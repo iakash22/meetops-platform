@@ -37,6 +37,12 @@ export default [
       "no-console": ["warn", { allow: ["warn", "error"] }],
       "no-debugger": "warn",
       "@typescript-eslint/explicit-function-return-type": "off",
+      "@typescript-eslint/no-unsafe-assignment": "off",
+      "@typescript-eslint/no-unsafe-call": "off",
+      "@typescript-eslint/no-unsafe-member-access": "off",
+      "@typescript-eslint/no-unsafe-return": "off",
+      "@typescript-eslint/require-await": "off",
+      "@typescript-eslint/no-redundant-type-constituents": "off",
       "@typescript-eslint/no-floating-promises": "error",
       "@typescript-eslint/no-misused-promises": "error",
       "unused-imports/no-unused-imports": "error"
