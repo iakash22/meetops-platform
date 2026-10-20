@@ -1,4 +1,4 @@
-import { Queue, Worker, QueueOptions, WorkerOptions, QueueScheduler } from 'bullmq';
+import { Queue, Worker, QueueOptions, WorkerOptions } from 'bullmq';
 import IORedis from 'ioredis';
 import { loadConfig } from '@meetops/config';
 import { logger as baseLogger } from '@meetops/logger';
@@ -21,10 +21,6 @@ export function createQueue<T = unknown>(
 ) {
   const connection = createRedisClient();
   const queue = new Queue<T>(name, { connection, ...options });
-  // Attach a scheduler to handle delayed/retried jobs reliably
-  new QueueScheduler(name, { connection }).waitUntilReady().catch(() => {
-    // Swallow scheduler readiness errors; queue can still operate
-  });
   return queue;
 }
 
