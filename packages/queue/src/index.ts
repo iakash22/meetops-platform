@@ -1,5 +1,5 @@
-import { Queue, Worker, QueueOptions, WorkerOptions } from 'bullmq';
-import IORedis from 'ioredis';
+import { Queue, Worker, QueueOptions, WorkerOptions, type Processor } from 'bullmq';
+import { Redis } from 'ioredis';
 import { loadConfig } from '@meetops/config';
 import { logger as baseLogger } from '@meetops/logger';
 
@@ -7,7 +7,7 @@ export type { Queue, Worker, QueueOptions, WorkerOptions };
 
 export function createRedisClient() {
   const config = loadConfig();
-  const client = new IORedis(config.REDIS_URL, {
+  const client = new Redis(config.REDIS_URL, {
     maxRetriesPerRequest: null,
     enableReadyCheck: true,
     lazyConnect: true
@@ -26,7 +26,7 @@ export function createQueue<T = unknown>(
 
 export function createWorker<T = unknown, R = unknown>(
   name: string,
-  processor: Parameters<typeof Worker<T, R>>[1],
+  processor: Processor<T, R, string>,
   options: Omit<WorkerOptions, 'connection'> = {}
 ) {
   const connection = createRedisClient();
