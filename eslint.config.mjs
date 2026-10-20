@@ -28,8 +28,10 @@ export default [
     }
   })),
   {
+    files: ["**/*.ts", "**/*.tsx"],
     plugins: {
-      "unused-imports": eslintPluginUnusedImports
+      "unused-imports": eslintPluginUnusedImports,
+      "@typescript-eslint": tseslint.plugin
     },
     rules: {
       "no-console": ["warn", { allow: ["warn", "error"] }],
