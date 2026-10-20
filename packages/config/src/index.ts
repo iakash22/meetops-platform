@@ -8,10 +8,7 @@ const bool = z
   })
   .transform((s) => ['true', '1', 'yes', 'on'].includes(s));
 
-const numberFromString = z
-  .string()
-  .regex(/^\\d+$/, 'Must be an integer string')
-  .transform((s) => parseInt(s, 10));
+const numberFromString = z.coerce.number().int().nonnegative();
 
 export const envSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
