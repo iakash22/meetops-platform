@@ -63,20 +63,6 @@ export type AppConfig = z.infer<typeof envSchema>;
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   const result = envSchema.safeParse(env);
   if (!result.success) {
-    // Redact anything that looks like a secret in error printing
-    const redacted = Object.fromEntries(
-      Object.entries(env).map(([k, v]) => {
-        const lower = k.toLowerCase();
-        if (
-          ['password', 'secret', 'token', 'key', 'authorization'].some((s) =>
-            lower.includes(s)
-          )
-        ) {
-          return [k, v ? '***redacted***' : v];
-        }
-        return [k, v];
-      })
-    );
     // Throw without logging secrets
     throw new Error(`Invalid environment configuration: ${result.error.message}`);
   }
