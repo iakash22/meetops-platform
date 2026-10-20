@@ -31,7 +31,7 @@ export const envSchema = z.object({
   // Email
   EMAIL_PROVIDER: z.enum(['smtp']).default('smtp'),
   SMTP_HOST: z.string().default('smtp.gmail.com'),
-  SMTP_PORT: numberFromString.default('465'),
+  SMTP_PORT: numberFromString.default(465),
   SMTP_SECURE: bool.default('true'),
   SMTP_USER: z.string().default(''),
   SMTP_PASSWORD: z.string().default(''),
