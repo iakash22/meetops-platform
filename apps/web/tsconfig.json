@@ -1,0 +1,14 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "jsx": "react-jsx",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "target": "ES2022",
+    "outDir": "dist",
+    "rootDir": "src",
+    "noEmit": true,
+    "types": ["vitest/globals"]
+  },
+  "include": ["src", "test", "vite.config.ts", "tailwind.config.ts", "postcss.config.js", "index.html"]
+}
