@@ -1,9 +1,9 @@
-import Fastify, { type FastifyInstance } from 'fastify';
+import Fastify from 'fastify';
 import swagger from '@fastify/swagger';
 import swaggerUi from '@fastify/swagger-ui';
 import { createLogger } from '@meetops/logger';
 
-export function createServer(): FastifyInstance {
+export function createServer() {
   const logger = createLogger({ name: 'api' });
   const app = Fastify({
     logger
