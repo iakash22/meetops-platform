@@ -19,7 +19,14 @@
     "skipLibCheck": true,
     "baseUrl": ".",
     "paths": {
-      "@meetops/*": ["packages/*/src"]
+      "@meetops/*": ["packages/*/src"],
+      "@meetops/contracts": ["packages/contracts/src/index.ts"],
+      "@meetops/config": ["packages/config/src/index.ts"],
+      "@meetops/logger": ["packages/logger/src/index.ts"],
+      "@meetops/queue": ["packages/queue/src/index.ts"],
+      "@meetops/storage": ["packages/storage/src/index.ts"],
+      "@meetops/ai-core": ["packages/ai-core/src/index.ts"],
+      "@meetops/database": ["packages/database/src/index.ts"]
     },
     "outDir": "dist",
     "rootDir": ".",
