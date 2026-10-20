@@ -17,6 +17,10 @@
     "sourceMap": true,
     "composite": true,
     "skipLibCheck": true,
+    "baseUrl": ".",
+    "paths": {
+      "@meetops/*": ["packages/*/src"]
+    },
     "outDir": "dist",
     "rootDir": ".",
     "types": ["vitest/globals"]
