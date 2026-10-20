@@ -10,7 +10,7 @@ const bool = z
 
 const numberFromString = z
   .string()
-  .regex(/^-?\\d+$/, 'Must be an integer string')
+  .regex(/^\\d+$/, 'Must be an integer string')
   .transform((s) => parseInt(s, 10));
 
 export const envSchema = z.object({
