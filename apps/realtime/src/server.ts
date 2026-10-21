@@ -13,7 +13,7 @@ import {
   type SocketData
 } from './events.js';
 
-export type AuthContext = { userId: string; orgId: string };
+export type AuthContext = { userId: string; organizationId: string };
 
 /**
  * Session verifier placeholder. Receives the handshake auth payload and headers;
@@ -25,7 +25,7 @@ export type SessionVerifier = (input: {
 }) => Promise<AuthContext | null> | AuthContext | null;
 
 /** Decide whether an org may access a meeting. */
-export type MeetingAccessHook = (input: { orgId: string; userId: string; meetingId: string }) => Promise<boolean> | boolean;
+export type MeetingAccessHook = (input: { organizationId: string; userId: string; meetingId: string }) => Promise<boolean> | boolean;
 
 export type RealtimeIo = Server<ClientToServerEvents, ServerToClientEvents, InterServerEvents, SocketData>;
 
@@ -74,23 +74,23 @@ export async function createRealtimeServer(opts: RealtimeServerOptions): Promise
     Promise.resolve()
       .then(() => opts.verifySession({ token, headers: socket.handshake.headers }))
       .then((ctx) => {
-        if (!ctx?.userId || !ctx.orgId) return next(new Error('unauthorized'));
+        if (!ctx?.userId || !ctx.organizationId) return next(new Error('unauthorized'));
         socket.data.userId = ctx.userId;
-        socket.data.orgId = ctx.orgId;
+        socket.data.organizationId = ctx.organizationId;
         next();
       })
       .catch(() => next(new Error('unauthorized')));
   });
 
   io.on('connection', (socket: Socket<ClientToServerEvents, ServerToClientEvents, InterServerEvents, SocketData>) => {
-    void socket.join(orgRoom(socket.data.orgId));
+    void socket.join(orgRoom(socket.data.organizationId));
 
     socket.on('meeting:join', (payload, ack) => {
       const reply = typeof ack === 'function' ? ack : () => undefined;
       const meetingId = payload?.meetingId;
       if (typeof meetingId !== 'string' || !MEETING_ID.test(meetingId)) return reply({ ok: false, error: 'invalid' });
       Promise.resolve()
-        .then(() => opts.canAccessMeeting({ orgId: socket.data.orgId, userId: socket.data.userId, meetingId }))
+        .then(() => opts.canAccessMeeting({ organizationId: socket.data.organizationId, userId: socket.data.userId, meetingId }))
         .then(async (allowed) => {
           if (!allowed) return reply({ ok: false, error: 'forbidden' });
           await socket.join(meetingRoom(meetingId));
@@ -129,9 +129,9 @@ export function emitToMeeting<E extends keyof ServerToClientEvents>(
 
 export function emitToOrg<E extends keyof ServerToClientEvents>(
   io: RealtimeIo,
-  orgId: string,
+  organizationId: string,
   event: E,
   ...args: Parameters<ServerToClientEvents[E]>
 ): void {
-  io.to(orgRoom(orgId)).emit(event, ...args);
+  io.to(orgRoom(organizationId)).emit(event, ...args);
 }

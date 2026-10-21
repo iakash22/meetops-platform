@@ -80,6 +80,9 @@ importers:
 
   apps/realtime:
     dependencies:
+      '@meetops/contracts':
+        specifier: workspace:^0.1.0
+        version: link:../../packages/contracts
       '@meetops/logger':
         specifier: workspace:*
         version: link:../../packages/logger

@@ -1,45 +1,27 @@
 /**
- * Realtime event contracts. Defined locally because @meetops/contracts has no
- * meeting/transcription/task event types yet; move them there when it does.
+ * Realtime event contracts come from @meetops/contracts (PR #17). Only the
+ * client->server events, socket data and room helpers are local.
  */
-export type MeetingStatus = 'scheduled' | 'recording' | 'uploaded' | 'processing' | 'transcribing' | 'completed' | 'failed';
+import type {
+  MeetingStatus,
+  MeetingStatusEvent,
+  ServerToClientEvents,
+  TaskUpdateEvent,
+  TranscriptionProgressEvent,
+  TranscriptionStage
+} from '@meetops/contracts';
 
-export type MeetingStatusEvent = {
-  meetingId: string;
-  orgId: string;
-  status: MeetingStatus;
-  at: string;
-  error?: string;
+export type {
+  MeetingStatus,
+  MeetingStatusEvent,
+  ServerToClientEvents,
+  TaskUpdateEvent,
+  TranscriptionProgressEvent,
+  TranscriptionStage
 };
-
-export type TranscriptionProgressEvent = {
-  meetingId: string;
-  orgId: string;
-  /** 0..100 */
-  percent: number;
-  chunksDone?: number;
-  chunksTotal?: number;
-  stage?: 'normalizing' | 'chunking' | 'transcribing' | 'merging';
-  at: string;
-};
-
-export type TaskUpdateEvent = {
-  taskId: string;
-  meetingId?: string;
-  orgId: string;
-  status: 'open' | 'in_progress' | 'done' | 'cancelled';
-  title?: string;
-  assigneeId?: string;
-  at: string;
-};
+export { REALTIME_EVENTS } from '@meetops/contracts';
 
 export type AckResult = { ok: true } | { ok: false; error: 'forbidden' | 'invalid' | 'error' };
-
-export interface ServerToClientEvents {
-  'meeting:status': (e: MeetingStatusEvent) => void;
-  'transcription:progress': (e: TranscriptionProgressEvent) => void;
-  'task:update': (e: TaskUpdateEvent) => void;
-}
 
 export interface ClientToServerEvents {
   'meeting:join': (p: { meetingId: string }, ack: (r: AckResult) => void) => void;
@@ -50,8 +32,29 @@ export type InterServerEvents = Record<string, never>;
 
 export interface SocketData {
   userId: string;
-  orgId: string;
+  organizationId: string;
 }
 
-export const orgRoom = (orgId: string) => `org:${orgId}`;
+export const orgRoom = (organizationId: string) => `org:${organizationId}`;
 export const meetingRoom = (meetingId: string) => `meeting:${meetingId}`;
+
+/** Internal pipeline phases (not sent to clients as-is). */
+export type PipelinePhase = 'scheduled' | 'recording' | 'uploaded' | 'normalizing' | 'chunking' | 'transcribing' | 'merging' | 'completed' | 'failed';
+
+/**
+ * Map an internal pipeline phase to the contracts MeetingStatus plus an optional
+ * transcription stage: uploaded/normalizing/chunking/transcribing/merging => processing.
+ */
+export function toMeetingStatus(phase: PipelinePhase): { status: MeetingStatus; stage?: TranscriptionStage } {
+  switch (phase) {
+    case 'uploaded':
+      return { status: 'processing' };
+    case 'normalizing':
+    case 'chunking':
+    case 'transcribing':
+    case 'merging':
+      return { status: 'processing', stage: phase };
+    default:
+      return { status: phase };
+  }
+}

@@ -6,16 +6,17 @@ import {
   emitToMeeting,
   emitToOrg,
   loadRealtimeConfig,
+  toMeetingStatus,
   type ClientToServerEvents,
   type ServerToClientEvents,
   type MeetingStatusEvent
 } from '../src/index.js';
 
 type C = ClientSocket<ServerToClientEvents, ClientToServerEvents>;
-const TOKENS: Record<string, { userId: string; orgId: string }> = {
-  a1: { userId: 'u1', orgId: 'orgA' },
-  a2: { userId: 'u2', orgId: 'orgA' },
-  b1: { userId: 'u3', orgId: 'orgB' }
+const TOKENS: Record<string, { userId: string; organizationId: string }> = {
+  a1: { userId: 'u1', organizationId: 'orgA' },
+  a2: { userId: 'u2', organizationId: 'orgA' },
+  b1: { userId: 'u3', organizationId: 'orgB' }
 };
 const MEETINGS: Record<string, string> = { mA: 'orgA', mB: 'orgB' };
 
@@ -28,7 +29,7 @@ async function start() {
   const { app, io } = await createRealtimeServer({
     config: loadRealtimeConfig({ REALTIME_PORT: '0' }),
     verifySession: ({ token }) => (token ? (TOKENS[token] ?? null) : null),
-    canAccessMeeting: ({ orgId, meetingId }) => MEETINGS[meetingId] === orgId
+    canAccessMeeting: ({ organizationId, meetingId }) => MEETINGS[meetingId] === organizationId
   });
   await app.listen({ host: '127.0.0.1', port: 0 });
   cleanups.push(() => app.close());
@@ -56,6 +57,14 @@ const nextEvent = <E extends keyof ServerToClientEvents>(s: C, e: E, ms = 300) =
       res(p);
     }) as never);
   });
+
+describe('status mapping', () => {
+  it('maps uploaded/transcribing to processing + stage', () => {
+    expect(toMeetingStatus('uploaded')).toEqual({ status: 'processing' });
+    expect(toMeetingStatus('transcribing')).toEqual({ status: 'processing', stage: 'transcribing' });
+    expect(toMeetingStatus('completed')).toEqual({ status: 'completed' });
+  });
+});
 
 describe('config', () => {
   it('parses env', () => {
@@ -107,14 +116,14 @@ describe('realtime server', () => {
     expect(await b1.emitWithAck('meeting:join', { meetingId: 'mA' })).toEqual({ ok: false, error: 'forbidden' });
     expect(await b1.emitWithAck('meeting:join', { meetingId: '../x' })).toEqual({ ok: false, error: 'invalid' });
 
-    const ev: MeetingStatusEvent = { meetingId: 'mA', orgId: 'orgA', status: 'processing', at: new Date().toISOString() };
+    const ev: MeetingStatusEvent = { meetingId: 'mA', organizationId: 'orgA', status: 'processing', at: new Date().toISOString() };
     const [ra1, ra2, rb1] = [nextEvent(a1, 'meeting:status'), nextEvent(a2, 'meeting:status'), nextEvent(b1, 'meeting:status')];
     emitToMeeting(io, 'mA', 'meeting:status', ev);
     expect(await ra1).toEqual(ev);
     expect(await ra2).toBe('timeout');
     expect(await rb1).toBe('timeout');
 
-    const task = { taskId: 't1', orgId: 'orgA', status: 'open' as const, at: ev.at };
+    const task = { taskId: 't1', organizationId: 'orgA', status: 'todo' as const, at: ev.at };
     const [ta1, ta2, tb1] = [nextEvent(a1, 'task:update'), nextEvent(a2, 'task:update'), nextEvent(b1, 'task:update')];
     emitToOrg(io, 'orgA', 'task:update', task);
     expect(await ta1).toEqual(task);
