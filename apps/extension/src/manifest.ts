@@ -1,7 +1,10 @@
 /**
- * Manifest fields for the MeetOps extension. Kept separate from wxt.config.ts
+ * Manifest fields for the MeetOps AI extension. Kept separate from wxt.config.ts
  * so unit tests can assert the permission surface stays minimal.
  *
+ * - `activeTab`: the toolbar click grants temporary access to the current tab
+ *   only, which tabCapture.getMediaStreamId({ targetTabId }) relies on. No
+ *   persistent host access.
  * - `tabCapture`: obtain a tab stream ID, only from the popup's user click
  *   after the consent notice is acknowledged.
  * - `offscreen`: MV3 service workers have no DOM/MediaRecorder; an offscreen
@@ -12,9 +15,9 @@
  * - No `host_permissions` and no content scripts.
  */
 export const manifest = {
-  name: "MeetOps",
-  description: "Record meetings you are part of, with clear consent.",
-  permissions: ["tabCapture", "offscreen", "storage"] as string[],
+  name: 'MeetOps AI',
+  description: 'Record meetings you are part of, with clear consent.',
+  permissions: ['activeTab', 'tabCapture', 'offscreen', 'storage'] as string[],
   host_permissions: [] as string[],
-  action: { default_title: "MeetOps" }
+  action: { default_title: 'MeetOps AI' },
 };
