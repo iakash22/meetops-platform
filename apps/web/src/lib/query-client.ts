@@ -6,9 +6,9 @@ export function createQueryClient(): QueryClient {
       queries: {
         staleTime: 30_000,
         retry: 1,
-        refetchOnWindowFocus: false
+        refetchOnWindowFocus: false,
       },
-      mutations: { retry: 0 }
-    }
+      mutations: { retry: 0 },
+    },
   });
 }

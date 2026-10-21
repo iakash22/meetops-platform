@@ -55,7 +55,11 @@ export function ProjectsPage() {
   return (
     <>
       <PageHeader title="Projects" />
-      <ResourceList query={query} emptyTitle="No projects yet" renderItem={(p) => <span>{p.name}</span>} />
+      <ResourceList
+        query={query}
+        emptyTitle="No projects yet"
+        renderItem={(p) => <span>{p.name}</span>}
+      />
     </>
   );
 }

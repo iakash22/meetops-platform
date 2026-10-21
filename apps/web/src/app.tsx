@@ -8,7 +8,7 @@ import { createAppRouter } from '@/routes/router';
 export function App({
   queryClient,
   api,
-  history
+  history,
 }: {
   queryClient: QueryClient;
   api: ApiClient;

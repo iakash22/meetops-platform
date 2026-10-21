@@ -13,12 +13,12 @@ export const useOrgStore = create<OrgState>((set) => ({
   currentOrgId: null,
   setOrganizations: (organizations) =>
     set((s) => ({ organizations, currentOrgId: s.currentOrgId ?? organizations[0]?.id ?? null })),
-  setCurrentOrg: (currentOrgId) => set({ currentOrgId })
+  setCurrentOrg: (currentOrgId) => set({ currentOrgId }),
 }));
 
 type UiState = { sidebarOpen: boolean; toggleSidebar: () => void };
 
 export const useUiStore = create<UiState>((set) => ({
   sidebarOpen: true,
-  toggleSidebar: () => set((s) => ({ sidebarOpen: !s.sidebarOpen }))
+  toggleSidebar: () => set((s) => ({ sidebarOpen: !s.sidebarOpen })),
 }));

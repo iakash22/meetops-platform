@@ -14,7 +14,10 @@ export function Sidebar() {
     <aside
       aria-label="Sidebar"
       data-state={open ? 'open' : 'closed'}
-      className={cn('flex shrink-0 flex-col border-r bg-muted/40 transition-all', open ? 'w-60' : 'w-0 overflow-hidden')}
+      className={cn(
+        'flex shrink-0 flex-col border-r bg-muted/40 transition-all',
+        open ? 'w-60' : 'w-0 overflow-hidden',
+      )}
     >
       <div className="flex h-14 items-center px-4 text-lg font-semibold">MeetOps AI</div>
       <Separator />

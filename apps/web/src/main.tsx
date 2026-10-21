@@ -13,5 +13,5 @@ if (!root) throw new Error('#root element missing');
 createRoot(root).render(
   <StrictMode>
     <App queryClient={queryClient} api={api} />
-  </StrictMode>
+  </StrictMode>,
 );

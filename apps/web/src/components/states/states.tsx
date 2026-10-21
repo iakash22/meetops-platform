@@ -7,7 +7,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 export function EmptyState({
   title,
   description,
-  action
+  action,
 }: {
   title: string;
   description?: string;
@@ -29,7 +29,13 @@ export function EmptyState({
 
 export function LoadingState({ label = 'Loading…', rows = 3 }: { label?: string; rows?: number }) {
   return (
-    <div role="status" aria-live="polite" aria-busy="true" data-testid="loading-state" className="space-y-3">
+    <div
+      role="status"
+      aria-live="polite"
+      aria-busy="true"
+      data-testid="loading-state"
+      className="space-y-3"
+    >
       <div className="flex items-center gap-2 text-sm text-muted-foreground">
         <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
         <span>{label}</span>
@@ -44,13 +50,14 @@ export function LoadingState({ label = 'Loading…', rows = 3 }: { label?: strin
 export function ErrorState({
   title = 'Something went wrong',
   error,
-  onRetry
+  onRetry,
 }: {
   title?: string;
   error?: unknown;
   onRetry?: () => void;
 }) {
-  const message = error instanceof Error ? error.message : typeof error === 'string' ? error : undefined;
+  const message =
+    error instanceof Error ? error.message : typeof error === 'string' ? error : undefined;
   return (
     <Alert variant="destructive" data-testid="error-state">
       <AlertCircle className="h-4 w-4" />

@@ -6,7 +6,7 @@ export const queryKeys = {
   organizations: ['organizations'] as const,
   meetings: (orgId: string) => ['orgs', orgId, 'meetings'] as const,
   tasks: (orgId: string) => ['orgs', orgId, 'tasks'] as const,
-  projects: (orgId: string) => ['orgs', orgId, 'projects'] as const
+  projects: (orgId: string) => ['orgs', orgId, 'projects'] as const,
 };
 
 function useOrgId(): string {
@@ -16,17 +16,29 @@ function useOrgId(): string {
 export function useMeetings() {
   const api = useApi();
   const orgId = useOrgId();
-  return useQuery({ queryKey: queryKeys.meetings(orgId), queryFn: () => api.meetings.list(orgId), enabled: !!orgId });
+  return useQuery({
+    queryKey: queryKeys.meetings(orgId),
+    queryFn: () => api.meetings.list(orgId),
+    enabled: !!orgId,
+  });
 }
 
 export function useTasks() {
   const api = useApi();
   const orgId = useOrgId();
-  return useQuery({ queryKey: queryKeys.tasks(orgId), queryFn: () => api.tasks.list(orgId), enabled: !!orgId });
+  return useQuery({
+    queryKey: queryKeys.tasks(orgId),
+    queryFn: () => api.tasks.list(orgId),
+    enabled: !!orgId,
+  });
 }
 
 export function useProjects() {
   const api = useApi();
   const orgId = useOrgId();
-  return useQuery({ queryKey: queryKeys.projects(orgId), queryFn: () => api.projects.list(orgId), enabled: !!orgId });
+  return useQuery({
+    queryKey: queryKeys.projects(orgId),
+    queryFn: () => api.projects.list(orgId),
+    enabled: !!orgId,
+  });
 }

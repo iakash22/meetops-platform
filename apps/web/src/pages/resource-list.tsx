@@ -8,7 +8,7 @@ export function ResourceList<T extends { id: string }>({
   query,
   emptyTitle,
   emptyDescription,
-  renderItem
+  renderItem,
 }: {
   query: UseQueryResult<Paginated<T>>;
   emptyTitle: string;
@@ -19,7 +19,12 @@ export function ResourceList<T extends { id: string }>({
   if (query.isPending && query.fetchStatus !== 'idle') return <LoadingState />;
   const items = query.data?.items ?? [];
   if (items.length === 0)
-    return <EmptyState title={emptyTitle} {...(emptyDescription ? { description: emptyDescription } : {})} />;
+    return (
+      <EmptyState
+        title={emptyTitle}
+        {...(emptyDescription ? { description: emptyDescription } : {})}
+      />
+    );
   return (
     <ul className="divide-y rounded-lg border">
       {items.map((item) => (

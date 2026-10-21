@@ -4,7 +4,7 @@ import {
   createRouter,
   Outlet,
   useNavigate,
-  type RouterHistory
+  type RouterHistory,
 } from '@tanstack/react-router';
 import type { QueryClient } from '@tanstack/react-query';
 import { AppShell } from '@/components/layout/app-shell';
@@ -12,14 +12,20 @@ import { EmptyState } from '@/components/states/states';
 import { ForgotPasswordForm, LoginForm, SignupForm } from '@/features/auth/forms';
 import { useApi } from '@/lib/api/context';
 import type { ApiClient } from '@/lib/api/client';
-import { DashboardPage, MeetingsPage, ProjectsPage, SettingsPage, TasksPage } from '@/pages/app-pages';
+import {
+  DashboardPage,
+  MeetingsPage,
+  ProjectsPage,
+  SettingsPage,
+  TasksPage,
+} from '@/pages/app-pages';
 import { useOrgStore } from '@/stores/org-store';
 
 export type RouterContext = { queryClient: QueryClient; api: ApiClient };
 
 export const rootRoute = createRootRouteWithContext<RouterContext>()({
   component: Outlet,
-  notFoundComponent: () => <EmptyState title="Page not found" />
+  notFoundComponent: () => <EmptyState title="Page not found" />,
 });
 
 // ---- Auth (public) ----
@@ -27,10 +33,13 @@ const authLayout = createRoute({
   getParentRoute: () => rootRoute,
   id: 'auth',
   component: () => (
-    <div className="flex min-h-screen items-center justify-center bg-muted/40 p-4" data-testid="auth-layout">
+    <div
+      className="flex min-h-screen items-center justify-center bg-muted/40 p-4"
+      data-testid="auth-layout"
+    >
       <Outlet />
     </div>
-  )
+  ),
 });
 
 function LoginPage() {
@@ -74,12 +83,20 @@ function ForgotPasswordPage() {
   );
 }
 
-const loginRoute = createRoute({ getParentRoute: () => authLayout, path: '/login', component: LoginPage });
-const signupRoute = createRoute({ getParentRoute: () => authLayout, path: '/signup', component: SignupPage });
+const loginRoute = createRoute({
+  getParentRoute: () => authLayout,
+  path: '/login',
+  component: LoginPage,
+});
+const signupRoute = createRoute({
+  getParentRoute: () => authLayout,
+  path: '/signup',
+  component: SignupPage,
+});
 const forgotPasswordRoute = createRoute({
   getParentRoute: () => authLayout,
   path: '/forgot-password',
-  component: ForgotPasswordPage
+  component: ForgotPasswordPage,
 });
 
 // ---- App (shell) ----
@@ -91,22 +108,47 @@ const appLayout = createRoute({
     <AppShell>
       <Outlet />
     </AppShell>
-  )
+  ),
 });
 
-const dashboardRoute = createRoute({ getParentRoute: () => appLayout, path: '/', component: DashboardPage });
-const meetingsRoute = createRoute({ getParentRoute: () => appLayout, path: '/meetings', component: MeetingsPage });
-const tasksRoute = createRoute({ getParentRoute: () => appLayout, path: '/tasks', component: TasksPage });
-const projectsRoute = createRoute({ getParentRoute: () => appLayout, path: '/projects', component: ProjectsPage });
-const settingsRoute = createRoute({ getParentRoute: () => appLayout, path: '/settings', component: SettingsPage });
+const dashboardRoute = createRoute({
+  getParentRoute: () => appLayout,
+  path: '/',
+  component: DashboardPage,
+});
+const meetingsRoute = createRoute({
+  getParentRoute: () => appLayout,
+  path: '/meetings',
+  component: MeetingsPage,
+});
+const tasksRoute = createRoute({
+  getParentRoute: () => appLayout,
+  path: '/tasks',
+  component: TasksPage,
+});
+const projectsRoute = createRoute({
+  getParentRoute: () => appLayout,
+  path: '/projects',
+  component: ProjectsPage,
+});
+const settingsRoute = createRoute({
+  getParentRoute: () => appLayout,
+  path: '/settings',
+  component: SettingsPage,
+});
 
 export const routeTree = rootRoute.addChildren([
   authLayout.addChildren([loginRoute, signupRoute, forgotPasswordRoute]),
-  appLayout.addChildren([dashboardRoute, meetingsRoute, tasksRoute, projectsRoute, settingsRoute])
+  appLayout.addChildren([dashboardRoute, meetingsRoute, tasksRoute, projectsRoute, settingsRoute]),
 ]);
 
 export function createAppRouter(context: RouterContext, history?: RouterHistory) {
-  return createRouter({ routeTree, context, ...(history ? { history } : {}), defaultPreload: 'intent' });
+  return createRouter({
+    routeTree,
+    context,
+    ...(history ? { history } : {}),
+    defaultPreload: 'intent',
+  });
 }
 
 export type AppRouter = ReturnType<typeof createAppRouter>;
