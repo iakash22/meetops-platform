@@ -239,9 +239,9 @@ describe('B1 fail-closed for every NODE_ENV except development/test', () => {
 
 describe('TRUST_PROXY validation', () => {
   it('accepts valid IPs and CIDRs', () => {
-    expect(parseTrustProxy('10.0.0.1,10.0.0.0/8,::1,fd00::/8,0.0.0.0/0')).toEqual(['10.0.0.1', '10.0.0.0/8', '::1', 'fd00::/8', '0.0.0.0/0']);
+    expect(parseTrustProxy('10.0.0.1,10.0.0.0/8,::1,fd00::/8')).toEqual(['10.0.0.1', '10.0.0.0/8', '::1', 'fd00::/8']);
   });
-  it.each(['10.0.0.256', 'loopback', '10.0.0.0/33', '::1/129', '10.0.0.1/', '10.0.0.0/8/1', '10.0.0.1, nope'])(
+  it.each(['0.0.0.0/0', '::/0', '::0/0', '10.0.0.0/0', '0:0:0:0:0:0:0:0/0', '10.0.0.0/00', '10.0.0.256', 'loopback', '10.0.0.0/33', '::1/129', '10.0.0.1/', '10.0.0.0/8/1', '10.0.0.1, nope'])(
     'rejects %s at startup',
     (v) => {
       expect(() => parseTrustProxy(v)).toThrow(/invalid IP\/CIDR/);

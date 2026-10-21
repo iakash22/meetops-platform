@@ -9,7 +9,9 @@ export function isIpOrCidr(entry: string): boolean {
   if (prefix === undefined) return true;
   if (!/^\d{1,3}$/.test(prefix)) return false;
   const n = Number(prefix);
-  return n >= 0 && n <= (family === 4 ? 32 : 128);
+  // A /0 trusts every address (0.0.0.0/0, ::/0, ::0/0, ...): equivalent to TRUST_PROXY=true.
+  if (n === 0) return false;
+  return n >= 1 && n <= (family === 4 ? 32 : 128);
 }
 
 /**

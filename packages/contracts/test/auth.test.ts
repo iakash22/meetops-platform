@@ -15,17 +15,19 @@ import {
 const now = '2026-10-21T17:00:00.000Z';
 const pw = 'correct-horse-battery';
 const session = {
-  user: { id: 'u1', email: 'a@b.co', name: 'Akash', createdAt: now, updatedAt: now },
+  user: { id: 'e4774cdd-a079-4f86-814e-8b9140bb6db4', email: 'a@b.co', name: 'Akash', createdAt: now, updatedAt: now },
   csrfToken: 'c'.repeat(32),
-  activeOrganizationId: 'o1',
+  activeOrganizationId: 'f1584b99-5a47-4098-8ad7-5bb8d29e9734',
   role: 'admin',
-  organizations: [{ id: 'o1', name: 'Acme', slug: 'acme', createdAt: now, updatedAt: now }],
+  organizations: [{ id: 'f1584b99-5a47-4098-8ad7-5bb8d29e9734', name: 'Acme', slug: 'acme', createdAt: now, updatedAt: now }],
 };
 
 describe('auth requests', () => {
-  it('enforces password length 12..128 and valid email', () => {
+  it('login accepts any non-empty password up to 128; signup enforces 12..128', () => {
     expect(Value.Check(LoginRequest, { email: 'a@b.co', password: pw })).toBe(true);
-    expect(Value.Check(LoginRequest, { email: 'a@b.co', password: 'elevenchars' })).toBe(false);
+    expect(Value.Check(LoginRequest, { email: 'a@b.co', password: 'elevenchars' })).toBe(true);
+    expect(Value.Check(LoginRequest, { email: 'a@b.co', password: '' })).toBe(false);
+    expect(Value.Check(SignupRequest, { name: 'A', email: 'a@b.co', password: 'elevenchars' })).toBe(false);
     expect(Value.Check(LoginRequest, { email: 'a@b.co', password: 'x'.repeat(129) })).toBe(false);
     expect(Value.Check(LoginRequest, { email: 'nope', password: pw })).toBe(false);
   });
@@ -64,9 +66,21 @@ describe('auth session', () => {
 describe('Paginated<T>', () => {
   it('builds a cursor page schema for any item', () => {
     const S = Paginated(Project);
-    const page: PaginatedT<{ id: string }> = { items: [{ id: 'p1' }], nextCursor: null };
+    const page: PaginatedT<{ id: string }> = { items: [{ id: 'ec6ef230-f182-4039-8e79-4566b9c58adc' }], nextCursor: null };
     expect(page.items).toHaveLength(1);
     expect(Value.Check(S, { items: [], nextCursor: 'c2' })).toBe(true);
     expect(Value.Check(S, { items: [{ bad: true }], nextCursor: null })).toBe(false);
+  });
+});
+
+import { Value as V2 } from '@sinclair/typebox/value';
+import { AuthSession as AS2 } from '../src/index.js';
+describe('AuthSession without org', () => {
+  it('accepts null activeOrganizationId and role', () => {
+    const s = {
+      user: { id: '7d0f3c2e-1b4a-4c8e-9f6a-2b3c4d5e6f70', email: 'a@example.com', createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z' },
+      csrfToken: 'x'.repeat(32), activeOrganizationId: null, role: null, organizations: [],
+    };
+    expect(V2.Errors(AS2, s).First()?.message).toBeUndefined();
   });
 });
