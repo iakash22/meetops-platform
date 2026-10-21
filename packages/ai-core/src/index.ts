@@ -10,6 +10,7 @@ export * from './router.js';
 export * from './executor.js';
 export * from './prompts.js';
 export * from './bootstrap.js';
+export * from './contracts.js';
 export * from './security/ssrf.js';
 export { guardedFetch, pinnedAgent, type HttpOpts, type FetchLike } from './adapters/http.js';
 export { GeminiProvider, GEMINI_DEFAULT_MODEL, parseStructured, type GeminiModelsClient } from './adapters/gemini.js';
