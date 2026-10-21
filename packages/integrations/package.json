@@ -15,7 +15,9 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@octokit/rest": "^21.0.2"
+    "@meetops/contracts": "workspace:*",
+    "@octokit/rest": "^21.0.2",
+    "@sinclair/typebox": "^0.34.0"
   },
   "devDependencies": {
     "@types/ioredis-mock": "^8.2.8",

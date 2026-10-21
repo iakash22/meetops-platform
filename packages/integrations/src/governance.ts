@@ -38,10 +38,16 @@ export interface AuditEvent {
   externalId?: string;
   /** Sanitized error name/message (no upstream bodies or secrets). */
   error?: string;
+  /** On success/failure: number of underlying write API attempts (1 + retries). */
+  attemptCount?: number;
   at: string;
 }
 
-/** Implemented by Backend (append-only audit log). Failures to audit abort the write. */
+/**
+ * Implemented by Backend (append-only audit log). Each record() is retried a few times (bounded).
+ * If the before-write ('attempt') record still fails, the write is aborted. Make record() idempotent on
+ * (approvalId, phase): a retried call may follow a partially successful one.
+ */
 export interface AuditSink {
   record(event: AuditEvent): Promise<void>;
 }
@@ -102,9 +108,55 @@ export function sanitizeError(err: unknown): string {
   return typeof e?.status === 'number' ? `${name} (${e.status})` : name;
 }
 
+export class AuditUnavailableError extends Error {
+  constructor(readonly phase: AuditPhase) {
+    super(`Audit sink unavailable (${phase})`);
+    this.name = 'AuditUnavailableError';
+  }
+}
+
+/**
+ * The write succeeded upstream but the 'success' audit record could not be stored after retries.
+ * `result` carries the upstream result so callers reconcile instead of re-pushing (which would duplicate).
+ */
+export class AuditRecordError<T = unknown> extends AuditUnavailableError {
+  constructor(readonly result: T) {
+    super('success');
+    this.name = 'AuditRecordError';
+  }
+}
+
+export interface AuditRetryOptions {
+  /** Total tries per audit record. Default 3. */
+  attempts?: number;
+  /** Delay before try n (n>=2) = baseDelayMs * (n-1). Default 50ms. */
+  baseDelayMs?: number;
+  sleep?: (ms: number) => Promise<void>;
+}
+
+async function recordWithRetry(sink: AuditSink, event: AuditEvent, opts: AuditRetryOptions = {}): Promise<void> {
+  const attempts = Math.max(1, opts.attempts ?? 3);
+  const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+  for (let i = 1; ; i++) {
+    try {
+      await sink.record(event);
+      return;
+    } catch (err) {
+      if (i >= attempts) throw err;
+      await sleep((opts.baseDelayMs ?? 50) * i);
+    }
+  }
+}
+
+/** Passed to the write callback; providers call attempt() once per underlying write API attempt. */
+export interface WriteAttemptTracker {
+  attempt(): void;
+}
+
 export interface WriteGuardDeps {
   approvals: ApprovalVerifier;
   audit: AuditSink;
+  auditRetry?: AuditRetryOptions;
   now?: () => Date;
 }
 
@@ -117,7 +169,7 @@ export async function guardedWrite<T>(
   scope: IntegrationContext & { provider: string; operation: WriteOperation },
   payload: unknown,
   approval: unknown,
-  write: () => Promise<T>,
+  write: (tracker: WriteAttemptTracker) => Promise<T>,
   externalIdOf?: (r: T) => string | undefined
 ): Promise<T> {
   const op = `${scope.provider}.${scope.operation}`;
@@ -128,7 +180,11 @@ export async function guardedWrite<T>(
     const ev: AuditEvent = { ...base, phase: 'rejected', error: err.name, at: at() };
     if (typeof a?.approvalId === 'string') ev.approvalId = a.approvalId;
     if (typeof a?.approverUserId === 'string') ev.approverUserId = a.approverUserId;
-    await deps.audit.record(ev);
+    try {
+      await recordWithRetry(deps.audit, ev, deps.auditRetry);
+    } catch {
+      /* the rejection itself is what matters to the caller */
+    }
     throw err;
   };
   try {
@@ -141,16 +197,35 @@ export async function guardedWrite<T>(
   const ok = await deps.approvals.verify(approval, { ...scope, payloadHash });
   if (!ok) return reject(new ApprovalRejectedError(op), approval);
   const who = { approvalId: approval.approvalId, approverUserId: approval.approverUserId };
-  await deps.audit.record({ ...base, ...who, phase: 'attempt', at: at() });
   try {
-    const result = await write();
-    const ev: AuditEvent = { ...base, ...who, phase: 'success', at: at() };
-    const ext = externalIdOf?.(result);
-    if (ext) ev.externalId = ext;
-    await deps.audit.record(ev);
-    return result;
+    await recordWithRetry(deps.audit, { ...base, ...who, phase: 'attempt', at: at() }, deps.auditRetry);
+  } catch {
+    throw new AuditUnavailableError('attempt'); // abort: never write without a before-audit
+  }
+  let attempts = 0;
+  const tracker: WriteAttemptTracker = { attempt: () => void attempts++ };
+  let result: T;
+  try {
+    result = await write(tracker);
   } catch (err) {
-    await deps.audit.record({ ...base, ...who, phase: 'failure', error: sanitizeError(err), at: at() });
+    try {
+      await recordWithRetry(
+        deps.audit,
+        { ...base, ...who, phase: 'failure', error: sanitizeError(err), attemptCount: attempts, at: at() },
+        deps.auditRetry
+      );
+    } catch {
+      /* surface the original write error */
+    }
     throw err;
   }
+  const ev: AuditEvent = { ...base, ...who, phase: 'success', attemptCount: Math.max(1, attempts), at: at() };
+  const ext = externalIdOf?.(result);
+  if (ext) ev.externalId = ext;
+  try {
+    await recordWithRetry(deps.audit, ev, deps.auditRetry);
+  } catch {
+    throw new AuditRecordError(result);
+  }
+  return result;
 }

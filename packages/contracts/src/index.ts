@@ -1,34 +1,16 @@
-export type EmailAddress = {
-  name?: string;
-  email: string;
-};
-
-export type EmailMessage = {
-  from: EmailAddress;
-  to: EmailAddress[];
-  cc?: EmailAddress[];
-  bcc?: EmailAddress[];
-  subject: string;
-  text?: string;
-  html?: string;
-};
-
-export type StorageObjectMetadata = {
-  key: string;
-  bucket: string;
-  size: number;
-  contentType?: string;
-  etag?: string;
-  checksumSha256?: string;
-  createdAt?: Date;
-  updatedAt?: Date;
-  custom?: Record<string, string>;
-};
-
-export type PresignedUrl = {
-  url: string;
-  expiresAt: Date;
-  method: "GET" | "PUT" | "POST" | "DELETE";
-  headers?: Record<string, string>;
-  fields?: Record<string, string>;
-};
+export * from './formats.js';
+export * from './common.js';
+export * from './domain/index.js';
+export * from './api/index.js';
+export * from './jobs/index.js';
+/**
+ * Phase 0 email types. The legacy storage types (PresignedUrl, StorageObjectMetadata) are no longer
+ * exported here; import them from '@meetops/contracts/legacy' (deprecated).
+ */
+export type { EmailAddress, EmailMessage } from './legacy.js';
+export * from './realtime/index.js';
+/**
+ * @deprecated Transitional re-export so @meetops/storage keeps compiling during migration.
+ * Import from '@meetops/contracts/legacy' instead. Removed from the main barrel in 0.3.0.
+ */
+export type { PresignedUrl, StorageObjectMetadata } from './legacy.js';
