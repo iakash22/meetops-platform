@@ -15,6 +15,8 @@ const IDS = {
   transcript: '00000000-0000-4000-8000-000000000501',
   empOwner: '00000000-0000-4000-8000-000000000601',
   empMember: '00000000-0000-4000-8000-000000000602',
+  recording: '00000000-0000-4000-8000-000000000701',
+  mediaNorm: '00000000-0000-4000-8000-000000000702',
 };
 
 async function main(): Promise<void> {
@@ -25,8 +27,8 @@ async function main(): Promise<void> {
   });
 
   const users = [
-    { id: IDS.owner, email: 'owner@demo.meetops.local', name: 'Olivia Owner', role: MembershipRole.OWNER, emp: IDS.empOwner },
-    { id: IDS.member, email: 'member@demo.meetops.local', name: 'Max Member', role: MembershipRole.MEMBER, emp: IDS.empMember },
+    { id: IDS.owner, email: 'owner@demo.meetops.local', name: 'Olivia Owner', role: MembershipRole.owner, emp: IDS.empOwner },
+    { id: IDS.member, email: 'member@demo.meetops.local', name: 'Max Member', role: MembershipRole.member, emp: IDS.empMember },
   ];
   for (const u of users) {
     await prisma.user.upsert({ where: { id: u.id }, update: {}, create: { id: u.id, email: u.email, name: u.name } });
@@ -52,21 +54,6 @@ async function main(): Promise<void> {
       create: { id: IDS.project, orgId: org.id, name: 'Website Relaunch', key: 'WEB' },
     });
 
-    await tx.fileObject.upsert({
-      where: { id: IDS.file },
-      update: {},
-      create: {
-        id: IDS.file,
-        orgId: org.id,
-        uploadedById: IDS.owner,
-        bucket: 'meetops-dev',
-        key: `orgs/${org.id}/meetings/${IDS.meeting}/recording.webm`,
-        mimeType: 'audio/webm',
-        sizeBytes: BigInt(1_048_576),
-        checksumSha256: 'demo-checksum',
-      },
-    });
-
     await tx.meeting.upsert({
       where: { id: IDS.meeting },
       update: {},
@@ -75,18 +62,62 @@ async function main(): Promise<void> {
         orgId: org.id,
         projectId: IDS.project,
         createdById: IDS.owner,
-        recordingId: IDS.file,
         title: 'Weekly sync',
-        status: 'COMPLETED',
+        status: 'completed',
         scheduledAt: new Date('2026-10-20T10:00:00Z'),
         durationSec: 1800,
         participants: {
           create: [
-            { orgId: org.id, employeeId: IDS.empOwner, displayName: 'Olivia Owner', speakerLabel: 'SPEAKER_0', role: 'HOST' },
-            { orgId: org.id, employeeId: IDS.empMember, displayName: 'Max Member', speakerLabel: 'SPEAKER_1' },
+            { employeeId: IDS.empOwner, displayName: 'Olivia Owner', speakerLabel: 'SPEAKER_0', role: 'host' },
+            { employeeId: IDS.empMember, displayName: 'Max Member', speakerLabel: 'SPEAKER_1' },
           ],
         },
       },
+    });
+
+    const base = `org/${org.id}/meetings/${IDS.meeting}`;
+    await tx.fileObject.upsert({
+      where: { id: IDS.file },
+      update: {},
+      create: {
+        id: IDS.file,
+        orgId: org.id,
+        meetingId: IDS.meeting,
+        uploadedById: IDS.owner,
+        kind: 'raw',
+        status: 'ready',
+        bucket: 'meetops-dev',
+        key: `${base}/raw/recording.webm`,
+        mimeType: 'audio/webm',
+        sizeBytes: BigInt(1_048_576),
+        checksumSha256: 'demo-checksum',
+        durationSeconds: 1800,
+        format: 'webm',
+      },
+    });
+    await tx.fileObject.upsert({
+      where: { id: IDS.mediaNorm },
+      update: {},
+      create: {
+        id: IDS.mediaNorm,
+        orgId: org.id,
+        meetingId: IDS.meeting,
+        parentObjectId: IDS.file,
+        kind: 'normalized',
+        status: 'ready',
+        bucket: 'meetops-dev',
+        key: `${base}/normalized/audio.wav`,
+        mimeType: 'audio/wav',
+        durationSeconds: 1800,
+        format: 'wav',
+        sampleRate: 16000,
+        channels: 1,
+      },
+    });
+    await tx.recording.upsert({
+      where: { id: IDS.recording },
+      update: {},
+      create: { id: IDS.recording, orgId: org.id, meetingId: IDS.meeting, fileObjectId: IDS.file, durationMs: 1_800_000, status: 'ready' },
     });
 
     const exists = await tx.transcript.findUnique({ where: { id: IDS.transcript } });
@@ -96,15 +127,15 @@ async function main(): Promise<void> {
           id: IDS.transcript,
           orgId: org.id,
           meetingId: IDS.meeting,
-          sourceFileId: IDS.file,
+          recordingId: IDS.recording,
           revision: 1,
-          status: 'READY',
+          status: 'ready',
           language: 'en',
           fullText: 'Olivia: Let us ship the landing page by Friday. Max: I will draft the copy.',
           segments: {
             create: [
-              { orgId: org.id, revision: 1, sequence: 0, speakerLabel: 'SPEAKER_0', startMs: 0, endMs: 4000, text: 'Let us ship the landing page by Friday.' },
-              { orgId: org.id, revision: 1, sequence: 1, speakerLabel: 'SPEAKER_1', startMs: 4000, endMs: 7000, text: 'I will draft the copy.' },
+              { revision: 1, sequence: 0, speakerLabel: 'SPEAKER_0', startMs: 0, endMs: 4000, text: 'Let us ship the landing page by Friday.' },
+              { revision: 1, sequence: 1, speakerLabel: 'SPEAKER_1', startMs: 4000, endMs: 7000, text: 'I will draft the copy.' },
             ],
           },
         },
