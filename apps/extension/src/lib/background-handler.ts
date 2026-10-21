@@ -38,6 +38,7 @@ export interface SenderInfo {
 const extras = (s: RecorderState) => ({
   ...(s.lastError ? { lastError: s.lastError } : {}),
   ...(s.storageWarning ? { storageWarning: s.storageWarning } : {}),
+  ...(s.incomplete ? { incomplete: true } : {}),
 });
 
 const status = (s: RecorderState): BackgroundResponse =>
@@ -57,9 +58,12 @@ const fail = (error: string): BackgroundResponse => ({ ok: false, error });
 const mb = (bytes: number) => `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 
 export function describeStorageEvent(e: StorageEvent): string {
-  return e.kind === 'evicted'
-    ? `Local storage limit reached: ${e.count} oldest chunk(s) (${mb(e.bytes)}) were deleted before upload.`
-    : `Local storage limit reached: chunk #${e.seq} was not saved. Free space or stop recording.`;
+  if (e.kind === 'refused') {
+    return `Local storage limit reached: chunk #${e.seq} was not saved. This recording is incomplete and will not be submitted.`;
+  }
+  return e.lostPending > 0
+    ? `Local storage limit reached: ${e.lostPending} chunk(s) not yet uploaded were deleted (${mb(e.bytes)} freed). This recording is incomplete and will not be submitted.`
+    : `Local storage limit reached: ${e.count} already-uploaded chunk(s) (${mb(e.bytes)}) were removed from local storage.`;
 }
 
 /**
@@ -96,6 +100,7 @@ async function toIdle(deps: BackgroundDeps, prev: RecorderState, lastError?: str
     status: 'idle',
     ...(lastError ? { lastError } : {}),
     ...(prev.storageWarning ? { storageWarning: prev.storageWarning } : {}),
+    ...(prev.incomplete ? { incomplete: true } : {}),
   };
   await saveState(deps.kv, next);
   await deps.stopWatchdog().catch(() => undefined);
@@ -127,6 +132,7 @@ export async function handleBackgroundMessage(
     case 'DISMISS_WARNING': {
       const next = { ...state };
       delete next.storageWarning;
+      if (next.status === 'idle') delete next.incomplete;
       await saveState(kv, next);
       return status(next);
     }
@@ -220,7 +226,12 @@ export async function handleBackgroundMessage(
     }
 
     case 'REC_STORAGE': {
-      const next: RecorderState = { ...state, storageWarning: describeStorageEvent(msg.event) };
+      const lost = msg.event.kind === 'refused' || msg.event.lostPending > 0;
+      const next: RecorderState = {
+        ...state,
+        storageWarning: describeStorageEvent(msg.event),
+        ...(lost ? { incomplete: true } : {}),
+      };
       await saveState(kv, next);
       return status(next);
     }

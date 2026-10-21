@@ -3,6 +3,7 @@ import type { KV } from './storage.js';
 interface Common {
   lastError?: string;
   storageWarning?: string;
+  incomplete?: boolean;
 }
 
 export type RecorderState =

@@ -16,7 +16,9 @@ export type BackgroundToOffscreen =
 
 /** Storage-cap events from the persistent chunk queue. */
 export type StorageEvent =
-  { kind: 'evicted'; count: number; bytes: number } | { kind: 'refused'; seq: number };
+  /** lostPending > 0 means not-yet-uploaded audio was lost: the recording is incomplete. */
+  | { kind: 'evicted'; count: number; bytes: number; lostPending: number }
+  | { kind: 'refused'; seq: number };
 
 /** offscreen -> background (events) */
 export type OffscreenToBackground =
@@ -40,6 +42,8 @@ export interface StatusPayload {
   lastError?: string;
   /** User-visible storage warning (eviction / refused chunk). */
   storageWarning?: string;
+  /** Audio was lost to the storage cap: the recording will be aborted, not submitted. */
+  incomplete?: boolean;
 }
 
 export type BackgroundResponse = ({ ok: true } & StatusPayload) | { ok: false; error: string };
@@ -50,7 +54,7 @@ const isStr = (v: unknown): v is string => typeof v === 'string' && v.length > 0
 function isStorageEvent(v: unknown): v is StorageEvent {
   if (typeof v !== 'object' || v === null) return false;
   const e = v as Record<string, unknown>;
-  if (e.kind === 'evicted') return isNum(e.count) && isNum(e.bytes);
+  if (e.kind === 'evicted') return isNum(e.count) && isNum(e.bytes) && isNum(e.lostPending);
   if (e.kind === 'refused') return isNum(e.seq);
   return false;
 }

@@ -109,20 +109,48 @@ describe('offscreen heartbeat watchdog', () => {
 });
 
 describe('storage warnings', () => {
-  it('surfaces eviction and refusal warnings to the popup and can be dismissed', async () => {
+  it('warns without marking incomplete when only uploaded chunks were evicted', async () => {
     const { deps, startRecording } = setup();
     await startRecording();
     const r = await handleBackgroundMessage(
       deps,
-      bg({ type: 'REC_STORAGE', event: { kind: 'evicted', count: 2, bytes: 2 * 1024 * 1024 } }),
+      bg({
+        type: 'REC_STORAGE',
+        event: { kind: 'evicted', count: 2, bytes: 2 * 1024 * 1024, lostPending: 0 },
+      }),
       offscreen,
     );
     expect(r).toMatchObject({
-      storageWarning: expect.stringContaining('2 oldest chunk(s) (2.0 MB)'),
+      storageWarning: expect.stringContaining('2 already-uploaded chunk(s) (2.0 MB)'),
     });
-    expect(describeStorageEvent({ kind: 'refused', seq: 4 })).toContain('chunk #4 was not saved');
+    expect(r.ok && r.incomplete).toBeFalsy();
     const d = await handleBackgroundMessage(deps, bg({ type: 'DISMISS_WARNING' }), popup);
     expect(d.ok && d.storageWarning).toBeFalsy();
+  });
+
+  it('marks the recording incomplete when pending audio is evicted or refused, through stop', async () => {
+    const { deps, startRecording } = setup();
+    await startRecording();
+    const r = await handleBackgroundMessage(
+      deps,
+      bg({ type: 'REC_STORAGE', event: { kind: 'evicted', count: 1, bytes: 10, lostPending: 1 } }),
+      offscreen,
+    );
+    expect(r).toMatchObject({ incomplete: true });
+    expect(describeStorageEvent({ kind: 'refused', seq: 4 })).toContain('will not be submitted');
+    await handleBackgroundMessage(deps, bg({ type: 'STOP_RECORDING' }), popup);
+    const stopped = await handleBackgroundMessage(
+      deps,
+      bg({ type: 'REC_STOPPED', chunkCount: 3 }),
+      offscreen,
+    );
+    expect(stopped).toMatchObject({ status: 'idle', incomplete: true });
+    const d = await handleBackgroundMessage(deps, bg({ type: 'DISMISS_WARNING' }), popup);
+    expect(d.ok && d.incomplete).toBeFalsy();
+    // A new recording starts clean.
+    await startRecording();
+    const s = await handleBackgroundMessage(deps, bg({ type: 'GET_STATUS' }), popup);
+    expect(s.ok && s.incomplete).toBeFalsy();
   });
 
   it('rejects malformed storage events', async () => {

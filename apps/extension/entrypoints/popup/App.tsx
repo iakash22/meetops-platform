@@ -100,6 +100,14 @@ export function App() {
         </button>
       </section>
       <hr />
+      {status.incomplete && (
+        <section role="alert" aria-label="Incomplete recording" style={{ color: '#c62828' }}>
+          <p>
+            <strong>Recording incomplete.</strong> Some audio was lost because local storage was
+            full, so this recording will be discarded instead of submitted.
+          </p>
+        </section>
+      )}
       {status.storageWarning && (
         <section role="alert" aria-label="Storage warning" style={{ color: '#8a5300' }}>
           <p>⚠ {status.storageWarning}</p>
