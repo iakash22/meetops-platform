@@ -1,34 +1,8 @@
-export type EmailAddress = {
-  name?: string;
-  email: string;
-};
-
-export type EmailMessage = {
-  from: EmailAddress;
-  to: EmailAddress[];
-  cc?: EmailAddress[];
-  bcc?: EmailAddress[];
-  subject: string;
-  text?: string;
-  html?: string;
-};
-
-export type StorageObjectMetadata = {
-  key: string;
-  bucket: string;
-  size: number;
-  contentType?: string;
-  etag?: string;
-  checksumSha256?: string;
-  createdAt?: Date;
-  updatedAt?: Date;
-  custom?: Record<string, string>;
-};
-
-export type PresignedUrl = {
-  url: string;
-  expiresAt: Date;
-  method: "GET" | "PUT" | "POST" | "DELETE";
-  headers?: Record<string, string>;
-  fields?: Record<string, string>;
-};
+export * from './formats.js';
+export * from './common.js';
+export * from './domain/index.js';
+export * from './api/index.js';
+export * from './jobs/index.js';
+/** Phase 0 hand-written types (EmailMessage, StorageObjectMetadata, PresignedUrl). */
+export * from './legacy.js';
+export * from './realtime/index.js';
