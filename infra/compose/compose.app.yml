@@ -1,7 +1,11 @@
 # MeetOps AI — application containers on top of the dev infra stack. DEV ONLY:
 # this is a local integration harness, not a production deployment manifest.
-# Run from repo root (both files are merged; service names come from compose.dev.yml):
-#   docker compose --env-file .env -f infra/compose/compose.dev.yml -f infra/compose/compose.app.yml up -d --build
+# NOT standalone: it must be merged with compose.dev.yml, which defines postgres,
+# redis, minio(-init) and the optional `ollama` / `local-stt` profile services
+# referenced below (OLLAMA_BASE_URL / LOCAL_STT_URL). Use the helper:
+#   scripts/compose-up.sh                      # dev infra + apps
+#   scripts/compose-up.sh --profile ollama --profile local-stt --profile realtime
+# which runs: docker compose --env-file .env -f infra/compose/compose.dev.yml -f infra/compose/compose.app.yml ... up -d --build
 # Inside the compose network the apps reach infra by service name, so the
 # localhost URLs from .env are overridden below. NODE_ENV comes from .env.
 # Required credentials use ${VAR:?} (no fallbacks). Host ports bind to 127.0.0.1.
