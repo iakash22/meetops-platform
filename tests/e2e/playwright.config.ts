@@ -18,7 +18,9 @@ export default defineConfig({
   fullyParallel: true,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 0,
-  reporter: process.env.CI ? [['list'], ['html', { open: 'never', outputFolder: '../playwright-report' }]] : 'list',
+  reporter: process.env.CI
+    ? [['list'], ['html', { open: 'never', outputFolder: '../playwright-report' }]]
+    : 'list',
   use: { baseURL, trace: 'on-first-retry' },
   projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'] } }],
   ...(startServer && {
@@ -26,7 +28,7 @@ export default defineConfig({
       command: `pnpm --filter @meetops/web dev --port ${port} --strictPort`,
       url: baseURL,
       reuseExistingServer: !process.env.CI,
-      timeout: 120_000
-    }
-  })
+      timeout: 120_000,
+    },
+  }),
 });
