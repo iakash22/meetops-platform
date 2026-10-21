@@ -77,7 +77,9 @@ describe.skipIf(!APP_URL || !OWNER_URL)('invitation definer functions (live)', (
   const expiredHash = `hash-${randomUUID()}`;
 
   it('setup', async () => {
-    await owner.organization.create({ data: { id: organizationId, name: 'Inv', slug: `inv-${organizationId}` } });
+    await owner.organization.create({
+      data: { id: organizationId, name: 'Inv', slug: `inv-${organizationId}` },
+    });
     await owner.user.createMany({
       data: [
         { id: userId, email: `invitee-${organizationId}@example.test` },
@@ -207,9 +209,9 @@ describe.skipIf(!RELAY_URL || !OWNER_URL)('outbox relay role (live)', () => {
   it('cannot touch other tables or insert/delete/change payload', async () => {
     await expect(relay.meeting.count()).rejects.toThrow(/permission denied/);
     await expect(relay.organization.count()).rejects.toThrow(/permission denied/);
-    await expect(relay.outboxEvent.deleteMany({ where: { organizationId: { in: orgs } } })).rejects.toThrow(
-      /permission denied/,
-    );
+    await expect(
+      relay.outboxEvent.deleteMany({ where: { organizationId: { in: orgs } } }),
+    ).rejects.toThrow(/permission denied/);
     await expect(
       relay.outboxEvent.create({
         data: {
@@ -273,7 +275,9 @@ describe.skipIf(!APP_URL || !OWNER_URL)('backend feedback (live)', () => {
     ).toBe(0);
     const orgAction = `org.updated.${randomUUID()}`;
     await runWithOrgContext(app, orgA, (tx) =>
-      tx.auditEvent.create({ data: { organizationId: orgA, action: orgAction, targetType: 'org' } }),
+      tx.auditEvent.create({
+        data: { organizationId: orgA, action: orgAction, targetType: 'org' },
+      }),
     );
     expect(
       await runWithOrgContext(app, orgA, (tx) =>
@@ -366,7 +370,13 @@ describe.skipIf(!APP_URL || !OWNER_URL)('worker media ids and recording sessions
         await tx.recording.upsert({
           where: { id: recordingId },
           update: {},
-          create: { id: recordingId, organizationId, meetingId, fileObjectId: rawId, status: 'processing' },
+          create: {
+            id: recordingId,
+            organizationId,
+            meetingId,
+            fileObjectId: rawId,
+            status: 'processing',
+          },
         });
         await tx.fileObject.upsert({
           where: { id: normId },
@@ -443,7 +453,13 @@ describe.skipIf(!APP_URL || !OWNER_URL)('worker media ids and recording sessions
     const sessionId = randomUUID();
     await runWithOrgContext(app, organizationId, async (tx) => {
       await tx.recordingSession.create({
-        data: { id: sessionId, organizationId, meetingId, mimeType: 'audio/webm', startedAt: new Date() },
+        data: {
+          id: sessionId,
+          organizationId,
+          meetingId,
+          mimeType: 'audio/webm',
+          startedAt: new Date(),
+        },
       });
       for (const seq of [0, 1]) {
         await tx.recordingSessionChunk.create({
@@ -498,7 +514,13 @@ describe.skipIf(!APP_URL || !OWNER_URL)('worker media ids and recording sessions
     const sessionId = randomUUID();
     await runWithOrgContext(app, organizationId, (tx) =>
       tx.recordingSession.create({
-        data: { id: sessionId, organizationId, meetingId, mimeType: 'audio/webm', startedAt: new Date() },
+        data: {
+          id: sessionId,
+          organizationId,
+          meetingId,
+          mimeType: 'audio/webm',
+          startedAt: new Date(),
+        },
       }),
     );
     await expect(
@@ -515,7 +537,13 @@ describe.skipIf(!APP_URL || !OWNER_URL)('worker media ids and recording sessions
     await expect(
       runWithOrgContext(app, organizationId, (tx) =>
         tx.recordingSessionChunk.create({
-          data: { organizationId, sessionId, seq: 0, sizeBytes: 1, storageKey: `org/${otherOrg}/x.part` },
+          data: {
+            organizationId,
+            sessionId,
+            seq: 0,
+            sizeBytes: 1,
+            storageKey: `org/${otherOrg}/x.part`,
+          },
         }),
       ),
     ).rejects.toThrow();
@@ -538,5 +566,39 @@ describe.skipIf(!APP_URL)('DB-BUG-2: empty-string context fails closed (live)', 
       // memberships self-read (app.current_user_id) is covered by the loop; audit_events read policy too.
     });
     await app.$disconnect();
+  });
+});
+
+describe.skipIf(!APP_URL || !OWNER_URL)('transcripts.provider constraint (live)', () => {
+  const app = new PrismaClient({ datasources: { db: { url: APP_URL ?? '' } } });
+  const owner = new PrismaClient({ datasources: { db: { url: OWNER_URL ?? '' } } });
+  const organizationId = randomUUID();
+  const meetingId = randomUUID();
+  const mk = (provider: string) =>
+    runWithOrgContext(app, organizationId, (tx) =>
+      tx.transcript.create({
+        data: { organizationId, meetingId, provider, revision: Math.floor(Math.random() * 1e6) },
+      }),
+    );
+
+  it('accepts real providers, rejects invalid and new unknown rows', async () => {
+    await owner.organization.create({
+      data: { id: organizationId, name: 'T', slug: `t-${organizationId}` },
+    });
+    await runWithOrgContext(app, organizationId, (tx) =>
+      tx.meeting.create({ data: { id: meetingId, organizationId, title: 'T' } }),
+    );
+    for (const p of ['assemblyai', 'faster-whisper', 'deepgram'])
+      await expect(mk(p)).resolves.toMatchObject({ provider: p });
+    await expect(mk('whisper-x')).rejects.toThrow(/transcripts_provider_check|check/i);
+    await expect(mk('unknown')).rejects.toThrow(/reserved for backfilled legacy rows/);
+    const t = await mk('deepgram');
+    await expect(
+      runWithOrgContext(app, organizationId, (tx) =>
+        tx.transcript.update({ where: { id: t.id }, data: { provider: 'unknown' } }),
+      ),
+    ).rejects.toThrow(/reserved/);
+    await app.$disconnect();
+    await owner.$disconnect();
   });
 });

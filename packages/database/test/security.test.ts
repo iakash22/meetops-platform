@@ -47,13 +47,19 @@ const migrationSql = readdirSync(migrationsDir, { withFileTypes: true })
   .join('\n');
 const allSql = `${finalSql}\n${migrationSql}`;
 /** Tables added after the RLS migration enable and police RLS in their own migration. */
-const laterTenantSql = readFileSync(resolve(migrationsDir, '20261021180000_recording_sessions/migration.sql'), 'utf8');
+const laterTenantSql = readFileSync(
+  resolve(migrationsDir, '20261021180000_recording_sessions/migration.sql'),
+  'utf8',
+);
 const rlsSql =
-  readFileSync(resolve(migrationsDir, '20261021110000_tenant_rls_roles/migration.sql'), 'utf8') + laterTenantSql;
+  readFileSync(resolve(migrationsDir, '20261021110000_tenant_rls_roles/migration.sql'), 'utf8') +
+  laterTenantSql;
 /** Latest (effective) tenant policy definitions. */
 const policySql =
-  readFileSync(resolve(migrationsDir, '20261021130000_rls_fail_closed_empty_setting/migration.sql'), 'utf8') +
-  laterTenantSql;
+  readFileSync(
+    resolve(migrationsDir, '20261021130000_rls_fail_closed_empty_setting/migration.sql'),
+    'utf8',
+  ) + laterTenantSql;
 const ORG_EXPR = "NULLIF(current_setting('app.current_org_id', true), '')::uuid";
 
 /** Parse models from schema: table name + body. */
@@ -84,7 +90,9 @@ describe('tenant schema', () => {
     for (const m of tenantModels) {
       if (NULLABLE_ORG.includes(m.table)) continue;
       expect(m.body, m.name).toMatch(/^\s+organizationId\s+String\s+@map\("org_id"\)/m);
-      expect(m.body, m.name).toMatch(/organization\s+Organization\s+@relation\(fields: \[organizationId\]/);
+      expect(m.body, m.name).toMatch(
+        /organization\s+Organization\s+@relation\(fields: \[organizationId\]/,
+      );
       expect(m.body, m.name).toMatch(/@@(index|unique)\(\[organizationId/);
     }
   });
@@ -252,7 +260,8 @@ describe('cross-tenant referential integrity (M1)', () => {
   const tenantNames = new Set(tenantModels.map((m) => m.name));
 
   it('every tenant table has UNIQUE(org_id, id)', () => {
-    for (const m of tenantModels) expect(m.body, m.name).toContain('@@unique([organizationId, id])');
+    for (const m of tenantModels)
+      expect(m.body, m.name).toContain('@@unique([organizationId, id])');
   });
 
   it('every relation between tenant tables is a composite (org_id, parent_id) FK', () => {
@@ -704,28 +713,37 @@ describe('worker UUIDv5 media ids (PR #39)', () => {
   });
 });
 
-const addendum2Sql = readFileSync(resolve(migrationsDir, '20261022000000_adr004_addendum2/migration.sql'), 'utf8');
+const addendum2Sql = readFileSync(
+  resolve(migrationsDir, '20261022000000_adr004_addendum2/migration.sql'),
+  'utf8',
+);
 
 describe('ADR-004 addendum 2 (contracts 0.3.0)', () => {
   it('(a) Prisma exposes organizationId mapped to org_id, never orgId', () => {
     expect(schema).not.toMatch(/\borgId\b/);
-    const fields = [...schema.matchAll(/^\s+organizationId\s+String\??\s+@map\("(\w+)"\)/gm)].map((m) => m[1]);
+    const fields = [...schema.matchAll(/^\s+organizationId\s+String\??\s+@map\("(\w+)"\)/gm)].map(
+      (m) => m[1],
+    );
     expect(fields.length).toBeGreaterThanOrEqual(TENANT_TABLES.length);
     expect(new Set(fields)).toEqual(new Set(['org_id']));
-    const src = readFileSync(resolve(pkgDir, 'src/tenant.ts'), 'utf8') + readFileSync(resolve(pkgDir, 'src/index.ts'), 'utf8');
+    const src =
+      readFileSync(resolve(pkgDir, 'src/tenant.ts'), 'utf8') +
+      readFileSync(resolve(pkgDir, 'src/index.ts'), 'utf8');
     expect(src).not.toMatch(/\borgId\b/);
     expect(src).toContain("'app.current_org_id'");
   });
 
   it('(b) extracted_tasks.report_id NOT NULL with a backfill that fails clearly, RLS re-forced', () => {
     expect(finalSql).toMatch(/CREATE TABLE "extracted_tasks" \([\s\S]*?"report_id" UUID NOT NULL,/);
-    expect(addendum2Sql).toContain('RAISE EXCEPTION \'ADR-004 addendum 2 (b)');
+    expect(addendum2Sql).toContain("RAISE EXCEPTION 'ADR-004 addendum 2 (b)");
     expect(addendum2Sql).toContain('ALTER TABLE "extracted_tasks" FORCE ROW LEVEL SECURITY;');
   });
 
   it('(c) transcripts.provider NOT NULL, legacy rows become unknown', () => {
     expect(finalSql).toMatch(/CREATE TABLE "transcripts" \([\s\S]*?"provider" TEXT NOT NULL,/);
-    expect(addendum2Sql).toContain(`UPDATE "transcripts" SET "provider" = 'unknown' WHERE "provider" IS NULL;`);
+    expect(addendum2Sql).toContain(
+      `UPDATE "transcripts" SET "provider" = 'unknown' WHERE "provider" IS NULL;`,
+    );
     expect(addendum2Sql).toContain('ALTER TABLE "transcripts" FORCE ROW LEVEL SECURITY;');
   });
 
@@ -735,12 +753,14 @@ describe('ADR-004 addendum 2 (contracts 0.3.0)', () => {
     expect(finalSql).not.toMatch(/accepted_task_id/);
     const et = /CREATE TABLE "extracted_tasks" \(([\s\S]*?)\n\);/.exec(finalSql)?.[1] ?? '';
     expect(et).not.toMatch(/"task_id"/);
-    expect(finalSql).toContain('CREATE UNIQUE INDEX "tasks_extracted_task_id_key" ON "tasks"("extracted_task_id");');
+    expect(finalSql).toContain(
+      'CREATE UNIQUE INDEX "tasks_extracted_task_id_key" ON "tasks"("extracted_task_id");',
+    );
   });
 });
 
 describe('DB-BUG-2: every setting-based policy is NULLIF-guarded', () => {
-  it('the latest definition of each policy reads settings only through NULLIF(..., \'\')::uuid', () => {
+  it("the latest definition of each policy reads settings only through NULLIF(..., '')::uuid", () => {
     const latest = new Map<string, string>();
     for (const m of migrationSql.matchAll(/CREATE POLICY (\w+) ON "(\w+)"([\s\S]*?);/g)) {
       latest.set(`${m[2]}.${m[1]}`, m[3] ?? '');
@@ -749,8 +769,37 @@ describe('DB-BUG-2: every setting-based policy is NULLIF-guarded', () => {
     expect(withSetting.length).toBeGreaterThanOrEqual(TENANT_TABLES.length + 1);
     for (const [name, body] of withSetting) {
       const raw = body.match(/current_setting\('app\.current_(org|user)_id', true\)/g) ?? [];
-      const guarded = body.match(/NULLIF\(current_setting\('app\.current_(org|user)_id', true\), ''\)::uuid/g) ?? [];
+      const guarded =
+        body.match(/NULLIF\(current_setting\('app\.current_(org|user)_id', true\), ''\)::uuid/g) ??
+        [];
       expect(guarded.length, name).toBe(raw.length);
     }
+  });
+});
+
+const providerSql = readFileSync(
+  resolve(migrationsDir, '20261022010000_transcript_provider_check/migration.sql'),
+  'utf8',
+);
+
+describe('transcripts.provider = contracts TranscriptProviderId', () => {
+  it('CHECK values are exactly SttProviderId (from packages/contracts) plus unknown', () => {
+    const jobs = readFileSync(resolve(pkgDir, '../contracts/src/jobs/index.ts'), 'utf8');
+    const union =
+      /export const SttProviderId = Type\.Union\(\[([\s\S]*?)\]\)/.exec(jobs)?.[1] ?? '';
+    const stt = [...union.matchAll(/Type\.Literal\('([^']+)'\)/g)].map((m) => m[1]);
+    expect(stt.length).toBeGreaterThan(0);
+    const check = /CHECK \("provider" IN \(([^)]*)\)\)/.exec(providerSql)?.[1] ?? '';
+    const allowed = [...check.matchAll(/'([^']+)'/g)].map((m) => m[1]);
+    expect([...allowed].sort()).toEqual([...stt, 'unknown'].sort());
+  });
+
+  it("'unknown' is backfill-only: trigger rejects it on insert/change and there is no column default", () => {
+    expect(providerSql).toContain('BEFORE INSERT OR UPDATE OF "provider" ON "transcripts"');
+    expect(providerSql).toMatch(
+      /NEW\.provider = 'unknown' AND \(TG_OP = 'INSERT' OR OLD\.provider IS DISTINCT FROM NEW\.provider\)/,
+    );
+    expect(finalSql).toMatch(/CREATE TABLE "transcripts" \([\s\S]*?"provider" TEXT NOT NULL,/);
+    expect(addendum2Sql).toContain(`SET "provider" = 'unknown' WHERE "provider" IS NULL`);
   });
 });
