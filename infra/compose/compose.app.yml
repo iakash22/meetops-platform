@@ -1,8 +1,17 @@
-# MeetOps AI — application containers on top of the dev infra stack.
+# MeetOps AI — application containers on top of the dev infra stack. DEV ONLY:
+# this is a local integration harness, not a production deployment manifest.
 # Run from repo root (both files are merged; service names come from compose.dev.yml):
 #   docker compose --env-file .env -f infra/compose/compose.dev.yml -f infra/compose/compose.app.yml up -d --build
-# Inside the compose network, the apps reach infra by service name, so the
-# localhost URLs from .env are overridden below.
+# Inside the compose network the apps reach infra by service name, so the
+# localhost URLs from .env are overridden below. NODE_ENV comes from .env.
+# Required credentials use ${VAR:?} (no fallbacks). Host ports bind to 127.0.0.1.
+
+x-infra-urls: &infra-urls
+  DATABASE_URL: postgresql://${POSTGRES_USER:?set POSTGRES_USER}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:?set POSTGRES_DB}
+  REDIS_URL: redis://:${REDIS_PASSWORD:?set REDIS_PASSWORD}@redis:6379
+  STORAGE_ENDPOINT: http://minio:9000
+  OLLAMA_BASE_URL: http://ollama:11434
+  LOCAL_STT_URL: http://local-stt:8000
 
 services:
   # One-shot: prisma migrate deploy + seed (@meetops/database db:migrate:deploy, db:seed).
@@ -16,9 +25,7 @@ services:
     env_file:
       - path: ../../.env
         required: true
-    environment:
-      NODE_ENV: production
-      DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-meetops}
+    environment: *infra-urls
     depends_on:
       postgres:
         condition: service_healthy
@@ -32,16 +39,10 @@ services:
     env_file:
       - path: ../../.env
         required: true
-    environment: &infra-urls
-      NODE_ENV: production
-      DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-meetops}
-      REDIS_URL: redis://redis:6379
-      STORAGE_ENDPOINT: http://minio:9000
-      OLLAMA_BASE_URL: http://ollama:11434
-      LOCAL_STT_URL: http://local-stt:8000
+    environment: *infra-urls
     ports:
-      - '${API_PORT:-3000}:3000'
-    depends_on:
+      - '127.0.0.1:${API_PORT:-3000}:3000'
+    depends_on: &app-deps
       migrate:
         condition: service_completed_successfully
       postgres:
@@ -60,23 +61,20 @@ services:
     env_file:
       - path: ../../.env
         required: true
-    environment: *infra-urls
-    depends_on:
-      migrate:
-        condition: service_completed_successfully
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-      minio-init:
-        condition: service_completed_successfully
-    # Hardening per docs/09-security (upload-media-security §5): non-root (image
-    # USER node), read-only root FS, tmpfs scratch, no capabilities, no privilege
+    environment:
+      <<: *infra-urls
+      FFMPEG_PATH: /usr/bin/ffmpeg
+      FFPROBE_PATH: /usr/bin/ffprobe
+      MEDIA_WORK_DIR: /tmp/work
+    depends_on: *app-deps
+    # Hardening per docs/09-security (upload-media-security §5): non-root, read-only
+    # root FS, tmpfs scratch (/tmp/work for FFmpeg), no capabilities, no privilege
     # escalation, resource caps. Network stays on (Redis/MinIO are required).
     user: node
     read_only: true
     tmpfs:
-      - /tmp:size=2g,mode=1777
+      - /tmp:size=256m,mode=1777
+      - /tmp/work:size=2g,uid=1000,gid=1000,mode=0700
     cap_drop: [ALL]
     security_opt:
       - no-new-privileges:true
@@ -88,10 +86,13 @@ services:
     build:
       context: ../..
       dockerfile: infra/docker/Dockerfile.web
+      args:
+        VITE_API_URL: ${VITE_API_URL:-http://localhost:3000}
     image: meetops/web:local
     restart: unless-stopped
+    # WEB_APP_PORT is the containerised nginx; WEB_PORT (5173) stays for `vite dev`.
     ports:
-      - '${WEB_PORT:-8080}:8080'
+      - '127.0.0.1:${WEB_APP_PORT:-8080}:8080'
     depends_on:
       api:
         condition: service_started
