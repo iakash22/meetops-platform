@@ -4,6 +4,34 @@ All notable changes to `@meetops/contracts` are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this package uses [Semantic Versioning](https://semver.org/).
 While the version is `0.x`, a minor bump may contain breaking changes (ADR-003).
 
+## [0.3.0] - 2026-10-22
+
+### Added
+
+- Meetings: `ResolveMeetingRequest` (a strict union; at least one of `externalMeetingUrl` (https) or `externalMeetingId`
+  (opaque, ≤255) is required) and `ResolveMeetingResponse { meetingId, created }`, for
+  `POST /orgs/:organizationId/meetings/resolve`. It is idempotent per (organizationId, source, externalMeetingId).
+  Also adds `GetMeetingParams { organizationId, meetingId }`.
+- Extension auth (ADR-005): `ExtensionTokenRequest { extensionId, deviceLabel? }`,
+  `ExtensionTokenResponse { accessToken, expiresAt, refreshToken, scopes, organizationId }`, `EXTENSION_SCOPES`
+  (`meetings:resolve`, `recordings:write`), `EXTENSION_TOKEN_AUDIENCE`, `EXTENSION_TOKEN_TTL_SECONDS` (900). This is the **only**
+  API body that carries tokens.
+- Auth: `SwitchOrganizationRequest` for `POST /auth/switch-org`. It returns `AuthSession` with a rotated csrfToken, and the
+  session id is rotated.
+- Errors: `CSRF_INVALID`.
+- Tasks: `ListTasksQuery` (strict; cursor pagination plus status (one or several), priority, assigneeId, projectId,
+  meetingId, dueBefore, dueAfter, q ≤200), `TASK_STATUSES` and the `TaskStatusValue` alias.
+
+### Changed
+
+- `PresignedUrlString` rejects userinfo (`user@`, `user:pass@`) for both https and http URLs.
+
+### Confirmed (DB alignment, ADR-004 addendum 2)
+
+- `organizationId` is canonical (the DB column is `org_id` via `@map`). `ExtractedTask.reportId` and `Transcript.provider` are
+  required. The only link between Task and ExtractedTask is `Task.extractedTaskId`; there is no `acceptedTaskId`. There is no
+  `employeeId` on participants. No schema changes were needed; tests now guard these.
+
 ## [0.2.0] - 2026-10-21
 
 ### Added
