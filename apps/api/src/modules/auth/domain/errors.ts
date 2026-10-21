@@ -2,7 +2,7 @@ import { DomainError } from '../../../shared/domain-error.js';
 
 export class InvalidCredentialsError extends DomainError {
   constructor() {
-    super('UNAUTHENTICATED', 'Invalid email or password', 401);
+    super('AUTH_FAILED', 'Invalid email or password', 401);
   }
 }
 export class UnauthenticatedError extends DomainError {

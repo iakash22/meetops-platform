@@ -1,4 +1,4 @@
-import type { Role } from '../../../shared/contracts/index.js';
+import type { Role } from '@meetops/contracts';
 import type { PublicUser } from '../../users/domain/user.js';
 import type { MembershipRepository } from '../../organizations/domain/repositories.js';
 import type { AuthService } from './auth.service.js';

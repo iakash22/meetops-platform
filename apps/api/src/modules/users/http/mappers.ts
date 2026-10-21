@@ -1,4 +1,4 @@
-import type { User as UserDto } from '../../../shared/contracts/index.js';
+import type { User as UserDto } from '@meetops/contracts';
 import type { PublicUser, User } from '../domain/user.js';
 
 /** Domain/Prisma user → contract User DTO. Never includes passwordHash. */

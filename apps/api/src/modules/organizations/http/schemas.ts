@@ -1,5 +1,5 @@
 import { Type, type Static } from '@sinclair/typebox';
-import { Organization, Paginated, Role } from '../../../shared/contracts/index.js';
+import { Organization, Paginated, Role } from '@meetops/contracts';
 
 export const InvitableRole = Type.Union([Type.Literal('admin'), Type.Literal('member'), Type.Literal('viewer')]);
 
@@ -11,7 +11,7 @@ export const CreateOrganizationBody = Type.Object(
   { additionalProperties: false }
 );
 export const SwitchOrganizationBody = Type.Object(
-  { organizationId: Type.String({ minLength: 1 }) },
+  { organizationId: Type.String({ format: 'uuid' }) },
   { additionalProperties: false }
 );
 export const CreateInvitationBody = Type.Object(
@@ -19,13 +19,13 @@ export const CreateInvitationBody = Type.Object(
   { additionalProperties: false }
 );
 export const AcceptInvitationBody = Type.Object(
-  { token: Type.String({ minLength: 16, maxLength: 256 }) },
+  { token: Type.String({ minLength: 32, maxLength: 512 }) },
   { additionalProperties: false }
 );
-export const IdParams = Type.Object({ id: Type.String({ minLength: 1 }) });
+export const IdParams = Type.Object({ id: Type.String({ format: 'uuid' }) });
 export const InvitationParams = Type.Object({
-  id: Type.String({ minLength: 1 }),
-  invitationId: Type.String({ minLength: 1 })
+  id: Type.String({ format: 'uuid' }),
+  invitationId: Type.String({ format: 'uuid' })
 });
 
 export const InvitationDto = Type.Object(

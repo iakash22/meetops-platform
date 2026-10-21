@@ -1,7 +1,7 @@
 import type {
   Membership as MembershipDto,
   Organization as OrganizationDto
-} from '../../../shared/contracts/index.js';
+} from '@meetops/contracts';
 import type { Organization } from '../domain/organization.js';
 import type { Membership } from '../domain/membership.js';
 import type { Invitation } from '../domain/invitation.js';

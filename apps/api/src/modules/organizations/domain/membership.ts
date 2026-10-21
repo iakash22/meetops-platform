@@ -1,4 +1,4 @@
-import type { Role } from '../../../shared/contracts/index.js';
+import type { Role } from '@meetops/contracts';
 
 export type { Role };
 export const ROLES = ['owner', 'admin', 'member', 'viewer'] as const satisfies readonly Role[];
