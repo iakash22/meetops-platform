@@ -11,6 +11,7 @@ import {
   GetBucketPolicyStatusCommand,
   GetObjectCommand,
   HeadObjectCommand,
+  ListObjectsV2Command,
   ListPartsCommand,
   PutObjectCommand,
   S3Client
@@ -26,6 +27,8 @@ import {
   loadStorageConfig,
   parseMeetingKey,
   toPresignedUrlDto,
+  toSignedPutUpload,
+  SESSION_CHUNK_PREFIX,
   toPublicFileObject,
   type MeetingObjectRef,
   type StorageConfig
@@ -44,7 +47,7 @@ const config: StorageConfig = loadStorageConfig({
 
 const s3 = mockClient(S3Client);
 const client = new S3Client({ region: 'us-east-1', credentials: { accessKeyId: 'a', secretAccessKey: 's' } });
-const svc = (extra: Partial<ConstructorParameters<typeof S3StorageService>[0]> = {}) => new S3StorageService({ config, client, ...extra });
+const svc = (extra: Partial<ConstructorParameters<typeof S3StorageService>[0]> = {}) => new S3StorageService({ config, client, authorize: () => undefined, ...extra });
 
 const rec: MeetingObjectRef = { orgId: 'o1', meetingId: 'm1', kind: 'recording', objectId: 'r1', ext: 'webm' };
 const REC_KEY = 'org/o1/meetings/m1/recordings/r1.webm';
@@ -196,7 +199,7 @@ describe('S3StorageService', () => {
   });
 
   it('presigned POST enforces exact content-length-range and Content-Type', async () => {
-    const real = new S3StorageService({ config });
+    const real = new S3StorageService({ config, authorize: () => undefined });
     const p = await real.getPresignedUploadPost(rec, { mimeType: 'audio/webm;codecs=opus', sizeBytes: 1234 });
     expect(p.url).toBe('http://localhost:9000/secret-bucket');
     const policy = JSON.parse(Buffer.from(p.fields!.Policy!, 'base64').toString()) as { conditions: unknown[]; expiration: string };
@@ -207,7 +210,7 @@ describe('S3StorageService', () => {
   });
 
   it('presigned PUT signs content-type and content-length; GET is path-style', async () => {
-    const real = new S3StorageService({ config });
+    const real = new S3StorageService({ config, authorize: () => undefined });
     const put = await real.getPresignedUploadUrl(rec, spec);
     const signed = decodeURIComponent(new URL(put.url).searchParams.get('X-Amz-SignedHeaders') ?? '');
     expect(signed.split(';')).toEqual(expect.arrayContaining(['content-length', 'content-type', 'host']));
@@ -284,30 +287,116 @@ describe('S3StorageService', () => {
     });
   });
 
-  it('recording-session chunks: PUT TTL <= 300, seq bounds, completion size checks, abort cleanup', async () => {
-    const presign = vi.fn().mockResolvedValue('https://chunk');
-    const s = svc({ presign });
-    const sess = { orgId: 'o1', meetingId: 'm1', sessionId: 's1' };
-    const p = await s.getPresignedSessionChunkUrl(sess, 7, 'audio/webm;codecs=opus');
-    expect(p).toMatchObject({ method: 'PUT', headers: { 'content-type': 'audio/webm' } });
-    expect(presign.mock.calls[0]![1].input.Key).toBe('org/o1/meetings/m1/sessions/s1/chunks/00007.part');
-    expect(presign.mock.calls[0]![2]).toMatchObject({ expiresIn: 300 });
-    await expect(s.getPresignedSessionChunkUrl(sess, 0, 'audio/webm', { ttlSeconds: 301 })).rejects.toThrow(RangeError);
-    await expect(s.getPresignedSessionChunkUrl(sess, 100000, 'audio/webm')).rejects.toThrow(/seq/);
-    await expect(s.getPresignedSessionChunkUrl({ ...sess, orgId: '' }, 0, 'audio/webm')).rejects.toBeInstanceOf(StorageError);
-
-    s3.on(HeadObjectCommand).resolves({ ContentLength: 10 });
-    expect(await s.verifySessionChunks(sess, 3)).toEqual({ totalBytes: 30, chunkSizes: [10, 10, 10] });
-    s3.reset();
-    s3.on(HeadObjectCommand).resolves({ ContentLength: MAX_CHUNK_BYTES + 1 });
-    await expect(s.verifySessionChunks(sess, 1)).rejects.toThrow(/MAX_CHUNK_BYTES/);
-    s3.reset();
-    s3.on(HeadObjectCommand).rejects(Object.assign(new Error('x'), { name: 'NotFound' }));
-    await expect(s.verifySessionChunks(sess, 1)).rejects.toThrow(/Missing chunk/);
-
-    s3.reset();
+  it('authorize hook is required and always called', async () => {
+    expect(() => new S3StorageService({ config, client } as never)).toThrow(/authorize/);
+    const authorize = vi.fn();
     s3.on(DeleteObjectCommand).resolves({});
-    await s.deleteSessionChunks(sess, 3);
-    expect(s3.commandCalls(DeleteObjectCommand).map((c) => c.args[0].input.Key)).toEqual([0, 1, 2].map((i) => `org/o1/meetings/m1/sessions/s1/chunks/0000${i}.part`));
+    await svc({ authorize }).deleteObject(rec);
+    expect(authorize).toHaveBeenCalledWith(rec);
+  });
+
+  describe('recording-session chunks (flat tmp prefix)', () => {
+    const sess = { orgId: 'o1', meetingId: 'm1', sessionId: 's1' };
+    const key = (seq: number) => `tmp/session-chunks/org/o1/meetings/m1/sessions/s1/${String(seq).padStart(5, '0')}.part`;
+    const sha = 'a'.repeat(64);
+    const shaB64 = Buffer.from(sha, 'hex').toString('base64');
+    const listed = (entries: Array<[string, number]>) => ({ Contents: entries.map(([Key, Size]) => ({ Key, Size })), IsTruncated: false });
+
+    it('keys and ownership accept the flat prefix with org+meeting validation', () => {
+      expect(SESSION_CHUNK_PREFIX).toBe('tmp/session-chunks/');
+      expect(buildObjectKey({ orgId: 'o1', meetingId: 'm1', kind: 'session_chunk', objectId: 's1', index: 7 })).toBe(key(7));
+      expect(() => assertKeyOwnedBy(key(7), 'o1')).not.toThrow();
+      expect(() => assertKeyOwnedBy(key(7), 'o1', 'm1')).not.toThrow();
+      expect(() => assertKeyOwnedBy(key(7), 'o2')).toThrow(StorageAccessError);
+      expect(() => assertKeyOwnedBy(key(7), 'o1', 'm2')).toThrow(StorageAccessError);
+      expect(() => assertKeyOwnedBy('tmp/session-chunks/org/o1/meetings/m1/other/x.part', 'o1')).toThrow(StorageAccessError);
+      expect(() => assertKeyOwnedBy('tmp/session-chunks/org/o1/meetings/../x/sessions/s1/00001.part', 'o1')).toThrow(StorageAccessError);
+      expect(() => assertKeyOwnedBy('tmp/other/org/o1/meetings/m1/sessions/s1/00001.part', 'o1')).toThrow(StorageAccessError);
+      expect(() => assertKeyOwnedBy(REC_KEY, 'o1', 'm2')).toThrow(StorageAccessError);
+      expect(parseMeetingKey(key(1))).toEqual({ orgId: 'o1', meetingId: 'm1', rest: 'sessions/s1/00001.part' });
+    });
+
+    it('presigns a PUT signing content-length, content-type and checksum; TTL <= 300', async () => {
+      s3.on(ListObjectsV2Command).resolves(listed([]));
+      const presign = vi.fn().mockResolvedValue('https://chunk');
+      const s = svc({ presign });
+      const p = await s.getPresignedSessionChunkUrl(sess, { seq: 7, sizeBytes: 1000, sha256: sha }, 'audio/webm;codecs=opus');
+      expect(p.headers).toEqual({ 'content-type': 'audio/webm', 'content-length': '1000', 'x-amz-checksum-sha256': shaB64 });
+      const [, cmd, o] = presign.mock.calls[0]!;
+      expect(cmd.input).toMatchObject({ Key: key(7), ContentLength: 1000, ChecksumSHA256: shaB64 });
+      expect(o.expiresIn).toBe(300);
+      expect([...o.signableHeaders]).toEqual(expect.arrayContaining(['content-length', 'content-type', 'x-amz-checksum-sha256']));
+      expect(toSignedPutUpload(p)).toMatchObject({ method: 'PUT', headers: { 'content-length': '1000' } });
+      expect(s3.commandCalls(ListObjectsV2Command)[0]!.args[0].input.Prefix).toBe('tmp/session-chunks/org/o1/meetings/m1/sessions/s1/');
+      await expect(s.getPresignedSessionChunkUrl(sess, { seq: 0, sizeBytes: 1 }, 'audio/webm', { ttlSeconds: 301 })).rejects.toThrow(RangeError);
+      await expect(s.getPresignedSessionChunkUrl(sess, { seq: 10000, sizeBytes: 1 }, 'audio/webm')).rejects.toThrow(/seq/);
+      await expect(s.getPresignedSessionChunkUrl(sess, { seq: 0, sizeBytes: MAX_CHUNK_BYTES + 1 }, 'audio/webm')).rejects.toThrow(/sizeBytes/);
+      await expect(s.getPresignedSessionChunkUrl({ ...sess, orgId: '' }, { seq: 0, sizeBytes: 1 }, 'audio/webm')).rejects.toBeInstanceOf(StorageError);
+    });
+
+    it('refuses already-uploaded seq and enforces the running total before issuing', async () => {
+      const small = new S3StorageService({
+        config: { ...config, limits: { ...config.limits, maxObjectBytes: 100 } },
+        client,
+        authorize: () => undefined,
+        presign: vi.fn().mockResolvedValue('https://x')
+      });
+      s3.on(ListObjectsV2Command).resolves(listed([[key(0), 60], [key(1), 30]]));
+      await expect(small.getPresignedSessionChunkUrl(sess, { seq: 1, sizeBytes: 5 }, 'audio/webm')).rejects.toThrow(/already/);
+      await expect(small.getPresignedSessionChunkUrl(sess, { seq: 2, sizeBytes: 11 }, 'audio/webm')).rejects.toThrow(/maximum size/);
+      await expect(small.getPresignedSessionChunkUrl(sess, { seq: 2, sizeBytes: 10 }, 'audio/webm')).resolves.toMatchObject({ method: 'PUT' });
+    });
+
+    it('verify on complete: happy path with manifest', async () => {
+      s3.on(ListObjectsV2Command).resolves(listed([[key(0), 10], [key(1), 10]]));
+      s3.on(HeadObjectCommand).resolves({ ContentLength: 10, ChecksumSHA256: shaB64 });
+      const r = await svc().verifySessionChunks(sess, { chunkCount: 2, chunks: [{ seq: 0, sha256: sha, sizeBytes: 10 }, { seq: 1, sha256: sha }] });
+      expect(r).toEqual({ totalBytes: 20, chunkSizes: [10, 10] });
+      expect(s3.commandCalls(HeadObjectCommand)[0]!.args[0].input.ChecksumMode).toBe('ENABLED');
+      expect(s3.commandCalls(DeleteObjectCommand)).toHaveLength(0);
+    });
+
+    it('verify deletes an oversized/mismatched chunk immediately and then all chunks', async () => {
+      s3.on(ListObjectsV2Command).resolves(listed([[key(0), 10], [key(1), 10]]));
+      s3.on(HeadObjectCommand, { Key: key(0) }).resolves({ ContentLength: 10, ChecksumSHA256: shaB64 });
+      s3.on(HeadObjectCommand, { Key: key(1) }).resolves({ ContentLength: MAX_CHUNK_BYTES + 1 });
+      s3.on(DeleteObjectCommand).resolves({});
+      await expect(svc().verifySessionChunks(sess, { chunkCount: 2 })).rejects.toThrow(/seq 1 rejected/);
+      const deleted = s3.commandCalls(DeleteObjectCommand).map((c) => c.args[0].input.Key);
+      expect(deleted[0]).toBe(key(1));
+      expect(new Set(deleted)).toEqual(new Set([key(0), key(1)]));
+
+      s3.reset();
+      s3.on(ListObjectsV2Command).resolves(listed([[key(0), 10]]));
+      s3.on(HeadObjectCommand).resolves({ ContentLength: 10, ChecksumSHA256: Buffer.from('b'.repeat(64), 'hex').toString('base64') });
+      s3.on(DeleteObjectCommand).resolves({});
+      await expect(svc().verifySessionChunks(sess, { chunkCount: 1, chunks: [{ seq: 0, sha256: sha }] })).rejects.toThrow(/rejected/);
+      expect(s3.commandCalls(DeleteObjectCommand).map((c) => c.args[0].input.Key)).toContain(key(0));
+    });
+
+    it('verify fails (and deletes all) on gaps, extras, or bad manifests', async () => {
+      s3.on(ListObjectsV2Command).resolves(listed([[key(0), 10], [key(2), 10]]));
+      s3.on(HeadObjectCommand, { Key: key(0) }).resolves({ ContentLength: 10 });
+      s3.on(DeleteObjectCommand).resolves({});
+      await expect(svc().verifySessionChunks(sess, { chunkCount: 2 })).rejects.toThrow(/Unexpected/);
+      expect(s3.commandCalls(DeleteObjectCommand)).toHaveLength(2);
+
+      s3.reset();
+      s3.on(ListObjectsV2Command).resolves(listed([[key(0), 10]]));
+      s3.on(HeadObjectCommand, { Key: key(0) }).resolves({ ContentLength: 10 });
+      s3.on(HeadObjectCommand, { Key: key(1) }).rejects(Object.assign(new Error('x'), { name: 'NotFound' }));
+      s3.on(DeleteObjectCommand).resolves({});
+      await expect(svc().verifySessionChunks(sess, { chunkCount: 2 })).rejects.toThrow(/Missing chunk/);
+      expect(s3.commandCalls(DeleteObjectCommand).map((c) => c.args[0].input.Key)).toEqual([key(0)]);
+
+      await expect(svc().verifySessionChunks(sess, { chunkCount: 2, chunks: [{ seq: 0, sha256: sha }, { seq: 0, sha256: sha }] })).rejects.toThrow(/manifest/);
+    });
+
+    it('abortSession deletes every stored chunk', async () => {
+      s3.on(ListObjectsV2Command).resolves(listed([[key(0), 1], [key(1), 1], [key(5), 1]]));
+      s3.on(DeleteObjectCommand).resolves({});
+      expect(await svc().abortSession(sess)).toEqual({ deleted: 3 });
+      expect(s3.commandCalls(DeleteObjectCommand).map((c) => c.args[0].input.Key)).toEqual([key(0), key(1), key(5)]);
+    });
   });
 });

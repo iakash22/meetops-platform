@@ -23,9 +23,11 @@ const session = {
 };
 
 describe('auth requests', () => {
-  it('enforces password length 12..128 and valid email', () => {
+  it('login accepts any non-empty password up to 128; signup enforces 12..128', () => {
     expect(Value.Check(LoginRequest, { email: 'a@b.co', password: pw })).toBe(true);
-    expect(Value.Check(LoginRequest, { email: 'a@b.co', password: 'elevenchars' })).toBe(false);
+    expect(Value.Check(LoginRequest, { email: 'a@b.co', password: 'elevenchars' })).toBe(true);
+    expect(Value.Check(LoginRequest, { email: 'a@b.co', password: '' })).toBe(false);
+    expect(Value.Check(SignupRequest, { name: 'A', email: 'a@b.co', password: 'elevenchars' })).toBe(false);
     expect(Value.Check(LoginRequest, { email: 'a@b.co', password: 'x'.repeat(129) })).toBe(false);
     expect(Value.Check(LoginRequest, { email: 'nope', password: pw })).toBe(false);
   });
@@ -68,5 +70,17 @@ describe('Paginated<T>', () => {
     expect(page.items).toHaveLength(1);
     expect(Value.Check(S, { items: [], nextCursor: 'c2' })).toBe(true);
     expect(Value.Check(S, { items: [{ bad: true }], nextCursor: null })).toBe(false);
+  });
+});
+
+import { Value as V2 } from '@sinclair/typebox/value';
+import { AuthSession as AS2 } from '../src/index.js';
+describe('AuthSession without org', () => {
+  it('accepts null activeOrganizationId and role', () => {
+    const s = {
+      user: { id: '7d0f3c2e-1b4a-4c8e-9f6a-2b3c4d5e6f70', email: 'a@example.com', createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z' },
+      csrfToken: 'x'.repeat(32), activeOrganizationId: null, role: null, organizations: [],
+    };
+    expect(V2.Errors(AS2, s).First()?.message).toBeUndefined();
   });
 });

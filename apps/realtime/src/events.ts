@@ -36,7 +36,8 @@ export interface SocketData {
 }
 
 export const orgRoom = (organizationId: string) => `org:${organizationId}`;
-export const meetingRoom = (meetingId: string) => `meeting:${meetingId}`;
+/** Org-prefixed meeting room: org:{organizationId}:meeting:{meetingId}. */
+export const meetingRoom = (organizationId: string, meetingId: string) => `org:${organizationId}:meeting:${meetingId}`;
 
 /** Internal pipeline phases (not sent to clients as-is). */
 export type PipelinePhase = 'scheduled' | 'recording' | 'uploaded' | 'normalizing' | 'chunking' | 'transcribing' | 'merging' | 'completed' | 'failed';

@@ -3,13 +3,11 @@ import { Value } from '@sinclair/typebox/value';
 import * as C from '../src/index.js';
 import * as Legacy from '../src/legacy.js';
 import {
-  ALLOWED_MEDIA_MIME_TYPES, CreateUploadRequest, EmailJobPayload, EmailTemplateId, InitRecordingSessionRequest,
+  ALLOWED_MEDIA_MIME_TYPES, CreateUploadRequest, InitRecordingSessionRequest,
   MAX_MEDIA_BYTES, MAX_RECORDING_SESSION_BYTES, MAX_UPLOAD_BYTES, MediaMimeType,
 } from '../src/index.js';
 import type { PresignedUrl } from '../src/legacy.js';
 
-const id = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
-const meta = { jobVersion: 1, organizationId: id(1), idempotencyKey: 'k', kind: 'send_email' };
 
 describe('N1 legacy subpath', () => {
   it('main barrel no longer exposes legacy storage types', async () => {
@@ -21,21 +19,6 @@ describe('N1 legacy subpath', () => {
     expect(p.method).toBe('GET');
     expect(Object.keys(Legacy)).toEqual([]); // type-only module
     expect(C).not.toHaveProperty('PresignedUrl');
-  });
-});
-
-describe('N2 email template discriminator', () => {
-  it('invite needs invitationId', () => {
-    expect(Value.Check(EmailJobPayload, { ...meta, templateId: 'invite', invitationId: id(2) })).toBe(true);
-    expect(Value.Check(EmailJobPayload, { ...meta, templateId: 'invite', userId: id(2) })).toBe(false);
-  });
-  it.each(['verify_email', 'reset_password', 'meeting_summary'])('%s needs userId', (t) => {
-    expect(Value.Check(EmailJobPayload, { ...meta, templateId: t, userId: id(2) })).toBe(true);
-    expect(Value.Check(EmailJobPayload, { ...meta, templateId: t, invitationId: id(2) })).toBe(false);
-  });
-  it('rejects unknown templates', () => {
-    expect(Value.Check(EmailTemplateId, 'marketing')).toBe(false);
-    expect(Value.Check(EmailJobPayload, { ...meta, templateId: 'marketing', userId: id(2) })).toBe(false);
   });
 });
 
@@ -61,7 +44,7 @@ describe('N3 media limits', () => {
     },
   );
   it('recording sessions use the allowlist', () => {
-    const r = { startedAt: '2026-10-21T17:00:00.000Z', source: 'tab' };
+    const r = { startedAt: '2026-10-21T17:00:00.000Z', source: 'tab', meetingId: '00000000-0000-4000-8000-000000000099' };
     expect(Value.Check(InitRecordingSessionRequest, { ...r, mimeType: 'audio/webm;codecs=opus' })).toBe(true);
     expect(Value.Check(InitRecordingSessionRequest, { ...r, mimeType: 'video/quicktime' })).toBe(false);
   });

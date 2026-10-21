@@ -57,14 +57,43 @@ export const ExtractedTask = Type.Object({
 });
 export type ExtractedTask = Static<typeof ExtractedTask>;
 
-export const IntegrationIssue = Type.Object({
-  id: Id,
-  taskId: Id,
-  /** Integration key, e.g. "linear", "jira", "github". */
-  integration: Type.String({ minLength: 1 }),
-  externalId: Type.String(),
-  externalUrl: Type.Optional(Type.String({ format: 'uri', pattern: '^https://', maxLength: 2048 })),
-  syncedAt: Type.Optional(IsoDateTime),
-  createdAt: IsoDateTime,
-});
+export const INTEGRATION_PROVIDERS = ['github', 'jira'] as const;
+export const IntegrationProvider = Type.Union([Type.Literal('github'), Type.Literal('jira')]);
+export type IntegrationProvider = Static<typeof IntegrationProvider>;
+
+export const IssueStatus = Type.Union([
+  Type.Literal('open'),
+  Type.Literal('in_progress'),
+  Type.Literal('done'),
+  Type.Literal('closed'),
+]);
+export type IssueStatus = Static<typeof IssueStatus>;
+
+/**
+ * A task's link to an external issue (persisted record).
+ *
+ * Tenant-scoped: always look up by (organizationId, provider, externalId), which is unique
+ * (DB: @@unique([organizationId, provider, externalId])). Cross-tenant lookups must return NOT_FOUND.
+ */
+export const IntegrationIssue = Type.Object(
+  {
+    id: Id,
+    organizationId: Id,
+    /** The specific connected integration instance. */
+    integrationId: Id,
+    taskId: Id,
+    provider: IntegrationProvider,
+    /** 'owner/repo#N' (GitHub) or 'PROJ-1' (Jira). */
+    externalId: Type.String({ minLength: 1, maxLength: 255 }),
+    externalUrl: Type.Optional(Type.String({ format: 'uri', pattern: '^https://', maxLength: 2048 })),
+    /** Last status seen at sync time, for conflict checks. */
+    lastKnownStatus: Type.Optional(IssueStatus),
+    syncedAt: Type.Optional(IsoDateTime),
+    createdAt: IsoDateTime,
+  },
+  { additionalProperties: false },
+);
 export type IntegrationIssue = Static<typeof IntegrationIssue>;
+/** Alias used by packages/integrations. */
+export const IntegrationIssueRecord = IntegrationIssue;
+export type IntegrationIssueRecord = IntegrationIssue;
