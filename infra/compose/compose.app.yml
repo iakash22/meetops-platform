@@ -1,0 +1,62 @@
+# MeetOps AI — application containers on top of the dev infra stack.
+# Run from repo root (both files are merged; service names come from compose.dev.yml):
+#   docker compose --env-file .env -f infra/compose/compose.dev.yml -f infra/compose/compose.app.yml up -d --build
+# Inside the compose network, the apps reach infra by service name, so the
+# localhost URLs from .env are overridden below.
+
+services:
+  api:
+    build:
+      context: ../..
+      dockerfile: infra/docker/Dockerfile.api
+    image: meetops/api:local
+    restart: unless-stopped
+    env_file:
+      - path: ../../.env
+        required: true
+    environment: &infra-urls
+      NODE_ENV: production
+      DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-meetops}
+      REDIS_URL: redis://redis:6379
+      STORAGE_ENDPOINT: http://minio:9000
+      OLLAMA_BASE_URL: http://ollama:11434
+      LOCAL_STT_URL: http://local-stt:8000
+    ports:
+      - '${API_PORT:-3000}:3000'
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+
+  worker:
+    build:
+      context: ../..
+      dockerfile: infra/docker/Dockerfile.worker
+    image: meetops/worker:local
+    restart: unless-stopped
+    env_file:
+      - path: ../../.env
+        required: true
+    environment: *infra-urls
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+
+  web:
+    build:
+      context: ../..
+      dockerfile: infra/docker/Dockerfile.web
+    image: meetops/web:local
+    restart: unless-stopped
+    ports:
+      - '${WEB_PORT:-8080}:8080'
+    depends_on:
+      api:
+        condition: service_started
