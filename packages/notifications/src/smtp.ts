@@ -25,6 +25,12 @@ export class EmailValidationError extends Error {
   }
 }
 
+/** Removes CR/LF (and other control chars) to prevent header injection. */
+export function sanitizeHeaderValue(value: string): string {
+  // eslint-disable-next-line no-control-regex
+  return value.replace(/[\r\n\u0000-\u001f\u007f]+/g, ' ').trim();
+}
+
 export function assertValidMessage(message: EmailMessage): void {
   if (toArray(message.to).length === 0) throw new EmailValidationError('Email requires at least one recipient');
   if (!message.subject?.trim()) throw new EmailValidationError('Email requires a subject');
@@ -56,14 +62,18 @@ export class SmtpEmailService implements EmailService {
     const mail: Record<string, unknown> = {
       from: message.from ? formatRecipient(message.from) : this.config.from,
       to: toArray(message.to).map(formatRecipient),
-      subject: message.subject
+      subject: sanitizeHeaderValue(message.subject)
     };
     if (message.cc?.length) mail.cc = message.cc.map(formatRecipient);
     if (message.bcc?.length) mail.bcc = message.bcc.map(formatRecipient);
     if (message.replyTo) mail.replyTo = formatRecipient(message.replyTo);
     if (message.html) mail.html = message.html;
     if (message.text) mail.text = message.text;
-    if (message.headers) mail.headers = message.headers;
+    if (message.headers) {
+      mail.headers = Object.fromEntries(
+        Object.entries(message.headers).map(([k, v]) => [sanitizeHeaderValue(k), sanitizeHeaderValue(v)])
+      );
+    }
     const info = await this.transport.sendMail(mail);
     return {
       messageId: info.messageId,

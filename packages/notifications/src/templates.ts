@@ -116,7 +116,10 @@ export const templates: { [K in TemplateName]: EmailTemplate<K> } = {
 export function renderTemplate<K extends TemplateName>(name: K, vars: TemplateVariables[K]): RenderedEmail {
   const tpl = templates[name] as EmailTemplate<K> | undefined;
   if (!tpl) throw new Error(`Unknown email template: ${String(name)}`);
-  return tpl(vars);
+  const out = tpl(vars);
+  // Subjects interpolate user data; strip CR/LF to prevent header injection.
+  // eslint-disable-next-line no-control-regex
+  return { ...out, subject: out.subject.replace(/[\r\n\u0000-\u001f\u007f]+/g, ' ').trim() };
 }
 
 export const templateNames = Object.keys(templates) as TemplateName[];
