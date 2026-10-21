@@ -1,0 +1,11 @@
+#!/usr/bin/env sh
+# gitleaks pre-commit: scan staged changes for secrets (docs/09-security/secrets-policy.md).
+# Wire-up: see scripts/install-git-hooks.sh. Bypass only in an emergency: SKIP_GITLEAKS=1.
+set -e
+[ "${SKIP_GITLEAKS:-0}" = "1" ] && exit 0
+if ! command -v gitleaks >/dev/null 2>&1; then
+  echo "pre-commit: gitleaks not installed; skipping secret scan (CI still runs it)." >&2
+  echo "            install: https://github.com/gitleaks/gitleaks#installing" >&2
+  exit 0
+fi
+gitleaks protect --staged --redact --no-banner
