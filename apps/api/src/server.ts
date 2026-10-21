@@ -7,7 +7,7 @@ import { defaultModuleDeps, registerModules, type ModuleDeps } from './modules/i
 export function createServer(options: { deps?: Partial<ModuleDeps> } = {}) {
   const logger = createLogger({ name: 'api' });
   const app = Fastify({
-    logger
+    loggerInstance: logger
   });
 
   void app.register(swagger, {
