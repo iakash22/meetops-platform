@@ -37,8 +37,9 @@ describe('generated client', () => {
     await db.disconnectPrismaClient();
   });
 
-  it('exposes key models', () => {
+  it('exposes exactly the 20 core models', () => {
     const models = Object.values(db.Prisma.ModelName);
+    expect(models).toHaveLength(20);
     for (const m of [
       'Organization', 'User', 'Membership', 'Session', 'Invitation', 'Employee', 'Project',
       'Meeting', 'MeetingParticipant', 'FileObject', 'Transcript', 'TranscriptSegment', 'Report',
