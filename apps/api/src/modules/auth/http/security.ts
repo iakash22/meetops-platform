@@ -34,6 +34,7 @@ export const CSRF_HEADER = 'x-csrf-token';
 export const DEV_WEB_ORIGINS = ['http://localhost:5173', 'http://localhost:3000'];
 const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
 
+/** Only NODE_ENV=development drops __Host-/Secure; everything else (incl. unset) is strict. */
 export function cookieConfig(nodeEnv: string | undefined) {
   const dev = nodeEnv === 'development';
   const p = dev ? '' : '__Host-';

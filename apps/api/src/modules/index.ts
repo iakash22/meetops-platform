@@ -62,7 +62,16 @@ const DAY = 24 * HOUR;
  * Default deps. Repositories, rate limiter and lockout are in-memory until the Prisma
  * repositories and the Redis client wiring land (TODO(database), TODO(infra)).
  */
-/** Implementations that must be injected (no in-memory fallback) when NODE_ENV=production. */
+/**
+ * In-memory implementations, a random CSRF secret and localhost origins are allowed ONLY when
+ * NODE_ENV is exactly 'development' or 'test'. Any other value (including unset and 'staging')
+ * fails closed and runs the full production checks.
+ */
+export function isRelaxedEnv(nodeEnv: string | undefined): boolean {
+  return nodeEnv === 'development' || nodeEnv === 'test';
+}
+
+/** Implementations that must be injected (no in-memory fallback) outside development/test. */
 export const PRODUCTION_REQUIRED_DEPS = [
   'users',
   'sessions',
@@ -86,7 +95,8 @@ export function defaultModuleDeps(
   overrides: Partial<ModuleDeps> = {},
   env: { nodeEnv?: string | undefined } = { nodeEnv: process.env.NODE_ENV }
 ): ModuleDeps {
-  if (env.nodeEnv === 'production') {
+  const strict = !isRelaxedEnv(env.nodeEnv);
+  if (strict) {
     const missing = PRODUCTION_REQUIRED_DEPS.filter((k) => overrides[k] === undefined);
     if (missing.length) throw new MissingProductionDependencyError(missing);
     if (!overrides.security) {
@@ -96,7 +106,7 @@ export function defaultModuleDeps(
   }
   const clock = overrides.clock ?? systemClock;
   const sessionPolicy = overrides.sessionPolicy ?? { idleTimeoutMs: 30 * MIN, absoluteTimeoutMs: 12 * HOUR };
-  const allowedOrigins = (process.env.WEB_ORIGINS ?? DEV_WEB_ORIGINS.join(','))
+  const allowedOrigins = (process.env.WEB_ORIGINS ?? (strict ? '' : DEV_WEB_ORIGINS.join(',')))
     .split(',')
     .map((s) => s.trim())
     .filter(Boolean);
@@ -105,9 +115,13 @@ export function defaultModuleDeps(
     allowedOrigins,
     sessionPolicy,
     // Dev/test: random per process. Production: required via CSRF_SECRET (checked above).
-    csrfSecret: process.env.CSRF_SECRET ? Buffer.from(process.env.CSRF_SECRET, 'utf8') : randomBytes(32)
+    csrfSecret: process.env.CSRF_SECRET
+      ? Buffer.from(process.env.CSRF_SECRET, 'utf8')
+      : strict
+        ? Buffer.alloc(0)
+        : randomBytes(32)
   };
-  if (env.nodeEnv === 'production') assertProductionCookies(security);
+  if (strict) assertProductionCookies(security);
   return {
     users: new InMemoryUserRepository(),
     sessions: new InMemorySessionRepository(),
