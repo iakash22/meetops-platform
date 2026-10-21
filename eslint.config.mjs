@@ -40,6 +40,18 @@ export default [
     }
   })),
   {
+    // apps/web relies on its own tsconfig (Bundler resolution + "@/" paths). Pin it
+    // explicitly so type-aware rules never fall back to a project without the alias.
+    files: ["apps/web/**/*.ts", "apps/web/**/*.tsx"],
+    languageOptions: {
+      parserOptions: {
+        projectService: false,
+        project: ["./apps/web/tsconfig.json"],
+        tsconfigRootDir: import.meta.dirname
+      }
+    }
+  },
+  {
     files: ["**/*.ts", "**/*.tsx"],
     plugins: {
       "unused-imports": eslintPluginUnusedImports,
