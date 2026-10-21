@@ -51,7 +51,7 @@ export class UsageQuotaManager implements QuotaManager {
     const now = this.now();
     const day = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
     const month = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
-    if (monthlyBudgetUsd !== undefined && provider.cost.tier === 'paid') {
+    if (monthlyBudgetUsd !== undefined && (provider.cost.tier === 'paid' || provider.platformBilled)) {
       const spent = await this.tracker.tenantCostSince(tenantId, month);
       if (spent >= monthlyBudgetUsd) return { allowed: false, reason: `org monthly budget $${monthlyBudgetUsd} reached` };
     }

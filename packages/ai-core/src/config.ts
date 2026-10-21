@@ -34,7 +34,8 @@ export const credentialRefSchema = z
   .string()
   .regex(/^(env|secret):[A-Za-z0-9_./-]+$/, 'credentialRef must be "env:NAME" or "secret:path", never a raw key');
 
-export const providerConfigSchema = z.object({
+export const providerConfigSchema = z
+  .object({
   name: z.string().min(1).regex(/^[a-z0-9-]+$/),
   type: z.enum(['llm', 'stt']),
   /** Adapter implementation id, e.g. "gemini", "assemblyai", "ollama", "openai-compatible", "faster-whisper", "deepgram". */
@@ -58,7 +59,10 @@ export const providerConfigSchema = z.object({
   concurrency: z.number().int().min(1).max(256).default(4),
   timeoutMs: z.number().int().min(100).max(30 * 60_000).default(60_000),
   retryPolicy: retryPolicySchema.default({ maxAttempts: 3, initialDelayMs: 500, maxDelayMs: 8000, backoffMultiplier: 2 }),
-  cost: costSchema.default({ tier: 'free' }),
+  /** REQUIRED: every provider must declare its cost tier explicitly (no implicit 'free'). */
+  cost: costSchema,
+  /** True when the platform pays for usage (platform keys). Budgets/quotas apply even to free-tier providers. */
+  platformBilled: z.boolean(),
   usage: z
     .object({
       dailyRequestLimit: z.number().int().positive().optional(),
@@ -75,7 +79,11 @@ export const providerConfigSchema = z.object({
     .default({ status: 'unknown' }),
   /** Lower number = tried earlier in fallback chains. */
   fallbackPriority: z.number().int().min(0).max(1000).default(100),
-});
+  })
+  .refine(
+    (c) => !(c.platformBilled && c.cost.tier === 'free') || Object.values(c.usage).some((v) => v !== undefined),
+    { message: 'platformBilled free-tier providers must declare usage limits (quotas apply even when free)', path: ['usage'] },
+  );
 export type ProviderConfig = z.infer<typeof providerConfigSchema>;
 export type ProviderConfigInput = z.input<typeof providerConfigSchema>;
 
