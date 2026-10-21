@@ -28,7 +28,7 @@ export const LlmProviderId = Type.Union([
 ]);
 export type LlmProviderId = Static<typeof LlmProviderId>;
 
-/** "<provider>:<model>", e.g. "gemini:gemini-2.0-flash", "ollama:llama3.1". */
+/** "<provider>:<model>", e.g. "gemini:gemini-2.5-flash-lite", "ollama:llama3.1". */
 export const ModelRouteId = Type.String({ pattern: '^(gemini|ollama|openai):[A-Za-z0-9._\\-/]+$' });
 export type ModelRouteId = Static<typeof ModelRouteId>;
 
