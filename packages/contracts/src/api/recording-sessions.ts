@@ -14,8 +14,12 @@ export const CHUNK_UPLOAD_URL_TTL_SECONDS = 300;
 export const MAX_CHUNK_BYTES = 64 * 1024 * 1024;
 /** 2 GB per recording session, enforced server-side across all chunks. */
 export const MAX_RECORDING_SESSION_BYTES = MAX_MEDIA_BYTES;
-/** Upper bound on chunk count (abuse ceiling). */
-export const MAX_RECORDING_CHUNKS = 100_000;
+/** Upper bound on chunk count. At 5 s timeslices this is about 13.9 h. */
+export const MAX_RECORDING_CHUNKS = 10_000;
+/** Alias. */
+export const MAX_CHUNKS = MAX_RECORDING_CHUNKS;
+
+const Sha256Hex = Type.String({ pattern: '^[0-9a-f]{64}$' });
 
 const strict = { additionalProperties: false } as const;
 
@@ -36,8 +40,20 @@ export type InitRecordingSessionRequest = Static<typeof InitRecordingSessionRequ
 export const InitRecordingSessionResponse = Type.Object({ sessionId: Id });
 export type InitRecordingSessionResponse = Static<typeof InitRecordingSessionResponse>;
 
+/**
+ * Request a presigned PUT for one chunk.
+ *
+ * The API signs `Content-Length: sizeBytes` (and, when given, the sha256 checksum, e.g. `x-amz-checksum-sha256`)
+ * into the presigned request, and returns them in `upload.headers`, so the client can't upload a different size or body.
+ * The API refuses to issue a URL once the session's running total plus `sizeBytes` would exceed
+ * MAX_RECORDING_SESSION_BYTES, or when `seq` is out of range or already completed.
+ */
 export const ChunkUploadUrlRequest = Type.Object(
-  { seq: Type.Integer({ minimum: 0, maximum: MAX_RECORDING_CHUNKS - 1 }) },
+  {
+    seq: Type.Integer({ minimum: 0, maximum: MAX_CHUNKS - 1 }),
+    sizeBytes: Type.Integer({ minimum: 1, maximum: MAX_CHUNK_BYTES }),
+    sha256: Type.Optional(Sha256Hex),
+  },
   strict,
 );
 export type ChunkUploadUrlRequest = Static<typeof ChunkUploadUrlRequest>;
@@ -48,9 +64,21 @@ export const ChunkUploadUrlResponse = Type.Object({
 });
 export type ChunkUploadUrlResponse = Static<typeof ChunkUploadUrlResponse>;
 
+export const CompletedChunk = Type.Object(
+  { seq: Type.Integer({ minimum: 0, maximum: MAX_CHUNKS - 1 }), sha256: Sha256Hex, sizeBytes: Type.Optional(Type.Integer({ minimum: 1, maximum: MAX_CHUNK_BYTES })) },
+  strict,
+);
+export type CompletedChunk = Static<typeof CompletedChunk>;
+
+/**
+ * Finish the session. The server verifies that the stored chunks are exactly seq 0..chunkCount-1 with no gaps or
+ * duplicates. It checks each chunk's stored size (and its sha256 and sizeBytes when `chunks` is given) against
+ * what was signed, and checks that the total is at most MAX_RECORDING_SESSION_BYTES. Any mismatch fails the session.
+ */
 export const CompleteRecordingSessionRequest = Type.Object(
   {
-    chunkCount: Type.Integer({ minimum: 1, maximum: MAX_RECORDING_CHUNKS }),
+    chunkCount: Type.Integer({ minimum: 1, maximum: MAX_CHUNKS }),
+    chunks: Type.Optional(Type.Array(CompletedChunk, { minItems: 1, maxItems: MAX_CHUNKS })),
     durationMs: Type.Integer({ minimum: 0, maximum: 24 * 60 * 60 * 1000 }),
   },
   strict,
