@@ -1,4 +1,4 @@
-import type { ApiErrorCode } from '@meetops/contracts';
+import type { ApiErrorCode } from './api-error.js';
 
 /** Base error for domain/application rules. Mapped to the contracts error envelope by route handlers. */
 export class DomainError extends Error {

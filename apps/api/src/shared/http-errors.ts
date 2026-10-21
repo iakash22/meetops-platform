@@ -1,5 +1,5 @@
 import type { FastifyError, FastifyInstance } from 'fastify';
-import type { ApiErrorCode, ApiErrorEnvelope } from '@meetops/contracts';
+import type { ApiErrorCode, ApiErrorEnvelope } from './api-error.js';
 import { DomainError } from './domain-error.js';
 import { RateLimitedError } from '../modules/auth/domain/errors.js';
 

@@ -1,6 +1,5 @@
 import { Type, type Static } from '@sinclair/typebox';
 import {
-  ApiErrorEnvelope,
   AuthSession,
   CsrfResponse,
   ForgotPasswordRequest,
@@ -9,7 +8,9 @@ import {
   ResetPasswordRequest,
   SignupRequest
 } from '@meetops/contracts';
+import { ApiErrorEnvelope } from '../../../shared/api-error.js';
 
+/** Contracts envelope + CSRF_INVALID (see shared/api-error.ts). */
 export const ErrorBody = ApiErrorEnvelope;
 export const AcceptedBody = Type.Object({ message: Type.String() });
 export const CsrfBody = CsrfResponse;

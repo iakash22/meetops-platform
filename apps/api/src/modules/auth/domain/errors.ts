@@ -15,8 +15,15 @@ export class RateLimitedError extends DomainError {
     super('RATE_LIMITED', 'Too many requests, try again later', 429);
   }
 }
+/** Missing, mismatched, forged or stale CSRF token. */
 export class CsrfError extends DomainError {
   constructor(message = 'CSRF validation failed') {
-    super('FORBIDDEN', message, 403);
+    super('CSRF_INVALID', message, 403);
+  }
+}
+/** Origin check failure stays a plain FORBIDDEN. */
+export class OriginForbiddenError extends DomainError {
+  constructor() {
+    super('FORBIDDEN', 'Origin not allowed', 403);
   }
 }

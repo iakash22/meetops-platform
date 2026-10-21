@@ -3,7 +3,7 @@ import type { FastifyReply, FastifyRequest } from 'fastify';
 import type { AuthService, RequestMeta, SessionResult } from '../application/auth.service.js';
 import type { PublicUser } from '../../users/domain/user.js';
 import type { Session, SessionPolicy } from '../domain/session.js';
-import { CsrfError } from '../domain/errors.js';
+import { CsrfError, OriginForbiddenError } from '../domain/errors.js';
 
 export interface AuthContext {
   user: PublicUser;
@@ -71,7 +71,7 @@ export function assertOrigin(request: FastifyRequest, allowed: string[]) {
       origin = undefined;
     }
   }
-  if (!origin || !allowed.includes(origin)) throw new CsrfError('Origin not allowed');
+  if (!origin || !allowed.includes(origin)) throw new OriginForbiddenError();
 }
 
 /**
