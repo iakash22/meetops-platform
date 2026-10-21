@@ -1,3 +1,5 @@
+import type { RecordingStatus } from './contracts.js';
+
 /**
  * Client contract for the future chunked upload API. No real endpoint yet;
  * StubUploadClient keeps everything in memory.
@@ -5,21 +7,29 @@
 export interface UploadSessionMeta {
   mimeType: string;
   startedAt: number;
-  source: "tab";
+  source: 'tab';
 }
 
 export interface UploadClient {
   initSession(meta: UploadSessionMeta): Promise<{ sessionId: string }>;
   /** seq starts at 0 and increases by 1 per chunk. */
   uploadChunk(sessionId: string, seq: number, data: Blob): Promise<void>;
-  complete(sessionId: string, summary: { chunkCount: number; durationMs: number }): Promise<void>;
+  complete(
+    sessionId: string,
+    summary: { chunkCount: number; durationMs: number },
+  ): Promise<{ status: RecordingStatus }>;
   abort?(sessionId: string, reason: string): Promise<void>;
 }
 
 export class StubUploadClient implements UploadClient {
   readonly sessions = new Map<
     string,
-    { meta: UploadSessionMeta; chunks: Map<number, number>; completed?: { chunkCount: number; durationMs: number }; aborted?: string }
+    {
+      meta: UploadSessionMeta;
+      chunks: Map<number, number>;
+      completed?: { chunkCount: number; durationMs: number };
+      aborted?: string;
+    }
   >();
   private n = 0;
 
@@ -31,12 +41,13 @@ export class StubUploadClient implements UploadClient {
 
   async uploadChunk(sessionId: string, seq: number, data: Blob) {
     const s = this.require(sessionId);
-    if (s.completed) throw new Error("Session already completed");
+    if (s.completed) throw new Error('Session already completed');
     s.chunks.set(seq, data.size);
   }
 
   async complete(sessionId: string, summary: { chunkCount: number; durationMs: number }) {
     this.require(sessionId).completed = summary;
+    return { status: 'uploaded' as const };
   }
 
   async abort(sessionId: string, reason: string) {
@@ -59,7 +70,7 @@ export class ChunkQueue {
   constructor(
     private readonly client: UploadClient,
     private readonly sessionId: string,
-    private readonly onUploaded?: (seq: number) => void
+    private readonly onUploaded?: (seq: number) => void,
   ) {}
 
   push(data: Blob): void {
@@ -82,6 +93,7 @@ export class ChunkQueue {
   /** Wait for all queued uploads; throws the first upload error. */
   async flush(): Promise<void> {
     await this.tail;
-    if (this.failed) throw this.failed instanceof Error ? this.failed : new Error("Chunk upload failed");
+    if (this.failed)
+      throw this.failed instanceof Error ? this.failed : new Error('Chunk upload failed');
   }
 }
