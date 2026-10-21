@@ -9,7 +9,9 @@ These variables are validated via `@meetops/config` (Zod) at runtime. Defaults s
 ### Database
 
 - `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`: required by `infra/compose/compose.dev.yml` (no fallbacks; compose fails fast if unset). `POSTGRES_PORT` host port (default 5432, bound to 127.0.0.1)
-- `DATABASE_URL`: postgresql connection string; must match the `POSTGRES_*` values (e.g. postgresql://meetops:<password>@localhost:5432/meetops)
+- `MEETOPS_APP_DB_PASSWORD`, `MEETOPS_MIGRATOR_DB_PASSWORD`: passwords for the `meetops_app` / `meetops_migrator` login roles that `infra/compose/postgres/initdb/10-meetops-roles.sh` creates on first boot (wipe the `postgres-data` volume to re-run). Required.
+- `DATABASE_URL`: runtime connection as `meetops_app` (NOSUPERUSER, NOBYPASSRLS, so RLS applies), e.g. postgresql://meetops_app:<password>@localhost:5432/meetops
+- `MIGRATION_DATABASE_URL`: migrations and seed as the schema owner `meetops_migrator` (Prisma `directUrl`), e.g. postgresql://meetops_migrator:<password>@localhost:5432/meetops
 
 ### Redis
 
