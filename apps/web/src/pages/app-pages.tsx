@@ -1,4 +1,4 @@
-import { useMeetings, useProjects, useTasks } from '@/lib/api/queries';
+import { useProjects } from '@/lib/api/queries';
 import { EmptyState } from '@/components/states/states';
 import { PageHeader, ResourceList } from './resource-list';
 
@@ -7,45 +7,6 @@ export function DashboardPage() {
     <>
       <PageHeader title="Dashboard" description="Your meetings, tasks and projects at a glance" />
       <EmptyState title="Nothing here yet" description="Connect a meeting source to get started." />
-    </>
-  );
-}
-
-export function MeetingsPage() {
-  const query = useMeetings();
-  return (
-    <>
-      <PageHeader title="Meetings" />
-      <ResourceList
-        query={query}
-        emptyTitle="No meetings yet"
-        emptyDescription="Meetings you record or import will appear here."
-        renderItem={(m) => (
-          <div className="flex justify-between">
-            <span>{m.title}</span>
-            <span className="text-sm text-muted-foreground">{m.status}</span>
-          </div>
-        )}
-      />
-    </>
-  );
-}
-
-export function TasksPage() {
-  const query = useTasks();
-  return (
-    <>
-      <PageHeader title="Tasks" />
-      <ResourceList
-        query={query}
-        emptyTitle="No tasks yet"
-        renderItem={(t) => (
-          <div className="flex justify-between">
-            <span>{t.title}</span>
-            <span className="text-sm text-muted-foreground">{t.status}</span>
-          </div>
-        )}
-      />
     </>
   );
 }

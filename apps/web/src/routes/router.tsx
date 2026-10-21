@@ -3,23 +3,22 @@ import {
   createRoute,
   createRouter,
   Outlet,
-  useNavigate,
+  redirect,
+  useRouter,
   type RouterHistory,
 } from '@tanstack/react-router';
-import type { QueryClient } from '@tanstack/react-query';
+import { useQueryClient, type QueryClient } from '@tanstack/react-query';
 import { AppShell } from '@/components/layout/app-shell';
 import { EmptyState } from '@/components/states/states';
 import { ForgotPasswordForm, LoginForm, SignupForm } from '@/features/auth/forms';
+import { MeetingDetailPage, MeetingsPage } from '@/features/meetings/meetings-pages';
+import { applySessionToStore, ensureSession, useSession } from '@/features/session/use-session';
+import { parseTaskSearch, TasksPage } from '@/features/tasks/tasks-page';
 import { useApi } from '@/lib/api/context';
 import type { ApiClient } from '@/lib/api/client';
-import {
-  DashboardPage,
-  MeetingsPage,
-  ProjectsPage,
-  SettingsPage,
-  TasksPage,
-} from '@/pages/app-pages';
-import { useOrgStore } from '@/stores/org-store';
+import { queryKeys } from '@/lib/api/queries';
+import { safeRedirect } from '@/lib/safe-redirect';
+import { DashboardPage, ProjectsPage, SettingsPage } from '@/pages/app-pages';
 
 export type RouterContext = { queryClient: QueryClient; api: ApiClient };
 
@@ -27,6 +26,11 @@ export const rootRoute = createRootRouteWithContext<RouterContext>()({
   component: Outlet,
   notFoundComponent: () => <EmptyState title="Page not found" />,
 });
+
+/** `?next=` carries the post-login destination; always passed through safeRedirect. */
+type NextSearch = { next?: string };
+const validateNext = (search: Record<string, unknown>): NextSearch =>
+  typeof search.next === 'string' ? { next: search.next } : {};
 
 // ---- Auth (public) ----
 const authLayout = createRoute({
@@ -42,68 +46,67 @@ const authLayout = createRoute({
   ),
 });
 
-function LoginPage() {
-  const api = useApi();
-  const navigate = useNavigate();
-  const setOrganizations = useOrgStore((s) => s.setOrganizations);
-  return (
-    <LoginForm
-      onSubmit={async (v) => {
-        const session = await api.auth.login(v);
-        setOrganizations(session.organizations);
-        await navigate({ to: '/' });
-      }}
-    />
-  );
-}
-
-function SignupPage() {
-  const api = useApi();
-  const navigate = useNavigate();
-  const setOrganizations = useOrgStore((s) => s.setOrganizations);
-  return (
-    <SignupForm
-      onSubmit={async ({ name, email, password }) => {
-        const session = await api.auth.signup({ name, email, password });
-        setOrganizations(session.organizations);
-        await navigate({ to: '/' });
-      }}
-    />
-  );
-}
-
-function ForgotPasswordPage() {
-  const api = useApi();
-  return (
-    <ForgotPasswordForm
-      onSubmit={async (v) => {
-        await api.auth.forgotPassword(v);
-      }}
-    />
-  );
+function useCompleteSignIn() {
+  const router = useRouter();
+  const queryClient = useQueryClient();
+  return async (session: Parameters<typeof applySessionToStore>[0], next: string | undefined) => {
+    applySessionToStore(session);
+    await queryClient.invalidateQueries({ queryKey: queryKeys.session });
+    router.history.push(safeRedirect(next, '/'));
+  };
 }
 
 const loginRoute = createRoute({
   getParentRoute: () => authLayout,
   path: '/login',
-  component: LoginPage,
+  validateSearch: validateNext,
+  component: function LoginPage() {
+    const api = useApi();
+    const { next } = loginRoute.useSearch();
+    const complete = useCompleteSignIn();
+    return <LoginForm onSubmit={async (v) => complete(await api.auth.login(v), next)} />;
+  },
 });
+
 const signupRoute = createRoute({
   getParentRoute: () => authLayout,
   path: '/signup',
-  component: SignupPage,
+  validateSearch: validateNext,
+  component: function SignupPage() {
+    const api = useApi();
+    const { next } = signupRoute.useSearch();
+    const complete = useCompleteSignIn();
+    return (
+      <SignupForm
+        onSubmit={async ({ name, email, password }) =>
+          complete(await api.auth.signup({ name, email, password }), next)
+        }
+      />
+    );
+  },
 });
+
 const forgotPasswordRoute = createRoute({
   getParentRoute: () => authLayout,
   path: '/forgot-password',
-  component: ForgotPasswordPage,
+  component: function ForgotPasswordPage() {
+    const api = useApi();
+    return <ForgotPasswordForm onSubmit={(v) => api.auth.forgotPassword(v)} />;
+  },
 });
 
-// ---- App (shell) ----
-// TODO(auth): add beforeLoad guard redirecting to /login once the session contract exists.
+// ---- App (guarded) ----
 const appLayout = createRoute({
   getParentRoute: () => rootRoute,
   id: 'app',
+  beforeLoad: async ({ context, location }) => {
+    const session = await ensureSession(context.queryClient, context.api);
+    if (!session) {
+      // TanStack Router control flow: redirect() returns a Redirect object to throw.
+      // eslint-disable-next-line @typescript-eslint/only-throw-error
+      throw redirect({ to: '/login', search: { next: safeRedirect(location.href, '/') } });
+    }
+  },
   component: () => (
     <AppShell>
       <Outlet />
@@ -121,10 +124,30 @@ const meetingsRoute = createRoute({
   path: '/meetings',
   component: MeetingsPage,
 });
+const meetingDetailRoute = createRoute({
+  getParentRoute: () => appLayout,
+  path: '/meetings/$meetingId',
+  component: function MeetingDetailRoute() {
+    const { meetingId } = meetingDetailRoute.useParams();
+    return <MeetingDetailPage meetingId={meetingId} />;
+  },
+});
 const tasksRoute = createRoute({
   getParentRoute: () => appLayout,
   path: '/tasks',
-  component: TasksPage,
+  validateSearch: parseTaskSearch,
+  component: function TasksRoute() {
+    const search = tasksRoute.useSearch();
+    const navigate = tasksRoute.useNavigate();
+    const { data: session } = useSession();
+    return (
+      <TasksPage
+        search={search}
+        {...(session ? { currentUserId: session.user.id } : {})}
+        onSearchChange={(next) => void navigate({ search: next, replace: true })}
+      />
+    );
+  },
 });
 const projectsRoute = createRoute({
   getParentRoute: () => appLayout,
@@ -139,7 +162,14 @@ const settingsRoute = createRoute({
 
 export const routeTree = rootRoute.addChildren([
   authLayout.addChildren([loginRoute, signupRoute, forgotPasswordRoute]),
-  appLayout.addChildren([dashboardRoute, meetingsRoute, tasksRoute, projectsRoute, settingsRoute]),
+  appLayout.addChildren([
+    dashboardRoute,
+    meetingsRoute,
+    meetingDetailRoute,
+    tasksRoute,
+    projectsRoute,
+    settingsRoute,
+  ]),
 ]);
 
 export function createAppRouter(context: RouterContext, history?: RouterHistory) {
