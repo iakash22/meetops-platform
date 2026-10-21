@@ -4,6 +4,8 @@ export interface Organization {
   slug: string;
   createdById: string;
   createdAt: Date;
+  updatedAt: Date;
+  deletedAt: Date | null;
 }
 
 export function slugify(name: string): string {

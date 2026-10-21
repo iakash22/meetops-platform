@@ -1,5 +1,7 @@
-export const ROLES = ['owner', 'admin', 'member', 'viewer'] as const;
-export type Role = (typeof ROLES)[number];
+import type { Role } from '../../../shared/contracts/index.js';
+
+export type { Role };
+export const ROLES = ['owner', 'admin', 'member', 'viewer'] as const satisfies readonly Role[];
 
 export interface Membership {
   id: string;
@@ -7,6 +9,7 @@ export interface Membership {
   userId: string;
   role: Role;
   createdAt: Date;
+  deletedAt: Date | null;
 }
 
 /** Roles a given role may grant via invitation. Owners are only created at org creation. */

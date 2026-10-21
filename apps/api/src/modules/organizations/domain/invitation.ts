@@ -17,17 +17,18 @@ export interface Invitation {
   acceptedAt: Date | null;
   acceptedById: string | null;
   revokedAt: Date | null;
+  deletedAt: Date | null;
 }
 
 export class InvitationError extends DomainError {}
 
 export const invitationErrors = {
-  notFound: () => new InvitationError('INVITATION_NOT_FOUND', 'Invitation not found', 404),
-  expired: () => new InvitationError('INVITATION_EXPIRED', 'Invitation has expired', 410),
-  revoked: () => new InvitationError('INVITATION_REVOKED', 'Invitation was revoked', 410),
-  accepted: () => new InvitationError('INVITATION_ALREADY_ACCEPTED', 'Invitation was already accepted', 409),
+  notFound: () => new InvitationError('NOT_FOUND', 'Invitation not found', 404),
+  expired: () => new InvitationError('CONFLICT', 'Invitation has expired', 409),
+  revoked: () => new InvitationError('CONFLICT', 'Invitation was revoked', 409),
+  accepted: () => new InvitationError('CONFLICT', 'Invitation was already accepted', 409),
   emailMismatch: () =>
-    new InvitationError('INVITATION_EMAIL_MISMATCH', 'Invitation was issued to a different email', 403)
+    new InvitationError('FORBIDDEN', 'Invitation was issued to a different email', 403)
 };
 
 export function isExpired(inv: Invitation, now: Date): boolean {

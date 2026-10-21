@@ -5,13 +5,9 @@ export class ForbiddenError extends DomainError {
     super('FORBIDDEN', message, 403);
   }
 }
-export class NotAMemberError extends DomainError {
-  constructor() {
-    super('NOT_A_MEMBER', 'You are not a member of this organization', 403);
-  }
-}
+/** Unknown and non-member orgs are indistinguishable (multi-tenant-isolation.md §4). */
 export class OrganizationNotFoundError extends DomainError {
   constructor() {
-    super('ORGANIZATION_NOT_FOUND', 'Organization not found', 404);
+    super('NOT_FOUND', 'Organization not found', 404);
   }
 }

@@ -1,126 +1,171 @@
-import type { FastifyInstance } from 'fastify';
-import { Type } from '@sinclair/typebox';
+import type { FastifyInstance, FastifyReply } from 'fastify';
 import type { AuthService } from '../../auth/application/auth.service.js';
-import { requireAuth } from '../../auth/http/auth.plugin.js';
+import type { AuthMailer } from '../../auth/domain/mailer.js';
 import { ErrorBody } from '../../auth/http/schemas.js';
+import { makeGuards, mutationGuard, requestMeta, type HttpSecurityConfig } from '../../auth/http/security.js';
 import { registerDomainErrorHandler } from '../../../shared/http-errors.js';
+import { DomainError } from '../../../shared/domain-error.js';
 import type { OrganizationService } from '../application/organization.service.js';
-import type { Organization } from '../domain/organization.js';
-import type { Invitation } from '../domain/invitation.js';
+import { InvitationError } from '../domain/invitation.js';
+import { toInvitationDto as invDto, toOrganizationDto as orgDto } from './mappers.js';
 import {
   AcceptInvitationBody,
   CreateInvitationBody,
   CreateOrganizationBody,
   IdParams,
   InvitationDto,
+  InvitationParams,
+  OrganizationList,
   OrganizationWithRole,
   SwitchOrganizationBody,
   type AcceptInvitationBodyT,
   type CreateInvitationBodyT,
   type CreateOrganizationBodyT,
   type IdParamsT,
+  type InvitationParamsT,
   type SwitchOrganizationBodyT
 } from './schemas.js';
 
 export interface OrganizationsPluginOptions {
   auth: AuthService;
   organizations: OrganizationService;
+  mailer: AuthMailer;
+  security: HttpSecurityConfig;
 }
 
-const orgDto = (o: Organization) => ({ id: o.id, name: o.name, slug: o.slug, createdAt: o.createdAt.toISOString() });
-const invDto = (i: Invitation) => ({
-  id: i.id,
-  organizationId: i.organizationId,
-  email: i.email,
-  role: i.role,
-  status: i.status,
-  expiresAt: i.expiresAt.toISOString()
-});
 
 export async function organizationRoutes(app: FastifyInstance, opts: OrganizationsPluginOptions) {
   registerDomainErrorHandler(app);
-  app.addHook('preHandler', requireAuth(opts.auth));
+  const { auth, organizations: orgs, security } = opts;
+  const g = makeGuards(auth, security);
+  app.addHook('onRequest', mutationGuard(security));
   const orgTags = ['organizations'];
   const invTags = ['invitations'];
-  const authErr = { 401: ErrorBody, 403: ErrorBody };
+  const authErr = { 401: ErrorBody, 403: ErrorBody, 404: ErrorBody, 429: ErrorBody };
+
+  const rotateInto = async (
+    request: Parameters<typeof g.requireSession>[0],
+    reply: FastifyReply,
+    organizationId: string
+  ) => {
+    const ctx = request.auth!;
+    const r = await auth.rotate(ctx.session, ctx.user, organizationId, requestMeta(request));
+    g.setSessionCookie(reply, r);
+  };
 
   app.post<{ Body: CreateOrganizationBodyT }>(
-    '/organizations',
+    '/orgs',
     {
       schema: {
         tags: orgTags,
         summary: 'Create organization',
-        description: 'Creates an organization; the caller becomes owner and it becomes the active org.',
+        description:
+          'Caller becomes owner; the session is rotated with the new org active.',
         body: CreateOrganizationBody,
         response: { 201: OrganizationWithRole, ...authErr }
       }
     },
     async (request, reply) => {
-      const { user, session } = request.auth!;
-      const r = await opts.organizations.create({ name: request.body.name, userId: user.id, sessionId: session.id });
+      const { user } = await g.requireSession(request);
+      const r = await orgs.create({ name: request.body.name, userId: user.id });
+      await rotateInto(request, reply, r.organization.id);
       return reply.status(201).send({ organization: orgDto(r.organization), role: r.membership.role });
     }
   );
 
   app.get(
-    '/organizations',
+    '/orgs',
     {
       schema: {
         tags: orgTags,
         summary: 'List my organizations',
         description: 'Organizations the caller is a member of, with their role.',
-        response: { 200: Type.Array(OrganizationWithRole), ...authErr }
+        response: { 200: OrganizationList, ...authErr }
       }
     },
     async (request) => {
-      const list = await opts.organizations.listForUser(request.auth!.user.id);
-      return list.map((x) => ({ organization: orgDto(x.organization), role: x.role }));
+      const { user } = await g.requireSession(request);
+      const items = (await orgs.listForUser(user.id)).map((x) => ({ organization: orgDto(x.organization), role: x.role }));
+      return { items, nextCursor: null };
+    }
+  );
+
+  app.get<{ Params: IdParamsT }>(
+    '/orgs/:id',
+    {
+      schema: {
+        tags: orgTags,
+        summary: 'Get organization',
+        description: '404 for unknown orgs and orgs the caller is not a member of.',
+        params: IdParams,
+        response: { 200: OrganizationWithRole, ...authErr }
+      }
+    },
+    async (request) => {
+      const { user } = await g.requireSession(request);
+      const r = await orgs.switchActive({ organizationId: request.params.id, userId: user.id });
+      return { organization: orgDto(r.organization), role: r.role };
     }
   );
 
   app.post<{ Body: SwitchOrganizationBodyT }>(
-    '/organizations/switch',
+    '/orgs/switch',
     {
       schema: {
         tags: orgTags,
         summary: 'Switch active organization',
-        description: 'Sets the active organization on the current session. Requires membership.',
+        description:
+          'Requires membership (404 otherwise). Rotates the session with the new active org.',
         body: SwitchOrganizationBody,
-        response: { 200: OrganizationWithRole, 404: ErrorBody, ...authErr }
+        response: { 200: OrganizationWithRole, ...authErr }
       }
     },
-    async (request) => {
-      const { user, session } = request.auth!;
-      const r = await opts.organizations.switchActive({
-        organizationId: request.body.organizationId,
-        userId: user.id,
-        sessionId: session.id
-      });
-      return { organization: orgDto(r.organization), role: r.membership.role };
+    async (request, reply) => {
+      const { user } = await g.requireSession(request);
+      const r = await orgs.switchActive({ organizationId: request.body.organizationId, userId: user.id });
+      await rotateInto(request, reply, r.organization.id);
+      return { organization: orgDto(r.organization), role: r.role };
     }
   );
 
   app.post<{ Params: IdParamsT; Body: CreateInvitationBodyT }>(
-    '/organizations/:id/invitations',
+    '/orgs/:id/invitations',
     {
       schema: {
         tags: invTags,
         summary: 'Invite a member',
-        description: 'Owner/admin only. The invitation token is delivered out of band and never returned or logged.',
+        description:
+          'Owner/admin only (CASL). Same response whether or not the address has an account; re-inviting replaces a pending invite. The token is only emailed.',
         params: IdParams,
         body: CreateInvitationBody,
-        response: { 201: InvitationDto, ...authErr }
+        response: { 201: InvitationDto, 400: ErrorBody, ...authErr }
       }
     },
     async (request, reply) => {
-      const r = await opts.organizations.invite({
-        organizationId: request.params.id,
-        actorUserId: request.auth!.user.id,
-        email: request.body.email,
-        role: request.body.role
-      });
-      // TODO(notifications): hand r.token to the email/notification module.
+      const { user } = await g.requireSession(request);
+      const ctx = await orgs.resolveTenant(request.params.id, user.id);
+      const r = await orgs.invite(ctx, request.body);
+      const org = await orgs.switchActive({ organizationId: ctx.organizationId, userId: user.id });
+      await opts.mailer.sendInvitation(r.invitation.email, { organizationName: org.organization.name, token: r.token });
       return reply.status(201).send(invDto(r.invitation));
+    }
+  );
+
+  app.post<{ Params: InvitationParamsT }>(
+    '/orgs/:id/invitations/:invitationId/revoke',
+    {
+      schema: {
+        tags: invTags,
+        summary: 'Revoke invitation',
+        description: 'Owner/admin only (CASL). Only pending invitations can be revoked.',
+        params: InvitationParams,
+        response: { 200: InvitationDto, 409: ErrorBody, 410: ErrorBody, ...authErr }
+      }
+    },
+    async (request) => {
+      const { user } = await g.requireSession(request);
+      const ctx = await orgs.resolveTenant(request.params.id, user.id);
+      return invDto(await orgs.revokeInvitation(ctx, request.params.invitationId));
     }
   );
 
@@ -130,37 +175,26 @@ export async function organizationRoutes(app: FastifyInstance, opts: Organizatio
       schema: {
         tags: invTags,
         summary: 'Accept invitation',
-        description: 'Accepts a pending, unexpired invitation addressed to the caller\'s email.',
+        description:
+          "Must be logged in as the invited email. Unknown, expired, revoked, used or mismatched invitations all return the same 404.",
         body: AcceptInvitationBody,
-        response: { 200: OrganizationWithRole, 404: ErrorBody, 409: ErrorBody, 410: ErrorBody, ...authErr }
+        response: { 200: OrganizationWithRole, ...authErr }
       }
     },
     async (request) => {
-      const { user } = request.auth!;
-      const r = await opts.organizations.acceptInvitation({ token: request.body.token, userId: user.id, email: user.email });
-      const orgs = await opts.organizations.listForUser(user.id);
-      const org = orgs.find((o) => o.organization.id === r.invitation.organizationId)!;
-      return { organization: orgDto(org.organization), role: r.membership.role };
-    }
-  );
-
-  app.post<{ Params: IdParamsT }>(
-    '/invitations/:id/revoke',
-    {
-      schema: {
-        tags: invTags,
-        summary: 'Revoke invitation',
-        description: 'Owner/admin only. Only pending invitations can be revoked.',
-        params: IdParams,
-        response: { 200: InvitationDto, 404: ErrorBody, 409: ErrorBody, 410: ErrorBody, ...authErr }
+      const { user } = await g.requireSession(request);
+      try {
+        const r = await orgs.acceptInvitation({
+          token: request.body.token,
+          userId: user.id,
+          email: user.email,
+          ip: request.ip ?? null
+        });
+        return { organization: orgDto(r.organization), role: r.membership.role };
+      } catch (err) {
+        if (err instanceof InvitationError) throw new DomainError('NOT_FOUND', 'Invitation not found', 404);
+        throw err;
       }
-    },
-    async (request) => {
-      const inv = await opts.organizations.revokeInvitation({
-        invitationId: request.params.id,
-        actorUserId: request.auth!.user.id
-      });
-      return invDto(inv);
     }
   );
 }
