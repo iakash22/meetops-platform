@@ -140,12 +140,13 @@ enum StorageObjectStatus {
 }
 
 model Organization {
-  id        String    @id @default(uuid()) @db.Uuid
-  name      String
-  slug      String    @unique
-  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
-  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(3)
+  id          String    @id @default(uuid()) @db.Uuid
+  name        String
+  slug        String    @unique
+  createdById String?   @map("created_by_id") @db.Uuid
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt   DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+  deletedAt   DateTime? @map("deleted_at") @db.Timestamptz(3)
 
   memberships         Membership[]
   invitations         Invitation[]
@@ -166,6 +167,8 @@ model Organization {
   auditEvents         AuditEvent[]
   recordings          Recording[]
   activeSessions      Session[]
+
+  createdBy User? @relation("OrgCreator", fields: [createdById], references: [id], onDelete: SetNull)
 
   @@map("organizations")
 }
@@ -190,6 +193,11 @@ model User {
   tasksCreated          Task[]               @relation("TaskCreator")
   meetingParticipations MeetingParticipant[] @relation("ParticipantUser")
   auditEvents           AuditEvent[]
+
+  organizationsCreated Organization[]      @relation("OrgCreator")
+  invitationsAccepted  Invitation[]        @relation("InvitationAcceptor")
+  emailVerifications   EmailVerification[]
+  passwordResets       PasswordReset[]
 
   @@map("users")
 }
@@ -242,20 +250,24 @@ model Session {
 }
 
 model Invitation {
-  id          String           @id @default(uuid()) @db.Uuid
-  orgId       String           @map("org_id") @db.Uuid
-  email       String
-  role        MembershipRole   @default(member)
-  tokenHash   String           @unique @map("token_hash")
-  status      InvitationStatus @default(pending)
-  invitedById String?          @map("invited_by_id") @db.Uuid
-  expiresAt   DateTime         @map("expires_at") @db.Timestamptz(3)
-  acceptedAt  DateTime?        @map("accepted_at") @db.Timestamptz(3)
-  createdAt   DateTime         @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt   DateTime         @updatedAt @map("updated_at") @db.Timestamptz(3)
+  id           String           @id @default(uuid()) @db.Uuid
+  orgId        String           @map("org_id") @db.Uuid
+  email        String
+  role         MembershipRole   @default(member)
+  tokenHash    String           @unique @map("token_hash")
+  status       InvitationStatus @default(pending)
+  invitedById  String?          @map("invited_by_id") @db.Uuid
+  expiresAt    DateTime         @map("expires_at") @db.Timestamptz(3)
+  acceptedAt   DateTime?        @map("accepted_at") @db.Timestamptz(3)
+  acceptedById String?          @map("accepted_by_id") @db.Uuid
+  revokedAt    DateTime?        @map("revoked_at") @db.Timestamptz(3)
+  createdAt    DateTime         @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt    DateTime         @updatedAt @map("updated_at") @db.Timestamptz(3)
+  deletedAt    DateTime?        @map("deleted_at") @db.Timestamptz(3)
 
   organization Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
   invitedBy    User?        @relation("InvitationInviter", fields: [invitedById], references: [id], onDelete: SetNull)
+  acceptedBy   User?        @relation("InvitationAcceptor", fields: [acceptedById], references: [id], onDelete: SetNull)
 
   @@unique([orgId, id])
   @@index([orgId, email])
@@ -615,21 +627,25 @@ model Task {
 }
 
 model IntegrationIssue {
-  id          String    @id @default(uuid()) @db.Uuid
-  orgId       String    @map("org_id") @db.Uuid
-  taskId      String    @map("task_id") @db.Uuid
+  id            String    @id @default(uuid()) @db.Uuid
+  orgId         String    @map("org_id") @db.Uuid
+  taskId        String    @map("task_id") @db.Uuid
   /// Integration identifier, e.g. "jira", "linear", "github".
-  integration String
-  externalId  String    @map("external_id")
-  externalUrl String?   @map("external_url")
-  syncedAt    DateTime? @map("synced_at") @db.Timestamptz(3)
-  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt   DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+  integration   String
+  /// Contracts v0.2: optional link to a configured integration instance (no integrations table yet).
+  integrationId String?   @map("integration_id") @db.Uuid
+  /// Contracts v0.2: provider key, e.g. "linear", "jira", "github".
+  provider      String
+  externalId    String    @map("external_id")
+  externalUrl   String?   @map("external_url")
+  syncedAt      DateTime? @map("synced_at") @db.Timestamptz(3)
+  createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt     DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   organization Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
   task         Task         @relation(fields: [orgId, taskId], references: [orgId, id], onDelete: Cascade)
 
-  @@unique([orgId, integration, externalId])
+  @@unique([orgId, provider, externalId])
   @@unique([orgId, id])
   @@index([orgId, taskId])
   @@map("integration_issues")
@@ -695,9 +711,10 @@ model OutboxEvent {
 }
 
 /// Append-only security/audit trail. UPDATE/DELETE are revoked from meetops_app in migrations.
+/// org_id is NULL for global auth events (signup, failed login): insert-only for the app, never readable via RLS.
 model AuditEvent {
   id         String   @id @default(uuid()) @db.Uuid
-  orgId      String   @map("org_id") @db.Uuid
+  orgId      String?  @map("org_id") @db.Uuid
   actorId    String?  @map("actor_id") @db.Uuid
   actorType  String   @default("user") @map("actor_type")
   action     String
@@ -708,12 +725,46 @@ model AuditEvent {
   userAgent  String?  @map("user_agent")
   createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
 
-  organization Organization @relation(fields: [orgId], references: [id], onDelete: Restrict)
-  actor        User?        @relation(fields: [actorId], references: [id], onDelete: SetNull)
+  organization Organization? @relation(fields: [orgId], references: [id], onDelete: Restrict)
+  actor        User?         @relation(fields: [actorId], references: [id], onDelete: SetNull)
 
   @@unique([orgId, id])
   @@index([orgId, createdAt])
   @@index([orgId, targetType, targetId])
   @@index([orgId, actorId])
   @@map("audit_events")
+}
+
+/// Global (user-scoped, no org): looked up by token hash before login. Only SHA-256(token) stored.
+model EmailVerification {
+  id        String    @id @default(uuid()) @db.Uuid
+  userId    String    @map("user_id") @db.Uuid
+  email     String
+  tokenHash String    @unique @map("token_hash")
+  expiresAt DateTime  @map("expires_at") @db.Timestamptz(3)
+  usedAt    DateTime? @map("used_at") @db.Timestamptz(3)
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@map("email_verifications")
+}
+
+/// Global (user-scoped, no org): looked up by token hash before login. Only SHA-256(token) stored.
+model PasswordReset {
+  id        String    @id @default(uuid()) @db.Uuid
+  userId    String    @map("user_id") @db.Uuid
+  tokenHash String    @unique @map("token_hash")
+  expiresAt DateTime  @map("expires_at") @db.Timestamptz(3)
+  usedAt    DateTime? @map("used_at") @db.Timestamptz(3)
+  ipAddress String?   @map("ip_address")
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@map("password_resets")
 }
