@@ -60,6 +60,8 @@ describe('route tree', () => {
     renderApp('/projects', createMockApi({ projects: { list: vi.fn().mockReturnValue(pending) } }));
     expect(await screen.findByTestId('loading-state')).toBeInTheDocument();
     reject(new Error('Network down'));
-    expect(await screen.findByTestId('error-state')).toHaveTextContent('Network down');
+    expect(await screen.findByTestId('error-state')).toHaveTextContent(
+      'Something went wrong. Please try again.',
+    );
   });
 });

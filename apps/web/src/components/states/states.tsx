@@ -3,6 +3,7 @@ import { AlertCircle, Inbox, Loader2 } from 'lucide-react';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
+import { describeError } from '@/lib/api/error-messages';
 
 export function EmptyState({
   title,
@@ -56,14 +57,18 @@ export function ErrorState({
   error?: unknown;
   onRetry?: () => void;
 }) {
-  const message =
-    error instanceof Error ? error.message : typeof error === 'string' ? error : undefined;
+  const { message, requestId } = describeError(error);
   return (
     <Alert variant="destructive" data-testid="error-state">
       <AlertCircle className="h-4 w-4" />
       <AlertTitle>{title}</AlertTitle>
       <AlertDescription className="flex flex-col gap-3">
-        {message ? <span>{message}</span> : null}
+        <span>{message}</span>
+        {requestId ? (
+          <span className="text-xs" data-testid="request-id">
+            Reference: {requestId}
+          </span>
+        ) : null}
         {onRetry ? (
           <Button variant="outline" size="sm" className="w-fit" onClick={onRetry}>
             Try again
