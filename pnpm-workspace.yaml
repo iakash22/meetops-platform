@@ -3,4 +3,3 @@ packages:
   - 'packages/*'
   - 'infra/*'
   - 'docs'
-  - 'tests'
