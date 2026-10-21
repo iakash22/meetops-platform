@@ -23,6 +23,7 @@ export const ApiErrorCode = Type.Union([
   Type.Literal('INTERNAL'),
 ]);
 export type ApiErrorCode = Static<typeof ApiErrorCode>;
+export { API_ERROR_CODES } from '../constants.js';
 
 /**
  * `message` is safe and generic for display. It must not contain stack traces, SQL, provider

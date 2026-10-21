@@ -9,7 +9,7 @@ export const TaskStatus = Type.Union([
 ]);
 export type TaskStatus = Static<typeof TaskStatus>;
 /** All task statuses, in display order. */
-export const TASK_STATUSES = ['todo', 'in_progress', 'done', 'cancelled'] as const satisfies readonly TaskStatus[];
+export { TASK_STATUSES } from '../constants.js';
 /** Alias of `TaskStatus` for FE (equivalent to `Task['status']`). */
 export type TaskStatusValue = TaskStatus;
 

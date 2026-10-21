@@ -28,8 +28,15 @@ organizationName }` (no tokens); `ExtensionTokenRequest { extensionId, deviceId,
   meetingId, dueBefore, dueAfter, q ≤200, and `unassigned: true` (literal; a strict union makes it mutually exclusive with
   assigneeId)), `TASK_STATUSES` and the `TaskStatusValue` alias.
 
+- Light entry `@meetops/contracts/types`: types only plus plain constants (`TASK_STATUSES`, `ROLES`, `API_ERROR_CODES`,
+  `EXTENSION_*`, `EXTENSION_AUTH_PATHS`, `REDACT_KEYS`), with zero runtime TypeBox import. It is recommended for `apps/extension`. For a
+  constants-only import, esbuild measures ≈47.5 kB minified (12.5 kB gzip) through the main entry versus ≈0.15 kB through the light entry.
+- `package.json`: `"sideEffects": false`.
+
 ### Changed
 
+- `TASK_STATUSES` and `ROLES` now live in `src/constants.ts` (with the extension constants) and are re-exported unchanged from
+  the main entry.
 - `PresignedUrlString` rejects userinfo (`user@`, `user:pass@`) for both https and http URLs.
 
 ### Confirmed (DB alignment, ADR-004 addendum 2)

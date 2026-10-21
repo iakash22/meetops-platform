@@ -8,7 +8,7 @@ export const Role = Type.Union([
   Type.Literal('viewer'),
 ]);
 export type Role = Static<typeof Role>;
-export const ROLES = ['owner', 'admin', 'member', 'viewer'] as const satisfies readonly Role[];
+export { ROLES } from '../constants.js';
 
 export const Organization = Type.Object({
   id: Id,
