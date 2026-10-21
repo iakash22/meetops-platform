@@ -9,6 +9,8 @@ const pkgDir = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const env = {
   ...process.env,
   DATABASE_URL: process.env.DATABASE_URL ?? 'postgresql://meetops:meetops@localhost:5432/meetops',
+  MIGRATION_DATABASE_URL:
+    process.env.MIGRATION_DATABASE_URL ?? 'postgresql://meetops:meetops@localhost:5432/meetops',
 };
 const prisma = (...args: string[]) =>
   execFileSync('pnpm', ['exec', 'prisma', ...args], { cwd: pkgDir, env, encoding: 'utf8', stdio: 'pipe' });
@@ -43,7 +45,7 @@ describe('generated client', () => {
     for (const m of [
       'Organization', 'User', 'Membership', 'Session', 'Invitation', 'Employee', 'Project',
       'Meeting', 'MeetingParticipant', 'FileObject', 'Transcript', 'TranscriptSegment', 'Report',
-      'ExtractedTask', 'TaskApproval', 'InternalTask', 'ExternalIssueLink', 'AiRun', 'OutboxEvent', 'AuditLog',
+      'ExtractedTask', 'TaskApproval', 'InternalTask', 'ExternalIssueLink', 'AiRun', 'OutboxEvent', 'AuditEvent',
     ]) {
       expect(models).toContain(m);
     }
