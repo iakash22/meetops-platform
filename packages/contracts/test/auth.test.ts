@@ -70,3 +70,15 @@ describe('Paginated<T>', () => {
     expect(Value.Check(S, { items: [{ bad: true }], nextCursor: null })).toBe(false);
   });
 });
+
+import { Value as V2 } from '@sinclair/typebox/value';
+import { AuthSession as AS2 } from '../src/index.js';
+describe('AuthSession without org', () => {
+  it('accepts null activeOrganizationId and role', () => {
+    const s = {
+      user: { id: '7d0f3c2e-1b4a-4c8e-9f6a-2b3c4d5e6f70', email: 'a@example.com', createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z' },
+      csrfToken: 'x'.repeat(32), activeOrganizationId: null, role: null, organizations: [],
+    };
+    expect(V2.Errors(AS2, s).First()?.message).toBeUndefined();
+  });
+});
