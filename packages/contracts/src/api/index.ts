@@ -4,3 +4,4 @@ export * from './pagination.js';
 export * from './uploads.js';
 export * from './recording-sessions.js';
 export * from './meetings.js';
+export * from './extension-auth.js';
