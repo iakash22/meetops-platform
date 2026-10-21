@@ -15,6 +15,7 @@
     "e2e:install": "playwright install chromium"
   },
   "devDependencies": {
+    "@meetops/api": "workspace:*",
     "@meetops/contracts": "workspace:*",
     "@playwright/test": "^1.48.2",
     "@sinclair/typebox": "^0.34.0",

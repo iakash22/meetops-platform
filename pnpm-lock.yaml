@@ -229,6 +229,9 @@ importers:
 
   tests:
     devDependencies:
+      '@meetops/api':
+        specifier: workspace:*
+        version: link:../apps/api
       '@meetops/contracts':
         specifier: workspace:*
         version: link:../packages/contracts
