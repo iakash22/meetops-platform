@@ -9,14 +9,14 @@ import type {
   Paginated,
   Project,
   SignupRequest,
-  Task
+  Task,
 } from './types';
 
 export class ApiError extends Error {
   constructor(
     message: string,
     public readonly status: number,
-    public readonly body?: unknown
+    public readonly body?: unknown,
   ) {
     super(message);
     this.name = 'ApiError';
@@ -32,17 +32,20 @@ export type ApiClientOptions = {
 /** Typed API client surface. Endpoints are stubs until the API contracts land. */
 export type ApiClient = {
   auth: {
-    login(body: LoginRequest): Promise<AuthSession>;
-    signup(body: SignupRequest): Promise<AuthSession>;
-    forgotPassword(body: ForgotPasswordRequest): Promise<{ ok: true }>;
+    login: (body: LoginRequest) => Promise<AuthSession>;
+    signup: (body: SignupRequest) => Promise<AuthSession>;
+    forgotPassword: (body: ForgotPasswordRequest) => Promise<{ ok: true }>;
   };
-  organizations: { list(): Promise<Organization[]> };
-  meetings: { list(orgId: ID): Promise<Paginated<Meeting>> };
-  tasks: { list(orgId: ID): Promise<Paginated<Task>> };
-  projects: { list(orgId: ID): Promise<Paginated<Project>> };
+  organizations: { list: () => Promise<Organization[]> };
+  meetings: { list: (orgId: ID) => Promise<Paginated<Meeting>> };
+  tasks: { list: (orgId: ID) => Promise<Paginated<Task>> };
+  projects: { list: (orgId: ID) => Promise<Paginated<Project>> };
   storage: {
     /** Uses PresignedUrl from @meetops/contracts. */
-    createUploadUrl(orgId: ID, body: { fileName: string; contentType: string }): Promise<PresignedUrl>;
+    createUploadUrl: (
+      orgId: ID,
+      body: { fileName: string; contentType: string },
+    ) => Promise<PresignedUrl>;
   };
 };
 
@@ -61,7 +64,8 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
     const res = await doFetch(`${base}${path}`, init);
     const text = await res.text();
     const data: unknown = text ? JSON.parse(text) : undefined;
-    if (!res.ok) throw new ApiError(`Request failed: ${method} ${path} (${res.status})`, res.status, data);
+    if (!res.ok)
+      throw new ApiError(`Request failed: ${method} ${path} (${res.status})`, res.status, data);
     return data as T;
   }
 
@@ -71,14 +75,14 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
     auth: {
       login: (body) => request('POST', '/auth/login', body),
       signup: (body) => request('POST', '/auth/signup', body),
-      forgotPassword: (body) => request('POST', '/auth/forgot-password', body)
+      forgotPassword: (body) => request('POST', '/auth/forgot-password', body),
     },
     organizations: { list: () => request('GET', '/orgs') },
     meetings: { list: (orgId) => request('GET', `${org(orgId)}/meetings`) },
     tasks: { list: (orgId) => request('GET', `${org(orgId)}/tasks`) },
     projects: { list: (orgId) => request('GET', `${org(orgId)}/projects`) },
     storage: {
-      createUploadUrl: (orgId, body) => request('POST', `${org(orgId)}/uploads`, body)
-    }
+      createUploadUrl: (orgId, body) => request('POST', `${org(orgId)}/uploads`, body),
+    },
   };
 }
