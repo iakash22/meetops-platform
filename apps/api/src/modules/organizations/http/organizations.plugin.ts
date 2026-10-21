@@ -2,7 +2,7 @@ import type { FastifyInstance, FastifyReply } from 'fastify';
 import type { AuthService } from '../../auth/application/auth.service.js';
 import type { AuthMailer } from '../../auth/domain/mailer.js';
 import { ErrorBody } from '../../auth/http/schemas.js';
-import { makeGuards, mutationGuard, requestMeta, type HttpSecurityConfig } from '../../auth/http/security.js';
+import { makeGuards, requestMeta, type HttpSecurityConfig } from '../../auth/http/security.js';
 import { registerDomainErrorHandler } from '../../../shared/http-errors.js';
 import { DomainError } from '../../../shared/domain-error.js';
 import type { OrganizationService } from '../application/organization.service.js';
@@ -38,7 +38,7 @@ export async function organizationRoutes(app: FastifyInstance, opts: Organizatio
   registerDomainErrorHandler(app);
   const { auth, organizations: orgs, security } = opts;
   const g = makeGuards(auth, security);
-  app.addHook('onRequest', mutationGuard(security));
+  app.addHook('onRequest', g.mutationGuard);
   const orgTags = ['organizations'];
   const invTags = ['invitations'];
   const authErr = { 401: ErrorBody, 403: ErrorBody, 404: ErrorBody, 429: ErrorBody };
@@ -51,6 +51,7 @@ export async function organizationRoutes(app: FastifyInstance, opts: Organizatio
     const ctx = request.auth!;
     const r = await auth.rotate(ctx.session, ctx.user, organizationId, requestMeta(request));
     g.setSessionCookie(reply, r);
+    g.issueCsrfForSession(reply, r.session.id);
   };
 
   app.post<{ Body: CreateOrganizationBodyT }>(

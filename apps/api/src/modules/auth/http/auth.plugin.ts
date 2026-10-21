@@ -9,6 +9,7 @@ import {
   ForgotPasswordBody,
   LoginBody,
   ResetPasswordBody,
+  GetSessionResponse,
   SessionResponse,
   SignupBody,
   type ForgotPasswordBodyT,
@@ -16,7 +17,7 @@ import {
   type ResetPasswordBodyT,
   type SignupBodyT
 } from './schemas.js';
-import { makeGuards, mutationGuard, requestMeta, type HttpSecurityConfig } from './security.js';
+import { makeGuards, requestMeta, type HttpSecurityConfig } from './security.js';
 import type { OrganizationService } from '../../organizations/application/organization.service.js';
 import { toSessionResponse } from './mappers.js';
 
@@ -34,7 +35,7 @@ export async function authRoutes(app: FastifyInstance, opts: AuthPluginOptions) 
   registerDomainErrorHandler(app);
   const { auth, security } = opts;
   const g = makeGuards(auth, security);
-  app.addHook('onRequest', mutationGuard(security));
+  app.addHook('onRequest', g.mutationGuard);
 
   app.post<{ Body: SignupBodyT }>(
     '/auth/signup',
@@ -61,7 +62,7 @@ export async function authRoutes(app: FastifyInstance, opts: AuthPluginOptions) 
         tags,
         summary: 'Log in',
         description:
-          'Verifies credentials, revokes any presented session and sets a new httpOnly session cookie. Generic 401 on failure; 429 when rate-limited or locked.',
+          'Verifies credentials, revokes any presented session, sets a new httpOnly session cookie and a fresh CSRF cookie (also returned as csrfToken). Generic 401 AUTH_FAILED on failure; 429 when rate-limited or locked.',
         body: LoginBody,
         response: { 200: SessionResponse, 401: ErrorBody, 403: ErrorBody, 429: ErrorBody }
       }
@@ -69,7 +70,7 @@ export async function authRoutes(app: FastifyInstance, opts: AuthPluginOptions) 
     async (request, reply) => {
       const r = await auth.login(request.body, requestMeta(request), g.readToken(request));
       g.setSessionCookie(reply, r);
-      return await toSessionResponse(r, security.sessionPolicy, opts.organizations);
+      return { ...(await toSessionResponse(r, opts.organizations)), csrfToken: g.issueCsrfForSession(reply, r.session.id) };
     }
   );
 
@@ -115,13 +116,13 @@ export async function authRoutes(app: FastifyInstance, opts: AuthPluginOptions) 
         tags,
         summary: 'Get CSRF token',
         description:
-          'Public. Returns { csrfToken } and sets the __Host-meetops_csrf cookie (Secure, Path=/, SameSite=Lax). Send the same value as X-CSRF-Token on every POST/PUT/PATCH/DELETE.',
+          'Public. Returns { csrfToken } and sets the CSRF cookie (__Host-meetops_csrf in production; Secure, Path=/, SameSite=Lax). The token is an HMAC bound to the current session id, or to an HttpOnly pre-session nonce cookie before login. Send it as X-CSRF-Token on every POST/PUT/PATCH/DELETE. Login returns a fresh token; org create/switch refresh the cookie; re-fetch after logout.',
         response: { 200: CsrfBody }
       }
     },
-    async (_request, reply) => {
+    async (request, reply) => {
       void reply.header('cache-control', 'no-store');
-      return { csrfToken: g.issueCsrf(reply) };
+      return { csrfToken: await g.issueCsrf(request, reply) };
     }
   );
 
@@ -150,9 +151,9 @@ export async function authRoutes(app: FastifyInstance, opts: AuthPluginOptions) 
         tags,
         summary: 'Current session',
         description: 'Returns the authenticated user and active organization. Slides the idle timeout.',
-        response: { 200: SessionResponse, 401: ErrorBody }
+        response: { 200: GetSessionResponse, 401: ErrorBody }
       }
     },
-    async (request) => toSessionResponse(await g.requireSession(request), security.sessionPolicy, opts.organizations)
+    async (request) => toSessionResponse(await g.requireSession(request), opts.organizations)
   );
 }
