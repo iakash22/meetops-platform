@@ -59,6 +59,24 @@ org/{orgId}/meetings/{meetingId}/{...parts}
 | `STORAGE_FORCE_PATH_STYLE`        | Path-style addressing; defaults to true for minio                                              |
 | `STORAGE_PRESIGN_EXPIRES_SECONDS` | Default presign expiry, integer 1..604800 (default 900). New in this PR, not in `.env.example` |
 
+### Contract: `FileObject` (from PR #17)
+
+Stored-object metadata crossing package boundaries uses the `FileObject` contract from `@meetops/contracts`, added in **open PR #17** (`feat/core-contracts`, read at `8a189c87e28ab7a81b14d8b94b0ca16990221561`):
+
+| Field            | Type                                                                |
+| ---------------- | ------------------------------------------------------------------- |
+| `id`             | `Id`                                                                |
+| `organizationId` | `Id`                                                                |
+| `provider`       | string, a registry key (e.g. `s3`, `minio`, `local`)                |
+| `bucket`         | string                                                              |
+| `key`            | string; use the `org/{orgId}/meetings/{meetingId}/...` scheme above |
+| `mimeType`       | string                                                              |
+| `sizeBytes`      | integer >= 0                                                        |
+| `checksumSha256` | optional string                                                     |
+| `createdAt`      | `IsoDateTime`                                                       |
+
+`Recording` (same PR) embeds a `FileObject` as `file`. `S3StorageService` itself returns the Phase 0 `StorageObjectMetadata` and `PresignedUrl` types (kept in `legacy.ts` in #17), not `FileObject`.
+
 ## `@meetops/media-core`
 
 Wraps `ffmpeg` and `ffprobe`, spawned with an argv array and no shell. FFmpeg must be installed (see `docs/00-getting-started/prerequisites.md`).
