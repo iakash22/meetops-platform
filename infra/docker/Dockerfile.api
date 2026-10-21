@@ -8,7 +8,7 @@ ENV PNPM_HOME=/pnpm \
     PATH=/pnpm:$PATH \
     COREPACK_ENABLE_DOWNLOAD_PROMPT=0 \
     COREPACK_HOME=/corepack
-RUN corepack enable && corepack prepare pnpm@9.12.3 --activate && chmod -R a+rX /corepack
+RUN corepack enable && corepack prepare pnpm@9.15.2 --activate && chmod -R a+rX /corepack
 WORKDIR /repo
 # hadolint ignore=DL3008
 RUN apt-get update \

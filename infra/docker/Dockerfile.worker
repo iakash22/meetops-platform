@@ -8,7 +8,7 @@ FROM node:${NODE_VERSION}-bookworm-slim AS base
 ENV PNPM_HOME=/pnpm \
     PATH=/pnpm:$PATH \
     COREPACK_ENABLE_DOWNLOAD_PROMPT=0
-RUN corepack enable && corepack prepare pnpm@9.12.3 --activate
+RUN corepack enable && corepack prepare pnpm@9.15.2 --activate
 WORKDIR /repo
 # hadolint ignore=DL3008
 RUN apt-get update \

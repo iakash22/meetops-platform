@@ -8,7 +8,7 @@ FROM node:${NODE_VERSION}-bookworm-slim AS build
 ENV PNPM_HOME=/pnpm \
     PATH=/pnpm:$PATH \
     COREPACK_ENABLE_DOWNLOAD_PROMPT=0
-RUN corepack enable && corepack prepare pnpm@9.12.3 --activate
+RUN corepack enable && corepack prepare pnpm@9.15.2 --activate
 WORKDIR /repo
 COPY . .
 RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store \
