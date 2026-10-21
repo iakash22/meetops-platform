@@ -1,22 +1,17 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
-import { createRouter, RouterProvider } from '@tanstack/react-router';
-import { rootRoute } from './routes/__root';
-import { indexRoute } from './routes';
-import { aboutRoute } from './routes/about';
+import { App } from './app';
+import { createApiClient } from './lib/api/client';
+import { createQueryClient } from './lib/query-client';
 import './index.css';
 
-const routeTree = rootRoute.addChildren([indexRoute, aboutRoute]);
-const router = createRouter({ routeTree });
-declare module '@tanstack/react-router' {
-  interface Register {
-    router: typeof router;
-  }
-}
+const api = createApiClient({ baseUrl: import.meta.env.VITE_API_URL ?? '/api' });
+const queryClient = createQueryClient();
 
-const root = document.getElementById('root')!;
+const root = document.getElementById('root');
+if (!root) throw new Error('#root element missing');
 createRoot(root).render(
   <StrictMode>
-    <RouterProvider router={router} />
+    <App queryClient={queryClient} api={api} />
   </StrictMode>
 );
