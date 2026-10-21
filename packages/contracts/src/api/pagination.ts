@@ -27,3 +27,7 @@ export const OffsetPage = <T extends TSchema>(item: T) =>
     limit: Type.Integer({ minimum: 1 }),
   });
 export type OffsetPage<T> = { items: T[]; total: number; offset: number; limit: number };
+
+/** Default list response used by the web app: cursor-based. Alias of CursorPage. */
+export const Paginated = CursorPage;
+export type Paginated<T> = CursorPage<T>;
