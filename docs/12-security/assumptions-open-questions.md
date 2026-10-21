@@ -15,7 +15,7 @@
 1. ~~**Doc location**~~: resolved — docs live in `docs/12-security/`.
 2. Secret manager / KMS choice (AWS, GCP, Vault) and hosting cloud.
 3. Use a password pepper? Where stored and how rotated?
-4. Guest role: needed at launch? Which resources can guests see?
+4. ~~Guest role~~: resolved for now — roles are `owner`, `admin`, `member`, `viewer` per contracts `Role` enum (PR #17). Guest is a possible future role; open: is it needed post-launch, and what can it see?
 5. Can members push to integrations, or admins only (org setting default)?
 6. Session timeouts (30 min idle / 12 h absolute) acceptable for UX? "Remember me"?
 7. Malware scanning: self-hosted ClamAV vs cloud provider scanner.

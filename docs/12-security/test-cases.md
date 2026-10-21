@@ -1,6 +1,6 @@
 # Security test cases (QA)
 
-Setup for all cases: orgs **A** and **B**, each with owner, admin, member, viewer, guest users and data in every tenant table. "As A" = authenticated session of an org A user (admin unless stated). `{B.id}` = a real id owned by org B. Expected 404 means the same body as a non-existent id (no existence leak).
+Setup for all cases: orgs **A** and **B**, each with owner, admin, member, viewer users (contracts `Role` enum) and data in every tenant table. "As A" = authenticated session of an org A user (admin unless stated). `{B.id}` = a real id owned by org B. Expected 404 means the same body as a non-existent id (no existence leak).
 
 ## 1. Cross-tenant access matrix
 
@@ -39,43 +39,43 @@ Setup for all cases: orgs **A** and **B**, each with owner, admin, member, viewe
 
 ## 2. Auth abuse cases
 
-| ID    | Case                         | Steps                                              | Expected                                                                                                     |
-| ----- | ---------------------------- | -------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
-| AU-01 | Brute force single account   | 6 wrong passwords in 15 min                        | Progressive delay; at 10 → temp lock 15 min, notice email; correct password during lock rejected generically |
-| AU-02 | Lockout not permanent        | Wait out lock window                               | Login works again                                                                                            |
-| AU-03 | Credential stuffing          | 25 logins/min from one IP across many emails       | 429 after 20/min                                                                                             |
-| AU-04 | Distributed stuffing         | Many IPs, one email                                | Per-account limit triggers                                                                                   |
-| AU-05 | Login enumeration (message)  | Unknown email vs known email wrong password        | Identical status + body                                                                                      |
-| AU-06 | Login enumeration (timing)   | 100 samples each                                   | Median difference < ~10 ms (dummy argon2 verify)                                                             |
-| AU-07 | Signup enumeration           | Sign up existing email                             | Same response as new; email sent to owner                                                                    |
-| AU-08 | Reset enumeration            | Reset unknown vs known email                       | Same response and timing                                                                                     |
-| AU-09 | Session fixation             | Set a pre-chosen cookie, then log in               | New session id issued; old value invalid                                                                     |
-| AU-10 | Rotation on privilege change | Admin promotes member; password change; org switch | New session id; old invalid; password change revokes other sessions                                          |
-| AU-11 | Idle timeout                 | Idle > 30 min                                      | 401                                                                                                          |
-| AU-12 | Absolute timeout             | Active > 12 h                                      | 401                                                                                                          |
-| AU-13 | Logout                       | Logout then replay cookie                          | 401                                                                                                          |
-| AU-14 | CSRF missing token           | POST without `X-CSRF-Token`                        | 403                                                                                                          |
-| AU-15 | CSRF wrong token             | Token from another session                         | 403                                                                                                          |
-| AU-16 | Bad Origin                   | Valid token, `Origin: https://evil.example`        | 403                                                                                                          |
-| AU-17 | Missing Origin/Referer       | State-changing request with neither                | 403                                                                                                          |
-| AU-18 | GET mutation                 | Try state change via GET                           | 404/405, no change                                                                                           |
-| AU-19 | Cookie flags                 | Inspect `Set-Cookie` in prod-like env              | `__Host-` prefix, `Secure`, `HttpOnly`, `SameSite=Lax`, `Path=/`, no `Domain`                                |
-| AU-20 | Token storage                | Inspect localStorage/sessionStorage                | No session tokens                                                                                            |
-| AU-21 | Reset token reuse            | Use reset link twice                               | Second use rejected                                                                                          |
-| AU-22 | Reset token expiry           | Use after 30 min                                   | Rejected                                                                                                     |
-| AU-23 | Reset revokes sessions       | Reset password                                     | All existing sessions invalid                                                                                |
-| AU-24 | Invite reuse                 | Accept invite twice                                | Second rejected                                                                                              |
-| AU-25 | Invite wrong email           | Accept with different account email                | Rejected                                                                                                     |
-| AU-26 | Invite expiry                | Accept after 7 days                                | Rejected                                                                                                     |
-| AU-27 | Invite flood                 | > 50 invites/day per org, > 5/day per address      | 429                                                                                                          |
-| AU-28 | Invite role escalation       | Admin invites with role `owner`                    | 403                                                                                                          |
-| AU-29 | Member → admin               | Member `PATCH /members/{self}` role=admin          | 403                                                                                                          |
-| AU-30 | Admin → owner changes        | Admin demotes/removes owner                        | 403                                                                                                          |
-| AU-31 | Last owner                   | Owner demotes self as last owner                   | 422                                                                                                          |
-| AU-32 | Viewer writes                | Viewer creates/updates task                        | 403                                                                                                          |
-| AU-33 | Guest scope                  | Guest reads unassigned meeting                     | 404                                                                                                          |
-| AU-34 | Member provider change       | Member `PUT /ai/providers`                         | 403; audit no change                                                                                         |
-| AU-35 | Mass assignment              | `PATCH /me` with `role`, `orgId`, `isAdmin`        | Fields ignored / 400                                                                                         |
+| ID    | Case                         | Steps                                                                             | Expected                                                                                                     |
+| ----- | ---------------------------- | --------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| AU-01 | Brute force single account   | 6 wrong passwords in 15 min                                                       | Progressive delay; at 10 → temp lock 15 min, notice email; correct password during lock rejected generically |
+| AU-02 | Lockout not permanent        | Wait out lock window                                                              | Login works again                                                                                            |
+| AU-03 | Credential stuffing          | 25 logins/min from one IP across many emails                                      | 429 after 20/min                                                                                             |
+| AU-04 | Distributed stuffing         | Many IPs, one email                                                               | Per-account limit triggers                                                                                   |
+| AU-05 | Login enumeration (message)  | Unknown email vs known email wrong password                                       | Identical status + body                                                                                      |
+| AU-06 | Login enumeration (timing)   | 100 samples each                                                                  | Median difference < ~10 ms (dummy argon2 verify)                                                             |
+| AU-07 | Signup enumeration           | Sign up existing email                                                            | Same response as new; email sent to owner                                                                    |
+| AU-08 | Reset enumeration            | Reset unknown vs known email                                                      | Same response and timing                                                                                     |
+| AU-09 | Session fixation             | Set a pre-chosen cookie, then log in                                              | New session id issued; old value invalid                                                                     |
+| AU-10 | Rotation on privilege change | Admin promotes member; password change; org switch                                | New session id; old invalid; password change revokes other sessions                                          |
+| AU-11 | Idle timeout                 | Idle > 30 min                                                                     | 401                                                                                                          |
+| AU-12 | Absolute timeout             | Active > 12 h                                                                     | 401                                                                                                          |
+| AU-13 | Logout                       | Logout then replay cookie                                                         | 401                                                                                                          |
+| AU-14 | CSRF missing token           | POST without `X-CSRF-Token`                                                       | 403                                                                                                          |
+| AU-15 | CSRF wrong token             | Token from another session                                                        | 403                                                                                                          |
+| AU-16 | Bad Origin                   | Valid token, `Origin: https://evil.example`                                       | 403                                                                                                          |
+| AU-17 | Missing Origin/Referer       | State-changing request with neither                                               | 403                                                                                                          |
+| AU-18 | GET mutation                 | Try state change via GET                                                          | 404/405, no change                                                                                           |
+| AU-19 | Cookie flags                 | Inspect `Set-Cookie` in prod-like env                                             | `__Host-` prefix, `Secure`, `HttpOnly`, `SameSite=Lax`, `Path=/`, no `Domain`                                |
+| AU-20 | Token storage                | Inspect localStorage/sessionStorage                                               | No session tokens                                                                                            |
+| AU-21 | Reset token reuse            | Use reset link twice                                                              | Second use rejected                                                                                          |
+| AU-22 | Reset token expiry           | Use after 30 min                                                                  | Rejected                                                                                                     |
+| AU-23 | Reset revokes sessions       | Reset password                                                                    | All existing sessions invalid                                                                                |
+| AU-24 | Invite reuse                 | Accept invite twice                                                               | Second rejected                                                                                              |
+| AU-25 | Invite wrong email           | Accept with different account email                                               | Rejected                                                                                                     |
+| AU-26 | Invite expiry                | Accept after 7 days                                                               | Rejected                                                                                                     |
+| AU-27 | Invite flood                 | > 50 invites/day per org, > 5/day per address                                     | 429                                                                                                          |
+| AU-28 | Invite role escalation       | Admin invites with role `owner`                                                   | 403                                                                                                          |
+| AU-29 | Member → admin               | Member `PATCH /members/{self}` role=admin                                         | 403                                                                                                          |
+| AU-30 | Admin → owner changes        | Admin demotes/removes owner                                                       | 403                                                                                                          |
+| AU-31 | Last owner                   | Owner demotes self as last owner                                                  | 422                                                                                                          |
+| AU-32 | Viewer writes                | Viewer creates/updates task                                                       | 403                                                                                                          |
+| AU-33 | Unknown role rejected        | Send `role: "guest"` (or any value outside the `Role` enum) on invite/role change | 400 validation error; no membership created/changed                                                          |
+| AU-34 | Member provider change       | Member `PUT /ai/providers`                                                        | 403; audit no change                                                                                         |
+| AU-35 | Mass assignment              | `PATCH /me` with `role`, `orgId`, `isAdmin`                                       | Fields ignored / 400                                                                                         |
 
 ## 3. SSRF payloads
 
