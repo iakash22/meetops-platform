@@ -15,14 +15,14 @@ Steps marked **(requires PR #N, unmerged)** depend on an open PR and won't work 
 
 ## 1. Install the tools
 
-| Tool | How |
-| --- | --- |
-| WSL 2 + Ubuntu | `wsl --install -d Ubuntu`, reboot, then `wsl --status` should show default version 2 |
-| Docker Desktop | Settings → General → "Use the WSL 2 based engine"; Resources → WSL integration → enable Ubuntu if you use it |
-| Git for Windows | `winget install Git.Git` |
-| Node | See the warning above (22 LTS recommended; 24 unverified) |
-| pnpm 9.12.3 | `corepack enable`, then `corepack prepare pnpm@9.12.3 --activate`, then `pnpm --version` |
-| FFmpeg | `winget install Gyan.FFmpeg` (needed by media-core tests and the worker) |
+| Tool            | How                                                                                                          |
+| --------------- | ------------------------------------------------------------------------------------------------------------ |
+| WSL 2 + Ubuntu  | `wsl --install -d Ubuntu`, reboot, then `wsl --status` should show default version 2                         |
+| Docker Desktop  | Settings → General → "Use the WSL 2 based engine"; Resources → WSL integration → enable Ubuntu if you use it |
+| Git for Windows | `winget install Git.Git`                                                                                     |
+| Node            | See the warning above (22 LTS recommended; 24 unverified)                                                    |
+| pnpm 9.12.3     | `corepack enable`, then `corepack prepare pnpm@9.12.3 --activate`, then `pnpm --version`                     |
+| FFmpeg          | `winget install Gyan.FFmpeg` (needed by media-core tests and the worker)                                     |
 
 ## 2. Line endings (before cloning)
 
@@ -76,10 +76,10 @@ This starts Postgres (pgvector pg16), Redis, MinIO and `minio-init` (bucket crea
 
 #25 adds two roles in migration `20261021110000_tenant_rls_roles`:
 
-| Role | Purpose | Env var |
-| --- | --- | --- |
-| `meetops_migrator` | Owns schema objects; runs `migrate deploy` and seed | `MIGRATION_DATABASE_URL` (Prisma `directUrl`) |
-| `meetops_app` | App runtime: DML only, `NOBYPASSRLS`, subject to forced RLS | `DATABASE_URL` |
+| Role               | Purpose                                                     | Env var                                       |
+| ------------------ | ----------------------------------------------------------- | --------------------------------------------- |
+| `meetops_migrator` | Owns schema objects; runs `migrate deploy` and seed         | `MIGRATION_DATABASE_URL` (Prisma `directUrl`) |
+| `meetops_app`      | App runtime: DML only, `NOBYPASSRLS`, subject to forced RLS | `DATABASE_URL`                                |
 
 Both roles are created as **NOLOGIN**. Per #25, passwords and LOGIN are set "out of band, never in SQL" (in migrations). Both URLs are required for `prisma validate` and `migrate`.
 
@@ -115,25 +115,25 @@ pnpm dev                                    # turbo run dev: every app with a de
 
 Or run one app per terminal:
 
-| App | Command | Port |
-| --- | --- | --- |
-| api | `pnpm --filter @meetops/api dev` | `PORT` (default 3000) |
-| web | `pnpm --filter @meetops/web dev` | 5173 |
-| worker | `pnpm --filter @meetops/worker dev` | None |
+| App                                      | Command                               | Port                           |
+| ---------------------------------------- | ------------------------------------- | ------------------------------ |
+| api                                      | `pnpm --filter @meetops/api dev`      | `PORT` (default 3000)          |
+| web                                      | `pnpm --filter @meetops/web dev`      | 5173                           |
+| worker                                   | `pnpm --filter @meetops/worker dev`   | None                           |
 | realtime **(requires PR #16, unmerged)** | `pnpm --filter @meetops/realtime dev` | `REALTIME_PORT` (default 4001) |
 
 ## 8. Port conflicts
 
-| Port | Service | Variable |
-| --- | --- | --- |
-| 5432 | Postgres | `POSTGRES_PORT` |
-| 6379 | Redis | `REDIS_PORT` |
-| 9000 / 9001 | MinIO API / console | fixed on `main`; `MINIO_API_PORT` / `MINIO_CONSOLE_PORT` **(requires PR #7, unmerged)** |
-| 3000 | api | `PORT` in code; `API_PORT` in #7's compose |
-| 5173 | web (Vite) | `WEB_PORT` (#7, #9) |
-| 8080 | web container | `WEB_APP_PORT` **(requires PR #7, unmerged)** |
-| 4001 | realtime | `REALTIME_PORT` **(requires PR #16, unmerged)** |
-| 11434 / 8001 | Ollama / local STT (optional profiles) | fixed |
+| Port         | Service                                | Variable                                                                                |
+| ------------ | -------------------------------------- | --------------------------------------------------------------------------------------- |
+| 5432         | Postgres                               | `POSTGRES_PORT`                                                                         |
+| 6379         | Redis                                  | `REDIS_PORT`                                                                            |
+| 9000 / 9001  | MinIO API / console                    | fixed on `main`; `MINIO_API_PORT` / `MINIO_CONSOLE_PORT` **(requires PR #7, unmerged)** |
+| 3000         | api                                    | `PORT` in code; `API_PORT` in #7's compose                                              |
+| 5173         | web (Vite)                             | `WEB_PORT` (#7, #9)                                                                     |
+| 8080         | web container                          | `WEB_APP_PORT` **(requires PR #7, unmerged)**                                           |
+| 4001         | realtime                               | `REALTIME_PORT` **(requires PR #16, unmerged)**                                         |
+| 11434 / 8001 | Ollama / local STT (optional profiles) | fixed                                                                                   |
 
 Find what's holding a port:
 
