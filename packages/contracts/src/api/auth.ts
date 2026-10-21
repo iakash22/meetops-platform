@@ -5,9 +5,11 @@ import { Membership, Organization, Role, User } from '../domain/org.js';
 const Email = Type.String({ format: 'email', maxLength: 320 });
 /** Minimum 12 characters (security review of PR #17). */
 const Password = Type.String({ minLength: 12, maxLength: 128 });
+/** Login accepts any non-empty password (max 128) so the policy is not revealed and legacy users are not locked out. */
+const LoginPassword = Type.String({ minLength: 1, maxLength: 128 });
 const strict = { additionalProperties: false } as const;
 
-export const LoginRequest = Type.Object({ email: Email, password: Password }, strict);
+export const LoginRequest = Type.Object({ email: Email, password: LoginPassword }, strict);
 export type LoginRequest = Static<typeof LoginRequest>;
 
 export const SignupRequest = Type.Object(
@@ -25,13 +27,13 @@ export type ForgotPasswordRequest = Static<typeof ForgotPasswordRequest>;
  * There is no bearer token in the body. The session lives only in a
  * `__Host-` prefixed, HttpOnly, Secure, SameSite cookie set by the API.
  * Clients send `csrfToken` back in the `x-csrf-token` header on state-changing requests.
- * `activeOrganizationId` and `role` are set by the server from the membership, never by the client.
+ * `activeOrganizationId` and `role` are set by the server from the membership, never by the client. Both are null when the user has no organization membership yet (both null or both set).
  */
 export const AuthSession = Type.Object({
   user: User,
   csrfToken: Type.String({ minLength: 16 }),
-  activeOrganizationId: Id,
-  role: Role,
+  activeOrganizationId: Type.Union([Id, Type.Null()]),
+  role: Type.Union([Role, Type.Null()]),
   expiresAt: Type.Optional(IsoDateTime),
   organizations: Type.Array(Organization),
   memberships: Type.Optional(Type.Array(Membership)),

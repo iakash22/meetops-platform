@@ -19,17 +19,28 @@ While the version is `0.x`, a minor bump may contain breaking changes (ADR-003).
   `Transcript.provider` and `providerJobId`, `TranscriptSegment.id`.
 - Static types for `MeetingSource`, `TaskStatus`, `TaskPriority`.
 - `AUTH_FAILED` error code.
-- `EmailTemplateId` (`invite`, `verify_email`, `reset_password`, `meeting_summary`).
+- Email: `EMAIL_QUEUE` (`'email'`), `EMAIL_JOB_RETENTION` (removeOnComplete `{count:100, age:3600}`, removeOnFail
+  `{count:500, age:86400}`), `EMAIL_TEMPLATE_IDS` / `EmailTemplateId` (`verification`, `password-reset`, `invitation`,
+  `task-assigned`, `meeting-summary`), `EmailRecipientRef`, `OPAQUE_ID_PATTERN`, and the advisory
+  `EMAIL_TEMPLATE_RECIPIENT` / `expectedRecipientKind()` (invitation→invitationId, others→userId).
+- `WriteApproval { approvalId, organizationId, approverUserId, payloadHash (sha256 hex), approvedAt? }`.
 - Media limits: `MAX_MEDIA_BYTES` (2,000,000,000 bytes), `ALLOWED_MEDIA_MIME_TYPES` and the `MediaMimeType` schema.
 - `@meetops/contracts/legacy` subpath export.
 
-### Changed (BREAKING)
+### Changed
+
+- `IntegrationIssue` (alias `IntegrationIssueRecord`) is tenant-scoped: adds `organizationId`, `integrationId`, `provider` (`github`|`jira`, replaces free-form `integration`), optional `lastKnownStatus`; strict. Unique on (organizationId, provider, externalId). (BREAKING)
 
 - All `Id`s are `format: uuid`.
 - `AuthSession`: `accessToken` removed (the session is an `__Host-` HttpOnly cookie). Added `csrfToken`,
   `activeOrganizationId` and `role`.
 - Passwords must be 12–128 characters. Request schemas reject unknown properties.
-- `EmailJobPayload` carries ids only and is discriminated on `templateId`: `invite` requires `invitationId`, and every other template requires `userId`.
+- `EmailJobPayload` now matches the Integrations shape (PR #11, queue `email`): `{ jobVersion: 1, kind: 'send_email', organizationId,
+idempotencyKey (opaque `^[A-Za-z0-9_-]+$`, 1–200), requestId?, templateId, recipient: {userId} | {invitationId},
+refs? (≤10 opaque id pairs), locale? (BCP-47-ish, ≤35) }`. Every level rejects extra properties, and the payload carries no addresses,
+  variables, URLs or tokens. The schema doesn't tie the template to the recipient kind; the worker enforces that.
+- Job versioning: every queue payload uses `jobVersion`. None used `version`, so nothing needed reconciling. The other queues
+  are unchanged, and their `idempotencyKey` is still any non-empty string.
 - `ApiErrorEnvelope.error.requestId` is required.
 - `Recording.file` is a `PublicFileObject`. `FileObject` is internal to api and worker.
 - `Report`: structured `summary`, `decisions`, `risks` and `actionItems`. `modelRouteId` is replaced by `aiRunId` (nullable).
@@ -41,6 +52,13 @@ While the version is `0.x`, a minor bump may contain breaking changes (ADR-003).
 
 - Upload limits: `CreateUploadRequest.sizeBytes` and recording sessions are capped at 2 GB (`MAX_UPLOAD_BYTES` = `MAX_RECORDING_SESSION_BYTES` = 2,000,000,000).
   `mimeType` must be on the explicit allowlist, optionally with a `;codecs=` parameter. Patterns like `audio/*` are no longer accepted.
+
+- Recording chunks (Security B1 on #38):
+  - `ChunkUploadUrlRequest` requires `sizeBytes` (1..`MAX_CHUNK_BYTES`) and accepts an optional `sha256` (lowercase hex). The API signs
+    Content-Length and the checksum into `upload.headers`, and refuses once the running total would exceed `MAX_RECORDING_SESSION_BYTES`.
+  - `CompleteRecordingSessionRequest.chunks?: [{ seq, sha256, sizeBytes? }]` (`CompletedChunk`). The server verifies there are no seq gaps, and
+    checks each chunk's size and the total.
+  - `MAX_RECORDING_CHUNKS` is lowered from 100,000 to 10,000, with a new alias `MAX_CHUNKS`. `seq` must be at most `MAX_CHUNKS - 1`.
 
 ### Deprecated
 
