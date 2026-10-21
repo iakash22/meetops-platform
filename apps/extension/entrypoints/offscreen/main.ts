@@ -1,4 +1,6 @@
 /// <reference types="chrome" />
+import { HEARTBEAT_INTERVAL_MS } from '../../src/lib/background-handler.js';
+import { ChunkStore } from '../../src/lib/chunk-store.js';
 import { isOffscreenMessage, type OffscreenToBackground } from '../../src/lib/messages.js';
 import { startRecording, type RecorderLike, type RecordingHandle } from '../../src/lib/recorder.js';
 import { StubUploadClient } from '../../src/lib/upload.js';
@@ -7,6 +9,8 @@ import { StubUploadClient } from '../../src/lib/upload.js';
 const client = new StubUploadClient();
 let handle: RecordingHandle | undefined;
 let audioCtx: AudioContext | undefined;
+let heartbeat: ReturnType<typeof setInterval> | undefined;
+let storePromise: Promise<ChunkStore> | undefined;
 
 const emit = (msg: OffscreenToBackground) => {
   void chrome.runtime.sendMessage(msg).catch(() => undefined);
@@ -14,6 +18,7 @@ const emit = (msg: OffscreenToBackground) => {
 
 async function start(streamId: string, startedAt: number) {
   if (handle) throw new Error('Already recording');
+  const store = await (storePromise ??= ChunkStore.open());
   const constraints = {
     audio: { mandatory: { chromeMediaSource: 'tab', chromeMediaSourceId: streamId } },
     video: false,
@@ -25,11 +30,13 @@ async function start(streamId: string, startedAt: number) {
   handle = await startRecording({
     stream,
     client,
+    store,
     startedAt,
     createRecorder: (s, mimeType) => new MediaRecorder(s, { mimeType }) as unknown as RecorderLike,
     events: {
       onStarted: (sessionId) => emit({ target: 'background', type: 'REC_STARTED', sessionId }),
       onChunk: (seq) => emit({ target: 'background', type: 'REC_CHUNK', seq }),
+      onStorage: (event) => emit({ target: 'background', type: 'REC_STORAGE', event }),
       onStopped: (chunkCount) => {
         cleanup();
         emit({ target: 'background', type: 'REC_STOPPED', chunkCount });
@@ -40,10 +47,17 @@ async function start(streamId: string, startedAt: number) {
       },
     },
   });
+  const sessionId = handle.sessionId;
+  heartbeat = setInterval(
+    () => emit({ target: 'background', type: 'REC_HEARTBEAT', sessionId }),
+    HEARTBEAT_INTERVAL_MS,
+  );
 }
 
 function cleanup() {
   handle = undefined;
+  if (heartbeat) clearInterval(heartbeat);
+  heartbeat = undefined;
   void audioCtx?.close();
   audioCtx = undefined;
 }

@@ -1,4 +1,7 @@
-import { ChunkQueue, type UploadClient } from './upload.js';
+import type { ChunkStore } from './chunk-store.js';
+import { drainQueue } from './drain.js';
+import type { StorageEvent } from './messages.js';
+import type { UploadClient } from './upload.js';
 
 export const MIME_TYPE = 'audio/webm;codecs=opus';
 export const TIMESLICE_MS = 5000;
@@ -6,6 +9,7 @@ export const TIMESLICE_MS = 5000;
 export interface RecorderEvents {
   onStarted(sessionId: string): void;
   onChunk(seq: number): void;
+  onStorage(event: StorageEvent): void;
   onStopped(chunkCount: number): void;
   onError(error: string): void;
 }
@@ -21,16 +25,19 @@ export interface RecorderLike {
 }
 
 export interface RecordingHandle {
+  sessionId: string;
   stop(): void;
 }
 
 /**
- * Starts MediaRecorder on an already-obtained stream and pipes timesliced
- * webm/opus chunks into the upload client in sequence order.
+ * Starts MediaRecorder on an already-obtained stream. Every timesliced webm/opus chunk is
+ * first persisted to the IndexedDB queue (respecting the size cap), then the queue is
+ * drained through the upload client. Writes are serialised so seq order is preserved.
  */
 export async function startRecording(opts: {
   stream: MediaStream;
   client: UploadClient;
+  store: ChunkStore;
   createRecorder: (stream: MediaStream, mimeType: string) => RecorderLike;
   events: RecorderEvents;
   startedAt: number;
@@ -38,17 +45,43 @@ export async function startRecording(opts: {
   timeslice?: number;
 }): Promise<RecordingHandle> {
   const now = opts.now ?? Date.now;
-  const { sessionId } = await opts.client.initSession({
-    mimeType: MIME_TYPE,
-    startedAt: opts.startedAt,
-    source: 'tab',
-  });
-  const queue = new ChunkQueue(opts.client, sessionId, (seq) => opts.events.onChunk(seq));
+  const meta = { mimeType: MIME_TYPE, startedAt: opts.startedAt, source: 'tab' as const };
+  const { sessionId } = await opts.client.initSession(meta);
+  await opts.store.putSession({ sessionId, meta, completed: false });
   const rec = opts.createRecorder(opts.stream, MIME_TYPE);
   const stopTracks = () => opts.stream.getTracks().forEach((t) => t.stop());
+  let seq = 0;
+  let tail: Promise<void> = Promise.resolve();
 
   rec.ondataavailable = (e) => {
-    if (e.data.size > 0) queue.push(e.data);
+    if (e.data.size === 0) return;
+    const mySeq = seq++;
+    const data = e.data;
+    tail = tail.then(async () => {
+      const res = await opts.store.putChunk({
+        sessionId,
+        seq: mySeq,
+        data: await data.arrayBuffer(),
+        mimeType: MIME_TYPE,
+        createdAt: now(),
+      });
+      if (!res.stored) {
+        opts.events.onStorage({ kind: 'refused', seq: mySeq });
+        return;
+      }
+      if (res.evictedCount > 0) {
+        opts.events.onStorage({
+          kind: 'evicted',
+          count: res.evictedCount,
+          bytes: res.evictedBytes,
+        });
+      }
+      opts.events.onChunk(mySeq);
+      await drainQueue(opts.store, opts.client, sessionId);
+    });
+    tail = tail.catch((err: unknown) => {
+      opts.events.onError(err instanceof Error ? err.message : String(err));
+    });
   };
   rec.onerror = (e) => {
     stopTracks();
@@ -58,14 +91,14 @@ export async function startRecording(opts: {
     stopTracks();
     void (async () => {
       try {
-        await queue.flush();
-        await opts.client.complete(sessionId, {
-          chunkCount: queue.count,
+        await tail;
+        await opts.store.finalizeSession(sessionId, {
+          chunkCount: seq,
           durationMs: now() - opts.startedAt,
         });
-        opts.events.onStopped(queue.count);
+        await drainQueue(opts.store, opts.client, sessionId);
+        opts.events.onStopped(seq);
       } catch (err) {
-        await opts.client.abort?.(sessionId, String(err)).catch(() => undefined);
         opts.events.onError(err instanceof Error ? err.message : String(err));
       }
     })();
@@ -80,6 +113,7 @@ export async function startRecording(opts: {
   rec.start(opts.timeslice ?? TIMESLICE_MS);
   opts.events.onStarted(sessionId);
   return {
+    sessionId,
     stop() {
       if (rec.state !== 'inactive') rec.stop();
     },

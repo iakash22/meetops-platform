@@ -1,6 +1,9 @@
+import { IDBFactory } from 'fake-indexeddb';
+import 'fake-indexeddb/auto';
 import { describe, expect, it, vi } from 'vitest';
-import { startRecording, type RecorderLike } from '../src/lib/recorder.js';
-import { ChunkQueue, StubUploadClient, type UploadClient } from '../src/lib/upload.js';
+import { ChunkStore } from '../src/lib/chunk-store.js';
+import { MIME_TYPE, startRecording, type RecorderLike } from '../src/lib/recorder.js';
+import { StubUploadClient } from '../src/lib/upload.js';
 
 class FakeRecorder implements RecorderLike {
   state = 'inactive';
@@ -26,91 +29,113 @@ const fakeStream = () => {
   return { stream: { getTracks: () => [track] } as unknown as MediaStream, track };
 };
 
-const tick = () => new Promise((r) => setTimeout(r, 0));
+const settle = async () => {
+  for (let i = 0; i < 50; i++) await new Promise((r) => setTimeout(r, 0));
+};
 
-describe('ChunkQueue', () => {
-  it('stub complete reports the contracts RecordingStatus', async () => {
-    const client = new StubUploadClient();
-    const { sessionId } = await client.initSession({ mimeType: 'x', startedAt: 0, source: 'tab' });
-    await expect(client.complete(sessionId, { chunkCount: 0, durationMs: 0 })).resolves.toEqual({
+const events = () => ({
+  onStarted: vi.fn(),
+  onChunk: vi.fn(),
+  onStorage: vi.fn(),
+  onStopped: vi.fn(),
+  onError: vi.fn(),
+});
+
+describe('StubUploadClient', () => {
+  it('complete reports the contracts RecordingStatus; resume is idempotent', async () => {
+    const client = new StubUploadClient(() => 'x');
+    const { sessionId } = await client.initSession({ mimeType: 'm', startedAt: 0, source: 'tab' });
+    await client.resumeSession(sessionId, { mimeType: 'm', startedAt: 0, source: 'tab' });
+    await client.uploadChunk(sessionId, 0, new Blob(['a']));
+    expect(client.sessions.get('x')!.chunks.size).toBe(1);
+    await expect(client.complete(sessionId, { chunkCount: 1, durationMs: 0 })).resolves.toEqual({
       status: 'uploaded',
     });
-  });
-
-  it('uploads chunks in seq order', async () => {
-    const client = new StubUploadClient();
-    const { sessionId } = await client.initSession({ mimeType: 'x', startedAt: 0, source: 'tab' });
-    const q = new ChunkQueue(client, sessionId);
-    q.push(new Blob(['a']));
-    q.push(new Blob(['bb']));
-    await q.flush();
-    expect([...client.sessions.get(sessionId)!.chunks.entries()]).toEqual([
-      [0, 1],
-      [1, 2],
-    ]);
-  });
-
-  it('surfaces upload failures on flush', async () => {
-    const client: UploadClient = {
-      initSession: vi.fn(),
-      uploadChunk: vi.fn().mockRejectedValue(new Error('503')),
-      complete: vi.fn(),
-    };
-    const q = new ChunkQueue(client, 's');
-    q.push(new Blob(['a']));
-    await expect(q.flush()).rejects.toThrow('503');
   });
 });
 
 describe('startRecording', () => {
-  it('records webm/opus on a timeslice, uploads chunks and completes', async () => {
-    const client = new StubUploadClient();
+  it('persists each webm/opus chunk to IndexedDB, uploads in order, finalizes and completes', async () => {
+    const store = await ChunkStore.open({ maxBytes: 1000, policy: 'refuse' }, new IDBFactory());
+    const client = new StubUploadClient(() => 'sess');
+    const upload = vi.spyOn(client, 'uploadChunk');
     const rec = new FakeRecorder();
     const { stream, track } = fakeStream();
-    const events = { onStarted: vi.fn(), onChunk: vi.fn(), onStopped: vi.fn(), onError: vi.fn() };
+    const ev = events();
     let mime = '';
     const h = await startRecording({
       stream,
       client,
-      events,
+      store,
+      events: ev,
       startedAt: 0,
       now: () => 9000,
       timeslice: 1000,
       createRecorder: (_s, m) => ((mime = m), rec),
     });
-    expect(mime).toBe('audio/webm;codecs=opus');
+    expect(mime).toBe(MIME_TYPE);
     expect(rec.timeslice).toBe(1000);
-    expect(events.onStarted).toHaveBeenCalledWith('stub-1');
+    expect(ev.onStarted).toHaveBeenCalledWith('sess');
     rec.emit('one');
     rec.emit('two');
     h.stop();
-    await tick();
-    await tick();
-    expect(events.onChunk).toHaveBeenCalledTimes(2);
-    expect(events.onStopped).toHaveBeenCalledWith(2);
-    expect(client.sessions.get('stub-1')!.completed).toEqual({ chunkCount: 2, durationMs: 9000 });
+    await settle();
+    expect(ev.onChunk.mock.calls.map((c) => c[0])).toEqual([0, 1]);
+    expect(upload.mock.calls.map((c) => c[1])).toEqual([0, 1]);
+    expect(ev.onStopped).toHaveBeenCalledWith(2);
+    expect(client.sessions.get('sess')!.completed).toEqual({ chunkCount: 2, durationMs: 9000 });
+    const stored = await store.listChunks('sess');
+    expect(stored.map((c) => [c.seq, c.size, c.uploaded])).toEqual([
+      [0, 3, true],
+      [1, 3, true],
+    ]);
+    expect((await store.getSession('sess'))!.completed).toBe(true);
     expect(track.stop).toHaveBeenCalled();
   });
 
-  it('aborts the upload session and reports an error if a chunk fails', async () => {
-    const client = new StubUploadClient();
+  it('keeps chunks queued when upload fails, so a later drain can retry', async () => {
+    const store = await ChunkStore.open({ maxBytes: 1000, policy: 'refuse' }, new IDBFactory());
+    const client = new StubUploadClient(() => 'sess');
     vi.spyOn(client, 'uploadChunk').mockRejectedValue(new Error('network'));
-    const abort = vi.spyOn(client, 'abort');
     const rec = new FakeRecorder();
-    const events = { onStarted: vi.fn(), onChunk: vi.fn(), onStopped: vi.fn(), onError: vi.fn() };
+    const ev = events();
     const h = await startRecording({
       stream: fakeStream().stream,
       client,
-      events,
+      store,
+      events: ev,
       startedAt: 0,
       createRecorder: () => rec,
     });
     rec.emit('x');
     h.stop();
-    await tick();
-    await tick();
-    expect(events.onError).toHaveBeenCalledWith('network');
-    expect(abort).toHaveBeenCalled();
-    expect(events.onStopped).not.toHaveBeenCalled();
+    await settle();
+    expect(ev.onStopped).toHaveBeenCalledWith(1);
+    expect((await store.listChunks('sess')).map((c) => c.uploaded)).toEqual([false]);
+    expect((await store.getSession('sess'))!.completed).toBe(false);
+  });
+
+  it('reports eviction and refusal through onStorage', async () => {
+    const store = await ChunkStore.open({ maxBytes: 4, policy: 'evict-oldest' }, new IDBFactory());
+    const client = new StubUploadClient(() => 'sess');
+    const rec = new FakeRecorder();
+    const ev = events();
+    await startRecording({
+      stream: fakeStream().stream,
+      client,
+      store,
+      events: ev,
+      startedAt: 0,
+      createRecorder: () => rec,
+    });
+    rec.emit('abc');
+    rec.emit('de');
+    rec.emit('toolong');
+    await settle();
+    expect(ev.onStorage.mock.calls.map((c) => c[0])).toEqual([
+      { kind: 'evicted', count: 1, bytes: 3 },
+      { kind: 'refused', seq: 2 },
+    ]);
+    expect(ev.onChunk.mock.calls.map((c) => c[0])).toEqual([0, 1]);
   });
 });
