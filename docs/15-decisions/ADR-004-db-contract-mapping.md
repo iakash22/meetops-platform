@@ -51,11 +51,41 @@ unions. Adding a value is a contracts change, handled under ADR-003.
 ### 3. Naming conventions
 
 - Models: PascalCase singular, with `@@map("snake_case_plural")`, e.g. `Task` maps to `tasks`.
-- Fields: camelCase in Prisma, `@map("snake_case")` in columns, e.g. `organizationId` maps to `organization_id`.
+- Fields: camelCase in Prisma, `@map("snake_case")` in columns (see 3a; `organizationId` maps to `org_id`).
 - Contract field names equal Prisma field names wherever the meaning is the same. Use `organizationId`,
   never `orgId`. Use `sizeBytes` and `mimeType` on FileObject.
 - Timestamps are `createdAt` / `updatedAt` (`DateTime @db.Timestamptz`). Contracts serialize them as ISO-8601 strings.
 - IDs are opaque strings (cuid/uuid). Every tenant-scoped model has `organizationId`.
+
+### 3a. Column mapping for camelCase fields (`organizationId` → `org_id`)
+
+Prisma and contract field names stay camelCase and identical, e.g. `organizationId`. Only the physical
+column name differs, set explicitly with `@map`. The tenant key uses the short column name `org_id`:
+
+```prisma
+model Task {
+  id             String   @id @default(cuid())
+  organizationId String   @map("org_id")
+  meetingId      String?  @map("meeting_id")
+  assigneeId     String?  @map("assignee_id")
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt      DateTime @updatedAt      @map("updated_at") @db.Timestamptz
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  @@index([organizationId, createdAt])
+  @@map("tasks")
+}
+```
+
+Rules:
+
+- Every multi-word field gets an explicit `@map("snake_case")`. Do not rely on the default column naming.
+- Foreign keys use `<entity>_id` (`meeting_id`, `file_object_id`, `user_id`). The single exception is
+  `organizationId` → `org_id`, applied the same way on every tenant-scoped table.
+- Relation fields (`organization`, `meeting`) are not columns and have no `@map`.
+- Indexes and constraints reference Prisma field names. Name them with `map:` when the SQL name matters,
+  e.g. `@@index([organizationId], map: "tasks_org_id_idx")`.
+- `orgId` must not appear in Prisma fields, contracts, DTOs or API params. Use `:organizationId` in routes.
+- Mappers never rename fields. If a column needs a different name, change `@map`, not the DTO.
 
 ### 4. DTO mappers live in `apps/api/src/mappers`
 
