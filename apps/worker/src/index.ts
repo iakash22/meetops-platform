@@ -6,7 +6,7 @@ const QUEUE_NAME = 'example';
 async function main() {
   const worker = createWorker<{ message: string }, string>(
     QUEUE_NAME,
-    async (job: any) => {
+    async (job) => {
       logger.info({ jobId: job.id, data: job.data }, 'processing job');
       return `processed: ${job.data.message}`;
     },
