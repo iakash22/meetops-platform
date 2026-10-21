@@ -23,7 +23,7 @@ export const User = Type.Object({
   id: Id,
   email: Type.String({ format: 'email' }),
   name: Type.Optional(Type.String({ maxLength: 200 })),
-  avatarUrl: Type.Optional(Type.String()),
+  avatarUrl: Type.Optional(Type.String({ format: 'uri', pattern: '^https://', maxLength: 2048 })),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
 });

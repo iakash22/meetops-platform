@@ -37,7 +37,13 @@ export const ExtractedTask = Type.Object({
   reportId: Id,
   title: Type.String({ minLength: 1 }),
   description: Type.Optional(Type.String()),
-  assigneeHint: Type.Optional(Type.String()),
+  /**
+   * UNTRUSTED: free text produced by the LLM from meeting content. Never use it as a user id or for
+   * authorization or lookups without human confirmation. Escape it when rendering.
+   */
+  assigneeHint: Type.Optional(
+    Type.String({ maxLength: 200, description: 'UNTRUSTED LLM output; display only, never used for authz or identity' }),
+  ),
   dueHint: Type.Optional(Type.String()),
   confidence: Type.Number({ minimum: 0, maximum: 1 }),
   sourceSegmentIndexes: Type.Array(Type.Integer({ minimum: 0 })),
@@ -52,7 +58,7 @@ export const IntegrationIssue = Type.Object({
   /** Integration key, e.g. "linear", "jira", "github". */
   integration: Type.String({ minLength: 1 }),
   externalId: Type.String(),
-  externalUrl: Type.Optional(Type.String()),
+  externalUrl: Type.Optional(Type.String({ format: 'uri', pattern: '^https://', maxLength: 2048 })),
   syncedAt: Type.Optional(IsoDateTime),
   createdAt: IsoDateTime,
 });
