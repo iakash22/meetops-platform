@@ -298,3 +298,17 @@ describe('upload URL and signed-header safety', () => {
     await expect(c.initSession({ ...init, meetingId: 'meeting-1' })).rejects.toThrow(/meetingId/);
   });
 });
+
+describe('signed headers: empty values', () => {
+  it('rejects an empty-string content-length', () => {
+    expect(() => checkSignedHeaders({ 'content-length': '' }, 3, undefined)).toThrow();
+    expect(() => checkSignedHeaders({ 'Content-Length': '   ' }, 3, undefined)).toThrow();
+  });
+
+  it('rejects an empty x-amz-checksum-sha256 when sha256 was sent', async () => {
+    const sha = await sha256Hex(new Blob(['abc']));
+    expect(() =>
+      checkSignedHeaders({ 'content-length': '3', 'x-amz-checksum-sha256': '' }, 3, sha),
+    ).toThrow();
+  });
+});

@@ -34,3 +34,12 @@ describe('sender checks', () => {
     });
   });
 });
+
+describe('popup sender must not be a tab', () => {
+  it('rejects popup.html opened as a normal tab', () => {
+    expect(classifySender({ id: 'ext', url: urls.popupUrl, tab: { id: 5 } }, urls).fromPopup).toBe(
+      false,
+    );
+    expect(classifySender({ id: 'ext', url: urls.popupUrl }, urls).fromPopup).toBe(true);
+  });
+});
