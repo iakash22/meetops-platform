@@ -2,6 +2,8 @@
 export interface RawSender {
   id?: string | undefined;
   url?: string | undefined;
+  /** Set when the sender is a page in a tab (e.g. popup.html opened as a normal tab). */
+  tab?: unknown;
 }
 
 export interface ExtensionUrls {
@@ -16,7 +18,8 @@ export function classifySender(sender: RawSender, urls: ExtensionUrls) {
   const fromSelf = sender.id === urls.runtimeId;
   return {
     fromSelf,
-    fromPopup: fromSelf && sender.url === urls.popupUrl,
+    // The real action popup has no tab; popup.html opened as a tab has the same URL but a tab.
+    fromPopup: fromSelf && sender.url === urls.popupUrl && sender.tab === undefined,
     fromOffscreen: fromSelf && sender.url === urls.offscreenUrl,
     fromBackground: fromSelf && sender.url === urls.backgroundUrl,
   };

@@ -249,3 +249,23 @@ describe('security review fixes', () => {
     expect(ctx.deps.setBadge).toHaveBeenLastCalledWith('!');
   });
 });
+
+describe('offscreen timeout', () => {
+  it('a hung OFFSCREEN_START times out, goes to error, closes offscreen and frees the lock', async () => {
+    const { serialized } = await import('../src/lib/background-handler.js');
+    const { deps } = makeDeps();
+    deps.sendToOffscreen.mockImplementation(() => new Promise(() => undefined));
+    const d = { ...deps, offscreenTimeoutMs: 20 };
+    const h = serialized(handleBackgroundMessage);
+    await h(d, bg({ type: 'ACK_CONSENT', tabId: 1 }), popup);
+    const r = await h(d, bg({ type: 'START_RECORDING', tabId: 1, streamId: 'hang' }), popup);
+    expect(r).toEqual({ ok: false, error: 'Offscreen recorder did not respond within 0.02s' });
+    expect(deps.closeOffscreen).toHaveBeenCalled();
+    expect(deps.setBadge).toHaveBeenLastCalledWith('!');
+    expect(await h(d, bg({ type: 'GET_STATUS' }), popup)).toMatchObject({
+      ok: true,
+      status: 'idle',
+      lastError: expect.stringContaining('did not respond'),
+    });
+  });
+});

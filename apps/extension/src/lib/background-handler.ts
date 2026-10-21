@@ -17,6 +17,23 @@ export interface BackgroundDeps {
   capturedTabIds: () => Promise<number[]>;
   /** Toolbar badge: 'REC' while recording, '' when idle. */
   setBadge: (text: string) => Promise<void>;
+  /** Override OFFSCREEN_TIMEOUT_MS (tests). */
+  offscreenTimeoutMs?: number;
+}
+
+/** Max wait for the offscreen document to answer, so a hung getUserMedia can't hold the SW lock. */
+export const OFFSCREEN_TIMEOUT_MS = 10_000;
+
+function sendOffscreen(deps: BackgroundDeps, msg: BackgroundToOffscreen): Promise<unknown> {
+  const ms = deps.offscreenTimeoutMs ?? OFFSCREEN_TIMEOUT_MS;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(
+      () => reject(new Error(`Offscreen recorder did not respond within ${ms / 1000}s`)),
+      ms,
+    );
+  });
+  return Promise.race([deps.sendToOffscreen(msg), timeout]).finally(() => clearTimeout(timer));
 }
 
 export interface SenderInfo {
@@ -92,7 +109,7 @@ export async function handleBackgroundMessage(
       await saveState(kv, next);
       try {
         await deps.ensureOffscreen();
-        await deps.sendToOffscreen({
+        await sendOffscreen(deps, {
           target: 'offscreen',
           type: 'OFFSCREEN_START',
           streamId: msg.streamId,
@@ -101,6 +118,8 @@ export async function handleBackgroundMessage(
       } catch (err) {
         const e = err instanceof Error ? err.message : String(err);
         await saveState(kv, { status: 'idle', lastError: e });
+        await deps.closeOffscreen().catch(() => undefined);
+        await deps.setBadge('!').catch(() => undefined);
         return fail(e);
       }
       return status(next);
@@ -111,7 +130,7 @@ export async function handleBackgroundMessage(
       const next: RecorderState = { ...state, status: 'stopping' };
       await saveState(kv, next);
       try {
-        await deps.sendToOffscreen({ target: 'offscreen', type: 'OFFSCREEN_STOP' });
+        await sendOffscreen(deps, { target: 'offscreen', type: 'OFFSCREEN_STOP' });
       } catch {
         // Offscreen doc gone (e.g. crashed): nothing is recording; reset.
         await saveState(kv, { status: 'idle', lastError: 'Recorder was not running' });
@@ -126,9 +145,9 @@ export async function handleBackgroundMessage(
       // Bind the stream to the consented tab: Chrome must report that exact tab as captured.
       const captured = await deps.capturedTabIds().catch(() => [] as number[]);
       if (!captured.includes(state.tabId)) {
-        await deps
-          .sendToOffscreen({ target: 'offscreen', type: 'OFFSCREEN_STOP' })
-          .catch(() => undefined);
+        await sendOffscreen(deps, { target: 'offscreen', type: 'OFFSCREEN_STOP' }).catch(
+          () => undefined,
+        );
         const err: RecorderState = {
           status: 'idle',
           lastError: 'Captured tab does not match the tab you consented to record; stopped.',
