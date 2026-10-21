@@ -19,5 +19,7 @@ Workspace: **MeetOps Engineering**.
 1. Create an app at https://api.slack.com/apps ("From scratch"), in the MeetOps Engineering workspace.
 2. Under **OAuth & Permissions**, add bot token scopes as needed, typically `chat:write`, `channels:read`, `channels:history`, and `chat:write.public` to post in channels the bot hasn't joined.
 3. Install the app to the workspace and invite the bot to the channels above (`/invite @<app-name>`).
-4. Store credentials only in local `.env` or the secret store. Suggested variable names: `SLACK_BOT_TOKEN`, `SLACK_SIGNING_SECRET`. (Not yet in `.env.example`; add them there with empty values when the integration lands.)
+4. Store credentials only in local `.env` or the secret store. Suggested variable names: `SLACK_BOT_TOKEN`, `SLACK_SIGNING_SECRET`. These are agent tooling credentials, not app config, so they don't go in `.env.example`.
 5. Record the request in `credential-requests.md`. Never record the token values.
+
+> **Agent tooling vs app config.** These are credentials for agent tooling (Grok Bot, `gh`, Slack bot), not application config. Don't add them to `.env.example`. The app's own GitHub integration env vars are owned by the Integrations (INT) agent.

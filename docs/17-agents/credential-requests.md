@@ -2,7 +2,9 @@
 
 Track every credential an agent needs. **Never record secret values** here, in commits, PRs, issues, Slack or logs. Record variable names and status only; values go in local `.env` files or the deployment secret store.
 
-Variable names match `.env.example`.
+Variable names for app services match `.env.example`. GitHub is the exception: `GITHUB_TOKEN` is an agent tooling credential.
+
+> **Agent tooling vs app config.** These are credentials for agent tooling (Grok Bot, `gh`, Slack bot), not application config. Don't add them to `.env.example`. The app's own GitHub integration env vars are owned by the Integrations (INT) agent.
 
 | Service       | Variables                                                                           | Reason                                           | Setup link                                | Scopes                                             | Blocking?     | What can continue                                                | Status   |
 | ------------- | ----------------------------------------------------------------------------------- | ------------------------------------------------ | ----------------------------------------- | -------------------------------------------------- | ------------- | ---------------------------------------------------------------- | -------- |
