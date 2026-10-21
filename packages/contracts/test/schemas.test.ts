@@ -49,8 +49,8 @@ describe('domain schemas', () => {
 
 describe('api schemas', () => {
   it('validates the error envelope', () => {
-    expect(Value.Check(ApiErrorEnvelope, { error: { code: 'NOT_FOUND', message: 'x' } })).toBe(true);
-    expect(Value.Check(ApiErrorEnvelope, { error: { code: 'NOPE', message: 'x' } })).toBe(false);
+    expect(Value.Check(ApiErrorEnvelope, { error: { code: 'NOT_FOUND', message: 'x', requestId: 'r1' } })).toBe(true);
+    expect(Value.Check(ApiErrorEnvelope, { error: { code: 'NOPE', message: 'x', requestId: 'r1' } })).toBe(false);
   });
   it('builds a cursor page schema', () => {
     const S = CursorPage(Membership);
