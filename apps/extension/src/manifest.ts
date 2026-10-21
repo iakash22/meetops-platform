@@ -12,12 +12,22 @@
  * - `storage`: required for chrome.storage.session, used to persist recorder
  *   and consent state across service-worker suspension. Session storage is
  *   in-memory, cleared on browser restart, and not exposed to content scripts.
+ * - `alarms`: a 30 s watchdog that wakes the (possibly suspended) service worker to
+ *   detect a dead offscreen recorder; heartbeats alone cannot detect silence.
+ * - `commands._execute_action`: keyboard shortcut to open the popup (an action
+ *   invocation, so it grants activeTab like a toolbar click). Not a permission.
  * - No `host_permissions` and no content scripts.
  */
 export const manifest = {
   name: 'MeetOps AI',
   description: 'Record meetings you are part of, with clear consent.',
-  permissions: ['activeTab', 'tabCapture', 'offscreen', 'storage'] as string[],
+  permissions: ['activeTab', 'tabCapture', 'offscreen', 'storage', 'alarms'] as string[],
   host_permissions: [] as string[],
+  commands: {
+    _execute_action: {
+      suggested_key: { default: 'Alt+Shift+M' },
+      description: 'Open MeetOps AI',
+    },
+  },
   action: { default_title: 'MeetOps AI' },
 };

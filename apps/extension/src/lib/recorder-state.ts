@@ -1,14 +1,21 @@
 import type { KV } from './storage.js';
 
+interface Common {
+  lastError?: string;
+  storageWarning?: string;
+}
+
 export type RecorderState =
-  | { status: 'idle'; lastError?: string }
-  | {
-      status: 'starting' | 'recording' | 'stopping';
+  | ({ status: 'idle' } & Common)
+  | ({
+      status: 'starting' | 'recording' | 'stopping' | 'error';
       tabId: number;
       sessionId: string;
       startedAt: number;
       chunks: number;
-    };
+      /** Last heartbeat from the offscreen document (ms epoch). */
+      lastHeartbeatAt: number;
+    } & Common);
 
 const KEY = 'recorder';
 

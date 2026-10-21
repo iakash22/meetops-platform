@@ -3,16 +3,29 @@ import {
   isBackgroundMessage,
   type BackgroundResponse,
   type BackgroundToOffscreen,
+  type StorageEvent,
 } from './messages.js';
 import { loadState, saveState, type RecorderState } from './recorder-state.js';
 import type { KV } from './storage.js';
+
+/** No heartbeat for this long while active => the offscreen recorder is considered dead. */
+export const HEARTBEAT_TIMEOUT_MS = 20_000;
+export const HEARTBEAT_INTERVAL_MS = 5_000;
 
 export interface BackgroundDeps {
   kv: KV;
   now: () => number;
   ensureOffscreen: () => Promise<void>;
   closeOffscreen: () => Promise<void>;
+  hasOffscreen: () => Promise<boolean>;
   sendToOffscreen: (msg: BackgroundToOffscreen) => Promise<unknown>;
+  /** Start/stop the periodic watchdog (chrome.alarms; survives SW suspension). */
+  startWatchdog: () => Promise<void>;
+  stopWatchdog: () => Promise<void>;
+  /** Mark a crashed session finalized in the chunk queue and drain it. */
+  finalizeAfterCrash: (sessionId: string, chunkCount: number, durationMs: number) => Promise<void>;
+  /** Toolbar badge, used to notify the user of an error without opening the popup. */
+  setBadge: (text: string) => Promise<void>;
 }
 
 export interface SenderInfo {
@@ -22,12 +35,73 @@ export interface SenderInfo {
   fromOffscreen: boolean;
 }
 
+const extras = (s: RecorderState) => ({
+  ...(s.lastError ? { lastError: s.lastError } : {}),
+  ...(s.storageWarning ? { storageWarning: s.storageWarning } : {}),
+});
+
 const status = (s: RecorderState): BackgroundResponse =>
   s.status === 'idle'
-    ? { ok: true, status: 'idle', ...(s.lastError ? { lastError: s.lastError } : {}) }
-    : { ok: true, status: s.status, tabId: s.tabId, startedAt: s.startedAt, chunks: s.chunks };
+    ? { ok: true, status: 'idle', ...extras(s) }
+    : {
+        ok: true,
+        status: s.status,
+        tabId: s.tabId,
+        startedAt: s.startedAt,
+        chunks: s.chunks,
+        ...extras(s),
+      };
 
 const fail = (error: string): BackgroundResponse => ({ ok: false, error });
+
+const mb = (bytes: number) => `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+
+export function describeStorageEvent(e: StorageEvent): string {
+  return e.kind === 'evicted'
+    ? `Local storage limit reached: ${e.count} oldest chunk(s) (${mb(e.bytes)}) were deleted before upload.`
+    : `Local storage limit reached: chunk #${e.seq} was not saved. Free space or stop recording.`;
+}
+
+/**
+ * Watchdog: if active and the offscreen doc is gone or silent, move to 'error', finalize the
+ * session so its queued chunks are uploaded later, and notify the user via the badge.
+ * The tab stream cannot be re-acquired without a new user gesture, so no auto-restart.
+ */
+export async function checkWatchdog(deps: BackgroundDeps): Promise<RecorderState> {
+  const state = await loadState(deps.kv);
+  if (state.status === 'idle' || state.status === 'error') return state;
+  const silentFor = deps.now() - state.lastHeartbeatAt;
+  const alive = silentFor <= HEARTBEAT_TIMEOUT_MS && (await deps.hasOffscreen());
+  if (alive) return state;
+  const next: RecorderState = {
+    ...state,
+    status: 'error',
+    lastError:
+      'Recording stopped unexpectedly (recorder not responding). Audio captured so far is kept and will be uploaded.',
+  };
+  await saveState(deps.kv, next);
+  await deps.stopWatchdog().catch(() => undefined);
+  await deps.closeOffscreen().catch(() => undefined);
+  if (state.sessionId) {
+    await deps
+      .finalizeAfterCrash(state.sessionId, state.chunks, deps.now() - state.startedAt)
+      .catch(() => undefined);
+  }
+  await deps.setBadge('!').catch(() => undefined);
+  return next;
+}
+
+async function toIdle(deps: BackgroundDeps, prev: RecorderState, lastError?: string) {
+  const next: RecorderState = {
+    status: 'idle',
+    ...(lastError ? { lastError } : {}),
+    ...(prev.storageWarning ? { storageWarning: prev.storageWarning } : {}),
+  };
+  await saveState(deps.kv, next);
+  await deps.stopWatchdog().catch(() => undefined);
+  await deps.closeOffscreen().catch(() => undefined);
+  return next;
+}
 
 export async function handleBackgroundMessage(
   deps: BackgroundDeps,
@@ -37,23 +111,32 @@ export async function handleBackgroundMessage(
   if (!sender.fromSelf) return fail('Untrusted sender');
   if (!isBackgroundMessage(msg)) return fail('Unknown or malformed message');
   const { kv } = deps;
-  const state = await loadState(kv);
 
   const isEvent = msg.type.startsWith('REC_');
   if (isEvent && !sender.fromOffscreen)
     return fail('Recorder events must come from the offscreen document');
   if (!isEvent && sender.fromOffscreen) return fail('Offscreen document cannot issue commands');
 
+  // Popup commands run the watchdog first so a dead recorder is reported promptly.
+  const state = isEvent ? await loadState(kv) : await checkWatchdog(deps);
+
   switch (msg.type) {
     case 'GET_STATUS':
       return status(state);
+
+    case 'DISMISS_WARNING': {
+      const next = { ...state };
+      delete next.storageWarning;
+      await saveState(kv, next);
+      return status(next);
+    }
 
     case 'ACK_CONSENT':
       await recordConsent(kv, msg.tabId, deps.now());
       return status(state);
 
     case 'START_RECORDING': {
-      if (state.status !== 'idle') return fail('Already recording');
+      if (state.status !== 'idle' && state.status !== 'error') return fail('Already recording');
       const consent = await consumeConsent(kv, msg.tabId, deps.now());
       if (!consent.ok) return fail(consent.reason);
       const startedAt = deps.now();
@@ -63,10 +146,13 @@ export async function handleBackgroundMessage(
         sessionId: '',
         startedAt,
         chunks: 0,
+        lastHeartbeatAt: startedAt,
       };
       await saveState(kv, next);
+      await deps.setBadge('').catch(() => undefined);
       try {
         await deps.ensureOffscreen();
+        await deps.startWatchdog();
         await deps.sendToOffscreen({
           target: 'offscreen',
           type: 'OFFSCREEN_START',
@@ -75,7 +161,7 @@ export async function handleBackgroundMessage(
         });
       } catch (err) {
         const e = err instanceof Error ? err.message : String(err);
-        await saveState(kv, { status: 'idle', lastError: e });
+        await toIdle(deps, next, e);
         return fail(e);
       }
       return status(next);
@@ -83,40 +169,67 @@ export async function handleBackgroundMessage(
 
     case 'STOP_RECORDING': {
       if (state.status === 'idle') return status(state);
+      if (state.status === 'error') {
+        await deps.setBadge('').catch(() => undefined);
+        return status(await toIdle(deps, state));
+      }
       const next: RecorderState = { ...state, status: 'stopping' };
       await saveState(kv, next);
       try {
         await deps.sendToOffscreen({ target: 'offscreen', type: 'OFFSCREEN_STOP' });
       } catch {
-        // Offscreen doc gone (e.g. crashed): nothing is recording; reset.
-        await saveState(kv, { status: 'idle', lastError: 'Recorder was not running' });
-        await deps.closeOffscreen().catch(() => undefined);
-        return status(await loadState(kv));
+        // Offscreen doc gone: finalize what was queued and reset.
+        if (state.sessionId) {
+          await deps
+            .finalizeAfterCrash(state.sessionId, state.chunks, deps.now() - state.startedAt)
+            .catch(() => undefined);
+        }
+        return status(await toIdle(deps, state, 'Recorder was not running'));
       }
       return status(next);
     }
 
     case 'REC_STARTED': {
       if (state.status !== 'starting') return status(state);
-      const next: RecorderState = { ...state, status: 'recording', sessionId: msg.sessionId };
+      const next: RecorderState = {
+        ...state,
+        status: 'recording',
+        sessionId: msg.sessionId,
+        lastHeartbeatAt: deps.now(),
+      };
+      await saveState(kv, next);
+      return status(next);
+    }
+
+    case 'REC_HEARTBEAT': {
+      if (state.status === 'idle' || state.status === 'error') return status(state);
+      const next: RecorderState = { ...state, lastHeartbeatAt: deps.now() };
       await saveState(kv, next);
       return status(next);
     }
 
     case 'REC_CHUNK': {
-      if (state.status === 'idle') return status(state);
-      const next: RecorderState = { ...state, chunks: Math.max(state.chunks, msg.seq + 1) };
+      if (state.status === 'idle' || state.status === 'error') return status(state);
+      const next: RecorderState = {
+        ...state,
+        chunks: Math.max(state.chunks, msg.seq + 1),
+        lastHeartbeatAt: deps.now(),
+      };
+      await saveState(kv, next);
+      return status(next);
+    }
+
+    case 'REC_STORAGE': {
+      const next: RecorderState = { ...state, storageWarning: describeStorageEvent(msg.event) };
       await saveState(kv, next);
       return status(next);
     }
 
     case 'REC_STOPPED':
-    case 'REC_ERROR': {
-      const next: RecorderState =
-        msg.type === 'REC_ERROR' ? { status: 'idle', lastError: msg.error } : { status: 'idle' };
-      await saveState(kv, next);
-      await deps.closeOffscreen().catch(() => undefined);
-      return status(next);
-    }
+      if (state.status === 'error') return status(state);
+      return status(await toIdle(deps, state));
+
+    case 'REC_ERROR':
+      return status(await toIdle(deps, state, msg.error));
   }
 }

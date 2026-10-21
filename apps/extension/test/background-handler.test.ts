@@ -7,7 +7,7 @@ const popup = { fromSelf: true, fromOffscreen: false };
 const offscreen = { fromSelf: true, fromOffscreen: true };
 const bg = <T extends object>(m: T) => ({ target: 'background', ...m });
 
-function makeDeps(kv = memoryKV()) {
+export function makeDeps(kv = memoryKV()) {
   let t = 1000;
   const deps = {
     kv,
@@ -15,6 +15,11 @@ function makeDeps(kv = memoryKV()) {
     ensureOffscreen: vi.fn(async () => undefined),
     closeOffscreen: vi.fn(async () => undefined),
     sendToOffscreen: vi.fn(async () => ({ ok: true })),
+    hasOffscreen: vi.fn(async () => true),
+    startWatchdog: vi.fn(async () => undefined),
+    stopWatchdog: vi.fn(async () => undefined),
+    finalizeAfterCrash: vi.fn(async () => undefined),
+    setBadge: vi.fn(async () => undefined),
   } satisfies BackgroundDeps;
   return { deps, advance: (ms: number) => (t += ms) };
 }

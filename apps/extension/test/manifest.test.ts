@@ -3,10 +3,10 @@ import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { manifest } from '../src/manifest.js';
 
-const EXPECTED = ['activeTab', 'offscreen', 'storage', 'tabCapture'];
+const EXPECTED = ['activeTab', 'alarms', 'offscreen', 'storage', 'tabCapture'];
 
 describe('manifest permissions', () => {
-  it('requests only activeTab, tabCapture, offscreen, storage and no host permissions', () => {
+  it('requests only activeTab, alarms, tabCapture, offscreen, storage and no host permissions', () => {
     expect([...manifest.permissions].sort()).toEqual(EXPECTED);
     expect(manifest.host_permissions).toEqual([]);
   });
