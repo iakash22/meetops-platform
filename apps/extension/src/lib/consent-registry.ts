@@ -22,7 +22,28 @@ export async function recordConsent(kv: KV, tabId: number, now: number): Promise
  * Verify and consume consent for a tab. One-shot: a successful check removes
  * the record so each recording requires a fresh acknowledgement.
  */
-export async function consumeConsent(
+export function consumeConsent(
+  kv: KV,
+  tabId: number,
+  now: number,
+): Promise<{ ok: true; record: ConsentRecord } | { ok: false; reason: string }> {
+  // Serialise per storage object so two concurrent consumers can't both read the record
+  // before either removes it (get-then-remove is not atomic in chrome.storage).
+  const prev = locks.get(kv) ?? Promise.resolve();
+  const run = prev.then(() => consumeUnlocked(kv, tabId, now));
+  locks.set(
+    kv,
+    run.then(
+      () => undefined,
+      () => undefined,
+    ),
+  );
+  return run;
+}
+
+const locks = new WeakMap<KV, Promise<void>>();
+
+async function consumeUnlocked(
   kv: KV,
   tabId: number,
   now: number,

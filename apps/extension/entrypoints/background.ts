@@ -1,5 +1,10 @@
 /// <reference types="chrome" />
-import { handleBackgroundMessage, type BackgroundDeps } from '../src/lib/background-handler.js';
+import {
+  handleBackgroundMessage,
+  serialized,
+  type BackgroundDeps,
+} from '../src/lib/background-handler.js';
+import { classifySender, extensionUrls } from '../src/lib/senders.js';
 import { sessionKV } from '../src/lib/storage.js';
 
 const OFFSCREEN_PATH = '/offscreen.html';
@@ -15,6 +20,17 @@ async function hasOffscreen(): Promise<boolean> {
 const deps: BackgroundDeps = {
   kv: sessionKV(),
   now: () => Date.now(),
+  async capturedTabIds() {
+    const tabs = await new Promise<chrome.tabCapture.CaptureInfo[]>((resolve) => {
+      chrome.tabCapture.getCapturedTabs(resolve);
+    });
+    return tabs.filter((t) => t.status === 'active' || t.status === 'pending').map((t) => t.tabId);
+  },
+  async setBadge(text) {
+    await chrome.action.setBadgeText({ text });
+    if (text)
+      await chrome.action.setBadgeBackgroundColor({ color: text === '!' ? '#b45309' : '#dc2626' });
+  },
   async ensureOffscreen() {
     if (await hasOffscreen()) return;
     await chrome.offscreen.createDocument({
@@ -36,15 +52,14 @@ const deps: BackgroundDeps = {
   },
 };
 
+const handle = serialized(handleBackgroundMessage);
+
 export default defineBackground(() => {
   chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     if ((msg as { target?: string } | null)?.target !== 'background') return false;
-    const fromSelf = sender.id === chrome.runtime.id;
-    const fromOffscreen = fromSelf && sender.url === chrome.runtime.getURL(OFFSCREEN_PATH);
-    handleBackgroundMessage(deps, msg, { fromSelf, fromOffscreen }).then(
-      sendResponse,
-      (err: unknown) =>
-        sendResponse({ ok: false, error: err instanceof Error ? err.message : String(err) }),
+    const { fromSelf, fromOffscreen, fromPopup } = classifySender(sender, extensionUrls());
+    handle(deps, msg, { fromSelf, fromOffscreen, fromPopup }).then(sendResponse, (err: unknown) =>
+      sendResponse({ ok: false, error: err instanceof Error ? err.message : String(err) }),
     );
     return true;
   });
