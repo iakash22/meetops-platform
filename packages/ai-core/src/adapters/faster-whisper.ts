@@ -32,7 +32,7 @@ export class FasterWhisperProvider implements TranscriptionProvider {
     let j: VerboseJson;
     try {
       const res = await guardedFetch(this.o(), 'v1/audio/transcriptions', { method: 'POST', body: form, ...(input.signal ? { signal: input.signal } : {}) });
-      j = (await res.json()) as VerboseJson;
+      j = res.json<VerboseJson>();
     } catch (e) {
       throw toAIError(e, this.providerId);
     }

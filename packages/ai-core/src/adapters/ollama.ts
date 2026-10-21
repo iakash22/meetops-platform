@@ -20,7 +20,7 @@ export class OllamaProvider implements LLMProvider {
   private async chat(body: Record<string, unknown>, signal?: AbortSignal): Promise<OllamaChat> {
     try {
       const res = await guardedFetch(this.o(), 'api/chat', { method: 'POST', body: JSON.stringify({ ...body, stream: false }), ...(signal ? { signal } : {}) });
-      return (await res.json()) as OllamaChat;
+      return res.json<OllamaChat>();
     } catch (e) {
       throw toAIError(e, this.providerId);
     }
@@ -35,7 +35,7 @@ export class OllamaProvider implements LLMProvider {
 
   async listModels(): Promise<string[]> {
     const res = await guardedFetch(this.o(), 'api/tags');
-    const j = (await res.json()) as { models?: Array<{ name: string }> };
+    const j = res.json<{ models?: Array<{ name: string }> }>();
     return (j.models ?? []).map((m) => m.name);
   }
 

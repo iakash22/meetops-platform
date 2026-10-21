@@ -28,7 +28,7 @@ export class OpenAICompatibleProvider implements LLMProvider {
   private async chat(body: Record<string, unknown>, signal?: AbortSignal): Promise<ChatResponse> {
     try {
       const res = await guardedFetch(this.opts(), 'chat/completions', { method: 'POST', body: JSON.stringify(body), ...(signal ? { signal } : {}) });
-      return (await res.json()) as ChatResponse;
+      return res.json<ChatResponse>();
     } catch (e) {
       throw toAIError(e, this.providerId);
     }
@@ -40,7 +40,7 @@ export class OpenAICompatibleProvider implements LLMProvider {
 
   async listModels(): Promise<string[]> {
     const res = await guardedFetch(this.opts(), 'models');
-    const j = (await res.json()) as { data?: Array<{ id: string }> };
+    const j = res.json<{ data?: Array<{ id: string }> }>();
     return (j.data ?? []).map((m) => m.id);
   }
 
