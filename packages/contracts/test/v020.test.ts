@@ -39,9 +39,9 @@ describe('chunked recording session', () => {
     expect(Value.Check(InitRecordingSessionRequest, { ...ok, extra: 1 })).toBe(false);
   });
   it('chunk url', () => {
-    expect(Value.Check(ChunkUploadUrlRequest, { seq: 0 })).toBe(true);
-    expect(Value.Check(ChunkUploadUrlRequest, { seq: -1 })).toBe(false);
-    expect(Value.Check(ChunkUploadUrlRequest, { seq: 1.5 })).toBe(false);
+    expect(Value.Check(ChunkUploadUrlRequest, { seq: 0, sizeBytes: 1024 })).toBe(true);
+    expect(Value.Check(ChunkUploadUrlRequest, { seq: -1, sizeBytes: 1024 })).toBe(false);
+    expect(Value.Check(ChunkUploadUrlRequest, { seq: 1.5, sizeBytes: 1024 })).toBe(false);
     const res = { seq: 0, upload: { url: 'https://s3.example.com/c0', method: 'PUT', expiresAt: at } };
     expect(Value.Check(ChunkUploadUrlResponse, res)).toBe(true);
     expect(Value.Check(ChunkUploadUrlResponse, { ...res, upload: { ...res.upload, method: 'GET' } })).toBe(false);
