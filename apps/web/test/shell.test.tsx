@@ -1,8 +1,9 @@
-import { screen, within } from '@testing-library/react';
+import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { useOrgStore } from '@/stores/org-store';
-import { renderApp, resetStores } from './fixtures/render';
+import { createMockApi, renderApp, resetStores } from './fixtures/render';
+import { sessionResponse } from './fixtures/data';
 
 describe('app shell', () => {
   beforeEach(() => resetStores());
@@ -15,16 +16,30 @@ describe('app shell', () => {
       expect(within(nav).getByRole('link', { name: label })).toBeInTheDocument();
     }
     expect(screen.getByRole('banner')).toBeInTheDocument();
-    expect(screen.getByRole('combobox', { name: 'Organization' })).toHaveValue('org_1');
+    expect(screen.getByRole('combobox', { name: 'Organization' })).toHaveTextContent('Acme Inc');
+    expect(await screen.findByLabelText('Signed in user')).toHaveTextContent('Ada');
   });
 
-  it('switches organization via the placeholder switcher', async () => {
-    renderApp('/');
-    await userEvent.selectOptions(
-      await screen.findByRole('combobox', { name: 'Organization' }),
-      'org_2',
+  it('switches organization with the shadcn Select and refetches org data', async () => {
+    const { api } = renderApp('/meetings');
+    expect(await screen.findByText('Weekly sync')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('combobox', { name: 'Organization' }));
+    await userEvent.click(await screen.findByRole('option', { name: 'Globex' }));
+    expect(useOrgStore.getState().currentOrganizationId).toBe('org_2');
+    await waitFor(() => expect(api.meetings.list).toHaveBeenCalledWith('org_2'));
+    expect(screen.getByRole('combobox', { name: 'Organization' })).toHaveTextContent('Globex');
+  });
+
+  it('falls back to the email when User.name is missing', async () => {
+    const { name: _omit, ...noName } = sessionResponse.user;
+    void _omit;
+    renderApp(
+      '/',
+      createMockApi({
+        auth: { session: vi.fn().mockResolvedValue({ ...sessionResponse, user: noName }) },
+      }),
     );
-    expect(useOrgStore.getState().currentOrgId).toBe('org_2');
+    expect(await screen.findByLabelText('Signed in user')).toHaveTextContent('ada');
   });
 
   it('toggles the sidebar', async () => {

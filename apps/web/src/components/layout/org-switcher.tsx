@@ -1,30 +1,47 @@
+import { useQueryClient } from '@tanstack/react-query';
 import { Building2 } from 'lucide-react';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { useOrgStore } from '@/stores/org-store';
 
-/** Placeholder org switcher: native select until org APIs + shadcn dropdown are wired. */
+/**
+ * Organization switcher (shadcn Select). Switching clears org-scoped caches.
+ * TODO(api): call the server org-switch endpoint once defined (session rotates on org switch).
+ */
 export function OrgSwitcher() {
   const organizations = useOrgStore((s) => s.organizations);
-  const currentOrgId = useOrgStore((s) => s.currentOrgId);
-  const setCurrentOrg = useOrgStore((s) => s.setCurrentOrg);
+  const currentOrganizationId = useOrgStore((s) => s.currentOrganizationId);
+  const setCurrentOrganization = useOrgStore((s) => s.setCurrentOrganization);
+  const queryClient = useQueryClient();
 
   return (
-    <label className="flex items-center gap-2 text-sm">
+    <div className="flex items-center gap-2 text-sm">
       <Building2 className="h-4 w-4 text-muted-foreground" aria-hidden />
-      <span className="sr-only">Organization</span>
-      <select
-        aria-label="Organization"
-        className="h-8 rounded-md border border-input bg-background px-2"
-        value={currentOrgId ?? ''}
-        onChange={(e) => setCurrentOrg(e.target.value)}
+      <Select
+        value={currentOrganizationId ?? ''}
+        onValueChange={(id) => {
+          if (id === currentOrganizationId) return;
+          setCurrentOrganization(id);
+          void queryClient.invalidateQueries({ queryKey: ['orgs'] });
+        }}
         disabled={organizations.length === 0}
       >
-        {organizations.length === 0 ? <option value="">No organization</option> : null}
-        {organizations.map((o) => (
-          <option key={o.id} value={o.id}>
-            {o.name}
-          </option>
-        ))}
-      </select>
-    </label>
+        <SelectTrigger className="h-8 w-48" aria-label="Organization">
+          <SelectValue placeholder="No organization" />
+        </SelectTrigger>
+        <SelectContent>
+          {organizations.map((o) => (
+            <SelectItem key={o.id} value={o.id}>
+              {o.name}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+    </div>
   );
 }
