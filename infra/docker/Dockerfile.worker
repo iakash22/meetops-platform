@@ -35,7 +35,7 @@ RUN set -e; \
 
 FROM node:${NODE_VERSION}-bookworm-slim AS runtime
 # FFmpeg is pinned to the exact Debian bookworm(-security) build; bump deliberately
-# when Debian ships a fix (see docs/09-security: pinned, patched FFmpeg).
+# when Debian ships a fix (see docs/12-security: pinned, patched FFmpeg).
 # OpenSSL is required by the Prisma query engine.
 ARG FFMPEG_VERSION=7:5.1.9-0+deb12u1
 # hadolint ignore=DL3008

@@ -1,5 +1,5 @@
 #!/usr/bin/env sh
-# gitleaks pre-commit: scan staged changes for secrets (docs/09-security/secrets-policy.md).
+# gitleaks pre-commit: scan staged changes for secrets (docs/12-security/secrets-policy.md).
 # Wire-up: see scripts/install-git-hooks.sh. Bypass only in an emergency: SKIP_GITLEAKS=1.
 set -e
 [ "${SKIP_GITLEAKS:-0}" = "1" ] && exit 0
