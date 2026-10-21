@@ -1,6 +1,9 @@
 import { PrismaClient, type Prisma } from '@prisma/client';
 
 export * from '@prisma/client';
+export * from './tenant.js';
+
+import { runWithOrgContext, type OrgContextOptions } from './tenant.js';
 
 export type DatabaseClient = PrismaClient;
 
@@ -33,4 +36,17 @@ export async function disconnectPrismaClient(): Promise<void> {
     delete globalForPrisma.__meetopsPrisma;
     await client.$disconnect();
   }
+}
+
+/**
+ * withOrgContext(orgId, fn, { client?, userId?, timeoutMs? }): run fn in a transaction scoped to orgId
+ * for Postgres RLS. Uses the shared client unless one is passed.
+ */
+export async function withOrgContext<T>(
+  orgId: string,
+  fn: (tx: Prisma.TransactionClient) => Promise<T>,
+  options: OrgContextOptions = {},
+): Promise<T> {
+  const { client, ...rest } = options;
+  return runWithOrgContext(client ?? getPrismaClient(), orgId, fn, rest);
 }
