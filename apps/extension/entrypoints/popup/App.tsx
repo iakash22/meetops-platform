@@ -8,30 +8,24 @@ import {
   showNotice,
   type ConsentState,
 } from '../../src/lib/consent.js';
+import { formatElapsed } from '../../src/lib/format.js';
 import type {
   BackgroundResponse,
   PopupToBackground,
   StatusPayload,
 } from '../../src/lib/messages.js';
-import { formatElapsed } from '../../src/lib/format.js';
+import { getTabStreamId } from '../../src/lib/tab-capture.js';
 
 const send = (msg: PopupToBackground): Promise<BackgroundResponse> =>
   chrome.runtime.sendMessage<PopupToBackground, BackgroundResponse>(msg);
-
-const getStreamId = (targetTabId: number): Promise<string> =>
-  new Promise((resolve, reject) => {
-    chrome.tabCapture.getMediaStreamId({ targetTabId }, (id) => {
-      const err = chrome.runtime.lastError;
-      if (err) reject(new Error(err.message ?? 'tabCapture failed'));
-      else resolve(id);
-    });
-  });
 
 const activeTabId = async (): Promise<number> => {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   if (tab?.id === undefined) throw new Error('No active tab');
   return tab.id;
 };
+
+const errText = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 export function App() {
   const [consent, setConsent] = useState<ConsentState>(initialConsent());
@@ -42,13 +36,13 @@ export function App() {
   const apply = useCallback((res: BackgroundResponse) => {
     if (res.ok) {
       setStatus(res);
-      setError(res.lastError ?? '');
+      setError(res.status === 'error' ? '' : (res.lastError ?? ''));
     } else setError(res.error);
   }, []);
 
   const refresh = useCallback(() => {
     send({ target: 'background', type: 'GET_STATUS' }).then(apply, (e: unknown) =>
-      setError(String(e)),
+      setError(errText(e)),
     );
   }, [apply]);
 
@@ -67,7 +61,7 @@ export function App() {
       apply(await send({ target: 'background', type: 'ACK_CONSENT', tabId }));
       setConsent(acknowledge(consent));
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError(errText(e));
     }
   };
 
@@ -76,10 +70,10 @@ export function App() {
     if (!canStartRecording(consent)) return;
     try {
       const tabId = await activeTabId();
-      const streamId = await getStreamId(tabId);
+      const streamId = await getTabStreamId(tabId);
       apply(await send({ target: 'background', type: 'START_RECORDING', tabId, streamId }));
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError(errText(e));
     } finally {
       setConsent(initialConsent());
     }
@@ -89,7 +83,12 @@ export function App() {
     apply(await send({ target: 'background', type: 'STOP_RECORDING' }));
   };
 
-  const active = status.status !== 'idle';
+  const onDismissWarning = async () => {
+    apply(await send({ target: 'background', type: 'DISMISS_WARNING' }));
+  };
+
+  const active =
+    status.status === 'starting' || status.status === 'recording' || status.status === 'stopping';
 
   return (
     <main style={{ width: 320, padding: 12, fontFamily: 'system-ui, sans-serif' }}>
@@ -101,7 +100,22 @@ export function App() {
         </button>
       </section>
       <hr />
-      {active ? (
+      {status.storageWarning && (
+        <section role="alert" aria-label="Storage warning" style={{ color: '#8a5300' }}>
+          <p>⚠ {status.storageWarning}</p>
+          <button type="button" onClick={() => void onDismissWarning()}>
+            Dismiss
+          </button>
+        </section>
+      )}
+      {status.status === 'error' ? (
+        <section role="alert" aria-label="Recording error" style={{ color: '#c62828' }}>
+          <p>{status.lastError ?? 'Recording stopped unexpectedly.'}</p>
+          <button type="button" onClick={() => void onStop()}>
+            Dismiss
+          </button>
+        </section>
+      ) : active ? (
         <section aria-live="polite">
           <p>
             ● {status.status === 'recording' ? 'Recording' : status.status}{' '}
