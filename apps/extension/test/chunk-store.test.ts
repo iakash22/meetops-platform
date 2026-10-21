@@ -3,7 +3,11 @@ import 'fake-indexeddb/auto';
 import { describe, expect, it } from 'vitest';
 import { ChunkStore, type ChunkStoreConfig } from '../src/lib/chunk-store.js';
 
-const meta = { mimeType: 'audio/webm;codecs=opus', startedAt: 0, source: 'tab' as const };
+const meta = {
+  mimeType: 'audio/webm;codecs=opus',
+  startedAt: '2026-10-21T00:00:00.000Z',
+  source: 'tab' as const,
+};
 const buf = (n: number) => new Uint8Array(n).fill(7).buffer;
 
 async function open(config: ChunkStoreConfig) {
