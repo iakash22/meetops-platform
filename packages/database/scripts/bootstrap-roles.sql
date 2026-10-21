@@ -21,3 +21,14 @@ SELECT format('ALTER DATABASE %I OWNER TO meetops_migrator', :'db_name') \gexec
 ALTER SCHEMA public OWNER TO meetops_migrator;
 -- pgvector is not a trusted extension: create it as superuser so the migration's IF NOT EXISTS is a no-op.
 CREATE EXTENSION IF NOT EXISTS vector;
+DO $$
+BEGIN
+  -- Relay created after migrations ran (e.g. DevOps initdb only makes app/migrator): apply the
+  -- same grants as migration 20261021120000 so the order of bootstrap vs migrate does not matter.
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'meetops_relay') AND to_regclass('public.outbox_events') IS NOT NULL THEN
+    GRANT USAGE ON SCHEMA public TO meetops_relay;
+    GRANT SELECT ON TABLE public.outbox_events TO meetops_relay;
+    GRANT UPDATE (status, attempts, last_error, available_at, published_at, updated_at) ON TABLE public.outbox_events TO meetops_relay;
+  END IF;
+END
+$$;
