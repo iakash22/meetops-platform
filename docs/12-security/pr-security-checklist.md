@@ -45,4 +45,5 @@ Copy into PR description for changes touching api, worker, web auth, database, i
 ## Dependencies & infra
 
 - [ ] New deps justified, maintained, lockfile updated; `pnpm audit` reviewed
+- [ ] Dependabot alerts and the GitHub dependency graph checked for new or changed dependencies; any high or critical alert blocks unless it has an active [risk-exceptions.md](risk-exceptions.md) entry
 - [ ] Containers non-root, least privilege; CI workflow `permissions:` minimal
