@@ -12,25 +12,19 @@
     "test:integration": "vitest run --project integration",
     "test:unit": "vitest run --project factories --project contract --project api",
     "test:e2e": "playwright test -c e2e/playwright.config.ts",
-    "e2e:install": "playwright install chromium",
-    "setup": "pnpm install --ignore-workspace"
+    "e2e:install": "playwright install chromium"
   },
   "devDependencies": {
-    "@eslint/js": "^9.13.0",
-    "@meetops/contracts": "link:../packages/contracts",
+    "@meetops/contracts": "workspace:*",
     "@playwright/test": "^1.48.2",
     "@sinclair/typebox": "^0.34.0",
     "@testcontainers/postgresql": "^10.13.2",
     "@testcontainers/redis": "^10.13.2",
-    "@types/node": "^20.16.11",
     "@types/pg": "^8.11.10",
-    "eslint": "^9.13.0",
-    "eslint-plugin-unused-imports": "^4.1.4",
     "ioredis": "^5.4.1",
     "pg": "^8.13.1",
     "testcontainers": "^10.13.2",
     "typescript": "^5.6.3",
-    "typescript-eslint": "^8.11.0",
     "vitest": "^2.1.3"
   }
 }
