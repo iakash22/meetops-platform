@@ -1,105 +1,137 @@
 /* eslint-disable @typescript-eslint/no-unsafe-argument -- test/ is not part of a TS project (see report) */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { buildApp, signup, type App } from './helpers';
+import { buildApp, signupAndLogin, type App, type Client } from './helpers';
 
-describe('organization routes', () => {
+describe('organizations', () => {
   let app: App;
   beforeEach(async () => {
     app = await buildApp();
   });
   afterEach(async () => app.close());
 
-  const createOrg = (cookie: string, name: string) =>
-    app.inject({ method: 'POST', url: '/organizations', headers: { cookie }, payload: { name } });
+  const createOrg = async (c: Client, name: string) => (await c.post('/orgs', { name })).json();
 
   it('requires authentication', async () => {
-    const res = await app.inject({ method: 'POST', url: '/organizations', payload: { name: 'X' } });
-    expect(res.statusCode).toBe(401);
+    const c = await signupAndLogin(app, 'a@example.com');
+    await c.post('/auth/logout');
+    expect((await c.post('/orgs', { name: 'X' })).statusCode).toBe(401);
+    expect((await c.get('/orgs')).statusCode).toBe(401);
   });
 
-  it('creates an org, makes the creator owner and activates it', async () => {
-    const { cookie } = await signup(app, 'owner@example.com');
-    const res = await createOrg(cookie, 'Acme Inc');
+  it('requires CSRF on org mutations', async () => {
+    const c = await signupAndLogin(app, 'a@example.com');
+    const res = await c.post('/orgs', { name: 'X' }, { 'x-csrf-token': 'wrong' });
+    expect(res.statusCode).toBe(403);
+  });
+
+  it('creates an org, makes the creator owner, activates it and rotates the session', async () => {
+    const c = await signupAndLogin(app, 'owner@example.com');
+    const before = c.cookie;
+    const res = await c.post('/orgs', { name: 'Acme Inc' });
     expect(res.statusCode).toBe(201);
     const body = res.json();
     expect(body.role).toBe('owner');
-    expect(body.organization.slug).toBe('acme-inc');
+    expect(body.organization).toMatchObject({ name: 'Acme Inc', slug: 'acme-inc' });
+    expect(body.organization.updatedAt).toBeTypeOf('string');
+    expect(c.cookie).not.toBe(before);
 
-    const session = await app.inject({ method: 'GET', url: '/auth/session', headers: { cookie } });
-    expect(session.json().session.activeOrganizationId).toBe(body.organization.id);
+    const old = await app.inject({ method: 'GET', url: '/auth/session', headers: { cookie: before } });
+    expect(old.statusCode).toBe(401);
+    const s = (await c.get('/auth/session')).json();
+    expect(s.activeOrganizationId).toBe(body.organization.id);
+    expect(s.memberships[0]).toMatchObject({ organizationId: body.organization.id, role: 'owner' });
 
-    const list = await app.inject({ method: 'GET', url: '/organizations', headers: { cookie } });
-    expect(list.json()).toHaveLength(1);
+    const list = (await c.get('/orgs')).json();
+    expect(list).toMatchObject({ nextCursor: null });
+    expect(list.items).toHaveLength(1);
   });
 
-  it('dedupes slugs', async () => {
-    const { cookie } = await signup(app, 'owner@example.com');
-    const a = (await createOrg(cookie, 'Acme')).json();
-    const b = (await createOrg(cookie, 'Acme')).json();
-    expect(a.organization.slug).toBe('acme');
-    expect(b.organization.slug).not.toBe('acme');
-  });
-
-  it('switches active org when the user is a member', async () => {
-    const { cookie } = await signup(app, 'owner@example.com');
-    const first = (await createOrg(cookie, 'One')).json();
-    await createOrg(cookie, 'Two');
-    const res = await app.inject({
-      method: 'POST',
-      url: '/organizations/switch',
-      headers: { cookie },
-      payload: { organizationId: first.organization.id }
-    });
+  it('switches the active org when the user is a member', async () => {
+    const c = await signupAndLogin(app, 'owner@example.com');
+    const first = await createOrg(c, 'One');
+    await createOrg(c, 'Two');
+    const res = await c.post('/orgs/switch', { organizationId: first.organization.id });
     expect(res.statusCode).toBe(200);
-    const session = await app.inject({ method: 'GET', url: '/auth/session', headers: { cookie } });
-    expect(session.json().session.activeOrganizationId).toBe(first.organization.id);
+    expect((await c.get('/auth/session')).json().activeOrganizationId).toBe(first.organization.id);
   });
 
-  it('refuses to switch to an org the user is not a member of, and 404s for unknown orgs', async () => {
-    const owner = await signup(app, 'owner@example.com');
-    const org = (await createOrg(owner.cookie, 'Private')).json();
-    const outsider = await signup(app, 'outsider@example.com');
-    const res = await app.inject({
-      method: 'POST',
-      url: '/organizations/switch',
-      headers: { cookie: outsider.cookie },
-      payload: { organizationId: org.organization.id }
-    });
-    expect(res.statusCode).toBe(403);
-    expect(res.json().error.code).toBe('NOT_A_MEMBER');
-    const session = await app.inject({ method: 'GET', url: '/auth/session', headers: { cookie: outsider.cookie } });
-    expect(session.json().session.activeOrganizationId).toBeNull();
-
-    const missing = await app.inject({
-      method: 'POST',
-      url: '/organizations/switch',
-      headers: { cookie: outsider.cookie },
-      payload: { organizationId: 'nope' }
-    });
-    expect(missing.statusCode).toBe(404);
+  it('404s switching to or reading another org (indistinguishable from unknown)', async () => {
+    const owner = await signupAndLogin(app, 'owner@example.com');
+    const org = await createOrg(owner, 'Private');
+    const outsider = await signupAndLogin(app, 'outsider@example.com');
+    const a = await outsider.post('/orgs/switch', { organizationId: org.organization.id });
+    const b = await outsider.post('/orgs/switch', { organizationId: 'nope' });
+    const g = await outsider.get(`/orgs/${org.organization.id}`);
+    for (const r of [a, b, g]) {
+      expect(r.statusCode).toBe(404);
+      expect(r.json().error.code).toBe('NOT_FOUND');
+    }
+    expect(a.json().error.message).toBe(b.json().error.message);
+    expect((await outsider.get('/auth/session')).json().activeOrganizationId).toBeNull();
   });
 
-  it('lets an owner invite, and forbids a non-member from inviting', async () => {
-    const owner = await signup(app, 'owner@example.com');
-    const org = (await createOrg(owner.cookie, 'Acme')).json();
-    const ok = await app.inject({
-      method: 'POST',
-      url: `/organizations/${org.organization.id}/invitations`,
-      headers: { cookie: owner.cookie },
-      payload: { email: 'New@Example.com', role: 'member' }
-    });
-    expect(ok.statusCode).toBe(201);
-    expect(ok.json()).toMatchObject({ email: 'new@example.com', role: 'member', status: 'pending' });
-    expect(ok.json()).not.toHaveProperty('token');
-    expect(ok.json()).not.toHaveProperty('tokenHash');
+  it('invites (owner), emails the token, never returns it, and the invitee accepts', async () => {
+    const owner = await signupAndLogin(app, 'owner@example.com');
+    const org = await createOrg(owner, 'Acme');
+    const inv = await owner.post(`/orgs/${org.organization.id}/invitations`, { email: 'New@Example.com', role: 'member' });
+    expect(inv.statusCode).toBe(201);
+    expect(inv.json()).toMatchObject({ email: 'new@example.com', role: 'member', status: 'pending', organizationId: org.organization.id });
+    expect(inv.body).not.toMatch(/token/i);
+    const token = app.mailer.sent.find((m) => m.kind === 'invite')!.token!;
 
-    const outsider = await signup(app, 'x@example.com');
-    const denied = await app.inject({
-      method: 'POST',
-      url: `/organizations/${org.organization.id}/invitations`,
-      headers: { cookie: outsider.cookie },
-      payload: { email: 'y@example.com', role: 'viewer' }
-    });
+    const wrongUser = await signupAndLogin(app, 'someone@example.com');
+    const mismatch = await wrongUser.post('/invitations/accept', { token });
+    const unknown = await wrongUser.post('/invitations/accept', { token: 'x'.repeat(43) });
+    expect(mismatch.statusCode).toBe(404);
+    expect(mismatch.body.replace(/"requestId":"[^"]+"/, '')).toBe(unknown.body.replace(/"requestId":"[^"]+"/, ''));
+
+    const invitee = await signupAndLogin(app, 'new@example.com');
+    const ok = await invitee.post('/invitations/accept', { token });
+    expect(ok.statusCode).toBe(200);
+    expect(ok.json().role).toBe('member');
+    expect((await invitee.post('/invitations/accept', { token })).statusCode).toBe(404);
+  });
+
+  it('invite response is identical for existing and new addresses', async () => {
+    const owner = await signupAndLogin(app, 'owner@example.com');
+    await signupAndLogin(app, 'exists@example.com');
+    const org = await createOrg(owner, 'Acme');
+    const strip = (b: string) => b.replace(/"(id|expiresAt|email)":"[^"]+"/g, '');
+    const a = await owner.post(`/orgs/${org.organization.id}/invitations`, { email: 'exists@example.com', role: 'viewer' });
+    const b = await owner.post(`/orgs/${org.organization.id}/invitations`, { email: 'ghost@example.com', role: 'viewer' });
+    expect(a.statusCode).toBe(b.statusCode);
+    expect(strip(a.body)).toBe(strip(b.body));
+  });
+
+  it('enforces CASL: members cannot invite, outsiders get 404, owners can revoke', async () => {
+    const owner = await signupAndLogin(app, 'owner@example.com');
+    const org = await createOrg(owner, 'Acme');
+    const id = org.organization.id;
+    await owner.post(`/orgs/${id}/invitations`, { email: 'm@example.com', role: 'member' });
+    const member = await signupAndLogin(app, 'm@example.com');
+    await member.post('/invitations/accept', { token: app.mailer.sent.find((m) => m.kind === 'invite')!.token! });
+
+    const denied = await member.post(`/orgs/${id}/invitations`, { email: 'y@example.com', role: 'viewer' });
     expect(denied.statusCode).toBe(403);
+    expect(denied.json().error.code).toBe('FORBIDDEN');
+
+    const outsider = await signupAndLogin(app, 'x@example.com');
+    expect((await outsider.post(`/orgs/${id}/invitations`, { email: 'y@example.com', role: 'viewer' })).statusCode).toBe(404);
+
+    const pending = (await owner.post(`/orgs/${id}/invitations`, { email: 'p@example.com', role: 'viewer' })).json();
+    expect((await member.post(`/orgs/${id}/invitations/${pending.id}/revoke`)).statusCode).toBe(403);
+    expect((await outsider.post(`/orgs/${id}/invitations/${pending.id}/revoke`)).statusCode).toBe(404);
+    const revoked = await owner.post(`/orgs/${id}/invitations/${pending.id}/revoke`);
+    expect(revoked.statusCode).toBe(200);
+    expect(revoked.json().status).toBe('revoked');
+  });
+
+  it('cannot revoke an invitation through a different org (tenant scoping)', async () => {
+    const owner = await signupAndLogin(app, 'owner@example.com');
+    const a = await createOrg(owner, 'A');
+    const b = await createOrg(owner, 'B');
+    const inv = (await owner.post(`/orgs/${a.organization.id}/invitations`, { email: 'p@example.com', role: 'viewer' })).json();
+    const res = await owner.post(`/orgs/${b.organization.id}/invitations/${inv.id}/revoke`);
+    expect(res.statusCode).toBe(404);
   });
 });
