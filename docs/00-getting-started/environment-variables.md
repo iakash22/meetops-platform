@@ -29,6 +29,14 @@ These variables are validated via `@meetops/config` (Zod) at runtime. Defaults s
 - `STORAGE_CORS_ORIGINS`: comma-separated browser origins allowed to PUT via presigned URLs (minio-init CORS; ETag exposed)
 - `MINIO_API_PORT` / `MINIO_CONSOLE_PORT`: host ports for MinIO (default 9000 / 9001, 127.0.0.1). The dev bucket is private (no anonymous access) and aborts incomplete multipart uploads after 1 day.
 
+### Realtime gateway (apps/realtime)
+
+- `REALTIME_HOST`: bind address (default 0.0.0.0)
+- `REALTIME_PORT`: listen port (default 4001; compose binds 127.0.0.1:4001)
+- `REALTIME_CORS_ORIGINS`: comma-separated allowed origins; empty or `*` allows any (dev only)
+- `REALTIME_SOCKET_PATH`: Socket.IO path (default /socket.io)
+- `REDIS_URL`: when set, enables the Socket.IO Redis adapter
+
 ### Media (worker)
 
 - `FFMPEG_PATH`: default /usr/bin/ffmpeg (worker image)
