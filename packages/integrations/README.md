@@ -89,7 +89,24 @@ Jira hardening:
 - Each request has a timeout enforced with `AbortController`.
 - Redirects are refused (`redirect: 'error'`, and any 3xx response is rejected).
 - Response bodies are capped in size.
-- Only `https://<site>.atlassian.net` base URLs are accepted.
+- Only `https://<site>.atlassian.net` or `https://api.atlassian.com/ex/jira/<cloudId>` base URLs are accepted. The gateway form is required for scoped API tokens and OAuth; set `siteUrl` so browse links use the site.
+
+## Resilience
+
+- **Retries.** `withRetry` uses exponential backoff with full jitter. Defaults: 4 attempts, 500 ms base delay, `maxDelayMs` 60 s. Sleep, clock and randomness can be injected for tests.
+- **What is retried:**
+  - **429**, honoring `Retry-After` in either seconds or HTTP-date form.
+  - **GitHub primary rate limit:** a 403 with `x-ratelimit-remaining: 0` waits until `x-ratelimit-reset`.
+  - **GitHub secondary rate limit:** a 403 with `Retry-After`.
+  - **5xx** responses, network errors and timeouts.
+- **What is never retried:** any other 4xx. If the server asks for a wait longer than `maxDelayMs`, the call fails fast instead of sleeping.
+- **Scope.** Retries apply to Octokit calls (`retry` option on `GitHubIssuesProvider`) and to Jira fetches (`retry` option on `JiraIssueTrackerProvider`).
+- **Order.** The approval gate runs before the first attempt. Retries happen inside the approved, audited write, and the audit log records one attempt and one result per write.
+- **Replay store.** `RedisDeliveryStore(redis, { keyPrefix = 'meetops:webhook:delivery:', defaultTtlSeconds = 86400 })` is atomic through `SET key 1 EX ttl NX`. It accepts any injected ioredis-compatible client.
+
+## Persisted links (`IntegrationIssue`)
+
+`toIntegrationIssue(issue, { id, taskId })` and `fromIntegrationIssue(record)` map a provider `Issue` to and from the `IntegrationIssue` shape in `@meetops/contracts` (`integration` = provider, `externalId` = provider key). Until PR #17 is merged, a structurally identical local `IntegrationIssueRecord` is used, marked with a TODO.
 
 ## GitHub webhooks
 
@@ -136,10 +153,32 @@ Backend stores refresh tokens encrypted, refreshes them in `CredentialResolver`,
 
 **Fine-grained PAT (fallback)**: scope to selected repositories; permissions **Issues: Read and write**, **Metadata: Read-only**. Avoid classic PATs (`repo` scope is far broader).
 
-**Jira Cloud**
+**Jira Cloud** (verified against Atlassian docs, 2026-10-21)
 
-- Use a dedicated service account and an Atlassian API token (basic auth `email:token`). If using scoped API tokens, grant only `read:jira-work` and `write:jira-work` (plus `read:jira-user` for `healthCheck` via `/myself`).
-- Project permissions for that account: **Browse Projects**, **Create Issues**, **Edit Issues**, **Transition Issues** (and **Assign Issues** / **Assignable User** if assigning). No admin permissions.
+Operations used and the OAuth 2.0 (3LO) / scoped-token scopes Atlassian lists for each:
+
+| Operation        | Endpoint                                   | Classic scope (recommended) | Granular scopes                                                                                                                                             |
+| ---------------- | ------------------------------------------ | --------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Create issue     | `POST /rest/api/3/issue`                   | `write:jira-work`           | `write:issue:jira`, `write:comment:jira`, `write:comment.property:jira`, `write:attachment:jira`, `read:issue:jira`                                         |
+| Get issue        | `GET /rest/api/3/issue/{key}`              | `read:jira-work`            | `read:issue-meta:jira`, `read:issue-security-level:jira`, `read:issue.vote:jira`, `read:issue.changelog:jira`, `read:avatar:jira`, … (more on the doc page) |
+| Get transitions  | `GET /rest/api/3/issue/{key}/transitions`  | `read:jira-work`            | `read:issue.transition:jira`, `read:status:jira`, `read:field-configuration:jira`                                                                           |
+| Transition issue | `POST /rest/api/3/issue/{key}/transitions` | `write:jira-work`           | `write:issue:jira`, `write:issue.property:jira`                                                                                                             |
+| Health check     | `GET /rest/api/3/myself`                   | `read:jira-user`            | `read:application-role:jira`, `read:group:jira`, `read:user:jira`, `read:avatar:jira`                                                                       |
+
+The minimum classic set is therefore **`read:jira-work`, `write:jira-work`, `read:jira-user`**. Note that `write:jira-work` also allows deleting issues and posting comments; the granular scopes narrow this.
+
+- **Unscoped API tokens** use basic auth `email:token` against `https://<site>.atlassian.net`. They carry the full permissions of the account, so use a dedicated service account.
+- **Scoped API tokens** must call `https://api.atlassian.com/ex/jira/{cloudId}`, which is supported via `baseUrl` + `siteUrl`.
+- **Token expiry.** New API tokens expire after at most one year, so plan for rotation.
+- **Scopes don't override Jira permissions.** The service account still needs these project permissions: **Browse Projects**, **Create Issues**, **Edit Issues**, **Transition Issues** (plus **Assign Issues** / **Assignable User** when assigning). Grant no admin permissions.
+
+Sources:
+
+- Scopes (classic and granular): https://developer.atlassian.com/cloud/jira/platform/scopes-for-oauth-2-3LO-and-forge-apps/
+- Issues API (per-operation scopes): https://developer.atlassian.com/cloud/jira/platform/rest/v3/api-group-issues/
+- Myself API: https://developer.atlassian.com/cloud/jira/platform/rest/v3/api-group-myself/
+- API tokens (scoped tokens, gateway URL, expiry): https://support.atlassian.com/atlassian-account/docs/manage-api-tokens-for-your-atlassian-account/
+- Project permissions: https://support.atlassian.com/jira-cloud-administration/docs/manage-project-permissions/
 
 ## Environment variables (names only)
 
