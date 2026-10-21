@@ -5,9 +5,9 @@ Target: Windows with WSL 2 (Ubuntu), Docker Desktop on the WSL 2 backend, Node 2
 Steps marked **(requires PR #N, unmerged)** depend on an open PR and won't work on `main` until it merges. Values come from `main` and the open PRs as of 2026-10-21. PR heads read: #6 `62c7b89`, #7 `9e1d407`, #16 `9d18f47`, #25 `30f542a`.
 
 > [!NOTE]
-> **Node 24: supported once DevOps' engines PR lands.** The Coordinator decided to widen `engines.node` to `<25` and run CI on Node 22 and 24. That change is a **pending DevOps PR** (none in `gh pr list` as of 2026-10-21 23:02 IST). Until it merges, `main` still says `">=20.10.0 <23"`:
+> **Node 24: supported once DevOps PR #32 lands.** The Coordinator decided to widen `engines.node` to `<25` and run CI on Node 22 and 24. That change is **DevOps PR #32** ("chore: Windows and Node 24 dev setup", base `integration/phase-1`, open). It widens `engines.node` to `">=20.10.0 <25"` and runs CI on a Node `[22, 24]` matrix. Until it merges, `main` still says `">=20.10.0 <23"`:
 >
-> - pnpm only **warns** on the mismatch (`.npmrc` has no `engine-strict`), so Node 24 works for local dev in the meantime. Don't enable `engine-strict=true` until the PR lands.
+> - pnpm only **warns** on the mismatch (`.npmrc` has no `engine-strict`), so Node 24 works for local dev in the meantime. Don't enable `engine-strict=true` until #32 lands.
 > - **Fallback option:** use Node 22 LTS for this repo with [nvm-windows](https://github.com/coreybutler/nvm-windows) (`nvm install 22`, `nvm use 22`) or [fnm](https://github.com/Schniz/fnm) (`winget install Schniz.fnm`, `fnm install 22`, `fnm use 22`; add `fnm env --use-on-cd | Out-String | Invoke-Expression` to your PowerShell profile).
 
 > **Known gaps, routed to owners:**
@@ -22,7 +22,7 @@ Steps marked **(requires PR #N, unmerged)** depend on an open PR and won't work 
 | WSL 2 + Ubuntu  | `wsl --install -d Ubuntu`, reboot, then `wsl --status` should show default version 2                         |
 | Docker Desktop  | Settings → General → "Use the WSL 2 based engine"; Resources → WSL integration → enable Ubuntu if you use it |
 | Git for Windows | `winget install Git.Git`                                                                                     |
-| Node            | 24 (supported once the DevOps engines PR lands) or 22 LTS; see the note above                                |
+| Node            | 24 (supported once #32 lands) or 22 LTS; see the note above                                                  |
 | pnpm 9.12.3     | `corepack enable`, then `corepack prepare pnpm@9.12.3 --activate`, then `pnpm --version`                     |
 | FFmpeg          | `winget install Gyan.FFmpeg` (needed by media-core tests and the worker)                                     |
 
@@ -153,5 +153,5 @@ See [troubleshooting](troubleshooting.md) for OneDrive, WSL 2, Docker Desktop an
 
 - **`sh\r` errors in hooks or containers:** a CRLF checkout. Set `core.autocrlf input`, then re-checkout with `git rm --cached -r . && git reset --hard`. That reset discards uncommitted changes, so commit or stash first.
 - **`EPERM` or long-path errors on `pnpm install`:** move the repo out of OneDrive and enable `core.longpaths`, plus Windows long paths (`LongPathsEnabled` registry setting; needs admin).
-- **pnpm "Unsupported engine" warning:** expected on Node 24 until the DevOps engines PR lands; see the note at the top.
+- **pnpm "Unsupported engine" warning:** expected on Node 24 until PR #32 lands; see the note at the top.
 - **Prisma "role does not exist" or "permission denied":** the migrations from #25 haven't run, or the LOGIN step was skipped (section 6).
