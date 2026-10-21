@@ -48,6 +48,7 @@ ENV NODE_ENV=production \
     FFMPEG_PATH=/usr/bin/ffmpeg \
     FFPROBE_PATH=/usr/bin/ffprobe \
     MEDIA_TMP_DIR=/tmp/work
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 # Writable FFmpeg scratch dir (mounted as tmpfs in compose; root FS is read-only).
 RUN mkdir -p /tmp/work && chown node:node /tmp/work && chmod 0700 /tmp/work \
  && ffmpeg -hide_banner -version >/dev/null \
