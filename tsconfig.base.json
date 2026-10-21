@@ -20,7 +20,7 @@
     "baseUrl": ".",
     "outDir": "dist",
     "rootDir": ".",
-    "types": ["node", "vitest/globals"]
+    "types": ["vitest/globals"]
   },
   "exclude": ["node_modules", "dist", "build", "**/dist", "**/build"]
 }
