@@ -24,6 +24,8 @@ import {
   buildObjectKey,
   loadStorageConfig,
   parseMeetingKey,
+  toPresignedUrlDto,
+  toPublicFileObject,
   type MeetingObjectRef,
   type StorageConfig
 } from '../src/index.js';
@@ -252,5 +254,24 @@ describe('S3StorageService', () => {
     s3.on(GetBucketPolicyStatusCommand).rejects(Object.assign(new Error('x'), { name: 'NotImplemented', $metadata: { httpStatusCode: 501 } }));
     s3.on(GetBucketAclCommand).rejects(Object.assign(new Error('x'), { name: 'NotImplemented', $metadata: { httpStatusCode: 501 } }));
     expect(await svc().verifyBucketPrivate()).toEqual({ status: 'unknown', checks: { policy: 'unsupported', acl: 'unsupported' } });
+  });
+
+  it('describeObject returns an internal FileObject; public mappers strip provider/bucket/key', async () => {
+    s3.on(HeadObjectCommand).resolves({ ContentLength: 7, ContentType: 'audio/webm', LastModified: new Date('2026-01-01T00:00:00Z') });
+    const f = await svc().describeObject(rec, 'f1');
+    expect(f).toEqual({
+      id: 'f1', organizationId: 'o1', provider: 'minio', bucket: 'secret-bucket', key: REC_KEY,
+      mimeType: 'audio/webm', sizeBytes: 7, createdAt: '2026-01-01T00:00:00.000Z'
+    });
+    const exp = new Date('2026-01-01T00:05:00Z');
+    const pub = toPublicFileObject(f!, { url: 'https://x', method: 'GET', expiresAt: exp });
+    expect(pub).toEqual({
+      id: 'f1', organizationId: 'o1', mimeType: 'audio/webm', sizeBytes: 7, createdAt: '2026-01-01T00:00:00.000Z',
+      download: { url: 'https://x', method: 'GET', expiresAt: '2026-01-01T00:05:00.000Z' }
+    });
+    expect(JSON.stringify(pub)).not.toMatch(/secret-bucket|minio|recordings/);
+    expect(toPresignedUrlDto({ url: 'https://p', method: 'POST', expiresAt: exp, fields: { a: 'b' } })).toEqual({
+      url: 'https://p', method: 'POST', expiresAt: '2026-01-01T00:05:00.000Z', fields: { a: 'b' }
+    });
   });
 });

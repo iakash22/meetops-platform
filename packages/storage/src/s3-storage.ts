@@ -15,7 +15,7 @@ import {
 } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { createPresignedPost } from '@aws-sdk/s3-presigned-post';
-import type { PresignedUrl } from '@meetops/contracts';
+import type { FileObject, PresignedUrl } from '@meetops/contracts';
 import { assertTtl, loadStorageConfig, S3_MIN_PART_BYTES, type StorageConfig } from './config.js';
 import { mapS3Error, StorageValidationError } from './errors.js';
 import { assertKeyOwnedBy, buildObjectKey, type MeetingObjectRef } from './keys.js';
@@ -327,9 +327,26 @@ export class S3StorageService implements StorageService {
     return { status, checks };
   }
 
-  /** For diagnostics only; not part of returned object data. */
-  get providerIdForDiagnostics(): string {
-    return this.#providerId;
+  /**
+   * INTERNAL (api/worker only): head the object and return a contracts FileObject, which
+   * includes provider/bucket/key. Never send this to clients; map with toPublicFileObject.
+   * Returns null when the object is missing.
+   */
+  async describeObject(ref: MeetingObjectRef, fileObjectId: string, createdAt?: Date): Promise<FileObject | null> {
+    const info = await this.headObject(ref);
+    if (!info) return null;
+    const f: FileObject = {
+      id: fileObjectId,
+      organizationId: ref.orgId,
+      provider: this.#providerId,
+      bucket: this.#bucket,
+      key: buildObjectKey(ref),
+      mimeType: info.mimeType ?? 'application/octet-stream',
+      sizeBytes: info.sizeBytes,
+      createdAt: (createdAt ?? info.updatedAt ?? new Date()).toISOString()
+    };
+    if (info.checksumSha256) f.checksumSha256 = info.checksumSha256;
+    return f;
   }
 }
 
