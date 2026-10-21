@@ -68,10 +68,14 @@ These variables are validated via `@meetops/config` (Zod) at runtime. Defaults s
 - `ASSEMBLYAI_API_KEY`
 - `OLLAMA_ENABLED`: false
 - `OLLAMA_BASE_URL`: http://localhost:11434
+- `OLLAMA_MODEL`: llama3.2
 - `LOCAL_STT_ENABLED`: false
-- `LOCAL_STT_URL`: http://localhost:8001
+- `LOCAL_STT_URL`: http://localhost:8000 (compose `local-stt` profile publishes 127.0.0.1:8000)
+- `LOCAL_STT_MODEL`: Systran/faster-whisper-small
 - `OPENAI_ENABLED`: false
 - `OPENAI_API_KEY`
+- `OPENAI_BASE_URL`: https://api.openai.com/v1
+- `OPENAI_MODEL`: gpt-4o-mini
 - `DEEPGRAM_ENABLED`: false
 - `DEEPGRAM_API_KEY`
 - `AI_ALLOW_PAID_FALLBACK`: false
