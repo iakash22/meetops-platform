@@ -72,7 +72,7 @@ services:
       <<: *infra-urls
       FFMPEG_PATH: /usr/bin/ffmpeg
       FFPROBE_PATH: /usr/bin/ffprobe
-      MEDIA_WORK_DIR: /tmp/work
+      MEDIA_TMP_DIR: /tmp/work
     depends_on: *app-deps
     # Hardening per docs/12-security (upload-media-security §5): non-root, read-only
     # root FS, tmpfs scratch (/tmp/work for FFmpeg), no capabilities, no privilege

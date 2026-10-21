@@ -65,7 +65,7 @@ services:
       retries: 10
 
   # Creates the bucket (private: no anonymous policy is ever set), CORS for
-  # browser presigned PUTs from WEB_ORIGIN only (exposes ETag for multipart), and a lifecycle rule that
+  # browser presigned PUT/POST from WEB_ORIGIN only (exposes ETag for multipart), and a lifecycle rule that
   # aborts incomplete multipart uploads after 1 day.
   minio-init:
     image: pgsty/mc:RELEASE.2026-10-18T00-00-00Z
@@ -89,7 +89,7 @@ services:
         # CORS is restricted to the single web origin (never "*").
         origins="<AllowedOrigin>$${WEB_ORIGIN}</AllowedOrigin>"
         cat > /tmp/cors.xml <<XML
-        <CORSConfiguration><CORSRule>$${origins}<AllowedMethod>GET</AllowedMethod><AllowedMethod>PUT</AllowedMethod><AllowedMethod>HEAD</AllowedMethod><AllowedHeader>*</AllowedHeader><ExposeHeader>ETag</ExposeHeader><MaxAgeSeconds>3600</MaxAgeSeconds></CORSRule></CORSConfiguration>
+        <CORSConfiguration><CORSRule>$${origins}<AllowedMethod>GET</AllowedMethod><AllowedMethod>PUT</AllowedMethod><AllowedMethod>POST</AllowedMethod><AllowedMethod>HEAD</AllowedMethod><AllowedHeader>*</AllowedHeader><ExposeHeader>ETag</ExposeHeader><MaxAgeSeconds>3600</MaxAgeSeconds></CORSRule></CORSConfiguration>
         XML
         if ! mc cors set "local/$${STORAGE_BUCKET}" /tmp/cors.xml; then
           echo "bucket CORS unsupported; falling back to server-wide api cors_allow_origin"
