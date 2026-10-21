@@ -64,3 +64,34 @@ redirects, 5 s connect timeout, 10 MB response cap).
 - **Prompt injection**: see `prompts.ts`. Transcripts are fenced in `<untrusted_transcript>`, delimiter sequences are
   escaped, and the system prompt tells the model to treat the block as data. Outputs go through `.strict()` zod schemas
   with a bounded repair loop (max 2). Action items are `status: 'draft'` (a literal) until a human approves them.
+
+## Security review fixes (PR #21)
+
+- **C1 Credentials.** Credentials are resolved per call with `resolveCredential(ref, { orgId })` (`createCredentialResolver`).
+  - An org's BYO `secret:org/{orgId}/…` ref must match the org. A mismatch is rejected (`FORBIDDEN`).
+  - `env:` refs are platform keys. They are allowed only when the server-decided `OrgPlan.platformKeys` is true. They are
+    never a fallback: a failing BYO ref does not fall back to the platform key.
+  - Adapters are built per call by `ProviderRegistry.instantiate()`. There are no long-lived, key-bound clients.
+- **H1 Cost.** `cost` is required. `platformBilled` is required, and free platform-billed providers must declare `usage`
+  quotas. Budgets apply to paid or platform-billed providers. The paid-fallback gate still applies to paid providers.
+- **H2 No SDKs.** Gemini and AssemblyAI are called over plain REST through `guardedFetch`.
+  - Gemini: `POST /v1beta/models/{model}:generateContent` with `x-goog-api-key`; `GET /v1beta/models`.
+  - AssemblyAI: `POST /v2/upload` (bytes), then `POST /v2/transcript`, then `GET /v2/transcript/{id}` with bounded
+    polling, using the `authorization` header. The AssemblyAI adapter only accepts bytes, so AssemblyAI never fetches our URLs.
+- **H3 Authorization and audit.**
+  - `setOrgConfig(input, TenantContext)` requires `manage ProviderConfig` (owner/admin) and the same org.
+  - `register(input, SystemContext)` is platform-only.
+  - The `AuditSink` is required and awaited. If the audit write fails, the change is aborted (`AUDIT_FAILED`). Audit
+    entries carry the real `userId` and redacted values.
+  - Request overrides are authorized from `actor.ability.can('override', 'AIRoute')`. Any `authorized` field in a
+    payload is ignored.
+  - The repo has no CASL package yet, so `Ability` is a minimal interface that is signature-compatible with
+    `@casl/ability`.
+- **H4 Deadlines.** There is an overall deadline AbortSignal across candidates, retries and polling
+  (`overallTimeoutMs`, default 15 min). Response bytes are capped while streaming (10 MB by default).
+- **Mediums.**
+  - HTTP goes through undici's own `fetch` with a pinned-IP `Agent`, and a test proves the pin.
+  - Startup throws when local providers are enabled in production.
+  - Job outcomes and `toPublicError()` expose only `code`, `requestId` and `retryable`. Provider messages go only to the
+    `onInternalError` hook.
+  - `loadAIEnv` fails fast on invalid env in production, naming the variables but never their values.
