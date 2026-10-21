@@ -1,9 +1,10 @@
+import { execFileSync } from 'node:child_process';
 import { readFileSync, readdirSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it, vi } from 'vitest';
 import { Prisma } from '@prisma/client';
-import { withOrgContext } from '../src/index.js';
+import { withOrgContext, withUserContext } from '../src/index.js';
 import {
   TENANT_TABLES,
   ORG_CONTEXT_SETTING,
@@ -14,12 +15,27 @@ import {
 const pkgDir = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const schema = readFileSync(resolve(pkgDir, 'prisma/schema.prisma'), 'utf8');
 const migrationsDir = resolve(pkgDir, 'prisma/migrations');
-const allSql = readdirSync(migrationsDir, { withFileTypes: true })
+/** DDL of the final schema (what the migration chain must converge to; the live drift check proves it). */
+const finalSql = execFileSync(
+  'pnpm',
+  ['exec', 'prisma', 'migrate', 'diff', '--from-empty', '--to-schema-datamodel', 'prisma/schema.prisma', '--script'],
+  {
+    cwd: pkgDir,
+    encoding: 'utf8',
+    env: {
+      ...process.env,
+      DATABASE_URL: process.env.DATABASE_URL ?? 'postgresql://u:p@localhost:5432/db',
+      MIGRATION_DATABASE_URL: process.env.MIGRATION_DATABASE_URL ?? 'postgresql://u:p@localhost:5432/db',
+    },
+  },
+);
+const migrationSql = readdirSync(migrationsDir, { withFileTypes: true })
   .filter((d) => d.isDirectory())
   .map((d) => d.name)
   .sort()
   .map((d) => readFileSync(resolve(migrationsDir, d, 'migration.sql'), 'utf8'))
   .join('\n');
+const allSql = `${finalSql}\n${migrationSql}`;
 const rlsSql = readFileSync(resolve(migrationsDir, '20261021110000_tenant_rls_roles/migration.sql'), 'utf8');
 /** Latest (effective) tenant policy definitions. */
 const policySql = readFileSync(
@@ -34,7 +50,9 @@ const models = [...schema.matchAll(/model (\w+) \{([\s\S]*?)\n\}/g)].map((m) => 
   return { name: m[1] ?? '', table: /@@map\("(\w+)"\)/.exec(body)?.[1] ?? '', body };
 });
 const tenantModels = models.filter((m) => /^\s+orgId\s/m.test(m.body));
-const GLOBAL_TABLES = ['organizations', 'users', 'sessions'];
+const GLOBAL_TABLES = ['organizations', 'users', 'sessions', 'email_verifications', 'password_resets'];
+/** Tenant tables whose org_id may be NULL (global auth audit events). */
+const NULLABLE_ORG = ['audit_events'];
 
 describe('tenant schema', () => {
   it('every table is either a tenant table or an explicitly reviewed global table', () => {
@@ -46,6 +64,7 @@ describe('tenant schema', () => {
 
   it('org_id is required (NOT NULL) with an org FK on every tenant table', () => {
     for (const m of tenantModels) {
+      if (NULLABLE_ORG.includes(m.table)) continue;
       expect(m.body, m.name).toMatch(/^\s+orgId\s+String\s+@map\("org_id"\)/m);
       expect(m.body, m.name).toMatch(/organization\s+Organization\s+@relation\(fields: \[orgId\]/);
       expect(m.body, m.name).toMatch(/@@(index|unique)\(\[orgId/);
@@ -59,6 +78,7 @@ describe('tenant schema', () => {
 
   it('every tenant CREATE TABLE declares org_id UUID NOT NULL', () => {
     for (const t of TENANT_TABLES) {
+      if (NULLABLE_ORG.includes(t)) continue;
       const body = new RegExp(`CREATE TABLE "${t}" \\(([\\s\\S]*?)\\);`).exec(allSql)?.[1] ?? '';
       expect(body, t).toContain('"org_id" UUID NOT NULL');
     }
@@ -73,7 +93,7 @@ describe('tenant schema', () => {
 
   it('audit_events replaces audit_logs and is append-only for the app', () => {
     expect(schema).not.toContain('model AuditLog');
-    expect(allSql).toContain('DROP TABLE "audit_logs"');
+    expect(hardeningSql).toContain('ALTER TABLE "audit_logs" RENAME TO "audit_events";');
     expect(allSql).toContain('"audit_events_org_id_created_at_idx" ON "audit_events"("org_id", "created_at")');
     expect(rlsSql).toContain('REVOKE UPDATE, DELETE ON TABLE "audit_events" FROM meetops_app');
   });
@@ -226,14 +246,14 @@ describe('per-org uniqueness (M2)', () => {
   it('storage key and external ids are unique per org', () => {
     expect(allSql).toContain('"file_objects"("org_id", "bucket", "storage_key")');
     expect(hardeningSql).toContain('DROP INDEX "file_objects_bucket_key_key"');
-    expect(allSql).toContain('"integration_issues"("org_id", "integration", "external_id")');
+    expect(finalSql).toContain('"integration_issues"("org_id", "provider", "external_id")');
     expect(allSql).toContain('"projects"("org_id", "key")');
   });
 
   it('only reviewed global uniques remain (email, slug, token hashes, storage key)', () => {
     const globals = [...schema.matchAll(/^[ \t]+(\w+)[ \t]+\S+[ \t][^\n]*@unique\b(?!\()/gm)].map((m) => m[1]).sort();
     expect(globals).toEqual(
-      ['email', 'extractedTaskId', 'fileObjectId', 'key', 'slug', 'tokenHash', 'tokenHash'].sort(),
+      ['email', 'extractedTaskId', 'fileObjectId', 'key', 'slug', 'tokenHash', 'tokenHash', 'tokenHash', 'tokenHash'].sort(),
     );
   });
 });
@@ -389,11 +409,116 @@ describe('schema conventions', () => {
   });
 
   it('every model uses a uuid primary key', () => {
-    expect(models).toHaveLength(21);
+    expect(models).toHaveLength(23);
     for (const m of models) expect(m.body, m.name).toMatch(/^\s+id\s+String\s+@id @default\(uuid\(\)\) @db\.Uuid$/m);
   });
 
   it('transcripts carry provider + provider_job_id unique per org', () => {
     expect(allSql).toContain('"transcripts"("org_id", "provider", "provider_job_id")');
+  });
+});
+
+describe('contracts v0.2 (PR #38) alignment', () => {
+  const v02 = readFileSync(resolve(migrationsDir, '20261021150000_contracts_v02_alignment/migration.sql'), 'utf8');
+  it('MeetingParticipantRole is exactly host|participant, mapped without data loss', () => {
+    expect(/enum MeetingParticipantRole \{\s*host\s+participant\s*\}/.test(schema)).toBe(true);
+    expect(v02).toContain(`WHEN 'host' THEN 'host' ELSE 'participant'`);
+  });
+  it('participants have nullable user_id, joined_at, left_at; extracted tasks have hints', () => {
+    for (const c of ['"user_id" UUID', '"joined_at" TIMESTAMPTZ(3)', '"left_at" TIMESTAMPTZ(3)', '"assignee_hint" TEXT', '"due_hint" TEXT']) {
+      expect(v02).toContain(c);
+    }
+  });
+  it('ai_run_id and created_by_id are nullable where the contract allows null', () => {
+    for (const [model, field] of [['Report', 'aiRunId'], ['ExtractedTask', 'aiRunId'], ['Meeting', 'createdById'], ['Task', 'createdById']] as const) {
+      const body = models.find((m) => m.name === model)?.body ?? '';
+      expect(body, `${model}.${field}`).toMatch(new RegExp(`^\\s+${field}\\s+String\\?`, 'm'));
+    }
+  });
+});
+
+describe('data-preserving migrations', () => {
+  it('no migration drops a table; renames are in place', () => {
+    expect(migrationSql).not.toMatch(/DROP TABLE/);
+    for (const r of [
+      'ALTER TABLE "internal_tasks" RENAME TO "tasks";',
+      'ALTER TABLE "external_issue_links" RENAME TO "integration_issues";',
+      'ALTER TABLE "file_objects" RENAME COLUMN "key" TO "storage_key";',
+      `ALTER TYPE "MembershipRole" RENAME VALUE 'OWNER' TO 'owner';`,
+    ]) expect(hardeningSql).toContain(r);
+  });
+});
+
+const authSql = readFileSync(resolve(migrationsDir, '20261021160000_auth_tables_audit_global/migration.sql'), 'utf8');
+
+describe('backend feedback (auth tables, global audit, invitation/org metadata)', () => {
+  it('email_verifications and password_resets: global, hashed token unique, app DML, no RLS', () => {
+    for (const t of ['email_verifications', 'password_resets']) {
+      expect(finalSql).toContain(`CREATE UNIQUE INDEX "${t}_token_hash_key" ON "${t}"("token_hash")`);
+      expect(allSql).not.toContain(`ALTER TABLE "${t}" ENABLE ROW LEVEL SECURITY`);
+    }
+    expect(authSql).toContain(
+      'GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "email_verifications", "password_resets" TO meetops_app;',
+    );
+  });
+
+  it('audit_events: nullable org_id, org-scoped read, insert-only for NULL org', () => {
+    expect(authSql).toContain('ALTER TABLE "audit_events" ALTER COLUMN "org_id" DROP NOT NULL;');
+    expect(authSql).toContain('DROP POLICY IF EXISTS tenant_isolation ON "audit_events";');
+    expect(authSql).toMatch(/CREATE POLICY audit_read_own_org ON "audit_events" FOR SELECT\n\s+USING \(org_id = NULLIF/);
+    expect(authSql).toMatch(
+      /CREATE POLICY audit_insert ON "audit_events" FOR INSERT\n\s+WITH CHECK \(org_id IS NULL OR org_id = NULLIF/,
+    );
+    expect(finalSql).toContain(
+      '"audit_events_org_id_fkey" FOREIGN KEY ("org_id") REFERENCES "organizations"("id") ON DELETE RESTRICT',
+    );
+  });
+
+  it('invitations: accepted_by_id, revoked_at, deleted_at; organizations.created_by_id', () => {
+    for (const c of ['"accepted_by_id" UUID', '"revoked_at" TIMESTAMPTZ(3)', '"deleted_at" TIMESTAMPTZ(3)']) {
+      expect(authSql).toContain(c);
+    }
+    expect(authSql).toContain('ALTER TABLE "organizations" ADD COLUMN     "created_by_id" UUID;');
+    expect(authSql).toContain('accepted_by_id = p_user_id');
+  });
+});
+
+describe('withUserContext', () => {
+  it('sets only app.current_user_id, LOCAL, and validates uuid', async () => {
+    const m = mockClient();
+    const USER = '33333333-3333-4333-8333-333333333333';
+    await withUserContext(USER, async () => 1, { client: m.client });
+    expect(m.calls.map((c) => c.values)).toEqual([['app.current_user_id', USER]]);
+    expect(m.calls[0]?.sql).toMatch(/, true\)$/);
+    await expect(withUserContext('nope', async () => 1, { client: m.client })).rejects.toThrow(/UUID/);
+  });
+
+  it('membership self-read policy keys on app.current_user_id', () => {
+    expect(policySql).toContain(
+      `USING (user_id = NULLIF(current_setting('app.current_user_id', true), '')::uuid)`,
+    );
+  });
+});
+
+const headSql = readFileSync(resolve(migrationsDir, '20261021170000_integration_provider_grants/migration.sql'), 'utf8');
+
+describe('contracts #38 integration_issues + DevOps #7 role compatibility', () => {
+  it('integration_issues has integration_id, provider and unique (org_id, provider, external_id)', () => {
+    expect(finalSql).toMatch(/"integration_id" UUID,/);
+    expect(finalSql).toMatch(/"provider" TEXT NOT NULL,/);
+    expect(headSql).toContain('CREATE UNIQUE INDEX "integration_issues_org_id_provider_external_id_key"');
+  });
+
+  it('head migration re-asserts app grants, default privileges and FORCE RLS; audit stays append-only', () => {
+    for (const g of [
+      'GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA %I TO meetops_app',
+      'GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA %I TO meetops_app',
+      'ALTER DEFAULT PRIVILEGES FOR ROLE meetops_migrator IN SCHEMA %I GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO meetops_app',
+      'ALTER DEFAULT PRIVILEGES FOR ROLE meetops_migrator IN SCHEMA %I GRANT USAGE, SELECT ON SEQUENCES TO meetops_app',
+      'FORCE ROW LEVEL SECURITY',
+      'REVOKE UPDATE, DELETE, TRUNCATE ON TABLE "audit_events" FROM meetops_app;',
+    ]) expect(headSql).toContain(g);
+    // Roles are only created when missing and never altered, so pre-existing infra roles are kept.
+    expect(migrationSql).not.toMatch(/ALTER ROLE/);
   });
 });

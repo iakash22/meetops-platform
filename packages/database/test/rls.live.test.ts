@@ -6,7 +6,7 @@
 import { randomUUID } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import { PrismaClient } from '@prisma/client';
-import { TENANT_TABLES, runWithOrgContext } from '../src/tenant.js';
+import { TENANT_TABLES, runWithOrgContext, runWithUserContext } from '../src/tenant.js';
 
 const APP_URL = process.env.RLS_TEST_APP_URL;
 const OWNER_URL = process.env.RLS_TEST_OWNER_URL;
@@ -171,6 +171,68 @@ describe.skipIf(!RELAY_URL || !OWNER_URL)('outbox relay role (live)', () => {
     ).rejects.toThrow(/permission denied/);
     await expect(relay.$executeRaw`UPDATE outbox_events SET payload = '{}'::jsonb WHERE false`).rejects.toThrow(/permission denied/);
     await relay.$disconnect();
+    await owner.$disconnect();
+  });
+});
+
+describe.skipIf(!APP_URL || !OWNER_URL)('backend feedback (live)', () => {
+  const app = new PrismaClient({ datasources: { db: { url: APP_URL ?? '' } } });
+  const owner = new PrismaClient({ datasources: { db: { url: OWNER_URL ?? '' } } });
+  const orgA = randomUUID();
+  const orgB = randomUUID();
+  const userId = randomUUID();
+
+  it('setup: user member of two orgs', async () => {
+    await owner.user.create({ data: { id: userId, email: `multi-${userId}@example.test` } });
+    for (const id of [orgA, orgB]) {
+      await owner.organization.create({ data: { id, name: 'U', slug: `u-${id}`, createdById: userId } });
+      await runWithOrgContext(owner, id, (tx) => tx.membership.create({ data: { orgId: id, userId, role: 'admin' } }));
+    }
+  });
+
+  it('withUserContext lists own memberships across orgs; nothing else is visible', async () => {
+    const rows = await runWithUserContext(app, userId, (tx) => tx.membership.findMany({ where: { userId } }));
+    expect(rows.map((r) => r.orgId).sort()).toEqual([orgA, orgB].sort());
+    expect(await runWithUserContext(app, userId, (tx) => tx.project.count())).toBe(0);
+    expect(await app.membership.count({ where: { userId } })).toBe(0);
+  });
+
+  it('global audit events (NULL org) are insert-only; org events readable only in-org', async () => {
+    const action = `auth.login_failed.${randomUUID()}`;
+    // NULL-org rows are invisible to the app, so INSERT ... RETURNING (Prisma create) is refused;
+    // the app writes them with createMany (no RETURNING).
+    await expect(app.auditEvent.create({ data: { action, targetType: 'user', metadata: {} } })).rejects.toThrow(
+      /row-level security/,
+    );
+    expect(await app.auditEvent.createMany({ data: [{ action, targetType: 'user', metadata: {} }] })).toEqual({ count: 1 });
+    expect(await app.auditEvent.count({ where: { action } })).toBe(0);
+    expect(await runWithOrgContext(app, orgA, (tx) => tx.auditEvent.count({ where: { action } }))).toBe(0);
+    const orgAction = `org.updated.${randomUUID()}`;
+    await runWithOrgContext(app, orgA, (tx) =>
+      tx.auditEvent.create({ data: { orgId: orgA, action: orgAction, targetType: 'org' } }),
+    );
+    expect(await runWithOrgContext(app, orgA, (tx) => tx.auditEvent.count({ where: { action: orgAction } }))).toBe(1);
+    expect(await runWithOrgContext(app, orgB, (tx) => tx.auditEvent.count({ where: { action: orgAction } }))).toBe(0);
+    await expect(
+      runWithOrgContext(app, orgA, (tx) => tx.auditEvent.create({ data: { orgId: orgB, action: 'x', targetType: 'org' } })),
+    ).rejects.toThrow();
+    await expect(app.$executeRaw`UPDATE audit_events SET action = 'x' WHERE false`).rejects.toThrow(/permission denied/);
+  });
+
+  it('email_verifications / password_resets usable by app without org context', async () => {
+    const th = `ev-${randomUUID()}`;
+    await app.emailVerification.create({
+      data: { userId, email: `multi-${userId}@example.test`, tokenHash: th, expiresAt: new Date(Date.now() + 60_000) },
+    });
+    expect((await app.emailVerification.findUnique({ where: { tokenHash: th } }))?.userId).toBe(userId);
+    const pr = await app.passwordReset.create({
+      data: { userId, tokenHash: `pr-${randomUUID()}`, expiresAt: new Date(Date.now() + 60_000) },
+    });
+    await app.passwordReset.update({ where: { id: pr.id }, data: { usedAt: new Date() } });
+    await expect(
+      app.emailVerification.create({ data: { userId, email: 'x', tokenHash: th, expiresAt: new Date() } }),
+    ).rejects.toThrow();
+    await app.$disconnect();
     await owner.$disconnect();
   });
 });

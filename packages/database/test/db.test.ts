@@ -9,9 +9,9 @@ import * as db from '../src/index.js';
 const pkgDir = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const env = {
   ...process.env,
-  DATABASE_URL: process.env.DATABASE_URL ?? 'postgresql://meetops:meetops@localhost:5432/meetops',
+  DATABASE_URL: process.env.DATABASE_URL ?? 'postgresql://meetops_app:change-me-app-local@localhost:5432/meetops',
   MIGRATION_DATABASE_URL:
-    process.env.MIGRATION_DATABASE_URL ?? 'postgresql://meetops:meetops@localhost:5432/meetops',
+    process.env.MIGRATION_DATABASE_URL ?? 'postgresql://meetops_migrator:change-me-migrator-local@localhost:5432/meetops',
 };
 const prisma = (...args: string[]) =>
   execFileSync('pnpm', ['exec', 'prisma', ...args], { cwd: pkgDir, env, encoding: 'utf8', stdio: 'pipe' });
@@ -40,13 +40,13 @@ describe('generated client', () => {
     await db.disconnectPrismaClient();
   });
 
-  it('exposes exactly the 21 models', () => {
+  it('exposes exactly the 23 models', () => {
     const models = Object.values(Prisma.ModelName);
-    expect(models).toHaveLength(21);
+    expect(models).toHaveLength(23);
     for (const m of [
       'Organization', 'User', 'Membership', 'Session', 'Invitation', 'Employee', 'Project',
       'Meeting', 'MeetingParticipant', 'FileObject', 'Transcript', 'TranscriptSegment', 'Report',
-      'ExtractedTask', 'TaskApproval', 'Task', 'IntegrationIssue', 'Recording', 'AiRun', 'OutboxEvent', 'AuditEvent',
+      'ExtractedTask', 'TaskApproval', 'Task', 'IntegrationIssue', 'Recording', 'EmailVerification', 'PasswordReset', 'AiRun', 'OutboxEvent', 'AuditEvent',
     ]) {
       expect(models).toContain(m);
     }
@@ -60,7 +60,7 @@ describe('generated client', () => {
 
   it('exports only the minimal runtime API', () => {
     expect(Object.keys(db).sort()).toEqual(
-      ['createPrismaClient', 'disconnectPrismaClient', 'getPrismaClient', 'withOrgContext'].sort(),
+      ['createPrismaClient', 'disconnectPrismaClient', 'getPrismaClient', 'withOrgContext', 'withUserContext'].sort(),
     );
   });
 
