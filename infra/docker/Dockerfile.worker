@@ -1,0 +1,34 @@
+# syntax=docker/dockerfile:1.7
+# MeetOps AI — background worker (@meetops/worker, apps/worker; BullMQ on Redis).
+# Includes FFmpeg for media processing. Build context: repository root.
+#   docker build -f infra/docker/Dockerfile.worker -t meetops/worker .
+ARG NODE_VERSION=20.18.0
+
+FROM node:${NODE_VERSION}-bookworm-slim AS base
+ENV PNPM_HOME=/pnpm \
+    PATH=/pnpm:$PATH \
+    COREPACK_ENABLE_DOWNLOAD_PROMPT=0
+RUN corepack enable && corepack prepare pnpm@9.12.3 --activate
+WORKDIR /repo
+
+FROM base AS build
+COPY . .
+RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store \
+    pnpm install --frozen-lockfile --ignore-scripts
+RUN pnpm --filter "@meetops/worker..." run build
+RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store \
+    pnpm --filter @meetops/worker deploy --prod --ignore-scripts /out
+
+FROM node:${NODE_VERSION}-bookworm-slim AS runtime
+# hadolint ignore=DL3008
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends ffmpeg tini ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
+ENV NODE_ENV=production
+WORKDIR /app
+COPY --from=build --chown=node:node /out ./
+USER node
+# The worker exposes no HTTP endpoint yet; liveness is the node process itself
+# (tini forwards SIGTERM so BullMQ shuts down gracefully).
+ENTRYPOINT ["/usr/bin/tini", "--"]
+CMD ["node", "dist/index.js"]

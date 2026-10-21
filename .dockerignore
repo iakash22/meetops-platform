@@ -1,0 +1,16 @@
+**/node_modules
+**/dist
+**/build
+**/coverage
+**/.turbo
+**/*.tsbuildinfo
+**/*.log
+.git
+.github
+.husky
+.pnpm-store
+.env
+.env.*
+!.env.example
+*.pem
+*.key
