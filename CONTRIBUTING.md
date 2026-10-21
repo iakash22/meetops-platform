@@ -10,7 +10,7 @@ New here? Start with [getting started](docs/00-getting-started/README.md). Agent
 
 Use [Conventional Commits](https://www.conventionalcommits.org/): `feat:`, `fix:`, `chore:`, `docs:`, `ci:`, `refactor:`, `test:`, with an optional scope (for example `docs(agents): ...`). Keep commits small.
 
-The repo has no commitlint config, so the format isn't enforced by a hook; reviewers check it.
+Commitlint is coming (DevOps is adding it); until then reviewers check the format.
 
 ## Tooling
 
@@ -49,5 +49,7 @@ All four scripts exist in the root `package.json` (via Turborepo). The repo has 
 See [local setup](docs/00-getting-started/local-setup.md): copy `.env.example` to `.env`, run `pnpm install`, `pnpm dev:infra:up`, then `pnpm dev`.
 
 ## Stacked PRs and merge order
+
+Stacked PRs are merged with merge commits, not squash.
 
 See [agent workflow](docs/00-getting-started/agent-workflow.md#stacked-prs).

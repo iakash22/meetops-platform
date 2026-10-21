@@ -4,12 +4,12 @@ Rules for every agent working on this repo. See also [`CONTRIBUTING.md`](../../C
 
 ## 1. One clone per agent
 
-Each agent works in its own clone under `/workspace/agents/<name>`, for example `/workspace/agents/database`. Never work in, reset or delete another agent's clone. The box is shared, and a shared checkout gets clobbered.
+Each agent works in its own clone under an area-named folder, `/workspace/agents/<area>`. Existing folders: `ai`, `architecture`, `backend` and `database`; new areas follow the same pattern. Never work in, reset or delete another agent's clone. The box is shared, and a shared checkout gets clobbered.
 
 ```bash
-git clone https://github.com/iakash22/meetops-platform.git /workspace/agents/<name>
-cd /workspace/agents/<name>
-git config user.name "<name>"   # local to the clone
+git clone https://github.com/iakash22/meetops-platform.git /workspace/agents/<area>
+cd /workspace/agents/<area>
+git config user.name "<area>"   # local to the clone
 ```
 
 ## 2. Pin pnpm with Corepack
@@ -39,7 +39,7 @@ Using the pinned version keeps lockfile diffs minimal.
   git push
   ```
 
-- Conventional Commits, small and scoped (`docs(agents): ...`). No commitlint config exists, so this isn't enforced automatically.
+- Conventional Commits, small and scoped (`docs(agents): ...`). No commitlint config exists yet; DevOps is adding one, and it will enforce this.
 - Never commit secrets or `.env`.
 
 ## 4. Pre-PR checks
@@ -69,7 +69,7 @@ gh pr edit <upper> --base main
 git fetch origin && git merge origin/main && git push
 ```
 
-If the lower PR is merged with a squash, expect conflicts on the merge from `main`; resolve them in a merge commit.
+**Stacks are merged with merge commits, not squash.** That keeps the upper PRs' history intact, so retargeting and merging `main` stay clean.
 
 ## 6. Merge order
 
@@ -90,7 +90,7 @@ Open PRs as of 2026-10-21, from `gh pr list --state open`.
 | PR  | Branch                        | Base                      | Confirmed dependency                                                                 |
 | --- | ----------------------------- | ------------------------- | ------------------------------------------------------------------------------------ |
 | #17 | `feat/core-contracts`         | `main`                    | None (ARCH; logical upstream of others, see graph)                                   |
-| #16 | `feat/realtime-scaffold`      | `main`                    | None                                                                                 |
+| #16 | `feat/realtime-scaffold`      | `main`                    | None (MEDIA)                                                                         |
 | #4  | `docs/security-threat-model`  | `main`                    | None                                                                                 |
 | #5  | `feat/extension-scaffold`     | `main`                    | None                                                                                 |
 | #15 | `feat/extension-capture`      | `feat/extension-scaffold` | Stacked on #5; merge #5 first                                                        |
