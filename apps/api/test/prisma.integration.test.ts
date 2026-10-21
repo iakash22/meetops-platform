@@ -17,8 +17,7 @@ import {
   PrismaOrganizationRepository
 } from '../src/modules/organizations/infrastructure/prisma/prisma.repositories.js';
 import { RedisLoginLockout, RedisRateLimiter, type RedisLike } from '../src/modules/auth/infrastructure/rate-limit/redis.js';
-import { RedisOneTimeTokenRepository } from '../src/modules/auth/infrastructure/redis-one-time-token.repository.js';
-import { InMemoryAuditLog } from '../src/modules/auth/domain/audit.js';
+import { PrismaOneTimeTokenRepository } from '../src/modules/auth/infrastructure/prisma/prisma-one-time-token.repository.js';
 
 const url = process.env.TEST_DATABASE_URL;
 const redisUrl = process.env.TEST_REDIS_URL ?? 'redis://127.0.0.1:6379';
@@ -29,7 +28,6 @@ describe.skipIf(!url)('Prisma + Redis adapters against live Postgres (RLS)', { t
   let app: App;
   const sfx = randomUUID().slice(0, 8);
   const email = (n: string) => `${n}-${sfx}@example.com`;
-  const fallbackAudit = new InMemoryAuditLog();
 
   beforeAll(async () => {
     db = createPrismaClient({ databaseUrl: url! });
@@ -41,9 +39,10 @@ describe.skipIf(!url)('Prisma + Redis adapters against live Postgres (RLS)', { t
       organizations: new PrismaOrganizationRepository(db),
       memberships: new PrismaMembershipRepository(db),
       invitations: new PrismaInvitationRepository(db),
-      audit: new PrismaAuditLog(fallbackAudit, db),
-      oneTimeTokens: new RedisOneTimeTokenRepository(r),
-      rateLimiter: new RedisRateLimiter(r),
+      audit: new PrismaAuditLog(db),
+      oneTimeTokens: new PrismaOneTimeTokenRepository(db),
+      // >5 signups/hour from one inject IP; the Redis limiter is covered by its own test below.
+      rateLimiter: { consume: () => Promise.resolve({ allowed: true, retryAfterMs: 0 }) },
       lockout: new RedisLoginLockout(r)
     });
   });
@@ -51,6 +50,14 @@ describe.skipIf(!url)('Prisma + Redis adapters against live Postgres (RLS)', { t
     await app?.close();
     await redis?.quit();
     await db?.$disconnect();
+  });
+
+  it('RedisRateLimiter against real Redis', async () => {
+    const rl = new RedisRateLimiter(redis);
+    for (let i = 0; i < 2; i++) expect((await rl.consume('live', 2, 5000)).allowed).toBe(true);
+    const r = await rl.consume('live', 2, 5000);
+    expect(r.allowed).toBe(false);
+    expect(r.retryAfterMs).toBeGreaterThan(0);
   });
 
   it('connects as the non-bypass app role', async () => {
@@ -120,5 +127,21 @@ describe.skipIf(!url)('Prisma + Redis adapters against live Postgres (RLS)', { t
     expect((await x.post('/auth/reset-password', { token: t, password: 'another-long-password' })).statusCode).toBe(204);
     expect((await x.post('/auth/reset-password', { token: t, password: 'another-long-password' })).statusCode).toBe(400);
     expect((await c.get('/auth/session')).statusCode).toBe(401);
+  });
+
+  it('D4: concurrent consumption of one reset token → exactly one wins (UPDATE ... RETURNING)', async () => {
+    await signupAndLogin(app, email('race'));
+    const { Client } = await import('./helpers.js');
+    const x = new Client(app);
+    await x.post('/auth/forgot-password', { email: email('race') });
+    const t = app.token(email('race'), 'password_reset')!;
+    const rs = await Promise.all([1, 2, 3].map(() => new Client(app).post('/auth/reset-password', { token: t, password: 'race-password-long' })));
+    expect(rs.map((r) => r.statusCode).sort()).toEqual([204, 400, 400]);
+  });
+
+  it('pre-tenant audit events are written as global rows (createMany, not readable by the app)', async () => {
+    await signupAndLogin(app, email('glob'));
+    // the app role cannot SELECT null-org rows; the insert succeeding is the assertion
+    expect(await db.auditEvent.count({ where: { orgId: null } })).toBe(0);
   });
 });

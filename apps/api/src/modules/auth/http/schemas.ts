@@ -4,9 +4,11 @@ import {
   CsrfResponse,
   ForgotPasswordRequest,
   GetAuthSessionResponse,
+  Id,
   LoginRequest,
   ResetPasswordRequest,
-  SignupRequest
+  SignupRequest,
+  VerifyEmailRequest
 } from '@meetops/contracts';
 import { ApiErrorEnvelope } from '../../../shared/api-error.js';
 
@@ -24,11 +26,7 @@ export const ResetPasswordBody = ResetPasswordRequest;
 export const SessionResponse = AuthSession;
 export const GetSessionResponse = GetAuthSessionResponse;
 
-/** TODO(contracts #38): replace with VerifyEmailRequest from @meetops/contracts. */
-export const VerifyEmailBody = Type.Object(
-  { token: Type.String({ minLength: 32, maxLength: 512 }) },
-  { additionalProperties: false }
-);
+export const VerifyEmailBody = VerifyEmailRequest;
 export const ResendVerificationBody = ForgotPasswordRequest;
 export const SessionIdParams = Type.Object({ sessionId: Id });
 

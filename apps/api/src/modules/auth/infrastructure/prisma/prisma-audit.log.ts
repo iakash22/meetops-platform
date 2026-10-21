@@ -2,35 +2,29 @@ import { getPrismaClient, withOrgContext, type DatabaseClient } from '../../../.
 import type { AuditEvent, AuditLog } from '../../domain/audit.js';
 
 /**
- * Org-scoped events → audit_events inside withOrgContext. Pre-tenant events (signup, login,
- * resets: organizationId null) go to `fallback` because audit_events.org_id is still NOT NULL.
- * TODO(database P1-DB-3): nullable audit_events.org_id, then write them here too.
+ * audit_events (DB #35): org events are written inside withOrgContext; pre-tenant events
+ * (organizationId null: signup, login, resets) are global rows that the app role may insert but
+ * not read back. Both use createMany, because Prisma `create` needs RETURNING, which RLS refuses
+ * for rows the app cannot SELECT.
  */
 export class PrismaAuditLog implements AuditLog {
-  constructor(
-    private readonly fallback: AuditLog,
-    private readonly db: DatabaseClient = getPrismaClient()
-  ) {}
+  constructor(private readonly db: DatabaseClient = getPrismaClient()) {}
   async record(e: AuditEvent) {
-    if (!e.organizationId) return this.fallback.record(e);
-    const orgId = e.organizationId;
-    await withOrgContext(
-      orgId,
-      (tx) =>
-        tx.auditEvent.create({
-          data: {
-            orgId,
-            actorId: e.actorId,
-            action: e.action,
-            targetType: e.targetType,
-            targetId: e.targetId,
-            metadata: e.metadata,
-            ipAddress: e.ip,
-            userAgent: e.userAgent
-          }
-        }),
-      { client: this.db }
-    );
+    const data = {
+      orgId: e.organizationId,
+      actorId: e.actorId,
+      action: e.action,
+      targetType: e.targetType,
+      targetId: e.targetId,
+      metadata: e.metadata,
+      ipAddress: e.ip,
+      userAgent: e.userAgent
+    };
+    if (!e.organizationId) {
+      await this.db.auditEvent.createMany({ data: [data] });
+      return;
+    }
+    await withOrgContext(e.organizationId, (tx) => tx.auditEvent.createMany({ data: [data] }), { client: this.db });
   }
 }
 

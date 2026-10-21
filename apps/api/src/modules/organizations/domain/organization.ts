@@ -2,7 +2,7 @@ export interface Organization {
   id: string;
   name: string;
   slug: string;
-  /** Not persisted yet (no organizations.created_by_id column): TODO(database). */
+  /** Null once the creator account is deleted. */
   createdById: string | null;
   createdAt: Date;
   updatedAt: Date;

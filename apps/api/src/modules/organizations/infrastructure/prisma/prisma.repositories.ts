@@ -1,7 +1,7 @@
 import {
   getPrismaClient,
   withOrgContext,
-  withUserContextFallback,
+  withUserContext,
   type DatabaseClient,
   type DatabaseTransaction
 } from '../../../../shared/prisma/context.js';
@@ -22,16 +22,16 @@ import type {
  * Column mapping: domain organizationId ↔ org_id.
  */
 
-type OrgRow = { id: string; name: string; slug: string; createdAt: Date; updatedAt: Date; deletedAt: Date | null };
-const toOrg = (r: OrgRow): Organization => ({ ...r, createdById: null });
+type OrgRow = { id: string; name: string; slug: string; createdById: string | null; createdAt: Date; updatedAt: Date; deletedAt: Date | null };
+const toOrg = (r: OrgRow): Organization => ({ ...r });
 
 export class PrismaOrganizationRepository implements OrganizationRepository {
   constructor(private readonly db: DatabaseClient = getPrismaClient()) {}
   async create(o: Organization) {
     const r = await this.db.organization.create({
-      data: { id: o.id, name: o.name, slug: o.slug, createdAt: o.createdAt }
+      data: { id: o.id, name: o.name, slug: o.slug, createdById: o.createdById, createdAt: o.createdAt }
     });
-    return { ...toOrg(r), createdById: o.createdById };
+    return toOrg(r);
   }
   async findById(organizationId: string) {
     const r = await this.db.organization.findFirst({ where: { id: organizationId, deletedAt: null } });
@@ -88,12 +88,12 @@ export class PrismaMembershipRepository implements MembershipRepository {
       )
     );
   }
-  /** User context (membership_self_read policy); TODO(database): withUserContext. */
+  /** User context (membership_self_read policy). */
   async listByUser(userId: string) {
-    return withUserContextFallback(
+    return withUserContext(
       userId,
       async (tx) => (await tx.membership.findMany({ where: { userId, deletedAt: null } })).map(toMembership),
-      this.db
+      { client: this.db }
     );
   }
 
@@ -139,8 +139,11 @@ type InvRow = {
   invitedById: string | null;
   expiresAt: Date;
   acceptedAt: Date | null;
+  acceptedById: string | null;
+  revokedAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
+  deletedAt: Date | null;
 };
 const toStatus = (s: DbInvStatus): InvitationStatus => (s === 'expired' ? 'revoked' : s);
 const toInvitation = (r: InvRow): Invitation => ({
@@ -154,10 +157,9 @@ const toInvitation = (r: InvRow): Invitation => ({
   expiresAt: r.expiresAt,
   createdAt: r.createdAt,
   acceptedAt: r.acceptedAt,
-  // TODO(database): accepted_by_id / revoked_at / deleted_at columns are missing on invitations.
-  acceptedById: null,
-  revokedAt: r.status === 'revoked' ? r.updatedAt : null,
-  deletedAt: null
+  acceptedById: r.acceptedById,
+  revokedAt: r.revokedAt,
+  deletedAt: r.deletedAt
 });
 
 export class PrismaInvitationRepository implements InvitationRepository {
@@ -187,13 +189,13 @@ export class PrismaInvitationRepository implements InvitationRepository {
   }
   async findById(organizationId: string, id: string) {
     return this.tx(organizationId, async (tx) => {
-      const r = await tx.invitation.findFirst({ where: { orgId: organizationId, id } });
+      const r = await tx.invitation.findFirst({ where: { orgId: organizationId, id, deletedAt: null } });
       return r ? toInvitation(r) : null;
     });
   }
   async findPendingByEmail(organizationId: string, email: string) {
     return this.tx(organizationId, async (tx) => {
-      const r = await tx.invitation.findFirst({ where: { orgId: organizationId, email, status: 'pending' } });
+      const r = await tx.invitation.findFirst({ where: { orgId: organizationId, email, status: 'pending', deletedAt: null } });
       return r ? toInvitation(r) : null;
     });
   }
@@ -201,8 +203,8 @@ export class PrismaInvitationRepository implements InvitationRepository {
     if (inv.organizationId !== organizationId) throw new Error('tenant mismatch');
     return this.tx(organizationId, async (tx) => {
       const n = await tx.invitation.updateMany({
-        where: { orgId: organizationId, id: inv.id },
-        data: { status: inv.status, acceptedAt: inv.acceptedAt }
+        where: { orgId: organizationId, id: inv.id, deletedAt: null },
+        data: { status: inv.status, acceptedAt: inv.acceptedAt, acceptedById: inv.acceptedById, revokedAt: inv.revokedAt }
       });
       if (n.count !== 1) throw new Error('tenant mismatch');
       return inv;
@@ -210,7 +212,7 @@ export class PrismaInvitationRepository implements InvitationRepository {
   }
   async setTokenHash(organizationId: string, id: string, tokenHash: string) {
     await this.tx(organizationId, (tx) =>
-      tx.invitation.updateMany({ where: { orgId: organizationId, id, status: 'pending' }, data: { tokenHash } })
+      tx.invitation.updateMany({ where: { orgId: organizationId, id, status: 'pending', deletedAt: null }, data: { tokenHash } })
     );
   }
   /** SECURITY DEFINER lookup_invitation_by_token_hash (P1-DB-3): no org context needed. */
