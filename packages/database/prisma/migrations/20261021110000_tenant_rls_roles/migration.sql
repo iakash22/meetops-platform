@@ -51,7 +51,14 @@ BEGIN
   END IF;
 END
 $$;
-REVOKE ALL ON TABLE "_prisma_migrations" FROM meetops_app;
+-- _prisma_migrations is absent when applying to a shadow DB via `migrate diff --from-migrations`.
+DO $$
+BEGIN
+  IF to_regclass('_prisma_migrations') IS NOT NULL THEN
+    REVOKE ALL ON TABLE "_prisma_migrations" FROM meetops_app;
+  END IF;
+END
+$$;
 
 -- audit_events is append-only for the app role.
 REVOKE UPDATE, DELETE ON TABLE "audit_events" FROM meetops_app;

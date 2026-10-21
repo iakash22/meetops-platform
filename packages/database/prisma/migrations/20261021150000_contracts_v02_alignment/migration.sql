@@ -16,9 +16,14 @@ ADD COLUMN     "left_at" TIMESTAMPTZ(3),
 ADD COLUMN     "user_id" UUID,
 ALTER COLUMN "role" SET DEFAULT 'participant';
 
--- Backfill user_id from linked employees.
+-- Backfill user_id from linked employees. FORCE RLS also binds the owner (no org context here),
+-- so lift it for the backfill only; the same transaction re-forces it.
+ALTER TABLE "meeting_participants" NO FORCE ROW LEVEL SECURITY;
+ALTER TABLE "employees" NO FORCE ROW LEVEL SECURITY;
 UPDATE "meeting_participants" p SET "user_id" = e."user_id"
 FROM "employees" e WHERE e."org_id" = p."org_id" AND e."id" = p."employee_id" AND e."user_id" IS NOT NULL;
+ALTER TABLE "meeting_participants" FORCE ROW LEVEL SECURITY;
+ALTER TABLE "employees" FORCE ROW LEVEL SECURITY;
 
 -- AlterTable
 ALTER TABLE "extracted_tasks" ADD COLUMN     "assignee_hint" TEXT,
