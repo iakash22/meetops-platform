@@ -10,19 +10,37 @@ ENV PNPM_HOME=/pnpm \
     COREPACK_ENABLE_DOWNLOAD_PROMPT=0
 RUN corepack enable && corepack prepare pnpm@9.12.3 --activate
 WORKDIR /repo
+# hadolint ignore=DL3008
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends openssl ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
 
 FROM base AS build
 COPY . .
 RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store \
     pnpm install --frozen-lockfile --ignore-scripts
-RUN pnpm --filter "@meetops/worker..." run build
+# Generate the Prisma client (@meetops/database) in the build stage. The root
+# postinstall is skipped by --ignore-scripts, so run it explicitly.
+RUN pnpm --filter @meetops/database exec prisma generate \
+ && pnpm --filter "@meetops/worker..." run build
 RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store \
     pnpm --filter @meetops/worker deploy --prod --ignore-scripts /out
+# pnpm deploy re-links node_modules, so regenerate the client inside the deployed
+# output when the app depends on @meetops/database (no-op otherwise).
+RUN set -e; \
+    schema="$(find /out/node_modules -path '*@meetops/database/prisma/schema.prisma' -print -quit 2>/dev/null || true)"; \
+    if [ -n "$schema" ]; then \
+      /repo/packages/database/node_modules/.bin/prisma generate --schema "$schema"; \
+    fi
 
 FROM node:${NODE_VERSION}-bookworm-slim AS runtime
+# FFmpeg is pinned to the exact Debian bookworm(-security) build; bump deliberately
+# when Debian ships a fix (see docs/09-security: pinned, patched FFmpeg).
+# OpenSSL is required by the Prisma query engine.
+ARG FFMPEG_VERSION=7:5.1.9-0+deb12u1
 # hadolint ignore=DL3008
 RUN apt-get update \
- && apt-get install -y --no-install-recommends ffmpeg tini ca-certificates \
+ && apt-get install -y --no-install-recommends "ffmpeg=${FFMPEG_VERSION}" tini openssl ca-certificates \
  && rm -rf /var/lib/apt/lists/*
 ENV NODE_ENV=production
 WORKDIR /app
