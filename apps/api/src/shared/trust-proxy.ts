@@ -1,9 +1,23 @@
+import { isIP } from 'node:net';
+
+/** True for an IPv4/IPv6 address or a CIDR with a valid prefix length. */
+export function isIpOrCidr(entry: string): boolean {
+  const [ip, prefix, ...rest] = entry.split('/');
+  if (rest.length || !ip) return false;
+  const family = isIP(ip);
+  if (!family) return false;
+  if (prefix === undefined) return true;
+  if (!/^\d{1,3}$/.test(prefix)) return false;
+  const n = Number(prefix);
+  return n >= 0 && n <= (family === 4 ? 32 : 128);
+}
+
 /**
  * Parses TRUST_PROXY into Fastify's trustProxy option.
  * - unset/empty/"false" → false (X-Forwarded-For is ignored; request.ip = socket address)
  * - integer "N"        → trust N hops
  * - "true"             → rejected (trusting every hop lets clients spoof their IP)
- * - "a,b/24,..."       → list of trusted proxy IPs/CIDRs
+ * - "a,b/24,..."       → list of trusted proxy IPs/CIDRs; every entry is validated (startup fails otherwise)
  */
 export function parseTrustProxy(
   value: string | undefined
@@ -15,8 +29,11 @@ export function parseTrustProxy(
     const hops = parseInt(v, 10);
     return (_address: string, hop: number) => hop < hops;
   }
-  return v
+  const entries = v
     .split(',')
     .map((s) => s.trim())
     .filter(Boolean);
+  const invalid = entries.filter((e) => !isIpOrCidr(e));
+  if (invalid.length) throw new Error(`TRUST_PROXY has invalid IP/CIDR entries: ${invalid.join(', ')}`);
+  return entries;
 }
