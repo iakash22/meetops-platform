@@ -2,8 +2,9 @@ import Fastify from 'fastify';
 import swagger from '@fastify/swagger';
 import swaggerUi from '@fastify/swagger-ui';
 import { createLogger } from '@meetops/logger';
+import { defaultModuleDeps, registerModules, type ModuleDeps } from './modules/index.js';
 
-export function createServer() {
+export function createServer(options: { deps?: Partial<ModuleDeps> } = {}) {
   const logger = createLogger({ name: 'api' });
   const app = Fastify({
     logger
@@ -21,6 +22,8 @@ export function createServer() {
   void app.register(swaggerUi, {
     routePrefix: '/docs'
   });
+
+  void app.register(registerModules, defaultModuleDeps(options.deps));
 
   app.get('/health', async () => {
     return { status: 'ok' };
