@@ -10,7 +10,7 @@ Monorepo, apps (api/web/worker), packages, Docker Compose, CI. Branch `chore/pha
 
 | Agent  | Workstream                                                                                                                                                                  | Branch                           | Pushed? | PR                                              | Status      |
 | ------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------- | ------- | ----------------------------------------------- | ----------- |
-| ARCH   | Core contracts                                                                                                                                                              | `feat/core-contracts`            | Not yet | None                                            | In progress |
+| ARCH   | Core contracts                                                                                                                                                              | `feat/core-contracts`            | Yes     | #17 (open)                                      | In progress |
 | DB     | Database schema and migrations                                                                                                                                              | `feat/database-core-schema`      | Yes     | #6 (open)                                       | In progress |
 | AI     | AI provider registry                                                                                                                                                        | `feat/ai-provider-registry`      | Not yet | None                                            | In progress |
 | BE     | API auth and organizations                                                                                                                                                  | `feat/api-auth-orgs`             | Not yet | None                                            | In progress |
@@ -31,3 +31,5 @@ Update the branch column when each agent pushes its branch.
 - Phase 3: Transcription, reports, task drafts
 - Phase 4: Review/approval, notifications
 - Phase 5: GitHub/Jira integrations, 2-way sync
+
+Also open, not assigned on this board: #16 `feat/realtime-scaffold`.

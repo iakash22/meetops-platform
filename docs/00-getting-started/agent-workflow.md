@@ -77,18 +77,20 @@ Open PRs as of 2026-10-21, from `gh pr list --state open`.
 
 ### Docs stack (merge in this order)
 
-| Order | PR       | Branch                           | Base                                                                   |
-| ----- | -------- | -------------------------------- | ---------------------------------------------------------------------- |
-| 1     | #3       | `docs/agent-board-and-providers` | `main`                                                                 |
-| 2     | #8       | `docs/getting-started`           | `main` (confirmed depends on #3: shares the implementation board file) |
-| 3     | #12      | `docs/database-and-devops`       | `docs/getting-started`                                                 |
-| 4     | #14      | `docs/storage-testing-extension` | `docs/database-and-devops`                                             |
-| 5     | P1-DOC-5 | `docs/contributing`              | `docs/storage-testing-extension`                                       |
+| Order | PR  | Branch                           | Base                                                                   |
+| ----- | --- | -------------------------------- | ---------------------------------------------------------------------- |
+| 1     | #3  | `docs/agent-board-and-providers` | `main`                                                                 |
+| 2     | #8  | `docs/getting-started`           | `main` (confirmed depends on #3: shares the implementation board file) |
+| 3     | #12 | `docs/database-and-devops`       | `docs/getting-started`                                                 |
+| 4     | #14 | `docs/storage-testing-extension` | `docs/database-and-devops`                                             |
+| 5     | #18 | `docs/contributing`              | `docs/storage-testing-extension`                                       |
 
 ### Other open PRs
 
 | PR  | Branch                        | Base                      | Confirmed dependency                                                                 |
 | --- | ----------------------------- | ------------------------- | ------------------------------------------------------------------------------------ |
+| #17 | `feat/core-contracts`         | `main`                    | None (ARCH; logical upstream of others, see graph)                                   |
+| #16 | `feat/realtime-scaffold`      | `main`                    | None                                                                                 |
 | #4  | `docs/security-threat-model`  | `main`                    | None                                                                                 |
 | #5  | `feat/extension-scaffold`     | `main`                    | None                                                                                 |
 | #15 | `feat/extension-capture`      | `feat/extension-scaffold` | Stacked on #5; merge #5 first                                                        |
