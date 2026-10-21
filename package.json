@@ -8,7 +8,7 @@
     "type": "git",
     "url": "https://github.com/iakash22/meetops-platform"
   },
-  "packageManager": "pnpm@9.15.2",
+  "packageManager": "pnpm@9.12.3",
   "engines": {
     "node": ">=20.10.0 <23"
   },
