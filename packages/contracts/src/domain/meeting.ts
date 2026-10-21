@@ -8,6 +8,8 @@ export const MeetingSource = Type.Union([
   Type.Literal('desktop'),
   Type.Literal('bot'),
 ]);
+export type MeetingSource = Static<typeof MeetingSource>;
+
 export const MeetingStatus = Type.Union([
   Type.Literal('scheduled'),
   Type.Literal('recording'),
@@ -26,13 +28,32 @@ export const Meeting = Type.Object({
   status: MeetingStatus,
   startedAt: Type.Optional(IsoDateTime),
   endedAt: Type.Optional(IsoDateTime),
-  createdById: Id,
+  /** Null for bot or import sources. */
+  createdById: Type.Union([Id, Type.Null()]),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
 });
 export type Meeting = Static<typeof Meeting>;
 
+export const MeetingParticipantRole = Type.Union([Type.Literal('host'), Type.Literal('participant')]);
+export type MeetingParticipantRole = Static<typeof MeetingParticipantRole>;
+
+/** A person in a meeting; `userId` is null for external attendees. */
+export const MeetingParticipant = Type.Object({
+  id: Id,
+  meetingId: Id,
+  organizationId: Id,
+  userId: Type.Union([Id, Type.Null()]),
+  displayName: Type.String({ minLength: 1, maxLength: 200 }),
+  email: Type.Optional(Type.Union([Type.String({ format: 'email', maxLength: 320 }), Type.Null()])),
+  role: MeetingParticipantRole,
+  joinedAt: Type.Optional(IsoDateTime),
+  leftAt: Type.Optional(IsoDateTime),
+});
+export type MeetingParticipant = Static<typeof MeetingParticipant>;
+
 export const TranscriptSegment = Type.Object({
+  id: Id,
   index: Type.Integer({ minimum: 0 }),
   startMs: Type.Integer({ minimum: 0 }),
   endMs: Type.Integer({ minimum: 0 }),
