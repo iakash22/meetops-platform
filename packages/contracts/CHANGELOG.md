@@ -19,6 +19,9 @@ While the version is `0.x`, a minor bump may contain breaking changes (ADR-003).
   `Transcript.provider` and `providerJobId`, `TranscriptSegment.id`.
 - Static types for `MeetingSource`, `TaskStatus`, `TaskPriority`.
 - `AUTH_FAILED` error code.
+- `EmailTemplateId` (`invite`, `verify_email`, `reset_password`, `meeting_summary`).
+- Media limits: `MAX_MEDIA_BYTES` (2,000,000,000 bytes), `ALLOWED_MEDIA_MIME_TYPES` and the `MediaMimeType` schema.
+- `@meetops/contracts/legacy` subpath export.
 
 ### Changed (BREAKING)
 
@@ -26,7 +29,7 @@ While the version is `0.x`, a minor bump may contain breaking changes (ADR-003).
 - `AuthSession`: `accessToken` removed (the session is an `__Host-` HttpOnly cookie). Added `csrfToken`,
   `activeOrganizationId` and `role`.
 - Passwords must be 12–128 characters. Request schemas reject unknown properties.
-- `EmailJobPayload` carries ids only (`templateId` and either `userId` or `invitationId`).
+- `EmailJobPayload` carries ids only and is discriminated on `templateId`: `invite` requires `invitationId`, and every other template requires `userId`.
 - `ApiErrorEnvelope.error.requestId` is required.
 - `Recording.file` is a `PublicFileObject`. `FileObject` is internal to api and worker.
 - `Report`: structured `summary`, `decisions`, `risks` and `actionItems`. `modelRouteId` is replaced by `aiRunId` (nullable).
@@ -35,6 +38,15 @@ While the version is `0.x`, a minor bump may contain breaking changes (ADR-003).
 - `ExtractedTask.sourceSegmentIndexes` is replaced by `sourceSegmentIds` (uuid[]).
 - `FallbackPolicy.fallbackRouteIds` is `ModelRouteId[]`.
 - `avatarUrl` and `externalUrl` must be `https://` URIs.
+
+- Upload limits: `CreateUploadRequest.sizeBytes` and recording sessions are capped at 2 GB (`MAX_UPLOAD_BYTES` = `MAX_RECORDING_SESSION_BYTES` = 2,000,000,000).
+  `mimeType` must be on the explicit allowlist, optionally with a `;codecs=` parameter. Patterns like `audio/*` are no longer accepted.
+
+### Deprecated
+
+- `PresignedUrl` and `StorageObjectMetadata` are no longer exported from the main entry point. Import them from
+  `@meetops/contracts/legacy` while migrating to `PresignedUrlDto` / `PublicFileObject` / `FileObject`. Removal is planned in 0.3.0.
+  `EmailAddress` and `EmailMessage` are still exported from the main entry point.
 
 ### Removed
 
