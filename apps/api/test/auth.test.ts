@@ -86,7 +86,8 @@ describe('auth', () => {
       const stored = [...sessions.items.values()];
       expect(stored.every((s) => s.tokenHash !== cookie.value && /^[a-f0-9]{64}$/.test(s.tokenHash))).toBe(true);
       expect(res.body).not.toContain(cookie.value);
-      expect(res.body).not.toMatch(/hash|token/i);
+      expect(res.body).not.toMatch(/hash|"token"|accessToken|sessionToken/i);
+      expect(res.json().csrfToken).toBeTypeOf('string');
     });
 
     it('rotates the session on login (old token revoked)', async () => {
@@ -106,7 +107,7 @@ describe('auth', () => {
       const unknown = await c.post('/auth/login', { email: 'ghost@example.com', password: 'nope-nope-nope' });
       for (const r of [wrong, unknown]) {
         expect(r.statusCode).toBe(401);
-        expect(r.json().error).toMatchObject({ code: 'UNAUTHENTICATED', message: 'Invalid email or password' });
+        expect(r.json().error).toMatchObject({ code: 'AUTH_FAILED', message: 'Invalid email or password' });
         expect(r.cookies.find((x) => x.name === SID)).toBeUndefined();
       }
     });
@@ -124,7 +125,7 @@ describe('auth', () => {
     it('rate-limits login per IP at 20/min', async () => {
       const c = new Client(app);
       let last = 0;
-      for (let i = 0; i < 21; i++) last = (await c.post('/auth/login', { email: `x${i}@example.com`, password: 'whatever' })).statusCode;
+      for (let i = 0; i < 21; i++) last = (await c.post('/auth/login', { email: `x${i}@example.com`, password: 'whatever-whatever' })).statusCode;
       expect(last).toBe(429);
     });
   });
@@ -263,5 +264,21 @@ describe('auth', () => {
       const json = JSON.stringify(Object.values(ops).map((o) => o.responses));
       expect(json, path).not.toMatch(/"(passwordHash|tokenHash|token|accessToken|sessionToken)"/);
     }
+  });
+});
+
+describe('contracts session shape', () => {
+  it('login returns csrfToken and role; GET /auth/session omits csrfToken', async () => {
+    const app = await buildApp();
+    const c = await signupAndLogin(app, 'shape@example.com');
+    await c.post('/orgs', { name: 'Shape' });
+    const login = await c.post('/auth/login', { email: 'shape@example.com', password: PASSWORD });
+    expect(login.json().csrfToken).toBe(c.jar.get(CSRF));
+    expect(login.json()).toHaveProperty('role');
+    const s = await c.get('/auth/session');
+    expect(s.json()).not.toHaveProperty('csrfToken');
+    await c.post('/orgs/switch', { organizationId: login.json().organizations[0].id });
+    expect((await c.get('/auth/session')).json().role).toBe('owner');
+    await app.close();
   });
 });

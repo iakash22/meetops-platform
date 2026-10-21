@@ -1,4 +1,5 @@
 /* eslint-disable @typescript-eslint/no-unsafe-argument -- test/ is not part of a TS project (see report) */
+import { randomUUID } from 'node:crypto';
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { buildApp, signupAndLogin, type App, type Client } from './helpers';
 
@@ -14,6 +15,7 @@ describe('organizations', () => {
   it('requires authentication', async () => {
     const c = await signupAndLogin(app, 'a@example.com');
     await c.post('/auth/logout');
+    await c.csrf();
     expect((await c.post('/orgs', { name: 'X' })).statusCode).toBe(401);
     expect((await c.get('/orgs')).statusCode).toBe(401);
   });
@@ -60,7 +62,7 @@ describe('organizations', () => {
     const org = await createOrg(owner, 'Private');
     const outsider = await signupAndLogin(app, 'outsider@example.com');
     const a = await outsider.post('/orgs/switch', { organizationId: org.organization.id });
-    const b = await outsider.post('/orgs/switch', { organizationId: 'nope' });
+    const b = await outsider.post('/orgs/switch', { organizationId: randomUUID() });
     const g = await outsider.get(`/orgs/${org.organization.id}`);
     for (const r of [a, b, g]) {
       expect(r.statusCode).toBe(404);
@@ -81,7 +83,7 @@ describe('organizations', () => {
 
     const wrongUser = await signupAndLogin(app, 'someone@example.com');
     const mismatch = await wrongUser.post('/invitations/accept', { token });
-    const unknown = await wrongUser.post('/invitations/accept', { token: 'x'.repeat(43) });
+    const unknown = await wrongUser.post('/invitations/accept', { token: 'x'.repeat(48) });
     expect(mismatch.statusCode).toBe(404);
     expect(mismatch.body.replace(/"requestId":"[^"]+"/, '')).toBe(unknown.body.replace(/"requestId":"[^"]+"/, ''));
 

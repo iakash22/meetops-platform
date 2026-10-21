@@ -1,0 +1,203 @@
+import { describe, it, expect, afterEach } from 'vitest';
+import { createServer } from '../src/server';
+import { MissingProductionDependencyError, PRODUCTION_REQUIRED_DEPS } from '../src/modules/index';
+import { InMemoryRateLimiter } from '../src/modules/auth/infrastructure/rate-limit/in-memory';
+import { systemClock } from '../src/shared/ports';
+import { parseTrustProxy } from '../src/shared/trust-proxy';
+import { Client, fakeHasher, ORIGIN } from './helpers';
+
+describe('B1: production refuses in-memory defaults', () => {
+  it('throws listing every missing implementation', () => {
+    try {
+      createServer({ nodeEnv: 'production' });
+      throw new Error('expected to throw');
+    } catch (err) {
+      expect(err).toBeInstanceOf(MissingProductionDependencyError);
+      expect((err as MissingProductionDependencyError).missing).toEqual([...PRODUCTION_REQUIRED_DEPS]);
+    }
+  });
+  it('still throws when only some are injected', () => {
+    expect(() => createServer({ nodeEnv: 'production', deps: { rateLimiter: new InMemoryRateLimiter(systemClock) } })).toThrow(
+      /users, sessions/
+    );
+  });
+  it('allows in-memory defaults outside production', async () => {
+    const app = createServer({ nodeEnv: 'test' });
+    await app.ready();
+    await app.close();
+  });
+});
+
+describe('B2: trustProxy and request.ip keyed rate limits', { timeout: 30_000 }, () => {
+  let app: ReturnType<typeof createServer> | undefined;
+  afterEach(async () => app?.close());
+
+  it('parses TRUST_PROXY', () => {
+    expect(parseTrustProxy(undefined)).toBe(false);
+    expect(parseTrustProxy('')).toBe(false);
+    expect(parseTrustProxy('10.0.0.1, 10.1.0.0/16')).toEqual(['10.0.0.1', '10.1.0.0/16']);
+    const hop = parseTrustProxy('1') as (a: string, h: number) => boolean;
+    expect(hop('x', 0)).toBe(true);
+    expect(hop('x', 1)).toBe(false);
+    expect(() => parseTrustProxy('true')).toThrow();
+  });
+
+  const burst = async (a: ReturnType<typeof createServer>) => {
+    const c = new Client(a as never);
+    let last = 0;
+    for (let i = 0; i < 21; i++) {
+      last = (
+        await c.post(
+          '/auth/login',
+          { email: `x${i}@example.com`, password: 'whatever-whatever' },
+          { 'x-forwarded-for': `203.0.113.${i}` }
+        )
+      ).statusCode;
+    }
+    return last;
+  };
+
+  it('ignores an untrusted X-Forwarded-For (still rate-limited by socket IP)', async () => {
+    app = createServer({ deps: { hasher: fakeHasher }, trustProxy: '' });
+    await app.ready();
+    expect(await burst(app)).toBe(429);
+  });
+
+  it('honours X-Forwarded-For from a trusted proxy', async () => {
+    app = createServer({ deps: { hasher: fakeHasher }, trustProxy: '127.0.0.1' });
+    await app.ready();
+    expect(await burst(app)).toBe(401);
+  });
+});
+
+describe('D9: 4xx framework errors use the envelope with a generic message', () => {
+  it('unknown route → 404 NOT_FOUND', async () => {
+    const app = createServer();
+    const res = await app.inject({ method: 'GET', url: '/nope' });
+    expect(res.statusCode).toBe(404);
+    expect(res.json().error).toMatchObject({ code: 'NOT_FOUND', message: 'Not found' });
+    expect(res.json().error.requestId).toBeTruthy();
+    await app.close();
+  });
+  it('malformed JSON → 400 generic, no parser internals', async () => {
+    const app = createServer();
+    const c = new Client(app as never);
+    const t = await c.csrf();
+    const res = await app.inject({
+      method: 'POST',
+      url: '/auth/login',
+      payload: '{"email":',
+      headers: { 'content-type': 'application/json', cookie: c.cookie, origin: ORIGIN, 'x-csrf-token': t }
+    });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error).toMatchObject({ code: 'BAD_REQUEST', message: 'Bad request' });
+    expect(res.body).not.toMatch(/Unexpected|JSON|position/);
+    await app.close();
+  });
+  it('oversized body → 413 with generic message', async () => {
+    const app = createServer();
+    const c = new Client(app as never);
+    const t = await c.csrf();
+    const res = await app.inject({
+      method: 'POST',
+      url: '/auth/login',
+      payload: JSON.stringify({ email: 'a@example.com', password: 'x'.repeat(1_100_000) }),
+      headers: { 'content-type': 'application/json', cookie: c.cookie, origin: ORIGIN, 'x-csrf-token': t }
+    });
+    expect(res.statusCode).toBe(413);
+    expect(res.json().error).toMatchObject({ code: 'BAD_REQUEST', message: 'Bad request' });
+    await app.close();
+  });
+  it('validation errors carry paths but not validator messages', async () => {
+    const app = createServer();
+    const res = await new Client(app as never).post('/auth/signup', { name: 'A', email: 'a@example.com', password: 'short' });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error.code).toBe('VALIDATION_FAILED');
+    expect(res.body).not.toMatch(/must NOT have fewer/);
+    await app.close();
+  });
+});
+
+describe('CSRF HMAC binding', () => {
+  it('a token from one session is rejected for another session (403)', async () => {
+    const { buildApp, signupAndLogin } = await import('./helpers');
+    const app = await buildApp();
+    const a = await signupAndLogin(app, 'a@example.com');
+    const b = await signupAndLogin(app, 'b@example.com');
+    const tokenA = a.jar.get('__Host-meetops_csrf')!;
+    b.jar.set('__Host-meetops_csrf', tokenA);
+    const res = await b.post('/orgs', { name: 'X' }, { 'x-csrf-token': tokenA });
+    expect(res.statusCode).toBe(403);
+    expect(res.json().error.code).toBe('FORBIDDEN');
+    expect((await a.post('/orgs', { name: 'X' })).statusCode).toBe(201);
+    await app.close();
+  });
+
+  it('a pre-session token stops working once a session exists; login returns a fresh one', async () => {
+    const { buildApp, Client, PASSWORD } = await import('./helpers');
+    const app = await buildApp();
+    const c = new Client(app);
+    const pre = await c.csrf();
+    expect(c.jar.has('__Host-meetops_presession')).toBe(true);
+    await c.post('/auth/signup', { name: 'A', email: 'p@example.com', password: PASSWORD });
+    const login = await c.post('/auth/login', { email: 'p@example.com', password: PASSWORD });
+    expect(login.json().csrfToken).not.toBe(pre);
+    const stale = await c.post('/orgs', { name: 'X' }, { 'x-csrf-token': pre });
+    expect(stale.statusCode).toBe(403);
+    expect((await c.post('/orgs', { name: 'X' })).statusCode).toBe(201);
+    await app.close();
+  });
+
+  it('a forged token (valid shape, wrong MAC) matching the cookie is rejected', async () => {
+    const { buildApp, Client, ORIGIN } = await import('./helpers');
+    const app = await buildApp();
+    const c = new Client(app);
+    await c.csrf();
+    const forged = 'abc.def';
+    c.jar.set('__Host-meetops_csrf', forged);
+    const res = await app.inject({
+      method: 'POST',
+      url: '/auth/forgot-password',
+      payload: { email: 'a@example.com' },
+      headers: { cookie: c.cookie, origin: ORIGIN, 'x-csrf-token': forged }
+    });
+    expect(res.statusCode).toBe(403);
+    await app.close();
+  });
+});
+
+describe('cookie policy', () => {
+  it('development drops the __Host- prefix and Secure', async () => {
+    const { cookieConfig } = await import('../src/modules/auth/http/security');
+    expect(cookieConfig('development')).toMatchObject({ cookieName: 'meetops_sid', csrfCookieName: 'meetops_csrf', cookieSecure: false });
+    expect(cookieConfig('production')).toMatchObject({ cookieName: '__Host-meetops_sid', csrfCookieName: '__Host-meetops_csrf', cookieSecure: true });
+    expect(cookieConfig('test').cookieName).toBe('__Host-meetops_sid');
+  });
+  it('production refuses non-__Host- or non-Secure cookie config', async () => {
+    const { assertProductionCookies, cookieConfig } = await import('../src/modules/auth/http/security');
+    const base = { allowedOrigins: ['https://app.example'], sessionPolicy: { idleTimeoutMs: 1, absoluteTimeoutMs: 1 }, csrfSecret: Buffer.alloc(32, 1) };
+    expect(() => assertProductionCookies({ ...cookieConfig('production'), ...base })).not.toThrow();
+    expect(() => assertProductionCookies({ ...cookieConfig('development'), ...base })).toThrow(/__Host-/);
+    expect(() => assertProductionCookies({ ...cookieConfig('production'), cookieSecure: false, ...base })).toThrow();
+    expect(() => assertProductionCookies({ ...cookieConfig('production'), ...base, csrfSecret: Buffer.alloc(8) })).toThrow(/CSRF_SECRET/);
+  });
+  it('production requires WEB_ORIGINS and CSRF_SECRET when security is not injected', async () => {
+    const { defaultModuleDeps, PRODUCTION_REQUIRED_DEPS } = await import('../src/modules/index');
+    const all: Record<string, object> = {};
+    for (const k of PRODUCTION_REQUIRED_DEPS as string[]) all[k] = {};
+    const saved = { o: process.env.WEB_ORIGINS, s: process.env.CSRF_SECRET };
+    delete process.env.WEB_ORIGINS;
+    delete process.env.CSRF_SECRET;
+    expect(() => defaultModuleDeps(all, { nodeEnv: 'production' })).toThrow(/WEB_ORIGINS, CSRF_SECRET/);
+    process.env.WEB_ORIGINS = 'https://app.example';
+    process.env.CSRF_SECRET = 'x'.repeat(40);
+    const deps = defaultModuleDeps(all, { nodeEnv: 'production' });
+    expect(deps.security).toMatchObject({ cookieName: '__Host-meetops_sid', cookieSecure: true, allowedOrigins: ['https://app.example'] });
+    if (saved.o === undefined) delete process.env.WEB_ORIGINS; else process.env.WEB_ORIGINS = saved.o;
+    if (saved.s === undefined) delete process.env.CSRF_SECRET; else process.env.CSRF_SECRET = saved.s;
+  });
+  it('dev default origins include the Vite app', async () => {
+    const { DEV_WEB_ORIGINS } = await import('../src/modules/auth/http/security');
+    expect(DEV_WEB_ORIGINS).toContain('http://localhost:5173');
+  });
+});

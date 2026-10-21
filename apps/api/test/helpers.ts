@@ -4,7 +4,7 @@ import type { ModuleDeps } from '../src/modules/index';
 import { RecordingAuthMailer } from '../src/modules/auth/domain/mailer';
 import type { PasswordHasher } from '../src/modules/auth/domain/ports';
 
-export const ORIGIN = 'http://localhost:3000';
+export const ORIGIN = 'http://localhost:5173';
 export const SID = '__Host-meetops_sid';
 export const CSRF = '__Host-meetops_csrf';
 export const PASSWORD = 'correct-horse-battery';
