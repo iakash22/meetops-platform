@@ -1,3 +1,4 @@
+import type { CreateUploadResponse } from '@meetops/contracts';
 import type { AuthSession, Meeting, Organization, Paginated, Project, Task } from '@/lib/api/types';
 
 export const orgs: Organization[] = [
@@ -7,7 +8,6 @@ export const orgs: Organization[] = [
 
 export const session: AuthSession = {
   user: { id: 'usr_1', email: 'ada@example.com', name: 'Ada' },
-  accessToken: 'test-token',
   organizations: orgs,
 };
 
@@ -36,4 +36,14 @@ export const tasks: Paginated<Task> = {
 
 export const projects: Paginated<Project> = {
   items: [{ id: 'prj_1', orgId: 'org_1', name: 'Launch' }],
+};
+
+export const uploadResponse: CreateUploadResponse = {
+  fileObjectId: 'fo_1',
+  upload: {
+    url: 'https://storage.example.com/upload?sig=abc',
+    method: 'PUT',
+    headers: { 'Content-Type': 'audio/webm' },
+    expiresAt: '2026-10-21T18:00:00.000Z',
+  },
 };

@@ -11,7 +11,8 @@ export type Organization = { id: ID; name: string; slug: string };
 
 export type User = { id: ID; email: string; name: string };
 
-export type AuthSession = { user: User; accessToken: string; organizations: Organization[] };
+/** Session itself is an HttpOnly cookie; the body only describes the signed-in user. */
+export type AuthSession = { user: User; organizations: Organization[] };
 
 export type LoginRequest = { email: string; password: string };
 export type SignupRequest = { name: string; email: string; password: string };

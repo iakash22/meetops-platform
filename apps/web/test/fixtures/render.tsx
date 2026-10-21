@@ -5,12 +5,13 @@ import { vi } from 'vitest';
 import { App } from '@/app';
 import type { ApiClient } from '@/lib/api/client';
 import { useOrgStore, useUiStore } from '@/stores/org-store';
-import { meetings, orgs, projects, session, tasks } from './data';
+import { meetings, orgs, projects, session, tasks, uploadResponse } from './data';
 
 export function createMockApi(
   overrides: Partial<{ [K in keyof ApiClient]: Partial<ApiClient[K]> }> = {},
 ): ApiClient {
   return {
+    request: vi.fn().mockResolvedValue(undefined),
     auth: {
       login: vi.fn().mockResolvedValue(session),
       signup: vi.fn().mockResolvedValue(session),
@@ -22,9 +23,7 @@ export function createMockApi(
     tasks: { list: vi.fn().mockResolvedValue(tasks), ...overrides.tasks },
     projects: { list: vi.fn().mockResolvedValue(projects), ...overrides.projects },
     storage: {
-      createUploadUrl: vi
-        .fn()
-        .mockResolvedValue({ url: 'https://x', expiresAt: new Date(), method: 'PUT' }),
+      createUpload: vi.fn().mockResolvedValue(uploadResponse),
       ...overrides.storage,
     },
   };
