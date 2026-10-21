@@ -14,6 +14,7 @@ Security design docs for MeetOps AI. Status: Draft, Phase 0 (no features impleme
 | [upload-media-security.md](upload-media-security.md)           | Upload, media processing, recording consent             |
 | [rbac-matrix.md](rbac-matrix.md)                               | CASL role/resource/action matrix                        |
 | [pr-security-checklist.md](pr-security-checklist.md)           | Security review checklist for PRs                       |
+| [test-cases.md](test-cases.md)                                 | QA security test cases (tenancy, auth abuse, SSRF)      |
 | [assumptions-open-questions.md](assumptions-open-questions.md) | Assumptions and open questions                          |
 
 Report vulnerabilities per the root `SECURITY.md`.
