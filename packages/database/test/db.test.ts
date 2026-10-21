@@ -106,3 +106,16 @@ describe('generated client', () => {
     expect(a).toBeInstanceOf(PrismaClient);
   });
 });
+
+describe('lint wiring', () => {
+  it('tsconfig.json excludes test/ (root eslint allowDefaultProject owns packages/*/test/*.ts); tsconfig.test.json typechecks it', () => {
+    const tsconfig = JSON.parse(
+      readFileSync(new URL('../tsconfig.json', import.meta.url), 'utf8'),
+    ) as { include: string[] };
+    const testConfig = JSON.parse(
+      readFileSync(new URL('../tsconfig.test.json', import.meta.url), 'utf8'),
+    ) as { include: string[] };
+    expect(tsconfig.include.some((p) => p.startsWith('test'))).toBe(false);
+    expect(testConfig.include).toContain('test');
+  });
+});
