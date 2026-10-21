@@ -42,18 +42,19 @@ E2E is **not** part of `pnpm test`; run it explicitly (it needs browsers).
 
 ## Environment variables
 
-| Var                                    | Default                                                                            | Used by                                                                                                                                                                                         |
-| -------------------------------------- | ---------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `E2E_BASE_URL`                         | unset → container port if set, else `http://localhost:$WEB_PORT` with a dev server | e2e; when set, it wins and no webServer is started                                                                                                                                              |
-| `WEB_PORT`                             | `5173`                                                                             | e2e: vite dev server port (matches `apps/web/vite.config.ts`)                                                                                                                                   |
-| `E2E_CONTAINER_PORT`                   | unset                                                                              | e2e: when set (e.g. `8080`, the web container in `compose.app.yml`), baseURL is `http://localhost:$E2E_CONTAINER_PORT` and no dev server is started                                             |
-| `API_BASE_URL`                         | unset → in-process `inject`                                                        | api (hit a running API over HTTP)                                                                                                                                                               |
-| `QA_SKIP_DOCKER`                       | unset                                                                              | integration; `1` forces skip                                                                                                                                                                    |
-| `QA_POSTGRES_IMAGE` / `QA_REDIS_IMAGE` | `pgvector/pgvector:pg16` / `redis:7-alpine`                                        | integration (override the images)                                                                                                                                                               |
-| `QA_DB_PACKAGE_DIR`                    | `../packages/database`                                                             | integration/db: where Prisma migrations + `seed.ts` live (e.g. a worktree of PR #6). Suite skips if no migrations; seed test skips if that package has no installed `tsx`/`@prisma/client`      |
-| `QA_RLS_SCHEMA`                        | `migrations`                                                                       | integration/rls: `migrations` = `prisma migrate deploy` (production path); `datamodel` = build tables from `schema.prisma` and apply only the RLS migration (workaround while DB-BUG-1 is open) |
-| `QA_CONTRACTS_DIR`                     | `../packages/contracts`                                                            | contract: alias `@meetops/contracts` to another checkout's `packages/contracts` (e.g. PR #17)                                                                                                   |
-| `CI`                                   | –                                                                                  | Playwright retries, forbidOnly, html report                                                                                                                                                     |
+| Var                                    | Default                                                                            | Used by                                                                                                                                                                                                                                |
+| -------------------------------------- | ---------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `E2E_BASE_URL`                         | unset → container port if set, else `http://localhost:$WEB_PORT` with a dev server | e2e; when set, it wins and no webServer is started                                                                                                                                                                                     |
+| `WEB_PORT`                             | `5173`                                                                             | e2e: vite dev server port (matches `apps/web/vite.config.ts`)                                                                                                                                                                          |
+| `E2E_CONTAINER_PORT`                   | unset                                                                              | e2e: when set (e.g. `8080`, the web container in `compose.app.yml`), baseURL is `http://localhost:$E2E_CONTAINER_PORT` and no dev server is started                                                                                    |
+| `API_BASE_URL`                         | unset → in-process `inject`                                                        | api (hit a running API over HTTP)                                                                                                                                                                                                      |
+| `QA_SKIP_DOCKER`                       | unset                                                                              | integration; `1` forces skip                                                                                                                                                                                                           |
+| `QA_POSTGRES_IMAGE` / `QA_REDIS_IMAGE` | `pgvector/pgvector:pg16` / `redis:7-alpine`                                        | integration (override the images)                                                                                                                                                                                                      |
+| `QA_DB_PACKAGE_DIR`                    | `../packages/database`                                                             | integration/db: where Prisma migrations + `seed.ts` live (e.g. a worktree of PR #6). Suite skips if no migrations; seed test skips if that package has no installed `tsx`/`@prisma/client`                                             |
+| `QA_API_DIR`                           | unset                                                                              | api/auth: Backend's `apps/api` checkout with the auth/orgs modules (PR #27). Its workspace deps must be installed and built (`pnpm install && pnpm --filter "@meetops/api^..." build` in that checkout). Unset → AU/XT API suites skip |
+| `QA_RLS_SCHEMA`                        | `migrations`                                                                       | integration/rls: `migrations` = `prisma migrate deploy` (production path); `datamodel` = build tables from `schema.prisma` and apply only the RLS migration (workaround while DB-BUG-1 is open)                                        |
+| `QA_CONTRACTS_DIR`                     | `../packages/contracts`                                                            | contract: alias `@meetops/contracts` to another checkout's `packages/contracts` (e.g. PR #17)                                                                                                                                          |
+| `CI`                                   | –                                                                                  | Playwright retries, forbidOnly, html report                                                                                                                                                                                            |
 
 ## Docker skip behaviour
 
@@ -68,6 +69,21 @@ reported as **skipped**, never failed. CI runners with Docker run them for real.
 - XT-26..29 (RLS) are real tests in `integration/rls.test.ts`, run against PR #25 (`feat/database-tenancy-rls`) through `QA_DB_PACKAGE_DIR`. They use a LOGIN role that inherits `meetops_app`.
 - SSRF: import from `fixtures/security/ssrf.ts`, e.g. `it.each(ssrfUrlPayloads)('$id rejects $url', ...)`. `ALLOWED_HOST` is a placeholder; swap it with `withAllowedHost(url, host)`.
 - Query-level analogues of XT-01/13/14 already run in `integration/database.test.ts`.
+
+## P1-QA-3: XT and AU suites
+
+- `api/auth/auth-abuse.test.ts`: AU-01..05, 07..19, 21..28 against PR #27 `createServer` (in-memory repos, injected fake clock and hasher, recording mailer). Signup is checked to be enumeration-safe (202, never `CONFLICT`).
+- `api/auth/cross-org.test.ts`: XT-01/04 analogues on `/orgs`, XT-21 (invitations), XT-30 (org switch, `X-Org-Id`). They expect 404 `NOT_FOUND` with the same body as a missing id.
+- `integration/xt-db.test.ts`: XT-01..04, 10, 13, 14 through `withOrgContext` (PR #25) with a Prisma client logged in as a `meetops_app` member.
+- `security/*.test.ts` list every XT/AU ID as implemented (with location) or pending (with reason); a test enforces that.
+
+Full local run:
+
+```bash
+QA_API_DIR=/path/to/pr27/apps/api \
+QA_DB_PACKAGE_DIR=/path/to/pr25/packages/database QA_RLS_SCHEMA=datamodel \
+pnpm --filter @meetops/tests test
+```
 
 ## Known product bugs (tests left failing or `it.fails`)
 
