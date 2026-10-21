@@ -1,39 +1,60 @@
-import type { Issue } from './types.js';
+import { Value } from '@sinclair/typebox/value';
+import { IntegrationIssueRecord as IntegrationIssueRecordSchema, type IntegrationIssueRecord, type IntegrationProvider } from '@meetops/contracts';
+import { IssueTrackerError, type Issue, type IssueStatus } from './types.js';
 
-/**
- * Local mirror of `IntegrationIssue` from @meetops/contracts (PR #17, feat/core-contracts).
- * TODO(P1-INT-3): once #17 is merged to main, delete this interface and
- * `import type { IntegrationIssue } from '@meetops/contracts'` (shape is identical).
- */
-export interface IntegrationIssueRecord {
+export type { IntegrationIssueRecord, IntegrationProvider };
+
+export interface ToIntegrationIssueContext {
+  /** Record id (uuid). */
   id: string;
+  organizationId: string;
+  integrationId: string;
   taskId: string;
-  /** Integration key, e.g. "jira", "github". */
-  integration: string;
-  externalId: string;
-  externalUrl?: string;
-  syncedAt?: string;
-  createdAt: string;
+  now?: Date;
+  /** Preserve original createdAt when re-syncing an existing link. */
+  createdAt?: string;
 }
 
-/** Provider Issue -> persisted link record. Uses the provider key ("owner/repo#N" / "PROJ-1") as externalId. */
-export function toIntegrationIssue(
-  issue: Issue,
-  ctx: { id: string; taskId: string; now?: Date; createdAt?: string }
-): IntegrationIssueRecord {
+/**
+ * Provider Issue -> tenant-scoped persisted link record (contracts IntegrationIssueRecord).
+ * externalId = provider key ("owner/repo#N" / "PROJ-1"); lastKnownStatus = issue.status; externalUrl only if https.
+ * The result is validated against the contract schema; invalid input throws IssueTrackerError.
+ */
+export function toIntegrationIssue(issue: Issue, ctx: ToIntegrationIssueContext): IntegrationIssueRecord {
   const now = (ctx.now ?? new Date()).toISOString();
-  return {
+  const record: IntegrationIssueRecord = {
     id: ctx.id,
+    organizationId: ctx.organizationId,
+    integrationId: ctx.integrationId,
     taskId: ctx.taskId,
-    integration: issue.provider,
+    provider: issue.provider,
     externalId: issue.key,
-    externalUrl: issue.url,
+    lastKnownStatus: issue.status,
     syncedAt: now,
     createdAt: ctx.createdAt ?? now
   };
+  if (/^https:\/\//i.test(issue.url)) record.externalUrl = issue.url;
+  if (!Value.Check(IntegrationIssueRecordSchema, record)) {
+    const first = Value.Errors(IntegrationIssueRecordSchema, record).First();
+    throw new IssueTrackerError(`Invalid IntegrationIssueRecord${first ? ` at ${first.path}` : ''}`, issue.provider);
+  }
+  return record;
 }
 
-/** Link record -> provider lookup reference (for getIssue/updateStatus). */
-export function fromIntegrationIssue(record: IntegrationIssueRecord): { provider: string; key: string } {
-  return { provider: record.integration, key: record.externalId };
+/** Link record -> lookup reference for the provider bound to (organizationId, integrationId). */
+export function fromIntegrationIssue(record: IntegrationIssueRecord): {
+  organizationId: string;
+  integrationId: string;
+  provider: IntegrationProvider;
+  key: string;
+  lastKnownStatus?: IssueStatus;
+} {
+  const ref: ReturnType<typeof fromIntegrationIssue> = {
+    organizationId: record.organizationId,
+    integrationId: record.integrationId,
+    provider: record.provider,
+    key: record.externalId
+  };
+  if (record.lastKnownStatus) ref.lastKnownStatus = record.lastKnownStatus;
+  return ref;
 }

@@ -123,9 +123,17 @@ Jira hardening:
 - **Order.** The approval gate runs before the first attempt. Retries happen inside the approved, audited write, and the audit log records one attempt and one result per write.
 - **Replay store.** `RedisDeliveryStore(redis, { keyPrefix = 'meetops:webhook:delivery:', defaultTtlSeconds = 86400 })` is atomic through `SET key 1 EX ttl NX`. It accepts any injected ioredis-compatible client.
 
-## Persisted links (`IntegrationIssue`)
+## Persisted links (`IntegrationIssueRecord` from @meetops/contracts)
 
-`toIntegrationIssue(issue, { id, taskId })` and `fromIntegrationIssue(record)` map a provider `Issue` to and from the `IntegrationIssue` shape in `@meetops/contracts` (`integration` = provider, `externalId` = provider key). Until PR #17 is merged, a structurally identical local `IntegrationIssueRecord` is used, marked with a TODO.
+`toIntegrationIssue(issue, { id, organizationId, integrationId, taskId, createdAt? })` builds a tenant-scoped `IntegrationIssueRecord`:
+
+- `provider` is `'github'` or `'jira'`.
+- `externalId` is the provider key.
+- `lastKnownStatus` is taken from `issue.status`.
+- `externalUrl` is set only for https links.
+- The result is validated against the contract schema.
+
+`fromIntegrationIssue(record)` returns `{ organizationId, integrationId, provider, key, lastKnownStatus? }`. Look links up by `(organizationId, provider, externalId)`.
 
 ## GitHub webhooks
 
