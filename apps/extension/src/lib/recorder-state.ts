@@ -11,6 +11,8 @@ export type RecorderState =
   | ({
       status: 'starting' | 'recording' | 'stopping' | 'error';
       tabId: number;
+      /** Stream id issued for tabId; one-shot. */
+      streamId: string;
       sessionId: string;
       startedAt: number;
       chunks: number;

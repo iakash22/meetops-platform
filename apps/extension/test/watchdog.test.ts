@@ -9,8 +9,8 @@ import {
 import { loadState } from '../src/lib/recorder-state.js';
 import { memoryKV } from '../src/lib/storage.js';
 
-const popup = { fromSelf: true, fromOffscreen: false };
-const offscreen = { fromSelf: true, fromOffscreen: true };
+const popup = { fromSelf: true, fromOffscreen: false, fromPopup: true };
+const offscreen = { fromSelf: true, fromOffscreen: true, fromPopup: false };
 const bg = <T extends object>(m: T) => ({ target: 'background', ...m });
 
 function setup() {
@@ -26,13 +26,14 @@ function setup() {
     stopWatchdog: vi.fn(async () => undefined),
     finalizeAfterCrash: vi.fn(async () => undefined),
     setBadge: vi.fn(async () => undefined),
+    capturedTabIds: vi.fn(async (): Promise<number[]> => [1, 2, 3, 7, 9]),
   } satisfies BackgroundDeps;
   const advance = (ms: number) => (t += ms);
   const startRecording = async () => {
     await handleBackgroundMessage(deps, bg({ type: 'ACK_CONSENT', tabId: 1 }), popup);
     await handleBackgroundMessage(
       deps,
-      bg({ type: 'START_RECORDING', tabId: 1, streamId: 's' }),
+      bg({ type: 'START_RECORDING', tabId: 1, streamId: crypto.randomUUID() }),
       popup,
     );
     await handleBackgroundMessage(deps, bg({ type: 'REC_STARTED', sessionId: 'u1' }), offscreen);

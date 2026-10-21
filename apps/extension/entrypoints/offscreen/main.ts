@@ -3,6 +3,7 @@ import { HEARTBEAT_INTERVAL_MS } from '../../src/lib/background-handler.js';
 import { ChunkStore } from '../../src/lib/chunk-store.js';
 import { isOffscreenMessage, type OffscreenToBackground } from '../../src/lib/messages.js';
 import { startRecording, type RecorderLike, type RecordingHandle } from '../../src/lib/recorder.js';
+import { extensionUrls, isTrustedOffscreenSender } from '../../src/lib/senders.js';
 import { StubUploadClient } from '../../src/lib/upload.js';
 
 // TODO: swap for the real HTTP client once the chunked upload API exists.
@@ -63,7 +64,9 @@ function cleanup() {
 }
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
-  if (sender.id !== chrome.runtime.id || !isOffscreenMessage(msg)) return false;
+  // Only the background service worker may drive the recorder (it is the one that checks
+  // consent); the popup or any other extension page is ignored.
+  if (!isOffscreenMessage(msg) || !isTrustedOffscreenSender(sender, extensionUrls())) return false;
   if (msg.type === 'OFFSCREEN_STOP') {
     if (!handle) {
       sendResponse({ ok: false, error: 'Not recording' });

@@ -24,7 +24,9 @@ export interface BackgroundDeps {
   stopWatchdog: () => Promise<void>;
   /** Mark a crashed session finalized in the chunk queue and drain it. */
   finalizeAfterCrash: (sessionId: string, chunkCount: number, durationMs: number) => Promise<void>;
-  /** Toolbar badge, used to notify the user of an error without opening the popup. */
+  /** Tab ids Chrome reports as being tab-captured (chrome.tabCapture.getCapturedTabs). */
+  capturedTabIds: () => Promise<number[]>;
+  /** Toolbar badge: 'REC' while recording, '' when idle. */
   setBadge: (text: string) => Promise<void>;
 }
 
@@ -33,6 +35,8 @@ export interface SenderInfo {
   fromSelf: boolean;
   /** True when sent from the offscreen document. */
   fromOffscreen: boolean;
+  /** True when sent from the action popup page. */
+  fromPopup: boolean;
 }
 
 const extras = (s: RecorderState) => ({
@@ -40,6 +44,21 @@ const extras = (s: RecorderState) => ({
   ...(s.storageWarning ? { storageWarning: s.storageWarning } : {}),
   ...(s.incomplete ? { incomplete: true } : {}),
 });
+
+/**
+ * Serialise all message handling so read-modify-write of session state (and consent
+ * consumption) cannot interleave across concurrent messages.
+ */
+export function serialized<A extends unknown[], R>(fn: (...a: A) => Promise<R>) {
+  let tail: Promise<unknown> = Promise.resolve();
+  return (...a: A): Promise<R> => {
+    const run = tail.then(() => fn(...a));
+    tail = run.catch(() => undefined);
+    return run;
+  };
+}
+
+const USED_STREAMS_KEY = 'usedStreamIds';
 
 const status = (s: RecorderState): BackgroundResponse =>
   s.status === 'idle'
@@ -105,6 +124,7 @@ async function toIdle(deps: BackgroundDeps, prev: RecorderState, lastError?: str
   await saveState(deps.kv, next);
   await deps.stopWatchdog().catch(() => undefined);
   await deps.closeOffscreen().catch(() => undefined);
+  await deps.setBadge(lastError ? '!' : '').catch(() => undefined);
   return next;
 }
 
@@ -120,7 +140,7 @@ export async function handleBackgroundMessage(
   const isEvent = msg.type.startsWith('REC_');
   if (isEvent && !sender.fromOffscreen)
     return fail('Recorder events must come from the offscreen document');
-  if (!isEvent && sender.fromOffscreen) return fail('Offscreen document cannot issue commands');
+  if (!isEvent && !sender.fromPopup) return fail('Commands must come from the popup');
 
   // Popup commands run the watchdog first so a dead recorder is reported promptly.
   const state = isEvent ? await loadState(kv) : await checkWatchdog(deps);
@@ -143,12 +163,16 @@ export async function handleBackgroundMessage(
 
     case 'START_RECORDING': {
       if (state.status !== 'idle' && state.status !== 'error') return fail('Already recording');
+      const used = (await kv.get<string[]>(USED_STREAMS_KEY)) ?? [];
+      if (used.includes(msg.streamId)) return fail('Stream id already used');
       const consent = await consumeConsent(kv, msg.tabId, deps.now());
       if (!consent.ok) return fail(consent.reason);
+      await kv.set(USED_STREAMS_KEY, [...used, msg.streamId].slice(-50));
       const startedAt = deps.now();
       const next: RecorderState = {
         status: 'starting',
         tabId: msg.tabId,
+        streamId: msg.streamId,
         sessionId: '',
         startedAt,
         chunks: 0,
@@ -197,6 +221,20 @@ export async function handleBackgroundMessage(
 
     case 'REC_STARTED': {
       if (state.status !== 'starting') return status(state);
+      // Bind the stream to the consented tab: Chrome must report that exact tab as captured.
+      const captured = await deps.capturedTabIds().catch(() => [] as number[]);
+      if (!captured.includes(state.tabId)) {
+        await deps
+          .sendToOffscreen({ target: 'offscreen', type: 'OFFSCREEN_STOP' })
+          .catch(() => undefined);
+        return status(
+          await toIdle(
+            deps,
+            state,
+            'Captured tab does not match the tab you consented to record; stopped.',
+          ),
+        );
+      }
       const next: RecorderState = {
         ...state,
         status: 'recording',
@@ -204,6 +242,7 @@ export async function handleBackgroundMessage(
         lastHeartbeatAt: deps.now(),
       };
       await saveState(kv, next);
+      await deps.setBadge('REC').catch(() => undefined);
       return status(next);
     }
 
