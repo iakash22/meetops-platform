@@ -50,16 +50,9 @@ qa-integration:
       with:
         node-version: 20
         cache: 'pnpm'
-        cache-dependency-path: |
-          pnpm-lock.yaml
-          tests/pnpm-lock.yaml
 
-    - name: Install root dependencies
+    - name: Install dependencies (root workspace, includes tests/)
       run: pnpm install --frozen-lockfile
-
-    - name: Install tests/ dependencies
-      working-directory: tests
-      run: pnpm install --ignore-workspace --frozen-lockfile
 
     - name: Pre-pull container images
       run: |
@@ -150,16 +143,9 @@ qa-e2e:
       with:
         node-version: 20
         cache: 'pnpm'
-        cache-dependency-path: |
-          pnpm-lock.yaml
-          tests/pnpm-lock.yaml
 
-    - name: Install root dependencies
+    - name: Install dependencies (root workspace, includes tests/)
       run: pnpm install --frozen-lockfile
-
-    - name: Install tests/ dependencies
-      working-directory: tests
-      run: pnpm install --ignore-workspace --frozen-lockfile
 
     - name: Get Playwright version
       id: pw
