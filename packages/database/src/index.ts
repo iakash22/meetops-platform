@@ -1,11 +1,11 @@
 import { PrismaClient, type Prisma } from '@prisma/client';
-
-export * from '@prisma/client';
-export * from './tenant.js';
-
 import { runWithOrgContext, type OrgContextOptions } from './tenant.js';
 
+/** The database client type. Model/enum types come from @meetops/contracts, not from here. */
 export type DatabaseClient = PrismaClient;
+/** Transaction-scoped client passed to withOrgContext callbacks. */
+export type DatabaseTransaction = Prisma.TransactionClient;
+export type { OrgContextOptions };
 
 export interface CreatePrismaClientOptions {
   /** Overrides DATABASE_URL for this client. */
@@ -14,17 +14,17 @@ export interface CreatePrismaClientOptions {
 }
 
 /** Create a new PrismaClient. Prefer getPrismaClient() in app code. */
-export function createPrismaClient(options: CreatePrismaClientOptions = {}): PrismaClient {
+export function createPrismaClient(options: CreatePrismaClientOptions = {}): DatabaseClient {
   const config: Prisma.PrismaClientOptions = {};
   if (options.databaseUrl) config.datasources = { db: { url: options.databaseUrl } };
   if (options.log) config.log = options.log;
   return new PrismaClient(config);
 }
 
-const globalForPrisma = globalThis as unknown as { __meetopsPrisma?: PrismaClient };
+const globalForPrisma = globalThis as unknown as { __meetopsPrisma?: DatabaseClient };
 
 /** Process-wide singleton (survives dev hot reload). Reads DATABASE_URL lazily on first query. */
-export function getPrismaClient(options: CreatePrismaClientOptions = {}): PrismaClient {
+export function getPrismaClient(options: CreatePrismaClientOptions = {}): DatabaseClient {
   globalForPrisma.__meetopsPrisma ??= createPrismaClient(options);
   return globalForPrisma.__meetopsPrisma;
 }
@@ -39,12 +39,13 @@ export async function disconnectPrismaClient(): Promise<void> {
 }
 
 /**
- * withOrgContext(orgId, fn, { client?, userId?, timeoutMs? }): run fn in a transaction scoped to orgId
- * for Postgres RLS. Uses the shared client unless one is passed.
+ * withOrgContext(orgId, fn, { client?, userId?, timeoutMs? }): run fn in one interactive
+ * transaction with app.current_org_id set LOCAL, so forced RLS only exposes this org.
+ * Uses the shared client unless one is passed.
  */
 export async function withOrgContext<T>(
   orgId: string,
-  fn: (tx: Prisma.TransactionClient) => Promise<T>,
+  fn: (tx: DatabaseTransaction) => Promise<T>,
   options: OrgContextOptions = {},
 ): Promise<T> {
   const { client, ...rest } = options;

@@ -19,11 +19,12 @@ export const TENANT_TABLES = [
   'reports',
   'extracted_tasks',
   'task_approvals',
-  'internal_tasks',
-  'external_issue_links',
+  'tasks',
+  'integration_issues',
   'ai_runs',
   'outbox_events',
   'audit_events',
+  'recordings',
 ] as const;
 export type TenantTable = (typeof TENANT_TABLES)[number];
 
