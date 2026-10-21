@@ -6,3 +6,4 @@ export * from './status-sync.js';
 export * from './governance.js';
 export * from './retry.js';
 export * from './redis-delivery-store.js';
+export * from './integration-issue.js';
