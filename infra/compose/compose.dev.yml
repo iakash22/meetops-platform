@@ -1,18 +1,20 @@
-# MeetOps AI — local development infrastructure.
+# MeetOps AI — local development infrastructure (DEV ONLY, never deploy this file).
 # Usage (from repo root): pnpm dev:infra:up   (reads ./.env, copy from .env.example)
 # Optional profiles:      docker compose --env-file .env -f infra/compose/compose.dev.yml --profile ollama --profile local-stt up -d
+# Credentials have no fallbacks: compose fails fast if .env is missing them.
+# All host ports bind to 127.0.0.1 only. Images are pinned (no :latest).
 name: meetops-dev
 
 services:
   postgres:
-    image: pgvector/pgvector:pg16
+    image: pgvector/pgvector:0.8.7-pg16-bookworm
     restart: unless-stopped
     environment:
-      POSTGRES_USER: ${POSTGRES_USER:-postgres}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
-      POSTGRES_DB: ${POSTGRES_DB:-meetops}
+      POSTGRES_USER: ${POSTGRES_USER:?set POSTGRES_USER in .env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:?set POSTGRES_DB in .env}
     ports:
-      - '${POSTGRES_PORT:-5432}:5432'
+      - '127.0.0.1:${POSTGRES_PORT:-5432}:5432'
     volumes:
       - postgres-data:/var/lib/postgresql/data
     healthcheck:
@@ -22,46 +24,55 @@ services:
       retries: 10
 
   redis:
-    image: redis:7-alpine
+    image: redis:7.4.11-alpine
     restart: unless-stopped
-    command: ['redis-server', '--appendonly', 'yes']
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?set REDIS_PASSWORD in .env}
+    command: ['sh', '-c', 'exec redis-server --appendonly yes --requirepass "$${REDIS_PASSWORD}"']
     ports:
-      - '${REDIS_PORT:-6379}:6379'
+      - '127.0.0.1:${REDIS_PORT:-6379}:6379'
     volumes:
       - redis-data:/data
     healthcheck:
-      test: ['CMD', 'redis-cli', 'ping']
+      test: ['CMD-SHELL', 'REDISCLI_AUTH="$${REDIS_PASSWORD}" redis-cli ping | grep -q PONG']
       interval: 5s
       timeout: 3s
       retries: 10
 
+  # minio/minio and minio/mc were removed from Docker Hub (Sept 2026) and the
+  # upstream project is archived. pgsty/silo is a MinIO fork that keeps the S3 API,
+  # MINIO_* env vars and on-disk format; its entrypoint prefixes `silo`.
   minio:
-    image: minio/minio:latest
+    image: pgsty/silo:RELEASE.2026-10-18T00-00-00Z
     restart: unless-stopped
     command: ['server', '/data', '--console-address', ':9001']
     environment:
-      MINIO_ROOT_USER: ${STORAGE_ACCESS_KEY_ID:-minioadmin}
-      MINIO_ROOT_PASSWORD: ${STORAGE_SECRET_ACCESS_KEY:-minioadmin}
+      MINIO_ROOT_USER: ${STORAGE_ACCESS_KEY_ID:?set STORAGE_ACCESS_KEY_ID in .env}
+      MINIO_ROOT_PASSWORD: ${STORAGE_SECRET_ACCESS_KEY:?set STORAGE_SECRET_ACCESS_KEY in .env}
     ports:
-      - '9000:9000'
-      - '9001:9001'
+      - '127.0.0.1:${MINIO_API_PORT:-9000}:9000'
+      - '127.0.0.1:${MINIO_CONSOLE_PORT:-9001}:9001'
     volumes:
       - minio-data:/data
     healthcheck:
-      test: ['CMD', 'mc', 'ready', 'local']
+      test: ['CMD', 'curl', '-fsS', 'http://127.0.0.1:9000/minio/health/live']
       interval: 5s
       timeout: 5s
       retries: 10
 
+  # Creates the bucket (private: no anonymous policy is ever set), CORS for
+  # browser presigned PUTs (exposes ETag for multipart), and a lifecycle rule that
+  # aborts incomplete multipart uploads after 1 day.
   minio-init:
-    image: minio/mc:latest
+    image: pgsty/mc:RELEASE.2026-10-18T00-00-00Z
     depends_on:
       minio:
         condition: service_healthy
     environment:
-      MINIO_ROOT_USER: ${STORAGE_ACCESS_KEY_ID:-minioadmin}
-      MINIO_ROOT_PASSWORD: ${STORAGE_SECRET_ACCESS_KEY:-minioadmin}
+      MINIO_ROOT_USER: ${STORAGE_ACCESS_KEY_ID:?set STORAGE_ACCESS_KEY_ID in .env}
+      MINIO_ROOT_PASSWORD: ${STORAGE_SECRET_ACCESS_KEY:?set STORAGE_SECRET_ACCESS_KEY in .env}
       STORAGE_BUCKET: ${STORAGE_BUCKET:-meetops-dev}
+      STORAGE_CORS_ORIGINS: ${STORAGE_CORS_ORIGINS:-http://localhost:5173,http://localhost:8080}
     entrypoint:
       - /bin/sh
       - -c
@@ -69,15 +80,36 @@ services:
         set -e
         mc alias set local http://minio:9000 "$${MINIO_ROOT_USER}" "$${MINIO_ROOT_PASSWORD}"
         mc mb --ignore-existing "local/$${STORAGE_BUCKET}"
-        echo "bucket $${STORAGE_BUCKET} ready"
+        mc anonymous set none "local/$${STORAGE_BUCKET}"
+
+        origins=""
+        for o in $$(echo "$${STORAGE_CORS_ORIGINS}" | tr ',' ' '); do
+          origins="$${origins}<AllowedOrigin>$${o}</AllowedOrigin>"
+        done
+        cat > /tmp/cors.xml <<XML
+        <CORSConfiguration><CORSRule>$${origins}<AllowedMethod>GET</AllowedMethod><AllowedMethod>PUT</AllowedMethod><AllowedMethod>HEAD</AllowedMethod><AllowedHeader>*</AllowedHeader><ExposeHeader>ETag</ExposeHeader><MaxAgeSeconds>3600</MaxAgeSeconds></CORSRule></CORSConfiguration>
+        XML
+        if ! mc cors set "local/$${STORAGE_BUCKET}" /tmp/cors.xml; then
+          echo "bucket CORS unsupported; falling back to server-wide api cors_allow_origin"
+          mc admin config set local api cors_allow_origin="$${STORAGE_CORS_ORIGINS}"
+        fi
+
+        cat > /tmp/ilm.json <<JSON
+        {"Rules":[{"ID":"abort-incomplete-multipart","Status":"Enabled","Filter":{"Prefix":""},"AbortIncompleteMultipartUpload":{"DaysAfterInitiation":1}}]}
+        JSON
+        if ! mc ilm import "local/$${STORAGE_BUCKET}" < /tmp/ilm.json; then
+          echo "AbortIncompleteMultipartUpload unsupported; using server stale_uploads_expiry=24h"
+          mc admin config set local api stale_uploads_expiry=24h
+        fi
+        echo "bucket $${STORAGE_BUCKET} ready (private, CORS, multipart cleanup)"
     restart: 'no'
 
   ollama:
-    image: ollama/ollama:latest
+    image: ollama/ollama:0.40.7
     profiles: ['ollama']
     restart: unless-stopped
     ports:
-      - '11434:11434'
+      - '127.0.0.1:11434:11434'
     volumes:
       - ollama-data:/root/.ollama
     healthcheck:
@@ -86,14 +118,14 @@ services:
       timeout: 5s
       retries: 10
 
-  # faster-whisper OpenAI-compatible server (Speaches, formerly fedirz/faster-whisper-server).
-  # CPU image; listens on 8000 inside the container, exposed on 8001 to match LOCAL_STT_URL.
+  # faster-whisper OpenAI-compatible server (Speaches). CPU image; listens on 8000
+  # inside the container, exposed on 8001 to match LOCAL_STT_URL.
   local-stt:
-    image: ghcr.io/speaches-ai/speaches:latest-cpu
+    image: ghcr.io/speaches-ai/speaches:0.9.0-rc.3-cpu
     profiles: ['local-stt']
     restart: unless-stopped
     ports:
-      - '8001:8000'
+      - '127.0.0.1:8001:8000'
     volumes:
       - local-stt-cache:/home/ubuntu/.cache/huggingface/hub
     healthcheck:
