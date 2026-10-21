@@ -2,14 +2,14 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it, vi } from 'vitest';
+import { Prisma } from '@prisma/client';
+import { withOrgContext } from '../src/index.js';
 import {
-  Prisma,
   TENANT_TABLES,
   ORG_CONTEXT_SETTING,
   runWithOrgContext,
-  withOrgContext,
   type TransactionCapableClient,
-} from '../src/index.js';
+} from '../src/tenant.js';
 
 const pkgDir = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const schema = readFileSync(resolve(pkgDir, 'prisma/schema.prisma'), 'utf8');
@@ -171,7 +171,147 @@ describe('withOrgContext', () => {
     ).rejects.toThrow('boom');
   });
 
-  it('exports Prisma namespace alongside helpers', () => {
+  it('generated client has renamed models', () => {
     expect(Prisma.ModelName.AuditEvent).toBe('AuditEvent');
+    expect(Prisma.ModelName.Task).toBe('Task');
+  });
+});
+
+const hardeningSql = readFileSync(
+  resolve(migrationsDir, '20261021100000_tenancy_hardening/migration.sql'),
+  'utf8',
+);
+
+describe('cross-tenant referential integrity (M1)', () => {
+  const tenantNames = new Set(tenantModels.map((m) => m.name));
+
+  it('every tenant table has UNIQUE(org_id, id)', () => {
+    for (const m of tenantModels) expect(m.body, m.name).toContain('@@unique([orgId, id])');
+  });
+
+  it('every relation between tenant tables is a composite (org_id, parent_id) FK', () => {
+    let count = 0;
+    for (const m of tenantModels) {
+      for (const line of m.body.split('\n')) {
+        const rel = /^\s+\w+\s+(\w+)\??(\[\])?\s+@relation\((.*)\)/.exec(line);
+        if (!rel || rel[2] || !rel[3]?.includes('fields:')) continue;
+        if (!tenantNames.has(rel[1] ?? '')) continue;
+        expect(rel[3], `${m.name}: ${line.trim()}`).toMatch(/fields: \[orgId, \w+\], references: \[orgId, id\]/);
+        expect(rel[3]).not.toContain('SetNull');
+        count++;
+      }
+    }
+    expect(count).toBeGreaterThanOrEqual(20);
+  });
+
+  it('migration creates composite FKs in SQL', () => {
+    expect(hardeningSql).toContain(
+      'FOREIGN KEY ("org_id", "project_id") REFERENCES "projects"("org_id", "id")',
+    );
+    expect(hardeningSql).toContain(
+      'FOREIGN KEY ("org_id", "meeting_id") REFERENCES "meetings"("org_id", "id")',
+    );
+  });
+});
+
+describe('per-org uniqueness (M2)', () => {
+  it('storage key and external ids are unique per org', () => {
+    expect(allSql).toContain('"file_objects"("org_id", "bucket", "storage_key")');
+    expect(hardeningSql).toContain('DROP INDEX "file_objects_bucket_key_key"');
+    expect(allSql).toContain('"integration_issues"("org_id", "integration", "external_id")');
+    expect(allSql).toContain('"projects"("org_id", "key")');
+  });
+
+  it('only reviewed global uniques remain (email, slug, token hashes, storage key)', () => {
+    const globals = [...schema.matchAll(/^[ \t]+(\w+)[ \t]+\S+[ \t][^\n]*@unique\b(?!\()/gm)].map((m) => m[1]).sort();
+    expect(globals).toEqual(
+      ['email', 'extractedTaskId', 'fileObjectId', 'key', 'slug', 'tokenHash', 'tokenHash'].sort(),
+    );
+  });
+});
+
+describe('sessions (M3) and audit retention (M4)', () => {
+  it('sessions track last_seen_at, absolute expiry and FK active_org_id', () => {
+    expect(allSql).toContain('"last_seen_at" TIMESTAMPTZ(3) NOT NULL');
+    expect(allSql).toContain('"absolute_expires_at" TIMESTAMPTZ(3) NOT NULL');
+    expect(allSql).toContain(
+      'FOREIGN KEY ("active_org_id") REFERENCES "organizations"("id") ON DELETE SET NULL',
+    );
+  });
+
+  it('audit_events org FK is ON DELETE RESTRICT (no cascade with org)', () => {
+    expect(allSql).toContain(
+      '"audit_events_org_id_fkey" FOREIGN KEY ("org_id") REFERENCES "organizations"("id") ON DELETE RESTRICT',
+    );
+  });
+});
+
+describe('storage objects and recordings', () => {
+  it('file_objects is the single storage-object table with media fields and lineage', () => {
+    const body = /CREATE TABLE "file_objects" \(([\s\S]*?)\);/.exec(allSql)?.[1] ?? '';
+    const add = /ALTER TABLE "file_objects"[\s\S]*?;/g;
+    const all = body + (hardeningSql.match(add) ?? []).join('\n');
+    for (const c of [
+      '"meeting_id" UUID', '"kind" "StorageObjectKind"', '"status" "StorageObjectStatus"', '"storage_key" TEXT',
+      '"parent_object_id" UUID', '"etag"', '"duration_seconds"', '"sample_rate"', '"channels"',
+      '"chunk_index"', '"start_seconds"', '"upload_id"', '"provider"',
+    ]) expect(all, c).toContain(c);
+    expect(allSql).toContain(`CREATE TYPE "StorageObjectKind" AS ENUM ('raw', 'normalized', 'chunk')`);
+    expect(allSql).toContain(
+      'FOREIGN KEY ("org_id", "parent_object_id") REFERENCES "file_objects"("org_id", "id")',
+    );
+    expect(schema).not.toContain('model MediaObject');
+  });
+
+  it('recordings reference a file object within the same org', () => {
+    expect(allSql).toContain('CREATE TABLE "recordings"');
+    expect(allSql).toContain(
+      'FOREIGN KEY ("org_id", "file_object_id") REFERENCES "file_objects"("org_id", "id")',
+    );
+    expect(allSql).toContain(
+      `CREATE TYPE "RecordingStatus" AS ENUM ('uploading', 'uploaded', 'processing', 'ready', 'failed')`,
+    );
+    expect(TENANT_TABLES).toContain('recordings');
+  });
+
+  it('contract names: tasks and integration_issues', () => {
+    expect(TENANT_TABLES).toEqual(expect.arrayContaining(['tasks', 'integration_issues']));
+    expect(allSql).toContain('CREATE TABLE "tasks"');
+    expect(allSql).toContain('CREATE TABLE "integration_issues"');
+  });
+
+  it('enum labels are lowercase (contracts PR #17)', () => {
+    const enums = [...schema.matchAll(/enum \w+ \{([\s\S]*?)\}/g)].flatMap((m) =>
+      (m[1] ?? '').split('\n').map((l) => l.trim()).filter(Boolean),
+    );
+    for (const v of enums) expect(v).toMatch(/^[a-z][a-z_]*$/);
+    expect(allSql).toContain(`'owner', 'admin', 'member', 'viewer'`);
+  });
+});
+
+describe('storage key convention', () => {
+  it('seed uses org/{orgId}/ prefix', () => {
+    const seed = readFileSync(resolve(pkgDir, 'prisma/seed.ts'), 'utf8');
+    expect(seed).toContain('`org/${org.id}/meetings/');
+    expect(seed).not.toContain('orgs/');
+  });
+});
+
+describe('XT-26..XT-28 static guarantees', () => {
+  it('XT-26: policies use missing_ok current_setting so no context => NULL => 0 rows', () => {
+    const policies = rlsSql.match(/current_setting\('app\.current_org_id', true\)::uuid/g) ?? [];
+    expect(policies.length).toBe(TENANT_TABLES.length * 2);
+    expect(rlsSql).not.toMatch(/current_setting\('app\.current_org_id'\)/);
+  });
+
+  it('XT-27: every tenant policy has WITH CHECK', () => {
+    const n = (rlsSql.match(/CREATE POLICY tenant_isolation[^;]*WITH CHECK/g) ?? []).length;
+    expect(n).toBe(TENANT_TABLES.length);
+  });
+
+  it('XT-28: org context is transaction-local (set_config is_local=true), never session SET', () => {
+    const src = readFileSync(resolve(pkgDir, 'src/tenant.ts'), 'utf8');
+    expect(src).toMatch(/set_config\(\$\{ORG_CONTEXT_SETTING\}, \$\{orgId\}, true\)/);
+    expect(src).not.toMatch(/\bSET\s+app\./i);
   });
 });
