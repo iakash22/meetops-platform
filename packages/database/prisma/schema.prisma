@@ -1,20 +1,770 @@
-// Prisma minimal schema for Phase 0
+// MeetOps AI core data model (PostgreSQL + pgvector)
+// Conventions: uuid ids, camelCase fields mapped to snake_case columns,
+// snake_case table names, org_id on every tenant-scoped table with indexes leading with org_id.
+
 generator client {
-  provider = "prisma-client-js"
+  provider        = "prisma-client-js"
+  previewFeatures = ["postgresqlExtensions"]
 }
 
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
+  provider   = "postgresql"
+  // Runtime app role (meetops_app, NOBYPASSRLS). Migrations use the owner role via directUrl.
+  url        = env("DATABASE_URL")
+  directUrl  = env("MIGRATION_DATABASE_URL")
+  extensions = [vector]
 }
 
+enum MembershipRole {
+  owner
+  admin
+  member
+  viewer
+}
+
+enum InvitationStatus {
+  pending
+  accepted
+  revoked
+  expired
+}
+
+enum ProjectStatus {
+  active
+  archived
+}
+
+enum MeetingStatus {
+  scheduled
+  recording
+  processing
+  completed
+  failed
+}
+
+enum MeetingParticipantRole {
+  host
+  participant
+}
+
+enum TranscriptStatus {
+  pending
+  processing
+  ready
+  failed
+}
+
+enum ReportStatus {
+  draft
+  published
+  archived
+}
+
+enum ExtractedTaskStatus {
+  pending_review
+  approved
+  rejected
+  converted
+}
+
+enum TaskPriority {
+  low
+  medium
+  high
+  urgent
+}
+
+enum ApprovalDecision {
+  approved
+  rejected
+  changes_requested
+}
+
+enum TaskStatus {
+  todo
+  in_progress
+  done
+  cancelled
+}
+
+enum AiRunStatus {
+  queued
+  running
+  succeeded
+  failed
+  cancelled
+}
+
+enum AiRunKind {
+  transcription
+  summary
+  task_extraction
+  embedding
+  other
+}
+
+enum StorageObjectKind {
+  raw
+  normalized
+  chunk
+}
+
+enum OutboxStatus {
+  pending
+  processing
+  published
+  failed
+}
+
+enum MeetingSource {
+  upload
+  extension
+  desktop
+  bot
+}
+
+enum RecordingStatus {
+  uploading
+  uploaded
+  processing
+  ready
+  failed
+}
+
+enum StorageObjectStatus {
+  pending_upload
+  uploaded
+  processing
+  ready
+  failed
+}
+
+model Organization {
+  id          String    @id @default(uuid()) @db.Uuid
+  name        String
+  slug        String    @unique
+  createdById String?   @map("created_by_id") @db.Uuid
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt   DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+  deletedAt   DateTime? @map("deleted_at") @db.Timestamptz(3)
+
+  memberships         Membership[]
+  invitations         Invitation[]
+  employees           Employee[]
+  projects            Project[]
+  meetings            Meeting[]
+  meetingParticipants MeetingParticipant[]
+  fileObjects         FileObject[]
+  transcripts         Transcript[]
+  transcriptSegments  TranscriptSegment[]
+  reports             Report[]
+  extractedTasks      ExtractedTask[]
+  taskApprovals       TaskApproval[]
+  tasks               Task[]
+  integrationIssues   IntegrationIssue[]
+  aiRuns              AiRun[]
+  outboxEvents        OutboxEvent[]
+  auditEvents         AuditEvent[]
+  recordings          Recording[]
+  activeSessions      Session[]
+
+  createdBy User? @relation("OrgCreator", fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@map("organizations")
+}
+
+model User {
+  id            String    @id @default(uuid()) @db.Uuid
+  email         String    @unique
+  name          String?
+  passwordHash  String?   @map("password_hash")
+  emailVerified DateTime? @map("email_verified_at") @db.Timestamptz(3)
+  createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt     DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+  deletedAt     DateTime? @map("deleted_at") @db.Timestamptz(3)
+
+  memberships           Membership[]
+  sessions              Session[]
+  invitationsSent       Invitation[]         @relation("InvitationInviter")
+  employees             Employee[]
+  meetingsCreated       Meeting[]            @relation("MeetingCreator")
+  fileObjectsUploaded   FileObject[]         @relation("FileUploader")
+  taskApprovals         TaskApproval[]
+  tasksCreated          Task[]               @relation("TaskCreator")
+  meetingParticipations MeetingParticipant[] @relation("ParticipantUser")
+  auditEvents           AuditEvent[]
+
+  organizationsCreated Organization[]      @relation("OrgCreator")
+  invitationsAccepted  Invitation[]        @relation("InvitationAcceptor")
+  emailVerifications   EmailVerification[]
+  passwordResets       PasswordReset[]
+
+  @@map("users")
+}
+
+model Membership {
+  id        String         @id @default(uuid()) @db.Uuid
+  orgId     String         @map("org_id") @db.Uuid
+  userId    String         @map("user_id") @db.Uuid
+  role      MembershipRole @default(member)
+  createdAt DateTime       @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime       @updatedAt @map("updated_at") @db.Timestamptz(3)
+  deletedAt DateTime?      @map("deleted_at") @db.Timestamptz(3)
+
+  organization Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([orgId, userId])
+  @@unique([orgId, id])
+  @@index([orgId, role])
+  @@index([userId])
+  @@map("memberships")
+}
+
+/// Global (user-scoped) table: sessions are resolved before an org context exists.
+/// Only SHA-256(token) is stored; the raw opaque token is never persisted.
+model Session {
+  id                String    @id @default(uuid()) @db.Uuid
+  userId            String    @map("user_id") @db.Uuid
+  tokenHash         String    @unique @map("token_hash")
+  activeOrgId       String?   @map("active_org_id") @db.Uuid
+  ipAddress         String?   @map("ip_address")
+  userAgent         String?   @map("user_agent")
+  /// Idle expiry (sliding).
+  expiresAt         DateTime  @map("expires_at") @db.Timestamptz(3)
+  /// Hard cap regardless of activity.
+  absoluteExpiresAt DateTime  @map("absolute_expires_at") @db.Timestamptz(3)
+  revokedAt         DateTime? @map("revoked_at") @db.Timestamptz(3)
+  lastSeenAt        DateTime  @default(now()) @map("last_seen_at") @db.Timestamptz(3)
+  authLevel         String    @default("password") @map("auth_level")
+  createdAt         DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt         DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  user      User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  activeOrg Organization? @relation(fields: [activeOrgId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([activeOrgId])
+  @@index([expiresAt])
+  @@map("sessions")
+}
+
+model Invitation {
+  id           String           @id @default(uuid()) @db.Uuid
+  orgId        String           @map("org_id") @db.Uuid
+  email        String
+  role         MembershipRole   @default(member)
+  tokenHash    String           @unique @map("token_hash")
+  status       InvitationStatus @default(pending)
+  invitedById  String?          @map("invited_by_id") @db.Uuid
+  expiresAt    DateTime         @map("expires_at") @db.Timestamptz(3)
+  acceptedAt   DateTime?        @map("accepted_at") @db.Timestamptz(3)
+  acceptedById String?          @map("accepted_by_id") @db.Uuid
+  revokedAt    DateTime?        @map("revoked_at") @db.Timestamptz(3)
+  createdAt    DateTime         @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt    DateTime         @updatedAt @map("updated_at") @db.Timestamptz(3)
+  deletedAt    DateTime?        @map("deleted_at") @db.Timestamptz(3)
+
+  organization Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  invitedBy    User?        @relation("InvitationInviter", fields: [invitedById], references: [id], onDelete: SetNull)
+  acceptedBy   User?        @relation("InvitationAcceptor", fields: [acceptedById], references: [id], onDelete: SetNull)
+
+  @@unique([orgId, id])
+  @@index([orgId, email])
+  @@index([orgId, status])
+  @@map("invitations")
+}
+
+model Employee {
+  id         String    @id @default(uuid()) @db.Uuid
+  orgId      String    @map("org_id") @db.Uuid
+  userId     String?   @map("user_id") @db.Uuid
+  fullName   String    @map("full_name")
+  email      String?
+  title      String?
+  department String?
+  externalId String?   @map("external_id")
+  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt  DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+  deletedAt  DateTime? @map("deleted_at") @db.Timestamptz(3)
+
+  organization        Organization         @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  user                User?                @relation(fields: [userId], references: [id], onDelete: SetNull)
+  meetingParticipants MeetingParticipant[]
+  extractedTasks      ExtractedTask[]
+  tasks               Task[]
+
+  @@unique([orgId, email])
+  @@unique([orgId, userId])
+  @@unique([orgId, id])
+  @@index([orgId, fullName])
+  @@map("employees")
+}
+
+model Project {
+  id          String        @id @default(uuid()) @db.Uuid
+  orgId       String        @map("org_id") @db.Uuid
+  name        String
+  key         String
+  description String?
+  status      ProjectStatus @default(active)
+  createdAt   DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt   DateTime      @updatedAt @map("updated_at") @db.Timestamptz(3)
+  deletedAt   DateTime?     @map("deleted_at") @db.Timestamptz(3)
+
+  organization Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  meetings     Meeting[]
+  tasks        Task[]
+
+  @@unique([orgId, key])
+  @@unique([orgId, id])
+  @@index([orgId, status])
+  @@map("projects")
+}
+
+model Meeting {
+  id          String        @id @default(uuid()) @db.Uuid
+  orgId       String        @map("org_id") @db.Uuid
+  projectId   String?       @map("project_id") @db.Uuid
+  createdById String?       @map("created_by_id") @db.Uuid
+  title       String
+  description String?
+  source      MeetingSource @default(upload)
+  status      MeetingStatus @default(scheduled)
+  scheduledAt DateTime?     @map("scheduled_at") @db.Timestamptz(3)
+  startedAt   DateTime?     @map("started_at") @db.Timestamptz(3)
+  endedAt     DateTime?     @map("ended_at") @db.Timestamptz(3)
+  durationSec Int?          @map("duration_sec")
+  createdAt   DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt   DateTime      @updatedAt @map("updated_at") @db.Timestamptz(3)
+  deletedAt   DateTime?     @map("deleted_at") @db.Timestamptz(3)
+
+  organization   Organization         @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  project        Project?             @relation(fields: [orgId, projectId], references: [orgId, id], onDelete: Restrict)
+  createdBy      User?                @relation("MeetingCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  participants   MeetingParticipant[]
+  transcripts    Transcript[]
+  reports        Report[]
+  extractedTasks ExtractedTask[]
+  aiRuns         AiRun[]
+  recordings     Recording[]
+  fileObjects    FileObject[]
+  tasks          Task[]
+
+  @@unique([orgId, id])
+  @@index([orgId, status])
+  @@index([orgId, projectId])
+  @@index([orgId, scheduledAt])
+  @@map("meetings")
+}
+
+model MeetingParticipant {
+  id           String                 @id @default(uuid()) @db.Uuid
+  orgId        String                 @map("org_id") @db.Uuid
+  meetingId    String                 @map("meeting_id") @db.Uuid
+  employeeId   String?                @map("employee_id") @db.Uuid
+  displayName  String                 @map("display_name")
+  email        String?
+  speakerLabel String?                @map("speaker_label")
+  role         MeetingParticipantRole @default(participant)
+  /// Platform user, null for external attendees (contracts v0.2).
+  userId       String?                @map("user_id") @db.Uuid
+  joinedAt     DateTime?              @map("joined_at") @db.Timestamptz(3)
+  leftAt       DateTime?              @map("left_at") @db.Timestamptz(3)
+  createdAt    DateTime               @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt    DateTime               @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  organization Organization        @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  meeting      Meeting             @relation(fields: [orgId, meetingId], references: [orgId, id], onDelete: Cascade)
+  employee     Employee?           @relation(fields: [orgId, employeeId], references: [orgId, id], onDelete: Restrict)
+  user         User?               @relation("ParticipantUser", fields: [userId], references: [id], onDelete: SetNull)
+  segments     TranscriptSegment[]
+
+  @@unique([meetingId, employeeId])
+  @@unique([orgId, id])
+  @@index([orgId, userId])
+  @@index([orgId, meetingId])
+  @@map("meeting_participants")
+}
+
+/// Single storage-object table for every blob in object storage (uploads, raw/normalized media, chunks).
+/// Media lineage via parent_object_id; a Recording points at its raw object.
 model FileObject {
-  id           String   @id @default(cuid())
-  key          String   @unique
-  bucket       String
-  size         Int
-  contentType  String?
-  checksumSha256 String?
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  id              String              @id @default(uuid()) @db.Uuid
+  orgId           String              @map("org_id") @db.Uuid
+  meetingId       String?             @map("meeting_id") @db.Uuid
+  parentObjectId  String?             @map("parent_object_id") @db.Uuid
+  uploadedById    String?             @map("uploaded_by_id") @db.Uuid
+  kind            StorageObjectKind   @default(raw)
+  status          StorageObjectStatus @default(pending_upload)
+  provider        String              @default("s3")
+  bucket          String
+  /// Always prefixed org/{orgId}/
+  key             String              @unique @map("storage_key")
+  mimeType        String              @map("mime_type")
+  sizeBytes       BigInt?             @map("size_bytes")
+  etag            String?
+  checksumSha256  String?             @map("checksum_sha256")
+  originalName    String?             @map("original_name")
+  durationSeconds Float?              @map("duration_seconds")
+  format          String?
+  sampleRate      Int?                @map("sample_rate")
+  channels        Int?
+  chunkIndex      Int?                @map("chunk_index")
+  startSeconds    Float?              @map("start_seconds")
+  uploadId        String?             @map("upload_id")
+  createdAt       DateTime            @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt       DateTime            @updatedAt @map("updated_at") @db.Timestamptz(3)
+  deletedAt       DateTime?           @map("deleted_at") @db.Timestamptz(3)
+
+  organization Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  meeting      Meeting?     @relation(fields: [orgId, meetingId], references: [orgId, id], onDelete: Restrict)
+  parent       FileObject?  @relation("StorageLineage", fields: [orgId, parentObjectId], references: [orgId, id], onDelete: Restrict)
+  children     FileObject[] @relation("StorageLineage")
+  uploadedBy   User?        @relation("FileUploader", fields: [uploadedById], references: [id], onDelete: SetNull)
+  recording    Recording?
+
+  @@unique([orgId, id])
+  @@unique([orgId, bucket, key])
+  @@unique([parentObjectId, chunkIndex])
+  @@index([orgId, meetingId, kind])
+  @@index([orgId, status])
+  @@index([orgId, createdAt])
+  @@map("file_objects")
+}
+
+model Recording {
+  id           String          @id @default(uuid()) @db.Uuid
+  orgId        String          @map("org_id") @db.Uuid
+  meetingId    String          @map("meeting_id") @db.Uuid
+  fileObjectId String          @unique @map("file_object_id") @db.Uuid
+  durationMs   Int?            @map("duration_ms")
+  status       RecordingStatus @default(uploading)
+  createdAt    DateTime        @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt    DateTime        @updatedAt @map("updated_at") @db.Timestamptz(3)
+  deletedAt    DateTime?       @map("deleted_at") @db.Timestamptz(3)
+
+  organization Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  meeting      Meeting      @relation(fields: [orgId, meetingId], references: [orgId, id], onDelete: Cascade)
+  file         FileObject   @relation(fields: [orgId, fileObjectId], references: [orgId, id], onDelete: Restrict)
+  transcripts  Transcript[]
+
+  @@unique([orgId, id])
+  @@unique([orgId, fileObjectId])
+  @@index([orgId, meetingId])
+  @@map("recordings")
+}
+
+model Transcript {
+  id            String           @id @default(uuid()) @db.Uuid
+  orgId         String           @map("org_id") @db.Uuid
+  meetingId     String           @map("meeting_id") @db.Uuid
+  recordingId   String?          @map("recording_id") @db.Uuid
+  /// Transcription provider (e.g. "deepgram") and its job id, for idempotent webhook/poll handling.
+  provider      String?
+  providerJobId String?          @map("provider_job_id")
+  revision      Int              @default(1)
+  status        TranscriptStatus @default(pending)
+  language      String?
+  fullText      String?          @map("full_text")
+  createdAt     DateTime         @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt     DateTime         @updatedAt @map("updated_at") @db.Timestamptz(3)
+  deletedAt     DateTime?        @map("deleted_at") @db.Timestamptz(3)
+
+  organization Organization        @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  meeting      Meeting             @relation(fields: [orgId, meetingId], references: [orgId, id], onDelete: Cascade)
+  recording    Recording?          @relation(fields: [orgId, recordingId], references: [orgId, id], onDelete: Restrict)
+  segments     TranscriptSegment[]
+  reports      Report[]
+  aiRuns       AiRun[]
+
+  @@unique([meetingId, revision])
+  @@unique([orgId, provider, providerJobId])
+  @@unique([orgId, id])
+  @@index([orgId, meetingId])
+  @@map("transcripts")
+}
+
+model TranscriptSegment {
+  id            String                       @id @default(uuid()) @db.Uuid
+  orgId         String                       @map("org_id") @db.Uuid
+  transcriptId  String                       @map("transcript_id") @db.Uuid
+  participantId String?                      @map("participant_id") @db.Uuid
+  revision      Int                          @default(1)
+  sequence      Int
+  speakerLabel  String?                      @map("speaker_label")
+  startMs       Int                          @map("start_ms")
+  endMs         Int                          @map("end_ms")
+  text          String
+  confidence    Float?
+  embedding     Unsupported("vector(1536)")?
+  createdAt     DateTime                     @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt     DateTime                     @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  organization Organization        @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  transcript   Transcript          @relation(fields: [orgId, transcriptId], references: [orgId, id], onDelete: Cascade)
+  participant  MeetingParticipant? @relation(fields: [orgId, participantId], references: [orgId, id], onDelete: Restrict)
+
+  @@unique([transcriptId, revision, sequence])
+  @@unique([orgId, id])
+  @@index([orgId, transcriptId])
+  @@map("transcript_segments")
+}
+
+model Report {
+  id           String       @id @default(uuid()) @db.Uuid
+  orgId        String       @map("org_id") @db.Uuid
+  meetingId    String       @map("meeting_id") @db.Uuid
+  transcriptId String?      @map("transcript_id") @db.Uuid
+  aiRunId      String?      @map("ai_run_id") @db.Uuid
+  version      Int          @default(1)
+  status       ReportStatus @default(draft)
+  title        String?
+  summary      String?
+  content      Json?
+  createdAt    DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt    DateTime     @updatedAt @map("updated_at") @db.Timestamptz(3)
+  deletedAt    DateTime?    @map("deleted_at") @db.Timestamptz(3)
+
+  organization   Organization    @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  meeting        Meeting         @relation(fields: [orgId, meetingId], references: [orgId, id], onDelete: Cascade)
+  transcript     Transcript?     @relation(fields: [orgId, transcriptId], references: [orgId, id], onDelete: Restrict)
+  aiRun          AiRun?          @relation(fields: [orgId, aiRunId], references: [orgId, id], onDelete: Restrict)
+  extractedTasks ExtractedTask[]
+
+  @@unique([meetingId, version])
+  @@unique([orgId, id])
+  @@index([orgId, meetingId])
+  @@map("reports")
+}
+
+model ExtractedTask {
+  id                  String              @id @default(uuid()) @db.Uuid
+  orgId               String              @map("org_id") @db.Uuid
+  meetingId           String              @map("meeting_id") @db.Uuid
+  reportId            String?             @map("report_id") @db.Uuid
+  aiRunId             String?             @map("ai_run_id") @db.Uuid
+  suggestedAssigneeId String?             @map("suggested_assignee_id") @db.Uuid
+  title               String
+  description         String?
+  priority            TaskPriority        @default(medium)
+  dueDate             DateTime?           @map("due_date") @db.Timestamptz(3)
+  /// UNTRUSTED LLM hints (display only), contracts v0.2.
+  assigneeHint        String?             @map("assignee_hint")
+  dueHint             String?             @map("due_hint")
+  confidence          Float?
+  sourceSegmentIds    String[]            @map("source_segment_ids") @db.Uuid
+  status              ExtractedTaskStatus @default(pending_review)
+  createdAt           DateTime            @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt           DateTime            @updatedAt @map("updated_at") @db.Timestamptz(3)
+  deletedAt           DateTime?           @map("deleted_at") @db.Timestamptz(3)
+
+  organization      Organization   @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  meeting           Meeting        @relation(fields: [orgId, meetingId], references: [orgId, id], onDelete: Cascade)
+  report            Report?        @relation(fields: [orgId, reportId], references: [orgId, id], onDelete: Restrict)
+  aiRun             AiRun?         @relation(fields: [orgId, aiRunId], references: [orgId, id], onDelete: Restrict)
+  suggestedAssignee Employee?      @relation(fields: [orgId, suggestedAssigneeId], references: [orgId, id], onDelete: Restrict)
+  approvals         TaskApproval[]
+  task              Task?
+
+  @@unique([orgId, id])
+  @@index([orgId, meetingId])
+  @@index([orgId, status])
+  @@map("extracted_tasks")
+}
+
+model TaskApproval {
+  id              String           @id @default(uuid()) @db.Uuid
+  orgId           String           @map("org_id") @db.Uuid
+  extractedTaskId String           @map("extracted_task_id") @db.Uuid
+  reviewerId      String?          @map("reviewer_id") @db.Uuid
+  decision        ApprovalDecision
+  comment         String?
+  createdAt       DateTime         @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt       DateTime         @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  organization  Organization  @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  extractedTask ExtractedTask @relation(fields: [orgId, extractedTaskId], references: [orgId, id], onDelete: Cascade)
+  reviewer      User?         @relation(fields: [reviewerId], references: [id], onDelete: SetNull)
+
+  @@unique([orgId, id])
+  @@index([orgId, extractedTaskId])
+  @@map("task_approvals")
+}
+
+model Task {
+  id              String       @id @default(uuid()) @db.Uuid
+  orgId           String       @map("org_id") @db.Uuid
+  projectId       String?      @map("project_id") @db.Uuid
+  extractedTaskId String?      @unique @map("extracted_task_id") @db.Uuid
+  assigneeId      String?      @map("assignee_id") @db.Uuid
+  createdById     String?      @map("created_by_id") @db.Uuid
+  title           String
+  description     String?
+  status          TaskStatus   @default(todo)
+  priority        TaskPriority @default(medium)
+  meetingId       String?      @map("meeting_id") @db.Uuid
+  dueAt           DateTime?    @map("due_at") @db.Timestamptz(3)
+  completedAt     DateTime?    @map("completed_at") @db.Timestamptz(3)
+  createdAt       DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt       DateTime     @updatedAt @map("updated_at") @db.Timestamptz(3)
+  deletedAt       DateTime?    @map("deleted_at") @db.Timestamptz(3)
+
+  organization      Organization       @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  project           Project?           @relation(fields: [orgId, projectId], references: [orgId, id], onDelete: Restrict)
+  meeting           Meeting?           @relation(fields: [orgId, meetingId], references: [orgId, id], onDelete: Restrict)
+  extractedTask     ExtractedTask?     @relation(fields: [orgId, extractedTaskId], references: [orgId, id], onDelete: Restrict)
+  assignee          Employee?          @relation(fields: [orgId, assigneeId], references: [orgId, id], onDelete: Restrict)
+  createdBy         User?              @relation("TaskCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  integrationIssues IntegrationIssue[]
+
+  @@unique([orgId, id])
+  @@unique([orgId, extractedTaskId])
+  @@index([orgId, status])
+  @@index([orgId, projectId])
+  @@index([orgId, assigneeId])
+  @@map("tasks")
+}
+
+model IntegrationIssue {
+  id            String    @id @default(uuid()) @db.Uuid
+  orgId         String    @map("org_id") @db.Uuid
+  taskId        String    @map("task_id") @db.Uuid
+  /// Integration identifier, e.g. "jira", "linear", "github".
+  integration   String
+  /// Contracts v0.2: optional link to a configured integration instance (no integrations table yet).
+  integrationId String?   @map("integration_id") @db.Uuid
+  /// Contracts v0.2: provider key, e.g. "linear", "jira", "github".
+  provider      String
+  externalId    String    @map("external_id")
+  externalUrl   String?   @map("external_url")
+  syncedAt      DateTime? @map("synced_at") @db.Timestamptz(3)
+  createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt     DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  organization Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  task         Task         @relation(fields: [orgId, taskId], references: [orgId, id], onDelete: Cascade)
+
+  @@unique([orgId, provider, externalId])
+  @@unique([orgId, id])
+  @@index([orgId, taskId])
+  @@map("integration_issues")
+}
+
+model AiRun {
+  id                 String      @id @default(uuid()) @db.Uuid
+  orgId              String      @map("org_id") @db.Uuid
+  meetingId          String?     @map("meeting_id") @db.Uuid
+  transcriptId       String?     @map("transcript_id") @db.Uuid
+  kind               AiRunKind
+  provider           String
+  model              String
+  promptVersion      String      @map("prompt_version")
+  transcriptRevision Int?        @map("transcript_revision")
+  status             AiRunStatus @default(queued)
+  inputTokens        Int?        @map("input_tokens")
+  outputTokens       Int?        @map("output_tokens")
+  totalTokens        Int?        @map("total_tokens")
+  costUsd            Decimal?    @map("cost_usd") @db.Decimal(12, 6)
+  latencyMs          Int?        @map("latency_ms")
+  error              String?
+  metadata           Json?
+  startedAt          DateTime?   @map("started_at") @db.Timestamptz(3)
+  completedAt        DateTime?   @map("completed_at") @db.Timestamptz(3)
+  createdAt          DateTime    @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt          DateTime    @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  organization   Organization    @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  meeting        Meeting?        @relation(fields: [orgId, meetingId], references: [orgId, id], onDelete: Restrict)
+  transcript     Transcript?     @relation(fields: [orgId, transcriptId], references: [orgId, id], onDelete: Restrict)
+  reports        Report[]
+  extractedTasks ExtractedTask[]
+
+  @@unique([orgId, id])
+  @@index([orgId, meetingId])
+  @@index([orgId, status])
+  @@index([orgId, createdAt])
+  @@map("ai_runs")
+}
+
+model OutboxEvent {
+  id            String       @id @default(uuid()) @db.Uuid
+  orgId         String       @map("org_id") @db.Uuid
+  aggregateType String       @map("aggregate_type")
+  aggregateId   String       @map("aggregate_id") @db.Uuid
+  eventType     String       @map("event_type")
+  payload       Json
+  status        OutboxStatus @default(pending)
+  attempts      Int          @default(0)
+  lastError     String?      @map("last_error")
+  availableAt   DateTime     @default(now()) @map("available_at") @db.Timestamptz(3)
+  publishedAt   DateTime?    @map("published_at") @db.Timestamptz(3)
+  createdAt     DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt     DateTime     @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  organization Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@unique([orgId, id])
+  @@index([orgId, aggregateType, aggregateId])
+  @@index([status, availableAt])
+  @@map("outbox_events")
+}
+
+/// Append-only security/audit trail. UPDATE/DELETE are revoked from meetops_app in migrations.
+/// org_id is NULL for global auth events (signup, failed login): insert-only for the app, never readable via RLS.
+model AuditEvent {
+  id         String   @id @default(uuid()) @db.Uuid
+  orgId      String?  @map("org_id") @db.Uuid
+  actorId    String?  @map("actor_id") @db.Uuid
+  actorType  String   @default("user") @map("actor_type")
+  action     String
+  targetType String   @map("target_type")
+  targetId   String?  @map("target_id")
+  metadata   Json     @default("{}")
+  ipAddress  String?  @map("ip_address")
+  userAgent  String?  @map("user_agent")
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  organization Organization? @relation(fields: [orgId], references: [id], onDelete: Restrict)
+  actor        User?         @relation(fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@unique([orgId, id])
+  @@index([orgId, createdAt])
+  @@index([orgId, targetType, targetId])
+  @@index([orgId, actorId])
+  @@map("audit_events")
+}
+
+/// Global (user-scoped, no org): looked up by token hash before login. Only SHA-256(token) stored.
+model EmailVerification {
+  id        String    @id @default(uuid()) @db.Uuid
+  userId    String    @map("user_id") @db.Uuid
+  email     String
+  tokenHash String    @unique @map("token_hash")
+  expiresAt DateTime  @map("expires_at") @db.Timestamptz(3)
+  usedAt    DateTime? @map("used_at") @db.Timestamptz(3)
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@map("email_verifications")
+}
+
+/// Global (user-scoped, no org): looked up by token hash before login. Only SHA-256(token) stored.
+model PasswordReset {
+  id        String    @id @default(uuid()) @db.Uuid
+  userId    String    @map("user_id") @db.Uuid
+  tokenHash String    @unique @map("token_hash")
+  expiresAt DateTime  @map("expires_at") @db.Timestamptz(3)
+  usedAt    DateTime? @map("used_at") @db.Timestamptz(3)
+  ipAddress String?   @map("ip_address")
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@map("password_resets")
 }
