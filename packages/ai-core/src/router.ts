@@ -2,7 +2,8 @@ import { z } from 'zod';
 import type { AIEnv } from './env.js';
 import type { Capability } from './types.js';
 import { AIError } from './errors.js';
-import type { AuditSink } from './audit.js';
+import { redact, type AuditSink } from './audit.js';
+import { assertCan, type TenantContext } from './auth.js';
 
 export const AI_FEATURES = [
   'transcription',
@@ -52,8 +53,10 @@ export const orgAIConfigSchema = z.object({
   /** Providers an org admin has approved (required when AI_REQUIRE_PROVIDER_APPROVAL=true). */
   approvedProviders: z.array(z.string()).default([]),
   allowPaidFallback: z.boolean().optional(),
-  /** Per-org monthly spend cap (USD) on paid providers, enforced before each call. */
+  /** Per-org monthly spend cap (USD) on paid or platform-billed providers, enforced before each call. */
   monthlyBudgetUsd: z.number().min(0).optional(),
+  /** BYO credential refs per provider. Must be `secret:org/<tenantId>/...` (checked in setOrgConfig + at resolve time). */
+  credentialRefs: z.record(z.string(), z.string().regex(/^secret:org\/[^/]+\/.+$/)).default({}),
 });
 export type OrgAIConfig = z.infer<typeof orgAIConfigSchema>;
 export type OrgAIConfigInput = z.input<typeof orgAIConfigSchema>;
@@ -75,10 +78,8 @@ export class InMemoryOrgConfigStore implements OrgConfigStore {
   }
 }
 
-export type RequestOverride = RouteSelection & {
-  /** Caller must have been authorized upstream (e.g. org admin / feature flag). */
-  authorized: boolean;
-};
+/** Per-request override. Authorization is derived server-side from the actor's ability, never from this payload. */
+export type RequestOverride = RouteSelection;
 
 export type ResolutionSource = 'system' | 'env' | 'organization' | 'feature' | 'request';
 
@@ -95,6 +96,7 @@ export type ResolvedRoute = {
   approvedProviders: string[];
   allowPaidFallback: boolean;
   monthlyBudgetUsd: number | undefined;
+  credentialRefs: Record<string, string>;
   trace: Array<{ source: ResolutionSource; selection?: RouteSelection | undefined }>;
 };
 
@@ -107,8 +109,10 @@ export class ModelRouter {
   constructor(
     private readonly env: AIEnv,
     private readonly orgStore: OrgConfigStore,
-    private readonly audit?: AuditSink,
-  ) {}
+    private readonly audit: AuditSink,
+  ) {
+    if (!audit) throw new AIError('CONFIG_INVALID', 'AuditSink is required');
+  }
 
   envSelection(kind: 'llm' | 'stt'): RouteSelection {
     if (kind === 'llm') {
@@ -120,23 +124,35 @@ export class ModelRouter {
     return p === 'faster-whisper' ? { provider: p, model: this.env.LOCAL_STT_MODEL } : { provider: p };
   }
 
-  async setOrgConfig(input: OrgAIConfigInput, actorId: string) {
+  /** Org owner/admin only (CASL `manage ProviderConfig`), same tenant only. Audit is awaited; failure aborts the change. */
+  async setOrgConfig(input: OrgAIConfigInput, ctx: TenantContext) {
+    assertCan(ctx, 'manage', 'ProviderConfig');
     const cfg = orgAIConfigSchema.parse(input);
+    if (cfg.tenantId !== ctx.orgId) throw new AIError('FORBIDDEN', 'cannot change another organization\'s AI config', { retryable: false });
+    for (const ref of Object.values(cfg.credentialRefs))
+      if (!ref.startsWith(`secret:org/${cfg.tenantId}/`)) throw new AIError('FORBIDDEN', 'credential ref must belong to this organization', { retryable: false });
     const before = await this.orgStore.get(cfg.tenantId);
+    try {
+      await this.audit.emit({
+        action: before ? 'update' : 'create', tenantId: cfg.tenantId, actorId: ctx.userId,
+        before: before ? redact(before) : undefined, after: redact(cfg), at: new Date().toISOString(),
+      });
+    } catch (e) {
+      throw new AIError('AUDIT_FAILED', 'audit write failed; change aborted', { retryable: true, cause: e });
+    }
     await this.orgStore.put(cfg);
-    await this.audit?.emit({ action: before ? 'update' : 'create', tenantId: cfg.tenantId, actorId, before, after: cfg, at: new Date().toISOString() });
   }
 
   /**
    * Precedence (lowest -> highest): system default < env < organization < feature/workflow < authorized request.
    * The highest layer that specifies a provider wins; its model is used, else the provider default (undefined).
    */
-  async resolve(tenantId: string, feature: AIFeature, override?: RequestOverride): Promise<ResolvedRoute> {
+  async resolve(tenantId: string, feature: AIFeature, override?: RequestOverride, actor?: TenantContext): Promise<ResolvedRoute> {
     if (!tenantId) throw new AIError('CONFIG_INVALID', 'tenantId is required');
     const kind = featureKind(feature);
     const org = await this.orgStore.get(tenantId);
     if (org && org.tenantId !== tenantId) throw new AIError('CONFIG_INVALID', 'tenant mismatch in org config store');
-    if (override && !override.authorized)
+    if (override && !(actor && actor.orgId === tenantId && actor.ability?.can('override', 'AIRoute')))
       throw new AIError('UNAUTHORIZED_OVERRIDE', 'Per-request provider override is not authorized', { retryable: false });
 
     const layers: Array<[ResolutionSource, RouteSelection | undefined]> = [
@@ -150,7 +166,13 @@ export class ModelRouter {
     for (const [src, sel] of layers) if (sel) chosen = [src, sel];
     const [source, sel] = chosen;
     const fallbacks = sel.fallbacks ?? (source === 'request' ? (org?.features[feature]?.fallbacks ?? org?.defaults[kind]?.fallbacks) : undefined) ?? [];
-    if (override) await this.audit?.emit({ action: 'override', tenantId, actorId: 'request', feature, after: override, at: new Date().toISOString() });
+    if (override && actor) {
+      try {
+        await this.audit.emit({ action: 'override', tenantId, actorId: actor.userId, feature, after: redact(override), at: new Date().toISOString() });
+      } catch (e) {
+        throw new AIError('AUDIT_FAILED', 'audit write failed; override rejected', { retryable: true, cause: e });
+      }
+    }
     return {
       tenantId,
       feature,
@@ -164,6 +186,7 @@ export class ModelRouter {
       approvedProviders: org?.approvedProviders ?? [],
       allowPaidFallback: this.env.AI_ALLOW_PAID_FALLBACK && (org?.allowPaidFallback ?? true),
       monthlyBudgetUsd: org?.monthlyBudgetUsd,
+      credentialRefs: org?.credentialRefs ?? {},
       trace: layers.map(([s, x]) => ({ source: s, selection: x })),
     };
   }

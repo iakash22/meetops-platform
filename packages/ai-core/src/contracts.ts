@@ -45,8 +45,8 @@ export const formatModelRouteId = (provider: LlmProviderId, model: string): Mode
 const KIND_FEATURE: Record<AiTaskKind, AIFeature> = { summarize_meeting: 'summary', extract_tasks: 'actions', embed_transcript: 'summary' };
 
 /**
- * Map a queue payload to executor inputs. The payload's route is treated as an AUTHORIZED request override only because
- * job payloads are produced server-side; fallbacks are only those listed explicitly (no automatic paid fallback).
+ * Map a queue payload to executor inputs. The route becomes a request override that is NOT authorized by the payload:
+ * the worker must pass a server-derived `actor` (TenantContext) to AIExecutor.run, whose ability decides.
  */
 export function aiJobToRequest(p: AiJobPayload): { tenantId: string; feature: AIFeature; promptVersion: string; idempotencyKey: string; override: RequestOverride } {
   const { provider, model } = parseModelRouteId(p.modelRouteId);
@@ -55,7 +55,7 @@ export function aiJobToRequest(p: AiJobPayload): { tenantId: string; feature: AI
     feature: KIND_FEATURE[p.kind],
     promptVersion: p.promptVersion,
     idempotencyKey: p.idempotencyKey,
-    override: { provider, model, fallbacks: (p.fallback?.fallbackRouteIds ?? []).map((r) => parseModelRouteId(r).provider), authorized: true },
+    override: { provider, model, fallbacks: (p.fallback?.fallbackRouteIds ?? []).map((r) => parseModelRouteId(r).provider) },
   };
 }
 
@@ -64,6 +64,6 @@ export function transcriptionJobToRequest(p: TranscriptionJobPayload): { tenantI
     tenantId: p.organizationId,
     feature: 'transcription',
     idempotencyKey: p.idempotencyKey,
-    override: { provider: p.sttProviderId, fallbacks: (p.fallback?.fallbackRouteIds ?? []).map((r) => r.split(':')[0] ?? r), authorized: true },
+    override: { provider: p.sttProviderId, fallbacks: (p.fallback?.fallbackRouteIds ?? []).map((r) => r.split(':')[0] ?? r) },
   };
 }
