@@ -53,8 +53,8 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 RUN mkdir -p /tmp/work && chown node:node /tmp/work && chmod 0700 /tmp/work \
  && ffmpeg -hide_banner -version >/dev/null \
  && ffprobe -hide_banner -version >/dev/null \
- && ffmpeg -hide_banner -encoders 2>/dev/null | grep -q libopus \
- && ffmpeg -hide_banner -decoders 2>/dev/null | grep -q libopus
+ && ffmpeg -hide_banner -encoders 2>/dev/null | grep libopus >/dev/null \
+ && ffmpeg -hide_banner -decoders 2>/dev/null | grep libopus >/dev/null
 WORKDIR /app
 COPY --from=build --chown=node:node /out ./
 USER node
