@@ -22,7 +22,8 @@
     "db:migrate:deploy": "prisma migrate deploy",
     "db:seed": "prisma db seed",
     "test:live": "vitest run test/rls.live.test.ts",
-    "db:bootstrap": "psql \"$BOOTSTRAP_DATABASE_URL\" -v migrator_pw=\"$MIGRATOR_PASSWORD\" -v app_pw=\"$APP_PASSWORD\" -v relay_pw=\"$RELAY_PASSWORD\" -f scripts/bootstrap-roles.sql"
+    "db:roles": "tsx scripts/create-db-roles.ts",
+    "db:roles:sh": "sh scripts/create-db-roles.sh"
   },
   "dependencies": {
     "@prisma/client": "^5.20.0"
