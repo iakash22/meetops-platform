@@ -81,6 +81,15 @@ describe('FE #48', () => {
     expect(Value.Check(ListTasksQuery, { limit: 101 })).toBe(false);
     expect(Value.Check(ListTasksQuery, { due: 'week' })).toBe(false);
   });
+  it('ListTasksQuery unassigned filter', () => {
+    expect(Value.Check(ListTasksQuery, { unassigned: true })).toBe(true);
+    expect(Value.Check(ListTasksQuery, { unassigned: true, status: 'todo', limit: 10 })).toBe(true);
+    expect(Value.Check(ListTasksQuery, { assigneeId: id(1) })).toBe(true);
+    expect(Value.Check(ListTasksQuery, { assigneeId: id(1), unassigned: true })).toBe(false);
+    expect(Value.Check(ListTasksQuery, { unassigned: false })).toBe(false);
+    expect(Value.Check(ListTasksQuery, { unassigned: 'true' })).toBe(false);
+    expect(Value.Check(ListTasksQuery, { unassigned: 1 })).toBe(false);
+  });
   it('TaskStatus alias', () => {
     const s: TaskStatusValue = 'cancelled';
     const t: Task['status'] = s;

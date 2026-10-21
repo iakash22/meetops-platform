@@ -20,7 +20,8 @@ While the version is `0.x`, a minor bump may contain breaking changes (ADR-003).
   session id is rotated.
 - Errors: `CSRF_INVALID`.
 - Tasks: `ListTasksQuery` (strict; cursor pagination plus status (one or several), priority, assigneeId, projectId,
-  meetingId, dueBefore, dueAfter, q ≤200), `TASK_STATUSES` and the `TaskStatusValue` alias.
+  meetingId, dueBefore, dueAfter, q ≤200, and `unassigned: true` (literal; a strict union makes it mutually exclusive with
+  assigneeId)), `TASK_STATUSES` and the `TaskStatusValue` alias.
 
 ### Changed
 
