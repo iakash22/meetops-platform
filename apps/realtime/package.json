@@ -14,7 +14,7 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@meetops/contracts": "workspace:^0.1.0",
+    "@meetops/contracts": "workspace:*",
     "@meetops/logger": "workspace:*",
     "@socket.io/redis-adapter": "^8.3.0",
     "fastify": "^5.12.7",
