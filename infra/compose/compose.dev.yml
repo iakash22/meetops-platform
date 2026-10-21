@@ -1,7 +1,8 @@
 # MeetOps AI — local development infrastructure (DEV ONLY, never deploy this file).
 # Usage (from repo root): pnpm dev:infra:up   (reads ./.env, copy from .env.example)
 # Optional profiles:      docker compose --env-file .env -f infra/compose/compose.dev.yml --profile ollama --profile local-stt up -d
-# Credentials have no fallbacks: compose fails fast if .env is missing them.
+# Passwords come from compose `secrets:` files (scripts/gen-dev-secrets.sh ->
+# infra/compose/secrets/*.txt, gitignored), never from env interpolation.
 # All host ports bind to 127.0.0.1 only. Images are pinned (no :latest).
 name: meetops-dev
 
@@ -11,11 +12,10 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER:?set POSTGRES_USER in .env}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
       POSTGRES_DB: ${POSTGRES_DB:?set POSTGRES_DB in .env}
-      # Login roles for PR #25 RLS (created on first boot by initdb/10-meetops-roles.sh).
-      MEETOPS_MIGRATOR_DB_PASSWORD: ${MEETOPS_MIGRATOR_DB_PASSWORD:?set MEETOPS_MIGRATOR_DB_PASSWORD in .env}
-      MEETOPS_APP_DB_PASSWORD: ${MEETOPS_APP_DB_PASSWORD:?set MEETOPS_APP_DB_PASSWORD in .env}
+    # Role passwords for initdb/10-meetops-roles.sh (PR #25 RLS) are read from here.
+    secrets: [postgres_password, meetops_app_db_password, meetops_migrator_db_password]
     ports:
       - '127.0.0.1:${POSTGRES_PORT:-5432}:5432'
     volumes:
@@ -30,15 +30,24 @@ services:
   redis:
     image: redis:7.4.11-alpine
     restart: unless-stopped
-    environment:
-      REDIS_PASSWORD: ${REDIS_PASSWORD:?set REDIS_PASSWORD in .env}
-    command: ['sh', '-c', 'exec redis-server --appendonly yes --requirepass "$${REDIS_PASSWORD}"']
+    secrets: [redis_password]
+    networks: [default, media-internal]
+    command:
+      [
+        'sh',
+        '-c',
+        'exec redis-server --appendonly yes --requirepass "$$(cat /run/secrets/redis_password)"',
+      ]
     ports:
       - '127.0.0.1:${REDIS_PORT:-6379}:6379'
     volumes:
       - redis-data:/data
     healthcheck:
-      test: ['CMD-SHELL', 'REDISCLI_AUTH="$${REDIS_PASSWORD}" redis-cli ping | grep -q PONG']
+      test:
+        [
+          'CMD-SHELL',
+          'REDISCLI_AUTH="$$(cat /run/secrets/redis_password)" redis-cli ping | grep -q PONG',
+        ]
       interval: 5s
       timeout: 3s
       retries: 10
@@ -52,9 +61,11 @@ services:
     image: pgsty/silo:RELEASE.2026-10-18T00-00-00Z@sha256:2636fc4155d9a7e41ff58cdb65ddd13ba9304e67184e13c25bc5cb34016269d7
     restart: unless-stopped
     command: ['server', '/data', '--console-address', ':9001']
+    secrets: [minio_root_password]
     environment:
       MINIO_ROOT_USER: ${STORAGE_ACCESS_KEY_ID:?set STORAGE_ACCESS_KEY_ID in .env}
-      MINIO_ROOT_PASSWORD: ${STORAGE_SECRET_ACCESS_KEY:?set STORAGE_SECRET_ACCESS_KEY in .env}
+      MINIO_ROOT_PASSWORD_FILE: /run/secrets/minio_root_password
+    networks: [default, media-internal]
     ports:
       - '127.0.0.1:${MINIO_API_PORT:-9000}:9000'
       - '127.0.0.1:${MINIO_CONSOLE_PORT:-9001}:9001'
@@ -68,15 +79,18 @@ services:
 
   # Creates the bucket (private: no anonymous policy is ever set), CORS for
   # browser presigned PUT/POST from WEB_ORIGIN only (exposes ETag for multipart), and a lifecycle rule that
-  # aborts incomplete multipart uploads after 1 day.
+  # aborts incomplete multipart uploads after 1 day, and
+  # expires session chunks under tmp/session-chunks/ after 1 day (Media: chunks
+  # live at tmp/session-chunks/org/{orgId}/meetings/{meetingId}/sessions/{sessionId}/{seq}.part;
+  # lifecycle filters are prefix-only, so the flat prefix is required).
   minio-init:
     image: pgsty/mc:RELEASE.2026-10-18T00-00-00Z@sha256:6ecdaec70bc5e8cf9d0e9a70c190f3beb1c83f11617ff4333f1fcd71ab1daf18
     depends_on:
       minio:
         condition: service_healthy
+    secrets: [minio_root_password]
     environment:
       MINIO_ROOT_USER: ${STORAGE_ACCESS_KEY_ID:?set STORAGE_ACCESS_KEY_ID in .env}
-      MINIO_ROOT_PASSWORD: ${STORAGE_SECRET_ACCESS_KEY:?set STORAGE_SECRET_ACCESS_KEY in .env}
       STORAGE_BUCKET: ${STORAGE_BUCKET:-meetops-dev}
       WEB_ORIGIN: ${WEB_ORIGIN:-http://localhost:5173}
     entrypoint:
@@ -84,7 +98,7 @@ services:
       - -c
       - |
         set -e
-        mc alias set local http://minio:9000 "$${MINIO_ROOT_USER}" "$${MINIO_ROOT_PASSWORD}"
+        mc alias set local http://minio:9000 "$${MINIO_ROOT_USER}" "$$(cat /run/secrets/minio_root_password)"
         mc mb --ignore-existing "local/$${STORAGE_BUCKET}"
         mc anonymous set none "local/$${STORAGE_BUCKET}"
 
@@ -98,14 +112,17 @@ services:
           mc admin config set local api cors_allow_origin="$${WEB_ORIGIN}"
         fi
 
-        cat > /tmp/ilm.json <<JSON
-        {"Rules":[{"ID":"abort-incomplete-multipart","Status":"Enabled","Filter":{"Prefix":""},"AbortIncompleteMultipartUpload":{"DaysAfterInitiation":1}}]}
-        JSON
-        if ! mc ilm import "local/$${STORAGE_BUCKET}" < /tmp/ilm.json; then
-          echo "AbortIncompleteMultipartUpload unsupported; using server stale_uploads_expiry=24h"
-          mc admin config set local api stale_uploads_expiry=24h
-        fi
-        echo "bucket $${STORAGE_BUCKET} ready (private, CORS, multipart cleanup)"
+        # MinIO/silo rejects AbortIncompleteMultipartUpload in bucket lifecycle XML
+        # (verified), so stale multipart uploads use the server-wide setting and
+        # chunk expiry is a prefix rule (filters are prefix-only, no wildcards).
+        mc admin config set local api stale_uploads_expiry=24h
+        # Idempotent without grep (the mc image has only sh + mc).
+        rules="$$(mc ilm rule ls --json "local/$${STORAGE_BUCKET}" 2>/dev/null || true)"
+        case "$${rules}" in
+          *'"tmp/session-chunks/"'*) echo "chunk expiry rule present" ;;
+          *) mc ilm rule add --prefix "tmp/session-chunks/" --expire-days 1 "local/$${STORAGE_BUCKET}" ;;
+        esac
+        echo "bucket $${STORAGE_BUCKET} ready (private, CORS, stale multipart 24h, tmp/session-chunks/ 1d)"
     restart: 'no'
 
   ollama:
@@ -137,6 +154,25 @@ services:
       interval: 10s
       timeout: 5s
       retries: 10
+
+# Internal-only network (no default route / egress) shared by redis, minio and
+# the media worker sandbox.
+networks:
+  default: {}
+  media-internal:
+    internal: true
+
+secrets:
+  postgres_password:
+    file: ./secrets/postgres_password.txt
+  meetops_app_db_password:
+    file: ./secrets/meetops_app_db_password.txt
+  meetops_migrator_db_password:
+    file: ./secrets/meetops_migrator_db_password.txt
+  redis_password:
+    file: ./secrets/redis_password.txt
+  minio_root_password:
+    file: ./secrets/minio_root_password.txt
 
 volumes:
   postgres-data:
