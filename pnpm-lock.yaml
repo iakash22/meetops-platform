@@ -185,6 +185,31 @@ importers:
         specifier: ^5.6.3
         version: 5.9.3
 
+  packages/notifications:
+    dependencies:
+      '@meetops/logger':
+        specifier: workspace:*
+        version: link:../logger
+      '@meetops/queue':
+        specifier: workspace:*
+        version: link:../queue
+      bullmq:
+        specifier: ^5.18.0
+        version: 5.81.5
+      nodemailer:
+        specifier: ^6.9.15
+        version: 6.10.1
+      zod:
+        specifier: ^3.23.8
+        version: 3.25.76
+    devDependencies:
+      '@types/nodemailer':
+        specifier: ^6.4.16
+        version: 6.4.24
+      typescript:
+        specifier: ^5.6.3
+        version: 5.9.3
+
   packages/queue:
     dependencies:
       '@meetops/config':
@@ -1642,6 +1667,12 @@ packages:
     resolution:
       {
         integrity: sha512-6oYBAi5ikg4Pl+kGsoYtawUMBT2zZMCvPNF7pVLnHZfd1zf38DRiWn/gT01RYCdUqkv7Fhr+C9ot4/tb+2sVvA==,
+      }
+
+  '@types/nodemailer@6.4.24':
+    resolution:
+      {
+        integrity: sha512-Ww4u0rT9wQNXh4JiQaIwx3QWdcOFXzOjQA2zc+jtFYNmQiT4mIUqcDin51bDFdkzKubFnQCZNK7FIHlPKQ/q9w==,
       }
 
   '@types/prop-types@15.7.15':
@@ -3106,6 +3137,13 @@ packages:
         integrity: sha512-5qr2okC4ItAI0hG5SaV0HoYMpnM/Y6+Oqr7AmPYy/2uEoGvS+GbSKLeRxSS1uAdu59yz0ouzcuXievSgg///WA==,
       }
     engines: { node: '>=18' }
+
+  nodemailer@6.10.1:
+    resolution:
+      {
+        integrity: sha512-Z+iLaBGVaSjbIzQ4pX6XV41HrooLsQ10ZWPUehGmuantvzWoDVBnmsdUcOIDM1t+yPor5pDhVlDESgOMEGxhHA==,
+      }
+    engines: { node: '>=6.0.0' }
 
   normalize-path@3.0.0:
     resolution:
@@ -4890,6 +4928,10 @@ snapshots:
     dependencies:
       undici-types: 6.21.0
 
+  '@types/nodemailer@6.4.24':
+    dependencies:
+      '@types/node': 20.19.43
+
   '@types/prop-types@15.7.15': {}
 
   '@types/react-dom@18.3.7(@types/react@18.3.31)':
@@ -5805,6 +5847,8 @@ snapshots:
     optional: true
 
   node-releases@2.0.59: {}
+
+  nodemailer@6.10.1: {}
 
   normalize-path@3.0.0: {}
 
