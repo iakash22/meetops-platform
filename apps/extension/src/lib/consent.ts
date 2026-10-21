@@ -4,7 +4,7 @@
  * Acknowledgement is not persisted: it is required for every recording.
  */
 export const CONSENT_NOTICE =
-  "Recording captures this tab's audio and video. Only record meetings where " +
+  "Recording captures this tab's audio. Only record meetings where " +
   "you have the right to do so and all participants have been informed and agree. " +
   "Recording is visible in Chrome's tab indicator and can be stopped at any time.";
 
