@@ -53,14 +53,36 @@ export const Transcript = Type.Object({
 });
 export type Transcript = Static<typeof Transcript>;
 
+export const ReportActionItem = Type.Object(
+  {
+    title: Type.String({ minLength: 1, maxLength: 500 }),
+    /** UNTRUSTED LLM output; display only. */
+    assigneeHint: Type.Optional(Type.String({ maxLength: 200 })),
+    dueHint: Type.Optional(Type.String({ maxLength: 100 })),
+  },
+  { additionalProperties: false },
+);
+export type ReportActionItem = Static<typeof ReportActionItem>;
+
+/** Shape of the DB `reports.content` JSON column. Validate on write and on read. */
+export const ReportContent = Type.Object(
+  {
+    summary: Type.String({ maxLength: 20000 }),
+    decisions: Type.Array(Type.String({ maxLength: 2000 })),
+    risks: Type.Array(Type.String({ maxLength: 2000 })),
+    actionItems: Type.Array(ReportActionItem),
+  },
+  { additionalProperties: false },
+);
+export type ReportContent = Static<typeof ReportContent>;
+
+/** Report DTO: ReportContent fields at top level, plus the AI run that produced it (null if manual or imported). */
 export const Report = Type.Object({
   id: Id,
+  organizationId: Id,
   meetingId: Id,
-  summary: Type.String(),
-  decisions: Type.Array(Type.String()),
-  risks: Type.Array(Type.String()),
-  /** "<provider>:<model>" router id, e.g. "gemini:gemini-2.0-flash". */
-  modelRouteId: Type.String(),
+  ...ReportContent.properties,
+  aiRunId: Type.Union([Id, Type.Null()]),
   createdAt: IsoDateTime,
 });
 export type Report = Static<typeof Report>;
