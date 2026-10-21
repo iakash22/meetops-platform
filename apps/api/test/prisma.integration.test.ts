@@ -97,7 +97,7 @@ describe.skipIf(!url)('Prisma + Redis adapters against live Postgres (RLS)', { t
 
     const audits = await db.$transaction(async (tx) => {
       await tx.$executeRaw`SELECT set_config('app.current_org_id', ${id}, true)`;
-      return tx.auditEvent.findMany({ where: { orgId: id }, select: { action: true } });
+      return tx.auditEvent.findMany({ where: { organizationId: id }, select: { action: true } });
     });
     expect(audits.map((a) => a.action)).toEqual(expect.arrayContaining(['org.create', 'invitation.create', 'invitation.accepted', 'membership.role_change']));
   });
@@ -142,6 +142,6 @@ describe.skipIf(!url)('Prisma + Redis adapters against live Postgres (RLS)', { t
   it('pre-tenant audit events are written as global rows (createMany, not readable by the app)', async () => {
     await signupAndLogin(app, email('glob'));
     // the app role cannot SELECT null-org rows; the insert succeeding is the assertion
-    expect(await db.auditEvent.count({ where: { orgId: null } })).toBe(0);
+    expect(await db.auditEvent.count({ where: { organizationId: null } })).toBe(0);
   });
 });

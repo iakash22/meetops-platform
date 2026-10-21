@@ -11,7 +11,7 @@ export class PrismaAuditLog implements AuditLog {
   constructor(private readonly db: DatabaseClient = getPrismaClient()) {}
   async record(e: AuditEvent) {
     const data = {
-      orgId: e.organizationId,
+      organizationId: e.organizationId,
       actorId: e.actorId,
       action: e.action,
       targetType: e.targetType,

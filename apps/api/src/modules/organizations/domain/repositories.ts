@@ -5,7 +5,7 @@ import type { Invitation } from './invitation.js';
 /**
  * Tenant-scoped repositories take organizationId explicitly on every call (from TenantContext,
  * never from request bodies). Prisma implementations use getPrismaClient(), filter
- * { orgId, deletedAt: null } and run inside withOrgContext(organizationId, fn) (RLS).
+ * { organizationId, deletedAt: null } and run inside withOrgContext(organizationId, fn) (RLS).
  */
 
 /** organizations is a global table (the tenant itself). */
@@ -41,7 +41,7 @@ export interface InvitationRepository {
   update(organizationId: string, inv: Invitation): Promise<Invitation>;
   /** Worker mints the emailed token: replaces the hash (earlier links stop working). */
   setTokenHash(organizationId: string, id: string, tokenHash: string): Promise<void>;
-  /** Pre-tenant lookup by token hash (no orgId in the token). */
+  /** Pre-tenant lookup by token hash (no organizationId in the token). */
   lookupByTokenHash(tokenHash: string): Promise<InvitationLookup | null>;
   /**
    * Atomic single use: pending + unexpired + email matches → membership created (or restored),

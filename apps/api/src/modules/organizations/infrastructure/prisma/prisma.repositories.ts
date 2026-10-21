@@ -18,7 +18,7 @@ import type {
 
 /**
  * Prisma adapters. Tenant tables (memberships, invitations) always run inside
- * withOrgContext(organizationId, fn) and filter { orgId, deletedAt: null } as well (defence in depth).
+ * withOrgContext(organizationId, fn) and filter { organizationId, deletedAt: null } as well (defence in depth).
  * Column mapping: domain organizationId ↔ org_id.
  */
 
@@ -47,10 +47,10 @@ export class PrismaOrganizationRepository implements OrganizationRepository {
   }
 }
 
-type MemRow = { id: string; orgId: string; userId: string; role: Role; createdAt: Date; updatedAt: Date; deletedAt: Date | null };
+type MemRow = { id: string; organizationId: string; userId: string; role: Role; createdAt: Date; updatedAt: Date; deletedAt: Date | null };
 const toMembership = (r: MemRow): Membership => ({
   id: r.id,
-  organizationId: r.orgId,
+  organizationId: r.organizationId,
   userId: r.userId,
   role: r.role,
   createdAt: r.createdAt,
@@ -68,8 +68,8 @@ export class PrismaMembershipRepository implements MembershipRepository {
     return this.tx(organizationId, async (tx) =>
       toMembership(
         await tx.membership.upsert({
-          where: { orgId_userId: { orgId: organizationId, userId: m.userId } },
-          create: { id: m.id, orgId: organizationId, userId: m.userId, role: m.role, createdAt: m.createdAt },
+          where: { organizationId_userId: { organizationId, userId: m.userId } },
+          create: { id: m.id, organizationId, userId: m.userId, role: m.role, createdAt: m.createdAt },
           update: { role: m.role, deletedAt: null }
         })
       )
@@ -77,13 +77,13 @@ export class PrismaMembershipRepository implements MembershipRepository {
   }
   async find(organizationId: string, userId: string) {
     return this.tx(organizationId, async (tx) => {
-      const r = await tx.membership.findFirst({ where: { orgId: organizationId, userId, deletedAt: null } });
+      const r = await tx.membership.findFirst({ where: { organizationId, userId, deletedAt: null } });
       return r ? toMembership(r) : null;
     });
   }
   async listByOrganization(organizationId: string) {
     return this.tx(organizationId, async (tx) =>
-      (await tx.membership.findMany({ where: { orgId: organizationId, deletedAt: null }, orderBy: { createdAt: 'asc' } })).map(
+      (await tx.membership.findMany({ where: { organizationId, deletedAt: null }, orderBy: { createdAt: 'asc' } })).map(
         toMembership
       )
     );
@@ -109,7 +109,7 @@ export class PrismaMembershipRepository implements MembershipRepository {
         SELECT user_id FROM memberships
         WHERE org_id = ${organizationId}::uuid AND role = 'owner' AND deleted_at IS NULL
         FOR UPDATE`;
-      const target = await tx.membership.findFirst({ where: { orgId: organizationId, userId, deletedAt: null } });
+      const target = await tx.membership.findFirst({ where: { organizationId, userId, deletedAt: null } });
       if (!target) return 'not_found';
       if (target.role === 'owner' && newRole !== 'owner' && owners.length <= 1) return 'last_owner';
       await apply(tx);
@@ -118,12 +118,12 @@ export class PrismaMembershipRepository implements MembershipRepository {
   }
   setRole(organizationId: string, userId: string, role: Role, at: Date) {
     return this.mutate(organizationId, userId, role, (tx) =>
-      tx.membership.updateMany({ where: { orgId: organizationId, userId, deletedAt: null }, data: { role, updatedAt: at } })
+      tx.membership.updateMany({ where: { organizationId, userId, deletedAt: null }, data: { role, updatedAt: at } })
     );
   }
   remove(organizationId: string, userId: string, at: Date) {
     return this.mutate(organizationId, userId, null, (tx) =>
-      tx.membership.updateMany({ where: { orgId: organizationId, userId, deletedAt: null }, data: { deletedAt: at } })
+      tx.membership.updateMany({ where: { organizationId, userId, deletedAt: null }, data: { deletedAt: at } })
     );
   }
 }
@@ -131,7 +131,7 @@ export class PrismaMembershipRepository implements MembershipRepository {
 type DbInvStatus = 'pending' | 'accepted' | 'revoked' | 'expired';
 type InvRow = {
   id: string;
-  orgId: string;
+  organizationId: string;
   email: string;
   role: Role;
   tokenHash: string;
@@ -148,7 +148,7 @@ type InvRow = {
 const toStatus = (s: DbInvStatus): InvitationStatus => (s === 'expired' ? 'revoked' : s);
 const toInvitation = (r: InvRow): Invitation => ({
   id: r.id,
-  organizationId: r.orgId,
+  organizationId: r.organizationId,
   email: r.email,
   role: r.role as Invitation['role'],
   tokenHash: r.tokenHash,
@@ -174,7 +174,7 @@ export class PrismaInvitationRepository implements InvitationRepository {
         await tx.invitation.create({
           data: {
             id: inv.id,
-            orgId: organizationId,
+            organizationId,
             email: inv.email,
             role: inv.role,
             tokenHash: inv.tokenHash,
@@ -189,13 +189,13 @@ export class PrismaInvitationRepository implements InvitationRepository {
   }
   async findById(organizationId: string, id: string) {
     return this.tx(organizationId, async (tx) => {
-      const r = await tx.invitation.findFirst({ where: { orgId: organizationId, id, deletedAt: null } });
+      const r = await tx.invitation.findFirst({ where: { organizationId, id, deletedAt: null } });
       return r ? toInvitation(r) : null;
     });
   }
   async findPendingByEmail(organizationId: string, email: string) {
     return this.tx(organizationId, async (tx) => {
-      const r = await tx.invitation.findFirst({ where: { orgId: organizationId, email, status: 'pending', deletedAt: null } });
+      const r = await tx.invitation.findFirst({ where: { organizationId, email, status: 'pending', deletedAt: null } });
       return r ? toInvitation(r) : null;
     });
   }
@@ -203,7 +203,7 @@ export class PrismaInvitationRepository implements InvitationRepository {
     if (inv.organizationId !== organizationId) throw new Error('tenant mismatch');
     return this.tx(organizationId, async (tx) => {
       const n = await tx.invitation.updateMany({
-        where: { orgId: organizationId, id: inv.id, deletedAt: null },
+        where: { organizationId, id: inv.id, deletedAt: null },
         data: { status: inv.status, acceptedAt: inv.acceptedAt, acceptedById: inv.acceptedById, revokedAt: inv.revokedAt }
       });
       if (n.count !== 1) throw new Error('tenant mismatch');
@@ -212,7 +212,7 @@ export class PrismaInvitationRepository implements InvitationRepository {
   }
   async setTokenHash(organizationId: string, id: string, tokenHash: string) {
     await this.tx(organizationId, (tx) =>
-      tx.invitation.updateMany({ where: { orgId: organizationId, id, status: 'pending', deletedAt: null }, data: { tokenHash } })
+      tx.invitation.updateMany({ where: { organizationId, id, status: 'pending', deletedAt: null }, data: { tokenHash } })
     );
   }
   /** SECURITY DEFINER lookup_invitation_by_token_hash (P1-DB-3): no org context needed. */
@@ -236,7 +236,7 @@ export class PrismaInvitationRepository implements InvitationRepository {
         SELECT * FROM accept_invitation(${tokenHash}, ${by.userId}::uuid)`;
       const r = rows[0];
       if (!r) return null;
-      const m = await this.tx(r.org_id, (tx) => tx.membership.findFirst({ where: { orgId: r.org_id, id: r.membership_id } }));
+      const m = await this.tx(r.org_id, (tx) => tx.membership.findFirst({ where: { organizationId: r.org_id, id: r.membership_id } }));
       return m ? { membership: toMembership(m) } : null;
     } catch (e) {
       if (e instanceof Error && e.message.includes('invitation_invalid')) return null;
