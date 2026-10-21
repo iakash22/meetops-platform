@@ -10,33 +10,47 @@ export interface UploadSessionMeta {
   source: 'tab';
 }
 
+export interface UploadSummary {
+  chunkCount: number;
+  durationMs: number;
+}
+
 export interface UploadClient {
+  /**
+   * True when a successful uploadChunk means the server durably has the data, so the
+   * local copy may be deleted. The stub is not durable: chunks stay in IndexedDB.
+   */
+  readonly durable: boolean;
   initSession(meta: UploadSessionMeta): Promise<{ sessionId: string }>;
-  /** seq starts at 0 and increases by 1 per chunk. */
+  /** Re-attach to a session created before a restart (idempotent). */
+  resumeSession(sessionId: string, meta: UploadSessionMeta): Promise<void>;
+  /** seq starts at 0 and increases by 1 per chunk. Must be idempotent per (sessionId, seq). */
   uploadChunk(sessionId: string, seq: number, data: Blob): Promise<void>;
-  complete(
-    sessionId: string,
-    summary: { chunkCount: number; durationMs: number },
-  ): Promise<{ status: RecordingStatus }>;
+  complete(sessionId: string, summary: UploadSummary): Promise<{ status: RecordingStatus }>;
   abort?(sessionId: string, reason: string): Promise<void>;
 }
 
+interface StubSession {
+  meta: UploadSessionMeta;
+  chunks: Map<number, number>;
+  completed?: UploadSummary;
+  aborted?: string;
+}
+
 export class StubUploadClient implements UploadClient {
-  readonly sessions = new Map<
-    string,
-    {
-      meta: UploadSessionMeta;
-      chunks: Map<number, number>;
-      completed?: { chunkCount: number; durationMs: number };
-      aborted?: string;
-    }
-  >();
-  private n = 0;
+  readonly durable = false;
+  readonly sessions = new Map<string, StubSession>();
+
+  constructor(private readonly newId: () => string = () => `stub-${crypto.randomUUID()}`) {}
 
   async initSession(meta: UploadSessionMeta) {
-    const sessionId = `stub-${++this.n}`;
+    const sessionId = this.newId();
     this.sessions.set(sessionId, { meta, chunks: new Map() });
     return { sessionId };
+  }
+
+  async resumeSession(sessionId: string, meta: UploadSessionMeta) {
+    if (!this.sessions.has(sessionId)) this.sessions.set(sessionId, { meta, chunks: new Map() });
   }
 
   async uploadChunk(sessionId: string, seq: number, data: Blob) {
@@ -45,7 +59,7 @@ export class StubUploadClient implements UploadClient {
     s.chunks.set(seq, data.size);
   }
 
-  async complete(sessionId: string, summary: { chunkCount: number; durationMs: number }) {
+  async complete(sessionId: string, summary: UploadSummary) {
     this.require(sessionId).completed = summary;
     return { status: 'uploaded' as const };
   }
@@ -58,42 +72,5 @@ export class StubUploadClient implements UploadClient {
     const s = this.sessions.get(id);
     if (!s) throw new Error(`Unknown upload session ${id}`);
     return s;
-  }
-}
-
-/** Serialises chunk uploads so seq order is preserved, even if a chunk fails. */
-export class ChunkQueue {
-  private seq = 0;
-  private tail: Promise<void> = Promise.resolve();
-  private failed: unknown;
-
-  constructor(
-    private readonly client: UploadClient,
-    private readonly sessionId: string,
-    private readonly onUploaded?: (seq: number) => void,
-  ) {}
-
-  push(data: Blob): void {
-    const seq = this.seq++;
-    this.tail = this.tail.then(async () => {
-      if (this.failed) return;
-      try {
-        await this.client.uploadChunk(this.sessionId, seq, data);
-        this.onUploaded?.(seq);
-      } catch (err) {
-        this.failed = err;
-      }
-    });
-  }
-
-  get count(): number {
-    return this.seq;
-  }
-
-  /** Wait for all queued uploads; throws the first upload error. */
-  async flush(): Promise<void> {
-    await this.tail;
-    if (this.failed)
-      throw this.failed instanceof Error ? this.failed : new Error('Chunk upload failed');
   }
 }
