@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import pkg from '../package.json' with { type: 'json' };
-import type { ApiErrorCode, ExtensionTokenResponse, Role, TaskStatus } from '../src/types.js';
+import type { ApiErrorCode, SttProviderId, TranscriptProviderId, ExtensionTokenResponse, Role, TaskStatus } from '../src/types.js';
 import type * as Full from '../src/index.js';
 
 vi.mock('@sinclair/typebox', () => {
@@ -53,6 +53,8 @@ describe('@meetops/contracts/types (light entry)', () => {
     expectTypeOf<(typeof Full.TASK_STATUSES)[number]>().toEqualTypeOf<TaskStatus>();
     expectTypeOf<(typeof Full.ROLES)[number]>().toEqualTypeOf<Role>();
     expectTypeOf<(typeof Full.API_ERROR_CODES)[number]>().toEqualTypeOf<ApiErrorCode>();
+    expectTypeOf<(typeof Full.STT_PROVIDER_IDS)[number]>().toEqualTypeOf<SttProviderId>();
+    expectTypeOf<(typeof Full.TRANSCRIPT_PROVIDER_IDS)[number]>().toEqualTypeOf<TranscriptProviderId>();
     expectTypeOf<ExtensionTokenResponse>().toEqualTypeOf<Full.ExtensionTokenResponse>();
   });
   it('package.json exposes ./types and sideEffects: false', () => {

@@ -107,6 +107,17 @@ describe('DB #mismatch decisions', () => {
     expect(ExtractedTask.required).toContain('reportId');
     expect(Transcript.required).toContain('provider');
   });
+  it("Transcript.provider accepts legacy 'unknown', but SttProviderId (routing) does not", () => {
+    const t = { id: id(1), meetingId: id(2), recordingId: id(3), provider: 'unknown', segments: [], createdAt: at };
+    expect(Value.Check(C.Transcript, { ...t, provider: 'assemblyai' })).toBe(true);
+    expect(Value.Check(C.Transcript, t)).toBe(true);
+    expect(Value.Check(C.Transcript, { ...t, provider: 'whisper' })).toBe(false);
+    expect(Value.Check(C.SttProviderId, 'unknown')).toBe(false);
+    expect(Value.Check(C.SttProviderId, 'assemblyai')).toBe(true);
+    expect(Value.Check(C.TranscriptProviderId, 'unknown')).toBe(true);
+    expect(C.TRANSCRIPT_PROVIDER_IDS).toEqual([...C.STT_PROVIDER_IDS, 'unknown']);
+    expect(C.STT_PROVIDER_IDS).toEqual(C.SttProviderId.anyOf.map((x) => x.const));
+  });
   it('organizationId is canonical; no orgId, acceptedTaskId or employeeId anywhere', () => {
     const json = JSON.stringify(Object.values(C).filter((v) => typeof v === 'object'));
     expect(json).not.toMatch(/"orgId"|"acceptedTaskId"|"employeeId"/);

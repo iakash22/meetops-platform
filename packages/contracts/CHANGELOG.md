@@ -35,6 +35,9 @@ organizationName }` (no tokens); `ExtensionTokenRequest { extensionId, deviceId,
 
 ### Changed
 
+- `Transcript.provider` is now `TranscriptProviderId` (`SttProviderId` values plus `'unknown'`). `'unknown'` is for legacy rows
+  backfilled by the DB migration only; new transcripts MUST record a real provider. `SttProviderId` (routing) is unchanged and
+  rejects `'unknown'`. Adds `STT_PROVIDER_IDS` and `TRANSCRIPT_PROVIDER_IDS` constants (also in `/types`).
 - `TASK_STATUSES` and `ROLES` now live in `src/constants.ts` (with the extension constants) and are re-exported unchanged from
   the main entry.
 - `PresignedUrlString` rejects userinfo (`user@`, `user:pass@`) for both https and http URLs.

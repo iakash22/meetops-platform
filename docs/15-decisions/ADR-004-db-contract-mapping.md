@@ -154,3 +154,5 @@ These were decided by ARCH and applied in `@meetops/contracts` 0.2.0. DB must ma
 | e   | The only link is from Task to ExtractedTask           | `Task.extractedTaskId`; no `acceptedTaskId` anywhere        | `tasks.extracted_task_id` (FK, unique) only, with no reverse column                                                   |
 
 These are guarded by `packages/contracts/test/v030.test.ts`.
+
+Note to (c): `Transcript.provider` is `TranscriptProviderId` (`SttProviderId` plus `'unknown'`). `'unknown'` is only for legacy rows backfilled by the migration, and the DB check constraint must allow exactly `assemblyai`, `faster-whisper`, `deepgram` and `unknown`. `SttProviderId` (routing) never includes `'unknown'`.

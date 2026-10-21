@@ -7,6 +7,10 @@
 export const TASK_STATUSES = ['todo', 'in_progress', 'done', 'cancelled'] as const;
 /** Membership roles. */
 export const ROLES = ['owner', 'admin', 'member', 'viewer'] as const;
+/** STT router ids (`SttProviderId`). */
+export const STT_PROVIDER_IDS = ['assemblyai', 'faster-whisper', 'deepgram'] as const;
+/** `TranscriptProviderId`: STT ids plus `'unknown'` (legacy backfilled transcripts only). */
+export const TRANSCRIPT_PROVIDER_IDS = [...STT_PROVIDER_IDS, 'unknown'] as const;
 /** All `ApiErrorCode` values (kept equal to the schema by a type test). */
 export const API_ERROR_CODES = [
   'BAD_REQUEST', 'VALIDATION_FAILED', 'UNAUTHENTICATED', 'AUTH_FAILED', 'CSRF_INVALID', 'FORBIDDEN', 'NOT_FOUND',
