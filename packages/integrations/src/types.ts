@@ -1,4 +1,8 @@
-export type IssueStatus = 'open' | 'in_progress' | 'done' | 'closed';
+import { Value } from '@sinclair/typebox/value';
+import { WriteApproval as WriteApprovalSchema, type IssueStatus, type WriteApproval } from '@meetops/contracts';
+
+/** open | in_progress | done | closed — from @meetops/contracts. */
+export type { IssueStatus, WriteApproval };
 
 export interface CreateIssueInput {
   title: string;
@@ -30,18 +34,6 @@ export interface HealthCheckResult {
   message?: string;
 }
 
-/**
- * Reference to a human approval recorded by Backend for one specific write.
- * Verified via an injected ApprovalVerifier; payloadHash must equal computeWritePayloadHash(...) of the exact write.
- */
-export interface WriteApproval {
-  approvalId: string;
-  organizationId: string;
-  approverUserId: string;
-  /** sha256 hex of the canonical write payload. */
-  payloadHash: string;
-}
-
 export class ApprovalRequiredError extends Error {
   constructor(operation: string, detail = 'requires an approval reference') {
     super(`${operation} ${detail}`);
@@ -49,16 +41,12 @@ export class ApprovalRequiredError extends Error {
   }
 }
 
-/** Throws ApprovalRequiredError unless the approval reference is structurally complete. */
+/**
+ * Throws ApprovalRequiredError unless the approval matches the contracts WriteApproval schema exactly:
+ * { approvalId, organizationId, approverUserId (uuids), payloadHash (lowercase sha256 hex), approvedAt? }.
+ */
 export function assertApproved(approval: unknown, operation: string): asserts approval is WriteApproval {
-  const a = approval as Partial<Record<keyof WriteApproval, unknown>> | null | undefined;
-  const ok =
-    typeof a === 'object' &&
-    a !== null &&
-    (['approvalId', 'organizationId', 'approverUserId'] as const).every((k) => typeof a[k] === 'string' && (a[k]).length > 0) &&
-    typeof a.payloadHash === 'string' &&
-    /^[0-9a-f]{64}$/.test(a.payloadHash);
-  if (!ok) throw new ApprovalRequiredError(operation);
+  if (!Value.Check(WriteApprovalSchema, approval)) throw new ApprovalRequiredError(operation);
 }
 
 export interface IssueTrackerProvider {

@@ -16,18 +16,37 @@ Issue-tracker integrations for MeetOps: a provider contract, GitHub Issues and J
 createIssue(input: CreateIssueInput, approval: WriteApproval): Promise<Issue>
 updateStatus(key: string, status: IssueStatus, approval: WriteApproval): Promise<Issue>
 
-interface WriteApproval { approvalId: string; organizationId: string; approverUserId: string; payloadHash: string }
+// WriteApproval is imported from @meetops/contracts:
+// { approvalId: uuid; organizationId: uuid; approverUserId: uuid; payloadHash: lowercase sha256 hex (64); approvedAt?: ISO date-time }
 ```
 
 Order of checks (in `guardedWrite`). No credential lookup or network call happens before all of them pass:
 
-1. The approval reference is complete. If not, `ApprovalRequiredError`.
+1. The approval passes `Value.Check` against the contracts `WriteApproval` schema (strict). If not, `ApprovalRequiredError`.
 2. `approval.organizationId` equals the provider's organization. If not, `ApprovalMismatchError`.
 3. `approval.payloadHash` equals `computeWritePayloadHash(operation, {provider, organizationId, integrationId}, payload)`. If not, `ApprovalMismatchError`.
    - The hash is sha256 over canonical JSON (sorted keys, undefined dropped).
    - For `createIssue` the payload is the exact `CreateIssueInput` passed in. For `updateStatus` it is `{ key, status }`.
 4. `ApprovalVerifier.verify(approval, {operation, provider, organizationId, integrationId, payloadHash})` returns true. If not, `ApprovalRejectedError`. Backend must check that the approval exists, is approved, is unexpired and unused, and must consume it atomically so it can only be used once.
-5. `AuditSink.record({phase:'attempt'})`, then the write, then `record({phase:'success'|'failure'})`. A rejection records `phase:'rejected'`. If the audit sink throws, the write is aborted.
+5. `AuditSink.record({phase:'attempt'})`, then the write, then `record({phase:'success'|'failure', attemptCount})`. A rejection records `phase:'rejected'`.
+   - Each audit record is retried a bounded number of times (`auditRetry`, default 3 tries with a 50 ms linear delay).
+   - If the before-write `attempt` record still fails, the write is **aborted** (`AuditUnavailableError`).
+   - If the write succeeded but the `success` record can't be stored, an `AuditRecordError` is thrown carrying `result`, so the caller can reconcile instead of re-pushing (which would create a duplicate).
+   - `attemptCount` is the number of underlying write API attempts, including retries.
+
+### `computeWritePayloadHash` (exported from the package root)
+
+```ts
+import { computeWritePayloadHash, canonicalJson } from '@meetops/integrations';
+const payloadHash = computeWritePayloadHash(
+  'createIssue',
+  { provider: 'github', organizationId, integrationId },
+  input,
+);
+// = sha256(canonicalJson({ operation, provider, organizationId, integrationId, payload })) as lowercase hex
+```
+
+Backend must store this hash on the approval record when the human approves, and pass it back in `WriteApproval.payloadHash`. The payload for `createIssue` is the exact `CreateIssueInput`; for `updateStatus` it is `{ key, status }`.
 
 ## Interfaces Backend must implement
 

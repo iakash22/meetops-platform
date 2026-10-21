@@ -1,5 +1,5 @@
 import { Octokit } from '@octokit/rest';
-import { guardedWrite, type ApprovalVerifier, type AuditSink, type CredentialResolver, type IntegrationContext } from './governance.js';
+import { guardedWrite, type ApprovalVerifier, type AuditSink, type CredentialResolver, type IntegrationContext, type WriteAttemptTracker } from './governance.js';
 import { IssueTrackerError, type WriteApproval, type CreateIssueInput, type HealthCheckResult, type Issue, type IssueStatus, type IssueTrackerProvider } from './types.js';
 
 /** Minimal Octokit surface used by the adapter; inject a mock in tests. */
@@ -78,15 +78,15 @@ export class GitHubIssuesProvider implements IssueTrackerProvider {
 
   /** Hash payload is exactly the input passed (Backend hashes the same object at approval time). */
   async createIssue(input: CreateIssueInput, approval: WriteApproval): Promise<Issue> {
-    return guardedWrite(this.options, this.scope('createIssue'), input, approval, () => this.doCreate(input), (i) => i.key);
+    return guardedWrite(this.options, this.scope('createIssue'), input, approval, (t) => this.doCreate(input, t), (i) => i.key);
   }
 
   /** Hash payload: { key, status }. */
   async updateStatus(key: string, status: IssueStatus, approval: WriteApproval): Promise<Issue> {
-    return guardedWrite(this.options, this.scope('updateStatus'), { key, status }, approval, () => this.doUpdate(key, status), (i) => i.key);
+    return guardedWrite(this.options, this.scope('updateStatus'), { key, status }, approval, (t) => this.doUpdate(key, status, t), (i) => i.key);
   }
 
-  private async doCreate(input: CreateIssueInput): Promise<Issue> {
+  private async doCreate(input: CreateIssueInput, tracker?: WriteAttemptTracker): Promise<Issue> {
     const repoRef = input.project ?? this.options.defaultRepo;
     if (!repoRef) throw new IssueTrackerError('No repository specified', this.name);
     const { owner, repo } = parseRepo(repoRef);
@@ -96,7 +96,7 @@ export class GitHubIssuesProvider implements IssueTrackerProvider {
     if (input.labels?.length) params.labels = input.labels;
     if (input.assignees?.length) params.assignees = input.assignees;
     const client = await this.client();
-    const { data } = await this.wrap(() => client.rest.issues.create(params));
+    const { data } = await this.wrap(() => client.rest.issues.create(params), tracker);
     return this.toIssue(owner, repo, data);
   }
 
@@ -112,7 +112,7 @@ export class GitHubIssuesProvider implements IssueTrackerProvider {
     }
   }
 
-  private async doUpdate(key: string, status: IssueStatus): Promise<Issue> {
+  private async doUpdate(key: string, status: IssueStatus, tracker?: WriteAttemptTracker): Promise<Issue> {
     const client = await this.client();
     const ref = parseIssueKey(key, this.options.defaultRepo);
     const { data: current } = await this.wrap(() => client.rest.issues.get(ref));
@@ -139,7 +139,7 @@ export class GitHubIssuesProvider implements IssueTrackerProvider {
         update.labels = labels;
         break;
     }
-    const { data } = await this.wrap(() => client.rest.issues.update(update));
+    const { data } = await this.wrap(() => client.rest.issues.update(update), tracker);
     return this.toIssue(ref.owner, ref.repo, data);
   }
 
@@ -173,8 +173,10 @@ export class GitHubIssuesProvider implements IssueTrackerProvider {
     return issue;
   }
 
-  private async wrap<T>(fn: () => Promise<T>): Promise<T> {
+  /** tracker (writes only) counts each underlying API attempt for the audit attemptCount. */
+  private async wrap<T>(fn: () => Promise<T>, tracker?: WriteAttemptTracker): Promise<T> {
     try {
+      tracker?.attempt();
       return await fn();
     } catch (err) {
       throw this.toError(err);

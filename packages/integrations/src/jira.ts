@@ -1,4 +1,4 @@
-import { guardedWrite, type ApprovalVerifier, type AuditSink, type CredentialResolver, type IntegrationContext } from './governance.js';
+import { guardedWrite, type ApprovalVerifier, type AuditSink, type CredentialResolver, type IntegrationContext, type WriteAttemptTracker } from './governance.js';
 import {
   IssueTrackerError,
   type CreateIssueInput,
@@ -106,15 +106,15 @@ export class JiraIssueTrackerProvider implements IssueTrackerProvider {
 
   /** Hash payload is exactly the input passed. */
   async createIssue(input: CreateIssueInput, approval: WriteApproval): Promise<Issue> {
-    return guardedWrite(this.options, this.scope('createIssue'), input, approval, () => this.doCreate(input), (i) => i.key);
+    return guardedWrite(this.options, this.scope('createIssue'), input, approval, (t) => this.doCreate(input, t), (i) => i.key);
   }
 
   /** Hash payload: { key, status }. */
   async updateStatus(key: string, status: IssueStatus, approval: WriteApproval): Promise<Issue> {
-    return guardedWrite(this.options, this.scope('updateStatus'), { key, status }, approval, () => this.doUpdate(key, status), (i) => i.key);
+    return guardedWrite(this.options, this.scope('updateStatus'), { key, status }, approval, (t) => this.doUpdate(key, status, t), (i) => i.key);
   }
 
-  private async doCreate(input: CreateIssueInput): Promise<Issue> {
+  private async doCreate(input: CreateIssueInput, tracker?: WriteAttemptTracker): Promise<Issue> {
     const project = input.project ?? this.options.projectKey;
     if (!project) throw new IssueTrackerError('No Jira project key specified', this.name);
     const desc = [input.description, input.externalRef ? `MeetOps ref: ${input.externalRef}` : undefined].filter(Boolean).join('\n\n');
@@ -127,7 +127,7 @@ export class JiraIssueTrackerProvider implements IssueTrackerProvider {
     if (input.labels?.length) fields.labels = input.labels.map((l) => l.replace(/\s+/g, '-'));
     // Jira Cloud assigns by accountId; first assignee only.
     if (input.assignees?.[0]) fields.assignee = { accountId: input.assignees[0] };
-    const created = (await this.request('POST', '/rest/api/3/issue', { fields })) as { key: string };
+    const created = (await this.request('POST', '/rest/api/3/issue', { fields }, tracker)) as { key: string };
     const issue = await this.getIssue(created.key);
     if (!issue) throw new IssueTrackerError(`Created issue ${created.key} not found`, this.name);
     return issue;
@@ -140,13 +140,13 @@ export class JiraIssueTrackerProvider implements IssueTrackerProvider {
     return this.toIssue(JSON.parse(res.body) as JiraIssueData);
   }
 
-  private async doUpdate(key: string, status: IssueStatus): Promise<Issue> {
+  private async doUpdate(key: string, status: IssueStatus, tracker?: WriteAttemptTracker): Promise<Issue> {
     const path = `/rest/api/3/issue/${encodeURIComponent(key)}/transitions`;
     const wanted = this.transitions[status].toLowerCase();
     const { transitions } = (await this.request('GET', path)) as { transitions?: { id: string; name: string; to?: { name?: string } }[] };
     const t = (transitions ?? []).find((x) => x.name.toLowerCase() === wanted || x.to?.name?.toLowerCase() === wanted);
     if (!t) throw new IssueTrackerError(`No Jira transition "${this.transitions[status]}" available for ${key}`, this.name);
-    await this.request('POST', path, { transition: { id: t.id } });
+    await this.request('POST', path, { transition: { id: t.id } }, tracker);
     const issue = await this.getIssue(key);
     if (!issue) throw new IssueTrackerError(`Issue ${key} not found after transition`, this.name, 404);
     return issue;
@@ -217,7 +217,8 @@ export class JiraIssueTrackerProvider implements IssueTrackerProvider {
     }
   }
 
-  private async request(method: string, path: string, body?: unknown): Promise<unknown> {
+  private async request(method: string, path: string, body?: unknown, tracker?: WriteAttemptTracker): Promise<unknown> {
+    tracker?.attempt();
     const res = await this.raw(method, path, body);
     if (!res.ok) throw this.httpError(res.status);
     if (res.status === 204 || !res.body) return {};
