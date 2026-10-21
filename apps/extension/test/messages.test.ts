@@ -49,6 +49,7 @@ describe('message guards', () => {
       }),
     ).toBe(true);
     expect(isOffscreenMessage({ target: 'offscreen', type: 'OFFSCREEN_STOP' })).toBe(true);
+    expect(isOffscreenMessage({ target: 'offscreen', type: 'OFFSCREEN_DISCARD' })).toBe(true);
     expect(
       isOffscreenMessage({
         target: 'offscreen',

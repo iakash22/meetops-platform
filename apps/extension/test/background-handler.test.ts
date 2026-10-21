@@ -240,7 +240,7 @@ describe('security review fixes', () => {
     expect(r).toMatchObject({ ok: true, status: 'idle' });
     expect(ctx.deps.sendToOffscreen).toHaveBeenCalledWith({
       target: 'offscreen',
-      type: 'OFFSCREEN_STOP',
+      type: 'OFFSCREEN_DISCARD',
     });
     expect(ctx.deps.setBadge).toHaveBeenLastCalledWith('!');
     expect((await loadState(ctx.deps.kv)).status).toBe('idle');

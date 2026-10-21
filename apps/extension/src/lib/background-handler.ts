@@ -227,13 +227,13 @@ export async function handleBackgroundMessage(
       const captured = await deps.capturedTabIds().catch(() => [] as number[]);
       if (!captured.includes(state.tabId)) {
         await deps
-          .sendToOffscreen({ target: 'offscreen', type: 'OFFSCREEN_STOP' })
+          .sendToOffscreen({ target: 'offscreen', type: 'OFFSCREEN_DISCARD' })
           .catch(() => undefined);
         return status(
           await toIdle(
             deps,
             state,
-            'Captured tab does not match the tab you consented to record; stopped.',
+            'Captured tab does not match the tab you consented to record; recording discarded.',
           ),
         );
       }

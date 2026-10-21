@@ -1,4 +1,5 @@
 /// <reference types="chrome" />
+import { resolveMeetingId } from '../../src/lib/meeting.js';
 import { useCallback, useEffect, useState } from 'react';
 import {
   CONSENT_NOTICE,
@@ -71,8 +72,7 @@ export function App() {
     try {
       const tabId = await activeTabId();
       const streamId = await getTabStreamId(tabId);
-      // TODO(meeting-api): interim meetingId, a fresh UUID per recording until a meeting API exists.
-      const meetingId = crypto.randomUUID();
+      const meetingId = await resolveMeetingId();
       apply(
         await send({ target: 'background', type: 'START_RECORDING', tabId, streamId, meetingId }),
       );

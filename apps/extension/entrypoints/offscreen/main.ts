@@ -64,10 +64,26 @@ function cleanup() {
   audioCtx = undefined;
 }
 
+let starting: Promise<void> | undefined;
+
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   // Only the background service worker may drive the recorder (it is the one that checks
   // consent); the popup or any other extension page is ignored.
   if (!isOffscreenMessage(msg) || !isTrustedOffscreenSender(sender, extensionUrls())) return false;
+  if (msg.type === 'OFFSCREEN_DISCARD') {
+    // Wait for an in-flight start so a session created moments ago is discarded too.
+    void (async () => {
+      await starting?.catch(() => undefined);
+      const h = handle;
+      cleanup();
+      // The consented tab is not the captured one: nothing from this session may be kept.
+      if (h) await h.discard('consent_revoked');
+    })().then(
+      () => sendResponse({ ok: true }),
+      (err: unknown) => sendResponse({ ok: false, error: String(err) }),
+    );
+    return true;
+  }
   if (msg.type === 'OFFSCREEN_STOP') {
     if (!handle) {
       sendResponse({ ok: false, error: 'Not recording' });
@@ -77,7 +93,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     sendResponse({ ok: true });
     return false;
   }
-  start(msg.streamId, msg.startedAt, msg.meetingId).then(
+  starting = start(msg.streamId, msg.startedAt, msg.meetingId);
+  starting.then(
     () => sendResponse({ ok: true }),
     (err: unknown) => {
       const error = err instanceof Error ? err.message : String(err);

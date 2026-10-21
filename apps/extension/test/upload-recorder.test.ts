@@ -202,3 +202,34 @@ describe('startRecording', () => {
     expect(ev.onChunk.mock.calls.map((c) => c[0])).toEqual([0, 1]);
   });
 });
+
+describe('discard (captured-tab mismatch)', () => {
+  it('deletes the session and its chunks locally, aborts the upload session, emits nothing more', async () => {
+    const store = await newStore();
+    const client = new StubUploadClient();
+    const complete = vi.spyOn(client, 'complete');
+    const rec = new FakeRecorder();
+    const ev = events();
+    const h = await startRecording({
+      meetingId: MID,
+      stream: fakeStream().stream,
+      client,
+      store,
+      events: ev,
+      startedAt: 0,
+      createRecorder: () => rec,
+    });
+    rec.emit('abc');
+    await settle();
+    expect(await store.listChunks(h.sessionId)).toHaveLength(1);
+    await h.discard('consent_revoked');
+    rec.emit('late');
+    await settle();
+    expect(await store.getSession(h.sessionId)).toBeUndefined();
+    expect(await store.listChunks(h.sessionId)).toHaveLength(0);
+    expect(client.sessions.get(h.sessionId)!.aborted).toBe('consent_revoked');
+    expect(complete).not.toHaveBeenCalled();
+    expect(ev.onStopped).not.toHaveBeenCalled();
+    expect(ev.onChunk).toHaveBeenCalledTimes(1);
+  });
+});

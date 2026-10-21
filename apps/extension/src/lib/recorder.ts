@@ -1,7 +1,7 @@
 import type { ChunkStore } from './chunk-store.js';
 import { drainQueue } from './drain.js';
 import type { StorageEvent } from './messages.js';
-import { MAX_CHUNK_BYTES, MAX_RECORDING_CHUNKS } from './contracts.js';
+import { MAX_CHUNK_BYTES, MAX_RECORDING_CHUNKS, type AbortReason } from './contracts.js';
 import { sha256Hex, splitForUpload, toIsoTimestamp, type UploadClient } from './upload.js';
 
 export const MIME_TYPE = 'audio/webm;codecs=opus';
@@ -28,6 +28,12 @@ export interface RecorderLike {
 export interface RecordingHandle {
   sessionId: string;
   stop(): void;
+  /**
+   * Stop without keeping anything: delete the session and its chunks from IndexedDB and abort the
+   * upload session with `reason`. Resolves once local data is gone. Fires neither onStopped nor
+   * further onChunk events.
+   */
+  discard(reason: AbortReason): Promise<void>;
 }
 
 /**
@@ -64,8 +70,9 @@ export async function startRecording(opts: {
   let seq = 0;
   let tail: Promise<void> = Promise.resolve();
 
+  let discarded = false;
   rec.ondataavailable = (e) => {
-    if (e.data.size === 0) return;
+    if (e.data.size === 0 || discarded) return;
     const data = e.data;
     tail = tail.then(async () => {
       // Enforce the per-chunk upload limit by splitting oversized timeslices into several seqs.
@@ -73,6 +80,7 @@ export async function startRecording(opts: {
         await data.arrayBuffer(),
         opts.maxChunkBytes ?? MAX_CHUNK_BYTES,
       )) {
+        if (discarded) return;
         if (seq >= MAX_RECORDING_CHUNKS)
           throw new Error('Recording reached the maximum chunk count');
         const mySeq = seq++;
@@ -111,6 +119,7 @@ export async function startRecording(opts: {
   };
   rec.onstop = () => {
     stopTracks();
+    if (discarded) return;
     void (async () => {
       try {
         await tail;
@@ -138,6 +147,14 @@ export async function startRecording(opts: {
     sessionId,
     stop() {
       if (rec.state !== 'inactive') rec.stop();
+    },
+    async discard(reason) {
+      discarded = true;
+      if (rec.state !== 'inactive') rec.stop();
+      stopTracks();
+      await tail.catch(() => undefined);
+      await opts.store.deleteSession(sessionId);
+      await opts.client.abort(sessionId, { reason }).catch(() => undefined);
     },
   };
 }

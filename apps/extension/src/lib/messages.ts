@@ -12,8 +12,7 @@ export type PopupToBackground =
       streamId: string;
       /**
        * UUID of the meeting this recording belongs to (InitRecordingSession.meetingId).
-       * TODO(meeting-api): interim, the popup mints a fresh UUID per recording because no meeting
-       * API exists yet; replace with the id of a meeting chosen/created via the API.
+       * Comes from resolveMeetingId() (src/lib/meeting.ts); see its TODO(meeting-api).
        */
       meetingId: string;
     }
@@ -30,7 +29,9 @@ export type BackgroundToOffscreen =
       startedAt: number;
       meetingId: string;
     }
-  | { target: 'offscreen'; type: 'OFFSCREEN_STOP' };
+  | { target: 'offscreen'; type: 'OFFSCREEN_STOP' }
+  /** Stop and throw the recording away (local chunks deleted, upload session aborted). */
+  | { target: 'offscreen'; type: 'OFFSCREEN_DISCARD' };
 
 /** Storage-cap events from the persistent chunk queue. */
 export type StorageEvent =
@@ -111,7 +112,7 @@ export function isOffscreenMessage(msg: unknown): msg is BackgroundToOffscreen {
   if (typeof msg !== 'object' || msg === null) return false;
   const m = msg as Record<string, unknown>;
   if (m.target !== 'offscreen') return false;
-  if (m.type === 'OFFSCREEN_STOP') return true;
+  if (m.type === 'OFFSCREEN_STOP' || m.type === 'OFFSCREEN_DISCARD') return true;
   return (
     m.type === 'OFFSCREEN_START' && isStr(m.streamId) && isNum(m.startedAt) && isUuid(m.meetingId)
   );
