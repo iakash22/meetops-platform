@@ -1,7 +1,8 @@
 import type { ChunkStore } from './chunk-store.js';
 import { drainQueue } from './drain.js';
 import type { StorageEvent } from './messages.js';
-import type { UploadClient } from './upload.js';
+import { MAX_CHUNK_BYTES, MAX_RECORDING_CHUNKS } from './contracts.js';
+import { splitForUpload, toIsoTimestamp, type UploadClient } from './upload.js';
 
 export const MIME_TYPE = 'audio/webm;codecs=opus';
 export const TIMESLICE_MS = 5000;
@@ -40,12 +41,19 @@ export async function startRecording(opts: {
   store: ChunkStore;
   createRecorder: (stream: MediaStream, mimeType: string) => RecorderLike;
   events: RecorderEvents;
+  /** Epoch ms (internal clock); sent to the upload API as ISO 8601. */
   startedAt: number;
   now?: () => number;
   timeslice?: number;
+  /** Defaults to contracts MAX_CHUNK_BYTES (64 MiB). */
+  maxChunkBytes?: number;
 }): Promise<RecordingHandle> {
   const now = opts.now ?? Date.now;
-  const meta = { mimeType: MIME_TYPE, startedAt: opts.startedAt, source: 'tab' as const };
+  const meta = {
+    mimeType: MIME_TYPE,
+    startedAt: toIsoTimestamp(opts.startedAt),
+    source: 'tab' as const,
+  };
   const { sessionId } = await opts.client.initSession(meta);
   await opts.store.putSession({ sessionId, meta, completed: false });
   const rec = opts.createRecorder(opts.stream, MIME_TYPE);
@@ -55,29 +63,37 @@ export async function startRecording(opts: {
 
   rec.ondataavailable = (e) => {
     if (e.data.size === 0) return;
-    const mySeq = seq++;
     const data = e.data;
     tail = tail.then(async () => {
-      const res = await opts.store.putChunk({
-        sessionId,
-        seq: mySeq,
-        data: await data.arrayBuffer(),
-        mimeType: MIME_TYPE,
-        createdAt: now(),
-      });
-      if (!res.stored) {
-        opts.events.onStorage({ kind: 'refused', seq: mySeq });
-        return;
-      }
-      if (res.evictedCount > 0) {
-        opts.events.onStorage({
-          kind: 'evicted',
-          count: res.evictedCount,
-          bytes: res.evictedBytes,
+      // Enforce the per-chunk upload limit by splitting oversized timeslices into several seqs.
+      for (const part of splitForUpload(
+        await data.arrayBuffer(),
+        opts.maxChunkBytes ?? MAX_CHUNK_BYTES,
+      )) {
+        if (seq >= MAX_RECORDING_CHUNKS)
+          throw new Error('Recording reached the maximum chunk count');
+        const mySeq = seq++;
+        const res = await opts.store.putChunk({
+          sessionId,
+          seq: mySeq,
+          data: part,
+          mimeType: MIME_TYPE,
+          createdAt: now(),
         });
+        if (!res.stored) {
+          opts.events.onStorage({ kind: 'refused', seq: mySeq });
+          continue;
+        }
+        if (res.evictedCount > 0) {
+          opts.events.onStorage({
+            kind: 'evicted',
+            count: res.evictedCount,
+            bytes: res.evictedBytes,
+          });
+        }
+        opts.events.onChunk(mySeq);
       }
-      opts.events.onChunk(mySeq);
-      await drainQueue(opts.store, opts.client, sessionId);
+      await drainQueue(opts.store, opts.client, sessionId, now);
     });
     tail = tail.catch((err: unknown) => {
       opts.events.onError(err instanceof Error ? err.message : String(err));
@@ -96,7 +112,7 @@ export async function startRecording(opts: {
           chunkCount: seq,
           durationMs: now() - opts.startedAt,
         });
-        await drainQueue(opts.store, opts.client, sessionId);
+        await drainQueue(opts.store, opts.client, sessionId, now);
         opts.events.onStopped(seq);
       } catch (err) {
         opts.events.onError(err instanceof Error ? err.message : String(err));

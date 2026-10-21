@@ -1,4 +1,5 @@
-import type { UploadSessionMeta, UploadSummary } from './upload.js';
+import type { CompleteRecordingSessionRequest, InitRecordingSessionRequest } from './contracts.js';
+import { toIsoTimestamp } from './upload.js';
 
 /**
  * Persistent IndexedDB queue of recorded chunks, shared by the offscreen document (writer)
@@ -29,15 +30,35 @@ export interface StoredChunk {
 
 export interface StoredSession {
   sessionId: string;
-  meta: UploadSessionMeta;
+  meta: InitRecordingSessionRequest;
   /** Set when recording ended (normally or after a crash). */
-  finalized?: UploadSummary;
+  finalized?: CompleteRecordingSessionRequest;
   completed: boolean;
 }
 
 export type PutResult =
   | { stored: true; evictedCount: number; evictedBytes: number }
   | { stored: false; reason: 'over-cap' };
+
+/**
+ * Records written before contracts v0.2 stored meta.startedAt as epoch ms. Normalize on read
+ * so the upload client always receives ISO 8601; unparseable values fall back to the epoch.
+ */
+export function normalizeSession(raw: StoredSession): StoredSession {
+  const startedAt = raw.meta.startedAt as string | number;
+  if (typeof startedAt === 'string' && !/^\d+$/.test(startedAt)) {
+    try {
+      return { ...raw, meta: { ...raw.meta, startedAt: toIsoTimestamp(startedAt) } };
+    } catch {
+      return { ...raw, meta: { ...raw.meta, startedAt: new Date(0).toISOString() } };
+    }
+  }
+  const ms = Number(startedAt);
+  return {
+    ...raw,
+    meta: { ...raw.meta, startedAt: new Date(Number.isFinite(ms) ? ms : 0).toISOString() },
+  };
+}
 
 const DB_NAME = 'meetops-ai-recorder';
 const CHUNKS = 'chunks';
@@ -89,12 +110,15 @@ export class ChunkStore {
 
   async getSession(sessionId: string): Promise<StoredSession | undefined> {
     const tx = this.db.transaction(SESSIONS, 'readonly');
-    return (await req(tx.objectStore(SESSIONS).get(sessionId))) as StoredSession | undefined;
+    const s = (await req(tx.objectStore(SESSIONS).get(sessionId))) as StoredSession | undefined;
+    return s && normalizeSession(s);
   }
 
   async listSessions(): Promise<StoredSession[]> {
     const tx = this.db.transaction(SESSIONS, 'readonly');
-    return (await req(tx.objectStore(SESSIONS).getAll())) as StoredSession[];
+    return ((await req(tx.objectStore(SESSIONS).getAll())) as StoredSession[]).map(
+      normalizeSession,
+    );
   }
 
   async deleteSession(sessionId: string): Promise<void> {
@@ -105,7 +129,10 @@ export class ChunkStore {
   }
 
   /** Mark a session as ended so a later drain will call complete(). */
-  async finalizeSession(sessionId: string, summary: UploadSummary): Promise<void> {
+  async finalizeSession(
+    sessionId: string,
+    summary: CompleteRecordingSessionRequest,
+  ): Promise<void> {
     const s = await this.getSession(sessionId);
     if (s && !s.finalized) await this.putSession({ ...s, finalized: summary });
   }
