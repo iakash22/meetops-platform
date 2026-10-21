@@ -6,13 +6,13 @@
 
 All Node images use `node:${NODE_VERSION}-bookworm-slim` (`NODE_VERSION=20.20.2`) with pinned base images and pnpm from `packageManager` (9.12.3).
 
-| Image | Dockerfile | Runs as | Port | Healthcheck | Notes |
-| --- | --- | --- | --- | --- | --- |
-| api | `Dockerfile.api` (target `runtime`) | `node` | 3000 | `/health` on `PORT` | Generates the Prisma client; installs OpenSSL |
-| migrate | `Dockerfile.api` (target `migrate`) | `node` | None | None | Runs `db:migrate:deploy && db:seed`, then exits; keeps the full workspace |
-| worker | `Dockerfile.worker` | `node` | None | None | Pinned FFmpeg (`FFMPEG_VERSION`), tini, OpenSSL; Prisma client |
-| realtime | `Dockerfile.realtime` | `node` | 4001 | Yes (`/health` on `REALTIME_PORT`) | For `apps/realtime` **(requires PR #16, unmerged)** |
-| web | `Dockerfile.web` + `nginx/web.conf.template` | nginx-unprivileged `1.27.5-alpine` | 8080 | Yes | `VITE_API_URL` build arg (default `http://localhost:3000`); strict CSP and security headers via an envsubst template |
+| Image    | Dockerfile                                   | Runs as                            | Port | Healthcheck                        | Notes                                                                                                                |
+| -------- | -------------------------------------------- | ---------------------------------- | ---- | ---------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| api      | `Dockerfile.api` (target `runtime`)          | `node`                             | 3000 | `/health` on `PORT`                | Generates the Prisma client; installs OpenSSL                                                                        |
+| migrate  | `Dockerfile.api` (target `migrate`)          | `node`                             | None | None                               | Runs `db:migrate:deploy && db:seed`, then exits; keeps the full workspace                                            |
+| worker   | `Dockerfile.worker`                          | `node`                             | None | None                               | Pinned FFmpeg (`FFMPEG_VERSION`), tini, OpenSSL; Prisma client                                                       |
+| realtime | `Dockerfile.realtime`                        | `node`                             | 4001 | Yes (`/health` on `REALTIME_PORT`) | For `apps/realtime` **(requires PR #16, unmerged)**                                                                  |
+| web      | `Dockerfile.web` + `nginx/web.conf.template` | nginx-unprivileged `1.27.5-alpine` | 8080 | Yes                                | `VITE_API_URL` build arg (default `http://localhost:3000`); strict CSP and security headers via an envsubst template |
 
 The root `.dockerignore` excludes `node_modules`, `dist`, `.git`, `.env*` and keys.
 
@@ -41,12 +41,12 @@ Infra URLs are overridden to service names, and `DATABASE_URL` is built from `PO
 
 ## CI
 
-| Workflow | Job | What it does |
-| --- | --- | --- |
-| `ci.yml` | `build` | Corepack pnpm, Node 20, `pnpm install --frozen-lockfile`, **lockfile drift check** (`git diff --exit-code pnpm-lock.yaml`), then lint, typecheck, test and build |
-| `ci.yml` | `audit` | `pnpm audit --prod --audit-level high`, `continue-on-error` as a **dated exception expiring 2026-11-04** |
-| `docker.yml` | `build` (matrix api, worker, web, realtime) | Buildx with `push: false` and GHA cache per image; realtime is skipped when `apps/realtime` is absent |
-| `secrets.yml` (new) | Secret scan | `gitleaks detect` over full history (`--redact`) |
+| Workflow            | Job                                         | What it does                                                                                                                                                     |
+| ------------------- | ------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ci.yml`            | `build`                                     | Corepack pnpm, Node 20, `pnpm install --frozen-lockfile`, **lockfile drift check** (`git diff --exit-code pnpm-lock.yaml`), then lint, typecheck, test and build |
+| `ci.yml`            | `audit`                                     | `pnpm audit --prod --audit-level high`, `continue-on-error` as a **dated exception expiring 2026-11-04**                                                         |
+| `docker.yml`        | `build` (matrix api, worker, web, realtime) | Buildx with `push: false` and GHA cache per image; realtime is skipped when `apps/realtime` is absent                                                            |
+| `secrets.yml` (new) | Secret scan                                 | `gitleaks detect` over full history (`--redact`)                                                                                                                 |
 
 All workflows run on `pull_request` (any base, including `integration/phase-1`) and on pushes to `main`. Actions are pinned to commit SHAs, and permissions are least-privilege per job.
 

@@ -71,10 +71,10 @@ Everything from `@prisma/client`, plus `createPrismaClient`, `getPrismaClient` (
 
 ### Roles
 
-| Role | Attributes | Used via |
-| --- | --- | --- |
-| `meetops_app` | NOLOGIN by default, NOSUPERUSER, NOBYPASSRLS, not owner; DML grants plus default privileges; `UPDATE`/`DELETE` revoked on `audit_events`; no access to `_prisma_migrations` | `DATABASE_URL` (runtime) |
-| `meetops_migrator` | Owns schema objects (best-effort `ALTER TABLE … OWNER`) | `MIGRATION_DATABASE_URL` (Prisma `directUrl`): `migrate deploy` and seed |
+| Role               | Attributes                                                                                                                                                                  | Used via                                                                 |
+| ------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------ |
+| `meetops_app`      | NOLOGIN by default, NOSUPERUSER, NOBYPASSRLS, not owner; DML grants plus default privileges; `UPDATE`/`DELETE` revoked on `audit_events`; no access to `_prisma_migrations` | `DATABASE_URL` (runtime)                                                 |
+| `meetops_migrator` | Owns schema objects (best-effort `ALTER TABLE … OWNER`)                                                                                                                     | `MIGRATION_DATABASE_URL` (Prisma `directUrl`): `migrate deploy` and seed |
 
 Passwords and LOGIN are set out of band, never in SQL. Both URLs are required for `prisma validate` and `migrate`; `prisma generate` needs neither. For local steps see [Windows setup](../00-getting-started/windows-setup.md#6-database-migrations-with-two-roles).
 
@@ -97,4 +97,3 @@ Passwords and LOGIN are set out of band, never in SQL. Both URLs are required fo
 - Public API narrows to `createPrismaClient`, `getPrismaClient`, `disconnectPrismaClient`, `withOrgContext` and the types `DatabaseClient`, `DatabaseTransaction`, `OrgContextOptions`. Domain types come from `@meetops/contracts`, and `@prisma/client` is no longer re-exported.
 - Scripts are unchanged (`db:migrate:dev`, `db:migrate:deploy`, `db:seed`); `build` uses `tsconfig.build.json`.
 - Live RLS tests (`test/rls.live.test.ts`) are skipped unless `RLS_TEST_APP_URL` and `RLS_TEST_OWNER_URL` are set.
-
