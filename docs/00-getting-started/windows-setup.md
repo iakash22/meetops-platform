@@ -22,7 +22,7 @@ Steps marked **(requires PR #N, unmerged)** depend on an open PR and won't work 
 | WSL 2 + Ubuntu  | `wsl --install -d Ubuntu`, reboot, then `wsl --status` should show default version 2                         |
 | Docker Desktop  | Settings → General → "Use the WSL 2 based engine"; Resources → WSL integration → enable Ubuntu if you use it |
 | Git for Windows | `winget install Git.Git`                                                                                     |
-| Node            | See the warning above (22 LTS recommended; 24 unverified)                                                    |
+| Node            | 24 (supported once the DevOps engines PR lands) or 22 LTS; see the note above                                |
 | pnpm 9.12.3     | `corepack enable`, then `corepack prepare pnpm@9.12.3 --activate`, then `pnpm --version`                     |
 | FFmpeg          | `winget install Gyan.FFmpeg` (needed by media-core tests and the worker)                                     |
 
