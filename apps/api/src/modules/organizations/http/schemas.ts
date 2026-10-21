@@ -1,5 +1,5 @@
 import { Type, type Static } from '@sinclair/typebox';
-import { Organization, Paginated, Role } from '@meetops/contracts';
+import { Membership, Organization, Paginated, Role } from '@meetops/contracts';
 
 export const InvitableRole = Type.Union([Type.Literal('admin'), Type.Literal('member'), Type.Literal('viewer')]);
 
@@ -39,6 +39,12 @@ export const InvitationDto = Type.Object(
   },
   { additionalProperties: false }
 );
+
+export const MemberParams = Type.Object({ id: Type.String({ format: 'uuid' }), userId: Type.String({ format: 'uuid' }) });
+export const ChangeRoleBody = Type.Object({ role: Role }, { additionalProperties: false });
+export const MemberList = Type.Object({ items: Type.Array(Membership) });
+export type MemberParamsT = Static<typeof MemberParams>;
+export type ChangeRoleBodyT = Static<typeof ChangeRoleBody>;
 
 export type CreateOrganizationBodyT = Static<typeof CreateOrganizationBody>;
 export type SwitchOrganizationBodyT = Static<typeof SwitchOrganizationBody>;

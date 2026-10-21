@@ -12,12 +12,15 @@ import {
 import { Argon2PasswordHasher } from './auth/infrastructure/argon2-password-hasher.js';
 import { CryptoTokenService, uuidGenerator } from './auth/infrastructure/crypto-token.service.js';
 import { InMemorySessionRepository } from './auth/infrastructure/in-memory-session.repository.js';
-import { InMemoryPasswordResetRepository } from './auth/infrastructure/in-memory-password-reset.repository.js';
+import { InMemoryOneTimeTokenRepository } from './auth/infrastructure/in-memory-one-time-token.repository.js';
 import { InMemoryLoginLockout, InMemoryRateLimiter } from './auth/infrastructure/rate-limit/in-memory.js';
 import type { SessionPolicy, SessionRepository } from './auth/domain/session.js';
 import type { LoginLockout, PasswordHasher, RateLimiter, TokenService } from './auth/domain/ports.js';
-import type { PasswordResetRepository } from './auth/domain/password-reset.js';
-import { NoopAuthMailer, type AuthMailer } from './auth/domain/mailer.js';
+import type { OneTimeTokenRepository } from './auth/domain/one-time-token.js';
+import type { AuthMailQueue, MailTransport } from './auth/domain/mail-jobs.js';
+import { InMemoryAuditLog, type AuditLog } from './auth/domain/audit.js';
+import { AuthMailJobHandler, InlineAuthMailQueue } from './auth/application/auth-mail.handler.js';
+import { SessionVerifier } from './auth/application/session-verifier.js';
 import { InMemoryUserRepository } from './users/infrastructure/in-memory-user.repository.js';
 import type { UserRepository } from './users/domain/user.repository.js';
 import { OrganizationService } from './organizations/application/organization.service.js';
@@ -37,7 +40,7 @@ import { systemClock, type Clock, type IdGenerator } from '../shared/ports.js';
 export interface ModuleDeps {
   users: UserRepository;
   sessions: SessionRepository;
-  passwordResets: PasswordResetRepository;
+  oneTimeTokens: OneTimeTokenRepository;
   organizations: OrganizationRepository;
   memberships: MembershipRepository;
   invitations: InvitationRepository;
@@ -45,12 +48,18 @@ export interface ModuleDeps {
   tokens: TokenService;
   rateLimiter: RateLimiter;
   lockout: LoginLockout;
-  mailer: AuthMailer;
+  /** Production: inject a real queue (TODO(notifications #11)); dev/test: inline + transport below. */
+  mailQueue: AuthMailQueue;
+  /** Only used by the dev/test inline queue. */
+  mailTransport: MailTransport;
+  audit: AuditLog;
+  webBaseUrl: string;
   clock: Clock;
   ids: IdGenerator;
   sessionPolicy: SessionPolicy;
   invitationTtlMs: number;
   passwordResetTtlMs: number;
+  emailVerificationTtlMs: number;
   security: HttpSecurityConfig;
 }
 
@@ -75,13 +84,14 @@ export function isRelaxedEnv(nodeEnv: string | undefined): boolean {
 export const PRODUCTION_REQUIRED_DEPS = [
   'users',
   'sessions',
-  'passwordResets',
+  'oneTimeTokens',
   'organizations',
   'memberships',
   'invitations',
   'rateLimiter',
   'lockout',
-  'mailer'
+  'mailQueue',
+  'audit'
 ] as const satisfies readonly (keyof ModuleDeps)[];
 
 export class MissingProductionDependencyError extends Error {
@@ -122,21 +132,28 @@ export function defaultModuleDeps(
         : randomBytes(32)
   };
   if (strict) assertProductionCookies(security);
+  const memberships = overrides.memberships ?? new InMemoryMembershipRepository();
   return {
     users: new InMemoryUserRepository(),
     sessions: new InMemorySessionRepository(),
-    passwordResets: new InMemoryPasswordResetRepository(),
+    oneTimeTokens: new InMemoryOneTimeTokenRepository(),
     organizations: new InMemoryOrganizationRepository(),
-    memberships: new InMemoryMembershipRepository(),
-    invitations: new InMemoryInvitationRepository(),
+    memberships,
+    invitations: new InMemoryInvitationRepository(
+      memberships instanceof InMemoryMembershipRepository ? memberships : undefined
+    ),
     hasher: new Argon2PasswordHasher(),
     tokens: new CryptoTokenService(),
     rateLimiter: new InMemoryRateLimiter(clock),
     lockout: new InMemoryLoginLockout(clock),
-    mailer: new NoopAuthMailer(),
+    mailQueue: new InlineAuthMailQueue(),
+    mailTransport: { send: async () => {} },
+    audit: new InMemoryAuditLog(),
+    webBaseUrl: process.env.WEB_BASE_URL ?? 'http://localhost:5173',
     ids: uuidGenerator,
     invitationTtlMs: 7 * DAY,
     passwordResetTtlMs: 30 * MIN,
+    emailVerificationTtlMs: DAY,
     ...overrides,
     clock,
     sessionPolicy,
@@ -148,7 +165,11 @@ export async function registerModules(app: FastifyInstance, deps: ModuleDeps) {
   await app.register(cookie);
   const auth = new AuthService(deps);
   const organizations = new OrganizationService(deps);
+  if (deps.mailQueue instanceof InlineAuthMailQueue && !deps.mailQueue.handler) {
+    deps.mailQueue.handler = new AuthMailJobHandler({ ...deps, transport: deps.mailTransport });
+  }
   app.decorateRequest('auth', null);
   await app.register(authRoutes, { auth, organizations, security: deps.security });
-  await app.register(organizationRoutes, { auth, organizations, mailer: deps.mailer, security: deps.security });
+  await app.register(organizationRoutes, { auth, organizations, security: deps.security });
+  return { auth, organizations, sessionVerifier: new SessionVerifier(auth, deps.memberships) };
 }

@@ -1,15 +1,21 @@
 import type { FastifyInstance, FastifyReply } from 'fastify';
+import { Type } from '@sinclair/typebox';
+import { Membership } from '@meetops/contracts';
 import type { AuthService } from '../../auth/application/auth.service.js';
-import type { AuthMailer } from '../../auth/domain/mailer.js';
 import { ErrorBody } from '../../auth/http/schemas.js';
 import { makeGuards, requestMeta, type HttpSecurityConfig } from '../../auth/http/security.js';
 import { registerDomainErrorHandler } from '../../../shared/http-errors.js';
 import { DomainError } from '../../../shared/domain-error.js';
 import type { OrganizationService } from '../application/organization.service.js';
 import { InvitationError } from '../domain/invitation.js';
-import { toInvitationDto as invDto, toOrganizationDto as orgDto } from './mappers.js';
+import { toInvitationDto as invDto, toMembershipDto as memberDto, toOrganizationDto as orgDto } from './mappers.js';
 import {
   AcceptInvitationBody,
+  ChangeRoleBody,
+  MemberList,
+  MemberParams,
+  type ChangeRoleBodyT,
+  type MemberParamsT,
   CreateInvitationBody,
   CreateOrganizationBody,
   IdParams,
@@ -29,7 +35,6 @@ import {
 export interface OrganizationsPluginOptions {
   auth: AuthService;
   organizations: OrganizationService;
-  mailer: AuthMailer;
   security: HttpSecurityConfig;
 }
 
@@ -46,7 +51,7 @@ export async function organizationRoutes(app: FastifyInstance, opts: Organizatio
   const rotateInto = async (
     request: Parameters<typeof g.requireSession>[0],
     reply: FastifyReply,
-    organizationId: string
+    organizationId: string | null
   ) => {
     const ctx = request.auth!;
     const r = await auth.rotate(ctx.session, ctx.user, organizationId, requestMeta(request));
@@ -61,7 +66,7 @@ export async function organizationRoutes(app: FastifyInstance, opts: Organizatio
         tags: orgTags,
         summary: 'Create organization',
         description:
-          'Caller becomes owner; the session is rotated with the new org active.',
+          'Caller becomes owner; the session is rotated with the new org active. Requires a verified email (403 otherwise).',
         body: CreateOrganizationBody,
         response: { 201: OrganizationWithRole, ...authErr }
       }
@@ -146,8 +151,6 @@ export async function organizationRoutes(app: FastifyInstance, opts: Organizatio
       const { user } = await g.requireSession(request);
       const ctx = await orgs.resolveTenant(request.params.id, user.id);
       const r = await orgs.invite(ctx, request.body);
-      const org = await orgs.switchActive({ organizationId: ctx.organizationId, userId: user.id });
-      await opts.mailer.sendInvitation(r.invitation.email, { organizationName: org.organization.name, token: r.token });
       return reply.status(201).send(invDto(r.invitation));
     }
   );
@@ -177,13 +180,14 @@ export async function organizationRoutes(app: FastifyInstance, opts: Organizatio
         tags: invTags,
         summary: 'Accept invitation',
         description:
-          "Must be logged in as the invited email. Unknown, expired, revoked, used or mismatched invitations all return the same 404.",
+          "Must be logged in as the invited email, with a verified email address (403 otherwise). Unknown, expired, revoked, used or mismatched invitations all return the same 404.",
         body: AcceptInvitationBody,
         response: { 200: OrganizationWithRole, ...authErr }
       }
     },
     async (request) => {
       const { user } = await g.requireSession(request);
+      await orgs.requireVerifiedEmail(user.id);
       try {
         const r = await orgs.acceptInvitation({
           token: request.body.token,
@@ -196,6 +200,63 @@ export async function organizationRoutes(app: FastifyInstance, opts: Organizatio
         if (err instanceof InvitationError) throw new DomainError('NOT_FOUND', 'Invitation not found', 404);
         throw err;
       }
+    }
+  );
+
+  const memberTags = ['members'];
+
+  app.get<{ Params: IdParamsT }>(
+    '/orgs/:id/members',
+    {
+      schema: { tags: memberTags, summary: 'List members', params: IdParams, response: { 200: MemberList, ...authErr } }
+    },
+    async (request) => {
+      const { user } = await g.requireSession(request);
+      const ctx = await orgs.resolveTenant(request.params.id, user.id);
+      return { items: (await orgs.listMembers(ctx)).map(memberDto) };
+    }
+  );
+
+  app.patch<{ Params: MemberParamsT; Body: ChangeRoleBodyT }>(
+    '/orgs/:id/members/:userId',
+    {
+      schema: {
+        tags: memberTags,
+        summary: 'Change a member role',
+        description:
+          "Owner: any change. Admin: only member/viewer targets, to member/viewer. Nobody else (403). Demoting the last owner returns 422. The target's sessions are revoked; changing your own role rotates your session.",
+        params: MemberParams,
+        body: ChangeRoleBody,
+        response: { 200: Membership, 400: ErrorBody, 422: ErrorBody, ...authErr }
+      }
+    },
+    async (request, reply) => {
+      const { user } = await g.requireSession(request);
+      const ctx = await orgs.resolveTenant(request.params.id, user.id);
+      const m = await orgs.changeRole(ctx, request.params.userId, request.body.role);
+      if (request.params.userId === user.id) await rotateInto(request, reply, ctx.organizationId);
+      return memberDto(m);
+    }
+  );
+
+  app.delete<{ Params: MemberParamsT }>(
+    '/orgs/:id/members/:userId',
+    {
+      schema: {
+        tags: memberTags,
+        summary: 'Remove a member (or leave)',
+        description:
+          "Owner removes anyone; admin removes members/viewers; anyone may leave. Removing the last owner returns 422. The removed user's sessions are revoked.",
+        params: MemberParams,
+        response: { 204: Type.Null(), 422: ErrorBody, ...authErr }
+      }
+    },
+    async (request, reply) => {
+      const { user } = await g.requireSession(request);
+      const ctx = await orgs.resolveTenant(request.params.id, user.id);
+      await orgs.removeMember(ctx, request.params.userId);
+      if (request.params.userId === user.id) await rotateInto(request, reply, null);
+      return reply.status(204).send();
     }
   );
 }
