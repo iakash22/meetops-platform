@@ -131,6 +131,28 @@ enum RecordingStatus {
   failed
 }
 
+/// Contracts v0.2 RecordingSource.
+enum RecordingSource {
+  tab
+}
+
+/// Upload-session lifecycle. After `completed`, the contract's RecordingStatus lives on the linked recording.
+enum RecordingSessionStatus {
+  uploading
+  completed
+  aborted
+  failed
+}
+
+/// Contracts v0.2 AbortReason.
+enum RecordingAbortReason {
+  user_stopped
+  consent_revoked
+  tab_closed
+  local_storage_exhausted
+  error
+}
+
 enum StorageObjectStatus {
   pending_upload
   uploaded
@@ -148,25 +170,27 @@ model Organization {
   updatedAt   DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
   deletedAt   DateTime? @map("deleted_at") @db.Timestamptz(3)
 
-  memberships         Membership[]
-  invitations         Invitation[]
-  employees           Employee[]
-  projects            Project[]
-  meetings            Meeting[]
-  meetingParticipants MeetingParticipant[]
-  fileObjects         FileObject[]
-  transcripts         Transcript[]
-  transcriptSegments  TranscriptSegment[]
-  reports             Report[]
-  extractedTasks      ExtractedTask[]
-  taskApprovals       TaskApproval[]
-  tasks               Task[]
-  integrationIssues   IntegrationIssue[]
-  aiRuns              AiRun[]
-  outboxEvents        OutboxEvent[]
-  auditEvents         AuditEvent[]
-  recordings          Recording[]
-  activeSessions      Session[]
+  memberships            Membership[]
+  invitations            Invitation[]
+  employees              Employee[]
+  projects               Project[]
+  meetings               Meeting[]
+  meetingParticipants    MeetingParticipant[]
+  fileObjects            FileObject[]
+  transcripts            Transcript[]
+  transcriptSegments     TranscriptSegment[]
+  reports                Report[]
+  extractedTasks         ExtractedTask[]
+  taskApprovals          TaskApproval[]
+  tasks                  Task[]
+  integrationIssues      IntegrationIssue[]
+  aiRuns                 AiRun[]
+  outboxEvents           OutboxEvent[]
+  auditEvents            AuditEvent[]
+  recordings             Recording[]
+  recordingSessions      RecordingSession[]
+  recordingSessionChunks RecordingSessionChunk[]
+  activeSessions         Session[]
 
   createdBy User? @relation("OrgCreator", fields: [createdById], references: [id], onDelete: SetNull)
 
@@ -198,25 +222,26 @@ model User {
   invitationsAccepted  Invitation[]        @relation("InvitationAcceptor")
   emailVerifications   EmailVerification[]
   passwordResets       PasswordReset[]
+  recordingSessions    RecordingSession[]  @relation("RecordingSessionCreator")
 
   @@map("users")
 }
 
 model Membership {
-  id        String         @id @default(uuid()) @db.Uuid
-  orgId     String         @map("org_id") @db.Uuid
-  userId    String         @map("user_id") @db.Uuid
-  role      MembershipRole @default(member)
-  createdAt DateTime       @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt DateTime       @updatedAt @map("updated_at") @db.Timestamptz(3)
-  deletedAt DateTime?      @map("deleted_at") @db.Timestamptz(3)
+  id             String         @id @default(uuid()) @db.Uuid
+  organizationId String         @map("org_id") @db.Uuid
+  userId         String         @map("user_id") @db.Uuid
+  role           MembershipRole @default(member)
+  createdAt      DateTime       @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime       @updatedAt @map("updated_at") @db.Timestamptz(3)
+  deletedAt      DateTime?      @map("deleted_at") @db.Timestamptz(3)
 
-  organization Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  @@unique([orgId, userId])
-  @@unique([orgId, id])
-  @@index([orgId, role])
+  @@unique([organizationId, userId])
+  @@unique([organizationId, id])
+  @@index([organizationId, role])
   @@index([userId])
   @@map("memberships")
 }
@@ -250,140 +275,137 @@ model Session {
 }
 
 model Invitation {
-  id           String           @id @default(uuid()) @db.Uuid
-  orgId        String           @map("org_id") @db.Uuid
-  email        String
-  role         MembershipRole   @default(member)
-  tokenHash    String           @unique @map("token_hash")
-  status       InvitationStatus @default(pending)
-  invitedById  String?          @map("invited_by_id") @db.Uuid
-  expiresAt    DateTime         @map("expires_at") @db.Timestamptz(3)
-  acceptedAt   DateTime?        @map("accepted_at") @db.Timestamptz(3)
-  acceptedById String?          @map("accepted_by_id") @db.Uuid
-  revokedAt    DateTime?        @map("revoked_at") @db.Timestamptz(3)
-  createdAt    DateTime         @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt    DateTime         @updatedAt @map("updated_at") @db.Timestamptz(3)
-  deletedAt    DateTime?        @map("deleted_at") @db.Timestamptz(3)
+  id             String           @id @default(uuid()) @db.Uuid
+  organizationId String           @map("org_id") @db.Uuid
+  email          String
+  role           MembershipRole   @default(member)
+  tokenHash      String           @unique @map("token_hash")
+  status         InvitationStatus @default(pending)
+  invitedById    String?          @map("invited_by_id") @db.Uuid
+  expiresAt      DateTime         @map("expires_at") @db.Timestamptz(3)
+  acceptedAt     DateTime?        @map("accepted_at") @db.Timestamptz(3)
+  acceptedById   String?          @map("accepted_by_id") @db.Uuid
+  revokedAt      DateTime?        @map("revoked_at") @db.Timestamptz(3)
+  createdAt      DateTime         @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime         @updatedAt @map("updated_at") @db.Timestamptz(3)
+  deletedAt      DateTime?        @map("deleted_at") @db.Timestamptz(3)
 
-  organization Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   invitedBy    User?        @relation("InvitationInviter", fields: [invitedById], references: [id], onDelete: SetNull)
   acceptedBy   User?        @relation("InvitationAcceptor", fields: [acceptedById], references: [id], onDelete: SetNull)
 
-  @@unique([orgId, id])
-  @@index([orgId, email])
-  @@index([orgId, status])
+  @@unique([organizationId, id])
+  @@index([organizationId, email])
+  @@index([organizationId, status])
   @@map("invitations")
 }
 
 model Employee {
-  id         String    @id @default(uuid()) @db.Uuid
-  orgId      String    @map("org_id") @db.Uuid
-  userId     String?   @map("user_id") @db.Uuid
-  fullName   String    @map("full_name")
-  email      String?
-  title      String?
-  department String?
-  externalId String?   @map("external_id")
-  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt  DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
-  deletedAt  DateTime? @map("deleted_at") @db.Timestamptz(3)
+  id             String    @id @default(uuid()) @db.Uuid
+  organizationId String    @map("org_id") @db.Uuid
+  userId         String?   @map("user_id") @db.Uuid
+  fullName       String    @map("full_name")
+  email          String?
+  title          String?
+  department     String?
+  externalId     String?   @map("external_id")
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+  deletedAt      DateTime? @map("deleted_at") @db.Timestamptz(3)
 
-  organization        Organization         @relation(fields: [orgId], references: [id], onDelete: Cascade)
-  user                User?                @relation(fields: [userId], references: [id], onDelete: SetNull)
-  meetingParticipants MeetingParticipant[]
-  extractedTasks      ExtractedTask[]
-  tasks               Task[]
+  organization   Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user           User?           @relation(fields: [userId], references: [id], onDelete: SetNull)
+  extractedTasks ExtractedTask[]
+  tasks          Task[]
 
-  @@unique([orgId, email])
-  @@unique([orgId, userId])
-  @@unique([orgId, id])
-  @@index([orgId, fullName])
+  @@unique([organizationId, email])
+  @@unique([organizationId, userId])
+  @@unique([organizationId, id])
+  @@index([organizationId, fullName])
   @@map("employees")
 }
 
 model Project {
-  id          String        @id @default(uuid()) @db.Uuid
-  orgId       String        @map("org_id") @db.Uuid
-  name        String
-  key         String
-  description String?
-  status      ProjectStatus @default(active)
-  createdAt   DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt   DateTime      @updatedAt @map("updated_at") @db.Timestamptz(3)
-  deletedAt   DateTime?     @map("deleted_at") @db.Timestamptz(3)
+  id             String        @id @default(uuid()) @db.Uuid
+  organizationId String        @map("org_id") @db.Uuid
+  name           String
+  key            String
+  description    String?
+  status         ProjectStatus @default(active)
+  createdAt      DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime      @updatedAt @map("updated_at") @db.Timestamptz(3)
+  deletedAt      DateTime?     @map("deleted_at") @db.Timestamptz(3)
 
-  organization Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   meetings     Meeting[]
   tasks        Task[]
 
-  @@unique([orgId, key])
-  @@unique([orgId, id])
-  @@index([orgId, status])
+  @@unique([organizationId, key])
+  @@unique([organizationId, id])
+  @@index([organizationId, status])
   @@map("projects")
 }
 
 model Meeting {
-  id          String        @id @default(uuid()) @db.Uuid
-  orgId       String        @map("org_id") @db.Uuid
-  projectId   String?       @map("project_id") @db.Uuid
-  createdById String?       @map("created_by_id") @db.Uuid
-  title       String
-  description String?
-  source      MeetingSource @default(upload)
-  status      MeetingStatus @default(scheduled)
-  scheduledAt DateTime?     @map("scheduled_at") @db.Timestamptz(3)
-  startedAt   DateTime?     @map("started_at") @db.Timestamptz(3)
-  endedAt     DateTime?     @map("ended_at") @db.Timestamptz(3)
-  durationSec Int?          @map("duration_sec")
-  createdAt   DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt   DateTime      @updatedAt @map("updated_at") @db.Timestamptz(3)
-  deletedAt   DateTime?     @map("deleted_at") @db.Timestamptz(3)
+  id             String        @id @default(uuid()) @db.Uuid
+  organizationId String        @map("org_id") @db.Uuid
+  projectId      String?       @map("project_id") @db.Uuid
+  createdById    String?       @map("created_by_id") @db.Uuid
+  title          String
+  description    String?
+  source         MeetingSource @default(upload)
+  status         MeetingStatus @default(scheduled)
+  scheduledAt    DateTime?     @map("scheduled_at") @db.Timestamptz(3)
+  startedAt      DateTime?     @map("started_at") @db.Timestamptz(3)
+  endedAt        DateTime?     @map("ended_at") @db.Timestamptz(3)
+  durationSec    Int?          @map("duration_sec")
+  createdAt      DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime      @updatedAt @map("updated_at") @db.Timestamptz(3)
+  deletedAt      DateTime?     @map("deleted_at") @db.Timestamptz(3)
 
-  organization   Organization         @relation(fields: [orgId], references: [id], onDelete: Cascade)
-  project        Project?             @relation(fields: [orgId, projectId], references: [orgId, id], onDelete: Restrict)
-  createdBy      User?                @relation("MeetingCreator", fields: [createdById], references: [id], onDelete: SetNull)
-  participants   MeetingParticipant[]
-  transcripts    Transcript[]
-  reports        Report[]
-  extractedTasks ExtractedTask[]
-  aiRuns         AiRun[]
-  recordings     Recording[]
-  fileObjects    FileObject[]
-  tasks          Task[]
+  organization      Organization         @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  project           Project?             @relation(fields: [organizationId, projectId], references: [organizationId, id], onDelete: Restrict)
+  createdBy         User?                @relation("MeetingCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  participants      MeetingParticipant[]
+  transcripts       Transcript[]
+  reports           Report[]
+  extractedTasks    ExtractedTask[]
+  aiRuns            AiRun[]
+  recordings        Recording[]
+  recordingSessions RecordingSession[]
+  fileObjects       FileObject[]
+  tasks             Task[]
 
-  @@unique([orgId, id])
-  @@index([orgId, status])
-  @@index([orgId, projectId])
-  @@index([orgId, scheduledAt])
+  @@unique([organizationId, id])
+  @@index([organizationId, status])
+  @@index([organizationId, projectId])
+  @@index([organizationId, scheduledAt])
   @@map("meetings")
 }
 
 model MeetingParticipant {
-  id           String                 @id @default(uuid()) @db.Uuid
-  orgId        String                 @map("org_id") @db.Uuid
-  meetingId    String                 @map("meeting_id") @db.Uuid
-  employeeId   String?                @map("employee_id") @db.Uuid
-  displayName  String                 @map("display_name")
-  email        String?
-  speakerLabel String?                @map("speaker_label")
-  role         MeetingParticipantRole @default(participant)
+  id             String                 @id @default(uuid()) @db.Uuid
+  organizationId String                 @map("org_id") @db.Uuid
+  meetingId      String                 @map("meeting_id") @db.Uuid
+  displayName    String                 @map("display_name")
+  email          String?
+  speakerLabel   String?                @map("speaker_label")
+  role           MeetingParticipantRole @default(participant)
   /// Platform user, null for external attendees (contracts v0.2).
-  userId       String?                @map("user_id") @db.Uuid
-  joinedAt     DateTime?              @map("joined_at") @db.Timestamptz(3)
-  leftAt       DateTime?              @map("left_at") @db.Timestamptz(3)
-  createdAt    DateTime               @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt    DateTime               @updatedAt @map("updated_at") @db.Timestamptz(3)
+  userId         String?                @map("user_id") @db.Uuid
+  joinedAt       DateTime?              @map("joined_at") @db.Timestamptz(3)
+  leftAt         DateTime?              @map("left_at") @db.Timestamptz(3)
+  createdAt      DateTime               @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime               @updatedAt @map("updated_at") @db.Timestamptz(3)
 
-  organization Organization        @relation(fields: [orgId], references: [id], onDelete: Cascade)
-  meeting      Meeting             @relation(fields: [orgId, meetingId], references: [orgId, id], onDelete: Cascade)
-  employee     Employee?           @relation(fields: [orgId, employeeId], references: [orgId, id], onDelete: Restrict)
+  organization Organization        @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  meeting      Meeting             @relation(fields: [organizationId, meetingId], references: [organizationId, id], onDelete: Cascade)
   user         User?               @relation("ParticipantUser", fields: [userId], references: [id], onDelete: SetNull)
   segments     TranscriptSegment[]
 
-  @@unique([meetingId, employeeId])
-  @@unique([orgId, id])
-  @@index([orgId, userId])
-  @@index([orgId, meetingId])
+  @@unique([organizationId, id])
+  @@index([organizationId, userId])
+  @@index([organizationId, meetingId])
   @@map("meeting_participants")
 }
 
@@ -391,7 +413,7 @@ model MeetingParticipant {
 /// Media lineage via parent_object_id; a Recording points at its raw object.
 model FileObject {
   id              String              @id @default(uuid()) @db.Uuid
-  orgId           String              @map("org_id") @db.Uuid
+  organizationId  String              @map("org_id") @db.Uuid
   meetingId       String?             @map("meeting_id") @db.Uuid
   parentObjectId  String?             @map("parent_object_id") @db.Uuid
   uploadedById    String?             @map("uploaded_by_id") @db.Uuid
@@ -399,7 +421,7 @@ model FileObject {
   status          StorageObjectStatus @default(pending_upload)
   provider        String              @default("s3")
   bucket          String
-  /// Always prefixed org/{orgId}/
+  /// Always prefixed org/{organizationId}/
   key             String              @unique @map("storage_key")
   mimeType        String              @map("mime_type")
   sizeBytes       BigInt?             @map("size_bytes")
@@ -417,132 +439,133 @@ model FileObject {
   updatedAt       DateTime            @updatedAt @map("updated_at") @db.Timestamptz(3)
   deletedAt       DateTime?           @map("deleted_at") @db.Timestamptz(3)
 
-  organization Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
-  meeting      Meeting?     @relation(fields: [orgId, meetingId], references: [orgId, id], onDelete: Restrict)
-  parent       FileObject?  @relation("StorageLineage", fields: [orgId, parentObjectId], references: [orgId, id], onDelete: Restrict)
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  meeting      Meeting?     @relation(fields: [organizationId, meetingId], references: [organizationId, id], onDelete: Restrict)
+  parent       FileObject?  @relation("StorageLineage", fields: [organizationId, parentObjectId], references: [organizationId, id], onDelete: Restrict)
   children     FileObject[] @relation("StorageLineage")
   uploadedBy   User?        @relation("FileUploader", fields: [uploadedById], references: [id], onDelete: SetNull)
   recording    Recording?
 
-  @@unique([orgId, id])
-  @@unique([orgId, bucket, key])
+  @@unique([organizationId, id])
+  @@unique([organizationId, bucket, key])
   @@unique([parentObjectId, chunkIndex])
-  @@index([orgId, meetingId, kind])
-  @@index([orgId, status])
-  @@index([orgId, createdAt])
+  @@index([organizationId, meetingId, kind])
+  @@index([organizationId, status])
+  @@index([organizationId, createdAt])
   @@map("file_objects")
 }
 
 model Recording {
-  id           String          @id @default(uuid()) @db.Uuid
-  orgId        String          @map("org_id") @db.Uuid
-  meetingId    String          @map("meeting_id") @db.Uuid
-  fileObjectId String          @unique @map("file_object_id") @db.Uuid
-  durationMs   Int?            @map("duration_ms")
-  status       RecordingStatus @default(uploading)
-  createdAt    DateTime        @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt    DateTime        @updatedAt @map("updated_at") @db.Timestamptz(3)
-  deletedAt    DateTime?       @map("deleted_at") @db.Timestamptz(3)
+  id             String          @id @default(uuid()) @db.Uuid
+  organizationId String          @map("org_id") @db.Uuid
+  meetingId      String          @map("meeting_id") @db.Uuid
+  fileObjectId   String          @unique @map("file_object_id") @db.Uuid
+  durationMs     Int?            @map("duration_ms")
+  status         RecordingStatus @default(uploading)
+  createdAt      DateTime        @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime        @updatedAt @map("updated_at") @db.Timestamptz(3)
+  deletedAt      DateTime?       @map("deleted_at") @db.Timestamptz(3)
 
-  organization Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
-  meeting      Meeting      @relation(fields: [orgId, meetingId], references: [orgId, id], onDelete: Cascade)
-  file         FileObject   @relation(fields: [orgId, fileObjectId], references: [orgId, id], onDelete: Restrict)
+  organization Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  meeting      Meeting           @relation(fields: [organizationId, meetingId], references: [organizationId, id], onDelete: Cascade)
+  file         FileObject        @relation(fields: [organizationId, fileObjectId], references: [organizationId, id], onDelete: Restrict)
   transcripts  Transcript[]
+  session      RecordingSession?
 
-  @@unique([orgId, id])
-  @@unique([orgId, fileObjectId])
-  @@index([orgId, meetingId])
+  @@unique([organizationId, id])
+  @@unique([organizationId, fileObjectId])
+  @@index([organizationId, meetingId])
   @@map("recordings")
 }
 
 model Transcript {
-  id            String           @id @default(uuid()) @db.Uuid
-  orgId         String           @map("org_id") @db.Uuid
-  meetingId     String           @map("meeting_id") @db.Uuid
-  recordingId   String?          @map("recording_id") @db.Uuid
+  id             String           @id @default(uuid()) @db.Uuid
+  organizationId String           @map("org_id") @db.Uuid
+  meetingId      String           @map("meeting_id") @db.Uuid
+  recordingId    String?          @map("recording_id") @db.Uuid
   /// Transcription provider (e.g. "deepgram") and its job id, for idempotent webhook/poll handling.
-  provider      String?
-  providerJobId String?          @map("provider_job_id")
-  revision      Int              @default(1)
-  status        TranscriptStatus @default(pending)
-  language      String?
-  fullText      String?          @map("full_text")
-  createdAt     DateTime         @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt     DateTime         @updatedAt @map("updated_at") @db.Timestamptz(3)
-  deletedAt     DateTime?        @map("deleted_at") @db.Timestamptz(3)
+  provider       String
+  providerJobId  String?          @map("provider_job_id")
+  revision       Int              @default(1)
+  status         TranscriptStatus @default(pending)
+  language       String?
+  fullText       String?          @map("full_text")
+  createdAt      DateTime         @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime         @updatedAt @map("updated_at") @db.Timestamptz(3)
+  deletedAt      DateTime?        @map("deleted_at") @db.Timestamptz(3)
 
-  organization Organization        @relation(fields: [orgId], references: [id], onDelete: Cascade)
-  meeting      Meeting             @relation(fields: [orgId, meetingId], references: [orgId, id], onDelete: Cascade)
-  recording    Recording?          @relation(fields: [orgId, recordingId], references: [orgId, id], onDelete: Restrict)
+  organization Organization        @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  meeting      Meeting             @relation(fields: [organizationId, meetingId], references: [organizationId, id], onDelete: Cascade)
+  recording    Recording?          @relation(fields: [organizationId, recordingId], references: [organizationId, id], onDelete: Restrict)
   segments     TranscriptSegment[]
   reports      Report[]
   aiRuns       AiRun[]
 
   @@unique([meetingId, revision])
-  @@unique([orgId, provider, providerJobId])
-  @@unique([orgId, id])
-  @@index([orgId, meetingId])
+  @@unique([organizationId, provider, providerJobId])
+  @@unique([organizationId, id])
+  @@index([organizationId, meetingId])
   @@map("transcripts")
 }
 
 model TranscriptSegment {
-  id            String                       @id @default(uuid()) @db.Uuid
-  orgId         String                       @map("org_id") @db.Uuid
-  transcriptId  String                       @map("transcript_id") @db.Uuid
-  participantId String?                      @map("participant_id") @db.Uuid
-  revision      Int                          @default(1)
-  sequence      Int
-  speakerLabel  String?                      @map("speaker_label")
-  startMs       Int                          @map("start_ms")
-  endMs         Int                          @map("end_ms")
-  text          String
-  confidence    Float?
-  embedding     Unsupported("vector(1536)")?
-  createdAt     DateTime                     @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt     DateTime                     @updatedAt @map("updated_at") @db.Timestamptz(3)
+  id             String                       @id @default(uuid()) @db.Uuid
+  organizationId String                       @map("org_id") @db.Uuid
+  transcriptId   String                       @map("transcript_id") @db.Uuid
+  participantId  String?                      @map("participant_id") @db.Uuid
+  revision       Int                          @default(1)
+  sequence       Int
+  speakerLabel   String?                      @map("speaker_label")
+  startMs        Int                          @map("start_ms")
+  endMs          Int                          @map("end_ms")
+  text           String
+  confidence     Float?
+  embedding      Unsupported("vector(1536)")?
+  createdAt      DateTime                     @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime                     @updatedAt @map("updated_at") @db.Timestamptz(3)
 
-  organization Organization        @relation(fields: [orgId], references: [id], onDelete: Cascade)
-  transcript   Transcript          @relation(fields: [orgId, transcriptId], references: [orgId, id], onDelete: Cascade)
-  participant  MeetingParticipant? @relation(fields: [orgId, participantId], references: [orgId, id], onDelete: Restrict)
+  organization Organization        @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  transcript   Transcript          @relation(fields: [organizationId, transcriptId], references: [organizationId, id], onDelete: Cascade)
+  participant  MeetingParticipant? @relation(fields: [organizationId, participantId], references: [organizationId, id], onDelete: Restrict)
 
   @@unique([transcriptId, revision, sequence])
-  @@unique([orgId, id])
-  @@index([orgId, transcriptId])
+  @@unique([organizationId, id])
+  @@index([organizationId, transcriptId])
   @@map("transcript_segments")
 }
 
 model Report {
-  id           String       @id @default(uuid()) @db.Uuid
-  orgId        String       @map("org_id") @db.Uuid
-  meetingId    String       @map("meeting_id") @db.Uuid
-  transcriptId String?      @map("transcript_id") @db.Uuid
-  aiRunId      String?      @map("ai_run_id") @db.Uuid
-  version      Int          @default(1)
-  status       ReportStatus @default(draft)
-  title        String?
-  summary      String?
-  content      Json?
-  createdAt    DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt    DateTime     @updatedAt @map("updated_at") @db.Timestamptz(3)
-  deletedAt    DateTime?    @map("deleted_at") @db.Timestamptz(3)
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @map("org_id") @db.Uuid
+  meetingId      String       @map("meeting_id") @db.Uuid
+  transcriptId   String?      @map("transcript_id") @db.Uuid
+  aiRunId        String?      @map("ai_run_id") @db.Uuid
+  version        Int          @default(1)
+  status         ReportStatus @default(draft)
+  title          String?
+  summary        String?
+  content        Json?
+  createdAt      DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime     @updatedAt @map("updated_at") @db.Timestamptz(3)
+  deletedAt      DateTime?    @map("deleted_at") @db.Timestamptz(3)
 
-  organization   Organization    @relation(fields: [orgId], references: [id], onDelete: Cascade)
-  meeting        Meeting         @relation(fields: [orgId, meetingId], references: [orgId, id], onDelete: Cascade)
-  transcript     Transcript?     @relation(fields: [orgId, transcriptId], references: [orgId, id], onDelete: Restrict)
-  aiRun          AiRun?          @relation(fields: [orgId, aiRunId], references: [orgId, id], onDelete: Restrict)
+  organization   Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  meeting        Meeting         @relation(fields: [organizationId, meetingId], references: [organizationId, id], onDelete: Cascade)
+  transcript     Transcript?     @relation(fields: [organizationId, transcriptId], references: [organizationId, id], onDelete: Restrict)
+  aiRun          AiRun?          @relation(fields: [organizationId, aiRunId], references: [organizationId, id], onDelete: Restrict)
   extractedTasks ExtractedTask[]
 
   @@unique([meetingId, version])
-  @@unique([orgId, id])
-  @@index([orgId, meetingId])
+  @@unique([organizationId, id])
+  @@index([organizationId, meetingId])
   @@map("reports")
 }
 
 model ExtractedTask {
   id                  String              @id @default(uuid()) @db.Uuid
-  orgId               String              @map("org_id") @db.Uuid
+  organizationId      String              @map("org_id") @db.Uuid
   meetingId           String              @map("meeting_id") @db.Uuid
-  reportId            String?             @map("report_id") @db.Uuid
+  reportId            String              @map("report_id") @db.Uuid
   aiRunId             String?             @map("ai_run_id") @db.Uuid
   suggestedAssigneeId String?             @map("suggested_assignee_id") @db.Uuid
   title               String
@@ -559,23 +582,23 @@ model ExtractedTask {
   updatedAt           DateTime            @updatedAt @map("updated_at") @db.Timestamptz(3)
   deletedAt           DateTime?           @map("deleted_at") @db.Timestamptz(3)
 
-  organization      Organization   @relation(fields: [orgId], references: [id], onDelete: Cascade)
-  meeting           Meeting        @relation(fields: [orgId, meetingId], references: [orgId, id], onDelete: Cascade)
-  report            Report?        @relation(fields: [orgId, reportId], references: [orgId, id], onDelete: Restrict)
-  aiRun             AiRun?         @relation(fields: [orgId, aiRunId], references: [orgId, id], onDelete: Restrict)
-  suggestedAssignee Employee?      @relation(fields: [orgId, suggestedAssigneeId], references: [orgId, id], onDelete: Restrict)
+  organization      Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  meeting           Meeting        @relation(fields: [organizationId, meetingId], references: [organizationId, id], onDelete: Cascade)
+  report            Report         @relation(fields: [organizationId, reportId], references: [organizationId, id], onDelete: Restrict)
+  aiRun             AiRun?         @relation(fields: [organizationId, aiRunId], references: [organizationId, id], onDelete: Restrict)
+  suggestedAssignee Employee?      @relation(fields: [organizationId, suggestedAssigneeId], references: [organizationId, id], onDelete: Restrict)
   approvals         TaskApproval[]
   task              Task?
 
-  @@unique([orgId, id])
-  @@index([orgId, meetingId])
-  @@index([orgId, status])
+  @@unique([organizationId, id])
+  @@index([organizationId, meetingId])
+  @@index([organizationId, status])
   @@map("extracted_tasks")
 }
 
 model TaskApproval {
   id              String           @id @default(uuid()) @db.Uuid
-  orgId           String           @map("org_id") @db.Uuid
+  organizationId  String           @map("org_id") @db.Uuid
   extractedTaskId String           @map("extracted_task_id") @db.Uuid
   reviewerId      String?          @map("reviewer_id") @db.Uuid
   decision        ApprovalDecision
@@ -583,18 +606,18 @@ model TaskApproval {
   createdAt       DateTime         @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt       DateTime         @updatedAt @map("updated_at") @db.Timestamptz(3)
 
-  organization  Organization  @relation(fields: [orgId], references: [id], onDelete: Cascade)
-  extractedTask ExtractedTask @relation(fields: [orgId, extractedTaskId], references: [orgId, id], onDelete: Cascade)
+  organization  Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  extractedTask ExtractedTask @relation(fields: [organizationId, extractedTaskId], references: [organizationId, id], onDelete: Cascade)
   reviewer      User?         @relation(fields: [reviewerId], references: [id], onDelete: SetNull)
 
-  @@unique([orgId, id])
-  @@index([orgId, extractedTaskId])
+  @@unique([organizationId, id])
+  @@index([organizationId, extractedTaskId])
   @@map("task_approvals")
 }
 
 model Task {
   id              String       @id @default(uuid()) @db.Uuid
-  orgId           String       @map("org_id") @db.Uuid
+  organizationId  String       @map("org_id") @db.Uuid
   projectId       String?      @map("project_id") @db.Uuid
   extractedTaskId String?      @unique @map("extracted_task_id") @db.Uuid
   assigneeId      String?      @map("assignee_id") @db.Uuid
@@ -610,50 +633,50 @@ model Task {
   updatedAt       DateTime     @updatedAt @map("updated_at") @db.Timestamptz(3)
   deletedAt       DateTime?    @map("deleted_at") @db.Timestamptz(3)
 
-  organization      Organization       @relation(fields: [orgId], references: [id], onDelete: Cascade)
-  project           Project?           @relation(fields: [orgId, projectId], references: [orgId, id], onDelete: Restrict)
-  meeting           Meeting?           @relation(fields: [orgId, meetingId], references: [orgId, id], onDelete: Restrict)
-  extractedTask     ExtractedTask?     @relation(fields: [orgId, extractedTaskId], references: [orgId, id], onDelete: Restrict)
-  assignee          Employee?          @relation(fields: [orgId, assigneeId], references: [orgId, id], onDelete: Restrict)
+  organization      Organization       @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  project           Project?           @relation(fields: [organizationId, projectId], references: [organizationId, id], onDelete: Restrict)
+  meeting           Meeting?           @relation(fields: [organizationId, meetingId], references: [organizationId, id], onDelete: Restrict)
+  extractedTask     ExtractedTask?     @relation(fields: [organizationId, extractedTaskId], references: [organizationId, id], onDelete: Restrict)
+  assignee          Employee?          @relation(fields: [organizationId, assigneeId], references: [organizationId, id], onDelete: Restrict)
   createdBy         User?              @relation("TaskCreator", fields: [createdById], references: [id], onDelete: SetNull)
   integrationIssues IntegrationIssue[]
 
-  @@unique([orgId, id])
-  @@unique([orgId, extractedTaskId])
-  @@index([orgId, status])
-  @@index([orgId, projectId])
-  @@index([orgId, assigneeId])
+  @@unique([organizationId, id])
+  @@unique([organizationId, extractedTaskId])
+  @@index([organizationId, status])
+  @@index([organizationId, projectId])
+  @@index([organizationId, assigneeId])
   @@map("tasks")
 }
 
 model IntegrationIssue {
-  id            String    @id @default(uuid()) @db.Uuid
-  orgId         String    @map("org_id") @db.Uuid
-  taskId        String    @map("task_id") @db.Uuid
+  id             String    @id @default(uuid()) @db.Uuid
+  organizationId String    @map("org_id") @db.Uuid
+  taskId         String    @map("task_id") @db.Uuid
   /// Integration identifier, e.g. "jira", "linear", "github".
-  integration   String
+  integration    String
   /// Contracts v0.2: optional link to a configured integration instance (no integrations table yet).
-  integrationId String?   @map("integration_id") @db.Uuid
+  integrationId  String?   @map("integration_id") @db.Uuid
   /// Contracts v0.2: provider key, e.g. "linear", "jira", "github".
-  provider      String
-  externalId    String    @map("external_id")
-  externalUrl   String?   @map("external_url")
-  syncedAt      DateTime? @map("synced_at") @db.Timestamptz(3)
-  createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt     DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+  provider       String
+  externalId     String    @map("external_id")
+  externalUrl    String?   @map("external_url")
+  syncedAt       DateTime? @map("synced_at") @db.Timestamptz(3)
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
 
-  organization Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
-  task         Task         @relation(fields: [orgId, taskId], references: [orgId, id], onDelete: Cascade)
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  task         Task         @relation(fields: [organizationId, taskId], references: [organizationId, id], onDelete: Cascade)
 
-  @@unique([orgId, provider, externalId])
-  @@unique([orgId, id])
-  @@index([orgId, taskId])
+  @@unique([organizationId, provider, externalId])
+  @@unique([organizationId, id])
+  @@index([organizationId, taskId])
   @@map("integration_issues")
 }
 
 model AiRun {
   id                 String      @id @default(uuid()) @db.Uuid
-  orgId              String      @map("org_id") @db.Uuid
+  organizationId     String      @map("org_id") @db.Uuid
   meetingId          String?     @map("meeting_id") @db.Uuid
   transcriptId       String?     @map("transcript_id") @db.Uuid
   kind               AiRunKind
@@ -674,38 +697,38 @@ model AiRun {
   createdAt          DateTime    @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt          DateTime    @updatedAt @map("updated_at") @db.Timestamptz(3)
 
-  organization   Organization    @relation(fields: [orgId], references: [id], onDelete: Cascade)
-  meeting        Meeting?        @relation(fields: [orgId, meetingId], references: [orgId, id], onDelete: Restrict)
-  transcript     Transcript?     @relation(fields: [orgId, transcriptId], references: [orgId, id], onDelete: Restrict)
+  organization   Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  meeting        Meeting?        @relation(fields: [organizationId, meetingId], references: [organizationId, id], onDelete: Restrict)
+  transcript     Transcript?     @relation(fields: [organizationId, transcriptId], references: [organizationId, id], onDelete: Restrict)
   reports        Report[]
   extractedTasks ExtractedTask[]
 
-  @@unique([orgId, id])
-  @@index([orgId, meetingId])
-  @@index([orgId, status])
-  @@index([orgId, createdAt])
+  @@unique([organizationId, id])
+  @@index([organizationId, meetingId])
+  @@index([organizationId, status])
+  @@index([organizationId, createdAt])
   @@map("ai_runs")
 }
 
 model OutboxEvent {
-  id            String       @id @default(uuid()) @db.Uuid
-  orgId         String       @map("org_id") @db.Uuid
-  aggregateType String       @map("aggregate_type")
-  aggregateId   String       @map("aggregate_id") @db.Uuid
-  eventType     String       @map("event_type")
-  payload       Json
-  status        OutboxStatus @default(pending)
-  attempts      Int          @default(0)
-  lastError     String?      @map("last_error")
-  availableAt   DateTime     @default(now()) @map("available_at") @db.Timestamptz(3)
-  publishedAt   DateTime?    @map("published_at") @db.Timestamptz(3)
-  createdAt     DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt     DateTime     @updatedAt @map("updated_at") @db.Timestamptz(3)
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @map("org_id") @db.Uuid
+  aggregateType  String       @map("aggregate_type")
+  aggregateId    String       @map("aggregate_id") @db.Uuid
+  eventType      String       @map("event_type")
+  payload        Json
+  status         OutboxStatus @default(pending)
+  attempts       Int          @default(0)
+  lastError      String?      @map("last_error")
+  availableAt    DateTime     @default(now()) @map("available_at") @db.Timestamptz(3)
+  publishedAt    DateTime?    @map("published_at") @db.Timestamptz(3)
+  createdAt      DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime     @updatedAt @map("updated_at") @db.Timestamptz(3)
 
-  organization Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
 
-  @@unique([orgId, id])
-  @@index([orgId, aggregateType, aggregateId])
+  @@unique([organizationId, id])
+  @@index([organizationId, aggregateType, aggregateId])
   @@index([status, availableAt])
   @@map("outbox_events")
 }
@@ -713,25 +736,25 @@ model OutboxEvent {
 /// Append-only security/audit trail. UPDATE/DELETE are revoked from meetops_app in migrations.
 /// org_id is NULL for global auth events (signup, failed login): insert-only for the app, never readable via RLS.
 model AuditEvent {
-  id         String   @id @default(uuid()) @db.Uuid
-  orgId      String?  @map("org_id") @db.Uuid
-  actorId    String?  @map("actor_id") @db.Uuid
-  actorType  String   @default("user") @map("actor_type")
-  action     String
-  targetType String   @map("target_type")
-  targetId   String?  @map("target_id")
-  metadata   Json     @default("{}")
-  ipAddress  String?  @map("ip_address")
-  userAgent  String?  @map("user_agent")
-  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  id             String   @id @default(uuid()) @db.Uuid
+  organizationId String?  @map("org_id") @db.Uuid
+  actorId        String?  @map("actor_id") @db.Uuid
+  actorType      String   @default("user") @map("actor_type")
+  action         String
+  targetType     String   @map("target_type")
+  targetId       String?  @map("target_id")
+  metadata       Json     @default("{}")
+  ipAddress      String?  @map("ip_address")
+  userAgent      String?  @map("user_agent")
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
 
-  organization Organization? @relation(fields: [orgId], references: [id], onDelete: Restrict)
+  organization Organization? @relation(fields: [organizationId], references: [id], onDelete: Restrict)
   actor        User?         @relation(fields: [actorId], references: [id], onDelete: SetNull)
 
-  @@unique([orgId, id])
-  @@index([orgId, createdAt])
-  @@index([orgId, targetType, targetId])
-  @@index([orgId, actorId])
+  @@unique([organizationId, id])
+  @@index([organizationId, createdAt])
+  @@index([organizationId, targetType, targetId])
+  @@index([organizationId, actorId])
   @@map("audit_events")
 }
 
@@ -767,4 +790,62 @@ model PasswordReset {
   @@index([userId])
   @@index([expiresAt])
   @@map("password_resets")
+}
+
+/// Chunked browser upload (contracts v0.2 recording-sessions API). Exists before any file object;
+/// on complete it is linked to the Recording it produced.
+model RecordingSession {
+  id             String                 @id @default(uuid()) @db.Uuid
+  organizationId String                 @map("org_id") @db.Uuid
+  meetingId      String                 @map("meeting_id") @db.Uuid
+  createdById    String?                @map("created_by_id") @db.Uuid
+  recordingId    String?                @unique @map("recording_id") @db.Uuid
+  mimeType       String                 @map("mime_type")
+  source         RecordingSource        @default(tab)
+  status         RecordingSessionStatus @default(uploading)
+  abortReason    RecordingAbortReason?  @map("abort_reason")
+  startedAt      DateTime               @map("started_at") @db.Timestamptz(3)
+  chunkCount     Int?                   @map("chunk_count")
+  durationMs     Int?                   @map("duration_ms")
+  /// Running total of signed chunk sizes; capped at MAX_RECORDING_SESSION_BYTES.
+  totalBytes     BigInt                 @default(0) @map("total_bytes")
+  failureCode    String?                @map("failure_code")
+  completedAt    DateTime?              @map("completed_at") @db.Timestamptz(3)
+  abortedAt      DateTime?              @map("aborted_at") @db.Timestamptz(3)
+  createdAt      DateTime               @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime               @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  organization Organization            @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  meeting      Meeting                 @relation(fields: [organizationId, meetingId], references: [organizationId, id], onDelete: Cascade)
+  createdBy    User?                   @relation("RecordingSessionCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  recording    Recording?              @relation(fields: [organizationId, recordingId], references: [organizationId, id], onDelete: Restrict)
+  chunks       RecordingSessionChunk[]
+
+  @@unique([organizationId, id])
+  @@unique([organizationId, recordingId])
+  @@index([organizationId, meetingId])
+  @@index([organizationId, status])
+  @@map("recording_sessions")
+}
+
+/// One signed chunk upload of a recording session (storage key .../sessions/{sessionId}/chunks/{seq}.part).
+model RecordingSessionChunk {
+  id             String    @id @default(uuid()) @db.Uuid
+  organizationId String    @map("org_id") @db.Uuid
+  sessionId      String    @map("session_id") @db.Uuid
+  seq            Int
+  sizeBytes      Int       @map("size_bytes")
+  sha256         String?
+  storageKey     String    @unique @map("storage_key")
+  uploadedAt     DateTime? @map("uploaded_at") @db.Timestamptz(3)
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  organization Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  session      RecordingSession @relation(fields: [organizationId, sessionId], references: [organizationId, id], onDelete: Cascade)
+
+  @@unique([organizationId, id])
+  @@unique([sessionId, seq])
+  @@index([organizationId, sessionId])
+  @@map("recording_session_chunks")
 }
