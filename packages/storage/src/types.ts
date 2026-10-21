@@ -1,5 +1,5 @@
 import type { Readable } from 'node:stream';
-import type { PresignedUrl } from '@meetops/contracts';
+import type { PresignedUrl } from '@meetops/contracts/legacy';
 import type { MeetingObjectRef } from './keys.js';
 
 /** Provider registry ids. contracts' FileObject.provider is a plain string; keep the union here until contracts owns it. */
@@ -49,4 +49,4 @@ export interface StorageService {
   abortMultipartUpload(ref: MeetingObjectRef, uploadId: string): Promise<void>;
 }
 
-export type { PresignedUrl } from '@meetops/contracts';
+export type { PresignedUrl } from '@meetops/contracts/legacy';

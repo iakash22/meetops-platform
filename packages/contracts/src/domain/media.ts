@@ -59,3 +59,30 @@ export const Recording = Type.Object({
   createdAt: IsoDateTime,
 });
 export type Recording = Static<typeof Recording>;
+
+/** Upload cap shared by direct uploads and recording sessions: 2 GB (decimal). */
+export const MAX_MEDIA_BYTES = 2_000_000_000;
+
+/** Explicit allowlist of accepted media MIME types. */
+export const ALLOWED_MEDIA_MIME_TYPES = [
+  'audio/webm',
+  'audio/ogg',
+  'audio/mpeg',
+  'audio/mp4',
+  'audio/wav',
+  'audio/x-wav',
+  'video/webm',
+  'video/mp4',
+] as const;
+export type AllowedMediaMimeType = (typeof ALLOWED_MEDIA_MIME_TYPES)[number];
+
+const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&');
+/**
+ * An allowlisted MIME type, optionally followed by a `;codecs=` parameter (e.g. `audio/webm;codecs=opus`).
+ * No other parameters are accepted.
+ */
+export const MediaMimeType = Type.String({
+  maxLength: 100,
+  pattern: `^(${ALLOWED_MEDIA_MIME_TYPES.map(escapeRe).join('|')})(;\\s?codecs="?[A-Za-z0-9.,+\\- ]{1,60}"?)?$`,
+});
+export type MediaMimeType = Static<typeof MediaMimeType>;

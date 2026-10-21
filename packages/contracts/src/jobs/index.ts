@@ -28,7 +28,7 @@ export const LlmProviderId = Type.Union([
 ]);
 export type LlmProviderId = Static<typeof LlmProviderId>;
 
-/** "<provider>:<model>", e.g. "gemini:gemini-2.0-flash", "ollama:llama3.1". */
+/** "<provider>:<model>", e.g. "gemini:gemini-2.5-flash-lite", "ollama:llama3.1". */
 export const ModelRouteId = Type.String({ pattern: '^(gemini|ollama|openai):[A-Za-z0-9._\\-/]+$' });
 export type ModelRouteId = Static<typeof ModelRouteId>;
 
@@ -85,13 +85,27 @@ export type AiJobPayload = Static<typeof AiJobPayload>;
  * The worker loads the recipient from the DB and builds any links (reset, invite)
  * server-side, then sends via the EmailService abstraction.
  */
+export const EmailTemplateId = Type.Union([
+  Type.Literal('invite'),
+  Type.Literal('verify_email'),
+  Type.Literal('reset_password'),
+  Type.Literal('meeting_summary'),
+]);
+export type EmailTemplateId = Static<typeof EmailTemplateId>;
+
+/** `invite` requires invitationId. Every other template requires userId. Discriminated on templateId. */
 export const EmailJobPayload = Type.Union([
   Type.Object(
-    { ...JobMeta, kind: Type.Literal('send_email'), templateId: Type.String({ minLength: 1 }), userId: Id },
+    { ...JobMeta, kind: Type.Literal('send_email'), templateId: Type.Literal('invite'), invitationId: Id },
     { additionalProperties: false },
   ),
   Type.Object(
-    { ...JobMeta, kind: Type.Literal('send_email'), templateId: Type.String({ minLength: 1 }), invitationId: Id },
+    {
+      ...JobMeta,
+      kind: Type.Literal('send_email'),
+      templateId: Type.Union([Type.Literal('verify_email'), Type.Literal('reset_password'), Type.Literal('meeting_summary')]),
+      userId: Id,
+    },
     { additionalProperties: false },
   ),
 ]);
