@@ -35,7 +35,7 @@ These variables are validated via `@meetops/config` (Zod) at runtime. Defaults s
 - `STORAGE_ALLOWED_MIME_TYPES`: comma-separated MIME allowlist override (empty = built-in list)
 - `STORAGE_PRESIGN_EXPIRES_SECONDS`: presigned URL lifetime, 1..604800 (default 900)
 - `WEB_ORIGIN`: the single browser origin allowed by MinIO CORS for presigned PUT/POST (default http://localhost:5173; ETag exposed). Never `*`.
-- `MINIO_API_PORT` / `MINIO_CONSOLE_PORT`: host ports for MinIO (default 9000 / 9001, 127.0.0.1). The dev bucket is private (no anonymous access) and aborts incomplete multipart uploads after 1 day.
+- `MINIO_API_PORT` / `MINIO_CONSOLE_PORT` (**local dev only**: the compose stack runs the pinned MinIO fork `pgsty/silo`; production uses R2/S3 via StorageService): host ports for MinIO (default 9000 / 9001, 127.0.0.1). The dev bucket is private (no anonymous access) and aborts incomplete multipart uploads after 1 day.
 
 ### Realtime gateway (apps/realtime)
 

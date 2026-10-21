@@ -43,6 +43,8 @@ services:
       timeout: 3s
       retries: 10
 
+  # LOCAL DEV ONLY. Production object storage is Cloudflare R2 / AWS S3 via
+  # StorageService (STORAGE_PROVIDER=r2|s3); never deploy this MinIO fork.
   # minio/minio and minio/mc were removed from Docker Hub (Sept 2026) and the
   # upstream project is archived. pgsty/silo is a MinIO fork that keeps the S3 API,
   # MINIO_* env vars and on-disk format; its entrypoint prefixes `silo`.
