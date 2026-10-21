@@ -213,9 +213,6 @@ importers:
       '@meetops/queue':
         specifier: workspace:*
         version: link:../queue
-      '@sinclair/typebox':
-        specifier: ^0.34.0
-        version: 0.34.52
       bullmq:
         specifier: ^5.18.0
         version: 5.81.5
