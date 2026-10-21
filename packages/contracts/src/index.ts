@@ -9,3 +9,8 @@ export * from './jobs/index.js';
  */
 export type { EmailAddress, EmailMessage } from './legacy.js';
 export * from './realtime/index.js';
+/**
+ * @deprecated Transitional re-export so @meetops/storage keeps compiling during migration.
+ * Import from '@meetops/contracts/legacy' instead. Removed from the main barrel in 0.3.0.
+ */
+export type { PresignedUrl, StorageObjectMetadata } from './legacy.js';
