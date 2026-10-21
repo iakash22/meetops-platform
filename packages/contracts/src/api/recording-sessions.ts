@@ -1,6 +1,6 @@
 import { Type, type Static } from '@sinclair/typebox';
 import { Id, IsoDateTime } from '../common.js';
-import { PresignedUrlDto, RecordingStatus } from '../domain/media.js';
+import { MAX_MEDIA_BYTES, MediaMimeType, PresignedUrlDto, RecordingStatus } from '../domain/media.js';
 
 /**
  * Chunked recording upload (extension/desktop capture), matching apps/extension UploadClient:
@@ -12,9 +12,9 @@ import { PresignedUrlDto, RecordingStatus } from '../domain/media.js';
 export const CHUNK_UPLOAD_URL_TTL_SECONDS = 300;
 /** 64 MiB per chunk (5 s timeslices are far smaller; this is an abuse ceiling). */
 export const MAX_CHUNK_BYTES = 64 * 1024 * 1024;
-/** 5 GiB per recording session, enforced server-side across all chunks. */
-export const MAX_RECORDING_SESSION_BYTES = 5 * 1024 * 1024 * 1024;
-/** Upper bound on chunk count (5 GiB / smallest reasonable chunk). */
+/** 2 GB per recording session, enforced server-side across all chunks. */
+export const MAX_RECORDING_SESSION_BYTES = MAX_MEDIA_BYTES;
+/** Upper bound on chunk count (abuse ceiling). */
 export const MAX_RECORDING_CHUNKS = 100_000;
 
 const strict = { additionalProperties: false } as const;
@@ -25,7 +25,7 @@ export type RecordingSource = Static<typeof RecordingSource>;
 
 export const InitRecordingSessionRequest = Type.Object(
   {
-    mimeType: Type.String({ pattern: '^(audio|video)/[a-z0-9.+-]+(;\\s*codecs=[A-Za-z0-9.,"\\s-]+)?$', maxLength: 100 }),
+    mimeType: MediaMimeType,
     startedAt: IsoDateTime,
     source: RecordingSource,
     meetingId: Type.Optional(Id),
