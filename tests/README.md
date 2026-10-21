@@ -9,7 +9,7 @@ Package-level unit tests stay next to their package (`apps/*/test`, `packages/*/
 | --------------------- | ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------ |
 | `api/`                | vitest (`api` project)         | `/health`, `/ready` via Fastify `inject` on `createServer()` from `apps/api/src/server.ts`; HTTP fallback when `API_BASE_URL` is set |
 | `contract/`           | vitest (`contract` project)    | zod schema validation for `@meetops/contracts` types, with compile-time drift checks                                                 |
-| `integration/`        | vitest (`integration` project) | Testcontainers Postgres + Redis                                                                                                      |
+| `integration/`        | vitest (`integration` project) | Testcontainers Postgres (pgvector) + Redis                                                                                           |
 | `e2e/`                | Playwright                     | Smoke test against the web dev server (`apps/web` `dev` = vite)                                                                      |
 | `factories/`          | vitest (`factories` project)   | Deterministic, seedable, tenant-aware test-data factories                                                                            |
 | `support/`            | –                              | Shared helpers (e.g. Docker detection)                                                                                               |
@@ -24,9 +24,10 @@ pnpm --filter @meetops/tests test              # all vitest suites here
 pnpm --filter @meetops/tests test:api
 pnpm --filter @meetops/tests test:contract
 pnpm --filter @meetops/tests test:integration
-pnpm --filter @meetops/tests test:unit         # factories
+pnpm --filter @meetops/tests test:unit         # all unit suites: factories + contract + api (no Docker/browser)
 pnpm --filter @meetops/tests e2e:install       # once: playwright install chromium
-pnpm --filter @meetops/tests test:e2e          # starts apps/web dev server automatically
+pnpm --filter @meetops/tests test:e2e          # starts apps/web dev server on WEB_PORT (5173)
+E2E_CONTAINER_PORT=8080 pnpm --filter @meetops/tests test:e2e  # against the running web container
 pnpm --filter @meetops/tests lint | typecheck
 ```
 
@@ -34,14 +35,15 @@ E2E is **not** part of `pnpm test`; run it explicitly (it needs browsers).
 
 ## Environment variables
 
-| Var                                    | Default                                                          | Used by                                     |
-| -------------------------------------- | ---------------------------------------------------------------- | ------------------------------------------- |
-| `E2E_BASE_URL`                         | unset → `http://localhost:$WEB_PORT` and a dev server is started | e2e; when set, no webServer is started      |
-| `WEB_PORT`                             | `5173`                                                           | e2e dev server port                         |
-| `API_BASE_URL`                         | unset → in-process `inject`                                      | api (hit a running API over HTTP)           |
-| `QA_SKIP_DOCKER`                       | unset                                                            | integration; `1` forces skip                |
-| `QA_POSTGRES_IMAGE` / `QA_REDIS_IMAGE` | `postgres:16-alpine` / `redis:7-alpine`                          | integration                                 |
-| `CI`                                   | –                                                                | Playwright retries, forbidOnly, html report |
+| Var                                    | Default                                                                            | Used by                                                                                                                                             |
+| -------------------------------------- | ---------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `E2E_BASE_URL`                         | unset → container port if set, else `http://localhost:$WEB_PORT` with a dev server | e2e; when set, it wins and no webServer is started                                                                                                  |
+| `WEB_PORT`                             | `5173`                                                                             | e2e: vite dev server port (matches `apps/web/vite.config.ts`)                                                                                       |
+| `E2E_CONTAINER_PORT`                   | unset                                                                              | e2e: when set (e.g. `8080`, the web container in `compose.app.yml`), baseURL is `http://localhost:$E2E_CONTAINER_PORT` and no dev server is started |
+| `API_BASE_URL`                         | unset → in-process `inject`                                                        | api (hit a running API over HTTP)                                                                                                                   |
+| `QA_SKIP_DOCKER`                       | unset                                                                              | integration; `1` forces skip                                                                                                                        |
+| `QA_POSTGRES_IMAGE` / `QA_REDIS_IMAGE` | `pgvector/pgvector:pg16` / `redis:7-alpine`                                        | integration (override the images)                                                                                                                   |
+| `CI`                                   | –                                                                                  | Playwright retries, forbidOnly, html report                                                                                                         |
 
 ## Docker skip behaviour
 
