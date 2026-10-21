@@ -4,35 +4,43 @@ import {
   CompleteMultipartUploadCommand,
   CreateMultipartUploadCommand,
   DeleteObjectCommand,
+  GetBucketAclCommand,
+  GetBucketPolicyStatusCommand,
   GetObjectCommand,
   HeadObjectCommand,
   ListPartsCommand,
   PutObjectCommand,
   S3Client,
-  S3ServiceException,
   UploadPartCommand
 } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
-import type { PresignedUrl, StorageObjectMetadata } from '@meetops/contracts';
-import { loadStorageConfig, type StorageConfig } from './config.js';
+import { createPresignedPost } from '@aws-sdk/s3-presigned-post';
+import type { PresignedUrl } from '@meetops/contracts';
+import { assertTtl, loadStorageConfig, S3_MIN_PART_BYTES, type StorageConfig } from './config.js';
+import { mapS3Error, StorageValidationError } from './errors.js';
+import { assertKeyOwnedBy, buildObjectKey, type MeetingObjectRef } from './keys.js';
 import type {
   CompletedPart,
   GetObjectResult,
+  MultipartSpec,
   MultipartUpload,
+  PresignOptions,
   PutObjectBody,
-  PutObjectOptions,
-  StorageService
+  StorageService,
+  StoredObjectInfo,
+  UploadSpec
 } from './types.js';
-import { StorageValidationError, type OwnershipHook, type ValidationHook } from './validation.js';
+import { normalizeMimeType, validateUploadSpec } from './validation.js';
+
+/** Extra authorization on top of the mandatory org-prefix check (e.g. meeting membership). */
+export type AuthorizeHook = (ref: MeetingObjectRef) => void | Promise<void>;
 
 export type S3StorageServiceOptions = {
   config: StorageConfig;
-  /** Inject a client (tests). Defaults to one built from config. */
   client?: S3Client;
-  validators?: ValidationHook[];
-  ownershipCheck?: OwnershipHook;
-  /** Injectable presigner (tests). */
+  authorize?: AuthorizeHook;
   presign?: typeof getSignedUrl;
+  presignPost?: typeof createPresignedPost;
 };
 
 export function createS3Client(config: StorageConfig): S3Client {
@@ -46,220 +54,302 @@ export function createS3Client(config: StorageConfig): S3Client {
   });
 }
 
-function isNotFound(err: unknown): boolean {
-  if (err instanceof S3ServiceException) {
-    return err.name === 'NotFound' || err.name === 'NoSuchKey' || err.$metadata?.httpStatusCode === 404;
-  }
-  const e = err as { name?: string; $metadata?: { httpStatusCode?: number } };
-  return e?.name === 'NotFound' || e?.name === 'NoSuchKey' || e?.$metadata?.httpStatusCode === 404;
-}
+export type BucketPrivacyResult = {
+  status: 'private' | 'public' | 'unknown';
+  checks: { policy: 'private' | 'public' | 'unsupported' | 'error'; acl: 'private' | 'public' | 'unsupported' | 'error' };
+};
 
-export class StorageNotFoundError extends Error {
-  override readonly name = 'StorageNotFoundError';
+const PUBLIC_GRANTEES = ['http://acs.amazonaws.com/groups/global/AllUsers', 'http://acs.amazonaws.com/groups/global/AuthenticatedUsers'];
+
+async function settle<T>(p: Promise<T>): Promise<T> {
+  try {
+    return await p;
+  } catch (err) {
+    throw mapS3Error(err);
+  }
 }
 
 export class S3StorageService implements StorageService {
-  readonly providerId;
-  readonly bucket;
-  private readonly client: S3Client;
-  private readonly validators: ValidationHook[];
-  private readonly ownershipCheck: OwnershipHook | undefined;
-  private readonly presign: typeof getSignedUrl;
-  private readonly defaultExpires: number;
+  readonly #providerId;
+  readonly #bucket: string;
+  readonly #client: S3Client;
+  readonly #cfg: StorageConfig;
+  readonly #authorize: AuthorizeHook | undefined;
+  readonly #presign: typeof getSignedUrl;
+  readonly #presignPost: typeof createPresignedPost;
 
   constructor(opts: S3StorageServiceOptions) {
-    this.providerId = opts.config.provider;
-    this.bucket = opts.config.bucket;
-    this.client = opts.client ?? createS3Client(opts.config);
-    this.validators = opts.validators ?? [];
-    this.ownershipCheck = opts.ownershipCheck;
-    this.presign = opts.presign ?? getSignedUrl;
-    this.defaultExpires = opts.config.presignExpiresInSeconds;
+    this.#cfg = opts.config;
+    this.#providerId = opts.config.provider;
+    this.#bucket = opts.config.bucket;
+    this.#client = opts.client ?? createS3Client(opts.config);
+    this.#authorize = opts.authorize;
+    this.#presign = opts.presign ?? getSignedUrl;
+    this.#presignPost = opts.presignPost ?? createPresignedPost;
   }
 
-  private async guard(key: string): Promise<void> {
-    if (!key || key.startsWith('/')) throw new StorageValidationError(`Invalid key: "${key}"`);
-    if (this.ownershipCheck) await this.ownershipCheck(key);
+  /** Derive the key server-side and always enforce org ownership. */
+  async #key(ref: MeetingObjectRef): Promise<string> {
+    if (!ref || typeof ref !== 'object') throw new StorageValidationError('ref is required');
+    const key = buildObjectKey(ref);
+    assertKeyOwnedBy(key, ref.orgId);
+    if (this.#authorize) await this.#authorize(ref);
+    return key;
   }
 
-  private async validate(key: string, o: PutObjectOptions | undefined): Promise<void> {
-    for (const v of this.validators) {
-      await v({
-        key,
-        ...(o?.contentType !== undefined ? { contentType: o.contentType } : {}),
-        ...(o?.contentLength !== undefined ? { contentLength: o.contentLength } : {})
-      });
+  #ttl(opts: PresignOptions | undefined, def: number): number {
+    return assertTtl(opts?.ttlSeconds ?? def);
+  }
+
+  #presigned(url: string, method: PresignedUrl['method'], ttl: number, extra: Partial<PresignedUrl> = {}): PresignedUrl {
+    return { url, method, expiresAt: new Date(Date.now() + ttl * 1000), ...extra };
+  }
+
+  async putObject(ref: MeetingObjectRef, body: PutObjectBody, spec: UploadSpec) {
+    const key = await this.#key(ref);
+    validateUploadSpec(spec, this.#cfg.limits);
+    if (!(body instanceof Readable)) {
+      const actual = typeof body === 'string' ? Buffer.byteLength(body) : body.byteLength;
+      if (actual !== spec.sizeBytes) throw new StorageValidationError('sizeBytes does not match body');
     }
-  }
-
-  private presigned(url: string, method: PresignedUrl['method'], expires: number, headers?: Record<string, string>): PresignedUrl {
-    return { url, method, expiresAt: new Date(Date.now() + expires * 1000), ...(headers ? { headers } : {}) };
-  }
-
-  async putObject(key: string, body: PutObjectBody, options?: PutObjectOptions) {
-    await this.guard(key);
-    let len = options?.contentLength;
-    if (len === undefined && !(body instanceof Readable)) {
-      len = typeof body === 'string' ? Buffer.byteLength(body) : body.byteLength;
-    }
-    await this.validate(key, { ...options, ...(len !== undefined ? { contentLength: len } : {}) });
-    const res = await this.client.send(
-      new PutObjectCommand({
-        Bucket: this.bucket,
-        Key: key,
-        Body: body,
-        ContentType: options?.contentType,
-        ContentLength: len,
-        ChecksumSHA256: options?.checksumSha256,
-        Metadata: options?.metadata
-      })
+    const res = await settle(
+      this.#client.send(
+        new PutObjectCommand({
+          Bucket: this.#bucket,
+          Key: key,
+          Body: body,
+          ContentType: normalizeMimeType(spec.mimeType),
+          ContentLength: spec.sizeBytes,
+          ChecksumSHA256: spec.checksumSha256,
+          Metadata: spec.metadata
+        })
+      )
     );
     return res.ETag ? { etag: res.ETag } : {};
   }
 
-  async getObject(key: string): Promise<GetObjectResult> {
-    await this.guard(key);
+  async getObject(ref: MeetingObjectRef): Promise<GetObjectResult> {
+    const key = await this.#key(ref);
+    const res = await settle(this.#client.send(new GetObjectCommand({ Bucket: this.#bucket, Key: key })));
+    if (!res.Body) throw mapS3Error({ name: 'NoSuchKey' });
+    const body = res.Body instanceof Readable ? res.Body : Readable.from(res.Body as unknown as AsyncIterable<Uint8Array>);
+    return { body, info: toInfo(res) };
+  }
+
+  async headObject(ref: MeetingObjectRef): Promise<StoredObjectInfo | null> {
+    const key = await this.#key(ref);
     try {
-      const res = await this.client.send(new GetObjectCommand({ Bucket: this.bucket, Key: key }));
-      const body = res.Body;
-      if (!body) throw new StorageNotFoundError(`Empty body for ${key}`);
-      const stream = body instanceof Readable ? body : Readable.from(body as unknown as AsyncIterable<Uint8Array>);
-      return { body: stream, metadata: this.toMeta(key, res) };
+      return toInfo(await settle(this.#client.send(new HeadObjectCommand({ Bucket: this.#bucket, Key: key }))));
     } catch (err) {
-      if (isNotFound(err)) throw new StorageNotFoundError(`Object not found: ${key}`);
+      if ((err as { code?: string }).code === 'NOT_FOUND') return null;
       throw err;
     }
   }
 
-  async getPresignedUploadUrl(key: string, options?: PutObjectOptions): Promise<PresignedUrl> {
-    await this.guard(key);
-    await this.validate(key, options);
-    const expires = options?.expiresInSeconds ?? this.defaultExpires;
-    const cmd = new PutObjectCommand({
-      Bucket: this.bucket,
-      Key: key,
-      ContentType: options?.contentType,
-      ContentLength: options?.contentLength,
-      ChecksumSHA256: options?.checksumSha256,
-      Metadata: options?.metadata
-    });
-    const url = await this.presign(this.client, cmd, { expiresIn: expires });
-    const headers: Record<string, string> = {};
-    if (options?.contentType) headers['content-type'] = options.contentType;
-    return this.presigned(url, 'PUT', expires, Object.keys(headers).length ? headers : undefined);
+  async deleteObject(ref: MeetingObjectRef): Promise<void> {
+    const key = await this.#key(ref);
+    await settle(this.#client.send(new DeleteObjectCommand({ Bucket: this.#bucket, Key: key })));
   }
 
-  async getPresignedDownloadUrl(key: string, expiresInSeconds?: number): Promise<PresignedUrl> {
-    await this.guard(key);
-    const expires = expiresInSeconds ?? this.defaultExpires;
-    const url = await this.presign(this.client, new GetObjectCommand({ Bucket: this.bucket, Key: key }), { expiresIn: expires });
-    return this.presigned(url, 'GET', expires);
+  async getPresignedUploadPost(ref: MeetingObjectRef, spec: UploadSpec, opts?: PresignOptions): Promise<PresignedUrl> {
+    const key = await this.#key(ref);
+    validateUploadSpec(spec, this.#cfg.limits);
+    const ttl = this.#ttl(opts, this.#cfg.uploadTtlSeconds);
+    const mime = normalizeMimeType(spec.mimeType);
+    const { url, fields } = await settle(
+      this.#presignPost(this.#client, {
+        Bucket: this.#bucket,
+        Key: key,
+        Expires: ttl,
+        Conditions: [
+          ['content-length-range', spec.sizeBytes, spec.sizeBytes],
+          ['eq', '$Content-Type', mime]
+        ],
+        Fields: { 'Content-Type': mime }
+      })
+    );
+    return this.#presigned(url, 'POST', ttl, { fields });
   }
 
-  async headObject(key: string): Promise<StorageObjectMetadata | null> {
-    await this.guard(key);
-    try {
-      const res = await this.client.send(new HeadObjectCommand({ Bucket: this.bucket, Key: key }));
-      return this.toMeta(key, res);
-    } catch (err) {
-      if (isNotFound(err)) return null;
-      throw err;
+  async getPresignedUploadUrl(ref: MeetingObjectRef, spec: UploadSpec, opts?: PresignOptions): Promise<PresignedUrl> {
+    const key = await this.#key(ref);
+    validateUploadSpec(spec, this.#cfg.limits);
+    const ttl = this.#ttl(opts, this.#cfg.uploadTtlSeconds);
+    const mime = normalizeMimeType(spec.mimeType);
+    const url = await settle(
+      this.#presign(
+        this.#client,
+        new PutObjectCommand({ Bucket: this.#bucket, Key: key, ContentType: mime, ContentLength: spec.sizeBytes }),
+        { expiresIn: ttl, signableHeaders: new Set(['content-type', 'content-length']) }
+      )
+    );
+    return this.#presigned(url, 'PUT', ttl, { headers: { 'content-type': mime, 'content-length': String(spec.sizeBytes) } });
+  }
+
+  async getPresignedDownloadUrl(ref: MeetingObjectRef, opts?: PresignOptions): Promise<PresignedUrl> {
+    const key = await this.#key(ref);
+    const ttl = this.#ttl(opts, this.#cfg.downloadTtlSeconds);
+    const url = await settle(this.#presign(this.#client, new GetObjectCommand({ Bucket: this.#bucket, Key: key }), { expiresIn: ttl }));
+    return this.#presigned(url, 'GET', ttl);
+  }
+
+  #checkPartSize(partSizeBytes: number): void {
+    const { maxPartBytes } = this.#cfg.limits;
+    if (!Number.isInteger(partSizeBytes) || partSizeBytes < 1 || partSizeBytes > maxPartBytes) {
+      throw new StorageValidationError('partSizeBytes out of range');
     }
   }
 
-  async deleteObject(key: string): Promise<void> {
-    await this.guard(key);
-    await this.client.send(new DeleteObjectCommand({ Bucket: this.bucket, Key: key }));
-  }
-
-  async createMultipartUpload(key: string, options?: PutObjectOptions): Promise<MultipartUpload> {
-    await this.guard(key);
-    await this.validate(key, options);
-    const res = await this.client.send(
-      new CreateMultipartUploadCommand({
-        Bucket: this.bucket,
-        Key: key,
-        ContentType: options?.contentType,
-        Metadata: options?.metadata
-      })
-    );
-    if (!res.UploadId) throw new Error('S3 did not return an UploadId');
-    return { key, uploadId: res.UploadId };
-  }
-
-  async getPresignedPartUrl(key: string, uploadId: string, partNumber: number, expiresInSeconds?: number): Promise<PresignedUrl> {
-    await this.guard(key);
-    if (!Number.isInteger(partNumber) || partNumber < 1 || partNumber > 10000) {
-      throw new StorageValidationError(`partNumber must be 1..10000, got ${partNumber}`);
+  #checkPartNumber(partNumber: number): void {
+    if (!Number.isInteger(partNumber) || partNumber < 1 || partNumber > this.#cfg.limits.maxParts) {
+      throw new StorageValidationError('partNumber out of range');
     }
-    const expires = expiresInSeconds ?? this.defaultExpires;
-    const url = await this.presign(
-      this.client,
-      new UploadPartCommand({ Bucket: this.bucket, Key: key, UploadId: uploadId, PartNumber: partNumber }),
-      { expiresIn: expires }
+  }
+
+  async createMultipartUpload(ref: MeetingObjectRef, spec: MultipartSpec): Promise<MultipartUpload> {
+    const key = await this.#key(ref);
+    validateUploadSpec(spec, this.#cfg.limits);
+    this.#checkPartSize(spec.partSizeBytes);
+    if (spec.partSizeBytes < S3_MIN_PART_BYTES && spec.partSizeBytes < spec.sizeBytes) {
+      throw new StorageValidationError('partSizeBytes below provider minimum');
+    }
+    const partCount = Math.ceil(spec.sizeBytes / spec.partSizeBytes);
+    if (partCount > this.#cfg.limits.maxParts) throw new StorageValidationError('Too many parts');
+    const res = await settle(
+      this.#client.send(
+        new CreateMultipartUploadCommand({
+          Bucket: this.#bucket,
+          Key: key,
+          ContentType: normalizeMimeType(spec.mimeType),
+          Metadata: spec.metadata
+        })
+      )
     );
-    return this.presigned(url, 'PUT', expires);
+    if (!res.UploadId) throw mapS3Error(new Error('missing UploadId'));
+    return { uploadId: res.UploadId, partCount, partSizeBytes: spec.partSizeBytes };
   }
 
-  async completeMultipartUpload(key: string, uploadId: string, parts: CompletedPart[]) {
-    await this.guard(key);
-    if (parts.length === 0) throw new StorageValidationError('At least one part is required');
-    const sorted = [...parts].sort((a, b) => a.partNumber - b.partNumber);
-    const res = await this.client.send(
-      new CompleteMultipartUploadCommand({
-        Bucket: this.bucket,
-        Key: key,
-        UploadId: uploadId,
-        MultipartUpload: { Parts: sorted.map((p) => ({ PartNumber: p.partNumber, ETag: p.etag })) }
-      })
+  async getPresignedPartUrl(
+    ref: MeetingObjectRef,
+    uploadId: string,
+    partNumber: number,
+    partSizeBytes: number,
+    opts?: PresignOptions
+  ): Promise<PresignedUrl> {
+    const key = await this.#key(ref);
+    this.#checkPartNumber(partNumber);
+    this.#checkPartSize(partSizeBytes);
+    const ttl = this.#ttl(opts, this.#cfg.uploadTtlSeconds);
+    const url = await settle(
+      this.#presign(
+        this.#client,
+        new UploadPartCommand({ Bucket: this.#bucket, Key: key, UploadId: uploadId, PartNumber: partNumber, ContentLength: partSizeBytes }),
+        { expiresIn: ttl, signableHeaders: new Set(['content-length']) }
+      )
     );
-    return res.ETag ? { etag: res.ETag } : {};
+    return this.#presigned(url, 'PUT', ttl, { headers: { 'content-length': String(partSizeBytes) } });
   }
 
-  async abortMultipartUpload(key: string, uploadId: string): Promise<void> {
-    await this.guard(key);
-    await this.client.send(new AbortMultipartUploadCommand({ Bucket: this.bucket, Key: key, UploadId: uploadId }));
-  }
-
-  /** Lists uploaded parts, for resuming an interrupted multipart upload. */
-  async listParts(key: string, uploadId: string): Promise<CompletedPart[]> {
-    await this.guard(key);
+  async listParts(ref: MeetingObjectRef, uploadId: string): Promise<CompletedPart[]> {
+    const key = await this.#key(ref);
     const out: CompletedPart[] = [];
     let marker: string | undefined;
     do {
-      const res = await this.client.send(
-        new ListPartsCommand({ Bucket: this.bucket, Key: key, UploadId: uploadId, PartNumberMarker: marker })
+      const res = await settle(
+        this.#client.send(new ListPartsCommand({ Bucket: this.#bucket, Key: key, UploadId: uploadId, PartNumberMarker: marker }))
       );
       for (const p of res.Parts ?? []) {
         if (p.PartNumber !== undefined && p.ETag) out.push({ partNumber: p.PartNumber, etag: p.ETag });
       }
       marker = res.IsTruncated ? res.NextPartNumberMarker : undefined;
+      if (out.length > this.#cfg.limits.maxParts) throw new StorageValidationError('Too many parts');
     } while (marker);
     return out;
   }
 
-  private toMeta(
-    key: string,
-    res: {
-      ContentLength?: number | undefined;
-      ContentType?: string | undefined;
-      ETag?: string | undefined;
-      ChecksumSHA256?: string | undefined;
-      LastModified?: Date | undefined;
-      Metadata?: Record<string, string> | undefined;
+  async completeMultipartUpload(ref: MeetingObjectRef, uploadId: string, parts: CompletedPart[]) {
+    const key = await this.#key(ref);
+    if (parts.length === 0) throw new StorageValidationError('At least one part is required');
+    if (parts.length > this.#cfg.limits.maxParts) throw new StorageValidationError('Too many parts');
+    parts.forEach((p) => this.#checkPartNumber(p.partNumber));
+    const sorted = [...parts].sort((a, b) => a.partNumber - b.partNumber);
+    const res = await settle(
+      this.#client.send(
+        new CompleteMultipartUploadCommand({
+          Bucket: this.#bucket,
+          Key: key,
+          UploadId: uploadId,
+          MultipartUpload: { Parts: sorted.map((p) => ({ PartNumber: p.partNumber, ETag: p.etag })) }
+        })
+      )
+    );
+    return res.ETag ? { etag: res.ETag } : {};
+  }
+
+  async abortMultipartUpload(ref: MeetingObjectRef, uploadId: string): Promise<void> {
+    const key = await this.#key(ref);
+    await settle(this.#client.send(new AbortMultipartUploadCommand({ Bucket: this.#bucket, Key: key, UploadId: uploadId })));
+  }
+
+  /**
+   * Best-effort startup check that the bucket is not public (policy status + ACL grants).
+   * Providers that don't implement these APIs (e.g. R2, some MinIO setups) report "unsupported".
+   */
+  async verifyBucketPrivate(): Promise<BucketPrivacyResult> {
+    const unsupported = (err: unknown) => {
+      const e = err as { name?: string; $metadata?: { httpStatusCode?: number } };
+      return (
+        ['NotImplemented', 'NoSuchBucketPolicy', 'MethodNotAllowed', 'XNotImplemented'].includes(e?.name ?? '') ||
+        e?.$metadata?.httpStatusCode === 501 ||
+        e?.$metadata?.httpStatusCode === 405
+      );
+    };
+    const checks: BucketPrivacyResult['checks'] = { policy: 'error', acl: 'error' };
+    try {
+      const r = await this.#client.send(new GetBucketPolicyStatusCommand({ Bucket: this.#bucket }));
+      checks.policy = r.PolicyStatus?.IsPublic ? 'public' : 'private';
+    } catch (err) {
+      checks.policy = (err as { name?: string }).name === 'NoSuchBucketPolicy' ? 'private' : unsupported(err) ? 'unsupported' : 'error';
     }
-  ): StorageObjectMetadata {
-    const m: StorageObjectMetadata = { key, bucket: this.bucket, size: res.ContentLength ?? 0 };
-    if (res.ContentType) m.contentType = res.ContentType;
-    if (res.ETag) m.etag = res.ETag;
-    if (res.ChecksumSHA256) m.checksumSha256 = res.ChecksumSHA256;
-    if (res.LastModified) m.updatedAt = res.LastModified;
-    if (res.Metadata && Object.keys(res.Metadata).length) m.custom = res.Metadata;
-    return m;
+    try {
+      const r = await this.#client.send(new GetBucketAclCommand({ Bucket: this.#bucket }));
+      const pub = (r.Grants ?? []).some((g) => g.Grantee?.URI && PUBLIC_GRANTEES.includes(g.Grantee.URI));
+      checks.acl = pub ? 'public' : 'private';
+    } catch (err) {
+      checks.acl = unsupported(err) ? 'unsupported' : 'error';
+    }
+    const status =
+      checks.policy === 'public' || checks.acl === 'public'
+        ? 'public'
+        : checks.policy === 'private' && checks.acl === 'private'
+          ? 'private'
+          : 'unknown';
+    return { status, checks };
+  }
+
+  /** For diagnostics only; not part of returned object data. */
+  get providerIdForDiagnostics(): string {
+    return this.#providerId;
   }
 }
 
-/** Build a StorageService from process env (STORAGE_*). */
+function toInfo(res: {
+  ContentLength?: number | undefined;
+  ContentType?: string | undefined;
+  ETag?: string | undefined;
+  ChecksumSHA256?: string | undefined;
+  LastModified?: Date | undefined;
+  Metadata?: Record<string, string> | undefined;
+}): StoredObjectInfo {
+  const m: StoredObjectInfo = { sizeBytes: res.ContentLength ?? 0 };
+  if (res.ContentType) m.mimeType = res.ContentType;
+  if (res.ETag) m.etag = res.ETag;
+  if (res.ChecksumSHA256) m.checksumSha256 = res.ChecksumSHA256;
+  if (res.LastModified) m.updatedAt = res.LastModified;
+  if (res.Metadata && Object.keys(res.Metadata).length) m.metadata = res.Metadata;
+  return m;
+}
+
 export function createStorageServiceFromEnv(
   env: NodeJS.ProcessEnv = process.env,
   opts: Omit<S3StorageServiceOptions, 'config'> = {}

@@ -1,37 +1,73 @@
-const SEGMENT = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
+import { StorageAccessError, StorageValidationError } from './errors.js';
 
-function assertSegment(name: string, value: string): void {
-  if (!SEGMENT.test(value) || value === '.' || value === '..' || value.includes('..')) {
-    throw new Error(`Invalid key segment for ${name}: "${value}"`);
-  }
+const ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
+const EXT = /^[a-z0-9]{1,8}$/;
+
+export type MeetingObjectKind = 'recording' | 'normalized' | 'chunk' | 'transcript' | 'export' | 'attachment';
+
+/**
+ * Server-side object reference. Callers pass IDs and a kind; the storage
+ * package derives the key. Raw keys are never accepted from callers.
+ */
+export type MeetingObjectRef = {
+  orgId: string;
+  meetingId: string;
+  kind: MeetingObjectKind;
+  /** Id of the logical object (recording id, transcript id, ...). */
+  objectId: string;
+  /** File extension without dot. Ignored for `normalized` and `chunk` (always wav). */
+  ext?: string;
+  /** Required for kind `chunk`: 0-based chunk index. */
+  index?: number;
+};
+
+function id(name: string, v: string): string {
+  if (typeof v !== 'string' || !ID.test(v)) throw new StorageValidationError(`Invalid ${name}`);
+  return v;
 }
 
 export function orgPrefix(orgId: string): string {
-  assertSegment('orgId', orgId);
-  return `org/${orgId}/`;
+  return `org/${id('orgId', orgId)}/`;
 }
 
-/** Builds `org/{orgId}/meetings/{meetingId}/{...parts}`. */
-export function buildMeetingKey(orgId: string, meetingId: string, ...parts: string[]): string {
-  assertSegment('meetingId', meetingId);
-  parts.forEach((p, i) => assertSegment(`part[${i}]`, p));
-  const base = `${orgPrefix(orgId)}meetings/${meetingId}`;
-  return parts.length ? `${base}/${parts.join('/')}` : `${base}/`;
-}
-
-export function parseMeetingKey(key: string): { orgId: string; meetingId: string; rest: string } | null {
-  const m = /^org\/([^/]+)\/meetings\/([^/]+)\/(.*)$/.exec(key);
-  if (!m) return null;
-  return { orgId: m[1]!, meetingId: m[2]!, rest: m[3]! };
-}
-
-/** Throws unless `key` lives under org/{orgId}/. */
-export function assertKeyOwnedBy(key: string, orgId: string): void {
-  if (!key.startsWith(orgPrefix(orgId)) || key.includes('..') || key.includes('//')) {
-    throw new StorageAccessError(`Key is not owned by org ${orgId}`);
+/** Derive the object key: org/{orgId}/meetings/{meetingId}/... */
+export function buildObjectKey(ref: MeetingObjectRef): string {
+  const base = `${orgPrefix(ref.orgId)}meetings/${id('meetingId', ref.meetingId)}`;
+  const obj = id('objectId', ref.objectId);
+  const ext = () => {
+    const e = (ref.ext ?? '').toLowerCase();
+    if (!EXT.test(e)) throw new StorageValidationError('Invalid ext');
+    return e;
+  };
+  switch (ref.kind) {
+    case 'recording':
+      return `${base}/recordings/${obj}.${ext()}`;
+    case 'normalized':
+      return `${base}/processed/${obj}/normalized.wav`;
+    case 'chunk': {
+      const i = ref.index;
+      if (i === undefined || !Number.isInteger(i) || i < 0 || i > 99999) throw new StorageValidationError('Invalid chunk index');
+      return `${base}/processed/${obj}/chunks/${String(i).padStart(5, '0')}.wav`;
+    }
+    case 'transcript':
+    case 'export':
+    case 'attachment':
+      return `${base}/${ref.kind}s/${obj}.${ext()}`;
+    default:
+      throw new StorageValidationError('Invalid kind');
   }
 }
 
-export class StorageAccessError extends Error {
-  override readonly name = 'StorageAccessError';
+export function parseMeetingKey(key: string): { orgId: string; meetingId: string; rest: string } | null {
+  const m = /^org\/([^/]+)\/meetings\/([^/]+)\/(.+)$/.exec(key);
+  if (!m || !ID.test(m[1]!) || !ID.test(m[2]!)) return null;
+  return { orgId: m[1]!, meetingId: m[2]!, rest: m[3]! };
+}
+
+/** Throws StorageAccessError unless `key` lives under org/{orgId}/. Message never includes the key. */
+export function assertKeyOwnedBy(key: string, orgId: string): void {
+  if (typeof orgId !== 'string' || !ID.test(orgId)) throw new StorageAccessError('orgId is required');
+  if (!key.startsWith(orgPrefix(orgId)) || key.includes('..') || key.includes('//') || key.includes('\\')) {
+    throw new StorageAccessError();
+  }
 }
