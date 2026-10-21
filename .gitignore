@@ -1,7 +1,6 @@
 # Node / PNPM
 node_modules/
 .pnpm-store/
-pnpm-lock.yaml
 
 # Build outputs
 dist/
@@ -32,3 +31,6 @@ pnpm-debug.log*
 apps/**/.vite/
 apps/**/node_modules/
 packages/**/node_modules/
+
+# TypeScript incremental
+*.tsbuildinfo
