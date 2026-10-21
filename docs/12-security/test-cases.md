@@ -4,38 +4,44 @@ Setup for all cases: orgs **A** and **B**, each with owner, admin, member, viewe
 
 ## 1. Cross-tenant access matrix
 
-| ID    | Resource / action                | Steps (as A)                                                         | Expected                                         |
-| ----- | -------------------------------- | -------------------------------------------------------------------- | ------------------------------------------------ |
-| XT-01 | Meeting read                     | `GET /meetings/{B.meetingId}`                                        | 404                                              |
-| XT-02 | Meeting update                   | `PATCH /meetings/{B.meetingId}`                                      | 404; B row unchanged                             |
-| XT-03 | Meeting delete                   | `DELETE /meetings/{B.meetingId}`                                     | 404; B row still exists                          |
-| XT-04 | Meeting list                     | `GET /meetings?orgId={B.orgId}`                                      | 200 with only A rows; `orgId` param ignored      |
-| XT-05 | Transcript read                  | `GET /meetings/{B.meetingId}/transcript`                             | 404                                              |
-| XT-06 | Transcript edit                  | `PATCH /transcripts/{B.transcriptId}`                                | 404                                              |
-| XT-07 | Summary / insights read          | `GET /meetings/{B.meetingId}/summary`                                | 404                                              |
-| XT-08 | Task read                        | `GET /tasks/{B.taskId}`                                              | 404                                              |
-| XT-09 | Task update/approve              | `PATCH /tasks/{B.taskId}`, `POST /tasks/{B.taskId}/approve`          | 404; no state change                             |
-| XT-10 | Task create referencing B parent | `POST /tasks` with `meetingId={B.meetingId}`                         | 404 or 422; no row created                       |
-| XT-11 | Task list                        | `GET /tasks`                                                         | Only A tasks                                     |
-| XT-12 | Assignee injection               | Approve A task with `assigneeId={B.userId}`                          | 422; assignee must be A member                   |
-| XT-13 | Full-text search                 | `GET /search?q=<unique B term>`                                      | 0 results                                        |
-| XT-14 | Vector search                    | Semantic query equal to a B chunk's text                             | No B chunks returned                             |
-| XT-15 | File presign download            | `POST /files/{B.fileId}/download-url`                                | 404; no URL issued                               |
-| XT-16 | File presign upload key          | `POST /uploads` with body key `org/{B.orgId}/x`                      | Key ignored; server key under `org/{A.orgId}/`   |
-| XT-17 | Upload complete                  | `POST /uploads/{B.uploadId}/complete`                                | 404                                              |
-| XT-18 | Integration connection read      | `GET /integrations/{B.integrationId}`                                | 404                                              |
-| XT-19 | Push to B integration            | `POST /tasks/{A.taskId}/push` with `integrationId={B.integrationId}` | 404; nothing sent externally                     |
-| XT-20 | Provider config                  | `GET/PUT /ai/providers/{B.configId}`                                 | 404                                              |
-| XT-21 | Members / invites                | `GET /orgs/{B.orgId}/members`, `POST /orgs/{B.orgId}/invites`        | 404                                              |
-| XT-22 | Audit log                        | `GET /audit?orgId={B.orgId}`                                         | Only A events                                    |
-| XT-23 | Realtime                         | Subscribe to channel `org:{B.orgId}` / B meeting                     | Rejected; no events                              |
-| XT-24 | Worker job mismatch              | Enqueue job `{orgId: A, meetingId: B.meetingId}`                     | Job fails closed, no processing, audit/log entry |
-| XT-25 | Worker object prefix             | Media job for A whose key points at `org/{B.orgId}/…`                | Rejected                                         |
-| XT-26 | RLS no context                   | As `meetops_app`, `SELECT * FROM tasks` without `app.current_org_id` | 0 rows                                           |
-| XT-27 | RLS wrong org write              | Context A, `INSERT … org_id = B`                                     | Fails `WITH CHECK`                               |
-| XT-28 | RLS connection reuse             | Txn with context A, then new txn on same connection without setting  | 0 rows                                           |
-| XT-29 | RLS coverage                     | Query `pg_class`/`pg_policies` for all tables with `org_id`          | All have RLS enabled + forced + policy           |
-| XT-30 | Org switch                       | Member of A only sends `X-Org-Id: B` / switch-org to B               | 404/403; context stays A                         |
+| ID    | Resource / action                                  | Steps (as A)                                                             | Expected                                         |
+| ----- | -------------------------------------------------- | ------------------------------------------------------------------------ | ------------------------------------------------ |
+| XT-01 | Meeting read                                       | `GET /meetings/{B.meetingId}`                                            | 404                                              |
+| XT-02 | Meeting update                                     | `PATCH /meetings/{B.meetingId}`                                          | 404; B row unchanged                             |
+| XT-03 | Meeting delete                                     | `DELETE /meetings/{B.meetingId}`                                         | 404; B row still exists                          |
+| XT-04 | Meeting list                                       | `GET /meetings?orgId={B.orgId}`                                          | 200 with only A rows; `orgId` param ignored      |
+| XT-05 | Transcript read                                    | `GET /meetings/{B.meetingId}/transcript`                                 | 404                                              |
+| XT-06 | Transcript edit                                    | `PATCH /transcripts/{B.transcriptId}`                                    | 404                                              |
+| XT-07 | Summary / insights read                            | `GET /meetings/{B.meetingId}/summary`                                    | 404                                              |
+| XT-08 | Task read                                          | `GET /tasks/{B.taskId}`                                                  | 404                                              |
+| XT-09 | Task update/approve                                | `PATCH /tasks/{B.taskId}`, `POST /tasks/{B.taskId}/approve`              | 404; no state change                             |
+| XT-10 | Task create referencing B parent                   | `POST /tasks` with `meetingId={B.meetingId}`                             | 404 or 422; no row created                       |
+| XT-11 | Task list                                          | `GET /tasks`                                                             | Only A tasks                                     |
+| XT-12 | Assignee injection                                 | Approve A task with `assigneeId={B.userId}`                              | 422; assignee must be A member                   |
+| XT-13 | Full-text search                                   | `GET /search?q=<unique B term>`                                          | 0 results                                        |
+| XT-14 | Vector search                                      | Semantic query equal to a B chunk's text                                 | No B chunks returned                             |
+| XT-15 | File presign download                              | `POST /files/{B.fileId}/download-url`                                    | 404; no URL issued                               |
+| XT-16 | File presign upload key                            | `POST /uploads` with body key `org/{B.orgId}/x`                          | Key ignored; server key under `org/{A.orgId}/`   |
+| XT-17 | Upload complete                                    | `POST /uploads/{B.uploadId}/complete`                                    | 404                                              |
+| XT-18 | Integration connection read                        | `GET /integrations/{B.integrationId}`                                    | 404                                              |
+| XT-19 | Push to B integration                              | `POST /tasks/{A.taskId}/push` with `integrationId={B.integrationId}`     | 404; nothing sent externally                     |
+| XT-20 | Provider config                                    | `GET/PUT /ai/providers/{B.configId}`                                     | 404                                              |
+| XT-21 | Members / invites                                  | `GET /orgs/{B.orgId}/members`, `POST /orgs/{B.orgId}/invites`            | 404                                              |
+| XT-22 | Audit log                                          | `GET /audit?orgId={B.orgId}`                                             | Only A events                                    |
+| XT-23 | Realtime                                           | Subscribe to channel `org:{B.orgId}` / B meeting                         | Rejected; no events                              |
+| XT-24 | Worker job mismatch                                | Enqueue job `{orgId: A, meetingId: B.meetingId}`                         | Job fails closed, no processing, audit/log entry |
+| XT-25 | Worker object prefix                               | Media job for A whose key points at `org/{B.orgId}/…`                    | Rejected                                         |
+| XT-26 | RLS no context                                     | As `meetops_app`, `SELECT * FROM tasks` without `app.current_org_id`     | 0 rows                                           |
+| XT-27 | RLS wrong org write                                | Context A, `INSERT … org_id = B`                                         | Fails `WITH CHECK`                               |
+| XT-28 | RLS connection reuse                               | Txn with context A, then new txn on same connection without setting      | 0 rows                                           |
+| XT-29 | RLS coverage                                       | Query `pg_class`/`pg_policies` for all tables with `org_id`              | All have RLS enabled + forced + policy           |
+| XT-30 | Org switch                                         | Member of A only sends `X-Org-Id: B` / switch-org to B                   | 404/403; context stays A                         |
+| XT-31 | Recording session chunk URL (other org)            | `POST /recording-sessions/{B.sessionId}/chunks` `{seq:0,sizeBytes:1024}` | 404; no URL issued                               |
+| XT-32 | Recording session complete (other org)             | `POST /recording-sessions/{B.sessionId}/complete`                        | 404; B session state unchanged                   |
+| XT-33 | Recording session abort (other org)                | `POST /recording-sessions/{B.sessionId}/abort` `{reason:"user_stopped"}` | 404; B session not aborted                       |
+| XT-34 | Recording session chunk URL (same org, other user) | User A2 (same org) requests a chunk URL for A1's sessionId               | 404; no URL issued                               |
+| XT-35 | Recording session complete (same org, other user)  | User A2 completes A1's session                                           | 404; session state unchanged                     |
+| XT-36 | Recording session abort (same org, other user)     | User A2 aborts A1's session                                              | 404; session not aborted                         |
 
 ## 2. Auth abuse cases
 
@@ -116,6 +122,28 @@ Run against every outbound URL input (AI provider config if any URL is accepted,
 | SS-31 | TLS with invalid/self-signed cert                                        | Rejected                                                                       |
 | SS-32 | Arbitrary URL in provider config by admin                                | Rejected — only registry provider ids accepted                                 |
 
-## 4. Counts
+## 4. Recording-session upload abuse
 
-Cross-tenant: 30 · Auth abuse: 35 · SSRF: 32 · Total: 97.
+Routes from contracts v0.2 (`api/recording-sessions.ts`): init, chunks, complete, abort. Limits: 64 MiB per chunk, 2 GB per session, 100,000 chunks, 300 s presigned PUT TTL. Run as the session owner unless stated.
+
+| ID    | Case                                    | Steps                                                                                       | Expected                                                                                                 |
+| ----- | --------------------------------------- | ------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| UP-01 | Chunk without size                      | `POST …/chunks` with `{seq:0}` only                                                         | 400 `VALIDATION_FAILED`; no URL issued                                                                   |
+| UP-02 | Chunk over 64 MiB                       | `POST …/chunks` with `sizeBytes: 67108865`                                                  | 400; no URL issued                                                                                       |
+| UP-03 | Body larger than signed Content-Length  | Get URL for `sizeBytes: 1048576`, PUT 2 MiB to it                                           | Storage rejects (403/400 signature mismatch); no object written                                          |
+| UP-04 | Body smaller than signed Content-Length | Same URL, PUT 512 KiB                                                                       | Rejected or incomplete; complete step later fails (UP-08)                                                |
+| UP-05 | Running total over 2 GB                 | Request chunk URLs until sum of `sizeBytes` would exceed 2,000,000,000                      | The exceeding request returns 400/413; no URL issued                                                     |
+| UP-06 | seq out of range                        | `POST …/chunks` with `seq: 100000` or `-1`                                                  | 400                                                                                                      |
+| UP-07 | Complete with gaps                      | Upload seq 0,1,3; complete with `chunkCount: 4`                                             | 400/409; status not `uploaded`; no transcription job enqueued                                            |
+| UP-08 | Complete with wrong sizes               | A stored chunk's size differs from its signed `sizeBytes` (or exceeds 64 MiB)               | 400/409; session not completed                                                                           |
+| UP-09 | Complete with mismatched count          | Upload 3 chunks; complete with `chunkCount: 5` (and with `2`)                               | 400/409 in both cases                                                                                    |
+| UP-10 | Expired chunk URL                       | Obtain URL, wait > 300 s, PUT                                                               | Storage rejects (expired signature)                                                                      |
+| UP-11 | Chunk after complete/abort              | Request a chunk URL or PUT after the session completed or was aborted                       | 404/409; no URL issued                                                                                   |
+| UP-12 | Double complete                         | Call complete twice                                                                         | Second returns 409; no duplicate job                                                                     |
+| UP-13 | Extra fields                            | Add `key`, `bucket`, `organizationId` or `userId` to init, chunks, complete or abort bodies | 400 `VALIDATION_FAILED`                                                                                  |
+| UP-14 | Disallowed MIME on init                 | Init with `mimeType: "video/x-msvideo"` or `audio/webm;foo=bar`                             | 400                                                                                                      |
+| UP-15 | Response leakage                        | Inspect every response from the four routes                                                 | No `bucket`, `key`, `provider` or internal paths; `upload.method` is `PUT` and `expiresAt` ≤ 300 s ahead |
+
+## 5. Counts
+
+Cross-tenant: 36 · Auth abuse: 35 · SSRF: 32 · Recording-session upload: 15 · Total: 118.
