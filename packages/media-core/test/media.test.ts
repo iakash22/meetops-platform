@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { describe, it, expect, afterAll } from 'vitest';
@@ -81,4 +81,34 @@ describe.skipIf(!HAS_FFMPEG)('with real ffmpeg', () => {
   it('fails cleanly on a corrupt input', async () => {
     await expect(normalizeToWav(path.join(dir, 'missing.mp3'), path.join(dir, 'x.wav'))).rejects.toThrow(FfmpegError);
   });
+
+  it('removes stale chunk files before writing (cleanup default)', async () => {
+    const out = path.join(dir, 'stale');
+    mkdirSync(out, { recursive: true });
+    writeFileSync(path.join(out, 'chunk-00007.wav'), 'stale');
+    writeFileSync(path.join(out, 'keep.txt'), 'keep');
+    const chunks = await chunkAudio(src, out, { segmentSeconds: 10 });
+    expect(chunks.map((c) => c.index)).toEqual([0, 1, 2]);
+    expect(existsSync(path.join(out, 'chunk-00007.wav'))).toBe(false);
+    expect(existsSync(path.join(out, 'keep.txt'))).toBe(true);
+  }, 60000);
+
+  it('keeps stale files when cleanup is false', async () => {
+    const out = path.join(dir, 'nocleanup');
+    mkdirSync(out, { recursive: true });
+    writeFileSync(path.join(out, 'chunk-00007.wav'), 'stale');
+    await expect(chunkAudio(src, out, { segmentSeconds: 10, cleanup: false })).rejects.toThrow(FfmpegError);
+    expect(existsSync(path.join(out, 'chunk-00007.wav'))).toBe(true);
+  }, 60000);
+
+  it('removes partial outputs on failure', async () => {
+    const out = path.join(dir, 'fail');
+    mkdirSync(out, { recursive: true });
+    writeFileSync(path.join(out, 'other.txt'), 'x');
+    // ffmpeg succeeds but probing the chunks fails, leaving outputs that must be removed.
+    await expect(chunkAudio(src, out, { segmentSeconds: 10, ffprobePath: '/nonexistent/ffprobe' })).rejects.toThrow(FfmpegError);
+    expect(readdirSync(out)).toEqual(['other.txt']);
+    await expect(chunkAudio(path.join(dir, 'missing.mp3'), out)).rejects.toThrow(FfmpegError);
+    expect(readdirSync(out)).toEqual(['other.txt']);
+  }, 60000);
 });

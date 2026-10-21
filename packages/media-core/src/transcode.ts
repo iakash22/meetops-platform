@@ -1,4 +1,4 @@
-import { mkdir, readdir } from 'node:fs/promises';
+import { mkdir, readdir, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { probeMedia } from './probe.js';
 import { resolveTools, runProcess, type MediaToolsOptions } from './run.js';
@@ -34,6 +34,12 @@ export type ChunkOptions = MediaToolsOptions & {
   segmentSeconds?: number;
   /** Filename prefix (default "chunk"). */
   prefix?: string;
+  /**
+   * Cleanup behaviour (default true): remove stale `{prefix}-NNNNN.wav` files in outDir
+   * before writing, and remove any partial outputs if ffmpeg or probing fails.
+   * Only files matching the prefix pattern are touched; other files are left alone.
+   */
+  cleanup?: boolean;
 };
 
 export type AudioChunk = {
@@ -65,23 +71,34 @@ export async function chunkAudio(input: string, outDir: string, opts: ChunkOptio
   if (!(seg > 0)) throw new Error('segmentSeconds must be > 0');
   const prefix = opts.prefix ?? 'chunk';
   if (!/^[A-Za-z0-9_-]+$/.test(prefix)) throw new Error('Invalid prefix');
+  const cleanup = opts.cleanup ?? true;
   const t = resolveTools(opts);
-  await mkdir(outDir, { recursive: true });
-  await runProcess(t.ffmpeg, buildChunkArgs(input, outDir, seg, prefix), { timeoutMs: t.timeoutMs, signal: opts.signal });
   const re = new RegExp(`^${prefix}-(\\d{5})\\.wav$`);
-  const files = (await readdir(outDir))
-    .map((f) => ({ f, m: re.exec(f) }))
-    .filter((x): x is { f: string; m: RegExpExecArray } => x.m !== null)
-    .sort((a, b) => Number(a.m[1]) - Number(b.m[1]));
-  const chunks: AudioChunk[] = [];
-  let start = 0;
-  for (const { f, m } of files) {
-    const p = path.join(outDir, f);
-    const info = await probeMedia(p, opts);
-    chunks.push({ index: Number(m[1]), path: p, startSeconds: start, durationSeconds: info.durationSeconds });
-    start += info.durationSeconds;
+  const removeChunks = async () => {
+    const names = await readdir(outDir).catch(() => [] as string[]);
+    await Promise.all(names.filter((f) => re.test(f)).map((f) => rm(path.join(outDir, f), { force: true })));
+  };
+  await mkdir(outDir, { recursive: true });
+  if (cleanup) await removeChunks();
+  try {
+    await runProcess(t.ffmpeg, buildChunkArgs(input, outDir, seg, prefix), { timeoutMs: t.timeoutMs, signal: opts.signal });
+    const files = (await readdir(outDir))
+      .map((f) => ({ f, m: re.exec(f) }))
+      .filter((x): x is { f: string; m: RegExpExecArray } => x.m !== null)
+      .sort((a, b) => Number(a.m[1]) - Number(b.m[1]));
+    const chunks: AudioChunk[] = [];
+    let start = 0;
+    for (const { f, m } of files) {
+      const p = path.join(outDir, f);
+      const info = await probeMedia(p, opts);
+      chunks.push({ index: Number(m[1]), path: p, startSeconds: start, durationSeconds: info.durationSeconds });
+      start += info.durationSeconds;
+    }
+    return chunks;
+  } catch (err) {
+    if (cleanup) await removeChunks();
+    throw err;
   }
-  return chunks;
 }
 
 export async function isFfmpegAvailable(opts: MediaToolsOptions = {}): Promise<boolean> {
