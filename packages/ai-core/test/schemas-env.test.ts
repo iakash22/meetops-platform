@@ -28,7 +28,7 @@ describe('env validation', () => {
     const resolveCredential = createCredentialResolver({ env: () => undefined, secret: async () => undefined }, async () => ({ platformKeys: true }));
     const reg = await createRegistryFromEnv(env, { audit: new InMemoryAuditSink(), resolveCredential, system: SYSTEM, production: false });
     expect(reg.availability('gemini').available).toBe(true);
-    await expect(reg.instantiate('gemini', { orgId: 'o' })).rejects.toMatchObject({ code: 'MISSING_CREDENTIALS' });
+    await expect(reg.instantiate('gemini', { orgId: '00000000-0000-4000-8000-00000000000e' })).rejects.toMatchObject({ code: 'MISSING_CREDENTIALS' });
     expect(reg.availability('ollama').available).toBe(false);
     expect(reg.availability('deepgram').available).toBe(false);
   });

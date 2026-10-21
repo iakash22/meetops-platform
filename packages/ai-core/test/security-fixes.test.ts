@@ -17,36 +17,36 @@ const call = async (p: unknown, ctx: { model: string }) => {
 };
 
 describe('C1: call-time, org-scoped credentials', () => {
-  const src = { env: (n: string) => (n === 'GEMINI_API_KEY' ? 'platform-key' : undefined), secret: async (p: string) => (p === 'org/o1/gemini' ? 'byo-o1' : undefined) };
+  const src = { env: (n: string) => (n === 'GEMINI_API_KEY' ? 'platform-key' : undefined), secret: async (p: string) => (p === 'org/00000000-0000-4000-8000-000000000006/gemini' ? 'byo-o1' : undefined) };
   it('platform keys only when the server-side org plan grants them', async () => {
-    const r = createCredentialResolver(src, async (org) => ({ platformKeys: org === 'paid-org' }));
-    await expect(r('env:GEMINI_API_KEY', { orgId: 'paid-org' })).resolves.toBe('platform-key');
-    await expect(r('env:GEMINI_API_KEY', { orgId: 'free-org' })).rejects.toMatchObject({ code: 'MISSING_CREDENTIALS' });
+    const r = createCredentialResolver(src, async (org) => ({ platformKeys: org === '00000000-0000-4000-8000-000000000009' }));
+    await expect(r('env:GEMINI_API_KEY', { orgId: '00000000-0000-4000-8000-000000000009' })).resolves.toBe('platform-key');
+    await expect(r('env:GEMINI_API_KEY', { orgId: '00000000-0000-4000-8000-00000000000a' })).rejects.toMatchObject({ code: 'MISSING_CREDENTIALS' });
   });
   it('secret refs bind to org/{orgId}; mismatch rejected', async () => {
     const r = createCredentialResolver(src, async () => ({ platformKeys: true }));
-    await expect(r('secret:org/o1/gemini', { orgId: 'o1' })).resolves.toBe('byo-o1');
-    await expect(r('secret:org/o1/gemini', { orgId: 'o2' })).rejects.toMatchObject({ code: 'FORBIDDEN' });
-    await expect(r('secret:global/gemini', { orgId: 'o1' })).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    await expect(r('secret:org/00000000-0000-4000-8000-000000000006/gemini', { orgId: '00000000-0000-4000-8000-000000000006' })).resolves.toBe('byo-o1');
+    await expect(r('secret:org/00000000-0000-4000-8000-000000000006/gemini', { orgId: '00000000-0000-4000-8000-000000000007' })).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    await expect(r('secret:global/gemini', { orgId: '00000000-0000-4000-8000-000000000006' })).rejects.toMatchObject({ code: 'FORBIDDEN' });
   });
   it('adapters are built per call with that org key; failing BYO never falls back to platform key', async () => {
     const s = await setup({
       providers: { gemini: fakeLLM('gemini') },
       configs: [llmCfg('gemini', { credentialRef: 'env:GEMINI_API_KEY' })],
       credentials: { GEMINI_API_KEY: 'platform-key' },
-      secrets: { 'org/o1/gemini': 'byo-o1' },
+      secrets: { 'org/00000000-0000-4000-8000-000000000006/gemini': 'byo-o1' },
     });
-    await s.router.setOrgConfig({ tenantId: 'o1', credentialRefs: { gemini: 'secret:org/o1/gemini' } }, admin('o1'));
-    await s.router.setOrgConfig({ tenantId: 'o2', credentialRefs: { gemini: 'secret:org/o2/missing' } }, admin('o2'));
-    expect((await s.executor.run({ tenantId: 'o1', feature: 'summary', promptVersion: 'v' }, call)).status).toBe('succeeded');
-    expect((await s.executor.run({ tenantId: 'o3', feature: 'summary', promptVersion: 'v' }, call)).status).toBe('succeeded');
-    const o2 = await s.executor.run({ tenantId: 'o2', feature: 'summary', promptVersion: 'v' }, call);
+    await s.router.setOrgConfig({ tenantId: '00000000-0000-4000-8000-000000000006', credentialRefs: { gemini: 'secret:org/00000000-0000-4000-8000-000000000006/gemini' } }, admin('00000000-0000-4000-8000-000000000006'));
+    await s.router.setOrgConfig({ tenantId: '00000000-0000-4000-8000-000000000007', credentialRefs: { gemini: 'secret:org/00000000-0000-4000-8000-000000000007/missing' } }, admin('00000000-0000-4000-8000-000000000007'));
+    expect((await s.executor.run({ tenantId: '00000000-0000-4000-8000-000000000006', feature: 'summary', promptVersion: 'v' }, call)).status).toBe('succeeded');
+    expect((await s.executor.run({ tenantId: '00000000-0000-4000-8000-000000000008', feature: 'summary', promptVersion: 'v' }, call)).status).toBe('succeeded');
+    const o2 = await s.executor.run({ tenantId: '00000000-0000-4000-8000-000000000007', feature: 'summary', promptVersion: 'v' }, call);
     expect(o2.status).toBe('failed');
     expect(s.keysSeen).toEqual(['byo-o1', 'platform-key']); // no platform key used for o2
   });
   it('org cannot reference another org secret', async () => {
     const s = await setup({ providers: {}, configs: [] });
-    await expect(s.router.setOrgConfig({ tenantId: 'o1', credentialRefs: { gemini: 'secret:org/o2/k' } }, admin('o1'))).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    await expect(s.router.setOrgConfig({ tenantId: '00000000-0000-4000-8000-000000000006', credentialRefs: { gemini: 'secret:org/00000000-0000-4000-8000-000000000007/k' } }, admin('00000000-0000-4000-8000-000000000006'))).rejects.toMatchObject({ code: 'FORBIDDEN' });
   });
 });
 
@@ -54,8 +54,8 @@ describe('H1: budgets/quotas apply to platform-billed free providers', () => {
   it('free platform-billed provider is quota-limited', async () => {
     const p = fakeLLM('gemini');
     const s = await setup({ providers: { gemini: p }, configs: [llmCfg('gemini', { platformBilled: true, usage: { dailyRequestLimit: 1 } })] });
-    await s.executor.run({ tenantId: 't', feature: 'summary', promptVersion: 'v' }, call);
-    expect((await s.executor.run({ tenantId: 't', feature: 'summary', promptVersion: 'v' }, call)).status).toBe('waiting');
+    await s.executor.run({ tenantId: '00000000-0000-4000-8000-000000000001', feature: 'summary', promptVersion: 'v' }, call);
+    expect((await s.executor.run({ tenantId: '00000000-0000-4000-8000-000000000001', feature: 'summary', promptVersion: 'v' }, call)).status).toBe('waiting');
     expect(p.calls).toBe(1);
   });
 });
@@ -63,29 +63,29 @@ describe('H1: budgets/quotas apply to platform-billed free providers', () => {
 describe('H3: authorization + mandatory audit', () => {
   it('setOrgConfig requires owner/admin of the same org', async () => {
     const s = await setup({ providers: {}, configs: [] });
-    await expect(s.router.setOrgConfig({ tenantId: 'o1' }, member('o1'))).rejects.toMatchObject({ code: 'FORBIDDEN' });
-    await expect(s.router.setOrgConfig({ tenantId: 'o1' }, admin('o2'))).rejects.toMatchObject({ code: 'FORBIDDEN' });
-    await s.router.setOrgConfig({ tenantId: 'o1' }, admin('o1', 'user-42'));
-    expect(s.audit.events.at(-1)).toMatchObject({ tenantId: 'o1', actorId: 'user-42' });
+    await expect(s.router.setOrgConfig({ tenantId: '00000000-0000-4000-8000-000000000006' }, member('00000000-0000-4000-8000-000000000006'))).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    await expect(s.router.setOrgConfig({ tenantId: '00000000-0000-4000-8000-000000000006' }, admin('00000000-0000-4000-8000-000000000007'))).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    await s.router.setOrgConfig({ tenantId: '00000000-0000-4000-8000-000000000006' }, admin('00000000-0000-4000-8000-000000000006', 'user-42'));
+    expect(s.audit.events.at(-1)).toMatchObject({ tenantId: '00000000-0000-4000-8000-000000000006', actorId: 'user-42' });
   });
   it('audit failure aborts the change', async () => {
     const failing: AuditSink = { emit: async () => { throw new Error('db down'); } };
     const store = new InMemoryOrgConfigStore();
     const router = new ModelRouter(aiEnvSchema.parse({}), store, failing);
-    await expect(router.setOrgConfig({ tenantId: 'o1' }, admin('o1'))).rejects.toMatchObject({ code: 'AUDIT_FAILED' });
-    expect(await store.get('o1')).toBeUndefined();
+    await expect(router.setOrgConfig({ tenantId: '00000000-0000-4000-8000-000000000006' }, admin('00000000-0000-4000-8000-000000000006'))).rejects.toMatchObject({ code: 'AUDIT_FAILED' });
+    expect(await store.get('00000000-0000-4000-8000-000000000006')).toBeUndefined();
     const reg = new ProviderRegistry({}, async () => 'k', failing);
     await expect(reg.register(llmCfg('x'), SYSTEM)).rejects.toMatchObject({ code: 'AUDIT_FAILED' });
     expect(reg.getConfig('x')).toBeUndefined();
   });
   it('register requires a system context', async () => {
     const s = await setup({ providers: {}, configs: [] });
-    await expect(s.registry.register(llmCfg('x'), admin('o1') as never)).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    await expect(s.registry.register(llmCfg('x'), admin('00000000-0000-4000-8000-000000000006') as never)).rejects.toMatchObject({ code: 'FORBIDDEN' });
   });
   it('override authorization is server-derived (actor ability), never payload', async () => {
     const s = await setup({ providers: { gemini: fakeLLM('gemini'), alt: fakeLLM('alt') }, configs: [llmCfg('gemini'), llmCfg('alt')] });
     const forged = { provider: 'alt', authorized: true } as never;
-    const out = await s.executor.run({ tenantId: 't', feature: 'summary', promptVersion: 'v', override: forged }, call);
+    const out = await s.executor.run({ tenantId: '00000000-0000-4000-8000-000000000001', feature: 'summary', promptVersion: 'v', override: forged }, call);
     expect(out.status).toBe('failed');
     if (out.status !== 'succeeded') expect(out.errors[0]?.code).toBe('UNAUTHORIZED_OVERRIDE');
   });
@@ -97,7 +97,7 @@ describe('H4: overall deadline across retries', () => {
     const slow = fakeLLM('gemini', () => { n++; return new Promise((_, rej) => setTimeout(() => rej(Object.assign(new Error('x'), { status: 503 })), 30)); });
     const s = await setup({ providers: { gemini: slow }, configs: [llmCfg('gemini', { retryPolicy: { maxAttempts: 5, initialDelayMs: 0, maxDelayMs: 0, backoffMultiplier: 1 } })] });
     const t0 = Date.now();
-    const out = await s.executor.run({ tenantId: 't', feature: 'summary', promptVersion: 'v', overallTimeoutMs: 50 }, call);
+    const out = await s.executor.run({ tenantId: '00000000-0000-4000-8000-000000000001', feature: 'summary', promptVersion: 'v', overallTimeoutMs: 50 }, call);
     expect(out.status).toBe('retryable');
     expect(n).toBeLessThan(5);
     expect(Date.now() - t0).toBeLessThan(500);
@@ -130,14 +130,14 @@ describe('Mediums', () => {
     expect(pulled).toBeLessThan(20);
   });
   it('public errors expose only code + requestId', () => {
-    const e = toPublicError(new AIError('MODEL_ERROR', 'upstream said: key sk-123 invalid'), 'req-1');
-    expect(e).toEqual({ code: 'MODEL_ERROR', requestId: 'req-1', retryable: true });
+    const e = toPublicError(new AIError('MODEL_ERROR', 'upstream said: key sk-123 invalid'), '50000000-0000-4000-8000-000000000002');
+    expect(e).toEqual({ code: 'MODEL_ERROR', requestId: '50000000-0000-4000-8000-000000000002', retryable: true });
     expect(JSON.stringify(e)).not.toContain('sk-123');
   });
   it('job outcomes carry codes only (no provider messages)', async () => {
     const s = await setup({ providers: { gemini: fakeLLM('gemini', () => { throw Object.assign(new Error('secret upstream detail'), { status: 500 }); }) }, configs: [llmCfg('gemini')] });
-    const out = await s.executor.run({ tenantId: 't', feature: 'summary', promptVersion: 'v', requestId: 'rq' }, call);
+    const out = await s.executor.run({ tenantId: '00000000-0000-4000-8000-000000000001', feature: 'summary', promptVersion: 'v', requestId: '50000000-0000-4000-8000-000000000001' }, call);
     expect(JSON.stringify(out)).not.toContain('secret upstream detail');
-    if (out.status !== 'succeeded') expect(out.requestId).toBe('rq');
+    if (out.status !== 'succeeded') expect(out.requestId).toBe('50000000-0000-4000-8000-000000000001');
   });
 });
