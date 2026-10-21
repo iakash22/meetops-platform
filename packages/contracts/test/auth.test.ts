@@ -23,9 +23,11 @@ const session = {
 };
 
 describe('auth requests', () => {
-  it('enforces password length 12..128 and valid email', () => {
+  it('login accepts any non-empty password up to 128; signup enforces 12..128', () => {
     expect(Value.Check(LoginRequest, { email: 'a@b.co', password: pw })).toBe(true);
-    expect(Value.Check(LoginRequest, { email: 'a@b.co', password: 'elevenchars' })).toBe(false);
+    expect(Value.Check(LoginRequest, { email: 'a@b.co', password: 'elevenchars' })).toBe(true);
+    expect(Value.Check(LoginRequest, { email: 'a@b.co', password: '' })).toBe(false);
+    expect(Value.Check(SignupRequest, { name: 'A', email: 'a@b.co', password: 'elevenchars' })).toBe(false);
     expect(Value.Check(LoginRequest, { email: 'a@b.co', password: 'x'.repeat(129) })).toBe(false);
     expect(Value.Check(LoginRequest, { email: 'nope', password: pw })).toBe(false);
   });
