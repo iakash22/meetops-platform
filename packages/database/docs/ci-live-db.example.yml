@@ -1,0 +1,35 @@
+# Example job for DevOps to adopt into .github/workflows (not active here).
+live-db:
+  runs-on: ubuntu-latest
+  services:
+    postgres:
+      image: pgvector/pgvector:pg16
+      env:
+        POSTGRES_PASSWORD: postgres
+      ports: ['5432:5432']
+      options: >-
+        --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 20
+  env:
+    BOOTSTRAP_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/postgres
+    MIGRATOR_PASSWORD: ci_migrator
+    APP_PASSWORD: ci_app
+    RELAY_PASSWORD: ci_relay
+    MIGRATION_DATABASE_URL: postgresql://meetops_migrator:ci_migrator@localhost:5432/meetops
+    DATABASE_URL: postgresql://meetops_app:ci_app@localhost:5432/meetops
+    RLS_TEST_APP_URL: postgresql://meetops_app:ci_app@localhost:5432/meetops
+    RLS_TEST_OWNER_URL: postgresql://meetops_migrator:ci_migrator@localhost:5432/meetops
+    RLS_TEST_RELAY_URL: postgresql://meetops_relay:ci_relay@localhost:5432/meetops
+  steps:
+    - uses: actions/checkout@v4
+    - uses: pnpm/action-setup@v4
+    - uses: actions/setup-node@v4
+      with: { node-version: 20, cache: pnpm }
+    - run: sudo apt-get update && sudo apt-get install -y postgresql-client
+    - run: pnpm install --frozen-lockfile
+    - run: pnpm --filter @meetops/database db:bootstrap
+    - run: pnpm --filter @meetops/database db:migrate:deploy
+    - run: >-
+        pnpm --filter @meetops/database exec prisma migrate diff
+        --from-url "$MIGRATION_DATABASE_URL" --to-schema-datamodel prisma/schema.prisma --exit-code
+    - run: pnpm --filter @meetops/database db:seed && pnpm --filter @meetops/database db:seed
+    - run: pnpm --filter @meetops/database test:live
