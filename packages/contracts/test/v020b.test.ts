@@ -44,7 +44,7 @@ describe('N3 media limits', () => {
     },
   );
   it('recording sessions use the allowlist', () => {
-    const r = { startedAt: '2026-10-21T17:00:00.000Z', source: 'tab' };
+    const r = { startedAt: '2026-10-21T17:00:00.000Z', source: 'tab', meetingId: '00000000-0000-4000-8000-000000000099' };
     expect(Value.Check(InitRecordingSessionRequest, { ...r, mimeType: 'audio/webm;codecs=opus' })).toBe(true);
     expect(Value.Check(InitRecordingSessionRequest, { ...r, mimeType: 'video/quicktime' })).toBe(false);
   });
