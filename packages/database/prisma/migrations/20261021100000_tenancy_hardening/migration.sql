@@ -1,3 +1,5 @@
+-- Hand-edited from `prisma migrate diff` so existing data survives: in-place enum RENAME VALUE,
+-- table/column/index/constraint renames instead of DROP/CREATE, and data backfills.
 -- CreateEnum
 CREATE TYPE "TaskStatus" AS ENUM ('todo', 'in_progress', 'done', 'cancelled');
 
@@ -13,149 +15,85 @@ CREATE TYPE "RecordingStatus" AS ENUM ('uploading', 'uploaded', 'processing', 'r
 -- CreateEnum
 CREATE TYPE "StorageObjectStatus" AS ENUM ('pending_upload', 'uploaded', 'processing', 'ready', 'failed');
 
--- AlterEnum
-BEGIN;
-CREATE TYPE "MembershipRole_new" AS ENUM ('owner', 'admin', 'member', 'viewer');
-ALTER TABLE "memberships" ALTER COLUMN "role" DROP DEFAULT;
-ALTER TABLE "invitations" ALTER COLUMN "role" DROP DEFAULT;
-ALTER TABLE "memberships" ALTER COLUMN "role" TYPE "MembershipRole_new" USING ("role"::text::"MembershipRole_new");
-ALTER TABLE "invitations" ALTER COLUMN "role" TYPE "MembershipRole_new" USING ("role"::text::"MembershipRole_new");
-ALTER TYPE "MembershipRole" RENAME TO "MembershipRole_old";
-ALTER TYPE "MembershipRole_new" RENAME TO "MembershipRole";
-DROP TYPE "MembershipRole_old";
-ALTER TABLE "memberships" ALTER COLUMN "role" SET DEFAULT 'member';
-ALTER TABLE "invitations" ALTER COLUMN "role" SET DEFAULT 'member';
-COMMIT;
+-- AlterEnum (in place: keeps data, defaults and dependent columns)
+ALTER TYPE "MembershipRole" RENAME VALUE 'OWNER' TO 'owner';
+ALTER TYPE "MembershipRole" RENAME VALUE 'ADMIN' TO 'admin';
+ALTER TYPE "MembershipRole" RENAME VALUE 'MEMBER' TO 'member';
+ALTER TYPE "MembershipRole" RENAME VALUE 'VIEWER' TO 'viewer';
 
--- AlterEnum
-BEGIN;
-CREATE TYPE "InvitationStatus_new" AS ENUM ('pending', 'accepted', 'revoked', 'expired');
-ALTER TABLE "invitations" ALTER COLUMN "status" DROP DEFAULT;
-ALTER TABLE "invitations" ALTER COLUMN "status" TYPE "InvitationStatus_new" USING ("status"::text::"InvitationStatus_new");
-ALTER TYPE "InvitationStatus" RENAME TO "InvitationStatus_old";
-ALTER TYPE "InvitationStatus_new" RENAME TO "InvitationStatus";
-DROP TYPE "InvitationStatus_old";
-ALTER TABLE "invitations" ALTER COLUMN "status" SET DEFAULT 'pending';
-COMMIT;
+-- AlterEnum (in place: keeps data, defaults and dependent columns)
+ALTER TYPE "InvitationStatus" RENAME VALUE 'PENDING' TO 'pending';
+ALTER TYPE "InvitationStatus" RENAME VALUE 'ACCEPTED' TO 'accepted';
+ALTER TYPE "InvitationStatus" RENAME VALUE 'REVOKED' TO 'revoked';
+ALTER TYPE "InvitationStatus" RENAME VALUE 'EXPIRED' TO 'expired';
 
--- AlterEnum
-BEGIN;
-CREATE TYPE "ProjectStatus_new" AS ENUM ('active', 'archived');
-ALTER TABLE "projects" ALTER COLUMN "status" DROP DEFAULT;
-ALTER TABLE "projects" ALTER COLUMN "status" TYPE "ProjectStatus_new" USING ("status"::text::"ProjectStatus_new");
-ALTER TYPE "ProjectStatus" RENAME TO "ProjectStatus_old";
-ALTER TYPE "ProjectStatus_new" RENAME TO "ProjectStatus";
-DROP TYPE "ProjectStatus_old";
-ALTER TABLE "projects" ALTER COLUMN "status" SET DEFAULT 'active';
-COMMIT;
+-- AlterEnum (in place: keeps data, defaults and dependent columns)
+ALTER TYPE "ProjectStatus" RENAME VALUE 'ACTIVE' TO 'active';
+ALTER TYPE "ProjectStatus" RENAME VALUE 'ARCHIVED' TO 'archived';
 
 -- AlterEnum
 BEGIN;
 CREATE TYPE "MeetingStatus_new" AS ENUM ('scheduled', 'recording', 'processing', 'completed', 'failed');
 ALTER TABLE "meetings" ALTER COLUMN "status" DROP DEFAULT;
-ALTER TABLE "meetings" ALTER COLUMN "status" TYPE "MeetingStatus_new" USING ("status"::text::"MeetingStatus_new");
+ALTER TABLE "meetings" ALTER COLUMN "status" TYPE "MeetingStatus_new" USING ((CASE "status"::text WHEN 'UPLOADED' THEN 'processing' WHEN 'TRANSCRIBING' THEN 'processing' ELSE lower("status"::text) END)::"MeetingStatus_new");
 ALTER TYPE "MeetingStatus" RENAME TO "MeetingStatus_old";
 ALTER TYPE "MeetingStatus_new" RENAME TO "MeetingStatus";
 DROP TYPE "MeetingStatus_old";
 ALTER TABLE "meetings" ALTER COLUMN "status" SET DEFAULT 'scheduled';
 COMMIT;
 
--- AlterEnum
-BEGIN;
-CREATE TYPE "MeetingParticipantRole_new" AS ENUM ('host', 'attendee', 'guest');
-ALTER TABLE "meeting_participants" ALTER COLUMN "role" DROP DEFAULT;
-ALTER TABLE "meeting_participants" ALTER COLUMN "role" TYPE "MeetingParticipantRole_new" USING ("role"::text::"MeetingParticipantRole_new");
-ALTER TYPE "MeetingParticipantRole" RENAME TO "MeetingParticipantRole_old";
-ALTER TYPE "MeetingParticipantRole_new" RENAME TO "MeetingParticipantRole";
-DROP TYPE "MeetingParticipantRole_old";
-ALTER TABLE "meeting_participants" ALTER COLUMN "role" SET DEFAULT 'attendee';
-COMMIT;
+-- AlterEnum (in place: keeps data, defaults and dependent columns)
+ALTER TYPE "MeetingParticipantRole" RENAME VALUE 'HOST' TO 'host';
+ALTER TYPE "MeetingParticipantRole" RENAME VALUE 'ATTENDEE' TO 'attendee';
+ALTER TYPE "MeetingParticipantRole" RENAME VALUE 'GUEST' TO 'guest';
 
--- AlterEnum
-BEGIN;
-CREATE TYPE "TranscriptStatus_new" AS ENUM ('pending', 'processing', 'ready', 'failed');
-ALTER TABLE "transcripts" ALTER COLUMN "status" DROP DEFAULT;
-ALTER TABLE "transcripts" ALTER COLUMN "status" TYPE "TranscriptStatus_new" USING ("status"::text::"TranscriptStatus_new");
-ALTER TYPE "TranscriptStatus" RENAME TO "TranscriptStatus_old";
-ALTER TYPE "TranscriptStatus_new" RENAME TO "TranscriptStatus";
-DROP TYPE "TranscriptStatus_old";
-ALTER TABLE "transcripts" ALTER COLUMN "status" SET DEFAULT 'pending';
-COMMIT;
+-- AlterEnum (in place: keeps data, defaults and dependent columns)
+ALTER TYPE "TranscriptStatus" RENAME VALUE 'PENDING' TO 'pending';
+ALTER TYPE "TranscriptStatus" RENAME VALUE 'PROCESSING' TO 'processing';
+ALTER TYPE "TranscriptStatus" RENAME VALUE 'READY' TO 'ready';
+ALTER TYPE "TranscriptStatus" RENAME VALUE 'FAILED' TO 'failed';
 
--- AlterEnum
-BEGIN;
-CREATE TYPE "ReportStatus_new" AS ENUM ('draft', 'published', 'archived');
-ALTER TABLE "reports" ALTER COLUMN "status" DROP DEFAULT;
-ALTER TABLE "reports" ALTER COLUMN "status" TYPE "ReportStatus_new" USING ("status"::text::"ReportStatus_new");
-ALTER TYPE "ReportStatus" RENAME TO "ReportStatus_old";
-ALTER TYPE "ReportStatus_new" RENAME TO "ReportStatus";
-DROP TYPE "ReportStatus_old";
-ALTER TABLE "reports" ALTER COLUMN "status" SET DEFAULT 'draft';
-COMMIT;
+-- AlterEnum (in place: keeps data, defaults and dependent columns)
+ALTER TYPE "ReportStatus" RENAME VALUE 'DRAFT' TO 'draft';
+ALTER TYPE "ReportStatus" RENAME VALUE 'PUBLISHED' TO 'published';
+ALTER TYPE "ReportStatus" RENAME VALUE 'ARCHIVED' TO 'archived';
 
--- AlterEnum
-BEGIN;
-CREATE TYPE "ExtractedTaskStatus_new" AS ENUM ('pending_review', 'approved', 'rejected', 'converted');
-ALTER TABLE "extracted_tasks" ALTER COLUMN "status" DROP DEFAULT;
-ALTER TABLE "extracted_tasks" ALTER COLUMN "status" TYPE "ExtractedTaskStatus_new" USING ("status"::text::"ExtractedTaskStatus_new");
-ALTER TYPE "ExtractedTaskStatus" RENAME TO "ExtractedTaskStatus_old";
-ALTER TYPE "ExtractedTaskStatus_new" RENAME TO "ExtractedTaskStatus";
-DROP TYPE "ExtractedTaskStatus_old";
-ALTER TABLE "extracted_tasks" ALTER COLUMN "status" SET DEFAULT 'pending_review';
-COMMIT;
+-- AlterEnum (in place: keeps data, defaults and dependent columns)
+ALTER TYPE "ExtractedTaskStatus" RENAME VALUE 'PENDING_REVIEW' TO 'pending_review';
+ALTER TYPE "ExtractedTaskStatus" RENAME VALUE 'APPROVED' TO 'approved';
+ALTER TYPE "ExtractedTaskStatus" RENAME VALUE 'REJECTED' TO 'rejected';
+ALTER TYPE "ExtractedTaskStatus" RENAME VALUE 'CONVERTED' TO 'converted';
 
--- AlterEnum
-BEGIN;
-CREATE TYPE "TaskPriority_new" AS ENUM ('low', 'medium', 'high', 'urgent');
-ALTER TABLE "internal_tasks" ALTER COLUMN "priority" DROP DEFAULT;
-ALTER TABLE "extracted_tasks" ALTER COLUMN "priority" DROP DEFAULT;
-ALTER TABLE "extracted_tasks" ALTER COLUMN "priority" TYPE "TaskPriority_new" USING ("priority"::text::"TaskPriority_new");
-ALTER TABLE "internal_tasks" ALTER COLUMN "priority" TYPE "TaskPriority_new" USING ("priority"::text::"TaskPriority_new");
-ALTER TYPE "TaskPriority" RENAME TO "TaskPriority_old";
-ALTER TYPE "TaskPriority_new" RENAME TO "TaskPriority";
-DROP TYPE "TaskPriority_old";
-ALTER TABLE "extracted_tasks" ALTER COLUMN "priority" SET DEFAULT 'medium';
-COMMIT;
+-- AlterEnum (in place: keeps data, defaults and dependent columns)
+ALTER TYPE "TaskPriority" RENAME VALUE 'LOW' TO 'low';
+ALTER TYPE "TaskPriority" RENAME VALUE 'MEDIUM' TO 'medium';
+ALTER TYPE "TaskPriority" RENAME VALUE 'HIGH' TO 'high';
+ALTER TYPE "TaskPriority" RENAME VALUE 'URGENT' TO 'urgent';
 
--- AlterEnum
-BEGIN;
-CREATE TYPE "ApprovalDecision_new" AS ENUM ('approved', 'rejected', 'changes_requested');
-ALTER TABLE "task_approvals" ALTER COLUMN "decision" TYPE "ApprovalDecision_new" USING ("decision"::text::"ApprovalDecision_new");
-ALTER TYPE "ApprovalDecision" RENAME TO "ApprovalDecision_old";
-ALTER TYPE "ApprovalDecision_new" RENAME TO "ApprovalDecision";
-DROP TYPE "ApprovalDecision_old";
-COMMIT;
+-- AlterEnum (in place: keeps data, defaults and dependent columns)
+ALTER TYPE "ApprovalDecision" RENAME VALUE 'APPROVED' TO 'approved';
+ALTER TYPE "ApprovalDecision" RENAME VALUE 'REJECTED' TO 'rejected';
+ALTER TYPE "ApprovalDecision" RENAME VALUE 'CHANGES_REQUESTED' TO 'changes_requested';
 
--- AlterEnum
-BEGIN;
-CREATE TYPE "AiRunStatus_new" AS ENUM ('queued', 'running', 'succeeded', 'failed', 'cancelled');
-ALTER TABLE "ai_runs" ALTER COLUMN "status" DROP DEFAULT;
-ALTER TABLE "ai_runs" ALTER COLUMN "status" TYPE "AiRunStatus_new" USING ("status"::text::"AiRunStatus_new");
-ALTER TYPE "AiRunStatus" RENAME TO "AiRunStatus_old";
-ALTER TYPE "AiRunStatus_new" RENAME TO "AiRunStatus";
-DROP TYPE "AiRunStatus_old";
-ALTER TABLE "ai_runs" ALTER COLUMN "status" SET DEFAULT 'queued';
-COMMIT;
+-- AlterEnum (in place: keeps data, defaults and dependent columns)
+ALTER TYPE "AiRunStatus" RENAME VALUE 'QUEUED' TO 'queued';
+ALTER TYPE "AiRunStatus" RENAME VALUE 'RUNNING' TO 'running';
+ALTER TYPE "AiRunStatus" RENAME VALUE 'SUCCEEDED' TO 'succeeded';
+ALTER TYPE "AiRunStatus" RENAME VALUE 'FAILED' TO 'failed';
+ALTER TYPE "AiRunStatus" RENAME VALUE 'CANCELLED' TO 'cancelled';
 
--- AlterEnum
-BEGIN;
-CREATE TYPE "AiRunKind_new" AS ENUM ('transcription', 'summary', 'task_extraction', 'embedding', 'other');
-ALTER TABLE "ai_runs" ALTER COLUMN "kind" TYPE "AiRunKind_new" USING ("kind"::text::"AiRunKind_new");
-ALTER TYPE "AiRunKind" RENAME TO "AiRunKind_old";
-ALTER TYPE "AiRunKind_new" RENAME TO "AiRunKind";
-DROP TYPE "AiRunKind_old";
-COMMIT;
+-- AlterEnum (in place: keeps data, defaults and dependent columns)
+ALTER TYPE "AiRunKind" RENAME VALUE 'TRANSCRIPTION' TO 'transcription';
+ALTER TYPE "AiRunKind" RENAME VALUE 'SUMMARY' TO 'summary';
+ALTER TYPE "AiRunKind" RENAME VALUE 'TASK_EXTRACTION' TO 'task_extraction';
+ALTER TYPE "AiRunKind" RENAME VALUE 'EMBEDDING' TO 'embedding';
+ALTER TYPE "AiRunKind" RENAME VALUE 'OTHER' TO 'other';
 
--- AlterEnum
-BEGIN;
-CREATE TYPE "OutboxStatus_new" AS ENUM ('pending', 'processing', 'published', 'failed');
-ALTER TABLE "outbox_events" ALTER COLUMN "status" DROP DEFAULT;
-ALTER TABLE "outbox_events" ALTER COLUMN "status" TYPE "OutboxStatus_new" USING ("status"::text::"OutboxStatus_new");
-ALTER TYPE "OutboxStatus" RENAME TO "OutboxStatus_old";
-ALTER TYPE "OutboxStatus_new" RENAME TO "OutboxStatus";
-DROP TYPE "OutboxStatus_old";
-ALTER TABLE "outbox_events" ALTER COLUMN "status" SET DEFAULT 'pending';
-COMMIT;
+-- AlterEnum (in place: keeps data, defaults and dependent columns)
+ALTER TYPE "OutboxStatus" RENAME VALUE 'PENDING' TO 'pending';
+ALTER TYPE "OutboxStatus" RENAME VALUE 'PROCESSING' TO 'processing';
+ALTER TYPE "OutboxStatus" RENAME VALUE 'PUBLISHED' TO 'published';
+ALTER TYPE "OutboxStatus" RENAME VALUE 'FAILED' TO 'failed';
 
 -- DropForeignKey
 ALTER TABLE "meetings" DROP CONSTRAINT "meetings_project_id_fkey";
@@ -248,9 +186,11 @@ DROP INDEX "file_objects_bucket_key_key";
 ALTER TABLE "memberships" ALTER COLUMN "role" SET DEFAULT 'member';
 
 -- AlterTable
-ALTER TABLE "sessions" ADD COLUMN     "absolute_expires_at" TIMESTAMPTZ(3) NOT NULL,
+ALTER TABLE "sessions" ADD COLUMN     "absolute_expires_at" TIMESTAMPTZ(3),
 ADD COLUMN     "auth_level" TEXT NOT NULL DEFAULT 'password',
 ADD COLUMN     "last_seen_at" TIMESTAMPTZ(3) NOT NULL DEFAULT CURRENT_TIMESTAMP;
+UPDATE "sessions" SET "absolute_expires_at" = "expires_at";
+ALTER TABLE "sessions" ALTER COLUMN "absolute_expires_at" SET NOT NULL;
 
 -- AlterTable
 ALTER TABLE "invitations" ALTER COLUMN "role" SET DEFAULT 'member',
@@ -258,65 +198,6 @@ ALTER COLUMN "status" SET DEFAULT 'pending';
 
 -- AlterTable
 ALTER TABLE "projects" ALTER COLUMN "status" SET DEFAULT 'active';
-
--- AlterTable
-ALTER TABLE "meetings" DROP COLUMN "recording_file_id",
-ADD COLUMN     "source" "MeetingSource" NOT NULL DEFAULT 'upload',
-ALTER COLUMN "status" SET DEFAULT 'scheduled';
-
--- AlterTable
-ALTER TABLE "meeting_participants" ALTER COLUMN "role" SET DEFAULT 'attendee';
-
--- AlterTable
-ALTER TABLE "file_objects" DROP COLUMN "key",
-ADD COLUMN     "channels" INTEGER,
-ADD COLUMN     "chunk_index" INTEGER,
-ADD COLUMN     "duration_seconds" DOUBLE PRECISION,
-ADD COLUMN     "etag" TEXT,
-ADD COLUMN     "format" TEXT,
-ADD COLUMN     "kind" "StorageObjectKind" NOT NULL DEFAULT 'raw',
-ADD COLUMN     "meeting_id" UUID,
-ADD COLUMN     "parent_object_id" UUID,
-ADD COLUMN     "provider" TEXT NOT NULL DEFAULT 's3',
-ADD COLUMN     "sample_rate" INTEGER,
-ADD COLUMN     "start_seconds" DOUBLE PRECISION,
-ADD COLUMN     "status" "StorageObjectStatus" NOT NULL DEFAULT 'pending_upload',
-ADD COLUMN     "storage_key" TEXT NOT NULL,
-ADD COLUMN     "upload_id" TEXT,
-ALTER COLUMN "size_bytes" DROP NOT NULL;
-
--- AlterTable
-ALTER TABLE "transcripts" DROP COLUMN "source_file_id",
-ADD COLUMN     "recording_id" UUID,
-ALTER COLUMN "status" SET DEFAULT 'pending';
-
--- AlterTable
-ALTER TABLE "reports" ALTER COLUMN "status" SET DEFAULT 'draft';
-
--- AlterTable
-ALTER TABLE "extracted_tasks" ALTER COLUMN "priority" SET DEFAULT 'medium',
-ALTER COLUMN "status" SET DEFAULT 'pending_review';
-
--- AlterTable
-ALTER TABLE "ai_runs" ALTER COLUMN "status" SET DEFAULT 'queued';
-
--- AlterTable
-ALTER TABLE "outbox_events" ALTER COLUMN "status" SET DEFAULT 'pending';
-
--- DropTable
-DROP TABLE "internal_tasks";
-
--- DropTable
-DROP TABLE "external_issue_links";
-
--- DropTable
-DROP TABLE "audit_logs";
-
--- DropEnum
-DROP TYPE "InternalTaskStatus";
-
--- DropEnum
-DROP TYPE "ExternalProvider";
 
 -- CreateTable
 CREATE TABLE "recordings" (
@@ -333,59 +214,102 @@ CREATE TABLE "recordings" (
     CONSTRAINT "recordings_pkey" PRIMARY KEY ("id")
 );
 
--- CreateTable
-CREATE TABLE "tasks" (
-    "id" UUID NOT NULL,
-    "org_id" UUID NOT NULL,
-    "project_id" UUID,
-    "extracted_task_id" UUID,
-    "assignee_id" UUID,
-    "created_by_id" UUID,
-    "title" TEXT NOT NULL,
-    "description" TEXT,
-    "status" "TaskStatus" NOT NULL DEFAULT 'todo',
-    "priority" "TaskPriority" NOT NULL DEFAULT 'medium',
-    "meeting_id" UUID,
-    "due_at" TIMESTAMPTZ(3),
-    "completed_at" TIMESTAMPTZ(3),
-    "created_at" TIMESTAMPTZ(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    "updated_at" TIMESTAMPTZ(3) NOT NULL,
-    "deleted_at" TIMESTAMPTZ(3),
+-- Data: one recording per meeting recording file, and per distinct transcript source file.
+INSERT INTO "recordings" ("id", "org_id", "meeting_id", "file_object_id", "status", "created_at", "updated_at")
+SELECT gen_random_uuid(), m."org_id", m."id", m."recording_file_id", 'ready', now(), now()
+FROM "meetings" m WHERE m."recording_file_id" IS NOT NULL;
+INSERT INTO "recordings" ("id", "org_id", "meeting_id", "file_object_id", "status", "created_at", "updated_at")
+SELECT DISTINCT ON (t."source_file_id") gen_random_uuid(), t."org_id", t."meeting_id", t."source_file_id", 'ready', now(), now()
+FROM "transcripts" t
+WHERE t."source_file_id" IS NOT NULL
+  AND NOT EXISTS (SELECT 1 FROM "recordings" r WHERE r."file_object_id" = t."source_file_id");
 
-    CONSTRAINT "tasks_pkey" PRIMARY KEY ("id")
-);
+-- AlterTable
+ALTER TABLE "meetings" DROP COLUMN "recording_file_id",
+ADD COLUMN     "source" "MeetingSource" NOT NULL DEFAULT 'upload',
+ALTER COLUMN "status" SET DEFAULT 'scheduled';
 
--- CreateTable
-CREATE TABLE "integration_issues" (
-    "id" UUID NOT NULL,
-    "org_id" UUID NOT NULL,
-    "task_id" UUID NOT NULL,
-    "integration" TEXT NOT NULL,
-    "external_id" TEXT NOT NULL,
-    "external_url" TEXT,
-    "synced_at" TIMESTAMPTZ(3),
-    "created_at" TIMESTAMPTZ(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    "updated_at" TIMESTAMPTZ(3) NOT NULL,
+-- AlterTable
+ALTER TABLE "meeting_participants" ALTER COLUMN "role" SET DEFAULT 'attendee';
 
-    CONSTRAINT "integration_issues_pkey" PRIMARY KEY ("id")
-);
+-- AlterTable
+ALTER TABLE "file_objects" RENAME COLUMN "key" TO "storage_key";
+ALTER TABLE "file_objects" ADD COLUMN     "channels" INTEGER,
+ADD COLUMN     "chunk_index" INTEGER,
+ADD COLUMN     "duration_seconds" DOUBLE PRECISION,
+ADD COLUMN     "etag" TEXT,
+ADD COLUMN     "format" TEXT,
+ADD COLUMN     "kind" "StorageObjectKind" NOT NULL DEFAULT 'raw',
+ADD COLUMN     "meeting_id" UUID,
+ADD COLUMN     "parent_object_id" UUID,
+ADD COLUMN     "provider" TEXT NOT NULL DEFAULT 's3',
+ADD COLUMN     "sample_rate" INTEGER,
+ADD COLUMN     "start_seconds" DOUBLE PRECISION,
+ADD COLUMN     "status" "StorageObjectStatus" NOT NULL DEFAULT 'pending_upload',
+ADD COLUMN     "upload_id" TEXT,
+ALTER COLUMN "size_bytes" DROP NOT NULL;
+UPDATE "file_objects" f SET "meeting_id" = r."meeting_id", "status" = 'ready' FROM "recordings" r WHERE r."file_object_id" = f."id";
+UPDATE "file_objects" SET "status" = 'uploaded' WHERE "status" = 'pending_upload';
 
--- CreateTable
-CREATE TABLE "audit_events" (
-    "id" UUID NOT NULL,
-    "org_id" UUID NOT NULL,
-    "actor_id" UUID,
-    "actor_type" TEXT NOT NULL DEFAULT 'user',
-    "action" TEXT NOT NULL,
-    "target_type" TEXT NOT NULL,
-    "target_id" TEXT,
-    "metadata" JSONB NOT NULL DEFAULT '{}',
-    "ip_address" TEXT,
-    "user_agent" TEXT,
-    "created_at" TIMESTAMPTZ(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+-- AlterTable
+ALTER TABLE "transcripts" ADD COLUMN     "recording_id" UUID,
+ALTER COLUMN "status" SET DEFAULT 'pending';
+UPDATE "transcripts" t SET "recording_id" = r."id" FROM "recordings" r WHERE r."file_object_id" = t."source_file_id";
+ALTER TABLE "transcripts" DROP COLUMN "source_file_id";
 
-    CONSTRAINT "audit_events_pkey" PRIMARY KEY ("id")
-);
+-- AlterTable
+ALTER TABLE "reports" ALTER COLUMN "status" SET DEFAULT 'draft';
+
+-- AlterTable
+ALTER TABLE "extracted_tasks" ALTER COLUMN "priority" SET DEFAULT 'medium',
+ALTER COLUMN "status" SET DEFAULT 'pending_review';
+
+-- AlterTable
+ALTER TABLE "ai_runs" ALTER COLUMN "status" SET DEFAULT 'queued';
+
+-- AlterTable
+ALTER TABLE "outbox_events" ALTER COLUMN "status" SET DEFAULT 'pending';
+
+
+-- Rename internal_tasks -> tasks (keeps rows)
+ALTER TABLE "internal_tasks" ALTER COLUMN "status" DROP DEFAULT;
+ALTER TABLE "internal_tasks" ALTER COLUMN "status" TYPE "TaskStatus"
+  USING ((CASE "status"::text WHEN 'BLOCKED' THEN 'in_progress' ELSE lower("status"::text) END)::"TaskStatus");
+ALTER TABLE "internal_tasks" ALTER COLUMN "status" SET DEFAULT 'todo';
+ALTER TABLE "internal_tasks" ALTER COLUMN "priority" SET DEFAULT 'medium';
+DROP TYPE "InternalTaskStatus";
+ALTER TABLE "internal_tasks" RENAME TO "tasks";
+ALTER TABLE "tasks" RENAME CONSTRAINT "internal_tasks_pkey" TO "tasks_pkey";
+ALTER TABLE "tasks" RENAME COLUMN "due_date" TO "due_at";
+ALTER TABLE "tasks" ADD COLUMN "meeting_id" UUID;
+ALTER INDEX "internal_tasks_extracted_task_id_key" RENAME TO "tasks_extracted_task_id_key";
+ALTER INDEX "internal_tasks_org_id_status_idx" RENAME TO "tasks_org_id_status_idx";
+ALTER INDEX "internal_tasks_org_id_project_id_idx" RENAME TO "tasks_org_id_project_id_idx";
+ALTER INDEX "internal_tasks_org_id_assignee_id_idx" RENAME TO "tasks_org_id_assignee_id_idx";
+
+-- Rename external_issue_links -> integration_issues (keeps rows)
+ALTER TABLE "external_issue_links" RENAME TO "integration_issues";
+ALTER TABLE "integration_issues" RENAME CONSTRAINT "external_issue_links_pkey" TO "integration_issues_pkey";
+ALTER TABLE "integration_issues" RENAME COLUMN "internal_task_id" TO "task_id";
+ALTER TABLE "integration_issues" ALTER COLUMN "provider" TYPE TEXT USING lower("provider"::text);
+ALTER TABLE "integration_issues" RENAME COLUMN "provider" TO "integration";
+DROP TYPE "ExternalProvider";
+ALTER INDEX "external_issue_links_org_id_internal_task_id_idx" RENAME TO "integration_issues_org_id_task_id_idx";
+ALTER INDEX "external_issue_links_org_id_provider_external_id_key" RENAME TO "integration_issues_org_id_integration_external_id_key";
+
+-- Rename audit_logs -> audit_events (keeps rows)
+ALTER TABLE "audit_logs" RENAME TO "audit_events";
+ALTER TABLE "audit_events" RENAME CONSTRAINT "audit_logs_pkey" TO "audit_events_pkey";
+ALTER TABLE "audit_events" RENAME COLUMN "entity_type" TO "target_type";
+ALTER TABLE "audit_events" ALTER COLUMN "entity_id" TYPE TEXT USING "entity_id"::text;
+ALTER TABLE "audit_events" RENAME COLUMN "entity_id" TO "target_id";
+ALTER TABLE "audit_events" ADD COLUMN "actor_type" TEXT NOT NULL DEFAULT 'user',
+ADD COLUMN "user_agent" TEXT;
+UPDATE "audit_events" SET "metadata" = '{}' WHERE "metadata" IS NULL;
+ALTER TABLE "audit_events" ALTER COLUMN "metadata" SET DEFAULT '{}',
+ALTER COLUMN "metadata" SET NOT NULL;
+ALTER INDEX "audit_logs_org_id_created_at_idx" RENAME TO "audit_events_org_id_created_at_idx";
+ALTER INDEX "audit_logs_org_id_entity_type_entity_id_idx" RENAME TO "audit_events_org_id_target_type_target_id_idx";
 
 -- CreateIndex
 CREATE UNIQUE INDEX "recordings_file_object_id_key" ON "recordings"("file_object_id");
@@ -400,37 +324,13 @@ CREATE UNIQUE INDEX "recordings_org_id_id_key" ON "recordings"("org_id", "id");
 CREATE UNIQUE INDEX "recordings_org_id_file_object_id_key" ON "recordings"("org_id", "file_object_id");
 
 -- CreateIndex
-CREATE UNIQUE INDEX "tasks_extracted_task_id_key" ON "tasks"("extracted_task_id");
-
--- CreateIndex
-CREATE INDEX "tasks_org_id_status_idx" ON "tasks"("org_id", "status");
-
--- CreateIndex
-CREATE INDEX "tasks_org_id_project_id_idx" ON "tasks"("org_id", "project_id");
-
--- CreateIndex
-CREATE INDEX "tasks_org_id_assignee_id_idx" ON "tasks"("org_id", "assignee_id");
-
--- CreateIndex
 CREATE UNIQUE INDEX "tasks_org_id_id_key" ON "tasks"("org_id", "id");
 
 -- CreateIndex
 CREATE UNIQUE INDEX "tasks_org_id_extracted_task_id_key" ON "tasks"("org_id", "extracted_task_id");
 
 -- CreateIndex
-CREATE INDEX "integration_issues_org_id_task_id_idx" ON "integration_issues"("org_id", "task_id");
-
--- CreateIndex
-CREATE UNIQUE INDEX "integration_issues_org_id_integration_external_id_key" ON "integration_issues"("org_id", "integration", "external_id");
-
--- CreateIndex
 CREATE UNIQUE INDEX "integration_issues_org_id_id_key" ON "integration_issues"("org_id", "id");
-
--- CreateIndex
-CREATE INDEX "audit_events_org_id_created_at_idx" ON "audit_events"("org_id", "created_at");
-
--- CreateIndex
-CREATE INDEX "audit_events_org_id_target_type_target_id_idx" ON "audit_events"("org_id", "target_type", "target_id");
 
 -- CreateIndex
 CREATE INDEX "audit_events_org_id_actor_id_idx" ON "audit_events"("org_id", "actor_id");
