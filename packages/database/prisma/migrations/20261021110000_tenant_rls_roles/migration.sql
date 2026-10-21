@@ -3,17 +3,27 @@
 -- Passwords/LOGIN for these roles are provisioned out of band (infra/secrets), never in migrations.
 
 -- 1. Roles ---------------------------------------------------------------
+-- Roles are cluster-level. Create them here only when the migrating role may (superuser or
+-- CREATEROLE, e.g. local dev); otherwise infra/bootstrap (scripts/bootstrap-roles.sql) must have
+-- created them. Either way, assert the security attributes and fail the migration if wrong.
 DO $$
+DECLARE can_create boolean;
 BEGIN
+  SELECT rolsuper OR rolcreaterole INTO can_create FROM pg_roles WHERE rolname = current_user;
   IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'meetops_migrator') THEN
-    CREATE ROLE meetops_migrator NOLOGIN NOSUPERUSER NOBYPASSRLS;
+    IF can_create THEN CREATE ROLE meetops_migrator NOLOGIN NOSUPERUSER NOBYPASSRLS;
+    ELSE RAISE EXCEPTION 'role meetops_migrator missing: run scripts/bootstrap-roles.sql first'; END IF;
   END IF;
   IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'meetops_app') THEN
-    CREATE ROLE meetops_app NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS;
+    IF can_create THEN CREATE ROLE meetops_app NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS;
+    ELSE RAISE EXCEPTION 'role meetops_app missing: run scripts/bootstrap-roles.sql first'; END IF;
+  END IF;
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'meetops_app'
+             AND (rolsuper OR rolbypassrls OR rolcreaterole OR rolcreatedb)) THEN
+    RAISE EXCEPTION 'meetops_app must be NOSUPERUSER NOBYPASSRLS NOCREATEROLE NOCREATEDB';
   END IF;
 END
 $$;
-ALTER ROLE meetops_app NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE;
 
 -- 2. Ownership: schema objects belong to meetops_migrator (best effort when the
 --    migration runs as another role that is allowed to hand objects over).
