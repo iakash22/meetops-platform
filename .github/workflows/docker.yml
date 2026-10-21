@@ -16,6 +16,8 @@ jobs:
   build:
     name: Build ${{ matrix.image }} image
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     strategy:
       fail-fast: false
       matrix:
