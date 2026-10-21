@@ -10,7 +10,8 @@ import {
   chunkAudio,
   normalizeToWav,
   parseProbeOutput,
-  probeMedia
+  probeMedia,
+  runProcess
 } from '../src/index.js';
 
 function has(bin: string): boolean {
@@ -45,9 +46,13 @@ describe('pure helpers', () => {
     const a = buildNormalizeArgs('in.mp4', 'out.wav');
     expect(a.join(' ')).toContain('-ac 1 -ar 16000 -c:a pcm_s16le -f wav out.wav');
     expect(a).toContain('-vn');
+    expect(a.join(' ')).toContain('-protocol_whitelist file,pipe -i in.mp4');
   });
   it('builds chunk args', () => {
     expect(buildChunkArgs('in.wav', '/o', 30, 'c').join(' ')).toContain('-f segment -segment_time 30');
+  });
+  it('caps stdout and kills the process', async () => {
+    await expect(runProcess('node', ['-e', 'process.stdout.write("x".repeat(5*1024*1024))'], { timeoutMs: 10000 })).rejects.toThrow(/exceeded/);
   });
   it('reports a missing binary as FfmpegError', async () => {
     await expect(probeMedia('x', { ffprobePath: '/nonexistent/ffprobe' })).rejects.toThrow(FfmpegError);
@@ -77,6 +82,10 @@ describe.skipIf(!HAS_FFMPEG)('with real ffmpeg', () => {
     const total = chunks.reduce((s, c) => s + c.durationSeconds, 0);
     expect(total).toBeCloseTo(n.durationSeconds, 0);
   }, 60000);
+
+  it('refuses network inputs via protocol whitelist', async () => {
+    await expect(probeMedia('http://127.0.0.1:9/x.mp3')).rejects.toThrow(FfmpegError);
+  });
 
   it('fails cleanly on a corrupt input', async () => {
     await expect(normalizeToWav(path.join(dir, 'missing.mp3'), path.join(dir, 'x.wav'))).rejects.toThrow(FfmpegError);
