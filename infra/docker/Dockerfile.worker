@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.7
 # MeetOps AI — background worker (@meetops/worker, apps/worker; BullMQ on Redis).
-# Includes FFmpeg + ffprobe (pinned) for media processing. Build context: repository root.
+# Includes FFmpeg + ffprobe + libopus (pinned) for media processing. Build context: repository root.
 #   docker build -f infra/docker/Dockerfile.worker -t meetops/worker .
 ARG NODE_VERSION=20.20.2
 
@@ -38,17 +38,22 @@ FROM node:${NODE_VERSION}-bookworm-slim AS runtime
 # when Debian ships a fix (see docs/12-security: pinned, patched FFmpeg).
 # OpenSSL is required by the Prisma query engine.
 ARG FFMPEG_VERSION=7:5.1.9-0+deb12u1
+# Opus codec (libavcodec59 links it); pinned bookworm build.
+ARG LIBOPUS_VERSION=1.3.1-3
 # hadolint ignore=DL3008
 RUN apt-get update \
- && apt-get install -y --no-install-recommends "ffmpeg=${FFMPEG_VERSION}" tini openssl ca-certificates \
+ && apt-get install -y --no-install-recommends "ffmpeg=${FFMPEG_VERSION}" "libopus0=${LIBOPUS_VERSION}" tini openssl ca-certificates \
  && rm -rf /var/lib/apt/lists/*
 ENV NODE_ENV=production \
     FFMPEG_PATH=/usr/bin/ffmpeg \
     FFPROBE_PATH=/usr/bin/ffprobe \
-    MEDIA_WORK_DIR=/tmp/work
+    MEDIA_TMP_DIR=/tmp/work
 # Writable FFmpeg scratch dir (mounted as tmpfs in compose; root FS is read-only).
 RUN mkdir -p /tmp/work && chown node:node /tmp/work && chmod 0700 /tmp/work \
- && ffmpeg -version >/dev/null && ffprobe -version >/dev/null
+ && ffmpeg -hide_banner -version >/dev/null \
+ && ffprobe -hide_banner -version >/dev/null \
+ && ffmpeg -hide_banner -encoders 2>/dev/null | grep -q libopus \
+ && ffmpeg -hide_banner -decoders 2>/dev/null | grep -q libopus
 WORKDIR /app
 COPY --from=build --chown=node:node /out ./
 USER node
