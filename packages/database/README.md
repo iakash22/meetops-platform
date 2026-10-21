@@ -4,7 +4,7 @@ Prisma schema, migrations, seed and tenant-safe client for MeetOps (PostgreSQL 1
 
 ## Public API
 
-`createPrismaClient`, `getPrismaClient`, `disconnectPrismaClient`, `withOrgContext(orgId, fn, { client?, userId?, timeoutMs? })`, plus the types `DatabaseClient`, `DatabaseTransaction` and `OrgContextOptions`. Every tenant query must run inside `withOrgContext`: forced RLS returns no rows without it.
+`createPrismaClient`, `getPrismaClient`, `disconnectPrismaClient`, `withOrgContext(organizationId, fn, { client?, userId?, timeoutMs? })`, plus the types `DatabaseClient`, `DatabaseTransaction` and `OrgContextOptions`. Every tenant query must run inside `withOrgContext`: forced RLS returns no rows without it.
 
 ## Roles and env
 
