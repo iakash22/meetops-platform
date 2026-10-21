@@ -2,7 +2,7 @@ import type { ChunkStore } from './chunk-store.js';
 import { drainQueue } from './drain.js';
 import type { StorageEvent } from './messages.js';
 import { MAX_CHUNK_BYTES, MAX_RECORDING_CHUNKS } from './contracts.js';
-import { splitForUpload, toIsoTimestamp, type UploadClient } from './upload.js';
+import { sha256Hex, splitForUpload, toIsoTimestamp, type UploadClient } from './upload.js';
 
 export const MIME_TYPE = 'audio/webm;codecs=opus';
 export const TIMESLICE_MS = 5000;
@@ -79,8 +79,10 @@ export async function startRecording(opts: {
           data: part,
           mimeType: MIME_TYPE,
           createdAt: now(),
+          sha256: await sha256Hex(part),
         });
         if (!res.stored) {
+          await opts.store.markIncomplete(sessionId);
           opts.events.onStorage({ kind: 'refused', seq: mySeq });
           continue;
         }
@@ -89,6 +91,7 @@ export async function startRecording(opts: {
             kind: 'evicted',
             count: res.evictedCount,
             bytes: res.evictedBytes,
+            lostPending: res.lostPending,
           });
         }
         opts.events.onChunk(mySeq);

@@ -49,7 +49,7 @@ describe('startRecording', () => {
     const store = await newStore();
     const client = new StubUploadClient();
     const init = vi.spyOn(client, 'initSession');
-    const put = vi.spyOn(client, 'putChunk');
+    const put = vi.spyOn(client, 'storage');
     const complete = vi.spyOn(client, 'complete');
     const rec = new FakeRecorder();
     const { stream, track } = fakeStream();
@@ -81,7 +81,14 @@ describe('startRecording', () => {
     expect(ev.onChunk.mock.calls.map((c) => c[0])).toEqual([0, 1]);
     expect(put).toHaveBeenCalledTimes(2);
     expect([...client.sessions.get(h.sessionId)!.chunks.keys()]).toEqual([0, 1]);
-    expect(complete).toHaveBeenCalledWith(h.sessionId, { chunkCount: 2, durationMs: 9000 });
+    expect(complete).toHaveBeenCalledWith(h.sessionId, {
+      chunkCount: 2,
+      chunks: [
+        { seq: 0, sha256: expect.stringMatching(/^[0-9a-f]{64}$/), sizeBytes: 3 },
+        { seq: 1, sha256: expect.stringMatching(/^[0-9a-f]{64}$/), sizeBytes: 3 },
+      ],
+      durationMs: 9000,
+    });
     expect(ev.onStopped).toHaveBeenCalledWith(2);
     const stored = await store.listChunks(h.sessionId);
     expect(stored.map((c) => [c.seq, c.size, c.uploaded])).toEqual([
@@ -110,7 +117,9 @@ describe('startRecording', () => {
     rec.emit('xy');
     h.stop();
     await settle();
-    expect([...client.sessions.get(h.sessionId)!.chunks.entries()]).toEqual([
+    expect(
+      [...client.sessions.get(h.sessionId)!.chunks.entries()].map(([seq, c]) => [seq, c.sizeBytes]),
+    ).toEqual([
       [0, 4],
       [1, 4],
       [2, 2],
@@ -122,7 +131,7 @@ describe('startRecording', () => {
   it('keeps chunks queued when the PUT fails, so a later drain can retry', async () => {
     const store = await newStore();
     const client = new StubUploadClient();
-    vi.spyOn(client, 'putChunk').mockRejectedValue(new Error('network'));
+    vi.spyOn(client, 'storage').mockRejectedValue(new Error('network'));
     const rec = new FakeRecorder();
     const ev = events();
     const h = await startRecording({
@@ -179,7 +188,7 @@ describe('startRecording', () => {
     rec.emit('toolong');
     await settle();
     expect(ev.onStorage.mock.calls.map((c) => c[0])).toEqual([
-      { kind: 'evicted', count: 1, bytes: 3 },
+      { kind: 'evicted', count: 1, bytes: 3, lostPending: 0 },
       { kind: 'refused', seq: 2 },
     ]);
     expect(ev.onChunk.mock.calls.map((c) => c[0])).toEqual([0, 1]);

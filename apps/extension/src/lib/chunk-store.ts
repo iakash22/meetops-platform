@@ -1,4 +1,8 @@
-import type { CompleteRecordingSessionRequest, InitRecordingSessionRequest } from './contracts.js';
+import type {
+  CompleteRecordingSessionRequest,
+  CompletedChunk,
+  InitRecordingSessionRequest,
+} from './contracts.js';
 import { toIsoTimestamp } from './upload.js';
 
 /**
@@ -26,6 +30,8 @@ export interface StoredChunk {
   mimeType: string;
   createdAt: number;
   uploaded: boolean;
+  /** Lowercase hex SHA-256 of data (absent on pre-v0.2 records; computed at upload). */
+  sha256?: string;
 }
 
 export interface StoredSession {
@@ -33,11 +39,26 @@ export interface StoredSession {
   meta: InitRecordingSessionRequest;
   /** Set when recording ended (normally or after a crash). */
   finalized?: CompleteRecordingSessionRequest;
+  /** Closed: completed or aborted on the server. */
   completed: boolean;
+  /** Some chunks were evicted or refused before upload: the session must be aborted, not completed. */
+  incomplete?: { lostChunks: number };
+  /** Set when the session was aborted instead of completed. */
+  abortedReason?: string;
+  /** Digests of uploaded chunks, sent with complete(). */
+  digests?: CompletedChunk[];
 }
 
 export type PutResult =
-  | { stored: true; evictedCount: number; evictedBytes: number }
+  | {
+      stored: true;
+      evictedCount: number;
+      evictedBytes: number;
+      /** Sessions that lost not-yet-uploaded chunks to eviction (now marked incomplete). */
+      damagedSessions: string[];
+      /** Evicted chunks that had not been uploaded yet (real data loss). */
+      lostPending: number;
+    }
   | { stored: false; reason: 'over-cap' };
 
 /**
@@ -161,14 +182,17 @@ export class ChunkStore {
   ): Promise<PutResult> {
     const size = c.data.byteLength;
     if (size > this.config.maxBytes) return { stored: false, reason: 'over-cap' };
-    const tx = this.db.transaction(CHUNKS, 'readwrite');
+    const tx = this.db.transaction([CHUNKS, SESSIONS], 'readwrite');
     const store = tx.objectStore(CHUNKS);
+    // Evict already-uploaded chunks first (no data loss), then the oldest pending ones.
     const existing = ((await req(store.getAll())) as StoredChunk[]).sort(
-      (a, b) => a.createdAt - b.createdAt || a.seq - b.seq,
+      (a, b) =>
+        Number(b.uploaded) - Number(a.uploaded) || a.createdAt - b.createdAt || a.seq - b.seq,
     );
     let total = existing.reduce((n, x) => n + x.size, 0);
     let evictedCount = 0;
     let evictedBytes = 0;
+    const lost = new Map<string, number>();
     if (total + size > this.config.maxBytes) {
       if (this.config.policy === 'refuse') {
         tx.abort();
@@ -181,11 +205,45 @@ export class ChunkStore {
         total -= old.size;
         evictedCount++;
         evictedBytes += old.size;
+        if (!old.uploaded) lost.set(old.sessionId, (lost.get(old.sessionId) ?? 0) + 1);
+      }
+    }
+    const sessions = tx.objectStore(SESSIONS);
+    for (const [sid, n] of lost) {
+      const s = (await req(sessions.get(sid))) as StoredSession | undefined;
+      if (s) {
+        sessions.put({ ...s, incomplete: { lostChunks: (s.incomplete?.lostChunks ?? 0) + n } });
       }
     }
     store.put({ ...c, size, uploaded: c.uploaded ?? false } satisfies StoredChunk);
     await done(tx);
-    return { stored: true, evictedCount, evictedBytes };
+    const lostPending = [...lost.values()].reduce((a, b) => a + b, 0);
+    return {
+      stored: true,
+      evictedCount,
+      evictedBytes,
+      damagedSessions: [...lost.keys()],
+      lostPending,
+    };
+  }
+
+  /** Record that a chunk of this session was refused or otherwise lost before upload. */
+  async markIncomplete(sessionId: string, lostChunks = 1): Promise<void> {
+    const s = await this.getSession(sessionId);
+    if (s) {
+      await this.putSession({
+        ...s,
+        incomplete: { lostChunks: (s.incomplete?.lostChunks ?? 0) + lostChunks },
+      });
+    }
+  }
+
+  async recordDigest(sessionId: string, digest: CompletedChunk): Promise<void> {
+    const s = await this.getSession(sessionId);
+    if (!s) return;
+    const digests = (s.digests ?? []).filter((d) => d.seq !== digest.seq);
+    digests.push(digest);
+    await this.putSession({ ...s, digests });
   }
 
   async markUploaded(sessionId: string, seq: number): Promise<void> {

@@ -44,7 +44,13 @@ describe('ChunkStore (IndexedDB)', () => {
     await s.putChunk(chunk(1, 10));
     await s.putChunk(chunk(2, 10));
     const r = await s.putChunk(chunk(3, 15));
-    expect(r).toEqual({ stored: true, evictedCount: 2, evictedBytes: 20 });
+    expect(r).toEqual({
+      stored: true,
+      evictedCount: 2,
+      evictedBytes: 20,
+      damagedSessions: ['s1'],
+      lostPending: 2,
+    });
     expect((await s.listChunks()).map((c) => c.seq)).toEqual([2, 3]);
     expect(await s.totalBytes()).toBe(25);
   });
