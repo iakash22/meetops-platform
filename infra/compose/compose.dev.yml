@@ -8,8 +8,8 @@ services:
     image: pgvector/pgvector:pg16
     restart: unless-stopped
     environment:
-      POSTGRES_USER: ${POSTGRES_USER:-postgres}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_USER: ${POSTGRES_USER:-meetops}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-meetops}
       POSTGRES_DB: ${POSTGRES_DB:-meetops}
     ports:
       - '${POSTGRES_PORT:-5432}:5432'
