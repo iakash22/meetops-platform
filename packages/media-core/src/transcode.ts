@@ -1,7 +1,7 @@
 import { mkdir, readdir, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { probeMedia } from './probe.js';
-import { resolveTools, runProcess, type MediaToolsOptions } from './run.js';
+import { PROTOCOL_WHITELIST, resolveTools, runProcess, type MediaToolsOptions } from './run.js';
 
 export type NormalizeOptions = MediaToolsOptions & {
   sampleRate?: number;
@@ -12,6 +12,7 @@ export type NormalizeOptions = MediaToolsOptions & {
 export function buildNormalizeArgs(input: string, output: string, o: { sampleRate?: number; channels?: number } = {}): string[] {
   return [
     '-hide_banner', '-nostdin', '-y',
+    ...PROTOCOL_WHITELIST,
     '-i', input,
     '-vn', '-sn', '-dn',
     '-ac', String(o.channels ?? 1),
@@ -52,6 +53,7 @@ export type AudioChunk = {
 export function buildChunkArgs(input: string, outDir: string, segmentSeconds: number, prefix: string): string[] {
   return [
     '-hide_banner', '-nostdin', '-y',
+    ...PROTOCOL_WHITELIST,
     '-i', input,
     '-vn',
     '-f', 'segment',

@@ -1,4 +1,4 @@
-import { resolveTools, runProcess, FfmpegError, type MediaToolsOptions } from './run.js';
+import { PROTOCOL_WHITELIST, resolveTools, runProcess, FfmpegError, type MediaToolsOptions } from './run.js';
 
 export type MediaStreamInfo = {
   index: number;
@@ -66,7 +66,7 @@ export async function probeMedia(inputPath: string, opts: MediaToolsOptions = {}
   const t = resolveTools(opts);
   const { stdout } = await runProcess(
     t.ffprobe,
-    ['-v', 'error', '-print_format', 'json', '-show_format', '-show_streams', '--', inputPath],
+    ['-v', 'error', ...PROTOCOL_WHITELIST, '-print_format', 'json', '-show_format', '-show_streams', '--', inputPath],
     { timeoutMs: t.timeoutMs, signal: opts.signal }
   );
   return parseProbeOutput(stdout);
