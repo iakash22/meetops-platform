@@ -1,6 +1,6 @@
 # ADR-005: Browser extension authentication
 
-- Status: Accepted
+- Status: Accepted; amended 2026-10-22 (Amendment 1: pairing proof and token hardening, supersedes points 2, 3, 5 and 6 where they conflict)
 - Date: 2026-10-22
 - Owner: Architecture Agent (ARCH), with the Security (SEC), Backend (BE) and Native (NATIVE) Agents
 - Related: [ADR-003 Contracts ownership](./ADR-003-contracts-ownership.md), [ADR-004](./ADR-004-db-contract-mapping.md)
@@ -45,3 +45,96 @@ capabilities: resolving the meeting it is recording, and uploading recording chu
 - Leaked extension tokens have a small blast radius: two scopes, one org, and 15 minutes.
 - BE must implement bearer validation for audience and scope, the refresh-family store and the device list. SEC reviews it.
 - NATIVE replaces any cookie or credentials-based fetches in `apps/extension` with the bearer flow.
+
+## Amendment 1 (2026-10-22): pairing proof and token hardening
+
+Raised by SEC on PR #50. The key words MUST, MUST NOT and SHOULD are as in RFC 2119. Where this amendment conflicts with
+the Decision above, the amendment wins. Schemas and constants: `packages/contracts/src/api/extension-auth.ts`.
+
+### A1.1 Pairing flow
+
+1. Pairing MUST start from a user gesture in the extension (a click in the popup or options page), never automatically.
+2. On that gesture the extension MUST generate a single-use nonce (`ExtensionNonce`: 32–128 base64url characters, at least
+   256 bits from `crypto.getRandomValues`) and a per-install `deviceId` (UUID). It MUST keep the nonce only in
+   `chrome.storage.session`, MUST delete it after one use or after 5 minutes, and then opens the web pairing page.
+3. The web pairing page MUST show a confirmation naming the organization (`organizationName`) and the device label
+   before calling `POST /auth/extension/pair` (`ExtensionPairRequest`) with the `__Host-` cookie and `x-csrf-token`.
+   The server MUST check `extensionId` against the allowlist and return `ExtensionPairResponse`, a single-use
+   `pairingCode` bound to `(nonce, extensionId, deviceId, userId, organizationId)` that expires within 60 seconds. It carries no tokens.
+4. The page hands `{ pairingCode, nonce }` to the extension with `chrome.runtime.sendMessage(extensionId, …)`. The
+   extension's `chrome.runtime.onMessageExternal` handler MUST check `sender.origin` for an exact string match against the
+   production web origin, MUST validate the message against the contracts schema, and MUST reject a nonce that differs
+   from the stored one. Anything else is dropped silently.
+5. `externally_connectable.matches` MUST list only the exact production web origin. Dev origins such as
+   `http://localhost:*` MUST appear only in dev builds and MUST NOT ship in a store build.
+6. The extension then calls `POST /auth/extension-token` (`ExtensionTokenRequest`, without a cookie). The server MUST
+   consume the pairing code atomically and require the same nonce, extension id and device id. The extension MUST
+   reject an `ExtensionTokenResponse` whose `nonce` doesn't match the stored nonce, and then delete the nonce.
+
+### A1.2 Token model
+
+1. Access and refresh tokens MUST be opaque random values (≥256 bits, base64url), not JWTs. The server MUST store only
+   their SHA-256 hashes and MUST NOT persist or log plaintext. Lookups go by hash.
+2. The access token TTL stays at 15 minutes (`EXTENSION_TOKEN_TTL_SECONDS = 900`). `tokenType` is `'Bearer'` and `audience` is `'extension'`.
+3. Refresh (`POST /auth/extension/refresh`) MUST rotate: each use consumes the presented refresh token and issues a new
+   pair in the same family. Presenting an already-consumed refresh token is reuse, and it MUST revoke the whole family
+   and every access token issued from it.
+4. A refresh family MUST NOT outlive `EXTENSION_REFRESH_FAMILY_MAX_LIFETIME_SECONDS` (30 days) from pairing, and rotation does
+   not extend it. `refreshExpiresAt` reports that bound, and after it the user must pair again.
+5. `ExtensionTokenResponse` and `ExtensionRefreshResponse` are strict, and they are the only API bodies carrying tokens.
+6. Tokens are stored only in `chrome.storage.session`. Its access level MUST remain the default `TRUSTED_CONTEXTS`, and the
+   extension MUST NOT call `chrome.storage.session.setAccessLevel` to expose it to content scripts.
+
+### A1.3 Bearer versus cookie
+
+1. Extension routes (`EXTENSION_AUTH_PATHS.refresh` and `revoke`, `meetings/resolve`, recording-session and chunk routes)
+   MUST accept only `Authorization: Bearer` with `aud=extension`, and MUST reject a request that carries a session cookie
+   (401 `UNAUTHENTICATED`). `pair` is the exception: it is a web route and is cookie-only.
+2. Every other route MUST reject bearer tokens, so the cookie path is the only one for web routes.
+3. Tokens MUST NOT be accepted in the query string or URL fragment, on any route.
+4. The `:organizationId` in the path MUST equal the token's organization, otherwise the response is `NOT_FOUND` (per ADR-004 tenancy).
+5. Scopes MUST be enforced per route: `meetings:resolve` for resolve, `recordings:write` for recording sessions and chunks.
+6. CORS MUST be enabled only on extension routes, MUST allow only the allowlisted `chrome-extension://<id>` origins, and
+   MUST NOT set `Access-Control-Allow-Credentials`.
+
+### A1.4 Rate limits (suggested starting values; DevOps tunes them)
+
+- `pair`: 5/min and 20/hour per user, plus 10/min per IP.
+- `extension-token` exchange: 10/min per IP. A failed nonce or code check counts double.
+- `refresh`: 10/min per family, plus 60/min per IP. A refresh more often than every 60 s per family SHOULD be logged.
+- `revoke`: 10/min per user.
+  Exceeding a limit returns 429 `RATE_LIMITED`.
+
+### A1.5 Redaction
+
+`accessToken` and `refreshToken` (and every key in the exported `REDACT_KEYS`, including `pairingCode`, `authorization` and `cookie`)
+MUST be redacted by every logger, error reporter (Sentry `beforeSend`), and request/response serializer, both API-side and
+in the extension. `REDACT_KEYS` is new in contracts 0.3.0, and API and worker logger configs MUST import it rather than copy it.
+
+### A1.6 Revocation
+
+The server MUST revoke the affected refresh families, and with them their access tokens, on: logout (the user's families),
+password change or reset (all the user's families), removal of the user from an org (families for that org),
+an org switch in the extension (the old family; a new pairing is required), and explicit `POST /auth/extension/revoke` per device.
+
+### A1.7 Meeting resolve
+
+`POST /orgs/:organizationId/meetings/resolve` MUST derive the external meeting id by parsing `externalMeetingUrl` against
+per-provider host and path rules (Meet, Zoom, Teams). The server MUST NOT fetch, resolve or follow the URL (no SSRF surface).
+An unparseable URL returns `VALIDATION_FAILED`.
+
+### A1.8 Owner dependencies
+
+- **Backend (BE):** pair, token, refresh and revoke routes with atomic single-use pairing codes; hashed token store;
+  family rotation with reuse detection and a 30-day cap; bearer-only and cookie-only route guards; org match returning
+  NOT_FOUND; per-route scopes; extension-only CORS without credentials; the revocation triggers in A1.6; URL-parsing resolve;
+  logger redaction from `REDACT_KEYS`.
+- **Native (`apps/extension`):** a user-gesture pairing UI; nonce and deviceId generation; `chrome.storage.session` only, left
+  at TRUSTED_CONTEXTS; an `onMessageExternal` handler with an exact `sender.origin` check, schema validation and the nonce
+  check; nonce echo verification; refresh before expiry; a production-only `externally_connectable` origin; dev
+  origins gated to dev builds; redaction; import from `@meetops/contracts/types` only.
+- **Web (`apps/web`):** the pairing page showing an org and device confirmation; the pair call with CSRF; the
+  `sendMessage` handoff; a device list with revoke in account settings.
+- **DevOps:** rate-limit config (A1.4); production versus dev manifest build gating; log pipeline and Sentry scrubbing
+  using `REDACT_KEYS`; alerts on refresh-reuse revocations.
+- **SEC:** reviews each of the above before release.
