@@ -2,7 +2,7 @@ import Fastify, { type FastifyBaseLogger } from 'fastify';
 import swagger from '@fastify/swagger';
 import swaggerUi from '@fastify/swagger-ui';
 import { createLogger } from '@meetops/logger';
-import { defaultModuleDeps, registerModules, type ModuleDeps } from './modules/index.js';
+import { isRelaxedEnv, defaultModuleDeps, registerModules, type ModuleDeps } from './modules/index.js';
 import { registerDomainErrorHandler, registerNotFoundHandler } from './shared/http-errors.js';
 import { parseTrustProxy } from './shared/trust-proxy.js';
 
@@ -40,7 +40,8 @@ export function createServer(options: CreateServerOptions = {}) {
     redact: { paths: REDACT_PATHS, censor: '***redacted***' }
   });
   // Throws in production when persistence/rate-limit implementations are not injected.
-  const deps = defaultModuleDeps(options.deps, { nodeEnv: options.nodeEnv ?? process.env.NODE_ENV });
+  const nodeEnv = options.nodeEnv ?? process.env.NODE_ENV;
+  const deps = defaultModuleDeps(options.deps, { nodeEnv });
   const app = Fastify({
     loggerInstance: logger,
     trustProxy: parseTrustProxy(options.trustProxy ?? process.env.TRUST_PROXY)
@@ -58,9 +59,13 @@ export function createServer(options: CreateServerOptions = {}) {
     }
   });
 
-  void app.register(swaggerUi, {
-    routePrefix: '/docs'
-  });
+  // Swagger UI and its /docs/json spec only for NODE_ENV exactly development|test (fail closed).
+  // The spec is still generated in-process (app.swagger()) for tests and tooling.
+  if (isRelaxedEnv(nodeEnv)) {
+    void app.register(swaggerUi, {
+      routePrefix: '/docs'
+    });
+  }
 
   void app.register(registerModules, deps);
 
