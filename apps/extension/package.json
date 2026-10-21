@@ -10,7 +10,7 @@
     "zip": "wxt zip",
     "postinstall": "wxt prepare",
     "typecheck": "wxt prepare && tsc -p tsconfig.json --noEmit",
-    "lint": "eslint .",
+    "lint": "wxt prepare && eslint .",
     "test": "vitest run",
     "test:e2e": "wxt build && node e2e/toolbar.mjs"
   },
