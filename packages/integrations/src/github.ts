@@ -1,5 +1,5 @@
 import { Octokit } from '@octokit/rest';
-import { IssueTrackerError, type CreateIssueInput, type HealthCheckResult, type Issue, type IssueStatus, type IssueTrackerProvider } from './types.js';
+import { assertApproved, IssueTrackerError, type WriteApproval, type CreateIssueInput, type HealthCheckResult, type Issue, type IssueStatus, type IssueTrackerProvider } from './types.js';
 
 /** Minimal Octokit surface used by the adapter; inject a mock in tests. */
 export interface GitHubIssuesClient {
@@ -35,7 +35,7 @@ export interface GitHubIssuesOptions {
   token?: string;
 }
 
-const IN_PROGRESS = 'status: in-progress';
+export const DEFAULT_IN_PROGRESS_LABEL = 'status: in-progress';
 
 export function parseRepo(repo: string): { owner: string; repo: string } {
   const [owner, name, ...rest] = repo.split('/');
@@ -58,10 +58,11 @@ export class GitHubIssuesProvider implements IssueTrackerProvider {
 
   constructor(private readonly options: GitHubIssuesOptions = {}) {
     this.client = options.client ?? (new Octokit(options.token ? { auth: options.token } : {}));
-    this.inProgressLabel = options.inProgressLabel ?? IN_PROGRESS;
+    this.inProgressLabel = options.inProgressLabel ?? DEFAULT_IN_PROGRESS_LABEL;
   }
 
-  async createIssue(input: CreateIssueInput): Promise<Issue> {
+  async createIssue(input: CreateIssueInput, approval: WriteApproval): Promise<Issue> {
+    assertApproved(approval, 'github.createIssue');
     const repoRef = input.project ?? this.options.defaultRepo;
     if (!repoRef) throw new IssueTrackerError('No repository specified', this.name);
     const { owner, repo } = parseRepo(repoRef);
@@ -85,7 +86,8 @@ export class GitHubIssuesProvider implements IssueTrackerProvider {
     }
   }
 
-  async updateStatus(key: string, status: IssueStatus): Promise<Issue> {
+  async updateStatus(key: string, status: IssueStatus, approval: WriteApproval): Promise<Issue> {
+    assertApproved(approval, 'github.updateStatus');
     const ref = parseIssueKey(key, this.options.defaultRepo);
     const { data: current } = await this.wrap(() => this.client.rest.issues.get(ref));
     const labels = labelNames(current).filter((l) => l !== this.inProgressLabel);
