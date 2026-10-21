@@ -21,6 +21,12 @@ const allSql = readdirSync(migrationsDir, { withFileTypes: true })
   .map((d) => readFileSync(resolve(migrationsDir, d, 'migration.sql'), 'utf8'))
   .join('\n');
 const rlsSql = readFileSync(resolve(migrationsDir, '20261021110000_tenant_rls_roles/migration.sql'), 'utf8');
+/** Latest (effective) tenant policy definitions. */
+const policySql = readFileSync(
+  resolve(migrationsDir, '20261021130000_rls_fail_closed_empty_setting/migration.sql'),
+  'utf8',
+);
+const ORG_EXPR = "NULLIF(current_setting('app.current_org_id', true), '')::uuid";
 
 /** Parse models from schema: table name + body. */
 const models = [...schema.matchAll(/model (\w+) \{([\s\S]*?)\n\}/g)].map((m) => {
@@ -77,8 +83,9 @@ describe('RLS migration', () => {
   it.each([...TENANT_TABLES])('%s has RLS enabled, forced, and a tenant policy', (t) => {
     expect(rlsSql).toContain(`ALTER TABLE "${t}" ENABLE ROW LEVEL SECURITY;`);
     expect(rlsSql).toContain(`ALTER TABLE "${t}" FORCE ROW LEVEL SECURITY;`);
-    expect(rlsSql).toContain(
-      `CREATE POLICY tenant_isolation ON "${t}"\n  USING (org_id = current_setting('app.current_org_id', true)::uuid)\n  WITH CHECK (org_id = current_setting('app.current_org_id', true)::uuid);`,
+    expect(rlsSql).toContain(`CREATE POLICY tenant_isolation ON "${t}"`);
+    expect(policySql).toContain(
+      `CREATE POLICY tenant_isolation ON "${t}"\n  USING (org_id = ${ORG_EXPR})\n  WITH CHECK (org_id = ${ORG_EXPR});`,
     );
   });
 
@@ -90,7 +97,8 @@ describe('RLS migration', () => {
     expect(rlsSql).toMatch(/IF NOT EXISTS \(SELECT 1 FROM pg_roles WHERE rolname = 'meetops_app'\)/);
     expect(rlsSql).toMatch(/IF NOT EXISTS \(SELECT 1 FROM pg_roles WHERE rolname = 'meetops_migrator'\)/);
     expect(rlsSql).toMatch(/CREATE ROLE meetops_app [^;]*NOBYPASSRLS/);
-    expect(rlsSql).toContain('ALTER ROLE meetops_app NOSUPERUSER NOBYPASSRLS');
+    expect(rlsSql).toContain("RAISE EXCEPTION 'meetops_app must be NOSUPERUSER NOBYPASSRLS NOCREATEROLE NOCREATEDB'");
+    expect(rlsSql).not.toMatch(/ALTER ROLE/);
     expect(rlsSql).toContain('GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES');
     expect(rlsSql).toContain('OWNER TO meetops_migrator');
     expect(rlsSql).not.toMatch(/GRANT (ALL|TRUNCATE|CREATE)[^;]*TO meetops_app/);
@@ -299,13 +307,13 @@ describe('storage key convention', () => {
 
 describe('XT-26..XT-28 static guarantees', () => {
   it('XT-26: policies use missing_ok current_setting so no context => NULL => 0 rows', () => {
-    const policies = rlsSql.match(/current_setting\('app\.current_org_id', true\)::uuid/g) ?? [];
-    expect(policies.length).toBe(TENANT_TABLES.length * 2);
-    expect(rlsSql).not.toMatch(/current_setting\('app\.current_org_id'\)/);
+    const policies = policySql.split(ORG_EXPR).length - 1;
+    expect(policies).toBe(TENANT_TABLES.length * 2);
+    expect(policySql).not.toMatch(/current_setting\('app\.current_org_id'\)/);
   });
 
   it('XT-27: every tenant policy has WITH CHECK', () => {
-    const n = (rlsSql.match(/CREATE POLICY tenant_isolation[^;]*WITH CHECK/g) ?? []).length;
+    const n = (policySql.match(/CREATE POLICY tenant_isolation[^;]*WITH CHECK/g) ?? []).length;
     expect(n).toBe(TENANT_TABLES.length);
   });
 
@@ -313,5 +321,79 @@ describe('XT-26..XT-28 static guarantees', () => {
     const src = readFileSync(resolve(pkgDir, 'src/tenant.ts'), 'utf8');
     expect(src).toMatch(/set_config\(\$\{ORG_CONTEXT_SETTING\}, \$\{orgId\}, true\)/);
     expect(src).not.toMatch(/\bSET\s+app\./i);
+  });
+});
+
+const defSql = readFileSync(
+  resolve(migrationsDir, '20261021120000_invitation_lookup_outbox_relay/migration.sql'),
+  'utf8',
+);
+
+describe('invitation definer functions', () => {
+  for (const fn of ['lookup_invitation_by_token_hash(text)', 'accept_invitation(text, uuid)']) {
+    it(`${fn} is locked down`, () => {
+      expect(defSql).toContain(`ALTER FUNCTION ${fn} OWNER TO meetops_migrator;`);
+      expect(defSql).toContain(`REVOKE ALL ON FUNCTION ${fn} FROM PUBLIC;`);
+      expect(defSql).toContain(`GRANT EXECUTE ON FUNCTION ${fn} TO meetops_app;`);
+      expect(defSql.match(new RegExp(`GRANT EXECUTE ON FUNCTION ${fn.replace(/[()]/g, '\\$&')} TO`, 'g'))).toHaveLength(1);
+    });
+  }
+
+  it('both are SECURITY DEFINER with a fixed search_path', () => {
+    expect(defSql.match(/SECURITY DEFINER\nSET search_path = public, pg_temp/g)).toHaveLength(2);
+  });
+
+  it('lookup matches by token hash only and returns minimal fields', () => {
+    const body = /FUNCTION lookup_invitation_by_token_hash[\s\S]*?\$\$;/.exec(defSql)?.[0] ?? '';
+    expect(body).toContain('WHERE i.token_hash = p_token_hash');
+    expect(body).toMatch(/SELECT i\.id, i\.org_id, i\.email, i\.role, i\.status, i\.expires_at\n/);
+    expect(body).not.toMatch(/token_hash,|\*/);
+  });
+
+  it('accept checks status, expiry and email, and audits', () => {
+    const body = /FUNCTION accept_invitation[\s\S]*?\$\$;/.exec(defSql)?.[0] ?? '';
+    expect(body).toContain("inv.status <> 'pending'");
+    expect(body).toContain('inv.expires_at <= now()');
+    expect(body).toContain('lower(u_email) <> lower(inv.email)');
+    expect(body).toContain("'invitation.accepted'");
+  });
+});
+
+describe('outbox relay role', () => {
+  it('meetops_relay gets only SELECT + delivery-column UPDATE on outbox_events', () => {
+    const grants = defSql.match(/GRANT [^;]* TO meetops_relay;/g) ?? [];
+    expect(defSql).toContain("GRANT USAGE ON SCHEMA %I TO meetops_relay");
+    expect(grants).toEqual([
+      'GRANT SELECT ON TABLE "outbox_events" TO meetops_relay;',
+      expect.stringMatching(/^GRANT UPDATE \("status", "attempts", "last_error", "available_at", "published_at", "updated_at"\)\s+ON TABLE "outbox_events" TO meetops_relay;$/),
+    ]);
+    expect(defSql).toContain('REVOKE ALL ON ALL TABLES IN SCHEMA %I FROM meetops_relay');
+    expect(allSql).not.toMatch(/DEFAULT PRIVILEGES[^;]*meetops_relay/);
+  });
+});
+
+describe('schema conventions', () => {
+  it('every multi-word scalar field has an explicit @map', () => {
+    const enumNames = new Set([...schema.matchAll(/^enum (\w+)/gm)].map((m) => m[1]));
+    const scalars = new Set(['String', 'Int', 'BigInt', 'Float', 'Decimal', 'Boolean', 'DateTime', 'Json', 'Bytes']);
+    const missing: string[] = [];
+    for (const m of models) {
+      for (const line of m.body.split('\n')) {
+        const f = /^\s+(\w+)\s+(\w+|Unsupported\("[^"]*"\))/.exec(line);
+        if (!f?.[1] || !f[2]) continue;
+        const isScalar = scalars.has(f[2]) || enumNames.has(f[2]) || f[2].startsWith('Unsupported');
+        if (isScalar && /[A-Z]/.test(f[1]) && !line.includes('@map(')) missing.push(`${m.name}.${f[1]}`);
+      }
+    }
+    expect(missing).toEqual([]);
+  });
+
+  it('every model uses a uuid primary key', () => {
+    expect(models).toHaveLength(21);
+    for (const m of models) expect(m.body, m.name).toMatch(/^\s+id\s+String\s+@id @default\(uuid\(\)\) @db\.Uuid$/m);
+  });
+
+  it('transcripts carry provider + provider_job_id unique per org', () => {
+    expect(allSql).toContain('"transcripts"("org_id", "provider", "provider_job_id")');
   });
 });
