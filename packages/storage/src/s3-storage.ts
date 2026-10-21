@@ -8,6 +8,7 @@ import {
   GetBucketPolicyStatusCommand,
   GetObjectCommand,
   HeadObjectCommand,
+  ListObjectsV2Command,
   ListPartsCommand,
   PutObjectCommand,
   S3Client,
@@ -17,7 +18,7 @@ import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { createPresignedPost } from '@aws-sdk/s3-presigned-post';
 import type { FileObject } from '@meetops/contracts';
 import type { PresignedUrl } from '@meetops/contracts/legacy';
-import { MAX_CHUNK_BYTES, MAX_RECORDING_CHUNKS } from '@meetops/contracts';
+import { MAX_CHUNK_BYTES, MAX_CHUNKS } from '@meetops/contracts';
 import { assertTtl, loadStorageConfig, S3_MIN_PART_BYTES, SESSION_CHUNK_TTL_SECONDS, type StorageConfig } from './config.js';
 import { mapS3Error, StorageValidationError } from './errors.js';
 import { assertKeyOwnedBy, buildObjectKey, type MeetingObjectRef } from './keys.js';
@@ -37,13 +38,16 @@ import { normalizeMimeType, validateUploadSpec } from './validation.js';
 /** Recording session scope (contracts InitRecordingSession). meetingId must exist before chunks are uploaded. */
 export type SessionRef = { orgId: string; meetingId: string; sessionId: string };
 
-/** Extra authorization on top of the mandatory org-prefix check (e.g. meeting membership). */
+/**
+ * REQUIRED meeting-level authorization, run on every op after the org-prefix check
+ * (e.g. "does this meeting belong to orgId and may the caller access it?"). Throw to deny.
+ */
 export type AuthorizeHook = (ref: MeetingObjectRef) => void | Promise<void>;
 
 export type S3StorageServiceOptions = {
   config: StorageConfig;
   client?: S3Client;
-  authorize?: AuthorizeHook;
+  authorize: AuthorizeHook;
   presign?: typeof getSignedUrl;
   presignPost?: typeof createPresignedPost;
 };
@@ -79,7 +83,7 @@ export class S3StorageService implements StorageService {
   readonly #bucket: string;
   readonly #client: S3Client;
   readonly #cfg: StorageConfig;
-  readonly #authorize: AuthorizeHook | undefined;
+  readonly #authorize: AuthorizeHook;
   readonly #presign: typeof getSignedUrl;
   readonly #presignPost: typeof createPresignedPost;
 
@@ -88,6 +92,7 @@ export class S3StorageService implements StorageService {
     this.#providerId = opts.config.provider;
     this.#bucket = opts.config.bucket;
     this.#client = opts.client ?? createS3Client(opts.config);
+    if (typeof opts.authorize !== 'function') throw new Error('S3StorageService requires an authorize hook');
     this.#authorize = opts.authorize;
     this.#presign = opts.presign ?? getSignedUrl;
     this.#presignPost = opts.presignPost ?? createPresignedPost;
@@ -97,8 +102,8 @@ export class S3StorageService implements StorageService {
   async #key(ref: MeetingObjectRef): Promise<string> {
     if (!ref || typeof ref !== 'object') throw new StorageValidationError('ref is required');
     const key = buildObjectKey(ref);
-    assertKeyOwnedBy(key, ref.orgId);
-    if (this.#authorize) await this.#authorize(ref);
+    assertKeyOwnedBy(key, ref.orgId, ref.meetingId);
+    await this.#authorize(ref);
     return key;
   }
 
@@ -296,63 +301,145 @@ export class S3StorageService implements StorageService {
     await settle(this.#client.send(new AbortMultipartUploadCommand({ Bucket: this.#bucket, Key: key, UploadId: uploadId })));
   }
 
-  // ---- Recording-session chunked upload (contracts v0.2 api/recording-sessions) ----
+  // ---- Recording-session chunked upload (contracts v0.2 api/recording-sessions, #38 @ f85a9d3) ----
 
   #sessionRef(ref: SessionRef, seq: number): MeetingObjectRef {
-    if (!Number.isInteger(seq) || seq < 0 || seq > MAX_RECORDING_CHUNKS - 1) throw new StorageValidationError('seq out of range');
+    if (!Number.isInteger(seq) || seq < 0 || seq > MAX_CHUNKS - 1) throw new StorageValidationError('seq out of range');
     return { orgId: ref.orgId, meetingId: ref.meetingId, kind: 'session_chunk', objectId: ref.sessionId, index: seq };
   }
 
+  /** List stored chunks of a session (seq -> size). Non-chunk objects under the prefix are reported as extra. */
+  async #listSession(ref: SessionRef): Promise<{ chunks: Map<number, number>; extra: number }> {
+    const key0 = await this.#key(this.#sessionRef(ref, 0));
+    const prefix = key0.slice(0, key0.lastIndexOf('/') + 1);
+    const chunks = new Map<number, number>();
+    let extra = 0;
+    let token: string | undefined;
+    do {
+      const res = await settle(this.#client.send(new ListObjectsV2Command({ Bucket: this.#bucket, Prefix: prefix, ContinuationToken: token })));
+      for (const o of res.Contents ?? []) {
+        const m = /^(\d{5})\.part$/.exec((o.Key ?? '').slice(prefix.length));
+        if (m) chunks.set(Number(m[1]), o.Size ?? 0);
+        else extra++;
+      }
+      token = res.IsTruncated ? res.NextContinuationToken : undefined;
+      if (chunks.size > MAX_CHUNKS) throw new StorageValidationError('Too many chunks');
+    } while (token);
+    return { chunks, extra };
+  }
+
   /**
-   * Presigned PUT for one session chunk (ChunkUploadUrlResponse.upload). TTL defaults to and is capped at
-   * CHUNK_UPLOAD_URL_TTL_SECONDS (300). Content-Type is signed. Per-chunk size cannot be signed because the
-   * contract request carries no size, so MAX_CHUNK_BYTES is enforced in verifySessionChunks().
+   * Presigned PUT for one session chunk (contracts ChunkUploadUrlRequest -> ChunkUploadUrlResponse.upload).
+   * Signs Content-Type, Content-Length = sizeBytes and, if given, x-amz-checksum-sha256. Refuses when seq is out of
+   * range or already stored, or when the stored running total + sizeBytes would exceed the session cap.
+   * TTL defaults to and is capped at CHUNK_UPLOAD_URL_TTL_SECONDS (300).
    */
-  async getPresignedSessionChunkUrl(ref: SessionRef, seq: number, mimeType: string, opts?: PresignOptions): Promise<PresignedUrl> {
-    const objRef = this.#sessionRef(ref, seq);
+  async getPresignedSessionChunkUrl(
+    ref: SessionRef,
+    req: { seq: number; sizeBytes: number; sha256?: string },
+    mimeType: string,
+    opts?: PresignOptions
+  ): Promise<PresignedUrl> {
+    const objRef = this.#sessionRef(ref, req.seq);
     const key = await this.#key(objRef);
-    validateUploadSpec({ mimeType, sizeBytes: 1 }, this.#cfg.limits);
+    if (!Number.isInteger(req.sizeBytes) || req.sizeBytes < 1 || req.sizeBytes > MAX_CHUNK_BYTES) {
+      throw new StorageValidationError('sizeBytes out of range');
+    }
+    if (req.sha256 !== undefined && !/^[0-9a-f]{64}$/.test(req.sha256)) throw new StorageValidationError('Invalid sha256');
+    validateUploadSpec({ mimeType, sizeBytes: req.sizeBytes }, this.#cfg.limits);
     const ttl = assertTtl(opts?.ttlSeconds ?? SESSION_CHUNK_TTL_SECONDS);
     if (ttl > SESSION_CHUNK_TTL_SECONDS) throw new RangeError(`Session chunk TTL must be <= ${SESSION_CHUNK_TTL_SECONDS}s`);
+
+    const { chunks } = await this.#listSession(ref);
+    if (chunks.has(req.seq)) throw new StorageValidationError('Chunk already uploaded');
+    let running = 0;
+    for (const size of chunks.values()) running += size;
+    if (running + req.sizeBytes > this.#cfg.limits.maxObjectBytes) throw new StorageValidationError('Recording session exceeds maximum size');
+
     const mime = normalizeMimeType(mimeType);
+    const checksum = req.sha256 ? Buffer.from(req.sha256, 'hex').toString('base64') : undefined;
+    const signable = new Set(['content-type', 'content-length', ...(checksum ? ['x-amz-checksum-sha256'] : [])]);
     const url = await settle(
-      this.#presign(this.#client, new PutObjectCommand({ Bucket: this.#bucket, Key: key, ContentType: mime }), {
-        expiresIn: ttl,
-        signableHeaders: new Set(['content-type'])
-      })
+      this.#presign(
+        this.#client,
+        new PutObjectCommand({ Bucket: this.#bucket, Key: key, ContentType: mime, ContentLength: req.sizeBytes, ChecksumSHA256: checksum }),
+        { expiresIn: ttl, signableHeaders: signable }
+      )
     );
-    return this.#presigned(url, 'PUT', ttl, { headers: { 'content-type': mime } });
+    const headers: Record<string, string> = { 'content-type': mime, 'content-length': String(req.sizeBytes) };
+    if (checksum) headers['x-amz-checksum-sha256'] = checksum;
+    return this.#presigned(url, 'PUT', ttl, { headers });
   }
 
   /**
-   * On CompleteRecordingSession: HEAD chunks 0..chunkCount-1, require all present, each <= MAX_CHUNK_BYTES,
-   * and the total <= limits.maxObjectBytes (MAX_RECORDING_SESSION_BYTES). Oversized/missing => validation error.
+   * CompleteRecordingSession: stored chunks must be exactly seq 0..chunkCount-1 (no gaps, no extras). Each is
+   * HEAD-checked: size <= MAX_CHUNK_BYTES and, when `chunks` is given, equal sizeBytes/sha256. An oversized or
+   * mismatching chunk is deleted immediately; any failure deletes ALL session chunks, then throws.
    */
-  async verifySessionChunks(ref: SessionRef, chunkCount: number): Promise<{ totalBytes: number; chunkSizes: number[] }> {
-    if (!Number.isInteger(chunkCount) || chunkCount < 1 || chunkCount > MAX_RECORDING_CHUNKS) {
+  async verifySessionChunks(
+    ref: SessionRef,
+    complete: { chunkCount: number; chunks?: Array<{ seq: number; sha256: string; sizeBytes?: number }> }
+  ): Promise<{ totalBytes: number; chunkSizes: number[] }> {
+    const { chunkCount } = complete;
+    if (!Number.isInteger(chunkCount) || chunkCount < 1 || chunkCount > MAX_CHUNKS) {
       throw new StorageValidationError('chunkCount out of range');
     }
-    const sizes: number[] = [];
-    let total = 0;
-    for (let seq = 0; seq < chunkCount; seq++) {
-      const info = await this.headObject(this.#sessionRef(ref, seq));
-      if (!info) throw new StorageValidationError(`Missing chunk seq ${seq}`);
-      if (info.sizeBytes > MAX_CHUNK_BYTES) throw new StorageValidationError(`Chunk seq ${seq} exceeds MAX_CHUNK_BYTES`);
-      total += info.sizeBytes;
-      if (total > this.#cfg.limits.maxObjectBytes) throw new StorageValidationError('Recording session exceeds maximum size');
-      sizes.push(info.sizeBytes);
+    try {
+      const declared = new Map<number, { sha256: string; sizeBytes?: number }>();
+      for (const c of complete.chunks ?? []) {
+        if (declared.has(c.seq) || c.seq >= chunkCount) throw new StorageValidationError('Invalid chunk manifest');
+        declared.set(c.seq, c);
+      }
+      if (complete.chunks && declared.size !== chunkCount) throw new StorageValidationError('Invalid chunk manifest');
+      const listed = await this.#listSession(ref);
+      if (listed.extra > 0 || [...listed.chunks.keys()].some((seq) => seq >= chunkCount)) {
+        throw new StorageValidationError('Unexpected objects in session');
+      }
+      const sizes: number[] = [];
+      let total = 0;
+      for (let seq = 0; seq < chunkCount; seq++) {
+        const objRef = this.#sessionRef(ref, seq);
+        const key = await this.#key(objRef);
+        let head;
+        try {
+          head = await settle(this.#client.send(new HeadObjectCommand({ Bucket: this.#bucket, Key: key, ChecksumMode: 'ENABLED' })));
+        } catch (err) {
+          if ((err as { code?: string }).code === 'NOT_FOUND') throw new StorageValidationError(`Missing chunk seq ${seq}`);
+          throw err;
+        }
+        const size = head.ContentLength ?? 0;
+        const d = declared.get(seq);
+        const bad =
+          size < 1 ||
+          size > MAX_CHUNK_BYTES ||
+          (d?.sizeBytes !== undefined && d.sizeBytes !== size) ||
+          (d !== undefined && head.ChecksumSHA256 !== Buffer.from(d.sha256, 'hex').toString('base64'));
+        if (bad) {
+          await this.deleteObject(objRef).catch(() => undefined);
+          throw new StorageValidationError(`Chunk seq ${seq} rejected`);
+        }
+        total += size;
+        if (total > this.#cfg.limits.maxObjectBytes) throw new StorageValidationError('Recording session exceeds maximum size');
+        sizes.push(size);
+      }
+      return { totalBytes: total, chunkSizes: sizes };
+    } catch (err) {
+      await this.abortSession(ref).catch(() => undefined);
+      throw err;
     }
-    return { totalBytes: total, chunkSizes: sizes };
   }
 
-  /** Best-effort delete of session chunks 0..upToSeq (abort or post-assembly cleanup). Missing chunks are ignored. */
-  async deleteSessionChunks(ref: SessionRef, chunkCount: number): Promise<void> {
-    const n = Math.min(Math.max(0, Math.floor(chunkCount)), MAX_RECORDING_CHUNKS);
-    for (let seq = 0; seq < n; seq++) {
+  /** AbortRecordingSession / failed verify: delete every stored chunk of the session. */
+  async abortSession(ref: SessionRef): Promise<{ deleted: number }> {
+    const { chunks } = await this.#listSession(ref);
+    let deleted = 0;
+    for (const seq of chunks.keys()) {
       await this.deleteObject(this.#sessionRef(ref, seq)).catch((err: unknown) => {
         if ((err as { code?: string }).code !== 'NOT_FOUND') throw err;
       });
+      deleted++;
     }
+    return { deleted };
   }
 
   /**
@@ -433,7 +520,7 @@ function toInfo(res: {
 
 export function createStorageServiceFromEnv(
   env: NodeJS.ProcessEnv = process.env,
-  opts: Omit<S3StorageServiceOptions, 'config'> = {}
+  opts: Omit<S3StorageServiceOptions, 'config'>
 ): S3StorageService {
   return new S3StorageService({ ...opts, config: loadStorageConfig(env) });
 }
