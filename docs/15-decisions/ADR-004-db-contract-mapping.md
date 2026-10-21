@@ -125,3 +125,20 @@ Rules:
 - The mapper layer is extra code, but it is small and well tested, and it isolates Prisma upgrades.
 - PR #6 needs follow-up changes: the renames, the Recording model, `@map` on enums and columns, and a narrowed
   database exports list.
+
+## Addendum (2026-10-21): decisions on the DB PR #25 mismatches
+
+These were decided by ARCH and applied in `@meetops/contracts` 0.2.0. DB must match them.
+
+| #   | Decision                                                                           | Contracts                                                                                                                                                                            | DB action                                                                                                |
+| --- | ---------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------- |
+| a   | The link direction follows the DB: a Task points at the ExtractedTask it came from | `Task.extractedTaskId?`; `ExtractedTask.acceptedTaskId` removed                                                                                                                      | keep `tasks.extracted_task_id` (FK, unique)                                                              |
+| b   | Extracted tasks reference transcript segments by id                                | `ExtractedTask.sourceSegmentIds: uuid[]` (was `sourceSegmentIndexes`)                                                                                                                | `source_segment_ids uuid[]`, or a join table                                                             |
+| c   | Report content is structured and stored as JSON                                    | `Report` exposes `summary`, `decisions`, `risks`, `actionItems`; the exported `ReportContent` schema validates `reports.content`; `modelRouteId` is replaced by `aiRunId` (nullable) | `content jsonb`, validated with `ReportContent` on write and read; `ai_run_id uuid null` FK to `ai_runs` |
+| d   | Transcripts record their STT provider                                              | `Transcript.provider: SttProviderId`, `providerJobId?`                                                                                                                               | **add columns** `provider` (enum: assemblyai, faster-whisper, deepgram) and `provider_job_id text null`  |
+| e   | Meetings can be created without a user (bot or import sources)                     | `Meeting.createdById: uuid \| null`                                                                                                                                                  | `created_by_id` nullable                                                                                 |
+| f   | Meeting participants are part of the contracts                                     | `MeetingParticipant { id, meetingId, organizationId, userId \| null, displayName, email? \| null, role: host \| participant, joinedAt?, leftAt? }`                                   | map the enum to `host`/`participant` (rename `ATTENDEE`/`GUEST` → `participant`); add `org_id`           |
+| g   | **All ids are UUIDs**                                                              | `Id` is `format: uuid` everywhere                                                                                                                                                    | `@id @default(uuid()) @db.Uuid` (or `dbgenerated("gen_random_uuid()")`); every FK is `@db.Uuid`; no cuid |
+
+`Session` stays internal to DB and API. It is not a contract, and clients only see `AuthSession` / `GetAuthSessionResponse`.
+`TranscriptSegment` now carries an `id`, which (b) needs.
