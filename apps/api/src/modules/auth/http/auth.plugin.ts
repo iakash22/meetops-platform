@@ -1,59 +1,40 @@
-import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
+import type { FastifyInstance } from 'fastify';
 import { Type } from '@sinclair/typebox';
-import type { AuthService, SessionResult } from '../application/auth.service.js';
-import type { PublicUser as PublicUserEntity } from '../../users/domain/user.js';
-import type { Session } from '../domain/session.js';
+import type { AuthService } from '../application/auth.service.js';
 import { registerDomainErrorHandler } from '../../../shared/http-errors.js';
-import { ErrorBody, LoginBody, SessionResponse, SignupBody, type LoginBodyT, type SignupBodyT } from './schemas.js';
-
-export const SESSION_COOKIE = 'meetops_session';
-
-export interface AuthContext {
-  user: PublicUserEntity;
-  session: Session;
-}
-
-declare module 'fastify' {
-  interface FastifyRequest {
-    auth: AuthContext | null;
-  }
-}
+import {
+  AcceptedBody,
+  CsrfBody,
+  ErrorBody,
+  ForgotPasswordBody,
+  LoginBody,
+  ResetPasswordBody,
+  SessionResponse,
+  SignupBody,
+  type ForgotPasswordBodyT,
+  type LoginBodyT,
+  type ResetPasswordBodyT,
+  type SignupBodyT
+} from './schemas.js';
+import { makeGuards, mutationGuard, requestMeta, type HttpSecurityConfig } from './security.js';
+import type { OrganizationService } from '../../organizations/application/organization.service.js';
+import { toSessionResponse } from './mappers.js';
 
 export interface AuthPluginOptions {
   auth: AuthService;
-  cookieSecure: boolean;
-  sessionTtlMs: number;
-}
-
-export function toSessionResponse(ctx: { user: PublicUserEntity; session: Session }) {
-  return {
-    user: { ...ctx.user, createdAt: ctx.user.createdAt.toISOString() },
-    session: {
-      activeOrganizationId: ctx.session.activeOrganizationId,
-      expiresAt: ctx.session.expiresAt.toISOString()
-    }
-  };
-}
-
-/** preHandler factory: resolves the session cookie into request.auth or 401s. */
-export function requireAuth(auth: AuthService) {
-  return async (request: FastifyRequest): Promise<void> => {
-    request.auth = await auth.authenticate(request.cookies[SESSION_COOKIE]);
-  };
+  security: HttpSecurityConfig;
+  organizations: OrganizationService;
 }
 
 const tags = ['auth'];
+const SIGNUP_MSG = 'Check your email to continue.';
+const RESET_MSG = 'If an account exists for that email, we sent a reset link.';
 
 export async function authRoutes(app: FastifyInstance, opts: AuthPluginOptions) {
   registerDomainErrorHandler(app);
-  const cookieOpts = {
-    httpOnly: true,
-    secure: opts.cookieSecure,
-    sameSite: 'lax' as const,
-    path: '/',
-    maxAge: Math.floor(opts.sessionTtlMs / 1000)
-  };
-  const setCookie = (reply: FastifyReply, r: SessionResult) => reply.setCookie(SESSION_COOKIE, r.token, cookieOpts);
+  const { auth, security } = opts;
+  const g = makeGuards(auth, security);
+  app.addHook('onRequest', mutationGuard(security));
 
   app.post<{ Body: SignupBodyT }>(
     '/auth/signup',
@@ -61,15 +42,15 @@ export async function authRoutes(app: FastifyInstance, opts: AuthPluginOptions) 
       schema: {
         tags,
         summary: 'Create an account',
-        description: 'Creates a user (argon2id password hash) and starts a cookie session.',
+        description:
+          'Enumeration-safe: always 202 with the same message whether or not the email exists. Does not start a session; log in afterwards.',
         body: SignupBody,
-        response: { 201: SessionResponse, 400: ErrorBody, 409: ErrorBody }
+        response: { 202: AcceptedBody, 400: ErrorBody, 403: ErrorBody, 429: ErrorBody }
       }
     },
     async (request, reply) => {
-      const r = await opts.auth.signup(request.body);
-      setCookie(reply, r);
-      return reply.status(201).send(toSessionResponse(r));
+      await auth.signup(request.body, requestMeta(request));
+      return reply.status(202).send({ message: SIGNUP_MSG });
     }
   );
 
@@ -79,15 +60,68 @@ export async function authRoutes(app: FastifyInstance, opts: AuthPluginOptions) 
       schema: {
         tags,
         summary: 'Log in',
-        description: 'Verifies credentials and sets an httpOnly session cookie.',
+        description:
+          'Verifies credentials, revokes any presented session and sets a new httpOnly session cookie. Generic 401 on failure; 429 when rate-limited or locked.',
         body: LoginBody,
-        response: { 200: SessionResponse, 401: ErrorBody }
+        response: { 200: SessionResponse, 401: ErrorBody, 403: ErrorBody, 429: ErrorBody }
       }
     },
     async (request, reply) => {
-      const r = await opts.auth.login(request.body);
-      setCookie(reply, r);
-      return toSessionResponse(r);
+      const r = await auth.login(request.body, requestMeta(request), g.readToken(request));
+      g.setSessionCookie(reply, r);
+      return await toSessionResponse(r, security.sessionPolicy, opts.organizations);
+    }
+  );
+
+  app.post<{ Body: ForgotPasswordBodyT }>(
+    '/auth/forgot-password',
+    {
+      schema: {
+        tags,
+        summary: 'Request a password reset',
+        description: 'Enumeration-safe: always 202 with the same message.',
+        body: ForgotPasswordBody,
+        response: { 202: AcceptedBody, 403: ErrorBody, 429: ErrorBody }
+      }
+    },
+    async (request, reply) => {
+      await auth.requestPasswordReset(request.body.email, requestMeta(request));
+      return reply.status(202).send({ message: RESET_MSG });
+    }
+  );
+
+  app.post<{ Body: ResetPasswordBodyT }>(
+    '/auth/reset-password',
+    {
+      schema: {
+        tags,
+        summary: 'Reset password',
+        description: 'Consumes a single-use reset token (30 min TTL) and revokes all sessions for the user.',
+        body: ResetPasswordBody,
+        response: { 204: Type.Null(), 400: ErrorBody, 403: ErrorBody, 429: ErrorBody }
+      }
+    },
+    async (request, reply) => {
+      await auth.resetPassword(request.body, requestMeta(request));
+      g.clearSessionCookie(reply);
+      return reply.status(204).send();
+    }
+  );
+
+  app.get(
+    '/auth/csrf',
+    {
+      schema: {
+        tags,
+        summary: 'Get CSRF token',
+        description:
+          'Public. Returns { csrfToken } and sets the __Host-meetops_csrf cookie (Secure, Path=/, SameSite=Lax). Send the same value as X-CSRF-Token on every POST/PUT/PATCH/DELETE.',
+        response: { 200: CsrfBody }
+      }
+    },
+    async (_request, reply) => {
+      void reply.header('cache-control', 'no-store');
+      return { csrfToken: g.issueCsrf(reply) };
     }
   );
 
@@ -97,13 +131,14 @@ export async function authRoutes(app: FastifyInstance, opts: AuthPluginOptions) 
       schema: {
         tags,
         summary: 'Log out',
-        description: 'Revokes the current session and clears the cookie. Idempotent.',
-        response: { 204: Type.Null() }
+        description: 'Revokes the current session and clears the cookie.',
+        response: { 204: Type.Null(), 401: ErrorBody, 403: ErrorBody }
       }
     },
     async (request, reply) => {
-      await opts.auth.logout(request.cookies[SESSION_COOKIE]);
-      reply.clearCookie(SESSION_COOKIE, { path: '/' });
+      await g.requireSession(request);
+      await auth.logout(g.readToken(request));
+      g.clearSessionCookie(reply);
       return reply.status(204).send();
     }
   );
@@ -114,10 +149,10 @@ export async function authRoutes(app: FastifyInstance, opts: AuthPluginOptions) 
       schema: {
         tags,
         summary: 'Current session',
-        description: 'Returns the authenticated user and active organization.',
+        description: 'Returns the authenticated user and active organization. Slides the idle timeout.',
         response: { 200: SessionResponse, 401: ErrorBody }
       }
     },
-    async (request) => toSessionResponse(await opts.auth.authenticate(request.cookies[SESSION_COOKIE]))
+    async (request) => toSessionResponse(await g.requireSession(request), security.sessionPolicy, opts.organizations)
   );
 }

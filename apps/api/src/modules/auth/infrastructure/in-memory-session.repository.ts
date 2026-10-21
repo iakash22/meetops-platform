@@ -12,12 +12,15 @@ export class InMemorySessionRepository implements SessionRepository {
     for (const s of this.items.values()) if (s.tokenHash === tokenHash) return { ...s };
     return null;
   }
+  async touch(id: string, at: Date) {
+    const s = this.items.get(id);
+    if (s) s.lastSeenAt = at;
+  }
   async revoke(id: string, at: Date) {
     const s = this.items.get(id);
     if (s) s.revokedAt = at;
   }
-  async setActiveOrganization(id: string, organizationId: string | null) {
-    const s = this.items.get(id);
-    if (s) s.activeOrganizationId = organizationId;
+  async revokeAllForUser(userId: string, at: Date) {
+    for (const s of this.items.values()) if (s.userId === userId && !s.revokedAt) s.revokedAt = at;
   }
 }
