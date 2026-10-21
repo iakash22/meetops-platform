@@ -1,5 +1,6 @@
 import { Type, type Static } from '@sinclair/typebox';
 import { Id } from '../common.js';
+import { MAX_CHUNKS } from '../api/recording-sessions.js';
 
 /**
  * Queue names. Payloads are provider-independent: they carry router ids,
@@ -9,6 +10,7 @@ export const QUEUE_NAMES = {
   transcription: 'transcription',
   ai: 'ai',
   email: 'email',
+  media: 'media',
 } as const;
 export type QueueName = (typeof QUEUE_NAMES)[keyof typeof QUEUE_NAMES];
 
@@ -57,10 +59,43 @@ export const TranscriptionJobPayload = Type.Object({
   fileObjectId: Id,
   sttProviderId: SttProviderId,
   languageHint: Type.Optional(Type.String()),
+  /** Index of the normalized chunk this job transcribes. Omit for whole-file jobs. */
+  chunkIndex: Type.Optional(Type.Integer({ minimum: 0, maximum: MAX_CHUNKS - 1 })),
+  /** Offset of the chunk within the recording. Segment timestamps are shifted by this. 0 for whole-file jobs. */
+  startMs: Type.Optional(Type.Integer({ minimum: 0 })),
   diarize: Type.Boolean({ default: true }),
   fallback: Type.Optional(FallbackPolicy),
 }, { additionalProperties: false });
 export type TranscriptionJobPayload = Static<typeof TranscriptionJobPayload>;
+
+/** Media processing queue (normalize, chunk, then fan out transcription jobs). */
+export const MEDIA_QUEUE = 'media' as const;
+export const MEDIA_JOB_NAME = 'process_recording' as const;
+
+export const MEDIA_SOURCE_EXTS = ['webm', 'ogg', 'mp3', 'm4a', 'mp4', 'wav'] as const;
+export const MediaSourceExt = Type.Union(MEDIA_SOURCE_EXTS.map((e) => Type.Literal(e)));
+export type MediaSourceExt = (typeof MEDIA_SOURCE_EXTS)[number];
+
+export const MediaJobPayload = Type.Object(
+  {
+    jobVersion: Type.Literal(1),
+    kind: Type.Literal('process_recording'),
+    organizationId: Id,
+    meetingId: Id,
+    recordingId: Id,
+    sourceExt: MediaSourceExt,
+    /**
+     * INTERNAL storage key of the uploaded source. Never expose it to clients. The worker must verify that it
+     * matches the key derived from {organizationId, meetingId, recordingId, sourceExt}.
+     */
+    sourceKey: Type.Optional(Type.String({ minLength: 1, maxLength: 1024, pattern: '^[A-Za-z0-9!_.*()/-]+$' })),
+    sttProviderId: Type.Optional(SttProviderId),
+    languageHint: Type.Optional(Type.String({ maxLength: 35, pattern: '^[A-Za-z]{2,3}(-[A-Za-z0-9]{2,8})*$' })),
+    requestId: Type.Optional(Type.String({ minLength: 1, maxLength: 200, pattern: '^[A-Za-z0-9_-]+$' })),
+  },
+  { additionalProperties: false },
+);
+export type MediaJobPayload = Static<typeof MediaJobPayload>;
 
 export const AiTaskKind = Type.Union([
   Type.Literal('summarize_meeting'),
@@ -108,48 +143,47 @@ export const EmailRecipientRef = Type.Union([
 ]);
 export type EmailRecipientRef = Static<typeof EmailRecipientRef>;
 
-/**
- * Expected recipient kind per template. This is advisory: the schema accepts either kind (per INT), and the
- * worker enforces it.
- *
- * | templateId      | recipient        |
- * |-----------------|------------------|
- * | invitation      | `{ invitationId }` |
- * | verification, password-reset, task-assigned, meeting-summary | `{ userId }` |
- */
-export const EMAIL_TEMPLATE_RECIPIENT: Readonly<Record<EmailTemplateId, 'userId' | 'invitationId'>> = {
-  verification: 'userId',
-  'password-reset': 'userId',
-  invitation: 'invitationId',
-  'task-assigned': 'userId',
-  'meeting-summary': 'userId',
+const EmailUserRecipient = Type.Object({ userId: Id }, { additionalProperties: false });
+const EmailInvitationRecipient = Type.Object({ invitationId: Id }, { additionalProperties: false });
+
+const emailCommon = {
+  jobVersion: Type.Literal(1),
+  kind: Type.Literal('send_email'),
+  organizationId: Id,
+  idempotencyKey: OpaqueId,
+  requestId: Type.Optional(OpaqueId),
+  refs: Type.Optional(
+    Type.Record(Type.String({ pattern: OPAQUE_ID_PATTERN, maxLength: 64 }), OpaqueId, {
+      maxProperties: 10,
+      additionalProperties: false,
+    }),
+  ),
+  locale: Type.Optional(Type.String({ maxLength: 35, pattern: '^[A-Za-z]{2,3}(-[A-Za-z0-9]{2,8})*$' })),
 };
-export function expectedRecipientKind(templateId: EmailTemplateId): 'userId' | 'invitationId' {
-  return EMAIL_TEMPLATE_RECIPIENT[templateId];
-}
 
 /**
- * Ids-only email job on queue `email`, matching INT (PR #11). It carries no addresses, names, URLs, tokens or template
- * variables. The worker resolves the recipient from the DB, mints any one-time tokens, builds links, and
- * sends via the EmailService abstraction. Every level rejects unknown properties.
+ * Ids-only email job on queue `email` (INT, PR #11). It is a union of strict per-template objects:
+ * `invitation` requires `recipient: { invitationId }`, and every other template requires `recipient: { userId }`.
+ * It carries no addresses, names, URLs, tokens or template variables. The worker resolves the recipient, mints
+ * one-time tokens and builds links server-side. Every level rejects unknown properties.
  */
-export const EmailJobPayload = Type.Object(
-  {
-    jobVersion: Type.Literal(1),
-    kind: Type.Literal('send_email'),
-    organizationId: Id,
-    idempotencyKey: OpaqueId,
-    requestId: Type.Optional(OpaqueId),
-    templateId: EmailTemplateId,
-    recipient: EmailRecipientRef,
-    refs: Type.Optional(
-      Type.Record(Type.String({ pattern: OPAQUE_ID_PATTERN, maxLength: 64 }), OpaqueId, {
-        maxProperties: 10,
-        additionalProperties: false,
-      }),
-    ),
-    locale: Type.Optional(Type.String({ maxLength: 35, pattern: '^[A-Za-z]{2,3}(-[A-Za-z0-9]{2,8})*$' })),
-  },
-  { additionalProperties: false },
-);
+export const EmailJobPayload = Type.Union([
+  Type.Object(
+    { ...emailCommon, templateId: Type.Literal('invitation'), recipient: EmailInvitationRecipient },
+    { additionalProperties: false },
+  ),
+  Type.Object(
+    {
+      ...emailCommon,
+      templateId: Type.Union([
+        Type.Literal('verification'),
+        Type.Literal('password-reset'),
+        Type.Literal('task-assigned'),
+        Type.Literal('meeting-summary'),
+      ]),
+      recipient: EmailUserRecipient,
+    },
+    { additionalProperties: false },
+  ),
+]);
 export type EmailJobPayload = Static<typeof EmailJobPayload>;

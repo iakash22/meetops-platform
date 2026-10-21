@@ -29,6 +29,8 @@ While the version is `0.x`, a minor bump may contain breaking changes (ADR-003).
 
 ### Changed
 
+- `AbortRecordingSessionRequest.reason` adds `local_storage_exhausted`.
+
 - `IntegrationIssue` (alias `IntegrationIssueRecord`) is tenant-scoped: adds `organizationId`, `integrationId`, `provider` (`github`|`jira`, replaces free-form `integration`), optional `lastKnownStatus`; strict. Unique on (organizationId, provider, externalId). (BREAKING)
 
 - All `Id`s are `format: uuid`.
@@ -59,6 +61,23 @@ refs? (≤10 opaque id pairs), locale? (BCP-47-ish, ≤35) }`. Every level rejec
   - `CompleteRecordingSessionRequest.chunks?: [{ seq, sha256, sizeBytes? }]` (`CompletedChunk`). The server verifies there are no seq gaps, and
     checks each chunk's size and the total.
   - `MAX_RECORDING_CHUNKS` is lowered from 100,000 to 10,000, with a new alias `MAX_CHUNKS`. `seq` must be at most `MAX_CHUNKS - 1`.
+
+- `EmailJobPayload` is now a union of strict per-template objects (Security blocker). `invitation` requires
+  `recipient: { invitationId }`; `verification`, `password-reset`, `task-assigned` and `meeting-summary` require
+  `recipient: { userId }`. `requestId` is opaque (`^[A-Za-z0-9_-]+$`, ≤200). The advisory
+  `EMAIL_TEMPLATE_RECIPIENT` / `expectedRecipientKind()` helpers are **removed**; the schema now enforces the binding.
+- `PresignedUrlDto` is a union: `GET`/`PUT` with optional `headers`, or `POST` with required `fields`. Its `url` is a
+  `PresignedUrlString`, which is https, or http only for `localhost`, `127.0.0.1`, `minio` or `*.localhost` (dev MinIO). The API must issue https in
+  production. `HttpsUrl` (avatar and external URLs) is still https-only.
+- `ChunkUploadUrlResponse.upload` is a `SignedPutUpload`. Its `headers` are required and must include `content-length`, plus
+  `x-amz-checksum-sha256` (base64 digest, `CHECKSUM_SHA256_HEADER`) when `sha256` was sent. `seq` is at most `MAX_CHUNKS - 1`.
+- `InitRecordingSessionRequest.meetingId` is required.
+
+### Added (media)
+
+- `MEDIA_QUEUE` (`'media'`, also `QUEUE_NAMES.media`), `MEDIA_JOB_NAME`, `MEDIA_SOURCE_EXTS` / `MediaSourceExt`, and
+  `MediaJobPayload` (`process_recording`; `sourceKey` is internal and never exposed to clients). This matches Media's PR #39.
+- `TranscriptionJobPayload.chunkIndex?` (0..`MAX_CHUNKS - 1`) and `startMs?` (≥0) for per-chunk transcription.
 
 ### Deprecated
 
