@@ -5,6 +5,16 @@
 
 # Backend agent
 /apps/api/                @iakash22
+/packages/config/         @iakash22
+/packages/logger/         @iakash22
+/packages/queue/          @iakash22
+
+# Media and Realtime agent (worker pipeline + storage)
+/apps/worker/             @iakash22
+/packages/storage/        @iakash22
+
+# Integrations agent (notifications; path not on integration/phase-1 yet)
+/packages/notifications/  @iakash22
 
 # Frontend agent
 /apps/web/                @iakash22
