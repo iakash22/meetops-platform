@@ -1,12 +1,16 @@
-import root from "../../eslint.config.mjs";
+import root from '../../eslint.config.mjs';
 
 export default [
-  { ignores: [".wxt/**", ".output/**", "dist/**"] },
+  { ignores: ['.wxt/**', '.output/**', 'dist/**'] },
   ...root,
   {
-    files: ["**/*.ts", "**/*.tsx"],
+    files: ['**/*.ts', '**/*.tsx'],
     languageOptions: {
-      parserOptions: { project: ["./tsconfig.json"], tsconfigRootDir: import.meta.dirname }
-    }
-  }
+      parserOptions: {
+        projectService: false,
+        project: ['./tsconfig.json'],
+        tsconfigRootDir: import.meta.dirname,
+      },
+    },
+  },
 ];
