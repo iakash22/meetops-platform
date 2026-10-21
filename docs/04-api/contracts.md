@@ -8,19 +8,19 @@
 
 TypeBox schemas (`@sinclair/typebox` `^0.34.0`), each with a matching TypeScript type. Version `0.1.0`.
 
-| Module | Exports |
-| --- | --- |
-| `common` | `Id`, `IsoDateTime`, `Timestamps` |
-| `formats` | `registerContractFormats()` registers the `date-time` and `email` formats with TypeBox's `FormatRegistry`; it runs on import and is idempotent |
-| `domain/org` | `Role` (`owner`, `admin`, `member`, `viewer`), `ROLES`, `Organization`, `User`, `Membership`, `Project` |
-| `domain/meeting` | `MeetingSource`, `MeetingStatus`, `Meeting`, `TranscriptSegment`, `Transcript`, `Report` |
-| `domain/media` | `FileObject`, `RecordingStatus`, `Recording` |
-| `domain/task` | `TaskStatus`, `TaskPriority`, `Task`, `ExtractedTask`, `IntegrationIssue` |
-| `api/auth` | `LoginRequest`, `SignupRequest`, `ForgotPasswordRequest`, `AuthSession` |
-| `api/errors` | `ApiErrorCode`, `ApiErrorEnvelope` (`{ error: { code, message, requestId?, details? } }`) |
-| `api/pagination` | `CursorPageQuery`, `OffsetPageQuery` (`limit` 1..100, default 25), `CursorPage(item)`, `OffsetPage(item)`, `Paginated` (alias of `CursorPage`) |
-| `jobs` | `QUEUE_NAMES` (`transcription`, `ai`, `email`), `SttProviderId`, `LlmProviderId`, `ModelRouteId` (`<provider>:<model>`), `FallbackPolicy`, `TranscriptionJobPayload`, `AiTaskKind`, `AiJobPayload`, `EmailJobPayload` |
-| `legacy` | Phase 0 hand-written types: `EmailMessage`, `StorageObjectMetadata`, `PresignedUrl` |
+| Module           | Exports                                                                                                                                                                                                               |
+| ---------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `common`         | `Id`, `IsoDateTime`, `Timestamps`                                                                                                                                                                                     |
+| `formats`        | `registerContractFormats()` registers the `date-time` and `email` formats with TypeBox's `FormatRegistry`; it runs on import and is idempotent                                                                        |
+| `domain/org`     | `Role` (`owner`, `admin`, `member`, `viewer`), `ROLES`, `Organization`, `User`, `Membership`, `Project`                                                                                                               |
+| `domain/meeting` | `MeetingSource`, `MeetingStatus`, `Meeting`, `TranscriptSegment`, `Transcript`, `Report`                                                                                                                              |
+| `domain/media`   | `FileObject`, `RecordingStatus`, `Recording`                                                                                                                                                                          |
+| `domain/task`    | `TaskStatus`, `TaskPriority`, `Task`, `ExtractedTask`, `IntegrationIssue`                                                                                                                                             |
+| `api/auth`       | `LoginRequest`, `SignupRequest`, `ForgotPasswordRequest`, `AuthSession`                                                                                                                                               |
+| `api/errors`     | `ApiErrorCode`, `ApiErrorEnvelope` (`{ error: { code, message, requestId?, details? } }`)                                                                                                                             |
+| `api/pagination` | `CursorPageQuery`, `OffsetPageQuery` (`limit` 1..100, default 25), `CursorPage(item)`, `OffsetPage(item)`, `Paginated` (alias of `CursorPage`)                                                                        |
+| `jobs`           | `QUEUE_NAMES` (`transcription`, `ai`, `email`), `SttProviderId`, `LlmProviderId`, `ModelRouteId` (`<provider>:<model>`), `FallbackPolicy`, `TranscriptionJobPayload`, `AiTaskKind`, `AiJobPayload`, `EmailJobPayload` |
+| `legacy`         | Phase 0 hand-written types: `EmailMessage`, `StorageObjectMetadata`, `PresignedUrl`                                                                                                                                   |
 
 Job payloads all carry `jobVersion: 1`, `organizationId`, `idempotencyKey` and an optional `requestId`. `FallbackPolicy` defaults to `allowPaidFallback: false` with no fallback routes, so there's no automatic paid fallback.
 
@@ -64,10 +64,10 @@ Per ADR-003:
 
 Semver on `package.json` `version` (currently `0.x`, so a minor bump may break).
 
-| Bump | When |
-| --- | --- |
-| PATCH | Docs, stricter tests, no schema change |
-| MINOR | Additive: new schema, new optional field, new union member in inputs only |
+| Bump                         | When                                                                                                                                         |
+| ---------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| PATCH                        | Docs, stricter tests, no schema change                                                                                                       |
+| MINOR                        | Additive: new schema, new optional field, new union member in inputs only                                                                    |
 | MAJOR (or minor while `0.x`) | Remove or rename a field, make optional required, narrow a union, change a format or pattern, or change a job payload old workers can't read |
 
 Breaking changes need a write-up in the PR (who is affected, migration steps), ARCH approval and a version bump. For queue payloads, increment `jobVersion` and keep workers accepting the previous version for one release. Log breaking changes in `docs/17-agents/progress-log.md`.
