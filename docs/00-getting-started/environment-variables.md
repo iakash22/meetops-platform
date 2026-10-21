@@ -26,7 +26,7 @@ These variables are validated via `@meetops/config` (Zod) at runtime. Defaults s
 - `STORAGE_SECRET_ACCESS_KEY`
 - `STORAGE_FORCE_PATH_STYLE`: true|false (default: true when `STORAGE_PROVIDER=minio`, else false)
 - `STORAGE_PRESIGN_EXPIRES_SECONDS`: presigned URL lifetime, 1..604800 (default 900)
-- `STORAGE_CORS_ORIGINS`: comma-separated browser origins allowed to PUT via presigned URLs (minio-init CORS; ETag exposed)
+- `WEB_ORIGIN`: the single browser origin allowed by MinIO CORS for presigned PUTs (default http://localhost:5173; ETag exposed). Never `*`.
 - `MINIO_API_PORT` / `MINIO_CONSOLE_PORT`: host ports for MinIO (default 9000 / 9001, 127.0.0.1). The dev bucket is private (no anonymous access) and aborts incomplete multipart uploads after 1 day.
 
 ### Realtime gateway (apps/realtime)

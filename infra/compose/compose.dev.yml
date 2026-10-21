@@ -61,7 +61,7 @@ services:
       retries: 10
 
   # Creates the bucket (private: no anonymous policy is ever set), CORS for
-  # browser presigned PUTs (exposes ETag for multipart), and a lifecycle rule that
+  # browser presigned PUTs from WEB_ORIGIN only (exposes ETag for multipart), and a lifecycle rule that
   # aborts incomplete multipart uploads after 1 day.
   minio-init:
     image: pgsty/mc:RELEASE.2026-10-18T00-00-00Z
@@ -72,7 +72,7 @@ services:
       MINIO_ROOT_USER: ${STORAGE_ACCESS_KEY_ID:?set STORAGE_ACCESS_KEY_ID in .env}
       MINIO_ROOT_PASSWORD: ${STORAGE_SECRET_ACCESS_KEY:?set STORAGE_SECRET_ACCESS_KEY in .env}
       STORAGE_BUCKET: ${STORAGE_BUCKET:-meetops-dev}
-      STORAGE_CORS_ORIGINS: ${STORAGE_CORS_ORIGINS:-http://localhost:5173,http://localhost:8080}
+      WEB_ORIGIN: ${WEB_ORIGIN:-http://localhost:5173}
     entrypoint:
       - /bin/sh
       - -c
@@ -82,16 +82,14 @@ services:
         mc mb --ignore-existing "local/$${STORAGE_BUCKET}"
         mc anonymous set none "local/$${STORAGE_BUCKET}"
 
-        origins=""
-        for o in $$(echo "$${STORAGE_CORS_ORIGINS}" | tr ',' ' '); do
-          origins="$${origins}<AllowedOrigin>$${o}</AllowedOrigin>"
-        done
+        # CORS is restricted to the single web origin (never "*").
+        origins="<AllowedOrigin>$${WEB_ORIGIN}</AllowedOrigin>"
         cat > /tmp/cors.xml <<XML
         <CORSConfiguration><CORSRule>$${origins}<AllowedMethod>GET</AllowedMethod><AllowedMethod>PUT</AllowedMethod><AllowedMethod>HEAD</AllowedMethod><AllowedHeader>*</AllowedHeader><ExposeHeader>ETag</ExposeHeader><MaxAgeSeconds>3600</MaxAgeSeconds></CORSRule></CORSConfiguration>
         XML
         if ! mc cors set "local/$${STORAGE_BUCKET}" /tmp/cors.xml; then
           echo "bucket CORS unsupported; falling back to server-wide api cors_allow_origin"
-          mc admin config set local api cors_allow_origin="$${STORAGE_CORS_ORIGINS}"
+          mc admin config set local api cors_allow_origin="$${WEB_ORIGIN}"
         fi
 
         cat > /tmp/ilm.json <<JSON
