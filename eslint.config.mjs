@@ -24,10 +24,14 @@ export default [
       parserOptions: {
         ...c.languageOptions?.parserOptions,
         // Resolve each file against its nearest tsconfig.json (per-package paths/aliases such as @/)
-        // Test files live outside each package's tsconfig "include" (src only); lint them
-        // with the base tsconfig, matching the previous behaviour.
+        // Only test dirs NOT covered by a tsconfig "include" may use the default project;
+        // apps/web includes test/ in its own tsconfig, so it must not be listed here.
         projectService: {
-          allowDefaultProject: ["apps/*/test/*.ts", "packages/*/test/*.ts"],
+          allowDefaultProject: [
+            "apps/api/test/*.ts",
+            "apps/worker/test/*.ts",
+            "packages/*/test/*.ts"
+          ],
           defaultProject: "tsconfig.base.json",
           maximumDefaultProjectFileMatchCount_THIS_WILL_SLOW_DOWN_LINTING: 32
         },
