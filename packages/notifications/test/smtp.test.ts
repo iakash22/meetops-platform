@@ -44,7 +44,7 @@ describe('ConsoleEmailService / factory', () => {
     expect(svc.sent).toHaveLength(1);
   });
   it('factory picks adapter by provider', () => {
-    expect(createEmailService({ provider: 'console', from: 'x@y.z' }).provider).toBe('console');
+    expect(createEmailService({ provider: 'console', from: 'x@y.z' }, { nodeEnv: 'test' }).provider).toBe('console');
     expect(createEmailService(cfg, { smtpTransportFactory: mockFactory().factory }).provider).toBe('smtp');
   });
 });

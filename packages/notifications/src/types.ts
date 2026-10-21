@@ -1,3 +1,7 @@
+/**
+ * TODO: replace EmailAddress/EmailMessage with the @meetops/contracts types once PR #17 is on main
+ * (blocked: #17 is unmerged; shapes kept compatible: { email, name? }).
+ */
 export interface EmailAddress {
   email: string;
   name?: string;
@@ -35,7 +39,9 @@ export interface EmailService {
 
 export function formatRecipient(r: EmailRecipient): string {
   if (typeof r === 'string') return r;
-  return r.name ? `"${r.name.replace(/"/g, '')}" <${r.email}>` : r.email;
+  // eslint-disable-next-line no-control-regex
+  const clean = (v: string) => v.replace(/[\r\n\u0000-\u001f\u007f]+/g, ' ').trim();
+  return r.name ? `"${clean(r.name).replace(/"/g, '')}" <${clean(r.email)}>` : clean(r.email);
 }
 
 export function recipientEmail(r: EmailRecipient): string {
