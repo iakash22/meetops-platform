@@ -12,7 +12,7 @@
 
 ## Open questions
 
-1. **Doc location**: `docs/12-security/` already exists and `docs/09-ai/` already uses prefix 09. Should this move to `docs/12-security/`?
+1. ~~**Doc location**~~: resolved — docs live in `docs/12-security/`.
 2. Secret manager / KMS choice (AWS, GCP, Vault) and hosting cloud.
 3. Use a password pepper? Where stored and how rotated?
 4. Guest role: needed at launch? Which resources can guests see?
