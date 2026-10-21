@@ -72,3 +72,22 @@ export async function runWithOrgContext<T>(
     return fn(tx);
   }, txOptions);
 }
+
+/**
+ * Run fn in one interactive transaction with only app.current_user_id set LOCAL (no org).
+ * Lets a user list their own memberships across orgs via the membership_self_read policy;
+ * every other tenant table stays fail-closed because app.current_org_id is unset.
+ */
+export async function runWithUserContext<T>(
+  client: TransactionCapableClient | PrismaClient,
+  userId: string,
+  fn: (tx: Prisma.TransactionClient) => Promise<T>,
+  options: { timeoutMs?: number } = {},
+): Promise<T> {
+  assertUuid(userId, 'userId');
+  const txOptions = options.timeoutMs !== undefined ? { timeout: options.timeoutMs } : undefined;
+  return (client as TransactionCapableClient).$transaction(async (tx) => {
+    await tx.$executeRaw`SELECT set_config(${USER_CONTEXT_SETTING}, ${userId}, true)`;
+    return fn(tx);
+  }, txOptions);
+}

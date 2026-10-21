@@ -1,5 +1,5 @@
 import { PrismaClient, type Prisma } from '@prisma/client';
-import { runWithOrgContext, type OrgContextOptions } from './tenant.js';
+import { runWithOrgContext, runWithUserContext, type OrgContextOptions } from './tenant.js';
 
 /** The database client type. Model/enum types come from @meetops/contracts, not from here. */
 export type DatabaseClient = PrismaClient;
@@ -50,4 +50,17 @@ export async function withOrgContext<T>(
 ): Promise<T> {
   const { client, ...rest } = options;
   return runWithOrgContext(client ?? getPrismaClient(), orgId, fn, rest);
+}
+
+/**
+ * withUserContext(userId, fn, { client?, timeoutMs? }): run fn in one transaction with
+ * app.current_user_id set LOCAL, for cross-org reads of the user's own memberships.
+ */
+export async function withUserContext<T>(
+  userId: string,
+  fn: (tx: DatabaseTransaction) => Promise<T>,
+  options: Pick<OrgContextOptions, 'client' | 'timeoutMs'> = {},
+): Promise<T> {
+  const { client, ...rest } = options;
+  return runWithUserContext(client ?? getPrismaClient(), userId, fn, rest);
 }
