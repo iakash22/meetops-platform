@@ -7,18 +7,23 @@ export const TaskStatus = Type.Union([
   Type.Literal('done'),
   Type.Literal('cancelled'),
 ]);
+export type TaskStatus = Static<typeof TaskStatus>;
+
 export const TaskPriority = Type.Union([
   Type.Literal('low'),
   Type.Literal('medium'),
   Type.Literal('high'),
   Type.Literal('urgent'),
 ]);
+export type TaskPriority = Static<typeof TaskPriority>;
 
 export const Task = Type.Object({
   id: Id,
   organizationId: Id,
   projectId: Type.Optional(Id),
   meetingId: Type.Optional(Id),
+  /** Set when the task was accepted from an ExtractedTask (link direction follows the DB). */
+  extractedTaskId: Type.Optional(Id),
   title: Type.String({ minLength: 1, maxLength: 500 }),
   description: Type.Optional(Type.String()),
   status: TaskStatus,
@@ -46,8 +51,8 @@ export const ExtractedTask = Type.Object({
   ),
   dueHint: Type.Optional(Type.String()),
   confidence: Type.Number({ minimum: 0, maximum: 1 }),
-  sourceSegmentIndexes: Type.Array(Type.Integer({ minimum: 0 })),
-  acceptedTaskId: Type.Optional(Id),
+  /** TranscriptSegment ids the task was extracted from. */
+  sourceSegmentIds: Type.Array(Id),
   createdAt: IsoDateTime,
 });
 export type ExtractedTask = Static<typeof ExtractedTask>;

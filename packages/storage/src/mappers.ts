@@ -1,4 +1,5 @@
-import type { FileObject, PresignedUrl, PresignedUrlDto, PublicFileObject } from '@meetops/contracts';
+import type { FileObject, PresignedUrlDto, PublicFileObject } from '@meetops/contracts';
+import type { PresignedUrl } from '@meetops/contracts/legacy';
 
 /**
  * Client-facing presign DTO. contracts' PresignedUrlDto has no `fields`, which a presigned POST
