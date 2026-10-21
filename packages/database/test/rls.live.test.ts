@@ -574,10 +574,12 @@ describe.skipIf(!APP_URL || !OWNER_URL)('transcripts.provider constraint (live)'
   const owner = new PrismaClient({ datasources: { db: { url: OWNER_URL ?? '' } } });
   const organizationId = randomUUID();
   const meetingId = randomUUID();
+  const recordingId = randomUUID();
+  let rev = 0;
   const mk = (provider: string) =>
     runWithOrgContext(app, organizationId, (tx) =>
       tx.transcript.create({
-        data: { organizationId, meetingId, provider, revision: Math.floor(Math.random() * 1e6) },
+        data: { organizationId, meetingId, recordingId, provider, revision: ++rev },
       }),
     );
 
@@ -588,6 +590,29 @@ describe.skipIf(!APP_URL || !OWNER_URL)('transcripts.provider constraint (live)'
     await runWithOrgContext(app, organizationId, (tx) =>
       tx.meeting.create({ data: { id: meetingId, organizationId, title: 'T' } }),
     );
+    await runWithOrgContext(app, organizationId, async (tx) => {
+      const f = await tx.fileObject.create({
+        data: {
+          organizationId,
+          meetingId,
+          bucket: 'b',
+          key: `org/${organizationId}/t.webm`,
+          mimeType: 'audio/webm',
+        },
+      });
+      await tx.recording.create({
+        data: { id: recordingId, organizationId, meetingId, fileObjectId: f.id },
+      });
+    });
+    // recording_id is required (contracts Transcript.recordingId)
+    await expect(
+      runWithOrgContext(
+        app,
+        organizationId,
+        (tx) =>
+          tx.$executeRaw`INSERT INTO transcripts (id, org_id, meeting_id, provider, revision, updated_at) VALUES (gen_random_uuid(), ${organizationId}::uuid, ${meetingId}::uuid, 'deepgram', 999999, now())`,
+      ),
+    ).rejects.toThrow(/23502|null value/);
     for (const p of ['assemblyai', 'faster-whisper', 'deepgram'])
       await expect(mk(p)).resolves.toMatchObject({ provider: p });
     await expect(mk('whisper-x')).rejects.toThrow(/transcripts_provider_check|check/i);

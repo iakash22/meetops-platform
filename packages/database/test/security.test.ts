@@ -816,3 +816,16 @@ describe('transcripts.provider = contracts TranscriptProviderId', () => {
     expect(addendum2Sql).toContain(`SET "provider" = 'unknown' WHERE "provider" IS NULL`);
   });
 });
+
+describe('transcripts.recording_id required (contracts Transcript.recordingId)', () => {
+  it('is NOT NULL with a link-or-fail backfill and RLS re-forced', () => {
+    const sql = readFileSync(
+      resolve(migrationsDir, '20261022020000_transcript_recording_required/migration.sql'),
+      'utf8',
+    );
+    expect(finalSql).toMatch(/CREATE TABLE "transcripts" \([\s\S]*?"recording_id" UUID NOT NULL,/);
+    expect(sql).toContain('HAVING count(*) = 1');
+    expect(sql).toContain("RAISE EXCEPTION 'transcripts.recording_id NOT NULL");
+    expect(sql).toContain('ALTER TABLE "transcripts" FORCE ROW LEVEL SECURITY;');
+  });
+});

@@ -482,7 +482,7 @@ model Transcript {
   id             String           @id @default(uuid()) @db.Uuid
   organizationId String           @map("org_id") @db.Uuid
   meetingId      String           @map("meeting_id") @db.Uuid
-  recordingId    String?          @map("recording_id") @db.Uuid
+  recordingId    String           @map("recording_id") @db.Uuid
   /// Transcription provider (e.g. "deepgram") and its job id, for idempotent webhook/poll handling.
   provider       String
   providerJobId  String?          @map("provider_job_id")
@@ -496,7 +496,7 @@ model Transcript {
 
   organization Organization        @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   meeting      Meeting             @relation(fields: [organizationId, meetingId], references: [organizationId, id], onDelete: Cascade)
-  recording    Recording?          @relation(fields: [organizationId, recordingId], references: [organizationId, id], onDelete: Restrict)
+  recording    Recording           @relation(fields: [organizationId, recordingId], references: [organizationId, id], onDelete: Restrict)
   segments     TranscriptSegment[]
   reports      Report[]
   aiRuns       AiRun[]
