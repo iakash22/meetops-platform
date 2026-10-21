@@ -1,6 +1,6 @@
-import { ChunkQueue, type UploadClient } from "./upload.js";
+import { ChunkQueue, type UploadClient } from './upload.js';
 
-export const MIME_TYPE = "audio/webm;codecs=opus";
+export const MIME_TYPE = 'audio/webm;codecs=opus';
 export const TIMESLICE_MS = 5000;
 
 export interface RecorderEvents {
@@ -38,7 +38,11 @@ export async function startRecording(opts: {
   timeslice?: number;
 }): Promise<RecordingHandle> {
   const now = opts.now ?? Date.now;
-  const { sessionId } = await opts.client.initSession({ mimeType: MIME_TYPE, startedAt: opts.startedAt, source: "tab" });
+  const { sessionId } = await opts.client.initSession({
+    mimeType: MIME_TYPE,
+    startedAt: opts.startedAt,
+    source: 'tab',
+  });
   const queue = new ChunkQueue(opts.client, sessionId, (seq) => opts.events.onChunk(seq));
   const rec = opts.createRecorder(opts.stream, MIME_TYPE);
   const stopTracks = () => opts.stream.getTracks().forEach((t) => t.stop());
@@ -48,14 +52,17 @@ export async function startRecording(opts: {
   };
   rec.onerror = (e) => {
     stopTracks();
-    opts.events.onError(e instanceof Error ? e.message : "MediaRecorder error");
+    opts.events.onError(e instanceof Error ? e.message : 'MediaRecorder error');
   };
   rec.onstop = () => {
     stopTracks();
     void (async () => {
       try {
         await queue.flush();
-        await opts.client.complete(sessionId, { chunkCount: queue.count, durationMs: now() - opts.startedAt });
+        await opts.client.complete(sessionId, {
+          chunkCount: queue.count,
+          durationMs: now() - opts.startedAt,
+        });
         opts.events.onStopped(queue.count);
       } catch (err) {
         await opts.client.abort?.(sessionId, String(err)).catch(() => undefined);
@@ -65,16 +72,16 @@ export async function startRecording(opts: {
   };
   // Stop if the user ends capture from Chrome's own UI or the tab closes.
   opts.stream.getTracks().forEach((t) =>
-    t.addEventListener("ended", () => {
-      if (rec.state !== "inactive") rec.stop();
-    })
+    t.addEventListener('ended', () => {
+      if (rec.state !== 'inactive') rec.stop();
+    }),
   );
 
   rec.start(opts.timeslice ?? TIMESLICE_MS);
   opts.events.onStarted(sessionId);
   return {
     stop() {
-      if (rec.state !== "inactive") rec.stop();
-    }
+      if (rec.state !== 'inactive') rec.stop();
+    },
   };
 }

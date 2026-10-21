@@ -1,4 +1,4 @@
-import type { KV } from "./storage.js";
+import type { KV } from './storage.js';
 
 /** How long an acknowledgement stays valid before recording must start. */
 export const CONSENT_TTL_MS = 2 * 60 * 1000;
@@ -25,12 +25,12 @@ export async function recordConsent(kv: KV, tabId: number, now: number): Promise
 export async function consumeConsent(
   kv: KV,
   tabId: number,
-  now: number
+  now: number,
 ): Promise<{ ok: true; record: ConsentRecord } | { ok: false; reason: string }> {
   const rec = await kv.get<ConsentRecord>(key(tabId));
-  if (!rec) return { ok: false, reason: "Consent not acknowledged for this tab" };
+  if (!rec) return { ok: false, reason: 'Consent not acknowledged for this tab' };
   await kv.remove(key(tabId));
-  if (rec.tabId !== tabId) return { ok: false, reason: "Consent bound to a different tab" };
-  if (now > rec.expiresAt) return { ok: false, reason: "Consent expired; acknowledge again" };
+  if (rec.tabId !== tabId) return { ok: false, reason: 'Consent bound to a different tab' };
+  if (now > rec.expiresAt) return { ok: false, reason: 'Consent expired; acknowledge again' };
   return { ok: true, record: rec };
 }

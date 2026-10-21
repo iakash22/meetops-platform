@@ -3,7 +3,7 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "description": "MeetOps browser extension (WXT, Manifest V3)",
+  "description": "MeetOps AI browser extension (WXT, Manifest V3)",
   "scripts": {
     "dev": "wxt",
     "build": "wxt build",

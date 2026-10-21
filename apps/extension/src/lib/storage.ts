@@ -17,7 +17,7 @@ export function sessionKV(area: chrome.storage.StorageArea = chrome.storage.sess
     },
     async remove(key) {
       await area.remove(key);
-    }
+    },
   };
 }
 
@@ -33,6 +33,6 @@ export function memoryKV(): KV & { data: Map<string, unknown> } {
     },
     async remove(key) {
       data.delete(key);
-    }
+    },
   };
 }

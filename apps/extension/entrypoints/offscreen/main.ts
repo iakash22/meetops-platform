@@ -1,7 +1,7 @@
 /// <reference types="chrome" />
-import { isOffscreenMessage, type OffscreenToBackground } from "../../src/lib/messages.js";
-import { startRecording, type RecorderLike, type RecordingHandle } from "../../src/lib/recorder.js";
-import { StubUploadClient } from "../../src/lib/upload.js";
+import { isOffscreenMessage, type OffscreenToBackground } from '../../src/lib/messages.js';
+import { startRecording, type RecorderLike, type RecordingHandle } from '../../src/lib/recorder.js';
+import { StubUploadClient } from '../../src/lib/upload.js';
 
 // TODO: swap for the real HTTP client once the chunked upload API exists.
 const client = new StubUploadClient();
@@ -13,10 +13,10 @@ const emit = (msg: OffscreenToBackground) => {
 };
 
 async function start(streamId: string, startedAt: number) {
-  if (handle) throw new Error("Already recording");
+  if (handle) throw new Error('Already recording');
   const constraints = {
-    audio: { mandatory: { chromeMediaSource: "tab", chromeMediaSourceId: streamId } },
-    video: false
+    audio: { mandatory: { chromeMediaSource: 'tab', chromeMediaSourceId: streamId } },
+    video: false,
   } as unknown as MediaStreamConstraints;
   const stream = await navigator.mediaDevices.getUserMedia(constraints);
   // Tab capture mutes the tab by default; route audio back so the user still hears the meeting.
@@ -28,17 +28,17 @@ async function start(streamId: string, startedAt: number) {
     startedAt,
     createRecorder: (s, mimeType) => new MediaRecorder(s, { mimeType }) as unknown as RecorderLike,
     events: {
-      onStarted: (sessionId) => emit({ target: "background", type: "REC_STARTED", sessionId }),
-      onChunk: (seq) => emit({ target: "background", type: "REC_CHUNK", seq }),
+      onStarted: (sessionId) => emit({ target: 'background', type: 'REC_STARTED', sessionId }),
+      onChunk: (seq) => emit({ target: 'background', type: 'REC_CHUNK', seq }),
       onStopped: (chunkCount) => {
         cleanup();
-        emit({ target: "background", type: "REC_STOPPED", chunkCount });
+        emit({ target: 'background', type: 'REC_STOPPED', chunkCount });
       },
       onError: (error) => {
         cleanup();
-        emit({ target: "background", type: "REC_ERROR", error });
-      }
-    }
+        emit({ target: 'background', type: 'REC_ERROR', error });
+      },
+    },
   });
 }
 
@@ -50,9 +50,9 @@ function cleanup() {
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (sender.id !== chrome.runtime.id || !isOffscreenMessage(msg)) return false;
-  if (msg.type === "OFFSCREEN_STOP") {
+  if (msg.type === 'OFFSCREEN_STOP') {
     if (!handle) {
-      sendResponse({ ok: false, error: "Not recording" });
+      sendResponse({ ok: false, error: 'Not recording' });
       return false;
     }
     handle.stop();
@@ -64,9 +64,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     (err: unknown) => {
       const error = err instanceof Error ? err.message : String(err);
       cleanup();
-      emit({ target: "background", type: "REC_ERROR", error });
+      emit({ target: 'background', type: 'REC_ERROR', error });
       sendResponse({ ok: false, error });
-    }
+    },
   );
   return true;
 });
