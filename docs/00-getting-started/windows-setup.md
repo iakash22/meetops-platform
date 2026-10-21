@@ -126,16 +126,16 @@ Or run one app per terminal:
 
 ## 8. Port conflicts
 
-| Port         | Service                                | Variable                                                                                |
-| ------------ | -------------------------------------- | --------------------------------------------------------------------------------------- |
-| 5432         | Postgres                               | `POSTGRES_PORT`                                                                         |
-| 6379         | Redis                                  | `REDIS_PORT`                                                                            |
-| 9000 / 9001  | MinIO API / console                    | fixed on `main`; `MINIO_API_PORT` / `MINIO_CONSOLE_PORT` **(requires PR #7, unmerged)** |
-| 3000         | api                                    | `PORT` in code; `API_PORT` in #7's compose                                              |
-| 5173         | web (Vite)                             | `WEB_PORT` (#7, #9)                                                                     |
-| 8080         | web container                          | `WEB_APP_PORT` **(requires PR #7, unmerged)**                                           |
-| 4001         | realtime                               | `REALTIME_PORT` **(requires PR #16, unmerged)**                                         |
-| 11434 / 8001 | Ollama / local STT (optional profiles) | fixed                                                                                   |
+| Port         | Service                                | Variable                                                                                                                                                    |
+| ------------ | -------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 5432         | Postgres                               | `POSTGRES_PORT`                                                                                                                                             |
+| 6379         | Redis                                  | `REDIS_PORT`                                                                                                                                                |
+| 9000 / 9001  | MinIO API / console                    | fixed on `main`; `MINIO_API_PORT` / `MINIO_CONSOLE_PORT` **(requires PR #7, unmerged)**                                                                     |
+| 3000         | api                                    | `PORT` in code; `API_PORT` in #7's compose                                                                                                                  |
+| 5173         | web (Vite)                             | `WEB_PORT` (#7, #9)                                                                                                                                         |
+| 8080         | web container                          | `WEB_APP_PORT` **(requires PR #7, unmerged)**                                                                                                               |
+| 4001         | realtime                               | `REALTIME_PORT` **(requires PR #16, unmerged)**                                                                                                             |
+| 11434 / 8000 | Ollama / local STT (optional profiles) | fixed; local STT is host `127.0.0.1:8000` → container `8000` per #7's head `23b8240` (requires PR #7, unmerged; `main` maps host `8001` → container `8000`) |
 
 Find what's holding a port:
 
