@@ -8,19 +8,48 @@ import eslintPluginUnusedImports from 'eslint-plugin-unused-imports';
 // type-aware parsing/rules for fast feedback. `pnpm lint` and CI run the full config.
 const noTypecheck = process.env.ESLINT_NO_TYPECHECK === '1';
 
+const tsFiles = ['**/*.ts', '**/*.tsx'];
+
 const tsConfigs = noTypecheck
-  ? tseslint.configs.recommended.map((c) => ({ ...c, files: ['**/*.ts', '**/*.tsx'] }))
-  : tseslint.configs.recommendedTypeChecked.map((c) => ({
-      ...c,
-      files: ['**/*.ts', '**/*.tsx'],
-      languageOptions: {
-        ...c.languageOptions,
-        parserOptions: {
-          ...c.languageOptions?.parserOptions,
-          project: ['./tsconfig.base.json', './apps/*/tsconfig.json', './packages/*/tsconfig.json'],
+  ? tseslint.configs.recommended.map((c) => ({ ...c, files: tsFiles }))
+  : [
+      ...tseslint.configs.recommendedTypeChecked.map((c) => ({
+        ...c,
+        files: tsFiles,
+        languageOptions: {
+          ...c.languageOptions,
+          parserOptions: {
+            ...c.languageOptions?.parserOptions,
+            // Resolve each file against its nearest tsconfig.json (per-package paths/aliases such as @/)
+            // Only test dirs NOT covered by a tsconfig "include" may use the default project;
+            // apps/web includes test/ in its own tsconfig, so it must not be listed here.
+            projectService: {
+              allowDefaultProject: [
+                'apps/api/test/*.ts',
+                'apps/worker/test/*.ts',
+                'packages/*/test/*.ts',
+              ],
+              defaultProject: 'tsconfig.base.json',
+              maximumDefaultProjectFileMatchCount_THIS_WILL_SLOW_DOWN_LINTING: 32,
+            },
+            tsconfigRootDir: import.meta.dirname,
+          },
+        },
+      })),
+      {
+        // apps/web relies on its own tsconfig (Bundler resolution + "@/" paths). Pin it
+        // explicitly so type-aware rules never fall back to a project without the alias.
+        // Omitted entirely in fast mode (no project/projectService).
+        files: ['apps/web/**/*.ts', 'apps/web/**/*.tsx'],
+        languageOptions: {
+          parserOptions: {
+            projectService: false,
+            project: ['./tsconfig.eslint.web.json'],
+            tsconfigRootDir: import.meta.dirname,
+          },
         },
       },
-    }));
+    ];
 
 const typeAwareRules = noTypecheck
   ? {}
@@ -44,7 +73,7 @@ export default [
   js.configs.recommended,
   ...tsConfigs,
   {
-    files: ['**/*.ts', '**/*.tsx'],
+    files: tsFiles,
     plugins: {
       'unused-imports': eslintPluginUnusedImports,
       '@typescript-eslint': tseslint.plugin,
