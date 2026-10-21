@@ -1,0 +1,10 @@
+{
+  "$schema": "https://turbo.build/schema.json",
+  "extends": ["//"],
+  "tasks": {
+    "test": {
+      "cache": false,
+      "passThroughEnv": ["QA_*", "API_BASE_URL", "DOCKER_HOST", "TESTCONTAINERS_*"]
+    }
+  }
+}

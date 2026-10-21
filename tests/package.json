@@ -16,6 +16,7 @@
     "test:security": "vitest run --project security"
   },
   "devDependencies": {
+    "@meetops/api": "workspace:*",
     "@meetops/contracts": "workspace:*",
     "@playwright/test": "^1.48.2",
     "@sinclair/typebox": "^0.34.0",
