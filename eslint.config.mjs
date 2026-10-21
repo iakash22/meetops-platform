@@ -23,7 +23,15 @@ export default [
       ...c.languageOptions,
       parserOptions: {
         ...c.languageOptions?.parserOptions,
-        project: ["./tsconfig.base.json", "./apps/*/tsconfig.json", "./packages/*/tsconfig.json"]
+        // Resolve each file against its nearest tsconfig.json (per-package paths/aliases such as @/)
+        // Test files live outside each package's tsconfig "include" (src only); lint them
+        // with the base tsconfig, matching the previous behaviour.
+        projectService: {
+          allowDefaultProject: ["apps/*/test/*.ts", "packages/*/test/*.ts"],
+          defaultProject: "tsconfig.base.json",
+          maximumDefaultProjectFileMatchCount_THIS_WILL_SLOW_DOWN_LINTING: 32
+        },
+        tsconfigRootDir: import.meta.dirname
       }
     }
   })),
