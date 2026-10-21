@@ -15,11 +15,11 @@ import {
 const now = '2026-10-21T17:00:00.000Z';
 const pw = 'correct-horse-battery';
 const session = {
-  user: { id: 'u1', email: 'a@b.co', name: 'Akash', createdAt: now, updatedAt: now },
+  user: { id: 'e4774cdd-a079-4f86-814e-8b9140bb6db4', email: 'a@b.co', name: 'Akash', createdAt: now, updatedAt: now },
   csrfToken: 'c'.repeat(32),
-  activeOrganizationId: 'o1',
+  activeOrganizationId: 'f1584b99-5a47-4098-8ad7-5bb8d29e9734',
   role: 'admin',
-  organizations: [{ id: 'o1', name: 'Acme', slug: 'acme', createdAt: now, updatedAt: now }],
+  organizations: [{ id: 'f1584b99-5a47-4098-8ad7-5bb8d29e9734', name: 'Acme', slug: 'acme', createdAt: now, updatedAt: now }],
 };
 
 describe('auth requests', () => {
@@ -64,7 +64,7 @@ describe('auth session', () => {
 describe('Paginated<T>', () => {
   it('builds a cursor page schema for any item', () => {
     const S = Paginated(Project);
-    const page: PaginatedT<{ id: string }> = { items: [{ id: 'p1' }], nextCursor: null };
+    const page: PaginatedT<{ id: string }> = { items: [{ id: 'ec6ef230-f182-4039-8e79-4566b9c58adc' }], nextCursor: null };
     expect(page.items).toHaveLength(1);
     expect(Value.Check(S, { items: [], nextCursor: 'c2' })).toBe(true);
     expect(Value.Check(S, { items: [{ bad: true }], nextCursor: null })).toBe(false);
