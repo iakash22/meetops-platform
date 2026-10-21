@@ -117,6 +117,7 @@ export const AbortReason = Type.Union([
   Type.Literal('user_stopped'),
   Type.Literal('consent_revoked'),
   Type.Literal('tab_closed'),
+  Type.Literal('local_storage_exhausted'),
   Type.Literal('error'),
 ]);
 export type AbortReason = Static<typeof AbortReason>;

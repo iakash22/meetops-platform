@@ -86,3 +86,11 @@ describe('media and transcription jobs', () => {
     expect(Value.Check(TranscriptionJobPayload, { ...t, startMs: -1 })).toBe(false);
   });
 });
+
+import { Value as V4 } from '@sinclair/typebox/value';
+import { AbortRecordingSessionRequest as ARS } from '../src/index.js';
+describe('AbortReason', () => {
+  it('accepts local_storage_exhausted', () => {
+    expect(V4.Check(ARS, { reason: 'local_storage_exhausted' })).toBe(true);
+  });
+});

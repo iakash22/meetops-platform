@@ -29,6 +29,8 @@ While the version is `0.x`, a minor bump may contain breaking changes (ADR-003).
 
 ### Changed
 
+- `AbortRecordingSessionRequest.reason` adds `local_storage_exhausted`.
+
 - `IntegrationIssue` (alias `IntegrationIssueRecord`) is tenant-scoped: adds `organizationId`, `integrationId`, `provider` (`github`|`jira`, replaces free-form `integration`), optional `lastKnownStatus`; strict. Unique on (organizationId, provider, externalId). (BREAKING)
 
 - All `Id`s are `format: uuid`.
