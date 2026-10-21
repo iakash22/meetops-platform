@@ -1,9 +1,15 @@
 import { defineConfig, devices } from '@playwright/test';
 
+// Dev server port (vite). Default matches apps/web/vite.config.ts.
 const port = Number(process.env.WEB_PORT ?? 5173);
-const baseURL = process.env.E2E_BASE_URL ?? `http://localhost:${port}`;
-// When E2E_BASE_URL points at an already-running env, don't start a dev server.
-const startServer = !process.env.E2E_BASE_URL;
+// Port of the web container (nginx, 8080 in infra/compose/compose.app.yml). When set,
+// tests run against the container instead of starting the dev server.
+const containerPort = process.env.E2E_CONTAINER_PORT;
+const baseURL =
+  process.env.E2E_BASE_URL ??
+  (containerPort ? `http://localhost:${containerPort}` : `http://localhost:${port}`);
+// Only start the vite dev server when no external target was given.
+const startServer = !process.env.E2E_BASE_URL && !containerPort;
 
 export default defineConfig({
   testDir: '.',
