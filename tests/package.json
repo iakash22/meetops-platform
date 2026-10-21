@@ -17,7 +17,7 @@
   "devDependencies": {
     "@meetops/api": "workspace:*",
     "@meetops/contracts": "workspace:*",
-    "@playwright/test": "^1.48.2",
+    "@playwright/test": "1.64.1",
     "@sinclair/typebox": "^0.34.0",
     "@testcontainers/postgresql": "^10.13.2",
     "@testcontainers/redis": "^10.13.2",
