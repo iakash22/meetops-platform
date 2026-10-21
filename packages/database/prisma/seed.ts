@@ -68,8 +68,8 @@ async function main(): Promise<void> {
         durationSec: 1800,
         participants: {
           create: [
-            { employeeId: IDS.empOwner, displayName: 'Olivia Owner', speakerLabel: 'SPEAKER_0', role: 'host' },
-            { employeeId: IDS.empMember, displayName: 'Max Member', speakerLabel: 'SPEAKER_1' },
+            { employeeId: IDS.empOwner, userId: IDS.owner, displayName: 'Olivia Owner', speakerLabel: 'SPEAKER_0', role: 'host' },
+            { employeeId: IDS.empMember, userId: IDS.member, displayName: 'Max Member', speakerLabel: 'SPEAKER_1' },
           ],
         },
       },

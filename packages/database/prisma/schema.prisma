@@ -44,8 +44,7 @@ enum MeetingStatus {
 
 enum MeetingParticipantRole {
   host
-  attendee
-  guest
+  participant
 }
 
 enum TranscriptStatus {
@@ -181,15 +180,16 @@ model User {
   updatedAt     DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
   deletedAt     DateTime? @map("deleted_at") @db.Timestamptz(3)
 
-  memberships         Membership[]
-  sessions            Session[]
-  invitationsSent     Invitation[]   @relation("InvitationInviter")
-  employees           Employee[]
-  meetingsCreated     Meeting[]      @relation("MeetingCreator")
-  fileObjectsUploaded FileObject[]   @relation("FileUploader")
-  taskApprovals       TaskApproval[]
-  tasksCreated        Task[]         @relation("TaskCreator")
-  auditEvents         AuditEvent[]
+  memberships           Membership[]
+  sessions              Session[]
+  invitationsSent       Invitation[]         @relation("InvitationInviter")
+  employees             Employee[]
+  meetingsCreated       Meeting[]            @relation("MeetingCreator")
+  fileObjectsUploaded   FileObject[]         @relation("FileUploader")
+  taskApprovals         TaskApproval[]
+  tasksCreated          Task[]               @relation("TaskCreator")
+  meetingParticipations MeetingParticipant[] @relation("ParticipantUser")
+  auditEvents           AuditEvent[]
 
   @@map("users")
 }
@@ -354,17 +354,23 @@ model MeetingParticipant {
   displayName  String                 @map("display_name")
   email        String?
   speakerLabel String?                @map("speaker_label")
-  role         MeetingParticipantRole @default(attendee)
+  role         MeetingParticipantRole @default(participant)
+  /// Platform user, null for external attendees (contracts v0.2).
+  userId       String?                @map("user_id") @db.Uuid
+  joinedAt     DateTime?              @map("joined_at") @db.Timestamptz(3)
+  leftAt       DateTime?              @map("left_at") @db.Timestamptz(3)
   createdAt    DateTime               @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt    DateTime               @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   organization Organization        @relation(fields: [orgId], references: [id], onDelete: Cascade)
   meeting      Meeting             @relation(fields: [orgId, meetingId], references: [orgId, id], onDelete: Cascade)
   employee     Employee?           @relation(fields: [orgId, employeeId], references: [orgId, id], onDelete: Restrict)
+  user         User?               @relation("ParticipantUser", fields: [userId], references: [id], onDelete: SetNull)
   segments     TranscriptSegment[]
 
   @@unique([meetingId, employeeId])
   @@unique([orgId, id])
+  @@index([orgId, userId])
   @@index([orgId, meetingId])
   @@map("meeting_participants")
 }
@@ -531,6 +537,9 @@ model ExtractedTask {
   description         String?
   priority            TaskPriority        @default(medium)
   dueDate             DateTime?           @map("due_date") @db.Timestamptz(3)
+  /// UNTRUSTED LLM hints (display only), contracts v0.2.
+  assigneeHint        String?             @map("assignee_hint")
+  dueHint             String?             @map("due_hint")
   confidence          Float?
   sourceSegmentIds    String[]            @map("source_segment_ids") @db.Uuid
   status              ExtractedTaskStatus @default(pending_review)
