@@ -62,3 +62,23 @@ sets `NODE_ENV=test` (`apps/api/vitest.config.ts`).
 
 `TRUST_PROXY` list entries are validated as IPs or CIDRs; any invalid entry fails startup.
 Logs redact `authorization`, `cookie`, `x-csrf-token` and `set-cookie` headers.
+
+## Persistence adapters (P1-BE-2)
+
+| Port                           | Production adapter                                                                                                                                                            | Status                                                                      |
+| ------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
+| `UserRepository`               | `PrismaUserRepository` (users, global)                                                                                                                                        | ready                                                                       |
+| `SessionRepository`            | `PrismaSessionRepository` (sessions, global; `expires_at` = sliding idle, `absolute_expires_at` = cap)                                                                        | ready                                                                       |
+| `OrganizationRepository`       | `PrismaOrganizationRepository`                                                                                                                                                | ready (`created_by_id` column missing → `createdById: null`)                |
+| `MembershipRepository`         | `PrismaMembershipRepository` — `withOrgContext`; `listByUser` uses a nil-org + `userId` context until `withUserContext` ships; last-owner check locks owner rows `FOR UPDATE` | ready                                                                       |
+| `InvitationRepository`         | `PrismaInvitationRepository` — token lookup/accept via SECURITY DEFINER `lookup_invitation_by_token_hash` / `accept_invitation`                                               | ready                                                                       |
+| `AuditLog`                     | `PrismaAuditLog` (org events) + fallback sink for pre-tenant events                                                                                                           | partial: `audit_events.org_id` still NOT NULL                               |
+| `OneTimeTokenRepository`       | `RedisOneTimeTokenRepository` (GETDEL single use)                                                                                                                             | interim; Prisma blocked on `email_verifications` / `password_resets` tables |
+| `RateLimiter` / `LoginLockout` | `RedisRateLimiter` / `RedisLoginLockout` (progressive: 5 failures → 1 min, doubling, cap 60 min)                                                                              | ready                                                                       |
+| `AuthMailQueue`                | inline in dev/test; production must inject (`@meetops/notifications`, PR #11)                                                                                                 | blocked on #11                                                              |
+
+Mail jobs carry ids only; `AuthMailJobHandler` (worker side) resolves recipients, mints tokens
+(storing only the hash) and builds links from `WEB_BASE_URL`.
+
+Live adapter tests: `TEST_DATABASE_URL=… TEST_REDIS_URL=… pnpm --filter @meetops/api exec vitest run test/prisma.integration.test.ts`
+(skipped when unset).
