@@ -31,8 +31,15 @@
 /scripts/                 @iakash22
 /.dockerignore            @iakash22
 
+# Architecture agent
+/packages/contracts/      @iakash22
+
 # Documentation agent
 /docs/                    @iakash22
+
+# Architecture + Documentation agents
+/docs/02*                 @iakash22
+/docs/15*                 @iakash22
 
 # Native Apps agent
 /apps/extension/          @iakash22
