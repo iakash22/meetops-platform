@@ -25,12 +25,14 @@ export const TENANT_TABLES = [
   'outbox_events',
   'audit_events',
   'recordings',
+  'recording_sessions',
+  'recording_session_chunks',
 ] as const;
 export type TenantTable = (typeof TENANT_TABLES)[number];
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-export function assertUuid(value: string, label = 'orgId'): void {
+export function assertUuid(value: string, label = 'organizationId'): void {
   if (typeof value !== 'string' || !UUID_RE.test(value)) {
     throw new TypeError(`${label} must be a UUID`);
   }
@@ -40,7 +42,11 @@ export function assertUuid(value: string, label = 'orgId'): void {
 export interface TransactionCapableClient {
   $transaction<R>(
     fn: (tx: Prisma.TransactionClient) => Promise<R>,
-    options?: { maxWait?: number; timeout?: number; isolationLevel?: Prisma.TransactionIsolationLevel },
+    options?: {
+      maxWait?: number;
+      timeout?: number;
+      isolationLevel?: Prisma.TransactionIsolationLevel;
+    },
   ): Promise<R>;
 }
 
@@ -57,15 +63,15 @@ export interface OrgContextOptions {
  */
 export async function runWithOrgContext<T>(
   client: TransactionCapableClient | PrismaClient,
-  orgId: string,
+  organizationId: string,
   fn: (tx: Prisma.TransactionClient) => Promise<T>,
   options: Omit<OrgContextOptions, 'client'> = {},
 ): Promise<T> {
-  assertUuid(orgId);
+  assertUuid(organizationId);
   if (options.userId !== undefined) assertUuid(options.userId, 'userId');
   const txOptions = options.timeoutMs !== undefined ? { timeout: options.timeoutMs } : undefined;
   return (client as TransactionCapableClient).$transaction(async (tx) => {
-    await tx.$executeRaw`SELECT set_config(${ORG_CONTEXT_SETTING}, ${orgId}, true)`;
+    await tx.$executeRaw`SELECT set_config(${ORG_CONTEXT_SETTING}, ${organizationId}, true)`;
     if (options.userId !== undefined) {
       await tx.$executeRaw`SELECT set_config(${USER_CONTEXT_SETTING}, ${options.userId}, true)`;
     }

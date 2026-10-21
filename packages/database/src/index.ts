@@ -39,17 +39,17 @@ export async function disconnectPrismaClient(): Promise<void> {
 }
 
 /**
- * withOrgContext(orgId, fn, { client?, userId?, timeoutMs? }): run fn in one interactive
+ * withOrgContext(organizationId, fn, { client?, userId?, timeoutMs? }): run fn in one interactive
  * transaction with app.current_org_id set LOCAL, so forced RLS only exposes this org.
  * Uses the shared client unless one is passed.
  */
 export async function withOrgContext<T>(
-  orgId: string,
+  organizationId: string,
   fn: (tx: DatabaseTransaction) => Promise<T>,
   options: OrgContextOptions = {},
 ): Promise<T> {
   const { client, ...rest } = options;
-  return runWithOrgContext(client ?? getPrismaClient(), orgId, fn, rest);
+  return runWithOrgContext(client ?? getPrismaClient(), organizationId, fn, rest);
 }
 
 /**

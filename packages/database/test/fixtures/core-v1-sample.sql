@@ -26,3 +26,9 @@ INSERT INTO employees (id, org_id, user_id, full_name, updated_at) VALUES
   ('40000000-0000-4000-8000-000000000001', 'a0000000-0000-4000-8000-000000000001', 'b0000000-0000-4000-8000-000000000001', 'Owner', now());
 INSERT INTO meeting_participants (id, org_id, meeting_id, employee_id, display_name, role, updated_at) VALUES
   ('50000000-0000-4000-8000-000000000001', 'a0000000-0000-4000-8000-000000000001', 'e0000000-0000-4000-8000-000000000001', '40000000-0000-4000-8000-000000000001', 'Owner', 'HOST', now());
+INSERT INTO reports (id, org_id, meeting_id, version, updated_at) VALUES
+  ('60000000-0000-4000-8000-000000000001', 'a0000000-0000-4000-8000-000000000001', 'e0000000-0000-4000-8000-000000000001', 1, now()),
+  ('60000000-0000-4000-8000-000000000002', 'a0000000-0000-4000-8000-000000000001', 'e0000000-0000-4000-8000-000000000001', 2, now());
+-- report_id NULL: ADR-004 addendum 2 (b) attaches it to the meeting's latest report (version 2).
+INSERT INTO extracted_tasks (id, org_id, meeting_id, title, updated_at) VALUES
+  ('70000000-0000-4000-8000-000000000001', 'a0000000-0000-4000-8000-000000000001', 'e0000000-0000-4000-8000-000000000001', 'ET1', now());

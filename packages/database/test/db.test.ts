@@ -9,12 +9,20 @@ import * as db from '../src/index.js';
 const pkgDir = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const env = {
   ...process.env,
-  DATABASE_URL: process.env.DATABASE_URL ?? 'postgresql://meetops_app:change-me-app-local@localhost:5432/meetops',
+  DATABASE_URL:
+    process.env.DATABASE_URL ??
+    'postgresql://meetops_app:change-me-app-local@localhost:5432/meetops',
   MIGRATION_DATABASE_URL:
-    process.env.MIGRATION_DATABASE_URL ?? 'postgresql://meetops_migrator:change-me-migrator-local@localhost:5432/meetops',
+    process.env.MIGRATION_DATABASE_URL ??
+    'postgresql://meetops_migrator:change-me-migrator-local@localhost:5432/meetops',
 };
 const prisma = (...args: string[]) =>
-  execFileSync('pnpm', ['exec', 'prisma', ...args], { cwd: pkgDir, env, encoding: 'utf8', stdio: 'pipe' });
+  execFileSync('pnpm', ['exec', 'prisma', ...args], {
+    cwd: pkgDir,
+    env,
+    encoding: 'utf8',
+    stdio: 'pipe',
+  });
 
 describe('prisma schema', () => {
   it('validates', () => {
@@ -40,13 +48,35 @@ describe('generated client', () => {
     await db.disconnectPrismaClient();
   });
 
-  it('exposes exactly the 23 models', () => {
+  it('exposes exactly the 25 models', () => {
     const models = Object.values(Prisma.ModelName);
-    expect(models).toHaveLength(23);
+    expect(models).toHaveLength(25);
     for (const m of [
-      'Organization', 'User', 'Membership', 'Session', 'Invitation', 'Employee', 'Project',
-      'Meeting', 'MeetingParticipant', 'FileObject', 'Transcript', 'TranscriptSegment', 'Report',
-      'ExtractedTask', 'TaskApproval', 'Task', 'IntegrationIssue', 'Recording', 'EmailVerification', 'PasswordReset', 'AiRun', 'OutboxEvent', 'AuditEvent',
+      'Organization',
+      'User',
+      'Membership',
+      'Session',
+      'Invitation',
+      'Employee',
+      'Project',
+      'Meeting',
+      'MeetingParticipant',
+      'FileObject',
+      'Transcript',
+      'TranscriptSegment',
+      'Report',
+      'ExtractedTask',
+      'TaskApproval',
+      'Task',
+      'IntegrationIssue',
+      'Recording',
+      'RecordingSession',
+      'RecordingSessionChunk',
+      'EmailVerification',
+      'PasswordReset',
+      'AiRun',
+      'OutboxEvent',
+      'AuditEvent',
     ]) {
       expect(models).toContain(m);
     }
@@ -60,7 +90,13 @@ describe('generated client', () => {
 
   it('exports only the minimal runtime API', () => {
     expect(Object.keys(db).sort()).toEqual(
-      ['createPrismaClient', 'disconnectPrismaClient', 'getPrismaClient', 'withOrgContext', 'withUserContext'].sort(),
+      [
+        'createPrismaClient',
+        'disconnectPrismaClient',
+        'getPrismaClient',
+        'withOrgContext',
+        'withUserContext',
+      ].sort(),
     );
   });
 
@@ -68,5 +104,18 @@ describe('generated client', () => {
     const a = db.getPrismaClient();
     expect(a).toBe(db.getPrismaClient());
     expect(a).toBeInstanceOf(PrismaClient);
+  });
+});
+
+describe('lint wiring', () => {
+  it('tsconfig.json excludes test/ (root eslint allowDefaultProject owns packages/*/test/*.ts); tsconfig.test.json typechecks it', () => {
+    const tsconfig = JSON.parse(
+      readFileSync(new URL('../tsconfig.json', import.meta.url), 'utf8'),
+    ) as { include: string[] };
+    const testConfig = JSON.parse(
+      readFileSync(new URL('../tsconfig.test.json', import.meta.url), 'utf8'),
+    ) as { include: string[] };
+    expect(tsconfig.include.some((p) => p.startsWith('test'))).toBe(false);
+    expect(testConfig.include).toContain('test');
   });
 });

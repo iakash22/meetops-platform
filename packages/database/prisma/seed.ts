@@ -37,21 +37,21 @@ async function main(): Promise<void> {
   await runWithOrgContext(prisma, org.id, async (tx) => {
     for (const u of users) {
       await tx.membership.upsert({
-        where: { orgId_userId: { orgId: org.id, userId: u.id } },
+        where: { organizationId_userId: { organizationId: org.id, userId: u.id } },
         update: { role: u.role },
-        create: { orgId: org.id, userId: u.id, role: u.role },
+        create: { organizationId: org.id, userId: u.id, role: u.role },
       });
       await tx.employee.upsert({
         where: { id: u.emp },
         update: {},
-        create: { id: u.emp, orgId: org.id, userId: u.id, fullName: u.name, email: u.email },
+        create: { id: u.emp, organizationId: org.id, userId: u.id, fullName: u.name, email: u.email },
       });
     }
 
     await tx.project.upsert({
       where: { id: IDS.project },
       update: {},
-      create: { id: IDS.project, orgId: org.id, name: 'Website Relaunch', key: 'WEB' },
+      create: { id: IDS.project, organizationId: org.id, name: 'Website Relaunch', key: 'WEB' },
     });
 
     await tx.meeting.upsert({
@@ -59,7 +59,7 @@ async function main(): Promise<void> {
       update: {},
       create: {
         id: IDS.meeting,
-        orgId: org.id,
+        organizationId: org.id,
         projectId: IDS.project,
         createdById: IDS.owner,
         title: 'Weekly sync',
@@ -68,8 +68,8 @@ async function main(): Promise<void> {
         durationSec: 1800,
         participants: {
           create: [
-            { employeeId: IDS.empOwner, userId: IDS.owner, displayName: 'Olivia Owner', speakerLabel: 'SPEAKER_0', role: 'host' },
-            { employeeId: IDS.empMember, userId: IDS.member, displayName: 'Max Member', speakerLabel: 'SPEAKER_1' },
+            { userId: IDS.owner, displayName: 'Olivia Owner', speakerLabel: 'SPEAKER_0', role: 'host' },
+            { userId: IDS.member, displayName: 'Max Member', speakerLabel: 'SPEAKER_1' },
           ],
         },
       },
@@ -81,7 +81,7 @@ async function main(): Promise<void> {
       update: {},
       create: {
         id: IDS.file,
-        orgId: org.id,
+        organizationId: org.id,
         meetingId: IDS.meeting,
         uploadedById: IDS.owner,
         kind: 'raw',
@@ -100,7 +100,7 @@ async function main(): Promise<void> {
       update: {},
       create: {
         id: IDS.mediaNorm,
-        orgId: org.id,
+        organizationId: org.id,
         meetingId: IDS.meeting,
         parentObjectId: IDS.file,
         kind: 'normalized',
@@ -117,7 +117,7 @@ async function main(): Promise<void> {
     await tx.recording.upsert({
       where: { id: IDS.recording },
       update: {},
-      create: { id: IDS.recording, orgId: org.id, meetingId: IDS.meeting, fileObjectId: IDS.file, durationMs: 1_800_000, status: 'ready' },
+      create: { id: IDS.recording, organizationId: org.id, meetingId: IDS.meeting, fileObjectId: IDS.file, durationMs: 1_800_000, status: 'ready' },
     });
 
     const exists = await tx.transcript.findUnique({ where: { id: IDS.transcript } });
@@ -125,7 +125,8 @@ async function main(): Promise<void> {
       await tx.transcript.create({
         data: {
           id: IDS.transcript,
-          orgId: org.id,
+          organizationId: org.id,
+          provider: 'faster-whisper',
           meetingId: IDS.meeting,
           recordingId: IDS.recording,
           revision: 1,
