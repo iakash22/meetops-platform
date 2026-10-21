@@ -101,3 +101,18 @@ GitHub, Jira and other integrations are configured as per-organization integrati
 - `RLS_TEST_APP_URL` / `RLS_TEST_OWNER_URL`: enable the PR #25 live RLS tests (connect as `meetops_app` / the owner). Skipped when unset.
 - `AI_SMOKE_AUDIO_FILE`: optional audio file for the AI provider smoke test (PR #21).
 - CI audit gate: `AUDIT_LEVEL` (default `high`) and `AUDIT_TODAY` (override the date) for `scripts/ci/audit-gate.mjs`; exceptions live in `.github/audit-allowlist.json`.
+
+## Compose secrets (local dev)
+
+`compose.dev.yml` / `compose.app.yml` pass passwords as compose `secrets:` files instead of plain env vars:
+
+- Run `scripts/gen-dev-secrets.sh` (random values) or `scripts/gen-dev-secrets.sh --from-env` (copy from `.env`).
+  This writes `infra/compose/secrets/*.txt`, which is gitignored.
+- Postgres uses `POSTGRES_PASSWORD_FILE`. MinIO uses `MINIO_ROOT_PASSWORD_FILE`. The initdb roles script reads
+  `/run/secrets/meetops_{app,migrator}_db_password`.
+- App containers run `infra/compose/bin/with-secrets.sh`, which builds `DATABASE_URL` (by `DB_ROLE=app|migrator|none`),
+  `REDIS_URL` and `STORAGE_SECRET_ACCESS_KEY` from `/run/secrets` at start-up.
+- **Backend dependency:** native `*_FILE` support in `@meetops/config` (e.g. `DATABASE_URL_FILE`) would remove the shim.
+  Until then the shim is the contract.
+- `REALTIME_CORS_ORIGINS` is required by compose (`${REALTIME_CORS_ORIGINS:?}`). Use `http://localhost:5173` in dev, never `*`.
+- Production object-storage lifecycle and CORS: see `infra/docs/object-storage-prod.md`.
