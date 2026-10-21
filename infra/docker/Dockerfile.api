@@ -6,8 +6,9 @@ ARG NODE_VERSION=20.18.0
 FROM node:${NODE_VERSION}-bookworm-slim AS base
 ENV PNPM_HOME=/pnpm \
     PATH=/pnpm:$PATH \
-    COREPACK_ENABLE_DOWNLOAD_PROMPT=0
-RUN corepack enable && corepack prepare pnpm@9.12.3 --activate
+    COREPACK_ENABLE_DOWNLOAD_PROMPT=0 \
+    COREPACK_HOME=/corepack
+RUN corepack enable && corepack prepare pnpm@9.12.3 --activate && chmod -R a+rX /corepack
 WORKDIR /repo
 # hadolint ignore=DL3008
 RUN apt-get update \
@@ -33,6 +34,13 @@ RUN set -e; \
     if [ -n "$schema" ]; then \
       /repo/packages/database/node_modules/.bin/prisma generate --schema "$schema"; \
     fi
+
+# One-shot DB migration + seed image (compose service `migrate`):
+#   docker build -f infra/docker/Dockerfile.api --target migrate -t meetops/migrate .
+# Keeps the full workspace (prisma CLI, seed tooling); never used to serve traffic.
+FROM build AS migrate
+USER node
+CMD ["sh", "-c", "pnpm --filter @meetops/database run db:migrate:deploy && pnpm --filter @meetops/database run db:seed"]
 
 FROM node:${NODE_VERSION}-bookworm-slim AS runtime
 # OpenSSL is required by the Prisma query engine.
