@@ -31,4 +31,19 @@ describe('safeRedirect', () => {
     expect(safeRedirect(42)).toBe('/');
     expect(safeRedirect('/a\nb')).toBe('/');
   });
+
+  it.each([
+    '/%2F%2Fevil.com',
+    '/%2f%2fevil.com',
+    '/%5Cevil.com',
+    '/%5cevil',
+    '/%252F%252Fevil.com',
+    '/%0aevil',
+  ])('rejects encoded unsafe path %s after decoding', (input) => {
+    expect(safeRedirect(input, '/home')).toBe('/home');
+  });
+
+  it('keeps harmless encoded characters', () => {
+    expect(safeRedirect('/meetings?q=a%20b')).toBe('/meetings?q=a%20b');
+  });
 });
