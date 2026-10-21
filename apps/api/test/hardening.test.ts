@@ -201,3 +201,66 @@ describe('cookie policy', () => {
     expect(DEV_WEB_ORIGINS).toContain('http://localhost:5173');
   });
 });
+
+describe('B1 fail-closed for every NODE_ENV except development/test', () => {
+  it.each([[undefined], ['staging'], ['production'], ['prod'], ['']])('NODE_ENV=%s refuses in-memory defaults', async (nodeEnv) => {
+    const { defaultModuleDeps, isRelaxedEnv } = await import('../src/modules/index');
+    expect(isRelaxedEnv(nodeEnv)).toBe(false);
+    expect(() => defaultModuleDeps({}, { nodeEnv })).toThrow(/Refusing to start/);
+  });
+  it('NODE_ENV unset runs the full checks (missing WEB_ORIGINS / CSRF_SECRET)', async () => {
+    const { defaultModuleDeps, PRODUCTION_REQUIRED_DEPS } = await import('../src/modules/index');
+    const all: Record<string, object> = {};
+    for (const k of PRODUCTION_REQUIRED_DEPS as string[]) all[k] = {};
+    const saved = { o: process.env.WEB_ORIGINS, s: process.env.CSRF_SECRET };
+    delete process.env.WEB_ORIGINS;
+    delete process.env.CSRF_SECRET;
+    try {
+      expect(() => defaultModuleDeps(all, { nodeEnv: undefined })).toThrow(/WEB_ORIGINS, CSRF_SECRET/);
+      expect(() => defaultModuleDeps(all, { nodeEnv: 'staging' })).toThrow(/WEB_ORIGINS, CSRF_SECRET/);
+    } finally {
+      if (saved.o !== undefined) process.env.WEB_ORIGINS = saved.o;
+      if (saved.s !== undefined) process.env.CSRF_SECRET = saved.s;
+    }
+  });
+  it('createServer with NODE_ENV unset refuses to start', () => {
+    expect(() => createServer({ nodeEnv: '' })).toThrow(/Refusing to start/);
+  });
+  it('the test runner runs with NODE_ENV=test', () => {
+    expect(process.env.NODE_ENV).toBe('test');
+  });
+  it('development and test are relaxed', async () => {
+    const { isRelaxedEnv } = await import('../src/modules/index');
+    expect(isRelaxedEnv('development')).toBe(true);
+    expect(isRelaxedEnv('test')).toBe(true);
+    expect(isRelaxedEnv('Development')).toBe(false);
+  });
+});
+
+describe('TRUST_PROXY validation', () => {
+  it('accepts valid IPs and CIDRs', () => {
+    expect(parseTrustProxy('10.0.0.1,10.0.0.0/8,::1,fd00::/8,0.0.0.0/0')).toEqual(['10.0.0.1', '10.0.0.0/8', '::1', 'fd00::/8', '0.0.0.0/0']);
+  });
+  it.each(['10.0.0.256', 'loopback', '10.0.0.0/33', '::1/129', '10.0.0.1/', '10.0.0.0/8/1', '10.0.0.1, nope'])(
+    'rejects %s at startup',
+    (v) => {
+      expect(() => parseTrustProxy(v)).toThrow(/invalid IP\/CIDR/);
+      expect(() => createServer({ trustProxy: v })).toThrow(/invalid IP\/CIDR/);
+    }
+  );
+});
+
+describe('log redaction', () => {
+  it('redacts x-csrf-token, cookie and authorization headers', async () => {
+    const { REDACT_PATHS } = await import('../src/server');
+    for (const p of ['req.headers.authorization', 'req.headers.cookie', 'req.headers["x-csrf-token"]', 'res.headers["set-cookie"]']) {
+      expect(REDACT_PATHS).toContain(p);
+    }
+    const pino = (await import('pino')).default;
+    const lines: string[] = [];
+    const log = pino({ redact: { paths: REDACT_PATHS, censor: '***redacted***' } }, { write: (l: string) => void lines.push(l) });
+    log.info({ req: { headers: { 'x-csrf-token': 'SECRET1', cookie: 'sid=SECRET2', authorization: 'Bearer SECRET3' } } }, 'x');
+    expect(lines.join('')).not.toMatch(/SECRET[123]/);
+    expect(lines.join('')).toContain('***redacted***');
+  });
+});
