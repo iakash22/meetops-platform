@@ -1,14 +1,24 @@
 import { createHash } from 'node:crypto';
+import { Id, registerContractFormats } from '@meetops/contracts';
+import { Value } from '@sinclair/typebox/value';
 
-/** Deterministic ids so retries overwrite the same objects and never duplicate jobs. */
-const ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
+registerContractFormats();
 
-export function assertId(name: string, v: unknown): string {
-  if (typeof v !== 'string' || !ID.test(v)) throw new Error(`Invalid ${name}`);
+/** Validates against the contracts `Id` schema (string, format uuid); the value is never echoed. */
+export function assertId(name: string, v: unknown): Id {
+  if (!Value.Check(Id, v)) throw new Error(`Invalid ${name}`);
   return v;
 }
 
-/** Fixed namespace for deterministic (RFC 4122 v5) media FileObject ids. */
+/**
+ * Fixed namespace for deterministic (RFC 4122 v5) media FileObject ids.
+ *
+ * DO NOT CHANGE. Every normalized/chunk FileObject id ever written is derived from this value.
+ * Changing it would give the same recording/chunk a different id, so retries would create
+ * duplicate FileObjects and orphan existing rows and storage objects instead of overwriting them.
+ * Pinned by a test in apps/worker/test/media-processor.test.ts. A new scheme needs a new constant
+ * and a data migration, not an edit here.
+ */
 export const MEDIA_UUID_NAMESPACE = '6f0d3a4e-1c2b-5d7e-9f80-a1b2c3d4e5f6';
 
 /** RFC 4122 version-5 UUID (SHA-1, namespace + name). Contracts v0.2 requires Id to be a uuid. */

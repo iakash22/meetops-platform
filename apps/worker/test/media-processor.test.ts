@@ -22,6 +22,7 @@ import {
   type MediaProcessorDeps,
   type TranscriptionJobPayload
 } from '../src/media/index.js';
+import * as ids from '../src/media/ids.js';
 
 const ORG = '11111111-1111-4111-8111-111111111111';
 const MEET = '22222222-2222-4222-8222-222222222222';
@@ -253,4 +254,20 @@ describe.skipIf(!has('ffmpeg') || !has('ffprobe'))('processRecording with real f
     expect(jobs.size).toBe(3);
     expect(existsSync(tmpRoot) && readdirSync(tmpRoot)).toEqual([]);
   }, 240000);
+});
+
+describe('media ids', () => {
+
+  it('MEDIA_UUID_NAMESPACE is pinned (changing it breaks every stored deterministic id)', () => {
+    expect(ids.MEDIA_UUID_NAMESPACE).toBe('6f0d3a4e-1c2b-5d7e-9f80-a1b2c3d4e5f6');
+    expect(ids.chunkFileObjectId('0b9c2f4e-6a1d-4c3b-8e2f-1a2b3c4d5e6f', 1)).toBe('3dd82417-1fb6-5e1e-83f1-d19140a21ffc');
+  });
+
+  it('assertId enforces the contracts Id (uuid) format', () => {
+    expect(ids.assertId('recordingId', REC)).toBe(REC);
+    expect(ids.assertId('fileObjectId', ids.chunkFileObjectId(REC, 0))).toBe(ids.chunkFileObjectId(REC, 0));
+    for (const bad of ['rec_123', '', 'not-a-uuid', `${REC}x`, '33333333-3333-0333-8333-333333333333', 42, null, undefined]) {
+      expect(() => ids.assertId('recordingId', bad)).toThrow('Invalid recordingId');
+    }
+  });
 });
