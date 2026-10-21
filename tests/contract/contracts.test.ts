@@ -1,28 +1,15 @@
 import { describe, expect, it } from 'vitest';
-import { FormatRegistry, type TSchema } from '@sinclair/typebox';
+import type { TSchema } from '@sinclair/typebox';
 import { Value } from '@sinclair/typebox/value';
 import * as contracts from '@meetops/contracts';
 import { createFactories } from '../factories/index.js';
 
 /*
  * Validates factory output against the runtime TypeBox schemas exported by
- * @meetops/contracts (added in PR #17, feat/core-contracts). Until #17 is merged the
- * schemas are absent on main, so this suite skips. To run it against #17 locally set
- * QA_CONTRACTS_DIR to a checkout of packages/contracts from that branch.
+ * @meetops/contracts (PR #17, merged into integration/phase-1). The suite skips if the
+ * installed contracts package has no runtime schemas. QA_CONTRACTS_DIR points it at
+ * another checkout of packages/contracts.
  */
-// @meetops/contracts registers 'date-time' and 'email' in *its* TypeBox FormatRegistry.
-// tests/ installs its own TypeBox copy, so register equivalent checks here when missing.
-// TODO(QA): drop once contracts exports a validator (e.g. check(schema, value)).
-if (!FormatRegistry.Has('date-time'))
-  FormatRegistry.Set(
-    'date-time',
-    (v) =>
-      /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})$/.test(v) &&
-      !Number.isNaN(Date.parse(v)),
-  );
-if (!FormatRegistry.Has('email'))
-  FormatRegistry.Set('email', (v) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v));
-
 const schemas = contracts as unknown as Record<string, TSchema | undefined>;
 const hasRuntimeSchemas = ['Organization', 'Membership', 'Meeting', 'FileObject'].every(
   (k) => typeof schemas[k] === 'object',
@@ -77,6 +64,21 @@ describe.skipIf(!hasRuntimeSchemas)(
 
     it('rejects a negative file size', () => {
       expect(Value.Check(schema('FileObject'), { ...f.fileObject(), sizeBytes: -1 })).toBe(false);
+    });
+
+    it('every factory id is a UUID', () => {
+      const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+      const m = f.membership();
+      for (const id of [
+        f.organization.id,
+        f.user().id,
+        m.id,
+        m.userId,
+        f.project().id,
+        f.meeting().createdById,
+        f.fileObject().id,
+      ])
+        expect(id).toMatch(uuid);
     });
 
     it('rejects a meeting without organizationId', () => {

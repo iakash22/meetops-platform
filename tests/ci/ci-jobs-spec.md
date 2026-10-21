@@ -5,14 +5,13 @@ Add both jobs to `.github/workflows/ci.yml` (or a new `qa.yml`).
 
 ## Constraints the jobs must respect
 
-- `tests/` is **not** a pnpm workspace member (`pnpm-workspace.yaml` is Architecture-owned).
-  It has its own lockfile, `tests/pnpm-lock.yaml`, and installs with
-  `pnpm install --ignore-workspace --frozen-lockfile` from `tests/`.
-- Root deps must be installed first: `tests/api` imports `apps/api/src`, and `@meetops/contracts`
-  is linked from `packages/contracts`.
+- `tests/` is a pnpm workspace member (`@meetops/tests`), so the single root
+  `pnpm install --frozen-lockfile` installs it. No second install step.
 - pnpm version comes from the root `packageManager` field (pnpm@9.12.3) via `pnpm/action-setup@v4`.
 - Node 20, same as the existing `build` job.
-- Root `pnpm lint/typecheck/test` (turbo) do **not** cover `tests/`; these jobs do.
+- Root `pnpm lint/typecheck/test` (turbo, existing `build` job) already run `tests/` lint, typecheck
+  and vitest suites. Without Docker the integration suites skip there; `qa-integration` makes
+  sure they run for real, and `qa-e2e` runs Playwright (not part of `pnpm test`).
 
 ## Job 1: `integration` (Testcontainers on ubuntu-latest)
 
@@ -212,5 +211,3 @@ qa-e2e:
 
 1. Required check or informational at first? QA suggests required for `qa-integration`,
    informational for `qa-e2e` until the web app has real pages.
-2. Add `tests` to `pnpm-workspace.yaml` (Architecture decision)? That would let the jobs drop the
-   second install and let turbo run `tests/`.

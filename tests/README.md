@@ -1,21 +1,17 @@
 # MeetOps AI — QA harness (`tests/`)
 
-Cross-cutting test suites live here as the standalone `@meetops/tests` package.
+Cross-cutting test suites live here as the `@meetops/tests` workspace package.
 
-> **Not a pnpm workspace member.** `pnpm-workspace.yaml` is owned by Architecture and
-> does not list `tests/`, so `tests/` has its own install and lockfile
-> (`tests/pnpm-lock.yaml`, pnpm 9.12.3, `--ignore-workspace`). `@meetops/contracts` is
-> linked with `link:../packages/contracts`; `apps/api` source is imported by relative path
-> and resolves its deps from the root install. Consequence: root `pnpm lint/typecheck/test`
-> (turbo) do **not** run `tests/`; run them from `tests/` (below) or add a CI step.
-> Package-level unit tests stay next to their package (`apps/*/test`, `packages/*/test`).
+It is a pnpm workspace member (`'tests'` in `pnpm-workspace.yaml`) and uses the root
+TypeScript/vitest versions and the root lockfile. Root `pnpm typecheck`, `pnpm lint` and
+`pnpm test` (turbo) include it. `apps/api` source is imported by relative path.
 
 ## Layout
 
 | Path                        | Runner                         | What                                                                                                                                                                             |
 | --------------------------- | ------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `api/`                      | vitest (`api` project)         | `/health`, `/ready` via Fastify `inject` on `createServer()` from `apps/api/src/server.ts`; HTTP fallback when `API_BASE_URL` is set                                             |
-| `contract/`                 | vitest (`contract` project)    | Factory output validated with TypeBox `Value.Check` against `@meetops/contracts` runtime schemas (PR #17); skips until #17 merges                                                |
+| `contract/`                 | vitest (`contract` project)    | Factory output validated with TypeBox `Value.Check` against `@meetops/contracts` runtime schemas (PR #17)                                                                        |
 | `integration/`              | vitest (`integration` project) | Testcontainers Postgres (pgvector) + Redis; `database.test.ts` applies PR #6 migrations, runs `seed.ts`, checks organization isolation and pgvector similarity; RLS placeholders |
 | `e2e/`                      | Playwright                     | Smoke test against the web dev server (`apps/web` `dev` = vite)                                                                                                                  |
 | `factories/`                | vitest (`factories` project)   | Deterministic, seedable, organization-scoped test-data factories                                                                                                                 |
@@ -29,8 +25,8 @@ Cross-cutting test suites live here as the standalone `@meetops/tests` package.
 
 ```bash
 pnpm install                       # from repo root (apps/packages deps)
-cd tests && pnpm install --ignore-workspace   # or: pnpm run setup
-pnpm test                          # run inside tests/: all vitest suites
+pnpm test                          # root: turbo runs every package incl. @meetops/tests
+pnpm --filter @meetops/tests test  # just tests/ (or `pnpm test` inside tests/)
 pnpm test:api
 pnpm test:contract
 pnpm test:integration
@@ -55,7 +51,7 @@ E2E is **not** part of `pnpm test`; run it explicitly (it needs browsers).
 | `QA_SKIP_DOCKER`                       | unset                                                                              | integration; `1` forces skip                                                                                                                                                               |
 | `QA_POSTGRES_IMAGE` / `QA_REDIS_IMAGE` | `pgvector/pgvector:pg16` / `redis:7-alpine`                                        | integration (override the images)                                                                                                                                                          |
 | `QA_DB_PACKAGE_DIR`                    | `../packages/database`                                                             | integration/db: where Prisma migrations + `seed.ts` live (e.g. a worktree of PR #6). Suite skips if no migrations; seed test skips if that package has no installed `tsx`/`@prisma/client` |
-| `QA_CONTRACTS_DIR`                     | unset                                                                              | contract: alias `@meetops/contracts` to another checkout's `packages/contracts` (e.g. PR #17)                                                                                              |
+| `QA_CONTRACTS_DIR`                     | `../packages/contracts`                                                            | contract: alias `@meetops/contracts` to another checkout's `packages/contracts` (e.g. PR #17)                                                                                              |
 | `CI`                                   | –                                                                                  | Playwright retries, forbidOnly, html report                                                                                                                                                |
 
 ## Docker skip behaviour
@@ -119,5 +115,4 @@ Waits on the `@meetops/ai-core` provider abstraction. Planned under `tests/ai/`:
 ## Dependencies on app code
 
 - `apps/api` does not export `createServer` from its package entry (`src/index.ts` starts listening), so `api/` imports `apps/api/src/server.ts` directly. An exported builder would be cleaner.
-- `contract/` needs PR #17 (`feat/core-contracts`) merged; until then it skips. It registers the `date-time`/`email` formats in its own TypeBox copy (contracts registers them in its copy). A validator exported from contracts would remove that duplication.
-- Running `tests/` from root turbo needs `tests` in `pnpm-workspace.yaml` (Architecture decision).
+- `contract/` validates against the `@meetops/contracts` schemas from PR #17, which is merged into `integration/phase-1`. Contracts' `Id` is still `minLength: 1` ("cuid/uuid"); the factories emit v4 UUIDs everywhere and a test checks it.
