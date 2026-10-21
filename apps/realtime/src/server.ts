@@ -3,7 +3,7 @@ import { Server, type Socket } from 'socket.io';
 import { createAdapter } from '@socket.io/redis-adapter';
 import { createClient } from 'redis';
 import { createLogger } from '@meetops/logger';
-import type { RealtimeConfig } from './config.js';
+import { normalizeOrigin, type RealtimeConfig } from './config.js';
 import {
   meetingRoom,
   orgRoom,
@@ -52,9 +52,16 @@ export async function createRealtimeServer(opts: RealtimeServerOptions): Promise
     ...(opts.config.redisUrl ? { redis: redisReady ? 'up' : 'down' } : {})
   }));
 
+  const allowed = new Set(opts.config.corsOrigins);
   const io: RealtimeIo = new Server(app.server, {
     path: opts.config.path,
-    cors: { origin: opts.config.corsOrigins, credentials: opts.config.corsOrigins !== '*' }
+    cors: { origin: opts.config.corsOrigins, credentials: true },
+    // Enforce Origin at the HTTP handshake (CORS alone does not stop non-browser or websocket-only clients).
+    allowRequest: (req, cb) => {
+      const raw = req.headers.origin;
+      const origin = typeof raw === 'string' ? normalizeOrigin(raw) : null;
+      cb(null, origin !== null && allowed.has(origin));
+    }
   });
 
   const redisClients: Array<ReturnType<typeof createClient>> = [];
@@ -93,7 +100,7 @@ export async function createRealtimeServer(opts: RealtimeServerOptions): Promise
         .then(() => opts.canAccessMeeting({ organizationId: socket.data.organizationId, userId: socket.data.userId, meetingId }))
         .then(async (allowed) => {
           if (!allowed) return reply({ ok: false, error: 'forbidden' });
-          await socket.join(meetingRoom(meetingId));
+          await socket.join(meetingRoom(socket.data.organizationId, meetingId));
           reply({ ok: true });
         })
         .catch((err: unknown) => {
@@ -105,7 +112,7 @@ export async function createRealtimeServer(opts: RealtimeServerOptions): Promise
     socket.on('meeting:leave', (payload, ack) => {
       const reply = typeof ack === 'function' ? ack : () => undefined;
       if (typeof payload?.meetingId !== 'string') return reply({ ok: false, error: 'invalid' });
-      void Promise.resolve(socket.leave(meetingRoom(payload.meetingId))).then(() => reply({ ok: true }));
+      void Promise.resolve(socket.leave(meetingRoom(socket.data.organizationId, payload.meetingId))).then(() => reply({ ok: true }));
     });
   });
 
@@ -120,11 +127,12 @@ export async function createRealtimeServer(opts: RealtimeServerOptions): Promise
 /** Emit helpers for producers in this process (other processes use the Redis adapter / emitter). */
 export function emitToMeeting<E extends keyof ServerToClientEvents>(
   io: RealtimeIo,
+  organizationId: string,
   meetingId: string,
   event: E,
   ...args: Parameters<ServerToClientEvents[E]>
 ): void {
-  io.to(meetingRoom(meetingId)).emit(event, ...args);
+  io.to(meetingRoom(organizationId, meetingId)).emit(event, ...args);
 }
 
 export function emitToOrg<E extends keyof ServerToClientEvents>(

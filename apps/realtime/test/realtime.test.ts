@@ -20,6 +20,7 @@ const TOKENS: Record<string, { userId: string; organizationId: string }> = {
 };
 const MEETINGS: Record<string, string> = { mA: 'orgA', mB: 'orgB' };
 
+const ORIGIN = 'https://app.example.com';
 const cleanups: Array<() => Promise<void> | void> = [];
 afterEach(async () => {
   while (cleanups.length) await cleanups.pop()!();
@@ -27,7 +28,7 @@ afterEach(async () => {
 
 async function start() {
   const { app, io } = await createRealtimeServer({
-    config: loadRealtimeConfig({ REALTIME_PORT: '0' }),
+    config: loadRealtimeConfig({ REALTIME_PORT: '0', REALTIME_CORS_ORIGINS: ORIGIN }),
     verifySession: ({ token }) => (token ? (TOKENS[token] ?? null) : null),
     canAccessMeeting: ({ organizationId, meetingId }) => MEETINGS[meetingId] === organizationId
   });
@@ -37,8 +38,14 @@ async function start() {
   return { app, io, url };
 }
 
-function connect(url: string, token?: string): C {
-  const s: C = ioc(url, { auth: token ? { token } : {}, transports: ['websocket'], reconnection: false, forceNew: true });
+function connect(url: string, token?: string, origin: string | null = ORIGIN): C {
+  const s: C = ioc(url, {
+    auth: token ? { token } : {},
+    transports: ['websocket'],
+    reconnection: false,
+    forceNew: true,
+    ...(origin ? { extraHeaders: { origin } } : {})
+  });
   cleanups.push(() => void s.disconnect());
   return s;
 }
@@ -68,12 +75,16 @@ describe('status mapping', () => {
 
 describe('config', () => {
   it('parses env', () => {
-    expect(loadRealtimeConfig({})).toMatchObject({ port: 4001, corsOrigins: '*', path: '/socket.io' });
-    expect(loadRealtimeConfig({ REDIS_URL: 'redis://x', REALTIME_CORS_ORIGINS: 'http://a, http://b' })).toMatchObject({
+    expect(loadRealtimeConfig({ REALTIME_CORS_ORIGINS: ORIGIN })).toMatchObject({ port: 4001, corsOrigins: [ORIGIN], path: '/socket.io' });
+    expect(loadRealtimeConfig({ REDIS_URL: 'redis://x', REALTIME_CORS_ORIGINS: 'http://localhost:3000, https://b.example' })).toMatchObject({
       redisUrl: 'redis://x',
-      corsOrigins: ['http://a', 'http://b']
+      corsOrigins: ['http://localhost:3000', 'https://b.example']
     });
-    expect(() => loadRealtimeConfig({ REALTIME_PORT: 'abc' })).toThrow();
+    expect(() => loadRealtimeConfig({ REALTIME_CORS_ORIGINS: ORIGIN, REALTIME_PORT: 'abc' })).toThrow();
+    expect(() => loadRealtimeConfig({})).toThrow(/REALTIME_CORS_ORIGINS is required/);
+    expect(() => loadRealtimeConfig({ REALTIME_CORS_ORIGINS: '*' })).toThrow();
+    expect(() => loadRealtimeConfig({ REALTIME_CORS_ORIGINS: 'https://a.example/path' })).toThrow();
+    expect(() => loadRealtimeConfig({ REALTIME_CORS_ORIGINS: 'ftp://a.example' })).toThrow();
   });
 });
 
@@ -85,6 +96,24 @@ describe('realtime server', () => {
     expect(res.json()).toEqual({ status: 'ok', adapter: 'memory' });
   });
 
+  it('rejects handshakes with a missing or disallowed Origin', async () => {
+    const { url } = await start();
+    await expect(connected(connect(url, 'a1', null))).rejects.toThrow();
+    await expect(connected(connect(url, 'a1', 'https://evil.example'))).rejects.toThrow();
+    await expect(connected(connect(url, 'a1', 'https://app.example.com.evil.example'))).rejects.toThrow();
+    await connected(connect(url, 'a1'));
+  });
+
+  it('uses org-prefixed meeting rooms', async () => {
+    const { io, url } = await start();
+    const a1 = connect(url, 'a1');
+    await connected(a1);
+    expect(await a1.emitWithAck('meeting:join', { meetingId: 'mA' })).toEqual({ ok: true });
+    const rooms = [...(io.sockets.sockets.values().next().value?.rooms ?? [])];
+    expect(rooms).toEqual(expect.arrayContaining(['org:orgA', 'org:orgA:meeting:mA']));
+    expect(rooms).not.toContain('meeting:mA');
+  });
+
   it('rejects missing and invalid tokens', async () => {
     const { url } = await start();
     await expect(connected(connect(url))).rejects.toThrow('unauthorized');
@@ -93,7 +122,7 @@ describe('realtime server', () => {
 
   it('rejects when the verifier throws', async () => {
     const { app } = await createRealtimeServer({
-      config: loadRealtimeConfig({}),
+      config: loadRealtimeConfig({ REALTIME_CORS_ORIGINS: ORIGIN }),
       verifySession: () => {
         throw new Error('boom');
       },
@@ -118,7 +147,7 @@ describe('realtime server', () => {
 
     const ev: MeetingStatusEvent = { meetingId: 'mA', organizationId: 'orgA', status: 'processing', at: new Date().toISOString() };
     const [ra1, ra2, rb1] = [nextEvent(a1, 'meeting:status'), nextEvent(a2, 'meeting:status'), nextEvent(b1, 'meeting:status')];
-    emitToMeeting(io, 'mA', 'meeting:status', ev);
+    emitToMeeting(io, 'orgA', 'mA', 'meeting:status', ev);
     expect(await ra1).toEqual(ev);
     expect(await ra2).toBe('timeout');
     expect(await rb1).toBe('timeout');
@@ -132,7 +161,7 @@ describe('realtime server', () => {
 
     expect(await a1.emitWithAck('meeting:leave', { meetingId: 'mA' })).toEqual({ ok: true });
     const after = nextEvent(a1, 'meeting:status');
-    emitToMeeting(io, 'mA', 'meeting:status', ev);
+    emitToMeeting(io, 'orgA', 'mA', 'meeting:status', ev);
     expect(await after).toBe('timeout');
   });
 });
