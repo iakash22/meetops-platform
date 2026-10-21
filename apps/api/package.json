@@ -13,12 +13,17 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@casl/ability": "^6.7.1",
+    "@fastify/cookie": "^9.4.0",
     "@fastify/swagger": "^8.14.0",
     "@fastify/swagger-ui": "^1.10.2",
     "@meetops/config": "workspace:*",
     "@meetops/logger": "workspace:*",
+    "@sinclair/typebox": "^0.33.0",
+    "argon2": "^0.41.1",
     "fastify": "^4.28.1",
-    "pino": "^9.4.0"
+    "pino": "^9.4.0",
+    "zod": "^3.23.8"
   },
   "devDependencies": {
     "tsx": "^4.19.1",
