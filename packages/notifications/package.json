@@ -15,7 +15,6 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@meetops/contracts": "workspace:*",
     "@meetops/logger": "workspace:*",
     "@meetops/queue": "workspace:*",
     "bullmq": "^5.18.0",

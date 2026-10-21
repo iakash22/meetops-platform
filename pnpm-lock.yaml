@@ -204,9 +204,6 @@ importers:
 
   packages/notifications:
     dependencies:
-      '@meetops/contracts':
-        specifier: workspace:*
-        version: link:../contracts
       '@meetops/logger':
         specifier: workspace:*
         version: link:../logger
