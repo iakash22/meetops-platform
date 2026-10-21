@@ -1,9 +1,9 @@
 import type { Queue } from 'bullmq';
-import { MEDIA_JOB_NAME, type MediaProcessingJobPayload } from './types.js';
+import { MEDIA_JOB_NAME, type MediaJobPayload } from './types.js';
 import { mediaJobId } from './ids.js';
 
 /** Producer helper (API side): one job per recording via deterministic jobId. */
-export function enqueueMediaJob(queue: Pick<Queue<MediaProcessingJobPayload>, 'add'>, payload: MediaProcessingJobPayload) {
+export function enqueueMediaJob(queue: Pick<Queue<MediaJobPayload>, 'add'>, payload: MediaJobPayload) {
   return queue.add(MEDIA_JOB_NAME, payload, {
     jobId: mediaJobId(payload.organizationId, payload.recordingId),
     attempts: 3,

@@ -2,30 +2,27 @@ import { createReadStream, createWriteStream } from 'node:fs';
 import { mkdtemp, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
-import { TranscriptionJobPayload as TranscriptionJobSchema, QUEUE_NAMES } from '@meetops/contracts';
+import {
+  MAX_MEDIA_BYTES,
+  MediaJobPayload as MediaJobSchema,
+  QUEUE_NAMES,
+  TranscriptionJobPayload as TranscriptionJobSchema
+} from '@meetops/contracts';
 import type { MeetingStatusEvent, TranscriptionProgressEvent, TranscriptionStage } from '@meetops/contracts';
 import { Value } from '@sinclair/typebox/value';
-import type { AudioChunk, ProbeResult } from '@meetops/media-core';
-import {
-  StorageError,
-  assertKeyOwnedBy,
-  buildObjectKey,
-  type MeetingObjectRef,
-  type StorageService
-} from '@meetops/storage';
-import {
-  assertId,
-  chunkFileObjectId,
-  normalizedFileObjectId,
-  transcriptionIdempotencyKey,
-  transcriptionJobId
-} from './ids.js';
-import type { ChunkManifestEntry, MediaProcessingJobPayload, MediaProcessingResult, TranscriptionJobPayload } from './types.js';
+import type { AllowedDemuxer, AudioChunk, ProbeResult } from '@meetops/media-core';
+import { assertProbedFormat, demuxerForExt } from '@meetops/media-core';
+import { StorageError, assertKeyOwnedBy, buildObjectKey, type MeetingObjectRef, type StorageService } from '@meetops/storage';
+import { chunkFileObjectId, normalizedFileObjectId, transcriptionIdempotencyKey, transcriptionJobId } from './ids.js';
+import type { ChunkManifestEntry, MediaJobPayload, MediaProcessingResult, TranscriptionJobPayload } from './types.js';
+
+export type NormalizeCaps = { inputFormat: string; maxDurationSeconds: number; maxOutputBytes: number };
 
 export type MediaOps = {
-  probeMedia(p: string): Promise<ProbeResult>;
-  normalizeToWav(input: string, output: string): Promise<string>;
+  probeMedia(p: string, opts: { format: string }): Promise<ProbeResult>;
+  normalizeToWav(input: string, output: string, opts: NormalizeCaps): Promise<string>;
   chunkAudio(input: string, outDir: string, opts: { segmentSeconds: number }): Promise<AudioChunk[]>;
 };
 
@@ -45,12 +42,25 @@ export type MinimalLogger = {
   error(obj: object, msg: string): void;
 };
 
+export type MediaLimits = {
+  /** Max source object size (HEAD-checked before download, and enforced while streaming). */
+  maxSourceBytes: number;
+  /** Max recording duration in seconds (probe check + ffmpeg -t). */
+  maxDurationSeconds: number;
+};
+
+export const DEFAULT_MEDIA_LIMITS: MediaLimits = { maxSourceBytes: MAX_MEDIA_BYTES, maxDurationSeconds: 4 * 60 * 60 };
+
+/** 16 kHz mono s16le = 32000 B/s; -fs cap = duration cap worth of PCM + header slack. */
+export const normalizedByteCap = (maxDurationSeconds: number) => Math.ceil(maxDurationSeconds * 32000) + 64 * 1024;
+
 export type MediaProcessorDeps = {
-  storage: Pick<StorageService, 'getObject' | 'putObject'>;
+  storage: Pick<StorageService, 'getObject' | 'putObject' | 'headObject'>;
   media: MediaOps;
   transcriptionQueue: TranscriptionEnqueuer;
   realtime: RealtimePublisher;
   logger: MinimalLogger;
+  limits?: Partial<MediaLimits>;
   segmentSeconds?: number;
   tmpRoot?: string;
   defaultSttProviderId?: TranscriptionJobPayload['sttProviderId'];
@@ -69,18 +79,6 @@ export class MediaJobError extends Error {
   }
 }
 
-function validatePayload(p: MediaProcessingJobPayload): void {
-  if (!p || p.jobVersion !== 1 || p.kind !== 'process_recording') throw new MediaJobError('invalid_payload', 'Invalid media job payload');
-  try {
-    assertId('organizationId', p.organizationId);
-    assertId('meetingId', p.meetingId);
-    assertId('recordingId', p.recordingId);
-    if (!/^[a-z0-9]{1,8}$/.test(p.sourceExt)) throw new Error('Invalid sourceExt');
-  } catch (e) {
-    throw new MediaJobError('invalid_payload', (e as Error).message);
-  }
-}
-
 export function errorCodeOf(err: unknown): string {
   if (err instanceof MediaJobError) return err.errorCode;
   if (err instanceof StorageError) return err.code === 'NOT_FOUND' ? 'source_not_found' : err.code === 'FORBIDDEN' ? 'forbidden' : 'storage_error';
@@ -88,52 +86,80 @@ export function errorCodeOf(err: unknown): string {
   return 'internal_error';
 }
 
+/** Counts bytes while streaming and aborts past the cap (defends against HEAD/GET size races). */
+function byteCap(max: number): Transform {
+  let n = 0;
+  return new Transform({
+    transform(chunk: Buffer, _enc, cb) {
+      n += chunk.length;
+      if (n > max) return cb(new MediaJobError('source_too_large', 'Source exceeds size limit'));
+      cb(null, chunk);
+    }
+  });
+}
+
 /**
- * Process one recording: verify ownership, download, probe, normalize (16 kHz mono),
- * chunk, upload outputs, enqueue one transcription job per chunk, and publish progress.
- * Deterministic keys/job ids make retries safe. The temp dir is always removed.
+ * Process one recording: validate the contract payload, verify ownership, HEAD-check size, download,
+ * probe with a forced allowlisted demuxer, normalize (16 kHz mono, -t/-fs capped), chunk, upload,
+ * enqueue one transcription job per chunk (chunkIndex + startMs), and publish progress.
+ * Deterministic keys/ids make retries safe. The temp dir is always removed.
  */
 export async function processRecording(
-  payload: MediaProcessingJobPayload,
+  payload: MediaJobPayload,
   deps: MediaProcessorDeps,
   ctx: JobContext = { isFinalAttempt: true }
 ): Promise<MediaProcessingResult> {
-  validatePayload(payload);
+  if (!Value.Check(MediaJobSchema, payload)) throw new MediaJobError('invalid_payload', 'Invalid media job payload');
   const { organizationId, meetingId, recordingId } = payload;
+  const limits: MediaLimits = { ...DEFAULT_MEDIA_LIMITS, ...deps.limits };
   const now = deps.now ?? (() => new Date());
   const log = { organizationId, meetingId, recordingId, jobId: ctx.jobId };
   const segmentSeconds = deps.segmentSeconds ?? 600;
-
   const progress = (percent: number, stage: TranscriptionStage, extra: Partial<TranscriptionProgressEvent> = {}) =>
     deps.realtime.transcriptionProgress({ organizationId, meetingId, recordingId, percent, stage, at: now().toISOString(), ...extra });
 
   const sourceRef: MeetingObjectRef = { orgId: organizationId, meetingId, kind: 'recording', objectId: recordingId, ext: payload.sourceExt };
-  const expectedKey = buildObjectKey(sourceRef);
+  let demuxer: AllowedDemuxer;
   try {
-    assertKeyOwnedBy(expectedKey, organizationId);
+    const expectedKey = buildObjectKey(sourceRef);
+    assertKeyOwnedBy(expectedKey, organizationId, meetingId);
     if (payload.sourceKey !== undefined) {
-      assertKeyOwnedBy(payload.sourceKey, organizationId);
+      assertKeyOwnedBy(payload.sourceKey, organizationId, meetingId);
       if (payload.sourceKey !== expectedKey) throw new MediaJobError('forbidden', 'sourceKey does not match recording');
     }
+    demuxer = demuxerForExt(payload.sourceExt);
   } catch (err) {
     deps.logger.warn({ ...log, errorCode: errorCodeOf(err) }, 'media job rejected');
     throw err;
   }
 
-  const tmp = await mkdtemp(path.join(deps.tmpRoot ?? tmpdir(), 'meetops-media-'));
+  let tmp: string | undefined;
   try {
     deps.realtime.meetingStatus({ organizationId, meetingId, status: 'processing', at: now().toISOString() });
     deps.logger.info(log, 'media job started');
 
+    const head = await deps.storage.headObject(sourceRef);
+    if (!head) throw new MediaJobError('source_not_found', 'Source not found');
+    if (head.sizeBytes < 1 || head.sizeBytes > limits.maxSourceBytes) throw new MediaJobError('source_too_large', 'Source exceeds size limit');
+
+    tmp = await mkdtemp(path.join(deps.tmpRoot ?? tmpdir(), 'meetops-media-'));
     const srcPath = path.join(tmp, `source.${payload.sourceExt}`);
     const { body } = await deps.storage.getObject(sourceRef);
-    await pipeline(body, createWriteStream(srcPath));
+    await pipeline(body, byteCap(limits.maxSourceBytes), createWriteStream(srcPath));
 
-    const info = await deps.media.probeMedia(srcPath);
+    const info = await deps.media.probeMedia(srcPath, { format: demuxer });
+    assertProbedFormat(info, demuxer);
     if (!info.hasAudio) throw new MediaJobError('no_audio_stream', 'Recording has no audio stream');
+    if (!(info.durationSeconds > 0) || info.durationSeconds > limits.maxDurationSeconds) {
+      throw new MediaJobError('source_too_long', 'Recording exceeds duration limit');
+    }
     progress(5, 'normalizing');
 
-    const wavPath = await deps.media.normalizeToWav(srcPath, path.join(tmp, 'normalized.wav'));
+    const wavPath = await deps.media.normalizeToWav(srcPath, path.join(tmp, 'normalized.wav'), {
+      inputFormat: demuxer,
+      maxDurationSeconds: limits.maxDurationSeconds,
+      maxOutputBytes: normalizedByteCap(limits.maxDurationSeconds)
+    });
     const wavSize = (await stat(wavPath)).size;
     const normalizedRef: MeetingObjectRef = { orgId: organizationId, meetingId, kind: 'normalized', objectId: recordingId };
     await deps.storage.putObject(normalizedRef, createReadStream(wavPath), { mimeType: 'audio/wav', sizeBytes: wavSize });
@@ -170,6 +196,8 @@ export async function processRecording(
         meetingId,
         recordingId,
         fileObjectId: m.fileObjectId,
+        chunkIndex: m.index,
+        startMs: m.startMs,
         sttProviderId: payload.sttProviderId ?? deps.defaultSttProviderId ?? 'assemblyai',
         diarize: true,
         ...(payload.languageHint ? { languageHint: payload.languageHint } : {}),
@@ -196,6 +224,6 @@ export async function processRecording(
     }
     throw err;
   } finally {
-    await rm(tmp, { recursive: true, force: true }).catch(() => undefined);
+    if (tmp) await rm(tmp, { recursive: true, force: true }).catch(() => undefined);
   }
 }

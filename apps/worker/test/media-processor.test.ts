@@ -15,7 +15,10 @@ import {
   chunkFileObjectId,
   uuidV5,
   processRecording,
-  type MediaProcessingJobPayload,
+  type MediaJobPayload,
+  workerAuthorize,
+  runInJobScope,
+  type MediaOps,
   type MediaProcessorDeps,
   type TranscriptionJobPayload
 } from '../src/media/index.js';
@@ -23,7 +26,7 @@ import {
 const ORG = '11111111-1111-4111-8111-111111111111';
 const MEET = '22222222-2222-4222-8222-222222222222';
 const REC = '33333333-3333-4333-8333-333333333333';
-const payload: MediaProcessingJobPayload = {
+const payload: MediaJobPayload = {
   jobVersion: 1,
   kind: 'process_recording',
   organizationId: ORG,
@@ -43,8 +46,13 @@ function makeDeps(over: Partial<MediaProcessorDeps> = {}, tmpRoot?: string) {
       if (!b) throw new StorageNotFoundError();
       return { body: Readable.from([b]), info: { sizeBytes: b.length } };
     });
+  const headObject = vi.fn(async (ref: MeetingObjectRef) => {
+    const b = stored.get(buildObjectKey(ref));
+    return b ? { sizeBytes: b.length } : null;
+  });
   const storage: MediaProcessorDeps['storage'] = {
     getObject,
+    headObject,
     putObject: vi.fn(async (ref: MeetingObjectRef, body: unknown, spec: { sizeBytes: number; mimeType: string }) => {
       const chunks: Buffer[] = [];
       for await (const c of body as Readable) chunks.push(c as Buffer);
@@ -58,14 +66,16 @@ function makeDeps(over: Partial<MediaProcessorDeps> = {}, tmpRoot?: string) {
   const add = vi.fn(async (_n: string, data: TranscriptionJobPayload, opts: { jobId: string }) => {
     if (!jobs.has(opts.jobId)) jobs.set(opts.jobId, data); // BullMQ semantics: duplicate jobId is a no-op
   });
+  const probeMedia = vi.fn<MediaOps['probeMedia']>(async () => ({ durationSeconds: 25, formatName: 'matroska,webm', streams: [], hasAudio: true, hasVideo: false }));
+  const normalizeToWav = vi.fn<MediaOps['normalizeToWav']>(async (_i, o) => {
+    writeFileSync(o, 'WAVDATA');
+    return o;
+  });
   const deps: MediaProcessorDeps = {
     storage,
     media: {
-      probeMedia: vi.fn(async () => ({ durationSeconds: 25, formatName: 'webm', streams: [], hasAudio: true, hasVideo: false })),
-      normalizeToWav: vi.fn(async (_i: string, o: string) => {
-        writeFileSync(o, 'WAVDATA');
-        return o;
-      }),
+      probeMedia,
+      normalizeToWav,
       chunkAudio: vi.fn(async (_i: string, outDir: string) => {
         const { mkdirSync } = await import('node:fs');
         mkdirSync(outDir, { recursive: true });
@@ -89,7 +99,7 @@ function makeDeps(over: Partial<MediaProcessorDeps> = {}, tmpRoot?: string) {
   };
   const srcKey = buildObjectKey({ orgId: ORG, meetingId: MEET, kind: 'recording', objectId: REC, ext: 'webm' });
   stored.set(srcKey, Buffer.from('SOURCE'));
-  return { deps, stored, jobs, events, logs, srcKey, getObject, add };
+  return { deps, stored, jobs, events, logs, srcKey, getObject, add, headObject, probeMedia, normalizeToWav };
 }
 
 const root = mkdtempSync(path.join(tmpdir(), 'worker-test-'));
@@ -101,7 +111,7 @@ beforeEach(() => {
 
 describe('processRecording (mocked storage, queue, emitter)', () => {
   it('uploads outputs, enqueues one contract-valid job per chunk, emits events, cleans temp', async () => {
-    const { deps, stored, jobs, events, logs, srcKey } = makeDeps({}, tmpRoot);
+    const { deps, stored, jobs, events, logs, srcKey, probeMedia: probeMock, normalizeToWav: normMock } = makeDeps({}, tmpRoot);
     const res = await processRecording({ ...payload, sourceKey: srcKey }, deps, { jobId: 'j1', isFinalAttempt: true });
 
     expect([...stored.keys()].sort()).toEqual([
@@ -117,11 +127,15 @@ describe('processRecording (mocked storage, queue, emitter)', () => {
     const j1 = jobs.get(`transcribe_${ORG}_${REC}_00001`)!;
     expect(parseTranscriptionIdempotencyKey(j1.idempotencyKey)).toEqual({ recordingId: REC, index: 1 });
     expect(j1.fileObjectId).toBe(chunkFileObjectId(REC, 1));
+    expect(j1.chunkIndex).toBe(1);
+    expect(j1.startMs).toBe(10000);
+    expect(probeMock.mock.calls[0]![1]).toEqual({ format: 'matroska' });
+    expect(normMock.mock.calls[0]![2]).toEqual({ inputFormat: 'matroska', maxDurationSeconds: 14400, maxOutputBytes: 14400 * 32000 + 65536 });
     expect(chunkFileObjectId(REC, 1)).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-5[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
     // RFC 4122 test vector: uuidv5(DNS namespace, 'www.example.com')
     expect(uuidV5('www.example.com', '6ba7b810-9dad-11d1-80b4-00c04fd430c8')).toBe('2ed6657d-e927-568b-95e1-2665a8aea6a2');
 
-    expect(events.every((e) => e.rooms.includes(`meeting:${MEET}`) && e.rooms.includes(`org:${ORG}`))).toBe(true);
+    expect(events.every((e) => e.rooms.includes(`org:${ORG}:meeting:${MEET}`) && e.rooms.includes(`org:${ORG}`))).toBe(true);
     expect(events[0]).toMatchObject({ event: 'meeting:status', payload: { status: 'processing', organizationId: ORG } });
     const stages = events.filter((e) => e.event === 'transcription:progress').map((e) => (e.payload as { stage: string }).stage);
     expect(stages).toEqual(['normalizing', 'chunking', 'chunking', 'chunking', 'chunking', 'transcribing']);
@@ -143,7 +157,7 @@ describe('processRecording (mocked storage, queue, emitter)', () => {
   it('rejects a sourceKey from another org before touching storage', async () => {
     const { deps, getObject } = makeDeps({}, tmpRoot);
     await expect(processRecording({ ...payload, sourceKey: `org/44444444-4444-4444-8444-444444444444/meetings/${MEET}/recordings/${REC}.webm` }, deps)).rejects.toThrow();
-    await expect(processRecording({ ...payload, sourceKey: `org/${ORG}/meetings/other/recordings/${REC}.webm` }, deps)).rejects.toThrow(/does not match/);
+    await expect(processRecording({ ...payload, sourceKey: `org/${ORG}/meetings/other/recordings/${REC}.webm` }, deps)).rejects.toThrow(/Access denied/);
     await expect(processRecording({ ...payload, organizationId: '../x' }, deps)).rejects.toThrow(/Invalid/);
     expect(getObject).not.toHaveBeenCalled();
     expect(readdirSync(tmpRoot)).toEqual([]);
@@ -167,8 +181,43 @@ describe('processRecording (mocked storage, queue, emitter)', () => {
   it('maps a missing source to source_not_found', async () => {
     const { deps, stored, srcKey, events } = makeDeps({}, tmpRoot);
     stored.delete(srcKey);
-    await expect(processRecording(payload, deps)).rejects.toBeInstanceOf(StorageNotFoundError);
+    await expect(processRecording(payload, deps)).rejects.toThrow(/Source not found/);
     expect(events.at(-1)!.payload).toMatchObject({ status: 'failed', errorCode: 'source_not_found' });
+  });
+
+  it('HEAD-checks source size before downloading', async () => {
+    const { deps, getObject, events } = makeDeps({ limits: { maxSourceBytes: 3 } }, tmpRoot);
+    await expect(processRecording(payload, deps)).rejects.toThrow(/size limit/);
+    expect(getObject).not.toHaveBeenCalled();
+    expect(events.at(-1)!.payload).toMatchObject({ status: 'failed', errorCode: 'source_too_large' });
+    expect(readdirSync(tmpRoot)).toEqual([]);
+  });
+
+  it('rejects forbidden/unexpected containers and over-long recordings after probing', async () => {
+    for (const [formatName, re] of [['hls', /Forbidden/], ['concat', /Forbidden/], ['ogg', /Unexpected/]] as const) {
+      const { deps, probeMedia: pm, normalizeToWav: nm } = makeDeps({}, tmpRoot);
+      pm.mockResolvedValue({ durationSeconds: 5, formatName, streams: [], hasAudio: true, hasVideo: false });
+      await expect(processRecording(payload, deps)).rejects.toThrow(re);
+      expect(nm).not.toHaveBeenCalled();
+    }
+    const { deps } = makeDeps({ limits: { maxDurationSeconds: 10 } }, tmpRoot);
+    await expect(processRecording(payload, deps)).rejects.toThrow(/duration/);
+    expect(readdirSync(tmpRoot)).toEqual([]);
+  });
+
+  it('rejects payloads that fail the contracts MediaJobPayload schema', async () => {
+    const { deps } = makeDeps({}, tmpRoot);
+    await expect(processRecording({ ...payload, sourceExt: 'm3u8' } as never, deps)).rejects.toThrow(/Invalid media job payload/);
+    await expect(processRecording({ ...payload, extra: 1 } as never, deps)).rejects.toThrow(/Invalid media job payload/);
+  });
+
+  it('worker authorize hook only allows the current job scope', async () => {
+    const ref = { orgId: ORG, meetingId: MEET, kind: 'recording' as const, objectId: REC, ext: 'webm' };
+    expect(() => workerAuthorize(ref)).toThrow();
+    await runInJobScope({ organizationId: ORG, meetingId: MEET }, async () => {
+      expect(() => workerAuthorize(ref)).not.toThrow();
+      expect(() => workerAuthorize({ ...ref, meetingId: '55555555-5555-4555-8555-555555555555' })).toThrow();
+    });
   });
 
   it('enqueueMediaJob uses a deterministic jobId', async () => {
@@ -193,14 +242,14 @@ describe.skipIf(!has('ffmpeg') || !has('ffprobe'))('processRecording with real f
     const src = path.join(root, 'tone.webm');
     execFileSync('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-y', '-f', 'lavfi', '-i', 'sine=frequency=440:sample_rate=48000:duration=25', '-ac', '2', '-c:a', 'libopus', src]);
     stored.set(srcKey, readFileSync(src));
-    deps.media = { probeMedia: (p) => probeMedia(p), normalizeToWav: (i, o) => normalizeToWav(i, o), chunkAudio: (i, o, x) => chunkAudio(i, o, x) };
+    deps.media = { probeMedia: (p, o) => probeMedia(p, o), normalizeToWav: (i, o, x) => normalizeToWav(i, o, x), chunkAudio: (i, o, x) => chunkAudio(i, o, x) };
     const res = await processRecording(payload, { ...deps, segmentSeconds: 10 });
     expect(res.chunks).toHaveLength(3);
     expect(res.durationMs).toBeGreaterThan(24000);
     const wavKey = `org/${ORG}/meetings/${MEET}/processed/${REC}/normalized.wav`;
     const probeOut = path.join(root, 'n.wav');
     writeFileSync(probeOut, stored.get(wavKey)!);
-    expect((await probeMedia(probeOut)).streams[0]).toMatchObject({ sampleRate: 16000, channels: 1, codecName: 'pcm_s16le' });
+    expect((await probeMedia(probeOut, { format: 'wav' })).streams[0]).toMatchObject({ sampleRate: 16000, channels: 1, codecName: 'pcm_s16le' });
     expect(jobs.size).toBe(3);
     expect(existsSync(tmpRoot) && readdirSync(tmpRoot)).toEqual([]);
   }, 240000);

@@ -14,7 +14,7 @@
   },
   "dependencies": {
     "@meetops/config": "workspace:*",
-    "@meetops/contracts": "workspace:^0.1.0",
+    "@meetops/contracts": "workspace:*",
     "@meetops/logger": "workspace:*",
     "@meetops/media-core": "workspace:*",
     "@meetops/queue": "workspace:*",
