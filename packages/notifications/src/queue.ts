@@ -1,48 +1,37 @@
 import { UnrecoverableError, type Job, type JobsOptions, type Queue } from 'bullmq';
 import { createQueue, createWorker } from '@meetops/queue';
 import { logger as baseLogger } from '@meetops/logger';
-import { renderTemplate, templateNames, type TemplateName, type TemplateVariables } from './templates.js';
+import { Value } from '@sinclair/typebox/value';
+import {
+  EMAIL_JOB_RETENTION,
+  EMAIL_QUEUE,
+  EMAIL_TEMPLATE_RECIPIENT,
+  EmailJobPayload as EmailJobPayloadSchema,
+  type EmailJobPayload
+} from '@meetops/contracts';
+import { renderTemplate, type TemplateName, type TemplateVariables } from './templates.js';
 import type { EmailRecipient, EmailService, SendResult } from './types.js';
 import { EmailValidationError } from './smtp.js';
 
-/**
- * Mirrors QUEUE_NAMES.email from @meetops/contracts (PR #17).
- * TODO: import { QUEUE_NAMES } from '@meetops/contracts' once #17 is on main.
- */
-export const EMAIL_QUEUE_NAME = 'email';
+export const EMAIL_QUEUE_NAME = EMAIL_QUEUE;
 export const EMAIL_JOB_NAME = 'send_email';
 
-/** Short retention: payloads are ids-only, but keep Redis footprint and exposure small. */
+/** Short, bounded retention from the contract; payloads are ids-only but keep Redis footprint/exposure small. */
 export const DEFAULT_EMAIL_JOB_OPTIONS = {
   attempts: 5,
   backoff: { type: 'exponential', delay: 2000 },
-  removeOnComplete: { count: 100, age: 3600 },
-  removeOnFail: { count: 500, age: 24 * 3600 }
+  removeOnComplete: { ...EMAIL_JOB_RETENTION.removeOnComplete },
+  removeOnFail: { ...EMAIL_JOB_RETENTION.removeOnFail }
 } satisfies JobsOptions;
 
-/** Opaque id: letters, digits, '_' and '-'. Structurally excludes emails ('@'), URLs (':', '/'), and BullMQ-reserved ':'. */
+/**
+ * Extra, stricter-than-contract id rule (contract allows up to 200 chars): 1..128 of [A-Za-z0-9_-].
+ * Excludes '@', ':' and '/', so no addresses/URLs/tokens, and keeps BullMQ jobIds free of ':'.
+ */
 export const SAFE_ID = /^[A-Za-z0-9_-]{1,128}$/;
 
-export type EmailRecipientRef = { userId: string } | { invitationId: string };
-
-/**
- * Ids-only email job (matches the JobMeta shape of @meetops/contracts: jobVersion, organizationId,
- * requestId?, idempotencyKey; kind 'send_email'; templateId). It deliberately carries NO email addresses,
- * names, tokens, links or free-form variables. The worker resolves those from the DB via EmailJobResolver.
- */
-export interface EmailJobPayload {
-  jobVersion: 1;
-  organizationId: string;
-  requestId?: string;
-  /** Used as BullMQ jobId for dedupe. Must match SAFE_ID. */
-  idempotencyKey: string;
-  kind: 'send_email';
-  templateId: TemplateName;
-  recipient: EmailRecipientRef;
-  /** Related entity ids (e.g. taskId, meetingId, resetRequestId). Values must match SAFE_ID. */
-  refs?: Record<string, string>;
-  locale?: string;
-}
+export type { EmailJobPayload };
+export type EmailRecipientRef = EmailJobPayload['recipient'];
 
 /** What the resolver returns: real recipient + fully built template variables (links incl. fresh tokens). */
 export type ResolvedEmail<K extends TemplateName = TemplateName> = {
@@ -62,34 +51,28 @@ export class InvalidEmailJobError extends UnrecoverableError {}
 /** Non-retryable failure (bad payload/template); BullMQ fails the job without further attempts. */
 export class PermanentEmailError extends UnrecoverableError {}
 
+/**
+ * 1) TypeBox Value.Check against the contracts EmailJobPayload schema (strict, ids-only, unknown fields rejected);
+ * 2) recipient kind must match the template (EMAIL_TEMPLATE_RECIPIENT: invitation -> invitationId, others -> userId);
+ * 3) stricter SAFE_ID on idempotencyKey/requestId/refs values and a stricter refs key rule.
+ * Invalid jobs throw InvalidEmailJobError (UnrecoverableError): never retried.
+ */
 export function validateEmailJobPayload(p: unknown): asserts p is EmailJobPayload {
   const fail = (m: string): never => {
     throw new InvalidEmailJobError(`Invalid email job: ${m}`);
   };
-  if (!p || typeof p !== 'object') fail('not an object');
-  const j = p as Record<string, unknown>;
-  const allowed = new Set(['jobVersion', 'organizationId', 'requestId', 'idempotencyKey', 'kind', 'templateId', 'recipient', 'refs', 'locale']);
-  for (const k of Object.keys(j)) if (!allowed.has(k)) fail(`unexpected field ${k}`);
-  if (j.jobVersion !== 1) fail('jobVersion must be 1');
-  if (j.kind !== 'send_email') fail('kind must be send_email');
-  for (const k of ['organizationId', 'idempotencyKey'] as const) {
-    if (typeof j[k] !== 'string' || !SAFE_ID.test(j[k])) fail(`${k} must be an opaque id`);
+  if (!Value.Check(EmailJobPayloadSchema, p)) {
+    const first = Value.Errors(EmailJobPayloadSchema, p).First();
+    fail(`schema violation${first ? ` at ${first.path || '/'}` : ''}`);
   }
-  if (j.requestId !== undefined && (typeof j.requestId !== 'string' || !SAFE_ID.test(j.requestId))) fail('requestId must be an opaque id');
-  if (typeof j.templateId !== 'string' || !(templateNames as string[]).includes(j.templateId)) fail('unknown templateId');
-  const r = j.recipient as Record<string, unknown> | undefined;
-  const rKeys = r && typeof r === 'object' ? Object.keys(r) : [];
-  const rKey = rKeys[0];
-  if (rKeys.length !== 1 || (rKey !== 'userId' && rKey !== 'invitationId') || typeof r?.[rKey] !== 'string' || !SAFE_ID.test(r[rKey])) {
-    fail('recipient must be exactly { userId } or { invitationId }');
+  const j = p as EmailJobPayload;
+  const expected = EMAIL_TEMPLATE_RECIPIENT[j.templateId];
+  if (!(expected in j.recipient)) fail(`${j.templateId} requires recipient.${expected}`);
+  if (!SAFE_ID.test(j.idempotencyKey)) fail('idempotencyKey must be an opaque id');
+  if (j.requestId !== undefined && !SAFE_ID.test(j.requestId)) fail('requestId must be an opaque id');
+  for (const [k, v] of Object.entries(j.refs ?? {})) {
+    if (!/^[A-Za-z][A-Za-z0-9]{0,63}$/.test(k) || !SAFE_ID.test(v)) fail(`refs.${k} must be an opaque id`);
   }
-  if (j.refs !== undefined) {
-    if (!j.refs || typeof j.refs !== 'object' || Array.isArray(j.refs)) fail('refs must be an object');
-    for (const [k, v] of Object.entries(j.refs as Record<string, unknown>)) {
-      if (!/^[A-Za-z][A-Za-z0-9]{0,63}$/.test(k) || typeof v !== 'string' || !SAFE_ID.test(v)) fail(`refs.${k} must be an opaque id`);
-    }
-  }
-  if (j.locale !== undefined && (typeof j.locale !== 'string' || !/^[A-Za-z]{2,3}(-[A-Za-z0-9]{2,8})*$/.test(j.locale))) fail('invalid locale');
 }
 
 type QueueLike = Pick<Queue<EmailJobPayload>, 'add' | 'close'>;

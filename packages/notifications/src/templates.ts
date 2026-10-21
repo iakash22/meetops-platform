@@ -1,3 +1,5 @@
+import type { EmailTemplateId } from '@meetops/contracts';
+
 export interface RenderedEmail {
   subject: string;
   html: string;
@@ -123,3 +125,8 @@ export function renderTemplate<K extends TemplateName>(name: K, vars: TemplateVa
 }
 
 export const templateNames = Object.keys(templates) as TemplateName[];
+
+/** Contract template ids; the registry must cover exactly these (checked at compile time). */
+export { EMAIL_TEMPLATE_IDS } from '@meetops/contracts';
+type RegistryMatchesContract = [EmailTemplateId] extends [TemplateName] ? ([TemplateName] extends [EmailTemplateId] ? true : never) : never;
+export const REGISTRY_MATCHES_CONTRACT: RegistryMatchesContract = true;

@@ -1,6 +1,8 @@
 import { describe, it, expect, vi } from 'vitest';
 import { UnrecoverableError } from 'bullmq';
+import { EMAIL_QUEUE, EMAIL_JOB_RETENTION, EMAIL_TEMPLATE_IDS } from '@meetops/contracts';
 import {
+  templateNames,
   createEmailProducer,
   createEmailProcessor,
   validateEmailJobPayload,
@@ -12,13 +14,17 @@ import {
   type EmailService
 } from '../src';
 
+const ORG = '0b6f3a52-6a0e-4d1f-9c55-2f4c6f0e1a01';
+const INV = '7d9e2c1b-3f4a-4b5c-8d6e-9f0a1b2c3d4e';
+const USR = 'e4774cdd-a079-4f86-814e-8b9140bb6db4';
+
 const payload = (over: Partial<EmailJobPayload> = {}): EmailJobPayload => ({
   jobVersion: 1,
-  organizationId: 'org_1',
+  organizationId: ORG,
   idempotencyKey: 'invite-inv_9-v1',
   kind: 'send_email',
   templateId: 'invitation',
-  recipient: { invitationId: 'inv_9' },
+  recipient: { invitationId: INV },
   ...over
 });
 
@@ -38,8 +44,12 @@ function assertIdsOnly(data: unknown) {
 }
 
 describe('email producer', () => {
-  it('uses the contracts "email" queue name', () => {
+  it('uses contract queue name, retention and template ids', () => {
+    expect(EMAIL_QUEUE_NAME).toBe(EMAIL_QUEUE);
     expect(EMAIL_QUEUE_NAME).toBe('email');
+    expect(DEFAULT_EMAIL_JOB_OPTIONS.removeOnComplete).toEqual(EMAIL_JOB_RETENTION.removeOnComplete);
+    expect(DEFAULT_EMAIL_JOB_OPTIONS.removeOnFail).toEqual(EMAIL_JOB_RETENTION.removeOnFail);
+    expect([...templateNames].sort()).toEqual([...EMAIL_TEMPLATE_IDS].sort());
   });
   it('enqueues ids-only payloads with jobId = idempotencyKey and short retention', async () => {
     const add = vi.fn().mockResolvedValue({ id: 'invite-inv_9-v1' });
@@ -65,17 +75,23 @@ describe('email producer', () => {
       { ...payload(), to: [{ email: 'a@b.test' }] },
       { ...payload(), variables: { inviteUrl: 'https://x' } },
       payload({ recipient: { userId: 'a@b.test' } }),
-      payload({ recipient: { userId: 'u1', invitationId: 'i1' } as never }),
+      payload({ recipient: { userId: USR, invitationId: INV } as never }),
       payload({ refs: { resetUrl: 'https://x/reset?token=abc' } }),
       payload({ idempotencyKey: 'has:colon' }),
       payload({ templateId: 'nope' as never }),
-      { ...payload(), jobVersion: 2 }
+      { ...payload(), jobVersion: 2 },
+      payload({ recipient: { invitationId: 'not-a-uuid' } }),
+      payload({ organizationId: 'org_1' }),
+      payload({ templateId: 'verification' }),
+      payload({ templateId: 'invitation', recipient: { userId: USR } }),
+      payload({ requestId: 'x'.repeat(150) }),
+      payload({ refs: { '9bad': 'v' } })
     ];
     for (const b of bad) await expect(producer.enqueue(b as EmailJobPayload)).rejects.toBeInstanceOf(UnrecoverableError);
     expect(add).not.toHaveBeenCalled();
   });
   it('accepts userId recipients with id refs', () => {
-    expect(() => validateEmailJobPayload(payload({ templateId: 'task-assigned', recipient: { userId: 'usr_1' }, refs: { taskId: 'tsk_1' }, locale: 'en-US' }))).not.toThrow();
+    expect(() => validateEmailJobPayload(payload({ templateId: 'task-assigned', recipient: { userId: USR }, refs: { taskId: 'tsk_1' }, locale: 'en-US' }))).not.toThrow();
   });
 });
 
@@ -91,7 +107,7 @@ describe('email processor', () => {
   });
   it('fails permanently when recipient cannot be resolved or template mismatches', async () => {
     const svc = new ConsoleEmailService();
-    await expect(createEmailProcessor(svc, resolver())({ id: '1', attemptsMade: 0, data: payload({ templateId: 'verification', recipient: { userId: 'u1' } }) })).rejects.toBeInstanceOf(UnrecoverableError);
+    await expect(createEmailProcessor(svc, resolver())({ id: '1', attemptsMade: 0, data: payload({ templateId: 'verification', recipient: { userId: USR } }) })).rejects.toBeInstanceOf(UnrecoverableError);
     const wrong: EmailJobResolver = { resolve: async () => ({ templateId: 'verification', to: 'a@x.test', variables: { name: 'a', verificationUrl: 'https://a.test', expiresInHours: 1 } }) };
     await expect(createEmailProcessor(svc, wrong)({ id: '1', attemptsMade: 0, data: payload() })).rejects.toBeInstanceOf(UnrecoverableError);
     expect(svc.sent).toHaveLength(0);
