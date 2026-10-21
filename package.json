@@ -19,7 +19,10 @@
     "test": "turbo run test",
     "dev": "turbo run dev",
     "prepare": "husky install",
-    "postinstall": "turbo run postinstall --cache-dir .turbo"
+    "postinstall": "turbo run postinstall --cache-dir .turbo",
+    "dev:infra:up": "docker compose --env-file .env -f infra/compose/compose.dev.yml up -d",
+    "dev:infra:down": "docker compose --env-file .env -f infra/compose/compose.dev.yml down",
+    "dev:infra:logs": "docker compose --env-file .env -f infra/compose/compose.dev.yml logs -f"
   },
   "devDependencies": {
     "@eslint/js": "^9.13.0",
