@@ -77,26 +77,26 @@ Open PRs as of 2026-10-21, from `gh pr list --state open`.
 
 ### Docs stack (merge in this order)
 
-| Order | PR | Branch | Base |
-| --- | --- | --- | --- |
-| 1 | #3 | `docs/agent-board-and-providers` | `main` |
-| 2 | #8 | `docs/getting-started` | `main` (confirmed depends on #3: shares the implementation board file) |
-| 3 | #12 | `docs/database-and-devops` | `docs/getting-started` |
-| 4 | #14 | `docs/storage-testing-extension` | `docs/database-and-devops` |
-| 5 | P1-DOC-5 | `docs/contributing` | `docs/storage-testing-extension` |
+| Order | PR       | Branch                           | Base                                                                   |
+| ----- | -------- | -------------------------------- | ---------------------------------------------------------------------- |
+| 1     | #3       | `docs/agent-board-and-providers` | `main`                                                                 |
+| 2     | #8       | `docs/getting-started`           | `main` (confirmed depends on #3: shares the implementation board file) |
+| 3     | #12      | `docs/database-and-devops`       | `docs/getting-started`                                                 |
+| 4     | #14      | `docs/storage-testing-extension` | `docs/database-and-devops`                                             |
+| 5     | P1-DOC-5 | `docs/contributing`              | `docs/storage-testing-extension`                                       |
 
 ### Other open PRs
 
-| PR | Branch | Base | Confirmed dependency |
-| --- | --- | --- | --- |
-| #4 | `docs/security-threat-model` | `main` | None |
-| #5 | `feat/extension-scaffold` | `main` | None |
-| #15 | `feat/extension-capture` | `feat/extension-scaffold` | Stacked on #5; merge #5 first |
-| #6 | `feat/database-core-schema` | `main` | None |
-| #7 | `chore/devops-containers-ci` | `main` | None confirmed. Its images skip `prisma generate`, which matters once apps import #6 |
-| #9 | `test/qa-harness` | `main` | None |
-| #10 | `feat/storage-and-media-core` | `main` | None |
-| #11 | `feat/notifications-email` | `main` | None |
-| #13 | `feat/web-shell` | `main` | None |
+| PR  | Branch                        | Base                      | Confirmed dependency                                                                 |
+| --- | ----------------------------- | ------------------------- | ------------------------------------------------------------------------------------ |
+| #4  | `docs/security-threat-model`  | `main`                    | None                                                                                 |
+| #5  | `feat/extension-scaffold`     | `main`                    | None                                                                                 |
+| #15 | `feat/extension-capture`      | `feat/extension-scaffold` | Stacked on #5; merge #5 first                                                        |
+| #6  | `feat/database-core-schema`   | `main`                    | None                                                                                 |
+| #7  | `chore/devops-containers-ci`  | `main`                    | None confirmed. Its images skip `prisma generate`, which matters once apps import #6 |
+| #9  | `test/qa-harness`             | `main`                    | None                                                                                 |
+| #10 | `feat/storage-and-media-core` | `main`                    | None                                                                                 |
+| #11 | `feat/notifications-email`    | `main`                    | None                                                                                 |
+| #13 | `feat/web-shell`              | `main`                    | None                                                                                 |
 
 "Confirmed" means the PR base or a shared file. Logical dependencies are in [dependency graph](../17-agents/dependency-graph.md) and marked as assumptions. Several PRs (#5, #6, #9, #10) touch `pnpm-lock.yaml`, so expect lockfile conflicts as they land; resolve them with `pnpm install` at the pinned version, without reformatting.
