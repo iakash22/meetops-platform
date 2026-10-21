@@ -89,6 +89,9 @@ export default defineBackground(() => {
   });
 
   // Retry queued chunks after a browser restart or extension install/update/reload.
+  // onStartup is not guaranteed to reach a worker that registers late, so also drain whenever
+  // the worker (re)starts; drainQueue is idempotent and skips already-uploaded chunks.
   chrome.runtime.onStartup.addListener(() => void drain());
   chrome.runtime.onInstalled.addListener(() => void drain());
+  void drain();
 });
