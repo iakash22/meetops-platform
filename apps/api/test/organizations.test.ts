@@ -1,7 +1,6 @@
-/* eslint-disable @typescript-eslint/no-unsafe-argument -- test/ is not part of a TS project (see report) */
 import { randomUUID } from 'node:crypto';
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { buildApp, signupAndLogin, type App, type Client } from './helpers';
+import { buildApp, signupAndLogin, type App, type Client } from './helpers.js';
 
 describe('organizations', () => {
   let app: App;
@@ -79,7 +78,7 @@ describe('organizations', () => {
     expect(inv.statusCode).toBe(201);
     expect(inv.json()).toMatchObject({ email: 'new@example.com', role: 'member', status: 'pending', organizationId: org.organization.id });
     expect(inv.body).not.toMatch(/token/i);
-    const token = app.mailer.sent.find((m) => m.kind === 'invite')!.token!;
+    const token = new URL([...app.mail.sent].reverse().find((m) => m.template === 'invitation')!.data.url!).searchParams.get('token')!;
 
     const wrongUser = await signupAndLogin(app, 'someone@example.com');
     const mismatch = await wrongUser.post('/invitations/accept', { token });
@@ -111,7 +110,7 @@ describe('organizations', () => {
     const id = org.organization.id;
     await owner.post(`/orgs/${id}/invitations`, { email: 'm@example.com', role: 'member' });
     const member = await signupAndLogin(app, 'm@example.com');
-    await member.post('/invitations/accept', { token: app.mailer.sent.find((m) => m.kind === 'invite')!.token! });
+    await member.post('/invitations/accept', { token: new URL([...app.mail.sent].reverse().find((m) => m.template === 'invitation')!.data.url!).searchParams.get('token')! });
 
     const denied = await member.post(`/orgs/${id}/invitations`, { email: 'y@example.com', role: 'viewer' });
     expect(denied.statusCode).toBe(403);
