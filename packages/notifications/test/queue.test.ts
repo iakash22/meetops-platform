@@ -12,10 +12,13 @@ import {
   type EmailService
 } from '../src';
 
+const ORG = '0b6f3a52-6a0e-4d1f-9c55-2f4c6f0e1a01';
+const INV = '7d9e2c1b-3f4a-4b5c-8d6e-9f0a1b2c3d4e';
+const USR = 'e4774cdd-a079-4f86-814e-8b9140bb6db4';
 const payload = (over: Record<string, unknown> = {}): EmailJobPayload =>
-  ({ jobVersion: 1, organizationId: 'org_1', idempotencyKey: 'invite-inv_9-v1', kind: 'send_email', templateId: 'invite', invitationId: 'inv_9', ...over }) as EmailJobPayload;
+  ({ jobVersion: 1, organizationId: ORG, idempotencyKey: 'invite-inv_9-v1', kind: 'send_email', templateId: 'invite', invitationId: INV, ...over }) as EmailJobPayload;
 const userPayload = (templateId: string, over: Record<string, unknown> = {}) =>
-  ({ jobVersion: 1, organizationId: 'org_1', idempotencyKey: `k-${templateId}`, kind: 'send_email', templateId, userId: 'usr_1', ...over }) as EmailJobPayload;
+  ({ jobVersion: 1, organizationId: ORG, idempotencyKey: `k-${templateId}`, kind: 'send_email', templateId, userId: USR, ...over }) as EmailJobPayload;
 
 const resolver = (): EmailJobResolver & { resolve: ReturnType<typeof vi.fn> } => ({
   resolve: vi.fn(async (p: EmailJobPayload) =>
@@ -60,14 +63,22 @@ describe('email producer', () => {
       { ...payload(), to: [{ email: 'a@b.test' }] },
       { ...payload(), variables: { inviteUrl: 'https://x' } },
       payload({ invitationId: 'a@b.test' }),
-      payload({ userId: 'u1' }),
-      userPayload('reset_password', { invitationId: 'i1' }),
+      payload({ invitationId: 'not-a-uuid' }),
+      payload({ userId: USR }),
+      userPayload('reset_password', { invitationId: INV }),
+      userPayload('invite'),
+      payload({ templateId: 'verify_email' }),
+      payload({ organizationId: 'org_1' }),
+      payload({ requestId: 'https://x' }),
       userPayload('reset_password', { userId: undefined }),
       payload({ resetUrl: 'https://x/reset?token=abc' }),
       userPayload('task_assigned'),
       payload({ idempotencyKey: 'has:colon' }),
       payload({ templateId: 'nope' }),
-      { ...payload(), jobVersion: 2 }
+      { ...payload(), jobVersion: 2 },
+      { ...payload(), kind: 'other' },
+      payload({ locale: 'en' }),
+      payload({ refs: { taskId: 't' } })
     ];
     for (const b of bad) await expect(producer.enqueue(b as EmailJobPayload)).rejects.toBeInstanceOf(UnrecoverableError);
     expect(add).not.toHaveBeenCalled();

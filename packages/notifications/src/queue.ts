@@ -1,7 +1,8 @@
 import { UnrecoverableError, type Job, type JobsOptions, type Queue } from 'bullmq';
 import { createQueue, createWorker } from '@meetops/queue';
 import { logger as baseLogger } from '@meetops/logger';
-import { QUEUE_NAMES } from '@meetops/contracts';
+import { Value } from '@sinclair/typebox/value';
+import { QUEUE_NAMES, EmailJobPayload as EmailJobPayloadSchema, type EmailJobPayload, type EmailTemplateId } from '@meetops/contracts';
 import { renderTemplate, type TemplateName, type TemplateVariables } from './templates.js';
 import type { EmailRecipient, EmailService, SendResult } from './types.js';
 import { EmailValidationError } from './smtp.js';
@@ -20,32 +21,10 @@ export const DEFAULT_EMAIL_JOB_OPTIONS = {
 /** Opaque id: letters, digits, '_' and '-'. Structurally excludes emails ('@'), URLs (':', '/'), and BullMQ-reserved ':'. */
 export const SAFE_ID = /^[A-Za-z0-9_-]{1,128}$/;
 
-/**
- * Queueable email template ids. Mirrors `EmailTemplateId` from @meetops/contracts v0.2 (PR #38).
- * `task_assigned` exists in the template registry but is NOT queueable until contracts adds it.
- * TODO(contracts v0.2, #38): import { EmailTemplateId } from '@meetops/contracts' once merged.
- */
-export type EmailTemplateId = 'invite' | 'verify_email' | 'reset_password' | 'meeting_summary';
+/** Queueable template ids, from the contract. (`task_assigned` is renderable but not queueable until contracts add it.) */
 export const EMAIL_TEMPLATE_IDS: readonly EmailTemplateId[] = ['invite', 'verify_email', 'reset_password', 'meeting_summary'];
 
-interface EmailJobMeta {
-  jobVersion: 1;
-  organizationId: string;
-  requestId?: string;
-  /** Used as BullMQ jobId for dedupe. Must match SAFE_ID. */
-  idempotencyKey: string;
-  kind: 'send_email';
-}
-
-/**
- * Ids-only email job, discriminated on templateId: `invite` -> invitationId, all others -> userId.
- * Mirrors `EmailJobPayload` from @meetops/contracts v0.2 (PR #38) exactly (additionalProperties: false).
- * Carries NO addresses, names, tokens or links; the worker resolves them via EmailJobResolver.
- * TODO(contracts v0.2, #38): replace with `import type { EmailJobPayload } from '@meetops/contracts'` once merged.
- */
-export type EmailJobPayload =
-  | (EmailJobMeta & { templateId: 'invite'; invitationId: string })
-  | (EmailJobMeta & { templateId: Exclude<EmailTemplateId, 'invite'>; userId: string });
+export type { EmailJobPayload, EmailTemplateId };
 
 /** What the resolver returns: real recipient + fully built template variables (links incl. fresh tokens). */
 export type ResolvedEmail<K extends TemplateName = TemplateName> = {
@@ -65,16 +44,26 @@ export class InvalidEmailJobError extends UnrecoverableError {}
 /** Non-retryable failure (bad payload/template); BullMQ fails the job without further attempts. */
 export class PermanentEmailError extends UnrecoverableError {}
 
+/**
+ * 1) TypeBox Value.Check against the contracts EmailJobPayload schema (additionalProperties: false),
+ * 2) explicit discriminator check (invite -> invitationId only; others -> userId only),
+ * 3) SAFE_ID on every id (stricter than the contract's Id: rules out '@', ':', '/', so no addresses/URLs/tokens).
+ * Invalid jobs throw InvalidEmailJobError (UnrecoverableError) so BullMQ never retries them.
+ */
 export function validateEmailJobPayload(p: unknown): asserts p is EmailJobPayload {
   const fail = (m: string): never => {
     throw new InvalidEmailJobError(`Invalid email job: ${m}`);
   };
-  if (!p || typeof p !== 'object') fail('not an object');
+  if (!p || typeof p !== 'object' || Array.isArray(p)) fail('not an object');
+  if (!Value.Check(EmailJobPayloadSchema, p)) {
+    const first = Value.Errors(EmailJobPayloadSchema, p).First();
+    fail(`schema violation${first ? ` at ${first.path || '/'}` : ''}`);
+  }
   const j = p as Record<string, unknown>;
-  if (j.jobVersion !== 1) fail('jobVersion must be 1');
-  if (j.kind !== 'send_email') fail('kind must be send_email');
-  if (typeof j.templateId !== 'string' || !(EMAIL_TEMPLATE_IDS as readonly string[]).includes(j.templateId)) fail('unknown templateId');
   const recipientKey = j.templateId === 'invite' ? 'invitationId' : 'userId';
+  const wrongKey = recipientKey === 'userId' ? 'invitationId' : 'userId';
+  if (wrongKey in j) fail(`${String(j.templateId)} must not carry ${wrongKey}`);
+  if (!(recipientKey in j)) fail(`${String(j.templateId)} requires ${recipientKey}`);
   const allowed = new Set(['jobVersion', 'organizationId', 'requestId', 'idempotencyKey', 'kind', 'templateId', recipientKey]);
   for (const k of Object.keys(j)) if (!allowed.has(k)) fail(`unexpected field ${k}`);
   for (const k of ['organizationId', 'idempotencyKey', recipientKey]) {
