@@ -47,7 +47,7 @@ describe('chunked recording session', () => {
     expect(Value.Check(ChunkUploadUrlResponse, { ...res, upload: { ...res.upload, method: 'GET' } })).toBe(false);
     expect(CHUNK_UPLOAD_URL_TTL_SECONDS).toBeLessThanOrEqual(900);
     expect(MAX_CHUNK_BYTES).toBeLessThan(MAX_RECORDING_SESSION_BYTES);
-    expect(MAX_RECORDING_SESSION_BYTES).toBe(5 * 1024 ** 3);
+    expect(MAX_RECORDING_SESSION_BYTES).toBe(2_000_000_000);
   });
   it('complete and abort', () => {
     expect(Value.Check(CompleteRecordingSessionRequest, { chunkCount: 12, durationMs: 60000 })).toBe(true);
