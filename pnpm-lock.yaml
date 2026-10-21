@@ -64,6 +64,9 @@ importers:
       '@meetops/config':
         specifier: workspace:*
         version: link:../../packages/config
+      '@meetops/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
       '@meetops/logger':
         specifier: workspace:*
         version: link:../../packages/logger

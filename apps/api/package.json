@@ -18,6 +18,7 @@
     "@fastify/swagger": "^9.9.2",
     "@fastify/swagger-ui": "^6.1.2",
     "@meetops/config": "workspace:*",
+    "@meetops/contracts": "workspace:*",
     "@meetops/logger": "workspace:*",
     "@sinclair/typebox": "^0.34.52",
     "argon2": "^0.41.1",
