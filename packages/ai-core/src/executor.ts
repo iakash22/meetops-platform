@@ -5,10 +5,12 @@ import { AIError, toAIError } from './errors.js';
 import { withRetry, withTimeout, type Sleeper } from './retry.js';
 import { estimateCost, type IdempotencyStore, type QuotaManager, type UsageTracker } from './usage.js';
 import type { AIResultMeta, AIUsage, AnyProvider } from './types.js';
+import type { TenantContext } from './auth.js';
 
 export type JobStatus = 'succeeded' | 'waiting' | 'retryable' | 'failed';
 
-export type AttemptError = { provider: string; code: AIError['code']; message: string };
+/** Client-safe attempt error: provider id + code only (no provider messages, no keys). */
+export type AttemptError = { provider: string; code: AIError['code'] };
 
 export type JobOutcome<T> =
   | { status: 'succeeded'; value: T; meta: AIResultMeta; attempts: AttemptError[] }
@@ -17,6 +19,7 @@ export type JobOutcome<T> =
       errors: AttemptError[];
       /** The original request is returned untouched so the caller can persist/re-queue it (no data loss). */
       request: AIJobRequest;
+      requestId?: string | undefined;
     };
 
 export type AIJobRequest = {
@@ -26,7 +29,12 @@ export type AIJobRequest = {
   idempotencyKey?: string | undefined;
   transcriptRevision?: number | undefined;
   override?: RequestOverride | undefined;
+  /** Server-derived caller context; required for overrides (ability `override AIRoute`). Never from payload. */
+  actor?: TenantContext | undefined;
   jobId?: string | undefined;
+  requestId?: string | undefined;
+  /** Overall deadline across all candidates, retries and polling. */
+  overallTimeoutMs?: number | undefined;
 };
 
 export type ProviderCall<T> = (
@@ -45,11 +53,19 @@ export type ExecutorDeps = {
   notify?: NotifyHook | undefined;
   sleep?: Sleeper | undefined;
   now?: (() => Date) | undefined;
+  /** Default overall deadline (ms). */
+  overallTimeoutMs?: number | undefined;
+  /** Internal (server-side) error log hook; receives full errors. Never forwarded to clients. */
+  onInternalError?: ((e: { requestId?: string | undefined; provider: string; error: AIError }) => void) | undefined;
 };
 
 /** Build ordered candidate list with all policy checks applied. Exported for tests/explainability. */
-export function planCandidates(route: ResolvedRoute, registry: ProviderRegistry): { candidates: ProviderConfig[]; skipped: AttemptError[] } {
+export function planCandidates(
+  route: ResolvedRoute,
+  registry: ProviderRegistry,
+): { candidates: ProviderConfig[]; skipped: AttemptError[]; reasons: Array<{ provider: string; reason: string }> } {
   const skipped: AttemptError[] = [];
+  const reasons: Array<{ provider: string; reason: string }> = [];
   const primary = registry.getConfig(route.provider);
   const primaryPaid = primary?.cost.tier === 'paid';
   const platformDefault = route.source === 'system' || route.source === 'env';
@@ -66,12 +82,16 @@ export function planCandidates(route: ResolvedRoute, registry: ProviderRegistry)
   const candidates: ProviderConfig[] = [];
   ordered.forEach((name, i) => {
     const cfg = registry.getConfig(name);
-    const skip = (code: AIError['code'], message: string) => skipped.push({ provider: name, code, message });
+    // Reasons are internal (explainability/logs); outcomes expose codes only.
+    const skip = (code: AIError['code'], reason: string) => {
+      skipped.push({ provider: name, code });
+      reasons.push({ provider: name, reason });
+    };
     if (!cfg) return skip('PROVIDER_UNAVAILABLE', 'unknown provider');
     if (cfg.type !== route.kind) return skip('CAPABILITY_UNSUPPORTED', `provider is ${cfg.type}, feature needs ${route.kind}`);
     if (!cfg.capabilities.includes(route.capability)) return skip('CAPABILITY_UNSUPPORTED', `missing capability ${route.capability}`);
     const av = registry.availability(name);
-    if (!av.available) return skip(cfg.enabled ? 'MISSING_CREDENTIALS' : 'PROVIDER_DISABLED', av.reason ?? 'unavailable');
+    if (!av.available) return skip(cfg.enabled ? 'PROVIDER_UNAVAILABLE' : 'PROVIDER_DISABLED', av.reason ?? 'unavailable');
     const isPrimary = i === 0;
     const implicitlyApproved = (isPrimary && platformDefault) || cfg.local;
     if (route.requireApproval && !implicitlyApproved && !route.approvedProviders.includes(name))
@@ -82,7 +102,7 @@ export function planCandidates(route: ResolvedRoute, registry: ProviderRegistry)
       return skip('PAID_FALLBACK_BLOCKED', 'free -> paid fallback disabled (AI_ALLOW_PAID_FALLBACK=false)');
     candidates.push(cfg);
   });
-  return { candidates, skipped };
+  return { candidates, skipped, reasons };
 }
 
 export class AIExecutor {
@@ -112,53 +132,67 @@ export class AIExecutor {
     const errors: AttemptError[] = [];
     let route: ResolvedRoute;
     try {
-      route = await this.deps.router.resolve(req.tenantId, req.feature, req.override);
+      route = await this.deps.router.resolve(req.tenantId, req.feature, req.override, req.actor);
     } catch (e) {
       const err = toAIError(e);
-      errors.push({ provider: '-', code: err.code, message: err.message });
+      this.deps.onInternalError?.({ requestId: req.requestId, provider: '-', error: err });
+      errors.push({ provider: '-', code: err.code });
       return this.finish(req, 'failed', errors);
     }
     const plan = planCandidates(route, this.deps.registry);
     errors.push(...plan.skipped);
 
-    for (const cfg of plan.candidates) {
-      const q = await this.deps.quota.check({ tenantId: req.tenantId, provider: cfg, monthlyBudgetUsd: route.monthlyBudgetUsd });
-      if (!q.allowed) {
-        errors.push({ provider: cfg.name, code: 'QUOTA_EXCEEDED', message: q.reason });
-        continue;
+    const deadline = new AbortController();
+    const overall = req.overallTimeoutMs ?? this.deps.overallTimeoutMs ?? 15 * 60_000;
+    const deadlineTimer = setTimeout(() => deadline.abort(), overall);
+    try {
+      for (const cfg of plan.candidates) {
+        if (deadline.signal.aborted) {
+          errors.push({ provider: cfg.name, code: 'TIMEOUT' });
+          break;
+        }
+        const q = await this.deps.quota.check({ tenantId: req.tenantId, provider: cfg, monthlyBudgetUsd: route.monthlyBudgetUsd });
+        if (!q.allowed) {
+          errors.push({ provider: cfg.name, code: 'QUOTA_EXCEEDED' });
+          continue;
+        }
+        const model = cfg.name === route.provider && route.model ? route.model : cfg.model;
+        try {
+          // Adapter is built per call with the org-scoped credential (no global key-bound client).
+          const provider = await this.deps.registry.instantiate(cfg.name, { orgId: req.tenantId, orgCredentialRefs: route.credentialRefs });
+          const res = await withRetry(
+            () => withTimeout((signal) => call(provider, { model, config: cfg, signal }), cfg.timeoutMs, cfg.name, deadline.signal),
+            cfg.retryPolicy,
+            { provider: cfg.name, signal: deadline.signal, ...(this.deps.sleep ? { sleep: this.deps.sleep } : {}) },
+          );
+          const usage: AIUsage = { ...res.usage, estimatedCostUsd: estimateCost(cfg, res.usage) };
+          await this.deps.usage.record({
+            tenantId: req.tenantId,
+            provider: cfg.name,
+            model,
+            feature: req.feature,
+            usage,
+            at: (this.deps.now?.() ?? new Date()).toISOString(),
+            jobId: req.jobId,
+          });
+          const meta: AIResultMeta = {
+            provider: cfg.name,
+            model,
+            promptVersion: req.promptVersion,
+            usage,
+            transcriptRevision: req.transcriptRevision,
+            idempotencyKey: req.idempotencyKey,
+          };
+          return { status: 'succeeded', value: res.value, meta, attempts: errors };
+        } catch (e) {
+          const err = toAIError(e, cfg.name);
+          this.deps.onInternalError?.({ requestId: req.requestId, provider: cfg.name, error: err });
+          errors.push({ provider: cfg.name, code: err.code });
+          if (err.code === 'QUOTA_EXCEEDED' || err.code === 'RATE_LIMITED') this.deps.registry.markHealth(cfg.name, 'degraded', err.code);
+        }
       }
-      const model = cfg.name === route.provider && route.model ? route.model : cfg.model;
-      try {
-        const provider = this.deps.registry.get(cfg.name);
-        const res = await withRetry(
-          () => withTimeout((signal) => call(provider, { model, config: cfg, signal }), cfg.timeoutMs, cfg.name),
-          cfg.retryPolicy,
-          { provider: cfg.name, ...(this.deps.sleep ? { sleep: this.deps.sleep } : {}) },
-        );
-        const usage: AIUsage = { ...res.usage, estimatedCostUsd: estimateCost(cfg, res.usage) };
-        await this.deps.usage.record({
-          tenantId: req.tenantId,
-          provider: cfg.name,
-          model,
-          feature: req.feature,
-          usage,
-          at: (this.deps.now?.() ?? new Date()).toISOString(),
-          jobId: req.jobId,
-        });
-        const meta: AIResultMeta = {
-          provider: cfg.name,
-          model,
-          promptVersion: req.promptVersion,
-          usage,
-          transcriptRevision: req.transcriptRevision,
-          idempotencyKey: req.idempotencyKey,
-        };
-        return { status: 'succeeded', value: res.value, meta, attempts: errors };
-      } catch (e) {
-        const err = toAIError(e, cfg.name);
-        errors.push({ provider: cfg.name, code: err.code, message: err.message });
-        if (err.code === 'QUOTA_EXCEEDED' || err.code === 'RATE_LIMITED') this.deps.registry.markHealth(cfg.name, 'degraded', err.code);
-      }
+    } finally {
+      clearTimeout(deadlineTimer);
     }
     const codes = errors.map((e) => e.code);
     const tried = errors.filter((e) => plan.candidates.some((c) => c.name === e.provider));
@@ -175,6 +209,6 @@ export class AIExecutor {
 
   private async finish<T>(req: AIJobRequest, status: Exclude<JobStatus, 'succeeded'>, errors: AttemptError[]): Promise<JobOutcome<T>> {
     await this.deps.notify?.({ tenantId: req.tenantId, feature: req.feature, status, errors, jobId: req.jobId });
-    return { status, errors, request: req };
+    return { status, errors, request: req, requestId: req.requestId };
   }
 }

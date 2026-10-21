@@ -39,7 +39,7 @@ describe('SSRF guard', () => {
   });
   it('guardedFetch passes a pinned dispatcher and refuses redirects', async () => {
     let seen: unknown;
-    const f = async (_u: string, init?: { dispatcher?: unknown; redirect?: string }) => {
+    const f = async (_u: string, init: { dispatcher?: unknown; redirect?: string }) => {
       seen = init;
       return new Response('', { status: 302, headers: { location: 'http://169.254.169.254/' } });
     };
@@ -54,12 +54,12 @@ describe('SSRF guard', () => {
 });
 
 describe('audit hook', () => {
-  it('emits redacted events for provider config changes', () => {
+  it('awaited, redacted events with real actor for provider config changes', async () => {
     const audit = new InMemoryAuditSink();
-    const reg = new ProviderRegistry({ gemini: () => fakeLLM('gemini') }, () => 'sk-secret', audit);
-    reg.register(llmCfg('gemini', { credentialRef: 'env:GEMINI_API_KEY' }), 'user-1');
-    reg.register(llmCfg('gemini', { enabled: false, credentialRef: 'env:GEMINI_API_KEY' }), 'user-1');
-    expect(audit.events.map((e) => e.action)).toEqual(['create', 'update']);
+    const reg = new ProviderRegistry({ gemini: () => fakeLLM('gemini') }, async () => 'sk-secret', audit);
+    await reg.register(llmCfg('gemini', { credentialRef: 'env:GEMINI_API_KEY' }), { system: true, userId: 'user-1' });
+    await reg.register(llmCfg('gemini', { enabled: false, credentialRef: 'env:GEMINI_API_KEY' }), { system: true, userId: 'user-1' });
+    expect(audit.events.map((e) => [e.action, e.actorId])).toEqual([['create', 'user-1'], ['update', 'user-1']]);
     expect(JSON.stringify(audit.events)).not.toContain('sk-secret');
     expect(JSON.stringify(audit.events)).not.toContain('GEMINI_API_KEY');
   });

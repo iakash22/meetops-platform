@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { z } from 'zod';
 import { AIError, withRetry, withTimeout, retryPolicySchema, type LLMProvider } from '../src/index.js';
-import { fakeLLM, llmCfg, setup } from './helpers.js';
+import { admin, fakeLLM, llmCfg, setup } from './helpers.js';
 
 const schema = z.object({ ok: z.boolean() }).strict();
 const call = async (p: unknown, ctx: { model: string }) => {
@@ -33,7 +33,7 @@ describe('timeouts & bounded retries', () => {
     expect(n).toBe(5);
   });
   it('executor timeout -> retryable status', async () => {
-    const { executor } = setup({ providers: { gemini: fakeLLM('gemini', () => new Promise(() => {})) }, configs: [llmCfg('gemini', { timeoutMs: 100 })] });
+    const { executor } = await setup({ providers: { gemini: fakeLLM('gemini', () => new Promise(() => {})) }, configs: [llmCfg('gemini', { timeoutMs: 100 })] });
     const out = await executor.run({ tenantId: 't', feature: 'summary', promptVersion: 'v1' }, call);
     expect(out.status).toBe('retryable');
   });
@@ -41,7 +41,7 @@ describe('timeouts & bounded retries', () => {
 
 describe('usage, quota, budgets, idempotency', () => {
   it('records usage + cost and metadata', async () => {
-    const { executor, usage } = setup({
+    const { executor, usage } = await setup({
       providers: { gemini: fakeLLM('gemini') },
       configs: [llmCfg('gemini', { cost: { tier: 'paid', inputPer1MTokens: 1_000_000, outputPer1MTokens: 0 } })],
     });
@@ -52,7 +52,7 @@ describe('usage, quota, budgets, idempotency', () => {
   });
   it('daily request quota blocks before calling -> waiting', async () => {
     const p = fakeLLM('gemini');
-    const { executor } = setup({ providers: { gemini: p }, configs: [llmCfg('gemini', { usage: { dailyRequestLimit: 1 } })] });
+    const { executor } = await setup({ providers: { gemini: p }, configs: [llmCfg('gemini', { usage: { dailyRequestLimit: 1 } })] });
     await executor.run({ tenantId: 't', feature: 'summary', promptVersion: 'v' }, call);
     const out = await executor.run({ tenantId: 't', feature: 'summary', promptVersion: 'v' }, call);
     expect(out.status).toBe('waiting');
@@ -62,8 +62,8 @@ describe('usage, quota, budgets, idempotency', () => {
   });
   it('per-org budget enforced before paid calls', async () => {
     const p = fakeLLM('gemini');
-    const { executor, router } = setup({ providers: { gemini: p }, configs: [llmCfg('gemini', { cost: { tier: 'paid', inputPer1MTokens: 1_000_000 } })] });
-    await router.setOrgConfig({ tenantId: 't', monthlyBudgetUsd: 5 }, 'admin');
+    const { executor, router } = await setup({ providers: { gemini: p }, configs: [llmCfg('gemini', { cost: { tier: 'paid', inputPer1MTokens: 1_000_000 } })] });
+    await router.setOrgConfig({ tenantId: 't', monthlyBudgetUsd: 5 }, admin('t'));
     expect((await executor.run({ tenantId: 't', feature: 'summary', promptVersion: 'v' }, call)).status).toBe('succeeded'); // spends $10
     const out = await executor.run({ tenantId: 't', feature: 'summary', promptVersion: 'v' }, call);
     expect(out.status).toBe('waiting');
@@ -71,7 +71,7 @@ describe('usage, quota, budgets, idempotency', () => {
   });
   it('idempotency key prevents duplicate AI calls (sequential + concurrent), tenant-scoped', async () => {
     const p = fakeLLM('gemini');
-    const { executor } = setup({ providers: { gemini: p }, configs: [llmCfg('gemini')] });
+    const { executor } = await setup({ providers: { gemini: p }, configs: [llmCfg('gemini')] });
     const req = { tenantId: 't', feature: 'summary' as const, promptVersion: 'v', idempotencyKey: 'k1' };
     const [a, b] = await Promise.all([executor.run(req, call), executor.run(req, call)]);
     const c = await executor.run(req, call);
