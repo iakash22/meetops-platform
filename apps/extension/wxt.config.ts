@@ -1,5 +1,5 @@
 import { defineConfig } from "wxt";
-import { manifest } from "./src/manifest";
+import { manifest } from "./src/manifest.js";
 
 export default defineConfig({
   modules: ["@wxt-dev/module-react"],
