@@ -7,13 +7,13 @@
 - **Unit tests** stay next to each package (`apps/*/test`, `packages/*/test`) and run with Vitest.
 - **Cross-cutting suites** live in `tests/`, as the `@meetops/tests` workspace package (PR #9 adds `tests` to `pnpm-workspace.yaml`):
 
-| Suite | Runner | What |
-| --- | --- | --- |
-| `tests/api` | Vitest project `api` | `/health`, `/ready` and 404 via Fastify `inject` on `createServer()`; real HTTP when `API_BASE_URL` is set |
-| `tests/contract` | Vitest project `contract` | zod mirrors of `@meetops/contracts` types |
-| `tests/factories` | Vitest project `factories` | Deterministic, seedable, tenant-aware factories |
-| `tests/integration` | Vitest project `integration` | Testcontainers Postgres and Redis |
-| `tests/e2e` | Playwright (chromium) | Smoke test against the web dev server |
+| Suite               | Runner                       | What                                                                                                       |
+| ------------------- | ---------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| `tests/api`         | Vitest project `api`         | `/health`, `/ready` and 404 via Fastify `inject` on `createServer()`; real HTTP when `API_BASE_URL` is set |
+| `tests/contract`    | Vitest project `contract`    | zod mirrors of `@meetops/contracts` types                                                                  |
+| `tests/factories`   | Vitest project `factories`   | Deterministic, seedable, tenant-aware factories                                                            |
+| `tests/integration` | Vitest project `integration` | Testcontainers Postgres and Redis                                                                          |
+| `tests/e2e`         | Playwright (chromium)        | Smoke test against the web dev server                                                                      |
 
 ## Prerequisites
 
@@ -38,14 +38,14 @@ E2E isn't part of `pnpm test` or CI yet; run it explicitly.
 
 ## Environment variables
 
-| Variable | Default | Used by |
-| --- | --- | --- |
-| `E2E_BASE_URL` | Unset: `http://localhost:$WEB_PORT`, and a dev server is started | e2e; when set, no server is started |
-| `WEB_PORT` | `5173` | e2e dev server port |
-| `API_BASE_URL` | Unset: in-process `inject` | api suite |
-| `QA_SKIP_DOCKER` | Unset | `1` forces integration tests to skip |
-| `QA_POSTGRES_IMAGE` / `QA_REDIS_IMAGE` | `postgres:16-alpine` / `redis:7-alpine` | integration |
-| `CI` | None | Playwright retries (2), `forbidOnly`, HTML report |
+| Variable                               | Default                                                          | Used by                                           |
+| -------------------------------------- | ---------------------------------------------------------------- | ------------------------------------------------- |
+| `E2E_BASE_URL`                         | Unset: `http://localhost:$WEB_PORT`, and a dev server is started | e2e; when set, no server is started               |
+| `WEB_PORT`                             | `5173`                                                           | e2e dev server port                               |
+| `API_BASE_URL`                         | Unset: in-process `inject`                                       | api suite                                         |
+| `QA_SKIP_DOCKER`                       | Unset                                                            | `1` forces integration tests to skip              |
+| `QA_POSTGRES_IMAGE` / `QA_REDIS_IMAGE` | `postgres:16-alpine` / `redis:7-alpine`                          | integration                                       |
+| `CI`                                   | None                                                             | Playwright retries (2), `forbidOnly`, HTML report |
 
 ## Docker skip behaviour
 

@@ -30,10 +30,10 @@ From `src/manifest.ts`, which tests check in both source and the built manifest:
 
 From `src/lib/messages.ts`. The background service worker ignores any sender other than this extension (`sender.id !== chrome.runtime.id`). Recorder state is held in memory.
 
-| Type | Payload | Response |
-| --- | --- | --- |
-| `GET_STATUS` | None | `{ ok: true, status, tabId? }` |
+| Type              | Payload                                                                                | Response                                                                                                                    |
+| ----------------- | -------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| `GET_STATUS`      | None                                                                                   | `{ ok: true, status, tabId? }`                                                                                              |
 | `START_RECORDING` | `tabId: number`, `streamId: string` (non-empty), `consentAcknowledgedAt: number` (> 0) | `{ ok: true, status: 'recording', tabId }`, or `{ ok: false, error }` for "Already recording" or "Consent not acknowledged" |
-| `STOP_RECORDING` | None | `{ ok: true, status: 'idle' }` |
+| `STOP_RECORDING`  | None                                                                                   | `{ ok: true, status: 'idle' }`                                                                                              |
 
 `status` is `'idle'` or `'recording'`. Malformed or unknown messages return `{ ok: false, error: 'Unknown or malformed message' }`.

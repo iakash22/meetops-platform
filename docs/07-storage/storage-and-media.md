@@ -10,19 +10,19 @@ Construct it with `createStorageServiceFromEnv(env?, opts?)`, or with `new S3Sto
 
 ### API
 
-| Method | Purpose |
-| --- | --- |
-| `putObject(key, body, options?)` | Upload a `Buffer`, `Uint8Array`, `string` or `Readable` |
-| `getObject(key)` | Returns `{ body: Readable, metadata }`; throws `StorageNotFoundError` |
-| `headObject(key)` | Metadata, or `null` if missing |
-| `deleteObject(key)` | Delete |
-| `getPresignedUploadUrl(key, options?)` | Presigned PUT |
-| `getPresignedDownloadUrl(key, expiresInSeconds?)` | Presigned GET |
-| `createMultipartUpload(key, options?)` | Returns `{ key, uploadId }` |
-| `getPresignedPartUrl(key, uploadId, partNumber, expiresInSeconds?)` | `partNumber` must be 1..10000 |
-| `listParts(key, uploadId)` | Returns `{ partNumber, etag }[]` |
-| `completeMultipartUpload(key, uploadId, parts)` | Needs at least one part; parts are sorted by number |
-| `abortMultipartUpload(key, uploadId)` | Abort |
+| Method                                                              | Purpose                                                               |
+| ------------------------------------------------------------------- | --------------------------------------------------------------------- |
+| `putObject(key, body, options?)`                                    | Upload a `Buffer`, `Uint8Array`, `string` or `Readable`               |
+| `getObject(key)`                                                    | Returns `{ body: Readable, metadata }`; throws `StorageNotFoundError` |
+| `headObject(key)`                                                   | Metadata, or `null` if missing                                        |
+| `deleteObject(key)`                                                 | Delete                                                                |
+| `getPresignedUploadUrl(key, options?)`                              | Presigned PUT                                                         |
+| `getPresignedDownloadUrl(key, expiresInSeconds?)`                   | Presigned GET                                                         |
+| `createMultipartUpload(key, options?)`                              | Returns `{ key, uploadId }`                                           |
+| `getPresignedPartUrl(key, uploadId, partNumber, expiresInSeconds?)` | `partNumber` must be 1..10000                                         |
+| `listParts(key, uploadId)`                                          | Returns `{ partNumber, etag }[]`                                      |
+| `completeMultipartUpload(key, uploadId, parts)`                     | Needs at least one part; parts are sorted by number                   |
+| `abortMultipartUpload(key, uploadId)`                               | Abort                                                                 |
 
 `options` (`PutObjectOptions`): `contentType`, `contentLength`, `metadata`, `expiresInSeconds`.
 
@@ -48,30 +48,30 @@ org/{orgId}/meetings/{meetingId}/{...parts}
 
 ### Environment variables (names and meaning only)
 
-| Variable | Meaning |
-| --- | --- |
-| `STORAGE_PROVIDER` | `minio`, `r2` or `s3` (default `minio`) |
-| `STORAGE_ENDPOINT` | S3 endpoint URL; required for `minio` and `r2` |
-| `STORAGE_REGION` | Region; defaults to `auto` for r2 and `us-east-1` otherwise |
-| `STORAGE_BUCKET` | Bucket name (required) |
-| `STORAGE_ACCESS_KEY_ID` | Access key ID (secret, keep in `.env` only) |
-| `STORAGE_SECRET_ACCESS_KEY` | Secret key (secret, keep in `.env` only) |
-| `STORAGE_FORCE_PATH_STYLE` | Path-style addressing; defaults to true for minio |
+| Variable                          | Meaning                                                                                        |
+| --------------------------------- | ---------------------------------------------------------------------------------------------- |
+| `STORAGE_PROVIDER`                | `minio`, `r2` or `s3` (default `minio`)                                                        |
+| `STORAGE_ENDPOINT`                | S3 endpoint URL; required for `minio` and `r2`                                                 |
+| `STORAGE_REGION`                  | Region; defaults to `auto` for r2 and `us-east-1` otherwise                                    |
+| `STORAGE_BUCKET`                  | Bucket name (required)                                                                         |
+| `STORAGE_ACCESS_KEY_ID`           | Access key ID (secret, keep in `.env` only)                                                    |
+| `STORAGE_SECRET_ACCESS_KEY`       | Secret key (secret, keep in `.env` only)                                                       |
+| `STORAGE_FORCE_PATH_STYLE`        | Path-style addressing; defaults to true for minio                                              |
 | `STORAGE_PRESIGN_EXPIRES_SECONDS` | Default presign expiry, integer 1..604800 (default 900). New in this PR, not in `.env.example` |
 
 ## `@meetops/media-core`
 
 Wraps `ffmpeg` and `ffprobe`, spawned with an argv array and no shell. FFmpeg must be installed (see `docs/00-getting-started/prerequisites.md`).
 
-| Function | Purpose |
-| --- | --- |
-| `probeMedia(path, opts?)` | ffprobe JSON parsed into `ProbeResult`: `durationSeconds`, `formatName`, `sizeBytes?`, `bitRate?`, `streams[]`, `hasAudio`, `hasVideo` |
-| `parseProbeOutput(json)` | Pure parser used by `probeMedia` |
-| `normalizeToWav(input, output, opts?)` | Converts to PCM s16le WAV, 16 kHz mono by default (`sampleRate`, `channels` options); drops video, subtitle and data streams |
-| `chunkAudio(input, outDir, opts?)` | Splits into fixed-length WAV segments (`segmentSeconds` default 600, `prefix` default `chunk`); returns `{ index, path, startSeconds, durationSeconds }[]` |
-| `buildNormalizeArgs` / `buildChunkArgs` | Build the ffmpeg argv (for tests) |
-| `isFfmpegAvailable(opts?)` | True if both binaries run |
-| `runProcess`, `resolveTools` | Low-level helpers; failures throw `FfmpegError` with `exitCode` and `stderr` |
+| Function                                | Purpose                                                                                                                                                    |
+| --------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `probeMedia(path, opts?)`               | ffprobe JSON parsed into `ProbeResult`: `durationSeconds`, `formatName`, `sizeBytes?`, `bitRate?`, `streams[]`, `hasAudio`, `hasVideo`                     |
+| `parseProbeOutput(json)`                | Pure parser used by `probeMedia`                                                                                                                           |
+| `normalizeToWav(input, output, opts?)`  | Converts to PCM s16le WAV, 16 kHz mono by default (`sampleRate`, `channels` options); drops video, subtitle and data streams                               |
+| `chunkAudio(input, outDir, opts?)`      | Splits into fixed-length WAV segments (`segmentSeconds` default 600, `prefix` default `chunk`); returns `{ index, path, startSeconds, durationSeconds }[]` |
+| `buildNormalizeArgs` / `buildChunkArgs` | Build the ffmpeg argv (for tests)                                                                                                                          |
+| `isFfmpegAvailable(opts?)`              | True if both binaries run                                                                                                                                  |
+| `runProcess`, `resolveTools`            | Low-level helpers; failures throw `FfmpegError` with `exitCode` and `stderr`                                                                               |
 
 Options (`MediaToolsOptions`): `ffmpegPath` (env `FFMPEG_PATH`, default `ffmpeg`), `ffprobePath` (env `FFPROBE_PATH`, default `ffprobe`), `timeoutMs` (default 10 minutes, then SIGKILL) and `signal` (an `AbortSignal`).
 
