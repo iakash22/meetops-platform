@@ -1,6 +1,6 @@
 import { Type, type Static } from '@sinclair/typebox';
 import { Id, IsoDateTime } from '../common.js';
-import { MAX_MEDIA_BYTES, MediaMimeType, PresignedUrlDto, RecordingStatus } from '../domain/media.js';
+import { MAX_MEDIA_BYTES, MediaMimeType, PresignedUrlString, RecordingStatus } from '../domain/media.js';
 
 /**
  * Chunked recording upload (extension/desktop capture), matching apps/extension UploadClient:
@@ -32,7 +32,7 @@ export const InitRecordingSessionRequest = Type.Object(
     mimeType: MediaMimeType,
     startedAt: IsoDateTime,
     source: RecordingSource,
-    meetingId: Type.Optional(Id),
+    meetingId: Id,
   },
   strict,
 );
@@ -57,10 +57,36 @@ export const ChunkUploadUrlRequest = Type.Object(
   strict,
 );
 export type ChunkUploadUrlRequest = Static<typeof ChunkUploadUrlRequest>;
-/** `upload.method` is always PUT; `upload.expiresAt` is at most CHUNK_UPLOAD_URL_TTL_SECONDS out. */
+/** S3 checksum header. Its value is the **base64** sha256 digest of the chunk body. */
+export const CHECKSUM_SHA256_HEADER = 'x-amz-checksum-sha256';
+
+/**
+ * Presigned PUT whose signature covers the headers the client must send verbatim.
+ * `headers['content-length']` always equals the requested `sizeBytes`. When the request carried `sha256`,
+ * `headers['x-amz-checksum-sha256']` (base64 of the same digest) is present and signed too. Other signed headers
+ * (e.g. `content-type`) may also appear.
+ */
+export const SignedPutUpload = Type.Object(
+  {
+    url: PresignedUrlString,
+    method: Type.Literal('PUT'),
+    headers: Type.Object(
+      {
+        'content-length': Type.String({ pattern: '^[1-9][0-9]{0,9}$' }),
+        [CHECKSUM_SHA256_HEADER]: Type.Optional(Type.String({ pattern: '^[A-Za-z0-9+/]{43}=$' })),
+      },
+      { additionalProperties: Type.String({ maxLength: 4096 }) },
+    ),
+    expiresAt: IsoDateTime,
+  },
+  { additionalProperties: false },
+);
+export type SignedPutUpload = Static<typeof SignedPutUpload>;
+
+/** `upload.expiresAt` is at most CHUNK_UPLOAD_URL_TTL_SECONDS out. */
 export const ChunkUploadUrlResponse = Type.Object({
-  seq: Type.Integer({ minimum: 0 }),
-  upload: Type.Composite([Type.Omit(PresignedUrlDto, ['method']), Type.Object({ method: Type.Literal('PUT') })]),
+  seq: Type.Integer({ minimum: 0, maximum: MAX_CHUNKS - 1 }),
+  upload: SignedPutUpload,
 });
 export type ChunkUploadUrlResponse = Static<typeof ChunkUploadUrlResponse>;
 
