@@ -37,3 +37,11 @@ export const AuthSession = Type.Object({
   memberships: Type.Optional(Type.Array(Membership)),
 });
 export type AuthSession = Static<typeof AuthSession>;
+
+/** GET /auth/session: the current session without any token material. */
+export const GetAuthSessionResponse = Type.Omit(AuthSession, ['csrfToken']);
+export type GetAuthSessionResponse = Static<typeof GetAuthSessionResponse>;
+
+/** GET /auth/csrf */
+export const CsrfResponse = Type.Object({ csrfToken: Type.String({ minLength: 16 }) });
+export type CsrfResponse = Static<typeof CsrfResponse>;
