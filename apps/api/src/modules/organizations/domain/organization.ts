@@ -2,7 +2,8 @@ export interface Organization {
   id: string;
   name: string;
   slug: string;
-  createdById: string;
+  /** Not persisted yet (no organizations.created_by_id column): TODO(database). */
+  createdById: string | null;
   createdAt: Date;
   updatedAt: Date;
   deletedAt: Date | null;

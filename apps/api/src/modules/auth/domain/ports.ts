@@ -25,6 +25,7 @@ export interface RateLimiter {
 /** Account lockout after repeated failures. Never permanent. */
 export interface LoginLockout {
   isLocked(accountKey: string): Promise<{ locked: boolean; retryAfterMs: number }>;
-  recordFailure(accountKey: string): Promise<void>;
+  /** Returns the lock applied by this failure (0 when none). */
+  recordFailure(accountKey: string): Promise<{ lockedForMs: number }>;
   reset(accountKey: string): Promise<void>;
 }

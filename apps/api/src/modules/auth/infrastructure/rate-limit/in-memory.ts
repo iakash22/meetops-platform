@@ -1,5 +1,8 @@
 import type { Clock } from '../../../../shared/ports.js';
 import type { LoginLockout, RateLimiter } from '../../domain/ports.js';
+import { DEFAULT_LOCKOUT, lockDurationMs, type LockoutPolicy } from './lockout-policy.js';
+
+export { DEFAULT_LOCKOUT, type LockoutPolicy };
 
 /** Test/dev only: process-local fixed windows. */
 export class InMemoryRateLimiter implements RateLimiter {
@@ -17,13 +20,7 @@ export class InMemoryRateLimiter implements RateLimiter {
   }
 }
 
-export interface LockoutPolicy {
-  maxFailures: number;
-  windowMs: number;
-  lockMs: number;
-}
-export const DEFAULT_LOCKOUT: LockoutPolicy = { maxFailures: 10, windowMs: 15 * 60_000, lockMs: 15 * 60_000 };
-
+/** Test/dev only. Same progressive policy as RedisLoginLockout. */
 export class InMemoryLoginLockout implements LoginLockout {
   private readonly state = new Map<string, { failures: number; windowEnd: number; lockedUntil: number }>();
   constructor(
@@ -40,8 +37,14 @@ export class InMemoryLoginLockout implements LoginLockout {
     let s = this.state.get(key);
     if (!s || s.windowEnd <= now) s = { failures: 0, windowEnd: now + this.policy.windowMs, lockedUntil: 0 };
     s.failures++;
-    if (s.failures >= this.policy.maxFailures) s.lockedUntil = now + this.policy.lockMs;
+    const lockedForMs = lockDurationMs(s.failures, this.policy);
+    if (lockedForMs) {
+      s.lockedUntil = now + lockedForMs;
+      // keep the failure count alive at least as long as the lock
+      s.windowEnd = Math.max(s.windowEnd, s.lockedUntil + this.policy.windowMs);
+    }
     this.state.set(key, s);
+    return { lockedForMs };
   }
   async reset(key: string) {
     this.state.delete(key);
