@@ -157,12 +157,33 @@ importers:
       '@meetops/config':
         specifier: workspace:*
         version: link:../../packages/config
+      '@meetops/contracts':
+        specifier: workspace:^0.1.0
+        version: link:../../packages/contracts
       '@meetops/logger':
         specifier: workspace:*
         version: link:../../packages/logger
+      '@meetops/media-core':
+        specifier: workspace:*
+        version: link:../../packages/media-core
       '@meetops/queue':
         specifier: workspace:*
         version: link:../../packages/queue
+      '@meetops/storage':
+        specifier: workspace:*
+        version: link:../../packages/storage
+      '@sinclair/typebox':
+        specifier: ^0.34.0
+        version: 0.34.52
+      '@socket.io/redis-emitter':
+        specifier: ^5.1.0
+        version: 5.1.0
+      bullmq:
+        specifier: ^5.18.0
+        version: 5.81.5
+      ioredis:
+        specifier: ^5.4.1
+        version: 5.11.1
     devDependencies:
       tsx:
         specifier: ^4.19.1
@@ -1714,6 +1735,12 @@ packages:
     engines: { node: '>=10.0.0' }
     peerDependencies:
       socket.io-adapter: ^2.5.4
+
+  '@socket.io/redis-emitter@5.1.0':
+    resolution:
+      {
+        integrity: sha512-QQUFPBq6JX7JIuM/X1811ymKlAfwufnQ8w6G2/59Jaqp09hdF1GJ/+e8eo/XdcmT0TqkvcSa2TT98ggTXa5QYw==,
+      }
 
   '@tanstack/history@1.162.5':
     resolution:
@@ -5431,6 +5458,14 @@ snapshots:
       notepack.io: 3.0.1
       socket.io-adapter: 2.5.8
       uid2: 1.0.0
+    transitivePeerDependencies:
+      - supports-color
+
+  '@socket.io/redis-emitter@5.1.0':
+    dependencies:
+      debug: 4.3.7
+      notepack.io: 3.0.1
+      socket.io-parser: 4.2.7
     transitivePeerDependencies:
       - supports-color
 
