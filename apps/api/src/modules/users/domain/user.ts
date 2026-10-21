@@ -5,8 +5,10 @@ export interface User {
   email: string;
   name: string | null;
   passwordHash: string;
+  emailVerifiedAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
+  deletedAt: Date | null;
 }
 
 /** Public projection of a user. Never includes the password hash. */
@@ -15,6 +17,7 @@ export interface PublicUser {
   email: string;
   name: string | null;
   createdAt: Date;
+  updatedAt: Date;
 }
 
 export function normalizeEmail(email: string): string {
@@ -22,5 +25,5 @@ export function normalizeEmail(email: string): string {
 }
 
 export function toPublicUser(user: User): PublicUser {
-  return { id: user.id, email: user.email, name: user.name, createdAt: user.createdAt };
+  return { id: user.id, email: user.email, name: user.name, createdAt: user.createdAt, updatedAt: user.updatedAt };
 }

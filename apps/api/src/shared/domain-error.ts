@@ -1,7 +1,9 @@
-/** Base error for domain/application rules. Mapped to HTTP by route error handlers. */
+import type { ApiErrorCode } from './contracts/index.js';
+
+/** Base error for domain/application rules. Mapped to the contracts error envelope by route handlers. */
 export class DomainError extends Error {
   constructor(
-    public readonly code: string,
+    public readonly code: ApiErrorCode,
     message: string,
     public readonly statusCode: number = 400
   ) {
