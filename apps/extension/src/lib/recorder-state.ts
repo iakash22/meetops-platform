@@ -1,4 +1,4 @@
-import type { KV } from "./storage";
+import type { KV } from "./storage.js";
 
 export type RecorderState =
   | { status: "idle"; lastError?: string }

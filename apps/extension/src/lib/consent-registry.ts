@@ -1,4 +1,4 @@
-import type { KV } from "./storage";
+import type { KV } from "./storage.js";
 
 /** How long an acknowledgement stays valid before recording must start. */
 export const CONSENT_TTL_MS = 2 * 60 * 1000;
