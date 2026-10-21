@@ -5,7 +5,6 @@ import { Value } from '@sinclair/typebox/value';
 import {
   EMAIL_JOB_RETENTION,
   EMAIL_QUEUE,
-  EMAIL_TEMPLATE_RECIPIENT,
   EmailJobPayload as EmailJobPayloadSchema,
   type EmailJobPayload
 } from '@meetops/contracts';
@@ -23,12 +22,6 @@ export const DEFAULT_EMAIL_JOB_OPTIONS = {
   removeOnComplete: { ...EMAIL_JOB_RETENTION.removeOnComplete },
   removeOnFail: { ...EMAIL_JOB_RETENTION.removeOnFail }
 } satisfies JobsOptions;
-
-/**
- * Extra, stricter-than-contract id rule (contract allows up to 200 chars): 1..128 of [A-Za-z0-9_-].
- * Excludes '@', ':' and '/', so no addresses/URLs/tokens, and keeps BullMQ jobIds free of ':'.
- */
-export const SAFE_ID = /^[A-Za-z0-9_-]{1,128}$/;
 
 export type { EmailJobPayload };
 export type EmailRecipientRef = EmailJobPayload['recipient'];
@@ -52,26 +45,13 @@ export class InvalidEmailJobError extends UnrecoverableError {}
 export class PermanentEmailError extends UnrecoverableError {}
 
 /**
- * 1) TypeBox Value.Check against the contracts EmailJobPayload schema (strict, ids-only, unknown fields rejected);
- * 2) recipient kind must match the template (EMAIL_TEMPLATE_RECIPIENT: invitation -> invitationId, others -> userId);
- * 3) stricter SAFE_ID on idempotencyKey/requestId/refs values and a stricter refs key rule.
- * Invalid jobs throw InvalidEmailJobError (UnrecoverableError): never retried.
+ * Validates solely against the contracts EmailJobPayload schema (single source of truth; no local rules so shapes
+ * cannot drift). Invalid jobs throw InvalidEmailJobError (UnrecoverableError) and are never retried.
  */
 export function validateEmailJobPayload(p: unknown): asserts p is EmailJobPayload {
-  const fail = (m: string): never => {
-    throw new InvalidEmailJobError(`Invalid email job: ${m}`);
-  };
   if (!Value.Check(EmailJobPayloadSchema, p)) {
     const first = Value.Errors(EmailJobPayloadSchema, p).First();
-    fail(`schema violation${first ? ` at ${first.path || '/'}` : ''}`);
-  }
-  const j = p as EmailJobPayload;
-  const expected = EMAIL_TEMPLATE_RECIPIENT[j.templateId];
-  if (!(expected in j.recipient)) fail(`${j.templateId} requires recipient.${expected}`);
-  if (!SAFE_ID.test(j.idempotencyKey)) fail('idempotencyKey must be an opaque id');
-  if (j.requestId !== undefined && !SAFE_ID.test(j.requestId)) fail('requestId must be an opaque id');
-  for (const [k, v] of Object.entries(j.refs ?? {})) {
-    if (!/^[A-Za-z][A-Za-z0-9]{0,63}$/.test(k) || !SAFE_ID.test(v)) fail(`refs.${k} must be an opaque id`);
+    throw new InvalidEmailJobError(`Invalid email job: schema violation${first ? ` at ${first.path || '/'}` : ''}`);
   }
 }
 

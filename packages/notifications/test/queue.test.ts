@@ -82,10 +82,9 @@ describe('email producer', () => {
       { ...payload(), jobVersion: 2 },
       payload({ recipient: { invitationId: 'not-a-uuid' } }),
       payload({ organizationId: 'org_1' }),
-      payload({ templateId: 'verification' }),
-      payload({ templateId: 'invitation', recipient: { userId: USR } }),
-      payload({ requestId: 'x'.repeat(150) }),
-      payload({ refs: { '9bad': 'v' } })
+      payload({ requestId: 'x'.repeat(250) }),
+      payload({ refs: { 'a:b': 'v' } })
+
     ];
     for (const b of bad) await expect(producer.enqueue(b as EmailJobPayload)).rejects.toBeInstanceOf(UnrecoverableError);
     expect(add).not.toHaveBeenCalled();
