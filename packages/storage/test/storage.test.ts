@@ -1,6 +1,7 @@
 import { Readable } from 'node:stream';
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { mockClient } from 'aws-sdk-client-mock';
+import { ALLOWED_MEDIA_MIME_TYPES, MAX_CHUNK_BYTES, MAX_MEDIA_BYTES } from '@meetops/contracts';
 import {
   AbortMultipartUploadCommand,
   CompleteMultipartUploadCommand,
@@ -58,6 +59,13 @@ describe('config', () => {
     expect(c).toMatchObject({ provider: 'minio', forcePathStyle: true, uploadTtlSeconds: 600, downloadTtlSeconds: 300 });
     expect(loadStorageConfig({ STORAGE_PROVIDER: 's3', STORAGE_BUCKET: 'b' }).forcePathStyle).toBe(false);
     expect(loadStorageConfig({ ...base, STORAGE_PROVIDER: 'r2' }).region).toBe('auto');
+  });
+  it('uses contracts v0.2 limits by default', () => {
+    const c = loadStorageConfig(base);
+    expect(c.limits.maxObjectBytes).toBe(MAX_MEDIA_BYTES);
+    expect(c.limits.maxPartBytes).toBe(MAX_CHUNK_BYTES);
+    expect(c.limits.allowedMimeTypes).toEqual(ALLOWED_MEDIA_MIME_TYPES);
+    expect(() => loadStorageConfig({ ...base, STORAGE_MAX_OBJECT_BYTES: String(MAX_MEDIA_BYTES + 1) })).toThrow();
   });
   it('rejects TTL over 600 and bad input', () => {
     expect(() => loadStorageConfig({ ...base, STORAGE_UPLOAD_TTL_SECONDS: '601' })).toThrow();
@@ -126,6 +134,7 @@ describe('S3StorageService', () => {
     await expect(s.putObject(rec, 'a', { sizeBytes: 1 } as never)).rejects.toThrow(/mimeType is required/);
     await expect(s.putObject(rec, 'a', { mimeType: 'audio/webm' } as never)).rejects.toThrow(/sizeBytes is required/);
     await expect(s.putObject(rec, 'a', { mimeType: 'application/x-sh', sizeBytes: 1 })).rejects.toThrow(/not allowed/);
+    await expect(s.putObject(rec, 'a', { mimeType: 'audio/webm; charset=evil', sizeBytes: 1 })).rejects.toThrow(/not allowed/);
     await expect(s.putObject(rec, Readable.from([]), { mimeType: 'audio/webm', sizeBytes: 600 * MB })).rejects.toThrow(/range/);
   });
 
@@ -188,7 +197,7 @@ describe('S3StorageService', () => {
 
   it('presigned POST enforces exact content-length-range and Content-Type', async () => {
     const real = new S3StorageService({ config });
-    const p = await real.getPresignedUploadPost(rec, { mimeType: 'Audio/WebM; codecs=opus', sizeBytes: 1234 });
+    const p = await real.getPresignedUploadPost(rec, { mimeType: 'audio/webm;codecs=opus', sizeBytes: 1234 });
     expect(p.url).toBe('http://localhost:9000/secret-bucket');
     const policy = JSON.parse(Buffer.from(p.fields!.Policy!, 'base64').toString()) as { conditions: unknown[]; expiration: string };
     expect(policy.conditions).toContainEqual(['content-length-range', 1234, 1234]);
@@ -273,5 +282,32 @@ describe('S3StorageService', () => {
     expect(toPresignedUrlDto({ url: 'https://p', method: 'POST', expiresAt: exp, fields: { a: 'b' } })).toEqual({
       url: 'https://p', method: 'POST', expiresAt: '2026-01-01T00:05:00.000Z', fields: { a: 'b' }
     });
+  });
+
+  it('recording-session chunks: PUT TTL <= 300, seq bounds, completion size checks, abort cleanup', async () => {
+    const presign = vi.fn().mockResolvedValue('https://chunk');
+    const s = svc({ presign });
+    const sess = { orgId: 'o1', meetingId: 'm1', sessionId: 's1' };
+    const p = await s.getPresignedSessionChunkUrl(sess, 7, 'audio/webm;codecs=opus');
+    expect(p).toMatchObject({ method: 'PUT', headers: { 'content-type': 'audio/webm' } });
+    expect(presign.mock.calls[0]![1].input.Key).toBe('org/o1/meetings/m1/sessions/s1/chunks/00007.part');
+    expect(presign.mock.calls[0]![2]).toMatchObject({ expiresIn: 300 });
+    await expect(s.getPresignedSessionChunkUrl(sess, 0, 'audio/webm', { ttlSeconds: 301 })).rejects.toThrow(RangeError);
+    await expect(s.getPresignedSessionChunkUrl(sess, 100000, 'audio/webm')).rejects.toThrow(/seq/);
+    await expect(s.getPresignedSessionChunkUrl({ ...sess, orgId: '' }, 0, 'audio/webm')).rejects.toBeInstanceOf(StorageError);
+
+    s3.on(HeadObjectCommand).resolves({ ContentLength: 10 });
+    expect(await s.verifySessionChunks(sess, 3)).toEqual({ totalBytes: 30, chunkSizes: [10, 10, 10] });
+    s3.reset();
+    s3.on(HeadObjectCommand).resolves({ ContentLength: MAX_CHUNK_BYTES + 1 });
+    await expect(s.verifySessionChunks(sess, 1)).rejects.toThrow(/MAX_CHUNK_BYTES/);
+    s3.reset();
+    s3.on(HeadObjectCommand).rejects(Object.assign(new Error('x'), { name: 'NotFound' }));
+    await expect(s.verifySessionChunks(sess, 1)).rejects.toThrow(/Missing chunk/);
+
+    s3.reset();
+    s3.on(DeleteObjectCommand).resolves({});
+    await s.deleteSessionChunks(sess, 3);
+    expect(s3.commandCalls(DeleteObjectCommand).map((c) => c.args[0].input.Key)).toEqual([0, 1, 2].map((i) => `org/o1/meetings/m1/sessions/s1/chunks/0000${i}.part`));
   });
 });

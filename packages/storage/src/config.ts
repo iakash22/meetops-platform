@@ -1,3 +1,4 @@
+import { ALLOWED_MEDIA_MIME_TYPES, CHUNK_UPLOAD_URL_TTL_SECONDS, MAX_CHUNK_BYTES, MAX_MEDIA_BYTES } from '@meetops/contracts';
 import type { StorageProviderId } from './types.js';
 
 /** Hard ceiling for any presigned URL/POST TTL (seconds). */
@@ -8,7 +9,7 @@ export const DEFAULT_DOWNLOAD_TTL_SECONDS = 300;
 export const S3_MIN_PART_BYTES = 5 * 1024 * 1024;
 
 export type StorageLimits = {
-  /** Max size of a single object in bytes. */
+  /** Max size of a single object in bytes (default contracts MAX_MEDIA_BYTES, also the cap per recording session). */
   maxObjectBytes: number;
   /** Max size of one multipart part in bytes. */
   maxPartBytes: number;
@@ -31,11 +32,10 @@ export type StorageConfig = {
   limits: StorageLimits;
 };
 
-export const DEFAULT_ALLOWED_MIME_TYPES: readonly string[] = [
-  'audio/mpeg', 'audio/mp4', 'audio/wav', 'audio/x-wav', 'audio/webm', 'audio/ogg', 'audio/flac',
-  'video/mp4', 'video/webm', 'video/quicktime',
-  'application/json', 'text/plain', 'text/vtt', 'application/pdf'
-];
+/** Defaults come from contracts v0.2 (ALLOWED_MEDIA_MIME_TYPES). */
+export const DEFAULT_ALLOWED_MIME_TYPES: readonly string[] = ALLOWED_MEDIA_MIME_TYPES;
+/** Recording-session chunk PUT TTL from contracts (300 s). */
+export const SESSION_CHUNK_TTL_SECONDS = CHUNK_UPLOAD_URL_TTL_SECONDS;
 
 const PROVIDERS: readonly StorageProviderId[] = ['minio', 'r2', 's3'];
 
@@ -65,7 +65,7 @@ export function assertTtl(ttl: number): number {
  * Env: STORAGE_PROVIDER, STORAGE_ENDPOINT, STORAGE_REGION, STORAGE_BUCKET,
  * STORAGE_ACCESS_KEY_ID, STORAGE_SECRET_ACCESS_KEY, STORAGE_FORCE_PATH_STYLE,
  * STORAGE_UPLOAD_TTL_SECONDS (default 600, max 600), STORAGE_DOWNLOAD_TTL_SECONDS (default 300, max 600),
- * STORAGE_MAX_OBJECT_BYTES (default 5 GiB), STORAGE_MAX_PART_BYTES (default 100 MiB),
+ * STORAGE_MAX_OBJECT_BYTES (default/max MAX_MEDIA_BYTES = 2 GB), STORAGE_MAX_PART_BYTES (default/max MAX_CHUNK_BYTES = 64 MiB),
  * STORAGE_MAX_PARTS (default 1000, max 10000), STORAGE_ALLOWED_MIME_TYPES (comma list).
  */
 export function loadStorageConfig(env: NodeJS.ProcessEnv = process.env): StorageConfig {
@@ -77,7 +77,7 @@ export function loadStorageConfig(env: NodeJS.ProcessEnv = process.env): Storage
   if ((provider === 'minio' || provider === 'r2') && !endpoint) {
     throw new Error(`STORAGE_ENDPOINT is required for provider ${provider}`);
   }
-  const maxPartBytes = parseInt('STORAGE_MAX_PART_BYTES', env.STORAGE_MAX_PART_BYTES, 100 * 1024 * 1024, S3_MIN_PART_BYTES, 5 * 1024 ** 3);
+  const maxPartBytes = parseInt('STORAGE_MAX_PART_BYTES', env.STORAGE_MAX_PART_BYTES, MAX_CHUNK_BYTES, S3_MIN_PART_BYTES, MAX_CHUNK_BYTES);
   const mimes = (env.STORAGE_ALLOWED_MIME_TYPES ?? '').split(',').map((s) => s.trim().toLowerCase()).filter(Boolean);
   const cfg: StorageConfig = {
     provider,
@@ -87,7 +87,7 @@ export function loadStorageConfig(env: NodeJS.ProcessEnv = process.env): Storage
     uploadTtlSeconds: parseInt('STORAGE_UPLOAD_TTL_SECONDS', env.STORAGE_UPLOAD_TTL_SECONDS, DEFAULT_UPLOAD_TTL_SECONDS, 1, MAX_PRESIGN_TTL_SECONDS),
     downloadTtlSeconds: parseInt('STORAGE_DOWNLOAD_TTL_SECONDS', env.STORAGE_DOWNLOAD_TTL_SECONDS, DEFAULT_DOWNLOAD_TTL_SECONDS, 1, MAX_PRESIGN_TTL_SECONDS),
     limits: {
-      maxObjectBytes: parseInt('STORAGE_MAX_OBJECT_BYTES', env.STORAGE_MAX_OBJECT_BYTES, 5 * 1024 ** 3, 1, 5 * 1024 ** 4),
+      maxObjectBytes: parseInt('STORAGE_MAX_OBJECT_BYTES', env.STORAGE_MAX_OBJECT_BYTES, MAX_MEDIA_BYTES, 1, MAX_MEDIA_BYTES),
       maxPartBytes,
       maxParts: parseInt('STORAGE_MAX_PARTS', env.STORAGE_MAX_PARTS, 1000, 1, 10000),
       allowedMimeTypes: mimes.length ? mimes : DEFAULT_ALLOWED_MIME_TYPES
