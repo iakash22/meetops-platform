@@ -68,10 +68,25 @@ describe('low-severity hardening', () => {
     const u = { id: 'e4774cdd-a079-4f86-814e-8b9140bb6db4', email: 'a@b.co', createdAt: now, updatedAt: now };
     expect(Value.Check(User, { ...u, avatarUrl: 'https://img.example.com/a.png' })).toBe(true);
     expect(Value.Check(User, { ...u, avatarUrl: 'javascript:alert(1)' })).toBe(false);
-    const i = { id: '9dd4e461-268c-4034-85c8-564e155c67a6', taskId: 'e358efa4-89f5-4062-810d-d7316b65649e', integration: 'linear', externalId: 'L-1', createdAt: now };
+    const i = { id: '9dd4e461-268c-4034-85c8-564e155c67a6', organizationId: 'b1c2d3e4-0000-4000-8000-000000000001', integrationId: 'b1c2d3e4-0000-4000-8000-000000000002', taskId: 'e358efa4-89f5-4062-810d-d7316b65649e', provider: 'github', externalId: 'L-1', createdAt: now };
     expect(Value.Check(IntegrationIssue, { ...i, externalUrl: 'http://linear.app/x' })).toBe(false);
   });
   it('assigneeHint is documented as untrusted', () => {
     expect(ExtractedTask.properties.assigneeHint.description).toMatch(/UNTRUSTED/);
+  });
+});
+
+import { Value as V3 } from '@sinclair/typebox/value';
+import { IntegrationIssueRecord as IIR } from '../src/index.js';
+describe('IntegrationIssueRecord', () => {
+  const base = {
+    id: '9dd4e461-268c-4034-85c8-564e155c67a6', organizationId: 'b1c2d3e4-0000-4000-8000-000000000001',
+    integrationId: 'b1c2d3e4-0000-4000-8000-000000000002', taskId: 'e358efa4-89f5-4062-810d-d7316b65649e',
+    provider: 'jira', externalId: 'PROJ-1', lastKnownStatus: 'in_progress', createdAt: '2026-01-01T00:00:00.000Z',
+  };
+  it('accepts a tenant-scoped record', () => expect(V3.Check(IIR, base)).toBe(true));
+  it('rejects unknown provider and extra fields', () => {
+    expect(V3.Check(IIR, { ...base, provider: 'linear' })).toBe(false);
+    expect(V3.Check(IIR, { ...base, integration: 'jira' })).toBe(false);
   });
 });

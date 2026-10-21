@@ -27,7 +27,9 @@ While the version is `0.x`, a minor bump may contain breaking changes (ADR-003).
 - Media limits: `MAX_MEDIA_BYTES` (2,000,000,000 bytes), `ALLOWED_MEDIA_MIME_TYPES` and the `MediaMimeType` schema.
 - `@meetops/contracts/legacy` subpath export.
 
-### Changed (BREAKING)
+### Changed
+
+- `IntegrationIssue` (alias `IntegrationIssueRecord`) is tenant-scoped: adds `organizationId`, `integrationId`, `provider` (`github`|`jira`, replaces free-form `integration`), optional `lastKnownStatus`; strict. Unique on (organizationId, provider, externalId). (BREAKING)
 
 - All `Id`s are `format: uuid`.
 - `AuthSession`: `accessToken` removed (the session is an `__Host-` HttpOnly cookie). Added `csrfToken`,
