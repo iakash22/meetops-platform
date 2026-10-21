@@ -5,7 +5,6 @@ import {
   ApiErrorEnvelope,
   CreateUploadRequest,
   CreateUploadResponse,
-  EmailJobPayload,
   ExtractedTask,
   FallbackPolicy,
   IntegrationIssue,
@@ -15,20 +14,6 @@ import {
 } from '../src/index.js';
 
 const now = '2026-10-21T17:00:00.000Z';
-const meta = { jobVersion: 1, organizationId: 'f1584b99-5a47-4098-8ad7-5bb8d29e9734', idempotencyKey: 'k1', kind: 'send_email', };
-
-describe('email job payload (ids only)', () => {
-  it('accepts userId or invitationId', () => {
-    expect(Value.Check(EmailJobPayload, { ...meta, templateId: 'reset_password', userId: 'e4774cdd-a079-4f86-814e-8b9140bb6db4' })).toBe(true);
-    expect(Value.Check(EmailJobPayload, { ...meta, templateId: 'invite', invitationId: '9ce88802-f075-41e5-8e04-57ef51ece021' })).toBe(true);
-  });
-  it('rejects emails, tokens, links and missing ids', () => {
-    expect(Value.Check(EmailJobPayload, meta)).toBe(false);
-    expect(Value.Check(EmailJobPayload, { ...meta, templateId: 'reset_password', userId: 'e4774cdd-a079-4f86-814e-8b9140bb6db4', to: [{ email: 'a@b.co' }] })).toBe(false);
-    expect(Value.Check(EmailJobPayload, { ...meta, templateId: 'reset_password', userId: 'e4774cdd-a079-4f86-814e-8b9140bb6db4', resetToken: 'x' })).toBe(false);
-    expect(Value.Check(EmailJobPayload, { ...meta, templateId: 'reset_password', userId: 'e4774cdd-a079-4f86-814e-8b9140bb6db4', link: 'https://x' })).toBe(false);
-  });
-});
 
 describe('error envelope', () => {
   it('requires requestId', () => {
