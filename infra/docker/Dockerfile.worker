@@ -1,8 +1,8 @@
 # syntax=docker/dockerfile:1.7
 # MeetOps AI — background worker (@meetops/worker, apps/worker; BullMQ on Redis).
-# Includes FFmpeg for media processing. Build context: repository root.
+# Includes FFmpeg + ffprobe (pinned) for media processing. Build context: repository root.
 #   docker build -f infra/docker/Dockerfile.worker -t meetops/worker .
-ARG NODE_VERSION=20.18.0
+ARG NODE_VERSION=20.20.2
 
 FROM node:${NODE_VERSION}-bookworm-slim AS base
 ENV PNPM_HOME=/pnpm \
@@ -42,7 +42,13 @@ ARG FFMPEG_VERSION=7:5.1.9-0+deb12u1
 RUN apt-get update \
  && apt-get install -y --no-install-recommends "ffmpeg=${FFMPEG_VERSION}" tini openssl ca-certificates \
  && rm -rf /var/lib/apt/lists/*
-ENV NODE_ENV=production
+ENV NODE_ENV=production \
+    FFMPEG_PATH=/usr/bin/ffmpeg \
+    FFPROBE_PATH=/usr/bin/ffprobe \
+    MEDIA_WORK_DIR=/tmp/work
+# Writable FFmpeg scratch dir (mounted as tmpfs in compose; root FS is read-only).
+RUN mkdir -p /tmp/work && chown node:node /tmp/work && chmod 0700 /tmp/work \
+ && ffmpeg -version >/dev/null && ffprobe -version >/dev/null
 WORKDIR /app
 COPY --from=build --chown=node:node /out ./
 USER node
