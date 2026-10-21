@@ -1,21 +1,21 @@
 import type {
   ApiErrorCode as ContractApiErrorCode,
+  AuthSession,
   CreateUploadRequest,
   CreateUploadResponse,
   CsrfResponse,
-} from '@meetops/contracts';
-import type {
-  AuthSession,
   ForgotPasswordRequest,
-  ID,
+  GetAuthSessionResponse,
+  Id,
   LoginRequest,
   Meeting,
   Organization,
   Paginated,
+  PresignedUrlDto,
   Project,
   SignupRequest,
   Task,
-} from './types';
+} from '@meetops/contracts';
 
 /** Contracts ApiErrorEnvelope codes plus 'UNKNOWN' when the body is unparseable. */
 export type ApiErrorCode = ContractApiErrorCode | 'UNKNOWN';
@@ -40,16 +40,32 @@ const KNOWN_CODES = new Set<string>([
 export class ApiError extends Error {
   readonly code: ApiErrorCode;
   readonly requestId: string | undefined;
+  readonly details: ReadonlyArray<{ path: string; message: string }>;
   constructor(
     public readonly status: number,
     code: ApiErrorCode,
     message: string,
     requestId?: string,
+    details: ReadonlyArray<{ path: string; message: string }> = [],
   ) {
     super(message);
     this.name = 'ApiError';
     this.code = code;
     this.requestId = requestId;
+    this.details = details;
+  }
+
+  /**
+   * CSRF rejection: 403 FORBIDDEN whose envelope details point at the CSRF token.
+   * Contracts have no dedicated CSRF code yet, so match `details[].path` of
+   * `csrf` / `x-csrf-token` (case-insensitive). Plain FORBIDDEN is never retried.
+   */
+  get isCsrfFailure(): boolean {
+    return (
+      this.status === 403 &&
+      this.code === 'FORBIDDEN' &&
+      this.details.some((d) => /^(x-)?csrf(-token)?$/i.test(d.path))
+    );
   }
 
   /** Parse `{ error: { code, message, requestId? } }`; tolerate anything else. */
@@ -64,7 +80,17 @@ export class ApiError extends Error {
           : 'UNKNOWN';
     const message = typeof e.message === 'string' ? e.message : 'Request failed';
     const requestId = typeof e.requestId === 'string' ? e.requestId : undefined;
-    return new ApiError(status, code, message, requestId);
+    const details = Array.isArray(e.details)
+      ? (e.details as unknown[]).flatMap((d) =>
+          d &&
+          typeof d === 'object' &&
+          typeof (d as Record<string, unknown>).path === 'string' &&
+          typeof (d as Record<string, unknown>).message === 'string'
+            ? [d as { path: string; message: string }]
+            : [],
+        )
+      : [];
+    return new ApiError(status, code, message, requestId, details);
   }
 }
 
@@ -74,6 +100,14 @@ function safeJson(text: string): unknown {
     return JSON.parse(text);
   } catch {
     return undefined;
+  }
+}
+
+/** Thrown before a mutating request is sent when no CSRF token is available. */
+export class CsrfUnavailableError extends ApiError {
+  constructor() {
+    super(0, 'UNKNOWN', 'CSRF token unavailable');
+    this.name = 'CsrfUnavailableError';
   }
 }
 
@@ -106,42 +140,70 @@ export function readCsrfCookie(
 
 export type HttpMethod = 'GET' | 'HEAD' | 'OPTIONS' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
 
+export type TaskDueFilter = 'overdue' | 'today' | 'week';
+export type TaskListFilters = { status?: Task['status']; assigneeId?: string; due?: TaskDueFilter };
+
 /** Typed API client surface. */
 export type ApiClient = {
   auth: {
     login: (body: LoginRequest) => Promise<AuthSession>;
     signup: (body: SignupRequest) => Promise<AuthSession>;
-    forgotPassword: (body: ForgotPasswordRequest) => Promise<{ ok: true }>;
+    forgotPassword: (body: ForgotPasswordRequest) => Promise<void>;
+    /** GET /auth/session; 401 when signed out. */
+    session: () => Promise<GetAuthSessionResponse>;
   };
   organizations: { list: () => Promise<Organization[]> };
-  meetings: { list: (orgId: ID) => Promise<Paginated<Meeting>> };
-  tasks: { list: (orgId: ID) => Promise<Paginated<Task>> };
-  projects: { list: (orgId: ID) => Promise<Paginated<Project>> };
+  meetings: {
+    list: (organizationId: Id) => Promise<Paginated<Meeting>>;
+    get: (organizationId: Id, meetingId: Id) => Promise<Meeting>;
+  };
+  tasks: {
+    list: (organizationId: Id, filters?: TaskListFilters) => Promise<Paginated<Task>>;
+  };
+  projects: { list: (organizationId: Id) => Promise<Paginated<Project>> };
   /** Low-level request (cookie session + CSRF on non-GET). */
   request: <T>(method: HttpMethod, path: string, body?: unknown) => Promise<T>;
   storage: {
     /** POST /orgs/:organizationId/uploads; returns a presigned PUT (PresignedUrlDto). */
-    createUpload: (orgId: ID, body: CreateUploadRequest) => Promise<CreateUploadResponse>;
+    createUpload: (organizationId: Id, body: CreateUploadRequest) => Promise<CreateUploadResponse>;
+    /** PUT the file to object storage. No cookies, no CSRF (third-party origin). */
+    putToPresignedUrl: (upload: PresignedUrlDto, file: Blob) => Promise<void>;
   };
+  /** Register a handler for 401 responses (excluding auth endpoints). Returns unsubscribe. */
+  onUnauthorized: (handler: () => void) => () => void;
 };
+
+/** Endpoints whose 401 is an expected result, not a session expiry. */
+const AUTH_PATHS = new Set([
+  '/auth/login',
+  '/auth/signup',
+  '/auth/forgot-password',
+  '/auth/session',
+  '/auth/csrf',
+]);
 
 export function createApiClient(options: ApiClientOptions): ApiClient {
   const doFetch = options.fetch ?? globalThis.fetch.bind(globalThis);
   const base = options.baseUrl.replace(/\/$/, '');
+  const unauthorizedHandlers = new Set<() => void>();
 
   // Session is an HttpOnly cookie (__Host-meetops_sid); the browser sends it via
   // credentials: 'include'. No bearer tokens or client-side token storage.
   let cachedCsrf: string | null = null;
 
   async function fetchCsrfToken(): Promise<string | null> {
-    const res = await doFetch(`${base}/auth/csrf`, {
-      method: 'GET',
-      credentials: 'include',
-      headers: { Accept: 'application/json' },
-    });
-    if (!res.ok) return null;
-    const data = (await res.json()) as Partial<CsrfResponse>;
-    return data.csrfToken ?? null;
+    try {
+      const res = await doFetch(`${base}/auth/csrf`, {
+        method: 'GET',
+        credentials: 'include',
+        headers: { Accept: 'application/json' },
+      });
+      if (!res.ok) return null;
+      const data = safeJson(await res.text()) as Partial<CsrfResponse> | undefined;
+      return typeof data?.csrfToken === 'string' && data.csrfToken ? data.csrfToken : null;
+    } catch {
+      return null;
+    }
   }
 
   async function resolveCsrfToken(force = false): Promise<string | null> {
@@ -152,17 +214,14 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
     return cachedCsrf;
   }
 
-  async function send(
-    method: string,
-    path: string,
-    body: unknown,
-    forceCsrf: boolean,
-  ): Promise<Response> {
+  async function send(method: string, path: string, body: unknown, forceCsrf: boolean) {
     const headers: Record<string, string> = { Accept: 'application/json' };
     if (body !== undefined) headers['Content-Type'] = 'application/json';
     if (!SAFE_METHODS.has(method)) {
       const csrf = await resolveCsrfToken(forceCsrf);
-      if (csrf) headers[CSRF_HEADER] = csrf;
+      // Never send a state-changing request without a CSRF token.
+      if (!csrf) throw new CsrfUnavailableError();
+      headers[CSRF_HEADER] = csrf;
     }
     const init: RequestInit = { method, headers, credentials: 'include' };
     if (body !== undefined) init.body = JSON.stringify(body);
@@ -171,30 +230,80 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
 
   async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
     let res = await send(method, path, body, false);
-    // A stale synchronizer token yields 403; refresh once and retry.
-    if (res.status === 403 && !SAFE_METHODS.has(method) && !options.getCsrfToken) {
+    let data = safeJson(await res.text());
+    // Retry once, with a fresh token, only for CSRF-specific rejections.
+    if (
+      res.status === 403 &&
+      !SAFE_METHODS.has(method) &&
+      !options.getCsrfToken &&
+      ApiError.fromResponse(403, data).isCsrfFailure
+    ) {
       res = await send(method, path, body, true);
+      data = safeJson(await res.text());
     }
-    const data = safeJson(await res.text());
-    if (!res.ok) throw ApiError.fromResponse(res.status, data);
+    if (!res.ok) {
+      if (res.status === 401 && !AUTH_PATHS.has(path)) {
+        cachedCsrf = null;
+        unauthorizedHandlers.forEach((h) => h());
+      }
+      throw ApiError.fromResponse(res.status, data);
+    }
     return data as T;
   }
 
-  const org = (orgId: ID) => `/orgs/${encodeURIComponent(orgId)}`;
+  async function authRequest(path: string, body: unknown): Promise<AuthSession> {
+    const session = await request<AuthSession>('POST', path, body);
+    // Session rotates on login/signup; use the token the server just issued.
+    cachedCsrf = session.csrfToken;
+    return session;
+  }
+
+  const org = (id: Id) => `/orgs/${encodeURIComponent(id)}`;
+
+  function taskQuery(filters: TaskListFilters = {}): string {
+    const q = new URLSearchParams();
+    if (filters.status) q.set('status', filters.status);
+    if (filters.assigneeId) q.set('assigneeId', filters.assigneeId);
+    if (filters.due) q.set('due', filters.due);
+    const s = q.toString();
+    return s ? `?${s}` : '';
+  }
 
   return {
     request,
+    onUnauthorized: (handler) => {
+      unauthorizedHandlers.add(handler);
+      return () => unauthorizedHandlers.delete(handler);
+    },
     auth: {
-      login: (body) => request('POST', '/auth/login', body),
-      signup: (body) => request('POST', '/auth/signup', body),
-      forgotPassword: (body) => request('POST', '/auth/forgot-password', body),
+      login: (body) => authRequest('/auth/login', body),
+      signup: (body) => authRequest('/auth/signup', body),
+      forgotPassword: async (body) => {
+        await request('POST', '/auth/forgot-password', body);
+      },
+      session: () => request('GET', '/auth/session'),
     },
     organizations: { list: () => request('GET', '/orgs') },
-    meetings: { list: (orgId) => request('GET', `${org(orgId)}/meetings`) },
-    tasks: { list: (orgId) => request('GET', `${org(orgId)}/tasks`) },
-    projects: { list: (orgId) => request('GET', `${org(orgId)}/projects`) },
+    meetings: {
+      list: (id) => request('GET', `${org(id)}/meetings`),
+      get: (id, meetingId) =>
+        request('GET', `${org(id)}/meetings/${encodeURIComponent(meetingId)}`),
+    },
+    tasks: { list: (id, filters) => request('GET', `${org(id)}/tasks${taskQuery(filters)}`) },
+    projects: { list: (id) => request('GET', `${org(id)}/projects`) },
     storage: {
-      createUpload: (orgId, body) => request('POST', `${org(orgId)}/uploads`, body),
+      createUpload: (id, body) => request('POST', `${org(id)}/uploads`, body),
+      putToPresignedUrl: async (upload, file) => {
+        if (!upload.url.startsWith('https://'))
+          throw new ApiError(0, 'BAD_REQUEST', 'Insecure upload URL');
+        const res = await doFetch(upload.url, {
+          method: upload.method,
+          headers: { ...(upload.headers ?? {}) },
+          body: file,
+          credentials: 'omit',
+        });
+        if (!res.ok) throw new ApiError(res.status, 'UNKNOWN', 'Upload failed');
+      },
     },
   };
 }

@@ -1,6 +1,12 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { ApiError, CSRF_HEADER, createApiClient, readCsrfCookie } from '@/lib/api/client';
-import { meetings, uploadResponse } from './fixtures/data';
+import {
+  ApiError,
+  CSRF_HEADER,
+  CsrfUnavailableError,
+  createApiClient,
+  readCsrfCookie,
+} from '@/lib/api/client';
+import { meetings, session, uploadResponse } from './fixtures/data';
 
 function jsonResponse(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -65,16 +71,39 @@ describe('api client (cookie session + CSRF)', () => {
     expect(headersOf((fetchMock.mock.calls[0] as Call)[1])[CSRF_HEADER]).toBe('from-cookie');
   });
 
-  it('refreshes the CSRF token once on 403', async () => {
+  it('refreshes the CSRF token once on a CSRF-specific 403', async () => {
+    const csrf403 = {
+      error: {
+        code: 'FORBIDDEN',
+        message: 'csrf',
+        requestId: 'r1',
+        details: [{ path: 'x-csrf-token', message: 'invalid' }],
+      },
+    };
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce(jsonResponse({ csrfToken: 'old' }))
-      .mockResolvedValueOnce(jsonResponse({ error: 'csrf' }, 403))
+      .mockResolvedValueOnce(jsonResponse(csrf403, 403))
       .mockResolvedValueOnce(jsonResponse({ csrfToken: 'new' }))
-      .mockResolvedValueOnce(jsonResponse({ ok: true }));
+      .mockResolvedValueOnce(new Response(null, { status: 204 }));
     const api = createApiClient({ baseUrl: 'http://api', fetch: fetchMock });
-    await expect(api.auth.forgotPassword({ email: 'a@b.co' })).resolves.toEqual({ ok: true });
+    await expect(api.auth.forgotPassword({ email: 'a@b.co' })).resolves.toBeUndefined();
+    expect(fetchMock).toHaveBeenCalledTimes(4);
     expect(headersOf((fetchMock.mock.calls[3] as Call)[1])[CSRF_HEADER]).toBe('new');
+  });
+
+  it('does not retry a plain FORBIDDEN 403', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse({ csrfToken: 'tok' }))
+      .mockResolvedValueOnce(
+        jsonResponse({ error: { code: 'FORBIDDEN', message: 'no', requestId: 'r2' } }, 403),
+      );
+    const api = createApiClient({ baseUrl: 'http://api', fetch: fetchMock });
+    const err = (await api.request('POST', '/x', {}).catch((e: unknown) => e)) as ApiError;
+    expect(err.code).toBe('FORBIDDEN');
+    expect(err.isCsrfFailure).toBe(false);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
   it('throws ApiError on non-2xx', async () => {
@@ -95,15 +124,21 @@ describe('api client (cookie session + CSRF)', () => {
 });
 
 describe('csrf endpoint response', () => {
-  it('only reads the csrfToken field', async () => {
-    const fetchMock = vi
-      .fn()
-      .mockResolvedValueOnce(jsonResponse({ token: 'ignored' }))
-      .mockImplementation(() => Promise.resolve(jsonResponse({ ok: true })));
+  it('only reads the csrfToken field and refuses to send without a token', async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(jsonResponse({ token: 'ignored' }));
     const api = createApiClient({ baseUrl: 'http://api', fetch: fetchMock });
-    await api.auth.forgotPassword({ email: 'a@b.co' });
-    const init = (fetchMock.mock.calls[1] as [string, RequestInit])[1];
-    expect((init.headers as Record<string, string>)['X-CSRF-Token']).toBeUndefined();
+    await expect(api.auth.forgotPassword({ email: 'a@b.co' })).rejects.toBeInstanceOf(
+      CsrfUnavailableError,
+    );
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect((fetchMock.mock.calls[0] as Call)[0]).toBe('http://api/auth/csrf');
+  });
+
+  it('throws before sending when the csrf endpoint fails', async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(new Response('', { status: 500 }));
+    const api = createApiClient({ baseUrl: 'http://api', fetch: fetchMock });
+    await expect(api.request('DELETE', '/x')).rejects.toBeInstanceOf(CsrfUnavailableError);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -205,5 +240,87 @@ describe('AUTH_FAILED code', () => {
       ApiError.fromResponse(401, { error: { code: 'AUTH_FAILED', message: 'x', requestId: 'r' } })
         .code,
     ).toBe('AUTH_FAILED');
+  });
+});
+
+describe('session, 401 and uploads', () => {
+  it('uses the csrfToken from the login response for later mutations', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse({ csrfToken: 'pre-login-token-000' }))
+      .mockResolvedValueOnce(jsonResponse(session))
+      .mockImplementation(() => Promise.resolve(new Response(null, { status: 204 })));
+    const api = createApiClient({ baseUrl: 'http://api', fetch: fetchMock });
+    await api.auth.login({ email: 'ada@example.com', password: 'x' });
+    await api.request('POST', '/x', {});
+    expect(headersOf((fetchMock.mock.calls[2] as Call)[1])[CSRF_HEADER]).toBe(session.csrfToken);
+  });
+
+  it('GET /auth/session with credentials', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ ok: 1 }));
+    const api = createApiClient({ baseUrl: 'http://api', fetch: fetchMock });
+    await api.auth.session();
+    const [url, init] = fetchMock.mock.calls[0] as Call;
+    expect(url).toBe('http://api/auth/session');
+    expect(init.credentials).toBe('include');
+  });
+
+  it('notifies onUnauthorized on 401 from app endpoints but not auth endpoints', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockImplementation(() =>
+        Promise.resolve(
+          jsonResponse({ error: { code: 'UNAUTHENTICATED', message: 'x', requestId: 'r' } }, 401),
+        ),
+      );
+    const api = createApiClient({ baseUrl: 'http://api', fetch: fetchMock });
+    const handler = vi.fn();
+    const off = api.onUnauthorized(handler);
+    await api.meetings.list('org_1').catch(() => undefined);
+    expect(handler).toHaveBeenCalledTimes(1);
+    await api.auth.session().catch(() => undefined);
+    expect(handler).toHaveBeenCalledTimes(1);
+    off();
+    await api.meetings.list('org_1').catch(() => undefined);
+    expect(handler).toHaveBeenCalledTimes(1);
+  });
+
+  it('builds task filter query params', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ items: [], nextCursor: null }));
+    const api = createApiClient({ baseUrl: 'http://api', fetch: fetchMock });
+    await api.tasks.list('org_1', { status: 'cancelled', assigneeId: 'usr_1', due: 'week' });
+    expect((fetchMock.mock.calls[0] as Call)[0]).toBe(
+      'http://api/orgs/org_1/tasks?status=cancelled&assigneeId=usr_1&due=week',
+    );
+  });
+
+  it('PUTs to the presigned url without cookies or CSRF', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 200 }));
+    const api = createApiClient({
+      baseUrl: 'http://api',
+      fetch: fetchMock,
+      getCsrfToken: () => 'c1',
+    });
+    const file = new Blob(['abc'], { type: 'audio/webm' });
+    await api.storage.putToPresignedUrl(uploadResponse.upload, file);
+    const [url, init] = fetchMock.mock.calls[0] as Call;
+    expect(url).toBe(uploadResponse.upload.url);
+    expect(init.method).toBe('PUT');
+    expect(init.credentials).toBe('omit');
+    expect(init.body).toBe(file);
+    expect(headersOf(init)['Content-Type']).toBe('audio/webm');
+    expect(headersOf(init)[CSRF_HEADER]).toBeUndefined();
+  });
+
+  it('refuses non-https presigned urls', async () => {
+    const fetchMock = vi.fn();
+    const api = createApiClient({ baseUrl: 'http://api', fetch: fetchMock });
+    await expect(
+      api.storage.putToPresignedUrl(
+        { ...uploadResponse.upload, url: 'http://x/y' },
+        new Blob(['a']),
+      ),
+    ).rejects.toBeInstanceOf(ApiError);
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });

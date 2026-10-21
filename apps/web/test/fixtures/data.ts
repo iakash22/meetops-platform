@@ -1,41 +1,96 @@
-import type { CreateUploadResponse } from '@meetops/contracts';
-import type { AuthSession, Meeting, Organization, Paginated, Project, Task } from '@/lib/api/types';
+import type {
+  AuthSession,
+  CreateUploadResponse,
+  GetAuthSessionResponse,
+  Meeting,
+  Organization,
+  Paginated,
+  Project,
+  Task,
+} from '@meetops/contracts';
+
+const T = '2026-10-01T00:00:00.000Z';
 
 export const orgs: Organization[] = [
-  { id: 'org_1', name: 'Acme Inc', slug: 'acme' },
-  { id: 'org_2', name: 'Globex', slug: 'globex' },
+  { id: 'org_1', name: 'Acme Inc', slug: 'acme', createdAt: T, updatedAt: T },
+  { id: 'org_2', name: 'Globex', slug: 'globex', createdAt: T, updatedAt: T },
 ];
 
+export const user = {
+  id: 'usr_1',
+  email: 'ada@example.com',
+  name: 'Ada',
+  createdAt: T,
+  updatedAt: T,
+};
+
 export const session: AuthSession = {
-  user: { id: 'usr_1', email: 'ada@example.com', name: 'Ada' },
+  user,
+  csrfToken: 'csrf-token-from-login-0001',
+  activeOrganizationId: 'org_1',
+  role: 'owner',
   organizations: orgs,
+};
+
+export const sessionResponse: GetAuthSessionResponse = {
+  user,
+  activeOrganizationId: 'org_1',
+  role: 'owner',
+  organizations: orgs,
+};
+
+export const meeting1: Meeting = {
+  id: 'mtg_1',
+  organizationId: 'org_1',
+  title: 'Weekly sync',
+  source: 'upload',
+  status: 'completed',
+  startedAt: '2026-10-20T10:00:00.000Z',
+  endedAt: '2026-10-20T10:30:00.000Z',
+  createdById: 'usr_1',
+  createdAt: T,
+  updatedAt: T,
 };
 
 export const meetings: Paginated<Meeting> = {
   items: [
-    {
-      id: 'mtg_1',
-      orgId: 'org_1',
-      title: 'Weekly sync',
-      startsAt: '2026-10-20T10:00:00Z',
-      status: 'completed',
-    },
+    meeting1,
     {
       id: 'mtg_2',
-      orgId: 'org_1',
+      organizationId: 'org_1',
       title: 'Planning',
-      startsAt: '2026-10-22T10:00:00Z',
-      status: 'scheduled',
+      source: 'extension',
+      status: 'recording',
+      startedAt: '2026-10-22T10:00:00.000Z',
+      createdById: 'usr_1',
+      createdAt: T,
+      updatedAt: T,
     },
   ],
+  nextCursor: null,
+};
+
+export const task1: Task = {
+  id: 'tsk_1',
+  organizationId: 'org_1',
+  title: 'Send recap',
+  status: 'todo',
+  priority: 'medium',
+  createdAt: T,
+  updatedAt: T,
 };
 
 export const tasks: Paginated<Task> = {
-  items: [{ id: 'tsk_1', orgId: 'org_1', title: 'Send recap', status: 'todo' }],
+  items: [
+    task1,
+    { ...task1, id: 'tsk_2', title: 'Old idea', status: 'cancelled', priority: 'low' },
+  ],
+  nextCursor: null,
 };
 
 export const projects: Paginated<Project> = {
-  items: [{ id: 'prj_1', orgId: 'org_1', name: 'Launch' }],
+  items: [{ id: 'prj_1', organizationId: 'org_1', name: 'Launch', createdAt: T, updatedAt: T }],
+  nextCursor: null,
 };
 
 export const uploadResponse: CreateUploadResponse = {
