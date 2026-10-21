@@ -1,8 +1,8 @@
 /**
  * Cross-platform (Windows/macOS/Linux) equivalent of create-db-roles.sh; needs no psql.
  *   pnpm --filter @meetops/database db:roles
- * Env: ADMIN_DATABASE_URL (superuser, maintenance DB), MEETOPS_APP_PASSWORD, MEETOPS_MIGRATOR_PASSWORD
- * (required), MEETOPS_RELAY_PASSWORD (optional), MEETOPS_DB_NAME (default "meetops").
+ * Env: ADMIN_DATABASE_URL (superuser, maintenance DB), MEETOPS_APP_DB_PASSWORD, MEETOPS_MIGRATOR_DB_PASSWORD
+ * (required), MEETOPS_RELAY_DB_PASSWORD (optional), MEETOPS_DB_NAME (default "meetops").
  * Passwords are sent as bind parameters and quoted server-side with format(%L); never logged.
  */
 import { PrismaClient } from '@prisma/client';
@@ -26,11 +26,11 @@ export async function createDbRoles(env = process.env): Promise<void> {
   const dbName = env.MEETOPS_DB_NAME ?? 'meetops';
   if (!/^[a-z_][a-z0-9_]{0,62}$/.test(dbName)) throw new Error('MEETOPS_DB_NAME must be a simple identifier');
   const roles: Role[] = [
-    { name: 'meetops_migrator', password: required('MEETOPS_MIGRATOR_PASSWORD'), attrs: 'LOGIN NOSUPERUSER NOBYPASSRLS CREATEDB' },
-    { name: 'meetops_app', password: required('MEETOPS_APP_PASSWORD'), attrs: 'LOGIN NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE' },
+    { name: 'meetops_migrator', password: required('MEETOPS_MIGRATOR_DB_PASSWORD'), attrs: 'LOGIN NOSUPERUSER NOBYPASSRLS CREATEDB' },
+    { name: 'meetops_app', password: required('MEETOPS_APP_DB_PASSWORD'), attrs: 'LOGIN NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE' },
   ];
-  if (env.MEETOPS_RELAY_PASSWORD) {
-    roles.push({ name: 'meetops_relay', password: env.MEETOPS_RELAY_PASSWORD, attrs: 'LOGIN NOSUPERUSER BYPASSRLS NOCREATEDB NOCREATEROLE' });
+  if (env.MEETOPS_RELAY_DB_PASSWORD) {
+    roles.push({ name: 'meetops_relay', password: env.MEETOPS_RELAY_DB_PASSWORD, attrs: 'LOGIN NOSUPERUSER BYPASSRLS NOCREATEDB NOCREATEROLE' });
   }
 
   const admin = new PrismaClient({ datasources: { db: { url: adminUrl } } });

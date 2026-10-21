@@ -33,15 +33,15 @@ Migrations assert these attributes. A migration fails if `meetops_app` is superu
 
 ## Env vars
 
-| Var                                                                             | Value (CI)                                                                        | Purpose                        |
-| ------------------------------------------------------------------------------- | --------------------------------------------------------------------------------- | ------------------------------ |
-| `ADMIN_DATABASE_URL`                                                            | `postgresql://meetops:change-me-local-dev@localhost:5432/meetops`                 | role bootstrap only            |
-| `MEETOPS_MIGRATOR_PASSWORD` / `MEETOPS_APP_PASSWORD` / `MEETOPS_RELAY_PASSWORD` | CI secrets or random values                                                       | bootstrap                      |
-| `MIGRATION_DATABASE_URL`                                                        | `postgresql://meetops_migrator:$MEETOPS_MIGRATOR_PASSWORD@localhost:5432/meetops` | Prisma `directUrl` (migrate)   |
-| `DATABASE_URL`                                                                  | `postgresql://meetops_app:$MEETOPS_APP_PASSWORD@localhost:5432/meetops`           | runtime + seed                 |
-| `RLS_TEST_APP_URL`                                                              | same as `DATABASE_URL`                                                            | live tests                     |
-| `RLS_TEST_OWNER_URL`                                                            | same as `MIGRATION_DATABASE_URL`                                                  | live tests (fixtures, catalog) |
-| `RLS_TEST_RELAY_URL`                                                            | `postgresql://meetops_relay:$MEETOPS_RELAY_PASSWORD@localhost:5432/meetops`       | live relay tests               |
+| Var                                                                                      | Value (CI)                                                                           | Purpose                        |
+| ---------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ | ------------------------------ |
+| `ADMIN_DATABASE_URL`                                                                     | `postgresql://meetops:change-me-local-dev@localhost:5432/meetops`                    | role bootstrap only            |
+| `MEETOPS_MIGRATOR_DB_PASSWORD` / `MEETOPS_APP_DB_PASSWORD` / `MEETOPS_RELAY_DB_PASSWORD` | CI secrets or random values                                                          | bootstrap                      |
+| `MIGRATION_DATABASE_URL`                                                                 | `postgresql://meetops_migrator:$MEETOPS_MIGRATOR_DB_PASSWORD@localhost:5432/meetops` | Prisma `directUrl` (migrate)   |
+| `DATABASE_URL`                                                                           | `postgresql://meetops_app:$MEETOPS_APP_DB_PASSWORD@localhost:5432/meetops`           | runtime + seed                 |
+| `RLS_TEST_APP_URL`                                                                       | same as `DATABASE_URL`                                                               | live tests                     |
+| `RLS_TEST_OWNER_URL`                                                                     | same as `MIGRATION_DATABASE_URL`                                                     | live tests (fixtures, catalog) |
+| `RLS_TEST_RELAY_URL`                                                                     | `postgresql://meetops_relay:$MEETOPS_RELAY_DB_PASSWORD@localhost:5432/meetops`       | live relay tests               |
 
 Without these vars the live suites are skipped. Unit tests still run.
 
@@ -68,7 +68,7 @@ pnpm --filter @meetops/database test:live
 
 - Roles can come from DevOps' `infra/compose/postgres/initdb/10-meetops-roles.sh` (app + migrator only) or
   from `pnpm db:roles`; both are idempotent and the migrations never `ALTER ROLE`. If `meetops_relay` is
-  created after `migrate deploy`, `pnpm db:roles` (with `MEETOPS_RELAY_PASSWORD`) applies its outbox grants.
+  created after `migrate deploy`, `pnpm db:roles` (with `MEETOPS_RELAY_DB_PASSWORD`) applies its outbox grants.
 - Drift: `migrate diff --from-url $MIGRATION_DATABASE_URL --to-schema-datamodel` and
   `--from-migrations ... --to-url` both exit 0. `--from-migrations --to-schema-datamodel --shadow-database-url`
   reports only `CREATE EXTENSION IF NOT EXISTS "vector"` (a Prisma 5.22 quirk with a pre-created
