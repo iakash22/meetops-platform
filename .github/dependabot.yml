@@ -7,8 +7,13 @@ updates:
     open-pull-requests-limit: 10
     commit-message:
       prefix: chore(deps)
+      prefix-development: chore(deps-dev)
     groups:
-      minor-and-patch:
+      prod-minor-patch:
+        dependency-type: production
+        update-types: [minor, patch]
+      dev-minor-patch:
+        dependency-type: development
         update-types: [minor, patch]
 
   - package-ecosystem: github-actions
@@ -17,6 +22,9 @@ updates:
       interval: weekly
     commit-message:
       prefix: ci
+    groups:
+      github-actions:
+        patterns: ['*']
 
   - package-ecosystem: docker
     directory: /infra/docker
@@ -24,3 +32,6 @@ updates:
       interval: weekly
     commit-message:
       prefix: build(docker)
+    groups:
+      docker:
+        patterns: ['*']
