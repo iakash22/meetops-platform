@@ -31,6 +31,9 @@ function id(name: string, v: string): string {
   return v;
 }
 
+/** Lifecycle-expirable prefix for recording-session chunks (configure e.g. 1-day expiry on it). */
+export const SESSION_CHUNK_PREFIX = 'tmp/session-chunks/';
+
 export function orgPrefix(orgId: string): string {
   return `org/${id('orgId', orgId)}/`;
 }
@@ -52,8 +55,9 @@ export function buildObjectKey(ref: MeetingObjectRef): string {
     case 'chunk':
       return `${base}/processed/${obj}/chunks/${idx(ref.index)}.wav`;
     case 'session_chunk':
-      // objectId = recording session id; contracts caps seq at MAX_RECORDING_CHUNKS - 1 (99999).
-      return `${base}/sessions/${obj}/chunks/${idx(ref.index)}.part`;
+      // Flat temp prefix so a prefix-only lifecycle rule (incl. R2) can expire abandoned chunks.
+      // objectId = recording session id; contracts caps seq at MAX_CHUNKS - 1 (9999).
+      return `${SESSION_CHUNK_PREFIX}${base}/sessions/${obj}/${idx(ref.index)}.part`;
     case 'transcript':
     case 'export':
     case 'attachment':
@@ -64,15 +68,24 @@ export function buildObjectKey(ref: MeetingObjectRef): string {
 }
 
 export function parseMeetingKey(key: string): { orgId: string; meetingId: string; rest: string } | null {
-  const m = /^org\/([^/]+)\/meetings\/([^/]+)\/(.+)$/.exec(key);
+  const k = key.startsWith(SESSION_CHUNK_PREFIX) ? key.slice(SESSION_CHUNK_PREFIX.length) : key;
+  const m = /^org\/([^/]+)\/meetings\/([^/]+)\/(.+)$/.exec(k);
   if (!m || !ID.test(m[1]!) || !ID.test(m[2]!)) return null;
   return { orgId: m[1]!, meetingId: m[2]!, rest: m[3]! };
 }
 
-/** Throws StorageAccessError unless `key` lives under org/{orgId}/. Message never includes the key. */
-export function assertKeyOwnedBy(key: string, orgId: string): void {
+/**
+ * Throws StorageAccessError unless `key` lives under org/{orgId}/ or tmp/session-chunks/org/{orgId}/,
+ * with a valid meetingId segment (and meetingId equal to `meetingId` when given). Never echoes the key.
+ */
+export function assertKeyOwnedBy(key: string, orgId: string, meetingId?: string): void {
   if (typeof orgId !== 'string' || !ID.test(orgId)) throw new StorageAccessError('orgId is required');
-  if (!key.startsWith(orgPrefix(orgId)) || key.includes('..') || key.includes('//') || key.includes('\\')) {
-    throw new StorageAccessError();
-  }
+  if (typeof key !== 'string' || key.includes('..') || key.includes('//') || key.includes('\\')) throw new StorageAccessError();
+  const isSession = key.startsWith(SESSION_CHUNK_PREFIX);
+  const k = isSession ? key.slice(SESSION_CHUNK_PREFIX.length) : key;
+  if (!k.startsWith(orgPrefix(orgId))) throw new StorageAccessError();
+  const parsed = parseMeetingKey(key);
+  if (!parsed || parsed.orgId !== orgId) throw new StorageAccessError();
+  if (meetingId !== undefined && parsed.meetingId !== meetingId) throw new StorageAccessError();
+  if (isSession && !/^sessions\/[A-Za-z0-9][A-Za-z0-9_-]{0,127}\/\d{5}\.part$/.test(parsed.rest)) throw new StorageAccessError();
 }
