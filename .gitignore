@@ -31,3 +31,6 @@ pnpm-debug.log*
 apps/**/.vite/
 apps/**/node_modules/
 packages/**/node_modules/
+
+# TypeScript incremental
+*.tsbuildinfo

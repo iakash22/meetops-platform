@@ -6,7 +6,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": ""
+    "url": "https://github.com/iakash22/meetops-platform"
   },
   "packageManager": "pnpm@9.12.3",
   "engines": {
@@ -18,7 +18,7 @@
     "lint": "turbo run lint",
     "test": "turbo run test",
     "dev": "turbo run dev",
-    "prepare": "husky install",
+    "prepare": "husky",
     "postinstall": "turbo run postinstall --cache-dir .turbo",
     "dev:infra:up": "docker compose --env-file .env -f infra/compose/compose.dev.yml up -d",
     "dev:infra:down": "docker compose --env-file .env -f infra/compose/compose.dev.yml down",
