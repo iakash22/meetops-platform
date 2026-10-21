@@ -259,7 +259,9 @@ export class StubUploadClient implements UploadClient {
     const ttl = (this.opts.ttlSeconds ?? CHUNK_UPLOAD_URL_TTL_SECONDS) * 1000;
     const expiresAtMs = this.now() + ttl;
     const url = `https://uploads.stub.invalid/recording-sessions/${sessionId}/chunks/${req.seq}?sig=${crypto.randomUUID()}`;
-    const headers: Record<string, string> = { 'Content-Length': String(req.sizeBytes) };
+    const headers: { 'content-length': string; 'x-amz-checksum-sha256'?: string } = {
+      'content-length': String(req.sizeBytes),
+    };
     if (req.sha256) headers['x-amz-checksum-sha256'] = hexToBase64(req.sha256);
     this.issued.set(url, { sessionId, seq: req.seq, expiresAtMs, headers });
     return {
@@ -283,7 +285,7 @@ export class StubUploadClient implements UploadClient {
     for (const [k, v] of Object.entries(grant.headers)) {
       if (sent[k.toLowerCase()] !== v) return { status: 403 }; // SignatureDoesNotMatch
     }
-    if (String(req.body.size) !== grant.headers['Content-Length']) return { status: 400 };
+    if (String(req.body.size) !== grant.headers['content-length']) return { status: 400 };
     const sha = await sha256Hex(req.body);
     const signed = grant.headers['x-amz-checksum-sha256'];
     if (signed !== undefined && hexToBase64(sha) !== signed) return { status: 400 };

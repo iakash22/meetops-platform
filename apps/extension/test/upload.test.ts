@@ -52,7 +52,7 @@ describe('StubUploadClient (contracts v0.2 flow)', () => {
     expect(res.upload.method).toBe('PUT');
     expect(res.upload.url).toMatch(/^https:\/\//);
     expect(res.upload.headers).toEqual({
-      'Content-Length': '3',
+      'content-length': '3',
       'x-amz-checksum-sha256': hexToBase64(ABC_SHA),
     });
     expect(Date.parse(res.upload.expiresAt) - t).toBe(CHUNK_UPLOAD_URL_TTL_SECONDS * 1000);
@@ -129,7 +129,7 @@ describe('uploadChunk helper', () => {
     expect(req).toHaveBeenCalledWith(sessionId, { seq: 4, sizeBytes: 3, sha256: ABC_SHA });
     expect(c.puts).toHaveLength(1);
     expect(c.puts[0]!.headers).toEqual({
-      'Content-Length': '3',
+      'content-length': '3',
       'x-amz-checksum-sha256': hexToBase64(ABC_SHA),
     });
   });
@@ -181,7 +181,7 @@ describe('uploadChunk helper', () => {
             url: 'https://x',
             method: 'PUT' as const,
             headers: {
-              'Content-Length': String(r.sizeBytes),
+              'content-length': String(r.sizeBytes),
               'x-amz-checksum-sha256': hexToBase64(r.sha256!),
             },
             expiresAt: '2999-01-01T00:00:00Z',
