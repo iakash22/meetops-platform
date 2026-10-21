@@ -9,7 +9,10 @@ import {
   type CompleteRecordingSessionResponse,
   type InitRecordingSessionRequest,
   type InitRecordingSessionResponse,
-} from './contracts.js';
+} from '@meetops/contracts';
+
+/** Signed headers of a presigned PUT; required by the contract (ChunkUploadUrlResponse.upload). */
+export type SignedHeaders = ChunkUploadUrlResponse['upload']['headers'];
 
 /** One HTTP PUT to object storage via a presigned URL. Implementations must send `headers` as given. */
 export interface StoragePutRequest {
@@ -101,12 +104,16 @@ export const fetchTransport: StorageTransport = createFetchTransport({
  * sha256 was sent. Anything else means the URL was not signed for this body; refuse to upload.
  */
 export function checkSignedHeaders(
-  headers: Record<string, string> | undefined,
+  headers: SignedHeaders,
   sizeBytes: number,
   sha256: string | undefined,
 ): Record<string, string> {
-  const h = headers ?? {};
-  const get = (name: string) => Object.entries(h).find(([k]) => k.toLowerCase() === name)?.[1];
+  const h: Record<string, string | undefined> = headers;
+  // Required by the type, but still validated at runtime: the response comes off the network.
+  const get = (name: string) => {
+    const v = Object.entries(h).find(([k]) => k.toLowerCase() === name)?.[1];
+    return v === undefined || v.trim() === '' ? undefined : v;
+  };
   const len = get('content-length');
   if (len === undefined) throw new Error('Presigned upload is missing signed content-length');
   if (len.trim() !== String(sizeBytes)) {
@@ -120,7 +127,9 @@ export function checkSignedHeaders(
     if (sum !== hexToBase64(sha256))
       throw new Error('Signed x-amz-checksum-sha256 does not match chunk');
   }
-  return h;
+  return Object.fromEntries(
+    Object.entries(h).filter((e): e is [string, string] => e[1] !== undefined),
+  );
 }
 
 /** Convert an epoch-ms number (pre-v0.2 records) or ISO string to an ISO 8601 string. */

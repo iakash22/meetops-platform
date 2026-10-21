@@ -1,7 +1,7 @@
 import type { ChunkStore } from './chunk-store.js';
 import { drainQueue } from './drain.js';
 import type { StorageEvent } from './messages.js';
-import { MAX_CHUNK_BYTES, MAX_RECORDING_CHUNKS, type AbortReason } from './contracts.js';
+import { MAX_CHUNK_BYTES, MAX_RECORDING_CHUNKS, type AbortReason } from '@meetops/contracts';
 import { sha256Hex, splitForUpload, toIsoTimestamp, type UploadClient } from './upload.js';
 
 export const MIME_TYPE = 'audio/webm;codecs=opus';

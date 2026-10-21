@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { CHUNK_UPLOAD_URL_TTL_SECONDS, MAX_CHUNK_BYTES } from '../src/lib/contracts.js';
+import { CHUNK_UPLOAD_URL_TTL_SECONDS, MAX_CHUNK_BYTES } from '@meetops/contracts';
 import {
   StubUploadClient,
   UUID_RE,
@@ -15,7 +15,10 @@ import {
   uploadChunk,
   type StorageTransport,
   type UploadClient,
+  type SignedHeaders,
 } from '../src/lib/upload.js';
+
+const hdrs = (o: Record<string, string>) => o as unknown as SignedHeaders;
 
 const MID = '6f1c2b8e-3d4a-4e5f-9a6b-7c8d9e0f1a2b';
 
@@ -261,17 +264,21 @@ describe('upload URL and signed-header safety', () => {
   it('checkSignedHeaders requires content-length and, with sha256, the checksum (case-insensitive)', async () => {
     const sha = await sha256Hex(new Blob(['abc']));
     const b64 = hexToBase64(sha);
-    expect(() => checkSignedHeaders(undefined, 3, undefined)).toThrow(/content-length/);
-    expect(() => checkSignedHeaders({ 'content-length': '4' }, 3, undefined)).toThrow(/match/);
-    expect(checkSignedHeaders({ 'CONTENT-LENGTH': '3' }, 3, undefined)).toEqual({
+    expect(() => checkSignedHeaders(hdrs({}), 3, undefined)).toThrow(/content-length/);
+    expect(() => checkSignedHeaders(hdrs({ 'content-length': '4' }), 3, undefined)).toThrow(
+      /match/,
+    );
+    expect(checkSignedHeaders(hdrs({ 'CONTENT-LENGTH': '3' }), 3, undefined)).toEqual({
       'CONTENT-LENGTH': '3',
     });
-    expect(() => checkSignedHeaders({ 'Content-Length': '3' }, 3, sha)).toThrow(/x-amz-checksum/);
+    expect(() => checkSignedHeaders(hdrs({ 'Content-Length': '3' }), 3, sha)).toThrow(
+      /x-amz-checksum/,
+    );
     expect(() =>
-      checkSignedHeaders({ 'Content-Length': '3', 'X-Amz-Checksum-Sha256': 'AAAA' }, 3, sha),
+      checkSignedHeaders(hdrs({ 'Content-Length': '3', 'X-Amz-Checksum-Sha256': 'AAAA' }), 3, sha),
     ).toThrow(/does not match/);
     expect(
-      checkSignedHeaders({ 'content-length': '3', 'X-AMZ-CHECKSUM-SHA256': b64 }, 3, sha),
+      checkSignedHeaders(hdrs({ 'content-length': '3', 'X-AMZ-CHECKSUM-SHA256': b64 }), 3, sha),
     ).toBeTruthy();
   });
 
@@ -301,14 +308,14 @@ describe('upload URL and signed-header safety', () => {
 
 describe('signed headers: empty values', () => {
   it('rejects an empty-string content-length', () => {
-    expect(() => checkSignedHeaders({ 'content-length': '' }, 3, undefined)).toThrow();
-    expect(() => checkSignedHeaders({ 'Content-Length': '   ' }, 3, undefined)).toThrow();
+    expect(() => checkSignedHeaders(hdrs({ 'content-length': '' }), 3, undefined)).toThrow();
+    expect(() => checkSignedHeaders(hdrs({ 'Content-Length': '   ' }), 3, undefined)).toThrow();
   });
 
   it('rejects an empty x-amz-checksum-sha256 when sha256 was sent', async () => {
     const sha = await sha256Hex(new Blob(['abc']));
     expect(() =>
-      checkSignedHeaders({ 'content-length': '3', 'x-amz-checksum-sha256': '' }, 3, sha),
+      checkSignedHeaders(hdrs({ 'content-length': '3', 'x-amz-checksum-sha256': '' }), 3, sha),
     ).toThrow();
   });
 });
