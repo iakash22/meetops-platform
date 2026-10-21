@@ -18,7 +18,7 @@ Owner: Database agent. DevOps owns `.github/workflows`; copy `ci-live-db.example
 `pgvector/pgvector:pg16`, superuser `postgres` (CI-only password), port 5432.
 
 ## Roles (cluster level, created before migrations)
-`scripts/bootstrap-roles.sql`, run as superuser. It is idempotent: it creates or updates the roles, creates the `meetops` DB owned by the migrator, and runs `CREATE EXTENSION vector`, because pgvector is not a trusted extension.
+`pnpm --filter @meetops/database db:roles` (`scripts/create-db-roles.ts`; or `create-db-roles.sh` / `bootstrap-roles.sql` with psql), run with a superuser `ADMIN_DATABASE_URL`. It is idempotent: it creates or updates the roles, creates the `meetops` DB owned by the migrator, and runs `CREATE EXTENSION vector`, because pgvector is not a trusted extension.
 
 | Role | Attributes | Used by |
 | --- | --- | --- |
@@ -31,20 +31,20 @@ Migrations assert these attributes. A migration fails if `meetops_app` is superu
 ## Env vars
 | Var | Value (CI) | Purpose |
 | --- | --- | --- |
-| `BOOTSTRAP_DATABASE_URL` | `postgresql://postgres:postgres@localhost:5432/postgres` | role bootstrap only |
-| `MIGRATOR_PASSWORD` / `APP_PASSWORD` / `RELAY_PASSWORD` | CI secrets or random values | bootstrap |
-| `MIGRATION_DATABASE_URL` | `postgresql://meetops_migrator:$MIGRATOR_PASSWORD@localhost:5432/meetops` | Prisma `directUrl` (migrate) |
-| `DATABASE_URL` | `postgresql://meetops_app:$APP_PASSWORD@localhost:5432/meetops` | runtime + seed |
+| `ADMIN_DATABASE_URL` | `postgresql://postgres:postgres@localhost:5432/postgres` | role bootstrap only |
+| `MEETOPS_MIGRATOR_PASSWORD` / `MEETOPS_APP_PASSWORD` / `MEETOPS_RELAY_PASSWORD` | CI secrets or random values | bootstrap |
+| `MIGRATION_DATABASE_URL` | `postgresql://meetops_migrator:$MEETOPS_MIGRATOR_PASSWORD@localhost:5432/meetops` | Prisma `directUrl` (migrate) |
+| `DATABASE_URL` | `postgresql://meetops_app:$MEETOPS_APP_PASSWORD@localhost:5432/meetops` | runtime + seed |
 | `RLS_TEST_APP_URL` | same as `DATABASE_URL` | live tests |
 | `RLS_TEST_OWNER_URL` | same as `MIGRATION_DATABASE_URL` | live tests (fixtures, catalog) |
-| `RLS_TEST_RELAY_URL` | `postgresql://meetops_relay:$RELAY_PASSWORD@localhost:5432/meetops` | live relay tests |
+| `RLS_TEST_RELAY_URL` | `postgresql://meetops_relay:$MEETOPS_RELAY_PASSWORD@localhost:5432/meetops` | live relay tests |
 
 Without these vars the live suites are skipped. Unit tests still run.
 
 ## Steps
 ```bash
 pnpm install --frozen-lockfile
-pnpm --filter @meetops/database db:bootstrap        # needs psql (postgresql-client)
+pnpm --filter @meetops/database db:roles            # cross-platform, no psql needed
 pnpm --filter @meetops/database db:migrate:deploy
 pnpm --filter @meetops/database exec prisma migrate diff \
   --from-url "$MIGRATION_DATABASE_URL" --to-schema-datamodel prisma/schema.prisma --exit-code

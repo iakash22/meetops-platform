@@ -10,10 +10,10 @@ live-db:
       options: >-
         --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 20
   env:
-    BOOTSTRAP_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/postgres
-    MIGRATOR_PASSWORD: ci_migrator
-    APP_PASSWORD: ci_app
-    RELAY_PASSWORD: ci_relay
+    ADMIN_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/postgres
+    MEETOPS_MIGRATOR_PASSWORD: ci_migrator
+    MEETOPS_APP_PASSWORD: ci_app
+    MEETOPS_RELAY_PASSWORD: ci_relay
     MIGRATION_DATABASE_URL: postgresql://meetops_migrator:ci_migrator@localhost:5432/meetops
     DATABASE_URL: postgresql://meetops_app:ci_app@localhost:5432/meetops
     RLS_TEST_APP_URL: postgresql://meetops_app:ci_app@localhost:5432/meetops
@@ -24,9 +24,8 @@ live-db:
     - uses: pnpm/action-setup@v4
     - uses: actions/setup-node@v4
       with: { node-version: 20, cache: pnpm }
-    - run: sudo apt-get update && sudo apt-get install -y postgresql-client
     - run: pnpm install --frozen-lockfile
-    - run: pnpm --filter @meetops/database db:bootstrap
+    - run: pnpm --filter @meetops/database db:roles
     - run: pnpm --filter @meetops/database db:migrate:deploy
     - run: >-
         pnpm --filter @meetops/database exec prisma migrate diff
