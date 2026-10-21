@@ -12,15 +12,18 @@ Cross-cutting test suites live here as the standalone `@meetops/tests` package.
 
 ## Layout
 
-| Path                  | Runner                         | What                                                                                                                                 |
-| --------------------- | ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------ |
-| `api/`                | vitest (`api` project)         | `/health`, `/ready` via Fastify `inject` on `createServer()` from `apps/api/src/server.ts`; HTTP fallback when `API_BASE_URL` is set |
-| `contract/`           | vitest (`contract` project)    | Factory output validated with TypeBox `Value.Check` against `@meetops/contracts` runtime schemas (PR #17); skips until #17 merges    |
-| `integration/`        | vitest (`integration` project) | Testcontainers Postgres (pgvector) + Redis                                                                                           |
-| `e2e/`                | Playwright                     | Smoke test against the web dev server (`apps/web` `dev` = vite)                                                                      |
-| `factories/`          | vitest (`factories` project)   | Deterministic, seedable, organization-scoped test-data factories                                                                     |
-| `support/`            | –                              | Shared helpers (e.g. Docker detection)                                                                                               |
-| `vitest.workspace.ts` | –                              | One vitest project per suite                                                                                                         |
+| Path                        | Runner                         | What                                                                                                                                                                             |
+| --------------------------- | ------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `api/`                      | vitest (`api` project)         | `/health`, `/ready` via Fastify `inject` on `createServer()` from `apps/api/src/server.ts`; HTTP fallback when `API_BASE_URL` is set                                             |
+| `contract/`                 | vitest (`contract` project)    | Factory output validated with TypeBox `Value.Check` against `@meetops/contracts` runtime schemas (PR #17); skips until #17 merges                                                |
+| `integration/`              | vitest (`integration` project) | Testcontainers Postgres (pgvector) + Redis; `database.test.ts` applies PR #6 migrations, runs `seed.ts`, checks organization isolation and pgvector similarity; RLS placeholders |
+| `e2e/`                      | Playwright                     | Smoke test against the web dev server (`apps/web` `dev` = vite)                                                                                                                  |
+| `factories/`                | vitest (`factories` project)   | Deterministic, seedable, organization-scoped test-data factories                                                                                                                 |
+| `security/`                 | vitest (`security` project)    | Security case catalogue from `docs/12-security/test-cases.md` (PR #4): XT (cross-organization), AU (auth abuse), SS (SSRF) as ID-tagged `describe.skip` placeholders             |
+| `fixtures/security/ssrf.ts` | –                              | Exported SSRF payloads SS-01..SS-32 (`ssrfPayloads`, `ssrfUrlPayloads`, `ssrfScenarios`, `withAllowedHost`) for URL validators to import                                         |
+| `ci/ci-jobs-spec.md`        | –                              | CI job request for DevOps (integration + e2e YAML)                                                                                                                               |
+| `support/`                  | –                              | Shared helpers (e.g. Docker detection)                                                                                                                                           |
+| `vitest.workspace.ts`       | –                              | One vitest project per suite                                                                                                                                                     |
 
 ## Running
 
@@ -31,6 +34,7 @@ pnpm test                          # run inside tests/: all vitest suites
 pnpm test:api
 pnpm test:contract
 pnpm test:integration
+pnpm test:security
 pnpm test:unit         # all unit suites (no Docker/browser)
 pnpm e2e:install       # once: playwright install chromium
 pnpm test:e2e          # starts apps/web dev server on WEB_PORT (5173)
@@ -42,22 +46,30 @@ E2E is **not** part of `pnpm test`; run it explicitly (it needs browsers).
 
 ## Environment variables
 
-| Var                                    | Default                                                                            | Used by                                                                                                                                             |
-| -------------------------------------- | ---------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `E2E_BASE_URL`                         | unset → container port if set, else `http://localhost:$WEB_PORT` with a dev server | e2e; when set, it wins and no webServer is started                                                                                                  |
-| `WEB_PORT`                             | `5173`                                                                             | e2e: vite dev server port (matches `apps/web/vite.config.ts`)                                                                                       |
-| `E2E_CONTAINER_PORT`                   | unset                                                                              | e2e: when set (e.g. `8080`, the web container in `compose.app.yml`), baseURL is `http://localhost:$E2E_CONTAINER_PORT` and no dev server is started |
-| `API_BASE_URL`                         | unset → in-process `inject`                                                        | api (hit a running API over HTTP)                                                                                                                   |
-| `QA_SKIP_DOCKER`                       | unset                                                                              | integration; `1` forces skip                                                                                                                        |
-| `QA_POSTGRES_IMAGE` / `QA_REDIS_IMAGE` | `pgvector/pgvector:pg16` / `redis:7-alpine`                                        | integration (override the images)                                                                                                                   |
-| `QA_CONTRACTS_DIR`                     | unset                                                                              | contract: alias `@meetops/contracts` to another checkout's `packages/contracts` (e.g. PR #17)                                                       |
-| `CI`                                   | –                                                                                  | Playwright retries, forbidOnly, html report                                                                                                         |
+| Var                                    | Default                                                                            | Used by                                                                                                                                                                                    |
+| -------------------------------------- | ---------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `E2E_BASE_URL`                         | unset → container port if set, else `http://localhost:$WEB_PORT` with a dev server | e2e; when set, it wins and no webServer is started                                                                                                                                         |
+| `WEB_PORT`                             | `5173`                                                                             | e2e: vite dev server port (matches `apps/web/vite.config.ts`)                                                                                                                              |
+| `E2E_CONTAINER_PORT`                   | unset                                                                              | e2e: when set (e.g. `8080`, the web container in `compose.app.yml`), baseURL is `http://localhost:$E2E_CONTAINER_PORT` and no dev server is started                                        |
+| `API_BASE_URL`                         | unset → in-process `inject`                                                        | api (hit a running API over HTTP)                                                                                                                                                          |
+| `QA_SKIP_DOCKER`                       | unset                                                                              | integration; `1` forces skip                                                                                                                                                               |
+| `QA_POSTGRES_IMAGE` / `QA_REDIS_IMAGE` | `pgvector/pgvector:pg16` / `redis:7-alpine`                                        | integration (override the images)                                                                                                                                                          |
+| `QA_DB_PACKAGE_DIR`                    | `../packages/database`                                                             | integration/db: where Prisma migrations + `seed.ts` live (e.g. a worktree of PR #6). Suite skips if no migrations; seed test skips if that package has no installed `tsx`/`@prisma/client` |
+| `QA_CONTRACTS_DIR`                     | unset                                                                              | contract: alias `@meetops/contracts` to another checkout's `packages/contracts` (e.g. PR #17)                                                                                              |
+| `CI`                                   | –                                                                                  | Playwright retries, forbidOnly, html report                                                                                                                                                |
 
 ## Docker skip behaviour
 
 `support/env.ts#isDockerAvailable()` runs `docker info`. If it fails (no CLI or no
 daemon) the integration suites use `describe.skipIf(...)`, print a warning, and are
 reported as **skipped**, never failed. CI runners with Docker run them for real.
+
+## Security suites
+
+- IDs match `docs/12-security/test-cases.md` exactly; a catalogue test asserts XT-01..30 and AU-01..35 are all present.
+- XT and AU are skipped until API auth and organization context exist. XT-26..29 (RLS) also wait on `feat/database-tenancy-rls`, which did not exist on origin on 2026-10-21.
+- SSRF: import from `fixtures/security/ssrf.ts`, e.g. `it.each(ssrfUrlPayloads)('$id rejects $url', ...)`. `ALLOWED_HOST` is a placeholder; swap it with `withAllowedHost(url, host)`.
+- Query-level analogues of XT-01/13/14 already run in `integration/database.test.ts`.
 
 ## Factories
 
