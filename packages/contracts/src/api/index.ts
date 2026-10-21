@@ -5,3 +5,4 @@ export * from './uploads.js';
 export * from './recording-sessions.js';
 export * from './meetings.js';
 export * from './extension-auth.js';
+export * from './tasks.js';
