@@ -13,14 +13,14 @@ Package: `packages/database` (`@meetops/database`). PostgreSQL with Prisma and p
 
 ## Models (19 in `schema.prisma`)
 
-| Area | Models (table) |
-| --- | --- |
-| Tenancy and auth | Organization (`organizations`), User (`users`), Membership (`memberships`), Session (`sessions`), Invitation (`invitations`) |
-| People and work | Employee (`employees`), Project (`projects`) |
-| Meetings | Meeting (`meetings`), MeetingParticipant (`meeting_participants`), FileObject (`file_objects`: bucket, key, mime type, size, SHA-256 checksum; metadata only) |
-| Transcripts | Transcript (`transcripts`, revisioned, unique per meeting), TranscriptSegment (`transcript_segments`, revision + sequence, `embedding vector(1536)` placeholder) |
+| Area                | Models (table)                                                                                                                                                                                                     |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Tenancy and auth    | Organization (`organizations`), User (`users`), Membership (`memberships`), Session (`sessions`), Invitation (`invitations`)                                                                                       |
+| People and work     | Employee (`employees`), Project (`projects`)                                                                                                                                                                       |
+| Meetings            | Meeting (`meetings`), MeetingParticipant (`meeting_participants`), FileObject (`file_objects`: bucket, key, mime type, size, SHA-256 checksum; metadata only)                                                      |
+| Transcripts         | Transcript (`transcripts`, revisioned, unique per meeting), TranscriptSegment (`transcript_segments`, revision + sequence, `embedding vector(1536)` placeholder)                                                   |
 | AI output and tasks | Report (`reports`), ExtractedTask (`extracted_tasks`), TaskApproval (`task_approvals`), InternalTask (`internal_tasks`), ExternalIssueLink (`external_issue_links`: provider, external id and URL, unique per org) |
-| Ops and audit | AiRun (`ai_runs`: provider, model, prompt version, transcript revision, token usage, `cost_usd`, status), OutboxEvent (`outbox_events`), AuditLog (`audit_logs`) |
+| Ops and audit       | AiRun (`ai_runs`: provider, model, prompt version, transcript revision, token usage, `cost_usd`, status), OutboxEvent (`outbox_events`), AuditLog (`audit_logs`)                                                   |
 
 Enums: MembershipRole (OWNER, ADMIN, MEMBER, VIEWER), InvitationStatus, ProjectStatus, MeetingStatus, MeetingParticipantRole, TranscriptStatus, ReportStatus, ExtractedTaskStatus, TaskPriority, ApprovalDecision, InternalTaskStatus, ExternalProvider, AiRunStatus, AiRunKind, OutboxStatus.
 
@@ -40,13 +40,13 @@ Enums: MembershipRole (OWNER, ADMIN, MEMBER, VIEWER), InvitationStatus, ProjectS
 
 ## Scripts (`packages/database/package.json`)
 
-| Script | Command |
-| --- | --- |
-| `postinstall` / `prisma:generate` | `prisma generate` |
-| `prisma:validate` | `prisma validate` |
-| `db:migrate:dev` | `prisma migrate dev` |
-| `db:migrate:deploy` | `prisma migrate deploy` |
-| `db:seed` | `prisma db seed` (runs `tsx prisma/seed.ts`) |
+| Script                            | Command                                      |
+| --------------------------------- | -------------------------------------------- |
+| `postinstall` / `prisma:generate` | `prisma generate`                            |
+| `prisma:validate`                 | `prisma validate`                            |
+| `db:migrate:dev`                  | `prisma migrate dev`                         |
+| `db:migrate:deploy`               | `prisma migrate deploy`                      |
+| `db:seed`                         | `prisma db seed` (runs `tsx prisma/seed.ts`) |
 
 Run from the repo root with infra up (`pnpm dev:infra:up`):
 

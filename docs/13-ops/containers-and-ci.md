@@ -4,11 +4,11 @@
 
 ## Docker images (`infra/docker/`)
 
-| Image | Dockerfile | Base | Runs as | Port | Healthcheck |
-| --- | --- | --- | --- | --- | --- |
-| api | `Dockerfile.api` | `node:${NODE_VERSION}-bookworm-slim` (20.18.0), multi-stage | `node` | 3000 | `/health` |
-| worker | `Dockerfile.worker` | same, runtime adds FFmpeg and tini | `node` | None | None (no HTTP endpoint yet) |
-| web | `Dockerfile.web` + `nginx/web.conf` | Vite build, served by `nginxinc/nginx-unprivileged:1.27-alpine` | UID 101 | 8080 | `/healthz`, SPA fallback |
+| Image  | Dockerfile                          | Base                                                            | Runs as | Port | Healthcheck                 |
+| ------ | ----------------------------------- | --------------------------------------------------------------- | ------- | ---- | --------------------------- |
+| api    | `Dockerfile.api`                    | `node:${NODE_VERSION}-bookworm-slim` (20.18.0), multi-stage     | `node`  | 3000 | `/health`                   |
+| worker | `Dockerfile.worker`                 | same, runtime adds FFmpeg and tini                              | `node`  | None | None (no HTTP endpoint yet) |
+| web    | `Dockerfile.web` + `nginx/web.conf` | Vite build, served by `nginxinc/nginx-unprivileged:1.27-alpine` | UID 101 | 8080 | `/healthz`, SPA fallback    |
 
 Build pattern (api/worker): pnpm 9.12.3 via Corepack → `pnpm install --frozen-lockfile --ignore-scripts` → `pnpm --filter <app>... build` → `pnpm deploy --prod`.
 
@@ -29,11 +29,11 @@ docker compose --env-file .env -f infra/compose/compose.dev.yml -f infra/compose
 
 ## CI
 
-| Workflow | Job | What it does |
-| --- | --- | --- |
-| `ci.yml` (existing) | `build` | Phase 0 lint, typecheck, test and build |
-| `ci.yml` (new) | `audit` | `pnpm audit --prod --audit-level high`, `continue-on-error: true` (non-blocking) until apps/api moves to fastify >= 5.12.2 |
-| `docker.yml` (new) | `build` (matrix api/worker/web) | Buildx build with `push: false`, GHA cache scoped per image; runs on PRs and pushes to `main` |
+| Workflow            | Job                             | What it does                                                                                                               |
+| ------------------- | ------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| `ci.yml` (existing) | `build`                         | Phase 0 lint, typecheck, test and build                                                                                    |
+| `ci.yml` (new)      | `audit`                         | `pnpm audit --prod --audit-level high`, `continue-on-error: true` (non-blocking) until apps/api moves to fastify >= 5.12.2 |
+| `docker.yml` (new)  | `build` (matrix api/worker/web) | Buildx build with `push: false`, GHA cache scoped per image; runs on PRs and pushes to `main`                              |
 
 Also in the PR: `.github/dependabot.yml` (weekly npm, github-actions and docker updates) and `.github/CODEOWNERS` (`@iakash22` everywhere, with comments naming the responsible agent per folder).
 
