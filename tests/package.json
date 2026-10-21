@@ -1,0 +1,31 @@
+{
+  "name": "@meetops/tests",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "lint": "eslint .",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "test:api": "vitest run --project api",
+    "test:contract": "vitest run --project contract",
+    "test:integration": "vitest run --project integration",
+    "test:unit": "vitest run --project factories",
+    "test:e2e": "playwright test -c e2e/playwright.config.ts",
+    "e2e:install": "playwright install chromium"
+  },
+  "devDependencies": {
+    "@meetops/api": "workspace:*",
+    "@meetops/contracts": "workspace:*",
+    "@playwright/test": "^1.48.2",
+    "@testcontainers/postgresql": "^10.13.2",
+    "@testcontainers/redis": "^10.13.2",
+    "ioredis": "^5.4.1",
+    "pg": "^8.13.1",
+    "@types/pg": "^8.11.10",
+    "testcontainers": "^10.13.2",
+    "typescript": "^5.6.3",
+    "vitest": "^2.1.3",
+    "zod": "^3.23.8"
+  }
+}
