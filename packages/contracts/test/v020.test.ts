@@ -32,7 +32,7 @@ describe('reset password / verify email', () => {
 
 describe('chunked recording session', () => {
   it('init', () => {
-    const ok = { mimeType: 'audio/webm;codecs=opus', startedAt: at, source: 'tab' };
+    const ok = { mimeType: 'audio/webm;codecs=opus', startedAt: at, source: 'tab', meetingId: '00000000-0000-4000-8000-000000000099' };
     expect(Value.Check(InitRecordingSessionRequest, ok)).toBe(true);
     expect(Value.Check(InitRecordingSessionRequest, { ...ok, mimeType: 'text/html' })).toBe(false);
     expect(Value.Check(InitRecordingSessionRequest, { ...ok, source: 'screen' })).toBe(false);
@@ -42,7 +42,7 @@ describe('chunked recording session', () => {
     expect(Value.Check(ChunkUploadUrlRequest, { seq: 0, sizeBytes: 1024 })).toBe(true);
     expect(Value.Check(ChunkUploadUrlRequest, { seq: -1, sizeBytes: 1024 })).toBe(false);
     expect(Value.Check(ChunkUploadUrlRequest, { seq: 1.5, sizeBytes: 1024 })).toBe(false);
-    const res = { seq: 0, upload: { url: 'https://s3.example.com/c0', method: 'PUT', expiresAt: at } };
+    const res = { seq: 0, upload: { url: 'https://s3.example.com/c0', method: 'PUT', headers: { 'content-length': '1024' }, expiresAt: at } };
     expect(Value.Check(ChunkUploadUrlResponse, res)).toBe(true);
     expect(Value.Check(ChunkUploadUrlResponse, { ...res, upload: { ...res.upload, method: 'GET' } })).toBe(false);
     expect(CHUNK_UPLOAD_URL_TTL_SECONDS).toBeLessThanOrEqual(900);

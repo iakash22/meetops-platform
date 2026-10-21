@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { Value } from '@sinclair/typebox/value';
 import {
   EMAIL_JOB_RETENTION, EMAIL_QUEUE, EMAIL_TEMPLATE_IDS, EmailJobPayload, EmailTemplateId, QUEUE_NAMES,
-  WriteApproval, expectedRecipientKind,
+  WriteApproval,
 } from '../src/index.js';
 
 const id = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
@@ -24,12 +24,10 @@ describe('email queue constants', () => {
       removeOnFail: { count: 500, age: 86400 },
     });
   });
-  it('template ids and advisory recipient kinds', () => {
+  it('template ids', () => {
     expect(EMAIL_TEMPLATE_IDS).toEqual(['verification', 'password-reset', 'invitation', 'task-assigned', 'meeting-summary']);
     for (const t of EMAIL_TEMPLATE_IDS) expect(Value.Check(EmailTemplateId, t)).toBe(true);
     expect(Value.Check(EmailTemplateId, 'reset_password')).toBe(false);
-    expect(expectedRecipientKind('invitation')).toBe('invitationId');
-    expect(expectedRecipientKind('password-reset')).toBe('userId');
   });
 });
 
@@ -46,9 +44,18 @@ describe('EmailJobPayload (INT shape)', () => {
       }),
     ).toBe(true);
   });
-  it('allows either recipient kind for any template (per INT)', () => {
+  it('binds recipient kind to template', () => {
     expect(Value.Check(EmailJobPayload, { ...base, templateId: 'invitation', recipient: { invitationId: id(5) } })).toBe(true);
-    expect(Value.Check(EmailJobPayload, { ...base, templateId: 'verification', recipient: { invitationId: id(5) } })).toBe(true);
+    expect(Value.Check(EmailJobPayload, { ...base, templateId: 'invitation', recipient: { userId: id(5) } })).toBe(false);
+    for (const t of ['verification', 'password-reset', 'task-assigned', 'meeting-summary']) {
+      expect(Value.Check(EmailJobPayload, { ...base, templateId: t, recipient: { userId: id(5) } })).toBe(true);
+      expect(Value.Check(EmailJobPayload, { ...base, templateId: t, recipient: { invitationId: id(5) } })).toBe(false);
+    }
+  });
+  it('requestId must be opaque and at most 200 chars', () => {
+    expect(Value.Check(EmailJobPayload, { ...base, requestId: 'req_1' })).toBe(true);
+    expect(Value.Check(EmailJobPayload, { ...base, requestId: 'has space' })).toBe(false);
+    expect(Value.Check(EmailJobPayload, { ...base, requestId: 'x'.repeat(201) })).toBe(false);
   });
   it('rejects bad recipients', () => {
     expect(Value.Check(EmailJobPayload, { ...base, recipient: {} })).toBe(false);
