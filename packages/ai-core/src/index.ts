@@ -1,61 +1,20 @@
-export type ProviderHealth = {
-  ok: boolean;
-  message?: string;
-  latencyMs?: number;
-  timestamp: string;
-};
-
-export type LLMGenerateTextParams = {
-  model: string;
-  system?: string;
-  prompt: string;
-  temperature?: number;
-  maxTokens?: number;
-  stopSequences?: string[];
-};
-
-export type LLMStructuredSchema<T> = {
-  name: string;
-  description?: string;
-  schema: T; // Provider-specific JSON schema or zod shape in adapters
-};
-
-export interface LLMProvider {
-  readonly providerId: string;
-  listModels(): Promise<string[]>;
-  generateText(params: LLMGenerateTextParams): Promise<{ text: string; finishReason?: string }>;
-  generateStructured<T>(params: {
-    model: string;
-    schema: LLMStructuredSchema<unknown>;
-    prompt: string;
-    temperature?: number;
-  }): Promise<{ value: T; rawText?: string }>;
-  healthCheck(): Promise<ProviderHealth>;
-}
-
-export type TranscriptionResult = {
-  text: string;
-  segments?: Array<{
-    startSec: number;
-    endSec: number;
-    text: string;
-    speaker?: string;
-    confidence?: number;
-  }>;
-  language?: string;
-  durationSec?: number;
-};
-
-export type TranscriptionCapabilities = {
-  speakerDiarization: boolean;
-  languages: string[]; // BCP-47 codes
-  maxFileDurationSec?: number;
-  supportsStreaming?: boolean;
-};
-
-export interface TranscriptionProvider {
-  readonly providerId: string;
-  transcribe(input: { url?: string; bytes?: Uint8Array; language?: string }): Promise<TranscriptionResult>;
-  getCapabilities(): Promise<TranscriptionCapabilities>;
-  healthCheck(): Promise<ProviderHealth>;
-}
+export * from './types.js';
+export * from './errors.js';
+export * from './config.js';
+export * from './env.js';
+export * from './retry.js';
+export * from './usage.js';
+export * from './audit.js';
+export * from './registry.js';
+export * from './router.js';
+export * from './executor.js';
+export * from './prompts.js';
+export * from './bootstrap.js';
+export * from './security/ssrf.js';
+export { guardedFetch, pinnedAgent, type HttpOpts, type FetchLike } from './adapters/http.js';
+export { GeminiProvider, GEMINI_DEFAULT_MODEL, parseStructured, type GeminiModelsClient } from './adapters/gemini.js';
+export { AssemblyAIProvider, type AssemblyAITranscriptsClient } from './adapters/assemblyai.js';
+export { OllamaProvider } from './adapters/ollama.js';
+export { OpenAICompatibleProvider } from './adapters/openai-compatible.js';
+export { FasterWhisperProvider } from './adapters/faster-whisper.js';
+export { DeepgramProvider } from './adapters/deepgram.js';
