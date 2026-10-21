@@ -110,7 +110,7 @@ CREATE TYPE "TaskPriority_new" AS ENUM ('low', 'medium', 'high', 'urgent');
 ALTER TABLE "internal_tasks" ALTER COLUMN "priority" DROP DEFAULT;
 ALTER TABLE "extracted_tasks" ALTER COLUMN "priority" DROP DEFAULT;
 ALTER TABLE "extracted_tasks" ALTER COLUMN "priority" TYPE "TaskPriority_new" USING ("priority"::text::"TaskPriority_new");
-ALTER TABLE "tasks" ALTER COLUMN "priority" TYPE "TaskPriority_new" USING ("priority"::text::"TaskPriority_new");
+ALTER TABLE "internal_tasks" ALTER COLUMN "priority" TYPE "TaskPriority_new" USING ("priority"::text::"TaskPriority_new");
 ALTER TYPE "TaskPriority" RENAME TO "TaskPriority_old";
 ALTER TYPE "TaskPriority_new" RENAME TO "TaskPriority";
 DROP TYPE "TaskPriority_old";
