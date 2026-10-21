@@ -144,19 +144,19 @@ CREATE POLICY tenant_isolation ON "task_approvals"
   USING (org_id = current_setting('app.current_org_id', true)::uuid)
   WITH CHECK (org_id = current_setting('app.current_org_id', true)::uuid);
 
--- internal_tasks
-ALTER TABLE "internal_tasks" ENABLE ROW LEVEL SECURITY;
-ALTER TABLE "internal_tasks" FORCE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS tenant_isolation ON "internal_tasks";
-CREATE POLICY tenant_isolation ON "internal_tasks"
+-- tasks
+ALTER TABLE "tasks" ENABLE ROW LEVEL SECURITY;
+ALTER TABLE "tasks" FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS tenant_isolation ON "tasks";
+CREATE POLICY tenant_isolation ON "tasks"
   USING (org_id = current_setting('app.current_org_id', true)::uuid)
   WITH CHECK (org_id = current_setting('app.current_org_id', true)::uuid);
 
--- external_issue_links
-ALTER TABLE "external_issue_links" ENABLE ROW LEVEL SECURITY;
-ALTER TABLE "external_issue_links" FORCE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS tenant_isolation ON "external_issue_links";
-CREATE POLICY tenant_isolation ON "external_issue_links"
+-- integration_issues
+ALTER TABLE "integration_issues" ENABLE ROW LEVEL SECURITY;
+ALTER TABLE "integration_issues" FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS tenant_isolation ON "integration_issues";
+CREATE POLICY tenant_isolation ON "integration_issues"
   USING (org_id = current_setting('app.current_org_id', true)::uuid)
   WITH CHECK (org_id = current_setting('app.current_org_id', true)::uuid);
 
@@ -181,6 +181,14 @@ ALTER TABLE "audit_events" ENABLE ROW LEVEL SECURITY;
 ALTER TABLE "audit_events" FORCE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS tenant_isolation ON "audit_events";
 CREATE POLICY tenant_isolation ON "audit_events"
+  USING (org_id = current_setting('app.current_org_id', true)::uuid)
+  WITH CHECK (org_id = current_setting('app.current_org_id', true)::uuid);
+
+-- recordings
+ALTER TABLE "recordings" ENABLE ROW LEVEL SECURITY;
+ALTER TABLE "recordings" FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS tenant_isolation ON "recordings";
+CREATE POLICY tenant_isolation ON "recordings"
   USING (org_id = current_setting('app.current_org_id', true)::uuid)
   WITH CHECK (org_id = current_setting('app.current_org_id', true)::uuid);
 
