@@ -267,3 +267,29 @@ describe('log redaction', () => {
     expect(lines.join('')).toContain('***redacted***');
   });
 });
+
+describe('Swagger UI gate', () => {
+  const serverFor = async (nodeEnv: string) => {
+    const { defaultModuleDeps } = await import('../src/modules/index.js');
+    // Fully injected deps so strict envs can start; only the docs gate is under test.
+    const deps = defaultModuleDeps({}, { nodeEnv: 'test' });
+    const app = createServer({ nodeEnv, deps });
+    await app.ready();
+    return app;
+  };
+  it.each(['production', 'staging', ''])('/docs and /docs/json are 404 when NODE_ENV=%s', async (env) => {
+    const app = await serverFor(env);
+    for (const url of ['/docs', '/docs/', '/docs/json', '/docs/yaml']) {
+      const r = await app.inject({ method: 'GET', url });
+      expect(r.statusCode, url).toBe(404);
+      expect(r.json().error.code).toBe('NOT_FOUND');
+    }
+    await app.close();
+  });
+  it.each(['development', 'test'])('/docs is served when NODE_ENV=%s', async (env) => {
+    const app = await serverFor(env);
+    expect((await app.inject({ method: 'GET', url: '/docs/json' })).statusCode).toBe(200);
+    expect([200, 302]).toContain((await app.inject({ method: 'GET', url: '/docs' })).statusCode);
+    await app.close();
+  });
+});
