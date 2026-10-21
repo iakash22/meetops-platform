@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { loadAIEnv, providerConfigSchema, retryPolicySchema, toPublicProviderConfig, createRegistryFromEnv } from '../src/index.js';
-import { llmCfg } from './helpers.js';
+import { loadAIEnv, providerConfigSchema, retryPolicySchema, toPublicProviderConfig, createRegistryFromEnv, createCredentialResolver, InMemoryAuditSink, endpointPolicyFromEnv } from '../src/index.js';
+import { SYSTEM, llmCfg } from './helpers.js';
 
 describe('env validation', () => {
   it('applies defaults', () => {
@@ -23,17 +23,38 @@ describe('env validation', () => {
     expect(errors.length).toBe(1);
     expect(env.OLLAMA_BASE_URL).toBe('http://localhost:11434');
   });
-  it('registry from env marks missing-key providers unavailable', () => {
+  it('registry from env: missing platform key -> clear MISSING_CREDENTIALS at call time, no crash', async () => {
     const { env } = loadAIEnv({});
-    const reg = createRegistryFromEnv(env, {});
-    expect(reg.availability('gemini')).toEqual({ available: false, reason: 'Missing credential env:GEMINI_API_KEY for gemini' });
-    expect(() => reg.get('gemini')).toThrow(/Missing credential/);
+    const resolveCredential = createCredentialResolver({ env: () => undefined, secret: async () => undefined }, async () => ({ platformKeys: true }));
+    const reg = await createRegistryFromEnv(env, { audit: new InMemoryAuditSink(), resolveCredential, system: SYSTEM, production: false });
+    expect(reg.availability('gemini').available).toBe(true);
+    await expect(reg.instantiate('gemini', { orgId: 'o' })).rejects.toMatchObject({ code: 'MISSING_CREDENTIALS' });
     expect(reg.availability('ollama').available).toBe(false);
     expect(reg.availability('deepgram').available).toBe(false);
+  });
+  it('fails fast on invalid env in production (names vars, never values)', () => {
+    expect(() => loadAIEnv({ OLLAMA_BASE_URL: 'not a url', NODE_ENV: 'production' })).toThrow(/OLLAMA_BASE_URL/);
+    expect(() => loadAIEnv({ GEMINI_MODEL: '' }, { production: true })).toThrow();
+  });
+  it('blocks local origins in production at startup', () => {
+    expect(() => endpointPolicyFromEnv(loadAIEnv({ OLLAMA_ENABLED: 'true' }).env, { production: true })).toThrow(/not allowed in production/);
+    expect(() => endpointPolicyFromEnv(loadAIEnv({ LOCAL_STT_ENABLED: 'true' }).env, { production: true })).toThrow();
+    expect(endpointPolicyFromEnv(loadAIEnv({}).env, { production: true }).allowedLocalOrigins).toEqual([]);
   });
 });
 
 describe('provider config schema', () => {
+  it('cost tier and platformBilled are REQUIRED', () => {
+    const rest: Record<string, unknown> = { ...llmCfg('x') };
+    delete rest.cost;
+    delete rest.platformBilled;
+    expect(providerConfigSchema.safeParse(rest).success).toBe(false);
+    expect(providerConfigSchema.safeParse({ ...rest, cost: { tier: 'free' } }).success).toBe(false);
+  });
+  it('platform-billed free providers must declare quotas', () => {
+    expect(providerConfigSchema.safeParse(llmCfg('x', { platformBilled: true })).success).toBe(false);
+    expect(providerConfigSchema.safeParse(llmCfg('x', { platformBilled: true, usage: { dailyRequestLimit: 10 } })).success).toBe(true);
+  });
   it('rejects raw keys as credentialRef', () => {
     expect(() => providerConfigSchema.parse(llmCfg('x', { credentialRef: 'AIzaSyRAWKEY' }))).toThrow();
     expect(providerConfigSchema.parse(llmCfg('x', { credentialRef: 'env:X_KEY' })).credentialRef).toBe('env:X_KEY');

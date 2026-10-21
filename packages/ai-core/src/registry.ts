@@ -2,94 +2,87 @@ import { providerConfigSchema, type ProviderConfig, type ProviderConfigInput } f
 import type { AnyProvider, Capability } from './types.js';
 import { AIError } from './errors.js';
 import { redact, type AuditSink } from './audit.js';
+import type { SystemContext } from './auth.js';
+import type { ResolveCredential } from './credentials.js';
 
-export type CredentialResolver = (ref: string) => string | undefined;
-
-/** Resolves "env:NAME" against a given env map. Secret-store refs must be supplied by the host app. */
-export const envCredentialResolver =
-  (env: Record<string, string | undefined> = process.env): CredentialResolver =>
-  (ref) => {
-    if (!ref.startsWith('env:')) return undefined;
-    const v = env[ref.slice(4)];
-    return v && v.trim() !== '' ? v : undefined;
-  };
-
+/** Builds an adapter for ONE call/org with the credential resolved for that org. No global key-bound clients. */
 export type AdapterFactory = (cfg: ProviderConfig, apiKey: string | undefined) => AnyProvider;
 
-type Entry = { config: ProviderConfig; instance?: AnyProvider | undefined; unavailableReason?: string | undefined };
+/** Per-org credential override (BYO key), from org config. */
+export type OrgCredentialRefs = Record<string, string | undefined>;
 
-/** Global (system-level) registry of provider definitions. Tenant choices live in the router. */
+/** Global (platform-level) registry of provider definitions. Tenant choices live in the router. */
 export class ProviderRegistry {
-  private readonly entries = new Map<string, Entry>();
+  private readonly configs = new Map<string, ProviderConfig>();
   constructor(
     private readonly factories: Record<string, AdapterFactory>,
-    private readonly resolveCredential: CredentialResolver,
-    private readonly audit?: AuditSink,
-  ) {}
+    private readonly resolveCredential: ResolveCredential,
+    private readonly audit: AuditSink,
+  ) {
+    if (!audit) throw new AIError('CONFIG_INVALID', 'AuditSink is required');
+  }
 
-  register(input: ProviderConfigInput, actorId = 'system'): ProviderConfig {
+  /** Register/replace a provider definition. Platform-only; audit is awaited and required (failure aborts). */
+  async register(input: ProviderConfigInput, ctx: SystemContext): Promise<ProviderConfig> {
+    if (!ctx?.system || !ctx.userId) throw new AIError('FORBIDDEN', 'provider registry changes require a system context', { retryable: false });
     const config = providerConfigSchema.parse(input);
-    const before = this.entries.get(config.name)?.config;
-    this.entries.set(config.name, this.build(config));
-    void this.audit?.emit({
-      action: before ? 'update' : 'create',
-      tenantId: null,
-      actorId,
-      provider: config.name,
-      before: before ? redact(before) : undefined,
-      after: redact(config),
-      at: new Date().toISOString(),
-    });
+    const before = this.configs.get(config.name);
+    try {
+      await this.audit.emit({
+        action: before ? 'update' : 'create',
+        tenantId: null,
+        actorId: ctx.userId,
+        provider: config.name,
+        before: before ? redact(before) : undefined,
+        after: redact(config),
+        at: new Date().toISOString(),
+      });
+    } catch (e) {
+      throw new AIError('AUDIT_FAILED', 'audit write failed; change aborted', { retryable: true, cause: e });
+    }
+    this.configs.set(config.name, config);
     return config;
   }
 
-  private build(config: ProviderConfig): Entry {
-    if (!config.enabled) return { config, unavailableReason: `Provider ${config.name} is disabled` };
-    const factory = this.factories[config.adapter];
-    if (!factory) return { config, unavailableReason: `No adapter registered for "${config.adapter}"` };
-    let key: string | undefined;
-    if (config.credentialRef) {
-      key = this.resolveCredential(config.credentialRef);
-      if (!key) return { config, unavailableReason: `Missing credential ${config.credentialRef} for ${config.name}` };
-    }
-    try {
-      return { config, instance: factory(config, key) };
-    } catch (e) {
-      return { config, unavailableReason: `Failed to init ${config.name}: ${(e as Error).message}` };
-    }
-  }
-
   list(): ProviderConfig[] {
-    return [...this.entries.values()].map((e) => e.config);
+    return [...this.configs.values()];
   }
 
   getConfig(name: string): ProviderConfig | undefined {
-    return this.entries.get(name)?.config;
+    return this.configs.get(name);
   }
 
+  /** Static availability (enabled + adapter). Credentials are checked per call, per org. */
   availability(name: string): { available: boolean; reason?: string | undefined } {
-    const e = this.entries.get(name);
-    if (!e) return { available: false, reason: `Unknown provider ${name}` };
-    return e.instance ? { available: true } : { available: false, reason: e.unavailableReason };
+    const c = this.configs.get(name);
+    if (!c) return { available: false, reason: 'unknown provider' };
+    if (!c.enabled) return { available: false, reason: 'provider disabled' };
+    if (!this.factories[c.adapter]) return { available: false, reason: 'no adapter' };
+    return { available: true };
   }
 
   supports(name: string, cap: Capability): boolean {
-    return this.entries.get(name)?.config.capabilities.includes(cap) ?? false;
+    return this.configs.get(name)?.capabilities.includes(cap) ?? false;
   }
 
-  get<T extends AnyProvider = AnyProvider>(name: string): T {
-    const e = this.entries.get(name);
-    if (!e) throw new AIError('PROVIDER_UNAVAILABLE', `Unknown provider ${name}`, { provider: name, retryable: false });
-    if (!e.instance) {
-      const code = e.unavailableReason?.startsWith('Missing credential') ? 'MISSING_CREDENTIALS' : e.config.enabled ? 'PROVIDER_UNAVAILABLE' : 'PROVIDER_DISABLED';
-      throw new AIError(code, e.unavailableReason ?? 'unavailable', { provider: name, retryable: false });
-    }
-    return e.instance as T;
+  /**
+   * Build an adapter for this call. Credential precedence: org BYO ref (if set) ELSE platform ref (plan-gated by the
+   * resolver). A failing BYO ref never falls back to the platform key.
+   */
+  async instantiate<T extends AnyProvider = AnyProvider>(name: string, ctx: { orgId: string; orgCredentialRefs?: OrgCredentialRefs | undefined }): Promise<T> {
+    const c = this.configs.get(name);
+    const av = this.availability(name);
+    if (!c || !av.available) throw new AIError(c && !c.enabled ? 'PROVIDER_DISABLED' : 'PROVIDER_UNAVAILABLE', av.reason ?? 'unavailable', { provider: name, retryable: false });
+    const ref = ctx.orgCredentialRefs?.[name] ?? c.credentialRef;
+    const key = ref ? await this.resolveCredential(ref, { orgId: ctx.orgId }) : undefined;
+    const factory = this.factories[c.adapter]!;
+    return factory(c, key) as T;
   }
 
   markHealth(name: string, status: ProviderConfig['health']['status'], reason?: string) {
-    const e = this.entries.get(name);
-    if (!e) return;
-    e.config = { ...e.config, health: reason === undefined ? { status, checkedAt: new Date().toISOString() } : { status, reason, checkedAt: new Date().toISOString() } };
+    const c = this.configs.get(name);
+    if (!c) return;
+    const at = new Date().toISOString();
+    this.configs.set(name, { ...c, health: reason === undefined ? { status, checkedAt: at } : { status, reason, checkedAt: at } });
   }
 }

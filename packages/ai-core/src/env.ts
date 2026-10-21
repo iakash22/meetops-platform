@@ -42,13 +42,20 @@ export type LoadedAIEnv = { env: AIEnv; availability: ProviderAvailability[]; er
  * Parse env without throwing on missing credentials. Invalid *shapes* (e.g. a malformed URL)
  * are reported in `errors` and fall back to defaults, so the process never crashes on boot.
  */
-export function loadAIEnv(source: Record<string, string | undefined> = process.env): LoadedAIEnv {
+export function loadAIEnv(
+  source: Record<string, string | undefined> = process.env,
+  opts: { production?: boolean | undefined } = {},
+): LoadedAIEnv {
+  const production = opts.production ?? source.NODE_ENV === 'production';
   const errors: string[] = [];
   const parsed = aiEnvSchema.safeParse(source);
   let env: AIEnv;
   if (parsed.success) env = parsed.data;
-  else {
-    for (const issue of parsed.error.issues) errors.push(`${issue.path.join('.')}: ${issue.message}`);
+  else if (production) {
+    // Fail fast in production: never boot with silently-defaulted AI config. Messages name vars, never values.
+    throw new Error(`Invalid AI env: ${parsed.error.issues.map((i) => i.path.join('.')).join(', ')}`);
+  } else {
+    for (const issue of parsed.error.issues) errors.push(`${issue.path.join('.')}: invalid`);
     const bad = new Set(parsed.error.issues.map((i) => String(i.path[0])));
     const cleaned = Object.fromEntries(Object.entries(source).filter(([k]) => !bad.has(k)));
     env = aiEnvSchema.parse(cleaned);

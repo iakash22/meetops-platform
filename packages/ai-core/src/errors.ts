@@ -12,6 +12,8 @@ export type AIErrorCode =
   | 'PAID_FALLBACK_BLOCKED'
   | 'SSRF_BLOCKED'
   | 'CONFIG_INVALID'
+  | 'FORBIDDEN'
+  | 'AUDIT_FAILED'
   | 'UNKNOWN';
 
 const RETRYABLE: ReadonlySet<AIErrorCode> = new Set(['RATE_LIMITED', 'TIMEOUT', 'PROVIDER_UNAVAILABLE', 'MODEL_ERROR']);
@@ -46,4 +48,11 @@ export function toAIError(err: unknown, provider?: string): AIError {
   if (status !== undefined && status >= 500) return new AIError('PROVIDER_UNAVAILABLE', msg, base);
   if (status === 404) return new AIError('MODEL_ERROR', msg, { ...base, retryable: false });
   return new AIError('UNKNOWN', msg, { ...base, retryable: false });
+}
+
+/** Client-safe error view: code + requestId only. Provider messages / keys never leave the server. */
+export type PublicAIError = { code: AIErrorCode; requestId?: string | undefined; retryable: boolean };
+export function toPublicError(err: unknown, requestId?: string): PublicAIError {
+  const e = toAIError(err);
+  return requestId === undefined ? { code: e.code, retryable: e.retryable } : { code: e.code, requestId, retryable: e.retryable };
 }
