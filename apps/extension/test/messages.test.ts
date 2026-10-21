@@ -1,35 +1,27 @@
 import { describe, expect, it } from "vitest";
-import { handleMessage, isPopupMessage, type RecorderState } from "../src/lib/messages";
+import { isBackgroundMessage, isOffscreenMessage } from "../src/lib/messages.js";
 
-const idle: RecorderState = { status: "idle" };
-const start = { type: "START_RECORDING", tabId: 7, streamId: "s1", consentAcknowledgedAt: 1 };
-
-describe("messages", () => {
-  it("validates message shapes", () => {
-    expect(isPopupMessage({ type: "GET_STATUS" })).toBe(true);
-    expect(isPopupMessage(start)).toBe(true);
-    expect(isPopupMessage({ ...start, streamId: "" })).toBe(false);
-    expect(isPopupMessage({ type: "EVIL" })).toBe(false);
-    expect(isPopupMessage(null)).toBe(false);
+describe("message guards", () => {
+  it("accepts valid background messages", () => {
+    expect(isBackgroundMessage({ target: "background", type: "GET_STATUS" })).toBe(true);
+    expect(isBackgroundMessage({ target: "background", type: "ACK_CONSENT", tabId: 1 })).toBe(true);
+    expect(isBackgroundMessage({ target: "background", type: "START_RECORDING", tabId: 1, streamId: "x" })).toBe(true);
+    expect(isBackgroundMessage({ target: "background", type: "REC_CHUNK", seq: 0 })).toBe(true);
   });
 
-  it("rejects malformed messages without changing state", () => {
-    const r = handleMessage(idle, { type: "START_RECORDING" });
-    expect(r.state).toBe(idle);
-    expect(r.response.ok).toBe(false);
+  it("rejects malformed or mis-targeted messages", () => {
+    expect(isBackgroundMessage(null)).toBe(false);
+    expect(isBackgroundMessage({ type: "GET_STATUS" })).toBe(false);
+    expect(isBackgroundMessage({ target: "offscreen", type: "GET_STATUS" })).toBe(false);
+    expect(isBackgroundMessage({ target: "background", type: "START_RECORDING", tabId: 1, streamId: "" })).toBe(false);
+    expect(isBackgroundMessage({ target: "background", type: "ACK_CONSENT", tabId: -1 })).toBe(false);
+    expect(isBackgroundMessage({ target: "background", type: "EVIL" })).toBe(false);
   });
 
-  it("rejects start without consent timestamp", () => {
-    const r = handleMessage(idle, { ...start, consentAcknowledgedAt: 0 });
-    expect(r.response).toEqual({ ok: false, error: "Consent not acknowledged" });
-  });
-
-  it("starts, reports status, refuses double start, and stops", () => {
-    const a = handleMessage(idle, start);
-    expect(a.response).toEqual({ ok: true, status: "recording", tabId: 7 });
-    expect(handleMessage(a.state, { type: "GET_STATUS" }).response).toEqual(a.response);
-    expect(handleMessage(a.state, start).response.ok).toBe(false);
-    const b = handleMessage(a.state, { type: "STOP_RECORDING" });
-    expect(b.response).toEqual({ ok: true, status: "idle" });
+  it("validates offscreen messages", () => {
+    expect(isOffscreenMessage({ target: "offscreen", type: "OFFSCREEN_START", streamId: "s", startedAt: 1 })).toBe(true);
+    expect(isOffscreenMessage({ target: "offscreen", type: "OFFSCREEN_STOP" })).toBe(true);
+    expect(isOffscreenMessage({ target: "offscreen", type: "OFFSCREEN_START", streamId: "s" })).toBe(false);
+    expect(isOffscreenMessage({ target: "background", type: "OFFSCREEN_STOP" })).toBe(false);
   });
 });

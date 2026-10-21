@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
-import { manifest } from "../src/manifest";
+import { manifest } from "../src/manifest.js";
 
 const EXPECTED = ["offscreen", "storage", "tabCapture"];
 

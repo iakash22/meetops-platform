@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { acknowledge, canStartRecording, initialConsent, showNotice } from "../src/lib/consent";
+import { acknowledge, canStartRecording, initialConsent, showNotice } from "../src/lib/consent.js";
 
 describe("consent", () => {
   it("blocks recording until acknowledged", () => {
