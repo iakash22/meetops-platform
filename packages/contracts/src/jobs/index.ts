@@ -80,13 +80,19 @@ export const AiJobPayload = Type.Object({
 });
 export type AiJobPayload = Static<typeof AiJobPayload>;
 
-/** Email jobs are rendered/sent through the EmailService abstraction; no transport details here. */
-export const EmailJobPayload = Type.Object({
-  ...JobMeta,
-  kind: Type.Literal('send_email'),
-  templateId: Type.String({ minLength: 1 }),
-  to: Type.Array(Type.Object({ email: Type.String({ format: 'email' }), name: Type.Optional(Type.String()) }), { minItems: 1 }),
-  variables: Type.Record(Type.String(), Type.Unknown()),
-  locale: Type.Optional(Type.String()),
-});
+/**
+ * Email jobs carry ids only: no tokens, email addresses, names or links.
+ * The worker loads the recipient from the DB and builds any links (reset, invite)
+ * server-side, then sends via the EmailService abstraction.
+ */
+export const EmailJobPayload = Type.Union([
+  Type.Object(
+    { ...JobMeta, kind: Type.Literal('send_email'), templateId: Type.String({ minLength: 1 }), userId: Id },
+    { additionalProperties: false },
+  ),
+  Type.Object(
+    { ...JobMeta, kind: Type.Literal('send_email'), templateId: Type.String({ minLength: 1 }), invitationId: Id },
+    { additionalProperties: false },
+  ),
+]);
 export type EmailJobPayload = Static<typeof EmailJobPayload>;
