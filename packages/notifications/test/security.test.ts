@@ -14,7 +14,7 @@ describe('header injection', () => {
     expect(sanitizeHeaderValue('a\r\nb')).toBe('a b');
   });
   it('template subjects never contain CR/LF', () => {
-    const r = renderTemplate('task-assigned', { assigneeName: 'x', taskTitle: 'T\r\nBcc: evil@x.test', taskUrl: 'https://a.test' });
+    const r = renderTemplate('task_assigned', { assigneeName: 'x', taskTitle: 'T\r\nBcc: evil@x.test', taskUrl: 'https://a.test' });
     expect(r.subject).not.toMatch(/[\r\n]/);
   });
 });

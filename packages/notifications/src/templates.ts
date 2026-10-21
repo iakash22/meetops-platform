@@ -5,10 +5,10 @@ export interface RenderedEmail {
 }
 
 export interface TemplateVariables {
-  verification: { name: string; verificationUrl: string; expiresInHours: number };
-  'password-reset': { name: string; resetUrl: string; expiresInMinutes: number };
-  invitation: { inviterName: string; workspaceName: string; inviteUrl: string; role?: string };
-  'task-assigned': {
+  verify_email: { name: string; verificationUrl: string; expiresInHours: number };
+  reset_password: { name: string; resetUrl: string; expiresInMinutes: number };
+  invite: { inviterName: string; workspaceName: string; inviteUrl: string; role?: string };
+  task_assigned: {
     assigneeName: string;
     taskTitle: string;
     taskUrl: string;
@@ -16,7 +16,7 @@ export interface TemplateVariables {
     dueDate?: string;
     meetingTitle?: string;
   };
-  'meeting-summary': {
+  meeting_summary: {
     recipientName: string;
     meetingTitle: string;
     meetingDate: string;
@@ -58,7 +58,7 @@ function button(url: string, label: string): string {
 }
 
 export const templates: { [K in TemplateName]: EmailTemplate<K> } = {
-  verification: (v) => {
+  verify_email: (v) => {
     const url = safeUrl(v.verificationUrl);
     const subject = 'Verify your email address';
     return {
@@ -67,7 +67,7 @@ export const templates: { [K in TemplateName]: EmailTemplate<K> } = {
       text: `Hi ${v.name},\n\nPlease confirm your email address:\n${url}\n\nThis link expires in ${v.expiresInHours} hours.`
     };
   },
-  'password-reset': (v) => {
+  reset_password: (v) => {
     const url = safeUrl(v.resetUrl);
     const subject = 'Reset your password';
     return {
@@ -76,7 +76,7 @@ export const templates: { [K in TemplateName]: EmailTemplate<K> } = {
       text: `Hi ${v.name},\n\nReset your password:\n${url}\n\nThis link expires in ${v.expiresInMinutes} minutes. If you didn't request this, ignore this email.`
     };
   },
-  invitation: (v) => {
+  invite: (v) => {
     const url = safeUrl(v.inviteUrl);
     const subject = `${v.inviterName} invited you to ${v.workspaceName} on MeetOps`;
     const role = v.role ? ` as ${v.role}` : '';
@@ -86,7 +86,7 @@ export const templates: { [K in TemplateName]: EmailTemplate<K> } = {
       text: `${v.inviterName} invited you to join ${v.workspaceName}${role}.\n\nAccept: ${url}`
     };
   },
-  'task-assigned': (v) => {
+  task_assigned: (v) => {
     const url = safeUrl(v.taskUrl);
     const subject = `New task assigned: ${v.taskTitle}`;
     const extra: string[] = [];
@@ -99,10 +99,10 @@ export const templates: { [K in TemplateName]: EmailTemplate<K> } = {
       text: `Hi ${v.assigneeName},\n\nYou have been assigned: ${v.taskTitle}\n${extra.join('\n')}${extra.length ? '\n' : ''}\nView: ${url}`
     };
   },
-  'meeting-summary': (v) => {
+  meeting_summary: (v) => {
     const url = safeUrl(v.meetingUrl);
     const subject = `Summary: ${v.meetingTitle} (${v.meetingDate})`;
-    const item = (a: TemplateVariables['meeting-summary']['actionItems'][number]) =>
+    const item = (a: TemplateVariables['meeting_summary']['actionItems'][number]) =>
       [a.title, a.owner ? `owner: ${a.owner}` : '', a.dueDate ? `due: ${a.dueDate}` : ''].filter(Boolean).join(' — ');
     const items = v.actionItems.map(item);
     return {

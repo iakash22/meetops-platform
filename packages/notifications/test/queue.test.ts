@@ -12,20 +12,15 @@ import {
   type EmailService
 } from '../src';
 
-const payload = (over: Partial<EmailJobPayload> = {}): EmailJobPayload => ({
-  jobVersion: 1,
-  organizationId: 'org_1',
-  idempotencyKey: 'invite-inv_9-v1',
-  kind: 'send_email',
-  templateId: 'invitation',
-  recipient: { invitationId: 'inv_9' },
-  ...over
-});
+const payload = (over: Record<string, unknown> = {}): EmailJobPayload =>
+  ({ jobVersion: 1, organizationId: 'org_1', idempotencyKey: 'invite-inv_9-v1', kind: 'send_email', templateId: 'invite', invitationId: 'inv_9', ...over }) as EmailJobPayload;
+const userPayload = (templateId: string, over: Record<string, unknown> = {}) =>
+  ({ jobVersion: 1, organizationId: 'org_1', idempotencyKey: `k-${templateId}`, kind: 'send_email', templateId, userId: 'usr_1', ...over }) as EmailJobPayload;
 
 const resolver = (): EmailJobResolver & { resolve: ReturnType<typeof vi.fn> } => ({
   resolve: vi.fn(async (p: EmailJobPayload) =>
-    p.templateId === 'invitation'
-      ? { templateId: 'invitation' as const, to: { email: 'invitee@example.test', name: 'Ivy' }, variables: { inviterName: 'Bo', workspaceName: 'Acme', inviteUrl: 'https://app.test/invite?token=secret-tok' } }
+    p.templateId === 'invite'
+      ? { templateId: 'invite' as const, to: { email: 'invitee@example.test', name: 'Ivy' }, variables: { inviterName: 'Bo', workspaceName: 'Acme', inviteUrl: 'https://app.test/invite?token=secret-tok' } }
       : null
   )
 });
@@ -64,18 +59,21 @@ describe('email producer', () => {
     const bad: unknown[] = [
       { ...payload(), to: [{ email: 'a@b.test' }] },
       { ...payload(), variables: { inviteUrl: 'https://x' } },
-      payload({ recipient: { userId: 'a@b.test' } }),
-      payload({ recipient: { userId: 'u1', invitationId: 'i1' } as never }),
-      payload({ refs: { resetUrl: 'https://x/reset?token=abc' } }),
+      payload({ invitationId: 'a@b.test' }),
+      payload({ userId: 'u1' }),
+      userPayload('reset_password', { invitationId: 'i1' }),
+      userPayload('reset_password', { userId: undefined }),
+      payload({ resetUrl: 'https://x/reset?token=abc' }),
+      userPayload('task_assigned'),
       payload({ idempotencyKey: 'has:colon' }),
-      payload({ templateId: 'nope' as never }),
+      payload({ templateId: 'nope' }),
       { ...payload(), jobVersion: 2 }
     ];
     for (const b of bad) await expect(producer.enqueue(b as EmailJobPayload)).rejects.toBeInstanceOf(UnrecoverableError);
     expect(add).not.toHaveBeenCalled();
   });
-  it('accepts userId recipients with id refs', () => {
-    expect(() => validateEmailJobPayload(payload({ templateId: 'task-assigned', recipient: { userId: 'usr_1' }, refs: { taskId: 'tsk_1' }, locale: 'en-US' }))).not.toThrow();
+  it('accepts userId templates (verify_email, reset_password, meeting_summary) per contracts v0.2', () => {
+    for (const t of ['verify_email', 'reset_password', 'meeting_summary']) expect(() => validateEmailJobPayload(userPayload(t, { requestId: 'req_1' }))).not.toThrow();
   });
 });
 
@@ -91,8 +89,8 @@ describe('email processor', () => {
   });
   it('fails permanently when recipient cannot be resolved or template mismatches', async () => {
     const svc = new ConsoleEmailService();
-    await expect(createEmailProcessor(svc, resolver())({ id: '1', attemptsMade: 0, data: payload({ templateId: 'verification', recipient: { userId: 'u1' } }) })).rejects.toBeInstanceOf(UnrecoverableError);
-    const wrong: EmailJobResolver = { resolve: async () => ({ templateId: 'verification', to: 'a@x.test', variables: { name: 'a', verificationUrl: 'https://a.test', expiresInHours: 1 } }) };
+    await expect(createEmailProcessor(svc, resolver())({ id: '1', attemptsMade: 0, data: userPayload('verify_email') })).rejects.toBeInstanceOf(UnrecoverableError);
+    const wrong: EmailJobResolver = { resolve: async () => ({ templateId: 'verify_email', to: 'a@x.test', variables: { name: 'a', verificationUrl: 'https://a.test', expiresInHours: 1 } }) };
     await expect(createEmailProcessor(svc, wrong)({ id: '1', attemptsMade: 0, data: payload() })).rejects.toBeInstanceOf(UnrecoverableError);
     expect(svc.sent).toHaveLength(0);
   });
@@ -108,7 +106,7 @@ describe('email processor', () => {
     await expect(createEmailProcessor(new ConsoleEmailService(), flaky)({ id: '1', attemptsMade: 0, data: payload() })).rejects.not.toBeInstanceOf(UnrecoverableError);
   });
   it('bad template variables from resolver are unrecoverable', async () => {
-    const r: EmailJobResolver = { resolve: async () => ({ templateId: 'invitation', to: 'a@x.test', variables: { inviterName: 'B', workspaceName: 'W', inviteUrl: 'javascript:alert(1)' } }) };
+    const r: EmailJobResolver = { resolve: async () => ({ templateId: 'invite', to: 'a@x.test', variables: { inviterName: 'B', workspaceName: 'W', inviteUrl: 'javascript:alert(1)' } }) };
     await expect(createEmailProcessor(new ConsoleEmailService(), r)({ id: '1', attemptsMade: 0, data: payload() })).rejects.toBeInstanceOf(UnrecoverableError);
   });
 });

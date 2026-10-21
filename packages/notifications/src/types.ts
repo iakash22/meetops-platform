@@ -1,14 +1,14 @@
-/**
- * TODO: replace EmailAddress/EmailMessage with the @meetops/contracts types once PR #17 is on main
- * (blocked: #17 is unmerged; shapes kept compatible: { email, name? }).
- */
-export interface EmailAddress {
-  email: string;
-  name?: string;
-}
+import type { EmailAddress as ContractEmailAddress } from '@meetops/contracts';
+
+/** `{ email, name? }` from @meetops/contracts. */
+export type EmailAddress = ContractEmailAddress;
 
 export type EmailRecipient = string | EmailAddress;
 
+/**
+ * Transport-level message. Intentionally NOT the contracts `EmailMessage` (which requires `from` and an array `to`
+ * and lacks replyTo/headers); ours lets `from` default to EMAIL_FROM. Recipients use the contracts EmailAddress.
+ */
 export interface EmailMessage {
   to: EmailRecipient | EmailRecipient[];
   cc?: EmailRecipient[];
