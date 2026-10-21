@@ -15,7 +15,7 @@ Owner: Database agent. DevOps owns `.github/workflows`; copy `ci-live-db.example
   - `meetops_relay` privilege limits.
 
 ## Service
-`pgvector/pgvector:pg16`, superuser `postgres` (CI-only password), port 5432.
+`pgvector/pgvector:pg16` with the PR #7 names: `POSTGRES_USER=meetops` (bootstrap superuser only), `POSTGRES_DB=meetops`, port 5432.
 
 ## Roles (cluster level, created before migrations)
 `pnpm --filter @meetops/database db:roles` (`scripts/create-db-roles.ts`; or `create-db-roles.sh` / `bootstrap-roles.sql` with psql), run with a superuser `ADMIN_DATABASE_URL`. It is idempotent: it creates or updates the roles, creates the `meetops` DB owned by the migrator, and runs `CREATE EXTENSION vector`, because pgvector is not a trusted extension.
@@ -31,7 +31,7 @@ Migrations assert these attributes. A migration fails if `meetops_app` is superu
 ## Env vars
 | Var | Value (CI) | Purpose |
 | --- | --- | --- |
-| `ADMIN_DATABASE_URL` | `postgresql://postgres:postgres@localhost:5432/postgres` | role bootstrap only |
+| `ADMIN_DATABASE_URL` | `postgresql://meetops:change-me-local-dev@localhost:5432/meetops` | role bootstrap only |
 | `MEETOPS_MIGRATOR_PASSWORD` / `MEETOPS_APP_PASSWORD` / `MEETOPS_RELAY_PASSWORD` | CI secrets or random values | bootstrap |
 | `MIGRATION_DATABASE_URL` | `postgresql://meetops_migrator:$MEETOPS_MIGRATOR_PASSWORD@localhost:5432/meetops` | Prisma `directUrl` (migrate) |
 | `DATABASE_URL` | `postgresql://meetops_app:$MEETOPS_APP_PASSWORD@localhost:5432/meetops` | runtime + seed |

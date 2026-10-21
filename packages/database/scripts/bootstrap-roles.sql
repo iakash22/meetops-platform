@@ -15,6 +15,9 @@ SELECT format('ALTER ROLE meetops_migrator LOGIN NOSUPERUSER NOBYPASSRLS CREATED
 SELECT format('ALTER ROLE meetops_app LOGIN NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE PASSWORD %L', :'app_pw') \gexec
 SELECT format('ALTER ROLE meetops_relay LOGIN NOSUPERUSER BYPASSRLS NOCREATEDB NOCREATEROLE PASSWORD %L', :'relay_pw') WHERE :'relay_pw' <> '' \gexec
 SELECT format('CREATE DATABASE %I OWNER meetops_migrator', :'db_name') WHERE NOT EXISTS (SELECT 1 FROM pg_database WHERE datname = :'db_name') \gexec
+-- With compose.dev.yml the DB already exists (POSTGRES_DB) owned by POSTGRES_USER: hand it to the migrator.
+SELECT format('ALTER DATABASE %I OWNER TO meetops_migrator', :'db_name') \gexec
 \connect :db_name
+ALTER SCHEMA public OWNER TO meetops_migrator;
 -- pgvector is not a trusted extension: create it as superuser so the migration's IF NOT EXISTS is a no-op.
 CREATE EXTENSION IF NOT EXISTS vector;

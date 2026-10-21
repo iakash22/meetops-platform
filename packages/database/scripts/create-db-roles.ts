@@ -45,6 +45,8 @@ export async function createDbRoles(env = process.env): Promise<void> {
     }
     const db = await admin.$queryRaw<unknown[]>`SELECT 1 FROM pg_database WHERE datname = ${dbName}`;
     if (db.length === 0) await admin.$executeRawUnsafe(`CREATE DATABASE "${dbName}" OWNER meetops_migrator`);
+    // With compose.dev.yml the DB already exists (POSTGRES_DB) owned by POSTGRES_USER: hand it over.
+    else await admin.$executeRawUnsafe(`ALTER DATABASE "${dbName}" OWNER TO meetops_migrator`);
   } finally {
     await admin.$disconnect();
   }
@@ -52,6 +54,7 @@ export async function createDbRoles(env = process.env): Promise<void> {
   const target = new PrismaClient({ datasources: { db: { url: withDatabase(adminUrl, dbName) } } });
   try {
     await target.$executeRawUnsafe('CREATE EXTENSION IF NOT EXISTS vector');
+    await target.$executeRawUnsafe('ALTER SCHEMA public OWNER TO meetops_migrator');
   } finally {
     await target.$disconnect();
   }

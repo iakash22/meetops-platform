@@ -5,12 +5,14 @@ live-db:
     postgres:
       image: pgvector/pgvector:pg16
       env:
-        POSTGRES_PASSWORD: postgres
+        POSTGRES_USER: meetops
+        POSTGRES_PASSWORD: change-me-local-dev
+        POSTGRES_DB: meetops
       ports: ['5432:5432']
       options: >-
-        --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 20
+        --health-cmd "pg_isready -U meetops -d meetops" --health-interval 5s --health-timeout 5s --health-retries 20
   env:
-    ADMIN_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/postgres
+    ADMIN_DATABASE_URL: postgresql://meetops:change-me-local-dev@localhost:5432/meetops
     MEETOPS_MIGRATOR_PASSWORD: ci_migrator
     MEETOPS_APP_PASSWORD: ci_app
     MEETOPS_RELAY_PASSWORD: ci_relay
