@@ -11,10 +11,10 @@ Business modules depend only on these interfaces, never on a vendor SDK.
 
 ## Providers
 
-| Role | Primary | Optional (disabled by default) |
-| --- | --- | --- |
-| LLM | Gemini (`AI_LLM_PROVIDER=gemini`) | Ollama (`OLLAMA_ENABLED`), OpenAI (`OPENAI_ENABLED`) |
-| STT | AssemblyAI (`AI_STT_PROVIDER=assemblyai`) | Local STT (`LOCAL_STT_ENABLED`), Deepgram (`DEEPGRAM_ENABLED`) |
+| Role | Primary                                   | Optional (disabled by default)                                 |
+| ---- | ----------------------------------------- | -------------------------------------------------------------- |
+| LLM  | Gemini (`AI_LLM_PROVIDER=gemini`)         | Ollama (`OLLAMA_ENABLED`), OpenAI (`OPENAI_ENABLED`)           |
+| STT  | AssemblyAI (`AI_STT_PROVIDER=assemblyai`) | Local STT (`LOCAL_STT_ENABLED`), Deepgram (`DEEPGRAM_ENABLED`) |
 
 ## Rules
 

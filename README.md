@@ -21,19 +21,19 @@ Software companies, IT agencies, product and client-delivery teams, project and 
 
 ## Tech stack
 
-| Area | Technology |
-| --- | --- |
-| Monorepo | pnpm workspaces, Turborepo, TypeScript (strict), ESLint, Prettier, Husky |
-| Web dashboard | React, Vite, TanStack Router/Query, Tailwind CSS |
-| Marketing site | TanStack Start (planned next; not yet scaffolded) |
-| API | Node.js LTS, Fastify, Zod, OpenAPI/Swagger, Pino |
-| Database | PostgreSQL, Prisma ORM & Migrate, pgvector (semantic search) |
-| Jobs & cache | Redis, BullMQ |
-| Storage & media | S3-compatible (MinIO in dev), FFmpeg |
-| AI | Pluggable STT (AssemblyAI, optional faster-whisper) and LLM providers (Gemini, others) |
-| Email | Provider-independent email service; dev uses Gmail SMTP via Nodemailer (smtp.gmail.com:465, TLS, App Password) |
-| Testing | Vitest |
-| DevOps | Docker, Docker Compose, GitHub Actions |
+| Area            | Technology                                                                                                     |
+| --------------- | -------------------------------------------------------------------------------------------------------------- |
+| Monorepo        | pnpm workspaces, Turborepo, TypeScript (strict), ESLint, Prettier, Husky                                       |
+| Web dashboard   | React, Vite, TanStack Router/Query, Tailwind CSS                                                               |
+| Marketing site  | TanStack Start (planned next; not yet scaffolded)                                                              |
+| API             | Node.js LTS, Fastify, Zod, OpenAPI/Swagger, Pino                                                               |
+| Database        | PostgreSQL, Prisma ORM & Migrate, pgvector (semantic search)                                                   |
+| Jobs & cache    | Redis, BullMQ                                                                                                  |
+| Storage & media | S3-compatible (MinIO in dev), FFmpeg                                                                           |
+| AI              | Pluggable STT (AssemblyAI, optional faster-whisper) and LLM providers (Gemini, others)                         |
+| Email           | Provider-independent email service; dev uses Gmail SMTP via Nodemailer (smtp.gmail.com:465, TLS, App Password) |
+| Testing         | Vitest                                                                                                         |
+| DevOps          | Docker, Docker Compose, GitHub Actions                                                                         |
 
 No Next.js, no MongoDB, and no Kubernetes at the start. The backend is a modular monolith with independently scalable workers.
 
@@ -110,18 +110,18 @@ Email in development needs `SMTP_PASSWORD` (a Google App Password) in your local
 
 ## Roadmap
 
-| Phase | Scope |
-| --- | --- |
-| 0 | Monorepo foundation, tooling, Docker Compose, logging, basic CI |
-| 1 | Auth, organizations, employees, teams, projects, RBAC |
-| 2 | Meetings, uploads, browser recording, FFmpeg pipeline |
-| 3 | Transcription, reports, decisions, task drafts with evidence |
-| 4 | Task review, approval, assignment, notifications |
-| 5 | GitHub and Jira integrations with two-way sync |
-| 6 | Live transcription and browser extension |
-| 7 | Calendar, Meet/Zoom/Teams imports, search, automation, analytics |
-| 8 | Desktop and mobile apps with offline recording |
-| 9 | Production hardening, billing, monitoring, release |
+| Phase | Scope                                                            |
+| ----- | ---------------------------------------------------------------- |
+| 0     | Monorepo foundation, tooling, Docker Compose, logging, basic CI  |
+| 1     | Auth, organizations, employees, teams, projects, RBAC            |
+| 2     | Meetings, uploads, browser recording, FFmpeg pipeline            |
+| 3     | Transcription, reports, decisions, task drafts with evidence     |
+| 4     | Task review, approval, assignment, notifications                 |
+| 5     | GitHub and Jira integrations with two-way sync                   |
+| 6     | Live transcription and browser extension                         |
+| 7     | Calendar, Meet/Zoom/Teams imports, search, automation, analytics |
+| 8     | Desktop and mobile apps with offline recording                   |
+| 9     | Production hardening, billing, monitoring, release               |
 
 The first milestone is a working end-to-end slice: create organization → add employee → create project → upload audio → transcribe → generate report → extract and approve tasks → create GitHub/Jira issue → sync status.
 

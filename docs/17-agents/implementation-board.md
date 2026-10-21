@@ -8,19 +8,19 @@ Monorepo, apps (api/web/worker), packages, Docker Compose, CI. Branch `chore/pha
 
 ## Phase 1: In progress
 
-| Agent | Workstream | Branch | Status |
-| --- | --- | --- | --- |
-| DB | Database schema and migrations | TBD | In progress |
-| AI | AI core, providers | TBD | In progress |
-| BE | Backend API | TBD | In progress |
-| FE | Web dashboard | TBD | In progress |
-| OPS | DevOps, CI, infra | TBD | In progress |
-| QA | Testing | TBD | In progress |
-| SEC | Security | TBD | In progress |
-| INT | Integrations | TBD | In progress |
-| MEDIA | Storage and media pipeline | TBD | In progress |
-| NATIVE | Desktop and mobile | TBD | In progress |
-| DOC | Docs: agent board, credential requests, AI provider docs (P1-DOC) | `docs/agent-board-and-providers` | In progress |
+| Agent  | Workstream                                                        | Branch                           | Status      |
+| ------ | ----------------------------------------------------------------- | -------------------------------- | ----------- |
+| DB     | Database schema and migrations                                    | TBD                              | In progress |
+| AI     | AI core, providers                                                | TBD                              | In progress |
+| BE     | Backend API                                                       | TBD                              | In progress |
+| FE     | Web dashboard                                                     | TBD                              | In progress |
+| OPS    | DevOps, CI, infra                                                 | TBD                              | In progress |
+| QA     | Testing                                                           | TBD                              | In progress |
+| SEC    | Security                                                          | TBD                              | In progress |
+| INT    | Integrations                                                      | TBD                              | In progress |
+| MEDIA  | Storage and media pipeline                                        | TBD                              | In progress |
+| NATIVE | Desktop and mobile                                                | TBD                              | In progress |
+| DOC    | Docs: agent board, credential requests, AI provider docs (P1-DOC) | `docs/agent-board-and-providers` | In progress |
 
 Update the branch column when each agent pushes its branch.
 

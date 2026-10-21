@@ -2,16 +2,16 @@
 
 Workspace: **MeetOps Engineering**.
 
-| Channel | Purpose |
-| --- | --- |
-| `#agent-coordination` | Coordinator and agent assignments, handoffs, blockers |
-| `#ai-engineering` | AI core, LLM and speech-to-text providers, prompts, evals |
-| `#backend` | API, database, workers, queues |
-| `#integrations` | GitHub, Jira, calendar and other third-party integrations |
-| `#devops` | CI, Docker Compose, infra, deployments |
-| `#qa-testing` | Test plans, failures, QA sign-off |
-| `#project-updates` | Phase status and milestone summaries for stakeholders |
-| `#commits-and-branches` | Branch creation, pushes, PRs and merges |
+| Channel                  | Purpose                                                              |
+| ------------------------ | -------------------------------------------------------------------- |
+| `#agent-coordination`    | Coordinator and agent assignments, handoffs, blockers                |
+| `#ai-engineering`        | AI core, LLM and speech-to-text providers, prompts, evals            |
+| `#backend`               | API, database, workers, queues                                       |
+| `#integrations`          | GitHub, Jira, calendar and other third-party integrations            |
+| `#devops`                | CI, Docker Compose, infra, deployments                               |
+| `#qa-testing`            | Test plans, failures, QA sign-off                                    |
+| `#project-updates`       | Phase status and milestone summaries for stakeholders                |
+| `#commits-and-branches`  | Branch creation, pushes, PRs and merges                              |
 | `#keys-and-requirements` | Credential and access requests (names and status only, never values) |
 
 ## Slack app setup
