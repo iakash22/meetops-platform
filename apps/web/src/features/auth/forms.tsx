@@ -193,7 +193,6 @@ export function ForgotPasswordForm({
 }: {
   onSubmit: SubmitHandler<ForgotPasswordValues>;
 }) {
-  const { error, setError } = useSubmitError();
   const [sent, setSent] = useState(false);
   const {
     register,
@@ -222,17 +221,16 @@ export function ForgotPasswordForm({
           className="grid gap-4"
           onSubmit={(e) =>
             void handleSubmit(async (v) => {
-              setError(null);
+              // Enumeration-safe: same outcome regardless of result.
               try {
                 await onSubmit(v);
-                setSent(true);
-              } catch (err) {
-                setError(err);
+              } catch {
+                /* intentionally ignored */
               }
+              setSent(true);
             })(e)
           }
         >
-          {error ? <ErrorState title="Request failed" error={error} /> : null}
           <Field
             label="Email"
             type="email"
