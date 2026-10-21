@@ -106,7 +106,7 @@ Each docs PR already contains #3 merged up through the stack, so each one is mer
 | #19 | INT        | `feat/integrations-webhooks-jira` | `main`                      | None                                              |
 | #21 | AI         | `feat/ai-provider-registry`       | `main`                      | None                                              |
 | #22 | ARCH       | `docs/adr-004`                    | `main`                      | ADR-004 references ADR-003 (#17); merge #17 first |
-| #24 | Unassigned | `fix/eslint-project-service`      | `main`                      | None                                              |
+| #24 | OPS | `fix/eslint-project-service`      | `main`                      | None                                              |
 | #25 | DB         | `feat/database-tenancy-rls`       | `feat/database-core-schema` | Stacked on #6; merge #6 first                     |
 | #26 | OPS        | `chore/commitlint`                | `main`                      | None                                              |
 
