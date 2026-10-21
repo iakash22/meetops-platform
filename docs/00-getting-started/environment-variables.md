@@ -26,9 +26,15 @@ These variables are validated via `@meetops/config` (Zod) at runtime. Defaults s
 - `STORAGE_BUCKET`: e.g. meetops-dev
 - `STORAGE_ACCESS_KEY_ID`
 - `STORAGE_SECRET_ACCESS_KEY`
-- `STORAGE_FORCE_PATH_STYLE`: true|false (default: true when `STORAGE_PROVIDER=minio`, else false)
+- `STORAGE_FORCE_PATH_STYLE`: true|false; empty = default (true when `STORAGE_PROVIDER=minio`, else false)
+- `STORAGE_UPLOAD_TTL_SECONDS`: presigned upload URL TTL (default 600, max 600)
+- `STORAGE_DOWNLOAD_TTL_SECONDS`: presigned download URL TTL (default 300, max 600)
+- `STORAGE_MAX_OBJECT_BYTES`: max object size (default/max 2 GB)
+- `STORAGE_MAX_PART_BYTES`: max multipart part size (default/max 64 MiB)
+- `STORAGE_MAX_PARTS`: max multipart parts (default 1000, max 10000)
+- `STORAGE_ALLOWED_MIME_TYPES`: comma-separated MIME allowlist override (empty = built-in list)
 - `STORAGE_PRESIGN_EXPIRES_SECONDS`: presigned URL lifetime, 1..604800 (default 900)
-- `WEB_ORIGIN`: the single browser origin allowed by MinIO CORS for presigned PUTs (default http://localhost:5173; ETag exposed). Never `*`.
+- `WEB_ORIGIN`: the single browser origin allowed by MinIO CORS for presigned PUT/POST (default http://localhost:5173; ETag exposed). Never `*`.
 - `MINIO_API_PORT` / `MINIO_CONSOLE_PORT`: host ports for MinIO (default 9000 / 9001, 127.0.0.1). The dev bucket is private (no anonymous access) and aborts incomplete multipart uploads after 1 day.
 
 ### Realtime gateway (apps/realtime)
@@ -43,6 +49,9 @@ These variables are validated via `@meetops/config` (Zod) at runtime. Defaults s
 
 - `FFMPEG_PATH`: default /usr/bin/ffmpeg (worker image)
 - `FFPROBE_PATH`: default /usr/bin/ffprobe (worker image)
+- `MEDIA_TMP_DIR`: FFmpeg scratch dir (worker image/compose: /tmp/work on tmpfs)
+- `MEDIA_WORKER_CONCURRENCY`: media jobs in parallel (default 1, 1..16)
+- `MEDIA_CHUNK_SECONDS`: segment length (default 600, 10..3600)
 
 ### App ports / URLs
 
