@@ -30,10 +30,41 @@ export interface HealthCheckResult {
   message?: string;
 }
 
+/**
+ * Explicit human/system approval required for every outbound write.
+ * There is intentionally no default: callers must pass `{ approved: true }`.
+ */
+export interface WriteApproval {
+  approved: true;
+  /** Who approved (user id/email) for audit logs. */
+  approvedBy?: string;
+  reason?: string;
+}
+
+export class ApprovalRequiredError extends Error {
+  constructor(operation: string) {
+    super(`${operation} requires explicit approval ({ approved: true })`);
+    this.name = 'ApprovalRequiredError';
+  }
+}
+
+/** Throws ApprovalRequiredError unless approval.approved === true (strict boolean). */
+export function assertApproved(approval: unknown, operation: string): asserts approval is WriteApproval {
+  if (
+    typeof approval !== 'object' ||
+    approval === null ||
+    (approval as { approved?: unknown }).approved !== true
+  ) {
+    throw new ApprovalRequiredError(operation);
+  }
+}
+
 export interface IssueTrackerProvider {
   readonly name: string;
-  createIssue(input: CreateIssueInput): Promise<Issue>;
-  updateStatus(key: string, status: IssueStatus): Promise<Issue>;
+  /** Outbound write: requires approval; throws ApprovalRequiredError before any network call otherwise. */
+  createIssue(input: CreateIssueInput, approval: WriteApproval): Promise<Issue>;
+  /** Outbound write: requires approval; throws ApprovalRequiredError before any network call otherwise. */
+  updateStatus(key: string, status: IssueStatus, approval: WriteApproval): Promise<Issue>;
   getIssue(key: string): Promise<Issue | null>;
   healthCheck(): Promise<HealthCheckResult>;
 }
