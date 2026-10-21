@@ -37,7 +37,7 @@ export type ModelRouteId = Static<typeof ModelRouteId>;
  * explicitly may be tried, and `allowPaidFallback` defaults to false.
  */
 export const FallbackPolicy = Type.Object({
-  fallbackRouteIds: Type.Array(Type.String(), { default: [] }),
+  fallbackRouteIds: Type.Array(ModelRouteId, { default: [] }),
   allowPaidFallback: Type.Boolean({ default: false }),
 });
 export type FallbackPolicy = Static<typeof FallbackPolicy>;
@@ -59,7 +59,7 @@ export const TranscriptionJobPayload = Type.Object({
   languageHint: Type.Optional(Type.String()),
   diarize: Type.Boolean({ default: true }),
   fallback: Type.Optional(FallbackPolicy),
-});
+}, { additionalProperties: false });
 export type TranscriptionJobPayload = Static<typeof TranscriptionJobPayload>;
 
 export const AiTaskKind = Type.Union([
@@ -77,7 +77,7 @@ export const AiJobPayload = Type.Object({
   modelRouteId: ModelRouteId,
   promptVersion: Type.String(),
   fallback: Type.Optional(FallbackPolicy),
-});
+}, { additionalProperties: false });
 export type AiJobPayload = Static<typeof AiJobPayload>;
 
 /**

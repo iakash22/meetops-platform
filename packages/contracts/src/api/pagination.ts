@@ -3,13 +3,13 @@ import { Type, type Static, type TSchema } from '@sinclair/typebox';
 export const CursorPageQuery = Type.Object({
   cursor: Type.Optional(Type.String()),
   limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 100, default: 25 })),
-});
+}, { additionalProperties: false });
 export type CursorPageQuery = Static<typeof CursorPageQuery>;
 
 export const OffsetPageQuery = Type.Object({
   offset: Type.Optional(Type.Integer({ minimum: 0, default: 0 })),
   limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 100, default: 25 })),
-});
+}, { additionalProperties: false });
 export type OffsetPageQuery = Static<typeof OffsetPageQuery>;
 
 export const CursorPage = <T extends TSchema>(item: T) =>
