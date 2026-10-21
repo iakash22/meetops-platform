@@ -42,3 +42,25 @@ jobs:
 
       - name: Build
         run: pnpm build
+
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # Blocking: fails on high/critical; only RE-01 (braces@3.0.3) is excepted until 2026-11-20.
+      - name: Audit gate
+        run: node scripts/audit-gate.mjs
