@@ -70,6 +70,19 @@ services:
         condition: service_healthy
       minio-init:
         condition: service_completed_successfully
+    # Hardening per docs/09-security (upload-media-security §5): non-root (image
+    # USER node), read-only root FS, tmpfs scratch, no capabilities, no privilege
+    # escalation, resource caps. Network stays on (Redis/MinIO are required).
+    user: node
+    read_only: true
+    tmpfs:
+      - /tmp:size=2g,mode=1777
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 256
+    mem_limit: 2g
+    cpus: 2
 
   web:
     build:
