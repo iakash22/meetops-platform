@@ -14,7 +14,7 @@ describe.skipIf(!docker)('integration: Postgres (Testcontainers)', () => {
   let client: pg.Client;
 
   beforeAll(async () => {
-    container = await new PostgreSqlContainer(process.env.QA_POSTGRES_IMAGE ?? 'postgres:16-alpine').start();
+    container = await new PostgreSqlContainer(process.env.QA_POSTGRES_IMAGE ?? 'pgvector/pgvector:pg16').start();
     client = new pg.Client({ connectionString: container.getConnectionUri() });
     await client.connect();
   });
