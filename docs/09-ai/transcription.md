@@ -48,3 +48,18 @@ How a chunk job is handled:
    - **Segment ids.** These are stable `c<chunk>-s<n>` ids, used as evidence references.
 6. **Revision.** A new revision (`revision + 1`) is written only when the content hash or completeness changes. It uses
    compare-and-set on the previous revision, and the CAS loop is bounded.
+
+## Consuming Media's transcription queue (PR #39)
+
+Media's worker enqueues one contracts `TranscriptionJobPayload` per 16 kHz mono WAV chunk at
+`processed/{rec}/chunks/NNNNN.wav`. Each job has the BullMQ job id `transcribe_{org}_{rec}_{NNNNN}` and the
+idempotency key `transcribe:{rec}:{index}`. `createTranscriptionQueueConsumer(handler, { segmentSeconds })` (in
+`packages/ai-core/src/transcription/queue.ts`) maps each job to a `TranscriptionChunkJobPayload`:
+
+- **Index:** taken from `chunkIndex` once Architecture adds it in PR #38. Until then it is derived with
+  `parseTranscriptionIdempotencyKey`. If both are present they must agree.
+- **Validation:** the key's recording must equal `recordingId`, and the job id must match the payload. A mismatch
+  throws `InvalidTranscriptionJobError`, which is non-retryable.
+- **Geometry:** `startSec = index * segmentSeconds`, overlap 0 (ffmpeg `-segment_time`). `segmentSeconds` must
+  equal Media's `MEDIA_CHUNK_SECONDS` (default 600). `durationSec` is nominal; the provider-reported duration wins.
+- **Completeness:** the chunk count is not on the payload, so `complete` needs the count from Media's manifest.
