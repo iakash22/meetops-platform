@@ -1,5 +1,6 @@
 import { Type, type Static } from '@sinclair/typebox';
 import { Id, IsoDateTime } from '../common.js';
+import { SttProviderId } from '../jobs/index.js';
 
 export const MeetingSource = Type.Union([
   Type.Literal('upload'),
@@ -46,8 +47,10 @@ export const Transcript = Type.Object({
   meetingId: Id,
   recordingId: Id,
   language: Type.Optional(Type.String()),
-  /** Router id of the STT provider used, e.g. "assemblyai" or "faster-whisper". */
-  providerId: Type.String(),
+  /** STT provider that produced the transcript. */
+  provider: SttProviderId,
+  /** Provider-side job id (e.g. AssemblyAI transcript id), for reconciliation. */
+  providerJobId: Type.Optional(Type.String({ maxLength: 200 })),
   segments: Type.Array(TranscriptSegment),
   createdAt: IsoDateTime,
 });
