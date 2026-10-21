@@ -31,39 +31,41 @@ export interface HealthCheckResult {
 }
 
 /**
- * Explicit human/system approval required for every outbound write.
- * There is intentionally no default: callers must pass `{ approved: true }`.
+ * Reference to a human approval recorded by Backend for one specific write.
+ * Verified via an injected ApprovalVerifier; payloadHash must equal computeWritePayloadHash(...) of the exact write.
  */
 export interface WriteApproval {
-  approved: true;
-  /** Who approved (user id/email) for audit logs. */
-  approvedBy?: string;
-  reason?: string;
+  approvalId: string;
+  organizationId: string;
+  approverUserId: string;
+  /** sha256 hex of the canonical write payload. */
+  payloadHash: string;
 }
 
 export class ApprovalRequiredError extends Error {
-  constructor(operation: string) {
-    super(`${operation} requires explicit approval ({ approved: true })`);
+  constructor(operation: string, detail = 'requires an approval reference') {
+    super(`${operation} ${detail}`);
     this.name = 'ApprovalRequiredError';
   }
 }
 
-/** Throws ApprovalRequiredError unless approval.approved === true (strict boolean). */
+/** Throws ApprovalRequiredError unless the approval reference is structurally complete. */
 export function assertApproved(approval: unknown, operation: string): asserts approval is WriteApproval {
-  if (
-    typeof approval !== 'object' ||
-    approval === null ||
-    (approval as { approved?: unknown }).approved !== true
-  ) {
-    throw new ApprovalRequiredError(operation);
-  }
+  const a = approval as Partial<Record<keyof WriteApproval, unknown>> | null | undefined;
+  const ok =
+    typeof a === 'object' &&
+    a !== null &&
+    (['approvalId', 'organizationId', 'approverUserId'] as const).every((k) => typeof a[k] === 'string' && (a[k]).length > 0) &&
+    typeof a.payloadHash === 'string' &&
+    /^[0-9a-f]{64}$/.test(a.payloadHash);
+  if (!ok) throw new ApprovalRequiredError(operation);
 }
 
 export interface IssueTrackerProvider {
   readonly name: string;
-  /** Outbound write: requires approval; throws ApprovalRequiredError before any network call otherwise. */
+  /** Outbound write: requires a verified approval; throws before any network call otherwise. */
   createIssue(input: CreateIssueInput, approval: WriteApproval): Promise<Issue>;
-  /** Outbound write: requires approval; throws ApprovalRequiredError before any network call otherwise. */
+  /** Outbound write: requires a verified approval; throws before any network call otherwise. */
   updateStatus(key: string, status: IssueStatus, approval: WriteApproval): Promise<Issue>;
   getIssue(key: string): Promise<Issue | null>;
   healthCheck(): Promise<HealthCheckResult>;

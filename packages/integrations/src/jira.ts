@@ -1,5 +1,5 @@
+import { guardedWrite, type ApprovalVerifier, type AuditSink, type CredentialResolver, type IntegrationContext } from './governance.js';
 import {
-  assertApproved,
   IssueTrackerError,
   type CreateIssueInput,
   type HealthCheckResult,
@@ -9,25 +9,38 @@ import {
   type WriteApproval
 } from './types.js';
 
-export type FetchLike = (url: string, init?: { method?: string; headers?: Record<string, string>; body?: string }) => Promise<{
+export interface SafeFetchInit {
+  method?: string;
+  headers?: Record<string, string>;
+  body?: string;
+  signal?: AbortSignal;
+  redirect?: 'error' | 'manual' | 'follow';
+}
+
+export type FetchLike = (url: string, init?: SafeFetchInit) => Promise<{
   ok: boolean;
   status: number;
-  json(): Promise<unknown>;
+  headers?: { get(name: string): string | null };
   text(): Promise<string>;
 }>;
 
-export interface JiraOptions {
+export interface JiraOptions extends IntegrationContext {
   /** https://<site>.atlassian.net */
   baseUrl: string;
-  email: string;
-  /** Atlassian API token. Never logged. */
-  apiToken: string;
+  /** Resolves email+API token (or OAuth access token) right before each request. */
+  credentials: CredentialResolver;
+  approvals: ApprovalVerifier;
+  audit: AuditSink;
   /** Default project key, e.g. "MEET". */
   projectKey?: string;
   issueType?: string;
   /** Internal status -> Jira transition name (case-insensitive). */
   transitions?: Partial<Record<IssueStatus, string>>;
   fetch?: FetchLike;
+  /** Per-request timeout. Default 10s. */
+  timeoutMs?: number;
+  /** Max response body size. Default 1 MiB. */
+  maxResponseBytes?: number;
 }
 
 export const DEFAULT_JIRA_TRANSITIONS: Record<IssueStatus, string> = {
@@ -79,19 +92,29 @@ export class JiraIssueTrackerProvider implements IssueTrackerProvider {
   readonly name = 'jira';
   private readonly base: string;
   private readonly fetchFn: FetchLike;
-  private readonly authHeader: string;
   private readonly transitions: Record<IssueStatus, string>;
 
   constructor(private readonly options: JiraOptions) {
     this.base = validateJiraBaseUrl(options.baseUrl);
-    if (!options.email || !options.apiToken) throw new IssueTrackerError('Jira email and API token are required', 'jira');
-    this.authHeader = 'Basic ' + Buffer.from(`${options.email}:${options.apiToken}`).toString('base64');
     this.fetchFn = options.fetch ?? (globalThis.fetch);
     this.transitions = { ...DEFAULT_JIRA_TRANSITIONS, ...options.transitions };
   }
 
+  private scope(operation: 'createIssue' | 'updateStatus') {
+    return { provider: this.name, operation, organizationId: this.options.organizationId, integrationId: this.options.integrationId };
+  }
+
+  /** Hash payload is exactly the input passed. */
   async createIssue(input: CreateIssueInput, approval: WriteApproval): Promise<Issue> {
-    assertApproved(approval, 'jira.createIssue');
+    return guardedWrite(this.options, this.scope('createIssue'), input, approval, () => this.doCreate(input), (i) => i.key);
+  }
+
+  /** Hash payload: { key, status }. */
+  async updateStatus(key: string, status: IssueStatus, approval: WriteApproval): Promise<Issue> {
+    return guardedWrite(this.options, this.scope('updateStatus'), { key, status }, approval, () => this.doUpdate(key, status), (i) => i.key);
+  }
+
+  private async doCreate(input: CreateIssueInput): Promise<Issue> {
     const project = input.project ?? this.options.projectKey;
     if (!project) throw new IssueTrackerError('No Jira project key specified', this.name);
     const desc = [input.description, input.externalRef ? `MeetOps ref: ${input.externalRef}` : undefined].filter(Boolean).join('\n\n');
@@ -113,12 +136,11 @@ export class JiraIssueTrackerProvider implements IssueTrackerProvider {
   async getIssue(key: string): Promise<Issue | null> {
     const res = await this.raw('GET', `/rest/api/3/issue/${encodeURIComponent(key)}?fields=summary,status,assignee,labels,updated,resolution`);
     if (res.status === 404) return null;
-    if (!res.ok) throw await this.httpError(res);
-    return this.toIssue((await res.json()) as JiraIssueData);
+    if (!res.ok) throw this.httpError(res.status);
+    return this.toIssue(JSON.parse(res.body) as JiraIssueData);
   }
 
-  async updateStatus(key: string, status: IssueStatus, approval: WriteApproval): Promise<Issue> {
-    assertApproved(approval, 'jira.updateStatus');
+  private async doUpdate(key: string, status: IssueStatus): Promise<Issue> {
     const path = `/rest/api/3/issue/${encodeURIComponent(key)}/transitions`;
     const wanted = this.transitions[status].toLowerCase();
     const { transitions } = (await this.request('GET', path)) as { transitions?: { id: string; name: string; to?: { name?: string } }[] };
@@ -159,38 +181,55 @@ export class JiraIssueTrackerProvider implements IssueTrackerProvider {
     return issue;
   }
 
-  private async raw(method: string, path: string, body?: unknown) {
-    const init: { method: string; headers: Record<string, string>; body?: string } = {
-      method,
-      headers: { Authorization: this.authHeader, Accept: 'application/json' }
-    };
+  private async authHeader(): Promise<string> {
+    const c = await this.options.credentials.resolve(this.options.organizationId, this.options.integrationId);
+    if (c.kind === 'jira' && c.email && c.apiToken) return 'Basic ' + Buffer.from(`${c.email}:${c.apiToken}`).toString('base64');
+    if (c.kind === 'jira-oauth' && c.accessToken) return `Bearer ${c.accessToken}`;
+    throw new IssueTrackerError('Jira credentials unavailable', this.name);
+  }
+
+  /** safeFetch: timeout via AbortController, no redirects, response size cap, sanitized errors. */
+  private async raw(method: string, path: string, body?: unknown): Promise<{ ok: boolean; status: number; body: string }> {
+    const headers: Record<string, string> = { Authorization: await this.authHeader(), Accept: 'application/json' };
+    const init: SafeFetchInit = { method, headers, redirect: 'error' };
     if (body !== undefined) {
-      init.headers['Content-Type'] = 'application/json';
+      headers['Content-Type'] = 'application/json';
       init.body = JSON.stringify(body);
     }
+    const controller = new AbortController();
+    init.signal = controller.signal;
+    const timer = setTimeout(() => controller.abort(), this.options.timeoutMs ?? 10_000);
+    const max = this.options.maxResponseBytes ?? 1024 * 1024;
     try {
-      return await this.fetchFn(`${this.base}${path}`, init);
+      const res = await this.fetchFn(`${this.base}${path}`, init);
+      if (res.status >= 300 && res.status < 400) throw new IssueTrackerError(`Jira request failed (${res.status})`, this.name, res.status);
+      const declared = Number(res.headers?.get('content-length') ?? NaN);
+      if (Number.isFinite(declared) && declared > max) throw new IssueTrackerError('Jira response too large', this.name, res.status);
+      const text = await res.text();
+      if (Buffer.byteLength(text) > max) throw new IssueTrackerError('Jira response too large', this.name, res.status);
+      return { ok: res.ok, status: res.status, body: text };
     } catch (err) {
-      throw new IssueTrackerError(`Jira request failed: ${(err as Error).message}`, this.name);
+      if (err instanceof IssueTrackerError) throw err;
+      const aborted = (err as { name?: string }).name === 'AbortError';
+      throw new IssueTrackerError(aborted ? 'Jira request timed out' : 'Jira request failed', this.name);
+    } finally {
+      clearTimeout(timer);
     }
   }
 
   private async request(method: string, path: string, body?: unknown): Promise<unknown> {
     const res = await this.raw(method, path, body);
-    if (!res.ok) throw await this.httpError(res);
-    if (res.status === 204) return {};
-    const text = await res.text();
-    return text ? JSON.parse(text) : {};
+    if (!res.ok) throw this.httpError(res.status);
+    if (res.status === 204 || !res.body) return {};
+    try {
+      return JSON.parse(res.body);
+    } catch {
+      throw new IssueTrackerError('Jira returned invalid JSON', this.name, res.status);
+    }
   }
 
-  private async httpError(res: { status: number; text(): Promise<string> }) {
-    let detail = '';
-    try {
-      const j = JSON.parse(await res.text()) as { errorMessages?: string[]; errors?: Record<string, string> };
-      detail = [...(j.errorMessages ?? []), ...Object.values(j.errors ?? {})].join('; ');
-    } catch {
-      /* ignore */
-    }
-    return new IssueTrackerError(`Jira request failed (${res.status})${detail ? `: ${detail}` : ''}`, this.name, res.status);
+  /** Sanitized: status only, never upstream bodies/headers. */
+  private httpError(status: number) {
+    return new IssueTrackerError(`Jira request failed (${status})`, this.name, status);
   }
 }

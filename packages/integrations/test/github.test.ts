@@ -1,11 +1,10 @@
 import { describe, it, expect, vi } from 'vitest';
-import { GitHubIssuesProvider, parseIssueKey, IssueTrackerError, ApprovalRequiredError, type GitHubIssuesClient } from '../src';
-
-const approved = { approved: true as const, approvedBy: 'user_1' };
+import { GitHubIssuesProvider, parseIssueKey, ApprovalRequiredError, ApprovalMismatchError, type GitHubIssuesClient, type CredentialResolver } from '../src';
+import { governance, approvalFor, ORG, INTEGRATION } from './helpers';
 
 const issue = (over: Record<string, unknown> = {}) => ({ id: 99, number: 7, title: 'T', state: 'open', html_url: 'https://github.com/o/r/issues/7', assignees: [{ login: 'bo' }], labels: [{ name: 'bug' }], ...over });
 
-function mockClient() {
+function setup(opts: { verify?: boolean; defaultRepo?: string } = {}) {
   const create = vi.fn().mockResolvedValue({ data: issue() });
   const get = vi.fn().mockResolvedValue({ data: issue() });
   const update = vi.fn().mockImplementation((p: { state?: string; state_reason?: string; labels?: string[] }) =>
@@ -13,51 +12,77 @@ function mockClient() {
   );
   const repoGet = vi.fn().mockResolvedValue({ data: { full_name: 'o/r' } });
   const client = { rest: { issues: { create, get, update }, repos: { get: repoGet } } } as unknown as GitHubIssuesClient;
-  return { client, create, get, update, repoGet };
+  const clientFactory = vi.fn(() => client);
+  const credentials: CredentialResolver & { resolve: ReturnType<typeof vi.fn> } = { resolve: vi.fn(async () => ({ kind: 'github' as const, token: 'ghs_test' })) };
+  const g = governance(opts.verify ?? true);
+  const provider = new GitHubIssuesProvider({
+    organizationId: ORG,
+    integrationId: INTEGRATION,
+    credentials,
+    approvals: g.approvals,
+    audit: g.audit,
+    clientFactory,
+    ...(opts.defaultRepo === undefined ? { defaultRepo: 'o/r' } : opts.defaultRepo ? { defaultRepo: opts.defaultRepo } : {})
+  });
+  return { provider, create, get, update, repoGet, clientFactory, credentials, g };
 }
 
 describe('GitHubIssuesProvider', () => {
-  it('creates issues in the default repo', async () => {
-    const m = mockClient();
-    const p = new GitHubIssuesProvider({ client: m.client, defaultRepo: 'o/r' });
-    const res = await p.createIssue({ title: 'T', description: 'd', labels: ['bug'], externalRef: 'task_1' }, approved);
-    expect(m.create).toHaveBeenCalledWith(expect.objectContaining({ owner: 'o', repo: 'r', title: 'T', labels: ['bug'] }));
-    expect(res).toMatchObject({ provider: 'github', key: 'o/r#7', id: '99', status: 'open', assignees: ['bo'], labels: ['bug'] });
-  });
-  it('requires a repo', async () => {
-    await expect(new GitHubIssuesProvider({ client: mockClient().client }).createIssue({ title: 'x' }, approved)).rejects.toBeInstanceOf(IssueTrackerError);
+  it('creates issues with a verified approval; credentials resolved per call', async () => {
+    const s = setup();
+    const input = { title: 'T', description: 'd', labels: ['bug'], externalRef: 'task_1' };
+    const res = await s.provider.createIssue(input, approvalFor('github', 'createIssue', input));
+    expect(s.credentials.resolve).toHaveBeenCalledWith(ORG, INTEGRATION);
+    expect(s.clientFactory).toHaveBeenCalledWith('ghs_test');
+    expect(s.create).toHaveBeenCalledWith(expect.objectContaining({ owner: 'o', repo: 'r', title: 'T', labels: ['bug'] }));
+    expect(res).toMatchObject({ provider: 'github', key: 'o/r#7', id: '99', status: 'open', assignees: ['bo'] });
+    expect(s.g.events.map((e) => e.phase)).toEqual(['attempt', 'success']);
   });
   it('maps statuses to state/labels', async () => {
-    const m = mockClient();
-    const p = new GitHubIssuesProvider({ client: m.client, defaultRepo: 'o/r' });
-    expect((await p.updateStatus('#7', 'in_progress', approved)).status).toBe('in_progress');
-    expect((await p.updateStatus('o/r#7', 'done', approved)).status).toBe('done');
-    expect((await p.updateStatus('7', 'closed', approved)).status).toBe('closed');
-    expect(m.update).toHaveBeenCalledWith(expect.objectContaining({ issue_number: 7, state: 'closed', state_reason: 'completed' }));
+    const s = setup();
+    const up = (key: string, status: 'in_progress' | 'done' | 'closed') => s.provider.updateStatus(key, status, approvalFor('github', 'updateStatus', { key, status }));
+    expect((await up('#7', 'in_progress')).status).toBe('in_progress');
+    expect((await up('o/r#7', 'done')).status).toBe('done');
+    expect((await up('7', 'closed')).status).toBe('closed');
+    expect(s.update).toHaveBeenCalledWith(expect.objectContaining({ issue_number: 7, state: 'closed', state_reason: 'completed' }));
   });
-  it('getIssue returns null on 404 and wraps other errors', async () => {
-    const m = mockClient();
-    const p = new GitHubIssuesProvider({ client: m.client, defaultRepo: 'o/r' });
-    m.get.mockRejectedValueOnce(Object.assign(new Error('Not Found'), { status: 404 }));
-    expect(await p.getIssue('#7')).toBeNull();
-    m.get.mockRejectedValueOnce(Object.assign(new Error('boom'), { status: 500 }));
-    await expect(p.getIssue('#7')).rejects.toMatchObject({ name: 'IssueTrackerError', status: 500 });
+  it('refuses writes without a matching approval and makes no network or credential call', async () => {
+    const s = setup();
+    await expect(s.provider.createIssue({ title: 'T' }, undefined as never)).rejects.toBeInstanceOf(ApprovalRequiredError);
+    await expect(s.provider.createIssue({ title: 'T' }, { approved: true })).rejects.toBeInstanceOf(ApprovalRequiredError);
+    await expect(s.provider.createIssue({ title: 'T2' }, approvalFor('github', 'createIssue', { title: 'T' }))).rejects.toBeInstanceOf(ApprovalMismatchError);
+    await expect(s.provider.updateStatus('#7', 'done', approvalFor('github', 'updateStatus', { key: '#7', status: 'closed' }))).rejects.toBeInstanceOf(ApprovalMismatchError);
+    const rejected = setup({ verify: false });
+    await expect(rejected.provider.updateStatus('#7', 'done', approvalFor('github', 'updateStatus', { key: '#7', status: 'done' }))).rejects.toBeInstanceOf(ApprovalRequiredError);
+    for (const x of [s, rejected]) {
+      expect(x.create).not.toHaveBeenCalled();
+      expect(x.update).not.toHaveBeenCalled();
+      expect(x.credentials.resolve).not.toHaveBeenCalled();
+    }
+  });
+  it('requires a repo', async () => {
+    const s = setup({ defaultRepo: '' });
+    await expect(s.provider.createIssue({ title: 'x' }, approvalFor('github', 'createIssue', { title: 'x' }))).rejects.toThrow(/No repository/);
+    expect(s.g.events.map((e) => e.phase)).toEqual(['attempt', 'failure']);
+  });
+  it('getIssue returns null on 404 and sanitizes other errors', async () => {
+    const s = setup();
+    s.get.mockRejectedValueOnce(Object.assign(new Error('Not Found'), { status: 404 }));
+    expect(await s.provider.getIssue('#7')).toBeNull();
+    s.get.mockRejectedValueOnce(Object.assign(new Error('Bad credentials ghs_test body'), { status: 500 }));
+    const err = await s.provider.getIssue('#7').catch((e: Error) => e);
+    expect(err).toMatchObject({ name: 'IssueTrackerError', status: 500, message: 'GitHub request failed (500)' });
+  });
+  it('fails when credentials are unavailable', async () => {
+    const s = setup();
+    s.credentials.resolve.mockResolvedValueOnce({ kind: 'jira', email: 'x', apiToken: 'y' });
+    await expect(s.provider.getIssue('#7')).rejects.toThrow(/credentials unavailable/);
   });
   it('healthCheck probes the repo', async () => {
-    const m = mockClient();
-    expect(await new GitHubIssuesProvider({ client: m.client, defaultRepo: 'o/r' }).healthCheck()).toEqual({ ok: true, provider: 'github' });
-    m.repoGet.mockRejectedValueOnce(Object.assign(new Error('Bad credentials'), { status: 401 }));
-    expect((await new GitHubIssuesProvider({ client: m.client, defaultRepo: 'o/r' }).healthCheck()).ok).toBe(false);
-  });
-  it('refuses writes without approval and makes no network call', async () => {
-    const m = mockClient();
-    const p = new GitHubIssuesProvider({ client: m.client, defaultRepo: 'o/r' });
-    await expect(p.createIssue({ title: 'T' }, undefined as never)).rejects.toBeInstanceOf(ApprovalRequiredError);
-    await expect(p.createIssue({ title: 'T' }, { approved: 'yes' })).rejects.toBeInstanceOf(ApprovalRequiredError);
-    await expect(p.updateStatus('#7', 'done', { approved: false })).rejects.toBeInstanceOf(ApprovalRequiredError);
-    expect(m.create).not.toHaveBeenCalled();
-    expect(m.get).not.toHaveBeenCalled();
-    expect(m.update).not.toHaveBeenCalled();
+    const s = setup();
+    expect(await s.provider.healthCheck()).toEqual({ ok: true, provider: 'github' });
+    s.repoGet.mockRejectedValueOnce(Object.assign(new Error('Bad credentials'), { status: 401 }));
+    expect(await s.provider.healthCheck()).toMatchObject({ ok: false, message: 'GitHub request failed (401)' });
   });
   it('parses issue keys', () => {
     expect(parseIssueKey('a/b#3')).toEqual({ owner: 'a', repo: 'b', issue_number: 3 });
