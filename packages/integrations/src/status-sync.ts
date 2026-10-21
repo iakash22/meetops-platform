@@ -2,9 +2,11 @@ import { DEFAULT_IN_PROGRESS_LABEL } from './github.js';
 import type { IssueStatus } from './types.js';
 
 export interface StatusChange {
+  organizationId: string;
+  integrationId: string;
   provider: 'github';
-  /** "owner/repo#N" */
-  key: string;
+  /** "owner/repo#N" — look up the task by (organizationId, provider, externalId). */
+  externalId: string;
   status: IssueStatus;
   action: string;
 }
@@ -25,7 +27,12 @@ function labelNames(labels: unknown): string[] {
  * Pure mapper: GitHub `issues` webhook event -> internal status change.
  * Returns null for non-issue events, unsupported actions or malformed payloads.
  */
-export function mapGitHubIssueEvent(event: string | undefined, payload: unknown, options: { inProgressLabel?: string } = {}): StatusChange | null {
+export function mapGitHubIssueEvent(
+  event: string | undefined,
+  payload: unknown,
+  ctx: { organizationId: string; integrationId: string },
+  options: { inProgressLabel?: string } = {}
+): StatusChange | null {
   if (event !== 'issues' || !payload || typeof payload !== 'object') return null;
   const p = payload as IssuesEventPayload;
   const action = typeof p.action === 'string' ? p.action : undefined;
@@ -53,5 +60,7 @@ export function mapGitHubIssueEvent(event: string | undefined, payload: unknown,
     default:
       status = null;
   }
-  return status ? { provider: 'github', key: `${repo}#${num}`, status, action } : null;
+  return status
+    ? { organizationId: ctx.organizationId, integrationId: ctx.integrationId, provider: 'github', externalId: `${repo}#${num}`, status, action }
+    : null;
 }
