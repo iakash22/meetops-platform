@@ -4,14 +4,16 @@ Target: Windows with WSL 2 (Ubuntu), Docker Desktop on the WSL 2 backend, Node 2
 
 Steps marked **(requires PR #N, unmerged)** depend on an open PR and won't work on `main` until it merges. Values come from `main` and the open PRs as of 2026-10-21. PR heads read: #6 `62c7b89`, #7 `9e1d407`, #16 `9d18f47`, #25 `30f542a`.
 
-> [!WARNING]
-> **Node 24 isn't supported yet.** The root `package.json` has `"engines": { "node": ">=20.10.0 <23" }` on `main`, and no open PR changes it (checked across all open PRs). Node 24 is outside that range.
+> [!NOTE]
+> **Node 24: supported once DevOps' engines PR lands.** The Coordinator decided to widen `engines.node` to `<25` and run CI on Node 22 and 24. That change is a **pending DevOps PR** (none in `gh pr list` as of 2026-10-21 23:02 IST). Until it merges, `main` still says `">=20.10.0 <23"`:
 >
-> - pnpm only **warns** on an engines mismatch by default. `.npmrc` has no `engine-strict`, so installs on Node 24 proceed, but builds and tests are unverified on 24. Don't add `engine-strict=true` locally unless you're on a supported version, because it turns the warning into a hard failure.
-> - **Recommended:** keep Node 24 for other work and use Node 22 LTS for this repo through a version manager:
->   - [nvm-windows](https://github.com/coreybutler/nvm-windows): `nvm install 22` then `nvm use 22` (switches globally; admin shell).
->   - [fnm](https://github.com/Schniz/fnm): `winget install Schniz.fnm`, then `fnm install 22` and `fnm use 22`. Add `fnm env --use-on-cd | Out-String | Invoke-Expression` to your PowerShell profile to switch per directory.
-> - Supporting Node 24 means changing `engines` in `package.json`, which is a DevOps/ARCH decision. This guide doesn't change it.
+> - pnpm only **warns** on the mismatch (`.npmrc` has no `engine-strict`), so Node 24 works for local dev in the meantime. Don't enable `engine-strict=true` until the PR lands.
+> - **Fallback option:** use Node 22 LTS for this repo with [nvm-windows](https://github.com/coreybutler/nvm-windows) (`nvm install 22`, `nvm use 22`) or [fnm](https://github.com/Schniz/fnm) (`winget install Schniz.fnm`, `fnm install 22`, `fnm use 22`; add `fnm env --use-on-cd | Out-String | Invoke-Expression` to your PowerShell profile).
+
+> **Known gaps, routed to owners:**
+>
+> - DevOps: adding `.gitattributes`, `MIGRATION_DATABASE_URL` missing from `.env.example`, `API_PORT` vs the api's `PORT`, and the Linux-only `FFMPEG_PATH` default in #7's `.env.example`.
+> - DB: a script for local LOGIN/password setup of `meetops_app` / `meetops_migrator` (section 6).
 
 ## 1. Install the tools
 
@@ -32,7 +34,7 @@ git config --global core.autocrlf input   # or: false
 
 - `input` converts CRLF to LF on commit and never adds CRLF on checkout; `false` leaves files untouched. Both keep LF in the working tree.
 - Avoid `true` (the Git for Windows default). It checks files out as CRLF, which breaks shell scripts and Husky hooks (`.husky/pre-commit` gets `/usr/bin/env: 'sh\r'`), Dockerfile `RUN` heredocs and the compose `minio-init` entrypoint inside Linux containers. It also produces whole-file Prettier/ESLint diffs.
-- The repo's `.editorconfig` sets the style, but **the repo has no `.gitattributes`** on `main` or in any open PR. Adding one is recommended (not done here) so line endings don't depend on each machine's settings, e.g. `* text=auto eol=lf` plus `*.png binary`-style entries for binaries. This is a DevOps change.
+- The repo's `.editorconfig` sets the style, but **the repo has no `.gitattributes`** on `main` or in any open PR. Adding one is recommended (not done here) so line endings don't depend on each machine's settings, e.g. `* text=auto eol=lf` plus `*.png binary`-style entries for binaries. Routed to DevOps.
 
 ## 3. Clone to `C:\dev`, not OneDrive
 
@@ -83,7 +85,7 @@ This starts Postgres (pgvector pg16), Redis, MinIO and `minio-init` (bucket crea
 
 Both roles are created as **NOLOGIN**. Per #25, passwords and LOGIN are set "out of band, never in SQL" (in migrations). Both URLs are required for `prisma validate` and `migrate`.
 
-Local procedure (my reading of #25; not scripted in the PR):
+Local procedure (my reading of #25; not scripted in the PR, and a script has been requested from DB):
 
 1. For the first migrate, point `MIGRATION_DATABASE_URL` at the compose superuser (`POSTGRES_USER`), because the roles don't exist yet.
 2. Run the migrations:
@@ -151,5 +153,5 @@ See [troubleshooting](troubleshooting.md) for OneDrive, WSL 2, Docker Desktop an
 
 - **`sh\r` errors in hooks or containers:** a CRLF checkout. Set `core.autocrlf input`, then re-checkout with `git rm --cached -r . && git reset --hard`. That reset discards uncommitted changes, so commit or stash first.
 - **`EPERM` or long-path errors on `pnpm install`:** move the repo out of OneDrive and enable `core.longpaths`, plus Windows long paths (`LongPathsEnabled` registry setting; needs admin).
-- **pnpm "Unsupported engine" warning:** you're on Node 24; see the warning at the top.
+- **pnpm "Unsupported engine" warning:** expected on Node 24 until the DevOps engines PR lands; see the note at the top.
 - **Prisma "role does not exist" or "permission denied":** the migrations from #25 haven't run, or the LOGIN step was skipped (section 6).
