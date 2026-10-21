@@ -1,6 +1,6 @@
 # Contracts guide (`@meetops/contracts`)
 
-> **Note:** This page describes **open PR #17** (`feat/core-contracts`), which is not merged yet. Source: head commit `97fb57dac27211aa9d4eb34656b8eae3d552e167`, read via `gh pr view 17` / `gh pr diff 17`. Rules come from ADR-003 in that PR.
+> **Note:** This page describes **open PR #17** (`feat/core-contracts`), which is not merged yet. Source: head commit `8a189c87e28ab7a81b14d8b94b0ca16990221561`, read via `gh pr view 17` / `gh pr diff 17`. Rules come from ADR-003 in that PR.
 >
 > This lives in `docs/04-api` rather than `packages/contracts/README.md` because ADR-003 makes ARCH the owner of `packages/contracts`, and other agents don't commit there. ARCH may move it into the package.
 
