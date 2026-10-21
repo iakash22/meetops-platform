@@ -31,6 +31,18 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Assert type-aware lint config
+        # Fast mode (ESLINT_NO_TYPECHECK=1) is for the pre-commit hook only.
+        run: |
+          test -z "${ESLINT_NO_TYPECHECK:-}" || { echo "ESLINT_NO_TYPECHECK must be unset in CI"; exit 1; }
+          pnpm exec eslint --print-config apps/api/src/server.ts | node -e '
+            const r = JSON.parse(require("fs").readFileSync(0, "utf8")).rules;
+            for (const k of ["@typescript-eslint/no-floating-promises", "@typescript-eslint/no-misused-promises"]) {
+              const v = [].concat(r[k] ?? [0])[0];
+              if (v !== 2 && v !== "error") { console.error(k + " not active: " + JSON.stringify(r[k])); process.exit(1); }
+            }
+            console.log("type-aware promise rules active");'
+
       - name: Lint
         run: pnpm lint
 
