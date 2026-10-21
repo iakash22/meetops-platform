@@ -39,15 +39,19 @@ describe('ResolveMeetingRequest', () => {
 describe('extension token (ADR-005)', () => {
   const extensionId = 'abcdefghijklmnopabcdefghijklmnop';
   it('request', () => {
-    expect(Value.Check(ExtensionTokenRequest, { extensionId })).toBe(true);
-    expect(Value.Check(ExtensionTokenRequest, { extensionId, deviceLabel: 'Chrome on Mac' })).toBe(true);
-    expect(Value.Check(ExtensionTokenRequest, { extensionId: 'not-an-extension-id' })).toBe(false);
-    expect(Value.Check(ExtensionTokenRequest, { extensionId, scopes: ['admin'] })).toBe(false);
+    const t = { extensionId, deviceId: id(9), pairingCode: 'p'.repeat(43), nonce: 'n'.repeat(43) };
+    expect(Value.Check(ExtensionTokenRequest, t)).toBe(true);
+    expect(Value.Check(ExtensionTokenRequest, { ...t, extensionId: 'not-an-extension-id' })).toBe(false);
+    expect(Value.Check(ExtensionTokenRequest, { ...t, scopes: ['admin'] })).toBe(false);
+    expect(Value.Check(ExtensionTokenRequest, { extensionId })).toBe(false);
   });
   it('response carries tokens with limited scopes', () => {
     expect(EXTENSION_TOKEN_TTL_SECONDS).toBe(900);
     expect(EXTENSION_SCOPES).toEqual(['meetings:resolve', 'recordings:write']);
-    const r = { accessToken: 'a'.repeat(64), expiresAt: at, refreshToken: 'r'.repeat(64), scopes: ['recordings:write'], organizationId: id(1) };
+    const r = {
+      accessToken: 'a'.repeat(64), refreshToken: 'r'.repeat(64), tokenType: 'Bearer', audience: 'extension', expiresAt: at,
+      expiresIn: 900, refreshExpiresAt: at, organizationId: id(1), scopes: ['recordings:write'], nonce: 'n'.repeat(43),
+    };
     expect(Value.Check(ExtensionTokenResponse, r)).toBe(true);
     expect(Value.Check(ExtensionTokenResponse, { ...r, scopes: ['tasks:write'] })).toBe(false);
     expect(Value.Check(ExtensionTokenResponse, { ...r, scopes: [] })).toBe(false);

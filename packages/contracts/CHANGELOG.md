@@ -12,10 +12,15 @@ While the version is `0.x`, a minor bump may contain breaking changes (ADR-003).
   (opaque, ≤255) is required) and `ResolveMeetingResponse { meetingId, created }`, for
   `POST /orgs/:organizationId/meetings/resolve`. It is idempotent per (organizationId, source, externalMeetingId).
   Also adds `GetMeetingParams { organizationId, meetingId }`.
-- Extension auth (ADR-005): `ExtensionTokenRequest { extensionId, deviceLabel? }`,
-  `ExtensionTokenResponse { accessToken, expiresAt, refreshToken, scopes, organizationId }`, `EXTENSION_SCOPES`
-  (`meetings:resolve`, `recordings:write`), `EXTENSION_TOKEN_AUDIENCE`, `EXTENSION_TOKEN_TTL_SECONDS` (900). This is the **only**
-  API body that carries tokens.
+- Extension auth (ADR-005 + amendment 1, pairing proof): `ExtensionPairRequest { extensionId, deviceId (UUID), nonce
+(32–128 base64url), deviceLabel? (printable, ≤100) }` → `ExtensionPairResponse { pairingCode, expiresAt, organizationId,
+organizationName }` (no tokens); `ExtensionTokenRequest { extensionId, deviceId, pairingCode, nonce }` →
+  `ExtensionTokenResponse` (strict: `accessToken`, `refreshToken`, `tokenType: 'Bearer'`, `audience: 'extension'`,
+  `expiresAt`, `expiresIn` ≤900, `refreshExpiresAt`, `organizationId`, `scopes` (1–2, unique), `nonce` echo);
+  `ExtensionRefreshRequest`/`ExtensionRefreshResponse` (rotation); `ExtensionRevokeRequest`/`ExtensionRevokeResponse`.
+  Constants: `EXTENSION_AUTH_PATHS`, `EXTENSION_SCOPES`, `EXTENSION_TOKEN_AUDIENCE`, `EXTENSION_TOKEN_TYPE`,
+  `EXTENSION_TOKEN_TTL_SECONDS` (900), `EXTENSION_REFRESH_FAMILY_MAX_LIFETIME_SECONDS` (30 days), and `REDACT_KEYS`
+  (includes `accessToken`, `refreshToken`) for loggers. These two token responses are the **only** API bodies that carry tokens.
 - Auth: `SwitchOrganizationRequest` for `POST /auth/switch-org`. It returns `AuthSession` with a rotated csrfToken, and the
   session id is rotated.
 - Errors: `CSRF_INVALID`.
