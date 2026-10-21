@@ -8,6 +8,7 @@ import {
   type IssueTrackerProvider,
   type WriteApproval
 } from './types.js';
+import { classifyHttpError, withRetry, type RetryOptions } from './retry.js';
 
 export interface SafeFetchInit {
   method?: string;
@@ -25,8 +26,10 @@ export type FetchLike = (url: string, init?: SafeFetchInit) => Promise<{
 }>;
 
 export interface JiraOptions extends IntegrationContext {
-  /** https://<site>.atlassian.net */
+  /** https://<site>.atlassian.net, or https://api.atlassian.com/ex/jira/<cloudId> for scoped API tokens / OAuth. */
   baseUrl: string;
+  /** Human-facing https://<site>.atlassian.net for browse links when baseUrl is the API gateway. */
+  siteUrl?: string;
   /** Resolves email+API token (or OAuth access token) right before each request. */
   credentials: CredentialResolver;
   approvals: ApprovalVerifier;
@@ -41,6 +44,8 @@ export interface JiraOptions extends IntegrationContext {
   timeoutMs?: number;
   /** Max response body size. Default 1 MiB. */
   maxResponseBytes?: number;
+  /** Retry policy (429 w/ Retry-After, 5xx, network/timeout). Other 4xx are never retried. */
+  retry?: RetryOptions;
 }
 
 export const DEFAULT_JIRA_TRANSITIONS: Record<IssueStatus, string> = {
@@ -82,20 +87,36 @@ export function validateJiraBaseUrl(url: string): string {
   } catch {
     throw new IssueTrackerError('Invalid Jira base URL', 'jira');
   }
-  if (u.protocol !== 'https:' || !/^[a-z0-9-]+\.atlassian\.net$/i.test(u.hostname)) {
-    throw new IssueTrackerError('Jira base URL must be https://<site>.atlassian.net', 'jira');
+  if (u.protocol === 'https:' && /^[a-z0-9-]+\.atlassian\.net$/i.test(u.hostname)) return u.origin;
+  // Scoped API tokens / OAuth must use the API gateway: https://api.atlassian.com/ex/jira/{cloudId}
+  const gw = /^\/ex\/jira\/([0-9a-f-]{8,64})\/?$/i.exec(u.pathname);
+  if (u.protocol === 'https:' && u.hostname === 'api.atlassian.com' && gw?.[1]) return `${u.origin}/ex/jira/${gw[1]}`;
+  throw new IssueTrackerError('Jira base URL must be https://<site>.atlassian.net or https://api.atlassian.com/ex/jira/<cloudId>', 'jira');
+}
+
+interface JiraResponse {
+  ok: boolean;
+  status: number;
+  body: string;
+  header: (name: string) => string | undefined;
+}
+
+class RetryableJiraResponse extends Error {
+  constructor(readonly res: JiraResponse) {
+    super(`retryable ${res.status}`);
   }
-  return u.origin;
 }
 
 export class JiraIssueTrackerProvider implements IssueTrackerProvider {
   readonly name = 'jira';
   private readonly base: string;
+  private readonly siteBase: string;
   private readonly fetchFn: FetchLike;
   private readonly transitions: Record<IssueStatus, string>;
 
   constructor(private readonly options: JiraOptions) {
     this.base = validateJiraBaseUrl(options.baseUrl);
+    this.siteBase = options.siteUrl ? validateJiraBaseUrl(options.siteUrl) : this.base;
     this.fetchFn = options.fetch ?? (globalThis.fetch);
     this.transitions = { ...DEFAULT_JIRA_TRANSITIONS, ...options.transitions };
   }
@@ -173,7 +194,7 @@ export class JiraIssueTrackerProvider implements IssueTrackerProvider {
       id: d.id,
       title: f.summary ?? '',
       status,
-      url: `${this.base}/browse/${d.key}`,
+      url: `${this.siteBase}/browse/${d.key}`,
       assignees: f.assignee?.accountId ? [f.assignee.accountId] : [],
       labels: f.labels ?? []
     };
@@ -189,7 +210,26 @@ export class JiraIssueTrackerProvider implements IssueTrackerProvider {
   }
 
   /** safeFetch: timeout via AbortController, no redirects, response size cap, sanitized errors. */
-  private async raw(method: string, path: string, body?: unknown): Promise<{ ok: boolean; status: number; body: string }> {
+  private async raw(method: string, path: string, body?: unknown): Promise<JiraResponse> {
+    return withRetry(
+      async () => {
+        const res = await this.rawOnce(method, path, body);
+        if (!res.ok && classifyHttpError({ status: res.status, header: res.header }, Date.now()).retry) throw new RetryableJiraResponse(res);
+        return res;
+      },
+      (err, now) => {
+        if (err instanceof RetryableJiraResponse) return classifyHttpError({ status: err.res.status, header: err.res.header }, now);
+        // Network errors / timeouts (no status) are retried; sanitized HTTP-level errors are not.
+        return err instanceof IssueTrackerError && err.status === undefined ? { retry: true } : { retry: false };
+      },
+      this.options.retry
+    ).catch((err: unknown) => {
+      if (err instanceof RetryableJiraResponse) return err.res;
+      throw err;
+    });
+  }
+
+  private async rawOnce(method: string, path: string, body?: unknown): Promise<JiraResponse> {
     const headers: Record<string, string> = { Authorization: await this.authHeader(), Accept: 'application/json' };
     const init: SafeFetchInit = { method, headers, redirect: 'error' };
     if (body !== undefined) {
@@ -207,7 +247,7 @@ export class JiraIssueTrackerProvider implements IssueTrackerProvider {
       if (Number.isFinite(declared) && declared > max) throw new IssueTrackerError('Jira response too large', this.name, res.status);
       const text = await res.text();
       if (Buffer.byteLength(text) > max) throw new IssueTrackerError('Jira response too large', this.name, res.status);
-      return { ok: res.ok, status: res.status, body: text };
+      return { ok: res.ok, status: res.status, body: text, header: (n: string) => res.headers?.get(n) ?? undefined };
     } catch (err) {
       if (err instanceof IssueTrackerError) throw err;
       const aborted = (err as { name?: string }).name === 'AbortError';

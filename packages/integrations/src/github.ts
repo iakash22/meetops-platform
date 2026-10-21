@@ -1,4 +1,5 @@
 import { Octokit } from '@octokit/rest';
+import { classifyOctokitError, withRetry, type RetryOptions } from './retry.js';
 import { guardedWrite, type ApprovalVerifier, type AuditSink, type CredentialResolver, type IntegrationContext } from './governance.js';
 import { IssueTrackerError, type WriteApproval, type CreateIssueInput, type HealthCheckResult, type Issue, type IssueStatus, type IssueTrackerProvider } from './types.js';
 
@@ -37,6 +38,8 @@ export interface GitHubIssuesOptions extends IntegrationContext {
   inProgressLabel?: string;
   /** Builds a client for a resolved token. Default: new Octokit({ auth: token }). Inject a mock in tests. */
   clientFactory?: (token: string) => GitHubIssuesClient;
+  /** Retry policy for API calls (429, rate-limited 403, 5xx, network). Other 4xx are never retried. */
+  retry?: RetryOptions;
 }
 
 export const DEFAULT_IN_PROGRESS_LABEL = 'status: in-progress';
@@ -104,7 +107,7 @@ export class GitHubIssuesProvider implements IssueTrackerProvider {
     const ref = parseIssueKey(key, this.options.defaultRepo);
     try {
       const client = await this.client();
-      const { data } = await client.rest.issues.get(ref);
+      const { data } = await withRetry(() => client.rest.issues.get(ref), classifyOctokitError, this.options.retry);
       return this.toIssue(ref.owner, ref.repo, data);
     } catch (err) {
       if ((err as { status?: number }).status === 404) return null;
@@ -147,7 +150,8 @@ export class GitHubIssuesProvider implements IssueTrackerProvider {
     if (!this.options.defaultRepo) return { ok: true, provider: this.name, message: 'client configured (no default repo to probe)' };
     try {
       const client = await this.client();
-      await client.rest.repos.get(parseRepo(this.options.defaultRepo));
+      const repo = parseRepo(this.options.defaultRepo);
+      await withRetry(() => client.rest.repos.get(repo), classifyOctokitError, this.options.retry);
       return { ok: true, provider: this.name };
     } catch (err) {
       return { ok: false, provider: this.name, message: this.toError(err).message };
@@ -175,7 +179,7 @@ export class GitHubIssuesProvider implements IssueTrackerProvider {
 
   private async wrap<T>(fn: () => Promise<T>): Promise<T> {
     try {
-      return await fn();
+      return await withRetry(fn, classifyOctokitError, this.options.retry);
     } catch (err) {
       throw this.toError(err);
     }

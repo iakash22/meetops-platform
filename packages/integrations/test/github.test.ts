@@ -4,7 +4,7 @@ import { governance, approvalFor, ORG, INTEGRATION } from './helpers';
 
 const issue = (over: Record<string, unknown> = {}) => ({ id: 99, number: 7, title: 'T', state: 'open', html_url: 'https://github.com/o/r/issues/7', assignees: [{ login: 'bo' }], labels: [{ name: 'bug' }], ...over });
 
-function setup(opts: { verify?: boolean; defaultRepo?: string } = {}) {
+function setup(opts: { verify?: boolean; defaultRepo?: string; retry?: Record<string, unknown> } = {}) {
   const create = vi.fn().mockResolvedValue({ data: issue() });
   const get = vi.fn().mockResolvedValue({ data: issue() });
   const update = vi.fn().mockImplementation((p: { state?: string; state_reason?: string; labels?: string[] }) =>
@@ -22,6 +22,7 @@ function setup(opts: { verify?: boolean; defaultRepo?: string } = {}) {
     approvals: g.approvals,
     audit: g.audit,
     clientFactory,
+    retry: opts.retry ?? { maxAttempts: 1 },
     ...(opts.defaultRepo === undefined ? { defaultRepo: 'o/r' } : opts.defaultRepo ? { defaultRepo: opts.defaultRepo } : {})
   });
   return { provider, create, get, update, repoGet, clientFactory, credentials, g };
@@ -83,6 +84,33 @@ describe('GitHubIssuesProvider', () => {
     expect(await s.provider.healthCheck()).toEqual({ ok: true, provider: 'github' });
     s.repoGet.mockRejectedValueOnce(Object.assign(new Error('Bad credentials'), { status: 401 }));
     expect(await s.provider.healthCheck()).toMatchObject({ ok: false, message: 'GitHub request failed (401)' });
+  });
+  it('retries rate-limited calls (secondary 403 + Retry-After) and never retries 422', async () => {
+    const sleep = vi.fn(async () => {});
+    const s = setup({ retry: { sleep, random: () => 0 } });
+    s.create.mockRejectedValueOnce(Object.assign(new Error('rate'), { status: 403, response: { headers: { 'retry-after': '2' } } }));
+    const input = { title: 'T' };
+    expect((await s.provider.createIssue(input, approvalFor('github', 'createIssue', input))).key).toBe('o/r#7');
+    expect(s.create).toHaveBeenCalledTimes(2);
+    expect(sleep).toHaveBeenCalledWith(2000);
+    s.create.mockRejectedValueOnce(Object.assign(new Error('invalid'), { status: 422 }));
+    await expect(s.provider.createIssue(input, approvalFor('github', 'createIssue', input))).rejects.toMatchObject({ status: 422 });
+    expect(s.create).toHaveBeenCalledTimes(3);
+  });
+  it('waits for x-ratelimit-reset on exhausted primary limit', async () => {
+    const sleep = vi.fn(async () => {});
+    const now = 1_800_000_000_000;
+    const s = setup({ retry: { sleep, now: () => now, random: () => 0 } });
+    s.get.mockRejectedValueOnce(Object.assign(new Error('rl'), { status: 403, response: { headers: { 'x-ratelimit-remaining': '0', 'x-ratelimit-reset': String(now / 1000 + 5) } } }));
+    expect((await s.provider.getIssue('#7'))?.key).toBe('o/r#7');
+    expect(sleep).toHaveBeenCalledWith(5000);
+  });
+  it('approval gate runs before any retry attempt', async () => {
+    const sleep = vi.fn(async () => {});
+    const s = setup({ retry: { sleep } });
+    await expect(s.provider.createIssue({ title: 'T' }, undefined as never)).rejects.toBeInstanceOf(ApprovalRequiredError);
+    expect(s.create).not.toHaveBeenCalled();
+    expect(sleep).not.toHaveBeenCalled();
   });
   it('parses issue keys', () => {
     expect(parseIssueKey('a/b#3')).toEqual({ owner: 'a', repo: 'b', issue_number: 3 });
