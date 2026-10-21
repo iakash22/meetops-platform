@@ -6,8 +6,12 @@
 # localhost URLs from .env are overridden below. NODE_ENV comes from .env.
 # Required credentials use ${VAR:?} (no fallbacks). Host ports bind to 127.0.0.1.
 
+# Database roles (PR #25 RLS): api/worker connect as meetops_app (NOSUPERUSER,
+# NOBYPASSRLS); only `migrate` uses meetops_migrator. Never the postgres superuser.
 x-infra-urls: &infra-urls
-  DATABASE_URL: postgresql://${POSTGRES_USER:?set POSTGRES_USER}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:?set POSTGRES_DB}
+  DATABASE_URL: postgresql://meetops_app:${MEETOPS_APP_DB_PASSWORD:?set MEETOPS_APP_DB_PASSWORD}@postgres:5432/${POSTGRES_DB:?set POSTGRES_DB}
+  # Blank out the migrator credentials that env_file would otherwise inject.
+  MIGRATION_DATABASE_URL: ''
   REDIS_URL: redis://:${REDIS_PASSWORD:?set REDIS_PASSWORD}@redis:6379
   STORAGE_ENDPOINT: http://minio:9000
   OLLAMA_BASE_URL: http://ollama:11434
@@ -25,7 +29,10 @@ services:
     env_file:
       - path: ../../.env
         required: true
-    environment: *infra-urls
+    environment:
+      MIGRATION_DATABASE_URL: &migrator-url postgresql://meetops_migrator:${MEETOPS_MIGRATOR_DB_PASSWORD:?set MEETOPS_MIGRATOR_DB_PASSWORD}@postgres:5432/${POSTGRES_DB:?set POSTGRES_DB}
+      # Seed runs as the schema owner too (RLS would hide/deny cross-tenant seed rows).
+      DATABASE_URL: *migrator-url
     depends_on:
       postgres:
         condition: service_healthy
@@ -67,7 +74,7 @@ services:
       FFPROBE_PATH: /usr/bin/ffprobe
       MEDIA_WORK_DIR: /tmp/work
     depends_on: *app-deps
-    # Hardening per docs/09-security (upload-media-security §5): non-root, read-only
+    # Hardening per docs/12-security (upload-media-security §5): non-root, read-only
     # root FS, tmpfs scratch (/tmp/work for FFmpeg), no capabilities, no privilege
     # escalation, resource caps. Network stays on (Redis/MinIO are required).
     user: node
