@@ -62,11 +62,17 @@ export function parseProbeOutput(json: string): ProbeResult {
 }
 
 /** Probe a local media file with ffprobe. */
-export async function probeMedia(inputPath: string, opts: MediaToolsOptions = {}): Promise<ProbeResult> {
+export type ProbeOptions = MediaToolsOptions & {
+  /** Force the input demuxer (`-f`); use demuxerForExt(). Strongly recommended for untrusted input. */
+  format?: string;
+};
+
+export async function probeMedia(inputPath: string, opts: ProbeOptions = {}): Promise<ProbeResult> {
   const t = resolveTools(opts);
+  const fmt = opts.format ? ['-f', opts.format] : [];
   const { stdout } = await runProcess(
     t.ffprobe,
-    ['-v', 'error', ...PROTOCOL_WHITELIST, '-print_format', 'json', '-show_format', '-show_streams', '--', inputPath],
+    ['-v', 'error', ...PROTOCOL_WHITELIST, ...fmt, '-print_format', 'json', '-show_format', '-show_streams', '--', inputPath],
     { timeoutMs: t.timeoutMs, signal: opts.signal }
   );
   return parseProbeOutput(stdout);

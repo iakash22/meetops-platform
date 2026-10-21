@@ -6,18 +6,35 @@ import { PROTOCOL_WHITELIST, resolveTools, runProcess, type MediaToolsOptions } 
 export type NormalizeOptions = MediaToolsOptions & {
   sampleRate?: number;
   channels?: number;
+  /** Forced input demuxer (`-f`), e.g. from demuxerForExt(). */
+  inputFormat?: string;
+  /** Output duration cap in seconds (`-t`). */
+  maxDurationSeconds?: number;
+  /** Output size cap in bytes (`-fs`). */
+  maxOutputBytes?: number;
 };
 
+type NormalizeArgOptions = Pick<NormalizeOptions, 'sampleRate' | 'channels' | 'inputFormat' | 'maxDurationSeconds' | 'maxOutputBytes'>;
+
 /** ffmpeg argv to normalize any input to PCM s16le WAV (default 16 kHz mono). */
-export function buildNormalizeArgs(input: string, output: string, o: { sampleRate?: number; channels?: number } = {}): string[] {
+export function buildNormalizeArgs(input: string, output: string, o: NormalizeArgOptions = {}): string[] {
+  const posNum = (n: number | undefined, name: string) => {
+    if (n !== undefined && !(Number.isFinite(n) && n > 0)) throw new Error(`${name} must be > 0`);
+    return n;
+  };
+  const t = posNum(o.maxDurationSeconds, 'maxDurationSeconds');
+  const fs = posNum(o.maxOutputBytes, 'maxOutputBytes');
   return [
     '-hide_banner', '-nostdin', '-y',
     ...PROTOCOL_WHITELIST,
+    ...(o.inputFormat ? ['-f', o.inputFormat] : []),
     '-i', input,
     '-vn', '-sn', '-dn',
     '-ac', String(o.channels ?? 1),
     '-ar', String(o.sampleRate ?? 16000),
     '-c:a', 'pcm_s16le',
+    ...(t !== undefined ? ['-t', String(t)] : []),
+    ...(fs !== undefined ? ['-fs', String(Math.floor(fs))] : []),
     '-f', 'wav',
     output
   ];
@@ -54,6 +71,7 @@ export function buildChunkArgs(input: string, outDir: string, segmentSeconds: nu
   return [
     '-hide_banner', '-nostdin', '-y',
     ...PROTOCOL_WHITELIST,
+    '-f', 'wav',
     '-i', input,
     '-vn',
     '-f', 'segment',
@@ -92,7 +110,7 @@ export async function chunkAudio(input: string, outDir: string, opts: ChunkOptio
     let start = 0;
     for (const { f, m } of files) {
       const p = path.join(outDir, f);
-      const info = await probeMedia(p, opts);
+      const info = await probeMedia(p, { ...opts, format: 'wav' });
       chunks.push({ index: Number(m[1]), path: p, startSeconds: start, durationSeconds: info.durationSeconds });
       start += info.durationSeconds;
     }
