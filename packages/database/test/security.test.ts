@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { readFileSync, readdirSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it, vi } from 'vitest';
@@ -783,15 +783,28 @@ const providerSql = readFileSync(
 );
 
 describe('transcripts.provider = contracts TranscriptProviderId', () => {
-  it('CHECK values are exactly SttProviderId (from packages/contracts) plus unknown', () => {
-    const jobs = readFileSync(resolve(pkgDir, '../contracts/src/jobs/index.ts'), 'utf8');
-    const union =
-      /export const SttProviderId = Type\.Union\(\[([\s\S]*?)\]\)/.exec(jobs)?.[1] ?? '';
-    const stt = [...union.matchAll(/Type\.Literal\('([^']+)'\)/g)].map((m) => m[1]);
-    expect(stt.length).toBeGreaterThan(0);
+  it('CHECK values are exactly contracts TRANSCRIPT_PROVIDER_IDS (#50 @ d54330c)', () => {
+    /** Pinned from packages/contracts/src/constants.ts at d54330c (contracts #50). */
+    const PINNED = ['assemblyai', 'faster-whisper', 'deepgram', 'unknown'];
     const check = /CHECK \("provider" IN \(([^)]*)\)\)/.exec(providerSql)?.[1] ?? '';
     const allowed = [...check.matchAll(/'([^']+)'/g)].map((m) => m[1]);
-    expect([...allowed].sort()).toEqual([...stt, 'unknown'].sort());
+    expect(allowed).toEqual(PINNED);
+    // Once #50 lands in this tree, compare with the live contracts constant too.
+    const constantsPath = resolve(pkgDir, '../contracts/src/constants.ts');
+    const constants = existsSync(constantsPath) ? readFileSync(constantsPath, 'utf8') : '';
+    if (constants.includes('TRANSCRIPT_PROVIDER_IDS')) {
+      const stt = /STT_PROVIDER_IDS = \[([^\]]*)\]/.exec(constants)?.[1] ?? '';
+      const fromContracts = [...[...stt.matchAll(/'([^']+)'/g)].map((m) => m[1]), 'unknown'];
+      expect(allowed).toEqual(fromContracts);
+    } else {
+      const jobs = readFileSync(resolve(pkgDir, '../contracts/src/jobs/index.ts'), 'utf8');
+      const union =
+        /export const SttProviderId = Type\.Union\(\[([\s\S]*?)\]\)/.exec(jobs)?.[1] ?? '';
+      expect([
+        ...[...union.matchAll(/Type\.Literal\('([^']+)'\)/g)].map((m) => m[1]),
+        'unknown',
+      ]).toEqual(PINNED);
+    }
   });
 
   it("'unknown' is backfill-only: trigger rejects it on insert/change and there is no column default", () => {
