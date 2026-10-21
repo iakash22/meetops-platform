@@ -50,7 +50,16 @@ pnpm lint && pnpm typecheck && pnpm test && pnpm build
 
 All four exist as root scripts. There's no `format:check` script; for Markdown run `npx prettier --check <files>`. E2E tests are separate (see [testing](testing.md)). Report the actual results in the PR; never claim a check passed if you didn't run it.
 
-## 5. Stacked PRs
+## 5. Phase 1 integration branch
+
+Phase 1 work merges through **`integration/phase-1`** (it exists on `origin`), not directly into `main`:
+
+1. Agent PRs target `integration/phase-1`: `gh pr create --base integration/phase-1 ...`.
+2. A PR merges into `integration/phase-1` only after **CI passes** and **Architecture and Security review** approve it. Use merge commits, not squash.
+3. **Akash merges the single integration PR** (`integration/phase-1` → `main`, currently #30 "Phase 1 integration") into `main`. Agents never merge into `main`.
+4. To catch up, merge `origin/integration/phase-1` into your branch, not `origin/main` (no rebase, no force-push).
+
+## 6. Stacked PRs
 
 When a task builds on an unmerged PR, branch from that PR's branch and open the PR against it:
 
@@ -62,52 +71,45 @@ git push -u origin docs/next
 gh pr create --base docs/lower --head docs/next --title "..." --body "Stacked on #<lower>."
 ```
 
-After the lower PR merges into `main`, retarget the upper PR and merge `main` in (no rebase or force-push):
+After the lower PR merges, **retarget the upper PR to `integration/phase-1`** (not `main`), then merge it in:
 
 ```bash
-gh pr edit <upper> --base main
-git fetch origin && git merge origin/main && git push
+gh pr edit <upper> --base integration/phase-1
+git fetch origin && git merge origin/integration/phase-1 && git push
 ```
 
-**Stacks are merged with merge commits, not squash.** That keeps the upper PRs' history intact, so retargeting and merging `main` stay clean.
+Retarget **before** the lower branch is deleted; GitHub closes PRs whose base branch disappears. The bottom PR of every stack targets `integration/phase-1` directly.
 
-## 6. Merge order
+## 7. Merge order
 
-Open PRs as of 2026-10-21 22:56 IST, from `gh pr list --state open`. Stacks merge with **merge commits, not squash**.
+As of 2026-10-21 23:02 IST, from `gh pr list`.
 
-### Docs stack (merge in this order)
+### Already merged into `integration/phase-1`
 
-| Order | PR  | Branch                           | Base                             |
-| ----- | --- | -------------------------------- | -------------------------------- |
-| 1     | #3  | `docs/agent-board-and-providers` | `main`                           |
-| 2     | #8  | `docs/getting-started`           | `main`                           |
-| 3     | #12 | `docs/database-and-devops`       | `docs/getting-started`           |
-| 4     | #14 | `docs/storage-testing-extension` | `docs/database-and-devops`       |
-| 5     | #18 | `docs/contributing`              | `docs/storage-testing-extension` |
-| 6     | #23 | `docs/contracts`                 | `docs/contributing`              |
+#3, #8, #12, #14, #18 and #23 (the docs stack), plus #4 (SEC threat model), #22 (ADR-004) and #17 (contracts). Merged between 23:00 and 23:02 IST.
 
-Each docs PR already contains #3 merged up through the stack, so each one is mergeable against its base. After each PR merges, retarget the next one with `gh pr edit <n> --base main`.
+### Open
 
-### Other open PRs
+| PR | Owner | Branch | Base | Dependency |
+| --- | --- | --- | --- | --- |
+| #5 | NATIVE | `feat/extension-scaffold` | `integration/phase-1` | None |
+| #6 | DB | `feat/database-core-schema` | `integration/phase-1` | None |
+| #7 | OPS | `chore/devops-containers-ci` | `integration/phase-1` | None |
+| #9 | QA | `test/qa-harness` | `integration/phase-1` | None |
+| #10 | MEDIA | `feat/storage-and-media-core` | `integration/phase-1` | None |
+| #11 | INT | `feat/notifications-email` | `integration/phase-1` | None |
+| #13 | FE | `feat/web-shell` | `integration/phase-1` | None |
+| #15 | NATIVE | `feat/extension-capture` | `feat/extension-scaffold` | Stacked on #5 |
+| #16 | MEDIA | `feat/realtime-scaffold` | `integration/phase-1` | None |
+| #19 | INT | `feat/integrations-webhooks-jira` | `integration/phase-1` | None |
+| #21 | AI | `feat/ai-provider-registry` | `integration/phase-1` | None |
+| #24 | OPS | `fix/eslint-project-service` | `integration/phase-1` | None |
+| #25 | DB | `feat/database-tenancy-rls` | `feat/database-core-schema` | Stacked on #6 |
+| #26 | OPS | `chore/commitlint` | `integration/phase-1` | None |
+| #27 | BE | `feat/api-auth-orgs` | `integration/phase-1` | Mirrors #17 contracts (merged into integration); follow-ups on #25 and #11 |
+| #28 | DOC | `docs/windows-local-setup` | `docs/contracts` | Stacked on `docs/contracts` (#23, merged): retarget to `integration/phase-1` |
+| #29 | QA | `test/db-and-security-suites` | `test/qa-harness` | Stacked on #9 |
+| #30 | Akash (integration) | `integration/phase-1` | `main` | Merge last, after all Phase 1 PRs |
+| this PR | DOC | `docs/refresh-heads` | `docs/windows-local-setup` | Stacked on #28 |
 
-| PR  | Owner  | Branch                            | Base                        | Confirmed dependency                              |
-| --- | ------ | --------------------------------- | --------------------------- | ------------------------------------------------- |
-| #4  | SEC    | `docs/security-threat-model`      | `main`                      | None                                              |
-| #5  | NATIVE | `feat/extension-scaffold`         | `main`                      | None                                              |
-| #6  | DB     | `feat/database-core-schema`       | `main`                      | None                                              |
-| #7  | OPS    | `chore/devops-containers-ci`      | `main`                      | None                                              |
-| #9  | QA     | `test/qa-harness`                 | `main`                      | None                                              |
-| #10 | MEDIA  | `feat/storage-and-media-core`     | `main`                      | None                                              |
-| #11 | INT    | `feat/notifications-email`        | `main`                      | None                                              |
-| #13 | FE     | `feat/web-shell`                  | `main`                      | None                                              |
-| #15 | NATIVE | `feat/extension-capture`          | `feat/extension-scaffold`   | Stacked on #5; merge #5 first                     |
-| #16 | MEDIA  | `feat/realtime-scaffold`          | `main`                      | None                                              |
-| #17 | ARCH   | `feat/core-contracts`             | `main`                      | None                                              |
-| #19 | INT    | `feat/integrations-webhooks-jira` | `main`                      | None                                              |
-| #21 | AI     | `feat/ai-provider-registry`       | `main`                      | None                                              |
-| #22 | ARCH   | `docs/adr-004`                    | `main`                      | ADR-004 references ADR-003 (#17); merge #17 first |
-| #24 | OPS    | `fix/eslint-project-service`      | `main`                      | None                                              |
-| #25 | DB     | `feat/database-tenancy-rls`       | `feat/database-core-schema` | Stacked on #6; merge #6 first                     |
-| #26 | OPS    | `chore/commitlint`                | `main`                      | None                                              |
-
-"Confirmed" means a stacked base or an explicit reference in the PR. Logical dependencies are in the [dependency graph](../17-agents/dependency-graph.md), marked as assumptions. Many PRs touch `pnpm-lock.yaml`; resolve conflicts with the pinned pnpm, without reformatting.
+Merge stacked PRs bottom-up. "Dependency" lists only stacked bases or explicit references in the PR; logical dependencies are in the [dependency graph](../17-agents/dependency-graph.md). Many PRs touch `pnpm-lock.yaml`; resolve conflicts with the pinned pnpm, without reformatting (CI fails on lockfile drift once #7 lands).

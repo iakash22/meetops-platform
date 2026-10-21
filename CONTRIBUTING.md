@@ -4,7 +4,7 @@ New here? Start with [getting started](docs/00-getting-started/README.md). Agent
 
 ## Branches
 
-`feat/*`, `fix/*`, `chore/*`, `docs/*`, `test/*`. One branch per task, opened as a PR to `main` (or to the branch below it when stacked).
+`feat/*`, `fix/*`, `chore/*`, `docs/*`, `test/*`. One branch per task. During Phase 1, open PRs against `integration/phase-1` (or the branch below it when stacked). They merge after CI plus Architecture and Security review, and Akash merges the integration PR into `main`. See [agent workflow](docs/00-getting-started/agent-workflow.md#5-phase-1-integration-branch).
 
 ## Commits
 
@@ -28,7 +28,7 @@ Commitlint is coming (DevOps is adding it); until then reviewers check the forma
 ## Git rules
 
 - **Never use `--no-verify`.** The Husky pre-commit hook runs `pnpm lint-staged` (ESLint on code, Prettier on md/json/yml). If it fails, fix the cause.
-- **Never force-push a pushed branch.** To catch up with `main`, run `git fetch origin && git merge origin/main`, then push.
+- **Never force-push a pushed branch.** To catch up, merge the base branch in (`git fetch origin && git merge origin/integration/phase-1`), then push.
 - Never commit `.env` or secret values.
 
 ## Before opening a PR
@@ -52,4 +52,4 @@ See [local setup](docs/00-getting-started/local-setup.md): copy `.env.example` t
 
 Stacked PRs are merged with merge commits, not squash.
 
-See [agent workflow](docs/00-getting-started/agent-workflow.md#stacked-prs).
+See [agent workflow](docs/00-getting-started/agent-workflow.md#6-stacked-prs).
