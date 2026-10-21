@@ -14,7 +14,9 @@ describe.skipIf(!docker)('integration: Postgres (Testcontainers)', () => {
   let client: pg.Client;
 
   beforeAll(async () => {
-    container = await new PostgreSqlContainer(process.env.QA_POSTGRES_IMAGE ?? 'pgvector/pgvector:pg16').start();
+    container = await new PostgreSqlContainer(
+      process.env.QA_POSTGRES_IMAGE ?? 'pgvector/pgvector:pg16',
+    ).start();
     client = new pg.Client({ connectionString: container.getConnectionUri() });
     await client.connect();
   });
@@ -24,12 +26,16 @@ describe.skipIf(!docker)('integration: Postgres (Testcontainers)', () => {
     await container?.stop();
   });
 
-  it('stores tenant-scoped rows from the factory', async () => {
-    const f = createFactories({ seed: 9, tenantSlug: 'pg' });
-    await client.query('CREATE TABLE objects (tenant_id text NOT NULL, key text PRIMARY KEY)');
+  it('stores organization-scoped rows from the factory', async () => {
+    const f = createFactories({ seed: 9, organizationSlug: 'pg' });
+    await client.query(
+      'CREATE TABLE objects (organization_id text NOT NULL, key text PRIMARY KEY)',
+    );
     const obj = f.storageObject();
-    await client.query('INSERT INTO objects VALUES ($1, $2)', [f.tenant.id, obj.key]);
-    const res = await client.query('SELECT key FROM objects WHERE tenant_id = $1', [f.tenant.id]);
+    await client.query('INSERT INTO objects VALUES ($1, $2)', [f.organization.id, obj.key]);
+    const res = await client.query('SELECT key FROM objects WHERE organization_id = $1', [
+      f.organization.id,
+    ]);
     expect(res.rows).toEqual([{ key: obj.key }]);
   });
 });

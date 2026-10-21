@@ -4,6 +4,8 @@ export type Rng = {
   int(min: number, max: number): number;
   pick<T>(items: readonly T[]): T;
   id(prefix: string): string;
+  /** Deterministic RFC 4122 v4-shaped UUID. */
+  uuid(): string;
 };
 
 export function createRng(seed: number): Rng {
@@ -24,6 +26,14 @@ export function createRng(seed: number): Rng {
       if (item === undefined) throw new Error('pick() on empty list');
       return item;
     },
-    id: (prefix) => `${prefix}_${(++counter).toString().padStart(4, '0')}_${Math.floor(next() * 0xffff).toString(16).padStart(4, '0')}`
+    uuid: () => {
+      const hex = Array.from({ length: 32 }, () => Math.floor(next() * 16).toString(16)).join('');
+      const variant = ((parseInt(hex[16] ?? '0', 16) & 0x3) | 0x8).toString(16);
+      return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-4${hex.slice(13, 16)}-${variant}${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
+    },
+    id: (prefix) =>
+      `${prefix}_${(++counter).toString().padStart(4, '0')}_${Math.floor(next() * 0xffff)
+        .toString(16)
+        .padStart(4, '0')}`,
   };
 }
