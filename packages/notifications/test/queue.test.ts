@@ -89,6 +89,11 @@ describe('email producer', () => {
     for (const b of bad) await expect(producer.enqueue(b as EmailJobPayload)).rejects.toBeInstanceOf(UnrecoverableError);
     expect(add).not.toHaveBeenCalled();
   });
+  it('enforces contract per-template recipient binding (a9d9d89 union)', () => {
+    expect(() => validateEmailJobPayload(payload({ templateId: 'invitation', recipient: { userId: USR } as never }))).toThrow(UnrecoverableError);
+    expect(() => validateEmailJobPayload(payload({ templateId: 'verification', recipient: { invitationId: INV } as never }))).toThrow(UnrecoverableError);
+  });
+
   it('accepts userId recipients with id refs', () => {
     expect(() => validateEmailJobPayload(payload({ templateId: 'task-assigned', recipient: { userId: USR }, refs: { taskId: 'tsk_1' }, locale: 'en-US' }))).not.toThrow();
   });
