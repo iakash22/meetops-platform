@@ -1,6 +1,6 @@
 # Implementation board
 
-Last updated: 2026-10-21. Branch names are assigned by the Coordinator. "Pushed?" and PR numbers come from `git ls-remote` and `gh pr list --state all` on that date.
+Last updated: 2026-10-21. Branch names are assigned by the Coordinator. PR numbers and states come from `git ls-remote` and `gh pr list --state all` on that date.
 
 ## Phase 0: Foundation — Done (merged)
 
@@ -8,20 +8,22 @@ Monorepo, apps (api/web/worker), packages, Docker Compose, CI. Branch `chore/pha
 
 ## Phase 1: In progress
 
-| Agent  | Workstream                                                                                                                                                                                                                                              | Branch                           | Pushed? | PR                                                                                | Status      |
-| ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------- | ------- | --------------------------------------------------------------------------------- | ----------- |
-| ARCH   | Core contracts                                                                                                                                                                                                                                          | `feat/core-contracts`            | Yes     | #17 (open, contracts); #22 `docs/adr-004` (open, ADR-004)                         | In progress |
-| DB     | Database schema and migrations                                                                                                                                                                                                                          | `feat/database-core-schema`      | Yes     | #6 (open); #25 `feat/database-tenancy-rls` (open, stacked on #6)                  | In progress |
-| AI     | AI provider registry                                                                                                                                                                                                                                    | `feat/ai-provider-registry`      | Yes     | #21 (open)                                                                        | In progress |
-| BE     | API auth and organizations                                                                                                                                                                                                                              | `feat/api-auth-orgs`             | Not yet | None                                                                              | In progress |
-| FE     | Web shell                                                                                                                                                                                                                                               | `feat/web-shell`                 | Yes     | #13 (open)                                                                        | In progress |
-| OPS    | Containers and CI                                                                                                                                                                                                                                       | `chore/devops-containers-ci`     | Yes     | #7 (open); #24 `fix/eslint-project-service` (open); #26 `chore/commitlint` (open) | In progress |
-| QA     | QA harness                                                                                                                                                                                                                                              | `test/qa-harness`                | Yes     | #9 (open)                                                                         | In progress |
-| SEC    | Threat model                                                                                                                                                                                                                                            | `docs/security-threat-model`     | Yes     | #4 (open)                                                                         | In progress |
-| INT    | Notifications and email                                                                                                                                                                                                                                 | `feat/notifications-email`       | Yes     | #11 (open); #19 `feat/integrations-webhooks-jira` (open)                          | In progress |
-| MEDIA  | Storage and media core                                                                                                                                                                                                                                  | `feat/storage-and-media-core`    | Yes     | #10 (open); #16 `feat/realtime-scaffold` (open)                                   | In progress |
-| NATIVE | Extension scaffold                                                                                                                                                                                                                                      | `feat/extension-scaffold`        | Yes     | #5 (open); #15 `feat/extension-capture` (open, stacked on #5)                     | In progress |
-| DOC    | P1-DOC #3; P1-DOC-2 #8 (`docs/getting-started`); P1-DOC-3 #12 (`docs/database-and-devops`); P1-DOC-4 #14 (`docs/storage-testing-extension`); P1-DOC-5 #18 (`docs/contributing`); P1-DOC-6 #23 (`docs/contracts`); P1-DOC-7 (`docs/windows-local-setup`) | `docs/agent-board-and-providers` | Yes     | #3 (open)                                                                         | In progress |
+| Agent | Workstream | Branch | PRs | Status |
+| --- | --- | --- | --- | --- |
+| ARCH | Core contracts, ADRs | `feat/core-contracts` | #17 merged; #22 (ADR-004) merged | Merged into integration |
+| DB | Schema, tenancy and RLS | `feat/database-core-schema` | #6 open; #25 `feat/database-tenancy-rls` open (stacked on #6) | In review |
+| AI | AI provider registry | `feat/ai-provider-registry` | #21 open | In review |
+| BE | API auth, orgs and users | `feat/api-auth-orgs` | #27 open | In review |
+| FE | Web shell | `feat/web-shell` | #13 open | In review |
+| OPS | Containers, CI, tooling | `chore/devops-containers-ci` | #7 open; #24 `fix/eslint-project-service` open; #26 `chore/commitlint` open | In review |
+| QA | QA harness | `test/qa-harness` | #9 open; #29 `test/db-and-security-suites` open (stacked on #9) | In review |
+| SEC | Threat model | `docs/security-threat-model` | #4 merged | Merged into integration |
+| INT | Notifications, integrations | `feat/notifications-email` | #11 open; #19 `feat/integrations-webhooks-jira` open | In review |
+| MEDIA | Storage, media core, realtime | `feat/storage-and-media-core` | #10 open; #16 `feat/realtime-scaffold` open | In review |
+| NATIVE | Extension | `feat/extension-scaffold` | #5 open; #15 `feat/extension-capture` open (stacked on #5) | In review |
+| DOC | Docs | `docs/*` | #3, #8, #12, #14, #18, #23 merged; #28 `docs/windows-local-setup` open; P1-DOC-8 `docs/refresh-heads` open | In progress |
+
+Integration: `integration/phase-1` → `main` is PR #30, merged by Akash once all Phase 1 PRs land.
 
 Update the branch column when each agent pushes its branch.
 
