@@ -12,11 +12,25 @@
 
 # Database roles (PR #25 RLS): api/worker connect as meetops_app (NOSUPERUSER,
 # NOBYPASSRLS); only `migrate` uses meetops_migrator. Never the postgres superuser.
+# Passwords are NOT interpolated here: compose `secrets:` (see compose.dev.yml)
+# are mounted at /run/secrets and infra/compose/bin/with-secrets.sh builds
+# DATABASE_URL / MIGRATION_DATABASE_URL / REDIS_URL / STORAGE_SECRET_ACCESS_KEY
+# at container start (DB_ROLE=app|migrator|none). The URL values from .env are
+# overridden/blanked so host-dev credentials never reach the containers.
+x-secrets-shim: &secrets-shim ./bin/with-secrets.sh:/opt/with-secrets.sh:ro
+
 x-infra-urls: &infra-urls
-  DATABASE_URL: postgresql://meetops_app:${MEETOPS_APP_DB_PASSWORD:?set MEETOPS_APP_DB_PASSWORD}@postgres:5432/${POSTGRES_DB:?set POSTGRES_DB}
-  # Blank out the migrator credentials that env_file would otherwise inject.
+  POSTGRES_DB: ${POSTGRES_DB:?set POSTGRES_DB}
+  DB_ROLE: app
+  DATABASE_URL: ''
   MIGRATION_DATABASE_URL: ''
-  REDIS_URL: redis://:${REDIS_PASSWORD:?set REDIS_PASSWORD}@redis:6379
+  REDIS_URL: ''
+  STORAGE_SECRET_ACCESS_KEY: ''
+  # .env password inputs (used only by scripts/gen-dev-secrets.sh --from-env) are blanked.
+  POSTGRES_PASSWORD: ''
+  MEETOPS_APP_DB_PASSWORD: ''
+  MEETOPS_MIGRATOR_DB_PASSWORD: ''
+  REDIS_PASSWORD: ''
   STORAGE_ENDPOINT: http://minio:9000
   OLLAMA_BASE_URL: http://ollama:11434
   LOCAL_STT_URL: http://local-stt:8000
@@ -34,9 +48,18 @@ services:
       - path: ../../.env
         required: true
     environment:
-      MIGRATION_DATABASE_URL: &migrator-url postgresql://meetops_migrator:${MEETOPS_MIGRATOR_DB_PASSWORD:?set MEETOPS_MIGRATOR_DB_PASSWORD}@postgres:5432/${POSTGRES_DB:?set POSTGRES_DB}
-      # Seed runs as the schema owner too (RLS would hide/deny cross-tenant seed rows).
-      DATABASE_URL: *migrator-url
+      <<: *infra-urls
+      # Migrate + seed as the schema owner (RLS would hide/deny cross-tenant seed rows).
+      DB_ROLE: migrator
+    secrets: [meetops_migrator_db_password]
+    volumes: [*secrets-shim]
+    entrypoint: ['/bin/sh', '/opt/with-secrets.sh']
+    command:
+      [
+        'sh',
+        '-c',
+        'pnpm --filter @meetops/database run db:migrate:deploy && pnpm --filter @meetops/database run db:seed',
+      ]
     depends_on:
       postgres:
         condition: service_healthy
@@ -51,6 +74,10 @@ services:
       - path: ../../.env
         required: true
     environment: *infra-urls
+    secrets: [meetops_app_db_password, redis_password, minio_root_password]
+    volumes: [*secrets-shim]
+    entrypoint: ['/bin/sh', '/opt/with-secrets.sh']
+    command: ['node', 'dist/index.js']
     ports:
       - '127.0.0.1:${API_PORT:-3000}:3000'
     depends_on: &app-deps
@@ -74,13 +101,25 @@ services:
         required: true
     environment:
       <<: *infra-urls
+      # Media worker needs only Redis + storage: no Postgres credentials.
+      DB_ROLE: none
       FFMPEG_PATH: /usr/bin/ffmpeg
       FFPROBE_PATH: /usr/bin/ffprobe
       MEDIA_TMP_DIR: /tmp/work
-    depends_on: *app-deps
-    # Hardening per docs/12-security (upload-media-security §5): non-root, read-only
-    # root FS, tmpfs scratch (/tmp/work for FFmpeg), no capabilities, no privilege
-    # escalation, resource caps. Network stays on (Redis/MinIO are required).
+    secrets: [redis_password, minio_root_password]
+    volumes: [*secrets-shim]
+    entrypoint: ['/usr/bin/tini', '--', '/bin/sh', '/opt/with-secrets.sh']
+    command: ['node', 'dist/index.js']
+    depends_on:
+      redis:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+    # FFmpeg sandbox (docs/12-security, upload-media-security §5): ONLY on the
+    # internal `media-internal` network (redis + minio, no egress / no default
+    # route), non-root, read-only root FS, tmpfs temp disk, no capabilities, no
+    # privilege escalation, CPU/memory/PID caps.
+    networks: [media-internal]
     user: node
     read_only: true
     tmpfs:
@@ -107,9 +146,24 @@ services:
       - path: ../../.env
         required: true
     environment:
-      REDIS_URL: redis://:${REDIS_PASSWORD:?set REDIS_PASSWORD}@redis:6379
+      POSTGRES_DB: ${POSTGRES_DB:?set POSTGRES_DB}
+      DB_ROLE: none
+      REDIS_URL: ''
+      DATABASE_URL: ''
+      MIGRATION_DATABASE_URL: ''
+      POSTGRES_PASSWORD: ''
+      MEETOPS_APP_DB_PASSWORD: ''
+      MEETOPS_MIGRATOR_DB_PASSWORD: ''
+      REDIS_PASSWORD: ''
+      STORAGE_SECRET_ACCESS_KEY: ''
       REALTIME_HOST: 0.0.0.0
       REALTIME_PORT: 4001
+      # Explicit allowlist, required; never '*'.
+      REALTIME_CORS_ORIGINS: ${REALTIME_CORS_ORIGINS:?set REALTIME_CORS_ORIGINS in .env}
+    secrets: [redis_password]
+    volumes: [*secrets-shim]
+    entrypoint: ['/bin/sh', '/opt/with-secrets.sh']
+    command: ['node', 'dist/index.js']
     ports:
       - '127.0.0.1:${REALTIME_PORT:-4001}:4001'
     healthcheck:
