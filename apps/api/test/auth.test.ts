@@ -196,28 +196,34 @@ describe('auth', () => {
       await c.csrf();
       const res = await app.inject({ method: 'POST', url: '/auth/signup', payload: body, headers: { cookie: c.cookie, origin: ORIGIN } });
       expect(res.statusCode).toBe(403);
-      expect(res.json().error.code).toBe('FORBIDDEN');
+      expect(res.json().error.code).toBe('CSRF_INVALID');
     });
     it('403s a mutation with a mismatched token', async () => {
       const c = new Client(app);
       await c.csrf();
       const res = await c.post('/auth/signup', body, { 'x-csrf-token': 'not-the-cookie-value' });
       expect(res.statusCode).toBe(403);
-      expect(res.json().error.code).toBe('FORBIDDEN');
+      expect(res.json().error.code).toBe('CSRF_INVALID');
+      expect(res.json().error.requestId).toBeTruthy();
     });
     it('403s a mutation with a header but no cookie', async () => {
       const res = await app.inject({ method: 'POST', url: '/auth/signup', payload: body, headers: { origin: ORIGIN, 'x-csrf-token': 'abc' } });
       expect(res.statusCode).toBe(403);
+      expect(res.json().error.code).toBe('CSRF_INVALID');
     });
     it('succeeds with a matching token', async () => {
       expect((await new Client(app).post('/auth/signup', body)).statusCode).toBe(202);
     });
     it('403s a disallowed or missing Origin even with a valid token', async () => {
       const c = new Client(app);
-      expect((await c.post('/auth/signup', body, { origin: 'https://evil.example' })).statusCode).toBe(403);
+      const evil = await c.post('/auth/signup', body, { origin: 'https://evil.example' });
+      expect(evil.statusCode).toBe(403);
+      // Origin failures stay FORBIDDEN (distinct from CSRF_INVALID)
+      expect(evil.json().error.code).toBe('FORBIDDEN');
       const t = await c.csrf();
       const none = await app.inject({ method: 'POST', url: '/auth/signup', payload: body, headers: { cookie: c.cookie, 'x-csrf-token': t } });
       expect(none.statusCode).toBe(403);
+      expect(none.json().error.code).toBe('FORBIDDEN');
       const ref = await app.inject({ method: 'POST', url: '/auth/signup', payload: body, headers: { cookie: c.cookie, 'x-csrf-token': t, referer: `${ORIGIN}/signup` } });
       expect(ref.statusCode).toBe(202);
     });

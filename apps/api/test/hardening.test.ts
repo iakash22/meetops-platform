@@ -128,7 +128,7 @@ describe('CSRF HMAC binding', () => {
     b.jar.set('__Host-meetops_csrf', tokenA);
     const res = await b.post('/orgs', { name: 'X' }, { 'x-csrf-token': tokenA });
     expect(res.statusCode).toBe(403);
-    expect(res.json().error.code).toBe('FORBIDDEN');
+    expect(res.json().error.code).toBe('CSRF_INVALID');
     expect((await a.post('/orgs', { name: 'X' })).statusCode).toBe(201);
     await app.close();
   });
@@ -144,6 +144,7 @@ describe('CSRF HMAC binding', () => {
     expect(login.json().csrfToken).not.toBe(pre);
     const stale = await c.post('/orgs', { name: 'X' }, { 'x-csrf-token': pre });
     expect(stale.statusCode).toBe(403);
+    expect(stale.json().error.code).toBe('CSRF_INVALID');
     expect((await c.post('/orgs', { name: 'X' })).statusCode).toBe(201);
     await app.close();
   });
@@ -162,6 +163,7 @@ describe('CSRF HMAC binding', () => {
       headers: { cookie: c.cookie, origin: ORIGIN, 'x-csrf-token': forged }
     });
     expect(res.statusCode).toBe(403);
+    expect(res.json().error.code).toBe('CSRF_INVALID');
     await app.close();
   });
 });
