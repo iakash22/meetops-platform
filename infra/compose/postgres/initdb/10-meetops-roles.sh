@@ -3,9 +3,13 @@
 #   meetops_migrator  schema owner, used by `migrate` via MIGRATION_DATABASE_URL
 #   meetops_app       runtime role (NOSUPERUSER, NOBYPASSRLS) for api/worker DATABASE_URL
 # The #25 migration's CREATE ROLE IF NOT EXISTS then no-ops and only grants DML.
-# Passwords come from env (placeholders in .env.example); nothing is hardcoded.
+# Passwords come from compose secrets (/run/secrets/*, see infra/compose/secrets),
+# falling back to env for non-compose use; nothing is hardcoded.
 set -eu
-: "${MEETOPS_MIGRATOR_DB_PASSWORD:?}" "${MEETOPS_APP_DB_PASSWORD:?}"
+read_secret() { if [ -r "/run/secrets/$1" ]; then cat "/run/secrets/$1"; else printenv "$2" || true; fi; }
+MEETOPS_MIGRATOR_DB_PASSWORD="$(read_secret meetops_migrator_db_password MEETOPS_MIGRATOR_DB_PASSWORD)"
+MEETOPS_APP_DB_PASSWORD="$(read_secret meetops_app_db_password MEETOPS_APP_DB_PASSWORD)"
+: "${MEETOPS_MIGRATOR_DB_PASSWORD:?missing migrator password}" "${MEETOPS_APP_DB_PASSWORD:?missing app password}"
 psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" \
   -v migrator_pw="$MEETOPS_MIGRATOR_DB_PASSWORD" -v app_pw="$MEETOPS_APP_DB_PASSWORD" <<'SQL'
 SELECT format('CREATE ROLE meetops_migrator LOGIN NOSUPERUSER NOBYPASSRLS PASSWORD %L', :'migrator_pw')
