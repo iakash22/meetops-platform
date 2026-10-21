@@ -1,17 +1,35 @@
 /** Messaging contracts between popup, background service worker and offscreen document. */
+import { UUID_RE } from './upload.js';
 
 /** popup -> background */
 export type PopupToBackground =
   | { target: 'background'; type: 'GET_STATUS' }
   | { target: 'background'; type: 'ACK_CONSENT'; tabId: number }
-  | { target: 'background'; type: 'START_RECORDING'; tabId: number; streamId: string }
+  | {
+      target: 'background';
+      type: 'START_RECORDING';
+      tabId: number;
+      streamId: string;
+      /**
+       * UUID of the meeting this recording belongs to (InitRecordingSession.meetingId).
+       * TODO(meeting-api): interim, the popup mints a fresh UUID per recording because no meeting
+       * API exists yet; replace with the id of a meeting chosen/created via the API.
+       */
+      meetingId: string;
+    }
   /** Stops an active recording, or dismisses an 'error' state. */
   | { target: 'background'; type: 'STOP_RECORDING' }
   | { target: 'background'; type: 'DISMISS_WARNING' };
 
 /** background -> offscreen */
 export type BackgroundToOffscreen =
-  | { target: 'offscreen'; type: 'OFFSCREEN_START'; streamId: string; startedAt: number }
+  | {
+      target: 'offscreen';
+      type: 'OFFSCREEN_START';
+      streamId: string;
+      startedAt: number;
+      meetingId: string;
+    }
   | { target: 'offscreen'; type: 'OFFSCREEN_STOP' };
 
 /** Storage-cap events from the persistent chunk queue. */
@@ -49,6 +67,7 @@ export interface StatusPayload {
 export type BackgroundResponse = ({ ok: true } & StatusPayload) | { ok: false; error: string };
 
 const isNum = (v: unknown): v is number => typeof v === 'number' && Number.isInteger(v) && v >= 0;
+const isUuid = (v: unknown): v is string => typeof v === 'string' && UUID_RE.test(v);
 const isStr = (v: unknown): v is string => typeof v === 'string' && v.length > 0;
 
 function isStorageEvent(v: unknown): v is StorageEvent {
@@ -71,7 +90,7 @@ export function isBackgroundMessage(msg: unknown): msg is BackgroundMessage {
     case 'ACK_CONSENT':
       return isNum(m.tabId);
     case 'START_RECORDING':
-      return isNum(m.tabId) && isStr(m.streamId);
+      return isNum(m.tabId) && isStr(m.streamId) && isUuid(m.meetingId);
     case 'REC_STARTED':
     case 'REC_HEARTBEAT':
       return isStr(m.sessionId);
@@ -93,5 +112,7 @@ export function isOffscreenMessage(msg: unknown): msg is BackgroundToOffscreen {
   const m = msg as Record<string, unknown>;
   if (m.target !== 'offscreen') return false;
   if (m.type === 'OFFSCREEN_STOP') return true;
-  return m.type === 'OFFSCREEN_START' && isStr(m.streamId) && isNum(m.startedAt);
+  return (
+    m.type === 'OFFSCREEN_START' && isStr(m.streamId) && isNum(m.startedAt) && isUuid(m.meetingId)
+  );
 }

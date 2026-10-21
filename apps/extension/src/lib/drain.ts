@@ -12,7 +12,7 @@ export interface DrainResult {
 
 /**
  * Message used when a session is aborted because chunks were evicted/refused. Contract
- * AbortReason has no specific member for this, so the wire reason is 'error'.
+ * The wire reason is AbortReason 'local_storage_exhausted' (contracts v0.2 @ a9d9d89).
  */
 export const INCOMPLETE_ABORT_NOTE = 'chunks lost to local storage limit';
 
@@ -46,7 +46,7 @@ async function close(
 /**
  * Upload every not-yet-uploaded chunk in the store, in seq order per session, via presigned
  * PUTs, then complete finalized sessions. Sessions that lost chunks to the storage cap are
- * aborted (reason 'error') instead: the server requires seq 0..chunkCount-1 with no gaps.
+ * aborted (reason 'local_storage_exhausted') instead: the server requires seq 0..chunkCount-1 with no gaps.
  * Sessions with no chunks are aborted ('user_stopped'). Safe to call repeatedly. Chunks are
  * deleted only when the client is durable; otherwise they are marked uploaded and kept.
  * A failing session is skipped and retried on the next drain.
@@ -65,7 +65,7 @@ export async function drainQueue(
     try {
       if (s.incomplete) {
         // Uploading the rest is pointless: complete() would fail on the gap. Abort now.
-        await client.abort(s.sessionId, { reason: 'error' });
+        await client.abort(s.sessionId, { reason: 'local_storage_exhausted' });
         if (client.durable) await store.deleteSession(s.sessionId);
         else await close(store, client, s, INCOMPLETE_ABORT_NOTE);
         result.aborted++;

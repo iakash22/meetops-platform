@@ -17,7 +17,7 @@ const emit = (msg: OffscreenToBackground) => {
   void chrome.runtime.sendMessage(msg).catch(() => undefined);
 };
 
-async function start(streamId: string, startedAt: number) {
+async function start(streamId: string, startedAt: number, meetingId: string) {
   if (handle) throw new Error('Already recording');
   const store = await (storePromise ??= ChunkStore.open());
   const constraints = {
@@ -33,6 +33,7 @@ async function start(streamId: string, startedAt: number) {
     client,
     store,
     startedAt,
+    meetingId,
     createRecorder: (s, mimeType) => new MediaRecorder(s, { mimeType }) as unknown as RecorderLike,
     events: {
       onStarted: (sessionId) => emit({ target: 'background', type: 'REC_STARTED', sessionId }),
@@ -76,7 +77,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     sendResponse({ ok: true });
     return false;
   }
-  start(msg.streamId, msg.startedAt).then(
+  start(msg.streamId, msg.startedAt, msg.meetingId).then(
     () => sendResponse({ ok: true }),
     (err: unknown) => {
       const error = err instanceof Error ? err.message : String(err);

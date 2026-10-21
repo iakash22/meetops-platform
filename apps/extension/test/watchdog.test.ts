@@ -9,6 +9,8 @@ import {
 import { loadState } from '../src/lib/recorder-state.js';
 import { memoryKV } from '../src/lib/storage.js';
 
+const MID = '6f1c2b8e-3d4a-4e5f-9a6b-7c8d9e0f1a2b';
+
 const popup = { fromSelf: true, fromOffscreen: false, fromPopup: true };
 const offscreen = { fromSelf: true, fromOffscreen: true, fromPopup: false };
 const bg = <T extends object>(m: T) => ({ target: 'background', ...m });
@@ -33,7 +35,7 @@ function setup() {
     await handleBackgroundMessage(deps, bg({ type: 'ACK_CONSENT', tabId: 1 }), popup);
     await handleBackgroundMessage(
       deps,
-      bg({ type: 'START_RECORDING', tabId: 1, streamId: crypto.randomUUID() }),
+      bg({ type: 'START_RECORDING', meetingId: MID, tabId: 1, streamId: crypto.randomUUID() }),
       popup,
     );
     await handleBackgroundMessage(deps, bg({ type: 'REC_STARTED', sessionId: 'u1' }), offscreen);

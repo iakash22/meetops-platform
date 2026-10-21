@@ -13,6 +13,8 @@ export type RecorderState =
       tabId: number;
       /** Stream id issued for tabId; one-shot. */
       streamId: string;
+      /** InitRecordingSession.meetingId (interim popup-minted UUID; see messages.ts). */
+      meetingId?: string;
       sessionId: string;
       startedAt: number;
       chunks: number;

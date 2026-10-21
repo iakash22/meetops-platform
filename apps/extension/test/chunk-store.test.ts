@@ -3,10 +3,13 @@ import 'fake-indexeddb/auto';
 import { describe, expect, it } from 'vitest';
 import { ChunkStore, type ChunkStoreConfig } from '../src/lib/chunk-store.js';
 
+const MID = '6f1c2b8e-3d4a-4e5f-9a6b-7c8d9e0f1a2b';
+
 const meta = {
   mimeType: 'audio/webm;codecs=opus',
   startedAt: '2026-10-21T00:00:00.000Z',
   source: 'tab' as const,
+  meetingId: MID,
 };
 const buf = (n: number) => new Uint8Array(n).fill(7).buffer;
 

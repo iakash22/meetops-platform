@@ -173,6 +173,7 @@ export async function handleBackgroundMessage(
         status: 'starting',
         tabId: msg.tabId,
         streamId: msg.streamId,
+        meetingId: msg.meetingId,
         sessionId: '',
         startedAt,
         chunks: 0,
@@ -188,6 +189,7 @@ export async function handleBackgroundMessage(
           type: 'OFFSCREEN_START',
           streamId: msg.streamId,
           startedAt,
+          meetingId: msg.meetingId,
         });
       } catch (err) {
         const e = err instanceof Error ? err.message : String(err);

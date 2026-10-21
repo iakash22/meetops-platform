@@ -54,16 +54,74 @@ export class UploadUrlExpiredError extends Error {
 export const URL_EXPIRY_SKEW_MS = 10_000;
 
 /**
- * Browser fetch transport. `Content-Length` is a forbidden request header in fetch: the browser
- * sets it from the Blob body, which is exactly the signed sizeBytes, so it is not passed explicitly.
+ * Only HTTPS upload targets are allowed. Plain http is accepted for localhost / 127.0.0.1 only
+ * when allowLocalHttp is set (dev builds), so a local stub/minio can be used during development.
  */
-export const fetchTransport: StorageTransport = async (req) => {
-  const headers = Object.fromEntries(
-    Object.entries(req.headers).filter(([k]) => k.toLowerCase() !== 'content-length'),
-  );
-  const res = await fetch(req.url, { method: req.method, headers, body: req.body });
-  return { status: res.status };
-};
+export function assertSafeUploadUrl(url: string, allowLocalHttp: boolean): void {
+  let u: URL;
+  try {
+    u = new URL(url);
+  } catch {
+    throw new Error('Upload URL is not a valid URL');
+  }
+  if (u.protocol === 'https:') return;
+  const local = u.hostname === 'localhost' || u.hostname === '127.0.0.1';
+  if (u.protocol === 'http:' && local && allowLocalHttp) return;
+  throw new Error(`Refusing non-HTTPS upload URL (${u.protocol}//${u.host})`);
+}
+
+/**
+ * Browser fetch transport. `Content-Length` is a forbidden request header in fetch: the browser
+ * sets it from the Blob body, which is exactly the signed sizeBytes, so it is not passed explicitly
+ * (uploadChunk has already checked that the signed value equals the body size).
+ */
+export function createFetchTransport(opts: { allowLocalHttp: boolean }): StorageTransport {
+  return async (req) => {
+    assertSafeUploadUrl(req.url, opts.allowLocalHttp);
+    const headers = Object.fromEntries(
+      Object.entries(req.headers).filter(([k]) => k.toLowerCase() !== 'content-length'),
+    );
+    const res = await fetch(req.url, {
+      method: req.method,
+      headers,
+      body: req.body,
+      redirect: 'error',
+    });
+    return { status: res.status };
+  };
+}
+
+export const fetchTransport: StorageTransport = createFetchTransport({
+  allowLocalHttp: import.meta.env.DEV,
+});
+
+/**
+ * Validate the headers the API signed into a presigned PUT (case-insensitive): content-length must
+ * be present and equal the body size, and x-amz-checksum-sha256 must be present and match when a
+ * sha256 was sent. Anything else means the URL was not signed for this body; refuse to upload.
+ */
+export function checkSignedHeaders(
+  headers: Record<string, string> | undefined,
+  sizeBytes: number,
+  sha256: string | undefined,
+): Record<string, string> {
+  const h = headers ?? {};
+  const get = (name: string) => Object.entries(h).find(([k]) => k.toLowerCase() === name)?.[1];
+  const len = get('content-length');
+  if (len === undefined) throw new Error('Presigned upload is missing signed content-length');
+  if (len.trim() !== String(sizeBytes)) {
+    throw new Error(`Signed content-length ${len} does not match chunk size ${sizeBytes}`);
+  }
+  if (sha256 !== undefined) {
+    const sum = get('x-amz-checksum-sha256');
+    if (sum === undefined) {
+      throw new Error('Presigned upload is missing signed x-amz-checksum-sha256');
+    }
+    if (sum !== hexToBase64(sha256))
+      throw new Error('Signed x-amz-checksum-sha256 does not match chunk');
+  }
+  return h;
+}
 
 /** Convert an epoch-ms number (pre-v0.2 records) or ISO string to an ISO 8601 string. */
 export function toIsoTimestamp(v: string | number): string {
@@ -128,7 +186,7 @@ export async function uploadChunk(
     const { status } = await client.storage({
       url: u.url,
       method: 'PUT',
-      headers: u.headers ?? {},
+      headers: checkSignedHeaders(u.headers, data.size, sha256),
       body: data,
     });
     if (status === 403) throw new UploadUrlExpiredError();
@@ -182,6 +240,7 @@ export class StubUploadClient implements UploadClient {
 
   async initSession(req: InitRecordingSessionRequest) {
     if (Number.isNaN(Date.parse(req.startedAt))) throw new Error('startedAt must be ISO 8601');
+    if (!UUID_RE.test(req.meetingId)) throw new Error('meetingId must be a UUID');
     const sessionId = (this.opts.newId ?? (() => crypto.randomUUID()))();
     this.sessions.set(sessionId, { req, chunks: new Map() });
     return { sessionId };
@@ -258,7 +317,12 @@ export class StubUploadClient implements UploadClient {
     let s = this.sessions.get(id);
     if (!s) {
       s = {
-        req: { mimeType: 'audio/webm', startedAt: new Date(0).toISOString(), source: 'tab' },
+        req: {
+          mimeType: 'audio/webm',
+          startedAt: new Date(0).toISOString(),
+          source: 'tab',
+          meetingId: '00000000-0000-4000-8000-000000000000',
+        },
         chunks: new Map(),
       };
       this.sessions.set(id, s);

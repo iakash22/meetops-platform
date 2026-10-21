@@ -71,7 +71,11 @@ export function App() {
     try {
       const tabId = await activeTabId();
       const streamId = await getTabStreamId(tabId);
-      apply(await send({ target: 'background', type: 'START_RECORDING', tabId, streamId }));
+      // TODO(meeting-api): interim meetingId, a fresh UUID per recording until a meeting API exists.
+      const meetingId = crypto.randomUUID();
+      apply(
+        await send({ target: 'background', type: 'START_RECORDING', tabId, streamId, meetingId }),
+      );
     } catch (e) {
       setError(errText(e));
     } finally {

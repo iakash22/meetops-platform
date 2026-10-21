@@ -52,7 +52,8 @@ export interface InitRecordingSessionRequest {
   mimeType: MediaMimeType;
   startedAt: IsoDateTime;
   source: RecordingSource;
-  meetingId?: Id;
+  /** Required since contracts v0.2 @ a9d9d89. */
+  meetingId: Id;
 }
 export interface InitRecordingSessionResponse {
   sessionId: Id;
@@ -100,7 +101,8 @@ export interface CompleteRecordingSessionResponse {
   status: RecordingStatus;
 }
 
-export type AbortReason = 'user_stopped' | 'consent_revoked' | 'tab_closed' | 'error';
+export type AbortReason =
+  'user_stopped' | 'consent_revoked' | 'tab_closed' | 'local_storage_exhausted' | 'error';
 export interface AbortRecordingSessionRequest {
   reason: AbortReason;
 }

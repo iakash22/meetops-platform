@@ -3,6 +3,8 @@ import { handleBackgroundMessage, type BackgroundDeps } from '../src/lib/backgro
 import { loadState } from '../src/lib/recorder-state.js';
 import { memoryKV } from '../src/lib/storage.js';
 
+const MID = '6f1c2b8e-3d4a-4e5f-9a6b-7c8d9e0f1a2b';
+
 const popup = { fromSelf: true, fromOffscreen: false, fromPopup: true };
 const offscreen = { fromSelf: true, fromOffscreen: true, fromPopup: false };
 const bg = <T extends object>(m: T) => ({ target: 'background', ...m });
@@ -43,7 +45,7 @@ describe('background handler', () => {
   it('refuses to start without background-recorded consent', async () => {
     const r = await handleBackgroundMessage(
       ctx.deps,
-      bg({ type: 'START_RECORDING', tabId: 3, streamId: 's' }),
+      bg({ type: 'START_RECORDING', meetingId: MID, tabId: 3, streamId: 's' }),
       popup,
     );
     expect(r.ok).toBe(false);
@@ -54,7 +56,7 @@ describe('background handler', () => {
     await handleBackgroundMessage(ctx.deps, bg({ type: 'ACK_CONSENT', tabId: 1 }), popup);
     const r = await handleBackgroundMessage(
       ctx.deps,
-      bg({ type: 'START_RECORDING', tabId: 2, streamId: 's' }),
+      bg({ type: 'START_RECORDING', meetingId: MID, tabId: 2, streamId: 's' }),
       popup,
     );
     expect(r.ok).toBe(false);
@@ -65,7 +67,7 @@ describe('background handler', () => {
     ctx.advance(10 * 60 * 1000);
     const r = await handleBackgroundMessage(
       ctx.deps,
-      bg({ type: 'START_RECORDING', tabId: 1, streamId: 's' }),
+      bg({ type: 'START_RECORDING', meetingId: MID, tabId: 1, streamId: 's' }),
       popup,
     );
     expect(r).toEqual({ ok: false, error: 'Consent expired; acknowledge again' });
@@ -75,13 +77,14 @@ describe('background handler', () => {
     await handleBackgroundMessage(ctx.deps, bg({ type: 'ACK_CONSENT', tabId: 1 }), popup);
     const s = await handleBackgroundMessage(
       ctx.deps,
-      bg({ type: 'START_RECORDING', tabId: 1, streamId: 'sid' }),
+      bg({ type: 'START_RECORDING', meetingId: MID, tabId: 1, streamId: 'sid' }),
       popup,
     );
     expect(s).toMatchObject({ ok: true, status: 'starting', tabId: 1 });
     expect(ctx.deps.sendToOffscreen).toHaveBeenCalledWith({
       target: 'offscreen',
       type: 'OFFSCREEN_START',
+      meetingId: MID,
       streamId: 'sid',
       startedAt: 1000,
     });
@@ -110,7 +113,7 @@ describe('background handler', () => {
       (
         await handleBackgroundMessage(
           revived,
-          bg({ type: 'START_RECORDING', tabId: 1, streamId: 'x' }),
+          bg({ type: 'START_RECORDING', meetingId: MID, tabId: 1, streamId: 'x' }),
           popup,
         )
       ).ok,
@@ -140,7 +143,7 @@ describe('background handler', () => {
     await handleBackgroundMessage(ctx.deps, bg({ type: 'ACK_CONSENT', tabId: 1 }), popup);
     const r = await handleBackgroundMessage(
       ctx.deps,
-      bg({ type: 'START_RECORDING', tabId: 1, streamId: 's' }),
+      bg({ type: 'START_RECORDING', meetingId: MID, tabId: 1, streamId: 's' }),
       popup,
     );
     expect(r).toEqual({ ok: false, error: 'Permission dismissed' });
@@ -174,14 +177,18 @@ describe('security review fixes', () => {
     ctx = makeDeps();
   });
   const start = (tabId: number, streamId: string) =>
-    handleBackgroundMessage(ctx.deps, bg({ type: 'START_RECORDING', tabId, streamId }), popup);
+    handleBackgroundMessage(
+      ctx.deps,
+      bg({ type: 'START_RECORDING', meetingId: MID, tabId, streamId }),
+      popup,
+    );
 
   it('rejects commands from extension pages other than the popup', async () => {
     const otherPage = { fromSelf: true, fromOffscreen: false, fromPopup: false };
     for (const m of [
       { type: 'GET_STATUS' },
       { type: 'ACK_CONSENT', tabId: 1 },
-      { type: 'START_RECORDING', tabId: 1, streamId: 's' },
+      { type: 'START_RECORDING', meetingId: MID, tabId: 1, streamId: 's' },
       { type: 'STOP_RECORDING' },
     ]) {
       const r = await handleBackgroundMessage(ctx.deps, bg(m), otherPage);
@@ -206,8 +213,8 @@ describe('security review fixes', () => {
     const h = serialized(handleBackgroundMessage);
     await h(ctx.deps, bg({ type: 'ACK_CONSENT', tabId: 1 }), popup);
     const rs = await Promise.all([
-      h(ctx.deps, bg({ type: 'START_RECORDING', tabId: 1, streamId: 'a' }), popup),
-      h(ctx.deps, bg({ type: 'START_RECORDING', tabId: 1, streamId: 'b' }), popup),
+      h(ctx.deps, bg({ type: 'START_RECORDING', meetingId: MID, tabId: 1, streamId: 'a' }), popup),
+      h(ctx.deps, bg({ type: 'START_RECORDING', meetingId: MID, tabId: 1, streamId: 'b' }), popup),
     ]);
     expect(rs.filter((r) => r.ok)).toHaveLength(1);
     expect(ctx.deps.ensureOffscreen).toHaveBeenCalledTimes(1);
@@ -251,5 +258,28 @@ describe('security review fixes', () => {
     await handleBackgroundMessage(ctx.deps, bg({ type: 'REC_STARTED', sessionId: 'u' }), offscreen);
     await handleBackgroundMessage(ctx.deps, bg({ type: 'REC_ERROR', error: 'x' }), offscreen);
     expect(ctx.deps.setBadge).toHaveBeenLastCalledWith('!');
+  });
+});
+
+describe('meetingId (contracts v0.2 @ a9d9d89)', () => {
+  it('threads meetingId from START_RECORDING to OFFSCREEN_START and rejects non-UUIDs', async () => {
+    const { deps } = makeDeps();
+    await handleBackgroundMessage(deps, bg({ type: 'ACK_CONSENT', tabId: 1 }), popup);
+    const bad = await handleBackgroundMessage(
+      deps,
+      bg({ type: 'START_RECORDING', tabId: 1, streamId: 'x', meetingId: 'meeting-1' }),
+      popup,
+    );
+    expect(bad).toEqual({ ok: false, error: 'Unknown or malformed message' });
+    const ok = await handleBackgroundMessage(
+      deps,
+      bg({ type: 'START_RECORDING', meetingId: MID, tabId: 1, streamId: 'y' }),
+      popup,
+    );
+    expect(ok.ok).toBe(true);
+    expect(deps.sendToOffscreen).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'OFFSCREEN_START', meetingId: MID, streamId: 'y' }),
+    );
+    expect(await loadState(deps.kv)).toMatchObject({ meetingId: MID });
   });
 });

@@ -4,6 +4,9 @@ import {
   StubUploadClient,
   UUID_RE,
   UploadUrlExpiredError,
+  assertSafeUploadUrl,
+  checkSignedHeaders,
+  createFetchTransport,
   fetchTransport,
   hexToBase64,
   sha256Hex,
@@ -14,10 +17,13 @@ import {
   type UploadClient,
 } from '../src/lib/upload.js';
 
+const MID = '6f1c2b8e-3d4a-4e5f-9a6b-7c8d9e0f1a2b';
+
 const init = {
   mimeType: 'audio/webm;codecs=opus',
   startedAt: '2026-10-21T00:00:00.000Z',
   source: 'tab' as const,
+  meetingId: MID,
 };
 const ABC_SHA = 'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad';
 
@@ -168,10 +174,20 @@ describe('uploadChunk helper', () => {
     const c: UploadClient = {
       durable: true,
       initSession: vi.fn(),
-      requestChunkUrl: vi.fn(async (_s: string, r: { seq: number }) => ({
-        seq: r.seq,
-        upload: { url: 'https://x', method: 'PUT' as const, expiresAt: '2999-01-01T00:00:00Z' },
-      })),
+      requestChunkUrl: vi.fn(
+        async (_s: string, r: { seq: number; sizeBytes: number; sha256?: string }) => ({
+          seq: r.seq,
+          upload: {
+            url: 'https://x',
+            method: 'PUT' as const,
+            headers: {
+              'Content-Length': String(r.sizeBytes),
+              'x-amz-checksum-sha256': hexToBase64(r.sha256!),
+            },
+            expiresAt: '2999-01-01T00:00:00Z',
+          },
+        }),
+      ),
       storage,
       complete: vi.fn(),
       abort: vi.fn(),
@@ -200,6 +216,7 @@ describe('fetchTransport', () => {
       method: 'PUT',
       headers: { 'x-amz-checksum-sha256': 'abc=' },
       body,
+      redirect: 'error',
     });
     vi.unstubAllGlobals();
   });
@@ -215,5 +232,69 @@ describe('helpers', () => {
   it('toIsoTimestamp converts epoch ms and rejects garbage', () => {
     expect(toIsoTimestamp(0)).toBe('1970-01-01T00:00:00.000Z');
     expect(() => toIsoTimestamp('nope')).toThrow();
+  });
+});
+
+describe('upload URL and signed-header safety', () => {
+  it('rejects non-HTTPS upload URLs; allows http://localhost and 127.0.0.1 only in dev', () => {
+    expect(() => assertSafeUploadUrl('https://s3.example/x', false)).not.toThrow();
+    expect(() => assertSafeUploadUrl('http://s3.example/x', true)).toThrow(/non-HTTPS/);
+    expect(() => assertSafeUploadUrl('http://localhost:9000/x', false)).toThrow(/non-HTTPS/);
+    expect(() => assertSafeUploadUrl('http://localhost:9000/x', true)).not.toThrow();
+    expect(() => assertSafeUploadUrl('http://127.0.0.1/x', true)).not.toThrow();
+    expect(() => assertSafeUploadUrl('http://localhost.evil.com/x', true)).toThrow();
+    expect(() => assertSafeUploadUrl('ftp://localhost/x', true)).toThrow();
+    expect(() => assertSafeUploadUrl('not a url', true)).toThrow(/valid URL/);
+  });
+
+  it('createFetchTransport refuses http in production without calling fetch', async () => {
+    const fetchMock = vi.fn(async () => new Response(null, { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+    const t = createFetchTransport({ allowLocalHttp: false });
+    await expect(
+      t({ url: 'http://localhost/x', method: 'PUT', headers: {}, body: new Blob(['a']) }),
+    ).rejects.toThrow(/non-HTTPS/);
+    expect(fetchMock).not.toHaveBeenCalled();
+    vi.unstubAllGlobals();
+  });
+
+  it('checkSignedHeaders requires content-length and, with sha256, the checksum (case-insensitive)', async () => {
+    const sha = await sha256Hex(new Blob(['abc']));
+    const b64 = hexToBase64(sha);
+    expect(() => checkSignedHeaders(undefined, 3, undefined)).toThrow(/content-length/);
+    expect(() => checkSignedHeaders({ 'content-length': '4' }, 3, undefined)).toThrow(/match/);
+    expect(checkSignedHeaders({ 'CONTENT-LENGTH': '3' }, 3, undefined)).toEqual({
+      'CONTENT-LENGTH': '3',
+    });
+    expect(() => checkSignedHeaders({ 'Content-Length': '3' }, 3, sha)).toThrow(/x-amz-checksum/);
+    expect(() =>
+      checkSignedHeaders({ 'Content-Length': '3', 'X-Amz-Checksum-Sha256': 'AAAA' }, 3, sha),
+    ).toThrow(/does not match/);
+    expect(
+      checkSignedHeaders({ 'content-length': '3', 'X-AMZ-CHECKSUM-SHA256': b64 }, 3, sha),
+    ).toBeTruthy();
+  });
+
+  it('uploadChunk refuses a presigned URL that lacks the signed headers', async () => {
+    const c = new StubUploadClient();
+    const { sessionId } = await c.initSession(init);
+    const unsigned: UploadClient = Object.assign(Object.create(c) as StubUploadClient, {
+      requestChunkUrl: async (
+        sid: string,
+        r: Parameters<StubUploadClient['requestChunkUrl']>[1],
+      ) => {
+        const res = await c.requestChunkUrl(sid, r);
+        return { ...res, upload: { ...res.upload, headers: {} } };
+      },
+    });
+    await expect(uploadChunk(unsigned, sessionId, 0, new Blob(['abc']))).rejects.toThrow(
+      /content-length/,
+    );
+    expect(c.puts).toHaveLength(0);
+  });
+
+  it('stub init requires a UUID meetingId', async () => {
+    const c = new StubUploadClient();
+    await expect(c.initSession({ ...init, meetingId: 'meeting-1' })).rejects.toThrow(/meetingId/);
   });
 });

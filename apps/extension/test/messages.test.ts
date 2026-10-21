@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { isBackgroundMessage, isOffscreenMessage } from '../src/lib/messages.js';
 
+const MID = '6f1c2b8e-3d4a-4e5f-9a6b-7c8d9e0f1a2b';
+
 describe('message guards', () => {
   it('accepts valid background messages', () => {
     expect(isBackgroundMessage({ target: 'background', type: 'GET_STATUS' })).toBe(true);
@@ -9,6 +11,7 @@ describe('message guards', () => {
       isBackgroundMessage({
         target: 'background',
         type: 'START_RECORDING',
+        meetingId: MID,
         tabId: 1,
         streamId: 'x',
       }),
@@ -24,6 +27,7 @@ describe('message guards', () => {
       isBackgroundMessage({
         target: 'background',
         type: 'START_RECORDING',
+        meetingId: MID,
         tabId: 1,
         streamId: '',
       }),
@@ -39,13 +43,19 @@ describe('message guards', () => {
       isOffscreenMessage({
         target: 'offscreen',
         type: 'OFFSCREEN_START',
+        meetingId: MID,
         streamId: 's',
         startedAt: 1,
       }),
     ).toBe(true);
     expect(isOffscreenMessage({ target: 'offscreen', type: 'OFFSCREEN_STOP' })).toBe(true);
     expect(
-      isOffscreenMessage({ target: 'offscreen', type: 'OFFSCREEN_START', streamId: 's' }),
+      isOffscreenMessage({
+        target: 'offscreen',
+        type: 'OFFSCREEN_START',
+        meetingId: MID,
+        streamId: 's',
+      }),
     ).toBe(false);
     expect(isOffscreenMessage({ target: 'background', type: 'OFFSCREEN_STOP' })).toBe(false);
   });

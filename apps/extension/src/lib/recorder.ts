@@ -43,6 +43,8 @@ export async function startRecording(opts: {
   events: RecorderEvents;
   /** Epoch ms (internal clock); sent to the upload API as ISO 8601. */
   startedAt: number;
+  /** InitRecordingSession.meetingId (required by contracts v0.2). */
+  meetingId: string;
   now?: () => number;
   timeslice?: number;
   /** Defaults to contracts MAX_CHUNK_BYTES (64 MiB). */
@@ -53,6 +55,7 @@ export async function startRecording(opts: {
     mimeType: MIME_TYPE,
     startedAt: toIsoTimestamp(opts.startedAt),
     source: 'tab' as const,
+    meetingId: opts.meetingId,
   };
   const { sessionId } = await opts.client.initSession(meta);
   await opts.store.putSession({ sessionId, meta, completed: false });
