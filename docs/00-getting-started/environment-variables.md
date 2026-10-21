@@ -60,3 +60,11 @@ These variables are validated via `@meetops/config` (Zod) at runtime. Defaults s
 - `DEEPGRAM_API_KEY`
 - `AI_ALLOW_PAID_FALLBACK`: false
 - `AI_REQUIRE_PROVIDER_APPROVAL`: true
+
+### Integrations (optional; not yet in the `@meetops/config` schema)
+- `GITHUB_DEFAULT_REPO`: default `owner/repo` for created issues
+- `GITHUB_WEBHOOK_SECRET`: HMAC secret for verifying GitHub webhooks
+- `JIRA_BASE_URL`: e.g. https://your-org.atlassian.net
+- `JIRA_EMAIL`: Jira account email for API auth
+- `JIRA_API_TOKEN`: Jira API token
+- `JIRA_PROJECT_KEY`: default Jira project key
