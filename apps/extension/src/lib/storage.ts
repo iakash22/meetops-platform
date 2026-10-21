@@ -1,3 +1,4 @@
+/// <reference types="chrome" />
 /** Minimal key/value interface over chrome.storage.session (injectable for tests). */
 export interface KV {
   get<T>(key: string): Promise<T | undefined>;
