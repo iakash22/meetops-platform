@@ -51,6 +51,13 @@ refs? (≤10 opaque id pairs), locale? (BCP-47-ish, ≤35) }`. Every level rejec
 - Upload limits: `CreateUploadRequest.sizeBytes` and recording sessions are capped at 2 GB (`MAX_UPLOAD_BYTES` = `MAX_RECORDING_SESSION_BYTES` = 2,000,000,000).
   `mimeType` must be on the explicit allowlist, optionally with a `;codecs=` parameter. Patterns like `audio/*` are no longer accepted.
 
+- Recording chunks (Security B1 on #38):
+  - `ChunkUploadUrlRequest` requires `sizeBytes` (1..`MAX_CHUNK_BYTES`) and accepts an optional `sha256` (lowercase hex). The API signs
+    Content-Length and the checksum into `upload.headers`, and refuses once the running total would exceed `MAX_RECORDING_SESSION_BYTES`.
+  - `CompleteRecordingSessionRequest.chunks?: [{ seq, sha256, sizeBytes? }]` (`CompletedChunk`). The server verifies there are no seq gaps, and
+    checks each chunk's size and the total.
+  - `MAX_RECORDING_CHUNKS` is lowered from 100,000 to 10,000, with a new alias `MAX_CHUNKS`. `seq` must be at most `MAX_CHUNKS - 1`.
+
 ### Deprecated
 
 - `PresignedUrl` and `StorageObjectMetadata` are no longer exported from the main entry point. Import them from
