@@ -4,13 +4,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
 import pg from 'pg';
 import { isDockerAvailable } from '../support/env.js';
-import {
-  canSeed,
-  dbPackageDir,
-  hasMigrations,
-  migrationFiles,
-  readSql,
-} from '../support/db-package.js';
+import { applyMigrations, canSeed, dbPackageDir, hasMigrations } from '../support/db-package.js';
 import { createRng } from '../factories/rng.js';
 
 const docker = isDockerAvailable();
@@ -33,7 +27,7 @@ function vec(seed: number): string {
 }
 
 describe.skipIf(!docker || !schema)(
-  'integration: database schema (pgvector, PR #6 migrations)',
+  'integration: database schema (pgvector, Prisma migrations)',
   () => {
     let container: StartedPostgreSqlContainer;
     let db: pg.Client;
@@ -52,7 +46,7 @@ describe.skipIf(!docker || !schema)(
     });
 
     it('applies every migration', async () => {
-      for (const file of migrationFiles()) await db.query(readSql(file));
+      await applyMigrations(container.getConnectionUri(), db);
       const { rows } = await db.query<{ extname: string }>(
         "SELECT extname FROM pg_extension WHERE extname = 'vector'",
       );
@@ -192,15 +186,6 @@ describe.skipIf(!docker || !schema)(
       });
     });
 
-    // TODO(QA/DB): RLS tests wait on DB's feat/database-tenancy-rls branch.
-    // As of 2026-10-21 that branch does not exist on origin (git ls-remote). Cases from
-    // docs/12-security/test-cases.md: XT-26..XT-29. Need a non-owner role (meetops_app) and
-    // the app.current_org_id setting.
-    describe.skip('RLS (waits on feat/database-tenancy-rls)', () => {
-      it('[XT-26] as meetops_app without app.current_org_id, SELECT returns 0 rows', () => {});
-      it('[XT-27] context A, INSERT with org_id = B fails WITH CHECK', () => {});
-      it('[XT-28] new txn on a reused connection without context returns 0 rows', () => {});
-      it('[XT-29] every table with org_id has RLS enabled + forced + a policy', () => {});
-    });
+    // RLS (XT-26..XT-29) lives in integration/rls.test.ts.
   },
 );
