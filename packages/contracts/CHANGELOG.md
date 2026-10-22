@@ -27,7 +27,7 @@ createdAt, user: UserSummary }` and `ListMembersResponse` (cursor page) for `GET
   `MAX_CHUNK_BYTES`, `MAX_CHUNKS` / `MAX_RECORDING_CHUNKS`, `MAX_RECORDING_SESSION_BYTES`, `MAX_MEDIA_BYTES`,
   `CHUNK_UPLOAD_URL_TTL_SECONDS`, and the new `MAX_DURATION_MS` (24 h, the `durationMs` cap of
   `CompleteRecordingSessionRequest`). The main entry still exports them with the same values. `apps/extension` can drop
-  its local `MAX_DURATION_MS`.
+  its local `MAX_DURATION_MS` and the four mirrors in `src/lib/contract-limits.ts` (PR #60).
 - Pairing handoff (ADR-005 A1): `PairingCodeMessage { type: 'MEETOPS_PAIRING_CODE', pairingCode, nonce }` (strict, no
   tokens), plus `PAIRING_CODE_MESSAGE_TYPE` in `constants.ts`. `ExtensionPairingCode` (32–128 base64url) is now exported.
 

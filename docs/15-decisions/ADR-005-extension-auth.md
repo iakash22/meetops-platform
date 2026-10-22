@@ -142,7 +142,11 @@ An unparseable URL returns `VALIDATION_FAILED`.
 - **Native (`apps/extension`):** a user-gesture pairing UI; nonce and deviceId generation; `chrome.storage.session` only, left
   at TRUSTED_CONTEXTS; an `onMessageExternal` handler with an exact `sender.origin` check, schema validation and the nonce
   check; nonce echo verification; refresh before expiry; a production-only `externally_connectable` origin; dev
-  origins gated to dev builds; redaction; import from `@meetops/contracts/types` only.
+  origins gated to dev builds; redaction. Imports: the background service worker MAY import the main
+  `@meetops/contracts` entry for runtime schema validation (for example `PairingCodeMessage` in the `onMessageExternal`
+  handler, and token responses). UI bundles (popup, options, offscreen documents, content scripts) MUST import only
+  `@meetops/contracts/types`, which has no TypeBox. Upload limits (`CHUNK_UPLOAD_URL_TTL_SECONDS`, `MAX_CHUNK_BYTES`,
+  `MAX_RECORDING_CHUNKS`, `MAX_CHUNKS`, `MAX_DURATION_MS`) come from `/types`, not from local mirrors.
 - **Web (`apps/web`):** the pairing page showing an org and device confirmation; the pair call with CSRF; the
   `sendMessage` handoff; a device list with revoke in account settings.
 - **DevOps:** rate-limit config (A1.4); production versus dev manifest build gating; log pipeline and Sentry scrubbing

@@ -47,6 +47,10 @@ describe('@meetops/contracts/types (light entry)', () => {
     expect(T.MAX_CHUNKS).toBe(10_000);
     expect(T.MAX_CHUNK_BYTES).toBe(64 * 1024 * 1024);
     expect(T.MAX_DURATION_MS).toBe(86_400_000);
+    // The four upload limits mirrored in apps/extension/src/lib/contract-limits.ts (PR #60).
+    expect(T.CHUNK_UPLOAD_URL_TTL_SECONDS).toBe(300);
+    expect(T.MAX_RECORDING_CHUNKS).toBe(10_000);
+    expect(T.MAX_CHUNKS).toBe(T.MAX_RECORDING_CHUNKS);
     expect(T.PAIRING_CODE_MESSAGE_TYPE).toBe('MEETOPS_PAIRING_CODE');
     for (const v of Object.values(T)) expect(typeof v === 'object' && v !== null && 'type' in v && '[Kind]' in v).toBe(false);
   });
