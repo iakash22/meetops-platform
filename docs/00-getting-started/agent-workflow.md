@@ -82,34 +82,50 @@ Retarget **before** the lower branch is deleted; GitHub closes PRs whose base br
 
 ## 7. Merge order
 
-As of 2026-10-21 23:02 IST, from `gh pr list`.
+As of 2026-10-22 12:50 IST, from `gh pr list --state all`.
 
 ### Already merged into `integration/phase-1`
 
-#3, #8, #12, #14, #18 and #23 (the docs stack), plus #4 (SEC threat model), #22 (ADR-004) and #17 (contracts). Merged between 23:00 and 23:02 IST.
+- 2026-10-21 23:00–23:02 IST: #3, #8, #12, #14, #18, #23 (the docs stack), #4 (SEC), #22 (ADR-004), #17 (contracts v0.1)
+- 23:30 IST: #24 (lint)
+- 23:42 IST: #13 (web shell)
+- 23:55 IST: #38 (contracts v0.2.0)
+- 2026-10-22 00:07 IST: #27 (API auth)
+- 00:27 IST: #52 (extension)
+
+Closed without merging: #5, #15 and #37 (superseded by #52), and #46 (replaced by #51).
 
 ### Open
 
-| PR      | Owner               | Branch                            | Base                        | Dependency                                                                   |
-| ------- | ------------------- | --------------------------------- | --------------------------- | ---------------------------------------------------------------------------- |
-| #5      | NATIVE              | `feat/extension-scaffold`         | `integration/phase-1`       | None                                                                         |
-| #6      | DB                  | `feat/database-core-schema`       | `integration/phase-1`       | None                                                                         |
-| #7      | OPS                 | `chore/devops-containers-ci`      | `integration/phase-1`       | None                                                                         |
-| #9      | QA                  | `test/qa-harness`                 | `integration/phase-1`       | None                                                                         |
-| #10     | MEDIA               | `feat/storage-and-media-core`     | `integration/phase-1`       | None                                                                         |
-| #11     | INT                 | `feat/notifications-email`        | `integration/phase-1`       | None                                                                         |
-| #13     | FE                  | `feat/web-shell`                  | `integration/phase-1`       | None                                                                         |
-| #15     | NATIVE              | `feat/extension-capture`          | `feat/extension-scaffold`   | Stacked on #5                                                                |
-| #16     | MEDIA               | `feat/realtime-scaffold`          | `integration/phase-1`       | None                                                                         |
-| #19     | INT                 | `feat/integrations-webhooks-jira` | `integration/phase-1`       | None                                                                         |
-| #21     | AI                  | `feat/ai-provider-registry`       | `integration/phase-1`       | None                                                                         |
-| #24     | OPS                 | `fix/eslint-project-service`      | `integration/phase-1`       | None                                                                         |
-| #25     | DB                  | `feat/database-tenancy-rls`       | `feat/database-core-schema` | Stacked on #6                                                                |
-| #26     | OPS                 | `chore/commitlint`                | `integration/phase-1`       | None                                                                         |
-| #27     | BE                  | `feat/api-auth-orgs`              | `integration/phase-1`       | Mirrors #17 contracts (merged into integration); follow-ups on #25 and #11   |
-| #28     | DOC                 | `docs/windows-local-setup`        | `docs/contracts`            | Stacked on `docs/contracts` (#23, merged): retarget to `integration/phase-1` |
-| #29     | QA                  | `test/db-and-security-suites`     | `test/qa-harness`           | Stacked on #9                                                                |
-| #30     | Akash (integration) | `integration/phase-1`             | `main`                      | Merge last, after all Phase 1 PRs                                            |
-| this PR | DOC                 | `docs/refresh-heads`              | `docs/windows-local-setup`  | Stacked on #28                                                               |
+| PR      | Owner               | Branch                            | Base                              | Dependency                              |
+| ------- | ------------------- | --------------------------------- | --------------------------------- | --------------------------------------- |
+| #6      | DB                  | `feat/database-core-schema`       | `integration/phase-1`             | None                                    |
+| #7      | OPS                 | `chore/devops-containers-ci`      | `integration/phase-1`             | Conflicts with #32 on `.env.example`    |
+| #9      | QA                  | `test/qa-harness`                 | `integration/phase-1`             | None                                    |
+| #10     | MEDIA               | `feat/storage-and-media-core`     | `integration/phase-1`             | None                                    |
+| #11     | INT                 | `feat/notifications-email`        | `integration/phase-1`             | None                                    |
+| #16     | MEDIA               | `feat/realtime-scaffold`          | `integration/phase-1`             | None                                    |
+| #19     | INT                 | `feat/integrations-webhooks-jira` | `integration/phase-1`             | None                                    |
+| #21     | AI                  | `feat/ai-provider-registry`       | `integration/phase-1`             | None                                    |
+| #25     | DB                  | `feat/database-tenancy-rls`       | `feat/database-core-schema`       | Stacked on #6                           |
+| #26     | OPS                 | `chore/commitlint`                | `integration/phase-1`             | None                                    |
+| #28     | DOC                 | `docs/windows-local-setup`        | `integration/phase-1`             | None                                    |
+| #29     | QA                  | `test/db-and-security-suites`     | `test/qa-harness`                 | Stacked on #9                           |
+| #31     | DOC                 | `docs/refresh-heads`              | `docs/windows-local-setup`        | Stacked on #28                          |
+| #32     | OPS                 | `chore/windows-node24-setup`      | `integration/phase-1`             | Conflicts with #7 on `.env.example`     |
+| #33     | OPS                 | `chore/audit-cleanup`             | `integration/phase-1`             | None                                    |
+| #34     | QA/OPS              | `ci/qa-jobs`                      | `integration/phase-1`             | None                                    |
+| #35     | DB                  | `feat/database-live-verification` | `integration/phase-1`             | None                                    |
+| #36     | INT                 | `feat/integrations-resilience`    | `feat/integrations-webhooks-jira` | Stacked on #19                          |
+| #39     | MEDIA               | `feat/media-pipeline-worker`      | `integration/phase-1`             | None                                    |
+| #40     | OPS                 | `chore/fast-pre-commit`           | `integration/phase-1`             | None                                    |
+| #47     | AI                  | `feat/ai-transcription-summaries` | `feat/ai-provider-registry`       | Stacked on #21                          |
+| #48     | FE                  | `feat/web-auth-meetings`          | `integration/phase-1`             | None                                    |
+| #49     | OPS                 | `chore/compose-hardening`         | `chore/devops-containers-ci`      | Stacked on #7                           |
+| #50     | ARCH                | `feat/contracts-v0.3`             | `integration/phase-1`             | Contracts v0.3.0, on top of merged v0.2 |
+| #51     | QA                  | `test/xt-au-suites-v2`            | `test/db-and-security-suites`     | Stacked on #29                          |
+| #53     | BE                  | `feat/api-persistence`            | `integration/phase-1`             | None                                    |
+| this PR | DOC                 | `docs/merged-phase1`              | `docs/refresh-heads`              | Stacked on #31                          |
+| #30     | Akash (integration) | `integration/phase-1`             | `main`                            | Merge last, after all Phase 1 PRs       |
 
 Merge stacked PRs bottom-up. "Dependency" lists only stacked bases or explicit references in the PR; logical dependencies are in the [dependency graph](../17-agents/dependency-graph.md). Many PRs touch `pnpm-lock.yaml`; resolve conflicts with the pinned pnpm, without reformatting (CI fails on lockfile drift once #7 lands).
