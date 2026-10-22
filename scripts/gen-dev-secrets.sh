@@ -33,6 +33,24 @@ for name in postgres_password meetops_app_db_password meetops_migrator_db_passwo
   od -An -tx1 -N24 /dev/urandom | tr -d ' \n' > "$f"
   echo "wrote  $f"
 done
+# Optional app secrets. csrf_secret is random; the SMTP password and provider
+# API keys default to EMPTY files (feature off) and are filled from .env only
+# with --from-env. Existing non-empty files are kept unless --force/--from-env.
+if [ ! -s "$dir/csrf_secret.txt" ] || [ "$force" = "--force" ]; then
+  od -An -tx1 -N48 /dev/urandom | tr -d ' \n' > "$dir/csrf_secret.txt"
+  echo "wrote  $dir/csrf_secret.txt"
+fi
+for pair in smtp_password:SMTP_PASSWORD gemini_api_key:GEMINI_API_KEY \
+  assemblyai_api_key:ASSEMBLYAI_API_KEY openai_api_key:OPENAI_API_KEY deepgram_api_key:DEEPGRAM_API_KEY; do
+  f="$dir/${pair%%:*}.txt"
+  if [ "$force" = "--from-env" ]; then
+    from_env "${pair#*:}" | tr -d '\n' > "$f"; echo "wrote  $f (from .env ${pair#*:})"
+  elif [ ! -s "$f" ] || [ "$force" = "--force" ]; then
+    : > "$f"; echo "wrote  $f (empty)"
+  else
+    echo "keep   $f"
+  fi
+done
 # Redis ACL file (aclfile), derived from redis_password so the password never
 # appears on the redis-server command line. Always regenerated.
 printf 'user default on #%s ~* &* +@all\n' "$(printf '%s' "$(cat "$dir/redis_password.txt")" | sha256sum | cut -d' ' -f1)" > "$dir/redis_acl.txt"

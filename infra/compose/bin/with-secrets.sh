@@ -5,7 +5,7 @@
 # config loader does not read *_FILE yet (Backend dependency), so we export here.
 set -eu
 s=/run/secrets
-db="${POSTGRES_DB:?}"
+db="${MEETOPS_DB_NAME:?}"
 if [ -r "$s/redis_password" ]; then
   export REDIS_URL="redis://:$(cat "$s/redis_password")@redis:6379"
 fi
@@ -13,6 +13,13 @@ fi
 if [ -r "$s/minio_app_password" ]; then
   export STORAGE_SECRET_ACCESS_KEY="$(cat "$s/minio_app_password")"
 fi
+# Optional app secrets: exported only when the secret file is mounted and non-empty.
+for pair in csrf_secret:CSRF_SECRET smtp_password:SMTP_PASSWORD \
+  gemini_api_key:GEMINI_API_KEY assemblyai_api_key:ASSEMBLYAI_API_KEY \
+  openai_api_key:OPENAI_API_KEY deepgram_api_key:DEEPGRAM_API_KEY; do
+  f="$s/${pair%%:*}"
+  if [ -s "$f" ]; then export "${pair#*:}=$(cat "$f")"; fi
+done
 case "${DB_ROLE:-app}" in
   app)
     if [ -r "$s/meetops_app_db_password" ]; then

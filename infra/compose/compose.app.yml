@@ -12,30 +12,62 @@
 
 # Database roles (PR #25 RLS): api/worker connect as meetops_app (NOSUPERUSER,
 # NOBYPASSRLS); only `migrate` uses meetops_migrator. Never the postgres superuser.
-# Passwords are NOT interpolated here: compose `secrets:` (see compose.dev.yml)
-# are mounted at /run/secrets and infra/compose/bin/with-secrets.sh builds
-# DATABASE_URL / MIGRATION_DATABASE_URL / REDIS_URL / STORAGE_SECRET_ACCESS_KEY
-# at container start (DB_ROLE=app|migrator|none). The URL values from .env are
-# overridden/blanked so host-dev credentials never reach the containers.
+# App services do NOT load ../../.env into the container: each gets an explicit
+# list of non-secret settings below (interpolated by `docker compose --env-file .env`).
+# Every password / secret / API key is a compose `secret:` file under
+# /run/secrets; infra/compose/bin/with-secrets.sh turns them into DATABASE_URL /
+# MIGRATION_DATABASE_URL / REDIS_URL / STORAGE_SECRET_ACCESS_KEY / CSRF_SECRET /
+# SMTP_PASSWORD / *_API_KEY at container start (DB_ROLE=app|migrator|none).
+# No POSTGRES_* variable and no MinIO root credential reaches an app container.
 x-secrets-shim: &secrets-shim ./bin/with-secrets.sh:/opt/with-secrets.sh:ro
 
-x-infra-urls: &infra-urls
-  POSTGRES_DB: ${POSTGRES_DB:?set POSTGRES_DB}
+x-base-env: &base-env
+  NODE_ENV: ${NODE_ENV:-development}
+  MEETOPS_DB_NAME: ${POSTGRES_DB:?set POSTGRES_DB}
   DB_ROLE: app
-  DATABASE_URL: ''
-  MIGRATION_DATABASE_URL: ''
-  REDIS_URL: ''
-  STORAGE_SECRET_ACCESS_KEY: ''
+
+x-storage-env: &storage-env
+  STORAGE_PROVIDER: ${STORAGE_PROVIDER:-minio}
+  STORAGE_ENDPOINT: http://minio:9000
+  STORAGE_REGION: ${STORAGE_REGION:-us-east-1}
+  STORAGE_BUCKET: ${STORAGE_BUCKET:-meetops-dev}
   # Scoped MinIO user created by minio-init (bucket-only policy), never root.
   STORAGE_ACCESS_KEY_ID: ${STORAGE_APP_ACCESS_KEY_ID:-meetops-app}
-  # .env password inputs (used only by scripts/gen-dev-secrets.sh --from-env) are blanked.
-  POSTGRES_PASSWORD: ''
-  MEETOPS_APP_DB_PASSWORD: ''
-  MEETOPS_MIGRATOR_DB_PASSWORD: ''
-  REDIS_PASSWORD: ''
-  STORAGE_ENDPOINT: http://minio:9000
+  STORAGE_FORCE_PATH_STYLE: ${STORAGE_FORCE_PATH_STYLE:-}
+  STORAGE_UPLOAD_TTL_SECONDS: ${STORAGE_UPLOAD_TTL_SECONDS:-300}
+  STORAGE_DOWNLOAD_TTL_SECONDS: ${STORAGE_DOWNLOAD_TTL_SECONDS:-300}
+  STORAGE_MAX_OBJECT_BYTES: ${STORAGE_MAX_OBJECT_BYTES:-}
+  STORAGE_MAX_PART_BYTES: ${STORAGE_MAX_PART_BYTES:-}
+  STORAGE_MAX_PARTS: ${STORAGE_MAX_PARTS:-}
+  STORAGE_ALLOWED_MIME_TYPES: ${STORAGE_ALLOWED_MIME_TYPES:-}
+
+x-api-env: &api-env
+  <<: [*base-env, *storage-env]
+  PORT: 3000
+  HOST: 0.0.0.0
+  WEB_ORIGINS: ${WEB_ORIGINS:-http://localhost:5173,http://localhost:3000}
+  TRUST_PROXY: ${TRUST_PROXY:-}
+  EMAIL_PROVIDER: ${EMAIL_PROVIDER:-smtp}
+  SMTP_HOST: ${SMTP_HOST:-smtp.gmail.com}
+  SMTP_PORT: ${SMTP_PORT:-465}
+  SMTP_SECURE: ${SMTP_SECURE:-true}
+  SMTP_USER: ${SMTP_USER:-}
+  EMAIL_FROM: ${EMAIL_FROM:-noreply@example.com}
+  AI_LLM_PROVIDER: ${AI_LLM_PROVIDER:-gemini}
+  GEMINI_MODEL: ${GEMINI_MODEL:-gemini-2.5-flash-lite}
+  AI_STT_PROVIDER: ${AI_STT_PROVIDER:-assemblyai}
+  OLLAMA_ENABLED: ${OLLAMA_ENABLED:-false}
   OLLAMA_BASE_URL: http://ollama:11434
+  OLLAMA_MODEL: ${OLLAMA_MODEL:-llama3.2}
+  LOCAL_STT_ENABLED: ${LOCAL_STT_ENABLED:-false}
   LOCAL_STT_URL: http://local-stt:8000
+  LOCAL_STT_MODEL: ${LOCAL_STT_MODEL:-Systran/faster-whisper-small}
+  OPENAI_ENABLED: ${OPENAI_ENABLED:-false}
+  OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.openai.com/v1}
+  OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o-mini}
+  DEEPGRAM_ENABLED: ${DEEPGRAM_ENABLED:-false}
+  AI_ALLOW_PAID_FALLBACK: ${AI_ALLOW_PAID_FALLBACK:-false}
+  AI_REQUIRE_PROVIDER_APPROVAL: ${AI_REQUIRE_PROVIDER_APPROVAL:-true}
 
 services:
   # One-shot: prisma migrate deploy + seed (@meetops/database db:migrate:deploy, db:seed).
@@ -46,11 +78,8 @@ services:
       target: migrate
     image: meetops/migrate:local
     restart: 'no'
-    env_file:
-      - path: ../../.env
-        required: true
     environment:
-      <<: *infra-urls
+      <<: *base-env
       # Migrate + seed as the schema owner (RLS would hide/deny cross-tenant seed rows).
       DB_ROLE: migrator
     secrets: [meetops_migrator_db_password]
@@ -72,11 +101,19 @@ services:
       dockerfile: infra/docker/Dockerfile.api
     image: meetops/api:local
     restart: unless-stopped
-    env_file:
-      - path: ../../.env
-        required: true
-    environment: *infra-urls
-    secrets: [meetops_app_db_password, redis_password, minio_app_password]
+    environment: *api-env
+    secrets:
+      [
+        meetops_app_db_password,
+        redis_password,
+        minio_app_password,
+        csrf_secret,
+        smtp_password,
+        gemini_api_key,
+        assemblyai_api_key,
+        openai_api_key,
+        deepgram_api_key,
+      ]
     volumes: [*secrets-shim]
     entrypoint: ['/bin/sh', '/opt/with-secrets.sh']
     command: ['node', 'dist/index.js']
@@ -98,11 +135,8 @@ services:
       dockerfile: infra/docker/Dockerfile.worker
     image: meetops/worker:local
     restart: unless-stopped
-    env_file:
-      - path: ../../.env
-        required: true
     environment:
-      <<: *infra-urls
+      <<: [*base-env, *storage-env]
       # Media worker needs only Redis + storage: no Postgres credentials.
       DB_ROLE: none
       FFMPEG_PATH: /usr/bin/ffmpeg
@@ -148,20 +182,10 @@ services:
       dockerfile: infra/docker/Dockerfile.realtime
     image: meetops/realtime:local
     restart: unless-stopped
-    env_file:
-      - path: ../../.env
-        required: true
     environment:
-      POSTGRES_DB: ${POSTGRES_DB:?set POSTGRES_DB}
+      NODE_ENV: ${NODE_ENV:-development}
+      MEETOPS_DB_NAME: ${POSTGRES_DB:?set POSTGRES_DB}
       DB_ROLE: none
-      REDIS_URL: ''
-      DATABASE_URL: ''
-      MIGRATION_DATABASE_URL: ''
-      POSTGRES_PASSWORD: ''
-      MEETOPS_APP_DB_PASSWORD: ''
-      MEETOPS_MIGRATOR_DB_PASSWORD: ''
-      REDIS_PASSWORD: ''
-      STORAGE_SECRET_ACCESS_KEY: ''
       REALTIME_HOST: 0.0.0.0
       REALTIME_PORT: 4001
       # Explicit allowlist, required; never '*'.

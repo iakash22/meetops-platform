@@ -13,6 +13,11 @@ Compose mounts them read-only at `/run/secrets/<name>`:
 | `minio_root_password.txt`          | MinIO (`MINIO_ROOT_PASSWORD_FILE`), minio-init only                      |
 | `minio_app_password.txt`           | minio-init (creates scoped user), api/worker `STORAGE_SECRET_ACCESS_KEY` |
 
+Optional app secrets: `csrf_secret.txt` (random), `smtp_password.txt`, `gemini_api_key.txt`,
+`assemblyai_api_key.txt`, `openai_api_key.txt`, `deepgram_api_key.txt` (empty by default; filled
+with `--from-env`). Mounted into `api` only; empty files are not exported.
+
+App services do not load `.env`; they get an explicit non-secret `environment:` list.
 Apps get their URLs from `infra/compose/bin/with-secrets.sh`, which builds
 `DATABASE_URL` / `MIGRATION_DATABASE_URL` / `REDIS_URL` / `STORAGE_SECRET_ACCESS_KEY`
 from these files at container start, so passwords never pass through compose
