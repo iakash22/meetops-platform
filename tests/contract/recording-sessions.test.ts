@@ -12,7 +12,11 @@ const c = contracts as unknown as Record<string, unknown>;
 const has = ['ChunkUploadUrlRequest', 'InitRecordingSessionRequest', 'SignedPutUpload'].every(
   (k) => k in c,
 );
-const S = c as Record<string, Parameters<typeof Value.Check>[0]> & {
+type Schema = Parameters<typeof Value.Check>[0];
+const S = c as unknown as {
+  InitRecordingSessionRequest: Schema;
+  ChunkUploadUrlRequest: Schema;
+  SignedPutUpload: Schema;
   MAX_CHUNK_BYTES: number;
   MAX_CHUNKS: number;
 };
