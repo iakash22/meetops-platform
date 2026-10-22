@@ -81,7 +81,7 @@ export async function extractMeeting(
     const prompt = buildTranscriptPrompt(`${MAP_TASK} (part ${i + 1} of ${windows.length})`, w, { title: o.title });
     const r = await generateStructuredWithRepair(
       llm,
-      { model: o.model, system: SYSTEM_PROMPT, prompt, schema: mapOutputSchema, schemaName: 'meeting_map', temperature: 0, signal: o.signal },
+      { model: o.model, system: SYSTEM_PROMPT, prompt, schema: mapOutputSchema, schemaName: 'meeting_map', step: 'map', temperature: 0, signal: o.signal },
       o.maxRepairs ?? 1,
     );
     add(r.usage, r.repairs + 1);
@@ -96,7 +96,7 @@ export async function extractMeeting(
     const prompt = buildTranscriptPrompt('Combine these partial meeting summaries (derived from untrusted transcript) into one summary and key points.', partials);
     const r = await generateStructuredWithRepair(
       llm,
-      { model: o.model, system: SYSTEM_PROMPT, prompt, schema: reduceOutputSchema, schemaName: 'meeting_reduce', temperature: 0, signal: o.signal },
+      { model: o.model, system: SYSTEM_PROMPT, prompt, schema: reduceOutputSchema, schemaName: 'meeting_reduce', step: 'reduce', temperature: 0, signal: o.signal },
       o.maxRepairs ?? 1,
     );
     add(r.usage, r.repairs + 1);

@@ -65,7 +65,7 @@ export class GeminiProvider implements LLMProvider {
       ...(p.system !== undefined ? { systemInstruction: { parts: [{ text: p.system }] } } : {}),
       generationConfig: {
         ...(p.temperature !== undefined ? { temperature: p.temperature } : {}),
-        maxOutputTokens: capOutputTokens(p.maxTokens, this.http.outputLimits),
+        maxOutputTokens: capOutputTokens(p.maxTokens, this.http.outputLimits, p.step),
         ...(p.stopSequences ? { stopSequences: p.stopSequences } : {}),
         ...extra,
       },
