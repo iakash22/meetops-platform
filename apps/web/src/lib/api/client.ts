@@ -15,6 +15,7 @@ import type {
   Project,
   SignupRequest,
   Task,
+  Role,
 } from '@meetops/contracts';
 
 /** Contracts ApiErrorEnvelope codes plus 'UNKNOWN' when the body is unparseable. */
@@ -140,6 +141,14 @@ export function readCsrfCookie(
 
 export type HttpMethod = 'GET' | 'HEAD' | 'OPTIONS' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
 
+/**
+ * POST /orgs body/response. TODO(contracts): not in @meetops/contracts yet; mirrors
+ * apps/api organizations/http/schemas.ts (CreateOrganizationBody, OrganizationWithRole).
+ * Replace with CreateOrganizationRequest/CreateOrganizationResponse once published.
+ */
+export type CreateOrganizationRequest = { name: string };
+export type CreateOrganizationResponse = { organization: Organization; role: Role };
+
 export type TaskDueFilter = 'overdue' | 'today' | 'week';
 export type TaskListFilters = { status?: Task['status']; assigneeId?: string; due?: TaskDueFilter };
 
@@ -152,7 +161,11 @@ export type ApiClient = {
     /** GET /auth/session; 401 when signed out. */
     session: () => Promise<GetAuthSessionResponse>;
   };
-  organizations: { list: () => Promise<Organization[]> };
+  organizations: {
+    list: () => Promise<Organization[]>;
+    /** POST /orgs. The server rotates the session into the new org and issues a new CSRF token. */
+    create: (body: CreateOrganizationRequest) => Promise<CreateOrganizationResponse>;
+  };
   meetings: {
     list: (organizationId: Id) => Promise<Paginated<Meeting>>;
     get: (organizationId: Id, meetingId: Id) => Promise<Meeting>;
@@ -283,7 +296,15 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
       },
       session: () => request('GET', '/auth/session'),
     },
-    organizations: { list: () => request('GET', '/orgs') },
+    organizations: {
+      list: () => request('GET', '/orgs'),
+      create: async (body) => {
+        const res = await request<CreateOrganizationResponse>('POST', '/orgs', body);
+        // Session rotated server-side: drop the old CSRF token so the next write refetches it.
+        cachedCsrf = null;
+        return res;
+      },
+    },
     meetings: {
       list: (id) => request('GET', `${org(id)}/meetings`),
       get: (id, meetingId) =>

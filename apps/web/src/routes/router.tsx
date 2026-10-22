@@ -26,6 +26,7 @@ import type { ApiClient } from '@/lib/api/client';
 import { queryKeys } from '@/lib/api/queries';
 import { safeRedirect } from '@/lib/safe-redirect';
 import { DashboardPage, ProjectsPage, SettingsPage } from '@/pages/app-pages';
+import { CreateOrganizationPage } from '@/features/organizations/create-organization';
 
 export type RouterContext = { queryClient: QueryClient; api: ApiClient };
 
@@ -204,6 +205,12 @@ const settingsRoute = createRoute({
   component: SettingsPage,
 });
 
+const createOrganizationRoute = createRoute({
+  getParentRoute: () => appLayout,
+  path: '/organizations/new',
+  component: CreateOrganizationPage,
+});
+
 export const routeTree = rootRoute.addChildren([
   authLayout.addChildren([loginRoute, signupRoute, forgotPasswordRoute]),
   appLayout.addChildren([
@@ -213,6 +220,7 @@ export const routeTree = rootRoute.addChildren([
     tasksRoute,
     projectsRoute,
     settingsRoute,
+    createOrganizationRoute,
   ]),
 ]);
 

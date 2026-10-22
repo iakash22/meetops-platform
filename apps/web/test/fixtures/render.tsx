@@ -11,6 +11,7 @@ import {
   orgs,
   projects,
   session,
+  newOrg,
   sessionResponse,
   tasks,
   uploadResponse,
@@ -31,7 +32,11 @@ export function createMockApi(
       session: vi.fn().mockResolvedValue(sessionResponse),
       ...overrides.auth,
     },
-    organizations: { list: vi.fn().mockResolvedValue(orgs), ...overrides.organizations },
+    organizations: {
+      list: vi.fn().mockResolvedValue(orgs),
+      create: vi.fn().mockResolvedValue({ organization: newOrg, role: 'owner' }),
+      ...overrides.organizations,
+    },
     meetings: {
       list: vi.fn().mockResolvedValue(meetings),
       get: vi.fn().mockResolvedValue(meeting1),

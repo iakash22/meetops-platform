@@ -1,5 +1,6 @@
 import { useQueryClient } from '@tanstack/react-query';
-import { Building2 } from 'lucide-react';
+import { Link } from '@tanstack/react-router';
+import { Building2, Plus } from 'lucide-react';
 import {
   Select,
   SelectContent,
@@ -42,6 +43,15 @@ export function OrgSwitcher() {
           ))}
         </SelectContent>
       </Select>
+      {/* Kept outside the Select so the switcher stays disabled when there are no orgs (E2E-06). */}
+      <Link
+        to="/organizations/new"
+        aria-label="Create organization"
+        title="Create organization"
+        className="inline-flex h-8 w-8 items-center justify-center rounded-md hover:bg-accent"
+      >
+        <Plus className="h-4 w-4" aria-hidden />
+      </Link>
     </div>
   );
 }

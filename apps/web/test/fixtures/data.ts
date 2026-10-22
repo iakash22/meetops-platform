@@ -16,6 +16,14 @@ export const orgs: Organization[] = [
   { id: 'org_2', name: 'Globex', slug: 'globex', createdAt: T, updatedAt: T },
 ];
 
+export const newOrg: Organization = {
+  id: 'org_3',
+  name: 'Initech',
+  slug: 'initech',
+  createdAt: T,
+  updatedAt: T,
+};
+
 export const user = {
   id: 'usr_1',
   email: 'ada@example.com',

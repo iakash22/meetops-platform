@@ -324,3 +324,31 @@ describe('session, 401 and uploads', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 });
+
+describe('organizations.create (POST /orgs)', () => {
+  afterEach(clearCookies);
+
+  it('POSTs {name} with CSRF and refetches the token after the session rotates', async () => {
+    const created = { organization: { id: 'org_9', name: 'Initech' }, role: 'owner' };
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse({ csrfToken: 'before' }))
+      .mockResolvedValueOnce(jsonResponse(created, 201))
+      .mockResolvedValueOnce(jsonResponse({ csrfToken: 'after' }))
+      .mockResolvedValue(jsonResponse({}, 200));
+    const api = createApiClient({ baseUrl: 'http://api', fetch: fetchMock });
+    await expect(api.organizations.create({ name: 'Initech' })).resolves.toEqual(created);
+    await api.request('POST', '/orgs/org_9/projects', { name: 'p' });
+    const calls = fetchMock.mock.calls as Call[];
+    expect(calls.map((c) => c[0])).toEqual([
+      'http://api/auth/csrf',
+      'http://api/orgs',
+      'http://api/auth/csrf',
+      'http://api/orgs/org_9/projects',
+    ]);
+    expect(calls[1]![1].method).toBe('POST');
+    expect(JSON.parse(calls[1]![1].body as string)).toEqual({ name: 'Initech' });
+    expect(headersOf(calls[1]![1])[CSRF_HEADER]).toBe('before');
+    expect(headersOf(calls[3]![1])[CSRF_HEADER]).toBe('after');
+  });
+});
