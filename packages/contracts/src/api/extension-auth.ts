@@ -1,5 +1,5 @@
 import { Type, type Static } from '@sinclair/typebox';
-import { Id, IsoDateTime } from '../common.js';
+import { Id, IsoDateTime, SafeDisplayText } from '../common.js';
 
 import {
   EXTENSION_SCOPES, EXTENSION_TOKEN_AUDIENCE, EXTENSION_TOKEN_TTL_SECONDS, EXTENSION_TOKEN_TYPE,
@@ -23,13 +23,9 @@ export const ExtensionDeviceId = Id;
 /**
  * Printable only: no C0/C1 control characters, DEL, line/paragraph separators, HTML-significant characters
  * (`<`, `>`, `"`, `'`, `&`), or bidi/format characters
- * (U+200B-U+200F, U+202A-U+202E, U+2060, U+2066-U+2069, U+FEFF, U+061C).
+ * (U+200B-U+200F, U+202A-U+202E, U+2060, U+2066-U+2069, U+FEFF, U+061C). Uses the shared SafeDisplayText charset.
  */
-export const ExtensionDeviceLabel = Type.String({
-  minLength: 1,
-  maxLength: 100,
-  pattern: '^[^\\u0000-\\u001F\\u007F-\\u009F\\u2028\\u2029<>"\'&\\u200B-\\u200F\\u2060\\uFEFF\\u061C\\u202A-\\u202E\\u2066-\\u2069]+$',
-});
+export const ExtensionDeviceLabel = SafeDisplayText({ maxLength: 100 });
 const PairingCode = Type.String({ minLength: 32, maxLength: 128, pattern: '^[A-Za-z0-9_-]+$' });
 const AccessToken = Type.String({ minLength: 32, maxLength: 512 });
 const RefreshToken = Type.String({ minLength: 32, maxLength: 512 });

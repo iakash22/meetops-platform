@@ -26,6 +26,17 @@ createdAt, user: UserSummary }` and `ListMembersResponse` (cursor page) for `GET
 
 ### Changed
 
+- `CreateOrganizationRequest.name` uses the same charset as `deviceLabel`, via the new shared `SafeDisplayText` helper
+  (with `SAFE_DISPLAY_TEXT_PATTERN`, `SAFE_DISPLAY_TEXT_TRIMMED_PATTERN` and `UNSAFE_DISPLAY_TEXT_CHARS`). It also rejects
+  whitespace-only names and leading or trailing whitespace. A schema cannot trim, so clients MUST trim before sending.
+  Names with `'`, `&`, `<`, `>` or `"` are now rejected.
+- `Organization` is strict (`additionalProperties: false`). Responses that add fields to it fail validation.
+- `CursorPage` (and so `Paginated` and every list response) caps `items` at `MAX_PAGE_LIMIT` (100, the same as the
+  query `limit` maximum) and `nextCursor` at `MAX_CURSOR_LENGTH` (512).
+- `UserSummary.avatarUrl` (`HttpsAvatarUrl`) must be https with no userinfo: no `@`, `\` or whitespace in the authority,
+  and no `\` or whitespace in the path. Max length 2048.
+- `UserSummary.email` is optional. The API MUST include it only for `owner` and `admin` viewers, and MUST omit it for
+  `member` and `viewer` viewers.
 - `deviceLabel` (`ExtensionDeviceLabel`) also rejects the invisible format characters U+200B-U+200D (zero-width space,
   non-joiner, joiner), U+2060 (word joiner), U+FEFF (BOM / zero-width no-break space) and U+061C (Arabic letter mark).
 
