@@ -28,7 +28,7 @@ describe('test-data factories', () => {
     const orgId = acme.organization.id;
     for (const r of [acme.membership(), acme.project(), acme.meeting(), acme.fileObject()])
       expect(r.organizationId).toBe(orgId);
-    expect(acme.fileObject().key.startsWith(`orgs/${orgId}/`)).toBe(true);
+    expect(acme.fileObject().key.startsWith(`org/${orgId}/`)).toBe(true);
     expect(acme.storageObject().custom?.organizationId).toBe(orgId);
     expect(globex.user().email.endsWith('@globex.test')).toBe(true);
   });

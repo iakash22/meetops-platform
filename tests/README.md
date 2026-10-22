@@ -8,18 +8,18 @@ TypeScript/vitest versions and the root lockfile. Root `pnpm typecheck`, `pnpm l
 
 ## Layout
 
-| Path                        | Runner                         | What                                                                                                                                                                             |
-| --------------------------- | ------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `api/`                      | vitest (`api` project)         | `/health`, `/ready` via Fastify `inject` on `createServer()` from `apps/api/src/server.ts`; HTTP fallback when `API_BASE_URL` is set                                             |
-| `contract/`                 | vitest (`contract` project)    | Factory output validated with TypeBox `Value.Check` against `@meetops/contracts` runtime schemas (PR #17)                                                                        |
-| `integration/`              | vitest (`integration` project) | Testcontainers Postgres (pgvector) + Redis; `database.test.ts` applies PR #6 migrations, runs `seed.ts`, checks organization isolation and pgvector similarity; RLS placeholders |
-| `e2e/`                      | Playwright                     | Smoke test against the web dev server (`apps/web` `dev` = vite)                                                                                                                  |
-| `factories/`                | vitest (`factories` project)   | Deterministic, seedable, organization-scoped test-data factories                                                                                                                 |
-| `security/`                 | vitest (`security` project)    | Security case catalogue from `docs/12-security/test-cases.md` (PR #4): XT (cross-organization), AU (auth abuse), SS (SSRF) as ID-tagged `describe.skip` placeholders             |
-| `fixtures/security/ssrf.ts` | –                              | Exported SSRF payloads SS-01..SS-32 (`ssrfPayloads`, `ssrfUrlPayloads`, `ssrfScenarios`, `withAllowedHost`) for URL validators to import                                         |
-| `ci/ci-jobs-spec.md`        | –                              | CI job request for DevOps (integration + e2e YAML)                                                                                                                               |
-| `support/`                  | –                              | Shared helpers (e.g. Docker detection)                                                                                                                                           |
-| `vitest.workspace.ts`       | –                              | One vitest project per suite                                                                                                                                                     |
+| Path                                     | Runner                         | What                                                                                                                                                                             |
+| ---------------------------------------- | ------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `api/`                                   | vitest (`api` project)         | `/health`, `/ready` via Fastify `inject` on `createServer()` from `apps/api/src/server.ts`; HTTP fallback when `API_BASE_URL` is set                                             |
+| `contract/`                              | vitest (`contract` project)    | Factory output validated with TypeBox `Value.Check` against `@meetops/contracts` runtime schemas (PR #17)                                                                        |
+| `integration/`                           | vitest (`integration` project) | Testcontainers Postgres (pgvector) + Redis; `database.test.ts` applies PR #6 migrations, runs `seed.ts`, checks organization isolation and pgvector similarity; RLS placeholders |
+| `e2e/`                                   | Playwright                     | Smoke test against the web dev server (`apps/web` `dev` = vite)                                                                                                                  |
+| `factories/`                             | vitest (`factories` project)   | Deterministic, seedable, organization-scoped test-data factories                                                                                                                 |
+| `security/`                              | vitest (`security` project)    | Security case catalogue from `docs/12-security/test-cases.md` (PR #4): XT (cross-organization), AU (auth abuse), SS (SSRF) as ID-tagged `describe.skip` placeholders             |
+| `fixtures/security/ssrf.ts`              | –                              | Exported SSRF payloads SS-01..SS-32 (`ssrfPayloads`, `ssrfUrlPayloads`, `ssrfScenarios`, `withAllowedHost`) for URL validators to import                                         |
+| `ci/ci-jobs-spec.md`                     | –                              | CI job request for DevOps (integration + e2e YAML)                                                                                                                               |
+| `support/`                               | –                              | Shared helpers (e.g. Docker detection)                                                                                                                                           |
+| `vitest.config.ts`, `vitest.projects.ts` | –                              | One vitest project per suite (`test.projects` on vitest ≥ 3.2, workspace file on 2.x)                                                                                            |
 
 ## Running
 

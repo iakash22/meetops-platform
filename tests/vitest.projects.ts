@@ -1,13 +1,14 @@
-import { defineWorkspace } from 'vitest/config';
-
 // Optional: point @meetops/contracts at another checkout (e.g. PR #17) for contract runs.
 // Always resolve contracts from source so tests never run against a stale dist/ build.
-const contractsDir = process.env.QA_CONTRACTS_DIR ?? new URL('../packages/contracts', import.meta.url).pathname;
+const contractsDir =
+  process.env.QA_CONTRACTS_DIR ?? new URL('../packages/contracts', import.meta.url).pathname;
 const alias = { '@meetops/contracts': `${contractsDir}/src/index.ts` };
 const base = { environment: 'node' as const, alias };
 
 // One vitest project per suite. E2E is run by Playwright, not vitest.
-export default defineWorkspace([
+// Plain array (no defineWorkspace, which vitest 4 removes). Used by vitest.config.ts as
+// `test.projects` (vitest >= 3.2) or as the workspace file (vitest 2.x / 3.0-3.1).
+export const projects = [
   { test: { ...base, name: 'api', include: ['api/**/*.test.ts'] } },
   { test: { ...base, name: 'contract', include: ['contract/**/*.test.ts'] } },
   {
@@ -27,4 +28,6 @@ export default defineWorkspace([
       hookTimeout: 180_000,
     },
   },
-]);
+];
+
+export default projects;
