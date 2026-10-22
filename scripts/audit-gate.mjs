@@ -85,8 +85,9 @@ for (const a of advisories) {
     (x) =>
       x.ghsa === a.github_advisory_id &&
       x.module === a.module_name &&
-      versions.length > 0 &&
-      versions.every((v) => x.versions.includes(v)),
+      Array.isArray(a.findings) &&
+      a.findings.length > 0 &&
+      a.findings.every((f) => f && typeof f.version === 'string' && x.versions.includes(f.version)),
   );
   if (ex && now <= new Date(ex.expires)) {
     console.log(
