@@ -30,14 +30,12 @@ services:
   redis:
     image: redis:7.4.11-alpine
     restart: unless-stopped
-    secrets: [redis_password]
+    # Auth comes from an ACL file mounted as a secret (generated from
+    # redis_password by scripts/gen-dev-secrets.sh), so the password is never on
+    # the redis-server command line / in `ps` or `docker inspect`.
+    secrets: [redis_password, redis_acl]
     networks: [default, media-internal]
-    command:
-      [
-        'sh',
-        '-c',
-        'exec redis-server --appendonly yes --requirepass "$$(cat /run/secrets/redis_password)"',
-      ]
+    command: ['redis-server', '--appendonly', 'yes', '--aclfile', '/run/secrets/redis_acl']
     ports:
       - '127.0.0.1:${REDIS_PORT:-6379}:6379'
     volumes:
@@ -88,9 +86,10 @@ services:
     depends_on:
       minio:
         condition: service_healthy
-    secrets: [minio_root_password]
+    secrets: [minio_root_password, minio_app_password]
     environment:
       MINIO_ROOT_USER: ${STORAGE_ACCESS_KEY_ID:?set STORAGE_ACCESS_KEY_ID in .env}
+      STORAGE_APP_ACCESS_KEY_ID: ${STORAGE_APP_ACCESS_KEY_ID:-meetops-app}
       STORAGE_BUCKET: ${STORAGE_BUCKET:-meetops-dev}
       WEB_ORIGIN: ${WEB_ORIGIN:-http://localhost:5173}
     entrypoint:
@@ -101,6 +100,17 @@ services:
         mc alias set local http://minio:9000 "$${MINIO_ROOT_USER}" "$$(cat /run/secrets/minio_root_password)"
         mc mb --ignore-existing "local/$${STORAGE_BUCKET}"
         mc anonymous set none "local/$${STORAGE_BUCKET}"
+
+        # Scoped app credential for api/worker: read/write on this bucket only.
+        # The root user/password is used only here, never by app containers.
+        cat > /tmp/app-policy.json <<JSON
+        {"Version":"2012-10-17","Statement":[
+          {"Effect":"Allow","Action":["s3:GetBucketLocation","s3:ListBucket","s3:ListBucketMultipartUploads"],"Resource":["arn:aws:s3:::$${STORAGE_BUCKET}"]},
+          {"Effect":"Allow","Action":["s3:GetObject","s3:PutObject","s3:DeleteObject","s3:AbortMultipartUpload","s3:ListMultipartUploadParts"],"Resource":["arn:aws:s3:::$${STORAGE_BUCKET}/*"]}]}
+        JSON
+        mc admin policy create local meetops-app-rw /tmp/app-policy.json 2>/dev/null || mc admin policy update local meetops-app-rw /tmp/app-policy.json 2>/dev/null || true
+        mc admin user add local "$${STORAGE_APP_ACCESS_KEY_ID}" "$$(cat /run/secrets/minio_app_password)"
+        mc admin policy attach local meetops-app-rw --user "$${STORAGE_APP_ACCESS_KEY_ID}" 2>/dev/null || echo "policy already attached"
 
         # CORS is restricted to the single web origin (never "*").
         origins="<AllowedOrigin>$${WEB_ORIGIN}</AllowedOrigin>"
@@ -126,7 +136,7 @@ services:
     restart: 'no'
 
   ollama:
-    image: ollama/ollama:0.40.7
+    image: ollama/ollama:0.40.7@sha256:2e6cc92ffa43b4b1a2e70e315407e00ac97ec125afc71277d73c7efe01c4f31b
     profiles: ['ollama']
     restart: unless-stopped
     ports:
@@ -142,7 +152,7 @@ services:
   # faster-whisper OpenAI-compatible server (Speaches). CPU image; listens on 8000
   # inside the container, exposed on 8000 to match LOCAL_STT_URL (AI PR #21).
   local-stt:
-    image: ghcr.io/speaches-ai/speaches:0.9.0-rc.3-cpu
+    image: ghcr.io/speaches-ai/speaches:0.9.0-rc.3-cpu@sha256:2163775b6df5e451a71200e8f675fed68dbd8ab184fc604453d549e486f22fd2
     profiles: ['local-stt']
     restart: unless-stopped
     ports:
@@ -171,8 +181,12 @@ secrets:
     file: ./secrets/meetops_migrator_db_password.txt
   redis_password:
     file: ./secrets/redis_password.txt
+  redis_acl:
+    file: ./secrets/redis_acl.txt
   minio_root_password:
     file: ./secrets/minio_root_password.txt
+  minio_app_password:
+    file: ./secrets/minio_app_password.txt
 
 volumes:
   postgres-data:

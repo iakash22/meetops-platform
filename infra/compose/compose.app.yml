@@ -26,6 +26,8 @@ x-infra-urls: &infra-urls
   MIGRATION_DATABASE_URL: ''
   REDIS_URL: ''
   STORAGE_SECRET_ACCESS_KEY: ''
+  # Scoped MinIO user created by minio-init (bucket-only policy), never root.
+  STORAGE_ACCESS_KEY_ID: ${STORAGE_APP_ACCESS_KEY_ID:-meetops-app}
   # .env password inputs (used only by scripts/gen-dev-secrets.sh --from-env) are blanked.
   POSTGRES_PASSWORD: ''
   MEETOPS_APP_DB_PASSWORD: ''
@@ -74,7 +76,7 @@ services:
       - path: ../../.env
         required: true
     environment: *infra-urls
-    secrets: [meetops_app_db_password, redis_password, minio_root_password]
+    secrets: [meetops_app_db_password, redis_password, minio_app_password]
     volumes: [*secrets-shim]
     entrypoint: ['/bin/sh', '/opt/with-secrets.sh']
     command: ['node', 'dist/index.js']
@@ -106,7 +108,7 @@ services:
       FFMPEG_PATH: /usr/bin/ffmpeg
       FFPROBE_PATH: /usr/bin/ffprobe
       MEDIA_TMP_DIR: /tmp/work
-    secrets: [redis_password, minio_root_password]
+    secrets: [redis_password, minio_app_password]
     volumes: [*secrets-shim]
     entrypoint: ['/usr/bin/tini', '--', '/bin/sh', '/opt/with-secrets.sh']
     command: ['node', 'dist/index.js']
@@ -124,12 +126,16 @@ services:
     read_only: true
     tmpfs:
       - /tmp:size=256m,mode=1777
-      - /tmp/work:size=2g,uid=1000,gid=1000,mode=0700
+      # Sized for the 2 GB source cap (upload-media-security) plus the
+      # normalised audio output and ffmpeg scratch: 2 GB source + up to 1 GB
+      # derived files. tmpfs pages are charged to the container memory cgroup,
+      # so mem_limit = 3g tmpfs + ~1g for node/ffmpeg. See docs/13-ops/containers-and-ci.md.
+      - /tmp/work:size=3g,uid=1000,gid=1000,mode=0700
     cap_drop: [ALL]
     security_opt:
       - no-new-privileges:true
     pids_limit: 256
-    mem_limit: 2g
+    mem_limit: 4g
     cpus: 2
 
   # Socket.IO gateway (apps/realtime, PR #16). Behind the `realtime` profile until

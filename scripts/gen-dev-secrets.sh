@@ -13,7 +13,7 @@ from_env() { # $1 = var name; value from .env without sourcing it
 }
 umask 077
 mkdir -p "$dir"
-for name in postgres_password meetops_app_db_password meetops_migrator_db_password redis_password minio_root_password; do
+for name in postgres_password meetops_app_db_password meetops_migrator_db_password redis_password minio_root_password minio_app_password; do
   f="$dir/$name.txt"
   if [ "$force" = "--from-env" ]; then
     case "$name" in
@@ -22,6 +22,7 @@ for name in postgres_password meetops_app_db_password meetops_migrator_db_passwo
       meetops_migrator_db_password) var=MEETOPS_MIGRATOR_DB_PASSWORD ;;
       redis_password) var=REDIS_PASSWORD ;;
       minio_root_password) var=STORAGE_SECRET_ACCESS_KEY ;;
+      minio_app_password) var=STORAGE_APP_SECRET_ACCESS_KEY ;;
     esac
     v="$(from_env "$var")"
     [ -n "$v" ] || { echo "missing $var in .env" >&2; exit 1; }
@@ -32,6 +33,10 @@ for name in postgres_password meetops_app_db_password meetops_migrator_db_passwo
   od -An -tx1 -N24 /dev/urandom | tr -d ' \n' > "$f"
   echo "wrote  $f"
 done
+# Redis ACL file (aclfile), derived from redis_password so the password never
+# appears on the redis-server command line. Always regenerated.
+printf 'user default on #%s ~* &* +@all\n' "$(printf '%s' "$(cat "$dir/redis_password.txt")" | sha256sum | cut -d' ' -f1)" > "$dir/redis_acl.txt"
+echo "wrote  $dir/redis_acl.txt"
 # Containers run as non-root (node uid 1000, postgres uid 999): compose bind-mounts
 # these files, so they must be readable inside. The directory itself stays 0700.
 chmod 0700 "$dir"; chmod 0644 "$dir"/*.txt

@@ -36,7 +36,7 @@ Where each variable is read:
 
 ### Redis
 
-- `REDIS_PASSWORD`: required; the dev Redis runs with `requirepass`. `REDIS_PORT` is the host port (default 6379, bound to 127.0.0.1).
+- `REDIS_PASSWORD`: required; the dev Redis authenticates via an ACL file (`infra/compose/secrets/redis_acl.txt`, generated from `redis_password.txt`, mounted as a compose secret; never on the command line). `REDIS_PORT` is the host port (default 6379, bound to 127.0.0.1).
 - `REDIS_URL`: must include the password, e.g. `redis://:<password>@localhost:6379`.
 
 ### Storage
@@ -100,7 +100,8 @@ GitHub, Jira and other integrations are configured as per-organization integrati
 
 - `RLS_TEST_APP_URL` / `RLS_TEST_OWNER_URL`: enable the PR #25 live RLS tests (connect as `meetops_app` / the owner). Skipped when unset.
 - `AI_SMOKE_AUDIO_FILE`: optional audio file for the AI provider smoke test (PR #21).
-- CI audit gate: `AUDIT_LEVEL` (default `high`) and `AUDIT_TODAY` (override the date) for `scripts/ci/audit-gate.mjs`; exceptions live in `.github/audit-allowlist.json`.
+- CI audit gate: `scripts/audit-gate.mjs` (fail-closed, high/critical block). `AUDIT_GATE_NOW` overrides the date for local tests only (ignored in CI). The only exception is RE-01 (braces@3.0.3, issue #54, expires 2026-11-20), defined in the script.
+- `STORAGE_APP_ACCESS_KEY_ID` / `STORAGE_APP_SECRET_ACCESS_KEY`: scoped MinIO user that minio-init creates for api/worker in the compose stack (read/write on `STORAGE_BUCKET` only). The root `STORAGE_ACCESS_KEY_ID`/`STORAGE_SECRET_ACCESS_KEY` is used only by minio/minio-init.
 
 ## Compose secrets (local dev)
 

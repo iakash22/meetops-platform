@@ -56,26 +56,22 @@ jobs:
 
   audit:
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
     steps:
       - name: Checkout
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
 
       - name: Setup Node.js
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        uses: actions/setup-node@v4
         with:
           node-version: 20
+          cache: 'pnpm'
 
-      - name: Enable corepack (pnpm from packageManager)
-        run: corepack enable && pnpm --version
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile --ignore-scripts
 
-      # BLOCKING: fails on any high/critical advisory (prod AND dev deps) that is
-      # not in .github/audit-allowlist.json, and on any allowlist entry past its
-      # expiry. Current allowances: braces GHSA-vfj7-8cjw-p6xm (Tailwind 3, until
-      # 2026-11-20); TEMPORARY Fastify 4 (PR #27) and vitest 2 chain (PR #33)
-      # entries until 2026-11-04.
-      - name: pnpm audit (gated)
-        run: |
-          pnpm audit --json > audit.json || true
-          node scripts/ci/audit-gate.mjs .github/audit-allowlist.json < audit.json
+      # Blocking: fails on high/critical; only RE-01 (braces@3.0.3) is excepted until 2026-11-20.
+      - name: Audit gate
+        run: node scripts/audit-gate.mjs

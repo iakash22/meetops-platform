@@ -9,8 +9,9 @@ db="${POSTGRES_DB:?}"
 if [ -r "$s/redis_password" ]; then
   export REDIS_URL="redis://:$(cat "$s/redis_password")@redis:6379"
 fi
-if [ -r "$s/minio_root_password" ]; then
-  export STORAGE_SECRET_ACCESS_KEY="$(cat "$s/minio_root_password")"
+# Scoped app user (bucket-only policy); the MinIO root password is never mounted here.
+if [ -r "$s/minio_app_password" ]; then
+  export STORAGE_SECRET_ACCESS_KEY="$(cat "$s/minio_app_password")"
 fi
 case "${DB_ROLE:-app}" in
   app)
