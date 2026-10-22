@@ -1,0 +1,149 @@
+# ADR-005: Browser extension authentication
+
+- Status: Accepted; amended 2026-10-22 (Amendment 1: pairing proof and token hardening, supersedes points 2, 3, 5 and 6 where they conflict)
+- Date: 2026-10-22
+- Owner: Architecture Agent (ARCH), with the Security (SEC), Backend (BE) and Native (NATIVE) Agents
+- Related: [ADR-003 Contracts ownership](./ADR-003-contracts-ownership.md), [ADR-004](./ADR-004-db-contract-mapping.md)
+
+## Context
+
+The web app authenticates with a `__Host-` prefixed, HttpOnly, Secure, SameSite session cookie plus a CSRF token
+(`AuthSession.csrfToken`). The Chrome extension (`apps/extension`) runs on a `chrome-extension://` origin and calls
+the API cross-site. SameSite cookies are not reliably sent to it, CSRF double-submit semantics don't apply, and
+widening CORS or SameSite for cookies would weaken the web app. The extension needs only a narrow set of
+capabilities: resolving the meeting it is recording, and uploading recording chunks.
+
+## Decision
+
+1. **The extension uses a short-lived, scoped bearer token, not the session cookie.** API routes used by the
+   extension accept `Authorization: Bearer <token>` with audience `extension`. Cookie auth is never accepted on
+   those routes from an extension origin.
+2. **Issuance by handoff.** A logged-in web session calls `POST /auth/extension-token` with the `__Host-` cookie
+   and a valid `x-csrf-token`. The body is `ExtensionTokenRequest { extensionId, deviceLabel? }`. `extensionId` must be in
+   a server-side allowlist (the published extension id, plus a dev id in non-production). The extension
+   receives the response through `chrome.runtime` external messaging from the web origin, which must be listed in
+   the manifest's `externally_connectable`.
+3. **Token properties.**
+   - The audience is `extension`. Scopes are a subset of `meetings:resolve` and `recordings:write` (`EXTENSION_SCOPES`). There are no
+     read scopes for tasks, reports or transcripts.
+   - Each token is org-scoped to the session's active organization (`organizationId` in the response), so
+     switching orgs requires a new handoff.
+   - The access token TTL is **15 minutes** (`EXTENSION_TOKEN_TTL_SECONDS`).
+   - A **rotating refresh token** is bound to `(extensionId, device, userId, organizationId)`. Each refresh issues a new pair
+     and invalidates the old one. Reusing an old refresh token revokes the whole device family.
+4. **Storage.** The extension keeps both tokens in `chrome.storage.session`, which is in memory and cleared when the
+   browser closes. It **never** uses `localStorage`, `chrome.storage.local` or `chrome.storage.sync`, and never writes them to logs or errors.
+5. **Revocation.** Tokens can be revoked per device (listed in account settings by `deviceLabel`), per org,
+   and on logout or a password change. The server stores only hashes of refresh tokens.
+6. **Contracts.** `ExtensionTokenResponse { accessToken, expiresAt, refreshToken, scopes, organizationId }` is the
+   **only** API response body that carries tokens. Every other auth response (`AuthSession`, `GetAuthSessionResponse`,
+   `CsrfResponse`) is token-free, and a contracts test guards this. Changes follow ADR-003.
+
+## Consequences
+
+- The extension can't use the web session directly, and a user must be logged into the web app to pair it.
+- Leaked extension tokens have a small blast radius: two scopes, one org, and 15 minutes.
+- BE must implement bearer validation for audience and scope, the refresh-family store and the device list. SEC reviews it.
+- NATIVE replaces any cookie or credentials-based fetches in `apps/extension` with the bearer flow.
+
+## Amendment 1 (2026-10-22): pairing proof and token hardening
+
+Raised by SEC on PR #50. The key words MUST, MUST NOT and SHOULD are as in RFC 2119. Where this amendment conflicts with
+the Decision above, the amendment wins. Schemas and constants: `packages/contracts/src/api/extension-auth.ts`.
+
+### A1.1 Pairing flow
+
+1. Pairing MUST start from a user gesture in the extension (a click in the popup or options page), never automatically.
+2. On that gesture the extension MUST generate a single-use nonce (`ExtensionNonce`: 32–128 base64url characters, at least
+   256 bits from `crypto.getRandomValues`) and a per-install `deviceId` (UUID). It MUST keep the nonce only in
+   `chrome.storage.session`, MUST delete it after one use or after 5 minutes, and then opens the web pairing page.
+3. The web pairing page MUST show a confirmation naming the organization (`organizationName`) and the device label
+   before calling `POST /auth/extension/pair` (`ExtensionPairRequest`) with the `__Host-` cookie and `x-csrf-token`.
+   The server MUST check `extensionId` against the allowlist and return `ExtensionPairResponse`, a single-use
+   `pairingCode` bound to `(nonce, extensionId, deviceId, userId, organizationId)` that expires within 60 seconds. It carries no tokens.
+4. The page hands `{ pairingCode, nonce }` to the extension with `chrome.runtime.sendMessage(extensionId, …)`. The
+   extension's `chrome.runtime.onMessageExternal` handler MUST check `sender.origin` for an exact string match against the
+   production web origin, MUST validate the message against the contracts schema, and MUST reject a nonce that differs
+   from the stored one. Anything else is dropped silently.
+5. `externally_connectable.matches` MUST list only the exact production web origin. Dev origins such as
+   `http://localhost:*` MUST appear only in dev builds and MUST NOT ship in a store build.
+6. The extension then calls `POST /auth/extension-token` (`ExtensionTokenRequest`, without a cookie). The server MUST
+   consume the pairing code atomically and require the same nonce, extension id and device id. The extension MUST
+   reject an `ExtensionTokenResponse` whose `nonce` doesn't match the stored nonce, and then delete the nonce.
+
+### A1.2 Token model
+
+1. Access and refresh tokens MUST be opaque random values (≥256 bits, base64url), not JWTs. The server MUST store only
+   their SHA-256 hashes and MUST NOT persist or log plaintext. Lookups go by hash.
+2. The access token TTL stays at 15 minutes (`EXTENSION_TOKEN_TTL_SECONDS = 900`). `tokenType` is `'Bearer'` and `audience` is `'extension'`.
+3. Refresh (`POST /auth/extension/refresh`) MUST rotate: each use consumes the presented refresh token and issues a new
+   pair in the same family. Presenting an already-consumed refresh token is reuse, and it MUST revoke the whole family
+   and every access token issued from it.
+4. A refresh family MUST NOT outlive `EXTENSION_REFRESH_FAMILY_MAX_LIFETIME_SECONDS` (30 days) from pairing, and rotation does
+   not extend it. `refreshExpiresAt` reports that bound, and after it the user must pair again.
+5. `ExtensionTokenResponse` and `ExtensionRefreshResponse` are strict, and they are the only API bodies carrying tokens.
+6. Tokens are stored only in `chrome.storage.session`. Its access level MUST remain the default `TRUSTED_CONTEXTS`, and the
+   extension MUST NOT call `chrome.storage.session.setAccessLevel` to expose it to content scripts.
+
+### A1.3 Bearer versus cookie
+
+#### A1.3.1 Route authentication
+
+1. Bearer-authenticated extension routes (`meetings/resolve`, recording-session and chunk routes) MUST accept only
+   `Authorization: Bearer` with `aud=extension`, and MUST reject a request that carries a session cookie
+   (401 `UNAUTHENTICATED`). The token lifecycle routes are different:
+   - `pair` is a web route and is cookie-only (`__Host-` session cookie + `x-csrf-token`).
+   - `extension-token` is authenticated by the pairing code + nonce in the body, bound to `extensionId` and `deviceId`.
+   - `refresh` is NOT Bearer-authenticated. It runs when the access token has expired and is authenticated only by the
+     `refreshToken` in the body, bound to `extensionId` and `deviceId`.
+   - `revoke` is NOT Bearer-authenticated. It is authenticated only by the required `refreshToken` in the body, bound to
+     `extensionId` and `deviceId`, so it also works after the access token has expired.
+     These three MUST ignore any `Authorization` header and MUST reject a request that carries a session cookie (401 `UNAUTHENTICATED`).
+2. Every other route MUST reject bearer tokens, so the cookie path is the only one for web routes.
+3. Tokens MUST NOT be accepted in the query string or URL fragment, on any route.
+4. The `:organizationId` in the path MUST equal the token's organization, otherwise the response is `NOT_FOUND` (per ADR-004 tenancy).
+5. Scopes MUST be enforced per route: `meetings:resolve` for resolve, `recordings:write` for recording sessions and chunks.
+6. CORS MUST be enabled only on extension routes, MUST allow only the allowlisted `chrome-extension://<id>` origins, and
+   MUST NOT set `Access-Control-Allow-Credentials`.
+
+### A1.4 Rate limits (suggested starting values; DevOps tunes them)
+
+- `pair`: 5/min and 20/hour per user, plus 10/min per IP.
+- `extension-token` exchange: 10/min per IP. A failed nonce or code check counts double.
+- `refresh`: 10/min per family, plus 60/min per IP. A refresh more often than every 60 s per family SHOULD be logged.
+- `revoke`: 10/min per family, plus 60/min per IP (it is authenticated by the refresh token, not a user session).
+  Exceeding a limit returns 429 `RATE_LIMITED`.
+
+### A1.5 Redaction
+
+`accessToken` and `refreshToken` (and every key in the exported `REDACT_KEYS`, including `pairingCode`, `authorization` and `cookie`)
+MUST be redacted by every logger, error reporter (Sentry `beforeSend`), and request/response serializer, both API-side and
+in the extension. `REDACT_KEYS` is new in contracts 0.3.0, and API and worker logger configs MUST import it rather than copy it.
+
+### A1.6 Revocation
+
+The server MUST revoke the affected refresh families, and with them their access tokens, on: logout (the user's families),
+password change or reset (all the user's families), removal of the user from an org (families for that org),
+an org switch in the extension (the old family; a new pairing is required), and explicit `POST /auth/extension/revoke` per device.
+
+### A1.7 Meeting resolve
+
+`POST /orgs/:organizationId/meetings/resolve` MUST derive the external meeting id by parsing `externalMeetingUrl` against
+per-provider host and path rules (Meet, Zoom, Teams). The server MUST NOT fetch, resolve or follow the URL (no SSRF surface).
+An unparseable URL returns `VALIDATION_FAILED`.
+
+### A1.8 Owner dependencies
+
+- **Backend (BE):** pair, token, refresh and revoke routes with atomic single-use pairing codes; hashed token store;
+  family rotation with reuse detection and a 30-day cap; bearer-only and cookie-only route guards; org match returning
+  NOT_FOUND; per-route scopes; extension-only CORS without credentials; the revocation triggers in A1.6; URL-parsing resolve;
+  logger redaction from `REDACT_KEYS`.
+- **Native (`apps/extension`):** a user-gesture pairing UI; nonce and deviceId generation; `chrome.storage.session` only, left
+  at TRUSTED_CONTEXTS; an `onMessageExternal` handler with an exact `sender.origin` check, schema validation and the nonce
+  check; nonce echo verification; refresh before expiry; a production-only `externally_connectable` origin; dev
+  origins gated to dev builds; redaction; import from `@meetops/contracts/types` only.
+- **Web (`apps/web`):** the pairing page showing an org and device confirmation; the pair call with CSRF; the
+  `sendMessage` handoff; a device list with revoke in account settings.
+- **DevOps:** rate-limit config (A1.4); production versus dev manifest build gating; log pipeline and Sentry scrubbing
+  using `REDACT_KEYS`; alerts on refresh-reuse revocations.
+- **SEC:** reviews each of the above before release.

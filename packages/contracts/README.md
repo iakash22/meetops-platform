@@ -24,6 +24,19 @@ Importing the package registers the `uuid`, `date-time`, `email` and `uri` strin
 | `jobs/`     | transcription, AI and email queue payloads, provider ids, `ModelRouteId` (e.g. `gemini:gemini-2.5-flash-lite`), `FallbackPolicy`                                                                           |
 | `realtime/` | `meeting:status`, `transcription:progress`, `task:update` events and their union                                                                                                                           |
 
+## Entry points
+
+| Import                      | Contents                                                                                                                                                                   | Runtime deps        |
+| --------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------- |
+| `@meetops/contracts`        | TypeBox schemas, `Static` types, constants                                                                                                                                 | `@sinclair/typebox` |
+| `@meetops/contracts/types`  | TS types (`export type`) plus plain `as const` constants: `TASK_STATUSES`, `ROLES`, `API_ERROR_CODES`, `EXTENSION_*` (TTLs, scopes, `EXTENSION_AUTH_PATHS`), `REDACT_KEYS` | none                |
+| `@meetops/contracts/legacy` | deprecated storage types (removal in 0.4.0)                                                                                                                                | none                |
+
+**Bundled clients (the `apps/extension` in particular) should import from `@meetops/contracts/types`.** The main entry
+pulls the TypeBox runtime into the bundle (≈47 kB minified, ≈12 kB gzipped for a constants-only import, measured with
+esbuild), while the light entry adds about 150 bytes. Use the main entry where you validate with schemas (API, workers).
+The package sets `"sideEffects": false`, and `test/types-entry.test.ts` guards that the light entry never imports TypeBox.
+
 ## Rules
 
 - Ids are UUIDs, and timestamps are ISO-8601 strings.
