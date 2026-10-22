@@ -21,3 +21,4 @@ export { OllamaProvider } from './adapters/ollama.js';
 export { OpenAICompatibleProvider } from './adapters/openai-compatible.js';
 export { FasterWhisperProvider } from './adapters/faster-whisper.js';
 export { DeepgramProvider } from './adapters/deepgram.js';
+export * from './credential-ref.js';

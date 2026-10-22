@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { parseCredentialRef } from './credential-ref.js';
 import { CAPABILITIES } from './types.js';
 
 export const capabilitySchema = z.enum(CAPABILITIES);
@@ -28,11 +29,11 @@ export type ProviderCost = z.infer<typeof costSchema>;
 
 /**
  * Reference to a credential held in a secret store / env. NEVER the secret itself.
- * Format: "env:VAR_NAME" or "secret:<path>".
+ * Format: "env:VAR_NAME" or "secret:<path>"; parsed strictly by parseCredentialRef (credential-ref.ts).
  */
 export const credentialRefSchema = z
   .string()
-  .regex(/^(env|secret):[A-Za-z0-9_./-]+$/, 'credentialRef must be "env:NAME" or "secret:path", never a raw key');
+  .refine((r) => parseCredentialRef(r) !== null, 'credentialRef must be "env:NAME" or "secret:seg/seg", never a raw key');
 
 export const providerConfigSchema = z
   .object({

@@ -1,3 +1,4 @@
+import { parseCredentialRef, parseOrgSecretRef } from './credential-ref.js';
 import { AIError } from './errors.js';
 
 /** Server-decided org plan (Backend/billing). Platform keys are an entitlement, never a fallback. */
@@ -21,18 +22,19 @@ export type CredentialContext = { orgId: string };
 export function createCredentialResolver(src: SecretSource, plans: OrgPlanResolver) {
   return async function resolveCredential(ref: string, ctx: CredentialContext): Promise<string> {
     if (!ctx?.orgId) throw new AIError('FORBIDDEN', 'orgId required for credential resolution', { retryable: false });
-    if (ref.startsWith('secret:')) {
-      const path = ref.slice(7);
-      const m = /^org\/([^/]+)\/.+$/.exec(path);
-      if (!m || m[1] !== ctx.orgId) throw new AIError('FORBIDDEN', 'credential does not belong to this organization', { retryable: false });
-      const v = await src.secret(path);
+    const parsed = parseCredentialRef(ref);
+    if (parsed?.kind === 'secret') {
+      const owned = parseOrgSecretRef(ref, ctx.orgId);
+      if (!owned) throw new AIError('FORBIDDEN', 'credential does not belong to this organization', { retryable: false });
+      // Only the canonical, validated path ever reaches the secret store.
+      const v = await src.secret(owned.path);
       if (!v) throw new AIError('MISSING_CREDENTIALS', 'organization credential not found', { retryable: false });
       return v;
     }
-    if (ref.startsWith('env:')) {
+    if (parsed?.kind === 'env') {
       const plan = await plans(ctx.orgId);
       if (!plan.platformKeys) throw new AIError('MISSING_CREDENTIALS', 'platform credentials not enabled for this organization plan', { retryable: false });
-      const v = src.env(ref.slice(4));
+      const v = src.env(parsed.name);
       if (!v || v.trim() === '') throw new AIError('MISSING_CREDENTIALS', 'platform credential not configured', { retryable: false });
       return v;
     }

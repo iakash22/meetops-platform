@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { isOrgSecretRefShape, parseOrgSecretRef } from './credential-ref.js';
 import type { AIEnv } from './env.js';
 import type { Capability } from './types.js';
 import { AIError } from './errors.js';
@@ -56,7 +57,7 @@ export const orgAIConfigSchema = z.object({
   /** Per-org monthly spend cap (USD) on paid or platform-billed providers, enforced before each call. */
   monthlyBudgetUsd: z.number().min(0).optional(),
   /** BYO credential refs per provider. Must be `secret:org/<tenantId>/...` (checked in setOrgConfig + at resolve time). */
-  credentialRefs: z.record(z.string(), z.string().regex(/^secret:org\/[^/]+\/.+$/)).default({}),
+  credentialRefs: z.record(z.string(), z.string().refine(isOrgSecretRefShape, 'must be secret:org/<orgId>/<name>')).default({}),
 });
 export type OrgAIConfig = z.infer<typeof orgAIConfigSchema>;
 export type OrgAIConfigInput = z.input<typeof orgAIConfigSchema>;
@@ -130,7 +131,7 @@ export class ModelRouter {
     const cfg = orgAIConfigSchema.parse(input);
     if (cfg.tenantId !== ctx.orgId) throw new AIError('FORBIDDEN', 'cannot change another organization\'s AI config', { retryable: false });
     for (const ref of Object.values(cfg.credentialRefs))
-      if (!ref.startsWith(`secret:org/${cfg.tenantId}/`)) throw new AIError('FORBIDDEN', 'credential ref must belong to this organization', { retryable: false });
+      if (!parseOrgSecretRef(ref, cfg.tenantId)) throw new AIError('FORBIDDEN', 'credential ref must belong to this organization', { retryable: false });
     const before = await this.orgStore.get(cfg.tenantId);
     try {
       await this.audit.emit({
