@@ -32,6 +32,21 @@ const EXCEPTIONS = [
     versions: ['3.0.3'],
     expires: '2026-11-20T23:59:59Z',
   },
+  {
+    // node-forge@1.4.0 has no patched release. Reached only through wxt /
+    // web-ext-run dev tooling (verified with `pnpm why -r node-forge`):
+    // apps/extension (dev) > wxt > web-ext-run > @devicefarmer/adbkit > node-forge.
+    // Not a prod dependency of any package (`pnpm why -r --prod` finds none) and
+    // absent from `pnpm deploy --prod` output of api and worker. Approver: Security.
+    // Exit plan: drop when web-ext-run/adbkit stop depending on node-forge or a fix ships.
+    id: 'RE-02',
+    owner: 'Security Agent',
+    issue: 'https://github.com/iakash22/meetops-platform/issues/54',
+    ghsa: 'GHSA-86w9-cpqp-85rv',
+    module: 'node-forge',
+    versions: ['1.4.0'],
+    expires: '2026-11-20T23:59:59Z',
+  },
 ];
 const BLOCKING = new Set(['high', 'critical']);
 
