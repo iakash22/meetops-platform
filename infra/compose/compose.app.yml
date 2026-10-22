@@ -85,12 +85,22 @@ services:
     secrets: [meetops_migrator_db_password]
     volumes: [*secrets-shim]
     entrypoint: ['/bin/sh', '/opt/with-secrets.sh']
+    # Fails loudly: `pnpm --filter ... run <script>` silently exits 0 when the
+    # script is missing, so check for both scripts first. Until PR #35 adds them,
+    # migrate exits 1 and api/worker (depends_on: service_completed_successfully)
+    # do not start. with-secrets.sh (DB_ROLE=migrator) sets both
+    # MIGRATION_DATABASE_URL and DATABASE_URL to meetops_migrator for prisma + seed.
     command:
-      [
-        'sh',
-        '-c',
-        'pnpm --filter @meetops/database run db:migrate:deploy && pnpm --filter @meetops/database run db:seed',
-      ]
+      - sh
+      - -ec
+      - |
+        for script in db:migrate:deploy db:seed; do
+          node -e 'const s=require("./packages/database/package.json").scripts||{}; process.exit(s[process.argv[1]]?0:1)' "$$script" \
+            || { echo "packages/database $$script missing; requires PR #35" >&2; exit 1; }
+        done
+        : "$${MIGRATION_DATABASE_URL:?MIGRATION_DATABASE_URL not set}" "$${DATABASE_URL:?DATABASE_URL not set}"
+        pnpm --filter @meetops/database run db:migrate:deploy
+        pnpm --filter @meetops/database run db:seed
     depends_on:
       postgres:
         condition: service_healthy
@@ -147,6 +157,9 @@ services:
     entrypoint: ['/usr/bin/tini', '--', '/bin/sh', '/opt/with-secrets.sh']
     command: ['node', 'dist/index.js']
     depends_on:
+      # Kept on migrate so the stack visibly fails until the schema exists (PR #35).
+      migrate:
+        condition: service_completed_successfully
       redis:
         condition: service_healthy
       minio-init:

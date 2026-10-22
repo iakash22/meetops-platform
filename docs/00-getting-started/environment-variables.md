@@ -117,3 +117,12 @@ GitHub, Jira and other integrations are configured as per-organization integrati
   Until then the shim is the contract.
 - `REALTIME_CORS_ORIGINS` is required by compose (`${REALTIME_CORS_ORIGINS:?}`). Use `http://localhost:5173` in dev, never `*`.
 - Production object-storage lifecycle and CORS: see `infra/docs/object-storage-prod.md`.
+
+## Compose `migrate` service
+
+In the compose stack, `migrate` gets `MIGRATION_DATABASE_URL` and `DATABASE_URL`
+(both `meetops_migrator`, built from secret files by `with-secrets.sh`). It exits
+non-zero with `packages/database db:migrate:deploy missing; requires PR #35` while
+the database scripts are missing, and `api`/`worker` depend on it completing
+successfully, so the stack does not start until PR #35 merges. See
+`infra/compose/README.md`.
