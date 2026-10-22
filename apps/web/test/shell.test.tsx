@@ -1,6 +1,7 @@
 import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { ApiError } from '@/lib/api/client';
 import { useOrgStore } from '@/stores/org-store';
 import { createMockApi, renderApp, resetStores } from './fixtures/render';
 import { sessionResponse } from './fixtures/data';
@@ -20,18 +21,51 @@ describe('app shell', () => {
     expect(await screen.findByLabelText('Signed in user')).toHaveTextContent('Ada');
   });
 
-  it('switches organization with the shadcn Select and refetches org data', async () => {
-    const { api } = renderApp('/meetings');
+  it('switches organization via POST /auth/switch-org and refetches org data', async () => {
+    const globex = '00000000-0000-4000-8000-000000000002';
+    let active = sessionResponse.activeOrganizationId;
+    const api = createMockApi({
+      auth: {
+        session: vi.fn(() => Promise.resolve({ ...sessionResponse, activeOrganizationId: active })),
+        switchOrganization: vi.fn(({ organizationId }: { organizationId: string }) => {
+          active = organizationId;
+          return Promise.resolve({
+            ...sessionResponse,
+            activeOrganizationId: organizationId,
+            csrfToken: 'rotated',
+          });
+        }),
+      },
+    });
+    renderApp('/meetings', api);
     expect(await screen.findByText('Weekly sync')).toBeInTheDocument();
     await userEvent.click(screen.getByRole('combobox', { name: 'Organization' }));
     await userEvent.click(await screen.findByRole('option', { name: 'Globex' }));
-    expect(useOrgStore.getState().currentOrganizationId).toBe(
-      '00000000-0000-4000-8000-000000000002',
-    );
+    await waitFor(() => expect(useOrgStore.getState().currentOrganizationId).toBe(globex));
+    expect(api.auth.switchOrganization).toHaveBeenCalledWith({ organizationId: globex });
+    await waitFor(() => expect(api.auth.session).toHaveBeenCalledTimes(2));
     await waitFor(() =>
       expect(api.meetings.list).toHaveBeenCalledWith('00000000-0000-4000-8000-000000000002'),
     );
     expect(screen.getByRole('combobox', { name: 'Organization' })).toHaveTextContent('Globex');
+  });
+
+  it('keeps the current org and shows an error when the switch fails', async () => {
+    const api = createMockApi({
+      auth: {
+        switchOrganization: vi
+          .fn()
+          .mockRejectedValue(new ApiError(404, 'NOT_FOUND', 'no', 'req_1')),
+      },
+    });
+    renderApp('/meetings', api);
+    expect(await screen.findByText('Weekly sync')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('combobox', { name: 'Organization' }));
+    await userEvent.click(await screen.findByRole('option', { name: 'Globex' }));
+    expect(await screen.findByRole('alert')).toBeInTheDocument();
+    expect(useOrgStore.getState().currentOrganizationId).toBe(
+      '00000000-0000-4000-8000-000000000001',
+    );
   });
 
   it('falls back to the email when User.name is missing', async () => {
