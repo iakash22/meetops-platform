@@ -23,10 +23,34 @@ export default [
       ...c.languageOptions,
       parserOptions: {
         ...c.languageOptions?.parserOptions,
-        project: ["./tsconfig.base.json", "./apps/*/tsconfig.json", "./packages/*/tsconfig.json"]
+        // Resolve each file against its nearest tsconfig.json (per-package paths/aliases such as @/)
+        // Only test dirs NOT covered by a tsconfig "include" may use the default project;
+        // apps/web includes test/ in its own tsconfig, so it must not be listed here.
+        projectService: {
+          allowDefaultProject: [
+            "apps/api/test/*.ts",
+            "apps/worker/test/*.ts",
+            "packages/*/test/*.ts"
+          ],
+          defaultProject: "tsconfig.base.json",
+          maximumDefaultProjectFileMatchCount_THIS_WILL_SLOW_DOWN_LINTING: 32
+        },
+        tsconfigRootDir: import.meta.dirname
       }
     }
   })),
+  {
+    // apps/web relies on its own tsconfig (Bundler resolution + "@/" paths). Pin it
+    // explicitly so type-aware rules never fall back to a project without the alias.
+    files: ["apps/web/**/*.ts", "apps/web/**/*.tsx"],
+    languageOptions: {
+      parserOptions: {
+        projectService: false,
+        project: ["./tsconfig.eslint.web.json"],
+        tsconfigRootDir: import.meta.dirname
+      }
+    }
+  },
   {
     files: ["**/*.ts", "**/*.tsx"],
     plugins: {
