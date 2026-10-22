@@ -24,6 +24,8 @@ describe('manifest permissions', () => {
     expect(m.host_permissions ?? []).toEqual([]);
     expect(m.content_scripts).toBeUndefined();
     expect(m.optional_permissions).toBeUndefined();
-    expect(m.externally_connectable).toEqual({ matches: ['https://app.meetops.ai/*'] });
+    // Derived from the build's WXT_WEB_ORIGIN (default https://app.meetops.ai): exactly one bare https origin.
+    expect(m.externally_connectable.matches).toHaveLength(1);
+    expect(m.externally_connectable.matches[0]).toMatch(/^https:\/\/[^/]+\/\*$/);
   });
 });

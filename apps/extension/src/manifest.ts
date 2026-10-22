@@ -1,4 +1,4 @@
-import { PROD_WEB_ORIGIN } from './lib/auth/config.js';
+import { DEFAULT_WEB_ORIGIN, originMatch } from './lib/auth/origins.js';
 
 /**
  * Manifest fields for the MeetOps AI extension. Kept separate from wxt.config.ts
@@ -18,21 +18,26 @@ import { PROD_WEB_ORIGIN } from './lib/auth/config.js';
  *   detect a dead offscreen recorder; heartbeats alone cannot detect silence.
  * - `commands._execute_action`: keyboard shortcut to open the popup (an action
  *   invocation, so it grants activeTab like a toolbar click). Not a permission.
- * - `externally_connectable`: ADR-005 A1.1.5. Only the exact production web origin may message the extension (the
- *   pairing handoff). Dev origins are added by wxt.config.ts in dev builds only and never ship in a store build.
+ * - `externally_connectable`: ADR-005 A1.1.5. Only the configured web origin (WXT_WEB_ORIGIN, validated at build
+ *   time; localhost only in dev builds) may message the extension for the pairing handoff.
  * - No `host_permissions` and no content scripts.
  */
-export const manifest = {
-  name: 'MeetOps AI',
-  description: 'Record meetings you are part of, with clear consent.',
-  permissions: ['activeTab', 'tabCapture', 'offscreen', 'storage', 'alarms'] as string[],
-  host_permissions: [] as string[],
-  externally_connectable: { matches: [`${PROD_WEB_ORIGIN}/*`] as string[] },
-  commands: {
-    _execute_action: {
-      suggested_key: { default: 'Alt+Shift+M' },
-      description: 'Open MeetOps AI',
+export function buildManifest(webOrigin: string) {
+  return {
+    name: 'MeetOps AI',
+    description: 'Record meetings you are part of, with clear consent.',
+    permissions: ['activeTab', 'tabCapture', 'offscreen', 'storage', 'alarms'] as string[],
+    host_permissions: [] as string[],
+    externally_connectable: { matches: [originMatch(webOrigin)] },
+    commands: {
+      _execute_action: {
+        suggested_key: { default: 'Alt+Shift+M' },
+        description: 'Open MeetOps AI',
+      },
     },
-  },
-  action: { default_title: 'MeetOps AI' },
-};
+    action: { default_title: 'MeetOps AI' },
+  };
+}
+
+/** Manifest with the default web origin (used by tests). */
+export const manifest = buildManifest(DEFAULT_WEB_ORIGIN);
