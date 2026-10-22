@@ -22,7 +22,7 @@ describe('precedence: system < env < org < feature < request', () => {
   });
   it('org beats env, feature beats org, request beats feature', async () => {
     const { router } = await s();
-    await router.setOrgConfig({ tenantId: '00000000-0000-4000-8000-000000000002', defaults: { llm: { provider: 'gemini', model: 'org-m' } }, features: { actions: { provider: 'alt' } } }, admin('00000000-0000-4000-8000-000000000002'));
+    await router.setOrgConfig({ organizationId: '00000000-0000-4000-8000-000000000002', defaults: { llm: { provider: 'gemini', model: 'org-m' } }, features: { actions: { provider: 'alt' } } }, admin('00000000-0000-4000-8000-000000000002'));
     expect((await router.resolve('00000000-0000-4000-8000-000000000002', 'summary')).source).toBe('organization');
     const f = await router.resolve('00000000-0000-4000-8000-000000000002', 'actions');
     expect([f.provider, f.source]).toEqual(['alt', 'feature']);
@@ -37,7 +37,7 @@ describe('precedence: system < env < org < feature < request', () => {
   });
   it('no cross-tenant leakage', async () => {
     const { router } = await s();
-    await router.setOrgConfig({ tenantId: '00000000-0000-4000-8000-000000000003', defaults: { llm: { provider: 'alt' } } }, admin('00000000-0000-4000-8000-000000000003'));
+    await router.setOrgConfig({ organizationId: '00000000-0000-4000-8000-000000000003', defaults: { llm: { provider: 'alt' } } }, admin('00000000-0000-4000-8000-000000000003'));
     expect((await router.resolve('00000000-0000-4000-8000-000000000003', 'summary')).provider).toBe('alt');
     const b = await router.resolve('00000000-0000-4000-8000-000000000004', 'summary');
     expect(b.provider).toBe('ollama');
@@ -55,7 +55,7 @@ describe('capabilities & fallback policy', () => {
       providers: { gemini: fakeLLM('gemini'), txt: fakeLLM('txt') },
       configs: [llmCfg('gemini'), llmCfg('txt', { capabilities: ['text-generation'] })],
     });
-    await router.setOrgConfig({ tenantId: '00000000-0000-4000-8000-000000000001', defaults: { llm: { provider: 'gemini', fallbacks: ['txt'] } }, approvedProviders: ['gemini', 'txt'] }, admin('00000000-0000-4000-8000-000000000001'));
+    await router.setOrgConfig({ organizationId: '00000000-0000-4000-8000-000000000001', defaults: { llm: { provider: 'gemini', fallbacks: ['txt'] } }, approvedProviders: ['gemini', 'txt'] }, admin('00000000-0000-4000-8000-000000000001'));
     const plan = planCandidates(await router.resolve('00000000-0000-4000-8000-000000000001', 'actions'), registry);
     expect(plan.candidates.map((c) => c.name)).toEqual(['gemini']);
     expect(plan.skipped[0]).toMatchObject({ provider: 'txt', code: 'CAPABILITY_UNSUPPORTED' });
@@ -67,13 +67,13 @@ describe('capabilities & fallback policy', () => {
       providers: { gemini: fakeLLM('gemini', () => { throw Object.assign(new Error('quota exhausted'), { status: 429 }); }), openai: paid },
       configs: [llmCfg('gemini'), llmCfg('openai', { cost: { tier: 'paid', inputPer1MTokens: 1 } })],
     });
-    await router.setOrgConfig({ tenantId: '00000000-0000-4000-8000-000000000001', defaults: { llm: { provider: 'gemini', fallbacks: ['openai'] } }, approvedProviders: ['gemini', 'openai'] }, admin('00000000-0000-4000-8000-000000000001'));
-    const out = await executor.run({ tenantId: '00000000-0000-4000-8000-000000000001', feature: 'summary', promptVersion: 'v1' }, call);
+    await router.setOrgConfig({ organizationId: '00000000-0000-4000-8000-000000000001', defaults: { llm: { provider: 'gemini', fallbacks: ['openai'] } }, approvedProviders: ['gemini', 'openai'] }, admin('00000000-0000-4000-8000-000000000001'));
+    const out = await executor.run({ organizationId: '00000000-0000-4000-8000-000000000001', feature: 'summary', promptVersion: 'v1' }, call);
     expect(paid.calls).toBe(0);
     expect(out.status).toBe('waiting');
     if (out.status !== 'succeeded') {
       expect(out.errors.map((e) => e.code)).toEqual(expect.arrayContaining(['PAID_FALLBACK_BLOCKED', 'QUOTA_EXCEEDED']));
-      expect(out.request.tenantId).toBe('00000000-0000-4000-8000-000000000001'); // no data loss
+      expect(out.request.organizationId).toBe('00000000-0000-4000-8000-000000000001'); // no data loss
     }
   });
 
@@ -84,8 +84,8 @@ describe('capabilities & fallback policy', () => {
       configs: [llmCfg('gemini'), llmCfg('openai', { cost: { tier: 'paid', inputPer1MTokens: 1 } })],
       env: { AI_ALLOW_PAID_FALLBACK: 'true' },
     });
-    await router.setOrgConfig({ tenantId: '00000000-0000-4000-8000-000000000001', defaults: { llm: { provider: 'gemini', fallbacks: ['openai'] } }, approvedProviders: ['gemini', 'openai'] }, admin('00000000-0000-4000-8000-000000000001'));
-    const out = await executor.run({ tenantId: '00000000-0000-4000-8000-000000000001', feature: 'summary', promptVersion: 'v1' }, call);
+    await router.setOrgConfig({ organizationId: '00000000-0000-4000-8000-000000000001', defaults: { llm: { provider: 'gemini', fallbacks: ['openai'] } }, approvedProviders: ['gemini', 'openai'] }, admin('00000000-0000-4000-8000-000000000001'));
+    const out = await executor.run({ organizationId: '00000000-0000-4000-8000-000000000001', feature: 'summary', promptVersion: 'v1' }, call);
     expect(out.status).toBe('succeeded');
     expect(paid.calls).toBe(1);
   });
@@ -95,24 +95,24 @@ describe('capabilities & fallback policy', () => {
     const failing = () => { throw Object.assign(new Error('down'), { status: 503 }); };
     const mk = async (enabled: boolean) =>
       await setup({ providers: { gemini: fakeLLM('gemini', failing), ollama: local }, configs: [llmCfg('gemini'), llmCfg('ollama', { local: true, enabled })] });
-    const off = await (await mk(false)).executor.run({ tenantId: '00000000-0000-4000-8000-000000000001', feature: 'summary', promptVersion: 'v1' }, call);
+    const off = await (await mk(false)).executor.run({ organizationId: '00000000-0000-4000-8000-000000000001', feature: 'summary', promptVersion: 'v1' }, call);
     expect(off.status).toBe('retryable');
-    const on = await (await mk(true)).executor.run({ tenantId: '00000000-0000-4000-8000-000000000001', feature: 'summary', promptVersion: 'v1' }, call);
+    const on = await (await mk(true)).executor.run({ organizationId: '00000000-0000-4000-8000-000000000001', feature: 'summary', promptVersion: 'v1' }, call);
     expect(on.status).toBe('succeeded');
     if (on.status === 'succeeded') expect(on.meta.provider).toBe('ollama');
   });
 
   it('unapproved provider is skipped when approval required', async () => {
     const { router, executor, notified } = await setup({ providers: { gemini: fakeLLM('gemini'), alt: fakeLLM('alt') }, configs: [llmCfg('gemini'), llmCfg('alt')] });
-    await router.setOrgConfig({ tenantId: '00000000-0000-4000-8000-000000000001', defaults: { llm: { provider: 'alt' } } }, admin('00000000-0000-4000-8000-000000000001'));
-    const out = await executor.run({ tenantId: '00000000-0000-4000-8000-000000000001', feature: 'summary', promptVersion: 'v1' }, call);
+    await router.setOrgConfig({ organizationId: '00000000-0000-4000-8000-000000000001', defaults: { llm: { provider: 'alt' } } }, admin('00000000-0000-4000-8000-000000000001'));
+    const out = await executor.run({ organizationId: '00000000-0000-4000-8000-000000000001', feature: 'summary', promptVersion: 'v1' }, call);
     expect(out.status).toBe('failed');
     expect(notified).toHaveLength(1);
   });
 
   it('missing credentials -> failed with clear error, no crash', async () => {
     const { executor } = await setup({ providers: { gemini: fakeLLM('gemini') }, configs: [llmCfg('gemini', { credentialRef: 'env:GEMINI_API_KEY' })] });
-    const out = await executor.run({ tenantId: '00000000-0000-4000-8000-000000000001', feature: 'summary', promptVersion: 'v1' }, call);
+    const out = await executor.run({ organizationId: '00000000-0000-4000-8000-000000000001', feature: 'summary', promptVersion: 'v1' }, call);
     expect(out.status).toBe('failed');
     if (out.status !== 'succeeded') expect(out.errors[0]).toMatchObject({ code: 'MISSING_CREDENTIALS' });
   });
@@ -122,7 +122,7 @@ describe('capabilities & fallback policy', () => {
       providers: { assemblyai: fakeSTT('assemblyai') },
       configs: [{ name: 'assemblyai', type: 'stt', adapter: 'assemblyai', model: 'u', enabled: true, capabilities: ['batch-transcription'], cost: { tier: 'free' }, platformBilled: false }],
     });
-    const out = await executor.run({ tenantId: '00000000-0000-4000-8000-000000000001', feature: 'transcription', promptVersion: 'stt@1', transcriptRevision: 1 }, async (p) => {
+    const out = await executor.run({ organizationId: '00000000-0000-4000-8000-000000000001', feature: 'transcription', promptVersion: 'stt@1', transcriptRevision: 1 }, async (p) => {
       const r = await (p as ReturnType<typeof fakeSTT>).transcribe({ url: 'https://x' });
       return { value: r, usage: { audioSeconds: r.durationSec } };
     });

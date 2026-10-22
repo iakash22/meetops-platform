@@ -1,6 +1,6 @@
 export type ProviderConfigAuditEvent = {
   action: 'create' | 'update' | 'delete' | 'enable' | 'disable' | 'approve' | 'revoke' | 'override';
-  tenantId: string | null;
+  organizationId: string | null;
   actorId: string;
   provider?: string | undefined;
   feature?: string | undefined;

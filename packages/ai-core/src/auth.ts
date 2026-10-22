@@ -12,7 +12,7 @@ export type AISubject = 'ProviderConfig' | 'ProviderRegistry' | 'AIRoute';
 
 /** Server-derived caller context. Never built from request payloads. */
 export type TenantContext = {
-  orgId: string;
+  organizationId: string;
   userId: string;
   requestId?: string | undefined;
   ability: Ability;

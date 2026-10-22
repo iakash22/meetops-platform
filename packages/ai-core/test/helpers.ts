@@ -41,8 +41,8 @@ export const llmCfg = (name: string, extra: Partial<ProviderConfigInput> = {}): 
 });
 
 export const SYSTEM: SystemContext = { system: true, userId: 'platform-admin' };
-export const admin = (orgId: string, userId = `admin@${orgId}`): TenantContext => ({ orgId, userId, ability: roleAbility('admin') });
-export const member = (orgId: string): TenantContext => ({ orgId, userId: `member@${orgId}`, ability: roleAbility('member') });
+export const admin = (organizationId: string, userId = `admin@${organizationId}`): TenantContext => ({ organizationId, userId, ability: roleAbility('admin') });
+export const member = (organizationId: string): TenantContext => ({ organizationId, userId: `member@${organizationId}`, ability: roleAbility('member') });
 
 export async function setup(opts: {
   providers: Record<string, AnyProvider>;

@@ -34,7 +34,7 @@ describe('timeouts & bounded retries', () => {
   });
   it('executor timeout -> retryable status', async () => {
     const { executor } = await setup({ providers: { gemini: fakeLLM('gemini', () => new Promise(() => {})) }, configs: [llmCfg('gemini', { timeoutMs: 100 })] });
-    const out = await executor.run({ tenantId: '00000000-0000-4000-8000-000000000001', feature: 'summary', promptVersion: 'v1' }, call);
+    const out = await executor.run({ organizationId: '00000000-0000-4000-8000-000000000001', feature: 'summary', promptVersion: 'v1' }, call);
     expect(out.status).toBe('retryable');
   });
 });
@@ -45,7 +45,7 @@ describe('usage, quota, budgets, idempotency', () => {
       providers: { gemini: fakeLLM('gemini') },
       configs: [llmCfg('gemini', { cost: { tier: 'paid', inputPer1MTokens: 1_000_000, outputPer1MTokens: 0 } })],
     });
-    const out = await executor.run({ tenantId: '00000000-0000-4000-8000-000000000001', feature: 'summary', promptVersion: 'v7', transcriptRevision: 3 }, call);
+    const out = await executor.run({ organizationId: '00000000-0000-4000-8000-000000000001', feature: 'summary', promptVersion: 'v7', transcriptRevision: 3 }, call);
     expect(out.status).toBe('succeeded');
     if (out.status === 'succeeded') expect(out.meta).toMatchObject({ provider: 'gemini', model: 'gemini-2.5-flash-lite', promptVersion: 'v7', transcriptRevision: 3, usage: { totalTokens: 15, estimatedCostUsd: 10 } });
     expect(usage.records).toHaveLength(1);
@@ -53,32 +53,32 @@ describe('usage, quota, budgets, idempotency', () => {
   it('daily request quota blocks before calling -> waiting', async () => {
     const p = fakeLLM('gemini');
     const { executor } = await setup({ providers: { gemini: p }, configs: [llmCfg('gemini', { usage: { dailyRequestLimit: 1 } })] });
-    await executor.run({ tenantId: '00000000-0000-4000-8000-000000000001', feature: 'summary', promptVersion: 'v' }, call);
-    const out = await executor.run({ tenantId: '00000000-0000-4000-8000-000000000001', feature: 'summary', promptVersion: 'v' }, call);
+    await executor.run({ organizationId: '00000000-0000-4000-8000-000000000001', feature: 'summary', promptVersion: 'v' }, call);
+    const out = await executor.run({ organizationId: '00000000-0000-4000-8000-000000000001', feature: 'summary', promptVersion: 'v' }, call);
     expect(out.status).toBe('waiting');
     expect(p.calls).toBe(1);
     // other tenant unaffected
-    expect((await executor.run({ tenantId: '00000000-0000-4000-8000-000000000005', feature: 'summary', promptVersion: 'v' }, call)).status).toBe('succeeded');
+    expect((await executor.run({ organizationId: '00000000-0000-4000-8000-000000000005', feature: 'summary', promptVersion: 'v' }, call)).status).toBe('succeeded');
   });
   it('per-org budget enforced before paid calls', async () => {
     const p = fakeLLM('gemini');
     const { executor, router } = await setup({ providers: { gemini: p }, configs: [llmCfg('gemini', { cost: { tier: 'paid', inputPer1MTokens: 1_000_000 } })] });
-    await router.setOrgConfig({ tenantId: '00000000-0000-4000-8000-000000000001', monthlyBudgetUsd: 5 }, admin('00000000-0000-4000-8000-000000000001'));
-    expect((await executor.run({ tenantId: '00000000-0000-4000-8000-000000000001', feature: 'summary', promptVersion: 'v' }, call)).status).toBe('succeeded'); // spends $10
-    const out = await executor.run({ tenantId: '00000000-0000-4000-8000-000000000001', feature: 'summary', promptVersion: 'v' }, call);
+    await router.setOrgConfig({ organizationId: '00000000-0000-4000-8000-000000000001', monthlyBudgetUsd: 5 }, admin('00000000-0000-4000-8000-000000000001'));
+    expect((await executor.run({ organizationId: '00000000-0000-4000-8000-000000000001', feature: 'summary', promptVersion: 'v' }, call)).status).toBe('succeeded'); // spends $10
+    const out = await executor.run({ organizationId: '00000000-0000-4000-8000-000000000001', feature: 'summary', promptVersion: 'v' }, call);
     expect(out.status).toBe('waiting');
     expect(p.calls).toBe(1);
   });
   it('idempotency key prevents duplicate AI calls (sequential + concurrent), tenant-scoped', async () => {
     const p = fakeLLM('gemini');
     const { executor } = await setup({ providers: { gemini: p }, configs: [llmCfg('gemini')] });
-    const req = { tenantId: '00000000-0000-4000-8000-000000000001', feature: 'summary' as const, promptVersion: 'v', idempotencyKey: 'k1' };
+    const req = { organizationId: '00000000-0000-4000-8000-000000000001', feature: 'summary' as const, promptVersion: 'v', idempotencyKey: 'k1' };
     const [a, b] = await Promise.all([executor.run(req, call), executor.run(req, call)]);
     const c = await executor.run(req, call);
     expect(p.calls).toBe(1);
     expect([a.status, b.status, c.status]).toEqual(['succeeded', 'succeeded', 'succeeded']);
     if (c.status === 'succeeded') expect(c.meta.cached).toBe(true);
-    await executor.run({ ...req, tenantId: '00000000-0000-4000-8000-000000000005' }, call);
+    await executor.run({ ...req, organizationId: '00000000-0000-4000-8000-000000000005' }, call);
     expect(p.calls).toBe(2);
   });
 });

@@ -23,7 +23,7 @@ export type JobOutcome<T> =
     };
 
 export type AIJobRequest = {
-  tenantId: string;
+  organizationId: string;
   feature: AIFeature;
   promptVersion: string;
   idempotencyKey?: string | undefined;
@@ -42,7 +42,7 @@ export type ProviderCall<T> = (
   ctx: { model: string; config: ProviderConfig; signal: AbortSignal },
 ) => Promise<{ value: T; usage: Omit<AIUsage, 'estimatedCostUsd'> }>;
 
-export type NotifyHook = (e: { tenantId: string; feature: AIFeature; status: JobStatus; errors: AttemptError[]; jobId?: string | undefined }) => Promise<void> | void;
+export type NotifyHook = (e: { organizationId: string; feature: AIFeature; status: JobStatus; errors: AttemptError[]; jobId?: string | undefined }) => Promise<void> | void;
 
 export type ExecutorDeps = {
   registry: ProviderRegistry;
@@ -114,7 +114,7 @@ export class AIExecutor {
   constructor(private readonly deps: ExecutorDeps) {}
 
   async run<T>(req: AIJobRequest, call: ProviderCall<T>): Promise<JobOutcome<T>> {
-    const key = req.idempotencyKey ? `${req.tenantId}:${req.feature}:${req.idempotencyKey}` : undefined;
+    const key = req.idempotencyKey ? `${req.organizationId}:${req.feature}:${req.idempotencyKey}` : undefined;
     if (key) {
       const stored = await this.deps.idempotency.get<JobOutcome<T>>(key);
       if (stored && stored.status === 'succeeded') return { ...stored, meta: { ...stored.meta, cached: true } };
@@ -136,7 +136,7 @@ export class AIExecutor {
     const errors: AttemptError[] = [];
     let route: ResolvedRoute;
     try {
-      route = await this.deps.router.resolve(req.tenantId, req.feature, req.override, req.actor);
+      route = await this.deps.router.resolve(req.organizationId, req.feature, req.override, req.actor);
     } catch (e) {
       const err = toAIError(e);
       this.deps.onInternalError?.({ requestId: req.requestId, provider: '-', error: err });
@@ -155,7 +155,7 @@ export class AIExecutor {
           errors.push({ provider: cfg.name, code: 'TIMEOUT' });
           break;
         }
-        const q = await this.deps.quota.check({ tenantId: req.tenantId, provider: cfg, monthlyBudgetUsd: route.monthlyBudgetUsd });
+        const q = await this.deps.quota.check({ organizationId: req.organizationId, provider: cfg, monthlyBudgetUsd: route.monthlyBudgetUsd });
         if (!q.allowed) {
           errors.push({ provider: cfg.name, code: 'QUOTA_EXCEEDED' });
           continue;
@@ -163,7 +163,7 @@ export class AIExecutor {
         const model = cfg.name === route.provider && route.model ? route.model : cfg.model;
         try {
           // Adapter is built per call with the org-scoped credential (no global key-bound client).
-          const provider = await this.deps.registry.instantiate(cfg.name, { orgId: req.tenantId, orgCredentialRefs: route.credentialRefs, feature: req.feature });
+          const provider = await this.deps.registry.instantiate(cfg.name, { organizationId: req.organizationId, orgCredentialRefs: route.credentialRefs, feature: req.feature });
           const res = await withRetry(
             () => withTimeout((signal) => call(provider, { model, config: cfg, signal }), cfg.timeoutMs, cfg.name, deadline.signal),
             cfg.retryPolicy,
@@ -171,7 +171,7 @@ export class AIExecutor {
           );
           const usage: AIUsage = { ...res.usage, estimatedCostUsd: estimateCost(cfg, res.usage) };
           await this.deps.usage.record({
-            tenantId: req.tenantId,
+            organizationId: req.organizationId,
             provider: cfg.name,
             model,
             feature: req.feature,
@@ -212,7 +212,7 @@ export class AIExecutor {
   }
 
   private async finish<T>(req: AIJobRequest, status: Exclude<JobStatus, 'succeeded'>, errors: AttemptError[]): Promise<JobOutcome<T>> {
-    await this.deps.notify?.({ tenantId: req.tenantId, feature: req.feature, status, errors, jobId: req.jobId });
+    await this.deps.notify?.({ organizationId: req.organizationId, feature: req.feature, status, errors, jobId: req.jobId });
     return { status, errors, request: req, requestId: req.requestId };
   }
 }

@@ -56,7 +56,7 @@ describe('TranscriptionChunkHandler', () => {
     };
     const s = await setup({ providers: { assemblyai: stt }, configs: [{ name: 'assemblyai', type: 'stt', adapter: 'assemblyai', model: 'universal', enabled: true, capabilities: ['batch-transcription', 'diarization'], cost: { tier: 'free' }, platformBilled: false }] });
     const store = new InMemoryTranscriptStore();
-    const h = new TranscriptionChunkHandler({ executor: s.executor, store, resolveAudio: async ({ fileObjectId }) => ({ bytes: new TextEncoder().encode(fileObjectId) }), resolveActor: async ({ tenantId }) => admin(tenantId) });
+    const h = new TranscriptionChunkHandler({ executor: s.executor, store, resolveAudio: async ({ fileObjectId }) => ({ bytes: new TextEncoder().encode(fileObjectId) }), resolveActor: async ({ organizationId }) => admin(organizationId) });
     return { h, store, calls: () => calls, usage: s.usage };
   };
   it('out-of-order chunks -> revisions increment, final complete', async () => {

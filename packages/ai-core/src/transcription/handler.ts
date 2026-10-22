@@ -27,14 +27,14 @@ export type TranscriptionChunkJobPayload = TranscriptionJobPayload & {
  * Reads a chunk's audio server-side (tenant-checked) and returns BYTES. Owned by Media/Storage.
  * Bytes, not URLs: the AssemblyAI adapter uploads bytes so providers never fetch our storage URLs.
  */
-export type AudioResolver = (q: { tenantId: string; fileObjectId: string }) => Promise<Pick<TranscriptionInput, 'bytes' | 'mimeType'>>;
+export type AudioResolver = (q: { organizationId: string; fileObjectId: string }) => Promise<Pick<TranscriptionInput, 'bytes' | 'mimeType'>>;
 
 /**
  * Server-derived actor for a job (e.g. the worker's service identity scoped to the org, or the enqueuing user's context
  * re-validated by Backend). Its ability decides whether the payload's provider choice may override routing.
  * Never derived from the payload itself.
  */
-export type JobActorResolver = (q: { tenantId: string; requestId?: string | undefined }) => Promise<TenantContext | undefined>;
+export type JobActorResolver = (q: { organizationId: string; requestId?: string | undefined }) => Promise<TenantContext | undefined>;
 
 export type ChunkJobResult =
   | { status: 'succeeded'; duplicate: boolean; revision: TranscriptRevision | undefined; revisionChanged: boolean }
@@ -63,8 +63,8 @@ export class TranscriptionChunkHandler {
 
     if (!existing) {
       const base = transcriptionJobToRequest(p);
-      const actor = await this.deps.resolveActor({ tenantId: t, requestId: p.requestId });
-      const audio = await this.deps.resolveAudio({ tenantId: t, fileObjectId: p.chunk.fileObjectId });
+      const actor = await this.deps.resolveActor({ organizationId: t, requestId: p.requestId });
+      const audio = await this.deps.resolveAudio({ organizationId: t, fileObjectId: p.chunk.fileObjectId });
       const out = await this.deps.executor.run(
         // Without an authorized actor the payload's provider is ignored and normal routing applies (no override).
         {
@@ -114,7 +114,7 @@ export class TranscriptionChunkHandler {
         return { status: 'succeeded', duplicate, revision: prev, revisionChanged: false };
       const rev: TranscriptRevision = {
         ...merged,
-        tenantId: t,
+        organizationId: t,
         meetingId: m,
         recordingId: r,
         revision: (prev?.revision ?? 0) + 1,

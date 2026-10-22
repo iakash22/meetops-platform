@@ -1,7 +1,7 @@
 import type { ChunkTranscript, MergedTranscript } from './merge.js';
 
 export type TranscriptRevision = MergedTranscript & {
-  tenantId: string;
+  organizationId: string;
   meetingId: string;
   recordingId: string;
   revision: number;
@@ -13,10 +13,10 @@ export type TranscriptRevision = MergedTranscript & {
 /** Persistence for chunk results + transcript revisions. Backend/DB provides the durable, tenant-scoped implementation. */
 export interface TranscriptStore {
   /** Returns false if a result for this chunk already exists (first write wins). */
-  putChunk(tenantId: string, meetingId: string, recordingId: string, chunk: ChunkTranscript): Promise<boolean>;
-  getChunk(tenantId: string, meetingId: string, recordingId: string, chunkIndex: number): Promise<ChunkTranscript | undefined>;
-  listChunks(tenantId: string, meetingId: string, recordingId: string): Promise<ChunkTranscript[]>;
-  latestRevision(tenantId: string, meetingId: string, recordingId: string): Promise<TranscriptRevision | undefined>;
+  putChunk(organizationId: string, meetingId: string, recordingId: string, chunk: ChunkTranscript): Promise<boolean>;
+  getChunk(organizationId: string, meetingId: string, recordingId: string, chunkIndex: number): Promise<ChunkTranscript | undefined>;
+  listChunks(organizationId: string, meetingId: string, recordingId: string): Promise<ChunkTranscript[]>;
+  latestRevision(organizationId: string, meetingId: string, recordingId: string): Promise<TranscriptRevision | undefined>;
   /** Must be compare-and-set on revision (expectedPrev) to avoid lost updates under concurrent chunk completion. */
   putRevision(rev: TranscriptRevision, expectedPrev: number): Promise<boolean>;
 }
@@ -44,7 +44,7 @@ export class InMemoryTranscriptStore implements TranscriptStore {
     return l?.[l.length - 1];
   }
   async putRevision(rev: TranscriptRevision, expectedPrev: number) {
-    const key = k(rev.tenantId, rev.meetingId, rev.recordingId);
+    const key = k(rev.organizationId, rev.meetingId, rev.recordingId);
     const l = this.revs.get(key) ?? [];
     if ((l[l.length - 1]?.revision ?? 0) !== expectedPrev) return false;
     l.push(structuredClone(rev));
