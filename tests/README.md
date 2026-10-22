@@ -85,12 +85,33 @@ QA_DB_PACKAGE_DIR=/path/to/pr25/packages/database QA_RLS_SCHEMA=datamodel \
 pnpm --filter @meetops/tests test
 ```
 
+## Web E2E flow (P1-QA-4)
+
+`e2e/flow/` drives the PR #48 web app against a real `createServer()` API (in-memory deps). Each test starts its own API and a same-origin proxy (`e2e/flow/stack.ts`) that serves the built SPA and forwards `/api/*` to the API. No Postgres is needed.
+
+| Env          | Points at                                                                                                  |
+| ------------ | ---------------------------------------------------------------------------------------------------------- |
+| `QA_WEB_DIR` | `apps/web` of the PR #48 checkout, built (`pnpm exec vite build`)                                          |
+| `QA_API_DIR` | `apps/api` with the auth/orgs modules (integration/phase-1), built (`pnpm --filter @meetops/api... build`) |
+
+When either variable is unset or a build is missing, the suite is skipped.
+
+```bash
+QA_WEB_DIR=/path/pr48/apps/web QA_API_DIR=/path/phase-1/apps/api pnpm --filter @meetops/tests test:e2e:flow
+```
+
+The tests are E2E-01..11. They cover the guard redirect, login, a bad login, `?next=`, the org switcher, no orgs, org creation (fixme FE-GAP-1), meetings rendering with a stubbed endpoint, meetings against the real API (BE-GAP-1), and the API being aborted or stopped (FE-BUG-2).
+
 ## Known product bugs (tests left failing or `it.fails`)
 
 | ID       | Owner                        | Found by                                                                                                               | Summary                                                                                                                                                                                                                                                                                                                                                                                                            |
 | -------- | ---------------------------- | ---------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | DB-BUG-1 | DB (PR #25; fixed in PR #35) | `integration/database.test.ts` "applies every migration", `integration/rls.test.ts` setup (`QA_RLS_SCHEMA=migrations`) | `20261021100000_tenancy_hardening` does not apply to a fresh DB: it `ALTER`s `"tasks"` before creating it (`relation "tasks" does not exist`). Without that line it then fails dropping `TaskPriority_old` (still used by `internal_tasks`). The migration doesn't match the init migration. `prisma migrate deploy` fails, so the seed fails too.                                                                 |
 | DB-BUG-2 | DB (PR #25)                  | `integration/rls.test.ts` XT-28 (strict; fixed in PR #35, fails against PR #25)                                        | After a transaction-local `set_config('app.current_org_id', …, true)`, the session keeps `''`; policies do `current_setting(…, true)::uuid`, so the next query without context on a pooled connection errors with 22P02 instead of returning 0 rows. Fails closed (no leak), but breaks pooled connections. Fix: `NULLIF(current_setting('app.current_org_id', true), '')::uuid` (same for `app.current_user_id`). |
+| FE-BUG-1 | Web (PR #48)                 | `e2e/flow` E2E-04 (`test.fail`)                                                                                        | After the guard caches `session=null` (visit to a protected URL), a successful login does not refetch `/auth/session`; `ensureQueryData` returns the stale null and the guard bounces back to `/login?next=`. Fix: `setQueryData(session)` from the login response or `fetchQuery` in `useCompleteSignIn`.                                                                                                         |
+| FE-BUG-2 | Web (PR #48)                 | `e2e/flow` E2E-10, E2E-11 (`test.fail`)                                                                                | When the API is unreachable, `GET /auth/session` rejects with a network error (not 401), the guard `beforeLoad` throws, and the router shows its default "Something went wrong!" page at the protected URL instead of redirecting to `/login`.                                                                                                                                                                     |
+| FE-GAP-1 | Web (PR #48)                 | E2E-07 (`fixme`)                                                                                                       | No create-organization UI.                                                                                                                                                                                                                                                                                                                                                                                         |
+| BE-GAP-1 | API (phase-1)                | E2E-09 (`test.fail`)                                                                                                   | `GET /orgs/:id/meetings` is not implemented, so the meetings page shows an error state.                                                                                                                                                                                                                                                                                                                            |
 
 ## Factories
 
