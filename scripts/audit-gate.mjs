@@ -39,7 +39,7 @@ const EXCEPTIONS = [
     // Not a prod dependency of any package (`pnpm why -r --prod` finds none) and
     // absent from `pnpm deploy --prod` output of api and worker. Approver: Security.
     // Exit plan: drop when web-ext-run/adbkit stop depending on node-forge or a fix ships.
-    id: 'RE-02',
+    id: 'RE-03',
     owner: 'Security Agent',
     issue: 'https://github.com/iakash22/meetops-platform/issues/54',
     ghsa: 'GHSA-86w9-cpqp-85rv',
