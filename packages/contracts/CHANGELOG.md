@@ -15,8 +15,14 @@ All changes in this release are additive. No existing export changed.
   the caller becomes `owner`.
 - `ListOrganizationsResponse { items: OrganizationWithRole[], nextCursor: string | null }` for `GET /orgs` (a cursor page,
   built from `CursorPage`). It is not a bare `Organization[]`.
-- All four are strict (`additionalProperties: false`) and are exported from the main entry. Their types are exported from
-  `@meetops/contracts/types`.
+- Sessions: `SessionSummary { id, current, createdAt, lastSeenAt, expiresAt, ip: string (≤45) | null, userAgent: string (≤1024) | null }`
+  and `ListSessionsResponse` (cursor page) for `GET /auth/sessions`, plus `SessionIdParams { sessionId }` for
+  `DELETE /auth/sessions/:sessionId`. `SessionSummary` never carries token, hash or other secret fields, and because it is
+  strict, a serializer that adds one fails validation.
+- Members: `UserSummary { id, email, name?, avatarUrl? }`, `OrganizationMember { id, organizationId, userId, role,
+createdAt, user: UserSummary }` and `ListMembersResponse` (cursor page) for `GET /orgs/:organizationId/members`.
+- All of these are strict (`additionalProperties: false`) and are exported from the main entry. Their types are exported
+  from `@meetops/contracts/types`.
 
 ## [0.3.0] - 2026-10-22
 
