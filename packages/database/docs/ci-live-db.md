@@ -95,3 +95,12 @@ pnpm --filter @meetops/database test:live
 - Backfill windows: Prisma sends each migration file as one multi-statement simple query, which Postgres
   runs as one implicit transaction (statements after an explicit COMMIT form another one), so a failure rolls back the NO FORCE too. Verified live on pg16 with a probe migration: NO FORCE, then 1/0, left the table forced, both with and without a preceding BEGIN/COMMIT.
   `20261022034000_assert_forced_rls` fails the deploy if any RLS table is not forced.
+
+## Architecture re-review fixes (#35 at 915f6b0)
+
+- **B1, accept_invitation and active members** (`20261022040000_accept_invitation_active_member`): accepting an invitation never changes an _active_ membership. The call raises `already_member` (SQLSTATE `P0001`), so a sole owner who accepts a viewer invite stays owner and the org keeps its owner. A soft-deleted membership is revived with the invitation's role, and a new membership is inserted with the invitation's role as before.
+  **Decision:** the invitation stays `pending`. The exception rolls back the whole call: the invite is not consumed and no audit row is written, so an admin can still see and revoke it, or it expires. The API should also refuse to invite an address that is already an active member (BE/#53).
+- **Audit maintenance hatch** (`20261022041000_audit_hatch_session_user`): the hatch now requires `session_user = 'meetops_migrator'` plus `meetops.audit_maintenance=on`. A migrator-owned SECURITY DEFINER function called by the app (where `current_user` is the migrator) cannot open it. A superuser session can't either; superusers can disable the trigger explicitly if they truly need to. Live test: "a migrator-owned SECURITY DEFINER function cannot open the hatch".
+- **Data-only restore:** `audit_events` has BEFORE UPDATE/DELETE/TRUNCATE triggers. For a `pg_restore --data-only` into an existing schema, run it as a superuser with `--disable-triggers`, or restore the full schema plus data into an empty database.
+- **Live tests need a throwaway database.** They leave fixture orgs and users behind (for example `ex-owner-*`, `multi-*`, `sole-*`). Cleanup isn't possible by design: audit rows are append-only and reference those orgs. Run them only against a disposable DB, as CI and `live.sh` do.
+- The forced-RLS check runs after every deploy in the live suite ("every table with RLS enabled is forced"), not only in migration 034000.
