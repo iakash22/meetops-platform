@@ -44,6 +44,14 @@ createdAt, user: UserSummary }` and `ListMembersResponse` (cursor page) for `GET
   and no `\` or whitespace in the path. Max length 2048.
 - `UserSummary.email` is optional. The API MUST include it only for `owner` and `admin` viewers, and MUST omit it for
   `member` and `viewer` viewers.
+- `UNSAFE_DISPLAY_TEXT_CHARS` (and so `deviceLabel`, `CreateOrganizationRequest.name` and `organizationName`) also
+  rejects U+00AD (soft hyphen), U+180E, U+3164 (Hangul filler), U+FE00-U+FE0F (variation selectors) and the tag
+  characters U+E0000-U+E007F (new `UNSAFE_DISPLAY_TEXT_TAGS`). The patterns work both without the `u` flag (TypeBox
+  `Value.Check`) and with it (Ajv in Fastify).
+- `ExtensionPairResponse.organizationName` uses `SafeDisplayText` with the same bounds as the org name (1–200, no
+  leading or trailing whitespace).
+- `MAX_RECORDING_SESSION_BYTES` (2 GB) JSDoc: the backend MUST enforce it as a running total per session. The
+  per-chunk limits cannot enforce it.
 - `deviceLabel` (`ExtensionDeviceLabel`) also rejects the invisible format characters U+200B-U+200D (zero-width space,
   non-joiner, joiner), U+2060 (word joiner), U+FEFF (BOM / zero-width no-break space) and U+061C (Arabic letter mark).
 
