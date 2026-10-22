@@ -1,6 +1,6 @@
 import { Type, type Static } from '@sinclair/typebox';
 import { Id, IsoDateTime } from '../common.js';
-import { SttProviderId } from '../jobs/index.js';
+import { TranscriptProviderId } from '../jobs/index.js';
 
 export const MeetingSource = Type.Union([
   Type.Literal('upload'),
@@ -68,8 +68,8 @@ export const Transcript = Type.Object({
   meetingId: Id,
   recordingId: Id,
   language: Type.Optional(Type.String()),
-  /** STT provider that produced the transcript. */
-  provider: SttProviderId,
+  /** STT provider that produced the transcript. `'unknown'` only on legacy backfilled rows. */
+  provider: TranscriptProviderId,
   /** Provider-side job id (e.g. AssemblyAI transcript id), for reconciliation. */
   providerJobId: Type.Optional(Type.String({ maxLength: 200 })),
   segments: Type.Array(TranscriptSegment),

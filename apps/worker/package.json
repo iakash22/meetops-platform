@@ -14,8 +14,15 @@
   },
   "dependencies": {
     "@meetops/config": "workspace:*",
+    "@meetops/contracts": "workspace:*",
     "@meetops/logger": "workspace:*",
-    "@meetops/queue": "workspace:*"
+    "@meetops/media-core": "workspace:*",
+    "@meetops/queue": "workspace:*",
+    "@meetops/storage": "workspace:*",
+    "@sinclair/typebox": "^0.34.0",
+    "@socket.io/redis-emitter": "^5.1.0",
+    "bullmq": "^5.18.0",
+    "ioredis": "^5.4.1"
   },
   "devDependencies": {
     "tsx": "^4.19.1",
