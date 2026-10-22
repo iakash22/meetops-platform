@@ -4,6 +4,60 @@ All notable changes to `@meetops/contracts` are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this package uses [Semantic Versioning](https://semver.org/).
 While the version is `0.x`, a minor bump may contain breaking changes (ADR-003).
 
+## [0.3.0] - 2026-10-22
+
+### Added
+
+- Meetings: `ResolveMeetingRequest` (a strict union; at least one of `externalMeetingUrl` (https) or `externalMeetingId`
+  (opaque, ≤255) is required) and `ResolveMeetingResponse { meetingId, created }`, for
+  `POST /orgs/:organizationId/meetings/resolve`. It is idempotent per (organizationId, source, externalMeetingId).
+  Also adds `GetMeetingParams { organizationId, meetingId }`.
+- Extension auth (ADR-005 + amendment 1, pairing proof): `ExtensionPairRequest { extensionId, deviceId (UUID), nonce
+(32–128 base64url), deviceLabel? (printable, ≤100) }` → `ExtensionPairResponse { pairingCode, expiresAt, organizationId,
+organizationName }` (no tokens); `ExtensionTokenRequest { extensionId, deviceId, pairingCode, nonce }` →
+  `ExtensionTokenResponse` (strict: `accessToken`, `refreshToken`, `tokenType: 'Bearer'`, `audience: 'extension'`,
+  `expiresAt`, `expiresIn` ≤900, `refreshExpiresAt`, `organizationId`, `scopes` (1–2, unique), `nonce` echo);
+  `ExtensionRefreshRequest`/`ExtensionRefreshResponse` (rotation); `ExtensionRevokeRequest`/`ExtensionRevokeResponse`.
+  `ExtensionRevokeRequest.refreshToken` is **required**: refresh and revoke are authenticated by the refresh token in the
+  body (bound to `extensionId` and `deviceId`), not by Bearer, so both work after the access token has expired.
+  `deviceLabel` also rejects `<`, `>`, `"`, `'`, `&` and bidi/format characters (U+200E-U+200F, U+202A-U+202E, U+2066-U+2069).
+  Constants: `EXTENSION_AUTH_PATHS`, `EXTENSION_SCOPES`, `EXTENSION_TOKEN_AUDIENCE`, `EXTENSION_TOKEN_TYPE`,
+  `EXTENSION_TOKEN_TTL_SECONDS` (900), `EXTENSION_REFRESH_FAMILY_MAX_LIFETIME_SECONDS` (30 days), and `REDACT_KEYS`
+  (includes `accessToken`, `refreshToken`) for loggers. These two token responses are the **only** API bodies that carry tokens.
+- Auth: `SwitchOrganizationRequest` for `POST /auth/switch-org`. It returns `AuthSession` with a rotated csrfToken, and the
+  session id is rotated.
+- Errors: `CSRF_INVALID`.
+- Tasks: `ListTasksQuery` (strict; cursor pagination plus status (one or several), priority, assigneeId, projectId,
+  meetingId, dueBefore, dueAfter, q ≤200, and `unassigned: true` (literal; a strict union makes it mutually exclusive with
+  assigneeId)), `TASK_STATUSES` and the `TaskStatusValue` alias.
+
+- Light entry `@meetops/contracts/types`: types only plus plain constants (`TASK_STATUSES`, `ROLES`, `API_ERROR_CODES`,
+  `EXTENSION_*`, `EXTENSION_AUTH_PATHS`, `REDACT_KEYS`), with zero runtime TypeBox import. It is recommended for `apps/extension`. For a
+  constants-only import, esbuild measures ≈47.5 kB minified (12.5 kB gzip) through the main entry versus ≈0.15 kB through the light entry.
+- `package.json`: `"sideEffects": false`.
+
+### Changed
+
+- `Transcript.provider` is now `TranscriptProviderId` (`SttProviderId` values plus `'unknown'`). `'unknown'` is for legacy rows
+  backfilled by the DB migration only; new transcripts MUST record a real provider. `SttProviderId` (routing) is unchanged and
+  rejects `'unknown'`. Adds `STT_PROVIDER_IDS` and `TRANSCRIPT_PROVIDER_IDS` constants (also in `/types`).
+- `TASK_STATUSES` and `ROLES` now live in `src/constants.ts` (with the extension constants) and are re-exported unchanged from
+  the main entry.
+- `PresignedUrlString` rejects userinfo (`user@`, `user:pass@`) for both https and http URLs.
+
+### Confirmed (DB alignment, ADR-004 addendum 2)
+
+- `organizationId` is canonical (the DB column is `org_id` via `@map`). `ExtractedTask.reportId` and `Transcript.provider` are
+  required. The only link between Task and ExtractedTask is `Task.extractedTaskId`; there is no `acceptedTaskId`. There is no
+  `employeeId` on participants. No schema changes were needed; tests now guard these.
+
+### Deprecated
+
+- `PresignedUrl` and `StorageObjectMetadata` are deprecated in 0.3.0. They are still re-exported from the main entry point
+  (as `@deprecated` types), because `@meetops/storage` still depends on them, and from `@meetops/contracts/legacy`.
+  Removal is scheduled for 0.4.0. Replacements: `PresignedUrlDto` for `PresignedUrl`; `PublicFileObject` (client-facing)
+  or the internal `FileObject` for `StorageObjectMetadata`.
+
 ## [0.2.0] - 2026-10-21
 
 ### Added
@@ -81,8 +135,9 @@ refs? (≤10 opaque id pairs), locale? (BCP-47-ish, ≤35) }`. Every level rejec
 
 ### Deprecated
 
-- `PresignedUrl` and `StorageObjectMetadata` are no longer exported from the main entry point. Import them from
-  `@meetops/contracts/legacy` while migrating to `PresignedUrlDto` / `PublicFileObject` / `FileObject`. Removal is planned in 0.3.0.
+- `PresignedUrl` and `StorageObjectMetadata` are deprecated. They are also exported from `@meetops/contracts/legacy`.
+  Migrate to `PresignedUrlDto` / `PublicFileObject` / `FileObject`. (Correction: an earlier version of this note said they
+  were dropped from the main entry point. They were not; see 0.3.0.)
   `EmailAddress` and `EmailMessage` are still exported from the main entry point.
 
 ### Removed

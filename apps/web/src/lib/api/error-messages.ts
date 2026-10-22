@@ -6,6 +6,7 @@ export const ERROR_MESSAGES: Record<ApiErrorCode, string> = {
   VALIDATION_FAILED: 'Some of the information provided is invalid.',
   UNAUTHENTICATED: 'Please sign in to continue.',
   AUTH_FAILED: 'Invalid email or password.',
+  CSRF_INVALID: 'Your session security check expired. Please refresh the page and try again.',
   FORBIDDEN: "You don't have permission to do that.",
   NOT_FOUND: "We couldn't find what you were looking for.",
   CONFLICT: 'This conflicts with an existing item.',

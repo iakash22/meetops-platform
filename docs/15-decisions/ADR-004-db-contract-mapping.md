@@ -142,3 +142,17 @@ These were decided by ARCH and applied in `@meetops/contracts` 0.2.0. DB must ma
 
 `Session` stays internal to DB and API. It is not a contract, and clients only see `AuthSession` / `GetAuthSessionResponse`.
 `TranscriptSegment` now carries an `id`, which (b) needs.
+
+## Addendum 2 (2026-10-22): DB mismatch decisions (contracts 0.3.0)
+
+| #   | Decision                                              | Contracts                                                   | DB action                                                                                                             |
+| --- | ----------------------------------------------------- | ----------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| a   | `organizationId` is canonical                         | unchanged: always `organizationId`                          | the Prisma field is `organizationId @map("org_id")`. The DB package must not expose `orgId` in types, queries or DTOs |
+| b   | `ExtractedTask.reportId` is required                  | already required                                            | `extracted_tasks.report_id` **NOT NULL** (FK to `reports`)                                                            |
+| c   | `Transcript.provider` is required                     | already required (`SttProviderId`)                          | `transcripts.provider` **NOT NULL**                                                                                   |
+| d   | `participants.employee_id` is HR PII and out of scope | not in contracts (`MeetingParticipant` has no `employeeId`) | **drop** `employee_id` from `meeting_participants` unless a spec explicitly requires it (it would need SEC review)    |
+| e   | The only link is from Task to ExtractedTask           | `Task.extractedTaskId`; no `acceptedTaskId` anywhere        | `tasks.extracted_task_id` (FK, unique) only, with no reverse column                                                   |
+
+These are guarded by `packages/contracts/test/v030.test.ts`.
+
+Note to (c): `Transcript.provider` is `TranscriptProviderId` (`SttProviderId` plus `'unknown'`). `'unknown'` is only for legacy rows backfilled by the migration, and the DB check constraint must allow exactly `assemblyai`, `faster-whisper`, `deepgram` and `unknown`. `SttProviderId` (routing) never includes `'unknown'`.
