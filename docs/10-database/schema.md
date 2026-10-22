@@ -1,6 +1,6 @@
 # Database schema (Phase 1, P1-DB)
 
-> **Note:** This page describes **open PR #6** (`feat/database-core-schema`), which is not merged yet. Source: head commit `1fe9123060ede0bc2024a37d78f2db47610265c0`, read via `gh pr view 6` / `gh pr diff 6`. Update this page if the PR changes before merge.
+> **Source:** this page reflects the merged code on `integration/phase-1` (`packages/database`), after PR #35 merged on 2026-10-22. The schema from PR #6 and the RLS work from PR #25 reached `integration/phase-1` through stacked PR #35. PRs #6 and #25 themselves are still open on GitHub. The model table below lists the original PR #6 set. `schema.prisma` now has 25 models (for example `recordings`, `recording_sessions`, `recording_session_chunks`, `audit_events`). See `packages/database/README.md` for the full list.
 
 Package: `packages/database` (`@meetops/database`). PostgreSQL with Prisma and pgvector. Env: `DATABASE_URL`.
 
@@ -26,8 +26,19 @@ Enums: MembershipRole (OWNER, ADMIN, MEMBER, VIEWER), InvitationStatus, ProjectS
 
 ## Tenancy and RLS
 
-- Tenancy is enforced at the schema level by `org_id` on every tenant-scoped table, with org-leading indexes.
-- **RLS:** PR #6 contains no row-level security policies (no `ENABLE ROW LEVEL SECURITY` or `CREATE POLICY` in the migration). Any RLS plan is outside this PR and not documented here yet; isolation currently relies on application-level `org_id` scoping.
+- Every tenant-scoped table has `org_id`, and its indexes lead with `org_id`.
+- **Forced RLS** (`20261021110000_tenant_rls_roles`, authored in PR #25): every table in `TENANT_TABLES` (`src/tenant.ts`, 20 tables) has RLS enabled and **forced**, keyed on `org_id`. Policies read the transaction-local setting `app.current_org_id`. `organizations`, `users` and `sessions` are global tables.
+  - `20261021130000_rls_fail_closed_empty_setting` recreates the policies with `NULLIF(current_setting(...), '')::uuid`, so an unset or reset setting returns no rows instead of an error.
+  - `20261022034000_assert_forced_rls` makes the migration fail if any table has RLS enabled but not forced.
+- **Roles:**
+  - `meetops_migrator` owns the schema and runs migrations (`MIGRATION_DATABASE_URL`).
+  - `meetops_app` is the runtime role (`DATABASE_URL`). It gets DML only, and the migration asserts that it is `NOSUPERUSER NOBYPASSRLS NOCREATEROLE NOCREATEDB`.
+  - `meetops_relay` is the outbox relay (`BYPASSRLS`). It only has `SELECT` and limited `UPDATE` on `outbox_events`.
+  - Roles and passwords are provisioned out of band (`scripts/bootstrap-roles.sql`, `pnpm --filter @meetops/database db:roles`). Migrations never contain passwords.
+- **Application access:** `withOrgContext(organizationId, fn, { client?, userId?, timeoutMs? })` runs `fn` in one interactive transaction with `app.current_org_id` set `LOCAL`. That setting is safe with pooled connections. `withUserContext(userId, fn)` sets only `app.current_user_id`, so a user can list their own memberships (`membership_self_read`) while every other tenant table stays fail-closed. Both validate UUIDs. The lower-level `runWithOrgContext` and `runWithUserContext` live in `src/tenant.ts`.
+- **Audit:** `audit_events` is append-only, including for the owner (`20261022032000_audit_append_only`). The only exception is a migration running as `meetops_migrator` that sets `meetops.audit_maintenance`.
+- **Invitations:** `lookup_invitation_by_token_hash` and `accept_invitation` are `SECURITY DEFINER` functions, executable only by `meetops_app`. The PR #35 fix is described below.
+- **Pending (not merged):** Backend PR #53 (`feat/api-persistence`) adds the API-side refusal to invite users who are already active members. The database-side `already_member` guard is merged and described below.
 
 ## pgvector
 
@@ -36,7 +47,7 @@ Enums: MembershipRole (OWNER, ADMIN, MEMBER, VIEWER), InvitationStatus, ProjectS
 ## Migrations
 
 - Initial migration: `prisma/migrations/20261021000000_init_core_schema/migration.sql`, generated with `prisma migrate diff --from-empty --to-schema-datamodel --script`.
-- Per the PR, it has **not been applied to a live database** yet.
+- There are 20 migrations (`20261021000000_init_core_schema` through `20261022041000_audit_hatch_session_user`). PR #35 verified them against a live Postgres (`pgvector/pgvector:pg16`): `prisma migrate deploy` from empty, then a drift check.
 
 ## Scripts (`packages/database/package.json`)
 
@@ -59,7 +70,7 @@ The seed is idempotent: it creates a demo org, owner and member users with membe
 
 ## Exports (`src/index.ts`)
 
-Everything from `@prisma/client`, plus `createPrismaClient`, `getPrismaClient` (global singleton), `disconnectPrismaClient` and the `DatabaseClient` type.
+Everything from `@prisma/client`, plus `createPrismaClient`, `getPrismaClient` (global singleton), `disconnectPrismaClient`, `withOrgContext`, `withUserContext`, and the `DatabaseClient`, `DatabaseTransaction` and `OrgContextOptions` types.
 
 ## Invitation acceptance: no owner demotion (PR #35, merged)
 
@@ -76,4 +87,4 @@ Merged into `integration/phase-1` by PR #35 (merge commit `f7c2d77`), migration 
 - On success it marks the invitation accepted and writes an `audit_events` row with action `invitation.accepted`.
 - The function stays `SECURITY DEFINER` with `SET search_path = public, pg_temp`, owned by `meetops_migrator`; `EXECUTE` is revoked from PUBLIC and granted to `meetops_app` only.
 
-PR #35 also adds the RLS, roles, outbox relay and live-test migrations; see `packages/database/README.md`. The note at the top of this page about PR #6 is older than these merges.
+PR #35 also adds the RLS, roles, outbox relay and live-test migrations; see `packages/database/README.md`.
