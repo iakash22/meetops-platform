@@ -61,6 +61,8 @@ E2E is **not** part of `pnpm test`; run it explicitly (it needs browsers).
 daemon) the integration suites use `describe.skipIf(...)`, print a warning, and are
 reported as **skipped**, never failed. CI runners with Docker run them for real.
 
+**Docker endpoint: local unix socket only.** Testcontainers must reach the engine through the local unix socket (`/var/run/docker.sock`; on the shared box, run the suites through `sudo -E env PATH="$PATH" HOME=<scratch> ./node_modules/.bin/vitest run --project integration`). Never set `DOCKER_HOST` to a `tcp://` address: a TCP engine endpoint is usually unauthenticated, and anything that can reach it controls the host. `DOCKER_HOST` is deliberately not in `tests/turbo.json` `passThroughEnv`.
+
 ## Security suites
 
 - IDs match `docs/12-security/test-cases.md` exactly; a catalogue test asserts XT-01..30 and AU-01..35 are all present.
