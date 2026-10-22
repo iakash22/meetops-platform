@@ -7,8 +7,8 @@ import { mergeChunkTranscripts, type ChunkTranscript } from './merge.js';
 import type { TranscriptRevision, TranscriptStore } from './store.js';
 
 /**
- * Per-chunk STT job. = PR #17 `TranscriptionJobPayload` + chunk fields.
- * NOTE: the chunk fields are not in PR #17 yet; they must be added to @meetops/contracts (owner: Contracts/Media).
+ * Per-chunk STT job: contracts `TranscriptionJobPayload` plus the resolved chunk geometry (see transcription/queue.ts,
+ * which derives it from contracts `chunkIndex`/`startMs`).
  */
 export type TranscriptionChunkJobPayload = TranscriptionJobPayload & {
   chunk: {
