@@ -51,6 +51,13 @@ organizationName }` (no tokens); `ExtensionTokenRequest { extensionId, deviceId,
   required. The only link between Task and ExtractedTask is `Task.extractedTaskId`; there is no `acceptedTaskId`. There is no
   `employeeId` on participants. No schema changes were needed; tests now guard these.
 
+### Deprecated
+
+- `PresignedUrl` and `StorageObjectMetadata` are deprecated in 0.3.0. They are still re-exported from the main entry point
+  (as `@deprecated` types), because `@meetops/storage` still depends on them, and from `@meetops/contracts/legacy`.
+  Removal is scheduled for 0.4.0. Replacements: `PresignedUrlDto` for `PresignedUrl`; `PublicFileObject` (client-facing)
+  or the internal `FileObject` for `StorageObjectMetadata`.
+
 ## [0.2.0] - 2026-10-21
 
 ### Added
@@ -128,8 +135,9 @@ refs? (≤10 opaque id pairs), locale? (BCP-47-ish, ≤35) }`. Every level rejec
 
 ### Deprecated
 
-- `PresignedUrl` and `StorageObjectMetadata` are no longer exported from the main entry point. Import them from
-  `@meetops/contracts/legacy` while migrating to `PresignedUrlDto` / `PublicFileObject` / `FileObject`. Removal is planned in 0.3.0.
+- `PresignedUrl` and `StorageObjectMetadata` are deprecated. They are also exported from `@meetops/contracts/legacy`.
+  Migrate to `PresignedUrlDto` / `PublicFileObject` / `FileObject`. (Correction: an earlier version of this note said they
+  were dropped from the main entry point. They were not; see 0.3.0.)
   `EmailAddress` and `EmailMessage` are still exported from the main entry point.
 
 ### Removed

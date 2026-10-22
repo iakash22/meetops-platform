@@ -30,7 +30,7 @@ Importing the package registers the `uuid`, `date-time`, `email` and `uri` strin
 | --------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------- |
 | `@meetops/contracts`        | TypeBox schemas, `Static` types, constants                                                                                                                                 | `@sinclair/typebox` |
 | `@meetops/contracts/types`  | TS types (`export type`) plus plain `as const` constants: `TASK_STATUSES`, `ROLES`, `API_ERROR_CODES`, `EXTENSION_*` (TTLs, scopes, `EXTENSION_AUTH_PATHS`), `REDACT_KEYS` | none                |
-| `@meetops/contracts/legacy` | deprecated storage types                                                                                                                                                   | none                |
+| `@meetops/contracts/legacy` | deprecated storage types (removal in 0.4.0)                                                                                                                                | none                |
 
 **Bundled clients (the `apps/extension` in particular) should import from `@meetops/contracts/types`.** The main entry
 pulls the TypeBox runtime into the bundle (≈47 kB minified, ≈12 kB gzipped for a constants-only import, measured with
