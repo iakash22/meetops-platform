@@ -5,6 +5,7 @@ import { ChunkStore } from '../src/lib/chunk-store.js';
 import { drainQueue, type DiscardGuard } from '../src/lib/drain.js';
 import {
   addPendingDiscard,
+  clearPendingDiscard,
   isPendingDiscard,
   listFailedDiscards,
   listPendingDiscards,
@@ -197,6 +198,13 @@ describe('pendingDiscards serial queue (two sessions racing)', () => {
     expect(discard).toHaveBeenCalledWith(A);
     expect(await listPendingDiscards(kv)).toContain(B);
     expect(await listPendingDiscards(kv)).not.toContain(A);
+  });
+
+  it('concurrent clearPendingDiscard(A) and addPendingDiscard(B) keeps B and removes A', async () => {
+    const kv = slowKV();
+    await addPendingDiscard(kv, A);
+    await Promise.all([clearPendingDiscard(kv, A), addPendingDiscard(kv, B)]);
+    expect(await listPendingDiscards(kv)).toEqual([B]);
   });
 
   it('concurrent adds keep both', async () => {
