@@ -24,6 +24,11 @@ createdAt, user: UserSummary }` and `ListMembersResponse` (cursor page) for `GET
 - All of these are strict (`additionalProperties: false`) and are exported from the main entry. Their types are exported
   from `@meetops/contracts/types`.
 
+### Changed
+
+- `deviceLabel` (`ExtensionDeviceLabel`) also rejects the invisible format characters U+200B-U+200D (zero-width space,
+  non-joiner, joiner), U+2060 (word joiner), U+FEFF (BOM / zero-width no-break space) and U+061C (Arabic letter mark).
+
 ## [0.3.0] - 2026-10-22
 
 ### Added

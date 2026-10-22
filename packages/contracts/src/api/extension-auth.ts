@@ -22,12 +22,13 @@ export const ExtensionNonce = Type.String({ minLength: 32, maxLength: 128, patte
 export const ExtensionDeviceId = Id;
 /**
  * Printable only: no C0/C1 control characters, DEL, line/paragraph separators, HTML-significant characters
- * (`<`, `>`, `"`, `'`, `&`), or bidi/format characters (U+200E-U+200F, U+202A-U+202E, U+2066-U+2069).
+ * (`<`, `>`, `"`, `'`, `&`), or bidi/format characters
+ * (U+200B-U+200F, U+202A-U+202E, U+2060, U+2066-U+2069, U+FEFF, U+061C).
  */
 export const ExtensionDeviceLabel = Type.String({
   minLength: 1,
   maxLength: 100,
-  pattern: '^[^\\u0000-\\u001F\\u007F-\\u009F\\u2028\\u2029<>"\'&\\u200E\\u200F\\u202A-\\u202E\\u2066-\\u2069]+$',
+  pattern: '^[^\\u0000-\\u001F\\u007F-\\u009F\\u2028\\u2029<>"\'&\\u200B-\\u200F\\u2060\\uFEFF\\u061C\\u202A-\\u202E\\u2066-\\u2069]+$',
 });
 const PairingCode = Type.String({ minLength: 32, maxLength: 128, pattern: '^[A-Za-z0-9_-]+$' });
 const AccessToken = Type.String({ minLength: 32, maxLength: 512 });
