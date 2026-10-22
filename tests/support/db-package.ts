@@ -91,3 +91,57 @@ export async function applyDatamodelPlusRls(client: {
   for (const f of migrationFiles().filter((m) => /FORCE ROW LEVEL SECURITY/i.test(readSql(m))))
     await client.query(readSql(f));
 }
+
+type Q = {
+  query: <R = Record<string, unknown>>(sql: string, params?: unknown[]) => Promise<{ rows: R[] }>;
+};
+
+async function columns(db: Q, table: string): Promise<Set<string>> {
+  const r = await db.query<{ column_name: string }>(
+    "SELECT column_name FROM information_schema.columns WHERE table_schema = 'public' AND table_name = $1",
+    [table],
+  );
+  return new Set(r.rows.map((x) => x.column_name));
+}
+
+async function insertRow(db: Q, table: string, values: Record<string, unknown>): Promise<string> {
+  const cols = await columns(db, table);
+  const v = { ...values };
+  const names = Object.keys(v).filter((k) => cols.has(k));
+  const params = names.map((k) => v[k]);
+  const exprs = names.map((_, i) => `$${i + 1}`);
+  if (cols.has('updated_at') && !names.includes('updated_at')) {
+    names.push('updated_at');
+    exprs.push('now()');
+  }
+  const r = await db.query<{ id: string }>(
+    `INSERT INTO ${table} (id, ${names.join(', ')}) VALUES (gen_random_uuid(), ${exprs.join(', ')}) RETURNING id`,
+    params,
+  );
+  return r.rows[0]!.id;
+}
+
+/**
+ * Insert a transcript for a meeting, schema-aware: newer schemas (PR #35) require a recording
+ * (and its file object) plus a provider; older ones (PR #6/#25) only need the meeting.
+ */
+export async function insertTranscript(db: Q, orgId: string, meetingId: string): Promise<string> {
+  const cols = await columns(db, 'transcripts');
+  const values: Record<string, unknown> = { org_id: orgId, meeting_id: meetingId };
+  if (cols.has('recording_id')) {
+    const fileId = await insertRow(db, 'file_objects', {
+      org_id: orgId,
+      meeting_id: meetingId,
+      bucket: 'qa',
+      storage_key: `org/${orgId}/meetings/${meetingId}/recordings/${crypto.randomUUID()}.webm`,
+      mime_type: 'audio/webm',
+    });
+    values.recording_id = await insertRow(db, 'recordings', {
+      org_id: orgId,
+      meeting_id: meetingId,
+      file_object_id: fileId,
+    });
+  }
+  if (cols.has('provider')) values.provider = 'deepgram'; // must satisfy transcripts_provider_check (PR #35)
+  return insertRow(db, 'transcripts', values);
+}
