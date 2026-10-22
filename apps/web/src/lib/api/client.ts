@@ -207,7 +207,8 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
 
   async function resolveCsrfToken(force = false): Promise<string | null> {
     if (options.getCsrfToken) return options.getCsrfToken();
-    const fromCookie = readCsrfCookie();
+    // On a CSRF_INVALID retry the cookie value is the one just rejected: skip it.
+    const fromCookie = force ? null : readCsrfCookie();
     if (fromCookie) return fromCookie;
     if (!cachedCsrf || force) cachedCsrf = await fetchCsrfToken();
     return cachedCsrf;

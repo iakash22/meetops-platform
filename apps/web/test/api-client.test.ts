@@ -85,6 +85,27 @@ describe('api client (cookie session + CSRF)', () => {
     expect(headersOf((fetchMock.mock.calls[3] as Call)[1])[CSRF_HEADER]).toBe('new');
   });
 
+  it('on CSRF_INVALID retry fetches a fresh token from /auth/csrf instead of re-reading the cookie', async () => {
+    document.cookie = 'meetops_csrf=stale; path=/';
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        jsonResponse({ error: { code: 'CSRF_INVALID', message: 'x', requestId: 'r6' } }, 403),
+      )
+      .mockResolvedValueOnce(jsonResponse({ csrfToken: 'fresh' }))
+      .mockResolvedValueOnce(new Response(null, { status: 204 }));
+    const api = createApiClient({ baseUrl: 'http://api', fetch: fetchMock });
+    await api.request('POST', '/x', {});
+    const calls = fetchMock.mock.calls as Call[];
+    expect(calls.map((c) => c[0])).toEqual([
+      'http://api/x',
+      'http://api/auth/csrf',
+      'http://api/x',
+    ]);
+    expect(headersOf(calls[0]![1])[CSRF_HEADER]).toBe('stale');
+    expect(headersOf(calls[2]![1])[CSRF_HEADER]).toBe('fresh');
+  });
+
   it('does not retry a FORBIDDEN 403 even when details mention csrf (pre-v0.3 shape)', async () => {
     const fetchMock = vi
       .fn()
