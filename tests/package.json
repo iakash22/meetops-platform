@@ -10,9 +10,10 @@
     "test:api": "vitest run --project api",
     "test:contract": "vitest run --project contract",
     "test:integration": "vitest run --project integration",
-    "test:unit": "vitest run --project factories --project contract --project api",
+    "test:unit": "vitest run --project factories --project contract --project api --project security",
     "test:e2e": "playwright test -c e2e/playwright.config.ts",
-    "e2e:install": "playwright install chromium"
+    "e2e:install": "playwright install chromium",
+    "test:security": "vitest run --project security"
   },
   "devDependencies": {
     "@meetops/api": "workspace:*",

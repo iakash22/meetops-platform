@@ -11,6 +11,13 @@ const base = { environment: 'node' as const, alias };
 export const projects = [
   { test: { ...base, name: 'api', include: ['api/**/*.test.ts'] } },
   { test: { ...base, name: 'contract', include: ['contract/**/*.test.ts'] } },
+  {
+    test: {
+      ...base,
+      name: 'security',
+      include: ['security/**/*.test.ts', 'fixtures/**/*.test.ts'],
+    },
+  },
   { test: { ...base, name: 'factories', include: ['factories/**/*.test.ts'] } },
   {
     test: {
