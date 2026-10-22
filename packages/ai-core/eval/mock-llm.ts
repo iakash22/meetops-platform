@@ -1,17 +1,25 @@
 import type { z } from 'zod';
 import type { LLMProvider, LLMGenerateStructuredParams } from '../src/index.js';
-import { AIError } from '../src/index.js';
+import { AIError, capOutputTokens, type OutputLimits } from '../src/index.js';
+
+export type MockCall = { schemaName: string; step: string | undefined; maxTokens: number; outputTokens: number; truncated: boolean };
 
 /**
  * Deterministic rule-based stand-in for an LLM (eval/tests only). It reads the fenced transcript lines
  * "[id] Speaker: text" and applies simple rules, so outputs are stable and golden-checkable.
  * Mode "obedient" simulates a model that FOLLOWS injected instructions (returns non-draft status / extra keys).
  */
-export function createRuleBasedLLM(mode: 'normal' | 'obedient' = 'normal'): LLMProvider & { calls: number } {
+/**
+ * `limits` mirrors what the adapter would get from the registry for the job's feature. The mock computes the exact
+ * cap a real adapter would send (capOutputTokens) and simulates truncation (MAX_TOKENS: cut, invalid JSON) when the
+ * output (~4 chars/token) exceeds it. Every call is recorded in `log`.
+ */
+export function createRuleBasedLLM(mode: 'normal' | 'obedient' = 'normal', limits?: OutputLimits): LLMProvider & { calls: number; log: MockCall[] } {
   const llm = {
     providerId: 'mock-rules',
     kind: 'llm' as const,
     calls: 0,
+    log: [] as MockCall[],
     async listModels() { return ['rules-v1']; },
     async healthCheck() { return { ok: true, timestamp: '1970-01-01T00:00:00.000Z' }; },
     async generateText() { throw new AIError('CAPABILITY_UNSUPPORTED', 'text not supported by mock'); },
@@ -37,6 +45,11 @@ export function createRuleBasedLLM(mode: 'normal' | 'obedient' = 'normal'): LLMP
         out = { summary: topics ? `Discussed: ${topics}` : 'No content.', decisions, actionItems };
       }
       const raw = JSON.stringify(out);
+      const maxTokens = capOutputTokens(p.maxTokens, limits, p.step);
+      const outputTokens = Math.ceil(raw.length / 4);
+      const truncated = outputTokens > maxTokens;
+      llm.log.push({ schemaName: p.schemaName, step: p.step, maxTokens, outputTokens, truncated });
+      if (truncated) throw new AIError('INVALID_OUTPUT', 'finishReason MAX_TOKENS: output truncated', { provider: 'mock-rules', retryable: false });
       const r = p.schema.safeParse(out);
       if (!r.success) throw new AIError('INVALID_OUTPUT', r.error.message, { provider: 'mock-rules', retryable: false });
       const tokens = Math.ceil(p.prompt.length / 4);

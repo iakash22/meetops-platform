@@ -39,3 +39,22 @@ the block as data. In the reduce step, partial summaries are fenced the same way
 
 `runExtractionJob(executor, AiJobPayload, { revision, segments, title })`. The idempotency key is
 `<payload.idempotencyKey>:rev<revision>:<promptVersion>`, so re-running the same transcript revision costs nothing.
+
+## Output token caps per feature and step
+
+Every LLM provider config uses `SUMMARY_OUTPUT_LIMITS` from `bootstrap.ts`:
+
+| Call                                                          | Cap            |
+| ------------------------------------------------------------- | -------------- |
+| `summary` feature (no step)                                   | 4096           |
+| map-reduce **reduce** step                                    | 4096           |
+| map steps and extraction features (`actions`, `deadlines`, …) | 2048 (default) |
+
+- **Steps:** the pipeline tags each call with `step: 'map' | 'reduce'` (an `LLMGenerate*Params.step` field).
+- **Precedence:** explicit `maxTokens`, then `perFeatureStep[feature][step]`, then `perStep[step]`, then
+  `perFeature[feature]`, then `defaultMaxTokens`.
+- **Clamping:** the result is always clamped to `maxTokens` and the 8192 hard max. The config schema rejects any
+  value above 8192.
+- **Eval check:** the eval mock computes the exact cap an adapter would send and simulates `MAX_TOKENS` truncation.
+  On the fixtures the worst output uses 13.8% of its cap (long meeting, 565 tokens), so there's no truncation and
+  extraction stays at 2048. Truncation on real models still needs a live eval.
