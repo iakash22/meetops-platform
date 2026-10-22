@@ -1,37 +1,20 @@
 /**
- * Thin local mirror of the job/router contracts from @meetops/contracts (PR #17, feat/core-contracts, not merged yet).
- * TODO(contracts): once PR #17 is on main, add "@meetops/contracts": "workspace:*" and replace these declarations with
- *   export type { LlmProviderId, SttProviderId, ModelRouteId, FallbackPolicy, AiJobPayload, TranscriptionJobPayload } from '@meetops/contracts';
- * The shapes below are kept identical so the swap is type-only.
+ * Job/router contracts come from @meetops/contracts (v0.2). Type-only imports: ai-core keeps no runtime dependency
+ * on the TypeBox schemas; validation happens at the queue boundary (apps/worker).
  */
+import type { AiJobPayload, AiTaskKind, LlmProviderId, ModelRouteId, TranscriptionJobPayload } from '@meetops/contracts';
 import type { AIFeature, RequestOverride } from './router.js';
 
-export type LlmProviderId = 'gemini' | 'ollama' | 'openai';
-export type SttProviderId = 'assemblyai' | 'faster-whisper' | 'deepgram';
-/** "<provider>:<model>", e.g. "gemini:gemini-2.5-flash-lite". */
-export type ModelRouteId = string;
-export type FallbackPolicy = { fallbackRouteIds: string[]; allowPaidFallback: boolean };
-export type AiTaskKind = 'summarize_meeting' | 'extract_tasks' | 'embed_transcript';
-
-type JobMeta = { jobVersion: 1; organizationId: string; requestId?: string; idempotencyKey: string };
-export type AiJobPayload = JobMeta & {
-  kind: AiTaskKind;
-  meetingId: string;
-  transcriptId: string;
-  modelRouteId: ModelRouteId;
-  promptVersion: string;
-  fallback?: FallbackPolicy;
-};
-export type TranscriptionJobPayload = JobMeta & {
-  kind: 'transcribe_recording';
-  meetingId: string;
-  recordingId: string;
-  fileObjectId: string;
-  sttProviderId: SttProviderId;
-  languageHint?: string;
-  diarize: boolean;
-  fallback?: FallbackPolicy;
-};
+export type {
+  AiJobPayload,
+  AiTaskKind,
+  FallbackPolicy,
+  LlmProviderId,
+  MediaJobPayload,
+  ModelRouteId,
+  SttProviderId,
+  TranscriptionJobPayload,
+} from '@meetops/contracts';
 
 const ROUTE_RE = /^(gemini|ollama|openai):([A-Za-z0-9._\-/]+)$/;
 

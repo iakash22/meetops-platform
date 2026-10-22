@@ -3,15 +3,19 @@
 These variables are validated via `@meetops/config` (Zod) at runtime. Defaults support local development.
 
 ### Core
+
 - `NODE_ENV`: development | test | production (default: development)
 
 ### Database
+
 - `DATABASE_URL`: postgresql connection string (default: postgres://postgres:postgres@localhost:5432/meetops)
 
 ### Redis
+
 - `REDIS_URL`: redis connection string (default: redis://localhost:6379)
 
 ### Storage
+
 - `STORAGE_PROVIDER`: minio | r2 | s3 (default: minio)
 - `STORAGE_ENDPOINT`: e.g. http://localhost:9000
 - `STORAGE_REGION`: e.g. us-east-1
@@ -21,6 +25,7 @@ These variables are validated via `@meetops/config` (Zod) at runtime. Defaults s
 - `STORAGE_FORCE_PATH_STYLE`: true|false (default: true)
 
 ### Email (dev: SMTP/Gmail via Nodemailer)
+
 - `EMAIL_PROVIDER`: smtp
 - `SMTP_HOST`: smtp.gmail.com
 - `SMTP_PORT`: 465
@@ -30,6 +35,7 @@ These variables are validated via `@meetops/config` (Zod) at runtime. Defaults s
 - `EMAIL_FROM`: e.g. "MeetOps AI <noreply@example.com>"
 
 ### AI providers (Phase 0 contracts only)
+
 - `AI_LLM_PROVIDER`: gemini
 - `GEMINI_MODEL`: gemini-2.5-flash-lite
 - `GEMINI_API_KEY`
