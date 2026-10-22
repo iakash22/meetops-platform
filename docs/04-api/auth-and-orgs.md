@@ -66,6 +66,8 @@ The session response (`GetAuthSessionResponse`) is `{ user, organizations, membe
 | Signup | 5/h per IP, 3/h per email |
 | Reset request | 5/h per IP, 3/h per email |
 | Reset submit | 10/h per IP |
+| Invitations | 50/day per org, 5/day per address |
+| Invitation accept | 10/h per IP |
 
 A 429 includes `Retry-After`. Limits key on the resolved `request.ip`, which respects `TRUST_PROXY`.
 
