@@ -14,13 +14,18 @@ describe('meetings', () => {
     expect(await screen.findByText('Weekly sync')).toBeInTheDocument();
     expect(screen.getByText('Recording')).toBeInTheDocument();
     await userEvent.click(screen.getByRole('link', { name: 'Weekly sync' }));
-    await waitFor(() => expect(history.location.pathname).toBe('/meetings/mtg_1'));
+    await waitFor(() =>
+      expect(history.location.pathname).toBe('/meetings/20000000-0000-4000-8000-000000000001'),
+    );
   });
 
   it('shows the detail page with status, summary and transcript placeholders', async () => {
-    const { api } = renderApp('/meetings/mtg_1');
+    const { api } = renderApp('/meetings/20000000-0000-4000-8000-000000000001');
     expect(await screen.findByRole('heading', { name: 'Weekly sync' })).toBeInTheDocument();
-    expect(api.meetings.get).toHaveBeenCalledWith('org_1', 'mtg_1');
+    expect(api.meetings.get).toHaveBeenCalledWith(
+      '00000000-0000-4000-8000-000000000001',
+      '20000000-0000-4000-8000-000000000001',
+    );
     expect(screen.getByTestId('meeting-status')).toHaveTextContent('Completed');
     expect(screen.getByRole('heading', { name: 'Summary' })).toBeInTheDocument();
     expect(screen.getByText('Summary not available yet')).toBeInTheDocument();
@@ -39,12 +44,12 @@ describe('meetings', () => {
   });
 
   it('uploads: createUpload then PUT to the presigned url', async () => {
-    const { api } = renderApp('/meetings/mtg_1');
+    const { api } = renderApp('/meetings/20000000-0000-4000-8000-000000000001');
     await screen.findByRole('heading', { name: 'Weekly sync' });
     const file = new File(['abc'], 'rec.webm', { type: 'audio/webm' });
     await userEvent.upload(screen.getByTestId('upload-input'), file);
     expect(await screen.findByText('Upload complete')).toBeInTheDocument();
-    expect(api.storage.createUpload).toHaveBeenCalledWith('org_1', {
+    expect(api.storage.createUpload).toHaveBeenCalledWith('00000000-0000-4000-8000-000000000001', {
       filename: 'rec.webm',
       mimeType: 'audio/webm',
       sizeBytes: 3,

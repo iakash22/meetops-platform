@@ -26,7 +26,9 @@ describe('auth guard', () => {
     const { api } = renderApp('/meetings');
     expect(await screen.findByText('Weekly sync')).toBeInTheDocument();
     expect(api.auth.session).toHaveBeenCalled();
-    expect(useOrgStore.getState().currentOrganizationId).toBe('org_1');
+    expect(useOrgStore.getState().currentOrganizationId).toBe(
+      '00000000-0000-4000-8000-000000000001',
+    );
   });
 
   it('redirects to /login?next= when any API call returns 401', async () => {
@@ -64,11 +66,14 @@ describe('auth guard', () => {
     const onError = (e: ErrorEvent) => errors.push(e.error);
     window.addEventListener('error', onError);
     const api = createMockApi({ auth: { session: makeSession() } });
-    const { history } = renderApp('/meetings/mtg_1?tab=summary', api);
+    const { history } = renderApp(
+      '/meetings/20000000-0000-4000-8000-000000000001?tab=summary',
+      api,
+    );
     expect(await screen.findByRole('heading', { name: 'Sign in' })).toBeInTheDocument();
     expect(history.location.pathname).toBe('/login');
     expect(new URLSearchParams(history.location.search).get('next')).toBe(
-      '/meetings/mtg_1?tab=summary',
+      '/meetings/20000000-0000-4000-8000-000000000001?tab=summary',
     );
     expect(screen.queryByTestId('app-shell')).not.toBeInTheDocument();
     expect(api.meetings.get).not.toHaveBeenCalled();
@@ -120,6 +125,8 @@ describe('login after guard redirect (E2E-04)', () => {
     await waitFor(() => expect(history.location.pathname).toBe('/meetings'));
     expect(await screen.findByTestId('app-shell')).toBeInTheDocument();
     expect(await screen.findByText('Weekly sync')).toBeInTheDocument();
-    expect(useOrgStore.getState().currentOrganizationId).toBe('org_1');
+    expect(useOrgStore.getState().currentOrganizationId).toBe(
+      '00000000-0000-4000-8000-000000000001',
+    );
   });
 });

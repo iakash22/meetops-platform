@@ -71,15 +71,8 @@ describe('api client (cookie session + CSRF)', () => {
     expect(headersOf((fetchMock.mock.calls[0] as Call)[1])[CSRF_HEADER]).toBe('from-cookie');
   });
 
-  it('refreshes the CSRF token once on a CSRF-specific 403', async () => {
-    const csrf403 = {
-      error: {
-        code: 'FORBIDDEN',
-        message: 'csrf',
-        requestId: 'r1',
-        details: [{ path: 'x-csrf-token', message: 'invalid' }],
-      },
-    };
+  it('refreshes the CSRF token once on a 403 CSRF_INVALID', async () => {
+    const csrf403 = { error: { code: 'CSRF_INVALID', message: 'csrf', requestId: 'r1' } };
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce(jsonResponse({ csrfToken: 'old' }))
@@ -90,6 +83,49 @@ describe('api client (cookie session + CSRF)', () => {
     await expect(api.auth.forgotPassword({ email: 'a@b.co' })).resolves.toBeUndefined();
     expect(fetchMock).toHaveBeenCalledTimes(4);
     expect(headersOf((fetchMock.mock.calls[3] as Call)[1])[CSRF_HEADER]).toBe('new');
+  });
+
+  it('does not retry a FORBIDDEN 403 even when details mention csrf (pre-v0.3 shape)', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse({ csrfToken: 'tok' }))
+      .mockResolvedValueOnce(
+        jsonResponse(
+          {
+            error: {
+              code: 'FORBIDDEN',
+              message: 'no',
+              requestId: 'r3',
+              details: [{ path: 'x-csrf-token', message: 'invalid' }],
+            },
+          },
+          403,
+        ),
+      );
+    const api = createApiClient({ baseUrl: 'http://api', fetch: fetchMock });
+    const err = (await api.request('POST', '/x', {}).catch((e: unknown) => e)) as ApiError;
+    expect(err.code).toBe('FORBIDDEN');
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('retries CSRF_INVALID only once, then surfaces it as a known code', async () => {
+    const csrf403 = jsonResponse(
+      { error: { code: 'CSRF_INVALID', message: 'x', requestId: 'r4' } },
+      403,
+    );
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse({ csrfToken: 'a' }))
+      .mockResolvedValueOnce(csrf403)
+      .mockResolvedValueOnce(jsonResponse({ csrfToken: 'b' }))
+      .mockResolvedValueOnce(
+        jsonResponse({ error: { code: 'CSRF_INVALID', message: 'x', requestId: 'r5' } }, 403),
+      );
+    const api = createApiClient({ baseUrl: 'http://api', fetch: fetchMock });
+    const err = (await api.request('POST', '/x', {}).catch((e: unknown) => e)) as ApiError;
+    expect(err.code).toBe('CSRF_INVALID');
+    expect(err.requestId).toBe('r5');
+    expect(fetchMock).toHaveBeenCalledTimes(4);
   });
 
   it('does not retry a plain FORBIDDEN 403', async () => {
@@ -222,12 +258,12 @@ describe('uploads (PresignedUrlDto)', () => {
       getCsrfToken: () => 'c1',
     });
     const body = { filename: 'rec.webm', mimeType: 'audio/webm', sizeBytes: 1024 };
-    const res = await api.storage.createUpload('org_1', body);
+    const res = await api.storage.createUpload('00000000-0000-4000-8000-000000000001', body);
     expect(res.upload.method).toBe('PUT');
     expect(res.upload.url.startsWith('https://')).toBe(true);
     expect(typeof res.upload.expiresAt).toBe('string');
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
-    expect(url).toBe('http://api/orgs/org_1/uploads');
+    expect(url).toBe('http://api/orgs/00000000-0000-4000-8000-000000000001/uploads');
     expect(init.method).toBe('POST');
     expect(JSON.parse(init.body as string)).toEqual(body);
     expect((init.headers as Record<string, string>)[CSRF_HEADER]).toBe('c1');
@@ -276,21 +312,25 @@ describe('session, 401 and uploads', () => {
     const api = createApiClient({ baseUrl: 'http://api', fetch: fetchMock });
     const handler = vi.fn();
     const off = api.onUnauthorized(handler);
-    await api.meetings.list('org_1').catch(() => undefined);
+    await api.meetings.list('00000000-0000-4000-8000-000000000001').catch(() => undefined);
     expect(handler).toHaveBeenCalledTimes(1);
     await api.auth.session().catch(() => undefined);
     expect(handler).toHaveBeenCalledTimes(1);
     off();
-    await api.meetings.list('org_1').catch(() => undefined);
+    await api.meetings.list('00000000-0000-4000-8000-000000000001').catch(() => undefined);
     expect(handler).toHaveBeenCalledTimes(1);
   });
 
   it('builds task filter query params', async () => {
     const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ items: [], nextCursor: null }));
     const api = createApiClient({ baseUrl: 'http://api', fetch: fetchMock });
-    await api.tasks.list('org_1', { status: 'cancelled', assigneeId: 'usr_1', due: 'week' });
+    await api.tasks.list('00000000-0000-4000-8000-000000000001', {
+      status: 'cancelled',
+      assigneeId: '10000000-0000-4000-8000-000000000001',
+      dueBefore: '2026-10-25T18:29:59.999Z',
+    });
     expect((fetchMock.mock.calls[0] as Call)[0]).toBe(
-      'http://api/orgs/org_1/tasks?status=cancelled&assigneeId=usr_1&due=week',
+      'http://api/orgs/00000000-0000-4000-8000-000000000001/tasks?status=cancelled&assigneeId=10000000-0000-4000-8000-000000000001&dueBefore=2026-10-25T18%3A29%3A59.999Z',
     );
   });
 
@@ -329,7 +369,10 @@ describe('organizations.create (POST /orgs)', () => {
   afterEach(clearCookies);
 
   it('POSTs {name} with CSRF and refetches the token after the session rotates', async () => {
-    const created = { organization: { id: 'org_9', name: 'Initech' }, role: 'owner' };
+    const created = {
+      organization: { id: '00000000-0000-4000-8000-000000000009', name: 'Initech' },
+      role: 'owner',
+    };
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce(jsonResponse({ csrfToken: 'before' }))
@@ -338,17 +381,61 @@ describe('organizations.create (POST /orgs)', () => {
       .mockResolvedValue(jsonResponse({}, 200));
     const api = createApiClient({ baseUrl: 'http://api', fetch: fetchMock });
     await expect(api.organizations.create({ name: 'Initech' })).resolves.toEqual(created);
-    await api.request('POST', '/orgs/org_9/projects', { name: 'p' });
+    await api.request('POST', '/orgs/00000000-0000-4000-8000-000000000009/projects', { name: 'p' });
     const calls = fetchMock.mock.calls as Call[];
     expect(calls.map((c) => c[0])).toEqual([
       'http://api/auth/csrf',
       'http://api/orgs',
       'http://api/auth/csrf',
-      'http://api/orgs/org_9/projects',
+      'http://api/orgs/00000000-0000-4000-8000-000000000009/projects',
     ]);
     expect(calls[1]![1].method).toBe('POST');
     expect(JSON.parse(calls[1]![1].body as string)).toEqual({ name: 'Initech' });
     expect(headersOf(calls[1]![1])[CSRF_HEADER]).toBe('before');
     expect(headersOf(calls[3]![1])[CSRF_HEADER]).toBe('after');
+  });
+});
+
+describe('auth.switchOrganization (POST /auth/switch-org)', () => {
+  afterEach(clearCookies);
+
+  it('sends SwitchOrganizationRequest and reuses the rotated csrfToken', async () => {
+    const orgId = '00000000-0000-4000-8000-000000000002';
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse({ csrfToken: 'before' }))
+      .mockResolvedValueOnce(jsonResponse({ ...session, csrfToken: 'rotated' }))
+      .mockResolvedValue(jsonResponse({}));
+    const api = createApiClient({ baseUrl: 'http://api', fetch: fetchMock });
+    await api.auth.switchOrganization({ organizationId: orgId });
+    await api.request('POST', '/x', {});
+    const calls = fetchMock.mock.calls as Call[];
+    expect(calls.map((c) => c[0])).toEqual([
+      'http://api/auth/csrf',
+      'http://api/auth/switch-org',
+      'http://api/x',
+    ]);
+    expect(JSON.parse(calls[1]![1].body as string)).toEqual({ organizationId: orgId });
+    expect(headersOf(calls[1]![1])[CSRF_HEADER]).toBe('before');
+    expect(headersOf(calls[2]![1])[CSRF_HEADER]).toBe('rotated');
+  });
+});
+
+describe('tasks.list query (ListTasksQuery)', () => {
+  it('serializes unassigned=true, dueAfter/dueBefore and status arrays', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ items: [], nextCursor: null }));
+    const api = createApiClient({ baseUrl: 'http://api', fetch: fetchMock });
+    await api.tasks.list('o', {
+      status: ['todo', 'in_progress'],
+      unassigned: true,
+      dueAfter: '2026-10-22T08:00:00.000Z',
+      dueBefore: '2026-10-25T18:29:59.999Z',
+    });
+    const url = new URL((fetchMock.mock.calls[0] as Call)[0]);
+    expect(url.searchParams.getAll('status')).toEqual(['todo', 'in_progress']);
+    expect(url.searchParams.get('unassigned')).toBe('true');
+    expect(url.searchParams.has('assigneeId')).toBe(false);
+    expect(url.searchParams.get('dueAfter')).toBe('2026-10-22T08:00:00.000Z');
+    expect(url.searchParams.get('dueBefore')).toBe('2026-10-25T18:29:59.999Z');
   });
 });

@@ -25,8 +25,12 @@ describe('app shell', () => {
     expect(await screen.findByText('Weekly sync')).toBeInTheDocument();
     await userEvent.click(screen.getByRole('combobox', { name: 'Organization' }));
     await userEvent.click(await screen.findByRole('option', { name: 'Globex' }));
-    expect(useOrgStore.getState().currentOrganizationId).toBe('org_2');
-    await waitFor(() => expect(api.meetings.list).toHaveBeenCalledWith('org_2'));
+    expect(useOrgStore.getState().currentOrganizationId).toBe(
+      '00000000-0000-4000-8000-000000000002',
+    );
+    await waitFor(() =>
+      expect(api.meetings.list).toHaveBeenCalledWith('00000000-0000-4000-8000-000000000002'),
+    );
     expect(screen.getByRole('combobox', { name: 'Organization' })).toHaveTextContent('Globex');
   });
 

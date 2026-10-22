@@ -30,6 +30,9 @@ export function createMockApi(
       signup: vi.fn().mockResolvedValue(session),
       forgotPassword: vi.fn().mockResolvedValue(undefined),
       session: vi.fn().mockResolvedValue(sessionResponse),
+      switchOrganization: vi.fn((body: { organizationId: string }) =>
+        Promise.resolve({ ...session, activeOrganizationId: body.organizationId }),
+      ),
       ...overrides.auth,
     },
     organizations: {
@@ -55,7 +58,7 @@ export function createMockApi(
 export function resetStores(withOrgs = true) {
   useOrgStore.setState({
     organizations: withOrgs ? orgs : [],
-    currentOrganizationId: withOrgs ? 'org_1' : null,
+    currentOrganizationId: withOrgs ? '00000000-0000-4000-8000-000000000001' : null,
   });
   useUiStore.setState({ sidebarOpen: true });
 }

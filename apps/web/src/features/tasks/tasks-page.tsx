@@ -1,21 +1,18 @@
-import type { Task } from '@meetops/contracts';
+import { useMemo } from 'react';
+import { TASK_STATUSES, type TaskStatusValue } from '@meetops/contracts/types';
 import { Badge } from '@/components/ui/badge';
 import { Label } from '@/components/ui/label';
-import type { TaskDueFilter, TaskListFilters } from '@/lib/api/client';
+import type { TaskListFilters } from '@/lib/api/client';
 import { useTasks } from '@/lib/api/queries';
 import { PageHeader, ResourceList } from '@/pages/resource-list';
 
-export const TASK_STATUSES = [
-  'todo',
-  'in_progress',
-  'done',
-  'cancelled',
-] as const satisfies readonly Task['status'][];
+export { TASK_STATUSES };
+export type TaskDueFilter = 'overdue' | 'today' | 'week';
 export const TASK_DUE = ['overdue', 'today', 'week'] as const satisfies readonly TaskDueFilter[];
 /** Assignee filter values: 'me', 'unassigned', or a user id. */
-export type TaskSearch = { status?: Task['status']; assignee?: string; due?: TaskDueFilter };
+export type TaskSearch = { status?: TaskStatusValue; assignee?: string; due?: TaskDueFilter };
 
-const STATUS_LABEL: Record<Task['status'], string> = {
+const STATUS_LABEL: Record<TaskStatusValue, string> = {
   todo: 'To do',
   in_progress: 'In progress',
   done: 'Done',
@@ -34,7 +31,7 @@ export function parseTaskSearch(search: Record<string, unknown>): TaskSearch {
     typeof search.status === 'string' &&
     (TASK_STATUSES as readonly string[]).includes(search.status)
   )
-    out.status = search.status as Task['status'];
+    out.status = search.status as TaskStatusValue;
   if (typeof search.assignee === 'string' && /^[A-Za-z0-9_-]{1,64}$/.test(search.assignee))
     out.assignee = search.assignee;
   if (typeof search.due === 'string' && (TASK_DUE as readonly string[]).includes(search.due))
@@ -42,14 +39,43 @@ export function parseTaskSearch(search: Record<string, unknown>): TaskSearch {
   return out;
 }
 
-export function toApiFilters(search: TaskSearch, currentUserId?: string): TaskListFilters {
-  const f: TaskListFilters = {};
-  if (search.status) f.status = search.status;
-  if (search.due) f.due = search.due;
-  if (search.assignee === 'me') {
-    if (currentUserId) f.assigneeId = currentUserId;
-  } else if (search.assignee) f.assigneeId = search.assignee;
-  return f;
+/**
+ * Due filter → dueAfter/dueBefore (ISO, UTC) computed in the user's local time zone.
+ * overdue: before now. today: local start..end of today. week: now..end of Sunday
+ * (weeks start Monday, so Sunday is the last day).
+ */
+export function dueRange(
+  due: TaskDueFilter,
+  now: Date = new Date(),
+): { dueAfter?: string; dueBefore?: string } {
+  const endOfDay = (d: Date) => {
+    const e = new Date(d);
+    e.setHours(23, 59, 59, 999);
+    return e;
+  };
+  if (due === 'overdue') return { dueBefore: now.toISOString() };
+  if (due === 'today') {
+    const start = new Date(now);
+    start.setHours(0, 0, 0, 0);
+    return { dueAfter: start.toISOString(), dueBefore: endOfDay(now).toISOString() };
+  }
+  const daysToSunday = (7 - now.getDay()) % 7; // getDay: 0 = Sunday
+  const sunday = new Date(now);
+  sunday.setDate(now.getDate() + daysToSunday);
+  return { dueAfter: now.toISOString(), dueBefore: endOfDay(sunday).toISOString() };
+}
+
+export function toApiFilters(
+  search: TaskSearch,
+  currentUserId?: string,
+  now: Date = new Date(),
+): TaskListFilters {
+  const base: { status?: TaskStatusValue; dueAfter?: string; dueBefore?: string } = {};
+  if (search.status) base.status = search.status;
+  if (search.due) Object.assign(base, dueRange(search.due, now));
+  if (search.assignee === 'unassigned') return { ...base, unassigned: true };
+  const assigneeId = search.assignee === 'me' ? currentUserId : search.assignee;
+  return assigneeId ? { ...base, assigneeId } : base;
 }
 
 function FilterSelect({
@@ -94,7 +120,9 @@ export function TasksPage({
   currentUserId?: string;
   onSearchChange: (next: TaskSearch) => void;
 }) {
-  const query = useTasks(toApiFilters(search, currentUserId));
+  // Freeze "now" per filter selection so the query key is stable across renders.
+  const filters = useMemo(() => toApiFilters(search, currentUserId), [search, currentUserId]);
+  const query = useTasks(filters);
   const set = (patch: { [K in keyof TaskSearch]?: TaskSearch[K] | undefined }) => {
     const merged = { ...search, ...patch };
     const next: TaskSearch = {};
@@ -112,7 +140,7 @@ export function TasksPage({
           label="Status"
           value={search.status}
           options={TASK_STATUSES.map((s) => ({ value: s, label: STATUS_LABEL[s] }))}
-          onChange={(v) => set({ status: v as Task['status'] | undefined })}
+          onChange={(v) => set({ status: v as TaskStatusValue | undefined })}
         />
         <FilterSelect
           id="filter-assignee"

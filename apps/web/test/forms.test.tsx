@@ -45,7 +45,9 @@ describe('auth forms', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Sign in' }));
     await waitFor(() => expect(history.location.pathname).toBe('/'));
     expect(api.auth.login).toHaveBeenCalledWith({ email: 'ada@example.com', password: 'secret' });
-    expect(useOrgStore.getState().currentOrganizationId).toBe('org_1');
+    expect(useOrgStore.getState().currentOrganizationId).toBe(
+      '00000000-0000-4000-8000-000000000001',
+    );
   });
 
   it('shows a submit error when login fails', async () => {

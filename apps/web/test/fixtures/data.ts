@@ -12,12 +12,24 @@ import type {
 const T = '2026-10-01T00:00:00.000Z';
 
 export const orgs: Organization[] = [
-  { id: 'org_1', name: 'Acme Inc', slug: 'acme', createdAt: T, updatedAt: T },
-  { id: 'org_2', name: 'Globex', slug: 'globex', createdAt: T, updatedAt: T },
+  {
+    id: '00000000-0000-4000-8000-000000000001',
+    name: 'Acme Inc',
+    slug: 'acme',
+    createdAt: T,
+    updatedAt: T,
+  },
+  {
+    id: '00000000-0000-4000-8000-000000000002',
+    name: 'Globex',
+    slug: 'globex',
+    createdAt: T,
+    updatedAt: T,
+  },
 ];
 
 export const newOrg: Organization = {
-  id: 'org_3',
+  id: '00000000-0000-4000-8000-000000000003',
   name: 'Initech',
   slug: 'initech',
   createdAt: T,
@@ -25,7 +37,7 @@ export const newOrg: Organization = {
 };
 
 export const user = {
-  id: 'usr_1',
+  id: '10000000-0000-4000-8000-000000000001',
   email: 'ada@example.com',
   name: 'Ada',
   createdAt: T,
@@ -35,27 +47,27 @@ export const user = {
 export const session: AuthSession = {
   user,
   csrfToken: 'csrf-token-from-login-0001',
-  activeOrganizationId: 'org_1',
+  activeOrganizationId: '00000000-0000-4000-8000-000000000001',
   role: 'owner',
   organizations: orgs,
 };
 
 export const sessionResponse: GetAuthSessionResponse = {
   user,
-  activeOrganizationId: 'org_1',
+  activeOrganizationId: '00000000-0000-4000-8000-000000000001',
   role: 'owner',
   organizations: orgs,
 };
 
 export const meeting1: Meeting = {
-  id: 'mtg_1',
-  organizationId: 'org_1',
+  id: '20000000-0000-4000-8000-000000000001',
+  organizationId: '00000000-0000-4000-8000-000000000001',
   title: 'Weekly sync',
   source: 'upload',
   status: 'completed',
   startedAt: '2026-10-20T10:00:00.000Z',
   endedAt: '2026-10-20T10:30:00.000Z',
-  createdById: 'usr_1',
+  createdById: '10000000-0000-4000-8000-000000000001',
   createdAt: T,
   updatedAt: T,
 };
@@ -64,13 +76,13 @@ export const meetings: Paginated<Meeting> = {
   items: [
     meeting1,
     {
-      id: 'mtg_2',
-      organizationId: 'org_1',
+      id: '20000000-0000-4000-8000-000000000002',
+      organizationId: '00000000-0000-4000-8000-000000000001',
       title: 'Planning',
       source: 'extension',
       status: 'recording',
       startedAt: '2026-10-22T10:00:00.000Z',
-      createdById: 'usr_1',
+      createdById: '10000000-0000-4000-8000-000000000001',
       createdAt: T,
       updatedAt: T,
     },
@@ -79,8 +91,8 @@ export const meetings: Paginated<Meeting> = {
 };
 
 export const task1: Task = {
-  id: 'tsk_1',
-  organizationId: 'org_1',
+  id: '30000000-0000-4000-8000-000000000001',
+  organizationId: '00000000-0000-4000-8000-000000000001',
   title: 'Send recap',
   status: 'todo',
   priority: 'medium',
@@ -91,13 +103,27 @@ export const task1: Task = {
 export const tasks: Paginated<Task> = {
   items: [
     task1,
-    { ...task1, id: 'tsk_2', title: 'Old idea', status: 'cancelled', priority: 'low' },
+    {
+      ...task1,
+      id: '30000000-0000-4000-8000-000000000002',
+      title: 'Old idea',
+      status: 'cancelled',
+      priority: 'low',
+    },
   ],
   nextCursor: null,
 };
 
 export const projects: Paginated<Project> = {
-  items: [{ id: 'prj_1', organizationId: 'org_1', name: 'Launch', createdAt: T, updatedAt: T }],
+  items: [
+    {
+      id: '40000000-0000-4000-8000-000000000001',
+      organizationId: '00000000-0000-4000-8000-000000000001',
+      name: 'Launch',
+      createdAt: T,
+      updatedAt: T,
+    },
+  ],
   nextCursor: null,
 };
 

@@ -16,23 +16,15 @@ import type {
   SignupRequest,
   Task,
   Role,
+  ListTasksQuery,
+  SwitchOrganizationRequest,
 } from '@meetops/contracts';
+import { API_ERROR_CODES } from '@meetops/contracts/types';
 
 /** Contracts ApiErrorEnvelope codes plus 'UNKNOWN' when the body is unparseable. */
 export type ApiErrorCode = ContractApiErrorCode | 'UNKNOWN';
 
-const KNOWN_CODES = new Set<string>([
-  'BAD_REQUEST',
-  'AUTH_FAILED',
-  'VALIDATION_FAILED',
-  'UNAUTHENTICATED',
-  'FORBIDDEN',
-  'NOT_FOUND',
-  'CONFLICT',
-  'RATE_LIMITED',
-  'PROVIDER_UNAVAILABLE',
-  'INTERNAL',
-]);
+const KNOWN_CODES = new Set<string>(API_ERROR_CODES);
 
 /**
  * Error from the API. `message` is the server-provided envelope message (never
@@ -56,17 +48,9 @@ export class ApiError extends Error {
     this.details = details;
   }
 
-  /**
-   * CSRF rejection: 403 FORBIDDEN whose envelope details point at the CSRF token.
-   * Contracts have no dedicated CSRF code yet, so match `details[].path` of
-   * `csrf` / `x-csrf-token` (case-insensitive). Plain FORBIDDEN is never retried.
-   */
+  /** CSRF rejection (contracts v0.3): 403 CSRF_INVALID. Plain FORBIDDEN is never retried. */
   get isCsrfFailure(): boolean {
-    return (
-      this.status === 403 &&
-      this.code === 'FORBIDDEN' &&
-      this.details.some((d) => /^(x-)?csrf(-token)?$/i.test(d.path))
-    );
+    return this.status === 403 && this.code === 'CSRF_INVALID';
   }
 
   /** Parse `{ error: { code, message, requestId? } }`; tolerate anything else. */
@@ -149,8 +133,8 @@ export type HttpMethod = 'GET' | 'HEAD' | 'OPTIONS' | 'POST' | 'PUT' | 'PATCH' |
 export type CreateOrganizationRequest = { name: string };
 export type CreateOrganizationResponse = { organization: Organization; role: Role };
 
-export type TaskDueFilter = 'overdue' | 'today' | 'week';
-export type TaskListFilters = { status?: Task['status']; assigneeId?: string; due?: TaskDueFilter };
+/** GET /orgs/:id/tasks query (contracts ListTasksQuery; `unassigned` excludes `assigneeId`). */
+export type TaskListFilters = ListTasksQuery;
 
 /** Typed API client surface. */
 export type ApiClient = {
@@ -160,6 +144,8 @@ export type ApiClient = {
     forgotPassword: (body: ForgotPasswordRequest) => Promise<void>;
     /** GET /auth/session; 401 when signed out. */
     session: () => Promise<GetAuthSessionResponse>;
+    /** POST /auth/switch-org. Session and CSRF token rotate; the returned csrfToken is reused. */
+    switchOrganization: (body: SwitchOrganizationRequest) => Promise<AuthSession>;
   };
   organizations: {
     list: () => Promise<Organization[]>;
@@ -275,9 +261,15 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
 
   function taskQuery(filters: TaskListFilters = {}): string {
     const q = new URLSearchParams();
-    if (filters.status) q.set('status', filters.status);
-    if (filters.assigneeId) q.set('assigneeId', filters.assigneeId);
-    if (filters.due) q.set('due', filters.due);
+    type Scalar = string | number | boolean;
+    for (const [key, value] of Object.entries(filters) as [
+      string,
+      Scalar | Scalar[] | undefined,
+    ][]) {
+      if (value === undefined || value === '') continue;
+      if (Array.isArray(value)) value.forEach((v) => q.append(key, String(v)));
+      else q.set(key, String(value));
+    }
     const s = q.toString();
     return s ? `?${s}` : '';
   }
@@ -295,6 +287,7 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
         await request('POST', '/auth/forgot-password', body);
       },
       session: () => request('GET', '/auth/session'),
+      switchOrganization: (body) => authRequest('/auth/switch-org', body),
     },
     organizations: {
       list: () => request('GET', '/orgs'),
