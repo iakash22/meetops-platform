@@ -4,7 +4,13 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
 import pg from 'pg';
 import { isDockerAvailable } from '../support/env.js';
-import { applyMigrations, canSeed, dbPackageDir, hasMigrations } from '../support/db-package.js';
+import {
+  applyMigrations,
+  canSeed,
+  dbPackageDir,
+  hasMigrations,
+  insertTranscript,
+} from '../support/db-package.js';
 import { createRng } from '../factories/rng.js';
 
 const docker = isDockerAvailable();
@@ -135,10 +141,7 @@ describe.skipIf(!docker || !schema)(
             'SELECT id FROM meetings WHERE org_id = $1 LIMIT 1',
             [org],
           );
-          const t = await db.query<{ id: string }>(
-            'INSERT INTO transcripts (id, org_id, meeting_id, updated_at) VALUES (gen_random_uuid(), $1, $2, now()) RETURNING id',
-            [org, m.rows[0]?.id],
-          );
+          const t = { rows: [{ id: await insertTranscript(db, org, m.rows[0]!.id) }] };
           for (const [seq, seed] of [
             [0, 1],
             [1, 2],
