@@ -8,7 +8,13 @@ import { registerDomainErrorHandler } from '../../../shared/http-errors.js';
 import { DomainError } from '../../../shared/domain-error.js';
 import type { OrganizationService } from '../application/organization.service.js';
 import { InvitationError } from '../domain/invitation.js';
-import { toInvitationDto as invDto, toMembershipDto as memberDto, toOrganizationDto as orgDto } from './mappers.js';
+import {
+  toInvitationDto as invDto,
+  toMembershipDto as memberDto,
+  toOrganizationDto as orgDto,
+  toOrganizationMemberDto
+} from './mappers.js';
+import { paginate } from '../../../shared/pagination.js';
 import {
   AcceptInvitationBody,
   ChangeRoleBody,
@@ -27,6 +33,8 @@ import {
   type AcceptInvitationBodyT,
   type CreateInvitationBodyT,
   type CreateOrganizationBodyT,
+  type CursorPageQueryT,
+  CursorPageQuery,
   type IdParamsT,
   type InvitationParamsT,
   type SwitchOrganizationBodyT
@@ -79,20 +87,21 @@ export async function organizationRoutes(app: FastifyInstance, opts: Organizatio
     }
   );
 
-  app.get(
+  app.get<{ Querystring: CursorPageQueryT }>(
     '/orgs',
     {
       schema: {
         tags: orgTags,
         summary: 'List my organizations',
-        description: 'Organizations the caller is a member of, with their role.',
+        description: 'Organizations the caller is a member of, with their role. Cursor page.',
+        querystring: CursorPageQuery,
         response: { 200: OrganizationList, ...authErr }
       }
     },
     async (request) => {
       const { user } = await g.requireSession(request);
       const items = (await orgs.listForUser(user.id)).map((x) => ({ organization: orgDto(x.organization), role: x.role }));
-      return { items, nextCursor: null };
+      return paginate(items, request.query);
     }
   );
 
@@ -141,10 +150,10 @@ export async function organizationRoutes(app: FastifyInstance, opts: Organizatio
         tags: invTags,
         summary: 'Invite a member',
         description:
-          'Owner/admin only (CASL). Same response whether or not the address has an account; re-inviting replaces a pending invite. The token is only emailed.',
+          'Owner/admin only (CASL). Same response whether or not the address has an account; re-inviting replaces a pending invite. The token is only emailed. 409 CONFLICT if the address belongs to an active member of this org.',
         params: IdParams,
         body: CreateInvitationBody,
-        response: { 201: InvitationDto, 400: ErrorBody, ...authErr }
+        response: { 201: InvitationDto, 400: ErrorBody, 409: ErrorBody, ...authErr }
       }
     },
     async (request, reply) => {
@@ -180,9 +189,9 @@ export async function organizationRoutes(app: FastifyInstance, opts: Organizatio
         tags: invTags,
         summary: 'Accept invitation',
         description:
-          "Must be logged in as the invited email, with a verified email address (403 otherwise). Unknown, expired, revoked, used or mismatched invitations all return the same 404.",
+          "Must be logged in as the invited email, with a verified email address (403 otherwise). Unknown, expired, revoked, used or mismatched invitations all return the same 404. 409 CONFLICT if the user is already an active member (the invitation stays pending and no role changes).",
         body: AcceptInvitationBody,
-        response: { 200: OrganizationWithRole, ...authErr }
+        response: { 200: OrganizationWithRole, 409: ErrorBody, ...authErr }
       }
     },
     async (request) => {
@@ -205,15 +214,23 @@ export async function organizationRoutes(app: FastifyInstance, opts: Organizatio
 
   const memberTags = ['members'];
 
-  app.get<{ Params: IdParamsT }>(
+  app.get<{ Params: IdParamsT; Querystring: CursorPageQueryT }>(
     '/orgs/:id/members',
     {
-      schema: { tags: memberTags, summary: 'List members', params: IdParams, response: { 200: MemberList, ...authErr } }
+      schema: {
+        tags: memberTags,
+        summary: 'List members',
+        description: 'Cursor page. `user.email` is included only when the caller is an owner or admin.',
+        params: IdParams,
+        querystring: CursorPageQuery,
+        response: { 200: MemberList, ...authErr }
+      }
     },
     async (request) => {
       const { user } = await g.requireSession(request);
       const ctx = await orgs.resolveTenant(request.params.id, user.id);
-      return { items: (await orgs.listMembers(ctx)).map(memberDto) };
+      const all = (await orgs.listMembersWithUsers(ctx)).map((x) => toOrganizationMemberDto(x.membership, x.user, ctx.role));
+      return paginate(all, request.query);
     }
   );
 

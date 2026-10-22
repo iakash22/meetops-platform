@@ -5,6 +5,7 @@ import {
   ForgotPasswordRequest,
   GetAuthSessionResponse,
   Id,
+  ListSessionsResponse,
   LoginRequest,
   ResetPasswordRequest,
   SignupRequest,
@@ -30,20 +31,8 @@ export const VerifyEmailBody = VerifyEmailRequest;
 export const ResendVerificationBody = ForgotPasswordRequest;
 export const SessionIdParams = Type.Object({ sessionId: Id });
 
-/** Device/session list item. No token or hash material. */
-export const SessionSummary = Type.Object(
-  {
-    id: Id,
-    current: Type.Boolean(),
-    createdAt: Type.String({ format: 'date-time' }),
-    lastSeenAt: Type.String({ format: 'date-time' }),
-    expiresAt: Type.String({ format: 'date-time' }),
-    ip: Type.Union([Type.String(), Type.Null()]),
-    userAgent: Type.Union([Type.String(), Type.Null()])
-  },
-  { additionalProperties: false }
-);
-export const SessionList = Type.Object({ items: Type.Array(SessionSummary) });
+/** Contracts v0.3.1: strict SessionSummary cursor page (no token material, ip <= 45, userAgent <= 1024). */
+export const SessionList = ListSessionsResponse;
 
 export type VerifyEmailBodyT = Static<typeof VerifyEmailBody>;
 export type SessionIdParamsT = Static<typeof SessionIdParams>;

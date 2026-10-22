@@ -23,7 +23,9 @@ import {
   type ResetPasswordBodyT,
   type SignupBodyT
 } from './schemas.js';
-import { makeGuards, requestMeta, type HttpSecurityConfig } from './security.js';
+import { capIp, capUserAgent, makeGuards, requestMeta, type HttpSecurityConfig } from './security.js';
+import { CursorPageQuery } from '@meetops/contracts';
+import { paginate } from '../../../shared/pagination.js';
 import type { OrganizationService } from '../../organizations/application/organization.service.js';
 import { toSessionResponse } from './mappers.js';
 
@@ -168,13 +170,14 @@ export async function authRoutes(app: FastifyInstance, opts: AuthPluginOptions) 
     }
   );
 
-  app.get(
+  app.get<{ Querystring: CursorPageQuery }>(
     '/auth/sessions',
     {
       schema: {
         tags,
         summary: 'List my sessions',
-        description: 'Active sessions (devices) of the caller; `current` marks this one.',
+        description: 'Active sessions (devices) of the caller; `current` marks this one. Cursor page.',
+        querystring: CursorPageQuery,
         response: { 200: SessionList, 401: ErrorBody }
       }
     },
@@ -186,10 +189,10 @@ export async function authRoutes(app: FastifyInstance, opts: AuthPluginOptions) 
         createdAt: s.createdAt.toISOString(),
         lastSeenAt: s.lastSeenAt.toISOString(),
         expiresAt: s.expiresAt.toISOString(),
-        ip: s.ip,
-        userAgent: s.userAgent
+        ip: capIp(s.ip),
+        userAgent: capUserAgent(s.userAgent)
       }));
-      return { items };
+      return paginate(items, request.query);
     }
   );
 

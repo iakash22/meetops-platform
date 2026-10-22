@@ -4,7 +4,7 @@
  * The schema must be migrated (prisma migrate deploy) with the P1-DB-3 chain.
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { Redis } from 'ioredis';
 import { createPrismaClient, type DatabaseClient } from '@meetops/database';
 import { buildApp, signupAndLogin, type App } from './helpers.js';
@@ -100,6 +100,42 @@ describe.skipIf(!url)('Prisma + Redis adapters against live Postgres (RLS)', { t
       return tx.auditEvent.findMany({ where: { organizationId: id }, select: { action: true } });
     });
     expect(audits.map((a) => a.action)).toEqual(expect.arrayContaining(['org.create', 'invitation.create', 'invitation.accepted', 'membership.role_change']));
+  });
+
+  it('already_member: invite of an active member is 409; a stale invite cannot demote the owner (accept → 409, nothing changes)', async () => {
+    const owner = await signupAndLogin(app, email('am-owner'));
+    const id = (await owner.post('/orgs', { name: `AM ${sfx}` })).json().organization.id as string;
+    const ownerId = (await owner.get('/auth/session')).json().user.id as string;
+    expect((await owner.post(`/orgs/${id}/invitations`, { email: email('am-admin'), role: 'admin' })).statusCode).toBe(201);
+    const admin = await signupAndLogin(app, email('am-admin'));
+    expect((await admin.post('/invitations/accept', { token: app.token(email('am-admin'), 'invitation')! })).statusCode).toBe(200);
+    const adminId = (await admin.get('/auth/session')).json().user.id as string;
+
+    const dup = await admin.post(`/orgs/${id}/invitations`, { email: email('am-owner'), role: 'viewer' });
+    expect(dup.statusCode).toBe(409);
+    expect(dup.json().error.code).toBe('CONFLICT');
+
+    // A pending invite for the owner's address that predates the guard (planted through the RLS repository).
+    const token = randomUUID() + randomUUID();
+    const now = new Date();
+    const invRepo = new PrismaInvitationRepository(db);
+    const invId = randomUUID();
+    await invRepo.create(id, {
+      id: invId, organizationId: id, email: email('am-owner'), role: 'viewer',
+      tokenHash: createHash('sha256').update(token).digest('hex'), invitedById: adminId, status: 'pending',
+      expiresAt: new Date(now.getTime() + 3_600_000), createdAt: now, acceptedAt: null, acceptedById: null, revokedAt: null, deletedAt: null
+    });
+    const acc = await owner.post('/invitations/accept', { token });
+    expect(acc.statusCode).toBe(409);
+    expect(acc.json().error).toMatchObject({ code: 'CONFLICT', message: 'This person is already a member of the organization' });
+    expect((await owner.get('/auth/session')).json().role).toBe('owner');
+    const members = (await owner.get(`/orgs/${id}/members`)).json();
+    expect(members.nextCursor).toBeNull();
+    expect(members.items.find((m: { userId: string }) => m.userId === ownerId).role).toBe('owner');
+    expect((await invRepo.findPendingByEmail(id, email('am-owner')))?.id).toBe(invId);
+
+    // Email visibility on the live member list: present for owner/admin.
+    for (const m of members.items) expect(m.user.email).toBeDefined();
   });
 
   it('RLS: memberships of another org are invisible through the repository', async () => {

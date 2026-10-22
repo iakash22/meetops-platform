@@ -12,6 +12,7 @@ import { canChangeMemberRole, canGrantRole, canRemoveMember, type Role } from '.
 import { invitationErrors, InvitationError, revokeInvitation, type Invitation } from '../domain/invitation.js';
 import { defineAbilityFor, orgSubject, type Action, type SubjectName } from '../domain/abilities.js';
 import {
+  AlreadyMemberError,
   EmailNotVerifiedError,
   ForbiddenError,
   LastOwnerError,
@@ -142,6 +143,8 @@ export class OrganizationService {
   /**
    * Enumeration-safe: same response whether or not the address has an account or a pending
    * invite (which is replaced). The token is minted by the mail worker; nothing is returned.
+   * The one exception is an address of an ACTIVE member of this org: 409 AlreadyMemberError. That only
+   * tells an inviter what GET /orgs/:id/members already shows them, never whether an outside account exists.
    */
   async invite(ctx: TenantContext, input: { email: string; role: Exclude<Role, 'owner'> }) {
     this.authorize(ctx, 'create', 'Invitation');
@@ -150,6 +153,10 @@ export class OrganizationService {
     const email = normalizeEmail(input.email);
     await this.limit(`invite:org:${ctx.organizationId}`, INVITE_LIMITS.sendPerOrg);
     await this.limit(`invite:addr:${ctx.organizationId}:${email}`, INVITE_LIMITS.sendPerAddress);
+    const existingUser = await this.d.users.findByEmail(email);
+    if (existingUser && (await this.d.memberships.find(ctx.organizationId, existingUser.id))) {
+      throw new AlreadyMemberError();
+    }
 
     const now = this.d.clock.now();
     const existing = await this.d.invitations.findPendingByEmail(ctx.organizationId, email);
@@ -178,7 +185,8 @@ export class OrganizationService {
 
   /**
    * Atomic single use, bound to the invited email; requires a verified email (D2).
-   * Every failure is the same InvitationError (404 at HTTP).
+   * Every invalid-invitation failure is the same InvitationError (404 at HTTP). A user who already has an
+   * active membership gets AlreadyMemberError (409); the invitation is left pending and nothing changes.
    */
   async acceptInvitation(input: { token: string; userId: string; email: string; ip: string | null }) {
     await this.limit(`invite:accept:ip:${input.ip ?? 'unknown'}`, INVITE_LIMITS.acceptPerIp);
@@ -212,6 +220,12 @@ export class OrganizationService {
   async listMembers(ctx: TenantContext) {
     this.authorize(ctx, 'read', 'Membership');
     return this.d.memberships.listByOrganization(ctx.organizationId);
+  }
+
+  /** Members with their user record (for the member list's user summary). */
+  async listMembersWithUsers(ctx: TenantContext) {
+    const members = await this.listMembers(ctx);
+    return Promise.all(members.map(async (membership) => ({ membership, user: await this.d.users.findById(membership.userId) })));
   }
 
   private check(r: MemberMutationResult) {

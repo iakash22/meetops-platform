@@ -1,3 +1,4 @@
+import { AlreadyMemberError } from '../domain/errors.js';
 import type { Organization } from '../domain/organization.js';
 import type { Membership, Role } from '../domain/membership.js';
 import type { Invitation } from '../domain/invitation.js';
@@ -107,20 +108,23 @@ export class InMemoryInvitationRepository implements InvitationRepository {
     const i = live([...this.items.values()].find((x) => x.tokenHash === tokenHash));
     if (!i || i.status !== 'pending' || i.expiresAt <= now || i.email !== by.email) return null;
     if (!this.memberships) throw new Error('InMemoryInvitationRepository needs the membership repository to accept');
+    // Claim synchronously (single use under concurrency), then mirror Postgres accept_invitation():
+    // an active membership is never changed and the invitation goes back to pending.
     i.status = 'accepted';
     i.acceptedAt = now;
     i.acceptedById = by.userId;
-    const existing = await this.memberships.find(i.organizationId, by.userId);
-    const membership =
-      existing ??
-      (await this.memberships.create(i.organizationId, {
-        id: globalThis.crypto.randomUUID(),
-        organizationId: i.organizationId,
-        userId: by.userId,
-        role: i.role,
-        createdAt: now,
-        deletedAt: null
-      }));
+    if (await this.memberships.find(i.organizationId, by.userId)) {
+      Object.assign(i, { status: 'pending', acceptedAt: null, acceptedById: null });
+      throw new AlreadyMemberError();
+    }
+    const membership = await this.memberships.create(i.organizationId, {
+      id: globalThis.crypto.randomUUID(),
+      organizationId: i.organizationId,
+      userId: by.userId,
+      role: i.role,
+      createdAt: now,
+      deletedAt: null
+    });
     return { membership };
   }
 }

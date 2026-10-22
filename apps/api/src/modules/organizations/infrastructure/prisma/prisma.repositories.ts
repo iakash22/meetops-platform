@@ -1,3 +1,4 @@
+import { AlreadyMemberError } from '../../domain/errors.js';
 import {
   getPrismaClient,
   withOrgContext,
@@ -240,6 +241,7 @@ export class PrismaInvitationRepository implements InvitationRepository {
       return m ? { membership: toMembership(m) } : null;
     } catch (e) {
       if (e instanceof Error && e.message.includes('invitation_invalid')) return null;
+      if (e instanceof Error && e.message.includes('already_member')) throw new AlreadyMemberError();
       throw e;
     }
   }
