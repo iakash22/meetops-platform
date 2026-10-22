@@ -31,9 +31,9 @@ export const EXTENSION_AUTH_PATHS = {
   pair: '/auth/extension/pair',
   /** No cookie. Exchanges the pairing code + nonce for the first token pair. */
   token: '/auth/extension-token',
-  /** No cookie. Rotates the refresh token. */
+  /** No cookie, no Bearer. Authenticated by the refresh token in the body (+ extensionId/deviceId). Rotates it. */
   refresh: '/auth/extension/refresh',
-  /** Bearer (aud=extension) or refresh token. Revokes the device's refresh family. */
+  /** No cookie, no Bearer. Authenticated by the required refresh token in the body (+ extensionId/deviceId). Revokes the device's refresh family. */
   revoke: '/auth/extension/revoke',
 } as const;
 

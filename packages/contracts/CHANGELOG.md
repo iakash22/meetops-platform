@@ -18,6 +18,9 @@ organizationName }` (no tokens); `ExtensionTokenRequest { extensionId, deviceId,
   `ExtensionTokenResponse` (strict: `accessToken`, `refreshToken`, `tokenType: 'Bearer'`, `audience: 'extension'`,
   `expiresAt`, `expiresIn` ≤900, `refreshExpiresAt`, `organizationId`, `scopes` (1–2, unique), `nonce` echo);
   `ExtensionRefreshRequest`/`ExtensionRefreshResponse` (rotation); `ExtensionRevokeRequest`/`ExtensionRevokeResponse`.
+  `ExtensionRevokeRequest.refreshToken` is **required**: refresh and revoke are authenticated by the refresh token in the
+  body (bound to `extensionId` and `deviceId`), not by Bearer, so both work after the access token has expired.
+  `deviceLabel` also rejects `<`, `>`, `"`, `'`, `&` and bidi/format characters (U+200E-U+200F, U+202A-U+202E, U+2066-U+2069).
   Constants: `EXTENSION_AUTH_PATHS`, `EXTENSION_SCOPES`, `EXTENSION_TOKEN_AUDIENCE`, `EXTENSION_TOKEN_TYPE`,
   `EXTENSION_TOKEN_TTL_SECONDS` (900), `EXTENSION_REFRESH_FAMILY_MAX_LIFETIME_SECONDS` (30 days), and `REDACT_KEYS`
   (includes `accessToken`, `refreshToken`) for loggers. These two token responses are the **only** API bodies that carry tokens.

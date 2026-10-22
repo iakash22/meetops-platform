@@ -36,6 +36,8 @@ describe('ExtensionPairRequest', () => {
   it('accepts a valid request, with and without deviceLabel', () => {
     expect(Value.Check(ExtensionPairRequest, pair)).toBe(true);
     expect(Value.Check(ExtensionPairRequest, { ...pair, deviceLabel: 'Chrome on Mac — work' })).toBe(true);
+    expect(Value.Check(ExtensionPairRequest, { ...pair, deviceLabel: 'Chrome on MacBook' })).toBe(true);
+    expect(Value.Check(ExtensionPairRequest, { ...pair, deviceLabel: 'Büro PC' })).toBe(true);
   });
   it('bounds the nonce to 32..128 base64url chars', () => {
     expect(Value.Check(ExtensionPairRequest, { ...pair, nonce: 'a'.repeat(32) })).toBe(true);
@@ -54,6 +56,13 @@ describe('ExtensionPairRequest', () => {
   });
   it('rejects non-printable deviceLabel and overlong labels', () => {
     for (const bad of ['a\nb', 'a\rb', 'a\u0000b', 'a\u0007b', 'a\u007Fb', 'a\u0085b', 'a\u2028b', '\t', '', 'x'.repeat(101)]) {
+      expect(Value.Check(ExtensionPairRequest, { ...pair, deviceLabel: bad })).toBe(false);
+    }
+  });
+  it('rejects HTML-significant and bidi/format characters in deviceLabel', () => {
+    const bads = ['<img src=x onerror=alert(1)>', 'a<b', 'a>b', 'a"b', "a'b", 'a&b', "Akash's laptop",
+      'a\u202Eb', 'a\u200Eb', 'a\u200Fb', 'a\u202Ab', 'a\u2066b', 'a\u2069b'];
+    for (const bad of bads) {
       expect(Value.Check(ExtensionPairRequest, { ...pair, deviceLabel: bad })).toBe(false);
     }
   });
@@ -108,7 +117,7 @@ describe('refresh and revoke', () => {
     expect(Value.Check(ExtensionRefreshResponse, { ...tokens, scopes: ['a', 'b', 'c'] })).toBe(false);
   });
   it('revoke request/response shapes', () => {
-    expect(Value.Check(ExtensionRevokeRequest, { extensionId, deviceId: id(1) })).toBe(true);
+    expect(Value.Check(ExtensionRevokeRequest, { extensionId, deviceId: id(1) })).toBe(false);
     expect(Value.Check(ExtensionRevokeRequest, { extensionId, deviceId: id(1), refreshToken: 'r'.repeat(64) })).toBe(true);
     expect(Value.Check(ExtensionRevokeRequest, { extensionId })).toBe(false);
     expect(Value.Check(ExtensionRevokeRequest, { extensionId, deviceId: id(1), all: true })).toBe(false);

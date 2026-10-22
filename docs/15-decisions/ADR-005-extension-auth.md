@@ -87,9 +87,18 @@ the Decision above, the amendment wins. Schemas and constants: `packages/contrac
 
 ### A1.3 Bearer versus cookie
 
-1. Extension routes (`EXTENSION_AUTH_PATHS.refresh` and `revoke`, `meetings/resolve`, recording-session and chunk routes)
-   MUST accept only `Authorization: Bearer` with `aud=extension`, and MUST reject a request that carries a session cookie
-   (401 `UNAUTHENTICATED`). `pair` is the exception: it is a web route and is cookie-only.
+#### A1.3.1 Route authentication
+
+1. Bearer-authenticated extension routes (`meetings/resolve`, recording-session and chunk routes) MUST accept only
+   `Authorization: Bearer` with `aud=extension`, and MUST reject a request that carries a session cookie
+   (401 `UNAUTHENTICATED`). The token lifecycle routes are different:
+   - `pair` is a web route and is cookie-only (`__Host-` session cookie + `x-csrf-token`).
+   - `extension-token` is authenticated by the pairing code + nonce in the body, bound to `extensionId` and `deviceId`.
+   - `refresh` is NOT Bearer-authenticated. It runs when the access token has expired and is authenticated only by the
+     `refreshToken` in the body, bound to `extensionId` and `deviceId`.
+   - `revoke` is NOT Bearer-authenticated. It is authenticated only by the required `refreshToken` in the body, bound to
+     `extensionId` and `deviceId`, so it also works after the access token has expired.
+     These three MUST ignore any `Authorization` header and MUST reject a request that carries a session cookie (401 `UNAUTHENTICATED`).
 2. Every other route MUST reject bearer tokens, so the cookie path is the only one for web routes.
 3. Tokens MUST NOT be accepted in the query string or URL fragment, on any route.
 4. The `:organizationId` in the path MUST equal the token's organization, otherwise the response is `NOT_FOUND` (per ADR-004 tenancy).
@@ -102,7 +111,7 @@ the Decision above, the amendment wins. Schemas and constants: `packages/contrac
 - `pair`: 5/min and 20/hour per user, plus 10/min per IP.
 - `extension-token` exchange: 10/min per IP. A failed nonce or code check counts double.
 - `refresh`: 10/min per family, plus 60/min per IP. A refresh more often than every 60 s per family SHOULD be logged.
-- `revoke`: 10/min per user.
+- `revoke`: 10/min per family, plus 60/min per IP (it is authenticated by the refresh token, not a user session).
   Exceeding a limit returns 429 `RATE_LIMITED`.
 
 ### A1.5 Redaction
