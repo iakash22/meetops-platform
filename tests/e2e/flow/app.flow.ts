@@ -331,4 +331,28 @@ test.describe('web flow (PR #48 web + createServer API)', () => {
       await expect(page).toHaveURL(/\/login\?next=%2Fmeetings/, { timeout: 10_000 });
     });
   }
+
+  test('[E2E-14] [AU-20] no session or CSRF tokens in web storage; session cookie is httpOnly', async ({
+    page,
+    api,
+    context,
+  }) => {
+    const { email } = await seedUser(api, ['Storage QA']);
+    await uiLogin(page, email, PASSWORD);
+    await expect(page.getByTestId('app-shell')).toBeVisible();
+    const cookies = await context.cookies();
+    const sid = cookies.find((c) => c.name.endsWith('meetops_sid'));
+    expect(sid, 'session cookie set').toBeDefined();
+    expect(sid!.httpOnly).toBe(true);
+    const dump = await page.evaluate(() => {
+      const all: string[] = [];
+      for (const s of [localStorage, sessionStorage])
+        for (let i = 0; i < s.length; i++) all.push(`${s.key(i)}=${s.getItem(s.key(i)!)}`);
+      return { storage: all.join('\n'), cookie: document.cookie };
+    });
+    expect(dump.storage).not.toContain(sid!.value);
+    expect(dump.storage).not.toMatch(/sid|session[_-]?token|bearer|csrf/i);
+    // JS can read the CSRF cookie by design (double submit), but never the session id.
+    expect(dump.cookie).not.toContain(sid!.value);
+  });
 });
