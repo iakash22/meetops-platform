@@ -8,15 +8,15 @@ TypeScript/vitest versions and the root lockfile. Root `pnpm typecheck`, `pnpm l
 
 ## Layout
 
-| Path                  | Runner                         | What                                                                                                                                 |
-| --------------------- | ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------ |
-| `api/`                | vitest (`api` project)         | `/health`, `/ready` via Fastify `inject` on `createServer()` from `apps/api/src/server.ts`; HTTP fallback when `API_BASE_URL` is set |
-| `contract/`           | vitest (`contract` project)    | Factory output validated with TypeBox `Value.Check` against `@meetops/contracts` runtime schemas (PR #17)                            |
-| `integration/`        | vitest (`integration` project) | Testcontainers Postgres (pgvector) + Redis                                                                                           |
-| `e2e/`                | Playwright                     | Smoke test against the web dev server (`apps/web` `dev` = vite)                                                                      |
-| `factories/`          | vitest (`factories` project)   | Deterministic, seedable, organization-scoped test-data factories                                                                     |
-| `support/`            | –                              | Shared helpers (e.g. Docker detection)                                                                                               |
-| `vitest.workspace.ts` | –                              | One vitest project per suite                                                                                                         |
+| Path                                     | Runner                         | What                                                                                                                                 |
+| ---------------------------------------- | ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------ |
+| `api/`                                   | vitest (`api` project)         | `/health`, `/ready` via Fastify `inject` on `createServer()` from `apps/api/src/server.ts`; HTTP fallback when `API_BASE_URL` is set |
+| `contract/`                              | vitest (`contract` project)    | Factory output validated with TypeBox `Value.Check` against `@meetops/contracts` runtime schemas (PR #17)                            |
+| `integration/`                           | vitest (`integration` project) | Testcontainers Postgres (pgvector) + Redis                                                                                           |
+| `e2e/`                                   | Playwright                     | Smoke test against the web dev server (`apps/web` `dev` = vite)                                                                      |
+| `factories/`                             | vitest (`factories` project)   | Deterministic, seedable, organization-scoped test-data factories                                                                     |
+| `support/`                               | –                              | Shared helpers (e.g. Docker detection)                                                                                               |
+| `vitest.config.ts`, `vitest.projects.ts` | –                              | One vitest project per suite (`test.projects` on vitest ≥ 3.2, workspace file on 2.x)                                                |
 
 ## Running
 
