@@ -174,3 +174,55 @@ describe('drain with discard markers', () => {
     expect(await listPendingDiscards(kv)).toEqual([A]);
   });
 });
+
+describe('pendingDiscards serial queue (two sessions racing)', () => {
+  // Yield between get and set so unserialised read-modify-writes would interleave.
+  const slowKV = () => {
+    const kv = memoryKV();
+    const tick = () => new Promise((r) => setTimeout(r, 5));
+    return Object.assign(kv, {
+      get: async <T>(k: string) => {
+        const v = structuredClone(kv.data.get(k));
+        await tick();
+        return v as T | undefined;
+      },
+    });
+  };
+
+  it('a retry clearing A while B is added keeps B', async () => {
+    const kv = slowKV();
+    await addPendingDiscard(kv, A);
+    const discard = vi.fn(async () => undefined);
+    await Promise.all([retryPendingDiscards(kv, discard), addPendingDiscard(kv, B)]);
+    expect(discard).toHaveBeenCalledWith(A);
+    expect(await listPendingDiscards(kv)).toContain(B);
+    expect(await listPendingDiscards(kv)).not.toContain(A);
+  });
+
+  it('concurrent adds keep both', async () => {
+    const kv = slowKV();
+    await Promise.all([addPendingDiscard(kv, A), addPendingDiscard(kv, B)]);
+    expect((await listPendingDiscards(kv)).sort()).toEqual([A, B].sort());
+  });
+
+  it('aborts the server session (best effort) before the fallback local delete', async () => {
+    const kv = memoryKV();
+    kv.data.set('pendingDiscards', [{ sessionId: A, attempts: MAX_DISCARD_ATTEMPTS - 1 }]);
+    const order: string[] = [];
+    await retryPendingDiscards(
+      kv,
+      async () => {
+        throw new Error('x');
+      },
+      async () => {
+        order.push('delete');
+      },
+      async () => {
+        order.push('abort');
+        throw new Error('offline');
+      },
+    );
+    expect(order).toEqual(['abort', 'delete']);
+    expect(await listPendingDiscards(kv)).toEqual([]);
+  });
+});

@@ -49,8 +49,22 @@ async function save(kv: KV, entries: PendingDiscard[]): Promise<void> {
   else await kv.remove(KEY);
 }
 
+// Single module-level serial queue: every read-modify-write of the pendingDiscards list (and the
+// corrupt/legacy rewrite on read) runs here one at a time, across all sessions, so a retry that
+// clears session A can never overwrite a marker added for session B in the meantime.
+let listQueue: Promise<unknown> = Promise.resolve();
+function withListQueue<T>(fn: () => Promise<T>): Promise<T> {
+  const run = listQueue.then(fn, fn);
+  listQueue = run.catch(() => undefined);
+  return run;
+}
+
 /** Validated marker entries; rewrites the stored value if it was corrupt or legacy. */
-export async function readPendingDiscards(kv: KV): Promise<PendingDiscard[]> {
+export function readPendingDiscards(kv: KV): Promise<PendingDiscard[]> {
+  return withListQueue(() => readUnqueued(kv));
+}
+
+async function readUnqueued(kv: KV): Promise<PendingDiscard[]> {
   let raw: unknown;
   try {
     raw = await kv.get<unknown>(KEY);
@@ -97,26 +111,31 @@ export function withSessionGate<T>(sessionId: string, fn: () => Promise<T>): Pro
 }
 
 export async function addPendingDiscard(kv: KV, sessionId: string): Promise<void> {
-  await withSessionGate(sessionId, async () => {
-    const entries = await readPendingDiscards(kv);
-    if (!entries.some((e) => e.sessionId === sessionId)) {
-      await save(kv, [...entries, { sessionId, attempts: 0 }]);
-    }
-  });
+  // Per-session gate (ordering against that session's PUTs), then the shared list queue.
+  await withSessionGate(sessionId, () =>
+    withListQueue(async () => {
+      const entries = await readUnqueued(kv);
+      if (!entries.some((e) => e.sessionId === sessionId)) {
+        await save(kv, [...entries, { sessionId, attempts: 0 }]);
+      }
+    }),
+  );
 }
 
 export async function clearPendingDiscard(kv: KV, sessionId: string): Promise<void> {
-  await save(
-    kv,
-    (await readPendingDiscards(kv)).filter((e) => e.sessionId !== sessionId),
+  await withListQueue(async () =>
+    save(
+      kv,
+      (await readUnqueued(kv)).filter((e) => e.sessionId !== sessionId),
+    ),
   );
 }
 
 async function update(kv: KV, sessionId: string, patch: Partial<PendingDiscard>): Promise<void> {
-  await save(
-    kv,
-    (await readPendingDiscards(kv)).map((e) =>
-      e.sessionId === sessionId ? { ...e, ...patch } : e,
+  await withListQueue(async () =>
+    save(
+      kv,
+      (await readUnqueued(kv)).map((e) => (e.sessionId === sessionId ? { ...e, ...patch } : e)),
     ),
   );
 }
@@ -132,6 +151,7 @@ export async function retryPendingDiscards(
   kv: KV,
   discardLocal: (sessionId: string) => Promise<void>,
   deleteLocal?: (sessionId: string) => Promise<void>,
+  abortRemote?: (sessionId: string) => Promise<void>,
 ): Promise<string[]> {
   for (const e of await readPendingDiscards(kv)) {
     if (e.failed) continue;
@@ -147,6 +167,8 @@ export async function retryPendingDiscards(
         }
         try {
           if (!deleteLocal) throw err;
+          // Best-effort server abort first: the fallback deletes local data only.
+          await abortRemote?.(e.sessionId).catch(() => undefined);
           await deleteLocal(e.sessionId);
         } catch (fallbackErr) {
           console.error('MeetOps AI: discard gave up', e.sessionId, fallbackErr);

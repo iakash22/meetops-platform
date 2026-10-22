@@ -47,7 +47,9 @@ async function deleteLocal(sessionId: string): Promise<void> {
 
 /** Retry pending discards; a session that can never be deleted shows the '!' badge. */
 async function retryDiscards(): Promise<void> {
-  await retryPendingDiscards(durableKV, discardLocal, deleteLocal);
+  await retryPendingDiscards(durableKV, discardLocal, deleteLocal, (id) =>
+    client.abort(id, { reason: 'consent_revoked' }),
+  );
   if ((await listFailedDiscards(durableKV)).length) {
     await chrome.action.setBadgeText({ text: '!' }).catch(() => undefined);
   }
