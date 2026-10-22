@@ -155,7 +155,7 @@ describe.skipIf(!docker || !rls)(`integration: RLS (PR #25, schema via ${schemaM
   // (not NULL) for the rest of the session. Policies cast it with ::uuid, so the next query
   // without context on that pooled connection ERRORS (22P02) instead of returning 0 rows.
   // It still fails closed (no rows leak), checked below; the strict XT-28 expectation is
-  // marked it.fails until policies use NULLIF(current_setting(...), '')::uuid.
+  // Fixed in PR #35 (NULLIF policies); this strict check fails against PR #25 head 30f542a.
   async function useContextThenCommit() {
     await app.query('BEGIN');
     await app.query("SELECT set_config('app.current_org_id', $1, true)", [orgA]);
@@ -176,14 +176,11 @@ describe.skipIf(!docker || !rls)(`integration: RLS (PR #25, schema via ${schemaM
     expect(after).toBe(0);
   });
 
-  it.fails(
-    '[XT-28] (DB-BUG-2) next transaction on the same connection returns 0 rows, not an error',
-    async () => {
-      await useContextThenCommit();
-      const after = await app.query<{ n: number }>('SELECT count(*)::int AS n FROM projects');
-      expect(after.rows[0]?.n).toBe(0);
-    },
-  );
+  it('[XT-28] next transaction on the same connection returns 0 rows, not an error', async () => {
+    await useContextThenCommit();
+    const after = await app.query<{ n: number }>('SELECT count(*)::int AS n FROM projects');
+    expect(after.rows[0]?.n).toBe(0);
+  });
 
   it('[XT-29] every table with org_id has RLS enabled + forced + at least one policy', async () => {
     const { rows } = await owner.query<{
