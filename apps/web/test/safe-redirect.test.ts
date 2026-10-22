@@ -46,4 +46,26 @@ describe('safeRedirect', () => {
   it('keeps harmless encoded characters', () => {
     expect(safeRedirect('/meetings?q=a%20b')).toBe('/meetings?q=a%20b');
   });
+
+  it.each([
+    '/.//evil.com',
+    '/..//evil.com',
+    '/./..//evil.com',
+    '/a/../..//evil.com',
+    '/a/..//evil.com',
+    '/%2E//evil.com',
+    '/%2e%2e//evil.com',
+    '/%2e/%2e%2e//evil.com',
+    '/.//evil.com/path?x=1#h',
+    '/./\\evil.com',
+    '/.%2F/evil.com',
+    '/..%5C%5Cevil.com',
+  ])('rejects dot-segment escape %j (normalises to //host)', (input) => {
+    expect(safeRedirect(input, '/home')).toBe('/home');
+  });
+
+  it('still normalises harmless dot segments to a same-origin path', () => {
+    expect(safeRedirect('/a/./b/../c?x=1#y')).toBe('/a/c?x=1#y');
+    expect(safeRedirect('/../meetings')).toBe('/meetings');
+  });
 });

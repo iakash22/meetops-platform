@@ -30,9 +30,26 @@ export function safeRedirect(target: unknown, fallback = '/'): string {
     decoded = next;
   }
   try {
-    const url = new URL(target, BASE);
-    if (url.origin !== BASE) return fallback;
-    return `${url.pathname}${url.search}${url.hash}`;
+    const origin =
+      typeof window !== 'undefined' && window.location?.origin && window.location.origin !== 'null'
+        ? window.location.origin
+        : BASE;
+    const url = new URL(target, origin);
+    if (url.origin !== origin) return fallback;
+    // URL parsing normalises dot segments ("/.//evil.com" -> "//evil.com"), so
+    // re-check the final path: it must not become protocol-relative or contain "\".
+    if (/^[/\\][/\\]/.test(url.pathname)) return fallback;
+    const result = `${url.pathname}${url.search}${url.hash}`;
+    if (isUnsafe(result)) return fallback;
+    // A re-resolution of the result must stay same-origin and stable.
+    const again = new URL(result, origin);
+    if (again.origin !== origin || `${again.pathname}${again.search}${again.hash}` !== result)
+      return fallback;
+    // Same check on the fully decoded form ("/.%2F/evil.com" decodes to "/.//evil.com"),
+    // in case a router or history layer decodes the path before navigating.
+    const decodedUrl = new URL(decoded, origin);
+    if (decodedUrl.origin !== origin || /^[/\\][/\\]/.test(decodedUrl.pathname)) return fallback;
+    return result;
   } catch {
     return fallback;
   }
