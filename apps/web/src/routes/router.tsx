@@ -8,6 +8,7 @@ import {
   type RouterHistory,
 } from '@tanstack/react-router';
 import { useQueryClient, type QueryClient } from '@tanstack/react-query';
+import type { AuthSession, GetAuthSessionResponse } from '@meetops/contracts';
 import { AppShell } from '@/components/layout/app-shell';
 import { EmptyState } from '@/components/states/states';
 import { ForgotPasswordForm, LoginForm, SignupForm } from '@/features/auth/forms';
@@ -49,10 +50,16 @@ const authLayout = createRoute({
 function useCompleteSignIn() {
   const router = useRouter();
   const queryClient = useQueryClient();
-  return async (session: Parameters<typeof applySessionToStore>[0], next: string | undefined) => {
-    applySessionToStore(session);
-    await queryClient.invalidateQueries({ queryKey: queryKeys.session });
-    router.history.push(safeRedirect(next, '/'));
+  return async (session: AuthSession, next: string | undefined) => {
+    // Seed the session cache from the login/signup response (minus the CSRF token,
+    // which only the API client keeps) so the guard sees the fresh session and does
+    // not bounce back to /login with a cached `null` from the earlier redirect.
+    const { csrfToken: _csrf, ...fresh } = session;
+    void _csrf;
+    queryClient.setQueryData<GetAuthSessionResponse | null>(queryKeys.session, fresh);
+    applySessionToStore(fresh);
+    await router.invalidate();
+    await router.navigate({ href: safeRedirect(next, '/') });
   };
 }
 

@@ -1,4 +1,5 @@
 import { act, screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ApiError } from '@/lib/api/client';
 import { useOrgStore } from '@/stores/org-store';
@@ -97,5 +98,28 @@ describe('isSignedOutForRouting', () => {
     expect(isSignedOutForRouting(new ApiError(401, 'UNAUTHENTICATED', 'x'))).toBe(true);
     expect(isSignedOutForRouting(new ApiError(503, 'UNKNOWN', 'x'))).toBe(true);
     expect(isSignedOutForRouting(new ApiError(404, 'NOT_FOUND', 'x'))).toBe(false);
+  });
+});
+
+describe('login after guard redirect (E2E-04)', () => {
+  beforeEach(() => resetStores(false));
+
+  it('protected page -> /login?next= -> login -> lands on the original page', async () => {
+    const session = vi
+      .fn()
+      .mockRejectedValue(new ApiError(401, 'UNAUTHENTICATED', 'no session', 'r1'));
+    const api = createMockApi({ auth: { session } });
+    const { history } = renderApp('/meetings', api);
+    await screen.findByRole('heading', { name: 'Sign in' });
+    expect(history.location.href).toBe('/login?next=%2Fmeetings');
+
+    await userEvent.type(screen.getByLabelText('Email'), 'ada@example.com');
+    await userEvent.type(screen.getByLabelText('Password'), 'pw');
+    await userEvent.click(screen.getByRole('button', { name: 'Sign in' }));
+
+    await waitFor(() => expect(history.location.pathname).toBe('/meetings'));
+    expect(await screen.findByTestId('app-shell')).toBeInTheDocument();
+    expect(await screen.findByText('Weekly sync')).toBeInTheDocument();
+    expect(useOrgStore.getState().currentOrganizationId).toBe('org_1');
   });
 });
