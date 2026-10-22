@@ -1,0 +1,87 @@
+import { AsyncLocalStorage } from 'node:async_hooks';
+import { Queue, Worker, type Job } from 'bullmq';
+import { Redis } from 'ioredis';
+import { chunkAudio, normalizeToWav, probeMedia } from '@meetops/media-core';
+import { createStorageServiceFromEnv, StorageAccessError, type MeetingObjectRef } from '@meetops/storage';
+import { QUEUE_NAMES, type SttProviderId } from '@meetops/contracts';
+import { logger as baseLogger } from '@meetops/logger';
+import { DEFAULT_MEDIA_LIMITS, processRecording, type MediaProcessorDeps } from './processor.js';
+import { createRealtimePublisher, createRedisEmitter } from './realtime.js';
+import { MEDIA_QUEUE, type MediaJobPayload, type MediaProcessingResult, type TranscriptionJobPayload } from './types.js';
+
+export type MediaWorkerConfig = {
+  redisUrl: string;
+  concurrency: number;
+  segmentSeconds: number;
+  tmpRoot?: string;
+  sttProviderId: SttProviderId;
+  maxSourceBytes: number;
+  maxDurationSeconds: number;
+};
+
+/** Job scope for the storage authorize hook: the worker may only touch its current job's org+meeting. */
+const jobScope = new AsyncLocalStorage<{ organizationId: string; meetingId: string }>();
+
+export function workerAuthorize(ref: MeetingObjectRef): void {
+  const scope = jobScope.getStore();
+  if (!scope || scope.organizationId !== ref.orgId || scope.meetingId !== ref.meetingId) throw new StorageAccessError();
+}
+
+export function runInJobScope<T>(scope: { organizationId: string; meetingId: string }, fn: () => Promise<T>): Promise<T> {
+  return jobScope.run(scope, fn);
+}
+
+export function loadMediaWorkerConfig(env: NodeJS.ProcessEnv = process.env): MediaWorkerConfig {
+  const int = (name: string, def: number, min: number, max: number) => {
+    const v = env[name];
+    if (!v) return def;
+    const n = Number(v);
+    if (!Number.isInteger(n) || n < min || n > max) throw new Error(`${name} must be an integer in ${min}..${max}`);
+    return n;
+  };
+  const stt = (env.STT_PROVIDER_ID ?? 'assemblyai') as SttProviderId;
+  if (!['assemblyai', 'faster-whisper', 'deepgram'].includes(stt)) throw new Error('Invalid STT_PROVIDER_ID');
+  const cfg: MediaWorkerConfig = {
+    redisUrl: env.REDIS_URL ?? 'redis://localhost:6379',
+    concurrency: int('MEDIA_WORKER_CONCURRENCY', 1, 1, 16),
+    segmentSeconds: int('MEDIA_CHUNK_SECONDS', 600, 10, 3600),
+    sttProviderId: stt,
+    maxSourceBytes: int('MEDIA_MAX_SOURCE_BYTES', DEFAULT_MEDIA_LIMITS.maxSourceBytes, 1, DEFAULT_MEDIA_LIMITS.maxSourceBytes),
+    maxDurationSeconds: int('MEDIA_MAX_DURATION_SECONDS', DEFAULT_MEDIA_LIMITS.maxDurationSeconds, 1, 24 * 60 * 60)
+  };
+  if (env.MEDIA_TMP_DIR) cfg.tmpRoot = env.MEDIA_TMP_DIR;
+  return cfg;
+}
+
+/** Wire the BullMQ media worker with real storage, ffmpeg, transcription queue and Redis emitter. */
+export function startMediaWorker(cfg: MediaWorkerConfig = loadMediaWorkerConfig()) {
+  const logger = baseLogger.child({ worker: MEDIA_QUEUE });
+  const conn = () => new Redis(cfg.redisUrl, { maxRetriesPerRequest: null });
+  const emitterRedis = conn();
+  const transcriptionQueue = new Queue<TranscriptionJobPayload>(QUEUE_NAMES.transcription, { connection: conn() });
+  const deps: MediaProcessorDeps = {
+    storage: createStorageServiceFromEnv(process.env, { authorize: workerAuthorize }),
+    media: { probeMedia: (p, o) => probeMedia(p, o), normalizeToWav: (i, o, x) => normalizeToWav(i, o, x), chunkAudio: (i, o, x) => chunkAudio(i, o, x) },
+    limits: { maxSourceBytes: cfg.maxSourceBytes, maxDurationSeconds: cfg.maxDurationSeconds },
+    transcriptionQueue: { add: (name, data, opts) => transcriptionQueue.add(name, data, opts) },
+    realtime: createRealtimePublisher(createRedisEmitter(emitterRedis)),
+    logger,
+    segmentSeconds: cfg.segmentSeconds,
+    defaultSttProviderId: cfg.sttProviderId,
+    ...(cfg.tmpRoot ? { tmpRoot: cfg.tmpRoot } : {})
+  };
+  const worker = new Worker<MediaJobPayload, MediaProcessingResult>(
+    MEDIA_QUEUE,
+    (job: Job<MediaJobPayload>) =>
+      runInJobScope({ organizationId: job.data.organizationId, meetingId: job.data.meetingId }, () =>
+        processRecording(job.data, deps, { jobId: job.id, isFinalAttempt: job.attemptsMade + 1 >= (job.opts.attempts ?? 1) })
+      ),
+    { connection: conn(), concurrency: cfg.concurrency }
+  );
+  worker.on('failed', (job) => logger.warn({ jobId: job?.id }, 'media job attempt failed'));
+  const close = async () => {
+    await Promise.allSettled([worker.close(), transcriptionQueue.close()]);
+    emitterRedis.disconnect();
+  };
+  return { worker, close };
+}
