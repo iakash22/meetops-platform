@@ -56,10 +56,12 @@ Media's worker enqueues one contracts `TranscriptionJobPayload` per 16 kHz mono 
 idempotency key `transcribe:{rec}:{index}`. `createTranscriptionQueueConsumer(handler, { segmentSeconds })` (in
 `packages/ai-core/src/transcription/queue.ts`) maps each job to a `TranscriptionChunkJobPayload`:
 
-- **Index:** taken from `chunkIndex` once Architecture adds it in PR #38. Until then it is derived with
-  `parseTranscriptionIdempotencyKey`. If both are present they must agree.
-- **Validation:** the key's recording must equal `recordingId`, and the job id must match the payload. A mismatch
-  throws `InvalidTranscriptionJobError`, which is non-retryable.
-- **Geometry:** `startSec = index * segmentSeconds`, overlap 0 (ffmpeg `-segment_time`). `segmentSeconds` must
-  equal Media's `MEDIA_CHUNK_SECONDS` (default 600). `durationSec` is nominal; the provider-reported duration wins.
+- **Index and offset:** taken from the contracts v0.2 fields `chunkIndex` and `startMs` (PR #38). A job without
+  `chunkIndex` is rejected (whole-file jobs are not chunk jobs). `startSec = startMs / 1000`; only if `startMs` is
+  absent does it fall back to `index * segmentSeconds`.
+- **Consistency checks:** if the idempotency key has Media's form (`parseTranscriptionIdempotencyKey`), its recording
+  and index must match the payload, and the job id must match too. A mismatch throws `InvalidTranscriptionJobError`,
+  which is non-retryable.
+- **Geometry:** overlap 0 (ffmpeg `-segment_time`). `segmentSeconds` should equal Media's `MEDIA_CHUNK_SECONDS`
+  (default 600). `durationSec` is nominal; the provider-reported duration wins.
 - **Completeness:** the chunk count is not on the payload, so `complete` needs the count from Media's manifest.
