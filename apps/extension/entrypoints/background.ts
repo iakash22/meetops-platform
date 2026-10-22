@@ -7,7 +7,12 @@ import {
 } from '../src/lib/background-handler.js';
 import { ChunkStore } from '../src/lib/chunk-store.js';
 import { drainQueue } from '../src/lib/drain.js';
-import { retryPendingDiscards } from '../src/lib/pending-discard.js';
+import {
+  isPendingDiscard,
+  listFailedDiscards,
+  retryPendingDiscards,
+  withSessionGate,
+} from '../src/lib/pending-discard.js';
 import { classifySender, extensionUrls } from '../src/lib/senders.js';
 import { sessionKV } from '../src/lib/storage.js';
 import { StubUploadClient } from '../src/lib/upload.js';
@@ -36,16 +41,29 @@ async function discardLocal(sessionId: string): Promise<void> {
   await client.abort(sessionId, { reason: 'consent_revoked' }).catch(() => undefined);
 }
 
+async function deleteLocal(sessionId: string): Promise<void> {
+  await (await store()).deleteSession(sessionId);
+}
+
+/** Retry pending discards; a session that can never be deleted shows the '!' badge. */
+async function retryDiscards(): Promise<void> {
+  await retryPendingDiscards(durableKV, discardLocal, deleteLocal);
+  if ((await listFailedDiscards(durableKV)).length) {
+    await chrome.action.setBadgeText({ text: '!' }).catch(() => undefined);
+  }
+}
+
 async function drain(): Promise<void> {
   try {
-    // Never upload a session marked for discard: finish those first, and hold the drain while
-    // any remain (they are retried on the next worker start).
-    const pending = await retryPendingDiscards(durableKV, discardLocal);
-    if (pending.length) {
-      console.warn('MeetOps AI: pending discards remain; not draining', pending);
-      return;
-    }
-    await drainQueue(await store(), client);
+    await retryDiscards().catch((err: unknown) =>
+      console.warn('MeetOps AI: retrying pending discards failed', err),
+    );
+    // Marked sessions are skipped (re-checked before each PUT and before complete, under a
+    // per-session gate shared with marking); every other session still drains.
+    await drainQueue(await store(), client, undefined, Date.now, {
+      isMarked: (id) => isPendingDiscard(durableKV, id),
+      gate: withSessionGate,
+    });
   } catch (err) {
     console.warn('MeetOps AI: draining queued chunks failed', err);
   }
@@ -91,7 +109,10 @@ const deps: BackgroundDeps = {
   },
   durableKV,
   discardLocal,
+  deleteLocal,
   async setBadge(text) {
+    // An undeletable discarded session keeps the error badge until it is resolved.
+    if (!text && (await listFailedDiscards(durableKV).catch(() => [])).length) text = '!';
     await chrome.action.setBadgeText({ text });
     if (text)
       await chrome.action.setBadgeBackgroundColor({ color: text === '!' ? '#b45309' : '#c62828' });
@@ -123,7 +144,10 @@ export default defineBackground(() => {
   // Pending discards run (under the state lock) before any drain, so a session marked for
   // discard is never uploaded; drain() also re-checks.
   const startup = () =>
-    void locked(() => retryPendingDiscards(durableKV, discardLocal)).then(() => drain());
+    void locked(() => retryDiscards()).then(
+      () => drain(),
+      () => drain(),
+    );
   chrome.runtime.onStartup.addListener(startup);
   chrome.runtime.onInstalled.addListener(startup);
   startup();

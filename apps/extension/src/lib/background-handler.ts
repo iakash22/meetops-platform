@@ -1,4 +1,10 @@
-import { addPendingDiscard, clearPendingDiscard, retryPendingDiscards } from './pending-discard.js';
+import {
+  addPendingDiscard,
+  clearPendingDiscard,
+  DISCARD_FAILED_MESSAGE,
+  listFailedDiscards,
+  retryPendingDiscards,
+} from './pending-discard.js';
 import { consumeConsent, recordConsent } from './consent-registry.js';
 import {
   isBackgroundMessage,
@@ -36,6 +42,8 @@ export interface BackgroundDeps {
    * its upload session with 'consent_revoked'. Must be idempotent.
    */
   discardLocal: (sessionId: string) => Promise<void>;
+  /** Fallback after repeated discard failures: delete the session from IndexedDB only. */
+  deleteLocal?: (sessionId: string) => Promise<void>;
   /** Override OFFSCREEN_TIMEOUT_MS (tests). */
   offscreenTimeoutMs?: number;
 }
@@ -171,8 +179,17 @@ export async function handleBackgroundMessage(
   const state = isEvent ? await loadState(kv) : await checkWatchdog(deps);
 
   switch (msg.type) {
-    case 'GET_STATUS':
+    case 'GET_STATUS': {
+      // A discard that could not be completed is surfaced until the user clears extension data.
+      const failed = await listFailedDiscards(deps.durableKV).catch(() => [] as string[]);
+      if (failed.length && state.status === 'idle') {
+        const lastError = state.lastError
+          ? `${state.lastError} ${DISCARD_FAILED_MESSAGE}`
+          : DISCARD_FAILED_MESSAGE;
+        return status({ ...state, lastError });
+      }
       return status(state);
+    }
 
     case 'DISMISS_WARNING': {
       const next = { ...state };
@@ -270,7 +287,10 @@ export async function handleBackgroundMessage(
           await clearPendingDiscard(deps.durableKV, msg.sessionId);
         } else {
           // Offscreen is closed by toIdle now, so nothing else writes; clean up directly.
-          await retryPendingDiscards(deps.durableKV, deps.discardLocal);
+          await retryPendingDiscards(deps.durableKV, deps.discardLocal, deps.deleteLocal);
+          if ((await listFailedDiscards(deps.durableKV)).length) {
+            await deps.setBadge('!').catch(() => undefined);
+          }
         }
         return status(idle);
       }

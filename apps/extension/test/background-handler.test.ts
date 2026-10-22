@@ -314,6 +314,9 @@ describe('offscreen timeout', () => {
   });
 });
 
+const S1 = '11111111-1111-4111-8111-111111111111';
+const S2 = '22222222-2222-4222-8222-222222222222';
+
 describe('pending discard marker (captured-tab mismatch)', () => {
   const mismatch = async (ctx: ReturnType<typeof makeDeps>) => {
     ctx.deps.capturedTabIds.mockResolvedValue([2]);
@@ -323,11 +326,7 @@ describe('pending discard marker (captured-tab mismatch)', () => {
       bg({ type: 'START_RECORDING', tabId: 1, streamId: crypto.randomUUID(), meetingId: MID }),
       popup,
     );
-    return handleBackgroundMessage(
-      ctx.deps,
-      bg({ type: 'REC_STARTED', sessionId: 'sess-1' }),
-      offscreen,
-    );
+    return handleBackgroundMessage(ctx.deps, bg({ type: 'REC_STARTED', sessionId: S1 }), offscreen);
   };
 
   it('records the marker before discarding and clears it when the offscreen discard succeeds', async () => {
@@ -338,7 +337,7 @@ describe('pending discard marker (captured-tab mismatch)', () => {
       return { ok: true };
     });
     await mismatch(ctx);
-    expect(markerDuringDiscard).toEqual(['sess-1']);
+    expect(markerDuringDiscard).toEqual([{ sessionId: S1, attempts: 0 }]);
     expect(await ctx.deps.durableKV.get('pendingDiscards')).toBeUndefined();
     expect(ctx.deps.discardLocal).not.toHaveBeenCalled();
   });
@@ -363,11 +362,11 @@ describe('pending discard marker (captured-tab mismatch)', () => {
     );
     const r = await handleBackgroundMessage(
       d,
-      bg({ type: 'REC_STARTED', sessionId: 'sess-2' }),
+      bg({ type: 'REC_STARTED', sessionId: S2 }),
       offscreen,
     );
     expect(r).toMatchObject({ ok: true, status: 'idle' });
-    expect(order).toEqual(['close', 'discard:sess-2']);
+    expect(order).toEqual(['close', `discard:${S2}`]);
     expect(await ctx.deps.durableKV.get('pendingDiscards')).toBeUndefined();
   });
 
@@ -379,7 +378,44 @@ describe('pending discard marker (captured-tab mismatch)', () => {
     });
     ctx.deps.discardLocal.mockRejectedValue(new Error('idb blocked'));
     await mismatch(ctx);
-    expect(await ctx.deps.durableKV.get('pendingDiscards')).toEqual(['sess-1']);
+    expect(await ctx.deps.durableKV.get('pendingDiscards')).toEqual([
+      { sessionId: S1, attempts: 1 },
+    ]);
+  });
+});
+
+describe('discard that keeps failing (handler)', () => {
+  it('after the cap and a failed fallback, shows the ! badge and a popup message', async () => {
+    const { DISCARD_FAILED_MESSAGE, MAX_DISCARD_ATTEMPTS } =
+      await import('../src/lib/pending-discard.js');
+    const ctx = makeDeps();
+    await ctx.deps.durableKV.set('pendingDiscards', [
+      { sessionId: S1, attempts: MAX_DISCARD_ATTEMPTS - 1 },
+    ]);
+    ctx.deps.sendToOffscreen.mockImplementation(async (m: { type: string }) => {
+      if (m.type === 'OFFSCREEN_DISCARD') throw new Error('gone');
+      return { ok: true };
+    });
+    ctx.deps.discardLocal.mockRejectedValue(new Error('idb blocked'));
+    const deleteLocal = vi.fn(async () => Promise.reject(new Error('still blocked')));
+    const d = { ...ctx.deps, deleteLocal };
+    ctx.deps.capturedTabIds.mockResolvedValue([2]);
+    await handleBackgroundMessage(d, bg({ type: 'ACK_CONSENT', tabId: 1 }), popup);
+    await handleBackgroundMessage(
+      d,
+      bg({ type: 'START_RECORDING', tabId: 1, streamId: 'x9', meetingId: MID }),
+      popup,
+    );
+    await handleBackgroundMessage(d, bg({ type: 'REC_STARTED', sessionId: S1 }), offscreen);
+    expect(deleteLocal).toHaveBeenCalledWith(S1);
+    expect(ctx.deps.setBadge).toHaveBeenLastCalledWith('!');
+    expect(await ctx.deps.durableKV.get('pendingDiscards')).toEqual([
+      { sessionId: S1, attempts: MAX_DISCARD_ATTEMPTS, failed: true },
+    ]);
+    expect(await handleBackgroundMessage(d, bg({ type: 'GET_STATUS' }), popup)).toMatchObject({
+      status: 'idle',
+      lastError: expect.stringContaining(DISCARD_FAILED_MESSAGE),
+    });
   });
 });
 
@@ -388,13 +424,13 @@ describe('retryPendingDiscards (worker start)', () => {
     const { addPendingDiscard, retryPendingDiscards, listPendingDiscards } =
       await import('../src/lib/pending-discard.js');
     const kv = memoryKV();
-    await addPendingDiscard(kv, 'a');
-    await addPendingDiscard(kv, 'b');
-    await addPendingDiscard(kv, 'a');
+    await addPendingDiscard(kv, S1);
+    await addPendingDiscard(kv, S2);
+    await addPendingDiscard(kv, S1);
     const discard = vi.fn(async (id: string) => {
-      if (id === 'b') throw new Error('fail');
+      if (id === S2) throw new Error('fail');
     });
-    expect(await retryPendingDiscards(kv, discard)).toEqual(['b']);
+    expect(await retryPendingDiscards(kv, discard)).toEqual([S2]);
     expect(discard).toHaveBeenCalledTimes(2);
     discard.mockResolvedValue(undefined);
     expect(await retryPendingDiscards(kv, discard)).toEqual([]);
