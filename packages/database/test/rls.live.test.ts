@@ -10,6 +10,7 @@ import { TENANT_TABLES, runWithOrgContext, runWithUserContext } from '../src/ten
 
 const APP_URL = process.env.RLS_TEST_APP_URL;
 const OWNER_URL = process.env.RLS_TEST_OWNER_URL;
+const ADMIN_URL = process.env.RLS_TEST_ADMIN_URL;
 
 describe.skipIf(!APP_URL || !OWNER_URL)('RLS live (XT-26..XT-29)', () => {
   const app = new PrismaClient({ datasources: { db: { url: APP_URL ?? '' } } });
@@ -122,13 +123,16 @@ describe.skipIf(!APP_URL || !OWNER_URL)('invitation definer functions (live)', (
       'id',
       'org_id',
       'role',
-      'status',
     ]);
     expect(rows[0]?.org_id).toBe(organizationId);
     const none = await app.$queryRaw<
       unknown[]
     >`SELECT * FROM lookup_invitation_by_token_hash(${'nope'})`;
     expect(none).toHaveLength(0);
+    // expired invitations are not returned (security review 1)
+    expect(
+      await app.$queryRaw<unknown[]>`SELECT * FROM lookup_invitation_by_token_hash(${expiredHash})`,
+    ).toHaveLength(0);
   });
 
   it('accept rejects wrong user email and expired tokens', async () => {
@@ -155,6 +159,69 @@ describe.skipIf(!APP_URL || !OWNER_URL)('invitation definer functions (live)', (
     await expect(
       app.$queryRaw`SELECT * FROM accept_invitation(${tokenHash}, ${userId}::uuid)`,
     ).rejects.toThrow(/invitation_invalid/);
+    // accepted invitations are not returned by lookup (security review 1)
+    expect(
+      await app.$queryRaw<unknown[]>`SELECT * FROM lookup_invitation_by_token_hash(${tokenHash})`,
+    ).toHaveLength(0);
+  });
+
+  it('lookup hides revoked and soft-deleted invitations', async () => {
+    const revokedHash = `hash-${randomUUID()}`;
+    const deletedHash = `hash-${randomUUID()}`;
+    const future = new Date(Date.now() + 3_600_000);
+    await runWithOrgContext(owner, organizationId, (tx) =>
+      tx.invitation.createMany({
+        data: [
+          {
+            organizationId,
+            email: 'r@example.test',
+            tokenHash: revokedHash,
+            expiresAt: future,
+            revokedAt: new Date(),
+          },
+          {
+            organizationId,
+            email: 'd@example.test',
+            tokenHash: deletedHash,
+            expiresAt: future,
+            deletedAt: new Date(),
+          },
+        ],
+      }),
+    );
+    for (const h of [revokedHash, deletedHash]) {
+      expect(
+        await app.$queryRaw<unknown[]>`SELECT * FROM lookup_invitation_by_token_hash(${h})`,
+      ).toHaveLength(0);
+    }
+  });
+
+  it('BLOCKER: a removed owner re-invited as viewer comes back as viewer, not owner', async () => {
+    const exOwner = randomUUID();
+    const email = `ex-owner-${exOwner}@example.test`;
+    const reinvite = `hash-${randomUUID()}`;
+    await owner.user.create({ data: { id: exOwner, email } });
+    await runWithOrgContext(owner, organizationId, async (tx) => {
+      await tx.membership.create({
+        data: { organizationId, userId: exOwner, role: 'owner', deletedAt: new Date() },
+      });
+      await tx.invitation.create({
+        data: {
+          organizationId,
+          email,
+          role: 'viewer',
+          tokenHash: reinvite,
+          expiresAt: new Date(Date.now() + 3_600_000),
+        },
+      });
+    });
+    const rows = await app.$queryRaw<{ role: string }[]>`
+      SELECT * FROM accept_invitation(${reinvite}, ${exOwner}::uuid)`;
+    expect(rows[0]?.role).toBe('viewer');
+    const m = await runWithOrgContext(app, organizationId, (tx) =>
+      tx.membership.findFirst({ where: { userId: exOwner } }),
+    );
+    expect(m).toMatchObject({ role: 'viewer', deletedAt: null });
   });
 
   it('PUBLIC cannot execute the functions', async () => {
@@ -194,38 +261,60 @@ describe.skipIf(!RELAY_URL || !OWNER_URL)('outbox relay role (live)', () => {
     }
   });
 
-  it('reads pending events across orgs without org context and marks them published', async () => {
-    const pending = await relay.outboxEvent.findMany({
-      where: { organizationId: { in: orgs }, status: 'pending' },
-    });
-    expect(pending.map((e) => e.organizationId).sort()).toEqual([...orgs].sort());
-    const res = await relay.outboxEvent.updateMany({
-      where: { id: { in: pending.map((e) => e.id) } },
-      data: { status: 'published', publishedAt: new Date(), attempts: { increment: 1 } },
-    });
-    expect(res.count).toBe(2);
+  it('claims due pending events across orgs via the definer function and completes them', async () => {
+    const claimed = await relay.$queryRaw<
+      { id: string; org_id: string; attempts: number }[]
+    >`SELECT * FROM relay_claim_outbox_events(500)`;
+    const mine = claimed.filter((e) => (orgs as string[]).includes(e.org_id));
+    expect(mine.map((e) => e.org_id).sort()).toEqual([...orgs].sort());
+    expect(Object.keys(claimed[0] ?? {}).sort()).toEqual(
+      [
+        'aggregate_id',
+        'aggregate_type',
+        'attempts',
+        'event_type',
+        'id',
+        'org_id',
+        'payload',
+      ].sort(),
+    );
+    // claimed rows are not handed out twice
+    const again = await relay.$queryRaw<
+      { id: string }[]
+    >`SELECT * FROM relay_claim_outbox_events(500)`;
+    expect(again.filter((e) => mine.some((m) => m.id === e.id))).toHaveLength(0);
+    const [first, second] = mine;
+    expect(
+      await relay.$queryRaw<
+        { ok: boolean }[]
+      >`SELECT relay_complete_outbox_event(${first?.id}::uuid, true) AS ok`,
+    ).toEqual([{ ok: true }]);
+    expect(
+      await relay.$queryRaw<
+        { ok: boolean }[]
+      >`SELECT relay_complete_outbox_event(${second?.id}::uuid, false, 'boom', now() + interval '1 minute') AS ok`,
+    ).toEqual([{ ok: true }]);
+    // completing twice is a no-op (only processing rows change)
+    expect(
+      await relay.$queryRaw<
+        { ok: boolean }[]
+      >`SELECT relay_complete_outbox_event(${first?.id}::uuid, true) AS ok`,
+    ).toEqual([{ ok: false }]);
+    const states = await owner.$queryRaw<{ status: string; last_error: string | null }[]>`
+      SELECT status::text, last_error FROM outbox_events WHERE org_id = ANY(${orgs}::uuid[]) ORDER BY status`;
+    expect(states.map((r) => r.status).sort()).toEqual(['pending', 'published']);
   });
 
-  it('cannot touch other tables or insert/delete/change payload', async () => {
+  it('has no table privileges at all and no BYPASSRLS', async () => {
+    await expect(relay.outboxEvent.findMany()).rejects.toThrow(/permission denied/);
     await expect(relay.meeting.count()).rejects.toThrow(/permission denied/);
     await expect(relay.organization.count()).rejects.toThrow(/permission denied/);
     await expect(
-      relay.outboxEvent.deleteMany({ where: { organizationId: { in: orgs } } }),
+      relay.$executeRaw`UPDATE outbox_events SET status = 'published' WHERE false`,
     ).rejects.toThrow(/permission denied/);
-    await expect(
-      relay.outboxEvent.create({
-        data: {
-          organizationId: orgs[0] ?? '',
-          aggregateType: 'x',
-          aggregateId: randomUUID(),
-          eventType: 'x',
-          payload: {},
-        },
-      }),
-    ).rejects.toThrow(/permission denied/);
-    await expect(
-      relay.$executeRaw`UPDATE outbox_events SET payload = '{}'::jsonb WHERE false`,
-    ).rejects.toThrow(/permission denied/);
+    const attrs = await owner.$queryRaw<{ bypass: boolean }[]>`
+      SELECT rolbypassrls AS bypass FROM pg_roles WHERE rolname = 'meetops_relay'`;
+    expect(attrs).toEqual([{ bypass: false }]);
     await relay.$disconnect();
     await owner.$disconnect();
   });
@@ -259,20 +348,38 @@ describe.skipIf(!APP_URL || !OWNER_URL)('backend feedback (live)', () => {
     expect(await app.membership.count({ where: { userId } })).toBe(0);
   });
 
-  it('global audit events (NULL org) are insert-only; org events readable only in-org', async () => {
-    const action = `auth.login_failed.${randomUUID()}`;
-    // NULL-org rows are invisible to the app, so INSERT ... RETURNING (Prisma create) is refused;
-    // the app writes them with createMany (no RETURNING).
+  it('global audit events (NULL org) only via record_global_auth_event; org events readable only in-org', async () => {
+    const action = 'auth.login_failed';
+    const target = `user-${randomUUID()}`;
+    // direct org-NULL inserts are refused for the app (security review 2)
     await expect(
-      app.auditEvent.create({ data: { action, targetType: 'user', metadata: {} } }),
+      app.auditEvent.createMany({
+        data: [{ action, targetType: 'user', targetId: target, metadata: {} }],
+      }),
     ).rejects.toThrow(/row-level security/);
+    const [ok] = await app.$queryRaw<{ id: string }[]>`
+      SELECT record_global_auth_event(${action}, NULL, 'user', ${target}, '{"reason":"bad_password"}'::jsonb, '127.0.0.1', 'vitest') AS id`;
+    expect(ok?.id).toMatch(/^[0-9a-f-]{36}$/);
+    await expect(
+      app.$queryRaw`SELECT record_global_auth_event('org.deleted', NULL, 'user', 'x')`,
+    ).rejects.toThrow(/audit_action_not_allowed/);
+    await expect(
+      app.$queryRaw`SELECT record_global_auth_event('auth.logout', NULL, 'project', 'x')`,
+    ).rejects.toThrow(/audit_target_not_allowed/);
+    expect(await app.auditEvent.count({ where: { targetId: target } })).toBe(0);
     expect(
-      await app.auditEvent.createMany({ data: [{ action, targetType: 'user', metadata: {} }] }),
-    ).toEqual({ count: 1 });
-    expect(await app.auditEvent.count({ where: { action } })).toBe(0);
-    expect(
-      await runWithOrgContext(app, orgA, (tx) => tx.auditEvent.count({ where: { action } })),
+      await runWithOrgContext(app, orgA, (tx) =>
+        tx.auditEvent.count({ where: { targetId: target } }),
+      ),
     ).toBe(0);
+    // org-NULL rows are invisible under RLS even to the owner; check with the admin (superuser) role.
+    if (ADMIN_URL) {
+      const admin = new PrismaClient({ datasources: { db: { url: ADMIN_URL } } });
+      const stored = await admin.$queryRaw<{ org_id: string | null; actor_type: string }[]>`
+        SELECT org_id, actor_type FROM audit_events WHERE target_id = ${target}`;
+      expect(stored).toEqual([{ org_id: null, actor_type: 'anonymous' }]);
+      await admin.$disconnect();
+    }
     const orgAction = `org.updated.${randomUUID()}`;
     await runWithOrgContext(app, orgA, (tx) =>
       tx.auditEvent.create({
@@ -627,3 +734,67 @@ describe.skipIf(!APP_URL || !OWNER_URL)('transcripts.provider constraint (live)'
     await owner.$disconnect();
   });
 });
+
+describe.skipIf(!OWNER_URL || !ADMIN_URL)(
+  'security review: audit append-only and forced RLS (live)',
+  () => {
+    const owner = new PrismaClient({ datasources: { db: { url: OWNER_URL ?? '' } } });
+    // Superuser bypasses RLS but NOT triggers: proves the trigger, not RLS, is what refuses changes.
+    const admin = new PrismaClient({ datasources: { db: { url: ADMIN_URL ?? '' } } });
+    const organizationId = randomUUID();
+    const actorId = randomUUID();
+
+    it('UPDATE, DELETE and TRUNCATE are refused even for a role that bypasses RLS', async () => {
+      await owner.organization.create({
+        data: { id: organizationId, name: 'A', slug: `aud-${organizationId}` },
+      });
+      await owner.user.create({ data: { id: actorId, email: `aud-${actorId}@example.test` } });
+      await runWithOrgContext(owner, organizationId, (tx) =>
+        tx.auditEvent.createMany({
+          data: [{ organizationId, actorId, action: 'org.updated', targetType: 'org' }],
+        }),
+      );
+      await expect(
+        admin.$executeRaw`UPDATE audit_events SET action = 'tampered' WHERE org_id = ${organizationId}::uuid`,
+      ).rejects.toThrow(/append-only/);
+      await expect(
+        admin.$executeRaw`DELETE FROM audit_events WHERE org_id = ${organizationId}::uuid`,
+      ).rejects.toThrow(/append-only/);
+      await expect(admin.$executeRaw`TRUNCATE audit_events`).rejects.toThrow(/append-only/);
+      // the owner (RLS forced, no UPDATE policy) changes nothing either
+      expect(
+        await runWithOrgContext(
+          owner,
+          organizationId,
+          (tx) =>
+            tx.$executeRaw`UPDATE audit_events SET action = 'tampered' WHERE org_id = ${organizationId}::uuid`,
+        ),
+      ).toBe(0);
+    });
+
+    it('deleting a user nulls actor_id (the one allowed change); explicit maintenance opt-in works', async () => {
+      await owner.user.delete({ where: { id: actorId } });
+      const rows = await admin.$queryRaw<{ actor_id: string | null; action: string }[]>`
+      SELECT actor_id, action FROM audit_events WHERE org_id = ${organizationId}::uuid`;
+      expect(rows).toEqual([{ actor_id: null, action: 'org.updated' }]);
+      const n = await admin.$transaction(async (tx) => {
+        await tx.$executeRaw`SELECT set_config('meetops.audit_maintenance', 'on', true)`;
+        return tx.$executeRaw`UPDATE audit_events SET metadata = '{"redacted":true}'::jsonb WHERE org_id = ${organizationId}::uuid`;
+      });
+      expect(n).toBe(1);
+      await admin.$disconnect();
+    });
+
+    it('every table with RLS enabled is forced', async () => {
+      const notForced = await owner.$queryRaw<{ relname: string }[]>`
+      SELECT c.relname FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+      WHERE n.nspname = 'public' AND c.relkind = 'r' AND c.relrowsecurity AND NOT c.relforcerowsecurity`;
+      expect(notForced).toEqual([]);
+      const enabled = await owner.$queryRaw<{ relname: string }[]>`
+      SELECT c.relname FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+      WHERE n.nspname = 'public' AND c.relkind = 'r' AND c.relrowsecurity`;
+      expect(enabled.map((r) => r.relname).sort()).toEqual([...TENANT_TABLES].sort());
+      await owner.$disconnect();
+    });
+  },
+);

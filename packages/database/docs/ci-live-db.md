@@ -23,11 +23,11 @@ Owner: Database agent. DevOps owns `.github/workflows`; copy `ci-live-db.example
 
 `pnpm --filter @meetops/database db:roles` (`scripts/create-db-roles.ts`; or `create-db-roles.sh` / `bootstrap-roles.sql` with psql), run with a superuser `ADMIN_DATABASE_URL`. It is idempotent: it creates or updates the roles, creates the `meetops` DB owned by the migrator, and runs `CREATE EXTENSION vector`, because pgvector is not a trusted extension.
 
-| Role               | Attributes                                                                                                                                           | Used by                           |
-| ------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------- |
-| `meetops_migrator` | LOGIN, NOSUPERUSER, NOBYPASSRLS; owns DB/schema/tables                                                                                               | `migrate deploy`, seed (optional) |
-| `meetops_app`      | LOGIN, NOSUPERUSER, **NOBYPASSRLS**, NOCREATEDB/ROLE; DML grants only                                                                                | API / worker runtime              |
-| `meetops_relay`    | LOGIN, **BYPASSRLS**, NOSUPERUSER; `SELECT` + `UPDATE(status, attempts, last_error, available_at, published_at, updated_at)` on `outbox_events` only | outbox relay process              |
+| Role               | Attributes                                                                                                                                                                 | Used by                           |
+| ------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------- |
+| `meetops_migrator` | LOGIN, NOSUPERUSER, NOBYPASSRLS; owns DB/schema/tables                                                                                                                     | `migrate deploy`, seed (optional) |
+| `meetops_app`      | LOGIN, NOSUPERUSER, **NOBYPASSRLS**, NOCREATEDB/ROLE; DML grants only                                                                                                      | API / worker runtime              |
+| `meetops_relay`    | LOGIN, NOBYPASSRLS, NOSUPERUSER; no table privileges, EXECUTE on `relay_claim_outbox_events(limit)` and `relay_complete_outbox_event(id, published, error, retry_at)` only | outbox relay process              |
 
 Migrations assert these attributes. A migration fails if `meetops_app` is superuser or BYPASSRLS, or if a required role is missing.
 
@@ -79,3 +79,19 @@ pnpm --filter @meetops/database test:live
   `migrate resolve --applied 20261021000000_init_core_schema`, load the fixture, `migrate deploy`.
 - Backfills in migrations lift FORCE RLS on the touched tables for the statement and re-force it
   in the same transaction (FORCE RLS also binds the owner, which has no org context).
+
+## Security review fixes (PR #35)
+
+- `accept_invitation`: re-accepting an existing/soft-deleted membership now takes the invitation's role.
+- `lookup_invitation_by_token_hash`: returns only pending, unexpired, non-revoked, non-deleted invites;
+  fields `id, org_id, email, role, expires_at` (email kept so the accept UI can show the invited address).
+- `audit_events`: BEFORE UPDATE/DELETE/TRUNCATE trigger refuses changes for every role. Escape hatch
+  only for a migration running as `meetops_migrator` with `SET LOCAL meetops.audit_maintenance = 'on'`.
+  The FK action from deleting a user (actor_id to NULL) is the one allowed update. The app inserts only
+  rows for its current org; global auth events go through `record_global_auth_event(...)` (allowlisted
+  actions and target types, metadata object of at most 4 KB).
+- Relay: definer functions instead of table access (a CHECK cannot prove a jsonb payload has no PII);
+  the relay has no table privileges and no BYPASSRLS.
+- Backfill windows: Prisma sends each migration file as one multi-statement simple query, which Postgres
+  runs as one implicit transaction (statements after an explicit COMMIT form another one), so a failure rolls back the NO FORCE too. Verified live on pg16 with a probe migration: NO FORCE, then 1/0, left the table forced, both with and without a preceding BEGIN/COMMIT.
+  `20261022034000_assert_forced_rls` fails the deploy if any RLS table is not forced.
