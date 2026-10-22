@@ -17,13 +17,13 @@ pnpm --filter @meetops/extension test:e2e   # build + real Alt+Shift+M gesture i
 
 ## Permissions
 
-| Permission | Why |
-| --- | --- |
-| `activeTab` | The toolbar click (or `Alt+Shift+M`) grants temporary access to the current tab only, which `tabCapture.getMediaStreamId({ targetTabId })` relies on |
-| `tabCapture` | Get a tab stream ID, only from the popup click after consent is acknowledged |
-| `offscreen` | MV3 service workers have no MediaRecorder; an offscreen document (reason `USER_MEDIA`) records |
-| `storage` | `chrome.storage.session` for recorder and consent state across service-worker suspension |
-| `alarms` | 30-second watchdog that wakes the service worker to detect a dead recorder |
+| Permission   | Why                                                                                                                                                  |
+| ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `activeTab`  | The toolbar click (or `Alt+Shift+M`) grants temporary access to the current tab only, which `tabCapture.getMediaStreamId({ targetTabId })` relies on |
+| `tabCapture` | Get a tab stream ID, only from the popup click after consent is acknowledged                                                                         |
+| `offscreen`  | MV3 service workers have no MediaRecorder; an offscreen document (reason `USER_MEDIA`) records                                                       |
+| `storage`    | `chrome.storage.session` for recorder and consent state across service-worker suspension                                                             |
+| `alarms`     | 30-second watchdog that wakes the service worker to detect a dead recorder                                                                           |
 
 There are no `host_permissions` and no content scripts. `commands._execute_action` (`Alt+Shift+M`) opens the popup; it isn't a permission. The manifest lives in `src/manifest.ts` so tests can assert this surface.
 
@@ -42,10 +42,10 @@ Every message carries a `target`, and the runtime guards (`isBackgroundMessage`,
 - Popup commands are accepted only from the real action popup (`sender.url === popup.html` with no `sender.tab`).
 - The offscreen document obeys only the service worker.
 
-| Direction | Types |
-| --- | --- |
-| Popup → background | `GET_STATUS`, `ACK_CONSENT { tabId }`, `START_RECORDING { tabId, streamId, meetingId (uuid) }`, `STOP_RECORDING` (also dismisses an error), `DISMISS_WARNING` |
-| Background → offscreen | `OFFSCREEN_START { streamId, startedAt, meetingId }`, `OFFSCREEN_STOP`, `OFFSCREEN_DISCARD` |
+| Direction              | Types                                                                                                                                                         |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Popup → background     | `GET_STATUS`, `ACK_CONSENT { tabId }`, `START_RECORDING { tabId, streamId, meetingId (uuid) }`, `STOP_RECORDING` (also dismisses an error), `DISMISS_WARNING` |
+| Background → offscreen | `OFFSCREEN_START { streamId, startedAt, meetingId }`, `OFFSCREEN_STOP`, `OFFSCREEN_DISCARD`                                                                   |
 | Offscreen → background | `REC_STARTED { sessionId }`, `REC_CHUNK { seq }`, `REC_HEARTBEAT { sessionId }`, `REC_STORAGE { event }`, `REC_STOPPED { chunkCount }`, `REC_ERROR { error }` |
 
 Replies are `{ ok: true, status, tabId?, startedAt?, chunks?, lastError?, storageWarning?, incomplete? }` or `{ ok: false, error }`. The local `CaptureStatus` is `idle | starting | recording | stopping | error`, which is separate from the server's `RecordingStatus`. Offscreen calls time out after 10 seconds and go to the error state.
@@ -65,10 +65,10 @@ Replies are `{ ok: true, status, tabId?, startedAt?, chunks?, lastError?, storag
 
 ## Earlier gaps (from #5)
 
-| Gap | Status after #52 |
-| --- | --- |
-| No Stop button | **Fixed**: `STOP_RECORDING` and a "Stop recording" button |
-| No `activeTab` | **Fixed**: `activeTab` declared; capture uses the click or shortcut grant |
+| Gap               | Status after #52                                                                                 |
+| ----------------- | ------------------------------------------------------------------------------------------------ |
+| No Stop button    | **Fixed**: `STOP_RECORDING` and a "Stop recording" button                                        |
+| No `activeTab`    | **Fixed**: `activeTab` declared; capture uses the click or shortcut grant                        |
 | `streamId` unused | **Fixed**: consumed by the offscreen recorder, single-use and verified against the consented tab |
-| Name "MeetOps" | **Fixed**: "MeetOps AI" |
-| Double quotes | **Fixed**: single quotes, per the repo Prettier config |
+| Name "MeetOps"    | **Fixed**: "MeetOps AI"                                                                          |
+| Double quotes     | **Fixed**: single quotes, per the repo Prettier config                                           |

@@ -6,22 +6,22 @@ Source: `packages/contracts` on `integration/phase-1`, **v0.2.0** (PR #38, head 
 
 TypeBox schemas (`@sinclair/typebox` `^0.34.0`), each with a `Static` TypeScript type of the same name.
 
-| Module | Main exports |
-| --- | --- |
-| `common`, `formats` | `Id` (now `format: uuid`), `IsoDateTime`, `Timestamps`, `HttpsUrl`; `registerContractFormats()` |
-| `domain/org` | `Role`, `ROLES`, `Organization`, `User`, `Membership`, `Project` |
-| `domain/meeting` | `MeetingSource`, `MeetingStatus`, `Meeting`, `MeetingParticipant`, `Transcript`, `TranscriptSegment`, `Report`, `ReportContent`, `ReportActionItem` |
-| `domain/media` | `FileObject` (internal to api and worker), `PublicFileObject`, `Recording`, `RecordingStatus`, media limits (`MAX_MEDIA_BYTES`, `ALLOWED_MEDIA_MIME_TYPES`, `MediaMimeType`) |
-| `domain/task` | `TaskStatus`, `TaskPriority`, `Task`, `ExtractedTask`, `IntegrationIssue` |
-| `domain/approval` | `WriteApproval` |
-| `api/auth` | `LoginRequest`, `SignupRequest`, `ForgotPasswordRequest`, `ResetPasswordRequest`, `VerifyEmailRequest`, `AuthSession`, `GetAuthSessionResponse`, `CsrfResponse` |
-| `api/errors` | `ApiErrorCode`, `ApiErrorEnvelope` |
-| `api/pagination` | `CursorPageQuery`, `OffsetPageQuery`, `CursorPage`, `OffsetPage`, `Paginated` |
-| `api/uploads` | `CreateUploadRequest`/`Response`, `PresignedUrlDto`, `PresignedUrlString`, `MAX_UPLOAD_BYTES` |
-| `api/recording-sessions` | `InitRecordingSessionRequest`/`Response`, `ChunkUploadUrlRequest`/`Response`, `SignedPutUpload`, `CompleteRecordingSessionRequest`/`Response`, `CompletedChunk`, `AbortRecordingSessionRequest`, `RecordingSource`, `AbortReason`, chunk limits (`MAX_CHUNK_BYTES`, `MAX_CHUNKS`, `MAX_RECORDING_SESSION_BYTES`, `CHUNK_UPLOAD_URL_TTL_SECONDS`) |
-| `jobs` | `QUEUE_NAMES` (`transcription`, `ai`, `email`, `media`), `SttProviderId`, `LlmProviderId`, `ModelRouteId`, `FallbackPolicy`, `TranscriptionJobPayload`, `AiJobPayload`, `EmailJobPayload` (per-template union), `EMAIL_QUEUE`, `EMAIL_TEMPLATE_IDS`, `MEDIA_QUEUE`, `MediaJobPayload` |
-| `realtime` | `MeetingStatusEvent`, `TranscriptionProgressEvent`, `TaskUpdateEvent`, `RealtimeEvent`, `REALTIME_EVENTS`, `ServerToClientEvents` |
-| `legacy` (subpath `@meetops/contracts/legacy`) | `PresignedUrl`, `StorageObjectMetadata` (deprecated), `EmailAddress`, `EmailMessage` |
+| Module                                         | Main exports                                                                                                                                                                                                                                                                                                                                     |
+| ---------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `common`, `formats`                            | `Id` (now `format: uuid`), `IsoDateTime`, `Timestamps`, `HttpsUrl`; `registerContractFormats()`                                                                                                                                                                                                                                                  |
+| `domain/org`                                   | `Role`, `ROLES`, `Organization`, `User`, `Membership`, `Project`                                                                                                                                                                                                                                                                                 |
+| `domain/meeting`                               | `MeetingSource`, `MeetingStatus`, `Meeting`, `MeetingParticipant`, `Transcript`, `TranscriptSegment`, `Report`, `ReportContent`, `ReportActionItem`                                                                                                                                                                                              |
+| `domain/media`                                 | `FileObject` (internal to api and worker), `PublicFileObject`, `Recording`, `RecordingStatus`, media limits (`MAX_MEDIA_BYTES`, `ALLOWED_MEDIA_MIME_TYPES`, `MediaMimeType`)                                                                                                                                                                     |
+| `domain/task`                                  | `TaskStatus`, `TaskPriority`, `Task`, `ExtractedTask`, `IntegrationIssue`                                                                                                                                                                                                                                                                        |
+| `domain/approval`                              | `WriteApproval`                                                                                                                                                                                                                                                                                                                                  |
+| `api/auth`                                     | `LoginRequest`, `SignupRequest`, `ForgotPasswordRequest`, `ResetPasswordRequest`, `VerifyEmailRequest`, `AuthSession`, `GetAuthSessionResponse`, `CsrfResponse`                                                                                                                                                                                  |
+| `api/errors`                                   | `ApiErrorCode`, `ApiErrorEnvelope`                                                                                                                                                                                                                                                                                                               |
+| `api/pagination`                               | `CursorPageQuery`, `OffsetPageQuery`, `CursorPage`, `OffsetPage`, `Paginated`                                                                                                                                                                                                                                                                    |
+| `api/uploads`                                  | `CreateUploadRequest`/`Response`, `PresignedUrlDto`, `PresignedUrlString`, `MAX_UPLOAD_BYTES`                                                                                                                                                                                                                                                    |
+| `api/recording-sessions`                       | `InitRecordingSessionRequest`/`Response`, `ChunkUploadUrlRequest`/`Response`, `SignedPutUpload`, `CompleteRecordingSessionRequest`/`Response`, `CompletedChunk`, `AbortRecordingSessionRequest`, `RecordingSource`, `AbortReason`, chunk limits (`MAX_CHUNK_BYTES`, `MAX_CHUNKS`, `MAX_RECORDING_SESSION_BYTES`, `CHUNK_UPLOAD_URL_TTL_SECONDS`) |
+| `jobs`                                         | `QUEUE_NAMES` (`transcription`, `ai`, `email`, `media`), `SttProviderId`, `LlmProviderId`, `ModelRouteId`, `FallbackPolicy`, `TranscriptionJobPayload`, `AiJobPayload`, `EmailJobPayload` (per-template union), `EMAIL_QUEUE`, `EMAIL_TEMPLATE_IDS`, `MEDIA_QUEUE`, `MediaJobPayload`                                                            |
+| `realtime`                                     | `MeetingStatusEvent`, `TranscriptionProgressEvent`, `TaskUpdateEvent`, `RealtimeEvent`, `REALTIME_EVENTS`, `ServerToClientEvents`                                                                                                                                                                                                                |
+| `legacy` (subpath `@meetops/contracts/legacy`) | `PresignedUrl`, `StorageObjectMetadata` (deprecated), `EmailAddress`, `EmailMessage`                                                                                                                                                                                                                                                             |
 
 ## What changed from v0.1 to v0.2
 
@@ -83,10 +83,10 @@ Per ADR-003:
 
 ## Versioning
 
-| Bump | When |
-| --- | --- |
-| PATCH | Docs, stricter tests, no schema change |
-| MINOR | Additive change. While the version is `0.x`, a minor bump may also contain breaking changes, as v0.2.0 does |
+| Bump             | When                                                                                                                                                    |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| PATCH            | Docs, stricter tests, no schema change                                                                                                                  |
+| MINOR            | Additive change. While the version is `0.x`, a minor bump may also contain breaking changes, as v0.2.0 does                                             |
 | MAJOR (from 1.0) | Removing or renaming a field, making an optional field required, narrowing a union, changing a format, or changing a job payload old workers can't read |
 
 For queue payloads, increment `jobVersion` and keep workers accepting the previous version for one release. For deprecation, use `/** @deprecated … Removal in vN */` and keep the symbol at least one minor release.
