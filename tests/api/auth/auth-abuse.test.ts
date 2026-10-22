@@ -313,7 +313,7 @@ describe.skipIf(!hasAuthApi)('AU: auth abuse (PR #27)', () => {
     }
 
     it('[AU-21] a reset token works once; the second use is rejected', async () => {
-      const { app, token } = await resetFlow();
+      const { app, token, e } = await resetFlow();
       const first = await new Client(app, '198.51.100.31').post('/auth/reset-password', {
         token,
         password: NEW_PW,
@@ -323,19 +323,29 @@ describe.skipIf(!hasAuthApi)('AU: auth abuse (PR #27)', () => {
         token,
         password: OTHER_PW,
       });
-      expect(second.statusCode).toBeGreaterThanOrEqual(400);
-      expect(second.statusCode).toBeLessThan(500);
+      expect(second.statusCode).toBe(400);
+      expect(errorCode(second)).toBe('BAD_REQUEST');
+      // The rejected second use must not have changed the password.
+      const login = (password: string, ip: string) =>
+        new Client(app, ip).post('/auth/login', { email: e, password });
+      expect((await login(OTHER_PW, '198.51.100.35')).statusCode).toBe(401);
+      expect((await login(NEW_PW, '198.51.100.36')).statusCode).toBe(200);
     });
 
     it('[AU-22] a reset token used after 30 min is rejected', async () => {
-      const { app, clock, token } = await resetFlow();
+      const { app, clock, token, e } = await resetFlow();
       clock.advance(31 * MIN);
       const r = await new Client(app, '198.51.100.33').post('/auth/reset-password', {
         token,
         password: NEW_PW,
       });
-      expect(r.statusCode).toBeGreaterThanOrEqual(400);
-      expect(r.statusCode).toBeLessThan(500);
+      expect(r.statusCode).toBe(400);
+      expect(errorCode(r)).toBe('BAD_REQUEST');
+      // The password is unchanged: the new one fails, the original still works.
+      const login = (password: string, ip: string) =>
+        new Client(app, ip).post('/auth/login', { email: e, password });
+      expect((await login(NEW_PW, '198.51.100.37')).statusCode).toBe(401);
+      expect((await login(PASSWORD, '198.51.100.38')).statusCode).toBe(200);
     });
 
     it('[AU-23] resetting the password revokes all existing sessions', async () => {
