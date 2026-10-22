@@ -61,10 +61,11 @@ the Decision above, the amendment wins. Schemas and constants: `packages/contrac
    before calling `POST /auth/extension/pair` (`ExtensionPairRequest`) with the `__Host-` cookie and `x-csrf-token`.
    The server MUST check `extensionId` against the allowlist and return `ExtensionPairResponse`, a single-use
    `pairingCode` bound to `(nonce, extensionId, deviceId, userId, organizationId)` that expires within 60 seconds. It carries no tokens.
-4. The page hands `{ pairingCode, nonce }` to the extension with `chrome.runtime.sendMessage(extensionId, …)`. The
-   extension's `chrome.runtime.onMessageExternal` handler MUST check `sender.origin` for an exact string match against the
-   production web origin, MUST validate the message against the contracts schema, and MUST reject a nonce that differs
-   from the stored one. Anything else is dropped silently.
+4. The page hands `{ type: 'MEETOPS_PAIRING_CODE', pairingCode, nonce }` to the extension with
+   `chrome.runtime.sendMessage(extensionId, …)`. The message schema is `PairingCodeMessage` (strict; the type literal is
+   `PAIRING_CODE_MESSAGE_TYPE`, both in `@meetops/contracts`). The extension's `chrome.runtime.onMessageExternal` handler
+   MUST check `sender.origin` for an exact string match against the production web origin, MUST validate the message
+   against `PairingCodeMessage`, and MUST reject a nonce that differs from the stored one. Anything else is dropped silently.
 5. `externally_connectable.matches` MUST list only the exact production web origin. Dev origins such as
    `http://localhost:*` MUST appear only in dev builds and MUST NOT ship in a store build.
 6. The extension then calls `POST /auth/extension-token` (`ExtensionTokenRequest`, without a cookie). The server MUST

@@ -23,6 +23,13 @@ All changes in this release are additive. No existing export changed.
 createdAt, user: UserSummary }` and `ListMembersResponse` (cursor page) for `GET /orgs/:organizationId/members`.
 - All of these are strict (`additionalProperties: false`) and are exported from the main entry. Their types are exported
   from `@meetops/contracts/types`.
+- Chunk limits moved to `constants.ts`, so they are also exported from `@meetops/contracts/types` (no TypeBox):
+  `MAX_CHUNK_BYTES`, `MAX_CHUNKS` / `MAX_RECORDING_CHUNKS`, `MAX_RECORDING_SESSION_BYTES`, `MAX_MEDIA_BYTES`,
+  `CHUNK_UPLOAD_URL_TTL_SECONDS`, and the new `MAX_DURATION_MS` (24 h, the `durationMs` cap of
+  `CompleteRecordingSessionRequest`). The main entry still exports them with the same values. `apps/extension` can drop
+  its local `MAX_DURATION_MS`.
+- Pairing handoff (ADR-005 A1): `PairingCodeMessage { type: 'MEETOPS_PAIRING_CODE', pairingCode, nonce }` (strict, no
+  tokens), plus `PAIRING_CODE_MESSAGE_TYPE` in `constants.ts`. `ExtensionPairingCode` (32–128 base64url) is now exported.
 
 ### Changed
 
