@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import type { LLMGenerateStructuredParams, LLMGenerateTextParams, LLMProvider, LLMStructuredResult, LLMTextResult, ProviderHealth } from '../types.js';
 import { toAIError } from '../errors.js';
+import { capOutputTokens, type OutputLimits } from '../output-limits.js';
 import { guardedFetch, requireOk, type HttpOpts } from './http.js';
 import { parseStructured } from './gemini.js';
 
@@ -15,11 +16,14 @@ type ChatResponse = {
  */
 export class OpenAICompatibleProvider implements LLMProvider {
   readonly kind = 'llm' as const;
-  constructor(private readonly http: Omit<HttpOpts, 'provider'> & { apiKey?: string | undefined }, readonly providerId = 'openai') {}
+  constructor(private readonly http: Omit<HttpOpts, 'provider'> & { apiKey?: string | undefined; outputLimits?: OutputLimits | undefined }, readonly providerId = 'openai') {}
 
   private opts(): HttpOpts {
+    const { outputLimits: _limits, apiKey: _key, ...http } = this.http;
+    void _limits;
+    void _key;
     return {
-      ...this.http,
+      ...http,
       provider: this.providerId,
       headers: { 'content-type': 'application/json', ...(this.http.apiKey ? { authorization: `Bearer ${this.http.apiKey}` } : {}) },
     };
@@ -46,7 +50,7 @@ export class OpenAICompatibleProvider implements LLMProvider {
 
   async generateText(p: LLMGenerateTextParams): Promise<LLMTextResult> {
     const j = await this.chat(
-      { model: p.model, messages: this.messages(p), temperature: p.temperature, max_tokens: p.maxTokens, stop: p.stopSequences },
+      { model: p.model, messages: this.messages(p), temperature: p.temperature, max_tokens: capOutputTokens(p.maxTokens, this.http.outputLimits), stop: p.stopSequences },
       p.signal,
     );
     const c = j.choices?.[0];
@@ -60,7 +64,7 @@ export class OpenAICompatibleProvider implements LLMProvider {
         model: p.model,
         messages: this.messages(p),
         temperature: p.temperature,
-        max_tokens: p.maxTokens,
+        max_tokens: capOutputTokens(p.maxTokens, this.http.outputLimits),
         response_format: { type: 'json_schema', json_schema: { name: p.schemaName, schema: z.toJSONSchema(p.schema), strict: true } },
       },
       p.signal,

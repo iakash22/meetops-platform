@@ -2,6 +2,7 @@ import { z } from 'zod';
 import type { LLMGenerateStructuredParams, LLMGenerateTextParams, LLMProvider, LLMStructuredResult, LLMTextResult, ProviderHealth } from '../types.js';
 import { AIError, toAIError } from '../errors.js';
 import { guardedFetch, type HttpOpts } from './http.js';
+import { capOutputTokens, type OutputLimits } from '../output-limits.js';
 
 export const GEMINI_DEFAULT_MODEL = 'gemini-2.5-flash-lite';
 export const GEMINI_BASE_URL = 'https://generativelanguage.googleapis.com/v1beta';
@@ -30,15 +31,18 @@ const MODEL_RE = /^[a-z0-9.-]+$/;
 export class GeminiProvider implements LLMProvider {
   readonly kind = 'llm' as const;
   constructor(
-    private readonly http: Omit<HttpOpts, 'provider' | 'baseUrl'> & { apiKey?: string | undefined; baseUrl?: string | undefined },
+    private readonly http: Omit<HttpOpts, 'provider' | 'baseUrl'> & { apiKey?: string | undefined; baseUrl?: string | undefined; outputLimits?: OutputLimits | undefined },
     readonly providerId = 'gemini',
   ) {
     if (!http.apiKey) throw new AIError('MISSING_CREDENTIALS', 'Gemini credential is required', { provider: providerId, retryable: false });
   }
 
   private o(): HttpOpts {
+    const { outputLimits: _limits, apiKey: _key, ...http } = this.http;
+    void _limits;
+    void _key;
     return {
-      ...this.http,
+      ...http,
       baseUrl: this.http.baseUrl ?? GEMINI_BASE_URL,
       provider: this.providerId,
       headers: { 'content-type': 'application/json', 'x-goog-api-key': this.http.apiKey ?? '' },
@@ -61,7 +65,7 @@ export class GeminiProvider implements LLMProvider {
       ...(p.system !== undefined ? { systemInstruction: { parts: [{ text: p.system }] } } : {}),
       generationConfig: {
         ...(p.temperature !== undefined ? { temperature: p.temperature } : {}),
-        ...(p.maxTokens !== undefined ? { maxOutputTokens: p.maxTokens } : {}),
+        maxOutputTokens: capOutputTokens(p.maxTokens, this.http.outputLimits),
         ...(p.stopSequences ? { stopSequences: p.stopSequences } : {}),
         ...extra,
       },
