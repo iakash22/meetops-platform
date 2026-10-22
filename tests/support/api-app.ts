@@ -1,15 +1,17 @@
 import { existsSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { fixturePassword } from './fixture-secrets.js';
 
 /**
- * Backend's auth/orgs API (PR #27, feat/api-auth-orgs). Point QA_API_DIR at that branch's
- * apps/api (read-only worktree). Suites skip when it is unset or has no auth module.
+ * Auth/orgs API under test. Defaults to this repo's own apps/api (auth/orgs from PR #27 are on
+ * integration/phase-1), so the AU/XT suites run in CI. QA_API_DIR overrides it with another
+ * checkout. The suites skip only when the target has no auth module.
  */
-export const apiDir = process.env.QA_API_DIR ? resolve(process.env.QA_API_DIR) : undefined;
-export const hasAuthApi =
-  !!apiDir && existsSync(join(apiDir, 'src/modules/auth/http/auth.plugin.ts'));
+export const apiDir = resolve(
+  process.env.QA_API_DIR ?? fileURLToPath(new URL('../../apps/api', import.meta.url)),
+);
+export const hasAuthApi = existsSync(join(apiDir, 'src/modules/auth/http/auth.plugin.ts'));
 
 export type InjectResponse = {
   statusCode: number;
@@ -49,7 +51,7 @@ export const fakeHasher = {
   needsRehash: () => false,
 };
 
-const imp = (rel: string) => import(pathToFileURL(join(apiDir ?? '', rel)).href);
+const imp = (rel: string) => import(pathToFileURL(join(apiDir, rel)).href);
 
 export async function buildAuthApp(deps: Record<string, unknown> = {}) {
   const { createServer } = (await imp('src/server.ts')) as {

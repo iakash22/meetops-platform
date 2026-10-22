@@ -137,7 +137,7 @@ export function createFactories(
       organizationId,
       provider: 'local',
       bucket: 'meetops-test',
-      key: `orgs/${organizationId}/files/${id}.bin`,
+      key: `org/${organizationId}/files/${id}.bin`,
       mimeType: 'application/octet-stream',
       sizeBytes: rng.int(1, 10_000),
       createdAt: iso,
@@ -158,7 +158,7 @@ export function createFactories(
     ...o,
   });
   const storageObject = (o: Partial<StorageObjectMetadata> = {}): StorageObjectMetadata => ({
-    key: `orgs/${organizationId}/${rng.uuid()}.bin`,
+    key: `org/${organizationId}/${rng.uuid()}.bin`,
     bucket: 'meetops-test',
     size: rng.int(1, 10_000),
     contentType: 'application/octet-stream',
