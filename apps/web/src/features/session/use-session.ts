@@ -18,6 +18,12 @@ export function isSignedOutForRouting(e: unknown): boolean {
   return true; // network / abort / unexpected non-API error
 }
 
+/** Stricter check for route error boundaries: only auth/availability failures, never app bugs. */
+export function isAuthOrUnavailable(e: unknown): boolean {
+  if (e instanceof ApiError) return e.status === 401 || e.status >= 500 || e.status === 0;
+  return e instanceof TypeError; // fetch() network failure (ECONNREFUSED, aborted, DNS)
+}
+
 /** Current cookie session from GET /auth/session (null when signed out). */
 export function sessionQueryOptions(api: ApiClient) {
   return {

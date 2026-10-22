@@ -10,10 +10,16 @@ import {
 import { useQueryClient, type QueryClient } from '@tanstack/react-query';
 import type { AuthSession, GetAuthSessionResponse } from '@meetops/contracts';
 import { AppShell } from '@/components/layout/app-shell';
-import { EmptyState } from '@/components/states/states';
+import { EmptyState, ErrorState } from '@/components/states/states';
+import { useEffect } from 'react';
 import { ForgotPasswordForm, LoginForm, SignupForm } from '@/features/auth/forms';
 import { MeetingDetailPage, MeetingsPage } from '@/features/meetings/meetings-pages';
-import { applySessionToStore, ensureSession, useSession } from '@/features/session/use-session';
+import {
+  applySessionToStore,
+  ensureSession,
+  isAuthOrUnavailable,
+  useSession,
+} from '@/features/session/use-session';
 import { parseTaskSearch, TasksPage } from '@/features/tasks/tasks-page';
 import { useApi } from '@/lib/api/context';
 import type { ApiClient } from '@/lib/api/client';
@@ -23,8 +29,33 @@ import { DashboardPage, ProjectsPage, SettingsPage } from '@/pages/app-pages';
 
 export type RouterContext = { queryClient: QueryClient; api: ApiClient };
 
+/**
+ * Route error boundary: auth/availability failures (401, 5xx incl. dev-proxy HTML
+ * 502/504, network errors) send the user to /login?next=; anything else shows the
+ * standard error state instead of the router's default "Something went wrong!".
+ */
+export function RouteError({ error, reset }: { error: unknown; reset: () => void }) {
+  const router = useRouter();
+  const redirectToLogin = isAuthOrUnavailable(error) && router.state.location.pathname !== '/login';
+  useEffect(() => {
+    if (!redirectToLogin) return;
+    void router.navigate({
+      to: '/login',
+      search: { next: safeRedirect(router.state.location.href, '/') },
+      replace: true,
+    });
+  }, [redirectToLogin, router]);
+  if (redirectToLogin) return null;
+  return (
+    <div className="p-6">
+      <ErrorState error={error} onRetry={reset} />
+    </div>
+  );
+}
+
 export const rootRoute = createRootRouteWithContext<RouterContext>()({
   component: Outlet,
+  errorComponent: RouteError,
   notFoundComponent: () => <EmptyState title="Page not found" />,
 });
 
@@ -191,6 +222,7 @@ export function createAppRouter(context: RouterContext, history?: RouterHistory)
     context,
     ...(history ? { history } : {}),
     defaultPreload: 'intent',
+    defaultErrorComponent: RouteError,
   });
 }
 
