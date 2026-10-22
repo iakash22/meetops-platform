@@ -11,6 +11,14 @@ export interface RetryOptions {
   /** [0,1) RNG for jitter. */
   random?: () => number;
   onRetry?: (info: { attempt: number; delayMs: number; status?: number }) => void;
+  /**
+   * Whether repeating the operation is safe. Default true (reads, PUT/PATCH/DELETE).
+   * Set false for non-idempotent writes (e.g. Jira `POST /issue`, GitHub `issues.create`): then only failures the
+   * classifier marks `notProcessed` (429, 503 + Retry-After, rate-limit 403) are retried. Network errors, timeouts and
+   * other 5xx are NOT retried because the request may already have been applied upstream (duplicate issue risk).
+   * Pass true for a POST only when a real idempotency mechanism exists (e.g. an idempotency key honored by the API).
+   */
+  idempotent?: boolean;
 }
 
 export interface HttpErrorInfo {
@@ -19,7 +27,11 @@ export interface HttpErrorInfo {
   header?: (name: string) => string | undefined;
 }
 
-export type RetryDecision = { retry: false } | { retry: true; minDelayMs?: number };
+/**
+ * `notProcessed: true` means the server clearly rejected the request before acting on it (rate limit / overload with
+ * Retry-After), so even a non-idempotent request can be safely resent.
+ */
+export type RetryDecision = { retry: false } | { retry: true; minDelayMs?: number; notProcessed?: boolean };
 
 /** Parses Retry-After (delta seconds or HTTP-date) into ms. */
 export function parseRetryAfter(value: string | undefined, now: number): number | undefined {
@@ -41,16 +53,17 @@ export function classifyHttpError(info: HttpErrorInfo, now: number): RetryDecisi
   const status = info.status;
   if (status === undefined) return { retry: true };
   const retryAfter = parseRetryAfter(h('retry-after'), now);
-  if (status === 429) return retryAfter !== undefined ? { retry: true, minDelayMs: retryAfter } : { retry: true };
+  if (status === 429) return retryAfter !== undefined ? { retry: true, minDelayMs: retryAfter, notProcessed: true } : { retry: true, notProcessed: true };
   if (status === 403) {
     if (h('x-ratelimit-remaining') === '0') {
       const reset = Number(h('x-ratelimit-reset'));
       const wait = Number.isFinite(reset) && reset > 0 ? Math.max(0, reset * 1000 - now) : retryAfter;
-      return wait !== undefined ? { retry: true, minDelayMs: wait } : { retry: true };
+      return wait !== undefined ? { retry: true, minDelayMs: wait, notProcessed: true } : { retry: true, notProcessed: true };
     }
-    if (retryAfter !== undefined) return { retry: true, minDelayMs: retryAfter };
+    if (retryAfter !== undefined) return { retry: true, minDelayMs: retryAfter, notProcessed: true };
     return { retry: false };
   }
+  if (status === 503 && retryAfter !== undefined) return { retry: true, minDelayMs: retryAfter, notProcessed: true };
   if (status >= 500 && status <= 599) return retryAfter !== undefined ? { retry: true, minDelayMs: retryAfter } : { retry: true };
   return { retry: false };
 }
@@ -60,6 +73,11 @@ const defaultSleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms))
 /** Full-jitter backoff: random(0, min(maxDelay, base * 2^(attempt-1))). */
 export function backoffDelay(attempt: number, base: number, max: number, random: () => number): number {
   return Math.floor(random() * Math.min(max, base * 2 ** (attempt - 1)));
+}
+
+/** RFC 9110 idempotent methods. POST (and Jira transition POSTs) are not. */
+export function isIdempotentMethod(method: string): boolean {
+  return ['GET', 'HEAD', 'OPTIONS', 'PUT', 'DELETE'].includes(method.toUpperCase());
 }
 
 /**
@@ -83,6 +101,7 @@ export async function withRetry<T>(
       if (attempt >= maxAttempts) throw err;
       const d = classify(err, now());
       if (!d.retry) throw err;
+      if (opts.idempotent === false && d.notProcessed !== true) throw err;
       if (d.minDelayMs !== undefined && d.minDelayMs > max) throw err;
       const delayMs = Math.min(max, Math.max(d.minDelayMs ?? 0, backoffDelay(attempt, base, max, random)));
       const info: { attempt: number; delayMs: number; status?: number } = { attempt, delayMs };

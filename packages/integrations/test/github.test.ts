@@ -97,6 +97,17 @@ describe('GitHubIssuesProvider', () => {
     await expect(s.provider.createIssue(input, approvalFor('github', 'createIssue', input))).rejects.toMatchObject({ status: 422 });
     expect(s.create).toHaveBeenCalledTimes(3);
   });
+  it('does not retry issues.create on 5xx or network errors; still retries update', async () => {
+    const sleep = vi.fn(async () => {});
+    const s = setup({ retry: { sleep, random: () => 0 } });
+    const input = { title: 'T' };
+    s.create.mockRejectedValueOnce(Object.assign(new Error('boom'), { status: 502 }));
+    await expect(s.provider.createIssue(input, approvalFor('github', 'createIssue', input))).rejects.toMatchObject({ status: 502 });
+    s.create.mockRejectedValueOnce(new Error('socket hang up'));
+    await expect(s.provider.createIssue(input, approvalFor('github', 'createIssue', input))).rejects.toMatchObject({ message: 'GitHub request failed' });
+    expect(s.create).toHaveBeenCalledTimes(2);
+    expect(sleep).not.toHaveBeenCalled();
+  });
   it('waits for x-ratelimit-reset on exhausted primary limit', async () => {
     const sleep = vi.fn(async () => {});
     const now = 1_800_000_000_000;

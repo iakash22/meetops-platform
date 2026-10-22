@@ -8,7 +8,7 @@ import {
   type IssueTrackerProvider,
   type WriteApproval
 } from './types.js';
-import { classifyHttpError, withRetry, type RetryOptions } from './retry.js';
+import { classifyHttpError, isIdempotentMethod, withRetry, type RetryOptions } from './retry.js';
 
 export interface SafeFetchInit {
   method?: string;
@@ -220,10 +220,11 @@ export class JiraIssueTrackerProvider implements IssueTrackerProvider {
       },
       (err, now) => {
         if (err instanceof RetryableJiraResponse) return classifyHttpError({ status: err.res.status, header: err.res.header }, now);
-        // Network errors / timeouts (no status) are retried; sanitized HTTP-level errors are not.
+        // Network errors / timeouts: retried only for idempotent methods (withRetry enforces via `idempotent`).
         return err instanceof IssueTrackerError && err.status === undefined ? { retry: true } : { retry: false };
       },
-      this.options.retry
+      // POST (create issue, transition) is not idempotent: only retried when the server clearly did not process it.
+      { ...this.options.retry, idempotent: isIdempotentMethod(method) && (this.options.retry?.idempotent ?? true) }
     ).catch((err: unknown) => {
       if (err instanceof RetryableJiraResponse) return err.res;
       throw err;
