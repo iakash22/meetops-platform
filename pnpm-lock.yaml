@@ -254,6 +254,9 @@ importers:
 
   packages/ai-core:
     dependencies:
+      '@meetops/contracts':
+        specifier: workspace:*
+        version: link:../contracts
       undici:
         specifier: ^7
         version: 7.30.1
