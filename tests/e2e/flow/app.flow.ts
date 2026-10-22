@@ -106,10 +106,6 @@ test.describe('web flow (PR #48 web + createServer API)', () => {
   });
 
   test('[E2E-04] login honours a same-origin ?next= after the redirect', async ({ page, api }) => {
-    // FE-BUG-1 (PR #48): after a guard redirect caches session=null, a successful login does
-    // not refetch /auth/session (ensureQueryData returns the stale null), so the guard bounces
-    // the user back to /login?next=... Login itself succeeds (a reload shows the session).
-    test.fail(true, 'FE-BUG-1: login after a guard redirect bounces back to /login');
     const { email } = await seedUser(api, ['Next QA']);
     await page.goto('/meetings');
     await expect(page).toHaveURL(/\/login\?next=/);
@@ -149,8 +145,50 @@ test.describe('web flow (PR #48 web + createServer API)', () => {
     await expect(page.getByRole('combobox', { name: 'Organization' })).toBeDisabled();
   });
 
-  test.fixme('[E2E-07] create an organization from the web UI', // FE-GAP-1: PR #48 has no create-organization UI (only the switcher); API POST /orgs exists.
-  async () => {});
+  test('[E2E-07] create an organization from the empty dashboard', async ({ page, api }) => {
+    const { email } = await seedUser(api, []);
+    await uiLogin(page, email, PASSWORD);
+    await expect(page.getByTestId('app-shell')).toBeVisible();
+    await page.getByRole('main').getByRole('link', { name: 'Create organization' }).click();
+    await expect(page).toHaveURL(/\/organizations\/new$/);
+    await page.getByLabel('Organization name').fill('Created QA');
+    await page.getByRole('button', { name: 'Create organization' }).click();
+    await expect(page).not.toHaveURL(/\/organizations\/new/);
+    const switcher = page.getByRole('combobox', { name: 'Organization' });
+    await expect(switcher).toBeEnabled();
+    await expect(switcher).toContainText('Created QA');
+    // Persisted server-side: a reload rebuilds the switcher from GET /auth/session.
+    await page.reload();
+    await expect(switcher).toContainText('Created QA');
+  });
+
+  test('[E2E-07b] create a second organization from the switcher link', async ({ page, api }) => {
+    const { email } = await seedUser(api, ['First QA']);
+    await uiLogin(page, email, PASSWORD);
+    await expect(page.getByTestId('app-shell')).toBeVisible();
+    await page.getByRole('link', { name: 'Create organization' }).first().click();
+    await expect(page).toHaveURL(/\/organizations\/new$/);
+    await page.getByLabel('Organization name').fill('Second QA');
+    await page.getByRole('button', { name: 'Create organization' }).click();
+    const switcher = page.getByRole('combobox', { name: 'Organization' });
+    await expect(switcher).toContainText('Second QA');
+    await switcher.click();
+    await expect(page.getByRole('option')).toHaveText(['First QA', 'Second QA']);
+  });
+
+  test('[E2E-07c] empty organization name is rejected client-side', async ({ page, api }) => {
+    const { email } = await seedUser(api, []);
+    await uiLogin(page, email, PASSWORD);
+    await expect(page.getByTestId('app-shell')).toBeVisible();
+    await page.goto('/organizations/new');
+    const posts: string[] = [];
+    page.on('request', (r) => {
+      if (r.method() === 'POST' && r.url().endsWith('/api/orgs')) posts.push(r.url());
+    });
+    await page.getByRole('button', { name: 'Create organization' }).click();
+    await expect(page.getByText('Organization name is required')).toBeVisible();
+    expect(posts).toHaveLength(0);
+  });
 
   test('[E2E-08] meetings list renders contract-shaped data (meetings API stubbed in tests/)', async ({
     page,
@@ -216,16 +254,12 @@ test.describe('web flow (PR #48 web + createServer API)', () => {
     page,
     api,
   }) => {
-    // FE-BUG-2 (PR #48): a network failure on GET /auth/session is not a 401, so the guard's
-    // beforeLoad throws and the router shows its default "Something went wrong!" page at the
-    // protected URL instead of redirecting to /login.
-    test.fail(true, 'FE-BUG-2: API unreachable shows the router error page, not /login');
     const { email } = await seedUser(api, ['Abort QA']);
     await uiLogin(page, email, PASSWORD);
     await expect(page.getByTestId('app-shell')).toBeVisible();
     await page.route('**/api/**', (route) => route.abort('connectionrefused'));
     await page.goto('/meetings');
-    await expect(page).toHaveURL(/\/login/, { timeout: 10_000 });
+    await expect(page).toHaveURL(/\/login\?next=%2Fmeetings/, { timeout: 10_000 });
   });
 
   test('[E2E-11] signed-in page redirects to /login when the API is stopped', async ({
@@ -233,15 +267,36 @@ test.describe('web flow (PR #48 web + createServer API)', () => {
     api,
     stack,
   }) => {
-    // FE-BUG-2 (PR #48): a network failure on GET /auth/session is not a 401, so the guard's
-    // beforeLoad throws and the router shows its default "Something went wrong!" page at the
-    // protected URL instead of redirecting to /login.
-    test.fail(true, 'FE-BUG-2: API unreachable shows the router error page, not /login');
     const { email } = await seedUser(api, ['Stop QA']);
     await uiLogin(page, email, PASSWORD);
     await expect(page.getByTestId('app-shell')).toBeVisible();
     await stack.stopApi();
     await page.goto('/meetings');
-    await expect(page).toHaveURL(/\/login/, { timeout: 10_000 });
+    await expect(page).toHaveURL(/\/login\?next=%2Fmeetings/, { timeout: 10_000 });
   });
+
+  for (const [id, label, fulfill] of [
+    [
+      'E2E-12',
+      '503 JSON error',
+      { status: 503, json: { error: { code: 'PROVIDER_UNAVAILABLE', message: 'down' } } },
+    ],
+    [
+      'E2E-13',
+      '502 proxy HTML page',
+      { status: 502, contentType: 'text/html', body: '<html><body>502 Bad Gateway</body></html>' },
+    ],
+  ] as const) {
+    test(`[${id}] signed-in page redirects to /login?next= on a ${label} from the API`, async ({
+      page,
+      api,
+    }) => {
+      const { email } = await seedUser(api, ['5xx QA']);
+      await uiLogin(page, email, PASSWORD);
+      await expect(page.getByTestId('app-shell')).toBeVisible();
+      await page.route('**/api/**', (route) => route.fulfill(fulfill));
+      await page.goto('/meetings');
+      await expect(page).toHaveURL(/\/login\?next=%2Fmeetings/, { timeout: 10_000 });
+    });
+  }
 });
