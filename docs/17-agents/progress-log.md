@@ -27,5 +27,5 @@ Newest entries last. Record facts only; never record secret values.
 - Merged into `integration/phase-1` by Akash (times from GitHub `mergedAt`, converted to IST):
   - PR #39 (media processing worker, P1-MEDIA-3) at 13:40 IST (08:10:32Z), merge commit `50e69d4`.
   - PR #35 (live DB verification, invitation definer functions, outbox relay role, P1-DB-3; includes the B1 no-owner-demotion fix in `accept_invitation`) at 13:42 IST (08:12:05Z), merge commit `f7c2d77`.
-  - PR #50 (contracts v0.3.0: meeting resolve, extension auth ADR-005, task list query) at 13:42 IST (08:12:21Z), merge commit `d396cd1`.
+  - PR #50 (contracts v0.3.0: meeting resolve, extension auth under ADR-005, task list query; see `docs/04-api/contracts.md`) at 13:42 IST (08:12:21Z), merge commit `d396cd1`.
 - Docs PRs #28, #31, #56 and #58 were synced with `integration/phase-1` through merge commits.

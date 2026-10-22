@@ -32,6 +32,6 @@ Update the branch column when each agent pushes its branch.
 - Phase 4: Review/approval, notifications
 - Phase 5: GitHub/Jira integrations, 2-way sync
 
-Merged into `integration/phase-1` on 2026-10-22: #39 (MEDIA, media worker), #35 (DB, P1-DB-3 incl. no-owner-demotion fix), #50 (ARCH, contracts v0.3.0).
+Merged into `integration/phase-1` on 2026-10-22: #39 (MEDIA, media worker), #35 (DB, P1-DB-3 incl. no-owner-demotion fix), #50 (ARCH, contracts v0.3.0: meeting resolve, extension auth under ADR-005, task list query).
 
 Also open, owner not assigned on this board: #24 `fix/eslint-project-service`.
