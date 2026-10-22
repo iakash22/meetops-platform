@@ -96,3 +96,24 @@ Options (`MediaToolsOptions`): `ffmpegPath` (env `FFMPEG_PATH`, default `ffmpeg`
 ## Tests
 
 S3 calls are mocked with `aws-sdk-client-mock`. The ffmpeg tests use the real binary and are skipped if it's missing.
+
+## Media processing worker (PR #39, merged)
+
+Merged into `integration/phase-1` by PR #39 (merge commit `50e69d4`). Code: `apps/worker/src/media/`.
+
+- Queue and job name come from `@meetops/contracts` (`MEDIA_QUEUE`, `MEDIA_JOB_NAME`); the payload is checked against the contracts `MediaJobPayload` schema.
+- Steps: check the source key belongs to the recording's org and meeting, HEAD and download it via `@meetops/storage`, probe, normalize to 16 kHz mono WAV, chunk, upload the normalized file and chunks, then enqueue one transcription job per chunk.
+- Object keys (`buildObjectKey` in `packages/storage/src/keys.ts`), under `org/{orgId}/meetings/{meetingId}/`:
+  - `recordings/{id}.{ext}`
+  - `processed/{recordingId}/normalized.wav`
+  - `processed/{recordingId}/chunks/{index}.wav`
+  - Session chunks use the `tmp/session-chunks/` prefix.
+- Transcription payloads (contracts `TranscriptionJobPayload`) carry `chunkIndex` and `startMs`, use `diarize: true`, and the STT provider from the job, then the worker default (`STT_PROVIDER_ID`, default `assemblyai`).
+- Idempotency: normalized and chunk FileObject ids are UUID v5 values from a fixed namespace (`MEDIA_UUID_NAMESPACE`, which must not change). BullMQ job ids are deterministic: `media_{org}_{recording}` and `transcribe_{org}_{recording}_{index:5}`. Media jobs use 3 attempts with exponential backoff (5 s).
+- Limits: source size up to the contracts `MAX_MEDIA_BYTES` (checked by HEAD and while streaming) and duration up to 4 hours by default. Failures throw `MediaJobError` codes such as `forbidden`, `source_not_found`, `source_too_large`, `no_audio_stream`, `source_too_long` and `no_chunks`.
+- Realtime: emits `meeting:status` and `transcription:progress` via `@socket.io/redis-emitter` to `org:{orgId}:meeting:{meetingId}` and `org:{orgId}`. Room names must match `apps/realtime`.
+- No STT runs in this job.
+
+Worker environment variables (names only): `REDIS_URL`, `STT_PROVIDER_ID`, `MEDIA_WORKER_CONCURRENCY` (default 1, max 16), `MEDIA_CHUNK_SECONDS` (default 600, 10–3600), `MEDIA_MAX_SOURCE_BYTES`, `MEDIA_MAX_DURATION_SECONDS` (max 24 h) and `MEDIA_TMP_DIR`. PR #39 also changed `.env.example` so `STORAGE_FORCE_PATH_STYLE` is empty instead of `true`.
+
+PR #39's diff also contains `apps/realtime` (from the stacked PR #16) and the `@meetops/storage` and `@meetops/media-core` code. The API tables above describe PR #10 and may be out of date (for example, `putObject` now takes a `MeetingObjectRef`).

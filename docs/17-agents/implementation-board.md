@@ -1,6 +1,6 @@
 # Implementation board
 
-Last updated: 2026-10-21. Branch names are assigned by the Coordinator. "Pushed?" and PR numbers come from `git ls-remote` and `gh pr list --state all` on that date.
+Last updated: 2026-10-22 (merges only; other rows are from 2026-10-21). Branch names are assigned by the Coordinator. "Pushed?" and PR numbers come from `git ls-remote` and `gh pr list --state all` on that date.
 
 ## Phase 0: Foundation — Done (merged)
 
@@ -31,5 +31,7 @@ Update the branch column when each agent pushes its branch.
 - Phase 3: Transcription, reports, task drafts
 - Phase 4: Review/approval, notifications
 - Phase 5: GitHub/Jira integrations, 2-way sync
+
+Merged into `integration/phase-1` on 2026-10-22: #39 (MEDIA, media worker), #35 (DB, P1-DB-3 incl. no-owner-demotion fix), #50 (ARCH, contracts v0.3.0).
 
 Also open, owner not assigned on this board: #24 `fix/eslint-project-service`.

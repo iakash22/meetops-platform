@@ -60,3 +60,20 @@ The seed is idempotent: it creates a demo org, owner and member users with membe
 ## Exports (`src/index.ts`)
 
 Everything from `@prisma/client`, plus `createPrismaClient`, `getPrismaClient` (global singleton), `disconnectPrismaClient` and the `DatabaseClient` type.
+
+## Invitation acceptance: no owner demotion (PR #35, merged)
+
+Merged into `integration/phase-1` by PR #35 (merge commit `f7c2d77`), migration `20261022040000_accept_invitation_active_member` (architecture review item B1). It replaces `accept_invitation(text, uuid)`.
+
+- Problem fixed: the earlier version (`20261022030000_accept_invitation_role`) rewrote the role of any existing membership, so a sole owner who accepted a viewer invite left the org with no owner.
+- Now, for the invitee's membership in the invitation's org:
+  - **Active** (`deleted_at IS NULL`): the call raises `already_member` (SQLSTATE `P0001`) and nothing changes. An invitation never changes an active membership's role.
+  - **Soft-deleted**: revived with the invitation's role.
+  - **None**: inserted with the invitation's role (unchanged).
+- A race where a concurrent accept makes the membership active first also raises `already_member`.
+- On `already_member` the whole call aborts, so the invitation stays `pending`, is not consumed, and no audit row is written. An admin can see and revoke it, or it expires. The migration comment says the API should also refuse to invite active members.
+- Other checks are unchanged: pending status, not revoked, not expired, and the user's email matches (case-insensitive). These failures still return `invitation_invalid` (`P0002`).
+- On success it marks the invitation accepted and writes an `audit_events` row with action `invitation.accepted`.
+- The function stays `SECURITY DEFINER` with `SET search_path = public, pg_temp`, owned by `meetops_migrator`; `EXECUTE` is revoked from PUBLIC and granted to `meetops_app` only.
+
+PR #35 also adds the RLS, roles, outbox relay and live-test migrations; see `packages/database/README.md`. The note at the top of this page about PR #6 is older than these merges.
