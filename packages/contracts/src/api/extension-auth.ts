@@ -1,13 +1,13 @@
 import { Type, type Static } from '@sinclair/typebox';
-import { Id, IsoDateTime } from '../common.js';
+import { Id, IsoDateTime, SafeDisplayText } from '../common.js';
 
 import {
-  EXTENSION_SCOPES, EXTENSION_TOKEN_AUDIENCE, EXTENSION_TOKEN_TTL_SECONDS, EXTENSION_TOKEN_TYPE,
+  EXTENSION_SCOPES, EXTENSION_TOKEN_AUDIENCE, EXTENSION_TOKEN_TTL_SECONDS, EXTENSION_TOKEN_TYPE, PAIRING_CODE_MESSAGE_TYPE,
 } from '../constants.js';
 
 export {
   EXTENSION_AUTH_PATHS, EXTENSION_REFRESH_FAMILY_MAX_LIFETIME_SECONDS, EXTENSION_SCOPES, EXTENSION_TOKEN_AUDIENCE,
-  EXTENSION_TOKEN_TTL_SECONDS, EXTENSION_TOKEN_TYPE, REDACT_KEYS,
+  EXTENSION_TOKEN_TTL_SECONDS, EXTENSION_TOKEN_TYPE, PAIRING_CODE_MESSAGE_TYPE, REDACT_KEYS,
 } from '../constants.js';
 export const ExtensionScope = Type.Union(EXTENSION_SCOPES.map((s) => Type.Literal(s)));
 export type ExtensionScope = (typeof EXTENSION_SCOPES)[number];
@@ -22,14 +22,12 @@ export const ExtensionNonce = Type.String({ minLength: 32, maxLength: 128, patte
 export const ExtensionDeviceId = Id;
 /**
  * Printable only: no C0/C1 control characters, DEL, line/paragraph separators, HTML-significant characters
- * (`<`, `>`, `"`, `'`, `&`), or bidi/format characters (U+200E-U+200F, U+202A-U+202E, U+2066-U+2069).
+ * (`<`, `>`, `"`, `'`, `&`), or bidi/format characters
+ * (U+200B-U+200F, U+202A-U+202E, U+2060, U+2066-U+2069, U+FEFF, U+061C). Uses the shared SafeDisplayText charset.
  */
-export const ExtensionDeviceLabel = Type.String({
-  minLength: 1,
-  maxLength: 100,
-  pattern: '^[^\\u0000-\\u001F\\u007F-\\u009F\\u2028\\u2029<>"\'&\\u200E\\u200F\\u202A-\\u202E\\u2066-\\u2069]+$',
-});
-const PairingCode = Type.String({ minLength: 32, maxLength: 128, pattern: '^[A-Za-z0-9_-]+$' });
+export const ExtensionDeviceLabel = SafeDisplayText({ maxLength: 100 });
+/** Single-use pairing code: 32 to 128 base64url characters. */
+export const ExtensionPairingCode = Type.String({ minLength: 32, maxLength: 128, pattern: '^[A-Za-z0-9_-]+$' });
 const AccessToken = Type.String({ minLength: 32, maxLength: 512 });
 const RefreshToken = Type.String({ minLength: 32, maxLength: 512 });
 
@@ -45,14 +43,25 @@ export const ExtensionPairRequest = Type.Object(
 export type ExtensionPairRequest = Static<typeof ExtensionPairRequest>;
 /** Carries no tokens. `pairingCode` is single-use, bound to (nonce, extensionId, deviceId, user, org) and expires in ≤60 s. */
 export const ExtensionPairResponse = Type.Object(
-  { pairingCode: PairingCode, expiresAt: IsoDateTime, organizationId: Id, organizationName: Type.String({ minLength: 1, maxLength: 200 }) },
+  { pairingCode: ExtensionPairingCode, expiresAt: IsoDateTime, organizationId: Id, organizationName: Type.String({ minLength: 1, maxLength: 200 }) },
   strict,
 );
 export type ExtensionPairResponse = Static<typeof ExtensionPairResponse>;
 
+/**
+ * Pairing handoff: the message the web pairing page sends to the extension over `externally_connectable` messaging
+ * after `POST /auth/extension/pair`. The extension MUST validate it, and MUST check that `nonce` equals the nonce it
+ * generated, before calling `POST /auth/extension-token`. It carries no tokens.
+ */
+export const PairingCodeMessage = Type.Object(
+  { type: Type.Literal(PAIRING_CODE_MESSAGE_TYPE), pairingCode: ExtensionPairingCode, nonce: ExtensionNonce },
+  strict,
+);
+export type PairingCodeMessage = Static<typeof PairingCodeMessage>;
+
 /** POST /auth/extension-token, from the extension (no cookie). The nonce must match the one bound to the pairing code. */
 export const ExtensionTokenRequest = Type.Object(
-  { extensionId: ExtensionId, deviceId: ExtensionDeviceId, pairingCode: PairingCode, nonce: ExtensionNonce },
+  { extensionId: ExtensionId, deviceId: ExtensionDeviceId, pairingCode: ExtensionPairingCode, nonce: ExtensionNonce },
   strict,
 );
 export type ExtensionTokenRequest = Static<typeof ExtensionTokenRequest>;
