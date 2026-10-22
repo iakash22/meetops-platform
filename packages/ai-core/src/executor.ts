@@ -163,7 +163,7 @@ export class AIExecutor {
         const model = cfg.name === route.provider && route.model ? route.model : cfg.model;
         try {
           // Adapter is built per call with the org-scoped credential (no global key-bound client).
-          const provider = await this.deps.registry.instantiate(cfg.name, { orgId: req.tenantId, orgCredentialRefs: route.credentialRefs });
+          const provider = await this.deps.registry.instantiate(cfg.name, { orgId: req.tenantId, orgCredentialRefs: route.credentialRefs, feature: req.feature });
           const res = await withRetry(
             () => withTimeout((signal) => call(provider, { model, config: cfg, signal }), cfg.timeoutMs, cfg.name, deadline.signal),
             cfg.retryPolicy,

@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import type { LLMGenerateStructuredParams, LLMGenerateTextParams, LLMProvider, LLMStructuredResult, LLMTextResult, ProviderHealth } from '../types.js';
 import { toAIError } from '../errors.js';
+import { capOutputTokens, type OutputLimits } from '../output-limits.js';
 import { guardedFetch, type HttpOpts } from './http.js';
 import { parseStructured } from './gemini.js';
 
@@ -12,9 +13,11 @@ type OllamaChat = { message?: { content?: string }; done_reason?: string; prompt
  */
 export class OllamaProvider implements LLMProvider {
   readonly kind = 'llm' as const;
-  constructor(private readonly http: Omit<HttpOpts, 'provider'>, readonly providerId = 'ollama') {}
+  constructor(private readonly http: Omit<HttpOpts, 'provider'> & { outputLimits?: OutputLimits | undefined }, readonly providerId = 'ollama') {}
   private o(): HttpOpts {
-    return { ...this.http, provider: this.providerId, headers: { 'content-type': 'application/json' } };
+    const { outputLimits: _limits, ...http } = this.http;
+    void _limits;
+    return { ...http, provider: this.providerId, headers: { 'content-type': 'application/json' } };
   }
 
   private async chat(body: Record<string, unknown>, signal?: AbortSignal): Promise<OllamaChat> {
@@ -30,7 +33,7 @@ export class OllamaProvider implements LLMProvider {
     return [...(p.system ? [{ role: 'system', content: p.system }] : []), { role: 'user', content: p.prompt }];
   }
   private opts(p: { temperature?: number | undefined; maxTokens?: number | undefined; stopSequences?: string[] | undefined }) {
-    return { temperature: p.temperature, num_predict: p.maxTokens, stop: p.stopSequences };
+    return { temperature: p.temperature, num_predict: capOutputTokens(p.maxTokens, this.http.outputLimits), stop: p.stopSequences };
   }
 
   async listModels(): Promise<string[]> {

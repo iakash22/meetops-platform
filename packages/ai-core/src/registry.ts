@@ -1,4 +1,5 @@
 import { providerConfigSchema, type ProviderConfig, type ProviderConfigInput } from './config.js';
+import { effectiveOutputLimits, type OutputLimits } from './output-limits.js';
 import type { AnyProvider, Capability } from './types.js';
 import { AIError } from './errors.js';
 import { redact, type AuditSink } from './audit.js';
@@ -6,7 +7,7 @@ import type { SystemContext } from './auth.js';
 import type { ResolveCredential } from './credentials.js';
 
 /** Builds an adapter for ONE call/org with the credential resolved for that org. No global key-bound clients. */
-export type AdapterFactory = (cfg: ProviderConfig, apiKey: string | undefined) => AnyProvider;
+export type AdapterFactory = (cfg: ProviderConfig, apiKey: string | undefined, opts?: { outputLimits: OutputLimits }) => AnyProvider;
 
 /** Per-org credential override (BYO key), from org config. */
 export type OrgCredentialRefs = Record<string, string | undefined>;
@@ -69,14 +70,14 @@ export class ProviderRegistry {
    * Build an adapter for this call. Credential precedence: org BYO ref (if set) ELSE platform ref (plan-gated by the
    * resolver). A failing BYO ref never falls back to the platform key.
    */
-  async instantiate<T extends AnyProvider = AnyProvider>(name: string, ctx: { orgId: string; orgCredentialRefs?: OrgCredentialRefs | undefined }): Promise<T> {
+  async instantiate<T extends AnyProvider = AnyProvider>(name: string, ctx: { orgId: string; orgCredentialRefs?: OrgCredentialRefs | undefined; feature?: string | undefined }): Promise<T> {
     const c = this.configs.get(name);
     const av = this.availability(name);
     if (!c || !av.available) throw new AIError(c && !c.enabled ? 'PROVIDER_DISABLED' : 'PROVIDER_UNAVAILABLE', av.reason ?? 'unavailable', { provider: name, retryable: false });
     const ref = ctx.orgCredentialRefs?.[name] ?? c.credentialRef;
     const key = ref ? await this.resolveCredential(ref, { orgId: ctx.orgId }) : undefined;
     const factory = this.factories[c.adapter]!;
-    return factory(c, key) as T;
+    return factory(c, key, { outputLimits: effectiveOutputLimits(c.outputLimits, ctx.feature) }) as T;
   }
 
   markHealth(name: string, status: ProviderConfig['health']['status'], reason?: string) {

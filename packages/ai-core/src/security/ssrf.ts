@@ -16,10 +16,16 @@ const blocked = new BlockList();
 for (const [net, bits] of [
   ['0.0.0.0', 8], ['10.0.0.0', 8], ['100.64.0.0', 10], ['127.0.0.0', 8], ['169.254.0.0', 16], ['172.16.0.0', 12],
   ['192.0.0.0', 24], ['192.168.0.0', 16], ['198.18.0.0', 15], ['224.0.0.0', 4], ['240.0.0.0', 4],
+  ['192.0.2.0', 24], ['198.51.100.0', 24], ['203.0.113.0', 24], // TEST-NET-1/2/3 (documentation)
 ] as const) blocked.addSubnet(net, bits, 'ipv4');
 for (const [net, bits] of [
   ['::1', 128], ['::', 128], ['fc00::', 7], ['fe80::', 10], ['ff00::', 8],
   ['64:ff9b::', 96], // NAT64
+  ['64:ff9b:1::', 48], // local-use NAT64
+  ['2002::', 16], // 6to4 (embeds arbitrary IPv4)
+  ['2001::', 32], // Teredo (embeds arbitrary IPv4)
+  ['2001:db8::', 32], // documentation
+  ['100::', 64], // discard-only
   ['fd00:ec2::254', 128], // AWS IMDS IPv6 (also inside fc00::/7)
 ] as const) blocked.addSubnet(net, bits, 'ipv6');
 

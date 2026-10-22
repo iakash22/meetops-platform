@@ -95,3 +95,21 @@ redirects, 5 s connect timeout, 10 MB response cap).
   - Job outcomes and `toPublicError()` expose only `code`, `requestId` and `retryable`. Provider messages go only to the
     `onInternalError` hook.
   - `loadAIEnv` fails fast on invalid env in production, naming the variables but never their values.
+
+## Security follow-ups (C1 path traversal, lows, output caps)
+
+- **Credential refs (C1):** one parser, `parseCredentialRef` in `src/credential-ref.ts`, is used by the config schema,
+  the credential resolver and the router org check.
+  - `env:` names must match `^[A-Z0-9_]+$`.
+  - `secret:` paths are split on `/`, and every segment must match `^[A-Za-z0-9_-]+$`. This rejects `.`, `..`, empty
+    segments, a leading or trailing `/`, `%` (so no encoded `%2e%2e`) and `\`.
+  - Nothing is decoded or normalized.
+  - Org binding (`parseOrgSecretRef`) compares the parsed segments exactly: `org`, then `{orgId}`, then at least one name segment.
+  - Only the canonical path reaches the secret store.
+- **SSRF:** the blocklist also covers 6to4 `2002::/16`, Teredo `2001::/32`, documentation `2001:db8::/32`,
+  `64:ff9b:1::/48`, `100::/64`, TEST-NET-1/2/3 (`192.0.2.0/24`, `198.51.100.0/24`, `203.0.113.0/24`), alongside the
+  existing CGNAT `100.64.0.0/10` and benchmarking `198.18.0.0/15`.
+- **Output token cap:** every LLM adapter (Gemini, OpenAI-compatible, Ollama) sends a cap on every call:
+  `min(requested ?? default, max, 8192)`, where the default is 2048.
+  - Providers set this in config with `outputLimits: { defaultMaxTokens, maxTokens, perFeature }`.
+  - The registry resolves the per-feature default each time it instantiates an adapter.

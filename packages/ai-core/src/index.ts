@@ -28,3 +28,5 @@ export * from './extraction/schemas.js';
 export * from './extraction/pipeline.js';
 export * from './extraction/job.js';
 export * from './transcription/queue.js';
+export * from './credential-ref.js';
+export * from './output-limits.js';

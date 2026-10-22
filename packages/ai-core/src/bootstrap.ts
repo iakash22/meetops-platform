@@ -68,10 +68,10 @@ export function defaultProviderConfigs(env: AIEnv): ProviderConfigInput[] {
 /** Factories build a fresh adapter per call with the per-org credential. */
 export function defaultAdapterFactories(policy: EndpointPolicy): Record<string, AdapterFactory> {
   return {
-    gemini: (c, key) => new GeminiProvider({ apiKey: key, policy }, c.name),
+    gemini: (c, key, o) => new GeminiProvider({ apiKey: key, policy, outputLimits: o?.outputLimits }, c.name),
     assemblyai: (c, key) => new AssemblyAIProvider({ apiKey: key, policy }, c.name),
-    ollama: (c) => new OllamaProvider({ baseUrl: c.baseUrl ?? '', policy }, c.name),
-    'openai-compatible': (c, key) => new OpenAICompatibleProvider({ baseUrl: c.baseUrl ?? '', policy, apiKey: key }, c.name),
+    ollama: (c, _key, o) => new OllamaProvider({ baseUrl: c.baseUrl ?? '', policy, outputLimits: o?.outputLimits }, c.name),
+    'openai-compatible': (c, key, o) => new OpenAICompatibleProvider({ baseUrl: c.baseUrl ?? '', policy, apiKey: key, outputLimits: o?.outputLimits }, c.name),
     'faster-whisper': (c) => new FasterWhisperProvider({ baseUrl: c.baseUrl ?? '', policy, model: c.model }, c.name),
     deepgram: () => new DeepgramProvider(),
   };

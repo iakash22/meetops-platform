@@ -1,4 +1,6 @@
 import { z } from 'zod';
+import { HARD_MAX_OUTPUT_TOKENS } from './output-limits.js';
+import { parseCredentialRef } from './credential-ref.js';
 import { CAPABILITIES } from './types.js';
 
 export const capabilitySchema = z.enum(CAPABILITIES);
@@ -28,11 +30,11 @@ export type ProviderCost = z.infer<typeof costSchema>;
 
 /**
  * Reference to a credential held in a secret store / env. NEVER the secret itself.
- * Format: "env:VAR_NAME" or "secret:<path>".
+ * Format: "env:VAR_NAME" or "secret:<path>"; parsed strictly by parseCredentialRef (credential-ref.ts).
  */
 export const credentialRefSchema = z
   .string()
-  .regex(/^(env|secret):[A-Za-z0-9_./-]+$/, 'credentialRef must be "env:NAME" or "secret:path", never a raw key');
+  .refine((r) => parseCredentialRef(r) !== null, 'credentialRef must be "env:NAME" or "secret:seg/seg", never a raw key');
 
 export const providerConfigSchema = z
   .object({
@@ -56,6 +58,15 @@ export const providerConfigSchema = z
       maxFileBytes: z.number().int().positive().optional(),
     })
     .default({}),
+  /** Output token caps for LLM providers (default 2048, hard max HARD_MAX_OUTPUT_TOKENS); perFeature overrides the default. */
+  outputLimits: z
+    .object({
+      defaultMaxTokens: z.number().int().positive().max(HARD_MAX_OUTPUT_TOKENS).optional(),
+      maxTokens: z.number().int().positive().max(HARD_MAX_OUTPUT_TOKENS).optional(),
+      perFeature: z.record(z.string(), z.number().int().positive().max(HARD_MAX_OUTPUT_TOKENS)).optional(),
+    })
+    .strict()
+    .optional(),
   concurrency: z.number().int().min(1).max(256).default(4),
   timeoutMs: z.number().int().min(100).max(30 * 60_000).default(60_000),
   retryPolicy: retryPolicySchema.default({ maxAttempts: 3, initialDelayMs: 500, maxDelayMs: 8000, backoffMultiplier: 2 }),
