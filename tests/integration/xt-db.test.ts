@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -11,6 +11,7 @@ import {
   applyMigrations,
   dbPackageDir,
   hasRlsMigration,
+  insertTranscript,
 } from '../support/db-package.js';
 
 /*
@@ -30,12 +31,19 @@ if (docker && !hasWithOrgContext)
   console.warn(
     `[integration/xt-db] no withOrgContext/RLS under ${dbPackageDir}: skipping (set QA_DB_PACKAGE_DIR)`,
   );
+// Prisma field for the tenant column: `orgId` (PR #6/#25) or `organizationId` (PR #35).
+const schemaText = existsSync(join(dbPackageDir, 'prisma/schema.prisma'))
+  ? readFileSync(join(dbPackageDir, 'prisma/schema.prisma'), 'utf8')
+  : '';
+const ORG: 'orgId' | 'organizationId' = /model Meeting \{[^}]*\borganizationId\b/.test(schemaText)
+  ? 'organizationId'
+  : 'orgId';
 const schemaMode = process.env.QA_RLS_SCHEMA === 'datamodel' ? 'datamodel' : 'migrations';
 
 type Tx = {
   meeting: {
     findUnique(a: object): Promise<{ id: string; title: string } | null>;
-    findMany(a?: object): Promise<{ id: string; orgId: string }[]>;
+    findMany(a?: object): Promise<({ id: string } & Record<string, unknown>)[]>;
     updateMany(a: object): Promise<{ count: number }>;
     deleteMany(a: object): Promise<{ count: number }>;
   };
@@ -88,10 +96,7 @@ describe.skipIf(!docker || !hasWithOrgContext)(
           'INSERT INTO meetings (id, org_id, title, updated_at) VALUES ($1, $2, $3, now())',
           [meet, org, `${slug} unique-term-${slug}`],
         );
-        const t = await owner.query<{ id: string }>(
-          'INSERT INTO transcripts (id, org_id, meeting_id, updated_at) VALUES (gen_random_uuid(), $1, $2, now()) RETURNING id',
-          [org, meet],
-        );
+        const t = { rows: [{ id: await insertTranscript(owner, org, meet) }] };
         await owner.query(
           `INSERT INTO transcript_segments (id, org_id, transcript_id, sequence, start_ms, end_ms, text, embedding, updated_at)
          VALUES (gen_random_uuid(), $1, $2, 0, 0, 1, $3, $4::vector, now())`,
@@ -138,14 +143,20 @@ describe.skipIf(!docker || !hasWithOrgContext)(
 
     it('[XT-04] listing as A, even filtering by orgId = B, returns only A rows', async () => {
       const all = await asA((tx) => tx.meeting.findMany());
-      expect(all.map((m) => m.orgId)).toEqual([orgA]);
-      expect(await asA((tx) => tx.meeting.findMany({ where: { orgId: orgB } }))).toEqual([]);
+      expect(all.map((m) => m[ORG])).toEqual([orgA]);
+      expect(await asA((tx) => tx.meeting.findMany({ where: { [ORG]: orgB } }))).toEqual([]);
     });
 
     it('[XT-10] A cannot create a task referencing a B meeting; no row created', async () => {
-      await expect(
-        asA((tx) => tx.task.create({ data: { orgId: orgA, title: 't', meetingId: meetB } })),
-      ).rejects.toThrow();
+      const err = await asA((tx) =>
+        tx.task.create({ data: { [ORG]: orgA, title: 't', meetingId: meetB } }),
+      ).then(
+        () => undefined,
+        (e: unknown) => e,
+      );
+      expect(err).toBeDefined();
+      // Must be rejected by the database, not by Prisma input validation (wrong field names).
+      expect((err as Error).constructor.name).not.toBe('PrismaClientValidationError');
       const { rows } = await owner.query<{ n: number }>(
         'SELECT count(*)::int AS n FROM tasks WHERE meeting_id = $1',
         [meetB],
