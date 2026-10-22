@@ -1,3 +1,4 @@
+import { addPendingDiscard, clearPendingDiscard, retryPendingDiscards } from './pending-discard.js';
 import { consumeConsent, recordConsent } from './consent-registry.js';
 import {
   isBackgroundMessage,
@@ -28,6 +29,13 @@ export interface BackgroundDeps {
   capturedTabIds: () => Promise<number[]>;
   /** Toolbar badge: 'REC' while recording, '' when idle. */
   setBadge: (text: string) => Promise<void>;
+  /** Persistent storage (chrome.storage.local) for pending-discard markers. */
+  durableKV: KV;
+  /**
+   * Delete a session and its chunks from IndexedDB directly (no offscreen doc needed) and abort
+   * its upload session with 'consent_revoked'. Must be idempotent.
+   */
+  discardLocal: (sessionId: string) => Promise<void>;
   /** Override OFFSCREEN_TIMEOUT_MS (tests). */
   offscreenTimeoutMs?: number;
 }
@@ -243,16 +251,28 @@ export async function handleBackgroundMessage(
       // Bind the stream to the consented tab: Chrome must report that exact tab as captured.
       const captured = await deps.capturedTabIds().catch(() => [] as number[]);
       if (!captured.includes(state.tabId)) {
-        await sendOffscreen(deps, { target: 'offscreen', type: 'OFFSCREEN_DISCARD' }).catch(
-          () => undefined,
+        // Record the marker first: if the offscreen discard hangs or the worker dies, the
+        // cleanup is retried (here on failure, and on every service-worker start).
+        await addPendingDiscard(deps.durableKV, msg.sessionId);
+        const discarded = await sendOffscreen(deps, {
+          target: 'offscreen',
+          type: 'OFFSCREEN_DISCARD',
+        }).then(
+          () => true,
+          () => false,
         );
-        return status(
-          await toIdle(
-            deps,
-            state,
-            'Captured tab does not match the tab you consented to record; recording discarded.',
-          ),
+        const idle = await toIdle(
+          deps,
+          state,
+          'Captured tab does not match the tab you consented to record; recording discarded.',
         );
+        if (discarded) {
+          await clearPendingDiscard(deps.durableKV, msg.sessionId);
+        } else {
+          // Offscreen is closed by toIdle now, so nothing else writes; clean up directly.
+          await retryPendingDiscards(deps.durableKV, deps.discardLocal);
+        }
+        return status(idle);
       }
       const next: RecorderState = {
         ...state,
