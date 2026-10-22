@@ -64,9 +64,9 @@ describe('StubUploadClient (contracts v0.2 flow)', () => {
   it('validates sizeBytes and sha256 format', async () => {
     const c = new StubUploadClient();
     const { sessionId } = await c.initSession(init);
-    await expect(c.requestChunkUrl(sessionId, { seq: 0, sizeBytes: 0 })).rejects.toThrow();
+    await expect(c.requestChunkUrl(sessionId, { seq: 0, sizeBytes: 0, sha256: '0'.repeat(64) })).rejects.toThrow();
     await expect(
-      c.requestChunkUrl(sessionId, { seq: 0, sizeBytes: MAX_CHUNK_BYTES + 1 }),
+      c.requestChunkUrl(sessionId, { seq: 0, sizeBytes: MAX_CHUNK_BYTES + 1, sha256: '0'.repeat(64) }),
     ).rejects.toThrow();
     await expect(
       c.requestChunkUrl(sessionId, { seq: 0, sizeBytes: 3, sha256: ABC_SHA.toUpperCase() }),
@@ -118,7 +118,7 @@ describe('StubUploadClient (contracts v0.2 flow)', () => {
     const b = (await c.initSession(init)).sessionId;
     await c.abort(b, { reason: 'error' });
     expect(c.sessions.get(b)!.aborted).toBe('error');
-    await expect(c.requestChunkUrl(b, { seq: 0, sizeBytes: 1 })).rejects.toThrow('closed');
+    await expect(c.requestChunkUrl(b, { seq: 0, sizeBytes: 1, sha256: '0'.repeat(64) })).rejects.toThrow('closed');
   });
 });
 

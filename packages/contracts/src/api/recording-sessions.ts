@@ -12,7 +12,7 @@ import { MAX_MEDIA_BYTES, MediaMimeType, PresignedUrlString, RecordingStatus } f
 export const CHUNK_UPLOAD_URL_TTL_SECONDS = 300;
 /** 64 MiB per chunk (5 s timeslices are far smaller; this is an abuse ceiling). */
 export const MAX_CHUNK_BYTES = 64 * 1024 * 1024;
-/** 2 GB per recording session, enforced server-side across all chunks. */
+/** 1.4 GB (MAX_MEDIA_BYTES) per recording session, enforced server-side across all chunks. */
 export const MAX_RECORDING_SESSION_BYTES = MAX_MEDIA_BYTES;
 /** Upper bound on chunk count. At 5 s timeslices this is about 13.9 h. */
 export const MAX_RECORDING_CHUNKS = 10_000;
@@ -43,7 +43,7 @@ export type InitRecordingSessionResponse = Static<typeof InitRecordingSessionRes
 /**
  * Request a presigned PUT for one chunk.
  *
- * The API signs `Content-Length: sizeBytes` (and, when given, the sha256 checksum, e.g. `x-amz-checksum-sha256`)
+ * The API signs `Content-Length: sizeBytes` and the REQUIRED sha256 checksum ( e.g. `x-amz-checksum-sha256`)
  * into the presigned request, and returns them in `upload.headers`, so the client can't upload a different size or body.
  * The API refuses to issue a URL once the session's running total plus `sizeBytes` would exceed
  * MAX_RECORDING_SESSION_BYTES, or when `seq` is out of range or already completed.
@@ -52,7 +52,8 @@ export const ChunkUploadUrlRequest = Type.Object(
   {
     seq: Type.Integer({ minimum: 0, maximum: MAX_CHUNKS - 1 }),
     sizeBytes: Type.Integer({ minimum: 1, maximum: MAX_CHUNK_BYTES }),
-    sha256: Type.Optional(Sha256Hex),
+    /** REQUIRED: lowercase hex sha256 of the chunk body; signed into the PUT as base64 `x-amz-checksum-sha256`. */
+    sha256: Sha256Hex,
   },
   strict,
 );
@@ -62,8 +63,8 @@ export const CHECKSUM_SHA256_HEADER = 'x-amz-checksum-sha256';
 
 /**
  * Presigned PUT whose signature covers the headers the client must send verbatim.
- * `headers['content-length']` always equals the requested `sizeBytes`. When the request carried `sha256`,
- * `headers['x-amz-checksum-sha256']` (base64 of the same digest) is present and signed too. Other signed headers
+ * `headers['content-length']` always equals the requested `sizeBytes`, and
+ * `headers['x-amz-checksum-sha256']` (base64 of the request's `sha256`) is always present and signed too. Other signed headers
  * (e.g. `content-type`) may also appear.
  */
 export const SignedPutUpload = Type.Object(

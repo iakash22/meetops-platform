@@ -90,8 +90,13 @@ export const Recording = Type.Object({
 });
 export type Recording = Static<typeof Recording>;
 
-/** Upload cap shared by direct uploads and recording sessions: 2 GB (decimal). */
-export const MAX_MEDIA_BYTES = 2_000_000_000;
+/**
+ * Upload cap shared by direct uploads, recording sessions and the media worker: 1.4 GB (decimal, 1_400_000_000 B
+ * ~= 1.30 GiB). Sized so the source plus its 16 kHz mono s16le WAV (<= ~461 MB at the 4 h duration cap) and the WAV
+ * chunks (~461 MB) fit the worker's 3 GiB /tmp/work tmpfs (1.4e9 + 2 * 4.61e8 ~= 2.32e9 < 3.22e9) with headroom.
+ * Single source of truth: storage, media-core callers and the worker all derive their caps from this.
+ */
+export const MAX_MEDIA_BYTES = 1_400_000_000;
 
 /** Explicit allowlist of accepted media MIME types. */
 export const ALLOWED_MEDIA_MIME_TYPES = [

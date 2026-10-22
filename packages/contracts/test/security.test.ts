@@ -44,9 +44,13 @@ describe('files and uploads', () => {
     ).toBe(true); // response objects are open; mappers must build from the schema
   });
   it('CreateUploadRequest limits', () => {
-    const ok = { filename: 'standup.webm', mimeType: 'audio/webm', sizeBytes: 1024, meetingId: 'ae7be26c-daa7-42ca-8480-68d5ac90eaca' };
+    const ok = { filename: 'standup.webm', mimeType: 'audio/webm', sizeBytes: 1024, checksumSha256: 'ungWv48Bz+pBQUDeXa4iI7ADYaOWF3qctBD/YfIAFa0=', meetingId: 'ae7be26c-daa7-42ca-8480-68d5ac90eaca' };
     expect(Value.Check(CreateUploadRequest, ok)).toBe(true);
     expect(Value.Check(CreateUploadRequest, { ...ok, sizeBytes: 0 })).toBe(false);
+    const noSum: Record<string, unknown> = { ...ok };
+    delete noSum.checksumSha256;
+    expect(Value.Check(CreateUploadRequest, noSum)).toBe(false);
+    expect(Value.Check(CreateUploadRequest, { ...ok, checksumSha256: 'a'.repeat(64) })).toBe(false);
     expect(Value.Check(CreateUploadRequest, { ...ok, sizeBytes: MAX_UPLOAD_BYTES + 1 })).toBe(false);
     expect(Value.Check(CreateUploadRequest, { ...ok, filename: '../etc/passwd' })).toBe(false);
     expect(Value.Check(CreateUploadRequest, { ...ok, mimeType: 'text/html' })).toBe(false);
