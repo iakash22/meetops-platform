@@ -1,6 +1,6 @@
 # Storage and media core (P1-MEDIA)
 
-> **Source:** the `@meetops/storage` sections reflect the merged code on `integration/phase-1` (`packages/storage/src`), as of PR #39 (2026-10-22). The `@meetops/media-core` section still describes PR #10.
+> **Source:** the `@meetops/storage` sections reflect the merged code on `integration/phase-1` (`packages/storage/src`), as of PR #39 (2026-10-22). So does the `@meetops/media-core` section (`packages/media-core/src`).
 
 ## `@meetops/storage`
 
@@ -90,17 +90,25 @@ Stored-object metadata crossing package boundaries uses the `FileObject` contrac
 
 ## `@meetops/media-core`
 
-Wraps `ffmpeg` and `ffprobe`, spawned with an argv array and no shell. FFmpeg must be installed (see `docs/00-getting-started/prerequisites.md`).
+Wraps `ffmpeg` and `ffprobe`. `runProcess` spawns them with an argv array and no shell. FFmpeg must be installed (see `docs/00-getting-started/prerequisites.md`).
 
-| Function                                | Purpose                                                                                                                                                    |
-| --------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `probeMedia(path, opts?)`               | ffprobe JSON parsed into `ProbeResult`: `durationSeconds`, `formatName`, `sizeBytes?`, `bitRate?`, `streams[]`, `hasAudio`, `hasVideo`                     |
-| `parseProbeOutput(json)`                | Pure parser used by `probeMedia`                                                                                                                           |
-| `normalizeToWav(input, output, opts?)`  | Converts to PCM s16le WAV, 16 kHz mono by default (`sampleRate`, `channels` options); drops video, subtitle and data streams                               |
-| `chunkAudio(input, outDir, opts?)`      | Splits into fixed-length WAV segments (`segmentSeconds` default 600, `prefix` default `chunk`); returns `{ index, path, startSeconds, durationSeconds }[]` |
-| `buildNormalizeArgs` / `buildChunkArgs` | Build the ffmpeg argv (for tests)                                                                                                                          |
-| `isFfmpegAvailable(opts?)`              | True if both binaries run                                                                                                                                  |
-| `runProcess`, `resolveTools`            | Low-level helpers; failures throw `FfmpegError` with `exitCode` and `stderr`                                                                               |
+| Export                                      | Purpose                                                                                                                                                                                                           |
+| ------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `probeMedia(path, opts?)`                   | Runs ffprobe (JSON) and returns `ProbeResult`: `durationSeconds`, `formatName`, `sizeBytes?`, `bitRate?`, `streams[]`, `hasAudio`, `hasVideo`. `opts.format` forces the demuxer (recommended for untrusted input) |
+| `parseProbeOutput(json)`                    | Pure parser used by `probeMedia`                                                                                                                                                                                  |
+| `normalizeToWav(input, output, opts?)`      | PCM s16le WAV, 16 kHz mono by default. Drops video, subtitle and data streams. Options: `sampleRate`, `channels`, `inputFormat` (`-f`), `maxDurationSeconds` (`-t`), `maxOutputBytes` (`-fs`)                     |
+| `chunkAudio(input, outDir, opts?)`          | Splits a WAV into `{prefix}-NNNNN.wav` segments (`segmentSeconds` default 600, `prefix` default `chunk`). Returns `{ index, path, startSeconds, durationSeconds }[]`; offsets come from probing each chunk        |
+| `buildNormalizeArgs` / `buildChunkArgs`     | Build the ffmpeg argv (for tests)                                                                                                                                                                                 |
+| `DEMUXER_BY_EXT`, `demuxerForExt(ext)`      | Input allowlist: `webm`/`mkv` → `matroska`, `ogg`, `mp3`, `m4a`/`mp4` → `mov`, `wav`. Other extensions throw                                                                                                      |
+| `assertProbedFormat(probe, demuxer)`        | Rejects a probe whose `formatName` is in `FORBIDDEN_FORMATS` (hls, concat, playlist, dash, image2, lavfi, rtp, tee and others) or doesn't match the expected container                                            |
+| `isFfmpegAvailable(opts?)`                  | True if both binaries run                                                                                                                                                                                         |
+| `runProcess`, `resolveTools`, `FfmpegError` | Low-level helpers. Failures throw `FfmpegError` with `exitCode` and `stderr`                                                                                                                                      |
+
+Hardening:
+
+- Every ffmpeg and ffprobe call passes `-protocol_whitelist file,pipe` (`PROTOCOL_WHITELIST`).
+- stdout is capped at 4 MiB (`MAX_STDOUT_BYTES`; over the cap, the process is killed) and stderr keeps the last 64 KiB (`MAX_STDERR_BYTES`).
+- By default, `chunkAudio` (`cleanup: true`) removes stale and partial `{prefix}-NNNNN.wav` files in `outDir`, and only those.
 
 Options (`MediaToolsOptions`): `ffmpegPath` (env `FFMPEG_PATH`, default `ffmpeg`), `ffprobePath` (env `FFPROBE_PATH`, default `ffprobe`), `timeoutMs` (default 10 minutes, then SIGKILL) and `signal` (an `AbortSignal`).
 

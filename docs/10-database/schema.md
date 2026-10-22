@@ -1,6 +1,6 @@
 # Database schema (Phase 1, P1-DB)
 
-> **Source:** this page reflects the merged code on `integration/phase-1` (`packages/database`), after PR #35 merged on 2026-10-22. The schema from PR #6 and the RLS work from PR #25 reached `integration/phase-1` through stacked PR #35. PRs #6 and #25 themselves are still open on GitHub. The model table below lists the original PR #6 set. `schema.prisma` now has 25 models (for example `recordings`, `recording_sessions`, `recording_session_chunks`, `audit_events`). See `packages/database/README.md` for the full list.
+> **Source:** this page reflects the merged code on `integration/phase-1` (`packages/database`), after PR #35 merged on 2026-10-22. The schema from PR #6 and the RLS work from PR #25 reached `integration/phase-1` through stacked PR #35. PRs #6 and #25 themselves are still open on GitHub.
 
 Package: `packages/database` (`@meetops/database`). PostgreSQL with Prisma and pgvector. Env: `DATABASE_URL`.
 
@@ -11,18 +11,19 @@ Package: `packages/database` (`@meetops/database`). PostgreSQL with Prisma and p
 - Every tenant-scoped table has `org_id` (FK → `organizations`, cascade delete), and its indexes lead with `org_id`.
 - Soft delete (`deleted_at`) on organizations, users, memberships, employees, projects, meetings, file_objects, transcripts, reports, extracted_tasks and internal_tasks.
 
-## Models (19 in `schema.prisma`)
+## Models (25 in `schema.prisma`)
 
-| Area                | Models (table)                                                                                                                                                                                                     |
-| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Tenancy and auth    | Organization (`organizations`), User (`users`), Membership (`memberships`), Session (`sessions`), Invitation (`invitations`)                                                                                       |
-| People and work     | Employee (`employees`), Project (`projects`)                                                                                                                                                                       |
-| Meetings            | Meeting (`meetings`), MeetingParticipant (`meeting_participants`), FileObject (`file_objects`: bucket, key, mime type, size, SHA-256 checksum; metadata only)                                                      |
-| Transcripts         | Transcript (`transcripts`, revisioned, unique per meeting), TranscriptSegment (`transcript_segments`, revision + sequence, `embedding vector(1536)` placeholder)                                                   |
-| AI output and tasks | Report (`reports`), ExtractedTask (`extracted_tasks`), TaskApproval (`task_approvals`), InternalTask (`internal_tasks`), ExternalIssueLink (`external_issue_links`: provider, external id and URL, unique per org) |
-| Ops and audit       | AiRun (`ai_runs`: provider, model, prompt version, transcript revision, token usage, `cost_usd`, status), OutboxEvent (`outbox_events`), AuditLog (`audit_logs`)                                                   |
+| Area                | Models (table)                                                                                                                                                                                                                            |
+| ------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Tenancy and auth    | Organization (`organizations`), User (`users`), Membership (`memberships`), Session (`sessions`), Invitation (`invitations`), EmailVerification (`email_verifications`), PasswordReset (`password_resets`)                                |
+| People and work     | Employee (`employees`), Project (`projects`)                                                                                                                                                                                              |
+| Meetings and media  | Meeting (`meetings`), MeetingParticipant (`meeting_participants`), FileObject (`file_objects`: kind, status, provider, bucket, key, mime type, size, checksum; optional parent object and `chunkIndex`; unique per org + bucket + key)    |
+| Recordings          | Recording (`recordings`: one FileObject, status, duration), RecordingSession (`recording_sessions`: source, status, abort reason, chunk count, total bytes), RecordingSessionChunk (`recording_session_chunks`: unique `seq` per session) |
+| Transcripts         | Transcript (`transcripts`: tied to a recording; provider + `providerJobId`, unique per org; revision unique per meeting), TranscriptSegment (`transcript_segments`: revision + sequence, `embedding vector(1536)`)                        |
+| AI output and tasks | Report (`reports`), ExtractedTask (`extracted_tasks`), TaskApproval (`task_approvals`), Task (`tasks`), IntegrationIssue (`integration_issues`: provider, external id and URL, unique per org)                                            |
+| Ops and audit       | AiRun (`ai_runs`), OutboxEvent (`outbox_events`), AuditEvent (`audit_events`: nullable org for global events, actor, action, target, metadata; append-only)                                                                               |
 
-Enums: MembershipRole (OWNER, ADMIN, MEMBER, VIEWER), InvitationStatus, ProjectStatus, MeetingStatus, MeetingParticipantRole, TranscriptStatus, ReportStatus, ExtractedTaskStatus, TaskPriority, ApprovalDecision, InternalTaskStatus, ExternalProvider, AiRunStatus, AiRunKind, OutboxStatus.
+Enums (21): MembershipRole (`owner`, `admin`, `member`, `viewer`), InvitationStatus, ProjectStatus, MeetingStatus, MeetingParticipantRole, TranscriptStatus, ReportStatus, ExtractedTaskStatus, TaskPriority, ApprovalDecision, TaskStatus, AiRunStatus, AiRunKind, StorageObjectKind, StorageObjectStatus, OutboxStatus, MeetingSource, RecordingStatus, RecordingSource, RecordingSessionStatus, RecordingAbortReason.
 
 ## Tenancy and RLS
 
