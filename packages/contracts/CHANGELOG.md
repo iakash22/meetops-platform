@@ -4,6 +4,20 @@ All notable changes to `@meetops/contracts` are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this package uses [Semantic Versioning](https://semver.org/).
 While the version is `0.x`, a minor bump may contain breaking changes (ADR-003).
 
+## [0.3.1] - 2026-10-22
+
+All changes in this release are additive. No existing export changed.
+
+### Added
+
+- Organizations: `CreateOrganizationRequest { name (1–200) }` and `CreateOrganizationResponse` (an alias of the new
+  `OrganizationWithRole { organization: Organization, role: Role }`) for `POST /orgs` (201). The server derives `slug`, and
+  the caller becomes `owner`.
+- `ListOrganizationsResponse { items: OrganizationWithRole[], nextCursor: string | null }` for `GET /orgs` (a cursor page,
+  built from `CursorPage`). It is not a bare `Organization[]`.
+- All four are strict (`additionalProperties: false`) and are exported from the main entry. Their types are exported from
+  `@meetops/contracts/types`.
+
 ## [0.3.0] - 2026-10-22
 
 ### Added
