@@ -24,6 +24,8 @@ const DUE_LABEL: Record<TaskDueFilter, string> = {
   week: 'Due this week',
 };
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 /** Parse untrusted URL search params into known filter values only. */
 export function parseTaskSearch(search: Record<string, unknown>): TaskSearch {
   const out: TaskSearch = {};
@@ -32,7 +34,10 @@ export function parseTaskSearch(search: Record<string, unknown>): TaskSearch {
     (TASK_STATUSES as readonly string[]).includes(search.status)
   )
     out.status = search.status as TaskStatusValue;
-  if (typeof search.assignee === 'string' && /^[A-Za-z0-9_-]{1,64}$/.test(search.assignee))
+  if (
+    typeof search.assignee === 'string' &&
+    (search.assignee === 'me' || search.assignee === 'unassigned' || UUID_RE.test(search.assignee))
+  )
     out.assignee = search.assignee;
   if (typeof search.due === 'string' && (TASK_DUE as readonly string[]).includes(search.due))
     out.due = search.due as TaskDueFilter;

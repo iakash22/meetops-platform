@@ -1,3 +1,4 @@
+import { TASK_STATUSES } from '@meetops/contracts/types';
 import { useQuery } from '@tanstack/react-query';
 import type { Id, Meeting, Paginated, Task, TaskUpdateEvent } from '@meetops/contracts';
 import type { QueryClient } from '@tanstack/react-query';
@@ -64,7 +65,43 @@ export function useProjects() {
  * Merge a realtime `task.updated` event into every cached task page for that org.
  * Values are stored as plain data and rendered as text by React (never as HTML).
  */
-export function applyTaskUpdate(queryClient: QueryClient, event: TaskUpdateEvent): void {
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const EVENT_KEYS = new Set([
+  'organizationId',
+  'taskId',
+  'meetingId',
+  'status',
+  'title',
+  'assigneeId',
+  'at',
+]);
+
+/**
+ * Minimal runtime guard for contracts TaskUpdateEvent (avoids shipping the TypeBox
+ * runtime): uuids, known status, title ≤ 500, ISO `at`, no extra keys.
+ */
+export function isTaskUpdateEvent(value: unknown): value is TaskUpdateEvent {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const e = value as Record<string, unknown>;
+  if (Object.keys(e).some((k) => !EVENT_KEYS.has(k))) return false;
+  const isId = (v: unknown) => typeof v === 'string' && UUID.test(v);
+  const optId = (v: unknown) => v === undefined || isId(v);
+  return (
+    isId(e.organizationId) &&
+    isId(e.taskId) &&
+    optId(e.meetingId) &&
+    optId(e.assigneeId) &&
+    typeof e.status === 'string' &&
+    (TASK_STATUSES as readonly string[]).includes(e.status) &&
+    (e.title === undefined || (typeof e.title === 'string' && e.title.length <= 500)) &&
+    typeof e.at === 'string' &&
+    !Number.isNaN(Date.parse(e.at))
+  );
+}
+
+/** Returns false (and changes nothing) for events that fail validation. */
+export function applyTaskUpdate(queryClient: QueryClient, event: unknown): boolean {
+  if (!isTaskUpdateEvent(event)) return false;
   queryClient.setQueriesData<Paginated<Task>>(
     { queryKey: ['orgs', event.organizationId, 'tasks'] },
     (page) =>
@@ -82,4 +119,5 @@ export function applyTaskUpdate(queryClient: QueryClient, event: TaskUpdateEvent
         ),
       },
   );
+  return true;
 }

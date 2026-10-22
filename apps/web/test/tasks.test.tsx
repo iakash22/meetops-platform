@@ -106,6 +106,11 @@ describe('tasks', () => {
 
   it('drops unknown or malformed filter values', () => {
     expect(parseTaskSearch({ status: 'hacked', assignee: '<x>', due: 'never' })).toEqual({});
+    for (const bad of ['usr_9', 'not-a-uuid', '10000000-0000-4000-8000-00000000000', '1;DROP']) {
+      expect(parseTaskSearch({ assignee: bad })).toEqual({});
+    }
+    expect(parseTaskSearch({ assignee: 'me' })).toEqual({ assignee: 'me' });
+    expect(parseTaskSearch({ assignee: 'unassigned' })).toEqual({ assignee: 'unassigned' });
     expect(
       parseTaskSearch({
         status: 'todo',
@@ -134,6 +139,35 @@ describe('tasks', () => {
     expect((window as unknown as { __xss?: number }).__xss).toBeUndefined();
   });
 
+  it.each([
+    ['non-object', 'boom'],
+    ['bad status', { status: 'pwned' }],
+    ['non-uuid taskId', { taskId: 'tsk_1' }],
+    ['non-uuid org', { organizationId: '../x' }],
+    ['title too long', { title: 'x'.repeat(501) }],
+    ['bad timestamp', { at: 'yesterday' }],
+    ['extra key', { html: '<b>' }],
+    ['non-string assignee', { assigneeId: 7 }],
+  ])('drops invalid realtime task events (%s)', async (_name, patch) => {
+    const { queryClient } = renderApp('/tasks');
+    await screen.findByText('Send recap');
+    const valid = {
+      organizationId: '00000000-0000-4000-8000-000000000001',
+      taskId: '30000000-0000-4000-8000-000000000001',
+      status: 'done',
+      title: 'Hijacked',
+      at: '2026-10-21T10:00:00.000Z',
+    };
+    const event = typeof patch === 'string' ? patch : { ...valid, ...patch };
+    let applied = true;
+    act(() => {
+      applied = applyTaskUpdate(queryClient, event);
+    });
+    expect(applied).toBe(false);
+    expect(screen.queryByText('Hijacked')).not.toBeInTheDocument();
+    expect(screen.getByText('Send recap')).toBeInTheDocument();
+  });
+
   it('renders HTML in realtime task title updates as escaped text', async () => {
     const { queryClient } = renderApp('/tasks');
     await screen.findByText('Send recap');
@@ -144,7 +178,9 @@ describe('tasks', () => {
       title: XSS,
       at: '2026-10-21T10:00:00.000Z',
     };
-    act(() => applyTaskUpdate(queryClient, event));
+    act(() => {
+      expect(applyTaskUpdate(queryClient, event)).toBe(true);
+    });
     const titles = await screen.findAllByTestId('task-title');
     const updated = titles.find((t) => t.textContent === XSS);
     expect(updated).toBeDefined();
