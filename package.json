@@ -50,7 +50,11 @@
   "pnpm": {
     "overrides": {
       "tailwindcss>postcss-nested": "^7.0.2",
-      "tailwindcss>postcss-selector-parser": "^7.1.6"
+      "tailwindcss>postcss-selector-parser": "^7.1.6",
+      "web-ext-run>tmp": "^0.2.6",
+      "firefox-profile>adm-zip": "^0.6.1",
+      "giget>tar": "^7.5.21",
+      "fx-runner>shell-quote": "^1.9.0"
     }
   }
 }
