@@ -3,7 +3,10 @@ import type { StorageProviderId } from './types.js';
 
 /** Hard ceiling for any presigned URL/POST TTL (seconds). */
 export const MAX_PRESIGN_TTL_SECONDS = 600;
-export const DEFAULT_UPLOAD_TTL_SECONDS = 600;
+/** Short default: presigned uploads are single-use (see upload-tokens.ts). */
+export const DEFAULT_UPLOAD_TTL_SECONDS = 300;
+/** How long after the URL expires an issued upload token may still be confirmed (upload in flight). */
+export const UPLOAD_CONFIRM_GRACE_SECONDS = 3600;
 export const DEFAULT_DOWNLOAD_TTL_SECONDS = 300;
 /** S3 minimum part size (all parts except the last). */
 export const S3_MIN_PART_BYTES = 5 * 1024 * 1024;
@@ -65,7 +68,7 @@ export function assertTtl(ttl: number): number {
  * Env: STORAGE_PROVIDER, STORAGE_ENDPOINT, STORAGE_REGION, STORAGE_BUCKET,
  * STORAGE_ACCESS_KEY_ID, STORAGE_SECRET_ACCESS_KEY, STORAGE_FORCE_PATH_STYLE,
  * STORAGE_UPLOAD_TTL_SECONDS (default 600, max 600), STORAGE_DOWNLOAD_TTL_SECONDS (default 300, max 600),
- * STORAGE_MAX_OBJECT_BYTES (default/max MAX_MEDIA_BYTES = 2 GB), STORAGE_MAX_PART_BYTES (default/max MAX_CHUNK_BYTES = 64 MiB),
+ * STORAGE_MAX_OBJECT_BYTES (default/max MAX_MEDIA_BYTES = 1.4 GB), STORAGE_MAX_PART_BYTES (default/max MAX_CHUNK_BYTES = 64 MiB),
  * STORAGE_MAX_PARTS (default 1000, max 10000), STORAGE_ALLOWED_MIME_TYPES (comma list).
  */
 export function loadStorageConfig(env: NodeJS.ProcessEnv = process.env): StorageConfig {

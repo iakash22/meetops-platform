@@ -19,7 +19,7 @@ import { createPresignedPost } from '@aws-sdk/s3-presigned-post';
 import type { FileObject } from '@meetops/contracts';
 import type { PresignedUrl } from '@meetops/contracts/legacy';
 import { MAX_CHUNK_BYTES, MAX_CHUNKS } from '@meetops/contracts';
-import { assertTtl, loadStorageConfig, S3_MIN_PART_BYTES, SESSION_CHUNK_TTL_SECONDS, type StorageConfig } from './config.js';
+import { assertTtl, loadStorageConfig, S3_MIN_PART_BYTES, SESSION_CHUNK_TTL_SECONDS, UPLOAD_CONFIRM_GRACE_SECONDS, type StorageConfig } from './config.js';
 import { mapS3Error, StorageValidationError } from './errors.js';
 import { assertKeyOwnedBy, buildObjectKey, type MeetingObjectRef } from './keys.js';
 import type {
@@ -28,12 +28,26 @@ import type {
   MultipartSpec,
   MultipartUpload,
   PresignOptions,
+  PresignedUpload,
+  PresignUploadSpec,
   PutObjectBody,
   StorageService,
   StoredObjectInfo,
   UploadSpec
 } from './types.js';
-import { normalizeMimeType, validateUploadSpec } from './validation.js';
+import { assertSha256Base64, normalizeMimeType, validateUploadSpec } from './validation.js';
+import {
+  InMemoryUploadTokenStore,
+  isUploadToken,
+  newUploadToken,
+  UPLOAD_TOKEN_HEADER,
+  UPLOAD_TOKEN_METADATA_KEY,
+  type UploadTokenRecord,
+  type UploadTokenStore
+} from './upload-tokens.js';
+
+/** Metadata key holding the declared whole-object sha256 (base64) of a multipart upload. */
+export const DECLARED_SHA256_METADATA_KEY = 'sha256';
 
 /** Recording session scope (contracts InitRecordingSession). meetingId must exist before chunks are uploaded. */
 export type SessionRef = { orgId: string; meetingId: string; sessionId: string };
@@ -50,6 +64,11 @@ export type S3StorageServiceOptions = {
   authorize: AuthorizeHook;
   presign?: typeof getSignedUrl;
   presignPost?: typeof createPresignedPost;
+  /**
+   * One-time upload token store. Defaults to a per-process InMemoryUploadTokenStore; inject a shared store
+   * (e.g. RedisUploadTokenStore) when several API instances issue/confirm uploads.
+   */
+  uploadTokens?: UploadTokenStore;
 };
 
 export function createS3Client(config: StorageConfig): S3Client {
@@ -86,6 +105,7 @@ export class S3StorageService implements StorageService {
   readonly #authorize: AuthorizeHook;
   readonly #presign: typeof getSignedUrl;
   readonly #presignPost: typeof createPresignedPost;
+  readonly #tokens: UploadTokenStore;
 
   constructor(opts: S3StorageServiceOptions) {
     this.#cfg = opts.config;
@@ -96,6 +116,24 @@ export class S3StorageService implements StorageService {
     this.#authorize = opts.authorize;
     this.#presign = opts.presign ?? getSignedUrl;
     this.#presignPost = opts.presignPost ?? createPresignedPost;
+    this.#tokens = opts.uploadTokens ?? new InMemoryUploadTokenStore();
+  }
+
+  /** Issue and record a fresh one-time token valid for the URL TTL plus the confirm grace window. */
+  async #issueToken(rec: UploadTokenRecord, ttl: number): Promise<string> {
+    for (let i = 0; i < 3; i++) {
+      const token = newUploadToken();
+      if (await this.#tokens.issue(token, rec, ttl + UPLOAD_CONFIRM_GRACE_SECONDS)) return token;
+    }
+    throw new Error('Could not issue upload token');
+  }
+
+  /** Consume a token (atomic in the store) and check it belongs to `key` (and `uploadId`). Reuse is rejected. */
+  async #consumeToken(token: string, key: string, uploadId?: string): Promise<UploadTokenRecord> {
+    if (!isUploadToken(token)) throw new StorageValidationError('Invalid upload token');
+    const rec = await this.#tokens.consume(token);
+    if (!rec || rec.key !== key || rec.uploadId !== uploadId) throw new StorageValidationError('Upload token invalid, expired or already used');
+    return rec;
   }
 
   /** Derive the key server-side and always enforce org ownership. */
@@ -161,11 +199,18 @@ export class S3StorageService implements StorageService {
     await settle(this.#client.send(new DeleteObjectCommand({ Bucket: this.#bucket, Key: key })));
   }
 
-  async getPresignedUploadPost(ref: MeetingObjectRef, spec: UploadSpec, opts?: PresignOptions): Promise<PresignedUrl> {
+  /**
+   * Single-use presigned POST. Policy pins exact size, Content-Type, the base64 sha256 checksum and a one-time
+   * `x-amz-meta-upload-token`. Limitation: POST policies cannot express If-None-Match, so a replay within the TTL can
+   * re-POST the same bytes (the checksum pins the body); confirmUpload still accepts the token only once.
+   */
+  async getPresignedUploadPost(ref: MeetingObjectRef, spec: PresignUploadSpec, opts?: PresignOptions): Promise<PresignedUpload> {
     const key = await this.#key(ref);
     validateUploadSpec(spec, this.#cfg.limits);
+    const checksum = assertSha256Base64(spec?.checksumSha256);
     const ttl = this.#ttl(opts, this.#cfg.uploadTtlSeconds);
     const mime = normalizeMimeType(spec.mimeType);
+    const uploadToken = await this.#issueToken({ key, checksumSha256: checksum, sizeBytes: spec.sizeBytes }, ttl);
     const { url, fields } = await settle(
       this.#presignPost(this.#client, {
         Bucket: this.#bucket,
@@ -173,27 +218,77 @@ export class S3StorageService implements StorageService {
         Expires: ttl,
         Conditions: [
           ['content-length-range', spec.sizeBytes, spec.sizeBytes],
-          ['eq', '$Content-Type', mime]
+          ['eq', '$Content-Type', mime],
+          ['eq', '$x-amz-checksum-sha256', checksum],
+          ['eq', `$${UPLOAD_TOKEN_HEADER}`, uploadToken]
         ],
-        Fields: { 'Content-Type': mime }
+        Fields: { 'Content-Type': mime, 'x-amz-checksum-sha256': checksum, [UPLOAD_TOKEN_HEADER]: uploadToken }
       })
     );
-    return this.#presigned(url, 'POST', ttl, { fields });
+    return { ...this.#presigned(url, 'POST', ttl, { fields }), uploadToken };
   }
 
-  async getPresignedUploadUrl(ref: MeetingObjectRef, spec: UploadSpec, opts?: PresignOptions): Promise<PresignedUrl> {
+  /**
+   * Single-use presigned PUT. Signs Content-Type, Content-Length, x-amz-checksum-sha256 (REQUIRED), a one-time
+   * x-amz-meta-upload-token and `If-None-Match: *` (the PUT fails with 412 if the key already exists, on providers
+   * that support conditional writes). The client must send `headers` verbatim.
+   */
+  async getPresignedUploadUrl(ref: MeetingObjectRef, spec: PresignUploadSpec, opts?: PresignOptions): Promise<PresignedUpload> {
     const key = await this.#key(ref);
     validateUploadSpec(spec, this.#cfg.limits);
+    const checksum = assertSha256Base64(spec?.checksumSha256);
     const ttl = this.#ttl(opts, this.#cfg.uploadTtlSeconds);
     const mime = normalizeMimeType(spec.mimeType);
+    const uploadToken = await this.#issueToken({ key, checksumSha256: checksum, sizeBytes: spec.sizeBytes }, ttl);
+    const signed = ['content-type', 'content-length', 'x-amz-checksum-sha256', UPLOAD_TOKEN_HEADER, 'if-none-match'];
     const url = await settle(
       this.#presign(
         this.#client,
-        new PutObjectCommand({ Bucket: this.#bucket, Key: key, ContentType: mime, ContentLength: spec.sizeBytes }),
-        { expiresIn: ttl, signableHeaders: new Set(['content-type', 'content-length']) }
+        new PutObjectCommand({
+          Bucket: this.#bucket,
+          Key: key,
+          ContentType: mime,
+          ContentLength: spec.sizeBytes,
+          ChecksumSHA256: checksum,
+          Metadata: { [UPLOAD_TOKEN_METADATA_KEY]: uploadToken },
+          IfNoneMatch: '*'
+        }),
+        { expiresIn: ttl, signableHeaders: new Set(signed), unhoistableHeaders: new Set(signed) }
       )
     );
-    return this.#presigned(url, 'PUT', ttl, { headers: { 'content-type': mime, 'content-length': String(spec.sizeBytes) } });
+    const headers = {
+      'content-type': mime,
+      'content-length': String(spec.sizeBytes),
+      'x-amz-checksum-sha256': checksum,
+      [UPLOAD_TOKEN_HEADER]: uploadToken,
+      'if-none-match': '*'
+    };
+    return { ...this.#presigned(url, 'PUT', ttl, { headers }), uploadToken };
+  }
+
+  /**
+   * Confirm a single-part (PUT/POST) upload: atomically consume the one-time token (reuse -> StorageValidationError),
+   * then HEAD the object and require matching token metadata, size and sha256. A mismatching object is deleted.
+   */
+  async confirmUpload(ref: MeetingObjectRef, uploadToken: string): Promise<StoredObjectInfo> {
+    const key = await this.#key(ref);
+    const rec = await this.#consumeToken(uploadToken, key);
+    let head;
+    try {
+      head = await settle(this.#client.send(new HeadObjectCommand({ Bucket: this.#bucket, Key: key, ChecksumMode: 'ENABLED' })));
+    } catch (err) {
+      if ((err as { code?: string }).code === 'NOT_FOUND') throw new StorageValidationError('Upload not found');
+      throw err;
+    }
+    const ok =
+      head.Metadata?.[UPLOAD_TOKEN_METADATA_KEY] === uploadToken &&
+      head.ContentLength === rec.sizeBytes &&
+      head.ChecksumSHA256 === rec.checksumSha256;
+    if (!ok) {
+      await this.deleteObject(ref).catch(() => undefined);
+      throw new StorageValidationError('Uploaded object does not match the presigned upload');
+    }
+    return toInfo(head);
   }
 
   async getPresignedDownloadUrl(ref: MeetingObjectRef, opts?: PresignOptions): Promise<PresignedUrl> {
@@ -219,6 +314,7 @@ export class S3StorageService implements StorageService {
   async createMultipartUpload(ref: MeetingObjectRef, spec: MultipartSpec): Promise<MultipartUpload> {
     const key = await this.#key(ref);
     validateUploadSpec(spec, this.#cfg.limits);
+    const checksum = assertSha256Base64(spec?.checksumSha256);
     this.#checkPartSize(spec.partSizeBytes);
     if (spec.partSizeBytes < S3_MIN_PART_BYTES && spec.partSizeBytes < spec.sizeBytes) {
       throw new StorageValidationError('partSizeBytes below provider minimum');
@@ -231,12 +327,17 @@ export class S3StorageService implements StorageService {
           Bucket: this.#bucket,
           Key: key,
           ContentType: normalizeMimeType(spec.mimeType),
-          Metadata: spec.metadata
+          ChecksumAlgorithm: 'SHA256',
+          Metadata: { ...spec.metadata, [DECLARED_SHA256_METADATA_KEY]: checksum }
         })
       )
     );
     if (!res.UploadId) throw mapS3Error(new Error('missing UploadId'));
-    return { uploadId: res.UploadId, partCount, partSizeBytes: spec.partSizeBytes };
+    const uploadToken = await this.#issueToken(
+      { key, checksumSha256: checksum, sizeBytes: spec.sizeBytes, uploadId: res.UploadId },
+      this.#cfg.uploadTtlSeconds
+    );
+    return { uploadId: res.UploadId, partCount, partSizeBytes: spec.partSizeBytes, uploadToken };
   }
 
   async getPresignedPartUrl(
@@ -244,20 +345,30 @@ export class S3StorageService implements StorageService {
     uploadId: string,
     partNumber: number,
     partSizeBytes: number,
+    partChecksumSha256: string,
     opts?: PresignOptions
   ): Promise<PresignedUrl> {
     const key = await this.#key(ref);
     this.#checkPartNumber(partNumber);
     this.#checkPartSize(partSizeBytes);
+    const checksum = assertSha256Base64(partChecksumSha256, 'partChecksumSha256');
     const ttl = this.#ttl(opts, this.#cfg.uploadTtlSeconds);
+    const signed = ['content-length', 'x-amz-checksum-sha256'];
     const url = await settle(
       this.#presign(
         this.#client,
-        new UploadPartCommand({ Bucket: this.#bucket, Key: key, UploadId: uploadId, PartNumber: partNumber, ContentLength: partSizeBytes }),
-        { expiresIn: ttl, signableHeaders: new Set(['content-length']) }
+        new UploadPartCommand({
+          Bucket: this.#bucket,
+          Key: key,
+          UploadId: uploadId,
+          PartNumber: partNumber,
+          ContentLength: partSizeBytes,
+          ChecksumSHA256: checksum
+        }),
+        { expiresIn: ttl, signableHeaders: new Set(signed), unhoistableHeaders: new Set(signed) }
       )
     );
-    return this.#presigned(url, 'PUT', ttl, { headers: { 'content-length': String(partSizeBytes) } });
+    return this.#presigned(url, 'PUT', ttl, { headers: { 'content-length': String(partSizeBytes), 'x-amz-checksum-sha256': checksum } });
   }
 
   async listParts(ref: MeetingObjectRef, uploadId: string): Promise<CompletedPart[]> {
@@ -269,7 +380,7 @@ export class S3StorageService implements StorageService {
         this.#client.send(new ListPartsCommand({ Bucket: this.#bucket, Key: key, UploadId: uploadId, PartNumberMarker: marker }))
       );
       for (const p of res.Parts ?? []) {
-        if (p.PartNumber !== undefined && p.ETag) out.push({ partNumber: p.PartNumber, etag: p.ETag });
+        if (p.PartNumber !== undefined && p.ETag) out.push({ partNumber: p.PartNumber, etag: p.ETag, ...(p.ChecksumSHA256 ? { checksumSha256: p.ChecksumSHA256 } : {}) });
       }
       marker = res.IsTruncated ? res.NextPartNumberMarker : undefined;
       if (out.length > this.#cfg.limits.maxParts) throw new StorageValidationError('Too many parts');
@@ -277,19 +388,37 @@ export class S3StorageService implements StorageService {
     return out;
   }
 
-  async completeMultipartUpload(ref: MeetingObjectRef, uploadId: string, parts: CompletedPart[]) {
+  /**
+   * Complete a multipart upload once: consumes the one-time token first (a second complete is rejected), requires a
+   * base64 sha256 per part that matches what the provider stored (ListParts), sends per-part ChecksumSHA256 and
+   * `If-None-Match: *` so an existing completed key is not overwritten. Limitation: S3 multipart SHA256 is a
+   * composite (checksum of part checksums), so the declared whole-object sha256 is stored as metadata but is NOT
+   * verified by the provider; verify it when the object is read (e.g. the worker hashes while downloading).
+   */
+  async completeMultipartUpload(ref: MeetingObjectRef, uploadId: string, parts: CompletedPart[], uploadToken: string) {
     const key = await this.#key(ref);
     if (parts.length === 0) throw new StorageValidationError('At least one part is required');
     if (parts.length > this.#cfg.limits.maxParts) throw new StorageValidationError('Too many parts');
-    parts.forEach((p) => this.#checkPartNumber(p.partNumber));
+    parts.forEach((p) => {
+      this.#checkPartNumber(p.partNumber);
+      assertSha256Base64(p.checksumSha256, 'part checksumSha256');
+    });
     const sorted = [...parts].sort((a, b) => a.partNumber - b.partNumber);
+    if (sorted.some((p, i) => i > 0 && p.partNumber === sorted[i - 1]!.partNumber)) throw new StorageValidationError('Duplicate part');
+    await this.#consumeToken(uploadToken, key, uploadId);
+    const stored = new Map((await this.listParts(ref, uploadId)).map((p) => [p.partNumber, p]));
+    for (const p of sorted) {
+      const s = stored.get(p.partNumber);
+      if (!s || s.etag !== p.etag || s.checksumSha256 !== p.checksumSha256) throw new StorageValidationError(`Part ${p.partNumber} checksum mismatch`);
+    }
     const res = await settle(
       this.#client.send(
         new CompleteMultipartUploadCommand({
           Bucket: this.#bucket,
           Key: key,
           UploadId: uploadId,
-          MultipartUpload: { Parts: sorted.map((p) => ({ PartNumber: p.partNumber, ETag: p.etag })) }
+          IfNoneMatch: '*',
+          MultipartUpload: { Parts: sorted.map((p) => ({ PartNumber: p.partNumber, ETag: p.etag, ChecksumSHA256: p.checksumSha256 })) }
         })
       )
     );
@@ -330,13 +459,14 @@ export class S3StorageService implements StorageService {
 
   /**
    * Presigned PUT for one session chunk (contracts ChunkUploadUrlRequest -> ChunkUploadUrlResponse.upload).
-   * Signs Content-Type, Content-Length = sizeBytes and, if given, x-amz-checksum-sha256. Refuses when seq is out of
+   * Signs Content-Type, Content-Length = sizeBytes, x-amz-checksum-sha256 (sha256 hex is REQUIRED) and
+   * `If-None-Match: *` (a stored chunk cannot be overwritten by replaying the URL). Refuses when seq is out of
    * range or already stored, or when the stored running total + sizeBytes would exceed the session cap.
    * TTL defaults to and is capped at CHUNK_UPLOAD_URL_TTL_SECONDS (300).
    */
   async getPresignedSessionChunkUrl(
     ref: SessionRef,
-    req: { seq: number; sizeBytes: number; sha256?: string },
+    req: { seq: number; sizeBytes: number; sha256: string },
     mimeType: string,
     opts?: PresignOptions
   ): Promise<PresignedUrl> {
@@ -345,7 +475,8 @@ export class S3StorageService implements StorageService {
     if (!Number.isInteger(req.sizeBytes) || req.sizeBytes < 1 || req.sizeBytes > MAX_CHUNK_BYTES) {
       throw new StorageValidationError('sizeBytes out of range');
     }
-    if (req.sha256 !== undefined && !/^[0-9a-f]{64}$/.test(req.sha256)) throw new StorageValidationError('Invalid sha256');
+    if (req.sha256 === undefined || req.sha256 === null) throw new StorageValidationError('sha256 is required');
+    if (typeof req.sha256 !== 'string' || !/^[0-9a-f]{64}$/.test(req.sha256)) throw new StorageValidationError('Invalid sha256');
     validateUploadSpec({ mimeType, sizeBytes: req.sizeBytes }, this.#cfg.limits);
     const ttl = assertTtl(opts?.ttlSeconds ?? SESSION_CHUNK_TTL_SECONDS);
     if (ttl > SESSION_CHUNK_TTL_SECONDS) throw new RangeError(`Session chunk TTL must be <= ${SESSION_CHUNK_TTL_SECONDS}s`);
@@ -357,17 +488,28 @@ export class S3StorageService implements StorageService {
     if (running + req.sizeBytes > this.#cfg.limits.maxObjectBytes) throw new StorageValidationError('Recording session exceeds maximum size');
 
     const mime = normalizeMimeType(mimeType);
-    const checksum = req.sha256 ? Buffer.from(req.sha256, 'hex').toString('base64') : undefined;
-    const signable = new Set(['content-type', 'content-length', ...(checksum ? ['x-amz-checksum-sha256'] : [])]);
+    const checksum = Buffer.from(req.sha256, 'hex').toString('base64');
+    const signed = ['content-type', 'content-length', 'x-amz-checksum-sha256', 'if-none-match'];
     const url = await settle(
       this.#presign(
         this.#client,
-        new PutObjectCommand({ Bucket: this.#bucket, Key: key, ContentType: mime, ContentLength: req.sizeBytes, ChecksumSHA256: checksum }),
-        { expiresIn: ttl, signableHeaders: signable }
+        new PutObjectCommand({
+          Bucket: this.#bucket,
+          Key: key,
+          ContentType: mime,
+          ContentLength: req.sizeBytes,
+          ChecksumSHA256: checksum,
+          IfNoneMatch: '*'
+        }),
+        { expiresIn: ttl, signableHeaders: new Set(signed), unhoistableHeaders: new Set(signed) }
       )
     );
-    const headers: Record<string, string> = { 'content-type': mime, 'content-length': String(req.sizeBytes) };
-    if (checksum) headers['x-amz-checksum-sha256'] = checksum;
+    const headers: Record<string, string> = {
+      'content-type': mime,
+      'content-length': String(req.sizeBytes),
+      'x-amz-checksum-sha256': checksum,
+      'if-none-match': '*'
+    };
     return this.#presigned(url, 'PUT', ttl, { headers });
   }
 
@@ -413,6 +555,8 @@ export class S3StorageService implements StorageService {
           size < 1 ||
           size > MAX_CHUNK_BYTES ||
           (d?.sizeBytes !== undefined && d.sizeBytes !== size) ||
+          // Every chunk URL signs a sha256, so a stored chunk without one was not uploaded through it.
+          !head.ChecksumSHA256 ||
           (d !== undefined && head.ChecksumSHA256 !== Buffer.from(d.sha256, 'hex').toString('base64'));
         if (bad) {
           await this.deleteObject(objRef).catch(() => undefined);
