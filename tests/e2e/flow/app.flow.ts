@@ -331,4 +331,42 @@ test.describe('web flow (PR #48 web + createServer API)', () => {
       await expect(page).toHaveURL(/\/login\?next=%2Fmeetings/, { timeout: 10_000 });
     });
   }
+
+  // Open redirect: ?next= must only ever lead to a same-origin path (PR #48 safeRedirect).
+  for (const next of [
+    'https://evil.example/',
+    '//evil.example/',
+    '/%2F%2Fevil.example/',
+    '/\\evil.example/',
+    '/.//evil.example/',
+    'javascript:alert(1)',
+  ]) {
+    test(`[E2E-15] malicious ?next=${next} stays on the app origin after login`, async ({
+      page,
+      api,
+      stack,
+    }) => {
+      const { email } = await seedUser(api, ['Redirect QA']);
+      const offsite: string[] = [];
+      await page.route(
+        (u) => u.hostname.includes('evil.example'),
+        (route) => {
+          offsite.push(route.request().url());
+          return route.abort();
+        },
+      );
+      page.on('dialog', (d) => {
+        offsite.push(`dialog:${d.message()}`);
+        void d.dismiss();
+      });
+      await page.goto(`/login?next=${encodeURIComponent(next)}`);
+      await page.getByLabel('Email').fill(email);
+      await page.getByLabel('Password', { exact: true }).fill(PASSWORD);
+      await page.getByRole('button', { name: 'Sign in' }).click();
+      await expect(page.getByTestId('app-shell')).toBeVisible();
+      expect(new URL(page.url()).origin).toBe(stack.origin);
+      expect(new URL(page.url()).pathname).not.toMatch(/evil/);
+      expect(offsite).toEqual([]);
+    });
+  }
 });
