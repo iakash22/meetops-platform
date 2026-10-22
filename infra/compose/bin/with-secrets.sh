@@ -25,7 +25,7 @@ case "${DB_ROLE:-app}" in
     if [ -r "$s/meetops_app_db_password" ]; then
       export DATABASE_URL="postgresql://meetops_app:$(cat "$s/meetops_app_db_password")@postgres:5432/$db"
     fi
-    export MIGRATION_DATABASE_URL=""
+    unset MIGRATION_DATABASE_URL
     ;;
   migrator)
     if [ -r "$s/meetops_migrator_db_password" ]; then
@@ -33,6 +33,7 @@ case "${DB_ROLE:-app}" in
       export DATABASE_URL="$MIGRATION_DATABASE_URL"
     fi
     ;;
-  none) export DATABASE_URL="" MIGRATION_DATABASE_URL="" ;;
+  # Unset (not empty): @meetops/config validates DATABASE_URL as a URL when set.
+  none) unset DATABASE_URL MIGRATION_DATABASE_URL ;;
 esac
 exec "$@"
