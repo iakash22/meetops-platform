@@ -7,14 +7,20 @@ import { ErrorState } from '@/components/states/states';
 import { useApi } from '@/lib/api/context';
 import { useOrganizationId } from '@/lib/api/queries';
 
-/** Mirrors contracts CreateUploadRequest: audio/video only, ≤ 5 GiB. */
-export const MAX_UPLOAD_BYTES = 5 * 1024 * 1024 * 1024;
+import type { MAX_MEDIA_BYTES } from '@meetops/contracts';
+
+/**
+ * Mirrors contracts CreateUploadRequest (MAX_UPLOAD_BYTES = MAX_MEDIA_BYTES = 2_000_000_000,
+ * decimal 2 GB). Declared locally to avoid pulling the TypeBox runtime into the bundle;
+ * the `satisfies` breaks typecheck if contracts change the value.
+ */
+export const MAX_UPLOAD_BYTES = 2_000_000_000 satisfies typeof MAX_MEDIA_BYTES;
 const MIME_RE = /^(audio|video)\/[a-z0-9.+-]+$/;
 
 export function validateUploadFile(file: File): string | null {
   if (!MIME_RE.test(file.type)) return 'Only audio or video files can be uploaded.';
   if (file.size < 1) return 'The file is empty.';
-  if (file.size > MAX_UPLOAD_BYTES) return 'The file is larger than 5 GB.';
+  if (file.size > MAX_UPLOAD_BYTES) return 'The file is larger than 2 GB.';
   return null;
 }
 

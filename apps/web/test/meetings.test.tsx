@@ -2,7 +2,7 @@ import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ApiError } from '@/lib/api/client';
-import { validateUploadFile } from '@/features/meetings/upload-button';
+import { MAX_UPLOAD_BYTES, validateUploadFile } from '@/features/meetings/upload-button';
 import { meeting1, uploadResponse } from './fixtures/data';
 import { createMockApi, renderApp, resetStores } from './fixtures/render';
 
@@ -82,6 +82,18 @@ describe('meetings', () => {
       new File(['a'], 'a.mp4', { type: 'video/mp4' }),
     );
     expect(await screen.findByText('Upload failed')).toBeInTheDocument();
+  });
+
+  it('upload cap matches the backend 2 GB (2_000_000_000 bytes)', () => {
+    expect(MAX_UPLOAD_BYTES).toBe(2_000_000_000);
+    const sized = (n: number) => {
+      const f = new File(['a'], 'a.mp4', { type: 'video/mp4' });
+      Object.defineProperty(f, 'size', { value: n });
+      return f;
+    };
+    expect(validateUploadFile(sized(2_000_000_000))).toBeNull();
+    expect(validateUploadFile(sized(2_000_000_001))).toBe('The file is larger than 2 GB.');
+    expect(validateUploadFile(sized(5 * 1024 ** 3))).toBe('The file is larger than 2 GB.');
   });
 
   it('validateUploadFile enforces type and size', () => {
