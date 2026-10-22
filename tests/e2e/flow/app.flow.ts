@@ -115,27 +115,59 @@ test.describe('web flow (PR #48 web + createServer API)', () => {
     await expect(page).toHaveURL(/\/meetings$/);
   });
 
-  test('[E2E-05] org switcher lists the orgs created via the API and switches the org scope', async ({
-    page,
-    api,
-  }) => {
+  /** Log in a user with two orgs, open /meetings, and return the switcher plus active/other orgs. */
+  async function twoOrgSetup(page: Page, api: Api) {
     const { email, orgs } = await seedUser(api, ['Alpha QA', 'Beta QA']);
     await uiLogin(page, email, PASSWORD);
     await expect(page.getByTestId('app-shell')).toBeVisible();
     const switcher = page.getByRole('combobox', { name: 'Organization' });
     await expect(switcher).toHaveText(/Alpha QA|Beta QA/);
-    const active = (await switcher.innerText()).includes('Alpha QA') ? 0 : 1;
-    const other = orgs[1 - active]!;
+    const activeIdx = (await switcher.innerText()).includes('Alpha QA') ? 0 : 1;
     await page.goto('/meetings');
     await expect(page.getByRole('heading', { name: 'Meetings' })).toBeVisible();
-    const otherMeetings = page.waitForRequest((r) =>
-      r.url().includes(`/api/orgs/${other.id}/meetings`),
-    );
+    return { switcher, active: orgs[activeIdx]!, other: orgs[1 - activeIdx]! };
+  }
+
+  test('[E2E-05] org switcher switches via POST /auth/switch-org (contracts v0.3)', async ({
+    page,
+    api,
+  }) => {
+    // BE-GAP-2: contracts v0.3 and PR #48 use POST /auth/switch-org; the API on
+    // integration/phase-1 only has POST /orgs/switch, so the switch returns 404. Left failing.
+    test.fail(true, 'BE-GAP-2: API has no POST /auth/switch-org (404)');
+    const { switcher, other } = await twoOrgSetup(page, api);
+    const switchResp = page.waitForResponse((r) => r.url().endsWith('/api/auth/switch-org'));
     await switcher.click();
     await expect(page.getByRole('option')).toHaveText(['Alpha QA', 'Beta QA']);
     await page.getByRole('option', { name: other.name }).click();
+    const resp = await switchResp;
+    expect(resp.request().postDataJSON()).toEqual({ organizationId: other.id });
+    expect(resp.status()).toBe(200);
     await expect(switcher).toContainText(other.name);
-    await otherMeetings;
+    await page.waitForRequest((r) => r.url().includes(`/api/orgs/${other.id}/meetings`));
+  });
+
+  test('[E2E-05b] a failed org switch keeps the current org (no cross-org requests)', async ({
+    page,
+    api,
+  }) => {
+    const { switcher, active, other } = await twoOrgSetup(page, api);
+    const otherOrgRequests: string[] = [];
+    page.on('request', (r) => {
+      if (r.url().includes(`/api/orgs/${other.id}/`)) otherOrgRequests.push(r.url());
+    });
+    // Force the switch to fail regardless of whether the endpoint exists.
+    await page.route('**/api/auth/switch-org', (route) =>
+      route.fulfill({ status: 404, json: { error: { code: 'NOT_FOUND', message: 'Not found' } } }),
+    );
+    const switchResp = page.waitForResponse((r) => r.url().endsWith('/api/auth/switch-org'));
+    await switcher.click();
+    await page.getByRole('option', { name: other.name }).click();
+    await switchResp;
+    await expect(switcher).toContainText(active.name);
+    await page.reload();
+    await expect(switcher).toContainText(active.name);
+    expect(otherOrgRequests).toEqual([]);
   });
 
   test('[E2E-06] user without organizations sees a disabled switcher', async ({ page, api }) => {

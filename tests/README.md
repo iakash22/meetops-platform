@@ -102,7 +102,7 @@ When either variable is unset or a build is missing, the suite is skipped.
 QA_WEB_DIR=/path/pr48/apps/web QA_API_DIR=/path/phase-1/apps/api pnpm --filter @meetops/tests test:e2e:flow
 ```
 
-The tests are E2E-01..13 (plus 07b and 07c). They cover the guard redirect, login, a bad login, `?next=`, the org switcher, no orgs, org creation from the UI, meetings rendering with a stubbed endpoint, meetings against the real API (BE-GAP-1), and the API being aborted, stopped, returning 503 JSON, or returning a 502 HTML page (all redirect to `/login?next=`).
+The tests are E2E-01..13 (plus 05b, 07b and 07c). They cover the guard redirect, login, a bad login, `?next=`, the org switcher, no orgs, org creation from the UI, meetings rendering with a stubbed endpoint, meetings against the real API (BE-GAP-1), and the API being aborted, stopped, returning 503 JSON, or returning a 502 HTML page (all redirect to `/login?next=`).
 
 ## Known product bugs (tests left failing or `it.fails`)
 
