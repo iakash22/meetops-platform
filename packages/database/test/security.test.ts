@@ -909,3 +909,20 @@ describe('security review fixes (static)', () => {
     );
   });
 });
+
+describe('architecture review B1 and audit hatch (static)', () => {
+  it('B1: accept_invitation refuses active members and only revives soft-deleted rows', () => {
+    const sql = secDir('20261022040000_accept_invitation_active_member');
+    expect(sql).toContain("RAISE EXCEPTION 'already_member'");
+    expect(sql).toMatch(/m\.deleted_at IS NULL\s+FOR UPDATE;/);
+    expect(sql).toContain(
+      'ON CONFLICT (org_id, user_id) DO UPDATE SET role = EXCLUDED.role, deleted_at = NULL, updated_at = now()\n  WHERE memberships.deleted_at IS NOT NULL',
+    );
+  });
+
+  it('audit maintenance hatch keys on session_user, not current_user', () => {
+    const sql = secDir('20261022041000_audit_hatch_session_user');
+    expect(sql).toContain("AND session_user = 'meetops_migrator' THEN");
+    expect(sql).not.toMatch(/pg_has_role\(current_user/);
+  });
+});

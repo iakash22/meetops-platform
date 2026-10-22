@@ -196,6 +196,67 @@ describe.skipIf(!APP_URL || !OWNER_URL)('invitation definer functions (live)', (
     }
   });
 
+  it('B1: the sole owner accepting a viewer invite is refused; org keeps 1 owner; invite stays pending', async () => {
+    const soleOrg = randomUUID();
+    const ownerId = randomUUID();
+    const email = `sole-${ownerId}@example.test`;
+    const hash = `hash-${randomUUID()}`;
+    await owner.organization.create({
+      data: { id: soleOrg, name: 'Sole', slug: `sole-${soleOrg}` },
+    });
+    await owner.user.create({ data: { id: ownerId, email } });
+    await runWithOrgContext(owner, soleOrg, async (tx) => {
+      await tx.membership.create({
+        data: { organizationId: soleOrg, userId: ownerId, role: 'owner' },
+      });
+      await tx.invitation.create({
+        data: {
+          organizationId: soleOrg,
+          email,
+          role: 'viewer',
+          tokenHash: hash,
+          expiresAt: new Date(Date.now() + 3_600_000),
+        },
+      });
+    });
+    await expect(
+      app.$queryRaw`SELECT * FROM accept_invitation(${hash}, ${ownerId}::uuid)`,
+    ).rejects.toThrow(/already_member/);
+    const after = await runWithOrgContext(app, soleOrg, async (tx) => ({
+      owners: await tx.membership.count({ where: { role: 'owner', deletedAt: null } }),
+      role: (await tx.membership.findFirst({ where: { userId: ownerId } }))?.role,
+      inv: (await tx.invitation.findFirst({ where: { tokenHash: hash } }))?.status,
+      audits: await tx.auditEvent.count({ where: { action: 'invitation.accepted' } }),
+    }));
+    expect(after).toEqual({ owners: 1, role: 'owner', inv: 'pending', audits: 0 });
+  });
+
+  it('B1: an active member accepting any invite is refused and keeps their role', async () => {
+    const memberId = randomUUID();
+    const email = `active-${memberId}@example.test`;
+    const hash = `hash-${randomUUID()}`;
+    await owner.user.create({ data: { id: memberId, email } });
+    await runWithOrgContext(owner, organizationId, async (tx) => {
+      await tx.membership.create({ data: { organizationId, userId: memberId, role: 'member' } });
+      await tx.invitation.create({
+        data: {
+          organizationId,
+          email,
+          role: 'admin',
+          tokenHash: hash,
+          expiresAt: new Date(Date.now() + 3_600_000),
+        },
+      });
+    });
+    await expect(
+      app.$queryRaw`SELECT * FROM accept_invitation(${hash}, ${memberId}::uuid)`,
+    ).rejects.toThrow(/already_member/);
+    const m = await runWithOrgContext(app, organizationId, (tx) =>
+      tx.membership.findFirst({ where: { userId: memberId } }),
+    );
+    expect(m?.role).toBe('member');
+  });
+
   it('BLOCKER: a removed owner re-invited as viewer comes back as viewer, not owner', async () => {
     const exOwner = randomUUID();
     const email = `ex-owner-${exOwner}@example.test`;
@@ -777,12 +838,59 @@ describe.skipIf(!OWNER_URL || !ADMIN_URL)(
       const rows = await admin.$queryRaw<{ actor_id: string | null; action: string }[]>`
       SELECT actor_id, action FROM audit_events WHERE org_id = ${organizationId}::uuid`;
       expect(rows).toEqual([{ actor_id: null, action: 'org.updated' }]);
-      const n = await admin.$transaction(async (tx) => {
-        await tx.$executeRaw`SELECT set_config('meetops.audit_maintenance', 'on', true)`;
-        return tx.$executeRaw`UPDATE audit_events SET metadata = '{"redacted":true}'::jsonb WHERE org_id = ${organizationId}::uuid`;
-      });
+      // the hatch is keyed on session_user: a superuser session with the GUC is still refused
+      await expect(
+        admin.$transaction(async (tx) => {
+          await tx.$executeRaw`SELECT set_config('meetops.audit_maintenance', 'on', true)`;
+          return tx.$executeRaw`UPDATE audit_events SET metadata = '{}'::jsonb WHERE org_id = ${organizationId}::uuid`;
+        }),
+      ).rejects.toThrow(/append-only/);
+      // a maintenance migration (session meetops_migrator, own NO FORCE window, GUC on) may change rows
+      class Rollback extends Error {}
+      let n = -1;
+      await expect(
+        owner.$transaction(async (tx) => {
+          await tx.$executeRaw`ALTER TABLE audit_events NO FORCE ROW LEVEL SECURITY`;
+          await tx.$executeRaw`SELECT set_config('meetops.audit_maintenance', 'on', true)`;
+          n =
+            await tx.$executeRaw`UPDATE audit_events SET metadata = '{"redacted":true}'::jsonb WHERE org_id = ${organizationId}::uuid`;
+          throw new Rollback('rollback');
+        }),
+      ).rejects.toThrow('rollback');
       expect(n).toBe(1);
       await admin.$disconnect();
+    });
+
+    it('a migrator-owned SECURITY DEFINER function cannot open the hatch for the app (session_user check)', async () => {
+      if (!APP_URL) return;
+      const app = new PrismaClient({ datasources: { db: { url: APP_URL } } });
+      const fn = `zz_spoof_${randomUUID().replace(/-/g, '')}`;
+      await owner.$executeRawUnsafe(`
+        CREATE FUNCTION public.${fn}(p_org uuid) RETURNS bigint LANGUAGE plpgsql SECURITY DEFINER
+        SET search_path = public, pg_temp AS $f$
+        DECLARE n bigint;
+        BEGIN
+          ALTER TABLE audit_events NO FORCE ROW LEVEL SECURITY;
+          UPDATE audit_events SET action = 'tampered' WHERE org_id = p_org;
+          GET DIAGNOSTICS n = ROW_COUNT;
+          ALTER TABLE audit_events FORCE ROW LEVEL SECURITY;
+          RETURN n;
+        END $f$`);
+      await owner.$executeRawUnsafe(`GRANT EXECUTE ON FUNCTION public.${fn}(uuid) TO meetops_app`);
+      try {
+        await expect(
+          app.$transaction(async (tx) => {
+            await tx.$executeRaw`SELECT set_config('meetops.audit_maintenance', 'on', true)`;
+            return tx.$queryRawUnsafe(`SELECT public.${fn}($1::uuid)`, organizationId);
+          }),
+        ).rejects.toThrow(/append-only/);
+      } finally {
+        await owner.$executeRawUnsafe(`DROP FUNCTION public.${fn}(uuid)`);
+        await app.$disconnect();
+      }
+      const forced = await owner.$queryRaw<{ f: boolean }[]>`
+        SELECT relforcerowsecurity AS f FROM pg_class WHERE oid = 'public.audit_events'::regclass`;
+      expect(forced).toEqual([{ f: true }]);
     });
 
     it('every table with RLS enabled is forced', async () => {
