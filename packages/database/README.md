@@ -8,11 +8,11 @@ Prisma schema, migrations, seed and tenant-safe client for MeetOps (PostgreSQL 1
 
 ## Roles and env
 
-| Role                       | Purpose                                                                              | Env                                           |
-| -------------------------- | ------------------------------------------------------------------------------------ | --------------------------------------------- |
-| `meetops_app`              | runtime (NOBYPASSRLS, DML only)                                                      | `DATABASE_URL`                                |
-| `meetops_migrator`         | owns the schema; runs migrations                                                     | `MIGRATION_DATABASE_URL` (Prisma `directUrl`) |
-| `meetops_relay` (optional) | outbox relay (BYPASSRLS; only SELECT plus delivery-column UPDATE on `outbox_events`) | relay service URL                             |
+| Role                       | Purpose                                                                                                           | Env                                           |
+| -------------------------- | ----------------------------------------------------------------------------------------------------------------- | --------------------------------------------- |
+| `meetops_app`              | runtime (NOBYPASSRLS, DML only)                                                                                   | `DATABASE_URL`                                |
+| `meetops_migrator`         | owns the schema; runs migrations                                                                                  | `MIGRATION_DATABASE_URL` (Prisma `directUrl`) |
+| `meetops_relay` (optional) | outbox relay (NOBYPASSRLS, no table privileges; only `relay_claim_outbox_events` / `relay_complete_outbox_event`) | relay service URL                             |
 
 ## Local setup
 

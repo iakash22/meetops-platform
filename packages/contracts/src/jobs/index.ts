@@ -21,6 +21,15 @@ export const SttProviderId = Type.Union([
   Type.Literal('deepgram'),
 ]);
 export type SttProviderId = Static<typeof SttProviderId>;
+export { STT_PROVIDER_IDS, TRANSCRIPT_PROVIDER_IDS } from '../constants.js';
+
+/**
+ * Provider recorded on a `Transcript`: every `SttProviderId` plus `'unknown'`.
+ * `'unknown'` is for legacy rows backfilled by the DB migration only (ADR-004 addendum 2); new transcripts MUST record a
+ * real `SttProviderId`. Never use this type for provider routing; use `SttProviderId`.
+ */
+export const TranscriptProviderId = Type.Union([...SttProviderId.anyOf, Type.Literal('unknown')]);
+export type TranscriptProviderId = Static<typeof TranscriptProviderId>;
 
 /** Known LLM provider ids. Gemini is primary; Ollama is local; OpenAI optional. */
 export const LlmProviderId = Type.Union([

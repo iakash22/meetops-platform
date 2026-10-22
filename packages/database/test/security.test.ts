@@ -829,3 +829,100 @@ describe('transcripts.recording_id required (contracts Transcript.recordingId)',
     expect(sql).toContain('ALTER TABLE "transcripts" FORCE ROW LEVEL SECURITY;');
   });
 });
+
+const secDir = (name: string) =>
+  readFileSync(resolve(migrationsDir, name, 'migration.sql'), 'utf8');
+
+describe('security review fixes (static)', () => {
+  it('BLOCKER: accept_invitation takes the invitation role on conflict', () => {
+    expect(secDir('20261022030000_accept_invitation_role')).toContain(
+      'ON CONFLICT (org_id, user_id) DO UPDATE SET role = EXCLUDED.role, deleted_at = NULL, updated_at = now()',
+    );
+  });
+
+  it('(1) lookup filters to pending, unexpired, not revoked/deleted, minimal fields', () => {
+    const sql = secDir('20261022031000_invitation_lookup_pending');
+    for (const f of [
+      "i.status = 'pending'",
+      'i.expires_at > now()',
+      'i.revoked_at IS NULL',
+      'i.deleted_at IS NULL',
+    ]) {
+      expect(sql).toContain(f);
+    }
+    expect(sql).toContain(
+      'RETURNS TABLE (id uuid, org_id uuid, email text, role "MembershipRole", expires_at timestamptz)',
+    );
+  });
+
+  it('(2) audit append-only trigger; org-NULL inserts only via allowlisted definer', () => {
+    const sql = secDir('20261022032000_audit_append_only');
+    expect(sql).toContain('BEFORE UPDATE OR DELETE ON "audit_events"');
+    expect(sql).toContain('BEFORE TRUNCATE ON "audit_events"');
+    expect(sql).toMatch(
+      /CREATE POLICY audit_insert ON "audit_events" FOR INSERT\n\s+WITH CHECK \(org_id = NULLIF/,
+    );
+    expect(sql).not.toMatch(/org_id IS NULL OR/);
+    expect(sql).toContain('SECURITY DEFINER');
+    expect(sql).toContain("RAISE EXCEPTION 'audit_action_not_allowed'");
+    expect(sql).toContain('REVOKE ALL ON FUNCTION public.record_global_auth_event');
+  });
+
+  it('(3) relay reads only through definer functions; no table grants, no BYPASSRLS in scripts', () => {
+    const sql = secDir('20261022033000_relay_definer_functions');
+    expect(sql).toContain('REVOKE ALL ON ALL TABLES IN SCHEMA %I FROM meetops_relay');
+    expect(sql).toContain(
+      'GRANT EXECUTE ON FUNCTION public.relay_claim_outbox_events(integer) TO meetops_relay;',
+    );
+    for (const f of ['scripts/bootstrap-roles.sql', 'scripts/create-db-roles.ts']) {
+      const src = readFileSync(resolve(pkgDir, f), 'utf8');
+      expect(src, f).not.toMatch(/meetops_relay[^\n]*\bBYPASSRLS/);
+      expect(src, f).not.toMatch(/GRANT (SELECT|UPDATE)[^\n]*outbox_events TO meetops_relay/);
+    }
+  });
+
+  it('(4) every NO FORCE is re-forced in the same migration, and a final assertion guards the chain', () => {
+    for (const d of readdirSync(migrationsDir, { withFileTypes: true }).filter((e) =>
+      e.isDirectory(),
+    )) {
+      const sql = secDir(d.name);
+      // Prisma sends each file as one multi-statement query: Postgres runs it as one implicit transaction,
+      // and statements after an explicit COMMIT form one more implicit transaction (both verified live).
+      // So any explicit BEGIN/COMMIT must come before the first NO FORCE, keeping the window atomic.
+      const firstNoForce = sql.indexOf('NO FORCE ROW LEVEL SECURITY');
+      if (firstNoForce >= 0) {
+        const txControl = [...sql.matchAll(/^\s*(BEGIN|COMMIT)\s*;/gim)].map((m) => m.index ?? 0);
+        expect(
+          txControl.filter((i) => i > firstNoForce),
+          d.name,
+        ).toEqual([]);
+      }
+      for (const m of sql.matchAll(/ALTER TABLE "(\w+)" NO FORCE ROW LEVEL SECURITY;/g)) {
+        const after = sql.slice((m.index ?? 0) + m[0].length);
+        expect(after, `${d.name}: ${m[1]}`).toContain(
+          `ALTER TABLE "${m[1]}" FORCE ROW LEVEL SECURITY;`,
+        );
+      }
+    }
+    expect(secDir('20261022034000_assert_forced_rls')).toContain(
+      "RAISE EXCEPTION 'RLS enabled but not forced on: %'",
+    );
+  });
+});
+
+describe('architecture review B1 and audit hatch (static)', () => {
+  it('B1: accept_invitation refuses active members and only revives soft-deleted rows', () => {
+    const sql = secDir('20261022040000_accept_invitation_active_member');
+    expect(sql).toContain("RAISE EXCEPTION 'already_member'");
+    expect(sql).toMatch(/m\.deleted_at IS NULL\s+FOR UPDATE;/);
+    expect(sql).toContain(
+      'ON CONFLICT (org_id, user_id) DO UPDATE SET role = EXCLUDED.role, deleted_at = NULL, updated_at = now()\n  WHERE memberships.deleted_at IS NOT NULL',
+    );
+  });
+
+  it('audit maintenance hatch keys on session_user, not current_user', () => {
+    const sql = secDir('20261022041000_audit_hatch_session_user');
+    expect(sql).toContain("AND session_user = 'meetops_migrator' THEN");
+    expect(sql).not.toMatch(/pg_has_role\(current_user/);
+  });
+});
