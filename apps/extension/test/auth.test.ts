@@ -52,6 +52,10 @@ function setup(handler: Handler) {
   const calls: Call[] = [];
   const session = memoryKV();
   const install = memoryKV();
+  const alarms = {
+    schedule: vi.fn<(when: number) => Promise<void>>(async () => {}),
+    clear: vi.fn(async () => {}),
+  };
   const openTab = vi.fn<(url: string) => Promise<void>>(async () => {});
   const deps: AuthDeps = {
     session,
@@ -71,12 +75,14 @@ function setup(handler: Handler) {
     randomUUID: () => DEVICE,
     openTab,
     validators,
+    alarms,
   };
   const auth = new AuthService(deps);
   return {
     auth,
     calls,
     session,
+    alarms,
     install,
     openTab,
     advance: (ms: number) => (now += ms),
@@ -447,5 +453,49 @@ describe('redaction', () => {
     expect(safeErrorMessage(new Error('failed with Bearer abc.DEF-123'))).toBe(
       'failed with Bearer [REDACTED]',
     );
+  });
+});
+
+describe('nonce expiry alarm (N1)', () => {
+  it('schedules a one-shot alarm 5 minutes out when the nonce is created', async () => {
+    const s = setup(() => ({ status: 500 }));
+    await s.auth.startPairing();
+    expect(s.alarms.schedule).toHaveBeenCalledTimes(1);
+    expect(s.alarms.schedule).toHaveBeenCalledWith(T0 + NONCE_TTL_MS);
+    expect(s.alarms.clear).not.toHaveBeenCalled();
+  });
+
+  it('deletes the nonce when the alarm fires at expiry, without a read', async () => {
+    const s = setup(() => ({ status: 500 }));
+    await s.auth.startPairing();
+    s.advance(NONCE_TTL_MS);
+    await s.auth.onNonceAlarm();
+    expect(s.session.data.has(NONCE_KEY)).toBe(false);
+  });
+
+  it('re-arms instead of deleting if the alarm fires early, and ignores a missing nonce', async () => {
+    const s = setup(() => ({ status: 500 }));
+    await s.auth.startPairing();
+    s.advance(60_000);
+    await s.auth.onNonceAlarm();
+    expect(s.session.data.has(NONCE_KEY)).toBe(true);
+    expect(s.alarms.schedule).toHaveBeenLastCalledWith(T0 + NONCE_TTL_MS);
+    await s.session.remove(NONCE_KEY);
+    await expect(s.auth.onNonceAlarm()).resolves.toBeUndefined();
+  });
+
+  it('clears the alarm when the nonce is consumed', async () => {
+    const s = setup((c) => ({ status: 200, body: tokenBody({ nonce: body(c).nonce as string }) }));
+    expect((await pair(s)).ok).toBe(true);
+    expect(s.alarms.clear).toHaveBeenCalled();
+    expect(s.session.data.has(NONCE_KEY)).toBe(false);
+  });
+
+  it('clears the alarm on unpair', async () => {
+    const s = setup(() => ({ status: 500 }));
+    await s.auth.startPairing();
+    await s.auth.unpair();
+    expect(s.alarms.clear).toHaveBeenCalledTimes(1);
+    expect(s.session.data.has(NONCE_KEY)).toBe(false);
   });
 });

@@ -24,6 +24,15 @@ export const NONCE_KEY = 'auth.nonce';
 export const TOKENS_KEY = 'auth.tokens';
 export const REPAIR_KEY = 'auth.repair';
 export const DEVICE_ID_KEY = 'auth.deviceId';
+/** One-shot chrome.alarms alarm that deletes an unused pairing nonce at expiry (distinct from the recorder watchdog). */
+export const NONCE_ALARM = 'meetops-pairing-nonce-expiry';
+
+/** One-shot timer used to delete the nonce at expiry (chrome.alarms in production). */
+export interface NonceAlarms {
+  /** Schedule (or replace) the one-shot NONCE_ALARM at epoch ms `when`. */
+  schedule(when: number): Promise<void>;
+  clear(): Promise<void>;
+}
 
 interface StoredNonce {
   value: string;
@@ -70,6 +79,7 @@ export interface AuthDeps {
   randomUUID: () => string;
   openTab: (url: string) => Promise<void>;
   validators: Validators;
+  alarms: NonceAlarms;
 }
 
 /** Minimal sender shape of chrome.runtime.MessageSender used for the origin check. */
@@ -114,11 +124,27 @@ export class AuthService {
     return { state: n ? 'pairing' : 'unpaired' };
   }
 
+  private async removeNonce(): Promise<void> {
+    await this.d.session.remove(NONCE_KEY);
+    await this.d.alarms.clear();
+  }
+
+  /** NONCE_ALARM fired: delete the nonce if it has expired (a newer nonce reschedules the alarm itself). */
+  async onNonceAlarm(): Promise<void> {
+    const n = await this.d.session.get<StoredNonce>(NONCE_KEY);
+    if (!n) return;
+    if (this.d.now() - n.createdAt >= NONCE_TTL_MS || n.createdAt > this.d.now()) {
+      await this.d.session.remove(NONCE_KEY);
+    } else {
+      await this.d.alarms.schedule(n.createdAt + NONCE_TTL_MS); // fired early: re-arm
+    }
+  }
+
   private async liveNonce(): Promise<StoredNonce | undefined> {
     const n = await this.d.session.get<StoredNonce>(NONCE_KEY);
     if (!n) return undefined;
     if (this.d.now() - n.createdAt >= NONCE_TTL_MS || n.createdAt > this.d.now()) {
-      await this.d.session.remove(NONCE_KEY);
+      await this.removeNonce();
       return undefined;
     }
     return n;
@@ -135,6 +161,7 @@ export class AuthService {
     };
     const deviceId = await this.deviceId();
     await this.d.session.set(NONCE_KEY, nonce);
+    await this.d.alarms.schedule(nonce.createdAt + NONCE_TTL_MS);
     const q = new URLSearchParams({
       extensionId: this.d.extensionId,
       deviceId,
@@ -162,7 +189,7 @@ export class AuthService {
     this.exchanging = true;
     try {
       // Single use: consume before the network round trip so a replay cannot reuse it.
-      await this.d.session.remove(NONCE_KEY);
+      await this.removeNonce();
       const body: ExtensionTokenRequest = {
         extensionId: this.d.extensionId,
         deviceId: await this.deviceId(),
@@ -205,14 +232,14 @@ export class AuthService {
   /** Drop all credentials and ask the user to pair again. */
   async requireRepair(reason: RepairReason): Promise<void> {
     await this.d.session.remove(TOKENS_KEY);
-    await this.d.session.remove(NONCE_KEY);
+    await this.removeNonce();
     await this.d.session.set(REPAIR_KEY, reason);
   }
 
   async unpair(): Promise<void> {
     const t = await this.d.session.get<StoredTokens>(TOKENS_KEY);
     await this.d.session.remove(TOKENS_KEY);
-    await this.d.session.remove(NONCE_KEY);
+    await this.removeNonce();
     await this.d.session.remove(REPAIR_KEY);
     if (t) await this.revokeQuietly(t);
   }

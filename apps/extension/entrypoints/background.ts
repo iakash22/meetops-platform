@@ -5,10 +5,11 @@ import {
   serialized,
   type BackgroundDeps,
 } from '../src/lib/background-handler.js';
-import { AuthService } from '../src/lib/auth/auth-service.js';
+import { AuthService, NONCE_ALARM } from '../src/lib/auth/auth-service.js';
 import { authConfig } from '../src/lib/auth/config.js';
 import { isAuthRequest, type AuthRequest, type AuthResponse } from '../src/lib/auth/messages.js';
 import { validators } from '../src/lib/auth/validate.js';
+import { routeAlarm, WATCHDOG_ALARM } from '../src/lib/alarms.js';
 import { ChunkStore } from '../src/lib/chunk-store.js';
 import { safeErrorMessage } from '../src/lib/redact.js';
 import { drainQueue } from '../src/lib/drain.js';
@@ -17,7 +18,6 @@ import { sessionKV } from '../src/lib/storage.js';
 import { StubUploadClient } from '../src/lib/upload.js';
 
 const OFFSCREEN_PATH = '/offscreen.html';
-const WATCHDOG_ALARM = 'meetops-recorder-watchdog';
 
 // ADR-005 pairing. Tokens live only in chrome.storage.session (access level left at the default TRUSTED_CONTEXTS).
 const auth = new AuthService({
@@ -33,6 +33,14 @@ const auth = new AuthService({
     await chrome.tabs.create({ url });
   },
   validators,
+  alarms: {
+    async schedule(when) {
+      await chrome.alarms.create(NONCE_ALARM, { when });
+    },
+    async clear() {
+      await chrome.alarms.clear(NONCE_ALARM);
+    },
+  },
 });
 
 async function handleAuth(msg: AuthRequest): Promise<AuthResponse> {
@@ -142,7 +150,10 @@ export default defineBackground(() => {
   });
 
   chrome.alarms.onAlarm.addListener((alarm) => {
-    if (alarm.name === WATCHDOG_ALARM) void locked(() => checkWatchdog(deps));
+    routeAlarm(alarm.name, {
+      watchdog: () => void locked(() => checkWatchdog(deps)),
+      nonceExpiry: () => void auth.onNonceAlarm(),
+    });
   });
 
   // Retry queued chunks after a browser restart or extension install/update/reload.
