@@ -1,10 +1,11 @@
 {
   "name": "@meetops/contracts",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "type": "module",
   "main": "dist/index.js",
   "types": "src/index.ts",
+  "sideEffects": false,
   "files": [
     "dist"
   ],
@@ -27,6 +28,10 @@
     "./legacy": {
       "types": "./src/legacy.ts",
       "import": "./dist/legacy.js"
+    },
+    "./types": {
+      "types": "./src/types.ts",
+      "import": "./dist/types.js"
     }
   },
   "dependencies": {
