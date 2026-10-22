@@ -8,6 +8,16 @@ import { useOrgStore } from '@/stores/org-store';
 
 export const SESSION_STALE_MS = 60_000;
 
+/**
+ * Errors that mean "no usable session" for routing: 401, API unreachable
+ * (fetch throws, e.g. TypeError: Failed to fetch) or a 5xx. The user is sent to
+ * /login instead of the app crashing.
+ */
+export function isSignedOutForRouting(e: unknown): boolean {
+  if (e instanceof ApiError) return e.status === 401 || e.status >= 500 || e.status === 0;
+  return true; // network / abort / unexpected non-API error
+}
+
 /** Current cookie session from GET /auth/session (null when signed out). */
 export function sessionQueryOptions(api: ApiClient) {
   return {
@@ -16,7 +26,7 @@ export function sessionQueryOptions(api: ApiClient) {
       try {
         return await api.auth.session();
       } catch (e) {
-        if (e instanceof ApiError && e.status === 401) return null;
+        if (isSignedOutForRouting(e)) return null;
         throw e;
       }
     },

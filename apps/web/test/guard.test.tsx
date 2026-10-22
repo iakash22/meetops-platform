@@ -2,6 +2,7 @@ import { act, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ApiError } from '@/lib/api/client';
 import { useOrgStore } from '@/stores/org-store';
+import { isSignedOutForRouting } from '@/features/session/use-session';
 import { createMockApi, renderApp, resetStores } from './fixtures/render';
 
 const unauthenticated = () =>
@@ -42,5 +43,59 @@ describe('auth guard', () => {
     await waitFor(() => expect(history.location.pathname).toBe('/login'));
     expect(new URLSearchParams(history.location.search).get('next')).toBe('/projects');
     expect(useOrgStore.getState().currentOrganizationId).toBeNull();
+  });
+
+  it.each([
+    [
+      'network error (fetch throws)',
+      () => vi.fn().mockRejectedValue(new TypeError('Failed to fetch')),
+    ],
+    [
+      '503 from /auth/session',
+      () => vi.fn().mockRejectedValue(new ApiError(503, 'PROVIDER_UNAVAILABLE', 'down', 'r503')),
+    ],
+    [
+      '500 with unparseable body',
+      () => vi.fn().mockRejectedValue(new ApiError(500, 'UNKNOWN', 'Request failed')),
+    ],
+  ])('redirects to /login?next= without crashing on %s', async (_label, makeSession) => {
+    const errors: unknown[] = [];
+    const onError = (e: ErrorEvent) => errors.push(e.error);
+    window.addEventListener('error', onError);
+    const api = createMockApi({ auth: { session: makeSession() } });
+    const { history } = renderApp('/meetings/mtg_1?tab=summary', api);
+    expect(await screen.findByRole('heading', { name: 'Sign in' })).toBeInTheDocument();
+    expect(history.location.pathname).toBe('/login');
+    expect(new URLSearchParams(history.location.search).get('next')).toBe(
+      '/meetings/mtg_1?tab=summary',
+    );
+    expect(screen.queryByTestId('app-shell')).not.toBeInTheDocument();
+    expect(api.meetings.get).not.toHaveBeenCalled();
+    window.removeEventListener('error', onError);
+    expect(errors).toEqual([]);
+  });
+
+  it('does not loop when /login is opened while the API is down', async () => {
+    const session = vi.fn().mockRejectedValue(new TypeError('Failed to fetch'));
+    const { history } = renderApp('/login', createMockApi({ auth: { session } }));
+    expect(await screen.findByRole('heading', { name: 'Sign in' })).toBeInTheDocument();
+    expect(history.location.href).toBe('/login');
+    expect(session).not.toHaveBeenCalled();
+  });
+
+  it('still surfaces non-routing errors via the guard as signed-out (no crash)', async () => {
+    const session = vi.fn().mockRejectedValue(new ApiError(403, 'FORBIDDEN', 'x', 'r'));
+    const { history } = renderApp('/tasks', createMockApi({ auth: { session } }));
+    expect(await screen.findByRole('heading', { name: 'Sign in' })).toBeInTheDocument();
+    expect(history.location.pathname).toBe('/login');
+  });
+});
+
+describe('isSignedOutForRouting', () => {
+  it('classifies errors', () => {
+    expect(isSignedOutForRouting(new TypeError('Failed to fetch'))).toBe(true);
+    expect(isSignedOutForRouting(new ApiError(401, 'UNAUTHENTICATED', 'x'))).toBe(true);
+    expect(isSignedOutForRouting(new ApiError(503, 'UNKNOWN', 'x'))).toBe(true);
+    expect(isSignedOutForRouting(new ApiError(404, 'NOT_FOUND', 'x'))).toBe(false);
   });
 });

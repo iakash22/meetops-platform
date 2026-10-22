@@ -100,7 +100,13 @@ const appLayout = createRoute({
   getParentRoute: () => rootRoute,
   id: 'app',
   beforeLoad: async ({ context, location }) => {
-    const session = await ensureSession(context.queryClient, context.api);
+    let session: Awaited<ReturnType<typeof ensureSession>> = null;
+    try {
+      session = await ensureSession(context.queryClient, context.api);
+    } catch {
+      // Unexpected session failure: treat as signed out rather than crashing.
+      session = null;
+    }
     if (!session) {
       // TanStack Router control flow: redirect() returns a Redirect object to throw.
       // eslint-disable-next-line @typescript-eslint/only-throw-error
