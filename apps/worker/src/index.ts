@@ -1,36 +1,24 @@
-import { createWorker, createQueue } from '@meetops/queue';
+import { pathToFileURL } from 'node:url';
 import { logger } from '@meetops/logger';
+import { startMediaWorker } from './media/index.js';
 
-const QUEUE_NAME = 'example';
+export * from './media/index.js';
 
 async function main() {
-  const worker = createWorker<{ message: string }, string>(
-    QUEUE_NAME,
-    async (job) => {
-      logger.info({ jobId: job.id, data: job.data }, 'processing job');
-      return `processed: ${job.data.message}`;
-    },
-    { concurrency: 2 }
-  );
-
-  const queue = createQueue<{ message: string }>(QUEUE_NAME);
-  await queue.add('hello', { message: 'Hello from MeetOps AI' });
-
+  const { close } = startMediaWorker();
+  logger.info('media worker started');
   const shutdown = async () => {
     logger.info('Shutting down worker...');
-    await Promise.allSettled([worker.close(), queue.close()]);
+    await close();
     process.exit(0);
   };
-
-  process.on('SIGINT', () => {
-    void shutdown();
-  });
-  process.on('SIGTERM', () => {
-    void shutdown();
-  });
+  process.on('SIGINT', () => void shutdown());
+  process.on('SIGTERM', () => void shutdown());
 }
 
-main().catch((err) => {
-  logger.error({ err }, 'Worker failed to start');
-  process.exit(1);
-});
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main().catch((err: unknown) => {
+    logger.error({ err }, 'Worker failed to start');
+    process.exit(1);
+  });
+}
