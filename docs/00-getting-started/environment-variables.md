@@ -44,7 +44,7 @@ These variables are validated via `@meetops/config` (Zod) at runtime. Defaults s
 - `OLLAMA_ENABLED`: false
 - `OLLAMA_BASE_URL`: http://localhost:11434
 - `LOCAL_STT_ENABLED`: false
-- `LOCAL_STT_URL`: http://localhost:8000 (host port; container also listens on 8000. Requires PR #7, unmerged; `.env.example` on `main` still says 8001)
+- `LOCAL_STT_URL`: http://localhost:8001 (host port; the container listens on 8000)
 - `OPENAI_ENABLED`: false
 - `OPENAI_API_KEY`
 - `DEEPGRAM_ENABLED`: false
