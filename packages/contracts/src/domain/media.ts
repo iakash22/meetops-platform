@@ -90,8 +90,7 @@ export const Recording = Type.Object({
 });
 export type Recording = Static<typeof Recording>;
 
-/** Upload cap shared by direct uploads and recording sessions: 2 GB (decimal). */
-export const MAX_MEDIA_BYTES = 2_000_000_000;
+export { MAX_MEDIA_BYTES } from '../constants.js';
 
 /** Explicit allowlist of accepted media MIME types. */
 export const ALLOWED_MEDIA_MIME_TYPES = [
