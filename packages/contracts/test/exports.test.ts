@@ -1,0 +1,41 @@
+import { describe, it, expect, expectTypeOf } from 'vitest';
+import * as C from '../src/index.js';
+import type {
+  ApiErrorCode, ApiErrorEnvelope, CsrfResponse, CursorPage, ForgotPasswordRequest, GetAuthSession,
+  GetAuthSessionResponse, Id, IsoDateTime, LoginRequest, Membership, MeetingSource, Organization,
+  Paginated, Role, SignupRequest, TaskPriority, TaskStatus, User,
+} from '../src/index.js';
+
+describe('main barrel', () => {
+  it.each([
+    'ApiErrorEnvelope', 'ApiErrorCode', 'Paginated', 'CursorPage', 'Organization', 'User', 'Membership', 'Role',
+    'LoginRequest', 'SignupRequest', 'ForgotPasswordRequest', 'ResetPasswordRequest', 'VerifyEmailRequest', 'Id',
+    'IsoDateTime', 'GetAuthSessionResponse', 'GetAuthSession', 'CsrfResponse', 'MeetingSource', 'TaskStatus',
+    'TaskPriority', 'MeetingParticipant', 'ReportContent', 'InitRecordingSessionRequest',
+  ])('exports schema %s', (name) => {
+    expect(C).toHaveProperty(name);
+    expect((C as Record<string, unknown>)[name]).toBeDefined();
+  });
+  it('GetAuthSession is an alias of GetAuthSessionResponse', () => {
+    expect(C.GetAuthSession).toBe(C.GetAuthSessionResponse);
+  });
+  it('exports matching Static types', () => {
+    expectTypeOf<Id>().toEqualTypeOf<string>();
+    expectTypeOf<IsoDateTime>().toEqualTypeOf<string>();
+    expectTypeOf<Role>().toEqualTypeOf<'owner' | 'admin' | 'member' | 'viewer'>();
+    expectTypeOf<TaskStatus>().toEqualTypeOf<'todo' | 'in_progress' | 'done' | 'cancelled'>();
+    expectTypeOf<TaskPriority>().toEqualTypeOf<'low' | 'medium' | 'high' | 'urgent'>();
+    expectTypeOf<MeetingSource>().toEqualTypeOf<'upload' | 'extension' | 'desktop' | 'bot'>();
+    expectTypeOf<ApiErrorCode>().toMatchTypeOf<string>();
+    expectTypeOf<ApiErrorEnvelope['error']['requestId']>().toEqualTypeOf<string>();
+    expectTypeOf<Paginated<User>>().toEqualTypeOf<CursorPage<User>>();
+    expectTypeOf<Organization>().toHaveProperty('slug');
+    expectTypeOf<Membership>().toHaveProperty('role');
+    expectTypeOf<LoginRequest>().toEqualTypeOf<{ email: string; password: string }>();
+    expectTypeOf<SignupRequest>().toHaveProperty('name');
+    expectTypeOf<ForgotPasswordRequest>().toEqualTypeOf<{ email: string }>();
+    expectTypeOf<CsrfResponse>().toEqualTypeOf<{ csrfToken: string }>();
+    expectTypeOf<GetAuthSession>().toEqualTypeOf<GetAuthSessionResponse>();
+    expectTypeOf<GetAuthSessionResponse>().not.toHaveProperty('csrfToken');
+  });
+});
