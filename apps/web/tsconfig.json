@@ -8,7 +8,16 @@
     "outDir": "dist",
     "rootDir": ".",
     "noEmit": true,
-    "types": ["vitest/globals"]
+    "baseUrl": ".",
+    "paths": { "@/*": ["./src/*"] },
+    "types": ["vitest/globals", "@testing-library/jest-dom"]
   },
-  "include": ["src", "vite.config.ts", "tailwind.config.ts", "postcss.config.js", "index.html"]
+  "include": [
+    "src",
+    "test",
+    "vite.config.ts",
+    "tailwind.config.ts",
+    "postcss.config.js",
+    "index.html"
+  ]
 }

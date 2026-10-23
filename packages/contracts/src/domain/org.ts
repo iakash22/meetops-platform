@@ -8,7 +8,7 @@ export const Role = Type.Union([
   Type.Literal('viewer'),
 ]);
 export type Role = Static<typeof Role>;
-export const ROLES = ['owner', 'admin', 'member', 'viewer'] as const satisfies readonly Role[];
+export { ROLES } from '../constants.js';
 
 export const Organization = Type.Object({
   id: Id,
@@ -16,7 +16,7 @@ export const Organization = Type.Object({
   slug: Type.String({ pattern: '^[a-z0-9-]{2,64}$' }),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
-});
+}, { additionalProperties: false });
 export type Organization = Static<typeof Organization>;
 
 export const User = Type.Object({

@@ -1,3 +1,7 @@
+/**
+ * @deprecated Phase 0 hand-written types, kept only for migration. Use PublicFileObject / PresignedUrlDto
+ * (and the internal FileObject) from '@meetops/contracts'. Deprecated in 0.3.0; removal scheduled for 0.4.0.
+ */
 export type EmailAddress = {
   name?: string;
   email: string;
@@ -13,6 +17,7 @@ export type EmailMessage = {
   html?: string;
 };
 
+/** @deprecated Deprecated in 0.3.0; use PublicFileObject or FileObject (internal). Removal in 0.4.0. */
 export type StorageObjectMetadata = {
   key: string;
   bucket: string;
@@ -25,6 +30,7 @@ export type StorageObjectMetadata = {
   custom?: Record<string, string>;
 };
 
+/** @deprecated Deprecated in 0.3.0; use PresignedUrlDto. Removal in 0.4.0. */
 export type PresignedUrl = {
   url: string;
   expiresAt: Date;
