@@ -111,8 +111,9 @@ Key: **Arch** = Architecture PASS, **Sec** = Security PASS, both on the exact he
 - Merge order: #28, #31, #56, and #62, #64, #66. #58 merges with or after #21.
 - Flagged gap: some ADR-005 MUSTs aren't in merged code yet (refresh-family revocation).
 
-### Native Apps — `apps/extension`
-- #55 and #60 are merged.
+### Native Apps — `apps/extension`, `apps/desktop`, mobile app
+- #55 and #60 are merged (extension).
+- Desktop app and mobile app (iOS/Android): planned for Phase 8 (offline recording). No code yet, and the frameworks are not decided.
 - Deferred, LOW: `validateOrigin` should reject `*` and private or loopback hosts in production builds. Pin the production host once the domain is final.
 
 ### Database — `packages/database`
@@ -124,4 +125,5 @@ Key: **Arch** = Architecture PASS, **Sec** = Security PASS, both on the exact he
 ## Blocked on Akash
 - Restarting work after the usage stop.
 - Merging #30 (integration into main), plus #70 (these handoff docs).
+- Choosing the desktop and mobile app frameworks (Phase 8).
 - Confirming Docker Desktop is running on his PC for the local dev stack.

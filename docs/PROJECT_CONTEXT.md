@@ -28,7 +28,12 @@
 - `apps/web`: React, Vite, TanStack, Tailwind 3, shadcn.
 - `apps/worker`: BullMQ workers (media pipeline, AI jobs).
 - `apps/realtime`: realtime events.
-- `apps/extension`: WXT MV3 browser extension (pairing per ADR-005).
+- `apps/extension`: WXT MV3 browser extension (pairing per ADR-005). **Built.**
+- `apps/desktop`: desktop app (offline recording). **Planned, Phase 8, no code yet.** Framework not decided (Akash to choose, e.g. Electron or Tauri).
+- Mobile app (iOS/Android, offline recording): **Planned, Phase 8, no code or folder yet.** Framework not decided (Akash to choose, e.g. React Native/Expo).
+
+Client apps at a glance: Web (built), Browser extension (built), Desktop (planned), Mobile (planned). Roadmap phases 0 to 9 are in `README.md` on `integration/phase-1`.
+
 - `packages/contracts`: TypeBox API contracts (v0.3.2 merged).
 - `packages/database`: Prisma, PostgreSQL, forced RLS.
 - `packages/ai-core`: AI provider registry and model router (PR #21 and #47, not merged yet).
@@ -93,7 +98,7 @@ The coordinator ("Project Plan and Coordinator") reports to **Project Lead**, wh
 | DevOps | `infra/`, `.github/workflows`, scripts | #7, #26, #32, #33, #34, #40 |
 | QA | `tests/` | #57, #68 |
 | Documentation | `docs/`, READMEs | #28, #31, #56, #58, #62, #64, #66 |
-| Native Apps | `apps/extension`, desktop | no open PR (#55, #60 merged) |
+| Native Apps | `apps/extension`, `apps/desktop`, mobile app | no open PR (#55, #60 merged) |
 
 ## 6. Phase status
 
@@ -145,6 +150,7 @@ Docs merge order: #28 → #31 → #56 and #62 → #64 → #66.
 Waiting on Akash:
 - Restarting work after the usage stop.
 - Merging #30 into main.
+- Choosing the desktop and mobile app frameworks (Phase 8).
 
 Environment:
 - Docker Desktop on Akash's Windows PC: needed for the local dev stack, so confirm it's running.
