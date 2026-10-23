@@ -41,9 +41,13 @@ export const ExtensionPairRequest = Type.Object(
   strict,
 );
 export type ExtensionPairRequest = Static<typeof ExtensionPairRequest>;
-/** Carries no tokens. `pairingCode` is single-use, bound to (nonce, extensionId, deviceId, user, org) and expires in ≤60 s. */
+/**
+ * Carries no tokens. `pairingCode` is single-use, bound to (nonce, extensionId, deviceId, user, org) and expires in ≤60 s.
+ * `organizationName` uses SafeDisplayText with the same bounds as `CreateOrganizationRequest.name` (1-200, trimmed),
+ * because the pairing page and extension render it.
+ */
 export const ExtensionPairResponse = Type.Object(
-  { pairingCode: ExtensionPairingCode, expiresAt: IsoDateTime, organizationId: Id, organizationName: Type.String({ minLength: 1, maxLength: 200 }) },
+  { pairingCode: ExtensionPairingCode, expiresAt: IsoDateTime, organizationId: Id, organizationName: SafeDisplayText({ maxLength: 200, trimmed: true }) },
   strict,
 );
 export type ExtensionPairResponse = Static<typeof ExtensionPairResponse>;
