@@ -1,3 +1,5 @@
+import { IDBFactory } from 'fake-indexeddb';
+import 'fake-indexeddb/auto';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { handleBackgroundMessage, type BackgroundDeps } from '../src/lib/background-handler.js';
 import { loadState } from '../src/lib/recorder-state.js';
@@ -16,13 +18,17 @@ export function makeDeps(kv = memoryKV()) {
     now: () => t,
     ensureOffscreen: vi.fn(async () => undefined),
     closeOffscreen: vi.fn(async () => undefined),
-    sendToOffscreen: vi.fn(async () => ({ ok: true })),
+    sendToOffscreen: vi.fn<(m: { type: string }) => Promise<{ ok: boolean }>>(async () => ({
+      ok: true,
+    })),
     hasOffscreen: vi.fn(async () => true),
     startWatchdog: vi.fn(async () => undefined),
     stopWatchdog: vi.fn(async () => undefined),
     finalizeAfterCrash: vi.fn(async () => undefined),
     capturedTabIds: vi.fn(async (): Promise<number[]> => [1, 2, 3, 7, 9]),
     setBadge: vi.fn(async () => undefined),
+    durableKV: memoryKV(),
+    discardLocal: vi.fn<(id: string) => Promise<void>>(async () => undefined),
   } satisfies BackgroundDeps;
   return { deps, advance: (ms: number) => (t += ms) };
 }
@@ -305,5 +311,171 @@ describe('offscreen timeout', () => {
       status: 'idle',
       lastError: expect.stringContaining('did not respond'),
     });
+  });
+});
+
+const S1 = '11111111-1111-4111-8111-111111111111';
+const S2 = '22222222-2222-4222-8222-222222222222';
+
+describe('pending discard marker (captured-tab mismatch)', () => {
+  const mismatch = async (ctx: ReturnType<typeof makeDeps>) => {
+    ctx.deps.capturedTabIds.mockResolvedValue([2]);
+    await handleBackgroundMessage(ctx.deps, bg({ type: 'ACK_CONSENT', tabId: 1 }), popup);
+    await handleBackgroundMessage(
+      ctx.deps,
+      bg({ type: 'START_RECORDING', tabId: 1, streamId: crypto.randomUUID(), meetingId: MID }),
+      popup,
+    );
+    return handleBackgroundMessage(ctx.deps, bg({ type: 'REC_STARTED', sessionId: S1 }), offscreen);
+  };
+
+  it('records the marker before discarding and clears it when the offscreen discard succeeds', async () => {
+    const ctx = makeDeps();
+    let markerDuringDiscard: unknown;
+    ctx.deps.sendToOffscreen.mockImplementation(async () => {
+      markerDuringDiscard = await ctx.deps.durableKV.get('pendingDiscards');
+      return { ok: true };
+    });
+    await mismatch(ctx);
+    expect(markerDuringDiscard).toEqual([{ sessionId: S1, attempts: 0 }]);
+    expect(await ctx.deps.durableKV.get('pendingDiscards')).toBeUndefined();
+    expect(ctx.deps.discardLocal).not.toHaveBeenCalled();
+  });
+
+  it('on offscreen timeout, closes offscreen then deletes locally and clears the marker', async () => {
+    const ctx = makeDeps();
+    ctx.deps.sendToOffscreen.mockImplementation(() => new Promise(() => undefined));
+    const d = { ...ctx.deps, offscreenTimeoutMs: 10 };
+    const order: string[] = [];
+    ctx.deps.closeOffscreen.mockImplementation(async () => void order.push('close'));
+    ctx.deps.discardLocal.mockImplementation(
+      async (id: string) => void order.push(`discard:${id}`),
+    );
+    ctx.deps.capturedTabIds.mockResolvedValue([2]);
+    await handleBackgroundMessage(d, bg({ type: 'ACK_CONSENT', tabId: 1 }), popup);
+    // START also goes through sendToOffscreen; let it succeed once, then hang on DISCARD.
+    ctx.deps.sendToOffscreen.mockResolvedValueOnce({ ok: true });
+    await handleBackgroundMessage(
+      d,
+      bg({ type: 'START_RECORDING', tabId: 1, streamId: 'x1', meetingId: MID }),
+      popup,
+    );
+    const r = await handleBackgroundMessage(
+      d,
+      bg({ type: 'REC_STARTED', sessionId: S2 }),
+      offscreen,
+    );
+    expect(r).toMatchObject({ ok: true, status: 'idle' });
+    expect(order).toEqual(['close', `discard:${S2}`]);
+    expect(await ctx.deps.durableKV.get('pendingDiscards')).toBeUndefined();
+  });
+
+  it('keeps the marker when local cleanup also fails, for retry on the next worker start', async () => {
+    const ctx = makeDeps();
+    ctx.deps.sendToOffscreen.mockImplementation(async (m: { type: string }) => {
+      if (m.type === 'OFFSCREEN_DISCARD') throw new Error('gone');
+      return { ok: true };
+    });
+    ctx.deps.discardLocal.mockRejectedValue(new Error('idb blocked'));
+    await mismatch(ctx);
+    expect(await ctx.deps.durableKV.get('pendingDiscards')).toEqual([
+      { sessionId: S1, attempts: 1 },
+    ]);
+  });
+});
+
+describe('discard that keeps failing (handler)', () => {
+  it('after the cap and a failed fallback, shows the ! badge and a popup message', async () => {
+    const { DISCARD_FAILED_MESSAGE, MAX_DISCARD_ATTEMPTS } =
+      await import('../src/lib/pending-discard.js');
+    const ctx = makeDeps();
+    await ctx.deps.durableKV.set('pendingDiscards', [
+      { sessionId: S1, attempts: MAX_DISCARD_ATTEMPTS - 1 },
+    ]);
+    ctx.deps.sendToOffscreen.mockImplementation(async (m: { type: string }) => {
+      if (m.type === 'OFFSCREEN_DISCARD') throw new Error('gone');
+      return { ok: true };
+    });
+    ctx.deps.discardLocal.mockRejectedValue(new Error('idb blocked'));
+    const deleteLocal = vi.fn(async () => Promise.reject(new Error('still blocked')));
+    const d = { ...ctx.deps, deleteLocal };
+    ctx.deps.capturedTabIds.mockResolvedValue([2]);
+    await handleBackgroundMessage(d, bg({ type: 'ACK_CONSENT', tabId: 1 }), popup);
+    await handleBackgroundMessage(
+      d,
+      bg({ type: 'START_RECORDING', tabId: 1, streamId: 'x9', meetingId: MID }),
+      popup,
+    );
+    await handleBackgroundMessage(d, bg({ type: 'REC_STARTED', sessionId: S1 }), offscreen);
+    expect(deleteLocal).toHaveBeenCalledWith(S1);
+    expect(ctx.deps.setBadge).toHaveBeenLastCalledWith('!');
+    expect(await ctx.deps.durableKV.get('pendingDiscards')).toEqual([
+      { sessionId: S1, attempts: MAX_DISCARD_ATTEMPTS, failed: true },
+    ]);
+    expect(await handleBackgroundMessage(d, bg({ type: 'GET_STATUS' }), popup)).toMatchObject({
+      status: 'idle',
+      lastError: expect.stringContaining(DISCARD_FAILED_MESSAGE),
+    });
+  });
+});
+
+describe('retryPendingDiscards (worker start)', () => {
+  it('deletes each pending session and clears only the ones that succeed', async () => {
+    const { addPendingDiscard, retryPendingDiscards, listPendingDiscards } =
+      await import('../src/lib/pending-discard.js');
+    const kv = memoryKV();
+    await addPendingDiscard(kv, S1);
+    await addPendingDiscard(kv, S2);
+    await addPendingDiscard(kv, S1);
+    const discard = vi.fn(async (id: string) => {
+      if (id === S2) throw new Error('fail');
+    });
+    expect(await retryPendingDiscards(kv, discard)).toEqual([S2]);
+    expect(discard).toHaveBeenCalledTimes(2);
+    discard.mockResolvedValue(undefined);
+    expect(await retryPendingDiscards(kv, discard)).toEqual([]);
+    expect(await listPendingDiscards(kv)).toEqual([]);
+  });
+
+  it('with a real ChunkStore: removes the session and its chunks and aborts consent_revoked', async () => {
+    const { ChunkStore } = await import('../src/lib/chunk-store.js');
+    const { StubUploadClient } = await import('../src/lib/upload.js');
+    const { addPendingDiscard, retryPendingDiscards } =
+      await import('../src/lib/pending-discard.js');
+    const store = await ChunkStore.open({ maxBytes: 1000, policy: 'refuse' }, new IDBFactory());
+    const client = new StubUploadClient();
+    const { sessionId } = await client.initSession({
+      mimeType: 'audio/webm;codecs=opus',
+      startedAt: new Date(0).toISOString(),
+      source: 'tab',
+      meetingId: MID,
+    });
+    await store.putSession({
+      sessionId,
+      meta: {
+        mimeType: 'audio/webm',
+        startedAt: new Date(0).toISOString(),
+        source: 'tab',
+        meetingId: MID,
+      },
+      completed: false,
+    });
+    await store.putChunk({
+      sessionId,
+      seq: 0,
+      data: new ArrayBuffer(3),
+      mimeType: 'audio/webm',
+      createdAt: 0,
+    });
+    const kv = memoryKV();
+    await addPendingDiscard(kv, sessionId);
+    const left = await retryPendingDiscards(kv, async (id) => {
+      await store.deleteSession(id);
+      await client.abort(id, { reason: 'consent_revoked' });
+    });
+    expect(left).toEqual([]);
+    expect(await store.getSession(sessionId)).toBeUndefined();
+    expect(await store.listChunks(sessionId)).toHaveLength(0);
+    expect(client.sessions.get(sessionId)!.aborted).toBe('consent_revoked');
   });
 });

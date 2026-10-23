@@ -8,6 +8,10 @@ export const TaskStatus = Type.Union([
   Type.Literal('cancelled'),
 ]);
 export type TaskStatus = Static<typeof TaskStatus>;
+/** All task statuses, in display order. */
+export { TASK_STATUSES } from '../constants.js';
+/** Alias of `TaskStatus` for FE (equivalent to `Task['status']`). */
+export type TaskStatusValue = TaskStatus;
 
 export const TaskPriority = Type.Union([
   Type.Literal('low'),

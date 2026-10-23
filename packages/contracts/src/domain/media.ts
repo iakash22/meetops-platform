@@ -19,12 +19,12 @@ export type FileObject = Static<typeof FileObject>;
 export const HttpsUrl = Type.String({ format: 'uri', pattern: '^https://', maxLength: 2048 });
 
 /**
- * URL of a presigned storage request. Always allows https. Plain http is allowed only for local development
+ * URL of a presigned storage request. Userinfo (`user@` / `user:pass@`) is always rejected. Always allows https. Plain http is allowed only for local development
  * hosts (localhost, 127.0.0.1, minio, *.localhost) so dev MinIO works. **In production the API must issue https
  * URLs only**, and it should refuse to start with a non-https public storage endpoint. Use `HttpsUrl` for everything else.
  */
 export const PRESIGNED_URL_PATTERN =
-  '^(https://[^\\s]+|http://(localhost|127\\.0\\.0\\.1|minio|[a-z0-9-]+(\\.[a-z0-9-]+)*\\.localhost)(:[0-9]{1,5})?([/?#][^\\s]*)?)$';
+  '^(https://[^\\s/?#@]+([/?#][^\\s]*)?|http://(localhost|127\\.0\\.0\\.1|minio|[a-z0-9-]+(\\.[a-z0-9-]+)*\\.localhost)(:[0-9]{1,5})?([/?#][^\\s]*)?)$';
 export const PresignedUrlString = Type.String({ format: 'uri', pattern: PRESIGNED_URL_PATTERN, maxLength: 4096 });
 export type PresignedUrlString = Static<typeof PresignedUrlString>;
 
@@ -90,8 +90,7 @@ export const Recording = Type.Object({
 });
 export type Recording = Static<typeof Recording>;
 
-/** Upload cap shared by direct uploads and recording sessions: 2 GB (decimal). */
-export const MAX_MEDIA_BYTES = 2_000_000_000;
+export { MAX_MEDIA_BYTES } from '../constants.js';
 
 /** Explicit allowlist of accepted media MIME types. */
 export const ALLOWED_MEDIA_MIME_TYPES = [
