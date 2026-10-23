@@ -4,6 +4,21 @@ All notable changes to `@meetops/contracts` are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this package uses [Semantic Versioning](https://semver.org/).
 While the version is `0.x`, a minor bump may contain breaking changes (ADR-003).
 
+## [0.3.2] - 2026-10-22
+
+Security's LOW follow-up from #59. Validation is stricter; no exports were removed.
+
+### Changed
+
+- `UNSAFE_DISPLAY_TEXT_CHARS` (and so `deviceLabel`, `CreateOrganizationRequest.name` and `organizationName`) also
+  rejects U+00AD (soft hyphen), U+180E, U+3164 (Hangul filler), U+FE00-U+FE0F (variation selectors) and the tag
+  characters U+E0000-U+E007F (new `UNSAFE_DISPLAY_TEXT_TAGS`). The patterns work both without the `u` flag (TypeBox
+  `Value.Check`) and with it (Ajv in Fastify).
+- `ExtensionPairResponse.organizationName` uses `SafeDisplayText` with the same bounds as the org name (1–200, no
+  leading or trailing whitespace).
+- `MAX_RECORDING_SESSION_BYTES` (2 GB) JSDoc: the backend MUST enforce it as a running total per session. The
+  per-chunk limits cannot enforce it.
+
 ## [0.3.1] - 2026-10-22
 
 All changes in this release are additive. No existing export changed.
