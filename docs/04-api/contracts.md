@@ -15,11 +15,12 @@ The guide to `@meetops/contracts` (what it exports, how to add a contract, versi
   - Tokens: `ExtensionTokenRequest` returns `ExtensionTokenResponse` (Bearer, audience `extension`, `expiresIn` at most 900 s).
   - Refresh rotates tokens. Revoke requires `refreshToken` in the body, and both refresh and revoke are authenticated by that refresh token, not by a Bearer token.
   - New constants: `EXTENSION_*`, `EXTENSION_AUTH_PATHS` and `REDACT_KEYS`.
-  - The extension generates a single-use nonce and must reject an `ExtensionTokenResponse` whose `nonce` echo doesn't match the stored nonce (ADR-005).
-  - The pairing message handler must match `sender.origin` exactly against the production web origin (ADR-005).
-  - Tokens are kept only in `chrome.storage.session`, left at `TRUSTED_CONTEXTS` (ADR-005).
-  - Reusing an already-consumed refresh token revokes the whole token family (ADR-005).
+  - ADR-005 requires (not yet implemented on `integration/phase-1`):
+    - The extension MUST generate a single-use nonce and MUST reject an `ExtensionTokenResponse` whose `nonce` echo doesn't match the stored nonce.
+    - The pairing message handler MUST match `sender.origin` exactly against the production web origin.
+    - Tokens MUST be kept only in `chrome.storage.session`, left at `TRUSTED_CONTEXTS`.
+    - The server MUST revoke the whole token family on reuse of a consumed refresh token.
 - **Task list query:** `ListTasksQuery` adds cursor pagination and filters for status, priority, assignee, project, meeting, due dates and `q`. `unassigned: true` can't be combined with `assigneeId`. Also adds `TASK_STATUSES`.
-- **Also added:** `SwitchOrganizationRequest` (`POST /auth/switch-org`), the `CSRF_INVALID` error code (the web client fetches a fresh token from `GET /auth/csrf` and retries once on 403; `apps/web/src/lib/api/client.ts`), and a types-only entry point, `@meetops/contracts/types`.
+- **Also added:** `SwitchOrganizationRequest` (`POST /orgs/switch`), the `CSRF_INVALID` error code, and a types-only entry point, `@meetops/contracts/types`. Caveat: on `integration/phase-1` the web client (`apps/web/src/lib/api/client.ts`) retries once on any 403 for a non-GET request, and it reuses a readable CSRF cookie before calling `GET /auth/csrf`. PR #48 (pending) narrows this to `CSRF_INVALID` with a fresh fetch.
 - **Changed:** `Transcript.provider` is now `TranscriptProviderId`. `'unknown'` is allowed only for legacy rows backfilled by the database migration.
 - **Deprecated:** `PresignedUrl` and `StorageObjectMetadata`, to be removed in 0.4.0.
