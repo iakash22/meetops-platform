@@ -5,7 +5,7 @@
     "composite": false,
     "incremental": false,
     "rootDir": ".",
-    "types": ["vitest/globals"]
+    "types": ["node", "vitest/globals"]
   },
   "include": ["src", "test"]
 }

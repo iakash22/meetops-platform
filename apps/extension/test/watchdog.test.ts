@@ -28,6 +28,8 @@ function setup() {
     stopWatchdog: vi.fn(async () => undefined),
     finalizeAfterCrash: vi.fn(async () => undefined),
     setBadge: vi.fn(async () => undefined),
+    durableKV: memoryKV(),
+    discardLocal: vi.fn<(id: string) => Promise<void>>(async () => undefined),
     capturedTabIds: vi.fn(async (): Promise<number[]> => [1, 2, 3, 7, 9]),
   } satisfies BackgroundDeps;
   const advance = (ms: number) => (t += ms);

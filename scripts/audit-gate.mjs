@@ -16,22 +16,10 @@
 // tailwindcss@3 pins postcss-nested 6 / postcss-selector-parser 6, which carry
 // audit findings (incl. the moderate postcss-selector-parser advisory). Both
 // overrides only exist for tailwind 3 and must be removed with the tailwind 4
-// migration (same exit plan as RE-01, see issue #54).
+// migration (see issue #54).
 import { spawnSync } from 'node:child_process';
 
 const EXCEPTIONS = [
-  {
-    // braces@3.0.3 has no patched release; reached only via tailwindcss@3 >
-    // chokidar/micromatch/fast-glob in apps/web (build-time). Exit plan:
-    // tailwind 4 migration or a patched braces via pnpm.overrides.
-    id: 'RE-01',
-    owner: 'DevOps Agent',
-    issue: 'https://github.com/iakash22/meetops-platform/issues/54',
-    ghsa: 'GHSA-vfj7-8cjw-p6xm',
-    module: 'braces',
-    versions: ['3.0.3'],
-    expires: '2026-11-20T23:59:59Z',
-  },
   {
     // node-forge@1.4.0 has no patched release. Reached only through wxt /
     // web-ext-run dev tooling (verified with `pnpm why -r node-forge`):

@@ -2,8 +2,11 @@
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
     "outDir": "dist",
-    "rootDir": "src",
+    "rootDir": ".",
+    "noEmit": true,
+    "composite": false,
+    "incremental": false,
     "types": ["node", "vitest/globals"]
   },
-  "include": ["src", "prisma/**/*.prisma"]
+  "include": ["src", "prisma/seed.ts", "scripts/*.ts"]
 }

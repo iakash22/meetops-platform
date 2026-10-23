@@ -61,6 +61,6 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile --ignore-scripts
 
-      # Blocking: fails on high/critical; only RE-01 (braces@3.0.3) is excepted until 2026-11-20.
+      # Blocking: fails on high/critical; only RE-03 (node-forge@1.4.0, Security-approved) is excepted until 2026-11-20.
       - name: Audit gate
         run: node scripts/audit-gate.mjs
