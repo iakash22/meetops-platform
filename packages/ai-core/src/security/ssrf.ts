@@ -76,6 +76,8 @@ export async function assertSafeEndpoint(rawUrl: string, policy: EndpointPolicy,
   if (url.protocol !== 'https:') throw block(`Scheme ${url.protocol} not allowed (HTTPS only)`);
   const host = url.hostname.replace(/^\[|\]$/g, '').toLowerCase();
   if (!policy.allowedHosts.includes(host)) throw block(`Host ${host} is not allowlisted`);
+  // SEC-BUG-1: remote providers only on the default HTTPS port (WHATWG URL normalizes ':443' to ''). Exact local origins returned above.
+  if (url.port !== '' && url.port !== '443') throw block(`Port ${url.port} not allowed`);
   const fam = isIP(host);
   const addrs = fam ? [{ address: host, family: fam }] : await lookup(host);
   if (addrs.length === 0) throw block(`Host ${host} did not resolve`);
