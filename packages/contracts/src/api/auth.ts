@@ -5,9 +5,11 @@ import { Membership, Organization, Role, User } from '../domain/org.js';
 const Email = Type.String({ format: 'email', maxLength: 320 });
 /** Minimum 12 characters (security review of PR #17). */
 const Password = Type.String({ minLength: 12, maxLength: 128 });
+/** Login accepts any non-empty password (max 128) so the policy is not revealed and legacy users are not locked out. */
+const LoginPassword = Type.String({ minLength: 1, maxLength: 128 });
 const strict = { additionalProperties: false } as const;
 
-export const LoginRequest = Type.Object({ email: Email, password: Password }, strict);
+export const LoginRequest = Type.Object({ email: Email, password: LoginPassword }, strict);
 export type LoginRequest = Static<typeof LoginRequest>;
 
 export const SignupRequest = Type.Object(
@@ -25,13 +27,13 @@ export type ForgotPasswordRequest = Static<typeof ForgotPasswordRequest>;
  * There is no bearer token in the body. The session lives only in a
  * `__Host-` prefixed, HttpOnly, Secure, SameSite cookie set by the API.
  * Clients send `csrfToken` back in the `x-csrf-token` header on state-changing requests.
- * `activeOrganizationId` and `role` are set by the server from the membership, never by the client.
+ * `activeOrganizationId` and `role` are set by the server from the membership, never by the client. Both are null when the user has no organization membership yet (both null or both set).
  */
 export const AuthSession = Type.Object({
   user: User,
   csrfToken: Type.String({ minLength: 16 }),
-  activeOrganizationId: Id,
-  role: Role,
+  activeOrganizationId: Type.Union([Id, Type.Null()]),
+  role: Type.Union([Role, Type.Null()]),
   expiresAt: Type.Optional(IsoDateTime),
   organizations: Type.Array(Organization),
   memberships: Type.Optional(Type.Array(Membership)),
@@ -45,3 +47,26 @@ export type GetAuthSessionResponse = Static<typeof GetAuthSessionResponse>;
 /** GET /auth/csrf */
 export const CsrfResponse = Type.Object({ csrfToken: Type.String({ minLength: 16 }) });
 export type CsrfResponse = Static<typeof CsrfResponse>;
+
+/** Alias used by Backend. */
+export const GetAuthSession = GetAuthSessionResponse;
+export type GetAuthSession = GetAuthSessionResponse;
+
+/** Single-use, opaque token from the emailed link (never logged). */
+const OpaqueToken = Type.String({ minLength: 32, maxLength: 512 });
+
+/** POST /auth/reset-password */
+export const ResetPasswordRequest = Type.Object({ token: OpaqueToken, password: Password }, strict);
+export type ResetPasswordRequest = Static<typeof ResetPasswordRequest>;
+
+/** POST /auth/verify-email */
+export const VerifyEmailRequest = Type.Object({ token: OpaqueToken }, strict);
+export type VerifyEmailRequest = Static<typeof VerifyEmailRequest>;
+
+/**
+ * POST /auth/switch-org returns an `AuthSession` for the new active organization. The caller must be a member
+ * (otherwise NOT_FOUND). The server **rotates the session id** (it issues a new `__Host-` cookie and invalidates the old
+ * one) and returns a **rotated `csrfToken`**. `role` and `activeOrganizationId` are re-derived from the membership.
+ */
+export const SwitchOrganizationRequest = Type.Object({ organizationId: Id }, strict);
+export type SwitchOrganizationRequest = Static<typeof SwitchOrganizationRequest>;
