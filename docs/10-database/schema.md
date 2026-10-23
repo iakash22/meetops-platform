@@ -88,7 +88,7 @@ Passwords and LOGIN are set out of band, never in SQL. Both URLs are required fo
 
 ### Schema changes on top of #6
 
-- 21 models. New: `Recording`. Renamed: `InternalTask` → `Task` (`tasks`), `ExternalIssueLink` → `IntegrationIssue` (`integration_issues`), `AuditLog` → `AuditEvent` (`audit_events`).
+- 25 models on `integration/phase-1`. New: `Recording`, `RecordingSession`, `RecordingSessionChunk`, `EmailVerification`, `PasswordReset`. Renamed: `InternalTask` → `Task` (`tasks`), `ExternalIssueLink` → `IntegrationIssue` (`integration_issues`), `AuditLog` → `AuditEvent` (`audit_events`).
 - All enum labels are lowercase (for example MembershipRole `owner|admin|member|viewer`). New enums: `MeetingSource`, `RecordingStatus`, `StorageObjectKind`, `StorageObjectStatus`, `TaskStatus`.
 - `UNIQUE(org_id, id)` on every tenant table. Tenant-to-tenant relations are composite FKs `(org_id, parent_id)`, and optional parents use `ON DELETE RESTRICT`.
 - Per-org uniques: `file_objects(org_id, bucket, storage_key)`, `integration_issues(org_id, integration, external_id)`, `projects(org_id, key)`, `employees(org_id, email)`.

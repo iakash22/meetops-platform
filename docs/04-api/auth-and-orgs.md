@@ -1,8 +1,8 @@
 # Auth, organizations and users API (P1-BE)
 
-Source: `apps/api` on `integration/phase-1`, as merged by PR #27 (head `ec3cdfa`, merged 2026-10-22 00:07 IST). Contracts come from `@meetops/contracts` v0.2 (#38). It reaches `main` with the integration PR (#30). See also `apps/api/README.md`.
+Source: `apps/api` on `integration/phase-1`, as merged by PR #27 (head `ec3cdfa`, merged 2026-10-22 00:07 IST). Contracts come from `@meetops/contracts` (0.3.2 on `integration/phase-1`). It reaches `main` with the integration PR (#30). See also `apps/api/README.md`.
 
-> Repositories, the rate limiter, the lockout and the mailer are **in-memory or no-op only in `NODE_ENV=development` or `test`**. In any other environment (including unset), `createServer` refuses to start unless real implementations are injected and `WEB_ORIGINS` and `CSRF_SECRET` are set. Prisma and Redis wiring is a follow-up.
+> Repositories, the rate limiter, the lockout and the mailer are **in-memory or no-op only in `NODE_ENV=development` or `test`**. In any other environment (including unset), `createServer` refuses to start unless real implementations are injected and `WEB_ORIGINS` and `CSRF_SECRET` are set. Prisma persistence is Backend PR #53 (open).
 
 ## Endpoints
 

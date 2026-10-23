@@ -2,7 +2,7 @@
 
 Source: `apps/extension` on `integration/phase-1`, as merged by PR #52 (head `3a8c49f`, merged 2026-10-22 00:27 IST). PR #52 consolidates and supersedes #5 (scaffold), #15 (capture) and #37 (resilience). It reaches `main` with the integration PR (#30).
 
-WXT, Manifest V3, React and TypeScript. The extension's name is **MeetOps AI**. It records the audio of the current tab, with consent, and uploads it in chunks using the `@meetops/contracts` v0.2 recording-session contract.
+WXT, Manifest V3, React and TypeScript. The extension's name is **MeetOps AI**. It records the audio of the current tab, with consent, and uploads it in chunks using the `@meetops/contracts` recording-session contract (introduced in v0.2; `integration/phase-1` is on 0.3.2).
 
 ## Running it
 
@@ -54,7 +54,7 @@ Replies are `{ ok: true, status, tabId?, startedAt?, chunks?, lastError?, storag
 
 - Chunks are queued in IndexedDB with a size cap and eviction. The queue drains when the service worker restarts, and a heartbeat watchdog runs alongside it.
 - If pending audio is lost to the cap, the session is marked `incomplete` and aborted with `local_storage_exhausted` rather than submitted.
-- The upload flow follows contracts v0.2: init with `meetingId`, then a presigned PUT per chunk with signed `content-length` and `x-amz-checksum-sha256`. A 403 triggers a refresh and retry, and the session is completed with the chunk digests. Transport is HTTPS-only; `http://localhost` and `127.0.0.1` are allowed in dev builds only.
+- The upload flow follows the contracts recording-session API (0.3.x; added in v0.2): init with `meetingId`, then a presigned PUT per chunk with signed `content-length` and `x-amz-checksum-sha256`. A 403 triggers a refresh and retry, and the session is completed with the chunk digests. Transport is HTTPS-only; `http://localhost` and `127.0.0.1` are allowed in dev builds only.
 
 ## Known gaps (as of #52)
 
