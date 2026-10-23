@@ -1,7 +1,7 @@
 import type { UseQueryResult } from '@tanstack/react-query';
 import type { ReactNode } from 'react';
 import { EmptyState, ErrorState, LoadingState } from '@/components/states/states';
-import type { Paginated } from '@/lib/api/types';
+import type { Paginated } from '@meetops/contracts';
 
 /** Renders loading / error / empty / list states for a paginated query. */
 export function ResourceList<T extends { id: string }>({
