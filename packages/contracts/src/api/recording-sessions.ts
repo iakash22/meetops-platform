@@ -1,6 +1,7 @@
 import { Type, type Static } from '@sinclair/typebox';
 import { Id, IsoDateTime } from '../common.js';
-import { MAX_MEDIA_BYTES, MediaMimeType, PresignedUrlString, RecordingStatus } from '../domain/media.js';
+import { MAX_CHUNK_BYTES, MAX_CHUNKS, MAX_DURATION_MS } from '../constants.js';
+import { MediaMimeType, PresignedUrlString, RecordingStatus } from '../domain/media.js';
 
 /**
  * Chunked recording upload (extension/desktop capture), matching apps/extension UploadClient:
@@ -9,15 +10,10 @@ import { MAX_MEDIA_BYTES, MediaMimeType, PresignedUrlString, RecordingStatus } f
  *   POST /recording-sessions/:sessionId/complete                 CompleteRecordingSessionRequest -> CompleteRecordingSessionResponse
  *   POST /recording-sessions/:sessionId/abort                    AbortRecordingSessionRequest    -> 204
  */
-export const CHUNK_UPLOAD_URL_TTL_SECONDS = 300;
-/** 64 MiB per chunk (5 s timeslices are far smaller; this is an abuse ceiling). */
-export const MAX_CHUNK_BYTES = 64 * 1024 * 1024;
-/** 2 GB per recording session, enforced server-side across all chunks. */
-export const MAX_RECORDING_SESSION_BYTES = MAX_MEDIA_BYTES;
-/** Upper bound on chunk count. At 5 s timeslices this is about 13.9 h. */
-export const MAX_RECORDING_CHUNKS = 10_000;
-/** Alias. */
-export const MAX_CHUNKS = MAX_RECORDING_CHUNKS;
+/** Chunk limits live in constants.ts (also exported from `@meetops/contracts/types`). */
+export {
+  CHUNK_UPLOAD_URL_TTL_SECONDS, MAX_CHUNK_BYTES, MAX_CHUNKS, MAX_DURATION_MS, MAX_RECORDING_CHUNKS, MAX_RECORDING_SESSION_BYTES,
+} from '../constants.js';
 
 const Sha256Hex = Type.String({ pattern: '^[0-9a-f]{64}$' });
 
@@ -105,7 +101,7 @@ export const CompleteRecordingSessionRequest = Type.Object(
   {
     chunkCount: Type.Integer({ minimum: 1, maximum: MAX_CHUNKS }),
     chunks: Type.Optional(Type.Array(CompletedChunk, { minItems: 1, maxItems: MAX_CHUNKS })),
-    durationMs: Type.Integer({ minimum: 0, maximum: 24 * 60 * 60 * 1000 }),
+    durationMs: Type.Integer({ minimum: 0, maximum: MAX_DURATION_MS }),
   },
   strict,
 );
