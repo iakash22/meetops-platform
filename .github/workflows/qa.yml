@@ -26,8 +26,8 @@ jobs:
     permissions:
       contents: read
     env:
-      QA_POSTGRES_IMAGE: pgvector/pgvector:pg16
-      QA_REDIS_IMAGE: redis:7-alpine
+      QA_POSTGRES_IMAGE: pgvector/pgvector:pg16@sha256:7b822b0aac60967beb1ea5e576b8602c94c300a157d187f385ae3e0da199b90a
+      QA_REDIS_IMAGE: redis:7-alpine@sha256:57e4255cc971b1c8d6f8a6ca283ac01bc3ecdd914273ef6bfaede87aaecd6541
       TESTCONTAINERS_RYUK_DISABLED: 'false'
     steps:
       - name: Checkout
@@ -47,6 +47,10 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+
+      - name: Build workspace dependencies of tests/
+        # Suites import @meetops/* packages through their built dist entries.
+        run: pnpm exec turbo run build --filter=@meetops/tests^...
 
       - name: Pre-pull container images
         run: |
