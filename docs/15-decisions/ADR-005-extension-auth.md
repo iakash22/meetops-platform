@@ -61,10 +61,11 @@ the Decision above, the amendment wins. Schemas and constants: `packages/contrac
    before calling `POST /auth/extension/pair` (`ExtensionPairRequest`) with the `__Host-` cookie and `x-csrf-token`.
    The server MUST check `extensionId` against the allowlist and return `ExtensionPairResponse`, a single-use
    `pairingCode` bound to `(nonce, extensionId, deviceId, userId, organizationId)` that expires within 60 seconds. It carries no tokens.
-4. The page hands `{ pairingCode, nonce }` to the extension with `chrome.runtime.sendMessage(extensionId, …)`. The
-   extension's `chrome.runtime.onMessageExternal` handler MUST check `sender.origin` for an exact string match against the
-   production web origin, MUST validate the message against the contracts schema, and MUST reject a nonce that differs
-   from the stored one. Anything else is dropped silently.
+4. The page hands `{ type: 'MEETOPS_PAIRING_CODE', pairingCode, nonce }` to the extension with
+   `chrome.runtime.sendMessage(extensionId, …)`. The message schema is `PairingCodeMessage` (strict; the type literal is
+   `PAIRING_CODE_MESSAGE_TYPE`, both in `@meetops/contracts`). The extension's `chrome.runtime.onMessageExternal` handler
+   MUST check `sender.origin` for an exact string match against the production web origin, MUST validate the message
+   against `PairingCodeMessage`, and MUST reject a nonce that differs from the stored one. Anything else is dropped silently.
 5. `externally_connectable.matches` MUST list only the exact production web origin. Dev origins such as
    `http://localhost:*` MUST appear only in dev builds and MUST NOT ship in a store build.
 6. The extension then calls `POST /auth/extension-token` (`ExtensionTokenRequest`, without a cookie). The server MUST
@@ -141,7 +142,11 @@ An unparseable URL returns `VALIDATION_FAILED`.
 - **Native (`apps/extension`):** a user-gesture pairing UI; nonce and deviceId generation; `chrome.storage.session` only, left
   at TRUSTED_CONTEXTS; an `onMessageExternal` handler with an exact `sender.origin` check, schema validation and the nonce
   check; nonce echo verification; refresh before expiry; a production-only `externally_connectable` origin; dev
-  origins gated to dev builds; redaction; import from `@meetops/contracts/types` only.
+  origins gated to dev builds; redaction. Imports: the background service worker MAY import the main
+  `@meetops/contracts` entry for runtime schema validation (for example `PairingCodeMessage` in the `onMessageExternal`
+  handler, and token responses). UI bundles (popup, options, offscreen documents, content scripts) MUST import only
+  `@meetops/contracts/types`, which has no TypeBox. Upload limits (`CHUNK_UPLOAD_URL_TTL_SECONDS`, `MAX_CHUNK_BYTES`,
+  `MAX_RECORDING_CHUNKS`, `MAX_CHUNKS`, `MAX_DURATION_MS`) come from `/types`, not from local mirrors.
 - **Web (`apps/web`):** the pairing page showing an org and device confirmation; the pair call with CSRF; the
   `sendMessage` handoff; a device list with revoke in account settings.
 - **DevOps:** rate-limit config (A1.4); production versus dev manifest build gating; log pipeline and Sentry scrubbing

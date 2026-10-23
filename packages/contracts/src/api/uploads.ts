@@ -1,6 +1,7 @@
 import { Type, type Static } from '@sinclair/typebox';
 import { Id } from '../common.js';
-import { MAX_MEDIA_BYTES, MediaMimeType, PresignedUrlDto } from '../domain/media.js';
+import { MAX_MEDIA_BYTES } from '../constants.js';
+import { MediaMimeType, PresignedUrlDto } from '../domain/media.js';
 
 /** 2 GB maximum single upload. */
 export const MAX_UPLOAD_BYTES = MAX_MEDIA_BYTES;
