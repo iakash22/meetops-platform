@@ -33,10 +33,10 @@ Enums: MembershipRole (OWNER, ADMIN, MEMBER, VIEWER), InvitationStatus, ProjectS
 - **Roles:**
   - `meetops_migrator` owns the schema and runs migrations (`MIGRATION_DATABASE_URL`).
   - `meetops_app` is the runtime role (`DATABASE_URL`). It gets DML only, and the migration asserts that it is `NOSUPERUSER NOBYPASSRLS NOCREATEROLE NOCREATEDB`.
-  - `meetops_relay` is the outbox relay (`BYPASSRLS`). It only has `SELECT` and limited `UPDATE` on `outbox_events`.
+  - `meetops_relay` (optional): `NOBYPASSRLS`, no table privileges; only executes `relay_claim_outbox_events` / `relay_complete_outbox_event` (`SECURITY DEFINER`, `20261022033000_relay_definer_functions`).
   - Roles and passwords are provisioned out of band (`scripts/bootstrap-roles.sql`, `pnpm --filter @meetops/database db:roles`). Migrations never contain passwords.
 - **Application access:** `withOrgContext(organizationId, fn, { client?, userId?, timeoutMs? })` runs `fn` in one interactive transaction with `app.current_org_id` set `LOCAL`. That setting is safe with pooled connections. `withUserContext(userId, fn)` sets only `app.current_user_id`, so a user can list their own memberships (`membership_self_read`) while every other tenant table stays fail-closed. Both validate UUIDs. The lower-level `runWithOrgContext` and `runWithUserContext` live in `src/tenant.ts`.
-- **Audit:** `audit_events` is append-only, including for the owner (`20261022032000_audit_append_only`). The only exception is a migration running as `meetops_migrator` that sets `meetops.audit_maintenance`.
+- **Audit:** `audit_events` is append-only, including for the owner (`20261022032000_audit_append_only`). The only exception is a maintenance migration that sets `meetops.audit_maintenance = on` while logged in as `meetops_migrator`. `20261022041000_audit_hatch_session_user` checks `session_user`, not `current_user`, so a migrator-owned `SECURITY DEFINER` function can't open the hatch for another caller.
 - **Invitations:** `lookup_invitation_by_token_hash` and `accept_invitation` are `SECURITY DEFINER` functions, executable only by `meetops_app`. The PR #35 fix is described below.
 - **Pending (not merged):** Backend PR #53 (`feat/api-persistence`) adds the API-side refusal to invite users who are already active members. The database-side `already_member` guard is merged and described below.
 
