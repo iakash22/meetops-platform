@@ -1,6 +1,6 @@
 # Auth, organizations and users API (P1-BE)
 
-> **Note:** This page describes **open, unmerged PR #27** (`feat/api-auth-orgs`, base `integration/phase-1`) at head `5d2619c471e69af02bfd10dcf54963d2d2ea7792`, read via `gh pr view 27` / `gh pr diff 27`. It depends on #17 (contracts; mirrored for now in `apps/api/src/shared/contracts`), with #25 (RLS) and #11 (mail) as follow-ups. Repositories, the rate limiter and the lockout are **in-memory** until the Prisma and Redis wiring lands, so this isn't production-safe yet.
+> **Note:** This page describes the auth, organizations and users modules from **PR #27** (`feat/api-auth-orgs`), merged into `integration/phase-1` on 2026-10-22 00:07 IST (2026-10-21 18:37Z). Contracts now come from the `@meetops/contracts` workspace package; the old `apps/api/src/shared/contracts` mirror is gone. In-memory repositories are still present on `integration/phase-1`, and Prisma/Redis persistence is Backend PR #53 (open), so this isn't production-safe yet.
 
 ## Endpoints
 
