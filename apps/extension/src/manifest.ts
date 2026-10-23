@@ -1,3 +1,5 @@
+import { DEFAULT_WEB_ORIGIN, originMatch } from './lib/auth/origins.js';
+
 /**
  * Manifest fields for the MeetOps AI extension. Kept separate from wxt.config.ts
  * so unit tests can assert the permission surface stays minimal.
@@ -16,18 +18,26 @@
  *   detect a dead offscreen recorder; heartbeats alone cannot detect silence.
  * - `commands._execute_action`: keyboard shortcut to open the popup (an action
  *   invocation, so it grants activeTab like a toolbar click). Not a permission.
+ * - `externally_connectable`: ADR-005 A1.1.5. Only the configured web origin (WXT_WEB_ORIGIN, validated at build
+ *   time; localhost only in dev builds) may message the extension for the pairing handoff.
  * - No `host_permissions` and no content scripts.
  */
-export const manifest = {
-  name: 'MeetOps AI',
-  description: 'Record meetings you are part of, with clear consent.',
-  permissions: ['activeTab', 'tabCapture', 'offscreen', 'storage', 'alarms'] as string[],
-  host_permissions: [] as string[],
-  commands: {
-    _execute_action: {
-      suggested_key: { default: 'Alt+Shift+M' },
-      description: 'Open MeetOps AI',
+export function buildManifest(webOrigin: string) {
+  return {
+    name: 'MeetOps AI',
+    description: 'Record meetings you are part of, with clear consent.',
+    permissions: ['activeTab', 'tabCapture', 'offscreen', 'storage', 'alarms'] as string[],
+    host_permissions: [] as string[],
+    externally_connectable: { matches: [originMatch(webOrigin)] },
+    commands: {
+      _execute_action: {
+        suggested_key: { default: 'Alt+Shift+M' },
+        description: 'Open MeetOps AI',
+      },
     },
-  },
-  action: { default_title: 'MeetOps AI' },
-};
+    action: { default_title: 'MeetOps AI' },
+  };
+}
+
+/** Manifest with the default web origin (used by tests). */
+export const manifest = buildManifest(DEFAULT_WEB_ORIGIN);
