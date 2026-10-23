@@ -41,8 +41,9 @@ export type InitRecordingSessionResponse = Static<typeof InitRecordingSessionRes
  *
  * The API signs `Content-Length: sizeBytes` (and, when given, the sha256 checksum, e.g. `x-amz-checksum-sha256`)
  * into the presigned request, and returns them in `upload.headers`, so the client can't upload a different size or body.
- * The API refuses to issue a URL once the session's running total plus `sizeBytes` would exceed
- * MAX_RECORDING_SESSION_BYTES, or when `seq` is out of range or already completed.
+ * The API MUST refuse to issue a URL once the session's running total plus `sizeBytes` would exceed
+ * MAX_RECORDING_SESSION_BYTES (2 GB), or when `seq` is out of range or already completed. The schema's per-chunk limits
+ * (MAX_CHUNK_BYTES, MAX_CHUNKS) cannot enforce the 2 GB total; only the backend's running total can.
  */
 export const ChunkUploadUrlRequest = Type.Object(
   {
