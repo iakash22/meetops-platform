@@ -1,5 +1,5 @@
 # QA suites in tests/ (spec: tests/ci/ci-jobs-spec.md, PR #29).
-# tests/ is not a pnpm workspace member: it has its own lockfile and is installed separately.
+# tests/ is a pnpm workspace member (@meetops/tests): the single root install covers it.
 name: QA
 
 on:
@@ -22,7 +22,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        node: [22, 24]
+        node: [20]
     permissions:
       contents: read
     env:
@@ -43,16 +43,10 @@ jobs:
         with:
           node-version: ${{ matrix.node }}
           cache: 'pnpm'
-          cache-dependency-path: |
-            pnpm-lock.yaml
-            tests/pnpm-lock.yaml
+          cache-dependency-path: pnpm-lock.yaml
 
-      - name: Install root dependencies
+      - name: Install dependencies
         run: pnpm install --frozen-lockfile
-
-      - name: Install tests/ dependencies
-        working-directory: tests
-        run: pnpm install --ignore-workspace --frozen-lockfile
 
       - name: Pre-pull container images
         run: |
@@ -80,7 +74,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        node: [22, 24]
+        node: [20]
     continue-on-error: true
     permissions:
       contents: read
@@ -100,16 +94,10 @@ jobs:
         with:
           node-version: ${{ matrix.node }}
           cache: 'pnpm'
-          cache-dependency-path: |
-            pnpm-lock.yaml
-            tests/pnpm-lock.yaml
+          cache-dependency-path: pnpm-lock.yaml
 
-      - name: Install root dependencies
+      - name: Install dependencies
         run: pnpm install --frozen-lockfile
-
-      - name: Install tests/ dependencies
-        working-directory: tests
-        run: pnpm install --ignore-workspace --frozen-lockfile
 
       - name: Get Playwright version
         id: pw
