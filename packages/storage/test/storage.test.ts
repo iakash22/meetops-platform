@@ -55,14 +55,17 @@ const svc = (extra: Partial<ConstructorParameters<typeof S3StorageService>[0]> =
 const rec: MeetingObjectRef = { orgId: 'o1', meetingId: 'm1', kind: 'recording', objectId: 'r1', ext: 'webm' };
 const REC_KEY = 'org/o1/meetings/m1/recordings/r1.webm';
 const spec = { mimeType: 'audio/webm', sizeBytes: 3 };
+/** base64 sha256 of 'abc' */
+const SUM = 'ungWv48Bz+pBQUDeXa4iI7ADYaOWF3qctBD/YfIAFa0=';
+const pspec = { ...spec, checksumSha256: SUM };
 
 beforeEach(() => s3.reset());
 
 describe('config', () => {
   const base = { STORAGE_BUCKET: 'b', STORAGE_ENDPOINT: 'http://m:9000' };
-  it('defaults: minio path-style, TTLs 600/300', () => {
+  it('defaults: minio path-style, TTLs 300/300', () => {
     const c = loadStorageConfig(base);
-    expect(c).toMatchObject({ provider: 'minio', forcePathStyle: true, uploadTtlSeconds: 600, downloadTtlSeconds: 300 });
+    expect(c).toMatchObject({ provider: 'minio', forcePathStyle: true, uploadTtlSeconds: 300, downloadTtlSeconds: 300 });
     expect(loadStorageConfig({ STORAGE_PROVIDER: 's3', STORAGE_BUCKET: 'b' }).forcePathStyle).toBe(false);
     expect(loadStorageConfig({ ...base, STORAGE_PROVIDER: 'r2' }).region).toBe('auto');
   });
@@ -223,25 +226,25 @@ describe('S3StorageService', () => {
     expect(s3.commandCalls(DeleteObjectCommand)[0]!.args[0].input.Key).toBe(REC_KEY);
   });
 
-  it('presign TTL defaults (PUT/POST 600, GET 300) and rejects >600', async () => {
+  it('presign TTL defaults (PUT/POST 300, GET 300) and rejects >600', async () => {
     const presign = vi.fn().mockResolvedValue('https://signed');
     const presignPost = vi.fn().mockResolvedValue({ url: 'https://post', fields: { key: 'k' } });
     const s = svc({ presign, presignPost });
-    await s.getPresignedUploadUrl(rec, spec);
-    expect(presign.mock.calls[0]![2]).toMatchObject({ expiresIn: 600 });
+    await s.getPresignedUploadUrl(rec, pspec);
+    expect(presign.mock.calls[0]![2]).toMatchObject({ expiresIn: 300 });
     await s.getPresignedDownloadUrl(rec);
     expect(presign.mock.calls[1]![2]).toMatchObject({ expiresIn: 300 });
-    const post = await s.getPresignedUploadPost(rec, spec);
-    expect(presignPost.mock.calls[0]![1]).toMatchObject({ Expires: 600 });
+    const post = await s.getPresignedUploadPost(rec, pspec);
+    expect(presignPost.mock.calls[0]![1]).toMatchObject({ Expires: 300 });
     expect(post).toMatchObject({ method: 'POST', url: 'https://post', fields: { key: 'k' } });
     await expect(s.getPresignedDownloadUrl(rec, { ttlSeconds: 601 })).rejects.toThrow(RangeError);
-    await expect(s.getPresignedUploadUrl(rec, spec, { ttlSeconds: 3600 })).rejects.toThrow(RangeError);
-    await expect(s.getPresignedUploadPost(rec, spec, { ttlSeconds: 0 })).rejects.toThrow(RangeError);
+    await expect(s.getPresignedUploadUrl(rec, pspec, { ttlSeconds: 3600 })).rejects.toThrow(RangeError);
+    await expect(s.getPresignedUploadPost(rec, pspec, { ttlSeconds: 0 })).rejects.toThrow(RangeError);
   });
 
   it('presigned POST enforces exact content-length-range and Content-Type', async () => {
     const real = new S3StorageService({ config, authorize: () => undefined });
-    const p = await real.getPresignedUploadPost(rec, { mimeType: 'audio/webm;codecs=opus', sizeBytes: 1234 });
+    const p = await real.getPresignedUploadPost(rec, { mimeType: 'audio/webm;codecs=opus', sizeBytes: 1234, checksumSha256: SUM });
     expect(p.url).toBe('http://localhost:9000/secret-bucket');
     const policy = JSON.parse(Buffer.from(p.fields!.Policy!, 'base64').toString()) as { conditions: unknown[]; expiration: string };
     expect(policy.conditions).toContainEqual(['content-length-range', 1234, 1234]);
@@ -252,10 +255,16 @@ describe('S3StorageService', () => {
 
   it('presigned PUT signs content-type and content-length; GET is path-style', async () => {
     const real = new S3StorageService({ config, authorize: () => undefined });
-    const put = await real.getPresignedUploadUrl(rec, spec);
+    const put = await real.getPresignedUploadUrl(rec, pspec);
     const signed = decodeURIComponent(new URL(put.url).searchParams.get('X-Amz-SignedHeaders') ?? '');
     expect(signed.split(';')).toEqual(expect.arrayContaining(['content-length', 'content-type', 'host']));
-    expect(put.headers).toEqual({ 'content-type': 'audio/webm', 'content-length': '3' });
+    expect(put.headers).toEqual({
+      'content-type': 'audio/webm',
+      'content-length': '3',
+      'x-amz-checksum-sha256': SUM,
+      'x-amz-meta-upload-token': put.uploadToken,
+      'if-none-match': '*'
+    });
     const get = await real.getPresignedDownloadUrl(rec, { ttlSeconds: 30 });
     expect(get.url).toMatch(/^http:\/\/localhost:9000\/secret-bucket\/org\/o1\/meetings\/m1\/recordings\/r1\.webm\?/);
     expect(get.url).toContain('X-Amz-Expires=30');
@@ -267,28 +276,31 @@ describe('S3StorageService', () => {
     s3.on(CompleteMultipartUploadCommand).resolves({ ETag: '"done"' });
     s3.on(AbortMultipartUploadCommand).resolves({});
     s3.on(ListPartsCommand)
-      .resolvesOnce({ Parts: [{ PartNumber: 1, ETag: 'a' }], IsTruncated: true, NextPartNumberMarker: '1' })
-      .resolvesOnce({ Parts: [{ PartNumber: 2, ETag: 'b' }], IsTruncated: false });
+      .resolvesOnce({ Parts: [{ PartNumber: 1, ETag: 'a', ChecksumSHA256: SUM }], IsTruncated: true, NextPartNumberMarker: '1' })
+      .resolvesOnce({ Parts: [{ PartNumber: 2, ETag: 'b', ChecksumSHA256: SUM }], IsTruncated: false });
     const presign = vi.fn().mockResolvedValue('https://part');
     const s = svc({ presign });
-    const big = { mimeType: 'video/mp4', sizeBytes: 100 * MB };
-    expect(await s.createMultipartUpload(rec, { ...big, partSizeBytes: 10 * MB })).toEqual({ uploadId: 'u1', partCount: 10, partSizeBytes: 10 * MB });
+    const big = { mimeType: 'video/mp4', sizeBytes: 100 * MB, checksumSha256: SUM };
+    const mp = await s.createMultipartUpload(rec, { ...big, partSizeBytes: 10 * MB });
+    expect(mp).toEqual({ uploadId: 'u1', partCount: 10, partSizeBytes: 10 * MB, uploadToken: expect.stringMatching(/^[A-Za-z0-9_-]{32}$/) });
     await expect(s.createMultipartUpload(rec, { ...big, partSizeBytes: 11 * MB })).rejects.toThrow(/partSizeBytes/);
-    await expect(s.createMultipartUpload(rec, { mimeType: 'video/mp4', sizeBytes: 300 * MB, partSizeBytes: 10 * MB })).rejects.toThrow(/Too many parts/);
+    await expect(s.createMultipartUpload(rec, { mimeType: 'video/mp4', sizeBytes: 300 * MB, checksumSha256: SUM, partSizeBytes: 10 * MB })).rejects.toThrow(/Too many parts/);
     await expect(s.createMultipartUpload(rec, { ...big, partSizeBytes: 1 * MB })).rejects.toThrow(/minimum/);
 
-    const p = await s.getPresignedPartUrl(rec, 'u1', 1, 10 * MB);
-    expect(p).toMatchObject({ url: 'https://part', method: 'PUT', headers: { 'content-length': String(10 * MB) } });
-    expect(presign.mock.calls[0]![2]).toMatchObject({ expiresIn: 600 });
-    await expect(s.getPresignedPartUrl(rec, 'u1', 21, MB)).rejects.toThrow(/partNumber/);
-    await expect(s.getPresignedPartUrl(rec, 'u1', 1, 11 * MB)).rejects.toThrow(/partSizeBytes/);
+    const p = await s.getPresignedPartUrl(rec, 'u1', 1, 10 * MB, SUM);
+    expect(p).toMatchObject({ url: 'https://part', method: 'PUT', headers: { 'content-length': String(10 * MB), 'x-amz-checksum-sha256': SUM } });
+    expect(presign.mock.calls[0]![2]).toMatchObject({ expiresIn: 300 });
+    await expect(s.getPresignedPartUrl(rec, 'u1', 21, MB, SUM)).rejects.toThrow(/partNumber/);
+    await expect(s.getPresignedPartUrl(rec, 'u1', 1, 11 * MB, SUM)).rejects.toThrow(/partSizeBytes/);
 
-    expect(await s.listParts(rec, 'u1')).toEqual([{ partNumber: 1, etag: 'a' }, { partNumber: 2, etag: 'b' }]);
-    expect(await s.completeMultipartUpload(rec, 'u1', [{ partNumber: 2, etag: 'b' }, { partNumber: 1, etag: 'a' }])).toEqual({ etag: '"done"' });
-    expect(s3.commandCalls(CompleteMultipartUploadCommand)[0]!.args[0].input.MultipartUpload?.Parts?.[0]).toEqual({ PartNumber: 1, ETag: 'a' });
-    const tooMany = Array.from({ length: 21 }, (_, i) => ({ partNumber: i + 1, etag: 'x' }));
-    await expect(s.completeMultipartUpload(rec, 'u1', tooMany)).rejects.toThrow(/Too many/);
-    await expect(s.completeMultipartUpload(rec, 'u1', [])).rejects.toThrow();
+    expect(await s.listParts(rec, 'u1')).toEqual([{ partNumber: 1, etag: 'a', checksumSha256: SUM }, { partNumber: 2, etag: 'b', checksumSha256: SUM }]);
+    s3.on(ListPartsCommand).resolves({ Parts: [{ PartNumber: 1, ETag: 'a', ChecksumSHA256: SUM }, { PartNumber: 2, ETag: 'b', ChecksumSHA256: SUM }] });
+    const parts = [{ partNumber: 2, etag: 'b', checksumSha256: SUM }, { partNumber: 1, etag: 'a', checksumSha256: SUM }];
+    expect(await s.completeMultipartUpload(rec, 'u1', parts, mp.uploadToken)).toEqual({ etag: '"done"' });
+    expect(s3.commandCalls(CompleteMultipartUploadCommand)[0]!.args[0].input.MultipartUpload?.Parts?.[0]).toEqual({ PartNumber: 1, ETag: 'a', ChecksumSHA256: SUM });
+    const tooMany = Array.from({ length: 21 }, (_, i) => ({ partNumber: i + 1, etag: 'x', checksumSha256: SUM }));
+    await expect(s.completeMultipartUpload(rec, 'u1', tooMany, mp.uploadToken)).rejects.toThrow(/Too many/);
+    await expect(s.completeMultipartUpload(rec, 'u1', [], mp.uploadToken)).rejects.toThrow();
     await s.abortMultipartUpload(rec, 'u1');
     expect(s3.commandCalls(AbortMultipartUploadCommand)).toHaveLength(1);
   });
@@ -362,17 +374,17 @@ describe('S3StorageService', () => {
       const presign = vi.fn().mockResolvedValue('https://chunk');
       const s = svc({ presign });
       const p = await s.getPresignedSessionChunkUrl(sess, { seq: 7, sizeBytes: 1000, sha256: sha }, 'audio/webm;codecs=opus');
-      expect(p.headers).toEqual({ 'content-type': 'audio/webm', 'content-length': '1000', 'x-amz-checksum-sha256': shaB64 });
+      expect(p.headers).toEqual({ 'content-type': 'audio/webm', 'content-length': '1000', 'x-amz-checksum-sha256': shaB64, 'if-none-match': '*' });
       const [, cmd, o] = presign.mock.calls[0]!;
       expect(cmd.input).toMatchObject({ Key: key(7), ContentLength: 1000, ChecksumSHA256: shaB64 });
       expect(o.expiresIn).toBe(300);
       expect([...o.signableHeaders]).toEqual(expect.arrayContaining(['content-length', 'content-type', 'x-amz-checksum-sha256']));
       expect(toSignedPutUpload(p)).toMatchObject({ method: 'PUT', headers: { 'content-length': '1000' } });
       expect(s3.commandCalls(ListObjectsV2Command)[0]!.args[0].input.Prefix).toBe('tmp/session-chunks/org/o1/meetings/m1/sessions/s1/');
-      await expect(s.getPresignedSessionChunkUrl(sess, { seq: 0, sizeBytes: 1 }, 'audio/webm', { ttlSeconds: 301 })).rejects.toThrow(RangeError);
-      await expect(s.getPresignedSessionChunkUrl(sess, { seq: 10000, sizeBytes: 1 }, 'audio/webm')).rejects.toThrow(/seq/);
-      await expect(s.getPresignedSessionChunkUrl(sess, { seq: 0, sizeBytes: MAX_CHUNK_BYTES + 1 }, 'audio/webm')).rejects.toThrow(/sizeBytes/);
-      await expect(s.getPresignedSessionChunkUrl({ ...sess, orgId: '' }, { seq: 0, sizeBytes: 1 }, 'audio/webm')).rejects.toBeInstanceOf(StorageError);
+      await expect(s.getPresignedSessionChunkUrl(sess, { seq: 0, sizeBytes: 1, sha256: sha }, 'audio/webm', { ttlSeconds: 301 })).rejects.toThrow(RangeError);
+      await expect(s.getPresignedSessionChunkUrl(sess, { seq: 10000, sizeBytes: 1, sha256: sha }, 'audio/webm')).rejects.toThrow(/seq/);
+      await expect(s.getPresignedSessionChunkUrl(sess, { seq: 0, sizeBytes: MAX_CHUNK_BYTES + 1, sha256: sha }, 'audio/webm')).rejects.toThrow(/sizeBytes/);
+      await expect(s.getPresignedSessionChunkUrl({ ...sess, orgId: '' }, { seq: 0, sizeBytes: 1, sha256: sha }, 'audio/webm')).rejects.toBeInstanceOf(StorageError);
     });
 
     it('refuses already-uploaded seq and enforces the running total before issuing', async () => {
@@ -383,9 +395,9 @@ describe('S3StorageService', () => {
         presign: vi.fn().mockResolvedValue('https://x')
       });
       s3.on(ListObjectsV2Command).resolves(listed([[key(0), 60], [key(1), 30]]));
-      await expect(small.getPresignedSessionChunkUrl(sess, { seq: 1, sizeBytes: 5 }, 'audio/webm')).rejects.toThrow(/already/);
-      await expect(small.getPresignedSessionChunkUrl(sess, { seq: 2, sizeBytes: 11 }, 'audio/webm')).rejects.toThrow(/maximum size/);
-      await expect(small.getPresignedSessionChunkUrl(sess, { seq: 2, sizeBytes: 10 }, 'audio/webm')).resolves.toMatchObject({ method: 'PUT' });
+      await expect(small.getPresignedSessionChunkUrl(sess, { seq: 1, sizeBytes: 5, sha256: sha }, 'audio/webm')).rejects.toThrow(/already/);
+      await expect(small.getPresignedSessionChunkUrl(sess, { seq: 2, sizeBytes: 11, sha256: sha }, 'audio/webm')).rejects.toThrow(/maximum size/);
+      await expect(small.getPresignedSessionChunkUrl(sess, { seq: 2, sizeBytes: 10, sha256: sha }, 'audio/webm')).resolves.toMatchObject({ method: 'PUT' });
     });
 
     it('verify on complete: happy path with manifest', async () => {
@@ -424,7 +436,7 @@ describe('S3StorageService', () => {
 
       s3.reset();
       s3.on(ListObjectsV2Command).resolves(listed([[key(0), 10]]));
-      s3.on(HeadObjectCommand, { Key: key(0) }).resolves({ ContentLength: 10 });
+      s3.on(HeadObjectCommand, { Key: key(0) }).resolves({ ContentLength: 10, ChecksumSHA256: shaB64 });
       s3.on(HeadObjectCommand, { Key: key(1) }).rejects(Object.assign(new Error('x'), { name: 'NotFound' }));
       s3.on(DeleteObjectCommand).resolves({});
       await expect(svc().verifySessionChunks(sess, { chunkCount: 2 })).rejects.toThrow(/Missing chunk/);

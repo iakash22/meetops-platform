@@ -24,13 +24,24 @@ export type UploadSpec = {
 
 export type PresignOptions = { ttlSeconds?: number };
 
+/** Client presign spec: checksumSha256 (standard base64 sha256 of the whole object) is REQUIRED. */
+export type PresignUploadSpec = UploadSpec & { checksumSha256: string };
+
+/**
+ * A single-use presigned upload. `uploadToken` is SERVER-ONLY: persist it with the pending file and pass it to
+ * confirmUpload / completeMultipartUpload. It is also signed into the request as `x-amz-meta-upload-token`
+ * (in `headers`/`fields`), so it is visible to the uploader; it is not a secret, only a one-time nonce.
+ */
+export type PresignedUpload = PresignedUrl & { uploadToken: string };
+
 export type PutObjectBody = Buffer | Uint8Array | string | Readable;
 
 export type GetObjectResult = { body: Readable; info: StoredObjectInfo };
 
-export type MultipartSpec = UploadSpec & { partSizeBytes: number };
-export type MultipartUpload = { uploadId: string; partCount: number; partSizeBytes: number };
-export type CompletedPart = { partNumber: number; etag: string };
+export type MultipartSpec = PresignUploadSpec & { partSizeBytes: number };
+export type MultipartUpload = { uploadId: string; partCount: number; partSizeBytes: number; uploadToken: string };
+/** checksumSha256 = base64 sha256 of that part (required when completing; ListParts reports it). */
+export type CompletedPart = { partNumber: number; etag: string; checksumSha256?: string };
 
 export interface StorageService {
   putObject(ref: MeetingObjectRef, body: PutObjectBody, spec: UploadSpec): Promise<{ etag?: string }>;
@@ -38,14 +49,23 @@ export interface StorageService {
   headObject(ref: MeetingObjectRef): Promise<StoredObjectInfo | null>;
   deleteObject(ref: MeetingObjectRef): Promise<void>;
   /** Preferred upload path: presigned POST with content-length-range and exact Content-Type. */
-  getPresignedUploadPost(ref: MeetingObjectRef, spec: UploadSpec, opts?: PresignOptions): Promise<PresignedUrl>;
+  getPresignedUploadPost(ref: MeetingObjectRef, spec: PresignUploadSpec, opts?: PresignOptions): Promise<PresignedUpload>;
   /** Presigned PUT with signed Content-Type and Content-Length (for providers without POST, e.g. R2). */
-  getPresignedUploadUrl(ref: MeetingObjectRef, spec: UploadSpec, opts?: PresignOptions): Promise<PresignedUrl>;
+  getPresignedUploadUrl(ref: MeetingObjectRef, spec: PresignUploadSpec, opts?: PresignOptions): Promise<PresignedUpload>;
+  /** Consume the one-time token of a finished single-part upload and verify the stored object. Rejects reuse. */
+  confirmUpload(ref: MeetingObjectRef, uploadToken: string): Promise<StoredObjectInfo>;
   getPresignedDownloadUrl(ref: MeetingObjectRef, opts?: PresignOptions): Promise<PresignedUrl>;
   createMultipartUpload(ref: MeetingObjectRef, spec: MultipartSpec): Promise<MultipartUpload>;
-  getPresignedPartUrl(ref: MeetingObjectRef, uploadId: string, partNumber: number, partSizeBytes: number, opts?: PresignOptions): Promise<PresignedUrl>;
+  getPresignedPartUrl(
+    ref: MeetingObjectRef,
+    uploadId: string,
+    partNumber: number,
+    partSizeBytes: number,
+    partChecksumSha256: string,
+    opts?: PresignOptions
+  ): Promise<PresignedUrl>;
   listParts(ref: MeetingObjectRef, uploadId: string): Promise<CompletedPart[]>;
-  completeMultipartUpload(ref: MeetingObjectRef, uploadId: string, parts: CompletedPart[]): Promise<{ etag?: string }>;
+  completeMultipartUpload(ref: MeetingObjectRef, uploadId: string, parts: CompletedPart[], uploadToken: string): Promise<{ etag?: string }>;
   abortMultipartUpload(ref: MeetingObjectRef, uploadId: string): Promise<void>;
 }
 
