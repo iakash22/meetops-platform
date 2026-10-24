@@ -163,8 +163,13 @@ jobs:
           node-version: 20
           cache: 'pnpm'
 
+      # The root postinstall runs turbo across every workspace (e.g. apps/extension), which fails when
+      # only @meetops/database and its deps are installed, so skip lifecycle scripts and generate explicitly.
       - name: Install dependencies
-        run: pnpm --filter @meetops/database install --frozen-lockfile
+        run: pnpm --filter @meetops/database install --frozen-lockfile --ignore-scripts
+
+      - name: Generate Prisma client
+        run: pnpm --filter @meetops/database exec prisma generate
 
       - name: Create DB roles
         run: pnpm --filter @meetops/database db:roles
