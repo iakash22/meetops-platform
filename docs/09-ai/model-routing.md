@@ -15,7 +15,7 @@ deadlines, reports, follow-ups. Each one maps to a kind (stt/llm) and a required
 
 ```
 kind = featureKind(feature)
-org  = orgStore.get(organizationId)                      # tenant-scoped; nothing is shared between tenants
+org  = orgStore.get(organizationId)                # organization-scoped; nothing is shared between organizations
 layers = [system, env, org.defaults[kind], org.features[feature], override]
 chosen = last non-empty layer                      # highest precedence wins
 provider = chosen.provider; model = chosen.model ?? providerConfig.model
