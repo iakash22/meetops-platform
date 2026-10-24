@@ -29,6 +29,16 @@ export function endpointPolicyFromEnv(env: AIEnv, opts: { production?: boolean |
   };
 }
 
+/**
+ * Output caps for LLM providers: summaries and the map-reduce REDUCE step get 4096 tokens; extraction and MAP steps
+ * keep the 2048 default (eval: no truncation at 2048 on the fixtures). All values are <= HARD_MAX_OUTPUT_TOKENS (schema-checked).
+ */
+export const SUMMARY_OUTPUT_LIMITS = {
+  defaultMaxTokens: 2048,
+  perFeature: { summary: 4096 },
+  perStep: { map: 2048, reduce: 4096 },
+} as const;
+
 /** Default provider definitions. Credentials are referenced, never embedded; cost tier is explicit. */
 export function defaultProviderConfigs(env: AIEnv): ProviderConfigInput[] {
   return [
@@ -36,6 +46,7 @@ export function defaultProviderConfigs(env: AIEnv): ProviderConfigInput[] {
       name: 'gemini', type: 'llm', adapter: 'gemini', model: env.GEMINI_MODEL, enabled: true, credentialRef: 'env:GEMINI_API_KEY',
       capabilities: ['text-generation', 'structured-output'], languages: ['en', 'hi', 'auto'],
       inputLimits: { maxInputTokens: 1_048_576, maxOutputTokens: 65_536 }, timeoutMs: 60_000,
+      outputLimits: SUMMARY_OUTPUT_LIMITS,
       cost: { tier: 'free' }, platformBilled: true, usage: { dailyRequestLimit: 1000 }, fallbackPriority: 10,
     },
     {
@@ -46,6 +57,7 @@ export function defaultProviderConfigs(env: AIEnv): ProviderConfigInput[] {
     {
       name: 'ollama', type: 'llm', adapter: 'ollama', model: env.OLLAMA_MODEL, enabled: env.OLLAMA_ENABLED, local: true,
       baseUrl: env.OLLAMA_BASE_URL, capabilities: ['text-generation', 'structured-output'], timeoutMs: 120_000,
+      outputLimits: SUMMARY_OUTPUT_LIMITS,
       cost: { tier: 'free' }, platformBilled: false, fallbackPriority: 50,
     },
     {
@@ -56,6 +68,7 @@ export function defaultProviderConfigs(env: AIEnv): ProviderConfigInput[] {
     {
       name: 'openai', type: 'llm', adapter: 'openai-compatible', model: env.OPENAI_MODEL, enabled: env.OPENAI_ENABLED,
       credentialRef: 'env:OPENAI_API_KEY', baseUrl: env.OPENAI_BASE_URL, capabilities: ['text-generation', 'structured-output'],
+      outputLimits: SUMMARY_OUTPUT_LIMITS,
       cost: { tier: 'paid', currency: 'USD', inputPer1MTokens: 0.15, outputPer1MTokens: 0.6 }, platformBilled: true, fallbackPriority: 90,
     },
     {

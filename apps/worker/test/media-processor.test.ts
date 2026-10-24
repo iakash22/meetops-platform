@@ -268,6 +268,9 @@ describe('processRecording (mocked storage, queue, emitter)', () => {
     await runInJobScope({ organizationId: ORG, meetingId: MEET }, async () => {
       expect(() => workerAuthorize(ref)).not.toThrow();
       expect(() => workerAuthorize({ ...ref, meetingId: '55555555-5555-4555-8555-555555555555' })).toThrow();
+      // Stored-key reads and deprecated orgId refs are checked too; a ref naming two organizations is denied.
+      expect(() => workerAuthorize({ organizationId: ORG, meetingId: MEET, key: `organizations/${ORG}/meetings/${MEET}/recordings/${REC}.webm` })).not.toThrow();
+      expect(() => workerAuthorize({ ...ref, orgId: '66666666-6666-4666-8666-666666666666' })).toThrow();
     });
   });
 

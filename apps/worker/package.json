@@ -13,6 +13,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@meetops/ai-core": "workspace:*",
     "@meetops/config": "workspace:*",
     "@meetops/contracts": "workspace:*",
     "@meetops/logger": "workspace:*",
@@ -27,6 +28,6 @@
   "devDependencies": {
     "tsx": "^4.19.1",
     "typescript": "^5.6.3",
-    "vitest": "^3.2.7"
+    "vitest": "^4.1.12"
   }
 }

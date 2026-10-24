@@ -1,6 +1,9 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 // apps/api does not export createServer from its package entry (index.ts starts
 // listening), so import the builder from source. See README "Dependencies".
+// TODO(architecture): QA reaches into apps/api/src; switch to the @meetops/api package entry (needs a built
+// workspace and a tests -> @meetops/api dependency), then drop this disable.
+// eslint-disable-next-line @typescript-eslint/no-restricted-imports
 import { createServer } from '../../apps/api/src/server.js';
 
 const externalUrl = process.env.API_BASE_URL;

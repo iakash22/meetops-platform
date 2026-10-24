@@ -2,7 +2,7 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import { Queue, Worker, type Job } from 'bullmq';
 import { Redis } from 'ioredis';
 import { chunkAudio, computeWaveform, normalizeToWav, probeMedia } from '@meetops/media-core';
-import { createStorageServiceFromEnv, StorageAccessError } from '@meetops/storage';
+import { createStorageServiceFromEnv, refOrganizationId, StorageAccessError, type AuthorizeTarget } from '@meetops/storage';
 import { QUEUE_NAMES, type SttProviderId } from '@meetops/contracts';
 import { logger as baseLogger } from '@meetops/logger';
 import { DEFAULT_MEDIA_LIMITS, DEFAULT_WORK_TMP_BYTES, peakScratchBytes, processRecording, type MediaProcessorDeps } from './processor.js';
@@ -22,9 +22,10 @@ export type MediaWorkerConfig = {
 /** Job scope for the storage authorize hook: the worker may only touch its current job's org+meeting. */
 const jobScope = new AsyncLocalStorage<{ organizationId: string; meetingId: string }>();
 
-export function workerAuthorize(ref: { organizationId: string; meetingId: string }): void {
+export function workerAuthorize(target: AuthorizeTarget): void {
   const scope = jobScope.getStore();
-  if (!scope || scope.organizationId !== ref.organizationId || scope.meetingId !== ref.meetingId) throw new StorageAccessError();
+  // refOrganizationId resolves organizationId (or the deprecated orgId) and throws if they differ.
+  if (!scope || scope.organizationId !== refOrganizationId(target) || scope.meetingId !== target.meetingId) throw new StorageAccessError();
 }
 
 export function runInJobScope<T>(scope: { organizationId: string; meetingId: string }, fn: () => Promise<T>): Promise<T> {

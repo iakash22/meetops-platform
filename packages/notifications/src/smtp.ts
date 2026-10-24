@@ -77,8 +77,12 @@ export class SmtpEmailService implements EmailService {
     const info = await this.transport.sendMail(mail);
     return {
       messageId: info.messageId,
-      accepted: (info.accepted ?? []).map((a) => (typeof a === 'string' ? a : a.address)),
-      rejected: (info.rejected ?? []).map((a) => (typeof a === 'string' ? a : a.address)),
+      accepted: ((info.accepted ?? []) as Array<string | { address: string }>).map((a) =>
+        typeof a === 'string' ? a : a.address
+      ),
+      rejected: ((info.rejected ?? []) as Array<string | { address: string }>).map((a) =>
+        typeof a === 'string' ? a : a.address
+      ),
       provider: this.provider
     };
   }

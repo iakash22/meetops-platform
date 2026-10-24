@@ -95,6 +95,12 @@ describe('generated client', () => {
         'disconnectPrismaClient',
         'getPrismaClient',
         'withOrgContext',
+        'withOrganizationContext',
+        'createRecordingChunkCountRepository',
+        'createChunkFileObjectRepository',
+        'createChunkFileObjectLookup',
+        'MediaPersistenceError',
+        'MAX_RECORDING_CHUNKS',
         'withUserContext',
       ].sort(),
     );
