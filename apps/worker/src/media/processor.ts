@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { createReadStream, createWriteStream } from 'node:fs';
 import { mkdtemp, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -16,7 +17,7 @@ import type { AllowedDemuxer, AudioChunk, ProbeResult, Waveform } from '@meetops
 import { assertProbedFormat, demuxerForExt } from '@meetops/media-core';
 import { StorageError, assertKeyOwnedBy, buildObjectKey, parseMeetingKey, type MeetingObjectRef, type StorageService } from '@meetops/storage';
 import { chunkFileObjectId, normalizedFileObjectId, transcriptionIdempotencyKey, transcriptionJobId } from './ids.js';
-import type { ChunkManifestEntry, MediaJobPayload, MediaProcessingResult, TranscriptionJobPayload } from './types.js';
+import type { ChunkManifestEntry, MediaJobPayload, MediaProcessingResult, ProcessingStatusEvent, TranscriptionJobPayload } from './types.js';
 
 export type NormalizeCaps = { inputFormat: string; maxDurationSeconds: number; maxOutputBytes: number; maxInputBytes: number };
 
@@ -24,6 +25,38 @@ export type MediaOps = {
   probeMedia(p: string, opts: { format: string }): Promise<ProbeResult>;
   normalizeToWav(input: string, output: string, opts: NormalizeCaps): Promise<string>;
   chunkAudio(input: string, outDir: string, opts: { segmentSeconds: number }): Promise<AudioChunk[]>;
+};
+
+/**
+ * Persists the number of transcription chunks produced for a recording (proposed `recordings.chunk_count`, read by
+ * AI as RecordingScope.chunkCount). Must be idempotent (plain SET) and run inside withOrgContext(organizationId).
+ * `recording_sessions.chunk_count` is NOT this value: it counts uploaded session parts, not STT chunks.
+ */
+/** One chunk FileObject row (packages/database `file_objects`, kind = chunk). */
+export type ChunkFileObjectRow = {
+  /** Deterministic uuidv5 of `chunk:{recordingId}:{index}` (chunkFileObjectId). Idempotency key. */
+  fileObjectId: string;
+  index: number;
+  /** Exactly organizations/{organizationId}/meetings/{meetingId}/processed/{recordingId}/chunks/{nnnnn}.wav */
+  storageKey: string;
+  sizeBytes: number;
+  mimeType: 'audio/wav';
+  /** Lowercase hex sha256 of the stored chunk. */
+  sha256?: string;
+  startMs: number;
+  durationMs: number;
+};
+
+/**
+ * Writes chunk FileObject rows. Implemented by Database in @meetops/database; MUST be idempotent on fileObjectId
+ * (upsert) and run inside withOrgContext(organizationId).
+ */
+export type ChunkFileObjectRepository = {
+  upsertChunkFileObjects(q: { organizationId: string; meetingId: string; recordingId: string; chunks: ChunkFileObjectRow[] }): Promise<void>;
+};
+
+export type RecordingChunkCountRepository = {
+  setChunkCount(q: { organizationId: string; meetingId: string; recordingId: string; chunkCount: number }): Promise<void>;
 };
 
 /** Optional waveform step (best effort: a failure is logged and never fails the job). */
@@ -40,6 +73,8 @@ export type TranscriptionEnqueuer = {
 export type RealtimePublisher = {
   meetingStatus(e: MeetingStatusEvent): void;
   transcriptionProgress(e: TranscriptionProgressEvent): void;
+  /** Media processing status (processing:status). Optional so existing publishers keep working. */
+  processingStatus?(e: ProcessingStatusEvent): void;
 };
 
 export type MinimalLogger = {
@@ -72,6 +107,8 @@ export type MediaProcessorDeps = {
   transcriptionQueue: TranscriptionEnqueuer;
   realtime: RealtimePublisher;
   logger: MinimalLogger;
+  recordings?: RecordingChunkCountRepository;
+  chunkFileObjects?: ChunkFileObjectRepository;
   waveform?: WaveformOps;
   waveformBins?: number;
   limits?: Partial<MediaLimits>;
@@ -98,6 +135,12 @@ export function errorCodeOf(err: unknown): string {
   if (err instanceof StorageError) return err.code === 'NOT_FOUND' ? 'source_not_found' : err.code === 'FORBIDDEN' ? 'forbidden' : 'storage_error';
   if ((err as { name?: string })?.name === 'FfmpegError') return 'media_processing_failed';
   return 'internal_error';
+}
+
+async function sha256File(p: string): Promise<string> {
+  const h = createHash('sha256');
+  for await (const c of createReadStream(p)) h.update(c as Buffer);
+  return h.digest('hex');
 }
 
 /** Counts bytes while streaming and aborts past the cap (defends against HEAD/GET size races). */
@@ -131,6 +174,8 @@ export async function processRecording(
   const segmentSeconds = deps.segmentSeconds ?? 600;
   const progress = (percent: number, stage: TranscriptionStage, extra: Partial<TranscriptionProgressEvent> = {}) =>
     deps.realtime.transcriptionProgress({ organizationId, meetingId, recordingId, percent, stage, at: now().toISOString(), ...extra });
+  const processing = (status: ProcessingStatusEvent['status'], extra: Partial<Pick<ProcessingStatusEvent, 'percent' | 'errorCode'>> = {}) =>
+    deps.realtime.processingStatus?.({ organizationId, meetingId, recordingId, status, at: now().toISOString(), ...extra });
 
   const sourceRef: MeetingObjectRef = { organizationId, meetingId, kind: 'recording', objectId: recordingId, ext: payload.sourceExt };
   let demuxer: AllowedDemuxer;
@@ -171,6 +216,7 @@ export async function processRecording(
       throw new MediaJobError('source_too_long', 'Recording exceeds duration limit');
     }
     progress(5, 'normalizing');
+    processing('normalizing', { percent: 5 });
 
     const wavPath = await deps.media.normalizeToWav(srcPath, path.join(tmp, 'normalized.wav'), {
       inputFormat: demuxer,
@@ -183,6 +229,7 @@ export async function processRecording(
     await deps.storage.putObject(normalizedRef, createReadStream(wavPath), { mimeType: 'audio/wav', sizeBytes: wavSize });
     let waveform: MediaProcessingResult['waveform'];
     if (deps.waveform) {
+      processing('waveform', { percent: 25 });
       try {
         const w = await deps.waveform.compute(wavPath, { bins: deps.waveformBins ?? 1000 });
         const stored = await deps.waveform.store({ organizationId, meetingId, kind: 'waveform', objectId: recordingId }, w);
@@ -192,18 +239,29 @@ export async function processRecording(
       }
     }
     progress(30, 'chunking');
+    processing('chunking', { percent: 30 });
 
     const chunks = await deps.media.chunkAudio(wavPath, path.join(tmp, 'chunks'), { segmentSeconds });
     if (chunks.length === 0) throw new MediaJobError('no_chunks', 'Chunking produced no output');
 
     const manifest: ChunkManifestEntry[] = [];
+    const rows: ChunkFileObjectRow[] = [];
     for (const [i, c] of chunks.entries()) {
       const size = (await stat(c.path)).size;
-      await deps.storage.putObject(
-        { organizationId, meetingId, kind: 'chunk', objectId: recordingId, index: c.index },
-        createReadStream(c.path),
-        { mimeType: 'audio/wav', sizeBytes: size }
-      );
+      const chunkRef: MeetingObjectRef = { organizationId, meetingId, kind: 'chunk', objectId: recordingId, index: c.index };
+      await deps.storage.putObject(chunkRef, createReadStream(c.path), { mimeType: 'audio/wav', sizeBytes: size });
+      if (deps.chunkFileObjects) {
+        rows.push({
+          fileObjectId: chunkFileObjectId(recordingId, c.index),
+          index: c.index,
+          storageKey: buildObjectKey(chunkRef),
+          sizeBytes: size,
+          mimeType: 'audio/wav',
+          sha256: await sha256File(c.path),
+          startMs: Math.round(c.startSeconds * 1000),
+          durationMs: Math.round(c.durationSeconds * 1000)
+        });
+      }
       manifest.push({
         index: c.index,
         fileObjectId: chunkFileObjectId(recordingId, c.index),
@@ -213,6 +271,25 @@ export async function processRecording(
         transcriptionJobId: transcriptionJobId(organizationId, recordingId, c.index)
       });
       progress(30 + Math.round(((i + 1) / chunks.length) * 50), 'chunking', { chunksDone: i + 1, chunksTotal: chunks.length });
+    }
+
+    // Chunk FileObject rows first (the audio resolver needs them), then the count, then jobs. Any failure here
+    // enqueues nothing; a retry upserts the same deterministic ids and keys.
+    if (deps.chunkFileObjects) {
+      try {
+        await deps.chunkFileObjects.upsertChunkFileObjects({ organizationId, meetingId, recordingId, chunks: rows });
+      } catch {
+        throw new MediaJobError('chunk_file_objects_persist_failed', 'Could not persist chunk file objects');
+      }
+    }
+
+    // Persist the expected chunk count before any transcription job exists, so AI can compute percent/complete.
+    if (deps.recordings) {
+      try {
+        await deps.recordings.setChunkCount({ organizationId, meetingId, recordingId, chunkCount: manifest.length });
+      } catch {
+        throw new MediaJobError('chunk_count_persist_failed', 'Could not persist chunk count');
+      }
     }
 
     for (const m of manifest) {
@@ -235,6 +312,7 @@ export async function processRecording(
       await deps.transcriptionQueue.add(QUEUE_NAMES.transcription, data, { jobId: m.transcriptionJobId });
     }
     progress(85, 'transcribing', { chunksDone: 0, chunksTotal: manifest.length });
+    processing('completed', { percent: 100 });
     deps.logger.info({ ...log, chunks: manifest.length }, 'media job completed');
 
     return {
@@ -250,6 +328,7 @@ export async function processRecording(
     deps.logger.error({ ...log, errorCode, finalAttempt: ctx.isFinalAttempt }, 'media job failed');
     if (ctx.isFinalAttempt) {
       deps.realtime.meetingStatus({ organizationId, meetingId, status: 'failed', errorCode, at: now().toISOString() });
+      processing('failed', { errorCode });
     }
     throw err;
   } finally {
