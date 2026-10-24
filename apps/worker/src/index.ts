@@ -1,6 +1,7 @@
 import { pathToFileURL } from 'node:url';
 import { logger } from '@meetops/logger';
 import { startMediaWorker } from './media/index.js';
+import { registerTranscriptionWorker } from './ai/index.js';
 
 export * from './media/index.js';
 export * from './ai/index.js';
@@ -8,9 +9,11 @@ export * from './ai/index.js';
 async function main() {
   const { close } = startMediaWorker();
   logger.info('media worker started');
+  // Flag-gated; no repository implementation is injectable yet, so this stays unregistered even when enabled.
+  const transcription = registerTranscriptionWorker();
   const shutdown = async () => {
     logger.info('Shutting down worker...');
-    await close();
+    await Promise.allSettled([close(), transcription.registered ? transcription.close() : Promise.resolve()]);
     process.exit(0);
   };
   process.on('SIGINT', () => void shutdown());

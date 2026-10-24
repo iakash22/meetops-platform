@@ -9,6 +9,7 @@ import {
   type TranscriptionConsumerDeps,
   type TranscriptionJobResult,
 } from './consumer.js';
+import { loadTranscriptionWorkerEnv, type TranscriptionWorkerEnv } from './env.js';
 
 export type TranscriptionWorkerConfig = { redisUrl: string; concurrency: number };
 
@@ -25,14 +26,11 @@ export function createTranscriptionProcessor(deps: TranscriptionConsumerDeps) {
   };
 }
 
-/**
- * Wire the AI transcription worker. Executor, repository, audio and actor resolvers are injected by the host because
- * apps/worker has no Prisma client or ai-core bootstrap yet (see PR open questions).
- */
-export function startTranscriptionWorker(
-  cfg: TranscriptionWorkerConfig,
-  deps: Omit<TranscriptionConsumerDeps, 'realtime' | 'logger'> & Partial<Pick<TranscriptionConsumerDeps, 'realtime' | 'logger'>>,
-) {
+/** Deps the host must inject (no Prisma/ai-core bootstrap in apps/worker yet). Geometry comes from env. */
+export type TranscriptionHostDeps = Omit<TranscriptionConsumerDeps, 'realtime' | 'logger' | 'geometry'> &
+  Partial<Pick<TranscriptionConsumerDeps, 'realtime' | 'logger' | 'geometry'>>;
+
+export function startTranscriptionWorker(cfg: TranscriptionWorkerConfig, deps: TranscriptionHostDeps & { geometry: TranscriptionConsumerDeps['geometry'] }) {
   const logger = deps.logger ?? baseLogger.child({ worker: QUEUE_NAMES.transcription });
   const conn = () => new Redis(cfg.redisUrl, { maxRetriesPerRequest: null });
   const emitterRedis = deps.realtime ? undefined : conn();
@@ -50,4 +48,39 @@ export function startTranscriptionWorker(
     emitterRedis?.disconnect();
   };
   return { worker, close };
+}
+
+export type RegisterTranscriptionWorkerOptions = {
+  env?: TranscriptionWorkerEnv;
+  /** Returns host deps (repository from @meetops/database's public entry, executor, audio resolver, audit), or undefined. */
+  resolveDeps?: () => TranscriptionHostDeps | undefined;
+  start?: typeof startTranscriptionWorker;
+  logger?: Pick<TranscriptionConsumerDeps['logger'], 'info' | 'warn'>;
+};
+
+export type TranscriptionRegistration =
+  | { registered: true; close: () => Promise<void> }
+  | { registered: false; reason: 'disabled' | 'missing_dependencies' };
+
+/**
+ * Registers the BullMQ processor only when TRANSCRIPTION_WORKER_ENABLED=true AND a repository-backed deps set is
+ * injectable. Otherwise nothing consumes QUEUE_NAMES.transcription and jobs stay queued.
+ */
+export function registerTranscriptionWorker(opts: RegisterTranscriptionWorkerOptions = {}): TranscriptionRegistration {
+  const env = opts.env ?? loadTranscriptionWorkerEnv();
+  const logger = opts.logger ?? baseLogger;
+  if (!env.enabled) {
+    logger.info({ worker: QUEUE_NAMES.transcription }, 'transcription worker disabled (TRANSCRIPTION_WORKER_ENABLED=false)');
+    return { registered: false, reason: 'disabled' };
+  }
+  const deps = opts.resolveDeps?.();
+  if (!deps) {
+    logger.warn({ worker: QUEUE_NAMES.transcription }, 'transcription worker enabled but no repository implementation injected; not registered');
+    return { registered: false, reason: 'missing_dependencies' };
+  }
+  const { close } = (opts.start ?? startTranscriptionWorker)(
+    { redisUrl: env.redisUrl, concurrency: env.concurrency },
+    { ...deps, geometry: deps.geometry ?? { segmentSeconds: env.segmentSeconds } },
+  );
+  return { registered: true, close };
 }
