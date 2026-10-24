@@ -1,0 +1,14 @@
+{
+  "extends": "../tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "composite": false,
+    "incremental": false,
+    "declaration": false,
+    "declarationMap": false,
+    "rootDir": "..",
+    "types": ["vitest/globals", "node"]
+  },
+  "include": ["**/*.ts", "../apps/api/src/server.ts"],
+  "exclude": ["node_modules", "test-results", "playwright-report"]
+}
