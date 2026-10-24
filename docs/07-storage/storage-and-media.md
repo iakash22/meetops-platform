@@ -49,7 +49,7 @@ Errors (all extend `StorageError`, with `code` `NOT_FOUND`, `FORBIDDEN`, `VALIDA
 
 ### Object key scheme
 
-See the key layout under "Media processing worker" below. Each id segment is validated. `assertKeyOwnedBy` throws `StorageAccessError` unless the key is under `org/{orgId}/` (or `tmp/session-chunks/org/{orgId}/`), has a valid meeting segment that matches `meetingId` when given, and contains no `..`, `//` or `\`. `orgPrefix` and `parseMeetingKey` are exported too.
+See the key layout under "Media processing worker" below. Each id segment is validated. Writers (`buildObjectKey`) only emit `organizations/{organizationId}/...` (ADR-010 Phase A). `assertKeyOwnedBy(key, organizationId, meetingId?)` throws `StorageAccessError` unless the key is under `organizations/{organizationId}/` or the legacy read-only `org/{organizationId}/` (optionally behind `tmp/session-chunks/`), has a valid meeting segment that matches `meetingId` when given, and contains no `..`, `//` or `\`. `organizationPrefix` (deprecated alias `orgPrefix`) and `parseMeetingKey` (returns `legacy: true` for `org/` keys) are exported too. Existing objects are read by their stored key (`getObjectByKey`, `headObjectByKey`, `getPresignedDownloadUrlByKey`), never by a rebuilt path.
 
 ### Environment variables (names and meaning only)
 
@@ -81,7 +81,7 @@ Stored-object metadata crossing package boundaries uses the `FileObject` contrac
 | `organizationId` | `Id`                                                                |
 | `provider`       | string, a registry key (e.g. `s3`, `minio`, `local`)                |
 | `bucket`         | string                                                              |
-| `key`            | string; use the `org/{orgId}/meetings/{meetingId}/...` scheme above |
+| `key`            | string; use the `organizations/{organizationId}/meetings/{meetingId}/...` scheme above |
 | `mimeType`       | string                                                              |
 | `sizeBytes`      | integer >= 0                                                        |
 | `checksumSha256` | optional string                                                     |
@@ -123,7 +123,7 @@ Merged into `integration/phase-1` by PR #39 (merge commit `50e69d4`). Code: `app
 
 - Queue and job name come from `@meetops/contracts` (`MEDIA_QUEUE`, `MEDIA_JOB_NAME`); the payload is checked against the contracts `MediaJobPayload` schema.
 - Steps: check the source key belongs to the recording's org and meeting, HEAD and download it via `@meetops/storage`, probe, normalize to 16 kHz mono WAV, chunk, upload the normalized file and chunks, then enqueue one transcription job per chunk.
-- Object keys (`buildObjectKey` in `packages/storage/src/keys.ts`), under `org/{orgId}/meetings/{meetingId}/`:
+- Object keys (`buildObjectKey` in `packages/storage/src/keys.ts`), under `organizations/{organizationId}/meetings/{meetingId}/` (legacy `org/` keys are read-only):
   - `recordings/{id}.{ext}`
   - `processed/{recordingId}/normalized.wav`
   - `processed/{recordingId}/chunks/{index}.wav`
