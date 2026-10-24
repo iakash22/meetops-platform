@@ -15,15 +15,78 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    # Throwaway, CI-only credentials for ephemeral containers. Not secrets; never reuse outside CI.
+    services:
+      postgres:
+        # pgvector/pgvector:pg16 (PostgreSQL 16 + pgvector, same as infra/compose), pinned by index digest.
+        image: pgvector/pgvector@sha256:7b822b0aac60967beb1ea5e576b8602c94c300a157d187f385ae3e0da199b90a
+        env:
+          POSTGRES_USER: meetops
+          POSTGRES_PASSWORD: ci-throwaway-postgres
+          POSTGRES_DB: meetops_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U meetops -d meetops_test"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+
+    env:
+      DATABASE_URL: postgresql://meetops:ci-throwaway-postgres@localhost:5432/meetops_test
+      # Names used by packages/storage (loadStorageConfig) and .env.example.
+      STORAGE_PROVIDER: minio
+      STORAGE_ENDPOINT: http://localhost:9000
+      STORAGE_REGION: us-east-1
+      STORAGE_BUCKET: meetops-ci
+      STORAGE_ACCESS_KEY_ID: minioadmin
+      STORAGE_SECRET_ACCESS_KEY: minioadmin
+      STORAGE_FORCE_PATH_STYLE: 'true'
+      # Generic S3_* aliases (same values) for tooling that expects them.
+      S3_ENDPOINT: http://localhost:9000
+      S3_ACCESS_KEY: minioadmin
+      S3_SECRET_KEY: minioadmin
+      S3_BUCKET: meetops-ci
+      S3_FORCE_PATH_STYLE: 'true'
+      # Pinned MinIO image. minio/minio was removed from Docker Hub and quay.io now needs auth,
+      # so use Chainguard's public build (cgr.dev/chainguard/minio:latest), pinned by index digest.
+      MINIO_IMAGE: cgr.dev/chainguard/minio@sha256:73297936408b731668ca0e835ac9add1a35cb6026a125c2f0cd476d9ef48222c
+
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      # MinIO needs a `server /data` command, which `services:` cannot pass, so start it here
+      # with a Docker health check plus an HTTP readiness wait.
+      - name: Start MinIO
+        run: |
+          docker run -d --name minio -p 9000:9000 \
+            -e MINIO_ROOT_USER="$STORAGE_ACCESS_KEY_ID" \
+            -e MINIO_ROOT_PASSWORD="$STORAGE_SECRET_ACCESS_KEY" \
+            --tmpfs /data:uid=65532,gid=65532 \
+            "$MINIO_IMAGE" server /data
+          for i in $(seq 1 60); do
+            if curl -fsS http://localhost:9000/minio/health/ready >/dev/null; then echo "MinIO ready"; exit 0; fi
+            sleep 2
+          done
+          docker logs minio
+          exit 1
+
+      - name: Create bucket
+        env:
+          AWS_ACCESS_KEY_ID: ${{ env.STORAGE_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ env.STORAGE_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: ${{ env.STORAGE_REGION }}
+          AWS_EC2_METADATA_DISABLED: 'true'
+        run: |
+          aws --endpoint-url "$STORAGE_ENDPOINT" s3api create-bucket --bucket "$STORAGE_BUCKET" \
+            || aws --endpoint-url "$STORAGE_ENDPOINT" s3api head-bucket --bucket "$STORAGE_BUCKET"
+          aws --endpoint-url "$STORAGE_ENDPOINT" s3api head-bucket --bucket "$STORAGE_BUCKET"
 
       - name: Setup pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 20
           cache: 'pnpm'
@@ -42,3 +105,7 @@ jobs:
 
       - name: Build
         run: pnpm build
+
+      - name: MinIO logs on failure
+        if: failure()
+        run: docker logs minio || true
