@@ -2,7 +2,7 @@ import { act, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { TaskUpdateEvent } from '@meetops/contracts';
-import { applyTaskUpdate } from '@/lib/api/queries';
+import { applyTaskUpdate, isIsoDateTime } from '@/lib/api/queries';
 import { dueRange, parseTaskSearch, toApiFilters } from '@/features/tasks/tasks-page';
 import { task1 } from './fixtures/data';
 import { createMockApi, renderApp, resetStores } from './fixtures/render';
@@ -176,6 +176,52 @@ describe('tasks', () => {
     expect(applied).toBe(false);
     expect(screen.queryByText('Hijacked')).not.toBeInTheDocument();
     expect(screen.getByText('Send recap')).toBeInTheDocument();
+  });
+
+  it.each([
+    '1',
+    '2026',
+    '2026-10-22',
+    'Oct 22 2026',
+    '2026-02-30T00:00:00Z',
+    '2025-02-29T00:00:00Z',
+    '2026-04-31T00:00:00Z',
+    '2026-13-01T00:00:00Z',
+    '2026-00-10T00:00:00Z',
+    '2026-10-22T10:00:00',
+    '2026-10-22T10:00:00.000',
+    '2026-10-22T24:00:00Z',
+    '2026-10-22T10:60:00Z',
+    '2026-10-22 10:00:00Z',
+    '2026-10-22T10:00:00+0530',
+    '2026-10-22T10:00:00+24:00',
+    ' 2026-10-22T10:00:00Z',
+  ])('rejects non-strict ISO datetime %j for realtime `at`', async (at) => {
+    expect(isIsoDateTime(at)).toBe(false);
+    const { queryClient } = renderApp('/tasks');
+    await screen.findByText('Send recap');
+    let applied = true;
+    act(() => {
+      applied = applyTaskUpdate(queryClient, {
+        organizationId: '00000000-0000-4000-8000-000000000001',
+        taskId: '30000000-0000-4000-8000-000000000001',
+        status: 'done',
+        title: 'Hijacked',
+        at,
+      });
+    });
+    expect(applied).toBe(false);
+    expect(screen.queryByText('Hijacked')).not.toBeInTheDocument();
+  });
+
+  it.each([
+    '2026-10-22T10:00:00Z',
+    '2026-10-22T10:00:00.123Z',
+    '2026-10-22T15:30:00+05:30',
+    '2026-10-22T05:00:00.5-04:00',
+    '2024-02-29T23:59:59Z',
+  ])('accepts strict ISO datetime %j', (at) => {
+    expect(isIsoDateTime(at)).toBe(true);
   });
 
   it('renders HTML in realtime task title updates as escaped text', async () => {

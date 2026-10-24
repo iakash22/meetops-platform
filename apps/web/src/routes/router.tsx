@@ -27,6 +27,8 @@ import { queryKeys } from '@/lib/api/queries';
 import { safeRedirect } from '@/lib/safe-redirect';
 import { DashboardPage, ProjectsPage, SettingsPage } from '@/pages/app-pages';
 import { CreateOrganizationPage } from '@/features/organizations/create-organization';
+import { ExtensionPairPage } from '@/features/extension/pair-page';
+import { parsePairSearch } from '@/features/extension/pairing';
 
 export type RouterContext = { queryClient: QueryClient; api: ApiClient };
 
@@ -211,6 +213,15 @@ const createOrganizationRoute = createRoute({
   component: CreateOrganizationPage,
 });
 
+const extensionPairRoute = createRoute({
+  getParentRoute: () => appLayout,
+  path: '/extension/pair',
+  validateSearch: parsePairSearch,
+  component: function ExtensionPairRoute() {
+    return <ExtensionPairPage search={extensionPairRoute.useSearch()} />;
+  },
+});
+
 export const routeTree = rootRoute.addChildren([
   authLayout.addChildren([loginRoute, signupRoute, forgotPasswordRoute]),
   appLayout.addChildren([
@@ -221,6 +232,7 @@ export const routeTree = rootRoute.addChildren([
     projectsRoute,
     settingsRoute,
     createOrganizationRoute,
+    extensionPairRoute,
   ]),
 ]);
 
