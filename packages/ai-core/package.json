@@ -16,5 +16,10 @@
   },
   "devDependencies": {
     "typescript": "^5.6.3"
+  },
+  "dependencies": {
+    "@meetops/contracts": "workspace:*",
+    "undici": "^7",
+    "zod": "^4"
   }
 }
