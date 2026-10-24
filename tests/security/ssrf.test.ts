@@ -98,9 +98,9 @@ describe.skipIf(!available)('SSRF: assertSafeEndpoint (PR #21)', () => {
     expect(r.pinned?.address).toBe(PUBLIC_IP);
   });
 
-  // SEC-BUG-1 (PR #21 8ba69b7): assertSafeEndpoint checks scheme, host and resolved IPs but not
-  // the port, so https://allowed.example:6379/ passes. Expected-fail until a port allowlist lands.
-  it.fails(
+  // SEC-BUG-1 (PR #21 8ba69b7): fixed. assertSafeEndpoint now enforces the port (443 only),
+  // so https://allowed.example:6379/ is rejected with SSRF_BLOCKED.
+  it(
     '[SS-28] (SEC-BUG-1) a non-default port on the allowlisted host is rejected',
     async () => {
       await expect(

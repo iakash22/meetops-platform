@@ -58,6 +58,7 @@ describe('meetings', () => {
       filename: 'rec.webm',
       mimeType: 'audio/webm',
       sizeBytes: 3,
+      checksumSha256: 'ungWv48Bz+pBQUDeXa4iI7ADYaOWF3qctBD/YfIAFa0=', // sha256('abc')
       meetingId: meeting1.id,
     });
     expect(api.storage.putToPresignedUrl).toHaveBeenCalledWith(uploadResponse.upload, file);
@@ -91,16 +92,16 @@ describe('meetings', () => {
     expect(await screen.findByText('Upload failed')).toBeInTheDocument();
   });
 
-  it('upload cap matches the backend 2 GB (2_000_000_000 bytes)', () => {
-    expect(MAX_UPLOAD_BYTES).toBe(2_000_000_000);
+  it('upload cap matches the backend 1.4 GB (1_400_000_000 bytes)', () => {
+    expect(MAX_UPLOAD_BYTES).toBe(1_400_000_000);
     const sized = (n: number) => {
       const f = new File(['a'], 'a.mp4', { type: 'video/mp4' });
       Object.defineProperty(f, 'size', { value: n });
       return f;
     };
-    expect(validateUploadFile(sized(2_000_000_000))).toBeNull();
-    expect(validateUploadFile(sized(2_000_000_001))).toBe('The file is larger than 2 GB.');
-    expect(validateUploadFile(sized(5 * 1024 ** 3))).toBe('The file is larger than 2 GB.');
+    expect(validateUploadFile(sized(1_400_000_000))).toBeNull();
+    expect(validateUploadFile(sized(1_400_000_001))).toBe('The file is larger than 1.4 GB.');
+    expect(validateUploadFile(sized(5 * 1024 ** 3))).toBe('The file is larger than 1.4 GB.');
   });
 
   it('validateUploadFile enforces type and size', () => {

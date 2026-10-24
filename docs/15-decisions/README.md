@@ -11,5 +11,6 @@
 | [ADR-007](ADR-007-integrations-retry-webhook-replay.md)    | Integrations retry idempotency and webhook replay     | Proposed (PR #63 unmerged)                       | 2026-10-24 |
 | [ADR-008](ADR-008-oauth-pkce-token-encryption.md)          | OAuth 3LO + PKCE state and token encryption at rest   | Proposed (PR #67 unmerged)                       | 2026-10-24 |
 | [ADR-009](ADR-009-ai-provider-routing-credentials-ssrf.md) | AI provider routing, credential refs and SSRF guard   | Proposed (PR #21 unmerged)                       | 2026-10-24 |
+| [ADR-010](ADR-010-organization-id-tenant-key.md)           | `organizationId` as the canonical tenant key          | Proposed - needs Architecture review             | 2026-10-24 |
 
 New ADRs use the next number, `ADR-NNN-short-title.md`, with Date, Status, Context, Decision and Consequences sections. Add a row here. Links to ADR-003 and ADR-004 resolve once their PRs merge. ADR-003 makes ARCH the owner of this folder.

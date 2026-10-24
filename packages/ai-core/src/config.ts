@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { HARD_MAX_OUTPUT_TOKENS } from './output-limits.js';
+import { HARD_MAX_OUTPUT_TOKENS, OUTPUT_STEPS } from './output-limits.js';
 import { parseCredentialRef } from './credential-ref.js';
 import { CAPABILITIES } from './types.js';
 
@@ -64,6 +64,10 @@ export const providerConfigSchema = z
       defaultMaxTokens: z.number().int().positive().max(HARD_MAX_OUTPUT_TOKENS).optional(),
       maxTokens: z.number().int().positive().max(HARD_MAX_OUTPUT_TOKENS).optional(),
       perFeature: z.record(z.string(), z.number().int().positive().max(HARD_MAX_OUTPUT_TOKENS)).optional(),
+      perStep: z.partialRecord(z.enum(OUTPUT_STEPS), z.number().int().positive().max(HARD_MAX_OUTPUT_TOKENS)).optional(),
+      perFeatureStep: z
+        .record(z.string(), z.partialRecord(z.enum(OUTPUT_STEPS), z.number().int().positive().max(HARD_MAX_OUTPUT_TOKENS)))
+        .optional(),
     })
     .strict()
     .optional(),

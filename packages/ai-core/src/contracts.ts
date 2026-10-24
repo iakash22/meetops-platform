@@ -38,7 +38,8 @@ export function aiJobToRequest(p: AiJobPayload): { organizationId: string; featu
     feature: KIND_FEATURE[p.kind],
     promptVersion: p.promptVersion,
     idempotencyKey: p.idempotencyKey,
-    override: { provider, model, fallbacks: (p.fallback?.fallbackRouteIds ?? []).map((r) => parseModelRouteId(r).provider) },
+    // No job fallbacks -> undefined, so the org/feature fallbacks still apply (router). An explicit list (even []) overrides.
+    override: { provider, model, fallbacks: p.fallback ? p.fallback.fallbackRouteIds.map((r) => parseModelRouteId(r).provider) : undefined },
   };
 }
 
@@ -47,6 +48,10 @@ export function transcriptionJobToRequest(p: TranscriptionJobPayload): { organiz
     organizationId: p.organizationId,
     feature: 'transcription',
     idempotencyKey: p.idempotencyKey,
-    override: { provider: p.sttProviderId, fallbacks: (p.fallback?.fallbackRouteIds ?? []).map((r) => r.split(':')[0] ?? r) },
+    // Job fallbacks are LLM route ids (FallbackPolicy.fallbackRouteIds = ModelRouteId) and must not become STT
+    // fallbacks. They are ignored for transcription; org/feature STT fallbacks still apply.
+    // TODO(contracts): map a dedicated STT fallback type (e.g. FallbackPolicy.sttProviderIds: SttProviderId[]) once
+    // @meetops/contracts defines one.
+    override: { provider: p.sttProviderId, fallbacks: undefined },
   };
 }
