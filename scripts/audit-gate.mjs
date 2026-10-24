@@ -17,6 +17,11 @@
 // audit findings (incl. the moderate postcss-selector-parser advisory). Both
 // overrides only exist for tailwind 3 and must be removed with the tailwind 4
 // migration (same exit plan as RE-01, see issue #54).
+//   "tmp@<0.2.6": "^0.2.6"            GHSA-ph9p-34f9-6g65 (web-ext-run pins tmp 0.2.5;
+//                                      also fengari/testcontainers). Remove once web-ext-run ships >=0.2.6.
+//   "firefox-profile@4.7.0": "4.7.1"  pulls adm-zip ~0.6.x (0.6.1) for GHSA-xcpc-8h2w-3j85,
+//                                      -7q85-xj36-vmfc, -rcw4-f5rp-g42v, -j5f4-cc29-5x44, -8238-w5pm-2374
+//                                      (web-ext-run pins firefox-profile 4.7.0). Remove once web-ext-run bumps it.
 import { spawnSync } from 'node:child_process';
 
 const EXCEPTIONS = [
