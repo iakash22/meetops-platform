@@ -4,9 +4,12 @@ import {
   CsrfResponse,
   ForgotPasswordRequest,
   GetAuthSessionResponse,
+  Id,
+  ListSessionsResponse,
   LoginRequest,
   ResetPasswordRequest,
-  SignupRequest
+  SignupRequest,
+  VerifyEmailRequest
 } from '@meetops/contracts';
 import { ApiErrorEnvelope } from '../../../shared/api-error.js';
 
@@ -24,6 +27,15 @@ export const ResetPasswordBody = ResetPasswordRequest;
 export const SessionResponse = AuthSession;
 export const GetSessionResponse = GetAuthSessionResponse;
 
+export const VerifyEmailBody = VerifyEmailRequest;
+export const ResendVerificationBody = ForgotPasswordRequest;
+export const SessionIdParams = Type.Object({ sessionId: Id });
+
+/** Contracts v0.3.1: strict SessionSummary cursor page (no token material, ip <= 45, userAgent <= 1024). */
+export const SessionList = ListSessionsResponse;
+
+export type VerifyEmailBodyT = Static<typeof VerifyEmailBody>;
+export type SessionIdParamsT = Static<typeof SessionIdParams>;
 export type SignupBodyT = Static<typeof SignupBody>;
 export type LoginBodyT = Static<typeof LoginBody>;
 export type ForgotPasswordBodyT = Static<typeof ForgotPasswordBody>;
