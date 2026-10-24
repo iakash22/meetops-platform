@@ -36,7 +36,7 @@ describe('route tree', () => {
   it('lists meetings from the api for the current org', async () => {
     const { api } = renderApp('/meetings');
     expect(await screen.findByText('Weekly sync')).toBeInTheDocument();
-    expect(api.meetings.list).toHaveBeenCalledWith('org_1');
+    expect(api.meetings.list).toHaveBeenCalledWith('00000000-0000-4000-8000-000000000001');
   });
 
   it('shows tasks and projects', async () => {
