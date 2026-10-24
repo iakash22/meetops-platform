@@ -428,10 +428,18 @@ describe('storage objects and recordings', () => {
 });
 
 describe('storage key convention', () => {
-  it('seed uses org/{organizationId}/ prefix', () => {
+  it('seed uses organizations/{organizationId}/ prefix (ADR-010, 2026-10-24)', () => {
     const seed = readFileSync(resolve(pkgDir, 'prisma/seed.ts'), 'utf8');
-    expect(seed).toContain('`org/${org.id}/meetings/');
+    expect(seed).toContain('`organizations/${org.id}/meetings/');
+    expect(seed).not.toContain('`org/${');
     expect(seed).not.toContain('orgs/');
+  });
+
+  it('seed is multi-organization and uses withOrganizationContext naming (ADR-010)', () => {
+    const seed = readFileSync(resolve(pkgDir, 'prisma/seed.ts'), 'utf8');
+    expect((seed.match(/^\s+slug: '(\w+)',$/gm) ?? []).length).toBeGreaterThanOrEqual(2);
+    expect(seed).toContain('runWithOrganizationContext(prisma, org.id');
+    expect(seed).not.toMatch(/\bwithOrgContext\b|\brunWithOrgContext\b|\borgId\b/);
   });
 });
 
