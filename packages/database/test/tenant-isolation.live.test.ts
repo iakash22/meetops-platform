@@ -17,6 +17,27 @@ import { TENANT_TABLES, runWithOrganizationContext, type TenantTable } from '../
 const APP_URL = process.env.RLS_TEST_APP_URL;
 const ADMIN_URL = process.env.RLS_TEST_ADMIN_URL;
 
+/**
+ * Required by this suite. In a CI live-DB run, a missing one is a hard failure, never a silent skip.
+ * A CI run counts as live when any RLS_TEST_* URL is set (the live-db job) or RLS_TEST_REQUIRED=true; the plain
+ * unit-test job (CI=true, no DB) still skips, with a warning, so it does not need a database.
+ */
+const REQUIRED_ENV = ['RLS_TEST_APP_URL', 'RLS_TEST_OWNER_URL', 'RLS_TEST_ADMIN_URL'] as const;
+const missingEnv = REQUIRED_ENV.filter((name) => !process.env[name]);
+const liveRun =
+  process.env.RLS_TEST_REQUIRED === 'true' ||
+  Object.keys(process.env).some(
+    (k) => k.startsWith('RLS_TEST_') && k.endsWith('_URL') && !!process.env[k],
+  );
+if (missingEnv.length > 0) {
+  if (process.env.CI === 'true' && liveRun) {
+    throw new Error(
+      `tenant isolation suite: missing required env ${missingEnv.join(', ')} (CI=true; see packages/database/docs/ci-live-db.md)`,
+    );
+  }
+  console.warn(`[tenant-isolation] skipped: missing ${missingEnv.join(', ')}`);
+}
+
 type Col = { table_name: string; column_name: string; udt_name: string; data_type: string };
 
 /** Column values that must satisfy table CHECK constraints. */
@@ -59,7 +80,7 @@ function dummy(c: Col): string {
   }
 }
 
-describe.skipIf(!APP_URL || !ADMIN_URL)('tenant isolation per table (live, ADR-010)', () => {
+describe.skipIf(missingEnv.length > 0)('tenant isolation per table (live, ADR-010)', () => {
   const app = new PrismaClient({ datasources: { db: { url: APP_URL ?? '' } } });
   const admin = new PrismaClient({ datasources: { db: { url: ADMIN_URL ?? '' } } });
   const orgA = randomUUID();
