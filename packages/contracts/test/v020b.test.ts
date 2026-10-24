@@ -23,13 +23,13 @@ describe('N1 legacy subpath', () => {
 });
 
 describe('N3 media limits', () => {
-  it('2 GB cap everywhere', () => {
-    expect(MAX_MEDIA_BYTES).toBe(2_000_000_000);
+  it('1.4 GB cap everywhere', () => {
+    expect(MAX_MEDIA_BYTES).toBe(1_400_000_000);
     expect(MAX_UPLOAD_BYTES).toBe(MAX_MEDIA_BYTES);
     expect(MAX_RECORDING_SESSION_BYTES).toBe(MAX_MEDIA_BYTES);
-    const ok = { filename: 'a.webm', mimeType: 'audio/webm', sizeBytes: 2_000_000_000 };
+    const ok = { filename: 'a.webm', mimeType: 'audio/webm', sizeBytes: 1_400_000_000, checksumSha256: 'ungWv48Bz+pBQUDeXa4iI7ADYaOWF3qctBD/YfIAFa0=' };
     expect(Value.Check(CreateUploadRequest, ok)).toBe(true);
-    expect(Value.Check(CreateUploadRequest, { ...ok, sizeBytes: 2_000_000_001 })).toBe(false);
+    expect(Value.Check(CreateUploadRequest, { ...ok, sizeBytes: 1_400_000_001 })).toBe(false);
   });
   it.each([...ALLOWED_MEDIA_MIME_TYPES])('allows %s', (m) => {
     expect(Value.Check(MediaMimeType, m)).toBe(true);

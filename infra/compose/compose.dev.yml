@@ -35,9 +35,14 @@ services:
       timeout: 3s
       retries: 10
 
+  # minio/minio and minio/mc are no longer pullable anonymously (removed from Docker Hub, quay.io needs auth).
+  # Chainguard's public MinIO build (cgr.dev/chainguard/minio:latest), pinned by index digest.
+  # It is distroless (no shell/mc/curl), so readiness is checked by minio-init instead of a healthcheck.
   minio:
-    image: minio/minio:latest
+    image: cgr.dev/chainguard/minio@sha256:73297936408b731668ca0e835ac9add1a35cb6026a125c2f0cd476d9ef48222c
     restart: unless-stopped
+    # Image defaults to uid 65532; run as root like the old official image so existing minio-data volumes stay writable.
+    user: '0:0'
     command: ['server', '/data', '--console-address', ':9001']
     environment:
       MINIO_ROOT_USER: ${STORAGE_ACCESS_KEY_ID:-minioadmin}
@@ -47,28 +52,32 @@ services:
       - '9001:9001'
     volumes:
       - minio-data:/data
-    healthcheck:
-      test: ['CMD', 'mc', 'ready', 'local']
-      interval: 5s
-      timeout: 5s
-      retries: 10
 
+  # Bucket init with the AWS CLI (amazon/aws-cli:2.38.5, pinned by index digest). Waits for MinIO, then creates the bucket.
   minio-init:
-    image: minio/mc:latest
+    image: amazon/aws-cli@sha256:c8156a0e74e13929a42d7e60f0d4e14e7d28d980cd21822505d4bff80e5460c1
     depends_on:
       minio:
-        condition: service_healthy
+        condition: service_started
     environment:
-      MINIO_ROOT_USER: ${STORAGE_ACCESS_KEY_ID:-minioadmin}
-      MINIO_ROOT_PASSWORD: ${STORAGE_SECRET_ACCESS_KEY:-minioadmin}
+      AWS_ACCESS_KEY_ID: ${STORAGE_ACCESS_KEY_ID:-minioadmin}
+      AWS_SECRET_ACCESS_KEY: ${STORAGE_SECRET_ACCESS_KEY:-minioadmin}
+      AWS_DEFAULT_REGION: ${STORAGE_REGION:-us-east-1}
+      AWS_EC2_METADATA_DISABLED: 'true'
       STORAGE_BUCKET: ${STORAGE_BUCKET:-meetops-dev}
     entrypoint:
       - /bin/sh
       - -c
       - |
         set -e
-        mc alias set local http://minio:9000 "$${MINIO_ROOT_USER}" "$${MINIO_ROOT_PASSWORD}"
-        mc mb --ignore-existing "local/$${STORAGE_BUCKET}"
+        ep=http://minio:9000
+        i=0
+        until aws --endpoint-url "$$ep" s3api list-buckets >/dev/null 2>&1; do
+          i=$$((i+1)); [ "$$i" -ge 60 ] && echo "minio not ready" && exit 1
+          sleep 2
+        done
+        aws --endpoint-url "$$ep" s3api head-bucket --bucket "$${STORAGE_BUCKET}" 2>/dev/null \
+          || aws --endpoint-url "$$ep" s3api create-bucket --bucket "$${STORAGE_BUCKET}"
         echo "bucket $${STORAGE_BUCKET} ready"
     restart: 'no'
 

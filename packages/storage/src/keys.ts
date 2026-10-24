@@ -9,8 +9,17 @@ export type MeetingObjectKind = 'recording' | 'normalized' | 'chunk' | 'session_
  * Server-side object reference. Callers pass IDs and a kind; the storage
  * package derives the key. Raw keys are never accepted from callers.
  */
-export type MeetingObjectRef = {
-  orgId: string;
+export type MeetingObjectRef = MeetingObjectRefFields &
+  (
+    | { organizationId: string; /** @deprecated Use organizationId (ADR-010). */ orgId?: string }
+    | {
+        organizationId?: string;
+        /** @deprecated Use organizationId (ADR-010). Accepted for one minor version. */
+        orgId: string;
+      }
+  );
+
+type MeetingObjectRefFields = {
   meetingId: string;
   kind: MeetingObjectKind;
   /** Id of the logical object (recording id, transcript id, ...). */
@@ -20,6 +29,29 @@ export type MeetingObjectRef = {
   /** Required for kinds `chunk` and `session_chunk` (= recording-session `seq`): 0-based index. */
   index?: number;
 };
+
+/**
+ * The organization id of a ref (ADR-010: organizationId, falling back to the deprecated orgId).
+ * Throws if both are given and differ, so a ref can never point at two organizations.
+ */
+export function refOrganizationId(ref: { organizationId?: string; orgId?: string }): string {
+  const { organizationId, orgId } = ref;
+  if (organizationId !== undefined && orgId !== undefined && organizationId !== orgId) {
+    throw new StorageValidationError('organizationId and orgId differ');
+  }
+  const v = organizationId ?? orgId;
+  if (typeof v !== 'string') throw new StorageValidationError('Invalid organizationId');
+  return v;
+}
+
+/**
+ * Returns a copy of ref with both organizationId and the deprecated orgId set, so authorize hooks written
+ * against either name keep working during the ADR-010 compatibility phase.
+ */
+export function normalizeMeetingObjectRef(ref: MeetingObjectRef): MeetingObjectRef & { organizationId: string; orgId: string } {
+  const organizationId = refOrganizationId(ref);
+  return { ...ref, organizationId, orgId: organizationId };
+}
 
 function idx(i: number | undefined): string {
   if (i === undefined || !Number.isInteger(i) || i < 0 || i > 99999) throw new StorageValidationError('Invalid chunk index');
@@ -34,13 +66,29 @@ function id(name: string, v: string): string {
 /** Lifecycle-expirable prefix for recording-session chunks (configure e.g. 1-day expiry on it). */
 export const SESSION_CHUNK_PREFIX = 'tmp/session-chunks/';
 
-export function orgPrefix(orgId: string): string {
-  return `org/${id('orgId', orgId)}/`;
+/** Current prefix. WRITERS (buildObjectKey) only ever emit this. */
+export const ORGANIZATIONS_KEY_PREFIX = 'organizations/';
+/**
+ * Legacy prefix (org/{organizationId}/). READ-ONLY: accepted by parseMeetingKey/assertKeyOwnedBy and the stored-key
+ * read methods until the staging copy to organizations/ is verified. Never produced by writers.
+ */
+export const LEGACY_ORG_KEY_PREFIX = 'org/';
+
+export function organizationPrefix(organizationId: string): string {
+  return `${ORGANIZATIONS_KEY_PREFIX}${id('organizationId', organizationId)}/`;
 }
 
-/** Derive the object key: org/{orgId}/meetings/{meetingId}/... */
+/** Legacy read-only prefix for an organization: org/{organizationId}/. */
+export function legacyOrganizationPrefix(organizationId: string): string {
+  return `${LEGACY_ORG_KEY_PREFIX}${id('organizationId', organizationId)}/`;
+}
+
+/** @deprecated Use organizationPrefix (ADR-010). Same output (organizations/{organizationId}/ since ADR-010 Phase A). */
+export const orgPrefix = organizationPrefix;
+
+/** Derive the object key: organizations/{organizationId}/meetings/{meetingId}/... */
 export function buildObjectKey(ref: MeetingObjectRef): string {
-  const base = `${orgPrefix(ref.orgId)}meetings/${id('meetingId', ref.meetingId)}`;
+  const base = `${organizationPrefix(refOrganizationId(ref))}meetings/${id('meetingId', ref.meetingId)}`;
   const obj = id('objectId', ref.objectId);
   const ext = () => {
     const e = (ref.ext ?? '').toLowerCase();
@@ -67,25 +115,38 @@ export function buildObjectKey(ref: MeetingObjectRef): string {
   }
 }
 
-export function parseMeetingKey(key: string): { orgId: string; meetingId: string; rest: string } | null {
+export type ParsedMeetingKey = {
+  organizationId: string;
+  /** @deprecated Use organizationId (ADR-010). */
+  orgId: string;
+  meetingId: string;
+  rest: string;
+  /** True for a legacy (read-only) org/ key. */
+  legacy: boolean;
+};
+
+/** Parse a stored key under organizations/ or (legacy, read-only) org/. Unknown prefixes return null. */
+export function parseMeetingKey(key: string): ParsedMeetingKey | null {
+  if (typeof key !== 'string') return null;
   const k = key.startsWith(SESSION_CHUNK_PREFIX) ? key.slice(SESSION_CHUNK_PREFIX.length) : key;
-  const m = /^org\/([^/]+)\/meetings\/([^/]+)\/(.+)$/.exec(k);
-  if (!m || !ID.test(m[1]!) || !ID.test(m[2]!)) return null;
-  return { orgId: m[1]!, meetingId: m[2]!, rest: m[3]! };
+  const m = /^(organizations|org)\/([^/]+)\/meetings\/([^/]+)\/(.+)$/.exec(k);
+  if (!m || !ID.test(m[2]!) || !ID.test(m[3]!)) return null;
+  return { organizationId: m[2]!, orgId: m[2]!, meetingId: m[3]!, rest: m[4]!, legacy: m[1] === 'org' };
 }
 
 /**
- * Throws StorageAccessError unless `key` lives under org/{orgId}/ or tmp/session-chunks/org/{orgId}/,
+ * Throws StorageAccessError unless `key` lives under organizations/{organizationId}/ (or legacy, read-only,
+ * org/{organizationId}/), optionally behind tmp/session-chunks/,
  * with a valid meetingId segment (and meetingId equal to `meetingId` when given). Never echoes the key.
  */
-export function assertKeyOwnedBy(key: string, orgId: string, meetingId?: string): void {
-  if (typeof orgId !== 'string' || !ID.test(orgId)) throw new StorageAccessError('orgId is required');
+export function assertKeyOwnedBy(key: string, organizationId: string, meetingId?: string): void {
+  if (typeof organizationId !== 'string' || !ID.test(organizationId)) throw new StorageAccessError('organizationId is required');
   if (typeof key !== 'string' || key.includes('..') || key.includes('//') || key.includes('\\')) throw new StorageAccessError();
   const isSession = key.startsWith(SESSION_CHUNK_PREFIX);
   const k = isSession ? key.slice(SESSION_CHUNK_PREFIX.length) : key;
-  if (!k.startsWith(orgPrefix(orgId))) throw new StorageAccessError();
+  if (!k.startsWith(organizationPrefix(organizationId)) && !k.startsWith(legacyOrganizationPrefix(organizationId))) throw new StorageAccessError();
   const parsed = parseMeetingKey(key);
-  if (!parsed || parsed.orgId !== orgId) throw new StorageAccessError();
+  if (!parsed || parsed.organizationId !== organizationId) throw new StorageAccessError();
   if (meetingId !== undefined && parsed.meetingId !== meetingId) throw new StorageAccessError();
   if (isSession && !/^sessions\/[A-Za-z0-9][A-Za-z0-9_-]{0,127}\/\d{5}\.part$/.test(parsed.rest)) throw new StorageAccessError();
 }
