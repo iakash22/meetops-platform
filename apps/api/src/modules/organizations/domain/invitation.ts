@@ -20,6 +20,7 @@ export interface Invitation {
   deletedAt: Date | null;
 }
 
+/** Invitation tokens are opaque (no organizationId); lookup is global by token hash. */
 export class InvitationError extends DomainError {}
 
 export const invitationErrors = {
