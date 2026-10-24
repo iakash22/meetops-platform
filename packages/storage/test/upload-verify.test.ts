@@ -101,10 +101,13 @@ describe('abortStaleMultipartUploads', () => {
     s3.on(ListMultipartUploadsCommand, { Prefix: 'organizations/' })
       .resolvesOnce({ IsTruncated: true, NextKeyMarker: 'k', NextUploadIdMarker: 'u', Uploads: [{ Key: REC_KEY, UploadId: 'a', Initiated: old }] })
       .resolvesOnce({ IsTruncated: false, Uploads: [{ Key: REC_KEY, UploadId: 'b', Initiated: fresh }] });
+    const legacyKey = 'org/o1/meetings/m1/recordings/r0.webm';
+    s3.on(ListMultipartUploadsCommand, { Prefix: 'org/' }).resolves({ IsTruncated: false, Uploads: [{ Key: legacyKey, UploadId: 'l', Initiated: old }] });
     s3.on(ListMultipartUploadsCommand, { Prefix: 'tmp/session-chunks/' }).resolves({ IsTruncated: false, Uploads: [] });
     s3.on(AbortMultipartUploadCommand).resolves({});
     const r = await svc().abortStaleMultipartUploads(new Date('2026-06-01T00:00:00Z'));
-    expect(r).toEqual({ aborted: 1 });
+    expect(r).toEqual({ aborted: 2 });
+    expect(s3.commandCalls(AbortMultipartUploadCommand)[1]!.args[0].input).toMatchObject({ Key: legacyKey, UploadId: 'l' });
     expect(s3.commandCalls(AbortMultipartUploadCommand)[0]!.args[0].input).toMatchObject({ Key: REC_KEY, UploadId: 'a' });
   });
 });

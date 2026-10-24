@@ -1,5 +1,65 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
 
+/**
+ * Replay window. GitHub deliveries carry NO signed timestamp, so the delivery-id TTL is the only replay control:
+ * a captured signed request can be replayed once its id expires. GitHub lets admins redeliver for up to 3 days, so
+ * we keep ids for 7 days and never allow a shorter window.
+ */
+export const MIN_REPLAY_TTL_SECONDS = 604_800;
+export const DEFAULT_REPLAY_TTL_SECONDS = MIN_REPLAY_TTL_SECONDS;
+
+/** Clamp a configured TTL to [7 days, ∞). Non-finite / missing values fall back to the default. */
+export function effectiveReplayTtlSeconds(ttlSeconds?: number): number {
+  if (ttlSeconds === undefined || !Number.isFinite(ttlSeconds)) return DEFAULT_REPLAY_TTL_SECONDS;
+  return Math.max(MIN_REPLAY_TTL_SECONDS, Math.ceil(ttlSeconds));
+}
+
+/** Upper bound on delivery-id length; anything longer is rejected before touching the store. */
+export const MAX_DELIVERY_ID_LENGTH = 64;
+const GUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** X-GitHub-Delivery is a GUID. Rejects anything else (prevents key-space abuse / injection into store keys). */
+export function isValidGitHubDeliveryId(id: string | undefined): id is string {
+  return typeof id === 'string' && id.length <= MAX_DELIVERY_ID_LENGTH && GUID_RE.test(id);
+}
+
+export interface FreshnessOptions {
+  /** Maximum accepted age of the event. */
+  maxAgeSeconds: number;
+  /** Allowed clock skew into the future. Default 300s. */
+  maxFutureSkewSeconds?: number;
+  now?: () => number;
+}
+
+export type FreshnessResult = 'fresh' | 'stale' | 'future' | 'invalid';
+
+/**
+ * Freshness check for providers that send an event timestamp (epoch ms or s, or ISO-8601).
+ * Only meaningful as a replay control when the timestamp is covered by the signature (e.g. inside a signed body).
+ */
+export function checkTimestampFreshness(timestamp: unknown, opts: FreshnessOptions): FreshnessResult {
+  let ms: number;
+  if (typeof timestamp === 'number' && Number.isFinite(timestamp)) ms = timestamp < 1e12 ? timestamp * 1000 : timestamp;
+  else if (typeof timestamp === 'string' && /^\d{10,13}$/.test(timestamp)) ms = timestamp.length <= 10 ? Number(timestamp) * 1000 : Number(timestamp);
+  else if (typeof timestamp === 'string' && timestamp.length <= 40 && !Number.isNaN(Date.parse(timestamp))) ms = Date.parse(timestamp);
+  else return 'invalid';
+  if (!(opts.maxAgeSeconds > 0)) return 'invalid';
+  const now = (opts.now ?? Date.now)();
+  if (ms - now > (opts.maxFutureSkewSeconds ?? 300) * 1000) return 'future';
+  if (now - ms > opts.maxAgeSeconds * 1000) return 'stale';
+  return 'fresh';
+}
+
+/**
+ * Jira Cloud webhook bodies include `timestamp` (epoch ms). Use after verifying the request's authenticity
+ * (shared secret / JWT). If the field is absent: `requireTimestamp` (default false) decides; absent -> 'invalid'.
+ */
+export function checkJiraWebhookFreshness(payload: unknown, opts: FreshnessOptions & { requireTimestamp?: boolean }): FreshnessResult | 'absent' {
+  const ts = (payload as { timestamp?: unknown } | null)?.timestamp;
+  if (ts === undefined || ts === null) return opts.requireTimestamp ? 'invalid' : 'absent';
+  return checkTimestampFreshness(ts, opts);
+}
+
 /** Store of seen webhook delivery ids for replay protection. Implement with Redis (SET NX EX) in production. */
 export interface DeliveryStore {
   /**
@@ -38,7 +98,7 @@ export class InMemoryDeliveryStore implements DeliveryStore {
     this.prune(t);
     const exp = this.seen.get(deliveryId);
     if (exp !== undefined && exp > t) return false;
-    this.seen.set(deliveryId, t + ttlSeconds * 1000);
+    this.seen.set(deliveryId, t + effectiveReplayTtlSeconds(ttlSeconds) * 1000);
     while (this.seen.size > this.maxEntries) {
       const first = this.seen.keys().next().value;
       if (first === undefined) break;
@@ -62,6 +122,7 @@ export type WebhookFailureReason =
   | 'invalid_signature'
   | 'unknown_integration'
   | 'missing_delivery_id'
+  | 'malformed_delivery_id'
   | 'replayed_delivery'
   | 'invalid_payload'
   | 'payload_too_large';
@@ -131,7 +192,7 @@ export interface VerifyWebhookOptions {
   rawBody: string | Uint8Array;
   headers: HeaderBag;
   deliveryStore: DeliveryStore;
-  /** Replay window; default 24h. */
+  /** Replay window; default and minimum 7 days (values below are raised to 604800s). */
   replayTtlSeconds?: number;
   /** Default 1 MiB (GitHub caps payloads at 25 MB; issues events are small). */
   maxBodyBytes?: number;
@@ -143,6 +204,7 @@ const STATUS: Record<WebhookFailureReason, 400 | 401 | 409 | 413> = {
   invalid_signature: 401,
   unknown_integration: 401,
   missing_delivery_id: 400,
+  malformed_delivery_id: 400,
   replayed_delivery: 409,
   invalid_payload: 400,
   payload_too_large: 413
@@ -185,9 +247,11 @@ export async function verifyGitHubWebhook(opts: VerifyWebhookOptions): Promise<W
   if (!resolved?.secret) return fail('unknown_integration');
   const sigErr = verifyGitHubSignature(resolved.secret, opts.rawBody, signature);
   if (sigErr) return fail(sigErr);
-  const deliveryId = header(opts.headers, 'x-github-delivery')?.trim();
-  if (!deliveryId) return fail('missing_delivery_id');
-  const fresh = await opts.deliveryStore.markIfNew(deliveryId, opts.replayTtlSeconds ?? 24 * 3600);
+  const rawDelivery = header(opts.headers, 'x-github-delivery');
+  if (!rawDelivery) return fail('missing_delivery_id');
+  const deliveryId = rawDelivery.trim().toLowerCase();
+  if (!isValidGitHubDeliveryId(deliveryId)) return fail('malformed_delivery_id');
+  const fresh = await opts.deliveryStore.markIfNew(deliveryId, effectiveReplayTtlSeconds(opts.replayTtlSeconds));
   if (!fresh) return fail('replayed_delivery');
   return {
     ok: true,
