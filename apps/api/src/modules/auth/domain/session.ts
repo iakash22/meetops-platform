@@ -29,6 +29,9 @@ export function isSessionActive(session: Session, now: Date, policy: SessionPoli
 export interface SessionRepository {
   create(session: Session): Promise<Session>;
   findByTokenHash(tokenHash: string): Promise<Session | null>;
+  findById(id: string): Promise<Session | null>;
+  /** Not revoked and not past the absolute expiry (idle filtering is done by the caller). */
+  listActiveForUser(userId: string, now: Date): Promise<Session[]>;
   touch(id: string, at: Date): Promise<void>;
   revoke(id: string, at: Date): Promise<void>;
   revokeAllForUser(userId: string, at: Date): Promise<void>;

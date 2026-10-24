@@ -12,12 +12,20 @@ import {
   GetSessionResponse,
   SessionResponse,
   SignupBody,
+  ResendVerificationBody,
+  SessionIdParams,
+  SessionList,
+  VerifyEmailBody,
+  type SessionIdParamsT,
+  type VerifyEmailBodyT,
   type ForgotPasswordBodyT,
   type LoginBodyT,
   type ResetPasswordBodyT,
   type SignupBodyT
 } from './schemas.js';
-import { makeGuards, requestMeta, type HttpSecurityConfig } from './security.js';
+import { capIp, capUserAgent, makeGuards, requestMeta, type HttpSecurityConfig } from './security.js';
+import { CursorPageQuery } from '@meetops/contracts';
+import { paginate } from '../../../shared/pagination.js';
 import type { OrganizationService } from '../../organizations/application/organization.service.js';
 import { toSessionResponse } from './mappers.js';
 
@@ -138,9 +146,106 @@ export async function authRoutes(app: FastifyInstance, opts: AuthPluginOptions) 
     },
     async (request, reply) => {
       await g.requireSession(request);
-      await auth.logout(g.readToken(request));
+      await auth.logout(g.readToken(request), requestMeta(request));
       g.clearSessionCookie(reply);
       return reply.status(204).send();
+    }
+  );
+
+  app.post(
+    '/auth/logout-all',
+    {
+      schema: {
+        tags,
+        summary: 'Log out everywhere',
+        description: 'Revokes every session of the caller (including this one) and clears the cookie.',
+        response: { 204: Type.Null(), 401: ErrorBody, 403: ErrorBody }
+      }
+    },
+    async (request, reply) => {
+      const { user } = await g.requireSession(request);
+      await auth.logoutAll(user.id, requestMeta(request));
+      g.clearSessionCookie(reply);
+      return reply.status(204).send();
+    }
+  );
+
+  app.get<{ Querystring: CursorPageQuery }>(
+    '/auth/sessions',
+    {
+      schema: {
+        tags,
+        summary: 'List my sessions',
+        description: 'Active sessions (devices) of the caller; `current` marks this one. Cursor page.',
+        querystring: CursorPageQuery,
+        response: { 200: SessionList, 401: ErrorBody }
+      }
+    },
+    async (request) => {
+      const { user, session } = await g.requireSession(request);
+      const items = (await auth.listSessions(user.id)).map((s) => ({
+        id: s.id,
+        current: s.id === session.id,
+        createdAt: s.createdAt.toISOString(),
+        lastSeenAt: s.lastSeenAt.toISOString(),
+        expiresAt: s.expiresAt.toISOString(),
+        ip: capIp(s.ip),
+        userAgent: capUserAgent(s.userAgent)
+      }));
+      return paginate(items, request.query);
+    }
+  );
+
+  app.delete<{ Params: SessionIdParamsT }>(
+    '/auth/sessions/:sessionId',
+    {
+      schema: {
+        tags,
+        summary: 'Revoke one of my sessions',
+        description: "404 for unknown sessions and other users' sessions. Revoking the current one also clears the cookie.",
+        params: SessionIdParams,
+        response: { 204: Type.Null(), 401: ErrorBody, 403: ErrorBody, 404: ErrorBody }
+      }
+    },
+    async (request, reply) => {
+      const { user, session } = await g.requireSession(request);
+      await auth.revokeSession(user.id, request.params.sessionId, requestMeta(request));
+      if (request.params.sessionId === session.id) g.clearSessionCookie(reply);
+      return reply.status(204).send();
+    }
+  );
+
+  app.post<{ Body: VerifyEmailBodyT }>(
+    '/auth/verify-email',
+    {
+      schema: {
+        tags,
+        summary: 'Verify email address',
+        description: 'Consumes a single-use verification token (24 h TTL). Public; does not need a session.',
+        body: VerifyEmailBody,
+        response: { 204: Type.Null(), 400: ErrorBody, 403: ErrorBody, 429: ErrorBody }
+      }
+    },
+    async (request, reply) => {
+      await auth.verifyEmail(request.body.token, requestMeta(request));
+      return reply.status(204).send();
+    }
+  );
+
+  app.post<{ Body: ForgotPasswordBodyT }>(
+    '/auth/resend-verification',
+    {
+      schema: {
+        tags,
+        summary: 'Resend verification email',
+        description: 'Enumeration-safe: always 202 with the same message.',
+        body: ResendVerificationBody,
+        response: { 202: AcceptedBody, 403: ErrorBody, 429: ErrorBody }
+      }
+    },
+    async (request, reply) => {
+      await auth.resendVerification(request.body.email, requestMeta(request));
+      return reply.status(202).send({ message: SIGNUP_MSG });
     }
   );
 
