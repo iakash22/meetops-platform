@@ -17,6 +17,7 @@ class Api {
   constructor(
     readonly ctx: APIRequestContext,
     readonly origin: string,
+    readonly stack: Stack,
   ) {}
   private async csrf(): Promise<string> {
     const r = await this.ctx.get('/api/auth/csrf');
@@ -31,6 +32,10 @@ class Api {
   async signup(email: string, password: string) {
     const r = await this.post('/auth/signup', { name: 'QA E2E', email, password });
     expect([200, 201, 202], `signup status ${r.status()}`).toContain(r.status());
+    // D2 (PR #53): verify the email so org create/switch work for this user.
+    const token = await this.stack.verificationToken(email);
+    const v = await this.post('/auth/verify-email', { token });
+    expect(v.status(), 'verify-email').toBe(204);
   }
   async login(email: string, password: string) {
     const r = await this.post('/auth/login', { email, password });
@@ -53,7 +58,7 @@ const test = base.extend<Fixtures>({
   },
   api: async ({ stack }, use) => {
     const ctx = await pwRequest.newContext({ baseURL: stack.origin });
-    await use(new Api(ctx, stack.origin));
+    await use(new Api(ctx, stack.origin, stack));
     await ctx.dispose();
   },
   baseURL: async ({ stack }, use) => use(stack.origin),
