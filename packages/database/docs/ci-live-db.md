@@ -14,6 +14,7 @@ Owner: Database agent. DevOps owns `.github/workflows`; copy `ci-live-db.example
   - XT-29: catalog check that every `org_id` table has RLS enabled and forced, with a policy.
   - Invitation definer functions.
   - `meetops_relay` privilege limits.
+  - `test/tenant-isolation.live.test.ts` (ADR-010): for every tenant table, cross-organization read, update, delete, insert and re-home are blocked. Needs `RLS_TEST_ADMIN_URL` (a superuser on the `meetops` DB) for fixtures.
 
 ## Service
 
