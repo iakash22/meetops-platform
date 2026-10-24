@@ -18,11 +18,61 @@ Not used anywhere (no v4 work needed): `.merge`, `z.record`, `errorMap`, `requir
 
 `zod@3.25.x` already ships v4 at the `zod/v4` subpath, so packages can migrate one at a time before bumping to `zod@^4`.
 
+## ⚠️ MUST-TEST-BEFORE-MIGRATING: `.default()` boolean behaviour
+
+**Do not bump zod or switch any import to `zod/v4` in `packages/config` until this test exists on v3 and passes.**
+
+In zod 3, `bool.default('true')` feeds `'true'` through the string→boolean transform, so the result is `true`. In zod 4, `.default()` short-circuits and returns the default value as-is, so the result would be the **string** `'true'` / `'false'`. A non-empty string is truthy, so `'false'` would behave like `true`.
+
+Affected keys in `packages/config/src/index.ts` (all 8):
+
+| Key                                | v3 default (boolean) | Why it matters                                              |
+| ---------------------------------- | -------------------- | ----------------------------------------------------------- |
+| **`AI_REQUIRE_PROVIDER_APPROVAL`** | `true`               | **Safety gate**: must stay a real boolean                   |
+| **`AI_ALLOW_PAID_FALLBACK`**       | `false`              | **Cost gate**: `'false'` (truthy) would allow paid fallback |
+| `STORAGE_FORCE_PATH_STYLE`         | `true`               | MinIO addressing                                            |
+| `SMTP_SECURE`                      | `true`               | TLS for SMTP                                                |
+| `OLLAMA_ENABLED`                   | `false`              | provider toggle                                             |
+| `LOCAL_STT_ENABLED`                | `false`              | provider toggle                                             |
+| `OPENAI_ENABLED`                   | `false`              | paid provider toggle                                        |
+| `DEEPGRAM_ENABLED`                 | `false`              | paid provider toggle                                        |
+
+Note: earlier drafts of this plan said 9 keys; the actual count is **8** (`grep -c 'bool.default' packages/config/src/index.ts` = 8).
+
+Test to add in `packages/config/test/config.test.ts` (merge on v3 first, keep it through the migration):
+
+```ts
+const BOOL_DEFAULTS = {
+  AI_REQUIRE_PROVIDER_APPROVAL: true,
+  AI_ALLOW_PAID_FALLBACK: false,
+  STORAGE_FORCE_PATH_STYLE: true,
+  SMTP_SECURE: true,
+  OLLAMA_ENABLED: false,
+  LOCAL_STT_ENABLED: false,
+  OPENAI_ENABLED: false,
+  DEEPGRAM_ENABLED: false,
+} as const;
+
+it('boolean env defaults parse to real booleans', () => {
+  const cfg = loadConfig({});
+  for (const [key, expected] of Object.entries(BOOL_DEFAULTS)) {
+    expect(typeof cfg[key as keyof typeof BOOL_DEFAULTS]).toBe('boolean');
+    expect(cfg[key as keyof typeof BOOL_DEFAULTS]).toBe(expected);
+  }
+});
+
+it.each(['false', '0', 'no', 'off'])('AI_ALLOW_PAID_FALLBACK=%s parses to false', (v) => {
+  expect(loadConfig({ AI_ALLOW_PAID_FALLBACK: v }).AI_ALLOW_PAID_FALLBACK).toBe(false);
+});
+```
+
+Fix during migration: `bool.default(true)` / `bool.default(false)` (output-typed), or `.prefault('true')` to keep v3 semantics.
+
 ## 2. v4 changes that affect this repo
 
 | #   | Change in v4                                                                                                                                                                                                                           | Where it bites                                                                                                                                                                                                                                                                                                                                                                            | Severity                           |
 | --- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------- |
-| 1   | **`.default()` short-circuits**: default must be of the _output_ type and is returned without running the schema. `.prefault()` keeps v3 behaviour (default is parsed).                                                                | `packages/config`: `bool.default('true')` / `bool.default('false')` on a string→boolean transform. In v4 this is a type error and, if forced, returns the string `'true'` instead of `true`. 9 fields (`STORAGE_FORCE_PATH_STYLE`, `SMTP_SECURE`, `OLLAMA_ENABLED`, `LOCAL_STT_ENABLED`, `OPENAI_ENABLED`, `DEEPGRAM_ENABLED`, `AI_ALLOW_PAID_FALLBACK`, `AI_REQUIRE_PROVIDER_APPROVAL`). | **High** (silent behaviour change) |
+| 1   | **`.default()` short-circuits**: default must be of the _output_ type and is returned without running the schema. `.prefault()` keeps v3 behaviour (default is parsed).                                                                | `packages/config`: `bool.default('true')` / `bool.default('false')` on a string→boolean transform. In v4 this is a type error and, if forced, returns the string `'true'` instead of `true`. 8 fields (`STORAGE_FORCE_PATH_STYLE`, `SMTP_SECURE`, `OLLAMA_ENABLED`, `LOCAL_STT_ENABLED`, `OPENAI_ENABLED`, `DEEPGRAM_ENABLED`, `AI_ALLOW_PAID_FALLBACK`, `AI_REQUIRE_PROVIDER_APPROVAL`). | **High** (silent behaviour change) |
 | 2   | Defaults inside optional object fields are now applied (`z.string().default(x).optional()` yields `x`).                                                                                                                                | Not used today; watch in review.                                                                                                                                                                                                                                                                                                                                                          | Low                                |
 | 3   | String formats moved to top level: `z.string().email()/.url()/.uuid()` deprecated in favour of `z.email()`, `z.url()`, `z.uuid()`. `.email()` regex is stricter; `z.url()` accepts any WHATWG URL (keeps `postgresql://`, `redis://`). | `config` (`DATABASE_URL`, `REDIS_URL`), `apps/web` auth schemas. Deprecated forms still work.                                                                                                                                                                                                                                                                                             | Low                                |
 | 4   | Error customisation unified under `error`: `message` param deprecated (still accepted); `errorMap`, `invalid_type_error`, `required_error` removed.                                                                                    | `.refine(..., { message })` in config/notifications/web; `.min(n, 'msg')` string shorthand is still fine.                                                                                                                                                                                                                                                                                 | Low                                |
