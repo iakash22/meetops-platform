@@ -153,6 +153,32 @@ enum RecordingAbortReason {
   error
 }
 
+/// Granularity of an AiUsageCounter bucket.
+enum AiUsagePeriodKind {
+  day
+  month
+}
+
+enum AiIdempotencyStatus {
+  pending
+  succeeded
+  failed
+}
+
+enum TranscriptChunkStatus {
+  pending
+  processing
+  done
+  failed
+}
+
+enum TranscriptMergeStatus {
+  pending
+  merging
+  merged
+  failed
+}
+
 enum StorageObjectStatus {
   pending_upload
   uploaded
@@ -191,6 +217,10 @@ model Organization {
   recordingSessions      RecordingSession[]
   recordingSessionChunks RecordingSessionChunk[]
   activeSessions         Session[]
+  aiUsageCounters        AiUsageCounter[]
+  aiConfig               AiOrganizationConfig?
+  aiIdempotencyKeys      AiIdempotency[]
+  transcriptChunks       TranscriptChunk[]
 
   createdBy User? @relation("OrgCreator", fields: [createdById], references: [id], onDelete: SetNull)
 
@@ -218,11 +248,12 @@ model User {
   meetingParticipations MeetingParticipant[] @relation("ParticipantUser")
   auditEvents           AuditEvent[]
 
-  organizationsCreated Organization[]      @relation("OrgCreator")
-  invitationsAccepted  Invitation[]        @relation("InvitationAcceptor")
+  organizationsCreated Organization[]         @relation("OrgCreator")
+  invitationsAccepted  Invitation[]           @relation("InvitationAcceptor")
   emailVerifications   EmailVerification[]
   passwordResets       PasswordReset[]
-  recordingSessions    RecordingSession[]  @relation("RecordingSessionCreator")
+  recordingSessions    RecordingSession[]     @relation("RecordingSessionCreator")
+  aiConfigsUpdated     AiOrganizationConfig[] @relation("AiOrganizationConfigUpdater")
 
   @@map("users")
 }
@@ -479,20 +510,23 @@ model Recording {
 }
 
 model Transcript {
-  id             String           @id @default(uuid()) @db.Uuid
-  organizationId String           @map("org_id") @db.Uuid
-  meetingId      String           @map("meeting_id") @db.Uuid
-  recordingId    String           @map("recording_id") @db.Uuid
+  id             String                @id @default(uuid()) @db.Uuid
+  organizationId String                @map("org_id") @db.Uuid
+  meetingId      String                @map("meeting_id") @db.Uuid
+  recordingId    String                @map("recording_id") @db.Uuid
   /// Transcription provider (e.g. "deepgram") and its job id, for idempotent webhook/poll handling.
   provider       String
-  providerJobId  String?          @map("provider_job_id")
-  revision       Int              @default(1)
-  status         TranscriptStatus @default(pending)
+  providerJobId  String?               @map("provider_job_id")
+  revision       Int                   @default(1)
+  status         TranscriptStatus      @default(pending)
   language       String?
-  fullText       String?          @map("full_text")
-  createdAt      DateTime         @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt      DateTime         @updatedAt @map("updated_at") @db.Timestamptz(3)
-  deletedAt      DateTime?        @map("deleted_at") @db.Timestamptz(3)
+  fullText       String?               @map("full_text")
+  /// Chunked transcription: merge of TranscriptChunk rows into fullText/segments (single winner via tryBeginMerge).
+  mergeStatus    TranscriptMergeStatus @default(pending) @map("merge_status")
+  mergedAt       DateTime?             @map("merged_at") @db.Timestamptz(3)
+  createdAt      DateTime              @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime              @updatedAt @map("updated_at") @db.Timestamptz(3)
+  deletedAt      DateTime?             @map("deleted_at") @db.Timestamptz(3)
 
   organization Organization        @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   meeting      Meeting             @relation(fields: [organizationId, meetingId], references: [organizationId, id], onDelete: Cascade)
@@ -500,6 +534,7 @@ model Transcript {
   segments     TranscriptSegment[]
   reports      Report[]
   aiRuns       AiRun[]
+  chunks       TranscriptChunk[]
 
   @@unique([meetingId, revision])
   @@unique([organizationId, provider, providerJobId])
@@ -689,6 +724,8 @@ model AiRun {
   outputTokens       Int?        @map("output_tokens")
   totalTokens        Int?        @map("total_tokens")
   costUsd            Decimal?    @map("cost_usd") @db.Decimal(12, 6)
+  /// Billed audio duration for transcription runs.
+  audioSeconds       Decimal?    @map("audio_seconds") @db.Decimal(10, 3)
   latencyMs          Int?        @map("latency_ms")
   error              String?
   metadata           Json?
@@ -848,4 +885,85 @@ model RecordingSessionChunk {
   @@unique([sessionId, seq])
   @@index([organizationId, sessionId])
   @@map("recording_session_chunks")
+}
+
+/// Per-organization AI usage bucket. Incremented atomically (INSERT ... ON CONFLICT DO UPDATE) by
+/// incrementAiUsage; never updated through Prisma's update (which would lose concurrent increments).
+model AiUsageCounter {
+  id             String            @id @default(uuid()) @db.Uuid
+  organizationId String            @map("org_id") @db.Uuid
+  provider       String
+  periodKind     AiUsagePeriodKind @map("period_kind")
+  periodStart    DateTime          @map("period_start") @db.Date
+  requests       Int               @default(0)
+  inputTokens    BigInt            @default(0) @map("input_tokens")
+  outputTokens   BigInt            @default(0) @map("output_tokens")
+  audioSeconds   Decimal           @default(0) @map("audio_seconds") @db.Decimal(12, 3)
+  costUsd        Decimal           @default(0) @map("cost_usd") @db.Decimal(12, 6)
+  updatedAt      DateTime          @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, provider, periodKind, periodStart])
+  @@unique([organizationId, id])
+  @@map("ai_usage_counters")
+}
+
+/// One AI configuration row per organization (PK = FK = org_id). config is a JSON object (CHECK in SQL).
+model AiOrganizationConfig {
+  organizationId   String   @id @map("org_id") @db.Uuid
+  config           Json     @default("{}")
+  monthlyBudgetUsd Decimal? @map("monthly_budget_usd") @db.Decimal(12, 2)
+  updatedById      String?  @map("updated_by_id") @db.Uuid
+  updatedAt        DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  updatedBy    User?        @relation("AiOrganizationConfigUpdater", fields: [updatedById], references: [id], onDelete: SetNull)
+
+  @@index([updatedById])
+  @@map("ai_org_config")
+}
+
+/// Idempotency keys for AI jobs. claimAiIdempotencyKey gives one winner per (org, key); an expired
+/// pending claim can be re-claimed.
+model AiIdempotency {
+  organizationId String              @map("org_id") @db.Uuid
+  key            String
+  status         AiIdempotencyStatus @default(pending)
+  resultRef      String?             @map("result_ref")
+  createdAt      DateTime            @default(now()) @map("created_at") @db.Timestamptz(3)
+  expiresAt      DateTime            @map("expires_at") @db.Timestamptz(3)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@id([organizationId, key])
+  @@index([expiresAt])
+  @@map("ai_idempotency")
+}
+
+/// One provider chunk of a chunked transcription. error holds a provider error CODE only (<= 500 chars),
+/// never a raw provider response body.
+model TranscriptChunk {
+  id             String                @id @default(uuid()) @db.Uuid
+  organizationId String                @map("org_id") @db.Uuid
+  transcriptId   String                @map("transcript_id") @db.Uuid
+  chunkIndex     Int                   @map("chunk_index")
+  startMs        Int                   @map("start_ms")
+  endMs          Int                   @map("end_ms")
+  status         TranscriptChunkStatus @default(pending)
+  provider       String
+  text           String?
+  segments       Json?
+  attemptCount   Int                   @default(0) @map("attempt_count")
+  error          String?               @db.VarChar(500)
+  createdAt      DateTime              @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime              @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  transcript   Transcript   @relation(fields: [organizationId, transcriptId], references: [organizationId, id], onDelete: Cascade)
+
+  @@unique([transcriptId, chunkIndex])
+  @@unique([organizationId, id])
+  @@index([organizationId, transcriptId])
+  @@map("transcript_chunks")
 }
