@@ -96,6 +96,11 @@ describe('generated client', () => {
         'getPrismaClient',
         'withOrgContext',
         'withOrganizationContext',
+        'createRecordingChunkCountRepository',
+        'createChunkFileObjectRepository',
+        'createChunkFileObjectLookup',
+        'MediaPersistenceError',
+        'MAX_RECORDING_CHUNKS',
         'withUserContext',
       ].sort(),
     );
