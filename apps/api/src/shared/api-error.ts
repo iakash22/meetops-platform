@@ -3,7 +3,7 @@ import { ApiErrorCode as ContractErrorCode } from '@meetops/contracts';
 
 /**
  * Contracts ApiErrorCode plus 'CSRF_INVALID'.
- * TODO(contracts): Architecture to add CSRF_INVALID to @meetops/contracts ApiErrorCode, then delete this file.
+ * TODO(contracts #50): switch to @meetops/contracts once PR #50 (adds CSRF_INVALID) merges, then delete this file.
  */
 export const ApiErrorCode = Type.Union([...ContractErrorCode.anyOf, Type.Literal('CSRF_INVALID')]);
 export type ApiErrorCode = Static<typeof ApiErrorCode>;
