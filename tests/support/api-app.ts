@@ -65,7 +65,10 @@ export async function buildAuthApp(deps: Record<string, unknown> = {}) {
   };
   const clock = new FakeClock();
   const mailer = new RecordingAuthMailer();
-  const app = createServer({ deps: { mailer, hasher: fakeHasher, clock, ...deps } });
+  const app = createServer({
+    // No-op sleep: the login lockout's progressive delay would otherwise really wait.
+    deps: { mailer, hasher: fakeHasher, clock, sleep: async () => {}, ...deps },
+  });
   mailers.set(app, mailer);
   await app.ready();
   return { app, mailer, clock };
