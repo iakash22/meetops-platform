@@ -13,8 +13,16 @@ This contract is owned by Media and Realtime. It covers Native Apps, Extension, 
 On success the complete route returns:
 
 ```json
-{ "verified": true, "sha256": "<lowercase hex>", "checksumSha256": "<base64>", "sizeBytes": 123 }
+{
+  "verified": true,
+  "sha256": "<hex>",
+  "checksumSha256": "<hex>",
+  "checksumSha256Base64": "<base64>",
+  "sizeBytes": 123
+}
 ```
+
+Encodings: `sha256` and `checksumSha256` are both lowercase 64-char hex (`checksumSha256` matches the DB `FileObject.checksumSha256`); `checksumSha256Base64` is the same digest in S3 `x-amz-checksum-sha256` (padded base64) form. Inputs are unchanged: the init request's `checksumSha256` stays base64 (contracts `Sha256Base64`), recording-session chunk `sha256` stays hex.
 
 The server never trusts a hash sent by the client. It checks it as follows:
 

@@ -32,7 +32,7 @@ describe.skipIf(!enabled)('S3StorageService against MinIO', () => {
     const put = await fetch(p.url, { method: 'PUT', headers: p.headers, body: data });
     expect(put.ok).toBe(true);
     const v = await s.verifyUpload(ref, p.uploadToken);
-    expect(v).toMatchObject({ verified: true, checksumSha256, sizeBytes: data.byteLength });
+    expect(v).toMatchObject({ verified: true, checksumSha256: Buffer.from(checksumSha256, 'base64').toString('hex'), checksumSha256Base64: checksumSha256, sizeBytes: data.byteLength });
     await expect(s.verifyUpload(ref, p.uploadToken)).resolves.toEqual(v);
     await s.deleteObject(ref);
     expect(await s.headObject(ref)).toBeNull();
