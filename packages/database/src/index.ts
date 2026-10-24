@@ -1,10 +1,11 @@
-import { PrismaClient, type Prisma } from '@prisma/client';
+import type { Prisma, PrismaClient } from '@prisma/client';
 import {
   runWithOrganizationContext,
   runWithUserContext,
   type OrganizationContextOptions,
   type OrgContextOptions,
 } from './tenant.js';
+import { getPrismaClient } from './client.js';
 
 /** The database client type. Model/enum types come from @meetops/contracts, not from here. */
 export type DatabaseClient = PrismaClient;
@@ -12,37 +13,12 @@ export type DatabaseClient = PrismaClient;
 export type DatabaseTransaction = Prisma.TransactionClient;
 export type { OrganizationContextOptions, OrgContextOptions };
 
-export interface CreatePrismaClientOptions {
-  /** Overrides DATABASE_URL for this client. */
-  databaseUrl?: string;
-  log?: Prisma.LogLevel[];
-}
-
-/** Create a new PrismaClient. Prefer getPrismaClient() in app code. */
-export function createPrismaClient(options: CreatePrismaClientOptions = {}): DatabaseClient {
-  const config: Prisma.PrismaClientOptions = {};
-  if (options.databaseUrl) config.datasources = { db: { url: options.databaseUrl } };
-  if (options.log) config.log = options.log;
-  return new PrismaClient(config);
-}
-
-const globalForPrisma = globalThis as unknown as { __meetopsPrisma?: DatabaseClient };
-
-/** Process-wide singleton (survives dev hot reload). Reads DATABASE_URL lazily on first query. */
-export function getPrismaClient(options: CreatePrismaClientOptions = {}): DatabaseClient {
-  globalForPrisma.__meetopsPrisma ??= createPrismaClient(options);
-  return globalForPrisma.__meetopsPrisma;
-}
-
-/** Disconnect and clear the singleton (for graceful shutdown and tests). */
-export async function disconnectPrismaClient(): Promise<void> {
-  const client = globalForPrisma.__meetopsPrisma;
-  if (client) {
-    delete globalForPrisma.__meetopsPrisma;
-    await client.$disconnect();
-  }
-}
-
+export {
+  createPrismaClient,
+  disconnectPrismaClient,
+  getPrismaClient,
+  type CreatePrismaClientOptions,
+} from './client.js';
 /**
  * withOrganizationContext(organizationId, fn, { client?, userId?, timeoutMs? }): run fn in one interactive
  * transaction with app.current_organization_id set LOCAL, so forced RLS only exposes this organization.
@@ -81,6 +57,27 @@ export async function withUserContext<T>(
   return runWithUserContext(client ?? getPrismaClient(), userId, fn, rest);
 }
 
+export {
+  createTranscriptRepository,
+  truncateChunkError,
+  TRANSCRIPT_CHUNK_ERROR_MAX,
+  type TranscriptRepository,
+  type TranscriptChunkRecord,
+  type TranscriptChunkStatus,
+  type UpsertChunkInput,
+  type MarkChunkInput,
+  type CompleteMergeInput,
+  type RepositoryOptions,
+} from './transcript-repository.js';
+export {
+  createAiUsageCounterRepository,
+  createAiIdempotencyRepository,
+  type AiUsageCounterRepository,
+  type AiIdempotencyRepository,
+  type AiUsageDelta,
+  type AiUsagePeriodKind,
+  type AiIdempotencyStatus,
+} from './ai.js';
 export {
   createRecordingChunkCountRepository,
   createChunkFileObjectRepository,
