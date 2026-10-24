@@ -16,6 +16,11 @@ jobs:
   build:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    # Coordinator decision (docs/00-getting-started/windows-setup.md): build on Node 22 and 24; live-db stays on 20.
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [22, 24]
 
     # Throwaway, CI-only credentials for ephemeral containers. Not secrets; never reuse outside CI.
     services:
@@ -92,7 +97,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
-          node-version: 20
+          node-version: ${{ matrix.node }}
           cache: 'pnpm'
 
       - name: Install dependencies
