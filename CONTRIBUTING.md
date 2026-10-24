@@ -14,7 +14,7 @@ Commitlint is coming (DevOps is adding it); until then reviewers check the forma
 
 ## Tooling
 
-- Node `>=20.10.0 <23` (`engines.node`).
+- Node `>=20.19 <25` (`engines.node`); CI builds on Node 22 and 24.
 - pnpm **9.12.3**, pinned in `packageManager` and installed through Corepack:
 
   ```bash

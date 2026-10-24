@@ -1,0 +1,33 @@
+# Normalise line endings to LF in the repo and working tree (Windows-safe).
+* text=auto eol=lf
+
+# Shell scripts and git hooks must stay LF or they fail to run.
+*.sh text eol=lf
+.husky/* text eol=lf
+.husky/** text eol=lf
+
+# Binary files: never normalise or diff.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.webp binary
+*.avif binary
+*.bmp binary
+*.pdf binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.otf binary
+*.eot binary
+*.mp3 binary
+*.mp4 binary
+*.wav binary
+*.webm binary
+*.ogg binary
+*.m4a binary
+*.zip binary
+*.gz binary
+*.tgz binary
+*.7z binary
