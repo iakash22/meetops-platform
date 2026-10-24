@@ -70,6 +70,9 @@ export default [
       '**/coverage/**',
     ],
   },
+  // Fast mode does not load type-aware rules, so their eslint-disable directives look unused;
+  // without this, `eslint --fix` in the pre-commit hook would delete them and break full lint.
+  ...(noTypecheck ? [{ linterOptions: { reportUnusedDisableDirectives: 'off' } }] : []),
   js.configs.recommended,
   ...tsConfigs,
   {
