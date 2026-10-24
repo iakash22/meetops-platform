@@ -76,6 +76,11 @@ describe('config', () => {
     );
   });
 
+  it('accepts a real postgresql:// URL with credentials and query params (zod 4 z.url())', () => {
+    const url = 'postgresql://app:p%40ss@db.internal:5432/meetops?sslmode=require';
+    expect(loadConfig({ DATABASE_URL: url }).DATABASE_URL).toBe(url);
+  });
+
   it('rejects an invalid DATABASE_URL with a message naming the key but not the value', () => {
     const bad = 'not a url s3cr3t-value';
     let message = '';

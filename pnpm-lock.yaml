@@ -343,7 +343,7 @@ importers:
         specifier: ^7
         version: 7.30.1
       zod:
-        specifier: ^4
+        specifier: ^4.6.6
         version: 4.6.7
     devDependencies:
       typescript:
@@ -353,8 +353,8 @@ importers:
   packages/config:
     dependencies:
       zod:
-        specifier: ^3.23.8
-        version: 3.25.76
+        specifier: ^4.6.6
+        version: 4.6.7
     devDependencies:
       typescript:
         specifier: ^5.6.3
@@ -13674,7 +13674,7 @@ snapshots:
       formdata-node: 6.0.3
       listr2: 8.3.3
       ofetch: 1.5.1
-      zod: 3.25.76
+      zod: 4.6.7
 
   pump@3.0.4:
     dependencies:
