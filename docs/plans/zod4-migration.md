@@ -1,26 +1,30 @@
 # Plan: migrate to Zod 4
 
 Status: proposal. Owner: DevOps (packages/config), with Notifications and Web owners for their packages.
-Baseline: `integration/phase-1` @ `8da9449`.
+Baseline: `integration/phase-1` @ `01b1dab` (after #21, which added zod 4 to `packages/ai-core`).
 
 ## 1. Inventory
 
-| Workspace                | Declared range | Resolved (lockfile) | Zod usage                                                                                                                              |
-| ------------------------ | -------------- | ------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
-| `packages/config`        | `^3.23.8`      | `3.25.76`           | `envSchema` (`z.object`, `z.enum`, `z.coerce.number`, `.url()`, `.default()`, `.refine`/`.transform`), `safeParse`, `error.message`    |
-| `packages/notifications` | `^3.23.8`      | `3.25.76`           | SMTP/console env schemas, `.refine({ message })`, `.default()`, `.optional()`, `z.ZodError` + `err.issues` formatting                  |
-| `apps/web`               | `^3.23.8`      | `3.25.76`           | Auth/org form schemas (`.min(n, 'msg')`, `.email('msg')`, `.refine({ path, message })`) via `@hookform/resolvers@3.10.0` `zodResolver` |
-| `packages/ai-core`       | none           | -                   | Only a comment mentions zod; no dependency.                                                                                            |
+| Workspace                | Declared range | Resolved (lockfile) | Zod usage                                                                                                                                                                                                                                                                                                                                                    |
+| ------------------------ | -------------- | ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `packages/config`        | `^3.23.8`      | `3.25.76`           | `envSchema` (`z.object`, `z.enum`, `z.coerce.number`, `.url()`, `.default()`, `.refine`/`.transform`), `safeParse`, `error.message`                                                                                                                                                                                                                          |
+| `packages/notifications` | `^3.23.8`      | `3.25.76`           | SMTP/console env schemas, `.refine({ message })`, `.default()`, `.optional()`, `z.ZodError` + `err.issues` formatting                                                                                                                                                                                                                                        |
+| `apps/web`               | `^3.23.8`      | `3.25.76`           | Auth/org form schemas (`.min(n, 'msg')`, `.email('msg')`, `.refine({ path, message })`) via `@hookform/resolvers@3.10.0` `zodResolver`                                                                                                                                                                                                                       |
+| `packages/ai-core`       | `^4`           | `4.6.7`             | Already on zod 4 since #21 (imports bare `'zod'`, no `zod/v4` subpath). `aiEnvSchema`/`loadAIEnv` in `src/env.ts` (AI_* env, booleans via a `bool(def)` union+transform helper, not `.default()`), provider config/retry schemas in `src/config.ts` (`.default()` on numbers, booleans, arrays, `{}`), structured-output schemas in adapters/router/prompts. |
 
 Consumers of `@meetops/config`: `apps/api`, `apps/worker`, `packages/queue` (they get the parsed `AppConfig`; type shape must stay identical).
 
 Not used anywhere (no v4 work needed): `.merge`, `z.record`, `errorMap`, `required_error`/`invalid_type_error`, `.flatten()`/`.format()`, `.strict()`/`.passthrough()`, `.deepPartial()`, `z.nativeEnum`, `.superRefine`.
 
-`zod@3.25.x` already ships v4 at the `zod/v4` subpath, so packages can migrate one at a time before bumping to `zod@^4`.
+**Starting point: zod 3 and zod 4 already coexist.** Since #21 the lockfile has two copies: `zod@3.25.76` (config, notifications, web via `^3.23.8`) and `zod@4.6.7` (ai-core via `^4`). Each package imports bare `'zod'` and gets its own copy; nothing uses the `zod/v4` or `zod/v3` subpaths. No zod schema crosses a package boundary today (ai-core exports parsed types and its own schemas only to its own callers), so each remaining package can move from `^3.23.8` to `^4` independently, with no `zod/v4` subpath stage.
+
+### Ownership of the AI_* env keys
+
+_\*`packages/ai-core` owns the AI_* keys_* (and the provider toggles `OLLAMA_ENABLED`, `LOCAL_STT_ENABLED`, `OPENAI_ENABLED`, `DEEPGRAM_ENABLED` and their URLs/keys). They are defined in `aiEnvSchema` (`packages/ai-core/src/env.ts`) and read at runtime only there (`loadAIEnv` → `ModelRouter`, e.g. `AI_REQUIRE_PROVIDER_APPROVAL`/`AI_ALLOW_PAID_FALLBACK` in `src/router.ts`). `packages/config` still declares copies in `envSchema`, but no app or package reads them from `AppConfig` (checked with `rg` on `01b1dab`), and they have already drifted (e.g. `AI_LLM_PROVIDER` enum is `gemini` only vs `gemini|ollama|openai`; `LOCAL_STT_URL` default `:8001` vs `:8000`). Plan: keep them in `packages/config` only until step 3, then remove them there (or mark `@deprecated`) so ai-core is the single source.
 
 ## ⚠️ MUST-TEST-BEFORE-MIGRATING: `.default()` boolean behaviour
 
-**Do not bump zod or switch any import to `zod/v4` in `packages/config` until this test exists on v3 and passes.**
+**Do not bump `packages/config` to zod 4 until this test exists on zod 3 and passes. Add the ai-core test too: ai-core is already on zod 4, and it guards against anyone "simplifying" its `bool(def)` helper to `.default()`.**
 
 In zod 3, `bool.default('true')` feeds `'true'` through the string→boolean transform, so the result is `true`. In zod 4, `.default()` short-circuits and returns the default value as-is, so the result would be the **string** `'true'` / `'false'`. A non-empty string is truthy, so `'false'` would behave like `true`.
 
@@ -66,7 +70,39 @@ it.each(['false', '0', 'no', 'off'])('AI_ALLOW_PAID_FALLBACK=%s parses to false'
 });
 ```
 
-Fix during migration: `bool.default(true)` / `bool.default(false)` (output-typed), or `.prefault('true')` to keep v3 semantics.
+Test to add in `packages/ai-core/test/schemas-env.test.ts` (ai-core owns these keys; it is on zod 4 already, so this must pass now):
+
+```ts
+const AI_BOOL_DEFAULTS = {
+  AI_REQUIRE_PROVIDER_APPROVAL: true,
+  AI_ALLOW_PAID_FALLBACK: false,
+  OLLAMA_ENABLED: false,
+  LOCAL_STT_ENABLED: false,
+  OPENAI_ENABLED: false,
+  DEEPGRAM_ENABLED: false,
+} as const;
+
+it('AI_* boolean defaults parse to real booleans', () => {
+  const { env, errors } = loadAIEnv({});
+  expect(errors).toEqual([]);
+  for (const [key, expected] of Object.entries(AI_BOOL_DEFAULTS)) {
+    expect(typeof env[key as keyof typeof AI_BOOL_DEFAULTS]).toBe('boolean');
+    expect(env[key as keyof typeof AI_BOOL_DEFAULTS]).toBe(expected);
+  }
+});
+
+it.each(['false', '0', 'no', 'off', ''])('AI_ALLOW_PAID_FALLBACK=%j parses to false', (v) => {
+  expect(loadAIEnv({ AI_ALLOW_PAID_FALLBACK: v }).env.AI_ALLOW_PAID_FALLBACK).toBe(false);
+});
+
+it.each(['true', '1', 'yes', 'on', ''])('AI_REQUIRE_PROVIDER_APPROVAL=%j parses to true', (v) => {
+  expect(loadAIEnv({ AI_REQUIRE_PROVIDER_APPROVAL: v }).env.AI_REQUIRE_PROVIDER_APPROVAL).toBe(
+    true,
+  );
+});
+```
+
+Fix during migration (packages/config): `bool.default(true)` / `bool.default(false)` (output-typed), or `.prefault('true')` to keep v3 semantics.
 
 ## 2. v4 changes that affect this repo
 
@@ -88,7 +124,7 @@ Fix during migration: `bool.default(true)` / `bool.default(false)` (output-typed
 | `packages/config`        | 0.5 day         | Fix 8 boolean defaults, swap to `z.url()`, `error:`; add tests for defaults (current test only checks `NODE_ENV`/`STORAGE_PROVIDER`). |
 | `packages/notifications` | 0.25 day        | `message`→`error`, verify `formatIssues` output and tests.                                                                            |
 | `apps/web`               | 0.5–1 day       | Bump `@hookform/resolvers` to v5, `z.email()`, re-run form tests (watch the `meetings.test.tsx` flake separately).                    |
-| Lockfile / CI            | 0.25 day        | Single `zod@^4` across workspace; dedupe.                                                                                             |
+| Lockfile / CI            | 0.25 day        | Drop `zod@3.25.76` once the last package moves; lockfile then has only `zod@4.x` (already present via ai-core).                       |
 | **Total**                | **~1.5–2 days** |                                                                                                                                       |
 
 ## 4. Risks
@@ -101,14 +137,17 @@ Fix during migration: `bool.default(true)` / `bool.default(false)` (output-typed
 
 ## 5. Ordered steps
 
-1. Add regression tests in `packages/config` for every default (esp. the 8 booleans → `boolean`, `SMTP_PORT` → `465`) and for an invalid `DATABASE_URL` error. Same for `packages/notifications` `loadEmailConfig` happy/failure paths. Merge on v3.
-2. `packages/config`: import from `zod/v4` (still on 3.25.x). Change `bool.default('true')` → `bool.default(true)` (or `.prefault('true')`), `z.string().url()` → `z.url()`, `{ message }` → `{ error }`. Optionally use `z.prettifyError(result.error)` in `loadConfig`. Run tests/typecheck for api, worker, queue.
-3. `packages/notifications`: same import switch; `{ message }` → `{ error }`; confirm `formatIssues` output.
-4. `apps/web`: bump `@hookform/resolvers` to `^5.1` (+ `react-hook-form` if needed), switch to `zod/v4`, `z.email('...')`; run web tests and e2e auth flows.
-5. Bump all three to `"zod": "^4"`, change imports back to `'zod'`, `pnpm install`, `pnpm dedupe`; confirm only one zod in `pnpm-lock.yaml`.
-6. CI green (lint, typecheck, test, build); update `docs/00-getting-started/environment-variables.md` if any error messages are documented.
-7. Follow-ups (optional): `zod/mini` for web bundle; move shared env schemas into `@meetops/contracts` only if needed.
+Starting point (after #21): ai-core is on `zod@^4` (4.6.7); config, notifications and web are on `zod@^3.23.8` (3.25.76); both copies are in the lockfile.
+
+1. Add the MUST-TEST tests above: `packages/config` (8 booleans, plus `SMTP_PORT` → `465` and an invalid `DATABASE_URL` error) on zod 3, and `packages/ai-core` (AI_* booleans) on zod 4. Add `packages/notifications` `loadEmailConfig` happy/failure tests. Merge.
+2. `packages/config`: change `"zod"` to `^4` and keep the bare `'zod'` import. Change `bool.default('true')` → `bool.default(true)` (or `.prefault('true')`), `z.string().url()` → `z.url()`, `{ message }` → `{ error }`. Optionally use `z.prettifyError(result.error)` in `loadConfig`. Run tests/typecheck for api, worker, queue.
+3. `packages/config`: remove (or `@deprecated`) the AI_* and provider-toggle keys that ai-core owns; point docs at `loadAIEnv`.
+4. `packages/notifications`: `"zod": "^4"`; `{ message }` → `{ error }`; confirm `formatIssues` output.
+5. `apps/web`: bump `@hookform/resolvers` to `^5.1` (+ `react-hook-form` if peers need it) and `"zod": "^4"` in the same PR; `z.email('...')`; run web tests and e2e auth flows.
+6. `pnpm install` + `pnpm dedupe`; confirm `zod@3.25.76` is gone from `pnpm-lock.yaml`. CI green (lint, typecheck, test, build). Update `docs/00-getting-started/environment-variables.md` if error messages or AI_* ownership are documented there.
+
+Out of scope: env schemas stay in the package that reads them (config, notifications, ai-core). `@meetops/contracts` holds only domain types, API envelopes, pagination and job payloads, and is ARCH-owned ([ADR-003](../15-decisions/ADR-003-contracts-ownership.md)), so env schemas are not moved there.
 
 ## 6. Rollback
 
-Each step is a separate PR; revert the PR. Until step 5, the dependency remains `zod@3.25.x`, so rollback is code-only.
+Each step is a separate PR; revert the PR. Because zod 3 and 4 already coexist, reverting one package's bump only restores its `^3.23.8` range and does not affect the others.
