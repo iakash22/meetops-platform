@@ -5,25 +5,51 @@ import { vi } from 'vitest';
 import { App } from '@/app';
 import type { ApiClient } from '@/lib/api/client';
 import { useOrgStore, useUiStore } from '@/stores/org-store';
-import { meetings, orgs, projects, session, tasks, uploadResponse } from './data';
+import {
+  meeting1,
+  meetings,
+  orgs,
+  projects,
+  session,
+  newOrg,
+  sessionResponse,
+  tasks,
+  uploadResponse,
+} from './data';
 
 export function createMockApi(
-  overrides: Partial<{ [K in keyof ApiClient]: Partial<ApiClient[K]> }> = {},
+  overrides: Partial<{
+    [K in Exclude<keyof ApiClient, 'onUnauthorized'>]: Partial<ApiClient[K]>;
+  }> & { onUnauthorized?: ApiClient['onUnauthorized'] } = {},
 ): ApiClient {
   return {
     request: vi.fn().mockResolvedValue(undefined),
+    onUnauthorized: overrides.onUnauthorized ?? vi.fn(() => () => {}),
     auth: {
       login: vi.fn().mockResolvedValue(session),
       signup: vi.fn().mockResolvedValue(session),
-      forgotPassword: vi.fn().mockResolvedValue({ ok: true }),
+      forgotPassword: vi.fn().mockResolvedValue(undefined),
+      session: vi.fn().mockResolvedValue(sessionResponse),
+      switchOrganization: vi.fn((body: { organizationId: string }) =>
+        Promise.resolve({ ...session, activeOrganizationId: body.organizationId }),
+      ),
       ...overrides.auth,
     },
-    organizations: { list: vi.fn().mockResolvedValue(orgs), ...overrides.organizations },
-    meetings: { list: vi.fn().mockResolvedValue(meetings), ...overrides.meetings },
+    organizations: {
+      list: vi.fn().mockResolvedValue(orgs),
+      create: vi.fn().mockResolvedValue({ organization: newOrg, role: 'owner' }),
+      ...overrides.organizations,
+    },
+    meetings: {
+      list: vi.fn().mockResolvedValue(meetings),
+      get: vi.fn().mockResolvedValue(meeting1),
+      ...overrides.meetings,
+    },
     tasks: { list: vi.fn().mockResolvedValue(tasks), ...overrides.tasks },
     projects: { list: vi.fn().mockResolvedValue(projects), ...overrides.projects },
     storage: {
       createUpload: vi.fn().mockResolvedValue(uploadResponse),
+      putToPresignedUrl: vi.fn().mockResolvedValue(undefined),
       ...overrides.storage,
     },
   };
@@ -32,7 +58,7 @@ export function createMockApi(
 export function resetStores(withOrgs = true) {
   useOrgStore.setState({
     organizations: withOrgs ? orgs : [],
-    currentOrgId: withOrgs ? 'org_1' : null,
+    currentOrganizationId: withOrgs ? '00000000-0000-4000-8000-000000000001' : null,
   });
   useUiStore.setState({ sidebarOpen: true });
 }

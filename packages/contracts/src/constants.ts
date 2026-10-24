@@ -57,7 +57,11 @@ export const MAX_MEDIA_BYTES = 2_000_000_000;
 export const CHUNK_UPLOAD_URL_TTL_SECONDS = 300;
 /** 64 MiB per chunk (5 s timeslices are far smaller; this is an abuse ceiling). */
 export const MAX_CHUNK_BYTES = 64 * 1024 * 1024;
-/** 2 GB per recording session, enforced server-side across all chunks. */
+/**
+ * 2 GB per recording session. The backend MUST enforce this as a running total of the bytes signed or stored for the
+ * session (on every chunk upload-URL request and again on complete), because the per-chunk limits alone cannot:
+ * MAX_CHUNK_BYTES x MAX_CHUNKS is far above 2 GB.
+ */
 export const MAX_RECORDING_SESSION_BYTES = MAX_MEDIA_BYTES;
 /** Upper bound on chunk count. At 5 s timeslices this is about 13.9 h. */
 export const MAX_RECORDING_CHUNKS = 10_000;
