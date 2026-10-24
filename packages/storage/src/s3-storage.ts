@@ -49,7 +49,7 @@ import type {
   UploadSpec,
   UploadVerification
 } from './types.js';
-import { assertSha256Base64, normalizeMimeType, validateUploadSpec } from './validation.js';
+import { assertSha256Base64, normalizeMimeType, sha256Base64ToHex, sha256HexToBase64, validateUploadSpec } from './validation.js';
 import {
   InMemoryUploadTokenStore,
   isUploadToken,
@@ -62,6 +62,9 @@ import {
 
 /** Metadata key holding the declared whole-object sha256 (base64) of a multipart upload. */
 export const DECLARED_SHA256_METADATA_KEY = 'sha256';
+
+/** Cap for server-written derived JSON artifacts (waveform peaks). */
+export const MAX_DERIVED_JSON_BYTES = 1024 * 1024;
 
 /** Recording session scope (contracts InitRecordingSession). meetingId must exist before chunks are uploaded. */
 export type SessionRef = { meetingId: string; sessionId: string } & (
@@ -241,6 +244,22 @@ export class S3StorageService implements StorageService {
     return res.ETag ? { etag: res.ETag } : {};
   }
 
+  /**
+   * Server-side write of a small derived JSON artifact (currently only kind `waveform`). Derived and UNTRACKED: it has
+   * no FileObject row, is deterministic per recording (safe to overwrite/regenerate) and must not be listed as a file. Not part of the client
+   * upload allowlist (which is media-only); capped at MAX_DERIVED_JSON_BYTES.
+   */
+  async putDerivedJson(ref: MeetingObjectRef, value: unknown): Promise<{ etag?: string; sizeBytes: number }> {
+    if (ref?.kind !== 'waveform') throw new StorageValidationError('Only waveform artifacts can be written as JSON');
+    const key = await this.#key(ref);
+    const body = Buffer.from(JSON.stringify(value), 'utf8');
+    if (body.byteLength > MAX_DERIVED_JSON_BYTES) throw new StorageValidationError('Derived JSON too large');
+    const res = await settle(
+      this.#client.send(new PutObjectCommand({ Bucket: this.#bucket, Key: key, Body: body, ContentType: 'application/json', ContentLength: body.byteLength }))
+    );
+    return { ...(res.ETag ? { etag: res.ETag } : {}), sizeBytes: body.byteLength };
+  }
+
   async getObject(ref: MeetingObjectRef): Promise<GetObjectResult> {
     const key = await this.#key(ref);
     const res = await settle(this.#client.send(new GetObjectCommand({ Bucket: this.#bucket, Key: key })));
@@ -392,7 +411,9 @@ export class S3StorageService implements StorageService {
     if (!isUploadToken(uploadToken)) throw new StorageValidationError('Invalid upload token');
     try {
       const info = await this.confirmUpload(ref, uploadToken);
-      return toVerification(info.checksumSha256, info.sizeBytes);
+      // confirmUpload's info carries hex (StoredObjectInfo boundary); convert back for the base64 field.
+      if (!info.checksumSha256) throw new StorageValidationError('Upload has no sha256');
+      return toVerification(sha256HexToBase64(info.checksumSha256), info.sizeBytes);
     } catch (err) {
       if (!(err instanceof StorageValidationError) || !/already used|expired/.test(err.message)) throw err;
       const head = await this.#headWithChecksum(key);
@@ -655,7 +676,7 @@ export class S3StorageService implements StorageService {
     if (running + req.sizeBytes > this.#cfg.limits.maxObjectBytes) throw new StorageValidationError('Recording session exceeds maximum size');
 
     const mime = normalizeMimeType(mimeType);
-    const checksum = Buffer.from(req.sha256, 'hex').toString('base64');
+    const checksum = sha256HexToBase64(req.sha256);
     const signed = ['content-type', 'content-length', 'x-amz-checksum-sha256', 'if-none-match'];
     const url = await settle(
       this.#presign(
@@ -724,7 +745,7 @@ export class S3StorageService implements StorageService {
           (d?.sizeBytes !== undefined && d.sizeBytes !== size) ||
           // Every chunk URL signs a sha256, so a stored chunk without one was not uploaded through it.
           !head.ChecksumSHA256 ||
-          (d !== undefined && head.ChecksumSHA256 !== Buffer.from(d.sha256, 'hex').toString('base64'));
+          (d !== undefined && head.ChecksumSHA256 !== sha256HexToBase64(d.sha256));
         if (bad) {
           await this.deleteObject(objRef).catch(() => undefined);
           throw new StorageValidationError(`Chunk seq ${seq} rejected`);
@@ -812,9 +833,11 @@ export class S3StorageService implements StorageService {
   }
 }
 
-function toVerification(checksumSha256: string | undefined, sizeBytes: number): UploadVerification {
-  if (!checksumSha256) throw new StorageValidationError('Upload has no sha256');
-  return { verified: true, sha256: Buffer.from(checksumSha256, 'base64').toString('hex'), checksumSha256, sizeBytes };
+/** Takes the S3 base64 digest; returns hex in sha256/checksumSha256 and base64 only in checksumSha256Base64. */
+function toVerification(checksumBase64: string | undefined, sizeBytes: number): UploadVerification {
+  if (!checksumBase64) throw new StorageValidationError('Upload has no sha256');
+  const hex = sha256Base64ToHex(checksumBase64);
+  return { verified: true, sha256: hex, checksumSha256: hex, checksumSha256Base64: checksumBase64, sizeBytes };
 }
 
 function toInfo(res: {
@@ -828,7 +851,9 @@ function toInfo(res: {
   const m: StoredObjectInfo = { sizeBytes: res.ContentLength ?? 0 };
   if (res.ContentType) m.mimeType = res.ContentType;
   if (res.ETag) m.etag = res.ETag;
-  if (res.ChecksumSHA256) m.checksumSha256 = res.ChecksumSHA256;
+  // Boundary: S3 reports base64; StoredObjectInfo/FileObject carry lowercase hex. Multipart objects only have a
+  // composite checksum ("<b64>-<parts>"), which is not a whole-object sha256, so it is omitted rather than converted.
+  if (res.ChecksumSHA256 && !/-\d+$/.test(res.ChecksumSHA256)) m.checksumSha256 = sha256Base64ToHex(res.ChecksumSHA256);
   if (res.LastModified) m.updatedAt = res.LastModified;
   if (res.Metadata && Object.keys(res.Metadata).length) m.metadata = res.Metadata;
   return m;
