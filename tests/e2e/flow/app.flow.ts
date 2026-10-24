@@ -137,9 +137,14 @@ test.describe('web flow (PR #48 web + createServer API)', () => {
     page,
     api,
   }) => {
-    // BE-GAP-2: contracts v0.3 and PR #48 use POST /auth/switch-org; the API on
-    // integration/phase-1 only has POST /orgs/switch, so the switch returns 404. Left failing.
-    test.fail(true, 'BE-GAP-2: API has no POST /auth/switch-org (404)');
+    // BE-GAP-2: the API on integration/phase-1 now has POST /orgs/switch (PR #53), but the web
+    // client calls POST /auth/switch-org (404) and expects an AuthSession with csrfToken back.
+    // /orgs/switch returns { organization, role }, so rewriting the request to it in the test
+    // still breaks the UI (checked). Closing the gap needs web or API source; left failing.
+    test.fail(
+      true,
+      'BE-GAP-2: web calls /auth/switch-org; API serves /orgs/switch (different response)',
+    );
     const { switcher, other } = await twoOrgSetup(page, api);
     const switchResp = page.waitForResponse((r) => r.url().endsWith('/api/auth/switch-org'));
     await switcher.click();
