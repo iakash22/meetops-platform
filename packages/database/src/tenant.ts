@@ -35,6 +35,10 @@ export const TENANT_TABLES = [
   'recordings',
   'recording_sessions',
   'recording_session_chunks',
+  'ai_usage_counters',
+  'ai_org_config',
+  'ai_idempotency',
+  'transcript_chunks',
 ] as const;
 export type TenantTable = (typeof TENANT_TABLES)[number];
 
