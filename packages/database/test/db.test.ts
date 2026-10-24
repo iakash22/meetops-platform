@@ -95,6 +95,7 @@ describe('generated client', () => {
         'disconnectPrismaClient',
         'getPrismaClient',
         'withOrgContext',
+        'withOrganizationContext',
         'withUserContext',
       ].sort(),
     );

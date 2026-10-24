@@ -1,10 +1,10 @@
 import { describe, it, expect, afterEach } from 'vitest';
-import { createServer } from '../src/server';
-import { MissingProductionDependencyError, PRODUCTION_REQUIRED_DEPS } from '../src/modules/index';
-import { InMemoryRateLimiter } from '../src/modules/auth/infrastructure/rate-limit/in-memory';
-import { systemClock } from '../src/shared/ports';
-import { parseTrustProxy } from '../src/shared/trust-proxy';
-import { Client, fakeHasher, ORIGIN } from './helpers';
+import { createServer } from '../src/server.js';
+import { MissingProductionDependencyError, PRODUCTION_REQUIRED_DEPS } from '../src/modules/index.js';
+import { InMemoryRateLimiter } from '../src/modules/auth/infrastructure/rate-limit/in-memory.js';
+import { systemClock } from '../src/shared/ports.js';
+import { parseTrustProxy } from '../src/shared/trust-proxy.js';
+import { Client, fakeHasher, ORIGIN } from './helpers.js';
 
 describe('B1: production refuses in-memory defaults', () => {
   it('throws listing every missing implementation', () => {
@@ -120,7 +120,7 @@ describe('D9: 4xx framework errors use the envelope with a generic message', () 
 
 describe('CSRF HMAC binding', () => {
   it('a token from one session is rejected for another session (403)', async () => {
-    const { buildApp, signupAndLogin } = await import('./helpers');
+    const { buildApp, signupAndLogin } = await import( './helpers.js');
     const app = await buildApp();
     const a = await signupAndLogin(app, 'a@example.com');
     const b = await signupAndLogin(app, 'b@example.com');
@@ -134,12 +134,13 @@ describe('CSRF HMAC binding', () => {
   });
 
   it('a pre-session token stops working once a session exists; login returns a fresh one', async () => {
-    const { buildApp, Client, PASSWORD } = await import('./helpers');
+    const { buildApp, Client, PASSWORD } = await import( './helpers.js');
     const app = await buildApp();
     const c = new Client(app);
     const pre = await c.csrf();
     expect(c.jar.has('__Host-meetops_presession')).toBe(true);
     await c.post('/auth/signup', { name: 'A', email: 'p@example.com', password: PASSWORD });
+    await c.post('/auth/verify-email', { token: app.token('p@example.com', 'email_verification')! });
     const login = await c.post('/auth/login', { email: 'p@example.com', password: PASSWORD });
     expect(login.json().csrfToken).not.toBe(pre);
     const stale = await c.post('/orgs', { name: 'X' }, { 'x-csrf-token': pre });
@@ -150,7 +151,7 @@ describe('CSRF HMAC binding', () => {
   });
 
   it('a forged token (valid shape, wrong MAC) matching the cookie is rejected', async () => {
-    const { buildApp, Client, ORIGIN } = await import('./helpers');
+    const { buildApp, Client, ORIGIN } = await import( './helpers.js');
     const app = await buildApp();
     const c = new Client(app);
     await c.csrf();
@@ -170,13 +171,13 @@ describe('CSRF HMAC binding', () => {
 
 describe('cookie policy', () => {
   it('development drops the __Host- prefix and Secure', async () => {
-    const { cookieConfig } = await import('../src/modules/auth/http/security');
+    const { cookieConfig } = await import( '../src/modules/auth/http/security.js');
     expect(cookieConfig('development')).toMatchObject({ cookieName: 'meetops_sid', csrfCookieName: 'meetops_csrf', cookieSecure: false });
     expect(cookieConfig('production')).toMatchObject({ cookieName: '__Host-meetops_sid', csrfCookieName: '__Host-meetops_csrf', cookieSecure: true });
     expect(cookieConfig('test').cookieName).toBe('__Host-meetops_sid');
   });
   it('production refuses non-__Host- or non-Secure cookie config', async () => {
-    const { assertProductionCookies, cookieConfig } = await import('../src/modules/auth/http/security');
+    const { assertProductionCookies, cookieConfig } = await import( '../src/modules/auth/http/security.js');
     const base = { allowedOrigins: ['https://app.example'], sessionPolicy: { idleTimeoutMs: 1, absoluteTimeoutMs: 1 }, csrfSecret: Buffer.alloc(32, 1) };
     expect(() => assertProductionCookies({ ...cookieConfig('production'), ...base })).not.toThrow();
     expect(() => assertProductionCookies({ ...cookieConfig('development'), ...base })).toThrow(/__Host-/);
@@ -184,9 +185,9 @@ describe('cookie policy', () => {
     expect(() => assertProductionCookies({ ...cookieConfig('production'), ...base, csrfSecret: Buffer.alloc(8) })).toThrow(/CSRF_SECRET/);
   });
   it('production requires WEB_ORIGINS and CSRF_SECRET when security is not injected', async () => {
-    const { defaultModuleDeps, PRODUCTION_REQUIRED_DEPS } = await import('../src/modules/index');
+    const { defaultModuleDeps, PRODUCTION_REQUIRED_DEPS } = await import( '../src/modules/index.js');
     const all: Record<string, object> = {};
-    for (const k of PRODUCTION_REQUIRED_DEPS as string[]) all[k] = {};
+    for (const k of PRODUCTION_REQUIRED_DEPS as readonly string[]) all[k] = {};
     const saved = { o: process.env.WEB_ORIGINS, s: process.env.CSRF_SECRET };
     delete process.env.WEB_ORIGINS;
     delete process.env.CSRF_SECRET;
@@ -199,21 +200,21 @@ describe('cookie policy', () => {
     if (saved.s === undefined) delete process.env.CSRF_SECRET; else process.env.CSRF_SECRET = saved.s;
   });
   it('dev default origins include the Vite app', async () => {
-    const { DEV_WEB_ORIGINS } = await import('../src/modules/auth/http/security');
+    const { DEV_WEB_ORIGINS } = await import( '../src/modules/auth/http/security.js');
     expect(DEV_WEB_ORIGINS).toContain('http://localhost:5173');
   });
 });
 
 describe('B1 fail-closed for every NODE_ENV except development/test', () => {
   it.each([[undefined], ['staging'], ['production'], ['prod'], ['']])('NODE_ENV=%s refuses in-memory defaults', async (nodeEnv) => {
-    const { defaultModuleDeps, isRelaxedEnv } = await import('../src/modules/index');
+    const { defaultModuleDeps, isRelaxedEnv } = await import('../src/modules/index.js');
     expect(isRelaxedEnv(nodeEnv)).toBe(false);
     expect(() => defaultModuleDeps({}, { nodeEnv })).toThrow(/Refusing to start/);
   });
   it('NODE_ENV unset runs the full checks (missing WEB_ORIGINS / CSRF_SECRET)', async () => {
-    const { defaultModuleDeps, PRODUCTION_REQUIRED_DEPS } = await import('../src/modules/index');
+    const { defaultModuleDeps, PRODUCTION_REQUIRED_DEPS } = await import('../src/modules/index.js');
     const all: Record<string, object> = {};
-    for (const k of PRODUCTION_REQUIRED_DEPS as string[]) all[k] = {};
+    for (const k of PRODUCTION_REQUIRED_DEPS as readonly string[]) all[k] = {};
     const saved = { o: process.env.WEB_ORIGINS, s: process.env.CSRF_SECRET };
     delete process.env.WEB_ORIGINS;
     delete process.env.CSRF_SECRET;
@@ -232,7 +233,7 @@ describe('B1 fail-closed for every NODE_ENV except development/test', () => {
     expect(process.env.NODE_ENV).toBe('test');
   });
   it('development and test are relaxed', async () => {
-    const { isRelaxedEnv } = await import('../src/modules/index');
+    const { isRelaxedEnv } = await import('../src/modules/index.js');
     expect(isRelaxedEnv('development')).toBe(true);
     expect(isRelaxedEnv('test')).toBe(true);
     expect(isRelaxedEnv('Development')).toBe(false);
@@ -254,7 +255,7 @@ describe('TRUST_PROXY validation', () => {
 
 describe('log redaction', () => {
   it('redacts x-csrf-token, cookie and authorization headers', async () => {
-    const { REDACT_PATHS } = await import('../src/server');
+    const { REDACT_PATHS } = await import('../src/server.js');
     for (const p of ['req.headers.authorization', 'req.headers.cookie', 'req.headers["x-csrf-token"]', 'res.headers["set-cookie"]']) {
       expect(REDACT_PATHS).toContain(p);
     }
@@ -264,5 +265,31 @@ describe('log redaction', () => {
     log.info({ req: { headers: { 'x-csrf-token': 'SECRET1', cookie: 'sid=SECRET2', authorization: 'Bearer SECRET3' } } }, 'x');
     expect(lines.join('')).not.toMatch(/SECRET[123]/);
     expect(lines.join('')).toContain('***redacted***');
+  });
+});
+
+describe('Swagger UI gate', () => {
+  const serverFor = async (nodeEnv: string) => {
+    const { defaultModuleDeps } = await import('../src/modules/index.js');
+    // Fully injected deps so strict envs can start; only the docs gate is under test.
+    const deps = defaultModuleDeps({}, { nodeEnv: 'test' });
+    const app = createServer({ nodeEnv, deps });
+    await app.ready();
+    return app;
+  };
+  it.each(['production', 'staging', ''])('/docs and /docs/json are 404 when NODE_ENV=%s', async (env) => {
+    const app = await serverFor(env);
+    for (const url of ['/docs', '/docs/', '/docs/json', '/docs/yaml']) {
+      const r = await app.inject({ method: 'GET', url });
+      expect(r.statusCode, url).toBe(404);
+      expect(r.json().error.code).toBe('NOT_FOUND');
+    }
+    await app.close();
+  });
+  it.each(['development', 'test'])('/docs is served when NODE_ENV=%s', async (env) => {
+    const app = await serverFor(env);
+    expect((await app.inject({ method: 'GET', url: '/docs/json' })).statusCode).toBe(200);
+    expect([200, 302]).toContain((await app.inject({ method: 'GET', url: '/docs' })).statusCode);
+    await app.close();
   });
 });
