@@ -63,6 +63,9 @@ import {
 /** Metadata key holding the declared whole-object sha256 (base64) of a multipart upload. */
 export const DECLARED_SHA256_METADATA_KEY = 'sha256';
 
+/** Cap for server-written derived JSON artifacts (waveform peaks). */
+export const MAX_DERIVED_JSON_BYTES = 1024 * 1024;
+
 /** Recording session scope (contracts InitRecordingSession). meetingId must exist before chunks are uploaded. */
 export type SessionRef = { meetingId: string; sessionId: string } & (
   | { organizationId: string; /** @deprecated Use organizationId (ADR-010). */ orgId?: string }
@@ -239,6 +242,22 @@ export class S3StorageService implements StorageService {
       )
     );
     return res.ETag ? { etag: res.ETag } : {};
+  }
+
+  /**
+   * Server-side write of a small derived JSON artifact (currently only kind `waveform`). Derived and UNTRACKED: it has
+   * no FileObject row, is deterministic per recording (safe to overwrite/regenerate) and must not be listed as a file. Not part of the client
+   * upload allowlist (which is media-only); capped at MAX_DERIVED_JSON_BYTES.
+   */
+  async putDerivedJson(ref: MeetingObjectRef, value: unknown): Promise<{ etag?: string; sizeBytes: number }> {
+    if (ref?.kind !== 'waveform') throw new StorageValidationError('Only waveform artifacts can be written as JSON');
+    const key = await this.#key(ref);
+    const body = Buffer.from(JSON.stringify(value), 'utf8');
+    if (body.byteLength > MAX_DERIVED_JSON_BYTES) throw new StorageValidationError('Derived JSON too large');
+    const res = await settle(
+      this.#client.send(new PutObjectCommand({ Bucket: this.#bucket, Key: key, Body: body, ContentType: 'application/json', ContentLength: body.byteLength }))
+    );
+    return { ...(res.ETag ? { etag: res.ETag } : {}), sizeBytes: body.byteLength };
   }
 
   async getObject(ref: MeetingObjectRef): Promise<GetObjectResult> {
