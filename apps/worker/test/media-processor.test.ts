@@ -179,6 +179,22 @@ describe('processRecording (mocked storage, queue, emitter)', () => {
     expect(readdirSync(tmpRoot)).toEqual([]);
   });
 
+  it('persists the STT chunk count before enqueueing transcription jobs', async () => {
+    const { deps, jobs } = makeDeps({}, tmpRoot);
+    const order: string[] = [];
+    const setChunkCount = vi.fn(async () => void order.push(`count:${jobs.size}`));
+    await processRecording(payload, { ...deps, recordings: { setChunkCount } });
+    expect(setChunkCount).toHaveBeenCalledWith({ organizationId: ORG, meetingId: MEET, recordingId: REC, chunkCount: 3 });
+    expect(order).toEqual(['count:0']);
+    expect(jobs.size).toBe(3);
+  });
+  it('a chunk-count persistence failure fails the job (retryable) without enqueueing', async () => {
+    const { deps, jobs } = makeDeps({}, tmpRoot);
+    const setChunkCount = vi.fn(async () => Promise.reject(new Error('db down')));
+    await expect(processRecording(payload, { ...deps, recordings: { setChunkCount } })).rejects.toMatchObject({ errorCode: 'chunk_count_persist_failed' });
+    expect(jobs.size).toBe(0);
+    expect(readdirSync(tmpRoot)).toEqual([]);
+  });
   it('maps a missing source to source_not_found', async () => {
     const { deps, stored, srcKey, events } = makeDeps({}, tmpRoot);
     stored.delete(srcKey);

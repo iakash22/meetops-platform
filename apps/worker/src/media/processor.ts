@@ -26,6 +26,15 @@ export type MediaOps = {
   chunkAudio(input: string, outDir: string, opts: { segmentSeconds: number }): Promise<AudioChunk[]>;
 };
 
+/**
+ * Persists the number of transcription chunks produced for a recording (proposed `recordings.chunk_count`, read by
+ * AI as RecordingScope.chunkCount). Must be idempotent (plain SET) and run inside withOrgContext(organizationId).
+ * `recording_sessions.chunk_count` is NOT this value: it counts uploaded session parts, not STT chunks.
+ */
+export type RecordingChunkCountRepository = {
+  setChunkCount(q: { organizationId: string; meetingId: string; recordingId: string; chunkCount: number }): Promise<void>;
+};
+
 export type TranscriptionEnqueuer = {
   /** Must be idempotent on opts.jobId (BullMQ ignores adds with an existing jobId). */
   add(name: string, data: TranscriptionJobPayload, opts: { jobId: string }): Promise<unknown>;
@@ -66,6 +75,7 @@ export type MediaProcessorDeps = {
   transcriptionQueue: TranscriptionEnqueuer;
   realtime: RealtimePublisher;
   logger: MinimalLogger;
+  recordings?: RecordingChunkCountRepository;
   limits?: Partial<MediaLimits>;
   segmentSeconds?: number;
   tmpRoot?: string;
@@ -192,6 +202,15 @@ export async function processRecording(
         transcriptionJobId: transcriptionJobId(organizationId, recordingId, c.index)
       });
       progress(30 + Math.round(((i + 1) / chunks.length) * 50), 'chunking', { chunksDone: i + 1, chunksTotal: chunks.length });
+    }
+
+    // Persist the expected chunk count before any transcription job exists, so AI can compute percent/complete.
+    if (deps.recordings) {
+      try {
+        await deps.recordings.setChunkCount({ organizationId, meetingId, recordingId, chunkCount: manifest.length });
+      } catch {
+        throw new MediaJobError('chunk_count_persist_failed', 'Could not persist chunk count');
+      }
     }
 
     for (const m of manifest) {
