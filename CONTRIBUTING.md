@@ -4,13 +4,22 @@ New here? Start with [getting started](docs/00-getting-started/README.md). Agent
 
 ## Branches
 
-`feat/*`, `fix/*`, `chore/*`, `docs/*`, `test/*`. One branch per task, opened as a PR to `main` (or to the branch below it when stacked).
+`feat/*`, `fix/*`, `chore/*`, `docs/*`, `test/*`. One branch per task. During Phase 1, open the PR against `integration/phase-1` (or against the branch below it when stacked), not `main`. See [Phase 1 integration branch](#phase-1-integration-branch).
+
+## Phase 1 integration branch
+
+Phase 1 work merges through `integration/phase-1`, not directly into `main`:
+
+1. Target `integration/phase-1`: `gh pr create --base integration/phase-1 ...`.
+2. A PR merges into `integration/phase-1` only after CI passes and Architecture and Security review approve it. Use merge commits, not squash.
+3. Akash merges `integration/phase-1` into `main` through an integration PR (so far #30 and #112, both merged). Agents never merge into `main`.
+4. To catch up, merge `origin/integration/phase-1` into your branch, not `origin/main`. Don't rebase or force-push.
 
 ## Commits
 
 Use [Conventional Commits](https://www.conventionalcommits.org/): `feat:`, `fix:`, `chore:`, `docs:`, `ci:`, `refactor:`, `test:`, with an optional scope (for example `docs(agents): ...`). Keep commits small.
 
-Commitlint is coming (DevOps is adding it); until then reviewers check the format.
+Commitlint enforces this through the Husky `commit-msg` hook (`commitlint.config.cjs`); for example, body and footer lines must be 100 characters or fewer.
 
 ## Tooling
 
@@ -28,7 +37,7 @@ Commitlint is coming (DevOps is adding it); until then reviewers check the forma
 ## Git rules
 
 - **Never use `--no-verify`.** The Husky pre-commit hook runs `pnpm lint-staged` (ESLint on code, Prettier on md/json/yml). If it fails, fix the cause.
-- **Never force-push a pushed branch.** To catch up with `main`, run `git fetch origin && git merge origin/main`, then push.
+- **Never force-push a pushed branch.** To catch up, merge the base branch in (`git fetch origin && git merge origin/integration/phase-1`), then push.
 - Never commit `.env` or secret values.
 
 ## Before opening a PR
@@ -52,4 +61,4 @@ See [local setup](docs/00-getting-started/local-setup.md): copy `.env.example` t
 
 Stacked PRs are merged with merge commits, not squash.
 
-See [agent workflow](docs/00-getting-started/agent-workflow.md#stacked-prs).
+See [agent workflow](docs/00-getting-started/agent-workflow.md#5-stacked-prs).
