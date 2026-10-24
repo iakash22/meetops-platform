@@ -45,7 +45,9 @@ describe('auth forms', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Sign in' }));
     await waitFor(() => expect(history.location.pathname).toBe('/'));
     expect(api.auth.login).toHaveBeenCalledWith({ email: 'ada@example.com', password: 'secret' });
-    expect(useOrgStore.getState().currentOrgId).toBe('org_1');
+    expect(useOrgStore.getState().currentOrganizationId).toBe(
+      '00000000-0000-4000-8000-000000000001',
+    );
   });
 
   it('shows a submit error when login fails', async () => {
@@ -131,4 +133,29 @@ describe('password rules', () => {
     expect(pw('a'.repeat(128))).toBe(true);
     expect(pw('a'.repeat(129))).toBe(false);
   });
+});
+
+describe('login ?next= redirect', () => {
+  beforeEach(() => resetStores(false));
+
+  async function login() {
+    await userEvent.type(await screen.findByLabelText('Email'), 'ada@example.com');
+    await userEvent.type(screen.getByLabelText('Password'), 'x');
+    await userEvent.click(screen.getByRole('button', { name: 'Sign in' }));
+  }
+
+  it('goes to a safe ?next= path after login', async () => {
+    const { history } = renderApp('/login?next=%2Ftasks%3Fstatus%3Ddone');
+    await login();
+    await waitFor(() => expect(history.location.href).toBe('/tasks?status=done'));
+  });
+
+  it.each(['//evil.com', 'https://evil.com', '/%2F%2Fevil.com', '/%5Cevil'])(
+    'ignores unsafe ?next=%s and goes to /',
+    async (next) => {
+      const { history } = renderApp(`/login?next=${encodeURIComponent(next)}`);
+      await login();
+      await waitFor(() => expect(history.location.pathname).toBe('/'));
+    },
+  );
 });
