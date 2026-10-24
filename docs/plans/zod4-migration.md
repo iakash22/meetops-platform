@@ -153,3 +153,4 @@ Out of scope: env schemas stay in the package that reads them (config, notificat
 Each step is a separate PR; revert the PR. Because zod 3 and 4 already coexist, reverting one package's bump only restores its `^3.23.8` range and does not affect the others.
 
 <!-- hook-verified commit -->
+<!-- hook-verified commit (husky active) -->
