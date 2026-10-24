@@ -54,9 +54,20 @@ const laterTenantSql = readFileSync(
   resolve(migrationsDir, '20261021180000_recording_sessions/migration.sql'),
   'utf8',
 );
+/** AI usage / chunked transcripts (item 7): new tenant tables enable and police RLS in their own migration. */
+const aiTenantSql = readFileSync(
+  resolve(migrationsDir, '20261024010000_ai_usage_transcript_chunks/migration.sql'),
+  'utf8',
+);
 const rlsSql =
   readFileSync(resolve(migrationsDir, '20261021110000_tenant_rls_roles/migration.sql'), 'utf8') +
-  laterTenantSql;
+  laterTenantSql +
+  aiTenantSql;
+/**
+ * Tenant tables keyed by the organization itself rather than a uuid id: ai_org_config (PK org_id) and
+ * ai_idempotency (PK (org_id, key)). Their primary key already leads with org_id.
+ */
+const ORGANIZATION_KEYED = ['ai_org_config', 'ai_idempotency'];
 /** Pre-ADR-010 tenant policy definitions (still the source of membership_self_read). */
 const legacyPolicySql =
   readFileSync(
@@ -64,10 +75,11 @@ const legacyPolicySql =
     'utf8',
   ) + laterTenantSql;
 /** Latest (effective) tenant policy definitions: ADR-010 organization context setting. */
-const policySql = readFileSync(
-  resolve(migrationsDir, '20261024000000_organization_context_setting/migration.sql'),
-  'utf8',
-);
+const policySql =
+  readFileSync(
+    resolve(migrationsDir, '20261024000000_organization_context_setting/migration.sql'),
+    'utf8',
+  ) + aiTenantSql;
 const ORG_EXPR =
   "COALESCE(NULLIF(current_setting('app.current_organization_id', true), ''), NULLIF(current_setting('app.current_org_id', true), ''))::uuid";
 
@@ -98,11 +110,11 @@ describe('tenant schema', () => {
   it('org_id is required (NOT NULL) with an org FK on every tenant table', () => {
     for (const m of tenantModels) {
       if (NULLABLE_ORG.includes(m.table)) continue;
-      expect(m.body, m.name).toMatch(/^\s+organizationId\s+String\s+@map\("org_id"\)/m);
+      expect(m.body, m.name).toMatch(/^\s+organizationId\s+String\s+(@id\s+)?@map\("org_id"\)/m);
       expect(m.body, m.name).toMatch(
         /organization\s+Organization\s+@relation\(fields: \[organizationId\]/,
       );
-      expect(m.body, m.name).toMatch(/@@(index|unique)\(\[organizationId/);
+      expect(m.body, m.name).toMatch(/@@(index|unique|id)\(\[organizationId|organizationId\s+String\s+@id/);
     }
   });
 
@@ -291,8 +303,10 @@ describe('cross-tenant referential integrity (M1)', () => {
   const tenantNames = new Set(tenantModels.map((m) => m.name));
 
   it('every tenant table has UNIQUE(org_id, id)', () => {
-    for (const m of tenantModels)
+    for (const m of tenantModels) {
+      if (ORGANIZATION_KEYED.includes(m.table)) continue;
       expect(m.body, m.name).toContain('@@unique([organizationId, id])');
+    }
   });
 
   it('every relation between tenant tables is a composite (org_id, parent_id) FK', () => {
@@ -546,8 +560,8 @@ describe('schema conventions', () => {
   });
 
   it('every model uses a uuid primary key', () => {
-    expect(models).toHaveLength(25);
-    for (const m of models)
+    expect(models).toHaveLength(29);
+    for (const m of models.filter((x) => !ORGANIZATION_KEYED.includes(x.table)))
       expect(m.body, m.name).toMatch(/^\s+id\s+String\s+@id @default\(uuid\(\)\) @db\.Uuid$/m);
   });
 
@@ -762,7 +776,9 @@ const addendum2Sql = readFileSync(
 describe('ADR-004 addendum 2 (contracts 0.3.0)', () => {
   it('(a) Prisma exposes organizationId mapped to org_id, never orgId', () => {
     expect(schema).not.toMatch(/\borgId\b/);
-    const fields = [...schema.matchAll(/^\s+organizationId\s+String\??\s+@map\("(\w+)"\)/gm)].map(
+    const fields = [
+      ...schema.matchAll(/^\s+organizationId\s+String\??\s+(?:@id\s+)?@map\("(\w+)"\)/gm),
+    ].map(
       (m) => m[1],
     );
     expect(fields.length).toBeGreaterThanOrEqual(TENANT_TABLES.length);
