@@ -150,5 +150,5 @@ See [troubleshooting](troubleshooting.md) for OneDrive, WSL 2, Docker Desktop an
 
 - **`sh\r` errors in hooks or containers:** a CRLF checkout. Set `core.autocrlf input`, then re-checkout with `git rm --cached -r . && git reset --hard`. That reset discards uncommitted changes, so commit or stash first.
 - **`EPERM` or long-path errors on `pnpm install`:** move the repo out of OneDrive and enable `core.longpaths`, plus Windows long paths (`LongPathsEnabled` registry setting; needs admin).
-- **pnpm "Unsupported engine" warning:** expected on Node 24 until PR #32 lands; see the note at the top.
+- **pnpm "Unsupported engine" warning:** your Node is outside `engines.node` (`>=20.19 <25`); switch to Node 22 or 24.
 - **Prisma "role does not exist" or "permission denied":** the migrations from #25 haven't run, or the LOGIN step was skipped (section 6).
