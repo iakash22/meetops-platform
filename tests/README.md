@@ -58,9 +58,13 @@ E2E is **not** part of `pnpm test`; run it explicitly (it needs browsers).
 
 ## Docker skip behaviour
 
-`support/env.ts#isDockerAvailable()` runs `docker info`. If it fails (no CLI or no
-daemon) the integration suites use `describe.skipIf(...)`, print a warning, and are
-reported as **skipped**, never failed. CI runners with Docker run them for real.
+`support/env.ts#isDockerAvailable()` runs `docker info`.
+
+- **Locally:** if it fails (no CLI or no daemon), the integration suites use `describe.skipIf(...)` and are reported as **skipped**.
+- **In CI (`CI=true`) or with `QA_REQUIRE_DOCKER=1`:** a missing daemon makes every integration file **fail**, so CI can never go green by skipping.
+- **Local-only opt-out:** `QA_ALLOW_DOCKER_SKIP=1` restores the skip when you set `QA_REQUIRE_DOCKER=1` on your own machine. It must never be set in CI, and the gate ignores it whenever `CI` is set: Docker missing in CI is always a hard failure.
+- **`QA_SKIP_DOCKER=1`:** forces "unavailable", so it always fails in CI.
+- **Turbo:** `CI` is in `tests/turbo.json` `passThroughEnv` so the gate sees it.
 
 **Docker endpoint: local unix socket only.** Testcontainers must reach the engine through the local unix socket (`/var/run/docker.sock`; on the shared box, run the suites through `sudo -E env PATH="$PATH" HOME=<scratch> ./node_modules/.bin/vitest run --project integration`). Never set `DOCKER_HOST` to a `tcp://` address: a TCP engine endpoint is usually unauthenticated, and anything that can reach it controls the host. `DOCKER_HOST` is deliberately not in `tests/turbo.json` `passThroughEnv`.
 
@@ -87,12 +91,33 @@ QA_DB_PACKAGE_DIR=/path/to/pr25/packages/database QA_RLS_SCHEMA=datamodel \
 pnpm --filter @meetops/tests test
 ```
 
+## Web E2E flow (P1-QA-4)
+
+`e2e/flow/` drives the PR #48 web app against a real `createServer()` API (in-memory deps). Each test starts its own API and a same-origin proxy (`e2e/flow/stack.ts`) that serves the built SPA and forwards `/api/*` to the API. No Postgres is needed.
+
+| Env          | Points at                                                                                                  |
+| ------------ | ---------------------------------------------------------------------------------------------------------- |
+| `QA_WEB_DIR` | `apps/web` of the PR #48 checkout, built (`pnpm exec vite build`)                                          |
+| `QA_API_DIR` | `apps/api` with the auth/orgs modules (integration/phase-1), built (`pnpm --filter @meetops/api... build`) |
+
+When either variable is unset or a build is missing, the suite is skipped.
+
+```bash
+QA_WEB_DIR=/path/pr48/apps/web QA_API_DIR=/path/phase-1/apps/api pnpm --filter @meetops/tests test:e2e:flow
+```
+
+The tests are E2E-01..13 (plus 05b, 07b and 07c). They cover the guard redirect, login, a bad login, `?next=`, the org switcher, no orgs, org creation from the UI, meetings rendering with a stubbed endpoint, meetings against the real API (BE-GAP-1), and the API being aborted, stopped, returning 503 JSON, or returning a 502 HTML page (all redirect to `/login?next=`).
+
 ## Known product bugs (tests left failing or `it.fails`)
 
 | ID       | Owner                        | Found by                                                                                                               | Summary                                                                                                                                                                                                                                                                                                                                                                                                            |
 | -------- | ---------------------------- | ---------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | DB-BUG-1 | DB (PR #25; fixed in PR #35) | `integration/database.test.ts` "applies every migration", `integration/rls.test.ts` setup (`QA_RLS_SCHEMA=migrations`) | `20261021100000_tenancy_hardening` does not apply to a fresh DB: it `ALTER`s `"tasks"` before creating it (`relation "tasks" does not exist`). Without that line it then fails dropping `TaskPriority_old` (still used by `internal_tasks`). The migration doesn't match the init migration. `prisma migrate deploy` fails, so the seed fails too.                                                                 |
 | DB-BUG-2 | DB (PR #25)                  | `integration/rls.test.ts` XT-28 (strict; fixed in PR #35, fails against PR #25)                                        | After a transaction-local `set_config('app.current_org_id', …, true)`, the session keeps `''`; policies do `current_setting(…, true)::uuid`, so the next query without context on a pooled connection errors with 22P02 instead of returning 0 rows. Fails closed (no leak), but breaks pooled connections. Fix: `NULLIF(current_setting('app.current_org_id', true), '')::uuid` (same for `app.current_user_id`). |
+| FE-BUG-1 | Web (PR #48)                 | `e2e/flow` E2E-04 (fixed in PR #48 b0e1795, now passing)                                                               | After the guard caches `session=null` (visit to a protected URL), a successful login does not refetch `/auth/session`; `ensureQueryData` returns the stale null and the guard bounces back to `/login?next=`. Fix: `setQueryData(session)` from the login response or `fetchQuery` in `useCompleteSignIn`.                                                                                                         |
+| FE-BUG-2 | Web (PR #48)                 | `e2e/flow` E2E-10, E2E-11 (fixed in PR #48 b0e1795, now passing; E2E-12/13 added)                                      | When the API is unreachable, `GET /auth/session` rejects with a network error (not 401), the guard `beforeLoad` throws, and the router shows its default "Something went wrong!" page at the protected URL instead of redirecting to `/login`.                                                                                                                                                                     |
+| FE-GAP-1 | Web (PR #48)                 | E2E-07 (fixed in PR #48 b0e1795: `/organizations/new`)                                                                 | No create-organization UI.                                                                                                                                                                                                                                                                                                                                                                                         |
+| BE-GAP-1 | API (phase-1)                | E2E-09 (`test.fail`)                                                                                                   | `GET /orgs/:id/meetings` is not implemented, so the meetings page shows an error state.                                                                                                                                                                                                                                                                                                                            |
 
 ## Factories
 

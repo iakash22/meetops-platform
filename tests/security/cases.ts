@@ -1,4 +1,5 @@
-// Generated from docs/12-security/test-cases.md (PR #4). Keep IDs in sync with that doc.
+// Generated from docs/12-security/test-cases.md (PR #4; XT-31..36 and UP-01..15 from the
+// docs/security-threat-model branch, 2026-10-22). Keep IDs in sync with that doc.
 export type SecurityCase = { id: string; title: string; steps: string; expected: string };
 
 export const crossOrganizationCases: readonly SecurityCase[] = [
@@ -128,7 +129,7 @@ export const crossOrganizationCases: readonly SecurityCase[] = [
   {
     id: 'XT-24',
     title: 'Worker job mismatch',
-    steps: 'Enqueue job {orgId: A, meetingId: B.meetingId}',
+    steps: 'Enqueue job {organizationId: A, meetingId: B.meetingId}',
     expected: 'Job fails closed, no processing, audit/log entry',
   },
   {
@@ -166,6 +167,42 @@ export const crossOrganizationCases: readonly SecurityCase[] = [
     title: 'Org switch',
     steps: 'Member of A only sends X-Org-Id: B / switch-org to B',
     expected: '404/403; context stays A',
+  },
+  {
+    id: 'XT-31',
+    title: 'Recording session chunk URL (other org)',
+    steps: '`POST /recording-sessions/{B.sessionId}/chunks` `{seq:0,sizeBytes:1024}`',
+    expected: '404; no URL issued',
+  },
+  {
+    id: 'XT-32',
+    title: 'Recording session complete (other org)',
+    steps: '`POST /recording-sessions/{B.sessionId}/complete`',
+    expected: '404; B session state unchanged',
+  },
+  {
+    id: 'XT-33',
+    title: 'Recording session abort (other org)',
+    steps: '`POST /recording-sessions/{B.sessionId}/abort` `{reason:"user_stopped"}`',
+    expected: '404; B session not aborted',
+  },
+  {
+    id: 'XT-34',
+    title: 'Recording session chunk URL (same org, other user)',
+    steps: "User A2 (same org) requests a chunk URL for A1's sessionId",
+    expected: '404; no URL issued',
+  },
+  {
+    id: 'XT-35',
+    title: 'Recording session complete (same org, other user)',
+    steps: "User A2 completes A1's session",
+    expected: '404; session state unchanged',
+  },
+  {
+    id: 'XT-36',
+    title: 'Recording session abort (same org, other user)',
+    steps: "User A2 aborts A1's session",
+    expected: '404; session not aborted',
   },
 ];
 
@@ -325,5 +362,100 @@ export const authAbuseCases: readonly SecurityCase[] = [
     title: 'Mass assignment',
     steps: 'PATCH /me with role, orgId, isAdmin',
     expected: 'Fields ignored / 400',
+  },
+];
+
+export const uploadCases: readonly SecurityCase[] = [
+  {
+    id: 'UP-01',
+    title: 'Chunk without size',
+    steps: '`POST …/chunks` with `{seq:0}` only',
+    expected: '400 `VALIDATION_FAILED`; no URL issued',
+  },
+  {
+    id: 'UP-02',
+    title: 'Chunk over 64 MiB',
+    steps: '`POST …/chunks` with `sizeBytes: 67108865`',
+    expected: '400; no URL issued',
+  },
+  {
+    id: 'UP-03',
+    title: 'Body larger than signed Content-Length',
+    steps: 'Get URL for `sizeBytes: 1048576`, PUT 2 MiB to it',
+    expected: 'Storage rejects (403/400 signature mismatch); no object written',
+  },
+  {
+    id: 'UP-04',
+    title: 'Body smaller than signed Content-Length',
+    steps: 'Same URL, PUT 512 KiB',
+    expected: 'Rejected or incomplete; complete step later fails (UP-08)',
+  },
+  {
+    id: 'UP-05',
+    title: 'Running total over 2 GB',
+    steps: 'Request chunk URLs until sum of `sizeBytes` would exceed 2,000,000,000',
+    expected: 'The exceeding request returns 400/413; no URL issued',
+  },
+  {
+    id: 'UP-06',
+    title: 'seq out of range',
+    steps: '`POST …/chunks` with `seq: 100000` or `-1`',
+    expected: '400',
+  },
+  {
+    id: 'UP-07',
+    title: 'Complete with gaps',
+    steps: 'Upload seq 0,1,3; complete with `chunkCount: 4`',
+    expected: '400/409; status not `uploaded`; no transcription job enqueued',
+  },
+  {
+    id: 'UP-08',
+    title: 'Complete with wrong sizes',
+    steps: "A stored chunk's size differs from its signed `sizeBytes` (or exceeds 64 MiB)",
+    expected: '400/409; session not completed',
+  },
+  {
+    id: 'UP-09',
+    title: 'Complete with mismatched count',
+    steps: 'Upload 3 chunks; complete with `chunkCount: 5` (and with `2`)',
+    expected: '400/409 in both cases',
+  },
+  {
+    id: 'UP-10',
+    title: 'Expired chunk URL',
+    steps: 'Obtain URL, wait > 300 s, PUT',
+    expected: 'Storage rejects (expired signature)',
+  },
+  {
+    id: 'UP-11',
+    title: 'Chunk after complete/abort',
+    steps: 'Request a chunk URL or PUT after the session completed or was aborted',
+    expected: '404/409; no URL issued',
+  },
+  {
+    id: 'UP-12',
+    title: 'Double complete',
+    steps: 'Call complete twice',
+    expected: 'Second returns 409; no duplicate job',
+  },
+  {
+    id: 'UP-13',
+    title: 'Extra fields',
+    steps:
+      'Add `key`, `bucket`, `organizationId` or `userId` to init, chunks, complete or abort bodies',
+    expected: '400 `VALIDATION_FAILED`',
+  },
+  {
+    id: 'UP-14',
+    title: 'Disallowed MIME on init',
+    steps: 'Init with `mimeType: "video/x-msvideo"` or `audio/webm;foo=bar`',
+    expected: '400',
+  },
+  {
+    id: 'UP-15',
+    title: 'Response leakage',
+    steps: 'Inspect every response from the four routes',
+    expected:
+      'No `bucket`, `key`, `provider` or internal paths; `upload.method` is `PUT` and `expiresAt` ≤ 300 s ahead',
   },
 ];

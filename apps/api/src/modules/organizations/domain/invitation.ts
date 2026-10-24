@@ -20,13 +20,14 @@ export interface Invitation {
   deletedAt: Date | null;
 }
 
+/** Invitation tokens are opaque (no organizationId); lookup is global by token hash. */
 export class InvitationError extends DomainError {}
 
 export const invitationErrors = {
   notFound: () => new InvitationError('NOT_FOUND', 'Invitation not found', 404),
-  expired: () => new InvitationError('CONFLICT', 'Invitation has expired', 409),
-  revoked: () => new InvitationError('CONFLICT', 'Invitation was revoked', 409),
-  accepted: () => new InvitationError('CONFLICT', 'Invitation was already accepted', 409),
+  expired: () => new InvitationError('CONFLICT', 'Invitation has expired', 409, 'INVITATION_EXPIRED'),
+  revoked: () => new InvitationError('CONFLICT', 'Invitation was revoked', 409, 'INVITATION_REVOKED'),
+  accepted: () => new InvitationError('CONFLICT', 'Invitation was already accepted', 409, 'INVITATION_ALREADY_ACCEPTED'),
   emailMismatch: () =>
     new InvitationError('FORBIDDEN', 'Invitation was issued to a different email', 403)
 };
