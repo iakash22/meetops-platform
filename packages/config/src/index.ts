@@ -26,13 +26,13 @@ export const envSchema = z.object({
   STORAGE_BUCKET: z.string().default('meetops-dev'),
   STORAGE_ACCESS_KEY_ID: z.string().default('minioadmin'),
   STORAGE_SECRET_ACCESS_KEY: z.string().default('minioadmin'),
-  STORAGE_FORCE_PATH_STYLE: bool.default('true'),
+  STORAGE_FORCE_PATH_STYLE: bool.prefault('true'),
 
   // Email
   EMAIL_PROVIDER: z.enum(['smtp']).default('smtp'),
   SMTP_HOST: z.string().default('smtp.gmail.com'),
   SMTP_PORT: numberFromString.default(465),
-  SMTP_SECURE: bool.default('true'),
+  SMTP_SECURE: bool.prefault('true'),
   SMTP_USER: z.string().default(''),
   SMTP_PASSWORD: z.string().default(''),
   EMAIL_FROM: z.string().default('noreply@example.com'),
@@ -43,16 +43,16 @@ export const envSchema = z.object({
   GEMINI_API_KEY: z.string().default(''),
   AI_STT_PROVIDER: z.enum(['assemblyai']).default('assemblyai'),
   ASSEMBLYAI_API_KEY: z.string().default(''),
-  OLLAMA_ENABLED: bool.default('false'),
+  OLLAMA_ENABLED: bool.prefault('false'),
   OLLAMA_BASE_URL: z.string().default('http://localhost:11434'),
-  LOCAL_STT_ENABLED: bool.default('false'),
+  LOCAL_STT_ENABLED: bool.prefault('false'),
   LOCAL_STT_URL: z.string().default('http://localhost:8001'),
-  OPENAI_ENABLED: bool.default('false'),
+  OPENAI_ENABLED: bool.prefault('false'),
   OPENAI_API_KEY: z.string().default(''),
-  DEEPGRAM_ENABLED: bool.default('false'),
+  DEEPGRAM_ENABLED: bool.prefault('false'),
   DEEPGRAM_API_KEY: z.string().default(''),
-  AI_ALLOW_PAID_FALLBACK: bool.default('false'),
-  AI_REQUIRE_PROVIDER_APPROVAL: bool.default('true')
+  AI_ALLOW_PAID_FALLBACK: bool.prefault('false'),
+  AI_REQUIRE_PROVIDER_APPROVAL: bool.prefault('true')
 });
 
 export type AppConfig = z.infer<typeof envSchema>;

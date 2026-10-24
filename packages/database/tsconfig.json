@@ -5,7 +5,8 @@
     "rootDir": ".",
     "noEmit": true,
     "composite": false,
-    "incremental": false
+    "incremental": false,
+    "types": ["node", "vitest/globals"]
   },
   "include": ["src", "prisma/seed.ts", "scripts/*.ts"]
 }
