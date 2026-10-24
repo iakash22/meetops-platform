@@ -1,15 +1,13 @@
-import {
-  CHUNK_UPLOAD_URL_TTL_SECONDS,
-  MAX_CHUNK_BYTES,
-  MAX_CHUNKS,
-  type AbortRecordingSessionRequest,
-  type ChunkUploadUrlRequest,
-  type ChunkUploadUrlResponse,
-  type CompleteRecordingSessionRequest,
-  type CompleteRecordingSessionResponse,
-  type InitRecordingSessionRequest,
-  type InitRecordingSessionResponse,
-} from '@meetops/contracts';
+import type {
+  AbortRecordingSessionRequest,
+  ChunkUploadUrlRequest,
+  ChunkUploadUrlResponse,
+  CompleteRecordingSessionRequest,
+  CompleteRecordingSessionResponse,
+  InitRecordingSessionRequest,
+  InitRecordingSessionResponse,
+} from '@meetops/contracts/types';
+import { CHUNK_UPLOAD_URL_TTL_SECONDS, MAX_CHUNK_BYTES, MAX_CHUNKS } from './contract-limits.js';
 
 /** Signed headers of a presigned PUT; required by the contract (ChunkUploadUrlResponse.upload). */
 export type SignedHeaders = ChunkUploadUrlResponse['upload']['headers'];
@@ -81,13 +79,18 @@ export function assertSafeUploadUrl(url: string, allowLocalHttp: boolean): void 
 export function createFetchTransport(opts: { allowLocalHttp: boolean }): StorageTransport {
   return async (req) => {
     assertSafeUploadUrl(req.url, opts.allowLocalHttp);
+    // Presigned PUTs are authorized by the URL signature only: never forward credentials (ADR-005 A1.3).
     const headers = Object.fromEntries(
-      Object.entries(req.headers).filter(([k]) => k.toLowerCase() !== 'content-length'),
+      Object.entries(req.headers).filter(([k]) => {
+        const key = k.toLowerCase();
+        return key !== 'content-length' && key !== 'authorization' && key !== 'cookie';
+      }),
     );
     const res = await fetch(req.url, {
       method: req.method,
       headers,
       body: req.body,
+      credentials: 'omit',
       redirect: 'error',
     });
     return { status: res.status };
