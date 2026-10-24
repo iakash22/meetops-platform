@@ -4,6 +4,20 @@ All notable changes to `@meetops/contracts` are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this package uses [Semantic Versioning](https://semver.org/).
 While the version is `0.x`, a minor bump may contain breaking changes (ADR-003).
 
+## [0.3.3] - 2026-10-24
+
+Additive. No existing export changed.
+
+### Added
+
+- `ApiErrorEnvelope.error.reason` (optional `ApiErrorReason`) and `API_ERROR_REASONS`. Every 409 `CONFLICT` sets it:
+  `LAST_OWNER`, `ALREADY_MEMBER`, `EMAIL_TAKEN`, `INVITATION_EXPIRED`, `INVITATION_REVOKED`,
+  `INVITATION_ALREADY_ACCEPTED`, or the generic `CONFLICT`.
+
+### Changed (API behaviour documented by this release)
+
+- Removing or demoting the last owner of an organization is `409 CONFLICT` with `reason: 'LAST_OWNER'` (was 422).
+
 ## [0.3.2] - 2026-10-22
 
 Security's LOW follow-up from #59. Validation is stricter; no exports were removed.

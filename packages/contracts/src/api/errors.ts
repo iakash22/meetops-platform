@@ -23,7 +23,22 @@ export const ApiErrorCode = Type.Union([
   Type.Literal('INTERNAL'),
 ]);
 export type ApiErrorCode = Static<typeof ApiErrorCode>;
-export { API_ERROR_CODES } from '../constants.js';
+export { API_ERROR_CODES, API_ERROR_REASONS } from '../constants.js';
+
+/**
+ * v0.3.3: machine-readable sub-reason. Always present on 409 CONFLICT (e.g. `LAST_OWNER` when the
+ * last owner of an organization would be demoted or removed); absent on other statuses for now.
+ */
+export const ApiErrorReason = Type.Union([
+  Type.Literal('CONFLICT'),
+  Type.Literal('LAST_OWNER'),
+  Type.Literal('ALREADY_MEMBER'),
+  Type.Literal('EMAIL_TAKEN'),
+  Type.Literal('INVITATION_EXPIRED'),
+  Type.Literal('INVITATION_REVOKED'),
+  Type.Literal('INVITATION_ALREADY_ACCEPTED'),
+]);
+export type ApiErrorReason = Static<typeof ApiErrorReason>;
 
 /**
  * `message` is safe and generic for display. It must not contain stack traces, SQL, provider
@@ -34,6 +49,7 @@ export const ApiErrorEnvelope = Type.Object({
     code: ApiErrorCode,
     message: Type.String({ maxLength: 500 }),
     requestId: Type.String({ minLength: 1 }),
+    reason: Type.Optional(ApiErrorReason),
     details: Type.Optional(
       Type.Array(Type.Object({ path: Type.String(), message: Type.String({ maxLength: 500 }) })),
     ),

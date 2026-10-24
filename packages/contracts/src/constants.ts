@@ -16,6 +16,14 @@ export const API_ERROR_CODES = [
   'BAD_REQUEST', 'VALIDATION_FAILED', 'UNAUTHENTICATED', 'AUTH_FAILED', 'CSRF_INVALID', 'FORBIDDEN', 'NOT_FOUND',
   'CONFLICT', 'RATE_LIMITED', 'PROVIDER_UNAVAILABLE', 'INTERNAL',
 ] as const;
+/**
+ * v0.3.3: all `ApiErrorReason` values. Every 409 CONFLICT carries one in `error.reason`;
+ * `CONFLICT` is the generic fallback when no more specific reason applies.
+ */
+export const API_ERROR_REASONS = [
+  'CONFLICT', 'LAST_OWNER', 'ALREADY_MEMBER', 'EMAIL_TAKEN', 'INVITATION_EXPIRED', 'INVITATION_REVOKED',
+  'INVITATION_ALREADY_ACCEPTED',
+] as const;
 
 /** ADR-005: extension tokens. TTL of the access token in seconds (15 min). */
 export const EXTENSION_TOKEN_TTL_SECONDS = 900;
