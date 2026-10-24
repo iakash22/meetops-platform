@@ -4,6 +4,20 @@ All notable changes to `@meetops/contracts` are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this package uses [Semantic Versioning](https://semver.org/).
 While the version is `0.x`, a minor bump may contain breaking changes (ADR-003).
 
+## [Unreleased]
+
+### Changed (breaking)
+
+- `MAX_MEDIA_BYTES` (and so `MAX_UPLOAD_BYTES`, `MAX_RECORDING_SESSION_BYTES`) lowered from 2,000,000,000 to
+  1,400,000,000 bytes (1.4 GB decimal) so source + normalized WAV fit the media worker's 3 GiB tmpfs.
+- `CreateUploadRequest.checksumSha256` is now REQUIRED: standard base64 sha256 of the file (`Sha256Base64`).
+- `ChunkUploadUrlRequest.sha256` (lowercase hex) is now REQUIRED; the signed PUT always carries `x-amz-checksum-sha256`.
+
+### Notes
+
+- Presigned uploads are single-use server-side: the URL carries signed `x-amz-meta-upload-token` and `if-none-match: *`
+  headers that clients must send verbatim from `upload.headers` / `upload.fields`.
+
 ## [0.3.3] - 2026-10-24
 
 All changes are additive. No export was removed and no existing schema got stricter.

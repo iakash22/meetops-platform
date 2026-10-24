@@ -13,8 +13,9 @@ describe('chunk limits (B1 / NB3)', () => {
     expect(MAX_RECORDING_CHUNKS).toBe(MAX_CHUNKS);
     expect(MAX_CHUNK_BYTES).toBeLessThan(MAX_RECORDING_SESSION_BYTES);
   });
-  it('ChunkUploadUrlRequest requires sizeBytes within bounds and an optional lowercase sha256', () => {
-    expect(Value.Check(ChunkUploadUrlRequest, { seq: 0, sizeBytes: 1 })).toBe(true);
+  it('ChunkUploadUrlRequest requires sizeBytes within bounds and a required lowercase sha256', () => {
+    expect(Value.Check(ChunkUploadUrlRequest, { seq: 0, sizeBytes: 1 })).toBe(false);
+    expect(Value.Check(ChunkUploadUrlRequest, { seq: 0, sizeBytes: 1, sha256: h })).toBe(true);
     expect(Value.Check(ChunkUploadUrlRequest, { seq: 0, sizeBytes: MAX_CHUNK_BYTES, sha256: h })).toBe(true);
     expect(Value.Check(ChunkUploadUrlRequest, { seq: 0 })).toBe(false);
     expect(Value.Check(ChunkUploadUrlRequest, { seq: 0, sizeBytes: 0 })).toBe(false);
@@ -23,8 +24,8 @@ describe('chunk limits (B1 / NB3)', () => {
     expect(Value.Check(ChunkUploadUrlRequest, { seq: 0, sizeBytes: 1, sha256: 'ab' })).toBe(false);
   });
   it('seq is bounded by MAX_CHUNKS - 1', () => {
-    expect(Value.Check(ChunkUploadUrlRequest, { seq: MAX_CHUNKS - 1, sizeBytes: 1 })).toBe(true);
-    expect(Value.Check(ChunkUploadUrlRequest, { seq: MAX_CHUNKS, sizeBytes: 1 })).toBe(false);
+    expect(Value.Check(ChunkUploadUrlRequest, { seq: MAX_CHUNKS - 1, sizeBytes: 1, sha256: h })).toBe(true);
+    expect(Value.Check(ChunkUploadUrlRequest, { seq: MAX_CHUNKS, sizeBytes: 1, sha256: h })).toBe(false);
   });
 });
 
