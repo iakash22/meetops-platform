@@ -46,5 +46,16 @@
     "*.{md,json,yml,yaml}": [
       "prettier --write"
     ]
+  },
+  "pnpm": {
+    "peerDependencyRules": {
+      "ignoreMissing": [
+        "webpack"
+      ],
+      "allowedVersions": {
+        "react-server-dom-webpack>react": "18",
+        "react-server-dom-webpack>react-dom": "18"
+      }
+    }
   }
 }
