@@ -16,6 +16,7 @@ import type {
   StatusPayload,
 } from '../../src/lib/messages.js';
 import { getTabStreamId } from '../../src/lib/tab-capture.js';
+import { PairingSection } from './PairingSection.js';
 
 const send = (msg: PopupToBackground): Promise<BackgroundResponse> =>
   chrome.runtime.sendMessage<PopupToBackground, BackgroundResponse>(msg);
@@ -97,12 +98,7 @@ export function App() {
   return (
     <main style={{ width: 320, padding: 12, fontFamily: 'system-ui, sans-serif' }}>
       <h1 style={{ fontSize: 16 }}>MeetOps AI</h1>
-      <section>
-        <p>Not signed in.</p>
-        <button type="button" disabled title="Sign-in coming soon">
-          Sign in
-        </button>
-      </section>
+      <PairingSection />
       <hr />
       {status.incomplete && (
         <section role="alert" aria-label="Incomplete recording" style={{ color: '#c62828' }}>

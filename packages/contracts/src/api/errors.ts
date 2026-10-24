@@ -13,6 +13,8 @@ export const ApiErrorCode = Type.Union([
   Type.Literal('VALIDATION_FAILED'),
   Type.Literal('UNAUTHENTICATED'),
   Type.Literal('AUTH_FAILED'),
+  /** Missing or mismatched x-csrf-token. The client should GET /auth/csrf and retry once. */
+  Type.Literal('CSRF_INVALID'),
   Type.Literal('FORBIDDEN'),
   Type.Literal('NOT_FOUND'),
   Type.Literal('CONFLICT'),
@@ -21,6 +23,7 @@ export const ApiErrorCode = Type.Union([
   Type.Literal('INTERNAL'),
 ]);
 export type ApiErrorCode = Static<typeof ApiErrorCode>;
+export { API_ERROR_CODES } from '../constants.js';
 
 /**
  * `message` is safe and generic for display. It must not contain stack traces, SQL, provider

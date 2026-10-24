@@ -1,41 +1,131 @@
-import type { CreateUploadResponse } from '@meetops/contracts';
-import type { AuthSession, Meeting, Organization, Paginated, Project, Task } from '@/lib/api/types';
+import type {
+  AuthSession,
+  CreateUploadResponse,
+  ExtensionPairResponse,
+  GetAuthSessionResponse,
+  Meeting,
+  Organization,
+  Paginated,
+  Project,
+  Task,
+} from '@meetops/contracts';
+
+const T = '2026-10-01T00:00:00.000Z';
 
 export const orgs: Organization[] = [
-  { id: 'org_1', name: 'Acme Inc', slug: 'acme' },
-  { id: 'org_2', name: 'Globex', slug: 'globex' },
+  {
+    id: '00000000-0000-4000-8000-000000000001',
+    name: 'Acme Inc',
+    slug: 'acme',
+    createdAt: T,
+    updatedAt: T,
+  },
+  {
+    id: '00000000-0000-4000-8000-000000000002',
+    name: 'Globex',
+    slug: 'globex',
+    createdAt: T,
+    updatedAt: T,
+  },
 ];
 
+export const newOrg: Organization = {
+  id: '00000000-0000-4000-8000-000000000003',
+  name: 'Initech',
+  slug: 'initech',
+  createdAt: T,
+  updatedAt: T,
+};
+
+export const user = {
+  id: '10000000-0000-4000-8000-000000000001',
+  email: 'ada@example.com',
+  name: 'Ada',
+  createdAt: T,
+  updatedAt: T,
+};
+
 export const session: AuthSession = {
-  user: { id: 'usr_1', email: 'ada@example.com', name: 'Ada' },
+  user,
+  csrfToken: 'csrf-token-from-login-0001',
+  activeOrganizationId: '00000000-0000-4000-8000-000000000001',
+  role: 'owner',
   organizations: orgs,
+};
+
+export const sessionResponse: GetAuthSessionResponse = {
+  user,
+  activeOrganizationId: '00000000-0000-4000-8000-000000000001',
+  role: 'owner',
+  organizations: orgs,
+};
+
+export const meeting1: Meeting = {
+  id: '20000000-0000-4000-8000-000000000001',
+  organizationId: '00000000-0000-4000-8000-000000000001',
+  title: 'Weekly sync',
+  source: 'upload',
+  status: 'completed',
+  startedAt: '2026-10-20T10:00:00.000Z',
+  endedAt: '2026-10-20T10:30:00.000Z',
+  createdById: '10000000-0000-4000-8000-000000000001',
+  createdAt: T,
+  updatedAt: T,
 };
 
 export const meetings: Paginated<Meeting> = {
   items: [
+    meeting1,
     {
-      id: 'mtg_1',
-      orgId: 'org_1',
-      title: 'Weekly sync',
-      startsAt: '2026-10-20T10:00:00Z',
-      status: 'completed',
-    },
-    {
-      id: 'mtg_2',
-      orgId: 'org_1',
+      id: '20000000-0000-4000-8000-000000000002',
+      organizationId: '00000000-0000-4000-8000-000000000001',
       title: 'Planning',
-      startsAt: '2026-10-22T10:00:00Z',
-      status: 'scheduled',
+      source: 'extension',
+      status: 'recording',
+      startedAt: '2026-10-22T10:00:00.000Z',
+      createdById: '10000000-0000-4000-8000-000000000001',
+      createdAt: T,
+      updatedAt: T,
     },
   ],
+  nextCursor: null,
+};
+
+export const task1: Task = {
+  id: '30000000-0000-4000-8000-000000000001',
+  organizationId: '00000000-0000-4000-8000-000000000001',
+  title: 'Send recap',
+  status: 'todo',
+  priority: 'medium',
+  createdAt: T,
+  updatedAt: T,
 };
 
 export const tasks: Paginated<Task> = {
-  items: [{ id: 'tsk_1', orgId: 'org_1', title: 'Send recap', status: 'todo' }],
+  items: [
+    task1,
+    {
+      ...task1,
+      id: '30000000-0000-4000-8000-000000000002',
+      title: 'Old idea',
+      status: 'cancelled',
+      priority: 'low',
+    },
+  ],
+  nextCursor: null,
 };
 
 export const projects: Paginated<Project> = {
-  items: [{ id: 'prj_1', orgId: 'org_1', name: 'Launch' }],
+  items: [
+    {
+      id: '40000000-0000-4000-8000-000000000001',
+      organizationId: '00000000-0000-4000-8000-000000000001',
+      name: 'Launch',
+      createdAt: T,
+      updatedAt: T,
+    },
+  ],
+  nextCursor: null,
 };
 
 export const uploadResponse: CreateUploadResponse = {
@@ -46,4 +136,11 @@ export const uploadResponse: CreateUploadResponse = {
     headers: { 'Content-Type': 'audio/webm' },
     expiresAt: '2026-10-21T18:00:00.000Z',
   },
+};
+
+export const pairResponse: ExtensionPairResponse = {
+  pairingCode: 'P'.repeat(40),
+  expiresAt: '2026-10-01T00:01:00.000Z',
+  organizationId: '00000000-0000-4000-8000-000000000001',
+  organizationName: 'Acme Inc',
 };

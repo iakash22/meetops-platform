@@ -7,20 +7,33 @@
   "types": "dist/index.d.ts",
   "files": [
     "dist",
-    "prisma/schema.prisma"
+    "prisma/schema.prisma",
+    "prisma/migrations"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.json",
-    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.test.json --noEmit",
     "lint": "eslint .",
     "test": "vitest run",
-    "postinstall": "prisma generate"
+    "postinstall": "prisma generate",
+    "prisma:validate": "prisma validate",
+    "prisma:generate": "prisma generate",
+    "db:migrate:dev": "prisma migrate dev",
+    "db:migrate:deploy": "prisma migrate deploy",
+    "db:seed": "prisma db seed",
+    "test:live": "vitest run test/rls.live.test.ts",
+    "db:roles": "tsx scripts/create-db-roles.ts",
+    "db:roles:sh": "sh scripts/create-db-roles.sh"
   },
   "dependencies": {
     "@prisma/client": "^5.20.0"
   },
   "devDependencies": {
     "prisma": "^5.20.0",
+    "tsx": "^4.23.15",
     "typescript": "^5.6.3"
+  },
+  "prisma": {
+    "seed": "tsx prisma/seed.ts"
   }
 }

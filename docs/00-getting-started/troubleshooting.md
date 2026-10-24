@@ -21,7 +21,7 @@ Docker Desktop on Windows needs the WSL 2 backend.
 
 ## Port conflicts
 
-Ports used: 5432, 6379, 9000, 9001, 3000, 5173, plus 11434 and 8001 with the optional profiles.
+Ports used: 5432, 6379, 9000, 9001, 3000, 5173, plus 11434 and 8001 with the optional profiles. Local STT maps host `8001` → container `8000` (`infra/compose/compose.dev.yml`).
 
 - Find the process holding a port. Windows: `netstat -ano | findstr :5432`. Linux: `ss -ltnp | grep 5432`.
 - Stop the conflicting service (for example a local PostgreSQL or Redis), or change the port.
