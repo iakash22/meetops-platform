@@ -223,3 +223,59 @@ Per-integration credentials and webhook secrets live in the secret manager or en
 | `REDIS_URL`                                                                   | `DeliveryStore`                                         |
 
 This package does not read env itself.
+
+## Jira OAuth 2.0 (3LO) with PKCE
+
+```ts
+const oauth = new JiraOAuthClient({
+  clientId, // Atlassian developer console
+  clientSecret: () => secrets.get('jira-oauth-client-secret'), // resolved per call
+  redirectUriAllowlist: ['https://app.example.com/integrations/jira/callback'], // exact match only
+  stateStore: new RedisOAuthStateStore(redis), // single-use, GETDEL
+});
+const { url } = await oauth.beginAuthorization({ organizationId, userId, redirectUri }); // 302 the user here
+// callback:
+const conn = await oauth.completeAuthorization({
+  state: q.state,
+  code: q.code,
+  organizationId,
+  userId,
+  redirectUri,
+});
+// conn: { accessToken, refreshToken, expiresAt, scopes, cloudId?, siteUrl?, baseUrl?, resources }
+const next = await oauth.refresh(storedRefreshToken); // rotating refresh token: persist the NEW pair atomically
+```
+
+- **Endpoints.** `https://auth.atlassian.com/authorize`, `https://auth.atlassian.com/oauth/token` and `https://api.atlassian.com/oauth/token/accessible-resources`.
+- **PKCE.** S256, with a 32-byte random verifier. The verifier stays server-side inside the state record and is never sent to the browser. The client secret is still sent, because this is a confidential client.
+- **State.** 256-bit random, stored under `sha256(state)`, bound to provider + organization + user + redirect URI. It is compared in constant time, can be used once (it is consumed even when the binding doesn't match), and expires after 600 s by default (900 s maximum).
+- **Redirect URIs.** Must match the allowlist exactly. Only https is accepted, or http://localhost for development. Fragments and userinfo are rejected.
+- **Scopes.** `JIRA_OAUTH_SCOPES = read:jira-work write:jira-work read:jira-user offline_access`. `validateGrantedScopes` checks the token response: a missing scope fails with `insufficient_scope`, and any extra scope fails with `excess_scope`.
+- **cloudId.** Accessible resources are filtered to Jira sites with a UUID id and an `https://*.atlassian.net` URL. If exactly one site is left, or `cloudId` names one of them, the result includes `baseUrl = https://api.atlassian.com/ex/jira/<cloudId>` for `JiraIssueTrackerProvider`. Otherwise the user must pick from `resources`.
+- **Refresh.** A new refresh token must come back on every refresh (`requireRefreshRotation`, default true). Token calls are never retried, because codes and rotated refresh tokens are single use. Concurrent refreshes need a per-integration lock and a compare-and-swap write.
+- **Errors.** `JiraOAuthError(code, status)` carries only an allowlisted `error` code. It never includes tokens, codes, secrets or response bodies.
+
+## GitHub App installation state
+
+`GitHubAppInstallFlow({ appSlug, redirectUriAllowlist, stateStore })`:
+
+- `.begin()` returns `https://github.com/apps/<slug>/installations/new?state=…`.
+- `.complete({ state, installationId, setupAction, … })` consumes the state with the same binding rules as Jira and validates `installation_id` (digits only) and `setup_action` (`install` or `update`).
+- The returned `installation_id` is **untrusted** until the backend confirms it with the App JWT (`GET /app/installations/{id}`).
+
+## Token encryption at rest
+
+```ts
+const cipher = new TokenCipher(kmsKeyProvider); // or new LocalKeyProvider({ k1: key32 }, 'k1') in dev/tests
+const enc = await cipher.encrypt(JSON.stringify({ accessToken, refreshToken }), {
+  organizationId,
+  integrationId,
+});
+// enc = "v1.<keyId>.<wrappedDataKey>.<iv|ciphertext|tag>" (base64url)
+const plain = await cipher.decrypt(enc, { organizationId, integrationId });
+```
+
+- **Envelope encryption.** Each record gets a fresh 256-bit data key and is encrypted with AES-256-GCM (random 12-byte IV, 16-byte tag). The `KeyEncryptionProvider` wraps the data key (KMS in production).
+- **AAD.** `["meetops.token.v1", organizationId, integrationId]`. A ciphertext moved to another row fails to decrypt.
+- **Rotation.** `currentKeyId()` encrypts new records, and old key ids still decrypt. `needsRotation()` and `rotate()` support re-encryption jobs. `TokenCipher.keyIdOf()` gives the value for a `key_id` column.
+- **Logging.** Never log plaintext tokens. Decryption errors are generic (`TokenDecryptionError`).
