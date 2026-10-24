@@ -66,18 +66,27 @@ function id(name: string, v: string): string {
 /** Lifecycle-expirable prefix for recording-session chunks (configure e.g. 1-day expiry on it). */
 export const SESSION_CHUNK_PREFIX = 'tmp/session-chunks/';
 
+/** Current prefix. WRITERS (buildObjectKey) only ever emit this. */
+export const ORGANIZATIONS_KEY_PREFIX = 'organizations/';
 /**
- * Key prefix of one organization. The string format `org/{organizationId}/` is unchanged by ADR-010,
- * so every existing object key stays valid.
+ * Legacy prefix (org/{organizationId}/). READ-ONLY: accepted by parseMeetingKey/assertKeyOwnedBy and the stored-key
+ * read methods until the staging copy to organizations/ is verified. Never produced by writers.
  */
+export const LEGACY_ORG_KEY_PREFIX = 'org/';
+
 export function organizationPrefix(organizationId: string): string {
-  return `org/${id('organizationId', organizationId)}/`;
+  return `${ORGANIZATIONS_KEY_PREFIX}${id('organizationId', organizationId)}/`;
 }
 
-/** @deprecated Use organizationPrefix (ADR-010). Same output. */
+/** Legacy read-only prefix for an organization: org/{organizationId}/. */
+export function legacyOrganizationPrefix(organizationId: string): string {
+  return `${LEGACY_ORG_KEY_PREFIX}${id('organizationId', organizationId)}/`;
+}
+
+/** @deprecated Use organizationPrefix (ADR-010). Same output (organizations/{organizationId}/ since ADR-010 Phase A). */
 export const orgPrefix = organizationPrefix;
 
-/** Derive the object key: org/{organizationId}/meetings/{meetingId}/... */
+/** Derive the object key: organizations/{organizationId}/meetings/{meetingId}/... */
 export function buildObjectKey(ref: MeetingObjectRef): string {
   const base = `${organizationPrefix(refOrganizationId(ref))}meetings/${id('meetingId', ref.meetingId)}`;
   const obj = id('objectId', ref.objectId);
@@ -112,17 +121,22 @@ export type ParsedMeetingKey = {
   orgId: string;
   meetingId: string;
   rest: string;
+  /** True for a legacy (read-only) org/ key. */
+  legacy: boolean;
 };
 
+/** Parse a stored key under organizations/ or (legacy, read-only) org/. Unknown prefixes return null. */
 export function parseMeetingKey(key: string): ParsedMeetingKey | null {
+  if (typeof key !== 'string') return null;
   const k = key.startsWith(SESSION_CHUNK_PREFIX) ? key.slice(SESSION_CHUNK_PREFIX.length) : key;
-  const m = /^org\/([^/]+)\/meetings\/([^/]+)\/(.+)$/.exec(k);
-  if (!m || !ID.test(m[1]!) || !ID.test(m[2]!)) return null;
-  return { organizationId: m[1]!, orgId: m[1]!, meetingId: m[2]!, rest: m[3]! };
+  const m = /^(organizations|org)\/([^/]+)\/meetings\/([^/]+)\/(.+)$/.exec(k);
+  if (!m || !ID.test(m[2]!) || !ID.test(m[3]!)) return null;
+  return { organizationId: m[2]!, orgId: m[2]!, meetingId: m[3]!, rest: m[4]!, legacy: m[1] === 'org' };
 }
 
 /**
- * Throws StorageAccessError unless `key` lives under org/{organizationId}/ or tmp/session-chunks/org/{organizationId}/,
+ * Throws StorageAccessError unless `key` lives under organizations/{organizationId}/ (or legacy, read-only,
+ * org/{organizationId}/), optionally behind tmp/session-chunks/,
  * with a valid meetingId segment (and meetingId equal to `meetingId` when given). Never echoes the key.
  */
 export function assertKeyOwnedBy(key: string, organizationId: string, meetingId?: string): void {
@@ -130,7 +144,7 @@ export function assertKeyOwnedBy(key: string, organizationId: string, meetingId?
   if (typeof key !== 'string' || key.includes('..') || key.includes('//') || key.includes('\\')) throw new StorageAccessError();
   const isSession = key.startsWith(SESSION_CHUNK_PREFIX);
   const k = isSession ? key.slice(SESSION_CHUNK_PREFIX.length) : key;
-  if (!k.startsWith(organizationPrefix(organizationId))) throw new StorageAccessError();
+  if (!k.startsWith(organizationPrefix(organizationId)) && !k.startsWith(legacyOrganizationPrefix(organizationId))) throw new StorageAccessError();
   const parsed = parseMeetingKey(key);
   if (!parsed || parsed.organizationId !== organizationId) throw new StorageAccessError();
   if (meetingId !== undefined && parsed.meetingId !== meetingId) throw new StorageAccessError();
