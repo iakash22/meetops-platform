@@ -46,5 +46,5 @@ See [docs/mobile/plan.md](../../docs/mobile/plan.md) for the roadmap and the sec
 
 - Mobile may import **values** only from `@meetops/contracts/types`.
 - Imports from the `@meetops/contracts` root must be `import type { ... }`.
-- No server packages (`@meetops/database`, `@meetops/ai-core`, integrations, `@meetops/queue`), no other apps, and no deep `src/` or `dist/` imports.
+- No server packages (`@meetops/database`, `@meetops/ai-core`, integrations, `@meetops/queue`, `@meetops/logger`), no other apps, and no deep `src/` or `dist/` imports.
 - Architecture owns the contracts package and will add a `default` export condition there. Mobile does not edit it.
