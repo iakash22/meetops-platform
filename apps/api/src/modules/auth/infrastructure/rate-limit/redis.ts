@@ -12,9 +12,25 @@ export interface RedisLike {
   getdel(key: string): Promise<string | null>;
   sadd(key: string, ...members: string[]): Promise<number>;
   smembers(key: string): Promise<string[]>;
+  /** EVAL (ioredis signature): script, number of keys, then keys and args. */
+  eval(script: string, numKeys: number, ...keysAndArgs: (string | number)[]): Promise<unknown>;
 }
 
-/** Fixed window: INCR + PEXPIRE on first hit. */
+/**
+ * INCR and, on the first hit (or if the key somehow lost its TTL), PEXPIRE in one Lua script,
+ * so the counter can never be left without an expiry (e.g. process crash between commands).
+ * Returns [count, pttl].
+ */
+export const INCR_WITH_EXPIRY_LUA = `local n = redis.call('INCR', KEYS[1])
+if n == 1 or redis.call('PTTL', KEYS[1]) < 0 then redis.call('PEXPIRE', KEYS[1], ARGV[1]) end
+return {n, redis.call('PTTL', KEYS[1])}`;
+
+export async function incrWithExpiry(redis: RedisLike, key: string, windowMs: number): Promise<{ count: number; ttlMs: number }> {
+  const r = (await redis.eval(INCR_WITH_EXPIRY_LUA, 1, key, String(windowMs))) as [number | string, number | string];
+  return { count: Number(r[0]), ttlMs: Number(r[1]) };
+}
+
+/** Fixed window: atomic INCR + PEXPIRE on first hit (Lua). */
 export class RedisRateLimiter implements RateLimiter {
   constructor(
     private readonly redis: RedisLike,
@@ -22,12 +38,9 @@ export class RedisRateLimiter implements RateLimiter {
   ) {}
   async consume(key: string, limit: number, windowMs: number) {
     const k = this.prefix + key;
-    const count = await this.redis.incr(k);
-    if (count === 1) await this.redis.pexpire(k, windowMs);
+    const { count, ttlMs } = await incrWithExpiry(this.redis, k, windowMs);
     if (count <= limit) return { allowed: true, retryAfterMs: 0 };
-    const ttl = await this.redis.pttl(k);
-    if (ttl < 0) await this.redis.pexpire(k, windowMs); // self-heal a key that lost its TTL
-    return { allowed: false, retryAfterMs: ttl > 0 ? ttl : windowMs };
+    return { allowed: false, retryAfterMs: ttlMs > 0 ? ttlMs : windowMs };
   }
 }
 
@@ -44,8 +57,7 @@ export class RedisLoginLockout implements LoginLockout {
   }
   async recordFailure(key: string) {
     const k = `${this.prefix}fail:${key}`;
-    const n = await this.redis.incr(k);
-    if (n === 1) await this.redis.pexpire(k, this.policy.windowMs);
+    const { count: n } = await incrWithExpiry(this.redis, k, this.policy.windowMs);
     const delayMs = failureDelayMs(n, this.policy);
     const lockedForMs = lockDurationMs(n, this.policy);
     if (lockedForMs) {

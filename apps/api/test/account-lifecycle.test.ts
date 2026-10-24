@@ -145,12 +145,14 @@ describe('account lifecycle (P1-BE-2)', () => {
       expect((await t.admin.c.delete(`/orgs/${t.id}/members/${t.ownerId}`)).statusCode).toBe(403);
     });
 
-    it('AU-31 last owner cannot demote self or leave (422)', async () => {
+    it('AU-31 last owner cannot demote self or leave (409 CONFLICT, reason LAST_OWNER)', async () => {
       const t = await team();
       const r = await t.owner.patch(`/orgs/${t.id}/members/${t.ownerId}`, { role: 'admin' });
-      expect(r.statusCode).toBe(422);
-      expect(r.json().error.code).toBe('CONFLICT');
-      expect((await t.owner.delete(`/orgs/${t.id}/members/${t.ownerId}`)).statusCode).toBe(422);
+      expect(r.statusCode).toBe(409);
+      expect(r.json().error).toMatchObject({ code: 'CONFLICT', reason: 'LAST_OWNER' });
+      const d = await t.owner.delete(`/orgs/${t.id}/members/${t.ownerId}`);
+      expect(d.statusCode).toBe(409);
+      expect(d.json().error).toMatchObject({ code: 'CONFLICT', reason: 'LAST_OWNER' });
     });
 
     it('owner changes a role / removes a member; target sessions are revoked', async () => {
