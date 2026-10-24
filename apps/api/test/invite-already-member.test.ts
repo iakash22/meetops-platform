@@ -61,7 +61,12 @@ describe('invitations vs active members (409 already_member)', () => {
     const res = await owner.post(`/orgs/${id}/invitations`, { email: 'Admin@Example.com', role: 'viewer' });
     expect(res.statusCode).toBe(409);
     expect(res.json()).toEqual({
-      error: { code: 'CONFLICT', message: 'This person is already a member of the organization', requestId: expect.any(String) }
+      error: {
+        code: 'CONFLICT',
+        reason: 'ALREADY_MEMBER',
+        message: 'This person is already a member of the organization',
+        requestId: expect.any(String)
+      }
     });
     expect(app.mail.sent.length).toBe(mailsBefore);
     expect(await invitations.findPendingByEmail(id, 'admin@example.com')).toBeNull();
@@ -86,7 +91,12 @@ describe('invitations vs active members (409 already_member)', () => {
     const res = await owner.post('/invitations/accept', { token });
     expect(res.statusCode).toBe(409);
     expect(res.json()).toEqual({
-      error: { code: 'CONFLICT', message: 'This person is already a member of the organization', requestId: expect.any(String) }
+      error: {
+        code: 'CONFLICT',
+        reason: 'ALREADY_MEMBER',
+        message: 'This person is already a member of the organization',
+        requestId: expect.any(String)
+      }
     });
     expect((await owner.get('/auth/session')).json().role).toBe('owner');
     const members = (await owner.get(`/orgs/${id}/members`)).json().items as { role: string }[];

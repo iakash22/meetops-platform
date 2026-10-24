@@ -286,6 +286,9 @@ importers:
 
   apps/worker:
     dependencies:
+      '@meetops/ai-core':
+        specifier: workspace:*
+        version: link:../../packages/ai-core
       '@meetops/config':
         specifier: workspace:*
         version: link:../../packages/config
@@ -394,6 +397,15 @@ importers:
         specifier: ^0.34.0
         version: 0.34.52
     devDependencies:
+      '@types/ioredis-mock':
+        specifier: ^8.2.8
+        version: 8.2.8(ioredis@5.11.1)
+      ioredis:
+        specifier: ^5.4.1
+        version: 5.11.1
+      ioredis-mock:
+        specifier: ^8.9.0
+        version: 8.13.1(@types/ioredis-mock@8.2.8(ioredis@5.11.1))(ioredis@5.11.1)
       typescript:
         specifier: ^5.6.3
         version: 5.9.3
@@ -507,11 +519,11 @@ importers:
         specifier: ^0.34.0
         version: 0.34.52
       '@testcontainers/postgresql':
-        specifier: ^10.13.2
-        version: 10.28.0
+        specifier: ^11.14.0
+        version: 11.14.0
       '@testcontainers/redis':
-        specifier: ^10.13.2
-        version: 10.28.0
+        specifier: ^11.14.0
+        version: 11.14.0
       '@types/pg':
         specifier: ^8.11.10
         version: 8.23.1
@@ -522,8 +534,8 @@ importers:
         specifier: ^8.13.1
         version: 8.23.1
       testcontainers:
-        specifier: ^10.13.2
-        version: 10.28.0
+        specifier: ^11.14.0
+        version: 11.14.0
       typescript:
         specifier: ^5.6.3
         version: 5.9.3
@@ -1811,13 +1823,6 @@ packages:
         integrity: sha512-VP0yIfwlc1ohj733keYDqyHm1VWeP9VQxYomunhr90jkC4aNNibbkrRiaNgPgqj1ORxUenILR4qzA/ppYBNAtQ==,
       }
 
-  '@fastify/busboy@2.1.1':
-    resolution:
-      {
-        integrity: sha512-vBZP4NlzfOlerQTnba4aqZoMhE/a9HY7HRqoOPaETQcSQuWEIyZMHGfVu6w9wGtGK5fED5qRs2DteVCjOH60sA==,
-      }
-    engines: { node: '>=14' }
-
   '@fastify/cookie@11.1.3':
     resolution:
       {
@@ -1977,6 +1982,12 @@ packages:
       }
     engines: { node: '>=18.18' }
 
+  '@ioredis/as-callback@3.0.0':
+    resolution:
+      {
+        integrity: sha512-Kqv1rZ3WbgOrS+hgzJ5xG5WQuhvzzSTRYvNeyPMLOAM78MHSnuKI20JeJGbpuAt//LCuP0vsexZcorqW7kWhJg==,
+      }
+
   '@ioredis/commands@1.10.0':
     resolution:
       {
@@ -2025,6 +2036,12 @@ packages:
     resolution:
       {
         integrity: sha512-iUKgm52T8HOE/makSxjqoWhe95ZJA1/G1sYsGev2JDKUSS14KAgg1LHb+Ba+IPow0xflbnSkOsZcO08C7w1gYw==,
+      }
+
+  '@kwsites/file-exists@1.1.1':
+    resolution:
+      {
+        integrity: sha512-m9/5YGR18lIwxSFDwfE3oA7bWuq9kdau6ugN4H2rJeyhFQZcG9AgSHkQtSD15a8WvTgfz9aikZMrKPHvbpqFiw==,
       }
 
   '@lukeed/ms@2.0.2':
@@ -3279,16 +3296,16 @@ packages:
         integrity: sha512-sJ4mjol8uQsHV0gOJzzjwXfh2Fwm+Sz0+8deqiTm4jGbMdjzNSW+xZCFm0kUa870uhd8yi+DpKnZb5Kc4apa0Q==,
       }
 
-  '@testcontainers/postgresql@10.28.0':
+  '@testcontainers/postgresql@11.14.0':
     resolution:
       {
-        integrity: sha512-NN25rruG5D4Q7pCNIJuHwB+G85OSeJ3xHZ2fWx0O6sPoPEfCYwvpj8mq99cyn68nxFkFYZeyrZJtSFO+FnydiA==,
+        integrity: sha512-wYbJn8GRTj8qfqzfVubxioYWlHJU/ImIjuzPwyy9C5Qfo6g3GLduPZAj+BifvqTZjgT3gd4gFVLCPhBji7dc1w==,
       }
 
-  '@testcontainers/redis@10.28.0':
+  '@testcontainers/redis@11.14.0':
     resolution:
       {
-        integrity: sha512-xDNKSJTBmQca/3v5sdHmqSCYr68vjvAGSxoHCuWylha77gAYn88g5nUZK0ocNbUZgBq69KhIzj/f9zlHkw34uA==,
+        integrity: sha512-WX005slz2JMQPw2avbSjf5awVjpmFhOs5xCxeGSYLcV5ia4W1edv/P6MdOw4dZnvDQDuN5LfqNoV/ut3XGb2pA==,
       }
 
   '@testing-library/dom@10.4.2':
@@ -3446,10 +3463,10 @@ packages:
         integrity: sha512-yKpAGEuKRSS8wwx0joknWxsmLha78wNMe9R2S3UNsVOkZded8UqOrV8KoeDXoXsjndxwyF3eIhyClGbO1SEhEg==,
       }
 
-  '@types/dockerode@3.3.47':
+  '@types/dockerode@4.0.2':
     resolution:
       {
-        integrity: sha512-ShM1mz7rCjdssXt7Xz0u1/R2BJC7piWa3SJpUBiVjCf2A3XNn4cP6pUVaD8bLanpPVVn4IKzJuw3dOvkJ8IbYw==,
+        integrity: sha512-hA4myZ0XzwHG/p/eCLElYsQS3y1XZfvi6AfLFKVp1SNpPkO6J3xLatacAFVkReTxXRoIa3eHJmhJi9w6I3+zNA==,
       }
 
   '@types/estree@1.0.9':
@@ -3475,6 +3492,14 @@ packages:
       {
         integrity: sha512-fluxdy7ryD3MV6h8pTfTYpy/xQzCFC7m89nOH9y94cNqJ1mDIDPut7MnRHI3F6qRmh/cT2fUjG1MLdCNb4hE9A==,
       }
+
+  '@types/ioredis-mock@8.2.8':
+    resolution:
+      {
+        integrity: sha512-Nxr1CXk8NtGVzWQ8WoGCOyo+HARd4CFc/Nt2+ITt3WWLNlj1InW38SzZwOJNqzA38iplrpBFp6Ny4KjPfeI+bA==,
+      }
+    peerDependencies:
+      ioredis: ^5
 
   '@types/json-schema@7.0.15':
     resolution:
@@ -4931,10 +4956,10 @@ packages:
         integrity: sha512-+HlytyjlPKnIG8XuRG8WvmBP8xs8P71y+SKKS6ZXWoEgLuePxtDoUEiH7WkdePWrQ5JBpE6aoVqfZfJUQkjXwA==,
       }
 
-  docker-compose@0.24.8:
+  docker-compose@1.5.0:
     resolution:
       {
-        integrity: sha512-plizRs/Vf15H+GCVxq2EUvyPK7ei9b/cVesHvjnX4xaXjM9spHe2Ytq0BitndFgvTJ3E3NljPNUEl7BAN43iZw==,
+        integrity: sha512-O+eD6c63+BJORUWddXA7uAlI6H1KLDPd/aS14k73nXYpFliM48C3xrrKB3sXsR1Fp/rHUZQe7+fJ+QA7+jepyw==,
       }
     engines: { node: '>= 6.0.0' }
 
@@ -5511,6 +5536,20 @@ packages:
       picomatch:
         optional: true
 
+  fengari-interop@0.1.4:
+    resolution:
+      {
+        integrity: sha512-4/CW/3PJUo3ebD4ACgE1g/3NGEYSq7OQAyETyypsAl/WeySDBbxExikkayNkZzbpgyC9GyJp8v1DU2VOXxNq7Q==,
+      }
+    peerDependencies:
+      fengari: ^0.1.0
+
+  fengari@0.1.5:
+    resolution:
+      {
+        integrity: sha512-0DS4Nn4rV8qyFlQCpKK8brT61EUtswynrpfFTcgLErcilBIBskSMQ86fO2WVuybr14ywyKdRjv91FiRZwnEuvQ==,
+      }
+
   file-entry-cache@8.0.0:
     resolution:
       {
@@ -5965,6 +6004,16 @@ packages:
         integrity: sha512-X7rqawQBvfdjS10YU1y1YVreA3SsLrW9dX2CewP2EbBJM4ypVNLDkO5y04gejPwKIY9lR+7r9gn3rFPt/kmWFg==,
       }
     engines: { node: ^14.17.0 || ^16.13.0 || >=18.0.0 }
+
+  ioredis-mock@8.13.1:
+    resolution:
+      {
+        integrity: sha512-Wsi50AU+cMiI32nAgfwpUaJVBtb4iQdVsOHl9M6R3tePCO/8vGsToCVIG82XWAxN4Se55TZoOzVseu+QngFLyw==,
+      }
+    engines: { node: '>=12.22' }
+    peerDependencies:
+      '@types/ioredis-mock': ^8
+      ioredis: ^5
 
   ioredis@5.11.1:
     resolution:
@@ -6787,10 +6836,10 @@ packages:
         integrity: sha512-gKLcREMhtuZRwRAfqP3RFW+TK4JqApVBtOIftVgjuABpAtpxhPGaDcfvbhNvD0B8iD1oUr/txX35NjcaY6Ns/A==,
       }
 
-  mkdirp@1.0.4:
+  mkdirp@3.0.1:
     resolution:
       {
-        integrity: sha512-vVqVZQyf3WLx2Shd0qJ9xuvqgAyKPLAiqITEtqW0oIUjzo3PePDd6fW9iFz30ef7Ysp/oiWqbhszeGWW2T6Gzw==,
+        integrity: sha512-+NsyUUAZDmo6YVHzL/stxSu3t9YS1iljliy3BSDrXJ/dkn1KYdmtZODGGjLcc9XLgVVpH4KshHB8XmZgMhaBXg==,
       }
     engines: { node: '>=10' }
     hasBin: true
@@ -7512,12 +7561,12 @@ packages:
         integrity: sha512-TjNPblN4BwAWMXU8s9AEz4JmQxnD1NNL7bNOY/AKUzyamc379FWASUhc/K1pL2noVb+XmZKLL68cjzLsiOAMaA==,
       }
 
-  properties-reader@2.3.0:
+  properties-reader@3.0.1:
     resolution:
       {
-        integrity: sha512-z597WicA7nDZxK12kZqHr2TcvwNU1GCfA5UwfDY/HDp3hXPoPlb5rlEx9bwGTiJnc0OqbBTkU975jDToth8Gxw==,
+        integrity: sha512-WPn+h9RGEExOKdu4bsF4HksG/uzd3cFq3MFtq8PsFeExPse5Ha/VOjQNyHhjboBFwGXGev6muJYTSPAOkROq2g==,
       }
-    engines: { node: '>=14' }
+    engines: { node: '>=18' }
 
   proto-list@1.2.4:
     resolution:
@@ -7715,6 +7764,13 @@ packages:
         integrity: sha512-Kko+Y5XQ6fM+Ce3dq3m9YGxnacYZYl9cA1wZjaF3Vbry2L3i1qVg8+CAgNPsXRArPMUMCaOR7oa9Nqntc43JKA==,
       }
     engines: { node: '>= 20.19.0' }
+
+  readline-sync@1.4.10:
+    resolution:
+      {
+        integrity: sha512-gNva8/6UAe8QYepIQH/jQ2qn91Qj0B9sYjMBBs3QOB8F2CXcKgLxQaJRP76sWVRQt+QU+8fAkCbCvjjMFu7Ycw==,
+      }
+    engines: { node: '>= 0.8.0' }
 
   real-require@0.2.0:
     resolution:
@@ -8145,6 +8201,12 @@ packages:
         integrity: sha512-mTyOoPbrivtXnwnIxZRFYRrPNtEFKlpB2fvjSnCQUiAA6qAZzqwna5envK4uk6OIeP17CsdF3rSBGYVBsU0Tkg==,
       }
 
+  sprintf-js@1.1.3:
+    resolution:
+      {
+        integrity: sha512-Oo+0REFV59/rz3gfJNKQiBlwfHaSESl1pcGyABQsnnIfWOFt6JNj5gCog2U6MLZ//IGYD+nA8nI+mTShREReaA==,
+      }
+
   ssh-remote-port-forward@1.0.4:
     resolution:
       {
@@ -8403,10 +8465,10 @@ packages:
         integrity: sha512-eYE6iEI62Ni1H8oIa7KlDU6uQBtqr4Eajni3wX7rpfXD8ysFx8z0+dri+KWEPWpBsxXfxu58x/0jvTVT1ekOSg==,
       }
 
-  testcontainers@10.28.0:
+  testcontainers@11.14.0:
     resolution:
       {
-        integrity: sha512-1fKrRRCsgAQNkarjHCMKzBKXSJFmzNTiTbhb5E/j5hflRXChEtHvkefjaHlgkNUjfw92/Dq8LTgwQn6RDBFbMg==,
+        integrity: sha512-r9pniwv/iwzyHaI7gwAvAm4Y+IvjJg3vBWdjrUCaDMc2AXIr4jKbq7jJO18Mw2ybs73pZy1Aj7p/4RVBGMRWjg==,
       }
 
   text-decoder@1.2.7:
@@ -8680,13 +8742,6 @@ packages:
       {
         integrity: sha512-iwDZqg0QAGrg9Rav5H4n0M64c3mkR59cJ6wQp+7C4nI0gsmExaedaYLNO44eT4AtBBwjbTiGPMlt2Md0T9H9JQ==,
       }
-
-  undici@5.29.0:
-    resolution:
-      {
-        integrity: sha512-raqeBD6NQK4SkWhQzeYKd1KmIG6dllBOTt55Rmkt4HtI9mwdWtJljnrXjAFUBLTSN67HWrOIZ3EPF4kjUw80Bg==,
-      }
-    engines: { node: '>=14.0' }
 
   undici@7.30.1:
     resolution:
@@ -10158,8 +10213,6 @@ snapshots:
       ajv-formats: 3.0.1
       fast-uri: 4.2.3
 
-  '@fastify/busboy@2.1.1': {}
-
   '@fastify/cookie@11.1.3':
     dependencies:
       cookie: 2.0.1
@@ -10276,6 +10329,8 @@ snapshots:
 
   '@humanwhocodes/retry@0.4.3': {}
 
+  '@ioredis/as-callback@3.0.0': {}
+
   '@ioredis/commands@1.10.0': {}
 
   '@isaacs/cliui@8.0.2':
@@ -10307,6 +10362,12 @@ snapshots:
       '@jridgewell/sourcemap-codec': 1.6.0
 
   '@js-sdsl/ordered-map@4.4.2': {}
+
+  '@kwsites/file-exists@1.1.1':
+    dependencies:
+      debug: 4.4.3
+    transitivePeerDependencies:
+      - supports-color
 
   '@lukeed/ms@2.0.2': {}
 
@@ -10983,18 +11044,18 @@ snapshots:
 
   '@tanstack/store@0.11.2': {}
 
-  '@testcontainers/postgresql@10.28.0':
+  '@testcontainers/postgresql@11.14.0':
     dependencies:
-      testcontainers: 10.28.0
+      testcontainers: 11.14.0
     transitivePeerDependencies:
       - bare-abort-controller
       - bare-buffer
       - react-native-b4a
       - supports-color
 
-  '@testcontainers/redis@10.28.0':
+  '@testcontainers/redis@11.14.0':
     dependencies:
-      testcontainers: 10.28.0
+      testcontainers: 11.14.0
     transitivePeerDependencies:
       - bare-abort-controller
       - bare-buffer
@@ -11100,7 +11161,7 @@ snapshots:
       '@types/node': 20.19.43
       '@types/ssh2': 1.15.6
 
-  '@types/dockerode@3.3.47':
+  '@types/dockerode@4.0.2':
     dependencies:
       '@types/docker-modem': 3.0.6
       '@types/node': 20.19.43
@@ -11115,6 +11176,10 @@ snapshots:
   '@types/filewriter@0.0.33': {}
 
   '@types/har-format@1.2.16': {}
+
+  '@types/ioredis-mock@8.2.8(ioredis@5.11.1)':
+    dependencies:
+      ioredis: 5.11.1
 
   '@types/json-schema@7.0.15': {}
 
@@ -11995,7 +12060,7 @@ snapshots:
 
   dlv@1.1.3: {}
 
-  docker-compose@0.24.8:
+  docker-compose@1.5.0:
     dependencies:
       yaml: 2.9.1
 
@@ -12430,6 +12495,16 @@ snapshots:
     optionalDependencies:
       picomatch: 4.0.7
 
+  fengari-interop@0.1.4(fengari@0.1.5):
+    dependencies:
+      fengari: 0.1.5
+
+  fengari@0.1.5:
+    dependencies:
+      readline-sync: 1.4.10
+      sprintf-js: 1.1.3
+      tmp: 0.2.5
+
   file-entry-cache@8.0.0:
     dependencies:
       flat-cache: 4.0.1
@@ -12667,6 +12742,16 @@ snapshots:
   ini@4.1.1: {}
 
   ini@4.1.3: {}
+
+  ioredis-mock@8.13.1(@types/ioredis-mock@8.2.8(ioredis@5.11.1))(ioredis@5.11.1):
+    dependencies:
+      '@ioredis/as-callback': 3.0.0
+      '@ioredis/commands': 1.10.0
+      '@types/ioredis-mock': 8.2.8(ioredis@5.11.1)
+      fengari: 0.1.5
+      fengari-interop: 0.1.4(fengari@0.1.5)
+      ioredis: 5.11.1
+      semver: 7.8.5
 
   ioredis@5.11.1:
     dependencies:
@@ -13091,7 +13176,7 @@ snapshots:
 
   mkdirp-classic@0.5.3: {}
 
-  mkdirp@1.0.4: {}
+  mkdirp@3.0.1: {}
 
   mlly@1.8.2:
     dependencies:
@@ -13503,9 +13588,12 @@ snapshots:
       retry: 0.12.0
       signal-exit: 3.0.7
 
-  properties-reader@2.3.0:
+  properties-reader@3.0.1:
     dependencies:
-      mkdirp: 1.0.4
+      '@kwsites/file-exists': 1.1.1
+      mkdirp: 3.0.1
+    transitivePeerDependencies:
+      - supports-color
 
   proto-list@1.2.4: {}
 
@@ -13645,6 +13733,8 @@ snapshots:
       picomatch: 2.3.2
 
   readdirp@5.1.1: {}
+
+  readline-sync@1.4.10: {}
 
   real-require@0.2.0: {}
 
@@ -13917,6 +14007,8 @@ snapshots:
     dependencies:
       through: 2.3.8
 
+  sprintf-js@1.1.3: {}
+
   ssh-remote-port-forward@1.0.4:
     dependencies:
       '@types/ssh2': 0.5.52
@@ -14112,23 +14204,23 @@ snapshots:
       - bare-abort-controller
       - react-native-b4a
 
-  testcontainers@10.28.0:
+  testcontainers@11.14.0:
     dependencies:
       '@balena/dockerignore': 1.0.2
-      '@types/dockerode': 3.3.47
+      '@types/dockerode': 4.0.2
       archiver: 7.0.1
       async-lock: 1.4.1
       byline: 5.0.0
       debug: 4.4.3
-      docker-compose: 0.24.8
+      docker-compose: 1.5.0
       dockerode: 4.0.12
       get-port: 7.2.0
       proper-lockfile: 4.1.2
-      properties-reader: 2.3.0
+      properties-reader: 3.0.1
       ssh-remote-port-forward: 1.0.4
       tar-fs: 3.1.3
       tmp: 0.2.5
-      undici: 5.29.0
+      undici: 7.30.1
     transitivePeerDependencies:
       - bare-abort-controller
       - bare-buffer
@@ -14259,10 +14351,6 @@ snapshots:
   undici-types@5.26.5: {}
 
   undici-types@6.21.0: {}
-
-  undici@5.29.0:
-    dependencies:
-      '@fastify/busboy': 2.1.1
 
   undici@7.30.1: {}
 

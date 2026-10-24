@@ -1,0 +1,41 @@
+{
+  "name": "standup",
+  "title": "Weekly standup",
+  "segments": [
+    {
+      "id": "c0-s0",
+      "startSec": 0,
+      "endSec": 5,
+      "speaker": "S1",
+      "text": "Morning everyone, let's review the release."
+    },
+    {
+      "id": "c0-s1",
+      "startSec": 5,
+      "endSec": 11,
+      "speaker": "S2",
+      "text": "We decided to ship version 2 on Friday."
+    },
+    {
+      "id": "c0-s2",
+      "startSec": 11,
+      "endSec": 17,
+      "speaker": "S1",
+      "text": "Priya will update the changelog by Thursday."
+    },
+    {
+      "id": "c0-s3",
+      "startSec": 17,
+      "endSec": 22,
+      "speaker": "S3",
+      "text": "Arjun will fix the login bug."
+    },
+    { "id": "c0-s4", "startSec": 22, "endSec": 26, "speaker": "S2", "text": "Thanks, that's all." }
+  ],
+  "golden": {
+    "decisions": ["ship version 2 on Friday"],
+    "draftTaskTitles": ["update the changelog", "fix the login bug"],
+    "assigneeHints": ["Priya", "Arjun"],
+    "flaggedTitles": []
+  }
+}

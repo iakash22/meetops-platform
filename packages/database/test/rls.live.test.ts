@@ -6,7 +6,12 @@
 import { randomUUID } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import { PrismaClient } from '@prisma/client';
-import { TENANT_TABLES, runWithOrgContext, runWithUserContext } from '../src/tenant.js';
+import {
+  TENANT_TABLES,
+  runWithOrgContext,
+  runWithOrganizationContext,
+  runWithUserContext,
+} from '../src/tenant.js';
 
 const APP_URL = process.env.RLS_TEST_APP_URL;
 const OWNER_URL = process.env.RLS_TEST_OWNER_URL;
@@ -26,7 +31,7 @@ describe.skipIf(!APP_URL || !OWNER_URL)('RLS live (XT-26..XT-29)', () => {
       ],
     });
     for (const organizationId of [orgA, orgB]) {
-      await runWithOrgContext(owner, organizationId, (tx) =>
+      await runWithOrganizationContext(owner, organizationId, (tx) =>
         tx.project.create({ data: { organizationId, name: 'P', key: 'P' } }),
       );
     }
@@ -38,15 +43,15 @@ describe.skipIf(!APP_URL || !OWNER_URL)('RLS live (XT-26..XT-29)', () => {
 
   it('XT-27: context A cannot insert org B rows', async () => {
     await expect(
-      runWithOrgContext(app, orgA, (tx) =>
+      runWithOrganizationContext(app, orgA, (tx) =>
         tx.project.create({ data: { organizationId: orgB, name: 'x', key: 'X' } }),
       ),
     ).rejects.toThrow();
-    expect(await runWithOrgContext(app, orgA, (tx) => tx.project.count())).toBe(1);
+    expect(await runWithOrganizationContext(app, orgA, (tx) => tx.project.count())).toBe(1);
   });
 
   it('XT-28: context does not leak to the next transaction', async () => {
-    await runWithOrgContext(app, orgA, (tx) => tx.project.count());
+    await runWithOrganizationContext(app, orgA, (tx) => tx.project.count());
     const leaked = await app.$transaction((tx) => tx.project.count());
     expect(leaked).toBe(0);
   });
@@ -87,7 +92,7 @@ describe.skipIf(!APP_URL || !OWNER_URL)('invitation definer functions (live)', (
         { id: otherUserId, email: `other-${organizationId}@example.test` },
       ],
     });
-    await runWithOrgContext(owner, organizationId, (tx) =>
+    await runWithOrganizationContext(owner, organizationId, (tx) =>
       tx.invitation.createMany({
         data: [
           {
@@ -149,7 +154,7 @@ describe.skipIf(!APP_URL || !OWNER_URL)('invitation definer functions (live)', (
       SELECT * FROM accept_invitation(${tokenHash}, ${userId}::uuid)`;
     expect(rows[0]?.org_id).toBe(organizationId);
     expect(rows[0]?.role).toBe('member');
-    const state = await runWithOrgContext(app, organizationId, async (tx) => ({
+    const state = await runWithOrganizationContext(app, organizationId, async (tx) => ({
       m: await tx.membership.count({ where: { userId } }),
       inv: await tx.invitation.findFirst({ where: { tokenHash } }),
       audit: await tx.auditEvent.count({ where: { action: 'invitation.accepted' } }),
@@ -169,7 +174,7 @@ describe.skipIf(!APP_URL || !OWNER_URL)('invitation definer functions (live)', (
     const revokedHash = `hash-${randomUUID()}`;
     const deletedHash = `hash-${randomUUID()}`;
     const future = new Date(Date.now() + 3_600_000);
-    await runWithOrgContext(owner, organizationId, (tx) =>
+    await runWithOrganizationContext(owner, organizationId, (tx) =>
       tx.invitation.createMany({
         data: [
           {
@@ -205,7 +210,7 @@ describe.skipIf(!APP_URL || !OWNER_URL)('invitation definer functions (live)', (
       data: { id: soleOrg, name: 'Sole', slug: `sole-${soleOrg}` },
     });
     await owner.user.create({ data: { id: ownerId, email } });
-    await runWithOrgContext(owner, soleOrg, async (tx) => {
+    await runWithOrganizationContext(owner, soleOrg, async (tx) => {
       await tx.membership.create({
         data: { organizationId: soleOrg, userId: ownerId, role: 'owner' },
       });
@@ -222,7 +227,7 @@ describe.skipIf(!APP_URL || !OWNER_URL)('invitation definer functions (live)', (
     await expect(
       app.$queryRaw`SELECT * FROM accept_invitation(${hash}, ${ownerId}::uuid)`,
     ).rejects.toThrow(/already_member/);
-    const after = await runWithOrgContext(app, soleOrg, async (tx) => ({
+    const after = await runWithOrganizationContext(app, soleOrg, async (tx) => ({
       owners: await tx.membership.count({ where: { role: 'owner', deletedAt: null } }),
       role: (await tx.membership.findFirst({ where: { userId: ownerId } }))?.role,
       inv: (await tx.invitation.findFirst({ where: { tokenHash: hash } }))?.status,
@@ -236,7 +241,7 @@ describe.skipIf(!APP_URL || !OWNER_URL)('invitation definer functions (live)', (
     const email = `active-${memberId}@example.test`;
     const hash = `hash-${randomUUID()}`;
     await owner.user.create({ data: { id: memberId, email } });
-    await runWithOrgContext(owner, organizationId, async (tx) => {
+    await runWithOrganizationContext(owner, organizationId, async (tx) => {
       await tx.membership.create({ data: { organizationId, userId: memberId, role: 'member' } });
       await tx.invitation.create({
         data: {
@@ -251,7 +256,7 @@ describe.skipIf(!APP_URL || !OWNER_URL)('invitation definer functions (live)', (
     await expect(
       app.$queryRaw`SELECT * FROM accept_invitation(${hash}, ${memberId}::uuid)`,
     ).rejects.toThrow(/already_member/);
-    const m = await runWithOrgContext(app, organizationId, (tx) =>
+    const m = await runWithOrganizationContext(app, organizationId, (tx) =>
       tx.membership.findFirst({ where: { userId: memberId } }),
     );
     expect(m?.role).toBe('member');
@@ -262,7 +267,7 @@ describe.skipIf(!APP_URL || !OWNER_URL)('invitation definer functions (live)', (
     const email = `ex-owner-${exOwner}@example.test`;
     const reinvite = `hash-${randomUUID()}`;
     await owner.user.create({ data: { id: exOwner, email } });
-    await runWithOrgContext(owner, organizationId, async (tx) => {
+    await runWithOrganizationContext(owner, organizationId, async (tx) => {
       await tx.membership.create({
         data: { organizationId, userId: exOwner, role: 'owner', deletedAt: new Date() },
       });
@@ -279,7 +284,7 @@ describe.skipIf(!APP_URL || !OWNER_URL)('invitation definer functions (live)', (
     const rows = await app.$queryRaw<{ role: string }[]>`
       SELECT * FROM accept_invitation(${reinvite}, ${exOwner}::uuid)`;
     expect(rows[0]?.role).toBe('viewer');
-    const m = await runWithOrgContext(app, organizationId, (tx) =>
+    const m = await runWithOrganizationContext(app, organizationId, (tx) =>
       tx.membership.findFirst({ where: { userId: exOwner } }),
     );
     expect(m).toMatchObject({ role: 'viewer', deletedAt: null });
@@ -308,7 +313,7 @@ describe.skipIf(!RELAY_URL || !OWNER_URL)('outbox relay role (live)', () => {
   it('setup one pending event per org', async () => {
     for (const id of orgs) {
       await owner.organization.create({ data: { id, name: 'R', slug: `r-${id}` } });
-      await runWithOrgContext(owner, id, (tx) =>
+      await runWithOrganizationContext(owner, id, (tx) =>
         tx.outboxEvent.create({
           data: {
             organizationId: id,
@@ -394,7 +399,7 @@ describe.skipIf(!APP_URL || !OWNER_URL)('backend feedback (live)', () => {
       await owner.organization.create({
         data: { id, name: 'U', slug: `u-${id}`, createdById: userId },
       });
-      await runWithOrgContext(owner, id, (tx) =>
+      await runWithOrganizationContext(owner, id, (tx) =>
         tx.membership.create({ data: { organizationId: id, userId, role: 'admin' } }),
       );
     }
@@ -429,7 +434,7 @@ describe.skipIf(!APP_URL || !OWNER_URL)('backend feedback (live)', () => {
     ).rejects.toThrow(/audit_target_not_allowed/);
     expect(await app.auditEvent.count({ where: { targetId: target } })).toBe(0);
     expect(
-      await runWithOrgContext(app, orgA, (tx) =>
+      await runWithOrganizationContext(app, orgA, (tx) =>
         tx.auditEvent.count({ where: { targetId: target } }),
       ),
     ).toBe(0);
@@ -442,23 +447,23 @@ describe.skipIf(!APP_URL || !OWNER_URL)('backend feedback (live)', () => {
       await admin.$disconnect();
     }
     const orgAction = `org.updated.${randomUUID()}`;
-    await runWithOrgContext(app, orgA, (tx) =>
+    await runWithOrganizationContext(app, orgA, (tx) =>
       tx.auditEvent.create({
         data: { organizationId: orgA, action: orgAction, targetType: 'org' },
       }),
     );
     expect(
-      await runWithOrgContext(app, orgA, (tx) =>
+      await runWithOrganizationContext(app, orgA, (tx) =>
         tx.auditEvent.count({ where: { action: orgAction } }),
       ),
     ).toBe(1);
     expect(
-      await runWithOrgContext(app, orgB, (tx) =>
+      await runWithOrganizationContext(app, orgB, (tx) =>
         tx.auditEvent.count({ where: { action: orgAction } }),
       ),
     ).toBe(0);
     await expect(
-      runWithOrgContext(app, orgA, (tx) =>
+      runWithOrganizationContext(app, orgA, (tx) =>
         tx.auditEvent.create({ data: { organizationId: orgB, action: 'x', targetType: 'org' } }),
       ),
     ).rejects.toThrow();
@@ -511,7 +516,7 @@ describe.skipIf(!APP_URL || !OWNER_URL)('worker media ids and recording sessions
         { id: otherOrg, name: 'O', slug: `o-${otherOrg}` },
       ],
     });
-    await runWithOrgContext(app, organizationId, (tx) =>
+    await runWithOrganizationContext(app, organizationId, (tx) =>
       tx.meeting.create({ data: { id: meetingId, organizationId, title: 'Media' } }),
     );
   });
@@ -521,7 +526,7 @@ describe.skipIf(!APP_URL || !OWNER_URL)('worker media ids and recording sessions
     const normId = normalizedFileObjectId(recordingId);
     const chunkIds = [0, 1, 2].map((i) => chunkFileObjectId(recordingId, i));
     const write = () =>
-      runWithOrgContext(app, organizationId, async (tx) => {
+      runWithOrganizationContext(app, organizationId, async (tx) => {
         await tx.fileObject.upsert({
           where: { id: rawId },
           update: {},
@@ -581,7 +586,7 @@ describe.skipIf(!APP_URL || !OWNER_URL)('worker media ids and recording sessions
       });
     await write();
     await write(); // worker retry with the same deterministic ids
-    const rows = await runWithOrgContext(app, organizationId, (tx) =>
+    const rows = await runWithOrganizationContext(app, organizationId, (tx) =>
       tx.fileObject.findMany({
         where: { id: { in: [normId, ...chunkIds] } },
         orderBy: { chunkIndex: 'asc' },
@@ -596,7 +601,7 @@ describe.skipIf(!APP_URL || !OWNER_URL)('worker media ids and recording sessions
     ]);
     // a duplicate chunk index under the same parent is refused
     await expect(
-      runWithOrgContext(app, organizationId, (tx) =>
+      runWithOrganizationContext(app, organizationId, (tx) =>
         tx.fileObject.create({
           data: {
             organizationId,
@@ -611,7 +616,7 @@ describe.skipIf(!APP_URL || !OWNER_URL)('worker media ids and recording sessions
       ),
     ).rejects.toThrow();
     expect(
-      await runWithOrgContext(app, otherOrg, (tx) =>
+      await runWithOrganizationContext(app, otherOrg, (tx) =>
         tx.fileObject.count({ where: { id: normId } }),
       ),
     ).toBe(0);
@@ -619,7 +624,7 @@ describe.skipIf(!APP_URL || !OWNER_URL)('worker media ids and recording sessions
 
   it('recording session lifecycle: chunks, duplicate seq refused, complete links the recording', async () => {
     const sessionId = randomUUID();
-    await runWithOrgContext(app, organizationId, async (tx) => {
+    await runWithOrganizationContext(app, organizationId, async (tx) => {
       await tx.recordingSession.create({
         data: {
           id: sessionId,
@@ -643,7 +648,7 @@ describe.skipIf(!APP_URL || !OWNER_URL)('worker media ids and recording sessions
       }
     });
     await expect(
-      runWithOrgContext(app, organizationId, (tx) =>
+      runWithOrganizationContext(app, organizationId, (tx) =>
         tx.recordingSessionChunk.create({
           data: { organizationId, sessionId, seq: 1, sizeBytes: 10, storageKey: `${base}/x.part` },
         }),
@@ -651,11 +656,11 @@ describe.skipIf(!APP_URL || !OWNER_URL)('worker media ids and recording sessions
     ).rejects.toThrow();
     // completed requires a recording
     await expect(
-      runWithOrgContext(app, organizationId, (tx) =>
+      runWithOrganizationContext(app, organizationId, (tx) =>
         tx.recordingSession.update({ where: { id: sessionId }, data: { status: 'completed' } }),
       ),
     ).rejects.toThrow();
-    const done = await runWithOrgContext(app, organizationId, (tx) =>
+    const done = await runWithOrganizationContext(app, organizationId, (tx) =>
       tx.recordingSession.update({
         where: { id: sessionId },
         data: {
@@ -671,7 +676,7 @@ describe.skipIf(!APP_URL || !OWNER_URL)('worker media ids and recording sessions
     );
     expect(done.recording?.status).toBe('processing');
     expect(
-      await runWithOrgContext(app, otherOrg, (tx) =>
+      await runWithOrganizationContext(app, otherOrg, (tx) =>
         tx.recordingSession.count({ where: { id: sessionId } }),
       ),
     ).toBe(0);
@@ -680,7 +685,7 @@ describe.skipIf(!APP_URL || !OWNER_URL)('worker media ids and recording sessions
 
   it('abort needs a reason; chunk keys must sit under the org prefix', async () => {
     const sessionId = randomUUID();
-    await runWithOrgContext(app, organizationId, (tx) =>
+    await runWithOrganizationContext(app, organizationId, (tx) =>
       tx.recordingSession.create({
         data: {
           id: sessionId,
@@ -692,18 +697,18 @@ describe.skipIf(!APP_URL || !OWNER_URL)('worker media ids and recording sessions
       }),
     );
     await expect(
-      runWithOrgContext(app, organizationId, (tx) =>
+      runWithOrganizationContext(app, organizationId, (tx) =>
         tx.recordingSession.update({ where: { id: sessionId }, data: { status: 'aborted' } }),
       ),
     ).rejects.toThrow();
-    await runWithOrgContext(app, organizationId, (tx) =>
+    await runWithOrganizationContext(app, organizationId, (tx) =>
       tx.recordingSession.update({
         where: { id: sessionId },
         data: { status: 'aborted', abortReason: 'tab_closed', abortedAt: new Date() },
       }),
     );
     await expect(
-      runWithOrgContext(app, organizationId, (tx) =>
+      runWithOrganizationContext(app, organizationId, (tx) =>
         tx.recordingSessionChunk.create({
           data: {
             organizationId,
@@ -745,7 +750,7 @@ describe.skipIf(!APP_URL || !OWNER_URL)('transcripts.provider constraint (live)'
   const recordingId = randomUUID();
   let rev = 0;
   const mk = (provider: string) =>
-    runWithOrgContext(app, organizationId, (tx) =>
+    runWithOrganizationContext(app, organizationId, (tx) =>
       tx.transcript.create({
         data: { organizationId, meetingId, recordingId, provider, revision: ++rev },
       }),
@@ -755,10 +760,10 @@ describe.skipIf(!APP_URL || !OWNER_URL)('transcripts.provider constraint (live)'
     await owner.organization.create({
       data: { id: organizationId, name: 'T', slug: `t-${organizationId}` },
     });
-    await runWithOrgContext(app, organizationId, (tx) =>
+    await runWithOrganizationContext(app, organizationId, (tx) =>
       tx.meeting.create({ data: { id: meetingId, organizationId, title: 'T' } }),
     );
-    await runWithOrgContext(app, organizationId, async (tx) => {
+    await runWithOrganizationContext(app, organizationId, async (tx) => {
       const f = await tx.fileObject.create({
         data: {
           organizationId,
@@ -774,7 +779,7 @@ describe.skipIf(!APP_URL || !OWNER_URL)('transcripts.provider constraint (live)'
     });
     // recording_id is required (contracts Transcript.recordingId)
     await expect(
-      runWithOrgContext(
+      runWithOrganizationContext(
         app,
         organizationId,
         (tx) =>
@@ -787,7 +792,7 @@ describe.skipIf(!APP_URL || !OWNER_URL)('transcripts.provider constraint (live)'
     await expect(mk('unknown')).rejects.toThrow(/reserved for backfilled legacy rows/);
     const t = await mk('deepgram');
     await expect(
-      runWithOrgContext(app, organizationId, (tx) =>
+      runWithOrganizationContext(app, organizationId, (tx) =>
         tx.transcript.update({ where: { id: t.id }, data: { provider: 'unknown' } }),
       ),
     ).rejects.toThrow(/reserved/);
@@ -810,7 +815,7 @@ describe.skipIf(!OWNER_URL || !ADMIN_URL)(
         data: { id: organizationId, name: 'A', slug: `aud-${organizationId}` },
       });
       await owner.user.create({ data: { id: actorId, email: `aud-${actorId}@example.test` } });
-      await runWithOrgContext(owner, organizationId, (tx) =>
+      await runWithOrganizationContext(owner, organizationId, (tx) =>
         tx.auditEvent.createMany({
           data: [{ organizationId, actorId, action: 'org.updated', targetType: 'org' }],
         }),
@@ -824,7 +829,7 @@ describe.skipIf(!OWNER_URL || !ADMIN_URL)(
       await expect(admin.$executeRaw`TRUNCATE audit_events`).rejects.toThrow(/append-only/);
       // the owner (RLS forced, no UPDATE policy) changes nothing either
       expect(
-        await runWithOrgContext(
+        await runWithOrganizationContext(
           owner,
           organizationId,
           (tx) =>
@@ -906,3 +911,65 @@ describe.skipIf(!OWNER_URL || !ADMIN_URL)(
     });
   },
 );
+
+describe.skipIf(!APP_URL || !OWNER_URL)('ADR-010 organization context setting (live)', () => {
+  const app = new PrismaClient({ datasources: { db: { url: APP_URL ?? '' } } });
+  const owner = new PrismaClient({ datasources: { db: { url: OWNER_URL ?? '' } } });
+  const orgA = randomUUID();
+  const orgB = randomUUID();
+
+  const countWith = (settings: [string, string][]) =>
+    app.$transaction(async (tx) => {
+      for (const [name, value] of settings) {
+        await tx.$executeRaw`SELECT set_config(${name}, ${value}, true)`;
+      }
+      return tx.project.count({ where: { organizationId: { in: [orgA, orgB] } } });
+    });
+
+  it('setup', async () => {
+    await owner.organization.createMany({
+      data: [
+        { id: orgA, name: 'A', slug: `a10-${orgA}` },
+        { id: orgB, name: 'B', slug: `b10-${orgB}` },
+      ],
+    });
+    for (const organizationId of [orgA, orgB]) {
+      await runWithOrganizationContext(owner, organizationId, (tx) =>
+        tx.project.create({ data: { organizationId, name: 'P', key: 'P' } }),
+      );
+    }
+  });
+
+  it('new GUC alone scopes to one organization', async () => {
+    expect(await countWith([['app.current_organization_id', orgA]])).toBe(1);
+  });
+
+  it('legacy GUC alone still scopes to one organization (deprecated fallback)', async () => {
+    expect(await countWith([['app.current_org_id', orgA]])).toBe(1);
+  });
+
+  it('new GUC wins over a conflicting legacy GUC', async () => {
+    const rows = await app.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT set_config('app.current_organization_id', ${orgA}, true)`;
+      await tx.$executeRaw`SELECT set_config('app.current_org_id', ${orgB}, true)`;
+      return tx.project.findMany({ where: { organizationId: { in: [orgA, orgB] } } });
+    });
+    expect(rows.map((r) => r.organizationId)).toEqual([orgA]);
+  });
+
+  it('no GUC or empty GUCs => 0 rows (fail-closed)', async () => {
+    expect(await countWith([])).toBe(0);
+    expect(
+      await countWith([
+        ['app.current_organization_id', ''],
+        ['app.current_org_id', ''],
+      ]),
+    ).toBe(0);
+  });
+
+  it('deprecated runWithOrgContext still works', async () => {
+    expect(await runWithOrgContext(app, orgB, (tx) => tx.project.count())).toBe(1);
+    await app.$disconnect();
+    await owner.$disconnect();
+  });
+});

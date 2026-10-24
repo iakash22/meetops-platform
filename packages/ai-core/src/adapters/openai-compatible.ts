@@ -50,7 +50,7 @@ export class OpenAICompatibleProvider implements LLMProvider {
 
   async generateText(p: LLMGenerateTextParams): Promise<LLMTextResult> {
     const j = await this.chat(
-      { model: p.model, messages: this.messages(p), temperature: p.temperature, max_tokens: capOutputTokens(p.maxTokens, this.http.outputLimits), stop: p.stopSequences },
+      { model: p.model, messages: this.messages(p), temperature: p.temperature, max_tokens: capOutputTokens(p.maxTokens, this.http.outputLimits, p.step), stop: p.stopSequences },
       p.signal,
     );
     const c = j.choices?.[0];
@@ -64,7 +64,7 @@ export class OpenAICompatibleProvider implements LLMProvider {
         model: p.model,
         messages: this.messages(p),
         temperature: p.temperature,
-        max_tokens: capOutputTokens(p.maxTokens, this.http.outputLimits),
+        max_tokens: capOutputTokens(p.maxTokens, this.http.outputLimits, p.step),
         response_format: { type: 'json_schema', json_schema: { name: p.schemaName, schema: z.toJSONSchema(p.schema), strict: true } },
       },
       p.signal,

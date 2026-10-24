@@ -21,6 +21,8 @@ live-db:
     RLS_TEST_APP_URL: postgresql://meetops_app:ci_app@localhost:5432/meetops
     RLS_TEST_OWNER_URL: postgresql://meetops_migrator:ci_migrator@localhost:5432/meetops
     RLS_TEST_RELAY_URL: postgresql://meetops_relay:ci_relay@localhost:5432/meetops
+    # Superuser (bootstrap) connection on the meetops DB, throwaway CI password; used only for test fixtures.
+    RLS_TEST_ADMIN_URL: postgresql://meetops:change-me-local-dev@localhost:5432/meetops
   steps:
     - uses: actions/checkout@v4
     - uses: pnpm/action-setup@v4
