@@ -140,7 +140,7 @@ export const uploadResponse: CreateUploadResponse = {
 
 export const pairResponse: ExtensionPairResponse = {
   pairingCode: 'P'.repeat(40),
-  expiresAt: '2026-10-01T00:01:00.000Z',
+  expiresAt: '2999-01-01T00:01:00.000Z',
   organizationId: '00000000-0000-4000-8000-000000000001',
   organizationName: 'Acme Inc',
 };
