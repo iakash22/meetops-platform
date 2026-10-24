@@ -10,7 +10,7 @@
   },
   "packageManager": "pnpm@9.12.3",
   "engines": {
-    "node": ">=20.10.0 <25"
+    "node": ">=20.19 <25"
   },
   "scripts": {
     "build": "turbo run build",
@@ -25,6 +25,8 @@
     "dev:infra:logs": "docker compose --env-file .env -f infra/compose/compose.dev.yml logs -f"
   },
   "devDependencies": {
+    "@commitlint/cli": "^19",
+    "@commitlint/config-conventional": "^19",
     "@eslint/js": "^9.13.0",
     "@types/node": "^20.16.11",
     "@typescript-eslint/eslint-plugin": "^8.11.0",
@@ -37,7 +39,7 @@
     "turbo": "^2.1.3",
     "typescript": "^5.6.3",
     "typescript-eslint": "^8.11.0",
-    "vitest": "^3.2.7"
+    "vitest": "^4.1.12"
   },
   "lint-staged": {
     "*.{ts,tsx,js,jsx,cjs,mjs}": [
@@ -49,8 +51,6 @@
   },
   "pnpm": {
     "overrides": {
-      "tinypool": "^2.1.2",
-      "vitest@3>vite": "^5.4.21",
       "shell-quote@<1.8.4": "^1.8.4"
     }
   }
