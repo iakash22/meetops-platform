@@ -1,4 +1,5 @@
 import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -7,7 +8,7 @@ import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { TranscriptionJobPayload as Schema } from '@meetops/contracts';
 import { Value } from '@sinclair/typebox/value';
 import { chunkAudio, normalizeToWav, probeMedia } from '@meetops/media-core';
-import { buildObjectKey, StorageNotFoundError, type MeetingObjectRef } from '@meetops/storage';
+import { buildObjectKey, createChunkAudioResolver, StorageNotFoundError, type MeetingObjectRef } from '@meetops/storage';
 import {
   createRealtimePublisher,
   enqueueMediaJob,
@@ -18,6 +19,7 @@ import {
   type MediaJobPayload,
   workerAuthorize,
   runInJobScope,
+  type ChunkFileObjectRepository,
   type MediaOps,
   type MediaProcessorDeps,
   type TranscriptionJobPayload
@@ -192,6 +194,59 @@ describe('processRecording (mocked storage, queue, emitter)', () => {
     const { deps, jobs } = makeDeps({}, tmpRoot);
     const setChunkCount = vi.fn(async () => Promise.reject(new Error('db down')));
     await expect(processRecording(payload, { ...deps, recordings: { setChunkCount } })).rejects.toMatchObject({ errorCode: 'chunk_count_persist_failed' });
+    expect(jobs.size).toBe(0);
+    expect(readdirSync(tmpRoot)).toEqual([]);
+  });
+  it('upserts chunk FileObject rows (deterministic ids, exact keys) before the count and any enqueue', async () => {
+    const { deps, jobs, stored } = makeDeps({}, tmpRoot);
+    const order: string[] = [];
+    const calls: Parameters<ChunkFileObjectRepository['upsertChunkFileObjects']>[0][] = [];
+    const repo: ChunkFileObjectRepository = {
+      upsertChunkFileObjects: async (q) => void (calls.push(q), order.push(`rows:${jobs.size}`))
+    };
+    const setChunkCount = vi.fn(async () => void order.push(`count:${jobs.size}`));
+    await processRecording(payload, { ...deps, chunkFileObjects: repo, recordings: { setChunkCount } });
+    expect(order).toEqual(['rows:0', 'count:0']);
+    const q = calls[0]!;
+    expect(q).toMatchObject({ organizationId: ORG, meetingId: MEET, recordingId: REC });
+    expect(q.chunks.map((c) => c.index)).toEqual([0, 1, 2]);
+    for (const c of q.chunks) {
+      expect(c.fileObjectId).toBe(chunkFileObjectId(REC, c.index));
+      expect(c.storageKey).toBe(`organizations/${ORG}/meetings/${MEET}/processed/${REC}/chunks/0000${c.index}.wav`);
+      expect(c.mimeType).toBe('audio/wav');
+      expect(c.sizeBytes).toBe(stored.get(c.storageKey)!.length);
+      expect(c.sha256).toBe(createHash('sha256').update(stored.get(c.storageKey)!).digest('hex'));
+    }
+    expect(q.chunks[1]).toMatchObject({ startMs: 10000, durationMs: 10000 });
+
+    // A retry produces identical rows (idempotent upsert on fileObjectId).
+    await processRecording(payload, { ...deps, chunkFileObjects: repo });
+    expect(calls[1]).toEqual(calls[0]);
+
+    // The rows written are accepted by the storage audio resolver.
+    const resolver = createChunkAudioResolver({
+      storage: deps.storage as never,
+      lookup: {
+        findFileObject: async ({ organizationId, fileObjectId }) => {
+          const c = q.chunks.find((x) => x.fileObjectId === fileObjectId);
+          return c ? { id: c.fileObjectId, organizationId, meetingId: MEET, kind: 'chunk', key: c.storageKey, mimeType: c.mimeType, sizeBytes: c.sizeBytes, chunkIndex: c.index } : null;
+        }
+      }
+    });
+    for (const c of q.chunks) {
+      const r = await resolver.bytes({ organizationId: ORG, fileObjectId: c.fileObjectId });
+      expect(Buffer.from(r.bytes).equals(stored.get(c.storageKey)!)).toBe(true);
+    }
+    await expect(resolver.bytes({ organizationId: 'other-org', fileObjectId: q.chunks[0]!.fileObjectId })).rejects.toThrow();
+  });
+  it('a chunk FileObject upsert failure enqueues nothing and skips the count', async () => {
+    const { deps, jobs } = makeDeps({}, tmpRoot);
+    const setChunkCount = vi.fn(async () => undefined);
+    const repo: ChunkFileObjectRepository = { upsertChunkFileObjects: async () => Promise.reject(new Error('db down')) };
+    await expect(processRecording(payload, { ...deps, chunkFileObjects: repo, recordings: { setChunkCount } })).rejects.toMatchObject({
+      errorCode: 'chunk_file_objects_persist_failed'
+    });
+    expect(setChunkCount).not.toHaveBeenCalled();
     expect(jobs.size).toBe(0);
     expect(readdirSync(tmpRoot)).toEqual([]);
   });

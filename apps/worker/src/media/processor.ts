@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { createReadStream, createWriteStream } from 'node:fs';
 import { mkdtemp, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -31,6 +32,29 @@ export type MediaOps = {
  * AI as RecordingScope.chunkCount). Must be idempotent (plain SET) and run inside withOrgContext(organizationId).
  * `recording_sessions.chunk_count` is NOT this value: it counts uploaded session parts, not STT chunks.
  */
+/** One chunk FileObject row (packages/database `file_objects`, kind = chunk). */
+export type ChunkFileObjectRow = {
+  /** Deterministic uuidv5 of `chunk:{recordingId}:{index}` (chunkFileObjectId). Idempotency key. */
+  fileObjectId: string;
+  index: number;
+  /** Exactly organizations/{organizationId}/meetings/{meetingId}/processed/{recordingId}/chunks/{nnnnn}.wav */
+  storageKey: string;
+  sizeBytes: number;
+  mimeType: 'audio/wav';
+  /** Lowercase hex sha256 of the stored chunk. */
+  sha256?: string;
+  startMs: number;
+  durationMs: number;
+};
+
+/**
+ * Writes chunk FileObject rows. Implemented by Database in @meetops/database; MUST be idempotent on fileObjectId
+ * (upsert) and run inside withOrgContext(organizationId).
+ */
+export type ChunkFileObjectRepository = {
+  upsertChunkFileObjects(q: { organizationId: string; meetingId: string; recordingId: string; chunks: ChunkFileObjectRow[] }): Promise<void>;
+};
+
 export type RecordingChunkCountRepository = {
   setChunkCount(q: { organizationId: string; meetingId: string; recordingId: string; chunkCount: number }): Promise<void>;
 };
@@ -76,6 +100,7 @@ export type MediaProcessorDeps = {
   realtime: RealtimePublisher;
   logger: MinimalLogger;
   recordings?: RecordingChunkCountRepository;
+  chunkFileObjects?: ChunkFileObjectRepository;
   limits?: Partial<MediaLimits>;
   segmentSeconds?: number;
   tmpRoot?: string;
@@ -100,6 +125,12 @@ export function errorCodeOf(err: unknown): string {
   if (err instanceof StorageError) return err.code === 'NOT_FOUND' ? 'source_not_found' : err.code === 'FORBIDDEN' ? 'forbidden' : 'storage_error';
   if ((err as { name?: string })?.name === 'FfmpegError') return 'media_processing_failed';
   return 'internal_error';
+}
+
+async function sha256File(p: string): Promise<string> {
+  const h = createHash('sha256');
+  for await (const c of createReadStream(p)) h.update(c as Buffer);
+  return h.digest('hex');
 }
 
 /** Counts bytes while streaming and aborts past the cap (defends against HEAD/GET size races). */
@@ -186,13 +217,23 @@ export async function processRecording(
     if (chunks.length === 0) throw new MediaJobError('no_chunks', 'Chunking produced no output');
 
     const manifest: ChunkManifestEntry[] = [];
+    const rows: ChunkFileObjectRow[] = [];
     for (const [i, c] of chunks.entries()) {
       const size = (await stat(c.path)).size;
-      await deps.storage.putObject(
-        { organizationId, meetingId, kind: 'chunk', objectId: recordingId, index: c.index },
-        createReadStream(c.path),
-        { mimeType: 'audio/wav', sizeBytes: size }
-      );
+      const chunkRef: MeetingObjectRef = { organizationId, meetingId, kind: 'chunk', objectId: recordingId, index: c.index };
+      await deps.storage.putObject(chunkRef, createReadStream(c.path), { mimeType: 'audio/wav', sizeBytes: size });
+      if (deps.chunkFileObjects) {
+        rows.push({
+          fileObjectId: chunkFileObjectId(recordingId, c.index),
+          index: c.index,
+          storageKey: buildObjectKey(chunkRef),
+          sizeBytes: size,
+          mimeType: 'audio/wav',
+          sha256: await sha256File(c.path),
+          startMs: Math.round(c.startSeconds * 1000),
+          durationMs: Math.round(c.durationSeconds * 1000)
+        });
+      }
       manifest.push({
         index: c.index,
         fileObjectId: chunkFileObjectId(recordingId, c.index),
@@ -202,6 +243,16 @@ export async function processRecording(
         transcriptionJobId: transcriptionJobId(organizationId, recordingId, c.index)
       });
       progress(30 + Math.round(((i + 1) / chunks.length) * 50), 'chunking', { chunksDone: i + 1, chunksTotal: chunks.length });
+    }
+
+    // Chunk FileObject rows first (the audio resolver needs them), then the count, then jobs. Any failure here
+    // enqueues nothing; a retry upserts the same deterministic ids and keys.
+    if (deps.chunkFileObjects) {
+      try {
+        await deps.chunkFileObjects.upsertChunkFileObjects({ organizationId, meetingId, recordingId, chunks: rows });
+      } catch {
+        throw new MediaJobError('chunk_file_objects_persist_failed', 'Could not persist chunk file objects');
+      }
     }
 
     // Persist the expected chunk count before any transcription job exists, so AI can compute percent/complete.
