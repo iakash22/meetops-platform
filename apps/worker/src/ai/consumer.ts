@@ -9,9 +9,9 @@ import {
   type AttemptError,
   type AudioResolver,
   type ChunkGeometry,
-  type JobActorResolver,
 } from '@meetops/ai-core';
-import { RepositoryTranscriptStore, type TranscriptRepository } from './repository.js';
+import { TRANSCRIPTION_SYSTEM_ACTOR, type TranscriptionAuditEntry, type TranscriptionAuditSink } from './actor.js';
+import { RepositoryTranscriptStore, type RecordingScope, type TranscriptRepository } from './repository.js';
 import { chunkProgressEvent, type TranscriptionProgressSink } from './progress.js';
 
 export type TranscriptionLogger = {
@@ -20,12 +20,16 @@ export type TranscriptionLogger = {
   error(obj: object, msg: string): void;
 };
 
+/**
+ * Credentials never appear here or in job payloads: `executor` is built from ai-core provider configs that hold
+ * credential refs (`env:...` / secret refs) resolved inside ai-core.
+ */
 export type TranscriptionConsumerDeps = {
   executor: AIExecutor;
   repository: TranscriptRepository;
   resolveAudio: AudioResolver;
-  resolveActor: JobActorResolver;
   realtime: TranscriptionProgressSink;
+  audit: TranscriptionAuditSink;
   logger: TranscriptionLogger;
   geometry: ChunkGeometry;
   now?: () => Date;
@@ -34,6 +38,7 @@ export type TranscriptionConsumerDeps = {
 export type TranscriptionErrorCode =
   | 'invalid_payload'
   | 'idempotency_key_mismatch'
+  | 'meeting_not_found'
   | 'recording_not_found'
   | 'org_mismatch'
   | 'provider_failed'
@@ -61,9 +66,11 @@ export type TranscriptionJobResult = {
 };
 
 /**
- * Process one `transcribe_recording` job from QUEUE_NAMES.transcription:
- * contract check -> idempotency key `transcribe:{recordingId}:{index}` -> org-scoped recording lookup ->
- * ai-core TranscriptionChunkHandler (transcriptionJobToRequest + AIExecutor) -> repository writes -> progress event.
+ * Process one `transcribe_recording` job from QUEUE_NAMES.transcription as the system actor `worker:transcription`
+ * for the job's organizationId:
+ * contract check -> meeting.organizationId === job.organizationId (first DB access) -> recording belongs to meeting ->
+ * idempotency key `transcribe:{recordingId}:{index}` -> ai-core TranscriptionChunkHandler (transcriptionJobToRequest +
+ * AIExecutor, default routing; the system actor never overrides providers) -> repository writes -> audit -> progress.
  */
 export async function processTranscriptionJob(
   data: TranscriptionJobPayload,
@@ -72,33 +79,45 @@ export async function processTranscriptionJob(
 ): Promise<TranscriptionJobResult> {
   if (!Value.Check(TranscriptionJobSchema, data)) throw new TranscriptionJobError('invalid_payload', false);
   const { organizationId, meetingId, recordingId } = data;
-  const log = { organizationId, meetingId, recordingId, chunkIndex: data.chunkIndex, jobId: ctx.jobId };
+  const log = { actorId: TRANSCRIPTION_SYSTEM_ACTOR.id, organizationId, meetingId, recordingId, chunkIndex: data.chunkIndex, jobId: ctx.jobId };
   const now = deps.now ?? (() => new Date());
+  const audit = async (e: Pick<TranscriptionAuditEntry, 'outcome' | 'errorCode' | 'provider' | 'revision'>) => {
+    try {
+      await deps.audit.record({
+        actor: TRANSCRIPTION_SYSTEM_ACTOR, organizationId, action: 'transcription.chunk', meetingId, recordingId,
+        chunkIndex: data.chunkIndex, jobId: ctx.jobId, at: now().toISOString(), ...e,
+      });
+    } catch {
+      deps.logger.warn({ ...log }, 'transcription audit write failed');
+    }
+  };
+  const reject = async (code: TranscriptionErrorCode, level: 'warn' | 'error' = 'warn'): Promise<never> => {
+    deps.logger[level]({ ...log, errorCode: code }, 'transcription job rejected');
+    await audit({ outcome: 'rejected', errorCode: code });
+    throw new TranscriptionJobError(code, false);
+  };
+
+  // Tenant check before anything else. Under RLS a foreign meeting is invisible -> meeting_not_found.
+  const scope = await deps.repository.withOrgContext(organizationId, async (repo) => {
+    const meeting = await repo.findMeeting(meetingId);
+    const recording = meeting ? await repo.findRecording(recordingId) : undefined;
+    return { meeting, recording };
+  });
+  if (!scope.meeting) return reject('meeting_not_found');
+  if (scope.meeting.organizationId !== organizationId) return reject('org_mismatch', 'error');
+  const recording: RecordingScope | undefined = scope.recording;
+  if (!recording) return reject('recording_not_found');
+  if (recording.organizationId !== organizationId || recording.meetingId !== meetingId) return reject('org_mismatch', 'error');
 
   if (data.chunkIndex === undefined || data.idempotencyKey !== transcriptionIdempotencyKey(recordingId, data.chunkIndex)) {
-    deps.logger.warn({ ...log, errorCode: 'idempotency_key_mismatch' }, 'transcription job rejected');
-    throw new TranscriptionJobError('idempotency_key_mismatch', false);
+    return reject('idempotency_key_mismatch');
   }
-
   let chunkJob;
   try {
     chunkJob = toChunkJob(data, ctx.jobId, deps.geometry);
   } catch (err) {
-    if (err instanceof InvalidTranscriptionJobError) {
-      deps.logger.warn({ ...log, errorCode: 'invalid_payload' }, 'transcription job rejected');
-      throw new TranscriptionJobError('invalid_payload', false);
-    }
+    if (err instanceof InvalidTranscriptionJobError) return reject('invalid_payload');
     throw err;
-  }
-
-  const recording = await deps.repository.findRecording(organizationId, recordingId);
-  if (!recording) {
-    deps.logger.warn({ ...log, errorCode: 'recording_not_found' }, 'transcription job rejected');
-    throw new TranscriptionJobError('recording_not_found', false);
-  }
-  if (recording.organizationId !== organizationId || recording.meetingId !== meetingId) {
-    deps.logger.error({ ...log, errorCode: 'org_mismatch' }, 'transcription job rejected');
-    throw new TranscriptionJobError('org_mismatch', false);
   }
   if (recording.chunkCount !== undefined) chunkJob.chunk.count = recording.chunkCount;
 
@@ -106,7 +125,8 @@ export async function processTranscriptionJob(
     executor: deps.executor,
     store: new RepositoryTranscriptStore(deps.repository),
     resolveAudio: deps.resolveAudio,
-    resolveActor: deps.resolveActor,
+    // System actor: no TenantContext/ability, so the payload's sttProviderId is not an override; org/env routing applies.
+    resolveActor: async () => undefined,
     now,
   });
   const out = await handler.handle(chunkJob);
@@ -117,17 +137,20 @@ export async function processTranscriptionJob(
     const code: TranscriptionErrorCode =
       out.status === 'failed' ? 'provider_failed' : out.status === 'waiting' ? 'provider_waiting' : 'provider_retryable';
     deps.logger.warn({ ...log, errorCode: code, errors }, 'transcription attempt failed');
+    await audit({ outcome: 'failed', errorCode: code, provider: out.errors[0]?.provider });
     throw new TranscriptionJobError(code, out.status !== 'failed', out.errors);
   }
 
-  const chunksDone = (await deps.repository.listChunkResults(organizationId, meetingId, recordingId)).length;
+  const chunks = await deps.repository.withOrgContext(organizationId, (repo) => repo.listChunkResults(meetingId, recordingId));
+  const provider = chunks.find((c) => c.chunkIndex === chunkJob.chunk.index)?.provider;
+  await audit({ outcome: out.duplicate ? 'duplicate' : 'succeeded', provider, revision: out.revision?.revision });
   try {
     deps.realtime.transcriptionProgress(
       chunkProgressEvent({
         organizationId,
         meetingId,
         recordingId,
-        chunksDone,
+        chunksDone: chunks.length,
         chunksTotal: recording.chunkCount,
         complete: out.revision?.complete === true && recording.chunkCount !== undefined,
         at: now(),
