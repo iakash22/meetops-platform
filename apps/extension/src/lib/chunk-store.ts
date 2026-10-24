@@ -2,7 +2,7 @@ import type {
   CompleteRecordingSessionRequest,
   CompletedChunk,
   InitRecordingSessionRequest,
-} from '@meetops/contracts';
+} from '@meetops/contracts/types';
 import { toIsoTimestamp } from './upload.js';
 
 /**
