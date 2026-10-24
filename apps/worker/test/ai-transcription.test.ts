@@ -108,7 +108,7 @@ describe('AI transcription consumer', () => {
     expect(emitted[0]!.payload).toEqual({ organizationId: ORG, meetingId: MEET, recordingId: REC, percent: 92, stage: 'transcribing', chunksDone: 1, chunksTotal: 2, at: '2026-10-24T08:00:00.000Z' });
 
     await processTranscriptionJob(job(0), deps, { jobId: jobId(0) });
-    expect(repo.revisions.at(-1)).toMatchObject({ revision: 2, status: 'completed' });
+    expect(repo.revisions.at(-1)).toMatchObject({ revision: 2, status: 'ready' });
     expect(emitted.at(-1)!.payload).toMatchObject({ percent: 100, stage: 'merging', chunksDone: 2, chunksTotal: 2 });
   });
 

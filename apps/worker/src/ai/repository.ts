@@ -25,7 +25,7 @@ export type TranscriptRevisionWrite = {
   recordingId: string;
   provider: string;
   revision: number;
-  status: 'processing' | 'completed';
+  status: 'processing' | 'ready';
   language: string | null;
   fullText: string;
   segments: TranscriptSegmentRow[];
@@ -65,7 +65,7 @@ export function toRevisionWrite(rev: TranscriptRevision, provider: string, langu
     recordingId: rev.recordingId,
     provider,
     revision: rev.revision,
-    status: rev.complete ? 'completed' : 'processing',
+    status: rev.complete ? 'ready' : 'processing',
     language: language ?? null,
     fullText: rev.text,
     segments: rev.segments.map((s, i) => ({
