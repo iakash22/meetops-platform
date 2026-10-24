@@ -34,6 +34,12 @@ resolution failures without any `ci.yml` change. CI runs no EAS builds.
 - `ignoreMissing: ["webpack"]` covers optional web-only peers pulled in by **expo-router** (`schema-utils`) and **jest-expo** (`react-server-dom-webpack`). Mobile never bundles with webpack.
 - `allowedVersions` lets jest-expo's `react-server-dom-webpack` accept the repo's React 18.
 
+`pnpm.overrides` also carries mobile-only audit fixes for Expo build tooling (HIGH advisories):
+
+- `@expo/plist>@xmldom/xmldom: ^0.8.15` (0.7.13 has the CDATA/attribute/element injection and ReDoS advisories). `@expo/plist` only uses `DOMParser`, which is unchanged in 0.8.
+- `@expo/metro-config>postcss: ^8.5.18` (8.4.49 has the source-map path traversal and file read advisories). This is a minor bump within postcss 8.
+- `image-size@1.2.1` (via `metro@0.81.5`) is **not** overridden. The fix is in 2.0.3, but 2.x drops the callable default export and file-path input that metro's `Assets.js` relies on. It is build-time only (asset dimensions during bundling) and goes away with an Expo SDK upgrade.
+
 See [docs/mobile/plan.md](../../docs/mobile/plan.md) for the roadmap and the security requirements.
 
 ## Contracts import rule (Architecture)

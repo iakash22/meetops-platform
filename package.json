@@ -54,7 +54,9 @@
     "overrides": {
       "shell-quote@<1.8.4": "^1.8.4",
       "@expo/cli>tar": "^7.5.21",
-      "cacache>tar": "^7.5.21"
+      "cacache>tar": "^7.5.21",
+      "@expo/plist>@xmldom/xmldom": "^0.8.15",
+      "@expo/metro-config>postcss": "^8.5.18"
     },
     "patchedDependencies": {
       "@expo/cli@0.22.28": "patches/@expo__cli@0.22.28.patch"
