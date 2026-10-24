@@ -3,7 +3,11 @@
 **Scope:** staging only. Uses the Database Agent's backfill script (branch `feat/db-storage-key-backfill`).
 **Status:** the branch did not exist when this runbook was written; flags below are the **required
 contract** for that script (see "Script contract"). Update this doc once it lands.
-**Order:** PR #82 merged → this backfill applied → deploy #82 code to staging (or deploy with a read fallback; see open questions).
+**Order (decided):** deploy #82 to staging **first**, then run the backfill. #82 reads both `org/` and
+`organizations/` keys, so rows on either prefix resolve during and after the backfill and the order carries no risk.
+New writes after the #82 deploy already use `organizations/`.
+
+**Schema comment:** the `FileObject.key` comment ("Always prefixed org/") is being fixed by Media in #82.
 
 ## Approvals
 
@@ -20,10 +24,32 @@ contract** for that script (see "Script contract"). Update this doc once it land
    `STORAGE_REGION`, `STORAGE_BUCKET`, `STORAGE_ACCESS_KEY_ID`, `STORAGE_SECRET_ACCESS_KEY`,
    `STORAGE_FORCE_PATH_STYLE`. Never paste values into tickets, chat, or logs; no `set -x`.
 2. **DB snapshot** of the staging database; record the snapshot id. Do not proceed without it.
-3. **Bucket versioning** must be enabled: `aws s3api get-bucket-versioning --bucket "$STORAGE_BUCKET"`
-   (or `mc version info`) → `Enabled`. If not, stop and ask Akash.
-4. Pause/quiesce writers (worker queue, uploads) or schedule a low-traffic window, so no new `org/` rows appear mid-run.
+3. **Bucket versioning check (required precondition, result recorded)**. Run it and record the output in the change record. Versioning should be: `aws s3api get-bucket-versioning --bucket "$STORAGE_BUCKET"`
+   (or `mc version info`) → `Enabled`. If it is `Suspended` or unset, record that and tell Akash before the apply. The process is safe either way:
+   it only copies and never deletes or overwrites `org/` objects. Versioning is extra protection, not a dependency.
+4. Pause writers (see "Pause and resume writers"), so no new `org/` rows appear mid-run.
 5. Capture baseline: `select org_id, count(*) from file_objects where storage_key like 'org/%' group by 1;`
+
+## Pause and resume writers
+
+**What's missing:** the repo has no existing queue-pause command or maintenance/upload-disable flag (searched
+`apps/`, `packages/`, `.env.example`). The worker uses BullMQ (`apps/worker/src/media/worker.ts`). Until a
+sanctioned mechanism exists, use the steps below. A follow-up should add a `MAINTENANCE_MODE`/uploads-disabled flag and a
+queue pause/resume script.
+
+Before the apply (after the dry-run is reviewed):
+
+1. Uploads: scale the staging web/API upload path to read-only, or announce a staging freeze. With no flag, the safe
+   option is to tell staging users and stop the extension/web upload traffic for the window.
+2. Worker: pause the BullMQ media queue (`Queue.pause()` on the media queue), or scale staging worker replicas to 0.
+   Wait for active jobs to finish.
+3. Record pause time and in-flight job count in the change record.
+
+After verification passes:
+
+1. Resume the media queue (`Queue.resume()`) or scale the workers back up. Re-enable uploads.
+2. Smoke-test one upload. Its key must start with `organizations/{organizationId}/`.
+3. Record resume time.
 
 ## 1. Dry-run (default) and review
 
@@ -78,6 +104,22 @@ Watch: script report error count, DB locks/long transactions, S3 4xx/5xx rates, 
 - DB: keys only changed per committed org; restore by reverting keys (`organizations/{id}/` → `org/{id}/`) via
   the script's rollback mode if provided, or restore the snapshot.
 - Storage: nothing deleted, so old keys still resolve; new copies can be left in place.
+
+## Evidence checklist (owner: DevOps)
+
+DevOps owns the DB snapshot and the change evidence. Attach everything to the change record with secrets redacted
+(no env values, connection strings, access keys, or presigned URLs):
+
+- [ ] Staging DB snapshot id and timestamp, taken before the apply
+- [ ] Bucket versioning check output (Enabled/Suspended/unset)
+- [ ] Baseline per-org `org/` counts (SQL output)
+- [ ] Dry-run report (`dryrun.jsonl`) and summary, with reviewer sign-off
+- [ ] Akash's go-ahead for this specific apply run (link/quote, with time)
+- [ ] Writer pause time and in-flight jobs
+- [ ] Apply report (`apply.jsonl`) and exit code
+- [ ] Verification SQL output (0 `org/` keys, 0 mismatched prefixes), per-org counts, checksum results
+- [ ] Post-apply dry-run showing 0 planned changes
+- [ ] Resume time and smoke-test result
 
 ## Script contract (required from the Database Agent's script)
 

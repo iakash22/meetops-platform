@@ -2,7 +2,8 @@
 
 **Scope:** local dev only (compose `infra/compose/compose.dev.yml`, MinIO + Postgres). Never staging/prod.
 **When:** only after PR #82 (`feat(storage)!: organizations/{organizationId}/ object keys`) is merged into `integration/phase-1`.
-**Approval:** Akash must approve directly (in writing, right before the run) before `--apply`.
+**Hard preconditions:** the dev wipe runs **only after #82 is merged**. Each `--apply` run needs Akash's go-ahead,
+confirmed separately for that run (an earlier approval does not carry over).
 
 ## Why wipe instead of migrate in dev
 
