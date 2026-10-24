@@ -20,7 +20,7 @@ const issueBody = (cat = 'new', name = 'To Do') => ({ id: '10001', key: 'MEET-1'
 function make(f: ReturnType<typeof mockFetch>, extra: Record<string, unknown> = {}, verify = true) {
   const credentials: CredentialResolver & { resolve: ReturnType<typeof vi.fn> } = { resolve: vi.fn(async () => ({ kind: 'jira' as const, email: 'bot@acme.test', apiToken: 'tok' })) };
   const g = governance(verify);
-  const provider = new JiraIssueTrackerProvider({ organizationId: ORG, integrationId: INTEGRATION, baseUrl: 'https://acme.atlassian.net', credentials, approvals: g.approvals, audit: g.audit, projectKey: 'MEET', fetch: f as unknown as FetchLike, ...extra });
+  const provider = new JiraIssueTrackerProvider({ organizationId: ORG, integrationId: INTEGRATION, baseUrl: 'https://acme.atlassian.net', credentials, approvals: g.approvals, audit: g.audit, projectKey: 'MEET', fetch: f as unknown as FetchLike, retry: { maxAttempts: 1 }, ...extra });
   return { provider, credentials, g };
 }
 
@@ -101,6 +101,58 @@ describe('JiraIssueTrackerProvider', () => {
     expect(f).not.toHaveBeenCalled();
     expect(m.credentials.resolve).not.toHaveBeenCalled();
     expect(r.credentials.resolve).not.toHaveBeenCalled();
+  });
+  it('retries 429 (Retry-After) and 5xx, never other 4xx', async () => {
+    const sleep = vi.fn(async () => {});
+    const f = mockFetch({ 'GET /rest/api/3/issue/MEET-1': [{ status: 429, headers: { 'retry-after': '3' } }, { status: 503 }, { status: 200, body: issueBody() }] });
+    const { provider } = make(f, { retry: { sleep, random: () => 0 } });
+    expect((await provider.getIssue('MEET-1'))?.key).toBe('MEET-1');
+    expect(f).toHaveBeenCalledTimes(3);
+    expect(sleep.mock.calls[0]).toEqual([3000]);
+    const f400 = mockFetch({ 'GET /rest/api/3/issue/MEET-1': [{ status: 400 }, { status: 200, body: issueBody() }] });
+    await expect(make(f400, { retry: { sleep } }).provider.getIssue('MEET-1')).rejects.toMatchObject({ status: 400 });
+    expect(f400).toHaveBeenCalledTimes(1);
+  });
+  it('returns final sanitized error after exhausting retries; retries timeouts', async () => {
+    const f = mockFetch({ 'GET /rest/api/3/issue/MEET-1': [{ status: 500 }, { status: 500 }] });
+    await expect(make(f, { retry: { sleep: async () => {}, maxAttempts: 2 } }).provider.getIssue('MEET-1')).rejects.toMatchObject({ status: 500, message: 'Jira request failed (500)' });
+    expect(f).toHaveBeenCalledTimes(2);
+    let calls = 0;
+    const flaky = vi.fn(async (_u: string, init?: { signal?: AbortSignal }) => {
+      calls++;
+      if (calls === 1) return new Promise((_r, rej) => init?.signal?.addEventListener('abort', () => rej(Object.assign(new Error('a'), { name: 'AbortError' }))));
+      return { ok: true, status: 200, headers: new Headers(), text: async () => JSON.stringify(issueBody()) };
+    });
+    expect((await make(flaky as never, { timeoutMs: 10, retry: { sleep: async () => {} } }).provider.getIssue('MEET-1'))?.key).toBe('MEET-1');
+  });
+  it('never retries POST create on 5xx / network error (may have been applied), but does on 429', async () => {
+    const sleep = vi.fn(async () => {});
+    const input = { title: 'T' };
+    const f500 = mockFetch({ 'POST /rest/api/3/issue': [{ status: 500 }, { status: 201, body: { id: '1', key: 'MEET-1' } }] });
+    await expect(make(f500, { retry: { sleep } }).provider.createIssue(input, approvalFor('jira', 'createIssue', input))).rejects.toMatchObject({ status: 500 });
+    expect(f500).toHaveBeenCalledTimes(1);
+    const net = vi.fn(async () => { throw new Error('ECONNRESET'); });
+    await expect(make(net as never, { retry: { sleep, idempotent: true } }).provider.createIssue(input, approvalFor('jira', 'createIssue', input))).rejects.toMatchObject({ message: 'Jira request failed' });
+    expect(net).toHaveBeenCalledTimes(1);
+    const f429 = mockFetch({ 'POST /rest/api/3/issue': [{ status: 429, headers: { 'retry-after': '1' } }, { status: 201, body: { id: '1', key: 'MEET-1' } }], 'GET /rest/api/3/issue/MEET-1': { status: 200, body: issueBody() } });
+    expect((await make(f429, { retry: { sleep, random: () => 0 } }).provider.createIssue(input, approvalFor('jira', 'createIssue', input))).key).toBe('MEET-1');
+    expect(f429).toHaveBeenCalledTimes(3);
+  });
+  it('approval gate runs before any attempt even with retries', async () => {
+    const f = mockFetch({});
+    const sleep = vi.fn(async () => {});
+    const { provider } = make(f, { retry: { sleep } });
+    await expect(provider.updateStatus('MEET-1', 'done', undefined as never)).rejects.toBeInstanceOf(ApprovalRequiredError);
+    expect(f).not.toHaveBeenCalled();
+    expect(sleep).not.toHaveBeenCalled();
+  });
+  it('accepts the scoped-token API gateway base URL with site browse links', async () => {
+    const gw = 'https://api.atlassian.com/ex/jira/11111111-2222-3333-4444-555555555555';
+    const f = vi.fn(async () => ({ ok: true, status: 200, headers: new Headers(), text: async () => JSON.stringify(issueBody()) }));
+    const { provider } = make(f, { baseUrl: gw, siteUrl: 'https://acme.atlassian.net' });
+    expect((await provider.getIssue('MEET-1'))?.url).toBe('https://acme.atlassian.net/browse/MEET-1');
+    expect((f.mock.calls[0] as unknown as [string])[0]).toBe(gw + '/rest/api/3/issue/MEET-1?fields=summary,status,assignee,labels,updated,resolution');
+    expect(() => make(f as never, { baseUrl: 'https://api.atlassian.com/other' })).toThrow(/Jira base URL/);
   });
   it('healthCheck calls /myself', async () => {
     expect(await make(mockFetch({ 'GET /rest/api/3/myself': { status: 200, body: { accountId: 'x' } } })).provider.healthCheck()).toEqual({ ok: true, provider: 'jira' });
