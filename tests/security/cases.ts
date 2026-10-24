@@ -129,7 +129,7 @@ export const crossOrganizationCases: readonly SecurityCase[] = [
   {
     id: 'XT-24',
     title: 'Worker job mismatch',
-    steps: 'Enqueue job {orgId: A, meetingId: B.meetingId}',
+    steps: 'Enqueue job {organizationId: A, meetingId: B.meetingId}',
     expected: 'Job fails closed, no processing, audit/log entry',
   },
   {
