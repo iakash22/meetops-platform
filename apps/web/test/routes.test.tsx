@@ -1,6 +1,7 @@
 import { screen } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createMockApi, renderApp, resetStores } from './fixtures/render';
+import { waitForRouteData } from './fixtures/route-ready';
 
 describe('route tree', () => {
   beforeEach(() => resetStores());
@@ -35,12 +36,14 @@ describe('route tree', () => {
 
   it('lists meetings from the api for the current org', async () => {
     const { api } = renderApp('/meetings');
+    await waitForRouteData(api.meetings.list, { heading: 'Meetings' });
     expect(await screen.findByText('Weekly sync')).toBeInTheDocument();
     expect(api.meetings.list).toHaveBeenCalledWith('00000000-0000-4000-8000-000000000001');
   });
 
   it('shows tasks and projects', async () => {
-    renderApp('/tasks');
+    const { api } = renderApp('/tasks');
+    await waitForRouteData(api.tasks.list, { heading: 'Tasks' });
     expect(await screen.findByText('Send recap')).toBeInTheDocument();
   });
 
