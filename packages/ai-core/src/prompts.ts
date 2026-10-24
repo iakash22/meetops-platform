@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import type { LLMProvider, LLMGenerateStructuredParams } from './types.js';
+import type { LLMProvider, LLMGenerateStructuredParams, LLMStructuredResult } from './types.js';
 import { AIError, toAIError } from './errors.js';
 
 export const PROMPT_VERSION = 'meeting-extract@1';
@@ -86,7 +86,7 @@ export async function generateStructuredWithRepair<S extends z.ZodType>(
   provider: LLMProvider,
   params: LLMGenerateStructuredParams<S>,
   maxRepairs = 1,
-): Promise<Awaited<ReturnType<LLMProvider['generateStructured']>> & { repairs: number }> {
+): Promise<LLMStructuredResult<z.infer<S>> & { repairs: number }> {
   const limit = Math.min(Math.max(0, maxRepairs), 2);
   let prompt = params.prompt;
   let lastErr: AIError | undefined;

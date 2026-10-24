@@ -1,0 +1,2831 @@
+{
+  "name": "long-meeting",
+  "title": "Quarterly planning",
+  "segments": [
+    {
+      "id": "c0-s0",
+      "startSec": 0,
+      "endSec": 6,
+      "speaker": "S1",
+      "text": "Discussion point number 0 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c0-s1",
+      "startSec": 6,
+      "endSec": 12,
+      "speaker": "S2",
+      "text": "Discussion point number 1 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c0-s2",
+      "startSec": 12,
+      "endSec": 18,
+      "speaker": "S3",
+      "text": "Discussion point number 2 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c0-s3",
+      "startSec": 18,
+      "endSec": 24,
+      "speaker": "S1",
+      "text": "Discussion point number 3 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c0-s4",
+      "startSec": 24,
+      "endSec": 30,
+      "speaker": "S2",
+      "text": "Discussion point number 4 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c0-s5",
+      "startSec": 30,
+      "endSec": 36,
+      "speaker": "S3",
+      "text": "Discussion point number 5 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c0-s6",
+      "startSec": 36,
+      "endSec": 42,
+      "speaker": "S1",
+      "text": "Discussion point number 6 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c0-s7",
+      "startSec": 42,
+      "endSec": 48,
+      "speaker": "S2",
+      "text": "Discussion point number 7 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c0-s8",
+      "startSec": 48,
+      "endSec": 54,
+      "speaker": "S3",
+      "text": "Discussion point number 8 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c0-s9",
+      "startSec": 54,
+      "endSec": 60,
+      "speaker": "S1",
+      "text": "Discussion point number 9 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c0-s10",
+      "startSec": 60,
+      "endSec": 66,
+      "speaker": "S2",
+      "text": "We decided to adopt plan 0."
+    },
+    {
+      "id": "c0-s11",
+      "startSec": 66,
+      "endSec": 72,
+      "speaker": "S3",
+      "text": "Discussion point number 11 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c0-s12",
+      "startSec": 72,
+      "endSec": 78,
+      "speaker": "S1",
+      "text": "Discussion point number 12 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c0-s13",
+      "startSec": 78,
+      "endSec": 84,
+      "speaker": "S2",
+      "text": "Discussion point number 13 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c0-s14",
+      "startSec": 84,
+      "endSec": 90,
+      "speaker": "S3",
+      "text": "Discussion point number 14 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c0-s15",
+      "startSec": 90,
+      "endSec": 96,
+      "speaker": "S1",
+      "text": "Discussion point number 15 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c0-s16",
+      "startSec": 96,
+      "endSec": 102,
+      "speaker": "S2",
+      "text": "Discussion point number 16 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c0-s17",
+      "startSec": 102,
+      "endSec": 108,
+      "speaker": "S3",
+      "text": "Discussion point number 17 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c0-s18",
+      "startSec": 108,
+      "endSec": 114,
+      "speaker": "S1",
+      "text": "Discussion point number 18 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c0-s19",
+      "startSec": 114,
+      "endSec": 120,
+      "speaker": "S2",
+      "text": "Discussion point number 19 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c0-s20",
+      "startSec": 120,
+      "endSec": 126,
+      "speaker": "S3",
+      "text": "Asha will prepare report 0 by Friday."
+    },
+    {
+      "id": "c0-s21",
+      "startSec": 126,
+      "endSec": 132,
+      "speaker": "S1",
+      "text": "Discussion point number 21 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c0-s22",
+      "startSec": 132,
+      "endSec": 138,
+      "speaker": "S2",
+      "text": "Discussion point number 22 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c0-s23",
+      "startSec": 138,
+      "endSec": 144,
+      "speaker": "S3",
+      "text": "Discussion point number 23 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c0-s24",
+      "startSec": 144,
+      "endSec": 150,
+      "speaker": "S1",
+      "text": "Discussion point number 24 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c0-s25",
+      "startSec": 150,
+      "endSec": 156,
+      "speaker": "S2",
+      "text": "Discussion point number 25 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c0-s26",
+      "startSec": 156,
+      "endSec": 162,
+      "speaker": "S3",
+      "text": "Discussion point number 26 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c0-s27",
+      "startSec": 162,
+      "endSec": 168,
+      "speaker": "S1",
+      "text": "Discussion point number 27 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c0-s28",
+      "startSec": 168,
+      "endSec": 174,
+      "speaker": "S2",
+      "text": "Discussion point number 28 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c0-s29",
+      "startSec": 174,
+      "endSec": 180,
+      "speaker": "S3",
+      "text": "Discussion point number 29 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c0-s30",
+      "startSec": 180,
+      "endSec": 186,
+      "speaker": "S1",
+      "text": "Discussion point number 30 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c0-s31",
+      "startSec": 186,
+      "endSec": 192,
+      "speaker": "S2",
+      "text": "Discussion point number 31 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c0-s32",
+      "startSec": 192,
+      "endSec": 198,
+      "speaker": "S3",
+      "text": "Discussion point number 32 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c0-s33",
+      "startSec": 198,
+      "endSec": 204,
+      "speaker": "S1",
+      "text": "Discussion point number 33 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c0-s34",
+      "startSec": 204,
+      "endSec": 210,
+      "speaker": "S2",
+      "text": "Discussion point number 34 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c0-s35",
+      "startSec": 210,
+      "endSec": 216,
+      "speaker": "S3",
+      "text": "Discussion point number 35 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c0-s36",
+      "startSec": 216,
+      "endSec": 222,
+      "speaker": "S1",
+      "text": "Discussion point number 36 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c0-s37",
+      "startSec": 222,
+      "endSec": 228,
+      "speaker": "S2",
+      "text": "Discussion point number 37 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c0-s38",
+      "startSec": 228,
+      "endSec": 234,
+      "speaker": "S3",
+      "text": "Discussion point number 38 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c0-s39",
+      "startSec": 234,
+      "endSec": 240,
+      "speaker": "S1",
+      "text": "Discussion point number 39 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c0-s40",
+      "startSec": 240,
+      "endSec": 246,
+      "speaker": "S2",
+      "text": "Discussion point number 40 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c0-s41",
+      "startSec": 246,
+      "endSec": 252,
+      "speaker": "S3",
+      "text": "Discussion point number 41 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c0-s42",
+      "startSec": 252,
+      "endSec": 258,
+      "speaker": "S1",
+      "text": "Discussion point number 42 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c0-s43",
+      "startSec": 258,
+      "endSec": 264,
+      "speaker": "S2",
+      "text": "Discussion point number 43 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c0-s44",
+      "startSec": 264,
+      "endSec": 270,
+      "speaker": "S3",
+      "text": "Discussion point number 44 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c0-s45",
+      "startSec": 270,
+      "endSec": 276,
+      "speaker": "S1",
+      "text": "Discussion point number 45 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c0-s46",
+      "startSec": 276,
+      "endSec": 282,
+      "speaker": "S2",
+      "text": "Discussion point number 46 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c0-s47",
+      "startSec": 282,
+      "endSec": 288,
+      "speaker": "S3",
+      "text": "Discussion point number 47 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c0-s48",
+      "startSec": 288,
+      "endSec": 294,
+      "speaker": "S1",
+      "text": "Discussion point number 48 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c0-s49",
+      "startSec": 294,
+      "endSec": 300,
+      "speaker": "S2",
+      "text": "Discussion point number 49 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c0-s50",
+      "startSec": 300,
+      "endSec": 306,
+      "speaker": "S3",
+      "text": "Discussion point number 50 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c0-s51",
+      "startSec": 306,
+      "endSec": 312,
+      "speaker": "S1",
+      "text": "Discussion point number 51 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c0-s52",
+      "startSec": 312,
+      "endSec": 318,
+      "speaker": "S2",
+      "text": "Discussion point number 52 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c0-s53",
+      "startSec": 318,
+      "endSec": 324,
+      "speaker": "S3",
+      "text": "Discussion point number 53 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c0-s54",
+      "startSec": 324,
+      "endSec": 330,
+      "speaker": "S1",
+      "text": "Discussion point number 54 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c0-s55",
+      "startSec": 330,
+      "endSec": 336,
+      "speaker": "S2",
+      "text": "Discussion point number 55 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c0-s56",
+      "startSec": 336,
+      "endSec": 342,
+      "speaker": "S3",
+      "text": "Discussion point number 56 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c0-s57",
+      "startSec": 342,
+      "endSec": 348,
+      "speaker": "S1",
+      "text": "Discussion point number 57 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c0-s58",
+      "startSec": 348,
+      "endSec": 354,
+      "speaker": "S2",
+      "text": "Discussion point number 58 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c0-s59",
+      "startSec": 354,
+      "endSec": 360,
+      "speaker": "S3",
+      "text": "Discussion point number 59 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c0-s60",
+      "startSec": 360,
+      "endSec": 366,
+      "speaker": "S1",
+      "text": "We decided to adopt plan 1."
+    },
+    {
+      "id": "c0-s61",
+      "startSec": 366,
+      "endSec": 372,
+      "speaker": "S2",
+      "text": "Discussion point number 61 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c0-s62",
+      "startSec": 372,
+      "endSec": 378,
+      "speaker": "S3",
+      "text": "Discussion point number 62 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c0-s63",
+      "startSec": 378,
+      "endSec": 384,
+      "speaker": "S1",
+      "text": "Discussion point number 63 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c0-s64",
+      "startSec": 384,
+      "endSec": 390,
+      "speaker": "S2",
+      "text": "Discussion point number 64 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c0-s65",
+      "startSec": 390,
+      "endSec": 396,
+      "speaker": "S3",
+      "text": "Discussion point number 65 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c0-s66",
+      "startSec": 396,
+      "endSec": 402,
+      "speaker": "S1",
+      "text": "Discussion point number 66 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c0-s67",
+      "startSec": 402,
+      "endSec": 408,
+      "speaker": "S2",
+      "text": "Discussion point number 67 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c0-s68",
+      "startSec": 408,
+      "endSec": 414,
+      "speaker": "S3",
+      "text": "Discussion point number 68 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c0-s69",
+      "startSec": 414,
+      "endSec": 420,
+      "speaker": "S1",
+      "text": "Discussion point number 69 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c0-s70",
+      "startSec": 420,
+      "endSec": 426,
+      "speaker": "S2",
+      "text": "Ravi will prepare report 1 by Friday."
+    },
+    {
+      "id": "c0-s71",
+      "startSec": 426,
+      "endSec": 432,
+      "speaker": "S3",
+      "text": "Discussion point number 71 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c0-s72",
+      "startSec": 432,
+      "endSec": 438,
+      "speaker": "S1",
+      "text": "Discussion point number 72 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c0-s73",
+      "startSec": 438,
+      "endSec": 444,
+      "speaker": "S2",
+      "text": "Discussion point number 73 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c0-s74",
+      "startSec": 444,
+      "endSec": 450,
+      "speaker": "S3",
+      "text": "Discussion point number 74 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c0-s75",
+      "startSec": 450,
+      "endSec": 456,
+      "speaker": "S1",
+      "text": "Discussion point number 75 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c0-s76",
+      "startSec": 456,
+      "endSec": 462,
+      "speaker": "S2",
+      "text": "Discussion point number 76 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c0-s77",
+      "startSec": 462,
+      "endSec": 468,
+      "speaker": "S3",
+      "text": "Discussion point number 77 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c0-s78",
+      "startSec": 468,
+      "endSec": 474,
+      "speaker": "S1",
+      "text": "Discussion point number 78 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c0-s79",
+      "startSec": 474,
+      "endSec": 480,
+      "speaker": "S2",
+      "text": "Discussion point number 79 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c0-s80",
+      "startSec": 480,
+      "endSec": 486,
+      "speaker": "S3",
+      "text": "Discussion point number 80 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c0-s81",
+      "startSec": 486,
+      "endSec": 492,
+      "speaker": "S1",
+      "text": "Discussion point number 81 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c0-s82",
+      "startSec": 492,
+      "endSec": 498,
+      "speaker": "S2",
+      "text": "Discussion point number 82 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c0-s83",
+      "startSec": 498,
+      "endSec": 504,
+      "speaker": "S3",
+      "text": "Discussion point number 83 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c0-s84",
+      "startSec": 504,
+      "endSec": 510,
+      "speaker": "S1",
+      "text": "Discussion point number 84 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c0-s85",
+      "startSec": 510,
+      "endSec": 516,
+      "speaker": "S2",
+      "text": "Discussion point number 85 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c0-s86",
+      "startSec": 516,
+      "endSec": 522,
+      "speaker": "S3",
+      "text": "Discussion point number 86 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c0-s87",
+      "startSec": 522,
+      "endSec": 528,
+      "speaker": "S1",
+      "text": "Discussion point number 87 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c0-s88",
+      "startSec": 528,
+      "endSec": 534,
+      "speaker": "S2",
+      "text": "Discussion point number 88 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c0-s89",
+      "startSec": 534,
+      "endSec": 540,
+      "speaker": "S3",
+      "text": "Discussion point number 89 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c0-s90",
+      "startSec": 540,
+      "endSec": 546,
+      "speaker": "S1",
+      "text": "Discussion point number 90 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c0-s91",
+      "startSec": 546,
+      "endSec": 552,
+      "speaker": "S2",
+      "text": "Discussion point number 91 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c0-s92",
+      "startSec": 552,
+      "endSec": 558,
+      "speaker": "S3",
+      "text": "Discussion point number 92 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c0-s93",
+      "startSec": 558,
+      "endSec": 564,
+      "speaker": "S1",
+      "text": "Discussion point number 93 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c0-s94",
+      "startSec": 564,
+      "endSec": 570,
+      "speaker": "S2",
+      "text": "Discussion point number 94 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c0-s95",
+      "startSec": 570,
+      "endSec": 576,
+      "speaker": "S3",
+      "text": "Discussion point number 95 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c0-s96",
+      "startSec": 576,
+      "endSec": 582,
+      "speaker": "S1",
+      "text": "Discussion point number 96 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c0-s97",
+      "startSec": 582,
+      "endSec": 588,
+      "speaker": "S2",
+      "text": "Discussion point number 97 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c0-s98",
+      "startSec": 588,
+      "endSec": 594,
+      "speaker": "S3",
+      "text": "Discussion point number 98 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c0-s99",
+      "startSec": 594,
+      "endSec": 600,
+      "speaker": "S1",
+      "text": "Discussion point number 99 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c1-s0",
+      "startSec": 600,
+      "endSec": 606,
+      "speaker": "S2",
+      "text": "Discussion point number 100 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c1-s1",
+      "startSec": 606,
+      "endSec": 612,
+      "speaker": "S3",
+      "text": "Discussion point number 101 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c1-s2",
+      "startSec": 612,
+      "endSec": 618,
+      "speaker": "S1",
+      "text": "Discussion point number 102 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c1-s3",
+      "startSec": 618,
+      "endSec": 624,
+      "speaker": "S2",
+      "text": "Discussion point number 103 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c1-s4",
+      "startSec": 624,
+      "endSec": 630,
+      "speaker": "S3",
+      "text": "Discussion point number 104 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c1-s5",
+      "startSec": 630,
+      "endSec": 636,
+      "speaker": "S1",
+      "text": "Discussion point number 105 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c1-s6",
+      "startSec": 636,
+      "endSec": 642,
+      "speaker": "S2",
+      "text": "Discussion point number 106 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c1-s7",
+      "startSec": 642,
+      "endSec": 648,
+      "speaker": "S3",
+      "text": "Discussion point number 107 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c1-s8",
+      "startSec": 648,
+      "endSec": 654,
+      "speaker": "S1",
+      "text": "Discussion point number 108 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c1-s9",
+      "startSec": 654,
+      "endSec": 660,
+      "speaker": "S2",
+      "text": "Discussion point number 109 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c1-s10",
+      "startSec": 660,
+      "endSec": 666,
+      "speaker": "S3",
+      "text": "We decided to adopt plan 2."
+    },
+    {
+      "id": "c1-s11",
+      "startSec": 666,
+      "endSec": 672,
+      "speaker": "S1",
+      "text": "Discussion point number 111 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c1-s12",
+      "startSec": 672,
+      "endSec": 678,
+      "speaker": "S2",
+      "text": "Discussion point number 112 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c1-s13",
+      "startSec": 678,
+      "endSec": 684,
+      "speaker": "S3",
+      "text": "Discussion point number 113 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c1-s14",
+      "startSec": 684,
+      "endSec": 690,
+      "speaker": "S1",
+      "text": "Discussion point number 114 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c1-s15",
+      "startSec": 690,
+      "endSec": 696,
+      "speaker": "S2",
+      "text": "Discussion point number 115 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c1-s16",
+      "startSec": 696,
+      "endSec": 702,
+      "speaker": "S3",
+      "text": "Discussion point number 116 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c1-s17",
+      "startSec": 702,
+      "endSec": 708,
+      "speaker": "S1",
+      "text": "Discussion point number 117 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c1-s18",
+      "startSec": 708,
+      "endSec": 714,
+      "speaker": "S2",
+      "text": "Discussion point number 118 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c1-s19",
+      "startSec": 714,
+      "endSec": 720,
+      "speaker": "S3",
+      "text": "Discussion point number 119 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c1-s20",
+      "startSec": 720,
+      "endSec": 726,
+      "speaker": "S1",
+      "text": "Meera will prepare report 2 by Friday."
+    },
+    {
+      "id": "c1-s21",
+      "startSec": 726,
+      "endSec": 732,
+      "speaker": "S2",
+      "text": "Discussion point number 121 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c1-s22",
+      "startSec": 732,
+      "endSec": 738,
+      "speaker": "S3",
+      "text": "Discussion point number 122 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c1-s23",
+      "startSec": 738,
+      "endSec": 744,
+      "speaker": "S1",
+      "text": "Discussion point number 123 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c1-s24",
+      "startSec": 744,
+      "endSec": 750,
+      "speaker": "S2",
+      "text": "Discussion point number 124 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c1-s25",
+      "startSec": 750,
+      "endSec": 756,
+      "speaker": "S3",
+      "text": "Discussion point number 125 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c1-s26",
+      "startSec": 756,
+      "endSec": 762,
+      "speaker": "S1",
+      "text": "Discussion point number 126 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c1-s27",
+      "startSec": 762,
+      "endSec": 768,
+      "speaker": "S2",
+      "text": "Discussion point number 127 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c1-s28",
+      "startSec": 768,
+      "endSec": 774,
+      "speaker": "S3",
+      "text": "Discussion point number 128 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c1-s29",
+      "startSec": 774,
+      "endSec": 780,
+      "speaker": "S1",
+      "text": "Discussion point number 129 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c1-s30",
+      "startSec": 780,
+      "endSec": 786,
+      "speaker": "S2",
+      "text": "Discussion point number 130 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c1-s31",
+      "startSec": 786,
+      "endSec": 792,
+      "speaker": "S3",
+      "text": "Discussion point number 131 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c1-s32",
+      "startSec": 792,
+      "endSec": 798,
+      "speaker": "S1",
+      "text": "Discussion point number 132 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c1-s33",
+      "startSec": 798,
+      "endSec": 804,
+      "speaker": "S2",
+      "text": "Discussion point number 133 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c1-s34",
+      "startSec": 804,
+      "endSec": 810,
+      "speaker": "S3",
+      "text": "Discussion point number 134 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c1-s35",
+      "startSec": 810,
+      "endSec": 816,
+      "speaker": "S1",
+      "text": "Discussion point number 135 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c1-s36",
+      "startSec": 816,
+      "endSec": 822,
+      "speaker": "S2",
+      "text": "Discussion point number 136 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c1-s37",
+      "startSec": 822,
+      "endSec": 828,
+      "speaker": "S3",
+      "text": "Discussion point number 137 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c1-s38",
+      "startSec": 828,
+      "endSec": 834,
+      "speaker": "S1",
+      "text": "Discussion point number 138 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c1-s39",
+      "startSec": 834,
+      "endSec": 840,
+      "speaker": "S2",
+      "text": "Discussion point number 139 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c1-s40",
+      "startSec": 840,
+      "endSec": 846,
+      "speaker": "S3",
+      "text": "Discussion point number 140 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c1-s41",
+      "startSec": 846,
+      "endSec": 852,
+      "speaker": "S1",
+      "text": "Discussion point number 141 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c1-s42",
+      "startSec": 852,
+      "endSec": 858,
+      "speaker": "S2",
+      "text": "Discussion point number 142 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c1-s43",
+      "startSec": 858,
+      "endSec": 864,
+      "speaker": "S3",
+      "text": "Discussion point number 143 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c1-s44",
+      "startSec": 864,
+      "endSec": 870,
+      "speaker": "S1",
+      "text": "Discussion point number 144 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c1-s45",
+      "startSec": 870,
+      "endSec": 876,
+      "speaker": "S2",
+      "text": "Discussion point number 145 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c1-s46",
+      "startSec": 876,
+      "endSec": 882,
+      "speaker": "S3",
+      "text": "Discussion point number 146 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c1-s47",
+      "startSec": 882,
+      "endSec": 888,
+      "speaker": "S1",
+      "text": "Discussion point number 147 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c1-s48",
+      "startSec": 888,
+      "endSec": 894,
+      "speaker": "S2",
+      "text": "Discussion point number 148 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c1-s49",
+      "startSec": 894,
+      "endSec": 900,
+      "speaker": "S3",
+      "text": "Discussion point number 149 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c1-s50",
+      "startSec": 900,
+      "endSec": 906,
+      "speaker": "S1",
+      "text": "Discussion point number 150 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c1-s51",
+      "startSec": 906,
+      "endSec": 912,
+      "speaker": "S2",
+      "text": "Discussion point number 151 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c1-s52",
+      "startSec": 912,
+      "endSec": 918,
+      "speaker": "S3",
+      "text": "Discussion point number 152 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c1-s53",
+      "startSec": 918,
+      "endSec": 924,
+      "speaker": "S1",
+      "text": "Discussion point number 153 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c1-s54",
+      "startSec": 924,
+      "endSec": 930,
+      "speaker": "S2",
+      "text": "Discussion point number 154 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c1-s55",
+      "startSec": 930,
+      "endSec": 936,
+      "speaker": "S3",
+      "text": "Discussion point number 155 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c1-s56",
+      "startSec": 936,
+      "endSec": 942,
+      "speaker": "S1",
+      "text": "Discussion point number 156 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c1-s57",
+      "startSec": 942,
+      "endSec": 948,
+      "speaker": "S2",
+      "text": "Discussion point number 157 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c1-s58",
+      "startSec": 948,
+      "endSec": 954,
+      "speaker": "S3",
+      "text": "Discussion point number 158 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c1-s59",
+      "startSec": 954,
+      "endSec": 960,
+      "speaker": "S1",
+      "text": "Discussion point number 159 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c1-s60",
+      "startSec": 960,
+      "endSec": 966,
+      "speaker": "S2",
+      "text": "We decided to adopt plan 3."
+    },
+    {
+      "id": "c1-s61",
+      "startSec": 966,
+      "endSec": 972,
+      "speaker": "S3",
+      "text": "Discussion point number 161 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c1-s62",
+      "startSec": 972,
+      "endSec": 978,
+      "speaker": "S1",
+      "text": "Discussion point number 162 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c1-s63",
+      "startSec": 978,
+      "endSec": 984,
+      "speaker": "S2",
+      "text": "Discussion point number 163 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c1-s64",
+      "startSec": 984,
+      "endSec": 990,
+      "speaker": "S3",
+      "text": "Discussion point number 164 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c1-s65",
+      "startSec": 990,
+      "endSec": 996,
+      "speaker": "S1",
+      "text": "Discussion point number 165 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c1-s66",
+      "startSec": 996,
+      "endSec": 1002,
+      "speaker": "S2",
+      "text": "Discussion point number 166 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c1-s67",
+      "startSec": 1002,
+      "endSec": 1008,
+      "speaker": "S3",
+      "text": "Discussion point number 167 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c1-s68",
+      "startSec": 1008,
+      "endSec": 1014,
+      "speaker": "S1",
+      "text": "Discussion point number 168 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c1-s69",
+      "startSec": 1014,
+      "endSec": 1020,
+      "speaker": "S2",
+      "text": "Discussion point number 169 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c1-s70",
+      "startSec": 1020,
+      "endSec": 1026,
+      "speaker": "S3",
+      "text": "Dev will prepare report 3 by Friday."
+    },
+    {
+      "id": "c1-s71",
+      "startSec": 1026,
+      "endSec": 1032,
+      "speaker": "S1",
+      "text": "Discussion point number 171 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c1-s72",
+      "startSec": 1032,
+      "endSec": 1038,
+      "speaker": "S2",
+      "text": "Discussion point number 172 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c1-s73",
+      "startSec": 1038,
+      "endSec": 1044,
+      "speaker": "S3",
+      "text": "Discussion point number 173 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c1-s74",
+      "startSec": 1044,
+      "endSec": 1050,
+      "speaker": "S1",
+      "text": "Discussion point number 174 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c1-s75",
+      "startSec": 1050,
+      "endSec": 1056,
+      "speaker": "S2",
+      "text": "Discussion point number 175 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c1-s76",
+      "startSec": 1056,
+      "endSec": 1062,
+      "speaker": "S3",
+      "text": "Discussion point number 176 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c1-s77",
+      "startSec": 1062,
+      "endSec": 1068,
+      "speaker": "S1",
+      "text": "Discussion point number 177 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c1-s78",
+      "startSec": 1068,
+      "endSec": 1074,
+      "speaker": "S2",
+      "text": "Discussion point number 178 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c1-s79",
+      "startSec": 1074,
+      "endSec": 1080,
+      "speaker": "S3",
+      "text": "Discussion point number 179 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c1-s80",
+      "startSec": 1080,
+      "endSec": 1086,
+      "speaker": "S1",
+      "text": "Discussion point number 180 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c1-s81",
+      "startSec": 1086,
+      "endSec": 1092,
+      "speaker": "S2",
+      "text": "Discussion point number 181 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c1-s82",
+      "startSec": 1092,
+      "endSec": 1098,
+      "speaker": "S3",
+      "text": "Discussion point number 182 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c1-s83",
+      "startSec": 1098,
+      "endSec": 1104,
+      "speaker": "S1",
+      "text": "Discussion point number 183 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c1-s84",
+      "startSec": 1104,
+      "endSec": 1110,
+      "speaker": "S2",
+      "text": "Discussion point number 184 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c1-s85",
+      "startSec": 1110,
+      "endSec": 1116,
+      "speaker": "S3",
+      "text": "Discussion point number 185 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c1-s86",
+      "startSec": 1116,
+      "endSec": 1122,
+      "speaker": "S1",
+      "text": "Discussion point number 186 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c1-s87",
+      "startSec": 1122,
+      "endSec": 1128,
+      "speaker": "S2",
+      "text": "Discussion point number 187 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c1-s88",
+      "startSec": 1128,
+      "endSec": 1134,
+      "speaker": "S3",
+      "text": "Discussion point number 188 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c1-s89",
+      "startSec": 1134,
+      "endSec": 1140,
+      "speaker": "S1",
+      "text": "Discussion point number 189 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c1-s90",
+      "startSec": 1140,
+      "endSec": 1146,
+      "speaker": "S2",
+      "text": "Discussion point number 190 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c1-s91",
+      "startSec": 1146,
+      "endSec": 1152,
+      "speaker": "S3",
+      "text": "Discussion point number 191 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c1-s92",
+      "startSec": 1152,
+      "endSec": 1158,
+      "speaker": "S1",
+      "text": "Discussion point number 192 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c1-s93",
+      "startSec": 1158,
+      "endSec": 1164,
+      "speaker": "S2",
+      "text": "Discussion point number 193 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c1-s94",
+      "startSec": 1164,
+      "endSec": 1170,
+      "speaker": "S3",
+      "text": "Discussion point number 194 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c1-s95",
+      "startSec": 1170,
+      "endSec": 1176,
+      "speaker": "S1",
+      "text": "Discussion point number 195 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c1-s96",
+      "startSec": 1176,
+      "endSec": 1182,
+      "speaker": "S2",
+      "text": "Discussion point number 196 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c1-s97",
+      "startSec": 1182,
+      "endSec": 1188,
+      "speaker": "S3",
+      "text": "Discussion point number 197 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c1-s98",
+      "startSec": 1188,
+      "endSec": 1194,
+      "speaker": "S1",
+      "text": "Discussion point number 198 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c1-s99",
+      "startSec": 1194,
+      "endSec": 1200,
+      "speaker": "S2",
+      "text": "Discussion point number 199 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c2-s0",
+      "startSec": 1200,
+      "endSec": 1206,
+      "speaker": "S3",
+      "text": "Discussion point number 200 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c2-s1",
+      "startSec": 1206,
+      "endSec": 1212,
+      "speaker": "S1",
+      "text": "Discussion point number 201 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c2-s2",
+      "startSec": 1212,
+      "endSec": 1218,
+      "speaker": "S2",
+      "text": "Discussion point number 202 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c2-s3",
+      "startSec": 1218,
+      "endSec": 1224,
+      "speaker": "S3",
+      "text": "Discussion point number 203 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c2-s4",
+      "startSec": 1224,
+      "endSec": 1230,
+      "speaker": "S1",
+      "text": "Discussion point number 204 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c2-s5",
+      "startSec": 1230,
+      "endSec": 1236,
+      "speaker": "S2",
+      "text": "Discussion point number 205 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c2-s6",
+      "startSec": 1236,
+      "endSec": 1242,
+      "speaker": "S3",
+      "text": "Discussion point number 206 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c2-s7",
+      "startSec": 1242,
+      "endSec": 1248,
+      "speaker": "S1",
+      "text": "Discussion point number 207 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c2-s8",
+      "startSec": 1248,
+      "endSec": 1254,
+      "speaker": "S2",
+      "text": "Discussion point number 208 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c2-s9",
+      "startSec": 1254,
+      "endSec": 1260,
+      "speaker": "S3",
+      "text": "Discussion point number 209 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c2-s10",
+      "startSec": 1260,
+      "endSec": 1266,
+      "speaker": "S1",
+      "text": "We decided to adopt plan 4."
+    },
+    {
+      "id": "c2-s11",
+      "startSec": 1266,
+      "endSec": 1272,
+      "speaker": "S2",
+      "text": "Discussion point number 211 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c2-s12",
+      "startSec": 1272,
+      "endSec": 1278,
+      "speaker": "S3",
+      "text": "Discussion point number 212 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c2-s13",
+      "startSec": 1278,
+      "endSec": 1284,
+      "speaker": "S1",
+      "text": "Discussion point number 213 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c2-s14",
+      "startSec": 1284,
+      "endSec": 1290,
+      "speaker": "S2",
+      "text": "Discussion point number 214 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c2-s15",
+      "startSec": 1290,
+      "endSec": 1296,
+      "speaker": "S3",
+      "text": "Discussion point number 215 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c2-s16",
+      "startSec": 1296,
+      "endSec": 1302,
+      "speaker": "S1",
+      "text": "Discussion point number 216 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c2-s17",
+      "startSec": 1302,
+      "endSec": 1308,
+      "speaker": "S2",
+      "text": "Discussion point number 217 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c2-s18",
+      "startSec": 1308,
+      "endSec": 1314,
+      "speaker": "S3",
+      "text": "Discussion point number 218 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c2-s19",
+      "startSec": 1314,
+      "endSec": 1320,
+      "speaker": "S1",
+      "text": "Discussion point number 219 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c2-s20",
+      "startSec": 1320,
+      "endSec": 1326,
+      "speaker": "S2",
+      "text": "Asha will prepare report 4 by Friday."
+    },
+    {
+      "id": "c2-s21",
+      "startSec": 1326,
+      "endSec": 1332,
+      "speaker": "S3",
+      "text": "Discussion point number 221 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c2-s22",
+      "startSec": 1332,
+      "endSec": 1338,
+      "speaker": "S1",
+      "text": "Discussion point number 222 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c2-s23",
+      "startSec": 1338,
+      "endSec": 1344,
+      "speaker": "S2",
+      "text": "Discussion point number 223 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c2-s24",
+      "startSec": 1344,
+      "endSec": 1350,
+      "speaker": "S3",
+      "text": "Discussion point number 224 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c2-s25",
+      "startSec": 1350,
+      "endSec": 1356,
+      "speaker": "S1",
+      "text": "Discussion point number 225 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c2-s26",
+      "startSec": 1356,
+      "endSec": 1362,
+      "speaker": "S2",
+      "text": "Discussion point number 226 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c2-s27",
+      "startSec": 1362,
+      "endSec": 1368,
+      "speaker": "S3",
+      "text": "Discussion point number 227 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c2-s28",
+      "startSec": 1368,
+      "endSec": 1374,
+      "speaker": "S1",
+      "text": "Discussion point number 228 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c2-s29",
+      "startSec": 1374,
+      "endSec": 1380,
+      "speaker": "S2",
+      "text": "Discussion point number 229 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c2-s30",
+      "startSec": 1380,
+      "endSec": 1386,
+      "speaker": "S3",
+      "text": "Discussion point number 230 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c2-s31",
+      "startSec": 1386,
+      "endSec": 1392,
+      "speaker": "S1",
+      "text": "Discussion point number 231 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c2-s32",
+      "startSec": 1392,
+      "endSec": 1398,
+      "speaker": "S2",
+      "text": "Discussion point number 232 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c2-s33",
+      "startSec": 1398,
+      "endSec": 1404,
+      "speaker": "S3",
+      "text": "Discussion point number 233 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c2-s34",
+      "startSec": 1404,
+      "endSec": 1410,
+      "speaker": "S1",
+      "text": "Discussion point number 234 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c2-s35",
+      "startSec": 1410,
+      "endSec": 1416,
+      "speaker": "S2",
+      "text": "Discussion point number 235 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c2-s36",
+      "startSec": 1416,
+      "endSec": 1422,
+      "speaker": "S3",
+      "text": "Discussion point number 236 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c2-s37",
+      "startSec": 1422,
+      "endSec": 1428,
+      "speaker": "S1",
+      "text": "Discussion point number 237 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c2-s38",
+      "startSec": 1428,
+      "endSec": 1434,
+      "speaker": "S2",
+      "text": "Discussion point number 238 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c2-s39",
+      "startSec": 1434,
+      "endSec": 1440,
+      "speaker": "S3",
+      "text": "Discussion point number 239 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c2-s40",
+      "startSec": 1440,
+      "endSec": 1446,
+      "speaker": "S1",
+      "text": "Discussion point number 240 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c2-s41",
+      "startSec": 1446,
+      "endSec": 1452,
+      "speaker": "S2",
+      "text": "Discussion point number 241 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c2-s42",
+      "startSec": 1452,
+      "endSec": 1458,
+      "speaker": "S3",
+      "text": "Discussion point number 242 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c2-s43",
+      "startSec": 1458,
+      "endSec": 1464,
+      "speaker": "S1",
+      "text": "Discussion point number 243 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c2-s44",
+      "startSec": 1464,
+      "endSec": 1470,
+      "speaker": "S2",
+      "text": "Discussion point number 244 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c2-s45",
+      "startSec": 1470,
+      "endSec": 1476,
+      "speaker": "S3",
+      "text": "Discussion point number 245 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c2-s46",
+      "startSec": 1476,
+      "endSec": 1482,
+      "speaker": "S1",
+      "text": "Discussion point number 246 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c2-s47",
+      "startSec": 1482,
+      "endSec": 1488,
+      "speaker": "S2",
+      "text": "Discussion point number 247 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c2-s48",
+      "startSec": 1488,
+      "endSec": 1494,
+      "speaker": "S3",
+      "text": "Discussion point number 248 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c2-s49",
+      "startSec": 1494,
+      "endSec": 1500,
+      "speaker": "S1",
+      "text": "Discussion point number 249 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c2-s50",
+      "startSec": 1500,
+      "endSec": 1506,
+      "speaker": "S2",
+      "text": "Discussion point number 250 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c2-s51",
+      "startSec": 1506,
+      "endSec": 1512,
+      "speaker": "S3",
+      "text": "Discussion point number 251 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c2-s52",
+      "startSec": 1512,
+      "endSec": 1518,
+      "speaker": "S1",
+      "text": "Discussion point number 252 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c2-s53",
+      "startSec": 1518,
+      "endSec": 1524,
+      "speaker": "S2",
+      "text": "Discussion point number 253 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c2-s54",
+      "startSec": 1524,
+      "endSec": 1530,
+      "speaker": "S3",
+      "text": "Discussion point number 254 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c2-s55",
+      "startSec": 1530,
+      "endSec": 1536,
+      "speaker": "S1",
+      "text": "Discussion point number 255 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c2-s56",
+      "startSec": 1536,
+      "endSec": 1542,
+      "speaker": "S2",
+      "text": "Discussion point number 256 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c2-s57",
+      "startSec": 1542,
+      "endSec": 1548,
+      "speaker": "S3",
+      "text": "Discussion point number 257 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c2-s58",
+      "startSec": 1548,
+      "endSec": 1554,
+      "speaker": "S1",
+      "text": "Discussion point number 258 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c2-s59",
+      "startSec": 1554,
+      "endSec": 1560,
+      "speaker": "S2",
+      "text": "Discussion point number 259 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c2-s60",
+      "startSec": 1560,
+      "endSec": 1566,
+      "speaker": "S3",
+      "text": "We decided to adopt plan 5."
+    },
+    {
+      "id": "c2-s61",
+      "startSec": 1566,
+      "endSec": 1572,
+      "speaker": "S1",
+      "text": "Discussion point number 261 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c2-s62",
+      "startSec": 1572,
+      "endSec": 1578,
+      "speaker": "S2",
+      "text": "Discussion point number 262 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c2-s63",
+      "startSec": 1578,
+      "endSec": 1584,
+      "speaker": "S3",
+      "text": "Discussion point number 263 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c2-s64",
+      "startSec": 1584,
+      "endSec": 1590,
+      "speaker": "S1",
+      "text": "Discussion point number 264 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c2-s65",
+      "startSec": 1590,
+      "endSec": 1596,
+      "speaker": "S2",
+      "text": "Discussion point number 265 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c2-s66",
+      "startSec": 1596,
+      "endSec": 1602,
+      "speaker": "S3",
+      "text": "Discussion point number 266 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c2-s67",
+      "startSec": 1602,
+      "endSec": 1608,
+      "speaker": "S1",
+      "text": "Discussion point number 267 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c2-s68",
+      "startSec": 1608,
+      "endSec": 1614,
+      "speaker": "S2",
+      "text": "Discussion point number 268 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c2-s69",
+      "startSec": 1614,
+      "endSec": 1620,
+      "speaker": "S3",
+      "text": "Discussion point number 269 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c2-s70",
+      "startSec": 1620,
+      "endSec": 1626,
+      "speaker": "S1",
+      "text": "Ravi will prepare report 5 by Friday."
+    },
+    {
+      "id": "c2-s71",
+      "startSec": 1626,
+      "endSec": 1632,
+      "speaker": "S2",
+      "text": "Discussion point number 271 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c2-s72",
+      "startSec": 1632,
+      "endSec": 1638,
+      "speaker": "S3",
+      "text": "Discussion point number 272 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c2-s73",
+      "startSec": 1638,
+      "endSec": 1644,
+      "speaker": "S1",
+      "text": "Discussion point number 273 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c2-s74",
+      "startSec": 1644,
+      "endSec": 1650,
+      "speaker": "S2",
+      "text": "Discussion point number 274 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c2-s75",
+      "startSec": 1650,
+      "endSec": 1656,
+      "speaker": "S3",
+      "text": "Discussion point number 275 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c2-s76",
+      "startSec": 1656,
+      "endSec": 1662,
+      "speaker": "S1",
+      "text": "Discussion point number 276 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c2-s77",
+      "startSec": 1662,
+      "endSec": 1668,
+      "speaker": "S2",
+      "text": "Discussion point number 277 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c2-s78",
+      "startSec": 1668,
+      "endSec": 1674,
+      "speaker": "S3",
+      "text": "Discussion point number 278 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c2-s79",
+      "startSec": 1674,
+      "endSec": 1680,
+      "speaker": "S1",
+      "text": "Discussion point number 279 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c2-s80",
+      "startSec": 1680,
+      "endSec": 1686,
+      "speaker": "S2",
+      "text": "Discussion point number 280 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c2-s81",
+      "startSec": 1686,
+      "endSec": 1692,
+      "speaker": "S3",
+      "text": "Discussion point number 281 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c2-s82",
+      "startSec": 1692,
+      "endSec": 1698,
+      "speaker": "S1",
+      "text": "Discussion point number 282 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c2-s83",
+      "startSec": 1698,
+      "endSec": 1704,
+      "speaker": "S2",
+      "text": "Discussion point number 283 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c2-s84",
+      "startSec": 1704,
+      "endSec": 1710,
+      "speaker": "S3",
+      "text": "Discussion point number 284 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c2-s85",
+      "startSec": 1710,
+      "endSec": 1716,
+      "speaker": "S1",
+      "text": "Discussion point number 285 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c2-s86",
+      "startSec": 1716,
+      "endSec": 1722,
+      "speaker": "S2",
+      "text": "Discussion point number 286 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c2-s87",
+      "startSec": 1722,
+      "endSec": 1728,
+      "speaker": "S3",
+      "text": "Discussion point number 287 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c2-s88",
+      "startSec": 1728,
+      "endSec": 1734,
+      "speaker": "S1",
+      "text": "Discussion point number 288 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c2-s89",
+      "startSec": 1734,
+      "endSec": 1740,
+      "speaker": "S2",
+      "text": "Discussion point number 289 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c2-s90",
+      "startSec": 1740,
+      "endSec": 1746,
+      "speaker": "S3",
+      "text": "Discussion point number 290 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c2-s91",
+      "startSec": 1746,
+      "endSec": 1752,
+      "speaker": "S1",
+      "text": "Discussion point number 291 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c2-s92",
+      "startSec": 1752,
+      "endSec": 1758,
+      "speaker": "S2",
+      "text": "Discussion point number 292 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c2-s93",
+      "startSec": 1758,
+      "endSec": 1764,
+      "speaker": "S3",
+      "text": "Discussion point number 293 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c2-s94",
+      "startSec": 1764,
+      "endSec": 1770,
+      "speaker": "S1",
+      "text": "Discussion point number 294 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c2-s95",
+      "startSec": 1770,
+      "endSec": 1776,
+      "speaker": "S2",
+      "text": "Discussion point number 295 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c2-s96",
+      "startSec": 1776,
+      "endSec": 1782,
+      "speaker": "S3",
+      "text": "Discussion point number 296 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c2-s97",
+      "startSec": 1782,
+      "endSec": 1788,
+      "speaker": "S1",
+      "text": "Discussion point number 297 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c2-s98",
+      "startSec": 1788,
+      "endSec": 1794,
+      "speaker": "S2",
+      "text": "Discussion point number 298 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c2-s99",
+      "startSec": 1794,
+      "endSec": 1800,
+      "speaker": "S3",
+      "text": "Discussion point number 299 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c3-s0",
+      "startSec": 1800,
+      "endSec": 1806,
+      "speaker": "S1",
+      "text": "Discussion point number 300 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c3-s1",
+      "startSec": 1806,
+      "endSec": 1812,
+      "speaker": "S2",
+      "text": "Discussion point number 301 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c3-s2",
+      "startSec": 1812,
+      "endSec": 1818,
+      "speaker": "S3",
+      "text": "Discussion point number 302 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c3-s3",
+      "startSec": 1818,
+      "endSec": 1824,
+      "speaker": "S1",
+      "text": "Discussion point number 303 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c3-s4",
+      "startSec": 1824,
+      "endSec": 1830,
+      "speaker": "S2",
+      "text": "Discussion point number 304 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c3-s5",
+      "startSec": 1830,
+      "endSec": 1836,
+      "speaker": "S3",
+      "text": "Discussion point number 305 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c3-s6",
+      "startSec": 1836,
+      "endSec": 1842,
+      "speaker": "S1",
+      "text": "Discussion point number 306 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c3-s7",
+      "startSec": 1842,
+      "endSec": 1848,
+      "speaker": "S2",
+      "text": "Discussion point number 307 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c3-s8",
+      "startSec": 1848,
+      "endSec": 1854,
+      "speaker": "S3",
+      "text": "Discussion point number 308 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c3-s9",
+      "startSec": 1854,
+      "endSec": 1860,
+      "speaker": "S1",
+      "text": "Discussion point number 309 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c3-s10",
+      "startSec": 1860,
+      "endSec": 1866,
+      "speaker": "S2",
+      "text": "We decided to adopt plan 6."
+    },
+    {
+      "id": "c3-s11",
+      "startSec": 1866,
+      "endSec": 1872,
+      "speaker": "S3",
+      "text": "Discussion point number 311 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c3-s12",
+      "startSec": 1872,
+      "endSec": 1878,
+      "speaker": "S1",
+      "text": "Discussion point number 312 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c3-s13",
+      "startSec": 1878,
+      "endSec": 1884,
+      "speaker": "S2",
+      "text": "Discussion point number 313 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c3-s14",
+      "startSec": 1884,
+      "endSec": 1890,
+      "speaker": "S3",
+      "text": "Discussion point number 314 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c3-s15",
+      "startSec": 1890,
+      "endSec": 1896,
+      "speaker": "S1",
+      "text": "Discussion point number 315 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c3-s16",
+      "startSec": 1896,
+      "endSec": 1902,
+      "speaker": "S2",
+      "text": "Discussion point number 316 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c3-s17",
+      "startSec": 1902,
+      "endSec": 1908,
+      "speaker": "S3",
+      "text": "Discussion point number 317 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c3-s18",
+      "startSec": 1908,
+      "endSec": 1914,
+      "speaker": "S1",
+      "text": "Discussion point number 318 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c3-s19",
+      "startSec": 1914,
+      "endSec": 1920,
+      "speaker": "S2",
+      "text": "Discussion point number 319 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c3-s20",
+      "startSec": 1920,
+      "endSec": 1926,
+      "speaker": "S3",
+      "text": "Meera will prepare report 6 by Friday."
+    },
+    {
+      "id": "c3-s21",
+      "startSec": 1926,
+      "endSec": 1932,
+      "speaker": "S1",
+      "text": "Discussion point number 321 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c3-s22",
+      "startSec": 1932,
+      "endSec": 1938,
+      "speaker": "S2",
+      "text": "Discussion point number 322 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c3-s23",
+      "startSec": 1938,
+      "endSec": 1944,
+      "speaker": "S3",
+      "text": "Discussion point number 323 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c3-s24",
+      "startSec": 1944,
+      "endSec": 1950,
+      "speaker": "S1",
+      "text": "Discussion point number 324 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c3-s25",
+      "startSec": 1950,
+      "endSec": 1956,
+      "speaker": "S2",
+      "text": "Discussion point number 325 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c3-s26",
+      "startSec": 1956,
+      "endSec": 1962,
+      "speaker": "S3",
+      "text": "Discussion point number 326 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c3-s27",
+      "startSec": 1962,
+      "endSec": 1968,
+      "speaker": "S1",
+      "text": "Discussion point number 327 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c3-s28",
+      "startSec": 1968,
+      "endSec": 1974,
+      "speaker": "S2",
+      "text": "Discussion point number 328 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c3-s29",
+      "startSec": 1974,
+      "endSec": 1980,
+      "speaker": "S3",
+      "text": "Discussion point number 329 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c3-s30",
+      "startSec": 1980,
+      "endSec": 1986,
+      "speaker": "S1",
+      "text": "Discussion point number 330 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c3-s31",
+      "startSec": 1986,
+      "endSec": 1992,
+      "speaker": "S2",
+      "text": "Discussion point number 331 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c3-s32",
+      "startSec": 1992,
+      "endSec": 1998,
+      "speaker": "S3",
+      "text": "Discussion point number 332 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c3-s33",
+      "startSec": 1998,
+      "endSec": 2004,
+      "speaker": "S1",
+      "text": "Discussion point number 333 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c3-s34",
+      "startSec": 2004,
+      "endSec": 2010,
+      "speaker": "S2",
+      "text": "Discussion point number 334 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c3-s35",
+      "startSec": 2010,
+      "endSec": 2016,
+      "speaker": "S3",
+      "text": "Discussion point number 335 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c3-s36",
+      "startSec": 2016,
+      "endSec": 2022,
+      "speaker": "S1",
+      "text": "Discussion point number 336 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c3-s37",
+      "startSec": 2022,
+      "endSec": 2028,
+      "speaker": "S2",
+      "text": "Discussion point number 337 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c3-s38",
+      "startSec": 2028,
+      "endSec": 2034,
+      "speaker": "S3",
+      "text": "Discussion point number 338 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c3-s39",
+      "startSec": 2034,
+      "endSec": 2040,
+      "speaker": "S1",
+      "text": "Discussion point number 339 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c3-s40",
+      "startSec": 2040,
+      "endSec": 2046,
+      "speaker": "S2",
+      "text": "Discussion point number 340 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c3-s41",
+      "startSec": 2046,
+      "endSec": 2052,
+      "speaker": "S3",
+      "text": "Discussion point number 341 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c3-s42",
+      "startSec": 2052,
+      "endSec": 2058,
+      "speaker": "S1",
+      "text": "Discussion point number 342 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c3-s43",
+      "startSec": 2058,
+      "endSec": 2064,
+      "speaker": "S2",
+      "text": "Discussion point number 343 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c3-s44",
+      "startSec": 2064,
+      "endSec": 2070,
+      "speaker": "S3",
+      "text": "Discussion point number 344 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c3-s45",
+      "startSec": 2070,
+      "endSec": 2076,
+      "speaker": "S1",
+      "text": "Discussion point number 345 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c3-s46",
+      "startSec": 2076,
+      "endSec": 2082,
+      "speaker": "S2",
+      "text": "Discussion point number 346 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c3-s47",
+      "startSec": 2082,
+      "endSec": 2088,
+      "speaker": "S3",
+      "text": "Discussion point number 347 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c3-s48",
+      "startSec": 2088,
+      "endSec": 2094,
+      "speaker": "S1",
+      "text": "Discussion point number 348 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c3-s49",
+      "startSec": 2094,
+      "endSec": 2100,
+      "speaker": "S2",
+      "text": "Discussion point number 349 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c3-s50",
+      "startSec": 2100,
+      "endSec": 2106,
+      "speaker": "S3",
+      "text": "Discussion point number 350 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c3-s51",
+      "startSec": 2106,
+      "endSec": 2112,
+      "speaker": "S1",
+      "text": "Discussion point number 351 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c3-s52",
+      "startSec": 2112,
+      "endSec": 2118,
+      "speaker": "S2",
+      "text": "Discussion point number 352 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c3-s53",
+      "startSec": 2118,
+      "endSec": 2124,
+      "speaker": "S3",
+      "text": "Discussion point number 353 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c3-s54",
+      "startSec": 2124,
+      "endSec": 2130,
+      "speaker": "S1",
+      "text": "Discussion point number 354 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c3-s55",
+      "startSec": 2130,
+      "endSec": 2136,
+      "speaker": "S2",
+      "text": "Discussion point number 355 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c3-s56",
+      "startSec": 2136,
+      "endSec": 2142,
+      "speaker": "S3",
+      "text": "Discussion point number 356 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c3-s57",
+      "startSec": 2142,
+      "endSec": 2148,
+      "speaker": "S1",
+      "text": "Discussion point number 357 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c3-s58",
+      "startSec": 2148,
+      "endSec": 2154,
+      "speaker": "S2",
+      "text": "Discussion point number 358 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c3-s59",
+      "startSec": 2154,
+      "endSec": 2160,
+      "speaker": "S3",
+      "text": "Discussion point number 359 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c3-s60",
+      "startSec": 2160,
+      "endSec": 2166,
+      "speaker": "S1",
+      "text": "We decided to adopt plan 7."
+    },
+    {
+      "id": "c3-s61",
+      "startSec": 2166,
+      "endSec": 2172,
+      "speaker": "S2",
+      "text": "Discussion point number 361 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c3-s62",
+      "startSec": 2172,
+      "endSec": 2178,
+      "speaker": "S3",
+      "text": "Discussion point number 362 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c3-s63",
+      "startSec": 2178,
+      "endSec": 2184,
+      "speaker": "S1",
+      "text": "Discussion point number 363 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c3-s64",
+      "startSec": 2184,
+      "endSec": 2190,
+      "speaker": "S2",
+      "text": "Discussion point number 364 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c3-s65",
+      "startSec": 2190,
+      "endSec": 2196,
+      "speaker": "S3",
+      "text": "Discussion point number 365 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c3-s66",
+      "startSec": 2196,
+      "endSec": 2202,
+      "speaker": "S1",
+      "text": "Discussion point number 366 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c3-s67",
+      "startSec": 2202,
+      "endSec": 2208,
+      "speaker": "S2",
+      "text": "Discussion point number 367 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c3-s68",
+      "startSec": 2208,
+      "endSec": 2214,
+      "speaker": "S3",
+      "text": "Discussion point number 368 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c3-s69",
+      "startSec": 2214,
+      "endSec": 2220,
+      "speaker": "S1",
+      "text": "Discussion point number 369 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c3-s70",
+      "startSec": 2220,
+      "endSec": 2226,
+      "speaker": "S2",
+      "text": "Dev will prepare report 7 by Friday."
+    },
+    {
+      "id": "c3-s71",
+      "startSec": 2226,
+      "endSec": 2232,
+      "speaker": "S3",
+      "text": "Discussion point number 371 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c3-s72",
+      "startSec": 2232,
+      "endSec": 2238,
+      "speaker": "S1",
+      "text": "Discussion point number 372 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c3-s73",
+      "startSec": 2238,
+      "endSec": 2244,
+      "speaker": "S2",
+      "text": "Discussion point number 373 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c3-s74",
+      "startSec": 2244,
+      "endSec": 2250,
+      "speaker": "S3",
+      "text": "Discussion point number 374 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c3-s75",
+      "startSec": 2250,
+      "endSec": 2256,
+      "speaker": "S1",
+      "text": "Discussion point number 375 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c3-s76",
+      "startSec": 2256,
+      "endSec": 2262,
+      "speaker": "S2",
+      "text": "Discussion point number 376 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c3-s77",
+      "startSec": 2262,
+      "endSec": 2268,
+      "speaker": "S3",
+      "text": "Discussion point number 377 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c3-s78",
+      "startSec": 2268,
+      "endSec": 2274,
+      "speaker": "S1",
+      "text": "Discussion point number 378 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c3-s79",
+      "startSec": 2274,
+      "endSec": 2280,
+      "speaker": "S2",
+      "text": "Discussion point number 379 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c3-s80",
+      "startSec": 2280,
+      "endSec": 2286,
+      "speaker": "S3",
+      "text": "Discussion point number 380 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c3-s81",
+      "startSec": 2286,
+      "endSec": 2292,
+      "speaker": "S1",
+      "text": "Discussion point number 381 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c3-s82",
+      "startSec": 2292,
+      "endSec": 2298,
+      "speaker": "S2",
+      "text": "Discussion point number 382 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c3-s83",
+      "startSec": 2298,
+      "endSec": 2304,
+      "speaker": "S3",
+      "text": "Discussion point number 383 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c3-s84",
+      "startSec": 2304,
+      "endSec": 2310,
+      "speaker": "S1",
+      "text": "Discussion point number 384 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c3-s85",
+      "startSec": 2310,
+      "endSec": 2316,
+      "speaker": "S2",
+      "text": "Discussion point number 385 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c3-s86",
+      "startSec": 2316,
+      "endSec": 2322,
+      "speaker": "S3",
+      "text": "Discussion point number 386 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c3-s87",
+      "startSec": 2322,
+      "endSec": 2328,
+      "speaker": "S1",
+      "text": "Discussion point number 387 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c3-s88",
+      "startSec": 2328,
+      "endSec": 2334,
+      "speaker": "S2",
+      "text": "Discussion point number 388 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c3-s89",
+      "startSec": 2334,
+      "endSec": 2340,
+      "speaker": "S3",
+      "text": "Discussion point number 389 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c3-s90",
+      "startSec": 2340,
+      "endSec": 2346,
+      "speaker": "S1",
+      "text": "Discussion point number 390 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c3-s91",
+      "startSec": 2346,
+      "endSec": 2352,
+      "speaker": "S2",
+      "text": "Discussion point number 391 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c3-s92",
+      "startSec": 2352,
+      "endSec": 2358,
+      "speaker": "S3",
+      "text": "Discussion point number 392 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c3-s93",
+      "startSec": 2358,
+      "endSec": 2364,
+      "speaker": "S1",
+      "text": "Discussion point number 393 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c3-s94",
+      "startSec": 2364,
+      "endSec": 2370,
+      "speaker": "S2",
+      "text": "Discussion point number 394 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c3-s95",
+      "startSec": 2370,
+      "endSec": 2376,
+      "speaker": "S3",
+      "text": "Discussion point number 395 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c3-s96",
+      "startSec": 2376,
+      "endSec": 2382,
+      "speaker": "S1",
+      "text": "Discussion point number 396 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c3-s97",
+      "startSec": 2382,
+      "endSec": 2388,
+      "speaker": "S2",
+      "text": "Discussion point number 397 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c3-s98",
+      "startSec": 2388,
+      "endSec": 2394,
+      "speaker": "S3",
+      "text": "Discussion point number 398 about the roadmap and hiring and budgets for next quarter."
+    },
+    {
+      "id": "c3-s99",
+      "startSec": 2394,
+      "endSec": 2400,
+      "speaker": "S1",
+      "text": "Asha will prepare report 0 by Friday."
+    }
+  ],
+  "golden": {
+    "decisions": [
+      "adopt plan 0",
+      "adopt plan 1",
+      "adopt plan 2",
+      "adopt plan 3",
+      "adopt plan 4",
+      "adopt plan 5",
+      "adopt plan 6",
+      "adopt plan 7"
+    ],
+    "draftTaskTitles": [
+      "prepare report 0",
+      "prepare report 1",
+      "prepare report 2",
+      "prepare report 3",
+      "prepare report 4",
+      "prepare report 5",
+      "prepare report 6",
+      "prepare report 7"
+    ],
+    "assigneeHints": ["Asha", "Ravi", "Meera", "Dev", "Asha", "Ravi", "Meera", "Dev"],
+    "flaggedTitles": [],
+    "minWindows": 3
+  }
+}
