@@ -19,4 +19,6 @@ export type MediaProcessingResult = {
   formatName: string;
   normalized: { fileObjectId: string; sizeBytes: number };
   chunks: ChunkManifestEntry[];
+  /** Present when the waveform step succeeded (stored at processed/{recordingId}/waveform.json). */
+  waveform?: { bins: number; sizeBytes: number };
 };
