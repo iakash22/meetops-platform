@@ -14,21 +14,21 @@ Every method takes a `MeetingObjectRef` (`{ orgId, meetingId, kind, objectId, ex
 
 ### API (`StorageService`)
 
-| Method                                                                 | Purpose                                                                                         |
-| ---------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
-| `putObject(ref, body, spec)`                                           | Upload a `Buffer`, `Uint8Array`, `string` or `Readable`; returns `{ etag? }`                    |
-| `getObject(ref)`                                                       | Returns `{ body: Readable, info }`                                                              |
-| `headObject(ref)`                                                      | `StoredObjectInfo`, or `null` if missing                                                        |
-| `deleteObject(ref)`                                                    | Delete                                                                                          |
-| `getPresignedUploadPost(ref, spec, opts?)`                             | Preferred upload: single-use presigned POST pinning exact size, Content-Type, sha256 and a one-time `uploadToken` |
-| `getPresignedUploadUrl(ref, spec, opts?)`                              | Single-use presigned PUT signing Content-Type, Content-Length, sha256, `uploadToken` and `If-None-Match: *` |
-| `confirmUpload(ref, uploadToken)`                                      | Consume the one-time token, then HEAD and check token metadata, size and sha256 (deletes a mismatch) |
-| `getPresignedDownloadUrl(ref, opts?)`                                  | Presigned GET                                                                                   |
-| `createMultipartUpload(ref, spec)`                                     | `spec` adds `partSizeBytes`; returns `{ uploadId, partCount, partSizeBytes, uploadToken }`      |
-| `getPresignedPartUrl(ref, uploadId, partNumber, partSizeBytes, partChecksumSha256, opts?)` | Presigned part PUT with a signed per-part sha256                              |
-| `listParts(ref, uploadId)`                                             | Returns `{ partNumber, etag, checksumSha256? }[]`                                               |
-| `completeMultipartUpload(ref, uploadId, parts, uploadToken)`           | Consumes the token, checks per-part sha256 against ListParts, completes; returns `{ etag? }`    |
-| `abortMultipartUpload(ref, uploadId)`                                  | Abort                                                                                           |
+| Method                                                                                     | Purpose                                                                                                           |
+| ------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------- |
+| `putObject(ref, body, spec)`                                                               | Upload a `Buffer`, `Uint8Array`, `string` or `Readable`; returns `{ etag? }`                                      |
+| `getObject(ref)`                                                                           | Returns `{ body: Readable, info }`                                                                                |
+| `headObject(ref)`                                                                          | `StoredObjectInfo`, or `null` if missing                                                                          |
+| `deleteObject(ref)`                                                                        | Delete                                                                                                            |
+| `getPresignedUploadPost(ref, spec, opts?)`                                                 | Preferred upload: single-use presigned POST pinning exact size, Content-Type, sha256 and a one-time `uploadToken` |
+| `getPresignedUploadUrl(ref, spec, opts?)`                                                  | Single-use presigned PUT signing Content-Type, Content-Length, sha256, `uploadToken` and `If-None-Match: *`       |
+| `confirmUpload(ref, uploadToken)`                                                          | Consume the one-time token, then HEAD and check token metadata, size and sha256 (deletes a mismatch)              |
+| `getPresignedDownloadUrl(ref, opts?)`                                                      | Presigned GET                                                                                                     |
+| `createMultipartUpload(ref, spec)`                                                         | `spec` adds `partSizeBytes`; returns `{ uploadId, partCount, partSizeBytes, uploadToken }`                        |
+| `getPresignedPartUrl(ref, uploadId, partNumber, partSizeBytes, partChecksumSha256, opts?)` | Presigned part PUT with a signed per-part sha256                                                                  |
+| `listParts(ref, uploadId)`                                                                 | Returns `{ partNumber, etag, checksumSha256? }[]`                                                                 |
+| `completeMultipartUpload(ref, uploadId, parts, uploadToken)`                               | Consumes the token, checks per-part sha256 against ListParts, completes; returns `{ etag? }`                      |
+| `abortMultipartUpload(ref, uploadId)`                                                      | Abort                                                                                                             |
 
 `spec` (`UploadSpec`): `mimeType` and `sizeBytes` (both required), plus `checksumSha256` (standard base64 sha256; REQUIRED by every presigned upload method) and optional `metadata`. `opts` (`PresignOptions`): `ttlSeconds`, capped at 600. `StoredObjectInfo` has `sizeBytes` and optional `mimeType`, `etag`, `checksumSha256`, `updatedAt` and `metadata`. Presign methods return the legacy `PresignedUrl` type; map it with `toPresignedUrlDto`, `toSignedPutUpload` or `toPublicFileObject` (`mappers.ts`).
 
@@ -75,17 +75,17 @@ The PR #10 variable `STORAGE_PRESIGN_EXPIRES_SECONDS` is no longer read.
 
 Stored-object metadata crossing package boundaries uses the `FileObject` contract from `@meetops/contracts`, added in **open PR #17** (`feat/core-contracts`, read at `8a189c87e28ab7a81b14d8b94b0ca16990221561`):
 
-| Field            | Type                                                                |
-| ---------------- | ------------------------------------------------------------------- |
-| `id`             | `Id`                                                                |
-| `organizationId` | `Id`                                                                |
-| `provider`       | string, a registry key (e.g. `s3`, `minio`, `local`)                |
-| `bucket`         | string                                                              |
+| Field            | Type                                                                                   |
+| ---------------- | -------------------------------------------------------------------------------------- |
+| `id`             | `Id`                                                                                   |
+| `organizationId` | `Id`                                                                                   |
+| `provider`       | string, a registry key (e.g. `s3`, `minio`, `local`)                                   |
+| `bucket`         | string                                                                                 |
 | `key`            | string; use the `organizations/{organizationId}/meetings/{meetingId}/...` scheme above |
-| `mimeType`       | string                                                              |
-| `sizeBytes`      | integer >= 0                                                        |
-| `checksumSha256` | optional string                                                     |
-| `createdAt`      | `IsoDateTime`                                                       |
+| `mimeType`       | string                                                                                 |
+| `sizeBytes`      | integer >= 0                                                                           |
+| `checksumSha256` | optional string                                                                        |
+| `createdAt`      | `IsoDateTime`                                                                          |
 
 `Recording` (same PR) embeds a `FileObject` as `file`. `S3StorageService` returns `StoredObjectInfo` and the legacy `PresignedUrl` (from `@meetops/contracts/legacy`, deprecated in contracts 0.3.0); only `describeObject` returns a `FileObject`.
 
