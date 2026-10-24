@@ -58,9 +58,13 @@ E2E is **not** part of `pnpm test`; run it explicitly (it needs browsers).
 
 ## Docker skip behaviour
 
-`support/env.ts#isDockerAvailable()` runs `docker info`. If it fails (no CLI or no
-daemon) the integration suites use `describe.skipIf(...)`, print a warning, and are
-reported as **skipped**, never failed. CI runners with Docker run them for real.
+`support/env.ts#isDockerAvailable()` runs `docker info`.
+
+- **Locally:** if it fails (no CLI or no daemon), the integration suites use `describe.skipIf(...)` and are reported as **skipped**.
+- **In CI (`CI=true`) or with `QA_REQUIRE_DOCKER=1`:** a missing daemon makes every integration file **fail**, so CI can never go green by skipping.
+- **Opt-out:** `QA_ALLOW_DOCKER_SKIP=1` restores the skip, even in CI.
+- **`QA_SKIP_DOCKER=1`:** forces "unavailable", so it still fails in CI unless the opt-out is set.
+- **Turbo:** `CI` is in `tests/turbo.json` `passThroughEnv` so the gate sees it.
 
 **Docker endpoint: local unix socket only.** Testcontainers must reach the engine through the local unix socket (`/var/run/docker.sock`; on the shared box, run the suites through `sudo -E env PATH="$PATH" HOME=<scratch> ./node_modules/.bin/vitest run --project integration`). Never set `DOCKER_HOST` to a `tcp://` address: a TCP engine endpoint is usually unauthenticated, and anything that can reach it controls the host. `DOCKER_HOST` is deliberately not in `tests/turbo.json` `passThroughEnv`.
 
