@@ -61,7 +61,8 @@ describe('ExtensionPairRequest', () => {
   });
   it('rejects HTML-significant and bidi/format characters in deviceLabel', () => {
     const bads = ['<img src=x onerror=alert(1)>', 'a<b', 'a>b', 'a"b', "a'b", 'a&b', "Akash's laptop",
-      'a\u202Eb', 'a\u200Eb', 'a\u200Fb', 'a\u202Ab', 'a\u2066b', 'a\u2069b'];
+      'a\u202Eb', 'a\u200Eb', 'a\u200Fb', 'a\u202Ab', 'a\u2066b', 'a\u2069b',
+      'a\u200Bb', 'a\u200Cb', 'a\u200Db', 'a\u2060b', 'a\uFEFFb', '\uFEFF', 'a\u061Cb'];
     for (const bad of bads) {
       expect(Value.Check(ExtensionPairRequest, { ...pair, deviceLabel: bad })).toBe(false);
     }

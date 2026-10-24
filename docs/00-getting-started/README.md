@@ -2,6 +2,7 @@
 
 - [Prerequisites](prerequisites.md)
 - [Local setup](local-setup.md) (Windows and Linux)
+- [Windows setup](windows-setup.md): WSL 2, Docker Desktop, Node 24 caveat, DB roles
 - [Environment variables](environment-variables.md)
 - [Testing](testing.md)
 - [Troubleshooting](troubleshooting.md)
