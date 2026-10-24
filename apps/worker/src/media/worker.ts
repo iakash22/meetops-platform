@@ -1,7 +1,7 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { Queue, Worker, type Job } from 'bullmq';
 import { Redis } from 'ioredis';
-import { chunkAudio, normalizeToWav, probeMedia } from '@meetops/media-core';
+import { chunkAudio, computeWaveform, normalizeToWav, probeMedia } from '@meetops/media-core';
 import { createStorageServiceFromEnv, refOrganizationId, StorageAccessError, type AuthorizeTarget } from '@meetops/storage';
 import { QUEUE_NAMES, type SttProviderId } from '@meetops/contracts';
 import { logger as baseLogger } from '@meetops/logger';
@@ -64,8 +64,10 @@ export function startMediaWorker(cfg: MediaWorkerConfig = loadMediaWorkerConfig(
   const conn = () => new Redis(cfg.redisUrl, { maxRetriesPerRequest: null });
   const emitterRedis = conn();
   const transcriptionQueue = new Queue<TranscriptionJobPayload>(QUEUE_NAMES.transcription, { connection: conn() });
+  const storage = createStorageServiceFromEnv(process.env, { authorize: workerAuthorize });
   const deps: MediaProcessorDeps = {
-    storage: createStorageServiceFromEnv(process.env, { authorize: workerAuthorize }),
+    storage,
+    waveform: { compute: (p, o) => computeWaveform(p, o), store: (ref, w) => storage.putDerivedJson(ref, w) },
     media: { probeMedia: (p, o) => probeMedia(p, o), normalizeToWav: (i, o, x) => normalizeToWav(i, o, x), chunkAudio: (i, o, x) => chunkAudio(i, o, x) },
     limits: { maxSourceBytes: cfg.maxSourceBytes, maxDurationSeconds: cfg.maxDurationSeconds },
     transcriptionQueue: { add: (name, data, opts) => transcriptionQueue.add(name, data, opts) },

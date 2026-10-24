@@ -27,6 +27,27 @@ export function assertSha256Base64(v: unknown, name = 'checksumSha256'): string 
   return v;
 }
 
+const SHA256_HEX = /^[0-9a-f]{64}$/;
+
+/** True for lowercase 64-char hex: the DB/contracts form of FileObject.checksumSha256. */
+export function isSha256Hex(v: unknown): v is string {
+  return typeof v === 'string' && SHA256_HEX.test(v);
+}
+
+/** S3 base64 ChecksumSHA256 -> lowercase hex. Rejects malformed or wrong-length values (incl. multipart composites). */
+export function sha256Base64ToHex(v: unknown, name = 'checksumSha256'): string {
+  if (!isSha256Base64(v)) throw new StorageValidationError(`Invalid ${name}`);
+  const hex = Buffer.from(v, 'base64').toString('hex');
+  if (!isSha256Hex(hex)) throw new StorageValidationError(`Invalid ${name}`);
+  return hex;
+}
+
+/** Lowercase hex -> S3 base64 ChecksumSHA256. Rejects anything but 64 lowercase hex chars. */
+export function sha256HexToBase64(v: unknown, name = 'sha256'): string {
+  if (!isSha256Hex(v)) throw new StorageValidationError(`Invalid ${name}`);
+  return Buffer.from(v, 'hex').toString('base64');
+}
+
 /** Validate a declared upload. mimeType and sizeBytes are mandatory. */
 export function validateUploadSpec(spec: UploadSpec | undefined, limits: StorageLimits): void {
   if (!spec || typeof spec.mimeType !== 'string' || !spec.mimeType) throw new StorageValidationError('mimeType is required');
