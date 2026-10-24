@@ -4,11 +4,14 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it, vi } from 'vitest';
 import { Prisma } from '@prisma/client';
-import { withOrgContext, withUserContext } from '../src/index.js';
+import { withOrgContext, withOrganizationContext, withUserContext } from '../src/index.js';
 import {
   TENANT_TABLES,
   ORG_CONTEXT_SETTING,
+  ORGANIZATION_CONTEXT_SETTING,
+  LEGACY_ORG_CONTEXT_SETTING,
   runWithOrgContext,
+  runWithOrganizationContext,
   type TransactionCapableClient,
 } from '../src/tenant.js';
 
@@ -54,13 +57,19 @@ const laterTenantSql = readFileSync(
 const rlsSql =
   readFileSync(resolve(migrationsDir, '20261021110000_tenant_rls_roles/migration.sql'), 'utf8') +
   laterTenantSql;
-/** Latest (effective) tenant policy definitions. */
-const policySql =
+/** Pre-ADR-010 tenant policy definitions (still the source of membership_self_read). */
+const legacyPolicySql =
   readFileSync(
     resolve(migrationsDir, '20261021130000_rls_fail_closed_empty_setting/migration.sql'),
     'utf8',
   ) + laterTenantSql;
-const ORG_EXPR = "NULLIF(current_setting('app.current_org_id', true), '')::uuid";
+/** Latest (effective) tenant policy definitions: ADR-010 organization context setting. */
+const policySql = readFileSync(
+  resolve(migrationsDir, '20261024000000_organization_context_setting/migration.sql'),
+  'utf8',
+);
+const ORG_EXPR =
+  "COALESCE(NULLIF(current_setting('app.current_organization_id', true), ''), NULLIF(current_setting('app.current_org_id', true), ''))::uuid";
 
 /** Parse models from schema: table name + body. */
 const models = [...schema.matchAll(/model (\w+) \{([\s\S]*?)\n\}/g)].map((m) => {
@@ -132,6 +141,15 @@ describe('RLS migration', () => {
     expect(rlsSql).toContain(`ALTER TABLE "${t}" ENABLE ROW LEVEL SECURITY;`);
     expect(rlsSql).toContain(`ALTER TABLE "${t}" FORCE ROW LEVEL SECURITY;`);
     expect(rlsSql).toContain(`CREATE POLICY tenant_isolation ON "${t}"`);
+    if (t === 'audit_events') {
+      expect(policySql).toContain(
+        `CREATE POLICY audit_read_own_org ON "audit_events" FOR SELECT\n  USING (org_id = ${ORG_EXPR});`,
+      );
+      expect(policySql).toContain(
+        `CREATE POLICY audit_insert ON "audit_events" FOR INSERT\n  WITH CHECK (org_id = ${ORG_EXPR});`,
+      );
+      return;
+    }
     expect(policySql).toContain(
       `CREATE POLICY tenant_isolation ON "${t}"\n  USING (org_id = ${ORG_EXPR})\n  WITH CHECK (org_id = ${ORG_EXPR});`,
     );
@@ -200,9 +218,11 @@ describe('withOrgContext', () => {
     );
     expect(result).toBe(42);
     expect(order).toEqual(['set', 'fn']);
+    expect(m.calls.length).toBe(2);
     expect(m.raw.$transaction).toHaveBeenCalledTimes(1);
     expect(m.calls[0]?.sql).toContain('set_config(');
-    expect(m.calls[0]?.values).toEqual([ORG_CONTEXT_SETTING, ORG]);
+    expect(m.calls[0]?.values).toEqual([ORGANIZATION_CONTEXT_SETTING, ORG]);
+    expect(m.calls[1]?.values).toEqual([LEGACY_ORG_CONTEXT_SETTING, ORG]);
     expect(m.calls[0]?.sql).toMatch(/, true\)$/);
   });
 
@@ -210,9 +230,20 @@ describe('withOrgContext', () => {
     const m = mockClient();
     await runWithOrgContext(m.client, ORG, async () => null, { userId: USER });
     expect(m.calls.map((c) => c.values)).toEqual([
+      ['app.current_organization_id', ORG],
       ['app.current_org_id', ORG],
       ['app.current_user_id', USER],
     ]);
+  });
+
+  it('deprecated aliases delegate to the organization names (ADR-010)', async () => {
+    expect(runWithOrgContext).toBe(runWithOrganizationContext);
+    expect(ORG_CONTEXT_SETTING).toBe(ORGANIZATION_CONTEXT_SETTING);
+    expect(LEGACY_ORG_CONTEXT_SETTING).toBe('app.current_org_id');
+    const m = mockClient();
+    expect(await withOrganizationContext(ORG, async () => 7, { client: m.client })).toBe(7);
+    expect(await withOrgContext(ORG, async () => 8, { client: m.client })).toBe(8);
+    expect(m.raw.$transaction).toHaveBeenCalledTimes(2);
   });
 
   it('passes the transaction client to fn', async () => {
@@ -397,10 +428,18 @@ describe('storage objects and recordings', () => {
 });
 
 describe('storage key convention', () => {
-  it('seed uses org/{organizationId}/ prefix', () => {
+  it('seed uses organizations/{organizationId}/ prefix (ADR-010, 2026-10-24)', () => {
     const seed = readFileSync(resolve(pkgDir, 'prisma/seed.ts'), 'utf8');
-    expect(seed).toContain('`org/${org.id}/meetings/');
+    expect(seed).toContain('`organizations/${org.id}/meetings/');
+    expect(seed).not.toContain('`org/${');
     expect(seed).not.toContain('orgs/');
+  });
+
+  it('seed is multi-organization and uses withOrganizationContext naming (ADR-010)', () => {
+    const seed = readFileSync(resolve(pkgDir, 'prisma/seed.ts'), 'utf8');
+    expect((seed.match(/^\s+slug: '(\w+)',$/gm) ?? []).length).toBeGreaterThanOrEqual(2);
+    expect(seed).toContain('runWithOrganizationContext(prisma, org.id');
+    expect(seed).not.toMatch(/\bwithOrgContext\b|\brunWithOrgContext\b|\borgId\b/);
   });
 });
 
@@ -408,17 +447,27 @@ describe('XT-26..XT-28 static guarantees', () => {
   it('XT-26: policies use missing_ok current_setting so no context => NULL => 0 rows', () => {
     const policies = policySql.split(ORG_EXPR).length - 1;
     expect(policies).toBe(TENANT_TABLES.length * 2);
-    expect(policySql).not.toMatch(/current_setting\('app\.current_org_id'\)/);
+    expect(policySql).not.toMatch(/current_setting\('app\.current_(org|organization)_id'\)/);
+    expect(policySql).not.toMatch(/DROP (TABLE|COLUMN)|RENAME/i);
   });
 
   it('XT-27: every tenant policy has WITH CHECK', () => {
+    // audit_events uses audit_insert (FOR INSERT ... WITH CHECK) instead of tenant_isolation.
     const n = (policySql.match(/CREATE POLICY tenant_isolation[^;]*WITH CHECK/g) ?? []).length;
-    expect(n).toBe(TENANT_TABLES.length);
+    expect(n).toBe(TENANT_TABLES.length - 1);
+    expect(policySql).toMatch(
+      /CREATE POLICY audit_insert ON "audit_events" FOR INSERT\n {2}WITH CHECK/,
+    );
   });
 
   it('XT-28: org context is transaction-local (set_config is_local=true), never session SET', () => {
     const src = readFileSync(resolve(pkgDir, 'src/tenant.ts'), 'utf8');
-    expect(src).toMatch(/set_config\(\$\{ORG_CONTEXT_SETTING\}, \$\{organizationId\}, true\)/);
+    expect(src).toMatch(
+      /set_config\(\$\{ORGANIZATION_CONTEXT_SETTING\}, \$\{organizationId\}, true\)/,
+    );
+    expect(src).toMatch(
+      /set_config\(\$\{LEGACY_ORG_CONTEXT_SETTING\}, \$\{organizationId\}, true\)/,
+    );
     expect(src).not.toMatch(/\bSET\s+app\./i);
   });
 });
@@ -619,7 +668,7 @@ describe('withUserContext', () => {
   });
 
   it('membership self-read policy keys on app.current_user_id', () => {
-    expect(policySql).toContain(
+    expect(legacyPolicySql).toContain(
       `USING (user_id = NULLIF(current_setting('app.current_user_id', true), '')::uuid)`,
     );
   });
@@ -730,6 +779,7 @@ describe('ADR-004 addendum 2 (contracts 0.3.0)', () => {
       readFileSync(resolve(pkgDir, 'src/tenant.ts'), 'utf8') +
       readFileSync(resolve(pkgDir, 'src/index.ts'), 'utf8');
     expect(src).not.toMatch(/\borgId\b/);
+    expect(src).toContain("'app.current_organization_id'");
     expect(src).toContain("'app.current_org_id'");
   });
 
@@ -768,11 +818,17 @@ describe('DB-BUG-2: every setting-based policy is NULLIF-guarded', () => {
     const withSetting = [...latest].filter(([, body]) => body.includes('current_setting'));
     expect(withSetting.length).toBeGreaterThanOrEqual(TENANT_TABLES.length + 1);
     for (const [name, body] of withSetting) {
-      const raw = body.match(/current_setting\('app\.current_(org|user)_id', true\)/g) ?? [];
+      const raw =
+        body.match(/current_setting\('app\.current_(org|organization|user)_id', true\)/g) ?? [];
       const guarded =
-        body.match(/NULLIF\(current_setting\('app\.current_(org|user)_id', true\), ''\)::uuid/g) ??
-        [];
+        body.match(
+          /NULLIF\(current_setting\('app\.current_(org|organization|user)_id', true\), ''\)/g,
+        ) ?? [];
       expect(guarded.length, name).toBe(raw.length);
+      // Every comparison casts once to uuid: either NULLIF(...)::uuid or COALESCE(NULLIF(...), NULLIF(...))::uuid.
+      const casts = (body.match(/\)::uuid/g) ?? []).length;
+      const coalesced = (body.match(/COALESCE\(NULLIF/g) ?? []).length;
+      expect(casts, name).toBe(raw.length - coalesced);
     }
   });
 });

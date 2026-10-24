@@ -14,27 +14,28 @@ Every method takes a `MeetingObjectRef` (`{ orgId, meetingId, kind, objectId, ex
 
 ### API (`StorageService`)
 
-| Method                                                                 | Purpose                                                                                         |
-| ---------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
-| `putObject(ref, body, spec)`                                           | Upload a `Buffer`, `Uint8Array`, `string` or `Readable`; returns `{ etag? }`                    |
-| `getObject(ref)`                                                       | Returns `{ body: Readable, info }`                                                              |
-| `headObject(ref)`                                                      | `StoredObjectInfo`, or `null` if missing                                                        |
-| `deleteObject(ref)`                                                    | Delete                                                                                          |
-| `getPresignedUploadPost(ref, spec, opts?)`                             | Preferred upload: presigned POST with content-length-range and exact Content-Type               |
-| `getPresignedUploadUrl(ref, spec, opts?)`                              | Presigned PUT with signed Content-Type and Content-Length (for providers without POST, e.g. R2) |
-| `getPresignedDownloadUrl(ref, opts?)`                                  | Presigned GET                                                                                   |
-| `createMultipartUpload(ref, spec)`                                     | `spec` adds `partSizeBytes`; returns `{ uploadId, partCount, partSizeBytes }`                   |
-| `getPresignedPartUrl(ref, uploadId, partNumber, partSizeBytes, opts?)` | Presigned part PUT                                                                              |
-| `listParts(ref, uploadId)`                                             | Returns `{ partNumber, etag }[]`                                                                |
-| `completeMultipartUpload(ref, uploadId, parts)`                        | Complete; returns `{ etag? }`                                                                   |
-| `abortMultipartUpload(ref, uploadId)`                                  | Abort                                                                                           |
+| Method                                                                                     | Purpose                                                                                                           |
+| ------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------- |
+| `putObject(ref, body, spec)`                                                               | Upload a `Buffer`, `Uint8Array`, `string` or `Readable`; returns `{ etag? }`                                      |
+| `getObject(ref)`                                                                           | Returns `{ body: Readable, info }`                                                                                |
+| `headObject(ref)`                                                                          | `StoredObjectInfo`, or `null` if missing                                                                          |
+| `deleteObject(ref)`                                                                        | Delete                                                                                                            |
+| `getPresignedUploadPost(ref, spec, opts?)`                                                 | Preferred upload: single-use presigned POST pinning exact size, Content-Type, sha256 and a one-time `uploadToken` |
+| `getPresignedUploadUrl(ref, spec, opts?)`                                                  | Single-use presigned PUT signing Content-Type, Content-Length, sha256, `uploadToken` and `If-None-Match: *`       |
+| `confirmUpload(ref, uploadToken)`                                                          | Consume the one-time token, then HEAD and check token metadata, size and sha256 (deletes a mismatch)              |
+| `getPresignedDownloadUrl(ref, opts?)`                                                      | Presigned GET                                                                                                     |
+| `createMultipartUpload(ref, spec)`                                                         | `spec` adds `partSizeBytes`; returns `{ uploadId, partCount, partSizeBytes, uploadToken }`                        |
+| `getPresignedPartUrl(ref, uploadId, partNumber, partSizeBytes, partChecksumSha256, opts?)` | Presigned part PUT with a signed per-part sha256                                                                  |
+| `listParts(ref, uploadId)`                                                                 | Returns `{ partNumber, etag, checksumSha256? }[]`                                                                 |
+| `completeMultipartUpload(ref, uploadId, parts, uploadToken)`                               | Consumes the token, checks per-part sha256 against ListParts, completes; returns `{ etag? }`                      |
+| `abortMultipartUpload(ref, uploadId)`                                                      | Abort                                                                                                             |
 
-`spec` (`UploadSpec`): `mimeType` and `sizeBytes` (both required), plus optional `checksumSha256` and `metadata`. `opts` (`PresignOptions`): `ttlSeconds`, capped at 600. `StoredObjectInfo` has `sizeBytes` and optional `mimeType`, `etag`, `checksumSha256`, `updatedAt` and `metadata`. Presign methods return the legacy `PresignedUrl` type; map it with `toPresignedUrlDto`, `toSignedPutUpload` or `toPublicFileObject` (`mappers.ts`).
+`spec` (`UploadSpec`): `mimeType` and `sizeBytes` (both required), plus `checksumSha256` (standard base64 sha256; REQUIRED by every presigned upload method) and optional `metadata`. `opts` (`PresignOptions`): `ttlSeconds`, capped at 600. `StoredObjectInfo` has `sizeBytes` and optional `mimeType`, `etag`, `checksumSha256`, `updatedAt` and `metadata`. Presign methods return the legacy `PresignedUrl` type; map it with `toPresignedUrlDto`, `toSignedPutUpload` or `toPublicFileObject` (`mappers.ts`).
 
 Additional `S3StorageService` methods:
 
 - Recording sessions (`SessionRef = { orgId, meetingId, sessionId }`):
-  - `getPresignedSessionChunkUrl(ref, { seq, sizeBytes, sha256? }, mimeType, opts?)` signs one chunk PUT. The TTL is capped at 300 s, and it refuses a chunk that is already stored or that would exceed the session cap.
+  - `getPresignedSessionChunkUrl(ref, { seq, sizeBytes, sha256 }, mimeType, opts?)` signs one chunk PUT (sha256 hex is required; `If-None-Match: *`). The TTL is capped at 300 s, and it refuses a chunk that is already stored or that would exceed the session cap.
   - `verifySessionChunks(ref, { chunkCount, chunks? })` requires chunks `0..chunkCount-1` with no gaps or extras. On any failure it deletes all session chunks.
   - `abortSession(ref)` deletes the session's chunks.
 - `verifyBucketPrivate()`: a best-effort check that the bucket is not public.
@@ -48,7 +49,7 @@ Errors (all extend `StorageError`, with `code` `NOT_FOUND`, `FORBIDDEN`, `VALIDA
 
 ### Object key scheme
 
-See the key layout under "Media processing worker" below. Each id segment is validated. `assertKeyOwnedBy` throws `StorageAccessError` unless the key is under `org/{orgId}/` (or `tmp/session-chunks/org/{orgId}/`), has a valid meeting segment that matches `meetingId` when given, and contains no `..`, `//` or `\`. `orgPrefix` and `parseMeetingKey` are exported too.
+See the key layout under "Media processing worker" below. Each id segment is validated. Writers (`buildObjectKey`) only emit `organizations/{organizationId}/...` (ADR-010 Phase A). `assertKeyOwnedBy(key, organizationId, meetingId?)` throws `StorageAccessError` unless the key is under `organizations/{organizationId}/` or the legacy read-only `org/{organizationId}/` (optionally behind `tmp/session-chunks/`), has a valid meeting segment that matches `meetingId` when given, and contains no `..`, `//` or `\`. `organizationPrefix` (deprecated alias `orgPrefix`) and `parseMeetingKey` (returns `legacy: true` for `org/` keys) are exported too. Existing objects are read by their stored key (`getObjectByKey`, `headObjectByKey`, `getPresignedDownloadUrlByKey`), never by a rebuilt path.
 
 ### Environment variables (names and meaning only)
 
@@ -74,17 +75,17 @@ The PR #10 variable `STORAGE_PRESIGN_EXPIRES_SECONDS` is no longer read.
 
 Stored-object metadata crossing package boundaries uses the `FileObject` contract from `@meetops/contracts`, added in **open PR #17** (`feat/core-contracts`, read at `8a189c87e28ab7a81b14d8b94b0ca16990221561`):
 
-| Field            | Type                                                                |
-| ---------------- | ------------------------------------------------------------------- |
-| `id`             | `Id`                                                                |
-| `organizationId` | `Id`                                                                |
-| `provider`       | string, a registry key (e.g. `s3`, `minio`, `local`)                |
-| `bucket`         | string                                                              |
-| `key`            | string; use the `org/{orgId}/meetings/{meetingId}/...` scheme above |
-| `mimeType`       | string                                                              |
-| `sizeBytes`      | integer >= 0                                                        |
-| `checksumSha256` | optional string                                                     |
-| `createdAt`      | `IsoDateTime`                                                       |
+| Field            | Type                                                                                   |
+| ---------------- | -------------------------------------------------------------------------------------- |
+| `id`             | `Id`                                                                                   |
+| `organizationId` | `Id`                                                                                   |
+| `provider`       | string, a registry key (e.g. `s3`, `minio`, `local`)                                   |
+| `bucket`         | string                                                                                 |
+| `key`            | string; use the `organizations/{organizationId}/meetings/{meetingId}/...` scheme above |
+| `mimeType`       | string                                                                                 |
+| `sizeBytes`      | integer >= 0                                                                           |
+| `checksumSha256` | optional string                                                                        |
+| `createdAt`      | `IsoDateTime`                                                                          |
 
 `Recording` (same PR) embeds a `FileObject` as `file`. `S3StorageService` returns `StoredObjectInfo` and the legacy `PresignedUrl` (from `@meetops/contracts/legacy`, deprecated in contracts 0.3.0); only `describeObject` returns a `FileObject`.
 
@@ -122,7 +123,7 @@ Merged into `integration/phase-1` by PR #39 (merge commit `50e69d4`). Code: `app
 
 - Queue and job name come from `@meetops/contracts` (`MEDIA_QUEUE`, `MEDIA_JOB_NAME`); the payload is checked against the contracts `MediaJobPayload` schema.
 - Steps: check the source key belongs to the recording's org and meeting, HEAD and download it via `@meetops/storage`, probe, normalize to 16 kHz mono WAV, chunk, upload the normalized file and chunks, then enqueue one transcription job per chunk.
-- Object keys (`buildObjectKey` in `packages/storage/src/keys.ts`), under `org/{orgId}/meetings/{meetingId}/`:
+- Object keys (`buildObjectKey` in `packages/storage/src/keys.ts`), under `organizations/{organizationId}/meetings/{meetingId}/` (legacy `org/` keys are read-only):
   - `recordings/{id}.{ext}`
   - `processed/{recordingId}/normalized.wav`
   - `processed/{recordingId}/chunks/{index}.wav`

@@ -57,6 +57,18 @@ export class AuthMailJobHandler {
         });
         return;
       }
+      case 'login_lockout': {
+        // Minimal template: tells the owner sign-in is paused and links to password reset.
+        if (!job.userId) return;
+        const user = await this.d.users.findById(job.userId);
+        if (!user) return;
+        await this.d.transport.send({
+          to: user.email,
+          template: 'login_lockout',
+          data: { url: new URL('/forgot-password', this.d.webBaseUrl).toString() }
+        });
+        return;
+      }
       case 'invitation': {
         const inv = await this.d.invitations.findById(job.organizationId, job.invitationId);
         if (!inv || inv.status !== 'pending' || inv.expiresAt <= now) return;

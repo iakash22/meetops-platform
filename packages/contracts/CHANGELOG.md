@@ -4,6 +4,45 @@ All notable changes to `@meetops/contracts` are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this package uses [Semantic Versioning](https://semver.org/).
 While the version is `0.x`, a minor bump may contain breaking changes (ADR-003).
 
+## [Unreleased]
+
+### Changed (breaking)
+
+- `MAX_MEDIA_BYTES` (and so `MAX_UPLOAD_BYTES`, `MAX_RECORDING_SESSION_BYTES`) lowered from 2,000,000,000 to
+  1,400,000,000 bytes (1.4 GB decimal) so source + normalized WAV fit the media worker's 3 GiB tmpfs.
+- `CreateUploadRequest.checksumSha256` is now REQUIRED: standard base64 sha256 of the file (`Sha256Base64`).
+- `ChunkUploadUrlRequest.sha256` (lowercase hex) is now REQUIRED; the signed PUT always carries `x-amz-checksum-sha256`.
+
+### Notes
+
+- Presigned uploads are single-use server-side: the URL carries signed `x-amz-meta-upload-token` and `if-none-match: *`
+  headers that clients must send verbatim from `upload.headers` / `upload.fields`.
+
+## [0.3.3] - 2026-10-24
+
+All changes are additive. No export was removed and no existing schema got stricter.
+
+### Added
+
+- Errors: `CONFLICT_REASONS` (`ALREADY_MEMBER`, `INVITATION_EXPIRED`, `INVITATION_REVOKED`,
+  `INVITATION_ALREADY_ACCEPTED`, `LAST_OWNER`), the `ConflictReason` schema/type and `CONFLICT_HTTP_STATUS` (409).
+  `ApiErrorEnvelope.error.reason` is an optional `ConflictReason`, sent only with `code: 'CONFLICT'`.
+  `ConflictErrorEnvelope` is the 409 body type with `reason` required. Matches the 409 paths of the API in #53
+  (invite/accept for an active member, expired/revoked/already-accepted invitation, last owner), plus `EMAIL_TAKEN`
+  and the generic `CONFLICT` fallback: the API sets `reason` on every 409. `API_ERROR_REASONS` / `ApiErrorReason`
+  are aliases of `CONFLICT_REASONS` / `ConflictReason`.
+- Pagination: `DEFAULT_PAGE_LIMIT` (25, the `CursorPageQuery.limit` default).
+- Package exports: `./types` also has a `default` condition (same ESM file), so `require()`, Jest and Metro
+  (React Native) resolve the light entry. `.` and `./legacy` are unchanged.
+
+### Changed
+
+- API behaviour documented by this release: removing or demoting the last owner of an organization is
+  `409 CONFLICT` with `reason: 'LAST_OWNER'` (was 422).
+- `MAX_PAGE_LIMIT` and `MAX_CURSOR_LENGTH` now live in `constants.ts`, so the light `@meetops/contracts/types`
+  entry exports them (and the new conflict constants). They are still exported from the main entry with the same
+  values. The cursor page shape (`CursorPage`, `ListOrganizationsResponse`, `ListMembersResponse`) is unchanged.
+
 ## [0.3.2] - 2026-10-22
 
 Security's LOW follow-up from #59. Validation is stricter; no exports were removed.

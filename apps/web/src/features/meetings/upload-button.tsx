@@ -10,17 +10,36 @@ import { useOrganizationId } from '@/lib/api/queries';
 import type { MAX_MEDIA_BYTES } from '@meetops/contracts';
 
 /**
- * Mirrors contracts CreateUploadRequest (MAX_UPLOAD_BYTES = MAX_MEDIA_BYTES = 2_000_000_000,
- * decimal 2 GB). Declared locally to avoid pulling the TypeBox runtime into the bundle;
+ * Mirrors contracts CreateUploadRequest (MAX_UPLOAD_BYTES = MAX_MEDIA_BYTES = 1_400_000_000,
+ * decimal 1.4 GB). Declared locally to avoid pulling the TypeBox runtime into the bundle;
  * the `satisfies` breaks typecheck if contracts change the value.
  */
-export const MAX_UPLOAD_BYTES = 2_000_000_000 satisfies typeof MAX_MEDIA_BYTES;
+export const MAX_UPLOAD_BYTES = 1_400_000_000 satisfies typeof MAX_MEDIA_BYTES;
 const MIME_RE = /^(audio|video)\/[a-z0-9.+-]+$/;
+
+function readBytes(file: Blob): Promise<ArrayBuffer> {
+  if (typeof file.arrayBuffer === 'function') return file.arrayBuffer();
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(r.result as ArrayBuffer);
+    r.onerror = () => reject(r.error ?? new Error('read failed'));
+    r.readAsArrayBuffer(file);
+  });
+}
+
+/** Standard base64 sha256 of the whole file (contracts Sha256Base64; required by CreateUploadRequest). */
+export async function sha256Base64(file: Blob): Promise<string> {
+  // Copy into this realm's Uint8Array: WebCrypto rejects ArrayBuffers from another realm (e.g. jsdom FileReader).
+  const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', new Uint8Array(new Uint8Array(await readBytes(file)))));
+  let bin = '';
+  for (const b of digest) bin += String.fromCharCode(b);
+  return btoa(bin);
+}
 
 export function validateUploadFile(file: File): string | null {
   if (!MIME_RE.test(file.type)) return 'Only audio or video files can be uploaded.';
   if (file.size < 1) return 'The file is empty.';
-  if (file.size > MAX_UPLOAD_BYTES) return 'The file is larger than 2 GB.';
+  if (file.size > MAX_UPLOAD_BYTES) return 'The file is larger than 1.4 GB.';
   return null;
 }
 
@@ -38,6 +57,7 @@ export function UploadButton({ meetingId }: { meetingId?: Id }) {
         filename: file.name,
         mimeType: file.type,
         sizeBytes: file.size,
+        checksumSha256: await sha256Base64(file),
         ...(meetingId ? { meetingId } : {}),
       });
       await api.storage.putToPresignedUrl(upload, file);
