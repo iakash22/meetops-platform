@@ -118,3 +118,4 @@ volumes:
   ollama-data:
   local-stt-cache:
 # hook-verified commit
+# hook-verified commit (husky active)
