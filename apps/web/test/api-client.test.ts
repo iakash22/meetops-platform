@@ -417,6 +417,53 @@ describe('organizations.create (POST /orgs)', () => {
   });
 });
 
+describe('organizations.list (GET /orgs)', () => {
+  it('returns the contracts ListOrganizationsResponse page', async () => {
+    const page = {
+      items: [
+        {
+          organization: { id: '00000000-0000-4000-8000-000000000001', name: 'Acme' },
+          role: 'owner',
+        },
+      ],
+      nextCursor: null,
+    };
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(page));
+    const api = createApiClient({ baseUrl: 'http://api', fetch: fetchMock });
+    await expect(api.organizations.list()).resolves.toEqual(page);
+    expect((fetchMock.mock.calls as Call[])[0]![0]).toBe('http://api/orgs');
+  });
+});
+
+describe('extension.pair (POST /auth/extension/pair)', () => {
+  afterEach(clearCookies);
+
+  it('POSTs the ExtensionPairRequest with CSRF', async () => {
+    const body = {
+      extensionId: 'a'.repeat(32),
+      deviceId: '00000000-0000-4000-8000-0000000000dd',
+      nonce: 'N'.repeat(43),
+    };
+    const res = {
+      pairingCode: 'P'.repeat(40),
+      expiresAt: '2026-10-01T00:01:00.000Z',
+      organizationId: '00000000-0000-4000-8000-000000000001',
+      organizationName: 'Acme',
+    };
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse({ csrfToken: 'tok' }))
+      .mockResolvedValueOnce(jsonResponse(res, 201));
+    const api = createApiClient({ baseUrl: 'http://api', fetch: fetchMock });
+    await expect(api.extension.pair(body)).resolves.toEqual(res);
+    const calls = fetchMock.mock.calls as Call[];
+    expect(calls[1]![0]).toBe('http://api/auth/extension/pair');
+    expect(calls[1]![1].method).toBe('POST');
+    expect(JSON.parse(calls[1]![1].body as string)).toEqual(body);
+    expect(headersOf(calls[1]![1])[CSRF_HEADER]).toBe('tok');
+  });
+});
+
 describe('auth.switchOrganization (POST /auth/switch-org)', () => {
   afterEach(clearCookies);
 
