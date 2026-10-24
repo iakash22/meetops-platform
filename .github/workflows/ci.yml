@@ -16,11 +16,11 @@ jobs:
   build:
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    # Node 20 is the supported floor (engines); 24 is the newest supported (Windows/Node 24 dev setup).
+    # Coordinator decision (docs/00-getting-started/windows-setup.md): build on Node 22 and 24; live-db stays on 20.
     strategy:
       fail-fast: false
       matrix:
-        node: [20, 24]
+        node: [22, 24]
 
     # Throwaway, CI-only credentials for ephemeral containers. Not secrets; never reuse outside CI.
     services:
