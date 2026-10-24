@@ -135,7 +135,7 @@ async function seedOrganization(spec: SeedOrganization): Promise<void> {
       },
     });
 
-    const base = `org/${org.id}/meetings/${IDS.meeting}`;
+    const base = `organizations/${org.id}/meetings/${IDS.meeting}`;
     await tx.fileObject.upsert({
       where: { id: IDS.file },
       update: {},
