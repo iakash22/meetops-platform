@@ -286,6 +286,9 @@ importers:
 
   apps/worker:
     dependencies:
+      '@meetops/ai-core':
+        specifier: workspace:*
+        version: link:../../packages/ai-core
       '@meetops/config':
         specifier: workspace:*
         version: link:../../packages/config

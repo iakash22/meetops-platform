@@ -62,7 +62,7 @@ export const orgAIConfigSchema = z.object({
 export type OrgAIConfig = z.infer<typeof orgAIConfigSchema>;
 export type OrgAIConfigInput = z.input<typeof orgAIConfigSchema>;
 
-/** Persistence for tenant AI config. Backend/DB supplies a durable, tenant-scoped implementation. */
+/** Persistence for organization AI config. Backend/DB supplies a durable, organization-scoped implementation. */
 export interface OrgConfigStore {
   get(organizationId: string): Promise<OrgAIConfig | undefined>;
   put(cfg: OrgAIConfig): Promise<void>;
@@ -125,7 +125,7 @@ export class ModelRouter {
     return p === 'faster-whisper' ? { provider: p, model: this.env.LOCAL_STT_MODEL } : { provider: p };
   }
 
-  /** Org owner/admin only (CASL `manage ProviderConfig`), same tenant only. Audit is awaited; failure aborts the change. */
+  /** Org owner/admin only (CASL `manage ProviderConfig`), same organization only. Audit is awaited; failure aborts the change. */
   async setOrgConfig(input: OrgAIConfigInput, ctx: TenantContext) {
     assertCan(ctx, 'manage', 'ProviderConfig');
     const cfg = orgAIConfigSchema.parse(input);
@@ -152,7 +152,7 @@ export class ModelRouter {
     if (!organizationId) throw new AIError('CONFIG_INVALID', 'organizationId is required');
     const kind = featureKind(feature);
     const org = await this.orgStore.get(organizationId);
-    if (org && org.organizationId !== organizationId) throw new AIError('CONFIG_INVALID', 'tenant mismatch in org config store');
+    if (org && org.organizationId !== organizationId) throw new AIError('CONFIG_INVALID', 'organization mismatch in org config store');
     if (override && !(actor && actor.organizationId === organizationId && actor.ability?.can('override', 'AIRoute')))
       throw new AIError('UNAUTHORIZED_OVERRIDE', 'Per-request provider override is not authorized', { retryable: false });
 
