@@ -16,11 +16,11 @@ Consumers of `@meetops/config`: `apps/api`, `apps/worker`, `packages/queue` (the
 
 Not used anywhere (no v4 work needed): `.merge`, `z.record`, `errorMap`, `required_error`/`invalid_type_error`, `.flatten()`/`.format()`, `.strict()`/`.passthrough()`, `.deepPartial()`, `z.nativeEnum`, `.superRefine`.
 
-**Starting point: zod 3 and zod 4 already coexist.** Since #21 the lockfile has two copies: `zod@3.25.76` (config, notifications, web via `^3.23.8`) and `zod@4.6.7` (ai-core via `^4`). Each package imports bare `'zod'` and gets its own copy; nothing uses the `zod/v4` or `zod/v3` subpaths. No zod schema crosses a package boundary today (ai-core exports parsed types and its own schemas only to its own callers), so each remaining package can move from `^3.23.8` to `^4` independently, with no `zod/v4` subpath stage.
+**Starting point: zod 3 and zod 4 already coexist.** Since #21 the lockfile has two copies: `zod@3.25.76` (config, notifications, web via `^3.23.8`) and `zod@4.6.7` (ai-core via `^4`). Each package imports bare `'zod'` and gets its own copy; nothing uses the `zod/v4` or `zod/v3` subpaths. No zod schema crosses a package boundary today (ai-core exports parsed types and its own schemas only to its own callers), so each remaining package can move from `^3.23.8` to `^4.6.6` independently, with no `zod/v4` subpath stage.
 
 ### Ownership of the AI_* env keys
 
-_\*`packages/ai-core` owns the AI_* keys_* (and the provider toggles `OLLAMA_ENABLED`, `LOCAL_STT_ENABLED`, `OPENAI_ENABLED`, `DEEPGRAM_ENABLED` and their URLs/keys). They are defined in `aiEnvSchema` (`packages/ai-core/src/env.ts`) and read at runtime only there (`loadAIEnv` → `ModelRouter`, e.g. `AI_REQUIRE_PROVIDER_APPROVAL`/`AI_ALLOW_PAID_FALLBACK` in `src/router.ts`). `packages/config` still declares copies in `envSchema`, but no app or package reads them from `AppConfig` (checked with `rg` on `01b1dab`), and they have already drifted (e.g. `AI_LLM_PROVIDER` enum is `gemini` only vs `gemini|ollama|openai`; `LOCAL_STT_URL` default `:8001` vs `:8000`). Plan: keep them in `packages/config` only until step 3, then remove them there (or mark `@deprecated`) so ai-core is the single source.
+**`packages/ai-core` owns the `AI_*` keys** (and the provider toggles `OLLAMA_ENABLED`, `LOCAL_STT_ENABLED`, `OPENAI_ENABLED`, `DEEPGRAM_ENABLED` and their URLs/keys). They are defined in `aiEnvSchema` (`packages/ai-core/src/env.ts`) and read at runtime only there (`loadAIEnv` → `ModelRouter`, e.g. `AI_REQUIRE_PROVIDER_APPROVAL`/`AI_ALLOW_PAID_FALLBACK` in `src/router.ts`). `packages/config` still declares copies in `envSchema`, but no app or package reads them from `AppConfig` (checked with `rg` on `01b1dab`), and they have already drifted (e.g. `AI_LLM_PROVIDER` enum is `gemini` only vs `gemini|ollama|openai`; `LOCAL_STT_URL` default `:8001` vs `:8000`). Plan: keep them in `packages/config` only until step 3, then remove them there (or mark `@deprecated`) so ai-core is the single source.
 
 ## ⚠️ MUST-TEST-BEFORE-MIGRATING: `.default()` boolean behaviour
 
@@ -104,6 +104,16 @@ it.each(['true', '1', 'yes', 'on', ''])('AI_REQUIRE_PROVIDER_APPROVAL=%j parses 
 
 Fix during migration (packages/config): `bool.default(true)` / `bool.default(false)` (output-typed), or `.prefault('true')` to keep v3 semantics.
 
+## Security: GHSA-mrhx-c7xc-m3w5 (fixed in zod 4.6.6)
+
+[GHSA-mrhx-c7xc-m3w5](https://github.com/advisories/GHSA-mrhx-c7xc-m3w5) (high): zod can exhaust memory while validating oversized constrained collections. Affected: `zod < 4.6.6`, which includes **every 3.x release** (so `zod@3.25.76` in config, notifications and web). Patched: `4.6.6`.
+
+- Only a real upgrade to `zod >= 4.6.6` fixes it. Importing the `zod/v4` subpath from a 3.25.x install does **not** (it ships the vulnerable code), which is one more reason this plan skips the subpath stage.
+- Pin `"zod": "^4.6.6"` (not `^4`) in every package that moves, and tighten `packages/ai-core` from `^4` to `^4.6.6` in step 2 so a fresh resolve can never pick a vulnerable 4.x. Today ai-core resolves `4.6.7` (patched).
+- After each step, confirm `pnpm-lock.yaml` resolves zod `>= 4.6.6` for the migrated package (`pnpm why zod`).
+- **Rule until the upgrade lands:** no zod 3 schema (config, notifications, web) may validate untrusted request bodies or other attacker-controlled input. Today they only parse env vars (operator-controlled) and browser-side form input, so exposure is low; keep it that way.
+- Any zod schema that does validate untrusted input (API bodies, webhook payloads, LLM output in ai-core) must cap collection sizes with `.max()` on arrays/records and string lengths, regardless of version.
+
 ## 2. v4 changes that affect this repo
 
 | #   | Change in v4                                                                                                                                                                                                                           | Where it bites                                                                                                                                                                                                                                                                                                                                                                            | Severity                           |
@@ -140,17 +150,14 @@ Fix during migration (packages/config): `bool.default(true)` / `bool.default(fal
 Starting point (after #21): ai-core is on `zod@^4` (4.6.7); config, notifications and web are on `zod@^3.23.8` (3.25.76); both copies are in the lockfile.
 
 1. Add the MUST-TEST tests above: `packages/config` (8 booleans, plus `SMTP_PORT` → `465` and an invalid `DATABASE_URL` error) on zod 3, and `packages/ai-core` (AI_* booleans) on zod 4. Add `packages/notifications` `loadEmailConfig` happy/failure tests. Merge.
-2. `packages/config`: change `"zod"` to `^4` and keep the bare `'zod'` import. Change `bool.default('true')` → `bool.default(true)` (or `.prefault('true')`), `z.string().url()` → `z.url()`, `{ message }` → `{ error }`. Optionally use `z.prettifyError(result.error)` in `loadConfig`. Run tests/typecheck for api, worker, queue.
+2. `packages/config`: change `"zod"` to `^4.6.6` (and tighten `packages/ai-core` from `^4` to `^4.6.6`) and keep the bare `'zod'` import. Change `bool.default('true')` → `bool.default(true)` (or `.prefault('true')`), `z.string().url()` → `z.url()`, `{ message }` → `{ error }`. Optionally use `z.prettifyError(result.error)` in `loadConfig`. Run tests/typecheck for api, worker, queue.
 3. `packages/config`: remove (or `@deprecated`) the AI_* and provider-toggle keys that ai-core owns; point docs at `loadAIEnv`.
-4. `packages/notifications`: `"zod": "^4"`; `{ message }` → `{ error }`; confirm `formatIssues` output.
-5. `apps/web`: bump `@hookform/resolvers` to `^5.1` (+ `react-hook-form` if peers need it) and `"zod": "^4"` in the same PR; `z.email('...')`; run web tests and e2e auth flows.
-6. `pnpm install` + `pnpm dedupe`; confirm `zod@3.25.76` is gone from `pnpm-lock.yaml`. CI green (lint, typecheck, test, build). Update `docs/00-getting-started/environment-variables.md` if error messages or AI_* ownership are documented there.
+4. `packages/notifications`: `"zod": "^4.6.6"`; `{ message }` → `{ error }`; confirm `formatIssues` output.
+5. `apps/web`: bump `@hookform/resolvers` to `^5.1` (+ `react-hook-form` if peers need it) and `"zod": "^4.6.6"` in the same PR; `z.email('...')`; run web tests and e2e auth flows.
+6. `pnpm install` + `pnpm dedupe`; confirm `zod@3.25.76` is gone from `pnpm-lock.yaml` and the only resolved zod is `>= 4.6.6` (closes GHSA-mrhx-c7xc-m3w5). CI green (lint, typecheck, test, build). Update `docs/00-getting-started/environment-variables.md` if error messages or AI_* ownership are documented there.
 
 Out of scope: env schemas stay in the package that reads them (config, notifications, ai-core). `@meetops/contracts` holds only domain types, API envelopes, pagination and job payloads, and is ARCH-owned ([ADR-003](../15-decisions/ADR-003-contracts-ownership.md)), so env schemas are not moved there.
 
 ## 6. Rollback
 
 Each step is a separate PR; revert the PR. Because zod 3 and 4 already coexist, reverting one package's bump only restores its `^3.23.8` range and does not affect the others.
-
-<!-- hook-verified commit -->
-<!-- hook-verified commit (husky active) -->
