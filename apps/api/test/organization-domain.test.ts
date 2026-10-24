@@ -236,10 +236,11 @@ describe('OrganizationService', () => {
     await expect(svc.changeRole(admin, 'viewer', 'admin')).rejects.toMatchObject({ statusCode: 403 });
   });
 
-  it('AU-31: the last owner cannot demote themselves or leave (422); a second owner unblocks it', async () => {
+  it('AU-31: the last owner cannot demote themselves or leave (409 LAST_OWNER); a second owner unblocks it', async () => {
     const { owner } = await team();
-    await expect(svc.changeRole(owner, 'owner', 'admin')).rejects.toMatchObject({ statusCode: 422 });
-    await expect(svc.removeMember(owner, 'owner')).rejects.toMatchObject({ statusCode: 422 });
+    const lastOwner = { statusCode: 409, code: 'CONFLICT', reason: 'LAST_OWNER' };
+    await expect(svc.changeRole(owner, 'owner', 'admin')).rejects.toMatchObject(lastOwner);
+    await expect(svc.removeMember(owner, 'owner')).rejects.toMatchObject(lastOwner);
     await svc.changeRole(owner, 'admin', 'owner');
     expect((await svc.changeRole(owner, 'owner', 'admin')).role).toBe('admin');
   });
