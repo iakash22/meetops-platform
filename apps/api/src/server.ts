@@ -2,7 +2,7 @@ import Fastify, { type FastifyBaseLogger } from 'fastify';
 import swagger from '@fastify/swagger';
 import swaggerUi from '@fastify/swagger-ui';
 import { createLogger } from '@meetops/logger';
-import { defaultModuleDeps, registerModules, type ModuleDeps } from './modules/index.js';
+import { isRelaxedEnv, defaultModuleDeps, registerModules, type ModuleDeps } from './modules/index.js';
 import { registerDomainErrorHandler, registerNotFoundHandler } from './shared/http-errors.js';
 import { parseTrustProxy } from './shared/trust-proxy.js';
 
@@ -25,6 +25,15 @@ export const REDACT_PATHS = [
   '*.refresh_token'
 ];
 
+/**
+ * Ajv request-validation options, pinned explicitly (they match Fastify's defaults). Coercion must stay on:
+ * query strings arrive as text, e.g. GET /orgs/:id/tasks?unassigned=true must validate against Literal(true).
+ * removeAdditional is OFF (Fastify defaults it to true): with it on, Ajv strips `unassigned` while trying the
+ * first anyOf branch of a strict union and the query silently loses the filter. Strict (additionalProperties:
+ * false) contract schemas therefore reject unknown keys with 400 instead of dropping them.
+ */
+export const AJV_CUSTOM_OPTIONS = { coerceTypes: 'array', useDefaults: true, removeAdditional: false } as const;
+
 export interface CreateServerOptions {
   deps?: Partial<ModuleDeps>;
   /** Overrides TRUST_PROXY. */
@@ -40,10 +49,12 @@ export function createServer(options: CreateServerOptions = {}) {
     redact: { paths: REDACT_PATHS, censor: '***redacted***' }
   });
   // Throws in production when persistence/rate-limit implementations are not injected.
-  const deps = defaultModuleDeps(options.deps, { nodeEnv: options.nodeEnv ?? process.env.NODE_ENV });
+  const nodeEnv = options.nodeEnv ?? process.env.NODE_ENV;
+  const deps = defaultModuleDeps(options.deps, { nodeEnv });
   const app = Fastify({
     loggerInstance: logger,
-    trustProxy: parseTrustProxy(options.trustProxy ?? process.env.TRUST_PROXY)
+    trustProxy: parseTrustProxy(options.trustProxy ?? process.env.TRUST_PROXY),
+    ajv: { customOptions: { ...AJV_CUSTOM_OPTIONS } }
   });
 
   registerDomainErrorHandler(app);
@@ -58,9 +69,13 @@ export function createServer(options: CreateServerOptions = {}) {
     }
   });
 
-  void app.register(swaggerUi, {
-    routePrefix: '/docs'
-  });
+  // Swagger UI and its /docs/json spec only for NODE_ENV exactly development|test (fail closed).
+  // The spec is still generated in-process (app.swagger()) for tests and tooling.
+  if (isRelaxedEnv(nodeEnv)) {
+    void app.register(swaggerUi, {
+      routePrefix: '/docs'
+    });
+  }
 
   void app.register(registerModules, deps);
 
