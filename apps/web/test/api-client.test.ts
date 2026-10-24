@@ -278,7 +278,7 @@ describe('uploads (PresignedUrlDto)', () => {
       fetch: fetchMock,
       getCsrfToken: () => 'c1',
     });
-    const body = { filename: 'rec.webm', mimeType: 'audio/webm', sizeBytes: 1024 };
+    const body = { filename: 'rec.webm', mimeType: 'audio/webm', sizeBytes: 1024, checksumSha256: 'ungWv48Bz+pBQUDeXa4iI7ADYaOWF3qctBD/YfIAFa0=' };
     const res = await api.storage.createUpload('00000000-0000-4000-8000-000000000001', body);
     expect(res.upload.method).toBe('PUT');
     expect(res.upload.url.startsWith('https://')).toBe(true);

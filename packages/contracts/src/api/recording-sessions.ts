@@ -39,17 +39,18 @@ export type InitRecordingSessionResponse = Static<typeof InitRecordingSessionRes
 /**
  * Request a presigned PUT for one chunk.
  *
- * The API signs `Content-Length: sizeBytes` (and, when given, the sha256 checksum, e.g. `x-amz-checksum-sha256`)
+ * The API signs `Content-Length: sizeBytes` and the REQUIRED sha256 checksum ( e.g. `x-amz-checksum-sha256`)
  * into the presigned request, and returns them in `upload.headers`, so the client can't upload a different size or body.
  * The API MUST refuse to issue a URL once the session's running total plus `sizeBytes` would exceed
- * MAX_RECORDING_SESSION_BYTES (2 GB), or when `seq` is out of range or already completed. The schema's per-chunk limits
- * (MAX_CHUNK_BYTES, MAX_CHUNKS) cannot enforce the 2 GB total; only the backend's running total can.
+ * MAX_RECORDING_SESSION_BYTES (1.4 GB), or when `seq` is out of range or already completed. The schema's per-chunk limits
+ * (MAX_CHUNK_BYTES, MAX_CHUNKS) cannot enforce the 1.4 GB total; only the backend's running total can.
  */
 export const ChunkUploadUrlRequest = Type.Object(
   {
     seq: Type.Integer({ minimum: 0, maximum: MAX_CHUNKS - 1 }),
     sizeBytes: Type.Integer({ minimum: 1, maximum: MAX_CHUNK_BYTES }),
-    sha256: Type.Optional(Sha256Hex),
+    /** REQUIRED: lowercase hex sha256 of the chunk body; signed into the PUT as base64 `x-amz-checksum-sha256`. */
+    sha256: Sha256Hex,
   },
   strict,
 );
@@ -59,8 +60,8 @@ export const CHECKSUM_SHA256_HEADER = 'x-amz-checksum-sha256';
 
 /**
  * Presigned PUT whose signature covers the headers the client must send verbatim.
- * `headers['content-length']` always equals the requested `sizeBytes`. When the request carried `sha256`,
- * `headers['x-amz-checksum-sha256']` (base64 of the same digest) is present and signed too. Other signed headers
+ * `headers['content-length']` always equals the requested `sizeBytes`, and
+ * `headers['x-amz-checksum-sha256']` (base64 of the request's `sha256`) is always present and signed too. Other signed headers
  * (e.g. `content-type`) may also appear.
  */
 export const SignedPutUpload = Type.Object(

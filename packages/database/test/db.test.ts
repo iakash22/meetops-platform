@@ -105,6 +105,11 @@ describe('generated client', () => {
         'TRANSCRIPT_CHUNK_ERROR_MAX',
         'createAiUsageCounterRepository',
         'createAiIdempotencyRepository',
+        'createRecordingChunkCountRepository',
+        'createChunkFileObjectRepository',
+        'createChunkFileObjectLookup',
+        'MediaPersistenceError',
+        'MAX_RECORDING_CHUNKS',
         'withUserContext',
       ].sort(),
     );

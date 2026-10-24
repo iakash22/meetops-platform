@@ -10,7 +10,8 @@ import {
 } from '../src/modules/organizations/infrastructure/in-memory.repositories.js';
 import { CryptoTokenService } from '../src/modules/auth/infrastructure/crypto-token.service.js';
 import { InMemoryRateLimiter } from '../src/modules/auth/infrastructure/rate-limit/in-memory.js';
-import { RedisRateLimiter, RedisLoginLockout, type RedisLike } from '../src/modules/auth/infrastructure/rate-limit/redis.js';
+import { RedisRateLimiter, RedisLoginLockout } from '../src/modules/auth/infrastructure/rate-limit/redis.js';
+import { fakeRedis } from './fake-redis.js';
 import { InMemoryLoginLockout } from '../src/modules/auth/infrastructure/rate-limit/in-memory.js';
 import { DEFAULT_LOCKOUT, failureDelayMs, lockDurationMs } from '../src/modules/auth/infrastructure/rate-limit/lockout-policy.js';
 import { RedisOneTimeTokenRepository } from '../src/modules/auth/infrastructure/redis-one-time-token.repository.js';
@@ -236,10 +237,11 @@ describe('OrganizationService', () => {
     await expect(svc.changeRole(admin, 'viewer', 'admin')).rejects.toMatchObject({ statusCode: 403 });
   });
 
-  it('AU-31: the last owner cannot demote themselves or leave (422); a second owner unblocks it', async () => {
+  it('AU-31: the last owner cannot demote themselves or leave (409 LAST_OWNER); a second owner unblocks it', async () => {
     const { owner } = await team();
-    await expect(svc.changeRole(owner, 'owner', 'admin')).rejects.toMatchObject({ statusCode: 422 });
-    await expect(svc.removeMember(owner, 'owner')).rejects.toMatchObject({ statusCode: 422 });
+    const lastOwner = { statusCode: 409, code: 'CONFLICT', reason: 'LAST_OWNER' };
+    await expect(svc.changeRole(owner, 'owner', 'admin')).rejects.toMatchObject(lastOwner);
+    await expect(svc.removeMember(owner, 'owner')).rejects.toMatchObject(lastOwner);
     await svc.changeRole(owner, 'admin', 'owner');
     expect((await svc.changeRole(owner, 'owner', 'admin')).role).toBe('admin');
   });
@@ -261,53 +263,6 @@ describe('OrganizationService', () => {
     await expect(svc.resolveTenant(organization.id, 'stranger')).rejects.toThrow(/not found/);
   });
 });
-
-export const fakeRedis = (): RedisLike & { advance(ms: number): void } => {
-  const store = new Map<string, { v: string; exp: number }>();
-  const sets = new Map<string, Set<string>>();
-  let t = 0;
-  const alive = (k: string) => {
-    const e = store.get(k);
-    if (e && e.exp <= t) store.delete(k);
-    return store.get(k);
-  };
-  return {
-    advance: (ms) => void (t += ms),
-    incr: async (k) => {
-      const e = alive(k) ?? { v: '0', exp: Infinity };
-      e.v = String(Number(e.v) + 1);
-      store.set(k, e);
-      return Number(e.v);
-    },
-    pexpire: async (k, ms) => {
-      const e = alive(k);
-      if (e) e.exp = t + ms;
-      return e ? 1 : 0;
-    },
-    pttl: async (k) => {
-      const e = alive(k);
-      return e ? (e.exp === Infinity ? -1 : e.exp - t) : -2;
-    },
-    set: async (k, v, _m, ms) => {
-      store.set(k, { v, exp: t + ms });
-      return 'OK';
-    },
-    get: async (k) => alive(k)?.v ?? null,
-    getdel: async (k) => {
-      const v = alive(k)?.v ?? null;
-      store.delete(k);
-      return v;
-    },
-    del: async (...ks) => ks.filter((k) => store.delete(k)).length,
-    sadd: async (k, ...m) => {
-      const s = sets.get(k) ?? new Set();
-      m.forEach((x) => s.add(x));
-      sets.set(k, s);
-      return m.length;
-    },
-    smembers: async (k) => [...(sets.get(k) ?? [])]
-  };
-};
 
 describe('Redis adapters (fake client)', () => {
   it('RedisRateLimiter blocks after the limit and resets after the window', async () => {

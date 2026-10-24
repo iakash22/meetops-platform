@@ -78,3 +78,17 @@ export {
   type AiUsagePeriodKind,
   type AiIdempotencyStatus,
 } from './ai.js';
+export {
+  createRecordingChunkCountRepository,
+  createChunkFileObjectRepository,
+  createChunkFileObjectLookup,
+  MediaPersistenceError,
+  MAX_RECORDING_CHUNKS,
+  type ChunkFileObjectRow,
+  type ChunkFileObjectRepository,
+  type ChunkFileObjectRepositoryOptions,
+  type RecordingChunkCountRepository,
+  type ChunkFileObjectRecord,
+  type ChunkFileObjectLookup,
+  type MediaRepositoryOptions,
+} from './media.js';

@@ -452,11 +452,13 @@ model FileObject {
   status          StorageObjectStatus @default(pending_upload)
   provider        String              @default("s3")
   bucket          String
-  /// Always prefixed org/{organizationId}/
+  /// Always prefixed organizations/{organizationId}/ (ADR-010, 2026-10-24). Legacy org/{organizationId}/ keys are
+  /// readable during phase A only and are copied over by scripts/backfill-organization-keys.ts.
   key             String              @unique @map("storage_key")
   mimeType        String              @map("mime_type")
   sizeBytes       BigInt?             @map("size_bytes")
   etag            String?
+  /// Lowercase hex SHA-256 (64 chars), CHECK in SQL (NOT VALID for pre-existing rows).
   checksumSha256  String?             @map("checksum_sha256")
   originalName    String?             @map("original_name")
   durationSeconds Float?              @map("duration_seconds")
@@ -492,6 +494,9 @@ model Recording {
   meetingId      String          @map("meeting_id") @db.Uuid
   fileObjectId   String          @unique @map("file_object_id") @db.Uuid
   durationMs     Int?            @map("duration_ms")
+  /// Number of STT chunks produced by the media worker (null until processed). CHECK 1..10000 in SQL.
+  /// Not recording_sessions.chunk_count, which counts uploaded session parts.
+  chunkCount     Int?            @map("chunk_count")
   status         RecordingStatus @default(uploading)
   createdAt      DateTime        @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt      DateTime        @updatedAt @map("updated_at") @db.Timestamptz(3)
