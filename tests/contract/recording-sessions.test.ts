@@ -31,7 +31,7 @@ describe.skipIf(!has)('contracts: recording-session request schemas (UP pre-chec
 
   it('control: a valid init and chunk request pass', () => {
     expect(Value.Check(S.InitRecordingSessionRequest, init)).toBe(true);
-    expect(Value.Check(S.ChunkUploadUrlRequest, { seq: 0, sizeBytes: 1024 })).toBe(true);
+    expect(Value.Check(S.ChunkUploadUrlRequest, { seq: 0, sizeBytes: 1024, sha256: 'a'.repeat(64) })).toBe(true);
   });
 
   it('[UP-01] chunk request without sizeBytes is invalid', () => {

@@ -16,7 +16,7 @@ describe('chunk limits live in constants.ts', () => {
     expect(C.MAX_DURATION_MS).toBe(86_400_000);
     expect(C.CHUNK_UPLOAD_URL_TTL_SECONDS).toBe(300);
     expect(C.MAX_RECORDING_SESSION_BYTES).toBe(C.MAX_MEDIA_BYTES);
-    expect(C.MAX_MEDIA_BYTES).toBe(2_000_000_000);
+    expect(C.MAX_MEDIA_BYTES).toBe(1_400_000_000);
   });
   it('main entry re-exports the same values', () => {
     for (const k of ['MAX_CHUNK_BYTES', 'MAX_CHUNKS', 'MAX_RECORDING_CHUNKS', 'MAX_DURATION_MS', 'CHUNK_UPLOAD_URL_TTL_SECONDS',

@@ -18,7 +18,7 @@ import { StorageError, assertKeyOwnedBy, buildObjectKey, type MeetingObjectRef, 
 import { chunkFileObjectId, normalizedFileObjectId, transcriptionIdempotencyKey, transcriptionJobId } from './ids.js';
 import type { ChunkManifestEntry, MediaJobPayload, MediaProcessingResult, TranscriptionJobPayload } from './types.js';
 
-export type NormalizeCaps = { inputFormat: string; maxDurationSeconds: number; maxOutputBytes: number };
+export type NormalizeCaps = { inputFormat: string; maxDurationSeconds: number; maxOutputBytes: number; maxInputBytes: number };
 
 export type MediaOps = {
   probeMedia(p: string, opts: { format: string }): Promise<ProbeResult>;
@@ -53,6 +53,12 @@ export const DEFAULT_MEDIA_LIMITS: MediaLimits = { maxSourceBytes: MAX_MEDIA_BYT
 
 /** 16 kHz mono s16le = 32000 B/s; -fs cap = duration cap worth of PCM + header slack. */
 export const normalizedByteCap = (maxDurationSeconds: number) => Math.ceil(maxDurationSeconds * 32000) + 64 * 1024;
+
+/** Worker scratch tmpfs size (/tmp/work, DevOps compose: 3g). Override with MEDIA_WORK_TMP_BYTES. */
+export const DEFAULT_WORK_TMP_BYTES = 3 * 1024 ** 3;
+
+/** Peak scratch use of one job: source + normalized WAV + WAV chunks (both capped by normalizedByteCap). */
+export const peakScratchBytes = (l: MediaLimits) => l.maxSourceBytes + 2 * normalizedByteCap(l.maxDurationSeconds);
 
 export type MediaProcessorDeps = {
   storage: Pick<StorageService, 'getObject' | 'putObject' | 'headObject'>;
@@ -158,7 +164,8 @@ export async function processRecording(
     const wavPath = await deps.media.normalizeToWav(srcPath, path.join(tmp, 'normalized.wav'), {
       inputFormat: demuxer,
       maxDurationSeconds: limits.maxDurationSeconds,
-      maxOutputBytes: normalizedByteCap(limits.maxDurationSeconds)
+      maxOutputBytes: normalizedByteCap(limits.maxDurationSeconds),
+      maxInputBytes: limits.maxSourceBytes
     });
     const wavSize = (await stat(wavPath)).size;
     const normalizedRef: MeetingObjectRef = { orgId: organizationId, meetingId, kind: 'normalized', objectId: recordingId };
