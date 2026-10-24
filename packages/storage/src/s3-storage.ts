@@ -28,6 +28,8 @@ import {
   buildObjectKey,
   normalizeMeetingObjectRef,
   parseMeetingKey,
+  LEGACY_ORG_KEY_PREFIX,
+  ORGANIZATIONS_KEY_PREFIX,
   refOrganizationId,
   SESSION_CHUNK_PREFIX,
   type MeetingObjectRef
@@ -428,14 +430,15 @@ export class S3StorageService implements StorageService {
 
   /**
    * Expiry cleanup for abandoned multipart uploads: abort every in-progress multipart upload under
-   * organizations/ (and the session-chunk prefix) initiated before `olderThan` (default: now - upload TTL - confirm
+   * organizations/ (plus legacy org/ and the session-chunk prefix) initiated before `olderThan` (default: now - upload TTL - confirm
    * grace). Single-part PUTs that were never confirmed are cleaned by the caller from its upload records
    * (status != verified and expiresAt + grace passed) via deleteObject, plus a bucket lifecycle rule as backstop.
    */
   async abortStaleMultipartUploads(olderThan?: Date): Promise<{ aborted: number }> {
     const cutoff = olderThan ?? new Date(Date.now() - (this.#cfg.uploadTtlSeconds + UPLOAD_CONFIRM_GRACE_SECONDS) * 1000);
     let aborted = 0;
-    for (const prefix of ['organizations/', SESSION_CHUNK_PREFIX]) {
+    // Legacy org/ uploads (pre ADR-010 Phase A) are swept too: writers no longer start them, so any left are abandoned.
+    for (const prefix of [ORGANIZATIONS_KEY_PREFIX, LEGACY_ORG_KEY_PREFIX, SESSION_CHUNK_PREFIX]) {
       let keyMarker: string | undefined;
       let uploadIdMarker: string | undefined;
       for (let page = 0; page < 1000; page++) {
