@@ -3,7 +3,8 @@
 const contractsDir =
   process.env.QA_CONTRACTS_DIR ?? new URL('../packages/contracts', import.meta.url).pathname;
 const alias = { '@meetops/contracts': `${contractsDir}/src/index.ts` };
-const base = { environment: 'node' as const, alias };
+// 15s default: API suites boot an in-process server per test and hit vitest's 5s default under load.
+const base = { environment: 'node' as const, alias, testTimeout: 15_000 };
 
 // One vitest project per suite. E2E is run by Playwright, not vitest.
 // Plain array (no defineWorkspace, which vitest 4 removes). Used by vitest.config.ts as
