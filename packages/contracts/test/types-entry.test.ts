@@ -67,6 +67,6 @@ describe('@meetops/contracts/types (light entry)', () => {
   });
   it('package.json exposes ./types and sideEffects: false', () => {
     expect(pkg.sideEffects).toBe(false);
-    expect(pkg.exports['./types']).toEqual({ types: './src/types.ts', import: './dist/types.js' });
+    expect(pkg.exports['./types']).toEqual({ types: './src/types.ts', import: './dist/types.js', default: './dist/types.js' });
   });
 });

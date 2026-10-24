@@ -16,14 +16,30 @@ export const API_ERROR_CODES = [
   'BAD_REQUEST', 'VALIDATION_FAILED', 'UNAUTHENTICATED', 'AUTH_FAILED', 'CSRF_INVALID', 'FORBIDDEN', 'NOT_FOUND',
   'CONFLICT', 'RATE_LIMITED', 'PROVIDER_UNAVAILABLE', 'INTERNAL',
 ] as const;
+/** Cursor pagination (v0.3.3): max page size, i.e. the `limit` maximum of CursorPageQuery and OffsetPageQuery. */
+export const MAX_PAGE_LIMIT = 100;
+/** Default `limit` when the query omits it. */
+export const DEFAULT_PAGE_LIMIT = 25;
+/** Max length of an opaque `cursor` / `nextCursor`. */
+export const MAX_CURSOR_LENGTH = 512;
+
 /**
- * v0.3.3: all `ApiErrorReason` values. Every 409 CONFLICT carries one in `error.reason`;
- * `CONFLICT` is the generic fallback when no more specific reason applies.
+ * v0.3.3: named reasons for `CONFLICT` errors (HTTP 409). Sent as `error.reason` next to `code: 'CONFLICT'` so clients
+ * can branch without parsing `message`.
+ * - `ALREADY_MEMBER`: invite or accept for someone who already has an active membership in the organization.
+ * - `INVITATION_EXPIRED` / `INVITATION_REVOKED` / `INVITATION_ALREADY_ACCEPTED`: the invitation can no longer be used.
+ * - `LAST_OWNER`: the change would leave the organization without an owner.
+ * - `EMAIL_TAKEN`: an account with this email address already exists.
+ * - `CONFLICT`: generic fallback, so every 409 carries a reason even when nothing more specific applies.
  */
-export const API_ERROR_REASONS = [
-  'CONFLICT', 'LAST_OWNER', 'ALREADY_MEMBER', 'EMAIL_TAKEN', 'INVITATION_EXPIRED', 'INVITATION_REVOKED',
-  'INVITATION_ALREADY_ACCEPTED',
+export const CONFLICT_REASONS = [
+  'ALREADY_MEMBER', 'INVITATION_EXPIRED', 'INVITATION_REVOKED', 'INVITATION_ALREADY_ACCEPTED', 'LAST_OWNER',
+  'EMAIL_TAKEN', 'CONFLICT',
 ] as const;
+/** Alias of CONFLICT_REASONS (name used by the API error envelope code). */
+export const API_ERROR_REASONS = CONFLICT_REASONS;
+/** HTTP status for every `CONFLICT` error, including all CONFLICT_REASONS. */
+export const CONFLICT_HTTP_STATUS = 409;
 
 /** ADR-005: extension tokens. TTL of the access token in seconds (15 min). */
 export const EXTENSION_TOKEN_TTL_SECONDS = 900;
