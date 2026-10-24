@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.7
 # MeetOps AI — realtime gateway (@meetops/realtime, apps/realtime; Fastify + Socket.IO,
-# optional Redis adapter). apps/realtime arrives with PR #16. Build context: repo root.
+# optional Redis adapter). Build context: repo root.
 #   docker build -f infra/docker/Dockerfile.realtime -t meetops/realtime .
 ARG NODE_VERSION=20.20.2
 
