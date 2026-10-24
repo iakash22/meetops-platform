@@ -20,8 +20,8 @@ import type { FileObject } from '@meetops/contracts';
 import type { PresignedUrl } from '@meetops/contracts/legacy';
 import { MAX_CHUNK_BYTES, MAX_CHUNKS } from '@meetops/contracts';
 import { assertTtl, loadStorageConfig, S3_MIN_PART_BYTES, SESSION_CHUNK_TTL_SECONDS, UPLOAD_CONFIRM_GRACE_SECONDS, type StorageConfig } from './config.js';
-import { mapS3Error, StorageValidationError } from './errors.js';
-import { assertKeyOwnedBy, buildObjectKey, type MeetingObjectRef } from './keys.js';
+import { mapS3Error, StorageAccessError, StorageValidationError } from './errors.js';
+import { assertKeyOwnedBy, buildObjectKey, parseMeetingKey, type MeetingObjectRef } from './keys.js';
 import type {
   CompletedPart,
   GetObjectResult,
@@ -56,7 +56,13 @@ export type SessionRef = { organizationId: string; meetingId: string; sessionId:
  * REQUIRED meeting-level authorization, run on every op after the org-prefix check
  * (e.g. "does this meeting belong to organizationId and may the caller access it?"). Throw to deny.
  */
-export type AuthorizeHook = (ref: MeetingObjectRef) => void | Promise<void>;
+/** A key read from storage of record (file_objects.key or a cached key). Never rebuilt from ids. */
+export type StoredObjectKey = { organizationId: string; meetingId: string; key: string };
+
+/** What the authorize hook sees: a derived ref (writes and ref reads) or a stored key (stored-key reads). */
+export type AuthorizeTarget = MeetingObjectRef | StoredObjectKey;
+
+export type AuthorizeHook = (target: AuthorizeTarget) => void | Promise<void>;
 
 export type S3StorageServiceOptions = {
   config: StorageConfig;
@@ -143,6 +149,46 @@ export class S3StorageService implements StorageService {
     assertKeyOwnedBy(key, ref.organizationId, ref.meetingId);
     await this.#authorize(ref);
     return key;
+  }
+
+  /**
+   * Validate a stored key for READS: owner (organizationId, meetingId) and shape must hold under organizations/ or the
+   * legacy org/ prefix. The key is used as stored; it is never rebuilt from ids.
+   */
+  async #storedKey(s: StoredObjectKey): Promise<string> {
+    if (!s || typeof s !== 'object') throw new StorageValidationError('stored key is required');
+    assertKeyOwnedBy(s.key, s.organizationId, s.meetingId);
+    if (!parseMeetingKey(s.key)) throw new StorageAccessError();
+    await this.#authorize({ organizationId: s.organizationId, meetingId: s.meetingId, key: s.key });
+    return s.key;
+  }
+
+  /** Read an object by its stored key (legacy org/ or organizations/). */
+  async getObjectByKey(s: StoredObjectKey): Promise<GetObjectResult> {
+    const key = await this.#storedKey(s);
+    const res = await settle(this.#client.send(new GetObjectCommand({ Bucket: this.#bucket, Key: key })));
+    if (!res.Body) throw mapS3Error({ name: 'NoSuchKey' });
+    const body = res.Body instanceof Readable ? res.Body : Readable.from(res.Body as unknown as AsyncIterable<Uint8Array>);
+    return { body, info: toInfo(res) };
+  }
+
+  /** HEAD an object by its stored key; null when missing. */
+  async headObjectByKey(s: StoredObjectKey): Promise<StoredObjectInfo | null> {
+    const key = await this.#storedKey(s);
+    try {
+      return toInfo(await settle(this.#client.send(new HeadObjectCommand({ Bucket: this.#bucket, Key: key }))));
+    } catch (err) {
+      if ((err as { code?: string }).code === 'NOT_FOUND') return null;
+      throw err;
+    }
+  }
+
+  /** Presigned GET for a stored key. Presigned URLs for existing objects must go through this, not a rebuilt ref. */
+  async getPresignedDownloadUrlByKey(s: StoredObjectKey, opts?: PresignOptions): Promise<PresignedUrl> {
+    const key = await this.#storedKey(s);
+    const ttl = this.#ttl(opts, this.#cfg.downloadTtlSeconds);
+    const url = await settle(this.#presign(this.#client, new GetObjectCommand({ Bucket: this.#bucket, Key: key }), { expiresIn: ttl }));
+    return this.#presigned(url, 'GET', ttl);
   }
 
   #ttl(opts: PresignOptions | undefined, def: number): number {

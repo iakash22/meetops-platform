@@ -43,7 +43,14 @@ export type MultipartUpload = { uploadId: string; partCount: number; partSizeByt
 /** checksumSha256 = base64 sha256 of that part (required when completing; ListParts reports it). */
 export type CompletedPart = { partNumber: number; etag: string; checksumSha256?: string };
 
+/** A key read from storage of record (file_objects.key or a cached key); validated, never rebuilt. */
+export type StoredKeyRef = { organizationId: string; meetingId: string; key: string };
+
 export interface StorageService {
+  /** Stored-key reads: accept organizations/ and legacy org/ keys owned by organizationId+meetingId. */
+  getObjectByKey(s: StoredKeyRef): Promise<GetObjectResult>;
+  headObjectByKey(s: StoredKeyRef): Promise<StoredObjectInfo | null>;
+  getPresignedDownloadUrlByKey(s: StoredKeyRef, opts?: PresignOptions): Promise<PresignedUrl>;
   putObject(ref: MeetingObjectRef, body: PutObjectBody, spec: UploadSpec): Promise<{ etag?: string }>;
   getObject(ref: MeetingObjectRef): Promise<GetObjectResult>;
   headObject(ref: MeetingObjectRef): Promise<StoredObjectInfo | null>;

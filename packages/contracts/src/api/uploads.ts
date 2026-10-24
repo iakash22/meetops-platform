@@ -1,6 +1,7 @@
 import { Type, type Static } from '@sinclair/typebox';
 import { Id } from '../common.js';
-import { MAX_MEDIA_BYTES, MediaMimeType, PresignedUrlDto } from '../domain/media.js';
+import { MAX_MEDIA_BYTES } from '../constants.js';
+import { MediaMimeType, PresignedUrlDto } from '../domain/media.js';
 
 /** Standard base64 encoding of a 32-byte sha256 digest (S3 `x-amz-checksum-sha256` format). */
 export const Sha256Base64 = Type.String({ pattern: '^[A-Za-z0-9+/]{43}=$' });

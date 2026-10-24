@@ -25,6 +25,12 @@ export const EXTENSION_TOKEN_AUDIENCE = 'extension' as const;
 export const EXTENSION_TOKEN_TYPE = 'Bearer' as const;
 export const EXTENSION_SCOPES = ['meetings:resolve', 'recordings:write'] as const;
 
+/**
+ * ADR-005 amendment 1: `type` of the pairing handoff message (`PairingCodeMessage`) that the web pairing page sends to
+ * the extension over `externally_connectable` messaging after `POST /auth/extension/pair`.
+ */
+export const PAIRING_CODE_MESSAGE_TYPE = 'MEETOPS_PAIRING_CODE' as const;
+
 /** Endpoint paths for the extension pairing and token lifecycle (ADR-005 amendment 1). All are POST. */
 export const EXTENSION_AUTH_PATHS = {
   /** Web session (`__Host-` cookie + `x-csrf-token`) only. Issues a single-use pairing code bound to the nonce. */
@@ -44,3 +50,27 @@ export const EXTENSION_AUTH_PATHS = {
 export const REDACT_KEYS = [
   'accessToken', 'refreshToken', 'pairingCode', 'authorization', 'cookie', 'set-cookie', 'password', 'csrfToken',
 ] as const;
+
+/**
+ * Upload cap shared by direct uploads, recording sessions and the media worker: 1.4 GB (decimal, 1_400_000_000 B
+ * ~= 1.30 GiB). Sized so the source plus its 16 kHz mono s16le WAV (<= ~461 MB at the 4 h duration cap) and the WAV
+ * chunks (~461 MB) fit the worker's 3 GiB /tmp/work tmpfs (1.4e9 + 2 * 4.61e8 ~= 2.32e9 < 3.22e9) with headroom.
+ * Single source of truth: storage, media-core callers and the worker all derive their caps from this.
+ */
+export const MAX_MEDIA_BYTES = 1_400_000_000;
+/** Chunked recording upload: lifetime of a chunk upload URL, in seconds. */
+export const CHUNK_UPLOAD_URL_TTL_SECONDS = 300;
+/** 64 MiB per chunk (5 s timeslices are far smaller; this is an abuse ceiling). */
+export const MAX_CHUNK_BYTES = 64 * 1024 * 1024;
+/**
+ * 1.4 GB (MAX_MEDIA_BYTES) per recording session. The backend MUST enforce this as a running total of the bytes signed or stored for the
+ * session (on every chunk upload-URL request and again on complete), because the per-chunk limits alone cannot:
+ * MAX_CHUNK_BYTES x MAX_CHUNKS is far above 1.4 GB.
+ */
+export const MAX_RECORDING_SESSION_BYTES = MAX_MEDIA_BYTES;
+/** Upper bound on chunk count. At 5 s timeslices this is about 13.9 h. */
+export const MAX_RECORDING_CHUNKS = 10_000;
+/** Alias of MAX_RECORDING_CHUNKS. */
+export const MAX_CHUNKS = MAX_RECORDING_CHUNKS;
+/** Longest recording `durationMs` accepted by `CompleteRecordingSessionRequest`: 24 h. */
+export const MAX_DURATION_MS = 24 * 60 * 60 * 1000;
