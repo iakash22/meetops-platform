@@ -108,7 +108,33 @@ Jira hardening:
 - Each request has a timeout enforced with `AbortController`.
 - Redirects are refused (`redirect: 'error'`, and any 3xx response is rejected).
 - Response bodies are capped in size.
-- Only `https://<site>.atlassian.net` base URLs are accepted.
+- Only `https://<site>.atlassian.net` or `https://api.atlassian.com/ex/jira/<cloudId>` base URLs are accepted. The gateway form is required for scoped API tokens and OAuth; set `siteUrl` so browse links use the site.
+
+## Resilience
+
+- **Retries.** `withRetry` uses exponential backoff with full jitter. Defaults: 4 attempts, 500 ms base delay, `maxDelayMs` 60 s. Sleep, clock and randomness can be injected for tests.
+- **What is retried:**
+  - **429**, honoring `Retry-After` in either seconds or HTTP-date form.
+  - **GitHub primary rate limit:** a 403 with `x-ratelimit-remaining: 0` waits until `x-ratelimit-reset`.
+  - **GitHub secondary rate limit:** a 403 with `Retry-After`.
+  - **5xx** responses, network errors and timeouts — **only for idempotent requests** (see below).
+- **Idempotency (`RetryOptions.idempotent`, default `true`).** With `idempotent: false`, only failures the classifier marks `notProcessed` are retried: 429, 503 with `Retry-After`, and GitHub rate-limit 403s. Network errors, timeouts and other 5xx are not retried because the request may already have been applied (duplicate issues). Providers set this per call: Jira uses the HTTP method (`POST /issue` and transition `POST`s are non-idempotent; `isIdempotentMethod`), GitHub marks `issues.create` non-idempotent. A caller's `idempotent: false` turns retries of transport errors off for every call; it can never turn them on for a POST. Only enable it for a POST when a real idempotency key exists.
+- **What is never retried:** any other 4xx. If the server asks for a wait longer than `maxDelayMs`, the call fails fast instead of sleeping.
+- **Scope.** Retries apply to Octokit calls (`retry` option on `GitHubIssuesProvider`) and to Jira fetches (`retry` option on `JiraIssueTrackerProvider`).
+- **Order.** The approval gate runs before the first attempt. Retries happen inside the approved, audited write, and the audit log records one attempt and one result per write.
+- **Replay store.** `RedisDeliveryStore(redis, { keyPrefix = 'meetops:webhook:delivery:', defaultTtlSeconds = 604800 })` is atomic through `SET key 1 EX ttl NX`. It accepts any injected ioredis-compatible client. TTLs below 7 days (`MIN_REPLAY_TTL_SECONDS`) are raised to 7 days in both the Redis and in-memory stores.
+
+## Persisted links (`IntegrationIssueRecord` from @meetops/contracts)
+
+`toIntegrationIssue(issue, { id, organizationId, integrationId, taskId, createdAt? })` builds a tenant-scoped `IntegrationIssueRecord`:
+
+- `provider` is `'github'` or `'jira'`.
+- `externalId` is the provider key.
+- `lastKnownStatus` is taken from `issue.status`.
+- `externalUrl` is set only for https links.
+- The result is validated against the contract schema.
+
+`fromIntegrationIssue(record)` returns `{ organizationId, integrationId, provider, key, lastKnownStatus? }`. Look links up by `(organizationId, provider, externalId)`.
 
 ## GitHub webhooks
 
@@ -127,8 +153,12 @@ const change = mapGitHubIssueEvent(result.event, result.payload, result); // use
 
 - **Routing.** `X-GitHub-Hook-ID`, `X-GitHub-Hook-Installation-Target-ID`/`-Type` and `payload.installation.id` are passed to `WebhookSecretResolver`. The body is parsed before verification only to read `installation.id`, and it is size-capped (default 1 MiB, otherwise 413).
 - **Signature.** HMAC-SHA256 of the raw body is compared to `X-Hub-Signature-256` with `timingSafeEqual`, after a length check.
-- **Failure codes.** An unknown integration, a missing or invalid secret, or a bad signature returns **401**. A missing delivery ID or invalid JSON returns 400. A replayed delivery returns 409. An oversized body returns 413.
+- **Failure codes.** An unknown integration, a missing or invalid secret, or a bad signature returns **401**. A missing or malformed delivery ID (`missing_delivery_id` / `malformed_delivery_id`) or invalid JSON returns 400. A replayed delivery returns 409. An oversized body returns 413.
 - **Replay protection.** The delivery ID is recorded only after the signature is valid. Use a Redis `DeliveryStore` in production.
+  - `X-GitHub-Delivery` must be a GUID (`isValidGitHubDeliveryId`, max 64 chars); anything else is rejected with 400 before the store is touched. IDs are lower-cased so case variants collide.
+  - Delivery IDs are kept for `replayTtlSeconds`, default **and minimum** 7 days (604800 s); smaller values are raised.
+  - **GitHub sends no signed timestamp**, so a captured request is replayable once its ID expires. The delivery-ID TTL is the only replay control for GitHub; keep it ≥ 7 days (GitHub allows manual redelivery for 3 days).
+- **Freshness (providers with timestamps).** `checkTimestampFreshness(ts, { maxAgeSeconds, maxFutureSkewSeconds = 300 })` returns `fresh | stale | future | invalid` for epoch s/ms or ISO-8601 values. `checkJiraWebhookFreshness(payload, opts)` reads Jira's `timestamp` body field (returns `absent` unless `requireTimestamp`). Run it only after authenticating the request, and reject `stale`/`future`/`invalid` with 400. Combine with a delivery-ID store where the provider sends one.
 
 ### Webhook secret handling
 
@@ -155,10 +185,32 @@ Backend stores refresh tokens encrypted, refreshes them in `CredentialResolver`,
 
 **Fine-grained PAT (fallback)**: scope to selected repositories; permissions **Issues: Read and write**, **Metadata: Read-only**. Avoid classic PATs (`repo` scope is far broader).
 
-**Jira Cloud**
+**Jira Cloud** (verified against Atlassian docs, 2026-10-21)
 
-- Use a dedicated service account and an Atlassian API token (basic auth `email:token`). If using scoped API tokens, grant only `read:jira-work` and `write:jira-work` (plus `read:jira-user` for `healthCheck` via `/myself`).
-- Project permissions for that account: **Browse Projects**, **Create Issues**, **Edit Issues**, **Transition Issues** (and **Assign Issues** / **Assignable User** if assigning). No admin permissions.
+Operations used and the OAuth 2.0 (3LO) / scoped-token scopes Atlassian lists for each:
+
+| Operation        | Endpoint                                   | Classic scope (recommended) | Granular scopes                                                                                                                                             |
+| ---------------- | ------------------------------------------ | --------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Create issue     | `POST /rest/api/3/issue`                   | `write:jira-work`           | `write:issue:jira`, `write:comment:jira`, `write:comment.property:jira`, `write:attachment:jira`, `read:issue:jira`                                         |
+| Get issue        | `GET /rest/api/3/issue/{key}`              | `read:jira-work`            | `read:issue-meta:jira`, `read:issue-security-level:jira`, `read:issue.vote:jira`, `read:issue.changelog:jira`, `read:avatar:jira`, … (more on the doc page) |
+| Get transitions  | `GET /rest/api/3/issue/{key}/transitions`  | `read:jira-work`            | `read:issue.transition:jira`, `read:status:jira`, `read:field-configuration:jira`                                                                           |
+| Transition issue | `POST /rest/api/3/issue/{key}/transitions` | `write:jira-work`           | `write:issue:jira`, `write:issue.property:jira`                                                                                                             |
+| Health check     | `GET /rest/api/3/myself`                   | `read:jira-user`            | `read:application-role:jira`, `read:group:jira`, `read:user:jira`, `read:avatar:jira`                                                                       |
+
+The minimum classic set is therefore **`read:jira-work`, `write:jira-work`, `read:jira-user`**. Note that `write:jira-work` also allows deleting issues and posting comments; the granular scopes narrow this.
+
+- **Unscoped API tokens** use basic auth `email:token` against `https://<site>.atlassian.net`. They carry the full permissions of the account, so use a dedicated service account.
+- **Scoped API tokens** must call `https://api.atlassian.com/ex/jira/{cloudId}`, which is supported via `baseUrl` + `siteUrl`.
+- **Token expiry.** New API tokens expire after at most one year, so plan for rotation.
+- **Scopes don't override Jira permissions.** The service account still needs these project permissions: **Browse Projects**, **Create Issues**, **Edit Issues**, **Transition Issues** (plus **Assign Issues** / **Assignable User** when assigning). Grant no admin permissions.
+
+Sources:
+
+- Scopes (classic and granular): https://developer.atlassian.com/cloud/jira/platform/scopes-for-oauth-2-3LO-and-forge-apps/
+- Issues API (per-operation scopes): https://developer.atlassian.com/cloud/jira/platform/rest/v3/api-group-issues/
+- Myself API: https://developer.atlassian.com/cloud/jira/platform/rest/v3/api-group-myself/
+- API tokens (scoped tokens, gateway URL, expiry): https://support.atlassian.com/atlassian-account/docs/manage-api-tokens-for-your-atlassian-account/
+- Project permissions: https://support.atlassian.com/jira-cloud-administration/docs/manage-project-permissions/
 
 ## Environment variables (names only)
 
