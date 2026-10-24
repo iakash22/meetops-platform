@@ -3,6 +3,7 @@ import { logger } from '@meetops/logger';
 import { startMediaWorker } from './media/index.js';
 
 export * from './media/index.js';
+export * from './ai/index.js';
 
 async function main() {
   const { close } = startMediaWorker();
