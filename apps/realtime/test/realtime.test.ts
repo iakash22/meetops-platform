@@ -104,14 +104,15 @@ describe('realtime server', () => {
     await connected(connect(url, 'a1'));
   });
 
-  it('uses org-prefixed meeting rooms', async () => {
+  it('uses organization-scoped rooms (organizations:{organizationId})', async () => {
     const { io, url } = await start();
     const a1 = connect(url, 'a1');
     await connected(a1);
     expect(await a1.emitWithAck('meeting:join', { meetingId: 'mA' })).toEqual({ ok: true });
     const rooms = [...(io.sockets.sockets.values().next().value?.rooms ?? [])];
-    expect(rooms).toEqual(expect.arrayContaining(['org:orgA', 'org:orgA:meeting:mA']));
+    expect(rooms).toEqual(expect.arrayContaining(['organizations:orgA', 'organizations:orgA:meetings:mA']));
     expect(rooms).not.toContain('meeting:mA');
+    expect(rooms.some((r) => r.startsWith('org:'))).toBe(false);
   });
 
   it('rejects missing and invalid tokens', async () => {
