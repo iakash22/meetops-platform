@@ -1,3 +1,4 @@
+// lint-staged: test folders are covered by test/tsconfig.json projects (see #106)
 // Flat ESLint config for monorepo
 import js from "@eslint/js";
 import tseslint from "typescript-eslint";
