@@ -88,7 +88,9 @@ describe.skipIf(!url)('Prisma + Redis adapters against live Postgres (RLS)', { t
     const memId = (await mem.get('/auth/session')).json().user.id as string;
     const ownerId = session.user.id as string;
     expect((await mem.patch(`/orgs/${id}/members/${memId}`, { role: 'admin' })).statusCode).toBe(403);
-    expect((await owner.patch(`/orgs/${id}/members/${ownerId}`, { role: 'admin' })).statusCode).toBe(422);
+    const lastOwner = await owner.patch(`/orgs/${id}/members/${ownerId}`, { role: 'admin' });
+    expect(lastOwner.statusCode).toBe(409);
+    expect(lastOwner.json().error).toMatchObject({ code: 'CONFLICT', reason: 'LAST_OWNER' });
     expect((await owner.patch(`/orgs/${id}/members/${memId}`, { role: 'viewer' })).statusCode).toBe(200);
     expect((await mem.get('/auth/session')).statusCode).toBe(401);
 

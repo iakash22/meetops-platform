@@ -27,6 +27,8 @@ import {
   loadStorageConfig,
   parseMeetingKey,
   organizationPrefix,
+  orgPrefix,
+  refOrganizationId,
   toPresignedUrlDto,
   toSignedPutUpload,
   SESSION_CHUNK_PREFIX,
@@ -90,11 +92,11 @@ describe('keys', () => {
     expect(buildObjectKey({ organizationId: 'o1', meetingId: 'm1', kind: 'chunk', objectId: 'r1', index: 3 })).toBe(
       'organizations/o1/meetings/m1/processed/r1/chunks/00003.wav'
     );
-    expect(parseMeetingKey(REC_KEY)).toEqual({ organizationId: 'o1', meetingId: 'm1', rest: 'recordings/r1.webm', legacy: false });
+    expect(parseMeetingKey(REC_KEY)).toEqual({ organizationId: 'o1', orgId: 'o1', meetingId: 'm1', rest: 'recordings/r1.webm', legacy: false });
   });
   it('writers use organizations/{organizationId}/; readers also accept legacy org/{organizationId}/', () => {
     expect(organizationPrefix('o1')).toBe('organizations/o1/');
-    expect(parseMeetingKey('org/o1/meetings/m1/recordings/r1.webm')).toEqual({ organizationId: 'o1', meetingId: 'm1', rest: 'recordings/r1.webm', legacy: true });
+    expect(parseMeetingKey('org/o1/meetings/m1/recordings/r1.webm')).toEqual({ organizationId: 'o1', orgId: 'o1', meetingId: 'm1', rest: 'recordings/r1.webm', legacy: true });
     expect(() => assertKeyOwnedBy('org/o1/meetings/m1/recordings/r1.webm', 'o1', 'm1')).not.toThrow();
     expect(() => assertKeyOwnedBy(REC_KEY, 'o1', 'm1')).not.toThrow();
   });
@@ -119,6 +121,45 @@ describe('keys', () => {
   });
 });
 
+describe('keys: ADR-010 organizationId naming (compat)', () => {
+  const recNew: MeetingObjectRef = { organizationId: 'o1', meetingId: 'm1', kind: 'recording', objectId: 'r1', ext: 'webm' };
+  it('organizationId refs produce the exact same key string as legacy orgId refs', () => {
+    expect(buildObjectKey(recNew)).toBe(REC_KEY);
+    expect(buildObjectKey(recNew)).toBe(buildObjectKey(rec));
+    for (const kind of ['recording', 'normalized', 'chunk', 'session_chunk', 'transcript', 'export', 'attachment'] as const) {
+      const base = { meetingId: 'm1', kind, objectId: 'x1', ext: 'json', index: 2 };
+      expect(buildObjectKey({ ...base, organizationId: 'o9' })).toBe(buildObjectKey({ ...base, orgId: 'o9' }));
+    }
+  });
+  it('organizationPrefix emits organizations/{id}/ (ADR-010 Phase A); orgPrefix is a deprecated alias', () => {
+    expect(organizationPrefix('o1')).toBe('organizations/o1/');
+    expect(orgPrefix).toBe(organizationPrefix);
+    expect(() => organizationPrefix('../x')).toThrow(StorageValidationError);
+  });
+  it('pre-ADR-010 keys (recording and session chunk) stay readable and owned', () => {
+    const sessionKey = `${SESSION_CHUNK_PREFIX}org/o1/meetings/m1/sessions/s1/00007.part`;
+    expect(() => assertKeyOwnedBy('org/o1/meetings/m1/recordings/r1.webm', 'o1', 'm1')).not.toThrow();
+    expect(() => assertKeyOwnedBy('org/o1/meetings/m1/recordings/r1.webm', 'o2', 'm1')).toThrow(StorageAccessError);
+    expect(() => assertKeyOwnedBy(sessionKey, 'o1', 'm1')).not.toThrow();
+    expect(() => assertKeyOwnedBy(sessionKey, 'o2')).toThrow(StorageAccessError);
+    expect(parseMeetingKey(sessionKey)?.organizationId).toBe('o1');
+  });
+  it('refOrganizationId rejects conflicting or missing ids', () => {
+    expect(refOrganizationId({ organizationId: 'o1' })).toBe('o1');
+    expect(refOrganizationId({ orgId: 'o1' })).toBe('o1');
+    expect(refOrganizationId({ organizationId: 'o1', orgId: 'o1' })).toBe('o1');
+    expect(() => refOrganizationId({ organizationId: 'o1', orgId: 'o2' })).toThrow(StorageValidationError);
+    expect(() => refOrganizationId({})).toThrow(StorageValidationError);
+    expect(() => buildObjectKey({ ...recNew, orgId: 'o2' })).toThrow(StorageValidationError);
+  });
+  it('service passes authorize a ref carrying both names', async () => {
+    const seen: MeetingObjectRef[] = [];
+    s3.on(HeadObjectCommand).resolves({ ContentLength: 3, ContentType: 'audio/webm' });
+    await svc({ authorize: (r) => void seen.push(r) }).headObject(recNew);
+    expect(seen[0]).toMatchObject({ organizationId: 'o1', orgId: 'o1' });
+  });
+});
+
 describe('S3StorageService', () => {
   it('requires organizationId on every op', async () => {
     const s = svc();
@@ -134,7 +175,7 @@ describe('S3StorageService', () => {
       throw new StorageAccessError();
     });
     await expect(svc({ authorize }).deleteObject(rec)).rejects.toBeInstanceOf(StorageAccessError);
-    expect(authorize).toHaveBeenCalledWith(rec);
+    expect(authorize).toHaveBeenCalledWith({ ...rec, organizationId: 'o1', orgId: 'o1' });
     expect(s3.calls()).toHaveLength(0);
   });
 
@@ -311,7 +352,7 @@ describe('S3StorageService', () => {
     const authorize = vi.fn();
     s3.on(DeleteObjectCommand).resolves({});
     await svc({ authorize }).deleteObject(rec);
-    expect(authorize).toHaveBeenCalledWith(rec);
+    expect(authorize).toHaveBeenCalledWith({ ...rec, organizationId: 'o1', orgId: 'o1' });
   });
 
   describe('recording-session chunks (flat tmp prefix)', () => {
@@ -332,7 +373,7 @@ describe('S3StorageService', () => {
       expect(() => assertKeyOwnedBy('tmp/session-chunks/organizations/o1/meetings/../x/sessions/s1/00001.part', 'o1')).toThrow(StorageAccessError);
       expect(() => assertKeyOwnedBy('tmp/other/organizations/o1/meetings/m1/sessions/s1/00001.part', 'o1')).toThrow(StorageAccessError);
       expect(() => assertKeyOwnedBy(REC_KEY, 'o1', 'm2')).toThrow(StorageAccessError);
-      expect(parseMeetingKey(key(1))).toEqual({ organizationId: 'o1', meetingId: 'm1', rest: 'sessions/s1/00001.part', legacy: false });
+      expect(parseMeetingKey(key(1))).toEqual({ organizationId: 'o1', orgId: 'o1', meetingId: 'm1', rest: 'sessions/s1/00001.part', legacy: false });
     });
 
     it('presigns a PUT signing content-length, content-type and checksum; TTL <= 300', async () => {

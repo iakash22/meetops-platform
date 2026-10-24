@@ -9,4 +9,4 @@
 - Cost estimate: `estimateCost()` uses token and audio-hour rates from the provider config. Free providers cost 0.
 - Idempotency keys stop duplicate AI calls on retries and redeliveries.
 - Bounded retries (max 5) and bounded repair attempts (max 2) cap the worst-case spend per job.
-- Usage records (`UsageTracker`) are per tenant, provider, model and feature, so they can drive dashboards and alerts.
+- Usage records (`UsageTracker`) are per organization, provider, model and feature, so they can drive dashboards and alerts.
