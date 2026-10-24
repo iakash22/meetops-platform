@@ -67,8 +67,8 @@ redirects, 5 s connect timeout, 10 MB response cap).
 
 ## Security review fixes (PR #21)
 
-- **C1 Credentials.** Credentials are resolved per call with `resolveCredential(ref, { orgId })` (`createCredentialResolver`).
-  - An org's BYO `secret:org/{orgId}/…` ref must match the org. A mismatch is rejected (`FORBIDDEN`).
+- **C1 Credentials.** Credentials are resolved per call with `resolveCredential(ref, { organizationId })` (`createCredentialResolver`).
+  - An org's BYO `secret:org/{organizationId}/…` ref must match the org. A mismatch is rejected (`FORBIDDEN`).
   - `env:` refs are platform keys. They are allowed only when the server-decided `OrgPlan.platformKeys` is true. They are
     never a fallback: a failing BYO ref does not fall back to the platform key.
   - Adapters are built per call by `ProviderRegistry.instantiate()`. There are no long-lived, key-bound clients.
@@ -104,7 +104,7 @@ redirects, 5 s connect timeout, 10 MB response cap).
   - `secret:` paths are split on `/`, and every segment must match `^[A-Za-z0-9_-]+$`. This rejects `.`, `..`, empty
     segments, a leading or trailing `/`, `%` (so no encoded `%2e%2e`) and `\`.
   - Nothing is decoded or normalized.
-  - Org binding (`parseOrgSecretRef`) compares the parsed segments exactly: `org`, then `{orgId}`, then at least one name segment.
+  - Org binding (`parseOrgSecretRef`) compares the parsed segments exactly: `org`, then `{organizationId}`, then at least one name segment.
   - Only the canonical path reaches the secret store.
 - **SSRF:** the blocklist also covers 6to4 `2002::/16`, Teredo `2001::/32`, documentation `2001:db8::/32`,
   `64:ff9b:1::/48`, `100::/64`, TEST-NET-1/2/3 (`192.0.2.0/24`, `198.51.100.0/24`, `203.0.113.0/24`), alongside the

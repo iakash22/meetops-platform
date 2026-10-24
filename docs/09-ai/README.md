@@ -18,3 +18,5 @@ See also ADR-002 (provider interfaces) and ADR-003 (contracts, including `Fallba
 - [Model routing](./model-routing.md): precedence, fallback, execution
 - [Transcription](./transcription.md)
 - [Cost optimization](./cost-optimization.md)
+- [Summaries and tasks](./summaries-and-tasks.md)
+- [AI evaluation](./ai-evaluation.md)

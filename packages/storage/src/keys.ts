@@ -9,8 +9,17 @@ export type MeetingObjectKind = 'recording' | 'normalized' | 'chunk' | 'session_
  * Server-side object reference. Callers pass IDs and a kind; the storage
  * package derives the key. Raw keys are never accepted from callers.
  */
-export type MeetingObjectRef = {
-  organizationId: string;
+export type MeetingObjectRef = MeetingObjectRefFields &
+  (
+    | { organizationId: string; /** @deprecated Use organizationId (ADR-010). */ orgId?: string }
+    | {
+        organizationId?: string;
+        /** @deprecated Use organizationId (ADR-010). Accepted for one minor version. */
+        orgId: string;
+      }
+  );
+
+type MeetingObjectRefFields = {
   meetingId: string;
   kind: MeetingObjectKind;
   /** Id of the logical object (recording id, transcript id, ...). */
@@ -20,6 +29,29 @@ export type MeetingObjectRef = {
   /** Required for kinds `chunk` and `session_chunk` (= recording-session `seq`): 0-based index. */
   index?: number;
 };
+
+/**
+ * The organization id of a ref (ADR-010: organizationId, falling back to the deprecated orgId).
+ * Throws if both are given and differ, so a ref can never point at two organizations.
+ */
+export function refOrganizationId(ref: { organizationId?: string; orgId?: string }): string {
+  const { organizationId, orgId } = ref;
+  if (organizationId !== undefined && orgId !== undefined && organizationId !== orgId) {
+    throw new StorageValidationError('organizationId and orgId differ');
+  }
+  const v = organizationId ?? orgId;
+  if (typeof v !== 'string') throw new StorageValidationError('Invalid organizationId');
+  return v;
+}
+
+/**
+ * Returns a copy of ref with both organizationId and the deprecated orgId set, so authorize hooks written
+ * against either name keep working during the ADR-010 compatibility phase.
+ */
+export function normalizeMeetingObjectRef(ref: MeetingObjectRef): MeetingObjectRef & { organizationId: string; orgId: string } {
+  const organizationId = refOrganizationId(ref);
+  return { ...ref, organizationId, orgId: organizationId };
+}
 
 function idx(i: number | undefined): string {
   if (i === undefined || !Number.isInteger(i) || i < 0 || i > 99999) throw new StorageValidationError('Invalid chunk index');
@@ -51,9 +83,12 @@ export function legacyOrganizationPrefix(organizationId: string): string {
   return `${LEGACY_ORG_KEY_PREFIX}${id('organizationId', organizationId)}/`;
 }
 
+/** @deprecated Use organizationPrefix (ADR-010). Same output (organizations/{organizationId}/ since ADR-010 Phase A). */
+export const orgPrefix = organizationPrefix;
+
 /** Derive the object key: organizations/{organizationId}/meetings/{meetingId}/... */
 export function buildObjectKey(ref: MeetingObjectRef): string {
-  const base = `${organizationPrefix(ref.organizationId)}meetings/${id('meetingId', ref.meetingId)}`;
+  const base = `${organizationPrefix(refOrganizationId(ref))}meetings/${id('meetingId', ref.meetingId)}`;
   const obj = id('objectId', ref.objectId);
   const ext = () => {
     const e = (ref.ext ?? '').toLowerCase();
@@ -80,7 +115,15 @@ export function buildObjectKey(ref: MeetingObjectRef): string {
   }
 }
 
-export type ParsedMeetingKey = { organizationId: string; meetingId: string; rest: string; legacy: boolean };
+export type ParsedMeetingKey = {
+  organizationId: string;
+  /** @deprecated Use organizationId (ADR-010). */
+  orgId: string;
+  meetingId: string;
+  rest: string;
+  /** True for a legacy (read-only) org/ key. */
+  legacy: boolean;
+};
 
 /** Parse a stored key under organizations/ or (legacy, read-only) org/. Unknown prefixes return null. */
 export function parseMeetingKey(key: string): ParsedMeetingKey | null {
@@ -88,7 +131,7 @@ export function parseMeetingKey(key: string): ParsedMeetingKey | null {
   const k = key.startsWith(SESSION_CHUNK_PREFIX) ? key.slice(SESSION_CHUNK_PREFIX.length) : key;
   const m = /^(organizations|org)\/([^/]+)\/meetings\/([^/]+)\/(.+)$/.exec(k);
   if (!m || !ID.test(m[2]!) || !ID.test(m[3]!)) return null;
-  return { organizationId: m[2]!, meetingId: m[3]!, rest: m[4]!, legacy: m[1] === 'org' };
+  return { organizationId: m[2]!, orgId: m[2]!, meetingId: m[3]!, rest: m[4]!, legacy: m[1] === 'org' };
 }
 
 /**

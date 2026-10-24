@@ -43,6 +43,19 @@ export type MultipartUpload = { uploadId: string; partCount: number; partSizeByt
 /** checksumSha256 = base64 sha256 of that part (required when completing; ListParts reports it). */
 export type CompletedPart = { partNumber: number; etag: string; checksumSha256?: string };
 
+/**
+ * Result of a successful server-side upload verification. Native Apps contract: the device may delete its local
+ * copy ONLY when it receives `verified: true`. Any error (or no response) means "keep the local copy and retry".
+ */
+export type UploadVerification = {
+  verified: true;
+  /** Lowercase hex sha256 of the stored object (as verified by the server). */
+  sha256: string;
+  /** The same digest, base64 (S3 x-amz-checksum-sha256 form). */
+  checksumSha256: string;
+  sizeBytes: number;
+};
+
 /** A key read from storage of record (file_objects.key or a cached key); validated, never rebuilt. */
 export type StoredKeyRef = { organizationId: string; meetingId: string; key: string };
 
@@ -74,6 +87,10 @@ export interface StorageService {
   listParts(ref: MeetingObjectRef, uploadId: string): Promise<CompletedPart[]>;
   completeMultipartUpload(ref: MeetingObjectRef, uploadId: string, parts: CompletedPart[], uploadToken: string): Promise<{ etag?: string }>;
   abortMultipartUpload(ref: MeetingObjectRef, uploadId: string): Promise<void>;
+  /** Idempotent, retry-safe verify-on-complete for a single-part upload. */
+  verifyUpload(ref: MeetingObjectRef, uploadToken: string): Promise<UploadVerification>;
+  /** Idempotent, retry-safe complete + streamed whole-object sha256 verify for a multipart upload. */
+  verifyMultipartUpload(ref: MeetingObjectRef, uploadId: string, parts: CompletedPart[], uploadToken: string): Promise<UploadVerification>;
 }
 
 export type { PresignedUrl } from '@meetops/contracts/legacy';
