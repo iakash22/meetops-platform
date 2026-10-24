@@ -90,24 +90,24 @@ Each docs PR already contains #3 merged up through the stack, so each one is mer
 
 ### Other open PRs
 
-| PR  | Owner      | Branch                            | Base                        | Confirmed dependency                              |
-| --- | ---------- | --------------------------------- | --------------------------- | ------------------------------------------------- |
-| #4  | SEC        | `docs/security-threat-model`      | `main`                      | None                                              |
-| #5  | NATIVE     | `feat/extension-scaffold`         | `main`                      | None                                              |
-| #6  | DB         | `feat/database-core-schema`       | `main`                      | None                                              |
-| #7  | OPS        | `chore/devops-containers-ci`      | `main`                      | None                                              |
-| #9  | QA         | `test/qa-harness`                 | `main`                      | None                                              |
-| #10 | MEDIA      | `feat/storage-and-media-core`     | `main`                      | None                                              |
-| #11 | INT        | `feat/notifications-email`        | `main`                      | None                                              |
-| #13 | FE         | `feat/web-shell`                  | `main`                      | None                                              |
-| #15 | NATIVE     | `feat/extension-capture`          | `feat/extension-scaffold`   | Stacked on #5; merge #5 first                     |
-| #16 | MEDIA      | `feat/realtime-scaffold`          | `main`                      | None                                              |
-| #17 | ARCH       | `feat/core-contracts`             | `main`                      | None                                              |
-| #19 | INT        | `feat/integrations-webhooks-jira` | `main`                      | None                                              |
-| #21 | AI         | `feat/ai-provider-registry`       | `main`                      | None                                              |
-| #22 | ARCH       | `docs/adr-004`                    | `main`                      | ADR-004 references ADR-003 (#17); merge #17 first |
-| #24 | Unassigned | `fix/eslint-project-service`      | `main`                      | None                                              |
-| #25 | DB         | `feat/database-tenancy-rls`       | `feat/database-core-schema` | Stacked on #6; merge #6 first                     |
-| #26 | OPS        | `chore/commitlint`                | `main`                      | None                                              |
+| PR  | Owner  | Branch                            | Base                        | Confirmed dependency                              |
+| --- | ------ | --------------------------------- | --------------------------- | ------------------------------------------------- |
+| #4  | SEC    | `docs/security-threat-model`      | `main`                      | None                                              |
+| #5  | NATIVE | `feat/extension-scaffold`         | `main`                      | None                                              |
+| #6  | DB     | `feat/database-core-schema`       | `main`                      | None                                              |
+| #7  | OPS    | `chore/devops-containers-ci`      | `main`                      | None                                              |
+| #9  | QA     | `test/qa-harness`                 | `main`                      | None                                              |
+| #10 | MEDIA  | `feat/storage-and-media-core`     | `main`                      | None                                              |
+| #11 | INT    | `feat/notifications-email`        | `main`                      | None                                              |
+| #13 | FE     | `feat/web-shell`                  | `main`                      | None                                              |
+| #15 | NATIVE | `feat/extension-capture`          | `feat/extension-scaffold`   | Stacked on #5; merge #5 first                     |
+| #16 | MEDIA  | `feat/realtime-scaffold`          | `main`                      | None                                              |
+| #17 | ARCH   | `feat/core-contracts`             | `main`                      | None                                              |
+| #19 | INT    | `feat/integrations-webhooks-jira` | `main`                      | None                                              |
+| #21 | AI     | `feat/ai-provider-registry`       | `main`                      | None                                              |
+| #22 | ARCH   | `docs/adr-004`                    | `main`                      | ADR-004 references ADR-003 (#17); merge #17 first |
+| #24 | OPS    | `fix/eslint-project-service`      | `main`                      | None                                              |
+| #25 | DB     | `feat/database-tenancy-rls`       | `feat/database-core-schema` | Stacked on #6; merge #6 first                     |
+| #26 | OPS    | `chore/commitlint`                | `main`                      | None                                              |
 
 "Confirmed" means a stacked base or an explicit reference in the PR. Logical dependencies are in the [dependency graph](../17-agents/dependency-graph.md), marked as assumptions. Many PRs touch `pnpm-lock.yaml`; resolve conflicts with the pinned pnpm, without reformatting.

@@ -18,6 +18,64 @@ While the version is `0.x`, a minor bump may contain breaking changes (ADR-003).
 - Presigned uploads are single-use server-side: the URL carries signed `x-amz-meta-upload-token` and `if-none-match: *`
   headers that clients must send verbatim from `upload.headers` / `upload.fields`.
 
+## [0.3.2] - 2026-10-22
+
+Security's LOW follow-up from #59. Validation is stricter; no exports were removed.
+
+### Changed
+
+- `UNSAFE_DISPLAY_TEXT_CHARS` (and so `deviceLabel`, `CreateOrganizationRequest.name` and `organizationName`) also
+  rejects U+00AD (soft hyphen), U+180E, U+3164 (Hangul filler), U+FE00-U+FE0F (variation selectors) and the tag
+  characters U+E0000-U+E007F (new `UNSAFE_DISPLAY_TEXT_TAGS`). The patterns work both without the `u` flag (TypeBox
+  `Value.Check`) and with it (Ajv in Fastify).
+- `ExtensionPairResponse.organizationName` uses `SafeDisplayText` with the same bounds as the org name (1–200, no
+  leading or trailing whitespace).
+- `MAX_RECORDING_SESSION_BYTES` (2 GB) JSDoc: the backend MUST enforce it as a running total per session. The
+  per-chunk limits cannot enforce it.
+
+## [0.3.1] - 2026-10-22
+
+All changes in this release are additive. No existing export changed.
+
+### Added
+
+- Organizations: `CreateOrganizationRequest { name (1–200) }` and `CreateOrganizationResponse` (an alias of the new
+  `OrganizationWithRole { organization: Organization, role: Role }`) for `POST /orgs` (201). The server derives `slug`, and
+  the caller becomes `owner`.
+- `ListOrganizationsResponse { items: OrganizationWithRole[], nextCursor: string | null }` for `GET /orgs` (a cursor page,
+  built from `CursorPage`). It is not a bare `Organization[]`.
+- Sessions: `SessionSummary { id, current, createdAt, lastSeenAt, expiresAt, ip: string (≤45) | null, userAgent: string (≤1024) | null }`
+  and `ListSessionsResponse` (cursor page) for `GET /auth/sessions`, plus `SessionIdParams { sessionId }` for
+  `DELETE /auth/sessions/:sessionId`. `SessionSummary` never carries token, hash or other secret fields, and because it is
+  strict, a serializer that adds one fails validation.
+- Members: `UserSummary { id, email, name?, avatarUrl? }`, `OrganizationMember { id, organizationId, userId, role,
+createdAt, user: UserSummary }` and `ListMembersResponse` (cursor page) for `GET /orgs/:organizationId/members`.
+- All of these are strict (`additionalProperties: false`) and are exported from the main entry. Their types are exported
+  from `@meetops/contracts/types`.
+- Chunk limits moved to `constants.ts`, so they are also exported from `@meetops/contracts/types` (no TypeBox):
+  `MAX_CHUNK_BYTES`, `MAX_CHUNKS` / `MAX_RECORDING_CHUNKS`, `MAX_RECORDING_SESSION_BYTES`, `MAX_MEDIA_BYTES`,
+  `CHUNK_UPLOAD_URL_TTL_SECONDS`, and the new `MAX_DURATION_MS` (24 h, the `durationMs` cap of
+  `CompleteRecordingSessionRequest`). The main entry still exports them with the same values. `apps/extension` can drop
+  its local `MAX_DURATION_MS` and the four mirrors in `src/lib/contract-limits.ts` (PR #60).
+- Pairing handoff (ADR-005 A1): `PairingCodeMessage { type: 'MEETOPS_PAIRING_CODE', pairingCode, nonce }` (strict, no
+  tokens), plus `PAIRING_CODE_MESSAGE_TYPE` in `constants.ts`. `ExtensionPairingCode` (32–128 base64url) is now exported.
+
+### Changed
+
+- `CreateOrganizationRequest.name` uses the same charset as `deviceLabel`, via the new shared `SafeDisplayText` helper
+  (with `SAFE_DISPLAY_TEXT_PATTERN`, `SAFE_DISPLAY_TEXT_TRIMMED_PATTERN` and `UNSAFE_DISPLAY_TEXT_CHARS`). It also rejects
+  whitespace-only names and leading or trailing whitespace. A schema cannot trim, so clients MUST trim before sending.
+  Names with `'`, `&`, `<`, `>` or `"` are now rejected.
+- `Organization` is strict (`additionalProperties: false`). Responses that add fields to it fail validation.
+- `CursorPage` (and so `Paginated` and every list response) caps `items` at `MAX_PAGE_LIMIT` (100, the same as the
+  query `limit` maximum) and `nextCursor` at `MAX_CURSOR_LENGTH` (512).
+- `UserSummary.avatarUrl` (`HttpsAvatarUrl`) must be https with no userinfo: no `@`, `\` or whitespace in the authority,
+  and no `\` or whitespace in the path. Max length 2048.
+- `UserSummary.email` is optional. The API MUST include it only for `owner` and `admin` viewers, and MUST omit it for
+  `member` and `viewer` viewers.
+- `deviceLabel` (`ExtensionDeviceLabel`) also rejects the invisible format characters U+200B-U+200D (zero-width space,
+  non-joiner, joiner), U+2060 (word joiner), U+FEFF (BOM / zero-width no-break space) and U+061C (Arabic letter mark).
+
 ## [0.3.0] - 2026-10-22
 
 ### Added

@@ -90,12 +90,12 @@ describe('keys', () => {
     expect(buildObjectKey({ organizationId: 'o1', meetingId: 'm1', kind: 'chunk', objectId: 'r1', index: 3 })).toBe(
       'organizations/o1/meetings/m1/processed/r1/chunks/00003.wav'
     );
-    expect(parseMeetingKey(REC_KEY)).toEqual({ organizationId: 'o1', meetingId: 'm1', rest: 'recordings/r1.webm' });
+    expect(parseMeetingKey(REC_KEY)).toEqual({ organizationId: 'o1', meetingId: 'm1', rest: 'recordings/r1.webm', legacy: false });
   });
-  it('uses the organizations/{organizationId}/ prefix and rejects legacy org/ keys', () => {
+  it('writers use organizations/{organizationId}/; readers also accept legacy org/{organizationId}/', () => {
     expect(organizationPrefix('o1')).toBe('organizations/o1/');
-    expect(parseMeetingKey('org/o1/meetings/m1/recordings/r1.webm')).toBeNull();
-    expect(() => assertKeyOwnedBy('org/o1/meetings/m1/recordings/r1.webm', 'o1')).toThrow(StorageAccessError);
+    expect(parseMeetingKey('org/o1/meetings/m1/recordings/r1.webm')).toEqual({ organizationId: 'o1', meetingId: 'm1', rest: 'recordings/r1.webm', legacy: true });
+    expect(() => assertKeyOwnedBy('org/o1/meetings/m1/recordings/r1.webm', 'o1', 'm1')).not.toThrow();
     expect(() => assertKeyOwnedBy(REC_KEY, 'o1', 'm1')).not.toThrow();
   });
   it('rejects traversal, raw paths and missing parts', () => {
@@ -332,7 +332,7 @@ describe('S3StorageService', () => {
       expect(() => assertKeyOwnedBy('tmp/session-chunks/organizations/o1/meetings/../x/sessions/s1/00001.part', 'o1')).toThrow(StorageAccessError);
       expect(() => assertKeyOwnedBy('tmp/other/organizations/o1/meetings/m1/sessions/s1/00001.part', 'o1')).toThrow(StorageAccessError);
       expect(() => assertKeyOwnedBy(REC_KEY, 'o1', 'm2')).toThrow(StorageAccessError);
-      expect(parseMeetingKey(key(1))).toEqual({ organizationId: 'o1', meetingId: 'm1', rest: 'sessions/s1/00001.part' });
+      expect(parseMeetingKey(key(1))).toEqual({ organizationId: 'o1', meetingId: 'm1', rest: 'sessions/s1/00001.part', legacy: false });
     });
 
     it('presigns a PUT signing content-length, content-type and checksum; TTL <= 300', async () => {

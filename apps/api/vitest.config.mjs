@@ -1,3 +1,4 @@
+// .mjs (not .ts) so type-aware lint does not need it in a tsconfig project.
 import { defineConfig } from 'vitest/config';
 
 export default defineConfig({
