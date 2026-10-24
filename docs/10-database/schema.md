@@ -1,6 +1,6 @@
 # Database schema (Phase 1, P1-DB)
 
-> **Note:** This page describes **open, unmerged PRs**: #6 (`feat/database-core-schema`, base `integration/phase-1`) at head `62c7b890c12eebfdf4598a7462c8fcdbbb3afa9d`, and #25 (`feat/database-tenancy-rls`, stacked on #6) at head `30f542a600d2250012f521937909e6584fe5b705`. Read via `gh pr view --json headRefOid` / `gh pr diff`. The sections before "Tenancy hardening and RLS (PR #25)" describe #6; #25 changes several of them, as noted there.
+> **Source:** this page reflects the merged code on `integration/phase-1` (`packages/database`), after PR #35 merged on 2026-10-22. The schema from PR #6 and the RLS work from PR #25 reached `integration/phase-1` through stacked PR #35. PRs #6 and #25 were closed as superseded on 2026-10-22; their work landed via #35.
 
 Package: `packages/database` (`@meetops/database`). PostgreSQL with Prisma and pgvector. Env: `DATABASE_URL`.
 
@@ -11,22 +11,35 @@ Package: `packages/database` (`@meetops/database`). PostgreSQL with Prisma and p
 - Every tenant-scoped table has `org_id` (FK → `organizations`, cascade delete), and its indexes lead with `org_id`.
 - Soft delete (`deleted_at`) on organizations, users, memberships, employees, projects, meetings, file_objects, transcripts, reports, extracted_tasks and internal_tasks.
 
-## Models in #6 (20 in `schema.prisma`)
+## Models (25 in `schema.prisma`)
 
-| Area                | Models (table)                                                                                                                                                                                                     |
-| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Tenancy and auth    | Organization (`organizations`), User (`users`), Membership (`memberships`), Session (`sessions`), Invitation (`invitations`)                                                                                       |
-| People and work     | Employee (`employees`), Project (`projects`)                                                                                                                                                                       |
-| Meetings            | Meeting (`meetings`), MeetingParticipant (`meeting_participants`), FileObject (`file_objects`: bucket, key, mime type, size, SHA-256 checksum; metadata only)                                                      |
-| Transcripts         | Transcript (`transcripts`, revisioned, unique per meeting), TranscriptSegment (`transcript_segments`, revision + sequence, `embedding vector(1536)` placeholder)                                                   |
-| AI output and tasks | Report (`reports`), ExtractedTask (`extracted_tasks`), TaskApproval (`task_approvals`), InternalTask (`internal_tasks`), ExternalIssueLink (`external_issue_links`: provider, external id and URL, unique per org) |
-| Ops and audit       | AiRun (`ai_runs`: provider, model, prompt version, transcript revision, token usage, `cost_usd`, status), OutboxEvent (`outbox_events`), AuditLog (`audit_logs`)                                                   |
+| Area                | Models (table)                                                                                                                                                                                                                            |
+| ------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Tenancy and auth    | Organization (`organizations`), User (`users`), Membership (`memberships`), Session (`sessions`), Invitation (`invitations`), EmailVerification (`email_verifications`), PasswordReset (`password_resets`)                                |
+| People and work     | Employee (`employees`), Project (`projects`)                                                                                                                                                                                              |
+| Meetings and media  | Meeting (`meetings`), MeetingParticipant (`meeting_participants`), FileObject (`file_objects`: kind, status, provider, bucket, key, mime type, size, checksum; optional parent object and `chunkIndex`; unique per org + bucket + key)    |
+| Recordings          | Recording (`recordings`: one FileObject, status, duration), RecordingSession (`recording_sessions`: source, status, abort reason, chunk count, total bytes), RecordingSessionChunk (`recording_session_chunks`: unique `seq` per session) |
+| Transcripts         | Transcript (`transcripts`: tied to a recording; provider + `providerJobId`, unique per org; revision unique per meeting), TranscriptSegment (`transcript_segments`: revision + sequence, `embedding vector(1536)`)                        |
+| AI output and tasks | Report (`reports`), ExtractedTask (`extracted_tasks`), TaskApproval (`task_approvals`), Task (`tasks`), IntegrationIssue (`integration_issues`: provider, external id and URL, unique per org)                                            |
+| Ops and audit       | AiRun (`ai_runs`), OutboxEvent (`outbox_events`), AuditEvent (`audit_events`: nullable org for global events, actor, action, target, metadata; append-only)                                                                               |
 
-Enums: MembershipRole (OWNER, ADMIN, MEMBER, VIEWER), InvitationStatus, ProjectStatus, MeetingStatus, MeetingParticipantRole, TranscriptStatus, ReportStatus, ExtractedTaskStatus, TaskPriority, ApprovalDecision, InternalTaskStatus, ExternalProvider, AiRunStatus, AiRunKind, OutboxStatus.
+Enums (21): MembershipRole (`owner`, `admin`, `member`, `viewer`), InvitationStatus, ProjectStatus, MeetingStatus, MeetingParticipantRole, TranscriptStatus, ReportStatus, ExtractedTaskStatus, TaskPriority, ApprovalDecision, TaskStatus, AiRunStatus, AiRunKind, StorageObjectKind, StorageObjectStatus, OutboxStatus, MeetingSource, RecordingStatus, RecordingSource, RecordingSessionStatus, RecordingAbortReason.
 
-## Tenancy in #6
+## Tenancy and RLS
 
-`org_id` on every tenant-scoped table, with org-leading indexes. #6 itself has no RLS; #25 adds it (below).
+- Every tenant-scoped table has `org_id`, and its indexes lead with `org_id`.
+- **Forced RLS** (`20261021110000_tenant_rls_roles`, authored in PR #25): every table in `TENANT_TABLES` (`src/tenant.ts`, 20 tables) has RLS enabled and **forced**, keyed on `org_id`. Policies read the transaction-local setting `app.current_org_id`. `organizations`, `users` and `sessions` are global tables.
+  - `20261021130000_rls_fail_closed_empty_setting` recreates the policies with `NULLIF(current_setting(...), '')::uuid`, so an unset or reset setting returns no rows instead of an error.
+  - `20261022034000_assert_forced_rls` makes the migration fail if any table has RLS enabled but not forced.
+- **Roles:**
+  - `meetops_migrator` owns the schema and runs migrations (`MIGRATION_DATABASE_URL`).
+  - `meetops_app` is the runtime role (`DATABASE_URL`). It gets DML only, and the migration asserts that it is `NOSUPERUSER NOBYPASSRLS NOCREATEROLE NOCREATEDB`.
+  - `meetops_relay` (optional): `NOBYPASSRLS`, no table privileges; only executes `relay_claim_outbox_events` / `relay_complete_outbox_event` (`SECURITY DEFINER`, `20261022033000_relay_definer_functions`).
+  - Roles and passwords are provisioned out of band (`scripts/bootstrap-roles.sql`, `pnpm --filter @meetops/database db:roles`). Migrations never contain passwords.
+- **Application access:** `withOrgContext(organizationId, fn, { client?, userId?, timeoutMs? })` runs `fn` in one interactive transaction with `app.current_org_id` set `LOCAL`. That setting is safe with pooled connections. `withUserContext(userId, fn)` sets only `app.current_user_id`, so a user can list their own memberships (`membership_self_read`) while every other tenant table stays fail-closed. Both validate UUIDs. The lower-level `runWithOrgContext` and `runWithUserContext` live in `src/tenant.ts`.
+- **Audit:** `audit_events` is append-only, including for the owner (`20261022032000_audit_append_only`). The only exception is a maintenance migration that sets `meetops.audit_maintenance = on` while logged in as `meetops_migrator`. `20261022041000_audit_hatch_session_user` checks `session_user`, not `current_user`, so a migrator-owned `SECURITY DEFINER` function can't open the hatch for another caller.
+- **Invitations:** `lookup_invitation_by_token_hash` and `accept_invitation` are `SECURITY DEFINER` functions, executable only by `meetops_app`. The PR #35 fix is described below.
+- **API-side guard:** Backend PR #53 (`feat/api-persistence`, merged 2026-10-24) adds the API-side refusal to invite users who are already active members. The database-side `already_member` guard is merged and described below.
 
 ## pgvector
 
@@ -35,7 +48,7 @@ Enums: MembershipRole (OWNER, ADMIN, MEMBER, VIEWER), InvitationStatus, ProjectS
 ## Migrations
 
 - Initial migration: `prisma/migrations/20261021000000_init_core_schema/migration.sql`, generated with `prisma migrate diff --from-empty --to-schema-datamodel --script`.
-- Per the PR, it has **not been applied to a live database** yet.
+- There are 20 migrations (`20261021000000_init_core_schema` through `20261022041000_audit_hatch_session_user`). PR #35 verified them against a live Postgres (`pgvector/pgvector:pg16`): `prisma migrate deploy` from empty, then a drift check.
 
 ## Scripts (`packages/database/package.json`)
 
@@ -58,42 +71,21 @@ The seed is idempotent: it creates a demo org, owner and member users with membe
 
 ## Exports (`src/index.ts`)
 
-Everything from `@prisma/client`, plus `createPrismaClient`, `getPrismaClient` (global singleton), `disconnectPrismaClient` and the `DatabaseClient` type.
+Everything from `@prisma/client`, plus `createPrismaClient`, `getPrismaClient` (global singleton), `disconnectPrismaClient`, `withOrgContext`, `withUserContext`, and the `DatabaseClient`, `DatabaseTransaction` and `OrgContextOptions` types.
 
-## Tenancy hardening and RLS (PR #25)
+## Invitation acceptance: no owner demotion (PR #35, merged)
 
-**(requires PR #25, unmerged; stacked on #6)**
+Merged into `integration/phase-1` by PR #35 (merge commit `f7c2d77`), migration `20261022040000_accept_invitation_active_member` (architecture review item B1). It replaces `accept_invitation(text, uuid)`.
 
-### Migrations
+- Problem fixed: the earlier version (`20261022030000_accept_invitation_role`) rewrote the role of any existing membership, so a sole owner who accepted a viewer invite left the org with no owner.
+- Now, for the invitee's membership in the invitation's org:
+  - **Active** (`deleted_at IS NULL`): the call raises `already_member` (SQLSTATE `P0001`) and nothing changes. An invitation never changes an active membership's role.
+  - **Soft-deleted**: revived with the invitation's role.
+  - **None**: inserted with the invitation's role (unchanged).
+- A race where a concurrent accept makes the membership active first also raises `already_member`.
+- On `already_member` the whole call aborts, so the invitation stays `pending`, is not consumed, and no audit row is written. An admin can see and revoke it, or it expires. The migration comment says the API should also refuse to invite active members.
+- Other checks are unchanged: pending status, not revoked, not expired, and the user's email matches (case-insensitive). These failures still return `invitation_invalid` (`P0002`).
+- On success it marks the invitation accepted and writes an `audit_events` row with action `invitation.accepted`.
+- The function stays `SECURITY DEFINER` with `SET search_path = public, pg_temp`, owned by `meetops_migrator`; `EXECUTE` is revoked from PUBLIC and granted to `meetops_app` only.
 
-- `20261021100000_tenancy_hardening`: generated with `prisma migrate diff` from #6's schema. Renames are drop and create, and enums are recast. Per the PR, this is only safe because no data is deployed.
-- `20261021110000_tenant_rls_roles`: hand-written and idempotent.
-
-### Roles
-
-| Role               | Attributes                                                                                                                                                                  | Used via                                                                 |
-| ------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------ |
-| `meetops_app`      | NOLOGIN by default, NOSUPERUSER, NOBYPASSRLS, not owner; DML grants plus default privileges; `UPDATE`/`DELETE` revoked on `audit_events`; no access to `_prisma_migrations` | `DATABASE_URL` (runtime)                                                 |
-| `meetops_migrator` | Owns schema objects (best-effort `ALTER TABLE … OWNER`)                                                                                                                     | `MIGRATION_DATABASE_URL` (Prisma `directUrl`): `migrate deploy` and seed |
-
-Passwords and LOGIN are set out of band, never in SQL. Both URLs are required for `prisma validate` and `migrate`; `prisma generate` needs neither. For local steps see [Windows setup](../00-getting-started/windows-setup.md#6-database-migrations-with-two-roles).
-
-### Row-level security
-
-- `ENABLE` + `FORCE ROW LEVEL SECURITY` with policy `tenant_isolation`: `USING`/`WITH CHECK (org_id = current_setting('app.current_org_id', true)::uuid)` on 18 org tables.
-- With no context set, the setting is NULL and no rows are returned (fails closed).
-- A read-only `membership_self_read` policy (`user_id = app.current_user_id`) lets login and the org switcher list a user's own memberships.
-- Global (non-RLS) tables: `organizations`, `users`, `sessions`.
-- `withOrgContext(orgId, fn, { client?, userId?, timeoutMs? })` runs `fn` in one interactive transaction with a transaction-local `set_config('app.current_org_id', …)`. Non-UUID ids are rejected before the transaction opens.
-
-### Schema changes on top of #6
-
-- 25 models on `integration/phase-1`. New: `Recording`, `RecordingSession`, `RecordingSessionChunk`, `EmailVerification`, `PasswordReset`. Renamed: `InternalTask` → `Task` (`tasks`), `ExternalIssueLink` → `IntegrationIssue` (`integration_issues`), `AuditLog` → `AuditEvent` (`audit_events`).
-- All enum labels are lowercase (for example MembershipRole `owner|admin|member|viewer`). New enums: `MeetingSource`, `RecordingStatus`, `StorageObjectKind`, `StorageObjectStatus`, `TaskStatus`.
-- `UNIQUE(org_id, id)` on every tenant table. Tenant-to-tenant relations are composite FKs `(org_id, parent_id)`, and optional parents use `ON DELETE RESTRICT`.
-- Per-org uniques: `file_objects(org_id, bucket, storage_key)`, `integration_issues(org_id, integration, external_id)`, `projects(org_id, key)`, `employees(org_id, email)`.
-- `file_objects` gains media columns (kind raw/normalized/chunk, status, storage_key, etag, duration, format, sample rate, channels, chunk index/start, upload id, `parent_object_id`).
-- Sessions store only `token_hash`, plus `last_seen_at`, `absolute_expires_at`, `auth_level`, `active_org_id`.
-- Public API narrows to `createPrismaClient`, `getPrismaClient`, `disconnectPrismaClient`, `withOrgContext` and the types `DatabaseClient`, `DatabaseTransaction`, `OrgContextOptions`. Domain types come from `@meetops/contracts`, and `@prisma/client` is no longer re-exported.
-- Scripts are unchanged (`db:migrate:dev`, `db:migrate:deploy`, `db:seed`); `build` uses `tsconfig.build.json`.
-- Live RLS tests (`test/rls.live.test.ts`) are skipped unless `RLS_TEST_APP_URL` and `RLS_TEST_OWNER_URL` are set.
+PR #35 also adds the RLS, roles, outbox relay and live-test migrations; see `packages/database/README.md`.

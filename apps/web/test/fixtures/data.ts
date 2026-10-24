@@ -1,6 +1,7 @@
 import type {
   AuthSession,
   CreateUploadResponse,
+  ExtensionPairResponse,
   GetAuthSessionResponse,
   Meeting,
   Organization,
@@ -135,4 +136,11 @@ export const uploadResponse: CreateUploadResponse = {
     headers: { 'Content-Type': 'audio/webm' },
     expiresAt: '2026-10-21T18:00:00.000Z',
   },
+};
+
+export const pairResponse: ExtensionPairResponse = {
+  pairingCode: 'P'.repeat(40),
+  expiresAt: '2999-01-01T00:01:00.000Z',
+  organizationId: '00000000-0000-4000-8000-000000000001',
+  organizationName: 'Acme Inc',
 };

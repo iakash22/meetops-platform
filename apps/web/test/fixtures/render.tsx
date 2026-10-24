@@ -15,6 +15,7 @@ import {
   sessionResponse,
   tasks,
   uploadResponse,
+  pairResponse,
 } from './data';
 
 export function createMockApi(
@@ -36,9 +37,16 @@ export function createMockApi(
       ...overrides.auth,
     },
     organizations: {
-      list: vi.fn().mockResolvedValue(orgs),
+      list: vi.fn().mockResolvedValue({
+        items: orgs.map((organization) => ({ organization, role: 'owner' })),
+        nextCursor: null,
+      }),
       create: vi.fn().mockResolvedValue({ organization: newOrg, role: 'owner' }),
       ...overrides.organizations,
+    },
+    extension: {
+      pair: vi.fn().mockResolvedValue(pairResponse),
+      ...overrides.extension,
     },
     meetings: {
       list: vi.fn().mockResolvedValue(meetings),
