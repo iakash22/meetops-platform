@@ -18,13 +18,6 @@ export type SmtpTransportFactory = (options: SMTPTransport.Options) => Pick<
 
 const defaultFactory: SmtpTransportFactory = (options) => nodemailer.createTransport(options);
 
-type AddressLike = string | { address: string };
-
-/** nodemailer reports recipients as plain strings or address objects depending on version. */
-function toAddresses(list: readonly AddressLike[] | undefined): string[] {
-  return (list ?? []).map((a) => (typeof a === 'string' ? a : a.address));
-}
-
 export class EmailValidationError extends Error {
   constructor(message: string) {
     super(message);
@@ -84,8 +77,8 @@ export class SmtpEmailService implements EmailService {
     const info = await this.transport.sendMail(mail);
     return {
       messageId: info.messageId,
-      accepted: toAddresses(info.accepted),
-      rejected: toAddresses(info.rejected),
+      accepted: (info.accepted ?? []).map((a) => (typeof a === 'string' ? a : a.address)),
+      rejected: (info.rejected ?? []).map((a) => (typeof a === 'string' ? a : a.address)),
       provider: this.provider
     };
   }
