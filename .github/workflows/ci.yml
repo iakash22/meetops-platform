@@ -20,6 +20,11 @@ jobs:
     timeout-minutes: 30
     permissions:
       contents: read
+    # Coordinator decision (docs/00-getting-started/windows-setup.md): build on Node 22 and 24; live-db stays on 20.
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [22, 24]
 
     # Throwaway, CI-only credentials for ephemeral containers. Not secrets; never reuse outside CI.
     services:
@@ -96,7 +101,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
-          node-version: 20
+          node-version: ${{ matrix.node }}
           cache: 'pnpm'
 
       - name: Install dependencies
@@ -104,6 +109,18 @@ jobs:
 
       - name: Lockfile unchanged
         run: git diff --exit-code pnpm-lock.yaml
+
+      - name: Assert type-aware lint config
+        # Fast mode (ESLINT_NO_TYPECHECK=1) is for the pre-commit hook only.
+        run: |
+          test -z "${ESLINT_NO_TYPECHECK:-}" || { echo "ESLINT_NO_TYPECHECK must be unset in CI"; exit 1; }
+          pnpm exec eslint --print-config apps/api/src/server.ts | node -e '
+            const r = JSON.parse(require("fs").readFileSync(0, "utf8")).rules;
+            for (const k of ["@typescript-eslint/no-floating-promises", "@typescript-eslint/no-misused-promises"]) {
+              const v = [].concat(r[k] ?? [0])[0];
+              if (v !== 2 && v !== "error") { console.error(k + " not active: " + JSON.stringify(r[k])); process.exit(1); }
+            }
+            console.log("type-aware promise rules active");'
 
       - name: Create DB roles (meetops_app / meetops_migrator)
         run: pnpm --filter @meetops/database db:roles
