@@ -25,11 +25,14 @@ export const ApiErrorCode = Type.Union([
 export type ApiErrorCode = Static<typeof ApiErrorCode>;
 export { API_ERROR_CODES } from '../constants.js';
 import { CONFLICT_REASONS } from '../constants.js';
-export { CONFLICT_REASONS, CONFLICT_HTTP_STATUS } from '../constants.js';
+export { CONFLICT_REASONS, CONFLICT_HTTP_STATUS, API_ERROR_REASONS } from '../constants.js';
 
 /** Named reason for a `CONFLICT` (409) error. See CONFLICT_REASONS. */
 export const ConflictReason = Type.Union(CONFLICT_REASONS.map((r) => Type.Literal(r)));
 export type ConflictReason = (typeof CONFLICT_REASONS)[number];
+/** Alias of ConflictReason: the `error.reason` schema of ApiErrorEnvelope. */
+export const ApiErrorReason = ConflictReason;
+export type ApiErrorReason = ConflictReason;
 
 /**
  * `message` is safe and generic for display. It must not contain stack traces, SQL, provider

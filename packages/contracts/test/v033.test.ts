@@ -1,7 +1,7 @@
 import { describe, it, expect, expectTypeOf } from 'vitest';
 import { Value } from '@sinclair/typebox/value';
 import {
-  ApiErrorEnvelope, CONFLICT_HTTP_STATUS, CONFLICT_REASONS, ConflictReason, CursorPageQuery, DEFAULT_PAGE_LIMIT,
+  API_ERROR_REASONS, ApiErrorEnvelope, ApiErrorReason, CONFLICT_HTTP_STATUS, CONFLICT_REASONS, ConflictReason, CursorPageQuery, DEFAULT_PAGE_LIMIT,
   ListMembersResponse, ListOrganizationsResponse, MAX_CURSOR_LENGTH, MAX_PAGE_LIMIT,
 } from '../src/index.js';
 import * as Light from '../src/types.js';
@@ -39,10 +39,14 @@ describe('v0.3.3 cursor pagination constants', () => {
 });
 
 describe('v0.3.3 conflict reasons', () => {
-  it('lists exactly the 409 conflicts PR #53 raises', () => {
+  it('lists exactly the 409 conflicts the API raises (plus the generic CONFLICT fallback)', () => {
     expect([...CONFLICT_REASONS]).toEqual([
       'ALREADY_MEMBER', 'INVITATION_EXPIRED', 'INVITATION_REVOKED', 'INVITATION_ALREADY_ACCEPTED', 'LAST_OWNER',
+      'EMAIL_TAKEN', 'CONFLICT',
     ]);
+    expect(API_ERROR_REASONS).toBe(CONFLICT_REASONS);
+    expect(Light.API_ERROR_REASONS).toBe(CONFLICT_REASONS);
+    expect(ApiErrorReason).toBe(ConflictReason);
     expect(CONFLICT_HTTP_STATUS).toBe(409);
     expect(Light.CONFLICT_REASONS).toBe(CONFLICT_REASONS);
   });

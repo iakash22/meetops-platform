@@ -16,7 +16,6 @@ export const API_ERROR_CODES = [
   'BAD_REQUEST', 'VALIDATION_FAILED', 'UNAUTHENTICATED', 'AUTH_FAILED', 'CSRF_INVALID', 'FORBIDDEN', 'NOT_FOUND',
   'CONFLICT', 'RATE_LIMITED', 'PROVIDER_UNAVAILABLE', 'INTERNAL',
 ] as const;
-
 /** Cursor pagination (v0.3.3): max page size, i.e. the `limit` maximum of CursorPageQuery and OffsetPageQuery. */
 export const MAX_PAGE_LIMIT = 100;
 /** Default `limit` when the query omits it. */
@@ -30,10 +29,15 @@ export const MAX_CURSOR_LENGTH = 512;
  * - `ALREADY_MEMBER`: invite or accept for someone who already has an active membership in the organization.
  * - `INVITATION_EXPIRED` / `INVITATION_REVOKED` / `INVITATION_ALREADY_ACCEPTED`: the invitation can no longer be used.
  * - `LAST_OWNER`: the change would leave the organization without an owner.
+ * - `EMAIL_TAKEN`: an account with this email address already exists.
+ * - `CONFLICT`: generic fallback, so every 409 carries a reason even when nothing more specific applies.
  */
 export const CONFLICT_REASONS = [
   'ALREADY_MEMBER', 'INVITATION_EXPIRED', 'INVITATION_REVOKED', 'INVITATION_ALREADY_ACCEPTED', 'LAST_OWNER',
+  'EMAIL_TAKEN', 'CONFLICT',
 ] as const;
+/** Alias of CONFLICT_REASONS (name used by the API error envelope code). */
+export const API_ERROR_REASONS = CONFLICT_REASONS;
 /** HTTP status for every `CONFLICT` error, including all CONFLICT_REASONS. */
 export const CONFLICT_HTTP_STATUS = 409;
 
