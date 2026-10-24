@@ -1,2 +1,23 @@
 #!/usr/bin/env sh
+# Fast pre-commit: gitleaks on staged changes, then prettier + NON-type-aware
+# eslint on staged files only. Type-aware lint and typecheck run in
+# .husky/pre-push (and in CI; CI's gitleaks job is the blocking backstop).
+# If a previous git/hook run was interrupted and git reports
+# "Unable to create '.git/index.lock': File exists", ensure no git process
+# is running and recover with:  rm -f .git/index.lock
+
+if command -v gitleaks >/dev/null 2>&1; then
+  # v8.19+ uses `gitleaks git --staged`; older releases use `protect --staged`.
+  if gitleaks git --help >/dev/null 2>&1; then
+    gitleaks git --staged --redact --no-banner || exit 1
+  else
+    gitleaks protect --staged --redact --no-banner || exit 1
+  fi
+else
+  echo "WARNING: gitleaks not installed; skipping local secret scan (CI still enforces it)." >&2
+  echo "  Install: brew install gitleaks | https://github.com/gitleaks/gitleaks/releases" >&2
+  echo "  See docs/12-security/secrets-policy.md" >&2
+fi
+
+export ESLINT_NO_TYPECHECK=1
 pnpm lint-staged

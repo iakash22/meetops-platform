@@ -10,7 +10,8 @@ const base = { environment: 'node' as const, alias, testTimeout: 15_000 };
 // Plain array (no defineWorkspace, which vitest 4 removes). Used by vitest.config.ts as
 // `test.projects` (vitest >= 3.2) or as the workspace file (vitest 2.x / 3.0-3.1).
 export const projects = [
-  { test: { ...base, name: 'api', include: ['api/**/*.test.ts'] } },
+  // API suites drive real password hashing (AU-01 does 10+ logins); 5s default flakes on CI runners.
+  { test: { ...base, name: 'api', include: ['api/**/*.test.ts'], testTimeout: 30_000 } },
   { test: { ...base, name: 'contract', include: ['contract/**/*.test.ts'] } },
   {
     test: {
