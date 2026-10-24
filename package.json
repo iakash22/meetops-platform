@@ -39,15 +39,6 @@
     "typescript-eslint": "^8.11.0",
     "vitest": "^3.2.7"
   },
-  "lint-staged": {
-    "*.{ts,tsx,js,jsx,cjs,mjs}": [
-      "prettier --write",
-      "eslint --fix --no-warn-ignored"
-    ],
-    "*.{md,json,yml,yaml}": [
-      "prettier --write"
-    ]
-  },
   "pnpm": {
     "overrides": {
       "tinypool": "^2.1.2",
