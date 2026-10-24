@@ -39,6 +39,7 @@ import type {
   PresignUploadSpec,
   PutObjectBody,
   StorageService,
+  StoredKeyRef,
   StoredObjectInfo,
   UploadSpec
 } from './types.js';
@@ -62,8 +63,8 @@ export type SessionRef = { meetingId: string; sessionId: string } & (
   | { organizationId?: string; /** @deprecated Use organizationId (ADR-010). */ orgId: string }
 );
 
-/** A key read from storage of record (file_objects.key or a cached key). Never rebuilt from ids. */
-export type StoredObjectKey = { organizationId: string; meetingId: string; key: string };
+/** A key read from storage of record (file_objects.key or a cached key). Never rebuilt from ids. Alias of StoredKeyRef. */
+export type StoredObjectKey = StoredKeyRef;
 
 /** What the authorize hook sees: a derived ref (writes and ref reads) or a stored key (stored-key reads). */
 export type AuthorizeTarget = MeetingObjectRef | StoredObjectKey;

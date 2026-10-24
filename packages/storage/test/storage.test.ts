@@ -175,7 +175,7 @@ describe('S3StorageService', () => {
       throw new StorageAccessError();
     });
     await expect(svc({ authorize }).deleteObject(rec)).rejects.toBeInstanceOf(StorageAccessError);
-    expect(authorize).toHaveBeenCalledWith({ ...rec, organizationId: 'o1' });
+    expect(authorize).toHaveBeenCalledWith({ ...rec, organizationId: 'o1', orgId: 'o1' });
     expect(s3.calls()).toHaveLength(0);
   });
 
@@ -352,7 +352,7 @@ describe('S3StorageService', () => {
     const authorize = vi.fn();
     s3.on(DeleteObjectCommand).resolves({});
     await svc({ authorize }).deleteObject(rec);
-    expect(authorize).toHaveBeenCalledWith({ ...rec, organizationId: 'o1' });
+    expect(authorize).toHaveBeenCalledWith({ ...rec, organizationId: 'o1', orgId: 'o1' });
   });
 
   describe('recording-session chunks (flat tmp prefix)', () => {
