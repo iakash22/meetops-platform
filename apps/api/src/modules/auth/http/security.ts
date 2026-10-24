@@ -55,9 +55,15 @@ export function assertProductionCookies(cfg: HttpSecurityConfig) {
   if (cfg.csrfSecret.length < 32) throw new Error('CSRF_SECRET must be at least 32 bytes');
 }
 
+/** Contracts SessionSummary limits: an IP fits in 45 chars (IPv4-mapped IPv6); user agents are truncated. */
+export const MAX_IP_LENGTH = 45;
+export const MAX_USER_AGENT_LENGTH = 1024;
+export const capIp = (ip: string | null | undefined) => (ip ? ip.slice(0, MAX_IP_LENGTH) : null);
+export const capUserAgent = (ua: string | null | undefined) => (ua ? ua.slice(0, MAX_USER_AGENT_LENGTH) : null);
+
 export const requestMeta = (r: FastifyRequest): RequestMeta => ({
-  ip: r.ip ?? null,
-  userAgent: r.headers['user-agent'] ?? null
+  ip: capIp(r.ip),
+  userAgent: capUserAgent(r.headers['user-agent'])
 });
 
 /** Reject state-changing requests whose Origin (fallback Referer) is not allowlisted. Missing both → reject. */
