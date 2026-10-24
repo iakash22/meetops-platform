@@ -117,3 +117,4 @@ volumes:
   minio-data:
   ollama-data:
   local-stt-cache:
+# hook-verified commit
