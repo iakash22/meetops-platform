@@ -7,6 +7,9 @@ import { runWithOrganizationContext } from '../src/tenant.js';
 
 const prisma = new PrismaClient();
 
+/** Lowercase hex SHA-256 (file_objects_checksum_sha256_check). Placeholder digest of the empty string. */
+const DEMO_SHA256 = 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855';
+
 /** Deterministic ids: 00000000-0000-4000-8000-0000000{n}{kind}{seq}; n = organization number. */
 function idsFor(n: number) {
   const id = (suffix: string) => `00000000-0000-4000-8000-${String(n).padStart(9, '0')}${suffix}`;
@@ -138,7 +141,7 @@ async function seedOrganization(spec: SeedOrganization): Promise<void> {
     const base = `organizations/${org.id}/meetings/${IDS.meeting}`;
     await tx.fileObject.upsert({
       where: { id: IDS.file },
-      update: {},
+      update: { checksumSha256: DEMO_SHA256 },
       create: {
         id: IDS.file,
         organizationId: org.id,
@@ -150,7 +153,7 @@ async function seedOrganization(spec: SeedOrganization): Promise<void> {
         key: `${base}/raw/recording.webm`,
         mimeType: 'audio/webm',
         sizeBytes: BigInt(1_048_576),
-        checksumSha256: `${spec.slug}-checksum`,
+        checksumSha256: DEMO_SHA256,
         durationSeconds: 1800,
         format: 'webm',
       },
