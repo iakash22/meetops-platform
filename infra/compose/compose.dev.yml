@@ -158,13 +158,13 @@ services:
       retries: 10
 
   # faster-whisper OpenAI-compatible server (Speaches). CPU image; listens on 8000
-  # inside the container, exposed on 8000 to match LOCAL_STT_URL (AI PR #21).
+  # inside the container, published on host 8001 to match LOCAL_STT_URL (AI PR #21).
   local-stt:
     image: ghcr.io/speaches-ai/speaches:0.9.0-rc.3-cpu@sha256:2163775b6df5e451a71200e8f675fed68dbd8ab184fc604453d549e486f22fd2
     profiles: ['local-stt']
     restart: unless-stopped
     ports:
-      - '127.0.0.1:8000:8000'
+      - '127.0.0.1:8001:8000'
     volumes:
       - local-stt-cache:/home/ubuntu/.cache/huggingface/hub
     healthcheck:
