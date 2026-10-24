@@ -147,7 +147,8 @@ export function defaultModuleDeps(
     rateLimiter: new InMemoryRateLimiter(clock),
     lockout: new InMemoryLoginLockout(clock),
     mailQueue: new InlineAuthMailQueue(),
-    mailTransport: { send: async () => {} },
+    // `mailer` is a legacy alias used only by the repo-level QA harness (tests/support).
+    mailTransport: (overrides as { mailer?: MailTransport }).mailer ?? { send: async () => {} },
     audit: new InMemoryAuditLog(),
     webBaseUrl: process.env.WEB_BASE_URL ?? 'http://localhost:5173',
     ids: uuidGenerator,
