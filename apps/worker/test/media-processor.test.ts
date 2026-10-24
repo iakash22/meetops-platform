@@ -41,19 +41,21 @@ function makeDeps(over: Partial<MediaProcessorDeps> = {}, tmpRoot?: string) {
   const jobs = new Map<string, TranscriptionJobPayload>();
   const events: Array<{ rooms: string[]; event: string; payload: unknown }> = [];
   const logs: Array<{ level: string; obj: object; msg: string }> = [];
-  const getObject = vi.fn(async (ref: MeetingObjectRef) => {
-      const key = buildObjectKey(ref);
+  const getObject = vi.fn(async (ref: MeetingObjectRef | { key: string }) => {
+      const key = 'key' in ref ? ref.key : buildObjectKey(ref);
       const b = stored.get(key);
       if (!b) throw new StorageNotFoundError();
       return { body: Readable.from([b]), info: { sizeBytes: b.length } };
     });
-  const headObject = vi.fn(async (ref: MeetingObjectRef) => {
-    const b = stored.get(buildObjectKey(ref));
+  const headObject = vi.fn(async (ref: MeetingObjectRef | { key: string }) => {
+    const b = stored.get('key' in ref ? ref.key : buildObjectKey(ref));
     return b ? { sizeBytes: b.length } : null;
   });
-  const storage: MediaProcessorDeps['storage'] = {
+  const storage = {
     getObject,
     headObject,
+    getObjectByKey: getObject,
+    headObjectByKey: headObject,
     putObject: vi.fn(async (ref: MeetingObjectRef, body: unknown, spec: { sizeBytes: number; mimeType: string }) => {
       const chunks: Buffer[] = [];
       for await (const c of body as Readable) chunks.push(c as Buffer);
@@ -155,6 +157,19 @@ describe('processRecording (mocked storage, queue, emitter)', () => {
     expect(add.mock.calls.map((c) => c[2].jobId)).toEqual([...jobs.keys(), ...jobs.keys()]);
   });
 
+  it('reads a legacy org/ sourceKey as stored (no rebuild); rejects legacy keys of other organizations', async () => {
+    const { deps, stored, srcKey, getObject } = makeDeps({}, tmpRoot);
+    const legacy = srcKey.replace(/^organizations\//, 'org/');
+    stored.set(legacy, stored.get(srcKey)!);
+    stored.delete(srcKey);
+    await processRecording({ ...payload, sourceKey: legacy }, deps);
+    expect(getObject.mock.calls[0]![0]).toEqual({ organizationId: ORG, meetingId: MEET, key: legacy });
+    const other = legacy.replace(`org/${ORG}/`, 'org/44444444-4444-4444-8444-444444444444/');
+    await expect(processRecording({ ...payload, sourceKey: other }, deps)).rejects.toThrow(/Access denied/);
+    await expect(processRecording({ ...payload, sourceKey: legacy.replace(`${REC}.webm`, 'other.webm') }, deps)).rejects.toThrow(/does not match/);
+    // Writers still only emit organizations/ keys.
+    expect([...stored.keys()].filter((k) => k !== legacy).every((k) => k.startsWith(`organizations/${ORG}/`))).toBe(true);
+  });
   it('rejects a sourceKey from another org before touching storage', async () => {
     const { deps, getObject } = makeDeps({}, tmpRoot);
     await expect(processRecording({ ...payload, sourceKey: `organizations/44444444-4444-4444-8444-444444444444/meetings/${MEET}/recordings/${REC}.webm` }, deps)).rejects.toThrow();

@@ -1,6 +1,6 @@
 # ADR-004: Mapping the database (Prisma) to `@meetops/contracts`
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-10-21
 - Owner: Architecture Agent (ARCH), with the Database Agent (DB) and the Backend Agent (BE)
 - Related: [ADR-003 Contracts ownership](./ADR-003-contracts-ownership.md), ADR-001 Modular monolith

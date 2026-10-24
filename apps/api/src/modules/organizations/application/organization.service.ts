@@ -1,19 +1,35 @@
 import type { Clock, IdGenerator } from '../../../shared/ports.js';
 import type { TenantContext } from '../../../shared/tenant.js';
 import type { RateLimiter, TokenService } from '../../auth/domain/ports.js';
+import type { AuthMailQueue } from '../../auth/domain/mail-jobs.js';
+import { safeAudit, type AuditEvent, type AuditLog } from '../../auth/domain/audit.js';
+import type { SessionRepository } from '../../auth/domain/session.js';
+import type { UserRepository } from '../../users/domain/user.repository.js';
 import { RateLimitedError } from '../../auth/domain/errors.js';
 import { normalizeEmail } from '../../users/domain/user.js';
 import { slugify, type Organization } from '../domain/organization.js';
-import { canGrantRole, type Membership, type Role } from '../domain/membership.js';
-import { acceptInvitation, invitationErrors, InvitationError, revokeInvitation, type Invitation } from '../domain/invitation.js';
+import { canChangeMemberRole, canGrantRole, canRemoveMember, type Role } from '../domain/membership.js';
+import { invitationErrors, InvitationError, revokeInvitation, type Invitation } from '../domain/invitation.js';
 import { defineAbilityFor, orgSubject, type Action, type SubjectName } from '../domain/abilities.js';
-import { ForbiddenError, OrganizationNotFoundError } from '../domain/errors.js';
+import {
+  AlreadyMemberError,
+  EmailNotVerifiedError,
+  ForbiddenError,
+  LastOwnerError,
+  MemberNotFoundError,
+  OrganizationNotFoundError
+} from '../domain/errors.js';
+import type { MemberMutationResult } from '../domain/repositories.js';
 import type { InvitationRepository, MembershipRepository, OrganizationRepository } from '../domain/repositories.js';
 
 export interface OrganizationServiceDeps {
   organizations: OrganizationRepository;
   memberships: MembershipRepository;
   invitations: InvitationRepository;
+  users: UserRepository;
+  sessions: SessionRepository;
+  mailQueue: AuthMailQueue;
+  audit: AuditLog;
   tokens: TokenService;
   rateLimiter: RateLimiter;
   clock: Clock;
@@ -34,6 +50,17 @@ export class OrganizationService {
   private async limit(key: string, l: { limit: number; windowMs: number }) {
     const r = await this.d.rateLimiter.consume(key, l.limit, l.windowMs);
     if (!r.allowed) throw new RateLimitedError(r.retryAfterMs);
+  }
+
+  private audit(ctx: { organizationId: string; userId: string }, e: Omit<AuditEvent, 'organizationId' | 'actorId' | 'ip' | 'userAgent'>, ip: string | null = null) {
+    return safeAudit(this.d.audit, { organizationId: ctx.organizationId, actorId: ctx.userId, ip, userAgent: null, ...e });
+  }
+
+  /** D2: unverified accounts cannot create orgs, invite or accept invitations. */
+  async requireVerifiedEmail(userId: string) {
+    const u = await this.d.users.findById(userId);
+    if (!u?.emailVerifiedAt) throw new EmailNotVerifiedError();
+    return u;
   }
 
   /** Build the TenantContext from membership; unknown or non-member orgs → 404. */
@@ -57,6 +84,7 @@ export class OrganizationService {
     if (defineAbilityFor({ userId: input.userId, organizationId: null, role: null }).cannot('create', 'Organization')) {
       throw new ForbiddenError();
     }
+    await this.requireVerifiedEmail(input.userId);
     const now = this.d.clock.now();
     let slug = slugify(input.name) || 'org';
     if (await this.d.organizations.slugExists(slug)) slug = `${slug}-${this.d.ids.next().slice(0, 8)}`;
@@ -78,6 +106,7 @@ export class OrganizationService {
       createdAt: now,
       deletedAt: null
     });
+    await this.audit({ organizationId: org.id, userId: input.userId }, { action: 'org.create', targetType: 'organization', targetId: org.id, metadata: {} });
     return { organization: org, membership };
   }
 
@@ -112,28 +141,33 @@ export class OrganizationService {
   }
 
   /**
-   * Enumeration-safe: returns the same shape whether or not a pending invite already exists.
-   * The raw token is returned only to the caller for out-of-band delivery; never logged.
+   * Enumeration-safe: same response whether or not the address has an account or a pending
+   * invite (which is replaced). The token is minted by the mail worker; nothing is returned.
+   * The one exception is an address of an ACTIVE member of this org: 409 AlreadyMemberError. That only
+   * tells an inviter what GET /orgs/:id/members already shows them, never whether an outside account exists.
    */
   async invite(ctx: TenantContext, input: { email: string; role: Exclude<Role, 'owner'> }) {
     this.authorize(ctx, 'create', 'Invitation');
     if (!canGrantRole(ctx.role, input.role)) throw new ForbiddenError();
+    await this.requireVerifiedEmail(ctx.userId);
     const email = normalizeEmail(input.email);
     await this.limit(`invite:org:${ctx.organizationId}`, INVITE_LIMITS.sendPerOrg);
     await this.limit(`invite:addr:${ctx.organizationId}:${email}`, INVITE_LIMITS.sendPerAddress);
+    const existingUser = await this.d.users.findByEmail(email);
+    if (existingUser && (await this.d.memberships.find(ctx.organizationId, existingUser.id))) {
+      throw new AlreadyMemberError();
+    }
 
     const now = this.d.clock.now();
     const existing = await this.d.invitations.findPendingByEmail(ctx.organizationId, email);
-    if (existing) {
-      await this.d.invitations.update(ctx.organizationId, revokeInvitation(existing, now));
-    }
-    const token = this.d.tokens.generate();
+    if (existing) await this.d.invitations.update(ctx.organizationId, revokeInvitation(existing, now));
     const invitation: Invitation = {
       id: this.d.ids.next(),
       organizationId: ctx.organizationId,
       email,
       role: input.role,
-      tokenHash: this.d.tokens.hash(token),
+      // Unusable placeholder until the worker mints and emails the real token.
+      tokenHash: this.d.tokens.hash(this.d.tokens.generate()),
       invitedById: ctx.userId,
       status: 'pending',
       expiresAt: new Date(now.getTime() + this.d.invitationTtlMs),
@@ -144,37 +178,85 @@ export class OrganizationService {
       deletedAt: null
     };
     await this.d.invitations.create(ctx.organizationId, invitation);
-    return { invitation, token };
+    await this.d.mailQueue.enqueue({ kind: 'invitation', organizationId: ctx.organizationId, invitationId: invitation.id });
+    await this.audit(ctx, { action: 'invitation.create', targetType: 'invitation', targetId: invitation.id, metadata: { role: input.role } });
+    return { invitation };
   }
 
-  /** Single-use, bound to email + org. All failures surface as one generic 404 at HTTP. */
+  /**
+   * Atomic single use, bound to the invited email; requires a verified email (D2).
+   * Every invalid-invitation failure is the same InvitationError (404 at HTTP). A user who already has an
+   * active membership gets AlreadyMemberError (409); the invitation is left pending and nothing changes.
+   */
   async acceptInvitation(input: { token: string; userId: string; email: string; ip: string | null }) {
     await this.limit(`invite:accept:ip:${input.ip ?? 'unknown'}`, INVITE_LIMITS.acceptPerIp);
-    const inv = await this.d.invitations.findByTokenHash(this.d.tokens.hash(input.token));
-    if (!inv) throw invitationErrors.notFound();
-    const now = this.d.clock.now();
-    const accepted = acceptInvitation(inv, { userId: input.userId, email: normalizeEmail(input.email) }, now);
-    const existing = await this.d.memberships.find(inv.organizationId, input.userId);
-    const membership: Membership =
-      existing ??
-      (await this.d.memberships.create(inv.organizationId, {
-        id: this.d.ids.next(),
-        organizationId: inv.organizationId,
-        userId: input.userId,
-        role: inv.role,
-        createdAt: now,
-        deletedAt: null
-      }));
-    await this.d.invitations.update(inv.organizationId, accepted);
-    const organization = (await this.d.organizations.findById(inv.organizationId))!;
-    return { invitation: accepted, membership, organization };
+    await this.requireVerifiedEmail(input.userId);
+    const r = await this.d.invitations.accept(
+      this.d.tokens.hash(input.token),
+      { userId: input.userId, email: normalizeEmail(input.email) },
+      this.d.clock.now()
+    );
+    if (!r) throw invitationErrors.notFound();
+    const organization = await this.d.organizations.findById(r.membership.organizationId);
+    if (!organization) throw invitationErrors.notFound();
+    // Postgres accept_invitation() writes its own audit row; in-memory/other adapters rely on this one.
+    await this.audit(
+      { organizationId: organization.id, userId: input.userId },
+      { action: 'invitation.accepted', targetType: 'membership', targetId: r.membership.id, metadata: { role: r.membership.role } },
+      input.ip
+    );
+    return { membership: r.membership, organization };
   }
 
   async revokeInvitation(ctx: TenantContext, invitationId: string) {
     this.authorize(ctx, 'delete', 'Invitation');
     const inv = await this.d.invitations.findById(ctx.organizationId, invitationId);
     if (!inv) throw invitationErrors.notFound();
-    return this.d.invitations.update(ctx.organizationId, revokeInvitation(inv, this.d.clock.now()));
+    const r = await this.d.invitations.update(ctx.organizationId, revokeInvitation(inv, this.d.clock.now()));
+    await this.audit(ctx, { action: 'invitation.revoke', targetType: 'invitation', targetId: inv.id, metadata: {} });
+    return r;
+  }
+
+  async listMembers(ctx: TenantContext) {
+    this.authorize(ctx, 'read', 'Membership');
+    return this.d.memberships.listByOrganization(ctx.organizationId);
+  }
+
+  /** Members with their user record (for the member list's user summary). */
+  async listMembersWithUsers(ctx: TenantContext) {
+    const members = await this.listMembers(ctx);
+    return Promise.all(members.map(async (membership) => ({ membership, user: await this.d.users.findById(membership.userId) })));
+  }
+
+  private check(r: MemberMutationResult) {
+    if (r === 'not_found') throw new MemberNotFoundError();
+    if (r === 'last_owner') throw new LastOwnerError();
+  }
+
+  /**
+   * AU-29..31. Target sessions are revoked on any privilege change (the HTTP layer rotates the
+   * caller's own session when they change themselves).
+   */
+  async changeRole(ctx: TenantContext, targetUserId: string, role: Role) {
+    this.authorize(ctx, 'update', 'Membership');
+    const target = await this.d.memberships.find(ctx.organizationId, targetUserId);
+    if (!target) throw new MemberNotFoundError();
+    if (!canChangeMemberRole(ctx, target, role)) throw new ForbiddenError();
+    if (target.role === role) return { ...target };
+    this.check(await this.d.memberships.setRole(ctx.organizationId, targetUserId, role, this.d.clock.now()));
+    if (targetUserId !== ctx.userId) await this.d.sessions.revokeAllForUser(targetUserId, this.d.clock.now());
+    await this.audit(ctx, { action: 'membership.role_change', targetType: 'membership', targetId: target.id, metadata: { from: target.role, to: role } });
+    return { ...target, role };
+  }
+
+  async removeMember(ctx: TenantContext, targetUserId: string) {
+    const target = await this.d.memberships.find(ctx.organizationId, targetUserId);
+    if (!target) throw new MemberNotFoundError();
+    if (targetUserId !== ctx.userId) this.authorize(ctx, 'delete', 'Membership');
+    if (!canRemoveMember(ctx, target)) throw new ForbiddenError();
+    this.check(await this.d.memberships.remove(ctx.organizationId, targetUserId, this.d.clock.now()));
+    if (targetUserId !== ctx.userId) await this.d.sessions.revokeAllForUser(targetUserId, this.d.clock.now());
+    await this.audit(ctx, { action: 'membership.remove', targetType: 'membership', targetId: target.id, metadata: { role: target.role } });
   }
 }
 

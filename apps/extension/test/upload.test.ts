@@ -218,6 +218,7 @@ describe('fetchTransport', () => {
     expect(fetchMock).toHaveBeenCalledWith('https://s3.example/x', {
       method: 'PUT',
       headers: { 'x-amz-checksum-sha256': 'abc=' },
+      credentials: 'omit',
       body,
       redirect: 'error',
     });
