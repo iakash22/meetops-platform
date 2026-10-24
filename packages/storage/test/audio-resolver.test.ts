@@ -7,7 +7,8 @@ import {
   buildObjectKey,
   createChunkAudioResolver,
   type ChunkFileObjectRecord,
-  type MeetingObjectRef
+  type MeetingObjectRef,
+  type StoredKeyRef
 } from '../src/index.js';
 
 const ORG = 'org-a';
@@ -21,13 +22,13 @@ const row = (o: Partial<ChunkFileObjectRecord> = {}): ChunkFileObjectRecord => (
 });
 
 function setup(r: ChunkFileObjectRecord | null = row(), body = 'abc') {
-  const getObject = vi.fn(async (ref: MeetingObjectRef) => ({ ref, body: Readable.from([Buffer.from(body)]), info: { sizeBytes: Buffer.byteLength(body) } }));
-  const getPresignedDownloadUrl = vi.fn(async (ref: MeetingObjectRef, o?: { ttlSeconds?: number }) => ({
+  const getObject = vi.fn(async (ref: StoredKeyRef) => ({ ref, body: Readable.from([Buffer.from(body)]), info: { sizeBytes: Buffer.byteLength(body) } }));
+  const getPresignedDownloadUrl = vi.fn(async (ref: StoredKeyRef, o?: { ttlSeconds?: number }) => ({
     ref,
     url: 'https://signed.example/x', method: 'GET' as const, expiresAt: new Date(Date.now() + (o?.ttlSeconds ?? 0) * 1000)
   }));
   const findFileObject = vi.fn(async () => r);
-  const resolver = createChunkAudioResolver({ storage: { getObject, getPresignedDownloadUrl }, lookup: { findFileObject }, maxBytes: 10 });
+  const resolver = createChunkAudioResolver({ storage: { getObjectByKey: getObject, getPresignedDownloadUrlByKey: getPresignedDownloadUrl }, lookup: { findFileObject }, maxBytes: 10 });
   return { resolver, getObject, getPresignedDownloadUrl, findFileObject };
 }
 const q = { organizationId: ORG, fileObjectId: FID };
@@ -37,7 +38,7 @@ describe('createChunkAudioResolver', () => {
     const { resolver, getObject, findFileObject } = setup();
     const s = await resolver.stream(q);
     expect(findFileObject).toHaveBeenCalledWith(q);
-    expect(getObject.mock.calls[0]![0]).toEqual(chunkRef);
+    expect(getObject.mock.calls[0]![0]).toEqual({ organizationId: ORG, meetingId: MEET, key: KEY });
     expect(s).toMatchObject({ kind: 'stream', mimeType: 'audio/wav', sizeBytes: 3 });
     expect(KEY).toBe('organizations/org-a/meetings/meet-1/processed/rec-1/chunks/00002.wav');
   });
@@ -58,10 +59,20 @@ describe('createChunkAudioResolver', () => {
     await expect(resolver.stream(q)).rejects.toThrow(StorageAccessError);
     expect(getObject).not.toHaveBeenCalled();
   });
-  it('rejects keys outside organizations/{organizationId}/ or not exactly a chunk key', async () => {
+  it('reads a legacy org/ chunk key as stored, never rebuilding it', async () => {
+    const legacy = `org/${ORG}/meetings/${MEET}/processed/${REC}/chunks/00002.wav`;
+    const { resolver, getObject, getPresignedDownloadUrl } = setup(row({ key: legacy }));
+    await resolver.stream(q);
+    await resolver.url(q);
+    expect(getObject.mock.calls[0]![0]).toEqual({ organizationId: ORG, meetingId: MEET, key: legacy });
+    expect(getPresignedDownloadUrl.mock.calls[0]![0].key).toBe(legacy);
+  });
+  it('rejects keys not owned by organizationId/meetingId or not exactly a chunk key', async () => {
     const bad = [
       buildObjectKey({ ...chunkRef, organizationId: 'org-b' }),
-      `org/${ORG}/meetings/${MEET}/processed/${REC}/chunks/00002.wav`,
+      `org/org-b/meetings/${MEET}/processed/${REC}/chunks/00002.wav`,
+      `org/${ORG}/meetings/${MEET}/processed/${REC}/chunks/2.wav`,
+      `bucket/${ORG}/meetings/${MEET}/processed/${REC}/chunks/00002.wav`,
       buildObjectKey({ organizationId: ORG, meetingId: MEET, kind: 'normalized', objectId: REC }),
       buildObjectKey({ ...chunkRef, meetingId: 'meet-2' }),
       `organizations/${ORG}/meetings/${MEET}/processed/${REC}/chunks/../../x.wav`,

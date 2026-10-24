@@ -1,13 +1,14 @@
 import type { Readable } from 'node:stream';
 import type { PresignedUrl } from '@meetops/contracts/legacy';
 import { StorageAccessError, StorageNotFoundError, StorageValidationError } from './errors.js';
-import { assertKeyOwnedBy, buildObjectKey, parseMeetingKey, type MeetingObjectRef } from './keys.js';
-import type { StorageService } from './types.js';
+import { assertKeyOwnedBy, parseMeetingKey } from './keys.js';
+import type { StorageService, StoredKeyRef } from './types.js';
 
 /**
  * The FileObject columns the resolver needs (packages/database `file_objects`: id, org_id, meeting_id, kind,
  * storage_key, mime_type, size_bytes, chunk_index). Chunk ids are deterministic uuidv5 values that cannot be
- * reversed into a key, so the key always comes from this row; it is then re-derived and checked here.
+ * reversed into a key, so the key always comes from this row and is read as stored (never rebuilt), after owner and
+ * shape checks. Both organizations/ and legacy org/ keys are accepted for reads.
  */
 export type ChunkFileObjectRecord = {
   id: string;
@@ -38,7 +39,7 @@ const UUIDISH = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
 const CHUNK_REST = /^processed\/([A-Za-z0-9][A-Za-z0-9_-]{0,127})\/chunks\/(\d{5})\.wav$/;
 
 export type ChunkAudioResolverDeps = {
-  storage: Pick<StorageService, 'getObject' | 'getPresignedDownloadUrl'>;
+  storage: Pick<StorageService, 'getObjectByKey' | 'getPresignedDownloadUrlByKey'>;
   lookup: ChunkFileObjectLookup;
   maxBytes?: number;
 };
@@ -46,12 +47,13 @@ export type ChunkAudioResolverDeps = {
 /**
  * Resolve a transcription chunk (chunkFileObjectId) to audio, scoped to organizationId. Denies (StorageAccessError,
  * no key echoed) when the row belongs to another organization, is not a chunk, or its key is not exactly the
- * server-derived organizations/{organizationId}/meetings/{meetingId}/processed/{recordingId}/chunks/{nnnnn}.wav.
+ * chunk shape {prefix}/{organizationId}/meetings/{meetingId}/processed/{recordingId}/chunks/{nnnnn}.wav, where prefix
+ * is organizations (current) or org (legacy, read-only).
  */
 export function createChunkAudioResolver(deps: ChunkAudioResolverDeps) {
   const maxBytes = deps.maxBytes ?? DEFAULT_MAX_CHUNK_AUDIO_BYTES;
 
-  async function resolveRef(q: { organizationId: string; fileObjectId: string }): Promise<{ ref: MeetingObjectRef; row: ChunkFileObjectRecord }> {
+  async function resolveRef(q: { organizationId: string; fileObjectId: string }): Promise<{ ref: StoredKeyRef; row: ChunkFileObjectRecord }> {
     if (typeof q?.organizationId !== 'string' || !UUIDISH.test(q.organizationId)) throw new StorageValidationError('Invalid organizationId');
     if (typeof q.fileObjectId !== 'string' || !UUIDISH.test(q.fileObjectId)) throw new StorageValidationError('Invalid fileObjectId');
     const row = await deps.lookup.findFileObject({ organizationId: q.organizationId, fileObjectId: q.fileObjectId });
@@ -61,11 +63,10 @@ export function createChunkAudioResolver(deps: ChunkAudioResolverDeps) {
     assertKeyOwnedBy(row.key, q.organizationId, row.meetingId);
     const parsed = parseMeetingKey(row.key);
     const m = parsed ? CHUNK_REST.exec(parsed.rest) : null;
-    if (!parsed || !m) throw new StorageAccessError();
+    if (!parsed || !m || parsed.organizationId !== q.organizationId || parsed.meetingId !== row.meetingId) throw new StorageAccessError();
     const index = Number(m[2]);
     if (row.chunkIndex !== undefined && row.chunkIndex !== null && row.chunkIndex !== index) throw new StorageAccessError();
-    const ref: MeetingObjectRef = { organizationId: q.organizationId, meetingId: row.meetingId, kind: 'chunk', objectId: m[1]!, index };
-    if (buildObjectKey(ref) !== row.key) throw new StorageAccessError();
+    const ref: StoredKeyRef = { organizationId: q.organizationId, meetingId: row.meetingId, key: row.key };
     return { ref, row };
   }
 
@@ -75,7 +76,7 @@ export function createChunkAudioResolver(deps: ChunkAudioResolverDeps) {
       const { ref, row } = await resolveRef(q);
       const declared = row.sizeBytes === undefined || row.sizeBytes === null ? undefined : Number(row.sizeBytes);
       if (declared !== undefined && declared > maxBytes) throw new StorageValidationError('Chunk exceeds size limit');
-      const { body, info } = await deps.storage.getObject(ref);
+      const { body, info } = await deps.storage.getObjectByKey(ref);
       if (info.sizeBytes > maxBytes) {
         body.destroy();
         throw new StorageValidationError('Chunk exceeds size limit');
@@ -88,7 +89,7 @@ export function createChunkAudioResolver(deps: ChunkAudioResolverDeps) {
       const ttl = opts.ttlSeconds ?? AUDIO_URL_DEFAULT_TTL_SECONDS;
       if (!Number.isInteger(ttl) || ttl < 1 || ttl > AUDIO_URL_MAX_TTL_SECONDS) throw new StorageValidationError('ttlSeconds out of range');
       const { ref, row } = await resolveRef(q);
-      return { kind: 'url', url: await deps.storage.getPresignedDownloadUrl(ref, { ttlSeconds: ttl }), mimeType: row.mimeType };
+      return { kind: 'url', url: await deps.storage.getPresignedDownloadUrlByKey(ref, { ttlSeconds: ttl }), mimeType: row.mimeType };
     },
 
     /** Read the chunk into memory (capped by maxBytes while streaming). Matches ai-core AudioResolver's {bytes, mimeType}. */
