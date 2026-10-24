@@ -8,4 +8,5 @@ export interface UserRepository {
   /** Must reject (DuplicateEmailError) when the email is taken. */
   create(user: User): Promise<User>;
   updatePasswordHash(id: UserId, passwordHash: string): Promise<void>;
+  markEmailVerified(id: UserId, at: Date): Promise<void>;
 }
