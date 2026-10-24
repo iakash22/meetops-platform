@@ -6,7 +6,7 @@ import { Readable } from 'node:stream';
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { TranscriptionJobPayload as Schema } from '@meetops/contracts';
 import { Value } from '@sinclair/typebox/value';
-import { chunkAudio, normalizeToWav, probeMedia } from '@meetops/media-core';
+import { chunkAudio, computeWaveform, normalizeToWav, probeMedia, type Waveform } from '@meetops/media-core';
 import { buildObjectKey, StorageNotFoundError, type MeetingObjectRef } from '@meetops/storage';
 import {
   createRealtimePublisher,
@@ -194,6 +194,26 @@ describe('processRecording (mocked storage, queue, emitter)', () => {
     expect(readdirSync(tmpRoot)).toEqual([]);
   });
 
+  it('stores a waveform under processed/{recordingId}/waveform.json when enabled', async () => {
+    const { deps } = makeDeps({}, tmpRoot);
+    const w: Waveform = { version: 1, sampleRate: 16000, channels: 1, durationMs: 25000, bins: 2, peaks: [0.1, 0.2] };
+    const store = vi.fn(async () => ({ sizeBytes: 42 }));
+    const compute = vi.fn(async () => w);
+    const res = await processRecording(payload, { ...deps, waveform: { compute, store }, waveformBins: 2 });
+    expect(compute).toHaveBeenCalledWith(expect.stringMatching(/normalized\.wav$/), { bins: 2 });
+    const ref = (store.mock.calls[0] as unknown as [MeetingObjectRef])[0];
+    expect(buildObjectKey(ref)).toBe(`organizations/${ORG}/meetings/${MEET}/processed/${REC}/waveform.json`);
+    expect(res.waveform).toEqual({ bins: 2, sizeBytes: 42 });
+  });
+  it('a failing waveform step is logged and does not fail the job', async () => {
+    const { deps, logs, jobs } = makeDeps({}, tmpRoot);
+    const res = await processRecording(payload, { ...deps, waveform: { compute: async () => Promise.reject(new Error('boom /secret/path')), store: vi.fn() } });
+    expect(res.waveform).toBeUndefined();
+    expect(jobs.size).toBe(3);
+    const warn = logs.find((l) => l.msg === 'waveform skipped');
+    expect(warn?.obj).toMatchObject({ errorCode: 'waveform_failed' });
+    expect(JSON.stringify(logs)).not.toContain('/secret/path');
+  });
   it('maps a missing source to source_not_found', async () => {
     const { deps, stored, srcKey, events } = makeDeps({}, tmpRoot);
     stored.delete(srcKey);
@@ -262,7 +282,11 @@ describe.skipIf(!has('ffmpeg') || !has('ffprobe'))('processRecording with real f
     execFileSync('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-y', '-f', 'lavfi', '-i', 'sine=frequency=440:sample_rate=48000:duration=25', '-ac', '2', '-c:a', 'libopus', src]);
     stored.set(srcKey, readFileSync(src));
     deps.media = { probeMedia: (p, o) => probeMedia(p, o), normalizeToWav: (i, o, x) => normalizeToWav(i, o, x), chunkAudio: (i, o, x) => chunkAudio(i, o, x) };
-    const res = await processRecording(payload, { ...deps, segmentSeconds: 10 });
+    const waves: Waveform[] = [];
+    deps.waveform = { compute: (p, o) => computeWaveform(p, o), store: async (_r, w) => (waves.push(w), { sizeBytes: JSON.stringify(w).length }) };
+    const res = await processRecording(payload, { ...deps, segmentSeconds: 10, waveformBins: 250 });
+    expect(res.waveform?.bins).toBe(250);
+    expect(waves[0]).toMatchObject({ sampleRate: 16000, channels: 1, bins: 250 });
     expect(res.chunks).toHaveLength(3);
     expect(res.durationMs).toBeGreaterThan(24000);
     const wavKey = `organizations/${ORG}/meetings/${MEET}/processed/${REC}/normalized.wav`;
