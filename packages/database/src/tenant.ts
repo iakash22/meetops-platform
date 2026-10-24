@@ -1,7 +1,15 @@
 import type { Prisma, PrismaClient } from '@prisma/client';
 
-/** Postgres GUC read by every RLS policy. */
-export const ORG_CONTEXT_SETTING = 'app.current_org_id';
+/** Postgres GUC read by every RLS policy (ADR-010). */
+export const ORGANIZATION_CONTEXT_SETTING = 'app.current_organization_id';
+/**
+ * Pre-ADR-010 GUC. Still set alongside ORGANIZATION_CONTEXT_SETTING and still read by policies as a
+ * fallback for one minor version, so old code and old databases keep working during rollout.
+ * @deprecated Use ORGANIZATION_CONTEXT_SETTING.
+ */
+export const LEGACY_ORG_CONTEXT_SETTING = 'app.current_org_id';
+/** @deprecated Use ORGANIZATION_CONTEXT_SETTING. */
+export const ORG_CONTEXT_SETTING = ORGANIZATION_CONTEXT_SETTING;
 /** Optional GUC for user-scoped reads (e.g. listing own memberships before an org is chosen). */
 export const USER_CONTEXT_SETTING = 'app.current_user_id';
 
@@ -50,28 +58,32 @@ export interface TransactionCapableClient {
   ): Promise<R>;
 }
 
-export interface OrgContextOptions {
+export interface OrganizationContextOptions {
   /** Defaults to the shared singleton from getPrismaClient(). */
   client?: TransactionCapableClient | PrismaClient;
   userId?: string;
   timeoutMs?: number;
 }
+/** @deprecated Use OrganizationContextOptions. */
+export type OrgContextOptions = OrganizationContextOptions;
 
 /**
- * Run fn inside an interactive transaction with app.current_org_id set LOCAL to the transaction,
- * so RLS policies see only this org. Safe with pooled connections (setting is discarded on commit/rollback).
+ * Run fn inside an interactive transaction with app.current_organization_id (and, for one minor version,
+ * the legacy app.current_org_id) set LOCAL to the transaction, so RLS policies see only this organization.
+ * Safe with pooled connections (settings are discarded on commit/rollback).
  */
-export async function runWithOrgContext<T>(
+export async function runWithOrganizationContext<T>(
   client: TransactionCapableClient | PrismaClient,
   organizationId: string,
   fn: (tx: Prisma.TransactionClient) => Promise<T>,
-  options: Omit<OrgContextOptions, 'client'> = {},
+  options: Omit<OrganizationContextOptions, 'client'> = {},
 ): Promise<T> {
   assertUuid(organizationId);
   if (options.userId !== undefined) assertUuid(options.userId, 'userId');
   const txOptions = options.timeoutMs !== undefined ? { timeout: options.timeoutMs } : undefined;
   return (client as TransactionCapableClient).$transaction(async (tx) => {
-    await tx.$executeRaw`SELECT set_config(${ORG_CONTEXT_SETTING}, ${organizationId}, true)`;
+    await tx.$executeRaw`SELECT set_config(${ORGANIZATION_CONTEXT_SETTING}, ${organizationId}, true)`;
+    await tx.$executeRaw`SELECT set_config(${LEGACY_ORG_CONTEXT_SETTING}, ${organizationId}, true)`;
     if (options.userId !== undefined) {
       await tx.$executeRaw`SELECT set_config(${USER_CONTEXT_SETTING}, ${options.userId}, true)`;
     }
@@ -79,10 +91,13 @@ export async function runWithOrgContext<T>(
   }, txOptions);
 }
 
+/** @deprecated Use runWithOrganizationContext (ADR-010). Removed one minor version after ADR-010. */
+export const runWithOrgContext = runWithOrganizationContext;
+
 /**
  * Run fn in one interactive transaction with only app.current_user_id set LOCAL (no org).
  * Lets a user list their own memberships across orgs via the membership_self_read policy;
- * every other tenant table stays fail-closed because app.current_org_id is unset.
+ * every other tenant table stays fail-closed because no organization context is set.
  */
 export async function runWithUserContext<T>(
   client: TransactionCapableClient | PrismaClient,

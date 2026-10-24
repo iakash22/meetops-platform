@@ -15,15 +15,82 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    # Throwaway, CI-only credentials for ephemeral containers. Not secrets; never reuse outside CI.
+    services:
+      postgres:
+        # pgvector/pgvector:pg16 (PostgreSQL 16 + pgvector, same as infra/compose), pinned by index digest.
+        image: pgvector/pgvector@sha256:7b822b0aac60967beb1ea5e576b8602c94c300a157d187f385ae3e0da199b90a
+        env:
+          POSTGRES_USER: meetops
+          POSTGRES_PASSWORD: ci-throwaway-postgres
+          POSTGRES_DB: meetops_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U meetops -d meetops_test"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+
+    env:
+      # Superuser URL is step-scoped to db:roles only; tests and apps get the non-superuser meetops_app (RLS enforced).
+      MEETOPS_DB_NAME: meetops_test
+      MEETOPS_APP_DB_PASSWORD: ci-only-throwaway-app
+      MEETOPS_MIGRATOR_DB_PASSWORD: ci-only-throwaway-migrator
+      DATABASE_URL: postgresql://meetops_app:ci-only-throwaway-app@localhost:5432/meetops_test
+      # Names used by packages/storage (loadStorageConfig) and .env.example.
+      STORAGE_PROVIDER: minio
+      STORAGE_ENDPOINT: http://localhost:9000
+      STORAGE_REGION: us-east-1
+      STORAGE_BUCKET: meetops-ci
+      STORAGE_ACCESS_KEY_ID: minioadmin
+      STORAGE_SECRET_ACCESS_KEY: minioadmin
+      STORAGE_FORCE_PATH_STYLE: 'true'
+      # Generic S3_* aliases (same values) for tooling that expects them.
+      S3_ENDPOINT: http://localhost:9000
+      S3_ACCESS_KEY: minioadmin
+      S3_SECRET_KEY: minioadmin
+      S3_BUCKET: meetops-ci
+      S3_FORCE_PATH_STYLE: 'true'
+      # Pinned MinIO image. minio/minio was removed from Docker Hub and quay.io now needs auth,
+      # so use Chainguard's public build (cgr.dev/chainguard/minio:latest), pinned by index digest.
+      MINIO_IMAGE: cgr.dev/chainguard/minio@sha256:73297936408b731668ca0e835ac9add1a35cb6026a125c2f0cd476d9ef48222c
+
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      # MinIO needs a `server /data` command, which `services:` cannot pass, so start it here
+      # with a Docker health check plus an HTTP readiness wait.
+      - name: Start MinIO
+        run: |
+          docker run -d --name minio -p 9000:9000 \
+            -e MINIO_ROOT_USER="$STORAGE_ACCESS_KEY_ID" \
+            -e MINIO_ROOT_PASSWORD="$STORAGE_SECRET_ACCESS_KEY" \
+            --tmpfs /data:uid=65532,gid=65532 \
+            "$MINIO_IMAGE" server /data
+          for i in $(seq 1 60); do
+            if curl -fsS http://localhost:9000/minio/health/ready >/dev/null; then echo "MinIO ready"; exit 0; fi
+            sleep 2
+          done
+          docker logs minio
+          exit 1
+
+      - name: Create bucket
+        env:
+          AWS_ACCESS_KEY_ID: ${{ env.STORAGE_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ env.STORAGE_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: ${{ env.STORAGE_REGION }}
+          AWS_EC2_METADATA_DISABLED: 'true'
+        run: |
+          aws --endpoint-url "$STORAGE_ENDPOINT" s3api create-bucket --bucket "$STORAGE_BUCKET" \
+            || aws --endpoint-url "$STORAGE_ENDPOINT" s3api head-bucket --bucket "$STORAGE_BUCKET"
+          aws --endpoint-url "$STORAGE_ENDPOINT" s3api head-bucket --bucket "$STORAGE_BUCKET"
 
       - name: Setup pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 20
           cache: 'pnpm'
@@ -43,6 +110,11 @@ jobs:
             }
             console.log("type-aware promise rules active");'
 
+      - name: Create DB roles (meetops_app / meetops_migrator)
+        run: pnpm --filter @meetops/database db:roles
+        env:
+          ADMIN_DATABASE_URL: postgresql://meetops:ci-throwaway-postgres@localhost:5432/meetops_test
+
       - name: Lint
         run: pnpm lint
 
@@ -55,3 +127,83 @@ jobs:
 
       - name: Build
         run: pnpm build
+
+      - name: MinIO logs on failure
+        if: failure()
+        run: docker logs minio || true
+
+  # Live Postgres checks for packages/database (see packages/database/docs/ci-live-db.example.yml).
+  live-db:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    services:
+      postgres:
+        image: pgvector/pgvector@sha256:7b822b0aac60967beb1ea5e576b8602c94c300a157d187f385ae3e0da199b90a
+        env:
+          POSTGRES_USER: meetops
+          POSTGRES_PASSWORD: ci-throwaway-postgres
+          POSTGRES_DB: meetops_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U meetops -d meetops_test"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+
+    # Throwaway, CI-only values for an ephemeral database. Not secrets; never reuse outside CI.
+    env:
+      # Superuser URLs are step-scoped: ADMIN_DATABASE_URL on db:roles, RLS_TEST_ADMIN_URL on test:live.
+      MEETOPS_DB_NAME: meetops_test
+      MEETOPS_APP_DB_PASSWORD: ci-only-throwaway-app
+      MEETOPS_MIGRATOR_DB_PASSWORD: ci-only-throwaway-migrator
+      MEETOPS_RELAY_DB_PASSWORD: ci-only-throwaway-relay
+      MIGRATION_DATABASE_URL: postgresql://meetops_migrator:ci-only-throwaway-migrator@localhost:5432/meetops_test
+      RLS_TEST_OWNER_URL: postgresql://meetops_migrator:ci-only-throwaway-migrator@localhost:5432/meetops_test
+      DATABASE_URL: postgresql://meetops_app:ci-only-throwaway-app@localhost:5432/meetops_test
+      RLS_TEST_APP_URL: postgresql://meetops_app:ci-only-throwaway-app@localhost:5432/meetops_test
+      RLS_TEST_RELAY_URL: postgresql://meetops_relay:ci-only-throwaway-relay@localhost:5432/meetops_test
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 20
+          cache: 'pnpm'
+
+      # The root postinstall runs turbo across every workspace (e.g. apps/extension), which fails when
+      # only @meetops/database and its deps are installed, so skip lifecycle scripts and generate explicitly.
+      - name: Install dependencies
+        run: pnpm --filter @meetops/database install --frozen-lockfile --ignore-scripts
+
+      - name: Generate Prisma client
+        run: pnpm --filter @meetops/database exec prisma generate
+
+      - name: Create DB roles
+        run: pnpm --filter @meetops/database db:roles
+        env:
+          ADMIN_DATABASE_URL: postgresql://meetops:ci-throwaway-postgres@localhost:5432/meetops_test
+
+      - name: Migrate
+        run: pnpm --filter @meetops/database db:migrate:deploy
+
+      - name: Drift check
+        run: >-
+          pnpm --filter @meetops/database exec prisma migrate diff
+          --from-url "$MIGRATION_DATABASE_URL" --to-schema-datamodel prisma/schema.prisma --exit-code
+
+      - name: Seed (twice, must be idempotent)
+        run: |
+          pnpm --filter @meetops/database db:seed
+          pnpm --filter @meetops/database db:seed
+
+      - name: Live tests
+        run: pnpm --filter @meetops/database test:live
+        env:
+          RLS_TEST_ADMIN_URL: postgresql://meetops:ci-throwaway-postgres@localhost:5432/meetops_test
+# hook-verified commit
+# hook-verified commit (husky active)

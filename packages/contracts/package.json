@@ -1,6 +1,6 @@
 {
   "name": "@meetops/contracts",
-  "version": "0.3.2",
+  "version": "0.3.3",
   "private": true,
   "type": "module",
   "main": "dist/index.js",
@@ -18,7 +18,7 @@
   },
   "devDependencies": {
     "typescript": "^5.6.3",
-    "vitest": "^3.2.7"
+    "vitest": "^4.1.12"
   },
   "exports": {
     ".": {
@@ -31,7 +31,8 @@
     },
     "./types": {
       "types": "./src/types.ts",
-      "import": "./dist/types.js"
+      "import": "./dist/types.js",
+      "default": "./dist/types.js"
     }
   },
   "dependencies": {

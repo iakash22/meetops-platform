@@ -1,4 +1,4 @@
-import { mkdir, readdir, rm } from 'node:fs/promises';
+import { mkdir, readdir, rm, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { probeMedia } from './probe.js';
 import { PROTOCOL_WHITELIST, resolveTools, runProcess, type MediaToolsOptions } from './run.js';
@@ -12,7 +12,19 @@ export type NormalizeOptions = MediaToolsOptions & {
   maxDurationSeconds?: number;
   /** Output size cap in bytes (`-fs`). */
   maxOutputBytes?: number;
+  /**
+   * Input size cap in bytes, checked with stat() before ffmpeg runs (callers pass contracts MAX_MEDIA_BYTES or a
+   * lower configured cap; media-core stays dependency-free so it does not import contracts itself).
+   */
+  maxInputBytes?: number;
 };
+
+export class InputTooLargeError extends Error {
+  constructor(readonly sizeBytes: number, readonly maxBytes: number) {
+    super(`input exceeds ${maxBytes} bytes`);
+    this.name = 'InputTooLargeError';
+  }
+}
 
 type NormalizeArgOptions = Pick<NormalizeOptions, 'sampleRate' | 'channels' | 'inputFormat' | 'maxDurationSeconds' | 'maxOutputBytes'>;
 
@@ -42,6 +54,11 @@ export function buildNormalizeArgs(input: string, output: string, o: NormalizeAr
 
 export async function normalizeToWav(input: string, output: string, opts: NormalizeOptions = {}): Promise<string> {
   const t = resolveTools(opts);
+  if (opts.maxInputBytes !== undefined) {
+    if (!(Number.isFinite(opts.maxInputBytes) && opts.maxInputBytes > 0)) throw new Error('maxInputBytes must be > 0');
+    const { size } = await stat(input);
+    if (size > opts.maxInputBytes) throw new InputTooLargeError(size, opts.maxInputBytes);
+  }
   await mkdir(path.dirname(output), { recursive: true });
   await runProcess(t.ffmpeg, buildNormalizeArgs(input, output, opts), { timeoutMs: t.timeoutMs, signal: opts.signal });
   return output;
