@@ -12,6 +12,15 @@ export class InMemorySessionRepository implements SessionRepository {
     for (const s of this.items.values()) if (s.tokenHash === tokenHash) return { ...s };
     return null;
   }
+  async findById(id: string) {
+    const s = this.items.get(id);
+    return s ? { ...s } : null;
+  }
+  async listActiveForUser(userId: string, now: Date) {
+    return [...this.items.values()]
+      .filter((s) => s.userId === userId && !s.revokedAt && s.expiresAt > now)
+      .map((s) => ({ ...s }));
+  }
   async touch(id: string, at: Date) {
     const s = this.items.get(id);
     if (s) s.lastSeenAt = at;
