@@ -19,18 +19,19 @@ function probeDocker(): boolean {
  * - Locally a missing daemon means the suites are skipped (with a warning).
  * - In CI (`CI=true`), or with `QA_REQUIRE_DOCKER=1`, a missing daemon is an error, so
  *   the suites can never pass by silently skipping.
- * - `QA_ALLOW_DOCKER_SKIP=1` opts out of that and restores the skip, even in CI.
- * - `QA_SKIP_DOCKER=1` forces "unavailable" (still an error in strict mode unless allowed).
+ * - `QA_ALLOW_DOCKER_SKIP=1` is a local-only opt-out for `QA_REQUIRE_DOCKER=1`. It is ignored
+ *   when `CI` is set: Docker missing in CI is always a hard failure.
+ * - `QA_SKIP_DOCKER=1` forces "unavailable" (always an error in CI).
  */
 export function dockerGate(env: Env = process.env, probe: () => boolean = probeDocker): boolean {
   const available = env.QA_SKIP_DOCKER === '1' ? false : probe();
   if (available) return true;
   const strict =
-    (truthy(env.CI) || truthy(env.QA_REQUIRE_DOCKER)) && !truthy(env.QA_ALLOW_DOCKER_SKIP);
+    truthy(env.CI) || (truthy(env.QA_REQUIRE_DOCKER) && !truthy(env.QA_ALLOW_DOCKER_SKIP));
   if (strict)
     throw new Error(
       'Docker is required for the integration suites in CI (CI=true or QA_REQUIRE_DOCKER=1) but ' +
-        '`docker info` failed. Fix the runner, or set QA_ALLOW_DOCKER_SKIP=1 to skip on purpose.',
+        '`docker info` failed. Fix the runner (QA_ALLOW_DOCKER_SKIP is ignored in CI).',
     );
   return false;
 }
