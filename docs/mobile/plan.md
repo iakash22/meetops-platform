@@ -14,6 +14,12 @@ Identity naming: `organizationId` everywhere.
 | M5  | Local storage + upload: encrypted sandbox storage, chunked TLS upload to pre-signed URLs, checksum confirmation, verified deletion, retention caps.                                                        | Media upload contract |
 | M6  | Hardening + release: security review against R1–R7, store-review notes, privacy labels / Data safety, E2E on devices, EAS submit.                                                                          | Security, DevOps      |
 
+## Package boundaries (Architecture rule)
+
+- Values may come only from `@meetops/contracts/types`. Anything from the `@meetops/contracts` root is `import type` only.
+- Mobile must not depend on server packages (database, ai-core, integrations, queue), other apps, or deep `src/`/`dist/` paths.
+- The contracts package is owned by Architecture, which will add a `default` export condition. Mobile doesn't modify it.
+
 ## Platform configuration
 
 ### iOS background audio
