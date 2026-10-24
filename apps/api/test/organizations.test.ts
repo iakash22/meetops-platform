@@ -1,7 +1,6 @@
-/* eslint-disable @typescript-eslint/no-unsafe-argument -- test/ is not part of a TS project (see report) */
 import { randomUUID } from 'node:crypto';
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { buildApp, signupAndLogin, type App, type Client } from './helpers';
+import { buildApp, signupAndLogin, CSRF, SID, type App, type Client } from './helpers.js';
 
 describe('organizations', () => {
   let app: App;
@@ -79,7 +78,7 @@ describe('organizations', () => {
     expect(inv.statusCode).toBe(201);
     expect(inv.json()).toMatchObject({ email: 'new@example.com', role: 'member', status: 'pending', organizationId: org.organization.id });
     expect(inv.body).not.toMatch(/token/i);
-    const token = app.mailer.sent.find((m) => m.kind === 'invite')!.token!;
+    const token = new URL([...app.mail.sent].reverse().find((m) => m.template === 'invitation')!.data.url!).searchParams.get('token')!;
 
     const wrongUser = await signupAndLogin(app, 'someone@example.com');
     const mismatch = await wrongUser.post('/invitations/accept', { token });
@@ -111,7 +110,7 @@ describe('organizations', () => {
     const id = org.organization.id;
     await owner.post(`/orgs/${id}/invitations`, { email: 'm@example.com', role: 'member' });
     const member = await signupAndLogin(app, 'm@example.com');
-    await member.post('/invitations/accept', { token: app.mailer.sent.find((m) => m.kind === 'invite')!.token! });
+    await member.post('/invitations/accept', { token: new URL([...app.mail.sent].reverse().find((m) => m.template === 'invitation')!.data.url!).searchParams.get('token')! });
 
     const denied = await member.post(`/orgs/${id}/invitations`, { email: 'y@example.com', role: 'viewer' });
     expect(denied.statusCode).toBe(403);
@@ -135,5 +134,22 @@ describe('organizations', () => {
     const inv = (await owner.post(`/orgs/${a.organization.id}/invitations`, { email: 'p@example.com', role: 'viewer' })).json();
     const res = await owner.post(`/orgs/${b.organization.id}/invitations/${inv.id}/revoke`);
     expect(res.statusCode).toBe(404);
+  });
+
+  it('POST /orgs/switch rotates the session (FE-2): new cookie + CSRF, old session revoked', async () => {
+    const c = await signupAndLogin(app, 'switch-rot@example.com');
+    const a = (await c.post('/orgs', { name: 'A' })).json().organization.id as string;
+    const b = (await c.post('/orgs', { name: 'B' })).json().organization.id as string;
+    const oldSid = c.jar.get(SID)!;
+    const oldCsrf = c.jar.get(CSRF)!;
+    const r = await c.post('/orgs/switch', { organizationId: a });
+    expect(r.statusCode).toBe(200);
+    expect(r.json()).toMatchObject({ organization: { id: a }, role: 'owner' });
+    expect(c.jar.get(SID)).not.toBe(oldSid);
+    expect(c.jar.get(CSRF)).not.toBe(oldCsrf);
+    expect((await c.get('/auth/session')).json().activeOrganizationId).toBe(a);
+    const stale = await app.inject({ method: 'GET', url: '/auth/session', headers: { cookie: `${SID}=${oldSid}` } });
+    expect(stale.statusCode).toBe(401);
+    expect(b).not.toBe(a);
   });
 });

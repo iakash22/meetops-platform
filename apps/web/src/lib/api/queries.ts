@@ -76,6 +76,20 @@ const EVENT_KEYS = new Set([
   'at',
 ]);
 
+const ISO_DATETIME =
+  /^(\d{4})-(\d{2})-(\d{2})T([01]\d|2[0-3]):([0-5]\d):([0-5]\d)(\.\d{1,9})?(Z|[+-](?:[01]\d|2[0-3]):[0-5]\d)$/;
+
+/** Strict ISO-8601 datetime with Z or ±HH:MM offset and a real calendar date. */
+export function isIsoDateTime(value: unknown): value is string {
+  if (typeof value !== 'string') return false;
+  const m = ISO_DATETIME.exec(value);
+  if (!m) return false;
+  const [y, mo, d] = [Number(m[1]), Number(m[2]), Number(m[3])];
+  if (mo < 1 || mo > 12 || d < 1) return false;
+  const daysInMonth = new Date(Date.UTC(y, mo, 0)).getUTCDate();
+  return d <= daysInMonth;
+}
+
 /**
  * Minimal runtime guard for contracts TaskUpdateEvent (avoids shipping the TypeBox
  * runtime): uuids, known status, title ≤ 500, ISO `at`, no extra keys.
@@ -94,8 +108,7 @@ export function isTaskUpdateEvent(value: unknown): value is TaskUpdateEvent {
     typeof e.status === 'string' &&
     (TASK_STATUSES as readonly string[]).includes(e.status) &&
     (e.title === undefined || (typeof e.title === 'string' && e.title.length <= 500)) &&
-    typeof e.at === 'string' &&
-    !Number.isNaN(Date.parse(e.at))
+    isIsoDateTime(e.at)
   );
 }
 
