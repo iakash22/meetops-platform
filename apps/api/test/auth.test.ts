@@ -1,9 +1,8 @@
-/* eslint-disable @typescript-eslint/no-unsafe-argument -- test/ is not part of a TS project (see report) */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { InMemorySessionRepository } from '../src/modules/auth/infrastructure/in-memory-session.repository';
-import { InMemoryUserRepository } from '../src/modules/users/infrastructure/in-memory-user.repository';
-import { ARGON2_PARAMS, Argon2PasswordHasher } from '../src/modules/auth/infrastructure/argon2-password-hasher';
-import { buildApp, Client, CSRF, ORIGIN, PASSWORD, SID, signupAndLogin, type App } from './helpers';
+import { InMemorySessionRepository } from '../src/modules/auth/infrastructure/in-memory-session.repository.js';
+import { InMemoryUserRepository } from '../src/modules/users/infrastructure/in-memory-user.repository.js';
+import { ARGON2_PARAMS, Argon2PasswordHasher } from '../src/modules/auth/infrastructure/argon2-password-hasher.js';
+import { buildApp, Client, CSRF, ORIGIN, PASSWORD, SID, signupAndLogin, type App } from './helpers.js';
 
 const MIN = 60_000;
 
@@ -26,7 +25,7 @@ describe('auth', () => {
       expect(res.statusCode).toBe(202);
       expect(res.cookies.find((x) => x.name === SID)).toBeUndefined();
       expect((await users.findByEmail('ada@example.com'))?.name).toBe('Ada');
-      expect(app.mailer.sent.map((m) => m.kind)).toEqual(['verify']);
+      expect(app.mail.sent.map((m) => m.template)).toEqual(['email_verification']);
     });
 
     it('is enumeration-safe for an existing email', async () => {
@@ -35,7 +34,7 @@ describe('auth', () => {
       const b = await c.post('/auth/signup', { name: 'B', email: 'DUP@example.com', password: 'another-password-1' });
       expect(b.statusCode).toBe(a.statusCode);
       expect(b.body).toBe(a.body);
-      expect(app.mailer.sent.map((m) => m.kind)).toEqual(['verify', 'exists']);
+      expect(app.mail.sent.map((m) => m.template)).toEqual(['email_verification', 'account_exists']);
     });
 
     it.each([
@@ -237,15 +236,15 @@ describe('auth', () => {
       const unknown = await anon.post('/auth/forgot-password', { email: 'nobody@example.com' });
       expect(known.statusCode).toBe(202);
       expect(unknown.body).toBe(known.body);
-      const mail = app.mailer.sent.filter((m) => m.kind === 'reset');
+      const mail = app.mail.sent.filter((m) => m.template === 'password_reset');
       expect(mail).toHaveLength(1);
 
       const newPassword = 'a-brand-new-password';
-      expect((await anon.post('/auth/reset-password', { token: mail[0]!.token, password: newPassword })).statusCode).toBe(204);
+      expect((await anon.post('/auth/reset-password', { token: new URL(mail[0]!.data.url!).searchParams.get('token')!, password: newPassword })).statusCode).toBe(204);
       expect((await c.get('/auth/session')).statusCode).toBe(401);
       expect((await anon.post('/auth/login', { email: 'reset@example.com', password: newPassword })).statusCode).toBe(200);
       // single use
-      const again = await anon.post('/auth/reset-password', { token: mail[0]!.token, password: newPassword });
+      const again = await anon.post('/auth/reset-password', { token: new URL(mail[0]!.data.url!).searchParams.get('token')!, password: newPassword });
       expect(again.statusCode).toBe(400);
       expect(again.json().error.code).toBe('BAD_REQUEST');
     });
@@ -257,14 +256,14 @@ describe('auth', () => {
       await signupAndLogin(app, 'exp@example.com');
       const anon = new Client(app);
       await anon.post('/auth/forgot-password', { email: 'exp@example.com' });
-      const token = app.mailer.sent.find((m) => m.kind === 'reset')!.token!;
+      const token = new URL(app.mail.sent.find((m) => m.template === 'password_reset')!.data.url!).searchParams.get('token')!;
       now = new Date(now.getTime() + 31 * MIN);
       expect((await anon.post('/auth/reset-password', { token, password: 'a-brand-new-password' })).statusCode).toBe(400);
     });
   });
 
   it('openapi response schemas never expose hashes or tokens (except /auth/csrf)', async () => {
-    const spec = app.swagger() as { paths: Record<string, Record<string, { responses: Record<string, unknown> }>> };
+    const spec = app.swagger() as unknown as { paths: Record<string, Record<string, { responses: Record<string, unknown> }>> };
     for (const [path, ops] of Object.entries(spec.paths)) {
       if (path === '/auth/csrf') continue;
       const json = JSON.stringify(Object.values(ops).map((o) => o.responses));

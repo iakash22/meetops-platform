@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ApiError } from '@/lib/api/client';
 import { useOrgStore } from '@/stores/org-store';
 import { createMockApi, renderApp, resetStores } from './fixtures/render';
+import { waitForRouteData } from './fixtures/route-ready';
 import { sessionResponse } from './fixtures/data';
 
 describe('app shell', () => {
@@ -38,6 +39,7 @@ describe('app shell', () => {
       },
     });
     renderApp('/meetings', api);
+    await waitForRouteData(api.meetings.list, { heading: 'Meetings' });
     expect(await screen.findByText('Weekly sync')).toBeInTheDocument();
     await userEvent.click(screen.getByRole('combobox', { name: 'Organization' }));
     await userEvent.click(await screen.findByRole('option', { name: 'Globex' }));
@@ -59,6 +61,7 @@ describe('app shell', () => {
       },
     });
     renderApp('/meetings', api);
+    await waitForRouteData(api.meetings.list, { heading: 'Meetings' });
     expect(await screen.findByText('Weekly sync')).toBeInTheDocument();
     await userEvent.click(screen.getByRole('combobox', { name: 'Organization' }));
     await userEvent.click(await screen.findByRole('option', { name: 'Globex' }));

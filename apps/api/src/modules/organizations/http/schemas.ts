@@ -1,15 +1,23 @@
 import { Type, type Static } from '@sinclair/typebox';
-import { Organization, Paginated, Role } from '@meetops/contracts';
+import {
+  CreateOrganizationRequest,
+  CursorPageQuery,
+  ListMembersResponse,
+  ListOrganizationsResponse,
+  Membership,
+  OrganizationWithRole,
+  Role
+} from '@meetops/contracts';
+
+// Shared contracts (v0.3.1): strict response shapes, so serializers must emit exactly these keys.
+export { OrganizationWithRole, Membership, CursorPageQuery };
+export const OrganizationList = ListOrganizationsResponse;
+export const CreateOrganizationBody = CreateOrganizationRequest;
+export const MemberList = ListMembersResponse;
+export type CursorPageQueryT = Static<typeof CursorPageQuery>;
 
 export const InvitableRole = Type.Union([Type.Literal('admin'), Type.Literal('member'), Type.Literal('viewer')]);
 
-export const OrganizationWithRole = Type.Object({ organization: Organization, role: Role });
-export const OrganizationList = Paginated(OrganizationWithRole);
-
-export const CreateOrganizationBody = Type.Object(
-  { name: Type.String({ minLength: 1, maxLength: 200 }) },
-  { additionalProperties: false }
-);
 export const SwitchOrganizationBody = Type.Object(
   { organizationId: Type.String({ format: 'uuid' }) },
   { additionalProperties: false }
@@ -39,6 +47,11 @@ export const InvitationDto = Type.Object(
   },
   { additionalProperties: false }
 );
+
+export const MemberParams = Type.Object({ id: Type.String({ format: 'uuid' }), userId: Type.String({ format: 'uuid' }) });
+export const ChangeRoleBody = Type.Object({ role: Role }, { additionalProperties: false });
+export type MemberParamsT = Static<typeof MemberParams>;
+export type ChangeRoleBodyT = Static<typeof ChangeRoleBody>;
 
 export type CreateOrganizationBodyT = Static<typeof CreateOrganizationBody>;
 export type SwitchOrganizationBodyT = Static<typeof SwitchOrganizationBody>;
