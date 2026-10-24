@@ -4,7 +4,7 @@
   "tasks": {
     "test": {
       "cache": false,
-      "passThroughEnv": ["QA_*", "API_BASE_URL", "TESTCONTAINERS_*"]
+      "passThroughEnv": ["QA_*", "CI", "API_BASE_URL", "TESTCONTAINERS_*"]
     }
   }
 }
