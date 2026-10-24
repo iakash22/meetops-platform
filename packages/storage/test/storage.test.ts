@@ -26,6 +26,7 @@ import {
   buildObjectKey,
   loadStorageConfig,
   parseMeetingKey,
+  organizationPrefix,
   toPresignedUrlDto,
   toSignedPutUpload,
   SESSION_CHUNK_PREFIX,
@@ -49,8 +50,8 @@ const s3 = mockClient(S3Client);
 const client = new S3Client({ region: 'us-east-1', credentials: { accessKeyId: 'a', secretAccessKey: 's' } });
 const svc = (extra: Partial<ConstructorParameters<typeof S3StorageService>[0]> = {}) => new S3StorageService({ config, client, authorize: () => undefined, ...extra });
 
-const rec: MeetingObjectRef = { orgId: 'o1', meetingId: 'm1', kind: 'recording', objectId: 'r1', ext: 'webm' };
-const REC_KEY = 'org/o1/meetings/m1/recordings/r1.webm';
+const rec: MeetingObjectRef = { organizationId: 'o1', meetingId: 'm1', kind: 'recording', objectId: 'r1', ext: 'webm' };
+const REC_KEY = 'organizations/o1/meetings/m1/recordings/r1.webm';
 const spec = { mimeType: 'audio/webm', sizeBytes: 3 };
 /** base64 sha256 of 'abc' */
 const SUM = 'ungWv48Bz+pBQUDeXa4iI7ADYaOWF3qctBD/YfIAFa0=';
@@ -85,17 +86,23 @@ describe('config', () => {
 describe('keys', () => {
   it('derives keys server-side from ids and kind', () => {
     expect(buildObjectKey(rec)).toBe(REC_KEY);
-    expect(buildObjectKey({ orgId: 'o1', meetingId: 'm1', kind: 'normalized', objectId: 'r1' })).toBe('org/o1/meetings/m1/processed/r1/normalized.wav');
-    expect(buildObjectKey({ orgId: 'o1', meetingId: 'm1', kind: 'chunk', objectId: 'r1', index: 3 })).toBe(
-      'org/o1/meetings/m1/processed/r1/chunks/00003.wav'
+    expect(buildObjectKey({ organizationId: 'o1', meetingId: 'm1', kind: 'normalized', objectId: 'r1' })).toBe('organizations/o1/meetings/m1/processed/r1/normalized.wav');
+    expect(buildObjectKey({ organizationId: 'o1', meetingId: 'm1', kind: 'chunk', objectId: 'r1', index: 3 })).toBe(
+      'organizations/o1/meetings/m1/processed/r1/chunks/00003.wav'
     );
-    expect(parseMeetingKey(REC_KEY)).toEqual({ orgId: 'o1', meetingId: 'm1', rest: 'recordings/r1.webm' });
+    expect(parseMeetingKey(REC_KEY)).toEqual({ organizationId: 'o1', meetingId: 'm1', rest: 'recordings/r1.webm' });
+  });
+  it('uses the organizations/{organizationId}/ prefix and rejects legacy org/ keys', () => {
+    expect(organizationPrefix('o1')).toBe('organizations/o1/');
+    expect(parseMeetingKey('org/o1/meetings/m1/recordings/r1.webm')).toBeNull();
+    expect(() => assertKeyOwnedBy('org/o1/meetings/m1/recordings/r1.webm', 'o1')).toThrow(StorageAccessError);
+    expect(() => assertKeyOwnedBy(REC_KEY, 'o1', 'm1')).not.toThrow();
   });
   it('rejects traversal, raw paths and missing parts', () => {
-    expect(() => buildObjectKey({ ...rec, orgId: '../x' })).toThrow(StorageValidationError);
+    expect(() => buildObjectKey({ ...rec, organizationId: '../x' })).toThrow(StorageValidationError);
     expect(() => buildObjectKey({ ...rec, objectId: 'a/b' })).toThrow();
     expect(() => buildObjectKey({ ...rec, ext: 'we/bm' })).toThrow();
-    expect(() => buildObjectKey({ orgId: 'o1', meetingId: 'm1', kind: 'chunk', objectId: 'r1' })).toThrow();
+    expect(() => buildObjectKey({ organizationId: 'o1', meetingId: 'm1', kind: 'chunk', objectId: 'r1' })).toThrow();
     expect(() => buildObjectKey({ ...rec, kind: 'bogus' as never })).toThrow();
   });
   it('ownership check never echoes the key', () => {
@@ -113,9 +120,9 @@ describe('keys', () => {
 });
 
 describe('S3StorageService', () => {
-  it('requires orgId on every op', async () => {
+  it('requires organizationId on every op', async () => {
     const s = svc();
-    const bad = { ...rec, orgId: undefined } as unknown as MeetingObjectRef;
+    const bad = { ...rec, organizationId: undefined } as unknown as MeetingObjectRef;
     await expect(s.headObject(bad)).rejects.toBeInstanceOf(StorageError);
     await expect(s.getPresignedDownloadUrl(bad)).rejects.toBeInstanceOf(StorageError);
     await expect(s.deleteObject(bad)).rejects.toBeInstanceOf(StorageError);
@@ -225,7 +232,7 @@ describe('S3StorageService', () => {
       'if-none-match': '*'
     });
     const get = await real.getPresignedDownloadUrl(rec, { ttlSeconds: 30 });
-    expect(get.url).toMatch(/^http:\/\/localhost:9000\/secret-bucket\/org\/o1\/meetings\/m1\/recordings\/r1\.webm\?/);
+    expect(get.url).toMatch(/^http:\/\/localhost:9000\/secret-bucket\/organizations\/o1\/meetings\/m1\/recordings\/r1\.webm\?/);
     expect(get.url).toContain('X-Amz-Expires=30');
     expect(Object.keys(get)).not.toContain('bucket');
   });
@@ -308,24 +315,24 @@ describe('S3StorageService', () => {
   });
 
   describe('recording-session chunks (flat tmp prefix)', () => {
-    const sess = { orgId: 'o1', meetingId: 'm1', sessionId: 's1' };
-    const key = (seq: number) => `tmp/session-chunks/org/o1/meetings/m1/sessions/s1/${String(seq).padStart(5, '0')}.part`;
+    const sess = { organizationId: 'o1', meetingId: 'm1', sessionId: 's1' };
+    const key = (seq: number) => `tmp/session-chunks/organizations/o1/meetings/m1/sessions/s1/${String(seq).padStart(5, '0')}.part`;
     const sha = 'a'.repeat(64);
     const shaB64 = Buffer.from(sha, 'hex').toString('base64');
     const listed = (entries: Array<[string, number]>) => ({ Contents: entries.map(([Key, Size]) => ({ Key, Size })), IsTruncated: false });
 
     it('keys and ownership accept the flat prefix with org+meeting validation', () => {
       expect(SESSION_CHUNK_PREFIX).toBe('tmp/session-chunks/');
-      expect(buildObjectKey({ orgId: 'o1', meetingId: 'm1', kind: 'session_chunk', objectId: 's1', index: 7 })).toBe(key(7));
+      expect(buildObjectKey({ organizationId: 'o1', meetingId: 'm1', kind: 'session_chunk', objectId: 's1', index: 7 })).toBe(key(7));
       expect(() => assertKeyOwnedBy(key(7), 'o1')).not.toThrow();
       expect(() => assertKeyOwnedBy(key(7), 'o1', 'm1')).not.toThrow();
       expect(() => assertKeyOwnedBy(key(7), 'o2')).toThrow(StorageAccessError);
       expect(() => assertKeyOwnedBy(key(7), 'o1', 'm2')).toThrow(StorageAccessError);
-      expect(() => assertKeyOwnedBy('tmp/session-chunks/org/o1/meetings/m1/other/x.part', 'o1')).toThrow(StorageAccessError);
-      expect(() => assertKeyOwnedBy('tmp/session-chunks/org/o1/meetings/../x/sessions/s1/00001.part', 'o1')).toThrow(StorageAccessError);
-      expect(() => assertKeyOwnedBy('tmp/other/org/o1/meetings/m1/sessions/s1/00001.part', 'o1')).toThrow(StorageAccessError);
+      expect(() => assertKeyOwnedBy('tmp/session-chunks/organizations/o1/meetings/m1/other/x.part', 'o1')).toThrow(StorageAccessError);
+      expect(() => assertKeyOwnedBy('tmp/session-chunks/organizations/o1/meetings/../x/sessions/s1/00001.part', 'o1')).toThrow(StorageAccessError);
+      expect(() => assertKeyOwnedBy('tmp/other/organizations/o1/meetings/m1/sessions/s1/00001.part', 'o1')).toThrow(StorageAccessError);
       expect(() => assertKeyOwnedBy(REC_KEY, 'o1', 'm2')).toThrow(StorageAccessError);
-      expect(parseMeetingKey(key(1))).toEqual({ orgId: 'o1', meetingId: 'm1', rest: 'sessions/s1/00001.part' });
+      expect(parseMeetingKey(key(1))).toEqual({ organizationId: 'o1', meetingId: 'm1', rest: 'sessions/s1/00001.part' });
     });
 
     it('presigns a PUT signing content-length, content-type and checksum; TTL <= 300', async () => {
@@ -339,11 +346,11 @@ describe('S3StorageService', () => {
       expect(o.expiresIn).toBe(300);
       expect([...o.signableHeaders]).toEqual(expect.arrayContaining(['content-length', 'content-type', 'x-amz-checksum-sha256']));
       expect(toSignedPutUpload(p)).toMatchObject({ method: 'PUT', headers: { 'content-length': '1000' } });
-      expect(s3.commandCalls(ListObjectsV2Command)[0]!.args[0].input.Prefix).toBe('tmp/session-chunks/org/o1/meetings/m1/sessions/s1/');
+      expect(s3.commandCalls(ListObjectsV2Command)[0]!.args[0].input.Prefix).toBe('tmp/session-chunks/organizations/o1/meetings/m1/sessions/s1/');
       await expect(s.getPresignedSessionChunkUrl(sess, { seq: 0, sizeBytes: 1, sha256: sha }, 'audio/webm', { ttlSeconds: 301 })).rejects.toThrow(RangeError);
       await expect(s.getPresignedSessionChunkUrl(sess, { seq: 10000, sizeBytes: 1, sha256: sha }, 'audio/webm')).rejects.toThrow(/seq/);
       await expect(s.getPresignedSessionChunkUrl(sess, { seq: 0, sizeBytes: MAX_CHUNK_BYTES + 1, sha256: sha }, 'audio/webm')).rejects.toThrow(/sizeBytes/);
-      await expect(s.getPresignedSessionChunkUrl({ ...sess, orgId: '' }, { seq: 0, sizeBytes: 1, sha256: sha }, 'audio/webm')).rejects.toBeInstanceOf(StorageError);
+      await expect(s.getPresignedSessionChunkUrl({ ...sess, organizationId: '' }, { seq: 0, sizeBytes: 1, sha256: sha }, 'audio/webm')).rejects.toBeInstanceOf(StorageError);
     });
 
     it('refuses already-uploaded seq and enforces the running total before issuing', async () => {

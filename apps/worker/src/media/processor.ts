@@ -124,7 +124,7 @@ export async function processRecording(
   const progress = (percent: number, stage: TranscriptionStage, extra: Partial<TranscriptionProgressEvent> = {}) =>
     deps.realtime.transcriptionProgress({ organizationId, meetingId, recordingId, percent, stage, at: now().toISOString(), ...extra });
 
-  const sourceRef: MeetingObjectRef = { orgId: organizationId, meetingId, kind: 'recording', objectId: recordingId, ext: payload.sourceExt };
+  const sourceRef: MeetingObjectRef = { organizationId, meetingId, kind: 'recording', objectId: recordingId, ext: payload.sourceExt };
   let demuxer: AllowedDemuxer;
   try {
     const expectedKey = buildObjectKey(sourceRef);
@@ -168,7 +168,7 @@ export async function processRecording(
       maxInputBytes: limits.maxSourceBytes
     });
     const wavSize = (await stat(wavPath)).size;
-    const normalizedRef: MeetingObjectRef = { orgId: organizationId, meetingId, kind: 'normalized', objectId: recordingId };
+    const normalizedRef: MeetingObjectRef = { organizationId, meetingId, kind: 'normalized', objectId: recordingId };
     await deps.storage.putObject(normalizedRef, createReadStream(wavPath), { mimeType: 'audio/wav', sizeBytes: wavSize });
     progress(30, 'chunking');
 
@@ -179,7 +179,7 @@ export async function processRecording(
     for (const [i, c] of chunks.entries()) {
       const size = (await stat(c.path)).size;
       await deps.storage.putObject(
-        { orgId: organizationId, meetingId, kind: 'chunk', objectId: recordingId, index: c.index },
+        { organizationId, meetingId, kind: 'chunk', objectId: recordingId, index: c.index },
         createReadStream(c.path),
         { mimeType: 'audio/wav', sizeBytes: size }
       );

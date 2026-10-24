@@ -24,7 +24,7 @@ const jobScope = new AsyncLocalStorage<{ organizationId: string; meetingId: stri
 
 export function workerAuthorize(ref: MeetingObjectRef): void {
   const scope = jobScope.getStore();
-  if (!scope || scope.organizationId !== ref.orgId || scope.meetingId !== ref.meetingId) throw new StorageAccessError();
+  if (!scope || scope.organizationId !== ref.organizationId || scope.meetingId !== ref.meetingId) throw new StorageAccessError();
 }
 
 export function runInJobScope<T>(scope: { organizationId: string; meetingId: string }, fn: () => Promise<T>): Promise<T> {

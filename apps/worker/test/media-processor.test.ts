@@ -98,7 +98,7 @@ function makeDeps(over: Partial<MediaProcessorDeps> = {}, tmpRoot?: string) {
     ...(tmpRoot ? { tmpRoot } : {}),
     ...over
   };
-  const srcKey = buildObjectKey({ orgId: ORG, meetingId: MEET, kind: 'recording', objectId: REC, ext: 'webm' });
+  const srcKey = buildObjectKey({ organizationId: ORG, meetingId: MEET, kind: 'recording', objectId: REC, ext: 'webm' });
   stored.set(srcKey, Buffer.from('SOURCE'));
   return { deps, stored, jobs, events, logs, srcKey, getObject, add, headObject, probeMedia, normalizeToWav };
 }
@@ -116,10 +116,10 @@ describe('processRecording (mocked storage, queue, emitter)', () => {
     const res = await processRecording({ ...payload, sourceKey: srcKey }, deps, { jobId: 'j1', isFinalAttempt: true });
 
     expect([...stored.keys()].sort()).toEqual([
-      `org/${ORG}/meetings/${MEET}/processed/${REC}/chunks/00000.wav`,
-      `org/${ORG}/meetings/${MEET}/processed/${REC}/chunks/00001.wav`,
-      `org/${ORG}/meetings/${MEET}/processed/${REC}/chunks/00002.wav`,
-      `org/${ORG}/meetings/${MEET}/processed/${REC}/normalized.wav`,
+      `organizations/${ORG}/meetings/${MEET}/processed/${REC}/chunks/00000.wav`,
+      `organizations/${ORG}/meetings/${MEET}/processed/${REC}/chunks/00001.wav`,
+      `organizations/${ORG}/meetings/${MEET}/processed/${REC}/chunks/00002.wav`,
+      `organizations/${ORG}/meetings/${MEET}/processed/${REC}/normalized.wav`,
       srcKey
     ]);
     expect(res.chunks.map((c) => [c.index, c.startMs, c.durationMs])).toEqual([[0, 0, 10000], [1, 10000, 10000], [2, 20000, 5000]]);
@@ -142,7 +142,7 @@ describe('processRecording (mocked storage, queue, emitter)', () => {
     expect(stages).toEqual(['normalizing', 'chunking', 'chunking', 'chunking', 'chunking', 'transcribing']);
 
     expect(readdirSync(tmpRoot)).toEqual([]);
-    expect(JSON.stringify(logs)).not.toMatch(/org\/|https?:\/\/|\.wav/);
+    expect(JSON.stringify(logs)).not.toMatch(/organizations\/|org\/|https?:\/\/|\.wav/);
   });
 
   it('is idempotent: a retry overwrites the same keys and creates no duplicate jobs', async () => {
@@ -157,8 +157,8 @@ describe('processRecording (mocked storage, queue, emitter)', () => {
 
   it('rejects a sourceKey from another org before touching storage', async () => {
     const { deps, getObject } = makeDeps({}, tmpRoot);
-    await expect(processRecording({ ...payload, sourceKey: `org/44444444-4444-4444-8444-444444444444/meetings/${MEET}/recordings/${REC}.webm` }, deps)).rejects.toThrow();
-    await expect(processRecording({ ...payload, sourceKey: `org/${ORG}/meetings/other/recordings/${REC}.webm` }, deps)).rejects.toThrow(/Access denied/);
+    await expect(processRecording({ ...payload, sourceKey: `organizations/44444444-4444-4444-8444-444444444444/meetings/${MEET}/recordings/${REC}.webm` }, deps)).rejects.toThrow();
+    await expect(processRecording({ ...payload, sourceKey: `organizations/${ORG}/meetings/other/recordings/${REC}.webm` }, deps)).rejects.toThrow(/Access denied/);
     await expect(processRecording({ ...payload, organizationId: '../x' }, deps)).rejects.toThrow(/Invalid/);
     expect(getObject).not.toHaveBeenCalled();
     expect(readdirSync(tmpRoot)).toEqual([]);
@@ -213,7 +213,7 @@ describe('processRecording (mocked storage, queue, emitter)', () => {
   });
 
   it('worker authorize hook only allows the current job scope', async () => {
-    const ref = { orgId: ORG, meetingId: MEET, kind: 'recording' as const, objectId: REC, ext: 'webm' };
+    const ref = { organizationId: ORG, meetingId: MEET, kind: 'recording' as const, objectId: REC, ext: 'webm' };
     expect(() => workerAuthorize(ref)).toThrow();
     await runInJobScope({ organizationId: ORG, meetingId: MEET }, async () => {
       expect(() => workerAuthorize(ref)).not.toThrow();
@@ -247,7 +247,7 @@ describe.skipIf(!has('ffmpeg') || !has('ffprobe'))('processRecording with real f
     const res = await processRecording(payload, { ...deps, segmentSeconds: 10 });
     expect(res.chunks).toHaveLength(3);
     expect(res.durationMs).toBeGreaterThan(24000);
-    const wavKey = `org/${ORG}/meetings/${MEET}/processed/${REC}/normalized.wav`;
+    const wavKey = `organizations/${ORG}/meetings/${MEET}/processed/${REC}/normalized.wav`;
     const probeOut = path.join(root, 'n.wav');
     writeFileSync(probeOut, stored.get(wavKey)!);
     expect((await probeMedia(probeOut, { format: 'wav' })).streams[0]).toMatchObject({ sampleRate: 16000, channels: 1, codecName: 'pcm_s16le' });

@@ -50,11 +50,11 @@ import {
 export const DECLARED_SHA256_METADATA_KEY = 'sha256';
 
 /** Recording session scope (contracts InitRecordingSession). meetingId must exist before chunks are uploaded. */
-export type SessionRef = { orgId: string; meetingId: string; sessionId: string };
+export type SessionRef = { organizationId: string; meetingId: string; sessionId: string };
 
 /**
  * REQUIRED meeting-level authorization, run on every op after the org-prefix check
- * (e.g. "does this meeting belong to orgId and may the caller access it?"). Throw to deny.
+ * (e.g. "does this meeting belong to organizationId and may the caller access it?"). Throw to deny.
  */
 export type AuthorizeHook = (ref: MeetingObjectRef) => void | Promise<void>;
 
@@ -140,7 +140,7 @@ export class S3StorageService implements StorageService {
   async #key(ref: MeetingObjectRef): Promise<string> {
     if (!ref || typeof ref !== 'object') throw new StorageValidationError('ref is required');
     const key = buildObjectKey(ref);
-    assertKeyOwnedBy(key, ref.orgId, ref.meetingId);
+    assertKeyOwnedBy(key, ref.organizationId, ref.meetingId);
     await this.#authorize(ref);
     return key;
   }
@@ -434,7 +434,7 @@ export class S3StorageService implements StorageService {
 
   #sessionRef(ref: SessionRef, seq: number): MeetingObjectRef {
     if (!Number.isInteger(seq) || seq < 0 || seq > MAX_CHUNKS - 1) throw new StorageValidationError('seq out of range');
-    return { orgId: ref.orgId, meetingId: ref.meetingId, kind: 'session_chunk', objectId: ref.sessionId, index: seq };
+    return { organizationId: ref.organizationId, meetingId: ref.meetingId, kind: 'session_chunk', objectId: ref.sessionId, index: seq };
   }
 
   /** List stored chunks of a session (seq -> size). Non-chunk objects under the prefix are reported as extra. */
@@ -632,7 +632,7 @@ export class S3StorageService implements StorageService {
     if (!info) return null;
     const f: FileObject = {
       id: fileObjectId,
-      organizationId: ref.orgId,
+      organizationId: ref.organizationId,
       provider: this.#providerId,
       bucket: this.#bucket,
       key: buildObjectKey(ref),
