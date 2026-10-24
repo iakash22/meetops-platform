@@ -1,9 +1,25 @@
 import { defineConfig } from 'wxt';
-import { manifest } from './src/manifest.js';
+import { resolveOrigins } from './src/lib/auth/origins.js';
+import { buildManifest } from './src/manifest.js';
+
+/**
+ * WXT loads .env files into process.env before evaluating these functions. Origins are validated here, so a bad
+ * WXT_WEB_ORIGIN / WXT_API_ORIGIN fails the build, and the same web origin drives externally_connectable.
+ */
+const origins = (mode: string) => resolveOrigins(process.env, mode === 'development');
 
 export default defineConfig({
   modules: ['@wxt-dev/module-react'],
   outDir: 'dist',
   manifestVersion: 3,
-  manifest,
+  manifest: ({ mode }) => buildManifest(origins(mode).webOrigin),
+  vite: ({ mode }) => {
+    const { webOrigin, apiOrigin } = origins(mode);
+    return {
+      define: {
+        'import.meta.env.WXT_WEB_ORIGIN': JSON.stringify(webOrigin),
+        'import.meta.env.WXT_API_ORIGIN': JSON.stringify(apiOrigin),
+      },
+    };
+  },
 });
