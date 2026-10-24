@@ -17,7 +17,7 @@ import type { AllowedDemuxer, AudioChunk, ProbeResult, Waveform } from '@meetops
 import { assertProbedFormat, demuxerForExt } from '@meetops/media-core';
 import { StorageError, assertKeyOwnedBy, buildObjectKey, parseMeetingKey, type MeetingObjectRef, type StorageService } from '@meetops/storage';
 import { chunkFileObjectId, normalizedFileObjectId, transcriptionIdempotencyKey, transcriptionJobId } from './ids.js';
-import type { ChunkManifestEntry, MediaJobPayload, MediaProcessingResult, TranscriptionJobPayload } from './types.js';
+import type { ChunkManifestEntry, MediaJobPayload, MediaProcessingResult, ProcessingStatusEvent, TranscriptionJobPayload } from './types.js';
 
 export type NormalizeCaps = { inputFormat: string; maxDurationSeconds: number; maxOutputBytes: number; maxInputBytes: number };
 
@@ -73,6 +73,8 @@ export type TranscriptionEnqueuer = {
 export type RealtimePublisher = {
   meetingStatus(e: MeetingStatusEvent): void;
   transcriptionProgress(e: TranscriptionProgressEvent): void;
+  /** Media processing status (processing:status). Optional so existing publishers keep working. */
+  processingStatus?(e: ProcessingStatusEvent): void;
 };
 
 export type MinimalLogger = {
@@ -172,6 +174,8 @@ export async function processRecording(
   const segmentSeconds = deps.segmentSeconds ?? 600;
   const progress = (percent: number, stage: TranscriptionStage, extra: Partial<TranscriptionProgressEvent> = {}) =>
     deps.realtime.transcriptionProgress({ organizationId, meetingId, recordingId, percent, stage, at: now().toISOString(), ...extra });
+  const processing = (status: ProcessingStatusEvent['status'], extra: Partial<Pick<ProcessingStatusEvent, 'percent' | 'errorCode'>> = {}) =>
+    deps.realtime.processingStatus?.({ organizationId, meetingId, recordingId, status, at: now().toISOString(), ...extra });
 
   const sourceRef: MeetingObjectRef = { organizationId, meetingId, kind: 'recording', objectId: recordingId, ext: payload.sourceExt };
   let demuxer: AllowedDemuxer;
@@ -212,6 +216,7 @@ export async function processRecording(
       throw new MediaJobError('source_too_long', 'Recording exceeds duration limit');
     }
     progress(5, 'normalizing');
+    processing('normalizing', { percent: 5 });
 
     const wavPath = await deps.media.normalizeToWav(srcPath, path.join(tmp, 'normalized.wav'), {
       inputFormat: demuxer,
@@ -224,6 +229,7 @@ export async function processRecording(
     await deps.storage.putObject(normalizedRef, createReadStream(wavPath), { mimeType: 'audio/wav', sizeBytes: wavSize });
     let waveform: MediaProcessingResult['waveform'];
     if (deps.waveform) {
+      processing('waveform', { percent: 25 });
       try {
         const w = await deps.waveform.compute(wavPath, { bins: deps.waveformBins ?? 1000 });
         const stored = await deps.waveform.store({ organizationId, meetingId, kind: 'waveform', objectId: recordingId }, w);
@@ -233,6 +239,7 @@ export async function processRecording(
       }
     }
     progress(30, 'chunking');
+    processing('chunking', { percent: 30 });
 
     const chunks = await deps.media.chunkAudio(wavPath, path.join(tmp, 'chunks'), { segmentSeconds });
     if (chunks.length === 0) throw new MediaJobError('no_chunks', 'Chunking produced no output');
@@ -305,6 +312,7 @@ export async function processRecording(
       await deps.transcriptionQueue.add(QUEUE_NAMES.transcription, data, { jobId: m.transcriptionJobId });
     }
     progress(85, 'transcribing', { chunksDone: 0, chunksTotal: manifest.length });
+    processing('completed', { percent: 100 });
     deps.logger.info({ ...log, chunks: manifest.length }, 'media job completed');
 
     return {
@@ -320,6 +328,7 @@ export async function processRecording(
     deps.logger.error({ ...log, errorCode, finalAttempt: ctx.isFinalAttempt }, 'media job failed');
     if (ctx.isFinalAttempt) {
       deps.realtime.meetingStatus({ organizationId, meetingId, status: 'failed', errorCode, at: now().toISOString() });
+      processing('failed', { errorCode });
     }
     throw err;
   } finally {

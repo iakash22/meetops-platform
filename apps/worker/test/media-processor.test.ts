@@ -11,6 +11,7 @@ import { chunkAudio, computeWaveform, normalizeToWav, probeMedia, type Waveform 
 import { buildObjectKey, createChunkAudioResolver, StorageNotFoundError, type MeetingObjectRef } from '@meetops/storage';
 import {
   createRealtimePublisher,
+  publishUploadStatus,
   enqueueMediaJob,
   parseTranscriptionIdempotencyKey,
   chunkFileObjectId,
@@ -140,10 +141,13 @@ describe('processRecording (mocked storage, queue, emitter)', () => {
     // RFC 4122 test vector: uuidv5(DNS namespace, 'www.example.com')
     expect(uuidV5('www.example.com', '6ba7b810-9dad-11d1-80b4-00c04fd430c8')).toBe('2ed6657d-e927-568b-95e1-2665a8aea6a2');
 
-    expect(events.every((e) => e.rooms.includes(`org:${ORG}:meeting:${MEET}`) && e.rooms.includes(`org:${ORG}`))).toBe(true);
+    expect(events.every((e) => e.rooms.includes(`organizations:${ORG}:meetings:${MEET}`) && e.rooms.includes(`organizations:${ORG}`))).toBe(true);
     expect(events[0]).toMatchObject({ event: 'meeting:status', payload: { status: 'processing', organizationId: ORG } });
     const stages = events.filter((e) => e.event === 'transcription:progress').map((e) => (e.payload as { stage: string }).stage);
     expect(stages).toEqual(['normalizing', 'chunking', 'chunking', 'chunking', 'chunking', 'transcribing']);
+    const proc = events.filter((e) => e.event === 'processing:status').map((e) => e.payload as { status: string; recordingId: string });
+    expect(proc.map((p) => p.status)).toEqual(['normalizing', 'chunking', 'completed']);
+    expect(proc.every((p) => p.recordingId === REC)).toBe(true);
 
     expect(readdirSync(tmpRoot)).toEqual([]);
     expect(JSON.stringify(logs)).not.toMatch(/organizations\/|org\/|https?:\/\/|\.wav/);
@@ -192,6 +196,10 @@ describe('processRecording (mocked storage, queue, emitter)', () => {
     await expect(processRecording(payload, deps, { isFinalAttempt: true })).rejects.toBe(boom);
     const failed = events.find((e) => (e.payload as { status?: string }).status === 'failed')!;
     expect(failed.payload).toEqual({ organizationId: ORG, meetingId: MEET, status: 'failed', errorCode: 'media_processing_failed', at: '2026-10-21T00:00:00.000Z' });
+    const procFailed = events.filter((e) => e.event === 'processing:status' && (e.payload as { status: string }).status === 'failed');
+    expect(procFailed.map((e) => e.payload)).toEqual([
+      { organizationId: ORG, meetingId: MEET, recordingId: REC, status: 'failed', errorCode: 'media_processing_failed', at: '2026-10-21T00:00:00.000Z' }
+    ]);
     expect(jobs.size).toBe(0);
     expect(readdirSync(tmpRoot)).toEqual([]);
   });
@@ -264,6 +272,13 @@ describe('processRecording (mocked storage, queue, emitter)', () => {
     expect(setChunkCount).not.toHaveBeenCalled();
     expect(jobs.size).toBe(0);
     expect(readdirSync(tmpRoot)).toEqual([]);
+  });
+  it('publishUploadStatus targets the organization and meeting rooms', () => {
+    const sent: Array<{ rooms: string[]; event: string; payload: unknown }> = [];
+    const emitter = { to: (rooms: string | string[]) => ({ emit: (event: string, p: unknown) => sent.push({ rooms: [rooms].flat(), event, payload: p }) }) };
+    const e = { organizationId: ORG, meetingId: MEET, uploadId: 'up1', status: 'verified' as const, sha256: 'a'.repeat(64), at: '2026-10-21T00:00:00.000Z' };
+    publishUploadStatus(emitter, e);
+    expect(sent).toEqual([{ rooms: [`organizations:${ORG}:meetings:${MEET}`, `organizations:${ORG}`], event: 'upload:status', payload: e }]);
   });
   it('stores a waveform under processed/{recordingId}/waveform.json when enabled', async () => {
     const { deps } = makeDeps({}, tmpRoot);
