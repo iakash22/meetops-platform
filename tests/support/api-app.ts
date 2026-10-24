@@ -53,6 +53,9 @@ export const fakeHasher = {
 
 const imp = (rel: string) => import(pathToFileURL(join(apiDir, rel)).href);
 
+/** Mailer per app, so signupAndLogin can read the verification token. */
+const mailers = new WeakMap<InjectApp, Mailer>();
+
 export async function buildAuthApp(deps: Record<string, unknown> = {}) {
   const { createServer } = (await imp('src/server.ts')) as {
     createServer: (o: { deps: Record<string, unknown> }) => InjectApp;
@@ -63,6 +66,7 @@ export async function buildAuthApp(deps: Record<string, unknown> = {}) {
   const clock = new FakeClock();
   const mailer = new RecordingAuthMailer();
   const app = createServer({ deps: { mailer, hasher: fakeHasher, clock, ...deps } });
+  mailers.set(app, mailer);
   await app.ready();
   return { app, mailer, clock };
 }
@@ -130,6 +134,14 @@ export async function signupAndLogin(app: InjectApp, email: string, ip?: string)
   const c = new Client(app, ip);
   const s = await c.post('/auth/signup', { name: 'QA User', email, password: PASSWORD });
   if (s.statusCode !== 202) throw new Error(`signup ${s.statusCode} ${s.body}`);
+  // D2: verify the email first (org create/invite/accept require a verified account).
+  const to = email.toLowerCase();
+  const token = [...(mailers.get(app)?.sent ?? [])]
+    .reverse()
+    .find((m) => m.kind === 'verify' && m.to === to)?.token;
+  if (!token) throw new Error('signup sent no verification token');
+  const v = await c.post('/auth/verify-email', { token });
+  if (v.statusCode !== 204) throw new Error(`verify-email ${v.statusCode}`);
   const l = await c.post('/auth/login', { email, password: PASSWORD });
   if (l.statusCode !== 200) throw new Error(`login ${l.statusCode} ${l.body}`);
   return c;
