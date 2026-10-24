@@ -40,6 +40,32 @@ if (missingEnv.length > 0) {
 
 type Col = { table_name: string; column_name: string; udt_name: string; data_type: string };
 
+type RowKey = { column: string; cast: 'uuid' | 'text' };
+/**
+ * Row key per table. Most tenant tables use `id`; a few have a natural key instead: `ai_org_config` is 1:1
+ * with the organization (key `org_id`) and `ai_idempotency` is keyed by (`org_id`, `key`).
+ */
+const ROW_KEY: Partial<Record<TenantTable, RowKey>> = {
+  ai_org_config: { column: 'org_id', cast: 'uuid' },
+  ai_idempotency: { column: 'key', cast: 'text' },
+};
+const keyOf = (t: TenantTable): RowKey => ROW_KEY[t] ?? { column: 'id', cast: 'uuid' };
+const whereKey = (t: TenantTable) => `"${keyOf(t).column}" = $1::${keyOf(t).cast}`;
+/** A fresh row key for table t owned by organizationId. */
+const newKey = (t: TenantTable, organizationId: string) =>
+  keyOf(t).column === 'org_id'
+    ? organizationId
+    : keyOf(t).cast === 'uuid'
+      ? randomUUID()
+      : `isolation-${randomUUID()}`;
+/** Key columns and SQL values for a minimal insert of row `id` owned by organizationId. */
+function keyColumns(t: TenantTable, id: string, organizationId: string) {
+  const k = keyOf(t);
+  return k.column === 'org_id'
+    ? { names: ['org_id'], values: [`'${organizationId}'::uuid`] }
+    : { names: [k.column, 'org_id'], values: [`'${id}'::${k.cast}`, `'${organizationId}'::uuid`] };
+}
+
 /** Column values that must satisfy table CHECK constraints. */
 function override(table: string, column: string, organizationId: string): string | undefined {
   if (table === 'recording_session_chunks' && column === 'size_bytes') return '1';
@@ -106,9 +132,8 @@ describe.skipIf(missingEnv.length > 0)('tenant isolation per table (live, ADR-01
     await admin.$transaction(async (tx) => {
       await tx.$executeRawUnsafe(`SET LOCAL session_replication_role = replica`);
       for (const t of TENANT_TABLES) {
-        const id = randomUUID();
-        const names = ['id', 'org_id'];
-        const values = [`'${id}'::uuid`, `'${orgB}'::uuid`];
+        const id = newKey(t, orgB);
+        const { names, values } = keyColumns(t, id, orgB);
         for (const c of cols.filter((x) => x.table_name === t)) {
           if (names.includes(c.column_name)) continue;
           names.push(c.column_name);
@@ -152,7 +177,7 @@ describe.skipIf(missingEnv.length > 0)('tenant isolation per table (live, ADR-01
       t === 'audit_events' ? /permission denied|append-only/ : /row-level security/;
     const count = (tx: Prisma.TransactionClient, id: string) =>
       tx.$queryRawUnsafe<{ n: bigint }[]>(
-        `SELECT count(*) AS n FROM "${t}" WHERE id = $1::uuid`,
+        `SELECT count(*) AS n FROM "${t}" WHERE ${whereKey(t)}`,
         id,
       );
 
@@ -168,8 +193,8 @@ describe.skipIf(missingEnv.length > 0)('tenant isolation per table (live, ADR-01
     it('organization A cannot update or delete organization B rows', async () => {
       const id = rowB.get(t)!;
       for (const sql of [
-        `UPDATE "${t}" SET org_id = org_id WHERE id = $1::uuid`,
-        `DELETE FROM "${t}" WHERE id = $1::uuid`,
+        `UPDATE "${t}" SET org_id = org_id WHERE ${whereKey(t)}`,
+        `DELETE FROM "${t}" WHERE ${whereKey(t)}`,
       ]) {
         // Either RLS filters the row (0 affected) or the app role lacks the privilege (audit_events).
         const affected = await inOrg(orgA, (tx) => tx.$executeRawUnsafe(sql, id)).catch(
@@ -187,20 +212,19 @@ describe.skipIf(missingEnv.length > 0)('tenant isolation per table (live, ADR-01
 
     it('organization A cannot insert a row for organization B (WITH CHECK)', async () => {
       await expect(
-        inOrg(orgA, (tx) =>
-          tx.$executeRawUnsafe(
-            `INSERT INTO "${t}" (id, org_id) VALUES ($1::uuid, $2::uuid)`,
-            randomUUID(),
-            orgB,
-          ),
-        ),
+        inOrg(orgA, (tx) => {
+          const { names, values } = keyColumns(t, newKey(t, orgB), orgB);
+          return tx.$executeRawUnsafe(
+            `INSERT INTO "${t}" (${names.map((n) => `"${n}"`).join(', ')}) VALUES (${values.join(', ')})`,
+          );
+        }),
       ).rejects.toThrow(/row-level security/);
     });
 
     it('organization B cannot re-home its row into organization A (WITH CHECK on UPDATE)', async () => {
       const id = rowB.get(t)!;
       const moved = inOrg(orgB, (tx) =>
-        tx.$executeRawUnsafe(`UPDATE "${t}" SET org_id = $2::uuid WHERE id = $1::uuid`, id, orgA),
+        tx.$executeRawUnsafe(`UPDATE "${t}" SET org_id = $2::uuid WHERE ${whereKey(t)}`, id, orgA),
       );
       await expect(moved).rejects.toThrow(blockedWrite);
       const [cross] = await inOrg(orgA, (tx) => count(tx, id));

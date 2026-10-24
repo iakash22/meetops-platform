@@ -13,7 +13,7 @@ import {
 } from '@meetops/contracts';
 import type { MeetingStatusEvent, TranscriptionProgressEvent, TranscriptionStage } from '@meetops/contracts';
 import { Value } from '@sinclair/typebox/value';
-import type { AllowedDemuxer, AudioChunk, ProbeResult } from '@meetops/media-core';
+import type { AllowedDemuxer, AudioChunk, ProbeResult, Waveform } from '@meetops/media-core';
 import { assertProbedFormat, demuxerForExt } from '@meetops/media-core';
 import { StorageError, assertKeyOwnedBy, buildObjectKey, parseMeetingKey, type MeetingObjectRef, type StorageService } from '@meetops/storage';
 import { chunkFileObjectId, normalizedFileObjectId, transcriptionIdempotencyKey, transcriptionJobId } from './ids.js';
@@ -59,6 +59,12 @@ export type RecordingChunkCountRepository = {
   setChunkCount(q: { organizationId: string; meetingId: string; recordingId: string; chunkCount: number }): Promise<void>;
 };
 
+/** Optional waveform step (best effort: a failure is logged and never fails the job). */
+export type WaveformOps = {
+  compute(wavPath: string, opts: { bins: number }): Promise<Waveform>;
+  store(ref: MeetingObjectRef, waveform: Waveform): Promise<{ sizeBytes: number }>;
+};
+
 export type TranscriptionEnqueuer = {
   /** Must be idempotent on opts.jobId (BullMQ ignores adds with an existing jobId). */
   add(name: string, data: TranscriptionJobPayload, opts: { jobId: string }): Promise<unknown>;
@@ -101,6 +107,8 @@ export type MediaProcessorDeps = {
   logger: MinimalLogger;
   recordings?: RecordingChunkCountRepository;
   chunkFileObjects?: ChunkFileObjectRepository;
+  waveform?: WaveformOps;
+  waveformBins?: number;
   limits?: Partial<MediaLimits>;
   segmentSeconds?: number;
   tmpRoot?: string;
@@ -214,6 +222,16 @@ export async function processRecording(
     const wavSize = (await stat(wavPath)).size;
     const normalizedRef: MeetingObjectRef = { organizationId, meetingId, kind: 'normalized', objectId: recordingId };
     await deps.storage.putObject(normalizedRef, createReadStream(wavPath), { mimeType: 'audio/wav', sizeBytes: wavSize });
+    let waveform: MediaProcessingResult['waveform'];
+    if (deps.waveform) {
+      try {
+        const w = await deps.waveform.compute(wavPath, { bins: deps.waveformBins ?? 1000 });
+        const stored = await deps.waveform.store({ organizationId, meetingId, kind: 'waveform', objectId: recordingId }, w);
+        waveform = { bins: w.bins, sizeBytes: stored.sizeBytes };
+      } catch (err) {
+        deps.logger.warn({ ...log, errorCode: 'waveform_failed', errName: (err as { name?: string })?.name }, 'waveform skipped');
+      }
+    }
     progress(30, 'chunking');
 
     const chunks = await deps.media.chunkAudio(wavPath, path.join(tmp, 'chunks'), { segmentSeconds });
@@ -294,7 +312,8 @@ export async function processRecording(
       durationMs: Math.round(info.durationSeconds * 1000),
       formatName: info.formatName,
       normalized: { fileObjectId: normalizedFileObjectId(recordingId), sizeBytes: wavSize },
-      chunks: manifest
+      chunks: manifest,
+      ...(waveform ? { waveform } : {})
     };
   } catch (err) {
     const errorCode = errorCodeOf(err);
