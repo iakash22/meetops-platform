@@ -65,3 +65,8 @@ Each requirement gets automated tests (unit + device E2E) in M3–M6 and a sign-
 - **Backend**: the mobile auth flow (token type, refresh, organization switch) and the consent API (`POST` consent record with userId, meetingId, organizationId, timestamp).
 - **Media**: the upload contract (chunking, checksum algorithm, pre-signed URL TTL/scope, server confirmation response).
 - **DevOps**: CI runtime for jest-expo (first run is about 25s), cache for pnpm store, and later an EAS secrets setup outside the repo.
+
+## Follow-ups
+
+- **tar via @expo/cli (track):** Expo SDK 52's `@expo/cli` (and its `cacache`) pins `tar@6.2.1`, which has high and critical advisories (all fixed only in tar 7.x). It's used at build/CLI time only and never ships in the app bundle. For now the root `pnpm.overrides` pins `@expo/cli>tar` and `cacache>tar` to `^7.5.21`, and `bundle:check` passes with it. Remove the overrides once an Expo SDK upgrade ships a patched tar, and re-check `expo prebuild` / `expo install`, which extract tarballs.
+- **Auth callbacks:** prefer iOS Universal Links and Android App Links (verified domain) over the custom `meetops://` scheme for auth and deep-link callbacks, because any app can claim a custom scheme. Keep `meetops://` only for non-sensitive navigation.
