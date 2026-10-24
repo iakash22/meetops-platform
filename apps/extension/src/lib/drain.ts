@@ -1,5 +1,5 @@
 import type { ChunkStore, StoredSession } from './chunk-store.js';
-import type { CompletedChunk } from '@meetops/contracts';
+import type { CompletedChunk } from '@meetops/contracts/types';
 import { MAX_DURATION_MS } from './limits.js';
 import { uploadChunk, type UploadClient } from './upload.js';
 
