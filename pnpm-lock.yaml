@@ -334,6 +334,16 @@ importers:
         version: 3.2.7(@types/node@20.19.43)(jiti@2.7.0)(jsdom@25.0.1)(lightningcss@1.33.0)(tsx@4.23.15)(yaml@2.9.1)
 
   packages/ai-core:
+    dependencies:
+      '@meetops/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+      undici:
+        specifier: ^7
+        version: 7.30.1
+      zod:
+        specifier: ^4
+        version: 4.6.7
     devDependencies:
       typescript:
         specifier: ^5.6.3
@@ -9043,6 +9053,13 @@ packages:
       }
     engines: { node: '>=14.0' }
 
+  undici@7.30.1:
+    resolution:
+      {
+        integrity: sha512-03KrMbjIFDWQR5RNPrSw3bd1r12JpyFQl9/yxjUbJtqkjmllqC5lFjZh6ujeuJCKr8EOQvRW872Oy/az+nLYxg==,
+      }
+    engines: { node: '>=20.18.1' }
+
   unicorn-magic@0.1.0:
     resolution:
       {
@@ -9683,6 +9700,12 @@ packages:
     resolution:
       {
         integrity: sha512-gzUt/qt81nXsFGKIFcC3YnfEAx5NkunCfnDlvuBSSFS02bcXu4Lmea0AFIUwbLWxWPx3d9p8S5QoaujKcNQxcQ==,
+      }
+
+  zod@4.6.7:
+    resolution:
+      {
+        integrity: sha512-g8W2D2kU6a8untc053fX1uVBKzM7yqAxW/3zwk83+6RyF2+SKOuV+c0wBDhUwzV1PaGapmZH+rmcUzPf+3CGwg==,
       }
 
   zustand@5.0.15:
@@ -14850,6 +14873,8 @@ snapshots:
     dependencies:
       '@fastify/busboy': 2.1.1
 
+  undici@7.30.1: {}
+
   unicorn-magic@0.1.0: {}
 
   unimport@3.14.6(rollup@4.64.12):
@@ -15303,6 +15328,8 @@ snapshots:
       readable-stream: 4.8.0
 
   zod@3.25.76: {}
+
+  zod@4.6.7: {}
 
   zustand@5.0.15(@types/react@18.3.31)(react@18.3.1)(use-sync-external-store@1.7.0(react@18.3.1)):
     optionalDependencies:
