@@ -39,7 +39,7 @@ describe('chunked recording session', () => {
     expect(Value.Check(InitRecordingSessionRequest, { ...ok, extra: 1 })).toBe(false);
   });
   it('chunk url', () => {
-    expect(Value.Check(ChunkUploadUrlRequest, { seq: 0, sizeBytes: 1024 })).toBe(true);
+    expect(Value.Check(ChunkUploadUrlRequest, { seq: 0, sizeBytes: 1024, sha256: 'a'.repeat(64) })).toBe(true);
     expect(Value.Check(ChunkUploadUrlRequest, { seq: -1, sizeBytes: 1024 })).toBe(false);
     expect(Value.Check(ChunkUploadUrlRequest, { seq: 1.5, sizeBytes: 1024 })).toBe(false);
     const res = { seq: 0, upload: { url: 'https://s3.example.com/c0', method: 'PUT', headers: { 'content-length': '1024' }, expiresAt: at } };
@@ -47,7 +47,7 @@ describe('chunked recording session', () => {
     expect(Value.Check(ChunkUploadUrlResponse, { ...res, upload: { ...res.upload, method: 'GET' } })).toBe(false);
     expect(CHUNK_UPLOAD_URL_TTL_SECONDS).toBeLessThanOrEqual(900);
     expect(MAX_CHUNK_BYTES).toBeLessThan(MAX_RECORDING_SESSION_BYTES);
-    expect(MAX_RECORDING_SESSION_BYTES).toBe(2_000_000_000);
+    expect(MAX_RECORDING_SESSION_BYTES).toBe(1_400_000_000);
   });
   it('complete and abort', () => {
     expect(Value.Check(CompleteRecordingSessionRequest, { chunkCount: 12, durationMs: 60000 })).toBe(true);

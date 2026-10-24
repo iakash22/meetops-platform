@@ -21,14 +21,23 @@ describe('Docker gate for integration suites', () => {
     expect(() => dockerGate({ QA_REQUIRE_DOCKER: '1' }, down)).toThrow(/Docker is required/);
   });
 
-  it('QA_SKIP_DOCKER=1 in CI is still an error unless explicitly allowed', () => {
-    expect(() => dockerGate({ CI: 'true', QA_SKIP_DOCKER: '1' }, up)).toThrow();
-    expect(dockerGate({ CI: 'true', QA_SKIP_DOCKER: '1', QA_ALLOW_DOCKER_SKIP: '1' }, up)).toBe(
-      false,
+  it('QA_SKIP_DOCKER=1 in CI is always an error, even with QA_ALLOW_DOCKER_SKIP', () => {
+    expect(() => dockerGate({ CI: 'true', QA_SKIP_DOCKER: '1' }, up)).toThrow(/Docker is required/);
+    expect(() =>
+      dockerGate({ CI: 'true', QA_SKIP_DOCKER: '1', QA_ALLOW_DOCKER_SKIP: '1' }, up),
+    ).toThrow(/Docker is required/);
+  });
+
+  it('QA_ALLOW_DOCKER_SKIP=1 is ignored in CI (Docker missing = hard fail)', () => {
+    expect(() => dockerGate({ CI: 'true', QA_ALLOW_DOCKER_SKIP: '1' }, down)).toThrow(
+      /Docker is required/,
+    );
+    expect(() => dockerGate({ CI: '1', QA_ALLOW_DOCKER_SKIP: '1' }, down)).toThrow(
+      /Docker is required/,
     );
   });
 
-  it('QA_ALLOW_DOCKER_SKIP=1 restores the skip in CI', () => {
-    expect(dockerGate({ CI: 'true', QA_ALLOW_DOCKER_SKIP: '1' }, down)).toBe(false);
+  it('QA_ALLOW_DOCKER_SKIP=1 restores the skip locally under QA_REQUIRE_DOCKER=1', () => {
+    expect(dockerGate({ QA_REQUIRE_DOCKER: '1', QA_ALLOW_DOCKER_SKIP: '1' }, down)).toBe(false);
   });
 });

@@ -15,8 +15,8 @@ export type UsageRecord = {
 export interface UsageTracker {
   record(rec: UsageRecord): Promise<void>;
   totals(q: { organizationId: string; provider: string; since: Date }): Promise<{ requests: number; tokens: number; audioSeconds: number; costUsd: number }>;
-  /** Total estimated spend for a tenant across all providers since a date (for per-org budgets). */
-  tenantCostSince(organizationId: string, since: Date): Promise<number>;
+  /** Total estimated spend for an organization across all providers since a date (for per-org budgets). */
+  organizationCostSince(organizationId: string, since: Date): Promise<number>;
 }
 
 export type QuotaDecision = { allowed: true } | { allowed: false; reason: string };
@@ -30,7 +30,7 @@ export class InMemoryUsageTracker implements UsageTracker {
   async record(rec: UsageRecord) {
     this.records.push(rec);
   }
-  async tenantCostSince(organizationId: string, since: Date) {
+  async organizationCostSince(organizationId: string, since: Date) {
     return this.records.filter((r) => r.organizationId === organizationId && new Date(r.at) >= since).reduce((s, r) => s + r.usage.estimatedCostUsd, 0);
   }
   async totals(q: { organizationId: string; provider: string; since: Date }) {
@@ -52,7 +52,7 @@ export class UsageQuotaManager implements QuotaManager {
     const day = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
     const month = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
     if (monthlyBudgetUsd !== undefined && (provider.cost.tier === 'paid' || provider.platformBilled)) {
-      const spent = await this.tracker.tenantCostSince(organizationId, month);
+      const spent = await this.tracker.organizationCostSince(organizationId, month);
       if (spent >= monthlyBudgetUsd) return { allowed: false, reason: `org monthly budget $${monthlyBudgetUsd} reached` };
     }
     const d = await this.tracker.totals({ organizationId, provider: provider.name, since: day });

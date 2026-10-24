@@ -144,7 +144,7 @@ export class OrganizationService {
    * Enumeration-safe: same response whether or not the address has an account or a pending
    * invite (which is replaced). The token is minted by the mail worker; nothing is returned.
    * The one exception is an address of an ACTIVE member of this org: 409 AlreadyMemberError. That only
-   * tells an inviter what GET /orgs/:id/members already shows them, never whether an outside account exists.
+   * tells an inviter what GET /orgs/:organizationId/members already shows them, never whether an outside account exists.
    */
   async invite(ctx: TenantContext, input: { email: string; role: Exclude<Role, 'owner'> }) {
     this.authorize(ctx, 'create', 'Invitation');
