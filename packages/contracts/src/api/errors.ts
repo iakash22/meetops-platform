@@ -24,6 +24,12 @@ export const ApiErrorCode = Type.Union([
 ]);
 export type ApiErrorCode = Static<typeof ApiErrorCode>;
 export { API_ERROR_CODES } from '../constants.js';
+import { CONFLICT_REASONS } from '../constants.js';
+export { CONFLICT_REASONS, CONFLICT_HTTP_STATUS } from '../constants.js';
+
+/** Named reason for a `CONFLICT` (409) error. See CONFLICT_REASONS. */
+export const ConflictReason = Type.Union(CONFLICT_REASONS.map((r) => Type.Literal(r)));
+export type ConflictReason = (typeof CONFLICT_REASONS)[number];
 
 /**
  * `message` is safe and generic for display. It must not contain stack traces, SQL, provider
@@ -34,9 +40,16 @@ export const ApiErrorEnvelope = Type.Object({
     code: ApiErrorCode,
     message: Type.String({ maxLength: 500 }),
     requestId: Type.String({ minLength: 1 }),
+    /** v0.3.3: only with `code: 'CONFLICT'` (409). Optional so older servers stay valid. */
+    reason: Type.Optional(ConflictReason),
     details: Type.Optional(
       Type.Array(Type.Object({ path: Type.String(), message: Type.String({ maxLength: 500 }) })),
     ),
   }),
 });
 export type ApiErrorEnvelope = Static<typeof ApiErrorEnvelope>;
+
+/** A 409 body: `code` is `CONFLICT` and `reason` is required. */
+export type ConflictErrorEnvelope = {
+  error: Omit<ApiErrorEnvelope['error'], 'code' | 'reason'> & { code: 'CONFLICT'; reason: ConflictReason };
+};
