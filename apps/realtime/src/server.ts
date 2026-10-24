@@ -5,12 +5,17 @@ import { createClient } from 'redis';
 import { createLogger } from '@meetops/logger';
 import { normalizeOrigin, type RealtimeConfig } from './config.js';
 import {
+  MEDIA_EVENTS,
+  isProcessingStatusEvent,
+  isUploadStatusEvent,
   meetingRoom,
-  orgRoom,
+  organizationRoom,
   type ClientToServerEvents,
   type InterServerEvents,
-  type ServerToClientEvents,
-  type SocketData
+  type ProcessingStatusEvent,
+  type RealtimeServerToClientEvents as ServerToClientEvents,
+  type SocketData,
+  type UploadStatusEvent
 } from './events.js';
 
 export type AuthContext = { userId: string; organizationId: string };
@@ -90,7 +95,7 @@ export async function createRealtimeServer(opts: RealtimeServerOptions): Promise
   });
 
   io.on('connection', (socket: Socket<ClientToServerEvents, ServerToClientEvents, InterServerEvents, SocketData>) => {
-    void socket.join(orgRoom(socket.data.organizationId));
+    void socket.join(organizationRoom(socket.data.organizationId));
 
     socket.on('meeting:join', (payload, ack) => {
       const reply = typeof ack === 'function' ? ack : () => undefined;
@@ -141,5 +146,19 @@ export function emitToOrg<E extends keyof ServerToClientEvents>(
   event: E,
   ...args: Parameters<ServerToClientEvents[E]>
 ): void {
-  io.to(orgRoom(organizationId)).emit(event, ...args);
+  io.to(organizationRoom(organizationId)).emit(event, ...args);
+}
+
+/**
+ * Publish a media upload status to its organization (organizations:{id}) and meeting room. Each socket receives it
+ * once (room union). Invalid or over-broad payloads are rejected rather than broadcast.
+ */
+export function emitUploadStatus(io: RealtimeIo, e: UploadStatusEvent): void {
+  if (!isUploadStatusEvent(e)) throw new TypeError('invalid upload:status event');
+  io.to([organizationRoom(e.organizationId), meetingRoom(e.organizationId, e.meetingId)]).emit(MEDIA_EVENTS.uploadStatus, e);
+}
+
+export function emitProcessingStatus(io: RealtimeIo, e: ProcessingStatusEvent): void {
+  if (!isProcessingStatusEvent(e)) throw new TypeError('invalid processing:status event');
+  io.to([organizationRoom(e.organizationId), meetingRoom(e.organizationId, e.meetingId)]).emit(MEDIA_EVENTS.processingStatus, e);
 }
