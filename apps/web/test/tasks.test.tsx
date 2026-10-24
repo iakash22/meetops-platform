@@ -13,10 +13,20 @@ describe('tasks', () => {
   beforeEach(() => resetStores());
 
   it('lists tasks including cancelled status and priority', async () => {
-    renderApp('/tasks');
-    expect(await screen.findByText('Send recap')).toBeInTheDocument();
-    expect(within(screen.getByRole('list')).getByText('Cancelled')).toBeInTheDocument();
-    expect(screen.getByText('medium')).toBeInTheDocument();
+    const { api } = renderApp('/tasks');
+    // Await each deterministic milestone instead of one findBy spanning the whole
+    // cold-start chain (guard beforeLoad -> session -> shell -> tasks query), which
+    // could exceed findBy's default timeout on a loaded CI runner.
+    await screen.findByRole('heading', { name: 'Tasks' });
+    await waitFor(() => expect(api.tasks.list).toHaveBeenCalled());
+    const listMock = vi.mocked(api.tasks.list);
+    await act(async () => {
+      await listMock.mock.results[0]?.value;
+    });
+    const list = await screen.findByRole('list');
+    expect(within(list).getByText('Send recap')).toBeInTheDocument();
+    expect(within(list).getByText('Cancelled')).toBeInTheDocument();
+    expect(within(list).getByText('medium')).toBeInTheDocument();
   });
 
   it('reads filters from the URL and passes them to the api', async () => {
