@@ -21,7 +21,14 @@ import type { PresignedUrl } from '@meetops/contracts/legacy';
 import { MAX_CHUNK_BYTES, MAX_CHUNKS } from '@meetops/contracts';
 import { assertTtl, loadStorageConfig, S3_MIN_PART_BYTES, SESSION_CHUNK_TTL_SECONDS, UPLOAD_CONFIRM_GRACE_SECONDS, type StorageConfig } from './config.js';
 import { mapS3Error, StorageAccessError, StorageValidationError } from './errors.js';
-import { assertKeyOwnedBy, buildObjectKey, parseMeetingKey, type MeetingObjectRef } from './keys.js';
+import {
+  assertKeyOwnedBy,
+  buildObjectKey,
+  normalizeMeetingObjectRef,
+  parseMeetingKey,
+  refOrganizationId,
+  type MeetingObjectRef
+} from './keys.js';
 import type {
   CompletedPart,
   GetObjectResult,
@@ -50,18 +57,22 @@ import {
 export const DECLARED_SHA256_METADATA_KEY = 'sha256';
 
 /** Recording session scope (contracts InitRecordingSession). meetingId must exist before chunks are uploaded. */
-export type SessionRef = { organizationId: string; meetingId: string; sessionId: string };
+export type SessionRef = { meetingId: string; sessionId: string } & (
+  | { organizationId: string; /** @deprecated Use organizationId (ADR-010). */ orgId?: string }
+  | { organizationId?: string; /** @deprecated Use organizationId (ADR-010). */ orgId: string }
+);
 
-/**
- * REQUIRED meeting-level authorization, run on every op after the org-prefix check
- * (e.g. "does this meeting belong to organizationId and may the caller access it?"). Throw to deny.
- */
 /** A key read from storage of record (file_objects.key or a cached key). Never rebuilt from ids. */
 export type StoredObjectKey = { organizationId: string; meetingId: string; key: string };
 
 /** What the authorize hook sees: a derived ref (writes and ref reads) or a stored key (stored-key reads). */
 export type AuthorizeTarget = MeetingObjectRef | StoredObjectKey;
 
+/**
+ * REQUIRED meeting-level authorization, run on every op after the org-prefix check
+ * (e.g. "does this meeting belong to organizationId and may the caller access it?").
+ * A derived ref always carries both organizationId and the deprecated orgId (same value) during ADR-010 compat. Throw to deny.
+ */
 export type AuthorizeHook = (target: AuthorizeTarget) => void | Promise<void>;
 
 export type S3StorageServiceOptions = {
@@ -145,9 +156,10 @@ export class S3StorageService implements StorageService {
   /** Derive the key server-side and always enforce org ownership. */
   async #key(ref: MeetingObjectRef): Promise<string> {
     if (!ref || typeof ref !== 'object') throw new StorageValidationError('ref is required');
-    const key = buildObjectKey(ref);
-    assertKeyOwnedBy(key, ref.organizationId, ref.meetingId);
-    await this.#authorize(ref);
+    const normalized = normalizeMeetingObjectRef(ref);
+    const key = buildObjectKey(normalized);
+    assertKeyOwnedBy(key, normalized.organizationId, normalized.meetingId);
+    await this.#authorize(normalized);
     return key;
   }
 
@@ -480,7 +492,7 @@ export class S3StorageService implements StorageService {
 
   #sessionRef(ref: SessionRef, seq: number): MeetingObjectRef {
     if (!Number.isInteger(seq) || seq < 0 || seq > MAX_CHUNKS - 1) throw new StorageValidationError('seq out of range');
-    return { organizationId: ref.organizationId, meetingId: ref.meetingId, kind: 'session_chunk', objectId: ref.sessionId, index: seq };
+    return { organizationId: refOrganizationId(ref), meetingId: ref.meetingId, kind: 'session_chunk', objectId: ref.sessionId, index: seq };
   }
 
   /** List stored chunks of a session (seq -> size). Non-chunk objects under the prefix are reported as extra. */
@@ -678,7 +690,7 @@ export class S3StorageService implements StorageService {
     if (!info) return null;
     const f: FileObject = {
       id: fileObjectId,
-      organizationId: ref.organizationId,
+      organizationId: refOrganizationId(ref),
       provider: this.#providerId,
       bucket: this.#bucket,
       key: buildObjectKey(ref),

@@ -14,6 +14,8 @@ import { CryptoTokenService, uuidGenerator } from './auth/infrastructure/crypto-
 import { InMemorySessionRepository } from './auth/infrastructure/in-memory-session.repository.js';
 import { InMemoryOneTimeTokenRepository } from './auth/infrastructure/in-memory-one-time-token.repository.js';
 import { InMemoryLoginLockout, InMemoryRateLimiter } from './auth/infrastructure/rate-limit/in-memory.js';
+import { RedisLoginLockout, type RedisLike } from './auth/infrastructure/rate-limit/redis.js';
+import { Redis } from 'ioredis';
 import type { SessionPolicy, SessionRepository } from './auth/domain/session.js';
 import type { LoginLockout, PasswordHasher, RateLimiter, TokenService } from './auth/domain/ports.js';
 import type { OneTimeTokenRepository } from './auth/domain/one-time-token.js';
@@ -63,6 +65,27 @@ export interface ModuleDeps {
   /** Optional progressive-delay sleeper for failed logins (tests inject a fake). */
   sleep?: (ms: number) => Promise<void>;
   security: HttpSecurityConfig;
+  /**
+   * Shared Redis client. When set (or REDIS_URL is set outside NODE_ENV=test), the login lockout
+   * defaults to RedisLoginLockout. Only clients created here from REDIS_URL are closed on shutdown.
+   */
+  redis?: RedisLike;
+  /** Set when defaultModuleDeps created the client itself (closed in an onClose hook). */
+  ownedRedis?: { quit(): Promise<unknown> };
+}
+
+/**
+ * Picks the Redis client for the lockout: an injected `redis` dep wins; otherwise REDIS_URL,
+ * except under NODE_ENV=test (tests stay hermetic unless they inject a client).
+ */
+function resolveRedis(
+  overrides: Partial<ModuleDeps>,
+  env: { nodeEnv?: string | undefined; redisUrl?: string | undefined }
+): { redis?: RedisLike; owned?: Redis } {
+  if (overrides.redis) return { redis: overrides.redis };
+  if (env.nodeEnv === 'test' || !env.redisUrl) return {};
+  const client = new Redis(env.redisUrl, { lazyConnect: true, maxRetriesPerRequest: 3 });
+  return { redis: client, owned: client };
 }
 
 const MIN = 60 * 1000;
@@ -70,8 +93,8 @@ const HOUR = 60 * MIN;
 const DAY = 24 * HOUR;
 
 /**
- * Default deps. Repositories, rate limiter and lockout are in-memory until the Prisma
- * repositories and the Redis client wiring land (TODO(database), TODO(infra)).
+ * Default deps. Repositories and the rate limiter are in-memory until the Prisma repositories
+ * land (TODO(database)). The login lockout uses Redis when a client or REDIS_URL is configured.
  */
 /**
  * In-memory implementations, a random CSRF secret and localhost origins are allowed ONLY when
@@ -105,11 +128,19 @@ export class MissingProductionDependencyError extends Error {
 
 export function defaultModuleDeps(
   overrides: Partial<ModuleDeps> = {},
-  env: { nodeEnv?: string | undefined } = { nodeEnv: process.env.NODE_ENV }
+  env: { nodeEnv?: string | undefined; redisUrl?: string | undefined } = {
+    nodeEnv: process.env.NODE_ENV,
+    redisUrl: process.env.REDIS_URL
+  }
 ): ModuleDeps {
   const strict = !isRelaxedEnv(env.nodeEnv);
+  // Redis-backed lockout is satisfied by an injected client or REDIS_URL; without either, strict
+  // environments still fail closed via PRODUCTION_REQUIRED_DEPS ('lockout').
+  const hasRedis = !overrides.lockout && (!!overrides.redis || (env.nodeEnv !== 'test' && !!env.redisUrl));
   if (strict) {
-    const missing = PRODUCTION_REQUIRED_DEPS.filter((k) => overrides[k] === undefined);
+    const missing = PRODUCTION_REQUIRED_DEPS.filter(
+      (k) => overrides[k] === undefined && !(k === 'lockout' && hasRedis)
+    );
     if (missing.length) throw new MissingProductionDependencyError(missing);
     if (!overrides.security) {
       const missingEnv = ['WEB_ORIGINS', 'CSRF_SECRET'].filter((k) => !process.env[k]);
@@ -134,6 +165,7 @@ export function defaultModuleDeps(
         : randomBytes(32)
   };
   if (strict) assertProductionCookies(security);
+  const { redis, owned } = overrides.lockout ? { redis: overrides.redis } : resolveRedis(overrides, env);
   const memberships = overrides.memberships ?? new InMemoryMembershipRepository();
   return {
     users: new InMemoryUserRepository(),
@@ -147,7 +179,8 @@ export function defaultModuleDeps(
     hasher: new Argon2PasswordHasher(),
     tokens: new CryptoTokenService(),
     rateLimiter: new InMemoryRateLimiter(clock),
-    lockout: new InMemoryLoginLockout(clock),
+    // Dev/test fallback only: strict envs reach here with Redis or an injected lockout (checked above).
+    lockout: redis ? new RedisLoginLockout(redis) : new InMemoryLoginLockout(clock),
     mailQueue: new InlineAuthMailQueue(),
     // `mailer` is a legacy alias used only by the repo-level QA harness (tests/support).
     mailTransport: (overrides as { mailer?: MailTransport }).mailer ?? { send: async () => {} },
@@ -158,6 +191,8 @@ export function defaultModuleDeps(
     passwordResetTtlMs: 30 * MIN,
     emailVerificationTtlMs: DAY,
     ...overrides,
+    ...(redis ? { redis } : {}),
+    ...(owned ? { ownedRedis: owned } : {}),
     clock,
     sessionPolicy,
     security
@@ -166,6 +201,12 @@ export function defaultModuleDeps(
 
 export async function registerModules(app: FastifyInstance, deps: ModuleDeps) {
   await app.register(cookie);
+  if (deps.ownedRedis) {
+    const client = deps.ownedRedis;
+    app.addHook('onClose', async () => {
+      await client.quit().catch(() => undefined);
+    });
+  }
   const auth = new AuthService(deps);
   const organizations = new OrganizationService(deps);
   if (deps.mailQueue instanceof InlineAuthMailQueue && !deps.mailQueue.handler) {
