@@ -25,7 +25,7 @@ const DEEP_IMPORT_PATTERNS = [
     message: "Do not reach into another workspace's src/ or dist/ by relative path; depend on its package entry."
   }
 ];
-const APP_NAMES = ["api", "web", "worker", "realtime", "extension"];
+const APP_NAMES = ["api", "web", "worker", "realtime", "extension", "mobile"];
 /** apps/* must not import other apps (by package name or by relative path through apps/). */
 export const appBoundaryPatterns = (self) => [
   {
