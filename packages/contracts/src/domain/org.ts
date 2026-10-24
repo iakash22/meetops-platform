@@ -16,7 +16,7 @@ export const Organization = Type.Object({
   slug: Type.String({ pattern: '^[a-z0-9-]{2,64}$' }),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
-});
+}, { additionalProperties: false });
 export type Organization = Static<typeof Organization>;
 
 export const User = Type.Object({

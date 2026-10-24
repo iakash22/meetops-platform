@@ -19,7 +19,7 @@ export type MediaProcessingResult = {
   formatName: string;
   normalized: { fileObjectId: string; sizeBytes: number };
   chunks: ChunkManifestEntry[];
-  /** Present when the waveform step succeeded (stored at processed/{recordingId}/waveform.json). */
+  /** Present when the waveform step succeeded (processed/{recordingId}/waveform.json). Derived and untracked: no FileObject row. */
   waveform?: { bins: number; sizeBytes: number };
 };
 
