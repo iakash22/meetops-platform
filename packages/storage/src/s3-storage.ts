@@ -180,7 +180,8 @@ export class S3StorageService implements StorageService {
   }
 
   /**
-   * Server-side write of a small derived JSON artifact (currently only kind `waveform`). Not part of the client
+   * Server-side write of a small derived JSON artifact (currently only kind `waveform`). Derived and UNTRACKED: it has
+   * no FileObject row, is deterministic per recording (safe to overwrite/regenerate) and must not be listed as a file. Not part of the client
    * upload allowlist (which is media-only); capped at MAX_DERIVED_JSON_BYTES.
    */
   async putDerivedJson(ref: MeetingObjectRef, value: unknown): Promise<{ etag?: string; sizeBytes: number }> {

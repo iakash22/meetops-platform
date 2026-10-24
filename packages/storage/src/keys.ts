@@ -52,6 +52,7 @@ export function buildObjectKey(ref: MeetingObjectRef): string {
       return `${base}/recordings/${obj}.${ext()}`;
     case 'normalized':
       return `${base}/processed/${obj}/normalized.wav`;
+    // Derived, untracked artifact: regenerated from the normalized WAV, no FileObject row, not in file_objects.
     case 'waveform':
       return `${base}/processed/${obj}/waveform.json`;
     case 'chunk':
