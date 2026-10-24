@@ -76,10 +76,11 @@ describe.skipIf(!hasAuthApi)('XT: cross-organization access via API (PR #27)', (
     const { a, orgA, orgB } = await twoOrgs();
     expect((await a.post('/orgs/switch', { organizationId: orgA.id })).statusCode).toBe(200);
     const r = await a.post('/orgs/switch', { organizationId: orgB.id });
-    expect([403, 404]).toContain(r.statusCode);
+    expect(r.statusCode).toBe(404);
     expect(errorCode(r)).toBe('NOT_FOUND');
     const s = await a.get('/auth/session');
-    expect(JSON.stringify(s.json())).toContain(orgA.id);
+    expect(s.statusCode).toBe(200);
+    expect(s.json().activeOrganizationId).toBe(orgA.id);
     expect(JSON.stringify(s.json())).not.toContain(orgB.id);
   });
 
@@ -93,6 +94,7 @@ describe.skipIf(!hasAuthApi)('XT: cross-organization access via API (PR #27)', (
     );
     expect(r.statusCode).toBe(201);
     const s = await a.get('/auth/session');
+    expect(s.json().activeOrganizationId).toBe(orgA.id);
     expect(JSON.stringify(s.json())).not.toContain(orgB.id);
   });
 });

@@ -99,7 +99,7 @@ export class GitHubIssuesProvider implements IssueTrackerProvider {
     if (input.labels?.length) params.labels = input.labels;
     if (input.assignees?.length) params.assignees = input.assignees;
     const client = await this.client();
-    const { data } = await this.wrap(() => client.rest.issues.create(params), tracker);
+    const { data } = await this.wrap(() => client.rest.issues.create(params), tracker, false);
     return this.toIssue(owner, repo, data);
   }
 
@@ -178,7 +178,7 @@ export class GitHubIssuesProvider implements IssueTrackerProvider {
   }
 
   /** tracker (writes only) counts each underlying API attempt for the audit attemptCount. */
-  private async wrap<T>(fn: () => Promise<T>, tracker?: WriteAttemptTracker): Promise<T> {
+  private async wrap<T>(fn: () => Promise<T>, tracker?: WriteAttemptTracker, idempotent = true): Promise<T> {
     try {
       return await withRetry(
         () => {
@@ -186,7 +186,8 @@ export class GitHubIssuesProvider implements IssueTrackerProvider {
           return fn();
         },
         classifyOctokitError,
-        this.options.retry
+        // issues.create (POST) is not idempotent: no retry on network errors/5xx where it may have been applied.
+        { ...this.options.retry, idempotent: idempotent && (this.options.retry?.idempotent ?? true) }
       );
     } catch (err) {
       throw this.toError(err);

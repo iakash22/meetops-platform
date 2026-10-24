@@ -1,4 +1,4 @@
-import type { DeliveryStore } from './webhook.js';
+import { effectiveReplayTtlSeconds, type DeliveryStore } from './webhook.js';
 
 /** Minimal ioredis surface (`SET key value EX ttl NX`). */
 export interface RedisSetNxClient {
@@ -8,7 +8,7 @@ export interface RedisSetNxClient {
 export interface RedisDeliveryStoreOptions {
   /** Default "meetops:webhook:delivery:". */
   keyPrefix?: string;
-  /** Used when markIfNew is called with a non-positive TTL. Default 86400s. */
+  /** Used when markIfNew is called with a non-positive TTL. Default and minimum 604800s (7 days). */
   defaultTtlSeconds?: number;
 }
 
@@ -22,12 +22,12 @@ export class RedisDeliveryStore implements DeliveryStore {
     options: RedisDeliveryStoreOptions = {}
   ) {
     this.prefix = options.keyPrefix ?? 'meetops:webhook:delivery:';
-    this.defaultTtl = options.defaultTtlSeconds ?? 86_400;
+    this.defaultTtl = effectiveReplayTtlSeconds(options.defaultTtlSeconds);
   }
 
   async markIfNew(deliveryId: string, ttlSeconds: number): Promise<boolean> {
     if (!deliveryId) throw new Error('deliveryId is required');
-    const ttl = Number.isFinite(ttlSeconds) && ttlSeconds > 0 ? Math.ceil(ttlSeconds) : this.defaultTtl;
+    const ttl = Number.isFinite(ttlSeconds) && ttlSeconds > 0 ? effectiveReplayTtlSeconds(ttlSeconds) : this.defaultTtl;
     const res = await this.redis.set(this.prefix + deliveryId, '1', 'EX', ttl, 'NX');
     return res === 'OK';
   }

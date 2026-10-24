@@ -117,11 +117,12 @@ Jira hardening:
   - **429**, honoring `Retry-After` in either seconds or HTTP-date form.
   - **GitHub primary rate limit:** a 403 with `x-ratelimit-remaining: 0` waits until `x-ratelimit-reset`.
   - **GitHub secondary rate limit:** a 403 with `Retry-After`.
-  - **5xx** responses, network errors and timeouts.
+  - **5xx** responses, network errors and timeouts — **only for idempotent requests** (see below).
+- **Idempotency (`RetryOptions.idempotent`, default `true`).** With `idempotent: false`, only failures the classifier marks `notProcessed` are retried: 429, 503 with `Retry-After`, and GitHub rate-limit 403s. Network errors, timeouts and other 5xx are not retried because the request may already have been applied (duplicate issues). Providers set this per call: Jira uses the HTTP method (`POST /issue` and transition `POST`s are non-idempotent; `isIdempotentMethod`), GitHub marks `issues.create` non-idempotent. A caller's `idempotent: false` turns retries of transport errors off for every call; it can never turn them on for a POST. Only enable it for a POST when a real idempotency key exists.
 - **What is never retried:** any other 4xx. If the server asks for a wait longer than `maxDelayMs`, the call fails fast instead of sleeping.
 - **Scope.** Retries apply to Octokit calls (`retry` option on `GitHubIssuesProvider`) and to Jira fetches (`retry` option on `JiraIssueTrackerProvider`).
 - **Order.** The approval gate runs before the first attempt. Retries happen inside the approved, audited write, and the audit log records one attempt and one result per write.
-- **Replay store.** `RedisDeliveryStore(redis, { keyPrefix = 'meetops:webhook:delivery:', defaultTtlSeconds = 86400 })` is atomic through `SET key 1 EX ttl NX`. It accepts any injected ioredis-compatible client.
+- **Replay store.** `RedisDeliveryStore(redis, { keyPrefix = 'meetops:webhook:delivery:', defaultTtlSeconds = 604800 })` is atomic through `SET key 1 EX ttl NX`. It accepts any injected ioredis-compatible client. TTLs below 7 days (`MIN_REPLAY_TTL_SECONDS`) are raised to 7 days in both the Redis and in-memory stores.
 
 ## Persisted links (`IntegrationIssueRecord` from @meetops/contracts)
 
@@ -152,8 +153,12 @@ const change = mapGitHubIssueEvent(result.event, result.payload, result); // use
 
 - **Routing.** `X-GitHub-Hook-ID`, `X-GitHub-Hook-Installation-Target-ID`/`-Type` and `payload.installation.id` are passed to `WebhookSecretResolver`. The body is parsed before verification only to read `installation.id`, and it is size-capped (default 1 MiB, otherwise 413).
 - **Signature.** HMAC-SHA256 of the raw body is compared to `X-Hub-Signature-256` with `timingSafeEqual`, after a length check.
-- **Failure codes.** An unknown integration, a missing or invalid secret, or a bad signature returns **401**. A missing delivery ID or invalid JSON returns 400. A replayed delivery returns 409. An oversized body returns 413.
+- **Failure codes.** An unknown integration, a missing or invalid secret, or a bad signature returns **401**. A missing or malformed delivery ID (`missing_delivery_id` / `malformed_delivery_id`) or invalid JSON returns 400. A replayed delivery returns 409. An oversized body returns 413.
 - **Replay protection.** The delivery ID is recorded only after the signature is valid. Use a Redis `DeliveryStore` in production.
+  - `X-GitHub-Delivery` must be a GUID (`isValidGitHubDeliveryId`, max 64 chars); anything else is rejected with 400 before the store is touched. IDs are lower-cased so case variants collide.
+  - Delivery IDs are kept for `replayTtlSeconds`, default **and minimum** 7 days (604800 s); smaller values are raised.
+  - **GitHub sends no signed timestamp**, so a captured request is replayable once its ID expires. The delivery-ID TTL is the only replay control for GitHub; keep it ≥ 7 days (GitHub allows manual redelivery for 3 days).
+- **Freshness (providers with timestamps).** `checkTimestampFreshness(ts, { maxAgeSeconds, maxFutureSkewSeconds = 300 })` returns `fresh | stale | future | invalid` for epoch s/ms or ISO-8601 values. `checkJiraWebhookFreshness(payload, opts)` reads Jira's `timestamp` body field (returns `absent` unless `requireTimestamp`). Run it only after authenticating the request, and reject `stale`/`future`/`invalid` with 400. Combine with a delivery-ID store where the provider sends one.
 
 ### Webhook secret handling
 

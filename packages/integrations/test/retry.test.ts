@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { withRetry, classifyHttpError, classifyOctokitError, parseRetryAfter, backoffDelay } from '../src';
+import { isIdempotentMethod, withRetry, classifyHttpError, classifyOctokitError, parseRetryAfter, backoffDelay } from '../src';
 
 const now = Date.parse('2026-10-21T00:00:00Z');
 const hdr = (h: Record<string, string>) => (n: string) => h[n];
@@ -15,15 +15,15 @@ describe('parseRetryAfter', () => {
 
 describe('classifyHttpError', () => {
   it('retries 429 with Retry-After', () => {
-    expect(classifyHttpError({ status: 429, header: hdr({ 'retry-after': '2' }) }, now)).toEqual({ retry: true, minDelayMs: 2000 });
-    expect(classifyHttpError({ status: 429 }, now)).toEqual({ retry: true });
+    expect(classifyHttpError({ status: 429, header: hdr({ 'retry-after': '2' }) }, now)).toEqual({ retry: true, minDelayMs: 2000, notProcessed: true });
+    expect(classifyHttpError({ status: 429 }, now)).toEqual({ retry: true, notProcessed: true });
   });
   it('waits until x-ratelimit-reset on exhausted 403', () => {
     const reset = String(Math.floor(now / 1000) + 10);
-    expect(classifyHttpError({ status: 403, header: hdr({ 'x-ratelimit-remaining': '0', 'x-ratelimit-reset': reset }) }, now)).toEqual({ retry: true, minDelayMs: 10_000 });
+    expect(classifyHttpError({ status: 403, header: hdr({ 'x-ratelimit-remaining': '0', 'x-ratelimit-reset': reset }) }, now)).toEqual({ retry: true, minDelayMs: 10_000, notProcessed: true });
   });
   it('retries secondary-limit 403 with Retry-After, not plain 403', () => {
-    expect(classifyHttpError({ status: 403, header: hdr({ 'retry-after': '60' }) }, now)).toEqual({ retry: true, minDelayMs: 60_000 });
+    expect(classifyHttpError({ status: 403, header: hdr({ 'retry-after': '60' }) }, now)).toEqual({ retry: true, minDelayMs: 60_000, notProcessed: true });
     expect(classifyHttpError({ status: 403, header: hdr({ 'x-ratelimit-remaining': '42' }) }, now)).toEqual({ retry: false });
   });
   it('retries 5xx and network errors, never other 4xx', () => {
@@ -32,7 +32,7 @@ describe('classifyHttpError', () => {
     for (const s of [400, 401, 404, 409, 422]) expect(classifyHttpError({ status: s }, now).retry).toBe(false);
   });
   it('reads Octokit error headers', () => {
-    expect(classifyOctokitError({ status: 429, response: { headers: { 'Retry-After': 1 } } }, now)).toEqual({ retry: true, minDelayMs: 1000 });
+    expect(classifyOctokitError({ status: 429, response: { headers: { 'Retry-After': 1 } } }, now)).toEqual({ retry: true, minDelayMs: 1000, notProcessed: true });
   });
 });
 
@@ -64,5 +64,39 @@ describe('withRetry', () => {
     const once = vi.fn().mockRejectedValue({ status: 404 });
     await expect(withRetry(once, () => ({ retry: false }), { sleep })).rejects.toEqual({ status: 404 });
     expect(once).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('idempotency', () => {
+  it('marks only clearly-unprocessed failures as notProcessed', () => {
+    expect(classifyHttpError({ status: 503, header: hdr({ 'retry-after': '1' }) }, now)).toEqual({ retry: true, minDelayMs: 1000, notProcessed: true });
+    expect(classifyHttpError({ status: 503 }, now)).toEqual({ retry: true });
+    expect(classifyHttpError({ status: 500, header: hdr({ 'retry-after': '1' }) }, now)).toEqual({ retry: true, minDelayMs: 1000 });
+    expect(classifyHttpError({}, now)).toEqual({ retry: true });
+  });
+  it('classifies HTTP methods', () => {
+    for (const m of ['GET', 'get', 'PUT', 'DELETE', 'HEAD', 'OPTIONS']) expect(isIdempotentMethod(m)).toBe(true);
+    for (const m of ['POST', 'PATCH']) expect(isIdempotentMethod(m)).toBe(false);
+  });
+  it('idempotent:false never retries network errors, timeouts or plain 5xx', async () => {
+    const sleep = vi.fn(async () => {});
+    for (const err of [{}, { status: 500 }, { status: 502 }, { status: 503 }]) {
+      const fn = vi.fn().mockRejectedValue(err);
+      await expect(withRetry(fn, (e, n) => classifyHttpError(e as { status?: number }, n), { sleep, idempotent: false })).rejects.toEqual(err);
+      expect(fn).toHaveBeenCalledTimes(1);
+    }
+    expect(sleep).not.toHaveBeenCalled();
+  });
+  it('idempotent:false still retries 429 and 503+Retry-After', async () => {
+    const sleep = vi.fn(async () => {});
+    const e503 = { status: 503, h: { 'retry-after': '1' } };
+    const fn = vi.fn().mockRejectedValueOnce({ status: 429 }).mockRejectedValueOnce(e503).mockResolvedValue('ok');
+    const classify = (e: unknown, n: number) => classifyHttpError({ status: (e as { status: number }).status, header: hdr((e as { h?: Record<string, string> }).h ?? {}) }, n);
+    expect(await withRetry(fn, classify, { sleep, random: () => 0, idempotent: false })).toBe('ok');
+    expect(fn).toHaveBeenCalledTimes(3);
+  });
+  it('default (idempotent) keeps retrying network errors', async () => {
+    const fn = vi.fn().mockRejectedValueOnce({}).mockResolvedValue(1);
+    expect(await withRetry(fn, (e, n) => classifyHttpError(e as { status?: number }, n), { sleep: async () => {} })).toBe(1);
   });
 });

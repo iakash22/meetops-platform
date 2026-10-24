@@ -125,6 +125,19 @@ describe('JiraIssueTrackerProvider', () => {
     });
     expect((await make(flaky as never, { timeoutMs: 10, retry: { sleep: async () => {} } }).provider.getIssue('MEET-1'))?.key).toBe('MEET-1');
   });
+  it('never retries POST create on 5xx / network error (may have been applied), but does on 429', async () => {
+    const sleep = vi.fn(async () => {});
+    const input = { title: 'T' };
+    const f500 = mockFetch({ 'POST /rest/api/3/issue': [{ status: 500 }, { status: 201, body: { id: '1', key: 'MEET-1' } }] });
+    await expect(make(f500, { retry: { sleep } }).provider.createIssue(input, approvalFor('jira', 'createIssue', input))).rejects.toMatchObject({ status: 500 });
+    expect(f500).toHaveBeenCalledTimes(1);
+    const net = vi.fn(async () => { throw new Error('ECONNRESET'); });
+    await expect(make(net as never, { retry: { sleep, idempotent: true } }).provider.createIssue(input, approvalFor('jira', 'createIssue', input))).rejects.toMatchObject({ message: 'Jira request failed' });
+    expect(net).toHaveBeenCalledTimes(1);
+    const f429 = mockFetch({ 'POST /rest/api/3/issue': [{ status: 429, headers: { 'retry-after': '1' } }, { status: 201, body: { id: '1', key: 'MEET-1' } }], 'GET /rest/api/3/issue/MEET-1': { status: 200, body: issueBody() } });
+    expect((await make(f429, { retry: { sleep, random: () => 0 } }).provider.createIssue(input, approvalFor('jira', 'createIssue', input))).key).toBe('MEET-1');
+    expect(f429).toHaveBeenCalledTimes(3);
+  });
   it('approval gate runs before any attempt even with retries', async () => {
     const f = mockFetch({});
     const sleep = vi.fn(async () => {});

@@ -2,7 +2,8 @@ export interface Organization {
   id: string;
   name: string;
   slug: string;
-  createdById: string;
+  /** Null once the creator account is deleted. */
+  createdById: string | null;
   createdAt: Date;
   updatedAt: Date;
   deletedAt: Date | null;
