@@ -16,6 +16,8 @@ All changes are additive. No export was removed and no existing schema got stric
   `ConflictErrorEnvelope` is the 409 body type with `reason` required. Matches the 409 paths of the API in #53
   (invite/accept for an active member, expired/revoked/already-accepted invitation, last owner).
 - Pagination: `DEFAULT_PAGE_LIMIT` (25, the `CursorPageQuery.limit` default).
+- Package exports: `./types` also has a `default` condition (same ESM file), so `require()`, Jest and Metro
+  (React Native) resolve the light entry. `.` and `./legacy` are unchanged.
 
 ### Changed
 

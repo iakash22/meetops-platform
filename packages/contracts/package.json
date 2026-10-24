@@ -31,7 +31,8 @@
     },
     "./types": {
       "types": "./src/types.ts",
-      "import": "./dist/types.js"
+      "import": "./dist/types.js",
+      "default": "./dist/types.js"
     }
   },
   "dependencies": {

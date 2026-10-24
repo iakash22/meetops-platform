@@ -61,3 +61,12 @@ describe('v0.3.3 conflict reasons', () => {
     expectTypeOf<T.ConflictErrorEnvelope['error']['reason']>().toEqualTypeOf<T.ConflictReason>();
   });
 });
+
+describe('v0.3.3 package exports', () => {
+  it('./types has a "default" condition so require/jest/Metro resolve the light entry', async () => {
+    const pkg = (await import('../package.json', { with: { type: 'json' } })).default as {
+      exports: Record<string, Record<string, string>>;
+    };
+    expect(pkg.exports['./types']).toMatchObject({ import: './dist/types.js', default: './dist/types.js' });
+  });
+});
