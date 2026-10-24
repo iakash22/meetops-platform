@@ -17,9 +17,12 @@ for (const [net, bits] of [
   ['0.0.0.0', 8], ['10.0.0.0', 8], ['100.64.0.0', 10], ['127.0.0.0', 8], ['169.254.0.0', 16], ['172.16.0.0', 12],
   ['192.0.0.0', 24], ['192.168.0.0', 16], ['198.18.0.0', 15], ['224.0.0.0', 4], ['240.0.0.0', 4],
   ['192.0.2.0', 24], ['198.51.100.0', 24], ['203.0.113.0', 24], // TEST-NET-1/2/3 (documentation)
+  ['192.88.99.0', 24], // 6to4 relay anycast (deprecated)
 ] as const) blocked.addSubnet(net, bits, 'ipv4');
 for (const [net, bits] of [
-  ['::1', 128], ['::', 128], ['fc00::', 7], ['fe80::', 10], ['ff00::', 8],
+  ['::1', 128], ['::', 128],
+  ['::', 96], // IPv4-compatible IPv6 (deprecated; embeds IPv4, e.g. ::7f00:1); covers :: and ::1 too
+  ['fc00::', 7], ['fe80::', 10], ['ff00::', 8],
   ['64:ff9b::', 96], // NAT64
   ['64:ff9b:1::', 48], // local-use NAT64
   ['2002::', 16], // 6to4 (embeds arbitrary IPv4)
@@ -73,6 +76,8 @@ export async function assertSafeEndpoint(rawUrl: string, policy: EndpointPolicy,
   if (url.protocol !== 'https:') throw block(`Scheme ${url.protocol} not allowed (HTTPS only)`);
   const host = url.hostname.replace(/^\[|\]$/g, '').toLowerCase();
   if (!policy.allowedHosts.includes(host)) throw block(`Host ${host} is not allowlisted`);
+  // SEC-BUG-1: remote providers only on the default HTTPS port (WHATWG URL normalizes ':443' to ''). Exact local origins returned above.
+  if (url.port !== '' && url.port !== '443') throw block(`Port ${url.port} not allowed`);
   const fam = isIP(host);
   const addrs = fam ? [{ address: host, family: fam }] : await lookup(host);
   if (addrs.length === 0) throw block(`Host ${host} did not resolve`);
