@@ -93,13 +93,14 @@ As of 2026-10-22 12:50 IST, from `gh pr list --state all`.
 - 2026-10-22 00:07 IST: #27 (API auth)
 - 00:27 IST: #52 (extension)
 
-Closed without merging: #5, #15 and #37 (superseded by #52), and #46 (replaced by #51).
+Closed without merging: #5, #15 and #37 (superseded by #52), #46 (replaced by #51), and #6 and #25 (superseded by #35).
+
+Merged into `integration/phase-1`: #35, #48 and #60.
 
 ### Open
 
 | PR      | Owner               | Branch                            | Base                              | Dependency                              |
 | ------- | ------------------- | --------------------------------- | --------------------------------- | --------------------------------------- |
-| #6      | DB                  | `feat/database-core-schema`       | `integration/phase-1`             | None                                    |
 | #7      | OPS                 | `chore/devops-containers-ci`      | `integration/phase-1`             | Conflicts with #32 on `.env.example`    |
 | #9      | QA                  | `test/qa-harness`                 | `integration/phase-1`             | None                                    |
 | #10     | MEDIA               | `feat/storage-and-media-core`     | `integration/phase-1`             | None                                    |
@@ -107,7 +108,6 @@ Closed without merging: #5, #15 and #37 (superseded by #52), and #46 (replaced b
 | #16     | MEDIA               | `feat/realtime-scaffold`          | `integration/phase-1`             | None                                    |
 | #19     | INT                 | `feat/integrations-webhooks-jira` | `integration/phase-1`             | None                                    |
 | #21     | AI                  | `feat/ai-provider-registry`       | `integration/phase-1`             | None                                    |
-| #25     | DB                  | `feat/database-tenancy-rls`       | `feat/database-core-schema`       | Stacked on #6                           |
 | #26     | OPS                 | `chore/commitlint`                | `integration/phase-1`             | None                                    |
 | #28     | DOC                 | `docs/windows-local-setup`        | `integration/phase-1`             | None                                    |
 | #29     | QA                  | `test/db-and-security-suites`     | `test/qa-harness`                 | Stacked on #9                           |
@@ -115,12 +115,10 @@ Closed without merging: #5, #15 and #37 (superseded by #52), and #46 (replaced b
 | #32     | OPS                 | `chore/windows-node24-setup`      | `integration/phase-1`             | Conflicts with #7 on `.env.example`     |
 | #33     | OPS                 | `chore/audit-cleanup`             | `integration/phase-1`             | None                                    |
 | #34     | QA/OPS              | `ci/qa-jobs`                      | `integration/phase-1`             | None                                    |
-| #35     | DB                  | `feat/database-live-verification` | `integration/phase-1`             | None                                    |
 | #36     | INT                 | `feat/integrations-resilience`    | `feat/integrations-webhooks-jira` | Stacked on #19                          |
 | #39     | MEDIA               | `feat/media-pipeline-worker`      | `integration/phase-1`             | None                                    |
 | #40     | OPS                 | `chore/fast-pre-commit`           | `integration/phase-1`             | None                                    |
 | #47     | AI                  | `feat/ai-transcription-summaries` | `feat/ai-provider-registry`       | Stacked on #21                          |
-| #48     | FE                  | `feat/web-auth-meetings`          | `integration/phase-1`             | None                                    |
 | #49     | OPS                 | `chore/compose-hardening`         | `chore/devops-containers-ci`      | Stacked on #7                           |
 | #50     | ARCH                | `feat/contracts-v0.3`             | `integration/phase-1`             | Contracts v0.3.0, on top of merged v0.2 |
 | #51     | QA                  | `test/xt-au-suites-v2`            | `test/db-and-security-suites`     | Stacked on #29                          |
