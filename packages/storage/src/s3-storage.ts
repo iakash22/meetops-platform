@@ -49,7 +49,7 @@ import type {
   UploadSpec,
   UploadVerification
 } from './types.js';
-import { assertSha256Base64, normalizeMimeType, validateUploadSpec } from './validation.js';
+import { assertSha256Base64, normalizeMimeType, sha256Base64ToHex, sha256HexToBase64, validateUploadSpec } from './validation.js';
 import {
   InMemoryUploadTokenStore,
   isUploadToken,
@@ -392,7 +392,9 @@ export class S3StorageService implements StorageService {
     if (!isUploadToken(uploadToken)) throw new StorageValidationError('Invalid upload token');
     try {
       const info = await this.confirmUpload(ref, uploadToken);
-      return toVerification(info.checksumSha256, info.sizeBytes);
+      // confirmUpload's info carries hex (StoredObjectInfo boundary); convert back for the base64 field.
+      if (!info.checksumSha256) throw new StorageValidationError('Upload has no sha256');
+      return toVerification(sha256HexToBase64(info.checksumSha256), info.sizeBytes);
     } catch (err) {
       if (!(err instanceof StorageValidationError) || !/already used|expired/.test(err.message)) throw err;
       const head = await this.#headWithChecksum(key);
@@ -655,7 +657,7 @@ export class S3StorageService implements StorageService {
     if (running + req.sizeBytes > this.#cfg.limits.maxObjectBytes) throw new StorageValidationError('Recording session exceeds maximum size');
 
     const mime = normalizeMimeType(mimeType);
-    const checksum = Buffer.from(req.sha256, 'hex').toString('base64');
+    const checksum = sha256HexToBase64(req.sha256);
     const signed = ['content-type', 'content-length', 'x-amz-checksum-sha256', 'if-none-match'];
     const url = await settle(
       this.#presign(
@@ -724,7 +726,7 @@ export class S3StorageService implements StorageService {
           (d?.sizeBytes !== undefined && d.sizeBytes !== size) ||
           // Every chunk URL signs a sha256, so a stored chunk without one was not uploaded through it.
           !head.ChecksumSHA256 ||
-          (d !== undefined && head.ChecksumSHA256 !== Buffer.from(d.sha256, 'hex').toString('base64'));
+          (d !== undefined && head.ChecksumSHA256 !== sha256HexToBase64(d.sha256));
         if (bad) {
           await this.deleteObject(objRef).catch(() => undefined);
           throw new StorageValidationError(`Chunk seq ${seq} rejected`);
@@ -812,9 +814,11 @@ export class S3StorageService implements StorageService {
   }
 }
 
-function toVerification(checksumSha256: string | undefined, sizeBytes: number): UploadVerification {
-  if (!checksumSha256) throw new StorageValidationError('Upload has no sha256');
-  return { verified: true, sha256: Buffer.from(checksumSha256, 'base64').toString('hex'), checksumSha256, sizeBytes };
+/** Takes the S3 base64 digest; returns hex in sha256/checksumSha256 and base64 only in checksumSha256Base64. */
+function toVerification(checksumBase64: string | undefined, sizeBytes: number): UploadVerification {
+  if (!checksumBase64) throw new StorageValidationError('Upload has no sha256');
+  const hex = sha256Base64ToHex(checksumBase64);
+  return { verified: true, sha256: hex, checksumSha256: hex, checksumSha256Base64: checksumBase64, sizeBytes };
 }
 
 function toInfo(res: {
@@ -828,7 +832,9 @@ function toInfo(res: {
   const m: StoredObjectInfo = { sizeBytes: res.ContentLength ?? 0 };
   if (res.ContentType) m.mimeType = res.ContentType;
   if (res.ETag) m.etag = res.ETag;
-  if (res.ChecksumSHA256) m.checksumSha256 = res.ChecksumSHA256;
+  // Boundary: S3 reports base64; StoredObjectInfo/FileObject carry lowercase hex. Multipart objects only have a
+  // composite checksum ("<b64>-<parts>"), which is not a whole-object sha256, so it is omitted rather than converted.
+  if (res.ChecksumSHA256 && !/-\d+$/.test(res.ChecksumSHA256)) m.checksumSha256 = sha256Base64ToHex(res.ChecksumSHA256);
   if (res.LastModified) m.updatedAt = res.LastModified;
   if (res.Metadata && Object.keys(res.Metadata).length) m.metadata = res.Metadata;
   return m;
