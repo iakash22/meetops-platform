@@ -1,4 +1,5 @@
 import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -6,10 +7,11 @@ import { Readable } from 'node:stream';
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { TranscriptionJobPayload as Schema } from '@meetops/contracts';
 import { Value } from '@sinclair/typebox/value';
-import { chunkAudio, normalizeToWav, probeMedia } from '@meetops/media-core';
-import { buildObjectKey, StorageNotFoundError, type MeetingObjectRef } from '@meetops/storage';
+import { chunkAudio, computeWaveform, normalizeToWav, probeMedia, type Waveform } from '@meetops/media-core';
+import { buildObjectKey, createChunkAudioResolver, StorageNotFoundError, type MeetingObjectRef } from '@meetops/storage';
 import {
   createRealtimePublisher,
+  publishUploadStatus,
   enqueueMediaJob,
   parseTranscriptionIdempotencyKey,
   chunkFileObjectId,
@@ -18,6 +20,7 @@ import {
   type MediaJobPayload,
   workerAuthorize,
   runInJobScope,
+  type ChunkFileObjectRepository,
   type MediaOps,
   type MediaProcessorDeps,
   type TranscriptionJobPayload
@@ -138,10 +141,13 @@ describe('processRecording (mocked storage, queue, emitter)', () => {
     // RFC 4122 test vector: uuidv5(DNS namespace, 'www.example.com')
     expect(uuidV5('www.example.com', '6ba7b810-9dad-11d1-80b4-00c04fd430c8')).toBe('2ed6657d-e927-568b-95e1-2665a8aea6a2');
 
-    expect(events.every((e) => e.rooms.includes(`org:${ORG}:meeting:${MEET}`) && e.rooms.includes(`org:${ORG}`))).toBe(true);
+    expect(events.every((e) => e.rooms.includes(`organizations:${ORG}:meetings:${MEET}`) && e.rooms.includes(`organizations:${ORG}`))).toBe(true);
     expect(events[0]).toMatchObject({ event: 'meeting:status', payload: { status: 'processing', organizationId: ORG } });
     const stages = events.filter((e) => e.event === 'transcription:progress').map((e) => (e.payload as { stage: string }).stage);
     expect(stages).toEqual(['normalizing', 'chunking', 'chunking', 'chunking', 'chunking', 'transcribing']);
+    const proc = events.filter((e) => e.event === 'processing:status').map((e) => e.payload as { status: string; recordingId: string });
+    expect(proc.map((p) => p.status)).toEqual(['normalizing', 'chunking', 'completed']);
+    expect(proc.every((p) => p.recordingId === REC)).toBe(true);
 
     expect(readdirSync(tmpRoot)).toEqual([]);
     expect(JSON.stringify(logs)).not.toMatch(/organizations\/|org\/|https?:\/\/|\.wav/);
@@ -190,10 +196,110 @@ describe('processRecording (mocked storage, queue, emitter)', () => {
     await expect(processRecording(payload, deps, { isFinalAttempt: true })).rejects.toBe(boom);
     const failed = events.find((e) => (e.payload as { status?: string }).status === 'failed')!;
     expect(failed.payload).toEqual({ organizationId: ORG, meetingId: MEET, status: 'failed', errorCode: 'media_processing_failed', at: '2026-10-21T00:00:00.000Z' });
+    const procFailed = events.filter((e) => e.event === 'processing:status' && (e.payload as { status: string }).status === 'failed');
+    expect(procFailed.map((e) => e.payload)).toEqual([
+      { organizationId: ORG, meetingId: MEET, recordingId: REC, status: 'failed', errorCode: 'media_processing_failed', at: '2026-10-21T00:00:00.000Z' }
+    ]);
     expect(jobs.size).toBe(0);
     expect(readdirSync(tmpRoot)).toEqual([]);
   });
 
+  it('persists the STT chunk count before enqueueing transcription jobs', async () => {
+    const { deps, jobs } = makeDeps({}, tmpRoot);
+    const order: string[] = [];
+    const setChunkCount = vi.fn(async () => void order.push(`count:${jobs.size}`));
+    await processRecording(payload, { ...deps, recordings: { setChunkCount } });
+    expect(setChunkCount).toHaveBeenCalledWith({ organizationId: ORG, meetingId: MEET, recordingId: REC, chunkCount: 3 });
+    expect(order).toEqual(['count:0']);
+    expect(jobs.size).toBe(3);
+  });
+  it('a chunk-count persistence failure fails the job (retryable) without enqueueing', async () => {
+    const { deps, jobs } = makeDeps({}, tmpRoot);
+    const setChunkCount = vi.fn(async () => Promise.reject(new Error('db down')));
+    await expect(processRecording(payload, { ...deps, recordings: { setChunkCount } })).rejects.toMatchObject({ errorCode: 'chunk_count_persist_failed' });
+    expect(jobs.size).toBe(0);
+    expect(readdirSync(tmpRoot)).toEqual([]);
+  });
+  it('upserts chunk FileObject rows (deterministic ids, exact keys) before the count and any enqueue', async () => {
+    const { deps, jobs, stored } = makeDeps({}, tmpRoot);
+    const order: string[] = [];
+    const calls: Parameters<ChunkFileObjectRepository['upsertChunkFileObjects']>[0][] = [];
+    const repo: ChunkFileObjectRepository = {
+      upsertChunkFileObjects: async (q) => void (calls.push(q), order.push(`rows:${jobs.size}`))
+    };
+    const setChunkCount = vi.fn(async () => void order.push(`count:${jobs.size}`));
+    await processRecording(payload, { ...deps, chunkFileObjects: repo, recordings: { setChunkCount } });
+    expect(order).toEqual(['rows:0', 'count:0']);
+    const q = calls[0]!;
+    expect(q).toMatchObject({ organizationId: ORG, meetingId: MEET, recordingId: REC });
+    expect(q.chunks.map((c) => c.index)).toEqual([0, 1, 2]);
+    for (const c of q.chunks) {
+      expect(c.fileObjectId).toBe(chunkFileObjectId(REC, c.index));
+      expect(c.storageKey).toBe(`organizations/${ORG}/meetings/${MEET}/processed/${REC}/chunks/0000${c.index}.wav`);
+      expect(c.mimeType).toBe('audio/wav');
+      expect(c.sizeBytes).toBe(stored.get(c.storageKey)!.length);
+      expect(c.sha256).toBe(createHash('sha256').update(stored.get(c.storageKey)!).digest('hex'));
+    }
+    expect(q.chunks[1]).toMatchObject({ startMs: 10000, durationMs: 10000 });
+
+    // A retry produces identical rows (idempotent upsert on fileObjectId).
+    await processRecording(payload, { ...deps, chunkFileObjects: repo });
+    expect(calls[1]).toEqual(calls[0]);
+
+    // The rows written are accepted by the storage audio resolver.
+    const resolver = createChunkAudioResolver({
+      storage: deps.storage as never,
+      lookup: {
+        findFileObject: async ({ organizationId, fileObjectId }) => {
+          const c = q.chunks.find((x) => x.fileObjectId === fileObjectId);
+          return c ? { id: c.fileObjectId, organizationId, meetingId: MEET, kind: 'chunk', key: c.storageKey, mimeType: c.mimeType, sizeBytes: c.sizeBytes, chunkIndex: c.index } : null;
+        }
+      }
+    });
+    for (const c of q.chunks) {
+      const r = await resolver.bytes({ organizationId: ORG, fileObjectId: c.fileObjectId });
+      expect(Buffer.from(r.bytes).equals(stored.get(c.storageKey)!)).toBe(true);
+    }
+    await expect(resolver.bytes({ organizationId: 'other-org', fileObjectId: q.chunks[0]!.fileObjectId })).rejects.toThrow();
+  });
+  it('a chunk FileObject upsert failure enqueues nothing and skips the count', async () => {
+    const { deps, jobs } = makeDeps({}, tmpRoot);
+    const setChunkCount = vi.fn(async () => undefined);
+    const repo: ChunkFileObjectRepository = { upsertChunkFileObjects: async () => Promise.reject(new Error('db down')) };
+    await expect(processRecording(payload, { ...deps, chunkFileObjects: repo, recordings: { setChunkCount } })).rejects.toMatchObject({
+      errorCode: 'chunk_file_objects_persist_failed'
+    });
+    expect(setChunkCount).not.toHaveBeenCalled();
+    expect(jobs.size).toBe(0);
+    expect(readdirSync(tmpRoot)).toEqual([]);
+  });
+  it('publishUploadStatus targets the organization and meeting rooms', () => {
+    const sent: Array<{ rooms: string[]; event: string; payload: unknown }> = [];
+    const emitter = { to: (rooms: string | string[]) => ({ emit: (event: string, p: unknown) => sent.push({ rooms: [rooms].flat(), event, payload: p }) }) };
+    const e = { organizationId: ORG, meetingId: MEET, uploadId: 'up1', status: 'verified' as const, sha256: 'a'.repeat(64), at: '2026-10-21T00:00:00.000Z' };
+    publishUploadStatus(emitter, e);
+    expect(sent).toEqual([{ rooms: [`organizations:${ORG}:meetings:${MEET}`, `organizations:${ORG}`], event: 'upload:status', payload: e }]);
+  });
+  it('stores a waveform under processed/{recordingId}/waveform.json when enabled', async () => {
+    const { deps } = makeDeps({}, tmpRoot);
+    const w: Waveform = { version: 1, sampleRate: 16000, channels: 1, durationMs: 25000, bins: 2, peaks: [0.1, 0.2] };
+    const store = vi.fn(async () => ({ sizeBytes: 42 }));
+    const compute = vi.fn(async () => w);
+    const res = await processRecording(payload, { ...deps, waveform: { compute, store }, waveformBins: 2 });
+    expect(compute).toHaveBeenCalledWith(expect.stringMatching(/normalized\.wav$/), { bins: 2 });
+    const ref = (store.mock.calls[0] as unknown as [MeetingObjectRef])[0];
+    expect(buildObjectKey(ref)).toBe(`organizations/${ORG}/meetings/${MEET}/processed/${REC}/waveform.json`);
+    expect(res.waveform).toEqual({ bins: 2, sizeBytes: 42 });
+  });
+  it('a failing waveform step is logged and does not fail the job', async () => {
+    const { deps, logs, jobs } = makeDeps({}, tmpRoot);
+    const res = await processRecording(payload, { ...deps, waveform: { compute: async () => Promise.reject(new Error('boom /secret/path')), store: vi.fn() } });
+    expect(res.waveform).toBeUndefined();
+    expect(jobs.size).toBe(3);
+    const warn = logs.find((l) => l.msg === 'waveform skipped');
+    expect(warn?.obj).toMatchObject({ errorCode: 'waveform_failed' });
+    expect(JSON.stringify(logs)).not.toContain('/secret/path');
+  });
   it('maps a missing source to source_not_found', async () => {
     const { deps, stored, srcKey, events } = makeDeps({}, tmpRoot);
     stored.delete(srcKey);
@@ -262,7 +368,11 @@ describe.skipIf(!has('ffmpeg') || !has('ffprobe'))('processRecording with real f
     execFileSync('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-y', '-f', 'lavfi', '-i', 'sine=frequency=440:sample_rate=48000:duration=25', '-ac', '2', '-c:a', 'libopus', src]);
     stored.set(srcKey, readFileSync(src));
     deps.media = { probeMedia: (p, o) => probeMedia(p, o), normalizeToWav: (i, o, x) => normalizeToWav(i, o, x), chunkAudio: (i, o, x) => chunkAudio(i, o, x) };
-    const res = await processRecording(payload, { ...deps, segmentSeconds: 10 });
+    const waves: Waveform[] = [];
+    deps.waveform = { compute: (p, o) => computeWaveform(p, o), store: async (_r, w) => (waves.push(w), { sizeBytes: JSON.stringify(w).length }) };
+    const res = await processRecording(payload, { ...deps, segmentSeconds: 10, waveformBins: 250 });
+    expect(res.waveform?.bins).toBe(250);
+    expect(waves[0]).toMatchObject({ sampleRate: 16000, channels: 1, bins: 250 });
     expect(res.chunks).toHaveLength(3);
     expect(res.durationMs).toBeGreaterThan(24000);
     const wavKey = `organizations/${ORG}/meetings/${MEET}/processed/${REC}/normalized.wav`;

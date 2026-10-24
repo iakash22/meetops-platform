@@ -1,0 +1,2 @@
+# pnpm owns this file; the lint-staged prettier hook must not reformat it.
+pnpm-lock.yaml

@@ -19,4 +19,28 @@ export type MediaProcessingResult = {
   formatName: string;
   normalized: { fileObjectId: string; sizeBytes: number };
   chunks: ChunkManifestEntry[];
+  /** Present when the waveform step succeeded (processed/{recordingId}/waveform.json). Derived and untracked: no FileObject row. */
+  waveform?: { bins: number; sizeBytes: number };
+};
+
+/** Mirrors apps/realtime/src/events.ts (MEDIA_EVENTS). Ids and codes only: never keys, URLs or paths. */
+export type UploadStatusEvent = {
+  organizationId: string;
+  meetingId: string;
+  uploadId: string;
+  status: 'pending' | 'uploaded' | 'verified' | 'failed' | 'expired';
+  sha256?: string;
+  sizeBytes?: number;
+  errorCode?: string;
+  at: string;
+};
+
+export type ProcessingStatusEvent = {
+  organizationId: string;
+  meetingId: string;
+  recordingId: string;
+  status: 'queued' | 'normalizing' | 'waveform' | 'chunking' | 'completed' | 'failed';
+  percent?: number;
+  errorCode?: string;
+  at: string;
 };
