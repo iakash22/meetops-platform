@@ -5,6 +5,8 @@ import type { AuthService } from './auth.service.js';
 
 export interface VerifiedSession {
   user: PublicUser;
+  sessionId: string;
+  /** Active org (only if the user is still a member); realtime scopes rooms by it. */
   organizationId: string | null;
   role: Role | null;
 }
@@ -23,7 +25,7 @@ export class SessionVerifier {
     const { user, session } = await this.auth.authenticate(sessionToken);
     const organizationId = session.activeOrganizationId;
     const m = organizationId ? await this.memberships.find(organizationId, user.id) : null;
-    return { user, organizationId: m ? organizationId : null, role: m?.role ?? null };
+    return { user, sessionId: session.id, organizationId: m ? organizationId : null, role: m?.role ?? null };
   }
 
   /** TODO(meetings): real check once the meetings module exists. Fails closed. */
