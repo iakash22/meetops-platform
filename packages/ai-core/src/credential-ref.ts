@@ -31,14 +31,14 @@ export function parseCredentialRef(ref: unknown): ParsedCredentialRef | null {
 }
 
 /**
- * `secret:org/{orgId}/<name>...` bound to exactly `orgId` (exact first-segment comparison, at least one key segment).
+ * `secret:org/{organizationId}/<name>...` bound to exactly `organizationId` (exact first-segment comparison, at least one key segment).
  * Returns the parsed ref, or null if malformed or bound to another org.
  */
-export function parseOrgSecretRef(ref: unknown, orgId: string): Extract<ParsedCredentialRef, { kind: 'secret' }> | null {
+export function parseOrgSecretRef(ref: unknown, organizationId: string): Extract<ParsedCredentialRef, { kind: 'secret' }> | null {
   const p = parseCredentialRef(ref);
   if (!p || p.kind !== 'secret') return null;
   const [scope, owner, ...rest] = p.segments;
-  if (scope !== 'org' || owner === undefined || owner !== orgId || rest.length === 0) return null;
+  if (scope !== 'org' || owner === undefined || owner !== organizationId || rest.length === 0) return null;
   return p;
 }
 

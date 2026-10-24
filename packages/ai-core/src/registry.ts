@@ -31,7 +31,7 @@ export class ProviderRegistry {
     try {
       await this.audit.emit({
         action: before ? 'update' : 'create',
-        tenantId: null,
+        organizationId: null,
         actorId: ctx.userId,
         provider: config.name,
         before: before ? redact(before) : undefined,
@@ -70,12 +70,12 @@ export class ProviderRegistry {
    * Build an adapter for this call. Credential precedence: org BYO ref (if set) ELSE platform ref (plan-gated by the
    * resolver). A failing BYO ref never falls back to the platform key.
    */
-  async instantiate<T extends AnyProvider = AnyProvider>(name: string, ctx: { orgId: string; orgCredentialRefs?: OrgCredentialRefs | undefined; feature?: string | undefined }): Promise<T> {
+  async instantiate<T extends AnyProvider = AnyProvider>(name: string, ctx: { organizationId: string; orgCredentialRefs?: OrgCredentialRefs | undefined; feature?: string | undefined }): Promise<T> {
     const c = this.configs.get(name);
     const av = this.availability(name);
     if (!c || !av.available) throw new AIError(c && !c.enabled ? 'PROVIDER_DISABLED' : 'PROVIDER_UNAVAILABLE', av.reason ?? 'unavailable', { provider: name, retryable: false });
     const ref = ctx.orgCredentialRefs?.[name] ?? c.credentialRef;
-    const key = ref ? await this.resolveCredential(ref, { orgId: ctx.orgId }) : undefined;
+    const key = ref ? await this.resolveCredential(ref, { organizationId: ctx.organizationId }) : undefined;
     const factory = this.factories[c.adapter]!;
     return factory(c, key, { outputLimits: effectiveOutputLimits(c.outputLimits, ctx.feature) }) as T;
   }

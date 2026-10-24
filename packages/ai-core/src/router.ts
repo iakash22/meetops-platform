@@ -46,7 +46,7 @@ export const routeSelectionSchema = z.object({
 export type RouteSelection = z.infer<typeof routeSelectionSchema>;
 
 export const orgAIConfigSchema = z.object({
-  tenantId: z.string().min(1),
+  organizationId: z.string().min(1),
   /** Default per kind for this org. */
   defaults: z.object({ llm: routeSelectionSchema.optional(), stt: routeSelectionSchema.optional() }).default({}),
   /** Per feature/workflow overrides. */
@@ -56,26 +56,26 @@ export const orgAIConfigSchema = z.object({
   allowPaidFallback: z.boolean().optional(),
   /** Per-org monthly spend cap (USD) on paid or platform-billed providers, enforced before each call. */
   monthlyBudgetUsd: z.number().min(0).optional(),
-  /** BYO credential refs per provider. Must be `secret:org/<tenantId>/...` (checked in setOrgConfig + at resolve time). */
-  credentialRefs: z.record(z.string(), z.string().refine(isOrgSecretRefShape, 'must be secret:org/<orgId>/<name>')).default({}),
+  /** BYO credential refs per provider. Must be `secret:org/<organizationId>/...` (checked in setOrgConfig + at resolve time). */
+  credentialRefs: z.record(z.string(), z.string().refine(isOrgSecretRefShape, 'must be secret:org/<organizationId>/<name>')).default({}),
 });
 export type OrgAIConfig = z.infer<typeof orgAIConfigSchema>;
 export type OrgAIConfigInput = z.input<typeof orgAIConfigSchema>;
 
 /** Persistence for tenant AI config. Backend/DB supplies a durable, tenant-scoped implementation. */
 export interface OrgConfigStore {
-  get(tenantId: string): Promise<OrgAIConfig | undefined>;
+  get(organizationId: string): Promise<OrgAIConfig | undefined>;
   put(cfg: OrgAIConfig): Promise<void>;
 }
 
 export class InMemoryOrgConfigStore implements OrgConfigStore {
   private readonly m = new Map<string, OrgAIConfig>();
-  async get(tenantId: string) {
-    const c = this.m.get(tenantId);
+  async get(organizationId: string) {
+    const c = this.m.get(organizationId);
     return c ? structuredClone(c) : undefined;
   }
   async put(cfg: OrgAIConfig) {
-    this.m.set(cfg.tenantId, structuredClone(cfg));
+    this.m.set(cfg.organizationId, structuredClone(cfg));
   }
 }
 
@@ -85,7 +85,7 @@ export type RequestOverride = RouteSelection;
 export type ResolutionSource = 'system' | 'env' | 'organization' | 'feature' | 'request';
 
 export type ResolvedRoute = {
-  tenantId: string;
+  organizationId: string;
   feature: AIFeature;
   kind: 'llm' | 'stt';
   capability: Capability;
@@ -129,13 +129,13 @@ export class ModelRouter {
   async setOrgConfig(input: OrgAIConfigInput, ctx: TenantContext) {
     assertCan(ctx, 'manage', 'ProviderConfig');
     const cfg = orgAIConfigSchema.parse(input);
-    if (cfg.tenantId !== ctx.orgId) throw new AIError('FORBIDDEN', 'cannot change another organization\'s AI config', { retryable: false });
+    if (cfg.organizationId !== ctx.organizationId) throw new AIError('FORBIDDEN', 'cannot change another organization\'s AI config', { retryable: false });
     for (const ref of Object.values(cfg.credentialRefs))
-      if (!parseOrgSecretRef(ref, cfg.tenantId)) throw new AIError('FORBIDDEN', 'credential ref must belong to this organization', { retryable: false });
-    const before = await this.orgStore.get(cfg.tenantId);
+      if (!parseOrgSecretRef(ref, cfg.organizationId)) throw new AIError('FORBIDDEN', 'credential ref must belong to this organization', { retryable: false });
+    const before = await this.orgStore.get(cfg.organizationId);
     try {
       await this.audit.emit({
-        action: before ? 'update' : 'create', tenantId: cfg.tenantId, actorId: ctx.userId,
+        action: before ? 'update' : 'create', organizationId: cfg.organizationId, actorId: ctx.userId,
         before: before ? redact(before) : undefined, after: redact(cfg), at: new Date().toISOString(),
       });
     } catch (e) {
@@ -148,12 +148,12 @@ export class ModelRouter {
    * Precedence (lowest -> highest): system default < env < organization < feature/workflow < authorized request.
    * The highest layer that specifies a provider wins; its model is used, else the provider default (undefined).
    */
-  async resolve(tenantId: string, feature: AIFeature, override?: RequestOverride, actor?: TenantContext): Promise<ResolvedRoute> {
-    if (!tenantId) throw new AIError('CONFIG_INVALID', 'tenantId is required');
+  async resolve(organizationId: string, feature: AIFeature, override?: RequestOverride, actor?: TenantContext): Promise<ResolvedRoute> {
+    if (!organizationId) throw new AIError('CONFIG_INVALID', 'organizationId is required');
     const kind = featureKind(feature);
-    const org = await this.orgStore.get(tenantId);
-    if (org && org.tenantId !== tenantId) throw new AIError('CONFIG_INVALID', 'tenant mismatch in org config store');
-    if (override && !(actor && actor.orgId === tenantId && actor.ability?.can('override', 'AIRoute')))
+    const org = await this.orgStore.get(organizationId);
+    if (org && org.organizationId !== organizationId) throw new AIError('CONFIG_INVALID', 'tenant mismatch in org config store');
+    if (override && !(actor && actor.organizationId === organizationId && actor.ability?.can('override', 'AIRoute')))
       throw new AIError('UNAUTHORIZED_OVERRIDE', 'Per-request provider override is not authorized', { retryable: false });
 
     const layers: Array<[ResolutionSource, RouteSelection | undefined]> = [
@@ -169,13 +169,13 @@ export class ModelRouter {
     const fallbacks = sel.fallbacks ?? (source === 'request' ? (org?.features[feature]?.fallbacks ?? org?.defaults[kind]?.fallbacks) : undefined) ?? [];
     if (override && actor) {
       try {
-        await this.audit.emit({ action: 'override', tenantId, actorId: actor.userId, feature, after: redact(override), at: new Date().toISOString() });
+        await this.audit.emit({ action: 'override', organizationId, actorId: actor.userId, feature, after: redact(override), at: new Date().toISOString() });
       } catch (e) {
         throw new AIError('AUDIT_FAILED', 'audit write failed; override rejected', { retryable: true, cause: e });
       }
     }
     return {
-      tenantId,
+      organizationId,
       feature,
       kind,
       capability: FEATURE_CAPABILITY[feature],

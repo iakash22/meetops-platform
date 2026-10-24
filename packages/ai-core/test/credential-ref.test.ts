@@ -55,22 +55,22 @@ describe('C1: strict credential ref parser', () => {
       async () => ({ platformKeys: true }),
     );
     for (const ref of [`secret:org/${A}/../${B}/key`, `secret:org/${A}/%2e%2e/${B}/key`, `secret:org/${A}\\..\\${B}\\key`, `secret:org//${B}/key`, `secret:org/${B}/key`]) {
-      await expect(resolve(ref, { orgId: A })).rejects.toMatchObject({ code: 'FORBIDDEN' });
+      await expect(resolve(ref, { organizationId: A })).rejects.toMatchObject({ code: 'FORBIDDEN' });
     }
-    await expect(resolve('env:bad-name', { orgId: A })).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    await expect(resolve('env:bad-name', { organizationId: A })).rejects.toMatchObject({ code: 'FORBIDDEN' });
     expect(asked).toEqual([]);
-    await expect(resolve(`secret:org/${A}/key`, { orgId: A })).resolves.toBe('byo');
+    await expect(resolve(`secret:org/${A}/key`, { organizationId: A })).resolves.toBe('byo');
     expect(asked).toEqual([`org/${A}/key`]);
-    await expect(resolve('env:GEMINI_API_KEY', { orgId: A })).resolves.toBe('platform');
+    await expect(resolve('env:GEMINI_API_KEY', { organizationId: A })).resolves.toBe('platform');
   });
 
   it('router setOrgConfig rejects traversal, encoded and cross-org refs', async () => {
     const s = await setup({ providers: {}, configs: [] });
     for (const ref of [`secret:org/${A}/../${B}/key`, `secret:org/${A}/%2e%2e/key`, `secret:org/${A}\\key`, `secret:org/${A}//key`, `secret:org/${B}/key`]) {
-      await expect(s.router.setOrgConfig({ tenantId: A, credentialRefs: { gemini: ref } }, admin(A))).rejects.toThrow();
+      await expect(s.router.setOrgConfig({ organizationId: A, credentialRefs: { gemini: ref } }, admin(A))).rejects.toThrow();
     }
-    expect(orgAIConfigSchema.safeParse({ tenantId: A, credentialRefs: { gemini: `secret:org/${A}/../${B}/k` } }).success).toBe(false);
-    await expect(s.router.setOrgConfig({ tenantId: A, credentialRefs: { gemini: `secret:org/${A}/gemini` } }, admin(A))).resolves.not.toThrow();
+    expect(orgAIConfigSchema.safeParse({ organizationId: A, credentialRefs: { gemini: `secret:org/${A}/../${B}/k` } }).success).toBe(false);
+    await expect(s.router.setOrgConfig({ organizationId: A, credentialRefs: { gemini: `secret:org/${A}/gemini` } }, admin(A))).resolves.not.toThrow();
     expect((await s.orgStore.get(A))?.credentialRefs).toEqual({ gemini: `secret:org/${A}/gemini` });
   });
 });

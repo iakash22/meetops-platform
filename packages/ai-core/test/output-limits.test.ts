@@ -69,8 +69,8 @@ describe('output token caps', () => {
     const seen: any[] = [];
     const reg = new ProviderRegistry({ fake: (_c, _k, o) => { seen.push(o?.outputLimits); return { kind: 'llm' } as any; } }, async () => 'k', new InMemoryAuditSink());
     await reg.register({ name: 'fake', type: 'llm', adapter: 'fake', model: 'm', enabled: true, cost: { tier: 'free' }, platformBilled: false, outputLimits: { defaultMaxTokens: 1000, perFeature: { summary: 1500 } } }, SYSTEM);
-    await reg.instantiate('fake', { orgId: ORG, feature: 'summary' });
-    await reg.instantiate('fake', { orgId: ORG });
+    await reg.instantiate('fake', { organizationId: ORG, feature: 'summary' });
+    await reg.instantiate('fake', { organizationId: ORG });
     expect(seen).toEqual([{ defaultMaxTokens: 1500, maxTokens: HARD_MAX_OUTPUT_TOKENS }, { defaultMaxTokens: 1000, maxTokens: HARD_MAX_OUTPUT_TOKENS }]);
   });
 });
