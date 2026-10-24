@@ -2,7 +2,7 @@
  * Job/router contracts come from @meetops/contracts (v0.2). Type-only imports: ai-core keeps no runtime dependency
  * on the TypeBox schemas; validation happens at the queue boundary (apps/worker).
  */
-import type { AiJobPayload, AiTaskKind, LlmProviderId, ModelRouteId, TranscriptionJobPayload } from '@meetops/contracts';
+import type { AiJobPayload, AiTaskKind, LlmProviderId, ModelRouteId, TranscriptionJobPayload } from '@meetops/contracts/types';
 import type { AIFeature, RequestOverride } from './router.js';
 
 export type {
@@ -14,7 +14,7 @@ export type {
   ModelRouteId,
   SttProviderId,
   TranscriptionJobPayload,
-} from '@meetops/contracts';
+} from '@meetops/contracts/types';
 
 const ROUTE_RE = /^(gemini|ollama|openai):([A-Za-z0-9._\-/]+)$/;
 
