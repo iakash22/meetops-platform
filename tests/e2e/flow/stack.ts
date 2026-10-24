@@ -27,6 +27,8 @@ export function flowSkipReason(): string | undefined {
   return undefined;
 }
 
+type RecordedMailer = { sent: { kind: string; to: string; token?: string }[] };
+
 type ApiApp = {
   listen(o: { port: number; host: string }): Promise<string>;
   close(): Promise<void>;
@@ -50,6 +52,7 @@ function listen(server: Server): Promise<number> {
 
 export class Stack {
   private api: ApiApp | undefined;
+  private mailer: RecordedMailer | undefined;
   private apiPort = 0;
   private proxy?: Server;
   origin = '';
@@ -99,11 +102,31 @@ export class Stack {
     process.env.WEB_ORIGINS = this.origin;
     process.env.LOG_LEVEL ??= 'silent';
     const mod = (await import(pathToFileURL(apiEntry!).href)) as {
-      createServer: (o?: { nodeEnv?: string }) => ApiApp;
+      createServer: (o?: { nodeEnv?: string; deps?: Record<string, unknown> }) => ApiApp;
     };
-    this.api = mod.createServer({ nodeEnv: 'test' });
+    if (!this.mailer) {
+      // D2 (PR #53): org create/invite need a verified email; record mail to read the token.
+      const { RecordingAuthMailer } = (await import(
+        pathToFileURL(join(apiDir!, 'dist', 'modules', 'auth', 'domain', 'mailer.js')).href
+      )) as { RecordingAuthMailer: new () => RecordedMailer };
+      this.mailer = new RecordingAuthMailer();
+    }
+    this.api = mod.createServer({ nodeEnv: 'test', deps: { mailer: this.mailer } });
     const address = await this.api.listen({ port: this.apiPort, host: '127.0.0.1' });
     this.apiPort = Number(new URL(address).port);
+  }
+
+  /** Latest email-verification token sent to `email` (waits briefly for async mail jobs). */
+  async verificationToken(email: string): Promise<string> {
+    const to = email.toLowerCase();
+    for (let i = 0; i < 50; i++) {
+      const token = [...(this.mailer?.sent ?? [])]
+        .reverse()
+        .find((m) => m.kind === 'verify' && m.to === to)?.token;
+      if (token) return token;
+      await new Promise((r) => setTimeout(r, 20));
+    }
+    throw new Error(`no verification email recorded for ${to}`);
   }
 
   /** Stop the API process-side; the proxy keeps serving the SPA and answers /api with 502. */

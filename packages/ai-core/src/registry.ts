@@ -10,9 +10,9 @@ import type { ResolveCredential } from './credentials.js';
 export type AdapterFactory = (cfg: ProviderConfig, apiKey: string | undefined, opts?: { outputLimits: OutputLimits }) => AnyProvider;
 
 /** Per-org credential override (BYO key), from org config. */
-export type OrgCredentialRefs = Record<string, string | undefined>;
+export type OrganizationCredentialRefs = Record<string, string | undefined>;
 
-/** Global (platform-level) registry of provider definitions. Tenant choices live in the router. */
+/** Global (platform-level) registry of provider definitions. Organization choices live in the router. */
 export class ProviderRegistry {
   private readonly configs = new Map<string, ProviderConfig>();
   constructor(
@@ -70,11 +70,11 @@ export class ProviderRegistry {
    * Build an adapter for this call. Credential precedence: org BYO ref (if set) ELSE platform ref (plan-gated by the
    * resolver). A failing BYO ref never falls back to the platform key.
    */
-  async instantiate<T extends AnyProvider = AnyProvider>(name: string, ctx: { organizationId: string; orgCredentialRefs?: OrgCredentialRefs | undefined; feature?: string | undefined }): Promise<T> {
+  async instantiate<T extends AnyProvider = AnyProvider>(name: string, ctx: { organizationId: string; organizationCredentialRefs?: OrganizationCredentialRefs | undefined; feature?: string | undefined }): Promise<T> {
     const c = this.configs.get(name);
     const av = this.availability(name);
     if (!c || !av.available) throw new AIError(c && !c.enabled ? 'PROVIDER_DISABLED' : 'PROVIDER_UNAVAILABLE', av.reason ?? 'unavailable', { provider: name, retryable: false });
-    const ref = ctx.orgCredentialRefs?.[name] ?? c.credentialRef;
+    const ref = ctx.organizationCredentialRefs?.[name] ?? c.credentialRef;
     const key = ref ? await this.resolveCredential(ref, { organizationId: ctx.organizationId }) : undefined;
     const factory = this.factories[c.adapter]!;
     return factory(c, key, { outputLimits: effectiveOutputLimits(c.outputLimits, ctx.feature) }) as T;

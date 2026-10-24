@@ -1,4 +1,5 @@
 import { Octokit } from '@octokit/rest';
+import { classifyOctokitError, withRetry, type RetryOptions } from './retry.js';
 import { guardedWrite, type ApprovalVerifier, type AuditSink, type CredentialResolver, type IntegrationContext, type WriteAttemptTracker } from './governance.js';
 import { IssueTrackerError, type WriteApproval, type CreateIssueInput, type HealthCheckResult, type Issue, type IssueStatus, type IssueTrackerProvider } from './types.js';
 
@@ -37,6 +38,8 @@ export interface GitHubIssuesOptions extends IntegrationContext {
   inProgressLabel?: string;
   /** Builds a client for a resolved token. Default: new Octokit({ auth: token }). Inject a mock in tests. */
   clientFactory?: (token: string) => GitHubIssuesClient;
+  /** Retry policy for API calls (429, rate-limited 403, 5xx, network). Other 4xx are never retried. */
+  retry?: RetryOptions;
 }
 
 export const DEFAULT_IN_PROGRESS_LABEL = 'status: in-progress';
@@ -96,7 +99,7 @@ export class GitHubIssuesProvider implements IssueTrackerProvider {
     if (input.labels?.length) params.labels = input.labels;
     if (input.assignees?.length) params.assignees = input.assignees;
     const client = await this.client();
-    const { data } = await this.wrap(() => client.rest.issues.create(params), tracker);
+    const { data } = await this.wrap(() => client.rest.issues.create(params), tracker, false);
     return this.toIssue(owner, repo, data);
   }
 
@@ -104,7 +107,7 @@ export class GitHubIssuesProvider implements IssueTrackerProvider {
     const ref = parseIssueKey(key, this.options.defaultRepo);
     try {
       const client = await this.client();
-      const { data } = await client.rest.issues.get(ref);
+      const { data } = await withRetry(() => client.rest.issues.get(ref), classifyOctokitError, this.options.retry);
       return this.toIssue(ref.owner, ref.repo, data);
     } catch (err) {
       if ((err as { status?: number }).status === 404) return null;
@@ -147,7 +150,8 @@ export class GitHubIssuesProvider implements IssueTrackerProvider {
     if (!this.options.defaultRepo) return { ok: true, provider: this.name, message: 'client configured (no default repo to probe)' };
     try {
       const client = await this.client();
-      await client.rest.repos.get(parseRepo(this.options.defaultRepo));
+      const repo = parseRepo(this.options.defaultRepo);
+      await withRetry(() => client.rest.repos.get(repo), classifyOctokitError, this.options.retry);
       return { ok: true, provider: this.name };
     } catch (err) {
       return { ok: false, provider: this.name, message: this.toError(err).message };
@@ -174,10 +178,17 @@ export class GitHubIssuesProvider implements IssueTrackerProvider {
   }
 
   /** tracker (writes only) counts each underlying API attempt for the audit attemptCount. */
-  private async wrap<T>(fn: () => Promise<T>, tracker?: WriteAttemptTracker): Promise<T> {
+  private async wrap<T>(fn: () => Promise<T>, tracker?: WriteAttemptTracker, idempotent = true): Promise<T> {
     try {
-      tracker?.attempt();
-      return await fn();
+      return await withRetry(
+        () => {
+          tracker?.attempt(); // counted per underlying attempt (incl. retries) for audit attemptCount
+          return fn();
+        },
+        classifyOctokitError,
+        // issues.create (POST) is not idempotent: no retry on network errors/5xx where it may have been applied.
+        { ...this.options.retry, idempotent: idempotent && (this.options.retry?.idempotent ?? true) }
+      );
     } catch (err) {
       throw this.toError(err);
     }
