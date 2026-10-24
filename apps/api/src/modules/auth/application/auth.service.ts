@@ -140,8 +140,12 @@ export class AuthService {
       const { lockedForMs, delayMs } = await this.d.lockout.recordFailure(email);
       const base = { actorId: user?.id ?? null, targetType: 'user' as const, targetId: user?.id ?? null };
       await this.audit({ ...base, action: 'auth.login.failure', metadata: { knownUser: !!user } }, meta);
-      // TODO(notifications #11): lockout notice email once a template exists; audited for now.
-      if (lockedForMs) await this.audit({ ...base, action: 'auth.lockout', metadata: { lockedForMs } }, meta);
+      if (lockedForMs) {
+        await this.audit({ ...base, action: 'auth.lockout', metadata: { lockedForMs } }, meta);
+        // Lockout notice (spec §5). Enqueued for unknown emails too (userId null, dropped by the
+        // worker) so the response path and timing are identical whether or not the account exists.
+        await this.d.mailQueue.enqueue({ kind: 'login_lockout', userId: user?.id ?? null });
+      }
       if (delayMs) await (this.d.sleep ?? realSleep)(delayMs);
       throw new InvalidCredentialsError();
     }

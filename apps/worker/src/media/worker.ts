@@ -5,7 +5,7 @@ import { chunkAudio, normalizeToWav, probeMedia } from '@meetops/media-core';
 import { createStorageServiceFromEnv, StorageAccessError, type MeetingObjectRef } from '@meetops/storage';
 import { QUEUE_NAMES, type SttProviderId } from '@meetops/contracts';
 import { logger as baseLogger } from '@meetops/logger';
-import { DEFAULT_MEDIA_LIMITS, processRecording, type MediaProcessorDeps } from './processor.js';
+import { DEFAULT_MEDIA_LIMITS, DEFAULT_WORK_TMP_BYTES, peakScratchBytes, processRecording, type MediaProcessorDeps } from './processor.js';
 import { createRealtimePublisher, createRedisEmitter } from './realtime.js';
 import { MEDIA_QUEUE, type MediaJobPayload, type MediaProcessingResult, type TranscriptionJobPayload } from './types.js';
 
@@ -50,6 +50,10 @@ export function loadMediaWorkerConfig(env: NodeJS.ProcessEnv = process.env): Med
     maxDurationSeconds: int('MEDIA_MAX_DURATION_SECONDS', DEFAULT_MEDIA_LIMITS.maxDurationSeconds, 1, 24 * 60 * 60)
   };
   if (env.MEDIA_TMP_DIR) cfg.tmpRoot = env.MEDIA_TMP_DIR;
+  // Fail fast if one job (x concurrency) could overflow the scratch tmpfs.
+  const tmpBytes = int('MEDIA_WORK_TMP_BYTES', DEFAULT_WORK_TMP_BYTES, 1, Number.MAX_SAFE_INTEGER);
+  const peak = peakScratchBytes({ maxSourceBytes: cfg.maxSourceBytes, maxDurationSeconds: cfg.maxDurationSeconds }) * cfg.concurrency;
+  if (peak > tmpBytes) throw new Error(`Media limits need ${peak} B scratch but MEDIA_WORK_TMP_BYTES is ${tmpBytes}`);
   return cfg;
 }
 

@@ -30,9 +30,9 @@ export const AcceptInvitationBody = Type.Object(
   { token: Type.String({ minLength: 32, maxLength: 512 }) },
   { additionalProperties: false }
 );
-export const IdParams = Type.Object({ id: Type.String({ format: 'uuid' }) });
+export const IdParams = Type.Object({ organizationId: Type.String({ format: 'uuid' }) });
 export const InvitationParams = Type.Object({
-  id: Type.String({ format: 'uuid' }),
+  organizationId: Type.String({ format: 'uuid' }),
   invitationId: Type.String({ format: 'uuid' })
 });
 
@@ -48,7 +48,9 @@ export const InvitationDto = Type.Object(
   { additionalProperties: false }
 );
 
-export const MemberParams = Type.Object({ id: Type.String({ format: 'uuid' }), userId: Type.String({ format: 'uuid' }) });
+export const MemberParams = Type.Object({
+  organizationId: Type.String({ format: 'uuid' }),
+  userId: Type.String({ format: 'uuid' }) });
 export const ChangeRoleBody = Type.Object({ role: Role }, { additionalProperties: false });
 export type MemberParamsT = Static<typeof MemberParams>;
 export type ChangeRoleBodyT = Static<typeof ChangeRoleBody>;
