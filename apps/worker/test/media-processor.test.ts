@@ -131,7 +131,7 @@ describe('processRecording (mocked storage, queue, emitter)', () => {
     expect(j1.chunkIndex).toBe(1);
     expect(j1.startMs).toBe(10000);
     expect(probeMock.mock.calls[0]![1]).toEqual({ format: 'matroska' });
-    expect(normMock.mock.calls[0]![2]).toEqual({ inputFormat: 'matroska', maxDurationSeconds: 14400, maxOutputBytes: 14400 * 32000 + 65536 });
+    expect(normMock.mock.calls[0]![2]).toEqual({ inputFormat: 'matroska', maxDurationSeconds: 14400, maxOutputBytes: 14400 * 32000 + 65536, maxInputBytes: 1_400_000_000 });
     expect(chunkFileObjectId(REC, 1)).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-5[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
     // RFC 4122 test vector: uuidv5(DNS namespace, 'www.example.com')
     expect(uuidV5('www.example.com', '6ba7b810-9dad-11d1-80b4-00c04fd430c8')).toBe('2ed6657d-e927-568b-95e1-2665a8aea6a2');
