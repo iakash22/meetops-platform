@@ -48,21 +48,40 @@ export const envSchema = z.object({
   SMTP_PASSWORD: z.string().default(''),
   EMAIL_FROM: z.string().default('noreply@example.com'),
 
-  // AI providers
+  // AI providers.
+  // @deprecated: packages/ai-core owns the AI_* and provider-toggle keys and reads them via
+  // `loadAIEnv` (aiEnvSchema). These copies are kept only so `AppConfig` keeps its shape for
+  // existing consumers; nothing reads them from AppConfig. Do not add new readers here. See
+  // docs/plans/zod4-migration.md (step 3).
+  /** @deprecated Read `AI_LLM_PROVIDER` from `loadAIEnv()` in `@meetops/ai-core`. */
   AI_LLM_PROVIDER: z.enum(['gemini']).default('gemini'),
+  /** @deprecated Read `GEMINI_MODEL` from `loadAIEnv()` in `@meetops/ai-core`. */
   GEMINI_MODEL: z.string().default('gemini-2.5-flash-lite'),
+  /** @deprecated Read `GEMINI_API_KEY` from `loadAIEnv()` in `@meetops/ai-core`. */
   GEMINI_API_KEY: z.string().default(''),
+  /** @deprecated Read `AI_STT_PROVIDER` from `loadAIEnv()` in `@meetops/ai-core`. */
   AI_STT_PROVIDER: z.enum(['assemblyai']).default('assemblyai'),
+  /** @deprecated Read `ASSEMBLYAI_API_KEY` from `loadAIEnv()` in `@meetops/ai-core`. */
   ASSEMBLYAI_API_KEY: z.string().default(''),
+  /** @deprecated Read `OLLAMA_ENABLED` from `loadAIEnv()` in `@meetops/ai-core`. */
   OLLAMA_ENABLED: boolEnv(false),
+  /** @deprecated Read `OLLAMA_BASE_URL` from `loadAIEnv()` in `@meetops/ai-core`. */
   OLLAMA_BASE_URL: z.string().default('http://localhost:11434'),
+  /** @deprecated Read `LOCAL_STT_ENABLED` from `loadAIEnv()` in `@meetops/ai-core`. */
   LOCAL_STT_ENABLED: boolEnv(false),
+  /** @deprecated Read `LOCAL_STT_URL` from `loadAIEnv()` in `@meetops/ai-core`. */
   LOCAL_STT_URL: z.string().default('http://localhost:8001'),
+  /** @deprecated Read `OPENAI_ENABLED` from `loadAIEnv()` in `@meetops/ai-core`. */
   OPENAI_ENABLED: boolEnv(false),
+  /** @deprecated Read `OPENAI_API_KEY` from `loadAIEnv()` in `@meetops/ai-core`. */
   OPENAI_API_KEY: z.string().default(''),
+  /** @deprecated Read `DEEPGRAM_ENABLED` from `loadAIEnv()` in `@meetops/ai-core`. */
   DEEPGRAM_ENABLED: boolEnv(false),
+  /** @deprecated Read `DEEPGRAM_API_KEY` from `loadAIEnv()` in `@meetops/ai-core`. */
   DEEPGRAM_API_KEY: z.string().default(''),
+  /** @deprecated Read `AI_ALLOW_PAID_FALLBACK` from `loadAIEnv()` in `@meetops/ai-core`. */
   AI_ALLOW_PAID_FALLBACK: boolEnv(false),
+  /** @deprecated Read `AI_REQUIRE_PROVIDER_APPROVAL` from `loadAIEnv()` in `@meetops/ai-core`. */
   AI_REQUIRE_PROVIDER_APPROVAL: boolEnv(true),
 });
 
