@@ -1,129 +1,69 @@
 # MeetOps AI — Agent Work Status and Pending Work
 
-> Snapshot: 2026-10-23 23:20 IST, from the coordinator's records and GitHub. **All work is STOPPED** (since 22:11 IST, a usage stop). Nothing below resumes until Akash restarts it in his own words. Read `docs/PROJECT_CONTEXT.md` first. No secrets.
+> Snapshot: 2026-10-24 ~15:10 IST, from the coordinator's records and live `gh pr list`. Work is running. **Priority (Akash, 14:27 IST): clear all open PRs before new work.** Read `docs/PROJECT_CONTEXT.md` first. No secrets.
 
-Key: **Arch** = Architecture PASS, **Sec** = Security PASS, both on the exact head SHA. Integration = `integration/phase-1` (head `bb9806a`).
+Key: **Arch** = Architecture PASS, **Sec** = Security PASS, both posted as PR comments on the exact head SHA. Integration = `integration/phase-1` (head `3dd2cda`). CI is replaced by local gates while GitHub Actions minutes are exhausted (Akash, 15:06 IST).
 
-## Summary
+## Summary (open PRs by agent, owner inferred from branch name)
 
-| Agent | Current situation | Open PRs | Pending count |
-|---|---|---|---|
-| Architecture | Reviewer, stopped mid-queue | none | review queue (see below) |
-| Security | Reviewer, stopped | none | review queue (see below) |
-| Backend | #53 waiting on reviews | #53 | 1 PR + deferred items |
-| Frontend | #48 merged; #61, #69 next | #61, #69 | 2 PRs |
-| AI | #21 and #47 pushed and green | #21, #47 | 2 PRs |
-| Integrations | Lockfile merges in progress at stop | #19, #36, #63, #67, #11 | 5 PRs |
-| DevOps | Chores green except audit gate | #7, #26, #32, #33, #34, #40 | 6 PRs |
-| QA | Both PRs green, waiting on reviews | #57, #68 | 2 PRs |
-| Documentation | All findings fixed, re-review pending | #28, #31, #56, #58, #62, #64, #66 | 7 PRs |
-| Native Apps | #55 and #60 merged | none | deferred LOW items |
-| Database | Stopped, no open PR | none | P1-DB-4 WIP (uncommitted, unpushed) |
-| Media/Realtime | Stopped, clone clean at aacc962 | none | none open |
+| Agent | Next-phase focus | Open PRs |
+|---|---|---|
+| Architecture | contracts v0.3.3, boundary lint (push OK pending Akash line in Architecture chat) | #104, #105 |
+| Security | reviews (Sec PASS on exact head SHA) | none |
+| Backend | contracts v0.3.3 error envelope, Redis lockout | #98, #103 |
+| Frontend | GitHub App / extension pairing UI (#84 merged) | none |
+| Database | tenant key migration (ADR-010), seeds, RLS isolation tests, AI usage tables | #81, #87, #89, #91, #93, #97, #100 |
+| DevOps | CI hardening, dependency upgrades, compose fixes | #7, #26, #32, #40, #95, #99, #101, #102 |
+| Media and Realtime | S3/MinIO uploads, organizations/{organizationId}/ keys, FFmpeg worker, realtime status | #77, #82, #85, #88, #90, #92, #94, #96 |
+| AI | transcription consumer and summaries (AssemblyAI default, Whisper option) | #75, #83 |
+| Integrations | GitHub App and pairing (#63, #67 merged) | none |
+| Native Apps | Expo mobile app (M1 scaffold); desktop Tauri later | #78 |
+| QA | QA hardening (#107 merged, supersedes #57) | #34 |
+| Documentation | docs refresh, runbooks | #31, #56, #80 |
+
+Full open-PR table with branches and titles: `docs/PROJECT_CONTEXT.md` section 6.
 
 ## Per agent
 
-### Architecture (reviewer)
-- Done today: PASS on #48 (merged), #60 (merged), #47 (at 689ea5a), and #53 (at 214e4df).
-- Pending reviews, in order:
-  1. #61, #69
-  2. The docs re-review: #28 f4a64be, #31 c62e828, #62 e63fd9e, #64 300a669, #66 02fa4d0, #58 5a0d041, and #56 after its board fix
-  3. The DevOps chores: #26 583aef2, #34 6694598, #32 0aac47e, #40 eadfc94
-  4. The #53 delta (214e4df to c23e7ca)
-  5. The #47 delta (689ea5a to 3fdeaca, the port fix)
-  6. #63, #67, #57, #68, #33, #7
-- Note: the box is overloaded (load around 160), so run gates sequentially.
+### Architecture (reviewer + contracts)
+- Open: #104 (contracts v0.3.3), #105 (boundary lint). Push OK needs Akash's own line in Architecture's own chat.
+- Reviews: Arch PASS comment on the exact head SHA for every open PR.
 
 ### Security (reviewer)
-- Done today: PASS on #48, #60, #47 (689ea5a), #63 (3c0e8ac), #67 (d1585bc), #64, #66 and the earlier DevOps heads.
-- Pending:
-  - #53, which has no Security verdict yet
-  - The docs re-review, with #62 the priority
-  - Rechecks of #32 (SHA pins) and #34
-  - #47 3fdeaca (the port fix)
-  - #57, #68, #61, #69
+- Sec PASS comment on the exact head SHA for every open PR; confirm the gitleaks exception is only `packages/ai-core/test/credential-ref.test.ts:26` (two fake values).
 
 ### Backend — `apps/api`
-- #53 (feat/api-persistence) is at head c23e7ca, with an integration merge and a 30s timeout added to the cold-import test. Arch PASS was at 214e4df, and the live Postgres and Redis run passed 8/8.
-- Pending:
-  - Arch delta check, Security verdict, green CI, then merge
-- Deferred, not started:
-  - Jira webhook freshness wiring (`requireTimestamp:true`)
-  - Binding OAuth state to the browser session
-  - Per-call scope check, loading connections by (orgId, integrationId)
-  - Refresh-family revocation on token reuse (ADR-005)
-  - Rename the `tenantId` key to `orgId` in stored AI configs, a data migration together with DB
+- Open: #98 (Redis lockout), #103 (v0.3.3 error envelope, depends on #104).
 
 ### Frontend — `apps/web`
-- #48 merged as ba37f12.
-- Pending:
-  - #61: retarget it to integration, merge integration in, get reviews, then merge.
-  - #69: same process (it was stacked on #48).
-- Deferred:
-  - Architecture's nits: TaskUpdateEvent copied by hand, duplicated UUID regex, a flaky tasks.test.tsx
-  - Tailwind 4 migration before 2026-11-20
-
-### AI — `packages/ai-core`
-- #21 is at 46db41a, with integration merged in and CI green. Its code is unchanged since the Arch and Sec passes at 8ba69b7.
-- #47 is at 3fdeaca and includes the SEC-BUG-1 fix (remote endpoints must use port 443). It's stacked on #21.
-- Pending:
-  - Verify and merge #21.
-  - Retarget #47, get both reviewers' delta check, then merge.
-- Deferred:
-  - Pin the local provider address to the IP it was checked against
-  - Restrict per-feature cap keys
-  - `executor.ts` auto-approving the default provider
-  - Extraction schema vs `ExtractedTask`
-  - Old v0.2 comments
-
-### Integrations — `packages/integrations`
-- Pending:
-  - #19: an integration merge was in progress at the stop. Then reviews, then merge.
-  - #36: stacked on #19. Retarget after #19 merges.
-  - #63: Sec PASS. Resolve the lockfile conflict, get Arch, merge **before** #67.
-  - #67: Sec PASS. Lockfile conflict; Arch needed.
-  - #11: check whether it's superseded and close it if so.
-- Deferred: dedupe webhook keys on `integrationId:deliveryId`.
-
-### DevOps — infra, workflows, scripts
-- Heads:
-  - #26 583aef2: Sec PASS, needs Arch.
-  - #32 0aac47e: needs a Security recheck of the SHA pins, plus Arch.
-  - #34 6694598: needs a Security recheck plus Arch.
-  - #40 eadfc94: merge only after #7.
-- Blocked:
-  - #33: the audit gate is failing, and DevOps is fixing it.
-  - #7: the audit gate is failing, and it needs #33 first.
-- Environment: the box has no Docker, which blocks the live #7 test. Don't install Docker without asking the coordinator.
-- Order: #26, then #34 and #32, then #33, #7, #40.
-- Deferred:
-  - Keep localhost out of the production redirect allowlist
-  - KMS-backed key provider
-  - CI check that WXT_WEB_ORIGIN is set
-
-### QA — `tests/`
-- #57 1e98b8a and #68 d395f8d: CI green, waiting on Arch and Sec.
-- Confirmed: the apps/api test timeouts come from box load, not code (they pass in about a second on integration CI).
-
-### Documentation — `docs/`
-- All Arch and Sec findings are fixed and CI is green on all seven PRs. Waiting on re-review.
-- #56 also needs one board fix: mark #6 and #25 closed, and #35, #48 and #60 merged.
-- Merge order: #28, #31, #56, and #62, #64, #66. #58 merges with or after #21.
-- Flagged gap: some ADR-005 MUSTs aren't in merged code yet (refresh-family revocation).
-
-### Native Apps — `apps/extension`, `apps/desktop`, mobile app
-- #55 and #60 are merged (extension).
-- Desktop app and mobile app (iOS/Android): planned for Phase 8 (offline recording). No code yet, and the frameworks are not decided.
-- Deferred, LOW: `validateOrigin` should reject `*` and private or loopback hosts in production builds. Pin the production host once the domain is final.
+- No open PR. #69, #72, #76, #84 merged.
 
 ### Database — `packages/database`
-- No open PR. P1-DB-4 work in progress is local only (uncommitted and unpushed). Resume only after Akash restarts work.
+- Open: #81 (ADR-010), #87, #89, #91, #93, #97, #100. Tenant key migration: `org/` → `organizations/{organizationId}/`; dev wipe/reseed, staging copy, keep reading `org/` keys until the copy is verified (approved by Akash).
 
-### Media/Realtime — `apps/realtime`, `packages/media-core`
-- No open PR. Its clone is clean at aacc962.
+### DevOps
+- Open: #7, #26, #32, #40, #95, #99, #101, #102. Actions minutes exhausted: run local gates. Docker isn't running on Akash's PC.
+
+### Media and Realtime
+- Open: #77, #82, #85, #88, #90, #92, #94 (stacked chain starting at #77), #96 (storage key migration runbook).
+
+### AI — `packages/ai-core`
+- Open: #75, #83. AssemblyAI default, Whisper option, no Deepgram; live streaming and embeddings deferred. #21, #47 merged.
+
+### Integrations
+- No open PR. #19, #63, #67 merged; #36 closed.
+
+### Native Apps
+- Open: #78 (Expo M1 scaffold). Desktop: Tauri (Phase 8). Mobile: React Native + Expo.
+
+### QA
+- Open: #34. #107 merged (absorbs #57's E2E flow tests); #57 closed (approved).
+
+### Documentation
+- Open: #31, #56, #80. #58, #62, #64 closed.
 
 ## Blocked on Akash
-- Restarting work after the usage stop.
-- Merging #30 (integration into main), plus #70 (these handoff docs).
-- Choosing the desktop and mobile app frameworks (Phase 8).
-- Confirming Docker Desktop is running on his PC for the local dev stack.
+- Architecture push OK for contracts v0.3.3 and boundary lint (in Architecture's own chat).
+- Optional GitHub token rotation.
+- Merges into `main` (#30 was merged 2026-10-24 13:48 IST; the next integration → main PR waits for Akash).
+- Closure approval for any open PR that won't be merged.

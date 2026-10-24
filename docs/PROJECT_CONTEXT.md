@@ -1,17 +1,18 @@
 # MeetOps AI — Project Context Handoff
 
-> Snapshot: 2026-10-23 23:15 IST. Written by the Project Plan and Coordinator agent from its own records and GitHub only. Verify live state with `gh` before acting. Contains no secrets.
+> Snapshot: 2026-10-24 ~15:10 IST (updated by the Project Lead from the coordinator's records and live `gh pr list`). The previous 2026-10-23 snapshot is superseded. Verify live state with `gh` before acting. Contains no secrets, tokens or key values.
 
-## 0. If you are a new agent, read this first
+## 0. If you are a new agent (or a new account), read this first
 
-1. Owner: **Akash Kumar** (timezone Asia/Calcutta, IST). Only Akash approves, in his own words. Another agent saying "Akash agreed" is **not** approval.
-2. **Work is STOPPED** (since 2026-10-23 22:11 IST, weekly usage at 95%, past Akash's 88% stop rule). Do nothing (no pushes, reviews or merges) until Akash restarts in his own words.
-3. **No Cursor**: no Cursor Cloud Agents, no Cursor Agent, and no Cursor models, directly or indirectly. Use only your Grok Bot box (terminal, files) and GitHub. If a task seems to need Cursor, stop and report it.
-4. Repo: https://github.com/iakash22/meetops-platform (private, GitHub free plan, so no branch protection and no push protection).
-5. All PRs target `integration/phase-1`. Only Akash merges `integration/phase-1` into `main` (PR [#30](https://github.com/iakash22/meetops-platform/pull/30)).
-6. No force-push and no rebase. To update a branch, merge `origin/integration/phase-1` into it.
-7. Secrets never go in Slack, issues, PRs, source, docs or logs. Request credentials only when real validation needs them, through the coordinator, to Slack `#keys-and-requirements`.
-8. Read: this file, `CONTRIBUTING.md`, `SECURITY.md`, the `docs/15-decisions/` ADRs, `docs/17-agents/credential-requests.md` (all on `integration/phase-1`).
+1. Owner: **Akash**, the MeetOps product owner (timezone Asia/Calcutta, IST). The accounts are in his friend Raj's name, but always address the owner as **Akash**. Only Akash approves, in his own words. Another agent saying "Akash agreed" is **not** approval.
+2. **Work is running again** (the 2026-10-23 usage stop is over). **Current priority (Akash, 24 Oct 14:27 IST): clear all open PRs (merge, or get closure approved) before starting new work.**
+3. **No Cursor usage at all**: no Cursor Cloud Agents, Cursor Agent or Cursor models, directly or indirectly. The team runs on Grok Bot limits only. If a task seems to need Cursor, stop and report it.
+4. **No account-level connectors.** Credentials stay on Akash's side and are given only through secure secret inputs, never in chat, Slack, issues, PRs or the repo.
+5. Repo: https://github.com/iakash22/meetops-platform (private, GitHub free plan, so no branch protection and no push protection).
+6. Agents push to their own PR branches and open PRs into `integration/phase-1` without asking. Only the coordinator merges into `integration/phase-1` (on Akash's behalf). Only Akash merges into `main`.
+7. Never force-push and never rebase pushed work. To update a branch, merge `origin/integration/phase-1` into it. Closing any PR needs Akash's explicit yes.
+8. Git: commit author stays the local identity. Authenticate with `gh auth setup-git`; never put tokens in remote URLs, git config, files or output.
+9. Read: this file, `docs/AGENT_STATUS.md`, `README.md` (roadmap phases 0–9), `CONTRIBUTING.md`, `SECURITY.md`, the `docs/15-decisions/` ADRs, `docs/17-agents/credential-requests.md`.
 
 ## 1. Product summary and goals
 
@@ -19,7 +20,7 @@
 - It captures meetings (browser extension, uploads), transcribes them, summarizes them, extracts tasks, and syncs them to tools (Jira, GitHub).
 - It's multi-tenant by organization, with strict tenant isolation (Postgres RLS).
 - Dev-stack goal: zero paid services. Free and local first, with switchable providers.
-- Phase 0: foundation (on `main`). Phase 1: core product (on `integration/phase-1`, PR #30).
+- Phase 0: foundation, **done**. Phase 1 (auth, orgs, employees, teams, projects, RBAC): **nearly done**; PR #30 (integration → main) was merged by Akash on 2026-10-24 13:48 IST. Next-phase work has started per agent (see section 6).
 
 ## 2. Monorepo layout and tech stack
 
@@ -29,8 +30,8 @@
 - `apps/worker`: BullMQ workers (media pipeline, AI jobs).
 - `apps/realtime`: realtime events.
 - `apps/extension`: WXT MV3 browser extension (pairing per ADR-005). **Built.**
-- `apps/desktop`: desktop app (offline recording). **Planned, Phase 8, no code yet.** Framework not decided (Akash to choose, e.g. Electron or Tauri).
-- Mobile app (iOS/Android, offline recording): **Planned, Phase 8, no code or folder yet.** Framework not decided (Akash to choose, e.g. React Native/Expo).
+- `apps/desktop`: desktop app (offline recording). **Decided: Tauri.** Phase 8, no code yet.
+- Mobile app (iOS/Android, offline recording): **Decided: React Native with Expo** (Phase 8). M1 Expo scaffold is open in PR #78.
 
 Client apps at a glance: Web (built), Browser extension (built), Desktop (planned), Mobile (planned). Roadmap phases 0 to 9 are in `README.md` on `integration/phase-1`.
 
@@ -56,13 +57,15 @@ ADRs (in `docs/15-decisions/` on `integration/phase-1`):
 Decisions:
 - **AI**: switchable AI Provider Registry and Model Router.
   - LLM: Gemini (primary, `gemini-2.5-flash-lite`, free tier), OpenAI, Ollama, OpenAI-compatible.
-  - STT: AssemblyAI (primary), faster-whisper (local), Deepgram.
+  - STT: **AssemblyAI is the default for background transcription**, with a Whisper (faster-whisper, local) option. **No Deepgram.** Live streaming transcription and embeddings are deferred.
   - **Never fall back automatically to a paid provider.** No arbitrary user-supplied endpoints (SSRF guard; remote endpoints must use port 443).
 - **Storage**: MinIO in dev, R2 or S3 in production. Postgres stores file metadata only.
 - **Email**: Gmail SMTP via Nodemailer (`smtp.gmail.com:465`), behind an EmailService adapter, with a BullMQ email queue. No paid email in dev.
 - **Frontend**: stay on Tailwind 3 under a `braces@3.0.3` risk exception, up for review 2026-11-20. Frontend owns the Tailwind 4 migration before then.
 - Dependabot and the dependency graph are on.
 - No covert recording, and no bypassing platform permissions.
+- **Storage keys (ADR-010, approved by Akash)**: object keys move from `org/` to `organizations/{organizationId}/`. Plan: dev wipe and reseed, a staging copy, and reads of old `org/` keys kept until the copy is verified. `organizationId` is the canonical tenant key.
+- PR housekeeping (approved): #57's E2E flow tests moved to `test/qa-hardening-1` (#107, merged) and #57 is closed. #33 is closed (approved); #36, #58, #62 and #64 are closed.
 
 ## 4. Contracts and conventions
 
@@ -72,108 +75,107 @@ Decisions:
 - Commits: small, step-by-step, conventional commits (commitlint is proposed in #26).
 - Before every PR: build, lint, typecheck, test, and gitleaks.
 - **Merge gate**, all required:
-  1. Green CI. Use `gh run list` / `gh run view`, because the token returns 403 on the checks API.
-  2. A PASS from the Architecture agent on the exact head SHA.
-  3. A PASS from the Security agent on the exact head SHA.
-  4. The coordinator's local `gitleaks git --redact --log-opts="origin/integration/phase-1..<head>"`.
-  5. Merge with `gh pr merge N --merge --match-head-commit <sha>`.
-  6. Add a row to #30's body: `| - [x] #N | title (sha, date) | link |`.
+  1. Green CI. **TEMPORARY**: the repo is out of free GitHub Actions minutes, so local gates (build, lint, typecheck, tests and the secrets scan) replace green CI until the minutes are back (Akash confirmed 24 Oct 15:06 IST). Use `gh run list` / `gh run view` when CI runs again (the token can't read the checks API).
+  2. Architecture PASS posted as a PR comment on the exact head SHA.
+  3. Security PASS posted as a PR comment on the exact head SHA.
+  4. A clean gitleaks scan, e.g. `gitleaks git --redact --log-opts="origin/integration/phase-1..<head>"`. The only allowed exception is the two fake values in `packages/ai-core/test/credential-ref.test.ts:26`.
+  5. Merge (coordinator only) with `gh pr merge N --merge --match-head-commit <sha>`.
 - If only `pnpm-lock.yaml` has changed since the approved head, no re-review is needed.
 - Stacked PRs: retarget them to `integration/phase-1` once their parent merges.
 
 ## 5. Team roster
 
-The coordinator ("Project Plan and Coordinator") reports to **Project Lead**, who posts to Slack (#project-updates, #commits-and-branches, #agent-<name>, #keys-and-requirements). All agents report to the coordinator. Status as of the stop:
+- **Project Lead** and **Project Plan and Coordinator** (coordinator merges into integration on Akash's behalf).
+- Agents: Architecture, Security, Backend, Frontend, Database, DevOps, Media and Realtime, AI, Integrations, Native Apps, QA, Documentation.
+- All agents report to the coordinator; Project Lead reports to Akash. Per-agent status is in `docs/AGENT_STATUS.md`.
 
-| Agent | Owns | Status / open PRs |
-|---|---|---|
-| Architecture | system design, monorepo, ADRs, reviews | reviewer; queue: #61, #69, docs, DevOps, #53 delta |
-| Database | `packages/database` | stopped, no open PR (P1-DB-4 WIP uncommitted, not pushed) |
-| Backend | `apps/api` | #53 |
-| Frontend | `apps/web` | #61, #69 (#48 merged) |
-| AI | `packages/ai-core` | #21, #47 |
-| Media/Realtime | `apps/realtime`, `packages/media-core` | stopped, no open PR, clone clean at aacc962 |
-| Integrations | `packages/integrations` | #19, #36, #63, #67, #11 |
-| Security | threat model, auth, tenancy, reviews | reviewer |
-| DevOps | `infra/`, `.github/workflows`, scripts | #7, #26, #32, #33, #34, #40 |
-| QA | `tests/` | #57, #68 |
-| Documentation | `docs/`, READMEs | #28, #31, #56, #58, #62, #64, #66 |
-| Native Apps | `apps/extension`, `apps/desktop`, mobile app | no open PR (#55, #60 merged) |
+| Agent | Owns |
+|---|---|
+| Architecture | system design, monorepo, contracts, ADRs, boundary lint, reviews |
+| Security | threat model, auth, tenancy, reviews |
+| Backend | `apps/api` |
+| Frontend | `apps/web` |
+| Database | `packages/database` |
+| DevOps | `infra/`, `.github/workflows`, scripts, deps |
+| Media and Realtime | `apps/realtime`, `packages/media-core`, `packages/storage`, FFmpeg worker |
+| AI | `packages/ai-core`, AI worker jobs |
+| Integrations | `packages/integrations` (GitHub App, Jira) |
+| Native Apps | `apps/extension`, `apps/desktop` (Tauri), mobile (Expo) |
+| QA | tests and test suites |
+| Documentation | `docs/`, READMEs |
 
 ## 6. Phase status
 
-`integration/phase-1` head: `bb9806a`.
+Roadmap (`README.md`): 0 foundation · 1 auth/orgs/employees/teams/projects/RBAC · 2 meetings, uploads, recording, FFmpeg · 3 transcription, reports, task drafts · 4 task review/notifications · 5 GitHub/Jira two-way sync · 6 live transcription + extension · 7 calendar/imports/search/analytics · 8 desktop + mobile offline recording · 9 production hardening, billing, release.
 
-Merged into integration:
-- #4, #13, #17, #18, #22, #23, #24 (Phase 0/1 foundation)
-- #27 auth and orgs API, #38 contracts v0.2, #50 contracts v0.3, #59 v0.3.1, #65 display-text hardening (v0.3.2)
-- #35 database (supersedes #6 and #25, both closed), #39 media pipeline worker, #52 extension, #55 extension pending-discard
-- #9, #29, #51 QA suites
-- #48 web auth, meetings, task filters, org switcher (`ba37f12`)
-- #60 extension ADR-005 pairing (`bb9806a`)
+- **Phase 0: done.**
+- **Phase 1: nearly done.** `integration/phase-1` head `3dd2cda` (2026-10-24 15:08 IST). #30 merged to `main` by Akash at 13:48 IST; later integration work reaches `main` only through a new PR that Akash merges.
+- **Next-phase work started per agent**: tenant key migration (Database, Media), S3/MinIO uploads and FFmpeg worker (Media), Expo app (Native Apps), GitHub App and pairing (Integrations/Frontend), CI hardening (DevOps), contracts v0.3.3 and boundary lint (Architecture, Backend), transcription and summaries (AI).
 
-Open PRs (base, then state):
+### Open PRs (live, 2026-10-24 ~15:10 IST; owner inferred from branch name)
 
-| PR | Branch → base | State / blocker |
-|---|---|---|
-| [#30](https://github.com/iakash22/meetops-platform/pull/30) | integration/phase-1 → main | **Akash merges only** |
-| #21 | feat/ai-provider-registry → integration | head 46db41a; Arch + Sec passed code at 8ba69b7 (since then only lockfile/integration merges); ready to verify and merge |
-| #47 | feat/ai-transcription-summaries → #21 | head 3fdeaca adds SEC-BUG-1 port fix; Arch + Sec passed 689ea5a; needs a re-check of 3fdeaca; merge after #21 and retarget |
-| #53 | feat/api-persistence → integration | Arch passed 214e4df; head c23e7ca (integration merge + test timeout); needs Arch delta check + a Security verdict |
-| #61 | fix/web-realtime-iso-at → integration | needs integration merge + reviews |
-| #69 | feat/web-org-contracts-pairing → integration | stacked on #48 (merged); needs integration merge + reviews |
-| #63 | feat/integrations-webhook-hardening | Sec PASS 3c0e8ac; lockfile conflict; needs Arch; merge before #67 |
-| #67 | feat/integrations-oauth-pkce | Sec PASS d1585bc; lockfile conflict; needs Arch |
-| #19 | feat/integrations-webhooks-jira | integration merge in progress at stop; then #36 (stacked) |
-| #36 | → #19 | retarget after #19 |
-| #11 | feat/notifications-email | close if superseded (check) |
-| #57 | test/web-e2e-flow | CI green 1e98b8a; needs reviews |
-| #68 | test/security-hardening | CI green d395f8d; needs reviews |
-| #26 | chore/commitlint | Sec PASS 583aef2; needs Arch |
-| #32 | chore/windows-node24-setup | head 0aac47e; needs Sec recheck of SHA pins + Arch |
-| #34 | ci/qa-jobs | head 6694598; needs Sec recheck + Arch |
-| #33 | chore/audit-cleanup | audit gate failing; DevOps fixing; must merge before #7 |
-| #7 | chore/devops-containers-ci | audit gate failing; needs #33 |
-| #40 | chore/fast-pre-commit | head eadfc94; Sec passed conditionally; merge after #7 |
-| #28 | docs/windows-local-setup | head f4a64be; fixes done; re-review pending |
-| #31 | → #28 | head c62e828; re-review pending |
-| #56 | → #31 | head 504510f + board-row fix requested; re-review pending |
-| #58 | docs/ai-folder-canonical | head 5a0d041; merge with or after #21 (else redirect loop) |
-| #62 | docs/merged-db-media | head e63fd9e; re-review pending |
-| #64 | → #62 | head 300a669; Sec PASS on prior head |
-| #66 | → #64 | head 02fa4d0; Sec PASS on prior head |
+| Agent (from branch) | PR | Branch → base | Title |
+|---|---|---|---|
+| AI | [#75](https://github.com/iakash22/meetops-platform/pull/75) | `refactor/ai-core-org-naming` → `integration/phase-1` | refactor(ai-core): finish organization naming |
+| AI | [#83](https://github.com/iakash22/meetops-platform/pull/83) | `feat/ai-worker-transcription` → `integration/phase-1` | feat(worker): AI transcription consumer |
+| Architecture | [#104](https://github.com/iakash22/meetops-platform/pull/104) | `feat/contracts-cursor-page-conflicts` → `integration/phase-1` | feat(contracts): v0.3.3 conflict reasons, page limits, /types default condition |
+| Architecture | [#105](https://github.com/iakash22/meetops-platform/pull/105) | `chore/boundary-lint` → `integration/phase-1` | chore(lint): enforce module boundary imports |
+| Backend | [#98](https://github.com/iakash22/meetops-platform/pull/98) | `fix/api-lockout-redis` → `integration/phase-1` | fix(api): atomic redis lockout counters, Redis lockout wiring, lockout notice email |
+| Backend | [#103](https://github.com/iakash22/meetops-platform/pull/103) | `fix/api-error-envelope` → `integration/phase-1` | fix(api): contracts v0.3.3 error envelope (reason, LAST_OWNER 409, organizationId params) |
+| Database | [#81](https://github.com/iakash22/meetops-platform/pull/81) | `feat/db-adr-organization-id` → `integration/phase-1` | docs(adr): ADR-010 organizationId as canonical tenant key (Proposed) |
+| Database | [#87](https://github.com/iakash22/meetops-platform/pull/87) | `feat/db-storage-organization-keys` → `integration/phase-1` | feat(storage): organizationPrefix/organizationId refs, key format unchanged (ADR-010) |
+| Database | [#89](https://github.com/iakash22/meetops-platform/pull/89) | `feat/db-tenant-isolation-tests` → `integration/phase-1` | test(database): per-table cross-organization RLS isolation (ADR-010) |
+| Database | [#91](https://github.com/iakash22/meetops-platform/pull/91) | `feat/db-seeds-organizations` → `integration/phase-1` | feat(database): multi-organization seed (ADR-010) |
+| Database | [#93](https://github.com/iakash22/meetops-platform/pull/93) | `feat/db-ai-usage-transcripts` → `integration/phase-1` | feat(database): AI usage counters, idempotency, org config and transcript chunks with RLS |
+| Database | [#97](https://github.com/iakash22/meetops-platform/pull/97) | `feat/db-recording-chunks` → `integration/phase-1` | feat(database): recordings.chunk_count, chunk FileObject repository + lookup for Media #92 |
+| Database | [#100](https://github.com/iakash22/meetops-platform/pull/100) | `feat/db-key-prefix-transition` → `integration/phase-1` | feat(database): accept org/ and organizations/ storage key prefixes (ADR-010 phase A) |
+| DevOps | [#7](https://github.com/iakash22/meetops-platform/pull/7) | `chore/devops-containers-ci` → `integration/phase-1` | chore(devops): Dockerfiles, compose.app, docker CI, audit, dependabot, CODEOWNERS |
+| DevOps | [#26](https://github.com/iakash22/meetops-platform/pull/26) | `chore/commitlint` → `integration/phase-1` | chore: add commitlint commit-msg hook |
+| DevOps | [#32](https://github.com/iakash22/meetops-platform/pull/32) | `chore/windows-node24-setup` → `integration/phase-1` | chore: Windows and Node 24 dev setup |
+| DevOps | [#40](https://github.com/iakash22/meetops-platform/pull/40) | `chore/fast-pre-commit` → `integration/phase-1` | chore(hooks): fast pre-commit, type-aware checks on pre-push |
+| DevOps | [#95](https://github.com/iakash22/meetops-platform/pull/95) | `fix/compose-dev-minio` → `integration/phase-1` | fix(compose): replace unpullable minio/minio and minio/mc images |
+| DevOps | [#99](https://github.com/iakash22/meetops-platform/pull/99) | `chore/nodemailer-10` → `integration/phase-1` | chore(deps): nodemailer 10.2.1 (high-severity advisories) |
+| DevOps | [#101](https://github.com/iakash22/meetops-platform/pull/101) | `chore/testcontainers-11` → `integration/phase-1` | chore(deps): testcontainers 11 (undici / @fastify/busboy high advisories) |
+| DevOps | [#102](https://github.com/iakash22/meetops-platform/pull/102) | `chore/vitest-4-upgrade` → `integration/phase-1` | chore(deps): vitest 4.1.12 + web vite 7 (GHSA-82fw-gwwq-j7x9, vite advisories) |
+| Documentation | [#31](https://github.com/iakash22/meetops-platform/pull/31) | `docs/refresh-heads` → `integration/phase-1` | docs: refresh DB/ops pages, auth and orgs API, integration merge flow (P1-DOC-8) |
+| Documentation | [#56](https://github.com/iakash22/meetops-platform/pull/56) | `docs/merged-phase1` → `docs/refresh-heads` | docs: auth, contracts v0.2 and extension pages for merged Phase 1 PRs; board refresh |
+| Documentation | [#80](https://github.com/iakash22/meetops-platform/pull/80) | `docs/zod4-migration-plan` → `integration/phase-1` | docs: zod 4 migration plan |
+| Media and Realtime | [#77](https://github.com/iakash22/meetops-platform/pull/77) | `feat/media-security-followups` → `integration/phase-1` | feat(media): security follow-ups — 1.4 GB cap, required sha256, single-use presigned uploads |
+| Media and Realtime | [#82](https://github.com/iakash22/meetops-platform/pull/82) | `feat/media-organization-keys` → `integration/phase-1` | feat(storage)!: organizations/{organizationId}/ object keys (stacked on #77) |
+| Media and Realtime | [#85](https://github.com/iakash22/meetops-platform/pull/85) | `feat/media-upload-verify` → `integration/phase-1` | feat(storage): idempotent verify-on-complete {verified:true, sha256} (stacked on #82) |
+| Media and Realtime | [#88](https://github.com/iakash22/meetops-platform/pull/88) | `feat/media-ffmpeg-worker` → `integration/phase-1` | feat(media): waveform artifact for the STT normalisation pipeline (stacked on #82) |
+| Media and Realtime | [#90](https://github.com/iakash22/meetops-platform/pull/90) | `feat/media-realtime-status` → `integration/phase-1` | feat(realtime): organizations:{organizationId} rooms and typed upload/processing status events (stacked on #88) |
+| Media and Realtime | [#92](https://github.com/iakash22/meetops-platform/pull/92) | `feat/media-audio-resolver` → `integration/phase-1` | feat(media): organization-scoped chunk audio resolver + chunk-count port (stacked on #82) |
+| Media and Realtime | [#94](https://github.com/iakash22/meetops-platform/pull/94) | `fix/storage-checksum-hex` → `integration/phase-1` | fix(storage)!: checksumSha256 as lowercase hex at the S3 boundary (stacked on #85) |
+| Media and Realtime | [#96](https://github.com/iakash22/meetops-platform/pull/96) | `docs/storage-key-migration-runbook` → `integration/phase-1` | docs(runbooks): storage key migration (dev wipe/reseed + staging copy) |
+| Native Apps | [#78](https://github.com/iakash22/meetops-platform/pull/78) | `feat/mobile-scaffold` → `integration/phase-1` | feat(mobile): M1 Expo app scaffold (expo-router, strict TS, jest-expo) |
+| QA | [#34](https://github.com/iakash22/meetops-platform/pull/34) | `ci/qa-jobs` → `integration/phase-1` | ci: add QA integration (required) and e2e (informational) jobs |
 
-Docs merge order: #28 → #31 → #56 and #62 → #64 → #66.
+### Merged and closed (all time)
+
+Merged: #1, #2, #3, #4, #8, #9, #10, #11, #12, #13, #14, #16, #17, #18, #19, #21, #22, #23, #24, #27, #28, #29, #30, #35, #38, #39, #47, #48, #49, #50, #51, #52, #53, #55, #59, #60, #61, #63, #65, #66, #67, #68, #69, #70, #71, #72, #73, #74, #76, #79, #84, #86, #106, #107, #108
+
+Closed (not merged): #5, #6, #15, #20, #25, #33, #36, #37, #41, #42, #43, #44, #45, #46, #57, #58, #62, #64
 
 ## 7. Open decisions and environment blockers
 
 Waiting on Akash:
-- Restarting work after the usage stop.
-- Merging #30 into main.
-- Choosing the desktop and mobile app frameworks (Phase 8).
+- The Architecture push OK for contracts v0.3.3 and boundary lint (#104, #105) needs Akash's own line in Architecture's own chat.
+- Optional: rotate the GitHub token.
+- `main` merges (Akash only).
+- Closure approval for any open PR that won't be merged.
 
 Environment:
-- Docker Desktop on Akash's Windows PC: needed for the local dev stack, so confirm it's running.
-- The Grok Bot box has no Docker or Docker socket right now, which blocks live container tests (#7). The box is under heavy load and installs get OOM-killed, so run gates sequentially (`--concurrency=1`).
-- Re-apply inotify limits after a box restart (524288 watches, 512 instances).
+- Docker isn't running on Akash's PC.
+- GitHub Actions free minutes are exhausted: local gates replace CI (section 4) until they return.
+- The Grok Bot box has no Docker; run heavy gates sequentially (`--concurrency=1`).
 
-Deferred follow-ups (not started):
-- Extension `validateOrigin` should reject `*` and private/loopback hosts in prod.
-- Backend: Jira webhook freshness wiring, binding OAuth state to the session, per-call scope check, refresh-family revocation on reuse.
-- AI: `executor.ts` auto-approve of the default provider, and the extraction schema vs `ExtractedTask`.
-- Allow U+FE0F in display names.
+## 8. Next steps (priority order)
 
-## 8. Next steps (priority order, after restart)
-
-1. Merge #21, then #47 (retarget), then #58.
-2. Frontend: #61, #69.
-3. Integrations: #19, #36; #63, #67; decide on #11.
-4. Backend #53 once the Security verdict is in.
-5. QA #57, #68.
-6. DevOps: #26, #34, #32, then #33, #7, #40.
-7. Docs stacks.
-8. Once all are merged or closed, Akash reviews and merges #30 into main.
-9. Then the deferred follow-ups in section 7, and Phase 1 remaining work (for example P1-DB-4), assigned by the coordinator.
+1. Clear all open PRs (section 6): reviews (Arch + Sec on exact head SHA), local gates, gitleaks, coordinator merges; stacked PRs retarget after their parent merges.
+2. Get Akash's yes for any PR to close instead of merge.
+3. Akash merges integration into `main` via a new PR.
+4. Then continue next-phase work per agent.
 
 ## 9. Setup and run
 
@@ -190,3 +192,12 @@ pnpm dev
 
 - Windows: Akash's clone is `E:\Project\meetops-platform`. See the Windows setup guide in #28 once it merges.
 - Env var reference: `docs/00-getting-started/environment-variables.md`.
+
+## 10. How to resume on a new account
+
+1. Read `docs/PROJECT_CONTEXT.md` (this file), `docs/AGENT_STATUS.md` and `README.md` (roadmap phases 0–9).
+2. Authenticate with the token Akash provides through a secure secret input (env var `GH_TOKEN`), then run `gh auth setup-git`. Never paste tokens into chat, URLs, git config or files.
+3. Get live PR state: `gh pr list --state all --limit 150 --json number,title,state,headRefName,baseRefName,author,isDraft` (don't request check fields; the token can't read them). Match open PRs to owners using the table in section 6.
+4. Review and merge flow: agent pushes to its own branch and opens a PR into `integration/phase-1` → Architecture PASS and Security PASS comments on the exact head SHA → local gates (build, lint, typecheck, tests, secrets scan) while Actions minutes are out → clean gitleaks → coordinator runs `gh pr merge N --merge --match-head-commit <sha>`. Only Akash merges into `main`.
+5. Secrets: all credentials come from Akash via secure secret inputs only. Never commit them, never put them in Slack, chat, PRs or docs. `.env` stays local (`cp .env.example .env`).
+6. Rules recap: no Cursor; no account-level connectors; no force-push or rebase of pushed work; closing a PR needs Akash's explicit yes.
