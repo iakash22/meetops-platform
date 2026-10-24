@@ -1,33 +1,53 @@
 # Auth, organizations and users API (P1-BE)
 
-Source: `apps/api` on `integration/phase-1`, as merged by PR #27 (head `ec3cdfa`, merged 2026-10-22 00:07 IST). Contracts come from `@meetops/contracts` (0.3.2 on `integration/phase-1`). It reaches `main` with the integration PR (#30). See also `apps/api/README.md`.
+Source: `apps/api` on `integration/phase-1`. The modules were added by PR #27 (merged 2026-10-22 00:07 IST). Later changes:
 
-> Repositories, the rate limiter, the lockout and the mailer are **in-memory or no-op only in `NODE_ENV=development` or `test`**. In any other environment (including unset), `createServer` refuses to start unless real implementations are injected and `WEB_ORIGINS` and `CSRF_SECRET` are set. Prisma persistence is Backend PR #53 (open).
+- **#53**: Prisma repositories and the Redis limiter/lockout (merged 2026-10-24 14:04 IST).
+- **#103**: the contracts v0.3.3 error envelope and `:organizationId` path params, per ADR-010 (merged 2026-10-24 17:24 IST).
+- **#98**: atomic Redis lockout counters (merged 2026-10-24 17:26 IST).
+
+Contracts come from `@meetops/contracts` (0.3.3 on `integration/phase-1`). See also `apps/api/README.md`.
+
+> In-memory repositories, the in-memory rate limiter, the inline mail queue and the in-memory audit log are used **only when `NODE_ENV` is exactly `development` or `test`**. In any other environment (including unset), `createServer` throws `MissingProductionDependencyError` unless real implementations are injected and `WEB_ORIGINS` and `CSRF_SECRET` are set. The login lockout counts as provided when a Redis client is injected or `REDIS_URL` is set. Prisma implementations live under `apps/api/src/modules/*/infrastructure/prisma` (#53), but `start()` does not wire them yet; the caller injects them through `createServer({ deps })`.
 
 ## Endpoints
 
-"Session" means a valid session cookie. Every POST also passes the Origin and CSRF guard (below).
+"Session" means a valid session cookie. Every POST, PATCH and DELETE also passes the Origin and CSRF guard (below). Path params use `organizationId`, the canonical tenant key from ADR-010.
 
-| Method | Path                                         | Auth           | Request                                      | Response                                                                                         |
-| ------ | -------------------------------------------- | -------------- | -------------------------------------------- | ------------------------------------------------------------------------------------------------ |
-| GET    | `/health`                                    | Public         | None                                         | 200 `{ status: 'ok' }`                                                                           |
-| GET    | `/ready`                                     | Public         | None                                         | 200 `{ status: 'ready' }`                                                                        |
-| GET    | `/auth/csrf`                                 | Public         | None                                         | 200 `{ csrfToken }`; sets the CSRF cookie (and a pre-session cookie if there's no session)       |
-| POST   | `/auth/signup`                               | Public         | `{ name, email, password }` (12–128)         | 202 `{ message }`, same body whether or not the email exists; no session                         |
-| POST   | `/auth/login`                                | Public         | `{ email, password }`                        | 200 session response plus `csrfToken`; sets the session and CSRF cookies; 401 `AUTH_FAILED`; 429 |
-| POST   | `/auth/forgot-password`                      | Public         | `{ email }`                                  | 202 `{ message }` (enumeration-safe)                                                             |
-| POST   | `/auth/reset-password`                       | Public         | `{ token, password }`                        | 204; single-use token, 30-minute TTL; revokes all of the user's sessions                         |
-| POST   | `/auth/logout`                               | Session        | None                                         | 204; revokes the session and clears the cookie                                                   |
-| GET    | `/auth/session`                              | Session        | None                                         | 200 session response; slides the idle timeout; 401                                               |
-| GET    | `/orgs`                                      | Session        | None                                         | 200 `Paginated<{ organization, role }>`                                                          |
-| POST   | `/orgs`                                      | Session        | `{ name }`                                   | 201 `{ organization, role }`; creator becomes owner; session rotates                             |
-| GET    | `/orgs/:id`                                  | Session        | None                                         | 200 `{ organization, role }`; 404 for non-members                                                |
-| POST   | `/orgs/switch`                               | Session        | `{ organizationId }`                         | 200 `{ organization, role }`; session rotates                                                    |
-| POST   | `/orgs/:id/invitations`                      | Session + CASL | `{ email, role: admin \| member \| viewer }` | 201 `Invitation` (same response for any address)                                                 |
-| POST   | `/orgs/:id/invitations/:invitationId/revoke` | Session + CASL | None                                         | 200 `Invitation`; cross-org 404                                                                  |
-| POST   | `/invitations/accept`                        | Session        | `{ token }`                                  | 200 `{ organization, role }`; every failure is the same 404                                      |
+| Method | Path                                                     | Auth           | Request                                      | Response                                                                                                                 |
+| ------ | -------------------------------------------------------- | -------------- | -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| GET    | `/health`                                                | Public         | None                                         | 200 `{ status: 'ok' }`                                                                                                   |
+| GET    | `/ready`                                                 | Public         | None                                         | 200 `{ status: 'ready' }`                                                                                                |
+| GET    | `/auth/csrf`                                             | Public         | None                                         | 200 `{ csrfToken }`; sets the CSRF cookie (and a pre-session cookie if there's no session)                               |
+| POST   | `/auth/signup`                                           | Public         | `{ name, email, password }` (12–128)         | 202 `{ message }`, same body whether or not the email exists; emails a verification link; no session                     |
+| POST   | `/auth/verify-email`                                     | Public         | `{ token }`                                  | 204; single-use token, 24-hour TTL                                                                                       |
+| POST   | `/auth/resend-verification`                              | Public         | `{ email }`                                  | 202 `{ message }` (enumeration-safe)                                                                                     |
+| POST   | `/auth/login`                                            | Public         | `{ email, password }`                        | 200 session response plus `csrfToken`; sets the session and CSRF cookies; 401 `AUTH_FAILED`; 429                         |
+| POST   | `/auth/forgot-password`                                  | Public         | `{ email }`                                  | 202 `{ message }` (enumeration-safe)                                                                                     |
+| POST   | `/auth/reset-password`                                   | Public         | `{ token, password }`                        | 204; single-use token, 30-minute TTL; revokes all of the user's sessions                                                 |
+| POST   | `/auth/logout`                                           | Session        | None                                         | 204; revokes the session and clears the cookie                                                                           |
+| POST   | `/auth/logout-all`                                       | Session        | None                                         | 204; revokes every session of the caller and clears the cookie                                                           |
+| GET    | `/auth/sessions`                                         | Session        | Cursor page query                            | 200 cursor page of `{ id, current, createdAt, lastSeenAt, expiresAt, ip, userAgent }`                                    |
+| DELETE | `/auth/sessions/:sessionId`                              | Session        | None                                         | 204; 404 for unknown sessions and other users' sessions; clears the cookie when it's the current session                 |
+| GET    | `/auth/session`                                          | Session        | None                                         | 200 session response; slides the idle timeout; 401                                                                       |
+| GET    | `/orgs`                                                  | Session        | Cursor page query                            | 200 cursor page of `{ organization, role }`                                                                              |
+| POST   | `/orgs`                                                  | Session        | `{ name }`                                   | 201 `{ organization, role }`; creator becomes owner; session rotates                                                     |
+| GET    | `/orgs/:organizationId`                                  | Session        | None                                         | 200 `{ organization, role }`; 404 for non-members                                                                        |
+| POST   | `/orgs/switch`                                           | Session        | `{ organizationId }`                         | 200 `{ organization, role }`; 404 for non-members; session rotates                                                       |
+| POST   | `/orgs/:organizationId/invitations`                      | Session + CASL | `{ email, role: admin \| member \| viewer }` | 201 `Invitation` (same response for any address); 409 if the address is already an active member                         |
+| POST   | `/orgs/:organizationId/invitations/:invitationId/revoke` | Session + CASL | None                                         | 200 `Invitation`; only pending invitations; cross-org 404                                                                |
+| POST   | `/invitations/accept`                                    | Session        | `{ token }`                                  | 200 `{ organization, role }`; needs a verified email (403); every invalid token is the same 404; 409 if already a member |
+| GET    | `/orgs/:organizationId/members`                          | Session        | Cursor page query                            | 200 cursor page of members; `user.email` only for owners and admins                                                      |
+| PATCH  | `/orgs/:organizationId/members/:userId`                  | Session + CASL | `{ role }`                                   | 200 `Membership`; 409 `LAST_OWNER`; revokes the target's sessions (your own role change rotates your session)            |
+| DELETE | `/orgs/:organizationId/members/:userId`                  | Session + CASL | None                                         | 204; anyone may leave; 409 `LAST_OWNER`; revokes the removed user's sessions                                             |
 
-The session response (`GetAuthSessionResponse`) is `{ user, organizations, memberships, activeOrganizationId | null, role | null, expiresAt }`. DTOs never include hashes or tokens. Request schemas reject unknown properties. Swagger UI is served at `/docs`.
+CASL rules: owners can do anything. Admins can invite, revoke, and change or remove members and viewers (only to member or viewer). Everyone else gets 403.
+
+Lists use cursor pages: query `{ cursor?, limit? }` (default 25, max 100) and response `{ items, nextCursor }`.
+
+The session response (`GetAuthSessionResponse`) is `{ user, organizations, memberships?, activeOrganizationId | null, role | null, expiresAt? }`. `activeOrganizationId` and `role` are both null or both set, and the server derives them from the membership. DTOs never include hashes or tokens. Request schemas reject unknown properties. Swagger UI is served at `/docs` only when `NODE_ENV` is exactly `development` or `test`.
+
+The extension pairing endpoints (`/auth/extension/pair`, `/auth/extension-token`, `/auth/extension/refresh`, `/auth/extension/revoke`) are defined in contracts (`EXTENSION_AUTH_PATHS`, ADR-005) but `apps/api` doesn't implement them yet.
 
 ## Cookies
 
@@ -60,20 +80,22 @@ The session response (`GetAuthSessionResponse`) is `{ user, organizations, membe
 
 ## Rate limits and lockout
 
-| Action            | Limit                                                         |
-| ----------------- | ------------------------------------------------------------- |
-| Login             | 20/min per IP; 15-minute lock after 10 failures in 15 minutes |
-| Signup            | 5/h per IP, 3/h per email                                     |
-| Reset request     | 5/h per IP, 3/h per email                                     |
-| Reset submit      | 10/h per IP                                                   |
-| Invitations       | 50/day per org, 5/day per address                             |
-| Invitation accept | 10/h per IP                                                   |
+| Action              | Limit                                                         |
+| ------------------- | ------------------------------------------------------------- |
+| Login               | 20/min per IP; 15-minute lock after 10 failures in 15 minutes |
+| Signup              | 5/h per IP, 3/h per email                                     |
+| Reset request       | 5/h per IP, 3/h per email                                     |
+| Reset submit        | 10/h per IP                                                   |
+| Verify email        | 10/h per IP                                                   |
+| Resend verification | 5/h per IP, 3/h per email                                     |
+| Invitations         | 50/day per org, 5/day per address                             |
+| Invitation accept   | 10/h per IP                                                   |
 
-A 429 includes `Retry-After`. Limits key on the resolved `request.ip`, which respects `TRUST_PROXY`.
+A 429 includes `Retry-After`. Limits key on the resolved `request.ip`, which respects `TRUST_PROXY`. The login lockout uses Redis (atomic counters, #98) when a client is injected or `REDIS_URL` is set outside `NODE_ENV=test`; otherwise it's in memory (development and test only).
 
 ## Errors
 
-Envelope: `{ error: { code, message, requestId, details? } }`, where `requestId` is required in v0.2.
+Envelope (contracts `ApiErrorEnvelope`, v0.3.3): `{ error: { code, message, requestId, details?, reason? } }`. `requestId` is always present. `reason` names the cause of a `CONFLICT`: `ALREADY_MEMBER`, `INVITATION_EXPIRED`, `INVITATION_REVOKED`, `INVITATION_ALREADY_ACCEPTED`, `LAST_OWNER`, `EMAIL_TAKEN` or the generic `CONFLICT`.
 
 | Code                | Status | When                                                      |
 | ------------------- | ------ | --------------------------------------------------------- |
@@ -82,10 +104,10 @@ Envelope: `{ error: { code, message, requestId, details? } }`, where `requestId`
 | `AUTH_FAILED`       | 401    | Login failed (generic)                                    |
 | `UNAUTHENTICATED`   | 401    | No or invalid session                                     |
 | `CSRF_INVALID`      | 403    | CSRF token missing, mismatched or invalid                 |
-| `FORBIDDEN`         | 403    | Origin not allowed, or CASL denial                        |
+| `FORBIDDEN`         | 403    | Origin not allowed, CASL denial, or unverified email      |
 | `NOT_FOUND`         | 404    | Unknown or non-member org; invitation-accept failures     |
-| `CONFLICT`          | 409    | Domain conflicts                                          |
+| `CONFLICT`          | 409    | Domain conflicts, with `reason`                           |
 | `RATE_LIMITED`      | 429    | Rate limit or lockout                                     |
 | `INTERNAL`          | 500    | Unhandled error                                           |
 
-`CSRF_INVALID` isn't in the contracts `ApiErrorCode` yet. The api extends the union locally (`apps/api/src/shared/api-error.ts`, with a TODO for Architecture to add it to contracts).
+`CSRF_INVALID` is part of the contracts `ApiErrorCode` since v0.3.0 (#50); the api no longer extends the union locally. The client should `GET /auth/csrf` and retry once. `PROVIDER_UNAVAILABLE` is also in the union but these routes don't use it.
