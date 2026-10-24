@@ -1,25 +1,28 @@
 import type {
   ApiErrorCode as ContractApiErrorCode,
   AuthSession,
+  CreateOrganizationRequest,
+  CreateOrganizationResponse,
   CreateUploadRequest,
   CreateUploadResponse,
   CsrfResponse,
+  ExtensionPairRequest,
+  ExtensionPairResponse,
   ForgotPasswordRequest,
   GetAuthSessionResponse,
   Id,
+  ListOrganizationsResponse,
   LoginRequest,
   Meeting,
-  Organization,
   Paginated,
   PresignedUrlDto,
   Project,
   SignupRequest,
   Task,
-  Role,
   ListTasksQuery,
   SwitchOrganizationRequest,
 } from '@meetops/contracts';
-import { API_ERROR_CODES } from '@meetops/contracts/types';
+import { API_ERROR_CODES, EXTENSION_AUTH_PATHS } from '@meetops/contracts/types';
 
 /** Contracts ApiErrorEnvelope codes plus 'UNKNOWN' when the body is unparseable. */
 export type ApiErrorCode = ContractApiErrorCode | 'UNKNOWN';
@@ -125,13 +128,7 @@ export function readCsrfCookie(
 
 export type HttpMethod = 'GET' | 'HEAD' | 'OPTIONS' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
 
-/**
- * POST /orgs body/response. TODO(contracts): not in @meetops/contracts yet; mirrors
- * apps/api organizations/http/schemas.ts (CreateOrganizationBody, OrganizationWithRole).
- * Replace with CreateOrganizationRequest/CreateOrganizationResponse once published.
- */
-export type CreateOrganizationRequest = { name: string };
-export type CreateOrganizationResponse = { organization: Organization; role: Role };
+export type { CreateOrganizationRequest, CreateOrganizationResponse, ListOrganizationsResponse };
 
 /** GET /orgs/:id/tasks query (contracts ListTasksQuery; `unassigned` excludes `assigneeId`). */
 export type TaskListFilters = ListTasksQuery;
@@ -148,9 +145,14 @@ export type ApiClient = {
     switchOrganization: (body: SwitchOrganizationRequest) => Promise<AuthSession>;
   };
   organizations: {
-    list: () => Promise<Organization[]>;
+    /** GET /orgs: cursor page of `{ organization, role }`. */
+    list: () => Promise<ListOrganizationsResponse>;
     /** POST /orgs. The server rotates the session into the new org and issues a new CSRF token. */
     create: (body: CreateOrganizationRequest) => Promise<CreateOrganizationResponse>;
+  };
+  extension: {
+    /** POST /auth/extension/pair (ADR-005 A1.1). Cookie + CSRF; returns a single-use pairing code. */
+    pair: (body: ExtensionPairRequest) => Promise<ExtensionPairResponse>;
   };
   meetings: {
     list: (organizationId: Id) => Promise<Paginated<Meeting>>;
@@ -298,6 +300,9 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
         cachedCsrf = null;
         return res;
       },
+    },
+    extension: {
+      pair: (body) => request('POST', EXTENSION_AUTH_PATHS.pair, body),
     },
     meetings: {
       list: (id) => request('GET', `${org(id)}/meetings`),
