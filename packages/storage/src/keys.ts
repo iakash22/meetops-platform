@@ -3,7 +3,7 @@ import { StorageAccessError, StorageValidationError } from './errors.js';
 const ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
 const EXT = /^[a-z0-9]{1,8}$/;
 
-export type MeetingObjectKind = 'recording' | 'normalized' | 'chunk' | 'session_chunk' | 'transcript' | 'export' | 'attachment';
+export type MeetingObjectKind = 'recording' | 'normalized' | 'chunk' | 'session_chunk' | 'transcript' | 'export' | 'attachment' | 'waveform';
 
 /**
  * Server-side object reference. Callers pass IDs and a kind; the storage
@@ -15,7 +15,7 @@ export type MeetingObjectRef = {
   kind: MeetingObjectKind;
   /** Id of the logical object (recording id, transcript id, ...). */
   objectId: string;
-  /** File extension without dot. Ignored for `normalized` and `chunk` (always wav). */
+  /** File extension without dot. Ignored for `normalized` and `chunk` (always wav) and `waveform` (always json). */
   ext?: string;
   /** Required for kinds `chunk` and `session_chunk` (= recording-session `seq`): 0-based index. */
   index?: number;
@@ -52,6 +52,8 @@ export function buildObjectKey(ref: MeetingObjectRef): string {
       return `${base}/recordings/${obj}.${ext()}`;
     case 'normalized':
       return `${base}/processed/${obj}/normalized.wav`;
+    case 'waveform':
+      return `${base}/processed/${obj}/waveform.json`;
     case 'chunk':
       return `${base}/processed/${obj}/chunks/${idx(ref.index)}.wav`;
     case 'session_chunk':

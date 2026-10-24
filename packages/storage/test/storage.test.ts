@@ -419,3 +419,16 @@ describe('S3StorageService', () => {
     });
   });
 });
+
+describe('waveform artifacts', () => {
+  it('derives processed/{id}/waveform.json and writes it as server-side JSON only', async () => {
+    const ref: MeetingObjectRef = { organizationId: 'o1', meetingId: 'm1', kind: 'waveform', objectId: 'r1' };
+    expect(buildObjectKey(ref)).toBe('organizations/o1/meetings/m1/processed/r1/waveform.json');
+    s3.on(PutObjectCommand).resolves({ ETag: '"w"' });
+    const s = new S3StorageService({ config: loadStorageConfig({ STORAGE_BUCKET: 'b', STORAGE_ENDPOINT: 'http://localhost:9000' }), client: new S3Client({ region: 'us-east-1', credentials: { accessKeyId: 'a', secretAccessKey: 's' } }), authorize: () => undefined });
+    await expect(s.putDerivedJson(ref, { peaks: [0, 1] })).resolves.toMatchObject({ etag: '"w"', sizeBytes: 15 });
+    expect(s3.commandCalls(PutObjectCommand)[0]!.args[0].input).toMatchObject({ Key: buildObjectKey(ref), ContentType: 'application/json' });
+    await expect(s.putDerivedJson({ ...ref, kind: 'recording', ext: 'webm' }, {})).rejects.toThrow(StorageValidationError);
+    await expect(s.putDerivedJson(ref, { big: 'x'.repeat(1024 * 1024) })).rejects.toThrow(/too large/);
+  });
+});
