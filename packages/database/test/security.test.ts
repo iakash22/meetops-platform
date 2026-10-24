@@ -434,6 +434,13 @@ describe('storage key convention', () => {
     expect(seed).not.toContain('`org/${');
     expect(seed).not.toContain('orgs/');
   });
+
+  it('seed is multi-organization and uses withOrganizationContext naming (ADR-010)', () => {
+    const seed = readFileSync(resolve(pkgDir, 'prisma/seed.ts'), 'utf8');
+    expect((seed.match(/^\s+slug: '(\w+)',$/gm) ?? []).length).toBeGreaterThanOrEqual(2);
+    expect(seed).toContain('runWithOrganizationContext(prisma, org.id');
+    expect(seed).not.toMatch(/\bwithOrgContext\b|\brunWithOrgContext\b|\borgId\b/);
+  });
 });
 
 describe('XT-26..XT-28 static guarantees', () => {

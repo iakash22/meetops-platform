@@ -1,34 +1,24 @@
+import type { AuthMailTemplate, MailTransport, OutboundMail } from './mail-jobs.js';
+
 /**
- * Outbound auth mail port. Will be backed by @meetops/notifications sendTemplate /
- * startEmailWorker once PR #11 merges. Implementations must never log tokens.
+ * Compatibility test double for the repo-level QA harness (tests/support/api-app.ts), which
+ * predates id-only mail jobs (D7) and expects `{ kind, to, token }` records. It is a
+ * MailTransport, so it sees mail only after the worker-side handler rendered it.
+ * Pass it as `mailTransport` (or the legacy `mailer` dep alias, tests only).
  */
-export interface AuthMailer {
-  sendEmailVerification(to: string, token: string): Promise<void>;
-  sendAccountExists(to: string): Promise<void>;
-  sendPasswordReset(to: string, token: string): Promise<void>;
-  sendInvitation(to: string, input: { organizationName: string; token: string }): Promise<void>;
-}
+const KIND: Record<AuthMailTemplate, string> = {
+  email_verification: 'verify',
+  password_reset: 'reset',
+  account_exists: 'exists',
+  invitation: 'invite',
+  login_lockout: 'lockout'
+};
 
-export class NoopAuthMailer implements AuthMailer {
-  async sendEmailVerification() {}
-  async sendAccountExists() {}
-  async sendPasswordReset() {}
-  async sendInvitation() {}
-}
-
-/** Test double that records calls in memory. */
-export class RecordingAuthMailer implements AuthMailer {
+export class RecordingAuthMailer implements MailTransport {
   readonly sent: { kind: string; to: string; token?: string }[] = [];
-  async sendEmailVerification(to: string, token: string) {
-    this.sent.push({ kind: 'verify', to, token });
-  }
-  async sendAccountExists(to: string) {
-    this.sent.push({ kind: 'exists', to });
-  }
-  async sendPasswordReset(to: string, token: string) {
-    this.sent.push({ kind: 'reset', to, token });
-  }
-  async sendInvitation(to: string, input: { organizationName: string; token: string }) {
-    this.sent.push({ kind: 'invite', to, token: input.token });
+  async send(mail: OutboundMail) {
+    const url = mail.data.url;
+    const token = url ? (new URL(url).searchParams.get('token') ?? undefined) : undefined;
+    this.sent.push({ kind: KIND[mail.template], to: mail.to, ...(token ? { token } : {}) });
   }
 }
