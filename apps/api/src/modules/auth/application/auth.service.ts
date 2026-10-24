@@ -1,27 +1,34 @@
 import type { UserRepository } from '../../users/domain/user.repository.js';
 import { normalizeEmail, toPublicUser, type PublicUser } from '../../users/domain/user.js';
 import type { Clock, IdGenerator } from '../../../shared/ports.js';
+import { DomainError } from '../../../shared/domain-error.js';
 import type { LoginLockout, PasswordHasher, RateLimiter, TokenService } from '../domain/ports.js';
 import { isSessionActive, type Session, type SessionPolicy, type SessionRepository } from '../domain/session.js';
 import { InvalidCredentialsError, RateLimitedError, UnauthenticatedError } from '../domain/errors.js';
-import type { AuthMailer } from '../domain/mailer.js';
-import { isResetTokenUsable, type PasswordResetRepository } from '../domain/password-reset.js';
-import { DomainError } from '../../../shared/domain-error.js';
+import type { AuthMailQueue } from '../domain/mail-jobs.js';
+import type { OneTimeTokenPurpose, OneTimeTokenRepository } from '../domain/one-time-token.js';
+import { safeAudit, type AuditEvent, type AuditLog } from '../domain/audit.js';
 
 export interface AuthServiceDeps {
   users: UserRepository;
   sessions: SessionRepository;
+  oneTimeTokens: OneTimeTokenRepository;
   hasher: PasswordHasher;
   tokens: TokenService;
   rateLimiter: RateLimiter;
   lockout: LoginLockout;
+  mailQueue: AuthMailQueue;
+  audit: AuditLog;
   clock: Clock;
   ids: IdGenerator;
   sessionPolicy: SessionPolicy;
-  passwordResets: PasswordResetRepository;
-  mailer: AuthMailer;
   passwordResetTtlMs: number;
+  emailVerificationTtlMs: number;
+  /** Progressive-delay sleeper for failed logins; inject a no-op/fake in tests. */
+  sleep?: (ms: number) => Promise<void>;
 }
+
+const realSleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
 export interface RequestMeta {
   ip: string | null;
@@ -43,8 +50,15 @@ export const AUTH_LIMITS = {
   signupPerEmail: { limit: 3, windowMs: HOUR },
   resetRequestPerIp: { limit: 5, windowMs: HOUR },
   resetRequestPerEmail: { limit: 3, windowMs: HOUR },
-  resetSubmitPerIp: { limit: 10, windowMs: HOUR }
+  resetSubmitPerIp: { limit: 10, windowMs: HOUR },
+  verifySubmitPerIp: { limit: 10, windowMs: HOUR },
+  resendPerIp: { limit: 5, windowMs: HOUR },
+  resendPerEmail: { limit: 3, windowMs: HOUR }
 } as const;
+
+export const invalidResetError = () => new DomainError('BAD_REQUEST', 'Reset link is invalid or has expired', 400);
+export const invalidVerificationError = () =>
+  new DomainError('BAD_REQUEST', 'Verification link is invalid or has expired', 400);
 
 export class AuthService {
   private dummyHash: Promise<string> | null = null;
@@ -55,22 +69,43 @@ export class AuthService {
     if (!r.allowed) throw new RateLimitedError(r.retryAfterMs);
   }
 
-  /**
-   * Enumeration-safe: same result whether or not the email exists. Does not start a session.
-   * TODO(notifications): send verification mail / "you already have an account" mail.
-   */
+  private audit(e: Omit<AuditEvent, 'ip' | 'userAgent' | 'organizationId'> & { organizationId?: string | null }, meta?: RequestMeta) {
+    return safeAudit(this.d.audit, {
+      organizationId: null,
+      ip: meta?.ip ?? null,
+      userAgent: meta?.userAgent ?? null,
+      ...e
+    });
+  }
+
+  /** Creates a token row with an unguessable placeholder hash; the mail worker mints the real token. */
+  private async createOneTimeToken(userId: string, purpose: OneTimeTokenPurpose, ttlMs: number) {
+    const now = this.d.clock.now();
+    return this.d.oneTimeTokens.create({
+      id: this.d.ids.next(),
+      userId,
+      purpose,
+      tokenHash: this.d.tokens.hash(this.d.tokens.generate()),
+      expiresAt: new Date(now.getTime() + ttlMs),
+      usedAt: null,
+      createdAt: now
+    });
+  }
+
+  /** Enumeration-safe: same 202 whether or not the email exists. Does not start a session. */
   async signup(input: { email: string; password: string; name?: string | undefined }, meta: RequestMeta) {
     const email = normalizeEmail(input.email);
     await this.limit(`signup:ip:${meta.ip ?? 'unknown'}`, AUTH_LIMITS.signupPerIp);
     await this.limit(`signup:email:${email}`, AUTH_LIMITS.signupPerEmail);
     const passwordHash = await this.d.hasher.hash(input.password);
-    if (await this.d.users.findByEmail(email)) {
-      await this.d.mailer.sendAccountExists(email);
+    const existing = await this.d.users.findByEmail(email);
+    if (existing) {
+      await this.d.mailQueue.enqueue({ kind: 'account_exists', userId: existing.id });
       return { accepted: true as const };
     }
     const now = this.d.clock.now();
     try {
-      await this.d.users.create({
+      const user = await this.d.users.create({
         id: this.d.ids.next(),
         email,
         name: input.name ?? null,
@@ -80,8 +115,9 @@ export class AuthService {
         updatedAt: now,
         deletedAt: null
       });
-      // TODO(database): persist an email_verifications row; token is only mailed.
-      await this.d.mailer.sendEmailVerification(email, this.d.tokens.generate());
+      const t = await this.createOneTimeToken(user.id, 'email_verification', this.d.emailVerificationTtlMs);
+      await this.d.mailQueue.enqueue({ kind: 'email_verification', tokenId: t.id });
+      await this.audit({ actorId: user.id, action: 'auth.signup', targetType: 'user', targetId: user.id, metadata: {} }, meta);
     } catch {
       // Race on unique email: still respond identically.
     }
@@ -96,13 +132,17 @@ export class AuthService {
     if (lock.locked) throw new RateLimitedError(lock.retryAfterMs);
 
     const user = await this.d.users.findByEmail(email);
-    if (!user) {
-      await this.d.hasher.verify(await this.getDummyHash(), input.password);
-      await this.d.lockout.recordFailure(email);
-      throw new InvalidCredentialsError();
-    }
-    if (!(await this.d.hasher.verify(user.passwordHash, input.password))) {
-      await this.d.lockout.recordFailure(email);
+    const ok = user
+      ? await this.d.hasher.verify(user.passwordHash, input.password)
+      : (await this.d.hasher.verify(await this.getDummyHash(), input.password), false);
+    if (!user || !ok) {
+      // Keyed by normalized email whether or not the account exists (enumeration-safe).
+      const { lockedForMs, delayMs } = await this.d.lockout.recordFailure(email);
+      const base = { actorId: user?.id ?? null, targetType: 'user' as const, targetId: user?.id ?? null };
+      await this.audit({ ...base, action: 'auth.login.failure', metadata: { knownUser: !!user } }, meta);
+      // TODO(notifications #11): lockout notice email once a template exists; audited for now.
+      if (lockedForMs) await this.audit({ ...base, action: 'auth.lockout', metadata: { lockedForMs } }, meta);
+      if (delayMs) await (this.d.sleep ?? realSleep)(delayMs);
       throw new InvalidCredentialsError();
     }
     await this.d.lockout.reset(email);
@@ -110,46 +150,108 @@ export class AuthService {
       await this.d.users.updatePasswordHash(user.id, await this.d.hasher.hash(input.password));
     }
     if (currentToken) await this.revokeByToken(currentToken);
-    return this.issueSession(user.id, toPublicUser(user), null, meta);
+    const r = await this.issueSession(user.id, toPublicUser(user), null, meta);
+    await this.audit(
+      { actorId: user.id, action: 'auth.login.success', targetType: 'session', targetId: r.session.id, metadata: {} },
+      meta
+    );
+    return r;
   }
 
-  /** Enumeration-safe: always resolves the same way. */
+  /**
+   * Enumeration-safe with timing parity: both paths generate + hash a token and enqueue
+   * exactly one job (tokenId null for unknown emails; the worker drops it).
+   */
   async requestPasswordReset(rawEmail: string, meta: RequestMeta) {
     const email = normalizeEmail(rawEmail);
     await this.limit(`reset:ip:${meta.ip ?? 'unknown'}`, AUTH_LIMITS.resetRequestPerIp);
     await this.limit(`reset:email:${email}`, AUTH_LIMITS.resetRequestPerEmail);
     const user = await this.d.users.findByEmail(email);
-    if (!user) return { accepted: true as const };
-    const token = this.d.tokens.generate();
-    const now = this.d.clock.now();
-    await this.d.passwordResets.create({
-      id: this.d.ids.next(),
-      userId: user.id,
-      tokenHash: this.d.tokens.hash(token),
-      expiresAt: new Date(now.getTime() + this.d.passwordResetTtlMs),
-      usedAt: null,
-      createdAt: now
-    });
-    await this.d.mailer.sendPasswordReset(email, token);
+    if (!user) {
+      this.d.tokens.hash(this.d.tokens.generate());
+      await this.d.mailQueue.enqueue({ kind: 'password_reset', tokenId: null });
+      return { accepted: true as const };
+    }
+    const t = await this.createOneTimeToken(user.id, 'password_reset', this.d.passwordResetTtlMs);
+    await this.d.mailQueue.enqueue({ kind: 'password_reset', tokenId: t.id });
+    await this.audit(
+      { actorId: null, action: 'auth.password_reset.request', targetType: 'user', targetId: user.id, metadata: {} },
+      meta
+    );
     return { accepted: true as const };
   }
 
-  /** Single-use token; on success revokes all of the user's sessions. */
+  /** Atomic single use; on success revokes all sessions and any other outstanding reset tokens. */
   async resetPassword(input: { token: string; password: string }, meta: RequestMeta) {
     await this.limit(`reset:submit:ip:${meta.ip ?? 'unknown'}`, AUTH_LIMITS.resetSubmitPerIp);
-    const t = await this.d.passwordResets.findByTokenHash(this.d.tokens.hash(input.token));
     const now = this.d.clock.now();
-    if (!t || !isResetTokenUsable(t, now)) {
-      throw new DomainError('BAD_REQUEST', 'Reset link is invalid or has expired', 400);
-    }
-    await this.d.passwordResets.markUsed(t.id, now);
+    const t = await this.d.oneTimeTokens.consume('password_reset', this.d.tokens.hash(input.token), now);
+    if (!t) throw invalidResetError();
     await this.d.users.updatePasswordHash(t.userId, await this.d.hasher.hash(input.password));
     await this.d.sessions.revokeAllForUser(t.userId, now);
-    await this.d.lockout.reset((await this.d.users.findById(t.userId))?.email ?? '');
+    await this.d.oneTimeTokens.invalidateForUser(t.userId, 'password_reset', now);
+    const user = await this.d.users.findById(t.userId);
+    if (user) await this.d.lockout.reset(user.email);
+    await this.audit(
+      { actorId: t.userId, action: 'auth.password_reset.complete', targetType: 'user', targetId: t.userId, metadata: {} },
+      meta
+    );
   }
 
-  async logout(token: string | undefined): Promise<void> {
-    if (token) await this.revokeByToken(token);
+  async verifyEmail(token: string, meta: RequestMeta) {
+    await this.limit(`verify:ip:${meta.ip ?? 'unknown'}`, AUTH_LIMITS.verifySubmitPerIp);
+    const now = this.d.clock.now();
+    const t = await this.d.oneTimeTokens.consume('email_verification', this.d.tokens.hash(token), now);
+    if (!t) throw invalidVerificationError();
+    await this.d.users.markEmailVerified(t.userId, now);
+    await this.d.oneTimeTokens.invalidateForUser(t.userId, 'email_verification', now);
+    await this.audit({ actorId: t.userId, action: 'auth.email.verify', targetType: 'user', targetId: t.userId, metadata: {} }, meta);
+  }
+
+  /** Enumeration-safe: always resolves the same; only unverified accounts get a new link. */
+  async resendVerification(rawEmail: string, meta: RequestMeta) {
+    const email = normalizeEmail(rawEmail);
+    await this.limit(`resend:ip:${meta.ip ?? 'unknown'}`, AUTH_LIMITS.resendPerIp);
+    await this.limit(`resend:email:${email}`, AUTH_LIMITS.resendPerEmail);
+    const user = await this.d.users.findByEmail(email);
+    if (!user || user.emailVerifiedAt) return { accepted: true as const };
+    const now = this.d.clock.now();
+    await this.d.oneTimeTokens.invalidateForUser(user.id, 'email_verification', now);
+    const t = await this.createOneTimeToken(user.id, 'email_verification', this.d.emailVerificationTtlMs);
+    await this.d.mailQueue.enqueue({ kind: 'email_verification', tokenId: t.id });
+    await this.audit(
+      { actorId: null, action: 'auth.email.verification_resend', targetType: 'user', targetId: user.id, metadata: {} },
+      meta
+    );
+    return { accepted: true as const };
+  }
+
+  async logout(token: string | undefined, meta: RequestMeta): Promise<void> {
+    if (!token) return;
+    const s = await this.revokeByToken(token);
+    if (s) await this.audit({ actorId: s.userId, action: 'auth.logout', targetType: 'session', targetId: s.id, metadata: {} }, meta);
+  }
+
+  async logoutAll(userId: string, meta: RequestMeta) {
+    await this.d.sessions.revokeAllForUser(userId, this.d.clock.now());
+    await this.audit({ actorId: userId, action: 'auth.logout_all', targetType: 'user', targetId: userId, metadata: {} }, meta);
+  }
+
+  async listSessions(userId: string) {
+    return this.d.sessions.listActiveForUser(userId, this.d.clock.now());
+  }
+
+  /** Revoke one of the caller's own sessions. Unknown or someone else's → 404. */
+  async revokeSession(userId: string, sessionId: string, meta: RequestMeta) {
+    const s = await this.d.sessions.findById(sessionId);
+    if (!s || s.userId !== userId || s.revokedAt) throw new DomainError('NOT_FOUND', 'Session not found', 404);
+    await this.d.sessions.revoke(s.id, this.d.clock.now());
+    await this.audit({ actorId: userId, action: 'auth.session.revoke', targetType: 'session', targetId: s.id, metadata: {} }, meta);
+  }
+
+  /** Used on privilege changes of another user (role change / removal). */
+  async revokeAllSessionsFor(userId: string) {
+    await this.d.sessions.revokeAllForUser(userId, this.d.clock.now());
   }
 
   /** Resolve the session (idle + absolute timeouts) and slide last_seen_at. */
@@ -172,7 +274,11 @@ export class AuthService {
 
   private async revokeByToken(token: string) {
     const session = await this.d.sessions.findByTokenHash(this.d.tokens.hash(token));
-    if (session && session.revokedAt === null) await this.d.sessions.revoke(session.id, this.d.clock.now());
+    if (session && session.revokedAt === null) {
+      await this.d.sessions.revoke(session.id, this.d.clock.now());
+      return session;
+    }
+    return null;
   }
 
   private getDummyHash() {

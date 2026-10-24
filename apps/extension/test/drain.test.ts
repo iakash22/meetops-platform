@@ -42,7 +42,7 @@ describe('drainQueue (restart retry)', () => {
     const req = vi.spyOn(client, 'requestChunkUrl');
     const complete = vi.spyOn(client, 'complete');
     const r = await drainQueue(store, client);
-    expect(r).toEqual({ uploaded: 3, completed: 1, aborted: 0, failed: 0 });
+    expect(r).toEqual({ uploaded: 3, completed: 1, aborted: 0, failed: 0, skipped: 0 });
     expect(req.mock.calls.map((c) => [c[0], c[1].seq, c[1].sizeBytes])).toEqual([
       [SID, 0, 1],
       [SID, 1, 2],
@@ -64,6 +64,7 @@ describe('drainQueue (restart retry)', () => {
       completed: 0,
       aborted: 0,
       failed: 0,
+      skipped: 0,
     });
   });
 
@@ -83,6 +84,7 @@ describe('drainQueue (restart retry)', () => {
       completed: 1,
       aborted: 0,
       failed: 0,
+      skipped: 0,
     });
   });
 
@@ -104,6 +106,7 @@ describe('drainQueue (restart retry)', () => {
       completed: 0,
       aborted: 0,
       failed: 1,
+      skipped: 0,
     });
     expect((await store.listChunks(SID)).map((c) => c.seq)).toEqual([1, 2]);
     expect(complete).not.toHaveBeenCalled();
@@ -113,6 +116,7 @@ describe('drainQueue (restart retry)', () => {
       completed: 1,
       aborted: 0,
       failed: 0,
+      skipped: 0,
     });
     expect(complete).toHaveBeenCalledTimes(1);
   });
@@ -144,6 +148,7 @@ describe('pre-v0.2 IndexedDB records', () => {
       completed: 1,
       aborted: 0,
       failed: 0,
+      skipped: 0,
     });
   });
 
@@ -184,6 +189,7 @@ describe('sessions with eviction/refusal gaps', () => {
       completed: 0,
       aborted: 1,
       failed: 0,
+      skipped: 0,
     });
     expect(abort).toHaveBeenCalledWith(SID, { reason: 'local_storage_exhausted' });
     expect(complete).not.toHaveBeenCalled();
