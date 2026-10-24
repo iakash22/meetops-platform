@@ -2,7 +2,8 @@ import type { TranscriptionProgressEvent } from '@meetops/contracts';
 
 /**
  * Organization-scoped progress sink. In production this is Media's `createRealtimePublisher` (rooms
- * `org:{org}:meeting:{id}` + `org:{org}`, event `transcription:progress`), reused unmodified.
+ * `organizations:{organizationId}:meetings:{meetingId}` + `organizations:{organizationId}`, event
+ * `transcription:progress`), reused unmodified.
  */
 export type TranscriptionProgressSink = { transcriptionProgress(e: TranscriptionProgressEvent): void };
 

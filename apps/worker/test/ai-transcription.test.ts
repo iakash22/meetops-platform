@@ -115,7 +115,7 @@ describe('AI transcription consumer', () => {
     expect(w.segments).toEqual([{ sequence: 0, speakerLabel: 'S1', startMs: 601_000, endMs: 602_500, text: 'hello world', confidence: 0.9 }]);
     expect(emitted).toHaveLength(1);
     expect(emitted[0]!.event).toBe('transcription:progress');
-    expect(emitted[0]!.rooms).toEqual([`org:${ORG}:meeting:${MEET}`, `org:${ORG}`]);
+    expect(emitted[0]!.rooms).toEqual([`organizations:${ORG}:meetings:${MEET}`, `organizations:${ORG}`]);
     expect(emitted[0]!.payload).toEqual({ organizationId: ORG, meetingId: MEET, recordingId: REC, percent: 92, stage: 'transcribing', chunksDone: 1, chunksTotal: 2, at: '2026-10-24T08:00:00.000Z' });
 
     await processTranscriptionJob(job(0), deps, { jobId: jobId(0) });
