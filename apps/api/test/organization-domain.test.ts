@@ -12,7 +12,7 @@ import { CryptoTokenService } from '../src/modules/auth/infrastructure/crypto-to
 import { InMemoryRateLimiter } from '../src/modules/auth/infrastructure/rate-limit/in-memory.js';
 import { RedisRateLimiter, RedisLoginLockout, type RedisLike } from '../src/modules/auth/infrastructure/rate-limit/redis.js';
 import { InMemoryLoginLockout } from '../src/modules/auth/infrastructure/rate-limit/in-memory.js';
-import { lockDurationMs } from '../src/modules/auth/infrastructure/rate-limit/lockout-policy.js';
+import { DEFAULT_LOCKOUT, failureDelayMs, lockDurationMs } from '../src/modules/auth/infrastructure/rate-limit/lockout-policy.js';
 import { RedisOneTimeTokenRepository } from '../src/modules/auth/infrastructure/redis-one-time-token.repository.js';
 import { InMemoryOneTimeTokenRepository } from '../src/modules/auth/infrastructure/in-memory-one-time-token.repository.js';
 import { InMemorySessionRepository } from '../src/modules/auth/infrastructure/in-memory-session.repository.js';
@@ -321,31 +321,43 @@ describe('Redis adapters (fake client)', () => {
     expect((await rl.consume('k', 3, 1000)).allowed).toBe(true);
   });
 
-  it('progressive lockout: doubles per extra failure, capped; reset clears', async () => {
-    const p = { threshold: 3, windowMs: 10_000, baseLockMs: 1000, maxLockMs: 4000 };
-    expect([1, 2, 3, 4, 5, 6].map((n) => lockDurationMs(n, p))).toEqual([0, 0, 1000, 2000, 4000, 4000]);
+  it('lockout policy matches spec §5: delay at 5-9, 15 min lock at 10', () => {
+    const p = DEFAULT_LOCKOUT;
+    expect([1, 2, 3, 4].map((n) => failureDelayMs(n, p))).toEqual([0, 0, 0, 0]);
+    expect([5, 6, 7, 8, 9].map((n) => failureDelayMs(n, p))).toEqual([100, 200, 400, 800, 1000]);
+    expect(failureDelayMs(10, p)).toBe(0);
+    expect([1, 5, 9].map((n) => lockDurationMs(n, p))).toEqual([0, 0, 0]);
+    expect(lockDurationMs(10, p)).toBe(15 * 60_000);
+  });
+
+  it('RedisLoginLockout: no lock before 10, 15 min lock at 10, count restarts, reset clears', async () => {
     const r = fakeRedis();
-    const lo = new RedisLoginLockout(r, p);
-    await lo.recordFailure('a');
-    await lo.recordFailure('a');
-    expect((await lo.isLocked('a')).locked).toBe(false);
-    expect((await lo.recordFailure('a')).lockedForMs).toBe(1000);
+    const lo = new RedisLoginLockout(r);
+    for (let i = 1; i <= 9; i++) {
+      const res = await lo.recordFailure('a');
+      expect(res.lockedForMs).toBe(0);
+      expect(res.delayMs).toBe(failureDelayMs(i, DEFAULT_LOCKOUT));
+      expect((await lo.isLocked('a')).locked).toBe(false);
+    }
+    expect((await lo.recordFailure('a')).lockedForMs).toBe(15 * 60_000);
     expect((await lo.isLocked('a')).locked).toBe(true);
-    r.advance(1001);
+    r.advance(15 * 60_000 + 1);
     expect((await lo.isLocked('a')).locked).toBe(false);
-    expect((await lo.recordFailure('a')).lockedForMs).toBe(2000);
+    expect(await lo.recordFailure('a')).toEqual({ lockedForMs: 0, delayMs: 0 });
     await lo.reset('a');
     expect((await lo.isLocked('a')).locked).toBe(false);
   });
 
-  it('InMemoryLoginLockout follows the same progressive policy', async () => {
+  it('InMemoryLoginLockout follows the same policy; window expiry resets the count', async () => {
     let t = 0;
-    const lo = new InMemoryLoginLockout({ now: () => new Date(t) }, { threshold: 2, windowMs: 10_000, baseLockMs: 1000, maxLockMs: 8000 });
-    await lo.recordFailure('a');
-    expect((await lo.recordFailure('a')).lockedForMs).toBe(1000);
-    t += 1500;
-    expect((await lo.recordFailure('a')).lockedForMs).toBe(2000);
-    expect((await lo.isLocked('a')).retryAfterMs).toBe(2000);
+    const lo = new InMemoryLoginLockout({ now: () => new Date(t) });
+    for (let i = 0; i < 4; i++) await lo.recordFailure('a');
+    expect((await lo.recordFailure('a')).delayMs).toBe(100);
+    t += 15 * 60_000 + 1;
+    expect(await lo.recordFailure('a')).toEqual({ lockedForMs: 0, delayMs: 0 });
+    for (let i = 0; i < 8; i++) await lo.recordFailure('a');
+    expect((await lo.recordFailure('a')).lockedForMs).toBe(15 * 60_000);
+    expect((await lo.isLocked('a')).retryAfterMs).toBe(15 * 60_000);
   });
 
   it('RedisOneTimeTokenRepository: atomic single use, rehash and invalidate', async () => {

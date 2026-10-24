@@ -1,5 +1,5 @@
 import type { LoginLockout, RateLimiter } from '../../domain/ports.js';
-import { DEFAULT_LOCKOUT, lockDurationMs, type LockoutPolicy } from './lockout-policy.js';
+import { DEFAULT_LOCKOUT, failureDelayMs, lockDurationMs, type LockoutPolicy } from './lockout-policy.js';
 
 /** Minimal subset of an ioredis client (keeps tests on a fake). */
 export interface RedisLike {
@@ -31,7 +31,7 @@ export class RedisRateLimiter implements RateLimiter {
   }
 }
 
-/** Progressive lockout (see lockout-policy.ts), shared across API instances. */
+/** Login lockout (see lockout-policy.ts), shared across API instances. */
 export class RedisLoginLockout implements LoginLockout {
   constructor(
     private readonly redis: RedisLike,
@@ -46,12 +46,13 @@ export class RedisLoginLockout implements LoginLockout {
     const k = `${this.prefix}fail:${key}`;
     const n = await this.redis.incr(k);
     if (n === 1) await this.redis.pexpire(k, this.policy.windowMs);
+    const delayMs = failureDelayMs(n, this.policy);
     const lockedForMs = lockDurationMs(n, this.policy);
     if (lockedForMs) {
       await this.redis.set(`${this.prefix}locked:${key}`, '1', 'PX', lockedForMs);
-      await this.redis.pexpire(k, lockedForMs + this.policy.windowMs);
+      await this.redis.del(k);
     }
-    return { lockedForMs };
+    return { lockedForMs, delayMs };
   }
   async reset(key: string) {
     await this.redis.del(`${this.prefix}fail:${key}`, `${this.prefix}locked:${key}`);

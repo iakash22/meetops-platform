@@ -60,6 +60,8 @@ export interface ModuleDeps {
   invitationTtlMs: number;
   passwordResetTtlMs: number;
   emailVerificationTtlMs: number;
+  /** Optional progressive-delay sleeper for failed logins (tests inject a fake). */
+  sleep?: (ms: number) => Promise<void>;
   security: HttpSecurityConfig;
 }
 

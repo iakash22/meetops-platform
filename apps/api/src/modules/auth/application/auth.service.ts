@@ -24,7 +24,11 @@ export interface AuthServiceDeps {
   sessionPolicy: SessionPolicy;
   passwordResetTtlMs: number;
   emailVerificationTtlMs: number;
+  /** Progressive-delay sleeper for failed logins; inject a no-op/fake in tests. */
+  sleep?: (ms: number) => Promise<void>;
 }
+
+const realSleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
 export interface RequestMeta {
   ip: string | null;
@@ -132,10 +136,13 @@ export class AuthService {
       ? await this.d.hasher.verify(user.passwordHash, input.password)
       : (await this.d.hasher.verify(await this.getDummyHash(), input.password), false);
     if (!user || !ok) {
-      const { lockedForMs } = await this.d.lockout.recordFailure(email);
+      // Keyed by normalized email whether or not the account exists (enumeration-safe).
+      const { lockedForMs, delayMs } = await this.d.lockout.recordFailure(email);
       const base = { actorId: user?.id ?? null, targetType: 'user' as const, targetId: user?.id ?? null };
       await this.audit({ ...base, action: 'auth.login.failure', metadata: { knownUser: !!user } }, meta);
+      // TODO(notifications #11): lockout notice email once a template exists; audited for now.
       if (lockedForMs) await this.audit({ ...base, action: 'auth.lockout', metadata: { lockedForMs } }, meta);
+      if (delayMs) await (this.d.sleep ?? realSleep)(delayMs);
       throw new InvalidCredentialsError();
     }
     await this.d.lockout.reset(email);

@@ -25,7 +25,10 @@ export interface RateLimiter {
 /** Account lockout after repeated failures. Never permanent. */
 export interface LoginLockout {
   isLocked(accountKey: string): Promise<{ locked: boolean; retryAfterMs: number }>;
-  /** Returns the lock applied by this failure (0 when none). */
-  recordFailure(accountKey: string): Promise<{ lockedForMs: number }>;
+  /**
+   * Returns the lock started by this failure and the progressive delay to apply before
+   * answering (0 when none). Callers must answer with the same generic error either way.
+   */
+  recordFailure(accountKey: string): Promise<{ lockedForMs: number; delayMs: number }>;
   reset(accountKey: string): Promise<void>;
 }
