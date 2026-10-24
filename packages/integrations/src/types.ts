@@ -1,5 +1,5 @@
 import { Value } from '@sinclair/typebox/value';
-import { WriteApproval as WriteApprovalSchema, type IssueStatus, type WriteApproval } from '@meetops/contracts';
+import { WriteApproval as WriteApprovalSchema, type IntegrationProvider, type IssueStatus, type WriteApproval } from '@meetops/contracts';
 
 /** open | in_progress | done | closed — from @meetops/contracts. */
 export type { IssueStatus, WriteApproval };
@@ -16,7 +16,7 @@ export interface CreateIssueInput {
 }
 
 export interface Issue {
-  provider: string;
+  provider: IntegrationProvider;
   /** Provider-scoped unique key, e.g. "owner/repo#12" or "PROJ-12". */
   key: string;
   id: string;

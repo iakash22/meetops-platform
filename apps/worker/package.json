@@ -13,6 +13,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@meetops/ai-core": "workspace:*",
     "@meetops/config": "workspace:*",
     "@meetops/contracts": "workspace:*",
     "@meetops/logger": "workspace:*",

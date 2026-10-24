@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import type { LLMGenerateStructuredParams, LLMGenerateTextParams, LLMProvider, LLMStructuredResult, LLMTextResult, ProviderHealth } from '../types.js';
 import { toAIError } from '../errors.js';
-import { capOutputTokens, type OutputLimits } from '../output-limits.js';
+import { capOutputTokens, type OutputLimits, type OutputStep } from '../output-limits.js';
 import { guardedFetch, type HttpOpts } from './http.js';
 import { parseStructured } from './gemini.js';
 
@@ -32,8 +32,8 @@ export class OllamaProvider implements LLMProvider {
   private msgs(p: { system?: string | undefined; prompt: string }) {
     return [...(p.system ? [{ role: 'system', content: p.system }] : []), { role: 'user', content: p.prompt }];
   }
-  private opts(p: { temperature?: number | undefined; maxTokens?: number | undefined; stopSequences?: string[] | undefined }) {
-    return { temperature: p.temperature, num_predict: capOutputTokens(p.maxTokens, this.http.outputLimits), stop: p.stopSequences };
+  private opts(p: { temperature?: number | undefined; maxTokens?: number | undefined; step?: OutputStep | undefined; stopSequences?: string[] | undefined }) {
+    return { temperature: p.temperature, num_predict: capOutputTokens(p.maxTokens, this.http.outputLimits, p.step), stop: p.stopSequences };
   }
 
   async listModels(): Promise<string[]> {

@@ -21,12 +21,12 @@
     "@meetops/contracts": "workspace:*",
     "@playwright/test": "1.64.1",
     "@sinclair/typebox": "^0.34.0",
-    "@testcontainers/postgresql": "^10.13.2",
-    "@testcontainers/redis": "^10.13.2",
+    "@testcontainers/postgresql": "^11.14.0",
+    "@testcontainers/redis": "^11.14.0",
     "@types/pg": "^8.11.10",
     "ioredis": "^5.4.1",
     "pg": "^8.13.1",
-    "testcontainers": "^10.13.2",
+    "testcontainers": "^11.14.0",
     "typescript": "^5.6.3",
     "vitest": "^4.1.12"
   }

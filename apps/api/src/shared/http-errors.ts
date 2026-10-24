@@ -1,5 +1,5 @@
 import type { FastifyError, FastifyInstance } from 'fastify';
-import type { ApiErrorCode, ApiErrorEnvelope } from './api-error.js';
+import type { ApiErrorCode, ApiErrorEnvelope, ApiErrorReason } from './api-error.js';
 import { DomainError } from './domain-error.js';
 import { RateLimitedError } from '../modules/auth/domain/errors.js';
 
@@ -24,11 +24,14 @@ export function genericClientError(status: number): [ApiErrorCode, string] {
  */
 export function registerDomainErrorHandler(app: FastifyInstance) {
   app.setErrorHandler((err: FastifyError | DomainError, request, reply) => {
-    const send = (status: number, error: Omit<ApiErrorEnvelope['error'], 'requestId'>) =>
-      reply.status(status).send({ error: { ...error, requestId: request.id } });
+    // contracts v0.3.3: every 409 carries `reason` (generic 'CONFLICT' when nothing more specific applies).
+    const send = (status: number, error: Omit<ApiErrorEnvelope['error'], 'requestId'>) => {
+      const reason: ApiErrorReason | undefined = error.reason ?? (status === 409 ? 'CONFLICT' : undefined);
+      return reply.status(status).send({ error: { ...error, ...(reason ? { reason } : {}), requestId: request.id } });
+    };
     if (err instanceof DomainError) {
       if (err instanceof RateLimitedError) void reply.header('retry-after', Math.ceil(err.retryAfterMs / 1000));
-      return send(err.statusCode, { code: err.code, message: err.message });
+      return send(err.statusCode, { code: err.code, message: err.message, ...(err.reason ? { reason: err.reason } : {}) });
     }
     if ('validation' in err && err.validation) {
       return send(400, {
