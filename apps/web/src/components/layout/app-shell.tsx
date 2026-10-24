@@ -7,6 +7,16 @@ import { cn } from '@/lib/utils';
 import { useUiStore } from '@/stores/org-store';
 import { navItems } from './nav-items';
 import { OrgSwitcher } from './org-switcher';
+import { displayName, useSession } from '@/features/session/use-session';
+
+function UserBadge() {
+  const { data } = useSession();
+  return (
+    <div className="text-sm text-muted-foreground" aria-label="Signed in user">
+      {data ? displayName(data.user) : null}
+    </div>
+  );
+}
 
 export function Sidebar() {
   const open = useUiStore((s) => s.sidebarOpen);
@@ -48,10 +58,7 @@ export function TopBar() {
         </Button>
         <OrgSwitcher />
       </div>
-      <div className="text-sm text-muted-foreground" aria-label="User menu">
-        {/* TODO: user menu once auth session contract exists */}
-        Account
-      </div>
+      <UserBadge />
     </header>
   );
 }
