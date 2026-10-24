@@ -133,7 +133,7 @@ describe('2. single-use presigned uploads', () => {
     const s = svc();
     const p = await s.getPresignedUploadUrl(rec, spec);
     s3.on(HeadObjectCommand).resolves(headOk(p.uploadToken));
-    await expect(s.confirmUpload(rec, p.uploadToken)).resolves.toMatchObject({ sizeBytes: 3, checksumSha256: SUM });
+    await expect(s.confirmUpload(rec, p.uploadToken)).resolves.toMatchObject({ sizeBytes: 3, checksumSha256: 'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad' });
     expect(s3.commandCalls(HeadObjectCommand)[0]!.args[0].input).toMatchObject({ Key: REC_KEY, ChecksumMode: 'ENABLED' });
     await expect(s.confirmUpload(rec, p.uploadToken)).rejects.toThrow(/already used/);
   });

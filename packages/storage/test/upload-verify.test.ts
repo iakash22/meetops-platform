@@ -35,7 +35,7 @@ describe('verifyUpload (single-part)', () => {
     const p = await s.getPresignedUploadUrl(rec, spec);
     s3.on(HeadObjectCommand).resolves({ ContentLength: 3, ChecksumSHA256: SUM, Metadata: { 'upload-token': p.uploadToken } });
     const first = await s.verifyUpload(rec, p.uploadToken);
-    expect(first).toEqual({ verified: true, sha256: HEX, checksumSha256: SUM, sizeBytes: 3 });
+    expect(first).toEqual({ verified: true, sha256: HEX, checksumSha256: HEX, checksumSha256Base64: SUM, sizeBytes: 3 });
     await expect(s.verifyUpload(rec, p.uploadToken)).resolves.toEqual(first);
   });
   it('a retry with a different token than the stored object is rejected', async () => {
@@ -79,7 +79,7 @@ describe('verifyMultipartUpload', () => {
     const s = svc();
     const mp = await s.createMultipartUpload(rec, big);
     const r = await s.verifyMultipartUpload(rec, 'u1', parts, mp.uploadToken);
-    expect(r).toEqual({ verified: true, sha256: HEX, checksumSha256: SUM, sizeBytes: 3 });
+    expect(r).toEqual({ verified: true, sha256: HEX, checksumSha256: HEX, checksumSha256Base64: SUM, sizeBytes: 3 });
     await expect(s.verifyMultipartUpload(rec, 'u1', parts, mp.uploadToken)).resolves.toEqual(r);
     expect(s3.commandCalls(CompleteMultipartUploadCommand)).toHaveLength(1);
   });

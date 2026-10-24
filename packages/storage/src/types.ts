@@ -10,6 +10,7 @@ export type StoredObjectInfo = {
   sizeBytes: number;
   mimeType?: string;
   etag?: string;
+  /** Lowercase 64-char hex sha256 (DB/contracts form). Absent for multipart objects (S3 only has a composite). */
   checksumSha256?: string;
   updatedAt?: Date;
   metadata?: Record<string, string>;
@@ -49,10 +50,12 @@ export type CompletedPart = { partNumber: number; etag: string; checksumSha256?:
  */
 export type UploadVerification = {
   verified: true;
-  /** Lowercase hex sha256 of the stored object (as verified by the server). */
+  /** Lowercase 64-char hex sha256 of the stored object (as verified by the server). */
   sha256: string;
-  /** The same digest, base64 (S3 x-amz-checksum-sha256 form). */
+  /** Same value as `sha256`: lowercase hex, matching FileObject.checksumSha256 (DB). */
   checksumSha256: string;
+  /** The same digest in S3 x-amz-checksum-sha256 form (standard padded base64). */
+  checksumSha256Base64: string;
   sizeBytes: number;
 };
 
