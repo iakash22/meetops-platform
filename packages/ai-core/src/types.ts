@@ -1,3 +1,4 @@
+import type { OutputStep } from './output-limits.js';
 import type { z } from 'zod';
 
 /** Provider kinds supported by the registry. */
@@ -51,6 +52,8 @@ export type LLMGenerateTextParams = {
   prompt: string;
   temperature?: number | undefined;
   maxTokens?: number | undefined;
+  /** Pipeline step (map/reduce) for step-specific default output caps; see output-limits.ts. */
+  step?: OutputStep | undefined;
   stopSequences?: string[] | undefined;
   signal?: AbortSignal | undefined;
 };
