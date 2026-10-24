@@ -429,8 +429,8 @@ importers:
         specifier: ^6.9.15
         version: 6.10.1
       zod:
-        specifier: ^3.23.8
-        version: 3.25.76
+        specifier: ^4.6.6
+        version: 4.6.7
     devDependencies:
       '@types/nodemailer':
         specifier: ^6.4.16
@@ -8969,12 +8969,6 @@ packages:
       }
     engines: { node: '>= 14' }
 
-  zod@3.25.76:
-    resolution:
-      {
-        integrity: sha512-gzUt/qt81nXsFGKIFcC3YnfEAx5NkunCfnDlvuBSSFS02bcXu4Lmea0AFIUwbLWxWPx3d9p8S5QoaujKcNQxcQ==,
-      }
-
   zod@4.6.7:
     resolution:
       {
@@ -14151,8 +14145,6 @@ snapshots:
       archiver-utils: 5.0.2
       compress-commons: 6.0.2
       readable-stream: 4.8.0
-
-  zod@3.25.76: {}
 
   zod@4.6.7: {}
 
