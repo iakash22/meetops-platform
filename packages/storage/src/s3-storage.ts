@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { Readable } from 'node:stream';
 import {
   AbortMultipartUploadCommand,
@@ -8,6 +9,7 @@ import {
   GetBucketPolicyStatusCommand,
   GetObjectCommand,
   HeadObjectCommand,
+  ListMultipartUploadsCommand,
   ListObjectsV2Command,
   ListPartsCommand,
   PutObjectCommand,
@@ -20,12 +22,16 @@ import type { FileObject } from '@meetops/contracts';
 import type { PresignedUrl } from '@meetops/contracts/legacy';
 import { MAX_CHUNK_BYTES, MAX_CHUNKS } from '@meetops/contracts';
 import { assertTtl, loadStorageConfig, S3_MIN_PART_BYTES, SESSION_CHUNK_TTL_SECONDS, UPLOAD_CONFIRM_GRACE_SECONDS, type StorageConfig } from './config.js';
-import { mapS3Error, StorageValidationError } from './errors.js';
+import { mapS3Error, StorageAccessError, StorageValidationError } from './errors.js';
 import {
   assertKeyOwnedBy,
   buildObjectKey,
   normalizeMeetingObjectRef,
+  parseMeetingKey,
+  LEGACY_ORG_KEY_PREFIX,
+  ORGANIZATIONS_KEY_PREFIX,
   refOrganizationId,
+  SESSION_CHUNK_PREFIX,
   type MeetingObjectRef
 } from './keys.js';
 import type {
@@ -38,8 +44,10 @@ import type {
   PresignUploadSpec,
   PutObjectBody,
   StorageService,
+  StoredKeyRef,
   StoredObjectInfo,
-  UploadSpec
+  UploadSpec,
+  UploadVerification
 } from './types.js';
 import { assertSha256Base64, normalizeMimeType, validateUploadSpec } from './validation.js';
 import {
@@ -61,12 +69,18 @@ export type SessionRef = { meetingId: string; sessionId: string } & (
   | { organizationId?: string; /** @deprecated Use organizationId (ADR-010). */ orgId: string }
 );
 
+/** A key read from storage of record (file_objects.key or a cached key). Never rebuilt from ids. Alias of StoredKeyRef. */
+export type StoredObjectKey = StoredKeyRef;
+
+/** What the authorize hook sees: a derived ref (writes and ref reads) or a stored key (stored-key reads). */
+export type AuthorizeTarget = MeetingObjectRef | StoredObjectKey;
+
 /**
  * REQUIRED meeting-level authorization, run on every op after the org-prefix check
  * (e.g. "does this meeting belong to organizationId and may the caller access it?").
- * The ref always carries both organizationId and the deprecated orgId (same value) during ADR-010 compat. Throw to deny.
+ * A derived ref always carries both organizationId and the deprecated orgId (same value) during ADR-010 compat. Throw to deny.
  */
-export type AuthorizeHook = (ref: MeetingObjectRef) => void | Promise<void>;
+export type AuthorizeHook = (target: AuthorizeTarget) => void | Promise<void>;
 
 export type S3StorageServiceOptions = {
   config: StorageConfig;
@@ -154,6 +168,46 @@ export class S3StorageService implements StorageService {
     assertKeyOwnedBy(key, normalized.organizationId, normalized.meetingId);
     await this.#authorize(normalized);
     return key;
+  }
+
+  /**
+   * Validate a stored key for READS: owner (organizationId, meetingId) and shape must hold under organizations/ or the
+   * legacy org/ prefix. The key is used as stored; it is never rebuilt from ids.
+   */
+  async #storedKey(s: StoredObjectKey): Promise<string> {
+    if (!s || typeof s !== 'object') throw new StorageValidationError('stored key is required');
+    assertKeyOwnedBy(s.key, s.organizationId, s.meetingId);
+    if (!parseMeetingKey(s.key)) throw new StorageAccessError();
+    await this.#authorize({ organizationId: s.organizationId, meetingId: s.meetingId, key: s.key });
+    return s.key;
+  }
+
+  /** Read an object by its stored key (legacy org/ or organizations/). */
+  async getObjectByKey(s: StoredObjectKey): Promise<GetObjectResult> {
+    const key = await this.#storedKey(s);
+    const res = await settle(this.#client.send(new GetObjectCommand({ Bucket: this.#bucket, Key: key })));
+    if (!res.Body) throw mapS3Error({ name: 'NoSuchKey' });
+    const body = res.Body instanceof Readable ? res.Body : Readable.from(res.Body as unknown as AsyncIterable<Uint8Array>);
+    return { body, info: toInfo(res) };
+  }
+
+  /** HEAD an object by its stored key; null when missing. */
+  async headObjectByKey(s: StoredObjectKey): Promise<StoredObjectInfo | null> {
+    const key = await this.#storedKey(s);
+    try {
+      return toInfo(await settle(this.#client.send(new HeadObjectCommand({ Bucket: this.#bucket, Key: key }))));
+    } catch (err) {
+      if ((err as { code?: string }).code === 'NOT_FOUND') return null;
+      throw err;
+    }
+  }
+
+  /** Presigned GET for a stored key. Presigned URLs for existing objects must go through this, not a rebuilt ref. */
+  async getPresignedDownloadUrlByKey(s: StoredObjectKey, opts?: PresignOptions): Promise<PresignedUrl> {
+    const key = await this.#storedKey(s);
+    const ttl = this.#ttl(opts, this.#cfg.downloadTtlSeconds);
+    const url = await settle(this.#presign(this.#client, new GetObjectCommand({ Bucket: this.#bucket, Key: key }), { expiresIn: ttl }));
+    return this.#presigned(url, 'GET', ttl);
   }
 
   #ttl(opts: PresignOptions | undefined, def: number): number {
@@ -300,6 +354,108 @@ export class S3StorageService implements StorageService {
       throw new StorageValidationError('Uploaded object does not match the presigned upload');
     }
     return toInfo(head);
+  }
+
+  /** HEAD with checksum mode; null when the object does not exist. */
+  async #headWithChecksum(key: string) {
+    try {
+      return await settle(this.#client.send(new HeadObjectCommand({ Bucket: this.#bucket, Key: key, ChecksumMode: 'ENABLED' })));
+    } catch (err) {
+      if ((err as { code?: string }).code === 'NOT_FOUND') return null;
+      throw err;
+    }
+  }
+
+  /** Stream the object and compute its sha256 (base64) and size. Used when S3 has no full-object checksum. */
+  async #streamSha256(key: string): Promise<{ checksumSha256: string; sizeBytes: number }> {
+    const res = await settle(this.#client.send(new GetObjectCommand({ Bucket: this.#bucket, Key: key })));
+    if (!res.Body) throw mapS3Error({ name: 'NoSuchKey' });
+    const body = res.Body instanceof Readable ? res.Body : Readable.from(res.Body as unknown as AsyncIterable<Uint8Array>);
+    const h = createHash('sha256');
+    let sizeBytes = 0;
+    for await (const chunk of body) {
+      const b = typeof chunk === 'string' ? Buffer.from(chunk) : (chunk as Uint8Array);
+      sizeBytes += b.byteLength;
+      h.update(b);
+    }
+    return { checksumSha256: h.digest('base64'), sizeBytes };
+  }
+
+  /**
+   * Verify-on-complete for a single-part upload. First call: consumes the one-time token and checks the object
+   * (token metadata, size, sha256) via confirmUpload. Retries after a lost response: the token is gone, so the
+   * object itself is the proof. It still carries this token in its metadata and a full-object sha256 that S3
+   * enforced at PUT time (mismatching objects were deleted by the first call). Never trusts the client's hash.
+   */
+  async verifyUpload(ref: MeetingObjectRef, uploadToken: string): Promise<UploadVerification> {
+    const key = await this.#key(ref);
+    if (!isUploadToken(uploadToken)) throw new StorageValidationError('Invalid upload token');
+    try {
+      const info = await this.confirmUpload(ref, uploadToken);
+      return toVerification(info.checksumSha256, info.sizeBytes);
+    } catch (err) {
+      if (!(err instanceof StorageValidationError) || !/already used|expired/.test(err.message)) throw err;
+      const head = await this.#headWithChecksum(key);
+      const sum = head?.ChecksumSHA256;
+      if (!head || head.Metadata?.[UPLOAD_TOKEN_METADATA_KEY] !== uploadToken || !sum || sum.includes('-')) throw err;
+      return toVerification(sum, head.ContentLength ?? 0);
+    }
+  }
+
+  /**
+   * Complete a multipart upload (per-part checksums checked against ListParts) and verify the declared whole-object
+   * sha256 by streaming the stored object (S3 only keeps a composite checksum for multipart). Retry-safe: when the
+   * token was already consumed by an earlier complete, the object is re-hashed and must match the declared sha256
+   * recorded at createMultipartUpload. A mismatching object is deleted.
+   */
+  async verifyMultipartUpload(ref: MeetingObjectRef, uploadId: string, parts: CompletedPart[], uploadToken: string): Promise<UploadVerification> {
+    const key = await this.#key(ref);
+    try {
+      await this.completeMultipartUpload(ref, uploadId, parts, uploadToken);
+    } catch (err) {
+      // Retry after a lost response: the token is gone; fall through and verify the stored object itself.
+      if (!(err instanceof StorageValidationError) || !/already used|expired/.test(err.message)) throw err;
+    }
+    const head = await this.#headWithChecksum(key);
+    if (!head) throw new StorageValidationError('Upload not found');
+    const declared = head.Metadata?.[DECLARED_SHA256_METADATA_KEY];
+    if (!declared) throw new StorageValidationError('Upload has no declared sha256');
+    const actual = await this.#streamSha256(key);
+    if (actual.checksumSha256 !== declared || (head.ContentLength !== undefined && head.ContentLength !== actual.sizeBytes)) {
+      await this.deleteObject(ref).catch(() => undefined);
+      throw new StorageValidationError('Uploaded object does not match the declared sha256');
+    }
+    return toVerification(actual.checksumSha256, actual.sizeBytes);
+  }
+
+  /**
+   * Expiry cleanup for abandoned multipart uploads: abort every in-progress multipart upload under
+   * organizations/ (plus legacy org/ and the session-chunk prefix) initiated before `olderThan` (default: now - upload TTL - confirm
+   * grace). Single-part PUTs that were never confirmed are cleaned by the caller from its upload records
+   * (status != verified and expiresAt + grace passed) via deleteObject, plus a bucket lifecycle rule as backstop.
+   */
+  async abortStaleMultipartUploads(olderThan?: Date): Promise<{ aborted: number }> {
+    const cutoff = olderThan ?? new Date(Date.now() - (this.#cfg.uploadTtlSeconds + UPLOAD_CONFIRM_GRACE_SECONDS) * 1000);
+    let aborted = 0;
+    // Legacy org/ uploads (pre ADR-010 Phase A) are swept too: writers no longer start them, so any left are abandoned.
+    for (const prefix of [ORGANIZATIONS_KEY_PREFIX, LEGACY_ORG_KEY_PREFIX, SESSION_CHUNK_PREFIX]) {
+      let keyMarker: string | undefined;
+      let uploadIdMarker: string | undefined;
+      for (let page = 0; page < 1000; page++) {
+        const res = await settle(
+          this.#client.send(new ListMultipartUploadsCommand({ Bucket: this.#bucket, Prefix: prefix, KeyMarker: keyMarker, UploadIdMarker: uploadIdMarker }))
+        );
+        for (const u of res.Uploads ?? []) {
+          if (!u.Key || !u.UploadId || !u.Initiated || u.Initiated >= cutoff) continue;
+          await settle(this.#client.send(new AbortMultipartUploadCommand({ Bucket: this.#bucket, Key: u.Key, UploadId: u.UploadId })));
+          aborted++;
+        }
+        if (!res.IsTruncated) break;
+        keyMarker = res.NextKeyMarker;
+        uploadIdMarker = res.NextUploadIdMarker;
+      }
+    }
+    return { aborted };
   }
 
   async getPresignedDownloadUrl(ref: MeetingObjectRef, opts?: PresignOptions): Promise<PresignedUrl> {
@@ -654,6 +810,11 @@ export class S3StorageService implements StorageService {
     if (info.checksumSha256) f.checksumSha256 = info.checksumSha256;
     return f;
   }
+}
+
+function toVerification(checksumSha256: string | undefined, sizeBytes: number): UploadVerification {
+  if (!checksumSha256) throw new StorageValidationError('Upload has no sha256');
+  return { verified: true, sha256: Buffer.from(checksumSha256, 'base64').toString('hex'), checksumSha256, sizeBytes };
 }
 
 function toInfo(res: {
