@@ -7,6 +7,7 @@ settings:
 overrides:
   tinypool: ^2.1.2
   vitest@3>vite: ^5.4.21
+  shell-quote@<1.8.4: ^1.8.4
 
 importers:
   .:
@@ -7985,11 +7986,12 @@ packages:
       }
     engines: { node: '>=8' }
 
-  shell-quote@1.7.3:
+  shell-quote@1.12.0:
     resolution:
       {
-        integrity: sha512-Vpfqwm4EnqGdlsBFNmHhxhElJYrdfcxPThu+ryKS5J8L/fhAwLazFZtq+S+TWZ9ANj2piSQLGj6NQg+lKPmxrw==,
+        integrity: sha512-PcByqNyT/38F2kDNi006HAMRJaULuBzq/FOsw3qdZvX/GA9W/jamDaRskgHjubHiftXK5sIFxLNkvrXUwcof6Q==,
       }
+    engines: { node: '>= 0.4' }
 
   shellwords@0.1.1:
     resolution:
@@ -12470,7 +12472,7 @@ snapshots:
   fx-runner@1.4.0:
     dependencies:
       commander: 2.9.0
-      shell-quote: 1.7.3
+      shell-quote: 1.12.0
       spawn-sync: 1.0.15
       when: 3.7.7
       which: 1.2.4
@@ -13787,7 +13789,7 @@ snapshots:
 
   shebang-regex@3.0.0: {}
 
-  shell-quote@1.7.3: {}
+  shell-quote@1.12.0: {}
 
   shellwords@0.1.1: {}
 
