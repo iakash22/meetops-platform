@@ -32,8 +32,7 @@ jobs:
           --health-interval 5s --health-timeout 5s --health-retries 20
 
     env:
-      # Superuser is used ONLY to bootstrap roles; tests and apps get the non-superuser meetops_app (RLS enforced).
-      ADMIN_DATABASE_URL: postgresql://meetops:ci-throwaway-postgres@localhost:5432/meetops_test
+      # Superuser URL is step-scoped to db:roles only; tests and apps get the non-superuser meetops_app (RLS enforced).
       MEETOPS_DB_NAME: meetops_test
       MEETOPS_APP_DB_PASSWORD: ci-only-throwaway-app
       MEETOPS_MIGRATOR_DB_PASSWORD: ci-only-throwaway-migrator
@@ -101,6 +100,8 @@ jobs:
 
       - name: Create DB roles (meetops_app / meetops_migrator)
         run: pnpm --filter @meetops/database db:roles
+        env:
+          ADMIN_DATABASE_URL: postgresql://meetops:ci-throwaway-postgres@localhost:5432/meetops_test
 
       - name: Lint
         run: pnpm lint
@@ -138,8 +139,7 @@ jobs:
 
     # Throwaway, CI-only values for an ephemeral database. Not secrets; never reuse outside CI.
     env:
-      # Superuser: used ONLY by db:roles.
-      ADMIN_DATABASE_URL: postgresql://meetops:ci-throwaway-postgres@localhost:5432/meetops_test
+      # Superuser URLs are step-scoped: ADMIN_DATABASE_URL on db:roles, RLS_TEST_ADMIN_URL on test:live.
       MEETOPS_DB_NAME: meetops_test
       MEETOPS_APP_DB_PASSWORD: ci-only-throwaway-app
       MEETOPS_MIGRATOR_DB_PASSWORD: ci-only-throwaway-migrator
@@ -173,6 +173,8 @@ jobs:
 
       - name: Create DB roles
         run: pnpm --filter @meetops/database db:roles
+        env:
+          ADMIN_DATABASE_URL: postgresql://meetops:ci-throwaway-postgres@localhost:5432/meetops_test
 
       - name: Migrate
         run: pnpm --filter @meetops/database db:migrate:deploy
@@ -189,5 +191,7 @@ jobs:
 
       - name: Live tests
         run: pnpm --filter @meetops/database test:live
+        env:
+          RLS_TEST_ADMIN_URL: postgresql://meetops:ci-throwaway-postgres@localhost:5432/meetops_test
 # hook-verified commit
 # hook-verified commit (husky active)
