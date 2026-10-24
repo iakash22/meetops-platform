@@ -190,3 +190,4 @@ jobs:
       - name: Live tests
         run: pnpm --filter @meetops/database test:live
 # hook-verified commit
+# hook-verified commit (husky active)
