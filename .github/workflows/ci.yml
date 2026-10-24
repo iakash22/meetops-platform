@@ -39,7 +39,7 @@ jobs:
 
       - name: Test
         # Cap turbo parallelism in CI to reduce timing flakes on shared runners.
-        run: pnpm test --concurrency=2
+        run: pnpm exec turbo run test --concurrency=2
 
       - name: Build
         run: pnpm build
