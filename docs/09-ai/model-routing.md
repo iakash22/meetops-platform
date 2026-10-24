@@ -11,11 +11,11 @@
 Features: transcription, live-transcription, summary, agenda, decisions, highlights, actions, employee-suggestions,
 deadlines, reports, follow-ups. Each one maps to a kind (stt/llm) and a required capability (`FEATURE_CAPABILITY`).
 
-## Resolution algorithm (`ModelRouter.resolve(tenantId, feature, override?)`)
+## Resolution algorithm (`ModelRouter.resolve(organizationId, feature, override?)`)
 
 ```
 kind = featureKind(feature)
-org  = orgStore.get(tenantId)                      # tenant-scoped; nothing is shared between tenants
+org  = orgStore.get(organizationId)                # organization-scoped; nothing is shared between organizations
 layers = [system, env, org.defaults[kind], org.features[feature], override]
 chosen = last non-empty layer                      # highest precedence wins
 provider = chosen.provider; model = chosen.model ?? providerConfig.model
@@ -50,5 +50,12 @@ The notify hook fires, and the original `request` comes back so the caller can p
 
 ## Idempotency
 
-The key is `tenantId:feature:idempotencyKey`. A stored success is returned with `cached: true`, and concurrent
+The key is `organizationId:feature:idempotencyKey`. A stored success is returned with `cached: true`, and concurrent
 duplicates share one in-flight promise. Only successes are stored.
+
+## Job payload fallbacks
+
+- **AI jobs:** when an `AiJobPayload` has no `fallback`, the request override carries `fallbacks: undefined`, so the
+  org and feature fallbacks still apply. An explicit `fallback.fallbackRouteIds` (even `[]`) replaces them.
+- **Transcription jobs:** a `TranscriptionJobPayload.fallback` holds LLM route ids, so it is ignored and only org and
+  feature STT fallbacks apply. This stays a TODO until contracts define an STT fallback type.

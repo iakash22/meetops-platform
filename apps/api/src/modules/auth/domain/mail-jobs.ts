@@ -7,13 +7,15 @@ export type AuthMailJob =
   | { kind: 'password_reset'; tokenId: string | null }
   | { kind: 'email_verification'; tokenId: string }
   | { kind: 'account_exists'; userId: string }
+  /** userId null = unknown email (timing parity); the worker drops it. */
+  | { kind: 'login_lockout'; userId: string | null }
   | { kind: 'invitation'; organizationId: string; invitationId: string };
 
 export interface AuthMailQueue {
   enqueue(job: AuthMailJob): Promise<void>;
 }
 
-export type AuthMailTemplate = 'email_verification' | 'password_reset' | 'account_exists' | 'invitation';
+export type AuthMailTemplate = 'email_verification' | 'password_reset' | 'account_exists' | 'invitation' | 'login_lockout';
 
 export interface OutboundMail {
   to: string;
