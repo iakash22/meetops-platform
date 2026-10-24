@@ -68,7 +68,11 @@ export function planCandidates(
   const reasons: Array<{ provider: string; reason: string }> = [];
   const primary = registry.getConfig(route.provider);
   const primaryPaid = primary?.cost.tier === 'paid';
-  const platformDefault = route.source === 'system' || route.source === 'env';
+  // The platform (system/env) default for this kind is implicitly approved even when selected by a higher layer.
+  const platformProviders = new Set(
+    route.trace.filter((t) => t.source === 'system' || t.source === 'env').map((t) => t.selection?.provider),
+  );
+  const platformDefault = route.source === 'system' || route.source === 'env' || platformProviders.has(route.provider);
 
   const ordered = [route.provider, ...route.fallbacks];
   // Implicit fallbacks: enabled *local* providers with the capability (free, self-hosted), by priority.

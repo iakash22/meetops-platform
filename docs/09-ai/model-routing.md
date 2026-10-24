@@ -52,3 +52,10 @@ The notify hook fires, and the original `request` comes back so the caller can p
 
 The key is `organizationId:feature:idempotencyKey`. A stored success is returned with `cached: true`, and concurrent
 duplicates share one in-flight promise. Only successes are stored.
+
+## Job payload fallbacks
+
+- **AI jobs:** when an `AiJobPayload` has no `fallback`, the request override carries `fallbacks: undefined`, so the
+  org and feature fallbacks still apply. An explicit `fallback.fallbackRouteIds` (even `[]`) replaces them.
+- **Transcription jobs:** a `TranscriptionJobPayload.fallback` holds LLM route ids, so it is ignored and only org and
+  feature STT fallbacks apply. This stays a TODO until contracts define an STT fallback type.
