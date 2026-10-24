@@ -14,7 +14,7 @@ import type { MeetingStatusEvent, TranscriptionProgressEvent, TranscriptionStage
 import { Value } from '@sinclair/typebox/value';
 import type { AllowedDemuxer, AudioChunk, ProbeResult } from '@meetops/media-core';
 import { assertProbedFormat, demuxerForExt } from '@meetops/media-core';
-import { StorageError, assertKeyOwnedBy, buildObjectKey, type MeetingObjectRef, type StorageService } from '@meetops/storage';
+import { StorageError, assertKeyOwnedBy, buildObjectKey, parseMeetingKey, type MeetingObjectRef, type StorageService } from '@meetops/storage';
 import { chunkFileObjectId, normalizedFileObjectId, transcriptionIdempotencyKey, transcriptionJobId } from './ids.js';
 import type { ChunkManifestEntry, MediaJobPayload, MediaProcessingResult, TranscriptionJobPayload } from './types.js';
 
@@ -61,7 +61,7 @@ export const DEFAULT_WORK_TMP_BYTES = 3 * 1024 ** 3;
 export const peakScratchBytes = (l: MediaLimits) => l.maxSourceBytes + 2 * normalizedByteCap(l.maxDurationSeconds);
 
 export type MediaProcessorDeps = {
-  storage: Pick<StorageService, 'getObject' | 'putObject' | 'headObject'>;
+  storage: Pick<StorageService, 'getObjectByKey' | 'headObjectByKey' | 'putObject'>;
   media: MediaOps;
   transcriptionQueue: TranscriptionEnqueuer;
   realtime: RealtimePublisher;
@@ -124,15 +124,18 @@ export async function processRecording(
   const progress = (percent: number, stage: TranscriptionStage, extra: Partial<TranscriptionProgressEvent> = {}) =>
     deps.realtime.transcriptionProgress({ organizationId, meetingId, recordingId, percent, stage, at: now().toISOString(), ...extra });
 
-  const sourceRef: MeetingObjectRef = { orgId: organizationId, meetingId, kind: 'recording', objectId: recordingId, ext: payload.sourceExt };
+  const sourceRef: MeetingObjectRef = { organizationId, meetingId, kind: 'recording', objectId: recordingId, ext: payload.sourceExt };
   let demuxer: AllowedDemuxer;
+  let source: { organizationId: string; meetingId: string; key: string };
   try {
-    const expectedKey = buildObjectKey(sourceRef);
-    assertKeyOwnedBy(expectedKey, organizationId, meetingId);
-    if (payload.sourceKey !== undefined) {
-      assertKeyOwnedBy(payload.sourceKey, organizationId, meetingId);
-      if (payload.sourceKey !== expectedKey) throw new MediaJobError('forbidden', 'sourceKey does not match recording');
+    // Read the source through its stored key when given (it may be a legacy org/ key); otherwise the derived key.
+    // Never rebuild a different path for an existing object. Owner + exact shape are enforced under either prefix.
+    const key = payload.sourceKey ?? buildObjectKey(sourceRef);
+    assertKeyOwnedBy(key, organizationId, meetingId);
+    if (parseMeetingKey(key)?.rest !== `recordings/${recordingId}.${payload.sourceExt}`) {
+      throw new MediaJobError('forbidden', 'sourceKey does not match recording');
     }
+    source = { organizationId, meetingId, key };
     demuxer = demuxerForExt(payload.sourceExt);
   } catch (err) {
     deps.logger.warn({ ...log, errorCode: errorCodeOf(err) }, 'media job rejected');
@@ -144,13 +147,13 @@ export async function processRecording(
     deps.realtime.meetingStatus({ organizationId, meetingId, status: 'processing', at: now().toISOString() });
     deps.logger.info(log, 'media job started');
 
-    const head = await deps.storage.headObject(sourceRef);
+    const head = await deps.storage.headObjectByKey(source);
     if (!head) throw new MediaJobError('source_not_found', 'Source not found');
     if (head.sizeBytes < 1 || head.sizeBytes > limits.maxSourceBytes) throw new MediaJobError('source_too_large', 'Source exceeds size limit');
 
     tmp = await mkdtemp(path.join(deps.tmpRoot ?? tmpdir(), 'meetops-media-'));
     const srcPath = path.join(tmp, `source.${payload.sourceExt}`);
-    const { body } = await deps.storage.getObject(sourceRef);
+    const { body } = await deps.storage.getObjectByKey(source);
     await pipeline(body, byteCap(limits.maxSourceBytes), createWriteStream(srcPath));
 
     const info = await deps.media.probeMedia(srcPath, { format: demuxer });
@@ -168,7 +171,7 @@ export async function processRecording(
       maxInputBytes: limits.maxSourceBytes
     });
     const wavSize = (await stat(wavPath)).size;
-    const normalizedRef: MeetingObjectRef = { orgId: organizationId, meetingId, kind: 'normalized', objectId: recordingId };
+    const normalizedRef: MeetingObjectRef = { organizationId, meetingId, kind: 'normalized', objectId: recordingId };
     await deps.storage.putObject(normalizedRef, createReadStream(wavPath), { mimeType: 'audio/wav', sizeBytes: wavSize });
     progress(30, 'chunking');
 
@@ -179,7 +182,7 @@ export async function processRecording(
     for (const [i, c] of chunks.entries()) {
       const size = (await stat(c.path)).size;
       await deps.storage.putObject(
-        { orgId: organizationId, meetingId, kind: 'chunk', objectId: recordingId, index: c.index },
+        { organizationId, meetingId, kind: 'chunk', objectId: recordingId, index: c.index },
         createReadStream(c.path),
         { mimeType: 'audio/wav', sizeBytes: size }
       );

@@ -25,8 +25,8 @@ import {
 const s3 = mockClient(S3Client);
 const client = new S3Client({ region: 'us-east-1', credentials: { accessKeyId: 'a', secretAccessKey: 's' } });
 const config = loadStorageConfig({ STORAGE_BUCKET: 'b', STORAGE_ENDPOINT: 'http://localhost:9000', STORAGE_ACCESS_KEY_ID: 'a', STORAGE_SECRET_ACCESS_KEY: 's' });
-const rec: MeetingObjectRef = { orgId: 'o1', meetingId: 'm1', kind: 'recording', objectId: 'r1', ext: 'webm' };
-const REC_KEY = 'org/o1/meetings/m1/recordings/r1.webm';
+const rec: MeetingObjectRef = { organizationId: 'o1', meetingId: 'm1', kind: 'recording', objectId: 'r1', ext: 'webm' };
+const REC_KEY = 'organizations/o1/meetings/m1/recordings/r1.webm';
 const SUM = 'ungWv48Bz+pBQUDeXa4iI7ADYaOWF3qctBD/YfIAFa0='; // sha256('abc')
 const OTHER = Buffer.alloc(32, 7).toString('base64');
 const MB = 1024 * 1024;
@@ -109,7 +109,7 @@ describe('3. required sha256', () => {
     s3.on(ListObjectsV2Command).resolves({ Contents: [], IsTruncated: false });
     const presign = vi.fn().mockResolvedValue('https://c');
     const s = new S3StorageService({ config, client, authorize: () => undefined, presign });
-    const sess = { orgId: 'o1', meetingId: 'm1', sessionId: 's1' };
+    const sess = { organizationId: 'o1', meetingId: 'm1', sessionId: 's1' };
     await expect(s.getPresignedSessionChunkUrl(sess, { seq: 0, sizeBytes: 1 } as never, 'audio/webm')).rejects.toThrow(/sha256 is required/);
     await expect(s.getPresignedSessionChunkUrl(sess, { seq: 0, sizeBytes: 1, sha256: SUM }, 'audio/webm')).rejects.toThrow(/Invalid sha256/);
     await s.getPresignedSessionChunkUrl(sess, { seq: 0, sizeBytes: 1, sha256: 'a'.repeat(64) }, 'audio/webm');
@@ -118,10 +118,10 @@ describe('3. required sha256', () => {
     expect([...o.signableHeaders]).toContain('if-none-match');
   });
   it('session verify rejects a stored chunk without a checksum', async () => {
-    s3.on(ListObjectsV2Command).resolves({ Contents: [{ Key: 'tmp/session-chunks/org/o1/meetings/m1/sessions/s1/00000.part', Size: 5 }], IsTruncated: false });
+    s3.on(ListObjectsV2Command).resolves({ Contents: [{ Key: 'tmp/session-chunks/organizations/o1/meetings/m1/sessions/s1/00000.part', Size: 5 }], IsTruncated: false });
     s3.on(HeadObjectCommand).resolves({ ContentLength: 5 });
     s3.on(DeleteObjectCommand).resolves({});
-    await expect(svc().verifySessionChunks({ orgId: 'o1', meetingId: 'm1', sessionId: 's1' }, { chunkCount: 1 })).rejects.toThrow(/rejected/);
+    await expect(svc().verifySessionChunks({ organizationId: 'o1', meetingId: 'm1', sessionId: 's1' }, { chunkCount: 1 })).rejects.toThrow(/rejected/);
   });
 });
 
