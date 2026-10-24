@@ -85,7 +85,7 @@ Fix during migration: `bool.default(true)` / `bool.default(false)` (output-typed
 
 | Package                  | Estimate        | Notes                                                                                                                                 |
 | ------------------------ | --------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
-| `packages/config`        | 0.5 day         | Fix 9 boolean defaults, swap to `z.url()`, `error:`; add tests for defaults (current test only checks `NODE_ENV`/`STORAGE_PROVIDER`). |
+| `packages/config`        | 0.5 day         | Fix 8 boolean defaults, swap to `z.url()`, `error:`; add tests for defaults (current test only checks `NODE_ENV`/`STORAGE_PROVIDER`). |
 | `packages/notifications` | 0.25 day        | `message`→`error`, verify `formatIssues` output and tests.                                                                            |
 | `apps/web`               | 0.5–1 day       | Bump `@hookform/resolvers` to v5, `z.email()`, re-run form tests (watch the `meetings.test.tsx` flake separately).                    |
 | Lockfile / CI            | 0.25 day        | Single `zod@^4` across workspace; dedupe.                                                                                             |
@@ -101,7 +101,7 @@ Fix during migration: `bool.default(true)` / `bool.default(false)` (output-typed
 
 ## 5. Ordered steps
 
-1. Add regression tests in `packages/config` for every default (esp. the 9 booleans → `boolean`, `SMTP_PORT` → `465`) and for an invalid `DATABASE_URL` error. Same for `packages/notifications` `loadEmailConfig` happy/failure paths. Merge on v3.
+1. Add regression tests in `packages/config` for every default (esp. the 8 booleans → `boolean`, `SMTP_PORT` → `465`) and for an invalid `DATABASE_URL` error. Same for `packages/notifications` `loadEmailConfig` happy/failure paths. Merge on v3.
 2. `packages/config`: import from `zod/v4` (still on 3.25.x). Change `bool.default('true')` → `bool.default(true)` (or `.prefault('true')`), `z.string().url()` → `z.url()`, `{ message }` → `{ error }`. Optionally use `z.prettifyError(result.error)` in `loadConfig`. Run tests/typecheck for api, worker, queue.
 3. `packages/notifications`: same import switch; `{ message }` → `{ error }`; confirm `formatIssues` output.
 4. `apps/web`: bump `@hookform/resolvers` to `^5.1` (+ `react-hook-form` if needed), switch to `zod/v4`, `z.email('...')`; run web tests and e2e auth flows.
