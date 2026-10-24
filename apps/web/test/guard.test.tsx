@@ -5,6 +5,7 @@ import { ApiError } from '@/lib/api/client';
 import { useOrgStore } from '@/stores/org-store';
 import { isSignedOutForRouting } from '@/features/session/use-session';
 import { createMockApi, renderApp, resetStores } from './fixtures/render';
+import { waitForRouteData } from './fixtures/route-ready';
 
 const unauthenticated = () =>
   vi.fn().mockRejectedValue(new ApiError(401, 'UNAUTHENTICATED', 'no session', 'r1'));
@@ -24,6 +25,7 @@ describe('auth guard', () => {
 
   it('lets signed-in users through and loads orgs from the session', async () => {
     const { api } = renderApp('/meetings');
+    await waitForRouteData(api.meetings.list, { heading: 'Meetings' });
     expect(await screen.findByText('Weekly sync')).toBeInTheDocument();
     expect(api.auth.session).toHaveBeenCalled();
     expect(useOrgStore.getState().currentOrganizationId).toBe(
@@ -123,7 +125,8 @@ describe('login after guard redirect (E2E-04)', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Sign in' }));
 
     await waitFor(() => expect(history.location.pathname).toBe('/meetings'));
-    expect(await screen.findByTestId('app-shell')).toBeInTheDocument();
+    await waitForRouteData(api.meetings.list, { heading: 'Meetings' });
+    expect(screen.getByTestId('app-shell')).toBeInTheDocument();
     expect(await screen.findByText('Weekly sync')).toBeInTheDocument();
     expect(useOrgStore.getState().currentOrganizationId).toBe(
       '00000000-0000-4000-8000-000000000001',
