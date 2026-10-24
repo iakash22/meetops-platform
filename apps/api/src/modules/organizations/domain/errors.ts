@@ -5,10 +5,10 @@ export class ForbiddenError extends DomainError {
     super('FORBIDDEN', message, 403);
   }
 }
-/** AU-31: the org must keep at least one owner. */
+/** AU-31: the org must keep at least one owner. contracts v0.3.3: 409 CONFLICT, reason LAST_OWNER (was 422). */
 export class LastOwnerError extends DomainError {
   constructor() {
-    super('CONFLICT', 'An organization must keep at least one owner', 422);
+    super('CONFLICT', 'An organization must keep at least one owner', 409, 'LAST_OWNER');
   }
 }
 export class EmailNotVerifiedError extends DomainError {
@@ -35,6 +35,6 @@ export class OrganizationNotFoundError extends DomainError {
  */
 export class AlreadyMemberError extends DomainError {
   constructor() {
-    super('CONFLICT', 'This person is already a member of the organization', 409);
+    super('CONFLICT', 'This person is already a member of the organization', 409, 'ALREADY_MEMBER');
   }
 }

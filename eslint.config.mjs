@@ -1,3 +1,4 @@
+// lint-staged: test folders are covered by test/tsconfig.json projects (see #106)
 // Flat ESLint config for monorepo
 import js from "@eslint/js";
 import tseslint from "typescript-eslint";
@@ -70,18 +71,11 @@ export default [
       ...c.languageOptions,
       parserOptions: {
         ...c.languageOptions?.parserOptions,
-        // Resolve each file against its nearest tsconfig.json (per-package paths/aliases such as @/)
-        // Only test dirs NOT covered by a tsconfig "include" may use the default project;
-        // apps/web includes test/ in its own tsconfig, so it must not be listed here.
-        projectService: {
-          allowDefaultProject: [
-            "apps/api/test/*.ts",
-            "apps/worker/test/*.ts",
-            "packages/*/test/*.ts"
-          ],
-          defaultProject: "tsconfig.base.json",
-          maximumDefaultProjectFileMatchCount_THIS_WILL_SLOW_DOWN_LINTING: 32
-        },
+        // Resolve each file against its nearest tsconfig.json (per-package paths/aliases such as @/).
+        // Every linted TS file must belong to a real tsconfig: package test/ dirs each have a
+        // test/tsconfig.json. No allowDefaultProject fallback, so large staged sets (e.g. merge
+        // commits) never hit the default-project file-count cap.
+        projectService: true,
         tsconfigRootDir: import.meta.dirname
       }
     }
