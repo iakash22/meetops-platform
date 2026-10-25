@@ -100,6 +100,31 @@ export type RecordingChunkCountRepository = {
   }): Promise<void>;
 };
 
+/**
+ * Ownership check run before anything is uploaded: true only if the recording exists and belongs to exactly the job's
+ * organization and meeting. Implemented in @meetops/database under runWithOrganizationContext (forced RLS).
+ */
+export type RecordingOwnershipVerifier = {
+  verifyRecording(q: {
+    organizationId: string;
+    meetingId: string;
+    recordingId: string;
+  }): Promise<boolean>;
+};
+
+/**
+ * Chunk FileObject rows + recordings.chunk_count (= chunks.length) in ONE transaction under
+ * runWithOrganizationContext: all or nothing. Preferred over chunkFileObjects + recordings when present.
+ */
+export type RecordingChunkPersistence = {
+  persistChunks(q: {
+    organizationId: string;
+    meetingId: string;
+    recordingId: string;
+    chunks: ChunkFileObjectRow[];
+  }): Promise<void>;
+};
+
 /** Optional waveform step (best effort: a failure is logged and never fails the job). */
 export type WaveformOps = {
   compute(wavPath: string, opts: { bins: number }): Promise<Waveform>;
@@ -155,6 +180,10 @@ export type MediaProcessorDeps = {
   logger: MinimalLogger;
   recordings?: RecordingChunkCountRepository;
   chunkFileObjects?: ChunkFileObjectRepository;
+  /** When set, the job's recording must belong to its organization/meeting before anything is downloaded or uploaded. */
+  recordingVerifier?: RecordingOwnershipVerifier;
+  /** When set, replaces chunkFileObjects + recordings with one atomic write. */
+  chunkPersistence?: RecordingChunkPersistence;
   waveform?: WaveformOps;
   waveformBins?: number;
   limits?: Partial<MediaLimits>;
@@ -277,6 +306,22 @@ export async function processRecording(
 
   let tmp: string | undefined;
   try {
+    // Verify the claimed recording belongs to this organization + meeting (RLS-scoped) before any storage I/O, so a
+    // forged job (real meeting, someone else's recording) uploads nothing and writes nothing.
+    if (deps.recordingVerifier) {
+      let owned: boolean;
+      try {
+        owned = await deps.recordingVerifier.verifyRecording({
+          organizationId,
+          meetingId,
+          recordingId,
+        });
+      } catch {
+        throw new MediaJobError('recording_verify_failed', 'Could not verify recording');
+      }
+      if (!owned) throw new MediaJobError('recording_not_found', 'Recording not found');
+    }
+
     deps.realtime.meetingStatus({
       organizationId,
       meetingId,
@@ -361,7 +406,7 @@ export async function processRecording(
         mimeType: 'audio/wav',
         sizeBytes: size,
       });
-      if (deps.chunkFileObjects) {
+      if (deps.chunkPersistence || deps.chunkFileObjects) {
         rows.push({
           fileObjectId: chunkFileObjectId(recordingId, c.index),
           index: c.index,
@@ -387,9 +432,23 @@ export async function processRecording(
       });
     }
 
-    // Chunk FileObject rows first (the audio resolver needs them), then the count, then jobs. Any failure here
-    // enqueues nothing; a retry upserts the same deterministic ids and keys.
-    if (deps.chunkFileObjects) {
+    // Chunk FileObject rows (the audio resolver needs them) and the count, then jobs. Any failure here enqueues
+    // nothing; a retry upserts the same deterministic ids and keys. chunkPersistence commits rows + count atomically.
+    if (deps.chunkPersistence) {
+      try {
+        await deps.chunkPersistence.persistChunks({
+          organizationId,
+          meetingId,
+          recordingId,
+          chunks: rows,
+        });
+      } catch {
+        throw new MediaJobError(
+          'chunk_persist_failed',
+          'Could not persist chunk file objects and chunk count',
+        );
+      }
+    } else if (deps.chunkFileObjects) {
       try {
         await deps.chunkFileObjects.upsertChunkFileObjects({
           organizationId,
@@ -406,7 +465,7 @@ export async function processRecording(
     }
 
     // Persist the expected chunk count before any transcription job exists, so AI can compute percent/complete.
-    if (deps.recordings) {
+    if (!deps.chunkPersistence && deps.recordings) {
       try {
         await deps.recordings.setChunkCount({
           organizationId,

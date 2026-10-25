@@ -450,6 +450,84 @@ describe('processRecording (mocked storage, queue, emitter)', () => {
     expect(jobs.size).toBe(0);
     expect(readdirSync(tmpRoot)).toEqual([]);
   });
+  it('verifies recording ownership before any storage I/O; an unowned recording uploads and enqueues nothing', async () => {
+    const { deps, jobs, stored, headObject, getObject, events } = makeDeps({}, tmpRoot);
+    const verifyRecording = vi.fn(async () => false);
+    const persistChunks = vi.fn(async () => undefined);
+    await expect(
+      processRecording(payload, {
+        ...deps,
+        recordingVerifier: { verifyRecording },
+        chunkPersistence: { persistChunks },
+      }),
+    ).rejects.toMatchObject({ errorCode: 'recording_not_found' });
+    expect(verifyRecording).toHaveBeenCalledWith({
+      organizationId: ORG,
+      meetingId: MEET,
+      recordingId: REC,
+    });
+    expect(headObject).not.toHaveBeenCalled();
+    expect(getObject).not.toHaveBeenCalled();
+    expect(deps.storage.putObject).not.toHaveBeenCalled();
+    expect([...stored.keys()]).toHaveLength(1); // only the pre-stored source
+    expect(persistChunks).not.toHaveBeenCalled();
+    expect(jobs.size).toBe(0);
+    expect(
+      events.filter((e) => (e.payload as { status?: string }).status === 'processing'),
+    ).toEqual([]);
+    expect(readdirSync(tmpRoot)).toEqual([]);
+  });
+  it('a failing ownership check is a retryable recording_verify_failed with no uploads', async () => {
+    const { deps, jobs } = makeDeps({}, tmpRoot);
+    const verifyRecording = vi.fn(async () => Promise.reject(new Error('db down')));
+    await expect(
+      processRecording(payload, { ...deps, recordingVerifier: { verifyRecording } }),
+    ).rejects.toMatchObject({
+      errorCode: 'recording_verify_failed',
+    });
+    expect(deps.storage.putObject).not.toHaveBeenCalled();
+    expect(jobs.size).toBe(0);
+  });
+  it('chunkPersistence writes all chunk rows + count in one call before any enqueue, replacing the separate ports', async () => {
+    const { deps, jobs, stored } = makeDeps({}, tmpRoot);
+    const order: string[] = [];
+    const verifyRecording = vi.fn(async () => (order.push(`verify:${stored.size}`), true));
+    const persistChunks = vi.fn(async () => void order.push(`persist:${jobs.size}`));
+    const upsertChunkFileObjects = vi.fn(async () => undefined);
+    const setChunkCount = vi.fn(async () => undefined);
+    await processRecording(payload, {
+      ...deps,
+      recordingVerifier: { verifyRecording },
+      chunkPersistence: { persistChunks },
+      chunkFileObjects: { upsertChunkFileObjects },
+      recordings: { setChunkCount },
+    });
+    expect(order).toEqual(['verify:1', 'persist:0']);
+    expect(persistChunks).toHaveBeenCalledTimes(1);
+    const q = (
+      persistChunks.mock.calls[0] as unknown as [
+        Parameters<NonNullable<MediaProcessorDeps['chunkPersistence']>['persistChunks']>[0],
+      ]
+    )[0];
+    expect(q).toMatchObject({ organizationId: ORG, meetingId: MEET, recordingId: REC });
+    expect(q.chunks.map((c) => [c.index, c.fileObjectId])).toEqual(
+      [0, 1, 2].map((i) => [i, chunkFileObjectId(REC, i)]),
+    );
+    expect(upsertChunkFileObjects).not.toHaveBeenCalled();
+    expect(setChunkCount).not.toHaveBeenCalled();
+    expect(jobs.size).toBe(3);
+  });
+  it('a chunkPersistence failure fails the job (retryable) without enqueueing', async () => {
+    const { deps, jobs } = makeDeps({}, tmpRoot);
+    const persistChunks = vi.fn(async () => Promise.reject(new Error('rolled back')));
+    await expect(
+      processRecording(payload, { ...deps, chunkPersistence: { persistChunks } }),
+    ).rejects.toMatchObject({
+      errorCode: 'chunk_persist_failed',
+    });
+    expect(jobs.size).toBe(0);
+    expect(readdirSync(tmpRoot)).toEqual([]);
+  });
   it('publishUploadStatus targets the organization and meeting rooms', () => {
     const sent: Array<{ rooms: string[]; event: string; payload: unknown }> = [];
     const emitter = {
