@@ -29,6 +29,12 @@ enum InvitationStatus {
   expired
 }
 
+/// Role of an employee inside a team (contracts v0.4 TeamMember.role).
+enum TeamMemberRole {
+  lead
+  member
+}
+
 enum ProjectStatus {
   active
   archived
@@ -221,6 +227,8 @@ model Organization {
   aiConfig               AiOrganizationConfig?
   aiIdempotencyKeys      AiIdempotency[]
   transcriptChunks       TranscriptChunk[]
+  teams                  Team[]
+  teamMembers            TeamMember[]
 
   createdBy User? @relation("OrgCreator", fields: [createdById], references: [id], onDelete: SetNull)
 
@@ -348,6 +356,7 @@ model Employee {
   user           User?           @relation(fields: [userId], references: [id], onDelete: SetNull)
   extractedTasks ExtractedTask[]
   tasks          Task[]
+  teamMembers    TeamMember[]
 
   @@unique([organizationId, email])
   @@unique([organizationId, userId])
@@ -359,6 +368,7 @@ model Employee {
 model Project {
   id             String        @id @default(uuid()) @db.Uuid
   organizationId String        @map("org_id") @db.Uuid
+  teamId         String?       @map("team_id") @db.Uuid
   name           String
   key            String
   description    String?
@@ -368,13 +378,59 @@ model Project {
   deletedAt      DateTime?     @map("deleted_at") @db.Timestamptz(3)
 
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  /// Optional owning team. Composite FK keeps it in the same organization; Restrict (not SetNull) because
+  /// SetNull on a composite FK would also null org_id. Teams are soft-deleted, so this rarely fires.
+  team         Team?        @relation(fields: [organizationId, teamId], references: [organizationId, id], onDelete: Restrict)
   meetings     Meeting[]
   tasks        Task[]
 
   @@unique([organizationId, key])
   @@unique([organizationId, id])
   @@index([organizationId, status])
+  @@index([organizationId, teamId])
   @@map("projects")
+}
+
+/// A team inside an organization (contracts v0.4 Team). Tenant table: forced RLS on org_id (ADR-010).
+model Team {
+  id             String    @id @default(uuid()) @db.Uuid
+  organizationId String    @map("org_id") @db.Uuid
+  name           String
+  key            String?
+  description    String?
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+  deletedAt      DateTime? @map("deleted_at") @db.Timestamptz(3)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  members      TeamMember[]
+  projects     Project[]
+
+  @@unique([organizationId, id])
+  @@unique([organizationId, name])
+  @@map("teams")
+}
+
+/// Employee membership in a team. Both parents are reached through composite (org_id, id) FKs, so a member
+/// row can never point at another organization's team or employee. Unique per (team, employee):
+/// a duplicate maps to TEAM_MEMBER_EXISTS.
+model TeamMember {
+  id             String         @id @default(uuid()) @db.Uuid
+  organizationId String         @map("org_id") @db.Uuid
+  teamId         String         @map("team_id") @db.Uuid
+  employeeId     String         @map("employee_id") @db.Uuid
+  role           TeamMemberRole @default(member)
+  createdAt      DateTime       @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime       @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  team         Team         @relation(fields: [organizationId, teamId], references: [organizationId, id], onDelete: Cascade)
+  employee     Employee     @relation(fields: [organizationId, employeeId], references: [organizationId, id], onDelete: Cascade)
+
+  @@unique([organizationId, id])
+  @@unique([organizationId, teamId, employeeId])
+  @@index([organizationId, employeeId])
+  @@map("team_members")
 }
 
 model Meeting {

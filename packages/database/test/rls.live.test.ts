@@ -973,3 +973,145 @@ describe.skipIf(!APP_URL || !OWNER_URL)('ADR-010 organization context setting (l
     await owner.$disconnect();
   });
 });
+
+describe.skipIf(!APP_URL || !OWNER_URL)('DB-1 teams and team_members RLS (live)', () => {
+  const app = new PrismaClient({ datasources: { db: { url: APP_URL ?? '' } } });
+  const owner = new PrismaClient({ datasources: { db: { url: OWNER_URL ?? '' } } });
+  const orgA = randomUUID();
+  const orgB = randomUUID();
+  const teamA = randomUUID();
+  const teamB = randomUUID();
+  const employeeA = randomUUID();
+  const employeeB = randomUUID();
+  const memberB = randomUUID();
+
+  it('setup: one team, employee and member per org', async () => {
+    await owner.organization.createMany({
+      data: [
+        { id: orgA, name: 'TA', slug: `ta-${orgA}` },
+        { id: orgB, name: 'TB', slug: `tb-${orgB}` },
+      ],
+    });
+    for (const [organizationId, teamId, employeeId, memberId] of [
+      [orgA, teamA, employeeA, randomUUID()],
+      [orgB, teamB, employeeB, memberB],
+    ] as const) {
+      await runWithOrganizationContext(owner, organizationId, async (tx) => {
+        await tx.team.create({ data: { id: teamId, organizationId, name: 'Platform' } });
+        await tx.employee.create({ data: { id: employeeId, organizationId, fullName: 'E' } });
+        await tx.teamMember.create({
+          data: { id: memberId, organizationId, teamId, employeeId, role: 'lead' },
+        });
+      });
+    }
+  });
+
+  it('no context => 0 teams and 0 team_members', async () => {
+    expect(await app.team.count()).toBe(0);
+    expect(await app.teamMember.count()).toBe(0);
+  });
+
+  it('org A context sees only its own team and member', async () => {
+    const [teams, members] = await runWithOrganizationContext(app, orgA, (tx) =>
+      Promise.all([tx.team.findMany(), tx.teamMember.findMany()]),
+    );
+    expect(teams.map((t) => t.id)).toEqual([teamA]);
+    expect(members.map((m) => m.organizationId)).toEqual([orgA]);
+    expect(
+      await runWithOrganizationContext(app, orgA, (tx) =>
+        tx.team.findUnique({ where: { id: teamB } }),
+      ),
+    ).toBeNull();
+  });
+
+  it('org A context cannot insert teams or team_members into org B', async () => {
+    await expect(
+      runWithOrganizationContext(app, orgA, (tx) =>
+        tx.team.create({ data: { organizationId: orgB, name: 'Injected' } }),
+      ),
+    ).rejects.toThrow();
+    await expect(
+      runWithOrganizationContext(app, orgA, (tx) =>
+        tx.teamMember.create({
+          data: { organizationId: orgB, teamId: teamB, employeeId: employeeB, role: 'member' },
+        }),
+      ),
+    ).rejects.toThrow();
+  });
+
+  it('org A context cannot update org B rows, nor move its own rows into org B', async () => {
+    const hidden = await runWithOrganizationContext(app, orgA, async (tx) => ({
+      teams: await tx.team.updateMany({ where: { id: teamB }, data: { name: 'Pwned' } }),
+      members: await tx.teamMember.updateMany({ where: { id: memberB }, data: { role: 'member' } }),
+    }));
+    expect(hidden).toEqual({ teams: { count: 0 }, members: { count: 0 } });
+    await expect(
+      runWithOrganizationContext(
+        app,
+        orgA,
+        (tx) => tx.$executeRaw`UPDATE teams SET org_id = ${orgB}::uuid WHERE id = ${teamA}::uuid`,
+      ),
+    ).rejects.toThrow();
+    const b = await runWithOrganizationContext(owner, orgB, (tx) =>
+      Promise.all([
+        tx.team.findUniqueOrThrow({ where: { id: teamB } }),
+        tx.teamMember.findUniqueOrThrow({ where: { id: memberB } }),
+      ]),
+    );
+    expect(b[0].name).toBe('Platform');
+    expect(b[1].role).toBe('lead');
+  });
+
+  it('a cross-org FK fails: an org A member row cannot reference an org B team or employee', async () => {
+    // Even as the owner (whose writes pass the org A policy), the composite FK rejects org B parents.
+    await expect(
+      runWithOrganizationContext(owner, orgA, (tx) =>
+        tx.teamMember.create({
+          data: { organizationId: orgA, teamId: teamB, employeeId: employeeA },
+        }),
+      ),
+    ).rejects.toThrow(/foreign key|Foreign key/);
+    await expect(
+      runWithOrganizationContext(owner, orgA, (tx) =>
+        tx.teamMember.create({
+          data: { organizationId: orgA, teamId: teamA, employeeId: employeeB },
+        }),
+      ),
+    ).rejects.toThrow(/foreign key|Foreign key/);
+    await expect(
+      runWithOrganizationContext(owner, orgA, (tx) =>
+        tx.project.create({ data: { organizationId: orgA, name: 'X', key: 'X', teamId: teamB } }),
+      ),
+    ).rejects.toThrow(/foreign key|Foreign key/);
+  });
+
+  it('a same-org project can belong to a team; duplicate members and team names are rejected', async () => {
+    const project = await runWithOrganizationContext(app, orgA, (tx) =>
+      tx.project.create({ data: { organizationId: orgA, name: 'TP', key: 'TP', teamId: teamA } }),
+    );
+    expect(project.teamId).toBe(teamA);
+    await expect(
+      runWithOrganizationContext(app, orgA, (tx) =>
+        tx.teamMember.create({
+          data: { organizationId: orgA, teamId: teamA, employeeId: employeeA },
+        }),
+      ),
+    ).rejects.toMatchObject({ code: 'P2002' });
+    await expect(
+      runWithOrganizationContext(app, orgA, (tx) =>
+        tx.team.create({ data: { organizationId: orgA, name: 'Platform' } }),
+      ),
+    ).rejects.toMatchObject({ code: 'P2002' });
+    // 'Platform' exists in both orgs (setup), so names are unique per organization, not globally.
+  });
+
+  it('the legacy setting alone does not open the new tables (ADR-010 setting only)', async () => {
+    const count = await app.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT set_config('app.current_org_id', ${orgA}, true)`;
+      return tx.team.count();
+    });
+    expect(count).toBe(0);
+    await app.$disconnect();
+    await owner.$disconnect();
+  });
+});
