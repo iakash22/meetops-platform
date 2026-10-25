@@ -10,7 +10,6 @@ import {
   meeting1,
   meetings,
   orgs,
-  projects,
   session,
   newOrg,
   sessionResponse,
@@ -55,7 +54,6 @@ export function createMockApi(
       ...overrides.meetings,
     },
     tasks: { list: vi.fn().mockResolvedValue(tasks), ...overrides.tasks },
-    projects: { list: vi.fn().mockResolvedValue(projects), ...overrides.projects },
     // In-memory directory (empty); pass `directory: createMockDirectoryApi(seed)` to seed it.
     directory: { ...createMockDirectoryApi(), ...overrides.directory },
     storage: {

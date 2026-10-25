@@ -16,7 +16,6 @@ import type {
   Meeting,
   Paginated,
   PresignedUrlDto,
-  Project,
   SignupRequest,
   Task,
   ListTasksQuery,
@@ -162,7 +161,6 @@ export type ApiClient = {
   tasks: {
     list: (organizationId: Id, filters?: TaskListFilters) => Promise<Paginated<Task>>;
   };
-  projects: { list: (organizationId: Id) => Promise<Paginated<Project>> };
   /** Employees, teams, team members and projects (contracts v0.4 directory, BE-3). */
   directory: DirectoryApi;
   /** Low-level request (cookie session + CSRF on non-GET). */
@@ -313,7 +311,6 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
         request('GET', `${org(id)}/meetings/${encodeURIComponent(meetingId)}`),
     },
     tasks: { list: (id, filters) => request('GET', `${org(id)}/tasks${taskQuery(filters)}`) },
-    projects: { list: (id) => request('GET', `${org(id)}/projects`) },
     directory: createHttpDirectoryApi(request),
     storage: {
       createUpload: (id, body) => request('POST', `${org(id)}/uploads`, body),
