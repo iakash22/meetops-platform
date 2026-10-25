@@ -1,6 +1,5 @@
 import { useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import type { GetAuthSessionResponse } from '@meetops/contracts';
 import { Link } from '@tanstack/react-router';
 import { Building2, Plus } from 'lucide-react';
 import {
@@ -12,14 +11,15 @@ import {
 } from '@/components/ui/select';
 import { describeError } from '@/lib/api/error-messages';
 import { useApi } from '@/lib/api/context';
-import { queryKeys } from '@/lib/api/queries';
-import { applySessionToStore } from '@/features/session/use-session';
+import { applySessionToStore, sessionQueryOptions } from '@/features/session/use-session';
 import { useOrgStore } from '@/stores/org-store';
 
 /**
- * Organization switcher (shadcn Select). Switching calls POST /auth/switch-org
- * (session + CSRF rotate; the client reuses the returned csrfToken), refreshes the
- * session and refetches org-scoped data. On failure the previous org stays selected.
+ * Organization switcher (shadcn Select). Switching calls POST /orgs/switch, which
+ * rotates the session + CSRF cookie and returns only `{ organization, role }`, so the
+ * session is then refetched from GET /auth/session (the source of truth for the
+ * active org and role) and org-scoped data is refetched. On failure the previous org
+ * stays selected.
  */
 export function OrgSwitcher() {
   const organizations = useOrgStore((s) => s.organizations);
@@ -35,17 +35,12 @@ export function OrgSwitcher() {
     setPending(true);
     setError(null);
     try {
-      const { csrfToken: _csrf, ...session } = await api.auth.switchOrganization({
-        organizationId,
-      });
-      void _csrf;
-      queryClient.setQueryData<GetAuthSessionResponse | null>(queryKeys.session, session);
-      applySessionToStore(session);
-      setCurrentOrganization(session.activeOrganizationId ?? organizationId);
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: queryKeys.session }),
-        queryClient.invalidateQueries({ queryKey: ['orgs'] }),
-      ]);
+      const { organization } = await api.organizations.switch({ organizationId });
+      // The switch response is not an AuthSession: refetch the rotated session.
+      const session = await queryClient.fetchQuery({ ...sessionQueryOptions(api), staleTime: 0 });
+      if (session) applySessionToStore(session);
+      setCurrentOrganization(session?.activeOrganizationId ?? organization.id);
+      await queryClient.invalidateQueries({ queryKey: ['orgs'] });
     } catch (e) {
       setError(e);
     } finally {

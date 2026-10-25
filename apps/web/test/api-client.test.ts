@@ -278,7 +278,12 @@ describe('uploads (PresignedUrlDto)', () => {
       fetch: fetchMock,
       getCsrfToken: () => 'c1',
     });
-    const body = { filename: 'rec.webm', mimeType: 'audio/webm', sizeBytes: 1024, checksumSha256: 'ungWv48Bz+pBQUDeXa4iI7ADYaOWF3qctBD/YfIAFa0=' };
+    const body = {
+      filename: 'rec.webm',
+      mimeType: 'audio/webm',
+      sizeBytes: 1024,
+      checksumSha256: 'ungWv48Bz+pBQUDeXa4iI7ADYaOWF3qctBD/YfIAFa0=',
+    };
     const res = await api.storage.createUpload('00000000-0000-4000-8000-000000000001', body);
     expect(res.upload.method).toBe('PUT');
     expect(res.upload.url.startsWith('https://')).toBe(true);
@@ -464,28 +469,168 @@ describe('extension.pair (POST /auth/extension/pair)', () => {
   });
 });
 
-describe('auth.switchOrganization (POST /auth/switch-org)', () => {
+describe('organizations.switch (POST /orgs/switch, BE-GAP-2)', () => {
   afterEach(clearCookies);
 
-  it('sends SwitchOrganizationRequest and reuses the rotated csrfToken', async () => {
+  it('posts to /orgs/switch, returns { organization, role } and drops the old CSRF token', async () => {
     const orgId = '00000000-0000-4000-8000-000000000002';
+    const switched = { organization: { ...session.organizations[1]! }, role: 'member' };
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce(jsonResponse({ csrfToken: 'before' }))
-      .mockResolvedValueOnce(jsonResponse({ ...session, csrfToken: 'rotated' }))
+      .mockResolvedValueOnce(jsonResponse(switched))
+      .mockResolvedValueOnce(jsonResponse({ csrfToken: 'after' }))
       .mockResolvedValue(jsonResponse({}));
     const api = createApiClient({ baseUrl: 'http://api', fetch: fetchMock });
-    await api.auth.switchOrganization({ organizationId: orgId });
+    await expect(api.organizations.switch({ organizationId: orgId })).resolves.toEqual(switched);
     await api.request('POST', '/x', {});
     const calls = fetchMock.mock.calls as Call[];
     expect(calls.map((c) => c[0])).toEqual([
       'http://api/auth/csrf',
-      'http://api/auth/switch-org',
+      'http://api/orgs/switch',
+      'http://api/auth/csrf',
       'http://api/x',
     ]);
+    expect(calls.some((c) => c[0].endsWith('/auth/switch-org'))).toBe(false);
     expect(JSON.parse(calls[1]![1].body as string)).toEqual({ organizationId: orgId });
     expect(headersOf(calls[1]![1])[CSRF_HEADER]).toBe('before');
-    expect(headersOf(calls[2]![1])[CSRF_HEADER]).toBe('rotated');
+    expect(headersOf(calls[3]![1])[CSRF_HEADER]).toBe('after');
+  });
+});
+
+describe('auth lifecycle endpoints', () => {
+  afterEach(clearCookies);
+
+  it('signup resolves the 202 { message } body and never caches a session token', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse({ csrfToken: 'pre-session' }))
+      .mockResolvedValueOnce(jsonResponse({ message: 'Check your email to continue.' }, 202))
+      .mockResolvedValue(jsonResponse({}));
+    const api = createApiClient({ baseUrl: 'http://api', fetch: fetchMock });
+    await expect(
+      api.auth.signup({ name: 'Ada', email: 'ada@example.com', password: 'long-enough-pass' }),
+    ).resolves.toEqual({ message: 'Check your email to continue.' });
+    await api.request('POST', '/x', {});
+    const calls = fetchMock.mock.calls as Call[];
+    expect(calls.map((c) => c[0])).toEqual([
+      'http://api/auth/csrf',
+      'http://api/auth/signup',
+      'http://api/x',
+    ]);
+    expect(headersOf(calls[2]![1])[CSRF_HEADER]).toBe('pre-session');
+  });
+
+  it.each([
+    ['verifyEmail', '/auth/verify-email', { token: 't'.repeat(40) }, 204],
+    [
+      'resetPassword',
+      '/auth/reset-password',
+      { token: 't'.repeat(40), password: 'x'.repeat(12) },
+      204,
+    ],
+    ['resendVerification', '/auth/resend-verification', { email: 'ada@example.com' }, 202],
+  ] as const)('%s posts to %s with CSRF', async (method, path, body, status) => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse({ csrfToken: 'tok' }))
+      .mockResolvedValueOnce(new Response(null, { status }));
+    const api = createApiClient({ baseUrl: 'http://api', fetch: fetchMock });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await expect((api.auth[method] as (b: any) => Promise<void>)(body)).resolves.toBeUndefined();
+    const calls = fetchMock.mock.calls as Call[];
+    expect(calls[1]![0]).toBe(`http://api${path}`);
+    expect(calls[1]![1].method).toBe('POST');
+    expect(JSON.parse(calls[1]![1].body as string)).toEqual(body);
+    expect(headersOf(calls[1]![1])[CSRF_HEADER]).toBe('tok');
+  });
+
+  it('a 400 from verify-email is an ApiError and does not fire onUnauthorized', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse({ csrfToken: 'tok' }))
+      .mockResolvedValueOnce(
+        jsonResponse(
+          { error: { code: 'BAD_REQUEST', message: 'Verification link is invalid' } },
+          400,
+        ),
+      );
+    const api = createApiClient({ baseUrl: 'http://api', fetch: fetchMock });
+    const handler = vi.fn();
+    api.onUnauthorized(handler);
+    await expect(api.auth.verifyEmail({ token: 't'.repeat(40) })).rejects.toMatchObject({
+      status: 400,
+      code: 'BAD_REQUEST',
+    });
+    expect(handler).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['logout', '/auth/logout'],
+    ['logoutAll', '/auth/logout-all'],
+  ] as const)('%s posts to %s and refetches the CSRF token afterwards', async (method, path) => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse({ csrfToken: 'old' }))
+      .mockResolvedValueOnce(new Response(null, { status: 204 }))
+      .mockResolvedValueOnce(jsonResponse({ csrfToken: 'new' }))
+      .mockResolvedValue(jsonResponse({}));
+    const api = createApiClient({ baseUrl: 'http://api', fetch: fetchMock });
+    const handler = vi.fn();
+    api.onUnauthorized(handler);
+    await api.auth[method]();
+    await api.request('POST', '/x', {});
+    const calls = fetchMock.mock.calls as Call[];
+    expect(calls.map((c) => c[0])).toEqual([
+      'http://api/auth/csrf',
+      `http://api${path}`,
+      'http://api/auth/csrf',
+      'http://api/x',
+    ]);
+    expect(calls[1]![1].body).toBeUndefined();
+    expect(headersOf(calls[1]![1])[CSRF_HEADER]).toBe('old');
+    expect(headersOf(calls[3]![1])[CSRF_HEADER]).toBe('new');
+    expect(handler).not.toHaveBeenCalled();
+  });
+
+  it('logout CSRF_INVALID is retried once with a fresh token', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse({ csrfToken: 'stale' }))
+      .mockResolvedValueOnce(
+        jsonResponse({ error: { code: 'CSRF_INVALID', message: 'bad csrf' } }, 403),
+      )
+      .mockResolvedValueOnce(jsonResponse({ csrfToken: 'fresh' }))
+      .mockResolvedValueOnce(new Response(null, { status: 204 }));
+    const api = createApiClient({ baseUrl: 'http://api', fetch: fetchMock });
+    await expect(api.auth.logout()).resolves.toBeUndefined();
+    const calls = fetchMock.mock.calls as Call[];
+    expect(calls.map((c) => c[0])).toEqual([
+      'http://api/auth/csrf',
+      'http://api/auth/logout',
+      'http://api/auth/csrf',
+      'http://api/auth/logout',
+    ]);
+    expect(headersOf(calls[3]![1])[CSRF_HEADER]).toBe('fresh');
+  });
+
+  it('invitations.accept posts the token to /invitations/accept; 401 stays in-page', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse({ csrfToken: 'tok' }))
+      .mockResolvedValueOnce(
+        jsonResponse({ error: { code: 'UNAUTHENTICATED', message: 'no session' } }, 401),
+      );
+    const api = createApiClient({ baseUrl: 'http://api', fetch: fetchMock });
+    const handler = vi.fn();
+    api.onUnauthorized(handler);
+    await expect(api.invitations.accept({ token: 'i'.repeat(40) })).rejects.toMatchObject({
+      status: 401,
+    });
+    const calls = fetchMock.mock.calls as Call[];
+    expect(calls[1]![0]).toBe('http://api/invitations/accept');
+    expect(JSON.parse(calls[1]![1].body as string)).toEqual({ token: 'i'.repeat(40) });
+    expect(handler).not.toHaveBeenCalled();
   });
 });
 
