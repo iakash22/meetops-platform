@@ -6,7 +6,7 @@ import { cn } from '@/lib/utils';
 const alertVariants = cva('relative w-full rounded-lg border px-4 py-3 text-sm', {
   variants: {
     variant: {
-      default: 'bg-surface text-foreground',
+      default: 'bg-card/60 text-foreground',
       destructive: 'border-destructive/50 text-destructive',
     },
   },

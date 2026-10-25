@@ -14,12 +14,12 @@ export function BrandMark({
     <div className={cn('flex items-center gap-2', className)}>
       <span
         aria-hidden
-        className="flex size-8 items-center justify-center rounded-lg bg-primary text-primary-foreground shadow-glow-primary"
+        className="flex size-8 items-center justify-center rounded-lg bg-primary text-primary-foreground brand-glow-box"
       >
         <AudioLines className="size-4" />
       </span>
       <span className={cn('text-base font-semibold tracking-tight', compact && 'sr-only')}>
-        MeetOps <span className="text-accent">AI</span>
+        MeetOps <span className="text-highlight">AI</span>
       </span>
     </div>
   );

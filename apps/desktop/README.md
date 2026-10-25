@@ -59,21 +59,32 @@ MSVC). Rust unit tests: `cd apps/desktop/src-tauri && cargo test`.
 
 ## Theme
 
-Dark-first owner palette, shared token names with `apps/web` (`src/index.css`, HSL triplets used via
-`hsl(var(--x))` and Tailwind 4 `@theme`):
+Mirrors the web tokens verbatim. Source of truth: `docs/05-web/brand-theme.md` (web PRs #128/#132);
+values live in `src/index.css` as HSL channels used via `hsl(var(--x))` and Tailwind 4 `@theme`, and
+`test/theme-tokens.test.ts` guards parity.
 
-| Token                                 | Colour               | Use                                                        |
-| ------------------------------------- | -------------------- | ---------------------------------------------------------- |
-| `--background`                        | `#0A0A0A`            | app background (Jet Black)                                 |
-| `--surface` / `--card`, `--surface-2` | `#141416`, `#1C1C1F` | sidebar/cards, inputs/hover                                |
-| `--border` / `--input`                | `#2A2A2E`            | borders                                                    |
-| `--primary` / `--ring`                | `#007BA7`            | buttons, links, focus rings (Cerulean)                     |
-| `--accent`                            | `#FF2D95`            | active state, record button, badges (Neon Rose, sparingly) |
-| `--foreground`, `--muted-foreground`  | `#F5F5F7`, `#A1A1AA` | text, muted text                                           |
+| Token                                    | Hex                   | Use                                                   |
+| ---------------------------------------- | --------------------- | ----------------------------------------------------- |
+| `--background`                           | `#0A0A0A`             | app background (Jet Black)                            |
+| `--foreground`                           | `#F5F5F7`             | body text                                             |
+| `--card`, `--muted`                      | `#141416`             | cards, sidebar                                        |
+| `--popover`, `--secondary`, `--accent`   | `#1C1C1F`             | popovers, hover/selected rows (shadcn neutral accent) |
+| `--primary` / `--primary-foreground`     | `#007BA7` / `#FFFFFF` | primary buttons (Cerulean)                            |
+| `--link`, `--ring`                       | `#3AB0E0`             | links, cerulean text, focus rings                     |
+| `--highlight` / `--highlight-foreground` | `#FF2D95` / `#0A0A0A` | Neon Rose: active nav, record, badges (sparingly)     |
+| `--muted-foreground`                     | `#A1A1AA`             | secondary text                                        |
+| `--destructive` / `-foreground`          | `#EF4444` / `#0A0A0A` | errors                                                |
+| `--border`                               | `#2A2A2E`             | dividers, card borders                                |
+| `--input`                                | `#6B6B73`             | form-control borders (≥3:1)                           |
+| `--radius`                               | `0.75rem`             | sm 6 · md 8 · lg 12 · xl 16 px                        |
+| `--duration-fast` / `--duration-base`    | 150ms / 200ms         | hover/press, enter/exit (`cubic-bezier(0.2,0,0,1)`)   |
 
-As in the web app, `--muted` is a muted **fill** and `--muted-foreground` is the muted **text**
-colour. Modern touches are CSS only (no motion library): `glow-card`, the `gradient-border` record
-button and a soft sign-in backdrop. All transitions are disabled under `prefers-reduced-motion`.
+As in web, `--accent` is a **neutral** hover surface; the brand rose is `--highlight`. Modern touches
+are CSS only (no motion library): `glow-card`, the rotating cerulean→rose `gradient-border-box` on
+the record button (`gradient-border` wrapper utility kept for web parity), `bg-grid`,
+`surface-glass` and a soft sign-in backdrop. The sidebar collapses to icons (preference stored
+locally). Under `prefers-reduced-motion: reduce` all animations and transitions are off and the
+gradient border is static.
 
 ## Security notes
 

@@ -53,7 +53,7 @@ export function AppShell({
         aria-label="Sidebar"
         data-collapsed={collapsed ? 'true' : 'false'}
         className={cn(
-          'flex shrink-0 flex-col border-r bg-surface transition-[width] duration-200 ease-out motion-reduce:transition-none',
+          'flex shrink-0 flex-col border-r bg-card/60 transition-[width] duration-base ease-out motion-reduce:transition-none',
           collapsed ? 'w-16' : 'w-60',
         )}
       >
@@ -75,11 +75,11 @@ export function AppShell({
                   'relative flex items-center gap-2 rounded-md py-2 text-left text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
                   collapsed ? 'justify-center px-0' : 'px-3',
                   active
-                    ? 'bg-surface-2 font-medium text-foreground before:absolute before:inset-y-1.5 before:left-0 before:w-0.5 before:rounded-full before:bg-accent'
-                    : 'text-muted-foreground hover:bg-surface-2 hover:text-foreground',
+                    ? 'bg-accent font-medium text-foreground before:absolute before:inset-y-1.5 before:left-0 before:w-0.5 before:rounded-full before:bg-highlight'
+                    : 'text-muted-foreground hover:bg-accent hover:text-foreground',
                 )}
               >
-                <Icon className={cn('size-4 shrink-0', active && 'text-accent')} aria-hidden />
+                <Icon className={cn('size-4 shrink-0', active && 'text-highlight')} aria-hidden />
                 <span className={cn(collapsed && 'sr-only')}>{label}</span>
               </button>
             );
@@ -94,7 +94,7 @@ export function AppShell({
             aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
             title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
             className={cn(
-              'flex w-full items-center gap-2 rounded-md py-2 text-sm text-muted-foreground transition-colors hover:bg-surface-2 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+              'flex w-full items-center gap-2 rounded-md py-2 text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
               collapsed ? 'justify-center px-0' : 'px-3',
             )}
           >

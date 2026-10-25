@@ -12,15 +12,16 @@ const buttonVariants = cva(
       variant: {
         default: 'bg-primary text-primary-foreground hover:bg-primary/90',
         destructive: 'bg-destructive text-destructive-foreground hover:bg-destructive/90',
-        outline: 'border border-input bg-transparent hover:bg-surface-2',
+        outline: 'border border-input bg-transparent hover:bg-accent',
         secondary: 'bg-secondary text-secondary-foreground hover:bg-secondary/80',
-        ghost: 'hover:bg-surface-2',
-        link: 'text-primary underline-offset-4 hover:underline',
-        /** Neon Rose: reserved for record / primary highlight actions. Use sparingly. */
-        accent: 'bg-accent text-accent-foreground shadow-glow-accent hover:bg-accent/90',
+        ghost: 'hover:bg-accent',
+        link: 'text-link underline-offset-4 hover:underline',
+        /** Neon Rose (brand highlight). Use sparingly: one rose element per view. */
+        highlight:
+          'bg-highlight text-highlight-foreground shadow-glow-highlight hover:bg-highlight/90',
         /** Record action: dark fill with a Cerulean -> Neon Rose gradient border and a soft rose glow. */
         record:
-          'gradient-border text-foreground transition-shadow hover:shadow-glow-accent [&_svg]:text-accent',
+          'gradient-border-box text-foreground hover:shadow-glow-highlight [&_svg]:text-highlight',
       },
       size: {
         default: 'h-9 px-4 py-2',

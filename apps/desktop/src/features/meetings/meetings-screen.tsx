@@ -16,7 +16,7 @@ const STATUS_LABEL: Record<MeetingStatus, string> = {
 
 const STATUS_VARIANT: Record<MeetingStatus, NonNullable<BadgeProps['variant']>> = {
   scheduled: 'outline',
-  recording: 'accent',
+  recording: 'highlight',
   processing: 'default',
   completed: 'secondary',
   failed: 'destructive',
