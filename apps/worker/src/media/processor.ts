@@ -9,22 +9,53 @@ import {
   MAX_MEDIA_BYTES,
   MediaJobPayload as MediaJobSchema,
   QUEUE_NAMES,
-  TranscriptionJobPayload as TranscriptionJobSchema
+  TranscriptionJobPayload as TranscriptionJobSchema,
 } from '@meetops/contracts';
-import type { MeetingStatusEvent, TranscriptionProgressEvent, TranscriptionStage } from '@meetops/contracts';
+import type {
+  MeetingStatusEvent,
+  TranscriptionProgressEvent,
+  TranscriptionStage,
+} from '@meetops/contracts';
 import { Value } from '@sinclair/typebox/value';
 import type { AllowedDemuxer, AudioChunk, ProbeResult, Waveform } from '@meetops/media-core';
 import { assertProbedFormat, demuxerForExt } from '@meetops/media-core';
-import { StorageError, assertKeyOwnedBy, buildObjectKey, parseMeetingKey, type MeetingObjectRef, type StorageService } from '@meetops/storage';
-import { chunkFileObjectId, normalizedFileObjectId, transcriptionIdempotencyKey, transcriptionJobId } from './ids.js';
-import type { ChunkManifestEntry, MediaJobPayload, MediaProcessingResult, ProcessingStatusEvent, TranscriptionJobPayload } from './types.js';
+import {
+  StorageError,
+  assertKeyOwnedBy,
+  buildObjectKey,
+  parseMeetingKey,
+  type MeetingObjectRef,
+  type StorageService,
+} from '@meetops/storage';
+import {
+  chunkFileObjectId,
+  normalizedFileObjectId,
+  transcriptionIdempotencyKey,
+  transcriptionJobId,
+} from './ids.js';
+import type {
+  ChunkManifestEntry,
+  MediaJobPayload,
+  MediaProcessingResult,
+  ProcessingStatusEvent,
+  TranscriptionJobPayload,
+} from './types.js';
 
-export type NormalizeCaps = { inputFormat: string; maxDurationSeconds: number; maxOutputBytes: number; maxInputBytes: number };
+export type NormalizeCaps = {
+  inputFormat: string;
+  maxDurationSeconds: number;
+  maxOutputBytes: number;
+  maxInputBytes: number;
+};
 
 export type MediaOps = {
   probeMedia(p: string, opts: { format: string }): Promise<ProbeResult>;
   normalizeToWav(input: string, output: string, opts: NormalizeCaps): Promise<string>;
-  chunkAudio(input: string, outDir: string, opts: { segmentSeconds: number }): Promise<AudioChunk[]>;
+  chunkAudio(
+    input: string,
+    outDir: string,
+    opts: { segmentSeconds: number },
+  ): Promise<AudioChunk[]>;
 };
 
 /**
@@ -52,11 +83,21 @@ export type ChunkFileObjectRow = {
  * (upsert) and run inside withOrgContext(organizationId).
  */
 export type ChunkFileObjectRepository = {
-  upsertChunkFileObjects(q: { organizationId: string; meetingId: string; recordingId: string; chunks: ChunkFileObjectRow[] }): Promise<void>;
+  upsertChunkFileObjects(q: {
+    organizationId: string;
+    meetingId: string;
+    recordingId: string;
+    chunks: ChunkFileObjectRow[];
+  }): Promise<void>;
 };
 
 export type RecordingChunkCountRepository = {
-  setChunkCount(q: { organizationId: string; meetingId: string; recordingId: string; chunkCount: number }): Promise<void>;
+  setChunkCount(q: {
+    organizationId: string;
+    meetingId: string;
+    recordingId: string;
+    chunkCount: number;
+  }): Promise<void>;
 };
 
 /** Optional waveform step (best effort: a failure is logged and never fails the job). */
@@ -90,16 +131,21 @@ export type MediaLimits = {
   maxDurationSeconds: number;
 };
 
-export const DEFAULT_MEDIA_LIMITS: MediaLimits = { maxSourceBytes: MAX_MEDIA_BYTES, maxDurationSeconds: 4 * 60 * 60 };
+export const DEFAULT_MEDIA_LIMITS: MediaLimits = {
+  maxSourceBytes: MAX_MEDIA_BYTES,
+  maxDurationSeconds: 4 * 60 * 60,
+};
 
 /** 16 kHz mono s16le = 32000 B/s; -fs cap = duration cap worth of PCM + header slack. */
-export const normalizedByteCap = (maxDurationSeconds: number) => Math.ceil(maxDurationSeconds * 32000) + 64 * 1024;
+export const normalizedByteCap = (maxDurationSeconds: number) =>
+  Math.ceil(maxDurationSeconds * 32000) + 64 * 1024;
 
 /** Worker scratch tmpfs size (/tmp/work, DevOps compose: 3g). Override with MEDIA_WORK_TMP_BYTES. */
 export const DEFAULT_WORK_TMP_BYTES = 3 * 1024 ** 3;
 
 /** Peak scratch use of one job: source + normalized WAV + WAV chunks (both capped by normalizedByteCap). */
-export const peakScratchBytes = (l: MediaLimits) => l.maxSourceBytes + 2 * normalizedByteCap(l.maxDurationSeconds);
+export const peakScratchBytes = (l: MediaLimits) =>
+  l.maxSourceBytes + 2 * normalizedByteCap(l.maxDurationSeconds);
 
 export type MediaProcessorDeps = {
   storage: Pick<StorageService, 'getObjectByKey' | 'headObjectByKey' | 'putObject'>;
@@ -124,7 +170,7 @@ export class MediaJobError extends Error {
   override readonly name = 'MediaJobError';
   constructor(
     readonly errorCode: string,
-    message: string
+    message: string,
   ) {
     super(message);
   }
@@ -132,7 +178,12 @@ export class MediaJobError extends Error {
 
 export function errorCodeOf(err: unknown): string {
   if (err instanceof MediaJobError) return err.errorCode;
-  if (err instanceof StorageError) return err.code === 'NOT_FOUND' ? 'source_not_found' : err.code === 'FORBIDDEN' ? 'forbidden' : 'storage_error';
+  if (err instanceof StorageError)
+    return err.code === 'NOT_FOUND'
+      ? 'source_not_found'
+      : err.code === 'FORBIDDEN'
+        ? 'forbidden'
+        : 'storage_error';
   if ((err as { name?: string })?.name === 'FfmpegError') return 'media_processing_failed';
   return 'internal_error';
 }
@@ -151,7 +202,7 @@ function byteCap(max: number): Transform {
       n += chunk.length;
       if (n > max) return cb(new MediaJobError('source_too_large', 'Source exceeds size limit'));
       cb(null, chunk);
-    }
+    },
   });
 }
 
@@ -164,20 +215,49 @@ function byteCap(max: number): Transform {
 export async function processRecording(
   payload: MediaJobPayload,
   deps: MediaProcessorDeps,
-  ctx: JobContext = { isFinalAttempt: true }
+  ctx: JobContext = { isFinalAttempt: true },
 ): Promise<MediaProcessingResult> {
-  if (!Value.Check(MediaJobSchema, payload)) throw new MediaJobError('invalid_payload', 'Invalid media job payload');
+  if (!Value.Check(MediaJobSchema, payload))
+    throw new MediaJobError('invalid_payload', 'Invalid media job payload');
   const { organizationId, meetingId, recordingId } = payload;
   const limits: MediaLimits = { ...DEFAULT_MEDIA_LIMITS, ...deps.limits };
   const now = deps.now ?? (() => new Date());
   const log = { organizationId, meetingId, recordingId, jobId: ctx.jobId };
   const segmentSeconds = deps.segmentSeconds ?? 600;
-  const progress = (percent: number, stage: TranscriptionStage, extra: Partial<TranscriptionProgressEvent> = {}) =>
-    deps.realtime.transcriptionProgress({ organizationId, meetingId, recordingId, percent, stage, at: now().toISOString(), ...extra });
-  const processing = (status: ProcessingStatusEvent['status'], extra: Partial<Pick<ProcessingStatusEvent, 'percent' | 'errorCode'>> = {}) =>
-    deps.realtime.processingStatus?.({ organizationId, meetingId, recordingId, status, at: now().toISOString(), ...extra });
+  const progress = (
+    percent: number,
+    stage: TranscriptionStage,
+    extra: Partial<TranscriptionProgressEvent> = {},
+  ) =>
+    deps.realtime.transcriptionProgress({
+      organizationId,
+      meetingId,
+      recordingId,
+      percent,
+      stage,
+      at: now().toISOString(),
+      ...extra,
+    });
+  const processing = (
+    status: ProcessingStatusEvent['status'],
+    extra: Partial<Pick<ProcessingStatusEvent, 'percent' | 'errorCode'>> = {},
+  ) =>
+    deps.realtime.processingStatus?.({
+      organizationId,
+      meetingId,
+      recordingId,
+      status,
+      at: now().toISOString(),
+      ...extra,
+    });
 
-  const sourceRef: MeetingObjectRef = { organizationId, meetingId, kind: 'recording', objectId: recordingId, ext: payload.sourceExt };
+  const sourceRef: MeetingObjectRef = {
+    organizationId,
+    meetingId,
+    kind: 'recording',
+    objectId: recordingId,
+    ext: payload.sourceExt,
+  };
   let demuxer: AllowedDemuxer;
   let source: { organizationId: string; meetingId: string; key: string };
   try {
@@ -197,12 +277,18 @@ export async function processRecording(
 
   let tmp: string | undefined;
   try {
-    deps.realtime.meetingStatus({ organizationId, meetingId, status: 'processing', at: now().toISOString() });
+    deps.realtime.meetingStatus({
+      organizationId,
+      meetingId,
+      status: 'processing',
+      at: now().toISOString(),
+    });
     deps.logger.info(log, 'media job started');
 
     const head = await deps.storage.headObjectByKey(source);
     if (!head) throw new MediaJobError('source_not_found', 'Source not found');
-    if (head.sizeBytes < 1 || head.sizeBytes > limits.maxSourceBytes) throw new MediaJobError('source_too_large', 'Source exceeds size limit');
+    if (head.sizeBytes < 1 || head.sizeBytes > limits.maxSourceBytes)
+      throw new MediaJobError('source_too_large', 'Source exceeds size limit');
 
     tmp = await mkdtemp(path.join(deps.tmpRoot ?? tmpdir(), 'meetops-media-'));
     const srcPath = path.join(tmp, `source.${payload.sourceExt}`);
@@ -222,34 +308,59 @@ export async function processRecording(
       inputFormat: demuxer,
       maxDurationSeconds: limits.maxDurationSeconds,
       maxOutputBytes: normalizedByteCap(limits.maxDurationSeconds),
-      maxInputBytes: limits.maxSourceBytes
+      maxInputBytes: limits.maxSourceBytes,
     });
     const wavSize = (await stat(wavPath)).size;
-    const normalizedRef: MeetingObjectRef = { organizationId, meetingId, kind: 'normalized', objectId: recordingId };
-    await deps.storage.putObject(normalizedRef, createReadStream(wavPath), { mimeType: 'audio/wav', sizeBytes: wavSize });
+    const normalizedRef: MeetingObjectRef = {
+      organizationId,
+      meetingId,
+      kind: 'normalized',
+      objectId: recordingId,
+    };
+    await deps.storage.putObject(normalizedRef, createReadStream(wavPath), {
+      mimeType: 'audio/wav',
+      sizeBytes: wavSize,
+    });
     let waveform: MediaProcessingResult['waveform'];
     if (deps.waveform) {
       processing('waveform', { percent: 25 });
       try {
         const w = await deps.waveform.compute(wavPath, { bins: deps.waveformBins ?? 1000 });
-        const stored = await deps.waveform.store({ organizationId, meetingId, kind: 'waveform', objectId: recordingId }, w);
+        const stored = await deps.waveform.store(
+          { organizationId, meetingId, kind: 'waveform', objectId: recordingId },
+          w,
+        );
         waveform = { bins: w.bins, sizeBytes: stored.sizeBytes };
       } catch (err) {
-        deps.logger.warn({ ...log, errorCode: 'waveform_failed', errName: (err as { name?: string })?.name }, 'waveform skipped');
+        deps.logger.warn(
+          { ...log, errorCode: 'waveform_failed', errName: (err as { name?: string })?.name },
+          'waveform skipped',
+        );
       }
     }
     progress(30, 'chunking');
     processing('chunking', { percent: 30 });
 
-    const chunks = await deps.media.chunkAudio(wavPath, path.join(tmp, 'chunks'), { segmentSeconds });
+    const chunks = await deps.media.chunkAudio(wavPath, path.join(tmp, 'chunks'), {
+      segmentSeconds,
+    });
     if (chunks.length === 0) throw new MediaJobError('no_chunks', 'Chunking produced no output');
 
     const manifest: ChunkManifestEntry[] = [];
     const rows: ChunkFileObjectRow[] = [];
     for (const [i, c] of chunks.entries()) {
       const size = (await stat(c.path)).size;
-      const chunkRef: MeetingObjectRef = { organizationId, meetingId, kind: 'chunk', objectId: recordingId, index: c.index };
-      await deps.storage.putObject(chunkRef, createReadStream(c.path), { mimeType: 'audio/wav', sizeBytes: size });
+      const chunkRef: MeetingObjectRef = {
+        organizationId,
+        meetingId,
+        kind: 'chunk',
+        objectId: recordingId,
+        index: c.index,
+      };
+      await deps.storage.putObject(chunkRef, createReadStream(c.path), {
+        mimeType: 'audio/wav',
+        sizeBytes: size,
+      });
       if (deps.chunkFileObjects) {
         rows.push({
           fileObjectId: chunkFileObjectId(recordingId, c.index),
@@ -259,7 +370,7 @@ export async function processRecording(
           mimeType: 'audio/wav',
           sha256: await sha256File(c.path),
           startMs: Math.round(c.startSeconds * 1000),
-          durationMs: Math.round(c.durationSeconds * 1000)
+          durationMs: Math.round(c.durationSeconds * 1000),
         });
       }
       manifest.push({
@@ -268,25 +379,41 @@ export async function processRecording(
         startMs: Math.round(c.startSeconds * 1000),
         durationMs: Math.round(c.durationSeconds * 1000),
         sizeBytes: size,
-        transcriptionJobId: transcriptionJobId(organizationId, recordingId, c.index)
+        transcriptionJobId: transcriptionJobId(organizationId, recordingId, c.index),
       });
-      progress(30 + Math.round(((i + 1) / chunks.length) * 50), 'chunking', { chunksDone: i + 1, chunksTotal: chunks.length });
+      progress(30 + Math.round(((i + 1) / chunks.length) * 50), 'chunking', {
+        chunksDone: i + 1,
+        chunksTotal: chunks.length,
+      });
     }
 
     // Chunk FileObject rows first (the audio resolver needs them), then the count, then jobs. Any failure here
     // enqueues nothing; a retry upserts the same deterministic ids and keys.
     if (deps.chunkFileObjects) {
       try {
-        await deps.chunkFileObjects.upsertChunkFileObjects({ organizationId, meetingId, recordingId, chunks: rows });
+        await deps.chunkFileObjects.upsertChunkFileObjects({
+          organizationId,
+          meetingId,
+          recordingId,
+          chunks: rows,
+        });
       } catch {
-        throw new MediaJobError('chunk_file_objects_persist_failed', 'Could not persist chunk file objects');
+        throw new MediaJobError(
+          'chunk_file_objects_persist_failed',
+          'Could not persist chunk file objects',
+        );
       }
     }
 
     // Persist the expected chunk count before any transcription job exists, so AI can compute percent/complete.
     if (deps.recordings) {
       try {
-        await deps.recordings.setChunkCount({ organizationId, meetingId, recordingId, chunkCount: manifest.length });
+        await deps.recordings.setChunkCount({
+          organizationId,
+          meetingId,
+          recordingId,
+          chunkCount: manifest.length,
+        });
       } catch {
         throw new MediaJobError('chunk_count_persist_failed', 'Could not persist chunk count');
       }
@@ -306,10 +433,16 @@ export async function processRecording(
         sttProviderId: payload.sttProviderId ?? deps.defaultSttProviderId ?? 'assemblyai',
         diarize: true,
         ...(payload.languageHint ? { languageHint: payload.languageHint } : {}),
-        ...(payload.requestId ? { requestId: payload.requestId } : {})
+        ...(payload.requestId ? { requestId: payload.requestId } : {}),
       };
-      if (!Value.Check(TranscriptionJobSchema, data)) throw new MediaJobError('invalid_transcription_payload', 'Transcription payload failed contract check');
-      await deps.transcriptionQueue.add(QUEUE_NAMES.transcription, data, { jobId: m.transcriptionJobId });
+      if (!Value.Check(TranscriptionJobSchema, data))
+        throw new MediaJobError(
+          'invalid_transcription_payload',
+          'Transcription payload failed contract check',
+        );
+      await deps.transcriptionQueue.add(QUEUE_NAMES.transcription, data, {
+        jobId: m.transcriptionJobId,
+      });
     }
     progress(85, 'transcribing', { chunksDone: 0, chunksTotal: manifest.length });
     processing('completed', { percent: 100 });
@@ -321,13 +454,19 @@ export async function processRecording(
       formatName: info.formatName,
       normalized: { fileObjectId: normalizedFileObjectId(recordingId), sizeBytes: wavSize },
       chunks: manifest,
-      ...(waveform ? { waveform } : {})
+      ...(waveform ? { waveform } : {}),
     };
   } catch (err) {
     const errorCode = errorCodeOf(err);
     deps.logger.error({ ...log, errorCode, finalAttempt: ctx.isFinalAttempt }, 'media job failed');
     if (ctx.isFinalAttempt) {
-      deps.realtime.meetingStatus({ organizationId, meetingId, status: 'failed', errorCode, at: now().toISOString() });
+      deps.realtime.meetingStatus({
+        organizationId,
+        meetingId,
+        status: 'failed',
+        errorCode,
+        at: now().toISOString(),
+      });
       processing('failed', { errorCode });
     }
     throw err;
