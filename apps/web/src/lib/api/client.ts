@@ -23,6 +23,7 @@ import type {
   SwitchOrganizationRequest,
 } from '@meetops/contracts';
 import { API_ERROR_CODES, EXTENSION_AUTH_PATHS } from '@meetops/contracts/types';
+import { createHttpDirectoryApi, type DirectoryApi } from '@/features/directory/api';
 
 /** Contracts ApiErrorEnvelope codes plus 'UNKNOWN' when the body is unparseable. */
 export type ApiErrorCode = ContractApiErrorCode | 'UNKNOWN';
@@ -162,6 +163,8 @@ export type ApiClient = {
     list: (organizationId: Id, filters?: TaskListFilters) => Promise<Paginated<Task>>;
   };
   projects: { list: (organizationId: Id) => Promise<Paginated<Project>> };
+  /** Employees, teams, team members and projects (contracts v0.4 directory, BE-3). */
+  directory: DirectoryApi;
   /** Low-level request (cookie session + CSRF on non-GET). */
   request: <T>(method: HttpMethod, path: string, body?: unknown) => Promise<T>;
   storage: {
@@ -311,6 +314,7 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
     },
     tasks: { list: (id, filters) => request('GET', `${org(id)}/tasks${taskQuery(filters)}`) },
     projects: { list: (id) => request('GET', `${org(id)}/projects`) },
+    directory: createHttpDirectoryApi(request),
     storage: {
       createUpload: (id, body) => request('POST', `${org(id)}/uploads`, body),
       putToPresignedUrl: async (upload, file) => {

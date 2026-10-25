@@ -4,6 +4,7 @@ import { QueryClient } from '@tanstack/react-query';
 import { vi } from 'vitest';
 import { App } from '@/app';
 import type { ApiClient } from '@/lib/api/client';
+import { createMockDirectoryApi } from '@/features/directory/mock-api';
 import { useOrgStore, useUiStore } from '@/stores/org-store';
 import {
   meeting1,
@@ -55,6 +56,8 @@ export function createMockApi(
     },
     tasks: { list: vi.fn().mockResolvedValue(tasks), ...overrides.tasks },
     projects: { list: vi.fn().mockResolvedValue(projects), ...overrides.projects },
+    // In-memory directory (empty); pass `directory: createMockDirectoryApi(seed)` to seed it.
+    directory: { ...createMockDirectoryApi(), ...overrides.directory },
     storage: {
       createUpload: vi.fn().mockResolvedValue(uploadResponse),
       putToPresignedUrl: vi.fn().mockResolvedValue(undefined),
