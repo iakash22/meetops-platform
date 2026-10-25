@@ -5,7 +5,8 @@ import { ApiError } from '@/lib/api/client';
 import { useOrgStore } from '@/stores/org-store';
 import { createMockApi, renderApp, resetStores } from './fixtures/render';
 
-const TOKEN = 'tok_abcdefghijklmnopqrstuvwxyz0123456789';
+// Obviously fake, low-entropy mail-link token (32 chars, the API minimum).
+const TOKEN = 'test-link-token-'.padEnd(32, 'x');
 const GLOBEX = '00000000-0000-4000-8000-000000000002';
 const signedOut = () =>
   createMockApi({
