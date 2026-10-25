@@ -93,6 +93,9 @@ importers:
       '@meetops/logger':
         specifier: workspace:*
         version: link:../../packages/logger
+      '@meetops/session-verifier':
+        specifier: workspace:*
+        version: link:../../packages/session-verifier
       '@sinclair/typebox':
         specifier: ^0.34.52
         version: 0.34.52

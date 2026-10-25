@@ -7,17 +7,25 @@ import {
   assertProductionCookies,
   cookieConfig,
   DEV_WEB_ORIGINS,
-  type HttpSecurityConfig
+  type HttpSecurityConfig,
 } from './auth/http/security.js';
 import { Argon2PasswordHasher } from './auth/infrastructure/argon2-password-hasher.js';
 import { CryptoTokenService, uuidGenerator } from './auth/infrastructure/crypto-token.service.js';
 import { InMemorySessionRepository } from './auth/infrastructure/in-memory-session.repository.js';
 import { InMemoryOneTimeTokenRepository } from './auth/infrastructure/in-memory-one-time-token.repository.js';
-import { InMemoryLoginLockout, InMemoryRateLimiter } from './auth/infrastructure/rate-limit/in-memory.js';
+import {
+  InMemoryLoginLockout,
+  InMemoryRateLimiter,
+} from './auth/infrastructure/rate-limit/in-memory.js';
 import { RedisLoginLockout, type RedisLike } from './auth/infrastructure/rate-limit/redis.js';
 import { Redis } from 'ioredis';
 import type { SessionPolicy, SessionRepository } from './auth/domain/session.js';
-import type { LoginLockout, PasswordHasher, RateLimiter, TokenService } from './auth/domain/ports.js';
+import type {
+  LoginLockout,
+  PasswordHasher,
+  RateLimiter,
+  TokenService,
+} from './auth/domain/ports.js';
 import type { OneTimeTokenRepository } from './auth/domain/one-time-token.js';
 import type { AuthMailQueue, MailTransport } from './auth/domain/mail-jobs.js';
 import { InMemoryAuditLog, type AuditLog } from './auth/domain/audit.js';
@@ -30,12 +38,12 @@ import { organizationRoutes } from './organizations/http/organizations.plugin.js
 import {
   InMemoryInvitationRepository,
   InMemoryMembershipRepository,
-  InMemoryOrganizationRepository
+  InMemoryOrganizationRepository,
 } from './organizations/infrastructure/in-memory.repositories.js';
 import type {
   InvitationRepository,
   MembershipRepository,
-  OrganizationRepository
+  OrganizationRepository,
 } from './organizations/domain/repositories.js';
 import { systemClock, type Clock, type IdGenerator } from '../shared/ports.js';
 
@@ -80,7 +88,7 @@ export interface ModuleDeps {
  */
 function resolveRedis(
   overrides: Partial<ModuleDeps>,
-  env: { nodeEnv?: string | undefined; redisUrl?: string | undefined }
+  env: { nodeEnv?: string | undefined; redisUrl?: string | undefined },
 ): { redis?: RedisLike; owned?: Redis } {
   if (overrides.redis) return { redis: overrides.redis };
   if (env.nodeEnv === 'test' || !env.redisUrl) return {};
@@ -116,12 +124,14 @@ export const PRODUCTION_REQUIRED_DEPS = [
   'rateLimiter',
   'lockout',
   'mailQueue',
-  'audit'
+  'audit',
 ] as const satisfies readonly (keyof ModuleDeps)[];
 
 export class MissingProductionDependencyError extends Error {
   constructor(public readonly missing: string[]) {
-    super(`Refusing to start in production without injected implementations for: ${missing.join(', ')}`);
+    super(
+      `Refusing to start in production without injected implementations for: ${missing.join(', ')}`,
+    );
     this.name = 'MissingProductionDependencyError';
   }
 }
@@ -130,16 +140,17 @@ export function defaultModuleDeps(
   overrides: Partial<ModuleDeps> = {},
   env: { nodeEnv?: string | undefined; redisUrl?: string | undefined } = {
     nodeEnv: process.env.NODE_ENV,
-    redisUrl: process.env.REDIS_URL
-  }
+    redisUrl: process.env.REDIS_URL,
+  },
 ): ModuleDeps {
   const strict = !isRelaxedEnv(env.nodeEnv);
   // Redis-backed lockout is satisfied by an injected client or REDIS_URL; without either, strict
   // environments still fail closed via PRODUCTION_REQUIRED_DEPS ('lockout').
-  const hasRedis = !overrides.lockout && (!!overrides.redis || (env.nodeEnv !== 'test' && !!env.redisUrl));
+  const hasRedis =
+    !overrides.lockout && (!!overrides.redis || (env.nodeEnv !== 'test' && !!env.redisUrl));
   if (strict) {
     const missing = PRODUCTION_REQUIRED_DEPS.filter(
-      (k) => overrides[k] === undefined && !(k === 'lockout' && hasRedis)
+      (k) => overrides[k] === undefined && !(k === 'lockout' && hasRedis),
     );
     if (missing.length) throw new MissingProductionDependencyError(missing);
     if (!overrides.security) {
@@ -148,7 +159,10 @@ export function defaultModuleDeps(
     }
   }
   const clock = overrides.clock ?? systemClock;
-  const sessionPolicy = overrides.sessionPolicy ?? { idleTimeoutMs: 30 * MIN, absoluteTimeoutMs: 12 * HOUR };
+  const sessionPolicy = overrides.sessionPolicy ?? {
+    idleTimeoutMs: 30 * MIN,
+    absoluteTimeoutMs: 12 * HOUR,
+  };
   const allowedOrigins = (process.env.WEB_ORIGINS ?? (strict ? '' : DEV_WEB_ORIGINS.join(',')))
     .split(',')
     .map((s) => s.trim())
@@ -162,10 +176,12 @@ export function defaultModuleDeps(
       ? Buffer.from(process.env.CSRF_SECRET, 'utf8')
       : strict
         ? Buffer.alloc(0)
-        : randomBytes(32)
+        : randomBytes(32),
   };
   if (strict) assertProductionCookies(security);
-  const { redis, owned } = overrides.lockout ? { redis: overrides.redis } : resolveRedis(overrides, env);
+  const { redis, owned } = overrides.lockout
+    ? { redis: overrides.redis }
+    : resolveRedis(overrides, env);
   const memberships = overrides.memberships ?? new InMemoryMembershipRepository();
   return {
     users: new InMemoryUserRepository(),
@@ -174,7 +190,7 @@ export function defaultModuleDeps(
     organizations: new InMemoryOrganizationRepository(),
     memberships,
     invitations: new InMemoryInvitationRepository(
-      memberships instanceof InMemoryMembershipRepository ? memberships : undefined
+      memberships instanceof InMemoryMembershipRepository ? memberships : undefined,
     ),
     hasher: new Argon2PasswordHasher(),
     tokens: new CryptoTokenService(),
@@ -195,7 +211,7 @@ export function defaultModuleDeps(
     ...(owned ? { ownedRedis: owned } : {}),
     clock,
     sessionPolicy,
-    security
+    security,
   };
 }
 
@@ -215,5 +231,5 @@ export async function registerModules(app: FastifyInstance, deps: ModuleDeps) {
   app.decorateRequest('auth', null);
   await app.register(authRoutes, { auth, organizations, security: deps.security });
   await app.register(organizationRoutes, { auth, organizations, security: deps.security });
-  return { auth, organizations, sessionVerifier: new SessionVerifier(auth, deps.memberships) };
+  return { auth, organizations, sessionVerifier: new SessionVerifier(deps) };
 }
