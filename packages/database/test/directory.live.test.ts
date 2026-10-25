@@ -114,6 +114,25 @@ describe.skipIf(!APP_URL || !OWNER_URL)('directory repositories (live, forced RL
       expect(await employees.softDelete(orgA, e.id)).toBe(false);
     });
 
+    it('ignores organizationId and unknown fields smuggled into create/update input', async () => {
+      const smuggled = { organizationId: orgB, id: randomUUID(), deletedAt: new Date() };
+      const e = await employees.create(orgA, { fullName: 'Smuggler', ...smuggled });
+      expect(e).toMatchObject({ organizationId: orgA, fullName: 'Smuggler' });
+      expect(e.id).not.toBe(smuggled.id);
+      expect(await employees.get(orgA, e.id)).not.toBeNull();
+      const u = await employees.update(orgA, e.id, { title: 'T', ...smuggled });
+      expect(u).toMatchObject({ organizationId: orgA, id: e.id, title: 'T' });
+      expect(await employees.get(orgA, e.id)).not.toBeNull();
+      const t = await teams.create(orgA, { name: `Smuggled ${sfx}`, ...smuggled });
+      expect(t).toMatchObject({ organizationId: orgA });
+      expect(t.id).not.toBe(smuggled.id);
+      const tu = await teams.update(orgA, t.id, { description: 'd', ...smuggled });
+      expect(tu).toMatchObject({ organizationId: orgA, id: t.id, description: 'd' });
+      expect(await teams.get(orgA, t.id)).not.toBeNull();
+      expect(await employees.get(orgB, e.id)).toBeNull();
+      expect(await teams.get(orgB, t.id)).toBeNull();
+    });
+
     it('an org-B id read, updated or deleted under org-A context is null/false', async () => {
       const b = await employees.create(orgB, { fullName: 'Bob B' });
       expect(await employees.get(orgA, b.id)).toBeNull();
