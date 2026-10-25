@@ -19,6 +19,10 @@ export default defineConfig({
       define: {
         'import.meta.env.WXT_WEB_ORIGIN': JSON.stringify(webOrigin),
         'import.meta.env.WXT_API_ORIGIN': JSON.stringify(apiOrigin),
+        // Feature flag (off unless 'true' / '1'): HttpUploadClient instead of StubUploadClient.
+        'import.meta.env.WXT_FEATURE_HTTP_UPLOAD': JSON.stringify(
+          process.env.WXT_FEATURE_HTTP_UPLOAD ?? '',
+        ),
       },
     };
   },

@@ -2,31 +2,415 @@
 @tailwind components;
 @tailwind utilities;
 
+/*
+ * Self-hosted variable fonts (OFL-1.1, Latin subset). Provenance and licences: public/fonts/README.md.
+ * Spec: docs/05-web/typography-and-motion.md. Only the sans is preloaded (index.html); the mono
+ * downloads only when a timecode/transcript/code element is first rendered.
+ */
+@font-face {
+  font-family: 'InterVariable';
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url('/fonts/InterVariable-latin.woff2') format('woff2');
+  unicode-range:
+    U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329,
+    U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: normal;
+  font-weight: 100 800;
+  font-display: swap;
+  src: url('/fonts/JetBrainsMono-latin.woff2') format('woff2');
+  unicode-range:
+    U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329,
+    U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+/* Metric-matched local fallback so the swap to Inter causes ~no layout shift (CLS). */
+@font-face {
+  font-family: 'Inter Fallback';
+  src: local('Arial'), local('Liberation Sans'), local('Helvetica');
+  size-adjust: 104.68%;
+  ascent-override: 92.54%;
+  descent-override: 23.04%;
+  line-gap-override: 0%;
+}
+
+/*
+ * MeetOps brand theme (dark-first). Source of truth for values:
+ * docs/05-web/brand-theme.md — keep mobile/desktop/extension in sync.
+ * Values are HSL channels consumed as hsl(var(--token)) by tailwind.config.ts.
+ */
 @layer base {
   :root {
-    --background: 0 0% 100%;
-    --foreground: 222.2 84% 4.9%;
-    --card: 0 0% 100%;
-    --card-foreground: 222.2 84% 4.9%;
-    --primary: 222.2 47.4% 11.2%;
-    --primary-foreground: 210 40% 98%;
-    --secondary: 210 40% 96.1%;
-    --secondary-foreground: 222.2 47.4% 11.2%;
-    --muted: 210 40% 96.1%;
-    --muted-foreground: 215.4 16.3% 46.9%;
-    --accent: 210 40% 96.1%;
-    --accent-foreground: 222.2 47.4% 11.2%;
-    --destructive: 0 84.2% 60.2%;
-    --destructive-foreground: 210 40% 98%;
-    --border: 214.3 31.8% 91.4%;
-    --input: 214.3 31.8% 91.4%;
-    --ring: 222.2 84% 4.9%;
-    --radius: 0.5rem;
+    color-scheme: dark;
+
+    /* Surfaces */
+    --background: 0 0% 3.9%; /* #0A0A0A Jet Black */
+    --foreground: 240 11.1% 96.5%; /* #F5F5F7 */
+    --card: 240 4.8% 8.2%; /* #141416 surface-1 */
+    --card-foreground: 240 11.1% 96.5%; /* #F5F5F7 */
+    --popover: 240 5.1% 11.6%; /* #1C1C1F surface-2 */
+    --popover-foreground: 240 11.1% 96.5%; /* #F5F5F7 */
+
+    /* Brand */
+    --primary: 195.8 100% 32.7%; /* #007BA7 Cerulean Blue (fills) */
+    --primary-foreground: 0 0% 100%; /* #FFFFFF */
+    --link: 197.3 72.8% 55.3%; /* #3AB0E0 cerulean-light (text on dark) */
+    --highlight: 330.3 100% 58.8%; /* #FF2D95 Neon Rose (sparing accent) */
+    --highlight-foreground: 0 0% 3.9%; /* #0A0A0A */
+
+    /* Neutral interaction surfaces (shadcn "secondary"/"muted"/"accent") */
+    --secondary: 240 5.1% 11.6%; /* #1C1C1F */
+    --secondary-foreground: 240 11.1% 96.5%; /* #F5F5F7 */
+    --muted: 240 4.8% 8.2%; /* #141416 */
+    --muted-foreground: 240 5% 64.9%; /* #A1A1AA */
+    --accent: 240 5.1% 11.6%; /* #1C1C1F hover/selected surface */
+    --accent-foreground: 240 11.1% 96.5%; /* #F5F5F7 */
+
+    /* Status */
+    --destructive: 0 84.2% 60.2%; /* #EF4444 (distinct from rose; also AA as text on bg) */
+    --destructive-foreground: 0 0% 3.9%; /* #0A0A0A (AA on #EF4444; white is only 3.76:1) */
+
+    /* Lines & focus */
+    --border: 240 4.5% 17.3%; /* #2A2A2E */
+    --input: 240 3.6% 43.5%; /* #6B6B73 (>=3:1 on bg for form controls) */
+    --ring: 197.3 72.8% 55.3%; /* #3AB0E0 */
+    /* Radius scale: sm 6px · md 8px · lg 12px (--radius) · xl 16px */
+    --radius: 0.75rem;
+
+    /* Motion tokens (docs/05-web/typography-and-motion.md). Reduced motion collapses them. */
+    --duration-instant: 100ms; /* press feedback, exits */
+    --duration-fast: 150ms; /* hover, popover/tooltip enter */
+    --duration-base: 200ms; /* toast, dialog, page enter */
+    --duration-slow: 300ms; /* sheets, large surfaces */
+    --ease-out: cubic-bezier(0.2, 0.8, 0.2, 1); /* enter / decelerate */
+    --ease-standard: cubic-bezier(0.4, 0, 0.2, 1); /* move / resize */
+    --ease-in: cubic-bezier(0.4, 0, 1, 1); /* exit / accelerate */
+
+    /* Typography */
+    --font-sans:
+      'InterVariable', 'Inter Fallback', ui-sans-serif, system-ui, -apple-system, 'Segoe UI',
+      Roboto, 'Helvetica Neue', Arial, 'Noto Sans', sans-serif;
+    --font-mono:
+      'JetBrains Mono', ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono',
+      monospace;
+
+    /* Layout */
+    --header-height: 3.5rem; /* 56px sticky top bar */
+    --sidebar-width: 15rem; /* 240px */
+    --sidebar-width-collapsed: 4rem; /* 64px icon rail */
+    --content-max: 80rem; /* 1280px page container */
+    --measure: 70ch; /* prose / transcript line length */
+
+    /* Optional subtle glows for brand/logo elements only */
+    --glow-primary: 0 0 12px hsl(195.8 100% 32.7% / 0.45);
+    --glow-highlight: 0 0 12px hsl(330.3 100% 58.8% / 0.35);
   }
   * {
     @apply border-border;
   }
+  html {
+    font-family: var(--font-sans);
+    /* cv11 single-storey a; calt contextual punctuation. */
+    font-feature-settings: 'cv11', 'calt';
+    text-rendering: optimizeLegibility;
+    -webkit-text-size-adjust: 100%;
+    /* Anchor jumps / focus scrolling clear the sticky top bar. */
+    scroll-padding-top: calc(var(--header-height) + 1rem);
+    scrollbar-color: hsl(var(--border)) transparent;
+  }
+  @media (prefers-reduced-motion: no-preference) {
+    html {
+      scroll-behavior: smooth;
+    }
+  }
   body {
-    @apply bg-background text-foreground antialiased;
+    @apply bg-background text-body text-foreground antialiased;
+  }
+  h1,
+  h2,
+  h3,
+  h4,
+  h5,
+  h6 {
+    text-wrap: balance;
+  }
+  h1 {
+    @apply text-h1;
+  }
+  h2 {
+    @apply text-h2;
+  }
+  h3 {
+    @apply text-h3;
+  }
+  h4 {
+    @apply text-h4;
+  }
+  h5 {
+    @apply text-h5;
+  }
+  h6 {
+    @apply text-h6;
+  }
+  p {
+    text-wrap: pretty;
+  }
+  code,
+  kbd,
+  samp,
+  pre {
+    font-family: var(--font-mono);
+    font-size: 0.9em;
+    font-variant-ligatures: none;
+  }
+  /* Dark scrollbars (Chromium/Safari; Firefox uses scrollbar-color above). */
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background-color: hsl(var(--border));
+    border: 2px solid transparent;
+    border-radius: 9999px;
+    background-clip: content-box;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background-color: hsl(var(--input));
+  }
+  ::-webkit-scrollbar-corner {
+    background: transparent;
+  }
+  :focus-visible {
+    outline: 2px solid hsl(var(--ring));
+    outline-offset: 2px;
+  }
+  /* Components that draw their own ring opt out with outline-none. */
+  ::selection {
+    background: hsl(var(--primary) / 0.45);
+    color: hsl(var(--foreground));
+  }
+}
+
+@layer utilities {
+  .brand-glow {
+    text-shadow: var(--glow-primary), var(--glow-highlight);
+  }
+  .brand-glow-box {
+    box-shadow: var(--glow-primary);
+  }
+
+  /* Layered translucent surface for sticky nav / overlays. */
+  .surface-glass {
+    background-color: hsl(var(--card) / 0.72);
+    -webkit-backdrop-filter: blur(12px) saturate(140%);
+    backdrop-filter: blur(12px) saturate(140%);
+  }
+
+  /* Faint grid background with a cerulean beam fading from the top (CSS-only). */
+  .bg-grid {
+    background-image:
+      radial-gradient(60% 50% at 50% 0%, hsl(var(--primary) / 0.18), transparent 70%),
+      linear-gradient(hsl(var(--border) / 0.55) 1px, transparent 1px),
+      linear-gradient(90deg, hsl(var(--border) / 0.55) 1px, transparent 1px);
+    background-size:
+      100% 100%,
+      32px 32px,
+      32px 32px;
+    background-position: center top;
+  }
+
+  /* Animated cerulean→rose gradient border; put on a wrapper with p-px + rounded. */
+  .gradient-border {
+    background: conic-gradient(
+      from var(--border-angle, 0deg),
+      hsl(var(--primary)),
+      hsl(var(--highlight)),
+      hsl(var(--primary)) 60%,
+      hsl(var(--border)) 75%,
+      hsl(var(--primary))
+    );
+    animation: border-spin 6s linear infinite;
+  }
+
+  /* Diagonal sheen for shimmer buttons and skeletons. */
+  .shimmer {
+    position: relative;
+    overflow: hidden;
+    isolation: isolate;
+  }
+  .shimmer::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    transform: translateX(-100%);
+    background: linear-gradient(
+      100deg,
+      transparent 20%,
+      hsl(0 0% 100% / 0.14) 50%,
+      transparent 80%
+    );
+    animation: shimmer 2.2s var(--ease-out) infinite;
+  }
+
+  /* Timers, durations, timestamps: mono + fixed-width digits + slashed/dotted zero. */
+  .timecode {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums slashed-zero;
+    font-variant-ligatures: none;
+    letter-spacing: 0;
+  }
+  /* Tabular figures in the UI sans (tables, KPIs). Tailwind's tabular-nums also works. */
+  .nums-tabular {
+    font-variant-numeric: tabular-nums;
+  }
+  /* Comfortable reading width for prose, summaries and transcripts. */
+  .measure {
+    max-width: var(--measure);
+  }
+
+  /* Contained scroll region: thin dark scrollbar, no scroll chaining, no layout jump. */
+  .scroll-area {
+    overflow: auto;
+    overscroll-behavior: contain;
+    scrollbar-width: thin;
+    scrollbar-gutter: stable;
+  }
+  /* Soft edge fade for scroll regions (static mask; no motion). */
+  .scroll-fade-y {
+    -webkit-mask-image: linear-gradient(
+      to bottom,
+      transparent,
+      #000 16px,
+      #000 calc(100% - 16px),
+      transparent
+    );
+    mask-image: linear-gradient(
+      to bottom,
+      transparent,
+      #000 16px,
+      #000 calc(100% - 16px),
+      transparent
+    );
+  }
+  .scroll-fade-x {
+    -webkit-mask-image: linear-gradient(
+      to right,
+      transparent,
+      #000 16px,
+      #000 calc(100% - 16px),
+      transparent
+    );
+    mask-image: linear-gradient(
+      to right,
+      transparent,
+      #000 16px,
+      #000 calc(100% - 16px),
+      transparent
+    );
+  }
+  /* Horizontal snapping rows (chips, cards carousel on mobile). */
+  .snap-row {
+    display: flex;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    scroll-snap-type: x mandatory;
+    scrollbar-width: thin;
+  }
+  .snap-row > * {
+    scroll-snap-align: start;
+    flex-shrink: 0;
+  }
+
+  /* Stagger children of an entering list: set style="--i: n" on each child; capped at 6 steps. */
+  .stagger > * {
+    animation-delay: calc(min(var(--i, 0), 6) * 30ms);
+  }
+
+  .transition-base {
+    transition-property: color, background-color, border-color, box-shadow, opacity, transform;
+    transition-duration: var(--duration-fast);
+    transition-timing-function: var(--ease-out);
+  }
+}
+
+@property --border-angle {
+  syntax: '<angle>';
+  inherits: false;
+  initial-value: 0deg;
+}
+
+@keyframes border-spin {
+  to {
+    --border-angle: 360deg;
+  }
+}
+
+/* Scroll-driven reveal: progressive enhancement. Without support (or with reduced motion) content
+   is simply visible — the base state is never hidden. */
+@supports (animation-timeline: view()) {
+  @media (prefers-reduced-motion: no-preference) {
+    .reveal-on-scroll {
+      animation: reveal linear both;
+      animation-timeline: view();
+      animation-range: entry 0% cover 20%;
+    }
+  }
+}
+@keyframes reveal {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+}
+
+/* View Transitions API (progressive enhancement): a short cross-fade for same-document
+   navigations started with document.startViewTransition(). */
+::view-transition-old(root) {
+  animation: var(--duration-instant) var(--ease-in) both vt-fade-out;
+}
+::view-transition-new(root) {
+  animation: var(--duration-base) var(--ease-out) both vt-fade-in;
+}
+@keyframes vt-fade-out {
+  to {
+    opacity: 0;
+  }
+}
+@keyframes vt-fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+}
+
+@keyframes shimmer {
+  to {
+    transform: translateX(100%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+  ::view-transition-group(*),
+  ::view-transition-old(*),
+  ::view-transition-new(*) {
+    animation: none !important;
+  }
+  .shimmer::after {
+    display: none;
   }
 }

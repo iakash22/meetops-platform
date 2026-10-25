@@ -13,20 +13,20 @@ const ids = (p: string, n: number) =>
 const groups = [
   {
     p: 'XT',
-    n: 36,
+    n: 42,
     got: crossOrganizationCases.map((c) => c.id),
     done: S.implementedXt,
     todo: S.todoXt,
   },
   { p: 'AU', n: 35, got: authAbuseCases.map((c) => c.id), done: S.implementedAu, todo: S.todoAu },
-  { p: 'UP', n: 15, got: uploadCases.map((c) => c.id), done: S.implementedUp, todo: S.todoUp },
+  { p: 'UP', n: 19, got: uploadCases.map((c) => c.id), done: S.implementedUp, todo: S.todoUp },
   { p: 'SS', n: 32, got: ssrfPayloads.map((c) => c.id), done: S.implementedSs, todo: S.todoSs },
 ];
 
 describe('security case catalogue', () => {
-  it('covers 118 cases: XT-01..36, AU-01..35, UP-01..15, SS-01..32', () => {
+  it('covers 128 cases: XT-01..42, AU-01..35, UP-01..19, SS-01..32', () => {
     for (const g of groups) expect(g.got, g.p).toEqual(ids(g.p, g.n));
-    expect(groups.reduce((n, g) => n + g.got.length, 0)).toBe(118);
+    expect(groups.reduce((n, g) => n + g.got.length, 0)).toBe(128);
   });
 
   it('every ID is either implemented or todo with a reason (never both, never neither)', () => {
