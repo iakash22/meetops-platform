@@ -27,6 +27,13 @@ import type {
  * - `GET /orgs` -> 200 `ListOrganizationsResponse`.
  * - `POST /auth/logout` -> 204.
  */
+/**
+ * Every value `error.reason` may take, derived from the contracts `ApiErrorEnvelope` schema type (TypeBox `Static`)
+ * instead of a hand-written list, so new reasons added to `@meetops/contracts` (e.g. v0.4.0 `NOT_FOUND` reasons and
+ * directory `CONFLICT` reasons) flow through without a mobile change.
+ */
+export type ApiErrorReason = NonNullable<ApiErrorEnvelope['error']['reason']>;
+
 export interface SignupAccepted {
   message: string;
 }
