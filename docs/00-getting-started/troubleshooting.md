@@ -16,6 +16,19 @@ Docker Desktop on Windows needs the WSL 2 backend.
 
 Apps resolve workspace packages from `dist/` (for example `@meetops/contracts/dist/index.js`). `pnpm dev` runs `^build` first via Turbo. If you still see `ERR_MODULE_NOT_FOUND` for a package `dist`, run `pnpm build --filter=@meetops/contracts` (or `pnpm build`) and retry.
 
+## API / worker crash on `pnpm dev:stack` (root `.env` not loaded)
+
+These scripts load the **repo root** `.env` (copy from `.env.example` first):
+
+| Package / command                                         | How env is loaded                                             |
+| --------------------------------------------------------- | ------------------------------------------------------------- |
+| `@meetops/api` / `worker` / `realtime` `dev`              | `tsx … --env-file=../../.env`                                 |
+| `@meetops/realtime` `start`                               | `node --env-file=../../.env`                                  |
+| `@meetops/database` `db:migrate:*`, `db:seed`, `db:roles` | `node` / `tsx` `--env-file=../../.env`                        |
+| `@meetops/web` `dev`                                      | Vite `envDir` = monorepo root (`WEB_PORT`, `VITE_API_URL`, …) |
+
+Without `NODE_ENV=development` and `DATABASE_URL`, the API exits with `MissingProductionDependencyError` and the worker with `DATABASE_URL is required`. Extension uses `apps/extension/.env` (see its `.env.example`); desktop keeps Tauri’s fixed Vite port `1420`.
+
 ## Docker Desktop
 
 - `pnpm dev:infra:up` / `down` / `logs` run `scripts/ensure-docker.mjs` first. On Windows/macOS that opens Docker Desktop and waits (default 180s; override with `DOCKER_WAIT_MS`) until `docker info` succeeds.

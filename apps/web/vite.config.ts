@@ -71,14 +71,25 @@ function apiPreconnect(apiUrl: string | undefined): Plugin {
   };
 }
 
+const monorepoRoot = fileURLToPath(new URL('../..', import.meta.url));
+
+function envPort(raw: string | undefined, fallback: number): number {
+  const n = Number(raw);
+  return Number.isInteger(n) && n > 0 && n < 65536 ? n : fallback;
+}
+
 export default defineConfig(({ mode }) => {
-  const env = loadEnv(mode, process.cwd(), 'VITE_');
+  // Root `.env` (not apps/web/.env): VITE_API_URL, WEB_PORT, etc.
+  // Empty prefix so WEB_PORT is available for the dev server; Vite still only
+  // exposes VITE_* to the client via import.meta.env.
+  const env = loadEnv(mode, monorepoRoot, '');
   return {
     plugins: [react(), apiPreconnect(env.VITE_API_URL)],
+    envDir: monorepoRoot,
     resolve: {
       alias: { '@': fileURLToPath(new URL('./src', import.meta.url)) },
     },
-    server: { port: 5173 },
+    server: { port: envPort(env.WEB_PORT, 5173) },
     build: {
       target: 'es2022',
       cssCodeSplit: true,
