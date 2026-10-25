@@ -13,5 +13,6 @@
 | [ADR-009](ADR-009-ai-provider-routing-credentials-ssrf.md) | AI provider routing, credential refs and SSRF guard        | Proposed (PR #21 unmerged)                                                              | 2026-10-24 |
 | [ADR-010](ADR-010-organization-id-tenant-key.md)           | `organizationId` as the canonical tenant key               | Proposed - needs Architecture review                                                    | 2026-10-24 |
 | [ADR-011](ADR-011-realtime-auth.md)                        | Realtime session auth, meeting access and org revalidation | Proposed - needs Architecture and Security sign-off                                     | 2026-10-25 |
+| [ADR-012](ADR-012-desktop-auth.md)                         | Desktop (Tauri) sign-in, token storage and revocation      | Proposed - needs Architecture and Security sign-off                                     | 2026-10-25 |
 
 New ADRs use the next number, `ADR-NNN-short-title.md`, with Date, Status, Context, Decision and Consequences sections. Add a row here. Links to ADR-003 and ADR-004 resolve once their PRs merge. ADR-003 makes ARCH the owner of this folder.
