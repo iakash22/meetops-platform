@@ -240,9 +240,15 @@ importers:
       '@meetops/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
+      '@meetops/database':
+        specifier: workspace:*
+        version: link:../../packages/database
       '@meetops/logger':
         specifier: workspace:*
         version: link:../../packages/logger
+      '@meetops/session-verifier':
+        specifier: workspace:*
+        version: link:../../packages/session-verifier
       '@socket.io/redis-adapter':
         specifier: ^8.3.0
         version: 8.3.0(socket.io-adapter@2.5.8)
