@@ -57,3 +57,20 @@ export function createPersistedChunkAudioResolver(
     ...(opts.maxBytes !== undefined ? { maxBytes: opts.maxBytes } : {}),
   });
 }
+
+/**
+ * Fail-fast startup check for the media worker's database. Prisma connects lazily, so without this a missing
+ * DATABASE_URL would only surface at the first job (after normalize and chunk upload). Checks presence and scheme only;
+ * it never echoes the value. Wrong credentials or an unreachable database are still only detected at the first job.
+ */
+export function assertMediaWorkerDatabaseEnv(env: NodeJS.ProcessEnv = process.env): void {
+  const url = env.DATABASE_URL?.trim();
+  if (!url) {
+    throw new Error(
+      'DATABASE_URL is required for the media worker (use the meetops_app NOBYPASSRLS runtime role)',
+    );
+  }
+  if (!/^postgres(ql)?:\/\//i.test(url)) {
+    throw new Error('DATABASE_URL must be a postgres:// or postgresql:// URL');
+  }
+}

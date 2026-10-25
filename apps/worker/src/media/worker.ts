@@ -23,7 +23,11 @@ import {
   type TranscriptionEnqueuer,
   type WaveformOps,
 } from './processor.js';
-import { createMediaPersistence, type MediaPersistence } from './persistence.js';
+import {
+  assertMediaWorkerDatabaseEnv,
+  createMediaPersistence,
+  type MediaPersistence,
+} from './persistence.js';
 import { createRealtimePublisher, createRedisEmitter } from './realtime.js';
 import {
   MEDIA_QUEUE,
@@ -149,6 +153,7 @@ export function buildMediaProcessorDeps(
 
 /** Wire the BullMQ media worker with real storage, ffmpeg, Postgres persistence, transcription queue and Redis emitter. */
 export function startMediaWorker(cfg: MediaWorkerConfig = loadMediaWorkerConfig()) {
+  assertMediaWorkerDatabaseEnv(process.env);
   const logger = baseLogger.child({ worker: MEDIA_QUEUE });
   const conn = () => new Redis(cfg.redisUrl, { maxRetriesPerRequest: null });
   const emitterRedis = conn();
