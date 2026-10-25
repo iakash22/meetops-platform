@@ -59,7 +59,7 @@ invitation.
   - Entrance animation is fade + rise, applied with the `motion-safe:` prefix.
 - **Brand panel.** `<aside aria-label="About MeetOps AI">`, `hidden lg:flex`.
   - Background: `BrandBackground` (hero variant on signup).
-  - Headline "Every meeting, turned into action." at `text-4xl xl:text-5xl`.
+  - Headline "Every meeting, turned into action." at `text-display` (36→60px).
   - On signup only, a `SpotlightCard` with a mock summary and 3 drafted tasks. It is labelled
     "Example summary" and contains no live data.
   - Value props: Record & transcribe · AI summaries · Draft tasks from action items.
@@ -70,8 +70,7 @@ invitation.
 ### Forms
 
 - **Headings.**
-  - One `<h1>` per page: `text-3xl sm:text-4xl font-semibold tracking-tight`. There is no
-    display type token yet.
+  - One `<h1>` per page: `text-h1` (30→36px, 600, −0.02em) from the typography scale.
   - Login: "Welcome back" / "Log in to MeetOps AI".
   - Signup: "Create your workspace" / "Start turning meetings into action".
 - **Field order.**
