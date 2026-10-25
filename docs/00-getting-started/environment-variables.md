@@ -114,7 +114,7 @@ GitHub, Jira and other integrations are configured as per-organization integrati
 
 - `RLS_TEST_APP_URL` / `RLS_TEST_OWNER_URL`: enable the PR #25 live RLS tests (connect as `meetops_app` / the owner). Skipped when unset.
 - `AI_SMOKE_AUDIO_FILE`: optional audio file for the AI provider smoke test (PR #21).
-- CI audit gate: `scripts/audit-gate.mjs` (fail-closed, high/critical block). `AUDIT_GATE_NOW` overrides the date for local tests only (ignored in CI). The only exception is RE-01 (braces@3.0.3, issue #54, expires 2026-11-20), defined in the script.
+- CI audit gate: `scripts/audit-gate.mjs` (fail-closed, high/critical block). `AUDIT_GATE_NOW` overrides the date for local tests only (ignored in CI). Exceptions are defined in the script and documented in `docs/12-security/risk-exceptions.md`: RE-01 (braces@3.0.3, issue #54, expires 2026-11-20), RE-03 (node-forge@1.4.0, expires 2026-11-24) and RE-04 (image-size@1.2.1, two GHSAs, expires 2026-11-24).
 - `STORAGE_APP_ACCESS_KEY_ID` / `STORAGE_APP_SECRET_ACCESS_KEY`: scoped MinIO user that minio-init creates for api/worker in the compose stack (read/write on `STORAGE_BUCKET` only). The root `STORAGE_ACCESS_KEY_ID`/`STORAGE_SECRET_ACCESS_KEY` is used only by minio/minio-init.
 
 ## Compose secrets (local dev)

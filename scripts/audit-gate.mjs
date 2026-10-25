@@ -37,6 +37,41 @@ const EXCEPTIONS = [
     versions: ['3.0.3'],
     expires: '2026-11-20T23:59:59Z',
   },
+  {
+    // node-forge@1.4.0 has no patched release. Dev/build tooling only:
+    // apps/extension > wxt > web-ext-run > @devicefarmer/adbkit, and
+    // apps/mobile > expo > @expo/cli (+ selfsigned). Owner-approved 2026-10-25.
+    // Exit plan: upgrade wxt/expo or drop the dependency when a fix lands.
+    // See docs/12-security/risk-exceptions.md.
+    id: 'RE-03',
+    owner: 'DevOps Agent',
+    issue: 'https://github.com/iakash22/meetops-platform/pull/7',
+    ghsa: 'GHSA-86w9-cpqp-85rv',
+    module: 'node-forge',
+    versions: ['1.4.0'],
+    expires: '2026-11-24T23:59:59Z',
+  },
+  {
+    // image-size@1.2.1 via apps/mobile > react-native > metro 0.81.x (mobile
+    // dev/bundler tooling; metro pins image-size ^1). Owner-approved 2026-10-25.
+    // Exit plan: upgrade expo/metro. See docs/12-security/risk-exceptions.md.
+    id: 'RE-04',
+    owner: 'DevOps Agent',
+    issue: 'https://github.com/iakash22/meetops-platform/pull/7',
+    ghsa: 'GHSA-5p2g-fcmc-qvqq',
+    module: 'image-size',
+    versions: ['1.2.1'],
+    expires: '2026-11-24T23:59:59Z',
+  },
+  {
+    id: 'RE-04',
+    owner: 'DevOps Agent',
+    issue: 'https://github.com/iakash22/meetops-platform/pull/7',
+    ghsa: 'GHSA-w3rx-r6r6-pgpr',
+    module: 'image-size',
+    versions: ['1.2.1'],
+    expires: '2026-11-24T23:59:59Z',
+  },
 ];
 const BLOCKING = new Set(['high', 'critical']);
 
