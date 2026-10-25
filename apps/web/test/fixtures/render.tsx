@@ -6,12 +6,12 @@ import { App } from '@/app';
 import { useToastStore } from '@/components/ui/toast';
 import type { Role } from '@meetops/contracts';
 import type { ApiClient, CreateInvitationRequest } from '@/lib/api/client';
+import { createMockDirectoryApi } from '@/features/directory/mock-api';
 import { useOrgStore, useUiStore } from '@/stores/org-store';
 import {
   meeting1,
   meetings,
   orgs,
-  projects,
   session,
   newOrg,
   sessionResponse,
@@ -92,7 +92,8 @@ export function createMockApi(
       ...overrides.meetings,
     },
     tasks: { list: vi.fn().mockResolvedValue(tasks), ...overrides.tasks },
-    projects: { list: vi.fn().mockResolvedValue(projects), ...overrides.projects },
+    // In-memory directory (empty); pass `directory: createMockDirectoryApi(seed)` to seed it.
+    directory: { ...createMockDirectoryApi(), ...overrides.directory },
     storage: {
       createUpload: vi.fn().mockResolvedValue(uploadResponse),
       putToPresignedUrl: vi.fn().mockResolvedValue(undefined),

@@ -26,7 +26,10 @@ import { useApi } from '@/lib/api/context';
 import type { ApiClient } from '@/lib/api/client';
 import { queryKeys } from '@/lib/api/queries';
 import { safeRedirect } from '@/lib/safe-redirect';
-import { DashboardPage, ProjectsPage, SettingsPage } from '@/pages/app-pages';
+import { DashboardPage } from '@/pages/app-pages';
+import { ProjectsPage } from '@/features/projects/projects-page';
+import { parseSettingsSearch, SettingsPage } from '@/features/settings/settings-page';
+import { TeamMembersPage } from '@/features/teams/team-members-page';
 import { CreateOrganizationPage } from '@/features/organizations/create-organization';
 import { ExtensionPairPage } from '@/features/extension/pair-page';
 import { parsePairSearch } from '@/features/extension/pairing';
@@ -206,7 +209,18 @@ const projectsRoute = createRoute({
 const settingsRoute = createRoute({
   getParentRoute: () => appLayout,
   path: '/settings',
-  component: SettingsPage,
+  validateSearch: parseSettingsSearch,
+  component: function SettingsRoute() {
+    return <SettingsPage tab={settingsRoute.useSearch().tab} />;
+  },
+});
+const teamMembersRoute = createRoute({
+  getParentRoute: () => appLayout,
+  path: '/settings/teams/$teamId',
+  component: function TeamMembersRoute() {
+    const { teamId } = teamMembersRoute.useParams();
+    return <TeamMembersPage key={teamId} teamId={teamId} />;
+  },
 });
 
 const createOrganizationRoute = createRoute({
@@ -234,6 +248,7 @@ export const routeTree = rootRoute.addChildren([
     tasksRoute,
     projectsRoute,
     settingsRoute,
+    teamMembersRoute,
     createOrganizationRoute,
     extensionPairRoute,
     createAccountRoutes(() => appLayout),
