@@ -13,7 +13,7 @@ Contents:
 4. [Layout and flow inspiration](#4-layout-and-flow-inspiration)
 5. [Auth page references](#5-auth-page-references)
 6. [Typography and motion](#6-typography-and-motion)
-7. [MCP servers and plugins](#7-mcp-servers-and-plugins)
+7. [MCP servers and dev plugins](#7-mcp-servers-and-dev-plugins)
 8. [Framework decisions recap](#8-framework-decisions-recap)
 9. [How to use these references (rules)](#9-how-to-use-these-references-rules)
 
@@ -178,3 +178,40 @@ VS Code uses `.vscode/mcp.json` with a top-level `"servers"` key instead of `"mc
 | Expo [debugging tools](https://docs.expo.dev/debugging/tools/), [dev tools](https://docs.expo.dev/develop/tools/), [DevTools plugins](https://docs.expo.dev/debugging/devtools-plugins/) | Debugging the React Native + Expo app                                  |
 | [WXT docs](https://wxt.dev/guide/introduction.html)                                                                                                                                      | Extension (MV3) framework guide                                        |
 | [Tauri v2 docs](https://v2.tauri.app)                                                                                                                                                    | Desktop shell guide                                                    |
+
+## 8. Framework decisions recap
+
+From `docs/PROJECT_CONTEXT.md`:
+
+| Client                               | Stack                                       | Status           |
+| ------------------------------------ | ------------------------------------------- | ---------------- |
+| Web (`apps/web`)                     | React + Vite, TanStack, Tailwind, shadcn/ui | Active           |
+| Mobile                               | React Native + Expo                         | Decided          |
+| Browser extension (`apps/extension`) | WXT, Manifest V3                            | Built            |
+| Desktop (`apps/desktop`)             | Tauri                                       | Decided, Phase 8 |
+
+The same brand tokens (section 1) apply on every client. Only web uses the shadcn-based
+libraries directly; mobile, extension and desktop take the look and patterns, not the code.
+
+## 9. How to use these references (rules)
+
+1. **Free assets only.** Use free tiers and free downloads (ls.graphics freebies, shaders.com
+   open-source components, free shadcn-ecosystem components). Don't buy Pro tiers, templates or
+   asset packs without an explicit decision recorded in an issue/PR. Paid sites (e.g. Tailwind
+   Plus) are for looking only; don't copy their code.
+2. **Attribution where licences require it.** Keep MIT notices for copied component code, keep
+   credit/links that 21st.dev authors or asset licences ask for, and note the source URL in a code
+   comment when you copy a component. Never redistribute source files (ls.graphics, Aceternity).
+3. **Copy, don't depend.** Copy a component into the app through the shadcn CLI and adapt it to
+   our tokens, rather than pulling a whole UI kit as a dependency.
+4. **No secrets in docs or configs.** No API keys, PATs, OAuth secrets or registry tokens in this
+   file, in MCP config files or in code. Use environment variables or OAuth sign-in;
+   `gitleaks` runs in pre-commit and CI (see `docs/12-security/secrets-policy.md`).
+5. **Performance budget.** Lazy-load heavy effects (shaders, WebGL, canvas, large Lottie/video)
+   with `React.lazy`/dynamic `import()` after first paint, and give each one a static CSS
+   fallback (gradient or image). Skip them on `prefers-reduced-motion` and on low-power/mobile
+   where reasonable. Check bundle impact with rollup-plugin-visualizer before merging.
+6. **Accessibility is not optional.** Meet WCAG AA contrast with our tokens, keep visible focus
+   rings (`#3AB0E0`), tap targets ≥ 44px, and respect reduced motion.
+7. **Keep this file current.** When you add a reference, MCP server or plugin, verify the URL and
+   licence the same day and record anything unverified as such.
