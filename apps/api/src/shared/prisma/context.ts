@@ -1,13 +1,21 @@
 import {
+  createPrismaClient,
   getPrismaClient,
   withOrgContext,
   withUserContext,
   type DatabaseClient,
-  type DatabaseTransaction
+  type DatabaseTransaction,
 } from '@meetops/database';
 
 /** The only @meetops/database runtime imports the API uses (plus types). */
-export { getPrismaClient, withOrgContext, withUserContext, type DatabaseClient, type DatabaseTransaction };
+export {
+  createPrismaClient,
+  getPrismaClient,
+  withOrgContext,
+  withUserContext,
+  type DatabaseClient,
+  type DatabaseTransaction,
+};
 
 /** Prisma unique-constraint violation, detected structurally (no @prisma/client import here). */
 export const isUniqueViolation = (e: unknown) =>
