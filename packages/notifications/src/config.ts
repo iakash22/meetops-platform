@@ -4,7 +4,7 @@ const boolString = z
   .string()
   .transform((s) => s.trim().toLowerCase())
   .refine((s) => ['true', 'false', '1', '0', 'yes', 'no', 'on', 'off', ''].includes(s), {
-    message: 'Invalid boolean string'
+    error: 'Invalid boolean string',
   })
   .transform((s) => ['true', '1', 'yes', 'on'].includes(s));
 
@@ -16,15 +16,15 @@ const smtpSchema = z
     SMTP_SECURE: boolString.optional(),
     SMTP_USER: z.string().min(1).optional(),
     SMTP_PASSWORD: z.string().min(1).optional(),
-    EMAIL_FROM: z.string().min(3, 'EMAIL_FROM is required')
+    EMAIL_FROM: z.string().min(3, 'EMAIL_FROM is required'),
   })
   .refine((v) => (v.SMTP_USER === undefined) === (v.SMTP_PASSWORD === undefined), {
-    message: 'SMTP_USER and SMTP_PASSWORD must be set together'
+    error: 'SMTP_USER and SMTP_PASSWORD must be set together',
   });
 
 const consoleSchema = z.object({
   EMAIL_PROVIDER: z.literal('console'),
-  EMAIL_FROM: z.string().min(3).default('MeetOps <no-reply@meetops.local>')
+  EMAIL_FROM: z.string().min(3).default('MeetOps <no-reply@meetops.local>'),
 });
 
 export interface SmtpEmailConfig {
@@ -62,7 +62,9 @@ function clean(env: Record<string, string | undefined>) {
  * Load and validate email configuration from env. Error messages never include values.
  * EMAIL_PROVIDER defaults to "smtp". "console" is intended for tests/dev only.
  */
-export function loadEmailConfig(env: Record<string, string | undefined> = process.env): EmailConfig {
+export function loadEmailConfig(
+  env: Record<string, string | undefined> = process.env,
+): EmailConfig {
   const raw = clean(env);
   const provider = raw.EMAIL_PROVIDER ?? 'smtp';
   if (provider === 'console') {
@@ -85,7 +87,7 @@ export function loadEmailConfig(env: Record<string, string | undefined> = proces
     port: d.SMTP_PORT,
     // Implicit TLS on 465 by default; STARTTLS otherwise unless explicitly set.
     secure: d.SMTP_SECURE ?? d.SMTP_PORT === 465,
-    from: d.EMAIL_FROM
+    from: d.EMAIL_FROM,
   };
   if (d.SMTP_USER && d.SMTP_PASSWORD) cfg.auth = { user: d.SMTP_USER, pass: d.SMTP_PASSWORD };
   return cfg;
@@ -107,6 +109,6 @@ export function redactEmailConfig(cfg: EmailConfig): Record<string, unknown> {
     port: cfg.port,
     secure: cfg.secure,
     from: cfg.from,
-    auth: cfg.auth ? { user: cfg.auth.user, pass: '***redacted***' } : undefined
+    auth: cfg.auth ? { user: cfg.auth.user, pass: '***redacted***' } : undefined,
   };
 }

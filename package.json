@@ -42,10 +42,26 @@
     "vitest": "^4.1.12"
   },
   "pnpm": {
+    "peerDependencyRules": {
+      "ignoreMissing": [
+        "webpack"
+      ],
+      "allowedVersions": {
+        "react-server-dom-webpack>react": "18",
+        "react-server-dom-webpack>react-dom": "18"
+      }
+    },
     "overrides": {
       "shell-quote@<1.8.4": "^1.8.4",
       "tmp@<0.2.6": "^0.2.6",
-      "firefox-profile@4.7.0": "4.7.1"
+      "firefox-profile@4.7.0": "4.7.1",
+      "@expo/cli>tar": "^7.5.21",
+      "cacache>tar": "^7.5.21",
+      "@expo/plist>@xmldom/xmldom": "^0.8.15",
+      "@expo/metro-config>postcss": "^8.5.18"
+    },
+    "patchedDependencies": {
+      "@expo/cli@0.22.28": "patches/@expo__cli@0.22.28.patch"
     }
   }
 }

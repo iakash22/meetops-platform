@@ -1,14 +1,18 @@
 import { z } from 'zod';
 
+// zod 4: top-level z.email() replaces the deprecated z.string().email(). Piping keeps the v3 UX
+// where an empty field reports only "Email is required" (pipe stops on the first failure).
+const email = z.string().min(1, 'Email is required').pipe(z.email('Enter a valid email'));
+
 export const loginSchema = z.object({
-  email: z.string().min(1, 'Email is required').email('Enter a valid email'),
+  email: email,
   password: z.string().min(1, 'Password is required'),
 });
 
 export const signupSchema = z
   .object({
     name: z.string().min(1, 'Name is required'),
-    email: z.string().min(1, 'Email is required').email('Enter a valid email'),
+    email: email,
     password: z
       .string()
       .min(12, 'Password must be at least 12 characters')
@@ -17,11 +21,11 @@ export const signupSchema = z
   })
   .refine((v) => v.password === v.confirmPassword, {
     path: ['confirmPassword'],
-    message: 'Passwords do not match',
+    error: 'Passwords do not match',
   });
 
 export const forgotPasswordSchema = z.object({
-  email: z.string().min(1, 'Email is required').email('Enter a valid email'),
+  email: email,
 });
 
 export type LoginValues = z.infer<typeof loginSchema>;
