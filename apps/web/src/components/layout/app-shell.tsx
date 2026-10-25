@@ -7,6 +7,7 @@ import { cn } from '@/lib/utils';
 import { useUiStore } from '@/stores/org-store';
 import { navItems } from './nav-items';
 import { OrgSwitcher } from './org-switcher';
+import { SignOutControls } from './sign-out';
 import { displayName, useSession } from '@/features/session/use-session';
 
 function UserBadge() {
@@ -61,7 +62,10 @@ export function TopBar() {
         </Button>
         <OrgSwitcher />
       </div>
-      <UserBadge />
+      <div className="flex items-center gap-3">
+        <UserBadge />
+        <SignOutControls />
+      </div>
     </header>
   );
 }
