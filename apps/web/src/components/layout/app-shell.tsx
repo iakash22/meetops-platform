@@ -26,11 +26,11 @@ export function Sidebar() {
       aria-label="Sidebar"
       data-state={open ? 'open' : 'closed'}
       className={cn(
-        'flex shrink-0 flex-col border-r bg-muted/40 transition-all',
+        'sticky top-0 flex h-screen shrink-0 flex-col border-r bg-card/60 transition-[width] duration-200',
         open ? 'w-60' : 'w-0 overflow-hidden',
       )}
     >
-      <div className="flex h-14 items-center px-4 text-lg font-semibold">MeetOps AI</div>
+      <div className="brand-glow flex h-14 items-center px-4 text-lg font-semibold">MeetOps AI</div>
       <Separator />
       <nav aria-label="Main" className="flex flex-col gap-1 p-2">
         {navItems.map(({ to, label, icon: Icon }) => (
@@ -38,7 +38,7 @@ export function Sidebar() {
             key={to}
             to={to}
             activeOptions={{ exact: to === '/' }}
-            className="flex items-center gap-2 rounded-md px-3 py-2 text-sm text-muted-foreground hover:bg-accent hover:text-accent-foreground [&.active]:bg-accent [&.active]:font-medium [&.active]:text-accent-foreground"
+            className="flex items-center gap-2 rounded-md px-3 py-2 text-sm text-muted-foreground transition-colors duration-150 hover:bg-accent hover:text-accent-foreground [&.active]:bg-accent [&.active]:font-medium [&.active]:text-accent-foreground [&.active]:shadow-[inset_2px_0_0_hsl(var(--highlight))] [&.active_svg]:text-highlight"
           >
             <Icon className="h-4 w-4" aria-hidden />
             {label}
@@ -52,7 +52,10 @@ export function Sidebar() {
 export function TopBar() {
   const toggle = useUiStore((s) => s.toggleSidebar);
   return (
-    <header className="flex h-14 items-center justify-between gap-4 border-b px-4" role="banner">
+    <header
+      className="surface-glass sticky top-0 z-40 flex h-14 items-center justify-between gap-4 border-b px-4"
+      role="banner"
+    >
       <div className="flex items-center gap-3">
         <Button variant="ghost" size="icon" aria-label="Toggle sidebar" onClick={toggle}>
           <Menu />
@@ -73,7 +76,7 @@ export function AppShell({ children }: { children: ReactNode }) {
       <Sidebar />
       <div className="flex min-w-0 flex-1 flex-col">
         <TopBar />
-        <main className="flex-1 p-6">{children}</main>
+        <main className="mx-auto w-full max-w-7xl flex-1 p-6">{children}</main>
       </div>
     </div>
   );

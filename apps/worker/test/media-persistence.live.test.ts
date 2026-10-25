@@ -141,7 +141,7 @@ describe.skipIf(!APP_URL || !OWNER_URL)('media worker chunk persistence (live, f
     const forged = job(orgB, a);
     const { deps, jobs } = makeWorkerParts(mkdtempSync(path.join(root, 'b-')), persistence, forged);
     await expect(processRecording(forged, deps)).rejects.toMatchObject({
-      errorCode: expect.stringMatching(/_persist_failed$/),
+      errorCode: 'recording_not_found',
     });
     expect(jobs.size).toBe(0);
     expect(await asOwner(orgA, (tx) => tx.fileObject.count())).toBe(before);
@@ -153,5 +153,59 @@ describe.skipIf(!APP_URL || !OWNER_URL)('media worker chunk persistence (live, f
       tx.recording.findUniqueOrThrow({ where: { id: b.recordingId } }),
     );
     expect(recB.chunkCount).toBeNull();
+  });
+  it("forged job: org B's real meeting with org A's recording uploads nothing and leaves no rows", async () => {
+    const a = scope.get(orgA)!;
+    const b = scope.get(orgB)!;
+    const forged = job(orgB, { meetingId: b.meetingId, recordingId: a.recordingId });
+    const beforeA = await asOwner(orgA, (tx) => tx.fileObject.count());
+    const beforeB = await asOwner(orgB, (tx) => tx.fileObject.count());
+    const { deps, jobs, stored, storage } = makeWorkerParts(
+      mkdtempSync(path.join(root, 'f-')),
+      persistence,
+      forged,
+    );
+    const sourceKeys = [...stored.keys()];
+    await expect(processRecording(forged, deps)).rejects.toMatchObject({
+      errorCode: 'recording_not_found',
+    });
+    // No uploads at all: not the normalized WAV, waveform or any chunk; the source is not even read.
+    expect([...stored.keys()]).toEqual(sourceKeys);
+    expect(storage.putObject).not.toHaveBeenCalled();
+    expect(storage.getObjectByKey).not.toHaveBeenCalled();
+    // No rows under the claimed organization or the real owner.
+    expect(await asOwner(orgB, (tx) => tx.fileObject.count())).toBe(beforeB);
+    expect(await asOwner(orgA, (tx) => tx.fileObject.count())).toBe(beforeA);
+    const ids = [0, 1, 2].map((i) => chunkFileObjectId(a.recordingId, i));
+    expect(
+      await asOwner(orgB, (tx) =>
+        tx.fileObject.count({ where: { id: { in: ids }, organizationId: orgB } }),
+      ),
+    ).toBe(0);
+    expect(jobs.size).toBe(0);
+    expect(
+      (
+        await asOwner(orgA, (tx) =>
+          tx.recording.findUniqueOrThrow({ where: { id: a.recordingId } }),
+        )
+      ).chunkCount,
+    ).toBe(3);
+  });
+
+  it('defence in depth: with the ownership check bypassed, the atomic write still leaves no chunk rows', async () => {
+    const a = scope.get(orgA)!;
+    const b = scope.get(orgB)!;
+    const forged = job(orgB, { meetingId: b.meetingId, recordingId: a.recordingId });
+    const beforeB = await asOwner(orgB, (tx) => tx.fileObject.count());
+    const { deps, jobs } = makeWorkerParts(
+      mkdtempSync(path.join(root, 'g-')),
+      { ...persistence, recordingAccess: { verifyRecording: async () => true } },
+      forged,
+    );
+    await expect(processRecording(forged, deps)).rejects.toMatchObject({
+      errorCode: 'chunk_persist_failed',
+    });
+    expect(await asOwner(orgB, (tx) => tx.fileObject.count())).toBe(beforeB);
+    expect(jobs.size).toBe(0);
   });
 });

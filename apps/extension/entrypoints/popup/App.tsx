@@ -101,7 +101,7 @@ export function App() {
       <PairingSection />
       <hr />
       {status.incomplete && (
-        <section role="alert" aria-label="Incomplete recording" style={{ color: '#c62828' }}>
+        <section role="alert" aria-label="Incomplete recording">
           <p>
             <strong>Recording incomplete.</strong> Some audio was lost because local storage was
             full, so this recording will be discarded instead of submitted.
@@ -109,7 +109,7 @@ export function App() {
         </section>
       )}
       {status.storageWarning && (
-        <section role="alert" aria-label="Storage warning" style={{ color: '#8a5300' }}>
+        <section role="alert" aria-label="Storage warning">
           <p>⚠ {status.storageWarning}</p>
           <button type="button" onClick={() => void onDismissWarning()}>
             Dismiss
@@ -117,7 +117,7 @@ export function App() {
         </section>
       )}
       {status.status === 'error' ? (
-        <section role="alert" aria-label="Recording error" style={{ color: '#c62828' }}>
+        <section role="alert" aria-label="Recording error">
           <p>{status.lastError ?? 'Recording stopped unexpectedly.'}</p>
           <button type="button" onClick={() => void onStop()}>
             Dismiss
@@ -126,7 +126,10 @@ export function App() {
       ) : active ? (
         <section aria-live="polite">
           <p>
-            ● {status.status === 'recording' ? 'Recording' : status.status}{' '}
+            <span className="mo-live-dot" aria-hidden="true">
+              ●
+            </span>{' '}
+            {status.status === 'recording' ? 'Recording' : status.status}{' '}
             {status.startedAt !== undefined && formatElapsed(now - status.startedAt)} ·{' '}
             {status.chunks ?? 0} chunks
           </p>
