@@ -99,6 +99,7 @@ git clone https://github.com/iakash22/meetops-platform.git
 cd C:\dev\meetops-platform
 Copy-Item .env.example .env     # fill in local values; never commit .env
 pnpm install
+sh scripts/gen-dev-secrets.sh --from-env  # compose secrets from .env (sh from Git for Windows)
 pnpm dev:infra:up               # docker compose --env-file .env -f infra/compose/compose.dev.yml up -d
 pnpm dev
 pnpm dev:infra:down             # stop the infra stack

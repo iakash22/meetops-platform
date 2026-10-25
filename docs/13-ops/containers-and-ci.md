@@ -43,3 +43,16 @@ Also in the PR: `.github/dependabot.yml` (weekly npm, github-actions and docker 
 - The compose app stack hasn't been started.
 - `--ignore-scripts` skips `prisma generate`. That's fine while api/worker don't import `@meetops/database`, but it must change once they do (see PR #6).
 - The audit currently reports 12 advisories (7 high) in fastify 4.x and related packages.
+
+## Media worker temp disk (tmpfs) sizing
+
+The upload cap for a media source is 2 GB (docs/12-security/upload-media-security.md).
+The worker writes the source and its derived files (normalised audio, ffmpeg scratch)
+to `MEDIA_TMP_DIR=/tmp/work`, a tmpfs. It is sized at **3 GB**: the 2 GB source plus
+up to 1 GB of derived output. A 2 GB tmpfs (the previous value) would hit ENOSPC on a
+max-size upload before any output is written.
+
+tmpfs pages count against the container memory cgroup, so `mem_limit` is **4 GB**
+(3 GB tmpfs + about 1 GB for node and ffmpeg). Change both values together. If the
+source cap grows, raise tmpfs and `mem_limit` by the same amount, or move
+`/tmp/work` to a size-limited volume.

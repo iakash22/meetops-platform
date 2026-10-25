@@ -1,0 +1,60 @@
+# syntax=docker/dockerfile:1.7
+# MeetOps AI — API (@meetops/api, apps/api). Build context: repository root.
+#   docker build -f infra/docker/Dockerfile.api -t meetops/api .
+ARG NODE_VERSION=20.20.2
+
+FROM node:${NODE_VERSION}-bookworm-slim AS base
+ENV PNPM_HOME=/pnpm \
+    PATH=/pnpm:$PATH \
+    COREPACK_ENABLE_DOWNLOAD_PROMPT=0 \
+    COREPACK_HOME=/corepack
+RUN corepack enable && corepack prepare pnpm@9.12.3 --activate && chmod -R a+rX /corepack
+WORKDIR /repo
+# hadolint ignore=DL3008
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends openssl ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
+
+FROM base AS build
+COPY . .
+# --ignore-scripts: skips husky and the root turbo postinstall (prisma generate),
+# which @meetops/api does not need at build time.
+RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store \
+    pnpm install --frozen-lockfile --ignore-scripts
+# Generate the Prisma client (@meetops/database) in the build stage. The root
+# postinstall is skipped by --ignore-scripts, so run it explicitly.
+RUN pnpm --filter @meetops/database exec prisma generate \
+ && pnpm --filter "@meetops/api..." run build
+RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store \
+    pnpm --filter @meetops/api deploy --prod --ignore-scripts /out
+# pnpm deploy re-links node_modules, so regenerate the client inside the deployed
+# output when the app depends on @meetops/database (no-op otherwise).
+RUN set -e; \
+    schema="$(find /out/node_modules -path '*@meetops/database/prisma/schema.prisma' -print -quit 2>/dev/null || true)"; \
+    if [ -n "$schema" ]; then \
+      /repo/packages/database/node_modules/.bin/prisma generate --schema "$schema"; \
+    fi
+
+# One-shot DB migration + seed image (compose service `migrate`):
+#   docker build -f infra/docker/Dockerfile.api --target migrate -t meetops/migrate .
+# Keeps the full workspace (prisma CLI, seed tooling); never used to serve traffic.
+FROM build AS migrate
+USER node
+CMD ["sh", "-c", "pnpm --filter @meetops/database run db:migrate:deploy && pnpm --filter @meetops/database run db:seed"]
+
+FROM node:${NODE_VERSION}-bookworm-slim AS runtime
+# OpenSSL is required by the Prisma query engine.
+# hadolint ignore=DL3008
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends openssl ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
+ENV NODE_ENV=production \
+    HOST=0.0.0.0 \
+    PORT=3000
+WORKDIR /app
+COPY --from=build --chown=node:node /out ./
+USER node
+EXPOSE 3000
+HEALTHCHECK --interval=15s --timeout=5s --start-period=20s --retries=5 \
+  CMD ["node", "-e", "fetch('http://127.0.0.1:'+(process.env.PORT||3000)+'/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+CMD ["node", "dist/index.js"]
