@@ -7,9 +7,9 @@ describe('route tree', () => {
   beforeEach(() => resetStores());
 
   it.each([
-    ['/login', 'Sign in'],
-    ['/signup', 'Create account'],
-    ['/forgot-password', 'Reset password'],
+    ['/login', 'Welcome back'],
+    ['/signup', 'Create your workspace'],
+    ['/forgot-password', 'Reset your password'],
   ])('renders auth route %s outside the shell', async (path, heading) => {
     renderApp(path);
     expect(await screen.findByRole('heading', { name: heading })).toBeInTheDocument();

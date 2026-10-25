@@ -26,7 +26,7 @@ describe('sign out (POST /auth/logout, /auth/logout-all)', () => {
 
     await userEvent.click(screen.getByRole('button', { name: label }));
 
-    expect(await screen.findByRole('heading', { name: 'Sign in' })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: 'Welcome back' })).toBeInTheDocument();
     expect(api.auth[method]).toHaveBeenCalledTimes(1);
     expect(api.auth[method === 'logout' ? 'logoutAll' : 'logout']).not.toHaveBeenCalled();
     expect(history.location.pathname).toBe('/login');

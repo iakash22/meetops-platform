@@ -2,16 +2,11 @@ import { useState, type ReactNode } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { Link } from '@tanstack/react-router';
-import { Button } from '@/components/ui/button';
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardFooter,
-  CardHeader,
-  CardTitle,
-} from '@/components/ui/card';
-import { ErrorState } from '@/components/states/states';
+import { ApiError } from '@/lib/api/client';
+import { applyFieldErrors, toastError } from '@/lib/errors/notify';
+import { CheckEmail } from './check-email';
+import { Field } from './field';
+import { PasswordField } from './password';
 import {
   forgotPasswordSchema,
   loginSchema,
@@ -20,10 +15,22 @@ import {
   type LoginValues,
   type SignupValues,
 } from './schemas';
-import { Field } from './field';
+import { authLinkClass } from './styles';
+import { SubmitButton } from './submit-button';
 
 type SubmitHandler<T> = (values: T) => Promise<void> | void;
 
+/** Email input attributes shared by every auth form. */
+export const emailInputProps = {
+  type: 'email',
+  inputMode: 'email',
+  autoCapitalize: 'none',
+  autoCorrect: 'off',
+  spellCheck: false,
+  placeholder: 'you@company.com',
+} as const;
+
+/** Title block + body + footer for one auth page. The page's only h1 lives here. */
 export function AuthCard({
   title,
   description,
@@ -36,82 +43,101 @@ export function AuthCard({
   footer?: ReactNode;
 }) {
   return (
-    <Card className="w-full max-w-sm">
-      <CardHeader>
-        <CardTitle>
-          <h1>{title}</h1>
-        </CardTitle>
-        <CardDescription>{description}</CardDescription>
-      </CardHeader>
-      <CardContent>{children}</CardContent>
-      {footer ? <CardFooter className="flex flex-col gap-1 text-sm">{footer}</CardFooter> : null}
-    </Card>
+    <section className="grid gap-6">
+      <header className="grid gap-2">
+        <h1 className="text-3xl font-semibold tracking-tight sm:text-4xl">{title}</h1>
+        <p className="text-base text-muted-foreground">{description}</p>
+      </header>
+      {children}
+      {footer ? (
+        <footer className="flex flex-col items-center gap-0 text-sm text-muted-foreground">
+          {footer}
+        </footer>
+      ) : null}
+    </section>
   );
 }
 
-function useSubmitError() {
-  const [error, setError] = useState<unknown>(null);
-  return { error, setError };
-}
+const FIELD_COPY = {
+  name: 'Enter your name.',
+  email: 'Enter a valid email address.',
+  password: 'Use 12 to 128 characters.',
+} as const;
 
 export function LoginForm({ onSubmit }: { onSubmit: SubmitHandler<LoginValues> }) {
-  const { error, setError } = useSubmitError();
   const {
     register,
     handleSubmit,
+    setError,
+    setValue,
     formState: { errors, isSubmitting },
   } = useForm<LoginValues>({
     resolver: zodResolver(loginSchema),
+    mode: 'onTouched',
+    shouldFocusError: true,
     defaultValues: { email: '', password: '' },
   });
 
   return (
     <AuthCard
-      title="Sign in"
-      description="Welcome back to MeetOps AI"
+      title="Welcome back"
+      description="Log in to MeetOps AI"
       footer={
-        <>
-          <Link to="/forgot-password" className="underline">
-            Forgot password?
-          </Link>
-          <Link to="/signup" className="underline">
+        <span>
+          New to MeetOps?{' '}
+          <Link to="/signup" className={authLinkClass}>
             Create an account
           </Link>
-        </>
+        </span>
       }
     >
       <form
+        method="post"
         noValidate
+        aria-busy={isSubmitting || undefined}
         className="grid gap-4"
         onSubmit={(e) =>
           void handleSubmit(async (v) => {
-            setError(null);
             try {
               await onSubmit(v);
             } catch (err) {
-              setError(err);
+              if (err instanceof ApiError && err.code === 'AUTH_FAILED') {
+                // Inline under the password: keep the email, clear + focus the password.
+                setValue('password', '');
+                setError(
+                  'password',
+                  { type: 'server', message: 'Email or password is incorrect.' },
+                  { shouldFocus: true },
+                );
+              } else if (!applyFieldErrors(setError, err, FIELD_COPY)) {
+                toastError(err);
+              }
             }
           })(e)
         }
       >
-        {error ? <ErrorState title="Sign in failed" error={error} /> : null}
         <Field
           label="Email"
-          type="email"
-          autoComplete="email"
+          autoComplete="username"
+          autoFocus
           error={errors.email?.message}
+          {...emailInputProps}
           {...register('email')}
         />
-        <Field
+        <PasswordField
           label="Password"
-          type="password"
           autoComplete="current-password"
+          labelAside={
+            <Link to="/forgot-password" className={`${authLinkClass} text-sm`}>
+              Forgot password?
+            </Link>
+          }
           error={errors.password?.message}
           {...register('password')}
         />
-        <Button type="submit" disabled={isSubmitting}>
-          {isSubmitting ? 'Signing in…' : 'Sign in'}
-        </Button>
+        <SubmitButton busy={isSubmitting} busyLabel="Logging in…">
+          Log in
+        </SubmitButton>
       </form>
     </AuthCard>
   );
@@ -119,8 +145,8 @@ export function LoginForm({ onSubmit }: { onSubmit: SubmitHandler<LoginValues> }
 
 /**
  * Sign-up. POST /auth/signup answers 202 `{ message }` with no session (the user must
- * verify their email first), so success shows a "check your email" state instead of
- * signing in. The response is enumeration-safe; so is the resend action.
+ * verify their email first), so success shows a "check your inbox" state in place.
+ * The response is enumeration-safe; so is the resend action.
  */
 export function SignupForm({
   onSubmit,
@@ -131,120 +157,96 @@ export function SignupForm({
   onResend?: (email: string) => Promise<unknown>;
   next?: string | undefined;
 }) {
-  const { error, setError } = useSubmitError();
   const [sentTo, setSentTo] = useState<string | null>(null);
-  const [resent, setResent] = useState(false);
-  const [resending, setResending] = useState(false);
   const {
     register,
     handleSubmit,
+    setError,
+    watch,
     formState: { errors, isSubmitting },
   } = useForm<SignupValues>({
     resolver: zodResolver(signupSchema),
-    defaultValues: { name: '', email: '', password: '', confirmPassword: '' },
+    mode: 'onTouched',
+    shouldFocusError: true,
+    defaultValues: { name: '', email: '', password: '' },
   });
 
   const signInLink = (
-    <Link to="/login" search={next ? { next } : {}} className="underline">
-      {sentTo ? 'Verified? Sign in' : 'Already have an account? Sign in'}
-    </Link>
+    <span>
+      {sentTo ? 'Verified already? ' : 'Already have an account? '}
+      <Link to="/login" search={next ? { next } : {}} className={authLinkClass}>
+        Log in
+      </Link>
+    </span>
   );
 
   if (sentTo) {
-    const resend = async () => {
-      if (!onResend) return;
-      setResending(true);
-      try {
-        await onResend(sentTo);
-      } catch {
-        /* enumeration-safe: same outcome regardless of result */
-      }
-      setResending(false);
-      setResent(true);
-    };
     return (
       <AuthCard
-        title="Check your email"
-        description="Verify your email address to finish creating your account"
+        title="Verify your email"
+        description="One more step to create your workspace"
         footer={signInLink}
       >
-        <div className="grid gap-4">
-          <p role="status">
-            We sent a verification link to <strong>{sentTo}</strong>. Open it to activate your
-            account, then sign in.
-          </p>
-          {onResend ? (
-            <Button
-              type="button"
-              variant="outline"
-              disabled={resending}
-              onClick={() => void resend()}
-            >
-              {resending ? 'Sending…' : 'Resend verification email'}
-            </Button>
-          ) : null}
-          {resent ? (
-            <p className="text-sm text-muted-foreground">
-              If that account still needs verifying, a new link is on its way.
-            </p>
-          ) : null}
-        </div>
+        <CheckEmail
+          email={sentTo}
+          message="to verify your email. Open it to activate your account, then log in"
+          onResend={onResend ? () => onResend(sentTo) : undefined}
+          // Back to the form with name + email kept (react-hook-form keeps the values).
+          onUseDifferentEmail={() => setSentTo(null)}
+        />
       </AuthCard>
     );
   }
 
   return (
     <AuthCard
-      title="Create account"
+      title="Create your workspace"
       description="Start turning meetings into action"
       footer={signInLink}
     >
       <form
+        method="post"
         noValidate
+        aria-busy={isSubmitting || undefined}
         className="grid gap-4"
         onSubmit={(e) =>
           void handleSubmit(async (v) => {
-            setError(null);
             try {
               await onSubmit(v);
               setSentTo(v.email);
             } catch (err) {
-              setError(err);
+              if (!applyFieldErrors(setError, err, FIELD_COPY)) toastError(err);
             }
           })(e)
         }
       >
-        {error ? <ErrorState title="Sign up failed" error={error} /> : null}
         <Field
-          label="Name"
+          label="Full name"
           autoComplete="name"
+          autoCapitalize="words"
           error={errors.name?.message}
           {...register('name')}
         />
         <Field
-          label="Email"
-          type="email"
+          label="Work email"
           autoComplete="email"
           error={errors.email?.message}
+          {...emailInputProps}
           {...register('email')}
         />
-        <Field
+        <PasswordField
           label="Password"
-          type="password"
           autoComplete="new-password"
+          meter
+          value={watch('password')}
           error={errors.password?.message}
           {...register('password')}
         />
-        <Field
-          label="Confirm password"
-          type="password"
-          autoComplete="new-password"
-          error={errors.confirmPassword?.message}
-          {...register('confirmPassword')}
-        />
-        <Button type="submit" disabled={isSubmitting}>
-          {isSubmitting ? 'Creating account…' : 'Create account'}
-        </Button>
+        {/* <SocialAuth /> — the API has no SSO yet; add Google/Microsoft here when it does. */}
+        {/* The page's one shimmer CTA (docs/05-web/auth-pages.md). */}
+        <SubmitButton variant="shimmer" busy={isSubmitting} busyLabel="Creating account…">
+          Create account
+        </SubmitButton>
       </form>
     </AuthCard>
   );
@@ -255,56 +257,74 @@ export function ForgotPasswordForm({
 }: {
   onSubmit: SubmitHandler<ForgotPasswordValues>;
 }) {
-  const [sent, setSent] = useState(false);
+  const [sentTo, setSentTo] = useState<string | null>(null);
   const {
     register,
     handleSubmit,
+    setError,
     formState: { errors, isSubmitting },
   } = useForm<ForgotPasswordValues>({
     resolver: zodResolver(forgotPasswordSchema),
+    mode: 'onTouched',
+    shouldFocusError: true,
     defaultValues: { email: '' },
   });
 
+  const backLink = (
+    <Link to="/login" className={authLinkClass}>
+      Back to log in
+    </Link>
+  );
+
+  if (sentTo) {
+    return (
+      <AuthCard title="Reset your password" description="Check your email" footer={backLink}>
+        <CheckEmail
+          email={sentTo}
+          message="to reset your password"
+          onResend={async () => onSubmit({ email: sentTo })}
+          onUseDifferentEmail={() => setSentTo(null)}
+        />
+      </AuthCard>
+    );
+  }
+
   return (
     <AuthCard
-      title="Reset password"
-      description="We'll email you a reset link"
-      footer={
-        <Link to="/login" className="underline">
-          Back to sign in
-        </Link>
-      }
+      title="Reset your password"
+      description="We'll email you a link to choose a new one"
+      footer={backLink}
     >
-      {sent ? (
-        <p role="status">If an account exists for that email, a reset link is on its way.</p>
-      ) : (
-        <form
-          noValidate
-          className="grid gap-4"
-          onSubmit={(e) =>
-            void handleSubmit(async (v) => {
-              // Enumeration-safe: same outcome regardless of result.
-              try {
-                await onSubmit(v);
-              } catch {
-                /* intentionally ignored */
-              }
-              setSent(true);
-            })(e)
-          }
-        >
-          <Field
-            label="Email"
-            type="email"
-            autoComplete="email"
-            error={errors.email?.message}
-            {...register('email')}
-          />
-          <Button type="submit" disabled={isSubmitting}>
-            {isSubmitting ? 'Sending…' : 'Send reset link'}
-          </Button>
-        </form>
-      )}
+      <form
+        method="post"
+        noValidate
+        aria-busy={isSubmitting || undefined}
+        className="grid gap-4"
+        onSubmit={(e) =>
+          void handleSubmit(async (v) => {
+            // The API answers 202 whether or not the account exists, so an error here is a
+            // real failure (network, 429, 5xx), never an enumeration signal.
+            try {
+              await onSubmit(v);
+              setSentTo(v.email);
+            } catch (err) {
+              if (!applyFieldErrors(setError, err, { email: FIELD_COPY.email })) toastError(err);
+            }
+          })(e)
+        }
+      >
+        <Field
+          label="Email"
+          autoComplete="email"
+          autoFocus
+          error={errors.email?.message}
+          {...emailInputProps}
+          {...register('email')}
+        />
+        <SubmitButton busy={isSubmitting} busyLabel="Sending…">
+          Send reset link
+        </SubmitButton>
+      </form>
     </AuthCard>
   );
 }
