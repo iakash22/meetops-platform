@@ -12,6 +12,7 @@ import type { AuthSession, GetAuthSessionResponse } from '@meetops/contracts';
 import { AppShell } from '@/components/layout/app-shell';
 import { EmptyState, ErrorState } from '@/components/states/states';
 import { useEffect } from 'react';
+import { AuthLayout } from '@/features/auth/auth-layout';
 import { ForgotPasswordForm, LoginForm, SignupForm } from '@/features/auth/forms';
 import { MeetingDetailPage, MeetingsPage } from '@/features/meetings/meetings-pages';
 import {
@@ -75,12 +76,9 @@ const authLayout = createRoute({
   getParentRoute: () => rootRoute,
   id: 'auth',
   component: () => (
-    <div
-      className="flex min-h-screen items-center justify-center bg-muted/40 p-4"
-      data-testid="auth-layout"
-    >
+    <AuthLayout>
       <Outlet />
-    </div>
+    </AuthLayout>
   ),
 });
 
