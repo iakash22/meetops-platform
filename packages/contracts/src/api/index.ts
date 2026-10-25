@@ -8,3 +8,6 @@ export * from './extension-auth.js';
 export * from './tasks.js';
 export * from './organizations.js';
 export * from './sessions.js';
+export * from './employees.js';
+export * from './teams.js';
+export * from './projects.js';

@@ -133,26 +133,24 @@ test.describe('web flow (PR #48 web + createServer API)', () => {
     return { switcher, active: orgs[activeIdx]!, other: orgs[1 - activeIdx]! };
   }
 
-  test('[E2E-05] org switcher switches via POST /auth/switch-org (contracts v0.3)', async ({
+  test('[E2E-05] org switcher switches via POST /orgs/switch and refetches the session', async ({
     page,
     api,
   }) => {
-    // BE-GAP-2: the API on integration/phase-1 now has POST /orgs/switch (PR #53), but the web
-    // client calls POST /auth/switch-org (404) and expects an AuthSession with csrfToken back.
-    // /orgs/switch returns { organization, role }, so rewriting the request to it in the test
-    // still breaks the UI (checked). Closing the gap needs web or API source; left failing.
-    test.fail(
-      true,
-      'BE-GAP-2: web calls /auth/switch-org; API serves /orgs/switch (different response)',
-    );
+    // BE-GAP-2 (client side) resolved: the web client calls POST /orgs/switch, which returns
+    // { organization, role } and rotates the session, then refetches GET /auth/session.
     const { switcher, other } = await twoOrgSetup(page, api);
-    const switchResp = page.waitForResponse((r) => r.url().endsWith('/api/auth/switch-org'));
+    const switchResp = page.waitForResponse((r) => r.url().endsWith('/api/orgs/switch'));
+    const sessionRefetch = page.waitForResponse(
+      (r) => r.url().endsWith('/api/auth/session') && r.request().method() === 'GET',
+    );
     await switcher.click();
     await expect(page.getByRole('option')).toHaveText(['Alpha QA', 'Beta QA']);
     await page.getByRole('option', { name: other.name }).click();
     const resp = await switchResp;
     expect(resp.request().postDataJSON()).toEqual({ organizationId: other.id });
     expect(resp.status()).toBe(200);
+    expect((await sessionRefetch).status()).toBe(200);
     await expect(switcher).toContainText(other.name);
     await page.waitForRequest((r) => r.url().includes(`/api/orgs/${other.id}/meetings`));
   });
@@ -167,10 +165,10 @@ test.describe('web flow (PR #48 web + createServer API)', () => {
       if (r.url().includes(`/api/orgs/${other.id}/`)) otherOrgRequests.push(r.url());
     });
     // Force the switch to fail regardless of whether the endpoint exists.
-    await page.route('**/api/auth/switch-org', (route) =>
+    await page.route('**/api/orgs/switch', (route) =>
       route.fulfill({ status: 404, json: { error: { code: 'NOT_FOUND', message: 'Not found' } } }),
     );
-    const switchResp = page.waitForResponse((r) => r.url().endsWith('/api/auth/switch-org'));
+    const switchResp = page.waitForResponse((r) => r.url().endsWith('/api/orgs/switch'));
     await switcher.click();
     await page.getByRole('option', { name: other.name }).click();
     await switchResp;

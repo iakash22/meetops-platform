@@ -110,6 +110,8 @@ describe('generated client', () => {
         'createRecordingChunkCountRepository',
         'createChunkFileObjectRepository',
         'createChunkFileObjectLookup',
+        'createRecordingOwnershipVerifier',
+        'createRecordingChunkPersistence',
         'MediaPersistenceError',
         'MAX_RECORDING_CHUNKS',
         'withUserContext',
