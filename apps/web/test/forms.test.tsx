@@ -96,7 +96,7 @@ describe('auth forms', () => {
   });
 
   it('validates and submits signup', async () => {
-    const { api } = renderApp('/signup');
+    const { api, history, queryClient } = renderApp('/signup');
     await userEvent.type(await screen.findByLabelText('Name'), 'Ada');
     await userEvent.type(screen.getByLabelText('Email'), 'ada@example.com');
     await userEvent.type(screen.getByLabelText('Password'), 'short');
@@ -117,6 +117,55 @@ describe('auth forms', () => {
         password: 'long-enough-pass',
       }),
     );
+    // 202 { message }: no session — show "check your email", do not sign in.
+    expect(await screen.findByRole('heading', { name: 'Check your email' })).toBeInTheDocument();
+    expect(screen.getByRole('status')).toHaveTextContent('ada@example.com');
+    expect(history.location.pathname).toBe('/signup');
+    expect(queryClient.getQueryData(['session'])).toBeFalsy();
+    expect(useOrgStore.getState().currentOrganizationId).toBeNull();
+    expect(api.auth.login).not.toHaveBeenCalled();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Resend verification email' }));
+    expect(await screen.findByText(/a new link is on its way/)).toBeInTheDocument();
+    expect(api.auth.resendVerification).toHaveBeenCalledWith({ email: 'ada@example.com' });
+    expect(screen.getByRole('link', { name: 'Verified? Sign in' })).toHaveAttribute(
+      'href',
+      '/login',
+    );
+  });
+
+  it('signup resend is enumeration-safe and carries ?next= to sign in', async () => {
+    const api = createMockApi({
+      auth: { resendVerification: vi.fn().mockRejectedValue(new Error('network')) },
+    });
+    renderApp('/signup?next=%2Fmeetings', api);
+    await userEvent.type(await screen.findByLabelText('Name'), 'Ada');
+    await userEvent.type(screen.getByLabelText('Email'), 'ada@example.com');
+    await userEvent.type(screen.getByLabelText('Password'), 'long-enough-pass');
+    await userEvent.type(screen.getByLabelText('Confirm password'), 'long-enough-pass');
+    await userEvent.click(screen.getByRole('button', { name: 'Create account' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Resend verification email' }));
+    expect(await screen.findByText(/a new link is on its way/)).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Verified? Sign in' })).toHaveAttribute(
+      'href',
+      '/login?next=%2Fmeetings',
+    );
+  });
+
+  it('shows the signup error and stays on the form when signup fails', async () => {
+    const api = createMockApi({
+      auth: {
+        signup: vi.fn().mockRejectedValue(new ApiError(429, 'RATE_LIMITED', 'slow down', 'req_2')),
+      },
+    });
+    renderApp('/signup', api);
+    await userEvent.type(await screen.findByLabelText('Name'), 'Ada');
+    await userEvent.type(screen.getByLabelText('Email'), 'ada@example.com');
+    await userEvent.type(screen.getByLabelText('Password'), 'long-enough-pass');
+    await userEvent.type(screen.getByLabelText('Confirm password'), 'long-enough-pass');
+    await userEvent.click(screen.getByRole('button', { name: 'Create account' }));
+    expect(await screen.findByTestId('error-state')).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'Check your email' })).not.toBeInTheDocument();
   });
 
   it('submits forgot password and shows confirmation', async () => {

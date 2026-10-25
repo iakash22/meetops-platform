@@ -116,12 +116,13 @@ const signupRoute = createRoute({
   component: function SignupPage() {
     const api = useApi();
     const { next } = signupRoute.useSearch();
-    const complete = useCompleteSignIn();
     return (
       <SignupForm
-        onSubmit={async ({ name, email, password }) =>
-          complete(await api.auth.signup({ name, email, password }), next)
-        }
+        next={next}
+        onSubmit={async ({ name, email, password }) => {
+          await api.auth.signup({ name, email, password });
+        }}
+        onResend={(email) => api.auth.resendVerification({ email })}
       />
     );
   },
