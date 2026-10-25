@@ -18,21 +18,21 @@ export type AuthState =
 export type WipeHook = () => void | Promise<void>;
 
 export interface SessionManager {
-  getState(): AuthState;
-  subscribe(listener: () => void): () => void;
+  getState: () => AuthState;
+  subscribe: (listener: () => void) => () => void;
   /** Reads stored tokens and resolves the session. Call once at startup. */
-  restore(): Promise<void>;
+  restore: () => Promise<void>;
   /** Throws `AuthClientError` on failure; state stays `signedOut`. */
-  signIn(credentials: LoginCredentials): Promise<void>;
-  signOut(): Promise<void>;
+  signIn: (credentials: LoginCredentials) => Promise<void>;
+  signOut: () => Promise<void>;
   /**
    * Switches the active organization. Runs the wipe hooks first (R4: local data of the old org is wiped on switch),
    * then stores the new org-scoped pair. On an auth failure the user is signed out.
    */
-  switchOrganization(organizationId: string): Promise<void>;
+  switchOrganization: (organizationId: string) => Promise<void>;
   /** A non-expired access token for API calls, refreshing if needed. Null (and signed out) if the session is gone. */
-  getAccessToken(): Promise<string | null>;
-  registerWipeHook(hook: WipeHook): () => void;
+  getAccessToken: () => Promise<string | null>;
+  registerWipeHook: (hook: WipeHook) => () => void;
 }
 
 export interface SessionManagerOptions {
