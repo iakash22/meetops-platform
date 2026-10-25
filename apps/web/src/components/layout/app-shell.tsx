@@ -25,11 +25,13 @@ export function Sidebar() {
       aria-label="Sidebar"
       data-state={open ? 'open' : 'closed'}
       className={cn(
-        'sticky top-0 flex h-screen shrink-0 flex-col border-r bg-card/60 transition-[width] duration-200',
-        open ? 'w-60' : 'w-0 overflow-hidden',
+        'scroll-area sticky top-0 flex h-screen shrink-0 flex-col border-r bg-card/60 transition-[width] duration-base ease-standard',
+        open ? 'w-sidebar' : 'w-0 overflow-hidden',
       )}
     >
-      <div className="brand-glow flex h-14 items-center px-4 text-lg font-semibold">MeetOps AI</div>
+      <div className="brand-glow flex h-header items-center px-4 text-lg font-semibold">
+        MeetOps AI
+      </div>
       <Separator />
       <nav aria-label="Main" className="flex flex-col gap-1 p-2">
         {navItems.map(({ to, label, icon: Icon }) => (
@@ -52,7 +54,7 @@ export function TopBar() {
   const toggle = useUiStore((s) => s.toggleSidebar);
   return (
     <header
-      className="surface-glass sticky top-0 z-40 flex h-14 items-center justify-between gap-4 border-b px-4"
+      className="surface-glass sticky top-0 z-40 flex h-header items-center justify-between gap-4 border-b px-4"
       role="banner"
     >
       <div className="flex items-center gap-3">
@@ -72,7 +74,7 @@ export function AppShell({ children }: { children: ReactNode }) {
       <Sidebar />
       <div className="flex min-w-0 flex-1 flex-col">
         <TopBar />
-        <main className="mx-auto w-full max-w-7xl flex-1 p-6">{children}</main>
+        <main className="mx-auto w-full max-w-content flex-1 p-4 sm:p-6 lg:p-8">{children}</main>
       </div>
     </div>
   );
