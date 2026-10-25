@@ -64,3 +64,28 @@ describe('desktop app shell', () => {
     expect(await screen.findByRole('form', { name: 'Sign in' })).toBeInTheDocument();
   });
 });
+
+describe('collapsible sidebar', () => {
+  it('collapses to icons and expands again, keeping nav labels accessible', async () => {
+    window.localStorage.clear();
+    const user = renderApp();
+    await signIn(user);
+    await screen.findByRole('list', { name: 'Meetings' });
+
+    const sidebar = screen.getByRole('complementary', { name: 'Sidebar' });
+    const collapse = screen.getByRole('button', { name: 'Collapse sidebar' });
+    expect(collapse).toHaveAttribute('aria-expanded', 'true');
+
+    await user.click(collapse);
+    expect(sidebar).toHaveAttribute('data-collapsed', 'true');
+    const expand = screen.getByRole('button', { name: 'Expand sidebar' });
+    expect(expand).toHaveAttribute('aria-expanded', 'false');
+    // Labels remain available to assistive tech while visually hidden.
+    const nav = within(sidebar).getByRole('navigation', { name: 'Main' });
+    expect(within(nav).getByRole('button', { name: /settings/i })).toBeInTheDocument();
+    expect(window.localStorage.getItem('meetops.desktop.sidebarCollapsed')).toBe('1');
+
+    await user.click(expand);
+    expect(sidebar).toHaveAttribute('data-collapsed', 'false');
+  });
+});

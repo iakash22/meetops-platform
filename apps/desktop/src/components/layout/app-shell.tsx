@@ -1,5 +1,5 @@
-import type { ReactNode } from 'react';
-import { CalendarDays, Settings } from 'lucide-react';
+import { useEffect, useState, type ReactNode } from 'react';
+import { CalendarDays, PanelLeftClose, PanelLeftOpen, Settings } from 'lucide-react';
 
 import { BrandMark } from '@/components/brand';
 import { Separator } from '@/components/ui/separator';
@@ -13,6 +13,17 @@ const NAV: ReadonlyArray<{ view: View; label: string; icon: typeof CalendarDays 
   { view: 'settings', label: 'Settings', icon: Settings },
 ];
 
+/** UI preference only (no user data); safe for localStorage. */
+const SIDEBAR_KEY = 'meetops.desktop.sidebarCollapsed';
+
+function readCollapsed(): boolean {
+  try {
+    return window.localStorage.getItem(SIDEBAR_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
 export function AppShell({
   view,
   onNavigate,
@@ -23,14 +34,34 @@ export function AppShell({
   children: ReactNode;
 }) {
   const { session } = useSession();
+  const [collapsed, setCollapsed] = useState(readCollapsed);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(SIDEBAR_KEY, collapsed ? '1' : '0');
+    } catch {
+      // Storage unavailable: keep the in-memory preference.
+    }
+  }, [collapsed]);
+
+  const ToggleIcon = collapsed ? PanelLeftOpen : PanelLeftClose;
+
   return (
     <div className="flex h-full" data-testid="app-shell">
-      <aside aria-label="Sidebar" className="flex w-56 shrink-0 flex-col border-r bg-surface">
-        <div className="flex h-14 items-center px-4">
-          <BrandMark />
+      <aside
+        id="app-sidebar"
+        aria-label="Sidebar"
+        data-collapsed={collapsed ? 'true' : 'false'}
+        className={cn(
+          'flex shrink-0 flex-col border-r bg-surface transition-[width] duration-200 ease-out motion-reduce:transition-none',
+          collapsed ? 'w-16' : 'w-60',
+        )}
+      >
+        <div className={cn('flex h-14 items-center', collapsed ? 'justify-center' : 'px-4')}>
+          <BrandMark compact={collapsed} />
         </div>
         <Separator />
-        <nav aria-label="Main" className="flex flex-col gap-1 p-2">
+        <nav aria-label="Main" className="flex flex-1 flex-col gap-1 p-2">
           {NAV.map(({ view: v, label, icon: Icon }) => {
             const active = v === view;
             return (
@@ -38,20 +69,39 @@ export function AppShell({
                 key={v}
                 type="button"
                 aria-current={active ? 'page' : undefined}
+                title={collapsed ? label : undefined}
                 onClick={() => onNavigate(v)}
                 className={cn(
-                  'relative flex items-center gap-2 rounded-md px-3 py-2 text-left text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+                  'relative flex items-center gap-2 rounded-md py-2 text-left text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+                  collapsed ? 'justify-center px-0' : 'px-3',
                   active
                     ? 'bg-surface-2 font-medium text-foreground before:absolute before:inset-y-1.5 before:left-0 before:w-0.5 before:rounded-full before:bg-accent'
                     : 'text-muted-foreground hover:bg-surface-2 hover:text-foreground',
                 )}
               >
-                <Icon className={cn('size-4', active && 'text-accent')} aria-hidden />
-                {label}
+                <Icon className={cn('size-4 shrink-0', active && 'text-accent')} aria-hidden />
+                <span className={cn(collapsed && 'sr-only')}>{label}</span>
               </button>
             );
           })}
         </nav>
+        <div className="p-2">
+          <button
+            type="button"
+            onClick={() => setCollapsed((c) => !c)}
+            aria-controls="app-sidebar"
+            aria-expanded={!collapsed}
+            aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+            title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+            className={cn(
+              'flex w-full items-center gap-2 rounded-md py-2 text-sm text-muted-foreground transition-colors hover:bg-surface-2 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+              collapsed ? 'justify-center px-0' : 'px-3',
+            )}
+          >
+            <ToggleIcon className="size-4 shrink-0" aria-hidden />
+            {collapsed ? null : <span aria-hidden>Collapse</span>}
+          </button>
+        </div>
       </aside>
       <div className="flex min-w-0 flex-1 flex-col">
         <header className="flex h-14 items-center justify-between gap-4 border-b px-6">

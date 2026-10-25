@@ -37,7 +37,7 @@ export function MeetingsScreen({ meetings = SAMPLE_MEETINGS }: { meetings?: read
             Placeholder data. Live meetings and offline recording arrive in later milestones.
           </p>
         </div>
-        <Button variant="accent" disabled title="Offline recording is not available yet">
+        <Button variant="record" disabled title="Offline recording is not available yet">
           <Circle className="fill-current" aria-hidden />
           New offline recording
         </Button>

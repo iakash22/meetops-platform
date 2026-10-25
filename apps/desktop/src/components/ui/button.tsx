@@ -18,6 +18,9 @@ const buttonVariants = cva(
         link: 'text-primary underline-offset-4 hover:underline',
         /** Neon Rose: reserved for record / primary highlight actions. Use sparingly. */
         accent: 'bg-accent text-accent-foreground shadow-glow-accent hover:bg-accent/90',
+        /** Record action: dark fill with a Cerulean -> Neon Rose gradient border and a soft rose glow. */
+        record:
+          'gradient-border text-foreground transition-shadow hover:shadow-glow-accent [&_svg]:text-accent',
       },
       size: {
         default: 'h-9 px-4 py-2',

@@ -34,10 +34,10 @@ export function SignInScreen() {
   }
 
   return (
-    <div className="flex min-h-full items-center justify-center p-6">
+    <div className="brand-backdrop flex min-h-full items-center justify-center p-6">
       <div className="w-full max-w-sm space-y-6">
         <BrandMark className="justify-center" />
-        <Card>
+        <Card glow>
           <CardHeader>
             <CardTitle>Sign in</CardTitle>
             <CardDescription>Use your MeetOps account to continue.</CardDescription>

@@ -2,8 +2,14 @@ import { AudioLines } from 'lucide-react';
 
 import { cn } from '@/lib/utils';
 
-/** Brand mark: Cerulean tile with a soft glow (no heavy drop shadow). */
-export function BrandMark({ className }: { className?: string }) {
+/** Brand mark: Cerulean tile with a soft glow (no heavy drop shadow). `compact` hides the wordmark visually. */
+export function BrandMark({
+  className,
+  compact = false,
+}: {
+  className?: string;
+  compact?: boolean;
+}) {
   return (
     <div className={cn('flex items-center gap-2', className)}>
       <span
@@ -12,7 +18,7 @@ export function BrandMark({ className }: { className?: string }) {
       >
         <AudioLines className="size-4" />
       </span>
-      <span className="text-base font-semibold tracking-tight">
+      <span className={cn('text-base font-semibold tracking-tight', compact && 'sr-only')}>
         MeetOps <span className="text-accent">AI</span>
       </span>
     </div>
