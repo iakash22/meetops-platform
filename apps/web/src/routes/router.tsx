@@ -12,6 +12,7 @@ import type { AuthSession, GetAuthSessionResponse } from '@meetops/contracts';
 import { AppShell } from '@/components/layout/app-shell';
 import { EmptyState, ErrorState } from '@/components/states/states';
 import { useEffect } from 'react';
+import { AuthLayout } from '@/features/auth/auth-layout';
 import { ForgotPasswordForm, LoginForm, SignupForm } from '@/features/auth/forms';
 import { MeetingDetailPage, MeetingsPage } from '@/features/meetings/meetings-pages';
 import {
@@ -25,7 +26,10 @@ import { useApi } from '@/lib/api/context';
 import type { ApiClient } from '@/lib/api/client';
 import { queryKeys } from '@/lib/api/queries';
 import { safeRedirect } from '@/lib/safe-redirect';
-import { DashboardPage, ProjectsPage, SettingsPage } from '@/pages/app-pages';
+import { DashboardPage } from '@/pages/app-pages';
+import { ProjectsPage } from '@/features/projects/projects-page';
+import { parseSettingsSearch, SettingsPage } from '@/features/settings/settings-page';
+import { TeamMembersPage } from '@/features/teams/team-members-page';
 import { CreateOrganizationPage } from '@/features/organizations/create-organization';
 import { ExtensionPairPage } from '@/features/extension/pair-page';
 import { parsePairSearch } from '@/features/extension/pairing';
@@ -75,12 +79,9 @@ const authLayout = createRoute({
   getParentRoute: () => rootRoute,
   id: 'auth',
   component: () => (
-    <div
-      className="flex min-h-screen items-center justify-center bg-muted/40 p-4"
-      data-testid="auth-layout"
-    >
+    <AuthLayout>
       <Outlet />
-    </div>
+    </AuthLayout>
   ),
 });
 
@@ -208,7 +209,18 @@ const projectsRoute = createRoute({
 const settingsRoute = createRoute({
   getParentRoute: () => appLayout,
   path: '/settings',
-  component: SettingsPage,
+  validateSearch: parseSettingsSearch,
+  component: function SettingsRoute() {
+    return <SettingsPage tab={settingsRoute.useSearch().tab} />;
+  },
+});
+const teamMembersRoute = createRoute({
+  getParentRoute: () => appLayout,
+  path: '/settings/teams/$teamId',
+  component: function TeamMembersRoute() {
+    const { teamId } = teamMembersRoute.useParams();
+    return <TeamMembersPage key={teamId} teamId={teamId} />;
+  },
 });
 
 const createOrganizationRoute = createRoute({
@@ -236,6 +248,7 @@ export const routeTree = rootRoute.addChildren([
     tasksRoute,
     projectsRoute,
     settingsRoute,
+    teamMembersRoute,
     createOrganizationRoute,
     extensionPairRoute,
     createAccountRoutes(() => appLayout),

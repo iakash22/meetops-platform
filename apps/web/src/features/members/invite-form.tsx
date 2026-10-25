@@ -1,4 +1,3 @@
-import { useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
@@ -7,7 +6,9 @@ import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { Field } from '@/features/auth/field';
 import type { Invitation, InvitableRole } from '@/lib/api/client';
+import { ApiError } from '@/lib/api/client';
 import { useApi } from '@/lib/api/context';
+import { notify, toastError } from '@/lib/errors/notify';
 import { memberActionMessage } from './messages';
 import { ROLE_LABEL } from './permissions';
 
@@ -33,13 +34,12 @@ export function InviteForm({
   onInvited: (invitation: Invitation) => void;
 }) {
   const api = useApi();
-  const [error, setError] = useState<string | null>(null);
-  const [sent, setSent] = useState<string | null>(null);
   const defaultRole: InvitableRole = roles.includes('member') ? 'member' : (roles[0] ?? 'viewer');
   const {
     register,
     handleSubmit,
     reset,
+    setError,
     formState: { errors, isSubmitting },
   } = useForm<InviteValues>({
     resolver: zodResolver(inviteSchema),
@@ -47,15 +47,23 @@ export function InviteForm({
   });
 
   const onSubmit = async (values: InviteValues) => {
-    setError(null);
-    setSent(null);
     try {
       const invitation = await api.invitations.create(organizationId, values);
       onInvited(invitation);
-      setSent(`Invitation sent to ${invitation.email}.`);
+      notify.success(`Invitation sent to ${invitation.email}.`);
       reset({ email: '', role: values.role });
     } catch (err) {
-      setError(memberActionMessage('invite', err));
+      // Errors about the address (already a member, invalid, role not allowed) belong to the
+      // email field; anything else (network, 5xx, 429, session) is a toast.
+      if (err instanceof ApiError && [400, 403, 409, 422].includes(err.status)) {
+        setError(
+          'email',
+          { type: 'server', message: memberActionMessage('invite', err) },
+          { shouldFocus: true },
+        );
+        return;
+      }
+      toastError(err, { title: "Couldn't send invitation" });
     }
   };
 
@@ -92,16 +100,6 @@ export function InviteForm({
       <Button type="submit" disabled={isSubmitting}>
         {isSubmitting ? 'Sending…' : 'Send invite'}
       </Button>
-      {error ? (
-        <p role="alert" className="basis-full text-sm text-destructive">
-          {error}
-        </p>
-      ) : null}
-      {sent ? (
-        <p role="status" className="basis-full text-sm text-muted-foreground">
-          {sent}
-        </p>
-      ) : null}
     </form>
   );
 }

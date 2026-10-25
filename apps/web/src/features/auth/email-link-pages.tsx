@@ -3,10 +3,14 @@ import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { Link } from '@tanstack/react-router';
 import { Button } from '@/components/ui/button';
-import { ErrorState } from '@/components/states/states';
 import { ApiError } from '@/lib/api/client';
-import { AuthCard } from './forms';
+import { applyFieldErrors, notify, toastError } from '@/lib/errors/notify';
+import { CheckEmail } from './check-email';
+import { AuthCard, emailInputProps } from './forms';
 import { Field } from './field';
+import { PasswordField } from './password';
+import { authButtonClass, authErrorTextClass, authLinkClass } from './styles';
+import { SubmitButton } from './submit-button';
 import {
   resendVerificationSchema,
   resetPasswordSchema,
@@ -27,18 +31,23 @@ function Status({ children }: { children: ReactNode }) {
   return <p role="status">{children}</p>;
 }
 
+/** A problem with the link itself (page-level, inline): not a toast. */
 function Problem({ title, children }: { title: string; children: ReactNode }) {
   return (
-    <div role="alert" className="grid gap-1" data-testid="link-problem">
-      <p className="font-medium text-destructive">{title}</p>
+    <div
+      role="alert"
+      className="grid gap-1 rounded-md border border-destructive/40 bg-destructive/10 p-4"
+      data-testid="link-problem"
+    >
+      <p className={`font-medium ${authErrorTextClass}`}>{title}</p>
       <p className="text-sm text-muted-foreground">{children}</p>
     </div>
   );
 }
 
 const backToSignIn = (
-  <Link to="/login" className="underline">
-    Back to sign in
+  <Link to="/login" className={authLinkClass}>
+    Back to log in
   </Link>
 );
 
@@ -60,14 +69,16 @@ export function VerifyEmailPage({
     try {
       await onVerify(t);
       setState('done');
+      notify.success('Email verified', 'You can log in now.');
     } catch (err) {
       setError(err);
       setState('idle');
+      if (!isStatus(err, 400)) toastError(err);
     }
   };
 
   const resendLink = (
-    <Link to="/resend-verification" className="underline">
+    <Link to="/resend-verification" className={authLinkClass}>
       Send a new verification link
     </Link>
   );
@@ -83,8 +94,8 @@ export function VerifyEmailPage({
     body = (
       <div className="grid gap-4">
         <Status>Your email address is verified.</Status>
-        <Button asChild>
-          <Link to="/login">Continue to sign in</Link>
+        <Button asChild className={authButtonClass}>
+          <Link to="/login">Continue to log in</Link>
         </Button>
       </div>
     );
@@ -97,13 +108,17 @@ export function VerifyEmailPage({
   } else {
     body = (
       <div className="grid gap-4">
-        {error ? <ErrorState title="Verification failed" error={error} /> : null}
         <p className="text-sm text-muted-foreground">
           Confirm that you want to verify the email address for your MeetOps AI account.
         </p>
-        <Button disabled={state === 'pending'} onClick={() => void verify(token)}>
-          {state === 'pending' ? 'Verifying…' : 'Verify email'}
-        </Button>
+        <SubmitButton
+          type="button"
+          busy={state === 'pending'}
+          busyLabel="Verifying…"
+          onClick={() => void verify(token)}
+        >
+          Verify email
+        </SubmitButton>
       </div>
     );
   }
@@ -138,14 +153,18 @@ export function ResetPasswordForm({
   const {
     register,
     handleSubmit,
+    setError: setFieldError,
+    watch,
     formState: { errors, isSubmitting },
   } = useForm<ResetPasswordValues>({
     resolver: zodResolver(resetPasswordSchema),
+    mode: 'onTouched',
+    shouldFocusError: true,
     defaultValues: { password: '', confirmPassword: '' },
   });
 
   const forgotLink = (
-    <Link to="/forgot-password" className="underline">
+    <Link to="/forgot-password" className={authLinkClass}>
       Request a new reset link
     </Link>
   );
@@ -161,8 +180,8 @@ export function ResetPasswordForm({
     body = (
       <div className="grid gap-4">
         <Status>Your password was changed. You were signed out on every device.</Status>
-        <Button asChild>
-          <Link to="/login">Sign in with your new password</Link>
+        <Button asChild className={authButtonClass}>
+          <Link to="/login">Log in with your new password</Link>
         </Button>
       </div>
     );
@@ -175,7 +194,9 @@ export function ResetPasswordForm({
   } else {
     body = (
       <form
+        method="post"
         noValidate
+        aria-busy={isSubmitting || undefined}
         className="grid gap-4"
         onSubmit={(e) =>
           void handleSubmit(async ({ password }) => {
@@ -183,30 +204,35 @@ export function ResetPasswordForm({
             try {
               await onSubmit({ token, password });
               setDone(true);
+              notify.success('Password changed', 'Log in with your new password.');
             } catch (err) {
+              // A 400 with field details is the password policy; a bare 400 is the token.
+              if (applyFieldErrors(setFieldError, err, { password: 'Use 12 to 128 characters.' }))
+                return;
               setError(err);
+              if (!isStatus(err, 400)) toastError(err);
             }
           })(e)
         }
       >
-        {error ? <ErrorState title="Password reset failed" error={error} /> : null}
-        <Field
+        <PasswordField
           label="New password"
-          type="password"
           autoComplete="new-password"
+          autoFocus
+          meter
+          value={watch('password')}
           error={errors.password?.message}
           {...register('password')}
         />
-        <Field
+        <PasswordField
           label="Confirm new password"
-          type="password"
           autoComplete="new-password"
           error={errors.confirmPassword?.message}
           {...register('confirmPassword')}
         />
-        <Button type="submit" disabled={isSubmitting}>
-          {isSubmitting ? 'Saving…' : 'Set new password'}
-        </Button>
+        <SubmitButton busy={isSubmitting} busyLabel="Saving…">
+          Set new password
+        </SubmitButton>
       </form>
     );
   }
@@ -214,7 +240,7 @@ export function ResetPasswordForm({
   return (
     <AuthCard
       title="Choose a new password"
-      description="Signing in again will be required on every device"
+      description="You'll need to log in again on every device"
       footer={
         <>
           {done ? null : forgotLink}
@@ -236,13 +262,16 @@ export function ResendVerificationForm({
   defaultEmail?: string | undefined;
   onSubmit: (values: ResendVerificationValues) => Promise<void>;
 }) {
-  const [sent, setSent] = useState(false);
+  const [sentTo, setSentTo] = useState<string | null>(null);
   const {
     register,
     handleSubmit,
+    setError,
     formState: { errors, isSubmitting },
   } = useForm<ResendVerificationValues>({
     resolver: zodResolver(resendVerificationSchema),
+    mode: 'onTouched',
+    shouldFocusError: true,
     defaultValues: { email: defaultEmail ?? '' },
   });
 
@@ -252,34 +281,44 @@ export function ResendVerificationForm({
       description="We'll email you a new verification link"
       footer={backToSignIn}
     >
-      {sent ? (
-        <Status>If that account still needs verifying, a new link is on its way.</Status>
+      {sentTo ? (
+        <CheckEmail
+          email={sentTo}
+          message="to verify your email"
+          onResend={() => onSubmit({ email: sentTo })}
+          onUseDifferentEmail={() => setSentTo(null)}
+        />
       ) : (
         <form
+          method="post"
           noValidate
+          aria-busy={isSubmitting || undefined}
           className="grid gap-4"
           onSubmit={(e) =>
             void handleSubmit(async (v) => {
-              // Enumeration-safe (API always answers 202): same outcome regardless of result.
+              // The API answers 202 whether or not the account exists, so an error here is a
+              // real failure (network, 429, 5xx), never an enumeration signal.
               try {
                 await onSubmit(v);
-              } catch {
-                /* intentionally ignored */
+                setSentTo(v.email);
+              } catch (err) {
+                const copy = { email: 'Enter a valid email address.' };
+                if (!applyFieldErrors(setError, err, copy)) toastError(err);
               }
-              setSent(true);
             })(e)
           }
         >
           <Field
             label="Email"
-            type="email"
             autoComplete="email"
+            autoFocus
             error={errors.email?.message}
+            {...emailInputProps}
             {...register('email')}
           />
-          <Button type="submit" disabled={isSubmitting}>
-            {isSubmitting ? 'Sending…' : 'Send verification link'}
-          </Button>
+          <SubmitButton busy={isSubmitting} busyLabel="Sending…">
+            Send verification link
+          </SubmitButton>
         </form>
       )}
     </AuthCard>
@@ -312,6 +351,7 @@ export function AcceptInvitationPage({
     } catch (err) {
       setError(err);
       setPending(false);
+      if (![401, 403, 404, 409].some((st) => isStatus(err, st))) toastError(err);
     }
   };
 
@@ -328,14 +368,18 @@ export function AcceptInvitationPage({
     body = (
       <div className="grid gap-4">
         <p className="text-sm text-muted-foreground">
-          Sign in with the email address the invitation was sent to, then accept it.
+          Log in with the email address the invitation was sent to, then accept it.
         </p>
-        <Button asChild>
+        <Button asChild className={authButtonClass}>
           <Link to="/login" search={here ? { next: here } : {}}>
-            Sign in to accept
+            Log in to accept
           </Link>
         </Button>
-        <Link to="/signup" search={here ? { next: here } : {}} className="text-sm underline">
+        <Link
+          to="/signup"
+          search={here ? { next: here } : {}}
+          className={`${authLinkClass} text-sm`}
+        >
           New here? Create an account
         </Link>
       </div>
@@ -354,7 +398,7 @@ export function AcceptInvitationPage({
         <Problem title="Verify your email first">
           You need a verified email address to join an organization.
         </Problem>
-        <Link to="/resend-verification" className="text-sm underline">
+        <Link to="/resend-verification" className={`${authLinkClass} text-sm`}>
           Send a new verification link
         </Link>
       </div>
@@ -365,7 +409,7 @@ export function AcceptInvitationPage({
         <Problem title="You're already a member">
           You already belong to this organization, so nothing changed.
         </Problem>
-        <Button asChild>
+        <Button asChild className={authButtonClass}>
           <Link to="/">Go to MeetOps AI</Link>
         </Button>
       </div>
@@ -373,13 +417,17 @@ export function AcceptInvitationPage({
   } else {
     body = (
       <div className="grid gap-4">
-        {error ? <ErrorState title="Could not accept the invitation" error={error} /> : null}
         <p className="text-sm text-muted-foreground">
           Signed in as <strong>{signedInAs}</strong>.
         </p>
-        <Button disabled={pending} onClick={() => void accept(token)}>
-          {pending ? 'Joining…' : 'Accept invitation'}
-        </Button>
+        <SubmitButton
+          type="button"
+          busy={pending}
+          busyLabel="Joining…"
+          onClick={() => void accept(token)}
+        >
+          Accept invitation
+        </SubmitButton>
       </div>
     );
   }

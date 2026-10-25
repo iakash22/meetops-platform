@@ -115,10 +115,25 @@ export class Client {
     );
   }
   async post(url: string, payload?: object, headers: Record<string, string> = {}) {
+    return this.mutate('POST', url, payload, headers);
+  }
+  async patch(url: string, payload?: object, headers: Record<string, string> = {}) {
+    return this.mutate('PATCH', url, payload, headers);
+  }
+  async delete(url: string, headers: Record<string, string> = {}) {
+    return this.mutate('DELETE', url, undefined, headers);
+  }
+  /** State-changing request with Origin + double-submit CSRF, like the web app. */
+  async mutate(
+    method: 'POST' | 'PATCH' | 'DELETE',
+    url: string,
+    payload?: object,
+    headers: Record<string, string> = {},
+  ) {
     if (!this.jar.has(CSRF)) await this.csrf();
     return this.absorb(
       await this.app.inject({
-        method: 'POST',
+        method,
         url,
         remoteAddress: this.ip,
         ...(payload ? { payload } : {}),

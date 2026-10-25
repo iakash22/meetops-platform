@@ -23,9 +23,11 @@ describe('/verify-email', () => {
     const button = await screen.findByRole('button', { name: 'Verify email' });
     expect(api.auth.verifyEmail).not.toHaveBeenCalled();
     await userEvent.click(button);
-    expect(await screen.findByRole('status')).toHaveTextContent('Your email address is verified.');
+    expect(await screen.findByText('Your email address is verified.')).toBeInTheDocument();
+    // Success also toasts (role=status inside the Notifications region).
+    expect(screen.getByText('Email verified')).toBeInTheDocument();
     expect(api.auth.verifyEmail).toHaveBeenCalledWith({ token: TOKEN });
-    expect(screen.getByRole('link', { name: 'Continue to sign in' })).toHaveAttribute(
+    expect(screen.getByRole('link', { name: 'Continue to log in' })).toHaveAttribute(
       'href',
       '/login',
     );
@@ -61,9 +63,11 @@ describe('/verify-email', () => {
     });
     renderApp(`/verify-email?token=${TOKEN}`, api);
     await userEvent.click(await screen.findByRole('button', { name: 'Verify email' }));
-    expect(await screen.findByTestId('error-state')).toBeInTheDocument();
+    // Not a link problem: toast, and the button stays for a retry.
+    expect(await screen.findByRole('alert')).toHaveTextContent("Can't reach MeetOps right now");
+    expect(screen.queryByTestId('link-problem')).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: 'Verify email' }));
-    expect(await screen.findByRole('status')).toHaveTextContent('verified');
+    expect(await screen.findByText('Your email address is verified.')).toBeInTheDocument();
   });
 });
 
@@ -86,14 +90,15 @@ describe('/reset-password', () => {
     await userEvent.type(screen.getByLabelText('Confirm new password'), 'long-enough-pass');
     await userEvent.click(screen.getByRole('button', { name: 'Set new password' }));
 
-    expect(await screen.findByRole('status')).toHaveTextContent(/signed out on every device/);
+    expect(await screen.findByText(/signed out on every device/)).toBeInTheDocument();
+    expect(screen.getByText('Password changed')).toBeInTheDocument();
     expect(api.auth.resetPassword).toHaveBeenCalledWith({
       token: TOKEN,
       password: 'long-enough-pass',
     });
     expect(queryClient.getQueryData(['session'])).toBeNull();
     expect(useOrgStore.getState().currentOrganizationId).toBeNull();
-    expect(screen.getByRole('link', { name: 'Sign in with your new password' })).toHaveAttribute(
+    expect(screen.getByRole('link', { name: 'Log in with your new password' })).toHaveAttribute(
       'href',
       '/login',
     );
@@ -128,11 +133,13 @@ describe('/resend-verification', () => {
     renderApp('/resend-verification?email=ada%40example.com', api);
     expect(await screen.findByLabelText('Email')).toHaveValue('ada@example.com');
     await userEvent.click(screen.getByRole('button', { name: 'Send verification link' }));
-    expect(await screen.findByRole('status')).toHaveTextContent(/a new link is on its way/);
+    expect(await screen.findByTestId('check-email')).toHaveTextContent(
+      /If ada@example.com can receive it/,
+    );
     expect(api.auth.resendVerification).toHaveBeenCalledWith({ email: 'ada@example.com' });
   });
 
-  it('validates the email and stays enumeration-safe on failure', async () => {
+  it('validates the email; a transport failure toasts and keeps the form', async () => {
     const api = createMockApi({
       auth: {
         session: vi.fn().mockRejectedValue(new ApiError(401, 'UNAUTHENTICATED', 'no')),
@@ -144,7 +151,8 @@ describe('/resend-verification', () => {
     expect(await screen.findByText('Email is required')).toBeInTheDocument();
     await userEvent.type(screen.getByLabelText('Email'), 'ada@example.com');
     await userEvent.click(screen.getByRole('button', { name: 'Send verification link' }));
-    expect(await screen.findByRole('status')).toHaveTextContent(/a new link is on its way/);
+    expect(await screen.findByRole('alert')).toHaveTextContent('Too many attempts');
+    expect(screen.queryByTestId('check-email')).not.toBeInTheDocument();
   });
 });
 
@@ -154,7 +162,7 @@ describe('/invitations/accept', () => {
   it('signed out: asks to sign in and keeps the invitation link in ?next=', async () => {
     const api = signedOut();
     renderApp(`/invitations/accept?token=${TOKEN}`, api);
-    const signIn = await screen.findByRole('link', { name: 'Sign in to accept' });
+    const signIn = await screen.findByRole('link', { name: 'Log in to accept' });
     const next = new URL(signIn.getAttribute('href')!, 'http://x').searchParams.get('next');
     expect(next).toBe(`/invitations/accept?token=${TOKEN}`);
     expect(api.invitations.accept).not.toHaveBeenCalled();
