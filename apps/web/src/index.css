@@ -42,7 +42,18 @@
     --border: 240 4.5% 17.3%; /* #2A2A2E */
     --input: 240 3.6% 43.5%; /* #6B6B73 (>=3:1 on bg for form controls) */
     --ring: 197.3 72.8% 55.3%; /* #3AB0E0 */
-    --radius: 0.5rem;
+    /* Radius scale: sm 6px · md 8px · lg 12px (--radius) · xl 16px */
+    --radius: 0.75rem;
+
+    /* Motion: 150–200ms, disabled under prefers-reduced-motion */
+    --duration-fast: 150ms;
+    --duration-base: 200ms;
+    --ease-out: cubic-bezier(0.2, 0, 0, 1);
+
+    /* Typography: Inter when installed locally, otherwise the system sans stack (no webfont dep). */
+    --font-sans:
+      Inter, ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial,
+      'Noto Sans', sans-serif;
 
     /* Optional subtle glows for brand/logo elements only */
     --glow-primary: 0 0 12px hsl(195.8 100% 32.7% / 0.45);
@@ -51,9 +62,24 @@
   * {
     @apply border-border;
   }
+  html {
+    font-family: var(--font-sans);
+    font-feature-settings: 'cv11', 'ss01';
+    text-rendering: optimizeLegibility;
+  }
   body {
     @apply bg-background text-foreground antialiased;
   }
+  h1,
+  h2,
+  h3 {
+    @apply tracking-tight;
+  }
+  :focus-visible {
+    outline: 2px solid hsl(var(--ring));
+    outline-offset: 2px;
+  }
+  /* Components that draw their own ring opt out with outline-none. */
   ::selection {
     background: hsl(var(--primary) / 0.45);
     color: hsl(var(--foreground));
@@ -66,5 +92,97 @@
   }
   .brand-glow-box {
     box-shadow: var(--glow-primary);
+  }
+
+  /* Layered translucent surface for sticky nav / overlays. */
+  .surface-glass {
+    background-color: hsl(var(--card) / 0.72);
+    -webkit-backdrop-filter: blur(12px) saturate(140%);
+    backdrop-filter: blur(12px) saturate(140%);
+  }
+
+  /* Faint grid background with a cerulean beam fading from the top (CSS-only). */
+  .bg-grid {
+    background-image:
+      radial-gradient(60% 50% at 50% 0%, hsl(var(--primary) / 0.18), transparent 70%),
+      linear-gradient(hsl(var(--border) / 0.55) 1px, transparent 1px),
+      linear-gradient(90deg, hsl(var(--border) / 0.55) 1px, transparent 1px);
+    background-size:
+      100% 100%,
+      32px 32px,
+      32px 32px;
+    background-position: center top;
+  }
+
+  /* Animated cerulean→rose gradient border; put on a wrapper with p-px + rounded. */
+  .gradient-border {
+    background: conic-gradient(
+      from var(--border-angle, 0deg),
+      hsl(var(--primary)),
+      hsl(var(--highlight)),
+      hsl(var(--primary)) 60%,
+      hsl(var(--border)) 75%,
+      hsl(var(--primary))
+    );
+    animation: border-spin 6s linear infinite;
+  }
+
+  /* Diagonal sheen for shimmer buttons and skeletons. */
+  .shimmer {
+    position: relative;
+    overflow: hidden;
+    isolation: isolate;
+  }
+  .shimmer::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    transform: translateX(-100%);
+    background: linear-gradient(
+      100deg,
+      transparent 20%,
+      hsl(0 0% 100% / 0.14) 50%,
+      transparent 80%
+    );
+    animation: shimmer 2.2s var(--ease-out) infinite;
+  }
+
+  .transition-base {
+    transition-property: color, background-color, border-color, box-shadow, opacity, transform;
+    transition-duration: var(--duration-fast);
+    transition-timing-function: var(--ease-out);
+  }
+}
+
+@property --border-angle {
+  syntax: '<angle>';
+  inherits: false;
+  initial-value: 0deg;
+}
+
+@keyframes border-spin {
+  to {
+    --border-angle: 360deg;
+  }
+}
+
+@keyframes shimmer {
+  to {
+    transform: translateX(100%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+  .shimmer::after {
+    display: none;
   }
 }

@@ -1,6 +1,7 @@
 import { QueryClientProvider, type QueryClient } from '@tanstack/react-query';
 import { RouterProvider, type RouterHistory } from '@tanstack/react-router';
 import { useEffect, useState } from 'react';
+import { Toaster } from '@/components/ui/toast';
 import { ApiProvider } from '@/lib/api/context';
 import type { ApiClient } from '@/lib/api/client';
 import { queryKeys } from '@/lib/api/queries';
@@ -37,6 +38,7 @@ export function App({
     <QueryClientProvider client={queryClient}>
       <ApiProvider client={api}>
         <RouterProvider router={router} />
+        <Toaster />
       </ApiProvider>
     </QueryClientProvider>
   );
