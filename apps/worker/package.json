@@ -16,6 +16,7 @@
     "@meetops/ai-core": "workspace:*",
     "@meetops/config": "workspace:*",
     "@meetops/contracts": "workspace:*",
+    "@meetops/database": "workspace:*",
     "@meetops/logger": "workspace:*",
     "@meetops/media-core": "workspace:*",
     "@meetops/queue": "workspace:*",

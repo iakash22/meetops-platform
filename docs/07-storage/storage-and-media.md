@@ -122,7 +122,7 @@ S3 calls are mocked with `aws-sdk-client-mock`. The ffmpeg tests use the real bi
 Merged into `integration/phase-1` by PR #39 (merge commit `50e69d4`). Code: `apps/worker/src/media/`.
 
 - Queue and job name come from `@meetops/contracts` (`MEDIA_QUEUE`, `MEDIA_JOB_NAME`); the payload is checked against the contracts `MediaJobPayload` schema.
-- Steps: check the source key belongs to the recording's org and meeting, HEAD and download it via `@meetops/storage`, probe, normalize to 16 kHz mono WAV, chunk, upload the normalized file and chunks, then enqueue one transcription job per chunk.
+- Steps: check the source key belongs to the recording's org and meeting, HEAD and download it via `@meetops/storage`, probe, normalize to 16 kHz mono WAV, compute the waveform (best effort, PR #88), chunk, upload the normalized file and chunks, upsert one chunk FileObject row per chunk (`file_objects`, `kind = chunk`) and set `recordings.chunk_count` (PR #92, wired into `startMediaWorker` by PR #118), then enqueue one transcription job per chunk. The chunk rows and `chunk_count` are saved before any transcription job is enqueued; if either write fails the job fails (`chunk_file_objects_persist_failed` / `chunk_count_persist_failed`) and nothing is enqueued. Both writes go through `@meetops/database` inside `runWithOrganizationContext(organizationId)`, so forced RLS scopes them to the job's organization.
 - Object keys (`buildObjectKey` in `packages/storage/src/keys.ts`), under `organizations/{organizationId}/meetings/{meetingId}/` (legacy `org/` keys are read-only):
   - `recordings/{id}.{ext}`
   - `processed/{recordingId}/normalized.wav`
@@ -131,9 +131,17 @@ Merged into `integration/phase-1` by PR #39 (merge commit `50e69d4`). Code: `app
 - Transcription payloads (contracts `TranscriptionJobPayload`) carry `chunkIndex` and `startMs`, use `diarize: true`, and the STT provider from the job, then the worker default (`STT_PROVIDER_ID`, default `assemblyai`).
 - Idempotency: normalized and chunk FileObject ids are UUID v5 values from a fixed namespace (`MEDIA_UUID_NAMESPACE`, which must not change). BullMQ job ids are deterministic: `media_{org}_{recording}` and `transcribe_{org}_{recording}_{index:5}`. Media jobs use 3 attempts with exponential backoff (5 s).
 - Limits: source size up to the contracts `MAX_MEDIA_BYTES` (checked by HEAD and while streaming) and duration up to 4 hours by default. Failures throw `MediaJobError` codes such as `forbidden`, `source_not_found`, `source_too_large`, `no_audio_stream`, `source_too_long` and `no_chunks`.
-- Realtime: emits `meeting:status` and `transcription:progress` via `@socket.io/redis-emitter` to `org:{orgId}:meeting:{meetingId}` and `org:{orgId}`. Room names must match `apps/realtime`.
+- Realtime: emits `meeting:status` and `transcription:progress` via `@socket.io/redis-emitter` to `organizations:{organizationId}:meetings:{meetingId}` and `organizations:{organizationId}` (PR #90). Room names must match `apps/realtime`.
 - No STT runs in this job.
 
-Worker environment variables (names only): `REDIS_URL`, `STT_PROVIDER_ID`, `MEDIA_WORKER_CONCURRENCY` (default 1, max 16), `MEDIA_CHUNK_SECONDS` (default 600, 10–3600), `MEDIA_MAX_SOURCE_BYTES`, `MEDIA_MAX_DURATION_SECONDS` (max 24 h) and `MEDIA_TMP_DIR`. PR #39 also changed `.env.example` so `STORAGE_FORCE_PATH_STYLE` is empty instead of `true`.
+Worker environment variables (names only, never commit values):
+
+- Queue and processing: `REDIS_URL`, `STT_PROVIDER_ID`, `MEDIA_WORKER_CONCURRENCY` (default 1, max 16), `MEDIA_CHUNK_SECONDS` (default 600, 10–3600), `MEDIA_MAX_SOURCE_BYTES`, `MEDIA_MAX_DURATION_SECONDS` (max 24 h) and `MEDIA_TMP_DIR`.
+- Database (PR #118): `DATABASE_URL`. It must use the `meetops_app` runtime role (LOGIN, NOSUPERUSER, **NOBYPASSRLS**, DML only; see `packages/database/docs/ci-live-db.md`), never `meetops_migrator` or a superuser, so forced RLS applies to every chunk write.
+- Storage (read by `loadStorageConfig`, see "Environment variables" above): `STORAGE_PROVIDER` (`minio`, `r2` or `s3`; also recorded as the chunk rows' `provider`), `STORAGE_BUCKET` (required; recorded on the chunk rows), `STORAGE_ENDPOINT` (required for `minio` and `r2`), `STORAGE_REGION`, `STORAGE_FORCE_PATH_STYLE`, and the credentials `STORAGE_ACCESS_KEY_ID` / `STORAGE_SECRET_ACCESS_KEY` (secrets, keep them in `.env` only).
+
+Startup behaviour: a missing or invalid storage setting throws when `startMediaWorker` starts. Prisma connects lazily, so on its own a missing `DATABASE_URL` would only fail at the first job (`chunk_file_objects_persist_failed`, after normalize and chunk upload). `startMediaWorker` therefore checks that `DATABASE_URL` is set to a `postgres://` or `postgresql://` URL before it connects to Redis (`assertMediaWorkerDatabaseEnv`). Wrong credentials or an unreachable database are still only detected at the first job.
+
+PR #39 also changed `.env.example` so `STORAGE_FORCE_PATH_STYLE` is empty instead of `true`.
 
 PR #39's diff also contains `apps/realtime` (from the stacked PR #16) and the `@meetops/storage` and `@meetops/media-core` code.

@@ -32,6 +32,7 @@ Where each variable is read:
   - The **dev stack instead creates them with LOGIN at first boot** via `infra/compose/postgres/initdb/10-meetops-roles.sh`.
   - That script only runs on an empty volume: **wipe the `postgres-data` volume to re-run it**.
 - `DATABASE_URL`: runtime connection as `meetops_app` (NOSUPERUSER, NOBYPASSRLS, so RLS applies).
+  - The API and the media worker (`apps/worker`, required since PR #118) use it as the runtime connection. Outside throwaway local setups it must be the `meetops_app` role (`NOBYPASSRLS`, DML only), never `meetops_migrator` or a superuser; see `packages/database/docs/ci-live-db.md`.
 - `MIGRATION_DATABASE_URL`: Prisma `directUrl` for migrations and seed, as the schema owner `meetops_migrator`.
 
 ### Redis
