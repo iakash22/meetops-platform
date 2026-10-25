@@ -59,10 +59,13 @@ const aiTenantSql = readFileSync(
   resolve(migrationsDir, '20261024010000_ai_usage_transcript_chunks/migration.sql'),
   'utf8',
 );
+/** DB-1 teams: new tenant tables enable and police RLS in their own migration (ADR-010 setting only). */
+const teamsSql = readFileSync(resolve(migrationsDir, '20261025090000_teams/migration.sql'), 'utf8');
 const rlsSql =
   readFileSync(resolve(migrationsDir, '20261021110000_tenant_rls_roles/migration.sql'), 'utf8') +
   laterTenantSql +
-  aiTenantSql;
+  aiTenantSql +
+  teamsSql;
 /**
  * Tenant tables keyed by the organization itself rather than a uuid id: ai_org_config (PK org_id) and
  * ai_idempotency (PK (org_id, key)). Their primary key already leads with org_id.
@@ -82,6 +85,10 @@ const policySql =
   ) + aiTenantSql;
 const ORG_EXPR =
   "COALESCE(NULLIF(current_setting('app.current_organization_id', true), ''), NULLIF(current_setting('app.current_org_id', true), ''))::uuid";
+/** Policy expression for tenant tables created after ADR-010: canonical setting only, no legacy COALESCE. */
+const ADR010_EXPR = "NULLIF(current_setting('app.current_organization_id', true), '')::uuid";
+/** Tenant tables whose policies never had the legacy fallback (DB-1 and later). */
+const ADR010_ONLY_TABLES: readonly string[] = ['teams', 'team_members'];
 
 /** Parse models from schema: table name + body. */
 const models = [...schema.matchAll(/model (\w+) \{([\s\S]*?)\n\}/g)].map((m) => {
@@ -114,7 +121,9 @@ describe('tenant schema', () => {
       expect(m.body, m.name).toMatch(
         /organization\s+Organization\s+@relation\(fields: \[organizationId\]/,
       );
-      expect(m.body, m.name).toMatch(/@@(index|unique|id)\(\[organizationId|organizationId\s+String\s+@id/);
+      expect(m.body, m.name).toMatch(
+        /@@(index|unique|id)\(\[organizationId|organizationId\s+String\s+@id/,
+      );
     }
   });
 
@@ -159,6 +168,12 @@ describe('RLS migration', () => {
       );
       expect(policySql).toContain(
         `CREATE POLICY audit_insert ON "audit_events" FOR INSERT\n  WITH CHECK (org_id = ${ORG_EXPR});`,
+      );
+      return;
+    }
+    if (ADR010_ONLY_TABLES.includes(t)) {
+      expect(teamsSql).toContain(
+        `CREATE POLICY tenant_isolation ON "${t}"\n  USING (org_id = ${ADR010_EXPR})\n  WITH CHECK (org_id = ${ADR010_EXPR});`,
       );
       return;
     }
@@ -460,7 +475,9 @@ describe('storage key convention', () => {
 describe('XT-26..XT-28 static guarantees', () => {
   it('XT-26: policies use missing_ok current_setting so no context => NULL => 0 rows', () => {
     const policies = policySql.split(ORG_EXPR).length - 1;
-    expect(policies).toBe(TENANT_TABLES.length * 2);
+    expect(policies).toBe((TENANT_TABLES.length - ADR010_ONLY_TABLES.length) * 2);
+    expect(teamsSql.split(ADR010_EXPR).length - 1).toBe(ADR010_ONLY_TABLES.length * 2);
+    expect(teamsSql).not.toMatch(/current_setting\('app\.current_(org|organization)_id'\)/);
     expect(policySql).not.toMatch(/current_setting\('app\.current_(org|organization)_id'\)/);
     expect(policySql).not.toMatch(/DROP (TABLE|COLUMN)|RENAME/i);
   });
@@ -468,7 +485,10 @@ describe('XT-26..XT-28 static guarantees', () => {
   it('XT-27: every tenant policy has WITH CHECK', () => {
     // audit_events uses audit_insert (FOR INSERT ... WITH CHECK) instead of tenant_isolation.
     const n = (policySql.match(/CREATE POLICY tenant_isolation[^;]*WITH CHECK/g) ?? []).length;
-    expect(n).toBe(TENANT_TABLES.length - 1);
+    expect(n).toBe(TENANT_TABLES.length - 1 - ADR010_ONLY_TABLES.length);
+    expect((teamsSql.match(/CREATE POLICY tenant_isolation[^;]*WITH CHECK/g) ?? []).length).toBe(
+      ADR010_ONLY_TABLES.length,
+    );
     expect(policySql).toMatch(
       /CREATE POLICY audit_insert ON "audit_events" FOR INSERT\n {2}WITH CHECK/,
     );
@@ -568,7 +588,7 @@ describe('schema conventions', () => {
   });
 
   it('every model uses a uuid primary key', () => {
-    expect(models).toHaveLength(29);
+    expect(models).toHaveLength(31);
     for (const m of models.filter((x) => !ORGANIZATION_KEYED.includes(x.table)))
       expect(m.body, m.name).toMatch(/^\s+id\s+String\s+@id @default\(uuid\(\)\) @db\.Uuid$/m);
   });
@@ -786,9 +806,7 @@ describe('ADR-004 addendum 2 (contracts 0.3.0)', () => {
     expect(schema).not.toMatch(/\borgId\b/);
     const fields = [
       ...schema.matchAll(/^\s+organizationId\s+String\??\s+(?:@id\s+)?@map\("(\w+)"\)/gm),
-    ].map(
-      (m) => m[1],
-    );
+    ].map((m) => m[1]);
     expect(fields.length).toBeGreaterThanOrEqual(TENANT_TABLES.length);
     expect(new Set(fields)).toEqual(new Set(['org_id']));
     const src =
@@ -996,5 +1014,45 @@ describe('architecture review B1 and audit hatch (static)', () => {
     const sql = secDir('20261022041000_audit_hatch_session_user');
     expect(sql).toContain("AND session_user = 'meetops_migrator' THEN");
     expect(sql).not.toMatch(/pg_has_role\(current_user/);
+  });
+});
+
+describe('DB-1 teams and team_members (static)', () => {
+  const model = (name: string) => models.find((m) => m.name === name)?.body ?? '';
+
+  it('are tenant tables in TENANT_TABLES with per-org uniques', () => {
+    expect(TENANT_TABLES).toEqual(expect.arrayContaining(['teams', 'team_members']));
+    expect(model('Team')).toContain('@@unique([organizationId, id])');
+    expect(model('Team')).toContain('@@unique([organizationId, name])');
+    expect(model('TeamMember')).toContain('@@unique([organizationId, teamId, employeeId])');
+    expect(schema).toMatch(/enum TeamMemberRole \{\s+lead\s+member\s+\}/);
+  });
+
+  it('links teams, employees and projects only through composite (org_id, id) FKs', () => {
+    for (const fk of [
+      'ALTER TABLE "team_members" ADD CONSTRAINT "team_members_org_id_team_id_fkey" FOREIGN KEY ("org_id", "team_id") REFERENCES "teams"("org_id", "id")',
+      'ALTER TABLE "team_members" ADD CONSTRAINT "team_members_org_id_employee_id_fkey" FOREIGN KEY ("org_id", "employee_id") REFERENCES "employees"("org_id", "id")',
+      'ALTER TABLE "projects" ADD CONSTRAINT "projects_org_id_team_id_fkey" FOREIGN KEY ("org_id", "team_id") REFERENCES "teams"("org_id", "id") ON DELETE RESTRICT',
+    ])
+      expect(teamsSql).toContain(fk);
+    expect(teamsSql).not.toMatch(/REFERENCES "(teams|employees)"\("id"\)/);
+  });
+
+  it('is additive, forced, uses only the ADR-010 setting, grants the app role and re-asserts FORCE', () => {
+    expect(teamsSql).not.toMatch(/DROP |RENAME|NO FORCE/);
+    expect(teamsSql).not.toContain('COALESCE');
+    expect(teamsSql).not.toContain('app.current_org_id');
+    expect(teamsSql).toContain(
+      'GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "teams", "team_members" TO meetops_app;',
+    );
+    expect(teamsSql).toContain("RAISE EXCEPTION 'RLS enabled but not forced on: %'");
+  });
+
+  it('migration sorts after every earlier migration', () => {
+    const dirs = readdirSync(migrationsDir, { withFileTypes: true })
+      .filter((d) => d.isDirectory())
+      .map((d) => d.name)
+      .sort();
+    expect(dirs.at(-1)).toBe('20261025090000_teams');
   });
 });

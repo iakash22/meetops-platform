@@ -8,7 +8,7 @@ import {
 import { AuthService, NONCE_ALARM } from '../src/lib/auth/auth-service.js';
 import { authConfig } from '../src/lib/auth/config.js';
 import { isAuthRequest, type AuthRequest, type AuthResponse } from '../src/lib/auth/messages.js';
-import { validators } from '../src/lib/auth/validate.js';
+import { uploadValidators, validators } from '../src/lib/auth/validate.js';
 import { routeAlarm, WATCHDOG_ALARM } from '../src/lib/alarms.js';
 import { ChunkStore } from '../src/lib/chunk-store.js';
 import { safeErrorMessage } from '../src/lib/redact.js';
@@ -21,7 +21,14 @@ import {
 } from '../src/lib/pending-discard.js';
 import { classifySender, extensionUrls } from '../src/lib/senders.js';
 import { sessionKV } from '../src/lib/storage.js';
-import { StubUploadClient } from '../src/lib/upload.js';
+import { httpUploadEnabled } from '../src/lib/features.js';
+import { HttpUploadClient } from '../src/lib/upload-http.js';
+import { handleUploadRpc, isUploadRpcRequest } from '../src/lib/upload-rpc.js';
+import {
+  httpStorageTransport,
+  pairedOrganizationId,
+  selectUploadClient,
+} from '../src/lib/upload-select.js';
 
 const OFFSCREEN_PATH = '/offscreen.html';
 
@@ -55,10 +62,20 @@ async function handleAuth(msg: AuthRequest): Promise<AuthResponse> {
   return { ok: true, ...(await auth.status()) };
 }
 
-// TODO: swap for the real HTTP client once the chunked upload API exists. The uploader stays a stub: no backend
-// calls are enabled by default. A real client must use auth.apiFetch() for API routes (bearer, API origin only)
-// and createFetchTransport() for presigned PUTs (never a bearer).
-const client = new StubUploadClient();
+// Upload client. StubUploadClient (no backend calls) is the default. With WXT_FEATURE_HTTP_UPLOAD on, HttpUploadClient
+// calls the recording-session API through auth.apiFetch() (bearer, exact API origin only) and PUTs chunks through the
+// fetch transport (never a bearer). The offscreen recorder reaches it via UPLOAD_RPC messages (src/lib/upload-rpc.ts).
+const HTTP_UPLOAD = httpUploadEnabled();
+const client = selectUploadClient(
+  HTTP_UPLOAD,
+  () =>
+    new HttpUploadClient({
+      api: (path, init) => auth.apiFetch(path, init),
+      organizationId: pairedOrganizationId(auth),
+      storage: httpStorageTransport({ allowLocalHttp: import.meta.env.DEV }),
+      validators: uploadValidators,
+    }),
+);
 let storePromise: Promise<ChunkStore> | undefined;
 const store = () => (storePromise ??= ChunkStore.open());
 
@@ -167,6 +184,12 @@ export default defineBackground(() => {
   chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     if ((msg as { target?: string } | null)?.target !== 'background') return false;
     const { fromSelf, fromOffscreen, fromPopup } = classifySender(sender, extensionUrls());
+    if (isUploadRpcRequest(msg)) {
+      // Only the offscreen recorder, and only when the HTTP client is enabled; anything else gets no response.
+      if (!fromOffscreen || !HTTP_UPLOAD) return false;
+      void handleUploadRpc(client, uploadValidators, msg).then(sendResponse);
+      return true;
+    }
     if (isAuthRequest(msg)) {
       if (!fromPopup) return false;
       handleAuth(msg).then(sendResponse, (err: unknown) =>

@@ -6,11 +6,18 @@
  */
 import { Value } from '@sinclair/typebox/value';
 import {
+  AbortRecordingSessionRequest,
   ApiErrorEnvelope,
+  ChunkUploadUrlRequest,
+  ChunkUploadUrlResponse,
+  CompleteRecordingSessionRequest,
+  CompleteRecordingSessionResponse,
   ExtensionTokenRequest,
   ExtensionRefreshResponse,
   ExtensionRevokeResponse,
   ExtensionTokenResponse,
+  InitRecordingSessionRequest,
+  InitRecordingSessionResponse,
   registerContractFormats,
 } from '@meetops/contracts';
 import { Type } from '@sinclair/typebox';
@@ -20,6 +27,7 @@ import type {
   ExtensionRevokeResponse as RevokeT,
   ExtensionTokenResponse as TokenT,
 } from '@meetops/contracts/types';
+import type { UploadValidators } from '../upload-http.js';
 
 // contracts is sideEffects:false, so the format registration must be invoked explicitly.
 registerContractFormats();
@@ -52,5 +60,21 @@ export const validators: Validators = {
   tokenResponse: (v): v is TokenT => Value.Check(ExtensionTokenResponse, v),
   refreshResponse: (v): v is RefreshT => Value.Check(ExtensionRefreshResponse, v),
   revokeResponse: (v): v is RevokeT => Value.Check(ExtensionRevokeResponse, v),
+  apiError: (v): v is ApiErrorT => Value.Check(ApiErrorEnvelope, v),
+};
+
+/** Recording-session (chunked upload) requests and responses, for HttpUploadClient and the offscreen upload RPC. */
+export const uploadValidators: UploadValidators = {
+  initRequest: (v): v is InitRecordingSessionRequest => Value.Check(InitRecordingSessionRequest, v),
+  chunkUrlRequest: (v): v is ChunkUploadUrlRequest => Value.Check(ChunkUploadUrlRequest, v),
+  completeRequest: (v): v is CompleteRecordingSessionRequest =>
+    Value.Check(CompleteRecordingSessionRequest, v),
+  abortRequest: (v): v is AbortRecordingSessionRequest =>
+    Value.Check(AbortRecordingSessionRequest, v),
+  initResponse: (v): v is InitRecordingSessionResponse =>
+    Value.Check(InitRecordingSessionResponse, v),
+  chunkUrlResponse: (v): v is ChunkUploadUrlResponse => Value.Check(ChunkUploadUrlResponse, v),
+  completeResponse: (v): v is CompleteRecordingSessionResponse =>
+    Value.Check(CompleteRecordingSessionResponse, v),
   apiError: (v): v is ApiErrorT => Value.Check(ApiErrorEnvelope, v),
 };

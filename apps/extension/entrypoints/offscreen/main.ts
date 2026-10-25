@@ -4,10 +4,21 @@ import { ChunkStore } from '../../src/lib/chunk-store.js';
 import { isOffscreenMessage, type OffscreenToBackground } from '../../src/lib/messages.js';
 import { startRecording, type RecorderLike, type RecordingHandle } from '../../src/lib/recorder.js';
 import { extensionUrls, isTrustedOffscreenSender } from '../../src/lib/senders.js';
-import { StubUploadClient } from '../../src/lib/upload.js';
+import { httpUploadEnabled } from '../../src/lib/features.js';
+import { RpcUploadClient, type UploadRpcResponse } from '../../src/lib/upload-rpc.js';
+import { httpStorageTransport, selectUploadClient } from '../../src/lib/upload-select.js';
 
-// TODO: swap for the real HTTP client once the chunked upload API exists.
-const client = new StubUploadClient();
+// StubUploadClient by default. With WXT_FEATURE_HTTP_UPLOAD on, API calls are proxied to the background worker (which
+// holds the ADR-005 tokens) and chunk PUTs go straight to the presigned URL without a bearer.
+const client = selectUploadClient(
+  httpUploadEnabled(),
+  () =>
+    new RpcUploadClient({
+      send: (msg) => chrome.runtime.sendMessage<typeof msg, UploadRpcResponse | undefined>(msg),
+      storage: httpStorageTransport({ allowLocalHttp: import.meta.env.DEV }),
+      durable: true,
+    }),
+);
 let handle: RecordingHandle | undefined;
 let audioCtx: AudioContext | undefined;
 let heartbeat: ReturnType<typeof setInterval> | undefined;

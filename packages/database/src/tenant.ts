@@ -39,6 +39,8 @@ export const TENANT_TABLES = [
   'ai_org_config',
   'ai_idempotency',
   'transcript_chunks',
+  'teams',
+  'team_members',
 ] as const;
 export type TenantTable = (typeof TENANT_TABLES)[number];
 
