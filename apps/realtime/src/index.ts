@@ -6,6 +6,8 @@ import { createRealtimeServer, denyAllVerifier } from './server.js';
 export * from './config.js';
 export * from './events.js';
 export * from './server.js';
+export * from './handshake.js';
+export * from './control-events.js';
 
 async function main(): Promise<void> {
   const log = createLogger({ name: 'realtime' });
@@ -15,7 +17,7 @@ async function main(): Promise<void> {
     config,
     verifySession: denyAllVerifier,
     canAccessMeeting: () => false,
-    logger: true
+    logger: true,
   });
   await app.listen({ host: config.host, port: config.port });
   log.info({ port: config.port, redis: Boolean(config.redisUrl) }, 'realtime listening');
