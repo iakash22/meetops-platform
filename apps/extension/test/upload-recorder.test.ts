@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { ChunkStore } from '../src/lib/chunk-store.js';
 import { MIME_TYPE, startRecording, type RecorderLike } from '../src/lib/recorder.js';
 import { StubUploadClient, UUID_RE } from '../src/lib/upload.js';
+import { CONSENT } from './helpers/consent.js';
 
 const MID = '6f1c2b8e-3d4a-4e5f-9a6b-7c8d9e0f1a2b';
 
@@ -59,6 +60,7 @@ describe('startRecording', () => {
     let mime = '';
     const h = await startRecording({
       meetingId: MID,
+      consent: CONSENT,
       stream,
       client,
       store,
@@ -75,6 +77,7 @@ describe('startRecording', () => {
       startedAt: '2026-10-21T17:30:00.000Z',
       source: 'tab',
       meetingId: MID,
+      consent: CONSENT,
     });
     expect(h.sessionId).toMatch(UUID_RE);
     expect(ev.onStarted).toHaveBeenCalledWith(h.sessionId);
@@ -110,6 +113,7 @@ describe('startRecording', () => {
     const ev = events();
     const h = await startRecording({
       meetingId: MID,
+      consent: CONSENT,
       stream: fakeStream().stream,
       client,
       store,
@@ -141,6 +145,7 @@ describe('startRecording', () => {
     const ev = events();
     const h = await startRecording({
       meetingId: MID,
+      consent: CONSENT,
       stream: fakeStream().stream,
       client,
       store,
@@ -163,6 +168,7 @@ describe('startRecording', () => {
     const rec = new FakeRecorder();
     const h = await startRecording({
       meetingId: MID,
+      consent: CONSENT,
       stream: fakeStream().stream,
       client,
       store,
@@ -183,6 +189,7 @@ describe('startRecording', () => {
     const ev = events();
     await startRecording({
       meetingId: MID,
+      consent: CONSENT,
       stream: fakeStream().stream,
       client,
       store,
@@ -212,6 +219,7 @@ describe('discard (captured-tab mismatch)', () => {
     const ev = events();
     const h = await startRecording({
       meetingId: MID,
+      consent: CONSENT,
       stream: fakeStream().stream,
       client,
       store,

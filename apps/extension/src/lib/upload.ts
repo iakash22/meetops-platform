@@ -7,6 +7,7 @@ import type {
   InitRecordingSessionRequest,
   InitRecordingSessionResponse,
 } from '@meetops/contracts/types';
+import { CURRENT_CONSENT_VERSION } from '@meetops/contracts/types';
 import { CHUNK_UPLOAD_URL_TTL_SECONDS, MAX_CHUNK_BYTES, MAX_CHUNKS } from './contract-limits.js';
 
 /** Signed headers of a presigned PUT; required by the contract (ChunkUploadUrlResponse.upload). */
@@ -336,6 +337,11 @@ export class StubUploadClient implements UploadClient {
           startedAt: new Date(0).toISOString(),
           source: 'tab',
           meetingId: '00000000-0000-4000-8000-000000000000',
+          consent: {
+            consentVersion: CURRENT_CONSENT_VERSION,
+            attestedAt: new Date(0).toISOString(),
+            method: 'all_parties_notified',
+          },
         },
         chunks: new Map(),
       };

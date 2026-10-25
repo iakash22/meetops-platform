@@ -1,7 +1,7 @@
 import type { ChunkStore } from './chunk-store.js';
 import { drainQueue } from './drain.js';
 import type { StorageEvent } from './messages.js';
-import type { AbortReason } from '@meetops/contracts/types';
+import type { AbortReason, ConsentAttestationInput } from '@meetops/contracts/types';
 import { MAX_CHUNK_BYTES, MAX_RECORDING_CHUNKS } from './contract-limits.js';
 import { sha256Hex, splitForUpload, toIsoTimestamp, type UploadClient } from './upload.js';
 
@@ -52,6 +52,8 @@ export async function startRecording(opts: {
   startedAt: number;
   /** InitRecordingSession.meetingId (required by contracts v0.2). */
   meetingId: string;
+  /** Contracts v0.4.1 (G11): the user's consent attestation for this meeting. Required by recording-session init. */
+  consent: ConsentAttestationInput;
   now?: () => number;
   timeslice?: number;
   /** Defaults to contracts MAX_CHUNK_BYTES (64 MiB). */
@@ -63,6 +65,7 @@ export async function startRecording(opts: {
     startedAt: toIsoTimestamp(opts.startedAt),
     source: 'tab' as const,
     meetingId: opts.meetingId,
+    consent: opts.consent,
   };
   const { sessionId } = await opts.client.initSession(meta);
   await opts.store.putSession({ sessionId, meta, completed: false });
