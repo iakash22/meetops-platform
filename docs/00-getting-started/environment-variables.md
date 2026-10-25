@@ -36,6 +36,8 @@ These variables are validated via `@meetops/config` (Zod) at runtime. Defaults s
 
 ### AI providers (Phase 0 contracts only)
 
+These keys are owned and parsed by `@meetops/ai-core` (`loadAIEnv` in `packages/ai-core/src/env.ts`). The copies in `@meetops/config` are `@deprecated` and kept only for `AppConfig` shape compatibility; read AI settings from `loadAIEnv`. Boolean keys accept `true|false|1|0|yes|no|on|off`; unset uses the default shown (paid fallback stays off unless `AI_ALLOW_PAID_FALLBACK` is explicitly true).
+
 - `AI_LLM_PROVIDER`: gemini
 - `GEMINI_MODEL`: gemini-2.5-flash-lite
 - `GEMINI_API_KEY`
