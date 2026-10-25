@@ -63,11 +63,12 @@ Fill in `.env` locally and never commit it. **(requires PR #7, unmerged)**: #7 m
 ## 5. Start the infra
 
 ```powershell
-pnpm dev:infra:up     # docker compose --env-file .env -f infra/compose/compose.dev.yml up -d
+pnpm docker:ensure    # opens Docker Desktop if needed, waits until ready
+pnpm dev:infra:up     # ensure-docker + compose up -d (infra/compose/compose.dev.yml)
 docker compose -f infra/compose/compose.dev.yml ps
 ```
 
-This starts Postgres (pgvector pg16), Redis, MinIO and `minio-init` (bucket creation). Stop it with `pnpm dev:infra:down`, and follow logs with `pnpm dev:infra:logs`.
+`dev:infra:up` already runs `docker:ensure`. This starts Postgres (pgvector pg16), Redis, MinIO and `minio-init` (bucket creation). Stop it with `pnpm dev:infra:down`, and follow logs with `pnpm dev:infra:logs`.
 
 ## 6. Database: migrations with two roles
 

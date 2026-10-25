@@ -34,13 +34,14 @@ pnpm dev
 
 ## Root scripts
 
-| Script                                       | What it runs                                                            |
-| -------------------------------------------- | ----------------------------------------------------------------------- |
-| `pnpm dev:infra:up`                          | `docker compose --env-file .env -f infra/compose/compose.dev.yml up -d` |
-| `pnpm dev:infra:down`                        | `... down`                                                              |
-| `pnpm dev:infra:logs`                        | `... logs -f`                                                           |
-| `pnpm dev`                                   | `turbo run dev`                                                         |
-| `pnpm build` / `lint` / `typecheck` / `test` | `turbo run <task>`                                                      |
+| Script                                       | What it runs                                                                                 |
+| -------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| `pnpm docker:ensure`                         | Start Docker Desktop if needed and wait until the engine is ready                            |
+| `pnpm dev:infra:up`                          | `docker:ensure` then `docker compose --env-file .env -f infra/compose/compose.dev.yml up -d` |
+| `pnpm dev:infra:down`                        | `docker:ensure` then `... down`                                                              |
+| `pnpm dev:infra:logs`                        | `docker:ensure` then `... logs -f`                                                           |
+| `pnpm dev`                                   | `turbo run dev`                                                                              |
+| `pnpm build` / `lint` / `typecheck` / `test` | `turbo run <task>`                                                                           |
 
 Optional profiles: `docker compose --env-file .env -f infra/compose/compose.dev.yml --profile ollama --profile local-stt up -d`.
 
