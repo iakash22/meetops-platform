@@ -7,12 +7,10 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { ApiError } from '@/lib/api/client';
 import { useApi } from '@/lib/api/context';
-import { describeError } from '@/lib/api/error-messages';
+import { notify, toastError } from '@/lib/errors/notify';
 import { describeUserAgent, formatDateTime } from './device-label';
 import { useEndLocalSession } from './end-session';
 import { accountKeys, useMySessions } from './queries';
-
-type Notice = { kind: 'status' | 'alert'; text: string } | null;
 
 /**
  * Active sessions (GET /auth/sessions) with per-session revoke (DELETE /auth/sessions/:id).
@@ -26,11 +24,9 @@ export function SessionsCard() {
   const query = useMySessions();
   const [confirming, setConfirming] = useState<string | null>(null);
   const [pending, setPending] = useState<string | null>(null);
-  const [notice, setNotice] = useState<Notice>(null);
 
   const revoke = async (s: SessionSummary) => {
     setPending(s.id);
-    setNotice(null);
     try {
       await api.auth.revokeSession(s.id);
     } catch (err) {
@@ -38,17 +34,17 @@ export function SessionsCard() {
       setPending(null);
       setConfirming(null);
       if (err instanceof ApiError && err.status === 404) {
-        setNotice({ kind: 'status', text: 'That session had already ended.' });
+        notify.info('That session had already ended.');
         await queryClient.invalidateQueries({ queryKey: accountKeys.sessions });
         return;
       }
-      setNotice({ kind: 'alert', text: describeError(err).message });
+      toastError(err, { title: "Couldn't revoke that session" });
       return;
     }
     if (s.current) return endLocalSession();
     setPending(null);
     setConfirming(null);
-    setNotice({ kind: 'status', text: `Signed out ${describeUserAgent(s.userAgent)}.` });
+    notify.success(`Signed out ${describeUserAgent(s.userAgent)}.`);
     await queryClient.invalidateQueries({ queryKey: accountKeys.sessions });
   };
 
@@ -63,16 +59,6 @@ export function SessionsCard() {
         </CardDescription>
       </CardHeader>
       <CardContent className="grid gap-3">
-        {notice ? (
-          <p
-            role={notice.kind}
-            className={
-              notice.kind === 'alert' ? 'text-sm text-destructive' : 'text-sm text-muted-foreground'
-            }
-          >
-            {notice.text}
-          </p>
-        ) : null}
         {query.isError ? (
           <ErrorState error={query.error} onRetry={() => void query.refetch()} />
         ) : query.isPending ? (

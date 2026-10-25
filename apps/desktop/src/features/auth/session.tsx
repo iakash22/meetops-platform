@@ -1,11 +1,13 @@
 import { createContext, useCallback, useContext, useMemo, useState, type ReactNode } from 'react';
-import type { LoginRequest } from '@meetops/contracts';
+import type { LoginRequest, SignupRequest } from '@meetops/contracts';
 
-import type { AuthClient, DesktopSession } from './auth-client';
+import type { AuthClient, DesktopSession, SignUpResult } from './auth-client';
 
 interface SessionContextValue {
   session: DesktopSession | null;
   signIn: (request: LoginRequest) => Promise<void>;
+  /** Creates the account only. Never sets a session: sign-up returns 202 and the email must be verified. */
+  signUp: (request: SignupRequest) => Promise<SignUpResult>;
   signOut: () => Promise<void>;
 }
 
@@ -21,6 +23,7 @@ export function SessionProvider({ client, children }: { client: AuthClient; chil
     },
     [client],
   );
+  const signUp = useCallback((request: SignupRequest) => client.signUp(request), [client]);
   const signOut = useCallback(async () => {
     try {
       await client.signOut();
@@ -29,7 +32,10 @@ export function SessionProvider({ client, children }: { client: AuthClient; chil
     }
   }, [client]);
 
-  const value = useMemo(() => ({ session, signIn, signOut }), [session, signIn, signOut]);
+  const value = useMemo(
+    () => ({ session, signIn, signUp, signOut }),
+    [session, signIn, signUp, signOut],
+  );
   return <SessionContext.Provider value={value}>{children}</SessionContext.Provider>;
 }
 
