@@ -98,9 +98,7 @@ function BrandPanel({ rich }: { rich: boolean }) {
         intensity={rich ? 'hero' : 'default'}
         className="flex w-full flex-col justify-center gap-8 p-10 xl:p-14"
       >
-        <h2 className="max-w-lg text-4xl font-semibold leading-tight tracking-tight xl:text-5xl">
-          {HEADLINE}
-        </h2>
+        <h2 className="max-w-lg text-display">{HEADLINE}</h2>
         {rich ? <MockSummary /> : null}
         <ul className="grid max-w-md gap-4">
           {VALUE_PROPS.map(({ icon: Icon, title, body }) => (

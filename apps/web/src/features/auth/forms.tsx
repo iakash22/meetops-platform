@@ -45,7 +45,7 @@ export function AuthCard({
   return (
     <section className="grid gap-6">
       <header className="grid gap-2">
-        <h1 className="text-3xl font-semibold tracking-tight sm:text-4xl">{title}</h1>
+        <h1 className="text-h1">{title}</h1>
         <p className="text-base text-muted-foreground">{description}</p>
       </header>
       {children}
