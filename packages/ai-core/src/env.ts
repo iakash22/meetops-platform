@@ -4,7 +4,9 @@ const bool = (def: boolean) =>
   z
     .union([z.boolean(), z.string()])
     .optional()
-    .transform((v) => (v === undefined || v === '' ? def : typeof v === 'boolean' ? v : /^(1|true|yes|on)$/i.test(v)));
+    .transform((v) =>
+      v === undefined || v === '' ? def : typeof v === 'boolean' ? v : /^(1|true|yes|on)$/i.test(v),
+    );
 
 const optStr = z
   .string()
@@ -15,7 +17,9 @@ export const aiEnvSchema = z.object({
   AI_LLM_PROVIDER: z.enum(['gemini', 'ollama', 'openai']).default('gemini'),
   GEMINI_MODEL: z.string().min(1).default('gemini-2.5-flash-lite'),
   GEMINI_API_KEY: optStr,
-  AI_STT_PROVIDER: z.enum(['assemblyai', 'faster-whisper', 'deepgram', 'openai']).default('assemblyai'),
+  AI_STT_PROVIDER: z
+    .enum(['assemblyai', 'faster-whisper', 'deepgram', 'openai'])
+    .default('assemblyai'),
   ASSEMBLYAI_API_KEY: optStr,
   OLLAMA_ENABLED: bool(false),
   OLLAMA_BASE_URL: z.string().url().default('http://localhost:11434'),
@@ -34,7 +38,11 @@ export const aiEnvSchema = z.object({
 });
 export type AIEnv = z.infer<typeof aiEnvSchema>;
 
-export type ProviderAvailability = { provider: string; available: boolean; reason?: string | undefined };
+export type ProviderAvailability = {
+  provider: string;
+  available: boolean;
+  reason?: string | undefined;
+};
 
 export type LoadedAIEnv = { env: AIEnv; availability: ProviderAvailability[]; errors: string[] };
 
@@ -53,7 +61,9 @@ export function loadAIEnv(
   if (parsed.success) env = parsed.data;
   else if (production) {
     // Fail fast in production: never boot with silently-defaulted AI config. Messages name vars, never values.
-    throw new Error(`Invalid AI env: ${parsed.error.issues.map((i) => i.path.join('.')).join(', ')}`);
+    throw new Error(
+      `Invalid AI env: ${parsed.error.issues.map((i) => i.path.join('.')).join(', ')}`,
+    );
   } else {
     for (const issue of parsed.error.issues) errors.push(`${issue.path.join('.')}: invalid`);
     const bad = new Set(parsed.error.issues.map((i) => String(i.path[0])));
@@ -72,7 +82,13 @@ export function loadAIEnv(
       env.OPENAI_ENABLED && !!env.OPENAI_API_KEY,
       env.OPENAI_ENABLED ? 'OPENAI_API_KEY is not set' : 'OPENAI_ENABLED is false',
     ),
-    a('deepgram', false, env.DEEPGRAM_ENABLED ? 'Deepgram adapter is a stub (not implemented yet)' : 'DEEPGRAM_ENABLED is false'),
+    a(
+      'deepgram',
+      false,
+      env.DEEPGRAM_ENABLED
+        ? 'Deepgram adapter is a stub (not implemented yet)'
+        : 'DEEPGRAM_ENABLED is false',
+    ),
   ];
   return { env, availability, errors };
 }
