@@ -1,9 +1,10 @@
-import { forwardRef, useState, type ReactNode, type TextareaHTMLAttributes } from 'react';
+import { forwardRef, useState, type ReactNode } from 'react';
 import type { InfiniteData, UseInfiniteQueryResult } from '@tanstack/react-query';
 import { EmptyState, ErrorState, LoadingState } from '@/components/states/states';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Textarea, type TextareaProps } from '@/components/ui/textarea';
 import {
   Select,
   SelectContent,
@@ -200,7 +201,7 @@ export function SelectField({
   );
 }
 
-type TextAreaFieldProps = TextareaHTMLAttributes<HTMLTextAreaElement> & {
+type TextAreaFieldProps = TextareaProps & {
   label: string;
   name: string;
   error?: string | undefined;
@@ -212,14 +213,12 @@ export const TextAreaField = forwardRef<HTMLTextAreaElement, TextAreaFieldProps>
     return (
       <div className="grid gap-1.5">
         <Label htmlFor={inputId}>{label}</Label>
-        <textarea
+        <Textarea
           id={inputId}
           name={name}
           ref={ref}
           rows={3}
           aria-invalid={error ? true : undefined}
-          // No shared Textarea primitive yet (see PR follow-ups); token classes mirror ui/input.
-          className="flex min-h-16 w-full rounded-md border border-input bg-transparent px-3 py-2 text-base shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50 md:text-sm"
           {...props}
         />
         {error ? (
