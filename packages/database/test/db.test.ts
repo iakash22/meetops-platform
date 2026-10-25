@@ -48,9 +48,9 @@ describe('generated client', () => {
     await db.disconnectPrismaClient();
   });
 
-  it('exposes exactly the 31 models', () => {
+  it('exposes exactly the 32 models', () => {
     const models = Object.values(Prisma.ModelName);
-    expect(models).toHaveLength(31);
+    expect(models).toHaveLength(32);
     for (const m of [
       'Organization',
       'User',
@@ -83,6 +83,7 @@ describe('generated client', () => {
       'TranscriptChunk',
       'Team',
       'TeamMember',
+      'ConsentAttestation',
     ]) {
       expect(models).toContain(m);
     }

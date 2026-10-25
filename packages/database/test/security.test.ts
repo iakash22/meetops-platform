@@ -61,6 +61,8 @@ const aiTenantSql = readFileSync(
 );
 /** DB-1 teams: new tenant tables enable and police RLS in their own migration (ADR-010 setting only). */
 const teamsSql = readFileSync(resolve(migrationsDir, '20261025090000_teams/migration.sql'), 'utf8');
+const CONSENT_MIGRATION = '20261025120000_consent_scan_keycheck';
+const consentSql = readFileSync(resolve(migrationsDir, CONSENT_MIGRATION, 'migration.sql'), 'utf8');
 const rlsSql =
   readFileSync(resolve(migrationsDir, '20261021110000_tenant_rls_roles/migration.sql'), 'utf8') +
   laterTenantSql +
@@ -89,6 +91,8 @@ const ORG_EXPR =
 const ADR010_EXPR = "NULLIF(current_setting('app.current_organization_id', true), '')::uuid";
 /** Tenant tables whose policies never had the legacy fallback (DB-1 and later). */
 const ADR010_ONLY_TABLES: readonly string[] = ['teams', 'team_members'];
+/** DB-3: append-only tenant tables with their own SELECT/INSERT policies (ADR-010 setting) in consentSql. */
+const CONSENT_TABLES: readonly string[] = ['consent_attestations'];
 
 /** Parse models from schema: table name + body. */
 const models = [...schema.matchAll(/model (\w+) \{([\s\S]*?)\n\}/g)].map((m) => {
@@ -159,6 +163,17 @@ describe('tenant schema', () => {
 
 describe('RLS migration', () => {
   it.each([...TENANT_TABLES])('%s has RLS enabled, forced, and a tenant policy', (t) => {
+    if (CONSENT_TABLES.includes(t)) {
+      expect(consentSql).toContain(`ALTER TABLE "${t}" ENABLE ROW LEVEL SECURITY;`);
+      expect(consentSql).toContain(`ALTER TABLE "${t}" FORCE ROW LEVEL SECURITY;`);
+      expect(consentSql).toContain(
+        `CREATE POLICY consent_select ON "${t}" FOR SELECT\n  USING (org_id = ${ADR010_EXPR});`,
+      );
+      expect(consentSql).toContain(
+        `CREATE POLICY consent_insert ON "${t}" FOR INSERT\n  WITH CHECK (org_id = ${ADR010_EXPR});`,
+      );
+      return;
+    }
     expect(rlsSql).toContain(`ALTER TABLE "${t}" ENABLE ROW LEVEL SECURITY;`);
     expect(rlsSql).toContain(`ALTER TABLE "${t}" FORCE ROW LEVEL SECURITY;`);
     expect(rlsSql).toContain(`CREATE POLICY tenant_isolation ON "${t}"`);
@@ -183,7 +198,10 @@ describe('RLS migration', () => {
   });
 
   it('does not enable RLS on global tables', () => {
-    for (const t of GLOBAL_TABLES) expect(rlsSql).not.toContain(`ALTER TABLE "${t}" ENABLE`);
+    for (const t of GLOBAL_TABLES) {
+      expect(rlsSql).not.toContain(`ALTER TABLE "${t}" ENABLE`);
+      expect(consentSql).not.toContain(`ALTER TABLE "${t}" ENABLE`);
+    }
   });
 
   it('creates roles idempotently with NOBYPASSRLS for the app and DML-only grants', () => {
@@ -475,7 +493,11 @@ describe('storage key convention', () => {
 describe('XT-26..XT-28 static guarantees', () => {
   it('XT-26: policies use missing_ok current_setting so no context => NULL => 0 rows', () => {
     const policies = policySql.split(ORG_EXPR).length - 1;
-    expect(policies).toBe((TENANT_TABLES.length - ADR010_ONLY_TABLES.length) * 2);
+    expect(policies).toBe(
+      (TENANT_TABLES.length - ADR010_ONLY_TABLES.length - CONSENT_TABLES.length) * 2,
+    );
+    expect(consentSql.split(ADR010_EXPR).length - 1).toBe(CONSENT_TABLES.length * 2);
+    expect(consentSql).not.toMatch(/current_setting\('app\.current_(org|organization)_id'\)/);
     expect(teamsSql.split(ADR010_EXPR).length - 1).toBe(ADR010_ONLY_TABLES.length * 2);
     expect(teamsSql).not.toMatch(/current_setting\('app\.current_(org|organization)_id'\)/);
     expect(policySql).not.toMatch(/current_setting\('app\.current_(org|organization)_id'\)/);
@@ -485,7 +507,10 @@ describe('XT-26..XT-28 static guarantees', () => {
   it('XT-27: every tenant policy has WITH CHECK', () => {
     // audit_events uses audit_insert (FOR INSERT ... WITH CHECK) instead of tenant_isolation.
     const n = (policySql.match(/CREATE POLICY tenant_isolation[^;]*WITH CHECK/g) ?? []).length;
-    expect(n).toBe(TENANT_TABLES.length - 1 - ADR010_ONLY_TABLES.length);
+    expect(n).toBe(TENANT_TABLES.length - 1 - ADR010_ONLY_TABLES.length - CONSENT_TABLES.length);
+    expect(consentSql).toMatch(
+      /CREATE POLICY consent_insert ON "consent_attestations" FOR INSERT\n {2}WITH CHECK/,
+    );
     expect((teamsSql.match(/CREATE POLICY tenant_isolation[^;]*WITH CHECK/g) ?? []).length).toBe(
       ADR010_ONLY_TABLES.length,
     );
@@ -588,7 +613,7 @@ describe('schema conventions', () => {
   });
 
   it('every model uses a uuid primary key', () => {
-    expect(models).toHaveLength(31);
+    expect(models).toHaveLength(32);
     for (const m of models.filter((x) => !ORGANIZATION_KEYED.includes(x.table)))
       expect(m.body, m.name).toMatch(/^\s+id\s+String\s+@id @default\(uuid\(\)\) @db\.Uuid$/m);
   });
@@ -1053,6 +1078,78 @@ describe('DB-1 teams and team_members (static)', () => {
       .filter((d) => d.isDirectory())
       .map((d) => d.name)
       .sort();
-    expect(dirs.at(-1)).toBe('20261025090000_teams');
+    expect(dirs.indexOf('20261025090000_teams')).toBe(dirs.indexOf(CONSENT_MIGRATION) - 1);
+  });
+});
+
+describe('DB-3 consent_attestations, scan_status and storage-key CHECKs (static)', () => {
+  const model = (name: string) => models.find((m) => m.name === name)?.body ?? '';
+  const statements = consentSql.replace(/--.*$/gm, '');
+
+  it('is the latest migration', () => {
+    const dirs = readdirSync(migrationsDir, { withFileTypes: true })
+      .filter((d) => d.isDirectory())
+      .map((d) => d.name)
+      .sort();
+    expect(dirs.at(-1)).toBe(CONSENT_MIGRATION);
+  });
+
+  it('is additive only: no drop, rename, retype or NO FORCE of existing objects', () => {
+    expect(statements).not.toMatch(/\bDROP\b|RENAME|ALTER COLUMN|NO FORCE|TYPE\s+"?\w+"?\s+USING/i);
+    const alters = statements.match(/ALTER TABLE "file_objects" [A-Z]+ [A-Z]+/g) ?? [];
+    expect([...new Set(alters)].sort()).toEqual([
+      'ALTER TABLE "file_objects" ADD COLUMN',
+      'ALTER TABLE "file_objects" ADD CONSTRAINT',
+      'ALTER TABLE "file_objects" VALIDATE CONSTRAINT',
+    ]);
+  });
+
+  it("adds file_objects.scan_status defaulting to 'pending'", () => {
+    expect(schema).toMatch(
+      /enum FileScanStatus \{\s+pending\s+clean\s+quarantined\s+rejected\s+\}/,
+    );
+    expect(model('FileObject')).toMatch(
+      /scanStatus\s+FileScanStatus\s+@default\(pending\) @map\("scan_status"\)/,
+    );
+    expect(consentSql).toContain(
+      `ALTER TABLE "file_objects" ADD COLUMN     "scan_status" "FileScanStatus" NOT NULL DEFAULT 'pending';`,
+    );
+  });
+
+  it('binds storage_key to the org prefix (and legacy org/) and validates the sha256 CHECK, after a preflight', () => {
+    const pre = consentSql.indexOf('consent_scan_keycheck preflight failed');
+    const key = consentSql.indexOf('ADD CONSTRAINT "file_objects_storage_key_org_check"');
+    const sha = consentSql.indexOf('VALIDATE CONSTRAINT "file_objects_checksum_sha256_check"');
+    expect(pre).toBeGreaterThan(0);
+    expect(key).toBeGreaterThan(pre);
+    expect(sha).toBeGreaterThan(pre);
+    expect(consentSql).toContain(
+      `starts_with("storage_key", 'organizations/' || "org_id"::text || '/')`,
+    );
+    expect(consentSql).toContain(`starts_with("storage_key", 'org/' || "org_id"::text || '/')`);
+    expect(consentSql).not.toMatch(/file_objects_storage_key_org_check"[^;]*NOT VALID/);
+  });
+
+  it('consent_attestations is a forced-RLS, append-only tenant table with server-side columns', () => {
+    expect(TENANT_TABLES).toContain('consent_attestations');
+    const m = model('ConsentAttestation');
+    expect(m).toContain('@@unique([organizationId, id])');
+    expect(m).toContain('@@index([organizationId, subjectType, subjectId])');
+    expect(m).toMatch(/attestedByUserId\s+String\s+@map\("attested_by_user_id"\)/);
+    expect(m).toMatch(/recordedAt\s+DateTime\s+@default\(now\(\)\)/);
+    expect(m).not.toMatch(/updatedAt|deletedAt/);
+    expect(consentSql).toContain('REVOKE ALL ON TABLE "consent_attestations" FROM meetops_app;');
+    expect(consentSql).toContain(
+      'GRANT SELECT, INSERT ON TABLE "consent_attestations" TO meetops_app;',
+    );
+    expect(consentSql).not.toMatch(
+      /GRANT [^;]*(UPDATE|DELETE|TRUNCATE)[^;]*"consent_attestations"/,
+    );
+    expect(consentSql).toMatch(/BEFORE UPDATE OR DELETE ON "consent_attestations"/);
+    expect(consentSql).toMatch(/BEFORE TRUNCATE ON "consent_attestations"/);
+    expect(consentSql).toMatch(/AFTER INSERT ON "consent_attestations"/);
+    expect(consentSql).toContain("RAISE EXCEPTION 'RLS enabled but not forced on: %'");
+    expect(consentSql).toContain(`CHECK ("consent_version" ~ '^[A-Za-z0-9][A-Za-z0-9._-]{0,31}$')`);
+    expect(consentSql).toContain(`CHECK ("attested_at" <= "recorded_at" + interval '300 seconds')`);
   });
 });

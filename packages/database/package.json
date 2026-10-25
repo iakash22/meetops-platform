@@ -21,7 +21,7 @@
     "db:migrate:dev": "prisma migrate dev",
     "db:migrate:deploy": "prisma migrate deploy",
     "db:seed": "prisma db seed",
-    "test:live": "vitest run test/rls.live.test.ts test/tenant-isolation.live.test.ts test/media.live.test.ts test/key-prefix.live.test.ts test/ai-transcripts.live.test.ts",
+    "test:live": "vitest run test/rls.live.test.ts test/tenant-isolation.live.test.ts test/media.live.test.ts test/key-prefix.live.test.ts test/ai-transcripts.live.test.ts test/consent-scan.live.test.ts",
     "db:roles": "tsx scripts/create-db-roles.ts",
     "db:roles:sh": "sh scripts/create-db-roles.sh"
   },
