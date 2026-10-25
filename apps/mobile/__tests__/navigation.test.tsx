@@ -1,40 +1,8 @@
 import '@testing-library/react-native/extend-expect';
-import { Slot } from 'expo-router';
 import { act, fireEvent, renderRouter, screen, waitFor } from 'expo-router/testing-library';
 
-import AppLayout from '../app/(app)/_layout';
-import MeetingsIndex from '../app/(app)/index';
-import Organizations from '../app/(app)/organizations';
-import AuthLayout from '../app/(auth)/_layout';
-import Login from '../app/(auth)/login';
-import { AuthProvider } from '../src/auth/AuthProvider';
 import { guardRedirect } from '../src/auth/guards';
-import { createMockAuthClient, demoAccount } from '../src/auth/mockAuthClient';
-import { createSessionManager, type SessionManager } from '../src/auth/sessionManager';
-import { createInMemoryTokenStore } from '../src/auth/tokenStore';
-
-const account = demoAccount('ada@example.com', 'correct horse battery');
-
-function routes(manager: SessionManager) {
-  return {
-    _layout: () => (
-      <AuthProvider manager={manager}>
-        <Slot />
-      </AuthProvider>
-    ),
-    '(auth)/_layout': AuthLayout,
-    '(auth)/login': Login,
-    '(app)/_layout': AppLayout,
-    '(app)/index': MeetingsIndex,
-    '(app)/organizations': Organizations,
-  };
-}
-
-function makeManager() {
-  const client = createMockAuthClient({ accounts: [account] });
-  const store = createInMemoryTokenStore();
-  return { client, store, manager: createSessionManager({ client, store }) };
-}
+import { account, makeManager, routes } from './support/appRoutes';
 
 describe('guardRedirect', () => {
   it('maps auth state and route group to a redirect', () => {
@@ -54,6 +22,15 @@ describe('navigation guards and screens', () => {
     await waitFor(() => expect(screen).toHavePathname('/login'));
     expect(await screen.findByText('Sign in to MeetOps')).toBeTruthy();
   });
+
+  it.each(['/record', '/tasks', '/account', '/organizations'])(
+    'guards the %s tab route for signed-out users',
+    async (url) => {
+      const { manager } = makeManager();
+      renderRouter(routes(manager), { initialUrl: url });
+      await waitFor(() => expect(screen).toHavePathname('/login'));
+    },
+  );
 
   it('shows field errors and does not call the client for an empty form', async () => {
     const { manager, client } = makeManager();
@@ -80,7 +57,7 @@ describe('navigation guards and screens', () => {
     expect(screen).toHavePathname('/login');
   });
 
-  it('signs in and lands on the meetings placeholder for the active org without claiming recording', async () => {
+  it('signs in and lands on the meetings tab for the active org', async () => {
     const { manager } = makeManager();
     renderRouter(routes(manager), { initialUrl: '/login' });
     fireEvent.changeText(await screen.findByTestId('login-email'), account.email);
@@ -88,7 +65,6 @@ describe('navigation guards and screens', () => {
     fireEvent.press(screen.getByTestId('login-submit'));
     await waitFor(() => expect(screen).toHavePathname('/'));
     expect(await screen.findByTestId('active-org')).toHaveTextContent('Demo Organization');
-    expect(screen.getByTestId('recording-status')).toHaveTextContent('Recording not available yet');
     expect(await screen.findAllByTestId('meeting-row')).toHaveLength(4);
     // Rose accent marks only the live meeting.
     expect(screen.getAllByTestId('live-dot', { includeHiddenElements: true })).toHaveLength(1);
@@ -120,7 +96,7 @@ describe('navigation guards and screens', () => {
     const { manager, store } = makeManager();
     await manager.signIn(account);
     expect(await store.load()).not.toBeNull();
-    renderRouter(routes(manager), { initialUrl: '/' });
+    renderRouter(routes(manager), { initialUrl: '/account' });
     fireEvent.press(await screen.findByTestId('sign-out'));
     await waitFor(() => expect(screen).toHavePathname('/login'));
     expect(await store.load()).toBeNull();

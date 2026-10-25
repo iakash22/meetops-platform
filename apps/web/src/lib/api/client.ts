@@ -20,7 +20,6 @@ import type {
   Meeting,
   Paginated,
   PresignedUrlDto,
-  Project,
   SignupRequest,
   Task,
   ListTasksQuery,
@@ -35,6 +34,7 @@ import {
   EXTENSION_AUTH_PATHS,
   type ConflictReason,
 } from '@meetops/contracts/types';
+import { createHttpDirectoryApi, type DirectoryApi } from '@/features/directory/api';
 
 /** Contracts ApiErrorEnvelope codes plus 'UNKNOWN' when the body is unparseable. */
 export type ApiErrorCode = ContractApiErrorCode | 'UNKNOWN';
@@ -258,7 +258,8 @@ export type ApiClient = {
   tasks: {
     list: (organizationId: Id, filters?: TaskListFilters) => Promise<Paginated<Task>>;
   };
-  projects: { list: (organizationId: Id) => Promise<Paginated<Project>> };
+  /** Employees, teams, team members and projects (contracts v0.4 directory, BE-3). */
+  directory: DirectoryApi;
   /** Low-level request (cookie session + CSRF on non-GET). */
   request: <T>(method: HttpMethod, path: string, body?: unknown) => Promise<T>;
   storage: {
@@ -481,7 +482,7 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
         request('GET', `${org(id)}/meetings/${encodeURIComponent(meetingId)}`),
     },
     tasks: { list: (id, filters) => request('GET', `${org(id)}/tasks${taskQuery(filters)}`) },
-    projects: { list: (id) => request('GET', `${org(id)}/projects`) },
+    directory: createHttpDirectoryApi(request),
     storage: {
       createUpload: (id, body) => request('POST', `${org(id)}/uploads`, body),
       putToPresignedUrl: async (upload, file) => {
