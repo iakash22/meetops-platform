@@ -9,6 +9,7 @@ These variables are validated via `@meetops/config` (Zod) at runtime. Defaults s
 ### Database
 
 - `DATABASE_URL`: postgresql connection string (default: postgres://postgres:postgres@localhost:5432/meetops)
+  - The API and the media worker (`apps/worker`, required since PR #118) use it as the runtime connection. Outside throwaway local setups it must be the `meetops_app` role (`NOBYPASSRLS`, DML only), never `meetops_migrator` or a superuser; see `packages/database/docs/ci-live-db.md`.
 
 ### Redis
 
