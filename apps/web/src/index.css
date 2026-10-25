@@ -3,6 +3,41 @@
 @tailwind utilities;
 
 /*
+ * Self-hosted variable fonts (OFL-1.1, Latin subset). Provenance and licences: public/fonts/README.md.
+ * Spec: docs/05-web/typography-and-motion.md. Only the sans is preloaded (index.html); the mono
+ * downloads only when a timecode/transcript/code element is first rendered.
+ */
+@font-face {
+  font-family: 'InterVariable';
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url('/fonts/InterVariable-latin.woff2') format('woff2');
+  unicode-range:
+    U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329,
+    U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: normal;
+  font-weight: 100 800;
+  font-display: swap;
+  src: url('/fonts/JetBrainsMono-latin.woff2') format('woff2');
+  unicode-range:
+    U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329,
+    U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+/* Metric-matched local fallback so the swap to Inter causes ~no layout shift (CLS). */
+@font-face {
+  font-family: 'Inter Fallback';
+  src: local('Arial'), local('Liberation Sans'), local('Helvetica');
+  size-adjust: 104.68%;
+  ascent-override: 92.54%;
+  descent-override: 23.04%;
+  line-gap-override: 0%;
+}
+
+/*
  * MeetOps brand theme (dark-first). Source of truth for values:
  * docs/05-web/brand-theme.md — keep mobile/desktop/extension in sync.
  * Values are HSL channels consumed as hsl(var(--token)) by tailwind.config.ts.
@@ -45,15 +80,29 @@
     /* Radius scale: sm 6px · md 8px · lg 12px (--radius) · xl 16px */
     --radius: 0.75rem;
 
-    /* Motion: 150–200ms, disabled under prefers-reduced-motion */
-    --duration-fast: 150ms;
-    --duration-base: 200ms;
-    --ease-out: cubic-bezier(0.2, 0, 0, 1);
+    /* Motion tokens (docs/05-web/typography-and-motion.md). Reduced motion collapses them. */
+    --duration-instant: 100ms; /* press feedback, exits */
+    --duration-fast: 150ms; /* hover, popover/tooltip enter */
+    --duration-base: 200ms; /* toast, dialog, page enter */
+    --duration-slow: 300ms; /* sheets, large surfaces */
+    --ease-out: cubic-bezier(0.2, 0.8, 0.2, 1); /* enter / decelerate */
+    --ease-standard: cubic-bezier(0.4, 0, 0.2, 1); /* move / resize */
+    --ease-in: cubic-bezier(0.4, 0, 1, 1); /* exit / accelerate */
 
-    /* Typography: Inter when installed locally, otherwise the system sans stack (no webfont dep). */
+    /* Typography */
     --font-sans:
-      Inter, ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial,
-      'Noto Sans', sans-serif;
+      'InterVariable', 'Inter Fallback', ui-sans-serif, system-ui, -apple-system, 'Segoe UI',
+      Roboto, 'Helvetica Neue', Arial, 'Noto Sans', sans-serif;
+    --font-mono:
+      'JetBrains Mono', ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono',
+      monospace;
+
+    /* Layout */
+    --header-height: 3.5rem; /* 56px sticky top bar */
+    --sidebar-width: 15rem; /* 240px */
+    --sidebar-width-collapsed: 4rem; /* 64px icon rail */
+    --content-max: 80rem; /* 1280px page container */
+    --measure: 70ch; /* prose / transcript line length */
 
     /* Optional subtle glows for brand/logo elements only */
     --glow-primary: 0 0 12px hsl(195.8 100% 32.7% / 0.45);
@@ -64,16 +113,78 @@
   }
   html {
     font-family: var(--font-sans);
-    font-feature-settings: 'cv11', 'ss01';
+    /* cv11 single-storey a; calt contextual punctuation. */
+    font-feature-settings: 'cv11', 'calt';
     text-rendering: optimizeLegibility;
+    -webkit-text-size-adjust: 100%;
+    /* Anchor jumps / focus scrolling clear the sticky top bar. */
+    scroll-padding-top: calc(var(--header-height) + 1rem);
+    scrollbar-color: hsl(var(--border)) transparent;
+  }
+  @media (prefers-reduced-motion: no-preference) {
+    html {
+      scroll-behavior: smooth;
+    }
   }
   body {
-    @apply bg-background text-foreground antialiased;
+    @apply bg-background text-body text-foreground antialiased;
   }
   h1,
   h2,
+  h3,
+  h4,
+  h5,
+  h6 {
+    text-wrap: balance;
+  }
+  h1 {
+    @apply text-h1;
+  }
+  h2 {
+    @apply text-h2;
+  }
   h3 {
-    @apply tracking-tight;
+    @apply text-h3;
+  }
+  h4 {
+    @apply text-h4;
+  }
+  h5 {
+    @apply text-h5;
+  }
+  h6 {
+    @apply text-h6;
+  }
+  p {
+    text-wrap: pretty;
+  }
+  code,
+  kbd,
+  samp,
+  pre {
+    font-family: var(--font-mono);
+    font-size: 0.9em;
+    font-variant-ligatures: none;
+  }
+  /* Dark scrollbars (Chromium/Safari; Firefox uses scrollbar-color above). */
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background-color: hsl(var(--border));
+    border: 2px solid transparent;
+    border-radius: 9999px;
+    background-clip: content-box;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background-color: hsl(var(--input));
+  }
+  ::-webkit-scrollbar-corner {
+    background: transparent;
   }
   :focus-visible {
     outline: 2px solid hsl(var(--ring));
@@ -148,6 +259,80 @@
     animation: shimmer 2.2s var(--ease-out) infinite;
   }
 
+  /* Timers, durations, timestamps: mono + fixed-width digits + slashed/dotted zero. */
+  .timecode {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums slashed-zero;
+    font-variant-ligatures: none;
+    letter-spacing: 0;
+  }
+  /* Tabular figures in the UI sans (tables, KPIs). Tailwind's tabular-nums also works. */
+  .nums-tabular {
+    font-variant-numeric: tabular-nums;
+  }
+  /* Comfortable reading width for prose, summaries and transcripts. */
+  .measure {
+    max-width: var(--measure);
+  }
+
+  /* Contained scroll region: thin dark scrollbar, no scroll chaining, no layout jump. */
+  .scroll-area {
+    overflow: auto;
+    overscroll-behavior: contain;
+    scrollbar-width: thin;
+    scrollbar-gutter: stable;
+  }
+  /* Soft edge fade for scroll regions (static mask; no motion). */
+  .scroll-fade-y {
+    -webkit-mask-image: linear-gradient(
+      to bottom,
+      transparent,
+      #000 16px,
+      #000 calc(100% - 16px),
+      transparent
+    );
+    mask-image: linear-gradient(
+      to bottom,
+      transparent,
+      #000 16px,
+      #000 calc(100% - 16px),
+      transparent
+    );
+  }
+  .scroll-fade-x {
+    -webkit-mask-image: linear-gradient(
+      to right,
+      transparent,
+      #000 16px,
+      #000 calc(100% - 16px),
+      transparent
+    );
+    mask-image: linear-gradient(
+      to right,
+      transparent,
+      #000 16px,
+      #000 calc(100% - 16px),
+      transparent
+    );
+  }
+  /* Horizontal snapping rows (chips, cards carousel on mobile). */
+  .snap-row {
+    display: flex;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    scroll-snap-type: x mandatory;
+    scrollbar-width: thin;
+  }
+  .snap-row > * {
+    scroll-snap-align: start;
+    flex-shrink: 0;
+  }
+
+  /* Stagger children of an entering list: set style="--i: n" on each child; capped at 6 steps. */
+  .stagger > * {
+    animation-delay: calc(min(var(--i, 0), 6) * 30ms);
+  }
+
   .transition-base {
     transition-property: color, background-color, border-color, box-shadow, opacity, transform;
     transition-duration: var(--duration-fast);
@@ -167,6 +352,44 @@
   }
 }
 
+/* Scroll-driven reveal: progressive enhancement. Without support (or with reduced motion) content
+   is simply visible — the base state is never hidden. */
+@supports (animation-timeline: view()) {
+  @media (prefers-reduced-motion: no-preference) {
+    .reveal-on-scroll {
+      animation: reveal linear both;
+      animation-timeline: view();
+      animation-range: entry 0% cover 20%;
+    }
+  }
+}
+@keyframes reveal {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+}
+
+/* View Transitions API (progressive enhancement): a short cross-fade for same-document
+   navigations started with document.startViewTransition(). */
+::view-transition-old(root) {
+  animation: var(--duration-instant) var(--ease-in) both vt-fade-out;
+}
+::view-transition-new(root) {
+  animation: var(--duration-base) var(--ease-out) both vt-fade-in;
+}
+@keyframes vt-fade-out {
+  to {
+    opacity: 0;
+  }
+}
+@keyframes vt-fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+}
+
 @keyframes shimmer {
   to {
     transform: translateX(100%);
@@ -181,6 +404,11 @@
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
     scroll-behavior: auto !important;
+  }
+  ::view-transition-group(*),
+  ::view-transition-old(*),
+  ::view-transition-new(*) {
+    animation: none !important;
   }
   .shimmer::after {
     display: none;
