@@ -2,31 +2,69 @@
 @tailwind components;
 @tailwind utilities;
 
+/*
+ * MeetOps brand theme (dark-first). Source of truth for values:
+ * docs/05-web/brand-theme.md — keep mobile/desktop/extension in sync.
+ * Values are HSL channels consumed as hsl(var(--token)) by tailwind.config.ts.
+ */
 @layer base {
   :root {
-    --background: 0 0% 100%;
-    --foreground: 222.2 84% 4.9%;
-    --card: 0 0% 100%;
-    --card-foreground: 222.2 84% 4.9%;
-    --primary: 222.2 47.4% 11.2%;
-    --primary-foreground: 210 40% 98%;
-    --secondary: 210 40% 96.1%;
-    --secondary-foreground: 222.2 47.4% 11.2%;
-    --muted: 210 40% 96.1%;
-    --muted-foreground: 215.4 16.3% 46.9%;
-    --accent: 210 40% 96.1%;
-    --accent-foreground: 222.2 47.4% 11.2%;
-    --destructive: 0 84.2% 60.2%;
-    --destructive-foreground: 210 40% 98%;
-    --border: 214.3 31.8% 91.4%;
-    --input: 214.3 31.8% 91.4%;
-    --ring: 222.2 84% 4.9%;
+    color-scheme: dark;
+
+    /* Surfaces */
+    --background: 0 0% 3.9%; /* #0A0A0A Jet Black */
+    --foreground: 240 11.1% 96.5%; /* #F5F5F7 */
+    --card: 240 4.8% 8.2%; /* #141416 surface-1 */
+    --card-foreground: 240 11.1% 96.5%; /* #F5F5F7 */
+    --popover: 240 5.1% 11.6%; /* #1C1C1F surface-2 */
+    --popover-foreground: 240 11.1% 96.5%; /* #F5F5F7 */
+
+    /* Brand */
+    --primary: 195.8 100% 32.7%; /* #007BA7 Cerulean Blue (fills) */
+    --primary-foreground: 0 0% 100%; /* #FFFFFF */
+    --link: 197.3 72.8% 55.3%; /* #3AB0E0 cerulean-light (text on dark) */
+    --highlight: 330.3 100% 58.8%; /* #FF2D95 Neon Rose (sparing accent) */
+    --highlight-foreground: 0 0% 3.9%; /* #0A0A0A */
+
+    /* Neutral interaction surfaces (shadcn "secondary"/"muted"/"accent") */
+    --secondary: 240 5.1% 11.6%; /* #1C1C1F */
+    --secondary-foreground: 240 11.1% 96.5%; /* #F5F5F7 */
+    --muted: 240 4.8% 8.2%; /* #141416 */
+    --muted-foreground: 240 5% 64.9%; /* #A1A1AA */
+    --accent: 240 5.1% 11.6%; /* #1C1C1F hover/selected surface */
+    --accent-foreground: 240 11.1% 96.5%; /* #F5F5F7 */
+
+    /* Status */
+    --destructive: 0 84.2% 60.2%; /* #EF4444 (distinct from rose; also AA as text on bg) */
+    --destructive-foreground: 0 0% 3.9%; /* #0A0A0A (AA on #EF4444; white is only 3.76:1) */
+
+    /* Lines & focus */
+    --border: 240 4.5% 17.3%; /* #2A2A2E */
+    --input: 240 3.6% 43.5%; /* #6B6B73 (>=3:1 on bg for form controls) */
+    --ring: 197.3 72.8% 55.3%; /* #3AB0E0 */
     --radius: 0.5rem;
+
+    /* Optional subtle glows for brand/logo elements only */
+    --glow-primary: 0 0 12px hsl(195.8 100% 32.7% / 0.45);
+    --glow-highlight: 0 0 12px hsl(330.3 100% 58.8% / 0.35);
   }
   * {
     @apply border-border;
   }
   body {
     @apply bg-background text-foreground antialiased;
+  }
+  ::selection {
+    background: hsl(var(--primary) / 0.45);
+    color: hsl(var(--foreground));
+  }
+}
+
+@layer utilities {
+  .brand-glow {
+    text-shadow: var(--glow-primary), var(--glow-highlight);
+  }
+  .brand-glow-box {
+    box-shadow: var(--glow-primary);
   }
 }
