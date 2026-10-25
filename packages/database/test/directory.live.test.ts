@@ -332,6 +332,70 @@ describe.skipIf(!APP_URL || !OWNER_URL)('directory repositories (live, forced RL
       expect(await reasonOf(projects.update(orgA, p.id, { teamId: tA.id }))).toBe('TEAM_NOT_FOUND');
     });
 
+    it('deleting a team unlinks all of its projects (soft-deleted too) and nothing else', async () => {
+      const t = await teams.create(orgA, { name: `Unlink team ${sfx}` });
+      const keep = await teams.create(orgA, { name: `Keep team ${sfx}` });
+      const p1 = await projects.create(orgA, { name: 'U1', key: `UA${sfx}`, teamId: t.id });
+      const p2 = await projects.create(orgA, { name: 'U2', key: `UB${sfx}`, teamId: t.id });
+      const gone = await projects.create(orgA, { name: 'U3', key: `UC${sfx}`, teamId: t.id });
+      const other = await projects.create(orgA, { name: 'U4', key: `UD${sfx}`, teamId: keep.id });
+      await projects.softDelete(orgA, gone.id);
+
+      expect(await teams.softDelete(orgA, t.id)).toBe(true);
+      const rows = await runWithOrganizationContext(owner, orgA, (tx) =>
+        tx.project.findMany({
+          where: { id: { in: [p1.id, p2.id, gone.id, other.id] } },
+          select: { id: true, teamId: true },
+        }),
+      );
+      const teamOf = new Map(rows.map((r) => [r.id, r.teamId]));
+      expect(teamOf.get(p1.id)).toBeNull();
+      expect(teamOf.get(p2.id)).toBeNull();
+      expect(teamOf.get(gone.id)).toBeNull();
+      expect(teamOf.get(other.id)).toBe(keep.id);
+      expect(await teams.get(orgA, t.id)).toBeNull();
+      // A second delete finds no live team and reports false.
+      expect(await teams.softDelete(orgA, t.id)).toBe(false);
+    });
+
+    it('a failure while unlinking projects rolls the team delete back (one transaction)', async () => {
+      const t = await teams.create(orgA, { name: `Rollback team ${sfx}` });
+      const ok = await projects.create(orgA, { name: 'R1', key: `RA${sfx}`, teamId: t.id });
+      const boomKey = `RB${sfx}`;
+      const boom = await projects.create(orgA, { name: 'R2', key: boomKey, teamId: t.id });
+      const fn = `dbtx_fail_unlink_${sfx.replace(/[^0-9a-f]/g, '')}`;
+      // Injected fault: the table owner adds a trigger that fails only this test's second project,
+      // so the team UPDATE has already run when the project UPDATE fails.
+      await owner.$executeRawUnsafe(
+        `CREATE FUNCTION ${fn}() RETURNS trigger LANGUAGE plpgsql AS $f$
+         BEGIN
+           IF NEW.key = '${boomKey}' AND OLD.team_id IS NOT NULL AND NEW.team_id IS NULL THEN
+             RAISE EXCEPTION 'injected unlink failure';
+           END IF;
+           RETURN NEW;
+         END $f$`,
+      );
+      await owner.$executeRawUnsafe(
+        `CREATE TRIGGER ${fn} BEFORE UPDATE ON projects FOR EACH ROW EXECUTE FUNCTION ${fn}()`,
+      );
+      try {
+        await expect(teams.softDelete(orgA, t.id)).rejects.toThrow(/injected unlink failure/);
+      } finally {
+        await owner.$executeRawUnsafe(`DROP TRIGGER IF EXISTS ${fn} ON projects`);
+        await owner.$executeRawUnsafe(`DROP FUNCTION IF EXISTS ${fn}()`);
+      }
+
+      // Nothing was applied: the team is still live and both projects are still linked.
+      expect(await teams.get(orgA, t.id)).toMatchObject({ id: t.id });
+      expect((await projects.get(orgA, ok.id))?.teamId).toBe(t.id);
+      expect((await projects.get(orgA, boom.id))?.teamId).toBe(t.id);
+
+      // With the fault gone, the same delete succeeds and unlinks both.
+      expect(await teams.softDelete(orgA, t.id)).toBe(true);
+      expect((await projects.get(orgA, ok.id))?.teamId).toBeNull();
+      expect((await projects.get(orgA, boom.id))?.teamId).toBeNull();
+    });
+
     it('RLS still holds underneath: no org context sees no directory rows', async () => {
       expect(await app.project.count()).toBe(0);
       expect(await app.team.count()).toBe(0);

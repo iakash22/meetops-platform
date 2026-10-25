@@ -591,7 +591,11 @@ export function createTeamRepository(options: RepositoryOptions = {}) {
       );
     },
 
-    /** Soft delete. Members and project links stay; the team just stops being visible. */
+    /**
+     * Soft delete, and unlink the team's projects (teamId = null, soft-deleted projects included) in
+     * the same transaction: either both happen or neither does. Member rows stay; a soft-deleted
+     * team reads as TEAM_NOT_FOUND. Returns false (and touches nothing) when there was no live team.
+     */
     softDelete(organizationId: string, teamId: string): Promise<boolean> {
       return run(organizationId, async (tx) => {
         if (!isUuid(teamId)) return false;
@@ -599,7 +603,9 @@ export function createTeamRepository(options: RepositoryOptions = {}) {
           where: { organizationId, id: teamId, deletedAt: null },
           data: { deletedAt: new Date() },
         });
-        return r.count === 1;
+        if (r.count !== 1) return false;
+        await tx.project.updateMany({ where: { organizationId, teamId }, data: { teamId: null } });
+        return true;
       });
     },
   };
