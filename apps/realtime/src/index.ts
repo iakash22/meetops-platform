@@ -1,7 +1,7 @@
 import { pathToFileURL } from 'node:url';
 import { createLogger } from '@meetops/logger';
 import { loadRealtimeConfig } from './config.js';
-import { createRealtimeServer, denyAllVerifier } from './server.js';
+import { createRealtimeServer } from './server.js';
 
 export * from './config.js';
 export * from './events.js';
@@ -12,11 +12,14 @@ export * from './control-events.js';
 async function main(): Promise<void> {
   const log = createLogger({ name: 'realtime' });
   const config = loadRealtimeConfig();
-  // TODO: replace placeholders with real session verification and meeting ownership lookup.
+  // ADR-011: real, read-only session verification (BE-6) and an org-scoped meeting lookup under RLS.
+  // denyAllVerifier stays exported for tests only.
+  const { verifySession } = await import('@meetops/session-verifier');
+  const { createPrismaMeetingAccess } = await import('./meeting-access.js');
   const { app } = await createRealtimeServer({
     config,
-    verifySession: denyAllVerifier,
-    canAccessMeeting: () => false,
+    verifySession,
+    canAccessMeeting: createPrismaMeetingAccess(),
     logger: true,
   });
   await app.listen({ host: config.host, port: config.port });
