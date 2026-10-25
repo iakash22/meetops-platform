@@ -1,17 +1,47 @@
 import { useRef } from 'react';
-import { ActivityIndicator, Animated, Pressable, StyleSheet, Text } from 'react-native';
+import {
+  ActivityIndicator,
+  Animated,
+  Pressable,
+  StyleSheet,
+  Text,
+  type ViewStyle,
+} from 'react-native';
 
-import { colors, radius, spacing } from '../theme/colors';
+import { colors, glow, radius, spacing } from '../theme/colors';
 import { useReducedMotion } from './useReducedMotion';
+
+export type ButtonVariant = 'primary' | 'secondary' | 'destructive';
 
 interface Props {
   label: string;
   onPress: () => void;
-  variant?: 'primary' | 'secondary';
+  variant?: ButtonVariant;
   loading?: boolean;
   disabled?: boolean;
+  /** Screen-reader hint describing the result of the press. */
+  accessibilityHint?: string;
   testID?: string;
 }
+
+const FILL: Record<ButtonVariant, { base: ViewStyle; pressed: ViewStyle; text: string }> = {
+  primary: {
+    base: { backgroundColor: colors.primary },
+    pressed: { backgroundColor: colors.primaryPressed },
+    text: colors.primaryForeground,
+  },
+  secondary: {
+    base: { backgroundColor: colors.card, borderWidth: 1, borderColor: colors.border },
+    pressed: { backgroundColor: colors.secondary },
+    text: colors.foreground,
+  },
+  // Outlined so a destructive action is clearly marked without dominating the screen.
+  destructive: {
+    base: { backgroundColor: colors.card, borderWidth: 1, borderColor: colors.destructive },
+    pressed: { backgroundColor: colors.secondary },
+    text: colors.destructive,
+  },
+};
 
 /**
  * Primary CTA has a subtle Cerulean glow (static shadow) and a small press scale.
@@ -23,11 +53,13 @@ export function Button({
   variant = 'primary',
   loading = false,
   disabled = false,
+  accessibilityHint,
   testID,
 }: Props) {
   const inactive = disabled || loading;
   const reducedMotion = useReducedMotion();
   const scale = useRef(new Animated.Value(1)).current;
+  const fill = FILL[variant];
 
   const animateTo = (toValue: number) => {
     if (reducedMotion) return;
@@ -46,6 +78,7 @@ export function Button({
         testID={testID}
         accessibilityRole="button"
         accessibilityLabel={label}
+        accessibilityHint={accessibilityHint}
         accessibilityState={{ disabled: inactive, busy: loading }}
         disabled={inactive}
         onPress={onPress}
@@ -53,19 +86,15 @@ export function Button({
         onPressOut={() => animateTo(1)}
         style={({ pressed }) => [
           styles.base,
-          variant === 'primary' ? styles.primary : styles.secondary,
-          pressed && styles.pressed,
+          fill.base,
+          pressed && fill.pressed,
           inactive && styles.dim,
         ]}
       >
         {loading ? (
-          <ActivityIndicator
-            color={variant === 'primary' ? colors.primaryForeground : colors.foreground}
-          />
+          <ActivityIndicator color={fill.text} />
         ) : (
-          <Text style={variant === 'primary' ? styles.primaryText : styles.secondaryText}>
-            {label}
-          </Text>
+          <Text style={[styles.text, { color: fill.text }]}>{label}</Text>
         )}
       </Pressable>
     </Animated.View>
@@ -75,9 +104,9 @@ export function Button({
 const styles = StyleSheet.create({
   wrap: { borderRadius: radius.md },
   glow: {
-    shadowColor: colors.primary,
-    shadowOpacity: 0.45,
-    shadowRadius: 14,
+    shadowColor: glow.primary.color,
+    shadowOpacity: glow.primary.opacity,
+    shadowRadius: glow.primary.radius,
     shadowOffset: { width: 0, height: 0 },
     elevation: 6,
   },
@@ -88,10 +117,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     paddingHorizontal: spacing.lg,
   },
-  primary: { backgroundColor: colors.primary },
-  secondary: { backgroundColor: colors.card, borderWidth: 1, borderColor: colors.border },
-  pressed: { opacity: 0.85 },
   dim: { opacity: 0.6 },
-  primaryText: { color: colors.primaryForeground, fontSize: 16, fontWeight: '600' },
-  secondaryText: { color: colors.foreground, fontSize: 16, fontWeight: '500' },
+  text: { fontSize: 16, fontWeight: '600' },
 });
