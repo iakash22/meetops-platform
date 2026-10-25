@@ -1,8 +1,18 @@
 import { describe, it, expect, expectTypeOf } from 'vitest';
 import { Value } from '@sinclair/typebox/value';
 import {
-  API_ERROR_REASONS, ApiErrorEnvelope, ApiErrorReason, CONFLICT_HTTP_STATUS, CONFLICT_REASONS, ConflictReason, CursorPageQuery, DEFAULT_PAGE_LIMIT,
-  ListMembersResponse, ListOrganizationsResponse, MAX_CURSOR_LENGTH, MAX_PAGE_LIMIT,
+  API_ERROR_REASONS,
+  ApiErrorEnvelope,
+  ApiErrorReason,
+  CONFLICT_HTTP_STATUS,
+  CONFLICT_REASONS,
+  ConflictReason,
+  CursorPageQuery,
+  DEFAULT_PAGE_LIMIT,
+  ListMembersResponse,
+  ListOrganizationsResponse,
+  MAX_CURSOR_LENGTH,
+  MAX_PAGE_LIMIT,
 } from '../src/index.js';
 import * as Light from '../src/types.js';
 import type * as T from '../src/types.js';
@@ -10,7 +20,12 @@ import type * as T from '../src/types.js';
 const id = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
 const at = '2026-10-22T07:00:00.000Z';
 const conflict = (reason?: string) => ({
-  error: { code: 'CONFLICT', message: 'This person is already a member of the organization', requestId: 'req-1', ...(reason ? { reason } : {}) },
+  error: {
+    code: 'CONFLICT',
+    message: 'This person is already a member of the organization',
+    requestId: 'req-1',
+    ...(reason ? { reason } : {}),
+  },
 });
 
 describe('v0.3.3 cursor pagination constants', () => {
@@ -26,27 +41,51 @@ describe('v0.3.3 cursor pagination constants', () => {
   it('matches the page #53 returns for GET /orgs and members (items + opaque base64url nextCursor or null)', () => {
     const organization = { id: id(1), name: 'Acme', slug: 'acme', createdAt: at, updatedAt: at };
     const nextCursor = Buffer.from('o:25').toString('base64url');
-    expect(Value.Check(ListOrganizationsResponse, { items: [{ organization, role: 'owner' }], nextCursor })).toBe(true);
+    expect(
+      Value.Check(ListOrganizationsResponse, {
+        items: [{ organization, role: 'owner' }],
+        nextCursor,
+      }),
+    ).toBe(true);
     expect(Value.Check(ListOrganizationsResponse, { items: [], nextCursor: null })).toBe(true);
-    const member = { id: id(3), organizationId: id(1), userId: id(2), role: 'member', createdAt: at, user: { id: id(2) } };
+    const member = {
+      id: id(3),
+      organizationId: id(1),
+      userId: id(2),
+      role: 'member',
+      createdAt: at,
+      user: { id: id(2) },
+    };
     expect(Value.Check(ListMembersResponse, { items: [member], nextCursor: null })).toBe(true);
     expect(Value.Check(ListMembersResponse, { items: [member] })).toBe(false);
   });
   it('type: page items and nextCursor', () => {
     expectTypeOf<T.ListOrganizationsResponse['nextCursor']>().toEqualTypeOf<string | null>();
-    expectTypeOf<T.CursorPage<number>>().toEqualTypeOf<{ items: number[]; nextCursor: string | null }>();
+    expectTypeOf<T.CursorPage<number>>().toEqualTypeOf<{
+      items: number[];
+      nextCursor: string | null;
+    }>();
   });
 });
 
 describe('v0.3.3 conflict reasons', () => {
   it('lists exactly the 409 conflicts the API raises (plus the generic CONFLICT fallback)', () => {
-    expect([...CONFLICT_REASONS]).toEqual([
-      'ALREADY_MEMBER', 'INVITATION_EXPIRED', 'INVITATION_REVOKED', 'INVITATION_ALREADY_ACCEPTED', 'LAST_OWNER',
-      'EMAIL_TAKEN', 'CONFLICT',
+    // v0.4.0 appended PROJECT_KEY_TAKEN and TEAM_MEMBER_EXISTS; the v0.3.3 reasons keep their order.
+    expect(CONFLICT_REASONS.slice(0, 7)).toEqual([
+      'ALREADY_MEMBER',
+      'INVITATION_EXPIRED',
+      'INVITATION_REVOKED',
+      'INVITATION_ALREADY_ACCEPTED',
+      'LAST_OWNER',
+      'EMAIL_TAKEN',
+      'CONFLICT',
     ]);
-    expect(API_ERROR_REASONS).toBe(CONFLICT_REASONS);
-    expect(Light.API_ERROR_REASONS).toBe(CONFLICT_REASONS);
-    expect(ApiErrorReason).toBe(ConflictReason);
+    // v0.4.0 widened API_ERROR_REASONS / ApiErrorReason to include the NOT_FOUND reasons (see v040.test.ts).
+    for (const r of CONFLICT_REASONS) {
+      expect(API_ERROR_REASONS).toContain(r);
+      expect(Value.Check(ApiErrorReason, r)).toBe(true);
+    }
+    expect(Light.API_ERROR_REASONS).toBe(API_ERROR_REASONS);
     expect(CONFLICT_HTTP_STATUS).toBe(409);
     expect(Light.CONFLICT_REASONS).toBe(CONFLICT_REASONS);
   });
@@ -71,6 +110,9 @@ describe('v0.3.3 package exports', () => {
     const pkg = (await import('../package.json', { with: { type: 'json' } })).default as {
       exports: Record<string, Record<string, string>>;
     };
-    expect(pkg.exports['./types']).toMatchObject({ import: './dist/types.js', default: './dist/types.js' });
+    expect(pkg.exports['./types']).toMatchObject({
+      import: './dist/types.js',
+      default: './dist/types.js',
+    });
   });
 });

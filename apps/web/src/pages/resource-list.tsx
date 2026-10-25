@@ -36,11 +36,5 @@ export function ResourceList<T extends { id: string }>({
   );
 }
 
-export function PageHeader({ title, description }: { title: string; description?: string }) {
-  return (
-    <div className="mb-6">
-      <h1 className="text-2xl font-semibold tracking-tight">{title}</h1>
-      {description ? <p className="text-sm text-muted-foreground">{description}</p> : null}
-    </div>
-  );
-}
+// Shared heading pattern lives in the UI kit; re-exported for existing imports.
+export { PageHeader } from '@/components/ui/typography';

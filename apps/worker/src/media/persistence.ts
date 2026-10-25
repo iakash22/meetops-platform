@@ -2,11 +2,18 @@ import {
   createChunkFileObjectLookup,
   createChunkFileObjectRepository,
   createRecordingChunkCountRepository,
+  createRecordingChunkPersistence,
+  createRecordingOwnershipVerifier,
   type ChunkFileObjectLookup,
   type MediaRepositoryOptions,
 } from '@meetops/database';
 import { createChunkAudioResolver, type ChunkAudioResolverDeps } from '@meetops/storage';
-import type { ChunkFileObjectRepository, RecordingChunkCountRepository } from './processor.js';
+import type {
+  ChunkFileObjectRepository,
+  RecordingChunkCountRepository,
+  RecordingChunkPersistence,
+  RecordingOwnershipVerifier,
+} from './processor.js';
 
 export type MediaPersistenceOptions = MediaRepositoryOptions & {
   /** Bucket the chunks are stored in (STORAGE_BUCKET), recorded on each chunk FileObject row. */
@@ -21,9 +28,13 @@ export type MediaPersistenceOptions = MediaRepositoryOptions & {
  * write to the job's organization; nothing is written outside that context.
  */
 export type MediaPersistence = {
-  /** Upserts chunk FileObject rows (file_objects, kind = chunk). */
+  /** Checks the job's recording belongs to its organization + meeting, before any upload. */
+  recordingAccess: RecordingOwnershipVerifier;
+  /** Chunk FileObject rows + recordings.chunk_count in one transaction (what the worker uses). */
+  chunks: RecordingChunkPersistence;
+  /** Upserts chunk FileObject rows (file_objects, kind = chunk). Separate transaction; kept for other callers. */
   chunkFileObjects: ChunkFileObjectRepository;
-  /** Sets recordings.chunk_count. */
+  /** Sets recordings.chunk_count. Separate transaction; kept for other callers. */
   recordings: RecordingChunkCountRepository;
   /** RLS-scoped chunk FileObject lookup for the audio resolver. */
   chunkLookup: ChunkFileObjectLookup;
@@ -32,6 +43,8 @@ export type MediaPersistence = {
 export function createMediaPersistence(opts: MediaPersistenceOptions): MediaPersistence {
   const { bucket, provider, ...repo } = opts;
   return {
+    recordingAccess: createRecordingOwnershipVerifier(repo),
+    chunks: createRecordingChunkPersistence({ ...repo, bucket, ...(provider ? { provider } : {}) }),
     chunkFileObjects: createChunkFileObjectRepository({
       ...repo,
       bucket,

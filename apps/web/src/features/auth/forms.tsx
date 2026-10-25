@@ -24,7 +24,7 @@ import { Field } from './field';
 
 type SubmitHandler<T> = (values: T) => Promise<void> | void;
 
-function AuthCard({
+export function AuthCard({
   title,
   description,
   children,
@@ -117,8 +117,24 @@ export function LoginForm({ onSubmit }: { onSubmit: SubmitHandler<LoginValues> }
   );
 }
 
-export function SignupForm({ onSubmit }: { onSubmit: SubmitHandler<SignupValues> }) {
+/**
+ * Sign-up. POST /auth/signup answers 202 `{ message }` with no session (the user must
+ * verify their email first), so success shows a "check your email" state instead of
+ * signing in. The response is enumeration-safe; so is the resend action.
+ */
+export function SignupForm({
+  onSubmit,
+  onResend,
+  next,
+}: {
+  onSubmit: SubmitHandler<SignupValues>;
+  onResend?: (email: string) => Promise<unknown>;
+  next?: string | undefined;
+}) {
   const { error, setError } = useSubmitError();
+  const [sentTo, setSentTo] = useState<string | null>(null);
+  const [resent, setResent] = useState(false);
+  const [resending, setResending] = useState(false);
   const {
     register,
     handleSubmit,
@@ -128,15 +144,60 @@ export function SignupForm({ onSubmit }: { onSubmit: SubmitHandler<SignupValues>
     defaultValues: { name: '', email: '', password: '', confirmPassword: '' },
   });
 
+  const signInLink = (
+    <Link to="/login" search={next ? { next } : {}} className="underline">
+      {sentTo ? 'Verified? Sign in' : 'Already have an account? Sign in'}
+    </Link>
+  );
+
+  if (sentTo) {
+    const resend = async () => {
+      if (!onResend) return;
+      setResending(true);
+      try {
+        await onResend(sentTo);
+      } catch {
+        /* enumeration-safe: same outcome regardless of result */
+      }
+      setResending(false);
+      setResent(true);
+    };
+    return (
+      <AuthCard
+        title="Check your email"
+        description="Verify your email address to finish creating your account"
+        footer={signInLink}
+      >
+        <div className="grid gap-4">
+          <p role="status">
+            We sent a verification link to <strong>{sentTo}</strong>. Open it to activate your
+            account, then sign in.
+          </p>
+          {onResend ? (
+            <Button
+              type="button"
+              variant="outline"
+              disabled={resending}
+              onClick={() => void resend()}
+            >
+              {resending ? 'Sending…' : 'Resend verification email'}
+            </Button>
+          ) : null}
+          {resent ? (
+            <p className="text-sm text-muted-foreground">
+              If that account still needs verifying, a new link is on its way.
+            </p>
+          ) : null}
+        </div>
+      </AuthCard>
+    );
+  }
+
   return (
     <AuthCard
       title="Create account"
       description="Start turning meetings into action"
-      footer={
-        <Link to="/login" className="underline">
-          Already have an account? Sign in
-        </Link>
-      }
+      footer={signInLink}
     >
       <form
         noValidate
@@ -146,6 +207,7 @@ export function SignupForm({ onSubmit }: { onSubmit: SubmitHandler<SignupValues>
             setError(null);
             try {
               await onSubmit(v);
+              setSentTo(v.email);
             } catch (err) {
               setError(err);
             }

@@ -9,14 +9,17 @@ export const loginSchema = z.object({
   password: z.string().min(1, 'Password is required'),
 });
 
+// Matches the API password policy (12-128 characters).
+const newPassword = z
+  .string()
+  .min(12, 'Password must be at least 12 characters')
+  .max(128, 'Password must be at most 128 characters');
+
 export const signupSchema = z
   .object({
     name: z.string().min(1, 'Name is required'),
     email: email,
-    password: z
-      .string()
-      .min(12, 'Password must be at least 12 characters')
-      .max(128, 'Password must be at most 128 characters'),
+    password: newPassword,
     confirmPassword: z.string().min(1, 'Please confirm your password'),
   })
   .refine((v) => v.password === v.confirmPassword, {
@@ -28,6 +31,22 @@ export const forgotPasswordSchema = z.object({
   email: email,
 });
 
+export const resetPasswordSchema = z
+  .object({
+    password: newPassword,
+    confirmPassword: z.string().min(1, 'Please confirm your password'),
+  })
+  .refine((v) => v.password === v.confirmPassword, {
+    path: ['confirmPassword'],
+    error: 'Passwords do not match',
+  });
+
+export const resendVerificationSchema = z.object({
+  email: email,
+});
+
 export type LoginValues = z.infer<typeof loginSchema>;
 export type SignupValues = z.infer<typeof signupSchema>;
 export type ForgotPasswordValues = z.infer<typeof forgotPasswordSchema>;
+export type ResetPasswordValues = z.infer<typeof resetPasswordSchema>;
+export type ResendVerificationValues = z.infer<typeof resendVerificationSchema>;
