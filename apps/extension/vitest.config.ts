@@ -13,5 +13,5 @@ export default defineConfig({
       { find: /^@meetops\/contracts$/, replacement: contracts('index.ts') },
     ],
   },
-  test: { include: ['test/**/*.test.ts'], environment: 'node' },
+  test: { include: ['test/**/*.test.ts', 'test/**/*.test.tsx'], environment: 'node' },
 });
