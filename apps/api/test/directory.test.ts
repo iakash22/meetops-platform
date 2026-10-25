@@ -32,7 +32,7 @@ describe('BE-3 directory API (employees, teams, members, projects)', () => {
   afterEach(async () => app.close());
 
   const createOrg = async (c: Client, name: string) =>
-    ((await c.post('/orgs', { name })).json() as { organization: { id: string } }).organization.id;
+    (await c.post('/orgs', { name })).json<{ organization: { id: string } }>().organization.id;
 
   /** Invite `email` into `orgId` with `role`, accept, and make it the active org. */
   async function join(owner: Client, orgId: string, email: string, role: Role) {
@@ -379,7 +379,7 @@ describe('BE-3 directory API (employees, teams, members, projects)', () => {
       const page = await owner.get(`/orgs/${org}/teams?limit=2${qs}`);
       expect(page.statusCode).toBe(200);
       expect(Value.Check(ListTeamsResponse, page.json())).toBe(true);
-      const body = page.json() as { items: { name: string }[]; nextCursor: string | null };
+      const body = page.json<{ items: { name: string }[]; nextCursor: string | null }>();
       seen.push(...body.items.map((t) => t.name));
       cursor = body.nextCursor;
       pages++;
