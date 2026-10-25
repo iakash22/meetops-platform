@@ -1,7 +1,6 @@
 import type {
   ApiErrorCode,
   ApiErrorEnvelope,
-  ApiErrorReason,
   AuthSession,
   GetAuthSessionResponse,
   ListOrganizationsResponse,
