@@ -9,7 +9,6 @@ import type {
   Organization,
   OrganizationMember,
   Paginated,
-  Project,
   Role,
   Task,
 } from '@meetops/contracts';
@@ -115,19 +114,6 @@ export const tasks: Paginated<Task> = {
       title: 'Old idea',
       status: 'cancelled',
       priority: 'low',
-    },
-  ],
-  nextCursor: null,
-};
-
-export const projects: Paginated<Project> = {
-  items: [
-    {
-      id: '40000000-0000-4000-8000-000000000001',
-      organizationId: '00000000-0000-4000-8000-000000000001',
-      name: 'Launch',
-      createdAt: T,
-      updatedAt: T,
     },
   ],
   nextCursor: null,

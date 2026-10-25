@@ -116,6 +116,14 @@ describe('generated client', () => {
         'MediaPersistenceError',
         'MAX_RECORDING_CHUNKS',
         'withUserContext',
+        'createEmployeeRepository',
+        'createTeamRepository',
+        'createTeamMemberRepository',
+        'createProjectRepository',
+        'DirectoryError',
+        'isDirectoryError',
+        'DIRECTORY_DEFAULT_PAGE_LIMIT',
+        'DIRECTORY_MAX_PAGE_LIMIT',
       ].sort(),
     );
   });

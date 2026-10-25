@@ -7,6 +7,7 @@ import {
   ResetPasswordForm,
   VerifyEmailPage,
 } from '@/features/auth/email-link-pages';
+import { AuthLayout } from '@/features/auth/auth-layout';
 import {
   applySessionToStore,
   sessionQueryOptions,
@@ -48,12 +49,9 @@ export function createAuthPublicRoutes(getRoot: () => typeof RootRoute) {
     getParentRoute: getRoot,
     id: 'auth-public',
     component: () => (
-      <div
-        className="flex min-h-screen items-center justify-center bg-muted/40 p-4"
-        data-testid="auth-layout"
-      >
+      <AuthLayout>
         <Outlet />
-      </div>
+      </AuthLayout>
     ),
   });
 

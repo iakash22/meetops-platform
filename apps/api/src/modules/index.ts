@@ -342,5 +342,6 @@ export async function registerModules(app: FastifyInstance, deps: ModuleDeps) {
   app.decorateRequest('auth', null);
   await app.register(authRoutes, { auth, organizations, security: deps.security });
   await app.register(organizationRoutes, { auth, organizations, security: deps.security });
+  await app.register(import('./directory/index.js'), { auth, organizations, deps });
   return { auth, organizations, sessionVerifier: new SessionVerifier(auth, deps.memberships) };
 }

@@ -97,4 +97,85 @@ describe.skipIf(!hasAuthApi)('XT: cross-organization access via API (PR #27)', (
     expect(s.json().activeOrganizationId).toBe(orgA.id);
     expect(JSON.stringify(s.json())).not.toContain(orgB.id);
   });
+
+  // BE-3: directory (employees, teams, team members, projects). The path org must be the
+  // caller's active org and every id must belong to it; anything else is 404, never 403.
+  async function directoryInB() {
+    const t = await twoOrgs();
+    await t.a.post('/orgs/switch', { organizationId: t.orgA.id });
+    await t.b.post('/orgs/switch', { organizationId: t.orgB.id });
+    const base = `/orgs/${t.orgB.id}`;
+    const emp = (
+      await t.b.post(`${base}/employees`, { fullName: 'Bea B', email: 'bea@example.test' })
+    ).json() as { id: string };
+    const team = (await t.b.post(`${base}/teams`, { name: 'B Team' })).json() as { id: string };
+    const project = (
+      await t.b.post(`${base}/projects`, { name: 'B Project', key: 'BP' })
+    ).json() as {
+      id: string;
+    };
+    expect(
+      (await t.b.post(`${base}/teams/${team.id}/members`, { employeeId: emp.id })).statusCode,
+    ).toBe(201);
+    return { ...t, emp, team, project };
+  }
+
+  it('[XT-DIR] reading B directory records as A is 404, same body as a missing id', async () => {
+    const { a, orgA, orgB, emp, team, project } = await directoryInB();
+    for (const [kind, id] of [
+      ['employees', emp.id],
+      ['teams', team.id],
+      ['projects', project.id],
+    ] as const) {
+      // B's path: A is not a member of B.
+      const viaB = await a.get(`/orgs/${orgB.id}/${kind}/${id}`);
+      expect(viaB.statusCode).toBe(404);
+      expect(errorCode(viaB)).toBe('NOT_FOUND');
+      expect(comparableBody(viaB)).toEqual(
+        comparableBody(await a.get(`/orgs/${orgB.id}/${kind}/${MISSING}`)),
+      );
+      // A's own path with B's id: indistinguishable from an unknown id.
+      const viaA = await a.get(`/orgs/${orgA.id}/${kind}/${id}`);
+      expect(viaA.statusCode).toBe(404);
+      expect(errorCode(viaA)).toBe('NOT_FOUND');
+      expect(comparableBody(viaA)).toEqual(
+        comparableBody(await a.get(`/orgs/${orgA.id}/${kind}/${MISSING}`)),
+      );
+    }
+    const list = await a.get(`/orgs/${orgB.id}/employees`);
+    expect(list.statusCode).toBe(404);
+    expect(errorCode(list)).toBe('NOT_FOUND');
+    const members = await a.get(`/orgs/${orgA.id}/teams/${team.id}/members`);
+    expect(members.statusCode).toBe(404);
+  });
+
+  it('[XT-DIR] writing B directory records as A is 404 and changes nothing', async () => {
+    const { a, b, orgA, orgB, emp, team, project } = await directoryInB();
+    const writes = [
+      a.post(`/orgs/${orgB.id}/employees`, { fullName: 'X', email: 'x@example.test' }),
+      a.patch(`/orgs/${orgB.id}/teams/${team.id}`, { name: 'pwned' }),
+      a.patch(`/orgs/${orgA.id}/teams/${team.id}`, { name: 'pwned' }),
+      a.delete(`/orgs/${orgA.id}/projects/${project.id}`),
+      a.delete(`/orgs/${orgA.id}/employees/${emp.id}`),
+      a.post(`/orgs/${orgA.id}/teams/${team.id}/members`, { employeeId: emp.id }),
+      a.delete(`/orgs/${orgA.id}/teams/${team.id}/members/${emp.id}`),
+    ];
+    for (const r of await Promise.all(writes)) {
+      expect(r.statusCode).toBe(404);
+      expect(errorCode(r)).toBe('NOT_FOUND');
+    }
+    // A cannot attach B's team to an A project either.
+    const linked = await a.post(`/orgs/${orgA.id}/projects`, {
+      name: 'A Project',
+      key: 'AP',
+      teamId: team.id,
+    });
+    expect(linked.statusCode).toBe(404);
+    const t = await b.get(`/orgs/${orgB.id}/teams/${team.id}`);
+    expect(t.json().name).toBe('B Team');
+    expect((await b.get(`/orgs/${orgB.id}/projects/${project.id}`)).statusCode).toBe(200);
+    expect((await b.get(`/orgs/${orgB.id}/employees/${emp.id}`)).statusCode).toBe(200);
+    const m = (await b.get(`/orgs/${orgB.id}/teams/${team.id}/members`)).json();
+    expect(JSON.stringify(m)).toContain(emp.id);
+  });
 });

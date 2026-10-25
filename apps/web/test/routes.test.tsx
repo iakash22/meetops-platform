@@ -2,14 +2,15 @@ import { screen } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createMockApi, renderApp, resetStores } from './fixtures/render';
 import { waitForRouteData } from './fixtures/route-ready';
+import { createMockDirectoryApi } from '@/features/directory/mock-api';
 
 describe('route tree', () => {
   beforeEach(() => resetStores());
 
   it.each([
-    ['/login', 'Sign in'],
-    ['/signup', 'Create account'],
-    ['/forgot-password', 'Reset password'],
+    ['/login', 'Welcome back'],
+    ['/signup', 'Create your workspace'],
+    ['/forgot-password', 'Reset your password'],
   ])('renders auth route %s outside the shell', async (path, heading) => {
     renderApp(path);
     expect(await screen.findByRole('heading', { name: heading })).toBeInTheDocument();
@@ -60,7 +61,11 @@ describe('route tree', () => {
     const pending = new Promise((_, r) => {
       reject = r;
     });
-    renderApp('/projects', createMockApi({ projects: { list: vi.fn().mockReturnValue(pending) } }));
+    const projects = {
+      ...createMockDirectoryApi().projects,
+      list: vi.fn().mockReturnValue(pending),
+    };
+    renderApp('/projects', createMockApi({ directory: { projects } }));
     expect(await screen.findByTestId('loading-state')).toBeInTheDocument();
     reject(new Error('Network down'));
     expect(await screen.findByTestId('error-state')).toHaveTextContent(
