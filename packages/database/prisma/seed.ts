@@ -23,6 +23,9 @@ function idsFor(n: number) {
       transcript: '00000000-0000-4000-8000-000000000501',
       recording: '00000000-0000-4000-8000-000000000701',
       mediaNorm: '00000000-0000-4000-8000-000000000702',
+      team: '00000000-0000-4000-8000-000000000801',
+      teamLead: '00000000-0000-4000-8000-000000000811',
+      teamMember: '00000000-0000-4000-8000-000000000812',
     };
   }
   return {
@@ -33,6 +36,9 @@ function idsFor(n: number) {
     transcript: id('501'),
     recording: id('701'),
     mediaNorm: id('702'),
+    team: id('801'),
+    teamLead: id('811'),
+    teamMember: id('812'),
   };
 }
 
@@ -43,16 +49,33 @@ type SeedOrganization = {
   name: string;
   slug: string;
   project: { name: string; key: string };
+  team: { name: string; key: string };
   meetingTitle: string;
   members: SeedMember[];
   transcript: { speaker0: string; speaker1: string };
 };
 
 const USERS = {
-  olivia: { id: '00000000-0000-4000-8000-000000000101', email: 'owner@demo.meetops.local', name: 'Olivia Owner' },
-  max: { id: '00000000-0000-4000-8000-000000000102', email: 'member@demo.meetops.local', name: 'Max Member' },
-  ada: { id: '00000000-0000-4000-8000-000000002101', email: 'owner@acme.meetops.local', name: 'Ada Acme' },
-  ben: { id: '00000000-0000-4000-8000-000000002102', email: 'member@acme.meetops.local', name: 'Ben Builder' },
+  olivia: {
+    id: '00000000-0000-4000-8000-000000000101',
+    email: 'owner@demo.meetops.local',
+    name: 'Olivia Owner',
+  },
+  max: {
+    id: '00000000-0000-4000-8000-000000000102',
+    email: 'member@demo.meetops.local',
+    name: 'Max Member',
+  },
+  ada: {
+    id: '00000000-0000-4000-8000-000000002101',
+    email: 'owner@acme.meetops.local',
+    name: 'Ada Acme',
+  },
+  ben: {
+    id: '00000000-0000-4000-8000-000000002102',
+    email: 'member@acme.meetops.local',
+    name: 'Ben Builder',
+  },
 } satisfies Record<string, SeedUser>;
 
 const ORGANIZATIONS: SeedOrganization[] = [
@@ -61,26 +84,54 @@ const ORGANIZATIONS: SeedOrganization[] = [
     name: 'Demo Org',
     slug: 'demo',
     project: { name: 'Website Relaunch', key: 'WEB' },
+    team: { name: 'Web Platform', key: 'WEBP' },
     meetingTitle: 'Weekly sync',
     members: [
-      { ...USERS.olivia, role: MembershipRole.owner, employeeId: '00000000-0000-4000-8000-000000000601' },
-      { ...USERS.max, role: MembershipRole.member, employeeId: '00000000-0000-4000-8000-000000000602' },
+      {
+        ...USERS.olivia,
+        role: MembershipRole.owner,
+        employeeId: '00000000-0000-4000-8000-000000000601',
+      },
+      {
+        ...USERS.max,
+        role: MembershipRole.member,
+        employeeId: '00000000-0000-4000-8000-000000000602',
+      },
     ],
-    transcript: { speaker0: 'Let us ship the landing page by Friday.', speaker1: 'I will draft the copy.' },
+    transcript: {
+      speaker0: 'Let us ship the landing page by Friday.',
+      speaker1: 'I will draft the copy.',
+    },
   },
   {
     n: 2,
     name: 'Acme Corp',
     slug: 'acme',
     project: { name: 'Mobile App', key: 'APP' },
+    team: { name: 'Mobile', key: 'MOB' },
     meetingTitle: 'Sprint planning',
     members: [
-      { ...USERS.ada, role: MembershipRole.owner, employeeId: '00000000-0000-4000-8000-000000002601' },
-      { ...USERS.ben, role: MembershipRole.member, employeeId: '00000000-0000-4000-8000-000000002602' },
+      {
+        ...USERS.ada,
+        role: MembershipRole.owner,
+        employeeId: '00000000-0000-4000-8000-000000002601',
+      },
+      {
+        ...USERS.ben,
+        role: MembershipRole.member,
+        employeeId: '00000000-0000-4000-8000-000000002602',
+      },
       // Olivia also belongs to Acme (as viewer): one user, two organizations.
-      { ...USERS.olivia, role: MembershipRole.viewer, employeeId: '00000000-0000-4000-8000-000000002603' },
+      {
+        ...USERS.olivia,
+        role: MembershipRole.viewer,
+        employeeId: '00000000-0000-4000-8000-000000002603',
+      },
     ],
-    transcript: { speaker0: 'Release 1.2 goes out on Tuesday.', speaker1: 'I will update the changelog.' },
+    transcript: {
+      speaker0: 'Release 1.2 goes out on Tuesday.',
+      speaker1: 'I will update the changelog.',
+    },
   },
 ];
 
@@ -94,118 +145,177 @@ async function seedOrganization(spec: SeedOrganization): Promise<void> {
   });
 
   for (const u of spec.members) {
-    await prisma.user.upsert({ where: { id: u.id }, update: {}, create: { id: u.id, email: u.email, name: u.name } });
+    await prisma.user.upsert({
+      where: { id: u.id },
+      update: {},
+      create: { id: u.id, email: u.email, name: u.name },
+    });
   }
 
-  await runWithOrganizationContext(prisma, org.id, async (tx) => {
-    for (const u of spec.members) {
-      await tx.membership.upsert({
-        where: { organizationId_userId: { organizationId: org.id, userId: u.id } },
-        update: { role: u.role },
-        create: { organizationId: org.id, userId: u.id, role: u.role },
-      });
-      await tx.employee.upsert({
-        where: { id: u.employeeId },
+  await runWithOrganizationContext(
+    prisma,
+    org.id,
+    async (tx) => {
+      for (const u of spec.members) {
+        await tx.membership.upsert({
+          where: { organizationId_userId: { organizationId: org.id, userId: u.id } },
+          update: { role: u.role },
+          create: { organizationId: org.id, userId: u.id, role: u.role },
+        });
+        await tx.employee.upsert({
+          where: { id: u.employeeId },
+          update: {},
+          create: {
+            id: u.employeeId,
+            organizationId: org.id,
+            userId: u.id,
+            fullName: u.name,
+            email: u.email,
+          },
+        });
+      }
+
+      // One team per organization: the host leads it, the second member joins it, and it owns the project.
+      await tx.team.upsert({
+        where: { id: IDS.team },
         update: {},
-        create: { id: u.employeeId, organizationId: org.id, userId: u.id, fullName: u.name, email: u.email },
+        create: { id: IDS.team, organizationId: org.id, name: spec.team.name, key: spec.team.key },
       });
-    }
+      for (const [memberId, employeeId, role] of [
+        [IDS.teamLead, host.employeeId, 'lead'],
+        [IDS.teamMember, second.employeeId, 'member'],
+      ] as const) {
+        await tx.teamMember.upsert({
+          where: { id: memberId },
+          update: {},
+          create: { id: memberId, organizationId: org.id, teamId: IDS.team, employeeId, role },
+        });
+      }
 
-    await tx.project.upsert({
-      where: { id: IDS.project },
-      update: {},
-      create: { id: IDS.project, organizationId: org.id, name: spec.project.name, key: spec.project.key },
-    });
-
-    await tx.meeting.upsert({
-      where: { id: IDS.meeting },
-      update: {},
-      create: {
-        id: IDS.meeting,
-        organizationId: org.id,
-        projectId: IDS.project,
-        createdById: host.id,
-        title: spec.meetingTitle,
-        status: 'completed',
-        scheduledAt: new Date('2026-10-20T10:00:00Z'),
-        durationSec: 1800,
-        participants: {
-          create: [
-            { userId: host.id, displayName: host.name, speakerLabel: 'SPEAKER_0', role: 'host' },
-            { userId: second.id, displayName: second.name, speakerLabel: 'SPEAKER_1' },
-          ],
-        },
-      },
-    });
-
-    const base = `organizations/${org.id}/meetings/${IDS.meeting}`;
-    await tx.fileObject.upsert({
-      where: { id: IDS.file },
-      update: { checksumSha256: DEMO_SHA256 },
-      create: {
-        id: IDS.file,
-        organizationId: org.id,
-        meetingId: IDS.meeting,
-        uploadedById: host.id,
-        kind: 'raw',
-        status: 'ready',
-        bucket: 'meetops-dev',
-        key: `${base}/raw/recording.webm`,
-        mimeType: 'audio/webm',
-        sizeBytes: BigInt(1_048_576),
-        checksumSha256: DEMO_SHA256,
-        durationSeconds: 1800,
-        format: 'webm',
-      },
-    });
-    await tx.fileObject.upsert({
-      where: { id: IDS.mediaNorm },
-      update: {},
-      create: {
-        id: IDS.mediaNorm,
-        organizationId: org.id,
-        meetingId: IDS.meeting,
-        parentObjectId: IDS.file,
-        kind: 'normalized',
-        status: 'ready',
-        bucket: 'meetops-dev',
-        key: `${base}/normalized/audio.wav`,
-        mimeType: 'audio/wav',
-        durationSeconds: 1800,
-        format: 'wav',
-        sampleRate: 16000,
-        channels: 1,
-      },
-    });
-    await tx.recording.upsert({
-      where: { id: IDS.recording },
-      update: {},
-      create: { id: IDS.recording, organizationId: org.id, meetingId: IDS.meeting, fileObjectId: IDS.file, durationMs: 1_800_000, status: 'ready' },
-    });
-
-    const exists = await tx.transcript.findUnique({ where: { id: IDS.transcript } });
-    if (!exists) {
-      await tx.transcript.create({
-        data: {
-          id: IDS.transcript,
+      await tx.project.upsert({
+        where: { id: IDS.project },
+        update: { teamId: IDS.team },
+        create: {
+          id: IDS.project,
           organizationId: org.id,
-          provider: 'faster-whisper',
-          meetingId: IDS.meeting,
-          recordingId: IDS.recording,
-          revision: 1,
-          status: 'ready',
-          language: 'en',
-          fullText: `${host.name.split(' ')[0]}: ${spec.transcript.speaker0} ${second.name.split(' ')[0]}: ${spec.transcript.speaker1}`,
-          segments: {
+          teamId: IDS.team,
+          name: spec.project.name,
+          key: spec.project.key,
+        },
+      });
+
+      await tx.meeting.upsert({
+        where: { id: IDS.meeting },
+        update: {},
+        create: {
+          id: IDS.meeting,
+          organizationId: org.id,
+          projectId: IDS.project,
+          createdById: host.id,
+          title: spec.meetingTitle,
+          status: 'completed',
+          scheduledAt: new Date('2026-10-20T10:00:00Z'),
+          durationSec: 1800,
+          participants: {
             create: [
-              { revision: 1, sequence: 0, speakerLabel: 'SPEAKER_0', startMs: 0, endMs: 4000, text: spec.transcript.speaker0 },
-              { revision: 1, sequence: 1, speakerLabel: 'SPEAKER_1', startMs: 4000, endMs: 7000, text: spec.transcript.speaker1 },
+              { userId: host.id, displayName: host.name, speakerLabel: 'SPEAKER_0', role: 'host' },
+              { userId: second.id, displayName: second.name, speakerLabel: 'SPEAKER_1' },
             ],
           },
         },
       });
-    }
-  }, { timeoutMs: 30_000 });
+
+      const base = `organizations/${org.id}/meetings/${IDS.meeting}`;
+      await tx.fileObject.upsert({
+        where: { id: IDS.file },
+        update: { checksumSha256: DEMO_SHA256 },
+        create: {
+          id: IDS.file,
+          organizationId: org.id,
+          meetingId: IDS.meeting,
+          uploadedById: host.id,
+          kind: 'raw',
+          status: 'ready',
+          bucket: 'meetops-dev',
+          key: `${base}/raw/recording.webm`,
+          mimeType: 'audio/webm',
+          sizeBytes: BigInt(1_048_576),
+          checksumSha256: DEMO_SHA256,
+          durationSeconds: 1800,
+          format: 'webm',
+        },
+      });
+      await tx.fileObject.upsert({
+        where: { id: IDS.mediaNorm },
+        update: {},
+        create: {
+          id: IDS.mediaNorm,
+          organizationId: org.id,
+          meetingId: IDS.meeting,
+          parentObjectId: IDS.file,
+          kind: 'normalized',
+          status: 'ready',
+          bucket: 'meetops-dev',
+          key: `${base}/normalized/audio.wav`,
+          mimeType: 'audio/wav',
+          durationSeconds: 1800,
+          format: 'wav',
+          sampleRate: 16000,
+          channels: 1,
+        },
+      });
+      await tx.recording.upsert({
+        where: { id: IDS.recording },
+        update: {},
+        create: {
+          id: IDS.recording,
+          organizationId: org.id,
+          meetingId: IDS.meeting,
+          fileObjectId: IDS.file,
+          durationMs: 1_800_000,
+          status: 'ready',
+        },
+      });
+
+      const exists = await tx.transcript.findUnique({ where: { id: IDS.transcript } });
+      if (!exists) {
+        await tx.transcript.create({
+          data: {
+            id: IDS.transcript,
+            organizationId: org.id,
+            provider: 'faster-whisper',
+            meetingId: IDS.meeting,
+            recordingId: IDS.recording,
+            revision: 1,
+            status: 'ready',
+            language: 'en',
+            fullText: `${host.name.split(' ')[0]}: ${spec.transcript.speaker0} ${second.name.split(' ')[0]}: ${spec.transcript.speaker1}`,
+            segments: {
+              create: [
+                {
+                  revision: 1,
+                  sequence: 0,
+                  speakerLabel: 'SPEAKER_0',
+                  startMs: 0,
+                  endMs: 4000,
+                  text: spec.transcript.speaker0,
+                },
+                {
+                  revision: 1,
+                  sequence: 1,
+                  speakerLabel: 'SPEAKER_1',
+                  startMs: 4000,
+                  endMs: 7000,
+                  text: spec.transcript.speaker1,
+                },
+              ],
+            },
+          },
+        });
+      }
+    },
+    { timeoutMs: 30_000 },
+  );
 
   console.warn('Seed complete for organization', org.slug);
 }
