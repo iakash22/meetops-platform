@@ -3,11 +3,15 @@ import { Value } from '@sinclair/typebox/value';
 import * as C from '../src/index.js';
 import * as Legacy from '../src/legacy.js';
 import {
-  ALLOWED_MEDIA_MIME_TYPES, CreateUploadRequest, InitRecordingSessionRequest,
-  MAX_MEDIA_BYTES, MAX_RECORDING_SESSION_BYTES, MAX_UPLOAD_BYTES, MediaMimeType,
+  ALLOWED_MEDIA_MIME_TYPES,
+  CreateUploadRequest,
+  InitRecordingSessionRequest,
+  MAX_MEDIA_BYTES,
+  MAX_RECORDING_SESSION_BYTES,
+  MAX_UPLOAD_BYTES,
+  MediaMimeType,
 } from '../src/index.js';
 import type { PresignedUrl } from '../src/legacy.js';
-
 
 describe('N1 legacy subpath', () => {
   it('main barrel no longer exposes legacy storage types', async () => {
@@ -27,25 +31,52 @@ describe('N3 media limits', () => {
     expect(MAX_MEDIA_BYTES).toBe(1_400_000_000);
     expect(MAX_UPLOAD_BYTES).toBe(MAX_MEDIA_BYTES);
     expect(MAX_RECORDING_SESSION_BYTES).toBe(MAX_MEDIA_BYTES);
-    const ok = { filename: 'a.webm', mimeType: 'audio/webm', sizeBytes: 1_400_000_000, checksumSha256: 'ungWv48Bz+pBQUDeXa4iI7ADYaOWF3qctBD/YfIAFa0=' };
+    const ok = {
+      filename: 'a.webm',
+      mimeType: 'audio/webm',
+      sizeBytes: 1_400_000_000,
+      checksumSha256: 'ungWv48Bz+pBQUDeXa4iI7ADYaOWF3qctBD/YfIAFa0=',
+    };
     expect(Value.Check(CreateUploadRequest, ok)).toBe(true);
     expect(Value.Check(CreateUploadRequest, { ...ok, sizeBytes: 1_400_000_001 })).toBe(false);
   });
   it.each([...ALLOWED_MEDIA_MIME_TYPES])('allows %s', (m) => {
     expect(Value.Check(MediaMimeType, m)).toBe(true);
   });
-  it.each(['audio/webm;codecs=opus', 'video/webm; codecs="vp8,opus"', 'video/mp4;codecs=avc1.42E01E'])('allows codecs %s', (m) => {
+  it.each([
+    'audio/webm;codecs=opus',
+    'video/webm; codecs="vp8,opus"',
+    'video/mp4;codecs=avc1.42E01E',
+  ])('allows codecs %s', (m) => {
     expect(Value.Check(MediaMimeType, m)).toBe(true);
   });
-  it.each(['audio/flac', 'video/quicktime', 'audio/x-matroska', 'text/html', 'audio/webm;charset=utf-8', 'audio/webmx', 'audio/webm;codecs=opus;x=1'])(
-    'rejects %s',
-    (m) => {
-      expect(Value.Check(MediaMimeType, m)).toBe(false);
-    },
-  );
+  it.each([
+    'audio/flac',
+    'video/quicktime',
+    'audio/x-matroska',
+    'text/html',
+    'audio/webm;charset=utf-8',
+    'audio/webmx',
+    'audio/webm;codecs=opus;x=1',
+  ])('rejects %s', (m) => {
+    expect(Value.Check(MediaMimeType, m)).toBe(false);
+  });
   it('recording sessions use the allowlist', () => {
-    const r = { startedAt: '2026-10-21T17:00:00.000Z', source: 'tab', meetingId: '00000000-0000-4000-8000-000000000099' };
-    expect(Value.Check(InitRecordingSessionRequest, { ...r, mimeType: 'audio/webm;codecs=opus' })).toBe(true);
-    expect(Value.Check(InitRecordingSessionRequest, { ...r, mimeType: 'video/quicktime' })).toBe(false);
+    const r = {
+      startedAt: '2026-10-21T17:00:00.000Z',
+      source: 'tab',
+      meetingId: '00000000-0000-4000-8000-000000000099',
+      consent: {
+        consentVersion: '2026-10',
+        attestedAt: '2026-10-21T16:59:00.000Z',
+        method: 'all_parties_notified',
+      },
+    };
+    expect(
+      Value.Check(InitRecordingSessionRequest, { ...r, mimeType: 'audio/webm;codecs=opus' }),
+    ).toBe(true);
+    expect(Value.Check(InitRecordingSessionRequest, { ...r, mimeType: 'video/quicktime' })).toBe(
+      false,
+    );
   });
 });
