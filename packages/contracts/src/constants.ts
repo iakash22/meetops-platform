@@ -13,8 +13,17 @@ export const STT_PROVIDER_IDS = ['assemblyai', 'faster-whisper', 'deepgram'] as 
 export const TRANSCRIPT_PROVIDER_IDS = [...STT_PROVIDER_IDS, 'unknown'] as const;
 /** All `ApiErrorCode` values (kept equal to the schema by a type test). */
 export const API_ERROR_CODES = [
-  'BAD_REQUEST', 'VALIDATION_FAILED', 'UNAUTHENTICATED', 'AUTH_FAILED', 'CSRF_INVALID', 'FORBIDDEN', 'NOT_FOUND',
-  'CONFLICT', 'RATE_LIMITED', 'PROVIDER_UNAVAILABLE', 'INTERNAL',
+  'BAD_REQUEST',
+  'VALIDATION_FAILED',
+  'UNAUTHENTICATED',
+  'AUTH_FAILED',
+  'CSRF_INVALID',
+  'FORBIDDEN',
+  'NOT_FOUND',
+  'CONFLICT',
+  'RATE_LIMITED',
+  'PROVIDER_UNAVAILABLE',
+  'INTERNAL',
 ] as const;
 /** Cursor pagination (v0.3.3): max page size, i.e. the `limit` maximum of CursorPageQuery and OffsetPageQuery. */
 export const MAX_PAGE_LIMIT = 100;
@@ -33,13 +42,86 @@ export const MAX_CURSOR_LENGTH = 512;
  * - `CONFLICT`: generic fallback, so every 409 carries a reason even when nothing more specific applies.
  */
 export const CONFLICT_REASONS = [
-  'ALREADY_MEMBER', 'INVITATION_EXPIRED', 'INVITATION_REVOKED', 'INVITATION_ALREADY_ACCEPTED', 'LAST_OWNER',
-  'EMAIL_TAKEN', 'CONFLICT',
+  'ALREADY_MEMBER',
+  'INVITATION_EXPIRED',
+  'INVITATION_REVOKED',
+  'INVITATION_ALREADY_ACCEPTED',
+  'LAST_OWNER',
+  'EMAIL_TAKEN',
+  'CONFLICT',
+  // v0.4.0 (directory)
+  'PROJECT_KEY_TAKEN',
+  'TEAM_MEMBER_EXISTS',
 ] as const;
-/** Alias of CONFLICT_REASONS (name used by the API error envelope code). */
-export const API_ERROR_REASONS = CONFLICT_REASONS;
 /** HTTP status for every `CONFLICT` error, including all CONFLICT_REASONS. */
 export const CONFLICT_HTTP_STATUS = 409;
+
+/**
+ * v0.4.0: named reasons for `NOT_FOUND` errors (HTTP 404) on the directory routes. Sent as `error.reason` next to
+ * `code: 'NOT_FOUND'`.
+ *
+ * Tenancy: the API MUST return exactly the same body for an id that does not exist, an id that is soft-deleted and an
+ * id that belongs to another organization, so these reasons never reveal whether another tenant's id exists.
+ */
+export const NOT_FOUND_REASONS = [
+  'EMPLOYEE_NOT_FOUND',
+  'TEAM_NOT_FOUND',
+  'PROJECT_NOT_FOUND',
+] as const;
+/** HTTP status for every `NOT_FOUND` error, including all NOT_FOUND_REASONS. */
+export const NOT_FOUND_HTTP_STATUS = 404;
+
+/**
+ * Every value `ApiErrorEnvelope.error.reason` may take: CONFLICT_REASONS (with `code: 'CONFLICT'`) followed by
+ * NOT_FOUND_REASONS (with `code: 'NOT_FOUND'`). v0.4.0 widened this from an alias of CONFLICT_REASONS.
+ */
+export const API_ERROR_REASONS = [...CONFLICT_REASONS, ...NOT_FOUND_REASONS] as const;
+
+/** v0.4.0: the error names the directory routes (employees, teams, projects) can return as `error.reason`. */
+export const DIRECTORY_ERROR_REASONS = [
+  'EMPLOYEE_NOT_FOUND',
+  'TEAM_NOT_FOUND',
+  'PROJECT_NOT_FOUND',
+  'PROJECT_KEY_TAKEN',
+  'TEAM_MEMBER_EXISTS',
+] as const;
+
+/** v0.4.0: project lifecycle states (Prisma `ProjectStatus`). */
+export const PROJECT_STATUSES = ['active', 'archived'] as const;
+/** v0.4.0: a team member's role in the team (Prisma `team_members.role`). Not an org Role. */
+export const TEAM_MEMBER_ROLES = ['lead', 'member'] as const;
+
+/** v0.4.0: max length of an employee full name, a team name and a project name. */
+export const MAX_DIRECTORY_NAME_LENGTH = 200;
+/** v0.4.0: max length of a team or project description. */
+export const MAX_DIRECTORY_DESCRIPTION_LENGTH = 2000;
+/** v0.4.0: max length of an employee title, department and externalId. */
+export const MAX_EMPLOYEE_FIELD_LENGTH = 200;
+/** v0.4.0: max length of an email address (RFC 5321 path limit). */
+export const MAX_EMAIL_LENGTH = 254;
+/**
+ * v0.4.0: project and team `key` pattern: an uppercase letter, then 1-9 uppercase letters or digits (e.g. `OPS`, `WEB2`).
+ * Clients may upper-case input before sending; the schema does not normalise.
+ */
+export const DIRECTORY_KEY_PATTERN = '^[A-Z][A-Z0-9]{1,9}$';
+
+/**
+ * v0.4.0: directory route templates. Every route is scoped to the organization in the path, and the API MUST check it
+ * equals the session's active organization (a mismatch or other-org resource id returns NOT_FOUND, never FORBIDDEN).
+ * - `employees` / `teams` / `projects`: GET (cursor page) and POST (create, 201).
+ * - `employee` / `team` / `project`: GET, PATCH (partial update) and DELETE (soft delete, 204).
+ * - `teamMembers`: GET (cursor page) and POST (add, 201). `teamMember`: PATCH (role) and DELETE (remove, 204).
+ */
+export const DIRECTORY_PATHS = {
+  employees: '/orgs/:organizationId/employees',
+  employee: '/orgs/:organizationId/employees/:employeeId',
+  teams: '/orgs/:organizationId/teams',
+  team: '/orgs/:organizationId/teams/:teamId',
+  teamMembers: '/orgs/:organizationId/teams/:teamId/members',
+  teamMember: '/orgs/:organizationId/teams/:teamId/members/:employeeId',
+  projects: '/orgs/:organizationId/projects',
+  project: '/orgs/:organizationId/projects/:projectId',
+} as const;
 
 /** ADR-005: extension tokens. TTL of the access token in seconds (15 min). */
 export const EXTENSION_TOKEN_TTL_SECONDS = 900;
@@ -72,7 +154,14 @@ export const EXTENSION_AUTH_PATHS = {
  * serializer (ADR-005 amendment 1). Matching is case-insensitive on the key name, at any depth.
  */
 export const REDACT_KEYS = [
-  'accessToken', 'refreshToken', 'pairingCode', 'authorization', 'cookie', 'set-cookie', 'password', 'csrfToken',
+  'accessToken',
+  'refreshToken',
+  'pairingCode',
+  'authorization',
+  'cookie',
+  'set-cookie',
+  'password',
+  'csrfToken',
 ] as const;
 
 /**

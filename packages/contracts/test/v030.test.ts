@@ -2,9 +2,23 @@ import { describe, it, expect } from 'vitest';
 import { Value } from '@sinclair/typebox/value';
 import * as C from '../src/index.js';
 import {
-  ApiErrorCode, EXTENSION_SCOPES, EXTENSION_TOKEN_TTL_SECONDS, ExtensionTokenRequest, ExtensionTokenResponse,
-  ExtractedTask, GetMeetingParams, ListTasksQuery, MeetingParticipant, PresignedUrlString, ResolveMeetingRequest,
-  ResolveMeetingResponse, SwitchOrganizationRequest, TASK_STATUSES, Task, TaskStatus, Transcript,
+  ApiErrorCode,
+  EXTENSION_SCOPES,
+  EXTENSION_TOKEN_TTL_SECONDS,
+  ExtensionTokenRequest,
+  ExtensionTokenResponse,
+  ExtractedTask,
+  GetMeetingParams,
+  ListTasksQuery,
+  MeetingParticipant,
+  PresignedUrlString,
+  ResolveMeetingRequest,
+  ResolveMeetingResponse,
+  SwitchOrganizationRequest,
+  TASK_STATUSES,
+  Task,
+  TaskStatus,
+  Transcript,
   type TaskStatusValue,
 } from '../src/index.js';
 
@@ -13,22 +27,45 @@ const at = '2026-10-21T17:00:00.000Z';
 
 describe('ResolveMeetingRequest', () => {
   it('requires externalMeetingUrl or externalMeetingId', () => {
-    expect(Value.Check(ResolveMeetingRequest, { source: 'extension', externalMeetingUrl: 'https://meet.google.com/abc-defg-hij' })).toBe(true);
-    expect(Value.Check(ResolveMeetingRequest, { source: 'extension', externalMeetingId: 'zoom:123456789' })).toBe(true);
     expect(
       Value.Check(ResolveMeetingRequest, {
-        source: 'extension', externalMeetingUrl: 'https://teams.microsoft.com/l/meetup-join/x', externalMeetingId: 'teams:x', title: 'Standup', startedAt: at,
+        source: 'extension',
+        externalMeetingUrl: 'https://meet.google.com/abc-defg-hij',
       }),
     ).toBe(true);
-    expect(Value.Check(ResolveMeetingRequest, { source: 'extension', title: 'No ids' })).toBe(false);
+    expect(
+      Value.Check(ResolveMeetingRequest, {
+        source: 'extension',
+        externalMeetingId: 'zoom:123456789',
+      }),
+    ).toBe(true);
+    expect(
+      Value.Check(ResolveMeetingRequest, {
+        source: 'extension',
+        externalMeetingUrl: 'https://teams.microsoft.com/l/meetup-join/x',
+        externalMeetingId: 'teams:x',
+        title: 'Standup',
+        startedAt: at,
+      }),
+    ).toBe(true);
+    expect(Value.Check(ResolveMeetingRequest, { source: 'extension', title: 'No ids' })).toBe(
+      false,
+    );
   });
   it('is strict and validates fields', () => {
     const ok = { source: 'extension', externalMeetingId: 'meet:abc' };
     expect(Value.Check(ResolveMeetingRequest, { ...ok, organizationId: id(1) })).toBe(false);
     expect(Value.Check(ResolveMeetingRequest, { ...ok, source: 'phone' })).toBe(false);
-    expect(Value.Check(ResolveMeetingRequest, { ...ok, externalMeetingId: 'x'.repeat(256) })).toBe(false);
+    expect(Value.Check(ResolveMeetingRequest, { ...ok, externalMeetingId: 'x'.repeat(256) })).toBe(
+      false,
+    );
     expect(Value.Check(ResolveMeetingRequest, { ...ok, title: 'x'.repeat(301) })).toBe(false);
-    expect(Value.Check(ResolveMeetingRequest, { source: 'extension', externalMeetingUrl: 'http://meet.google.com/x' })).toBe(false);
+    expect(
+      Value.Check(ResolveMeetingRequest, {
+        source: 'extension',
+        externalMeetingUrl: 'http://meet.google.com/x',
+      }),
+    ).toBe(false);
   });
   it('response', () => {
     expect(Value.Check(ResolveMeetingResponse, { meetingId: id(1), created: true })).toBe(true);
@@ -41,7 +78,9 @@ describe('extension token (ADR-005)', () => {
   it('request', () => {
     const t = { extensionId, deviceId: id(9), pairingCode: 'p'.repeat(43), nonce: 'n'.repeat(43) };
     expect(Value.Check(ExtensionTokenRequest, t)).toBe(true);
-    expect(Value.Check(ExtensionTokenRequest, { ...t, extensionId: 'not-an-extension-id' })).toBe(false);
+    expect(Value.Check(ExtensionTokenRequest, { ...t, extensionId: 'not-an-extension-id' })).toBe(
+      false,
+    );
     expect(Value.Check(ExtensionTokenRequest, { ...t, scopes: ['admin'] })).toBe(false);
     expect(Value.Check(ExtensionTokenRequest, { extensionId })).toBe(false);
   });
@@ -49,8 +88,16 @@ describe('extension token (ADR-005)', () => {
     expect(EXTENSION_TOKEN_TTL_SECONDS).toBe(900);
     expect(EXTENSION_SCOPES).toEqual(['meetings:resolve', 'recordings:write']);
     const r = {
-      accessToken: 'a'.repeat(64), refreshToken: 'r'.repeat(64), tokenType: 'Bearer', audience: 'extension', expiresAt: at,
-      expiresIn: 900, refreshExpiresAt: at, organizationId: id(1), scopes: ['recordings:write'], nonce: 'n'.repeat(43),
+      accessToken: 'a'.repeat(64),
+      refreshToken: 'r'.repeat(64),
+      tokenType: 'Bearer',
+      audience: 'extension',
+      expiresAt: at,
+      expiresIn: 900,
+      refreshExpiresAt: at,
+      organizationId: id(1),
+      scopes: ['recordings:write'],
+      nonce: 'n'.repeat(43),
     };
     expect(Value.Check(ExtensionTokenResponse, r)).toBe(true);
     expect(Value.Check(ExtensionTokenResponse, { ...r, scopes: ['tasks:write'] })).toBe(false);
@@ -58,7 +105,9 @@ describe('extension token (ADR-005)', () => {
   });
   it('no other auth response schema carries an accessToken or refreshToken', () => {
     for (const name of ['AuthSession', 'GetAuthSessionResponse', 'CsrfResponse']) {
-      const keys = Object.keys((C as unknown as Record<string, { properties: object }>)[name]!.properties);
+      const keys = Object.keys(
+        (C as unknown as Record<string, { properties: object }>)[name]!.properties,
+      );
       expect(keys).not.toContain('accessToken');
       expect(keys).not.toContain('refreshToken');
     }
@@ -71,13 +120,27 @@ describe('FE #48', () => {
   });
   it('SwitchOrganizationRequest and GetMeetingParams are strict', () => {
     expect(Value.Check(SwitchOrganizationRequest, { organizationId: id(1) })).toBe(true);
-    expect(Value.Check(SwitchOrganizationRequest, { organizationId: id(1), role: 'owner' })).toBe(false);
+    expect(Value.Check(SwitchOrganizationRequest, { organizationId: id(1), role: 'owner' })).toBe(
+      false,
+    );
     expect(Value.Check(GetMeetingParams, { organizationId: id(1), meetingId: id(2) })).toBe(true);
-    expect(Value.Check(GetMeetingParams, { organizationId: 'org_1', meetingId: id(2) })).toBe(false);
+    expect(Value.Check(GetMeetingParams, { organizationId: 'org_1', meetingId: id(2) })).toBe(
+      false,
+    );
   });
   it('ListTasksQuery', () => {
     expect(Value.Check(ListTasksQuery, {})).toBe(true);
-    expect(Value.Check(ListTasksQuery, { cursor: 'c', limit: 50, status: 'todo', priority: 'high', assigneeId: id(1), dueBefore: at, q: 'deploy' })).toBe(true);
+    expect(
+      Value.Check(ListTasksQuery, {
+        cursor: 'c',
+        limit: 50,
+        status: 'todo',
+        priority: 'high',
+        assigneeId: id(1),
+        dueBefore: at,
+        q: 'deploy',
+      }),
+    ).toBe(true);
     expect(Value.Check(ListTasksQuery, { status: ['todo', 'in_progress'] })).toBe(true);
     expect(Value.Check(ListTasksQuery, { status: [] })).toBe(false);
     expect(Value.Check(ListTasksQuery, { status: 'open' })).toBe(false);
@@ -108,7 +171,14 @@ describe('DB #mismatch decisions', () => {
     expect(Transcript.required).toContain('provider');
   });
   it("Transcript.provider accepts legacy 'unknown', but SttProviderId (routing) does not", () => {
-    const t = { id: id(1), meetingId: id(2), recordingId: id(3), provider: 'unknown', segments: [], createdAt: at };
+    const t = {
+      id: id(1),
+      meetingId: id(2),
+      recordingId: id(3),
+      provider: 'unknown',
+      segments: [],
+      createdAt: at,
+    };
     expect(Value.Check(C.Transcript, { ...t, provider: 'assemblyai' })).toBe(true);
     expect(Value.Check(C.Transcript, t)).toBe(true);
     expect(Value.Check(C.Transcript, { ...t, provider: 'whisper' })).toBe(false);
@@ -118,9 +188,22 @@ describe('DB #mismatch decisions', () => {
     expect(C.TRANSCRIPT_PROVIDER_IDS).toEqual([...C.STT_PROVIDER_IDS, 'unknown']);
     expect(C.STT_PROVIDER_IDS).toEqual(C.SttProviderId.anyOf.map((x) => x.const));
   });
-  it('organizationId is canonical; no orgId, acceptedTaskId or employeeId anywhere', () => {
+  it('organizationId is canonical; no orgId or acceptedTaskId anywhere; employeeId only in the directory', () => {
     const json = JSON.stringify(Object.values(C).filter((v) => typeof v === 'object'));
-    expect(json).not.toMatch(/"orgId"|"acceptedTaskId"|"employeeId"/);
+    expect(json).not.toMatch(/"orgId"|"acceptedTaskId"/);
+    // v0.4.0: `employeeId` is legitimate only on the directory employee path params and team-member schemas
+    // (table team_members.employee_id). Meeting participants still have none.
+    const DIRECTORY_SCHEMAS = [
+      'EmployeeParams',
+      'TeamMemberDto',
+      'AddTeamMemberRequest',
+      'TeamMemberParams',
+      'ListTeamMembersResponse',
+    ];
+    const rest = Object.entries(C).filter(
+      ([k, v]) => typeof v === 'object' && !DIRECTORY_SCHEMAS.includes(k),
+    );
+    expect(JSON.stringify(rest.map(([, v]) => v))).not.toMatch(/"employeeId"/);
     expect(Object.keys(Task.properties)).toContain('extractedTaskId');
     expect(Object.keys(MeetingParticipant.properties)).not.toContain('employeeId');
   });
@@ -135,8 +218,12 @@ describe('PresignedUrlString userinfo', () => {
     'http://user:pass@minio:9000/b',
     'http://localhost@evil.com/b',
   ])('rejects %s', (u) => expect(Value.Check(PresignedUrlString, u)).toBe(false));
-  it.each(['https://s3.example.com/b/k@v.webm', 'https://s3.example.com/b?x=a@b', 'https://s3.example.com', 'http://minio:9000/b/a@b'])(
-    'allows @ outside the authority: %s',
-    (u) => expect(Value.Check(PresignedUrlString, u)).toBe(true),
+  it.each([
+    'https://s3.example.com/b/k@v.webm',
+    'https://s3.example.com/b?x=a@b',
+    'https://s3.example.com',
+    'http://minio:9000/b/a@b',
+  ])('allows @ outside the authority: %s', (u) =>
+    expect(Value.Check(PresignedUrlString, u)).toBe(true),
   );
 });

@@ -115,13 +115,17 @@ export type MediaWorkerParts = {
   transcriptionQueue: TranscriptionEnqueuer;
   realtime: RealtimePublisher;
   logger: MinimalLogger;
-  /** Chunk FileObject rows + recordings.chunk_count (#92). Required: production must persist both. */
-  persistence: Pick<MediaPersistence, 'chunkFileObjects' | 'recordings'>;
+  /**
+   * Recording ownership check (before any upload) and the atomic chunk rows + recordings.chunk_count write (#92).
+   * Required: production must verify and persist both.
+   */
+  persistence: Pick<MediaPersistence, 'recordingAccess' | 'chunks'>;
 };
 
 /**
  * The processor deps startMediaWorker runs with: ffmpeg ops, #88 waveform step, #90 realtime publisher and the #92
- * persistence steps (chunk FileObject rows, then recordings.chunk_count, both inside runWithOrganizationContext).
+ * persistence steps: verify the recording belongs to the job's organization/meeting before any upload, then write chunk
+ * FileObject rows + recordings.chunk_count in one runWithOrganizationContext transaction.
  */
 export function buildMediaProcessorDeps(
   cfg: MediaWorkerConfig,
@@ -143,8 +147,8 @@ export function buildMediaProcessorDeps(
     transcriptionQueue: parts.transcriptionQueue,
     realtime: parts.realtime,
     logger: parts.logger,
-    chunkFileObjects: parts.persistence.chunkFileObjects,
-    recordings: parts.persistence.recordings,
+    recordingVerifier: parts.persistence.recordingAccess,
+    chunkPersistence: parts.persistence.chunks,
     segmentSeconds: cfg.segmentSeconds,
     defaultSttProviderId: cfg.sttProviderId,
     ...(cfg.tmpRoot ? { tmpRoot: cfg.tmpRoot } : {}),

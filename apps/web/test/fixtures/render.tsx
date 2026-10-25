@@ -28,12 +28,14 @@ export function createMockApi(
     onUnauthorized: overrides.onUnauthorized ?? vi.fn(() => () => {}),
     auth: {
       login: vi.fn().mockResolvedValue(session),
-      signup: vi.fn().mockResolvedValue(session),
+      signup: vi.fn().mockResolvedValue({ message: 'Check your email to continue.' }),
       forgotPassword: vi.fn().mockResolvedValue(undefined),
+      resetPassword: vi.fn().mockResolvedValue(undefined),
+      verifyEmail: vi.fn().mockResolvedValue(undefined),
+      resendVerification: vi.fn().mockResolvedValue(undefined),
+      logout: vi.fn().mockResolvedValue(undefined),
+      logoutAll: vi.fn().mockResolvedValue(undefined),
       session: vi.fn().mockResolvedValue(sessionResponse),
-      switchOrganization: vi.fn((body: { organizationId: string }) =>
-        Promise.resolve({ ...session, activeOrganizationId: body.organizationId }),
-      ),
       ...overrides.auth,
     },
     organizations: {
@@ -42,7 +44,17 @@ export function createMockApi(
         nextCursor: null,
       }),
       create: vi.fn().mockResolvedValue({ organization: newOrg, role: 'owner' }),
+      switch: vi.fn((body: { organizationId: string }) =>
+        Promise.resolve({
+          organization: orgs.find((o) => o.id === body.organizationId) ?? orgs[0]!,
+          role: 'owner' as const,
+        }),
+      ),
       ...overrides.organizations,
+    },
+    invitations: {
+      accept: vi.fn().mockResolvedValue({ organization: orgs[1]!, role: 'member' }),
+      ...overrides.invitations,
     },
     extension: {
       pair: vi.fn().mockResolvedValue(pairResponse),

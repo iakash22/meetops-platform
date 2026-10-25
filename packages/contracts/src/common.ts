@@ -51,3 +51,20 @@ export const SafeDisplayText = (opts: { maxLength: number; trimmed?: boolean }) 
   });
 
 export const Timestamps = Type.Object({ createdAt: IsoDateTime, updatedAt: IsoDateTime });
+
+/**
+ * v0.4.0: BMP characters disallowed in multi-line user text (team and project descriptions): like
+ * UNSAFE_DISPLAY_TEXT_CHARS, but tab, LF and CR are allowed, and so are the HTML-significant characters (`<`, `>`, `"`,
+ * `'`, `&`), because prose needs apostrophes and ampersands. Clients MUST render such text as text (never as HTML).
+ * Tag characters are still rejected via UNSAFE_DISPLAY_TEXT_TAGS.
+ */
+export const UNSAFE_MULTILINE_TEXT_CHARS =
+  '\\u0000-\\u0008\\u000B\\u000C\\u000E-\\u001F\\u007F-\\u009F\\u00AD\\u180E\\u2028\\u2029\\u200B-\\u200F\\u2060' +
+  '\\uFEFF\\u061C\\u202A-\\u202E\\u2066-\\u2069\\u3164\\uFE00-\\uFE0F';
+
+/** v0.4.0: pattern for SafeMultilineText: one or more characters, none in UNSAFE_MULTILINE_TEXT_CHARS or a tag character. */
+export const SAFE_MULTILINE_TEXT_PATTERN = `^(?:(?!${UNSAFE_DISPLAY_TEXT_TAGS})[^${UNSAFE_MULTILINE_TEXT_CHARS}])+$`;
+
+/** v0.4.0: shared schema for multi-line user text (descriptions). Length is 1..maxLength. */
+export const SafeMultilineText = (opts: { maxLength: number }) =>
+  Type.String({ minLength: 1, maxLength: opts.maxLength, pattern: SAFE_MULTILINE_TEXT_PATTERN });
