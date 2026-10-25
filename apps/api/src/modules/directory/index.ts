@@ -12,6 +12,7 @@ import { projectRoutes } from '../projects/http/projects.routes.js';
 import { isRelaxedEnv, MissingProductionDependencyError, type ModuleDeps } from '../index.js';
 import { DirectoryAccess } from './access.js';
 import { InMemoryDirectory } from './in-memory.repositories.js';
+import { createPrismaDirectory } from './prisma.repositories.js';
 import type { DirectoryRepositories } from './ports.js';
 import type { ResolveCaller } from './http/route-kit.js';
 
@@ -25,14 +26,16 @@ export interface DirectoryPluginOptions {
 }
 
 /**
- * Repositories for the directory routes: injected > in-memory (development/test only). Anywhere else the
- * process refuses to start rather than silently keep directory data in memory.
+ * Repositories for the directory routes: injected > DB-2 Prisma repositories when a database client is
+ * configured (`deps.db`) > in-memory (development/test only). Anywhere else the process refuses to start
+ * rather than silently keep directory data in memory.
  */
 export function selectDirectoryRepositories(
   deps: DirectoryModuleDeps,
   nodeEnv: string | undefined = process.env.NODE_ENV,
 ): DirectoryRepositories {
   if (deps.directory) return deps.directory;
+  if (deps.db) return createPrismaDirectory(deps.db);
   if (!isRelaxedEnv(nodeEnv)) throw new MissingProductionDependencyError(['directory']);
   return new InMemoryDirectory(() => deps.clock.now());
 }
