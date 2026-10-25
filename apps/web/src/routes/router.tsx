@@ -29,6 +29,7 @@ import { DashboardPage, ProjectsPage, SettingsPage } from '@/pages/app-pages';
 import { CreateOrganizationPage } from '@/features/organizations/create-organization';
 import { ExtensionPairPage } from '@/features/extension/pair-page';
 import { parsePairSearch } from '@/features/extension/pairing';
+import { createAuthPublicRoutes } from './auth-public';
 
 export type RouterContext = { queryClient: QueryClient; api: ApiClient };
 
@@ -225,6 +226,7 @@ const extensionPairRoute = createRoute({
 
 export const routeTree = rootRoute.addChildren([
   authLayout.addChildren([loginRoute, signupRoute, forgotPasswordRoute]),
+  createAuthPublicRoutes(() => rootRoute),
   appLayout.addChildren([
     dashboardRoute,
     meetingsRoute,
