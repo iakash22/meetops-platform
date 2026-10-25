@@ -17,10 +17,11 @@ const A = 'org-a';
 const B = 'org-b';
 const ME = 'user-me';
 const OTHER = 'user-other';
-const ACTIONS: Action[] = ['create', 'read', 'update', 'delete'];
+const ACTIONS: CrudAction[] = ['create', 'read', 'update', 'delete'];
 const ROLES: Role[] = ['owner', 'admin', 'member', 'viewer'];
 
-type Expect = Record<Action, boolean>;
+type CrudAction = Exclude<Action, 'manage'>;
+type Expect = Record<CrudAction, boolean>;
 const all: Expect = { create: true, read: true, update: true, delete: true };
 const readOnly: Expect = { create: false, read: true, update: false, delete: false };
 const memberMediaOwn: Expect = all;
