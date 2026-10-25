@@ -28,7 +28,8 @@ const VENDOR_GROUPS: ReadonlyArray<readonly [chunk: string, packages: readonly s
     ],
   ],
   ['icons', ['lucide-react']],
-  ['forms', ['zod', 'react-hook-form', '@hookform/']],
+  // Not 'forms': that name is taken by the src/features/auth/forms route chunk once routes are lazy.
+  ['validation', ['zod', 'react-hook-form', '@hookform/']],
 ];
 
 /** Package name for a resolved module id inside node_modules (pnpm layout aware). */

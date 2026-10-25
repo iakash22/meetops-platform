@@ -20,7 +20,7 @@ const BUDGETS = {
   tanstack: 45,
   radix: 38,
   icons: 6,
-  forms: 45,
+  validation: 45, // zod + react-hook-form
   index: 35, // app code
   '*': 25, // any other JS chunk (e.g. future lazy route chunks)
   css: 8,
