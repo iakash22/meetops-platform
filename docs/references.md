@@ -77,3 +77,56 @@ assets from them into the repo.
 | **Mobbin**     | https://mobbin.com    | Real app screens and flows (web + iOS/Android), e.g. [web login screens](https://mobbin.com/explore/web/screens/login), [logging-in flows](https://mobbin.com/explore/web/flows/logging-in). Some content needs a free login. |
 | **Page Flows** | https://pageflows.com | Recorded end-to-end user flows, e.g. [signing up](https://pageflows.com/web/flows/signing-up/), [logging in](https://pageflows.com/web/flows/logging-in/).                                                                    |
 | **Land-book**  | https://land-book.com | Landing-page and marketing-site layouts for `apps/marketing`.                                                                                                                                                                 |
+
+## 5. Auth page references
+
+Shortlist for `/login`, `/signup`, forgot/reset password and verify email (researched
+2026-10-25; every link returned 200).
+
+| Reference                                                                                                                  | What to take from it                                                                                                                                          |
+| -------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [Supabase sign-in](https://supabase.com/dashboard/sign-in)                                                                 | Split screen: form column left, testimonial panel right. Password show/hide eye, inline "Forgot password?" in the label row, legal line pinned to the bottom. |
+| [Resend login](https://resend.com/login)                                                                                   | Dark, centered, minimal; ambient art from the corners (closest to our BrandBackground glow); CTA disabled until input is valid.                               |
+| [Vercel login](https://vercel.com/login)                                                                                   | Pure black, high contrast; "Sign up" pill top-right.                                                                                                          |
+| [Linear login](https://linear.app/login) / [signup](https://linear.app/signup)                                             | Narrow column, one headline, strict type scale and spacing on near-black.                                                                                     |
+| [Cal.com signup](https://app.cal.com/signup)                                                                               | The "signup sells the product" panel: framed product preview, three value props, "Already have an account? Sign in" pinned bottom-left.                       |
+| [shadcn login blocks](https://ui.shadcn.com/blocks/login) / [signup blocks](https://ui.shadcn.com/blocks/signup)           | Code base to start from. `login-02` = two columns with cover panel; `login-04` = card with form + image. `npx shadcn add login-02`.                           |
+| [Watermelon auth-01](https://ui.watermelon.sh/block/auth-01) + [form components](https://ui.watermelon.sh/components/form) | react-hook-form + zod + sonner wiring for validation and toasts.                                                                                              |
+| [21st.dev sign-in](https://21st.dev/s/sign-in) / [sign-up](https://21st.dev/s/sign-up)                                     | Micro-interactions to borrow (animated sign-in, split screen, auth divider). Keep the attribution link.                                                       |
+| [Aceternity signup form](https://ui.aceternity.com/components/signup-form)                                                 | Cursor-following radial glow on input hover/focus; copy it in cerulean.                                                                                       |
+| [Mobbin web login screens](https://mobbin.com/explore/web/screens/login)                                                   | Benchmark error, verification and "check your email" states.                                                                                                  |
+
+Also useful: [Page Flows signing-up](https://pageflows.com/web/flows/signing-up/),
+[Magic UI Shimmer Button](https://www.magicui.design/docs/components/shimmer-button),
+[Animate UI components](https://animate-ui.com/docs/components).
+
+Key spec points:
+
+- **The API is email + password only.** There are no SSO/Google/GitHub/magic-link/passkey
+  endpoints, so **render no SSO buttons and no "or" divider** until the API adds OAuth.
+- Signup = full name → work email → password (12–128 chars, mirrors `packages/contracts`) with a
+  strength meter → one shimmer CTA. No confirm-password field.
+- Signup, forgot-password and resend are enumeration-safe: signup always ends on a "Check your
+  email" state, never "email already taken".
+- Login = email (`autoComplete="username"`) + password (`current-password`) on one screen; login
+  only checks the password is non-empty, so the policy isn't revealed.
+- Fetch `GET /auth/csrf` before submit and send `x-csrf-token`; on `CSRF_INVALID`, refetch once and
+  retry.
+- **Error rule:**
+  - **Field errors appear inline under the field** (`aria-invalid`, `aria-describedby`, destructive
+    border). On submit, focus the first invalid field.
+  - **Non-field errors appear as an animated toast** using [Sonner](https://sonner.emilkowal.ski)
+    (MIT, [source](https://github.com/emilkowalski/sonner)), themed to our tokens. That covers
+    `AUTH_FAILED`, `RATE_LIMITED`, network/5xx and expired sessions. Error toasts use
+    `#EF4444`, never rose. Don't auto-dismiss toasts that need action, and keep them ≥5s.
+    The toast animation is skipped under reduced motion.
+- Loading: fixed-width button, spinner + label, `aria-busy`, block double submit.
+- Mobile: brand panel hidden below `lg`, 16px inputs, `h-11` controls, `min-h-svh`.
+- Neon rose at most once per page (e.g. a "New" pill), never for errors or CTAs.
+
+## 6. Typography and motion
+
+**In progress (branch `feat/typography-motion`).** The spec will live at
+`docs/05-web/typography-and-motion.md` once that branch is pushed and merged. Until then, don't
+pick or hard-code a font in other clients; take the font and motion values from that doc when it
+lands.
