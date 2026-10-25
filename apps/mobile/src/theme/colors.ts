@@ -49,6 +49,8 @@ export const colors = {
   accentForeground: '#0A0A0A',
   /** Errors and danger. Red, deliberately distinct from rose (5.26:1 as text on background). */
   destructive: '#EF4444',
+  /** Inline error text (field errors, toasts): lighter red for comfortable AA at small sizes. */
+  destructiveText: '#F87171',
   /** Text on destructive fills (white would fail AA). */
   destructiveForeground: '#0A0A0A',
   /** Warnings. */

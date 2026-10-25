@@ -1,5 +1,6 @@
+import { useRouter } from 'expo-router';
 import { useState } from 'react';
-import { KeyboardAvoidingView, Platform, StyleSheet, Text, View } from 'react-native';
+import { KeyboardAvoidingView, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { useAuth } from '../auth/AuthProvider';
 import { isAuthClientError } from '../auth/types';
@@ -28,6 +29,7 @@ export function loginErrorMessage(e: unknown): string {
 
 export function LoginScreen() {
   const { signIn } = useAuth();
+  const router = useRouter();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [fieldErrors, setFieldErrors] = useState<LoginFieldErrors>({});
@@ -118,6 +120,18 @@ export function LoginScreen() {
           onPress={() => void submit()}
           loading={submitting}
         />
+
+        <View style={styles.switchRow}>
+          <Text style={styles.switchPrompt}>New to MeetOps?</Text>
+          <Pressable
+            testID="login-to-signup"
+            onPress={() => router.push('/signup')}
+            accessibilityRole="link"
+            hitSlop={8}
+          >
+            <Text style={styles.link}>Create an account</Text>
+          </Pressable>
+        </View>
       </View>
     </KeyboardAvoidingView>
   );
@@ -139,4 +153,12 @@ const styles = StyleSheet.create({
     fontSize: 13,
   },
   formError: { color: colors.destructive, marginBottom: 16, fontSize: 14 },
+  switchRow: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    gap: spacing.xs,
+    marginTop: spacing.lg,
+  },
+  switchPrompt: { color: colors.mutedForeground, fontSize: 14 },
+  link: { color: colors.link, fontSize: 14, fontWeight: '600' },
 });
