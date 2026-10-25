@@ -12,6 +12,19 @@ export async function start() {
   try {
     const address = await app.listen({ port, host });
     app.log.info({ address }, 'API server started');
+    // Graceful shutdown: app.close() runs the onClose hooks that disconnect Prisma and quit Redis.
+    for (const signal of ['SIGTERM', 'SIGINT'] as const) {
+      process.once(signal, () => {
+        app.log.info({ signal }, 'Shutting down API server');
+        app.close().then(
+          () => process.exit(0),
+          (err: unknown) => {
+            app.log.error({ err }, 'Error during shutdown');
+            process.exit(1);
+          },
+        );
+      });
+    }
   } catch (err) {
     app.log.error({ err }, 'Failed to start API server');
     process.exit(1);

@@ -11,7 +11,11 @@ import type {
   ForgotPasswordRequest,
   GetAuthSessionResponse,
   Id,
+  ListMembersResponse,
   ListOrganizationsResponse,
+  ListSessionsResponse,
+  Membership,
+  Role,
   LoginRequest,
   Meeting,
   Paginated,
@@ -25,12 +29,18 @@ import type {
   SwitchOrganizationRequest,
   VerifyEmailRequest,
 } from '@meetops/contracts';
-import { API_ERROR_CODES, EXTENSION_AUTH_PATHS } from '@meetops/contracts/types';
+import {
+  API_ERROR_CODES,
+  CONFLICT_REASONS,
+  EXTENSION_AUTH_PATHS,
+  type ConflictReason,
+} from '@meetops/contracts/types';
 
 /** Contracts ApiErrorEnvelope codes plus 'UNKNOWN' when the body is unparseable. */
 export type ApiErrorCode = ContractApiErrorCode | 'UNKNOWN';
 
 const KNOWN_CODES = new Set<string>(API_ERROR_CODES);
+const KNOWN_REASONS = new Set<string>(CONFLICT_REASONS);
 
 /**
  * Error from the API. `message` is the server-provided envelope message (never
@@ -40,6 +50,8 @@ export class ApiError extends Error {
   readonly code: ApiErrorCode;
   readonly requestId: string | undefined;
   readonly details: ReadonlyArray<{ path: string; message: string }>;
+  /** 409 sub-reason (contracts CONFLICT_REASONS, e.g. LAST_OWNER), when the envelope carries a known one. */
+  reason: ConflictReason | undefined = undefined;
   constructor(
     public readonly status: number,
     code: ApiErrorCode,
@@ -81,7 +93,10 @@ export class ApiError extends Error {
             : [],
         )
       : [];
-    return new ApiError(status, code, message, requestId, details);
+    const error = new ApiError(status, code, message, requestId, details);
+    if (typeof e.reason === 'string' && KNOWN_REASONS.has(e.reason))
+      error.reason = e.reason as ConflictReason;
+    return error;
   }
 }
 
@@ -142,6 +157,25 @@ export type AcceptedResponse = { message: string };
 /** POST /invitations/accept body (the API's `AcceptInvitationBody`; not in contracts yet). */
 export type AcceptInvitationRequest = { token: string };
 
+/** Roles an invitation may grant (the API's `InvitableRole`; owners are only created with the org). */
+export type InvitableRole = Exclude<Role, 'owner'>;
+
+/** POST /orgs/:organizationId/invitations body (the API's `CreateInvitationBody`; not in contracts yet). */
+export type CreateInvitationRequest = { email: string; role: InvitableRole };
+
+/** The API's `InvitationDto` (not in contracts yet). The token is never returned; it is only emailed. */
+export type Invitation = {
+  id: Id;
+  organizationId: Id;
+  email: string;
+  role: InvitableRole;
+  status: 'pending' | 'accepted' | 'revoked';
+  expiresAt: string;
+};
+
+/** Cursor page params for GET list endpoints (contracts CursorPageQuery). */
+export type CursorParams = { cursor?: string | undefined; limit?: number | undefined };
+
 /** GET /orgs/:id/tasks query (contracts ListTasksQuery; `unassigned` excludes `assigneeId`). */
 export type TaskListFilters = ListTasksQuery;
 
@@ -167,6 +201,13 @@ export type ApiClient = {
     logoutAll: () => Promise<void>;
     /** GET /auth/session; 401 when signed out. */
     session: () => Promise<GetAuthSessionResponse>;
+    /** GET /auth/sessions: cursor page of the caller's active sessions; `current` marks this one. */
+    sessions: (page?: CursorParams) => Promise<ListSessionsResponse>;
+    /**
+     * DELETE /auth/sessions/:sessionId (204). 404 for unknown or other users' sessions.
+     * Revoking the current session also clears the cookie (the caller is signed out).
+     */
+    revokeSession: (sessionId: Id) => Promise<void>;
   };
   organizations: {
     /** GET /orgs: cursor page of `{ organization, role }`. */
@@ -186,6 +227,25 @@ export type ApiClient = {
      * Unknown/expired/revoked/mismatched tokens are 404; already a member is 409.
      */
     accept: (body: AcceptInvitationRequest) => Promise<OrganizationWithRole>;
+    /**
+     * POST /orgs/:organizationId/invitations (201). Owner/admin only. Re-inviting the
+     * same address replaces its pending invite (this is how "resend" works: there is
+     * no separate resend route). 409 ALREADY_MEMBER for an active member.
+     */
+    create: (organizationId: Id, body: CreateInvitationRequest) => Promise<Invitation>;
+    /** POST /orgs/:organizationId/invitations/:invitationId/revoke. Pending invitations only (else 409). */
+    revoke: (organizationId: Id, invitationId: Id) => Promise<Invitation>;
+  };
+  members: {
+    /** GET /orgs/:organizationId/members: cursor page; `user.email` only for owner/admin viewers. 404 for non-members. */
+    list: (organizationId: Id, page?: CursorParams) => Promise<ListMembersResponse>;
+    /**
+     * PATCH /orgs/:organizationId/members/:userId. 403 outside the role rules, 409 LAST_OWNER.
+     * Changing your own role rotates your session.
+     */
+    changeRole: (organizationId: Id, userId: Id, role: Role) => Promise<Membership>;
+    /** DELETE /orgs/:organizationId/members/:userId (204). Removing yourself leaves the org (session rotates). */
+    remove: (organizationId: Id, userId: Id) => Promise<void>;
   };
   extension: {
     /** POST /auth/extension/pair (ADR-005 A1.1). Cookie + CSRF; returns a single-use pairing code. */
@@ -305,6 +365,14 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
 
   const org = (id: Id) => `/orgs/${encodeURIComponent(id)}`;
 
+  function pageQuery(page: CursorParams = {}): string {
+    const q = new URLSearchParams();
+    if (page.cursor) q.set('cursor', page.cursor);
+    if (page.limit !== undefined) q.set('limit', String(page.limit));
+    const s = q.toString();
+    return s ? `?${s}` : '';
+  }
+
   function taskQuery(filters: TaskListFilters = {}): string {
     const q = new URLSearchParams();
     type Scalar = string | number | boolean;
@@ -359,6 +427,12 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
         }
       },
       session: () => request('GET', '/auth/session'),
+      sessions: (page) => request('GET', `/auth/sessions${pageQuery(page)}`),
+      revokeSession: async (sessionId) => {
+        await request('DELETE', `/auth/sessions/${encodeURIComponent(sessionId)}`);
+        // If this was the current session its cookie is gone; never reuse its token.
+        cachedCsrf = null;
+      },
     },
     organizations: {
       list: () => request('GET', '/orgs'),
@@ -377,6 +451,26 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
     },
     invitations: {
       accept: (body) => request('POST', '/invitations/accept', body),
+      create: (id, body) => request('POST', `${org(id)}/invitations`, body),
+      revoke: (id, invitationId) =>
+        request('POST', `${org(id)}/invitations/${encodeURIComponent(invitationId)}/revoke`),
+    },
+    members: {
+      list: (id, page) => request('GET', `${org(id)}/members${pageQuery(page)}`),
+      changeRole: async (id, userId, role) => {
+        const res = await request<Membership>(
+          'PATCH',
+          `${org(id)}/members/${encodeURIComponent(userId)}`,
+          { role },
+        );
+        // A self role change rotates the session (new CSRF cookie): drop the cached token.
+        cachedCsrf = null;
+        return res;
+      },
+      remove: async (id, userId) => {
+        await request('DELETE', `${org(id)}/members/${encodeURIComponent(userId)}`);
+        cachedCsrf = null;
+      },
     },
     extension: {
       pair: (body) => request('POST', EXTENSION_AUTH_PATHS.pair, body),

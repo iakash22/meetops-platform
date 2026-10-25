@@ -3,12 +3,17 @@ import type {
   CreateUploadResponse,
   ExtensionPairResponse,
   GetAuthSessionResponse,
+  ListMembersResponse,
+  ListSessionsResponse,
   Meeting,
   Organization,
+  OrganizationMember,
   Paginated,
   Project,
+  Role,
   Task,
 } from '@meetops/contracts';
+import type { Invitation } from '@/lib/api/client';
 
 const T = '2026-10-01T00:00:00.000Z';
 
@@ -143,4 +148,64 @@ export const pairResponse: ExtensionPairResponse = {
   expiresAt: '2999-01-01T00:01:00.000Z',
   organizationId: '00000000-0000-4000-8000-000000000001',
   organizationName: 'Acme Inc',
+};
+
+const ORG_A = '00000000-0000-4000-8000-000000000001';
+
+/** GET /auth/sessions: this browser (current) plus another device. */
+export const sessionList: ListSessionsResponse = {
+  items: [
+    {
+      id: '20000000-0000-4000-8000-000000000001',
+      current: true,
+      createdAt: T,
+      lastSeenAt: '2026-10-24T10:00:00.000Z',
+      expiresAt: '2026-11-24T10:00:00.000Z',
+      ip: '203.0.113.7',
+      userAgent: 'Mozilla/5.0 (Macintosh) Firefox/131.0',
+    },
+    {
+      id: '20000000-0000-4000-8000-000000000002',
+      current: false,
+      createdAt: T,
+      lastSeenAt: '2026-10-20T08:00:00.000Z',
+      expiresAt: '2026-11-20T08:00:00.000Z',
+      ip: null,
+      userAgent: 'Mozilla/5.0 (iPhone) Safari/604.1',
+    },
+  ],
+  nextCursor: null,
+};
+
+const member = (n: number, role: Role, name: string, email?: string): OrganizationMember => ({
+  id: `30000000-0000-4000-8000-00000000000${n}`,
+  organizationId: ORG_A,
+  userId: `10000000-0000-4000-8000-00000000000${n}`,
+  role,
+  createdAt: T,
+  user: {
+    id: `10000000-0000-4000-8000-00000000000${n}`,
+    name,
+    ...(email ? { email } : {}),
+  },
+});
+
+/** GET /orgs/:id/members as seen by an owner/admin (emails included). Ada (user 1) is the owner. */
+export const memberList: ListMembersResponse = {
+  items: [
+    member(1, 'owner', 'Ada', 'ada@example.com'),
+    member(2, 'admin', 'Grace', 'grace@example.com'),
+    member(3, 'member', 'Linus', 'linus@example.com'),
+    member(4, 'viewer', 'Barbara', 'barbara@example.com'),
+  ],
+  nextCursor: null,
+};
+
+export const invitation: Invitation = {
+  id: '40000000-0000-4000-8000-000000000001',
+  organizationId: ORG_A,
+  email: 'new.person@example.com',
+  role: 'member',
+  status: 'pending',
+  expiresAt: '2026-11-01T00:00:00.000Z',
 };
