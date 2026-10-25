@@ -1,14 +1,14 @@
 import type { Meeting } from '@meetops/contracts';
 import { Link } from 'expo-router';
-import { useEffect, useState } from 'react';
 import { FlatList, StyleSheet, Text, View } from 'react-native';
 
-import { useAuth } from '../auth/AuthProvider';
-import { RECORDING_ENABLED } from '../config/session';
-import { meetingsClient } from '../services';
+import { useActiveOrganization } from '../auth/useActiveOrganization';
+import { useRepositories } from '../data/RepositoriesProvider';
+import { useOrgScopedList } from '../data/useOrgScopedList';
 import { colors, radius, spacing } from '../theme/colors';
-import { Button } from '../ui/Button';
 import { LiveDot } from '../ui/LiveDot';
+import { SkeletonList } from '../ui/Skeleton';
+import { EmptyState, ErrorState } from '../ui/StateViews';
 
 const STATUS_LABEL: Record<Meeting['status'], string> = {
   scheduled: 'Scheduled',
@@ -18,38 +18,21 @@ const STATUS_LABEL: Record<Meeting['status'], string> = {
   failed: 'Failed',
 };
 
-/** Placeholder list: real data needs a list-meetings API route (not in the API yet). */
+/** Placeholder list: real data needs a list-meetings API route (Backend, not in the API yet). */
 export function MeetingsScreen() {
-  const { state, signOut } = useAuth();
-  const organizationId = state.status === 'signedIn' ? state.identity.organizationId : null;
-  const orgName =
-    state.status === 'signedIn'
-      ? (state.session.organizations.find((o) => o.id === organizationId)?.name ?? 'Organization')
-      : '';
-  const [meetings, setMeetings] = useState<Meeting[] | null>(null);
-  const [signingOut, setSigningOut] = useState(false);
-
-  useEffect(() => {
-    if (!organizationId) return;
-    let active = true;
-    setMeetings(null);
-    meetingsClient
-      .list(organizationId)
-      .then((list) => {
-        if (active) setMeetings(list);
-      })
-      .catch(() => {
-        if (active) setMeetings([]);
-      });
-    return () => {
-      active = false;
-    };
-  }, [organizationId]);
+  const { organization, organizationId } = useActiveOrganization();
+  const { meetings } = useRepositories();
+  const { state, reload } = useOrgScopedList(organizationId, meetings.list);
+  const orgName = organization?.name ?? 'Organization';
 
   return (
     <View style={styles.container}>
       <View style={styles.orgRow}>
-        <View style={styles.avatar} accessibilityElementsHidden>
+        <View
+          style={styles.avatar}
+          accessibilityElementsHidden
+          importantForAccessibility="no-hide-descendants"
+        >
           <Text style={styles.avatarText}>{orgName.slice(0, 1).toUpperCase()}</Text>
         </View>
         <View style={styles.flex}>
@@ -63,60 +46,60 @@ export function MeetingsScreen() {
           testID="switch-org-link"
           style={styles.link}
           accessibilityRole="link"
+          accessibilityLabel="Switch organization"
         >
           Switch
         </Link>
       </View>
 
-      <Text testID="recording-status" style={styles.muted}>
-        {RECORDING_ENABLED ? 'Recording available' : 'Recording not available yet'}
-      </Text>
-
-      <FlatList
-        testID="meetings-list"
-        style={styles.list}
-        data={meetings ?? []}
-        keyExtractor={(m) => m.id}
-        ListEmptyComponent={
-          <Text style={styles.muted}>
-            {meetings === null ? 'Loading meetings…' : 'No meetings yet.'}
-          </Text>
-        }
-        renderItem={({ item }) => (
-          <View
-            style={[styles.row, item.status === 'recording' && styles.liveRow]}
-            testID="meeting-row"
-          >
-            <Text style={styles.title}>{item.title}</Text>
-            <View style={styles.statusRow}>
-              {item.status === 'recording' ? <LiveDot testID="live-dot" /> : null}
-              <Text style={item.status === 'recording' ? styles.live : styles.muted}>
-                {STATUS_LABEL[item.status]}
+      {state.status === 'loading' ? (
+        <SkeletonList testID="meetings-skeleton" label="Loading meetings" />
+      ) : state.status === 'error' ? (
+        <ErrorState testID="meetings-error" message="Couldn't load meetings." onRetry={reload} />
+      ) : (
+        <FlatList
+          testID="meetings-list"
+          data={state.items}
+          keyExtractor={(m) => m.id}
+          ListEmptyComponent={
+            <EmptyState
+              testID="meetings-empty"
+              title="No meetings yet"
+              body="Meetings you record or upload will show up here."
+            />
+          }
+          ListFooterComponent={
+            state.items.length > 0 ? (
+              <Text style={styles.placeholder}>
+                Placeholder data. Meetings sync arrives with the meetings API.
               </Text>
-            </View>
-          </View>
-        )}
-      />
-      <Text style={styles.placeholder}>
-        Placeholder data. Meetings sync arrives with the meetings API.
-      </Text>
-
-      <Button
-        testID="sign-out"
-        variant="secondary"
-        label="Sign out"
-        loading={signingOut}
-        onPress={() => {
-          setSigningOut(true);
-          void signOut();
-        }}
-      />
+            ) : null
+          }
+          renderItem={({ item }) => {
+            const live = item.status === 'recording';
+            return (
+              <View
+                style={[styles.row, live && styles.liveRow]}
+                testID="meeting-row"
+                accessible
+                accessibilityLabel={`${item.title}, ${STATUS_LABEL[item.status]}`}
+              >
+                <Text style={styles.title}>{item.title}</Text>
+                <View style={styles.statusRow}>
+                  {live ? <LiveDot testID="live-dot" /> : null}
+                  <Text style={live ? styles.live : styles.muted}>{STATUS_LABEL[item.status]}</Text>
+                </View>
+              </View>
+            );
+          }}
+        />
+      )}
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: colors.background, padding: spacing.xl },
+  container: { flex: 1, backgroundColor: colors.background, padding: spacing.xl, paddingBottom: 0 },
   flex: { flex: 1 },
   orgRow: {
     flexDirection: 'row',
@@ -127,7 +110,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderRadius: radius.lg,
     padding: spacing.lg,
-    marginBottom: spacing.lg,
+    marginBottom: spacing.xl,
   },
   avatar: {
     width: 40,
@@ -141,7 +124,6 @@ const styles = StyleSheet.create({
   orgName: { color: colors.foreground, fontSize: 17, fontWeight: '600', marginTop: 2 },
   link: { color: colors.link, fontSize: 16, fontWeight: '600', padding: spacing.sm },
   muted: { color: colors.mutedForeground, fontSize: 14 },
-  list: { marginVertical: spacing.lg },
   row: {
     backgroundColor: colors.card,
     borderColor: colors.border,
@@ -157,7 +139,7 @@ const styles = StyleSheet.create({
   placeholder: {
     color: colors.mutedForeground,
     fontSize: 12,
-    marginBottom: spacing.lg,
+    marginVertical: spacing.lg,
     textAlign: 'center',
   },
 });
