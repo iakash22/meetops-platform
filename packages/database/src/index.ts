@@ -82,6 +82,8 @@ export {
   createRecordingChunkCountRepository,
   createChunkFileObjectRepository,
   createChunkFileObjectLookup,
+  createRecordingOwnershipVerifier,
+  createRecordingChunkPersistence,
   MediaPersistenceError,
   MAX_RECORDING_CHUNKS,
   type ChunkFileObjectRow,
@@ -91,4 +93,7 @@ export {
   type ChunkFileObjectRecord,
   type ChunkFileObjectLookup,
   type MediaRepositoryOptions,
+  type RecordingRef,
+  type RecordingOwnershipVerifier,
+  type RecordingChunkPersistence,
 } from './media.js';
