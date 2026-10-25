@@ -21,6 +21,6 @@
   "dependencies": {
     "@meetops/contracts": "workspace:*",
     "undici": "^7",
-    "zod": "^4"
+    "zod": "^4.6.6"
   }
 }

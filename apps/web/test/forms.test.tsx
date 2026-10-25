@@ -24,6 +24,30 @@ describe('auth schemas', () => {
   it('validates forgot password email', () => {
     expect(forgotPasswordSchema.safeParse({ email: '' }).success).toBe(false);
   });
+  // zod 4 + @hookform/resolvers v5: pin the user-facing messages so the migration keeps v3 UX.
+  const emailMessages = (email: string) => {
+    const r = forgotPasswordSchema.safeParse({ email });
+    return r.success ? [] : r.error.issues.map((i) => i.message);
+  };
+  it('reports only "Email is required" for an empty email', () => {
+    expect(emailMessages('')).toEqual(['Email is required']);
+  });
+  it('reports "Enter a valid email" for a malformed email', () => {
+    expect(emailMessages('bad')).toEqual(['Enter a valid email']);
+    expect(emailMessages('a@b.co')).toEqual([]);
+  });
+  it('attaches the password mismatch message to confirmPassword', () => {
+    const r = signupSchema.safeParse({
+      name: 'A',
+      email: 'a@b.co',
+      password: '123456789012',
+      confirmPassword: 'nope',
+    });
+    expect(r.success).toBe(false);
+    expect(r.error?.issues).toEqual([
+      expect.objectContaining({ path: ['confirmPassword'], message: 'Passwords do not match' }),
+    ]);
+  });
 });
 
 describe('auth forms', () => {
