@@ -126,10 +126,17 @@ Key spec points:
 
 ## 6. Typography and motion
 
-**In progress (branch `feat/typography-motion`).** The spec will live at
-`docs/05-web/typography-and-motion.md` once that branch is pushed and merged. Until then, don't
-pick or hard-code a font in other clients; take the font and motion values from that doc when it
-lands.
+Self-hosted variable fonts (woff2), both under the SIL Open Font License (OFL):
+
+| Font                      | Role                    | Loading                        | Official site                                                                                                    |
+| ------------------------- | ----------------------- | ------------------------------ | ---------------------------------------------------------------------------------------------------------------- |
+| Inter (variable)          | Sans: UI and body text  | Preloaded; latin subset ≈57 KB | [rsms.me/inter](https://rsms.me/inter/) ([repo](https://github.com/rsms/inter))                                  |
+| JetBrains Mono (variable) | Mono: timecodes and IDs | Lazy-loaded                    | [jetbrains.com/lp/mono](https://www.jetbrains.com/lp/mono/) ([repo](https://github.com/JetBrains/JetBrainsMono)) |
+
+The full guide (type scale, spacing, scroll and motion system) is at
+`docs/05-web/typography-and-motion.md`, via
+[PR #143](https://github.com/iakash22/meetops-platform/pull/143) into `integration/phase-1` (not
+yet on `main`). Don't load fonts from a third-party CDN; use the self-hosted files.
 
 ## 7. MCP servers and dev plugins
 
