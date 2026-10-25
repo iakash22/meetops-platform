@@ -31,6 +31,7 @@ import { ExtensionPairPage } from '@/features/extension/pair-page';
 import { parsePairSearch } from '@/features/extension/pairing';
 import { createAuthPublicRoutes } from './auth-public';
 import { createAccountRoutes } from './account';
+import { createOrganizationRoutes } from './organization';
 
 export type RouterContext = { queryClient: QueryClient; api: ApiClient };
 
@@ -238,6 +239,7 @@ export const routeTree = rootRoute.addChildren([
     createOrganizationRoute,
     extensionPairRoute,
     createAccountRoutes(() => appLayout),
+    createOrganizationRoutes(() => appLayout),
   ]),
 ]);
 
