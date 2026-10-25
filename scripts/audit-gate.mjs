@@ -11,12 +11,6 @@
 // ignored when CI=true or GITHUB_ACTIONS=true.
 //
 // Related root package.json overrides (JSON has no comments, so documented here):
-//   "tailwindcss>postcss-nested": "^7.0.2"
-//   "tailwindcss>postcss-selector-parser": "^7.1.6"
-// tailwindcss@3 pins postcss-nested 6 / postcss-selector-parser 6, which carry
-// audit findings (incl. the moderate postcss-selector-parser advisory). Both
-// overrides only exist for tailwind 3 and must be removed with the tailwind 4
-// migration (same exit plan as RE-01, see issue #54).
 //   "tmp@<0.2.6": "^0.2.6"            GHSA-ph9p-34f9-6g65 (web-ext-run pins tmp 0.2.5;
 //                                      also fengari/testcontainers). Remove once web-ext-run ships >=0.2.6.
 //   "firefox-profile@4.7.0": "4.7.1"  pulls adm-zip ~0.6.x (0.6.1) for GHSA-xcpc-8h2w-3j85,
