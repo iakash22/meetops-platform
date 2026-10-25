@@ -1,7 +1,9 @@
 # @meetops/mobile
 
 Expo (SDK 52) + expo-router + strict TypeScript app for iOS and Android.
-Status: **M1 scaffold only**. There is no recording, auth, or upload code yet.
+Status: **M2 auth shell (demo mode)**. Sign-in, organization switcher, a meetings list
+placeholder and route guards run against a **mock** auth client. There is no real network
+auth, no recording and no upload code yet.
 
 ## Commands (from repo root, pnpm 9.12.3 per `packageManager`)
 
@@ -24,8 +26,40 @@ resolution failures without any `ci.yml` change. CI runs no EAS builds.
 
 - `app.config.ts`: placeholder ids `com.example.meetops` (iOS bundle id and Android package). Replace them before any store build.
 - `eas.json`: `development`, `preview` and `production` profiles. There are no credentials in the repo. EAS credentials are managed outside git.
-- `@meetops/contracts` is a workspace dependency stub. It isn't imported yet and hasn't been changed. See the contracts import rule below.
+- `@meetops/contracts` provides the types (`LoginRequest`, `GetAuthSessionResponse`, `OrganizationWithRole`, `Meeting`, ...) and `REDACT_KEYS` / `ApiErrorCode` values via `@meetops/contracts/types`. It hasn't been changed. See the contracts import rule below.
+- `tsconfig.json` uses `module: esnext` + `moduleResolution: bundler` so the `@meetops/contracts/types` subpath export resolves for `tsc`.
+- `babel.config.js` sets `enableBabelRuntime: false`: helpers are inlined because `@babel/runtime` is not a direct dependency and is unresolvable for Metro under pnpm's isolated layout (adding it would change the lockfile).
 - Identity naming: always `organizationId` (never `orgId` / `tenantId`).
+
+## Auth shell (M2)
+
+```
+app/_layout.tsx            AuthProvider + dark StatusBar + root Stack
+app/(auth)/_layout.tsx     guard: signed-in users are redirected to /
+app/(auth)/login.tsx       sign-in screen
+app/(app)/_layout.tsx      guard: signed-out users are redirected to /login
+app/(app)/index.tsx        meetings list placeholder (active organization)
+app/(app)/organizations.tsx organization switcher (modal)
+```
+
+- `src/auth/sessionManager.ts`: framework-free session state (`loading | signedOut | signedIn`), restore, sign in, sign out, org switch, single-flight token refresh and wipe hooks. `AuthProvider` / `useAuth` wrap it for React.
+- `src/auth/tokenStore.ts`: `TokenStore` interface + `createInMemoryTokenStore()`. **expo-secure-store is a separate follow-up PR** (lockfile owned by another lane).
+- `src/auth/mockAuthClient.ts`: mirrors ADR-005 (opaque tokens, 15-min access TTL, rotating refresh with reuse detection revoking the family, 30-day family cap, org-scoped tokens, generic `AUTH_FAILED`).
+- `src/api/client.ts`: typed client for the real API (`POST /auth/signup` -> 202 without a session, `POST /auth/login`, `GET /auth/session`, `GET /orgs`, `POST /orgs/switch` -> `{ organization, role }`, `POST /auth/logout` -> 204). Bearer header only, `credentials: 'omit'`, never a token in a URL. Not wired into the app until the mobile bearer flow lands in the API.
+- Logout and org switch wipe local data (plan R4): tokens are cleared and registered wipe hooks run.
+- `src/services.ts`: **demo mode** (`IS_DEMO_MODE`). The mock accepts any well-formed credentials and the login screen shows a demo notice. Replace with the real client before any release.
+- The meetings list uses placeholder data: the API has no list-meetings route yet.
+
+## Theme
+
+`src/theme/colors.ts` is the single token file (owner palette, dark-first). Names follow shadcn
+semantics to match web: `background #0A0A0A`, `foreground #F5F5F7`, `card #141416`,
+`muted #1C1C1F`, `mutedForeground #A1A1AA`, `border`/`input #2A2A2E`, `primary`/`ring #007BA7`
+(buttons, links, focus), `accent #FF2D95` (active/live states, record button; sparingly), plus
+`radius` and `spacing` scales. Screens never hard-code hex values. The app runs in dark
+`userInterfaceStyle`. Motion uses React Native built-ins only (`Animated`, `Pressable`): the primary
+CTA has a subtle glow and press scale, live meetings get a pulsing rose dot, and both animations
+are skipped when the OS reduce-motion setting is on (`useReducedMotion`).
 
 ## Root changes
 
