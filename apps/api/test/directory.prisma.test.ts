@@ -157,30 +157,19 @@ describe('createPrismaDirectory', () => {
     });
   });
 
-  it('deleting a team clears teamId on all of its projects, page by page', async () => {
+  it('deleting a team is one DB-2 call (it unlinks the projects in the same transaction)', async () => {
     fakes.teams.softDelete.mockResolvedValue(true);
-    fakes.projects.list
-      .mockResolvedValueOnce({ items: [{ id: 'p1' }, { id: 'p2' }], nextCursor: 'c1' })
-      .mockResolvedValueOnce({ items: [{ id: 'p3' }], nextCursor: null });
-    fakes.projects.update.mockResolvedValue({});
     expect(await repos.teams.softDelete(ORG, TEAM)).toBe(true);
-    expect(fakes.projects.list).toHaveBeenNthCalledWith(1, ORG, { teamId: TEAM, limit: 100 });
-    expect(fakes.projects.list).toHaveBeenNthCalledWith(2, ORG, {
-      teamId: TEAM,
-      limit: 100,
-      cursor: 'c1',
-    });
-    expect(fakes.projects.update.mock.calls).toEqual([
-      [ORG, 'p1', { teamId: null }],
-      [ORG, 'p2', { teamId: null }],
-      [ORG, 'p3', { teamId: null }],
-    ]);
+    expect(fakes.teams.softDelete).toHaveBeenCalledExactlyOnceWith(ORG, TEAM);
+    expect(fakes.projects.list).not.toHaveBeenCalled();
+    expect(fakes.projects.update).not.toHaveBeenCalled();
   });
 
-  it('deleting a missing team touches no projects', async () => {
+  it('deleting a missing team reports false and touches no projects', async () => {
     fakes.teams.softDelete.mockResolvedValue(false);
     expect(await repos.teams.softDelete(ORG, TEAM)).toBe(false);
     expect(fakes.projects.list).not.toHaveBeenCalled();
+    expect(fakes.projects.update).not.toHaveBeenCalled();
   });
 
   it('passes member writes straight through', async () => {

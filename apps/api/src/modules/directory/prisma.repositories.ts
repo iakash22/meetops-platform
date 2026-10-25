@@ -91,19 +91,8 @@ export function createPrismaDirectory(client: DatabaseClient): DirectoryReposito
       create: (orgId, data: TeamCreate) =>
         call(teams.create(orgId, { ...present(data), name: data.name })),
       update: (orgId, id, patch) => call(teams.update(orgId, id, defined(patch))),
-      async softDelete(orgId, id) {
-        if (!(await call(teams.softDelete(orgId, id)))) return false;
-        // DB-2 keeps project links on a deleted team; the API contract clears them.
-        let cursor: string | undefined;
-        do {
-          const page = await call(
-            projects.list(orgId, { teamId: id, limit: 100, ...(cursor ? { cursor } : {}) }),
-          );
-          for (const p of page.items) await call(projects.update(orgId, p.id, { teamId: null }));
-          cursor = page.nextCursor ?? undefined;
-        } while (cursor);
-        return true;
-      },
+      // DB-2 unlinks the team's projects in the same transaction as the soft delete.
+      softDelete: (orgId, id) => call(teams.softDelete(orgId, id)),
     },
     teamMembers: {
       async list(orgId, teamId, q) {
