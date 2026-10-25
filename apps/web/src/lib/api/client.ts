@@ -20,7 +20,10 @@ import type {
   SignupRequest,
   Task,
   ListTasksQuery,
+  OrganizationWithRole,
+  ResetPasswordRequest,
   SwitchOrganizationRequest,
+  VerifyEmailRequest,
 } from '@meetops/contracts';
 import { API_ERROR_CODES, EXTENSION_AUTH_PATHS } from '@meetops/contracts/types';
 
@@ -130,6 +133,15 @@ export type HttpMethod = 'GET' | 'HEAD' | 'OPTIONS' | 'POST' | 'PUT' | 'PATCH' |
 
 export type { CreateOrganizationRequest, CreateOrganizationResponse, ListOrganizationsResponse };
 
+/**
+ * 202 body of the enumeration-safe auth endpoints (signup, forgot-password,
+ * resend-verification). The API's `AcceptedBody`; not in contracts yet.
+ */
+export type AcceptedResponse = { message: string };
+
+/** POST /invitations/accept body (the API's `AcceptInvitationBody`; not in contracts yet). */
+export type AcceptInvitationRequest = { token: string };
+
 /** GET /orgs/:id/tasks query (contracts ListTasksQuery; `unassigned` excludes `assigneeId`). */
 export type TaskListFilters = ListTasksQuery;
 
@@ -137,18 +149,43 @@ export type TaskListFilters = ListTasksQuery;
 export type ApiClient = {
   auth: {
     login: (body: LoginRequest) => Promise<AuthSession>;
-    signup: (body: SignupRequest) => Promise<AuthSession>;
+    /**
+     * POST /auth/signup: always 202 `{ message }` (enumeration-safe). No session is
+     * started; the user verifies their email and then logs in.
+     */
+    signup: (body: SignupRequest) => Promise<AcceptedResponse>;
     forgotPassword: (body: ForgotPasswordRequest) => Promise<void>;
+    /** POST /auth/reset-password (204). The API revokes every session of the user. */
+    resetPassword: (body: ResetPasswordRequest) => Promise<void>;
+    /** POST /auth/verify-email (204). Public; 400 BAD_REQUEST for an invalid/expired token. */
+    verifyEmail: (body: VerifyEmailRequest) => Promise<void>;
+    /** POST /auth/resend-verification: always 202 (enumeration-safe). */
+    resendVerification: (body: ForgotPasswordRequest) => Promise<void>;
+    /** POST /auth/logout (204): revokes this session and clears the cookie. */
+    logout: () => Promise<void>;
+    /** POST /auth/logout-all (204): revokes every session of the caller, this one included. */
+    logoutAll: () => Promise<void>;
     /** GET /auth/session; 401 when signed out. */
     session: () => Promise<GetAuthSessionResponse>;
-    /** POST /auth/switch-org. Session and CSRF token rotate; the returned csrfToken is reused. */
-    switchOrganization: (body: SwitchOrganizationRequest) => Promise<AuthSession>;
   };
   organizations: {
     /** GET /orgs: cursor page of `{ organization, role }`. */
     list: () => Promise<ListOrganizationsResponse>;
     /** POST /orgs. The server rotates the session into the new org and issues a new CSRF token. */
     create: (body: CreateOrganizationRequest) => Promise<CreateOrganizationResponse>;
+    /**
+     * POST /orgs/switch: returns `{ organization, role }` (not an AuthSession). The
+     * server rotates the session and sets a new CSRF cookie; callers refetch
+     * GET /auth/session afterwards.
+     */
+    switch: (body: SwitchOrganizationRequest) => Promise<OrganizationWithRole>;
+  };
+  invitations: {
+    /**
+     * POST /invitations/accept: needs a session for the invited, verified email.
+     * Unknown/expired/revoked/mismatched tokens are 404; already a member is 409.
+     */
+    accept: (body: AcceptInvitationRequest) => Promise<OrganizationWithRole>;
   };
   extension: {
     /** POST /auth/extension/pair (ADR-005 A1.1). Cookie + CSRF; returns a single-use pairing code. */
@@ -181,6 +218,12 @@ const AUTH_PATHS = new Set([
   '/auth/forgot-password',
   '/auth/session',
   '/auth/csrf',
+  '/auth/reset-password',
+  '/auth/verify-email',
+  '/auth/resend-verification',
+  '/auth/logout',
+  '/auth/logout-all',
+  '/invitations/accept',
 ]);
 
 export function createApiClient(options: ApiClientOptions): ApiClient {
@@ -255,7 +298,7 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
 
   async function authRequest(path: string, body: unknown): Promise<AuthSession> {
     const session = await request<AuthSession>('POST', path, body);
-    // Session rotates on login/signup; use the token the server just issued.
+    // Session rotates on login; use the token the server just issued.
     cachedCsrf = session.csrfToken;
     return session;
   }
@@ -285,12 +328,37 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
     },
     auth: {
       login: (body) => authRequest('/auth/login', body),
-      signup: (body) => authRequest('/auth/signup', body),
+      // 202 with no session: the cached CSRF token stays as is.
+      signup: (body) => request<AcceptedResponse>('POST', '/auth/signup', body),
       forgotPassword: async (body) => {
         await request('POST', '/auth/forgot-password', body);
       },
+      resetPassword: async (body) => {
+        await request('POST', '/auth/reset-password', body);
+        // All sessions were revoked server-side; drop the token bound to the old one.
+        cachedCsrf = null;
+      },
+      verifyEmail: async (body) => {
+        await request('POST', '/auth/verify-email', body);
+      },
+      resendVerification: async (body) => {
+        await request('POST', '/auth/resend-verification', body);
+      },
+      logout: async () => {
+        try {
+          await request('POST', '/auth/logout');
+        } finally {
+          cachedCsrf = null;
+        }
+      },
+      logoutAll: async () => {
+        try {
+          await request('POST', '/auth/logout-all');
+        } finally {
+          cachedCsrf = null;
+        }
+      },
       session: () => request('GET', '/auth/session'),
-      switchOrganization: (body) => authRequest('/auth/switch-org', body),
     },
     organizations: {
       list: () => request('GET', '/orgs'),
@@ -300,6 +368,15 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
         cachedCsrf = null;
         return res;
       },
+      switch: async (body) => {
+        const res = await request<OrganizationWithRole>('POST', '/orgs/switch', body);
+        // Session rotated server-side (new CSRF cookie): drop the old cached token.
+        cachedCsrf = null;
+        return res;
+      },
+    },
+    invitations: {
+      accept: (body) => request('POST', '/invitations/accept', body),
     },
     extension: {
       pair: (body) => request('POST', EXTENSION_AUTH_PATHS.pair, body),
