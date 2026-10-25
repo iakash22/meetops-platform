@@ -108,3 +108,53 @@ button:disabled {
   color: var(--mo-highlight);
   text-shadow: 0 0 8px rgb(255 45 149 / 50%);
 }
+
+/* Recording consent gate (contracts v0.4.1). */
+.mo-consent {
+  background: var(--mo-surface-1);
+  border: 1px solid var(--mo-border);
+  border-radius: var(--mo-radius);
+  padding: 10px 12px;
+}
+
+.mo-consent-title {
+  font-size: 13px;
+  font-weight: 600;
+  margin: 0 0 6px;
+}
+
+.mo-consent-notice,
+.mo-consent-hint {
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--mo-muted-foreground);
+  margin: 0 0 8px;
+}
+
+.mo-consent-hint {
+  margin: 2px 0 0;
+}
+
+.mo-consent-check {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  font-size: 13px;
+  line-height: 1.4;
+  margin: 0 0 10px;
+  cursor: pointer;
+}
+
+.mo-consent-check input {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  margin: 1px 0 0;
+  accent-color: var(--mo-primary);
+  cursor: pointer;
+}
+
+.mo-consent-check input:focus-visible {
+  outline: 2px solid var(--mo-ring);
+  outline-offset: 2px;
+}

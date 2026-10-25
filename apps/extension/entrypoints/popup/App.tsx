@@ -2,11 +2,10 @@
 import { resolveMeetingId } from '../../src/lib/meeting.js';
 import { useCallback, useEffect, useState } from 'react';
 import {
-  CONSENT_NOTICE,
-  acknowledge,
   canStartRecording,
+  consentGrant,
   initialConsent,
-  showNotice,
+  setConfirmed,
   type ConsentState,
 } from '../../src/lib/consent.js';
 import { formatElapsed } from '../../src/lib/format.js';
@@ -16,6 +15,7 @@ import type {
   StatusPayload,
 } from '../../src/lib/messages.js';
 import { getTabStreamId } from '../../src/lib/tab-capture.js';
+import { ConsentSection } from './ConsentSection.js';
 import { PairingSection } from './PairingSection.js';
 
 const send = (msg: PopupToBackground): Promise<BackgroundResponse> =>
@@ -34,6 +34,7 @@ export function App() {
   const [status, setStatus] = useState<StatusPayload>({ status: 'idle' });
   const [error, setError] = useState('');
   const [now, setNow] = useState(Date.now());
+  const [starting, setStarting] = useState(false);
 
   const apply = useCallback((res: BackgroundResponse) => {
     if (res.ok) {
@@ -57,30 +58,34 @@ export function App() {
     return () => clearInterval(t);
   }, [refresh]);
 
-  const onAcknowledge = async () => {
-    try {
-      const tabId = await activeTabId();
-      apply(await send({ target: 'background', type: 'ACK_CONSENT', tabId }));
-      setConsent(acknowledge(consent));
-    } catch (e) {
-      setError(errText(e));
-    }
-  };
-
-  // Runs directly from the click so tabCapture stays inside the user gesture.
-  const onStart = async () => {
-    if (!canStartRecording(consent)) return;
+  // Runs directly from the click so tabCapture stays inside the user gesture. The ticked confirmation is sent to the
+  // background for this tab + meeting first (ACK_CONSENT), then consumed by START_RECORDING.
+  const onRecord = async () => {
+    if (!canStartRecording(consent) || starting) return;
+    setStarting(true);
     try {
       const tabId = await activeTabId();
       const streamId = await getTabStreamId(tabId);
       const meetingId = await resolveMeetingId();
+      const ack = await send({
+        target: 'background',
+        type: 'ACK_CONSENT',
+        tabId,
+        ...consentGrant(consent, meetingId),
+      });
+      if (!ack.ok) {
+        apply(ack);
+        return;
+      }
       apply(
         await send({ target: 'background', type: 'START_RECORDING', tabId, streamId, meetingId }),
       );
     } catch (e) {
       setError(errText(e));
     } finally {
+      // Per meeting, per recording: never carried over to the next start.
       setConsent(initialConsent());
+      setStarting(false);
     }
   };
 
@@ -142,29 +147,12 @@ export function App() {
           </button>
         </section>
       ) : (
-        <>
-          {consent.status === 'unseen' && (
-            <button type="button" onClick={() => setConsent(showNotice(consent))}>
-              Record this meeting
-            </button>
-          )}
-          {consent.status === 'shown' && (
-            <section role="alertdialog" aria-label="Recording consent">
-              <p>{CONSENT_NOTICE}</p>
-              <button type="button" onClick={() => void onAcknowledge()}>
-                I understand and have consent
-              </button>
-              <button type="button" onClick={() => setConsent(initialConsent())}>
-                Cancel
-              </button>
-            </section>
-          )}
-          {consent.status === 'acknowledged' && (
-            <button type="button" onClick={() => void onStart()}>
-              Start recording
-            </button>
-          )}
-        </>
+        <ConsentSection
+          consent={consent}
+          busy={starting}
+          onConfirmedChange={(checked) => setConsent(setConfirmed(checked))}
+          onRecord={() => void onRecord()}
+        />
       )}
       {error && <p role="alert">Error: {error}</p>}
     </main>
