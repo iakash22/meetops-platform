@@ -9,7 +9,13 @@ import TasksTab from '../../app/(app)/(tabs)/tasks';
 import Organizations from '../../app/(app)/organizations';
 import AuthLayout from '../../app/(auth)/_layout';
 import Login from '../../app/(auth)/login';
+import Signup from '../../app/(auth)/signup';
 import { AuthProvider } from '../../src/auth/AuthProvider';
+import {
+  createDemoSignupApi,
+  SignupApiProvider,
+  type SignupApi,
+} from '../../src/auth/SignupApiProvider';
 import { createMockAuthClient, demoAccount } from '../../src/auth/mockAuthClient';
 import { createSessionManager, type SessionManager } from '../../src/auth/sessionManager';
 import { createInMemoryTokenStore } from '../../src/auth/tokenStore';
@@ -30,17 +36,24 @@ export function makeRepositories(overrides: Partial<Repositories> = {}): Reposit
 }
 
 /** Same file tree as `app/`, with injectable session manager and repositories. */
-export function routes(manager: SessionManager, repositories: Repositories = makeRepositories()) {
+export function routes(
+  manager: SessionManager,
+  repositories: Repositories = makeRepositories(),
+  signupApi: SignupApi = createDemoSignupApi(),
+) {
   return {
     _layout: () => (
       <AuthProvider manager={manager}>
-        <RepositoriesProvider value={repositories}>
-          <Slot />
-        </RepositoriesProvider>
+        <SignupApiProvider value={signupApi}>
+          <RepositoriesProvider value={repositories}>
+            <Slot />
+          </RepositoriesProvider>
+        </SignupApiProvider>
       </AuthProvider>
     ),
     '(auth)/_layout': AuthLayout,
     '(auth)/login': Login,
+    '(auth)/signup': Signup,
     '(app)/_layout': AppLayout,
     '(app)/(tabs)/_layout': TabsLayout,
     '(app)/(tabs)/index': MeetingsTab,
