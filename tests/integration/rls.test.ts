@@ -8,6 +8,8 @@ import {
   applyMigrations,
   dbPackageDir,
   hasRlsMigration,
+  migrationFiles,
+  readSql,
 } from '../support/db-package.js';
 
 /*
@@ -28,6 +30,10 @@ if (docker && !rls)
 // 'migrations' (default): prisma migrate deploy, exactly like production.
 // 'datamodel': schema.prisma + RLS migration only; workaround while the chain is broken (DB-BUG-1).
 const schemaMode = process.env.QA_RLS_SCHEMA === 'datamodel' ? 'datamodel' : 'migrations';
+
+// DB-1: teams/team_members exist from migration 20261025090000_teams onward. Their policies
+// read only the ADR-010 setting (app.current_organization_id), never the legacy one.
+const hasTeams = migrationFiles().some((f) => /CREATE TABLE "teams"/.test(readSql(f)));
 
 const APP_ROLE = 'qa_app_login';
 const APP_PASSWORD = 'qa-only-not-a-secret';
@@ -79,6 +85,11 @@ describe.skipIf(!docker || !rls)(`integration: RLS (PR #25, schema via ${schemaM
         "INSERT INTO projects (id, org_id, name, key, updated_at) VALUES (gen_random_uuid(), $1, 'P', 'P', now())",
         [id],
       );
+      if (hasTeams)
+        await owner.query(
+          "INSERT INTO teams (id, org_id, name, updated_at) VALUES (gen_random_uuid(), $1, 'Core', now())",
+          [id],
+        );
     }
   }, 240_000);
 
@@ -180,6 +191,47 @@ describe.skipIf(!docker || !rls)(`integration: RLS (PR #25, schema via ${schemaM
     await useContextThenCommit();
     const after = await app.query<{ n: number }>('SELECT count(*)::int AS n FROM projects');
     expect(after.rows[0]?.n).toBe(0);
+  });
+
+  it.skipIf(!hasTeams)(
+    '[DB-1] teams: ADR-010 context A sees only org A, cannot write into B',
+    async () => {
+      await app.query('BEGIN');
+      try {
+        await app.query("SELECT set_config('app.current_organization_id', $1, true)", [orgA]);
+        const { rows } = await app.query<{ org_id: string }>('SELECT org_id FROM teams');
+        expect(rows.map((r) => r.org_id)).toEqual([orgA]);
+        const moved = app.query('UPDATE teams SET org_id = $1 WHERE org_id = $2', [orgB, orgA]);
+        await expect(moved).rejects.toMatchObject({ code: '42501' });
+      } finally {
+        await app.query('ROLLBACK');
+      }
+      await app.query('BEGIN');
+      try {
+        await app.query("SELECT set_config('app.current_organization_id', $1, true)", [orgA]);
+        await expect(
+          app.query(
+            "INSERT INTO teams (id, org_id, name, updated_at) VALUES (gen_random_uuid(), $1, 'x', now())",
+            [orgB],
+          ),
+        ).rejects.toMatchObject({ code: '42501' });
+      } finally {
+        await app.query('ROLLBACK');
+      }
+    },
+  );
+
+  it.skipIf(!hasTeams)('[DB-1] teams: the legacy setting alone opens no rows', async () => {
+    await app.query('BEGIN');
+    try {
+      await app.query("SELECT set_config('app.current_org_id', $1, true)", [orgA]);
+      for (const t of ['teams', 'team_members']) {
+        const { rows } = await app.query<{ n: number }>(`SELECT count(*)::int AS n FROM "${t}"`);
+        expect(rows[0]?.n, t).toBe(0);
+      }
+    } finally {
+      await app.query('ROLLBACK');
+    }
   });
 
   it('[XT-29] every table with org_id has RLS enabled + forced + at least one policy', async () => {
