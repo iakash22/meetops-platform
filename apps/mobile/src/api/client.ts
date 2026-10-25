@@ -1,8 +1,8 @@
 import type {
   ApiErrorCode,
   ApiErrorEnvelope,
+  ApiErrorReason,
   AuthSession,
-  ConflictReason,
   GetAuthSessionResponse,
   ListOrganizationsResponse,
   LoginRequest,
@@ -43,14 +43,14 @@ export class ApiError extends Error {
   readonly status: number;
   readonly code: ApiErrorCode;
   readonly requestId: string | undefined;
-  readonly reason: ConflictReason | undefined;
+  readonly reason: ApiErrorReason | undefined;
 
   constructor(
     status: number,
     code: ApiErrorCode,
     message: string,
     requestId?: string,
-    reason?: ConflictReason,
+    reason?: ApiErrorReason,
   ) {
     super(message);
     this.name = 'ApiError';
