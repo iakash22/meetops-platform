@@ -30,7 +30,7 @@ export const implementedXt: Record<string, Implemented> = {
   'XT-29': { file: 'integration/rls.test.ts' },
   'XT-30': {
     file: 'api/auth/cross-org.test.ts',
-    note: 'POST /orgs/switch; /auth/switch-org is BE-GAP-2',
+    note: 'POST /orgs/switch (BE-GAP-2 client-resolved: web calls /orgs/switch)',
   },
 };
 export const todoXt: Record<string, string> = {
@@ -52,6 +52,12 @@ export const todoXt: Record<string, string> = {
   'XT-24': 'Worker job handlers with org checks not implemented yet',
   'XT-25': 'Worker media jobs not implemented yet',
   ...Object.fromEntries(range('XT', 31, 36).map((id) => [id, NO_REC])),
+  'XT-37': `${NO_ENDPOINT}: employees (BE-3)`,
+  'XT-38': `${NO_ENDPOINT}: teams and team members (BE-3, needs DB-1)`,
+  'XT-39': `${NO_ENDPOINT}: projects (BE-3)`,
+  'XT-40': 'teams/team_members tables do not exist yet (DB-1 migration)',
+  'XT-41': 'Realtime revocation subscriber not implemented yet (MR-2, ADR-011)',
+  'XT-42': 'Realtime reauth on membership change not implemented yet (MR-2, ADR-011)',
 };
 
 // ---- AU: auth abuse ----
@@ -85,6 +91,10 @@ const UP_CONTRACT = 'contract/recording-sessions.test.ts checks the request sche
 export const implementedUp: Record<string, Implemented> = {};
 export const todoUp: Record<string, string> = {
   ...Object.fromEntries(range('UP', 1, 15).map((id) => [id, NO_REC])),
+  'UP-16': 'No uploads routes or consent attestation model yet (BE-4, DB-3)',
+  'UP-17': `${NO_REC}; consent attestation contract pending ARC-2`,
+  'UP-18': 'consent_attestations table does not exist yet (DB-3)',
+  'UP-19': 'No uploads complete route yet (BE-4)',
   'UP-01': `${NO_REC}; ${UP_CONTRACT}`,
   'UP-02': `${NO_REC}; ${UP_CONTRACT}`,
   'UP-03': `${NO_REC}; also needs S3/MinIO signed-PUT harness`,

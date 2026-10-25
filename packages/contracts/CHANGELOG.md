@@ -6,6 +6,45 @@ While the version is `0.x`, a minor bump may contain breaking changes (ADR-003).
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-10-25
+
+Directory contracts (employees, teams + team members, projects). A `0.x` minor bump (ADR-003): it also releases the
+breaking upload-limit changes listed under "Changed (breaking)" below, which were unreleased in 0.3.3.
+
+### Added
+
+- `api/employees.ts`: `EmployeeDto`, `CreateEmployeeRequest`, `UpdateEmployeeRequest`, `ListEmployeesQuery`,
+  `ListEmployeesResponse`, `EmployeesParams`, `EmployeeParams` (+ `EmployeeName`, `EmployeeField`, `EmployeeEmail`).
+  `EmployeeDto.email` follows the UserSummary RBAC rule (owner/admin only).
+- `api/teams.ts`: `TeamDto`, `CreateTeamRequest`, `UpdateTeamRequest`, `ListTeamsQuery`, `ListTeamsResponse`,
+  `TeamsParams`, `TeamParams`; team members `TeamMemberDto`, `TeamMemberRole` (`lead | member`), `AddTeamMemberRequest`,
+  `UpdateTeamMemberRequest`, `ListTeamMembersQuery`, `ListTeamMembersResponse`, `TeamMemberParams`; shared
+  `DirectoryKey` and `DirectoryDescription`.
+- `api/projects.ts`: `ProjectDto` (strict, with `key`, `status`, `teamId`), `ProjectStatus`, `CreateProjectRequest`,
+  `UpdateProjectRequest` (key is immutable), `ListProjectsQuery`, `ListProjectsResponse`, `ProjectsParams`, `ProjectParams`.
+- List routes use cursor pagination (`CursorPageQuery` / `CursorPage`); employee/team/project DELETE is a soft delete
+  returning 204 (see the `DIRECTORY_PATHS` doc comment). Every request and response schema is `additionalProperties: false`, every id is a UUID, and names use
+  `SafeDisplayText` (1-200, trimmed, shared unsafe-character rules).
+- `common.ts`: `SafeMultilineText`, `SAFE_MULTILINE_TEXT_PATTERN`, `UNSAFE_MULTILINE_TEXT_CHARS` for descriptions
+  (allows tab/LF/CR and prose punctuation; rejects other control, bidi/invisible and tag characters).
+- Constants (also in `/types`): `DIRECTORY_PATHS` (all under `/orgs/:organizationId/...`), `PROJECT_STATUSES`,
+  `TEAM_MEMBER_ROLES`, `DIRECTORY_KEY_PATTERN`, `MAX_DIRECTORY_NAME_LENGTH`, `MAX_DIRECTORY_DESCRIPTION_LENGTH`,
+  `MAX_EMPLOYEE_FIELD_LENGTH`, `MAX_EMAIL_LENGTH`.
+- Errors: `CONFLICT_REASONS` gains `PROJECT_KEY_TAKEN` and `TEAM_MEMBER_EXISTS`. New `NOT_FOUND_REASONS`
+  (`EMPLOYEE_NOT_FOUND`, `TEAM_NOT_FOUND`, `PROJECT_NOT_FOUND`), `NotFoundReason`, `NOT_FOUND_HTTP_STATUS` (404),
+  `NotFoundErrorEnvelope` and `DIRECTORY_ERROR_REASONS`. They travel as `error.reason` next to the unchanged generic
+  `code` (`NOT_FOUND` / `CONFLICT`), so the tenancy rule (other-org ids are NOT_FOUND, never FORBIDDEN) is kept: the API
+  MUST send the same body for a missing, soft-deleted or other-org id.
+
+### Changed
+
+- `API_ERROR_REASONS` / `ApiErrorReason` are now `[...CONFLICT_REASONS, ...NOT_FOUND_REASONS]` (no longer aliases of
+  `CONFLICT_REASONS` / `ConflictReason`). `ApiErrorEnvelope.error.reason` accepts either kind. Exhaustive
+  `Record<ApiErrorReason, …>` maps need the new keys (none exist in the repo today).
+- The loose domain `Project` schema is kept for existing web mocks; directory routes return `ProjectDto`.
+- The deprecated `PresignedUrl` / `StorageObjectMetadata` re-exports are kept: their removal is deferred until
+  `@meetops/storage` stops importing them.
+
 ### Changed (breaking)
 
 - `MAX_MEDIA_BYTES` (and so `MAX_UPLOAD_BYTES`, `MAX_RECORDING_SESSION_BYTES`) lowered from 2,000,000,000 to

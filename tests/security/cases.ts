@@ -1,5 +1,6 @@
 // Generated from docs/12-security/test-cases.md (PR #4; XT-31..36 and UP-01..15 from the
-// docs/security-threat-model branch, 2026-10-22). Keep IDs in sync with that doc.
+// docs/security-threat-model branch, 2026-10-22; ADR-010 names, XT-37..42 and UP-16..19 from
+// docs/security-rbac-directory-media, 2026-10-25). Keep IDs in sync with that doc.
 export type SecurityCase = { id: string; title: string; steps: string; expected: string };
 
 export const crossOrganizationCases: readonly SecurityCase[] = [
@@ -19,7 +20,7 @@ export const crossOrganizationCases: readonly SecurityCase[] = [
   {
     id: 'XT-04',
     title: 'Meeting list',
-    steps: 'GET /meetings?orgId={B.orgId}',
+    steps: 'GET /meetings?organizationId={B.organizationId} (and ?orgId=)',
     expected: '200 with only A rows; orgId param ignored',
   },
   {
@@ -81,8 +82,10 @@ export const crossOrganizationCases: readonly SecurityCase[] = [
   {
     id: 'XT-16',
     title: 'File presign upload key',
-    steps: 'POST /uploads with body key org/{B.orgId}/x',
-    expected: 'Key ignored; server key under org/{A.orgId}/',
+    steps:
+      'POST /orgs/{A.organizationId}/uploads with body key organizations/{B.organizationId}/x (or legacy org/{B.organizationId}/x)',
+    expected:
+      '400 VALIDATION_FAILED or key ignored; server key under organizations/{A.organizationId}/',
   },
   {
     id: 'XT-17',
@@ -111,20 +114,20 @@ export const crossOrganizationCases: readonly SecurityCase[] = [
   {
     id: 'XT-21',
     title: 'Members / invites',
-    steps: 'GET /orgs/{B.orgId}/members, POST /orgs/{B.orgId}/invites',
+    steps: 'GET /orgs/{B.organizationId}/members, POST /orgs/{B.organizationId}/invites',
     expected: '404',
   },
   {
     id: 'XT-22',
     title: 'Audit log',
-    steps: 'GET /audit?orgId={B.orgId}',
+    steps: 'GET /audit?organizationId={B.organizationId}',
     expected: 'Only A events',
   },
   {
     id: 'XT-23',
     title: 'Realtime',
-    steps: 'Subscribe to channel org:{B.orgId} / B meeting',
-    expected: 'Rejected; no events',
+    steps: 'Join room organizations:{B.organizationId} / meeting:join a B meeting',
+    expected: 'Rejected (same ack as a missing meeting); no events',
   },
   {
     id: 'XT-24',
@@ -135,13 +138,15 @@ export const crossOrganizationCases: readonly SecurityCase[] = [
   {
     id: 'XT-25',
     title: 'Worker object prefix',
-    steps: 'Media job for A whose key points at org/{B.orgId}/…',
-    expected: 'Rejected',
+    steps:
+      'Media job for A whose key points at organizations/{B.organizationId}/… (or legacy org/{B.organizationId}/…)',
+    expected: 'Rejected by assertKeyOwnedBy',
   },
   {
     id: 'XT-26',
     title: 'RLS no context',
-    steps: 'As meetops_app, SELECT * FROM tasks without app.current_org_id',
+    steps:
+      'As meetops_app, SELECT * FROM tasks without app.current_organization_id (and without the legacy app.current_org_id)',
     expected: '0 rows',
   },
   {
@@ -166,7 +171,7 @@ export const crossOrganizationCases: readonly SecurityCase[] = [
     id: 'XT-30',
     title: 'Org switch',
     steps: 'Member of A only sends X-Org-Id: B / switch-org to B',
-    expected: '404/403; context stays A',
+    expected: '404/403; context stays A. Realtime side: XT-41, XT-42',
   },
   {
     id: 'XT-31',
@@ -203,6 +208,46 @@ export const crossOrganizationCases: readonly SecurityCase[] = [
     title: 'Recording session abort (same org, other user)',
     steps: "User A2 aborts A1's session",
     expected: '404; session not aborted',
+  },
+  {
+    id: 'XT-37',
+    title: 'Employee read/update/delete',
+    steps: '`GET`/`PATCH`/`DELETE /orgs/{A.organizationId}/employees/{B.employeeId}`',
+    expected: '404; B row unchanged',
+  },
+  {
+    id: 'XT-38',
+    title: 'Team and team members (other org)',
+    steps:
+      '`GET /orgs/{A.organizationId}/teams/{B.teamId}`; `POST …/teams/{A.teamId}/members` with `employeeId = B.employeeId`',
+    expected: '404; no `team_members` row',
+  },
+  {
+    id: 'XT-39',
+    title: 'Project (other org)',
+    steps:
+      '`GET`/`PATCH /orgs/{A.organizationId}/projects/{B.projectId}`; create a project with `teamId = B.teamId`',
+    expected: '404; no row created or changed',
+  },
+  {
+    id: 'XT-40',
+    title: 'Team RLS',
+    steps:
+      "As `meetops_app` with context A: select `teams`/`team_members`; insert a `team_members` row with `org_id = B`; insert one with `org_id = A` and B's `team_id` or `employee_id`",
+    expected: 'Only A rows; `WITH CHECK` fails; composite FK fails',
+  },
+  {
+    id: 'XT-41',
+    title: 'Realtime session revocation',
+    steps: 'Socket open on an A session; logout, logout-all or session revoke',
+    expected:
+      'Disconnected within 1 s via `meetops:auth:revocations` (within `REALTIME_REAUTH_INTERVAL_MS` if Redis is down); no further `organizations:{A}` events',
+  },
+  {
+    id: 'XT-42',
+    title: 'Realtime membership change',
+    steps: 'Socket open; the user is removed from A, has their role changed, or switches org',
+    expected: '`auth:reauth-required`, then disconnect; no further events for the old org',
   },
 ];
 
@@ -360,7 +405,7 @@ export const authAbuseCases: readonly SecurityCase[] = [
   {
     id: 'AU-35',
     title: 'Mass assignment',
-    steps: 'PATCH /me with role, orgId, isAdmin',
+    steps: 'PATCH /me with role, organizationId/orgId, isAdmin',
     expected: 'Fields ignored / 400',
   },
 ];
@@ -392,14 +437,15 @@ export const uploadCases: readonly SecurityCase[] = [
   },
   {
     id: 'UP-05',
-    title: 'Running total over 2 GB',
-    steps: 'Request chunk URLs until sum of `sizeBytes` would exceed 2,000,000,000',
+    title: 'Running total over the session cap',
+    steps:
+      'Request chunk URLs until the sum of `sizeBytes` would exceed `MAX_RECORDING_SESSION_BYTES` (value per ARC-2)',
     expected: 'The exceeding request returns 400/413; no URL issued',
   },
   {
     id: 'UP-06',
     title: 'seq out of range',
-    steps: '`POST …/chunks` with `seq: 100000` or `-1`',
+    steps: '`POST …/chunks` with `seq: MAX_RECORDING_CHUNKS` or `-1`',
     expected: '400',
   },
   {
@@ -423,7 +469,7 @@ export const uploadCases: readonly SecurityCase[] = [
   {
     id: 'UP-10',
     title: 'Expired chunk URL',
-    steps: 'Obtain URL, wait > 300 s, PUT',
+    steps: 'Obtain URL, wait > `CHUNK_UPLOAD_URL_TTL_SECONDS`, PUT',
     expected: 'Storage rejects (expired signature)',
   },
   {
@@ -457,5 +503,33 @@ export const uploadCases: readonly SecurityCase[] = [
     steps: 'Inspect every response from the four routes',
     expected:
       'No `bucket`, `key`, `provider` or internal paths; `upload.method` is `PUT` and `expiresAt` ≤ 300 s ahead',
+  },
+  {
+    id: 'UP-16',
+    title: 'Upload without consent',
+    steps:
+      '`POST /orgs/{A.organizationId}/uploads` init (and complete) with no consent attestation',
+    expected: '422; no `FileObject` created (or it stays `pending_upload`); no media job enqueued',
+  },
+  {
+    id: 'UP-17',
+    title: 'Recording session without consent',
+    steps: 'Recording-session init with no consent attestation',
+    expected: '422; no session created; no chunk URL issued',
+  },
+  {
+    id: 'UP-18',
+    title: 'Consent attestation spoofing',
+    steps:
+      'Attestation with `attestedByUserId` of another user or `organizationId = B`; then `UPDATE`/`DELETE` on `consent_attestations` as `meetops_app`',
+    expected:
+      '400 `VALIDATION_FAILED` for the extra fields; the stored row names the caller and org A; update/delete denied (append-only)',
+  },
+  {
+    id: 'UP-19',
+    title: 'Complete with a key not owned by the caller',
+    steps:
+      'The `FileObject` key or the stored object is under `organizations/{B.organizationId}/…` (or legacy `org/…` for a new upload)',
+    expected: '400/409 from `assertKeyOwnedBy`; `FileObject` stays `pending_upload`; no media job',
   },
 ];

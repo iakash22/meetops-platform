@@ -8,7 +8,9 @@ const config: ExpoConfig = {
   scheme: 'meetops',
   version: '0.0.0',
   orientation: 'portrait',
-  userInterfaceStyle: 'automatic',
+  // Dark-first brand (owner decision). Colours live in src/theme/colors.ts.
+  userInterfaceStyle: 'dark',
+  backgroundColor: '#0A0A0A',
   platforms: ['ios', 'android'],
   ios: {
     bundleIdentifier: 'com.example.meetops',

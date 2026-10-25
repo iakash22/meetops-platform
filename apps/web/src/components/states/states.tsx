@@ -18,12 +18,14 @@ export function EmptyState({
     <div
       role="status"
       data-testid="empty-state"
-      className="flex flex-col items-center justify-center gap-2 rounded-lg border border-dashed p-10 text-center"
+      className="bg-grid relative flex flex-col items-center justify-center gap-3 overflow-hidden rounded-xl border border-dashed px-6 py-12 text-center"
     >
-      <Inbox className="h-8 w-8 text-muted-foreground" aria-hidden />
-      <h3 className="text-lg font-semibold">{title}</h3>
-      {description ? <p className="text-sm text-muted-foreground">{description}</p> : null}
-      {action}
+      <span className="flex h-12 w-12 items-center justify-center rounded-xl border bg-card text-link">
+        <Inbox className="h-6 w-6" aria-hidden />
+      </span>
+      <h3 className="text-lg font-semibold tracking-tight">{title}</h3>
+      {description ? <p className="max-w-sm text-sm text-muted-foreground">{description}</p> : null}
+      {action ? <div className="mt-1">{action}</div> : null}
     </div>
   );
 }

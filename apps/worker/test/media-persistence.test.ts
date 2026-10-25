@@ -37,6 +37,8 @@ type Stmt = {
   values: unknown[];
   inTransaction: boolean;
   organizationId: string | null;
+  /** 1-based number of the $transaction the statement ran in. */
+  tx?: number;
 };
 type FileObjectRow = {
   id: string;
@@ -61,12 +63,13 @@ function fakePrisma(recordings: Array<{ id: string; organizationId: string; meet
   let transactions = 0;
   const client = {
     async $transaction<R>(fn: (tx: never) => Promise<R>): Promise<R> {
-      transactions++;
+      const txNo = ++transactions;
       let org: string | null = null;
       const pending = new Map<string, FileObjectRow>();
+      const pendingCounts = new Map<string, number>();
       const record = (strings: TemplateStringsArray, values: unknown[]) => {
         const sql = strings.join('$').replace(/\s+/g, ' ').trim();
-        statements.push({ sql, values, inTransaction: true, organizationId: org });
+        statements.push({ sql, values, inTransaction: true, organizationId: org, tx: txNo });
         return sql;
       };
       const tx = {
@@ -92,13 +95,23 @@ function fakePrisma(recordings: Array<{ id: string; organizationId: string; meet
               r.meetingId !== meetingId
             )
               return 0;
-            r.chunkCount = chunkCount;
+            pendingCounts.set(recordingId, chunkCount);
             return 1;
           }
           throw new Error(`unexpected statement: ${sql}`);
         },
         $queryRaw: async (strings: TemplateStringsArray, ...values: unknown[]) => {
           const sql = record(strings, values);
+          if (sql.startsWith('SELECT "id" FROM "recordings"')) {
+            const [orgId, recordingId, meetingId] = values as [string, string, string];
+            const r = recs.get(recordingId);
+            return r &&
+              r.organizationId === org &&
+              r.organizationId === orgId &&
+              r.meetingId === meetingId
+              ? [{ id: r.id }]
+              : [];
+          }
           if (!sql.startsWith('INSERT INTO "file_objects"'))
             throw new Error(`unexpected query: ${sql}`);
           const [
@@ -177,6 +190,7 @@ function fakePrisma(recordings: Array<{ id: string; organizationId: string; meet
       };
       const out = await fn(tx as never); // a throw rolls the transaction back: pending rows are dropped
       for (const [k, v] of pending) fileObjects.set(k, v);
+      for (const [k, v] of pendingCounts) recs.get(k)!.chunkCount = v;
       return out;
     },
   };
@@ -184,6 +198,7 @@ function fakePrisma(recordings: Array<{ id: string; organizationId: string; meet
 }
 
 const isWrite = (s: Stmt) => /^(INSERT|UPDATE|DELETE)\b/.test(s.sql);
+const isUpload = (k: string) => !k.endsWith(`/recordings/${REC}.webm`);
 
 const root = mkdtempSync(path.join(tmpdir(), 'worker-persist-'));
 afterAll(() => rmSync(root, { recursive: true, force: true }));
@@ -193,12 +208,15 @@ beforeEach(() => {
 });
 
 describe('startMediaWorker persistence wiring (#92)', () => {
-  it('buildMediaProcessorDeps wires chunk rows, chunk_count, waveform and realtime', () => {
+  it('buildMediaProcessorDeps wires the ownership check, atomic chunk persistence, waveform and realtime', () => {
     const db = fakePrisma([]);
     const persistence = createMediaPersistence({ client: db.client, bucket: 'meetops-media' });
     const { built } = makeWorkerParts(tmpRoot, persistence, payload);
-    expect(built.chunkFileObjects).toBe(persistence.chunkFileObjects);
-    expect(built.recordings).toBe(persistence.recordings);
+    expect(built.recordingVerifier).toBe(persistence.recordingAccess);
+    expect(built.chunkPersistence).toBe(persistence.chunks);
+    // The separate-transaction ports are not used by the worker any more.
+    expect(built.chunkFileObjects).toBeUndefined();
+    expect(built.recordings).toBeUndefined();
     expect(built.waveform).toBeDefined();
     expect(Object.keys(built.realtime)).toContain('processingStatus');
   });
@@ -262,10 +280,14 @@ describe('startMediaWorker persistence wiring (#92)', () => {
     const { deps } = makeWorkerParts(tmpRoot, persistence, payload);
     await processRecording(payload, deps);
     const writes = db.statements.filter(isWrite);
-    expect(writes.length).toBe(4); // 3 chunk upserts + 1 chunk_count update
+    expect(writes.length).toBe(4); // 1 chunk_count update + 3 chunk upserts
     for (const w of writes) expect(w).toMatchObject({ inTransaction: true, organizationId: ORG });
-    // Each transaction sets the context first (current + legacy GUC) and only then runs its statement(s).
+    // Two transactions: the read-only ownership check, then ONE transaction holding every write.
     expect(db.transactions()).toBe(2);
+    expect(db.statements.filter((s) => s.tx === 1).some(isWrite)).toBe(false);
+    expect(new Set(writes.map((w) => w.tx))).toEqual(new Set([2]));
+    expect(writes[0]!.sql).toMatch(/^UPDATE "recordings" SET "chunk_count"/);
+    // Each transaction sets the context first (current + legacy GUC) and only then runs its statement(s).
     const sets = db.statements.filter((s) => s.sql.startsWith('SELECT set_config('));
     expect(sets.map((s) => s.values.slice(0, 2))).toEqual([
       [ORGANIZATION_CONTEXT_SETTING, ORG],
@@ -277,16 +299,102 @@ describe('startMediaWorker persistence wiring (#92)', () => {
     expect('$executeRaw' in db.client).toBe(false);
   });
 
-  it('a job for a recording of another organization persists nothing and enqueues nothing', async () => {
+  it('a job for a recording of another organization uploads nothing, persists nothing and enqueues nothing', async () => {
     const db = fakePrisma([{ id: REC, organizationId: OTHER_ORG, meetingId: MEET }]);
+    const persistence = createMediaPersistence({ client: db.client, bucket: 'meetops-media' });
+    const { deps, jobs, stored, storage } = makeWorkerParts(tmpRoot, persistence, payload);
+    await expect(processRecording(payload, deps)).rejects.toMatchObject({
+      errorCode: 'recording_not_found',
+    });
+    expect(db.recordings.get(REC)!.chunkCount).toBeNull();
+    expect(db.fileObjects.size).toBe(0);
+    expect(db.statements.filter(isWrite)).toEqual([]);
+    expect([...stored.keys()].filter(isUpload)).toEqual([]);
+    expect(storage.headObjectByKey).not.toHaveBeenCalled();
+    expect(storage.getObjectByKey).not.toHaveBeenCalled();
+    expect(storage.putObject).not.toHaveBeenCalled();
+    expect(jobs.size).toBe(0);
+  });
+
+  it('a recording of the same organization but another meeting is rejected before any upload', async () => {
+    const otherMeeting = '55555555-5555-4555-8555-555555555555';
+    const db = fakePrisma([{ id: REC, organizationId: ORG, meetingId: otherMeeting }]);
+    const persistence = createMediaPersistence({ client: db.client, bucket: 'meetops-media' });
+    const { deps, jobs, stored } = makeWorkerParts(tmpRoot, persistence, payload);
+    await expect(processRecording(payload, deps)).rejects.toMatchObject({
+      errorCode: 'recording_not_found',
+    });
+    expect(db.fileObjects.size).toBe(0);
+    expect([...stored.keys()].filter(isUpload)).toEqual([]);
+    expect(jobs.size).toBe(0);
+  });
+
+  it('the atomic write alone rolls back every chunk row if the recording does not match', async () => {
+    // Defence in depth: even if the ownership check were bypassed, chunk rows and chunk_count commit together or not
+    // at all (the separate-transaction design left chunk rows behind under the claimed organization).
+    const db = fakePrisma([{ id: REC, organizationId: OTHER_ORG, meetingId: MEET }]);
+    const persistence = createMediaPersistence({ client: db.client, bucket: 'meetops-media' });
+    const { deps, jobs } = makeWorkerParts(
+      tmpRoot,
+      { ...persistence, recordingAccess: { verifyRecording: async () => true } },
+      payload,
+    );
+    await expect(processRecording(payload, deps)).rejects.toMatchObject({
+      errorCode: 'chunk_persist_failed',
+    });
+    expect(db.fileObjects.size).toBe(0);
+    expect(db.recordings.get(REC)!.chunkCount).toBeNull();
+    expect(jobs.size).toBe(0);
+  });
+
+  it('a chunk row conflict rolls back chunk_count too', async () => {
+    const db = fakePrisma([{ id: REC, organizationId: ORG, meetingId: MEET }]);
+    // Chunk 1's deterministic id already exists with another key: the upsert refuses it.
+    const id1 = chunkFileObjectId(REC, 1);
+    db.fileObjects.set(id1, {
+      id: id1,
+      organizationId: ORG,
+      meetingId: MEET,
+      key: 'organizations/x/other.wav',
+      kind: 'chunk',
+      bucket: 'b',
+      provider: 's3',
+      sizeBytes: 1,
+      sha256: null,
+      chunkIndex: 1,
+      startSeconds: 0,
+      durationSeconds: 1,
+    });
     const persistence = createMediaPersistence({ client: db.client, bucket: 'meetops-media' });
     const { deps, jobs } = makeWorkerParts(tmpRoot, persistence, payload);
     await expect(processRecording(payload, deps)).rejects.toMatchObject({
-      errorCode: 'chunk_count_persist_failed',
+      errorCode: 'chunk_persist_failed',
     });
+    expect([...db.fileObjects.keys()]).toEqual([id1]);
     expect(db.recordings.get(REC)!.chunkCount).toBeNull();
     expect(jobs.size).toBe(0);
-    for (const w of db.statements.filter(isWrite)) expect(w.organizationId).toBe(ORG);
+  });
+
+  it('an ownership check that errors fails the job before any upload', async () => {
+    const db = fakePrisma([{ id: REC, organizationId: ORG, meetingId: MEET }]);
+    const persistence = createMediaPersistence({ client: db.client, bucket: 'meetops-media' });
+    const { deps, stored } = makeWorkerParts(
+      tmpRoot,
+      {
+        ...persistence,
+        recordingAccess: {
+          verifyRecording: async () => {
+            throw new Error('connection refused');
+          },
+        },
+      },
+      payload,
+    );
+    await expect(processRecording(payload, deps)).rejects.toMatchObject({
+      errorCode: 'recording_verify_failed',
+    });
+    expect([...stored.keys()].filter(isUpload)).toEqual([]);
+    expect(db.statements.filter(isWrite)).toEqual([]);
   });
 
   it('keeps the #88 waveform step and #90 realtime rooms', async () => {
