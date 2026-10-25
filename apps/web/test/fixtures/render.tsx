@@ -3,7 +3,8 @@ import { createMemoryHistory, type RouterHistory } from '@tanstack/react-router'
 import { QueryClient } from '@tanstack/react-query';
 import { vi } from 'vitest';
 import { App } from '@/app';
-import type { ApiClient } from '@/lib/api/client';
+import type { Role } from '@meetops/contracts';
+import type { ApiClient, CreateInvitationRequest } from '@/lib/api/client';
 import { useOrgStore, useUiStore } from '@/stores/org-store';
 import {
   meeting1,
@@ -16,6 +17,9 @@ import {
   tasks,
   uploadResponse,
   pairResponse,
+  sessionList,
+  memberList,
+  invitation,
 } from './data';
 
 export function createMockApi(
@@ -36,6 +40,8 @@ export function createMockApi(
       logout: vi.fn().mockResolvedValue(undefined),
       logoutAll: vi.fn().mockResolvedValue(undefined),
       session: vi.fn().mockResolvedValue(sessionResponse),
+      sessions: vi.fn().mockResolvedValue(sessionList),
+      revokeSession: vi.fn().mockResolvedValue(undefined),
       ...overrides.auth,
     },
     organizations: {
@@ -54,7 +60,26 @@ export function createMockApi(
     },
     invitations: {
       accept: vi.fn().mockResolvedValue({ organization: orgs[1]!, role: 'member' }),
+      create: vi.fn((organizationId: string, body: CreateInvitationRequest) =>
+        Promise.resolve({ ...invitation, organizationId, ...body }),
+      ),
+      revoke: vi.fn().mockResolvedValue({ ...invitation, status: 'revoked' }),
       ...overrides.invitations,
+    },
+    members: {
+      list: vi.fn().mockResolvedValue(memberList),
+      changeRole: vi.fn((organizationId: string, userId: string, role: Role) => {
+        const m = memberList.items.find((x) => x.userId === userId) ?? memberList.items[0]!;
+        return Promise.resolve({
+          id: m.id,
+          organizationId,
+          userId,
+          role,
+          createdAt: m.createdAt,
+        });
+      }),
+      remove: vi.fn().mockResolvedValue(undefined),
+      ...overrides.members,
     },
     extension: {
       pair: vi.fn().mockResolvedValue(pairResponse),

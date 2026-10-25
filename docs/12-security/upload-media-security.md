@@ -22,6 +22,8 @@ capped at `MAX_PRESIGNED_GET_TTL_SECONDS`.
 - [ ] Presign enforces `content-length-range` and `Content-Type`.
 - [ ] Per-org storage quota and concurrent-upload limits.
 
+> Limit values are pending ARC-2 (G9). Contracts currently set `MAX_MEDIA_BYTES = 1_400_000_000`, `MAX_RECORDING_CHUNKS = 10_000`, `MAX_DURATION_MS = 24 h` and `CHUNK_UPLOAD_URL_TTL_SECONDS = 300`, which differ from the defaults above. ARC-2 records the decision here and in the contracts; tests (UP-05, UP-10) use the contracts constants, not literals.
+
 ## 2. Content validation
 
 - [ ] Magic-byte check (e.g. `file-type`) on the stored object, not the client-declared MIME or extension; mismatch → reject.
@@ -30,10 +32,10 @@ capped at `MAX_PRESIGNED_GET_TTL_SECONDS`.
 
 ## 3. Presigned URLs
 
-- [ ] Server-generated key `org/{orgId}/uploads/{uploadId}/source` — client never chooses the key.
+- [ ] Server-generated key from `@meetops/storage` `buildObjectKey` (ADR-010): `organizations/{organizationId}/meetings/{meetingId}/recordings/{objectId}.{ext}`; session chunks under `tmp/session-chunks/organizations/{organizationId}/meetings/{meetingId}/sessions/{sessionId}/{seq}.part`. The client never chooses or sends a key, bucket or `organizationId` (XT-16, UP-13); the key is stored in `file_objects.storage_key` and read back from there, never rebuilt.
 - [ ] TTL ≤ 10 min for PUT, ≤ 5 min for GET; scoped to a single object and method.
-- [ ] Issued only after CASL check; upload record (`FileObject` with `orgId`, status `pending`) created first.
-- [ ] Completion endpoint verifies size, checksum (SHA-256), and that the key belongs to caller's org.
+- [ ] Issued only after the CASL check (`create FileObject` / `create` or `update RecordingSession`, rbac-matrix.md); the upload record (`FileObject` with `organizationId`, status `pending_upload`) is created first inside `runWithOrganizationContext`.
+- [ ] Completion endpoint verifies size, checksum (SHA-256), and that the key belongs to the caller's organization with `assertKeyOwnedBy(key, organizationId, meetingId)`; any mismatch leaves the `FileObject` pending (UP-19). Legacy `org/{organizationId}/` keys are accepted for reads in ADR-010 phase A only and never for new uploads.
 - [ ] Bucket private, public access blocked, SSE enabled, CORS limited to web origin.
 
 ## 4. Malware scanning
@@ -58,6 +60,7 @@ capped at `MAX_PRESIGNED_GET_TTL_SECONDS`.
 
 - [ ] Notice: recorder bot uses visible name ("MeetOps Recorder") and posts a chat notice on join; uploads require uploader attestation of consent.
 - [ ] Per-org consent settings: required notice text, all-party vs one-party mode, auto-skip meetings with external participants, retention period.
-- [ ] Processing blocked if required consent attestation missing.
+- [ ] Server-side attestation (G11): upload init and recording-session init require a consent attestation in the request (shape per ARC-2); without it the API returns 422 and creates nothing (UP-16, UP-17). The server persists it in `consent_attestations` (DB-3: `org_id`, subject id, `consent_version`, method, `attested_by_user_id`, `attested_at`; RLS-forced, append-only). `attested_by_user_id` and `org_id` come from the session, never the body (UP-18).
+- [ ] Processing blocked if required consent attestation missing: complete fails with 422 and no media job is enqueued; the worker re-checks before processing (UP-16).
 - [ ] Audit: consent attestation, who started recording, notices posted, deletion requests.
 - [ ] Retention and deletion: org-configurable retention; hard delete of media + derived transcripts/embeddings on request.

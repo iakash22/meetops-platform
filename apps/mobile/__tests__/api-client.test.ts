@@ -1,4 +1,6 @@
-import { ApiError, createApiClient } from '../src/api/client';
+import { API_ERROR_REASONS, CONFLICT_REASONS, NOT_FOUND_REASONS } from '@meetops/contracts';
+
+import { ApiError, createApiClient, type ApiErrorReason } from '../src/api/client';
 
 type Call = { url: string; init: RequestInit };
 
@@ -78,5 +80,26 @@ describe('createApiClient', () => {
     await expect(bad.getSession()).rejects.toMatchObject({ status: 502, code: 'INTERNAL' });
     const ok = createApiClient({ baseUrl: 'https://x.test', fetchImpl: fakeFetch(204).impl });
     await expect(ok.logout()).resolves.toBeUndefined();
+  });
+
+  it('accepts every contracts error reason (v0.4 CONFLICT and NOT_FOUND) on ApiError.reason', async () => {
+    // Type-level: the mobile reason type must stay identical to the contracts list, in both directions.
+    type ContractsReason = (typeof API_ERROR_REASONS)[number];
+    const toMobile = (r: ContractsReason): ApiErrorReason => r;
+    const toContracts = (r: ApiErrorReason): ContractsReason => r;
+    expect(API_ERROR_REASONS.length).toBeGreaterThan(0);
+
+    const cases = [
+      ...CONFLICT_REASONS.map((reason) => ({ status: 409, code: 'CONFLICT' as const, reason })),
+      ...NOT_FOUND_REASONS.map((reason) => ({ status: 404, code: 'NOT_FOUND' as const, reason })),
+    ];
+    expect(cases).toHaveLength(API_ERROR_REASONS.length);
+    for (const { status, code, reason } of cases) {
+      const { impl } = fakeFetch(status, { error: { code, message: 'Nope.', reason } });
+      const api = createApiClient({ baseUrl: 'https://api.example.test', fetchImpl: impl });
+      const err = await api.getSession().catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(ApiError);
+      expect(err).toMatchObject({ status, code, reason: toContracts(toMobile(reason)) });
+    }
   });
 });
