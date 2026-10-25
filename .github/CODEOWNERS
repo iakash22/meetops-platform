@@ -1,0 +1,61 @@
+# CODEOWNERS — @iakash22 owns everything; comments name the responsible agent.
+# Later rules win, so specific paths come after the catch-all.
+
+*                         @iakash22
+
+# Backend agent
+/apps/api/                @iakash22
+/packages/config/         @iakash22
+/packages/logger/         @iakash22
+/packages/queue/          @iakash22
+
+# Media and Realtime agent (worker pipeline + storage)
+/apps/worker/             @iakash22
+/packages/storage/        @iakash22
+
+# Integrations agent (notifications; path not on integration/phase-1 yet)
+/packages/notifications/  @iakash22
+
+# Frontend agent
+/apps/web/                @iakash22
+
+# Media and Realtime agent
+/apps/realtime/           @iakash22
+/packages/media-core/     @iakash22
+
+# AI agent
+/packages/ai-core/        @iakash22
+
+# Integrations agent
+/packages/integrations/   @iakash22
+
+# Database agent
+/packages/database/       @iakash22
+
+# QA agent
+/tests/                   @iakash22
+
+# DevOps agent
+/infra/                   @iakash22
+/.github/                 @iakash22
+/scripts/                 @iakash22
+/.dockerignore            @iakash22
+
+# Architecture agent
+/packages/contracts/      @iakash22
+
+# Documentation agent
+/docs/                    @iakash22
+
+# Architecture + Documentation agents
+/docs/02*                 @iakash22
+/docs/15*                 @iakash22
+
+# Native Apps agent
+/apps/extension/          @iakash22
+/apps/desktop/            @iakash22
+
+# Security agent
+/SECURITY.md              @iakash22
+/.github/CODEOWNERS       @iakash22
+/.github/dependabot.yml   @iakash22

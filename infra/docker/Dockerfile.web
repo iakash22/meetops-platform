@@ -1,0 +1,32 @@
+# syntax=docker/dockerfile:1.7
+# MeetOps AI — web SPA (@meetops/web, apps/web; Vite + React), served as static
+# files by unprivileged nginx on :8080. Build context: repository root.
+#   docker build -f infra/docker/Dockerfile.web -t meetops/web .
+ARG NODE_VERSION=20.20.2
+
+FROM node:${NODE_VERSION}-bookworm-slim AS build
+ENV PNPM_HOME=/pnpm \
+    PATH=/pnpm:$PATH \
+    COREPACK_ENABLE_DOWNLOAD_PROMPT=0
+RUN corepack enable && corepack prepare pnpm@9.12.3 --activate
+WORKDIR /repo
+# API base URL baked into the SPA at build time (import.meta.env.VITE_API_URL).
+ARG VITE_API_URL=http://localhost:3000
+ENV VITE_API_URL=${VITE_API_URL}
+COPY . .
+RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store \
+    pnpm install --frozen-lockfile --ignore-scripts
+RUN pnpm --filter "@meetops/web..." run build
+
+FROM nginxinc/nginx-unprivileged:1.27.5-alpine AS runtime
+# CSP connect-src origins, overridable at `docker run -e ...` / compose.
+ENV CSP_API_ORIGIN=http://localhost:3000 \
+    CSP_REALTIME_ORIGIN="ws://localhost:4001 http://localhost:4001" \
+    CSP_STORAGE_ORIGIN=http://localhost:9000 \
+    NGINX_ENVSUBST_FILTER=^CSP_
+COPY infra/docker/nginx/web.conf.template /etc/nginx/templates/default.conf.template
+COPY --from=build /repo/apps/web/dist /usr/share/nginx/html
+USER 101
+EXPOSE 8080
+HEALTHCHECK --interval=15s --timeout=5s --start-period=5s --retries=5 \
+  CMD ["wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/healthz"]

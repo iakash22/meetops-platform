@@ -14,6 +14,7 @@ cd meetops-platform
 corepack enable
 Copy-Item .env.example .env      # fill in local values; never commit .env
 pnpm install
+sh scripts/gen-dev-secrets.sh --from-env   # compose secrets from .env (sh from Git for Windows)
 pnpm dev:infra:up                # Postgres, Redis, MinIO (+ bucket init)
 pnpm dev                         # api, web, worker via turbo
 ```
@@ -26,6 +27,7 @@ cd meetops-platform
 corepack enable
 cp .env.example .env             # fill in local values; never commit .env
 pnpm install
+./scripts/gen-dev-secrets.sh --from-env   # compose secrets in infra/compose/secrets (gitignored)
 pnpm dev:infra:up
 pnpm dev
 ```

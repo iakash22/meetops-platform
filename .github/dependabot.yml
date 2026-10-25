@@ -1,0 +1,43 @@
+# Version-update PRs target integration/phase-1 (no retargeting needed).
+# NOTE: Dependabot *security* update PRs ignore target-branch and still open
+# against the default branch (main).
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    target-branch: integration/phase-1
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 10
+    commit-message:
+      prefix: chore(deps)
+      prefix-development: chore(deps-dev)
+    groups:
+      prod-minor-patch:
+        dependency-type: production
+        update-types: [minor, patch]
+      dev-minor-patch:
+        dependency-type: development
+        update-types: [minor, patch]
+
+  - package-ecosystem: github-actions
+    directory: /
+    target-branch: integration/phase-1
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: ci
+    groups:
+      github-actions:
+        patterns: ['*']
+
+  - package-ecosystem: docker
+    directory: /infra/docker
+    target-branch: integration/phase-1
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: build(docker)
+    groups:
+      docker:
+        patterns: ['*']

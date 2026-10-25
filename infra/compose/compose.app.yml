@@ -1,0 +1,256 @@
+# MeetOps AI — application containers on top of the dev infra stack. DEV ONLY:
+# this is a local integration harness, not a production deployment manifest.
+# NOT standalone: it must be merged with compose.dev.yml, which defines postgres,
+# redis, minio(-init) and the optional `ollama` / `local-stt` profile services
+# referenced below (OLLAMA_BASE_URL / LOCAL_STT_URL). Use the helper:
+#   scripts/compose-up.sh                      # dev infra + apps
+#   scripts/compose-up.sh --profile ollama --profile local-stt --profile realtime
+# which runs: docker compose --env-file .env -f infra/compose/compose.dev.yml -f infra/compose/compose.app.yml ... up -d --build
+# Inside the compose network the apps reach infra by service name, so the
+# localhost URLs from .env are overridden below. NODE_ENV comes from .env.
+# Required credentials use ${VAR:?} (no fallbacks). Host ports bind to 127.0.0.1.
+
+# Database roles (PR #25 RLS): api/worker connect as meetops_app (NOSUPERUSER,
+# NOBYPASSRLS); only `migrate` uses meetops_migrator. Never the postgres superuser.
+# App services do NOT load ../../.env into the container: each gets an explicit
+# list of non-secret settings below (interpolated by `docker compose --env-file .env`).
+# Every password / secret / API key is a compose `secret:` file under
+# /run/secrets; infra/compose/bin/with-secrets.sh turns them into DATABASE_URL /
+# MIGRATION_DATABASE_URL / REDIS_URL / STORAGE_SECRET_ACCESS_KEY / CSRF_SECRET /
+# SMTP_PASSWORD / *_API_KEY at container start (DB_ROLE=app|migrator|none).
+# No POSTGRES_* variable and no MinIO root credential reaches an app container.
+x-secrets-shim: &secrets-shim ./bin/with-secrets.sh:/opt/with-secrets.sh:ro
+
+x-base-env: &base-env
+  NODE_ENV: ${NODE_ENV:-development}
+  MEETOPS_DB_NAME: ${POSTGRES_DB:?set POSTGRES_DB}
+  DB_ROLE: app
+
+x-storage-env: &storage-env
+  STORAGE_PROVIDER: ${STORAGE_PROVIDER:-minio}
+  STORAGE_ENDPOINT: http://minio:9000
+  STORAGE_REGION: ${STORAGE_REGION:-us-east-1}
+  STORAGE_BUCKET: ${STORAGE_BUCKET:-meetops-dev}
+  # Scoped MinIO user created by minio-init (bucket-only policy), never root.
+  STORAGE_ACCESS_KEY_ID: ${STORAGE_APP_ACCESS_KEY_ID:-meetops-app}
+  STORAGE_FORCE_PATH_STYLE: ${STORAGE_FORCE_PATH_STYLE:-}
+  STORAGE_UPLOAD_TTL_SECONDS: ${STORAGE_UPLOAD_TTL_SECONDS:-300}
+  STORAGE_DOWNLOAD_TTL_SECONDS: ${STORAGE_DOWNLOAD_TTL_SECONDS:-300}
+  STORAGE_MAX_OBJECT_BYTES: ${STORAGE_MAX_OBJECT_BYTES:-}
+  STORAGE_MAX_PART_BYTES: ${STORAGE_MAX_PART_BYTES:-}
+  STORAGE_MAX_PARTS: ${STORAGE_MAX_PARTS:-}
+  STORAGE_ALLOWED_MIME_TYPES: ${STORAGE_ALLOWED_MIME_TYPES:-}
+
+x-api-env: &api-env
+  <<: [*base-env, *storage-env]
+  PORT: 3000
+  HOST: 0.0.0.0
+  WEB_ORIGINS: ${WEB_ORIGINS:-http://localhost:5173,http://localhost:3000}
+  TRUST_PROXY: ${TRUST_PROXY:-}
+  EMAIL_PROVIDER: ${EMAIL_PROVIDER:-smtp}
+  SMTP_HOST: ${SMTP_HOST:-smtp.gmail.com}
+  SMTP_PORT: ${SMTP_PORT:-465}
+  SMTP_SECURE: ${SMTP_SECURE:-true}
+  SMTP_USER: ${SMTP_USER:-}
+  EMAIL_FROM: ${EMAIL_FROM:-noreply@example.com}
+  AI_LLM_PROVIDER: ${AI_LLM_PROVIDER:-gemini}
+  GEMINI_MODEL: ${GEMINI_MODEL:-gemini-2.5-flash-lite}
+  AI_STT_PROVIDER: ${AI_STT_PROVIDER:-assemblyai}
+  OLLAMA_ENABLED: ${OLLAMA_ENABLED:-false}
+  OLLAMA_BASE_URL: http://ollama:11434
+  OLLAMA_MODEL: ${OLLAMA_MODEL:-llama3.2}
+  LOCAL_STT_ENABLED: ${LOCAL_STT_ENABLED:-false}
+  LOCAL_STT_URL: http://local-stt:8000
+  LOCAL_STT_MODEL: ${LOCAL_STT_MODEL:-Systran/faster-whisper-small}
+  OPENAI_ENABLED: ${OPENAI_ENABLED:-false}
+  OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.openai.com/v1}
+  OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o-mini}
+  DEEPGRAM_ENABLED: ${DEEPGRAM_ENABLED:-false}
+  AI_ALLOW_PAID_FALLBACK: ${AI_ALLOW_PAID_FALLBACK:-false}
+  AI_REQUIRE_PROVIDER_APPROVAL: ${AI_REQUIRE_PROVIDER_APPROVAL:-true}
+
+services:
+  # One-shot: prisma migrate deploy + seed (@meetops/database db:migrate:deploy, db:seed).
+  migrate:
+    build:
+      context: ../..
+      dockerfile: infra/docker/Dockerfile.api
+      target: migrate
+    image: meetops/migrate:local
+    restart: 'no'
+    environment:
+      <<: *base-env
+      # Migrate + seed as the schema owner (RLS would hide/deny cross-tenant seed rows).
+      DB_ROLE: migrator
+    secrets: [meetops_migrator_db_password]
+    volumes: [*secrets-shim]
+    entrypoint: ['/bin/sh', '/opt/with-secrets.sh']
+    # Fails loudly: `pnpm --filter ... run <script>` silently exits 0 when the
+    # script is missing, so check for both scripts first. Until PR #35 adds them,
+    # migrate exits 1 and api/worker (depends_on: service_completed_successfully)
+    # do not start. with-secrets.sh (DB_ROLE=migrator) sets both
+    # MIGRATION_DATABASE_URL and DATABASE_URL to meetops_migrator for prisma + seed.
+    command:
+      - sh
+      - -ec
+      - |
+        for script in db:migrate:deploy db:seed; do
+          node -e 'const s=require("./packages/database/package.json").scripts||{}; process.exit(s[process.argv[1]]?0:1)' "$$script" \
+            || { echo "packages/database $$script missing; requires PR #35" >&2; exit 1; }
+        done
+        : "$${MIGRATION_DATABASE_URL:?MIGRATION_DATABASE_URL not set}" "$${DATABASE_URL:?DATABASE_URL not set}"
+        pnpm --filter @meetops/database run db:migrate:deploy
+        pnpm --filter @meetops/database run db:seed
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  api:
+    build:
+      context: ../..
+      dockerfile: infra/docker/Dockerfile.api
+    image: meetops/api:local
+    restart: unless-stopped
+    environment: *api-env
+    secrets:
+      [
+        meetops_app_db_password,
+        redis_password,
+        minio_app_password,
+        csrf_secret,
+        smtp_password,
+        gemini_api_key,
+        assemblyai_api_key,
+        openai_api_key,
+        deepgram_api_key,
+      ]
+    volumes: [*secrets-shim]
+    entrypoint: ['/bin/sh', '/opt/with-secrets.sh']
+    command: ['node', 'dist/index.js']
+    ports:
+      - '127.0.0.1:${API_PORT:-3000}:3000'
+    depends_on: &app-deps
+      migrate:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+
+  worker:
+    build:
+      context: ../..
+      dockerfile: infra/docker/Dockerfile.worker
+    image: meetops/worker:local
+    restart: unless-stopped
+    environment:
+      <<: [*base-env, *storage-env]
+      # Media worker needs only Redis + storage: no Postgres credentials.
+      DB_ROLE: none
+      FFMPEG_PATH: /usr/bin/ffmpeg
+      FFPROBE_PATH: /usr/bin/ffprobe
+      MEDIA_TMP_DIR: /tmp/work
+    secrets: [redis_password, minio_app_password]
+    volumes: [*secrets-shim]
+    entrypoint: ['/usr/bin/tini', '--', '/bin/sh', '/opt/with-secrets.sh']
+    command: ['node', 'dist/index.js']
+    depends_on:
+      # Kept on migrate so the stack visibly fails until the schema exists (PR #35).
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+    # FFmpeg sandbox (docs/12-security, upload-media-security §5): ONLY on the
+    # internal `media-internal` network (redis + minio, no egress / no default
+    # route), non-root, read-only root FS, tmpfs temp disk, no capabilities, no
+    # privilege escalation, CPU/memory/PID caps.
+    networks: [media-internal]
+    user: node
+    read_only: true
+    tmpfs:
+      - /tmp:size=256m,mode=1777
+      # Sized for the 2 GB source cap (upload-media-security) plus the
+      # normalised audio output and ffmpeg scratch: 2 GB source + up to 1 GB
+      # derived files. tmpfs pages are charged to the container memory cgroup,
+      # so mem_limit = 3g tmpfs + ~1g for node/ffmpeg. See docs/13-ops/containers-and-ci.md.
+      - /tmp/work:size=3g,uid=1000,gid=1000,mode=0700
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 256
+    mem_limit: 4g
+    cpus: 2
+
+  # Socket.IO gateway (apps/realtime, PR #16). Behind the `realtime` profile until
+  # PR #16 merges (the build fails without apps/realtime); then drop `profiles`.
+  #   ... -f infra/compose/compose.app.yml --profile realtime up -d --build
+  realtime:
+    profiles: ['realtime']
+    build:
+      context: ../..
+      dockerfile: infra/docker/Dockerfile.realtime
+    image: meetops/realtime:local
+    restart: unless-stopped
+    environment:
+      NODE_ENV: ${NODE_ENV:-development}
+      MEETOPS_DB_NAME: ${POSTGRES_DB:?set POSTGRES_DB}
+      DB_ROLE: none
+      REALTIME_HOST: 0.0.0.0
+      REALTIME_PORT: 4001
+      # Explicit allowlist, required; never '*'.
+      REALTIME_CORS_ORIGINS: ${REALTIME_CORS_ORIGINS:?set REALTIME_CORS_ORIGINS in .env}
+    secrets: [redis_password]
+    volumes: [*secrets-shim]
+    entrypoint: ['/bin/sh', '/opt/with-secrets.sh']
+    command: ['node', 'dist/index.js']
+    ports:
+      - '127.0.0.1:${REALTIME_PORT:-4001}:4001'
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'node',
+          '-e',
+          "fetch('http://127.0.0.1:4001/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 15s
+      timeout: 5s
+      start_period: 20s
+      retries: 5
+    depends_on:
+      redis:
+        condition: service_healthy
+    # Same hardening as the worker.
+    user: node
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 256
+    mem_limit: 512m
+    cpus: 1
+
+  web:
+    build:
+      context: ../..
+      dockerfile: infra/docker/Dockerfile.web
+      args:
+        VITE_API_URL: ${VITE_API_URL:-http://localhost:3000}
+    image: meetops/web:local
+    restart: unless-stopped
+    environment:
+      CSP_API_ORIGIN: ${VITE_API_URL:-http://localhost:3000}
+      CSP_REALTIME_ORIGIN: ws://localhost:${REALTIME_PORT:-4001} http://localhost:${REALTIME_PORT:-4001}
+      CSP_STORAGE_ORIGIN: http://localhost:${MINIO_API_PORT:-9000}
+    # WEB_APP_PORT is the containerised nginx; WEB_PORT (5173) stays for `vite dev`.
+    ports:
+      - '127.0.0.1:${WEB_APP_PORT:-8080}:8080'
+    depends_on:
+      api:
+        condition: service_started

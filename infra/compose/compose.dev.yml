@@ -1,20 +1,26 @@
-# MeetOps AI — local development infrastructure.
+# MeetOps AI — local development infrastructure (DEV ONLY, never deploy this file).
 # Usage (from repo root): pnpm dev:infra:up   (reads ./.env, copy from .env.example)
 # Optional profiles:      docker compose --env-file .env -f infra/compose/compose.dev.yml --profile ollama --profile local-stt up -d
+# Passwords come from compose `secrets:` files (scripts/gen-dev-secrets.sh ->
+# infra/compose/secrets/*.txt, gitignored), never from env interpolation.
+# All host ports bind to 127.0.0.1 only. Images are pinned (no :latest).
 name: meetops-dev
 
 services:
   postgres:
-    image: pgvector/pgvector:pg16
+    image: pgvector/pgvector:0.8.7-pg16-bookworm
     restart: unless-stopped
     environment:
-      POSTGRES_USER: ${POSTGRES_USER:-postgres}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
-      POSTGRES_DB: ${POSTGRES_DB:-meetops}
+      POSTGRES_USER: ${POSTGRES_USER:?set POSTGRES_USER in .env}
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+      POSTGRES_DB: ${POSTGRES_DB:?set POSTGRES_DB in .env}
+    # Role passwords for initdb/10-meetops-roles.sh (PR #25 RLS) are read from here.
+    secrets: [postgres_password, meetops_app_db_password, meetops_migrator_db_password]
     ports:
-      - '${POSTGRES_PORT:-5432}:5432'
+      - '127.0.0.1:${POSTGRES_PORT:-5432}:5432'
     volumes:
       - postgres-data:/var/lib/postgresql/data
+      - ./postgres/initdb:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ['CMD-SHELL', 'pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}']
       interval: 5s
@@ -22,71 +28,127 @@ services:
       retries: 10
 
   redis:
-    image: redis:7-alpine
+    image: redis:7.4.11-alpine
     restart: unless-stopped
-    command: ['redis-server', '--appendonly', 'yes']
+    # Auth comes from an ACL file mounted as a secret (generated from
+    # redis_password by scripts/gen-dev-secrets.sh), so the password is never on
+    # the redis-server command line / in `ps` or `docker inspect`.
+    secrets: [redis_password, redis_acl]
+    networks: [default, media-internal]
+    command: ['redis-server', '--appendonly', 'yes', '--aclfile', '/run/secrets/redis_acl']
     ports:
-      - '${REDIS_PORT:-6379}:6379'
+      - '127.0.0.1:${REDIS_PORT:-6379}:6379'
     volumes:
       - redis-data:/data
     healthcheck:
-      test: ['CMD', 'redis-cli', 'ping']
+      test:
+        [
+          'CMD-SHELL',
+          'REDISCLI_AUTH="$$(cat /run/secrets/redis_password)" redis-cli ping | grep -q PONG',
+        ]
       interval: 5s
       timeout: 3s
       retries: 10
 
-  # minio/minio and minio/mc are no longer pullable anonymously (removed from Docker Hub, quay.io needs auth).
-  # Chainguard's public MinIO build (cgr.dev/chainguard/minio:latest), pinned by index digest.
-  # It is distroless (no shell/mc/curl), so readiness is checked by minio-init instead of a healthcheck.
+  # LOCAL DEV ONLY. Production object storage is Cloudflare R2 / AWS S3 via
+  # StorageService (STORAGE_PROVIDER=r2|s3); never deploy this MinIO fork.
+  # minio/minio and minio/mc were removed from Docker Hub (Sept 2026) and the
+  # upstream project is archived. pgsty/silo is a MinIO fork that keeps the S3 API,
+  # MINIO_* env vars and on-disk format; its entrypoint prefixes `silo`.
   minio:
-    image: cgr.dev/chainguard/minio@sha256:73297936408b731668ca0e835ac9add1a35cb6026a125c2f0cd476d9ef48222c
+    image: pgsty/silo:RELEASE.2026-10-18T00-00-00Z@sha256:2636fc4155d9a7e41ff58cdb65ddd13ba9304e67184e13c25bc5cb34016269d7
     restart: unless-stopped
-    # Image defaults to uid 65532; run as root like the old official image so existing minio-data volumes stay writable.
-    user: '0:0'
     command: ['server', '/data', '--console-address', ':9001']
+    secrets: [minio_root_password]
     environment:
-      MINIO_ROOT_USER: ${STORAGE_ACCESS_KEY_ID:-minioadmin}
-      MINIO_ROOT_PASSWORD: ${STORAGE_SECRET_ACCESS_KEY:-minioadmin}
+      MINIO_ROOT_USER: ${STORAGE_ACCESS_KEY_ID:?set STORAGE_ACCESS_KEY_ID in .env}
+      MINIO_ROOT_PASSWORD_FILE: /run/secrets/minio_root_password
+    networks: [default, media-internal]
     ports:
-      - '9000:9000'
-      - '9001:9001'
+      - '127.0.0.1:${MINIO_API_PORT:-9000}:9000'
+      - '127.0.0.1:${MINIO_CONSOLE_PORT:-9001}:9001'
     volumes:
       - minio-data:/data
+    healthcheck:
+      test: ['CMD', 'curl', '-fsS', 'http://127.0.0.1:9000/minio/health/live']
+      interval: 5s
+      timeout: 5s
+      retries: 10
 
-  # Bucket init with the AWS CLI (amazon/aws-cli:2.38.5, pinned by index digest). Waits for MinIO, then creates the bucket.
+  # Creates the bucket (private: no anonymous policy is ever set), CORS for
+  # browser presigned PUT/POST from WEB_ORIGIN only (exposes ETag for multipart), and a lifecycle rule that
+  # aborts incomplete multipart uploads after 1 day, and
+  # expires session chunks under tmp/session-chunks/ after 1 day (Media: chunks
+  # live at tmp/session-chunks/org/{orgId}/meetings/{meetingId}/sessions/{sessionId}/{seq}.part;
+  # lifecycle filters are prefix-only, so the flat prefix is required).
   minio-init:
-    image: amazon/aws-cli@sha256:c8156a0e74e13929a42d7e60f0d4e14e7d28d980cd21822505d4bff80e5460c1
+    image: pgsty/mc:RELEASE.2026-10-18T00-00-00Z@sha256:6ecdaec70bc5e8cf9d0e9a70c190f3beb1c83f11617ff4333f1fcd71ab1daf18
     depends_on:
       minio:
-        condition: service_started
+        condition: service_healthy
+    secrets: [minio_root_password, minio_app_password]
     environment:
-      AWS_ACCESS_KEY_ID: ${STORAGE_ACCESS_KEY_ID:-minioadmin}
-      AWS_SECRET_ACCESS_KEY: ${STORAGE_SECRET_ACCESS_KEY:-minioadmin}
-      AWS_DEFAULT_REGION: ${STORAGE_REGION:-us-east-1}
-      AWS_EC2_METADATA_DISABLED: 'true'
+      MINIO_ROOT_USER: ${STORAGE_ACCESS_KEY_ID:?set STORAGE_ACCESS_KEY_ID in .env}
+      STORAGE_APP_ACCESS_KEY_ID: ${STORAGE_APP_ACCESS_KEY_ID:-meetops-app}
       STORAGE_BUCKET: ${STORAGE_BUCKET:-meetops-dev}
+      WEB_ORIGIN: ${WEB_ORIGIN:-http://localhost:5173}
     entrypoint:
       - /bin/sh
       - -c
       - |
         set -e
-        ep=http://minio:9000
-        i=0
-        until aws --endpoint-url "$$ep" s3api list-buckets >/dev/null 2>&1; do
-          i=$$((i+1)); [ "$$i" -ge 60 ] && echo "minio not ready" && exit 1
-          sleep 2
-        done
-        aws --endpoint-url "$$ep" s3api head-bucket --bucket "$${STORAGE_BUCKET}" 2>/dev/null \
-          || aws --endpoint-url "$$ep" s3api create-bucket --bucket "$${STORAGE_BUCKET}"
-        echo "bucket $${STORAGE_BUCKET} ready"
+        mc alias set local http://minio:9000 "$${MINIO_ROOT_USER}" "$$(cat /run/secrets/minio_root_password)"
+        mc mb --ignore-existing "local/$${STORAGE_BUCKET}"
+        mc anonymous set none "local/$${STORAGE_BUCKET}"
+
+        # Scoped app credential for api/worker: read/write on this bucket only.
+        # The root user/password is used only here, never by app containers.
+        cat > /tmp/app-policy.json <<JSON
+        {"Version":"2012-10-17","Statement":[
+          {"Effect":"Allow","Action":["s3:GetBucketLocation","s3:ListBucket","s3:ListBucketMultipartUploads"],"Resource":["arn:aws:s3:::$${STORAGE_BUCKET}"]},
+          {"Effect":"Allow","Action":["s3:GetObject","s3:PutObject","s3:DeleteObject","s3:AbortMultipartUpload","s3:ListMultipartUploadParts"],"Resource":["arn:aws:s3:::$${STORAGE_BUCKET}/*"]}]}
+        JSON
+        # Idempotent with explicit existence checks; any mc failure stops init (set -e).
+        # `policy create` is an upsert (re-applies the current document); no remove
+        # step, since a policy attached to a user cannot be removed.
+        mc admin policy create local meetops-app-rw /tmp/app-policy.json
+        # `user add` creates or updates the user (and resets its secret from the file).
+        mc admin user add local "$${STORAGE_APP_ACCESS_KEY_ID}" "$$(cat /run/secrets/minio_app_password)"
+        uinfo="$$(mc admin user info local "$${STORAGE_APP_ACCESS_KEY_ID}" --json)"
+        case "$${uinfo}" in
+          *'"meetops-app-rw"'*) echo "policy meetops-app-rw already attached" ;;
+          *) mc admin policy attach local meetops-app-rw --user "$${STORAGE_APP_ACCESS_KEY_ID}" ;;
+        esac
+
+        # CORS is restricted to the single web origin (never "*").
+        origins="<AllowedOrigin>$${WEB_ORIGIN}</AllowedOrigin>"
+        cat > /tmp/cors.xml <<XML
+        <CORSConfiguration><CORSRule>$${origins}<AllowedMethod>GET</AllowedMethod><AllowedMethod>PUT</AllowedMethod><AllowedMethod>POST</AllowedMethod><AllowedMethod>HEAD</AllowedMethod><AllowedHeader>*</AllowedHeader><ExposeHeader>ETag</ExposeHeader><MaxAgeSeconds>3600</MaxAgeSeconds></CORSRule></CORSConfiguration>
+        XML
+        if ! mc cors set "local/$${STORAGE_BUCKET}" /tmp/cors.xml; then
+          echo "bucket CORS unsupported; falling back to server-wide api cors_allow_origin"
+          mc admin config set local api cors_allow_origin="$${WEB_ORIGIN}"
+        fi
+
+        # MinIO/silo rejects AbortIncompleteMultipartUpload in bucket lifecycle XML
+        # (verified), so stale multipart uploads use the server-wide setting and
+        # chunk expiry is a prefix rule (filters are prefix-only, no wildcards).
+        mc admin config set local api stale_uploads_expiry=24h
+        # Idempotent without grep (the mc image has only sh + mc).
+        rules="$$(mc ilm rule ls --json "local/$${STORAGE_BUCKET}" 2>/dev/null || true)"
+        case "$${rules}" in
+          *'"tmp/session-chunks/"'*) echo "chunk expiry rule present" ;;
+          *) mc ilm rule add --prefix "tmp/session-chunks/" --expire-days 1 "local/$${STORAGE_BUCKET}" ;;
+        esac
+        echo "bucket $${STORAGE_BUCKET} ready (private, CORS, stale multipart 24h, tmp/session-chunks/ 1d)"
     restart: 'no'
 
   ollama:
-    image: ollama/ollama:latest
+    image: ollama/ollama:0.40.7@sha256:2e6cc92ffa43b4b1a2e70e315407e00ac97ec125afc71277d73c7efe01c4f31b
     profiles: ['ollama']
     restart: unless-stopped
     ports:
-      - '11434:11434'
+      - '127.0.0.1:11434:11434'
     volumes:
       - ollama-data:/root/.ollama
     healthcheck:
@@ -95,14 +157,14 @@ services:
       timeout: 5s
       retries: 10
 
-  # faster-whisper OpenAI-compatible server (Speaches, formerly fedirz/faster-whisper-server).
-  # CPU image; listens on 8000 inside the container, exposed on 8001 to match LOCAL_STT_URL.
+  # faster-whisper OpenAI-compatible server (Speaches). CPU image; listens on 8000
+  # inside the container, published on host 8001 to match LOCAL_STT_URL (AI PR #21).
   local-stt:
-    image: ghcr.io/speaches-ai/speaches:latest-cpu
+    image: ghcr.io/speaches-ai/speaches:0.9.0-rc.3-cpu@sha256:2163775b6df5e451a71200e8f675fed68dbd8ab184fc604453d549e486f22fd2
     profiles: ['local-stt']
     restart: unless-stopped
     ports:
-      - '8001:8000'
+      - '127.0.0.1:8001:8000'
     volumes:
       - local-stt-cache:/home/ubuntu/.cache/huggingface/hub
     healthcheck:
@@ -110,6 +172,42 @@ services:
       interval: 10s
       timeout: 5s
       retries: 10
+
+# Internal-only network (no default route / egress) shared by redis, minio and
+# the media worker sandbox.
+networks:
+  default: {}
+  media-internal:
+    internal: true
+
+secrets:
+  postgres_password:
+    file: ./secrets/postgres_password.txt
+  meetops_app_db_password:
+    file: ./secrets/meetops_app_db_password.txt
+  meetops_migrator_db_password:
+    file: ./secrets/meetops_migrator_db_password.txt
+  redis_password:
+    file: ./secrets/redis_password.txt
+  redis_acl:
+    file: ./secrets/redis_acl.txt
+  minio_root_password:
+    file: ./secrets/minio_root_password.txt
+  minio_app_password:
+    file: ./secrets/minio_app_password.txt
+  # App-only secrets (may be empty files; empty = not exported).
+  csrf_secret:
+    file: ./secrets/csrf_secret.txt
+  smtp_password:
+    file: ./secrets/smtp_password.txt
+  gemini_api_key:
+    file: ./secrets/gemini_api_key.txt
+  assemblyai_api_key:
+    file: ./secrets/assemblyai_api_key.txt
+  openai_api_key:
+    file: ./secrets/openai_api_key.txt
+  deepgram_api_key:
+    file: ./secrets/deepgram_api_key.txt
 
 volumes:
   postgres-data:
