@@ -30,7 +30,7 @@ export const implementedXt: Record<string, Implemented> = {
   'XT-29': { file: 'integration/rls.test.ts' },
   'XT-30': {
     file: 'api/auth/cross-org.test.ts',
-    note: 'POST /orgs/switch; /auth/switch-org is BE-GAP-2',
+    note: 'POST /orgs/switch (BE-GAP-2 client-resolved: web calls /orgs/switch)',
   },
 };
 export const todoXt: Record<string, string> = {

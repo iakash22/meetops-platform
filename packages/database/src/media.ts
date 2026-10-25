@@ -44,6 +44,29 @@ export type RecordingChunkCountRepository = {
   }): Promise<void>;
 };
 
+/** The (organization, meeting, recording) triple a media job claims. */
+export type RecordingRef = {
+  organizationId: string;
+  meetingId: string;
+  recordingId: string;
+};
+
+/**
+ * Ownership check the worker runs before it uploads anything: true only if the recording exists, is not soft-deleted
+ * and belongs to exactly this organization and meeting. Runs under runWithOrganizationContext (forced RLS).
+ */
+export type RecordingOwnershipVerifier = {
+  verifyRecording(q: RecordingRef): Promise<boolean>;
+};
+
+/**
+ * Chunk FileObject rows and recordings.chunk_count (= chunks.length) written in ONE transaction: either all chunk rows
+ * and the count are committed, or nothing is.
+ */
+export type RecordingChunkPersistence = {
+  persistChunks(q: RecordingRef & { chunks: ChunkFileObjectRow[] }): Promise<void>;
+};
+
 /** Mirrors #92 ChunkFileObjectRecord (packages/storage/src/audio-resolver.ts). */
 export type ChunkFileObjectRecord = {
   id: string;
@@ -127,6 +150,86 @@ function runner(options: MediaRepositoryOptions) {
     });
 }
 
+function assertChunkCount(chunkCount: number): void {
+  if (!Number.isInteger(chunkCount) || chunkCount < 1 || chunkCount > MAX_RECORDING_CHUNKS) {
+    throw new MediaPersistenceError(
+      'invalid_chunk_count',
+      'chunkCount must be an integer in 1..10000',
+    );
+  }
+}
+
+function assertChunkRows(q: RecordingRef & { chunks: ChunkFileObjectRow[] }): void {
+  for (const c of q.chunks) {
+    const ok =
+      Number.isInteger(c.index) &&
+      c.index >= 0 &&
+      Number.isInteger(c.sizeBytes) &&
+      c.sizeBytes >= 0 &&
+      c.mimeType === 'audio/wav' &&
+      (c.sha256 === undefined || SHA256_HEX.test(c.sha256)) &&
+      Number.isFinite(c.startMs) &&
+      c.startMs >= 0 &&
+      Number.isFinite(c.durationMs) &&
+      c.durationMs >= 0 &&
+      chunkKeyMatches(c.storageKey, q, c.index);
+    if (!ok) throw new MediaPersistenceError('invalid_chunk_row', `Invalid chunk row ${c.index}`);
+  }
+}
+
+/** UPDATE recordings.chunk_count inside tx; throws if no row matched (org, meeting, id). */
+async function updateChunkCount(
+  tx: Prisma.TransactionClient,
+  q: RecordingRef & { chunkCount: number },
+  opts: { liveOnly: boolean },
+): Promise<void> {
+  const n = opts.liveOnly
+    ? await tx.$executeRaw`
+        UPDATE "recordings" SET "chunk_count" = ${q.chunkCount}, "updated_at" = now()
+        WHERE "org_id" = ${q.organizationId}::uuid AND "id" = ${q.recordingId}::uuid
+          AND "meeting_id" = ${q.meetingId}::uuid AND "deleted_at" IS NULL`
+    : await tx.$executeRaw`
+        UPDATE "recordings" SET "chunk_count" = ${q.chunkCount}, "updated_at" = now()
+        WHERE "org_id" = ${q.organizationId}::uuid AND "id" = ${q.recordingId}::uuid
+          AND "meeting_id" = ${q.meetingId}::uuid`;
+  if (n !== 1) throw new MediaPersistenceError('chunk_count_not_updated', 'Recording not found');
+}
+
+/** Upserts validated chunk rows inside tx; throws on an id owned by another organization/key/kind. */
+async function upsertChunkRows(
+  tx: Prisma.TransactionClient,
+  q: RecordingRef & { chunks: ChunkFileObjectRow[] },
+  store: { bucket: string; provider: string },
+): Promise<void> {
+  for (const c of q.chunks) {
+    const rows = await tx.$queryRaw<{ id: string }[]>`
+      INSERT INTO "file_objects"
+        ("id", "org_id", "meeting_id", "kind", "status", "provider", "bucket", "storage_key", "mime_type",
+         "size_bytes", "checksum_sha256", "chunk_index", "start_seconds", "duration_seconds",
+         "created_at", "updated_at")
+      VALUES (${c.fileObjectId}::uuid, ${q.organizationId}::uuid, ${q.meetingId}::uuid, 'chunk', 'uploaded',
+              ${store.provider}, ${store.bucket}, ${c.storageKey}, ${c.mimeType}, ${c.sizeBytes}::bigint,
+              ${c.sha256 ?? null}, ${c.index}, ${c.startMs / 1000}::float8, ${c.durationMs / 1000}::float8,
+              now(), now())
+      ON CONFLICT ("id") DO UPDATE SET
+        "size_bytes" = EXCLUDED."size_bytes",
+        "checksum_sha256" = EXCLUDED."checksum_sha256",
+        "start_seconds" = EXCLUDED."start_seconds",
+        "duration_seconds" = EXCLUDED."duration_seconds",
+        "updated_at" = now()
+      WHERE "file_objects"."org_id" = EXCLUDED."org_id"
+        AND "file_objects"."storage_key" = EXCLUDED."storage_key"
+        AND "file_objects"."kind" = 'chunk'
+      RETURNING "id"`;
+    if (rows.length !== 1) {
+      throw new MediaPersistenceError(
+        'chunk_file_object_conflict',
+        `Chunk FileObject ${c.index} exists with a different organization, key or kind`,
+      );
+    }
+  }
+}
+
 /** RecordingChunkCountRepository: sets recordings.chunk_count; throws if no row matched (org, meeting, id). */
 export function createRecordingChunkCountRepository(
   options: MediaRepositoryOptions = {},
@@ -134,21 +237,14 @@ export function createRecordingChunkCountRepository(
   const run = runner(options);
   return {
     async setChunkCount({ organizationId, meetingId, recordingId, chunkCount }) {
-      if (!Number.isInteger(chunkCount) || chunkCount < 1 || chunkCount > MAX_RECORDING_CHUNKS) {
-        throw new MediaPersistenceError(
-          'invalid_chunk_count',
-          'chunkCount must be an integer in 1..10000',
-        );
-      }
-      const n = await run(
-        organizationId,
-        (tx) => tx.$executeRaw`
-          UPDATE "recordings" SET "chunk_count" = ${chunkCount}, "updated_at" = now()
-          WHERE "org_id" = ${organizationId}::uuid AND "id" = ${recordingId}::uuid
-            AND "meeting_id" = ${meetingId}::uuid`,
+      assertChunkCount(chunkCount);
+      await run(organizationId, (tx) =>
+        updateChunkCount(
+          tx,
+          { organizationId, meetingId, recordingId, chunkCount },
+          { liveOnly: false },
+        ),
       );
-      if (n !== 1)
-        throw new MediaPersistenceError('chunk_count_not_updated', 'Recording not found');
     },
   };
 }
@@ -157,59 +253,73 @@ export function createRecordingChunkCountRepository(
  * ChunkFileObjectRepository: idempotent upsert of chunk FileObjects in one transaction. ON CONFLICT (id) only
  * refreshes size/checksum/timing, and only when the existing row has the same organization and key; otherwise the
  * whole call throws (and rolls back). Under RLS a row of another organization is not even updatable.
+ *
+ * Prefer createRecordingChunkPersistence in the media pipeline: this port alone does not check that the recording
+ * belongs to the organization/meeting, and commits separately from chunk_count.
  */
 export function createChunkFileObjectRepository(
   options: ChunkFileObjectRepositoryOptions,
 ): ChunkFileObjectRepository {
   if (!options?.bucket) throw new TypeError('bucket is required');
   const run = runner(options);
-  const provider = options.provider ?? 's3';
+  const store = { bucket: options.bucket, provider: options.provider ?? 's3' };
   return {
     async upsertChunkFileObjects(q) {
-      for (const c of q.chunks) {
-        const ok =
-          Number.isInteger(c.index) &&
-          c.index >= 0 &&
-          Number.isInteger(c.sizeBytes) &&
-          c.sizeBytes >= 0 &&
-          c.mimeType === 'audio/wav' &&
-          (c.sha256 === undefined || SHA256_HEX.test(c.sha256)) &&
-          Number.isFinite(c.startMs) &&
-          c.startMs >= 0 &&
-          Number.isFinite(c.durationMs) &&
-          c.durationMs >= 0 &&
-          chunkKeyMatches(c.storageKey, q, c.index);
-        if (!ok)
-          throw new MediaPersistenceError('invalid_chunk_row', `Invalid chunk row ${c.index}`);
+      assertChunkRows(q);
+      await run(q.organizationId, (tx) => upsertChunkRows(tx, q, store));
+    },
+  };
+}
+
+/**
+ * RecordingOwnershipVerifier: one RLS-scoped SELECT on recordings (org, meeting, id, not soft-deleted). Returns false
+ * when the recording is missing, soft-deleted, belongs to another meeting, or is invisible under this organization.
+ */
+export function createRecordingOwnershipVerifier(
+  options: MediaRepositoryOptions = {},
+): RecordingOwnershipVerifier {
+  const run = runner(options);
+  return {
+    async verifyRecording({ organizationId, meetingId, recordingId }) {
+      const rows = await run(
+        organizationId,
+        (tx) => tx.$queryRaw<{ id: string }[]>`
+          SELECT "id" FROM "recordings"
+          WHERE "org_id" = ${organizationId}::uuid AND "id" = ${recordingId}::uuid
+            AND "meeting_id" = ${meetingId}::uuid AND "deleted_at" IS NULL`,
+      );
+      return rows.length === 1;
+    },
+  };
+}
+
+/**
+ * RecordingChunkPersistence: in ONE runWithOrganizationContext transaction, first sets recordings.chunk_count
+ * (= chunks.length; must match org, meeting, id and not be soft-deleted, which also row-locks the recording), then
+ * upserts every chunk FileObject row with the same rules as createChunkFileObjectRepository. Any failure (unknown or
+ * foreign recording, conflicting row, RLS) rolls back everything, so a forged job never leaves chunk rows behind.
+ */
+export function createRecordingChunkPersistence(
+  options: ChunkFileObjectRepositoryOptions,
+): RecordingChunkPersistence {
+  if (!options?.bucket) throw new TypeError('bucket is required');
+  const run = runner(options);
+  const store = { bucket: options.bucket, provider: options.provider ?? 's3' };
+  return {
+    async persistChunks(q) {
+      assertChunkCount(q.chunks.length);
+      assertChunkRows(q);
+      if (new Set(q.chunks.map((c) => c.index)).size !== q.chunks.length) {
+        throw new MediaPersistenceError('invalid_chunk_row', 'Duplicate chunk index');
       }
+      const ref = {
+        organizationId: q.organizationId,
+        meetingId: q.meetingId,
+        recordingId: q.recordingId,
+      };
       await run(q.organizationId, async (tx) => {
-        for (const c of q.chunks) {
-          const rows = await tx.$queryRaw<{ id: string }[]>`
-            INSERT INTO "file_objects"
-              ("id", "org_id", "meeting_id", "kind", "status", "provider", "bucket", "storage_key", "mime_type",
-               "size_bytes", "checksum_sha256", "chunk_index", "start_seconds", "duration_seconds",
-               "created_at", "updated_at")
-            VALUES (${c.fileObjectId}::uuid, ${q.organizationId}::uuid, ${q.meetingId}::uuid, 'chunk', 'uploaded',
-                    ${provider}, ${options.bucket}, ${c.storageKey}, ${c.mimeType}, ${c.sizeBytes}::bigint,
-                    ${c.sha256 ?? null}, ${c.index}, ${c.startMs / 1000}::float8, ${c.durationMs / 1000}::float8,
-                    now(), now())
-            ON CONFLICT ("id") DO UPDATE SET
-              "size_bytes" = EXCLUDED."size_bytes",
-              "checksum_sha256" = EXCLUDED."checksum_sha256",
-              "start_seconds" = EXCLUDED."start_seconds",
-              "duration_seconds" = EXCLUDED."duration_seconds",
-              "updated_at" = now()
-            WHERE "file_objects"."org_id" = EXCLUDED."org_id"
-              AND "file_objects"."storage_key" = EXCLUDED."storage_key"
-              AND "file_objects"."kind" = 'chunk'
-            RETURNING "id"`;
-          if (rows.length !== 1) {
-            throw new MediaPersistenceError(
-              'chunk_file_object_conflict',
-              `Chunk FileObject ${c.index} exists with a different organization, key or kind`,
-            );
-          }
-        }
+        await updateChunkCount(tx, { ...ref, chunkCount: q.chunks.length }, { liveOnly: true });
+        await upsertChunkRows(tx, q, store);
       });
     },
   };

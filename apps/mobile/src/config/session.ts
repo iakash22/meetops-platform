@@ -1,6 +1,6 @@
 /**
- * Placeholder session shape for the mobile app. The real shape comes from
- * Backend's auth contract; until then this is a local stub.
+ * Minimal signed-in identity used across the app. Derived from the contracts session
+ * (`GetAuthSessionResponse`) by `toIdentity` in `src/auth/sessionManager.ts`.
  * Always use `organizationId` (never orgId/tenantId).
  */
 export interface MobileSession {

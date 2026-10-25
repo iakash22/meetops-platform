@@ -11,6 +11,8 @@ import {
   createChunkFileObjectLookup,
   createChunkFileObjectRepository,
   createRecordingChunkCountRepository,
+  createRecordingChunkPersistence,
+  createRecordingOwnershipVerifier,
   type ChunkFileObjectRow,
 } from '../src/index.js';
 
@@ -24,6 +26,8 @@ describe.skipIf(!APP_URL || !OWNER_URL)('media chunk persistence (live, PR #92 p
   const counts = createRecordingChunkCountRepository({ client: app });
   const chunks = createChunkFileObjectRepository({ client: app, bucket: 'meetops-test' });
   const lookup = createChunkFileObjectLookup({ client: app });
+  const verifier = createRecordingOwnershipVerifier({ client: app });
+  const atomic = createRecordingChunkPersistence({ client: app, bucket: 'meetops-test' });
   const orgA = randomUUID();
   const orgB = randomUUID();
   const scope = new Map<string, { meetingId: string; recordingId: string }>();
@@ -261,6 +265,119 @@ describe.skipIf(!APP_URL || !OWNER_URL)('media chunk persistence (live, PR #92 p
           }),
         ),
       ).rejects.toThrow(/checksum_sha256_check|23514/);
+    });
+  });
+  describe('RecordingOwnershipVerifier + RecordingChunkPersistence (single transaction)', () => {
+    /** Org B's real meeting with org A's recording: the forged job from the #118 review. */
+    const forged = () => ({
+      organizationId: orgB,
+      meetingId: scope.get(orgB)!.meetingId,
+      recordingId: scope.get(orgA)!.recordingId,
+    });
+    const forgedKey = (i: number) => {
+      const f = forged();
+      return `organizations/${orgB}/meetings/${f.meetingId}/processed/${f.recordingId}/chunks/${String(i).padStart(5, '0')}.wav`;
+    };
+    const countFileObjects = (org: string) =>
+      runWithOrganizationContext(owner, org, (tx) => tx.fileObject.count());
+    const chunkCountOf = (org: string) =>
+      runWithOrganizationContext(owner, org, (tx) =>
+        tx.recording.findUniqueOrThrow({ where: { id: scope.get(org)!.recordingId } }),
+      ).then((r) => r.chunkCount);
+
+    it('verifies only the exact (organization, meeting, recording) under RLS', async () => {
+      expect(await verifier.verifyRecording({ organizationId: orgA, ...scope.get(orgA)! })).toBe(
+        true,
+      );
+      expect(await verifier.verifyRecording({ organizationId: orgB, ...scope.get(orgB)! })).toBe(
+        true,
+      );
+      expect(await verifier.verifyRecording(forged())).toBe(false);
+      expect(await verifier.verifyRecording({ organizationId: orgB, ...scope.get(orgA)! })).toBe(
+        false,
+      );
+      expect(
+        await verifier.verifyRecording({
+          organizationId: orgA,
+          meetingId: scope.get(orgB)!.meetingId,
+          recordingId: scope.get(orgA)!.recordingId,
+        }),
+      ).toBe(false);
+    });
+
+    it('forged job: org B claiming its real meeting with org A recording leaves no rows anywhere', async () => {
+      const beforeA = await countFileObjects(orgA);
+      const beforeB = await countFileObjects(orgB);
+      const countA = await chunkCountOf(orgA);
+      const rows = [0, 1].map((i) => row(orgB, i, { storageKey: forgedKey(i) }));
+      await expect(atomic.persistChunks({ ...forged(), chunks: rows })).rejects.toMatchObject({
+        code: 'chunk_count_not_updated',
+      });
+      expect(await countFileObjects(orgB)).toBe(beforeB);
+      expect(await countFileObjects(orgA)).toBe(beforeA);
+      for (const r of rows) {
+        expect(
+          await lookup.findFileObject({ organizationId: orgB, fileObjectId: r.fileObjectId }),
+        ).toBeNull();
+      }
+      expect(await chunkCountOf(orgA)).toBe(countA);
+      expect(await chunkCountOf(orgB)).toBeNull();
+    });
+
+    it('writes chunk rows and chunk_count together, idempotently', async () => {
+      const rows = [row(orgB, 0), row(orgB, 1)];
+      const q = { organizationId: orgB, ...scope.get(orgB)!, chunks: rows };
+      await atomic.persistChunks(q);
+      await atomic.persistChunks(q); // retry
+      expect(await chunkCountOf(orgB)).toBe(2);
+      for (const r of rows) {
+        expect(
+          await lookup.findFileObject({ organizationId: orgB, fileObjectId: r.fileObjectId }),
+        ).toMatchObject({ organizationId: orgB, kind: 'chunk', key: r.storageKey });
+      }
+      // A conflicting row rolls back the new count and the fresh row in the same transaction.
+      const fresh = row(orgB, 2);
+      const moved = { ...rows[0]!, storageKey: key('organizations', orgB, 3), index: 3 };
+      await expect(
+        atomic.persistChunks({ ...q, chunks: [fresh, rows[1]!, moved] }),
+      ).rejects.toMatchObject({
+        code: 'chunk_file_object_conflict',
+      });
+      expect(await chunkCountOf(orgB)).toBe(2);
+      expect(
+        await lookup.findFileObject({ organizationId: orgB, fileObjectId: fresh.fileObjectId }),
+      ).toBeNull();
+    });
+
+    it('a soft-deleted recording is neither verified nor written', async () => {
+      const s = await runWithOrganizationContext(owner, orgA, async (tx) => {
+        const meetingId = scope.get(orgA)!.meetingId;
+        const file = await tx.fileObject.create({
+          data: {
+            organizationId: orgA,
+            meetingId,
+            bucket: 'b',
+            key: `organizations/${orgA}/meetings/${meetingId}/recordings/${randomUUID()}.webm`,
+            mimeType: 'audio/webm',
+          },
+        });
+        const rec = await tx.recording.create({
+          data: { organizationId: orgA, meetingId, fileObjectId: file.id, deletedAt: new Date() },
+        });
+        return { meetingId, recordingId: rec.id };
+      });
+      expect(await verifier.verifyRecording({ organizationId: orgA, ...s })).toBe(false);
+      const r = row(orgA, 0, {
+        storageKey: `organizations/${orgA}/meetings/${s.meetingId}/processed/${s.recordingId}/chunks/00000.wav`,
+      });
+      await expect(
+        atomic.persistChunks({ organizationId: orgA, ...s, chunks: [r] }),
+      ).rejects.toMatchObject({
+        code: 'chunk_count_not_updated',
+      });
+      expect(
+        await lookup.findFileObject({ organizationId: orgA, fileObjectId: r.fileObjectId }),
+      ).toBeNull();
     });
   });
 });
