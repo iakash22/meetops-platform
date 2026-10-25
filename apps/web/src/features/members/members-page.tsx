@@ -11,6 +11,7 @@ import { useApi } from '@/lib/api/context';
 import { queryKeys } from '@/lib/api/queries';
 import { PageHeader } from '@/pages/resource-list';
 import { InviteForm } from './invite-form';
+import { notify } from '@/lib/errors/notify';
 import { memberActionMessage } from './messages';
 import {
   assignableRoles,
@@ -284,11 +285,9 @@ function SentInvitations({
 }) {
   const api = useApi();
   const [pending, setPending] = useState<string | null>(null);
-  const [notice, setNotice] = useState<{ kind: 'status' | 'alert'; text: string } | null>(null);
 
   const run = async (inv: Invitation, action: 'resend' | 'revoke') => {
     setPending(inv.id);
-    setNotice(null);
     try {
       const next =
         action === 'resend'
@@ -296,18 +295,16 @@ function SentInvitations({
             await api.invitations.create(organizationId, { email: inv.email, role: inv.role })
           : await api.invitations.revoke(organizationId, inv.id);
       onChange(next);
-      setNotice({
-        kind: 'status',
-        text:
-          action === 'resend'
-            ? `Invitation resent to ${inv.email}.`
-            : `Invitation to ${inv.email} revoked.`,
-      });
+      notify.success(
+        action === 'resend'
+          ? `Invitation resent to ${inv.email}.`
+          : `Invitation to ${inv.email} revoked.`,
+      );
     } catch (err) {
-      setNotice({
-        kind: 'alert',
-        text: memberActionMessage(action === 'resend' ? 'invite' : 'revoke', err),
-      });
+      notify.error(
+        action === 'resend' ? "Couldn't resend invitation" : "Couldn't revoke invitation",
+        memberActionMessage(action === 'resend' ? 'invite' : 'revoke', err),
+      );
     } finally {
       setPending(null);
     }
@@ -316,16 +313,6 @@ function SentInvitations({
   return (
     <div className="grid gap-2">
       <h3 className="text-sm font-medium">Sent from this page</h3>
-      {notice ? (
-        <p
-          role={notice.kind}
-          className={
-            notice.kind === 'alert' ? 'text-sm text-destructive' : 'text-sm text-muted-foreground'
-          }
-        >
-          {notice.text}
-        </p>
-      ) : null}
       <ul className="divide-y rounded-lg border" aria-label="Invitations">
         {invitations.map((inv) => (
           <li
