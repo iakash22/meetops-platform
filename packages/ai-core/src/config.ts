@@ -14,7 +14,7 @@ export const retryPolicySchema = z
     backoffMultiplier: z.number().min(1).max(10).default(2),
   })
   .refine((r) => r.maxDelayMs >= r.initialDelayMs, {
-    message: 'maxDelayMs must be >= initialDelayMs',
+    error: 'maxDelayMs must be >= initialDelayMs',
   });
 export type RetryPolicy = z.infer<typeof retryPolicySchema>;
 
@@ -53,7 +53,7 @@ export const providerConfigSchema = z
     model: z.string().min(1),
     enabled: z.boolean().default(false),
     credentialRef: credentialRefSchema.optional(),
-    baseUrl: z.string().url().optional(),
+    baseUrl: z.url().optional(),
     /** True for self-hosted providers (Ollama, faster-whisper) that may live on private networks. */
     local: z.boolean().default(false),
     capabilities: z.array(capabilitySchema).default([]),
@@ -131,7 +131,7 @@ export const providerConfigSchema = z
       !(c.platformBilled && c.cost.tier === 'free') ||
       Object.values(c.usage).some((v) => v !== undefined),
     {
-      message:
+      error:
         'platformBilled free-tier providers must declare usage limits (quotas apply even when free)',
       path: ['usage'],
     },
