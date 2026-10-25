@@ -65,7 +65,7 @@ describe('/extension/pair (ADR-005)', () => {
     });
     resetStores(false);
     const { history } = renderApp(path, api);
-    expect(await screen.findByRole('heading', { name: 'Sign in' })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: 'Welcome back' })).toBeInTheDocument();
     expect(new URLSearchParams(history.location.search).get('next')).toBe(path.replace('%20', '+'));
   });
 

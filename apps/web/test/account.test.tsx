@@ -41,7 +41,7 @@ describe('/account', () => {
       auth: { session: vi.fn().mockRejectedValue(new ApiError(401, 'UNAUTHENTICATED', 'x')) },
     });
     const { history } = renderApp('/account', api);
-    expect(await screen.findByRole('heading', { name: 'Sign in' })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: 'Welcome back' })).toBeInTheDocument();
     expect(history.location.search).toContain('account');
     expect(api.auth.sessions).not.toHaveBeenCalled();
   });
@@ -82,7 +82,7 @@ describe('/account', () => {
       screen.getByRole('button', { name: 'Revoke Firefox on macOS (this device)' }),
     );
     await userEvent.click(screen.getByRole('button', { name: 'Sign out this device' }));
-    expect(await screen.findByRole('heading', { name: 'Sign in' })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: 'Welcome back' })).toBeInTheDocument();
     expect(r.api.auth.revokeSession).toHaveBeenCalledWith(CURRENT.id);
     expectSignedOut(r);
   });
@@ -126,7 +126,7 @@ describe('/account', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Log out all devices' }));
     expect(r.api.auth.logoutAll).not.toHaveBeenCalled();
     await userEvent.click(screen.getByRole('button', { name: 'Yes, log out all devices' }));
-    expect(await screen.findByRole('heading', { name: 'Sign in' })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: 'Welcome back' })).toBeInTheDocument();
     expect(r.api.auth.logoutAll).toHaveBeenCalledTimes(1);
     expectSignedOut(r);
   });
