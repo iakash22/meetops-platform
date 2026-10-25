@@ -40,7 +40,9 @@ pnpm dev
 | `pnpm dev:infra:up`                          | `docker:ensure` then `docker compose --env-file .env -f infra/compose/compose.dev.yml up -d` |
 | `pnpm dev:infra:down`                        | `docker:ensure` then `... down`                                                              |
 | `pnpm dev:infra:logs`                        | `docker:ensure` then `... logs -f`                                                           |
-| `pnpm dev`                                   | `turbo run dev`                                                                              |
+| `pnpm dev`                                   | `turbo run dev` (all packages with a `dev` script)                                           |
+| `pnpm dev:stack`                             | api + web + worker only                                                                      |
+| `pnpm dev:api` / `dev:web` / `dev:worker`    | single app (`dev:realtime`, `dev:desktop`, `dev:extension` also available)                   |
 | `pnpm build` / `lint` / `typecheck` / `test` | `turbo run <task>`                                                                           |
 
 Optional profiles: `docker compose --env-file .env -f infra/compose/compose.dev.yml --profile ollama --profile local-stt up -d`.

@@ -110,17 +110,20 @@ On #6 alone (without #25), there's a single `DATABASE_URL`: run `db:migrate:depl
 ## 7. Run the apps
 
 ```powershell
-pnpm dev                                    # turbo run dev: every app with a dev script
+pnpm dev:stack                              # api + web + worker (usual local loop)
+pnpm dev                                    # every package with a dev script
 ```
 
 Or run one app per terminal:
 
-| App                                      | Command                               | Port                           |
-| ---------------------------------------- | ------------------------------------- | ------------------------------ |
-| api                                      | `pnpm --filter @meetops/api dev`      | `PORT` (default 3000)          |
-| web                                      | `pnpm --filter @meetops/web dev`      | 5173                           |
-| worker                                   | `pnpm --filter @meetops/worker dev`   | None                           |
-| realtime **(requires PR #16, unmerged)** | `pnpm --filter @meetops/realtime dev` | `REALTIME_PORT` (default 4001) |
+| App       | Command              | Port                           |
+| --------- | -------------------- | ------------------------------ |
+| api       | `pnpm dev:api`       | `PORT` (default 3000)          |
+| web       | `pnpm dev:web`       | 5173                           |
+| worker    | `pnpm dev:worker`    | None                           |
+| realtime  | `pnpm dev:realtime`  | `REALTIME_PORT` (default 4001) |
+| desktop   | `pnpm dev:desktop`   | 1420                           |
+| extension | `pnpm dev:extension` | 3000 (WXT)                     |
 
 ## 8. Port conflicts
 

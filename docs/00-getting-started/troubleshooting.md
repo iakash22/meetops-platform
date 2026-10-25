@@ -12,6 +12,10 @@ Docker Desktop on Windows needs the WSL 2 backend.
 - Enable virtualization in BIOS/UEFI if WSL reports it's missing.
 - If you work inside a WSL distro instead, clone into the Linux filesystem (`~/...`), not `/mnt/c`, and follow the Linux steps.
 
+## `pnpm dev` / missing `@meetops/*/dist`
+
+Apps resolve workspace packages from `dist/` (for example `@meetops/contracts/dist/index.js`). `pnpm dev` runs `^build` first via Turbo. If you still see `ERR_MODULE_NOT_FOUND` for a package `dist`, run `pnpm build --filter=@meetops/contracts` (or `pnpm build`) and retry.
+
 ## Docker Desktop
 
 - `pnpm dev:infra:up` / `down` / `logs` run `scripts/ensure-docker.mjs` first. On Windows/macOS that opens Docker Desktop and waits (default 180s; override with `DOCKER_WAIT_MS`) until `docker info` succeeds.
