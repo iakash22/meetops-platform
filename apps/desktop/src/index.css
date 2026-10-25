@@ -1,0 +1,253 @@
+@import 'tailwindcss';
+
+/*
+ * MeetOps brand theme (dark-first, owner decision). Source of truth: docs/05-web/brand-theme.md.
+ * Values mirror apps/web/src/index.css verbatim (HSL channels consumed as hsl(var(--token))), so the
+ * token names and hex values are identical across web, extension, mobile and desktop.
+ *
+ * Note (same as web): shadcn's --accent is a NEUTRAL hover/selected surface (#1C1C1F). The brand
+ * Neon Rose lives in --highlight; cerulean text/links/focus use --link / --ring (#3AB0E0), because
+ * #007BA7 as text on black fails AA. --muted is a fill; --muted-foreground is the muted text colour.
+ */
+:root {
+  color-scheme: dark;
+
+  /* Surfaces */
+  --background: 0 0% 3.9%; /* #0A0A0A Jet Black */
+  --foreground: 240 11.1% 96.5%; /* #F5F5F7 */
+  --card: 240 4.8% 8.2%; /* #141416 surface-1 */
+  --card-foreground: 240 11.1% 96.5%; /* #F5F5F7 */
+  --popover: 240 5.1% 11.6%; /* #1C1C1F surface-2 */
+  --popover-foreground: 240 11.1% 96.5%; /* #F5F5F7 */
+
+  /* Brand */
+  --primary: 195.8 100% 32.7%; /* #007BA7 Cerulean Blue (fills) */
+  --primary-foreground: 0 0% 100%; /* #FFFFFF */
+  --link: 197.3 72.8% 55.3%; /* #3AB0E0 cerulean-light (text on dark) */
+  --highlight: 330.3 100% 58.8%; /* #FF2D95 Neon Rose (sparing accent) */
+  --highlight-foreground: 0 0% 3.9%; /* #0A0A0A */
+
+  /* Neutral interaction surfaces (shadcn "secondary"/"muted"/"accent") */
+  --secondary: 240 5.1% 11.6%; /* #1C1C1F */
+  --secondary-foreground: 240 11.1% 96.5%; /* #F5F5F7 */
+  --muted: 240 4.8% 8.2%; /* #141416 */
+  --muted-foreground: 240 5% 64.9%; /* #A1A1AA */
+  --accent: 240 5.1% 11.6%; /* #1C1C1F hover/selected surface */
+  --accent-foreground: 240 11.1% 96.5%; /* #F5F5F7 */
+
+  /* Status */
+  --destructive: 0 84.2% 60.2%; /* #EF4444 */
+  --destructive-foreground: 0 0% 3.9%; /* #0A0A0A (AA on #EF4444) */
+
+  /* Lines & focus */
+  --border: 240 4.5% 17.3%; /* #2A2A2E */
+  --input: 240 3.6% 43.5%; /* #6B6B73 (>=3:1 on bg for form controls) */
+  --ring: 197.3 72.8% 55.3%; /* #3AB0E0 */
+  /* Radius scale: sm 6px · md 8px · lg 12px (--radius) · xl 16px */
+  --radius: 0.75rem;
+
+  /* Motion: 150–200ms, disabled under prefers-reduced-motion */
+  --duration-fast: 150ms;
+  --duration-base: 200ms;
+  --ease-out: cubic-bezier(0.2, 0, 0, 1);
+
+  /* Typography: Inter when installed locally, otherwise the system sans stack (no webfont dep). */
+  --font-sans:
+    Inter, ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial,
+    'Noto Sans', sans-serif;
+
+  /* Optional subtle glows for brand/logo elements only */
+  --glow-primary: 0 0 12px hsl(195.8 100% 32.7% / 0.45);
+  --glow-highlight: 0 0 12px hsl(330.3 100% 58.8% / 0.35);
+}
+
+@theme inline {
+  --color-background: hsl(var(--background));
+  --color-foreground: hsl(var(--foreground));
+  --color-card: hsl(var(--card));
+  --color-card-foreground: hsl(var(--card-foreground));
+  --color-popover: hsl(var(--popover));
+  --color-popover-foreground: hsl(var(--popover-foreground));
+  --color-primary: hsl(var(--primary));
+  --color-primary-foreground: hsl(var(--primary-foreground));
+  --color-link: hsl(var(--link));
+  --color-highlight: hsl(var(--highlight));
+  --color-highlight-foreground: hsl(var(--highlight-foreground));
+  --color-secondary: hsl(var(--secondary));
+  --color-secondary-foreground: hsl(var(--secondary-foreground));
+  --color-muted: hsl(var(--muted));
+  --color-muted-foreground: hsl(var(--muted-foreground));
+  --color-accent: hsl(var(--accent));
+  --color-accent-foreground: hsl(var(--accent-foreground));
+  --color-destructive: hsl(var(--destructive));
+  --color-destructive-foreground: hsl(var(--destructive-foreground));
+  --color-border: hsl(var(--border));
+  --color-input: hsl(var(--input));
+  --color-ring: hsl(var(--ring));
+
+  /* Radius scale 6 / 8 / 12 / 16 px off --radius (0.75rem), same as web. */
+  --radius-sm: calc(var(--radius) - 6px);
+  --radius-md: calc(var(--radius) - 4px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+
+  --font-sans: var(--font-sans);
+
+  /* 150ms default for hover/press; duration-base (200ms) for enter/exit. */
+  --default-transition-duration: var(--duration-fast);
+  --default-transition-timing-function: var(--ease-out);
+  --ease-out: var(--ease-out);
+
+  /* Brand glows (brand/logo and the record action only; no heavy drop shadows). */
+  --shadow-glow-primary: var(--glow-primary);
+  --shadow-glow-highlight: var(--glow-highlight);
+}
+
+@utility duration-fast {
+  transition-duration: var(--duration-fast);
+}
+@utility duration-base {
+  transition-duration: var(--duration-base);
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+  html {
+    font-family: var(--font-sans);
+    font-feature-settings: 'cv11', 'ss01';
+    text-rendering: optimizeLegibility;
+  }
+  body {
+    @apply bg-background text-foreground antialiased;
+  }
+  h1,
+  h2,
+  h3 {
+    @apply tracking-tight;
+  }
+  :focus-visible {
+    outline: 2px solid hsl(var(--ring));
+    outline-offset: 2px;
+  }
+  ::selection {
+    background: hsl(var(--primary) / 0.45);
+    color: hsl(var(--foreground));
+  }
+  a {
+    @apply text-link underline-offset-4 hover:underline;
+  }
+}
+
+/*
+ * Modern touches (inspired by 21st.dev / Aceternity / Animate UI), CSS only, no motion library.
+ * Utility names match apps/web where the behaviour matches.
+ */
+
+/* Subtle glow card: a soft cerulean halo along the top edge plus a faint glow on hover/focus. */
+@utility glow-card {
+  position: relative;
+  isolation: isolate;
+  background-image: radial-gradient(120% 60% at 50% 0%, hsl(var(--primary) / 0.1), transparent 60%);
+  transition-property: box-shadow, border-color;
+  transition-duration: var(--duration-base);
+  transition-timing-function: var(--ease-out);
+  &:hover,
+  &:focus-within {
+    border-color: hsl(var(--primary) / 0.45);
+    box-shadow: 0 0 24px hsl(var(--primary) / 0.18);
+  }
+}
+
+/* Web parity: rotating conic cerulean→rose border; put on a wrapper with p-px + rounded. */
+@utility gradient-border {
+  background: conic-gradient(
+    from var(--border-angle, 0deg),
+    hsl(var(--primary)),
+    hsl(var(--highlight)),
+    hsl(var(--primary)) 60%,
+    hsl(var(--border)) 75%,
+    hsl(var(--primary))
+  );
+  animation: border-spin 6s linear infinite;
+}
+
+/*
+ * Same gradient as .gradient-border, drawn on the element itself (padding-box/border-box), so a
+ * plain <button> can carry it. Used by the record button.
+ */
+@utility gradient-border-box {
+  border: 1px solid transparent;
+  background:
+    linear-gradient(hsl(var(--card)), hsl(var(--card))) padding-box,
+    conic-gradient(
+        from var(--border-angle, 0deg),
+        hsl(var(--primary)),
+        hsl(var(--highlight)),
+        hsl(var(--primary)) 60%,
+        hsl(var(--border)) 75%,
+        hsl(var(--primary))
+      )
+      border-box;
+  animation: border-spin 6s linear infinite;
+}
+
+/* Web parity: faint grid with a cerulean beam from the top (auth backdrop). */
+@utility bg-grid {
+  background-image:
+    radial-gradient(60% 50% at 50% 0%, hsl(var(--primary) / 0.18), transparent 70%),
+    linear-gradient(hsl(var(--border) / 0.55) 1px, transparent 1px),
+    linear-gradient(90deg, hsl(var(--border) / 0.55) 1px, transparent 1px);
+  background-size:
+    100% 100%,
+    32px 32px,
+    32px 32px;
+  background-position: center top;
+}
+
+/* Soft cerulean + rose radial glows behind the sign-in card (web BrandBackground equivalent). */
+@utility brand-backdrop {
+  background-image:
+    radial-gradient(60% 50% at 20% 0%, hsl(var(--primary) / 0.14), transparent 70%),
+    radial-gradient(40% 40% at 90% 100%, hsl(var(--highlight) / 0.08), transparent 70%);
+}
+
+@utility surface-glass {
+  background-color: hsl(var(--card) / 0.72);
+  -webkit-backdrop-filter: blur(12px) saturate(140%);
+  backdrop-filter: blur(12px) saturate(140%);
+}
+
+@utility brand-glow-box {
+  box-shadow: var(--glow-primary);
+}
+
+@property --border-angle {
+  syntax: '<angle>';
+  inherits: false;
+  initial-value: 0deg;
+}
+
+@keyframes border-spin {
+  to {
+    --border-angle: 360deg;
+  }
+}
+
+/* Reduced motion: animations and transitions off (gradient borders become static). */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

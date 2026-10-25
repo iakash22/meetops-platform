@@ -2,7 +2,6 @@ import type {
   ApiErrorCode,
   ApiErrorEnvelope,
   AuthSession,
-  ConflictReason,
   GetAuthSessionResponse,
   ListOrganizationsResponse,
   LoginRequest,
@@ -27,6 +26,13 @@ import type {
  * - `GET /orgs` -> 200 `ListOrganizationsResponse`.
  * - `POST /auth/logout` -> 204.
  */
+/**
+ * Every value `error.reason` may take, derived from the contracts `ApiErrorEnvelope` schema type (TypeBox `Static`)
+ * instead of a hand-written list, so new reasons added to `@meetops/contracts` (e.g. v0.4.0 `NOT_FOUND` reasons and
+ * directory `CONFLICT` reasons) flow through without a mobile change.
+ */
+export type ApiErrorReason = NonNullable<ApiErrorEnvelope['error']['reason']>;
+
 export interface SignupAccepted {
   message: string;
 }
@@ -43,14 +49,14 @@ export class ApiError extends Error {
   readonly status: number;
   readonly code: ApiErrorCode;
   readonly requestId: string | undefined;
-  readonly reason: ConflictReason | undefined;
+  readonly reason: ApiErrorReason | undefined;
 
   constructor(
     status: number,
     code: ApiErrorCode,
     message: string,
     requestId?: string,
-    reason?: ConflictReason,
+    reason?: ApiErrorReason,
   ) {
     super(message);
     this.name = 'ApiError';

@@ -195,6 +195,31 @@ function defined<T extends object>(input: T): { [K in keyof T]: Exclude<T[K], un
   };
 }
 
+/**
+ * Explicit field picks for writes: only these columns ever reach Prisma, so extra fields in a
+ * caller's input (organizationId, id, deletedAt, ...) can never override tenant or system columns.
+ */
+function employeeCreateFields(input: CreateEmployeeInput) {
+  const { fullName, email, title, department, externalId, userId } = input;
+  return defined({ fullName, email, title, department, externalId, userId });
+}
+function employeeUpdateFields(input: UpdateEmployeeInput) {
+  const { fullName, email, title, department, externalId, userId } = input;
+  return defined({ fullName, email, title, department, externalId, userId });
+}
+function teamCreateFields(input: CreateTeamInput) {
+  const { name, key, description } = input;
+  return defined({ name, key, description });
+}
+function teamUpdateFields(input: UpdateTeamInput) {
+  const { name, key, description } = input;
+  return defined({ name, key, description });
+}
+function projectCreateFields(input: CreateProjectInput) {
+  const { name, key, description, teamId } = input;
+  return defined({ name, key, description, teamId });
+}
+
 // ---- cursors ---------------------------------------------------------------------------------
 
 interface Keyset {
@@ -442,7 +467,7 @@ export function createEmployeeRepository(options: RepositoryOptions = {}) {
         run(organizationId, async (tx) => {
           await assertEmployeeFree(tx, organizationId, input);
           return tx.employee.create({
-            data: { organizationId, ...defined(input) },
+            data: { ...employeeCreateFields(input), organizationId },
             select: EMPLOYEE_SELECT,
           });
         }),
@@ -463,7 +488,7 @@ export function createEmployeeRepository(options: RepositoryOptions = {}) {
           await assertEmployeeFree(tx, organizationId, input, employeeId);
           return tx.employee.update({
             where: { organizationId_id: { organizationId, id: employeeId } },
-            data: defined(input),
+            data: employeeUpdateFields(input),
             select: EMPLOYEE_SELECT,
           });
         }),
@@ -532,7 +557,7 @@ export function createTeamRepository(options: RepositoryOptions = {}) {
             'TEAM_NAME_TAKEN',
           );
           return tx.team.create({
-            data: { organizationId, ...defined(input) },
+            data: { ...teamCreateFields(input), organizationId },
             select: TEAM_SELECT,
           });
         }),
@@ -557,7 +582,7 @@ export function createTeamRepository(options: RepositoryOptions = {}) {
           }
           return tx.team.update({
             where: { organizationId_id: { organizationId, id: teamId } },
-            data: defined(input),
+            data: teamUpdateFields(input),
             select: TEAM_SELECT,
           });
         }),
@@ -749,7 +774,7 @@ export function createProjectRepository(options: RepositoryOptions = {}) {
             'PROJECT_KEY_TAKEN',
           );
           return tx.project.create({
-            data: { organizationId, ...defined(input) },
+            data: { ...projectCreateFields(input), organizationId },
             select: PROJECT_SELECT,
           });
         }),
