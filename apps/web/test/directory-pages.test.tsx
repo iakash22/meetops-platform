@@ -25,7 +25,15 @@ function setup(path: string, role: Role = 'owner', activeOrganizationId?: string
   return { ...utils, directory, user: userEvent.setup() };
 }
 
-const list = (name: string) => screen.findByRole('list', { name });
+/**
+ * Wait in stages (guard -> AppShell -> page list) with a cold-start budget: the first test of
+ * the file also pays for lazy imports, which can exceed findBy's 1s default under turbo load.
+ */
+const COLD = { timeout: 5000 };
+async function list(name: string) {
+  await screen.findByTestId('app-shell', {}, COLD);
+  return screen.findByRole('list', { name }, COLD);
+}
 
 /** Pick an option in a shared (Radix) Select; its listbox renders in a portal. */
 async function choose(user: ReturnType<typeof userEvent.setup>, label: string, option: string) {
@@ -102,14 +110,14 @@ describe('/projects', () => {
 
   it.each<Role>(['member', 'viewer'])('is read-only for %s', async (role) => {
     setup('/projects', role);
-    expect(await screen.findByText('Launch')).toBeInTheDocument();
+    expect(await screen.findByText('Launch', {}, COLD)).toBeInTheDocument();
     expect(screen.queryByRole('form', { name: 'New project' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /Archive|Delete/ })).not.toBeInTheDocument();
   });
 
   it('is read-only when the session role belongs to another org', async () => {
     setup('/projects', 'owner', ORG_B);
-    expect(await screen.findByText('Launch')).toBeInTheDocument();
+    expect(await screen.findByText('Launch', {}, COLD)).toBeInTheDocument();
     expect(screen.queryByRole('form', { name: 'New project' })).not.toBeInTheDocument();
   });
 });
@@ -119,7 +127,9 @@ describe('/settings', () => {
 
   it('defaults to the employees tab and lists employees', async () => {
     setup('/settings');
-    expect(await screen.findByRole('heading', { name: 'Settings', level: 1 })).toBeInTheDocument();
+    expect(
+      await screen.findByRole('heading', { name: 'Settings', level: 1 }, COLD),
+    ).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Employees' })).toHaveAttribute('aria-current', 'page');
     const employees = await list('Employees');
     expect(within(employees).getByText('Grace Hopper')).toBeInTheDocument();
@@ -192,7 +202,7 @@ describe('/settings/teams/:teamId', () => {
 
   it('shows members and lets an owner add, promote and remove them', async () => {
     const { user } = setup(`/settings/teams/${platform.id}`);
-    expect(await screen.findByRole('heading', { name: 'Platform' })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: 'Platform' }, COLD)).toBeInTheDocument();
     const members = await list('Team members');
     expect(within(members).getByText('Grace Hopper')).toBeInTheDocument();
     expect(within(members).getByText('lead')).toBeInTheDocument();
@@ -220,7 +230,7 @@ describe('/settings/teams/:teamId', () => {
 
   it('requires an employee before adding', async () => {
     const { user } = setup(`/settings/teams/${platform.id}`);
-    const form = await screen.findByRole('form', { name: 'Add member' });
+    const form = await screen.findByRole('form', { name: 'Add member' }, COLD);
     await user.click(within(form).getByRole('button', { name: 'Add member' }));
     expect(await within(form).findByText('Choose an employee')).toBeInTheDocument();
   });
@@ -234,6 +244,6 @@ describe('/settings/teams/:teamId', () => {
 
   it('shows an error for a team outside the org', async () => {
     setup('/settings/teams/52000000-0000-4000-8000-0000000000ff');
-    expect(await screen.findByText('Could not load team')).toBeInTheDocument();
+    expect(await screen.findByText('Could not load team', {}, COLD)).toBeInTheDocument();
   });
 });
