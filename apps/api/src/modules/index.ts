@@ -31,6 +31,11 @@ import type { AuthMailQueue, MailTransport } from './auth/domain/mail-jobs.js';
 import { InMemoryAuditLog, type AuditLog } from './auth/domain/audit.js';
 import { AuthMailJobHandler, InlineAuthMailQueue } from './auth/application/auth-mail.handler.js';
 import { SessionVerifier } from './auth/application/session-verifier.js';
+import {
+  noopRevocationPublisher,
+  type RevocationPublisher,
+} from './auth/application/revocations.js';
+import { createRedisRevocationPublisher } from '@meetops/session-verifier';
 import { InMemoryUserRepository } from './users/infrastructure/in-memory-user.repository.js';
 import type { UserRepository } from './users/domain/user.repository.js';
 import { OrganizationService } from './organizations/application/organization.service.js';
@@ -80,6 +85,20 @@ export interface ModuleDeps {
   redis?: RedisLike;
   /** Set when defaultModuleDeps created the client itself (closed in an onClose hook). */
   ownedRedis?: { quit(): Promise<unknown> };
+  /**
+   * ADR-011 revocation fan-out (meetops:auth:revocations). Defaults to publishing on `redis` when
+   * the client supports PUBLISH, otherwise a no-op.
+   */
+  revocations?: RevocationPublisher;
+}
+
+/** Revocation publisher over the shared Redis client, or a no-op without one. */
+export function defaultRevocationPublisher(
+  redis: RedisLike | undefined,
+  clock: Clock,
+): RevocationPublisher {
+  const publish = redis?.publish?.bind(redis);
+  return publish ? createRedisRevocationPublisher({ publish }, clock) : noopRevocationPublisher;
 }
 
 /**
@@ -209,6 +228,7 @@ export function defaultModuleDeps(
     ...overrides,
     ...(redis ? { redis } : {}),
     ...(owned ? { ownedRedis: owned } : {}),
+    revocations: overrides.revocations ?? defaultRevocationPublisher(redis, clock),
     clock,
     sessionPolicy,
     security,
