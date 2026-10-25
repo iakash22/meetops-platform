@@ -19,7 +19,7 @@ export default [
     },
   },
   {
-    // 'desktop' is not one of the root APP_NAMES, so every other app is blocked here.
+    // Desktop must not import other apps (root APP_NAMES); other apps must not import desktop.
     files: ['**/*.ts', '**/*.tsx'],
     rules: {
       '@typescript-eslint/no-restricted-imports': boundaryImports({
