@@ -3,7 +3,7 @@ import { createMemoryHistory, type RouterHistory } from '@tanstack/react-router'
 import { QueryClient } from '@tanstack/react-query';
 import { vi } from 'vitest';
 import { App } from '@/app';
-import { useToastStore } from '@/components/ui/toast';
+import { dismissAllToasts } from '@/lib/errors/toaster';
 import type { Role } from '@meetops/contracts';
 import type { ApiClient, CreateInvitationRequest } from '@/lib/api/client';
 import { useOrgStore, useUiStore } from '@/stores/org-store';
@@ -107,7 +107,7 @@ export function resetStores(withOrgs = true) {
     currentOrganizationId: withOrgs ? '00000000-0000-4000-8000-000000000001' : null,
   });
   useUiStore.setState({ sidebarOpen: true });
-  useToastStore.setState({ toasts: [] });
+  dismissAllToasts();
 }
 
 export type RenderAppResult = RenderResult & {

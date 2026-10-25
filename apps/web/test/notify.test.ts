@@ -1,10 +1,15 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { useToastStore } from '@/components/ui/toast';
 import { ApiError } from '@/lib/api/client';
 import { ERROR_MESSAGES } from '@/lib/api/error-messages';
 import { applyFieldErrors, errorTitle, isNetworkError, toastError } from '@/lib/errors/notify';
+import { showToast } from '@/lib/errors/toaster';
 
-const last = () => useToastStore.getState().toasts.at(-1);
+vi.mock('@/lib/errors/toaster', () => ({ showToast: vi.fn(), dismissAllToasts: vi.fn() }));
+
+const last = () => {
+  const call = vi.mocked(showToast).mock.calls.at(-1);
+  return call ? { variant: call[0], title: call[1], ...call[2] } : undefined;
+};
 const validation = (details: { path: string; message: string }[], status = 400) =>
   ApiError.fromResponse(status, {
     error: { code: 'VALIDATION_FAILED', message: 'server text', details },
@@ -30,7 +35,7 @@ describe('errorTitle / isNetworkError', () => {
 });
 
 describe('toastError', () => {
-  beforeEach(() => useToastStore.setState({ toasts: [] }));
+  beforeEach(() => vi.mocked(showToast).mockClear());
 
   it('toasts an error with fixed copy, never the server message', () => {
     toastError(new ApiError(429, 'RATE_LIMITED', 'raw server text'));
@@ -86,5 +91,20 @@ describe('applyFieldErrors', () => {
     ).toBe(false);
     expect(applyFieldErrors(setError, new TypeError('x'), { email: 'x' })).toBe(false);
     expect(setError).not.toHaveBeenCalled();
+  });
+});
+
+describe('toast variants', () => {
+  it('errors stay up for 8s; success and info use the default duration', async () => {
+    const { notify } = await import('@/lib/errors/notify');
+    vi.mocked(showToast).mockClear();
+    notify.error('E', 'd');
+    notify.success('S');
+    notify.info('I');
+    expect(vi.mocked(showToast).mock.calls).toEqual([
+      ['error', 'E', { description: 'd', duration: 8000 }],
+      ['success', 'S', { description: undefined }],
+      ['default', 'I', { description: undefined }],
+    ]);
   });
 });

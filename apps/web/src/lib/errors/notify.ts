@@ -1,5 +1,5 @@
 import type { FieldValues, Path, UseFormSetError } from 'react-hook-form';
-import { toast } from '@/components/ui/toast';
+import { showToast } from './toaster';
 import { ApiError } from '@/lib/api/client';
 import { describeError } from '@/lib/api/error-messages';
 
@@ -10,14 +10,14 @@ import { describeError } from '@/lib/api/error-messages';
  *   (`toastError`).
  *
  * Call sites use only `notify` / `toastError` / `applyFieldErrors`, so the toast backend
- * (today #132's `ui/toast`, later Sonner) can be swapped here without touching them.
+ * (Sonner, see ./toaster) can be swapped here without touching them.
  */
 export const notify = {
-  success: (title: string, description?: string) => toast.success(title, { description }),
-  info: (title: string, description?: string) => toast(title, { description }),
+  success: (title: string, description?: string) => showToast('success', title, { description }),
+  info: (title: string, description?: string) => showToast('default', title, { description }),
   error: (title: string, description?: string) =>
     // Errors stay up longer (≥5s); the user can dismiss them.
-    toast.error(title, { description, duration: 8000 }),
+    showToast('error', title, { description, duration: 8000 }),
 };
 
 /** Status 0 or a fetch TypeError: the API could not be reached at all. */
