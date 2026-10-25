@@ -152,3 +152,11 @@ An unparseable URL returns `VALIDATION_FAILED`.
 - **DevOps:** rate-limit config (A1.4); production versus dev manifest build gating; log pipeline and Sentry scrubbing
   using `REDACT_KEYS`; alerts on refresh-reuse revocations.
 - **SEC:** reviews each of the above before release.
+
+## Amendment 2 (2026-10-25): realtime handshake
+
+Proposed in [ADR-011](./ADR-011-realtime-auth.md) section 1, pending Architecture and Security sign-off there. The Socket.IO
+handshake to `apps/realtime` becomes a bearer surface: the extension sends its access token in `auth.token` (never the query
+string), with `aud=extension` and scope `recordings:write`, from an allowlisted `chrome-extension://<id>` origin, and MUST
+NOT send a session cookie. Bearer sockets join only meeting rooms they pass the access check for, never the org-wide room.
+Revoking a token family (A1.6) also publishes to `meetops:auth:revocations` so open sockets are disconnected.
