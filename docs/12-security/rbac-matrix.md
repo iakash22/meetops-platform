@@ -18,7 +18,7 @@ Legend: C create, R read, U update, D delete, A approve, P push to integration, 
 | Teams + team members         | ✓      | ✓                    | R                         | R        |
 | Projects                     | ✓      | ✓                    | R                         | R        |
 | Recordings / media (uploads) | ✓      | ✓                    | C R; U D own              | R        |
-| Recording sessions           | ✓      | ✓                    | C R; U own                | R        |
+| Recording sessions           | ✓      | ✓                    | C R; U D own              | R        |
 | Transcripts                  | ✓      | ✓                    | R U(corrections)          | R        |
 | AI summaries / insights      | ✓      | ✓                    | R                         | R        |
 | Draft tasks (AI)             | ✓      | ✓ A                  | R U A(own meetings)       | R        |
@@ -68,13 +68,13 @@ can(['update', 'delete'], 'Meeting', { organizationId, createdById: userId }); /
 | `RecordingSession` | create | allow | allow | allow  | deny   |
 | `RecordingSession` | read   | allow | allow | allow  | allow  |
 | `RecordingSession` | update | allow | allow | own    | deny   |
-| `RecordingSession` | delete | allow | allow | deny   | deny   |
+| `RecordingSession` | delete | allow | allow | own    | deny   |
 
 Mapping to routes and records:
 
 - `Team` covers team members: adding, changing or removing a member is `update` on the team (there is no separate `TeamMember` subject). The employee referenced must be in the same organization (composite FK, XT-38).
 - `FileObject` is the upload subject. `POST /orgs/:organizationId/uploads` is `create`; `…/uploads/:id/complete` is `update`; a download URL is `read`. CASL runs before any presign. Build the subject with `createdById = uploadedById`.
-- `RecordingSession` init is `create`; chunk URL, complete and abort are `update`. Build the subject with `createdById = createdById`.
+- `RecordingSession` init is `create`; chunk URL, complete and abort are `update`; `delete` (discarding a session's chunks) has no route yet. Build the subject with `createdById = createdById`.
 - `own` for a member means the record was created by that user; a member acting on another member's upload or session is denied (XT-34..36), and the route answers 404 as for other orgs.
 - Uploads and recording sessions also need a consent attestation (upload-media-security §7, UP-16..18). That is a request check, not a CASL cell.
 
@@ -84,4 +84,4 @@ Invariants (checked for every subject above):
 - An authenticated user with no membership (`role = null`) is denied every action on these subjects.
 - `viewer` is read-only on every subject in this table.
 
-BE-2 test derivation (1:1): `test/organization-domain.test.ts` has one table-driven case per row × role above (20 rows × 4 roles = 80 assertions) against a same-org subject, with `own` cells asserted twice (own record allowed, other user's record denied). It also asserts, for every subject × action × role, that the same subject in another org is denied, and that `role = null` is denied. Changing a cell here requires changing the test in the same PR, and the reverse.
+BE-2 test derivation (1:1): `apps/api/test/abilities-directory-media.test.ts` has one table-driven case per row × role above (20 rows × 4 roles = 80 assertions) against a same-org subject, with `own` cells asserted twice (own record allowed, other user's record denied). It also asserts, for every subject × action × role, that the same subject in another org is denied, and that `role = null` is denied. Changing a cell here requires changing the test in the same PR, and the reverse.
