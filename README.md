@@ -77,7 +77,7 @@ cd meetops-ai
 cp .env.example .env            # fill in local values
 pnpm install
 ./scripts/gen-dev-secrets.sh --from-env   # compose secrets in infra/compose/secrets (gitignored)
-docker compose -f infra/compose/compose.dev.yml up -d   # Postgres, Redis, MinIO (+ optional profiles)
+docker compose --env-file .env -f infra/compose/compose.dev.yml up -d   # Postgres, Redis, MinIO (+ optional profiles)
 pnpm dev
 ```
 
