@@ -2,6 +2,8 @@
 
 Last updated: 2026-10-22 (merges only; other rows are from 2026-10-21). Branch names are assigned by the Coordinator. "Pushed?" and PR numbers come from `git ls-remote` and `gh pr list --state all` on that date.
 
+This board is a historical snapshot. Current phase status (what is done, in progress, and still open on `main`) is [`docs/PHASE_STATUS.md`](../PHASE_STATUS.md).
+
 ## Phase 0: Foundation — Done (merged)
 
 Monorepo, apps (api/web/worker), packages, Docker Compose, CI. Branch `chore/phase-0-foundation`: PR #1 (original scaffold) and PR #2 (Phase 0 fixes) both merged to `main`.

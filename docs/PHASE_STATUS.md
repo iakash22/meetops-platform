@@ -1,0 +1,134 @@
+# MeetOps AI — Phase status
+
+> Snapshot: 2026-10-25, local `main` at `b074922` (merge of pull request #157 from `integration/phase-1`, 18:12 IST). Read from the tree on that commit. No secrets. Open pull requests on GitHub were not re-listed.
+>
+> Older notes understate this branch: `README.md` still says the repo is in Phase 0, `docs/17-agents/implementation-board.md` stops at 2026-10-22, and `docs/AGENT_STATUS.md` / `docs/PROJECT_CONTEXT.md` freeze at 2026-10-24 ~15:25 IST. Use this file for phase status.
+
+Pre-alpha. Phase 0 is done. Phase 1 is nearly done. Phases 2–6 and 8 are started and unfinished. Phases 7 and 9 have not started.
+
+The first milestone is create organization → add employee → create project → upload audio → transcribe → generate report → extract and approve tasks → create a GitHub or Jira issue → sync status. The API serves the directory. It does not yet serve meetings, uploads, transcription, task approval, or GitHub/Jira.
+
+"Scope present" is a reading of how much of that phase's README scope is in this checkout. It is not a measured metric and not an official score.
+
+| Phase | Status          | Scope present | On `main`                                                                                                                                    | Still open                                                                               |
+| ----- | --------------- | ------------- | -------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| 0     | Done            | 100%          | pnpm, Turborepo, apps (api, web, worker, realtime, extension, desktop, mobile), packages, Compose, CI                                        | README still says the repo is in Phase 0                                                 |
+| 1     | Nearly done     | 85%           | Signup through sessions, organizations, invitations, members, employees, teams, projects, CASL, RLS, contracts 0.4.0, web auth and directory | Default mail transport drops messages. MFA and SSO are undecided                         |
+| 2     | In progress     | 45%           | Meeting and file models, upload and recording-session contracts, media worker, storage package, meetings UI                                  | No meetings, upload, or recording-session routes. Realtime rejects every handshake       |
+| 3     | In progress     | 30%           | Transcript tables, `ai-core` adapters and extraction pipeline, transcription consumer                                                        | Worker stays unregistered. No transcript, report, or extraction API                      |
+| 4     | Early           | 20%           | Task and approval tables, task list contract, web tasks page, email package                                                                  | No task or approval API. Task mail is not a product flow                                 |
+| 5     | Library only    | 25%           | GitHub and Jira adapters, OAuth, webhook replay, token encryption in `packages/integrations`                                                 | API and worker never call that package                                                   |
+| 6     | Capture started | 35%           | WXT extension (pairing UI, recorder, chunk store) and the web pair page                                                                      | No extension auth routes. HTTP upload is off. Live speech-to-text is deferred            |
+| 7     | Pending         | 5%            | `pgvector` column on transcript segments                                                                                                     | No calendar, Meet/Zoom/Teams import, search, automation, or analytics                    |
+| 8     | Scaffolds       | 20%           | Tauri shell with mock sign-in. Expo app through signup and tabs, demo mode                                                                   | No offline recording. ADR-012 unsigned. Placeholder bundle ids. Mobile M3–M6 not started |
+| 9     | Pending         | 15%           | CI workflows, Dockerfiles, threat model, security tests                                                                                      | No billing, production monitoring product, or release                                    |
+
+## Phase 0 — Done
+
+Monorepo foundation: tooling, apps, shared packages, Docker Compose, logging, and basic CI. Pull requests #1 and #2 merged to `main`.
+
+## Phase 1 — Nearly done
+
+Auth, organizations, employees, teams, projects, and RBAC.
+
+In the API (`apps/api` `registerModules`): signup, login, forgot and reset password, email verification, sessions, organizations, invitations, members, and the directory (employees, teams, team members, projects) with CASL. The web directory uses the real client unless `VITE_DIRECTORY_MOCKS=true`. Contracts are at 0.4.0. Postgres uses forced row-level security. The tenant key in schema and routes is `organizationId`.
+
+Still open:
+
+| Item                 | State                                                                                                                                                                                                                                                                                               |
+| -------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Outbound email       | `InlineAuthMailQueue` runs in the API process. The default transport is an empty `send`. The production BullMQ adapter is still a TODO in `apps/api/src/modules/auth/application/auth-mail.handler.ts`. `startEmailWorker` exists in `packages/notifications` and is not what `apps/worker` starts. |
+| MFA, SSO, guest role | Open questions in `docs/12-security/assumptions-open-questions.md`. No implementation.                                                                                                                                                                                                              |
+| Lockout and sessions | Redis lockout and opaque session tokens exist. [ADR-006](15-decisions/ADR-006-login-lockout-one-time-tokens.md) is still Proposed. Idle versus absolute timeout is an open product question.                                                                                                        |
+| Tenant key           | `organizationId` is what the schema and APIs use. [ADR-010](15-decisions/ADR-010-organization-id-tenant-key.md) is still marked Proposed.                                                                                                                                                           |
+
+## Phase 2 — In progress
+
+Meetings, uploads, browser recording, and the FFmpeg pipeline.
+
+Present: Prisma models for meetings, recordings, file objects, and recording-session chunks; upload and recording-session contracts; the media worker (probe, normalize to WAV, waveform, chunking, organization-scoped storage); `packages/storage`; web meetings list, detail, and upload button.
+
+Still open:
+
+| Item                           | State                                                                                                                                                                                                                            |
+| ------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Meetings API                   | Models and web pages exist. `registerModules` does not mount meeting routes.                                                                                                                                                     |
+| Uploads and recording sessions | Contracts and the extension HTTP client exist. The API does not expose `POST /orgs/:organizationId/uploads` or the recording-session routes. The extension build defaults to `StubUploadClient` (`WXT_FEATURE_HTTP_UPLOAD` off). |
+| Realtime                       | Socket.IO server, organization and meeting rooms, upload and processing events. The production entry uses `denyAllVerifier`. [ADR-011](15-decisions/ADR-011-realtime-auth.md) needs Architecture and Security sign-off.          |
+| Meeting access                 | The API session verifier's meeting-access hook is fail-closed and unfinished.                                                                                                                                                    |
+| Web calls                      | The meetings UI and upload button call routes the API does not serve, so those screens 404 against this API.                                                                                                                     |
+
+## Phase 3 — In progress
+
+Transcription, reports, decisions, and task drafts with evidence.
+
+Present: transcript, segment, chunk, report, and extracted-task tables; AssemblyAI, faster-whisper, Gemini, Ollama, and OpenAI-compatible adapters; an extraction pipeline in `packages/ai-core`; a transcription consumer in `apps/worker`.
+
+Still open:
+
+| Item                 | State                                                                                                                                                                       |
+| -------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Transcription worker | The consumer is written. `apps/worker/src/index.ts` does not inject a repository, so the processor stays unregistered even when `TRANSCRIPTION_WORKER_ENABLED` is true.     |
+| Summaries and drafts | The extraction pipeline, prompts, and schemas live in `packages/ai-core`. No API writes `Report` or `ExtractedTask`.                                                        |
+| Providers            | A Deepgram adapter file remains in `packages/ai-core`. The product decision is AssemblyAI by default, optional faster-whisper, no Deepgram, and no automatic paid fallback. |
+
+## Phase 4 — Early
+
+Task review, approval, assignment, and notifications.
+
+Present: `Task` and `TaskApproval` models, the task list contract, and a web tasks page that calls `GET /orgs/:organizationId/tasks`. The notifications package can send SMTP or console email.
+
+Still open: no task module in the API, no review or assign flow, and no task-notification product path. `apps/worker` does not start an email consumer.
+
+## Phase 5 — Library only
+
+GitHub and Jira with two-way sync.
+
+`packages/integrations` has issue create and update, retries, a webhook delivery store, PKCE OAuth, and token encryption. Nothing in `apps/api` or `apps/worker` imports that product flow. There is no install UI and no sync worker. [ADR-007](15-decisions/ADR-007-integrations-retry-webhook-replay.md) and [ADR-008](15-decisions/ADR-008-oauth-pkce-token-encryption.md) are Proposed.
+
+## Phase 6 — Capture started
+
+Live transcription and the browser extension.
+
+The extension (WXT, Manifest V3) has pairing UI, a recorder, and a chunk store. The web app has `/extension/pair`. [ADR-005](15-decisions/ADR-005-extension-auth.md) is accepted. `apps/api` has no extension or pair routes. The extension consent registry has no consent API (user, time, meeting, `organizationId`). Live speech-to-text is deferred; background AssemblyAI is the chosen path.
+
+## Phase 7 — Pending
+
+Calendar, Meet/Zoom/Teams imports, search, automation, and analytics are not started. `transcript_segments.embedding` is `vector(1536)` in the initial migration. Nothing writes or queries it.
+
+## Phase 8 — Scaffolds
+
+Desktop and mobile offline recording.
+
+| App                      | State                                                                                                                                                                                                                                                                                                                                                                       |
+| ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Desktop (`apps/desktop`) | Tauri 2 M1 scaffold. Mock sign-in and sign-up, sample meetings, one read-only Rust `app_info` command. Bundle id is still `ai.meetops.desktop.todo-owner`. [ADR-012](15-decisions/ADR-012-desktop-auth.md) is Proposed and needs Architecture and Security sign-off. No recording.                                                                                          |
+| Mobile (`apps/mobile`)   | Expo SDK 52. M1 scaffold and M2 demo auth, signup, organization switcher, and tabs (Meetings, Record, Tasks, Account). `IS_DEMO_MODE` is true. Tokens stay in memory. Meetings, tasks, and the upload queue are placeholders. The Record tab is a UI shell. M3 consent through M6 release are not started. Bundle id is `com.example.meetops`. Plan: `docs/mobile/plan.md`. |
+
+## Phase 9 — Pending
+
+Production hardening, billing, monitoring, and release are not started. CI workflows, Dockerfiles, the threat model, and security tests exist. The marketing site (`apps/marketing`, TanStack Start) is named in the README and is not in the repo. Secret manager, malware scanning, media retention, and consent-by-jurisdiction are open questions.
+
+## Gaps that cut across phases
+
+1. **Contract without a route.** Meetings, uploads, recording sessions, tasks, and extension auth are in `@meetops/contracts` 0.4.0. `registerModules` only mounts auth, organizations, and the directory.
+2. **Jobs that do not run.** The media worker can start. Transcription will not, because no repository is injected. Email and integration queues have packages and no process in `apps/worker`.
+3. **Three clients, one real session.** Web cookies are real. The extension bearer flow and the desktop PKCE flow are specified and not served. Mobile is hard-coded to demo mode.
+4. **Boards lag the branch.** The implementation board, agent status, project context, and `docs/12-security/assumptions-open-questions.md` still describe Phase 0 or 22–24 Oct. CASL is a dependency and is used for organizations and the directory; the assumptions note still says it is not.
+
+## Decisions still marked open
+
+| Decision                                                                                                                             | Doc status     | Code on this commit              |
+| ------------------------------------------------------------------------------------------------------------------------------------ | -------------- | -------------------------------- |
+| [ADR-005](15-decisions/ADR-005-extension-auth.md) extension auth                                                                     | Accepted       | Client built. API routes missing |
+| [ADR-011](15-decisions/ADR-011-realtime-auth.md) realtime auth                                                                       | Proposed       | Server fail-closed               |
+| [ADR-012](15-decisions/ADR-012-desktop-auth.md) desktop sign-in                                                                      | Proposed       | Mock client only                 |
+| [ADR-006](15-decisions/ADR-006-login-lockout-one-time-tokens.md) lockout and one-time tokens                                         | Proposed       | Implemented in the API           |
+| [ADR-007](15-decisions/ADR-007-integrations-retry-webhook-replay.md), [ADR-008](15-decisions/ADR-008-oauth-pkce-token-encryption.md) | Proposed       | Package only                     |
+| [ADR-009](15-decisions/ADR-009-ai-provider-routing-credentials-ssrf.md) AI routing and SSRF                                          | Proposed       | Guards exist in `ai-core`        |
+| [ADR-010](15-decisions/ADR-010-organization-id-tenant-key.md) `organizationId`                                                       | Proposed       | Used as the tenant key           |
+| KMS, malware scan, retention, consent law, MFA                                                                                       | Open questions | No product choice in code        |
+
+## Next slice
+
+Serve meetings, presigned uploads, and recording sessions from the API, point the extension HTTP client at them, then inject the transcription repository so the worker already in the repo can consume the queue. Task approval and GitHub or Jira stay behind that.

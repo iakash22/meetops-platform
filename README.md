@@ -2,7 +2,7 @@
 
 Turn every meeting into actionable, assigned, measurable, and synchronized work.
 
-Status: Pre-alpha. This repo is in Phase 0 (architecture and foundation). Features listed below are planned scope, not yet implemented. See `docs/17-agents/implementation-board.md` for live progress.
+Status: Pre-alpha. Phase 0 is done and Phase 1 (auth, organizations, directory, RBAC) is nearly done. Later phases are started and unfinished. See [`docs/PHASE_STATUS.md`](docs/PHASE_STATUS.md) for what is on `main` and what is still open. `docs/17-agents/implementation-board.md` is the 2026-10-22 agent board, not the current phase report.
 
 ## Core flow
 
@@ -124,6 +124,8 @@ Email in development needs `SMTP_PASSWORD` (a Google App Password) in your local
 | 7     | Calendar, Meet/Zoom/Teams imports, search, automation, analytics |
 | 8     | Desktop and mobile apps with offline recording                   |
 | 9     | Production hardening, billing, monitoring, release               |
+
+Current status of each phase, including unfinished work, is in [`docs/PHASE_STATUS.md`](docs/PHASE_STATUS.md).
 
 The first milestone is a working end-to-end slice: create organization → add employee → create project → upload audio → transcribe → generate report → extract and approve tasks → create GitHub/Jira issue → sync status.
 
