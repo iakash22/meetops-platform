@@ -1,0 +1,18 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "jsx": "react-jsx",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "outDir": "dist",
+    "rootDir": ".",
+    "noEmit": true,
+    "baseUrl": ".",
+    "paths": { "@/*": ["./src/*"] },
+    "types": ["vite/client", "vitest/globals", "@testing-library/jest-dom", "node"]
+  },
+  "include": ["src", "test", "vite.config.ts", "index.html"],
+  "exclude": ["node_modules", "dist", "src-tauri"]
+}
