@@ -18,7 +18,7 @@ RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store \
     pnpm install --frozen-lockfile --ignore-scripts
 RUN pnpm --filter "@meetops/web..." run build
 
-FROM nginxinc/nginx-unprivileged:1.27.5-alpine AS runtime
+FROM nginxinc/nginx-unprivileged:1.31.7-alpine AS runtime
 # CSP connect-src origins, overridable at `docker run -e ...` / compose.
 ENV CSP_API_ORIGIN=http://localhost:3000 \
     CSP_REALTIME_ORIGIN="ws://localhost:4001 http://localhost:4001" \
