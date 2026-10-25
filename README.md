@@ -106,7 +106,7 @@ pnpm dev
 pnpm dev:infra:down             # stop the infra stack
 ```
 
-Equivalent raw command: `docker compose -f infra/compose/compose.dev.yml up -d` (the pnpm scripts also pass `--env-file .env`). `pnpm dev:infra:logs` tails container logs.
+Equivalent raw command: `docker compose --env-file .env -f infra/compose/compose.dev.yml up -d`. Keep `--env-file .env`: Compose otherwise looks for `.env` next to the compose file (`infra/compose/`), not in the repo root, and the required `POSTGRES_*` / `STORAGE_*` values would be missing. `pnpm dev:infra:logs` tails container logs.
 
 Email in development needs `SMTP_PASSWORD` (a Google App Password) in your local `.env`. Only the variable name is documented here; never commit or share its value. See `docs/00-getting-started/environment-variables.md` and `docs/17-agents/credential-requests.md`.
 
