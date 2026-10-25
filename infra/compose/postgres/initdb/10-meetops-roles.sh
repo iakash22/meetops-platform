@@ -12,8 +12,11 @@ MEETOPS_APP_DB_PASSWORD="$(read_secret meetops_app_db_password MEETOPS_APP_DB_PA
 : "${MEETOPS_MIGRATOR_DB_PASSWORD:?missing migrator password}" "${MEETOPS_APP_DB_PASSWORD:?missing app password}"
 psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" \
   -v migrator_pw="$MEETOPS_MIGRATOR_DB_PASSWORD" -v app_pw="$MEETOPS_APP_DB_PASSWORD" <<'SQL'
-SELECT format('CREATE ROLE meetops_migrator LOGIN NOSUPERUSER NOBYPASSRLS PASSWORD %L', :'migrator_pw')
+-- CREATEDB: required for Prisma `migrate dev` shadow database (P3014 without it).
+SELECT format('CREATE ROLE meetops_migrator LOGIN NOSUPERUSER NOBYPASSRLS CREATEDB PASSWORD %L', :'migrator_pw')
   WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'meetops_migrator') \gexec
+SELECT format('ALTER ROLE meetops_migrator LOGIN NOSUPERUSER NOBYPASSRLS CREATEDB PASSWORD %L', :'migrator_pw')
+  WHERE EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'meetops_migrator') \gexec
 SELECT format('CREATE ROLE meetops_app LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS PASSWORD %L', :'app_pw')
   WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'meetops_app') \gexec
 -- pgvector needs superuser to install; do it here so migrations don't have to.

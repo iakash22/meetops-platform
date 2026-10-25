@@ -20,14 +20,30 @@ Apps resolve workspace packages from `dist/` (for example `@meetops/contracts/di
 
 These scripts load the **repo root** `.env` (copy from `.env.example` first):
 
-| Package / command                                         | How env is loaded                                             |
-| --------------------------------------------------------- | ------------------------------------------------------------- |
-| `@meetops/api` / `worker` / `realtime` `dev`              | `tsx … --env-file=../../.env`                                 |
-| `@meetops/realtime` `start`                               | `node --env-file=../../.env`                                  |
-| `@meetops/database` `db:migrate:*`, `db:seed`, `db:roles` | `node` / `tsx` `--env-file=../../.env`                        |
-| `@meetops/web` `dev`                                      | Vite `envDir` = monorepo root (`WEB_PORT`, `VITE_API_URL`, …) |
+| Package / command                                         | How env is loaded                                                                           |
+| --------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
+| `@meetops/api` / `worker` / `realtime` `dev`              | `tsx … --env-file=../../.env`                                                               |
+| `@meetops/realtime` `start`                               | `node --env-file=../../.env`                                                                |
+| `@meetops/database` `db:migrate:*`, `db:seed`, `db:roles` | `node` / `tsx` `--env-file=../../.env`                                                      |
+| `@meetops/web` `dev`                                      | Vite `envDir` = monorepo root; `/api` proxied to `PORT`/`API_PORT` when `VITE_API_URL=/api` |
 
 Without `NODE_ENV=development` and `DATABASE_URL`, the API exits with `MissingProductionDependencyError` and the worker with `DATABASE_URL is required`. Extension uses `apps/extension/.env` (see its `.env.example`); desktop keeps Tauri’s fixed Vite port `1420`.
+
+## Signup / API returns `INTERNAL` (`PrismaClientInitializationError`)
+
+Usually the Postgres volume was first created **without** real secret files. Docker Compose then creates `infra/compose/secrets/*.txt` as **directories**, initdb never creates `meetops` / `meetops_app`, and Prisma fails on signup.
+
+Fix (local only; **deletes DB volumes**):
+
+```powershell
+# remove secret directories if present, then:
+bash scripts/gen-dev-secrets.sh --from-env
+docker compose --env-file .env -f infra/compose/compose.dev.yml down -v
+pnpm dev:infra:up
+pnpm --filter @meetops/database db:migrate:deploy
+```
+
+Confirm roles with `docker exec meetops-dev-postgres-1 psql -U meetops -d meetops -c "\du"` (expect `meetops`, `meetops_app`, `meetops_migrator`).
 
 ## Docker Desktop
 
