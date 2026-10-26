@@ -99,10 +99,25 @@ export const PAYLOAD_TOO_LARGE_HTTP_STATUS = 413;
  * NOT_FOUND_REASONS (with `code: 'NOT_FOUND'`), then (v0.4.1) CONSENT_ERROR_REASONS (with `code: 'VALIDATION_FAILED'`).
  * v0.4.0 widened this from an alias of CONFLICT_REASONS.
  */
+/**
+ * v0.7.0: integration error reasons. INTEGRATION_NOT_CONNECTED (409): the integration is revoked or in error.
+ * APPROVAL_REQUIRED (403): issue push without a matching approved WriteApproval. OAUTH_STATE_INVALID (400): callback
+ * state missing, expired, consumed or mismatched. REPLAYED_DELIVERY (409): duplicate webhook delivery id (ADR-007).
+ * WEBHOOK_SIGNATURE_INVALID (401).
+ */
+export const INTEGRATION_ERROR_REASONS = [
+  'INTEGRATION_NOT_CONNECTED',
+  'APPROVAL_REQUIRED',
+  'OAUTH_STATE_INVALID',
+  'REPLAYED_DELIVERY',
+  'WEBHOOK_SIGNATURE_INVALID',
+] as const;
+
 export const API_ERROR_REASONS = [
   ...CONFLICT_REASONS,
   ...NOT_FOUND_REASONS,
   ...CONSENT_ERROR_REASONS,
+  ...INTEGRATION_ERROR_REASONS,
 ] as const;
 
 /** v0.4.0: the error names the directory routes (employees, teams, projects) can return as `error.reason`. */
@@ -333,3 +348,31 @@ export const MEETING_PATHS = {
   meetings: '/orgs/:organizationId/meetings',
   meeting: '/orgs/:organizationId/meetings/:meetingId',
 } as const;
+
+/**
+ * v0.7.0: integration route templates (ADR-007 webhooks/retries, ADR-008 OAuth state + token encryption).
+ * - `integrations`: GET -> `IntegrationList` (every role; never carries tokens or secrets).
+ * - `connect`: POST `ConnectIntegrationRequest` -> `ConnectIntegrationResponse` (owner/admin; session + CSRF). Issues
+ *   single-use OAuth state (Jira 3LO + PKCE S256) or GitHub App install state.
+ * - `callback`: GET, `IntegrationCallbackQuery`; the browser lands here from the provider. Not org-scoped in the path:
+ *   the org, user and redirect come from the consumed state. Responds 303 to the web app; no JSON body.
+ * - `integration`: DELETE -> 204 (owner/admin). Revokes the stored tokens and the webhook secret.
+ * - `webhook`: POST, raw provider body (≤ 1 MiB); `X-Hub-Signature-256` + `X-GitHub-Delivery` for GitHub. No session.
+ *   -> 202 `WebhookAcceptedResponse`; replayed delivery -> 409 `REPLAYED_DELIVERY`.
+ * - `issuePush`: POST `PushTaskIssueRequest` -> 201 `IntegrationIssue` (requires an approved WriteApproval).
+ */
+export const INTEGRATION_PATHS = {
+  integrations: '/orgs/:organizationId/integrations',
+  connect: '/orgs/:organizationId/integrations/connect',
+  callback: '/integrations/:provider/callback',
+  integration: '/orgs/:organizationId/integrations/:integrationId',
+  webhook: '/webhooks/:provider/:integrationId',
+  issuePush: '/orgs/:organizationId/tasks/:taskId/integration-issues',
+} as const;
+
+/** v0.7.0: integration connection lifecycle (Prisma `IntegrationStatus`). */
+export const INTEGRATION_STATUSES = ['active', 'error', 'revoked'] as const;
+/** v0.7.0: OAuth/App-install state TTL bounds in seconds (ADR-008: default 600, clamped 60-900). */
+export const INTEGRATION_STATE_TTL_SECONDS = 600;
+/** v0.7.0: webhook body cap in bytes (ADR-007). */
+export const INTEGRATION_WEBHOOK_MAX_BYTES = 1_048_576;
