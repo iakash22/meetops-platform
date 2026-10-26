@@ -7,7 +7,9 @@ import { createDemoConsentApi } from './consent/consentApi';
 import { createPlaceholderMeetingsRepository } from './data/meetingsRepository';
 import type { Repositories } from './data/RepositoriesProvider';
 import { createPlaceholderTasksRepository } from './data/tasksRepository';
-import { createPlaceholderUploadQueue } from './data/uploadQueue';
+import { createSimulatedCapture } from './record/simulatedRecorder';
+import { createMemoryQueueStore, createSimulatedUploadApi } from './upload/simulatedUploadApi';
+import { createUploadQueueEngine } from './upload/uploadQueueEngine';
 
 /**
  * App composition root. Everything here is a MOCK until the mobile bearer ADR and Backend routes land:
@@ -15,7 +17,8 @@ import { createPlaceholderUploadQueue } from './data/uploadQueue';
  * - signup: demo stand-in for `ApiClient.signup` (swap for `createApiClient({ baseUrl }).signup` once wired);
  * - tokens: in memory only (expo-secure-store follow-up);
  * - meetings and tasks: placeholder lists (no list routes in the API yet);
- * - upload queue: placeholder, always empty (no native recording yet);
+ * - recorder: SIMULATED (no audio, placeholder chunks) feeding the real queue engine with a simulated upload API;
+ *   in-memory queue store, always online (NetInfo and expo-audio wait for the lockfile slot);
  * - consent: demo, in memory (no Backend consent API yet). Opt-in starts OFF.
  * Swap implementations here; screens depend only on the interfaces.
  */
@@ -29,10 +32,26 @@ export const sessionManager = createSessionManager({
 /** Same signature as `ApiClient['signup']` (`POST /auth/signup`, 202, no session). */
 export const signupApi: SignupApi = createDemoSignupApi({ latencyMs: 300 });
 
+const capture = createSimulatedCapture();
+const engine = createUploadQueueEngine({
+  store: createMemoryQueueStore(),
+  chunks: capture,
+  api: createSimulatedUploadApi(300),
+  network: { isOnline: () => true },
+});
+
 export const repositories: Repositories = {
   meetings: createPlaceholderMeetingsRepository(400),
   tasks: createPlaceholderTasksRepository(400),
-  uploadQueue: createPlaceholderUploadQueue(),
+  uploadQueue: engine,
+  recordings: {
+    engine,
+    capture,
+    organizationId: () => {
+      const state = sessionManager.getState();
+      return state.status === 'signedIn' ? state.identity.organizationId : null;
+    },
+  },
   consent: createDemoConsentApi({ latencyMs: 300 }),
   micPermission: createDemoMicPermission(),
 };
