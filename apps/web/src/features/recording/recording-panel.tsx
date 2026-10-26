@@ -155,7 +155,7 @@ export function RecordingPanel({ meetingId }: { meetingId: Id }) {
       <div className="flex flex-wrap items-center gap-3" aria-live="polite">
         <span className="flex items-center gap-2 text-sm font-medium">
           <span
-            className="size-2.5 rounded-full bg-destructive motion-safe:animate-pulse"
+            className="size-2.5 rounded-full bg-highlight motion-safe:animate-pulse"
             aria-hidden
           />
           {state.phase === 'finishing'
@@ -168,11 +168,11 @@ export function RecordingPanel({ meetingId }: { meetingId: Id }) {
               {state.uploaded} chunk{state.uploaded === 1 ? '' : 's'} uploaded
               {state.pending ? `, ${state.pending} pending` : ''}
             </span>
-            <Button type="button" onClick={stop}>
+            <Button className="min-h-11" type="button" onClick={stop}>
               <Square aria-hidden />
               Stop and upload
             </Button>
-            <Button type="button" variant="outline" onClick={discard}>
+            <Button className="min-h-11" type="button" variant="outline" onClick={discard}>
               <X aria-hidden />
               Discard
             </Button>
@@ -222,7 +222,7 @@ export function RecordingPanel({ meetingId }: { meetingId: Id }) {
           {consentError}
         </p>
       ) : null}
-      <Button type="submit" disabled={starting || !organizationId}>
+      <Button className="min-h-11" type="submit" disabled={starting || !organizationId}>
         <Circle aria-hidden />
         {starting ? 'Starting…' : 'Start recording'}
       </Button>

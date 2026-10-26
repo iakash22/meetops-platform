@@ -86,6 +86,7 @@ export function UploadButton({ meetingId }: { meetingId?: Id }) {
         }}
       />
       <Button
+        className="min-h-11"
         type="button"
         onClick={() => inputRef.current?.click()}
         disabled={!organizationId || mutation.isPending}
