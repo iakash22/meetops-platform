@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client';
 import { App } from './app';
 import { createApiClient } from './lib/api/client';
 import { createMockDirectoryApi, demoDirectorySeed } from './features/directory/mock-api';
+import { createMockIntegrationsApi, setIntegrationsApiOverride } from './features/integrations/api';
 import { createQueryClient } from './lib/query-client';
 import './index.css';
 
@@ -13,6 +14,18 @@ const api =
   import.meta.env.DEV && import.meta.env.VITE_DIRECTORY_MOCKS === 'true'
     ? { ...httpApi, directory: createMockDirectoryApi({}, { seedOrg: demoDirectorySeed }) }
     : httpApi;
+// Same for integration settings until the backend routes exist (VITE_INTEGRATION_MOCKS=true, dev only).
+if (import.meta.env.DEV && import.meta.env.VITE_INTEGRATION_MOCKS === 'true')
+  setIntegrationsApiOverride(
+    createMockIntegrationsApi({
+      github: {
+        id: 'mock-github',
+        status: 'connected',
+        accountLabel: 'acme',
+        connectedAt: new Date().toISOString(),
+      },
+    }),
+  );
 const queryClient = createQueryClient();
 
 const root = document.getElementById('root');

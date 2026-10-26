@@ -23,6 +23,10 @@ export default defineConfig({
         'import.meta.env.WXT_FEATURE_HTTP_UPLOAD': JSON.stringify(
           process.env.WXT_FEATURE_HTTP_UPLOAD ?? '',
         ),
+        // Feature flag (off unless 'true' / '1'): single-file upload via POST /orgs/:org/uploads.
+        'import.meta.env.WXT_FEATURE_DIRECT_UPLOAD': JSON.stringify(
+          process.env.WXT_FEATURE_DIRECT_UPLOAD ?? '',
+        ),
       },
     };
   },

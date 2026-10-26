@@ -265,6 +265,9 @@ export const PRODUCTION_REQUIRED_DEPS = [
   'rateLimiter',
   'lockout',
   'mailQueue',
+  // The default transport drops every mail (no-op); production must inject a real one, e.g.
+  // createAuthMailTransport(createEmailService(loadEmailConfig())) from @meetops/notifications.
+  'mailTransport',
   'audit',
 ] as const satisfies readonly (keyof ModuleDeps)[];
 
@@ -295,7 +298,8 @@ export function defaultModuleDeps(
   const hasRedis = !!overrides.redis || !!urlFor(env, env.redisUrl);
   const provided = (k: keyof ModuleDeps) =>
     ((DATABASE_BACKED_DEPS as readonly string[]).includes(k) && hasDb) ||
-    ((REDIS_BACKED_DEPS as readonly string[]).includes(k) && hasRedis);
+    ((REDIS_BACKED_DEPS as readonly string[]).includes(k) && hasRedis) ||
+    (k === 'mailTransport' && (overrides as { mailer?: unknown }).mailer !== undefined);
   if (strict) {
     const missing = PRODUCTION_REQUIRED_DEPS.filter(
       (k) => overrides[k] === undefined && !provided(k),
