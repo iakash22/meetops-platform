@@ -1,4 +1,4 @@
-import type { ConsentSubjectType } from '@meetops/contracts';
+import type { ConsentSubjectType, FileObjectScanStatus } from '@meetops/contracts';
 import { DomainError } from '../../../shared/domain-error.js';
 
 export type FileObjectStatus = 'pending_upload' | 'uploaded' | 'processing';
@@ -15,13 +15,20 @@ export interface FileObjectRecord {
   checksumSha256Base64: string;
   originalName: string;
   status: FileObjectStatus;
+  /** null until complete; complete sets `pending`; the scanner moves it to clean/quarantined/rejected. */
+  scanStatus: FileObjectScanStatus | null;
   createdAt: Date;
 }
 
 export interface FileObjectRepository {
   create(r: FileObjectRecord): Promise<FileObjectRecord>;
   findById(organizationId: string, id: string): Promise<FileObjectRecord | null>;
-  setStatus(organizationId: string, id: string, status: FileObjectStatus): Promise<void>;
+  setStatus(
+    organizationId: string,
+    id: string,
+    status: FileObjectStatus,
+    scanStatus?: FileObjectScanStatus,
+  ): Promise<void>;
 }
 
 /** Presigned request returned by the signer (expiresAt is a Date; routes serialise it). */

@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import type { ConsentSubjectType } from '@meetops/contracts';
+import type { ConsentSubjectType, FileObjectScanStatus } from '@meetops/contracts';
 import type { ConsentRecord, ConsentRepository } from '../domain/consent.js';
 import type {
   FileObjectRecord,
@@ -39,9 +39,16 @@ export class InMemoryFileObjectRepository implements FileObjectRepository {
     const r = this.rows.get(id);
     return r && r.organizationId === organizationId ? { ...r } : null;
   }
-  async setStatus(organizationId: string, id: string, status: FileObjectStatus) {
+  async setStatus(
+    organizationId: string,
+    id: string,
+    status: FileObjectStatus,
+    scanStatus?: FileObjectScanStatus,
+  ) {
     const r = this.rows.get(id);
-    if (r && r.organizationId === organizationId) r.status = status;
+    if (!r || r.organizationId !== organizationId) return;
+    r.status = status;
+    if (scanStatus) r.scanStatus = scanStatus;
   }
 }
 

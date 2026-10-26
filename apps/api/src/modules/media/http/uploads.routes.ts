@@ -1,14 +1,20 @@
 import type { FastifyInstance } from 'fastify';
 import { InitUploadResponse } from '@meetops/contracts';
+import type { FileObjectRecord } from '../domain/ports.js';
 import { ErrorBody } from '../../auth/http/schemas.js';
 import { directoryErrors, iso, type ResolveCaller } from '../../directory/http/route-kit.js';
-import type { InitUploadInput, UploadService } from '../application/upload.service.js';
 import {
+  DOWNLOAD_URL_TTL_SECONDS,
+  type InitUploadInput,
+  type UploadService,
+} from '../application/upload.service.js';
+import {
+  CONSENT_UPLOAD_PATHS,
+  CompleteUploadRequest,
   CompleteUploadResponse,
   DownloadUrlResponse,
   InitUploadRouteBody,
   OrgParams,
-  UPLOAD_PATHS,
   UploadParams,
 } from './types.js';
 
@@ -22,7 +28,7 @@ export async function uploadRoutes(
   const { uploads, caller } = opts;
 
   app.post<{ Params: OrgParams; Body: InitUploadInput }>(
-    UPLOAD_PATHS.init,
+    CONSENT_UPLOAD_PATHS.uploads,
     {
       schema: {
         tags,
@@ -50,7 +56,7 @@ export async function uploadRoutes(
   );
 
   app.post<{ Params: UploadParams }>(
-    UPLOAD_PATHS.complete,
+    CONSENT_UPLOAD_PATHS.uploadComplete,
     {
       schema: {
         tags,
@@ -58,23 +64,25 @@ export async function uploadRoutes(
         description:
           'Queues processing only if a stored consent attestation exists; else 422 CONSENT_* and no job. 409 when not uploaded or already completed.',
         params: UploadParams,
-        response: { 202: CompleteUploadResponse, ...errors },
+        body: CompleteUploadRequest,
+        response: { 200: CompleteUploadResponse, ...errors },
       },
     },
     async (request, reply) => {
       const c = await caller(request, request.params.organizationId);
       const f = await uploads.complete(c, request.params.fileObjectId);
-      return reply.code(202).send({ fileObjectId: f.id, status: 'processing' });
+      return reply.code(200).send({ fileObject: toPublicFileObject(f), scanStatus: 'pending' });
     },
   );
 
   app.get<{ Params: UploadParams }>(
-    UPLOAD_PATHS.downloadUrl,
+    CONSENT_UPLOAD_PATHS.uploadDownloadUrl,
     {
       schema: {
         tags,
         summary: 'Short-lived download URL',
-        description: 'Presigned GET, expires in at most 300 s.',
+        description:
+          'Presigned GET; expiresIn <= 300 s. 404 for other-org ids or a FileObject whose scanStatus is not `clean`.',
         params: UploadParams,
         response: { 200: DownloadUrlResponse, ...errors },
       },
@@ -84,9 +92,19 @@ export async function uploadRoutes(
       const d = await uploads.downloadUrl(c, request.params.fileObjectId);
       void reply.header('cache-control', 'no-store');
       return {
-        fileObjectId: request.params.fileObjectId,
-        download: { url: d.url, method: 'GET', expiresAt: iso(d.expiresAt) },
+        url: d.url,
+        method: 'GET',
+        expiresIn: DOWNLOAD_URL_TTL_SECONDS,
+        expiresAt: iso(d.expiresAt),
       };
     },
   );
 }
+
+const toPublicFileObject = (f: FileObjectRecord) => ({
+  id: f.id,
+  organizationId: f.organizationId,
+  mimeType: f.mimeType,
+  sizeBytes: f.sizeBytes,
+  createdAt: iso(f.createdAt),
+});

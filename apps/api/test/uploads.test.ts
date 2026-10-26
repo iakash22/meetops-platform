@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { Value } from '@sinclair/typebox/value';
 import { InitUploadResponse, MAX_UPLOAD_BYTES } from '@meetops/contracts';
 import { CompleteUploadResponse, DownloadUrlResponse } from '../src/modules/media/http/types.js';
+import type { InMemoryFileObjectRepository } from '../src/modules/media/infrastructure/in-memory.js';
 import { consent, errorOf, mediaWorld, SHA_B64, type MediaWorld } from './media-helpers.js';
 
 const body = (over: Record<string, unknown> = {}) => ({
@@ -82,13 +83,22 @@ describe('uploads (init, complete, download-url)', () => {
   it('complete queues one job only after the object is stored', async () => {
     const { fileObjectId } = await init();
     const done = `${url()}/${fileObjectId}/complete`;
-    const early = await w.member.post(done);
+    const early = await w.member.post(done, {});
     expect(early.statusCode).toBe(409);
     expect(w.jobs.jobs).toHaveLength(0);
     w.signer.put(keyOf(fileObjectId), 1000);
-    const r = await w.member.post(done);
-    expect(r.statusCode).toBe(202);
+    const r = await w.member.post(done, {});
+    expect(r.statusCode).toBe(200);
     expect(Value.Check(CompleteUploadResponse, r.json())).toBe(true);
+    expect(r.json()).toMatchObject({
+      fileObject: {
+        id: fileObjectId,
+        organizationId: w.org,
+        mimeType: 'audio/webm',
+        sizeBytes: 1000,
+      },
+      scanStatus: 'pending',
+    });
     expect(w.jobs.jobs).toEqual([
       expect.objectContaining({
         kind: 'process_upload',
@@ -97,7 +107,7 @@ describe('uploads (init, complete, download-url)', () => {
         consentAttestationId: w.consents.rows[0]!.id,
       }),
     ]);
-    expect((await w.member.post(done)).statusCode).toBe(409);
+    expect((await w.member.post(done, {})).statusCode).toBe(409);
     expect(w.jobs.jobs).toHaveLength(1);
   });
 
@@ -105,7 +115,7 @@ describe('uploads (init, complete, download-url)', () => {
     const { fileObjectId } = await init();
     w.consents.rows.length = 0;
     w.signer.put(keyOf(fileObjectId), 1000);
-    const r = await w.member.post(`${url()}/${fileObjectId}/complete`);
+    const r = await w.member.post(`${url()}/${fileObjectId}/complete`, {});
     expect(r.statusCode).toBe(422);
     expect(errorOf(r)).toMatchObject({ code: 'VALIDATION_FAILED', reason: 'CONSENT_REQUIRED' });
     expect(w.jobs.jobs).toHaveLength(0);
@@ -115,13 +125,13 @@ describe('uploads (init, complete, download-url)', () => {
     const a = await init();
     w.signer.put(keyOf(a.fileObjectId), 1000);
     w.consents.rows[0]!.consentVersion = 'old-1';
-    const r1 = await w.member.post(`${url()}/${a.fileObjectId}/complete`);
+    const r1 = await w.member.post(`${url()}/${a.fileObjectId}/complete`, {});
     expect(errorOf(r1).reason).toBe('CONSENT_VERSION_UNSUPPORTED');
     const b = await init();
     w.signer.put(keyOf(b.fileObjectId), 1000);
     const row = w.consents.rows.at(-1)!;
     row.attestedAt = new Date(row.recordedAt.getTime() + 301_000);
-    const r2 = await w.member.post(`${url()}/${b.fileObjectId}/complete`);
+    const r2 = await w.member.post(`${url()}/${b.fileObjectId}/complete`, {});
     expect(r2.statusCode).toBe(422);
     expect(errorOf(r2).reason).toBe('CONSENT_INVALID');
     expect(w.jobs.jobs).toHaveLength(0);
@@ -131,29 +141,45 @@ describe('uploads (init, complete, download-url)', () => {
     const { fileObjectId } = await init();
     w.signer.put(keyOf(fileObjectId), 999);
     const done = `${url()}/${fileObjectId}/complete`;
-    expect((await w.member.post(done)).statusCode).toBe(409);
-    expect((await w.viewer.post(done)).statusCode).toBe(403);
+    expect((await w.member.post(done, {})).statusCode).toBe(409);
+    expect((await w.viewer.post(done, {})).statusCode).toBe(403);
     expect(
-      (await w.other.post(`/orgs/${w.otherOrg}/uploads/${fileObjectId}/complete`)).statusCode,
+      (await w.other.post(`/orgs/${w.otherOrg}/uploads/${fileObjectId}/complete`, {})).statusCode,
     ).toBe(404);
     expect(w.jobs.jobs).toHaveLength(0);
   });
 
-  it('download-url expires in <= 300 s, only after complete, and never cross-org', async () => {
+  it('download-url: expiresIn <= 300 s, 404 unless scanStatus is clean, never cross-org', async () => {
     const { fileObjectId } = await init();
     const dl = `${url()}/${fileObjectId}/download-url`;
-    expect((await w.member.get(dl)).statusCode).toBe(409);
+    expect((await w.member.get(dl)).statusCode).toBe(404);
     w.signer.put(keyOf(fileObjectId), 1000);
-    expect((await w.member.post(`${url()}/${fileObjectId}/complete`)).statusCode).toBe(202);
+    expect((await w.member.post(`${url()}/${fileObjectId}/complete`, {})).statusCode).toBe(200);
+    expect((await w.member.get(dl)).statusCode).toBe(404); // scanStatus pending
+    (w.media.files as InMemoryFileObjectRepository).rows.get(fileObjectId)!.scanStatus = 'clean';
     const before = Date.now();
     const r = await w.viewer.get(dl);
     expect(r.statusCode).toBe(200);
     expect(r.headers['cache-control']).toBe('no-store');
     const out = r.json<DownloadUrlResponse>();
     expect(Value.Check(DownloadUrlResponse, out)).toBe(true);
-    expect(Date.parse(out.download.expiresAt) - before).toBeLessThanOrEqual(300_000 + 1000);
+    expect(out.method).toBe('GET');
+    expect(out.expiresIn).toBeGreaterThanOrEqual(1);
+    expect(out.expiresIn).toBeLessThanOrEqual(300);
+    expect(Date.parse(out.expiresAt) - before).toBeLessThanOrEqual(out.expiresIn * 1000 + 1000);
     expect(
       (await w.other.get(`/orgs/${w.otherOrg}/uploads/${fileObjectId}/download-url`)).statusCode,
     ).toBe(404);
+  });
+});
+
+describe('uploads complete body', () => {
+  it('rejects unknown properties (CompleteUploadRequest is a strict empty object)', async () => {
+    const w = await mediaWorld();
+    const r = await w.member.post(`/orgs/${w.org}/uploads`, body());
+    const { fileObjectId } = r.json<{ fileObjectId: string }>();
+    const res = await w.member.post(`/orgs/${w.org}/uploads/${fileObjectId}/complete`, { x: 1 });
+    expect(res.statusCode).toBe(400);
+    await w.app.close();
   });
 });
