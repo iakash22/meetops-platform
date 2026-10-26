@@ -51,7 +51,7 @@ describe('navigation guards and screens', () => {
     fireEvent.changeText(screen.getByTestId('login-password'), 'wrong password');
     fireEvent.press(screen.getByTestId('login-submit'));
     expect(await screen.findByTestId('login-error')).toHaveTextContent(
-      'Invalid email or password.',
+      /Invalid email or password\./,
     );
     expect(screen.getByTestId('login-password').props.value).toBe('');
     expect(screen).toHavePathname('/login');

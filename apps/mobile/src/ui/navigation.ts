@@ -17,7 +17,7 @@ export const tabScreenOptions = {
   headerShadowVisible: false,
   sceneStyle: { backgroundColor: colors.background },
   tabBarStyle: { backgroundColor: colors.card, borderTopColor: colors.border },
-  tabBarActiveTintColor: colors.accent,
+  tabBarActiveTintColor: colors.link,
   tabBarInactiveTintColor: colors.mutedForeground,
   tabBarLabelStyle: { fontSize: 12, fontWeight: '600' },
 } as const;

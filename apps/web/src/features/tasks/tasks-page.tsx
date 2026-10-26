@@ -1,3 +1,4 @@
+import { Link } from '@tanstack/react-router';
 import { useMemo } from 'react';
 import { TASK_STATUSES, type TaskStatusValue } from '@meetops/contracts/types';
 import { Badge } from '@/components/ui/badge';
@@ -84,7 +85,7 @@ function FilterSelect({
       <Label htmlFor={id}>{label}</Label>
       <select
         id={id}
-        className="h-9 rounded-md border border-input bg-background px-2 text-sm"
+        className="min-h-11 h-9 rounded-md border border-input bg-background px-2 text-sm"
         value={value ?? ''}
         onChange={(e) => onChange(e.target.value || undefined)}
       >
@@ -121,7 +122,17 @@ export function TasksPage({
   };
   return (
     <>
-      <PageHeader title="Tasks" />
+      <PageHeader
+        title="Tasks"
+        actions={
+          <Link
+            to="/tasks/review"
+            className="text-sm font-medium text-link underline-offset-4 hover:underline"
+          >
+            Review suggested tasks
+          </Link>
+        }
+      />
       <div className="mb-4 flex flex-wrap gap-4" role="group" aria-label="Task filters">
         <FilterSelect
           id="filter-status"

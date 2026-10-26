@@ -7,9 +7,9 @@ import type {
 } from '@meetops/contracts';
 
 /**
- * Desktop session as held in memory. Uses the contracts' token-free session shape: the M1 shell never sees
- * or stores a token. The real desktop auth flow (bearer + pairing per an ADR-005-style decision, tokens in
- * the OS keychain via the Rust side) is an owner/Architecture decision and is NOT implemented here.
+ * Desktop session as held in memory. Uses the contracts' token-free session shape: the webview never sees or
+ * stores a token. Per ADR-012 tokens live only on the Rust side (refresh token in the OS keychain, access token in
+ * process memory) and the webview talks to narrow IPC commands (see `lib/native-auth.ts`).
  */
 export type DesktopSession = GetAuthSessionResponse;
 
@@ -41,7 +41,12 @@ export interface SignUpResult {
 }
 
 export interface AuthClient {
+  /** Mock preview only: the production desktop never collects a password (ADR-012 Option C rejected). */
   signIn: (request: LoginRequest) => Promise<DesktopSession>;
   signUp: (request: SignupRequest) => Promise<SignUpResult>;
   signOut: () => Promise<void>;
+  /** ADR-012 Decision 1: opens the system browser and resolves after the PKCE exchange. */
+  signInWithBrowser?: () => Promise<DesktopSession>;
+  /** ADR-012 Decision 5.3: reloads the session on launch from the keychain-backed Rust side; null when signed out. */
+  restore?: () => Promise<DesktopSession | null>;
 }

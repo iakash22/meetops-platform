@@ -3,13 +3,13 @@ import type { ReactNode } from 'react';
 import { BrandMark } from '@/components/brand';
 
 /** Shared frame for the sign-in / sign-up screens: brand backdrop, centred mark, card slot and footer note. */
-export function AuthLayout({ children, footer }: { children: ReactNode; footer: ReactNode }) {
+export function AuthLayout({ children, footer }: { children: ReactNode; footer?: ReactNode }) {
   return (
     <div className="brand-backdrop flex min-h-full items-center justify-center p-6">
       <div className="w-full max-w-sm space-y-6">
         <BrandMark className="justify-center" />
         {children}
-        <p className="text-center text-sm text-muted-foreground">{footer}</p>
+        {footer ? <p className="text-center text-sm text-muted-foreground">{footer}</p> : null}
       </div>
     </div>
   );

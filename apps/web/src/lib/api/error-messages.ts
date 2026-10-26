@@ -10,6 +10,7 @@ export const ERROR_MESSAGES: Record<ApiErrorCode, string> = {
   FORBIDDEN: "You don't have permission to do that.",
   NOT_FOUND: "We couldn't find what you were looking for.",
   CONFLICT: 'This conflicts with an existing item.',
+  PAYLOAD_TOO_LARGE: 'This file is too large to upload. The limit is 1.4 GB.',
   RATE_LIMITED: 'Too many attempts. Please wait a moment and try again.',
   PROVIDER_UNAVAILABLE: 'A service we depend on is unavailable. Please try again later.',
   INTERNAL: 'Something went wrong on our side. Please try again.',
