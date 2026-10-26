@@ -12,7 +12,9 @@ import { sampleVariables } from './fixtures.js';
 
 const render = <K extends EmailName>(n: K) => renderEmail(n, sampleVariables[n]);
 
-const withoutLogo = (h: string) => h.replace(/<img src="cid:meetops-logo@meetops"[^>]*>/g, '');
+/** The only images allowed: the logo (header + footer) and the animated banner, all inline CID. */
+const ALLOWED_IMG = /<img src="cid:meetops-(logo|banner)@meetops"[^>]*>/g;
+const withoutLogo = (h: string) => h.replace(ALLOWED_IMG, '');
 
 describe('email catalog', () => {
   it('covers every product email', () => {
@@ -46,9 +48,12 @@ describe('email catalog', () => {
         expect(r.html).toMatch(/^<!doctype html>/);
         expect(r.html).toContain('role="presentation"');
         expect(withoutLogo(r.html)).not.toMatch(/<script|<link|<img|<iframe|<form|javascript:/i);
-        // The only image is the CID logo, shipped as an inline attachment (no remote fetch).
-        expect(r.html.match(/<img /g)).toHaveLength(2);
-        expect(r.html).not.toMatch(/<img [^>]*src="(?!cid:meetops-logo@meetops")/);
+        // Only expected images: the CID logo (header + footer) and one category banner, as inline attachments.
+        expect(r.html.match(/<img /g)).toHaveLength(3);
+        expect(r.html.match(ALLOWED_IMG)).toHaveLength(3);
+        expect(r.html).toMatch(
+          /<img src="cid:meetops-banner@meetops"[^>]*alt="Animated MeetOps AI [^"]+"/,
+        );
         expect(r.html).toContain('alt="MeetOps AI"');
         expect(r.attachments).toEqual([
           expect.objectContaining({
@@ -56,7 +61,16 @@ describe('email catalog', () => {
             contentType: 'image/png',
             encoding: 'base64',
           }),
+          expect.objectContaining({
+            cid: 'meetops-banner@meetops',
+            contentType: 'image/gif',
+          }),
         ]);
+        // Every cid: referenced in the HTML has a matching attachment, and each image stays small.
+        for (const [, cid] of r.html.matchAll(/src="cid:([^"]+)"/g))
+          expect(r.attachments.map((a) => a.cid)).toContain(cid);
+        for (const a of r.attachments)
+          expect(Buffer.from(a.content, 'base64').length).toBeLessThan(200_000);
         expect(r.html).not.toMatch(/url\(/i);
         expect(r.html).toContain('display:none;max-height:0'); // hidden preheader
         expect(r.html).toContain('background-color:#0A0A0A');
@@ -66,6 +80,9 @@ describe('email catalog', () => {
       });
       it('uses cerulean only as a fill and links in #3AB0E0', () => {
         expect(r.html).not.toMatch(/(?<!-)color:#007BA7/i);
+        // Rose is an accent fill only, never text.
+        expect(r.html).not.toMatch(/(?<!-)color:#FF2D95/i);
+        expect(r.html).toContain('background-color:#FF2D95');
         for (const m of r.html.matchAll(/<a [^>]*style="([^"]*)"/g)) {
           const style = m[1] ?? '';
           expect(style).toMatch(/color:#(3AB0E0|FFFFFF)/);
@@ -169,6 +186,7 @@ describe('theme contrast (WCAG AA)', () => {
     ['text on raised surface', t.text, t.surfaceRaised],
     ['muted on raised surface', t.muted, t.surfaceRaised],
     ['link chip on cerulean tint', t.link, t.primaryTint],
+    ['text on rose (onHighlight)', t.onHighlight, t.highlight],
     ['text on destructive tint', t.text, t.destructiveTint],
     ['button label on cerulean', t.onPrimary, t.primaryFill],
     ['light text', t.light.text, t.light.background],
@@ -180,4 +198,41 @@ describe('theme contrast (WCAG AA)', () => {
   it('cerulean fails as text on black (why it is fill-only)', () => {
     expect(contrastRatio(t.primaryFill, t.background)).toBeLessThan(4.5);
   });
+});
+
+describe('image-free build (Outlook desktop / images blocked)', () => {
+  /** What a client renders with zero images: drop the non-mso GIF block and every <img>. */
+  const noImages = (html: string) =>
+    html
+      .replace(/<!--\[if !mso\]><!-->[\s\S]*?<!--<!\[endif\]-->/g, '')
+      .replace(/<img\b[^>]*>/g, '');
+  const text = (html: string) =>
+    noImages(html)
+      .replace(/<!--\[if [^\]]*\]>|<!\[endif\]-->/g, '')
+      .replace(/<[^>]+>/g, ' ')
+      .replace(/&middot;/g, '·')
+      .replace(/&amp;/g, '&')
+      .replace(/\s+/g, ' ');
+
+  for (const name of emailNames) {
+    const r = render(name);
+    it(`${name}: banner and all key copy are live text without images`, () => {
+      const out = text(r.html);
+      expect(out).toContain('MeetOps AI ·');
+      expect(out).toContain('Meeting to action');
+      for (const f of ['Record', 'Transcribe', 'AI summary', 'Tasks', 'Sync'])
+        expect(out).toContain(f);
+      const h1 = /<h1[^>]*>([\s\S]*?)<\/h1>/.exec(r.html)?.[1] ?? '';
+      expect(h1.length).toBeGreaterThan(0);
+      expect(out).toContain(text(h1).trim());
+      expect(noImages(r.html)).not.toContain('cid:meetops-banner');
+    });
+    it(`${name}: Outlook gets VML + table icons, modern clients get the GIF`, () => {
+      expect(r.html).toMatch(/<!--\[if gte mso 9\]><v:rect[^>]*><v:fill type="gradient"/);
+      expect(r.html).toMatch(/<!--\[if mso\]><table[\s\S]*?&#10022;[\s\S]*?<!\[endif\]-->/);
+      expect(r.html).toMatch(
+        /<!--\[if !mso\]><!--><img src="cid:meetops-banner@meetops" width="600" height="76"/,
+      );
+    });
+  }
 });

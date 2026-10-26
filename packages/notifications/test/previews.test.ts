@@ -17,10 +17,10 @@ describe.skipIf(!out)('email previews', () => {
     for (const name of emailNames) {
       const r = renderEmail(name, sampleVariables[name] as never);
       // Browsers can't resolve cid: URLs, so previews inline the logo as a data URI.
-      const logo = r.attachments[0];
-      const html = logo
-        ? r.html.split(`cid:${logo.cid}`).join(`data:${logo.contentType};base64,${logo.content}`)
-        : r.html;
+      const html = r.attachments.reduce(
+        (h, a) => h.split(`cid:${a.cid}`).join(`data:${a.contentType};base64,${a.content}`),
+        r.html,
+      );
       writeFileSync(join(dir, `${name}.html`), html);
       writeFileSync(join(dir, `${name}.txt`), `Subject: ${r.subject}\n\n${r.text}`);
     }
