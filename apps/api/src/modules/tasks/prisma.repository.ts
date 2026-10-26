@@ -203,7 +203,7 @@ export class PrismaTasks implements TaskRepositories {
           dueAt: input.dueAt ?? null,
         },
       });
-      return toTask(t as TaskRow);
+      return toTask(t);
     });
   }
 
