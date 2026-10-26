@@ -5,6 +5,19 @@
  */
 export interface EmailMessages {
   brand: string;
+  /** Rendered after the brand in link colour, like the web logo ("MeetOps AI"). */
+  brandSuffix: string;
+  logoAlt: string;
+  tagline: string;
+  eyebrow: {
+    security: string;
+    account: string;
+    workspace: string;
+    meeting: string;
+    tasks: string;
+    integration: string;
+  };
+  meetingChips: { actionItems: (n: number) => string };
   greeting: (name: string) => string;
   greetingFallback: string;
   buttonFallback: string;
@@ -106,6 +119,20 @@ const plural = (n: number, one: string, many: string) => (n === 1 ? one : many);
 
 export const en: EmailMessages = {
   brand: 'MeetOps',
+  brandSuffix: 'AI',
+  logoAlt: 'MeetOps AI',
+  tagline: 'MeetOps AI turns meetings into reviewed, synced tasks.',
+  eyebrow: {
+    security: 'Security',
+    account: 'Account',
+    workspace: 'Workspace',
+    meeting: 'Meeting summary',
+    tasks: 'Tasks',
+    integration: 'Integration',
+  },
+  meetingChips: {
+    actionItems: (n) => `${n} ${plural(n, 'action item', 'action items')}`,
+  },
   greeting: (name) => `Hi ${name},`,
   greetingFallback: 'Hi there,',
   buttonFallback: "If the button doesn't work, copy and paste this link into your browser:",

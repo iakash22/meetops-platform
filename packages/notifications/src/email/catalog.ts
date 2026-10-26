@@ -2,7 +2,10 @@ import { cleanSubject, safeUrl } from './escape.js';
 import {
   bulletList,
   button,
+  chips,
   heading,
+  itemList,
+  overline,
   join,
   layout,
   linkFallback,
@@ -10,13 +13,33 @@ import {
   paragraph,
   textLayout,
 } from './layout.js';
+import { logoAttachment } from './logo.js';
 import { DEFAULT_EMAIL_LOCALE, emailMessages, messagesFor, type EmailMessages } from './strings.js';
+
+/** Inline image referenced from the HTML as cid:<cid> (nodemailer `attachments` shape, base64 content). */
+export interface InlineAttachment {
+  filename: string;
+  cid: string;
+  contentType: string;
+  content: string;
+  encoding: 'base64';
+}
 
 export interface RenderedEmail {
   subject: string;
   html: string;
   text: string;
+  /** The logo, referenced from the HTML as cid:meetops-logo@meetops. Send it with the message. */
+  attachments: InlineAttachment[];
 }
+
+const LOGO: InlineAttachment = {
+  filename: logoAttachment.filename,
+  cid: logoAttachment.cid,
+  contentType: logoAttachment.contentType,
+  content: logoAttachment.contentBase64,
+  encoding: 'base64',
+};
 
 /** Common to every template. `locale` falls back to English. */
 interface Base {
@@ -134,6 +157,7 @@ function build(locale: string | undefined, p: Parts, m: EmailMessages): Rendered
       preferencesUrl: p.preferencesUrl,
       unsubscribeUrl: p.unsubscribeUrl,
     }),
+    attachments: [{ ...LOGO }],
   };
 }
 
@@ -147,6 +171,7 @@ const renderers: { [K in EmailName]: Renderer<K> } = {
       subject: c.subject,
       preheader: c.preheader,
       body: [
+        overline(m.eyebrow.account),
         heading(c.subject, 1),
         paragraph(greet(m, v.name)),
         paragraph(c.body),
@@ -165,6 +190,7 @@ const renderers: { [K in EmailName]: Renderer<K> } = {
       subject: c.subject,
       preheader: c.preheader,
       body: [
+        overline(m.eyebrow.security),
         heading(c.subject, 1),
         paragraph(greet(m, v.name)),
         paragraph(c.body),
@@ -185,9 +211,10 @@ const renderers: { [K in EmailName]: Renderer<K> } = {
       subject: c.subject(v.inviterName, v.workspaceName),
       preheader: c.preheader(v.workspaceName),
       body: [
+        overline(m.eyebrow.workspace),
         heading(c.preheader(v.workspaceName), 1),
         paragraph(c.body(v.inviterName, v.workspaceName)),
-        role && paragraph(role),
+        chips([v.role && c.role(v.role)], 'primary'),
         button(url, c.cta),
         exp && paragraph(exp, { muted: true }),
         linkFallback(url, m),
@@ -202,6 +229,7 @@ const renderers: { [K in EmailName]: Renderer<K> } = {
       subject: c.subject,
       preheader: c.preheader,
       body: [
+        overline(m.eyebrow.security),
         heading(c.subject, 1),
         paragraph(greet(m, v.name)),
         paragraph(c.body),
@@ -219,6 +247,7 @@ const renderers: { [K in EmailName]: Renderer<K> } = {
       subject: c.subject,
       preheader: c.preheader,
       body: [
+        overline(m.eyebrow.security),
         heading(c.subject, 1),
         paragraph(greet(m, v.name)),
         panel([c.body(v.lockedForMinutes)], 'destructive'),
@@ -236,6 +265,7 @@ const renderers: { [K in EmailName]: Renderer<K> } = {
       subject: c.subject,
       preheader: c.preheader,
       body: [
+        overline(m.eyebrow.security),
         heading(c.subject, 1),
         paragraph(greet(m, v.name)),
         paragraph(c.body(v.changedAt)),
@@ -254,10 +284,11 @@ const renderers: { [K in EmailName]: Renderer<K> } = {
       subject: c.subject(v.workspaceName),
       preheader: c.preheader(v.workspaceName),
       body: [
+        overline(m.eyebrow.workspace),
         heading(c.subject(v.workspaceName), 1),
         paragraph(greet(m, v.name)),
         paragraph(c.body(v.addedBy, v.workspaceName)),
-        role && paragraph(role),
+        chips([v.role && c.role(v.role)], 'primary'),
         button(url, c.cta),
         linkFallback(url, m),
       ],
@@ -273,6 +304,7 @@ const renderers: { [K in EmailName]: Renderer<K> } = {
       subject: c.subject(v.workspaceName),
       preheader: c.preheader(v.workspaceName),
       body: [
+        overline(m.eyebrow.workspace),
         heading(c.subject(v.workspaceName), 1),
         paragraph(greet(m, v.name)),
         paragraph(c.body(v.workspaceName)),
@@ -296,14 +328,23 @@ const renderers: { [K in EmailName]: Renderer<K> } = {
       subject: c.subject(v.meetingTitle),
       preheader: c.preheader(v.meetingTitle),
       body: [
+        overline(m.eyebrow.meeting),
         heading(v.meetingTitle, 1),
-        paragraph(c.when(v.meetingDate), { muted: true, small: true }),
+        chips([
+          c.when(v.meetingDate),
+          v.actionItems.length > 0 && m.meetingChips.actionItems(v.actionItems.length),
+        ]),
         paragraph(greet(m, v.recipientName)),
         paragraph(c.intro),
         heading(c.summaryHeading),
         panel([v.summary]),
         items.length > 0 && heading(c.actionItemsHeading),
-        bulletList(items),
+        itemList(
+          v.actionItems.map((a) => ({
+            title: a.title,
+            meta: [a.owner && c.owner(a.owner), a.dueDate && c.due(a.dueDate)],
+          })),
+        ),
         button(url, c.cta),
         linkFallback(url, m),
       ],
@@ -329,6 +370,7 @@ const renderers: { [K in EmailName]: Renderer<K> } = {
       subject: c.subject(n, v.meetingTitle),
       preheader: c.preheader(n),
       body: [
+        overline(m.eyebrow.tasks),
         heading(c.subject(n, v.meetingTitle), 1),
         paragraph(greet(m, v.name)),
         paragraph(c.body(n, v.meetingTitle)),
@@ -358,10 +400,11 @@ const renderers: { [K in EmailName]: Renderer<K> } = {
       subject: c.subject(v.taskTitle),
       preheader: c.preheader(v.taskTitle),
       body: [
+        overline(m.eyebrow.tasks),
         heading(c.subject(v.taskTitle), 1),
         paragraph(greet(m, v.assigneeName)),
         paragraph(c.body),
-        panel([v.taskTitle, ...details]),
+        panel([v.taskTitle, ...details], 'primary', { titleFirst: true }),
         button(url, c.cta),
         linkFallback(url, m),
       ],
@@ -386,6 +429,7 @@ const renderers: { [K in EmailName]: Renderer<K> } = {
       subject: c.subject(v.provider),
       preheader: c.preheader(v.provider),
       body: [
+        overline(m.eyebrow.integration),
         heading(c.subject(v.provider), 1),
         paragraph(greet(m, v.name)),
         paragraph(c.body(v.provider, v.workspaceName)),
