@@ -1,6 +1,11 @@
 import type { Clock } from '../../../../shared/ports.js';
 import type { LoginLockout, RateLimiter } from '../../domain/ports.js';
-import { DEFAULT_LOCKOUT, failureDelayMs, lockDurationMs, type LockoutPolicy } from './lockout-policy.js';
+import {
+  DEFAULT_LOCKOUT,
+  failureDelayMs,
+  lockDurationMs,
+  type LockoutPolicy,
+} from './lockout-policy.js';
 
 export { DEFAULT_LOCKOUT, type LockoutPolicy };
 
@@ -16,30 +21,39 @@ export class InMemoryRateLimiter implements RateLimiter {
       this.buckets.set(key, b);
     }
     b.count++;
-    return b.count <= limit ? { allowed: true, retryAfterMs: 0 } : { allowed: false, retryAfterMs: b.resetAt - now };
+    return b.count <= limit
+      ? { allowed: true, retryAfterMs: 0 }
+      : { allowed: false, retryAfterMs: b.resetAt - now };
   }
 }
 
 /** Test/dev only. Same policy as RedisLoginLockout (see lockout-policy.ts). */
 export class InMemoryLoginLockout implements LoginLockout {
-  private readonly state = new Map<string, { failures: number; windowEnd: number; lockedUntil: number }>();
+  private readonly state = new Map<
+    string,
+    { failures: number; windowEnd: number; lockedUntil: number }
+  >();
   constructor(
     private readonly clock: Clock,
-    private readonly policy: LockoutPolicy = DEFAULT_LOCKOUT
+    private readonly policy: LockoutPolicy = DEFAULT_LOCKOUT,
   ) {}
   async isLocked(key: string) {
     const now = this.clock.now().getTime();
     const s = this.state.get(key);
-    return s && s.lockedUntil > now ? { locked: true, retryAfterMs: s.lockedUntil - now } : { locked: false, retryAfterMs: 0 };
+    return s && s.lockedUntil > now
+      ? { locked: true, retryAfterMs: s.lockedUntil - now }
+      : { locked: false, retryAfterMs: 0 };
   }
   async recordFailure(key: string) {
     const now = this.clock.now().getTime();
     let s = this.state.get(key);
-    if (!s || s.windowEnd <= now) s = { failures: 0, windowEnd: now + this.policy.windowMs, lockedUntil: 0 };
+    if (!s || s.windowEnd <= now)
+      s = { failures: 0, windowEnd: now + this.policy.windowMs, lockedUntil: 0 };
     s.failures++;
     const delayMs = failureDelayMs(s.failures, this.policy);
     const lockedForMs = lockDurationMs(s.failures, this.policy);
-    if (lockedForMs) s = { failures: 0, windowEnd: now + this.policy.windowMs, lockedUntil: now + lockedForMs };
+    if (lockedForMs)
+      s = { failures: 0, windowEnd: now + this.policy.windowMs, lockedUntil: now + lockedForMs };
     this.state.set(key, s);
     return { lockedForMs, delayMs };
   }

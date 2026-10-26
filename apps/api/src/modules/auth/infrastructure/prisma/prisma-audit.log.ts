@@ -1,4 +1,8 @@
-import { getPrismaClient, withOrgContext, type DatabaseClient } from '../../../../shared/prisma/context.js';
+import {
+  getPrismaClient,
+  withOrgContext,
+  type DatabaseClient,
+} from '../../../../shared/prisma/context.js';
 import type { AuditEvent, AuditLog } from '../../domain/audit.js';
 
 /**
@@ -18,13 +22,15 @@ export class PrismaAuditLog implements AuditLog {
       targetId: e.targetId,
       metadata: e.metadata,
       ipAddress: e.ip,
-      userAgent: e.userAgent
+      userAgent: e.userAgent,
     };
     if (!e.organizationId) {
       await this.db.auditEvent.createMany({ data: [data] });
       return;
     }
-    await withOrgContext(e.organizationId, (tx) => tx.auditEvent.createMany({ data: [data] }), { client: this.db });
+    await withOrgContext(e.organizationId, (tx) => tx.auditEvent.createMany({ data: [data] }), {
+      client: this.db,
+    });
   }
 }
 

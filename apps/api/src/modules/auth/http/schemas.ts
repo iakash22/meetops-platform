@@ -9,7 +9,7 @@ import {
   LoginRequest,
   ResetPasswordRequest,
   SignupRequest,
-  VerifyEmailRequest
+  VerifyEmailRequest,
 } from '@meetops/contracts';
 import { ApiErrorEnvelope } from '../../../shared/api-error.js';
 

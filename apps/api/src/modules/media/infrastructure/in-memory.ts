@@ -1,5 +1,10 @@
 import { randomUUID } from 'node:crypto';
-import type { ConsentSubjectType, FileObjectScanStatus } from '@meetops/contracts';
+import type { AbortReason, ConsentSubjectType, FileObjectScanStatus } from '@meetops/contracts';
+import type {
+  RecordingChunkRecord,
+  RecordingSessionRecord,
+  RecordingSessionRepository,
+} from '../domain/recording-session.js';
 import type { ConsentRecord, ConsentRepository } from '../domain/consent.js';
 import type {
   FileObjectRecord,
@@ -95,5 +100,36 @@ export class InMemoryMediaJobQueue implements MediaJobQueue {
   readonly jobs: MediaProcessingJob[] = [];
   async enqueue(job: MediaProcessingJob) {
     this.jobs.push(job);
+  }
+}
+
+export class InMemoryRecordingSessionRepository implements RecordingSessionRepository {
+  readonly rows = new Map<string, RecordingSessionRecord>();
+  async create(r: RecordingSessionRecord) {
+    this.rows.set(r.id, { ...r, chunks: new Map(r.chunks) });
+  }
+  async findById(id: string) {
+    const r = this.rows.get(id);
+    return r ? { ...r, chunks: new Map(r.chunks) } : null;
+  }
+  async reserveChunk(id: string, chunk: RecordingChunkRecord, maxTotalBytes: number) {
+    const r = this.rows.get(id);
+    if (!r || r.status !== 'uploading') return 'not_uploading' as const;
+    const total = r.totalBytes - (r.chunks.get(chunk.seq)?.sizeBytes ?? 0) + chunk.sizeBytes;
+    if (total > maxTotalBytes) return 'over_limit' as const;
+    r.chunks.set(chunk.seq, { ...chunk });
+    r.totalBytes = total;
+    return 'ok' as const;
+  }
+  async finish(
+    id: string,
+    next:
+      | { status: 'completed'; chunkCount: number; durationMs: number }
+      | { status: 'aborted'; abortReason: AbortReason },
+  ) {
+    const r = this.rows.get(id);
+    if (!r || r.status !== 'uploading') return false;
+    Object.assign(r, next);
+    return true;
   }
 }
