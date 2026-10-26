@@ -61,6 +61,14 @@ const aiTenantSql = readFileSync(
 );
 /** DB-1 teams: new tenant tables enable and police RLS in their own migration (ADR-010 setting only). */
 const teamsSql = readFileSync(resolve(migrationsDir, '20261025090000_teams/migration.sql'), 'utf8');
+/** ADR-005 durable token families: ADR-010-only tenant tables with their own policies. */
+const AUTH_TOKENS_MIGRATION = '20261026230000_auth_token_families';
+const authTokensSql = readFileSync(
+  resolve(migrationsDir, AUTH_TOKENS_MIGRATION, 'migration.sql'),
+  'utf8',
+);
+/** Every migration that creates ADR-010-only tenant policies. */
+const adr010Sql = teamsSql + authTokensSql;
 const CONSENT_MIGRATION = '20261025120000_consent_scan_keycheck';
 const MEETINGS_EXTERNAL_ID_MIGRATION = '20261026120000_meetings_external_id';
 const consentSql = readFileSync(resolve(migrationsDir, CONSENT_MIGRATION, 'migration.sql'), 'utf8');
@@ -68,7 +76,7 @@ const rlsSql =
   readFileSync(resolve(migrationsDir, '20261021110000_tenant_rls_roles/migration.sql'), 'utf8') +
   laterTenantSql +
   aiTenantSql +
-  teamsSql;
+  adr010Sql;
 /**
  * Tenant tables keyed by the organization itself rather than a uuid id: ai_org_config (PK org_id) and
  * ai_idempotency (PK (org_id, key)). Their primary key already leads with org_id.
@@ -91,7 +99,13 @@ const ORG_EXPR =
 /** Policy expression for tenant tables created after ADR-010: canonical setting only, no legacy COALESCE. */
 const ADR010_EXPR = "NULLIF(current_setting('app.current_organization_id', true), '')::uuid";
 /** Tenant tables whose policies never had the legacy fallback (DB-1 and later). */
-const ADR010_ONLY_TABLES: readonly string[] = ['teams', 'team_members'];
+const ADR010_ONLY_TABLES: readonly string[] = [
+  'teams',
+  'team_members',
+  'auth_devices',
+  'auth_token_families',
+  'auth_refresh_tokens',
+];
 /** DB-3: append-only tenant tables with their own SELECT/INSERT policies (ADR-010 setting) in consentSql. */
 const CONSENT_TABLES: readonly string[] = ['consent_attestations'];
 
@@ -188,7 +202,7 @@ describe('RLS migration', () => {
       return;
     }
     if (ADR010_ONLY_TABLES.includes(t)) {
-      expect(teamsSql).toContain(
+      expect(adr010Sql).toContain(
         `CREATE POLICY tenant_isolation ON "${t}"\n  USING (org_id = ${ADR010_EXPR})\n  WITH CHECK (org_id = ${ADR010_EXPR});`,
       );
       return;
@@ -395,6 +409,8 @@ describe('per-org uniqueness (M2)', () => {
         'tokenHash',
         'tokenHash',
         'tokenHash',
+        // auth_refresh_tokens.token_hash (ADR-005 A1.2.1): SHA-256 hashes are globally unique.
+        'tokenHash',
       ].sort(),
     );
   });
@@ -499,8 +515,8 @@ describe('XT-26..XT-28 static guarantees', () => {
     );
     expect(consentSql.split(ADR010_EXPR).length - 1).toBe(CONSENT_TABLES.length * 2);
     expect(consentSql).not.toMatch(/current_setting\('app\.current_(org|organization)_id'\)/);
-    expect(teamsSql.split(ADR010_EXPR).length - 1).toBe(ADR010_ONLY_TABLES.length * 2);
-    expect(teamsSql).not.toMatch(/current_setting\('app\.current_(org|organization)_id'\)/);
+    expect(adr010Sql.split(ADR010_EXPR).length - 1).toBe(ADR010_ONLY_TABLES.length * 2);
+    expect(adr010Sql).not.toMatch(/current_setting\('app\.current_(org|organization)_id'\)/);
     expect(policySql).not.toMatch(/current_setting\('app\.current_(org|organization)_id'\)/);
     expect(policySql).not.toMatch(/DROP (TABLE|COLUMN)|RENAME/i);
   });
@@ -512,7 +528,7 @@ describe('XT-26..XT-28 static guarantees', () => {
     expect(consentSql).toMatch(
       /CREATE POLICY consent_insert ON "consent_attestations" FOR INSERT\n {2}WITH CHECK/,
     );
-    expect((teamsSql.match(/CREATE POLICY tenant_isolation[^;]*WITH CHECK/g) ?? []).length).toBe(
+    expect((adr010Sql.match(/CREATE POLICY tenant_isolation[^;]*WITH CHECK/g) ?? []).length).toBe(
       ADR010_ONLY_TABLES.length,
     );
     expect(policySql).toMatch(
@@ -614,7 +630,7 @@ describe('schema conventions', () => {
   });
 
   it('every model uses a uuid primary key', () => {
-    expect(models).toHaveLength(32);
+    expect(models).toHaveLength(35);
     for (const m of models.filter((x) => !ORGANIZATION_KEYED.includes(x.table)))
       expect(m.body, m.name).toMatch(/^\s+id\s+String\s+@id @default\(uuid\(\)\) @db\.Uuid$/m);
   });
@@ -1087,13 +1103,12 @@ describe('DB-3 consent_attestations, scan_status and storage-key CHECKs (static)
   const model = (name: string) => models.find((m) => m.name === name)?.body ?? '';
   const statements = consentSql.replace(/--.*$/gm, '');
 
-  it('sorts immediately before the meetings external id migration (the latest)', () => {
+  it('sorts immediately before the meetings external id migration', () => {
     const dirs = readdirSync(migrationsDir, { withFileTypes: true })
       .filter((d) => d.isDirectory())
       .map((d) => d.name)
       .sort();
-    expect(dirs.at(-1)).toBe(MEETINGS_EXTERNAL_ID_MIGRATION);
-    expect(dirs.at(-2)).toBe(CONSENT_MIGRATION);
+    expect(dirs.indexOf(CONSENT_MIGRATION)).toBe(dirs.indexOf(MEETINGS_EXTERNAL_ID_MIGRATION) - 1);
   });
 
   it('is additive only: no drop, rename, retype or NO FORCE of existing objects', () => {
@@ -1161,12 +1176,14 @@ describe('API-MEETINGS meetings.external_meeting_id (static)', () => {
     resolve(migrationsDir, MEETINGS_EXTERNAL_ID_MIGRATION, 'migration.sql'),
     'utf8',
   );
-  it('is the latest migration', () => {
+  it('sorts before the auth token families migration', () => {
     const dirs = readdirSync(migrationsDir, { withFileTypes: true })
       .filter((x) => x.isDirectory())
       .map((x) => x.name)
       .sort();
-    expect(dirs.at(-1)).toBe(MEETINGS_EXTERNAL_ID_MIGRATION);
+    expect(dirs.indexOf(MEETINGS_EXTERNAL_ID_MIGRATION)).toBeLessThan(
+      dirs.indexOf(AUTH_TOKENS_MIGRATION),
+    );
   });
 
   it('is additive and adds the per-org idempotency key and keyset index', () => {
@@ -1178,5 +1195,40 @@ describe('API-MEETINGS meetings.external_meeting_id (static)', () => {
     expect(sql).toMatch(
       /INDEX "meetings_org_id_created_at_id_idx"\s+ON "meetings"\("org_id", "created_at", "id"\)/,
     );
+  });
+});
+
+describe('ADR-005 durable token families (static)', () => {
+  const statements = authTokensSql.replace(/--.*$/gm, '');
+  it('is the latest migration', () => {
+    const dirs = readdirSync(migrationsDir, { withFileTypes: true })
+      .filter((x) => x.isDirectory())
+      .map((x) => x.name)
+      .sort();
+    expect(dirs.at(-1)).toBe(AUTH_TOKENS_MIGRATION);
+  });
+  it('is additive only', () => {
+    expect(statements).not.toMatch(
+      /\bDROP\b|RENAME|ALTER COLUMN|NO FORCE|DISABLE ROW LEVEL SECURITY/i,
+    );
+  });
+  it('stores refresh tokens only as SHA-256 hex hashes', () => {
+    expect(authTokensSql).toContain(`CHECK ("token_hash" ~ '^[0-9a-f]{64}$')`);
+    for (const t of ['auth_devices', 'auth_token_families', 'auth_refresh_tokens']) {
+      const body =
+        new RegExp(`CREATE TABLE "${t}" \\(([\\s\\S]*?)\\);`).exec(authTokensSql)?.[1] ?? '';
+      expect(body, t).not.toMatch(/"(token|refresh_token|access_token|pairing_code)"/);
+    }
+  });
+  it('carries an audience on devices and families', () => {
+    expect(schema).toMatch(/enum AuthTokenAudience \{\s+extension\s+desktop\s+\}/);
+    expect(authTokensSql.match(/"audience" "AuthTokenAudience" NOT NULL/g)).toHaveLength(2);
+  });
+  it('grants the app no DELETE and re-asserts forced RLS', () => {
+    expect(authTokensSql).toContain(
+      'GRANT SELECT, INSERT, UPDATE ON TABLE "auth_devices", "auth_token_families", "auth_refresh_tokens" TO meetops_app;',
+    );
+    expect(statements).not.toMatch(/GRANT [^;]*DELETE/);
+    expect(authTokensSql).toContain("RAISE EXCEPTION 'RLS enabled but not forced on: %'");
   });
 });
