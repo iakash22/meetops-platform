@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { ApiError, createApiClient } from '@/lib/api/client';
+import { ApiError, assertHttpsUrl, createApiClient } from '@/lib/api/client';
 import { completeResponse, consentSettings, downloadUrlResponse } from './fixtures/data';
 
 const ORG = '00000000-0000-4000-8000-000000000001';
@@ -73,5 +73,67 @@ describe('uploads API client', () => {
         new Blob(['a']),
       ),
     ).rejects.toBeInstanceOf(ApiError);
+  });
+
+  it.each([
+    'http://x/y',
+    'javascript:alert(1)',
+    '//evil/x',
+    '/relative',
+    'httpsx://x',
+    'not a url',
+  ])('assertHttpsUrl rejects %s', (u) => {
+    expect(() => assertHttpsUrl(u)).toThrow(ApiError);
+  });
+
+  it('assertHttpsUrl accepts an absolute https URL', () => {
+    expect(() => assertHttpsUrl('https://bucket.example/k?sig=1')).not.toThrow();
+  });
+
+  it('refuses a non-https PUT on the XHR (progress) path before xhr.open or any send', async () => {
+    const open = vi.spyOn(XMLHttpRequest.prototype, 'open');
+    const send = vi.spyOn(XMLHttpRequest.prototype, 'send');
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    const api = createApiClient({ baseUrl: 'http://api', getCsrfToken: () => 'c1' });
+    await expect(
+      api.storage.putToPresignedUrl(
+        { url: 'http://storage/k', method: 'PUT', expiresAt: '2026-10-21T18:00:00.000Z' },
+        new Blob(['a']),
+        () => undefined,
+      ),
+    ).rejects.toMatchObject({ status: 0, code: 'BAD_REQUEST' });
+    expect(open).not.toHaveBeenCalled();
+    expect(send).not.toHaveBeenCalled();
+    expect(fetchSpy).not.toHaveBeenCalled();
+    open.mockRestore();
+    send.mockRestore();
+    fetchSpy.mockRestore();
+  });
+
+  it('refuses a non-https PUT on the fetch path without calling fetch', async () => {
+    const f = vi.fn();
+    await expect(
+      client(f).storage.putToPresignedUrl(
+        { url: 'http://storage/k', method: 'PUT', expiresAt: '2026-10-21T18:00:00.000Z' },
+        new Blob(['a']),
+      ),
+    ).rejects.toBeInstanceOf(ApiError);
+    expect(f).not.toHaveBeenCalled();
+  });
+
+  it('maps a 413 PAYLOAD_TOO_LARGE envelope to its code', async () => {
+    const f = vi
+      .fn()
+      .mockResolvedValue(
+        json({ error: { code: 'PAYLOAD_TOO_LARGE', message: 'too big', requestId: 'r' } }, 413),
+      );
+    await expect(
+      client(f).storage.initUpload(ORG, {
+        fileName: 'a.mp4',
+        contentType: 'video/mp4',
+        sizeBytes: 1,
+        sha256Base64: 'x',
+      } as never),
+    ).rejects.toMatchObject({ status: 413, code: 'PAYLOAD_TOO_LARGE' });
   });
 });

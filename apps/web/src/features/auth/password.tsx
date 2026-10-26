@@ -81,8 +81,7 @@ export function scorePassword(password: string): Strength {
 const FILL: Record<Strength['score'], string> = {
   0: 'bg-border',
   1: 'bg-destructive',
-  // No amber token on web yet (docs list --mo-warning for the extension only).
-  2: 'bg-destructive/60',
+  2: 'bg-warning',
   3: 'bg-primary',
   4: 'bg-link',
 };

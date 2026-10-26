@@ -50,9 +50,11 @@ import {
 } from '@/features/uploads/types';
 
 /** Contracts ApiErrorEnvelope codes plus 'UNKNOWN' when the body is unparseable. */
-export type ApiErrorCode = ContractApiErrorCode | 'UNKNOWN';
+export type ApiErrorCode = ContractApiErrorCode | LocalApiErrorCode | 'UNKNOWN';
+/** TODO(contracts): 'PAYLOAD_TOO_LARGE' (413) is added by #168 (contracts 0.5.0); drop this once it merges. */
+type LocalApiErrorCode = 'PAYLOAD_TOO_LARGE';
 
-const KNOWN_CODES = new Set<string>(API_ERROR_CODES);
+const KNOWN_CODES = new Set<string>([...API_ERROR_CODES, 'PAYLOAD_TOO_LARGE']);
 const KNOWN_REASONS = new Set<string>([...CONFLICT_REASONS, ...CONSENT_ERROR_REASONS]);
 
 /** 422 consent sub-reason (contracts CONSENT_ERROR_REASONS). */
@@ -71,6 +73,8 @@ export class ApiError extends Error {
    * 422 CONSENT_ERROR_REASONS (e.g. CONSENT_REQUIRED).
    */
   reason: ConflictReason | ConsentErrorReason | undefined = undefined;
+  /** Seconds from a 429/503 `Retry-After` header (delta-seconds or HTTP date), when present. */
+  retryAfterSeconds: number | undefined = undefined;
   constructor(
     public readonly status: number,
     code: ApiErrorCode,
@@ -117,6 +121,21 @@ export class ApiError extends Error {
       error.reason = e.reason as ConflictReason | ConsentErrorReason;
     return error;
   }
+}
+
+/** Parse `Retry-After` (RFC 9110 §10.2.3): delta-seconds or an HTTP-date. Capped at 1 h. */
+export function parseRetryAfter(value: string | null, now = Date.now()): number | undefined {
+  if (!value) return undefined;
+  const trimmed = value.trim();
+  let seconds: number;
+  if (/^\d+$/.test(trimmed)) seconds = Number(trimmed);
+  else {
+    const at = Date.parse(trimmed);
+    if (Number.isNaN(at)) return undefined;
+    seconds = Math.ceil((at - now) / 1000);
+  }
+  if (!Number.isFinite(seconds) || seconds <= 0) return undefined;
+  return Math.min(seconds, 3600);
 }
 
 function safeJson(text: string): unknown {
@@ -303,7 +322,10 @@ export type ApiClient = {
     ) => Promise<void>;
     /** POST .../uploads/:fileObjectId/complete. TODO(contracts): #168 CompleteUploadResponse. */
     completeUpload: (organizationId: Id, fileObjectId: Id) => Promise<CompleteUploadResponse>;
-    /** GET .../uploads/:fileObjectId/download-url (409 while the scan is pending). Never cache. */
+    /**
+     * GET .../uploads/:fileObjectId/download-url. The API answers 404 until scanStatus is `clean`
+     * (same body as an unknown id); 409 is also treated as "not ready" by callers. Never cache.
+     */
     getDownloadUrl: (organizationId: Id, fileObjectId: Id) => Promise<DownloadUrlResponse>;
   };
   /** Org consent / retention settings (contracts #168). GET all roles; PATCH owner/admin. */
@@ -395,7 +417,10 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
         cachedCsrf = null;
         unauthorizedHandlers.forEach((h) => h());
       }
-      throw ApiError.fromResponse(res.status, data);
+      const error = ApiError.fromResponse(res.status, data);
+      if (res.status === 429 || res.status === 503)
+        error.retryAfterSeconds = parseRetryAfter(res.headers?.get?.('retry-after') ?? null);
+      throw error;
     }
     return data as T;
   }
@@ -532,8 +557,7 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
     storage: {
       initUpload: (id, body) => request('POST', uploadPaths.uploads(org(id)), body),
       putToPresignedUrl: async (upload, file, onProgress, signal) => {
-        if (!upload.url.startsWith('https://'))
-          throw new ApiError(0, 'BAD_REQUEST', 'Insecure upload URL');
+        assertHttpsUrl(upload.url);
         // XHR only when progress is wanted: fetch() has no upload progress events.
         if (onProgress && !options.fetch && typeof XMLHttpRequest !== 'undefined') {
           await xhrPut(upload, file, onProgress, signal);
@@ -567,6 +591,7 @@ function xhrPut(
   onProgress: (loaded: number, total: number) => void,
   signal?: AbortSignal,
 ): Promise<void> {
+  assertHttpsUrl(upload.url);
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
     xhr.open(upload.method, upload.url);
@@ -582,4 +607,18 @@ function xhrPut(
     signal?.addEventListener('abort', () => xhr.abort(), { once: true });
     xhr.send(file);
   });
+}
+
+/**
+ * Presigned storage URLs must be absolute https:// before any file bytes or navigation go to them.
+ * Parsed (not prefix-matched) so `https:` look-alikes and relative URLs are rejected.
+ */
+export function assertHttpsUrl(url: string): void {
+  let ok = false;
+  try {
+    ok = new URL(url).protocol === 'https:';
+  } catch {
+    ok = false;
+  }
+  if (!ok) throw new ApiError(0, 'BAD_REQUEST', 'Insecure storage URL');
 }

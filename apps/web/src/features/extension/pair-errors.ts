@@ -59,6 +59,11 @@ const BY_CODE: Record<ApiErrorCode, Omit<PairFailure, 'requestId'>> = {
     message: `This pairing link was already used or has expired. ${RESTART}`,
     retryable: false,
   },
+  PAYLOAD_TOO_LARGE: {
+    title: 'Request too large',
+    message: `The request was too large. ${RESTART}`,
+    retryable: false,
+  },
   RATE_LIMITED: {
     title: 'Too many attempts',
     message: 'Please wait a moment, then try again.',

@@ -106,6 +106,7 @@ describe('meetings', () => {
   it.each([
     [new ApiError(409, 'CONFLICT', 'x'), /exceed the 1.4 GB total/],
     [new ApiError(413, 'BAD_REQUEST', 'x'), /exceed the 1.4 GB total/],
+    [new ApiError(413, 'PAYLOAD_TOO_LARGE', 'x'), /exceed the 1.4 GB total/],
     [
       Object.assign(new ApiError(422, 'VALIDATION_FAILED', 'x'), {
         reason: 'CONSENT_VERSION_UNSUPPORTED',

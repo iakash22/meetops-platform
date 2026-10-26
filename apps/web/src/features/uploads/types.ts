@@ -3,7 +3,8 @@ import type { FILE_OBJECT_SCAN_STATUSES } from '@meetops/contracts/types';
 
 /*
  * TODO(contracts): local mirrors of the v0.5.0 proposal in contracts PR #168
- * (feat/contracts-consent-settings-uploads @ 8dd9b0c). Replace with the
+ * (feat/contracts-consent-settings-uploads @ 0150108, contracts 0.5.0; also adds
+ * the PAYLOAD_TOO_LARGE error code, mirrored in lib/api/client.ts). Replace with the
  * `@meetops/contracts` exports (ConsentSettings, UpdateConsentSettingsRequest,
  * CompleteUploadResponse, DownloadUrlResponse, CONSENT_SETTINGS_MODES,
  * CONSENT_SETTINGS_WRITE_ROLES, MIN/MAX_RETENTION_DAYS,

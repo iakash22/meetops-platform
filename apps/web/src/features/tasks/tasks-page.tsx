@@ -6,11 +6,14 @@ import type { TaskListFilters } from '@/lib/api/client';
 import { useTasks } from '@/lib/api/queries';
 import { PageHeader, ResourceList } from '@/pages/resource-list';
 
-export { TASK_STATUSES };
-export type TaskDueFilter = 'overdue' | 'today' | 'week';
-export const TASK_DUE = ['overdue', 'today', 'week'] as const satisfies readonly TaskDueFilter[];
-/** Assignee filter values: 'me', 'unassigned', or a user id. */
-export type TaskSearch = { status?: TaskStatusValue; assignee?: string; due?: TaskDueFilter };
+export {
+  TASK_DUE,
+  TASK_STATUSES,
+  parseTaskSearch,
+  type TaskDueFilter,
+  type TaskSearch,
+} from './task-search';
+import { TASK_DUE, type TaskDueFilter, type TaskSearch } from './task-search';
 
 const STATUS_LABEL: Record<TaskStatusValue, string> = {
   todo: 'To do',
@@ -23,26 +26,6 @@ const DUE_LABEL: Record<TaskDueFilter, string> = {
   today: 'Due today',
   week: 'Due this week',
 };
-
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
-/** Parse untrusted URL search params into known filter values only. */
-export function parseTaskSearch(search: Record<string, unknown>): TaskSearch {
-  const out: TaskSearch = {};
-  if (
-    typeof search.status === 'string' &&
-    (TASK_STATUSES as readonly string[]).includes(search.status)
-  )
-    out.status = search.status as TaskStatusValue;
-  if (
-    typeof search.assignee === 'string' &&
-    (search.assignee === 'me' || search.assignee === 'unassigned' || UUID_RE.test(search.assignee))
-  )
-    out.assignee = search.assignee;
-  if (typeof search.due === 'string' && (TASK_DUE as readonly string[]).includes(search.due))
-    out.due = search.due as TaskDueFilter;
-  return out;
-}
 
 /**
  * Due filter → dueAfter/dueBefore (ISO, UTC) computed in the user's local time zone.

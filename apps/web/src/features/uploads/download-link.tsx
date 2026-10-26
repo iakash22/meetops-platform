@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Download } from 'lucide-react';
 import type { Id } from '@meetops/contracts';
 import { Button } from '@/components/ui/button';
-import { ApiError } from '@/lib/api/client';
+import { ApiError, assertHttpsUrl } from '@/lib/api/client';
 import { describeError } from '@/lib/api/error-messages';
 import { useApi } from '@/lib/api/context';
 import { useOrganizationId } from '@/lib/api/queries';
@@ -39,8 +39,7 @@ export function DownloadLink({ fileObjectId, filename }: { fileObjectId: Id; fil
     setProcessing(false);
     try {
       const { url } = await api.storage.getDownloadUrl(organizationId, fileObjectId);
-      if (!url.startsWith('https://'))
-        throw new ApiError(0, 'BAD_REQUEST', 'Insecure download URL');
+      assertHttpsUrl(url);
       const a = document.createElement('a');
       a.href = url;
       a.download = name;

@@ -39,8 +39,9 @@ export function describeUploadError(e: unknown): string {
       return 'The consent notice has changed. Review it and confirm again.';
     if (e.reason === 'CONSENT_INVALID')
       return "Consent couldn't be verified. Check your device clock and try again.";
-    // Recording running total over 1.4 GB: 409 today, may become 413.
-    if (e.status === 409 || e.status === 413)
+    // Size caps: 413 PAYLOAD_TOO_LARGE (contracts 0.5.0); the uploads API returns 409 for the
+    // recording running total until it adopts 413, so both map to the same copy.
+    if (e.code === 'PAYLOAD_TOO_LARGE' || e.status === 413 || e.status === 409)
       return 'This recording would exceed the 1.4 GB total. Upload a smaller file.';
     if (e.status === 400) return 'The file is larger than 1.4 GB or not a supported type.';
   }
@@ -216,7 +217,7 @@ export function UploadButton({ meetingId }: { meetingId?: Id }) {
             <Button type="button" variant="outline" className="min-h-11" onClick={reset}>
               Cancel
             </Button>
-            <Button type="submit" className="min-h-11" disabled={!confirmed}>
+            <Button type="submit" className="min-h-11" disabled={!confirmed || settings.isPending}>
               Confirm and upload
             </Button>
           </div>

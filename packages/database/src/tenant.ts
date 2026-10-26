@@ -41,6 +41,7 @@ export const TENANT_TABLES = [
   'transcript_chunks',
   'teams',
   'team_members',
+  'consent_attestations',
 ] as const;
 export type TenantTable = (typeof TENANT_TABLES)[number];
 
