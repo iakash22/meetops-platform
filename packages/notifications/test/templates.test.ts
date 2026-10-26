@@ -3,7 +3,17 @@ import { renderTemplate, templateNames } from '../src';
 
 describe('templates', () => {
   it('registers all templates', () => {
-    expect(templateNames.sort()).toEqual(['invitation', 'meeting-summary', 'password-reset', 'task-assigned', 'verification']);
+    expect(templateNames.sort()).toEqual([
+      'integration-error',
+      'invitation',
+      'meeting-summary',
+      'member-added',
+      'member-removed',
+      'password-reset',
+      'task-assigned',
+      'tasks-ready-for-review',
+      'verification',
+    ]);
   });
   it('renders verification with subject/html/text', () => {
     const r = renderTemplate('verification', { name: 'Ana', verificationUrl: 'https://app.test/v?t=1', expiresInHours: 24 });
