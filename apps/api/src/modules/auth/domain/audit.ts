@@ -29,7 +29,8 @@ export type AuditAction =
   | 'team_member.remove'
   | 'project.create'
   | 'project.update'
-  | 'project.delete';
+  | 'project.delete'
+  | 'meeting.create';
 
 /** Never put passwords, tokens, cookies or hashes in metadata. */
 export interface AuditEvent {
@@ -46,7 +47,8 @@ export interface AuditEvent {
     | 'employee'
     | 'team'
     | 'team_member'
-    | 'project';
+    | 'project'
+    | 'meeting';
   targetId: string | null;
   metadata: Record<string, string | number | boolean | null>;
   ip: string | null;

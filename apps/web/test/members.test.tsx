@@ -1,7 +1,7 @@
 import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { ListMembersResponse, Role } from '@meetops/contracts';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   assignableRoles,
   canManageMembers,
@@ -11,6 +11,7 @@ import {
 import { ApiError } from '@/lib/api/client';
 import { memberList } from './fixtures/data';
 import { createMockApi, renderApp, resetStores } from './fixtures/render';
+import { waitForRouteData } from './fixtures/route-ready';
 
 const ORG = '00000000-0000-4000-8000-000000000001';
 const conflict = (reason: 'ALREADY_MEMBER' | 'LAST_OWNER') =>
@@ -28,8 +29,17 @@ function membersAs(role: Role, others: Partial<Record<number, Role>> = {}): List
   };
 }
 
+// The route lazy-loads members-page. The first test in a worker used to pay Vite's cold
+// transform of that chunk inside a single findBy (default 1s), which timed out under load.
+// Preload it once so the lazy route resolves from the module cache.
+beforeAll(async () => {
+  await import('@/features/members/members-page');
+});
+
 async function openMembers(api = createMockApi(), path = '/organization/members') {
   const result = renderApp(path, api);
+  // Staged waits (guard -> shell -> members.list settled) instead of one findBy over the chain.
+  await waitForRouteData(result.api.members.list);
   expect(await screen.findByRole('heading', { name: 'Members', level: 1 })).toBeInTheDocument();
   await screen.findAllByTestId('member-row');
   return result;
@@ -234,8 +244,10 @@ describe('/organization/members org resolution', () => {
   it('is reachable from the sidebar', async () => {
     const api = createMockApi();
     renderApp('/account', api);
+    await screen.findByTestId('app-shell');
     expect(await screen.findByRole('heading', { name: 'Account' })).toBeInTheDocument();
     await userEvent.click(screen.getByRole('link', { name: 'Members' }));
+    await waitFor(() => expect(api.members.list).toHaveBeenCalled());
     expect(await screen.findByRole('heading', { name: 'Members', level: 1 })).toBeInTheDocument();
   });
 });

@@ -1,15 +1,17 @@
 import { memo, useEffect, useRef } from 'react';
-import { AccessibilityInfo, findNodeHandle, StyleSheet, Text, View } from 'react-native';
+import { AccessibilityInfo, findNodeHandle, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { colors, radius, spacing } from '../theme/colors';
 import { Button } from '../ui/Button';
 
-export type ConsentStep = 'optIn' | 'notice';
+export type ConsentStep = 'optIn' | 'notice' | 'mic' | 'micDenied';
 
 interface Props {
   step: ConsentStep;
   busy: boolean;
-  error: string | null;
+  /** Notice step only: everyone explicitly agreed (`all_parties_consented`) rather than was told. */
+  allAgreed?: boolean;
+  onToggleAllAgreed?: () => void;
   onAccept: () => void;
   onCancel: () => void;
 }
@@ -34,13 +36,32 @@ const COPY: Record<ConsentStep, { title: string; body: string[]; accept: string;
     accept: 'Participants are informed, start',
     hint: 'Logs the notice and starts the recording',
   },
+  mic: {
+    title: 'Microphone access',
+    body: [
+      'MeetOps needs the microphone to record the meeting audio you choose to capture.',
+      'Your phone will ask next. Audio is only captured while a recording you started is running.',
+    ],
+    accept: 'Continue',
+    hint: 'Shows the system microphone prompt',
+  },
+  micDenied: {
+    title: 'Microphone is off',
+    body: [
+      'Recording needs microphone access, which is turned off for MeetOps.',
+      'Turn it on in Settings, then come back and press Start again.',
+    ],
+    accept: 'Open Settings',
+    hint: 'Opens the MeetOps page in system settings',
+  },
 };
 
 /** Inline consent step shown over the Record tab (R1 opt-in, R3 participant notice). */
 export const ConsentSheet = memo(function ConsentSheet({
   step,
   busy,
-  error,
+  allAgreed = false,
+  onToggleAllAgreed,
   onAccept,
   onCancel,
 }: Props) {
@@ -63,10 +84,21 @@ export const ConsentSheet = memo(function ConsentSheet({
           {line}
         </Text>
       ))}
-      {error ? (
-        <Text testID="consent-error" accessibilityRole="alert" style={styles.error}>
-          {error}
-        </Text>
+      {step === 'notice' && onToggleAllAgreed ? (
+        <Pressable
+          testID="consent-all-agreed"
+          accessibilityRole="checkbox"
+          accessibilityState={{ checked: allAgreed, disabled: busy }}
+          disabled={busy}
+          onPress={onToggleAllAgreed}
+          style={styles.check}
+          hitSlop={8}
+        >
+          <View style={[styles.box, allAgreed && styles.boxOn]}>
+            {allAgreed ? <Text style={styles.tick}>✓</Text> : null}
+          </View>
+          <Text style={styles.body}>Everyone also agreed to be recorded</Text>
+        </Pressable>
       ) : null}
       <View style={styles.actions}>
         <Button
@@ -100,6 +132,17 @@ const styles = StyleSheet.create({
   },
   title: { color: colors.foreground, fontSize: 20, fontWeight: '700' },
   body: { color: colors.foreground, fontSize: 15, lineHeight: 22 },
-  error: { color: colors.destructiveText, fontSize: 14 },
+  check: { flexDirection: 'row', alignItems: 'center', gap: spacing.md, minHeight: 44 },
+  box: {
+    width: 24,
+    height: 24,
+    borderRadius: radius.sm,
+    borderWidth: 2,
+    borderColor: colors.mutedForeground,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  boxOn: { backgroundColor: colors.primary, borderColor: colors.primary },
+  tick: { color: colors.primaryForeground, fontSize: 14, fontWeight: '700' },
   actions: { gap: spacing.md, marginTop: spacing.sm },
 });
