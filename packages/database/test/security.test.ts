@@ -1053,6 +1053,24 @@ describe('DB-1 teams and team_members (static)', () => {
       .filter((d) => d.isDirectory())
       .map((d) => d.name)
       .sort();
-    expect(dirs.at(-1)).toBe('20261025090000_teams');
+    expect(dirs.indexOf('20261025090000_teams')).toBe(dirs.length - 2);
+    expect(dirs.at(-1)).toBe('20261026120000_meetings_external_id');
+  });
+});
+
+describe('API-MEETINGS meetings.external_meeting_id (static)', () => {
+  const sql = readFileSync(
+    resolve(migrationsDir, '20261026120000_meetings_external_id', 'migration.sql'),
+    'utf8',
+  );
+  it('is additive and adds the per-org idempotency key and keyset index', () => {
+    expect(sql).not.toMatch(/DROP |RENAME|NO FORCE|DISABLE ROW LEVEL SECURITY/);
+    expect(sql).toContain('ADD COLUMN "external_meeting_id" TEXT');
+    expect(sql).toMatch(
+      /UNIQUE INDEX "meetings_org_id_source_external_meeting_id_key"\s+ON "meetings"\("org_id", "source", "external_meeting_id"\)/,
+    );
+    expect(sql).toMatch(
+      /INDEX "meetings_org_id_created_at_id_idx"\s+ON "meetings"\("org_id", "created_at", "id"\)/,
+    );
   });
 });
