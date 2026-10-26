@@ -15,6 +15,16 @@ export interface AuthMailHandlerDeps {
   clock: Clock;
   /** e.g. https://app.meetops.ai */
   webBaseUrl: string;
+  /** Shown in the lockout mail; must match the login lockout policy. Default 15. */
+  lockoutMinutes?: number;
+  /** IANA zone used for password_changed until users carry a time-zone preference. Default UTC. */
+  defaultTimeZone?: string;
+}
+
+/** Recipient display name, only when set (templates fall back to "there"). */
+function withName(data: Record<string, string>, name: string | null | undefined): Record<string, string> {
+  const n = name?.trim();
+  return n ? { ...data, name: n } : data;
 }
 
 /**
@@ -44,7 +54,7 @@ export class AuthMailJobHandler {
         const token = this.d.tokens.generate();
         await this.d.oneTimeTokens.setTokenHash(t.id, this.d.tokens.hash(token));
         const path = job.kind === 'password_reset' ? '/reset-password' : '/verify-email';
-        await this.d.transport.send({ to: user.email, template: job.kind, data: { url: this.link(path, token) } });
+        await this.d.transport.send({ to: user.email, template: job.kind, data: withName({ url: this.link(path, token) }, user.name) });
         return;
       }
       case 'account_exists': {
@@ -53,7 +63,7 @@ export class AuthMailJobHandler {
         await this.d.transport.send({
           to: user.email,
           template: 'account_exists',
-          data: { url: new URL('/forgot-password', this.d.webBaseUrl).toString() }
+          data: withName({ url: new URL('/forgot-password', this.d.webBaseUrl).toString() }, user.name)
         });
         return;
       }
@@ -65,7 +75,30 @@ export class AuthMailJobHandler {
         await this.d.transport.send({
           to: user.email,
           template: 'login_lockout',
-          data: { url: new URL('/forgot-password', this.d.webBaseUrl).toString() }
+          data: withName(
+            {
+              url: new URL('/forgot-password', this.d.webBaseUrl).toString(),
+              lockedForMinutes: String(this.d.lockoutMinutes ?? 15)
+            },
+            user.name
+          )
+        });
+        return;
+      }
+      case 'password_changed': {
+        const user = await this.d.users.findById(job.userId);
+        if (!user) return;
+        await this.d.transport.send({
+          to: user.email,
+          template: 'password_changed',
+          data: withName(
+            {
+              url: new URL('/forgot-password', this.d.webBaseUrl).toString(),
+              changedAt: job.changedAt,
+              timeZone: this.d.defaultTimeZone ?? 'UTC'
+            },
+            user.name
+          )
         });
         return;
       }
@@ -76,11 +109,17 @@ export class AuthMailJobHandler {
         if (!org) return;
         const token = this.d.tokens.generate();
         await this.d.invitations.setTokenHash(inv.organizationId, inv.id, this.d.tokens.hash(token));
-        await this.d.transport.send({
-          to: inv.email,
-          template: 'invitation',
-          data: { url: this.link('/invitations/accept', token), organizationName: org.name }
-        });
+        const inviter = inv.invitedById ? await this.d.users.findById(inv.invitedById) : null;
+        const days = Math.max(1, Math.ceil((inv.expiresAt.getTime() - now.getTime()) / 86_400_000));
+        const data: Record<string, string> = {
+          url: this.link('/invitations/accept', token),
+          organizationName: org.name,
+          role: inv.role,
+          expiresInDays: String(days)
+        };
+        const inviterName = inviter?.name?.trim() || inviter?.email;
+        if (inviterName) data.inviterName = inviterName;
+        await this.d.transport.send({ to: inv.email, template: 'invitation', data });
         return;
       }
     }
