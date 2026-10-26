@@ -48,7 +48,8 @@ export const RECORDING_SESSION_PATHS = {
   abort: (sessionId: string) => `/recording-sessions/${seg(sessionId)}/abort`,
 } as const;
 
-export type UploadOp = 'initSession' | 'requestChunkUrl' | 'complete' | 'abort';
+export type UploadOp =
+  'initSession' | 'requestChunkUrl' | 'complete' | 'abort' | 'initUpload' | 'completeUpload';
 
 /** Runtime schema checks (TypeBox Value.Check in production, see auth/validate.ts) for every request and response. */
 export interface UploadValidators {
