@@ -1,15 +1,24 @@
 import { useEffect, useState, type ReactNode } from 'react';
-import { CalendarDays, PanelLeftClose, PanelLeftOpen, Settings } from 'lucide-react';
+import {
+  CalendarDays,
+  ListChecks,
+  Mic,
+  PanelLeftClose,
+  PanelLeftOpen,
+  Settings,
+} from 'lucide-react';
 
 import { BrandMark } from '@/components/brand';
 import { Separator } from '@/components/ui/separator';
 import { cn } from '@/lib/utils';
 import { activeOrganizationName, displayName, useSession } from '@/features/auth/session';
 
-export type View = 'meetings' | 'settings';
+export type View = 'meetings' | 'tasks' | 'record' | 'settings';
 
 const NAV: ReadonlyArray<{ view: View; label: string; icon: typeof CalendarDays }> = [
   { view: 'meetings', label: 'Meetings', icon: CalendarDays },
+  { view: 'tasks', label: 'Tasks', icon: ListChecks },
+  { view: 'record', label: 'Record', icon: Mic },
   { view: 'settings', label: 'Settings', icon: Settings },
 ];
 
@@ -48,6 +57,12 @@ export function AppShell({
 
   return (
     <div className="flex h-full" data-testid="app-shell">
+      <a
+        href="#main-content"
+        className="sr-only focus:not-sr-only focus:absolute focus:left-2 focus:top-2 focus:z-50 focus:rounded-md focus:bg-card focus:px-3 focus:py-2 focus:text-sm focus:text-link focus:ring-2 focus:ring-ring"
+      >
+        Skip to content
+      </a>
       <aside
         id="app-sidebar"
         aria-label="Sidebar"
@@ -72,14 +87,14 @@ export function AppShell({
                 title={collapsed ? label : undefined}
                 onClick={() => onNavigate(v)}
                 className={cn(
-                  'relative flex items-center gap-2 rounded-md py-2 text-left text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+                  'relative flex min-h-11 items-center gap-2 rounded-md py-2 text-left text-sm motion-safe:transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
                   collapsed ? 'justify-center px-0' : 'px-3',
                   active
-                    ? 'bg-accent font-medium text-foreground before:absolute before:inset-y-1.5 before:left-0 before:w-0.5 before:rounded-full before:bg-highlight'
+                    ? 'bg-accent font-medium text-foreground before:absolute before:inset-y-1.5 before:left-0 before:w-0.5 before:rounded-full before:bg-primary'
                     : 'text-muted-foreground hover:bg-accent hover:text-foreground',
                 )}
               >
-                <Icon className={cn('size-4 shrink-0', active && 'text-highlight')} aria-hidden />
+                <Icon className={cn('size-4 shrink-0', active && 'text-link')} aria-hidden />
                 <span className={cn(collapsed && 'sr-only')}>{label}</span>
               </button>
             );
@@ -94,7 +109,7 @@ export function AppShell({
             aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
             title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
             className={cn(
-              'flex w-full items-center gap-2 rounded-md py-2 text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+              'flex min-h-11 w-full items-center gap-2 rounded-md py-2 text-sm text-muted-foreground motion-safe:transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
               collapsed ? 'justify-center px-0' : 'px-3',
             )}
           >
@@ -112,7 +127,13 @@ export function AppShell({
             {session ? displayName(session) : null}
           </span>
         </header>
-        <main className="flex-1 overflow-y-auto p-6">{children}</main>
+        <main
+          id="main-content"
+          tabIndex={-1}
+          className="flex-1 overflow-y-auto p-6 focus:outline-none"
+        >
+          {children}
+        </main>
       </div>
     </div>
   );

@@ -6,7 +6,7 @@
   "description": "MeetOps AI desktop app (Tauri 2, offline recording; Phase 8)",
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
+    "build": "vite build && node scripts/check-prod-bundle.mjs",
     "preview": "vite preview",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "eslint .",
