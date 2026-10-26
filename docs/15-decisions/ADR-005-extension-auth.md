@@ -160,3 +160,147 @@ handshake to `apps/realtime` becomes a bearer surface: the extension sends its a
 string), with `aud=extension` and scope `recordings:write`, from an allowlisted `chrome-extension://<id>` origin, and MUST
 NOT send a session cookie. Bearer sockets join only meeting rooms they pass the access check for, never the org-wide room.
 Revoking a token family (A1.6) also publishes to `meetops:auth:revocations` so open sockets are disconnected.
+
+## Amendment 3 (2026-10-26, Proposed): mobile header tokens
+
+- Status: **Proposed - needs Architecture and Security sign-off** (see [Amendment 3 sign-off](#amendment-3-sign-off)).
+  No route code may ship against it until both sign.
+- Related: PR #170 (mobile `httpAuthClient`, whose shapes this amendment adopts unchanged),
+  [ADR-011](./ADR-011-realtime-auth.md) Decision 1 item 4 (mobile audience), [ADR-006](./ADR-006-login-lockout-one-time-tokens.md)
+  (login lockout), [ADR-012](./ADR-012-desktop-auth.md) (desktop tokens, same family design).
+
+### A3.1 Context
+
+The React Native app (`apps/mobile`) can't use the web cookie: there is no browser cookie jar it can protect with
+`__Host-` and `SameSite`, and ADR-011 Decision 1 item 4 defers a mobile audience to "a later ADR". PR #170 already
+builds against the routes below. This amendment defines audience **`mobile`** with the A1.2 token model (opaque hashed
+tokens, rotating refresh, bounded family, reuse revokes the family).
+
+### A3.2 Routes and exact shapes (all TypeBox objects `additionalProperties: false`)
+
+| Route                       | Authenticated by                                     | Request              | Success                                                                                    |
+| --------------------------- | ---------------------------------------------------- | -------------------- | ------------------------------------------------------------------------------------------ |
+| `POST /auth/mobile/token`   | `LoginRequest` credentials in the body               | `LoginRequest`       | 200 `MobileTokenResponse`                                                                  |
+| `POST /auth/mobile/refresh` | `refreshToken` in the body (not Bearer)              | `{ refreshToken }`   | 200 `MobileAuthTokens`                                                                     |
+| `POST /auth/mobile/logout`  | `refreshToken` in the body (not Bearer)              | `{ refreshToken }`   | 204, idempotent                                                                            |
+| `GET /auth/session`         | cookie **or** `Authorization: Bearer` (`aud=mobile`) | none                 | 200 `GetAuthSessionResponse`                                                               |
+| `POST /orgs/switch`         | cookie **or** `Authorization: Bearer` (`aud=mobile`) | `{ organizationId }` | 200 `OrganizationWithRole & { tokens: MobileAuthTokens }` for Bearer; unchanged for cookie |
+
+```ts
+MobileAuthTokens = {
+  tokenType: 'Bearer',
+  accessToken: AccessToken, // opaque, ≥256 bits, base64url
+  expiresAt: IsoDateTime, // access expiry
+  refreshToken: RefreshToken, // opaque, ≥256 bits, base64url
+  refreshExpiresAt: IsoDateTime, // family hard cap, not extended by rotation
+  organizationId: Id,
+};
+MobileTokenResponse = { tokens: MobileAuthTokens, session: GetAuthSessionResponse }; // session is token-free
+MobileRefreshRequest = { refreshToken: RefreshToken };
+MobileLogoutRequest = { refreshToken: RefreshToken };
+```
+
+- `MobileAuthTokens` is a strict subset of the extension `tokenPair` and of `DesktopTokenResponse` (ADR-012 A1), so a
+  shared client helper reads all three. `audience` and `scopes` are omitted to match PR #170; the server still records
+  both on the token row and enforces them.
+- `POST /auth/mobile/token` runs the full ADR-006 login path (lockout, constant-time failure, generic
+  `UNAUTHENTICATED`), and issues tokens for the user's default (most recently active) org. A user with no org gets 403
+  `FORBIDDEN` with no tokens. It MUST NOT set a cookie.
+- `POST /orgs/switch` with a Bearer checks a live membership in the target org (not a member is `NOT_FOUND`, ADR-004),
+  revokes the presented token's family, and issues a new family for the target org whose `refreshExpiresAt` is
+  `min(old cap, now + 30 days)`. The cookie behaviour of `/orgs/switch` is unchanged.
+- `logout` returns 204 for an unknown, expired or already-revoked token, so the client can wipe locally and never learn
+  whether the token was valid. (PR #170 also tolerates 401/404 for compatibility.)
+- Tokens travel only in the `Authorization` header or a JSON body; never in a URL, query string or deep link.
+
+### A3.3 Bearer versus cookie
+
+1. A request carrying **both** a session cookie and `Authorization: Bearer` is 401 `UNAUTHENTICATED` on every route.
+2. `refresh` and `logout` ignore `Authorization`, reject a cookie, and are authenticated only by the body token.
+3. Mobile bearer is accepted on `GET /auth/session`, `POST /orgs/switch` and the resource routes covered by its scopes.
+   Every other route MUST reject a mobile bearer (A1.3.1 item 2).
+4. Path `:organizationId` MUST equal the token's org, otherwise `NOT_FOUND`.
+5. **Scopes** (`MOBILE_SCOPES`): `meetings:read`, `tasks:read`, `recordings:write`. Read-only for tasks, like desktop;
+   task write or approve from mobile needs a further amendment. Enforced server-side in each route's auth hook.
+6. No CORS headers on mobile routes: a native client sends no `Origin`, and a browser must not be able to call them
+   cross-site.
+
+### A3.4 CSRF exemption reasoning
+
+The web cookie routes need `x-csrf-token` because the browser attaches the cookie automatically to a cross-site
+request. The mobile routes carry **no ambient credential**: the access token is added explicitly by app code to the
+`Authorization` header, and `refresh`/`logout` read a token from the JSON body. A malicious site can't make the
+browser add either one, so CSRF does not apply and the mobile routes are exempt from the CSRF check. This holds only
+while A3.3 item 1 (cookie + bearer together is rejected) holds, so a cookie can never be what authenticates a
+mobile-exempt request. `POST /auth/mobile/token` is a credential exchange like `/auth/login` and needs no CSRF token
+either, but it is rate limited and lockout-protected.
+
+### A3.5 Lifetimes, rotation and reuse detection
+
+1. Access TTL **15 minutes** (`MOBILE_TOKEN_TTL_SECONDS = 900`).
+2. Refresh family max lifetime **30 days** from login (`MOBILE_REFRESH_FAMILY_MAX_LIFETIME_SECONDS = 2592000`), not
+   extended by rotation; after it the user logs in again.
+3. Every refresh consumes the presented token atomically and issues a new pair in the same family.
+4. Presenting a consumed refresh token is reuse: revoke the whole family and its access tokens, return 401, publish
+   `{ kind: 'session', sessionId: <familyId>, reason: 'mobile_revoked' }` on `meetops:auth:revocations`, and write an
+   audit event. The app MUST serialise refreshes (one in flight) so normal use never trips this.
+
+### A3.6 Revocation
+
+The server MUST revoke mobile families on: `POST /auth/mobile/logout` (that family); logout-all and password change or
+reset (all the user's families, `kind: 'user'`); removal from an org (that org's families, `kind: 'membership'`); org
+switch (old family, `reason: 'org_switch'`); refresh reuse; and per-device revoke from web account settings. Each
+revocation publishes to `meetops:auth:revocations` so open sockets drop (ADR-011 Decision 3).
+
+### A3.7 Storage guidance (client)
+
+- Refresh token: OS secure storage only. iOS Keychain with `WHEN_UNLOCKED_THIS_DEVICE_ONLY` (no iCloud sync, not
+  restored to another device); Android Keystore-backed storage (`expo-secure-store`, or EncryptedSharedPreferences).
+  Access token: in memory only.
+- Never AsyncStorage, MMKV without encryption, files, logs, crash reports, analytics or deep links.
+- Android: exclude the secure store from Auto Backup (`android:allowBackup` rules). iOS: no shared keychain group.
+- On logout, reuse 401 or `session:revoked`, wipe both tokens and any cached org data.
+
+### A3.8 Rate limits (DevOps tunes; 429 `RATE_LIMITED`)
+
+- `token`: the `/auth/login` limits plus ADR-006 lockout; 10/min per IP, failures count double.
+- `refresh`: 10/min per family, 60/min per IP; more often than every 60 s per family SHOULD be logged.
+- `logout`: 10/min per family, 60/min per IP.
+- Bearer `/orgs/switch`: 10/min per user.
+
+### A3.9 Redaction and audit
+
+`REDACT_KEYS` already covers `accessToken`, `refreshToken` and `authorization`; the mobile client logger MUST import the
+same list. Audit events (no token values): `mobile.login`, `mobile.refresh_reuse`, `mobile.logout`, `mobile.revoked`
+(with reason), `mobile.org_switched`.
+
+### A3.10 Threat model
+
+| Threat                                      | Mitigation                                                                                        | Residual                                                   |
+| ------------------------------------------- | ------------------------------------------------------------------------------------------------- | ---------------------------------------------------------- |
+| Token theft from a lost or rooted device    | Keychain/Keystore `THIS_DEVICE_ONLY`; 15-min access; 30-day cap; per-device revoke from web       | A rooted, unlocked device can read the store until revoked |
+| Stolen refresh token replayed elsewhere     | Rotation; reuse revokes the family and publishes revocation                                       | Window until the victim's next refresh (≤ 15 min)          |
+| Credential stuffing on `/auth/mobile/token` | ADR-006 lockout, per-IP limits, generic errors                                                    | Same as web login                                          |
+| CSRF                                        | No ambient credential; cookie + bearer rejected                                                   | None known                                                 |
+| Token leaks via logs, URLs, deep links      | Header/body only; `REDACT_KEYS`; no query tokens                                                  | None known                                                 |
+| Stale org access after removal              | Org-scoped tokens; verifier checks live membership; revocation fan-out                            | ≤ 5 min without Redis (ADR-011 ceiling)                    |
+| Phishing app collecting passwords           | Store-signed app; future SSO/MFA via system browser (open question)                               | In-app password entry remains (see A3.11)                  |
+| Cross-audience misuse                       | `aud=mobile` checked per route; mobile tokens rejected on extension/desktop routes and vice versa | None known                                                 |
+
+### A3.11 Cross-amendments and open points
+
+- **ADR-011 Decision 1 item 4** becomes, on acceptance: "`aud=mobile` bearers are verified with the same rules as
+  `extension`, with scope `meetings:read` to connect, no `Origin` required, no org-room auto-join." Until then the
+  verifier keeps returning `null` for `mobile`.
+- **A1.2.5** gains `MobileTokenResponse`, `MobileAuthTokens` and the Bearer `/orgs/switch` response as token-bearing
+  bodies; the contracts guard test is updated to match.
+- In-app password login differs from ADR-012, which rejects it for desktop under RFC 8252. It is accepted here for M2
+  because native UI (not an embedded web view) collects it and ADR-006 lockout applies; moving mobile to system-browser
+  - PKCE when SSO/MFA ships is left open.
+
+### Amendment 3 sign-off
+
+| Role                      | Signer  | Date | Notes |
+| ------------------------- | ------- | ---- | ----- |
+| Architecture Agent (ARCH) | pending |      |       |
+| Security Agent (SEC)      | pending |      |       |
