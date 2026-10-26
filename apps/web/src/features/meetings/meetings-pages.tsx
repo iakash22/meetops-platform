@@ -1,10 +1,10 @@
 import { Link } from '@tanstack/react-router';
 import type { Meeting } from '@meetops/contracts';
 import { Badge } from '@/components/ui/badge';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { EmptyState, ErrorState, LoadingState } from '@/components/states/states';
+import { ErrorState, LoadingState } from '@/components/states/states';
 import { useMeeting, useMeetings } from '@/lib/api/queries';
 import { PageHeader, ResourceList } from '@/pages/resource-list';
+import { ReportPanel, TranscriptPanel } from './insights-panels';
 import { UploadButton } from './upload-button';
 
 const STATUS_LABEL: Record<Meeting['status'], string> = {
@@ -80,32 +80,8 @@ export function MeetingDetailPage({ meetingId }: { meetingId: string }) {
           <UploadButton meetingId={m.id} />
         </div>
       </div>
-      <Card>
-        <CardHeader>
-          <CardTitle>
-            <h2>Summary</h2>
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          <EmptyState
-            title="Summary not available yet"
-            description="It will appear after processing completes."
-          />
-        </CardContent>
-      </Card>
-      <Card>
-        <CardHeader>
-          <CardTitle>
-            <h2>Transcript</h2>
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          <EmptyState
-            title="Transcript not available yet"
-            description="It will appear after transcription completes."
-          />
-        </CardContent>
-      </Card>
+      <ReportPanel meetingId={m.id} ready={m.status === 'completed'} />
+      <TranscriptPanel meetingId={m.id} ready={m.status === 'completed'} />
     </div>
   );
 }
