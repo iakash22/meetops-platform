@@ -171,7 +171,7 @@ function IntegrationCard({
                 }}
                 className="h-11"
               />
-              <Button type="submit" disabled={save.isPending}>
+              <Button className="min-h-11" type="submit" disabled={save.isPending}>
                 {save.isPending ? 'Saving…' : 'Save'}
               </Button>
             </div>
@@ -185,6 +185,7 @@ function IntegrationCard({
         <div className="flex gap-2">
           {connected ? (
             <Button
+              className="min-h-11"
               type="button"
               variant="outline"
               disabled={disconnect.isPending}
@@ -195,6 +196,7 @@ function IntegrationCard({
             </Button>
           ) : (
             <Button
+              className="min-h-11"
               type="button"
               disabled={connect.isPending || !organizationId}
               onClick={() => connect.mutate()}
