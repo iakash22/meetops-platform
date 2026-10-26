@@ -1,6 +1,6 @@
 # ADR-012: Desktop (Tauri) sign-in, token storage and revocation
 
-- Status: **Proposed - needs Architecture and Security sign-off** (see [Sign-off](#sign-off))
+- Status: **Proposed - needs Architecture and Security sign-off** (see [Sign-off](#sign-off)); Amendment 1 (2026-10-26) also Proposed
 - Date: 2026-10-25
 - Owners: Architecture Agent (ARCH) and Security Agent (SEC), co-owners; Native/Desktop, Backend (BE) and Web implement
 - Related: [ADR-005](./ADR-005-extension-auth.md) (extension bearer tokens and pairing),
@@ -240,6 +240,192 @@ button in M2.
 ## Sign-off
 
 Both signatures are required before Status moves to Accepted. Sign by replacing `pending` with the agent, date and PR.
+
+| Role                      | Signer  | Date | Notes |
+| ------------------------- | ------- | ---- | ----- |
+| Architecture Agent (ARCH) | pending |      |       |
+| Security Agent (SEC)      | pending |      |       |
+
+## Amendment 1 (2026-10-26, Proposed): exact desktop routes, token shapes and cross-amendments
+
+- Status: **Proposed - needs Architecture and Security sign-off** (see [Amendment 1 sign-off](#amendment-1-sign-off)).
+  Nothing in this amendment is binding, and no route code may ship against it, until both sign.
+- Scope: makes `/auth/desktop/authorize` and `/auth/desktop/switch-org` explicitly in scope for BE, pins every request and
+  response body, adds `tasks:read`, and writes out the cross-amendments to ADR-011 and ADR-005 that Decision 5.2 and the
+  Consequences only referred to. Where this amendment and Decisions 1-5 differ, this amendment wins.
+
+### D1.1 Routes in scope
+
+| Route                           | Caller                        | Authenticated by                                        | Success                        |
+| ------------------------------- | ----------------------------- | ------------------------------------------------------- | ------------------------------ |
+| `POST /auth/desktop/authorize`  | web `/desktop/authorize` page | `__Host-` session cookie + `x-csrf-token` (cookie-only) | 200 `DesktopAuthorizeResponse` |
+| `POST /auth/desktop/token`      | desktop Rust core             | code + PKCE verifier in the body, bound to `deviceId`   | 200 `DesktopTokenResponse`     |
+| `POST /auth/desktop/refresh`    | desktop Rust core             | `refreshToken` in the body, bound to `deviceId`         | 200 `DesktopTokenResponse`     |
+| `POST /auth/desktop/revoke`     | desktop Rust core             | `refreshToken` in the body, bound to `deviceId`         | 204 (idempotent)               |
+| `POST /auth/desktop/switch-org` | desktop Rust core             | `refreshToken` in the body, bound to `deviceId`         | 200 `DesktopTokenResponse`     |
+
+`authorize` is the only cookie route. It MUST reject an `Authorization` header (401 `UNAUTHENTICATED`), and it is
+CSRF-protected like every other cookie mutation. The other four are token-lifecycle routes (Decision 2.4): they MUST
+ignore `Authorization`, MUST reject a request carrying a session cookie (401 `UNAUTHENTICATED`), and are CSRF-exempt
+because they carry no ambient credential (the browser can't attach the body secret on the victim's behalf). They MUST
+NOT send CORS headers: the Rust core is not a browser and needs none.
+
+### D1.2 Exact bodies (all TypeBox objects `additionalProperties: false`)
+
+Shared field types: `DesktopDeviceId` = UUID; `DesktopDeviceLabel` = 1-80 printable chars; `DesktopAuthCode`,
+`AccessToken`, `RefreshToken` = base64url, 43-128 chars; `PkceCodeVerifier` = RFC 7636 `[A-Za-z0-9-._~]{43,128}`;
+`PkceCodeChallenge` = base64url, exactly 43 chars; `DesktopRedirectUri` = string matching the rule in D1.3.
+
+```ts
+// POST /auth/desktop/authorize   (cookie + x-csrf-token)
+DesktopAuthorizeRequest  = { codeChallenge: PkceCodeChallenge, codeChallengeMethod: 'S256',
+                             redirectUri: DesktopRedirectUri, deviceId: DesktopDeviceId,
+                             deviceLabel: DesktopDeviceLabel, organizationId: Id }
+DesktopAuthorizeResponse = { code: DesktopAuthCode, expiresAt: IsoDateTime }   // the page then redirects
+
+// POST /auth/desktop/token
+DesktopTokenRequest   = { code: DesktopAuthCode, codeVerifier: PkceCodeVerifier,
+                          redirectUri: DesktopRedirectUri, deviceId: DesktopDeviceId }
+// POST /auth/desktop/refresh
+DesktopRefreshRequest = { refreshToken: RefreshToken, deviceId: DesktopDeviceId }
+// POST /auth/desktop/revoke     -> 204, no body
+DesktopRevokeRequest  = { refreshToken: RefreshToken, deviceId: DesktopDeviceId }
+// POST /auth/desktop/switch-org
+DesktopSwitchOrgRequest = { refreshToken: RefreshToken, deviceId: DesktopDeviceId, organizationId: Id }
+
+DesktopTokenResponse = {
+  tokenType: 'Bearer',
+  audience: 'desktop',
+  accessToken: AccessToken,
+  expiresAt: IsoDateTime,            // access token expiry
+  expiresIn: integer 1..900,         // seconds, same instant as expiresAt
+  refreshToken: RefreshToken,
+  refreshExpiresAt: IsoDateTime,     // family hard cap (30 days from sign-in), not extended by rotation
+  organizationId: Id,
+  scopes: DesktopScope[],            // minItems 1, uniqueItems
+  session: GetAuthSessionResponse,   // token-free, for the org in organizationId
+}
+```
+
+`state` is never sent to the API: it lives only between Rust and the browser redirect (Decision 1.7).
+`organizationId` in `DesktopAuthorizeRequest` MUST be an org the signed-in user is a live member of, otherwise `NOT_FOUND`.
+
+**Why this response shape.** It is the ADR-005 `tokenPair` (`ExtensionTokenResponse` minus `nonce`) plus `session`:
+
+- Reusing `tokenPair` field-for-field lets BE share the issuing code and the contracts guard test with the extension,
+  and it is a superset of `MobileAuthTokens` (`tokenType, accessToken, expiresAt, refreshToken, refreshExpiresAt,
+organizationId`, see the ADR-005 mobile amendment), so one client-side helper can read all three.
+- Both `expiresAt` and `expiresIn` are kept: `expiresIn` lets Rust schedule the refresh without trusting the local clock
+  (Decision 4.1), and `expiresAt` matches the other two token shapes. The server sets them from the same instant.
+- `audience` and `scopes` let the client assert it got what it asked for, and make a wrong-audience bug fail loudly.
+- `session` saves the extra `GET /auth/session` round trip Decision 5.3 would otherwise force after every sign-in,
+  refresh and switch. It is the token-free shape, so Rust MAY pass exactly this field (and only it) to the webview over
+  IPC. Rust MUST strip every other field before anything crosses IPC (Decision 3).
+- No `nonce`: PKCE plus `state` already bind the response to the requesting instance.
+
+### D1.3 Authorization code and PKCE (security properties BE MUST implement and test)
+
+1. **PKCE S256 only.** `codeChallengeMethod` MUST be the literal `'S256'`; `plain` or a missing method is
+   `VALIDATION_FAILED`. At `/token` the server checks `base64url(SHA-256(codeVerifier)) == codeChallenge` in constant time.
+2. **Code.** 256-bit random, base64url, stored as a SHA-256 hash only, TTL **60 s**, **single-use**. Redemption is one
+   atomic statement (for example `UPDATE … SET consumed_at = now() WHERE code_hash = $1 AND consumed_at IS NULL AND
+expires_at > now() RETURNING …`). The code is consumed on **any** outcome, including a wrong verifier, redirect URI or
+   device. A second presentation of a consumed code MUST also revoke any family that code issued (RFC 6749 §4.1.2).
+3. **Bindings.** The code row stores `(codeChallenge, redirectUri, deviceId, deviceLabel, userId, organizationId)`. At
+   `/token`, `redirectUri` MUST be byte-equal to the stored one and `deviceId` MUST match; any mismatch is the same
+   generic 400 `VALIDATION_FAILED` (`invalid_grant`-style; the body never says which check failed).
+4. **Redirect URI allowlist.** Exactly `http://127.0.0.1:<port>/callback` where `<port>` is 1024-65535. No `localhost`,
+   no `[::1]` (MAY be added by amendment), no `https`, no other path, no query, fragment or userinfo, no
+   percent-encoding tricks (parse with WHATWG URL, then compare the re-serialised value to the input). This allowlist is
+   desktop-only and separate from the ADR-008 integration redirect allowlist.
+5. **Device binding.** `deviceId` is bound into the code and then into the family. `refresh`, `revoke` and `switch-org`
+   MUST present the same `deviceId` as the family; a mismatch is 401 `UNAUTHENTICATED` and counts as a failed attempt
+   for rate limits, but does not revoke the family (a guessed device id must not let an attacker log the user out).
+6. **CSRF.** `authorize` requires the double-submit `x-csrf-token` and an `Origin` equal to the web origin. The web page
+   MUST NOT auto-submit: the user clicks a confirmation naming the user, org and device label (Decision 1.4). The
+   `state` round trip protects the desktop side against login CSRF.
+7. **No tokens in URLs.** Only the code and `state` ever appear in a URL (the loopback redirect). Access and refresh
+   tokens never do, on any route.
+
+### D1.4 Refresh, revoke and switch-org (reuses the ADR-005 A1.2 / A1.6 extension token family)
+
+1. **Rotation.** Each `refresh` consumes the presented refresh token and issues a new pair in the same family.
+   `refreshExpiresAt` stays the family cap (30 days from sign-in, `DESKTOP_REFRESH_FAMILY_MAX_LIFETIME_SECONDS`).
+2. **Reuse detection.** Presenting an already-consumed refresh token revokes the whole family and every access token it
+   issued, publishes `{ kind: 'session', sessionId: <familyId>, reason: 'desktop_revoked' }` on `meetops:auth:revocations`,
+   and returns 401. The consume step is atomic, so two concurrent refreshes with the same token yield one success and
+   one reuse (the client's refresh mutex, Decision 4.1, prevents this in normal use).
+3. **Revoke.** `revoke` is idempotent: an unknown, expired or already-revoked token returns 204, so a client can retry on
+   next launch (Decision 4.2) without leaking token validity. It revokes the family and publishes as above.
+4. **Revocation triggers (server-side, all publish to `meetops:auth:revocations`):** logout-all and password change or
+   reset (all the user's desktop families, `kind: 'user'`); removal from an org (that org's families,
+   `kind: 'membership'`); per-device revoke from web account settings; refresh reuse; code replay (D1.3.2); and org
+   switch (old family, `reason: 'org_switch'`).
+5. **switch-org.** Authenticated by the refresh token (not the access token, so it works after access expiry). Under
+   `runWithOrganizationContext` it checks a live membership in the target org; not a member is `NOT_FOUND` (ADR-004),
+   and the old family is left intact in that case. On success it revokes the old family and issues a **new** family for
+   the target org whose `refreshExpiresAt` is `min(old family cap, now + 30 days)`, so switching cannot extend a sign-in
+   beyond 30 days. The new family keeps the same `deviceId` and `deviceLabel`.
+6. **Rate limits** (DevOps tunes; 429 `RATE_LIMITED`): `authorize` 10/min per user and 30/min per IP; `token` 10/min
+   per IP, failed checks count double; `refresh` 10/min per family and 60/min per IP; `revoke` and `switch-org`
+   10/min per family and 60/min per IP.
+7. **Audit events** (no token, code, verifier or state values): `desktop.authorize`, `desktop.token_issued`,
+   `desktop.refresh_reuse`, `desktop.revoked` (with reason), `desktop.org_switched`.
+
+### D1.5 Scopes, including `tasks:read`
+
+`DESKTOP_SCOPES = ['meetings:read', 'meetings:resolve', 'tasks:read', 'recordings:write']`. This replaces the list in
+Decision 2.2.
+
+- `tasks:read` is the change proposed in **PR #182** (`docs/adr-012-tasks-read`, commit `bb69151`). This amendment
+  **references PR #182 rather than building on its branch**: it restates the same list here, so the two do not conflict
+  textually and either can merge first. If #182 merges, Decision 2.2 and D1.5 agree; if it is closed, D1.5 alone carries it.
+- `tasks:read` is read-only. Desktop gets **no** `tasks:write`, task-approve, extracted-task accept or dismiss scope.
+  A desktop token on any task mutation route is 403 `FORBIDDEN`.
+- **Server-side enforcement on every tasks route.** Each `GET` under `/orgs/:organizationId/tasks` and
+  `/orgs/:organizationId/extracted-tasks` that admits a desktop bearer MUST check the `tasks:read` scope in the route's
+  auth hook (not in the client and not only in the UI), and MUST still apply the caller's org role and the path-org rule
+  (path `:organizationId` ≠ token org is `NOT_FOUND`). Routes not listed as desktop-bearer routes MUST reject a desktop
+  bearer (ADR-005 A1.3.1 item 2). BE MUST add a test per tasks route asserting a desktop token without `tasks:read`
+  gets 403 and a desktop token on a task mutation gets 403.
+
+### D1.6 Cross-amendment to ADR-011 Decision 1 (desktop audience)
+
+On acceptance of this amendment, ADR-011 Decision 1 reads as follows (items 1, 2 and 5 unchanged):
+
+> 3a. **Desktop bearer rules:** `aud=desktop`, verified by `@meetops/session-verifier` with the same rules as
+> `extension` (hash lookup, family not revoked or past `refreshExpiresAt`, live membership, earliest `expiresAt`), and
+> scope `meetings:read` to connect. A desktop handshake MUST carry no session cookie and MUST NOT carry a browser
+> `Origin` other than the Tauri webview origins (`tauri://localhost`, `http://tauri.localhost`, `https://tauri.localhost`);
+> a missing `Origin` is allowed because the client is the Rust core. Desktop sockets MUST NOT auto-join
+> `organizations:{organizationId}`; they may only `meeting:join` meetings in the token's org that pass `canAccessMeeting`.
+>
+> 4. **Mobile** bearer tokens are accepted only once the ADR-005 mobile amendment (audience `mobile`) is Accepted. Until
+>    then the verifier MUST return `null` for any audience other than `extension` and `desktop`.
+
+ADR-011 gets a one-line pointer to this section; its own text changes only when both ADRs are Accepted.
+
+### D1.7 Cross-amendment to ADR-005 A1.2.5 (token-bearing responses)
+
+On acceptance, ADR-005 A1.2.5 reads:
+
+> 5. `ExtensionTokenResponse`, `ExtensionRefreshResponse` and `DesktopTokenResponse` (ADR-012) are strict, and they are
+>    the only API bodies carrying tokens, together with any body a later Accepted amendment adds to this list by name.
+
+The contracts guard test (no `accessToken` / `refreshToken` key outside the allowlisted schemas) gains
+`DesktopTokenResponse`. `DesktopAuthorizeResponse` carries a code, not a token, and is not on the list; its `code` key
+is redacted (below). `REDACT_KEYS` gains `code`, `codeVerifier`, `code_verifier`, `codeChallenge` and `state`.
+
+### D1.8 Contracts and migration impact (for BE and ARC, informative)
+
+- Contracts: a minor bump after the in-flight 0.6.x line, adding `DESKTOP_TOKEN_AUDIENCE`, `DESKTOP_SCOPES`,
+  `DESKTOP_TOKEN_TTL_SECONDS = 900`, `DESKTOP_REFRESH_FAMILY_MAX_LIFETIME_SECONDS = 2592000`, the schemas in D1.2, the
+  `desktop_revoked` revocation reason and the `REDACT_KEYS` additions.
+- Database: a `desktop_auth_codes` table (hash, bindings, `expires_at`, `consumed_at`) and either a `desktop` audience
+  on the extension token-family tables or parallel desktop tables. BE decides; reusing the family tables with an
+  `audience` column is preferred so revocation triggers cover both with one query.
+
+### Amendment 1 sign-off
 
 | Role                      | Signer  | Date | Notes |
 | ------------------------- | ------- | ---- | ----- |
