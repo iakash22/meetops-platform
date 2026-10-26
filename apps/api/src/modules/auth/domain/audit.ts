@@ -16,7 +16,20 @@ export type AuditAction =
   | 'invitation.accepted'
   | 'invitation.revoke'
   | 'membership.role_change'
-  | 'membership.remove';
+  | 'membership.remove'
+  // BE-3 directory
+  | 'employee.create'
+  | 'employee.update'
+  | 'employee.delete'
+  | 'team.create'
+  | 'team.update'
+  | 'team.delete'
+  | 'team_member.add'
+  | 'team_member.update'
+  | 'team_member.remove'
+  | 'project.create'
+  | 'project.update'
+  | 'project.delete';
 
 /** Never put passwords, tokens, cookies or hashes in metadata. */
 export interface AuditEvent {
@@ -24,7 +37,16 @@ export interface AuditEvent {
   organizationId: string | null;
   actorId: string | null;
   action: AuditAction;
-  targetType: 'user' | 'session' | 'organization' | 'invitation' | 'membership';
+  targetType:
+    | 'user'
+    | 'session'
+    | 'organization'
+    | 'invitation'
+    | 'membership'
+    | 'employee'
+    | 'team'
+    | 'team_member'
+    | 'project';
   targetId: string | null;
   metadata: Record<string, string | number | boolean | null>;
   ip: string | null;

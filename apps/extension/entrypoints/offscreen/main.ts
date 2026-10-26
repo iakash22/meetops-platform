@@ -1,4 +1,5 @@
 /// <reference types="chrome" />
+import type { ConsentAttestationInput } from '@meetops/contracts/types';
 import { HEARTBEAT_INTERVAL_MS } from '../../src/lib/background-handler.js';
 import { ChunkStore } from '../../src/lib/chunk-store.js';
 import { isOffscreenMessage, type OffscreenToBackground } from '../../src/lib/messages.js';
@@ -28,7 +29,12 @@ const emit = (msg: OffscreenToBackground) => {
   void chrome.runtime.sendMessage(msg).catch(() => undefined);
 };
 
-async function start(streamId: string, startedAt: number, meetingId: string) {
+async function start(
+  streamId: string,
+  startedAt: number,
+  meetingId: string,
+  consent: ConsentAttestationInput,
+) {
   if (handle) throw new Error('Already recording');
   const store = await (storePromise ??= ChunkStore.open());
   const constraints = {
@@ -45,6 +51,7 @@ async function start(streamId: string, startedAt: number, meetingId: string) {
     store,
     startedAt,
     meetingId,
+    consent,
     createRecorder: (s, mimeType) => new MediaRecorder(s, { mimeType }) as unknown as RecorderLike,
     events: {
       onStarted: (sessionId) => emit({ target: 'background', type: 'REC_STARTED', sessionId }),
@@ -104,7 +111,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     sendResponse({ ok: true });
     return false;
   }
-  starting = start(msg.streamId, msg.startedAt, msg.meetingId);
+  starting = start(msg.streamId, msg.startedAt, msg.meetingId, msg.consent);
   starting.then(
     () => sendResponse({ ok: true }),
     (err: unknown) => {

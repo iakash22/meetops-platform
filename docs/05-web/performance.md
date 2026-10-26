@@ -29,8 +29,11 @@ There are no dependencies (node:fs and node:zlib). Budgets are gzip kB per chunk
 `BUDGETS` at the top of the script. Any JS chunk over 500 kB raw also fails. It is not wired
 into `package.json` yet.
 
-## Not done yet: route-level code splitting
+## Route-level code splitting
 
-All routes live in `src/routes/router.tsx`, so page modules are still in the entry chunk. The
-follow-up (after FE-1 `feat/web-directory` and `fix/web-auth-flows` merge) switches page
-components to `lazyRouteComponent(...)`. The exact diff is in the perf/web-bundle PR description.
+Every page module is loaded with `lazyRouteComponent(() => import(...), 'Name')` in
+`src/routes/router.tsx`, `account.tsx`, `organization.tsx` and `auth-public.tsx`. Layouts, guards
+and search parsers (`features/tasks/task-search.ts`, `features/settings/settings-search.ts`) stay
+in the entry so redirects never wait on a page chunk. `defaultPreload: 'intent'` fetches a page on
+link hover/focus; `RoutePending` (static skeleton, shimmer off under reduced motion) shows only
+after the router's 1 s pending delay. Entry chunk: 137.23 kB / 40.12 kB gz → 74.63 kB / 24.15 kB gz.

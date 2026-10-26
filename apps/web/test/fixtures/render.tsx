@@ -3,14 +3,15 @@ import { createMemoryHistory, type RouterHistory } from '@tanstack/react-router'
 import { QueryClient } from '@tanstack/react-query';
 import { vi } from 'vitest';
 import { App } from '@/app';
+import { useToastStore } from '@/components/ui/toast';
 import type { Role } from '@meetops/contracts';
 import type { ApiClient, CreateInvitationRequest } from '@/lib/api/client';
+import { createMockDirectoryApi } from '@/features/directory/mock-api';
 import { useOrgStore, useUiStore } from '@/stores/org-store';
 import {
   meeting1,
   meetings,
   orgs,
-  projects,
   session,
   newOrg,
   sessionResponse,
@@ -85,13 +86,18 @@ export function createMockApi(
       pair: vi.fn().mockResolvedValue(pairResponse),
       ...overrides.extension,
     },
+    desktop: {
+      authorize: vi.fn().mockResolvedValue({ code: 'C'.repeat(43) }),
+      ...overrides.desktop,
+    },
     meetings: {
       list: vi.fn().mockResolvedValue(meetings),
       get: vi.fn().mockResolvedValue(meeting1),
       ...overrides.meetings,
     },
     tasks: { list: vi.fn().mockResolvedValue(tasks), ...overrides.tasks },
-    projects: { list: vi.fn().mockResolvedValue(projects), ...overrides.projects },
+    // In-memory directory (empty); pass `directory: createMockDirectoryApi(seed)` to seed it.
+    directory: { ...createMockDirectoryApi(), ...overrides.directory },
     storage: {
       createUpload: vi.fn().mockResolvedValue(uploadResponse),
       putToPresignedUrl: vi.fn().mockResolvedValue(undefined),
@@ -106,6 +112,7 @@ export function resetStores(withOrgs = true) {
     currentOrganizationId: withOrgs ? '00000000-0000-4000-8000-000000000001' : null,
   });
   useUiStore.setState({ sidebarOpen: true });
+  useToastStore.setState({ toasts: [] });
 }
 
 export type RenderAppResult = RenderResult & {

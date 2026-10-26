@@ -18,7 +18,7 @@ describe('auth guard', () => {
       '/tasks?status=todo',
       createMockApi({ auth: { session: unauthenticated() } }),
     );
-    expect(await screen.findByRole('heading', { name: 'Sign in' })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: 'Welcome back' })).toBeInTheDocument();
     expect(history.location.pathname).toBe('/login');
     expect(new URLSearchParams(history.location.search).get('next')).toBe('/tasks?status=todo');
   });
@@ -72,7 +72,7 @@ describe('auth guard', () => {
       '/meetings/20000000-0000-4000-8000-000000000001?tab=summary',
       api,
     );
-    expect(await screen.findByRole('heading', { name: 'Sign in' })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: 'Welcome back' })).toBeInTheDocument();
     expect(history.location.pathname).toBe('/login');
     expect(new URLSearchParams(history.location.search).get('next')).toBe(
       '/meetings/20000000-0000-4000-8000-000000000001?tab=summary',
@@ -86,7 +86,7 @@ describe('auth guard', () => {
   it('does not loop when /login is opened while the API is down', async () => {
     const session = vi.fn().mockRejectedValue(new TypeError('Failed to fetch'));
     const { history } = renderApp('/login', createMockApi({ auth: { session } }));
-    expect(await screen.findByRole('heading', { name: 'Sign in' })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: 'Welcome back' })).toBeInTheDocument();
     expect(history.location.href).toBe('/login');
     expect(session).not.toHaveBeenCalled();
   });
@@ -94,7 +94,7 @@ describe('auth guard', () => {
   it('still surfaces non-routing errors via the guard as signed-out (no crash)', async () => {
     const session = vi.fn().mockRejectedValue(new ApiError(403, 'FORBIDDEN', 'x', 'r'));
     const { history } = renderApp('/tasks', createMockApi({ auth: { session } }));
-    expect(await screen.findByRole('heading', { name: 'Sign in' })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: 'Welcome back' })).toBeInTheDocument();
     expect(history.location.pathname).toBe('/login');
   });
 });
@@ -117,12 +117,12 @@ describe('login after guard redirect (E2E-04)', () => {
       .mockRejectedValue(new ApiError(401, 'UNAUTHENTICATED', 'no session', 'r1'));
     const api = createMockApi({ auth: { session } });
     const { history } = renderApp('/meetings', api);
-    await screen.findByRole('heading', { name: 'Sign in' });
+    await screen.findByRole('heading', { name: 'Welcome back' });
     expect(history.location.href).toBe('/login?next=%2Fmeetings');
 
     await userEvent.type(screen.getByLabelText('Email'), 'ada@example.com');
     await userEvent.type(screen.getByLabelText('Password'), 'pw');
-    await userEvent.click(screen.getByRole('button', { name: 'Sign in' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Log in' }));
 
     await waitFor(() => expect(history.location.pathname).toBe('/meetings'));
     await waitForRouteData(api.meetings.list, { heading: 'Meetings' });

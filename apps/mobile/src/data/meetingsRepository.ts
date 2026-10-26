@@ -1,7 +1,11 @@
 import type { Meeting } from '@meetops/contracts';
 
-/** Read side of meetings for the list screen. The API has no list-meetings route yet, so only a mock exists. */
-export interface MeetingsClient {
+/**
+ * Read side of meetings for the Meetings tab. The API has no list-meetings route yet
+ * (Backend), so only a placeholder implementation exists. Screens depend on this interface only.
+ */
+export interface MeetingsRepository {
+  /** Meetings of one organization, newest first. Never mixes organizations. */
   list: (organizationId: string) => Promise<Meeting[]>;
 }
 
@@ -25,11 +29,10 @@ function placeholder(
   };
 }
 
-export function createMockMeetingsClient(latencyMs = 0): MeetingsClient {
+export function createPlaceholderMeetingsRepository(latencyMs = 0): MeetingsRepository {
   return {
     async list(organizationId) {
       if (latencyMs > 0) await new Promise((r) => setTimeout(r, latencyMs));
-      // Always scoped to the requested organization; never mixes orgs.
       return [
         placeholder(organizationId, 1, 'Weekly sync', 'completed'),
         placeholder(organizationId, 2, 'Design review', 'recording'),

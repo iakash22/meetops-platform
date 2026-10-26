@@ -4,8 +4,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { handleBackgroundMessage, type BackgroundDeps } from '../src/lib/background-handler.js';
 import { loadState } from '../src/lib/recorder-state.js';
 import { memoryKV } from '../src/lib/storage.js';
+import { CURRENT_CONSENT_VERSION } from '@meetops/contracts/types';
+import { CONSENT } from './helpers/consent.js';
 
 const MID = '6f1c2b8e-3d4a-4e5f-9a6b-7c8d9e0f1a2b';
+const GRANT = { meetingId: MID, method: 'all_parties_consented' as const };
 
 const popup = { fromSelf: true, fromOffscreen: false, fromPopup: true };
 const offscreen = { fromSelf: true, fromOffscreen: true, fromPopup: false };
@@ -59,7 +62,7 @@ describe('background handler', () => {
   });
 
   it('refuses consent given for a different tab', async () => {
-    await handleBackgroundMessage(ctx.deps, bg({ type: 'ACK_CONSENT', tabId: 1 }), popup);
+    await handleBackgroundMessage(ctx.deps, bg({ type: 'ACK_CONSENT', tabId: 1, ...GRANT }), popup);
     const r = await handleBackgroundMessage(
       ctx.deps,
       bg({ type: 'START_RECORDING', meetingId: MID, tabId: 2, streamId: 's' }),
@@ -69,7 +72,7 @@ describe('background handler', () => {
   });
 
   it('refuses expired consent', async () => {
-    await handleBackgroundMessage(ctx.deps, bg({ type: 'ACK_CONSENT', tabId: 1 }), popup);
+    await handleBackgroundMessage(ctx.deps, bg({ type: 'ACK_CONSENT', tabId: 1, ...GRANT }), popup);
     ctx.advance(10 * 60 * 1000);
     const r = await handleBackgroundMessage(
       ctx.deps,
@@ -79,8 +82,70 @@ describe('background handler', () => {
     expect(r).toEqual({ ok: false, error: 'Consent expired; acknowledge again' });
   });
 
+  it('consent is per meeting: a confirmation for one meeting cannot start another', async () => {
+    const OTHER = '0b4e7f1a-2c3d-4e5f-8a9b-0c1d2e3f4a5b';
+    await handleBackgroundMessage(ctx.deps, bg({ type: 'ACK_CONSENT', tabId: 1, ...GRANT }), popup);
+    const r = await handleBackgroundMessage(
+      ctx.deps,
+      bg({ type: 'START_RECORDING', meetingId: OTHER, tabId: 1, streamId: 's' }),
+      popup,
+    );
+    expect(r).toEqual({ ok: false, error: 'Consent was given for a different meeting' });
+    expect(ctx.deps.ensureOffscreen).not.toHaveBeenCalled();
+    // One-shot: the mismatched attempt consumed it, so the original meeting needs a fresh confirmation too.
+    const again = await handleBackgroundMessage(
+      ctx.deps,
+      bg({ type: 'START_RECORDING', meetingId: MID, tabId: 1, streamId: 's2' }),
+      popup,
+    );
+    expect(again.ok).toBe(false);
+  });
+
+  it('sends the method the user confirmed and the time they confirmed, not the start time', async () => {
+    await handleBackgroundMessage(
+      ctx.deps,
+      bg({ type: 'ACK_CONSENT', tabId: 1, meetingId: MID, method: 'all_parties_notified' }),
+      popup,
+    );
+    ctx.advance(30_000);
+    await handleBackgroundMessage(
+      ctx.deps,
+      bg({ type: 'START_RECORDING', meetingId: MID, tabId: 1, streamId: 'm' }),
+      popup,
+    );
+    expect(ctx.deps.sendToOffscreen).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'OFFSCREEN_START',
+        startedAt: 31_000,
+        consent: {
+          consentVersion: CURRENT_CONSENT_VERSION,
+          attestedAt: new Date(1000).toISOString(),
+          method: 'all_parties_notified',
+        },
+      }),
+    );
+  });
+
+  it('rejects ACK_CONSENT without a meeting or with an unknown method', async () => {
+    for (const m of [
+      { type: 'ACK_CONSENT', tabId: 1 },
+      { type: 'ACK_CONSENT', tabId: 1, meetingId: MID },
+      { type: 'ACK_CONSENT', tabId: 1, meetingId: 'meeting-1', method: 'all_parties_consented' },
+      { type: 'ACK_CONSENT', tabId: 1, meetingId: MID, method: 'implied' },
+    ]) {
+      const r = await handleBackgroundMessage(ctx.deps, bg(m), popup);
+      expect(r.ok).toBe(false);
+    }
+    const start = await handleBackgroundMessage(
+      ctx.deps,
+      bg({ type: 'START_RECORDING', meetingId: MID, tabId: 1, streamId: 's' }),
+      popup,
+    );
+    expect(start.ok).toBe(false);
+  });
+
   it('runs the full lifecycle and persists state in session storage', async () => {
-    await handleBackgroundMessage(ctx.deps, bg({ type: 'ACK_CONSENT', tabId: 1 }), popup);
+    await handleBackgroundMessage(ctx.deps, bg({ type: 'ACK_CONSENT', tabId: 1, ...GRANT }), popup);
     const s = await handleBackgroundMessage(
       ctx.deps,
       bg({ type: 'START_RECORDING', meetingId: MID, tabId: 1, streamId: 'sid' }),
@@ -93,6 +158,11 @@ describe('background handler', () => {
       meetingId: MID,
       streamId: 'sid',
       startedAt: 1000,
+      consent: {
+        consentVersion: CURRENT_CONSENT_VERSION,
+        attestedAt: new Date(1000).toISOString(),
+        method: 'all_parties_consented',
+      },
     });
 
     await handleBackgroundMessage(
@@ -114,7 +184,7 @@ describe('background handler', () => {
     );
 
     // A second start is refused while recording.
-    await handleBackgroundMessage(revived, bg({ type: 'ACK_CONSENT', tabId: 1 }), popup);
+    await handleBackgroundMessage(revived, bg({ type: 'ACK_CONSENT', tabId: 1, ...GRANT }), popup);
     expect(
       (
         await handleBackgroundMessage(
@@ -139,14 +209,19 @@ describe('background handler', () => {
         .ok,
     ).toBe(false);
     expect(
-      (await handleBackgroundMessage(ctx.deps, bg({ type: 'ACK_CONSENT', tabId: 1 }), offscreen))
-        .ok,
+      (
+        await handleBackgroundMessage(
+          ctx.deps,
+          bg({ type: 'ACK_CONSENT', tabId: 1, ...GRANT }),
+          offscreen,
+        )
+      ).ok,
     ).toBe(false);
   });
 
   it('resets to idle with an error if the offscreen doc fails to start', async () => {
     ctx.deps.sendToOffscreen.mockRejectedValueOnce(new Error('Permission dismissed'));
-    await handleBackgroundMessage(ctx.deps, bg({ type: 'ACK_CONSENT', tabId: 1 }), popup);
+    await handleBackgroundMessage(ctx.deps, bg({ type: 'ACK_CONSENT', tabId: 1, ...GRANT }), popup);
     const r = await handleBackgroundMessage(
       ctx.deps,
       bg({ type: 'START_RECORDING', meetingId: MID, tabId: 1, streamId: 's' }),
@@ -169,9 +244,15 @@ describe('background handler', () => {
     vi.stubGlobal('chrome', { storage: { session: area } });
     const { sessionKV } = await import('../src/lib/storage');
     const c = makeDeps(sessionKV() as ReturnType<typeof memoryKV>);
-    await handleBackgroundMessage(c.deps, bg({ type: 'ACK_CONSENT', tabId: 9 }), popup);
+    await handleBackgroundMessage(c.deps, bg({ type: 'ACK_CONSENT', tabId: 9, ...GRANT }), popup);
     expect(area.set).toHaveBeenCalledWith({
-      'consent:9': { tabId: 9, acknowledgedAt: 1000, expiresAt: 121000 },
+      'consent:9': {
+        tabId: 9,
+        meetingId: MID,
+        method: 'all_parties_consented',
+        acknowledgedAt: 1000,
+        expiresAt: 121000,
+      },
     });
     vi.unstubAllGlobals();
   });
@@ -193,7 +274,7 @@ describe('security review fixes', () => {
     const otherPage = { fromSelf: true, fromOffscreen: false, fromPopup: false };
     for (const m of [
       { type: 'GET_STATUS' },
-      { type: 'ACK_CONSENT', tabId: 1 },
+      { type: 'ACK_CONSENT', tabId: 1, ...GRANT },
       { type: 'START_RECORDING', meetingId: MID, tabId: 1, streamId: 's' },
       { type: 'STOP_RECORDING' },
     ]) {
@@ -205,11 +286,11 @@ describe('security review fixes', () => {
 
   it('consumes consent atomically: two concurrent starts, one acknowledgement, one wins', async () => {
     const { consumeConsent, recordConsent } = await import('../src/lib/consent-registry.js');
-    await recordConsent(ctx.deps.kv, 1, 1000);
+    await recordConsent(ctx.deps.kv, 1, 1000, GRANT);
     const rs = await Promise.all([
-      consumeConsent(ctx.deps.kv, 1, 1000),
-      consumeConsent(ctx.deps.kv, 1, 1000),
-      consumeConsent(ctx.deps.kv, 1, 1000),
+      consumeConsent(ctx.deps.kv, 1, 1000, MID),
+      consumeConsent(ctx.deps.kv, 1, 1000, MID),
+      consumeConsent(ctx.deps.kv, 1, 1000, MID),
     ]);
     expect(rs.filter((r) => r.ok)).toHaveLength(1);
   });
@@ -217,7 +298,7 @@ describe('security review fixes', () => {
   it('serialized() runs handlers one at a time', async () => {
     const { serialized } = await import('../src/lib/background-handler.js');
     const h = serialized(handleBackgroundMessage);
-    await h(ctx.deps, bg({ type: 'ACK_CONSENT', tabId: 1 }), popup);
+    await h(ctx.deps, bg({ type: 'ACK_CONSENT', tabId: 1, ...GRANT }), popup);
     const rs = await Promise.all([
       h(ctx.deps, bg({ type: 'START_RECORDING', meetingId: MID, tabId: 1, streamId: 'a' }), popup),
       h(ctx.deps, bg({ type: 'START_RECORDING', meetingId: MID, tabId: 1, streamId: 'b' }), popup),
@@ -227,16 +308,16 @@ describe('security review fixes', () => {
   });
 
   it('rejects a reused streamId', async () => {
-    await handleBackgroundMessage(ctx.deps, bg({ type: 'ACK_CONSENT', tabId: 1 }), popup);
+    await handleBackgroundMessage(ctx.deps, bg({ type: 'ACK_CONSENT', tabId: 1, ...GRANT }), popup);
     expect((await start(1, 'sid')).ok).toBe(true);
     await handleBackgroundMessage(ctx.deps, bg({ type: 'REC_STOPPED', chunkCount: 0 }), offscreen);
-    await handleBackgroundMessage(ctx.deps, bg({ type: 'ACK_CONSENT', tabId: 1 }), popup);
+    await handleBackgroundMessage(ctx.deps, bg({ type: 'ACK_CONSENT', tabId: 1, ...GRANT }), popup);
     expect(await start(1, 'sid')).toEqual({ ok: false, error: 'Stream id already used' });
   });
 
   it('stops when Chrome reports a different captured tab than the consented one', async () => {
     ctx.deps.capturedTabIds.mockResolvedValue([2]);
-    await handleBackgroundMessage(ctx.deps, bg({ type: 'ACK_CONSENT', tabId: 1 }), popup);
+    await handleBackgroundMessage(ctx.deps, bg({ type: 'ACK_CONSENT', tabId: 1, ...GRANT }), popup);
     await start(1, 'sid');
     const r = await handleBackgroundMessage(
       ctx.deps,
@@ -253,13 +334,13 @@ describe('security review fixes', () => {
   });
 
   it('shows REC while recording, clears on stop, ! on error', async () => {
-    await handleBackgroundMessage(ctx.deps, bg({ type: 'ACK_CONSENT', tabId: 1 }), popup);
+    await handleBackgroundMessage(ctx.deps, bg({ type: 'ACK_CONSENT', tabId: 1, ...GRANT }), popup);
     await start(1, 's1');
     await handleBackgroundMessage(ctx.deps, bg({ type: 'REC_STARTED', sessionId: 'u' }), offscreen);
     expect(ctx.deps.setBadge).toHaveBeenLastCalledWith('REC');
     await handleBackgroundMessage(ctx.deps, bg({ type: 'REC_STOPPED', chunkCount: 0 }), offscreen);
     expect(ctx.deps.setBadge).toHaveBeenLastCalledWith('');
-    await handleBackgroundMessage(ctx.deps, bg({ type: 'ACK_CONSENT', tabId: 1 }), popup);
+    await handleBackgroundMessage(ctx.deps, bg({ type: 'ACK_CONSENT', tabId: 1, ...GRANT }), popup);
     await start(1, 's2');
     await handleBackgroundMessage(ctx.deps, bg({ type: 'REC_STARTED', sessionId: 'u' }), offscreen);
     await handleBackgroundMessage(ctx.deps, bg({ type: 'REC_ERROR', error: 'x' }), offscreen);
@@ -270,7 +351,7 @@ describe('security review fixes', () => {
 describe('meetingId (contracts v0.2 @ a9d9d89)', () => {
   it('threads meetingId from START_RECORDING to OFFSCREEN_START and rejects non-UUIDs', async () => {
     const { deps } = makeDeps();
-    await handleBackgroundMessage(deps, bg({ type: 'ACK_CONSENT', tabId: 1 }), popup);
+    await handleBackgroundMessage(deps, bg({ type: 'ACK_CONSENT', tabId: 1, ...GRANT }), popup);
     const bad = await handleBackgroundMessage(
       deps,
       bg({ type: 'START_RECORDING', tabId: 1, streamId: 'x', meetingId: 'meeting-1' }),
@@ -297,7 +378,7 @@ describe('offscreen timeout', () => {
     deps.sendToOffscreen.mockImplementation(() => new Promise(() => undefined));
     const d = { ...deps, offscreenTimeoutMs: 20 };
     const h = serialized(handleBackgroundMessage);
-    await h(d, bg({ type: 'ACK_CONSENT', tabId: 1 }), popup);
+    await h(d, bg({ type: 'ACK_CONSENT', tabId: 1, ...GRANT }), popup);
     const r = await h(
       d,
       bg({ type: 'START_RECORDING', tabId: 1, streamId: 'hang', meetingId: MID }),
@@ -320,7 +401,7 @@ const S2 = '22222222-2222-4222-8222-222222222222';
 describe('pending discard marker (captured-tab mismatch)', () => {
   const mismatch = async (ctx: ReturnType<typeof makeDeps>) => {
     ctx.deps.capturedTabIds.mockResolvedValue([2]);
-    await handleBackgroundMessage(ctx.deps, bg({ type: 'ACK_CONSENT', tabId: 1 }), popup);
+    await handleBackgroundMessage(ctx.deps, bg({ type: 'ACK_CONSENT', tabId: 1, ...GRANT }), popup);
     await handleBackgroundMessage(
       ctx.deps,
       bg({ type: 'START_RECORDING', tabId: 1, streamId: crypto.randomUUID(), meetingId: MID }),
@@ -352,7 +433,7 @@ describe('pending discard marker (captured-tab mismatch)', () => {
       async (id: string) => void order.push(`discard:${id}`),
     );
     ctx.deps.capturedTabIds.mockResolvedValue([2]);
-    await handleBackgroundMessage(d, bg({ type: 'ACK_CONSENT', tabId: 1 }), popup);
+    await handleBackgroundMessage(d, bg({ type: 'ACK_CONSENT', tabId: 1, ...GRANT }), popup);
     // START also goes through sendToOffscreen; let it succeed once, then hang on DISCARD.
     ctx.deps.sendToOffscreen.mockResolvedValueOnce({ ok: true });
     await handleBackgroundMessage(
@@ -400,7 +481,7 @@ describe('discard that keeps failing (handler)', () => {
     const deleteLocal = vi.fn(async () => Promise.reject(new Error('still blocked')));
     const d = { ...ctx.deps, deleteLocal };
     ctx.deps.capturedTabIds.mockResolvedValue([2]);
-    await handleBackgroundMessage(d, bg({ type: 'ACK_CONSENT', tabId: 1 }), popup);
+    await handleBackgroundMessage(d, bg({ type: 'ACK_CONSENT', tabId: 1, ...GRANT }), popup);
     await handleBackgroundMessage(
       d,
       bg({ type: 'START_RECORDING', tabId: 1, streamId: 'x9', meetingId: MID }),
@@ -448,6 +529,7 @@ describe('retryPendingDiscards (worker start)', () => {
       mimeType: 'audio/webm;codecs=opus',
       startedAt: new Date(0).toISOString(),
       source: 'tab',
+      consent: CONSENT,
       meetingId: MID,
     });
     await store.putSession({
@@ -456,6 +538,7 @@ describe('retryPendingDiscards (worker start)', () => {
         mimeType: 'audio/webm',
         startedAt: new Date(0).toISOString(),
         source: 'tab',
+        consent: CONSENT,
         meetingId: MID,
       },
       completed: false,

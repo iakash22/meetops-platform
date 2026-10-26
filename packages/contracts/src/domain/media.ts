@@ -1,5 +1,17 @@
 import { Type, type Static } from '@sinclair/typebox';
 import { Id, IsoDateTime } from '../common.js';
+import { FILE_OBJECT_SCAN_STATUSES } from '../constants.js';
+
+/**
+ * v0.4.1 (G11): content / malware scan state of a FileObject (DB-3 `file_objects.scan_status`).
+ * `pending` until scanned; only `clean` objects may be processed or downloaded. `quarantined` objects are kept but
+ * never served; `rejected` objects failed validation (e.g. magic bytes) and are deleted by retention.
+ */
+export const FileObjectScanStatus = Type.Union(
+  FILE_OBJECT_SCAN_STATUSES.map((s) => Type.Literal(s)),
+);
+export type FileObjectScanStatus = (typeof FILE_OBJECT_SCAN_STATUSES)[number];
+export { FILE_OBJECT_SCAN_STATUSES } from '../constants.js';
 
 /** INTERNAL (api/worker only). Storage-provider independent object reference. Use PublicFileObject in responses. `provider` is a registry key (e.g. "s3", "minio", "local"). */
 export const FileObject = Type.Object({
@@ -11,6 +23,8 @@ export const FileObject = Type.Object({
   mimeType: Type.String({ minLength: 1 }),
   sizeBytes: Type.Integer({ minimum: 0 }),
   checksumSha256: Type.Optional(Type.String()),
+  /** v0.4.1: optional so pre-DB-3 rows stay valid; absent means not scanned (treat as `pending`). */
+  scanStatus: Type.Optional(FileObjectScanStatus),
   createdAt: IsoDateTime,
 });
 export type FileObject = Static<typeof FileObject>;
@@ -25,7 +39,11 @@ export const HttpsUrl = Type.String({ format: 'uri', pattern: '^https://', maxLe
  */
 export const PRESIGNED_URL_PATTERN =
   '^(https://[^\\s/?#@]+([/?#][^\\s]*)?|http://(localhost|127\\.0\\.0\\.1|minio|[a-z0-9-]+(\\.[a-z0-9-]+)*\\.localhost)(:[0-9]{1,5})?([/?#][^\\s]*)?)$';
-export const PresignedUrlString = Type.String({ format: 'uri', pattern: PRESIGNED_URL_PATTERN, maxLength: 4096 });
+export const PresignedUrlString = Type.String({
+  format: 'uri',
+  pattern: PRESIGNED_URL_PATTERN,
+  maxLength: 4096,
+});
 export type PresignedUrlString = Static<typeof PresignedUrlString>;
 
 const StringMap = Type.Record(Type.String({ maxLength: 256 }), Type.String({ maxLength: 4096 }));
@@ -59,7 +77,7 @@ export type PresignedUrlDto = Static<typeof PresignedUrlDto>;
 
 /**
  * Client-facing file. Never exposes storage provider, bucket or key;
- * content is fetched via the short-lived presigned `download` URL.
+ * content is fetched via the short-lived presigned `download` URL (expires at most MAX_PRESIGNED_GET_TTL_SECONDS out).
  */
 export const PublicFileObject = Type.Object({
   id: Id,
@@ -90,7 +108,7 @@ export const Recording = Type.Object({
 });
 export type Recording = Static<typeof Recording>;
 
-export { MAX_MEDIA_BYTES } from '../constants.js';
+export { MAX_MEDIA_BYTES, MAX_PRESIGNED_GET_TTL_SECONDS } from '../constants.js';
 
 /** Explicit allowlist of accepted media MIME types. */
 export const ALLOWED_MEDIA_MIME_TYPES = [

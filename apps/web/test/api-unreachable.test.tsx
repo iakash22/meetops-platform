@@ -52,7 +52,7 @@ describe('API unreachable on a signed-in page (E2E-10/11)', () => {
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     render(<App queryClient={queryClient} api={api} history={history} />);
 
-    expect(await screen.findByRole('button', { name: 'Sign in' })).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: 'Log in' })).toBeInTheDocument();
     expect(history.location.href).toBe('/login?next=%2Fmeetings');
     expect(screen.queryByText('Something went wrong!')).not.toBeInTheDocument();
     expect(screen.queryByTestId('app-shell')).not.toBeInTheDocument();

@@ -20,7 +20,6 @@ import type {
   Meeting,
   Paginated,
   PresignedUrlDto,
-  Project,
   SignupRequest,
   Task,
   ListTasksQuery,
@@ -35,6 +34,12 @@ import {
   EXTENSION_AUTH_PATHS,
   type ConflictReason,
 } from '@meetops/contracts/types';
+import { createHttpDirectoryApi, type DirectoryApi } from '@/features/directory/api';
+import {
+  DESKTOP_AUTHORIZE_PATH,
+  type DesktopAuthorizeRequest,
+  type DesktopAuthorizeResponse,
+} from '@/features/desktop/authorize';
 
 /** Contracts ApiErrorEnvelope codes plus 'UNKNOWN' when the body is unparseable. */
 export type ApiErrorCode = ContractApiErrorCode | 'UNKNOWN';
@@ -52,6 +57,8 @@ export class ApiError extends Error {
   readonly details: ReadonlyArray<{ path: string; message: string }>;
   /** 409 sub-reason (contracts CONFLICT_REASONS, e.g. LAST_OWNER), when the envelope carries a known one. */
   reason: ConflictReason | undefined = undefined;
+  /** Seconds from a 429/503 `Retry-After` header (delta-seconds or HTTP date), when present. */
+  retryAfterSeconds: number | undefined = undefined;
   constructor(
     public readonly status: number,
     code: ApiErrorCode,
@@ -98,6 +105,21 @@ export class ApiError extends Error {
       error.reason = e.reason as ConflictReason;
     return error;
   }
+}
+
+/** Parse `Retry-After` (RFC 9110 §10.2.3): delta-seconds or an HTTP-date. Capped at 1 h. */
+export function parseRetryAfter(value: string | null, now = Date.now()): number | undefined {
+  if (!value) return undefined;
+  const trimmed = value.trim();
+  let seconds: number;
+  if (/^\d+$/.test(trimmed)) seconds = Number(trimmed);
+  else {
+    const at = Date.parse(trimmed);
+    if (Number.isNaN(at)) return undefined;
+    seconds = Math.ceil((at - now) / 1000);
+  }
+  if (!Number.isFinite(seconds) || seconds <= 0) return undefined;
+  return Math.min(seconds, 3600);
 }
 
 function safeJson(text: string): unknown {
@@ -251,6 +273,13 @@ export type ApiClient = {
     /** POST /auth/extension/pair (ADR-005 A1.1). Cookie + CSRF; returns a single-use pairing code. */
     pair: (body: ExtensionPairRequest) => Promise<ExtensionPairResponse>;
   };
+  desktop: {
+    /**
+     * POST /auth/desktop/authorize (ADR-012 §1.4, Proposed). Cookie + CSRF; returns a single-use code for the
+     * loopback redirect. Not served by the API yet, so callers must handle 404/network errors.
+     */
+    authorize: (body: DesktopAuthorizeRequest) => Promise<DesktopAuthorizeResponse>;
+  };
   meetings: {
     list: (organizationId: Id) => Promise<Paginated<Meeting>>;
     get: (organizationId: Id, meetingId: Id) => Promise<Meeting>;
@@ -258,7 +287,8 @@ export type ApiClient = {
   tasks: {
     list: (organizationId: Id, filters?: TaskListFilters) => Promise<Paginated<Task>>;
   };
-  projects: { list: (organizationId: Id) => Promise<Paginated<Project>> };
+  /** Employees, teams, team members and projects (contracts v0.4 directory, BE-3). */
+  directory: DirectoryApi;
   /** Low-level request (cookie session + CSRF on non-GET). */
   request: <T>(method: HttpMethod, path: string, body?: unknown) => Promise<T>;
   storage: {
@@ -351,7 +381,10 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
         cachedCsrf = null;
         unauthorizedHandlers.forEach((h) => h());
       }
-      throw ApiError.fromResponse(res.status, data);
+      const error = ApiError.fromResponse(res.status, data);
+      if (res.status === 429 || res.status === 503)
+        error.retryAfterSeconds = parseRetryAfter(res.headers?.get?.('retry-after') ?? null);
+      throw error;
     }
     return data as T;
   }
@@ -475,13 +508,16 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
     extension: {
       pair: (body) => request('POST', EXTENSION_AUTH_PATHS.pair, body),
     },
+    desktop: {
+      authorize: (body) => request('POST', DESKTOP_AUTHORIZE_PATH, body),
+    },
     meetings: {
       list: (id) => request('GET', `${org(id)}/meetings`),
       get: (id, meetingId) =>
         request('GET', `${org(id)}/meetings/${encodeURIComponent(meetingId)}`),
     },
     tasks: { list: (id, filters) => request('GET', `${org(id)}/tasks${taskQuery(filters)}`) },
-    projects: { list: (id) => request('GET', `${org(id)}/projects`) },
+    directory: createHttpDirectoryApi(request),
     storage: {
       createUpload: (id, body) => request('POST', `${org(id)}/uploads`, body),
       putToPresignedUrl: async (upload, file) => {

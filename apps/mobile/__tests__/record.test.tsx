@@ -1,0 +1,175 @@
+import '@testing-library/react-native/extend-expect';
+import { act, fireEvent, render, screen } from '@testing-library/react-native';
+import { AccessibilityInfo, Animated } from 'react-native';
+
+import {
+  elapsedMs,
+  formatElapsed,
+  initialRecorderState,
+  recorderReducer,
+  spokenElapsed,
+} from '../src/record/recorderShell';
+import { createDemoConsentApi } from '../src/consent/consentApi';
+import { RepositoriesProvider } from '../src/data/RepositoriesProvider';
+import { RecordScreen } from '../src/screens/RecordScreen';
+import { makeRepositories } from './support/appRoutes';
+
+describe('recorder state machine', () => {
+  it('follows idle → recording → paused → recording → stopped → idle and keeps time', () => {
+    let s = recorderReducer(initialRecorderState, { type: 'start', now: 1_000 });
+    expect(s.phase).toBe('recording');
+    expect(elapsedMs(s, 4_000)).toBe(3_000);
+    s = recorderReducer(s, { type: 'pause', now: 4_000 });
+    expect(s.phase).toBe('paused');
+    expect(elapsedMs(s, 99_000)).toBe(3_000);
+    s = recorderReducer(s, { type: 'resume', now: 10_000 });
+    s = recorderReducer(s, { type: 'stop', now: 12_500 });
+    expect(s).toEqual({ phase: 'stopped', accumulatedMs: 5_500, startedAt: null });
+    expect(recorderReducer(s, { type: 'reset' })).toEqual(initialRecorderState);
+  });
+
+  it('ignores invalid transitions', () => {
+    expect(recorderReducer(initialRecorderState, { type: 'stop', now: 1 })).toBe(
+      initialRecorderState,
+    );
+    expect(recorderReducer(initialRecorderState, { type: 'pause', now: 1 })).toBe(
+      initialRecorderState,
+    );
+    const rec = recorderReducer(initialRecorderState, { type: 'start', now: 0 });
+    expect(recorderReducer(rec, { type: 'start', now: 5 })).toBe(rec);
+    expect(recorderReducer(rec, { type: 'reset' })).toBe(rec);
+  });
+
+  it('formats elapsed time for display and screen readers', () => {
+    expect(formatElapsed(0)).toBe('00:00');
+    expect(formatElapsed(65_900)).toBe('01:05');
+    expect(formatElapsed(3_723_000)).toBe('1:02:03');
+    expect(spokenElapsed(1_000)).toBe('1 second');
+    expect(spokenElapsed(65_000)).toBe('1 minute 5 seconds');
+    expect(spokenElapsed(3_600_000)).toBe('1 hour 0 minutes 0 seconds');
+  });
+});
+
+describe('Record tab UI', () => {
+  let loop: jest.SpyInstance;
+
+  beforeEach(() => {
+    jest.useFakeTimers({ now: new Date('2026-10-25T10:00:00Z') });
+    loop = jest
+      .spyOn(Animated, 'loop')
+      .mockReturnValue({ start: jest.fn(), stop: jest.fn(), reset: jest.fn() });
+  });
+
+  afterEach(() => {
+    jest.useRealTimers();
+    jest.restoreAllMocks();
+  });
+
+  async function renderRecord(
+    reducedMotion = false,
+    repos = makeRepositories({ consent: createDemoConsentApi({ optedIn: true }) }),
+  ) {
+    jest.spyOn(AccessibilityInfo, 'isReduceMotionEnabled').mockResolvedValue(reducedMotion);
+    render(
+      <RepositoriesProvider value={repos}>
+        <RecordScreen />
+      </RepositoriesProvider>,
+    );
+    await act(async () => {});
+  }
+
+  /** Start passes the per-recording participant notice (opt-in already given). */
+  async function startRecording() {
+    fireEvent.press(screen.getByTestId('record-button'));
+    await act(async () => {});
+    fireEvent.press(screen.getByTestId('consent-notice-accept'));
+    await act(async () => {});
+  }
+
+  const advance = (ms: number) =>
+    act(() => {
+      jest.advanceTimersByTime(ms);
+    });
+
+  it('starts idle with a preview-only notice and an empty upload queue', async () => {
+    await renderRecord();
+    expect(screen.getByTestId('record-preview-notice')).toHaveTextContent(
+      /Nothing is recorded, saved or uploaded/,
+    );
+    expect(screen.getByTestId('record-button')).toHaveProp('accessibilityLabel', 'Start recording');
+    expect(screen.getByTestId('record-button')).toHaveProp(
+      'accessibilityHint',
+      'Preview only, no audio is captured',
+    );
+    expect(screen.getByTestId('record-timer')).toHaveTextContent('00:00');
+    expect(screen.getByTestId('record-status')).toHaveTextContent('Ready');
+    expect(screen.getByTestId('upload-queue-status')).toHaveTextContent(
+      'Nothing waiting to upload.',
+    );
+    expect(screen.queryByTestId('record-pause')).toBeNull();
+  });
+
+  it('runs the timer while recording, pauses, resumes and stops without saving', async () => {
+    await renderRecord();
+    await startRecording();
+    expect(screen.getByTestId('record-status')).toHaveTextContent('Recording');
+    expect(screen.getByTestId('record-button')).toHaveProp('accessibilityLabel', 'Stop recording');
+    expect(screen.getAllByTestId('record-live-dot', { includeHiddenElements: true })).toHaveLength(
+      1,
+    );
+
+    advance(65_000);
+    expect(screen.getByTestId('record-timer')).toHaveTextContent('01:05');
+    expect(screen.getByTestId('record-timer')).toHaveProp(
+      'accessibilityLabel',
+      'Elapsed time 1 minute 5 seconds',
+    );
+
+    fireEvent.press(screen.getByTestId('record-pause'));
+    expect(screen.getByTestId('record-status')).toHaveTextContent('Paused');
+    advance(30_000);
+    expect(screen.getByTestId('record-timer')).toHaveTextContent('01:05');
+
+    fireEvent.press(screen.getByTestId('record-pause')); // Resume
+    advance(5_000);
+    expect(screen.getByTestId('record-timer')).toHaveTextContent('01:10');
+
+    fireEvent.press(screen.getByTestId('record-button'));
+    expect(screen.getByTestId('record-status')).toHaveTextContent('Stopped');
+    expect(screen.getByTestId('record-summary')).toHaveTextContent(
+      'Preview ended at 01:10. Nothing was saved.',
+    );
+    expect(screen.queryByTestId('record-button')).toBeNull();
+
+    fireEvent.press(screen.getByTestId('record-done'));
+    expect(screen.getByTestId('record-timer')).toHaveTextContent('00:00');
+    expect(screen.getByTestId('record-button')).toHaveProp('accessibilityLabel', 'Start recording');
+  });
+
+  it('pulses the halo while recording when motion is allowed', async () => {
+    await renderRecord(false);
+    expect(loop).not.toHaveBeenCalled();
+    await startRecording();
+    expect(loop).toHaveBeenCalled();
+  });
+
+  it('keeps the halo still when reduce motion is on', async () => {
+    await renderRecord(true);
+    await startRecording();
+    advance(2_000);
+    expect(loop).not.toHaveBeenCalled();
+    expect(screen.getByTestId('record-timer')).toHaveTextContent('00:02');
+  });
+
+  it('shows queued and offline states from the upload queue', async () => {
+    await renderRecord(
+      false,
+      makeRepositories({
+        uploadQueue: { status: () => Promise.resolve({ pending: 2, offline: true }) },
+      }),
+    );
+    expect(screen.getByTestId('upload-queue-status')).toHaveTextContent(
+      "Offline. 2 recordings waiting to upload. Uploads resume when you're back online.",
+    );
+  });
+});

@@ -1,4 +1,9 @@
-import { API_ERROR_REASONS, CONFLICT_REASONS, NOT_FOUND_REASONS } from '@meetops/contracts';
+import {
+  API_ERROR_REASONS,
+  CONFLICT_REASONS,
+  CONSENT_ERROR_REASONS,
+  NOT_FOUND_REASONS,
+} from '@meetops/contracts';
 
 import { ApiError, createApiClient, type ApiErrorReason } from '../src/api/client';
 
@@ -82,7 +87,7 @@ describe('createApiClient', () => {
     await expect(ok.logout()).resolves.toBeUndefined();
   });
 
-  it('accepts every contracts error reason (v0.4 CONFLICT and NOT_FOUND) on ApiError.reason', async () => {
+  it('accepts every contracts error reason (v0.4 CONFLICT and NOT_FOUND, v0.4.1 CONSENT) on ApiError.reason', async () => {
     // Type-level: the mobile reason type must stay identical to the contracts list, in both directions.
     type ContractsReason = (typeof API_ERROR_REASONS)[number];
     const toMobile = (r: ContractsReason): ApiErrorReason => r;
@@ -92,6 +97,11 @@ describe('createApiClient', () => {
     const cases = [
       ...CONFLICT_REASONS.map((reason) => ({ status: 409, code: 'CONFLICT' as const, reason })),
       ...NOT_FOUND_REASONS.map((reason) => ({ status: 404, code: 'NOT_FOUND' as const, reason })),
+      ...CONSENT_ERROR_REASONS.map((reason) => ({
+        status: 422,
+        code: 'VALIDATION_FAILED' as const,
+        reason,
+      })),
     ];
     expect(cases).toHaveLength(API_ERROR_REASONS.length);
     for (const { status, code, reason } of cases) {

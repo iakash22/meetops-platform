@@ -57,5 +57,5 @@ const styles = StyleSheet.create({
   },
   focused: { borderColor: colors.ring },
   invalid: { borderColor: colors.destructive },
-  error: { color: colors.destructive, fontSize: 13, marginTop: 6 },
+  error: { color: colors.destructiveText, fontSize: 13, marginTop: 6 },
 });

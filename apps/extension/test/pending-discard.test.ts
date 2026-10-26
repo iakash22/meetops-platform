@@ -16,6 +16,7 @@ import {
 } from '../src/lib/pending-discard.js';
 import { memoryKV } from '../src/lib/storage.js';
 import { StubUploadClient } from '../src/lib/upload.js';
+import { CONSENT } from './helpers/consent.js';
 
 const A = '11111111-1111-4111-8111-111111111111';
 const B = '22222222-2222-4222-8222-222222222222';
@@ -115,6 +116,7 @@ async function storeWith(...ids: string[]) {
     mimeType: 'audio/webm',
     startedAt: new Date(0).toISOString(),
     source: 'tab' as const,
+    consent: CONSENT,
     meetingId: MID,
   };
   for (const sessionId of ids) {
