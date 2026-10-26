@@ -252,6 +252,7 @@ model Organization {
   teams                  Team[]
   teamMembers            TeamMember[]
   consentAttestations    ConsentAttestation[]
+  integrationConnections IntegrationConnection[]
   authDevices            AuthDevice[]
   authTokenFamilies      AuthTokenFamily[]
   authRefreshTokens      AuthRefreshToken[]
@@ -1093,6 +1094,43 @@ model TranscriptChunk {
   @@unique([organizationId, id])
   @@index([organizationId, transcriptId])
   @@map("transcript_chunks")
+}
+
+enum IntegrationConnectionStatus {
+  active
+  error
+  revoked
+}
+
+/// Phase 5 (ADR-008): one connected provider account per organization. Secrets are stored only as TokenCipher
+/// envelopes (`v1.<keyId>.<wrappedKey>.<iv|ct|tag>`, AAD = org + integration id) produced by
+/// @meetops/integrations; this package never sees a KEK. `tokenKeyId` mirrors the envelope key id so key
+/// rotation can find rows to re-wrap. The webhook secret is per connection and bound to org_id by RLS.
+model IntegrationConnection {
+  id                   String                      @id @default(uuid()) @db.Uuid
+  organizationId       String                      @map("org_id") @db.Uuid
+  provider             String
+  status               IntegrationConnectionStatus @default(active)
+  displayName          String                      @map("display_name")
+  externalAccountId    String                      @map("external_account_id")
+  connectedById        String?                     @map("connected_by_id") @db.Uuid
+  /// NULL only once revoked (disconnect wipes every secret; enforced by a CHECK).
+  accessTokenEnc       String?                     @map("access_token_enc")
+  refreshTokenEnc      String?                     @map("refresh_token_enc")
+  webhookSecretEnc     String?                     @map("webhook_secret_enc")
+  tokenKeyId           String                      @map("token_key_id")
+  accessTokenExpiresAt DateTime?                   @map("access_token_expires_at") @db.Timestamptz(3)
+  /// Set by soft disconnect (status revoked). The app role has no DELETE on this table.
+  revokedAt            DateTime?                   @map("revoked_at") @db.Timestamptz(3)
+  createdAt            DateTime                    @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt            DateTime                    @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, id])
+  @@unique([organizationId, provider, externalAccountId])
+  @@index([tokenKeyId])
+  @@map("integration_connections")
 }
 
 /// ADR-005 A1.2 / ADR-012: who a bearer token family was issued to. `extension` today; `desktop` once ADR-012 is accepted.

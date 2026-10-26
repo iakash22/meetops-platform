@@ -132,6 +132,16 @@ export {
   type ListProjectsInput,
 } from './directory.js';
 export {
+  createIntegrationConnectionRepository,
+  type IntegrationConnectionRepository,
+  type IntegrationConnectionRepositoryOptions,
+  type IntegrationConnectionRecord,
+  type IntegrationConnectionStatusValue,
+  type IntegrationSecretCipher,
+  type IntegrationSecrets,
+  type UpsertIntegrationConnectionInput,
+} from './integration-connections.js';
+export {
   createAuthTokenRepository,
   AuthTokenHashError,
   AUTH_TOKEN_AUDIENCES,
