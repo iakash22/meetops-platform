@@ -54,11 +54,9 @@ import {
 } from '@/features/uploads/types';
 
 /** Contracts ApiErrorEnvelope codes plus 'UNKNOWN' when the body is unparseable. */
-export type ApiErrorCode = ContractApiErrorCode | LocalApiErrorCode | 'UNKNOWN';
-/** TODO(contracts): 'PAYLOAD_TOO_LARGE' (413) is added by #168 (contracts 0.5.0); drop this once it merges. */
-type LocalApiErrorCode = 'PAYLOAD_TOO_LARGE';
+export type ApiErrorCode = ContractApiErrorCode | 'UNKNOWN';
 
-const KNOWN_CODES = new Set<string>([...API_ERROR_CODES, 'PAYLOAD_TOO_LARGE']);
+const KNOWN_CODES = new Set<string>(API_ERROR_CODES);
 const KNOWN_REASONS = new Set<string>([...CONFLICT_REASONS, ...CONSENT_ERROR_REASONS]);
 
 /** 422 consent sub-reason (contracts CONSENT_ERROR_REASONS). */
@@ -323,7 +321,7 @@ export type ApiClient = {
       file: Blob,
       opts?: { onProgress?: (fraction: number) => void; signal?: AbortSignal },
     ) => Promise<void>;
-    /** POST .../uploads/:fileObjectId/complete. TODO(contracts): #168 CompleteUploadResponse. */
+    /** POST .../uploads/:fileObjectId/complete. Contracts CompleteUploadResponse. */
     completeUpload: (organizationId: Id, fileObjectId: Id) => Promise<CompleteUploadResponse>;
     /**
      * GET .../uploads/:fileObjectId/download-url. The API answers 404 until scanStatus is `clean`
@@ -559,7 +557,7 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
     directory: createHttpDirectoryApi(request),
     meetingInsights: createHttpMeetingInsightsApi(request),
     storage: {
-      createUpload: (id, body) => request('POST', uploadPaths.uploads(org(id)), body),
+      createUpload: (id, body) => request('POST', uploadPaths.uploads(id), body),
       putToPresignedUrl: async (upload, file, opts = {}) => {
         assertHttpsUrl(upload.url);
         const { onProgress, signal } = opts;
@@ -578,13 +576,13 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
         if (!res.ok) throw new ApiError(res.status, 'UNKNOWN', 'Upload failed');
       },
       completeUpload: (id, fileObjectId) =>
-        request('POST', uploadPaths.complete(org(id), fileObjectId), {}),
+        request('POST', uploadPaths.complete(id, fileObjectId), {}),
       getDownloadUrl: (id, fileObjectId) =>
-        request('GET', uploadPaths.downloadUrl(org(id), fileObjectId)),
+        request('GET', uploadPaths.downloadUrl(id, fileObjectId)),
     },
     consentSettings: {
-      get: (id) => request('GET', uploadPaths.consentSettings(org(id))),
-      update: (id, body) => request('PATCH', uploadPaths.consentSettings(org(id)), body),
+      get: (id) => request('GET', uploadPaths.consentSettings(id)),
+      update: (id, body) => request('PATCH', uploadPaths.consentSettings(id), body),
     },
   };
 }
