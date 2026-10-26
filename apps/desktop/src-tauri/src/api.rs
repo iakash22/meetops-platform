@@ -72,7 +72,6 @@ impl ApiState {
     }
 
     /// Rust-only: the auth module stores/clears the access token here. Not exposed as a command.
-    #[allow(dead_code)]
     pub fn set_access_token(&self, token: Option<String>) {
         if let Ok(mut slot) = self.token.lock() {
             *slot = token;
