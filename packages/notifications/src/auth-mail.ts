@@ -1,4 +1,5 @@
-import { escapeHtml, renderTemplate, safeUrl, type RenderedEmail } from './templates.js';
+import { renderEmail } from './email/catalog.js';
+import { renderTemplate, type RenderedEmail } from './templates.js';
 import type { EmailService } from './types.js';
 
 /**
@@ -34,15 +35,6 @@ function required(data: Record<string, string>, key: string): string {
   return v;
 }
 
-function simple(subject: string, intro: string, url: string, label: string): RenderedEmail {
-  const safe = safeUrl(url);
-  return {
-    subject,
-    html: `<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(subject)}</title></head><body style="font-family:Arial,sans-serif;line-height:1.5;color:#111"><p>${escapeHtml(intro)}</p><p><a href="${escapeHtml(safe)}">${escapeHtml(label)}</a></p><p style="color:#666;font-size:12px">— MeetOps</p></body></html>`,
-    text: `${intro}\n\n${label}: ${safe}`,
-  };
-}
-
 /** Renders one auth mail. Exported for tests and previews. */
 export function renderAuthMail(
   mail: AuthOutboundMail,
@@ -69,19 +61,9 @@ export function renderAuthMail(
         inviteUrl: url,
       });
     case 'account_exists':
-      return simple(
-        'You already have a MeetOps account',
-        'Someone tried to sign up with this email address, but it already has an account. If that was you, sign in or reset your password.',
-        url,
-        'Reset password',
-      );
+      return renderEmail('account-exists', { resetUrl: url });
     case 'login_lockout':
-      return simple(
-        'Sign-in temporarily locked',
-        'We locked sign-in to your account for a short time after several failed attempts. If that was not you, reset your password.',
-        url,
-        'Reset password',
-      );
+      return renderEmail('login-lockout', { resetUrl: url });
     default:
       throw new UnknownAuthMailTemplateError(String((mail as { template: unknown }).template));
   }
@@ -95,7 +77,14 @@ export function createAuthMailTransport(
   return {
     async send(mail: AuthOutboundMail): Promise<void> {
       const rendered = renderAuthMail(mail, options);
-      await service.send({ to: mail.to, ...rendered });
+      // Inline CID images (logo, banner GIF) must travel with the HTML that references them.
+      await service.send({
+        to: mail.to,
+        subject: rendered.subject,
+        html: rendered.html,
+        text: rendered.text,
+        attachments: rendered.attachments,
+      });
     },
   };
 }
