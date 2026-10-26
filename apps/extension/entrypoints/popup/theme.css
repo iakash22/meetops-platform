@@ -175,7 +175,6 @@ a {
 
 .mo-pill--pending .mo-pill__dot {
   background: var(--mo-link);
-  animation: mo-pulse 1.2s ease-in-out infinite;
 }
 
 .mo-pill--warning {
@@ -193,7 +192,8 @@ a {
   align-items: center;
   justify-content: center;
   width: 100%;
-  min-height: 36px;
+  /* WCAG 2.5.5 / references.md: tap targets ≥ 44px. */
+  min-height: 44px;
   margin: 0;
   padding: 8px 14px;
   font: inherit;
@@ -241,8 +241,8 @@ a {
 .mo-btn--ghost {
   width: auto;
   align-self: flex-start;
-  min-height: 30px;
-  padding: 4px 10px;
+  min-height: 44px;
+  padding: 4px 14px;
   font-size: 13px;
   color: var(--mo-foreground);
   background: transparent;
@@ -304,7 +304,6 @@ a {
   border-radius: 999px;
   background: var(--mo-highlight);
   box-shadow: 0 0 8px rgb(255 45 149 / 60%);
-  animation: mo-pulse 1.4s ease-in-out infinite;
 }
 
 /* Toast (non-field errors) ---------------------------------------------- */
@@ -318,7 +317,6 @@ a {
   border: 1px solid rgb(239 68 68 / 45%);
   border-radius: var(--mo-radius);
   box-shadow: 0 8px 24px rgb(0 0 0 / 45%);
-  animation: mo-toast-in var(--mo-normal) ease-out;
 }
 
 @keyframes mo-pulse {
@@ -363,13 +361,15 @@ a {
   align-items: flex-start;
   font-size: 13px;
   line-height: 1.4;
+  min-height: 44px;
+  padding: 4px 0;
   cursor: pointer;
 }
 
 .mo-consent__check input {
   flex: none;
-  width: 16px;
-  height: 16px;
+  width: 18px;
+  height: 18px;
   margin: 1px 0 0;
   accent-color: var(--mo-primary);
   cursor: pointer;
@@ -378,4 +378,86 @@ a {
 .mo-consent__check input:focus-visible {
   outline: 2px solid var(--mo-ring);
   outline-offset: 2px;
+}
+
+/* Status, hints and re-auth (extension popup UI pass) ---------------------- */
+
+.mo-row--center {
+  align-items: center;
+}
+
+.mo-row > .mo-grow,
+.mo-grow {
+  flex: 1;
+  margin: 0;
+}
+
+.mo-hint,
+.mo-section > .mo-hint {
+  margin: 0;
+  font-size: 12px;
+  color: var(--mo-muted-foreground);
+}
+
+.mo-callout__title {
+  font-weight: 600;
+}
+
+.mo-callout--warning {
+  border-color: rgb(245 165 36 / 45%);
+}
+
+.mo-callout--warning .mo-muted {
+  color: var(--mo-muted-foreground);
+}
+
+.mo-consent .mo-consent__ok {
+  font-size: 12px;
+  color: var(--mo-link);
+}
+
+.mo-live--recording {
+  border-color: rgb(255 45 149 / 35%);
+}
+
+/* Static ring by default; it only spins when motion is allowed. */
+.mo-spinner {
+  display: inline-block;
+  flex: none;
+  width: 12px;
+  height: 12px;
+  margin-right: 6px;
+  vertical-align: -1px;
+  border: 2px solid var(--mo-border);
+  border-top-color: var(--mo-link);
+  border-radius: 999px;
+}
+
+.mo-live__line .mo-spinner {
+  margin-right: 0;
+}
+
+/* Animations run only when the user has not asked for reduced motion; under `reduce` the static end state shows. */
+@media (prefers-reduced-motion: no-preference) {
+  .mo-pill--pending .mo-pill__dot {
+    animation: mo-pulse 1.2s ease-in-out infinite;
+  }
+
+  .mo-live-dot {
+    animation: mo-pulse 1.4s ease-in-out infinite;
+  }
+
+  .mo-toast {
+    animation: mo-toast-in var(--mo-normal) ease-out;
+  }
+
+  .mo-spinner {
+    animation: mo-spin 0.8s linear infinite;
+  }
+}
+
+@keyframes mo-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }

@@ -145,7 +145,13 @@ Use them on every screen, not only auth. Never put a raw `err.message` in the UI
 
 - **No SSO, testimonials, logos, ratings, security claims or "14-day trial".** None of these
   exist yet, so nothing is invented. The testimonial slot renders nothing (TODO).
-- **No Terms/Privacy line.** There are no legal pages yet (`TODO(legal)` in `auth-layout.tsx`).
+- **Terms/Privacy line is env-gated.** `LegalLine` in `auth-layout.tsx` renders "By continuing, you
+  agree to the Terms of Service and Privacy Policy" only when both `VITE_TERMS_URL` and
+  `VITE_PRIVACY_URL` are set (https or same-origin path). Until the legal pages exist nothing renders.
+- **Toasts run on Sonner.** `components/ui/toast.tsx` keeps the same `toast`/`Toaster` API and our
+  own themed card (`sonner.custom`); motion is disabled under `prefers-reduced-motion: reduce`.
+- **429 countdown.** The API client reads `Retry-After` (seconds or HTTP date, capped at 1 h) into
+  `ApiError.retryAfterSeconds`; `toastError` then shows "Try again in N seconds." updating in place.
 - **Login CTA uses the default cerulean button instead of a `highlight` variant.** This lane
   doesn't touch `components/ui`.
 - **No amber token.** Strength score 2 ("Weak") uses `bg-destructive/60`. Follow-up: add a

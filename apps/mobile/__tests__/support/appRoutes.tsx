@@ -1,3 +1,4 @@
+import { createDemoConsentApi } from '../../src/consent/consentApi';
 import { Slot } from 'expo-router';
 
 import AppLayout from '../../app/(app)/_layout';
@@ -31,6 +32,7 @@ export function makeRepositories(overrides: Partial<Repositories> = {}): Reposit
     meetings: createPlaceholderMeetingsRepository(),
     tasks: createPlaceholderTasksRepository(),
     uploadQueue: createPlaceholderUploadQueue(),
+    consent: createDemoConsentApi(),
     ...overrides,
   };
 }

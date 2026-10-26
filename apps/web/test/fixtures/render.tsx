@@ -86,6 +86,10 @@ export function createMockApi(
       pair: vi.fn().mockResolvedValue(pairResponse),
       ...overrides.extension,
     },
+    desktop: {
+      authorize: vi.fn().mockResolvedValue({ code: 'C'.repeat(43) }),
+      ...overrides.desktop,
+    },
     meetings: {
       list: vi.fn().mockResolvedValue(meetings),
       get: vi.fn().mockResolvedValue(meeting1),
