@@ -55,7 +55,7 @@ const upload = {
 };
 
 describe('v0.4.1 package version', () => {
-  it('is 0.4.1', () => expect(pkg.version).toBe('0.4.1'));
+  it('is 0.4.1 or a later 0.x', () => expect(pkg.version).toMatch(/^0\.(4\.[1-9]\d*|5\.\d+)$/));
 });
 
 describe('v0.4.1 consent attestation (G11)', () => {

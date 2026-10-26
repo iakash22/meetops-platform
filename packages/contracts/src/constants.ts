@@ -21,6 +21,7 @@ export const API_ERROR_CODES = [
   'FORBIDDEN',
   'NOT_FOUND',
   'CONFLICT',
+  'PAYLOAD_TOO_LARGE',
   'RATE_LIMITED',
   'PROVIDER_UNAVAILABLE',
   'INTERNAL',
@@ -86,6 +87,12 @@ export const CONSENT_ERROR_REASONS = [
 ] as const;
 /** v0.4.1: HTTP status for every consent rejection (CONSENT_ERROR_REASONS). */
 export const CONSENT_HTTP_STATUS = 422;
+/**
+ * v0.5.0: HTTP status for `code: 'PAYLOAD_TOO_LARGE'`. Returned when a
+ * recording session's running total would exceed MAX_RECORDING_SESSION_BYTES (1.4 GB) on a chunk-URL request, or an
+ * upload's `sizeBytes` exceeds MAX_UPLOAD_BYTES. No presigned URL is issued.
+ */
+export const PAYLOAD_TOO_LARGE_HTTP_STATUS = 413;
 
 /**
  * Every value `ApiErrorEnvelope.error.reason` may take: CONFLICT_REASONS (with `code: 'CONFLICT'`), then
@@ -287,3 +294,31 @@ export const REALTIME_CONTROL_EVENTS = {
 export const ORG_ACCESS_CHANGE_REASONS = ['member_removed', 'role_changed'] as const;
 /** v0.4.1: `auth:reauth-required` reasons. */
 export const REAUTH_REASONS = ['org_switch', 'session_expired', 'revalidation_failed'] as const;
+
+/**
+ * v0.5.0: consent / retention settings.
+ * - `mode`: `all_party` (every participant must consent) or `one_party` (the recording user's attestation suffices).
+ */
+export const CONSENT_SETTINGS_MODES = ['all_party', 'one_party'] as const;
+/** v0.5.0: roles allowed to PATCH consent settings. Every role may GET them (rbac-matrix "Consent / retention settings"). */
+export const CONSENT_SETTINGS_WRITE_ROLES = ['owner', 'admin'] as const;
+/** v0.5.0: max length of the consent notice text shown to participants. */
+export const MAX_CONSENT_NOTICE_TEXT_LENGTH = 4000;
+/** v0.5.0: recording retention range in days (1 day .. 10 years). */
+export const MIN_RETENTION_DAYS = 1;
+export const MAX_RETENTION_DAYS = 3650;
+
+/**
+ * v0.5.0: consent settings and upload lifecycle route templates. Org-scoped; the API MUST check
+ * `:organizationId` equals the session's active organization (mismatch or other-org id -> NOT_FOUND).
+ * - `consentSettings`: GET (all roles) and PATCH (owner/admin, partial update, CSRF, audit-logged).
+ * - `uploadComplete`: POST. Verifies size/checksum and the stored consent attestation; 422 + ConsentErrorReason and
+ *   no media job enqueued when the attestation is missing or invalid.
+ * - `uploadDownloadUrl`: GET. Presigned GET valid for at most MAX_PRESIGNED_GET_TTL_SECONDS (300 s).
+ */
+export const CONSENT_UPLOAD_PATHS = {
+  consentSettings: '/orgs/:organizationId/settings/consent',
+  uploads: '/orgs/:organizationId/uploads',
+  uploadComplete: '/orgs/:organizationId/uploads/:fileObjectId/complete',
+  uploadDownloadUrl: '/orgs/:organizationId/uploads/:fileObjectId/download-url',
+} as const;
