@@ -1,6 +1,7 @@
 import {
   createPrismaClient,
   getPrismaClient,
+  withOrganizationContext,
   withOrgContext,
   withUserContext,
   type DatabaseClient,
@@ -11,6 +12,7 @@ import {
 export {
   createPrismaClient,
   getPrismaClient,
+  withOrganizationContext,
   withOrgContext,
   withUserContext,
   type DatabaseClient,
