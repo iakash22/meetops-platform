@@ -85,7 +85,7 @@ function FilterSelect({
       <Label htmlFor={id}>{label}</Label>
       <select
         id={id}
-        className="h-9 rounded-md border border-input bg-background px-2 text-sm"
+        className="min-h-11 h-9 rounded-md border border-input bg-background px-2 text-sm"
         value={value ?? ''}
         onChange={(e) => onChange(e.target.value || undefined)}
       >

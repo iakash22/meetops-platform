@@ -87,6 +87,7 @@ const ReviewCard = memo(function ReviewCard({
         <div className="space-y-1">
           <Label htmlFor={`${fid}-title`}>Title</Label>
           <Input
+            className="min-h-11"
             id={`${fid}-title`}
             value={title}
             aria-invalid={error ? true : undefined}
@@ -119,10 +120,16 @@ const ReviewCard = memo(function ReviewCard({
             </select>
           </div>
           <div className="flex gap-2">
-            <Button type="button" variant="outline" disabled={busy} onClick={onDismiss}>
+            <Button
+              className="min-h-11"
+              type="button"
+              variant="outline"
+              disabled={busy}
+              onClick={onDismiss}
+            >
               <X aria-hidden /> Dismiss
             </Button>
-            <Button type="submit" disabled={busy}>
+            <Button className="min-h-11" type="submit" disabled={busy}>
               <Check aria-hidden /> Accept
             </Button>
           </div>
