@@ -48,6 +48,12 @@ export function AppShell({
 
   return (
     <div className="flex h-full" data-testid="app-shell">
+      <a
+        href="#main-content"
+        className="sr-only focus:not-sr-only focus:absolute focus:left-2 focus:top-2 focus:z-50 focus:rounded-md focus:bg-card focus:px-3 focus:py-2 focus:text-sm focus:text-link focus:ring-2 focus:ring-ring"
+      >
+        Skip to content
+      </a>
       <aside
         id="app-sidebar"
         aria-label="Sidebar"
@@ -72,7 +78,7 @@ export function AppShell({
                 title={collapsed ? label : undefined}
                 onClick={() => onNavigate(v)}
                 className={cn(
-                  'relative flex items-center gap-2 rounded-md py-2 text-left text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+                  'relative flex min-h-11 items-center gap-2 rounded-md py-2 text-left text-sm motion-safe:transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
                   collapsed ? 'justify-center px-0' : 'px-3',
                   active
                     ? 'bg-accent font-medium text-foreground before:absolute before:inset-y-1.5 before:left-0 before:w-0.5 before:rounded-full before:bg-highlight'
@@ -94,7 +100,7 @@ export function AppShell({
             aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
             title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
             className={cn(
-              'flex w-full items-center gap-2 rounded-md py-2 text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+              'flex min-h-11 w-full items-center gap-2 rounded-md py-2 text-sm text-muted-foreground motion-safe:transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
               collapsed ? 'justify-center px-0' : 'px-3',
             )}
           >
@@ -112,7 +118,13 @@ export function AppShell({
             {session ? displayName(session) : null}
           </span>
         </header>
-        <main className="flex-1 overflow-y-auto p-6">{children}</main>
+        <main
+          id="main-content"
+          tabIndex={-1}
+          className="flex-1 overflow-y-auto p-6 focus:outline-none"
+        >
+          {children}
+        </main>
       </div>
     </div>
   );
