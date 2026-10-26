@@ -29,6 +29,8 @@ export const User = Type.Object({
   avatarUrl: Type.Optional(Type.String({ format: 'uri', pattern: '^https://', maxLength: 2048 })),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
+  /** 0.7.0: when the email was verified; null while unverified. Returned by GET /auth/session. */
+  emailVerifiedAt: Type.Optional(Type.Union([IsoDateTime, Type.Null()])),
 });
 export type User = Static<typeof User>;
 
