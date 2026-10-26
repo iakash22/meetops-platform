@@ -1,6 +1,10 @@
-import { createRoute, useSearch, type AnyRoute } from '@tanstack/react-router';
-import { MembersPage } from '@/features/members/members-page';
+import { createRoute, lazyRouteComponent, useSearch, type AnyRoute } from '@tanstack/react-router';
 import { useOrganizationId } from '@/lib/api/queries';
+
+const MembersPage = lazyRouteComponent(
+  () => import('@/features/members/members-page'),
+  'MembersPage',
+);
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
