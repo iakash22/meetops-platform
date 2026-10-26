@@ -3,8 +3,8 @@ import type {
   AuthSession,
   CreateOrganizationRequest,
   CreateOrganizationResponse,
-  CreateUploadRequest,
-  CreateUploadResponse,
+  InitUploadRequest,
+  InitUploadResponse,
   CsrfResponse,
   ExtensionPairRequest,
   ExtensionPairResponse,
@@ -31,6 +31,7 @@ import type {
 import {
   API_ERROR_CODES,
   CONFLICT_REASONS,
+  CONSENT_ERROR_REASONS,
   EXTENSION_AUTH_PATHS,
   type ConflictReason,
 } from '@meetops/contracts/types';
@@ -40,12 +41,22 @@ import {
   type DesktopAuthorizeRequest,
   type DesktopAuthorizeResponse,
 } from '@/features/desktop/authorize';
+import {
+  uploadPaths,
+  type CompleteUploadResponse,
+  type ConsentSettings,
+  type DownloadUrlResponse,
+  type UpdateConsentSettingsRequest,
+} from '@/features/uploads/types';
 
 /** Contracts ApiErrorEnvelope codes plus 'UNKNOWN' when the body is unparseable. */
 export type ApiErrorCode = ContractApiErrorCode | 'UNKNOWN';
 
 const KNOWN_CODES = new Set<string>(API_ERROR_CODES);
-const KNOWN_REASONS = new Set<string>(CONFLICT_REASONS);
+const KNOWN_REASONS = new Set<string>([...CONFLICT_REASONS, ...CONSENT_ERROR_REASONS]);
+
+/** 422 consent sub-reason (contracts CONSENT_ERROR_REASONS). */
+export type ConsentErrorReason = (typeof CONSENT_ERROR_REASONS)[number];
 
 /**
  * Error from the API. `message` is the server-provided envelope message (never
@@ -55,8 +66,11 @@ export class ApiError extends Error {
   readonly code: ApiErrorCode;
   readonly requestId: string | undefined;
   readonly details: ReadonlyArray<{ path: string; message: string }>;
-  /** 409 sub-reason (contracts CONFLICT_REASONS, e.g. LAST_OWNER), when the envelope carries a known one. */
-  reason: ConflictReason | undefined = undefined;
+  /**
+   * Known sub-reason, when the envelope carries one: 409 CONFLICT_REASONS (e.g. LAST_OWNER) or
+   * 422 CONSENT_ERROR_REASONS (e.g. CONSENT_REQUIRED).
+   */
+  reason: ConflictReason | ConsentErrorReason | undefined = undefined;
   constructor(
     public readonly status: number,
     code: ApiErrorCode,
@@ -100,7 +114,7 @@ export class ApiError extends Error {
       : [];
     const error = new ApiError(status, code, message, requestId, details);
     if (typeof e.reason === 'string' && KNOWN_REASONS.has(e.reason))
-      error.reason = e.reason as ConflictReason;
+      error.reason = e.reason as ConflictReason | ConsentErrorReason;
     return error;
   }
 }
@@ -275,10 +289,27 @@ export type ApiClient = {
   /** Low-level request (cookie session + CSRF on non-GET). */
   request: <T>(method: HttpMethod, path: string, body?: unknown) => Promise<T>;
   storage: {
-    /** POST /orgs/:organizationId/uploads; returns a presigned PUT (PresignedUrlDto). */
-    createUpload: (organizationId: Id, body: CreateUploadRequest) => Promise<CreateUploadResponse>;
+    /**
+     * POST /orgs/:organizationId/uploads with InitUploadRequest (consent attestation required);
+     * returns a presigned PUT (900 s) that signs content-length and sha256.
+     */
+    initUpload: (organizationId: Id, body: InitUploadRequest) => Promise<InitUploadResponse>;
     /** PUT the file to object storage. No cookies, no CSRF (third-party origin). */
-    putToPresignedUrl: (upload: PresignedUrlDto, file: Blob) => Promise<void>;
+    putToPresignedUrl: (
+      upload: PresignedUrlDto,
+      file: Blob,
+      onProgress?: (loaded: number, total: number) => void,
+      signal?: AbortSignal,
+    ) => Promise<void>;
+    /** POST .../uploads/:fileObjectId/complete. TODO(contracts): #168 CompleteUploadResponse. */
+    completeUpload: (organizationId: Id, fileObjectId: Id) => Promise<CompleteUploadResponse>;
+    /** GET .../uploads/:fileObjectId/download-url (409 while the scan is pending). Never cache. */
+    getDownloadUrl: (organizationId: Id, fileObjectId: Id) => Promise<DownloadUrlResponse>;
+  };
+  /** Org consent / retention settings (contracts #168). GET all roles; PATCH owner/admin. */
+  consentSettings: {
+    get: (organizationId: Id) => Promise<ConsentSettings>;
+    update: (organizationId: Id, body: UpdateConsentSettingsRequest) => Promise<ConsentSettings>;
   };
   /** Register a handler for 401 responses (excluding auth endpoints). Returns unsubscribe. */
   onUnauthorized: (handler: () => void) => () => void;
@@ -499,18 +530,56 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
     tasks: { list: (id, filters) => request('GET', `${org(id)}/tasks${taskQuery(filters)}`) },
     directory: createHttpDirectoryApi(request),
     storage: {
-      createUpload: (id, body) => request('POST', `${org(id)}/uploads`, body),
-      putToPresignedUrl: async (upload, file) => {
+      initUpload: (id, body) => request('POST', uploadPaths.uploads(org(id)), body),
+      putToPresignedUrl: async (upload, file, onProgress, signal) => {
         if (!upload.url.startsWith('https://'))
           throw new ApiError(0, 'BAD_REQUEST', 'Insecure upload URL');
+        // XHR only when progress is wanted: fetch() has no upload progress events.
+        if (onProgress && !options.fetch && typeof XMLHttpRequest !== 'undefined') {
+          await xhrPut(upload, file, onProgress, signal);
+          return;
+        }
         const res = await doFetch(upload.url, {
           method: upload.method,
           headers: { ...(upload.headers ?? {}) },
           body: file,
           credentials: 'omit',
+          ...(signal ? { signal } : {}),
         });
         if (!res.ok) throw new ApiError(res.status, 'UNKNOWN', 'Upload failed');
       },
+      completeUpload: (id, fileObjectId) =>
+        request('POST', uploadPaths.complete(org(id), fileObjectId), {}),
+      getDownloadUrl: (id, fileObjectId) =>
+        request('GET', uploadPaths.downloadUrl(org(id), fileObjectId)),
+    },
+    consentSettings: {
+      get: (id) => request('GET', uploadPaths.consentSettings(org(id))),
+      update: (id, body) => request('PATCH', uploadPaths.consentSettings(org(id)), body),
     },
   };
+}
+
+/** Presigned PUT with upload progress. No cookies (withCredentials false), no CSRF. */
+function xhrPut(
+  upload: PresignedUrlDto,
+  file: Blob,
+  onProgress: (loaded: number, total: number) => void,
+  signal?: AbortSignal,
+): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open(upload.method, upload.url);
+    xhr.withCredentials = false;
+    for (const [k, v] of Object.entries(upload.headers ?? {})) xhr.setRequestHeader(k, v);
+    xhr.upload.onprogress = (e) => onProgress(e.loaded, e.lengthComputable ? e.total : file.size);
+    xhr.onload = () =>
+      xhr.status >= 200 && xhr.status < 300
+        ? resolve()
+        : reject(new ApiError(xhr.status, 'UNKNOWN', 'Upload failed'));
+    xhr.onerror = () => reject(new ApiError(0, 'UNKNOWN', 'Upload failed'));
+    xhr.onabort = () => reject(new DOMException('Upload aborted', 'AbortError'));
+    signal?.addEventListener('abort', () => xhr.abort(), { once: true });
+    xhr.send(file);
+  });
 }

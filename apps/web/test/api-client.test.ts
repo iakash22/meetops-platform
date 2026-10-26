@@ -271,7 +271,7 @@ describe('CSRF header by method', () => {
 });
 
 describe('uploads (PresignedUrlDto)', () => {
-  it('POSTs CreateUploadRequest with CSRF and returns CreateUploadResponse', async () => {
+  it('POSTs InitUploadRequest (with consent) and CSRF, returns InitUploadResponse', async () => {
     const fetchMock = vi.fn().mockResolvedValue(jsonResponse(uploadResponse, 201));
     const api = createApiClient({
       baseUrl: 'http://api',
@@ -283,8 +283,13 @@ describe('uploads (PresignedUrlDto)', () => {
       mimeType: 'audio/webm',
       sizeBytes: 1024,
       checksumSha256: 'ungWv48Bz+pBQUDeXa4iI7ADYaOWF3qctBD/YfIAFa0=',
+      consent: {
+        consentVersion: '2026-10',
+        attestedAt: '2026-10-26T10:00:00.000Z',
+        method: 'all_parties_consented' as const,
+      },
     };
-    const res = await api.storage.createUpload('00000000-0000-4000-8000-000000000001', body);
+    const res = await api.storage.initUpload('00000000-0000-4000-8000-000000000001', body);
     expect(res.upload.method).toBe('PUT');
     expect(res.upload.url.startsWith('https://')).toBe(true);
     expect(typeof res.upload.expiresAt).toBe('string');
