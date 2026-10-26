@@ -280,7 +280,7 @@ describe('CSRF header by method', () => {
 });
 
 describe('uploads (PresignedUrlDto)', () => {
-  it('POSTs CreateUploadRequest with CSRF and returns CreateUploadResponse', async () => {
+  it('POSTs InitUploadRequest (with consent) and CSRF, returns CreateUploadResponse', async () => {
     const fetchMock = vi.fn().mockResolvedValue(jsonResponse(uploadResponse, 201));
     const api = createApiClient({
       baseUrl: 'http://api',

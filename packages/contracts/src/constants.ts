@@ -322,3 +322,14 @@ export const CONSENT_UPLOAD_PATHS = {
   uploadComplete: '/orgs/:organizationId/uploads/:fileObjectId/complete',
   uploadDownloadUrl: '/orgs/:organizationId/uploads/:fileObjectId/download-url',
 } as const;
+
+/**
+ * v0.6.0: meeting route templates. Org-scoped like CONSENT_UPLOAD_PATHS (path org must be the session's active org,
+ * otherwise NOT_FOUND).
+ * - `meetings`: GET, `ListMeetingsQuery` -> `CursorPage<Meeting>` (every role).
+ * - `meeting`: GET -> `Meeting`.
+ */
+export const MEETING_PATHS = {
+  meetings: '/orgs/:organizationId/meetings',
+  meeting: '/orgs/:organizationId/meetings/:meetingId',
+} as const;
