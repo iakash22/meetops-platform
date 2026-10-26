@@ -1,5 +1,5 @@
 import type { FieldValues, Path, UseFormSetError } from 'react-hook-form';
-import { toast } from '@/components/ui/toast';
+import { toast, useToastStore } from '@/components/ui/toast';
 import { ApiError } from '@/lib/api/client';
 import { describeError } from '@/lib/api/error-messages';
 
@@ -40,9 +40,39 @@ export function errorTitle(err: unknown): string {
   return 'Something went wrong';
 }
 
+const retryCopy = (s: number) => `Try again in ${s} second${s === 1 ? '' : 's'}.`;
+
+/**
+ * Rate-limit toast with a live Retry-After countdown. The text updates once per second in
+ * place (same toast id, so screen readers are not re-alerted each tick); at 0 it switches to
+ * "You can try again now." and auto-dismisses a few seconds later.
+ */
+function toastRateLimited(title: string, seconds: number): void {
+  const id = toast.error(title, { description: retryCopy(seconds), duration: Infinity });
+  let left = seconds;
+  const timer = setInterval(() => {
+    left -= 1;
+    if (!useToastStore.getState().toasts.some((t) => t.id === id)) {
+      clearInterval(timer);
+      return;
+    }
+    if (left > 0) {
+      toast.update(id, { description: retryCopy(left) });
+      return;
+    }
+    clearInterval(timer);
+    toast.update(id, { description: 'You can try again now.' });
+    setTimeout(() => toast.dismiss(id), 5000);
+  }, 1000);
+}
+
 /** Toast an error that isn't tied to a form field. Server messages are never shown. */
 export function toastError(err: unknown, opts: { title?: string } = {}): void {
   const title = opts.title ?? errorTitle(err);
+  if (err instanceof ApiError && err.status === 429 && err.retryAfterSeconds) {
+    toastRateLimited(title, err.retryAfterSeconds);
+    return;
+  }
   const { message } = describeError(err);
   notify.error(title, isNetworkError(err) ? 'Check your connection and try again.' : message);
 }
