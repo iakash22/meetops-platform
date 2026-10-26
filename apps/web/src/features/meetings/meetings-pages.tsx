@@ -1,4 +1,4 @@
-import { memo, useMemo } from 'react';
+import { memo, useDeferredValue, useMemo, useState } from 'react';
 import { Link } from '@tanstack/react-router';
 import type { Meeting } from '@meetops/contracts';
 import { Badge, type BadgeProps } from '@/components/ui/badge';
@@ -10,6 +10,9 @@ import { useMeeting, useMeetings } from '@/lib/api/queries';
 import { PageHeader } from '@/pages/resource-list';
 import { ReportPanel, TranscriptPanel } from './insights-panels';
 import { UploadButton } from './upload-button';
+import { filterMeetings, type MeetingFilters } from './manage-api';
+import { MeetingFormDialog } from './meeting-form';
+import { Input } from '@/components/ui/input';
 import { RecordingPanel } from '@/features/recording/recording-panel';
 
 const STATUS_LABEL: Record<Meeting['status'], string> = {
@@ -70,16 +73,28 @@ const MeetingRow = memo(function MeetingRow({ meeting: m }: { meeting: Meeting }
 
 export function MeetingsPage() {
   const query = useMeetings();
-  const items = useMemo(() => query.data?.pages.flatMap((p) => p.items) ?? [], [query.data]);
+  const [filters, setFilters] = useState<MeetingFilters>({ q: '', status: '' });
+  const deferred = useDeferredValue(filters);
+  const filtering = deferred.q.trim() !== '' || deferred.status !== '';
+  const all = useMemo(() => query.data?.pages.flatMap((p) => p.items) ?? [], [query.data]);
+  // Search and status filter apply to the pages loaded so far; "Load more" keeps fetching.
+  const items = useMemo(
+    () => (filtering ? filterMeetings(all, deferred) : all),
+    [all, deferred, filtering],
+  );
   let body;
-  if (query.isError && items.length === 0)
+  if (query.isError && all.length === 0)
     body = <ErrorState error={query.error} onRetry={() => void query.refetch()} />;
   else if (query.isPending && query.fetchStatus !== 'idle') body = <LoadingState />;
   else if (items.length === 0)
     body = (
       <EmptyState
-        title="No meetings yet"
-        description="Meetings you record or import will appear here."
+        title={filtering ? 'No matching meetings' : 'No meetings yet'}
+        description={
+          filtering
+            ? 'Try a different search or status.'
+            : 'Meetings you record or import will appear here.'
+        }
       />
     );
   else
@@ -111,9 +126,38 @@ export function MeetingsPage() {
     );
   return (
     <>
-      <div className="flex items-start justify-between">
+      <div className="flex flex-wrap items-start justify-between gap-3">
         <PageHeader title="Meetings" />
-        <UploadButton />
+        <div className="flex items-start gap-2">
+          <MeetingFormDialog />
+          <UploadButton />
+        </div>
+      </div>
+      <div className="mb-4 flex flex-wrap gap-2" role="search">
+        <Input
+          type="search"
+          aria-label="Search meetings"
+          placeholder="Search meetings"
+          maxLength={200}
+          value={filters.q}
+          onChange={(e) => setFilters((f) => ({ ...f, q: e.target.value }))}
+          className="h-11 max-w-xs"
+        />
+        <select
+          aria-label="Filter by status"
+          value={filters.status}
+          onChange={(e) =>
+            setFilters((f) => ({ ...f, status: e.target.value as MeetingFilters['status'] }))
+          }
+          className="h-11 rounded-md border border-input bg-background px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        >
+          <option value="">All statuses</option>
+          {(Object.keys(STATUS_LABEL) as Meeting['status'][]).map((s) => (
+            <option key={s} value={s}>
+              {STATUS_LABEL[s]}
+            </option>
+          ))}
+        </select>
       </div>
       <div className="flex flex-col gap-4" aria-busy={query.isFetchingNextPage}>
         {body}
@@ -153,6 +197,7 @@ export function MeetingDetailPage({ meetingId }: { meetingId: string }) {
         </div>
         <div className="flex items-center gap-3">
           <MeetingStatusBadge status={m.status} />
+          <MeetingFormDialog meeting={m} />
           <UploadButton meetingId={m.id} />
         </div>
       </div>
