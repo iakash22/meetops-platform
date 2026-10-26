@@ -22,6 +22,9 @@ const session: DesktopSession = {
   organizations: [{ id: ORG, name: 'Acme', slug: 'acme', role: 'owner' }],
 } as unknown as DesktopSession;
 
+/** Tauri IPC rejects with the plain serialized error value, not an Error. */
+const ipcReject = (value: unknown) => Promise.reject(value as Error);
+
 const invokeWith = (impl: (cmd: string, args?: Record<string, unknown>) => unknown) =>
   vi.fn(async (cmd: string, args?: Record<string, unknown>) =>
     impl(cmd, args),
@@ -50,12 +53,12 @@ describe('ADR-012 native auth bridge', () => {
   });
 
   it('maps native errors and hides unknown failures', async () => {
-    const typed = invokeWith(() => Promise.reject({ code: 'RATE_LIMITED', message: 'Slow down.' }));
+    const typed = invokeWith(() => ipcReject({ code: 'RATE_LIMITED', message: 'Slow down.' }));
     await expect(createNativeAuthClient(typed).signInWithBrowser?.()).rejects.toMatchObject({
       code: 'RATE_LIMITED',
       message: 'Slow down.',
     });
-    const raw = invokeWith(() => Promise.reject('command auth_sign_in not found'));
+    const raw = invokeWith(() => ipcReject('command auth_sign_in not found'));
     await expect(createNativeAuthClient(raw).signInWithBrowser?.()).rejects.toMatchObject({
       code: 'INTERNAL',
       message: expect.not.stringContaining('command') as unknown as string,
@@ -63,9 +66,7 @@ describe('ADR-012 native auth bridge', () => {
   });
 
   it('restore treats a dead token family as signed out', async () => {
-    const invoke = invokeWith(() =>
-      Promise.reject({ code: 'UNAUTHENTICATED', message: 'expired' }),
-    );
+    const invoke = invokeWith(() => ipcReject({ code: 'UNAUTHENTICATED', message: 'expired' }));
     await expect(createNativeAuthClient(invoke).restore?.()).resolves.toBeNull();
   });
 });
