@@ -1,3 +1,4 @@
+import { EXTENSION_AUTH_PATHS } from '@meetops/contracts';
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { InMemorySessionRepository } from '../src/modules/auth/infrastructure/in-memory-session.repository.js';
 import { InMemoryUserRepository } from '../src/modules/users/infrastructure/in-memory-user.repository.js';
@@ -401,12 +402,23 @@ describe('auth', () => {
     });
   });
 
-  it('openapi response schemas never expose hashes or tokens (except /auth/csrf)', async () => {
+  it('openapi response schemas never expose hashes or tokens (except /auth/csrf and extension token issuance)', async () => {
     const spec = app.swagger() as unknown as {
       paths: Record<string, Record<string, { responses: Record<string, unknown> }>>;
     };
+    // ADR-005 A1: these two routes exist to hand the extension its opaque token pair (never a hash).
+    const tokenIssuers = new Set<string>([
+      EXTENSION_AUTH_PATHS.token,
+      EXTENSION_AUTH_PATHS.refresh,
+    ]);
     for (const [path, ops] of Object.entries(spec.paths)) {
       if (path === '/auth/csrf') continue;
+      if (tokenIssuers.has(path)) {
+        expect(JSON.stringify(Object.values(ops).map((o) => o.responses)), path).not.toMatch(
+          /"(passwordHash|tokenHash|sessionToken)"/,
+        );
+        continue;
+      }
       const json = JSON.stringify(Object.values(ops).map((o) => o.responses));
       expect(json, path).not.toMatch(/"(passwordHash|tokenHash|token|accessToken|sessionToken)"/);
     }
