@@ -56,11 +56,12 @@ export function VerifyEmailBanner() {
       data-testid="verify-email-banner"
       className="flex flex-wrap items-center gap-3 border-b bg-card px-4 py-2 text-sm"
     >
-      <MailWarning className="h-4 w-4 text-highlight" aria-hidden />
+      <MailWarning className="h-4 w-4 text-link" aria-hidden />
       <span className="flex-1">
         Verify your email address. We sent a link to <strong>{email}</strong>.
       </span>
       <Button
+        className="min-h-11"
         size="sm"
         onClick={() => void resend()}
         disabled={sending || cooldown > 0}
@@ -68,7 +69,7 @@ export function VerifyEmailBanner() {
       >
         {sending ? 'Sending…' : cooldown > 0 ? `Resend in ${cooldown}s` : 'Resend link'}
       </Button>
-      <Button size="sm" variant="ghost" onClick={() => setHidden(true)}>
+      <Button className="min-h-11" size="sm" variant="ghost" onClick={() => setHidden(true)}>
         Dismiss
       </Button>
     </div>
