@@ -1,3 +1,4 @@
+import type { ConsentAttestationInput } from '@meetops/contracts';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Animated, Pressable, StyleSheet, Text, View } from 'react-native';
 
@@ -11,6 +12,7 @@ import { useRecorderShell } from '../record/useRecorderShell';
 import { colors, glow, radius, spacing } from '../theme/colors';
 import { Button } from '../ui/Button';
 import { LiveDot } from '../ui/LiveDot';
+import { Toast } from '../ui/Toast';
 import { useReducedMotion } from '../ui/useReducedMotion';
 
 const BUTTON_SIZE = 148;
@@ -29,10 +31,13 @@ const STATUS_TEXT = {
 export function RecordScreen() {
   const recorder = useRecorderShell();
   const reducedMotion = useReducedMotion();
-  const { uploadQueue, consent } = useRepositories();
+  const { uploadQueue, consent, micPermission } = useRepositories();
   const [consentStep, setConsentStep] = useState<ConsentStep | null>(null);
   const [consentBusy, setConsentBusy] = useState(false);
-  const [consentError, setConsentError] = useState<string | null>(null);
+  const [toast, setToast] = useState<string | null>(null);
+  const [allAgreed, setAllAgreed] = useState(false);
+  /** Attestation of the current recording; handed to the upload queue when the recording is saved (M5). */
+  const attestationRef = useRef<ConsentAttestationInput | null>(null);
   const [queue, setQueue] = useState<UploadQueueStatus | null>(null);
   const halo = useRef(new Animated.Value(0)).current;
   const active = recorder.phase === 'recording' || recorder.phase === 'paused';
@@ -72,41 +77,63 @@ export function RecordScreen() {
     transform: [{ scale: halo.interpolate({ inputRange: [0, 1], outputRange: [1, 1.12] }) }],
   };
 
-  // R1 + R3: `start` is only reachable through explicit opt-in, then a per-recording participant notice.
+  // R1 + R3: `start` is only reachable through explicit opt-in, the mic pre-prompt (when needed), then a
+  // per-recording participant notice. The notice's attestation is kept for the recording's upload (contracts G11).
+  const toNoticeOrMic = useCallback(async () => {
+    const mic = await micPermission.status().catch(() => 'undetermined' as const);
+    setConsentStep(mic === 'granted' ? 'notice' : mic === 'denied' ? 'micDenied' : 'mic');
+  }, [micPermission]);
+
   const beginConsent = useCallback(async () => {
-    setConsentError(null);
+    setToast(null);
+    setAllAgreed(false);
     const optedIn = await consent.hasOptedIn().catch(() => false);
-    setConsentStep(optedIn ? 'notice' : 'optIn');
-  }, [consent]);
+    if (optedIn) await toNoticeOrMic();
+    else setConsentStep('optIn');
+  }, [consent, toNoticeOrMic]);
 
   const { start } = recorder;
   const acceptConsent = useCallback(async () => {
     setConsentBusy(true);
-    setConsentError(null);
+    setToast(null);
     try {
       if (consentStep === 'optIn') {
         await consent.optIn();
-        setConsentStep('notice');
+        await toNoticeOrMic();
+      } else if (consentStep === 'mic') {
+        // Only after the in-app pre-prompt; a denial is never retried silently.
+        const result = await micPermission.request();
+        setConsentStep(result === 'granted' ? 'notice' : 'micDenied');
+      } else if (consentStep === 'micDenied') {
+        setConsentStep(null);
+        await micPermission.openSettings();
       } else {
-        await consent.confirmParticipantNotice({
+        attestationRef.current = await consent.confirmParticipantNotice({
           meetingId: newLocalMeetingId(),
           confirmedAt: new Date().toISOString(),
+          method: allAgreed ? 'all_parties_consented' : 'all_parties_notified',
         });
         setConsentStep(null);
         start();
       }
     } catch {
       // Fail closed: never start without a logged notice.
-      setConsentError("Couldn't save your confirmation. Recording hasn't started. Try again.");
+      setToast(
+        consentStep === 'micDenied'
+          ? "Couldn't open Settings. Open it from your home screen."
+          : "Couldn't save your confirmation. Recording hasn't started. Try again.",
+      );
     } finally {
       setConsentBusy(false);
     }
-  }, [consent, consentStep, start]);
+  }, [allAgreed, consent, consentStep, micPermission, start, toNoticeOrMic]);
 
   const cancelConsent = useCallback(() => {
     setConsentStep(null);
-    setConsentError(null);
+    setToast(null);
   }, []);
+
+  const toggleAllAgreed = useCallback(() => setAllAgreed((v) => !v), []);
 
   const onMainPress = () => {
     if (recorder.phase === 'idle') void beginConsent();
@@ -154,7 +181,8 @@ export function RecordScreen() {
           <ConsentSheet
             step={consentStep}
             busy={consentBusy}
-            error={consentError}
+            allAgreed={allAgreed}
+            onToggleAllAgreed={toggleAllAgreed}
             onAccept={() => void acceptConsent()}
             onCancel={cancelConsent}
           />
@@ -223,6 +251,7 @@ export function RecordScreen() {
           </Text>
         </View>
       </View>
+      <Toast testID="record-toast" message={toast} onDismiss={() => setToast(null)} />
     </View>
   );
 }
