@@ -68,3 +68,10 @@ Many Outlook installs block images by default, so no copy lives in images.
   dim unicode glyphs in tinted cells instead of the GIF. Looks complete with zero images.
 - Rose (`--highlight`) is an accent fill only (banner and overline live dots), never text; text on rose would use
   `#0A0A0A` (tested for AA). Tests prove all key copy survives with every image removed.
+
+### Full-width hero
+
+The hero is the first row of the card with nothing above it. It holds the logo and wordmark, the eyebrow chip
+with the rose dot, the email's single `<h1>`, and the dim icon row. All of it is live text over a `#0D0D10`
+fill: CSS glows for modern clients, and a VML `v:rect` gradient (`#0D0D10` to `#0B2531`) with `v:textbox` for Outlook.
+The hero text pairs pass AA on both gradient ends, which is tested.

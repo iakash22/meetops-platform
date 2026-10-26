@@ -5,7 +5,6 @@ import {
   chips,
   heading,
   itemList,
-  overline,
   join,
   layout,
   linkFallback,
@@ -132,6 +131,9 @@ const greet = (m: EmailMessages, name?: string) => (name ? m.greeting(name) : m.
 
 interface Parts {
   subject: string;
+  /** Rendered on the hero banner: chip label and main heading (live text). */
+  eyebrow: string;
+  title: string;
   preheader: string;
   body: Parameters<typeof join>;
   text: (string | false | 0 | undefined)[];
@@ -179,7 +181,12 @@ function build(
       m,
       preferencesUrl: p.preferencesUrl,
       unsubscribeUrl: p.unsubscribeUrl,
-      banner: { category, alt: m.bannerAlt(m.bannerLabel[category]) },
+      banner: {
+        category,
+        alt: m.bannerAlt(m.bannerLabel[category]),
+        eyebrow: p.eyebrow,
+        title: p.title,
+      },
     }),
     text: textLayout({
       m,
@@ -200,9 +207,9 @@ const renderers: { [K in EmailName]: Renderer<K> } = {
     return {
       subject: c.subject,
       preheader: c.preheader,
+      eyebrow: m.eyebrow.account,
+      title: c.subject,
       body: [
-        overline(m.eyebrow.account),
-        heading(c.subject, 1),
         paragraph(greet(m, v.name)),
         paragraph(c.body),
         button(url, c.cta),
@@ -219,9 +226,9 @@ const renderers: { [K in EmailName]: Renderer<K> } = {
     return {
       subject: c.subject,
       preheader: c.preheader,
+      eyebrow: m.eyebrow.security,
+      title: c.subject,
       body: [
-        overline(m.eyebrow.security),
-        heading(c.subject, 1),
         paragraph(greet(m, v.name)),
         paragraph(c.body),
         button(url, c.cta),
@@ -240,9 +247,9 @@ const renderers: { [K in EmailName]: Renderer<K> } = {
     return {
       subject: c.subject(v.inviterName, v.workspaceName),
       preheader: c.preheader(v.workspaceName),
+      eyebrow: m.eyebrow.workspace,
+      title: c.preheader(v.workspaceName),
       body: [
-        overline(m.eyebrow.workspace),
-        heading(c.preheader(v.workspaceName), 1),
         paragraph(c.body(v.inviterName, v.workspaceName)),
         chips([v.role && c.role(v.role)], 'primary'),
         button(url, c.cta),
@@ -258,9 +265,9 @@ const renderers: { [K in EmailName]: Renderer<K> } = {
     return {
       subject: c.subject,
       preheader: c.preheader,
+      eyebrow: m.eyebrow.security,
+      title: c.subject,
       body: [
-        overline(m.eyebrow.security),
-        heading(c.subject, 1),
         paragraph(greet(m, v.name)),
         paragraph(c.body),
         button(url, c.cta),
@@ -276,9 +283,9 @@ const renderers: { [K in EmailName]: Renderer<K> } = {
     return {
       subject: c.subject,
       preheader: c.preheader,
+      eyebrow: m.eyebrow.security,
+      title: c.subject,
       body: [
-        overline(m.eyebrow.security),
-        heading(c.subject, 1),
         paragraph(greet(m, v.name)),
         panel([c.body(v.lockedForMinutes)], 'destructive'),
         paragraph(c.notYou),
@@ -294,9 +301,9 @@ const renderers: { [K in EmailName]: Renderer<K> } = {
     return {
       subject: c.subject,
       preheader: c.preheader,
+      eyebrow: m.eyebrow.security,
+      title: c.subject,
       body: [
-        overline(m.eyebrow.security),
-        heading(c.subject, 1),
         paragraph(greet(m, v.name)),
         paragraph(c.body(v.changedAt)),
         panel([c.notYou], 'destructive'),
@@ -313,9 +320,9 @@ const renderers: { [K in EmailName]: Renderer<K> } = {
     return {
       subject: c.subject(v.workspaceName),
       preheader: c.preheader(v.workspaceName),
+      eyebrow: m.eyebrow.workspace,
+      title: c.subject(v.workspaceName),
       body: [
-        overline(m.eyebrow.workspace),
-        heading(c.subject(v.workspaceName), 1),
         paragraph(greet(m, v.name)),
         paragraph(c.body(v.addedBy, v.workspaceName)),
         chips([v.role && c.role(v.role)], 'primary'),
@@ -333,9 +340,9 @@ const renderers: { [K in EmailName]: Renderer<K> } = {
     return {
       subject: c.subject(v.workspaceName),
       preheader: c.preheader(v.workspaceName),
+      eyebrow: m.eyebrow.workspace,
+      title: c.subject(v.workspaceName),
       body: [
-        overline(m.eyebrow.workspace),
-        heading(c.subject(v.workspaceName), 1),
         paragraph(greet(m, v.name)),
         paragraph(c.body(v.workspaceName)),
         by && paragraph(by, { muted: true }),
@@ -357,9 +364,9 @@ const renderers: { [K in EmailName]: Renderer<K> } = {
     return {
       subject: c.subject(v.meetingTitle),
       preheader: c.preheader(v.meetingTitle),
+      eyebrow: m.eyebrow.meeting,
+      title: v.meetingTitle,
       body: [
-        overline(m.eyebrow.meeting),
-        heading(v.meetingTitle, 1),
         chips([
           c.when(v.meetingDate),
           v.actionItems.length > 0 && m.meetingChips.actionItems(v.actionItems.length),
@@ -399,9 +406,9 @@ const renderers: { [K in EmailName]: Renderer<K> } = {
     return {
       subject: c.subject(n, v.meetingTitle),
       preheader: c.preheader(n),
+      eyebrow: m.eyebrow.tasks,
+      title: c.subject(n, v.meetingTitle),
       body: [
-        overline(m.eyebrow.tasks),
-        heading(c.subject(n, v.meetingTitle), 1),
         paragraph(greet(m, v.name)),
         paragraph(c.body(n, v.meetingTitle)),
         bulletList(list),
@@ -429,9 +436,9 @@ const renderers: { [K in EmailName]: Renderer<K> } = {
     return {
       subject: c.subject(v.taskTitle),
       preheader: c.preheader(v.taskTitle),
+      eyebrow: m.eyebrow.tasks,
+      title: c.subject(v.taskTitle),
       body: [
-        overline(m.eyebrow.tasks),
-        heading(c.subject(v.taskTitle), 1),
         paragraph(greet(m, v.assigneeName)),
         paragraph(c.body),
         panel([v.taskTitle, ...details], 'primary', { titleFirst: true }),
@@ -458,9 +465,9 @@ const renderers: { [K in EmailName]: Renderer<K> } = {
     return {
       subject: c.subject(v.provider),
       preheader: c.preheader(v.provider),
+      eyebrow: m.eyebrow.integration,
+      title: c.subject(v.provider),
       body: [
-        overline(m.eyebrow.integration),
-        heading(c.subject(v.provider), 1),
         paragraph(greet(m, v.name)),
         paragraph(c.body(v.provider, v.workspaceName)),
         details.length > 0 && panel(details, 'destructive'),

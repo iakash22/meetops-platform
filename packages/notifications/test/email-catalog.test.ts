@@ -187,6 +187,9 @@ describe('theme contrast (WCAG AA)', () => {
     ['muted on raised surface', t.muted, t.surfaceRaised],
     ['link chip on cerulean tint', t.link, t.primaryTint],
     ['text on rose (onHighlight)', t.onHighlight, t.highlight],
+    ['hero heading on VML gradient end', t.text, t.primaryTint],
+    ['hero labels on VML gradient end', t.muted, t.primaryTint],
+    ['hero chip on VML gradient end', t.link, t.primaryTint],
     ['text on destructive tint', t.text, t.destructiveTint],
     ['button label on cerulean', t.onPrimary, t.primaryFill],
     ['light text', t.light.text, t.light.background],
@@ -218,14 +221,26 @@ describe('image-free build (Outlook desktop / images blocked)', () => {
     const r = render(name);
     it(`${name}: banner and all key copy are live text without images`, () => {
       const out = text(r.html);
-      expect(out).toContain('MeetOps AI ·');
-      expect(out).toContain('Meeting to action');
+      expect(out).toMatch(/MeetOps\s*AI/); // wordmark is live text
       for (const f of ['Record', 'Transcribe', 'AI summary', 'Tasks', 'Sync'])
         expect(out).toContain(f);
       const h1 = /<h1[^>]*>([\s\S]*?)<\/h1>/.exec(r.html)?.[1] ?? '';
       expect(h1.length).toBeGreaterThan(0);
       expect(out).toContain(text(h1).trim());
       expect(noImages(r.html)).not.toContain('cid:meetops-banner');
+    });
+    it(`${name}: hero is the first thing in the email and carries logo, chip and heading`, () => {
+      const body = r.html.slice(r.html.indexOf('<body'));
+      const hero = body.indexOf('<v:rect');
+      expect(hero).toBeGreaterThan(0);
+      // nothing visible (logo, text) before the hero; preheader is hidden
+      const before = body.slice(0, hero).replace(/<div style="display:none[\s\S]*?<\/div>/, '');
+      expect(before).not.toMatch(/<img|MeetOps/);
+      const heroHtml = body.slice(hero, body.indexOf('</v:rect>'));
+      expect(heroHtml).toContain('cid:meetops-logo@meetops');
+      expect(heroHtml).toMatch(/<h1\b/);
+      expect(heroHtml).toContain('background-color:#FF2D95');
+      expect((r.html.match(/<h1\b/g) ?? []).length).toBe(1);
     });
     it(`${name}: Outlook gets VML + table icons, modern clients get the GIF`, () => {
       expect(r.html).toMatch(/<!--\[if gte mso 9\]><v:rect[^>]*><v:fill type="gradient"/);

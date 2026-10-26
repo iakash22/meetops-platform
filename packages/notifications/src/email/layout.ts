@@ -152,13 +152,13 @@ export const join = (...parts: (Html | false | '' | 0 | undefined | null)[]): Ht
   );
 
 /** Logo (CID image, alt text) + "MeetOps AI" wordmark matching apps/web MeetOpsLogo. */
-function wordmark(m: EmailMessages, size: 'lg' | 'sm' = 'lg'): string {
+function wordmark(m: EmailMessages, size: 'lg' | 'sm' = 'lg', onHero = false): string {
   const px = size === 'lg' ? 36 : 22;
   const fs = size === 'lg' ? 19 : 14;
   return (
     `<table ${TABLE}><tr>` +
     `<td width="${px}" style="width:${px}px;"><img src="cid:${LOGO_CID}" width="${px}" height="${px}" alt="${escapeHtml(m.logoAlt)}" style="display:block;width:${px}px;height:${px}px;border:0;outline:none;text-decoration:none;border-radius:${size === 'lg' ? 9 : 6}px;color:${t.text};font-size:10px;"></td>` +
-    `<td class="mo-text" style="padding-left:${size === 'lg' ? 12 : 8}px;color:${t.text};font-size:${fs}px;font-weight:600;letter-spacing:-0.01em;white-space:nowrap;">${escapeHtml(m.brand)} <span class="mo-link" style="color:${t.link};">${escapeHtml(m.brandSuffix)}</span></td>` +
+    `<td${onHero ? '' : ' class="mo-text"'} style="padding-left:${size === 'lg' ? 12 : 8}px;color:${t.text};font-size:${fs}px;font-weight:600;letter-spacing:-0.01em;white-space:nowrap;">${escapeHtml(m.brand)} <span${onHero ? '' : ' class="mo-link"'} style="color:${t.link};">${escapeHtml(m.brandSuffix)}</span></td>` +
     `</tr></table>`
   );
 }
@@ -173,7 +173,7 @@ export interface LayoutOptions {
   preferencesUrl?: string | undefined;
   unsubscribeUrl?: string | undefined;
   /** Hero banner (inline CID image) shown at the top of the card. */
-  banner?: { category: BannerCategory; alt: string } | undefined;
+  banner?: { category: BannerCategory; alt: string; eyebrow: string; title: string } | undefined;
 }
 
 const lightCss =
@@ -213,10 +213,8 @@ export function layout(o: LayoutOptions): string {
     `<body class="mo-bg" style="margin:0;padding:0;background-color:${t.background};-webkit-text-size-adjust:100%;">` +
     `<div style="display:none;max-height:0;max-width:0;overflow:hidden;opacity:0;mso-hide:all;font-size:1px;line-height:1px;color:${t.background};">${escapeHtml(o.preheader)}${preheaderPad}</div>` +
     `<table ${TABLE} class="mo-bg" width="100%" bgcolor="${t.background}" style="background-color:${t.background};">` +
-    `<tr><td align="center" style="padding:40px 12px;">` +
+    `<tr><td align="center" style="padding:24px 12px 40px;">` +
     `<table ${TABLE} class="mo-container" width="600" style="width:600px;max-width:600px;font-family:${t.fontStack};">` +
-    // Header: logo + wordmark
-    `<tr><td style="padding:0 4px 24px;">${wordmark(m)}</td></tr>` +
     // Card: cerulean hairline on top (fill only), then content
     `<tr><td class="mo-surface" bgcolor="${t.surface}" style="background-color:${t.surface};border:1px solid ${t.border};border-radius:${r.xl}px;overflow:hidden;">` +
     `<table ${TABLE} width="100%">` +
@@ -262,17 +260,20 @@ const GLYPHS = ['&#9679;', '&#8767;', '&#10022;', '&#9745;', '&#10227;'] as cons
  * and Outlook desktop never sees (it gets table cells + VML instead). With images blocked elsewhere, the strip's
  * cell keeps its dark fill and coloured alt text, and the chip, tagline and labels still render.
  */
-function banner(m: EmailMessages, b: { category: BannerCategory; alt: string }): string {
+function banner(
+  m: EmailMessages,
+  b: { category: BannerCategory; alt: string; eyebrow: string; title: string },
+): string {
   const h = BANNER_FALLBACK;
-  const label = escapeHtml(m.bannerLabel[b.category]);
   const cols = m.bannerFeatures;
-  const chip =
-    `<table ${TABLE}><tr>` +
+  const top =
+    `<tr><td class="mo-pad" style="padding:28px 40px 0;">${wordmark(m, 'lg', true)}</td></tr>` +
+    `<tr><td class="mo-pad" style="padding:28px 40px 0;"><table ${TABLE}><tr>` +
     // Rose live dot: a filled cell in its own table so it stays an 8x8 dot (accent only, no text on it).
     `<td valign="middle" style="width:8px;"><table ${TABLE} width="8"><tr><td width="8" height="8" bgcolor="${t.highlight}" style="width:8px;height:8px;max-height:8px;background-color:${t.highlight};border-radius:50%;font-size:1px;line-height:8px;mso-line-height-rule:exactly;">&#8203;</td></tr></table></td>` +
-    `<td style="padding-left:10px;color:${t.text};font-size:12px;line-height:16px;letter-spacing:0.08em;text-transform:uppercase;font-weight:600;font-family:${t.fontStack};">MeetOps AI &middot; ${label}</td>` +
-    `</tr></table>` +
-    `<p style="margin:6px 0 0;color:${t.muted};font-size:13px;line-height:18px;font-family:${t.fontStack};">${escapeHtml(m.bannerTagline)}</p>`;
+    `<td style="padding-left:10px;color:${t.link};font-size:12px;line-height:16px;letter-spacing:0.08em;text-transform:uppercase;font-weight:600;font-family:${t.fontStack};">${escapeHtml(b.eyebrow)}</td>` +
+    `</tr></table></td></tr>` +
+    `<tr><td class="mo-pad" style="padding:12px 40px 8px;"><h1 class="mo-h1" style="margin:0;color:${t.text};font-size:30px;line-height:1.2;letter-spacing:-0.02em;font-weight:700;font-family:${t.fontStack};">${escapeHtml(b.title)}</h1></td></tr>`;
   const gif = `<!--[if !mso]><!--><img src="cid:${BANNER_CID}" width="${BANNER_WIDTH}" height="${BANNER_HEIGHT}" alt="${escapeHtml(b.alt)}" style="display:block;width:100%;max-width:${BANNER_WIDTH}px;height:auto;border:0;outline:none;text-decoration:none;background-color:${h};color:${t.muted};font-size:12px;line-height:1.5;font-family:${t.fontStack};"><!--<![endif]-->`;
   const msoIcons =
     `<!--[if mso]><table ${TABLE} width="600"><tr>` +
@@ -290,10 +291,12 @@ function banner(m: EmailMessages, b: { category: BannerCategory; alt: string }):
       )
       .join('') +
     `</tr></table>`;
+  // Modern clients: solid fill + CSS glow gradients (dropped harmlessly where unsupported).
+  const bg = `background-color:${h};background-image:radial-gradient(circle at 92% 0%,rgba(0,123,167,0.38),rgba(0,123,167,0) 50%),radial-gradient(circle at 0% 0%,rgba(255,45,149,0.14),rgba(255,45,149,0) 35%);`;
   const inner =
-    `<table ${TABLE} width="100%" bgcolor="${h}" style="background-color:${h};">` +
-    `<tr><td style="padding:28px 40px 8px;">${chip}</td></tr>` +
-    `<tr><td style="font-size:0;line-height:0;">${gif}${msoIcons}</td></tr>` +
+    `<table ${TABLE} width="100%" bgcolor="${h}" style="${bg}">` +
+    top +
+    `<tr><td style="padding-top:20px;font-size:0;line-height:0;">${gif}${msoIcons}</td></tr>` +
     `<tr><td>${labels}</td></tr></table>`;
   return (
     `<div style="background-color:${h};border-bottom:1px solid ${t.border};border-radius:${r.xl}px ${r.xl}px 0 0;overflow:hidden;">` +
