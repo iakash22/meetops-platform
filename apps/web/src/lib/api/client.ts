@@ -281,7 +281,8 @@ export type ApiClient = {
     authorize: (body: DesktopAuthorizeRequest) => Promise<DesktopAuthorizeResponse>;
   };
   meetings: {
-    list: (organizationId: Id) => Promise<Paginated<Meeting>>;
+    /** Newest first. Omit `page` for the first page (server default limit 25, max 100). */
+    list: (organizationId: Id, page?: CursorParams) => Promise<Paginated<Meeting>>;
     get: (organizationId: Id, meetingId: Id) => Promise<Meeting>;
   };
   tasks: {
@@ -512,7 +513,7 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
       authorize: (body) => request('POST', DESKTOP_AUTHORIZE_PATH, body),
     },
     meetings: {
-      list: (id) => request('GET', `${org(id)}/meetings`),
+      list: (id, page) => request('GET', `${org(id)}/meetings${pageQuery(page)}`),
       get: (id, meetingId) =>
         request('GET', `${org(id)}/meetings/${encodeURIComponent(meetingId)}`),
     },

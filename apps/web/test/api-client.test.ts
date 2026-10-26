@@ -28,6 +28,15 @@ function clearCookies() {
 describe('api client (cookie session + CSRF)', () => {
   afterEach(clearCookies);
 
+  it('meetings.list sends cursor and limit as query params (encoded)', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(meetings));
+    const api = createApiClient({ baseUrl: 'http://api/', fetch: fetchMock });
+    await api.meetings.list('o', { cursor: 'a b&c', limit: 50 });
+    expect((fetchMock.mock.calls[0] as Call)[0]).toBe(
+      'http://api/orgs/o/meetings?cursor=a+b%26c&limit=50',
+    );
+  });
+
   it('GET uses credentials include, no bearer and no CSRF header', async () => {
     const fetchMock = vi.fn().mockResolvedValue(jsonResponse(meetings));
     const api = createApiClient({ baseUrl: 'http://api/', fetch: fetchMock });
