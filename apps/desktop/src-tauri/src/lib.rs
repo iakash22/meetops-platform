@@ -1,9 +1,27 @@
 //! MeetOps AI desktop shell (Tauri 2).
 //!
-//! M1 exposes a single read-only command, `app_info`, used by the Settings screen. Offline recording,
-//! secure token storage (OS keychain) and uploads are later Phase 8 milestones.
+//! Commands: `app_info`; the ADR-012 auth commands (`auth_sign_in`, `auth_session`, `auth_sign_out`); the scoped
+//! `api_request` and presigned `upload_put`; and the encrypted offline chunk store (`chunk_put`, `chunk_get`,
+//! `chunk_delete`). No command ever returns a token.
+
+mod api;
+mod auth;
+mod chunk_store;
+mod config;
+mod error;
+mod keychain;
+mod loopback;
+mod pkce;
+
+use std::sync::Arc;
 
 use serde::Serialize;
+use serde_json::Value;
+use tauri::{Manager, State};
+
+use auth::AuthState;
+use chunk_store::ChunkStore;
+use error::{CmdError, CmdResult};
 
 /// Static app/platform info for the UI. Mirrored by `AppInfo` in `src/lib/native.ts`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -33,10 +51,73 @@ fn app_info(app: tauri::AppHandle) -> AppInfo {
     build_app_info(&pkg.name, &pkg.version.to_string())
 }
 
+#[tauri::command]
+async fn auth_sign_in(auth: State<'_, AuthState>) -> CmdResult<Value> {
+    auth::sign_in(&auth).await
+}
+
+#[tauri::command]
+async fn auth_session(auth: State<'_, AuthState>) -> CmdResult<Option<Value>> {
+    match config::origins() {
+        Ok(o) => auth.session(&o).await,
+        Err(_) => Ok(None),
+    }
+}
+
+#[tauri::command]
+async fn auth_sign_out(auth: State<'_, AuthState>) -> CmdResult<()> {
+    auth.sign_out(config::origins().ok().as_ref()).await;
+    Ok(())
+}
+
+#[tauri::command]
+async fn api_request(auth: State<'_, AuthState>, method: String, path: String, body: Option<Value>) -> CmdResult<Value> {
+    let o = config::origins()?;
+    api::request(&auth, &o, &method, &path, body).await
+}
+
+#[tauri::command]
+async fn upload_put(auth: State<'_, AuthState>, upload: api::PresignedPut, body: Vec<u8>) -> CmdResult<()> {
+    api::upload_put(&auth.http, upload, body).await
+}
+
+#[tauri::command]
+fn chunk_put(chunks: State<'_, ChunkStore>, session_id: String, index: u32, data: Vec<u8>) -> CmdResult<()> {
+    chunks.put(&session_id, index, &data)
+}
+
+#[tauri::command]
+fn chunk_get(chunks: State<'_, ChunkStore>, session_id: String, index: u32) -> CmdResult<Vec<u8>> {
+    chunks.get(&session_id, index)
+}
+
+#[tauri::command]
+fn chunk_delete(chunks: State<'_, ChunkStore>, session_id: String) -> CmdResult<()> {
+    chunks.delete_session(&session_id)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
-        .invoke_handler(tauri::generate_handler![app_info])
+        .setup(|app| {
+            let store: Arc<dyn keychain::SecretStore> = Arc::new(keychain::KeychainStore::new(config::KEYCHAIN_SERVICE));
+            let key = chunk_store::device_key(store.as_ref(), config::CHUNK_KEY_ACCOUNT);
+            let dir = app.path().app_local_data_dir().map_err(|_| CmdError::internal().message)?.join("chunks");
+            app.manage(ChunkStore::new(dir, &key));
+            app.manage(AuthState::new(store));
+            Ok(())
+        })
+        .invoke_handler(tauri::generate_handler![
+            app_info,
+            auth_sign_in,
+            auth_session,
+            auth_sign_out,
+            api_request,
+            upload_put,
+            chunk_put,
+            chunk_get,
+            chunk_delete
+        ])
         .run(tauri::generate_context!())
         .expect("error while running the MeetOps desktop app");
 }
