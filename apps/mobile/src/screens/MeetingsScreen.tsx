@@ -61,6 +61,10 @@ export function MeetingsScreen() {
           testID="meetings-list"
           data={state.items}
           keyExtractor={(m) => m.id}
+          initialNumToRender={12}
+          maxToRenderPerBatch={12}
+          windowSize={7}
+          removeClippedSubviews
           ListEmptyComponent={
             <EmptyState
               testID="meetings-empty"
