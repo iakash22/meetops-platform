@@ -21,6 +21,7 @@
     "@meetops/contracts": "workspace:*",
     "@meetops/database": "workspace:*",
     "@meetops/logger": "workspace:*",
+    "@meetops/session-verifier": "workspace:*",
     "@sinclair/typebox": "^0.34.52",
     "argon2": "^0.41.1",
     "fastify": "^5.12.7",

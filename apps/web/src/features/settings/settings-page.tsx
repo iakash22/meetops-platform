@@ -4,15 +4,13 @@ import { PageHeader } from '@/pages/resource-list';
 import { EmployeesPanel } from '@/features/employees/employees-panel';
 import { TeamsPanel } from '@/features/teams/teams-panel';
 
-export const SETTINGS_TABS = ['employees', 'teams'] as const;
-export type SettingsTab = (typeof SETTINGS_TABS)[number];
-export type SettingsSearch = { tab?: SettingsTab };
-
-/** `?tab=` is untrusted: anything but a known tab falls back to the default. */
-export function parseSettingsSearch(search: Record<string, unknown>): SettingsSearch {
-  const tab = SETTINGS_TABS.find((t) => t === search.tab);
-  return tab ? { tab } : {};
-}
+import { SETTINGS_TABS, type SettingsTab } from './settings-search';
+export {
+  SETTINGS_TABS,
+  parseSettingsSearch,
+  type SettingsSearch,
+  type SettingsTab,
+} from './settings-search';
 
 const LABELS: Record<SettingsTab, string> = { employees: 'Employees', teams: 'Teams' };
 

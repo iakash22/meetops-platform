@@ -1,5 +1,6 @@
 import { createContext, useContext, type ReactNode } from 'react';
 
+import type { ConsentApi } from '../consent/consentApi';
 import type { MeetingsRepository } from './meetingsRepository';
 import type { TasksRepository } from './tasksRepository';
 import type { UploadQueue } from './uploadQueue';
@@ -8,6 +9,8 @@ export interface Repositories {
   meetings: MeetingsRepository;
   tasks: TasksRepository;
   uploadQueue: UploadQueue;
+  /** Recording consent (demo until the Backend consent API exists). */
+  consent: ConsentApi;
 }
 
 const RepositoriesContext = createContext<Repositories | null>(null);

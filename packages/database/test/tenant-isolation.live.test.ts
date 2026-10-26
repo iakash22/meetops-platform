@@ -72,6 +72,9 @@ function override(table: string, column: string, organizationId: string): string
   if (table === 'recording_session_chunks' && column === 'storage_key')
     return `'org/${organizationId}/isolation-test'`;
   if (table === 'transcripts' && column === 'provider') return `'unknown'`;
+  if (table === 'file_objects' && column === 'storage_key')
+    return `'organizations/${organizationId}/isolation-test-${randomUUID()}'`;
+  if (table === 'consent_attestations' && column === 'consent_version') return `'2026-10'`;
   return undefined;
 }
 
@@ -172,9 +175,9 @@ describe.skipIf(missingEnv.length > 0)('tenant isolation per table (live, ADR-01
   });
 
   describe.each([...TENANT_TABLES])('%s', (t) => {
-    /** audit_events is append-only: UPDATE/DELETE are revoked from the app, so they fail on privilege instead. */
-    const blockedWrite =
-      t === 'audit_events' ? /permission denied|append-only/ : /row-level security/;
+    /** Append-only tables: UPDATE/DELETE are revoked from the app, so they fail on privilege instead. */
+    const appendOnly = t === 'audit_events' || t === 'consent_attestations';
+    const blockedWrite = appendOnly ? /permission denied|append-only/ : /row-level security/;
     const count = (tx: Prisma.TransactionClient, id: string) =>
       tx.$queryRawUnsafe<{ n: bigint }[]>(
         `SELECT count(*) AS n FROM "${t}" WHERE ${whereKey(t)}`,
@@ -196,10 +199,10 @@ describe.skipIf(missingEnv.length > 0)('tenant isolation per table (live, ADR-01
         `UPDATE "${t}" SET org_id = org_id WHERE ${whereKey(t)}`,
         `DELETE FROM "${t}" WHERE ${whereKey(t)}`,
       ]) {
-        // Either RLS filters the row (0 affected) or the app role lacks the privilege (audit_events).
+        // Either RLS filters the row (0 affected) or the app role lacks the privilege (append-only tables).
         const affected = await inOrg(orgA, (tx) => tx.$executeRawUnsafe(sql, id)).catch(
           (e: unknown) => {
-            if (t !== 'audit_events') throw e;
+            if (!appendOnly) throw e;
             expect(String(e)).toMatch(blockedWrite);
             return 0;
           },

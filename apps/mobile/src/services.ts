@@ -2,6 +2,7 @@ import { createMockAuthClient } from './auth/mockAuthClient';
 import { createDemoSignupApi, type SignupApi } from './auth/SignupApiProvider';
 import { createSessionManager } from './auth/sessionManager';
 import { createInMemoryTokenStore } from './auth/tokenStore';
+import { createDemoConsentApi } from './consent/consentApi';
 import { createPlaceholderMeetingsRepository } from './data/meetingsRepository';
 import type { Repositories } from './data/RepositoriesProvider';
 import { createPlaceholderTasksRepository } from './data/tasksRepository';
@@ -13,7 +14,8 @@ import { createPlaceholderUploadQueue } from './data/uploadQueue';
  * - signup: demo stand-in for `ApiClient.signup` (swap for `createApiClient({ baseUrl }).signup` once wired);
  * - tokens: in memory only (expo-secure-store follow-up);
  * - meetings and tasks: placeholder lists (no list routes in the API yet);
- * - upload queue: placeholder, always empty (no native recording yet).
+ * - upload queue: placeholder, always empty (no native recording yet);
+ * - consent: demo, in memory (no Backend consent API yet). Opt-in starts OFF.
  * Swap implementations here; screens depend only on the interfaces.
  */
 export const IS_DEMO_MODE = true as const;
@@ -30,4 +32,5 @@ export const repositories: Repositories = {
   meetings: createPlaceholderMeetingsRepository(400),
   tasks: createPlaceholderTasksRepository(400),
   uploadQueue: createPlaceholderUploadQueue(),
+  consent: createDemoConsentApi({ latencyMs: 300 }),
 };

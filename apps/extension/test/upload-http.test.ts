@@ -38,6 +38,7 @@ import {
   jsonBody,
   route,
 } from './helpers/fake-upload-api.js';
+import { CONSENT } from './helpers/consent.js';
 
 const API = 'https://api.meetops.test';
 const WEB = 'https://app.meetops.test';
@@ -51,6 +52,7 @@ const initReq = {
   mimeType: 'audio/webm;codecs=opus',
   startedAt: '2026-10-25T08:00:00.000Z',
   source: 'tab' as const,
+  consent: CONSENT,
   meetingId: MID,
 };
 
@@ -139,6 +141,19 @@ describe('HttpUploadClient: contracts paths and payloads', () => {
     await expect(client.initSession({ ...initReq, meetingId: 'nope' })).rejects.toBeInstanceOf(
       UploadContractError,
     );
+    // Contracts v0.4.1: consent is required and must be a real attestation, never a bare flag.
+    const noConsent: Partial<typeof initReq> = { ...initReq };
+    delete noConsent.consent;
+    for (const bad of [
+      noConsent,
+      { ...initReq, consent: true },
+      { ...initReq, consent: { ...CONSENT, attestedByUserId: MID } },
+      { ...initReq, consent: { ...CONSENT, method: 'implied' } },
+    ]) {
+      await expect(client.initSession(bad as unknown as typeof initReq)).rejects.toBeInstanceOf(
+        UploadContractError,
+      );
+    }
     await expect(
       client.requestChunkUrl(SID, { seq: 0, sizeBytes: 1, sha256: 'ABC' }),
     ).rejects.toBeInstanceOf(UploadContractError);

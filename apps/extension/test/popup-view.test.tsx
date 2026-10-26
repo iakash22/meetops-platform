@@ -1,8 +1,12 @@
 import { readFileSync } from 'node:fs';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
+import { CONSENT_CONFIRMATION, CONSENT_NOTICE, setConfirmed } from '../src/lib/consent.js';
+import { MAX_DURATION_MS } from '../src/lib/contract-limits.js';
 import {
+  OFFLINE_MESSAGE,
   OPEN_FROM_TOOLBAR,
+  RELOADED_MESSAGE,
   POPUP_ONLY_ERROR,
   detectPopupContext,
   popupErrorMessage,
@@ -18,15 +22,13 @@ const noop = () => undefined;
 const base: PopupViewProps = {
   auth: { state: 'unpaired' },
   status: { status: 'idle' },
-  consent: { status: 'unseen' },
+  consent: { status: 'unconfirmed' },
   now: 0,
   error: '',
   onPair: noop,
   onUnpair: noop,
+  onConsentChange: noop,
   onRecord: noop,
-  onAcknowledge: noop,
-  onCancelConsent: noop,
-  onStart: noop,
   onStop: noop,
   onDismissWarning: noop,
 };
@@ -94,18 +96,30 @@ describe('popup render states', () => {
     expect(html).toContain('Record this meeting');
   });
 
-  it('consent notice shows acknowledge and cancel', () => {
-    const html = render({ consent: { status: 'shown' } });
-    expect(html).toContain('role="alertdialog"');
-    expect(buttonsOf(html, 'primary')).toContain('I understand and have consent');
-    expect(buttonsOf(html, 'secondary')).toContain('Cancel');
-    expect(html).not.toContain('Record this meeting');
+  it('consent gate: notice and an unticked confirmation keep Record disabled', () => {
+    const html = render();
+    expect(html).toContain('Recording consent');
+    expect(html).toContain(CONSENT_NOTICE.replaceAll("'", '&#x27;'));
+    expect(html).toContain(CONSENT_CONFIRMATION);
+    expect(html).toMatch(/<input[^>]*type="checkbox"/);
+    expect(html).not.toMatch(/<input[^>]*checked/);
+    expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Record this meeting/);
+    expect(html).toContain('Tick the box above to enable recording');
+    expect(html).not.toContain('Start recording');
   });
 
-  it('acknowledged consent shows Start recording', () => {
-    expect(
-      buttonsOf(render({ consent: { status: 'acknowledged', acknowledgedAt: 1 } }), 'primary'),
-    ).toEqual(['Pair with MeetOps', 'Start recording']);
+  it('consent gate: ticking the confirmation enables Record this meeting', () => {
+    const html = render({ consent: setConfirmed(true, 1), auth: { state: 'paired' } });
+    expect(html).toMatch(/<input[^>]*checked/);
+    expect(html).not.toMatch(/<button[^>]*disabled=""[^>]*>Record this meeting/);
+    expect(buttonsOf(html, 'primary')).toEqual(['Record this meeting']);
+    expect(html).not.toContain('Tick the box above');
+  });
+
+  it('consent gate: Record stays disabled while a start is in flight', () => {
+    expect(render({ consent: setConfirmed(true, 1), starting: true })).toMatch(
+      /<button[^>]*disabled=""[^>]*>Record this meeting/,
+    );
   });
 
   it('recording shows the rose live dot, elapsed time and Stop', () => {
@@ -142,6 +156,64 @@ describe('popup render states', () => {
     expect(render({ error: 'No active tab' })).toContain(
       '<div class="mo-toast" role="alert">No active tab</div>',
     );
+  });
+});
+
+describe('popup UI pass: status, re-auth, a11y', () => {
+  it('re-auth required: warning alert, never the error/rose styles, keeps queued recordings', () => {
+    const html = render({ auth: { state: 'repair_required', reason: 'refresh_rejected' } });
+    expect(html).toMatch(
+      /class="mo-callout mo-callout--warning" role="alert" aria-label="Sign-in required"/,
+    );
+    expect(html).toContain('Your sign-in was revoked. Pair again to continue.');
+    expect(html).toContain('stay queued and upload after you pair again');
+    expect(html).not.toContain('mo-callout--error');
+  });
+
+  it('re-auth required without a reason still explains', () => {
+    expect(render({ auth: { state: 'repair_required' } })).toContain(
+      'Your sign-in needs to be renewed. Pair again to continue.',
+    );
+  });
+
+  it('not paired: hint that recordings stay on the device; hidden when paired or unknown', () => {
+    const hint = 'recordings are kept on this device';
+    expect(render()).toContain(hint);
+    expect(render({ auth: { state: 'paired' } })).not.toContain(hint);
+    expect(render({ auth: undefined })).not.toContain(hint);
+  });
+
+  it('confirmed consent is announced as per-meeting', () => {
+    const html = render({ consent: setConfirmed(true, 1) });
+    expect(html).toContain('Consent confirmed for this meeting only.');
+    expect(html).toMatch(/<p class="mo-consent__ok" role="status">/);
+  });
+
+  it('recording: polite status, non-live timer and the 4 h auto-stop countdown', () => {
+    const html = render({
+      status: { status: 'recording', startedAt: 0, chunks: 1 },
+      now: MAX_DURATION_MS - 60_000,
+    });
+    expect(html).toMatch(/<span class="mo-live__state" role="status">Recording<\/span>/);
+    expect(html).toMatch(/role="timer" aria-label="Elapsed">3:59:00</);
+    expect(html).toContain('Stops automatically in <span class="mo-mono">1:00</span>');
+  });
+
+  it.each([
+    ['starting', 'Starting…'],
+    ['stopping', 'Saving…'],
+  ] as const)('%s shows a spinner and a clear label', (status, label) => {
+    const html = render({ status: { status } });
+    expect(html).toContain('mo-spinner');
+    expect(html).toContain(`>${label}</span>`);
+    expect(html).not.toContain('mo-live-dot');
+  });
+
+  it('maps network and reloaded-extension errors to friendly copy', () => {
+    expect(popupErrorMessage('Pairing error: Failed to fetch', true)).toBe(OFFLINE_MESSAGE);
+    expect(
+      popupErrorMessage('Could not establish connection. Receiving end does not exist.', true),
+    ).toBe(RELOADED_MESSAGE);
   });
 });
 
@@ -199,6 +271,18 @@ describe('popup stylesheet', () => {
     expect(css).toMatch(/\.mo-divider \{[^}]*width: 100%;[^}]*margin: 0;/);
     expect(css).toMatch(/\.mo-btn:focus-visible \{[^}]*outline: 2px solid var\(--mo-ring\)/);
     expect(css).toContain('@media (prefers-reduced-motion: reduce)');
+  });
+
+  it('only animates under prefers-reduced-motion: no-preference', () => {
+    const [before, motionSafe = ''] = css.split('@media (prefers-reduced-motion: no-preference)');
+    expect(before).not.toMatch(/animation:\s*mo-/);
+    expect(motionSafe).toMatch(/animation:\s*mo-pulse/);
+  });
+
+  it('buttons and the consent checkbox row are at least 44px tall', () => {
+    expect(css).toMatch(/\.mo-btn \{[^}]*min-height: 44px;/);
+    expect(css).toMatch(/\.mo-btn--ghost \{[^}]*min-height: 44px;/);
+    expect(css).toMatch(/\.mo-consent__check \{[^}]*min-height: 44px;/);
   });
 
   it('never uses the rose accent for errors', () => {
