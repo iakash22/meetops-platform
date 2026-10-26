@@ -16,7 +16,12 @@ describe.skipIf(!out)('email previews', () => {
     mkdirSync(dir, { recursive: true });
     for (const name of emailNames) {
       const r = renderEmail(name, sampleVariables[name] as never);
-      writeFileSync(join(dir, `${name}.html`), r.html);
+      // Browsers can't resolve cid: URLs, so previews inline the logo as a data URI.
+      const logo = r.attachments[0];
+      const html = logo
+        ? r.html.split(`cid:${logo.cid}`).join(`data:${logo.contentType};base64,${logo.content}`)
+        : r.html;
+      writeFileSync(join(dir, `${name}.html`), html);
       writeFileSync(join(dir, `${name}.txt`), `Subject: ${r.subject}\n\n${r.text}`);
     }
     expect(emailNames.length).toBe(12);

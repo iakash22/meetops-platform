@@ -12,6 +12,8 @@ import { sampleVariables } from './fixtures.js';
 
 const render = <K extends EmailName>(n: K) => renderEmail(n, sampleVariables[n]);
 
+const withoutLogo = (h: string) => h.replace(/<img src="cid:meetops-logo@meetops"[^>]*>/g, '');
+
 describe('email catalog', () => {
   it('covers every product email', () => {
     expect([...emailNames].sort()).toEqual(
@@ -43,7 +45,18 @@ describe('email catalog', () => {
       it('is email-client safe', () => {
         expect(r.html).toMatch(/^<!doctype html>/);
         expect(r.html).toContain('role="presentation"');
-        expect(r.html).not.toMatch(/<script|<link|<img|<iframe|<form|javascript:/i);
+        expect(withoutLogo(r.html)).not.toMatch(/<script|<link|<img|<iframe|<form|javascript:/i);
+        // The only image is the CID logo, shipped as an inline attachment (no remote fetch).
+        expect(r.html.match(/<img /g)).toHaveLength(2);
+        expect(r.html).not.toMatch(/<img [^>]*src="(?!cid:meetops-logo@meetops")/);
+        expect(r.html).toContain('alt="MeetOps AI"');
+        expect(r.attachments).toEqual([
+          expect.objectContaining({
+            cid: 'meetops-logo@meetops',
+            contentType: 'image/png',
+            encoding: 'base64',
+          }),
+        ]);
         expect(r.html).not.toMatch(/url\(/i);
         expect(r.html).toContain('display:none;max-height:0'); // hidden preheader
         expect(r.html).toContain('background-color:#0A0A0A');
@@ -95,7 +108,7 @@ describe('escaping', () => {
           );
       }
       const r = renderEmail(name, v as never);
-      expect(r.html, name).not.toContain('<img');
+      expect(withoutLogo(r.html), name).not.toContain('<img');
       expect(r.html, name).not.toContain('onerror=alert(1)>');
       if (injected)
         expect(r.html, name).toContain('&lt;img src=x onerror=alert(1)&gt;&quot;&#39;&amp;');
@@ -152,6 +165,11 @@ describe('theme contrast (WCAG AA)', () => {
     ['muted on background', t.muted, t.background],
     ['link on surface', t.link, t.surface],
     ['link on background', t.link, t.background],
+    ['link on raised surface', t.link, t.surfaceRaised],
+    ['text on raised surface', t.text, t.surfaceRaised],
+    ['muted on raised surface', t.muted, t.surfaceRaised],
+    ['link chip on cerulean tint', t.link, t.primaryTint],
+    ['text on destructive tint', t.text, t.destructiveTint],
     ['button label on cerulean', t.onPrimary, t.primaryFill],
     ['light text', t.light.text, t.light.background],
     ['light muted on surface', t.light.muted, t.light.surface],
