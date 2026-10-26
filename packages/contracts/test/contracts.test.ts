@@ -7,7 +7,7 @@ describe('contracts package', () => {
       from: { email: 'bot@example.com', name: 'MeetOps AI' },
       to: [{ email: 'user@example.com' }],
       subject: 'Hello',
-      text: 'World',
+      text: 'World'
     };
     expect(msg.subject).toBe('Hello');
   });

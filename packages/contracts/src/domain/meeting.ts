@@ -35,10 +35,7 @@ export const Meeting = Type.Object({
 });
 export type Meeting = Static<typeof Meeting>;
 
-export const MeetingParticipantRole = Type.Union([
-  Type.Literal('host'),
-  Type.Literal('participant'),
-]);
+export const MeetingParticipantRole = Type.Union([Type.Literal('host'), Type.Literal('participant')]);
 export type MeetingParticipantRole = Static<typeof MeetingParticipantRole>;
 
 /** A person in a meeting; `userId` is null for external attendees. */

@@ -13,10 +13,7 @@ const strict = { additionalProperties: false } as const;
  * characters), 1-200 characters, and must not be whitespace-only or have leading or trailing whitespace. A schema
  * cannot trim, so clients MUST trim the name before sending.
  */
-export const CreateOrganizationRequest = Type.Object(
-  { name: SafeDisplayText({ maxLength: 200, trimmed: true }) },
-  strict,
-);
+export const CreateOrganizationRequest = Type.Object({ name: SafeDisplayText({ maxLength: 200, trimmed: true }) }, strict);
 export type CreateOrganizationRequest = Static<typeof CreateOrganizationRequest>;
 
 /** An organization together with the caller's role in it. */
@@ -28,10 +25,7 @@ export const CreateOrganizationResponse = OrganizationWithRole;
 export type CreateOrganizationResponse = OrganizationWithRole;
 
 /** GET /orgs: the organizations the caller is a member of, with their role. Cursor page (`nextCursor` null on the last page). */
-export const ListOrganizationsResponse = Type.Object(
-  CursorPage(OrganizationWithRole).properties,
-  strict,
-);
+export const ListOrganizationsResponse = Type.Object(CursorPage(OrganizationWithRole).properties, strict);
 export type ListOrganizationsResponse = Static<typeof ListOrganizationsResponse>;
 
 /**

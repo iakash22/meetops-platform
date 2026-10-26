@@ -51,10 +51,7 @@ export const ExtractedTask = Type.Object({
    * authorization or lookups without human confirmation. Escape it when rendering.
    */
   assigneeHint: Type.Optional(
-    Type.String({
-      maxLength: 200,
-      description: 'UNTRUSTED LLM output; display only, never used for authz or identity',
-    }),
+    Type.String({ maxLength: 200, description: 'UNTRUSTED LLM output; display only, never used for authz or identity' }),
   ),
   dueHint: Type.Optional(Type.String()),
   confidence: Type.Number({ minimum: 0, maximum: 1 }),
@@ -92,9 +89,7 @@ export const IntegrationIssue = Type.Object(
     provider: IntegrationProvider,
     /** 'owner/repo#N' (GitHub) or 'PROJ-1' (Jira). */
     externalId: Type.String({ minLength: 1, maxLength: 255 }),
-    externalUrl: Type.Optional(
-      Type.String({ format: 'uri', pattern: '^https://', maxLength: 2048 }),
-    ),
+    externalUrl: Type.Optional(Type.String({ format: 'uri', pattern: '^https://', maxLength: 2048 })),
     /** Last status seen at sync time, for conflict checks. */
     lastKnownStatus: Type.Optional(IssueStatus),
     syncedAt: Type.Optional(IsoDateTime),

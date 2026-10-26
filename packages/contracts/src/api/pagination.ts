@@ -4,26 +4,16 @@ import { DEFAULT_PAGE_LIMIT, MAX_CURSOR_LENGTH, MAX_PAGE_LIMIT } from '../consta
 // Defined in constants.ts so the light `/types` entry exposes them; re-exported here for existing importers.
 export { DEFAULT_PAGE_LIMIT, MAX_CURSOR_LENGTH, MAX_PAGE_LIMIT };
 
-export const CursorPageQuery = Type.Object(
-  {
-    cursor: Type.Optional(Type.String()),
-    limit: Type.Optional(
-      Type.Integer({ minimum: 1, maximum: MAX_PAGE_LIMIT, default: DEFAULT_PAGE_LIMIT }),
-    ),
-  },
-  { additionalProperties: false },
-);
+export const CursorPageQuery = Type.Object({
+  cursor: Type.Optional(Type.String()),
+  limit: Type.Optional(Type.Integer({ minimum: 1, maximum: MAX_PAGE_LIMIT, default: DEFAULT_PAGE_LIMIT })),
+}, { additionalProperties: false });
 export type CursorPageQuery = Static<typeof CursorPageQuery>;
 
-export const OffsetPageQuery = Type.Object(
-  {
-    offset: Type.Optional(Type.Integer({ minimum: 0, default: 0 })),
-    limit: Type.Optional(
-      Type.Integer({ minimum: 1, maximum: MAX_PAGE_LIMIT, default: DEFAULT_PAGE_LIMIT }),
-    ),
-  },
-  { additionalProperties: false },
-);
+export const OffsetPageQuery = Type.Object({
+  offset: Type.Optional(Type.Integer({ minimum: 0, default: 0 })),
+  limit: Type.Optional(Type.Integer({ minimum: 1, maximum: MAX_PAGE_LIMIT, default: DEFAULT_PAGE_LIMIT })),
+}, { additionalProperties: false });
 export type OffsetPageQuery = Static<typeof OffsetPageQuery>;
 
 /** A page holds at most MAX_PAGE_LIMIT items; `nextCursor` is at most MAX_CURSOR_LENGTH characters, or null on the last page. */
