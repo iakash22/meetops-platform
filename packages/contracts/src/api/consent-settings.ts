@@ -9,7 +9,7 @@ import {
 import { ConsentVersion } from './consent.js';
 
 /**
- * v0.5.0 PROPOSAL (Architecture review): organization consent / retention settings.
+ * v0.5.0: organization consent / retention settings.
  *   GET   /orgs/:organizationId/settings/consent                          -> ConsentSettings (all roles)
  *   PATCH /orgs/:organizationId/settings/consent  UpdateConsentSettingsRequest -> ConsentSettings (owner/admin only; 403 otherwise)
  * See CONSENT_UPLOAD_PATHS.consentSettings and CONSENT_SETTINGS_WRITE_ROLES.
@@ -45,7 +45,8 @@ export type ConsentSettings = Static<typeof ConsentSettings>;
 
 /**
  * PATCH body: partial update of the writable fields; at least one field. Strict: `currentConsentVersion` and
- * `updatedAt` cannot be set by a client (422 VALIDATION_FAILED).
+ * `updatedAt` cannot be set by a client: a schema failure is 400
+ * `VALIDATION_FAILED` (like every other route; only CONSENT_ERROR_REASONS use CONSENT_HTTP_STATUS 422).
  */
 export const UpdateConsentSettingsRequest = Type.Object(
   {

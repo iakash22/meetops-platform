@@ -60,7 +60,7 @@ export const InitUploadResponse = CreateUploadResponse;
 export type InitUploadResponse = CreateUploadResponse;
 
 /**
- * v0.5.0 PROPOSAL: `POST /orgs/:organizationId/uploads/:fileObjectId/complete` (CONSENT_UPLOAD_PATHS.uploadComplete).
+ * v0.5.0: `POST /orgs/:organizationId/uploads/:fileObjectId/complete` (CONSENT_UPLOAD_PATHS.uploadComplete).
  * Body is an empty strict object (the server already holds the signed size, checksum and attestation). The server
  * verifies the stored object's size and checksum, then the stored consent attestation. On a consent failure it answers
  * 422 `VALIDATION_FAILED` + `reason` from UPLOAD_COMPLETE_CONSENT_ERROR_REASONS (ConsentErrorEnvelope) and enqueues no
@@ -80,7 +80,7 @@ export const CompleteUploadResponse = Type.Object(
 export type CompleteUploadResponse = Static<typeof CompleteUploadResponse>;
 
 /**
- * v0.5.0 PROPOSAL: `GET /orgs/:organizationId/uploads/:fileObjectId/download-url` (CONSENT_UPLOAD_PATHS.uploadDownloadUrl).
+ * v0.5.0: `GET /orgs/:organizationId/uploads/:fileObjectId/download-url` (CONSENT_UPLOAD_PATHS.uploadDownloadUrl).
  * A presigned GET. `expiresIn` (seconds) is 1..MAX_PRESIGNED_GET_TTL_SECONDS (300) and `expiresAt` = issue time + expiresIn.
  * 404 for other-org ids or a FileObject whose scanStatus is not `clean`.
  */

@@ -18,7 +18,7 @@ export const ApiErrorCode = Type.Union([
   Type.Literal('FORBIDDEN'),
   Type.Literal('NOT_FOUND'),
   Type.Literal('CONFLICT'),
-  /** v0.5.0 PROPOSAL (pending Architecture agreement): HTTP 413 (PAYLOAD_TOO_LARGE_HTTP_STATUS). Size caps (1.4 GB). */
+  /** v0.5.0: HTTP 413 (PAYLOAD_TOO_LARGE_HTTP_STATUS). Size caps (1.4 GB). */
   Type.Literal('PAYLOAD_TOO_LARGE'),
   Type.Literal('RATE_LIMITED'),
   Type.Literal('PROVIDER_UNAVAILABLE'),
@@ -102,7 +102,7 @@ export type ConsentErrorEnvelope = {
 };
 
 /**
- * v0.5.0 PROPOSAL (pending Architecture agreement): a 413 body for the 1.4 GB caps (recording-session running total,
+ * v0.5.0: a 413 body for the 1.4 GB caps (recording-session running total,
  * upload `sizeBytes`). `code` is `PAYLOAD_TOO_LARGE`; no `reason`.
  */
 export type PayloadTooLargeErrorEnvelope = {
