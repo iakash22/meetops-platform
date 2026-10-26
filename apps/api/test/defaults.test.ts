@@ -74,6 +74,7 @@ describe('BE-1: strict environments without DATABASE_URL / REDIS_URL', () => {
       'rateLimiter',
       'lockout',
       'mailQueue',
+      'extensionTokens',
     ]);
   });
 
