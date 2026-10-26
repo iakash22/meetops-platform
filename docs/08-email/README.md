@@ -49,3 +49,22 @@ hand-written, email-client-safe HTML with a plain-text twin. No MJML/react-email
 ```sh
 EMAIL_PREVIEW_DIR=/tmp/email-previews pnpm --filter @meetops/notifications test -- previews
 ```
+
+## Hero banner (two builds)
+
+Research: animated GIFs play in Gmail, Apple Mail/iOS, Outlook.com/new Outlook, but classic Outlook for Windows
+(Word engine) shows only the first frame ([caniemail: GIF](https://www.caniemail.com/features/image-gif/),
+[Mailjet: Outlook rendering](https://documentation.mailjet.com/hc/en-us/articles/38816577432475-Outlook-rendering-issues)).
+CSS background images are unreliable in Gmail and ignored by classic Outlook, which needs VML
+([caniemail: background-image](https://www.caniemail.com/features/css-background-image/),
+[Litmus: background images](https://www.litmus.com/blog/the-ultimate-guide-to-background-images-in-email)).
+Many Outlook installs block images by default, so no copy lives in images.
+
+- **Modern clients** (`<!--[if !mso]><!-->`): live-text banner (category chip, rose `#FF2D95` live dot, tagline,
+  feature labels) plus an inline-CID animated GIF strip of the five Lucide feature icons (600x76, 16 frames,
+  ~95 KB, no text, `width`/`height` set, coloured alt text). Icons sit at ~40% opacity with a slow shimmer and a
+  waveform drift; frame 1 is complete.
+- **Outlook desktop / images off** (`<!--[if mso]>`, `v:rect` gradient): the same banner from table cells, with
+  dim unicode glyphs in tinted cells instead of the GIF. Looks complete with zero images.
+- Rose (`--highlight`) is an accent fill only (banner and overline live dots), never text; text on rose would use
+  `#0A0A0A` (tested for AA). Tests prove all key copy survives with every image removed.
