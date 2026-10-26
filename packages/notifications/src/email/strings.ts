@@ -18,6 +18,10 @@ export interface EmailMessages {
     integration: string;
   };
   meetingChips: { actionItems: (n: number) => string };
+  bannerLabel: Record<'security' | 'workspace' | 'meeting' | 'tasks' | 'integration', string>;
+  bannerAlt: (label: string) => string;
+  bannerTagline: string;
+  bannerFeatures: readonly [string, string, string, string, string];
   greeting: (name: string) => string;
   greetingFallback: string;
   buttonFallback: string;
@@ -130,6 +134,17 @@ export const en: EmailMessages = {
     tasks: 'Tasks',
     integration: 'Integration',
   },
+  bannerLabel: {
+    security: 'Security',
+    workspace: 'Workspace',
+    meeting: 'Meeting summary',
+    tasks: 'Tasks',
+    integration: 'Integration',
+  },
+  bannerAlt: () =>
+    'Animated MeetOps AI feature icons: record, transcribe, AI summary, tasks and sync',
+  bannerTagline: 'Meeting to action',
+  bannerFeatures: ['Record', 'Transcribe', 'AI summary', 'Tasks', 'Sync'],
   meetingChips: {
     actionItems: (n) => `${n} ${plural(n, 'action item', 'action items')}`,
   },

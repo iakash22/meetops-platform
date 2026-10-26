@@ -13,6 +13,7 @@ import {
   paragraph,
   textLayout,
 } from './layout.js';
+import { BANNER_CID, bannerGif, type BannerCategory } from './banner.js';
 import { logoAttachment } from './logo.js';
 import { DEFAULT_EMAIL_LOCALE, emailMessages, messagesFor, type EmailMessages } from './strings.js';
 
@@ -138,7 +139,35 @@ interface Parts {
   unsubscribeUrl?: string | undefined;
 }
 
-function build(locale: string | undefined, p: Parts, m: EmailMessages): RenderedEmail {
+const CATEGORY: Record<EmailName, BannerCategory> = {
+  verification: 'security',
+  'password-reset': 'security',
+  'account-exists': 'security',
+  'login-lockout': 'security',
+  'password-changed': 'security',
+  invitation: 'workspace',
+  'member-added': 'workspace',
+  'member-removed': 'workspace',
+  'meeting-summary': 'meeting',
+  'tasks-ready-for-review': 'tasks',
+  'task-assigned': 'tasks',
+  'integration-error': 'integration',
+};
+
+const BANNER: InlineAttachment = {
+  filename: 'meetops-banner.gif',
+  cid: BANNER_CID,
+  contentType: 'image/gif',
+  content: bannerGif,
+  encoding: 'base64',
+};
+
+function build(
+  locale: string | undefined,
+  p: Parts,
+  m: EmailMessages,
+  category: BannerCategory,
+): RenderedEmail {
   const subject = cleanSubject(p.subject);
   return {
     subject,
@@ -150,6 +179,7 @@ function build(locale: string | undefined, p: Parts, m: EmailMessages): Rendered
       m,
       preferencesUrl: p.preferencesUrl,
       unsubscribeUrl: p.unsubscribeUrl,
+      banner: { category, alt: m.bannerAlt(m.bannerLabel[category]) },
     }),
     text: textLayout({
       m,
@@ -157,7 +187,7 @@ function build(locale: string | undefined, p: Parts, m: EmailMessages): Rendered
       preferencesUrl: p.preferencesUrl,
       unsubscribeUrl: p.unsubscribeUrl,
     }),
-    attachments: [{ ...LOGO }],
+    attachments: [{ ...LOGO }, { ...BANNER }],
   };
 }
 
@@ -456,5 +486,5 @@ export function renderEmail<K extends EmailName>(name: K, vars: EmailVariables[K
   const r = renderers[name] as Renderer<K> | undefined;
   if (!r) throw new Error(`Unknown email template: ${String(name)}`);
   const m = messagesFor(vars.locale);
-  return build(vars.locale, r(vars, m), m);
+  return build(vars.locale, r(vars, m), m, CATEGORY[name]);
 }

@@ -1,4 +1,11 @@
 import { escapeHtml, safeUrl } from './escape.js';
+import {
+  BANNER_CID,
+  BANNER_FALLBACK,
+  BANNER_HEIGHT,
+  BANNER_WIDTH,
+  type BannerCategory,
+} from './banner.js';
 import { LOGO_CID } from './logo.js';
 import type { EmailMessages } from './strings.js';
 import { emailTheme as t } from './theme.js';
@@ -28,8 +35,10 @@ export function paragraph(text: string, opts: { muted?: boolean; small?: boolean
 
 /** Small uppercase label above the hero heading (type scale "overline": 12px, 0.08em, 600). */
 export function overline(text: string): Html {
+  // Rose (#FF2D95) appears only as a small live-dot fill next to the label, never as text.
+  const dot = `<span style="display:inline-block;width:8px;height:8px;margin:0 8px 1px 0;border-radius:50%;background-color:${t.highlight};vertical-align:middle;"></span>`;
   return html(
-    `<p class="mo-link" style="margin:0 0 12px;color:${t.link};font-size:12px;line-height:16px;letter-spacing:0.08em;text-transform:uppercase;font-weight:600;">${escapeHtml(text)}</p>`,
+    `<p class="mo-link" style="margin:0 0 12px;color:${t.link};font-size:12px;line-height:16px;letter-spacing:0.08em;text-transform:uppercase;font-weight:600;">${dot}${escapeHtml(text)}</p>`,
   );
 }
 
@@ -163,6 +172,8 @@ export interface LayoutOptions {
   /** Required for non-auth (product) mail; omitted for auth/security mail which can't be unsubscribed. */
   preferencesUrl?: string | undefined;
   unsubscribeUrl?: string | undefined;
+  /** Hero banner (inline CID image) shown at the top of the card. */
+  banner?: { category: BannerCategory; alt: string } | undefined;
 }
 
 const lightCss =
@@ -193,7 +204,7 @@ export function layout(o: LayoutOptions): string {
   const preheaderPad = '&#847;&zwnj;&nbsp;'.repeat(40);
   const small = `margin:0 0 8px;color:${t.muted};font-size:12px;line-height:1.6;`;
   return (
-    `<!doctype html><html lang="${escapeHtml(o.lang)}" xmlns="http://www.w3.org/1999/xhtml"><head>` +
+    `<!doctype html><html lang="${escapeHtml(o.lang)}" xmlns="http://www.w3.org/1999/xhtml" xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office"><head>` +
     `<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">` +
     `<meta http-equiv="X-UA-Compatible" content="IE=edge">` +
     `<meta name="color-scheme" content="dark light"><meta name="supported-color-schemes" content="dark light">` +
@@ -208,7 +219,10 @@ export function layout(o: LayoutOptions): string {
     `<tr><td style="padding:0 4px 24px;">${wordmark(m)}</td></tr>` +
     // Card: cerulean hairline on top (fill only), then content
     `<tr><td class="mo-surface" bgcolor="${t.surface}" style="background-color:${t.surface};border:1px solid ${t.border};border-radius:${r.xl}px;overflow:hidden;">` +
-    `<table ${TABLE} width="100%"><tr><td height="3" bgcolor="${t.primaryFill}" style="height:3px;line-height:3px;font-size:0;background-color:${t.primaryFill};background-image:linear-gradient(90deg,${t.primaryFill},${t.link});border-radius:${r.xl}px ${r.xl}px 0 0;">&nbsp;</td></tr>` +
+    `<table ${TABLE} width="100%">` +
+    (o.banner
+      ? `<tr><td>${banner(m, o.banner)}</td></tr>`
+      : `<tr><td height="3" bgcolor="${t.primaryFill}" style="height:3px;line-height:3px;font-size:0;background-color:${t.primaryFill};border-radius:${r.xl}px ${r.xl}px 0 0;">&nbsp;</td></tr>`) +
     `<tr><td class="mo-pad" style="padding:40px 40px 32px;">${o.body.__html}</td></tr></table>` +
     `</td></tr>` +
     // Footer
@@ -238,4 +252,54 @@ export function textLayout(o: {
   if (o.preferencesUrl) footer.push(`${o.m.managePreferences}: ${safeUrl(o.preferencesUrl)}`);
   if (o.unsubscribeUrl) footer.push(`${o.m.unsubscribe}: ${safeUrl(o.unsubscribeUrl)}`);
   return `${o.m.brand}\n\n${body}\n\n--\n${footer.join('\n')}\n`;
+}
+
+/** Glyphs for the image-free icon row (Outlook desktop / images off). */
+const GLYPHS = ['&#9679;', '&#8767;', '&#10022;', '&#9745;', '&#10227;'] as const;
+
+/**
+ * Hero banner. Every word is live text; the only image is the animated icon strip, which modern clients get
+ * and Outlook desktop never sees (it gets table cells + VML instead). With images blocked elsewhere, the strip's
+ * cell keeps its dark fill and coloured alt text, and the chip, tagline and labels still render.
+ */
+function banner(m: EmailMessages, b: { category: BannerCategory; alt: string }): string {
+  const h = BANNER_FALLBACK;
+  const label = escapeHtml(m.bannerLabel[b.category]);
+  const cols = m.bannerFeatures;
+  const chip =
+    `<table ${TABLE}><tr>` +
+    // Rose live dot: a filled cell in its own table so it stays an 8x8 dot (accent only, no text on it).
+    `<td valign="middle" style="width:8px;"><table ${TABLE} width="8"><tr><td width="8" height="8" bgcolor="${t.highlight}" style="width:8px;height:8px;max-height:8px;background-color:${t.highlight};border-radius:50%;font-size:1px;line-height:8px;mso-line-height-rule:exactly;">&#8203;</td></tr></table></td>` +
+    `<td style="padding-left:10px;color:${t.text};font-size:12px;line-height:16px;letter-spacing:0.08em;text-transform:uppercase;font-weight:600;font-family:${t.fontStack};">MeetOps AI &middot; ${label}</td>` +
+    `</tr></table>` +
+    `<p style="margin:6px 0 0;color:${t.muted};font-size:13px;line-height:18px;font-family:${t.fontStack};">${escapeHtml(m.bannerTagline)}</p>`;
+  const gif = `<!--[if !mso]><!--><img src="cid:${BANNER_CID}" width="${BANNER_WIDTH}" height="${BANNER_HEIGHT}" alt="${escapeHtml(b.alt)}" style="display:block;width:100%;max-width:${BANNER_WIDTH}px;height:auto;border:0;outline:none;text-decoration:none;background-color:${h};color:${t.muted};font-size:12px;line-height:1.5;font-family:${t.fontStack};"><!--<![endif]-->`;
+  const msoIcons =
+    `<!--[if mso]><table ${TABLE} width="600"><tr>` +
+    GLYPHS.map(
+      (g) =>
+        `<td width="120" align="center" style="padding:16px 0 12px;"><table ${TABLE}><tr><td width="44" height="44" align="center" valign="middle" bgcolor="#10232C" style="width:44px;height:44px;background-color:#10232C;border:1px solid #1B3A48;color:#4F7D90;font-size:18px;font-family:Segoe UI Symbol,Arial,sans-serif;">${g}</td></tr></table></td>`,
+    ).join('') +
+    `</tr></table><![endif]-->`;
+  const labels =
+    `<table ${TABLE} width="100%"><tr>` +
+    cols
+      .map(
+        (c) =>
+          `<td width="20%" align="center" style="padding:0 0 22px;color:${t.muted};font-size:12px;line-height:16px;font-weight:500;font-family:${t.fontStack};">${escapeHtml(c)}</td>`,
+      )
+      .join('') +
+    `</tr></table>`;
+  const inner =
+    `<table ${TABLE} width="100%" bgcolor="${h}" style="background-color:${h};">` +
+    `<tr><td style="padding:28px 40px 8px;">${chip}</td></tr>` +
+    `<tr><td style="font-size:0;line-height:0;">${gif}${msoIcons}</td></tr>` +
+    `<tr><td>${labels}</td></tr></table>`;
+  return (
+    `<div style="background-color:${h};border-bottom:1px solid ${t.border};border-radius:${r.xl}px ${r.xl}px 0 0;overflow:hidden;">` +
+    `<!--[if gte mso 9]><v:rect xmlns:v="urn:schemas-microsoft-com:vml" fill="true" stroke="false" style="width:600px;"><v:fill type="gradient" color="${h}" color2="${t.primaryTint}" angle="135"/><v:textbox style="mso-fit-shape-to-text:true" inset="0,0,0,0"><![endif]-->` +
+    inner +
+    `<!--[if gte mso 9]></v:textbox></v:rect><![endif]-->` +
+    `</div>`
+  );
 }

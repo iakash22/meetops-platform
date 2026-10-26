@@ -17,6 +17,9 @@ export const emailTheme = {
   link: '#3AB0E0',
   /** Cerulean-tinted chip/tile background; #3AB0E0 text on it stays AA. */
   primaryTint: '#0B2531',
+  /** Neon Rose (apps/web --highlight). Fill/glow accent only, never text; text on rose uses onHighlight. */
+  highlight: '#FF2D95',
+  onHighlight: '#0A0A0A',
   destructive: '#EF4444',
   destructiveText: '#F87171',
   destructiveTint: '#2A1215',
