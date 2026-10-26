@@ -108,3 +108,20 @@ describe('v0.7.0 integrations', () => {
     expect(new Set(API_ERROR_REASONS).size).toBe(API_ERROR_REASONS.length);
   });
 });
+
+describe('0.7.0 User.emailVerifiedAt', () => {
+  it('accepts an ISO date-time, null, or absence; rejects other values', async () => {
+    const { Value } = await import('@sinclair/typebox/value');
+    const { User } = await import('../src/domain/org.js');
+    const base = {
+      id: '00000000-0000-4000-8000-000000000001',
+      email: 'a@example.com',
+      createdAt: '2026-10-26T00:00:00.000Z',
+      updatedAt: '2026-10-26T00:00:00.000Z',
+    };
+    expect(Value.Check(User, base)).toBe(true);
+    expect(Value.Check(User, { ...base, emailVerifiedAt: null })).toBe(true);
+    expect(Value.Check(User, { ...base, emailVerifiedAt: '2026-10-26T01:00:00.000Z' })).toBe(true);
+    expect(Value.Check(User, { ...base, emailVerifiedAt: 'yesterday' })).toBe(false);
+  });
+});
