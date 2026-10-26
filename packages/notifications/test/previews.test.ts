@@ -5,8 +5,8 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { emailNames, renderEmail } from '../src';
-import { sampleVariables } from './fixtures';
+import { emailNames, renderEmail } from '../src/index.js';
+import { sampleVariables } from './fixtures.js';
 
 const out = process.env.EMAIL_PREVIEW_DIR;
 

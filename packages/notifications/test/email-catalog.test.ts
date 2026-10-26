@@ -7,8 +7,8 @@ import {
   messagesFor,
   renderEmail,
   type EmailName,
-} from '../src';
-import { sampleVariables } from './fixtures';
+} from '../src/index.js';
+import { sampleVariables } from './fixtures.js';
 
 const render = <K extends EmailName>(n: K) => renderEmail(n, sampleVariables[n]);
 

@@ -1,4 +1,4 @@
-import type { EmailName, EmailVariables } from '../src';
+import type { EmailName, EmailVariables } from '../src/index.js';
 
 const pref = {
   preferencesUrl: 'https://app.meetops.test/settings/notifications',
