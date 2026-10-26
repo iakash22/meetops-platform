@@ -20,3 +20,4 @@ export {
   contrastRatio,
   cleanSubject,
 } from './email/public.js';
+export * from './auth-mail.js';
