@@ -17,6 +17,9 @@ import {
   sessionResponse,
   tasks,
   uploadResponse,
+  completeResponse,
+  downloadUrlResponse,
+  consentSettings,
   pairResponse,
   sessionList,
   memberList,
@@ -109,7 +112,18 @@ export function createMockApi(
     storage: {
       createUpload: vi.fn().mockResolvedValue(uploadResponse),
       putToPresignedUrl: vi.fn().mockResolvedValue(undefined),
+      completeUpload: vi.fn().mockResolvedValue(completeResponse),
+      getDownloadUrl: vi.fn().mockResolvedValue(downloadUrlResponse),
       ...overrides.storage,
+    },
+    consentSettings: {
+      get: vi.fn().mockResolvedValue(consentSettings),
+      update: vi
+        .fn()
+        .mockImplementation((_o: string, body: object) =>
+          Promise.resolve({ ...consentSettings, ...body }),
+        ),
+      ...overrides.consentSettings,
     },
   };
 }

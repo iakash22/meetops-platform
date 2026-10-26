@@ -25,8 +25,15 @@ const Sha256Hex = Type.String({ pattern: '^[0-9a-f]{64}$' });
 
 const strict = { additionalProperties: false } as const;
 
-/** Capture source. Extensible: add members via a contracts PR. */
-export const RecordingSource = Type.Union([Type.Literal('tab')]);
+/**
+ * Capture source. Extensible: add members via a contracts PR. v0.6.0 adds `mobile` (native app, PR #173) and
+ * `desktop` (Tauri app, PR #180). Servers persisting the value need the matching DB enum members.
+ */
+export const RecordingSource = Type.Union([
+  Type.Literal('tab'),
+  Type.Literal('mobile'),
+  Type.Literal('desktop'),
+]);
 export type RecordingSource = Static<typeof RecordingSource>;
 
 export const InitRecordingSessionRequest = Type.Object(

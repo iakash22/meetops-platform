@@ -6,6 +6,52 @@ While the version is `0.x`, a minor bump may contain breaking changes (ADR-003).
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-10-26
+
+Native capture sources and the meetings list route. Builds on 0.5.0 (#168). Needed by mobile PR #173, desktop PRs
+#176 and #180. A `0.x` minor that contains a breaking change (ADR-003).
+
+### Changed (breaking)
+
+- `RecordingSource` gains `'mobile'` and `'desktop'` (was `'tab'` only), used in `InitRecordingSessionRequest.source`.
+  Accepting more request values is additive for servers, but code that switches exhaustively over `RecordingSource`
+  must add the new members (ADR-003 §5). None exists in the repo today. Persisting the value also needs the
+  `RecordingSource` Postgres enum (currently `tab` only) to gain `mobile` and `desktop`: a database migration,
+  tracked separately from this contracts release.
+
+### Added
+
+- `ListMeetingsQuery` and `ListMeetingsParams` for `GET /orgs/:organizationId/meetings`, returning
+  `CursorPage<Meeting>`. Paged like `ListTasksQuery` (`cursor` + `limit`), newest first, with optional `status`
+  (single or array), `source`, `projectId`, `startedAfter`, `startedBefore` and `q` filters. Unknown params are rejected.
+- `MEETING_PATHS` route templates (`meetings`, `meeting`).
+
+## [0.5.0] - 2026-10-26
+
+Consent settings, upload complete / download-URL contracts and the `PAYLOAD_TOO_LARGE` (413) error code. Builds on
+0.4.1 (#156). A `0.x` minor that contains a breaking change (ADR-003).
+
+### Changed (breaking)
+
+- `ApiErrorCode` / `API_ERROR_CODES` gain `PAYLOAD_TOO_LARGE`. Adding a member to a response union breaks exhaustive
+  consumers (ADR-003 §5): every `Record<ApiErrorCode, …>` map must add an entry. Affected consumers, updated in this
+  release: `apps/web/src/lib/api/error-messages.ts`, `apps/web/src/features/extension/pair-errors.ts`,
+  `apps/web/src/features/desktop/authorize-errors.ts`. No other exhaustive map exists (apps/api, desktop, extension,
+  mobile, realtime, worker use non-exhaustive status maps that fall back to `BAD_REQUEST` / `INTERNAL` for 413).
+
+### Added
+
+- `api/consent-settings.ts`: `ConsentSettings` (`{ mode, noticeText, skipExternalParticipants, retentionDays,
+currentConsentVersion, updatedAt }`), `UpdateConsentSettingsRequest` (partial, strict, non-empty; server-owned
+  fields not writable), `ConsentSettingsMode` (`all_party | one_party`).
+- `api/uploads.ts`: `CompleteUploadRequest` (empty strict), `CompleteUploadResponse` (`{ fileObject, scanStatus }`),
+  `UPLOAD_COMPLETE_CONSENT_ERROR_REASONS`, `DownloadUrlResponse` (`{ url, method: 'GET', expiresIn <= 300, expiresAt }`).
+- Constants: `CONSENT_UPLOAD_PATHS`, `CONSENT_SETTINGS_MODES`, `CONSENT_SETTINGS_WRITE_ROLES` (owner, admin),
+  `MAX_CONSENT_NOTICE_TEXT_LENGTH` (4000), `MIN_RETENTION_DAYS` (1), `MAX_RETENTION_DAYS` (3650).
+- Error code `PAYLOAD_TOO_LARGE` in `ApiErrorCode` / `API_ERROR_CODES`, with
+  `PAYLOAD_TOO_LARGE_HTTP_STATUS` (413) and type `PayloadTooLargeErrorEnvelope`: a recording session's running total
+  over `MAX_RECORDING_SESSION_BYTES` (1.4 GB) or an upload `sizeBytes` over `MAX_UPLOAD_BYTES`.
+
 ## [0.4.1] - 2026-10-25
 
 Consent attestation (G11), FileObject scan status, realtime auth-revocation contracts (G2, ADR-011) and the G9 upload
