@@ -1,4 +1,3 @@
-import type { ExtensionScope } from '@meetops/contracts';
 import type { RedisLike } from '../../auth/infrastructure/rate-limit/redis.js';
 import type {
   AccessTokenRecord,
@@ -8,7 +7,9 @@ import type {
   TokenFamily,
 } from '../domain/extension-token.js';
 
-type Json<T> = { [K in keyof T]: T[K] extends Date ? number : T[K] extends Date | null ? number | null : T[K] };
+type Json<T> = {
+  [K in keyof T]: T[K] extends Date ? number : T[K] extends Date | null ? number | null : T[K];
+};
 
 const ms = (d: Date | null) => (d ? d.getTime() : null);
 const ttl = (until: number) => Math.max(1, until - Date.now()) + 60_000;
@@ -37,7 +38,12 @@ export class RedisExtensionTokenRepository implements ExtensionTokenRepository {
   }
 
   private async saveFamily(f: TokenFamily) {
-    const v: Json<TokenFamily> = { ...f, createdAt: f.createdAt.getTime(), maxExpiresAt: f.maxExpiresAt.getTime(), revokedAt: ms(f.revokedAt) };
+    const v: Json<TokenFamily> = {
+      ...f,
+      createdAt: f.createdAt.getTime(),
+      maxExpiresAt: f.maxExpiresAt.getTime(),
+      revokedAt: ms(f.revokedAt),
+    };
     await this.redis.set(this.k('fam', f.id), JSON.stringify(v), 'PX', ttl(v.maxExpiresAt));
   }
   async createFamily(f: TokenFamily) {
@@ -52,7 +58,7 @@ export class RedisExtensionTokenRepository implements ExtensionTokenRepository {
     const v = JSON.parse(raw) as Json<TokenFamily>;
     return {
       ...v,
-      scopes: v.scopes as ExtensionScope[],
+      scopes: v.scopes,
       createdAt: new Date(v.createdAt),
       maxExpiresAt: new Date(v.maxExpiresAt),
       revokedAt: v.revokedAt === null ? null : new Date(v.revokedAt),
@@ -80,7 +86,12 @@ export class RedisExtensionTokenRepository implements ExtensionTokenRepository {
     const familyId = await this.redis.getdel(this.k('rt', tokenHash));
     if (familyId) {
       const f = await this.findFamily(familyId);
-      await this.redis.set(this.k('rtused', tokenHash), familyId, 'PX', ttl(f ? f.maxExpiresAt.getTime() : Date.now()));
+      await this.redis.set(
+        this.k('rtused', tokenHash),
+        familyId,
+        'PX',
+        ttl(f ? f.maxExpiresAt.getTime() : Date.now()),
+      );
       return { status: 'ok', familyId };
     }
     const used = await this.redis.get(this.k('rtused', tokenHash));
@@ -100,6 +111,6 @@ export class RedisExtensionTokenRepository implements ExtensionTokenRepository {
     const raw = await this.redis.get(this.k('at', tokenHash));
     if (!raw) return null;
     const v = JSON.parse(raw) as Json<AccessTokenRecord>;
-    return { ...v, scopes: v.scopes as ExtensionScope[], expiresAt: new Date(v.expiresAt) };
+    return { ...v, scopes: v.scopes, expiresAt: new Date(v.expiresAt) };
   }
 }
