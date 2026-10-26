@@ -72,7 +72,7 @@ const CONSENT_MIGRATION = '20261025120000_consent_scan_keycheck';
 const MEETINGS_EXTERNAL_ID_MIGRATION = '20261026120000_meetings_external_id';
 const RECORDING_SOURCE_NATIVE_MIGRATION = '20261026210000_recording_source_native';
 /** Update when adding a migration. */
-const INTEGRATION_CONNECTIONS_MIGRATION = '20261026220000_integration_connections';
+const INTEGRATION_CONNECTIONS_MIGRATION = '20261027000000_integration_connections';
 const LATEST_MIGRATION = INTEGRATION_CONNECTIONS_MIGRATION;
 const integrationsSql = readFileSync(
   resolve(migrationsDir, INTEGRATION_CONNECTIONS_MIGRATION, 'migration.sql'),
