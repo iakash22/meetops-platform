@@ -28,6 +28,10 @@ export const REDACT_PATHS = [
   '*.api_key',
   '*.access_token',
   '*.refresh_token',
+  '*.accessToken',
+  '*.refreshToken',
+  '*.pairingCode',
+  '*.nonce',
 ];
 
 /**

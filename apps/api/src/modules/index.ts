@@ -50,6 +50,13 @@ import {
   type RevocationPublisher,
 } from './auth/application/revocations.js';
 import { createRedisRevocationPublisher } from '@meetops/session-verifier';
+import {
+  ExtensionAuthService,
+  extensionAuthRoutes,
+  InMemoryExtensionTokenRepository,
+  RedisExtensionTokenRepository,
+  type ExtensionTokenRepository,
+} from './extension-auth/index.js';
 import { InMemoryUserRepository } from './users/infrastructure/in-memory-user.repository.js';
 import type { UserRepository } from './users/domain/user.repository.js';
 import { OrganizationService } from './organizations/application/organization.service.js';
@@ -118,6 +125,10 @@ export interface ModuleDeps {
   revocations?: RevocationPublisher;
   /** Meetings repository (Prisma when `db` is set; in-memory only in development/test). */
   meetings: MeetingRepository;
+  /** ADR-005 extension pairing/token store (Redis when `redis` is set; in-memory only in development/test). */
+  extensionTokens: ExtensionTokenRepository;
+  /** ADR-005 allowlisted Chrome extension ids (EXTENSION_IDS; plus EXTENSION_DEV_IDS in development/test). */
+  extensionIds: readonly string[];
 }
 
 /** Revocation publisher over the shared Redis client, or a no-op without one. */
@@ -162,6 +173,7 @@ export const REDIS_BACKED_DEPS = [
   'rateLimiter',
   'lockout',
   'revocations',
+  'extensionTokens',
 ] as const satisfies readonly (keyof ModuleDeps)[];
 
 /** Connection URLs are ignored under NODE_ENV=test: tests stay hermetic unless they inject a client. */
@@ -210,6 +222,12 @@ export async function closeOwnedRedis(client: OwnedRedis): Promise<void> {
   await client.quit().catch(() => client.disconnect());
 }
 
+const csv = (v: string | undefined) =>
+  (v ?? '')
+    .split(',')
+    .map((x) => x.trim())
+    .filter(Boolean);
+
 const MIN = 60 * 1000;
 const HOUR = 60 * MIN;
 const DAY = 24 * HOUR;
@@ -236,6 +254,7 @@ export const PRODUCTION_REQUIRED_DEPS = [
   'lockout',
   'mailQueue',
   'audit',
+  'extensionTokens',
 ] as const satisfies readonly (keyof ModuleDeps)[];
 
 export class MissingProductionDependencyError extends Error {
@@ -333,6 +352,13 @@ export function defaultModuleDeps(
     rateLimiter: redis ? new RedisRateLimiter(redis) : new InMemoryRateLimiter(clock),
     lockout: redis ? new RedisLoginLockout(redis) : new InMemoryLoginLockout(clock),
     mailQueue: new InlineAuthMailQueue(),
+    extensionTokens: redis
+      ? new RedisExtensionTokenRepository(redis)
+      : new InMemoryExtensionTokenRepository(),
+    extensionIds: [
+      ...csv(process.env.EXTENSION_IDS),
+      ...(strict ? [] : csv(process.env.EXTENSION_DEV_IDS)),
+    ],
     // `mailer` is a legacy alias used only by the repo-level QA harness (tests/support).
     mailTransport: (overrides as { mailer?: MailTransport }).mailer ?? { send: async () => {} },
     webBaseUrl: process.env.WEB_BASE_URL ?? 'http://localhost:5173',
@@ -364,15 +390,26 @@ export async function registerModules(app: FastifyInstance, deps: ModuleDeps) {
       ]);
     });
   }
-  const auth = new AuthService(deps);
-  const organizations = new OrganizationService(deps);
+  const extensionAuth = new ExtensionAuthService(deps);
+  // ADR-005 A1.6: logout, password reset and member removal also revoke extension token families.
+  const auth = new AuthService({ ...deps, extensionRevoker: extensionAuth });
+  const organizations = new OrganizationService({ ...deps, extensionRevoker: extensionAuth });
   if (deps.mailQueue instanceof InlineAuthMailQueue && !deps.mailQueue.handler) {
     deps.mailQueue.handler = new AuthMailJobHandler({ ...deps, transport: deps.mailTransport });
   }
   app.decorateRequest('auth', null);
   await app.register(authRoutes, { auth, organizations, security: deps.security });
   await app.register(organizationRoutes, { auth, organizations, security: deps.security });
+  await app.register(extensionAuthRoutes, { auth, extensionAuth, security: deps.security });
   await app.register(import('./directory/index.js'), { auth, organizations, deps });
   await app.register(import('./meetings/index.js'), { auth, organizations, deps });
-  return { auth, organizations, sessionVerifier: new SessionVerifier(deps) };
+  return {
+    auth,
+    organizations,
+    sessionVerifier: new SessionVerifier({
+      ...deps,
+      extensionTokenStore: extensionAuth.verifierStore(),
+    }),
+    extensionAuth,
+  };
 }

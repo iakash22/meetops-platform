@@ -22,6 +22,7 @@ import {
   type AuthRevocationInput,
   type RevocationPublisher,
 } from './revocations.js';
+import type { ExtensionRevoker } from '../../extension-auth/application/extension-auth.service.js';
 
 export interface AuthServiceDeps {
   users: UserRepository;
@@ -42,6 +43,8 @@ export interface AuthServiceDeps {
   sleep?: (ms: number) => Promise<void>;
   /** ADR-011 revocation fan-out to realtime. Omitted: nothing is published. */
   revocations?: RevocationPublisher;
+  /** ADR-005 A1.6: also revoke the user's extension token families. */
+  extensionRevoker?: ExtensionRevoker;
 }
 
 const realSleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
@@ -278,6 +281,7 @@ export class AuthService {
     await this.d.users.updatePasswordHash(t.userId, await this.d.hasher.hash(input.password));
     await this.d.sessions.revokeAllForUser(t.userId, now);
     await this.publish({ kind: 'user', userId: t.userId, reason: 'password_changed' });
+    await this.d.extensionRevoker?.revokeForUser(t.userId, 'password_changed');
     await this.d.oneTimeTokens.invalidateForUser(t.userId, 'password_reset', now);
     const user = await this.d.users.findById(t.userId);
     if (user) await this.d.lockout.reset(user.email);
@@ -348,6 +352,7 @@ export class AuthService {
     if (!token) return;
     const s = await this.revokeByToken(token);
     if (s) await this.publishSessionRevoked(s, 'logout');
+    if (s) await this.d.extensionRevoker?.revokeForUser(s.userId, 'logout');
     if (s)
       await this.audit(
         {
@@ -364,6 +369,7 @@ export class AuthService {
   async logoutAll(userId: string, meta: RequestMeta) {
     await this.d.sessions.revokeAllForUser(userId, this.d.clock.now());
     await this.publish({ kind: 'user', userId, reason: 'logout_all' });
+    await this.d.extensionRevoker?.revokeForUser(userId, 'logout_all');
     await this.audit(
       {
         actorId: userId,
