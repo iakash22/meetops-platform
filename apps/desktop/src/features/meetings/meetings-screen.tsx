@@ -4,7 +4,9 @@ import { Circle } from 'lucide-react';
 import { Badge, type BadgeProps } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { SAMPLE_MEETINGS } from './sample-meetings';
+import { useDataSource } from '@/features/data/repositories';
+import { ListError, ListLoading } from '@/features/data/list-states';
+import { useOrgList } from '@/features/data/use-org-list';
 
 const STATUS_LABEL: Record<MeetingStatus, string> = {
   scheduled: 'Scheduled',
@@ -16,7 +18,7 @@ const STATUS_LABEL: Record<MeetingStatus, string> = {
 
 const STATUS_VARIANT: Record<MeetingStatus, NonNullable<BadgeProps['variant']>> = {
   scheduled: 'outline',
-  recording: 'highlight',
+  recording: 'default',
   processing: 'default',
   completed: 'secondary',
   failed: 'destructive',
@@ -27,14 +29,19 @@ function formatDate(iso: string | undefined): string {
   return new Date(iso).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
 }
 
-export function MeetingsScreen({ meetings = SAMPLE_MEETINGS }: { meetings?: readonly Meeting[] }) {
+export function MeetingsScreen() {
+  const data = useDataSource();
+  const { state, retry } = useOrgList(data.listMeetings);
+  const meetings: readonly Meeting[] = state.status === 'ready' ? state.items : [];
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Meetings</h1>
           <p className="text-sm text-muted-foreground">
-            Placeholder data. Live meetings and offline recording arrive in later milestones.
+            {data.sample
+              ? 'Sample data. Live meetings load once you sign in with your browser.'
+              : 'Meetings in your active organization.'}
           </p>
         </div>
         <Button variant="record" disabled title="Offline recording is not available yet">
@@ -46,10 +53,16 @@ export function MeetingsScreen({ meetings = SAMPLE_MEETINGS }: { meetings?: read
       <Card>
         <CardHeader>
           <CardTitle>Recent meetings</CardTitle>
-          <CardDescription>{meetings.length} meetings</CardDescription>
+          <CardDescription>
+            {state.status === 'ready' ? `${meetings.length} meetings` : '\u00a0'}
+          </CardDescription>
         </CardHeader>
         <CardContent>
-          {meetings.length === 0 ? (
+          {state.status === 'loading' ? (
+            <ListLoading label="meetings" />
+          ) : state.status === 'error' ? (
+            <ListError message={state.message} onRetry={retry} />
+          ) : meetings.length === 0 ? (
             <p className="text-sm text-muted-foreground">No meetings yet.</p>
           ) : (
             <ul aria-label="Meetings" className="divide-y divide-border">

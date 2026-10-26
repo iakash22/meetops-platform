@@ -36,6 +36,7 @@ const DesktopAuthorizePage = lazy(() =>
 import { createAuthPublicRoutes } from './auth-public';
 import { createAccountRoutes } from './account';
 import { createOrganizationRoutes } from './organization';
+import { createTaskReviewRoutes } from './task-review';
 import { RoutePending } from './route-pending';
 
 /*
@@ -306,6 +307,7 @@ export const routeTree = rootRoute.addChildren([
     desktopAuthorizeRoute,
     createAccountRoutes(() => appLayout),
     createOrganizationRoutes(() => appLayout),
+    createTaskReviewRoutes(() => appLayout),
   ]),
 ]);
 
