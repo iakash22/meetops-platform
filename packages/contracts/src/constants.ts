@@ -21,6 +21,7 @@ export const API_ERROR_CODES = [
   'FORBIDDEN',
   'NOT_FOUND',
   'CONFLICT',
+  'PAYLOAD_TOO_LARGE',
   'RATE_LIMITED',
   'PROVIDER_UNAVAILABLE',
   'INTERNAL',
@@ -86,6 +87,12 @@ export const CONSENT_ERROR_REASONS = [
 ] as const;
 /** v0.4.1: HTTP status for every consent rejection (CONSENT_ERROR_REASONS). */
 export const CONSENT_HTTP_STATUS = 422;
+/**
+ * v0.5.0 PROPOSAL (pending Architecture agreement): HTTP status for `code: 'PAYLOAD_TOO_LARGE'`. Returned when a
+ * recording session's running total would exceed MAX_RECORDING_SESSION_BYTES (1.4 GB) on a chunk-URL request, or an
+ * upload's `sizeBytes` exceeds MAX_UPLOAD_BYTES. No presigned URL is issued.
+ */
+export const PAYLOAD_TOO_LARGE_HTTP_STATUS = 413;
 
 /**
  * Every value `ApiErrorEnvelope.error.reason` may take: CONFLICT_REASONS (with `code: 'CONFLICT'`), then

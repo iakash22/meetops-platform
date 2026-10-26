@@ -15,6 +15,9 @@ currentConsentVersion, updatedAt }`), `UpdateConsentSettingsRequest` (partial, s
   `UPLOAD_COMPLETE_CONSENT_ERROR_REASONS`, `DownloadUrlResponse` (`{ url, method: 'GET', expiresIn <= 300, expiresAt }`).
 - Constants: `CONSENT_UPLOAD_PATHS`, `CONSENT_SETTINGS_MODES`, `CONSENT_SETTINGS_WRITE_ROLES` (owner, admin),
   `MAX_CONSENT_NOTICE_TEXT_LENGTH` (4000), `MIN_RETENTION_DAYS` (1), `MAX_RETENTION_DAYS` (3650).
+- Error code `PAYLOAD_TOO_LARGE` (pending Architecture agreement) in `ApiErrorCode` / `API_ERROR_CODES`, with
+  `PAYLOAD_TOO_LARGE_HTTP_STATUS` (413) and type `PayloadTooLargeErrorEnvelope`: a recording session's running total
+  over `MAX_RECORDING_SESSION_BYTES` (1.4 GB) or an upload `sizeBytes` over `MAX_UPLOAD_BYTES`.
 
 ## [0.4.1] - 2026-10-25
 

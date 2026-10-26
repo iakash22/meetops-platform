@@ -1,6 +1,11 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, expectTypeOf } from 'vitest';
 import { Value } from '@sinclair/typebox/value';
 import {
+  API_ERROR_CODES,
+  ApiErrorCode,
+  ApiErrorEnvelope,
+  PAYLOAD_TOO_LARGE_HTTP_STATUS,
+  type PayloadTooLargeErrorEnvelope,
   CONSENT_ERROR_REASONS,
   CONSENT_SETTINGS_WRITE_ROLES,
   CONSENT_UPLOAD_PATHS,
@@ -103,5 +108,22 @@ describe('download url (proposal)', () => {
     expect(Value.Check(DownloadUrlResponse, { ...ok, expiresIn: 301 })).toBe(false);
     expect(Value.Check(DownloadUrlResponse, { ...ok, expiresIn: 0 })).toBe(false);
     expect(Value.Check(DownloadUrlResponse, { ...ok, method: 'PUT' })).toBe(false);
+  });
+});
+
+describe('PAYLOAD_TOO_LARGE (proposal)', () => {
+  it('is an ApiErrorCode with HTTP 413, kept in sync with API_ERROR_CODES', () => {
+    expect(PAYLOAD_TOO_LARGE_HTTP_STATUS).toBe(413);
+    expect(API_ERROR_CODES).toContain('PAYLOAD_TOO_LARGE');
+    expect(Light.API_ERROR_CODES).toContain('PAYLOAD_TOO_LARGE');
+    expect(Light.PAYLOAD_TOO_LARGE_HTTP_STATUS).toBe(413);
+    expect(ApiErrorCode.anyOf.map((s) => s.const)).toEqual([...API_ERROR_CODES]);
+  });
+  it('envelope validates and carries no reason', () => {
+    const body: PayloadTooLargeErrorEnvelope = {
+      error: { code: 'PAYLOAD_TOO_LARGE', message: 'Recording exceeds 1.4 GB', requestId: 'req-1' },
+    };
+    expect(Value.Check(ApiErrorEnvelope, body)).toBe(true);
+    expectTypeOf<PayloadTooLargeErrorEnvelope['error']>().not.toHaveProperty('reason');
   });
 });
