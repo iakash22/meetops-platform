@@ -193,6 +193,26 @@ enum StorageObjectStatus {
   failed
 }
 
+/// G11 (DB-3): content / malware scan state of a FileObject. Only `clean` objects may be processed or downloaded.
+enum FileScanStatus {
+  pending
+  clean
+  quarantined
+  rejected
+}
+
+/// G11 (DB-3): what a consent attestation is attached to (contracts CONSENT_SUBJECT_TYPES).
+enum ConsentSubjectType {
+  upload
+  recording_session
+}
+
+/// G11 (DB-3): how consent was obtained (contracts CONSENT_METHODS).
+enum ConsentMethod {
+  all_parties_notified
+  all_parties_consented
+}
+
 model Organization {
   id          String    @id @default(uuid()) @db.Uuid
   name        String
@@ -229,6 +249,7 @@ model Organization {
   transcriptChunks       TranscriptChunk[]
   teams                  Team[]
   teamMembers            TeamMember[]
+  consentAttestations    ConsentAttestation[]
 
   createdBy User? @relation("OrgCreator", fields: [createdById], references: [id], onDelete: SetNull)
 
@@ -262,6 +283,7 @@ model User {
   passwordResets       PasswordReset[]
   recordingSessions    RecordingSession[]     @relation("RecordingSessionCreator")
   aiConfigsUpdated     AiOrganizationConfig[] @relation("AiOrganizationConfigUpdater")
+  consentAttestations  ConsentAttestation[]   @relation("ConsentAttester")
 
   @@map("users")
 }
@@ -531,6 +553,8 @@ model FileObject {
   createdAt       DateTime            @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt       DateTime            @updatedAt @map("updated_at") @db.Timestamptz(3)
   deletedAt       DateTime?           @map("deleted_at") @db.Timestamptz(3)
+  /// G11 (DB-3): every new object starts `pending` until the scanner records a verdict.
+  scanStatus      FileScanStatus      @default(pending) @map("scan_status")
 
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   meeting      Meeting?     @relation(fields: [organizationId, meetingId], references: [organizationId, id], onDelete: Restrict)
@@ -545,7 +569,35 @@ model FileObject {
   @@index([organizationId, meetingId, kind])
   @@index([organizationId, status])
   @@index([organizationId, createdAt])
+  @@index([organizationId, scanStatus])
   @@map("file_objects")
+}
+
+/// G11 (DB-3): server-side consent evidence for an upload (FileObject id) or a recording session. Append-only
+/// (UPDATE/DELETE/TRUNCATE raise, like audit_events) under forced RLS. organizationId and attestedByUserId come
+/// from the authenticated session, never from the request. subjectId is checked by a trigger to be a row of the
+/// same organization at insert time (no FK: the subject is polymorphic and the evidence outlives it).
+model ConsentAttestation {
+  id               String             @id @default(uuid()) @db.Uuid
+  organizationId   String             @map("org_id") @db.Uuid
+  subjectType      ConsentSubjectType @map("subject_type")
+  subjectId        String             @map("subject_id") @db.Uuid
+  /// contracts CONSENT_VERSION_PATTERN, CHECK in SQL.
+  consentVersion   String             @map("consent_version")
+  method           ConsentMethod
+  attestedByUserId String             @map("attested_by_user_id") @db.Uuid
+  /// Client clock; CHECK: at most 300 s after recordedAt (contracts CONSENT_ATTESTATION_MAX_SKEW_SECONDS).
+  attestedAt       DateTime           @map("attested_at") @db.Timestamptz(3)
+  /// Server receive time.
+  recordedAt       DateTime           @default(now()) @map("recorded_at") @db.Timestamptz(3)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  attestedBy   User         @relation("ConsentAttester", fields: [attestedByUserId], references: [id], onDelete: Restrict)
+
+  @@unique([organizationId, id])
+  @@index([organizationId, subjectType, subjectId])
+  @@index([organizationId, attestedByUserId])
+  @@map("consent_attestations")
 }
 
 model Recording {

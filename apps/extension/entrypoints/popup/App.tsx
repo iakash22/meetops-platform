@@ -107,13 +107,19 @@ function PopupApp() {
     }
   };
 
-  const onStop = async () => {
-    apply(await send({ target: 'background', type: 'STOP_RECORDING' }));
-  };
+  // Stable callbacks so the memoised header, pairing and consent views skip the 1 s timer re-render.
+  const onStop = useCallback(() => {
+    send({ target: 'background', type: 'STOP_RECORDING' }).then(apply, (e: unknown) =>
+      setRawError(errText(e)),
+    );
+  }, [apply]);
+  const onConsentChange = useCallback((checked: boolean) => setConsent(setConfirmed(checked)), []);
 
-  const onDismissWarning = async () => {
-    apply(await send({ target: 'background', type: 'DISMISS_WARNING' }));
-  };
+  const onDismissWarning = useCallback(() => {
+    send({ target: 'background', type: 'DISMISS_WARNING' }).then(apply, (e: unknown) =>
+      setRawError(errText(e)),
+    );
+  }, [apply]);
 
   return (
     <PopupView
@@ -123,10 +129,10 @@ function PopupApp() {
       now={now}
       error={popupErrorMessage(rawError, true) || popupErrorMessage(pairingError, true)}
       starting={starting}
-      onConsentChange={(checked) => setConsent(setConfirmed(checked))}
+      onConsentChange={onConsentChange}
       onRecord={() => void onRecord()}
-      onStop={() => void onStop()}
-      onDismissWarning={() => void onDismissWarning()}
+      onStop={onStop}
+      onDismissWarning={onDismissWarning}
     />
   );
 }

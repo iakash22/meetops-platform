@@ -1,12 +1,6 @@
-import { createRoute, Outlet, useRouter } from '@tanstack/react-router';
+import { createRoute, lazyRouteComponent, Outlet, useRouter } from '@tanstack/react-router';
 import { useQueryClient } from '@tanstack/react-query';
 import type { GetAuthSessionResponse } from '@meetops/contracts';
-import {
-  AcceptInvitationPage,
-  ResendVerificationForm,
-  ResetPasswordForm,
-  VerifyEmailPage,
-} from '@/features/auth/email-link-pages';
 import { AuthLayout } from '@/features/auth/auth-layout';
 import {
   applySessionToStore,
@@ -16,6 +10,11 @@ import {
 import { useApi } from '@/lib/api/context';
 import { queryKeys } from '@/lib/api/queries';
 import { useOrgStore } from '@/stores/org-store';
+const emailLinkPages = () => import('@/features/auth/email-link-pages');
+const AcceptInvitationPage = lazyRouteComponent(emailLinkPages, 'AcceptInvitationPage');
+const ResendVerificationForm = lazyRouteComponent(emailLinkPages, 'ResendVerificationForm');
+const ResetPasswordForm = lazyRouteComponent(emailLinkPages, 'ResetPasswordForm');
+const VerifyEmailPage = lazyRouteComponent(emailLinkPages, 'VerifyEmailPage');
 // Type-only: no runtime import cycle with router.tsx (which mounts these routes).
 import type { rootRoute as RootRoute } from './router';
 
