@@ -1,7 +1,9 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Animated, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { RECORDING_ENABLED } from '../config/session';
+import { newLocalMeetingId } from '../consent/consentApi';
+import { ConsentSheet, type ConsentStep } from '../consent/ConsentSheet';
 import { useRepositories } from '../data/RepositoriesProvider';
 import type { UploadQueueStatus } from '../data/uploadQueue';
 import { formatElapsed, spokenElapsed } from '../record/recorderShell';
@@ -27,7 +29,10 @@ const STATUS_TEXT = {
 export function RecordScreen() {
   const recorder = useRecorderShell();
   const reducedMotion = useReducedMotion();
-  const { uploadQueue } = useRepositories();
+  const { uploadQueue, consent } = useRepositories();
+  const [consentStep, setConsentStep] = useState<ConsentStep | null>(null);
+  const [consentBusy, setConsentBusy] = useState(false);
+  const [consentError, setConsentError] = useState<string | null>(null);
   const [queue, setQueue] = useState<UploadQueueStatus | null>(null);
   const halo = useRef(new Animated.Value(0)).current;
   const active = recorder.phase === 'recording' || recorder.phase === 'paused';
@@ -67,8 +72,44 @@ export function RecordScreen() {
     transform: [{ scale: halo.interpolate({ inputRange: [0, 1], outputRange: [1, 1.12] }) }],
   };
 
+  // R1 + R3: `start` is only reachable through explicit opt-in, then a per-recording participant notice.
+  const beginConsent = useCallback(async () => {
+    setConsentError(null);
+    const optedIn = await consent.hasOptedIn().catch(() => false);
+    setConsentStep(optedIn ? 'notice' : 'optIn');
+  }, [consent]);
+
+  const { start } = recorder;
+  const acceptConsent = useCallback(async () => {
+    setConsentBusy(true);
+    setConsentError(null);
+    try {
+      if (consentStep === 'optIn') {
+        await consent.optIn();
+        setConsentStep('notice');
+      } else {
+        await consent.confirmParticipantNotice({
+          meetingId: newLocalMeetingId(),
+          confirmedAt: new Date().toISOString(),
+        });
+        setConsentStep(null);
+        start();
+      }
+    } catch {
+      // Fail closed: never start without a logged notice.
+      setConsentError("Couldn't save your confirmation. Recording hasn't started. Try again.");
+    } finally {
+      setConsentBusy(false);
+    }
+  }, [consent, consentStep, start]);
+
+  const cancelConsent = useCallback(() => {
+    setConsentStep(null);
+    setConsentError(null);
+  }, []);
+
   const onMainPress = () => {
-    if (recorder.phase === 'idle') recorder.start();
+    if (recorder.phase === 'idle') void beginConsent();
     else if (active) recorder.stop();
   };
 
@@ -109,7 +150,15 @@ export function RecordScreen() {
           {timeText}
         </Text>
 
-        {recorder.phase === 'stopped' ? (
+        {consentStep ? (
+          <ConsentSheet
+            step={consentStep}
+            busy={consentBusy}
+            error={consentError}
+            onAccept={() => void acceptConsent()}
+            onCancel={cancelConsent}
+          />
+        ) : recorder.phase === 'stopped' ? (
           <View style={styles.summary}>
             <Text testID="record-summary" style={styles.summaryText} accessibilityRole="alert">
               {preview
