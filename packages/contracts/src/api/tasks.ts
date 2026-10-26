@@ -5,7 +5,12 @@ import { CursorPageQuery } from './pagination.js';
 
 const ListTasksQueryBase = {
   ...CursorPageQuery.properties,
-  status: Type.Optional(Type.Union([TaskStatus, Type.Array(TaskStatus, { minItems: 1, maxItems: 4, uniqueItems: true })])),
+  status: Type.Optional(
+    Type.Union([
+      TaskStatus,
+      Type.Array(TaskStatus, { minItems: 1, maxItems: 4, uniqueItems: true }),
+    ]),
+  ),
   priority: Type.Optional(TaskPriority),
   projectId: Type.Optional(Id),
   meetingId: Type.Optional(Id),
@@ -23,7 +28,13 @@ const ListTasksQueryBase = {
  * carrying both is rejected.
  */
 export const ListTasksQuery = Type.Union([
-  Type.Object({ ...ListTasksQueryBase, assigneeId: Type.Optional(Id) }, { additionalProperties: false }),
-  Type.Object({ ...ListTasksQueryBase, unassigned: Type.Optional(Type.Literal(true)) }, { additionalProperties: false }),
+  Type.Object(
+    { ...ListTasksQueryBase, assigneeId: Type.Optional(Id) },
+    { additionalProperties: false },
+  ),
+  Type.Object(
+    { ...ListTasksQueryBase, unassigned: Type.Optional(Type.Literal(true)) },
+    { additionalProperties: false },
+  ),
 ]);
 export type ListTasksQuery = Static<typeof ListTasksQuery>;

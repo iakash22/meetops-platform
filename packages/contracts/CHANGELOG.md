@@ -6,6 +6,16 @@ While the version is `0.x`, a minor bump may contain breaking changes (ADR-003).
 
 ## [Unreleased]
 
+### Added (PROPOSAL, pending Architecture review; builds on #156 / 0.4.1)
+
+- `api/consent-settings.ts`: `ConsentSettings` (`{ mode, noticeText, skipExternalParticipants, retentionDays,
+currentConsentVersion, updatedAt }`), `UpdateConsentSettingsRequest` (partial, strict, non-empty; server-owned
+  fields not writable), `ConsentSettingsMode` (`all_party | one_party`).
+- `api/uploads.ts`: `CompleteUploadRequest` (empty strict), `CompleteUploadResponse` (`{ fileObject, scanStatus }`),
+  `UPLOAD_COMPLETE_CONSENT_ERROR_REASONS`, `DownloadUrlResponse` (`{ url, method: 'GET', expiresIn <= 300, expiresAt }`).
+- Constants: `CONSENT_UPLOAD_PATHS`, `CONSENT_SETTINGS_MODES`, `CONSENT_SETTINGS_WRITE_ROLES` (owner, admin),
+  `MAX_CONSENT_NOTICE_TEXT_LENGTH` (4000), `MIN_RETENTION_DAYS` (1), `MAX_RETENTION_DAYS` (3650).
+
 ## [0.4.1] - 2026-10-25
 
 Consent attestation (G11), FileObject scan status, realtime auth-revocation contracts (G2, ADR-011) and the G9 upload

@@ -4,7 +4,11 @@ import { MeetingSource } from '../domain/meeting.js';
 import { HttpsUrl } from '../domain/media.js';
 
 const strict = { additionalProperties: false } as const;
-const ExternalMeetingId = Type.String({ minLength: 1, maxLength: 255, pattern: '^[A-Za-z0-9_.:@/-]+$' });
+const ExternalMeetingId = Type.String({
+  minLength: 1,
+  maxLength: 255,
+  pattern: '^[A-Za-z0-9_.:@/-]+$',
+});
 const resolveCommon = {
   source: MeetingSource,
   title: Type.Optional(Type.String({ minLength: 1, maxLength: 300 })),
@@ -21,11 +25,19 @@ const resolveCommon = {
  */
 export const ResolveMeetingRequest = Type.Union([
   Type.Object(
-    { ...resolveCommon, externalMeetingUrl: HttpsUrl, externalMeetingId: Type.Optional(ExternalMeetingId) },
+    {
+      ...resolveCommon,
+      externalMeetingUrl: HttpsUrl,
+      externalMeetingId: Type.Optional(ExternalMeetingId),
+    },
     strict,
   ),
   Type.Object(
-    { ...resolveCommon, externalMeetingId: ExternalMeetingId, externalMeetingUrl: Type.Optional(HttpsUrl) },
+    {
+      ...resolveCommon,
+      externalMeetingId: ExternalMeetingId,
+      externalMeetingUrl: Type.Optional(HttpsUrl),
+    },
     strict,
   ),
 ]);
