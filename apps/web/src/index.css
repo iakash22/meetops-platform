@@ -262,6 +262,11 @@
     );
     animation: shimmer 2.2s var(--ease-out) infinite;
   }
+  @media (prefers-reduced-motion: reduce) {
+    .shimmer::after {
+      animation: none;
+    }
+  }
 
   /* Timers, durations, timestamps: mono + fixed-width digits + slashed/dotted zero. */
   .timecode {
