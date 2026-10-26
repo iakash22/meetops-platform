@@ -1,7 +1,7 @@
 import { createMockAuthClient } from './auth/mockAuthClient';
 import { createDemoSignupApi, type SignupApi } from './auth/SignupApiProvider';
 import { createSessionManager } from './auth/sessionManager';
-import { createInMemoryTokenStore } from './auth/tokenStore';
+import { createSecureTokenStore } from './auth/secureTokenStore';
 import { createDemoConsentApi } from './consent/consentApi';
 import { createPlaceholderMeetingsRepository } from './data/meetingsRepository';
 import type { Repositories } from './data/RepositoriesProvider';
@@ -12,7 +12,7 @@ import { createPlaceholderUploadQueue } from './data/uploadQueue';
  * App composition root. Everything here is a MOCK until the mobile bearer ADR and Backend routes land:
  * - auth: demo mode, any well-formed email/password signs in, nothing leaves the device;
  * - signup: demo stand-in for `ApiClient.signup` (swap for `createApiClient({ baseUrl }).signup` once wired);
- * - tokens: in memory only (expo-secure-store follow-up);
+ * - tokens: Keychain / Keystore via expo-secure-store (device-only, not backed up);
  * - meetings and tasks: placeholder lists (no list routes in the API yet);
  * - upload queue: placeholder, always empty (no native recording yet);
  * - consent: demo, in memory (no Backend consent API yet). Opt-in starts OFF.
@@ -22,7 +22,7 @@ export const IS_DEMO_MODE = true as const;
 
 export const sessionManager = createSessionManager({
   client: createMockAuthClient({ acceptAnyCredentials: true, latencyMs: 300 }),
-  store: createInMemoryTokenStore(),
+  store: createSecureTokenStore(),
 });
 
 /** Same signature as `ApiClient['signup']` (`POST /auth/signup`, 202, no session). */

@@ -3,10 +3,8 @@ import type { MobileAuthTokens } from './types';
 /**
  * Where the app keeps the bearer pair between launches.
  *
- * Plan M2 / R5 require the Keychain (iOS) and Keystore (Android) via `expo-secure-store`. That package is NOT a
- * dependency yet, and this PR must not touch the lockfile, so the app currently uses `createInMemoryTokenStore()`:
- * tokens live only in JS memory and a cold start means signing in again. FOLLOW-UP: add `expo-secure-store` (SDK 52:
- * `~14.0.x`) in a lockfile-owning PR and implement `TokenStore` with it (`keychainAccessible: WHEN_UNLOCKED_THIS_DEVICE_ONLY`).
+ * Production uses `createSecureTokenStore()` (expo-secure-store, Keychain / Keystore, Plan M2 / R5). The in-memory store
+ * below is for tests and previews.
  *
  * Rules for every implementation:
  * - never AsyncStorage, files, or anything that is backed up in plain text;
