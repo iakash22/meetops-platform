@@ -1,4 +1,4 @@
-import { lazy, Suspense, useMemo, useState } from 'react';
+import { lazy, Suspense, useMemo, useRef, useState } from 'react';
 
 import { AppShell, type View } from '@/components/layout/app-shell';
 import type { AuthClient } from '@/features/auth/auth-client';
@@ -7,9 +7,15 @@ import { SignInScreen } from '@/features/auth/sign-in-screen';
 import { createUnavailableAuthClient } from '@/features/auth/unavailable-auth';
 import { invoke } from '@tauri-apps/api/core';
 
-import { DataProvider, createDataSource } from '@/features/data/repositories';
+import { ListError, ListLoading } from '@/features/data/list-states';
+import { DataProvider, createDataSource, useDataSource } from '@/features/data/repositories';
+import { useOrgList } from '@/features/data/use-org-list';
 import { isBrowserAuthEnabled, isMockAuthEnabled } from '@/lib/config';
 import { createNativeAuthClient } from '@/lib/native-auth';
+import { createMediaRecorder } from '@/features/recording/recorder';
+import type { RecordingDeps } from '@/features/recording/recording-screen';
+import { createSimulatedUploadApi } from '@/features/recording/simulated-upload-api';
+import { createMemoryChunkStore, createUploadQueue } from '@/features/recording/upload-queue';
 
 // Only the sign-in screen is in the entry chunk; everything behind it loads on demand.
 // Sign-up is mock-only for now; the guard keeps its chunk out of production builds.
@@ -21,6 +27,9 @@ const MeetingsScreen = lazy(() =>
 );
 const TasksScreen = lazy(() =>
   import('@/features/tasks/tasks-screen').then((m) => ({ default: m.TasksScreen })),
+);
+const RecordingScreen = lazy(() =>
+  import('@/features/recording/recording-screen').then((m) => ({ default: m.RecordingScreen })),
 );
 const SettingsScreen = lazy(() =>
   import('@/features/settings/settings-screen').then((m) => ({ default: m.SettingsScreen })),
@@ -34,8 +43,46 @@ function Loading() {
   );
 }
 
-function Screens({ mockAuth }: { mockAuth: boolean }) {
+/** Record view: the meeting picker lists the active org's meetings from the data source (sample or live). */
+function RecordingRoute({ deps }: { deps: RecordingDeps }) {
+  const data = useDataSource();
+  const { state, retry } = useOrgList(data.listMeetings);
+  if (state.status === 'error') return <ListError message={state.message} onRetry={retry} />;
+  if (state.status !== 'ready') return <ListLoading label="meetings" />;
+  return <RecordingScreen meetings={state.items} deps={deps} />;
+}
+
+function useRecordingDeps(override: RecordingDeps | undefined): RecordingDeps {
+  const { session } = useSession();
+  const sessionRef = useRef(session);
+  sessionRef.current = session;
+  return useMemo(() => {
+    if (override) return override;
+    // TODO(desktop-recording): swap for createNativeUploadApi(invoke) + encrypted disk store once the
+    // Rust commands land (Cargo.lock slot). Until then chunks stay in memory and uploads are simulated.
+    const chunks = createMemoryChunkStore();
+    const queue = createUploadQueue(createSimulatedUploadApi(), chunks, {
+      isOnline: () => navigator.onLine,
+      identity: () => {
+        const s = sessionRef.current;
+        return s?.activeOrganizationId
+          ? { userId: s.user.id, organizationId: s.activeOrganizationId }
+          : null;
+      },
+    });
+    return { queue, chunks, makeRecorder: createMediaRecorder, simulated: true };
+  }, [override]);
+}
+
+function Screens({
+  mockAuth,
+  recording,
+}: {
+  mockAuth: boolean;
+  recording?: RecordingDeps | undefined;
+}) {
   const { session, restoring } = useSession();
+  const recordingDeps = useRecordingDeps(recording);
   const [view, setView] = useState<View>('meetings');
   const [authView, setAuthView] = useState<'sign-in' | 'sign-up'>('sign-in');
 
@@ -53,9 +100,11 @@ function Screens({ mockAuth }: { mockAuth: boolean }) {
     <AppShell view={view} onNavigate={setView}>
       <Suspense fallback={<Loading />}>
         {view === 'meetings' ? (
-          <MeetingsScreen />
+          <MeetingsScreen onRecord={() => setView('record')} />
         ) : view === 'tasks' ? (
           <TasksScreen />
+        ) : view === 'record' ? (
+          <RecordingRoute deps={recordingDeps} />
         ) : (
           <SettingsScreen />
         )}
@@ -68,11 +117,13 @@ export function App({
   authClient,
   mockAuth,
   browserAuth,
+  recording,
 }: {
   authClient?: AuthClient;
   mockAuth?: boolean;
   /** Overrides `isBrowserAuthEnabled()` (tests). */
   browserAuth?: boolean;
+  recording?: RecordingDeps;
 }) {
   const native = browserAuth ?? isBrowserAuthEnabled();
   // Hard-off in production: neither the prop nor env can enable the mock outside dev.
@@ -103,7 +154,7 @@ export function App({
   return (
     <SessionProvider client={client}>
       <DataProvider value={data}>
-        <Screens mockAuth={mock} />
+        <Screens mockAuth={mock} recording={recording} />
       </DataProvider>
     </SessionProvider>
   );

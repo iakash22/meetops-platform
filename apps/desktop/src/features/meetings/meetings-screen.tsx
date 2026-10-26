@@ -29,7 +29,7 @@ function formatDate(iso: string | undefined): string {
   return new Date(iso).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
 }
 
-export function MeetingsScreen() {
+export function MeetingsScreen({ onRecord }: { onRecord?: (() => void) | undefined } = {}) {
   const data = useDataSource();
   const { state, retry } = useOrgList(data.listMeetings);
   const meetings: readonly Meeting[] = state.status === 'ready' ? state.items : [];
@@ -44,7 +44,7 @@ export function MeetingsScreen() {
               : 'Meetings in your active organization.'}
           </p>
         </div>
-        <Button variant="record" disabled title="Offline recording is not available yet">
+        <Button variant="record" onClick={onRecord} disabled={!onRecord}>
           <Circle className="fill-current" aria-hidden />
           New offline recording
         </Button>

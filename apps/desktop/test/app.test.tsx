@@ -45,7 +45,7 @@ describe('desktop app shell', () => {
     expect(within(list).getAllByRole('listitem').length).toBeGreaterThan(0);
     expect(screen.getByLabelText('Signed in user')).toHaveTextContent('Alex');
     expect(screen.getByText('Demo Organization')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /new offline recording/i })).toBeDisabled();
+    expect(screen.getByRole('button', { name: /new offline recording/i })).toBeEnabled();
 
     const nav = screen.getByRole('navigation', { name: 'Main' });
     expect(within(nav).getByRole('button', { name: /meetings/i })).toHaveAttribute(
@@ -62,6 +62,17 @@ describe('desktop app shell', () => {
 
     await user.click(screen.getByRole('button', { name: 'Sign out' }));
     expect(await screen.findByRole('form', { name: 'Sign in' })).toBeInTheDocument();
+  });
+});
+
+describe('record view meeting picker', () => {
+  it('lists recordable meetings from the data source for the active org', async () => {
+    const user = renderApp();
+    await signIn(user);
+    await user.click(await screen.findByRole('button', { name: /new offline recording/i }));
+    const picker = await screen.findByLabelText('Meeting');
+    const options = within(picker).getAllByRole('option');
+    expect(options.map((o) => o.textContent)).toEqual([expect.stringContaining('Sprint planning')]);
   });
 });
 
