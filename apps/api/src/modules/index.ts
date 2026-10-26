@@ -55,6 +55,7 @@ import {
   extensionAuthRoutes,
   InMemoryExtensionTokenRepository,
   RedisExtensionTokenRepository,
+  DurableExtensionTokenRepository,
   type ExtensionTokenRepository,
 } from './extension-auth/index.js';
 import { InMemoryUserRepository } from './users/infrastructure/in-memory-user.repository.js';
@@ -352,8 +353,11 @@ export function defaultModuleDeps(
     rateLimiter: redis ? new RedisRateLimiter(redis) : new InMemoryRateLimiter(clock),
     lockout: redis ? new RedisLoginLockout(redis) : new InMemoryLoginLockout(clock),
     mailQueue: new InlineAuthMailQueue(),
+    // ADR-005 A1.2: Redis fast path, Postgres durable authority when both are configured.
     extensionTokens: redis
-      ? new RedisExtensionTokenRepository(redis)
+      ? db
+        ? new DurableExtensionTokenRepository(new RedisExtensionTokenRepository(redis), db)
+        : new RedisExtensionTokenRepository(redis)
       : new InMemoryExtensionTokenRepository(),
     extensionIds: [
       ...csv(process.env.EXTENSION_IDS),
