@@ -50,16 +50,12 @@ describe('ADR-012 native auth bridge', () => {
   });
 
   it('maps native errors and hides unknown failures', async () => {
-    const typed = invokeWith(() => {
-      throw { code: 'RATE_LIMITED', message: 'Slow down.' };
-    });
+    const typed = invokeWith(() => Promise.reject({ code: 'RATE_LIMITED', message: 'Slow down.' }));
     await expect(createNativeAuthClient(typed).signInWithBrowser?.()).rejects.toMatchObject({
       code: 'RATE_LIMITED',
       message: 'Slow down.',
     });
-    const raw = invokeWith(() => {
-      throw 'command auth_sign_in not found';
-    });
+    const raw = invokeWith(() => Promise.reject('command auth_sign_in not found'));
     await expect(createNativeAuthClient(raw).signInWithBrowser?.()).rejects.toMatchObject({
       code: 'INTERNAL',
       message: expect.not.stringContaining('command') as unknown as string,
@@ -67,9 +63,9 @@ describe('ADR-012 native auth bridge', () => {
   });
 
   it('restore treats a dead token family as signed out', async () => {
-    const invoke = invokeWith(() => {
-      throw { code: 'UNAUTHENTICATED', message: 'expired' };
-    });
+    const invoke = invokeWith(() =>
+      Promise.reject({ code: 'UNAUTHENTICATED', message: 'expired' }),
+    );
     await expect(createNativeAuthClient(invoke).restore?.()).resolves.toBeNull();
   });
 });
