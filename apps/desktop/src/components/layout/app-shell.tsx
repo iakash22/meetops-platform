@@ -90,11 +90,11 @@ export function AppShell({
                   'relative flex min-h-11 items-center gap-2 rounded-md py-2 text-left text-sm motion-safe:transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
                   collapsed ? 'justify-center px-0' : 'px-3',
                   active
-                    ? 'bg-accent font-medium text-foreground before:absolute before:inset-y-1.5 before:left-0 before:w-0.5 before:rounded-full before:bg-highlight'
+                    ? 'bg-accent font-medium text-foreground before:absolute before:inset-y-1.5 before:left-0 before:w-0.5 before:rounded-full before:bg-primary'
                     : 'text-muted-foreground hover:bg-accent hover:text-foreground',
                 )}
               >
-                <Icon className={cn('size-4 shrink-0', active && 'text-highlight')} aria-hidden />
+                <Icon className={cn('size-4 shrink-0', active && 'text-link')} aria-hidden />
                 <span className={cn(collapsed && 'sr-only')}>{label}</span>
               </button>
             );

@@ -27,7 +27,9 @@ describe('desktop app shell', () => {
   it('validates empty credentials without calling the client', async () => {
     const user = renderApp();
     await user.click(screen.getByRole('button', { name: 'Sign in' }));
-    expect(screen.getByRole('alert')).toHaveTextContent('Enter your email and password.');
+    expect(screen.getByLabelText('Email')).toHaveAccessibleDescription('Enter your email.');
+    expect(screen.getByLabelText('Password')).toHaveAccessibleDescription('Enter your password.');
+    expect(screen.getByLabelText('Email')).toHaveFocus();
   });
 
   it('shows the auth error for rejected credentials', async () => {
