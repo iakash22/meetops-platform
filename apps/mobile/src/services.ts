@@ -5,7 +5,7 @@ import { createDemoMicPermission } from './consent/micPermission';
 import { createMockAuthClient } from './auth/mockAuthClient';
 import { createDemoSignupApi, type SignupApi } from './auth/SignupApiProvider';
 import { createSessionManager } from './auth/sessionManager';
-import { createInMemoryTokenStore } from './auth/tokenStore';
+import { createSecureTokenStore } from './auth/secureTokenStore';
 import { createDemoConsentApi } from './consent/consentApi';
 import { createHttpMeetingsRepository, createHttpTasksRepository } from './data/httpRepositories';
 import { createPlaceholderMeetingsRepository } from './data/meetingsRepository';
@@ -24,7 +24,10 @@ import { createUploadQueueEngine } from './upload/uploadQueueEngine';
  * Demo mode (no URL, or a non-https URL outside dev): typed mocks, nothing leaves the device.
  * Still mocked in both modes: consent (no Backend consent route), recorder (SIMULATED: no audio, placeholder chunks into the
  * real upload queue engine with a simulated upload API, in-memory queue, always online),
- * token storage (in memory until `expo-secure-store` lands in a lockfile-owning PR).
+ * Tokens: Keychain / Keystore via expo-secure-store (`WHEN_UNLOCKED_THIS_DEVICE_ONLY`: device-only, not backed up).
+ * The store sits behind `TokenStore`/`AuthClient`, so it is independent of how ADR-005 mobile (#193) lands.
+ * Note: the item is unreadable while the phone is locked, so a background token refresh is blocked until unlock;
+ * `load()`/`save()` reject in that state and the refresh fails; it succeeds again once the phone is unlocked.
  */
 export function resolveApiBaseUrl(raw: string | undefined, dev: boolean): string | null {
   const url = raw?.trim().replace(/\/+$/, '');
@@ -45,7 +48,7 @@ export const sessionManager = createSessionManager({
   client: API_BASE_URL
     ? createHttpAuthClient({ baseUrl: API_BASE_URL })
     : createMockAuthClient({ acceptAnyCredentials: true, latencyMs: 300 }),
-  store: createInMemoryTokenStore(),
+  store: createSecureTokenStore(),
 });
 
 /** Same signature as `ApiClient['signup']` (`POST /auth/signup`, 202, no session). */
