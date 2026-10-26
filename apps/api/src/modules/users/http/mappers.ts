@@ -8,6 +8,6 @@ export function toUserDto(u: PublicUser & Partial<Pick<User, 'updatedAt'>>): Use
     email: u.email,
     ...(u.name ? { name: u.name } : {}),
     createdAt: u.createdAt.toISOString(),
-    updatedAt: (u.updatedAt ?? u.createdAt).toISOString()
+    updatedAt: (u.updatedAt ?? u.createdAt).toISOString(),
   };
 }

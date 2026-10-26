@@ -15,7 +15,8 @@ export interface AuthMailQueue {
   enqueue(job: AuthMailJob): Promise<void>;
 }
 
-export type AuthMailTemplate = 'email_verification' | 'password_reset' | 'account_exists' | 'invitation' | 'login_lockout';
+export type AuthMailTemplate =
+  'email_verification' | 'password_reset' | 'account_exists' | 'invitation' | 'login_lockout';
 
 export interface OutboundMail {
   to: string;

@@ -42,7 +42,7 @@ export function cookieConfig(nodeEnv: string | undefined) {
     cookieName: `${p}meetops_sid`,
     csrfCookieName: `${p}meetops_csrf`,
     preSessionCookieName: `${p}meetops_presession`,
-    cookieSecure: !dev
+    cookieSecure: !dev,
   };
 }
 
@@ -59,11 +59,12 @@ export function assertProductionCookies(cfg: HttpSecurityConfig) {
 export const MAX_IP_LENGTH = 45;
 export const MAX_USER_AGENT_LENGTH = 1024;
 export const capIp = (ip: string | null | undefined) => (ip ? ip.slice(0, MAX_IP_LENGTH) : null);
-export const capUserAgent = (ua: string | null | undefined) => (ua ? ua.slice(0, MAX_USER_AGENT_LENGTH) : null);
+export const capUserAgent = (ua: string | null | undefined) =>
+  ua ? ua.slice(0, MAX_USER_AGENT_LENGTH) : null;
 
 export const requestMeta = (r: FastifyRequest): RequestMeta => ({
   ip: capIp(r.ip),
-  userAgent: capUserAgent(r.headers['user-agent'])
+  userAgent: capUserAgent(r.headers['user-agent']),
 });
 
 /** Reject state-changing requests whose Origin (fallback Referer) is not allowlisted. Missing both → reject. */
@@ -84,7 +85,11 @@ export function assertOrigin(request: FastifyRequest, allowed: string[]) {
  * CSRF token = `<nonce>.<HMAC-SHA256(secret, "<binding>.<nonce>")>` where binding is
  * `s:<sessionId>` for an authenticated session, or `p:<preSessionNonce>` before login.
  */
-export function signCsrf(secret: Buffer, binding: string, nonce = randomBytes(18).toString('base64url')) {
+export function signCsrf(
+  secret: Buffer,
+  binding: string,
+  nonce = randomBytes(18).toString('base64url'),
+) {
   const mac = createHmac('sha256', secret).update(`${binding}.${nonce}`).digest('base64url');
   return `${nonce}.${mac}`;
 }
@@ -125,7 +130,8 @@ export function makeGuards(auth: AuthService, cfg: HttpSecurityConfig) {
     assertOrigin(request, cfg.allowedOrigins);
     const header = request.headers[CSRF_HEADER];
     const cookie = request.cookies[cfg.csrfCookieName];
-    if (typeof header !== 'string' || !header || !cookie || !safeEqual(header, cookie)) throw new CsrfError();
+    if (typeof header !== 'string' || !header || !cookie || !safeEqual(header, cookie))
+      throw new CsrfError();
     const binding = await bindingFor(request);
     if (!binding || !verifyCsrf(cfg.csrfSecret, binding, header)) throw new CsrfError();
   };
@@ -142,10 +148,11 @@ export function makeGuards(auth: AuthService, cfg: HttpSecurityConfig) {
     reply.setCookie(cfg.cookieName, r.token, {
       ...baseCookie,
       httpOnly: true,
-      maxAge: Math.floor(cfg.sessionPolicy.absoluteTimeoutMs / 1000)
+      maxAge: Math.floor(cfg.sessionPolicy.absoluteTimeoutMs / 1000),
     });
 
-  const clearSessionCookie = (reply: FastifyReply) => reply.clearCookie(cfg.cookieName, { ...baseCookie, httpOnly: true });
+  const clearSessionCookie = (reply: FastifyReply) =>
+    reply.clearCookie(cfg.cookieName, { ...baseCookie, httpOnly: true });
 
   const setCsrfCookie = (reply: FastifyReply, token: string) => {
     reply.setCookie(cfg.csrfCookieName, token, { ...baseCookie, httpOnly: false });
@@ -165,5 +172,13 @@ export function makeGuards(auth: AuthService, cfg: HttpSecurityConfig) {
     return setCsrfCookie(reply, signCsrf(cfg.csrfSecret, `p:${pre}`));
   };
 
-  return { readToken, requireSession, setSessionCookie, clearSessionCookie, issueCsrf, issueCsrfForSession, mutationGuard };
+  return {
+    readToken,
+    requireSession,
+    setSessionCookie,
+    clearSessionCookie,
+    issueCsrf,
+    issueCsrfForSession,
+    mutationGuard,
+  };
 }

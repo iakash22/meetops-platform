@@ -1,4 +1,4 @@
-import type { FastifyInstance } from 'fastify';
+import type { FastifyInstance, FastifyRequest } from 'fastify';
 import type { AuthService } from '../auth/application/auth.service.js';
 import { makeGuards, requestMeta } from '../auth/http/security.js';
 import { registerDomainErrorHandler } from '../../shared/http-errors.js';
@@ -8,6 +8,9 @@ import type { ResolveCaller } from '../directory/http/route-kit.js';
 import type { ModuleDeps } from '../index.js';
 import { UploadService } from './application/upload.service.js';
 import { uploadRoutes } from './http/uploads.routes.js';
+import { RecordingSessionService } from './application/recording-session.service.js';
+import { recordingSessionRoutes } from './http/recording-sessions.routes.js';
+import { RecordingSessionNotFoundError } from './domain/recording-session.js';
 
 export interface MediaPluginOptions {
   auth: AuthService;
@@ -32,4 +35,16 @@ export default async function mediaModule(app: FastifyInstance, opts: MediaPlugi
     access.caller(await g.requireSession(request), organizationId, requestMeta(request));
   const mediaDeps = { ...media, meetings: deps.meetings, now: () => deps.clock.now() };
   await app.register(uploadRoutes, { uploads: new UploadService(mediaDeps), caller });
+  // Session routes have no org in the path: resolve it from the session's active organization.
+  const activeCaller = async (request: FastifyRequest) => {
+    const ctx = await g.requireSession(request);
+    const org = ctx.session.activeOrganizationId;
+    if (!org) throw new RecordingSessionNotFoundError();
+    return access.caller(ctx, org, requestMeta(request));
+  };
+  await app.register(recordingSessionRoutes, {
+    sessions: new RecordingSessionService(mediaDeps),
+    caller,
+    activeCaller,
+  });
 }

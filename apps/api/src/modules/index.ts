@@ -69,11 +69,13 @@ import { InMemoryMeetingRepository } from './meetings/infrastructure/in-memory.r
 import { PrismaMeetingRepository } from './meetings/infrastructure/prisma.repository.js';
 import type { ConsentRepository } from './media/domain/consent.js';
 import type { FileObjectRepository, MediaJobQueue, MediaSigner } from './media/domain/ports.js';
+import type { RecordingSessionRepository } from './media/domain/recording-session.js';
 import {
   FakeMediaSigner,
   InMemoryConsentRepository,
   InMemoryFileObjectRepository,
   InMemoryMediaJobQueue,
+  InMemoryRecordingSessionRepository,
 } from './media/infrastructure/in-memory.js';
 import { systemClock, type Clock, type IdGenerator } from '../shared/ports.js';
 
@@ -139,6 +141,7 @@ export interface MediaAdapters {
   consents: ConsentRepository;
   signer: MediaSigner;
   jobs: MediaJobQueue;
+  sessions: RecordingSessionRepository;
 }
 
 export function inMemoryMediaAdapters(clock: Clock = systemClock): MediaAdapters {
@@ -147,6 +150,7 @@ export function inMemoryMediaAdapters(clock: Clock = systemClock): MediaAdapters
     consents: new InMemoryConsentRepository(),
     signer: new FakeMediaSigner(() => clock.now()),
     jobs: new InMemoryMediaJobQueue(),
+    sessions: new InMemoryRecordingSessionRepository(),
   };
 }
 

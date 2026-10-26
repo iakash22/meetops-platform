@@ -1,5 +1,8 @@
 import type { UserRepository } from '../../users/domain/user.repository.js';
-import type { InvitationRepository, OrganizationRepository } from '../../organizations/domain/repositories.js';
+import type {
+  InvitationRepository,
+  OrganizationRepository,
+} from '../../organizations/domain/repositories.js';
 import type { TokenService } from '../domain/ports.js';
 import type { OneTimeTokenRepository } from '../domain/one-time-token.js';
 import type { AuthMailJob, AuthMailQueue, MailTransport } from '../domain/mail-jobs.js';
@@ -44,7 +47,11 @@ export class AuthMailJobHandler {
         const token = this.d.tokens.generate();
         await this.d.oneTimeTokens.setTokenHash(t.id, this.d.tokens.hash(token));
         const path = job.kind === 'password_reset' ? '/reset-password' : '/verify-email';
-        await this.d.transport.send({ to: user.email, template: job.kind, data: { url: this.link(path, token) } });
+        await this.d.transport.send({
+          to: user.email,
+          template: job.kind,
+          data: { url: this.link(path, token) },
+        });
         return;
       }
       case 'account_exists': {
@@ -53,7 +60,7 @@ export class AuthMailJobHandler {
         await this.d.transport.send({
           to: user.email,
           template: 'account_exists',
-          data: { url: new URL('/forgot-password', this.d.webBaseUrl).toString() }
+          data: { url: new URL('/forgot-password', this.d.webBaseUrl).toString() },
         });
         return;
       }
@@ -65,7 +72,7 @@ export class AuthMailJobHandler {
         await this.d.transport.send({
           to: user.email,
           template: 'login_lockout',
-          data: { url: new URL('/forgot-password', this.d.webBaseUrl).toString() }
+          data: { url: new URL('/forgot-password', this.d.webBaseUrl).toString() },
         });
         return;
       }
@@ -75,11 +82,15 @@ export class AuthMailJobHandler {
         const org = await this.d.organizations.findById(job.organizationId);
         if (!org) return;
         const token = this.d.tokens.generate();
-        await this.d.invitations.setTokenHash(inv.organizationId, inv.id, this.d.tokens.hash(token));
+        await this.d.invitations.setTokenHash(
+          inv.organizationId,
+          inv.id,
+          this.d.tokens.hash(token),
+        );
         await this.d.transport.send({
           to: inv.email,
           template: 'invitation',
-          data: { url: this.link('/invitations/accept', token), organizationName: org.name }
+          data: { url: this.link('/invitations/accept', token), organizationName: org.name },
         });
         return;
       }
