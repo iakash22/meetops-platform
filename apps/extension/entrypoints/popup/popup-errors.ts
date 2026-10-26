@@ -8,12 +8,20 @@ export const POPUP_ONLY_ERROR = 'Commands must come from the popup';
 export const OPEN_FROM_TOOLBAR =
   'MeetOps works from the toolbar. Click the MeetOps icon in your browser toolbar to pair or record this meeting.';
 
+export const OFFLINE_MESSAGE = "Can't reach MeetOps. Check your connection and try again.";
+export const RELOADED_MESSAGE = 'MeetOps was updated. Close and reopen this popup.';
+const NETWORK_ERROR =
+  /failed to fetch|networkerror|network request failed|err_internet_disconnected/i;
+const EXTENSION_RELOADED = /extension context invalidated|receiving end does not exist/i;
+
 export const isPopupOnlyError = (raw: string): boolean => raw.includes(POPUP_ONLY_ERROR);
 
 /** Map a raw error to what the popup shows. Empty string means "show nothing". */
 export function popupErrorMessage(raw: string | undefined, inPopup: boolean): string {
   if (!raw) return '';
   if (isPopupOnlyError(raw)) return inPopup ? '' : OPEN_FROM_TOOLBAR;
+  if (NETWORK_ERROR.test(raw)) return OFFLINE_MESSAGE;
+  if (EXTENSION_RELOADED.test(raw)) return RELOADED_MESSAGE;
   return raw;
 }
 
