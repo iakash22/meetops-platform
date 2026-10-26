@@ -5,7 +5,7 @@ import { vi } from 'vitest';
 import { App } from '@/app';
 import { useToastStore } from '@/components/ui/toast';
 import type { Role } from '@meetops/contracts';
-import type { ApiClient, CreateInvitationRequest } from '@/lib/api/client';
+import { ApiError, type ApiClient, type CreateInvitationRequest } from '@/lib/api/client';
 import { createMockDirectoryApi } from '@/features/directory/mock-api';
 import { useOrgStore, useUiStore } from '@/stores/org-store';
 import {
@@ -96,6 +96,11 @@ export function createMockApi(
       ...overrides.meetings,
     },
     tasks: { list: vi.fn().mockResolvedValue(tasks), ...overrides.tasks },
+    meetingInsights: {
+      transcript: vi.fn().mockRejectedValue(new ApiError(404, 'NOT_FOUND', 'Not found')),
+      report: vi.fn().mockRejectedValue(new ApiError(404, 'NOT_FOUND', 'Not found')),
+      ...overrides.meetingInsights,
+    },
     // In-memory directory (empty); pass `directory: createMockDirectoryApi(seed)` to seed it.
     directory: { ...createMockDirectoryApi(), ...overrides.directory },
     storage: {
