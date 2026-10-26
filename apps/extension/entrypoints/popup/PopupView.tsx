@@ -1,6 +1,11 @@
-import type { ReactNode } from 'react';
+import { useId, type ReactNode } from 'react';
 import type { AuthStatus } from '../../src/lib/auth/messages.js';
-import { CONSENT_NOTICE, type ConsentState } from '../../src/lib/consent.js';
+import {
+  CONSENT_CONFIRMATION,
+  CONSENT_NOTICE,
+  canStartRecording,
+  type ConsentState,
+} from '../../src/lib/consent.js';
 import { formatElapsed } from '../../src/lib/format.js';
 import type { StatusPayload } from '../../src/lib/messages.js';
 import { OPEN_FROM_TOOLBAR } from './popup-errors.js';
@@ -138,10 +143,10 @@ export interface RecorderViewProps {
   now: number;
   /** Primary when paired (the main action), secondary while pairing is still the next step. */
   emphasis: 'primary' | 'secondary';
+  /** A start attempt is in flight: Record stays disabled. */
+  starting?: boolean;
+  onConsentChange: (checked: boolean) => void;
   onRecord: () => void;
-  onAcknowledge: () => void;
-  onCancelConsent: () => void;
-  onStart: () => void;
   onStop: () => void;
   onDismissWarning: () => void;
 }
@@ -201,37 +206,64 @@ export function RecorderView(p: RecorderViewProps) {
           </button>
         </div>
       ) : (
-        <>
-          {consent.status === 'unseen' && (
-            <button type="button" className={`mo-btn mo-btn--${p.emphasis}`} onClick={p.onRecord}>
-              Record this meeting
-            </button>
-          )}
-          {consent.status === 'shown' && (
-            <div className="mo-consent" role="alertdialog" aria-label="Recording consent">
-              <p>{CONSENT_NOTICE}</p>
-              <div className="mo-row">
-                <button type="button" className="mo-btn mo-btn--primary" onClick={p.onAcknowledge}>
-                  I understand and have consent
-                </button>
-                <button
-                  type="button"
-                  className="mo-btn mo-btn--secondary"
-                  onClick={p.onCancelConsent}
-                >
-                  Cancel
-                </button>
-              </div>
-            </div>
-          )}
-          {consent.status === 'acknowledged' && (
-            <button type="button" className="mo-btn mo-btn--primary" onClick={p.onStart}>
-              Start recording
-            </button>
-          )}
-        </>
+        <ConsentGate
+          consent={consent}
+          emphasis={p.emphasis}
+          starting={p.starting ?? false}
+          onConsentChange={p.onConsentChange}
+          onRecord={p.onRecord}
+        />
       )}
     </section>
+  );
+}
+
+/**
+ * Consent gate in front of "Record this meeting" (contracts v0.4.1, G11). Record stays disabled until the user
+ * ticks the confirmation. The tick is for this meeting only: the popup clears it after every start attempt.
+ */
+export function ConsentGate(p: {
+  consent: ConsentState;
+  emphasis: 'primary' | 'secondary';
+  starting: boolean;
+  onConsentChange: (checked: boolean) => void;
+  onRecord: () => void;
+}) {
+  const id = useId();
+  const confirmed = canStartRecording(p.consent);
+  return (
+    <div className="mo-consent" role="group" aria-labelledby={`${id}-title`}>
+      <p id={`${id}-title`} className="mo-consent__title">
+        Recording consent
+      </p>
+      <p id={`${id}-notice`} className="mo-consent__notice">
+        {CONSENT_NOTICE}
+      </p>
+      <label className="mo-consent__check" htmlFor={`${id}-confirm`}>
+        <input
+          id={`${id}-confirm`}
+          type="checkbox"
+          checked={confirmed}
+          aria-describedby={`${id}-notice`}
+          onChange={(e) => p.onConsentChange(e.currentTarget.checked)}
+        />
+        <span>{CONSENT_CONFIRMATION}</span>
+      </label>
+      <button
+        type="button"
+        className={`mo-btn mo-btn--${p.emphasis}`}
+        disabled={!confirmed || p.starting}
+        aria-describedby={confirmed ? undefined : `${id}-hint`}
+        onClick={p.onRecord}
+      >
+        Record this meeting
+      </button>
+      {!confirmed && (
+        <p id={`${id}-hint`} className="mo-consent__hint">
+          Tick the box above to enable recording. You confirm this for each meeting.
+        </p>
+      )}
+    </div>
   );
 }
 

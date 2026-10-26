@@ -11,6 +11,7 @@ import {
 } from '../src/lib/upload-rpc.js';
 import { selectUploadClient } from '../src/lib/upload-select.js';
 import { StubUploadClient, type StorageTransport, type UploadClient } from '../src/lib/upload.js';
+import { CONSENT } from './helpers/consent.js';
 
 const SID = '7d9f2c1e-3b4a-4c5d-8e6f-0a1b2c3d4e5f';
 const MID = '6f1c2b8e-3d4a-4e5f-9a6b-7c8d9e0f1a2b';
@@ -18,6 +19,7 @@ const initReq = {
   mimeType: 'audio/webm;codecs=opus',
   startedAt: '2026-10-25T08:00:00.000Z',
   source: 'tab' as const,
+  consent: CONSENT,
   meetingId: MID,
 };
 
