@@ -5,6 +5,7 @@ import type { Id } from '@meetops/contracts';
 import { CONSENT_METHODS, CURRENT_CONSENT_VERSION } from '@meetops/contracts/types';
 import { Button } from '@/components/ui/button';
 import { ApiError } from '@/lib/api/client';
+import { notify } from '@/lib/errors/notify';
 import { describeError } from '@/lib/api/error-messages';
 import { useApi } from '@/lib/api/context';
 import { useOrganizationId } from '@/lib/api/queries';
@@ -87,7 +88,7 @@ export function UploadButton({ meetingId }: { meetingId?: Id }) {
       setProgress(0);
       setPhase('hashing');
       const checksumSha256 = await hashFile(f, ac.signal);
-      const { fileObjectId, upload } = await api.storage.initUpload(organizationId, {
+      const { fileObjectId, upload } = await api.storage.createUpload(organizationId, {
         filename: f.name,
         mimeType: f.type,
         sizeBytes: f.size,
@@ -100,13 +101,10 @@ export function UploadButton({ meetingId }: { meetingId?: Id }) {
         },
       });
       setPhase('uploading');
-      await api.storage.putToPresignedUrl(
-        upload,
-        f,
-        (loaded, total) =>
-          setProgress(total > 0 ? Math.min(100, Math.round((loaded / total) * 100)) : 0),
-        ac.signal,
-      );
+      await api.storage.putToPresignedUrl(upload, f, {
+        onProgress: (fraction) => setProgress(Math.min(100, Math.round(fraction * 100))),
+        signal: ac.signal,
+      });
       setProgress(100);
       setPhase('completing');
       return api.storage.completeUpload(organizationId, fileObjectId);
@@ -117,9 +115,13 @@ export function UploadButton({ meetingId }: { meetingId?: Id }) {
     },
     onSuccess: () => {
       setConfirmed(false);
+      notify.success('Upload complete', 'Processing starts shortly.');
       return queryClient.invalidateQueries({ queryKey: ['orgs', organizationId, 'meetings'] });
     },
     onError: (e) => {
+      // Non-field failures are toasts (docs/references.md); a cancel is informational.
+      if (e instanceof DOMException && e.name === 'AbortError') notify.info('Upload cancelled');
+      else notify.error('Upload failed', describeUploadError(e));
       if (e instanceof ApiError && e.reason === 'CONSENT_VERSION_UNSUPPORTED') {
         setConfirmed(false);
         void queryClient.invalidateQueries({ queryKey: consentSettingsQueryKey(organizationId) });
@@ -241,8 +243,8 @@ export function UploadButton({ meetingId }: { meetingId?: Id }) {
             className="h-2 w-full overflow-hidden rounded-full bg-secondary"
           >
             <div
-              className="h-full bg-primary transition-[width] duration-200 motion-reduce:transition-none"
-              style={{ width: `${phase === 'hashing' ? 0 : progress}%` }}
+              className="h-full origin-left bg-primary motion-safe:transition-transform motion-safe:duration-200"
+              style={{ transform: `scaleX(${phase === 'hashing' ? 0 : progress / 100})` }}
             />
           </div>
         </div>
@@ -253,12 +255,6 @@ export function UploadButton({ meetingId }: { meetingId?: Id }) {
           <span className="text-sm">Upload complete</span>
           <ScanStatusBadge status={mutation.data.scanStatus} />
           <DownloadLink fileObjectId={mutation.data.fileObject.id} filename={file.name} />
-        </div>
-      ) : null}
-      {mutation.isError && !(mutation.error instanceof DOMException) ? (
-        <div role="alert" className="w-full text-sm text-destructive">
-          <p className="font-medium">Upload failed</p>
-          <p>{describeUploadError(mutation.error)}</p>
         </div>
       ) : null}
     </div>

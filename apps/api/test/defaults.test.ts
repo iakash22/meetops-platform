@@ -85,6 +85,7 @@ describe('BE-1: strict environments without DATABASE_URL / REDIS_URL', () => {
       'organizations',
       'memberships',
       'invitations',
+      'meetings',
       'mailQueue',
       'audit',
     ]);

@@ -32,7 +32,10 @@ export function createMockApi(
   }> & { onUnauthorized?: ApiClient['onUnauthorized'] } = {},
 ): ApiClient {
   return {
-    request: vi.fn().mockResolvedValue(undefined),
+    // Honour a passed-in request mock (e.g. a path-routed vi.fn) instead of always replacing it.
+    request:
+      (overrides.request as ApiClient['request'] | undefined) ??
+      vi.fn().mockResolvedValue(undefined),
     onUnauthorized: overrides.onUnauthorized ?? vi.fn(() => () => {}),
     auth: {
       login: vi.fn().mockResolvedValue(session),
@@ -102,7 +105,7 @@ export function createMockApi(
     // In-memory directory (empty); pass `directory: createMockDirectoryApi(seed)` to seed it.
     directory: { ...createMockDirectoryApi(), ...overrides.directory },
     storage: {
-      initUpload: vi.fn().mockResolvedValue(uploadResponse),
+      createUpload: vi.fn().mockResolvedValue(uploadResponse),
       putToPresignedUrl: vi.fn().mockResolvedValue(undefined),
       completeUpload: vi.fn().mockResolvedValue(completeResponse),
       getDownloadUrl: vi.fn().mockResolvedValue(downloadUrlResponse),

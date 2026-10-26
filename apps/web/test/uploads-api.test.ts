@@ -43,7 +43,7 @@ describe('uploads API client', () => {
           json({ error: { code: 'VALIDATION_FAILED', message: 'x', reason } }, 422),
         );
       const err = await client(f)
-        .storage.initUpload(ORG, {} as never)
+        .storage.createUpload(ORG, {} as never)
         .catch((e: unknown) => e);
       expect(err).toBeInstanceOf(ApiError);
       expect((err as ApiError).reason).toBe(reason);
@@ -99,7 +99,7 @@ describe('uploads API client', () => {
       api.storage.putToPresignedUrl(
         { url: 'http://storage/k', method: 'PUT', expiresAt: '2026-10-21T18:00:00.000Z' },
         new Blob(['a']),
-        () => undefined,
+        { onProgress: () => undefined },
       ),
     ).rejects.toMatchObject({ status: 0, code: 'BAD_REQUEST' });
     expect(open).not.toHaveBeenCalled();
@@ -128,7 +128,7 @@ describe('uploads API client', () => {
         json({ error: { code: 'PAYLOAD_TOO_LARGE', message: 'too big', requestId: 'r' } }, 413),
       );
     await expect(
-      client(f).storage.initUpload(ORG, {
+      client(f).storage.createUpload(ORG, {
         fileName: 'a.mp4',
         contentType: 'video/mp4',
         sizeBytes: 1,

@@ -28,6 +28,15 @@ function clearCookies() {
 describe('api client (cookie session + CSRF)', () => {
   afterEach(clearCookies);
 
+  it('meetings.list sends cursor and limit as query params (encoded)', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(meetings));
+    const api = createApiClient({ baseUrl: 'http://api/', fetch: fetchMock });
+    await api.meetings.list('o', { cursor: 'a b&c', limit: 50 });
+    expect((fetchMock.mock.calls[0] as Call)[0]).toBe(
+      'http://api/orgs/o/meetings?cursor=a+b%26c&limit=50',
+    );
+  });
+
   it('GET uses credentials include, no bearer and no CSRF header', async () => {
     const fetchMock = vi.fn().mockResolvedValue(jsonResponse(meetings));
     const api = createApiClient({ baseUrl: 'http://api/', fetch: fetchMock });
@@ -271,7 +280,7 @@ describe('CSRF header by method', () => {
 });
 
 describe('uploads (PresignedUrlDto)', () => {
-  it('POSTs InitUploadRequest (with consent) and CSRF, returns InitUploadResponse', async () => {
+  it('POSTs InitUploadRequest (with consent) and CSRF, returns CreateUploadResponse', async () => {
     const fetchMock = vi.fn().mockResolvedValue(jsonResponse(uploadResponse, 201));
     const api = createApiClient({
       baseUrl: 'http://api',
@@ -285,11 +294,11 @@ describe('uploads (PresignedUrlDto)', () => {
       checksumSha256: 'ungWv48Bz+pBQUDeXa4iI7ADYaOWF3qctBD/YfIAFa0=',
       consent: {
         consentVersion: '2026-10',
-        attestedAt: '2026-10-26T10:00:00.000Z',
-        method: 'all_parties_consented' as const,
+        attestedAt: '2026-10-26T00:00:00.000Z',
+        method: 'all_parties_notified' as const,
       },
     };
-    const res = await api.storage.initUpload('00000000-0000-4000-8000-000000000001', body);
+    const res = await api.storage.createUpload('00000000-0000-4000-8000-000000000001', body);
     expect(res.upload.method).toBe('PUT');
     expect(res.upload.url.startsWith('https://')).toBe(true);
     expect(typeof res.upload.expiresAt).toBe('string');
@@ -381,6 +390,69 @@ describe('session, 401 and uploads', () => {
     expect(init.body).toBe(file);
     expect(headersOf(init)['Content-Type']).toBe('audio/webm');
     expect(headersOf(init)[CSRF_HEADER]).toBeUndefined();
+  });
+
+  it('reports upload progress and aborts via XHR when onProgress is given', async () => {
+    class FakeXhr {
+      static last: FakeXhr;
+      upload: {
+        onprogress?: (e: { lengthComputable: boolean; loaded: number; total: number }) => void;
+      } = {};
+      onload?: () => void;
+      onerror?: () => void;
+      onabort?: () => void;
+      status = 0;
+      withCredentials = true;
+      headers: Record<string, string> = {};
+      method = '';
+      url = '';
+      body: unknown;
+      constructor() {
+        FakeXhr.last = this;
+      }
+      open(m: string, u: string) {
+        this.method = m;
+        this.url = u;
+      }
+      setRequestHeader(k: string, v: string) {
+        this.headers[k] = v;
+      }
+      send(b: unknown) {
+        this.body = b;
+      }
+      abort() {
+        this.onabort?.();
+      }
+    }
+    vi.stubGlobal('XMLHttpRequest', FakeXhr);
+    try {
+      const fetchMock = vi.fn();
+      const api = createApiClient({ baseUrl: 'http://api', fetch: fetchMock });
+      const file = new Blob(['abc'], { type: 'audio/webm' });
+      const onProgress = vi.fn();
+      const done = api.storage.putToPresignedUrl(uploadResponse.upload, file, { onProgress });
+      const xhr = FakeXhr.last;
+      expect(xhr.url).toBe(uploadResponse.upload.url);
+      expect(xhr.withCredentials).toBe(false);
+      expect(xhr.headers[CSRF_HEADER]).toBeUndefined();
+      xhr.upload.onprogress?.({ lengthComputable: true, loaded: 1, total: 4 });
+      expect(onProgress).toHaveBeenLastCalledWith(0.25);
+      xhr.status = 200;
+      xhr.onload?.();
+      await done;
+      expect(onProgress).toHaveBeenLastCalledWith(1);
+      expect(fetchMock).not.toHaveBeenCalled();
+
+      const controller = new AbortController();
+      const cancelled = api.storage.putToPresignedUrl(uploadResponse.upload, file, {
+        onProgress,
+        signal: controller.signal,
+      });
+      controller.abort();
+      await expect(cancelled).rejects.toMatchObject({ name: 'AbortError' });
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 
   it('refuses non-https presigned urls', async () => {
