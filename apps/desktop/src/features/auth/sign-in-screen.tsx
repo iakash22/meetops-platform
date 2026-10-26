@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Toast } from '@/components/ui/toast';
 import { AuthError } from './auth-client';
 import { AuthLayout, AuthSwitch } from './auth-layout';
 import { useSession } from './session';
@@ -14,6 +15,9 @@ export const SIGN_IN_FOOTER = 'Preview build: sign-in is mocked and no server is
 
 export const BROWSER_SIGN_IN_PENDING =
   'Browser sign-in (ADR-012) is not available yet. It will open your default browser once the decision is signed off.';
+
+export const BROWSER_SIGN_IN_HINT =
+  'Opens your default browser. Sign in there and confirm this device; your password never enters the app.';
 
 interface SignInScreenProps {
   onCreateAccount?: () => void;
@@ -24,7 +28,21 @@ interface SignInScreenProps {
 export function SignInScreen({ onCreateAccount, mockAuth = false }: SignInScreenProps) {
   // `import.meta.env.DEV` first so production builds drop the mock form entirely.
   const showMock = import.meta.env.DEV && mockAuth;
-  const { signIn } = useSession();
+  const { signIn, signInWithBrowser } = useSession();
+  const [browserPending, setBrowserPending] = useState(false);
+  const [toast, setToast] = useState<string | null>(null);
+
+  async function browserSignIn() {
+    if (!signInWithBrowser) return;
+    setToast(null);
+    setBrowserPending(true);
+    try {
+      await signInWithBrowser();
+    } catch (err) {
+      setToast(err instanceof AuthError ? err.message : 'Sign-in failed. Try again.');
+      setBrowserPending(false);
+    }
+  }
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -58,16 +76,21 @@ export function SignInScreen({ onCreateAccount, mockAuth = false }: SignInScreen
               system browser (PKCE + loopback). Disabled until the ADR is signed off, so no auth is faked. */}
           <Button
             type="button"
-            variant="outline"
+            variant={signInWithBrowser ? 'default' : 'outline'}
             className="h-11 w-full"
-            disabled
+            disabled={!signInWithBrowser || browserPending}
             aria-describedby="browser-sign-in-note"
+            onClick={() => void browserSignIn()}
           >
-            <ExternalLink aria-hidden />
-            Sign in with your browser
+            {browserPending ? (
+              <Loader2 className="motion-safe:animate-spin" aria-hidden />
+            ) : (
+              <ExternalLink aria-hidden />
+            )}
+            {browserPending ? 'Waiting for your browser…' : 'Sign in with your browser'}
           </Button>
           <p id="browser-sign-in-note" className="text-xs text-muted-foreground">
-            {BROWSER_SIGN_IN_PENDING}
+            {signInWithBrowser ? BROWSER_SIGN_IN_HINT : BROWSER_SIGN_IN_PENDING}
           </p>
           {showMock ? (
             <form
@@ -116,6 +139,7 @@ export function SignInScreen({ onCreateAccount, mockAuth = false }: SignInScreen
           ) : null}
         </CardContent>
       </Card>
+      <Toast message={toast} onDismiss={() => setToast(null)} />
     </AuthLayout>
   );
 }
