@@ -3,6 +3,7 @@ import { cn } from '@/lib/utils';
 import { PageHeader } from '@/pages/resource-list';
 import { EmployeesPanel } from '@/features/employees/employees-panel';
 import { TeamsPanel } from '@/features/teams/teams-panel';
+import { IntegrationsPanel } from '@/features/integrations/integrations-panel';
 
 import { SETTINGS_TABS, type SettingsTab } from './settings-search';
 export {
@@ -12,12 +13,16 @@ export {
   type SettingsTab,
 } from './settings-search';
 
-const LABELS: Record<SettingsTab, string> = { employees: 'Employees', teams: 'Teams' };
+const LABELS: Record<SettingsTab, string> = {
+  employees: 'Employees',
+  teams: 'Teams',
+  integrations: 'Integrations',
+};
 
 export function SettingsPage({ tab = 'employees' }: { tab?: SettingsTab | undefined }) {
   return (
     <>
-      <PageHeader title="Settings" description="Organization directory: people and teams" />
+      <PageHeader title="Settings" description="Organization directory, teams and integrations" />
       <nav aria-label="Settings sections" className="mb-6 flex gap-2 border-b">
         {SETTINGS_TABS.map((t) => (
           <Link
@@ -36,7 +41,13 @@ export function SettingsPage({ tab = 'employees' }: { tab?: SettingsTab | undefi
           </Link>
         ))}
       </nav>
-      {tab === 'teams' ? <TeamsPanel /> : <EmployeesPanel />}
+      {tab === 'teams' ? (
+        <TeamsPanel />
+      ) : tab === 'integrations' ? (
+        <IntegrationsPanel />
+      ) : (
+        <EmployeesPanel />
+      )}
     </>
   );
 }

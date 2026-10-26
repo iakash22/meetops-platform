@@ -8,6 +8,7 @@ import type { Clock } from '../../../shared/ports.js';
 import type { UserRepository } from '../../users/domain/user.repository.js';
 import type { MembershipRepository } from '../../organizations/domain/repositories.js';
 import type { SessionPolicy, SessionRepository } from '../domain/session.js';
+import { isUuid, type MeetingRepository } from '../../meetings/domain/meeting.js';
 
 export type { VerifiedSession };
 
@@ -17,6 +18,8 @@ export interface SessionVerifierDeps {
   memberships: MembershipRepository;
   clock: Clock;
   sessionPolicy: SessionPolicy;
+  /** Org-scoped meeting lookup for canAccessMeeting (realtime `meeting:join`). */
+  meetings: MeetingRepository;
 }
 
 /**
@@ -55,8 +58,10 @@ export function apiSessionStore(d: SessionVerifierDeps): SessionStore {
  */
 export class SessionVerifier {
   private readonly inner: SharedSessionVerifier;
+  private readonly meetings: MeetingRepository;
 
   constructor(deps: SessionVerifierDeps) {
+    this.meetings = deps.meetings;
     this.inner = createSessionVerifier({
       sessions: apiSessionStore(deps),
       clock: deps.clock,
@@ -73,10 +78,18 @@ export class SessionVerifier {
     return this.inner.verifySessionByHash({ cookieHash });
   }
 
-  /** TODO(meetings): real check once the meetings module exists. Fails closed. */
+  /**
+   * True only when the meeting exists, is not soft-deleted and belongs to the session's verified active
+   * organization (the lookup runs in that org's RLS context). Missing, deleted, other-org and malformed ids are
+   * all `false`, the same answer, so a caller cannot probe other tenants. Errors fail closed.
+   */
   async canAccessMeeting(session: VerifiedSession, meetingId: string): Promise<boolean> {
-    void session;
-    void meetingId;
-    return false;
+    if (!session.organizationId || !isUuid(meetingId)) return false;
+    try {
+      const m = await this.meetings.findById(session.organizationId, meetingId);
+      return m !== null && m.organizationId === session.organizationId;
+    } catch {
+      return false;
+    }
   }
 }
