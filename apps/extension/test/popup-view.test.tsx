@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
+import { CONSENT_CONFIRMATION, CONSENT_NOTICE, setConfirmed } from '../src/lib/consent.js';
 import {
   OPEN_FROM_TOOLBAR,
   POPUP_ONLY_ERROR,
@@ -18,15 +19,13 @@ const noop = () => undefined;
 const base: PopupViewProps = {
   auth: { state: 'unpaired' },
   status: { status: 'idle' },
-  consent: { status: 'unseen' },
+  consent: { status: 'unconfirmed' },
   now: 0,
   error: '',
   onPair: noop,
   onUnpair: noop,
+  onConsentChange: noop,
   onRecord: noop,
-  onAcknowledge: noop,
-  onCancelConsent: noop,
-  onStart: noop,
   onStop: noop,
   onDismissWarning: noop,
 };
@@ -94,18 +93,30 @@ describe('popup render states', () => {
     expect(html).toContain('Record this meeting');
   });
 
-  it('consent notice shows acknowledge and cancel', () => {
-    const html = render({ consent: { status: 'shown' } });
-    expect(html).toContain('role="alertdialog"');
-    expect(buttonsOf(html, 'primary')).toContain('I understand and have consent');
-    expect(buttonsOf(html, 'secondary')).toContain('Cancel');
-    expect(html).not.toContain('Record this meeting');
+  it('consent gate: notice and an unticked confirmation keep Record disabled', () => {
+    const html = render();
+    expect(html).toContain('Recording consent');
+    expect(html).toContain(CONSENT_NOTICE.replaceAll("'", '&#x27;'));
+    expect(html).toContain(CONSENT_CONFIRMATION);
+    expect(html).toMatch(/<input[^>]*type="checkbox"/);
+    expect(html).not.toMatch(/<input[^>]*checked/);
+    expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Record this meeting/);
+    expect(html).toContain('Tick the box above to enable recording');
+    expect(html).not.toContain('Start recording');
   });
 
-  it('acknowledged consent shows Start recording', () => {
-    expect(
-      buttonsOf(render({ consent: { status: 'acknowledged', acknowledgedAt: 1 } }), 'primary'),
-    ).toEqual(['Pair with MeetOps', 'Start recording']);
+  it('consent gate: ticking the confirmation enables Record this meeting', () => {
+    const html = render({ consent: setConfirmed(true, 1), auth: { state: 'paired' } });
+    expect(html).toMatch(/<input[^>]*checked/);
+    expect(html).not.toMatch(/<button[^>]*disabled=""[^>]*>Record this meeting/);
+    expect(buttonsOf(html, 'primary')).toEqual(['Record this meeting']);
+    expect(html).not.toContain('Tick the box above');
+  });
+
+  it('consent gate: Record stays disabled while a start is in flight', () => {
+    expect(render({ consent: setConfirmed(true, 1), starting: true })).toMatch(
+      /<button[^>]*disabled=""[^>]*>Record this meeting/,
+    );
   });
 
   it('recording shows the rose live dot, elapsed time and Stop', () => {

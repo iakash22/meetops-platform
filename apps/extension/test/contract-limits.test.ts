@@ -10,3 +10,10 @@ describe('contract-limits mirror', () => {
     expect(limits.MAX_CHUNKS).toBe(contracts.MAX_CHUNKS);
   });
 });
+
+describe('MAX_DURATION_MS', () => {
+  it('is the contracts value (4 h), not an extension-local limit', () => {
+    expect(limits.MAX_DURATION_MS).toBe(contracts.MAX_DURATION_MS);
+    expect(limits.MAX_DURATION_MS).toBe(4 * 60 * 60 * 1000);
+  });
+});

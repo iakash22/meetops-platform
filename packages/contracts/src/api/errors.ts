@@ -24,7 +24,12 @@ export const ApiErrorCode = Type.Union([
 ]);
 export type ApiErrorCode = Static<typeof ApiErrorCode>;
 export { API_ERROR_CODES } from '../constants.js';
-import { API_ERROR_REASONS, CONFLICT_REASONS, NOT_FOUND_REASONS } from '../constants.js';
+import {
+  API_ERROR_REASONS,
+  CONFLICT_REASONS,
+  CONSENT_ERROR_REASONS,
+  NOT_FOUND_REASONS,
+} from '../constants.js';
 export {
   CONFLICT_REASONS,
   CONFLICT_HTTP_STATUS,
@@ -41,8 +46,8 @@ export type ConflictReason = (typeof CONFLICT_REASONS)[number];
 export const NotFoundReason = Type.Union(NOT_FOUND_REASONS.map((r) => Type.Literal(r)));
 export type NotFoundReason = (typeof NOT_FOUND_REASONS)[number];
 /**
- * The `error.reason` schema of ApiErrorEnvelope: a ConflictReason or (v0.4.0) a NotFoundReason. Until v0.3.3 this was
- * an alias of ConflictReason.
+ * The `error.reason` schema of ApiErrorEnvelope: a ConflictReason, (v0.4.0) a NotFoundReason or (v0.4.1) a
+ * ConsentErrorReason. Until v0.3.3 this was an alias of ConflictReason.
  */
 export const ApiErrorReason = Type.Union(API_ERROR_REASONS.map((r) => Type.Literal(r)));
 export type ApiErrorReason = (typeof API_ERROR_REASONS)[number];
@@ -58,7 +63,8 @@ export const ApiErrorEnvelope = Type.Object({
     requestId: Type.String({ minLength: 1 }),
     /**
      * Optional so older servers stay valid. A ConflictReason only with `code: 'CONFLICT'` (409, v0.3.3); a
-     * NotFoundReason only with `code: 'NOT_FOUND'` (404, v0.4.0).
+     * NotFoundReason only with `code: 'NOT_FOUND'` (404, v0.4.0); a ConsentErrorReason only with
+     * `code: 'VALIDATION_FAILED'` (422, v0.4.1).
      */
     reason: Type.Optional(ApiErrorReason),
     details: Type.Optional(
@@ -81,5 +87,13 @@ export type NotFoundErrorEnvelope = {
   error: Omit<ApiErrorEnvelope['error'], 'code' | 'reason'> & {
     code: 'NOT_FOUND';
     reason: NotFoundReason;
+  };
+};
+
+/** v0.4.1: a 422 consent rejection body: `code` is `VALIDATION_FAILED` and `reason` is a ConsentErrorReason. */
+export type ConsentErrorEnvelope = {
+  error: Omit<ApiErrorEnvelope['error'], 'code' | 'reason'> & {
+    code: 'VALIDATION_FAILED';
+    reason: (typeof CONSENT_ERROR_REASONS)[number];
   };
 };

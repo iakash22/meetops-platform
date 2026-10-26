@@ -4,6 +4,9 @@ import { describe, expect, it, vi } from 'vitest';
 import { ChunkStore } from '../src/lib/chunk-store.js';
 import { MIME_TYPE, startRecording, type RecorderLike } from '../src/lib/recorder.js';
 import { StubUploadClient, UUID_RE } from '../src/lib/upload.js';
+import { CONSENT } from './helpers/consent.js';
+import { MAX_DURATION_MS } from '../src/lib/contract-limits.js';
+import { uploadValidators } from '../src/lib/auth/validate.js';
 
 const MID = '6f1c2b8e-3d4a-4e5f-9a6b-7c8d9e0f1a2b';
 
@@ -59,6 +62,7 @@ describe('startRecording', () => {
     let mime = '';
     const h = await startRecording({
       meetingId: MID,
+      consent: CONSENT,
       stream,
       client,
       store,
@@ -75,6 +79,7 @@ describe('startRecording', () => {
       startedAt: '2026-10-21T17:30:00.000Z',
       source: 'tab',
       meetingId: MID,
+      consent: CONSENT,
     });
     expect(h.sessionId).toMatch(UUID_RE);
     expect(ev.onStarted).toHaveBeenCalledWith(h.sessionId);
@@ -110,6 +115,7 @@ describe('startRecording', () => {
     const ev = events();
     const h = await startRecording({
       meetingId: MID,
+      consent: CONSENT,
       stream: fakeStream().stream,
       client,
       store,
@@ -141,6 +147,7 @@ describe('startRecording', () => {
     const ev = events();
     const h = await startRecording({
       meetingId: MID,
+      consent: CONSENT,
       stream: fakeStream().stream,
       client,
       store,
@@ -163,6 +170,7 @@ describe('startRecording', () => {
     const rec = new FakeRecorder();
     const h = await startRecording({
       meetingId: MID,
+      consent: CONSENT,
       stream: fakeStream().stream,
       client,
       store,
@@ -183,6 +191,7 @@ describe('startRecording', () => {
     const ev = events();
     await startRecording({
       meetingId: MID,
+      consent: CONSENT,
       stream: fakeStream().stream,
       client,
       store,
@@ -212,11 +221,13 @@ describe('discard (captured-tab mismatch)', () => {
     const ev = events();
     const h = await startRecording({
       meetingId: MID,
+      consent: CONSENT,
       stream: fakeStream().stream,
       client,
       store,
       events: ev,
       startedAt: 0,
+      now: () => 1000, // keep elapsed under MAX_DURATION_MS so the 4 h auto-stop does not fire
       createRecorder: () => rec,
     });
     rec.emit('abc');
@@ -231,5 +242,106 @@ describe('discard (captured-tab mismatch)', () => {
     expect(complete).not.toHaveBeenCalled();
     expect(ev.onStopped).not.toHaveBeenCalled();
     expect(ev.onChunk).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('MAX_DURATION_MS auto-stop (contracts v0.4.1, 4 h)', () => {
+  const H = 60 * 60 * 1000;
+  const start = Date.UTC(2026, 9, 21, 8, 0);
+
+  it('stops itself at 4 h via the timer and sends a contracts-valid complete request', async () => {
+    const store = await newStore();
+    const client = new StubUploadClient();
+    const complete = vi.spyOn(client, 'complete');
+    const rec = new FakeRecorder();
+    const { stream } = fakeStream();
+    const ev = events();
+    let clock = start;
+    let fire: (() => void) | undefined;
+    let delay = -1;
+    await startRecording({
+      meetingId: MID,
+      consent: CONSENT,
+      stream,
+      client,
+      store,
+      events: ev,
+      startedAt: start,
+      now: () => clock,
+      createRecorder: () => rec,
+      setTimer: (fn, ms) => ((fire = fn), (delay = ms), 1),
+      clearTimer: () => undefined,
+    });
+    expect(delay).toBe(MAX_DURATION_MS);
+    rec.emit('a');
+    clock = start + 4 * H + 1500; // timer fired late
+    fire!();
+    await settle();
+    expect(rec.state).toBe('inactive');
+    expect(ev.onStopped).toHaveBeenCalledWith(1);
+    const req = complete.mock.calls[0]![1];
+    expect(req.durationMs).toBe(MAX_DURATION_MS);
+    expect(uploadValidators.completeRequest(req)).toBe(true);
+  });
+
+  it('stops on the next chunk past 4 h even if the timer never ran (throttled)', async () => {
+    const store = await newStore();
+    const client = new StubUploadClient();
+    const complete = vi.spyOn(client, 'complete');
+    const rec = new FakeRecorder();
+    const { stream } = fakeStream();
+    let clock = start;
+    await startRecording({
+      meetingId: MID,
+      consent: CONSENT,
+      stream,
+      client,
+      store,
+      events: events(),
+      startedAt: start,
+      now: () => clock,
+      createRecorder: () => rec,
+      setTimer: () => 1,
+      clearTimer: () => undefined,
+    });
+    rec.emit('a');
+    clock = start + 5 * H;
+    rec.emit('b');
+    await settle();
+    expect(rec.state).toBe('inactive');
+    const req = complete.mock.calls[0]![1];
+    expect(req.durationMs).toBeLessThanOrEqual(MAX_DURATION_MS);
+    expect(uploadValidators.completeRequest(req)).toBe(true);
+  });
+
+  it('never reports more than 4 h, even when a caller passes a larger maxDurationMs', async () => {
+    const store = await newStore();
+    const client = new StubUploadClient();
+    const complete = vi.spyOn(client, 'complete');
+    const rec = new FakeRecorder();
+    const { stream } = fakeStream();
+    let clock = start;
+    const h = await startRecording({
+      meetingId: MID,
+      consent: CONSENT,
+      stream,
+      client,
+      store,
+      events: events(),
+      startedAt: start,
+      now: () => clock,
+      createRecorder: () => rec,
+      maxDurationMs: 24 * H, // cannot raise the contracts cap
+      setTimer: () => 1,
+      clearTimer: () => undefined,
+    });
+    rec.emit('a');
+    await settle();
+    clock = start + 20 * H;
+    h.stop();
+    await settle();
+    const req = complete.mock.calls[0]![1];
+    expect(req.durationMs).toBe(MAX_DURATION_MS);
+    expect(uploadValidators.completeRequest(req)).toBe(true);
   });
 });
