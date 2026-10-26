@@ -6,6 +6,14 @@ While the version is `0.x`, a minor bump may contain breaking changes (ADR-003).
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-10-26
+
+### Fixed
+
+- `ListTasksQuery` no longer puts a `default` on `limit` inside its `anyOf` variants. Fastify's Ajv strict mode
+  refuses to compile a `default` inside `anyOf`, so servers had to strip it. Accepted and rejected inputs are
+  unchanged; servers apply `DEFAULT_PAGE_LIMIT` when `limit` is absent (Value.Default no longer fills it).
+
 ## [0.6.0] - 2026-10-26
 
 Native capture sources and the meetings list route. Builds on 0.5.0 (#168). Needed by mobile PR #173, desktop PRs
