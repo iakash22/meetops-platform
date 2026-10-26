@@ -34,7 +34,7 @@ const transcript: Transcript = {
     },
   ],
   createdAt: T,
-} as Transcript;
+};
 const report: Report = {
   id: '32000000-0000-4000-8000-000000000001',
   organizationId: ORG,
@@ -81,7 +81,7 @@ describe('meeting insights', () => {
     expect(screen.getByText('QA capacity')).toBeInTheDocument();
     expect(screen.getByText('Ana · Thu')).toBeInTheDocument();
     const list = screen.getByRole('list', { name: 'Transcript' });
-    expect(list.textContent?.indexOf('Welcome')).toBeLessThan(list.textContent!.indexOf('Ship'));
+    expect(list.textContent?.indexOf('Welcome')).toBeLessThan(list.textContent.indexOf('Ship'));
     expect(screen.getByText('1:05')).toBeInTheDocument();
     await userEvent.type(screen.getByLabelText('Search transcript'), 'friday');
     await waitFor(() => expect(screen.queryByText('Welcome everyone.')).not.toBeInTheDocument());
