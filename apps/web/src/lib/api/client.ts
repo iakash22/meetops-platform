@@ -31,6 +31,7 @@ import type {
 import {
   API_ERROR_CODES,
   CONFLICT_REASONS,
+  CONSENT_ERROR_REASONS,
   EXTENSION_AUTH_PATHS,
   type ConflictReason,
 } from '@meetops/contracts/types';
@@ -44,12 +45,24 @@ import {
   type DesktopAuthorizeRequest,
   type DesktopAuthorizeResponse,
 } from '@/features/desktop/authorize';
+import {
+  uploadPaths,
+  type CompleteUploadResponse,
+  type ConsentSettings,
+  type DownloadUrlResponse,
+  type UpdateConsentSettingsRequest,
+} from '@/features/uploads/types';
 
 /** Contracts ApiErrorEnvelope codes plus 'UNKNOWN' when the body is unparseable. */
-export type ApiErrorCode = ContractApiErrorCode | 'UNKNOWN';
+export type ApiErrorCode = ContractApiErrorCode | LocalApiErrorCode | 'UNKNOWN';
+/** TODO(contracts): 'PAYLOAD_TOO_LARGE' (413) is added by #168 (contracts 0.5.0); drop this once it merges. */
+type LocalApiErrorCode = 'PAYLOAD_TOO_LARGE';
 
-const KNOWN_CODES = new Set<string>(API_ERROR_CODES);
-const KNOWN_REASONS = new Set<string>(CONFLICT_REASONS);
+const KNOWN_CODES = new Set<string>([...API_ERROR_CODES, 'PAYLOAD_TOO_LARGE']);
+const KNOWN_REASONS = new Set<string>([...CONFLICT_REASONS, ...CONSENT_ERROR_REASONS]);
+
+/** 422 consent sub-reason (contracts CONSENT_ERROR_REASONS). */
+export type ConsentErrorReason = (typeof CONSENT_ERROR_REASONS)[number];
 
 /**
  * Error from the API. `message` is the server-provided envelope message (never
@@ -59,8 +72,11 @@ export class ApiError extends Error {
   readonly code: ApiErrorCode;
   readonly requestId: string | undefined;
   readonly details: ReadonlyArray<{ path: string; message: string }>;
-  /** 409 sub-reason (contracts CONFLICT_REASONS, e.g. LAST_OWNER), when the envelope carries a known one. */
-  reason: ConflictReason | undefined = undefined;
+  /**
+   * Known sub-reason, when the envelope carries one: 409 CONFLICT_REASONS (e.g. LAST_OWNER) or
+   * 422 CONSENT_ERROR_REASONS (e.g. CONSENT_REQUIRED).
+   */
+  reason: ConflictReason | ConsentErrorReason | undefined = undefined;
   /** Seconds from a 429/503 `Retry-After` header (delta-seconds or HTTP date), when present. */
   retryAfterSeconds: number | undefined = undefined;
   constructor(
@@ -106,7 +122,7 @@ export class ApiError extends Error {
       : [];
     const error = new ApiError(status, code, message, requestId, details);
     if (typeof e.reason === 'string' && KNOWN_REASONS.has(e.reason))
-      error.reason = e.reason as ConflictReason;
+      error.reason = e.reason as ConflictReason | ConsentErrorReason;
     return error;
   }
 }
@@ -307,6 +323,18 @@ export type ApiClient = {
       file: Blob,
       opts?: { onProgress?: (fraction: number) => void; signal?: AbortSignal },
     ) => Promise<void>;
+    /** POST .../uploads/:fileObjectId/complete. TODO(contracts): #168 CompleteUploadResponse. */
+    completeUpload: (organizationId: Id, fileObjectId: Id) => Promise<CompleteUploadResponse>;
+    /**
+     * GET .../uploads/:fileObjectId/download-url. The API answers 404 until scanStatus is `clean`
+     * (same body as an unknown id); 409 is also treated as "not ready" by callers. Never cache.
+     */
+    getDownloadUrl: (organizationId: Id, fileObjectId: Id) => Promise<DownloadUrlResponse>;
+  };
+  /** Org consent / retention settings (contracts #168). GET all roles; PATCH owner/admin. */
+  consentSettings: {
+    get: (organizationId: Id) => Promise<ConsentSettings>;
+    update: (organizationId: Id, body: UpdateConsentSettingsRequest) => Promise<ConsentSettings>;
   };
   /** Register a handler for 401 responses (excluding auth endpoints). Returns unsubscribe. */
   onUnauthorized: (handler: () => void) => () => void;
@@ -531,10 +559,9 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
     directory: createHttpDirectoryApi(request),
     meetingInsights: createHttpMeetingInsightsApi(request),
     storage: {
-      createUpload: (id, body) => request('POST', `${org(id)}/uploads`, body),
+      createUpload: (id, body) => request('POST', uploadPaths.uploads(org(id)), body),
       putToPresignedUrl: async (upload, file, opts = {}) => {
-        if (!upload.url.startsWith('https://'))
-          throw new ApiError(0, 'BAD_REQUEST', 'Insecure upload URL');
+        assertHttpsUrl(upload.url);
         const { onProgress, signal } = opts;
         // fetch has no upload progress; use XHR only when the caller wants progress.
         if (onProgress && typeof XMLHttpRequest !== 'undefined') {
@@ -550,6 +577,14 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
         });
         if (!res.ok) throw new ApiError(res.status, 'UNKNOWN', 'Upload failed');
       },
+      completeUpload: (id, fileObjectId) =>
+        request('POST', uploadPaths.complete(org(id), fileObjectId), {}),
+      getDownloadUrl: (id, fileObjectId) =>
+        request('GET', uploadPaths.downloadUrl(org(id), fileObjectId)),
+    },
+    consentSettings: {
+      get: (id) => request('GET', uploadPaths.consentSettings(org(id))),
+      update: (id, body) => request('PATCH', uploadPaths.consentSettings(org(id)), body),
     },
   };
 }
@@ -561,6 +596,7 @@ function putWithProgress(
   onProgress: (fraction: number) => void,
   signal?: AbortSignal,
 ): Promise<void> {
+  assertHttpsUrl(upload.url);
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
     xhr.open(upload.method, upload.url);
@@ -581,4 +617,18 @@ function putWithProgress(
     }
     xhr.send(file);
   });
+}
+
+/**
+ * Presigned storage URLs must be absolute https:// before any file bytes or navigation go to them.
+ * Parsed (not prefix-matched) so `https:` look-alikes and relative URLs are rejected.
+ */
+export function assertHttpsUrl(url: string): void {
+  let ok = false;
+  try {
+    ok = new URL(url).protocol === 'https:';
+  } catch {
+    ok = false;
+  }
+  if (!ok) throw new ApiError(0, 'BAD_REQUEST', 'Insecure storage URL');
 }

@@ -89,20 +89,23 @@ describe('meetings', () => {
     expect(screen.getByRole('button', { name: 'Try again' })).toBeInTheDocument();
   });
 
-  it('uploads: createUpload then PUT to the presigned url', async () => {
+  async function pickAndConsent(file: File) {
+    await userEvent.upload(screen.getByTestId('upload-input'), file);
+    expect(await screen.findByTestId('consent-notice')).toHaveTextContent(
+      'This meeting is recorded.',
+    );
+    const confirm = screen.getByRole('button', { name: 'Confirm and upload' });
+    expect(confirm).toBeDisabled();
+    await userEvent.click(screen.getByRole('checkbox', { name: /agreed to be recorded/ }));
+    await userEvent.click(confirm);
+  }
+
+  it('uploads: consent → createUpload → PUT with progress → complete → pending badge', async () => {
     const { api } = renderApp('/meetings/20000000-0000-4000-8000-000000000001');
     await waitForRouteData(api.meetings.get);
     await screen.findByRole('heading', { name: 'Weekly sync' });
     const file = new File(['abc'], 'rec.webm', { type: 'audio/webm' });
-    await userEvent.upload(screen.getByTestId('upload-input'), file);
-    // Consent is required (contracts 0.4.1): submitting without a choice shows an inline error.
-    await userEvent.click(screen.getByRole('button', { name: 'Start upload' }));
-    expect(
-      screen.getByText('Confirm how everyone was told about the recording.'),
-    ).toBeInTheDocument();
-    expect(api.storage.createUpload).not.toHaveBeenCalled();
-    await userEvent.click(screen.getByLabelText(/agreed to be recorded/));
-    await userEvent.click(screen.getByRole('button', { name: 'Start upload' }));
+    await pickAndConsent(file);
     expect(await screen.findByText('Upload complete')).toBeInTheDocument();
     expect(api.storage.createUpload).toHaveBeenCalledWith('00000000-0000-4000-8000-000000000001', {
       filename: 'rec.webm',
@@ -112,15 +115,56 @@ describe('meetings', () => {
       meetingId: meeting1.id,
       consent: {
         consentVersion: '2026-10',
-        attestedAt: expect.any(String) as string,
+        attestedAt: expect.any(String),
         method: 'all_parties_consented',
       },
     });
     expect(api.storage.putToPresignedUrl).toHaveBeenCalledWith(
       uploadResponse.upload,
       file,
-      expect.objectContaining({ signal: expect.any(AbortSignal) as AbortSignal }),
+      expect.objectContaining({
+        onProgress: expect.any(Function) as unknown,
+        signal: expect.any(AbortSignal) as AbortSignal,
+      }),
     );
+    expect(api.storage.completeUpload).toHaveBeenCalledWith(
+      '00000000-0000-4000-8000-000000000001',
+      'fo_1',
+    );
+    expect(screen.getByTestId('scan-status')).toHaveAttribute('data-status', 'pending');
+  });
+
+  it('download after complete: 404 (not yet clean) shows processing, not an error', async () => {
+    const api = createMockApi({
+      storage: { getDownloadUrl: vi.fn().mockRejectedValue(new ApiError(404, 'NOT_FOUND', 'x')) },
+    });
+    renderApp('/meetings', api);
+    await waitForRouteData(api.meetings.list, { heading: 'Meetings' });
+    await screen.findByText('Weekly sync');
+    await pickAndConsent(new File(['a'], 'a.mp4', { type: 'video/mp4' }));
+    await userEvent.click(await screen.findByRole('button', { name: /Download/ }));
+    expect(await screen.findByText(/Still processing/)).toBeInTheDocument();
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+
+  it.each([
+    [new ApiError(409, 'CONFLICT', 'x'), /exceed the 1.4 GB total/],
+    [new ApiError(413, 'BAD_REQUEST', 'x'), /exceed the 1.4 GB total/],
+    [new ApiError(413, 'PAYLOAD_TOO_LARGE', 'x'), /exceed the 1.4 GB total/],
+    [
+      Object.assign(new ApiError(422, 'VALIDATION_FAILED', 'x'), {
+        reason: 'CONSENT_VERSION_UNSUPPORTED',
+      }),
+      /consent notice has changed/,
+    ],
+  ])('maps init failure %#', async (err, text) => {
+    const api = createMockApi({ storage: { createUpload: vi.fn().mockRejectedValue(err) } });
+    renderApp('/meetings', api);
+    await waitForRouteData(api.meetings.list, { heading: 'Meetings' });
+    await screen.findByText('Weekly sync');
+    await pickAndConsent(new File(['a'], 'a.mp4', { type: 'video/mp4' }));
+    expect(await screen.findByText(text)).toBeInTheDocument();
+    expect(api.storage.putToPresignedUrl).not.toHaveBeenCalled();
   });
 
   it('shows progress and cancels an in-flight upload', async () => {
@@ -141,32 +185,25 @@ describe('meetings', () => {
     renderApp('/meetings', api);
     await waitForRouteData(api.meetings.list, { heading: 'Meetings' });
     await screen.findByText('Weekly sync');
-    await userEvent.upload(
-      screen.getByTestId('upload-input'),
-      new File(['a'], 'a.mp4', { type: 'video/mp4' }),
-    );
-    await userEvent.click(screen.getByLabelText(/was told it is recorded/));
-    await userEvent.click(screen.getByRole('button', { name: 'Start upload' }));
+    await pickAndConsent(new File(['a'], 'a.mp4', { type: 'video/mp4' }));
     const bar = await screen.findByRole('progressbar', { name: 'Upload progress' });
     await waitFor(() => expect(seen.onProgress).toBeDefined());
     act(() => seen.onProgress?.(0.42));
     expect(bar).toHaveAttribute('aria-valuenow', '42');
-    await userEvent.click(screen.getByRole('button', { name: 'Cancel upload' }));
+    await userEvent.click(screen.getByRole('button', { name: /Cancel upload/ }));
     expect(await screen.findByText('Upload cancelled')).toBeInTheDocument();
     expect(screen.queryByRole('progressbar')).not.toBeInTheDocument();
   });
 
   it('rejects non audio/video files before requesting an upload url', async () => {
-    const { api } = renderApp('/meetings');
+    const api = createMockApi();
+    renderApp('/meetings', api);
     await waitForRouteData(api.meetings.list, { heading: 'Meetings' });
-    await screen.findByText('Weekly sync');
     const input = screen.getByTestId('upload-input');
     await userEvent.upload(input, new File(['x'], 'evil.html', { type: 'text/html' }), {
       applyAccept: false,
     });
-    expect(
-      await screen.findByText('Only audio or video files can be uploaded.'),
-    ).toBeInTheDocument();
+    expect(await screen.findByText(/Only audio or video files/)).toBeInTheDocument();
     expect(api.storage.createUpload).not.toHaveBeenCalled();
   });
 
@@ -177,13 +214,9 @@ describe('meetings', () => {
     renderApp('/meetings', api);
     await waitForRouteData(api.meetings.list, { heading: 'Meetings' });
     await screen.findByText('Weekly sync');
-    await userEvent.upload(
-      screen.getByTestId('upload-input'),
-      new File(['a'], 'a.mp4', { type: 'video/mp4' }),
-    );
-    await userEvent.click(screen.getByLabelText(/was told it is recorded/));
-    await userEvent.click(screen.getByRole('button', { name: 'Start upload' }));
+    await pickAndConsent(new File(['a'], 'a.mp4', { type: 'video/mp4' }));
     expect(await screen.findByText('Upload failed')).toBeInTheDocument();
+    expect(api.storage.completeUpload).not.toHaveBeenCalled();
   });
 
   it('upload cap matches the backend 1.4 GB (1_400_000_000 bytes)', () => {
