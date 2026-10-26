@@ -12,7 +12,7 @@ import {
   toInvitationDto as invDto,
   toMembershipDto as memberDto,
   toOrganizationDto as orgDto,
-  toOrganizationMemberDto
+  toOrganizationMemberDto,
 } from './mappers.js';
 import { paginate } from '../../../shared/pagination.js';
 import {
@@ -37,7 +37,7 @@ import {
   CursorPageQuery,
   type IdParamsT,
   type InvitationParamsT,
-  type SwitchOrganizationBodyT
+  type SwitchOrganizationBodyT,
 } from './schemas.js';
 
 export interface OrganizationsPluginOptions {
@@ -45,7 +45,6 @@ export interface OrganizationsPluginOptions {
   organizations: OrganizationService;
   security: HttpSecurityConfig;
 }
-
 
 export async function organizationRoutes(app: FastifyInstance, opts: OrganizationsPluginOptions) {
   registerDomainErrorHandler(app);
@@ -59,10 +58,17 @@ export async function organizationRoutes(app: FastifyInstance, opts: Organizatio
   const rotateInto = async (
     request: Parameters<typeof g.requireSession>[0],
     reply: FastifyReply,
-    organizationId: string | null
+    organizationId: string | null,
+    reason: 'org_switch' | 'role_changed' | 'member_removed' = 'org_switch',
   ) => {
     const ctx = request.auth!;
-    const r = await auth.rotate(ctx.session, ctx.user, organizationId, requestMeta(request));
+    const r = await auth.rotate(
+      ctx.session,
+      ctx.user,
+      organizationId,
+      requestMeta(request),
+      reason,
+    );
     g.setSessionCookie(reply, r);
     g.issueCsrfForSession(reply, r.session.id);
   };
@@ -76,15 +82,17 @@ export async function organizationRoutes(app: FastifyInstance, opts: Organizatio
         description:
           'Caller becomes owner; the session is rotated with the new org active. Requires a verified email (403 otherwise).',
         body: CreateOrganizationBody,
-        response: { 201: OrganizationWithRole, ...authErr }
-      }
+        response: { 201: OrganizationWithRole, ...authErr },
+      },
     },
     async (request, reply) => {
       const { user } = await g.requireSession(request);
       const r = await orgs.create({ name: request.body.name, userId: user.id });
       await rotateInto(request, reply, r.organization.id);
-      return reply.status(201).send({ organization: orgDto(r.organization), role: r.membership.role });
-    }
+      return reply
+        .status(201)
+        .send({ organization: orgDto(r.organization), role: r.membership.role });
+    },
   );
 
   app.get<{ Querystring: CursorPageQueryT }>(
@@ -95,14 +103,17 @@ export async function organizationRoutes(app: FastifyInstance, opts: Organizatio
         summary: 'List my organizations',
         description: 'Organizations the caller is a member of, with their role. Cursor page.',
         querystring: CursorPageQuery,
-        response: { 200: OrganizationList, ...authErr }
-      }
+        response: { 200: OrganizationList, ...authErr },
+      },
     },
     async (request) => {
       const { user } = await g.requireSession(request);
-      const items = (await orgs.listForUser(user.id)).map((x) => ({ organization: orgDto(x.organization), role: x.role }));
+      const items = (await orgs.listForUser(user.id)).map((x) => ({
+        organization: orgDto(x.organization),
+        role: x.role,
+      }));
       return paginate(items, request.query);
-    }
+    },
   );
 
   app.get<{ Params: IdParamsT }>(
@@ -113,14 +124,17 @@ export async function organizationRoutes(app: FastifyInstance, opts: Organizatio
         summary: 'Get organization',
         description: '404 for unknown orgs and orgs the caller is not a member of.',
         params: IdParams,
-        response: { 200: OrganizationWithRole, ...authErr }
-      }
+        response: { 200: OrganizationWithRole, ...authErr },
+      },
     },
     async (request) => {
       const { user } = await g.requireSession(request);
-      const r = await orgs.switchActive({ organizationId: request.params.organizationId, userId: user.id });
+      const r = await orgs.switchActive({
+        organizationId: request.params.organizationId,
+        userId: user.id,
+      });
       return { organization: orgDto(r.organization), role: r.role };
-    }
+    },
   );
 
   app.post<{ Body: SwitchOrganizationBodyT }>(
@@ -132,15 +146,18 @@ export async function organizationRoutes(app: FastifyInstance, opts: Organizatio
         description:
           'Requires membership (404 otherwise). Rotates the session with the new active org.',
         body: SwitchOrganizationBody,
-        response: { 200: OrganizationWithRole, ...authErr }
-      }
+        response: { 200: OrganizationWithRole, ...authErr },
+      },
     },
     async (request, reply) => {
       const { user } = await g.requireSession(request);
-      const r = await orgs.switchActive({ organizationId: request.body.organizationId, userId: user.id });
+      const r = await orgs.switchActive({
+        organizationId: request.body.organizationId,
+        userId: user.id,
+      });
       await rotateInto(request, reply, r.organization.id);
       return { organization: orgDto(r.organization), role: r.role };
-    }
+    },
   );
 
   app.post<{ Params: IdParamsT; Body: CreateInvitationBodyT }>(
@@ -153,15 +170,15 @@ export async function organizationRoutes(app: FastifyInstance, opts: Organizatio
           'Owner/admin only (CASL). Same response whether or not the address has an account; re-inviting replaces a pending invite. The token is only emailed. 409 CONFLICT if the address belongs to an active member of this org.',
         params: IdParams,
         body: CreateInvitationBody,
-        response: { 201: InvitationDto, 400: ErrorBody, 409: ErrorBody, ...authErr }
-      }
+        response: { 201: InvitationDto, 400: ErrorBody, 409: ErrorBody, ...authErr },
+      },
     },
     async (request, reply) => {
       const { user } = await g.requireSession(request);
       const ctx = await orgs.resolveTenant(request.params.organizationId, user.id);
       const r = await orgs.invite(ctx, request.body);
       return reply.status(201).send(invDto(r.invitation));
-    }
+    },
   );
 
   app.post<{ Params: InvitationParamsT }>(
@@ -172,14 +189,14 @@ export async function organizationRoutes(app: FastifyInstance, opts: Organizatio
         summary: 'Revoke invitation',
         description: 'Owner/admin only (CASL). Only pending invitations can be revoked.',
         params: InvitationParams,
-        response: { 200: InvitationDto, 409: ErrorBody, ...authErr }
-      }
+        response: { 200: InvitationDto, 409: ErrorBody, ...authErr },
+      },
     },
     async (request) => {
       const { user } = await g.requireSession(request);
       const ctx = await orgs.resolveTenant(request.params.organizationId, user.id);
       return invDto(await orgs.revokeInvitation(ctx, request.params.invitationId));
-    }
+    },
   );
 
   app.post<{ Body: AcceptInvitationBodyT }>(
@@ -189,10 +206,10 @@ export async function organizationRoutes(app: FastifyInstance, opts: Organizatio
         tags: invTags,
         summary: 'Accept invitation',
         description:
-          "Must be logged in as the invited email, with a verified email address (403 otherwise). Unknown, expired, revoked, used or mismatched invitations all return the same 404. 409 CONFLICT if the user is already an active member (the invitation stays pending and no role changes).",
+          'Must be logged in as the invited email, with a verified email address (403 otherwise). Unknown, expired, revoked, used or mismatched invitations all return the same 404. 409 CONFLICT if the user is already an active member (the invitation stays pending and no role changes).',
         body: AcceptInvitationBody,
-        response: { 200: OrganizationWithRole, 409: ErrorBody, ...authErr }
-      }
+        response: { 200: OrganizationWithRole, 409: ErrorBody, ...authErr },
+      },
     },
     async (request) => {
       const { user } = await g.requireSession(request);
@@ -202,14 +219,15 @@ export async function organizationRoutes(app: FastifyInstance, opts: Organizatio
           token: request.body.token,
           userId: user.id,
           email: user.email,
-          ip: request.ip ?? null
+          ip: request.ip ?? null,
         });
         return { organization: orgDto(r.organization), role: r.membership.role };
       } catch (err) {
-        if (err instanceof InvitationError) throw new DomainError('NOT_FOUND', 'Invitation not found', 404);
+        if (err instanceof InvitationError)
+          throw new DomainError('NOT_FOUND', 'Invitation not found', 404);
         throw err;
       }
-    }
+    },
   );
 
   const memberTags = ['members'];
@@ -220,18 +238,21 @@ export async function organizationRoutes(app: FastifyInstance, opts: Organizatio
       schema: {
         tags: memberTags,
         summary: 'List members',
-        description: 'Cursor page. `user.email` is included only when the caller is an owner or admin.',
+        description:
+          'Cursor page. `user.email` is included only when the caller is an owner or admin.',
         params: IdParams,
         querystring: CursorPageQuery,
-        response: { 200: MemberList, ...authErr }
-      }
+        response: { 200: MemberList, ...authErr },
+      },
     },
     async (request) => {
       const { user } = await g.requireSession(request);
       const ctx = await orgs.resolveTenant(request.params.organizationId, user.id);
-      const all = (await orgs.listMembersWithUsers(ctx)).map((x) => toOrganizationMemberDto(x.membership, x.user, ctx.role));
+      const all = (await orgs.listMembersWithUsers(ctx)).map((x) =>
+        toOrganizationMemberDto(x.membership, x.user, ctx.role),
+      );
       return paginate(all, request.query);
-    }
+    },
   );
 
   app.patch<{ Params: MemberParamsT; Body: ChangeRoleBodyT }>(
@@ -244,16 +265,17 @@ export async function organizationRoutes(app: FastifyInstance, opts: Organizatio
           "Owner: any change. Admin: only member/viewer targets, to member/viewer. Nobody else (403). Demoting the last owner returns 409 CONFLICT with reason LAST_OWNER. The target's sessions are revoked; changing your own role rotates your session.",
         params: MemberParams,
         body: ChangeRoleBody,
-        response: { 200: Membership, 400: ErrorBody, 409: ErrorBody, ...authErr }
-      }
+        response: { 200: Membership, 400: ErrorBody, 409: ErrorBody, ...authErr },
+      },
     },
     async (request, reply) => {
       const { user } = await g.requireSession(request);
       const ctx = await orgs.resolveTenant(request.params.organizationId, user.id);
       const m = await orgs.changeRole(ctx, request.params.userId, request.body.role);
-      if (request.params.userId === user.id) await rotateInto(request, reply, ctx.organizationId);
+      if (request.params.userId === user.id)
+        await rotateInto(request, reply, ctx.organizationId, 'role_changed');
       return memberDto(m);
-    }
+    },
   );
 
   app.delete<{ Params: MemberParamsT }>(
@@ -265,15 +287,16 @@ export async function organizationRoutes(app: FastifyInstance, opts: Organizatio
         description:
           "Owner removes anyone; admin removes members/viewers; anyone may leave. Removing the last owner returns 409 CONFLICT with reason LAST_OWNER. The removed user's sessions are revoked.",
         params: MemberParams,
-        response: { 204: Type.Null(), 409: ErrorBody, ...authErr }
-      }
+        response: { 204: Type.Null(), 409: ErrorBody, ...authErr },
+      },
     },
     async (request, reply) => {
       const { user } = await g.requireSession(request);
       const ctx = await orgs.resolveTenant(request.params.organizationId, user.id);
       await orgs.removeMember(ctx, request.params.userId);
-      if (request.params.userId === user.id) await rotateInto(request, reply, null);
+      if (request.params.userId === user.id)
+        await rotateInto(request, reply, null, 'member_removed');
       return reply.status(204).send();
-    }
+    },
   );
 }
