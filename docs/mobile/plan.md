@@ -79,3 +79,9 @@ Each requirement gets automated tests (unit + device E2E) in M3–M6 and a sign-
 - **Offline upload queue (M4):** `UploadQueue` is a placeholder that always reports nothing pending. The real queue needs encrypted on-device storage and the Media upload contract.
 - **Theme sync:** mobile tokens match the web theme lane's final values (`docs/05-web/brand-theme.md`). Change both together.
 - **Placeholder ids:** `com.example.meetops` / `meetops://` remain. The owner must choose the real bundle id/package and the verified domain for Universal/App Links.
+
+### M5 status (upload queue engine)
+
+- `src/upload/uploadQueueEngine.ts`: durable queue over the recording-sessions contract: init with the G11 consent attestation, per-chunk signed URL, PUT with signed headers verbatim (https only, no cookies or bearer), complete with every chunk's size and sha256, then verified local deletion (R6). Exponential backoff (5 s to 15 min, 8 attempts), offline pause, resume from the last confirmed chunk, consent/validation rejections stop retrying, 7-day retention cap with a day-6 warning (R4), and `wipe()` for logout and org switch.
+- Storage, chunk files and hashing sit behind ports (`QueueStore`, `ChunkSource`); native implementations land with the M4 recorder and the lockfile slot (expo-file-system, expo-crypto). The placeholder queue stays the default, so nothing changes at runtime yet.
+- Dependencies: contracts `RecordingSource` needs `'mobile'` (only `'tab'` today); API `feat/api-recording-sessions` must ship and accept Bearer.
