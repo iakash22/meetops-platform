@@ -71,6 +71,7 @@ const authTokensSql = readFileSync(
 const adr010Sql = teamsSql + authTokensSql;
 const CONSENT_MIGRATION = '20261025120000_consent_scan_keycheck';
 const MEETINGS_EXTERNAL_ID_MIGRATION = '20261026120000_meetings_external_id';
+const RECORDING_SOURCE_NATIVE_MIGRATION = '20261026210000_recording_source_native';
 /** Phase 3 per-recording transcript revision migration. */
 const TRANSCRIPT_REVISION_MIGRATION_DIR = '20261026200000_transcript_recording_revision';
 const consentSql = readFileSync(resolve(migrationsDir, CONSENT_MIGRATION, 'migration.sql'), 'utf8');
@@ -805,7 +806,9 @@ describe('recording sessions (contracts v0.2)', () => {
   });
 
   it('enums and limits match the contract', () => {
-    expect(finalSql).toContain(`CREATE TYPE "RecordingSource" AS ENUM ('tab');`);
+    expect(finalSql).toContain(
+      `CREATE TYPE "RecordingSource" AS ENUM ('tab', 'mobile', 'desktop');`,
+    );
     expect(finalSql).toContain(
       `CREATE TYPE "RecordingAbortReason" AS ENUM ('user_stopped', 'consent_revoked', 'tab_closed', 'local_storage_exhausted', 'error');`,
     );
@@ -1274,5 +1277,30 @@ describe('Phase 3 transcripts revised per recording (static)', () => {
       /DROP TABLE|DROP COLUMN|NO FORCE ROW LEVEL SECURITY|DISABLE ROW LEVEL SECURITY/i,
     );
     expect(transcript).toMatch(/mergeState\s+Json\?/);
+  });
+});
+
+describe('DB recording_source_native: RecordingSource mobile/desktop (static)', () => {
+  const sql = readFileSync(
+    resolve(migrationsDir, RECORDING_SOURCE_NATIVE_MIGRATION, 'migration.sql'),
+    'utf8',
+  );
+  const statements = sql.replace(/--.*$/gm, '');
+
+  it('sorts after the Phase 3 transcript revision and before auth token families', () => {
+    const dirs = readdirSync(migrationsDir, { withFileTypes: true })
+      .filter((x) => x.isDirectory())
+      .map((x) => x.name)
+      .sort();
+    const i = dirs.indexOf(RECORDING_SOURCE_NATIVE_MIGRATION);
+    expect(i).toBeGreaterThan(dirs.indexOf(TRANSCRIPT_REVISION_MIGRATION_DIR));
+    expect(i).toBeLessThan(dirs.indexOf(AUTH_TOKENS_MIGRATION));
+  });
+
+  it('only adds the two enum values, matching the schema and contracts 0.6.0', () => {
+    expect(statements).not.toMatch(/DROP|RENAME|CREATE TABLE|ALTER TABLE|NO FORCE/i);
+    expect(statements).toContain(`ALTER TYPE "RecordingSource" ADD VALUE IF NOT EXISTS 'mobile';`);
+    expect(statements).toContain(`ALTER TYPE "RecordingSource" ADD VALUE IF NOT EXISTS 'desktop';`);
+    expect(schema).toMatch(/enum RecordingSource \{\s+tab\s+mobile\s+desktop\s+\}/);
   });
 });

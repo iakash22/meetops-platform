@@ -140,6 +140,8 @@ enum RecordingStatus {
 /// Contracts v0.2 RecordingSource.
 enum RecordingSource {
   tab
+  mobile
+  desktop
 }
 
 /// Upload-session lifecycle. After `completed`, the contract's RecordingStatus lives on the linked recording.
