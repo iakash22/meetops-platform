@@ -64,6 +64,9 @@ import type {
   MembershipRepository,
   OrganizationRepository,
 } from './organizations/domain/repositories.js';
+import type { MeetingRepository } from './meetings/domain/meeting.js';
+import { InMemoryMeetingRepository } from './meetings/infrastructure/in-memory.repository.js';
+import { PrismaMeetingRepository } from './meetings/infrastructure/prisma.repository.js';
 import { systemClock, type Clock, type IdGenerator } from '../shared/ports.js';
 
 export interface ModuleDeps {
@@ -113,6 +116,8 @@ export interface ModuleDeps {
    * the client supports PUBLISH, otherwise a no-op.
    */
   revocations?: RevocationPublisher;
+  /** Meetings repository (Prisma when `db` is set; in-memory only in development/test). */
+  meetings: MeetingRepository;
 }
 
 /** Revocation publisher over the shared Redis client, or a no-op without one. */
@@ -148,6 +153,7 @@ export const DATABASE_BACKED_DEPS = [
   'organizations',
   'memberships',
   'invitations',
+  'meetings',
   'audit',
 ] as const satisfies readonly (keyof ModuleDeps)[];
 
@@ -225,9 +231,13 @@ export const PRODUCTION_REQUIRED_DEPS = [
   'organizations',
   'memberships',
   'invitations',
+  'meetings',
   'rateLimiter',
   'lockout',
   'mailQueue',
+  // The default transport drops every mail (no-op); production must inject a real one, e.g.
+  // createAuthMailTransport(createEmailService(loadEmailConfig())) from @meetops/notifications.
+  'mailTransport',
   'audit',
 ] as const satisfies readonly (keyof ModuleDeps)[];
 
@@ -258,7 +268,8 @@ export function defaultModuleDeps(
   const hasRedis = !!overrides.redis || !!urlFor(env, env.redisUrl);
   const provided = (k: keyof ModuleDeps) =>
     ((DATABASE_BACKED_DEPS as readonly string[]).includes(k) && hasDb) ||
-    ((REDIS_BACKED_DEPS as readonly string[]).includes(k) && hasRedis);
+    ((REDIS_BACKED_DEPS as readonly string[]).includes(k) && hasRedis) ||
+    (k === 'mailTransport' && (overrides as { mailer?: unknown }).mailer !== undefined);
   if (strict) {
     const missing = PRODUCTION_REQUIRED_DEPS.filter(
       (k) => overrides[k] === undefined && !provided(k),
@@ -304,6 +315,7 @@ export function defaultModuleDeps(
         oneTimeTokens: new PrismaOneTimeTokenRepository(db),
         organizations: new PrismaOrganizationRepository(db),
         invitations: new PrismaInvitationRepository(db),
+        meetings: new PrismaMeetingRepository(db),
         audit: new PrismaAuditLog(db),
       }
     : {
@@ -314,6 +326,7 @@ export function defaultModuleDeps(
         invitations: new InMemoryInvitationRepository(
           memberships instanceof InMemoryMembershipRepository ? memberships : undefined,
         ),
+        meetings: new InMemoryMeetingRepository(() => clock.now()),
         audit: new InMemoryAuditLog(),
       };
   return {
@@ -364,5 +377,6 @@ export async function registerModules(app: FastifyInstance, deps: ModuleDeps) {
   await app.register(authRoutes, { auth, organizations, security: deps.security });
   await app.register(organizationRoutes, { auth, organizations, security: deps.security });
   await app.register(import('./directory/index.js'), { auth, organizations, deps });
+  await app.register(import('./meetings/index.js'), { auth, organizations, deps });
   return { auth, organizations, sessionVerifier: new SessionVerifier(deps) };
 }

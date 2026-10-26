@@ -1,14 +1,28 @@
+import type { ConsentAttestationInput, ConsentMethod } from '@meetops/contracts';
+import { CURRENT_CONSENT_VERSION } from '@meetops/contracts/types';
+
 /**
- * Recording consent (plan.md M3, R1 + R3). DEMO ONLY: the Backend consent API (`POST` consent record with
- * userId, meetingId, organizationId, timestamp) does not exist yet, so this keeps records in memory and
- * nothing leaves the device. The real client derives userId/organizationId from the session server-side.
- * TODO(contracts): replace the local types with @meetops/contracts once Architecture adds the consent schema.
+ * Recording consent (plan.md M3, R1 + R3), aligned with contracts v0.4.1 (G11): there is no standalone consent route.
+ * The participant notice produces a `ConsentAttestationInput` that the upload queue attaches to
+ * `InitRecordingSessionRequest.consent` / `InitUploadRequest.consent`; the server fills user and organization from the
+ * session and stores it. The opt-in flag (R1) is device-local. The demo keeps records in memory.
  */
 export interface ParticipantNoticeRecord {
   /** Client-generated id for this recording until meetings exist server-side. */
   meetingId: string;
   /** ISO-8601 time the user confirmed the notice. */
   confirmedAt: string;
+  /** How consent was obtained. Defaults to `all_parties_notified`. */
+  method?: ConsentMethod;
+}
+
+/** Builds the contracts attestation for a confirmed notice. */
+export function toAttestation(record: ParticipantNoticeRecord): ConsentAttestationInput {
+  return {
+    consentVersion: CURRENT_CONSENT_VERSION,
+    attestedAt: record.confirmedAt,
+    method: record.method ?? 'all_parties_notified',
+  };
 }
 
 export interface ConsentApi {
@@ -16,8 +30,11 @@ export interface ConsentApi {
   hasOptedIn: () => Promise<boolean>;
   /** R1: record the explicit opt-in. Never called implicitly. */
   optIn: () => Promise<void>;
-  /** R3: log the per-recording participant notice confirmation. Must resolve before `start`. */
-  confirmParticipantNotice: (record: ParticipantNoticeRecord) => Promise<void>;
+  /**
+   * R3: log the per-recording participant notice confirmation. Must resolve before `start`. Returns the attestation
+   * the recording's upload must carry.
+   */
+  confirmParticipantNotice: (record: ParticipantNoticeRecord) => Promise<ConsentAttestationInput>;
 }
 
 export function createDemoConsentApi(
@@ -40,6 +57,7 @@ export function createDemoConsentApi(
       await wait();
       if (!optedIn) throw new Error('Opt-in consent is required before a participant notice.');
       notices.push(record);
+      return toAttestation(record);
     },
   };
 }

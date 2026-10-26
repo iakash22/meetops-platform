@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { forwardRef, useState } from 'react';
 import { StyleSheet, Text, TextInput, View, type TextInputProps } from 'react-native';
 
 import { colors, radius, spacing } from '../theme/colors';
@@ -8,13 +8,17 @@ interface Props extends Omit<TextInputProps, 'style'> {
   error?: string;
 }
 
-export function TextField({ label, error, testID, onFocus, onBlur, ...input }: Props) {
+export const TextField = forwardRef<TextInput, Props>(function TextField(
+  { label, error, testID, onFocus, onBlur, ...input },
+  ref,
+) {
   const [focused, setFocused] = useState(false);
   return (
     <View style={styles.wrap}>
       <Text style={styles.label}>{label}</Text>
       <TextInput
         {...input}
+        ref={ref}
         testID={testID}
         accessibilityLabel={label}
         placeholderTextColor={colors.mutedForeground}
@@ -28,6 +32,7 @@ export function TextField({ label, error, testID, onFocus, onBlur, ...input }: P
           onBlur?.(e);
         }}
         style={[styles.input, focused && styles.focused, !!error && styles.invalid]}
+        aria-invalid={!!error}
       />
       {error ? (
         <Text
@@ -40,7 +45,7 @@ export function TextField({ label, error, testID, onFocus, onBlur, ...input }: P
       ) : null}
     </View>
   );
-}
+});
 
 const styles = StyleSheet.create({
   wrap: { marginBottom: spacing.lg },

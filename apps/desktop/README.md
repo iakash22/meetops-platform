@@ -120,3 +120,14 @@ Milestones:
 3. **M3**: local recording + encrypted storage + consent UX.
 4. **M4**: offline queue and resumable pre-signed uploads.
 5. **M5**: signing/notarization, auto-update, release pipeline.
+
+## ADR-012 auth seam and data (Phase 8)
+
+- `src/lib/native-auth.ts`: token-free IPC client for the Rust auth module (`auth_sign_in`, `auth_session`,
+  `auth_sign_out`, `api_request`). Responses carrying any token key are refused. Enabled only inside Tauri with
+  `VITE_DESKTOP_BROWSER_AUTH=true`; otherwise the mock (dev) or fail-closed client is used, as before.
+- Session is restored on launch through `auth_session`; a dead token family means signed out.
+- Meetings and Tasks read through `api_request` when live and fall back to typed sample data.
+- **Pending:** the Rust commands themselves (PKCE, loopback listener, `keyring`, opener plugin, refresh mutex) change
+  `Cargo.lock`, so they wait for the lockfile slot and ADR-012 sign-off. Backend: `/auth/desktop/*` routes, the
+  `desktop` audience, a meetings list contract, and `tasks:read` in the desktop scopes.
