@@ -2,7 +2,7 @@ import type { ChunkStore } from './chunk-store.js';
 import { drainQueue } from './drain.js';
 import type { StorageEvent } from './messages.js';
 import type { AbortReason, ConsentAttestationInput } from '@meetops/contracts/types';
-import { MAX_CHUNK_BYTES, MAX_RECORDING_CHUNKS } from './contract-limits.js';
+import { MAX_CHUNK_BYTES, MAX_DURATION_MS, MAX_RECORDING_CHUNKS } from './contract-limits.js';
 import { sha256Hex, splitForUpload, toIsoTimestamp, type UploadClient } from './upload.js';
 
 export const MIME_TYPE = 'audio/webm;codecs=opus';
@@ -58,6 +58,11 @@ export async function startRecording(opts: {
   timeslice?: number;
   /** Defaults to contracts MAX_CHUNK_BYTES (64 MiB). */
   maxChunkBytes?: number;
+  /** Defaults to contracts MAX_DURATION_MS (4 h). The recorder stops itself once this much time has elapsed. */
+  maxDurationMs?: number;
+  /** Injectable timer for the duration auto-stop (tests). */
+  setTimer?: (fn: () => void, ms: number) => unknown;
+  clearTimer?: (handle: unknown) => void;
 }): Promise<RecordingHandle> {
   const now = opts.now ?? Date.now;
   const meta = {
@@ -75,8 +80,23 @@ export async function startRecording(opts: {
   let tail: Promise<void> = Promise.resolve();
 
   let discarded = false;
+  const maxDurationMs = Math.min(opts.maxDurationMs ?? MAX_DURATION_MS, MAX_DURATION_MS);
+  const setTimer = opts.setTimer ?? ((fn: () => void, ms: number) => setTimeout(fn, ms));
+  const clearTimer =
+    opts.clearTimer ?? ((h: unknown) => clearTimeout(h as ReturnType<typeof setTimeout>));
+  // Contracts cap CompleteRecordingSessionRequest.durationMs at MAX_DURATION_MS: stop at the limit (like the
+  // MAX_RECORDING_CHUNKS stop) so a recording never runs past what the server accepts.
+  const stopAtLimit = () => {
+    if (rec.state !== 'inactive') rec.stop();
+  };
+  const durationTimer = setTimer(
+    stopAtLimit,
+    Math.max(0, maxDurationMs - (now() - opts.startedAt)),
+  );
   rec.ondataavailable = (e) => {
     if (e.data.size === 0 || discarded) return;
+    // Belt and braces for throttled timers (suspended offscreen documents): check the clock on every chunk.
+    if (now() - opts.startedAt >= maxDurationMs) queueMicrotask(stopAtLimit);
     const data = e.data;
     tail = tail.then(async () => {
       // Enforce the per-chunk upload limit by splitting oversized timeslices into several seqs.
@@ -122,6 +142,7 @@ export async function startRecording(opts: {
     opts.events.onError(e instanceof Error ? e.message : 'MediaRecorder error');
   };
   rec.onstop = () => {
+    clearTimer(durationTimer);
     stopTracks();
     if (discarded) return;
     void (async () => {
@@ -129,7 +150,8 @@ export async function startRecording(opts: {
         await tail;
         await opts.store.finalizeSession(sessionId, {
           chunkCount: seq,
-          durationMs: now() - opts.startedAt,
+          // The stop lands a moment after the limit; never report more than the contracts accept.
+          durationMs: Math.min(Math.max(0, now() - opts.startedAt), maxDurationMs),
         });
         await drainQueue(opts.store, opts.client, sessionId, now);
         opts.events.onStopped(seq);
@@ -154,6 +176,7 @@ export async function startRecording(opts: {
     },
     async discard(reason) {
       discarded = true;
+      clearTimer(durationTimer);
       if (rec.state !== 'inactive') rec.stop();
       stopTracks();
       await tail.catch(() => undefined);
