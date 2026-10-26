@@ -1,3 +1,4 @@
+import { useDeferredValue, useMemo, useState } from 'react';
 import { Link } from '@tanstack/react-router';
 import type { Meeting } from '@meetops/contracts';
 import { Badge } from '@/components/ui/badge';
@@ -6,6 +7,9 @@ import { EmptyState, ErrorState, LoadingState } from '@/components/states/states
 import { useMeeting, useMeetings } from '@/lib/api/queries';
 import { PageHeader, ResourceList } from '@/pages/resource-list';
 import { UploadButton } from './upload-button';
+import { filterMeetings, type MeetingFilters } from './manage-api';
+import { MeetingFormDialog } from './meeting-form';
+import { Input } from '@/components/ui/input';
 
 const STATUS_LABEL: Record<Meeting['status'], string> = {
   scheduled: 'Scheduled',
@@ -31,16 +35,59 @@ function formatDate(iso?: string): string {
 
 export function MeetingsPage() {
   const query = useMeetings();
+  const [filters, setFilters] = useState<MeetingFilters>({ q: '', status: '' });
+  const deferred = useDeferredValue(filters);
+  const filtering = deferred.q.trim() !== '' || deferred.status !== '';
+  const filtered = useMemo(
+    () =>
+      query.data && filtering
+        ? { ...query.data, items: filterMeetings(query.data.items, deferred) }
+        : query.data,
+    [query.data, deferred, filtering],
+  );
   return (
     <>
-      <div className="flex items-start justify-between">
+      <div className="flex flex-wrap items-start justify-between gap-3">
         <PageHeader title="Meetings" />
-        <UploadButton />
+        <div className="flex items-start gap-2">
+          <MeetingFormDialog />
+          <UploadButton />
+        </div>
+      </div>
+      <div className="mb-4 flex flex-wrap gap-2" role="search">
+        <Input
+          type="search"
+          aria-label="Search meetings"
+          placeholder="Search meetings"
+          maxLength={200}
+          value={filters.q}
+          onChange={(e) => setFilters((f) => ({ ...f, q: e.target.value }))}
+          className="h-11 max-w-xs"
+        />
+        <select
+          aria-label="Filter by status"
+          value={filters.status}
+          onChange={(e) =>
+            setFilters((f) => ({ ...f, status: e.target.value as MeetingFilters['status'] }))
+          }
+          className="h-11 rounded-md border border-input bg-background px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        >
+          <option value="">All statuses</option>
+          {(Object.keys(STATUS_LABEL) as Meeting['status'][]).map((s) => (
+            <option key={s} value={s}>
+              {STATUS_LABEL[s]}
+            </option>
+          ))}
+        </select>
       </div>
       <ResourceList
-        query={query}
-        emptyTitle="No meetings yet"
-        emptyDescription="Meetings you record or import will appear here."
+        query={filtered === query.data ? query : ({ ...query, data: filtered } as typeof query)}
+        emptyTitle={filtering ? 'No matching meetings' : 'No meetings yet'}
+        emptyDescription={
+          filtering
+            ? 'Try a different search or status.'
+            : 'Meetings you record or import will appear here.'
+        }
         renderItem={(m) => (
           <div className="flex items-center justify-between gap-4">
             <Link
@@ -77,6 +124,7 @@ export function MeetingDetailPage({ meetingId }: { meetingId: string }) {
         </div>
         <div className="flex items-center gap-3">
           <MeetingStatusBadge status={m.status} />
+          <MeetingFormDialog meeting={m} />
           <UploadButton meetingId={m.id} />
         </div>
       </div>
