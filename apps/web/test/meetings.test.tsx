@@ -1,4 +1,4 @@
-import { screen, waitFor } from '@testing-library/react';
+import { act, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ApiError } from '@/lib/api/client';
@@ -93,6 +93,14 @@ describe('meetings', () => {
     await screen.findByRole('heading', { name: 'Weekly sync' });
     const file = new File(['abc'], 'rec.webm', { type: 'audio/webm' });
     await userEvent.upload(screen.getByTestId('upload-input'), file);
+    // Consent is required (contracts 0.4.1): submitting without a choice shows an inline error.
+    await userEvent.click(screen.getByRole('button', { name: 'Start upload' }));
+    expect(
+      screen.getByText('Confirm how everyone was told about the recording.'),
+    ).toBeInTheDocument();
+    expect(api.storage.createUpload).not.toHaveBeenCalled();
+    await userEvent.click(screen.getByLabelText(/agreed to be recorded/));
+    await userEvent.click(screen.getByRole('button', { name: 'Start upload' }));
     expect(await screen.findByText('Upload complete')).toBeInTheDocument();
     expect(api.storage.createUpload).toHaveBeenCalledWith('00000000-0000-4000-8000-000000000001', {
       filename: 'rec.webm',
@@ -100,8 +108,50 @@ describe('meetings', () => {
       sizeBytes: 3,
       checksumSha256: 'ungWv48Bz+pBQUDeXa4iI7ADYaOWF3qctBD/YfIAFa0=', // sha256('abc')
       meetingId: meeting1.id,
+      consent: {
+        consentVersion: '2026-10',
+        attestedAt: expect.any(String) as string,
+        method: 'all_parties_consented',
+      },
     });
-    expect(api.storage.putToPresignedUrl).toHaveBeenCalledWith(uploadResponse.upload, file);
+    expect(api.storage.putToPresignedUrl).toHaveBeenCalledWith(
+      uploadResponse.upload,
+      file,
+      expect.objectContaining({ signal: expect.any(AbortSignal) as AbortSignal }),
+    );
+  });
+
+  it('shows progress and cancels an in-flight upload', async () => {
+    let seen: { onProgress?: (f: number) => void; signal?: AbortSignal } = {};
+    const api = createMockApi({
+      storage: {
+        putToPresignedUrl: vi.fn(
+          (_u: unknown, _f: unknown, opts?: typeof seen) =>
+            new Promise<void>((_res, rej) => {
+              seen = opts ?? {};
+              opts?.signal?.addEventListener('abort', () =>
+                rej(new DOMException('Upload cancelled', 'AbortError')),
+              );
+            }),
+        ),
+      },
+    });
+    renderApp('/meetings', api);
+    await waitForRouteData(api.meetings.list, { heading: 'Meetings' });
+    await screen.findByText('Weekly sync');
+    await userEvent.upload(
+      screen.getByTestId('upload-input'),
+      new File(['a'], 'a.mp4', { type: 'video/mp4' }),
+    );
+    await userEvent.click(screen.getByLabelText(/was told it is recorded/));
+    await userEvent.click(screen.getByRole('button', { name: 'Start upload' }));
+    const bar = await screen.findByRole('progressbar', { name: 'Upload progress' });
+    await waitFor(() => expect(seen.onProgress).toBeDefined());
+    act(() => seen.onProgress?.(0.42));
+    expect(bar).toHaveAttribute('aria-valuenow', '42');
+    await userEvent.click(screen.getByRole('button', { name: 'Cancel upload' }));
+    expect(await screen.findByText('Upload cancelled')).toBeInTheDocument();
+    expect(screen.queryByRole('progressbar')).not.toBeInTheDocument();
   });
 
   it('rejects non audio/video files before requesting an upload url', async () => {
@@ -129,6 +179,8 @@ describe('meetings', () => {
       screen.getByTestId('upload-input'),
       new File(['a'], 'a.mp4', { type: 'video/mp4' }),
     );
+    await userEvent.click(screen.getByLabelText(/was told it is recorded/));
+    await userEvent.click(screen.getByRole('button', { name: 'Start upload' }));
     expect(await screen.findByText('Upload failed')).toBeInTheDocument();
   });
 
