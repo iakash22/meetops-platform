@@ -4,11 +4,13 @@ import type { Meeting } from '@meetops/contracts';
 import { Badge, type BadgeProps } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { ApiError } from '@/lib/api/client';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { EmptyState, ErrorState, LoadingState } from '@/components/states/states';
 import { useMeeting, useMeetings } from '@/lib/api/queries';
 import { PageHeader } from '@/pages/resource-list';
 import { ReportPanel, TranscriptPanel } from './insights-panels';
 import { UploadButton } from './upload-button';
+import { RecordingPanel } from '@/features/recording/recording-panel';
 
 const STATUS_LABEL: Record<Meeting['status'], string> = {
   scheduled: 'Scheduled',
@@ -154,6 +156,16 @@ export function MeetingDetailPage({ meetingId }: { meetingId: string }) {
           <UploadButton meetingId={m.id} />
         </div>
       </div>
+      <Card>
+        <CardHeader>
+          <CardTitle>
+            <h2>Record</h2>
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <RecordingPanel meetingId={m.id} />
+        </CardContent>
+      </Card>
       <ReportPanel meetingId={m.id} ready={m.status === 'completed'} />
       <TranscriptPanel meetingId={m.id} ready={m.status === 'completed'} />
     </div>
