@@ -157,6 +157,20 @@ export function TaskReviewPage() {
       old ? { ...old, items: old.items.filter((t) => t.id !== id) } : old,
     );
 
+  /** 409: someone already accepted or dismissed it. Drop it locally, resync, and say so. */
+  const onReviewError = (err: unknown, id: string, title: string) => {
+    if (err instanceof ApiError && err.status === 409) {
+      removeLocal(id);
+      void qc.invalidateQueries({ queryKey: key });
+      notify.info(
+        'Task already reviewed',
+        'Someone already accepted or dismissed this suggestion.',
+      );
+      return;
+    }
+    toastError(err, { title });
+  };
+
   const accept = useMutation({
     mutationFn: (v: { id: string; body: AcceptExtractedTaskRequest }) =>
       review.accept(organizationId, v.id, v.body),
@@ -165,7 +179,7 @@ export function TaskReviewPage() {
       void qc.invalidateQueries({ queryKey: ['orgs', organizationId, 'tasks'] });
       notify.success('Task added', task.title);
     },
-    onError: (err) => toastError(err, { title: "Couldn't accept the task" }),
+    onError: (err, v) => onReviewError(err, v.id, "Couldn't accept the task"),
   });
   const dismiss = useMutation({
     mutationFn: (id: string) => review.dismiss(organizationId, id),
@@ -173,7 +187,7 @@ export function TaskReviewPage() {
       removeLocal(id);
       notify.info('Suggestion dismissed');
     },
-    onError: (err) => toastError(err, { title: "Couldn't dismiss the suggestion" }),
+    onError: (err, id) => onReviewError(err, id, "Couldn't dismiss the suggestion"),
   });
   const busyId = accept.isPending
     ? accept.variables?.id

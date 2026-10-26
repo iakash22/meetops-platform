@@ -58,7 +58,7 @@ describe('task review', () => {
     ]);
   });
 
-  it('shows the empty state when the route is not served yet (404)', async () => {
+  it('still shows the empty state for a legacy 404', async () => {
     const request = vi.fn().mockRejectedValue(new ApiError(404, 'NOT_FOUND', 'x'));
     renderApp('/tasks/review', withRequest(request));
     await waitForRouteData(request);
@@ -110,5 +110,31 @@ describe('task review', () => {
     await userEvent.click(await screen.findByRole('button', { name: 'Accept' }));
     expect(await screen.findByText("Couldn't accept the task")).toBeInTheDocument();
     expect(screen.getByRole('form', { name: 'Review Suggested 1' })).toBeInTheDocument();
+  });
+
+  it('shows the empty state for a 200 empty page', async () => {
+    const request = routedRequest({
+      [`GET /orgs/${ORG}/extracted-tasks`]: () => ({ items: [], nextCursor: null }),
+    });
+    renderApp('/tasks/review', withRequest(request));
+    await waitForRouteData(request);
+    expect(await screen.findByText('Nothing to review')).toBeInTheDocument();
+  });
+
+  it('treats a 409 as already reviewed: toast and drop the card', async () => {
+    let listed = 0;
+    const request = routedRequest({
+      [`GET /orgs/${ORG}/extracted-tasks`]: () =>
+        listed++ === 0 ? { items: [item(1)], nextCursor: null } : { items: [], nextCursor: null },
+      [`POST /orgs/${ORG}/extracted-tasks/40000000-0000-4000-8000-000000000001/accept`]: () => {
+        throw new ApiError(409, 'CONFLICT', 'x');
+      },
+    });
+    renderApp('/tasks/review', withRequest(request));
+    await waitForRouteData(request);
+    await userEvent.click(await screen.findByRole('button', { name: 'Accept' }));
+    expect(await screen.findByText('Task already reviewed')).toBeInTheDocument();
+    expect(screen.queryByText("Couldn't accept the task")).not.toBeInTheDocument();
+    expect(await screen.findByText('Nothing to review')).toBeInTheDocument();
   });
 });

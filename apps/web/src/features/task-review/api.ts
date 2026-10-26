@@ -6,7 +6,9 @@ import type { HttpMethod } from '@/lib/api/client';
  *
  * BACKEND DEPENDENCY (All Rounder): contracts 0.4.x define ExtractedTask and Task but no review
  * routes. These are the proposed shapes; replace them with contracts path constants when they ship.
- * The UI treats 404 on the list as "nothing to review yet".
+ * Matches feat/task-approval-api: the list returns 200 with an empty page when nothing is pending (a 404 from an
+ * older API is still treated as empty), accept returns 201 with the created Task, and a second review of the same
+ * extracted task returns 409 (shown as an "already reviewed" toast).
  */
 export const TASK_REVIEW_PATHS = {
   pending: '/orgs/:organizationId/extracted-tasks',
