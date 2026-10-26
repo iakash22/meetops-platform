@@ -57,6 +57,16 @@ function fakeClient() {
         rows.push(r);
         return pick(r, select);
       },
+      updateMany: async ({ where, data }: Pick<Args, 'where' | 'data'>) => {
+        const hit = rows.filter(
+          (x) =>
+            x.id === where.id &&
+            x.organizationId === where.organizationId &&
+            !(where.status && x.status === 'revoked'),
+        );
+        for (const r of hit) Object.assign(r, data);
+        return { count: hit.length };
+      },
       update: async ({ where, data, select }: Args) => {
         const r = rows.find((x) => x.id === where.id)!;
         Object.assign(r, data);
@@ -115,6 +125,37 @@ describe('integration connection repository', () => {
     expect((await repo.readSecrets(ORG, a.id))?.accessToken).toBe('a2');
     expect((await repo.readSecrets(ORG, a.id))?.refreshToken).toBeNull();
     expect(await repo.get(ORG, 'not-a-uuid')).toBeNull();
+  });
+
+  it('disconnect is a soft revoke that wipes every secret; reconnect restores the row', async () => {
+    const f = fakeClient();
+    const repo = createIntegrationConnectionRepository({ client: f.client, cipher });
+    const input = {
+      provider: 'github',
+      displayName: 'acme',
+      externalAccountId: '7',
+      accessToken: 'a1',
+      refreshToken: 'r1',
+      webhookSecret: 'w1',
+    };
+    const a = await repo.upsert(ORG, input);
+    const d = await repo.disconnect(ORG, a.id);
+    expect(d?.status).toBe('revoked');
+    expect(d?.revokedAt).toBeInstanceOf(Date);
+    expect(f.rows[0]).toMatchObject({
+      accessTokenEnc: null,
+      refreshTokenEnc: null,
+      webhookSecretEnc: null,
+    });
+    expect(JSON.stringify(f.rows)).not.toMatch(/v1\./);
+    expect(await repo.readSecrets(ORG, a.id)).toBeNull();
+    expect((await repo.disconnect(ORG, a.id))?.status).toBe('revoked');
+    expect(await repo.disconnect(ORG, 'bad')).toBeNull();
+    await expect(repo.setStatus(ORG, a.id, 'revoked' as 'active')).rejects.toThrow(/disconnect/);
+    expect('remove' in repo).toBe(false);
+    const b = await repo.upsert(ORG, { ...input, accessToken: 'a2' });
+    expect(b).toMatchObject({ id: a.id, status: 'active', revokedAt: null });
+    expect((await repo.readSecrets(ORG, a.id))?.accessToken).toBe('a2');
   });
 
   it('rejects a cipher that does not return a v1 envelope', async () => {

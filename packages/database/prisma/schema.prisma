@@ -1106,11 +1106,14 @@ model IntegrationConnection {
   displayName          String                      @map("display_name")
   externalAccountId    String                      @map("external_account_id")
   connectedById        String?                     @map("connected_by_id") @db.Uuid
-  accessTokenEnc       String                      @map("access_token_enc")
+  /// NULL only once revoked (disconnect wipes every secret; enforced by a CHECK).
+  accessTokenEnc       String?                     @map("access_token_enc")
   refreshTokenEnc      String?                     @map("refresh_token_enc")
-  webhookSecretEnc     String                      @map("webhook_secret_enc")
+  webhookSecretEnc     String?                     @map("webhook_secret_enc")
   tokenKeyId           String                      @map("token_key_id")
   accessTokenExpiresAt DateTime?                   @map("access_token_expires_at") @db.Timestamptz(3)
+  /// Set by soft disconnect (status revoked). The app role has no DELETE on this table.
+  revokedAt            DateTime?                   @map("revoked_at") @db.Timestamptz(3)
   createdAt            DateTime                    @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt            DateTime                    @updatedAt @map("updated_at") @db.Timestamptz(3)
 

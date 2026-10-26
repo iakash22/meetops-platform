@@ -78,6 +78,8 @@ function override(table: string, column: string, organizationId: string): string
   // CHECK constraints require v1 cipher envelopes (no real secrets in tests).
   if (table === 'integration_connections' && column.endsWith('_enc'))
     return `'v1.isolation.wrapped.ciphertext'`;
+  if (table === 'integration_connections' && column === 'revoked_at') return 'NULL';
+  if (table === 'integration_connections' && column === 'status') return `'active'`;
   return undefined;
 }
 
@@ -180,6 +182,8 @@ describe.skipIf(missingEnv.length > 0)('tenant isolation per table (live, ADR-01
   describe.each([...TENANT_TABLES])('%s', (t) => {
     /** Append-only tables: UPDATE/DELETE are revoked from the app, so they fail on privilege instead. */
     const appendOnly = t === 'audit_events' || t === 'consent_attestations';
+    /** Soft-delete tables: the app role has no DELETE (disconnect wipes secrets via UPDATE instead). */
+    const noDelete = appendOnly || t === 'integration_connections';
     const blockedWrite = appendOnly ? /permission denied|append-only/ : /row-level security/;
     const count = (tx: Prisma.TransactionClient, id: string) =>
       tx.$queryRawUnsafe<{ n: bigint }[]>(
@@ -205,8 +209,8 @@ describe.skipIf(missingEnv.length > 0)('tenant isolation per table (live, ADR-01
         // Either RLS filters the row (0 affected) or the app role lacks the privilege (append-only tables).
         const affected = await inOrg(orgA, (tx) => tx.$executeRawUnsafe(sql, id)).catch(
           (e: unknown) => {
-            if (!appendOnly) throw e;
-            expect(String(e)).toMatch(blockedWrite);
+            if (!appendOnly && !(noDelete && sql.startsWith('DELETE'))) throw e;
+            expect(String(e)).toMatch(appendOnly ? blockedWrite : /permission denied/);
             return 0;
           },
         );
@@ -236,5 +240,40 @@ describe.skipIf(missingEnv.length > 0)('tenant isolation per table (live, ADR-01
       const [cross] = await inOrg(orgA, (tx) => count(tx, id));
       expect(cross!.n).toBe(0n);
     });
+  });
+  it('integration_connections: no DELETE even in-org; disconnect must wipe every secret', async () => {
+    const id = rowB.get('integration_connections')!;
+    await expect(
+      inOrg(orgB, (tx) =>
+        tx.$executeRawUnsafe(`DELETE FROM integration_connections WHERE id = $1::uuid`, id),
+      ),
+    ).rejects.toThrow(/permission denied/);
+    // Revoking while keeping ciphertext violates the revoked-wipe CHECK.
+    await expect(
+      inOrg(orgB, (tx) =>
+        tx.$executeRawUnsafe(
+          `UPDATE integration_connections SET status = 'revoked', revoked_at = now() WHERE id = $1::uuid`,
+          id,
+        ),
+      ),
+    ).rejects.toThrow(/revoked_wipe_check/);
+    const n = await inOrg(orgB, (tx) =>
+      tx.$executeRawUnsafe(
+        `UPDATE integration_connections SET status = 'revoked', revoked_at = now(),
+           access_token_enc = NULL, refresh_token_enc = NULL, webhook_secret_enc = NULL
+         WHERE id = $1::uuid`,
+        id,
+      ),
+    );
+    expect(n).toBe(1);
+    const [row] = await inOrg(orgB, (tx) =>
+      tx.$queryRawUnsafe<{ status: string; secrets: bigint }[]>(
+        `SELECT status::text AS status,
+           num_nonnulls(access_token_enc, refresh_token_enc, webhook_secret_enc)::bigint AS secrets
+         FROM integration_connections WHERE id = $1::uuid`,
+        id,
+      ),
+    );
+    expect(row).toEqual({ status: 'revoked', secrets: 0n });
   });
 });

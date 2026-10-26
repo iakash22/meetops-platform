@@ -1260,4 +1260,19 @@ describe('Phase 5 integration_connections (static)', () => {
     expect(statements).not.toMatch(/"(access_token|refresh_token|webhook_secret)" /);
     expect(model).toMatch(/tokenKeyId\s+String\s+@map\("token_key_id"\)/);
   });
+
+  it('app role cannot DELETE: disconnect is a soft revoke that wipes the secrets (CHECK-enforced)', () => {
+    expect(integrationsSql).toContain(
+      'REVOKE DELETE, TRUNCATE ON TABLE "integration_connections" FROM meetops_app;',
+    );
+    expect(integrationsSql).toContain(
+      'GRANT SELECT, INSERT, UPDATE ON TABLE "integration_connections" TO meetops_app;',
+    );
+    expect(statements).not.toMatch(/GRANT[^;]*DELETE[^;]*"integration_connections"/);
+    expect(statements).toMatch(/"integration_connections_revoked_wipe_check" CHECK \(/);
+    expect(statements).toMatch(
+      /"status" = 'revoked' AND "revoked_at" IS NOT NULL\s+AND "access_token_enc" IS NULL AND "refresh_token_enc" IS NULL AND "webhook_secret_enc" IS NULL/,
+    );
+    expect(model).toMatch(/revokedAt\s+DateTime\?\s+@map\("revoked_at"\)/);
+  });
 });

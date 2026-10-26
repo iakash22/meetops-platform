@@ -37,6 +37,7 @@ export interface IntegrationConnectionRecord {
   connectedById: string | null;
   tokenKeyId: string;
   accessTokenExpiresAt: Date | null;
+  revokedAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -81,6 +82,7 @@ const SELECT = {
   connectedById: true,
   tokenKeyId: true,
   accessTokenExpiresAt: true,
+  revokedAt: true,
   createdAt: true,
   updatedAt: true,
 } as const satisfies Prisma.IntegrationConnectionSelect;
@@ -135,6 +137,7 @@ export function createIntegrationConnectionRepository(
           connectedById: input.connectedById ?? null,
           accessTokenExpiresAt: input.accessTokenExpiresAt ?? null,
           status: 'active' as const,
+          revokedAt: null,
           ...sealed,
         };
         if (existing) {
@@ -170,7 +173,7 @@ export function createIntegrationConnectionRepository(
       );
     },
 
-    /** Decrypt the secrets of one connection (worker/webhook use only). null when not found. */
+    /** Decrypt the secrets of one connection (worker/webhook use only). null when not found or revoked. */
     async readSecrets(organizationId: string, id: string): Promise<IntegrationSecrets | null> {
       if (!UUID_RE.test(id)) return null;
       const row = await run(organizationId, (tx) =>
@@ -179,7 +182,8 @@ export function createIntegrationConnectionRepository(
           select: { accessTokenEnc: true, refreshTokenEnc: true, webhookSecretEnc: true },
         }),
       );
-      if (!row) return null;
+      // Revoked rows hold no secrets (wiped on disconnect).
+      if (!row || row.accessTokenEnc === null || row.webhookSecretEnc === null) return null;
       const ctx = { organizationId, integrationId: id };
       return {
         accessToken: await cipher.decrypt(row.accessTokenEnc, ctx),
@@ -189,15 +193,18 @@ export function createIntegrationConnectionRepository(
       };
     },
 
+    /** active <-> error only; use `disconnect` to revoke (it must wipe the secrets in the same write). */
     async setStatus(
       organizationId: string,
       id: string,
-      status: IntegrationConnectionStatus,
+      status: Exclude<IntegrationConnectionStatus, 'revoked'>,
     ): Promise<IntegrationConnectionRecord | null> {
+      if ((status as string) === 'revoked')
+        throw new Error('Use disconnect() to revoke a connection');
       if (!UUID_RE.test(id)) return null;
       return run(organizationId, async (tx) => {
         const n = await tx.integrationConnection.updateMany({
-          where: { id, organizationId },
+          where: { id, organizationId, status: { not: 'revoked' } },
           data: { status },
         });
         if (n.count === 0) return null;
@@ -208,12 +215,31 @@ export function createIntegrationConnectionRepository(
       });
     },
 
-    /** Hard-delete (disconnect). Ciphertext goes with the row. Returns false when not found. */
-    async remove(organizationId: string, id: string): Promise<boolean> {
-      if (!UUID_RE.test(id)) return false;
+    /**
+     * Soft disconnect: status revoked + revokedAt, and every ciphertext column wiped to NULL in one UPDATE
+     * (the app role has no DELETE). Idempotent; returns the record, or null when not found in this org.
+     * Reconnecting through `upsert` re-encrypts fresh secrets onto the same row.
+     */
+    async disconnect(
+      organizationId: string,
+      id: string,
+    ): Promise<IntegrationConnectionRecord | null> {
+      if (!UUID_RE.test(id)) return null;
       return run(organizationId, async (tx) => {
-        const n = await tx.integrationConnection.deleteMany({ where: { id, organizationId } });
-        return n.count > 0;
+        await tx.integrationConnection.updateMany({
+          where: { id, organizationId, status: { not: 'revoked' } },
+          data: {
+            status: 'revoked',
+            revokedAt: new Date(),
+            accessTokenEnc: null,
+            refreshTokenEnc: null,
+            webhookSecretEnc: null,
+          },
+        });
+        return tx.integrationConnection.findFirst({
+          where: { id, organizationId },
+          select: SELECT,
+        });
       });
     },
   };
