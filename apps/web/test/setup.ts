@@ -1,6 +1,10 @@
 import '@testing-library/jest-dom/vitest';
 import { cleanup } from '@testing-library/react';
-import { afterEach } from 'vitest';
+import { afterEach, beforeAll } from 'vitest';
+import { preloadLazyRoutes } from './fixtures/preload-routes';
+
+// Load lazy route chunks before any test so cold module loads never land inside a findBy.
+beforeAll(preloadLazyRoutes, 30_000);
 
 afterEach(() => {
   cleanup();
