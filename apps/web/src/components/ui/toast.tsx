@@ -29,7 +29,7 @@ type ToastState = {
 };
 
 let nextId = 1;
-const DEFAULT_DURATION = 4000;
+const DEFAULT_DURATION = 5000;
 const MAX_VISIBLE = 4;
 
 function show(item: ToastItem, duration: number) {

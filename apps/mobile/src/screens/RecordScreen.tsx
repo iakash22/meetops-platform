@@ -258,9 +258,18 @@ export function RecordScreen() {
 
 function queueText(queue: UploadQueueStatus | null): string {
   if (!queue) return 'Checking…';
-  if (queue.offline)
-    return `Offline. ${pendingText(queue.pending)} Uploads resume when you're back online.`;
-  return pendingText(queue.pending);
+  const extra = [
+    queue.failed ? `${queue.failed} need${queue.failed === 1 ? 's' : ''} attention.` : '',
+    queue.expiringSoon
+      ? `${queue.expiringSoon} will be deleted from this device within a day.`
+      : '',
+  ]
+    .filter(Boolean)
+    .join(' ');
+  const base = queue.offline
+    ? `Offline. ${pendingText(queue.pending)} Uploads resume when you're back online.`
+    : pendingText(queue.pending);
+  return extra ? `${base} ${extra}` : base;
 }
 
 function pendingText(n: number): string {
