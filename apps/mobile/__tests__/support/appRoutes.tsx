@@ -1,3 +1,4 @@
+import { createDemoMicPermission } from '../../src/consent/micPermission';
 import { createDemoConsentApi } from '../../src/consent/consentApi';
 import { Slot } from 'expo-router';
 
@@ -34,6 +35,7 @@ export function makeRepositories(overrides: Partial<Repositories> = {}): Reposit
     tasks: createPlaceholderTasksRepository(),
     uploadQueue: createPlaceholderUploadQueue(),
     consent: createDemoConsentApi(),
+    micPermission: createDemoMicPermission({ initial: 'granted' }),
     ...overrides,
   };
 }

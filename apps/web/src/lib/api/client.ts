@@ -37,6 +37,10 @@ import {
 } from '@meetops/contracts/types';
 import { createHttpDirectoryApi, type DirectoryApi } from '@/features/directory/api';
 import {
+  createHttpMeetingInsightsApi,
+  type MeetingInsightsApi,
+} from '@/features/meetings/insights-api';
+import {
   DESKTOP_AUTHORIZE_PATH,
   type DesktopAuthorizeRequest,
   type DesktopAuthorizeResponse,
@@ -304,6 +308,8 @@ export type ApiClient = {
   tasks: {
     list: (organizationId: Id, filters?: TaskListFilters) => Promise<Paginated<Task>>;
   };
+  /** Transcript + report per meeting (Phase 3; routes pending on the backend). */
+  meetingInsights: MeetingInsightsApi;
   /** Employees, teams, team members and projects (contracts v0.4 directory, BE-3). */
   directory: DirectoryApi;
   /** Low-level request (cookie session + CSRF on non-GET). */
@@ -551,6 +557,7 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
     },
     tasks: { list: (id, filters) => request('GET', `${org(id)}/tasks${taskQuery(filters)}`) },
     directory: createHttpDirectoryApi(request),
+    meetingInsights: createHttpMeetingInsightsApi(request),
     storage: {
       createUpload: (id, body) => request('POST', uploadPaths.uploads(org(id)), body),
       putToPresignedUrl: async (upload, file, opts = {}) => {

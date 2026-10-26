@@ -57,7 +57,7 @@ const BY_CODE: Record<ApiErrorCode, Omit<DesktopAuthorizeFailure, 'requestId'>> 
   },
   PAYLOAD_TOO_LARGE: {
     title: 'Request too large',
-    message: `The request was too large. ${RESTART}`,
+    message: `This request was too large to process. ${RESTART}`,
     retryable: false,
   },
   RATE_LIMITED: {

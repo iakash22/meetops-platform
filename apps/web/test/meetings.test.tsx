@@ -14,7 +14,9 @@ describe('meetings', () => {
     const { history, api } = renderApp('/meetings');
     await waitForRouteData(api.meetings.list, { heading: 'Meetings' });
     expect(await screen.findByText('Weekly sync')).toBeInTheDocument();
-    expect(screen.getByText('Recording')).toBeInTheDocument();
+    expect(screen.getAllByTestId('meeting-status').map((b) => b.textContent)).toContain(
+      'Recording',
+    );
     await userEvent.click(screen.getByRole('link', { name: 'Weekly sync' }));
     await waitFor(() =>
       expect(history.location.pathname).toBe('/meetings/20000000-0000-4000-8000-000000000001'),
