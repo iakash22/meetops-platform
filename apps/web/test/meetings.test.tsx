@@ -86,10 +86,10 @@ describe('meetings', () => {
     const api = createMockApi({
       storage: {
         putToPresignedUrl: vi.fn(
-          (_u: unknown, _f: unknown, opts: typeof seen) =>
+          (_u: unknown, _f: unknown, opts?: typeof seen) =>
             new Promise<void>((_res, rej) => {
-              seen = opts;
-              opts.signal?.addEventListener('abort', () =>
+              seen = opts ?? {};
+              opts?.signal?.addEventListener('abort', () =>
                 rej(new DOMException('Upload cancelled', 'AbortError')),
               );
             }),
