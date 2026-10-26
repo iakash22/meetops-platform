@@ -29,7 +29,10 @@ export function createMockApi(
   }> & { onUnauthorized?: ApiClient['onUnauthorized'] } = {},
 ): ApiClient {
   return {
-    request: vi.fn().mockResolvedValue(undefined),
+    // Honour a passed-in request mock (e.g. a path-routed vi.fn) instead of always replacing it.
+    request:
+      (overrides.request as ApiClient['request'] | undefined) ??
+      vi.fn().mockResolvedValue(undefined),
     onUnauthorized: overrides.onUnauthorized ?? vi.fn(() => () => {}),
     auth: {
       login: vi.fn().mockResolvedValue(session),
