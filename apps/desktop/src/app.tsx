@@ -8,9 +8,10 @@ import { createUnavailableAuthClient } from '@/features/auth/unavailable-auth';
 import { isMockAuthEnabled } from '@/lib/config';
 
 // Only the sign-in screen is in the entry chunk; everything behind it loads on demand.
-const SignUpScreen = lazy(() =>
-  import('@/features/auth/sign-up-screen').then((m) => ({ default: m.SignUpScreen })),
-);
+// Sign-up is mock-only for now; the guard keeps its chunk out of production builds.
+const SignUpScreen = import.meta.env.DEV
+  ? lazy(() => import('@/features/auth/sign-up-screen').then((m) => ({ default: m.SignUpScreen })))
+  : null;
 const MeetingsScreen = lazy(() =>
   import('@/features/meetings/meetings-screen').then((m) => ({ default: m.MeetingsScreen })),
 );
@@ -32,7 +33,7 @@ function Screens({ mockAuth }: { mockAuth: boolean }) {
   const [authView, setAuthView] = useState<'sign-in' | 'sign-up'>('sign-in');
 
   if (!session) {
-    return mockAuth && authView === 'sign-up' ? (
+    return SignUpScreen && mockAuth && authView === 'sign-up' ? (
       <Suspense fallback={<Loading />}>
         <SignUpScreen onSignIn={() => setAuthView('sign-in')} />
       </Suspense>
@@ -50,20 +51,24 @@ function Screens({ mockAuth }: { mockAuth: boolean }) {
 }
 
 export function App({ authClient, mockAuth }: { authClient?: AuthClient; mockAuth?: boolean }) {
-  const mock = mockAuth ?? isMockAuthEnabled();
+  // Hard-off in production: neither the prop nor env can enable the mock outside dev.
+  const mock = import.meta.env.DEV && (mockAuth ?? isMockAuthEnabled());
   // TODO(desktop-auth): replace with the ADR-012 browser + PKCE client once the ADR is signed off.
   // The mock client is imported lazily so production (mock off) never ships it in the entry chunk.
   const client = useMemo<AuthClient>(() => {
     if (authClient) return authClient;
-    if (!mock) return createUnavailableAuthClient();
-    let real: AuthClient | null = null;
-    const load = async () =>
-      (real ??= (await import('@/features/auth/mock-auth')).createMockAuthClient());
-    return {
-      signIn: async (r) => (await load()).signIn(r),
-      signUp: async (r) => (await load()).signUp(r),
-      signOut: async () => (await load()).signOut(),
-    };
+    if (import.meta.env.DEV && mock) {
+      // DEV-guarded so the bundler drops the mock-auth chunk from production builds.
+      let real: AuthClient | null = null;
+      const load = async () =>
+        (real ??= (await import('@/features/auth/mock-auth')).createMockAuthClient());
+      return {
+        signIn: async (r) => (await load()).signIn(r),
+        signUp: async (r) => (await load()).signUp(r),
+        signOut: async () => (await load()).signOut(),
+      };
+    }
+    return createUnavailableAuthClient();
   }, [authClient, mock]);
   return (
     <SessionProvider client={client}>

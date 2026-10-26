@@ -21,7 +21,9 @@ interface SignInScreenProps {
   mockAuth?: boolean;
 }
 
-export function SignInScreen({ onCreateAccount, mockAuth = true }: SignInScreenProps) {
+export function SignInScreen({ onCreateAccount, mockAuth = false }: SignInScreenProps) {
+  // `import.meta.env.DEV` first so production builds drop the mock form entirely.
+  const showMock = import.meta.env.DEV && mockAuth;
   const { signIn } = useSession();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -45,7 +47,7 @@ export function SignInScreen({ onCreateAccount, mockAuth = true }: SignInScreenP
   }
 
   return (
-    <AuthLayout footer={mockAuth ? SIGN_IN_FOOTER : undefined}>
+    <AuthLayout footer={showMock ? SIGN_IN_FOOTER : undefined}>
       <Card glow className="rounded-xl">
         <CardHeader>
           <CardTitle>Sign in</CardTitle>
@@ -67,7 +69,7 @@ export function SignInScreen({ onCreateAccount, mockAuth = true }: SignInScreenP
           <p id="browser-sign-in-note" className="text-xs text-muted-foreground">
             {BROWSER_SIGN_IN_PENDING}
           </p>
-          {mockAuth ? (
+          {showMock ? (
             <form
               className="space-y-4"
               onSubmit={(e) => void submit(e)}
@@ -105,7 +107,7 @@ export function SignInScreen({ onCreateAccount, mockAuth = true }: SignInScreenP
               </Button>
             </form>
           ) : null}
-          {mockAuth && onCreateAccount ? (
+          {showMock && onCreateAccount ? (
             <AuthSwitch
               prompt="New to MeetOps?"
               action="Create an account"

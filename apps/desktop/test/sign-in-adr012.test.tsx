@@ -1,11 +1,27 @@
 import { render, screen } from '@testing-library/react';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { App } from '@/app';
+import { SessionProvider } from '@/features/auth/session';
+import { SignInScreen } from '@/features/auth/sign-in-screen';
 import { createUnavailableAuthClient } from '@/features/auth/unavailable-auth';
 import { isMockAuthEnabled } from '@/lib/config';
 
 describe('ADR-012 desktop sign-in', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it('production build: App ignores VITE_DESKTOP_MOCK_AUTH=true and the mockAuth prop', () => {
+    vi.stubEnv('DEV', false);
+    vi.stubEnv('PROD', true);
+    vi.stubEnv('VITE_DESKTOP_MOCK_AUTH', 'true');
+    render(<App mockAuth />);
+    expect(screen.queryByRole('form', { name: 'Sign in' })).not.toBeInTheDocument();
+    expect(screen.queryByText(/sign-in is mocked/i)).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /sign in with your browser/i })).toBeDisabled();
+  });
+
   it('shows a disabled browser sign-in button explained as pending', () => {
     render(<App mockAuth={false} />);
     const btn = screen.getByRole('button', { name: /sign in with your browser/i });
@@ -32,11 +48,23 @@ describe('ADR-012 desktop sign-in', () => {
     ).rejects.toThrow(/not available/i);
   });
 
-  it('mock flag: explicit env wins, otherwise DEV only', () => {
+  it('mock flag is hard-off in production: VITE_DESKTOP_MOCK_AUTH=true is ignored when PROD', () => {
     const env = (e: Partial<ImportMetaEnv>) => e as ImportMetaEnv;
-    expect(isMockAuthEnabled(env({ DEV: false }))).toBe(false);
-    expect(isMockAuthEnabled(env({ DEV: true }))).toBe(true);
-    expect(isMockAuthEnabled(env({ DEV: false, VITE_DESKTOP_MOCK_AUTH: 'true' }))).toBe(true);
+    expect(isMockAuthEnabled(env({ DEV: false, PROD: true }))).toBe(false);
+    expect(isMockAuthEnabled(env({ DEV: false, PROD: true, VITE_DESKTOP_MOCK_AUTH: 'true' }))).toBe(
+      false,
+    );
+    expect(isMockAuthEnabled(env({ DEV: true, PROD: false }))).toBe(true);
     expect(isMockAuthEnabled(env({ DEV: true, VITE_DESKTOP_MOCK_AUTH: 'false' }))).toBe(false);
+  });
+
+  it('SignInScreen fails closed: no mock form unless mockAuth is passed', () => {
+    render(
+      <SessionProvider client={createUnavailableAuthClient()}>
+        <SignInScreen />
+      </SessionProvider>,
+    );
+    expect(screen.queryByRole('form', { name: 'Sign in' })).not.toBeInTheDocument();
+    expect(screen.queryByText(/sign-in is mocked/i)).not.toBeInTheDocument();
   });
 });
