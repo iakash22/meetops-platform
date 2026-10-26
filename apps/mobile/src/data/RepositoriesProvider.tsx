@@ -1,3 +1,4 @@
+import type { MicPermission } from '../consent/micPermission';
 import { createContext, useContext, type ReactNode } from 'react';
 
 import type { ConsentApi } from '../consent/consentApi';
@@ -9,8 +10,10 @@ export interface Repositories {
   meetings: MeetingsRepository;
   tasks: TasksRepository;
   uploadQueue: UploadQueue;
-  /** Recording consent (demo until the Backend consent API exists). */
+  /** Recording consent (R1 opt-in local; R3 attestation travels with the upload, contracts v0.4.1). */
   consent: ConsentApi;
+  /** Microphone permission (demo until the M4 native recorder). */
+  micPermission: MicPermission;
 }
 
 const RepositoriesContext = createContext<Repositories | null>(null);
