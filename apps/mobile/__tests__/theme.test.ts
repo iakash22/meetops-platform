@@ -23,6 +23,7 @@ describe('brand palette (dark-first)', () => {
       accentForeground: '#0A0A0A',
       destructive: '#EF4444',
       destructiveForeground: '#0A0A0A',
+      destructiveText: '#F87171',
     });
   });
 
@@ -59,6 +60,8 @@ describe('contrast (WCAG AA)', () => {
     ['text on rose', colors.accentForeground, colors.accent, 4.5],
     ['error text on background', colors.destructive, colors.background, 4.5],
     ['error text on card', colors.destructive, colors.card, 4.5],
+    ['inline error text on background', colors.destructiveText, colors.background, 4.5],
+    ['inline error text on card', colors.destructiveText, colors.card, 4.5],
     ['text on destructive', colors.destructiveForeground, colors.destructive, 4.5],
     ['input border on background', colors.input, colors.background, 3],
     ['focus ring on background', colors.ring, colors.background, 3],

@@ -6,6 +6,53 @@ While the version is `0.x`, a minor bump may contain breaking changes (ADR-003).
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-10-25
+
+Consent attestation (G11), FileObject scan status, realtime auth-revocation contracts (G2, ADR-011) and the G9 upload
+limits. A `0.x` patch that contains breaking changes (ADR-003); see "Changed (breaking)".
+
+### Added
+
+- `api/consent.ts`: `ConsentAttestationInput` (`{ consentVersion, attestedAt, method }`, strict: a client cannot send
+  `attestedByUserId` or `organizationId`), the stored `ConsentAttestation` record (server-filled `attestedByUserId`,
+  `organizationId`, `subjectType`, `subjectId`, `recordedAt`), `ConsentMethod`, `ConsentVersion`, `ConsentSubjectType`,
+  `ConsentErrorReason`.
+- Constants: `CONSENT_METHODS` (`all_parties_notified`, `all_parties_consented`), `CURRENT_CONSENT_VERSION`,
+  `CONSENT_VERSION_PATTERN`, `CONSENT_ATTESTATION_MAX_SKEW_SECONDS` (300), `CONSENT_SUBJECT_TYPES`,
+  `CONSENT_ERROR_REASONS` (`CONSENT_REQUIRED`, `CONSENT_VERSION_UNSUPPORTED`, `CONSENT_INVALID`, with
+  `code: 'VALIDATION_FAILED'`), `CONSENT_HTTP_STATUS` (422); the reasons are part of `API_ERROR_REASONS` /
+  `ApiErrorReason`. Type `ConsentErrorEnvelope`.
+- `api/uploads.ts`: `InitUploadRequest` (the upload body plus a required `consent`) and `InitUploadResponse` (alias of
+  `CreateUploadResponse`).
+- `domain/media.ts`: `FileObjectScanStatus` (`pending | clean | quarantined | rejected`), `FILE_OBJECT_SCAN_STATUSES`,
+  and optional `FileObject.scanStatus`.
+- `realtime`: `AuthRevocationMessage` (ADR-011 section 3; ids-only, strict, `v: 1`, `kind: session | user | membership`)
+  with `AuthRevocationReason` / `AuthRevocationKind`, `AUTH_REVOCATIONS_CHANNEL` (`meetops:auth:revocations`),
+  `AUTH_REVOCATION_MESSAGE_VERSION`, `AUTH_REVOCATION_KINDS`, `AUTH_REVOCATION_REASONS` (logout, logout_all, org_switch,
+  member_removed, role_changed, invitation_revoked, password_changed, extension_revoked).
+- `realtime` control events, kept separate from the domain events (`REALTIME_EVENTS` is unchanged):
+  `REALTIME_CONTROL_EVENTS`, `SessionRevokedEvent` (`session:revoked`), `OrgAccessChangedEvent` (`org:access-changed`,
+  `role` only for `role_changed`), `AuthReauthRequiredEvent` (`auth:reauth-required`, G2), `RealtimeControlEvent`,
+  `RealtimeControlEventSchemas`, `RealtimeControlEventMap`, `ORG_ACCESS_CHANGE_REASONS`, `REAUTH_REASONS`,
+  `REALTIME_REAUTH_INTERVAL_MS` / `MAX_REALTIME_REAUTH_INTERVAL_MS` (300 s). `ServerToClientEvents` now also includes
+  the control events (additive).
+- `MAX_PRESIGNED_GET_TTL_SECONDS` (300, G9).
+
+### Changed (breaking)
+
+- `InitRecordingSessionRequest` requires `consent: ConsentAttestationInput`. The API answers 422 `CONSENT_REQUIRED`
+  without it.
+- `POST /orgs/:organizationId/uploads` is validated with `InitUploadRequest`, so a body without `consent` is rejected
+  with 422 `CONSENT_REQUIRED`.
+- `MAX_DURATION_MS` is 4 h (was 24 h), matching the worker default and the tmpfs budget (G9). Media limits stay at
+  1.4 GB (2 GB rejected), 10_000 chunks and a 300 s chunk PUT TTL. Decision recorded in
+  `docs/12-security/upload-media-security.md` section 1.
+
+### Deprecated
+
+- `CreateUploadRequest`: the v0.4.0 body without `consent`. Kept only so existing clients compile; use
+  `InitUploadRequest`. Removal in 0.5.0.
+
 ## [0.4.0] - 2026-10-25
 
 Directory contracts (employees, teams + team members, projects). A `0.x` minor bump (ADR-003): it also releases the
