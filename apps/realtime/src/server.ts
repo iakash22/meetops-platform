@@ -4,7 +4,7 @@ import { createAdapter } from '@socket.io/redis-adapter';
 import { createClient } from 'redis';
 import { createLogger } from '@meetops/logger';
 import type { RealtimeConfig } from './config.js';
-import { REALTIME_CONTROL_EVENTS } from './control-events.js';
+import { REALTIME_CONTROL_EVENTS, type ReauthReason } from './control-events.js';
 import {
   classifyOrigin,
   readHandshakeCredential,
@@ -70,7 +70,36 @@ export type RealtimeServerOptions = {
   logger?: boolean;
   /** Injectable clock (tests). */
   now?: () => number;
+  /**
+   * ADR-011 section 3 revocation feed: register a listener for raw `meetops:auth:revocations` messages and return
+   * an unsubscribe. Defaults to a Redis subscription when REDIS_URL is set; tests pass a fake.
+   */
+  subscribeRevocations?: (
+    listener: (raw: string) => void,
+  ) => (() => Promise<void> | void) | Promise<() => Promise<void> | void>;
 };
+
+/** Fixed-window counter keyed by IP or user. In-process: each realtime replica enforces its own limit. */
+export class ConnectionRateLimiter {
+  private readonly hits = new Map<string, { n: number; resetAt: number }>();
+  constructor(
+    private readonly windowMs: number,
+    private readonly now: () => number,
+  ) {}
+  /** Counts one attempt; false once `limit` is exceeded within the window. */
+  take(key: string, limit: number): boolean {
+    const t = this.now();
+    if (this.hits.size > 10_000)
+      for (const [k, v] of this.hits) if (v.resetAt <= t) this.hits.delete(k);
+    const e = this.hits.get(key);
+    if (!e || e.resetAt <= t) {
+      this.hits.set(key, { n: 1, resetAt: t + this.windowMs });
+      return true;
+    }
+    e.n += 1;
+    return e.n <= limit;
+  }
+}
 
 /** Extension bearer sockets need this scope (ADR-011 section 1.3). */
 export const EXTENSION_REQUIRED_SCOPE = 'recordings:write';
@@ -128,6 +157,13 @@ export async function createRealtimeServer(
     io.adapter(createAdapter(pub, sub));
   }
 
+  const limiter = new ConnectionRateLimiter(opts.config.connLimitWindowMs, now);
+  /** The handshake credential, kept server-side only (never in socket.data, never logged) for re-verification. */
+  const credentials = new WeakMap<
+    RealtimeSocket,
+    { credential: RealtimeCredential; kind: ClientKind }
+  >();
+
   // ADR-011 section 1.5: every rejection is the same generic error; the handshake (cookie, token, query) is never logged.
   io.use((socket, next) => {
     const unauthorized = () => next(new Error(REALTIME_CONNECT_ERROR));
@@ -139,11 +175,21 @@ export async function createRealtimeServer(
       },
       policy,
     );
+    // Per-IP limit before any verifier work, so a flood cannot turn into database load.
+    if (!limiter.take(`ip:${socket.handshake.address}`, opts.config.connLimitPerIp)) {
+      log.warn('realtime connection rate limited (ip)');
+      return unauthorized();
+    }
     if (!read.ok) return unauthorized();
     Promise.resolve()
       .then(() => opts.verifySession(read.credential))
       .then((ctx) => {
         if (!acceptable(ctx, read.kind, now())) return unauthorized();
+        if (!limiter.take(`user:${ctx.userId}`, opts.config.connLimitPerUser)) {
+          log.warn('realtime connection rate limited (user)');
+          return unauthorized();
+        }
+        credentials.set(socket, { credential: read.credential, kind: read.kind });
         socket.data.userId = ctx.userId;
         socket.data.organizationId = ctx.organizationId;
         socket.data.sessionId = ctx.sessionId;
@@ -165,6 +211,9 @@ export async function createRealtimeServer(
     if (socket.data.credential === 'session')
       void socket.join(organizationRoom(socket.data.organizationId));
     armExpiry(socket, now);
+    const timer = setInterval(() => void revalidate(socket), opts.config.revalidateIntervalMs);
+    timer.unref?.();
+    socket.on('disconnect', () => clearInterval(timer));
 
     socket.on('meeting:join', (payload, ack) => {
       const reply = typeof ack === 'function' ? ack : () => undefined;
@@ -203,7 +252,76 @@ export async function createRealtimeServer(
     });
   });
 
+  const inFlight = new WeakSet<RealtimeSocket>();
+  const reject = (socket: RealtimeSocket, reason: ReauthReason) => {
+    if (!socket.connected) return;
+    socket.emit(REALTIME_CONTROL_EVENTS.authReauthRequired, {
+      reason,
+      at: new Date(now()).toISOString(),
+    });
+    socket.disconnect(true);
+  };
+  /**
+   * Re-verify a live socket's credential (ADR-011 section 3). It stays connected only if the verifier still returns
+   * the same user, org and session/family for the same client class; otherwise, or on any error, it is told to
+   * re-authenticate and disconnected (fail closed). A still-valid answer refreshes the expiry timer's deadline.
+   */
+  async function revalidate(socket: RealtimeSocket, reason: ReauthReason = 'revalidation_failed') {
+    const c = credentials.get(socket);
+    if (!c || !socket.connected || inFlight.has(socket)) return;
+    inFlight.add(socket);
+    try {
+      const ctx = await opts.verifySession(c.credential);
+      const same =
+        acceptable(ctx, c.kind, now()) &&
+        ctx.userId === socket.data.userId &&
+        ctx.organizationId === socket.data.organizationId &&
+        ctx.sessionId === socket.data.sessionId;
+      if (!same) return reject(socket, reason);
+      socket.data.expiresAt = Math.min(socket.data.expiresAt, ctx.expiresAt.getTime());
+    } catch (err: unknown) {
+      log.warn(
+        { errName: err instanceof Error ? err.name : typeof err },
+        'session re-verification failed',
+      );
+      reject(socket, reason);
+    } finally {
+      inFlight.delete(socket);
+    }
+  }
+
+  /** ADR-011 section 3: re-verify the local sockets a revocation message names. Malformed messages are dropped. */
+  const subscribeWanted = Boolean(opts.subscribeRevocations ?? opts.config.redisUrl);
+  // Loaded lazily (like main()'s verifier) so a server without a revocation feed never imports it.
+  const rev = subscribeWanted ? await import('@meetops/session-verifier') : undefined;
+  const onRevocation = (raw: string) => {
+    const m = rev?.parseRevocationMessage(raw);
+    if (!m) return log.warn('dropped malformed revocation message');
+    for (const socket of io.of('/').sockets.values()) {
+      if (socket.data.userId !== m.userId) continue;
+      if (m.kind === 'session' && socket.data.sessionId !== m.sessionId) continue;
+      if (m.kind === 'membership' && socket.data.organizationId !== m.organizationId) continue;
+      void revalidate(socket, m.reason === 'org_switch' ? 'org_switch' : 'revalidation_failed');
+    }
+  };
+  const unsubscribers: Array<() => Promise<void> | void> = [];
+  if (opts.subscribeRevocations) {
+    unsubscribers.push(await opts.subscribeRevocations(onRevocation));
+  } else if (rev && redisClients[0]) {
+    const revSub = redisClients[0].duplicate();
+    revSub.on('error', (err: unknown) => log.error({ err }, 'redis revocation subscriber error'));
+    await revSub.connect();
+    await revSub.subscribe(rev.AUTH_REVOCATIONS_CHANNEL, onRevocation);
+    unsubscribers.push(() =>
+      revSub
+        .quit()
+        .then(() => undefined)
+        .catch(() => undefined),
+    );
+  }
+
   app.addHook('onClose', async () => {
+    for (const u of unsubscribers) await u();
     await io.close();
     await Promise.all(redisClients.map((c) => c.quit().catch(() => undefined)));
   });
@@ -213,7 +331,7 @@ export async function createRealtimeServer(
 
 /**
  * At the credential's expiry, send `auth:reauth-required { reason: 'session_expired' }` and disconnect (the ARC-2
- * control event, via the local shim). Periodic and revocation-driven re-verification is MR-2.
+ * control event, via the local shim). Periodic and revocation-driven re-verification run in createRealtimeServer.
  */
 function armExpiry(socket: RealtimeSocket, now: () => number): void {
   let timer: ReturnType<typeof setTimeout> | undefined;
