@@ -9,6 +9,7 @@ import { navItems } from './nav-items';
 import { OrgSwitcher } from './org-switcher';
 import { SignOutControls } from './sign-out';
 import { displayName, useSession } from '@/features/session/use-session';
+import { VerifyEmailBanner } from '@/features/session/verify-banner';
 
 function UserBadge() {
   const { data } = useSession();
@@ -78,6 +79,7 @@ export function AppShell({ children }: { children: ReactNode }) {
       <Sidebar />
       <div className="flex min-w-0 flex-1 flex-col">
         <TopBar />
+        <VerifyEmailBanner />
         <main className="mx-auto w-full max-w-content flex-1 p-4 sm:p-6 lg:p-8">{children}</main>
       </div>
     </div>
