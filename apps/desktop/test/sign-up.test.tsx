@@ -15,7 +15,7 @@ function renderApp(client: AuthClient = createMockAuthClient({ delayMs: 0 })) {
 
 async function openSignUp(user: ReturnType<typeof userEvent.setup>) {
   await user.click(screen.getByRole('button', { name: 'Create an account' }));
-  expect(screen.getByRole('form', { name: 'Sign up' })).toBeInTheDocument();
+  expect(await screen.findByRole('form', { name: 'Sign up' })).toBeInTheDocument();
 }
 
 async function fill(

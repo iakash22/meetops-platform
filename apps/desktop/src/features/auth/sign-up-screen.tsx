@@ -220,7 +220,7 @@ export function SignUpScreen({ onSignIn }: { onSignIn: () => void }) {
               <FieldError id="confirm-error" message={errors.confirm} />
             </div>
             <Button type="submit" className="w-full" disabled={pending}>
-              {pending ? <Loader2 className="animate-spin" aria-hidden /> : null}
+              {pending ? <Loader2 className="motion-safe:animate-spin" aria-hidden /> : null}
               {pending ? 'Creating account…' : 'Create account'}
             </Button>
           </form>
