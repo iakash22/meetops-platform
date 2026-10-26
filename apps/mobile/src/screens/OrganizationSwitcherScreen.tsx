@@ -4,6 +4,7 @@ import { FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { useAuth } from '../auth/AuthProvider';
 import { colors, radius, spacing } from '../theme/colors';
+import { Toast } from '../ui/Toast';
 
 /**
  * Organization switcher. Switching wipes local data for the old org (wipe hooks, R4) and swaps to a token scoped to
@@ -41,11 +42,6 @@ export function OrganizationSwitcherScreen() {
       <Text style={styles.note}>
         Switching clears data stored on this device for the current organization.
       </Text>
-      {error ? (
-        <Text testID="switch-error" style={styles.error} accessibilityRole="alert">
-          {error}
-        </Text>
-      ) : null}
       <FlatList
         data={state.session.organizations}
         keyExtractor={(o) => o.id}
@@ -76,6 +72,7 @@ export function OrganizationSwitcherScreen() {
           );
         }}
       />
+      <Toast testID="switch-error" message={error} onDismiss={() => setError(null)} />
     </View>
   );
 }
@@ -83,7 +80,6 @@ export function OrganizationSwitcherScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.background, padding: spacing.xl },
   note: { color: colors.mutedForeground, fontSize: 13, marginBottom: spacing.lg },
-  error: { color: colors.destructive, marginBottom: spacing.md },
   row: {
     flexDirection: 'row',
     alignItems: 'center',

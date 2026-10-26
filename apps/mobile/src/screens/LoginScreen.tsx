@@ -2,6 +2,7 @@ import { useRouter } from 'expo-router';
 import { useState } from 'react';
 import { KeyboardAvoidingView, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 
+import { Toast } from '../ui/Toast';
 import { useAuth } from '../auth/AuthProvider';
 import { isAuthClientError } from '../auth/types';
 import {
@@ -103,17 +104,6 @@ export function LoginScreen() {
           editable={!submitting}
         />
 
-        {formError ? (
-          <Text
-            testID="login-error"
-            style={styles.formError}
-            accessibilityRole="alert"
-            accessibilityLiveRegion="assertive"
-          >
-            {formError}
-          </Text>
-        ) : null}
-
         <Button
           testID="login-submit"
           label="Sign in"
@@ -133,6 +123,7 @@ export function LoginScreen() {
           </Pressable>
         </View>
       </View>
+      <Toast testID="login-error" message={formError} onDismiss={() => setFormError(null)} />
     </KeyboardAvoidingView>
   );
 }
@@ -152,7 +143,6 @@ const styles = StyleSheet.create({
     marginBottom: spacing.xl,
     fontSize: 13,
   },
-  formError: { color: colors.destructive, marginBottom: 16, fontSize: 14 },
   switchRow: {
     flexDirection: 'row',
     justifyContent: 'center',
