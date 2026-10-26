@@ -1,4 +1,4 @@
-import { act, render, screen } from '@testing-library/react';
+import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { Badge } from '@/components/ui/badge';
@@ -19,10 +19,14 @@ describe('brand UI primitives', () => {
       toast.success('Saved', { description: 'Team updated', duration: 0 });
       toast.error('Upload failed', { duration: 0 });
     });
-    expect(screen.getByRole('status')).toHaveTextContent('SavedTeam updated');
+    // Sonner publishes on the next tick.
+    expect(await screen.findByRole('status')).toHaveTextContent('SavedTeam updated');
     expect(screen.getByRole('alert')).toHaveTextContent('Upload failed');
-    await userEvent.click(screen.getAllByRole('button', { name: 'Dismiss notification' })[0]!);
-    expect(screen.queryByText('Saved')).not.toBeInTheDocument();
+    await userEvent.click(
+      within(screen.getByRole('status')).getByRole('button', { name: 'Dismiss notification' }),
+    );
+    // Sonner keeps the node for its exit transition before unmounting it.
+    await waitFor(() => expect(screen.queryByText('Saved')).not.toBeInTheDocument());
   });
 
   it('auto-dismisses toasts after their duration', () => {
@@ -31,9 +35,15 @@ describe('brand UI primitives', () => {
     act(() => {
       toast('Copied', { duration: 1000 });
     });
+    act(() => {
+      vi.advanceTimersByTime(0);
+    });
     expect(screen.getByText('Copied')).toBeInTheDocument();
     act(() => {
       vi.advanceTimersByTime(1000);
+    });
+    act(() => {
+      vi.advanceTimersByTime(500); // exit transition
     });
     expect(screen.queryByText('Copied')).not.toBeInTheDocument();
   });

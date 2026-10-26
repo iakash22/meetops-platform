@@ -37,7 +37,7 @@ describe('create organization (E2E-07)', () => {
     await userEvent.click(await screen.findByRole('link', { name: 'Create organization' }));
     expect(history.location.pathname).toBe('/organizations/new');
 
-    await userEvent.type(screen.getByLabelText('Organization name'), '  Initech  ');
+    await userEvent.type(await screen.findByLabelText('Organization name'), '  Initech  ');
     await userEvent.click(screen.getByRole('button', { name: 'Create organization' }));
 
     await waitFor(() => expect(history.location.pathname).toBe('/'));

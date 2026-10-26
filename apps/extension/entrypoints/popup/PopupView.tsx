@@ -1,4 +1,4 @@
-import { useId, type ReactNode } from 'react';
+import { memo, useId, type ReactNode } from 'react';
 import type { AuthStatus } from '../../src/lib/auth/messages.js';
 import {
   CONSENT_CONFIRMATION,
@@ -6,6 +6,7 @@ import {
   canStartRecording,
   type ConsentState,
 } from '../../src/lib/consent.js';
+import { MAX_DURATION_MS } from '../../src/lib/contract-limits.js';
 import { formatElapsed } from '../../src/lib/format.js';
 import type { StatusPayload } from '../../src/lib/messages.js';
 import { OPEN_FROM_TOOLBAR } from './popup-errors.js';
@@ -33,7 +34,7 @@ export function pillFor(auth: AuthStatus | undefined): { label: string; tone: st
   }
 }
 
-export function StatusPill({ auth }: { auth: AuthStatus | undefined }) {
+export const StatusPill = memo(function StatusPill({ auth }: { auth: AuthStatus | undefined }) {
   const { label, tone } = pillFor(auth);
   return (
     <span className={`mo-pill mo-pill--${tone}`} role="status" aria-label={`Pairing: ${label}`}>
@@ -41,7 +42,7 @@ export function StatusPill({ auth }: { auth: AuthStatus | undefined }) {
       {label}
     </span>
   );
-}
+});
 
 function Logo() {
   return (
@@ -59,7 +60,8 @@ function Logo() {
   );
 }
 
-export function BrandHeader({
+// memo: the popup re-renders every second for the elapsed timer; the header and pairing UI only change with `auth`.
+export const BrandHeader = memo(function BrandHeader({
   auth,
   showPill = true,
 }: {
@@ -77,7 +79,7 @@ export function BrandHeader({
       {showPill && <StatusPill auth={auth} />}
     </header>
   );
-}
+});
 
 export function PopupFrame({ children }: { children: ReactNode }) {
   return <main className="mo-popup">{children}</main>;
@@ -103,20 +105,40 @@ export interface PairingViewProps {
 }
 
 /** ADR-005 pairing state: Pair (user gesture) / pairing in progress / paired (Unpair) / re-pair required. */
-export function PairingView({ auth, onPair, onUnpair }: PairingViewProps) {
+export const PairingView = memo(function PairingView({ auth, onPair, onUnpair }: PairingViewProps) {
   if (!auth) return null;
+  if (auth.state === 'repair_required') {
+    const why = auth.reason ? REASONS[auth.reason] : 'Your sign-in needs to be renewed.';
+    return (
+      <section className="mo-section" aria-label="Account pairing">
+        <div className="mo-callout mo-callout--warning" role="alert" aria-label="Sign-in required">
+          <p className="mo-callout__title">Sign in again to keep uploading</p>
+          <p>{`${why} Pair again to continue.`}</p>
+          <p className="mo-muted">
+            Recordings already on this device stay queued and upload after you pair again.
+          </p>
+          <button type="button" className="mo-btn mo-btn--primary" onClick={onPair}>
+            Pair again
+          </button>
+        </div>
+      </section>
+    );
+  }
   return (
     <section className="mo-section" aria-label="Account pairing">
       {auth.state === 'paired' ? (
-        <>
-          <p className="mo-muted">Paired with your organization.</p>
+        <div className="mo-row mo-row--center">
+          <p className="mo-muted mo-grow">Paired with your organization.</p>
           <button type="button" className="mo-btn mo-btn--ghost" onClick={onUnpair}>
             Unpair
           </button>
-        </>
+        </div>
       ) : auth.state === 'pairing' ? (
         <>
-          <p className="mo-muted">Confirm the pairing in the MeetOps tab that just opened.</p>
+          <p className="mo-muted" aria-live="polite">
+            <span className="mo-spinner" aria-hidden="true" />
+            Confirm the pairing in the MeetOps tab that just opened.
+          </p>
           <button type="button" className="mo-btn mo-btn--secondary" onClick={onPair}>
             Restart pairing
           </button>
@@ -124,18 +146,16 @@ export function PairingView({ auth, onPair, onUnpair }: PairingViewProps) {
       ) : (
         <>
           <p className="mo-muted">
-            {auth.state === 'repair_required' && auth.reason
-              ? `${REASONS[auth.reason]} Pair again to continue.`
-              : 'Pair this browser with your MeetOps workspace to upload recordings.'}
+            Pair this browser with your MeetOps workspace to upload recordings.
           </p>
           <button type="button" className="mo-btn mo-btn--primary" onClick={onPair}>
-            {auth.state === 'repair_required' ? 'Pair again' : 'Pair with MeetOps'}
+            Pair with MeetOps
           </button>
         </>
       )}
     </section>
   );
-}
+});
 
 export interface RecorderViewProps {
   status: StatusPayload;
@@ -143,6 +163,8 @@ export interface RecorderViewProps {
   now: number;
   /** Primary when paired (the main action), secondary while pairing is still the next step. */
   emphasis: 'primary' | 'secondary';
+  /** Pairing state, for the upload hint. Undefined while still asking the background. */
+  paired?: boolean | undefined;
   /** A start attempt is in flight: Record stays disabled. */
   starting?: boolean;
   onConsentChange: (checked: boolean) => void;
@@ -185,26 +207,7 @@ export function RecorderView(p: RecorderViewProps) {
           </button>
         </div>
       ) : active ? (
-        <div className="mo-live" aria-live="polite">
-          <p className="mo-live__line">
-            <span className="mo-live-dot" aria-hidden="true" />
-            <span className="mo-live__state">
-              {status.status === 'recording' ? 'Recording' : status.status}
-            </span>
-            {status.startedAt !== undefined && (
-              <span className="mo-mono">{formatElapsed(p.now - status.startedAt)}</span>
-            )}
-            <span className="mo-muted">· {status.chunks ?? 0} chunks</span>
-          </p>
-          <button
-            type="button"
-            className="mo-btn mo-btn--secondary"
-            onClick={p.onStop}
-            disabled={status.status === 'stopping'}
-          >
-            Stop recording
-          </button>
-        </div>
+        <LiveStatus status={status} now={p.now} onStop={p.onStop} />
       ) : (
         <ConsentGate
           consent={consent}
@@ -214,6 +217,11 @@ export function RecorderView(p: RecorderViewProps) {
           onRecord={p.onRecord}
         />
       )}
+      {p.paired === false && !active && status.status !== 'error' && (
+        <p className="mo-hint">
+          Not paired: recordings are kept on this device and upload once you pair.
+        </p>
+      )}
     </section>
   );
 }
@@ -222,7 +230,7 @@ export function RecorderView(p: RecorderViewProps) {
  * Consent gate in front of "Record this meeting" (contracts v0.4.1, G11). Record stays disabled until the user
  * ticks the confirmation. The tick is for this meeting only: the popup clears it after every start attempt.
  */
-export function ConsentGate(p: {
+export const ConsentGate = memo(function ConsentGate(p: {
   consent: ConsentState;
   emphasis: 'primary' | 'secondary';
   starting: boolean;
@@ -263,21 +271,86 @@ export function ConsentGate(p: {
           Tick the box above to enable recording. You confirm this for each meeting.
         </p>
       )}
+      {confirmed && (
+        <p className="mo-consent__ok" role="status">
+          <span aria-hidden="true">✓ </span>Consent confirmed for this meeting only.
+        </p>
+      )}
+    </div>
+  );
+});
+
+const STATE_LABEL: Record<'starting' | 'recording' | 'stopping', string> = {
+  starting: 'Starting…',
+  recording: 'Recording',
+  stopping: 'Saving…',
+};
+
+/**
+ * Live recording status: state (announced politely), elapsed time and the contracts 4 h auto-stop. The ticking
+ * timers are not live regions, so screen readers are not interrupted every second.
+ */
+export function LiveStatus({
+  status,
+  now,
+  onStop,
+}: {
+  status: StatusPayload;
+  now: number;
+  onStop: () => void;
+}) {
+  const state = status.status as keyof typeof STATE_LABEL;
+  const elapsed = status.startedAt !== undefined ? now - status.startedAt : undefined;
+  const remaining = elapsed !== undefined ? Math.max(0, MAX_DURATION_MS - elapsed) : undefined;
+  return (
+    <div className={`mo-live mo-live--${state}`}>
+      <p className="mo-live__line">
+        {state === 'recording' ? (
+          <span className="mo-live-dot" aria-hidden="true" />
+        ) : (
+          <span className="mo-spinner" aria-hidden="true" />
+        )}
+        <span className="mo-live__state" role="status">
+          {STATE_LABEL[state]}
+        </span>
+        {elapsed !== undefined && (
+          <span className="mo-mono" role="timer" aria-label="Elapsed">
+            {formatElapsed(elapsed)}
+          </span>
+        )}
+        <span className="mo-muted">· {status.chunks ?? 0} chunks</span>
+      </p>
+      {remaining !== undefined && state === 'recording' && (
+        <p className="mo-hint">
+          Stops automatically in <span className="mo-mono">{formatElapsed(remaining)}</span> (4 h
+          limit).
+        </p>
+      )}
+      <button
+        type="button"
+        className="mo-btn mo-btn--secondary"
+        onClick={onStop}
+        disabled={status.status === 'stopping'}
+        aria-busy={status.status === 'stopping' || undefined}
+      >
+        Stop recording
+      </button>
     </div>
   );
 }
 
 /** Non-field errors render as a toast pinned to the bottom of the popup. */
-export function ErrorToast({ message }: { message: string }) {
+export const ErrorToast = memo(function ErrorToast({ message }: { message: string }) {
   if (!message) return null;
   return (
     <div className="mo-toast" role="alert">
       {message}
     </div>
   );
-}
+});
 
-export interface PopupViewProps extends Omit<RecorderViewProps, 'emphasis'>, PairingViewProps {
+export interface PopupViewProps
+  extends Omit<RecorderViewProps, 'emphasis' | 'paired'>, PairingViewProps {
   error: string;
 }
 
@@ -287,7 +360,11 @@ export function PopupView({ error, auth, onPair, onUnpair, ...recorder }: PopupV
       <BrandHeader auth={auth} />
       <hr className="mo-divider" />
       <PairingView auth={auth} onPair={onPair} onUnpair={onUnpair} />
-      <RecorderView {...recorder} emphasis={auth?.state === 'paired' ? 'primary' : 'secondary'} />
+      <RecorderView
+        {...recorder}
+        paired={auth === undefined ? undefined : auth.state === 'paired'}
+        emphasis={auth?.state === 'paired' ? 'primary' : 'secondary'}
+      />
       <ErrorToast message={error} />
     </PopupFrame>
   );

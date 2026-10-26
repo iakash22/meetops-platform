@@ -9,6 +9,7 @@ import {
   recorderReducer,
   spokenElapsed,
 } from '../src/record/recorderShell';
+import { createDemoConsentApi } from '../src/consent/consentApi';
 import { RepositoriesProvider } from '../src/data/RepositoriesProvider';
 import { RecordScreen } from '../src/screens/RecordScreen';
 import { makeRepositories } from './support/appRoutes';
@@ -64,13 +65,24 @@ describe('Record tab UI', () => {
     jest.restoreAllMocks();
   });
 
-  async function renderRecord(reducedMotion = false, repos = makeRepositories()) {
+  async function renderRecord(
+    reducedMotion = false,
+    repos = makeRepositories({ consent: createDemoConsentApi({ optedIn: true }) }),
+  ) {
     jest.spyOn(AccessibilityInfo, 'isReduceMotionEnabled').mockResolvedValue(reducedMotion);
     render(
       <RepositoriesProvider value={repos}>
         <RecordScreen />
       </RepositoriesProvider>,
     );
+    await act(async () => {});
+  }
+
+  /** Start passes the per-recording participant notice (opt-in already given). */
+  async function startRecording() {
+    fireEvent.press(screen.getByTestId('record-button'));
+    await act(async () => {});
+    fireEvent.press(screen.getByTestId('consent-notice-accept'));
     await act(async () => {});
   }
 
@@ -99,7 +111,7 @@ describe('Record tab UI', () => {
 
   it('runs the timer while recording, pauses, resumes and stops without saving', async () => {
     await renderRecord();
-    fireEvent.press(screen.getByTestId('record-button'));
+    await startRecording();
     expect(screen.getByTestId('record-status')).toHaveTextContent('Recording');
     expect(screen.getByTestId('record-button')).toHaveProp('accessibilityLabel', 'Stop recording');
     expect(screen.getAllByTestId('record-live-dot', { includeHiddenElements: true })).toHaveLength(
@@ -137,13 +149,13 @@ describe('Record tab UI', () => {
   it('pulses the halo while recording when motion is allowed', async () => {
     await renderRecord(false);
     expect(loop).not.toHaveBeenCalled();
-    fireEvent.press(screen.getByTestId('record-button'));
+    await startRecording();
     expect(loop).toHaveBeenCalled();
   });
 
   it('keeps the halo still when reduce motion is on', async () => {
     await renderRecord(true);
-    fireEvent.press(screen.getByTestId('record-button'));
+    await startRecording();
     advance(2_000);
     expect(loop).not.toHaveBeenCalled();
     expect(screen.getByTestId('record-timer')).toHaveTextContent('00:02');

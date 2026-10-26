@@ -1,5 +1,9 @@
-import { createRoute, type AnyRoute } from '@tanstack/react-router';
-import { AccountPage } from '@/features/account/account-page';
+import { createRoute, lazyRouteComponent, type AnyRoute } from '@tanstack/react-router';
+
+const AccountPage = lazyRouteComponent(
+  () => import('@/features/account/account-page'),
+  'AccountPage',
+);
 
 /**
  * /account (profile, sessions, log out everywhere). Mounted under the guarded app
