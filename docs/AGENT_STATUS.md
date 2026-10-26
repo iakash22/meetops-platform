@@ -1,5 +1,14 @@
 # MeetOps AI — Agent Work Status and Pending Work
 
+## Update — 27 Oct 2026
+
+- **Agents:** Coordinator (merge gate, PRs, frontend) + All Rounder (backend, DB, contracts, security; full local CI incl. live DB tests).
+- **Flow:** feature branch → PR into `integration/phase-1` → merge gate → later one integration → `main` PR merged by Shubham.
+- **Merge gate:** PR rebased on current integration, full CI green (audit-gate must pass; known mobile/extension advisories excepted), review, then merge in dependency order.
+- **Lockfile rule:** only one branch at a time may change `pnpm-lock.yaml`; others wait for the slot.
+- Work paused overnight 27 Oct; see `PHASE_STATUS.md` for the resume list.
+
+
 > Snapshot: 2026-10-24 ~15:25 IST (refreshed), from the coordinator's records and live `gh pr list`. Work is running. **Priority (Akash, 14:27 IST): clear all open PRs before new work.** Read `docs/PROJECT_CONTEXT.md` first. No secrets.
 >
 > Phase completion after this snapshot is in [`docs/PHASE_STATUS.md`](PHASE_STATUS.md) (`main` at `b074922`, 2026-10-25). The open-PR table below is the 24 Oct queue, not the current tree.

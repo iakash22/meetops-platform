@@ -1,5 +1,14 @@
 # MeetOps AI — Project Context Handoff
 
+## Update — 27 Oct 2026
+
+- **Agents:** Coordinator (merge gate, PRs, frontend) + All Rounder (backend, DB, contracts, security; full local CI incl. live DB tests).
+- **Flow:** feature branch → PR into `integration/phase-1` → merge gate → later one integration → `main` PR merged by Shubham.
+- **Merge gate:** PR rebased on current integration, full CI green (audit-gate must pass; known mobile/extension advisories excepted), review, then merge in dependency order.
+- **Lockfile rule:** only one branch at a time may change `pnpm-lock.yaml`; others wait for the slot.
+- Work paused overnight 27 Oct; see `PHASE_STATUS.md` for the resume list.
+
+
 > Snapshot: 2026-10-24 ~15:25 IST (refreshed; first written ~15:10 IST) (updated by the Project Lead from the coordinator's records and live `gh pr list`). The previous 2026-10-23 snapshot is superseded. Verify live state with `gh` before acting. Contains no secrets, tokens or key values.
 
 ## Resume checklist (do this first)

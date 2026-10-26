@@ -1,3 +1,40 @@
+# Phase status — 27 Oct 2026 (~01:30 IST)
+
+> All code below is merged into `integration/phase-1`, **not yet on `main`**. Percentages are coordinator estimates from merged work, not measured.
+
+| Phase | 25 Oct | 27 Oct | Merged (integration) | Open PRs | Missing |
+|---|---|---|---|---|---|
+| P0 Foundation | 100% | 100% | — | — | Nothing |
+| P1 Auth, orgs, roles | 85% | ~90% | #149, #140, #188, #195, #201 | #205, #208 | Notification prefs + unsubscribe routes (signing secret, user timezone); MFA/SSO decision; ADR-006/010 sign-off |
+| P2 Meetings, uploads, recording | 45% | ~62% | #164, #166, #167, #168, #169, #177, #179, #181, #202 | #196, #197, #206 | Upload checksum verification on complete; live-DB tests |
+| P3 Transcripts, reports | 30% | ~35% | #172 (web views) | — (p3 branch unpushed) | Transcript/report API |
+| P4 Tasks, approval | 20% | ~30% | #174 (review UI) | #203 | Task API |
+| P5 GitHub, Jira | 25% | ~30% | #183 (settings on mocks) | #204, #207 | Sync engine; real connections |
+| P6 Extension | 35% | ~45% | #145, #159, #185, #191 | #209, #200, #199 | Extension auth live; revoked tokens valid until expiry; direct upload flagged off |
+| P7 Calendar, search, analytics | 5% | 5% | — | — | Not started |
+| P8 Desktop, mobile | 20% | ~45% | #138, #146, #161, #176, #180, #187, #141, #148, #170, #171, #173, #184, #186 | #192, #193 | Real mobile recording; real app ids |
+| P9 Hardening, release | 15% | ~15% | #133, #194, #198 | — | Billing, monitoring, Dependabot (9 alerts), 3 medium security fixes |
+
+## Next (resume 27 Oct)
+1. #202 — merged (verify downstream rebases).
+2. All Rounder merges integration into #196, #197 and #205.
+3. p3 branch `207ae20`: full CI, then push/PR.
+4. #204: DELETE revoke + soft-disconnect fix (`fd35bf0`).
+5. ar-sec security fixes: token revocation, realtime re-auth + connect rate limit, upload checksum.
+6. #209, then #200.
+7. Open the integration/phase-1 → main PR.
+
+## Owner decisions (Shubham)
+- ADR drafts #192, #193, #199; ADR-006, ADR-010, ADR-011, ADR-012 sign-off.
+- MFA / SSO scope.
+- Real app ids and domain.
+- Dependabot fix (pnpm overrides, lockfile change).
+- Note: live Postgres/Redis tests have not run on the coordinator box (no Docker); All Rounder runs them locally.
+
+---
+
+## Previous status (25 Oct)
+
 # MeetOps AI — Phase status
 
 > Snapshot: 2026-10-25, local `main` at `b074922` (merge of pull request #157 from `integration/phase-1`, 18:12 IST). Read from the tree on that commit. No secrets. Open pull requests on GitHub were not re-listed.
