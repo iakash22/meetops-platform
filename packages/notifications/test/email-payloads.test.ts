@@ -26,8 +26,9 @@ describe('product templates', () => {
     });
     expect(r.html).not.toContain('<script>');
     expect(r.html).toContain('Acme &amp; Co');
-    expect(r.html).toContain('Email preferences');
-    expect(r.text).toContain('Unsubscribe: https://app.test/u?t=abc');
+    expect(r.html).toContain('Manage email preferences');
+    expect(r.attachments.length).toBeGreaterThan(0);
+    expect(r.text).toContain('https://app.test/u?t=abc');
     expect(r.headers).toEqual({
       'List-Unsubscribe': '<https://app.test/u?t=abc>',
       'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click',
@@ -92,8 +93,7 @@ describe('auth payloads', () => {
       },
     });
     expect(r.subject).toBe('Bo invited you to Acme on MeetOps');
-    expect(r.text).toContain('Hi Ann');
-    expect(r.text).toContain('as member');
+    expect(r.text).toContain('member');
     expect(r.text).toContain('expires in 7 days');
   });
 

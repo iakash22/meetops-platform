@@ -21,7 +21,10 @@ import {
 } from '../src/lib/pending-discard.js';
 import { classifySender, extensionUrls } from '../src/lib/senders.js';
 import { sessionKV } from '../src/lib/storage.js';
-import { httpUploadEnabled } from '../src/lib/features.js';
+import { directUploadEnabled, httpUploadEnabled } from '../src/lib/features.js';
+import { drainDirectUploads } from '../src/lib/direct-drain.js';
+import { DirectUploadClient } from '../src/lib/upload-direct.js';
+import { directUploadValidators } from '../src/lib/auth/validate.js';
 import { HttpUploadClient } from '../src/lib/upload-http.js';
 import { handleUploadRpc, isUploadRpcRequest } from '../src/lib/upload-rpc.js';
 import {
@@ -76,6 +79,17 @@ const client = selectUploadClient(
       validators: uploadValidators,
     }),
 );
+// WXT_FEATURE_DIRECT_UPLOAD (off by default, ignored when the chunked HTTP client is on): finished recordings are
+// assembled from the local chunk store and sent as one file via POST /orgs/:org/uploads (src/lib/direct-drain.ts).
+const DIRECT_UPLOAD = directUploadEnabled() && !HTTP_UPLOAD;
+const direct = DIRECT_UPLOAD
+  ? new DirectUploadClient({
+      api: (path, init) => auth.apiFetch(path, init),
+      organizationId: pairedOrganizationId(auth),
+      storage: httpStorageTransport({ allowLocalHttp: import.meta.env.DEV }),
+      ...directUploadValidators,
+    })
+  : undefined;
 let storePromise: Promise<ChunkStore> | undefined;
 const store = () => (storePromise ??= ChunkStore.open());
 
@@ -120,6 +134,12 @@ async function drain(): Promise<void> {
       isMarked: (id) => isPendingDiscard(durableKV, id),
       gate: withSessionGate,
     });
+    if (direct) {
+      const { failed } = await drainDirectUploads(await store(), direct, {
+        isMarked: (id) => isPendingDiscard(durableKV, id),
+      });
+      if (failed.length) console.warn(`MeetOps AI: ${failed.length} direct upload(s) will retry`);
+    }
   } catch (err) {
     console.warn('MeetOps AI: draining queued chunks failed', err);
   }
@@ -197,7 +217,11 @@ export default defineBackground(() => {
       );
       return true;
     }
-    handle(deps, msg, { fromSelf, fromOffscreen, fromPopup }).then(sendResponse, (err: unknown) =>
+    const done = handle(deps, msg, { fromSelf, fromOffscreen, fromPopup });
+    // A finished recording is uploaded as one file as soon as it stops (direct-upload flag only).
+    if (direct && fromOffscreen && (msg as { type?: string }).type === 'REC_STOPPED')
+      void done.finally(() => void drain());
+    done.then(sendResponse, (err: unknown) =>
       sendResponse({ ok: false, error: err instanceof Error ? err.message : String(err) }),
     );
     return true;

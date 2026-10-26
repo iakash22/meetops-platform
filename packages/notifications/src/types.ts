@@ -20,7 +20,7 @@ export interface EmailMessage {
   html?: string;
   text?: string;
   headers?: Record<string, string>;
-  /** Inline images referenced as cid:<cid> from the HTML (PR #195's logo/banner). Same shape as #195. */
+  /** Inline images referenced as cid:<cid> from the HTML (the email logo). */
   attachments?: EmailAttachment[];
 }
 

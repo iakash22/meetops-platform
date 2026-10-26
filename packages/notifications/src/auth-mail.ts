@@ -1,4 +1,5 @@
-import { escapeHtml, renderTemplate, safeUrl, type RenderedEmail, type TemplateVariables } from './templates.js';
+import { renderEmail } from './email/catalog.js';
+import { renderTemplate, type RenderedEmail, type TemplateVariables } from './templates.js';
 import type { EmailService } from './types.js';
 
 /**
@@ -15,7 +16,7 @@ export type AuthMailTemplateId =
 
 /**
  * `data` keys per template (all strings; `url` always required):
- * - every template: `url`, optional `name` (recipient display name; falls back to "there")
+ * - every template: `url`, optional `name` (recipient display name; falls back to the generic greeting)
  * - invitation: `organizationName`, optional `inviterName`, `role`, `expiresInDays`
  * - login_lockout: optional `lockedForMinutes`
  * - password_changed: `changedAt` (ISO 8601), optional `timeZone` (IANA, default UTC); `url` = reset link
@@ -81,22 +82,6 @@ export function formatChangedAt(iso: string, timeZone = 'UTC'): string {
   }
 }
 
-function simple(
-  subject: string,
-  name: string | undefined,
-  intro: string,
-  url: string,
-  label: string,
-): RenderedEmail {
-  const safe = safeUrl(url);
-  const hi = `Hi ${name ?? 'there'},`;
-  return {
-    subject,
-    html: `<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(subject)}</title></head><body style="font-family:Arial,sans-serif;line-height:1.5;color:#111"><p>${escapeHtml(hi)}</p><p>${escapeHtml(intro)}</p><p><a href="${escapeHtml(safe)}">${escapeHtml(label)}</a></p><p style="color:#666;font-size:12px">— MeetOps</p></body></html>`,
-    text: `${hi}\n\n${intro}\n\n${label}: ${safe}`,
-  };
-}
-
 /** Renders one auth mail. Exported for tests and previews. */
 export function renderAuthMail(
   mail: AuthOutboundMail,
@@ -104,16 +89,17 @@ export function renderAuthMail(
 ): RenderedEmail {
   const url = required(mail.data, 'url');
   const name = optional(mail.data, 'name');
+  const named = name ? { name } : {};
   switch (mail.template) {
     case 'email_verification':
       return renderTemplate('verification', {
-        name: name ?? 'there',
+        ...named,
         verificationUrl: url,
         expiresInHours: options.verificationExpiresInHours ?? 24,
       });
     case 'password_reset':
       return renderTemplate('password-reset', {
-        name: name ?? 'there',
+        ...named,
         resetUrl: url,
         expiresInMinutes: options.passwordResetExpiresInMinutes ?? 30,
       });
@@ -125,45 +111,29 @@ export function renderAuthMail(
       };
       const role = optional(mail.data, 'role');
       const expiresInDays = positiveInt(mail.data, 'expiresInDays');
-      if (name) vars.name = name;
       if (role) vars.role = role;
       if (expiresInDays) vars.expiresInDays = expiresInDays;
       return renderTemplate('invitation', vars);
     }
     case 'account_exists':
-      return simple(
-        'You already have a MeetOps account',
-        name,
-        'Someone tried to sign up with this email address, but it already has an account. If that was you, sign in or reset your password.',
-        url,
-        'Reset password',
-      );
+      return renderEmail('account-exists', { ...named, resetUrl: url });
     case 'login_lockout': {
-      const minutes = positiveInt(mail.data, 'lockedForMinutes');
-      const span = minutes
-        ? `for ${minutes} minute${minutes === 1 ? '' : 's'}`
-        : 'for a short time';
-      return simple(
-        'Sign-in temporarily locked',
-        name,
-        `We locked sign-in to your account ${span} after several failed attempts. If that was not you, reset your password.`,
-        url,
-        'Reset password',
-      );
+      const lockedForMinutes = positiveInt(mail.data, 'lockedForMinutes');
+      return renderEmail('login-lockout', {
+        ...named,
+        resetUrl: url,
+        ...(lockedForMinutes ? { lockedForMinutes } : {}),
+      });
     }
-    case 'password_changed': {
-      const when = formatChangedAt(
-        required(mail.data, 'changedAt'),
-        optional(mail.data, 'timeZone'),
-      );
-      return simple(
-        'Your MeetOps password was changed',
-        name,
-        `Your password was changed on ${when}. If you did not make this change, reset your password now.`,
-        url,
-        'Reset password',
-      );
-    }
+    case 'password_changed':
+      return renderEmail('password-changed', {
+        ...named,
+        resetUrl: url,
+        changedAt: formatChangedAt(
+          required(mail.data, 'changedAt'),
+          optional(mail.data, 'timeZone'),
+        ),
+      });
     default:
       throw new UnknownAuthMailTemplateError(String((mail as { template: unknown }).template));
   }
@@ -177,7 +147,14 @@ export function createAuthMailTransport(
   return {
     async send(mail: AuthOutboundMail): Promise<void> {
       const rendered = renderAuthMail(mail, options);
-      await service.send({ to: mail.to, ...rendered });
+      // Inline CID images (logo, banner GIF) must travel with the HTML that references them.
+      await service.send({
+        to: mail.to,
+        subject: rendered.subject,
+        html: rendered.html,
+        text: rendered.text,
+        attachments: rendered.attachments,
+      });
     },
   };
 }
