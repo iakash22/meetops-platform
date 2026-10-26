@@ -1,7 +1,15 @@
-import type { OneTimeToken, OneTimeTokenPurpose, OneTimeTokenRepository } from '../domain/one-time-token.js';
+import type {
+  OneTimeToken,
+  OneTimeTokenPurpose,
+  OneTimeTokenRepository,
+} from '../domain/one-time-token.js';
 import type { RedisLike } from './rate-limit/redis.js';
 
-type Stored = Omit<OneTimeToken, 'expiresAt' | 'usedAt' | 'createdAt'> & { expiresAt: number; usedAt: number | null; createdAt: number };
+type Stored = Omit<OneTimeToken, 'expiresAt' | 'usedAt' | 'createdAt'> & {
+  expiresAt: number;
+  usedAt: number | null;
+  createdAt: number;
+};
 
 /**
  * Interim production store until email_verifications / password_resets exist
@@ -11,11 +19,12 @@ type Stored = Omit<OneTimeToken, 'expiresAt' | 'usedAt' | 'createdAt'> & { expir
 export class RedisOneTimeTokenRepository implements OneTimeTokenRepository {
   constructor(
     private readonly redis: RedisLike,
-    private readonly prefix = 'meetops:ott:'
+    private readonly prefix = 'meetops:ott:',
   ) {}
   private rowKey = (id: string) => `${this.prefix}t:${id}`;
   private hashKey = (purpose: OneTimeTokenPurpose, h: string) => `${this.prefix}h:${purpose}:${h}`;
-  private userKey = (purpose: OneTimeTokenPurpose, userId: string) => `${this.prefix}u:${purpose}:${userId}`;
+  private userKey = (purpose: OneTimeTokenPurpose, userId: string) =>
+    `${this.prefix}u:${purpose}:${userId}`;
   private ttl = (t: { expiresAt: number }) => Math.max(1, t.expiresAt - Date.now()) + 60_000;
 
   private async save(t: Stored) {
@@ -29,11 +38,16 @@ export class RedisOneTimeTokenRepository implements OneTimeTokenRepository {
     ...t,
     expiresAt: new Date(t.expiresAt),
     usedAt: t.usedAt === null ? null : new Date(t.usedAt),
-    createdAt: new Date(t.createdAt)
+    createdAt: new Date(t.createdAt),
   });
 
   async create(t: OneTimeToken) {
-    const s: Stored = { ...t, expiresAt: t.expiresAt.getTime(), usedAt: t.usedAt?.getTime() ?? null, createdAt: t.createdAt.getTime() };
+    const s: Stored = {
+      ...t,
+      expiresAt: t.expiresAt.getTime(),
+      usedAt: t.usedAt?.getTime() ?? null,
+      createdAt: t.createdAt.getTime(),
+    };
     await this.save(s);
     await this.redis.set(this.hashKey(t.purpose, t.tokenHash), t.id, 'PX', this.ttl(s));
     const uk = this.userKey(t.purpose, t.userId);
@@ -57,7 +71,8 @@ export class RedisOneTimeTokenRepository implements OneTimeTokenRepository {
     const id = await this.redis.getdel(this.hashKey(purpose, tokenHash));
     if (!id) return null;
     const t = await this.load(id);
-    if (!t || t.usedAt !== null || t.expiresAt <= now.getTime() || t.purpose !== purpose) return null;
+    if (!t || t.usedAt !== null || t.expiresAt <= now.getTime() || t.purpose !== purpose)
+      return null;
     t.usedAt = now.getTime();
     await this.save(t);
     return this.out(t);

@@ -55,6 +55,11 @@ const BY_CODE: Record<ApiErrorCode, Omit<DesktopAuthorizeFailure, 'requestId'>> 
     message: `This link was already used or has expired. ${RESTART}`,
     retryable: false,
   },
+  PAYLOAD_TOO_LARGE: {
+    title: 'Request too large',
+    message: `This request was too large to process. ${RESTART}`,
+    retryable: false,
+  },
   RATE_LIMITED: {
     title: 'Too many attempts',
     message: 'Please wait a moment, then try again.',

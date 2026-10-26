@@ -1,4 +1,9 @@
 import type {
+  CompleteUploadResponse,
+  ConsentSettings,
+  DownloadUrlResponse,
+} from '@/features/uploads/types';
+import type {
   AuthSession,
   CreateUploadResponse,
   ExtensionPairResponse,
@@ -194,4 +199,32 @@ export const invitation: Invitation = {
   role: 'member',
   status: 'pending',
   expiresAt: '2026-11-01T00:00:00.000Z',
+};
+
+// TODO(contracts): #168 types.
+export const completeResponse: CompleteUploadResponse = {
+  fileObject: {
+    id: 'fo_1',
+    organizationId: '00000000-0000-4000-8000-000000000001',
+    mimeType: 'audio/webm',
+    sizeBytes: 3,
+    createdAt: '2026-10-21T17:00:00.000Z',
+  },
+  scanStatus: 'pending',
+};
+
+export const downloadUrlResponse: DownloadUrlResponse = {
+  url: 'https://storage.example.com/get?sig=xyz',
+  method: 'GET',
+  expiresIn: 300,
+  expiresAt: '2026-10-21T17:05:00.000Z',
+};
+
+export const consentSettings: ConsentSettings = {
+  mode: 'all_party',
+  noticeText: 'This meeting is recorded.',
+  skipExternalParticipants: false,
+  retentionDays: 365,
+  currentConsentVersion: '2026-10',
+  updatedAt: '2026-10-20T10:00:00.000Z',
 };

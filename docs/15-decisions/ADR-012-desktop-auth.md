@@ -114,8 +114,9 @@ button in M2.
 
 1. Access and refresh tokens are opaque random values (≥256 bits, base64url), not JWTs, and are stored server-side as
    SHA-256 hashes only (the `@meetops/session-verifier` `hashToken`).
-2. The audience is **`desktop`**. Scopes are a fixed subset: `meetings:read`, `meetings:resolve` and
-   `recordings:write`. There's no admin, member-management or integration scope. Tokens are org-scoped to the org
+2. The audience is **`desktop`**. Scopes are a fixed subset: `meetings:read`, `meetings:resolve`, `tasks:read` and
+   `recordings:write`. `tasks:read` is read-only: desktop gets no `tasks:write` or task-approve scope, and the server
+   MUST enforce the scope on every tasks route. There's no admin, member-management or integration scope. Tokens are org-scoped to the org
    confirmed in step 1.4.
 3. Access TTL: **15 minutes**. The refresh token rotates on every use, within a family bound to
    `(deviceId, userId, organizationId)`. Reusing a consumed refresh token revokes the whole family and its access

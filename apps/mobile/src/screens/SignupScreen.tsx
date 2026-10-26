@@ -1,13 +1,23 @@
 import { useRouter } from 'expo-router';
-import { useState } from 'react';
-import { KeyboardAvoidingView, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
+import { useRef, useState } from 'react';
+import {
+  KeyboardAvoidingView,
+  Platform,
+  Pressable,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
+} from 'react-native';
 
 import { ApiError } from '../api/client';
 import { useSignupApi } from '../auth/SignupApiProvider';
 import {
   NAME_MAX_LENGTH,
   PASSWORD_MIN_LENGTH,
+  passwordStrength,
   validateSignup,
+  type PasswordStrength,
   type SignupFieldErrors,
 } from '../auth/signupValidation';
 import { EMAIL_MAX_LENGTH, PASSWORD_MAX_LENGTH } from '../auth/validation';
@@ -17,11 +27,12 @@ import { Button } from '../ui/Button';
 import { TextField } from '../ui/TextField';
 import { Toast } from '../ui/Toast';
 
-/** Errors that belong to one field (shown inline). Everything else goes to the toast. */
-export function signupFieldError(e: unknown): SignupFieldErrors | null {
-  if (e instanceof ApiError && e.code === 'CONFLICT' && e.reason === 'EMAIL_TAKEN')
-    return { email: 'An account with this email already exists.' };
-  return null;
+/**
+ * Signup is enumeration-safe (docs/references.md section 5): `EMAIL_TAKEN` ends on the same "Check your email" state
+ * as a new account, never an "already taken" message.
+ */
+export function isEnumerationSafeSuccess(e: unknown): boolean {
+  return e instanceof ApiError && e.code === 'CONFLICT' && e.reason === 'EMAIL_TAKEN';
 }
 
 /** User-facing copy for non-field errors. Never echoes server messages or credentials. */
@@ -40,12 +51,14 @@ export function SignupScreen() {
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [confirm, setConfirm] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [fieldErrors, setFieldErrors] = useState<SignupFieldErrors>({});
   const [toast, setToast] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [sentTo, setSentTo] = useState<string | null>(null);
+  const nameRef = useRef<TextInput>(null);
+  const emailRef = useRef<TextInput>(null);
+  const passwordRef = useRef<TextInput>(null);
 
   const edit =
     (field: keyof SignupFieldErrors, set: (v: string) => void) =>
@@ -58,20 +71,24 @@ export function SignupScreen() {
 
   const submit = async () => {
     if (submitting) return;
-    const { ok, errors, request } = validateSignup({ name, email, password, confirm });
+    const { ok, errors, request } = validateSignup({ name, email, password });
     setFieldErrors(errors);
     setToast(null);
-    if (!ok) return;
+    if (!ok) {
+      // Focus the first invalid field.
+      (errors.name ? nameRef : errors.email ? emailRef : passwordRef).current?.focus();
+      return;
+    }
     setSubmitting(true);
     try {
       await api.signup(request);
       setPassword('');
-      setConfirm('');
       setSentTo(request.email);
     } catch (e) {
-      const inline = signupFieldError(e);
-      if (inline) setFieldErrors(inline);
-      else setToast(signupErrorMessage(e));
+      if (isEnumerationSafeSuccess(e)) {
+        setPassword('');
+        setSentTo(request.email);
+      } else setToast(signupErrorMessage(e));
     } finally {
       setSubmitting(false);
     }
@@ -93,6 +110,7 @@ export function SignupScreen() {
   }
 
   const longEnough = password.length >= PASSWORD_MIN_LENGTH;
+  const strength = passwordStrength(password);
 
   return (
     <KeyboardAvoidingView
@@ -112,6 +130,7 @@ export function SignupScreen() {
         ) : null}
 
         <TextField
+          ref={nameRef}
           testID="signup-name"
           label="Name"
           value={name}
@@ -124,6 +143,7 @@ export function SignupScreen() {
           editable={!submitting}
         />
         <TextField
+          ref={emailRef}
           testID="signup-email"
           label="Email"
           value={email}
@@ -140,6 +160,7 @@ export function SignupScreen() {
           editable={!submitting}
         />
         <TextField
+          ref={passwordRef}
           testID="signup-password"
           label="Password"
           value={password}
@@ -151,9 +172,11 @@ export function SignupScreen() {
           autoComplete="new-password"
           textContentType="newPassword"
           maxLength={PASSWORD_MAX_LENGTH}
-          returnKeyType="next"
+          returnKeyType="go"
+          onSubmitEditing={() => void submit()}
           editable={!submitting}
         />
+        <StrengthMeter strength={strength} />
         <View style={styles.passwordMeta}>
           <Text
             testID="signup-password-hint"
@@ -174,22 +197,6 @@ export function SignupScreen() {
             <Text style={styles.toggle}>{showPassword ? 'Hide password' : 'Show password'}</Text>
           </Pressable>
         </View>
-        <TextField
-          testID="signup-confirm"
-          label="Confirm password"
-          value={confirm}
-          onChangeText={edit('confirm', setConfirm)}
-          error={fieldErrors.confirm}
-          secureTextEntry={!showPassword}
-          autoCapitalize="none"
-          autoCorrect={false}
-          autoComplete="new-password"
-          textContentType="newPassword"
-          maxLength={PASSWORD_MAX_LENGTH}
-          returnKeyType="go"
-          onSubmitEditing={() => void submit()}
-          editable={!submitting}
-        />
 
         <Button
           testID="signup-submit"
@@ -215,7 +222,38 @@ export function SignupScreen() {
   );
 }
 
+const STRENGTH: Record<PasswordStrength, { label: string; bars: number; color: string }> = {
+  'too-short': { label: 'Too short', bars: 0, color: colors.border },
+  weak: { label: 'Weak', bars: 1, color: colors.destructive },
+  fair: { label: 'Fair', bars: 2, color: colors.warning },
+  strong: { label: 'Strong', bars: 3, color: colors.primary },
+};
+
+/** Three-bar strength meter. Bars are fills (cerulean only as a fill); the label carries the meaning. */
+function StrengthMeter({ strength }: { strength: PasswordStrength }) {
+  const { label, bars, color } = STRENGTH[strength];
+  return (
+    <View
+      testID="signup-strength"
+      style={styles.meter}
+      accessible
+      accessibilityLabel={`Password strength: ${label}`}
+    >
+      {[0, 1, 2].map((i) => (
+        <View
+          key={i}
+          style={[styles.meterBar, { backgroundColor: i < bars ? color : colors.border }]}
+        />
+      ))}
+      <Text style={styles.meterLabel}>{label}</Text>
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
+  meter: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs, marginTop: -4 },
+  meterBar: { flex: 1, height: 4, borderRadius: radius.full },
+  meterLabel: { color: colors.mutedForeground, fontSize: 13, marginLeft: spacing.sm, minWidth: 64 },
   flex: { flex: 1, backgroundColor: colors.background },
   container: { flex: 1, justifyContent: 'center', padding: spacing.xl, gap: spacing.xs },
   title: { color: colors.foreground, fontSize: 28, fontWeight: '700', marginBottom: 6 },

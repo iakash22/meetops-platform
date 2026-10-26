@@ -15,3 +15,11 @@ type Env = Record<string, string | boolean | undefined>;
 export function httpUploadEnabled(env: Env = import.meta.env): boolean {
   return flagEnabled(env.WXT_FEATURE_HTTP_UPLOAD);
 }
+
+/**
+ * WXT_FEATURE_DIRECT_UPLOAD: upload a finished recording as one file through `POST /orgs/:org/uploads` (DirectUploadClient)
+ * while the chunked recording-session routes are not served. Requires a paired token.
+ */
+export function directUploadEnabled(env: Env = import.meta.env): boolean {
+  return flagEnabled(env.WXT_FEATURE_DIRECT_UPLOAD);
+}

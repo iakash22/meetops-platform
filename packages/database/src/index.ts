@@ -131,3 +131,14 @@ export {
   type UpdateProjectInput,
   type ListProjectsInput,
 } from './directory.js';
+export {
+  createAuthTokenRepository,
+  AuthTokenHashError,
+  AUTH_TOKEN_AUDIENCES,
+  type AuthTokenRepository,
+  type AuthTokenAudience,
+  type AuthTokenFamilyRecord,
+  type AuthDeviceInput,
+  type CreateAuthTokenFamilyInput,
+  type AuthRefreshConsumeResult,
+} from './auth-tokens.js';

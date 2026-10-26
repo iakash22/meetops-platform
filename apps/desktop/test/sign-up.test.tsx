@@ -24,13 +24,11 @@ async function fill(
     name = 'Alex Rivera',
     email = 'alex@example.com',
     password = 'correct horse battery',
-    confirm = password,
-  }: { name?: string; email?: string; password?: string; confirm?: string } = {},
+  }: { name?: string; email?: string; password?: string } = {},
 ) {
   if (name) await user.type(screen.getByLabelText('Name'), name);
   if (email) await user.type(screen.getByLabelText('Email'), email);
   if (password) await user.type(screen.getByLabelText('Password'), password);
-  if (confirm) await user.type(screen.getByLabelText('Confirm password'), confirm);
 }
 
 const submit = (user: ReturnType<typeof userEvent.setup>) =>
@@ -55,20 +53,29 @@ describe('desktop sign-up', () => {
     expect(screen.getByLabelText('Email')).toHaveAccessibleDescription('Enter your email.');
     expect(screen.getByLabelText('Password')).toHaveAttribute('aria-invalid', 'true');
     expect(screen.getByText('Create a password.')).toBeInTheDocument();
-    expect(screen.getByLabelText('Confirm password')).toHaveAccessibleDescription(
-      'Confirm your password.',
-    );
+    expect(screen.queryByLabelText('Confirm password')).not.toBeInTheDocument();
+    expect(screen.getByLabelText('Name')).toHaveFocus();
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
     expect(spy).not.toHaveBeenCalled();
   });
 
-  it('flags short and mismatched passwords inline', async () => {
+  it('flags a short password inline and focuses it', async () => {
     const user = renderApp();
     await openSignUp(user);
-    await fill(user, { password: 'short', confirm: 'different' });
+    await fill(user, { password: 'short' });
     await submit(user);
     expect(screen.getByText('Use at least 12 characters.')).toBeInTheDocument();
-    expect(screen.getByText('Passwords do not match.')).toBeInTheDocument();
+    expect(screen.getByLabelText('Password')).toHaveFocus();
+  });
+
+  it('rates password strength', async () => {
+    const user = renderApp();
+    await openSignUp(user);
+    expect(screen.getByRole('img', { name: 'Password strength: Too short' })).toBeInTheDocument();
+    await user.type(screen.getByLabelText('Password'), 'aaaaaaaaaaaa');
+    expect(screen.getByRole('img', { name: 'Password strength: Weak' })).toBeInTheDocument();
+    await user.type(screen.getByLabelText('Password'), 'A-9-bcdefgh');
+    expect(screen.getByRole('img', { name: 'Password strength: Strong' })).toBeInTheDocument();
   });
 
   it('clears a field error as soon as the field is edited', async () => {
@@ -97,18 +104,15 @@ describe('desktop sign-up', () => {
       'true',
     );
     expect(screen.getByLabelText('Password')).toHaveAttribute('type', 'text');
-    expect(screen.getByLabelText('Confirm password')).toHaveAttribute('type', 'text');
   });
 
-  it('shows a taken email inline under the email field, not in a toast', async () => {
+  it('ends on check-your-email for a taken email (enumeration-safe)', async () => {
     const user = renderApp();
     await openSignUp(user);
     await fill(user, { email: 'alex@taken.test' });
     await submit(user);
-    expect(
-      await screen.findByText('An account with this email already exists.'),
-    ).toBeInTheDocument();
-    expect(screen.getByLabelText('Email')).toHaveAttribute('aria-invalid', 'true');
+    expect(await screen.findByRole('status', { name: 'Check your email' })).toBeInTheDocument();
+    expect(screen.queryByText(/already exists/)).not.toBeInTheDocument();
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   });
 
@@ -138,7 +142,7 @@ describe('desktop sign-up', () => {
 });
 
 describe('validateSignUp', () => {
-  const ok = { name: 'A', email: 'a@b.co', password: 'x'.repeat(12), confirm: 'x'.repeat(12) };
+  const ok = { name: 'A', email: 'a@b.co', password: 'x'.repeat(12) };
   it('accepts a valid request', () => {
     expect(validateSignUp(ok)).toEqual({});
   });
@@ -146,8 +150,6 @@ describe('validateSignUp', () => {
     expect(validateSignUp({ ...ok, name: 'n'.repeat(201) }).name).toMatch(/at most 200/);
     expect(validateSignUp({ ...ok, email: 'nope' }).email).toBe('Enter a valid email address.');
     const long = 'x'.repeat(129);
-    expect(validateSignUp({ ...ok, password: long, confirm: long }).password).toMatch(
-      /at most 128/,
-    );
+    expect(validateSignUp({ ...ok, password: long }).password).toMatch(/at most 128/);
   });
 });
