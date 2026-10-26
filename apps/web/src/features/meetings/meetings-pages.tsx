@@ -8,6 +8,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { EmptyState, ErrorState, LoadingState } from '@/components/states/states';
 import { useMeeting, useMeetings } from '@/lib/api/queries';
 import { PageHeader } from '@/pages/resource-list';
+import { ReportPanel, TranscriptPanel } from './insights-panels';
 import { UploadButton } from './upload-button';
 import { RecordingPanel } from '@/features/recording/recording-panel';
 
@@ -165,32 +166,8 @@ export function MeetingDetailPage({ meetingId }: { meetingId: string }) {
           <RecordingPanel meetingId={m.id} />
         </CardContent>
       </Card>
-      <Card>
-        <CardHeader>
-          <CardTitle>
-            <h2>Summary</h2>
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          <EmptyState
-            title="Summary not available yet"
-            description="It will appear after processing completes."
-          />
-        </CardContent>
-      </Card>
-      <Card>
-        <CardHeader>
-          <CardTitle>
-            <h2>Transcript</h2>
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          <EmptyState
-            title="Transcript not available yet"
-            description="It will appear after transcription completes."
-          />
-        </CardContent>
-      </Card>
+      <ReportPanel meetingId={m.id} ready={m.status === 'completed'} />
+      <TranscriptPanel meetingId={m.id} ready={m.status === 'completed'} />
     </div>
   );
 }
