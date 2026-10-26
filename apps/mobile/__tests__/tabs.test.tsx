@@ -73,10 +73,10 @@ describe('bottom tabs', () => {
   });
 
   it('tints the active tab rose and inactive tabs muted on a dark bar', () => {
-    expect(tabScreenOptions.tabBarActiveTintColor).toBe(colors.accent);
+    expect(tabScreenOptions.tabBarActiveTintColor).toBe(colors.link);
     expect(tabScreenOptions.tabBarInactiveTintColor).toBe(colors.mutedForeground);
     expect(tabScreenOptions.tabBarStyle.backgroundColor).toBe(colors.card);
-    const icon = render(<TabIcon name="tasks" color={colors.accent} />);
+    const icon = render(<TabIcon name="tasks" color={colors.link} />);
     const colorsUsed = icon
       .getByTestId('tab-icon-tasks', { includeHiddenElements: true })
       .findAll((n: HostNode) => typeof n.type === 'string' && n.props.testID === undefined)
@@ -93,7 +93,7 @@ describe('bottom tabs', () => {
       ])
       .filter(Boolean);
     expect(colorsUsed.length).toBeGreaterThan(0);
-    expect(colorsUsed.every((c: string | undefined) => c === colors.accent)).toBe(true);
+    expect(colorsUsed.every((c: string | undefined) => c === colors.link)).toBe(true);
   });
 
   it('account shows org, role and app version, and opens the switcher', async () => {
