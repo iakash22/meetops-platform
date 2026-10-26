@@ -12,8 +12,7 @@ export const authInputClass =
 export const authButtonClass = 'h-11 w-full text-base';
 
 /**
- * Inline error text on the dark card: #F87171 is 6.65:1 on #141416 (AA). `--destructive`
- * (#EF4444, 4.89:1) stays for borders and icons. TODO(tokens): promote to a
- * `--destructive-text` token in the theme; components/ui is off-limits for this lane.
+ * Inline error text on the dark card: `--destructive-text` (#F87171) is 6.65:1 on #141416 (AA).
+ * `--destructive` (#EF4444, 4.89:1) stays for borders and icons.
  */
-export const authErrorTextClass = 'text-[#F87171]';
+export const authErrorTextClass = 'text-destructive-text';

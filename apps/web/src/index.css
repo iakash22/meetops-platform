@@ -72,6 +72,10 @@
     /* Status */
     --destructive: 0 84.2% 60.2%; /* #EF4444 (distinct from rose; also AA as text on bg) */
     --destructive-foreground: 0 0% 3.9%; /* #0A0A0A (AA on #EF4444; white is only 3.76:1) */
+    --destructive-text: 0 90.6% 70.8%; /* #F87171 inline error text (6.65:1 on #141416, AA) */
+    --warning: 37.7 92.1% 50.2%; /* #F59E0B amber (fills, icons, meter; 9.2:1 vs #0A0A0A) */
+    --warning-foreground: 0 0% 3.9%; /* #0A0A0A (AA on #F59E0B) */
+    --warning-text: 43.3 96.4% 56.3%; /* #FBBF24 warning text on dark surfaces (11:1 on #141416, AA) */
 
     /* Lines & focus */
     --border: 240 4.5% 17.3%; /* #2A2A2E */
@@ -258,6 +262,11 @@
     );
     animation: shimmer 2.2s var(--ease-out) infinite;
   }
+  @media (prefers-reduced-motion: reduce) {
+    .shimmer::after {
+      animation: none;
+    }
+  }
 
   /* Timers, durations, timestamps: mono + fixed-width digits + slashed/dotted zero. */
   .timecode {
@@ -412,5 +421,13 @@
   }
   .shimmer::after {
     display: none;
+  }
+}
+
+/* Sonner toasts: skip enter/exit/stack motion under reduced motion (docs/references.md §5). */
+@media (prefers-reduced-motion: reduce) {
+  [data-sonner-toast] {
+    transition: none !important;
+    animation: none !important;
   }
 }

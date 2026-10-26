@@ -45,6 +45,11 @@ import type { AuthMailQueue, MailTransport } from './auth/domain/mail-jobs.js';
 import { InMemoryAuditLog, type AuditLog } from './auth/domain/audit.js';
 import { AuthMailJobHandler, InlineAuthMailQueue } from './auth/application/auth-mail.handler.js';
 import { SessionVerifier } from './auth/application/session-verifier.js';
+import {
+  noopRevocationPublisher,
+  type RevocationPublisher,
+} from './auth/application/revocations.js';
+import { createRedisRevocationPublisher } from '@meetops/session-verifier';
 import { InMemoryUserRepository } from './users/infrastructure/in-memory-user.repository.js';
 import type { UserRepository } from './users/domain/user.repository.js';
 import { OrganizationService } from './organizations/application/organization.service.js';
@@ -103,6 +108,20 @@ export interface ModuleDeps {
   db?: DatabaseClient;
   /** Set when defaultModuleDeps created the Prisma client itself (disconnected in an onClose hook). */
   ownedDb?: { $disconnect(): Promise<void> };
+  /**
+   * ADR-011 revocation fan-out (meetops:auth:revocations). Defaults to publishing on `redis` when
+   * the client supports PUBLISH, otherwise a no-op.
+   */
+  revocations?: RevocationPublisher;
+}
+
+/** Revocation publisher over the shared Redis client, or a no-op without one. */
+export function defaultRevocationPublisher(
+  redis: RedisLike | undefined,
+  clock: Clock,
+): RevocationPublisher {
+  const publish = redis?.publish?.bind(redis);
+  return publish ? createRedisRevocationPublisher({ publish }, clock) : noopRevocationPublisher;
 }
 
 /** Owned Redis client; `status`/`disconnect` let shutdown skip QUIT on a never-connected lazy client. */
@@ -136,6 +155,7 @@ export const DATABASE_BACKED_DEPS = [
 export const REDIS_BACKED_DEPS = [
   'rateLimiter',
   'lockout',
+  'revocations',
 ] as const satisfies readonly (keyof ModuleDeps)[];
 
 /** Connection URLs are ignored under NODE_ENV=test: tests stay hermetic unless they inject a client. */
@@ -316,6 +336,7 @@ export function defaultModuleDeps(
     ...(ownedRedis ? { ownedRedis } : {}),
     ...(db ? { db } : {}),
     ...(ownedDb ? { ownedDb } : {}),
+    revocations: overrides.revocations ?? defaultRevocationPublisher(redis, clock),
     clock,
     sessionPolicy,
     security,
@@ -343,5 +364,5 @@ export async function registerModules(app: FastifyInstance, deps: ModuleDeps) {
   await app.register(authRoutes, { auth, organizations, security: deps.security });
   await app.register(organizationRoutes, { auth, organizations, security: deps.security });
   await app.register(import('./directory/index.js'), { auth, organizations, deps });
-  return { auth, organizations, sessionVerifier: new SessionVerifier(auth, deps.memberships) };
+  return { auth, organizations, sessionVerifier: new SessionVerifier(deps) };
 }

@@ -51,8 +51,7 @@ export function AuthLayout({ children }: { children: ReactNode }) {
             {children}
           </div>
         </main>
-        {/* TODO(legal): "By continuing you agree to the Terms and Privacy Policy" once those
-            pages exist; no links are rendered until there is something real to link to. */}
+        <LegalLine />
       </div>
       <BrandPanel rich={onSignup} />
     </div>
@@ -157,5 +156,39 @@ function MockSummary() {
         ))}
       </ul>
     </SpotlightCard>
+  );
+}
+
+/**
+ * Legal line pinned under the form (Supabase/Resend pattern, docs/references.md §5).
+ * The Terms/Privacy pages are owned outside this repo, so their URLs come from build env
+ * (VITE_TERMS_URL / VITE_PRIVACY_URL). Until both are set, nothing renders: we never link
+ * to a page that doesn't exist.
+ */
+export function LegalLine({
+  termsUrl = import.meta.env.VITE_TERMS_URL,
+  privacyUrl = import.meta.env.VITE_PRIVACY_URL,
+}: {
+  termsUrl?: string | undefined;
+  privacyUrl?: string | undefined;
+}) {
+  const safe = (u: string | undefined) => (u && /^(https:\/\/|\/)/.test(u) ? u : undefined);
+  const terms = safe(termsUrl);
+  const privacy = safe(privacyUrl);
+  if (!terms || !privacy) return null;
+  return (
+    <p className="pb-2 text-caption text-muted-foreground">
+      By continuing, you agree to the{' '}
+      <a href={terms} className={authLinkClass} target="_blank" rel="noopener noreferrer">
+        Terms of Service
+        <span className="sr-only"> (opens in a new tab)</span>
+      </a>{' '}
+      and{' '}
+      <a href={privacy} className={authLinkClass} target="_blank" rel="noopener noreferrer">
+        Privacy Policy
+        <span className="sr-only"> (opens in a new tab)</span>
+      </a>
+      .
+    </p>
   );
 }
