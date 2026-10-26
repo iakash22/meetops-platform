@@ -19,7 +19,6 @@ import {
   UpdateConsentSettingsRequest,
 } from '../src/index.js';
 import * as Light from '../src/types.js';
-import pkg from '../package.json' with { type: 'json' };
 
 const id = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
 const at = '2026-10-26T12:00:00.000Z';
@@ -127,8 +126,4 @@ describe('PAYLOAD_TOO_LARGE', () => {
     expect(Value.Check(ApiErrorEnvelope, body)).toBe(true);
     expectTypeOf<PayloadTooLargeErrorEnvelope['error']>().not.toHaveProperty('reason');
   });
-});
-
-describe('package version', () => {
-  it('is 0.5.0', () => expect(pkg.version).toBe('0.5.0'));
 });

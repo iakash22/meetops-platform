@@ -6,6 +6,26 @@ While the version is `0.x`, a minor bump may contain breaking changes (ADR-003).
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-10-26
+
+Native capture sources and the meetings list route. Builds on 0.5.0 (#168). Needed by mobile PR #173, desktop PRs
+#176 and #180. A `0.x` minor that contains a breaking change (ADR-003).
+
+### Changed (breaking)
+
+- `RecordingSource` gains `'mobile'` and `'desktop'` (was `'tab'` only), used in `InitRecordingSessionRequest.source`.
+  Accepting more request values is additive for servers, but code that switches exhaustively over `RecordingSource`
+  must add the new members (ADR-003 §5). None exists in the repo today. Persisting the value also needs the
+  `RecordingSource` Postgres enum (currently `tab` only) to gain `mobile` and `desktop`: a database migration,
+  tracked separately from this contracts release.
+
+### Added
+
+- `ListMeetingsQuery` and `ListMeetingsParams` for `GET /orgs/:organizationId/meetings`, returning
+  `CursorPage<Meeting>`. Paged like `ListTasksQuery` (`cursor` + `limit`), newest first, with optional `status`
+  (single or array), `source`, `projectId`, `startedAfter`, `startedBefore` and `q` filters. Unknown params are rejected.
+- `MEETING_PATHS` route templates (`meetings`, `meeting`).
+
 ## [0.5.0] - 2026-10-26
 
 Consent settings, upload complete / download-URL contracts and the `PAYLOAD_TOO_LARGE` (413) error code. Builds on
