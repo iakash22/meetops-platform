@@ -93,7 +93,11 @@ export function createEmailProcessor(service: EmailService, resolver: EmailJobRe
       throw new PermanentEmailError(`Failed to build email: ${(err as Error).message}`);
     }
     try {
-      return await service.send({ to: resolved.to, ...rendered, headers: { 'X-MeetOps-Idempotency-Key': job.data.idempotencyKey } });
+      return await service.send({
+        to: resolved.to,
+        ...rendered,
+        headers: { ...rendered.headers, 'X-MeetOps-Idempotency-Key': job.data.idempotencyKey },
+      });
     } catch (err) {
       if (err instanceof EmailValidationError) throw new PermanentEmailError(err.message);
       throw err; // transient -> retried with exponential backoff

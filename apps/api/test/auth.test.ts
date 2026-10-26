@@ -371,10 +371,12 @@ describe('auth', () => {
         ).statusCode,
       ).toBe(204);
       expect((await c.get('/auth/session')).statusCode).toBe(401);
-      expect(
-        (await anon.post('/auth/login', { email: 'reset@example.com', password: newPassword }))
-          .statusCode,
-      ).toBe(200);
+      const changed = app.mail.sent.filter((m) => m.template === 'password_changed');
+      expect(changed).toHaveLength(1);
+      expect(changed[0]!.to).toBe('reset@example.com');
+      expect(Number.isNaN(Date.parse(changed[0]!.data.changedAt!))).toBe(false);
+      expect(changed[0]!.data.url).toMatch(/\/forgot-password$/);
+      expect((await anon.post('/auth/login', { email: 'reset@example.com', password: newPassword })).statusCode).toBe(200);
       // single use
       const again = await anon.post('/auth/reset-password', {
         token: new URL(mail[0]!.data.url!).searchParams.get('token')!,

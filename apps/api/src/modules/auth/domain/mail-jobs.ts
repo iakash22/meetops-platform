@@ -9,13 +9,21 @@ export type AuthMailJob =
   | { kind: 'account_exists'; userId: string }
   /** userId null = unknown email (timing parity); the worker drops it. */
   | { kind: 'login_lockout'; userId: string | null }
-  | { kind: 'invitation'; organizationId: string; invitationId: string };
+  | { kind: 'invitation'; organizationId: string; invitationId: string }
+  /** Security notice after a password change; changedAt is ISO 8601. */
+  | { kind: 'password_changed'; userId: string; changedAt: string };
 
 export interface AuthMailQueue {
   enqueue(job: AuthMailJob): Promise<void>;
 }
 
-export type AuthMailTemplate = 'email_verification' | 'password_reset' | 'account_exists' | 'invitation' | 'login_lockout';
+export type AuthMailTemplate =
+  | 'email_verification'
+  | 'password_reset'
+  | 'account_exists'
+  | 'invitation'
+  | 'login_lockout'
+  | 'password_changed';
 
 export interface OutboundMail {
   to: string;
