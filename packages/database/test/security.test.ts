@@ -62,6 +62,9 @@ const aiTenantSql = readFileSync(
 /** DB-1 teams: new tenant tables enable and police RLS in their own migration (ADR-010 setting only). */
 const teamsSql = readFileSync(resolve(migrationsDir, '20261025090000_teams/migration.sql'), 'utf8');
 const CONSENT_MIGRATION = '20261025120000_consent_scan_keycheck';
+const MEETINGS_EXTERNAL_ID_MIGRATION = '20261026120000_meetings_external_id';
+/** Newest migration directory; bump when a migration is added. */
+const LATEST_MIGRATION = '20261026200000_transcript_recording_revision';
 const consentSql = readFileSync(resolve(migrationsDir, CONSENT_MIGRATION, 'migration.sql'), 'utf8');
 const rlsSql =
   readFileSync(resolve(migrationsDir, '20261021110000_tenant_rls_roles/migration.sql'), 'utf8') +
@@ -1086,12 +1089,13 @@ describe('DB-3 consent_attestations, scan_status and storage-key CHECKs (static)
   const model = (name: string) => models.find((m) => m.name === name)?.body ?? '';
   const statements = consentSql.replace(/--.*$/gm, '');
 
-  it('is applied after every earlier migration (Phase 3 transcript migration follows it)', () => {
+  it('sorts immediately before the meetings external id migration', () => {
     const dirs = readdirSync(migrationsDir, { withFileTypes: true })
       .filter((d) => d.isDirectory())
       .map((d) => d.name)
       .sort();
-    expect(dirs.indexOf(CONSENT_MIGRATION)).toBe(dirs.indexOf(TRANSCRIPT_REVISION_MIGRATION) - 1);
+    expect(dirs.indexOf(CONSENT_MIGRATION)).toBe(dirs.indexOf(MEETINGS_EXTERNAL_ID_MIGRATION) - 1);
+    expect(dirs.at(-1)).toBe(LATEST_MIGRATION);
   });
 
   it('is additive only: no drop, rename, retype or NO FORCE of existing objects', () => {
@@ -1154,7 +1158,33 @@ describe('DB-3 consent_attestations, scan_status and storage-key CHECKs (static)
   });
 });
 
-const TRANSCRIPT_REVISION_MIGRATION = '20261026200000_transcript_recording_revision';
+describe('API-MEETINGS meetings.external_meeting_id (static)', () => {
+  const sql = readFileSync(
+    resolve(migrationsDir, MEETINGS_EXTERNAL_ID_MIGRATION, 'migration.sql'),
+    'utf8',
+  );
+  it('precedes the latest migration', () => {
+    const dirs = readdirSync(migrationsDir, { withFileTypes: true })
+      .filter((x) => x.isDirectory())
+      .map((x) => x.name)
+      .sort();
+    expect(dirs.indexOf(MEETINGS_EXTERNAL_ID_MIGRATION)).toBeLessThan(dirs.indexOf(LATEST_MIGRATION));
+    expect(dirs.at(-1)).toBe(LATEST_MIGRATION);
+  });
+
+  it('is additive and adds the per-org idempotency key and keyset index', () => {
+    expect(sql).not.toMatch(/DROP |RENAME|NO FORCE|DISABLE ROW LEVEL SECURITY/);
+    expect(sql).toContain('ADD COLUMN "external_meeting_id" TEXT');
+    expect(sql).toMatch(
+      /UNIQUE INDEX "meetings_org_id_source_external_meeting_id_key"\s+ON "meetings"\("org_id", "source", "external_meeting_id"\)/,
+    );
+    expect(sql).toMatch(
+      /INDEX "meetings_org_id_created_at_id_idx"\s+ON "meetings"\("org_id", "created_at", "id"\)/,
+    );
+  });
+});
+
+const TRANSCRIPT_REVISION_MIGRATION = LATEST_MIGRATION;
 
 describe('Phase 3 transcripts revised per recording (static)', () => {
   const sql = readFileSync(
@@ -1168,7 +1198,7 @@ describe('Phase 3 transcripts revised per recording (static)', () => {
       .filter((d) => d.isDirectory())
       .map((d) => d.name)
       .sort();
-    expect(dirs.at(-1)).toBe(TRANSCRIPT_REVISION_MIGRATION);
+    expect(dirs.at(-1)).toBe(LATEST_MIGRATION);
   });
 
   it('moves the revision key to (recording_id, revision) and keeps revisions non-negative', () => {

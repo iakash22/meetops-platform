@@ -11,6 +11,8 @@ import { httpStorageTransport, selectUploadClient } from '../../src/lib/upload-s
 
 // StubUploadClient by default. With WXT_FEATURE_HTTP_UPLOAD on, API calls are proxied to the background worker (which
 // holds the ADR-005 tokens) and chunk PUTs go straight to the presigned URL without a bearer.
+// With only WXT_FEATURE_DIRECT_UPLOAD on, the stub keeps chunks locally and the background worker uploads the finished
+// recording as one file (src/lib/direct-drain.ts); nothing here talks to the API.
 const client = selectUploadClient(
   httpUploadEnabled(),
   () =>

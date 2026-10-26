@@ -456,21 +456,23 @@ model TeamMember {
 }
 
 model Meeting {
-  id             String        @id @default(uuid()) @db.Uuid
-  organizationId String        @map("org_id") @db.Uuid
-  projectId      String?       @map("project_id") @db.Uuid
-  createdById    String?       @map("created_by_id") @db.Uuid
-  title          String
-  description    String?
-  source         MeetingSource @default(upload)
-  status         MeetingStatus @default(scheduled)
-  scheduledAt    DateTime?     @map("scheduled_at") @db.Timestamptz(3)
-  startedAt      DateTime?     @map("started_at") @db.Timestamptz(3)
-  endedAt        DateTime?     @map("ended_at") @db.Timestamptz(3)
-  durationSec    Int?          @map("duration_sec")
-  createdAt      DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt      DateTime      @updatedAt @map("updated_at") @db.Timestamptz(3)
-  deletedAt      DateTime?     @map("deleted_at") @db.Timestamptz(3)
+  id                String        @id @default(uuid()) @db.Uuid
+  organizationId    String        @map("org_id") @db.Uuid
+  projectId         String?       @map("project_id") @db.Uuid
+  createdById       String?       @map("created_by_id") @db.Uuid
+  title             String
+  description       String?
+  source            MeetingSource @default(upload)
+  /// External call id for extension/desktop/bot meetings (meetings/resolve idempotency key). Null for uploads.
+  externalMeetingId String?       @map("external_meeting_id")
+  status            MeetingStatus @default(scheduled)
+  scheduledAt       DateTime?     @map("scheduled_at") @db.Timestamptz(3)
+  startedAt         DateTime?     @map("started_at") @db.Timestamptz(3)
+  endedAt           DateTime?     @map("ended_at") @db.Timestamptz(3)
+  durationSec       Int?          @map("duration_sec")
+  createdAt         DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt         DateTime      @updatedAt @map("updated_at") @db.Timestamptz(3)
+  deletedAt         DateTime?     @map("deleted_at") @db.Timestamptz(3)
 
   organization      Organization         @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   project           Project?             @relation(fields: [organizationId, projectId], references: [organizationId, id], onDelete: Restrict)
@@ -486,9 +488,11 @@ model Meeting {
   tasks             Task[]
 
   @@unique([organizationId, id])
+  @@unique([organizationId, source, externalMeetingId])
   @@index([organizationId, status])
   @@index([organizationId, projectId])
   @@index([organizationId, scheduledAt])
+  @@index([organizationId, createdAt, id])
   @@map("meetings")
 }
 

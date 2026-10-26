@@ -19,15 +19,14 @@ const buttonVariants = cva(
         /** Neon Rose (brand highlight). Use sparingly: one rose element per view. */
         highlight:
           'bg-highlight text-highlight-foreground shadow-glow-highlight hover:bg-highlight/90',
-        /** Record action: dark fill with a Cerulean -> Neon Rose gradient border and a soft rose glow. */
-        record:
-          'gradient-border-box text-foreground hover:shadow-glow-highlight [&_svg]:text-highlight',
+        /** Record action: dark fill with a brand gradient border and a cerulean glow (rose is never a CTA). */
+        record: 'gradient-border-box text-foreground hover:shadow-glow-primary [&_svg]:text-link',
       },
       size: {
-        default: 'h-9 px-4 py-2',
-        sm: 'h-8 rounded-md px-3 text-xs',
-        lg: 'h-10 rounded-md px-8',
-        icon: 'h-9 w-9',
+        default: 'h-11 px-4 py-2',
+        sm: 'h-11 rounded-md px-3 text-xs',
+        lg: 'h-11 rounded-md px-8',
+        icon: 'h-11 w-11',
       },
     },
     defaultVariants: {
