@@ -6,6 +6,7 @@ import { EmptyState, ErrorState, LoadingState } from '@/components/states/states
 import { useMeeting, useMeetings } from '@/lib/api/queries';
 import { PageHeader, ResourceList } from '@/pages/resource-list';
 import { UploadButton } from './upload-button';
+import { RecordingPanel } from '@/features/recording/recording-panel';
 
 const STATUS_LABEL: Record<Meeting['status'], string> = {
   scheduled: 'Scheduled',
@@ -80,6 +81,16 @@ export function MeetingDetailPage({ meetingId }: { meetingId: string }) {
           <UploadButton meetingId={m.id} />
         </div>
       </div>
+      <Card>
+        <CardHeader>
+          <CardTitle>
+            <h2>Record</h2>
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <RecordingPanel meetingId={m.id} />
+        </CardContent>
+      </Card>
       <Card>
         <CardHeader>
           <CardTitle>

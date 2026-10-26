@@ -30,7 +30,9 @@ function readBytes(file: Blob): Promise<ArrayBuffer> {
 /** Standard base64 sha256 of the whole file (contracts Sha256Base64; required by CreateUploadRequest). */
 export async function sha256Base64(file: Blob): Promise<string> {
   // Copy into this realm's Uint8Array: WebCrypto rejects ArrayBuffers from another realm (e.g. jsdom FileReader).
-  const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', new Uint8Array(new Uint8Array(await readBytes(file)))));
+  const digest = new Uint8Array(
+    await crypto.subtle.digest('SHA-256', new Uint8Array(new Uint8Array(await readBytes(file)))),
+  );
   let bin = '';
   for (const b of digest) bin += String.fromCharCode(b);
   return btoa(bin);
