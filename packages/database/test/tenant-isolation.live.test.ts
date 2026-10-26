@@ -75,6 +75,10 @@ function override(table: string, column: string, organizationId: string): string
   if (table === 'file_objects' && column === 'storage_key')
     return `'organizations/${organizationId}/isolation-test-${randomUUID()}'`;
   if (table === 'consent_attestations' && column === 'consent_version') return `'2026-10'`;
+  if (table === 'auth_token_families' && column === 'max_expires_at')
+    return `now() + interval '30 days'`;
+  if (table === 'auth_refresh_tokens' && column === 'token_hash')
+    return `encode(sha256(gen_random_uuid()::text::bytea), 'hex')`;
   return undefined;
 }
 
@@ -178,6 +182,8 @@ describe.skipIf(missingEnv.length > 0)('tenant isolation per table (live, ADR-01
     /** Append-only tables: UPDATE/DELETE are revoked from the app, so they fail on privilege instead. */
     const appendOnly = t === 'audit_events' || t === 'consent_attestations';
     const blockedWrite = appendOnly ? /permission denied|append-only/ : /row-level security/;
+    /** ADR-005 A1.2 token tables: DELETE is revoked (revocation is an UPDATE). */
+    const noDelete = t.startsWith('auth_');
     const count = (tx: Prisma.TransactionClient, id: string) =>
       tx.$queryRawUnsafe<{ n: bigint }[]>(
         `SELECT count(*) AS n FROM "${t}" WHERE ${whereKey(t)}`,
@@ -202,6 +208,10 @@ describe.skipIf(missingEnv.length > 0)('tenant isolation per table (live, ADR-01
         // Either RLS filters the row (0 affected) or the app role lacks the privilege (append-only tables).
         const affected = await inOrg(orgA, (tx) => tx.$executeRawUnsafe(sql, id)).catch(
           (e: unknown) => {
+            if (noDelete && sql.startsWith('DELETE')) {
+              expect(String(e)).toMatch(/permission denied/);
+              return 0;
+            }
             if (!appendOnly) throw e;
             expect(String(e)).toMatch(blockedWrite);
             return 0;

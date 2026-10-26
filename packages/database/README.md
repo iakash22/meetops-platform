@@ -104,3 +104,18 @@ pnpm --filter @meetops/database test:live
 ```
 
 The CI job spec is in [`docs/ci-live-db.md`](docs/ci-live-db.md).
+
+## Durable auth token families (ADR-005 A1.2)
+
+Migration `20261026230000_auth_token_families` adds `auth_devices`, `auth_token_families` and
+`auth_refresh_tokens` (forced RLS, ADR-010 tenant policy, `meetops_app` has no `DELETE`). Only SHA-256
+hex hashes are stored (CHECK constraint); access tokens and pairing codes stay in Redis. An `audience`
+column (`extension` | `desktop`) lets ADR-012 desktop auth reuse the tables.
+
+**Ordering vs Phase 3:** it sorts after `20261026200000_transcript_recording_revision`,
+`20261026210000_recording_source_native` and `20261026220000_integration_connections`, and depends on
+none of them, so it can merge before or after those branches; if a Phase 3 migration lands with a later
+timestamp, keep this one's name and let Prisma apply both in timestamp order (no rename once deployed).
+
+The API (`DurableExtensionTokenRepository`) keeps Redis as the fast path and uses these tables as the
+authority for revocation and refresh single-use whenever both `DATABASE_URL` and Redis are configured.

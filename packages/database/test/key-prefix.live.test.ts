@@ -53,17 +53,15 @@ describe.skipIf(!APP_URL || !OWNER_URL)(
       await owner.$disconnect();
     });
 
-    it.each([
-      'org',
-      'organizations',
-      'tmp/session-chunks/org',
-      'tmp/session-chunks/organizations',
-    ])('accepts %s/{organizationId}/... keys', async (prefix) => {
-      const row = await insert(
-        `${prefix}/${organizationId}/meetings/m/sessions/${sessionId}/${randomUUID()}.part`,
-      );
-      expect(row.storageKey.startsWith(`${prefix}/${organizationId}/`)).toBe(true);
-    });
+    it.each(['org', 'organizations', 'tmp/session-chunks/org', 'tmp/session-chunks/organizations'])(
+      'accepts %s/{organizationId}/... keys',
+      async (prefix) => {
+        const row = await insert(
+          `${prefix}/${organizationId}/meetings/m/sessions/${sessionId}/${randomUUID()}.part`,
+        );
+        expect(row.storageKey.startsWith(`${prefix}/${organizationId}/`)).toBe(true);
+      },
+    );
 
     it.each([
       ['org/ with another organization', () => `org/${otherOrg}/x.part`],
@@ -82,7 +80,10 @@ describe.skipIf(!APP_URL || !OWNER_URL)(
       ['other tmp/ prefix', () => `tmp/other/organizations/${organizationId}/x.part`],
       ['tmp/ without trailing slash', () => `tmp/session-chunks/organizations/${organizationId}`],
       ['tmp/ garbage', () => 'tmp/session-chunks/not-a-key'],
-      ['nested tmp/ prefix', () => `tmp/session-chunks/tmp/session-chunks/org/${organizationId}/x.part`],
+      [
+        'nested tmp/ prefix',
+        () => `tmp/session-chunks/tmp/session-chunks/org/${organizationId}/x.part`,
+      ],
     ])('rejects %s', async (_label, key) => {
       await expect(insert(key())).rejects.toThrow(
         /recording_session_chunks_key_check|23514|check constraint/,
