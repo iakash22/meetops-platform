@@ -1,5 +1,5 @@
 import { renderEmail } from './email/catalog.js';
-import { renderTemplate, type RenderedEmail } from './templates.js';
+import { renderTemplate, type RenderedEmail, type TemplateVariables } from './templates.js';
 import type { EmailService } from './types.js';
 
 /**
@@ -7,7 +7,20 @@ import type { EmailService } from './types.js';
  * this adapter without notifications depending on the api. `data.url` carries a one-time token: never log it.
  */
 export type AuthMailTemplateId =
-  'email_verification' | 'password_reset' | 'account_exists' | 'invitation' | 'login_lockout';
+  | 'email_verification'
+  | 'password_reset'
+  | 'account_exists'
+  | 'invitation'
+  | 'login_lockout'
+  | 'password_changed';
+
+/**
+ * `data` keys per template (all strings; `url` always required):
+ * - every template: `url`, optional `name` (recipient display name; falls back to the generic greeting)
+ * - invitation: `organizationName`, optional `inviterName`, `role`, `expiresInDays`
+ * - login_lockout: optional `lockedForMinutes`
+ * - password_changed: `changedAt` (ISO 8601), optional `timeZone` (IANA, default UTC); `url` = reset link
+ */
 
 export interface AuthOutboundMail {
   to: string;
@@ -35,35 +48,92 @@ function required(data: Record<string, string>, key: string): string {
   return v;
 }
 
+function optional(data: Record<string, string>, key: string): string | undefined {
+  const v = data[key];
+  return typeof v === 'string' && v.trim().length > 0 ? v.trim() : undefined;
+}
+
+function positiveInt(data: Record<string, string>, key: string): number | undefined {
+  const v = optional(data, key);
+  if (v === undefined) return undefined;
+  const n = Number(v);
+  return Number.isInteger(n) && n > 0 ? n : undefined;
+}
+
+/** Formats an ISO instant in the recipient's IANA time zone; unknown zones fall back to UTC. */
+export function formatChangedAt(iso: string, timeZone = 'UTC'): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime()))
+    throw new Error('Auth mail data.changedAt must be an ISO date-time');
+  const fmt = (tz: string) =>
+    new Intl.DateTimeFormat('en-US', {
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric',
+      hour: 'numeric',
+      minute: '2-digit',
+      timeZone: tz,
+      timeZoneName: 'short',
+    }).format(d);
+  try {
+    return fmt(timeZone);
+  } catch {
+    return fmt('UTC');
+  }
+}
+
 /** Renders one auth mail. Exported for tests and previews. */
 export function renderAuthMail(
   mail: AuthOutboundMail,
   options: AuthMailTransportOptions = {},
 ): RenderedEmail {
   const url = required(mail.data, 'url');
+  const name = optional(mail.data, 'name');
+  const named = name ? { name } : {};
   switch (mail.template) {
     case 'email_verification':
       return renderTemplate('verification', {
-        name: 'there',
+        ...named,
         verificationUrl: url,
         expiresInHours: options.verificationExpiresInHours ?? 24,
       });
     case 'password_reset':
       return renderTemplate('password-reset', {
-        name: 'there',
+        ...named,
         resetUrl: url,
         expiresInMinutes: options.passwordResetExpiresInMinutes ?? 30,
       });
-    case 'invitation':
-      return renderTemplate('invitation', {
-        inviterName: 'A teammate',
+    case 'invitation': {
+      const vars: TemplateVariables['invitation'] = {
+        inviterName: optional(mail.data, 'inviterName') ?? 'A teammate',
         workspaceName: required(mail.data, 'organizationName'),
         inviteUrl: url,
-      });
+      };
+      const role = optional(mail.data, 'role');
+      const expiresInDays = positiveInt(mail.data, 'expiresInDays');
+      if (role) vars.role = role;
+      if (expiresInDays) vars.expiresInDays = expiresInDays;
+      return renderTemplate('invitation', vars);
+    }
     case 'account_exists':
-      return renderEmail('account-exists', { resetUrl: url });
-    case 'login_lockout':
-      return renderEmail('login-lockout', { resetUrl: url });
+      return renderEmail('account-exists', { ...named, resetUrl: url });
+    case 'login_lockout': {
+      const lockedForMinutes = positiveInt(mail.data, 'lockedForMinutes');
+      return renderEmail('login-lockout', {
+        ...named,
+        resetUrl: url,
+        ...(lockedForMinutes ? { lockedForMinutes } : {}),
+      });
+    }
+    case 'password_changed':
+      return renderEmail('password-changed', {
+        ...named,
+        resetUrl: url,
+        changedAt: formatChangedAt(
+          required(mail.data, 'changedAt'),
+          optional(mail.data, 'timeZone'),
+        ),
+      });
     default:
       throw new UnknownAuthMailTemplateError(String((mail as { template: unknown }).template));
   }

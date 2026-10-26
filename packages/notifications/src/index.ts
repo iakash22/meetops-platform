@@ -21,3 +21,4 @@ export {
   cleanSubject,
 } from './email/public.js';
 export * from './auth-mail.js';
+export * from './unsubscribe-token.js';

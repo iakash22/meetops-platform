@@ -6,6 +6,10 @@ While the version is `0.x`, a minor bump may contain breaking changes (ADR-003).
 
 ## [Unreleased]
 
+### Added
+
+- `EMAIL_TEMPLATE_IDS` / `EmailJobPayload` (user recipient): `member-added`, `member-removed`, `tasks-ready-for-review`, `integration-error` (product mails; ids-only payloads, variables resolved by the worker).
+
 ## [0.7.0] - 2026-10-26
 
 Integration routes (Phase 5), following ADR-007 (retries, webhook replay) and ADR-008 (OAuth state + PKCE, token

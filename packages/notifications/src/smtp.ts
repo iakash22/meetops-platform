@@ -35,6 +35,18 @@ export function assertValidMessage(message: EmailMessage): void {
   if (!message.subject?.trim()) throw new EmailValidationError('Email requires a subject');
   if (!message.html && !message.text)
     throw new EmailValidationError('Email requires html or text body');
+  for (const a of message.attachments ?? []) {
+    // Inline images only: header-bearing fields must be plain tokens (no CR/LF injection into MIME headers).
+    if (!/^[A-Za-z0-9._@-]{1,128}$/.test(a.cid))
+      throw new EmailValidationError('Invalid attachment cid');
+    if (!/^[A-Za-z0-9._-]{1,128}$/.test(a.filename))
+      throw new EmailValidationError('Invalid attachment filename');
+    if (!/^image\/(png|jpeg|gif|webp)$/.test(a.contentType))
+      throw new EmailValidationError('Invalid attachment content type');
+    if (a.encoding !== 'base64' || !/^[A-Za-z0-9+/]+={0,2}$/.test(a.content)) {
+      throw new EmailValidationError('Attachment content must be base64');
+    }
+  }
 }
 
 export class SmtpEmailService implements EmailService {
