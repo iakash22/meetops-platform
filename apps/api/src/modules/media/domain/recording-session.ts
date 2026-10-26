@@ -1,4 +1,4 @@
-import type { AbortReason } from '@meetops/contracts';
+import type { AbortReason, RecordingSource } from '@meetops/contracts';
 import { DomainError } from '../../../shared/domain-error.js';
 
 export type RecordingSessionStatus = 'uploading' | 'completed' | 'aborted' | 'failed';
@@ -17,7 +17,7 @@ export interface RecordingSessionRecord {
   meetingId: string;
   createdById: string;
   mimeType: string;
-  source: 'tab';
+  source: RecordingSource;
   startedAt: Date;
   status: RecordingSessionStatus;
   /** Running sum of every signed chunk's sizeBytes. Never above MAX_RECORDING_SESSION_BYTES. */

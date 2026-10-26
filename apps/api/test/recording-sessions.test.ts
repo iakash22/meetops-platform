@@ -79,6 +79,16 @@ describe('recording sessions', () => {
     expect((await w.init(w.member, { source: 'screen' })).statusCode).toBe(400);
   });
 
+  it('init accepts every contracts RecordingSource and stores it', async () => {
+    const w = await setup();
+    for (const source of ['tab', 'mobile', 'desktop'] as const) {
+      const r = await w.init(w.member, { source });
+      expect(r.statusCode).toBe(201);
+      const { sessionId } = r.json<{ sessionId: string }>();
+      expect(w.repo.rows.get(sessionId)!.source).toBe(source);
+    }
+  });
+
   it('chunks: presigned PUT per contract with base64 checksum; tenancy and ownership', async () => {
     const w = await setup();
     const id = await w.start();
