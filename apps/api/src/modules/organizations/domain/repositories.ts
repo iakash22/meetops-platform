@@ -26,13 +26,21 @@ export interface MembershipRepository {
   /** Cross-tenant by design (user context): only ever called with the authenticated user's own id. */
   listByUser(userId: string): Promise<Membership[]>;
   /** Atomic: refuses (last_owner) if this would leave the org without an owner. */
-  setRole(organizationId: string, userId: string, role: Role, at: Date): Promise<MemberMutationResult>;
+  setRole(
+    organizationId: string,
+    userId: string,
+    role: Role,
+    at: Date,
+  ): Promise<MemberMutationResult>;
   /** Atomic soft delete; same last-owner guarantee. */
   remove(organizationId: string, userId: string, at: Date): Promise<MemberMutationResult>;
 }
 
 /** Minimal global projection returned by the token-hash lookup (SECURITY DEFINER in Postgres). */
-export type InvitationLookup = Pick<Invitation, 'id' | 'organizationId' | 'email' | 'role' | 'status' | 'expiresAt'>;
+export type InvitationLookup = Pick<
+  Invitation,
+  'id' | 'organizationId' | 'email' | 'role' | 'status' | 'expiresAt'
+>;
 
 export interface InvitationRepository {
   create(organizationId: string, inv: Invitation): Promise<Invitation>;
@@ -47,5 +55,9 @@ export interface InvitationRepository {
    * Atomic single use: pending + unexpired + email matches → membership created (or restored),
    * invitation marked accepted. Null on any failure. Postgres: accept_invitation(hash, user).
    */
-  accept(tokenHash: string, by: { userId: string; email: string }, now: Date): Promise<{ membership: Membership } | null>;
+  accept(
+    tokenHash: string,
+    by: { userId: string; email: string },
+    now: Date,
+  ): Promise<{ membership: Membership } | null>;
 }

@@ -8,7 +8,12 @@ export interface Argon2Params {
   timeCost: number;
   parallelism: number;
 }
-export const ARGON2_PARAMS: Argon2Params = { type: argon2.argon2id, memoryCost: 19456, timeCost: 2, parallelism: 1 };
+export const ARGON2_PARAMS: Argon2Params = {
+  type: argon2.argon2id,
+  memoryCost: 19456,
+  timeCost: 2,
+  parallelism: 1,
+};
 
 export class Argon2PasswordHasher implements PasswordHasher {
   constructor(private readonly params: Argon2Params = ARGON2_PARAMS) {}

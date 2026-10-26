@@ -1,4 +1,8 @@
-import { getPrismaClient, isUniqueViolation, type DatabaseClient } from '../../../../shared/prisma/context.js';
+import {
+  getPrismaClient,
+  isUniqueViolation,
+  type DatabaseClient,
+} from '../../../../shared/prisma/context.js';
 import type { User, UserId } from '../../domain/user.js';
 import type { UserRepository } from '../../domain/user.repository.js';
 import { DuplicateEmailError } from '../../domain/errors.js';
@@ -22,7 +26,7 @@ const toUser = (r: Row): User => ({
   emailVerifiedAt: r.emailVerified,
   createdAt: r.createdAt,
   updatedAt: r.updatedAt,
-  deletedAt: r.deletedAt
+  deletedAt: r.deletedAt,
 });
 
 /** users is global (no RLS); always excludes soft-deleted rows. */
@@ -45,8 +49,8 @@ export class PrismaUserRepository implements UserRepository {
           name: u.name,
           passwordHash: u.passwordHash,
           emailVerified: u.emailVerifiedAt,
-          createdAt: u.createdAt
-        }
+          createdAt: u.createdAt,
+        },
       });
       return toUser(r);
     } catch (e) {
@@ -58,6 +62,9 @@ export class PrismaUserRepository implements UserRepository {
     await this.db.user.updateMany({ where: { id, deletedAt: null }, data: { passwordHash } });
   }
   async markEmailVerified(id: UserId, at: Date) {
-    await this.db.user.updateMany({ where: { id, deletedAt: null, emailVerified: null }, data: { emailVerified: at } });
+    await this.db.user.updateMany({
+      where: { id, deletedAt: null, emailVerified: null },
+      data: { emailVerified: at },
+    });
   }
 }

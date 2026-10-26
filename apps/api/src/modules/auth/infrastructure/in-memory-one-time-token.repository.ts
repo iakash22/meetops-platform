@@ -1,4 +1,8 @@
-import type { OneTimeToken, OneTimeTokenPurpose, OneTimeTokenRepository } from '../domain/one-time-token.js';
+import type {
+  OneTimeToken,
+  OneTimeTokenPurpose,
+  OneTimeTokenRepository,
+} from '../domain/one-time-token.js';
 
 /** Test/dev only. consume() is synchronous check-and-set, so it is atomic in-process. */
 export class InMemoryOneTimeTokenRepository implements OneTimeTokenRepository {
@@ -25,6 +29,7 @@ export class InMemoryOneTimeTokenRepository implements OneTimeTokenRepository {
     return null;
   }
   async invalidateForUser(userId: string, purpose: OneTimeTokenPurpose, now: Date) {
-    for (const t of this.items.values()) if (t.userId === userId && t.purpose === purpose && !t.usedAt) t.usedAt = now;
+    for (const t of this.items.values())
+      if (t.userId === userId && t.purpose === purpose && !t.usedAt) t.usedAt = now;
   }
 }
