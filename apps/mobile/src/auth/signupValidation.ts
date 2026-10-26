@@ -12,14 +12,12 @@ export interface SignupFieldErrors {
   name?: string;
   email?: string;
   password?: string;
-  confirm?: string;
 }
 
 export interface SignupInput {
   name: string;
   email: string;
   password: string;
-  confirm: string;
 }
 
 export function validateSignup(input: SignupInput): {
@@ -29,7 +27,7 @@ export function validateSignup(input: SignupInput): {
 } {
   const name = input.name.trim();
   const email = input.email.trim();
-  const { password, confirm } = input;
+  const { password } = input;
   const errors: SignupFieldErrors = {};
 
   if (name.length === 0) errors.name = 'Enter your name.';
@@ -45,12 +43,24 @@ export function validateSignup(input: SignupInput): {
     errors.password = `Use at least ${PASSWORD_MIN_LENGTH} characters.`;
   else if (password.length > PASSWORD_MAX_LENGTH) errors.password = 'Password is too long.';
 
-  if (confirm.length === 0) errors.confirm = 'Confirm your password.';
-  else if (confirm !== password) errors.confirm = 'Passwords do not match.';
-
   return {
     ok: Object.keys(errors).length === 0,
     errors,
     request: { name, email, password },
   };
+}
+
+export type PasswordStrength = 'too-short' | 'weak' | 'fair' | 'strong';
+
+/**
+ * Advisory strength meter (docs/references.md section 5). Only length is enforced (12..128, contracts); variety and
+ * length beyond the minimum raise the level.
+ */
+export function passwordStrength(password: string): PasswordStrength {
+  if (password.length < PASSWORD_MIN_LENGTH) return 'too-short';
+  const classes = [/[a-z]/, /[A-Z]/, /\d/, /[^A-Za-z0-9]/].filter((r) => r.test(password)).length;
+  const score = classes + (password.length >= 16 ? 1 : 0) + (password.length >= 20 ? 1 : 0);
+  if (score >= 4) return 'strong';
+  if (score >= 2) return 'fair';
+  return 'weak';
 }

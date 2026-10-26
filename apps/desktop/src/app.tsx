@@ -5,12 +5,16 @@ import type { AuthClient } from '@/features/auth/auth-client';
 import { SessionProvider, useSession } from '@/features/auth/session';
 import { SignInScreen } from '@/features/auth/sign-in-screen';
 import { createUnavailableAuthClient } from '@/features/auth/unavailable-auth';
+import { invoke } from '@tauri-apps/api/core';
+
+import { DataProvider, createDataSource } from '@/features/data/repositories';
+import { isBrowserAuthEnabled, isMockAuthEnabled } from '@/lib/config';
+import { createNativeAuthClient } from '@/lib/native-auth';
 import { SAMPLE_MEETINGS } from '@/features/meetings/sample-meetings';
 import { createMediaRecorder } from '@/features/recording/recorder';
 import type { RecordingDeps } from '@/features/recording/recording-screen';
 import { createSimulatedUploadApi } from '@/features/recording/simulated-upload-api';
 import { createMemoryChunkStore, createUploadQueue } from '@/features/recording/upload-queue';
-import { isMockAuthEnabled } from '@/lib/config';
 
 // Only the sign-in screen is in the entry chunk; everything behind it loads on demand.
 // Sign-up is mock-only for now; the guard keeps its chunk out of production builds.
@@ -19,6 +23,9 @@ const SignUpScreen = import.meta.env.DEV
   : null;
 const MeetingsScreen = lazy(() =>
   import('@/features/meetings/meetings-screen').then((m) => ({ default: m.MeetingsScreen })),
+);
+const TasksScreen = lazy(() =>
+  import('@/features/tasks/tasks-screen').then((m) => ({ default: m.TasksScreen })),
 );
 const RecordingScreen = lazy(() =>
   import('@/features/recording/recording-screen').then((m) => ({ default: m.RecordingScreen })),
@@ -64,11 +71,12 @@ function Screens({
   mockAuth: boolean;
   recording?: RecordingDeps | undefined;
 }) {
-  const { session } = useSession();
+  const { session, restoring } = useSession();
   const recordingDeps = useRecordingDeps(recording);
   const [view, setView] = useState<View>('meetings');
   const [authView, setAuthView] = useState<'sign-in' | 'sign-up'>('sign-in');
 
+  if (restoring) return <Loading />;
   if (!session) {
     return SignUpScreen && mockAuth && authView === 'sign-up' ? (
       <Suspense fallback={<Loading />}>
@@ -85,6 +93,8 @@ function Screens({
           <MeetingsScreen onRecord={() => setView('record')} />
         ) : view === 'record' ? (
           <RecordingScreen meetings={SAMPLE_MEETINGS} deps={recordingDeps} />
+        ) : view === 'tasks' ? (
+          <TasksScreen />
         ) : (
           <SettingsScreen />
         )}
@@ -96,18 +106,23 @@ function Screens({
 export function App({
   authClient,
   mockAuth,
+  browserAuth,
   recording,
 }: {
   authClient?: AuthClient;
   mockAuth?: boolean;
+  /** Overrides `isBrowserAuthEnabled()` (tests). */
+  browserAuth?: boolean;
   recording?: RecordingDeps;
 }) {
+  const native = browserAuth ?? isBrowserAuthEnabled();
   // Hard-off in production: neither the prop nor env can enable the mock outside dev.
   const mock = import.meta.env.DEV && (mockAuth ?? isMockAuthEnabled());
-  // TODO(desktop-auth): replace with the ADR-012 browser + PKCE client once the ADR is signed off.
+  // ADR-012 browser + PKCE client when enabled (Tauri + VITE_DESKTOP_BROWSER_AUTH=true); otherwise mock or fail-closed.
   // The mock client is imported lazily so production (mock off) never ships it in the entry chunk.
   const client = useMemo<AuthClient>(() => {
     if (authClient) return authClient;
+    if (native) return createNativeAuthClient(invoke);
     if (import.meta.env.DEV && mock) {
       // DEV-guarded so the bundler drops the mock-auth chunk from production builds.
       let real: AuthClient | null = null;
@@ -120,10 +135,17 @@ export function App({
       };
     }
     return createUnavailableAuthClient();
-  }, [authClient, mock]);
+  }, [authClient, mock, native]);
+  // Live data only through the Rust `api_request` command; typed sample data otherwise.
+  const data = useMemo(
+    () => createDataSource(native && !authClient ? invoke : null),
+    [native, authClient],
+  );
   return (
     <SessionProvider client={client}>
-      <Screens mockAuth={mock} recording={recording} />
+      <DataProvider value={data}>
+        <Screens mockAuth={mock} recording={recording} />
+      </DataProvider>
     </SessionProvider>
   );
 }
