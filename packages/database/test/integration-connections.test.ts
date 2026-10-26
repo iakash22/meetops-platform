@@ -1,3 +1,4 @@
+import type { PrismaClient } from '@prisma/client';
 import { describe, expect, it } from 'vitest';
 import {
   createIntegrationConnectionRepository,
@@ -18,10 +19,18 @@ const cipher: IntegrationSecretCipher = {
   },
 };
 
+type Row = Record<string, unknown>;
+type Sel = Record<string, boolean>;
+interface Args {
+  where: Row & { organizationId_provider_externalAccountId?: Row };
+  select: Sel;
+  data: Row;
+}
+
 function fakeClient() {
-  const rows: Record<string, unknown>[] = [];
+  const rows: Row[] = [];
   const settings: string[] = [];
-  const pick = (r: Record<string, unknown>, sel: Record<string, boolean>) =>
+  const pick = (r: Row, sel: Sel) =>
     Object.fromEntries(Object.keys(sel).map((k) => [k, r[k] ?? null]));
   const tx = {
     $executeRaw: async (_s: TemplateStringsArray, ...v: unknown[]) => {
@@ -29,8 +38,8 @@ function fakeClient() {
       return 1;
     },
     integrationConnection: {
-      findUnique: async ({ where, select }: any) => {
-        const k = where.organizationId_provider_externalAccountId;
+      findUnique: async ({ where, select }: Pick<Args, 'where' | 'select'>) => {
+        const k = where.organizationId_provider_externalAccountId ?? {};
         const r = rows.find(
           (x) =>
             x.organizationId === k.organizationId &&
@@ -39,23 +48,29 @@ function fakeClient() {
         );
         return r ? pick(r, select) : null;
       },
-      findFirst: async ({ where, select }: any) => {
+      findFirst: async ({ where, select }: Pick<Args, 'where' | 'select'>) => {
         const r = rows.find((x) => x.id === where.id && x.organizationId === where.organizationId);
         return r ? pick(r, select) : null;
       },
-      create: async ({ data, select }: any) => {
+      create: async ({ data, select }: Pick<Args, 'data' | 'select'>) => {
         const r = { ...data, createdAt: new Date(), updatedAt: new Date() };
         rows.push(r);
         return pick(r, select);
       },
-      update: async ({ where, data, select }: any) => {
+      update: async ({ where, data, select }: Args) => {
         const r = rows.find((x) => x.id === where.id)!;
         Object.assign(r, data);
         return pick(r, select);
       },
     },
   };
-  return { rows, settings, client: { $transaction: (fn: any) => fn(tx) } as any };
+  return {
+    rows,
+    settings,
+    client: {
+      $transaction: (fn: (t: typeof tx) => Promise<unknown>) => fn(tx),
+    } as unknown as PrismaClient,
+  };
 }
 
 describe('integration connection repository', () => {
