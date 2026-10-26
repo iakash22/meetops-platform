@@ -6,6 +6,10 @@ While the version is `0.x`, a minor bump may contain breaking changes (ADR-003).
 
 ## [Unreleased]
 
+### Added
+
+- `EMAIL_TEMPLATE_IDS` / `EmailJobPayload` (user recipient): `member-added`, `member-removed`, `tasks-ready-for-review`, `integration-error` (product mails; ids-only payloads, variables resolved by the worker).
+
 ## [0.4.1] - 2026-10-25
 
 Consent attestation (G11), FileObject scan status, realtime auth-revocation contracts (G2, ADR-011) and the G9 upload
