@@ -12,6 +12,7 @@ import { UploadButton } from './upload-button';
 import { filterMeetings, type MeetingFilters } from './manage-api';
 import { MeetingFormDialog } from './meeting-form';
 import { Input } from '@/components/ui/input';
+import { RecordingPanel } from '@/features/recording/recording-panel';
 
 const STATUS_LABEL: Record<Meeting['status'], string> = {
   scheduled: 'Scheduled',
@@ -199,6 +200,16 @@ export function MeetingDetailPage({ meetingId }: { meetingId: string }) {
           <UploadButton meetingId={m.id} />
         </div>
       </div>
+      <Card>
+        <CardHeader>
+          <CardTitle>
+            <h2>Record</h2>
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <RecordingPanel meetingId={m.id} />
+        </CardContent>
+      </Card>
       <Card>
         <CardHeader>
           <CardTitle>

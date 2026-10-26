@@ -18,11 +18,13 @@ import {
   ExtensionTokenResponse,
   InitRecordingSessionRequest,
   InitRecordingSessionResponse,
+  InitUploadResponse,
   registerContractFormats,
 } from '@meetops/contracts';
 import { Type } from '@sinclair/typebox';
 import type {
   ApiErrorEnvelope as ApiErrorT,
+  InitUploadResponse as InitUploadResponseT,
   ExtensionRefreshResponse as RefreshT,
   ExtensionRevokeResponse as RevokeT,
   ExtensionTokenResponse as TokenT,
@@ -77,4 +79,11 @@ export const uploadValidators: UploadValidators = {
   completeResponse: (v): v is CompleteRecordingSessionResponse =>
     Value.Check(CompleteRecordingSessionResponse, v),
   apiError: (v): v is ApiErrorT => Value.Check(ApiErrorEnvelope, v),
+};
+
+/** Direct single-file upload (DirectUploadClient): init response and API error code. */
+export const directUploadValidators = {
+  isInitResponse: (v: unknown): v is InitUploadResponseT => Value.Check(InitUploadResponse, v),
+  apiErrorCode: (v: unknown): string | undefined =>
+    Value.Check(ApiErrorEnvelope, v) ? v.error.code : undefined,
 };
