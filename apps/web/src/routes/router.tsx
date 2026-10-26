@@ -11,7 +11,7 @@ import { useQueryClient, type QueryClient } from '@tanstack/react-query';
 import type { AuthSession, GetAuthSessionResponse } from '@meetops/contracts';
 import { AppShell } from '@/components/layout/app-shell';
 import { EmptyState, ErrorState } from '@/components/states/states';
-import { useEffect } from 'react';
+import { lazy, Suspense, useEffect } from 'react';
 import { AuthLayout } from '@/features/auth/auth-layout';
 import { ForgotPasswordForm, LoginForm, SignupForm } from '@/features/auth/forms';
 import { MeetingDetailPage, MeetingsPage } from '@/features/meetings/meetings-pages';
@@ -33,6 +33,12 @@ import { TeamMembersPage } from '@/features/teams/team-members-page';
 import { CreateOrganizationPage } from '@/features/organizations/create-organization';
 import { ExtensionPairPage } from '@/features/extension/pair-page';
 import { parsePairSearch } from '@/features/extension/pairing';
+import { parseDesktopAuthorizeSearch } from '@/features/desktop/authorize';
+
+/** Rarely visited (only from the desktop app's sign-in), so it ships as its own chunk. */
+const DesktopAuthorizePage = lazy(() =>
+  import('@/features/desktop/authorize-page').then((m) => ({ default: m.DesktopAuthorizePage })),
+);
 import { createAuthPublicRoutes } from './auth-public';
 import { createAccountRoutes } from './account';
 import { createOrganizationRoutes } from './organization';
@@ -238,6 +244,20 @@ const extensionPairRoute = createRoute({
   },
 });
 
+const desktopAuthorizeRoute = createRoute({
+  getParentRoute: () => appLayout,
+  path: '/desktop/authorize',
+  validateSearch: parseDesktopAuthorizeSearch,
+  component: function DesktopAuthorizeRoute() {
+    const search = desktopAuthorizeRoute.useSearch();
+    return (
+      <Suspense fallback={<div className="p-6" aria-busy="true" />}>
+        <DesktopAuthorizePage search={search} />
+      </Suspense>
+    );
+  },
+});
+
 export const routeTree = rootRoute.addChildren([
   authLayout.addChildren([loginRoute, signupRoute, forgotPasswordRoute]),
   createAuthPublicRoutes(() => rootRoute),
@@ -251,6 +271,7 @@ export const routeTree = rootRoute.addChildren([
     teamMembersRoute,
     createOrganizationRoute,
     extensionPairRoute,
+    desktopAuthorizeRoute,
     createAccountRoutes(() => appLayout),
     createOrganizationRoutes(() => appLayout),
   ]),

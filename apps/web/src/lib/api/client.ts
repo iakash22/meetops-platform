@@ -35,6 +35,11 @@ import {
   type ConflictReason,
 } from '@meetops/contracts/types';
 import { createHttpDirectoryApi, type DirectoryApi } from '@/features/directory/api';
+import {
+  DESKTOP_AUTHORIZE_PATH,
+  type DesktopAuthorizeRequest,
+  type DesktopAuthorizeResponse,
+} from '@/features/desktop/authorize';
 
 /** Contracts ApiErrorEnvelope codes plus 'UNKNOWN' when the body is unparseable. */
 export type ApiErrorCode = ContractApiErrorCode | 'UNKNOWN';
@@ -250,6 +255,13 @@ export type ApiClient = {
   extension: {
     /** POST /auth/extension/pair (ADR-005 A1.1). Cookie + CSRF; returns a single-use pairing code. */
     pair: (body: ExtensionPairRequest) => Promise<ExtensionPairResponse>;
+  };
+  desktop: {
+    /**
+     * POST /auth/desktop/authorize (ADR-012 §1.4, Proposed). Cookie + CSRF; returns a single-use code for the
+     * loopback redirect. Not served by the API yet, so callers must handle 404/network errors.
+     */
+    authorize: (body: DesktopAuthorizeRequest) => Promise<DesktopAuthorizeResponse>;
   };
   meetings: {
     list: (organizationId: Id) => Promise<Paginated<Meeting>>;
@@ -475,6 +487,9 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
     },
     extension: {
       pair: (body) => request('POST', EXTENSION_AUTH_PATHS.pair, body),
+    },
+    desktop: {
+      authorize: (body) => request('POST', DESKTOP_AUTHORIZE_PATH, body),
     },
     meetings: {
       list: (id) => request('GET', `${org(id)}/meetings`),
