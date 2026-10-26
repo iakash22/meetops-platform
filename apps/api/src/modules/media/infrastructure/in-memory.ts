@@ -9,6 +9,7 @@ import type {
   MediaProcessingJob,
   MediaSigner,
   SignedRequest,
+  StoredObjectHead,
 } from '../domain/ports.js';
 
 export class InMemoryConsentRepository implements ConsentRepository {
@@ -54,7 +55,9 @@ export class InMemoryFileObjectRepository implements FileObjectRepository {
 
 /** Dev/test signer: fake https URLs, plus `put()` so tests can simulate the client upload. */
 export class FakeMediaSigner implements MediaSigner {
-  readonly stored = new Map<string, number>();
+  readonly stored = new Map<string, StoredObjectHead>();
+  /** Checksum signed into each presigned PUT: what S3 stores when the client sends the signed headers. */
+  private readonly signedChecksums = new Map<string, string>();
   constructor(private readonly now: () => Date = () => new Date()) {}
   private sign(
     method: 'PUT' | 'GET',
@@ -73,6 +76,7 @@ export class FakeMediaSigner implements MediaSigner {
     checksumSha256Base64: string;
     ttlSeconds: number;
   }) {
+    this.signedChecksums.set(s.key, s.checksumSha256Base64);
     return this.sign('PUT', s.key, s.ttlSeconds, {
       'content-length': String(s.sizeBytes),
       'content-type': s.mimeType,
@@ -83,11 +87,14 @@ export class FakeMediaSigner implements MediaSigner {
     return this.sign('GET', s.key, s.ttlSeconds, {});
   }
   async head(key: string) {
-    const n = this.stored.get(key);
-    return n === undefined ? null : { sizeBytes: n };
+    const h = this.stored.get(key);
+    return h ? { ...h } : null;
   }
-  put(key: string, sizeBytes: number) {
-    this.stored.set(key, sizeBytes);
+  /** Simulates the client PUT. `checksum` defaults to the one signed into the presigned PUT. */
+  put(key: string, sizeBytes: number, checksum?: string | null) {
+    const checksumSha256Base64 =
+      checksum === undefined ? (this.signedChecksums.get(key) ?? null) : checksum;
+    this.stored.set(key, { sizeBytes, checksumSha256Base64 });
   }
 }
 

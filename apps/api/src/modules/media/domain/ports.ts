@@ -31,6 +31,11 @@ export interface FileObjectRepository {
   ): Promise<void>;
 }
 
+export interface StoredObjectHead {
+  sizeBytes: number;
+  checksumSha256Base64: string | null;
+}
+
 /** Presigned request returned by the signer (expiresAt is a Date; routes serialise it). */
 export interface SignedRequest {
   url: string;
@@ -52,8 +57,12 @@ export interface MediaSigner {
     ttlSeconds: number;
   }): Promise<SignedRequest>;
   presignGet(spec: { key: string; ttlSeconds: number }): Promise<SignedRequest>;
-  /** Stored object size, or null when nothing was uploaded at `key`. */
-  head(key: string): Promise<{ sizeBytes: number } | null>;
+  /**
+   * Stored object size and full-object SHA-256 (base64), or null when nothing was uploaded at `key`. Adapters must
+   * HEAD with checksum mode enabled (S3/MinIO `ChecksumMode: 'ENABLED'` -> `ChecksumSHA256`) and return
+   * `checksumSha256Base64: null` when the store reports none; complete() then rejects the upload.
+   */
+  head(key: string): Promise<StoredObjectHead | null>;
 }
 
 /** Processing job. Local shape: contracts MediaJobPayload needs meetingId + recordingId, which uploads may lack. */
