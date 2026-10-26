@@ -44,7 +44,47 @@ describe('meetings', () => {
       }),
     );
     await waitForRouteData(api.meetings.get);
-    expect(await screen.findByTestId('error-state')).toHaveTextContent('req_7');
+    const err = await screen.findByTestId('error-state');
+    expect(err).toHaveTextContent('Meeting not found');
+    expect(err).toHaveTextContent('req_7');
+    expect(screen.queryByRole('button', { name: 'Try again' })).not.toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Back to meetings' })).toBeInTheDocument();
+    expect(api.meetings.get).toHaveBeenCalledTimes(1); // 404 is final: no retry
+  });
+
+  it('paginates with nextCursor and "Load more"', async () => {
+    const page2 = { ...meeting1, id: '20000000-0000-4000-8000-000000000009', title: 'Older retro' };
+    const list = vi
+      .fn()
+      .mockResolvedValueOnce({ items: [meeting1], nextCursor: 'c1' })
+      .mockResolvedValueOnce({ items: [page2], nextCursor: null });
+    const { api } = renderApp('/meetings', createMockApi({ meetings: { list } }));
+    await waitForRouteData(api.meetings.list, { heading: 'Meetings' });
+    expect(await screen.findByText('Weekly sync')).toBeInTheDocument();
+    expect(list).toHaveBeenNthCalledWith(1, '00000000-0000-4000-8000-000000000001');
+    await userEvent.click(screen.getByRole('button', { name: 'Load more' }));
+    expect(await screen.findByText('Older retro')).toBeInTheDocument();
+    expect(list).toHaveBeenNthCalledWith(2, '00000000-0000-4000-8000-000000000001', {
+      cursor: 'c1',
+    });
+    expect(screen.getByText('Weekly sync')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Load more' })).not.toBeInTheDocument();
+  });
+
+  it('shows the empty state when there are no meetings', async () => {
+    const list = vi.fn().mockResolvedValue({ items: [], nextCursor: null });
+    const { api } = renderApp('/meetings', createMockApi({ meetings: { list } }));
+    await waitForRouteData(api.meetings.list, { heading: 'Meetings' });
+    expect(await screen.findByText('No meetings yet')).toBeInTheDocument();
+  });
+
+  it('shows an error state with retry when the list fails', async () => {
+    const list = vi.fn().mockRejectedValue(new ApiError(403, 'FORBIDDEN', 'no', 'req_9'));
+    const { api } = renderApp('/meetings', createMockApi({ meetings: { list } }));
+    await waitForRouteData(api.meetings.list, { heading: 'Meetings' });
+    const err = await screen.findByTestId('error-state', {}, { timeout: 3000 });
+    expect(err).toHaveTextContent('req_9');
+    expect(screen.getByRole('button', { name: 'Try again' })).toBeInTheDocument();
   });
 
   it('uploads: createUpload then PUT to the presigned url', async () => {

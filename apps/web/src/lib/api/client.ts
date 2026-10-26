@@ -252,7 +252,8 @@ export type ApiClient = {
     pair: (body: ExtensionPairRequest) => Promise<ExtensionPairResponse>;
   };
   meetings: {
-    list: (organizationId: Id) => Promise<Paginated<Meeting>>;
+    /** Newest first. Omit `page` for the first page (server default limit 25, max 100). */
+    list: (organizationId: Id, page?: CursorParams) => Promise<Paginated<Meeting>>;
     get: (organizationId: Id, meetingId: Id) => Promise<Meeting>;
   };
   tasks: {
@@ -477,7 +478,7 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
       pair: (body) => request('POST', EXTENSION_AUTH_PATHS.pair, body),
     },
     meetings: {
-      list: (id) => request('GET', `${org(id)}/meetings`),
+      list: (id, page) => request('GET', `${org(id)}/meetings${pageQuery(page)}`),
       get: (id, meetingId) =>
         request('GET', `${org(id)}/meetings/${encodeURIComponent(meetingId)}`),
     },
