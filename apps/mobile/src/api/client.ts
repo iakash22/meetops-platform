@@ -131,6 +131,8 @@ export function createApiRequester({ baseUrl, getAccessToken, fetchImpl }: ApiCl
 export function createApiClient(options: ApiClientOptions) {
   const request = createApiRequester(options);
   return {
+    /** Typed escape hatch for routes without a named method (same auth, envelope and error mapping). */
+    request,
     signup: (body: SignupRequest) => request<SignupAccepted>('POST', '/auth/signup', body, 202),
     login: (body: LoginRequest) => request<AuthSession>('POST', '/auth/login', body),
     getSession: () => request<GetAuthSessionResponse>('GET', '/auth/session'),
