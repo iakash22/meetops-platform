@@ -146,6 +146,7 @@ export function UploadButton({ meetingId }: { meetingId?: Id }) {
             {Math.round(progress * 100)}%
           </span>
           <Button
+            className="min-h-11"
             type="button"
             size="sm"
             variant="outline"
@@ -157,6 +158,7 @@ export function UploadButton({ meetingId }: { meetingId?: Id }) {
         </div>
       ) : (
         <Button
+          className="min-h-11"
           type="button"
           onClick={() => inputRef.current?.click()}
           disabled={!organizationId || pending !== null}
@@ -215,10 +217,12 @@ export function UploadButton({ meetingId }: { meetingId?: Id }) {
             </p>
           ) : null}
           <div className="flex justify-end gap-2">
-            <Button type="button" variant="outline" onClick={reset}>
+            <Button className="min-h-11" type="button" variant="outline" onClick={reset}>
               Cancel
             </Button>
-            <Button type="submit">Start upload</Button>
+            <Button className="min-h-11" type="submit">
+              Start upload
+            </Button>
           </div>
         </form>
       ) : null}
