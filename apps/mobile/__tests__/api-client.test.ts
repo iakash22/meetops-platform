@@ -2,6 +2,7 @@ import {
   API_ERROR_REASONS,
   CONFLICT_REASONS,
   CONSENT_ERROR_REASONS,
+  INTEGRATION_ERROR_REASONS,
   NOT_FOUND_REASONS,
 } from '@meetops/contracts';
 
@@ -100,6 +101,12 @@ describe('createApiClient', () => {
       ...CONSENT_ERROR_REASONS.map((reason) => ({
         status: 422,
         code: 'VALIDATION_FAILED' as const,
+        reason,
+      })),
+      // 0.7.0 integration reasons; the client passes any contracts reason through unchanged.
+      ...INTEGRATION_ERROR_REASONS.map((reason) => ({
+        status: 409,
+        code: 'CONFLICT' as const,
         reason,
       })),
     ];
