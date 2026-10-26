@@ -19,6 +19,7 @@ import {
   UpdateConsentSettingsRequest,
 } from '../src/index.js';
 import * as Light from '../src/types.js';
+import pkg from '../package.json' with { type: 'json' };
 
 const id = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
 const at = '2026-10-26T12:00:00.000Z';
@@ -31,7 +32,7 @@ const settings = {
   updatedAt: at,
 };
 
-describe('consent settings (proposal)', () => {
+describe('consent settings', () => {
   it('paths follow org-scoped conventions and are in the light entry', () => {
     expect(CONSENT_UPLOAD_PATHS.consentSettings).toBe('/orgs/:organizationId/settings/consent');
     expect(CONSENT_UPLOAD_PATHS.uploadComplete).toBe(
@@ -69,7 +70,7 @@ describe('consent settings (proposal)', () => {
   });
 });
 
-describe('upload complete (proposal)', () => {
+describe('upload complete', () => {
   it('request is an empty strict object', () => {
     expect(Value.Check(CompleteUploadRequest, {})).toBe(true);
     expect(Value.Check(CompleteUploadRequest, { consent: {} })).toBe(false);
@@ -95,7 +96,7 @@ describe('upload complete (proposal)', () => {
   });
 });
 
-describe('download url (proposal)', () => {
+describe('download url', () => {
   const ok = {
     url: 'https://storage.example.com/o?X-Amz-Signature=abc',
     method: 'GET',
@@ -111,7 +112,7 @@ describe('download url (proposal)', () => {
   });
 });
 
-describe('PAYLOAD_TOO_LARGE (proposal)', () => {
+describe('PAYLOAD_TOO_LARGE', () => {
   it('is an ApiErrorCode with HTTP 413, kept in sync with API_ERROR_CODES', () => {
     expect(PAYLOAD_TOO_LARGE_HTTP_STATUS).toBe(413);
     expect(API_ERROR_CODES).toContain('PAYLOAD_TOO_LARGE');
@@ -126,4 +127,8 @@ describe('PAYLOAD_TOO_LARGE (proposal)', () => {
     expect(Value.Check(ApiErrorEnvelope, body)).toBe(true);
     expectTypeOf<PayloadTooLargeErrorEnvelope['error']>().not.toHaveProperty('reason');
   });
+});
+
+describe('package version', () => {
+  it('is 0.5.0', () => expect(pkg.version).toBe('0.5.0'));
 });
