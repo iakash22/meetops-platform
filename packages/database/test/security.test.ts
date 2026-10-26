@@ -1086,12 +1086,12 @@ describe('DB-3 consent_attestations, scan_status and storage-key CHECKs (static)
   const model = (name: string) => models.find((m) => m.name === name)?.body ?? '';
   const statements = consentSql.replace(/--.*$/gm, '');
 
-  it('is the latest migration', () => {
+  it('is applied after every earlier migration (Phase 3 transcript migration follows it)', () => {
     const dirs = readdirSync(migrationsDir, { withFileTypes: true })
       .filter((d) => d.isDirectory())
       .map((d) => d.name)
       .sort();
-    expect(dirs.at(-1)).toBe(CONSENT_MIGRATION);
+    expect(dirs.indexOf(CONSENT_MIGRATION)).toBe(dirs.indexOf(TRANSCRIPT_REVISION_MIGRATION) - 1);
   });
 
   it('is additive only: no drop, rename, retype or NO FORCE of existing objects', () => {
@@ -1151,5 +1151,41 @@ describe('DB-3 consent_attestations, scan_status and storage-key CHECKs (static)
     expect(consentSql).toContain("RAISE EXCEPTION 'RLS enabled but not forced on: %'");
     expect(consentSql).toContain(`CHECK ("consent_version" ~ '^[A-Za-z0-9][A-Za-z0-9._-]{0,31}$')`);
     expect(consentSql).toContain(`CHECK ("attested_at" <= "recorded_at" + interval '300 seconds')`);
+  });
+});
+
+const TRANSCRIPT_REVISION_MIGRATION = '20261026200000_transcript_recording_revision';
+
+describe('Phase 3 transcripts revised per recording (static)', () => {
+  const sql = readFileSync(
+    resolve(migrationsDir, TRANSCRIPT_REVISION_MIGRATION, 'migration.sql'),
+    'utf8',
+  ).replace(/--.*$/gm, '');
+  const transcript = models.find((m) => m.name === 'Transcript')?.body ?? '';
+
+  it('is the latest migration', () => {
+    const dirs = readdirSync(migrationsDir, { withFileTypes: true })
+      .filter((d) => d.isDirectory())
+      .map((d) => d.name)
+      .sort();
+    expect(dirs.at(-1)).toBe(TRANSCRIPT_REVISION_MIGRATION);
+  });
+
+  it('moves the revision key to (recording_id, revision) and keeps revisions non-negative', () => {
+    expect(sql).toContain('DROP INDEX IF EXISTS "transcripts_meeting_id_revision_key"');
+    expect(sql).toContain(
+      'CREATE UNIQUE INDEX "transcripts_recording_id_revision_key" ON "transcripts"("recording_id", "revision")',
+    );
+    expect(sql).toContain('CHECK ("revision" >= 0)');
+    expect(transcript).toContain('@@unique([recordingId, revision])');
+    expect(transcript).not.toContain('@@unique([meetingId, revision])');
+  });
+
+  it('only adds a nullable merge_state column (no table drop, no RLS change)', () => {
+    expect(sql).toContain('ADD COLUMN "merge_state" JSONB');
+    expect(sql).not.toMatch(
+      /DROP TABLE|DROP COLUMN|NO FORCE ROW LEVEL SECURITY|DISABLE ROW LEVEL SECURITY/i,
+    );
+    expect(transcript).toMatch(/mergeState\s+Json\?/);
   });
 });
