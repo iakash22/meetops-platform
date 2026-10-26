@@ -6,6 +6,25 @@ While the version is `0.x`, a minor bump may contain breaking changes (ADR-003).
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-10-26
+
+Integration routes (Phase 5), following ADR-007 (retries, webhook replay) and ADR-008 (OAuth state + PKCE, token
+encryption at rest). Builds on 0.6.1.
+
+### Added
+
+- `INTEGRATION_PATHS`: list, connect, OAuth/App-install callback, disconnect, webhook, and task issue push.
+- DTOs: `Integration` (never carries tokens, webhook secret or ciphertext), `IntegrationList`, `IntegrationParams`,
+  `ConnectIntegrationRequest`/`Response`, `IntegrationCallbackQuery`/`Params`, `WebhookParams`,
+  `WebhookAcceptedResponse`, `PushTaskIssueRequest`/`Params`. `IntegrationStatus` (`INTEGRATION_STATUSES`).
+- `INTEGRATION_STATE_TTL_SECONDS` (600) and `INTEGRATION_WEBHOOK_MAX_BYTES` (1 MiB).
+
+### Changed (breaking)
+
+- `API_ERROR_REASONS` / `ApiErrorReason` gain `INTEGRATION_ERROR_REASONS`: `INTEGRATION_NOT_CONNECTED`,
+  `APPROVAL_REQUIRED`, `OAUTH_STATE_INVALID`, `REPLAYED_DELIVERY`, `WEBHOOK_SIGNATURE_INVALID`. Additive on the wire;
+  exhaustive switches over `ApiErrorReason` must add them (ADR-003 §5). None exists in the repo today.
+
 ## [0.6.1] - 2026-10-26
 
 ### Fixed
