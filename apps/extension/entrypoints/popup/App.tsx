@@ -2,10 +2,10 @@
 import { resolveMeetingId } from '../../src/lib/meeting.js';
 import { useCallback, useEffect, useState } from 'react';
 import {
-  acknowledge,
   canStartRecording,
+  consentGrant,
   initialConsent,
-  showNotice,
+  setConfirmed,
   type ConsentState,
 } from '../../src/lib/consent.js';
 import type {
@@ -51,6 +51,7 @@ function PopupApp() {
   const [status, setStatus] = useState<StatusPayload>({ status: 'idle' });
   const [rawError, setRawError] = useState('');
   const [now, setNow] = useState(Date.now());
+  const [starting, setStarting] = useState(false);
   const { error: pairingError, ...pairing } = usePairing();
 
   const apply = useCallback((res: BackgroundResponse) => {
@@ -75,30 +76,34 @@ function PopupApp() {
     return () => clearInterval(t);
   }, [refresh]);
 
-  const onAcknowledge = async () => {
-    try {
-      const tabId = await activeTabId();
-      apply(await send({ target: 'background', type: 'ACK_CONSENT', tabId }));
-      setConsent(acknowledge(consent));
-    } catch (e) {
-      setRawError(errText(e));
-    }
-  };
-
-  // Runs directly from the click so tabCapture stays inside the user gesture.
-  const onStart = async () => {
-    if (!canStartRecording(consent)) return;
+  // Runs directly from the click so tabCapture stays inside the user gesture. The ticked confirmation is sent to the
+  // background for this tab + meeting first (ACK_CONSENT), then consumed by START_RECORDING.
+  const onRecord = async () => {
+    if (!canStartRecording(consent) || starting) return;
+    setStarting(true);
     try {
       const tabId = await activeTabId();
       const streamId = await getTabStreamId(tabId);
       const meetingId = await resolveMeetingId();
+      const ack = await send({
+        target: 'background',
+        type: 'ACK_CONSENT',
+        tabId,
+        ...consentGrant(consent, meetingId),
+      });
+      if (!ack.ok) {
+        apply(ack);
+        return;
+      }
       apply(
         await send({ target: 'background', type: 'START_RECORDING', tabId, streamId, meetingId }),
       );
     } catch (e) {
       setRawError(errText(e));
     } finally {
+      // Per meeting, per recording: never carried over to the next start.
       setConsent(initialConsent());
+      setStarting(false);
     }
   };
 
@@ -117,10 +122,9 @@ function PopupApp() {
       consent={consent}
       now={now}
       error={popupErrorMessage(rawError, true) || popupErrorMessage(pairingError, true)}
-      onRecord={() => setConsent(showNotice(consent))}
-      onAcknowledge={() => void onAcknowledge()}
-      onCancelConsent={() => setConsent(initialConsent())}
-      onStart={() => void onStart()}
+      starting={starting}
+      onConsentChange={(checked) => setConsent(setConfirmed(checked))}
+      onRecord={() => void onRecord()}
       onStop={() => void onStop()}
       onDismissWarning={() => void onDismissWarning()}
     />

@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { ChunkStore, normalizeSession } from '../src/lib/chunk-store.js';
 import { INCOMPLETE_ABORT_NOTE, drainQueue } from '../src/lib/drain.js';
 import { StubUploadClient, type UploadClient } from '../src/lib/upload.js';
+import { CONSENT } from './helpers/consent.js';
 
 const MID = '6f1c2b8e-3d4a-4e5f-9a6b-7c8d9e0f1a2b';
 
@@ -11,6 +12,7 @@ const meta = {
   mimeType: 'audio/webm;codecs=opus',
   startedAt: '2026-10-21T00:00:00.000Z',
   source: 'tab' as const,
+  consent: CONSENT,
   meetingId: MID,
 };
 const SID = '7d9f2c1e-3b4a-4c5d-8e6f-0a1b2c3d4e5f';

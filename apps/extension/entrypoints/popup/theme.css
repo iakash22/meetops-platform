@@ -342,3 +342,40 @@ a {
     transition: none !important;
   }
 }
+
+/* Recording consent gate (contracts v0.4.1): checkbox + hint inside .mo-consent. */
+.mo-consent__title {
+  font-size: 13px;
+  font-weight: 600;
+  margin: 0;
+}
+
+.mo-consent .mo-consent__notice,
+.mo-consent .mo-consent__hint {
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--mo-muted-foreground);
+}
+
+.mo-consent__check {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  font-size: 13px;
+  line-height: 1.4;
+  cursor: pointer;
+}
+
+.mo-consent__check input {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  margin: 1px 0 0;
+  accent-color: var(--mo-primary);
+  cursor: pointer;
+}
+
+.mo-consent__check input:focus-visible {
+  outline: 2px solid var(--mo-ring);
+  outline-offset: 2px;
+}

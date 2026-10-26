@@ -3,7 +3,14 @@ import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import pkg from '../package.json' with { type: 'json' };
-import type { ApiErrorCode, SttProviderId, TranscriptProviderId, ExtensionTokenResponse, Role, TaskStatus } from '../src/types.js';
+import type {
+  ApiErrorCode,
+  SttProviderId,
+  TranscriptProviderId,
+  ExtensionTokenResponse,
+  Role,
+  TaskStatus,
+} from '../src/types.js';
 import type * as Full from '../src/index.js';
 
 vi.mock('@sinclair/typebox', () => {
@@ -14,9 +21,12 @@ const srcDir = resolve(dirname(fileURLToPath(import.meta.url)), '../src');
 
 /** Runtime (non-type-only) import/export specifiers of a TS source file. */
 function runtimeSpecifiers(file: string): string[] {
-  const code = readFileSync(file, 'utf8').replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+  const code = readFileSync(file, 'utf8')
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/\/\/.*$/gm, '');
   const out: string[] = [];
-  for (const m of code.matchAll(/^\s*(import|export)\s+(?!type\b)[^;]*?from\s+['"]([^'"]+)['"]/gm)) out.push(m[2]!);
+  for (const m of code.matchAll(/^\s*(import|export)\s+(?!type\b)[^;]*?from\s+['"]([^'"]+)['"]/gm))
+    out.push(m[2]!);
   for (const m of code.matchAll(/^\s*import\s+['"]([^'"]+)['"]/gm)) out.push(m[1]!);
   for (const m of code.matchAll(/import\(\s*['"]([^'"]+)['"]\s*\)/g)) out.push(m[1]!);
   return out;
@@ -26,7 +36,8 @@ function runtimeGraph(entry: string, seen = new Set<string>()): Set<string> {
   if (seen.has(entry)) return seen;
   seen.add(entry);
   for (const spec of runtimeSpecifiers(entry)) {
-    if (spec.startsWith('.')) runtimeGraph(resolve(dirname(entry), spec.replace(/\.js$/, '.ts')), seen);
+    if (spec.startsWith('.'))
+      runtimeGraph(resolve(dirname(entry), spec.replace(/\.js$/, '.ts')), seen);
     else seen.add(spec);
   }
   return seen;
@@ -46,13 +57,14 @@ describe('@meetops/contracts/types (light entry)', () => {
     expect(T.TASK_STATUSES).toEqual(['todo', 'in_progress', 'done', 'cancelled']);
     expect(T.MAX_CHUNKS).toBe(10_000);
     expect(T.MAX_CHUNK_BYTES).toBe(64 * 1024 * 1024);
-    expect(T.MAX_DURATION_MS).toBe(86_400_000);
+    expect(T.MAX_DURATION_MS).toBe(14_400_000);
     // The four upload limits mirrored in apps/extension/src/lib/contract-limits.ts (PR #60).
     expect(T.CHUNK_UPLOAD_URL_TTL_SECONDS).toBe(300);
     expect(T.MAX_RECORDING_CHUNKS).toBe(10_000);
     expect(T.MAX_CHUNKS).toBe(T.MAX_RECORDING_CHUNKS);
     expect(T.PAIRING_CODE_MESSAGE_TYPE).toBe('MEETOPS_PAIRING_CODE');
-    for (const v of Object.values(T)) expect(typeof v === 'object' && v !== null && 'type' in v && '[Kind]' in v).toBe(false);
+    for (const v of Object.values(T))
+      expect(typeof v === 'object' && v !== null && 'type' in v && '[Kind]' in v).toBe(false);
   });
   it('the mock is live: the full entry fails to load', async () => {
     await expect(import('../src/index.js')).rejects.toThrow();
@@ -62,11 +74,17 @@ describe('@meetops/contracts/types (light entry)', () => {
     expectTypeOf<(typeof Full.ROLES)[number]>().toEqualTypeOf<Role>();
     expectTypeOf<(typeof Full.API_ERROR_CODES)[number]>().toEqualTypeOf<ApiErrorCode>();
     expectTypeOf<(typeof Full.STT_PROVIDER_IDS)[number]>().toEqualTypeOf<SttProviderId>();
-    expectTypeOf<(typeof Full.TRANSCRIPT_PROVIDER_IDS)[number]>().toEqualTypeOf<TranscriptProviderId>();
+    expectTypeOf<
+      (typeof Full.TRANSCRIPT_PROVIDER_IDS)[number]
+    >().toEqualTypeOf<TranscriptProviderId>();
     expectTypeOf<ExtensionTokenResponse>().toEqualTypeOf<Full.ExtensionTokenResponse>();
   });
   it('package.json exposes ./types and sideEffects: false', () => {
     expect(pkg.sideEffects).toBe(false);
-    expect(pkg.exports['./types']).toEqual({ types: './src/types.ts', import: './dist/types.js', default: './dist/types.js' });
+    expect(pkg.exports['./types']).toEqual({
+      types: './src/types.ts',
+      import: './dist/types.js',
+      default: './dist/types.js',
+    });
   });
 });

@@ -5,7 +5,7 @@ import {
   listFailedDiscards,
   retryPendingDiscards,
 } from './pending-discard.js';
-import { consumeConsent, recordConsent } from './consent-registry.js';
+import { consumeConsent, recordConsent, toAttestation } from './consent-registry.js';
 import {
   isBackgroundMessage,
   type BackgroundResponse,
@@ -200,14 +200,17 @@ export async function handleBackgroundMessage(
     }
 
     case 'ACK_CONSENT':
-      await recordConsent(kv, msg.tabId, deps.now());
+      await recordConsent(kv, msg.tabId, deps.now(), {
+        meetingId: msg.meetingId,
+        method: msg.method,
+      });
       return status(state);
 
     case 'START_RECORDING': {
       if (state.status !== 'idle' && state.status !== 'error') return fail('Already recording');
       const used = (await kv.get<string[]>(USED_STREAMS_KEY)) ?? [];
       if (used.includes(msg.streamId)) return fail('Stream id already used');
-      const consent = await consumeConsent(kv, msg.tabId, deps.now());
+      const consent = await consumeConsent(kv, msg.tabId, deps.now(), msg.meetingId);
       if (!consent.ok) return fail(consent.reason);
       await kv.set(USED_STREAMS_KEY, [...used, msg.streamId].slice(-50));
       const startedAt = deps.now();
@@ -232,6 +235,7 @@ export async function handleBackgroundMessage(
           streamId: msg.streamId,
           startedAt,
           meetingId: msg.meetingId,
+          consent: toAttestation(consent.record),
         });
       } catch (err) {
         const e = err instanceof Error ? err.message : String(err);

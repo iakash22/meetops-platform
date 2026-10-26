@@ -2,6 +2,26 @@ import { Type, type Static } from '@sinclair/typebox';
 import { Id, IsoDateTime } from '../common.js';
 import { MeetingStatus } from '../domain/meeting.js';
 import { TaskStatus } from '../domain/task.js';
+import { Role } from '../domain/org.js';
+import {
+  AUTH_REVOCATION_KINDS,
+  AUTH_REVOCATION_MESSAGE_VERSION,
+  AUTH_REVOCATION_REASONS,
+  ORG_ACCESS_CHANGE_REASONS,
+  REAUTH_REASONS,
+} from '../constants.js';
+
+export {
+  AUTH_REVOCATIONS_CHANNEL,
+  AUTH_REVOCATION_KINDS,
+  AUTH_REVOCATION_MESSAGE_VERSION,
+  AUTH_REVOCATION_REASONS,
+  MAX_REALTIME_REAUTH_INTERVAL_MS,
+  ORG_ACCESS_CHANGE_REASONS,
+  REALTIME_CONTROL_EVENTS,
+  REALTIME_REAUTH_INTERVAL_MS,
+  REAUTH_REASONS,
+} from '../constants.js';
 
 /**
  * Server-to-client realtime events (Socket.IO). Payloads use contract ids and statuses
@@ -66,9 +86,18 @@ export type TaskUpdateEvent = Static<typeof TaskUpdateEvent>;
 
 /** Discriminated union on `event`, e.g. for a Redis emitter or a single client handler. */
 export const RealtimeEvent = Type.Union([
-  Type.Object({ event: Type.Literal('meeting:status'), data: MeetingStatusEvent }, { additionalProperties: false }),
-  Type.Object({ event: Type.Literal('transcription:progress'), data: TranscriptionProgressEvent }, { additionalProperties: false }),
-  Type.Object({ event: Type.Literal('task:update'), data: TaskUpdateEvent }, { additionalProperties: false }),
+  Type.Object(
+    { event: Type.Literal('meeting:status'), data: MeetingStatusEvent },
+    { additionalProperties: false },
+  ),
+  Type.Object(
+    { event: Type.Literal('transcription:progress'), data: TranscriptionProgressEvent },
+    { additionalProperties: false },
+  ),
+  Type.Object(
+    { event: Type.Literal('task:update'), data: TaskUpdateEvent },
+    { additionalProperties: false },
+  ),
 ]);
 export type RealtimeEvent = Static<typeof RealtimeEvent>;
 
@@ -85,4 +114,126 @@ export type RealtimeEventMap = {
   'transcription:progress': TranscriptionProgressEvent;
   'task:update': TaskUpdateEvent;
 };
-export type ServerToClientEvents = { [K in keyof RealtimeEventMap]: (payload: RealtimeEventMap[K]) => void };
+
+// ---- v0.4.1: auth revocation and control events (ADR-011 sections 3 and 5) ----
+
+const strict = { additionalProperties: false } as const;
+
+/** Why access was revoked. See AUTH_REVOCATION_REASONS. */
+export const AuthRevocationReason = Type.Union(AUTH_REVOCATION_REASONS.map((r) => Type.Literal(r)));
+export type AuthRevocationReason = (typeof AUTH_REVOCATION_REASONS)[number];
+/** AuthRevocationMessage `kind`. See AUTH_REVOCATION_KINDS. */
+export const AuthRevocationKind = Type.Union(AUTH_REVOCATION_KINDS.map((k) => Type.Literal(k)));
+export type AuthRevocationKind = (typeof AUTH_REVOCATION_KINDS)[number];
+
+const revocationBase = {
+  v: Type.Literal(AUTH_REVOCATION_MESSAGE_VERSION),
+  userId: Id,
+  reason: AuthRevocationReason,
+  at: IsoDateTime,
+};
+
+/**
+ * INTERNAL (api -> realtime). JSON message on the Redis channel AUTH_REVOCATIONS_CHANNEL (`meetops:auth:revocations`),
+ * published after the change commits. Identifiers only: it never carries a token, cookie or token hash, and is strict so
+ * one cannot be added. A message that fails this schema is dropped and counted by the subscriber.
+ * - `session`: disconnect sockets of `sessionId` (sessions.id, or the extension token family id).
+ * - `user`: disconnect every socket of `userId` (logout-all, password change).
+ * - `membership`: disconnect every socket of `userId` in `organizationId` (member removed, role changed, invitation revoked).
+ */
+export const AuthRevocationMessage = Type.Union([
+  Type.Object(
+    {
+      ...revocationBase,
+      kind: Type.Literal('session'),
+      sessionId: Id,
+      organizationId: Type.Optional(Id),
+    },
+    strict,
+  ),
+  Type.Object({ ...revocationBase, kind: Type.Literal('user') }, strict),
+  Type.Object({ ...revocationBase, kind: Type.Literal('membership'), organizationId: Id }, strict),
+]);
+export type AuthRevocationMessage = Static<typeof AuthRevocationMessage>;
+
+/**
+ * Server -> client `session:revoked`. Sent right before the server disconnects a socket whose session or token family
+ * was revoked. Carries no ids or credentials. The client must not reconnect with the same credential.
+ */
+export const SessionRevokedEvent = Type.Object(
+  { reason: AuthRevocationReason, at: IsoDateTime },
+  strict,
+);
+export type SessionRevokedEvent = Static<typeof SessionRevokedEvent>;
+
+/** `org:access-changed` reason. See ORG_ACCESS_CHANGE_REASONS. */
+export const OrgAccessChangeReason = Type.Union(
+  ORG_ACCESS_CHANGE_REASONS.map((r) => Type.Literal(r)),
+);
+export type OrgAccessChangeReason = (typeof ORG_ACCESS_CHANGE_REASONS)[number];
+
+/**
+ * Server -> client `org:access-changed`. Sent right before the server disconnects a socket whose membership in
+ * `organizationId` (the socket's own organization) was removed or changed role. `role` is the new role and is present
+ * only for `role_changed`. After `role_changed` the client may reconnect (the new socket gets the new role).
+ */
+export const OrgAccessChangedEvent = Type.Union([
+  Type.Object(
+    { organizationId: Id, reason: Type.Literal('member_removed'), at: IsoDateTime },
+    strict,
+  ),
+  Type.Object(
+    { organizationId: Id, reason: Type.Literal('role_changed'), role: Role, at: IsoDateTime },
+    strict,
+  ),
+]);
+export type OrgAccessChangedEvent = Static<typeof OrgAccessChangedEvent>;
+
+/** `auth:reauth-required` reason. See REAUTH_REASONS. */
+export const ReauthReason = Type.Union(REAUTH_REASONS.map((r) => Type.Literal(r)));
+export type ReauthReason = (typeof REAUTH_REASONS)[number];
+
+/**
+ * Server -> client `auth:reauth-required` (G2). Sent right before the server disconnects a socket that must reconnect
+ * with its current credential: `org_switch` (the session was rotated to another org), `session_expired` (the socket
+ * outlived the session's `expiresAt`) or `revalidation_failed` (the periodic or on-join re-verification failed).
+ */
+export const AuthReauthRequiredEvent = Type.Object(
+  { reason: ReauthReason, at: IsoDateTime },
+  strict,
+);
+export type AuthReauthRequiredEvent = Static<typeof AuthReauthRequiredEvent>;
+
+/** Discriminated union of the control events on `event`. */
+export const RealtimeControlEvent = Type.Union([
+  Type.Object({ event: Type.Literal('session:revoked'), data: SessionRevokedEvent }, strict),
+  Type.Object({ event: Type.Literal('org:access-changed'), data: OrgAccessChangedEvent }, strict),
+  Type.Object(
+    { event: Type.Literal('auth:reauth-required'), data: AuthReauthRequiredEvent },
+    strict,
+  ),
+]);
+export type RealtimeControlEvent = Static<typeof RealtimeControlEvent>;
+
+/** Control event name to payload schema. */
+export const RealtimeControlEventSchemas = {
+  'session:revoked': SessionRevokedEvent,
+  'org:access-changed': OrgAccessChangedEvent,
+  'auth:reauth-required': AuthReauthRequiredEvent,
+} as const;
+
+/** Control event name to payload type map. */
+export type RealtimeControlEventMap = {
+  'session:revoked': SessionRevokedEvent;
+  'org:access-changed': OrgAccessChangedEvent;
+  'auth:reauth-required': AuthReauthRequiredEvent;
+};
+export type RealtimeControlEventName = keyof RealtimeControlEventMap;
+
+/**
+ * Socket.IO ServerToClientEvents: the domain events (RealtimeEventMap) plus, from v0.4.1, the control events
+ * (RealtimeControlEventMap).
+ */
+export type ServerToClientEvents = {
+  [K in keyof RealtimeEventMap]: (payload: RealtimeEventMap[K]) => void;
+} & { [K in keyof RealtimeControlEventMap]: (payload: RealtimeControlEventMap[K]) => void };
