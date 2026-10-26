@@ -1,3 +1,4 @@
+import { Link } from '@tanstack/react-router';
 import { useMemo } from 'react';
 import { TASK_STATUSES, type TaskStatusValue } from '@meetops/contracts/types';
 import { Badge } from '@/components/ui/badge';
@@ -121,7 +122,17 @@ export function TasksPage({
   };
   return (
     <>
-      <PageHeader title="Tasks" />
+      <PageHeader
+        title="Tasks"
+        actions={
+          <Link
+            to="/tasks/review"
+            className="text-sm font-medium text-link underline-offset-4 hover:underline"
+          >
+            Review suggested tasks
+          </Link>
+        }
+      />
       <div className="mb-4 flex flex-wrap gap-4" role="group" aria-label="Task filters">
         <FilterSelect
           id="filter-status"
