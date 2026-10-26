@@ -66,6 +66,7 @@ export class UploadService {
       checksumSha256Base64: body.checksumSha256,
       originalName: body.filename,
       status: 'pending_upload',
+      scanStatus: null,
       createdAt: now,
     };
     await this.d.files.create(file);
@@ -101,15 +102,16 @@ export class UploadService {
     authorizeMedia(c, 'update', 'FileObject', f.uploadedById);
     if (f.status !== 'pending_upload')
       throw new UploadStateConflictError('Upload already completed');
-    const consent = checkStoredConsent(
-      await this.d.consents.findLatest(f.organizationId, 'upload', f.id),
-    );
+    // #168 order: stored size/checksum first, then the stored consent attestation.
     const stored = await this.d.signer.head(f.key);
     if (!stored) throw new UploadStateConflictError('The file has not been uploaded yet');
     if (stored.sizeBytes !== f.sizeBytes) {
       throw new UploadStateConflictError('Uploaded size does not match the declared size');
     }
-    await this.d.files.setStatus(f.organizationId, f.id, 'processing');
+    const consent = checkStoredConsent(
+      await this.d.consents.findLatest(f.organizationId, 'upload', f.id),
+    );
+    await this.d.files.setStatus(f.organizationId, f.id, 'processing', 'pending');
     await this.d.jobs.enqueue({
       kind: 'process_upload',
       organizationId: f.organizationId,
@@ -118,13 +120,14 @@ export class UploadService {
       consentAttestationId: consent.id,
       ...(f.meetingId ? { meetingId: f.meetingId } : {}),
     });
-    return { ...f, status: 'processing' };
+    return { ...f, status: 'processing', scanStatus: 'pending' };
   }
 
+  /** Per #168: 404 (same body as other-org / unknown ids) unless the FileObject's scanStatus is `clean`. */
   async downloadUrl(c: DirectoryCaller, id: string): Promise<SignedRequest> {
     const f = await this.find(c, id);
     authorizeMedia(c, 'read', 'FileObject');
-    if (f.status === 'pending_upload') throw new UploadStateConflictError('Upload not completed');
+    if (f.scanStatus !== 'clean') throw new UploadNotFoundError();
     return this.d.signer.presignGet({ key: f.key, ttlSeconds: DOWNLOAD_URL_TTL_SECONDS });
   }
 }

@@ -28,7 +28,10 @@ export interface RecordingDeps extends MediaDeps {
   sessions: RecordingSessionRepository;
 }
 
-/** 413-style refusal, sent as 409 CONFLICT (contracts have no PAYLOAD_TOO_LARGE code). */
+/**
+ * Running-total (1.4 GB) refusal, sent as 409 CONFLICT for now.
+ * TODO(#168): 413 PAYLOAD_TOO_LARGE is being proposed in contracts PR #168; switch status/code once it lands.
+ */
 export class RecordingLimitError extends DomainError {
   constructor(message: string) {
     super('CONFLICT', message, 409);
