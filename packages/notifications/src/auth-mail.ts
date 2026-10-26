@@ -1,4 +1,4 @@
-import { escapeHtml, renderTemplate, safeUrl, type RenderedEmail } from './templates.js';
+import { escapeHtml, renderTemplate, safeUrl, type RenderedEmail, type TemplateVariables } from './templates.js';
 import type { EmailService } from './types.js';
 
 /**
@@ -117,17 +117,19 @@ export function renderAuthMail(
         resetUrl: url,
         expiresInMinutes: options.passwordResetExpiresInMinutes ?? 30,
       });
-    case 'invitation':
-      return renderTemplate('invitation', {
-        ...(name ? { name } : {}),
+    case 'invitation': {
+      const vars: TemplateVariables['invitation'] = {
         inviterName: optional(mail.data, 'inviterName') ?? 'A teammate',
         workspaceName: required(mail.data, 'organizationName'),
         inviteUrl: url,
-        ...(optional(mail.data, 'role') ? { role: optional(mail.data, 'role') } : {}),
-        ...(positiveInt(mail.data, 'expiresInDays')
-          ? { expiresInDays: positiveInt(mail.data, 'expiresInDays') }
-          : {}),
-      });
+      };
+      const role = optional(mail.data, 'role');
+      const expiresInDays = positiveInt(mail.data, 'expiresInDays');
+      if (name) vars.name = name;
+      if (role) vars.role = role;
+      if (expiresInDays) vars.expiresInDays = expiresInDays;
+      return renderTemplate('invitation', vars);
+    }
     case 'account_exists':
       return simple(
         'You already have a MeetOps account',
