@@ -71,6 +71,8 @@ const authTokensSql = readFileSync(
 const adr010Sql = teamsSql + authTokensSql;
 const CONSENT_MIGRATION = '20261025120000_consent_scan_keycheck';
 const MEETINGS_EXTERNAL_ID_MIGRATION = '20261026120000_meetings_external_id';
+/** Phase 3 per-recording transcript revision migration. */
+const TRANSCRIPT_REVISION_MIGRATION_DIR = '20261026200000_transcript_recording_revision';
 const consentSql = readFileSync(resolve(migrationsDir, CONSENT_MIGRATION, 'migration.sql'), 'utf8');
 const rlsSql =
   readFileSync(resolve(migrationsDir, '20261021110000_tenant_rls_roles/migration.sql'), 'utf8') +
@@ -1234,5 +1236,43 @@ describe('ADR-005 durable token families (static)', () => {
       'REVOKE DELETE ON TABLE "auth_devices", "auth_token_families", "auth_refresh_tokens" FROM meetops_app;',
     );
     expect(authTokensSql).toContain("RAISE EXCEPTION 'RLS enabled but not forced on: %'");
+  });
+});
+
+const TRANSCRIPT_REVISION_MIGRATION = TRANSCRIPT_REVISION_MIGRATION_DIR;
+
+describe('Phase 3 transcripts revised per recording (static)', () => {
+  const sql = readFileSync(
+    resolve(migrationsDir, TRANSCRIPT_REVISION_MIGRATION, 'migration.sql'),
+    'utf8',
+  ).replace(/--.*$/gm, '');
+  const transcript = models.find((m) => m.name === 'Transcript')?.body ?? '';
+
+  it('sorts before the auth token families migration', () => {
+    const dirs = readdirSync(migrationsDir, { withFileTypes: true })
+      .filter((d) => d.isDirectory())
+      .map((d) => d.name)
+      .sort();
+    expect(dirs.indexOf(TRANSCRIPT_REVISION_MIGRATION)).toBeLessThan(
+      dirs.indexOf(AUTH_TOKENS_MIGRATION),
+    );
+  });
+
+  it('moves the revision key to (recording_id, revision) and keeps revisions non-negative', () => {
+    expect(sql).toContain('DROP INDEX IF EXISTS "transcripts_meeting_id_revision_key"');
+    expect(sql).toContain(
+      'CREATE UNIQUE INDEX "transcripts_recording_id_revision_key" ON "transcripts"("recording_id", "revision")',
+    );
+    expect(sql).toContain('CHECK ("revision" >= 0)');
+    expect(transcript).toContain('@@unique([recordingId, revision])');
+    expect(transcript).not.toContain('@@unique([meetingId, revision])');
+  });
+
+  it('only adds a nullable merge_state column (no table drop, no RLS change)', () => {
+    expect(sql).toContain('ADD COLUMN "merge_state" JSONB');
+    expect(sql).not.toMatch(
+      /DROP TABLE|DROP COLUMN|NO FORCE ROW LEVEL SECURITY|DISABLE ROW LEVEL SECURITY/i,
+    );
+    expect(transcript).toMatch(/mergeState\s+Json\?/);
   });
 });

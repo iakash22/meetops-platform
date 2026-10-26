@@ -646,6 +646,8 @@ model Transcript {
   /// Chunked transcription: merge of TranscriptChunk rows into fullText/segments (single winner via tryBeginMerge).
   mergeStatus    TranscriptMergeStatus @default(pending) @map("merge_status")
   mergedAt       DateTime?             @map("merged_at") @db.Timestamptz(3)
+  /// ai-core merge state for this revision (content hash, chunk indexes, speaker map). Null on the revision-0 anchor.
+  mergeState     Json?                 @map("merge_state")
   createdAt      DateTime              @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt      DateTime              @updatedAt @map("updated_at") @db.Timestamptz(3)
   deletedAt      DateTime?             @map("deleted_at") @db.Timestamptz(3)
@@ -658,7 +660,8 @@ model Transcript {
   aiRuns       AiRun[]
   chunks       TranscriptChunk[]
 
-  @@unique([meetingId, revision])
+  /// Revision 0 is the per-recording anchor that owns TranscriptChunk rows; >= 1 are merged revisions.
+  @@unique([recordingId, revision])
   @@unique([organizationId, provider, providerJobId])
   @@unique([organizationId, id])
   @@index([organizationId, meetingId])
