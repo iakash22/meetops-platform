@@ -163,3 +163,9 @@ Both signatures are required before Status moves to Accepted. Sign by replacing 
 | ------------------------- | ------- | ---- | ----- |
 | Architecture Agent (ARCH) | pending |      |       |
 | Security Agent (SEC)      | pending |      |       |
+
+## Pending amendment from ADR-012 (Proposed)
+
+[ADR-012 Amendment 1, D1.6](./ADR-012-desktop-auth.md#d16-cross-amendment-to-adr-011-decision-1-desktop-audience)
+proposes a desktop bearer rule (`aud=desktop`) as Decision 1 item 3a and rewords item 4. This text changes only when
+both ADRs are Accepted with Architecture and Security sign-off.

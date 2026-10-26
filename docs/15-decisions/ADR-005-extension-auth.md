@@ -160,3 +160,9 @@ handshake to `apps/realtime` becomes a bearer surface: the extension sends its a
 string), with `aud=extension` and scope `recordings:write`, from an allowlisted `chrome-extension://<id>` origin, and MUST
 NOT send a session cookie. Bearer sockets join only meeting rooms they pass the access check for, never the org-wide room.
 Revoking a token family (A1.6) also publishes to `meetops:auth:revocations` so open sockets are disconnected.
+
+## Pending amendment from ADR-012 (Proposed)
+
+[ADR-012 Amendment 1, D1.7](./ADR-012-desktop-auth.md#d17-cross-amendment-to-adr-005-a125-token-bearing-responses)
+proposes adding `DesktopTokenResponse` to the A1.2.5 list of token-bearing bodies and extending `REDACT_KEYS`. A1.2.5
+changes only when ADR-012 Amendment 1 is Accepted with Architecture and Security sign-off.
