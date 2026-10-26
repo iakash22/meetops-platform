@@ -23,7 +23,8 @@ const session: DesktopSession = {
 } as unknown as DesktopSession;
 
 /** Tauri IPC rejects with the plain serialized error value, not an Error. */
-const ipcReject = (value: unknown) => Promise.reject(value as Error);
+// eslint-disable-next-line @typescript-eslint/prefer-promise-reject-errors -- mirrors Tauri IPC rejections
+const ipcReject = (value: unknown) => Promise.reject(value);
 
 const invokeWith = (impl: (cmd: string, args?: Record<string, unknown>) => unknown) =>
   vi.fn(async (cmd: string, args?: Record<string, unknown>) =>
