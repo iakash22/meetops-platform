@@ -219,7 +219,7 @@ export function RecordingScreen({
             <CardTitle className="flex items-center gap-2">
               <span
                 aria-hidden
-                className={`size-2.5 rounded-full bg-destructive ${paused ? '' : 'motion-safe:animate-pulse'}`}
+                className={`size-2.5 rounded-full bg-highlight ${paused ? '' : 'motion-safe:animate-pulse'}`}
               />
               <span data-testid="recording-indicator">{paused ? 'Paused' : 'Recording'}</span>
               <span className="font-mono text-muted-foreground" aria-label="Elapsed time">
@@ -256,7 +256,7 @@ export function RecordingScreen({
                     id="record-meeting"
                     value={meetingId}
                     onChange={(e) => setMeetingId(e.target.value)}
-                    className="h-11 w-full rounded-md border bg-card px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    className="h-11 w-full rounded-md border bg-card px-3 text-base focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                   >
                     {recordable.map((m) => (
                       <option key={m.id} value={m.id}>
