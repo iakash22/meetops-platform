@@ -91,7 +91,7 @@ const styles = StyleSheet.create({
     padding: spacing.lg,
     marginBottom: spacing.md,
   },
-  activeRow: { borderColor: colors.accent },
+  activeRow: { borderColor: colors.primary },
   pressed: { backgroundColor: colors.secondary },
   avatar: {
     width: 36,
@@ -101,10 +101,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  activeAvatar: { backgroundColor: colors.accent },
+  activeAvatar: { backgroundColor: colors.primary },
   avatarText: { color: colors.foreground, fontSize: 15, fontWeight: '700' },
-  activeAvatarText: { color: colors.accentForeground },
+  activeAvatarText: { color: colors.primaryForeground },
   name: { color: colors.foreground, fontSize: 16, flex: 1 },
-  activeTag: { color: colors.accent, fontSize: 13, fontWeight: '600' },
+  activeTag: { color: colors.link, fontSize: 13, fontWeight: '600' },
   muted: { color: colors.mutedForeground, fontSize: 13, marginLeft: spacing.sm },
 });

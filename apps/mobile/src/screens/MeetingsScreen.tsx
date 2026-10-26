@@ -136,9 +136,9 @@ const styles = StyleSheet.create({
     padding: spacing.lg,
     marginBottom: spacing.md,
   },
-  liveRow: { borderColor: colors.accent },
+  liveRow: { borderColor: colors.primary },
   statusRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
-  live: { color: colors.accent, fontSize: 14, fontWeight: '600' },
+  live: { color: colors.foreground, fontSize: 14, fontWeight: '600' },
   title: { color: colors.foreground, fontSize: 16, fontWeight: '600', marginBottom: spacing.xs },
   placeholder: {
     color: colors.mutedForeground,

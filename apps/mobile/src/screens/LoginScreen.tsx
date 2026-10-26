@@ -1,6 +1,14 @@
 import { useRouter } from 'expo-router';
-import { useState } from 'react';
-import { KeyboardAvoidingView, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
+import { useRef, useState } from 'react';
+import {
+  KeyboardAvoidingView,
+  Platform,
+  Pressable,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
+} from 'react-native';
 
 import { Toast } from '../ui/Toast';
 import { useAuth } from '../auth/AuthProvider';
@@ -36,13 +44,18 @@ export function LoginScreen() {
   const [fieldErrors, setFieldErrors] = useState<LoginFieldErrors>({});
   const [formError, setFormError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const emailRef = useRef<TextInput>(null);
+  const passwordRef = useRef<TextInput>(null);
 
   const submit = async () => {
     if (submitting) return;
     const { ok, errors, credentials } = validateLogin({ email, password });
     setFieldErrors(errors);
     setFormError(null);
-    if (!ok) return;
+    if (!ok) {
+      (errors.email ? emailRef : passwordRef).current?.focus();
+      return;
+    }
     setSubmitting(true);
     try {
       await signIn(credentials);
@@ -72,6 +85,7 @@ export function LoginScreen() {
         ) : null}
 
         <TextField
+          ref={emailRef}
           testID="login-email"
           label="Email"
           value={email}
@@ -88,6 +102,7 @@ export function LoginScreen() {
           editable={!submitting}
         />
         <TextField
+          ref={passwordRef}
           testID="login-password"
           label="Password"
           value={password}
