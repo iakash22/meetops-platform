@@ -18,6 +18,8 @@ export const ApiErrorCode = Type.Union([
   Type.Literal('FORBIDDEN'),
   Type.Literal('NOT_FOUND'),
   Type.Literal('CONFLICT'),
+  /** v0.5.0: HTTP 413 (PAYLOAD_TOO_LARGE_HTTP_STATUS). Size caps (1.4 GB). */
+  Type.Literal('PAYLOAD_TOO_LARGE'),
   Type.Literal('RATE_LIMITED'),
   Type.Literal('PROVIDER_UNAVAILABLE'),
   Type.Literal('INTERNAL'),
@@ -37,6 +39,7 @@ export {
   NOT_FOUND_REASONS,
   NOT_FOUND_HTTP_STATUS,
   DIRECTORY_ERROR_REASONS,
+  PAYLOAD_TOO_LARGE_HTTP_STATUS,
 } from '../constants.js';
 
 /** Named reason for a `CONFLICT` (409) error. See CONFLICT_REASONS. */
@@ -96,4 +99,12 @@ export type ConsentErrorEnvelope = {
     code: 'VALIDATION_FAILED';
     reason: (typeof CONSENT_ERROR_REASONS)[number];
   };
+};
+
+/**
+ * v0.5.0: a 413 body for the 1.4 GB caps (recording-session running total,
+ * upload `sizeBytes`). `code` is `PAYLOAD_TOO_LARGE`; no `reason`.
+ */
+export type PayloadTooLargeErrorEnvelope = {
+  error: Omit<ApiErrorEnvelope['error'], 'code' | 'reason'> & { code: 'PAYLOAD_TOO_LARGE' };
 };
