@@ -36,6 +36,7 @@ import {
   OrganizationNotFoundError,
 } from '../domain/errors.js';
 import type { MemberMutationResult } from '../domain/repositories.js';
+import type { ExtensionRevoker } from '../../extension-auth/application/extension-auth.service.js';
 import type {
   InvitationRepository,
   MembershipRepository,
@@ -43,6 +44,8 @@ import type {
 } from '../domain/repositories.js';
 
 export interface OrganizationServiceDeps {
+  /** ADR-005 A1.6: removal from an org revokes the user's extension families for that org. */
+  extensionRevoker?: ExtensionRevoker;
   organizations: OrganizationRepository;
   memberships: MembershipRepository;
   invitations: InvitationRepository;
@@ -364,6 +367,11 @@ export class OrganizationService {
       organizationId: ctx.organizationId,
       reason: 'member_removed',
     });
+    await this.d.extensionRevoker?.revokeForUser(
+      targetUserId,
+      'member_removed',
+      ctx.organizationId,
+    );
     await this.audit(ctx, {
       action: 'membership.remove',
       targetType: 'membership',

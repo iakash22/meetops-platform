@@ -23,7 +23,7 @@ export const DEFAULT_LOCKOUT: LockoutPolicy = {
   lockThreshold: 10,
   baseDelayMs: 100,
   maxDelayMs: 1000,
-  lockMs: 15 * MIN
+  lockMs: 15 * MIN,
 };
 
 /** Delay to apply to the response of the n-th failure in the window (0 = none). */

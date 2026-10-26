@@ -253,6 +253,9 @@ model Organization {
   teamMembers            TeamMember[]
   consentAttestations    ConsentAttestation[]
   integrationConnections IntegrationConnection[]
+  authDevices            AuthDevice[]
+  authTokenFamilies      AuthTokenFamily[]
+  authRefreshTokens      AuthRefreshToken[]
 
   createdBy User? @relation("OrgCreator", fields: [createdById], references: [id], onDelete: SetNull)
 
@@ -287,6 +290,8 @@ model User {
   recordingSessions    RecordingSession[]     @relation("RecordingSessionCreator")
   aiConfigsUpdated     AiOrganizationConfig[] @relation("AiOrganizationConfigUpdater")
   consentAttestations  ConsentAttestation[]   @relation("ConsentAttester")
+  authDevices          AuthDevice[]           @relation("AuthDeviceOwner")
+  authTokenFamilies    AuthTokenFamily[]      @relation("AuthTokenFamilyOwner")
 
   @@map("users")
 }
@@ -644,6 +649,8 @@ model Transcript {
   /// Chunked transcription: merge of TranscriptChunk rows into fullText/segments (single winner via tryBeginMerge).
   mergeStatus    TranscriptMergeStatus @default(pending) @map("merge_status")
   mergedAt       DateTime?             @map("merged_at") @db.Timestamptz(3)
+  /// ai-core merge state for this revision (content hash, chunk indexes, speaker map). Null on the revision-0 anchor.
+  mergeState     Json?                 @map("merge_state")
   createdAt      DateTime              @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt      DateTime              @updatedAt @map("updated_at") @db.Timestamptz(3)
   deletedAt      DateTime?             @map("deleted_at") @db.Timestamptz(3)
@@ -656,7 +663,8 @@ model Transcript {
   aiRuns       AiRun[]
   chunks       TranscriptChunk[]
 
-  @@unique([meetingId, revision])
+  /// Revision 0 is the per-recording anchor that owns TranscriptChunk rows; >= 1 are merged revisions.
+  @@unique([recordingId, revision])
   @@unique([organizationId, provider, providerJobId])
   @@unique([organizationId, id])
   @@index([organizationId, meetingId])
@@ -1123,4 +1131,77 @@ model IntegrationConnection {
   @@unique([organizationId, provider, externalAccountId])
   @@index([tokenKeyId])
   @@map("integration_connections")
+}
+
+/// ADR-005 A1.2 / ADR-012: who a bearer token family was issued to. `extension` today; `desktop` once ADR-012 is accepted.
+enum AuthTokenAudience {
+  extension
+  desktop
+}
+
+/// A paired client install (ADR-005 A1.1: per-install deviceId) for one user in one organization. clientId is the
+/// allowlisted extension id (or the desktop app id). Tenant table: forced RLS, ADR-010 setting only.
+model AuthDevice {
+  id             String            @id @default(uuid()) @db.Uuid
+  organizationId String            @map("org_id") @db.Uuid
+  userId         String            @map("user_id") @db.Uuid
+  audience       AuthTokenAudience
+  clientId       String            @map("client_id")
+  /// Client-generated per-install id (UUID per ADR-005 A1.1.2).
+  deviceId       String            @map("device_id") @db.Uuid
+  label          String?
+  createdAt      DateTime          @default(now()) @map("created_at") @db.Timestamptz(3)
+  lastSeenAt     DateTime          @default(now()) @map("last_seen_at") @db.Timestamptz(3)
+
+  organization Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user         User              @relation("AuthDeviceOwner", fields: [userId], references: [id], onDelete: Cascade)
+  families     AuthTokenFamily[]
+
+  @@unique([organizationId, id])
+  @@unique([organizationId, userId, audience, clientId, deviceId])
+  @@index([organizationId, userId])
+  @@map("auth_devices")
+}
+
+/// A rotating refresh family (ADR-005 A1.2.3-4). Rotation never extends maxExpiresAt. Revocation is durable here;
+/// access tokens (15 min) stay in Redis only.
+model AuthTokenFamily {
+  id             String            @id @default(uuid()) @db.Uuid
+  organizationId String            @map("org_id") @db.Uuid
+  userId         String            @map("user_id") @db.Uuid
+  authDeviceId   String            @map("auth_device_id") @db.Uuid
+  audience       AuthTokenAudience
+  scopes         String[]
+  createdAt      DateTime          @default(now()) @map("created_at") @db.Timestamptz(3)
+  maxExpiresAt   DateTime          @map("max_expires_at") @db.Timestamptz(3)
+  revokedAt      DateTime?         @map("revoked_at") @db.Timestamptz(3)
+
+  organization  Organization       @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user          User               @relation("AuthTokenFamilyOwner", fields: [userId], references: [id], onDelete: Cascade)
+  device        AuthDevice         @relation(fields: [organizationId, authDeviceId], references: [organizationId, id], onDelete: Cascade)
+  refreshTokens AuthRefreshToken[]
+
+  @@unique([organizationId, id])
+  @@index([organizationId, userId])
+  @@index([organizationId, authDeviceId])
+  @@map("auth_token_families")
+}
+
+/// One issued refresh token, stored only as a SHA-256 hash (CHECK: 64 lowercase hex). consumedAt set = rotated;
+/// presenting it again is reuse and revokes the family (ADR-005 A1.2.3).
+model AuthRefreshToken {
+  id             String    @id @default(uuid()) @db.Uuid
+  organizationId String    @map("org_id") @db.Uuid
+  familyId       String    @map("family_id") @db.Uuid
+  tokenHash      String    @unique @map("token_hash")
+  expiresAt      DateTime  @map("expires_at") @db.Timestamptz(3)
+  consumedAt     DateTime? @map("consumed_at") @db.Timestamptz(3)
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  organization Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  family       AuthTokenFamily @relation(fields: [organizationId, familyId], references: [organizationId, id], onDelete: Cascade)
+
+  @@unique([organizationId, id])
+  @@index([organizationId, familyId])
+  @@map("auth_refresh_tokens")
 }

@@ -6,10 +6,11 @@ import type {
   InvitationRepository,
   MemberMutationResult,
   MembershipRepository,
-  OrganizationRepository
+  OrganizationRepository,
 } from '../domain/repositories.js';
 
-const live = <T extends { deletedAt: Date | null }>(x: T | undefined | null) => (x && !x.deletedAt ? x : null);
+const live = <T extends { deletedAt: Date | null }>(x: T | undefined | null) =>
+  x && !x.deletedAt ? x : null;
 
 /** Test/dev only. */
 export class InMemoryOrganizationRepository implements OrganizationRepository {
@@ -22,7 +23,9 @@ export class InMemoryOrganizationRepository implements OrganizationRepository {
     return live(this.items.get(organizationId));
   }
   async findManyByIds(organizationIds: string[]) {
-    return organizationIds.map((id) => live(this.items.get(id))).filter((o): o is Organization => o !== null);
+    return organizationIds
+      .map((id) => live(this.items.get(id)))
+      .filter((o): o is Organization => o !== null);
   }
   async slugExists(slug: string) {
     return [...this.items.values()].some((o) => o.slug === slug);
@@ -37,7 +40,9 @@ export class InMemoryMembershipRepository implements MembershipRepository {
   }
   async create(organizationId: string, m: Membership) {
     if (m.organizationId !== organizationId) throw new Error('tenant mismatch');
-    const old = this.items.find((x) => x.organizationId === organizationId && x.userId === m.userId);
+    const old = this.items.find(
+      (x) => x.organizationId === organizationId && x.userId === m.userId,
+    );
     if (old) Object.assign(old, { ...m, id: old.id, deletedAt: null });
     else this.items.push({ ...m });
     return old ? { ...old } : m;
@@ -56,7 +61,12 @@ export class InMemoryMembershipRepository implements MembershipRepository {
     if (target.role !== 'owner' || newRole === 'owner') return false;
     return this.live(organizationId).filter((m) => m.role === 'owner').length <= 1;
   }
-  async setRole(organizationId: string, userId: string, role: Role, at: Date): Promise<MemberMutationResult> {
+  async setRole(
+    organizationId: string,
+    userId: string,
+    role: Role,
+    at: Date,
+  ): Promise<MemberMutationResult> {
     const m = this.live(organizationId).find((x) => x.userId === userId);
     if (!m) return 'not_found';
     if (this.wouldOrphan(organizationId, m, role)) return 'last_owner';
@@ -87,12 +97,15 @@ export class InMemoryInvitationRepository implements InvitationRepository {
   }
   async findPendingByEmail(organizationId: string, email: string) {
     const i = live(
-      [...this.items.values()].find((x) => x.organizationId === organizationId && x.email === email && x.status === 'pending')
+      [...this.items.values()].find(
+        (x) => x.organizationId === organizationId && x.email === email && x.status === 'pending',
+      ),
     );
     return i ? { ...i } : null;
   }
   async update(organizationId: string, inv: Invitation) {
-    if (inv.organizationId !== organizationId || !this.items.has(inv.id)) throw new Error('tenant mismatch');
+    if (inv.organizationId !== organizationId || !this.items.has(inv.id))
+      throw new Error('tenant mismatch');
     this.items.set(inv.id, { ...inv });
     return inv;
   }
@@ -102,12 +115,22 @@ export class InMemoryInvitationRepository implements InvitationRepository {
   }
   async lookupByTokenHash(tokenHash: string) {
     const i = live([...this.items.values()].find((x) => x.tokenHash === tokenHash));
-    return i ? { id: i.id, organizationId: i.organizationId, email: i.email, role: i.role, status: i.status, expiresAt: i.expiresAt } : null;
+    return i
+      ? {
+          id: i.id,
+          organizationId: i.organizationId,
+          email: i.email,
+          role: i.role,
+          status: i.status,
+          expiresAt: i.expiresAt,
+        }
+      : null;
   }
   async accept(tokenHash: string, by: { userId: string; email: string }, now: Date) {
     const i = live([...this.items.values()].find((x) => x.tokenHash === tokenHash));
     if (!i || i.status !== 'pending' || i.expiresAt <= now || i.email !== by.email) return null;
-    if (!this.memberships) throw new Error('InMemoryInvitationRepository needs the membership repository to accept');
+    if (!this.memberships)
+      throw new Error('InMemoryInvitationRepository needs the membership repository to accept');
     // Claim synchronously (single use under concurrency), then mirror Postgres accept_invitation():
     // an active membership is never changed and the invitation goes back to pending.
     i.status = 'accepted';
@@ -123,7 +146,7 @@ export class InMemoryInvitationRepository implements InvitationRepository {
       userId: by.userId,
       role: i.role,
       createdAt: now,
-      deletedAt: null
+      deletedAt: null,
     });
     return { membership };
   }

@@ -4,10 +4,14 @@ import { renderTemplate, templateNames } from '../src';
 describe('templates', () => {
   it('registers all templates', () => {
     expect(templateNames.sort()).toEqual([
+      'integration-error',
       'invitation',
       'meeting-summary',
+      'member-added',
+      'member-removed',
       'password-reset',
       'task-assigned',
+      'tasks-ready-for-review',
       'verification',
     ]);
   });

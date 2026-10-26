@@ -86,5 +86,5 @@ describe('v0.6.0 ListMeetingsQuery', () => {
 });
 
 describe('package version', () => {
-  it('is 0.6.0', () => expect(pkg.version).toBe('0.6.0'));
+  it('is 0.6.0 or later', () => expect(pkg.version).toMatch(/^0\.([6-9]|\d{2,})\.\d+$/));
 });

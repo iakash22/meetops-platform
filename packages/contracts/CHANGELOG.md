@@ -6,6 +6,39 @@ While the version is `0.x`, a minor bump may contain breaking changes (ADR-003).
 
 ## [Unreleased]
 
+### Added
+
+- `EMAIL_TEMPLATE_IDS` / `EmailJobPayload` (user recipient): `member-added`, `member-removed`, `tasks-ready-for-review`, `integration-error` (product mails; ids-only payloads, variables resolved by the worker).
+
+## [0.7.0] - 2026-10-26
+
+Integration routes (Phase 5), following ADR-007 (retries, webhook replay) and ADR-008 (OAuth state + PKCE, token
+encryption at rest). Builds on 0.6.1.
+
+### Added
+
+- `User.emailVerifiedAt` (optional, nullable ISO date-time), returned by `GET /auth/session`; used by web PR #188 (verification banner).
+
+- `INTEGRATION_PATHS`: list, connect, OAuth/App-install callback, disconnect, webhook, and task issue push.
+- DTOs: `Integration` (never carries tokens, webhook secret or ciphertext), `IntegrationList`, `IntegrationParams`,
+  `ConnectIntegrationRequest`/`Response`, `IntegrationCallbackQuery`/`Params`, `WebhookParams`,
+  `WebhookAcceptedResponse`, `PushTaskIssueRequest`/`Params`. `IntegrationStatus` (`INTEGRATION_STATUSES`).
+- `INTEGRATION_STATE_TTL_SECONDS` (600) and `INTEGRATION_WEBHOOK_MAX_BYTES` (1 MiB).
+
+### Changed (breaking)
+
+- `API_ERROR_REASONS` / `ApiErrorReason` gain `INTEGRATION_ERROR_REASONS`: `INTEGRATION_NOT_CONNECTED`,
+  `APPROVAL_REQUIRED`, `OAUTH_STATE_INVALID`, `REPLAYED_DELIVERY`, `WEBHOOK_SIGNATURE_INVALID`. Additive on the wire;
+  exhaustive switches over `ApiErrorReason` must add them (ADR-003 §5). None exists in the repo today.
+
+## [0.6.1] - 2026-10-26
+
+### Fixed
+
+- `ListTasksQuery` no longer puts a `default` on `limit` inside its `anyOf` variants. Fastify's Ajv strict mode
+  refuses to compile a `default` inside `anyOf`, so servers had to strip it. Accepted and rejected inputs are
+  unchanged; servers apply `DEFAULT_PAGE_LIMIT` when `limit` is absent (Value.Default no longer fills it).
+
 ## [0.6.0] - 2026-10-26
 
 Native capture sources and the meetings list route. Builds on 0.5.0 (#168). Needed by mobile PR #173, desktop PRs
@@ -20,6 +53,8 @@ Native capture sources and the meetings list route. Builds on 0.5.0 (#168). Need
   tracked separately from this contracts release.
 
 ### Added
+
+- `User.emailVerifiedAt` (optional, nullable ISO date-time), returned by `GET /auth/session`; used by web PR #188 (verification banner).
 
 - `ListMeetingsQuery` and `ListMeetingsParams` for `GET /orgs/:organizationId/meetings`, returning
   `CursorPage<Meeting>`. Paged like `ListTasksQuery` (`cursor` + `limit`), newest first, with optional `status`
@@ -41,6 +76,8 @@ Consent settings, upload complete / download-URL contracts and the `PAYLOAD_TOO_
 
 ### Added
 
+- `User.emailVerifiedAt` (optional, nullable ISO date-time), returned by `GET /auth/session`; used by web PR #188 (verification banner).
+
 - `api/consent-settings.ts`: `ConsentSettings` (`{ mode, noticeText, skipExternalParticipants, retentionDays,
 currentConsentVersion, updatedAt }`), `UpdateConsentSettingsRequest` (partial, strict, non-empty; server-owned
   fields not writable), `ConsentSettingsMode` (`all_party | one_party`).
@@ -58,6 +95,8 @@ Consent attestation (G11), FileObject scan status, realtime auth-revocation cont
 limits. A `0.x` patch that contains breaking changes (ADR-003); see "Changed (breaking)".
 
 ### Added
+
+- `User.emailVerifiedAt` (optional, nullable ISO date-time), returned by `GET /auth/session`; used by web PR #188 (verification banner).
 
 - `api/consent.ts`: `ConsentAttestationInput` (`{ consentVersion, attestedAt, method }`, strict: a client cannot send
   `attestedByUserId` or `organizationId`), the stored `ConsentAttestation` record (server-filled `attestedByUserId`,
@@ -105,6 +144,8 @@ Directory contracts (employees, teams + team members, projects). A `0.x` minor b
 breaking upload-limit changes listed under "Changed (breaking)" below, which were unreleased in 0.3.3.
 
 ### Added
+
+- `User.emailVerifiedAt` (optional, nullable ISO date-time), returned by `GET /auth/session`; used by web PR #188 (verification banner).
 
 - `api/employees.ts`: `EmployeeDto`, `CreateEmployeeRequest`, `UpdateEmployeeRequest`, `ListEmployeesQuery`,
   `ListEmployeesResponse`, `EmployeesParams`, `EmployeeParams` (+ `EmployeeName`, `EmployeeField`, `EmployeeEmail`).
@@ -156,6 +197,8 @@ All changes are additive. No export was removed and no existing schema got stric
 
 ### Added
 
+- `User.emailVerifiedAt` (optional, nullable ISO date-time), returned by `GET /auth/session`; used by web PR #188 (verification banner).
+
 - Errors: `CONFLICT_REASONS` (`ALREADY_MEMBER`, `INVITATION_EXPIRED`, `INVITATION_REVOKED`,
   `INVITATION_ALREADY_ACCEPTED`, `LAST_OWNER`), the `ConflictReason` schema/type and `CONFLICT_HTTP_STATUS` (409).
   `ApiErrorEnvelope.error.reason` is an optional `ConflictReason`, sent only with `code: 'CONFLICT'`.
@@ -195,6 +238,8 @@ Security's LOW follow-up from #59. Validation is stricter; no exports were remov
 All changes in this release are additive. No existing export changed.
 
 ### Added
+
+- `User.emailVerifiedAt` (optional, nullable ISO date-time), returned by `GET /auth/session`; used by web PR #188 (verification banner).
 
 - Organizations: `CreateOrganizationRequest { name (1–200) }` and `CreateOrganizationResponse` (an alias of the new
   `OrganizationWithRole { organization: Organization, role: Role }`) for `POST /orgs` (201). The server derives `slug`, and
@@ -236,6 +281,8 @@ createdAt, user: UserSummary }` and `ListMembersResponse` (cursor page) for `GET
 ## [0.3.0] - 2026-10-22
 
 ### Added
+
+- `User.emailVerifiedAt` (optional, nullable ISO date-time), returned by `GET /auth/session`; used by web PR #188 (verification banner).
 
 - Meetings: `ResolveMeetingRequest` (a strict union; at least one of `externalMeetingUrl` (https) or `externalMeetingId`
   (opaque, ≤255) is required) and `ResolveMeetingResponse { meetingId, created }`, for
@@ -290,6 +337,8 @@ organizationName }` (no tokens); `ExtensionTokenRequest { extensionId, deviceId,
 ## [0.2.0] - 2026-10-21
 
 ### Added
+
+- `User.emailVerifiedAt` (optional, nullable ISO date-time), returned by `GET /auth/session`; used by web PR #188 (verification banner).
 
 - Auth: `GetAuthSessionResponse` (alias `GetAuthSession`), `CsrfResponse`, `ResetPasswordRequest`, `VerifyEmailRequest`.
 - Uploads: `CreateUploadRequest`, `CreateUploadResponse`, `PresignedUrlDto`, `PublicFileObject`, `MAX_UPLOAD_BYTES`.
@@ -376,6 +425,8 @@ refs? (≤10 opaque id pairs), locale? (BCP-47-ish, ≤35) }`. Every level rejec
 ## [0.1.0] - 2026-10-21
 
 ### Added
+
+- `User.emailVerifiedAt` (optional, nullable ISO date-time), returned by `GET /auth/session`; used by web PR #188 (verification banner).
 
 - TypeBox schemas and `Static` types for Organization, User, Membership/Role, Project, Meeting, Recording,
   FileObject, Transcript (with segments), Report, Task, ExtractedTask and IntegrationIssue.

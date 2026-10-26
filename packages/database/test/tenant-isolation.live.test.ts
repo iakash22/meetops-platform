@@ -88,6 +88,10 @@ function override(table: string, column: string, organizationId: string): string
     return `'v1.isolation.wrapped.ciphertext'`;
   if (table === 'integration_connections' && column === 'revoked_at') return 'NULL';
   if (table === 'integration_connections' && column === 'status') return `'active'`;
+  if (table === 'auth_token_families' && column === 'max_expires_at')
+    return `now() + interval '30 days'`;
+  if (table === 'auth_refresh_tokens' && column === 'token_hash')
+    return `encode(sha256(gen_random_uuid()::text::bytea), 'hex')`;
   return undefined;
 }
 
@@ -196,9 +200,9 @@ describe.skipIf(missingEnv.length > 0)('tenant isolation per table (live, ADR-01
   describe.each([...TENANT_TABLES])('%s', (t) => {
     /** Append-only tables: UPDATE/DELETE are revoked from the app, so they fail on privilege instead. */
     const appendOnly = t === 'audit_events' || t === 'consent_attestations';
-    /** Soft-delete tables: the app role has no DELETE (disconnect wipes secrets via UPDATE instead). */
-    const noDelete = appendOnly || t === 'integration_connections';
     const blockedWrite = appendOnly ? /permission denied|append-only/ : /row-level security/;
+    /** DELETE is revoked: ADR-005 A1.2 token tables (revocation is an UPDATE) and integration_connections (soft disconnect wipes secrets). */
+    const noDelete = t.startsWith('auth_') || t === 'integration_connections';
     const count = (tx: Prisma.TransactionClient, id: string) =>
       tx.$queryRawUnsafe<{ n: bigint }[]>(
         `SELECT count(*) AS n FROM "${t}" WHERE ${whereKey(t)}`,
@@ -223,8 +227,12 @@ describe.skipIf(missingEnv.length > 0)('tenant isolation per table (live, ADR-01
         // Either RLS filters the row (0 affected) or the app role lacks the privilege (append-only tables).
         const affected = await inOrg(orgA, (tx) => tx.$executeRawUnsafe(sql, id)).catch(
           (e: unknown) => {
-            if (!appendOnly && !(noDelete && sql.startsWith('DELETE'))) throw e;
-            expect(String(e)).toMatch(appendOnly ? blockedWrite : /permission denied/);
+            if (noDelete && sql.startsWith('DELETE')) {
+              expect(String(e)).toMatch(/permission denied/);
+              return 0;
+            }
+            if (!appendOnly) throw e;
+            expect(String(e)).toMatch(blockedWrite);
             return 0;
           },
         );
