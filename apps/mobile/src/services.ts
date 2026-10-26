@@ -1,5 +1,6 @@
 import { createApiClient } from './api/client';
 import { createHttpAuthClient } from './api/httpAuthClient';
+import { createDemoMicPermission } from './consent/micPermission';
 import { createMockAuthClient } from './auth/mockAuthClient';
 import { createDemoSignupApi, type SignupApi } from './auth/SignupApiProvider';
 import { createSessionManager } from './auth/sessionManager';
@@ -56,4 +57,5 @@ export const repositories: Repositories = {
   tasks: http ? createHttpTasksRepository(http) : createPlaceholderTasksRepository(400),
   uploadQueue: createPlaceholderUploadQueue(),
   consent: createDemoConsentApi({ latencyMs: 300 }),
+  micPermission: createDemoMicPermission(),
 };
