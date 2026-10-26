@@ -40,7 +40,7 @@ export function Sidebar() {
             key={to}
             to={to}
             activeOptions={{ exact: to === '/' }}
-            className="flex items-center gap-2 rounded-md px-3 py-2 text-sm text-muted-foreground transition-colors duration-150 hover:bg-accent hover:text-accent-foreground [&.active]:bg-accent [&.active]:font-medium [&.active]:text-accent-foreground [&.active]:shadow-[inset_2px_0_0_hsl(var(--highlight))] [&.active_svg]:text-highlight"
+            className="flex items-center gap-2 rounded-md px-3 py-2 text-sm text-muted-foreground transition-colors duration-150 hover:bg-accent hover:text-accent-foreground [&.active]:bg-accent [&.active]:font-medium [&.active]:text-accent-foreground [&.active]:shadow-[inset_2px_0_0_hsl(var(--link))] [&.active_svg]:text-link"
           >
             <Icon className="h-4 w-4" aria-hidden />
             {label}
