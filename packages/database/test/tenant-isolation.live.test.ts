@@ -67,6 +67,14 @@ function keyColumns(t: TenantTable, id: string, organizationId: string) {
 }
 
 /** Column values that must satisfy table CHECK constraints. */
+/** integration_connections secrets are nullable (wiped on revoke) but required while active. */
+const EXTRA_COLUMNS: Record<string, [string, string][]> = {
+  integration_connections: [
+    ['access_token_enc', `'v1.isolation.wrapped.ciphertext'`],
+    ['webhook_secret_enc', `'v1.isolation.wrapped.ciphertext'`],
+  ],
+};
+
 function override(table: string, column: string, organizationId: string): string | undefined {
   if (table === 'recording_session_chunks' && column === 'size_bytes') return '1';
   if (table === 'recording_session_chunks' && column === 'storage_key')
@@ -146,6 +154,12 @@ describe.skipIf(missingEnv.length > 0)('tenant isolation per table (live, ADR-01
           if (names.includes(c.column_name)) continue;
           names.push(c.column_name);
           values.push(override(t, c.column_name, orgB) ?? dummy(c));
+        }
+        // Nullable columns a table CHECK still requires for an active row.
+        for (const [col, val] of EXTRA_COLUMNS[t] ?? []) {
+          if (names.includes(col)) continue;
+          names.push(col);
+          values.push(val);
         }
         await tx.$executeRawUnsafe(
           `INSERT INTO "${t}" (${names.map((n) => `"${n}"`).join(', ')}) VALUES (${values.join(', ')})`,
