@@ -144,6 +144,7 @@ export function TranscriptPanel({ meetingId, ready }: { meetingId: Id; ready: bo
         <div className="space-y-1">
           <Label htmlFor="transcript-filter">Search transcript</Label>
           <Input
+            className="min-h-11"
             id="transcript-filter"
             type="search"
             value={filter}
