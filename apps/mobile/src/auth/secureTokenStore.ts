@@ -32,7 +32,7 @@ function isTokens(v: unknown): v is MobileAuthTokens {
   return (
     t.tokenType === 'Bearer' &&
     ['accessToken', 'expiresAt', 'refreshToken', 'refreshExpiresAt', 'organizationId'].every(
-      (k) => typeof t[k] === 'string' && (t[k] as string).length > 0,
+      (k) => typeof t[k] === 'string' && t[k].length > 0,
     )
   );
 }
