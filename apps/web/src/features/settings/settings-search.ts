@@ -1,5 +1,5 @@
 // Kept out of settings-page.tsx so the router can validate ?tab without loading the page chunk.
-export const SETTINGS_TABS = ['employees', 'teams'] as const;
+export const SETTINGS_TABS = ['employees', 'teams', 'integrations'] as const;
 export type SettingsTab = (typeof SETTINGS_TABS)[number];
 export type SettingsSearch = { tab?: SettingsTab };
 
