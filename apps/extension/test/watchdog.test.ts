@@ -34,7 +34,11 @@ function setup() {
   } satisfies BackgroundDeps;
   const advance = (ms: number) => (t += ms);
   const startRecording = async () => {
-    await handleBackgroundMessage(deps, bg({ type: 'ACK_CONSENT', tabId: 1 }), popup);
+    await handleBackgroundMessage(
+      deps,
+      bg({ type: 'ACK_CONSENT', tabId: 1, meetingId: MID, method: 'all_parties_consented' }),
+      popup,
+    );
     await handleBackgroundMessage(
       deps,
       bg({ type: 'START_RECORDING', meetingId: MID, tabId: 1, streamId: crypto.randomUUID() }),

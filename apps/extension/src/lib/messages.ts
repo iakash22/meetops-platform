@@ -1,10 +1,22 @@
 /** Messaging contracts between popup, background service worker and offscreen document. */
+import { CONSENT_METHODS, CONSENT_VERSION_PATTERN } from '@meetops/contracts/types';
+import type { ConsentAttestationInput, ConsentMethod } from '@meetops/contracts/types';
 import { UUID_RE } from './upload.js';
 
 /** popup -> background */
 export type PopupToBackground =
   | { target: 'background'; type: 'GET_STATUS' }
-  | { target: 'background'; type: 'ACK_CONSENT'; tabId: number }
+  /**
+   * The user ticked the consent confirmation for this meeting and pressed Record. The background records it
+   * (bound to tab + meeting, short TTL, one-shot) and turns it into the contracts v0.4.1 attestation at start.
+   */
+  | {
+      target: 'background';
+      type: 'ACK_CONSENT';
+      tabId: number;
+      meetingId: string;
+      method: ConsentMethod;
+    }
   | {
       target: 'background';
       type: 'START_RECORDING';
@@ -28,6 +40,8 @@ export type BackgroundToOffscreen =
       streamId: string;
       startedAt: number;
       meetingId: string;
+      /** Contracts v0.4.1: the user's attestation for this meeting, sent on recording-session init. */
+      consent: ConsentAttestationInput;
     }
   | { target: 'offscreen'; type: 'OFFSCREEN_STOP' }
   /** Stop and throw the recording away (local chunks deleted, upload session aborted). */
@@ -71,6 +85,25 @@ const isNum = (v: unknown): v is number => typeof v === 'number' && Number.isInt
 const isUuid = (v: unknown): v is string => typeof v === 'string' && UUID_RE.test(v);
 const isStr = (v: unknown): v is string => typeof v === 'string' && v.length > 0;
 
+const isConsentMethod = (v: unknown): v is ConsentMethod =>
+  typeof v === 'string' && (CONSENT_METHODS as readonly string[]).includes(v);
+
+const CONSENT_VERSION_RE = new RegExp(CONSENT_VERSION_PATTERN);
+
+/** Shape check for an attestation crossing the offscreen boundary (the API validates it again). */
+export function isConsentAttestation(v: unknown): v is ConsentAttestationInput {
+  if (typeof v !== 'object' || v === null) return false;
+  const c = v as Record<string, unknown>;
+  return (
+    Object.keys(c).length === 3 &&
+    typeof c.consentVersion === 'string' &&
+    CONSENT_VERSION_RE.test(c.consentVersion) &&
+    typeof c.attestedAt === 'string' &&
+    !Number.isNaN(Date.parse(c.attestedAt)) &&
+    isConsentMethod(c.method)
+  );
+}
+
 function isStorageEvent(v: unknown): v is StorageEvent {
   if (typeof v !== 'object' || v === null) return false;
   const e = v as Record<string, unknown>;
@@ -89,7 +122,7 @@ export function isBackgroundMessage(msg: unknown): msg is BackgroundMessage {
     case 'DISMISS_WARNING':
       return true;
     case 'ACK_CONSENT':
-      return isNum(m.tabId);
+      return isNum(m.tabId) && isUuid(m.meetingId) && isConsentMethod(m.method);
     case 'START_RECORDING':
       return isNum(m.tabId) && isStr(m.streamId) && isUuid(m.meetingId);
     case 'REC_STARTED':
@@ -114,6 +147,10 @@ export function isOffscreenMessage(msg: unknown): msg is BackgroundToOffscreen {
   if (m.target !== 'offscreen') return false;
   if (m.type === 'OFFSCREEN_STOP' || m.type === 'OFFSCREEN_DISCARD') return true;
   return (
-    m.type === 'OFFSCREEN_START' && isStr(m.streamId) && isNum(m.startedAt) && isUuid(m.meetingId)
+    m.type === 'OFFSCREEN_START' &&
+    isStr(m.streamId) &&
+    isNum(m.startedAt) &&
+    isUuid(m.meetingId) &&
+    isConsentAttestation(m.consent)
   );
 }

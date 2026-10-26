@@ -36,6 +36,11 @@ export interface StoredChunk {
 
 export interface StoredSession {
   sessionId: string;
+  /**
+   * The init request as sent. Sessions stored before contracts v0.4.1 have no `meta.consent`, so this MUST NOT be
+   * replayed to initSession(): it would fail validation. Nothing does today; the drain only uploads chunks, completes
+   * or aborts already-initialised sessions by id.
+   */
   meta: InitRecordingSessionRequest;
   /** Set when recording ended (normally or after a crash). */
   finalized?: CompleteRecordingSessionRequest;
