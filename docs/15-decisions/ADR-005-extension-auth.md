@@ -1,6 +1,6 @@
 # ADR-005: Browser extension authentication
 
-- Status: Accepted; amended 2026-10-22 (Amendment 1: pairing proof and token hardening, supersedes points 2, 3, 5 and 6 where they conflict)
+- Status: Accepted; amended 2026-10-22 (Amendment 1: pairing proof and token hardening, supersedes points 2, 3, 5 and 6 where they conflict); Amendment 3 (standalone consent route) Proposed 2026-10-26
 - Date: 2026-10-22
 - Owner: Architecture Agent (ARCH), with the Security (SEC), Backend (BE) and Native (NATIVE) Agents
 - Related: [ADR-003 Contracts ownership](./ADR-003-contracts-ownership.md), [ADR-004](./ADR-004-db-contract-mapping.md)
@@ -160,3 +160,37 @@ handshake to `apps/realtime` becomes a bearer surface: the extension sends its a
 string), with `aud=extension` and scope `recordings:write`, from an allowlisted `chrome-extension://<id>` origin, and MUST
 NOT send a session cookie. Bearer sockets join only meeting rooms they pass the access check for, never the org-wide room.
 Revoking a token family (A1.6) also publishes to `meetops:auth:revocations` so open sockets are disconnected.
+
+## Amendment 3 (2026-10-26, Proposed): standalone extension consent route
+
+- Status: **Proposed**, pending Architecture (ARCH), Security (SEC) and Contracts owner sign-off. Nothing below is
+  implemented, and no contracts change ships until this is accepted.
+
+### Context
+
+Consent is defined only as an embedded `consent: ConsentAttestationInput` on upload init and recording-session init
+(contracts v0.4.1, G11, `packages/contracts/src/api/consent.ts`). The extension records consent locally first
+(`ACK_CONSENT`, 2-minute TTL, one-shot, see `docs/05-web/extension.md`), so the server sees it only when a session is
+created. No ADR defines a standalone route, its scope, idempotency or how it binds to a later session, so a
+contracts branch would be guessing.
+
+### Proposal
+
+1. `POST /extension/consent` (bearer, `aud=extension`, scope `recordings:write`; cookie auth is refused, per A1.3).
+   Body is the existing strict `ConsentAttestationInput` plus `meetingId`. The server fills user, org and subject
+   (UP-18) and stores it append-only in `consent_attestations` with subject type `pending_recording`.
+2. Response `201 { consentId, expiresAt }`, where `expiresAt` = attestation time + 2 minutes (same as
+   `CONSENT_TTL_MS`). It is single use: recording-session init may send `consentId` instead of the inline `consent`
+   object, and it is consumed atomically. A reused, expired, other-user or other-meeting id gets 422
+   `VALIDATION_FAILED` with a new `CONSENT_*` reason.
+3. Inline `consent` stays valid (additive, minor contracts bump). The media pipeline rule is unchanged: no stored
+   attestation, no processing.
+4. Rate limit it like A1.4 refresh (per family). Audit `extension.consent.attest`, without the notice text.
+
+### Open questions (decide before acceptance)
+
+- Is a separate round trip worth it versus the inline object? The main benefit is an audit record for consent that
+  was given but never followed by a recording.
+- Should the `pending_recording` subject type be a new `CONSENT_SUBJECT_TYPES` value, or should the attestation be
+  re-pointed to the session on consume?
+- Do desktop (ADR-012) and mobile clients get the same route, under a shared path?
