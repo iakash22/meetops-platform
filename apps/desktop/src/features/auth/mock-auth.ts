@@ -9,7 +9,7 @@ import {
 
 /** Emails ending with this domain are rejected by the mock, to exercise the error path. */
 export const MOCK_REJECT_DOMAIN = '@invalid.test';
-/** Sign-ups with emails ending with this domain get the EMAIL_TAKEN conflict, to exercise the field error. */
+/** Sign-ups with emails ending with this domain get the EMAIL_TAKEN conflict (the UI still shows "Check your email"). */
 export const MOCK_TAKEN_DOMAIN = '@taken.test';
 /** Sign-ups with emails ending with this domain fail with a non-field error, to exercise the toast. */
 export const MOCK_DOWN_DOMAIN = '@unavailable.test';
