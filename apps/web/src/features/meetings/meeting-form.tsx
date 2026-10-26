@@ -77,7 +77,12 @@ export function MeetingFormDialog({ meeting }: { meeting?: Meeting }) {
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
-        <Button type="button" variant={editing ? 'outline' : 'default'} disabled={!organizationId}>
+        <Button
+          className="min-h-11"
+          type="button"
+          variant={editing ? 'outline' : 'default'}
+          disabled={!organizationId}
+        >
           {editing ? <Pencil aria-hidden /> : <Plus aria-hidden />}
           {editing ? 'Edit' : 'New meeting'}
         </Button>
@@ -117,7 +122,7 @@ export function MeetingFormDialog({ meeting }: { meeting?: Meeting }) {
             {...register('startedAt')}
           />
           <DialogFooter>
-            <Button type="submit" disabled={isSubmitting}>
+            <Button className="min-h-11" type="submit" disabled={isSubmitting}>
               {isSubmitting ? 'Saving…' : editing ? 'Save changes' : 'Create meeting'}
             </Button>
           </DialogFooter>
