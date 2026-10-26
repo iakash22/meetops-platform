@@ -84,11 +84,12 @@ const isEnvelope = (body: unknown): body is ApiErrorEnvelope =>
   typeof body.error === 'object' &&
   typeof (body as { error: { code?: unknown } }).error.code === 'string';
 
-export function createApiClient({ baseUrl, getAccessToken, fetchImpl }: ApiClientOptions) {
+/** Low-level typed requester shared by `createApiClient`, the HTTP auth client and the HTTP repositories. */
+export function createApiRequester({ baseUrl, getAccessToken, fetchImpl }: ApiClientOptions) {
   const doFetch = fetchImpl ?? fetch;
   const origin = baseUrl.replace(/\/+$/, '');
 
-  async function request<T>(
+  return async function request<T>(
     method: 'GET' | 'POST',
     path: string,
     body?: unknown,
@@ -124,8 +125,11 @@ export function createApiClient({ baseUrl, getAccessToken, fetchImpl }: ApiClien
       throw new ApiError(res.status, statusToCode(res.status), `Request failed (${res.status}).`);
     }
     return parsed as T;
-  }
+  };
+}
 
+export function createApiClient(options: ApiClientOptions) {
+  const request = createApiRequester(options);
   return {
     signup: (body: SignupRequest) => request<SignupAccepted>('POST', '/auth/signup', body, 202),
     login: (body: LoginRequest) => request<AuthSession>('POST', '/auth/login', body),
