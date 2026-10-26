@@ -1,6 +1,7 @@
 import {
   createSessionVerifier,
   type SessionVerifier as SharedSessionVerifier,
+  type ExtensionTokenStore,
   type SessionStore,
   type VerifiedSession,
 } from '@meetops/session-verifier';
@@ -20,6 +21,8 @@ export interface SessionVerifierDeps {
   sessionPolicy: SessionPolicy;
   /** Org-scoped meeting lookup for canAccessMeeting (realtime `meeting:join`). */
   meetings: MeetingRepository;
+  /** ADR-005 extension token store; omitted, every bearer fails closed. */
+  extensionTokenStore?: ExtensionTokenStore;
 }
 
 /**
@@ -66,12 +69,19 @@ export class SessionVerifier {
       sessions: apiSessionStore(deps),
       clock: deps.clock,
       idleTimeoutMs: deps.sessionPolicy.idleTimeoutMs,
+      ...(deps.extensionTokenStore ? { extensionTokens: deps.extensionTokenStore } : {}),
     });
   }
 
   verify(sessionToken: string | undefined): Promise<VerifiedSession | null> {
     if (!sessionToken) return Promise.resolve(null);
     return this.inner.verifySession({ cookie: sessionToken });
+  }
+
+  /** ADR-005 bearer: audience, expiry, family revocation and live membership. Null on any problem. */
+  verifyBearer(token: string | undefined): Promise<VerifiedSession | null> {
+    if (!token) return Promise.resolve(null);
+    return this.inner.verifySession({ bearer: token });
   }
 
   verifyByHash(cookieHash: string): Promise<VerifiedSession | null> {
