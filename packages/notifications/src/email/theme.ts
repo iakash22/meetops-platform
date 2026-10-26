@@ -5,26 +5,36 @@
  * Every text/background pair below is checked for WCAG AA (>= 4.5:1) in test/email-theme.test.ts.
  */
 export const emailTheme = {
+  /** Values match apps/web/src/index.css tokens (background, card, popover, border, foreground...). */
   background: '#0A0A0A',
-  surface: '#141414',
-  border: '#262626',
-  text: '#EDEDED',
-  muted: '#A3A3A3',
+  surface: '#141416',
+  surfaceRaised: '#1C1C1F',
+  border: '#2A2A2E',
+  text: '#F5F5F7',
+  muted: '#A1A1AA',
   primaryFill: '#007BA7',
   onPrimary: '#FFFFFF',
   link: '#3AB0E0',
+  /** Cerulean-tinted chip/tile background; #3AB0E0 text on it stays AA. */
+  primaryTint: '#0B2531',
   destructive: '#EF4444',
+  destructiveText: '#F87171',
+  destructiveTint: '#2A1215',
   /** Light fallback for clients that force a light scheme (prefers-color-scheme: light). */
   light: {
     background: '#FFFFFF',
-    surface: '#F5F5F5',
-    border: '#D4D4D4',
-    text: '#111111',
-    muted: '#525252',
+    surface: '#F5F5F7',
+    border: '#D4D4D8',
+    text: '#111113',
+    muted: '#52525B',
     link: '#005F82',
     destructive: '#B91C1C',
   },
-  fontStack: "-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif",
+  /** Inter is the web font (self-hosted); email clients mostly fall back to the system stack. */
+  fontStack:
+    "InterVariable,Inter,-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif",
+  monoStack: "'JetBrains Mono',ui-monospace,SFMono-Regular,Menlo,Consolas,monospace",
+  radius: { sm: 6, md: 8, lg: 12, xl: 16 },
 } as const;
 
 function channel(c: number): number {
