@@ -18,7 +18,7 @@ function fakeDurable() {
   const refresh = new Map<string, { org: string; familyId: string; consumed: boolean }>();
   const calls: string[] = [];
   const store = {
-    async createFamily(org, input) {
+    async createFamily(org: string, input: Parameters<Store['createFamily']>[1]) {
       calls.push('createFamily');
       fams.set(input.id, {
         org,
@@ -29,33 +29,33 @@ function fakeDurable() {
           extensionId: input.device.clientId,
           deviceId: input.device.deviceId,
           deviceLabel: input.device.label,
-          scopes: input.scopes,
+          scopes: input.scopes as TokenFamily['scopes'],
           createdAt: input.createdAt,
           maxExpiresAt: input.maxExpiresAt,
           revokedAt: null,
-        } as TokenFamily,
+        },
       });
     },
-    async findFamily(org, id) {
+    async findFamily(org: string, id: string) {
       const r = fams.get(id);
       if (!r || r.org !== org) return null;
       return { ...r.f, clientId: r.f.extensionId, audience: 'extension' as const };
     },
-    async listFamilies(org, userId, now) {
+    async listFamilies(org: string, userId: string, now: Date) {
       return [...fams.values()]
         .filter(
           (r) => r.org === org && r.f.userId === userId && !r.f.revokedAt && r.f.maxExpiresAt > now,
         )
         .map((r) => ({ ...r.f, clientId: r.f.extensionId, audience: 'extension' as const }));
     },
-    async revokeFamily(org, id, at) {
+    async revokeFamily(org: string, id: string, at: Date) {
       const r = fams.get(id);
       if (r && r.org === org && !r.f.revokedAt) r.f.revokedAt = at;
     },
-    async saveRefresh(org, hash, familyId) {
+    async saveRefresh(org: string, hash: string, familyId: string) {
       refresh.set(hash, { org, familyId, consumed: false });
     },
-    async consumeRefresh(org, hash) {
+    async consumeRefresh(org: string, hash: string) {
       const r = refresh.get(hash);
       if (!r || r.org !== org) return { status: 'unknown' as const };
       const was = r.consumed;
