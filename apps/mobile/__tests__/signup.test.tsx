@@ -4,7 +4,7 @@ import { fireEvent, renderRouter, screen, waitFor } from 'expo-router/testing-li
 import { ApiError, createApiClient } from '../src/api/client';
 import { createDemoSignupApi, type SignupApi } from '../src/auth/SignupApiProvider';
 import { validateSignup } from '../src/auth/signupValidation';
-import { signupErrorMessage, signupFieldError } from '../src/screens/SignupScreen';
+import { isEnumerationSafeSuccess, signupErrorMessage } from '../src/screens/SignupScreen';
 import { makeManager, makeRepositories, routes } from './support/appRoutes';
 
 /** Real `createApiClient().signup` over a fake fetch, so the screen exercises the actual API call. */
@@ -29,7 +29,6 @@ async function fillValid(email = 'grace@example.com') {
   fireEvent.changeText(await screen.findByTestId('signup-name'), 'Grace Hopper');
   fireEvent.changeText(screen.getByTestId('signup-email'), email);
   fireEvent.changeText(screen.getByTestId('signup-password'), 'correct horse battery');
-  fireEvent.changeText(screen.getByTestId('signup-confirm'), 'correct horse battery');
 }
 
 describe('validateSignup', () => {
@@ -37,7 +36,6 @@ describe('validateSignup', () => {
     name: ' Ada ',
     email: ' ada@example.com ',
     password: 'x'.repeat(12),
-    confirm: 'x'.repeat(12),
   };
 
   it('trims and returns a contracts SignupRequest', () => {
@@ -48,33 +46,27 @@ describe('validateSignup', () => {
     });
   });
 
-  it('enforces SignupRequest limits and the confirmation', () => {
+  it('enforces SignupRequest limits (no confirm-password field)', () => {
     const { errors } = validateSignup({
       name: 'n'.repeat(201),
       email: 'nope',
       password: 'short',
-      confirm: 'other',
     });
     expect(errors).toEqual({
       name: 'Use at most 200 characters.',
       email: 'Enter a valid email address.',
       password: 'Use at least 12 characters.',
-      confirm: 'Passwords do not match.',
     });
     const long = 'x'.repeat(129);
-    expect(validateSignup({ ...ok, password: long, confirm: long }).errors.password).toBe(
-      'Password is too long.',
-    );
+    expect(validateSignup({ ...ok, password: long }).errors.password).toBe('Password is too long.');
   });
 });
 
 describe('signup error mapping', () => {
-  it('puts EMAIL_TAKEN inline under email and everything else in the toast', () => {
+  it('treats EMAIL_TAKEN as success (enumeration-safe) and everything else as a toast', () => {
     const taken = new ApiError(409, 'CONFLICT', 'x', undefined, 'EMAIL_TAKEN');
-    expect(signupFieldError(taken)).toEqual({
-      email: 'An account with this email already exists.',
-    });
-    expect(signupFieldError(new ApiError(429, 'RATE_LIMITED', 'x'))).toBeNull();
+    expect(isEnumerationSafeSuccess(taken)).toBe(true);
+    expect(isEnumerationSafeSuccess(new ApiError(429, 'RATE_LIMITED', 'x'))).toBe(false);
     expect(signupErrorMessage(new ApiError(429, 'RATE_LIMITED', 'secret server text'))).toBe(
       'Too many attempts. Try again later.',
     );
@@ -103,7 +95,7 @@ describe('signup screen', () => {
     expect(await screen.findByTestId('signup-name-error')).toHaveTextContent('Enter your name.');
     expect(screen.getByTestId('signup-email-error')).toHaveTextContent('Enter your email address.');
     expect(screen.getByTestId('signup-password-error')).toHaveTextContent('Create a password.');
-    expect(screen.getByTestId('signup-confirm-error')).toHaveTextContent('Confirm your password.');
+    expect(screen.queryByTestId('signup-confirm')).toBeNull();
     expect(screen.queryByTestId('signup-toast')).toBeNull();
     expect(spy).not.toHaveBeenCalled();
   });
@@ -127,7 +119,6 @@ describe('signup screen', () => {
     expect(screen.getByTestId('signup-password').props.secureTextEntry).toBe(true);
     fireEvent.press(screen.getByTestId('signup-toggle-password'));
     expect(screen.getByTestId('signup-password').props.secureTextEntry).toBe(false);
-    expect(screen.getByTestId('signup-confirm').props.secureTextEntry).toBe(false);
     expect(screen.getByText('Hide password')).toBeTruthy();
   });
 
@@ -150,16 +141,25 @@ describe('signup screen', () => {
     await waitFor(() => expect(screen).toHavePathname('/login'));
   });
 
-  it('shows EMAIL_TAKEN inline under the email field', async () => {
+  it('rates password strength with an accessible label', async () => {
+    renderSignup();
+    expect(await screen.findByLabelText('Password strength: Too short')).toBeTruthy();
+    fireEvent.changeText(screen.getByTestId('signup-password'), 'aaaaaaaaaaaa');
+    expect(screen.getByLabelText('Password strength: Weak')).toBeTruthy();
+    fireEvent.changeText(screen.getByTestId('signup-password'), 'Correct-Horse-Battery-9');
+    expect(screen.getByLabelText('Password strength: Strong')).toBeTruthy();
+  });
+
+  it('ends on check-your-email for EMAIL_TAKEN, never an already-taken message', async () => {
     const { api } = apiReturning(409, {
       error: { code: 'CONFLICT', message: 'taken', reason: 'EMAIL_TAKEN' },
     });
     renderSignup(api);
     await fillValid();
     fireEvent.press(screen.getByTestId('signup-submit'));
-    expect(await screen.findByTestId('signup-email-error')).toHaveTextContent(
-      'An account with this email already exists.',
-    );
+    expect(await screen.findByTestId('signup-check-email')).toBeTruthy();
+    expect(screen.queryByText(/already exists/)).toBeNull();
+    expect(screen.queryByTestId('signup-email-error')).toBeNull();
     expect(screen.queryByTestId('signup-toast')).toBeNull();
   });
 

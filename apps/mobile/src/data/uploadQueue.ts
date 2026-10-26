@@ -1,13 +1,16 @@
 /**
- * Offline upload queue as seen by the Record tab. Placeholder only: the real queue (durable
- * on-device storage, chunked resumable upload, checksums) arrives with native recording and the
- * Media upload contract. Nothing is ever queued by the M2 shell.
+ * Offline upload queue as seen by the Record tab. The engine lives in `src/upload/uploadQueueEngine.ts`; this
+ * placeholder stays the default until the M4 recorder writes real chunks.
  */
 export interface UploadQueueStatus {
   /** Recordings stored on the device that still need to upload. */
   pending: number;
   /** Whether uploads are currently paused because the device is offline. */
   offline: boolean;
+  /** Recordings that stopped retrying and need the user (e.g. consent rejected). */
+  failed?: number;
+  /** Recordings within a day of the 7-day local retention cap (R4). */
+  expiringSoon?: number;
 }
 
 export interface UploadQueue {

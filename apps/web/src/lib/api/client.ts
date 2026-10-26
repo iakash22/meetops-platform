@@ -3,7 +3,7 @@ import type {
   AuthSession,
   CreateOrganizationRequest,
   CreateOrganizationResponse,
-  CreateUploadRequest,
+  InitUploadRequest,
   CreateUploadResponse,
   CsrfResponse,
   ExtensionPairRequest,
@@ -35,6 +35,10 @@ import {
   type ConflictReason,
 } from '@meetops/contracts/types';
 import { createHttpDirectoryApi, type DirectoryApi } from '@/features/directory/api';
+import {
+  createHttpMeetingInsightsApi,
+  type MeetingInsightsApi,
+} from '@/features/meetings/insights-api';
 import {
   DESKTOP_AUTHORIZE_PATH,
   type DesktopAuthorizeRequest,
@@ -281,21 +285,28 @@ export type ApiClient = {
     authorize: (body: DesktopAuthorizeRequest) => Promise<DesktopAuthorizeResponse>;
   };
   meetings: {
-    list: (organizationId: Id) => Promise<Paginated<Meeting>>;
+    /** Newest first. Omit `page` for the first page (server default limit 25, max 100). */
+    list: (organizationId: Id, page?: CursorParams) => Promise<Paginated<Meeting>>;
     get: (organizationId: Id, meetingId: Id) => Promise<Meeting>;
   };
   tasks: {
     list: (organizationId: Id, filters?: TaskListFilters) => Promise<Paginated<Task>>;
   };
+  /** Transcript + report per meeting (Phase 3; routes pending on the backend). */
+  meetingInsights: MeetingInsightsApi;
   /** Employees, teams, team members and projects (contracts v0.4 directory, BE-3). */
   directory: DirectoryApi;
   /** Low-level request (cookie session + CSRF on non-GET). */
   request: <T>(method: HttpMethod, path: string, body?: unknown) => Promise<T>;
   storage: {
     /** POST /orgs/:organizationId/uploads; returns a presigned PUT (PresignedUrlDto). */
-    createUpload: (organizationId: Id, body: CreateUploadRequest) => Promise<CreateUploadResponse>;
+    createUpload: (organizationId: Id, body: InitUploadRequest) => Promise<CreateUploadResponse>;
     /** PUT the file to object storage. No cookies, no CSRF (third-party origin). */
-    putToPresignedUrl: (upload: PresignedUrlDto, file: Blob) => Promise<void>;
+    putToPresignedUrl: (
+      upload: PresignedUrlDto,
+      file: Blob,
+      opts?: { onProgress?: (fraction: number) => void; signal?: AbortSignal },
+    ) => Promise<void>;
   };
   /** Register a handler for 401 responses (excluding auth endpoints). Returns unsubscribe. */
   onUnauthorized: (handler: () => void) => () => void;
@@ -512,25 +523,62 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
       authorize: (body) => request('POST', DESKTOP_AUTHORIZE_PATH, body),
     },
     meetings: {
-      list: (id) => request('GET', `${org(id)}/meetings`),
+      list: (id, page) => request('GET', `${org(id)}/meetings${pageQuery(page)}`),
       get: (id, meetingId) =>
         request('GET', `${org(id)}/meetings/${encodeURIComponent(meetingId)}`),
     },
     tasks: { list: (id, filters) => request('GET', `${org(id)}/tasks${taskQuery(filters)}`) },
     directory: createHttpDirectoryApi(request),
+    meetingInsights: createHttpMeetingInsightsApi(request),
     storage: {
       createUpload: (id, body) => request('POST', `${org(id)}/uploads`, body),
-      putToPresignedUrl: async (upload, file) => {
+      putToPresignedUrl: async (upload, file, opts = {}) => {
         if (!upload.url.startsWith('https://'))
           throw new ApiError(0, 'BAD_REQUEST', 'Insecure upload URL');
+        const { onProgress, signal } = opts;
+        // fetch has no upload progress; use XHR only when the caller wants progress.
+        if (onProgress && typeof XMLHttpRequest !== 'undefined') {
+          await putWithProgress(upload, file, onProgress, signal);
+          return;
+        }
         const res = await doFetch(upload.url, {
           method: upload.method,
           headers: { ...(upload.headers ?? {}) },
           body: file,
           credentials: 'omit',
+          ...(signal ? { signal } : {}),
         });
         if (!res.ok) throw new ApiError(res.status, 'UNKNOWN', 'Upload failed');
       },
     },
   };
+}
+
+/** PUT to a presigned URL with upload progress (0..1) and abort. Rejects with AbortError on cancel. */
+function putWithProgress(
+  upload: PresignedUrlDto,
+  file: Blob,
+  onProgress: (fraction: number) => void,
+  signal?: AbortSignal,
+): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open(upload.method, upload.url);
+    xhr.withCredentials = false;
+    for (const [k, v] of Object.entries(upload.headers ?? {})) xhr.setRequestHeader(k, v);
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable && e.total > 0) onProgress(e.loaded / e.total);
+    };
+    xhr.onload = () =>
+      xhr.status >= 200 && xhr.status < 300
+        ? (onProgress(1), resolve())
+        : reject(new ApiError(xhr.status, 'UNKNOWN', 'Upload failed'));
+    xhr.onerror = () => reject(new ApiError(0, 'UNKNOWN', 'Upload failed'));
+    xhr.onabort = () => reject(new DOMException('Upload cancelled', 'AbortError'));
+    if (signal) {
+      if (signal.aborted) return xhr.abort();
+      signal.addEventListener('abort', () => xhr.abort(), { once: true });
+    }
+    xhr.send(file);
+  });
 }

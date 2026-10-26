@@ -62,6 +62,7 @@ const aiTenantSql = readFileSync(
 /** DB-1 teams: new tenant tables enable and police RLS in their own migration (ADR-010 setting only). */
 const teamsSql = readFileSync(resolve(migrationsDir, '20261025090000_teams/migration.sql'), 'utf8');
 const CONSENT_MIGRATION = '20261025120000_consent_scan_keycheck';
+const MEETINGS_EXTERNAL_ID_MIGRATION = '20261026120000_meetings_external_id';
 const consentSql = readFileSync(resolve(migrationsDir, CONSENT_MIGRATION, 'migration.sql'), 'utf8');
 const rlsSql =
   readFileSync(resolve(migrationsDir, '20261021110000_tenant_rls_roles/migration.sql'), 'utf8') +
@@ -1086,12 +1087,13 @@ describe('DB-3 consent_attestations, scan_status and storage-key CHECKs (static)
   const model = (name: string) => models.find((m) => m.name === name)?.body ?? '';
   const statements = consentSql.replace(/--.*$/gm, '');
 
-  it('is the latest migration', () => {
+  it('sorts immediately before the meetings external id migration (the latest)', () => {
     const dirs = readdirSync(migrationsDir, { withFileTypes: true })
       .filter((d) => d.isDirectory())
       .map((d) => d.name)
       .sort();
-    expect(dirs.at(-1)).toBe(CONSENT_MIGRATION);
+    expect(dirs.at(-1)).toBe(MEETINGS_EXTERNAL_ID_MIGRATION);
+    expect(dirs.at(-2)).toBe(CONSENT_MIGRATION);
   });
 
   it('is additive only: no drop, rename, retype or NO FORCE of existing objects', () => {
@@ -1151,5 +1153,30 @@ describe('DB-3 consent_attestations, scan_status and storage-key CHECKs (static)
     expect(consentSql).toContain("RAISE EXCEPTION 'RLS enabled but not forced on: %'");
     expect(consentSql).toContain(`CHECK ("consent_version" ~ '^[A-Za-z0-9][A-Za-z0-9._-]{0,31}$')`);
     expect(consentSql).toContain(`CHECK ("attested_at" <= "recorded_at" + interval '300 seconds')`);
+  });
+});
+
+describe('API-MEETINGS meetings.external_meeting_id (static)', () => {
+  const sql = readFileSync(
+    resolve(migrationsDir, MEETINGS_EXTERNAL_ID_MIGRATION, 'migration.sql'),
+    'utf8',
+  );
+  it('is the latest migration', () => {
+    const dirs = readdirSync(migrationsDir, { withFileTypes: true })
+      .filter((x) => x.isDirectory())
+      .map((x) => x.name)
+      .sort();
+    expect(dirs.at(-1)).toBe(MEETINGS_EXTERNAL_ID_MIGRATION);
+  });
+
+  it('is additive and adds the per-org idempotency key and keyset index', () => {
+    expect(sql).not.toMatch(/DROP |RENAME|NO FORCE|DISABLE ROW LEVEL SECURITY/);
+    expect(sql).toContain('ADD COLUMN "external_meeting_id" TEXT');
+    expect(sql).toMatch(
+      /UNIQUE INDEX "meetings_org_id_source_external_meeting_id_key"\s+ON "meetings"\("org_id", "source", "external_meeting_id"\)/,
+    );
+    expect(sql).toMatch(
+      /INDEX "meetings_org_id_created_at_id_idx"\s+ON "meetings"\("org_id", "created_at", "id"\)/,
+    );
   });
 });
