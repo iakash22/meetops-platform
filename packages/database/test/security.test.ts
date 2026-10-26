@@ -65,13 +65,21 @@ const CONSENT_MIGRATION = '20261025120000_consent_scan_keycheck';
 const MEETINGS_EXTERNAL_ID_MIGRATION = '20261026120000_meetings_external_id';
 const RECORDING_SOURCE_NATIVE_MIGRATION = '20261026210000_recording_source_native';
 /** Update when adding a migration. */
-const LATEST_MIGRATION = RECORDING_SOURCE_NATIVE_MIGRATION;
+const INTEGRATION_CONNECTIONS_MIGRATION = '20261026220000_integration_connections';
+const LATEST_MIGRATION = INTEGRATION_CONNECTIONS_MIGRATION;
+const integrationsSql = readFileSync(
+  resolve(migrationsDir, INTEGRATION_CONNECTIONS_MIGRATION, 'migration.sql'),
+  'utf8',
+);
+/** Migrations whose tenant policies use only the ADR-010 setting. */
+const adr010Sql = teamsSql + integrationsSql;
 const consentSql = readFileSync(resolve(migrationsDir, CONSENT_MIGRATION, 'migration.sql'), 'utf8');
 const rlsSql =
   readFileSync(resolve(migrationsDir, '20261021110000_tenant_rls_roles/migration.sql'), 'utf8') +
   laterTenantSql +
   aiTenantSql +
-  teamsSql;
+  teamsSql +
+  integrationsSql;
 /**
  * Tenant tables keyed by the organization itself rather than a uuid id: ai_org_config (PK org_id) and
  * ai_idempotency (PK (org_id, key)). Their primary key already leads with org_id.
@@ -94,7 +102,7 @@ const ORG_EXPR =
 /** Policy expression for tenant tables created after ADR-010: canonical setting only, no legacy COALESCE. */
 const ADR010_EXPR = "NULLIF(current_setting('app.current_organization_id', true), '')::uuid";
 /** Tenant tables whose policies never had the legacy fallback (DB-1 and later). */
-const ADR010_ONLY_TABLES: readonly string[] = ['teams', 'team_members'];
+const ADR010_ONLY_TABLES: readonly string[] = ['teams', 'team_members', 'integration_connections'];
 /** DB-3: append-only tenant tables with their own SELECT/INSERT policies (ADR-010 setting) in consentSql. */
 const CONSENT_TABLES: readonly string[] = ['consent_attestations'];
 
@@ -191,7 +199,7 @@ describe('RLS migration', () => {
       return;
     }
     if (ADR010_ONLY_TABLES.includes(t)) {
-      expect(teamsSql).toContain(
+      expect(adr010Sql).toContain(
         `CREATE POLICY tenant_isolation ON "${t}"\n  USING (org_id = ${ADR010_EXPR})\n  WITH CHECK (org_id = ${ADR010_EXPR});`,
       );
       return;
@@ -502,7 +510,7 @@ describe('XT-26..XT-28 static guarantees', () => {
     );
     expect(consentSql.split(ADR010_EXPR).length - 1).toBe(CONSENT_TABLES.length * 2);
     expect(consentSql).not.toMatch(/current_setting\('app\.current_(org|organization)_id'\)/);
-    expect(teamsSql.split(ADR010_EXPR).length - 1).toBe(ADR010_ONLY_TABLES.length * 2);
+    expect(adr010Sql.split(ADR010_EXPR).length - 1).toBe(ADR010_ONLY_TABLES.length * 2);
     expect(teamsSql).not.toMatch(/current_setting\('app\.current_(org|organization)_id'\)/);
     expect(policySql).not.toMatch(/current_setting\('app\.current_(org|organization)_id'\)/);
     expect(policySql).not.toMatch(/DROP (TABLE|COLUMN)|RENAME/i);
@@ -515,7 +523,7 @@ describe('XT-26..XT-28 static guarantees', () => {
     expect(consentSql).toMatch(
       /CREATE POLICY consent_insert ON "consent_attestations" FOR INSERT\n {2}WITH CHECK/,
     );
-    expect((teamsSql.match(/CREATE POLICY tenant_isolation[^;]*WITH CHECK/g) ?? []).length).toBe(
+    expect((adr010Sql.match(/CREATE POLICY tenant_isolation[^;]*WITH CHECK/g) ?? []).length).toBe(
       ADR010_ONLY_TABLES.length,
     );
     expect(policySql).toMatch(
@@ -617,7 +625,7 @@ describe('schema conventions', () => {
   });
 
   it('every model uses a uuid primary key', () => {
-    expect(models).toHaveLength(32);
+    expect(models).toHaveLength(33);
     for (const m of models.filter((x) => !ORGANIZATION_KEYED.includes(x.table)))
       expect(m.body, m.name).toMatch(/^\s+id\s+String\s+@id @default\(uuid\(\)\) @db\.Uuid$/m);
   });
@@ -1198,6 +1206,28 @@ describe('DB recording_source_native: RecordingSource mobile/desktop (static)', 
   );
   const statements = sql.replace(/--.*$/gm, '');
 
+  it('sorts after the meetings external id migration', () => {
+    const dirs = readdirSync(migrationsDir, { withFileTypes: true })
+      .filter((x) => x.isDirectory())
+      .map((x) => x.name)
+      .sort();
+    expect(dirs.indexOf(RECORDING_SOURCE_NATIVE_MIGRATION)).toBeGreaterThan(
+      dirs.indexOf(MEETINGS_EXTERNAL_ID_MIGRATION),
+    );
+  });
+
+  it('only adds the two enum values, matching the schema and contracts 0.6.0', () => {
+    expect(statements).not.toMatch(/DROP|RENAME|CREATE TABLE|ALTER TABLE|NO FORCE/i);
+    expect(statements).toContain(`ALTER TYPE "RecordingSource" ADD VALUE IF NOT EXISTS 'mobile';`);
+    expect(statements).toContain(`ALTER TYPE "RecordingSource" ADD VALUE IF NOT EXISTS 'desktop';`);
+    expect(schema).toMatch(/enum RecordingSource \{\s+tab\s+mobile\s+desktop\s+\}/);
+  });
+});
+
+describe('Phase 5 integration_connections (static)', () => {
+  const statements = integrationsSql.replace(/--.*$/gm, '');
+  const model = models.find((m) => m.name === 'IntegrationConnection')?.body ?? '';
+
   it('is the latest migration', () => {
     const dirs = readdirSync(migrationsDir, { withFileTypes: true })
       .filter((x) => x.isDirectory())
@@ -1206,10 +1236,28 @@ describe('DB recording_source_native: RecordingSource mobile/desktop (static)', 
     expect(dirs.at(-1)).toBe(LATEST_MIGRATION);
   });
 
-  it('only adds the two enum values, matching the schema and contracts 0.6.0', () => {
-    expect(statements).not.toMatch(/DROP|RENAME|CREATE TABLE|ALTER TABLE|NO FORCE/i);
-    expect(statements).toContain(`ALTER TYPE "RecordingSource" ADD VALUE IF NOT EXISTS 'mobile';`);
-    expect(statements).toContain(`ALTER TYPE "RecordingSource" ADD VALUE IF NOT EXISTS 'desktop';`);
-    expect(schema).toMatch(/enum RecordingSource \{\s+tab\s+mobile\s+desktop\s+\}/);
+  it('is additive only', () => {
+    expect(statements).not.toMatch(
+      /\bDROP\b|RENAME|ALTER COLUMN|NO FORCE|DISABLE ROW LEVEL SECURITY/i,
+    );
+  });
+
+  it('is a forced-RLS tenant table bound to org_id', () => {
+    expect(TENANT_TABLES).toContain('integration_connections');
+    expect(integrationsSql).toContain(
+      'ALTER TABLE "integration_connections" FORCE ROW LEVEL SECURITY;',
+    );
+    expect(integrationsSql).toContain("RAISE EXCEPTION 'RLS enabled but not forced on: %'");
+    expect(model).toContain('@@unique([organizationId, provider, externalAccountId])');
+    expect(model).toContain('@@unique([organizationId, id])');
+  });
+
+  it('stores secrets only as v1 envelopes, never plaintext columns', () => {
+    for (const c of ['access_token_enc', 'refresh_token_enc', 'webhook_secret_enc']) {
+      expect(integrationsSql).toContain(`"integration_connections_${c}_check" CHECK (`);
+    }
+    expect(model).not.toMatch(/^\s+(accessToken|refreshToken|webhookSecret)\s/m);
+    expect(statements).not.toMatch(/"(access_token|refresh_token|webhook_secret)" /);
+    expect(model).toMatch(/tokenKeyId\s+String\s+@map\("token_key_id"\)/);
   });
 });

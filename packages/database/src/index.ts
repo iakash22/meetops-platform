@@ -131,3 +131,13 @@ export {
   type UpdateProjectInput,
   type ListProjectsInput,
 } from './directory.js';
+export {
+  createIntegrationConnectionRepository,
+  type IntegrationConnectionRepository,
+  type IntegrationConnectionRepositoryOptions,
+  type IntegrationConnectionRecord,
+  type IntegrationConnectionStatusValue,
+  type IntegrationSecretCipher,
+  type IntegrationSecrets,
+  type UpsertIntegrationConnectionInput,
+} from './integration-connections.js';

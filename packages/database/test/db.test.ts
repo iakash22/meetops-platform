@@ -48,9 +48,9 @@ describe('generated client', () => {
     await db.disconnectPrismaClient();
   });
 
-  it('exposes exactly the 32 models', () => {
+  it('exposes exactly the 33 models', () => {
     const models = Object.values(Prisma.ModelName);
-    expect(models).toHaveLength(32);
+    expect(models).toHaveLength(33);
     for (const m of [
       'Organization',
       'User',
@@ -120,6 +120,7 @@ describe('generated client', () => {
         'createTeamRepository',
         'createTeamMemberRepository',
         'createProjectRepository',
+        'createIntegrationConnectionRepository',
         'DirectoryError',
         'isDirectoryError',
         'DIRECTORY_DEFAULT_PAGE_LIMIT',
