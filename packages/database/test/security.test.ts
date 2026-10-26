@@ -63,6 +63,9 @@ const aiTenantSql = readFileSync(
 const teamsSql = readFileSync(resolve(migrationsDir, '20261025090000_teams/migration.sql'), 'utf8');
 const CONSENT_MIGRATION = '20261025120000_consent_scan_keycheck';
 const MEETINGS_EXTERNAL_ID_MIGRATION = '20261026120000_meetings_external_id';
+const RECORDING_SOURCE_NATIVE_MIGRATION = '20261026210000_recording_source_native';
+/** Update when adding a migration. */
+const LATEST_MIGRATION = RECORDING_SOURCE_NATIVE_MIGRATION;
 const consentSql = readFileSync(resolve(migrationsDir, CONSENT_MIGRATION, 'migration.sql'), 'utf8');
 const rlsSql =
   readFileSync(resolve(migrationsDir, '20261021110000_tenant_rls_roles/migration.sql'), 'utf8') +
@@ -787,7 +790,9 @@ describe('recording sessions (contracts v0.2)', () => {
   });
 
   it('enums and limits match the contract', () => {
-    expect(finalSql).toContain(`CREATE TYPE "RecordingSource" AS ENUM ('tab');`);
+    expect(finalSql).toContain(
+      `CREATE TYPE "RecordingSource" AS ENUM ('tab', 'mobile', 'desktop');`,
+    );
     expect(finalSql).toContain(
       `CREATE TYPE "RecordingAbortReason" AS ENUM ('user_stopped', 'consent_revoked', 'tab_closed', 'local_storage_exhausted', 'error');`,
     );
@@ -1087,13 +1092,15 @@ describe('DB-3 consent_attestations, scan_status and storage-key CHECKs (static)
   const model = (name: string) => models.find((m) => m.name === name)?.body ?? '';
   const statements = consentSql.replace(/--.*$/gm, '');
 
-  it('sorts immediately before the meetings external id migration (the latest)', () => {
+  it('sorts before the meetings external id migration', () => {
     const dirs = readdirSync(migrationsDir, { withFileTypes: true })
       .filter((d) => d.isDirectory())
       .map((d) => d.name)
       .sort();
-    expect(dirs.at(-1)).toBe(MEETINGS_EXTERNAL_ID_MIGRATION);
-    expect(dirs.at(-2)).toBe(CONSENT_MIGRATION);
+    expect(dirs.indexOf(CONSENT_MIGRATION)).toBeGreaterThanOrEqual(0);
+    expect(dirs.indexOf(CONSENT_MIGRATION)).toBeLessThan(
+      dirs.indexOf(MEETINGS_EXTERNAL_ID_MIGRATION),
+    );
   });
 
   it('is additive only: no drop, rename, retype or NO FORCE of existing objects', () => {
@@ -1161,12 +1168,15 @@ describe('API-MEETINGS meetings.external_meeting_id (static)', () => {
     resolve(migrationsDir, MEETINGS_EXTERNAL_ID_MIGRATION, 'migration.sql'),
     'utf8',
   );
-  it('is the latest migration', () => {
+  it('is applied before the latest migration', () => {
     const dirs = readdirSync(migrationsDir, { withFileTypes: true })
       .filter((x) => x.isDirectory())
       .map((x) => x.name)
       .sort();
-    expect(dirs.at(-1)).toBe(MEETINGS_EXTERNAL_ID_MIGRATION);
+    expect(dirs.indexOf(MEETINGS_EXTERNAL_ID_MIGRATION)).toBeGreaterThanOrEqual(0);
+    expect(dirs.indexOf(MEETINGS_EXTERNAL_ID_MIGRATION)).toBeLessThanOrEqual(
+      dirs.indexOf(LATEST_MIGRATION),
+    );
   });
 
   it('is additive and adds the per-org idempotency key and keyset index', () => {
@@ -1178,5 +1188,28 @@ describe('API-MEETINGS meetings.external_meeting_id (static)', () => {
     expect(sql).toMatch(
       /INDEX "meetings_org_id_created_at_id_idx"\s+ON "meetings"\("org_id", "created_at", "id"\)/,
     );
+  });
+});
+
+describe('DB recording_source_native: RecordingSource mobile/desktop (static)', () => {
+  const sql = readFileSync(
+    resolve(migrationsDir, RECORDING_SOURCE_NATIVE_MIGRATION, 'migration.sql'),
+    'utf8',
+  );
+  const statements = sql.replace(/--.*$/gm, '');
+
+  it('is the latest migration', () => {
+    const dirs = readdirSync(migrationsDir, { withFileTypes: true })
+      .filter((x) => x.isDirectory())
+      .map((x) => x.name)
+      .sort();
+    expect(dirs.at(-1)).toBe(LATEST_MIGRATION);
+  });
+
+  it('only adds the two enum values, matching the schema and contracts 0.6.0', () => {
+    expect(statements).not.toMatch(/DROP|RENAME|CREATE TABLE|ALTER TABLE|NO FORCE/i);
+    expect(statements).toContain(`ALTER TYPE "RecordingSource" ADD VALUE IF NOT EXISTS 'mobile';`);
+    expect(statements).toContain(`ALTER TYPE "RecordingSource" ADD VALUE IF NOT EXISTS 'desktop';`);
+    expect(schema).toMatch(/enum RecordingSource \{\s+tab\s+mobile\s+desktop\s+\}/);
   });
 });
