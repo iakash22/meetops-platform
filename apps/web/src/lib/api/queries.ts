@@ -1,15 +1,16 @@
 import { TASK_STATUSES } from '@meetops/contracts/types';
-import { useQuery } from '@tanstack/react-query';
+import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
 import type { Id, Meeting, Paginated, Task, TaskUpdateEvent } from '@meetops/contracts';
 import type { QueryClient } from '@tanstack/react-query';
 import { useApi } from './context';
-import type { TaskListFilters } from './client';
+import { ApiError, type TaskListFilters } from './client';
 import { useOrgStore } from '@/stores/org-store';
 
 export const queryKeys = {
   session: ['session'] as const,
   organizations: ['organizations'] as const,
   meetings: (organizationId: Id) => ['orgs', organizationId, 'meetings'] as const,
+  meetingsList: (organizationId: Id) => ['orgs', organizationId, 'meetings', 'list'] as const,
   meeting: (organizationId: Id, meetingId: Id) =>
     ['orgs', organizationId, 'meetings', meetingId] as const,
   tasks: (organizationId: Id, filters: TaskListFilters = {}) =>
@@ -20,15 +21,28 @@ export function useOrganizationId(): Id {
   return useOrgStore((s) => s.currentOrganizationId) ?? '';
 }
 
+/**
+ * GET /orgs/:id/meetings, newest first, cursor-paginated. The first page omits `cursor`
+ * (server default limit 25); `fetchNextPage` follows `nextCursor` until it is null.
+ */
 export function useMeetings() {
   const api = useApi();
   const organizationId = useOrganizationId();
-  return useQuery({
-    queryKey: queryKeys.meetings(organizationId),
-    queryFn: () => api.meetings.list(organizationId),
+  return useInfiniteQuery({
+    queryKey: queryKeys.meetingsList(organizationId),
+    queryFn: ({ pageParam }) =>
+      pageParam
+        ? api.meetings.list(organizationId, { cursor: pageParam })
+        : api.meetings.list(organizationId),
+    initialPageParam: null as string | null,
+    getNextPageParam: (last: Paginated<Meeting>) => last.nextCursor,
     enabled: !!organizationId,
   });
 }
+
+/** 400/403/404 will not change on retry (404 is the same for missing and other-org ids). */
+const isFinalClientError = (err: unknown) =>
+  err instanceof ApiError && (err.status === 400 || err.status === 403 || err.status === 404);
 
 export function useMeeting(meetingId: Id) {
   const api = useApi();
@@ -37,6 +51,7 @@ export function useMeeting(meetingId: Id) {
     queryKey: queryKeys.meeting(organizationId, meetingId),
     queryFn: () => api.meetings.get(organizationId, meetingId),
     enabled: !!organizationId && !!meetingId,
+    retry: (count, err) => !isFinalClientError(err) && count < 1,
   });
 }
 

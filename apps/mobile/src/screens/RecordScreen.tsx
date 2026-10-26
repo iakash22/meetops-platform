@@ -229,9 +229,18 @@ export function RecordScreen() {
 
 function queueText(queue: UploadQueueStatus | null): string {
   if (!queue) return 'Checking…';
-  if (queue.offline)
-    return `Offline. ${pendingText(queue.pending)} Uploads resume when you're back online.`;
-  return pendingText(queue.pending);
+  const extra = [
+    queue.failed ? `${queue.failed} need${queue.failed === 1 ? 's' : ''} attention.` : '',
+    queue.expiringSoon
+      ? `${queue.expiringSoon} will be deleted from this device within a day.`
+      : '',
+  ]
+    .filter(Boolean)
+    .join(' ');
+  const base = queue.offline
+    ? `Offline. ${pendingText(queue.pending)} Uploads resume when you're back online.`
+    : pendingText(queue.pending);
+  return extra ? `${base} ${extra}` : base;
 }
 
 function pendingText(n: number): string {
@@ -274,18 +283,18 @@ const styles = StyleSheet.create({
     width: BUTTON_SIZE + 32,
     height: BUTTON_SIZE + 32,
     borderRadius: radius.full,
-    backgroundColor: colors.accent,
+    backgroundColor: colors.primary,
   },
   recordButton: {
     width: BUTTON_SIZE,
     height: BUTTON_SIZE,
     borderRadius: radius.full,
-    backgroundColor: colors.accent,
+    backgroundColor: colors.primary,
     alignItems: 'center',
     justifyContent: 'center',
-    shadowColor: glow.accent.color,
-    shadowOpacity: glow.accent.opacity,
-    shadowRadius: glow.accent.radius * 2,
+    shadowColor: glow.primary.color,
+    shadowOpacity: glow.primary.opacity,
+    shadowRadius: glow.primary.radius * 2,
     shadowOffset: { width: 0, height: 0 },
     elevation: 10,
   },
@@ -294,13 +303,13 @@ const styles = StyleSheet.create({
     width: 44,
     height: 44,
     borderRadius: radius.full,
-    backgroundColor: colors.accentForeground,
+    backgroundColor: colors.primaryForeground,
   },
   stopGlyph: {
     width: 40,
     height: 40,
     borderRadius: radius.md,
-    backgroundColor: colors.accentForeground,
+    backgroundColor: colors.primaryForeground,
   },
   secondaryRow: { width: 200 },
   summary: { alignSelf: 'stretch', gap: spacing.lg },
