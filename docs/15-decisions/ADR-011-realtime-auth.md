@@ -163,3 +163,8 @@ Both signatures are required before Status moves to Accepted. Sign by replacing 
 | ------------------------- | ------- | ---- | ----- |
 | Architecture Agent (ARCH) | pending |      |       |
 | Security Agent (SEC)      | pending |      |       |
+
+## Pending amendment from ADR-005 (Proposed)
+
+[ADR-005 Amendment 3](./ADR-005-extension-auth.md#a311-cross-amendments-and-open-points) proposes the `mobile`
+audience for Decision 1 item 4. This text changes only when it is Accepted with Architecture and Security sign-off.
