@@ -1229,6 +1229,10 @@ describe('ADR-005 durable token families (static)', () => {
       'GRANT SELECT, INSERT, UPDATE ON TABLE "auth_devices", "auth_token_families", "auth_refresh_tokens" TO meetops_app;',
     );
     expect(statements).not.toMatch(/GRANT [^;]*DELETE/);
+    // Default privileges grant DELETE on new tables, so it must be revoked explicitly.
+    expect(authTokensSql).toContain(
+      'REVOKE DELETE ON TABLE "auth_devices", "auth_token_families", "auth_refresh_tokens" FROM meetops_app;',
+    );
     expect(authTokensSql).toContain("RAISE EXCEPTION 'RLS enabled but not forced on: %'");
   });
 });

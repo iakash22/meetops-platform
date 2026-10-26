@@ -127,6 +127,8 @@ CREATE POLICY tenant_isolation ON "auth_refresh_tokens"
   WITH CHECK (org_id = NULLIF(current_setting('app.current_organization_id', true), '')::uuid);
 -- No DELETE for the app: revocation and rotation are UPDATEs, so reuse evidence is kept.
 GRANT SELECT, INSERT, UPDATE ON TABLE "auth_devices", "auth_token_families", "auth_refresh_tokens" TO meetops_app;
+-- Default privileges (20261021110000) also grant DELETE; revocation is an UPDATE, so take it away.
+REVOKE DELETE ON TABLE "auth_devices", "auth_token_families", "auth_refresh_tokens" FROM meetops_app;
 
 -- Re-run the forced-RLS catalog assertion (20261022034000_assert_forced_rls).
 DO $$
