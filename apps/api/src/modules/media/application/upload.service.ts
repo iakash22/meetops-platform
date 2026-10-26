@@ -108,6 +108,11 @@ export class UploadService {
     if (stored.sizeBytes !== f.sizeBytes) {
       throw new UploadStateConflictError('Uploaded size does not match the declared size');
     }
+    // Fail closed: no checksum, a multipart composite (`<b64>-<parts>`) or a different digest all mean the stored
+    // bytes are not provably the ones declared at init.
+    if (stored.checksumSha256Base64 !== f.checksumSha256Base64) {
+      throw new UploadStateConflictError('Uploaded checksum does not match the declared checksum');
+    }
     const consent = checkStoredConsent(
       await this.d.consents.findLatest(f.organizationId, 'upload', f.id),
     );

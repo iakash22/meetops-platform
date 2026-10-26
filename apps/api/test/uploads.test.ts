@@ -149,6 +149,31 @@ describe('uploads (init, complete, download-url)', () => {
     expect(w.jobs.jobs).toHaveLength(0);
   });
 
+  it('complete: checksum mismatch, missing or multipart checksum -> 409 and no job', async () => {
+    const other = 'LCa0a2j/xo/5m0U8HTBBNBNCLXBkg7+g+YpeiGJm564=';
+    for (const stored of [other, null, `${SHA_B64}-3`]) {
+      const { fileObjectId } = await init();
+      w.signer.put(keyOf(fileObjectId), 1000, stored);
+      const r = await w.member.post(`${url()}/${fileObjectId}/complete`, {});
+      expect(r.statusCode).toBe(409);
+      expect(errorOf(r)).toMatchObject({ code: 'CONFLICT' });
+      expect((w.media.files as InMemoryFileObjectRepository).rows.get(fileObjectId)!.status).toBe(
+        'pending_upload',
+      );
+    }
+    expect(w.jobs.jobs).toHaveLength(0);
+  });
+
+  it('complete: a matching re-upload after a checksum mismatch succeeds', async () => {
+    const { fileObjectId } = await init();
+    w.signer.put(keyOf(fileObjectId), 1000, null);
+    const done = `${url()}/${fileObjectId}/complete`;
+    expect((await w.member.post(done, {})).statusCode).toBe(409);
+    w.signer.put(keyOf(fileObjectId), 1000, SHA_B64);
+    expect((await w.member.post(done, {})).statusCode).toBe(200);
+    expect(w.jobs.jobs).toHaveLength(1);
+  });
+
   it('download-url: expiresIn <= 300 s, 404 unless scanStatus is clean, never cross-org', async () => {
     const { fileObjectId } = await init();
     const dl = `${url()}/${fileObjectId}/download-url`;
