@@ -8,6 +8,7 @@
 /packages/config/         @iakash22
 /packages/logger/         @iakash22
 /packages/queue/          @iakash22
+/packages/session-verifier/ @iakash22
 
 # Media and Realtime agent (worker pipeline + storage)
 /apps/worker/             @iakash22
