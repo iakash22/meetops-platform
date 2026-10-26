@@ -1,10 +1,15 @@
-import { lazy, Suspense, useMemo, useState } from 'react';
+import { lazy, Suspense, useMemo, useRef, useState } from 'react';
 
 import { AppShell, type View } from '@/components/layout/app-shell';
 import type { AuthClient } from '@/features/auth/auth-client';
 import { SessionProvider, useSession } from '@/features/auth/session';
 import { SignInScreen } from '@/features/auth/sign-in-screen';
 import { createUnavailableAuthClient } from '@/features/auth/unavailable-auth';
+import { SAMPLE_MEETINGS } from '@/features/meetings/sample-meetings';
+import { createMediaRecorder } from '@/features/recording/recorder';
+import type { RecordingDeps } from '@/features/recording/recording-screen';
+import { createSimulatedUploadApi } from '@/features/recording/simulated-upload-api';
+import { createMemoryChunkStore, createUploadQueue } from '@/features/recording/upload-queue';
 import { isMockAuthEnabled } from '@/lib/config';
 
 // Only the sign-in screen is in the entry chunk; everything behind it loads on demand.
@@ -14,6 +19,9 @@ const SignUpScreen = import.meta.env.DEV
   : null;
 const MeetingsScreen = lazy(() =>
   import('@/features/meetings/meetings-screen').then((m) => ({ default: m.MeetingsScreen })),
+);
+const RecordingScreen = lazy(() =>
+  import('@/features/recording/recording-screen').then((m) => ({ default: m.RecordingScreen })),
 );
 const SettingsScreen = lazy(() =>
   import('@/features/settings/settings-screen').then((m) => ({ default: m.SettingsScreen })),
@@ -27,8 +35,37 @@ function Loading() {
   );
 }
 
-function Screens({ mockAuth }: { mockAuth: boolean }) {
+function useRecordingDeps(override: RecordingDeps | undefined): RecordingDeps {
   const { session } = useSession();
+  const sessionRef = useRef(session);
+  sessionRef.current = session;
+  return useMemo(() => {
+    if (override) return override;
+    // TODO(desktop-recording): swap for createNativeUploadApi(invoke) + encrypted disk store once the
+    // Rust commands land (Cargo.lock slot). Until then chunks stay in memory and uploads are simulated.
+    const chunks = createMemoryChunkStore();
+    const queue = createUploadQueue(createSimulatedUploadApi(), chunks, {
+      isOnline: () => navigator.onLine,
+      identity: () => {
+        const s = sessionRef.current;
+        return s?.activeOrganizationId
+          ? { userId: s.user.id, organizationId: s.activeOrganizationId }
+          : null;
+      },
+    });
+    return { queue, chunks, makeRecorder: createMediaRecorder, simulated: true };
+  }, [override]);
+}
+
+function Screens({
+  mockAuth,
+  recording,
+}: {
+  mockAuth: boolean;
+  recording?: RecordingDeps | undefined;
+}) {
+  const { session } = useSession();
+  const recordingDeps = useRecordingDeps(recording);
   const [view, setView] = useState<View>('meetings');
   const [authView, setAuthView] = useState<'sign-in' | 'sign-up'>('sign-in');
 
@@ -44,13 +81,27 @@ function Screens({ mockAuth }: { mockAuth: boolean }) {
   return (
     <AppShell view={view} onNavigate={setView}>
       <Suspense fallback={<Loading />}>
-        {view === 'meetings' ? <MeetingsScreen /> : <SettingsScreen />}
+        {view === 'meetings' ? (
+          <MeetingsScreen onRecord={() => setView('record')} />
+        ) : view === 'record' ? (
+          <RecordingScreen meetings={SAMPLE_MEETINGS} deps={recordingDeps} />
+        ) : (
+          <SettingsScreen />
+        )}
       </Suspense>
     </AppShell>
   );
 }
 
-export function App({ authClient, mockAuth }: { authClient?: AuthClient; mockAuth?: boolean }) {
+export function App({
+  authClient,
+  mockAuth,
+  recording,
+}: {
+  authClient?: AuthClient;
+  mockAuth?: boolean;
+  recording?: RecordingDeps;
+}) {
   // Hard-off in production: neither the prop nor env can enable the mock outside dev.
   const mock = import.meta.env.DEV && (mockAuth ?? isMockAuthEnabled());
   // TODO(desktop-auth): replace with the ADR-012 browser + PKCE client once the ADR is signed off.
@@ -72,7 +123,7 @@ export function App({ authClient, mockAuth }: { authClient?: AuthClient; mockAut
   }, [authClient, mock]);
   return (
     <SessionProvider client={client}>
-      <Screens mockAuth={mock} />
+      <Screens mockAuth={mock} recording={recording} />
     </SessionProvider>
   );
 }

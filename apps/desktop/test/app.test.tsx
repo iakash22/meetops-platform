@@ -45,7 +45,7 @@ describe('desktop app shell', () => {
     expect(within(list).getAllByRole('listitem').length).toBeGreaterThan(0);
     expect(screen.getByLabelText('Signed in user')).toHaveTextContent('Alex');
     expect(screen.getByText('Demo Organization')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /new offline recording/i })).toBeDisabled();
+    expect(screen.getByRole('button', { name: /new offline recording/i })).toBeEnabled();
 
     const nav = screen.getByRole('navigation', { name: 'Main' });
     expect(within(nav).getByRole('button', { name: /meetings/i })).toHaveAttribute(

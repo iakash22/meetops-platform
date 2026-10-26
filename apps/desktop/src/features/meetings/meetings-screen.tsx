@@ -27,17 +27,23 @@ function formatDate(iso: string | undefined): string {
   return new Date(iso).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
 }
 
-export function MeetingsScreen({ meetings = SAMPLE_MEETINGS }: { meetings?: readonly Meeting[] }) {
+export function MeetingsScreen({
+  meetings = SAMPLE_MEETINGS,
+  onRecord,
+}: {
+  meetings?: readonly Meeting[];
+  onRecord?: (() => void) | undefined;
+}) {
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Meetings</h1>
           <p className="text-sm text-muted-foreground">
-            Placeholder data. Live meetings and offline recording arrive in later milestones.
+            Placeholder data. Live meetings arrive with the desktop API commands.
           </p>
         </div>
-        <Button variant="record" disabled title="Offline recording is not available yet">
+        <Button variant="record" onClick={onRecord} disabled={!onRecord}>
           <Circle className="fill-current" aria-hidden />
           New offline recording
         </Button>

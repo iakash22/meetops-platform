@@ -1,15 +1,16 @@
 import { useEffect, useState, type ReactNode } from 'react';
-import { CalendarDays, PanelLeftClose, PanelLeftOpen, Settings } from 'lucide-react';
+import { CalendarDays, PanelLeftClose, PanelLeftOpen, Mic, Settings } from 'lucide-react';
 
 import { BrandMark } from '@/components/brand';
 import { Separator } from '@/components/ui/separator';
 import { cn } from '@/lib/utils';
 import { activeOrganizationName, displayName, useSession } from '@/features/auth/session';
 
-export type View = 'meetings' | 'settings';
+export type View = 'meetings' | 'record' | 'settings';
 
 const NAV: ReadonlyArray<{ view: View; label: string; icon: typeof CalendarDays }> = [
   { view: 'meetings', label: 'Meetings', icon: CalendarDays },
+  { view: 'record', label: 'Record', icon: Mic },
   { view: 'settings', label: 'Settings', icon: Settings },
 ];
 
