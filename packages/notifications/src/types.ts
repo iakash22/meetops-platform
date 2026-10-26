@@ -20,6 +20,17 @@ export interface EmailMessage {
   html?: string;
   text?: string;
   headers?: Record<string, string>;
+  /** Inline images referenced as cid:<cid> from the HTML (the email logo). */
+  attachments?: EmailAttachment[];
+}
+
+export interface EmailAttachment {
+  filename: string;
+  cid: string;
+  contentType: string;
+  /** Base64-encoded bytes. */
+  content: string;
+  encoding: 'base64';
 }
 
 export interface SendResult {
