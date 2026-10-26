@@ -39,6 +39,10 @@ export function TasksScreen() {
           testID="tasks-list"
           data={state.items}
           keyExtractor={(t) => t.id}
+          initialNumToRender={12}
+          maxToRenderPerBatch={12}
+          windowSize={7}
+          removeClippedSubviews
           ListEmptyComponent={
             <EmptyState
               testID="tasks-empty"
