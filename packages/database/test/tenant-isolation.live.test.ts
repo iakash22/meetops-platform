@@ -75,6 +75,9 @@ function override(table: string, column: string, organizationId: string): string
   if (table === 'file_objects' && column === 'storage_key')
     return `'organizations/${organizationId}/isolation-test-${randomUUID()}'`;
   if (table === 'consent_attestations' && column === 'consent_version') return `'2026-10'`;
+  // CHECK constraints require v1 cipher envelopes (no real secrets in tests).
+  if (table === 'integration_connections' && column.endsWith('_enc'))
+    return `'v1.isolation.wrapped.ciphertext'`;
   return undefined;
 }
 
