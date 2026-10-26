@@ -15,6 +15,12 @@ export const DIRECTORY_SUBJECTS = ['Employee', 'Team', 'Project'] as const;
  * Ownership: pass the row's `uploadedById` (FileObject) / `createdById` (RecordingSession) as `createdById`.
  */
 export const MEDIA_SUBJECTS = ['FileObject', 'RecordingSession'] as const;
+/**
+ * Task subjects (Phase 4). `Task` covers tasks and the review of AI-extracted tasks: reviewing (accept/dismiss) is
+ * `create Task`, since accepting creates one. Viewers read only.
+ */
+export const TASK_SUBJECTS = ['Task'] as const;
+export type TaskSubject = (typeof TASK_SUBJECTS)[number];
 export type DirectorySubject = (typeof DIRECTORY_SUBJECTS)[number];
 export type MediaSubject = (typeof MEDIA_SUBJECTS)[number];
 export type SubjectName =
@@ -25,6 +31,7 @@ export type SubjectName =
   | 'Billing'
   | DirectorySubject
   | MediaSubject
+  | TaskSubject
   | 'all';
 type OrgScoped = { organizationId: string; createdById?: string };
 // Conditions are Mongo queries over { organizationId, createdById }.
@@ -60,7 +67,7 @@ export function defineAbilityFor(ctx: {
         can('read', 'Billing', o);
         can(['create', 'read', 'update', 'delete'], ['Membership', 'Invitation'], o);
         can('manage', 'Meeting', o);
-        can('manage', [...DIRECTORY_SUBJECTS, ...MEDIA_SUBJECTS], o);
+        can('manage', [...DIRECTORY_SUBJECTS, ...MEDIA_SUBJECTS, ...TASK_SUBJECTS], o);
         cannot('delete', 'Organization');
         break;
       case 'member':
@@ -68,6 +75,7 @@ export function defineAbilityFor(ctx: {
         can(['create', 'read'], 'Meeting', o);
         can(['update', 'delete'], 'Meeting', { organizationId, createdById: ctx.userId });
         can('read', [...DIRECTORY_SUBJECTS], o);
+        can(['create', 'read', 'update'], [...TASK_SUBJECTS], o);
         // Recordings / media: C R; U D own. `update` own covers chunk upload, complete and abort of the
         // member's own upload or recording session.
         can(['create', 'read'], [...MEDIA_SUBJECTS], o);
@@ -83,6 +91,7 @@ export function defineAbilityFor(ctx: {
             'Meeting',
             ...DIRECTORY_SUBJECTS,
             ...MEDIA_SUBJECTS,
+            ...TASK_SUBJECTS,
           ],
           o,
         );
