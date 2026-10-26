@@ -1,4 +1,5 @@
 import type { ConsentAttestationInput } from '@meetops/contracts';
+import type { QueueItem } from '../upload/types';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Animated, Pressable, StyleSheet, Text, View } from 'react-native';
 
@@ -31,7 +32,12 @@ const STATUS_TEXT = {
 export function RecordScreen() {
   const recorder = useRecorderShell();
   const reducedMotion = useReducedMotion();
-  const { uploadQueue, consent, micPermission } = useRepositories();
+  const { uploadQueue, consent, micPermission, recordings } = useRepositories();
+  const [items, setItems] = useState<QueueItem[]>([]);
+  const [saved, setSaved] = useState(false);
+  const meetingIdRef = useRef<string | null>(null);
+  const startedAtRef = useRef<string | null>(null);
+  const stoppedRef = useRef(false);
   const [consentStep, setConsentStep] = useState<ConsentStep | null>(null);
   const [consentBusy, setConsentBusy] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
@@ -45,16 +51,58 @@ export function RecordScreen() {
 
   useEffect(() => {
     let mounted = true;
-    uploadQueue
-      .status()
-      .then((s) => {
-        if (mounted) setQueue(s);
-      })
-      .catch(() => undefined);
+    const refresh = () => {
+      uploadQueue
+        .status()
+        .then((s) => {
+          if (mounted) setQueue(s);
+        })
+        .catch(() => undefined);
+      recordings?.engine
+        .items()
+        .then((list) => {
+          if (mounted) setItems(list);
+        })
+        .catch(() => undefined);
+    };
+    refresh();
+    const unsubscribe = recordings?.engine.subscribe(refresh);
     return () => {
       mounted = false;
+      unsubscribe?.();
     };
-  }, [uploadQueue]);
+  }, [recordings, uploadQueue]);
+
+  // Stop -> save: the simulated capture writes placeholder chunks, then the recording joins the queue.
+  useEffect(() => {
+    if (recorder.phase !== 'stopped' || stoppedRef.current) return;
+    stoppedRef.current = true;
+    const consentRecord = attestationRef.current;
+    const meetingId = meetingIdRef.current;
+    const organizationId = recordings?.organizationId();
+    if (!recordings || !consentRecord || !meetingId || !organizationId) return;
+    const id = `rec-${Date.now().toString(36)}`;
+    const durationMs = recorder.elapsedMs;
+    void (async () => {
+      try {
+        const chunks = await recordings.capture.capture(id, durationMs);
+        await recordings.engine.enqueue({
+          id,
+          organizationId,
+          meetingId,
+          mimeType: 'audio/mp4',
+          startedAt: startedAtRef.current ?? new Date().toISOString(),
+          durationMs,
+          chunks,
+          consent: consentRecord,
+        });
+        setSaved(true);
+        await recordings.engine.process();
+      } catch {
+        setToast("Couldn't save this recording. Try again.");
+      }
+    })();
+  }, [recorder.elapsedMs, recorder.phase, recordings]);
 
   // Breathing halo while recording; static when reduced motion is on or not recording.
   useEffect(() => {
@@ -108,12 +156,18 @@ export function RecordScreen() {
         setConsentStep(null);
         await micPermission.openSettings();
       } else {
+        // CONTRACTS DEPENDENCY: a real recording needs a server meeting id (meeting picker, list-meetings route).
+        const meetingId = newLocalMeetingId();
+        meetingIdRef.current = meetingId;
         attestationRef.current = await consent.confirmParticipantNotice({
-          meetingId: newLocalMeetingId(),
+          meetingId,
           confirmedAt: new Date().toISOString(),
           method: allAgreed ? 'all_parties_consented' : 'all_parties_notified',
         });
         setConsentStep(null);
+        stoppedRef.current = false;
+        setSaved(false);
+        startedAtRef.current = new Date().toISOString();
         start();
       }
     } catch {
@@ -145,7 +199,15 @@ export function RecordScreen() {
 
   return (
     <View style={styles.container}>
-      {preview ? (
+      {preview && recordings ? (
+        <View testID="record-simulated-notice" style={styles.notice} accessible>
+          <Text style={styles.noticeTitle}>Simulated recorder</Text>
+          <Text style={styles.noticeBody}>
+            No audio is captured. Stopping queues a placeholder recording so you can see the upload
+            queue. Uploads are simulated and nothing leaves this device.
+          </Text>
+        </View>
+      ) : preview ? (
         <View testID="record-preview-notice" style={styles.notice} accessible>
           <Text style={styles.noticeTitle}>Preview only</Text>
           <Text style={styles.noticeBody}>
@@ -189,9 +251,11 @@ export function RecordScreen() {
         ) : recorder.phase === 'stopped' ? (
           <View style={styles.summary}>
             <Text testID="record-summary" style={styles.summaryText} accessibilityRole="alert">
-              {preview
-                ? `Preview ended at ${timeText}. Nothing was saved.`
-                : `Recording stopped at ${timeText}.`}
+              {saved
+                ? `Simulated recording saved at ${timeText}. It's in the upload queue.`
+                : preview && !recordings
+                  ? `Preview ended at ${timeText}. Nothing was saved.`
+                  : `Recording stopped at ${timeText}.`}
             </Text>
             <Button
               testID="record-done"
@@ -251,6 +315,49 @@ export function RecordScreen() {
           </Text>
         </View>
       </View>
+      {items.length > 0 ? (
+        <View testID="upload-queue-items" style={styles.items}>
+          {items.map((item) => (
+            <View key={item.id} style={styles.item} testID={`queue-item-${item.id}`}>
+              <View style={styles.flex}>
+                <Text style={styles.itemTitle}>
+                  {formatElapsed(item.durationMs)} recording · {item.uploadedSeqs.length}/
+                  {item.chunks.length} parts
+                </Text>
+                <Text style={item.state === 'failed' ? styles.itemError : styles.queueBody}>
+                  {item.state === 'failed'
+                    ? (item.lastError ?? 'Upload stopped.')
+                    : item.state === 'uploading'
+                      ? 'Uploading…'
+                      : 'Waiting'}
+                </Text>
+              </View>
+              {item.state === 'failed' ? (
+                <Button
+                  testID={`queue-retry-${item.id}`}
+                  variant="secondary"
+                  label="Retry"
+                  onPress={() =>
+                    void recordings?.engine
+                      .retry(item.id)
+                      .catch(() => setToast("Couldn't retry the upload. Try again."))
+                  }
+                />
+              ) : null}
+              <Button
+                testID={`queue-delete-${item.id}`}
+                variant="secondary"
+                label="Delete"
+                onPress={() =>
+                  void recordings?.engine
+                    .discard(item.id)
+                    .catch(() => setToast("Couldn't delete the recording. Try again."))
+                }
+              />
+            </View>
+          ))}
+        </View>
+      ) : null}
       <Toast testID="record-toast" message={toast} onDismiss={() => setToast(null)} />
     </View>
   );
@@ -359,6 +466,19 @@ const styles = StyleSheet.create({
     borderRadius: radius.full,
     backgroundColor: colors.mutedForeground,
   },
+  items: { gap: spacing.sm, marginTop: spacing.sm },
+  item: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    backgroundColor: colors.card,
+    borderColor: colors.border,
+    borderWidth: 1,
+    borderRadius: radius.lg,
+    padding: spacing.md,
+  },
+  itemTitle: { color: colors.foreground, fontSize: 14, fontWeight: '600' },
+  itemError: { color: colors.destructiveText, fontSize: 13, marginTop: 2 },
   queueDotOffline: { backgroundColor: colors.warning },
   queueTitle: { color: colors.foreground, fontSize: 15, fontWeight: '600' },
   queueBody: { color: colors.mutedForeground, fontSize: 13, marginTop: 2 },

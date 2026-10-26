@@ -35,6 +35,8 @@ export interface UploadQueueEngine extends UploadQueue {
   /** Retries a failed item now. */
   retry(id: string): Promise<void>;
   items(): Promise<QueueItem[]>;
+  /** User deletes one recording: aborts its session (user_stopped) and deletes the local copy. */
+  discard(id: string): Promise<void>;
   /** R4 logout / org-switch wipe: aborts open sessions and deletes every local recording. */
   wipe(): Promise<void>;
   subscribe(listener: () => void): () => void;
@@ -195,6 +197,15 @@ export function createUploadQueueEngine({
         failed: items.filter((i) => i.state === 'failed').length,
         expiringSoon: items.filter((i) => t - i.queuedAt >= RETENTION_WARNING_MS).length,
       };
+    },
+    async discard(id) {
+      await running?.catch(() => undefined);
+      const item = (await load()).find((i) => i.id === id);
+      if (!item) return;
+      if (item.sessionId && item.state !== 'done')
+        await api.abort(item.sessionId, 'user_stopped').catch(() => undefined);
+      await chunks.remove(id);
+      await persist((await load()).filter((i) => i.id !== id));
     },
     async wipe() {
       await running?.catch(() => undefined);

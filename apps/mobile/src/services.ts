@@ -10,7 +10,9 @@ import { createHttpMeetingsRepository, createHttpTasksRepository } from './data/
 import { createPlaceholderMeetingsRepository } from './data/meetingsRepository';
 import type { Repositories } from './data/RepositoriesProvider';
 import { createPlaceholderTasksRepository } from './data/tasksRepository';
-import { createPlaceholderUploadQueue } from './data/uploadQueue';
+import { createSimulatedCapture } from './record/simulatedRecorder';
+import { createMemoryQueueStore, createSimulatedUploadApi } from './upload/simulatedUploadApi';
+import { createUploadQueueEngine } from './upload/uploadQueueEngine';
 
 /**
  * App composition root.
@@ -18,7 +20,8 @@ import { createPlaceholderUploadQueue } from './data/uploadQueue';
  * Live mode: set `EXPO_PUBLIC_API_URL` (https origin, public, not a secret). Auth, signup, meetings and tasks then go
  * to the API with bearer tokens (see `src/api/httpAuthClient.ts` for the mobile token routes Backend must ship).
  * Demo mode (no URL, or a non-https URL outside dev): typed mocks, nothing leaves the device.
- * Still mocked in both modes: consent (no Backend consent route), upload queue (native recorder, M4/M5),
+ * Still mocked in both modes: consent (no Backend consent route), recorder (SIMULATED: no audio, placeholder chunks into the
+ * real upload queue engine with a simulated upload API, in-memory queue, always online),
  * token storage (in memory until `expo-secure-store` lands in a lockfile-owning PR).
  */
 export function resolveApiBaseUrl(raw: string | undefined, dev: boolean): string | null {
@@ -52,10 +55,26 @@ const http = API_BASE_URL
   ? { baseUrl: API_BASE_URL, getAccessToken: () => sessionManager.getAccessToken() }
   : null;
 
+const capture = createSimulatedCapture();
+const engine = createUploadQueueEngine({
+  store: createMemoryQueueStore(),
+  chunks: capture,
+  api: createSimulatedUploadApi(300),
+  network: { isOnline: () => true },
+});
+
 export const repositories: Repositories = {
   meetings: http ? createHttpMeetingsRepository(http) : createPlaceholderMeetingsRepository(400),
   tasks: http ? createHttpTasksRepository(http) : createPlaceholderTasksRepository(400),
-  uploadQueue: createPlaceholderUploadQueue(),
+  uploadQueue: engine,
+  recordings: {
+    engine,
+    capture,
+    organizationId: () => {
+      const state = sessionManager.getState();
+      return state.status === 'signedIn' ? state.identity.organizationId : null;
+    },
+  },
   consent: createDemoConsentApi({ latencyMs: 300 }),
   micPermission: createDemoMicPermission(),
 };
