@@ -1,6 +1,14 @@
 # MeetOps AI — Agent Work Status and Pending Work
 
-## Update — 27 Oct 2026
+## Update — 27 Oct 2026 (~21:30 IST)
+
+- **`main` updated:** Shubham merged [#247](https://github.com/iakash22/meetops-platform/pull/247) (`integration/phase-1` → `main`, merge commit `47dbf97`). 31 PRs merged into integration on 27 Oct: #216, #217, #218, #219, #220, #221, #222, #223, #224, #225, #226, #227, #228, #229, #230, #231, #232, #233, #234, #235, #236, #237, #238, #239, #240, #241, #242, #243, #244, #245, #246.
+- **All Rounder** (backend, DB, contracts, security): idle, awaiting "start work". On hold: `feat/worker-ai-queue-consumer` (`4dc75a7`, needs `GEMINI_API_KEY`).
+- **Coordinator** (Project Plan and Coordinator; frontend: web, extension, mobile, desktop; merge gate): idle, awaiting "start work".
+- **Open PRs:** only the ADR drafts #192, #193, #199 (need Shubham's sign-off).
+- **CI:** GitHub Actions runs fail; the local gate is the CI. Phase numbers: [`PHASE_STATUS.md`](PHASE_STATUS.md).
+
+## Update — 27 Oct 2026 (morning)
 
 - **Agents:** Coordinator (merge gate, PRs, frontend) + All Rounder (backend, DB, contracts, security; full local CI incl. live DB tests).
 - **Flow:** feature branch → PR into `integration/phase-1` → merge gate → later one integration → `main` PR merged by Shubham.
