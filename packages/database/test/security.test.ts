@@ -80,6 +80,8 @@ const REPORT_SUMMARY_DEDUPE_MIGRATION = '20261027120000_report_summary_dedupe';
 const RECORDING_BYTES_MIGRATION = '20261027130000_recording_session_bytes_received';
 /** Definer SELECT policy for the integration routing functions (forced RLS binds the owner). */
 const INTEGRATION_ROUTING_POLICY_MIGRATION = '20261027140000_integration_routing_definer_policy';
+/** ADR-014 session/audit geo columns + 30-day IP retention. */
+const SESSION_AUDIT_GEOIP_MIGRATION = '20261028010000_session_audit_geoip';
 /** App-wide GitHub webhook routing by installation id (definer function, identifiers only). */
 const EXTERNAL_ACCOUNT_ROUTING_MIGRATION = '20261028020000_integration_external_account_routing';
 const LATEST_MIGRATION = EXTERNAL_ACCOUNT_ROUTING_MIGRATION;
@@ -1440,6 +1442,14 @@ describe('integration routing definer functions', () => {
 });
 
 describe('integration external-account routing (20261028020000)', () => {
+  it('is the newest migration, right after the ADR-014 geoip one', () => {
+    const dirs = readdirSync(migrationsDir, { withFileTypes: true })
+      .filter((x) => x.isDirectory())
+      .map((x) => x.name)
+      .sort();
+    expect(dirs.at(-1)).toBe(EXTERNAL_ACCOUNT_ROUTING_MIGRATION);
+    expect(dirs.at(-2)).toBe(SESSION_AUDIT_GEOIP_MIGRATION);
+  });
   const sql = readFileSync(
     resolve(migrationsDir, EXTERNAL_ACCOUNT_ROUTING_MIGRATION, 'migration.sql'),
     'utf8',
