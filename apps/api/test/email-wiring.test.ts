@@ -63,9 +63,9 @@ describe('email delivery wiring', () => {
       },
     });
     const errors: unknown[] = [];
-    const spy = vi.spyOn(failing.log, 'error').mockImplementation(((obj: unknown) => {
+    const spy = vi.spyOn(failing.log, 'error').mockImplementation((obj: unknown) => {
       errors.push(obj);
-    }) as never);
+    });
     const bad = await flow(failing);
     expect(bad).toEqual(good);
     expect(bad.every((r) => r.status < 500)).toBe(true);

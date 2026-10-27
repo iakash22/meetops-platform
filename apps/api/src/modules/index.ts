@@ -242,7 +242,7 @@ export const emailConfigured = (emailEnv: ModuleEnv['emailEnv']) =>
  */
 function resolveEmailConfig(env: ModuleEnv): EmailConfig | null {
   if (env.nodeEnv === 'test' || !emailConfigured(env.emailEnv)) return null;
-  return loadEmailConfig(env.emailEnv as Record<string, string | undefined>);
+  return loadEmailConfig(env.emailEnv);
 }
 
 /** Dev/test sender: keeps nothing (bodies hold one-time links) and logs nothing. */
