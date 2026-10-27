@@ -1,6 +1,7 @@
 import pino, { type LoggerOptions, type Logger } from 'pino';
 import { CENSOR, DEFAULT_REDACT_KEYS, redactDeep, type RedactLimits } from './redact.js';
 
+export type { Logger };
 export {
   CENSOR,
   CIRCULAR,

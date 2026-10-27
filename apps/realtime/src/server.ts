@@ -1,9 +1,9 @@
-import Fastify, { type FastifyInstance } from 'fastify';
+import Fastify, { type FastifyBaseLogger, type FastifyInstance } from 'fastify';
 import { Server, type Socket } from 'socket.io';
 import { createAdapter } from '@socket.io/redis-adapter';
 import { createClient } from 'redis';
 import { REDACT_KEYS } from '@meetops/contracts';
-import { createLogger } from '@meetops/logger';
+import { createLogger, type Logger } from '@meetops/logger';
 import type { RealtimeConfig } from './config.js';
 import { REALTIME_CONTROL_EVENTS, type ReauthReason } from './control-events.js';
 import {
@@ -119,14 +119,14 @@ function acceptable(ctx: AuthContext | null, kind: ClientKind, now: number): ctx
 }
 
 /** Realtime logger with contracts REDACT_KEYS redacted at any depth (ADR-005 A1.5). */
-export function createRealtimeLogger(destination?: Parameters<typeof createLogger>[1]) {
+export function createRealtimeLogger(destination?: Parameters<typeof createLogger>[1]): Logger {
   return createLogger({ name: 'realtime', redactKeys: REDACT_KEYS }, destination);
 }
 
 export async function createRealtimeServer(
   opts: RealtimeServerOptions,
 ): Promise<{ app: FastifyInstance; io: RealtimeIo }> {
-  const log = createRealtimeLogger();
+  const log: FastifyBaseLogger = createRealtimeLogger();
   // Fastify request logs go through the same redacting logger, never pino's unredacted default.
   const app = opts.logger ? Fastify({ loggerInstance: log }) : Fastify({ logger: false });
   const now = opts.now ?? Date.now;
