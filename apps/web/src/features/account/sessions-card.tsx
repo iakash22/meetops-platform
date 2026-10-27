@@ -9,6 +9,15 @@ import { ApiError } from '@/lib/api/client';
 import { useApi } from '@/lib/api/context';
 import { notify, toastError } from '@/lib/errors/notify';
 import { describeUserAgent, formatDateTime } from './device-label';
+import {
+  countryFlag,
+  formatLocation,
+  isNewLocation,
+  type SessionWithGeo,
+} from './session-location';
+
+const UNKNOWN = 'Unknown location';
+const APPROX_HINT = 'Approximate location based on IP address';
 import { useEndLocalSession } from './end-session';
 import { accountKeys, useMySessions } from './queries';
 
@@ -67,8 +76,13 @@ export function SessionsCard() {
           <EmptyState title="No active sessions" />
         ) : (
           <ul className="divide-y rounded-lg border" aria-label="Sessions">
-            {query.data.items.map((s) => {
+            {query.data.items.map((summary) => {
+              const s: SessionWithGeo = summary;
+              const current = (query.data.items as SessionWithGeo[]).find((x) => x.current);
+              const flag = countryFlag(s.geoCountryCode);
+              const code = s.geoCountryCode?.trim().toUpperCase();
               const label = describeUserAgent(s.userAgent);
+              const location = formatLocation(s);
               const isConfirming = confirming === s.id;
               return (
                 <li
@@ -77,9 +91,35 @@ export function SessionsCard() {
                   className="flex flex-wrap items-center justify-between gap-3 p-3"
                 >
                   <div className="grid gap-0.5">
-                    <span className="flex items-center gap-2 font-medium">
-                      {label}
+                    <span
+                      className="flex flex-wrap items-center gap-2 font-medium"
+                      data-testid="session-location"
+                    >
+                      {flag ? (
+                        <span role="img" aria-label={code ?? ''}>
+                          {flag}
+                        </span>
+                      ) : code ? (
+                        <span className="text-xs text-muted-foreground">[{code}]</span>
+                      ) : null}
+                      <span>
+                        {label} · {location}
+                      </span>
+                      {location !== UNKNOWN && s.geoApproximate !== false ? (
+                        <abbr
+                          title={APPROX_HINT}
+                          aria-label={APPROX_HINT}
+                          className="cursor-help text-xs text-muted-foreground no-underline"
+                        >
+                          ≈ approximate
+                        </abbr>
+                      ) : null}
                       {s.current ? <Badge variant="secondary">This device</Badge> : null}
+                      {isNewLocation(s, current) ? (
+                        <Badge variant="destructive" data-testid="new-location">
+                          New location
+                        </Badge>
+                      ) : null}
                     </span>
                     <span className="text-xs text-muted-foreground">
                       Last active{' '}

@@ -50,10 +50,10 @@ describe('/account', () => {
     await openAccount();
     const rows = screen.getAllByTestId('session-row');
     expect(rows).toHaveLength(2);
-    expect(within(rows[0]!).getByText('Firefox on macOS')).toBeInTheDocument();
+    expect(within(rows[0]!).getByText('Firefox on macOS · Unknown location')).toBeInTheDocument();
     expect(within(rows[0]!).getByText('This device')).toBeInTheDocument();
     expect(within(rows[0]!).getByText(/203\.0\.113\.7/)).toBeInTheDocument();
-    expect(within(rows[1]!).getByText('Safari on iOS')).toBeInTheDocument();
+    expect(within(rows[1]!).getByText('Safari on iOS · Unknown location')).toBeInTheDocument();
     expect(within(rows[1]!).queryByText('This device')).toBeNull();
   });
 
