@@ -3,6 +3,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react-nativ
 import { PushNotificationsCard } from '../src/notifications/PushNotificationsCard';
 import {
   createDemoPushTokenProvider,
+  createHttpPushDeviceApi,
   createPushRegistrationService,
   type PushDeviceApi,
 } from '../src/notifications/pushRegistration';
@@ -56,5 +57,31 @@ describe('push registration', () => {
     const s = createPushRegistrationService(createDemoPushTokenProvider('granted'), a, 'ios');
     const r = await s.enable();
     expect(r).toEqual({ status: 'error', message: 'Could not turn on notifications. Try again.' });
+  });
+});
+
+describe('createHttpPushDeviceApi', () => {
+  const device = { id: 'd1', platform: 'ios', createdAt: '2026-10-27T00:00:00.000Z' };
+
+  it('POSTs /me/push-devices (201) and DELETEs /me/push-devices/:id (204)', async () => {
+    const request = jest.fn().mockResolvedValueOnce(device).mockResolvedValueOnce(undefined);
+    const http = createHttpPushDeviceApi(request);
+    const body = {
+      provider: 'expo' as const,
+      token: 'ExponentPushToken[abcdefghijkl]',
+      platform: 'ios' as const,
+    };
+    await expect(http.register(body)).resolves.toEqual(device);
+    await http.unregister('a/b');
+    expect(request.mock.calls).toEqual([
+      ['POST', '/me/push-devices', body, 201],
+      ['DELETE', '/me/push-devices/a%2Fb', undefined, 204],
+    ]);
+  });
+
+  it('does not report on when the server response is not a PushDevice', async () => {
+    const http = createHttpPushDeviceApi(jest.fn().mockResolvedValue({}));
+    const s = createPushRegistrationService(createDemoPushTokenProvider('granted'), http, 'ios');
+    expect((await s.enable()).status).toBe('error');
   });
 });

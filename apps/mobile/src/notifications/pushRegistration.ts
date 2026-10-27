@@ -21,7 +21,10 @@ export interface PushTokenProvider {
   getToken(): Promise<string>;
 }
 
-/** Proposed body for `POST /me/push-devices` (CONTRACT NEED: not in @meetops/contracts yet). */
+/**
+ * Mobile (expo) variant of `RegisterPushDeviceRequest` from @meetops/contracts v0.10.0 (#263). Kept local and
+ * identical until #263 merges into integration/phase-1; then import it from contracts.
+ */
 export interface RegisterPushDeviceRequest {
   provider: 'expo';
   token: string;
@@ -29,15 +32,21 @@ export interface RegisterPushDeviceRequest {
   deviceName?: string;
 }
 
+/** `PushDevice` (201 response of `POST /me/push-devices`). */
 export interface RegisteredPushDevice {
   id: string;
   platform: PushPlatform;
   createdAt: string;
 }
 
+export const PUSH_DEVICE_PATHS = {
+  pushDevices: '/me/push-devices',
+  pushDevice: '/me/push-devices/:id',
+} as const;
+
 export interface PushDeviceApi {
   register(body: RegisterPushDeviceRequest): Promise<RegisteredPushDevice>;
-  /** `DELETE /me/push-devices/:id`. Idempotent. */
+  /** `DELETE /me/push-devices/:id`. Always 204 (idempotent). */
   unregister(id: string): Promise<void>;
 }
 
@@ -114,5 +123,39 @@ export function createDemoPushDeviceApi(): PushDeviceApi {
         createdAt: new Date().toISOString(),
       }),
     unregister: () => Promise.resolve(),
+  };
+}
+
+type Requester = <T>(
+  method: 'POST' | 'DELETE',
+  path: string,
+  body?: unknown,
+  expect?: number,
+) => Promise<T>;
+
+const isDevice = (v: unknown): v is RegisteredPushDevice =>
+  typeof v === 'object' &&
+  v !== null &&
+  typeof (v as { id?: unknown }).id === 'string' &&
+  typeof (v as { createdAt?: unknown }).createdAt === 'string' &&
+  ['ios', 'android'].includes((v as { platform?: unknown }).platform as string);
+
+/** HTTP `PushDeviceApi` over the authenticated mobile requester (Bearer). */
+export function createHttpPushDeviceApi(request: Requester): PushDeviceApi {
+  return {
+    async register(body) {
+      const device = await request<unknown>('POST', PUSH_DEVICE_PATHS.pushDevices, body, 201);
+      // Only report "on" once the server has confirmed with a well-formed PushDevice.
+      if (!isDevice(device)) throw new Error('Unexpected push device response');
+      return device;
+    },
+    async unregister(id) {
+      await request<void>(
+        'DELETE',
+        PUSH_DEVICE_PATHS.pushDevice.replace(':id', encodeURIComponent(id)),
+        undefined,
+        204,
+      );
+    },
   };
 }
