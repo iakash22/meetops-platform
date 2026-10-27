@@ -147,6 +147,30 @@ describe('fanoutEvent', () => {
     expect(r).toEqual({ ignored: false, notifications: 2, jobs: 2 });
     expect([...producer.jobs.values()].every((j) => j.channel === 'in_app')).toBe(true);
   });
+  it('accepts the exact payload the #272 summary worker writes (ids/counts only)', async () => {
+    const r = await fanoutEvent(
+      ev({
+        eventType: 'meeting.summary_ready',
+        payload: {
+          meetingId: MEET,
+          reportId: REPORT,
+          transcriptRevision: 2,
+          tasksPendingReview: 3,
+        },
+      }),
+      { store: memStore({ [U(1)]: 'owner' }), producer: memProducer() },
+    );
+    expect(r).toEqual({ ignored: false, notifications: 1, jobs: 1 });
+    await expect(
+      fanoutEvent(
+        ev({
+          eventType: 'meeting.summary_ready',
+          payload: { meetingId: MEET, reportId: REPORT, tasksPendingReview: -1 },
+        }),
+        { store: memStore({ [U(1)]: 'owner' }), producer: memProducer() },
+      ),
+    ).rejects.toBeInstanceOf(OutboxPayloadError);
+  });
   it('unknown event types are ignored; bad payloads (incl. extra PII-ish keys or bad ids) throw', async () => {
     const store = memStore({ [U(1)]: 'owner' });
     expect(

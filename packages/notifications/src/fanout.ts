@@ -69,6 +69,8 @@ const SummaryReadyPayload = Type.Object({
   meetingId: Id,
   reportId: Id,
   transcriptRevision: Type.Optional(Type.Integer({ minimum: 1 })),
+  /** Written by the summary worker (#272): drafts created with this summary, all pending_review. */
+  tasksPendingReview: Type.Optional(Type.Integer({ minimum: 0, maximum: 1000 })),
 });
 
 type Rule<P> = {
