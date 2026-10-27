@@ -17,14 +17,19 @@ const api =
 // Same for integration settings until the backend routes exist (VITE_INTEGRATION_MOCKS=true, dev only).
 if (import.meta.env.DEV && import.meta.env.VITE_INTEGRATION_MOCKS === 'true')
   setIntegrationsApiOverride(
-    createMockIntegrationsApi({
-      github: {
-        id: 'mock-github',
-        status: 'connected',
-        accountLabel: 'acme',
-        connectedAt: new Date().toISOString(),
+    createMockIntegrationsApi([
+      {
+        id: '70000000-0000-4000-8000-000000000001',
+        organizationId: '00000000-0000-4000-8000-000000000001',
+        provider: 'github',
+        status: 'active',
+        displayName: 'acme',
+        externalAccountId: '1',
+        connectedById: '10000000-0000-4000-8000-000000000001',
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
       },
-    }),
+    ]),
   );
 const queryClient = createQueryClient();
 

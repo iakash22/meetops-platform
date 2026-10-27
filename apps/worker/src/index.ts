@@ -7,6 +7,7 @@ import { loadTranscriptionWorkerEnv } from './ai/env.js';
 
 export * from './media/index.js';
 export * from './ai/index.js';
+export * from './integrations/index.js';
 
 async function main() {
   const { close } = startMediaWorker();

@@ -8,6 +8,7 @@ export * from './recording-sessions.js';
 export * from './meetings.js';
 export * from './meeting-insights.js';
 export * from './extension-auth.js';
+export * from './desktop-auth.js';
 export * from './tasks.js';
 export * from './organizations.js';
 export * from './sessions.js';

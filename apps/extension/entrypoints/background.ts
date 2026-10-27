@@ -11,6 +11,11 @@ import { isAuthRequest, type AuthRequest, type AuthResponse } from '../src/lib/a
 import { uploadValidators, validators } from '../src/lib/auth/validate.js';
 import { routeAlarm, WATCHDOG_ALARM } from '../src/lib/alarms.js';
 import { ChunkStore } from '../src/lib/chunk-store.js';
+import {
+  fetchPendingTasks,
+  isPendingTasksRequest,
+  type PendingTasksResponse,
+} from '../src/lib/pending-tasks.js';
 import { safeErrorMessage } from '../src/lib/redact.js';
 import { drainQueue } from '../src/lib/drain.js';
 import {
@@ -63,6 +68,16 @@ async function handleAuth(msg: AuthRequest): Promise<AuthResponse> {
   if (msg.type === 'AUTH_PAIR') await auth.startPairing();
   if (msg.type === 'AUTH_UNPAIR') await auth.unpair();
   return { ok: true, ...(await auth.status()) };
+}
+
+/** Pending-task count for the popup; only when paired, scoped to the paired organization. */
+async function handlePendingTasks(): Promise<PendingTasksResponse> {
+  const s = await auth.status();
+  if (s.state !== 'paired' || !s.organizationId) return { ok: false, error: 'not_paired' };
+  return {
+    ok: true,
+    ...(await fetchPendingTasks((p, i) => auth.apiFetch(p, i), s.organizationId)),
+  };
 }
 
 // Upload client. StubUploadClient (no backend calls) is the default. With WXT_FEATURE_HTTP_UPLOAD on, HttpUploadClient
@@ -213,6 +228,13 @@ export default defineBackground(() => {
     if (isAuthRequest(msg)) {
       if (!fromPopup) return false;
       handleAuth(msg).then(sendResponse, (err: unknown) =>
+        sendResponse({ ok: false, error: safeErrorMessage(err) }),
+      );
+      return true;
+    }
+    if (isPendingTasksRequest(msg)) {
+      if (!fromPopup) return false;
+      handlePendingTasks().then(sendResponse, (err: unknown) =>
         sendResponse({ ok: false, error: safeErrorMessage(err) }),
       );
       return true;

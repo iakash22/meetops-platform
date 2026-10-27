@@ -1,4 +1,4 @@
-import { UnrecoverableError, Worker, type Job } from 'bullmq';
+import { Queue, UnrecoverableError, Worker, type Job } from 'bullmq';
 import { Redis } from 'ioredis';
 import { QUEUE_NAMES, type TranscriptionJobPayload } from '@meetops/contracts';
 import { logger as baseLogger } from '../logger.js';
@@ -9,6 +9,7 @@ import {
   type TranscriptionConsumerDeps,
   type TranscriptionJobResult,
 } from './consumer.js';
+import { createQueueSummaryTrigger, SUMMARY_QUEUE } from './summary-trigger.js';
 import { loadTranscriptionWorkerEnv, type TranscriptionWorkerEnv } from './env.js';
 
 export type TranscriptionWorkerConfig = { redisUrl: string; concurrency: number };
@@ -45,9 +46,15 @@ export function startTranscriptionWorker(
   const conn = () => new Redis(cfg.redisUrl, { maxRetriesPerRequest: null });
   const emitterRedis = deps.realtime ? undefined : conn();
   const realtime = deps.realtime ?? createRealtimePublisher(createRedisEmitter(emitterRedis!));
+  // Default trigger: enqueue the meeting summary on QUEUE_NAMES.ai when a transcript becomes ready.
+  // `summaryTrigger: undefined` in host deps keeps the default; pass a no-op trigger to opt out.
+  const summaryQueue = deps.summaryTrigger
+    ? undefined
+    : new Queue(SUMMARY_QUEUE, { connection: conn() });
+  const summaryTrigger = deps.summaryTrigger ?? createQueueSummaryTrigger(summaryQueue!);
   const worker = new Worker<TranscriptionJobPayload, TranscriptionJobResult>(
     QUEUE_NAMES.transcription,
-    createTranscriptionProcessor({ ...deps, realtime, logger }),
+    createTranscriptionProcessor({ ...deps, realtime, logger, summaryTrigger }),
     { connection: conn(), concurrency: cfg.concurrency },
   );
   worker.on('failed', (job, err) =>
@@ -58,6 +65,7 @@ export function startTranscriptionWorker(
   );
   const close = async () => {
     await worker.close();
+    await summaryQueue?.close();
     emitterRedis?.disconnect();
   };
   return { worker, close };
