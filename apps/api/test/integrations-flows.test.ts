@@ -305,7 +305,7 @@ describe('Phase 5 integration flows', () => {
       expect(delNoCsrf.statusCode).toBe(403);
     });
 
-    it('runtime selection: production without a runtime is 503; dev fallback has no providers (409)', async () => {
+    it('runtime selection: production without a runtime is 503; dev fallback has no providers (503 INTEGRATION_NOT_CONFIGURED)', async () => {
       expect(selectIntegrationsRuntime({} as ModuleDeps, 'production')).toBeUndefined();
       expect(selectIntegrationsRuntime({ integrationsRuntime: rt } as never, 'production')).toBe(
         rt,
@@ -322,7 +322,7 @@ describe('Phase 5 integration flows', () => {
       const { c, org } = await owner();
       expect(
         (await c.post(`/orgs/${org}/integrations/connect`, { provider: 'jira' })).statusCode,
-      ).toBe(409);
+      ).toBe(503);
     });
   });
 
@@ -712,6 +712,13 @@ describe('Phase 5 integration flows', () => {
       const { c, org } = await owner();
       const r = await c.get(`/orgs/${org}/integrations/providers`);
       expect(r.json<IntegrationProviderList>().items.every((i) => !i.configured)).toBe(true);
+      for (const provider of ['jira', 'github']) {
+        const c2 = await c.post(`/orgs/${org}/integrations/connect`, { provider });
+        expect(c2.statusCode).toBe(503);
+        expect(c2.json()).toMatchObject({
+          error: { code: 'PROVIDER_UNAVAILABLE', reason: 'INTEGRATION_NOT_CONFIGURED' },
+        });
+      }
     });
 
     it('requires a session and org membership', async () => {

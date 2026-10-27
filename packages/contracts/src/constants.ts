@@ -111,6 +111,8 @@ export const INTEGRATION_ERROR_REASONS = [
   'OAUTH_STATE_INVALID',
   'REPLAYED_DELIVERY',
   'WEBHOOK_SIGNATURE_INVALID',
+  /** v0.12.0: the provider app is not configured on this deployment (503; see providers `configured`). */
+  'INTEGRATION_NOT_CONFIGURED',
 ] as const;
 
 export const API_ERROR_REASONS = [

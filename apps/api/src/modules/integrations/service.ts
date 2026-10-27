@@ -36,6 +36,7 @@ import { isUniqueViolation } from '../../shared/prisma/context.js';
 import {
   ApprovalRequiredHttpError,
   CallbackRejectedError,
+  IntegrationNotConfiguredError,
   IntegrationNotConnectedError,
   IntegrationNotFoundError,
   IntegrationsUnavailableError,
@@ -94,7 +95,7 @@ export class IntegrationsService {
   private jiraClient() {
     const rt = this.runtime();
     if (!rt.jira)
-      throw new IntegrationNotConnectedError('Jira is not configured on this deployment');
+      throw new IntegrationNotConfiguredError('Jira is not configured on this deployment');
     return new JiraOAuthClient({
       clientId: rt.jira.clientId,
       clientSecret: rt.jira.clientSecret,
@@ -107,7 +108,7 @@ export class IntegrationsService {
   }
   private githubConfig() {
     const gh = this.runtime().github;
-    if (!gh) throw new IntegrationNotConnectedError('GitHub is not configured on this deployment');
+    if (!gh) throw new IntegrationNotConfiguredError('GitHub is not configured on this deployment');
     return gh;
   }
   private githubFlow() {

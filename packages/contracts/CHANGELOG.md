@@ -23,6 +23,7 @@ Integrations page support (Phase 5, builds on 0.7.0). Additive. Version numbers 
   `id_token`, `GITHUB_APP_CLIENT_SECRET`, `JIRA_CLIENT_SECRET`, `GITHUB_APP_WEBHOOK_SECRET`.
 - `REDACT_CONDITIONAL_KEYS` (`code`): redacted unless the value looks like an error code. Plain `code` is still not
   in `REDACT_KEYS`.
+- `INTEGRATION_ERROR_REASONS`: `INTEGRATION_NOT_CONFIGURED` (503 when the provider app is not set up on the deployment).
 - `INTEGRATION_PATHS.githubAppWebhook` (`POST /webhooks/github`): App-wide GitHub webhook, routed by installation id.
 
 ## [0.9.0] - 2026-10-27

@@ -18,6 +18,13 @@ export class IntegrationNotConnectedError extends DomainError {
   }
 }
 /** No integrations runtime (KEK, state store, provider secrets) on this deployment. */
+/** The provider app (GitHub App / Jira OAuth app) is not configured on this deployment (#282 L-1). */
+export class IntegrationNotConfiguredError extends DomainError {
+  constructor(message: string) {
+    super('PROVIDER_UNAVAILABLE', message, 503, 'INTEGRATION_NOT_CONFIGURED');
+  }
+}
+
 export class IntegrationsUnavailableError extends DomainError {
   constructor() {
     super('PROVIDER_UNAVAILABLE', 'Integrations are not configured', 503);
