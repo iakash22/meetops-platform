@@ -978,6 +978,8 @@ model RecordingSession {
   durationMs     Int?                   @map("duration_ms")
   /// Running total of signed chunk sizes; capped at MAX_RECORDING_SESSION_BYTES.
   totalBytes     BigInt                 @default(0) @map("total_bytes")
+  /// Bytes the API confirmed received; only add_recording_session_bytes() changes it. Max 1_400_000_000.
+  bytesReceived  BigInt                 @default(0) @map("bytes_received")
   failureCode    String?                @map("failure_code")
   completedAt    DateTime?              @map("completed_at") @db.Timestamptz(3)
   abortedAt      DateTime?              @map("aborted_at") @db.Timestamptz(3)
