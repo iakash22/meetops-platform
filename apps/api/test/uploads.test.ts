@@ -28,6 +28,21 @@ describe('uploads (init, complete, download-url)', () => {
   };
   const keyOf = (id: string) => `organizations/${w.org}/uploads/${id}/source`;
 
+  it('rejects invisible / format characters in the filename (#270 L-1)', async () => {
+    for (const filename of [
+      'a\u200Bb.webm',
+      'a\u200Fb.webm',
+      'a\u2060b.webm',
+      'a\u2064b.webm',
+      'a\uFEFFb.webm',
+      'a\u{E0041}b.webm', // astral tag character: caught by the service check
+    ]) {
+      const r = await w.member.post(url(), body({ filename }));
+      expect(r.statusCode, JSON.stringify(filename)).toBe(400);
+    }
+    expect(w.consents.rows).toHaveLength(0);
+  });
+
   it('init returns a contract-valid presigned PUT and stores the consent attestation', async () => {
     const out = await init();
     expect(Value.Check(InitUploadResponse, out)).toBe(true);
@@ -189,6 +204,12 @@ describe('uploads (init, complete, download-url)', () => {
     const out = r.json<DownloadUrlResponse>();
     expect(Value.Check(DownloadUrlResponse, out)).toBe(true);
     expect(out.method).toBe('GET');
+    // Security review B 4.1: always an attachment with a fixed allowlisted type.
+    const q = new URL(out.url).searchParams;
+    expect(q.get('response-content-disposition')).toBe('attachment');
+    expect(q.get('response-content-type')).toMatch(
+      /^(audio|video)\/(webm|ogg|mpeg|mp4|wav|x-wav)$/,
+    );
     expect(out.expiresIn).toBeGreaterThanOrEqual(1);
     expect(out.expiresIn).toBeLessThanOrEqual(300);
     expect(Date.parse(out.expiresAt) - before).toBeLessThanOrEqual(out.expiresIn * 1000 + 1000);

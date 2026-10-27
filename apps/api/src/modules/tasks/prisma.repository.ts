@@ -7,7 +7,9 @@ import {
   ExtractedTaskMissing,
   TaskAssigneeInvalid,
   TaskMissing,
+  TaskReferenceInvalid,
   type AcceptInput,
+  type CreateTaskInput,
   type TaskFilter,
   type TaskPatch,
   type TaskRepositories,
@@ -181,8 +183,52 @@ export class PrismaTasks implements TaskRepositories {
 
   getTask(organizationId: string, taskId: string) {
     return this.run(organizationId, async (tx) => {
-      const t = await tx.task.findFirst({ where: { organizationId, id: taskId } });
+      const t = await tx.task.findFirst({ where: { organizationId, id: taskId, deletedAt: null } });
       if (!t) throw new TaskMissing();
+      return toTask(t);
+    });
+  }
+
+  createTask(organizationId: string, input: CreateTaskInput) {
+    return this.run(organizationId, async (tx) => {
+      if (
+        input.assigneeId &&
+        !(await tx.employee.findFirst({
+          where: { organizationId, id: input.assigneeId, deletedAt: null },
+          select: { id: true },
+        }))
+      )
+        throw new TaskAssigneeInvalid();
+      if (
+        input.projectId &&
+        !(await tx.project.findFirst({
+          where: { organizationId, id: input.projectId, deletedAt: null },
+          select: { id: true },
+        }))
+      )
+        throw new TaskReferenceInvalid('projectId');
+      if (
+        input.meetingId &&
+        !(await tx.meeting.findFirst({
+          where: { organizationId, id: input.meetingId, deletedAt: null },
+          select: { id: true },
+        }))
+      )
+        throw new TaskReferenceInvalid('meetingId');
+      const t = await tx.task.create({
+        data: {
+          organizationId,
+          createdById: input.createdById,
+          title: input.title,
+          description: input.description ?? null,
+          status: input.status,
+          priority: input.priority,
+          assigneeId: input.assigneeId ?? null,
+          projectId: input.projectId ?? null,
+          meetingId: input.meetingId ?? null,
+          dueAt: input.dueAt ?? null,
+        },
+      });
       return toTask(t);
     });
   }
@@ -191,13 +237,13 @@ export class PrismaTasks implements TaskRepositories {
     return this.run(organizationId, async (tx) => {
       if (p.assigneeId) {
         const e = await tx.employee.findFirst({
-          where: { organizationId, id: p.assigneeId },
+          where: { organizationId, id: p.assigneeId, deletedAt: null },
           select: { id: true },
         });
         if (!e) throw new TaskAssigneeInvalid();
       }
       const n = await tx.task.updateMany({
-        where: { organizationId, id: taskId },
+        where: { organizationId, id: taskId, deletedAt: null },
         data: {
           ...(p.title !== undefined ? { title: p.title } : {}),
           ...(p.description !== undefined ? { description: p.description } : {}),

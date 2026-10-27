@@ -1,3 +1,4 @@
+import { nonNotificationCalls } from './fixtures/route-ready';
 import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi, beforeEach } from 'vitest';
@@ -154,7 +155,7 @@ describe('RecordingPanel', () => {
       await userEvent.click(screen.getByRole('button', { name: 'Start recording' }));
       await waitFor(() => expect(getDisplayMedia).toHaveBeenCalled());
       expect(await screen.findByText('Recording not started')).toBeInTheDocument();
-      expect(api.request).not.toHaveBeenCalled();
+      expect(nonNotificationCalls(api.request)).toEqual([]);
     } finally {
       vi.unstubAllGlobals();
       Reflect.deleteProperty(navigator, 'mediaDevices');

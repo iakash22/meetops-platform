@@ -101,8 +101,16 @@ describe('generated client', () => {
   it('exports only the minimal runtime API', () => {
     expect(Object.keys(db).sort()).toEqual(
       [
+        'MEETINGS_PAGE_DEFAULT_LIMIT',
+        'MEETINGS_PAGE_MAX_LIMIT',
+        'RECORDING_SESSION_BYTES_ERRORS',
+        'addRecordingSessionBytes',
+        'clampMeetingsLimit',
         'createPrismaClient',
+        'decodeMeetingsCursor',
         'disconnectPrismaClient',
+        'encodeMeetingsCursor',
+        'listMeetingsPage',
         'getPrismaClient',
         'withOrgContext',
         'withOrganizationContext',

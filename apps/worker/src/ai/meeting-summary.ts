@@ -5,6 +5,7 @@ import { Value } from '@sinclair/typebox/value';
 import { ReportActionItem, ReportContent, TaskPriority } from '@meetops/contracts';
 import { ProviderError, type ProviderErrorCode } from './providers/errors.js';
 import type { LlmProvider } from './providers/llm-provider.js';
+import type { ActionItemsInput, ActionItemsResult } from './action-items.js';
 import type {
   ExtractedTaskWrite,
   SummaryRepository,
@@ -65,13 +66,38 @@ export const DEFAULT_SUMMARY_LIMITS: MeetingSummaryLimits = {
 };
 
 export type MeetingSummaryDeps = {
-  llm: LlmProvider;
+  /** Fixed provider (tests / legacy direct adapter). */
+  llm?: LlmProvider | undefined;
+  /** Per-job provider, e.g. the ai-core executor adapter scoped to the job's organization. Wins over `llm`. */
+  llmFor?: ((organizationId: string, jobId?: string) => LlmProvider) | undefined;
   repository: SummaryRepository;
   logger: TranscriptionLogger;
   limits?: Partial<MeetingSummaryLimits> | undefined;
   now?: () => number;
   /** Fence nonce source (tests). */
   nonce?: () => string;
+  /**
+   * Dedicated action-item extraction (ai-core executor, Zod-validated). When set, the summary's own `tasks` output is
+   * NOT persisted (avoids duplicate drafts); the extractor writes `pending_review` drafts + an outbox event instead.
+   * Runs on fresh and duplicate summaries (idempotent), so a retry after an extraction failure completes the work.
+   */
+  actionItems?:
+    | {
+        extract(input: ActionItemsInput): Promise<ActionItemsResult>;
+      }
+    | undefined;
+  /** Realtime hook after summary (+ extraction). Ids/counts only. Failures are logged, never fail the job. */
+  onSummaryReady?: ((e: SummaryReadyEvent) => void | Promise<void>) | undefined;
+};
+
+/** Worker realtime event `summary:ready` (not yet in @meetops/contracts; see PR notes). Ids and counts only. */
+export type SummaryReadyEvent = {
+  organizationId: string;
+  meetingId: string;
+  reportId: string;
+  transcriptRevision: number;
+  tasksPendingReview: number;
+  at: string;
 };
 
 export type MeetingSummaryErrorCode =
@@ -190,14 +216,16 @@ export async function processMeetingSummary(
   if (!Value.Check(MeetingSummaryInput, input))
     throw new MeetingSummaryError('invalid_payload', false);
   const { organizationId, meetingId } = input;
+  const llm = deps.llmFor?.(organizationId, ctx.jobId) ?? deps.llm;
+  if (!llm) throw new MeetingSummaryError('provider_unavailable', false);
   const limits = { ...DEFAULT_SUMMARY_LIMITS, ...deps.limits };
   const now = deps.now ?? Date.now;
   const log = {
     organizationId,
     meetingId,
     jobId: ctx.jobId,
-    provider: deps.llm.id,
-    model: deps.llm.model,
+    provider: llm.id,
+    model: llm.model,
   };
   const repo = deps.repository;
 
@@ -228,17 +256,52 @@ export async function processMeetingSummary(
     transcriptRevision: t.revision,
     promptVersion: SUMMARY_PROMPT_VERSION,
   };
+  const finish = async (
+    reportId: string,
+    duplicate: boolean,
+    summaryTasks: number,
+  ): Promise<MeetingSummaryResult> => {
+    let tasksCreated = summaryTasks;
+    if (deps.actionItems) {
+      try {
+        const x = await deps.actionItems.extract({
+          organizationId,
+          meetingId,
+          reportId,
+          transcript: t,
+          jobId: ctx.jobId,
+        });
+        tasksCreated = x.tasksCreated;
+      } catch (err) {
+        if (err instanceof ProviderError) {
+          deps.logger.warn(
+            { ...log, reportId, errorCode: err.code },
+            'action items attempt failed',
+          );
+          throw new MeetingSummaryError(`provider_${err.code}`, err.retryable);
+        }
+        throw err;
+      }
+    }
+    if (deps.onSummaryReady && (!duplicate || tasksCreated > 0))
+      await Promise.resolve(
+        deps.onSummaryReady({
+          organizationId,
+          meetingId,
+          reportId,
+          transcriptRevision: t.revision,
+          tasksPendingReview: tasksCreated,
+          at: new Date(now()).toISOString(),
+        }),
+      ).catch(() => deps.logger.warn({ ...log, reportId }, 'summary realtime emit failed'));
+    return { reportId, duplicate, tasksCreated, transcriptRevision: t.revision };
+  };
   if (scope.existing) {
     deps.logger.info(
       { ...log, reportId: scope.existing.reportId, duplicate: true },
       'meeting summary done',
     );
-    return {
-      reportId: scope.existing.reportId,
-      duplicate: true,
-      tasksCreated: 0,
-      transcriptRevision: t.revision,
-    };
+    return finish(scope.existing.reportId, true, 0);
   }
 
   const fail = async (code: MeetingSummaryErrorCode, retryable: boolean): Promise<never> => {
@@ -248,8 +311,8 @@ export async function processMeetingSummary(
         .withOrgContext(organizationId, (r) =>
           r.recordFailure({
             ...key,
-            provider: deps.llm.id,
-            model: deps.llm.model,
+            provider: llm.id,
+            model: llm.model,
             errorCode: code,
           }),
         )
@@ -264,7 +327,7 @@ export async function processMeetingSummary(
   const started = now();
   let raw;
   try {
-    raw = await deps.llm.generateJson({
+    raw = await llm.generateJson({
       ...prompt,
       maxOutputTokens: limits.maxOutputTokens,
       temperature: 0.2,
@@ -284,7 +347,7 @@ export async function processMeetingSummary(
   };
   if (!Value.Check(ReportContent, content)) return fail('invalid_model_output', true);
 
-  const tasks = toTaskWrites(out, t.segments);
+  const tasks = deps.actionItems ? [] : toTaskWrites(out, t.segments);
   const saved = await repo.saveSummary(organizationId, {
     ...key,
     provider: raw.provider,
@@ -306,12 +369,7 @@ export async function processMeetingSummary(
     },
     'meeting summary done',
   );
-  return {
-    reportId: saved.reportId,
-    duplicate: !saved.created,
-    tasksCreated: saved.created ? tasks.length : 0,
-    transcriptRevision: t.revision,
-  };
+  return finish(saved.reportId, !saved.created, saved.created ? tasks.length : 0);
 }
 
 export function createMeetingSummaryProcessor(deps: MeetingSummaryDeps) {
