@@ -8,6 +8,7 @@ import { Transform, type Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { createGunzip } from 'node:zlib';
 import { Reader, type CityResponse } from 'maxmind';
+import type { SchedulerQueue } from '../privacy/ip-retention.js';
 
 /**
  * ADR-014 monthly GeoIP database updater (DB-IP City Lite, CC BY 4.0 — free, no account, no key).
@@ -333,14 +334,6 @@ export async function runMmdbUpdate(
     );
     throw e;
   }
-}
-
-export interface SchedulerQueue {
-  upsertJobScheduler(
-    id: string,
-    repeat: { pattern: string; tz?: string },
-    template: { name: string; data?: unknown; opts?: Record<string, unknown> },
-  ): Promise<unknown>;
 }
 
 export async function scheduleMmdbUpdate(queue: SchedulerQueue): Promise<void> {
