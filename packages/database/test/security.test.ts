@@ -1402,12 +1402,14 @@ describe('Phase 3 report summary dedupe (static)', () => {
   const statements = reportDedupeSql.replace(/--.*$/gm, '');
   const model = models.find((m) => m.name === 'Report')?.body ?? '';
 
-  it('sorts just before the notifications migration', () => {
+  it('sorts before the recording bytes, routing policy and notifications migrations', () => {
     const dirs = readdirSync(migrationsDir, { withFileTypes: true })
       .filter((x) => x.isDirectory())
       .map((x) => x.name)
       .sort();
-    expect(dirs.indexOf(REPORT_SUMMARY_DEDUPE_MIGRATION)).toBe(dirs.indexOf(LATEST_MIGRATION) - 1);
+    const at = (m: string) => dirs.indexOf(m);
+    expect(at(RECORDING_BYTES_MIGRATION)).toBe(at(REPORT_SUMMARY_DEDUPE_MIGRATION) + 1);
+    expect(at(LATEST_MIGRATION)).toBe(at(INTEGRATION_ROUTING_POLICY_MIGRATION) + 1);
   });
 
   it('is additive only and keeps RLS untouched', () => {
