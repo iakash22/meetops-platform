@@ -26,6 +26,7 @@ Where each variable is read:
 - `BEHIND_CLOUDFLARE`: `true` to use `CF-Connecting-IP`, only when the peer is in the pinned Cloudflare ranges (`apps/api/src/shared/geoip/client-ip.ts`). Default off. Raw X-Forwarded-For is never read.
 - `GEOIP_PROVIDER`: `dbip` (default when `GEOIP_DB_PATH` is set), `geolite2` or `none`. Local mmdb lookups only; no external API, no paid provider, no fallback.
 - `GEOIP_DB_PATH`: path to the DB-IP City Lite (or GeoLite2-City) `.mmdb`. Missing/unreadable: location lookups are off and session geo fields stay empty. See [GeoIP](../12-security/geoip.md).
+- `GEOIP_UPDATE_URL` (worker): monthly mmdb updater source, e.g. `https://download.db-ip.com/free/dbip-city-lite-{YYYY}-{MM}.mmdb.gz`. Off unless this and `GEOIP_DB_PATH` are set. https only, exact host allowlist `GEOIP_UPDATE_ALLOWED_HOSTS` (default `download.db-ip.com`), redirects refused, size cap `GEOIP_UPDATE_MAX_BYTES` (default 256 MiB), optional `GEOIP_UPDATE_SHA256_URL`, `GEOIP_UPDATE_TEST_IPS`, `GEOIP_UPDATE_TIMEOUT_MS`. See [GeoIP](../12-security/geoip.md#getting-the-database-monthly-updater).
 
 ### Database
 
