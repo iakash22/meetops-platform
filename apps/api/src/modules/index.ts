@@ -60,6 +60,12 @@ import {
   DurableExtensionTokenRepository,
   type ExtensionTokenRepository,
 } from './extension-auth/index.js';
+import {
+  combineBearerStores,
+  combineRevokers,
+  DesktopAuthService,
+  desktopAuthRoutes,
+} from './desktop-auth/index.js';
 import { InMemoryUserRepository } from './users/infrastructure/in-memory-user.repository.js';
 import type { UserRepository } from './users/domain/user.repository.js';
 import { OrganizationService } from './organizations/application/organization.service.js';
@@ -142,6 +148,13 @@ export interface ModuleDeps {
   extensionTokens: ExtensionTokenRepository;
   /** ADR-005 allowlisted Chrome extension ids (EXTENSION_IDS; plus EXTENSION_DEV_IDS in development/test). */
   extensionIds: readonly string[];
+  /**
+   * ADR-012 desktop sign-in. Off unless DESKTOP_AUTH_ENABLED=true (the ADR-012 amendment, PR #192, awaits sign-off).
+   * When off, the /auth/desktop/* routes are not registered and desktop bearers never verify.
+   */
+  desktopAuthEnabled?: boolean;
+  /** Desktop token store: its own Redis prefix (meetops:desktop:) when `redis` is set; in-memory otherwise. */
+  desktopTokens?: ExtensionTokenRepository;
   /**
    * Media (uploads / recording sessions) adapters. Defaults to in-memory ONLY in development/test; outside them it
    * stays unset unless injected and the media routes are not registered (no production adapters yet).
@@ -399,6 +412,10 @@ export function defaultModuleDeps(
         ? new DurableExtensionTokenRepository(new RedisExtensionTokenRepository(redis), db)
         : new RedisExtensionTokenRepository(redis)
       : new InMemoryExtensionTokenRepository(),
+    desktopAuthEnabled: process.env.DESKTOP_AUTH_ENABLED === 'true',
+    desktopTokens: redis
+      ? new RedisExtensionTokenRepository(redis, 'meetops:desktop:')
+      : new InMemoryExtensionTokenRepository(),
     extensionIds: [
       ...csv(process.env.EXTENSION_IDS),
       ...(strict ? [] : csv(process.env.EXTENSION_DEV_IDS)),
@@ -462,9 +479,17 @@ export async function registerModules(app: FastifyInstance, deps: ModuleDeps) {
     });
   }
   const extensionAuth = new ExtensionAuthService(deps);
-  // ADR-005 A1.6: logout, password reset and member removal also revoke extension token families.
-  const auth = new AuthService({ ...deps, extensionRevoker: extensionAuth });
-  const organizations = new OrganizationService({ ...deps, extensionRevoker: extensionAuth });
+  const desktopAuth =
+    deps.desktopAuthEnabled === true
+      ? new DesktopAuthService({
+          ...deps,
+          desktopTokens: deps.desktopTokens ?? new InMemoryExtensionTokenRepository(),
+        })
+      : undefined;
+  // ADR-005 A1.6 (and ADR-012 when enabled): logout, password reset and member removal also revoke token families.
+  const revoker = desktopAuth ? combineRevokers(extensionAuth, desktopAuth) : extensionAuth;
+  const auth = new AuthService({ ...deps, extensionRevoker: revoker });
+  const organizations = new OrganizationService({ ...deps, extensionRevoker: revoker });
   if (deps.mailQueue instanceof InlineAuthMailQueue && !deps.mailQueue.handler) {
     deps.mailQueue.handler = new AuthMailJobHandler({ ...deps, transport: deps.mailTransport });
   }
@@ -472,6 +497,8 @@ export async function registerModules(app: FastifyInstance, deps: ModuleDeps) {
   await app.register(authRoutes, { auth, organizations, security: deps.security });
   await app.register(organizationRoutes, { auth, organizations, security: deps.security });
   await app.register(extensionAuthRoutes, { auth, extensionAuth, security: deps.security });
+  if (desktopAuth)
+    await app.register(desktopAuthRoutes, { auth, desktopAuth, security: deps.security });
   await app.register(import('./directory/index.js'), { auth, organizations, deps });
   await app.register(import('./tasks/index.js'), { auth, organizations, deps });
   await app.register(import('./meeting-insights/index.js'), { auth, organizations, deps });
@@ -483,8 +510,12 @@ export async function registerModules(app: FastifyInstance, deps: ModuleDeps) {
     organizations,
     sessionVerifier: new SessionVerifier({
       ...deps,
-      extensionTokenStore: extensionAuth.verifierStore(),
+      extensionTokenStore: desktopAuth
+        ? combineBearerStores(extensionAuth.verifierStore(), desktopAuth.verifierStore())
+        : extensionAuth.verifierStore(),
+      ...(desktopAuth ? { bearerAudiences: ['extension', 'desktop'] as const } : {}),
     }),
     extensionAuth,
+    desktopAuth,
   };
 }

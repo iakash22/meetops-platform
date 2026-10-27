@@ -30,3 +30,16 @@ off by default: the session-verifier accepts `desktop` bearers only when a calle
 - **D6 (session-verifier):** `bearerAudiences` defaults to `['extension']`; unknown audiences throw at
   construction. A `desktop` token verifies as `credential: 'desktop'`, keeping its scopes. apps/realtime
   rejects `desktop` credentials on both web and extension handshakes (no desktop socket class yet).
+
+## PR3 — API desktop auth (behind `DESKTOP_AUTH_ENABLED`, default off)
+
+Still gated on the ADR-012 amendment (PR #192) being signed off. Until then `DESKTOP_AUTH_ENABLED` stays unset, so none of this runs.
+
+- **D7** With the flag off, the `/auth/desktop/*` routes aren't registered at all and return 404. The API verifier only accepts the `desktop` bearer audience when the flag is on.
+- **D8** Desktop tokens live in their own store. That's Redis under the `meetops:desktop:` prefix, or in-memory when Redis isn't configured. Each family is checked against `clientId = meetops-desktop`, so extension and desktop tokens can't be swapped for each other. Durable Postgres persistence is left for later.
+- **D9** Authorization codes reuse `PairingRecord`, with the code challenge in `nonce` and the redirect URI in `extensionId`. Only the hash is stored, each code works once and expires after 60 s, and any failed exchange burns the code.
+- **D10** switch-org checks the refresh token without consuming it, so an org that isn't a membership gets a 404 and the token still works. The new family keeps the old absolute expiry, so the 30-day cap can't be extended.
+- **D11** Desktop rate limits copy the extension ones, under a `desk:` key prefix.
+- **D12** `bearerGuard` takes an `accept` list that defaults to `['extension']`, so existing routes never accept desktop tokens without an explicit opt-in.
+- **D13** Desktop app routes refuse session cookies and send no CORS headers. Authorize is the only cookie-authenticated route, and it's behind the mutation guard.
+- **D14** Logout, logout-all, password change and member removal also revoke desktop families, with reason `desktop_revoked`.
