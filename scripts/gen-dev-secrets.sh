@@ -40,7 +40,7 @@ if [ ! -s "$dir/csrf_secret.txt" ] || [ "$force" = "--force" ]; then
   od -An -tx1 -N48 /dev/urandom | tr -d ' \n' > "$dir/csrf_secret.txt"
   echo "wrote  $dir/csrf_secret.txt"
 fi
-for pair in smtp_password:SMTP_PASSWORD gemini_api_key:GEMINI_API_KEY \
+for pair in smtp_password:SMTP_PASSWORD resend_api_key:RESEND_API_KEY gemini_api_key:GEMINI_API_KEY \
   assemblyai_api_key:ASSEMBLYAI_API_KEY openai_api_key:OPENAI_API_KEY deepgram_api_key:DEEPGRAM_API_KEY; do
   f="$dir/${pair%%:*}.txt"
   if [ "$force" = "--from-env" ]; then

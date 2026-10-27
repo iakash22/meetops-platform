@@ -47,12 +47,14 @@ x-api-env: &api-env
   HOST: 0.0.0.0
   WEB_ORIGINS: ${WEB_ORIGINS:-http://localhost:5173,http://localhost:3000}
   TRUST_PROXY: ${TRUST_PROXY:-}
-  EMAIL_PROVIDER: ${EMAIL_PROVIDER:-smtp}
-  SMTP_HOST: ${SMTP_HOST:-smtp.gmail.com}
+  # Empty EMAIL_PROVIDER/SMTP_HOST (and no resend_api_key secret) = console sender in development.
+  # SMTP_PASSWORD and RESEND_API_KEY come from secrets via with-secrets.sh, never from env here.
+  EMAIL_PROVIDER: ${EMAIL_PROVIDER:-}
+  SMTP_HOST: ${SMTP_HOST:-}
   SMTP_PORT: ${SMTP_PORT:-465}
   SMTP_SECURE: ${SMTP_SECURE:-true}
   SMTP_USER: ${SMTP_USER:-}
-  EMAIL_FROM: ${EMAIL_FROM:-noreply@example.com}
+  EMAIL_FROM: ${EMAIL_FROM:-}
   AI_LLM_PROVIDER: ${AI_LLM_PROVIDER:-gemini}
   GEMINI_MODEL: ${GEMINI_MODEL:-gemini-2.5-flash-lite}
   AI_STT_PROVIDER: ${AI_STT_PROVIDER:-assemblyai}
@@ -119,6 +121,7 @@ services:
         minio_app_password,
         csrf_secret,
         smtp_password,
+        resend_api_key,
         gemini_api_key,
         assemblyai_api_key,
         openai_api_key,
