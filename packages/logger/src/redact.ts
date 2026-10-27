@@ -18,6 +18,8 @@ export const DEFAULT_REDACT_KEYS: readonly string[] = [
   // ADR-013 push credentials.
   'expoPushToken',
   'p256dh',
+  // Web Push subscription `keys.auth` secret (PR #263 L-1).
+  'auth',
   'authorization',
   'cookie',
   'set-cookie',
@@ -91,4 +93,40 @@ export function redactDeep(
     }
   };
   return walk(value, 0);
+}
+
+/** Query parameter names that carry bearer-like values in URLs (signed links, OAuth callbacks, presigned URLs). */
+export const SENSITIVE_QUERY_KEYS: readonly string[] = [
+  'token',
+  'code',
+  'state',
+  'sig',
+  'signature',
+  'x-amz-signature',
+  'x-amz-credential',
+  'x-amz-security-token',
+];
+
+/**
+ * Redacts values of sensitive query parameters in a URL or path (`/x?token=abc` -> `/x?token=***redacted***`).
+ * Parameter names stay visible for debugging; unparsable input keeps only the path.
+ */
+export function redactUrl(url: string, keys: Iterable<string> = DEFAULT_REDACT_KEYS): string {
+  const q = url.indexOf('?');
+  if (q === -1) return url;
+  const names = new Set([...SENSITIVE_QUERY_KEYS, ...keys].map((k) => k.toLowerCase()));
+  const hash = url.indexOf('#', q);
+  const query = url.slice(q + 1, hash === -1 ? undefined : hash);
+  try {
+    const parts = query.split('&').map((p) => {
+      if (!p) return p;
+      const eq = p.indexOf('=');
+      const rawName = eq === -1 ? p : p.slice(0, eq);
+      const name = decodeURIComponent(rawName.replace(/\+/g, ' ')).toLowerCase();
+      return names.has(name) && eq !== -1 ? `${rawName}=${CENSOR}` : p;
+    });
+    return `${url.slice(0, q)}?${parts.join('&')}`;
+  } catch {
+    return url.slice(0, q);
+  }
 }

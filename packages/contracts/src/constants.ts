@@ -229,6 +229,8 @@ export const REDACT_KEYS = [
   // v0.10.0 (ADR-013): push credentials.
   'expoPushToken',
   'p256dh',
+  // Web Push subscription `keys.auth` secret (PR #263 L-1).
+  'auth',
   'refreshToken',
   'pairingCode',
   'authorization',
