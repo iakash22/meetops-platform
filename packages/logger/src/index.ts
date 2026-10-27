@@ -108,7 +108,7 @@ type ReqLike = {
 
 export interface RequestSerializerOptions {
   /** Maps the client IP (e.g. truncation). When set, `remotePort` is never logged either. */
-  mapIp?: IpMapper;
+  mapIp?: IpMapper | undefined;
 }
 
 /**
