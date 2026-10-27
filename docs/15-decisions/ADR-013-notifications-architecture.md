@@ -38,7 +38,7 @@ Direct calls from API handlers (dual-write, no retries) — rejected. Novu self-
 
 ## Implementation notes (2026-10-27)
 
-- `PushDevice` is stored as `push_device_tokens` and is **org-scoped** (`org_id` + `user_id`) so it sits under the same forced tenant RLS as every other table; a device used in two orgs registers once per org. Revocation with the session (ADR-011) is still to be wired.
+- `PushDevice` is stored as `push_device_tokens` and is **org-scoped** (`org_id` + `user_id`) so it sits under the same forced tenant RLS as every other table; a device used in two orgs registers once per org. Clients use `POST /me/push-devices` / `DELETE /me/push-devices/:id` (mobile PR #262); the server binds the device to the session's active organization. Devices are deleted when the session is revoked (logout, session revoke, logout-all, password reset) or the membership is removed. Revocation with the session (ADR-011) is still to be wired.
 - Delivery rows are per attempt (`notification_delivery_attempts`), keyed by `(org, delivery_key, attempt)` where `delivery_key` is the BullMQ `jobId`.
 - `NotificationSettings` (quiet hours, digest cadence) is deferred to the digest follow-up.
 - Email stays on SMTP (Nodemailer, Gmail in dev); there is no automatic fallback to a paid provider.
