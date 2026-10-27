@@ -1366,3 +1366,27 @@ describe('Phase 5 integration_connections (static)', () => {
     expect(model).toMatch(/revokedAt\s+DateTime\?\s+@map\("revoked_at"\)/);
   });
 });
+
+describe('integration routing definer functions', () => {
+  const sql = readFileSync(
+    resolve(migrationsDir, '20261027100000_integration_routing_functions/migration.sql'),
+    'utf8',
+  );
+  for (const fn of [
+    'integration_connection_org(uuid, text)',
+    'integration_connections_due_for_refresh(timestamptz, integer)',
+  ]) {
+    it(`${fn} is locked down`, () => {
+      expect(sql).toContain(`ALTER FUNCTION ${fn} OWNER TO meetops_migrator;`);
+      expect(sql).toContain(`REVOKE ALL ON FUNCTION ${fn} FROM PUBLIC;`);
+      expect(sql).toContain(`GRANT EXECUTE ON FUNCTION ${fn} TO meetops_app;`);
+    });
+  }
+  it('are SECURITY DEFINER with a fixed search_path and never return secret columns', () => {
+    expect(sql.match(/SECURITY DEFINER\nSET search_path = public, pg_temp/g)).toHaveLength(2);
+    const bodies = sql.match(/AS \$\$[\s\S]*?\$\$;/g) ?? [];
+    expect(bodies).toHaveLength(2);
+    for (const b of bodies) expect(b).not.toMatch(/_enc|display_name|\*/);
+    expect(sql).toContain("c.status <> 'revoked'");
+  });
+});
