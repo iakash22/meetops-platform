@@ -22,6 +22,7 @@ ALTER TABLE "audit_events" ADD CONSTRAINT "audit_events_geo_country_code_check"
 -- Retention scans by age where a raw IP is still present.
 CREATE INDEX "sessions_ip_retention_idx" ON "sessions"("created_at") WHERE "ip_address" IS NOT NULL;
 CREATE INDEX "audit_events_ip_retention_idx" ON "audit_events"("created_at") WHERE "ip_address" IS NOT NULL;
+CREATE INDEX "password_resets_ip_retention_idx" ON "password_resets"("created_at") WHERE "ip_address" IS NOT NULL;
 
 -- Append-only trigger (body from 20261022041000_audit_hatch_session_user, unchanged) plus one narrow case: the
 -- retention UPDATE that only nulls ip_address on rows older than 30 days, from the migrator-owned
@@ -55,41 +56,57 @@ END
 $$;
 REVOKE ALL ON FUNCTION public.audit_events_append_only() FROM PUBLIC;
 
--- Forced RLS has no UPDATE policy on audit_events; scope one narrowly to the definer role.
+-- Forced RLS has no UPDATE policy on audit_events. UPDATE ... WHERE also needs a SELECT policy, so both are scoped
+-- TO meetops_migrator, gated on the retention GUC, and limited to rows the exception may touch (older than
+-- 30 days; the UPDATE policy also requires a raw IP present and NULL after). meetops_app gets no UPDATE grant and FORCE RLS stays on.
 DROP POLICY IF EXISTS audit_ip_retention_select ON "audit_events";
+-- (The SELECT policy cannot require ip_address IS NOT NULL: Postgres also checks the updated row against it.)
 CREATE POLICY audit_ip_retention_select ON "audit_events" FOR SELECT TO meetops_migrator
-  USING (current_setting('meetops.audit_ip_retention', true) = 'on');
+  USING (current_setting('meetops.audit_ip_retention', true) = 'on' AND created_at < now() - interval '30 days');
 DROP POLICY IF EXISTS audit_ip_retention_update ON "audit_events";
 CREATE POLICY audit_ip_retention_update ON "audit_events" FOR UPDATE TO meetops_migrator
-  USING (current_setting('meetops.audit_ip_retention', true) = 'on')
-  WITH CHECK (current_setting('meetops.audit_ip_retention', true) = 'on');
+  USING (current_setting('meetops.audit_ip_retention', true) = 'on'
+         AND ip_address IS NOT NULL AND created_at < now() - interval '30 days')
+  WITH CHECK (current_setting('meetops.audit_ip_retention', true) = 'on' AND ip_address IS NULL);
 
--- Null raw IPs older than p_days (min 30, default 30) on sessions and audit_events; keep coarse geo.
-CREATE OR REPLACE FUNCTION public.redact_expired_ip_addresses(p_days integer DEFAULT 30)
-RETURNS TABLE (sessions_redacted bigint, audit_events_redacted bigint)
+-- One batch: null raw IPs older than p_days (>= 30, default 30) on sessions, audit_events and password_resets, at most
+-- p_batch (1..10000) rows per table. Server time (now()). Idempotent; call until every count is 0. Keeps coarse geo.
+CREATE OR REPLACE FUNCTION public.redact_expired_ip_addresses(p_days integer DEFAULT 30, p_batch integer DEFAULT 1000)
+RETURNS TABLE (sessions_redacted bigint, audit_events_redacted bigint, password_resets_redacted bigint)
 LANGUAGE plpgsql
 VOLATILE
 SECURITY DEFINER
 SET search_path = public, pg_temp
 AS $$
-DECLARE v_cutoff timestamptz; v_s bigint; v_a bigint;
+DECLARE v_cutoff timestamptz; v_s bigint; v_a bigint; v_p bigint;
 BEGIN
   IF p_days IS NULL OR p_days < 30 THEN
     RAISE EXCEPTION 'retention_days_invalid' USING ERRCODE = '22023';
   END IF;
+  IF p_batch IS NULL OR p_batch < 1 OR p_batch > 10000 THEN
+    RAISE EXCEPTION 'retention_batch_invalid' USING ERRCODE = '22023';
+  END IF;
   v_cutoff := now() - make_interval(days => p_days);
-  PERFORM set_config('meetops.audit_ip_retention', 'on', true);
-  UPDATE public.sessions SET ip_address = NULL WHERE ip_address IS NOT NULL AND created_at < v_cutoff;
+  UPDATE public.sessions SET ip_address = NULL
+   WHERE id IN (SELECT id FROM public.sessions WHERE ip_address IS NOT NULL AND created_at < v_cutoff
+                ORDER BY created_at LIMIT p_batch FOR UPDATE SKIP LOCKED);
   GET DIAGNOSTICS v_s = ROW_COUNT;
-  UPDATE public.audit_events SET ip_address = NULL WHERE ip_address IS NOT NULL AND created_at < v_cutoff;
+  UPDATE public.password_resets SET ip_address = NULL
+   WHERE id IN (SELECT id FROM public.password_resets WHERE ip_address IS NOT NULL AND created_at < v_cutoff
+                ORDER BY created_at LIMIT p_batch FOR UPDATE SKIP LOCKED);
+  GET DIAGNOSTICS v_p = ROW_COUNT;
+  PERFORM set_config('meetops.audit_ip_retention', 'on', true);
+  UPDATE public.audit_events SET ip_address = NULL
+   WHERE id IN (SELECT id FROM public.audit_events WHERE ip_address IS NOT NULL AND created_at < v_cutoff
+                ORDER BY created_at LIMIT p_batch FOR UPDATE SKIP LOCKED);
   GET DIAGNOSTICS v_a = ROW_COUNT;
   PERFORM set_config('meetops.audit_ip_retention', 'off', true);
-  RETURN QUERY SELECT v_s, v_a;
+  RETURN QUERY SELECT v_s, v_a, v_p;
 END
 $$;
-ALTER FUNCTION public.redact_expired_ip_addresses(integer) OWNER TO meetops_migrator;
-REVOKE ALL ON FUNCTION public.redact_expired_ip_addresses(integer) FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION public.redact_expired_ip_addresses(integer) TO meetops_app;
+ALTER FUNCTION public.redact_expired_ip_addresses(integer, integer) OWNER TO meetops_migrator;
+REVOKE ALL ON FUNCTION public.redact_expired_ip_addresses(integer, integer) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.redact_expired_ip_addresses(integer, integer) TO meetops_app;
 
 -- Global auth audit events gain optional coarse geo. Replace (not overload) so 7-arg callers keep working.
 DROP FUNCTION IF EXISTS public.record_global_auth_event(text, uuid, text, text, jsonb, text, text);

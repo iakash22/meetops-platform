@@ -190,6 +190,8 @@ export async function addRecordingSessionBytes(
 
 export {
   IP_RETENTION_DAYS,
+  IP_RETENTION_BATCH,
+  IP_RETENTION_MAX_BATCHES,
   redactExpiredIpAddresses,
   type IpRetentionResult,
 } from './ip-retention.js';

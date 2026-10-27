@@ -12,12 +12,16 @@ describe('ip retention job', () => {
   it('logs counts only and returns the result', async () => {
     const l = log();
     const res = await runIpRetention({
-      redact: async () => ({ sessionsRedacted: 2, auditEventsRedacted: 5 }),
+      redact: async () => ({
+        sessionsRedacted: 2,
+        auditEventsRedacted: 5,
+        passwordResetsRedacted: 1,
+      }),
       log: l,
     });
-    expect(res).toEqual({ sessionsRedacted: 2, auditEventsRedacted: 5 });
+    expect(res).toEqual({ sessionsRedacted: 2, auditEventsRedacted: 5, passwordResetsRedacted: 1 });
     expect(l.info).toHaveBeenCalledWith(
-      { sessionsRedacted: 2, auditEventsRedacted: 5 },
+      { sessionsRedacted: 2, auditEventsRedacted: 5, passwordResetsRedacted: 1 },
       expect.any(String),
     );
   });

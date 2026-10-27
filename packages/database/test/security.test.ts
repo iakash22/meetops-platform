@@ -80,7 +80,9 @@ const REPORT_SUMMARY_DEDUPE_MIGRATION = '20261027120000_report_summary_dedupe';
 const RECORDING_BYTES_MIGRATION = '20261027130000_recording_session_bytes_received';
 /** Definer SELECT policy for the integration routing functions (forced RLS binds the owner). */
 const INTEGRATION_ROUTING_POLICY_MIGRATION = '20261027140000_integration_routing_definer_policy';
-const LATEST_MIGRATION = INTEGRATION_ROUTING_POLICY_MIGRATION;
+/** ADR-014 session/audit geo columns + 30-day IP retention. */
+const SESSION_AUDIT_GEOIP_MIGRATION = '20261028010000_session_audit_geoip';
+const LATEST_MIGRATION = SESSION_AUDIT_GEOIP_MIGRATION;
 const reportDedupeSql = readFileSync(
   resolve(migrationsDir, REPORT_SUMMARY_DEDUPE_MIGRATION, 'migration.sql'),
   'utf8',
