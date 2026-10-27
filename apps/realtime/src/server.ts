@@ -216,10 +216,12 @@ export async function createRealtimeServer(
 
   io.on('connection', (socket: RealtimeSocket) => {
     // Only cookie (web) sockets get the org fan-out room; bearer sockets only receive meetings they join (1.3).
-    if (socket.data.credential === 'session')
+    // ADR-013: cookie sockets also get the user's notification room, derived only from the verified identity (never
+    // from client input; there is no client join event for it). Bearer sockets keep joining no fan-out room.
+    if (socket.data.credential === 'session') {
       void socket.join(organizationRoom(socket.data.organizationId));
-    // ADR-013: the user's notification room, derived only from the verified identity (never from client input).
-    void socket.join(userRoom(socket.data.organizationId, socket.data.userId));
+      void socket.join(userRoom(socket.data.organizationId, socket.data.userId));
+    }
     armExpiry(socket, now);
     const timer = setInterval(() => void revalidate(socket), opts.config.revalidateIntervalMs);
     timer.unref?.();
