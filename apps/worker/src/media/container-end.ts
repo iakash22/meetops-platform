@@ -82,6 +82,16 @@ async function element(fh: FileHandle, pos: number) {
   };
 }
 
+const VOID = 0xec;
+/** Padding (Matroska Void, MP4 free/skip) larger than this, or not all zero bytes, is treated as smuggled data. */
+const MAX_PADDING_BYTES = 1024 * 1024;
+
+async function zeroPadding(fh: FileHandle, pos: number, size: number): Promise<boolean> {
+  if (size > MAX_PADDING_BYTES) return false;
+  const b = await readAt(fh, pos, size);
+  return b.length === size && b.every((x) => x === 0);
+}
+
 async function matroskaEnd(fh: FileHandle, fileSize: number): Promise<ContainerEnd> {
   let pos = 0;
   const ebml = await element(fh, pos);
@@ -89,15 +99,20 @@ async function matroskaEnd(fh: FileHandle, fileSize: number): Promise<ContainerE
   pos = ebml.dataStart + ebml.size;
   const seg = await element(fh, pos);
   if (!seg || seg.id !== SEGMENT) return 'trailing';
+  // A known Segment size must match the file exactly, and its children are walked like an unknown-size one, so bytes
+  // hidden behind an enlarged Segment size are found (N-2).
+  let limit = fileSize;
   if (!seg.unknown) {
     const end = seg.dataStart + seg.size;
-    return end < fileSize ? 'trailing' : end > fileSize ? 'truncated' : 'ok';
+    if (end < fileSize) return 'trailing';
+    if (end > fileSize) return 'truncated';
+    limit = end;
   }
-  // Unknown-size Segment (MediaRecorder / live): walk level-1 children to EOF.
   pos = seg.dataStart;
-  while (pos < fileSize) {
+  while (pos < limit) {
     const el = await element(fh, pos);
     if (!el || !LEVEL1.has(el.id)) return 'trailing';
+    if (el.id === VOID && !(await zeroPadding(fh, el.dataStart, el.size))) return 'trailing';
     if (!el.unknown) {
       pos = el.dataStart + el.size;
       continue;
@@ -105,15 +120,16 @@ async function matroskaEnd(fh: FileHandle, fileSize: number): Promise<ContainerE
     if (el.id !== CLUSTER) return 'trailing';
     // Unknown-size Cluster ends at the next level-1 element (or EOF).
     pos = el.dataStart;
-    while (pos < fileSize) {
+    while (pos < limit) {
       const c = await element(fh, pos);
       if (!c) return 'trailing';
       if (LEVEL1.has(c.id) && !CLUSTER_CHILDREN.has(c.id)) break;
       if (!CLUSTER_CHILDREN.has(c.id) || c.unknown) return 'trailing';
+      if (c.id === VOID && !(await zeroPadding(fh, c.dataStart, c.size))) return 'trailing';
       pos = c.dataStart + c.size;
     }
   }
-  return pos > fileSize ? 'truncated' : 'ok';
+  return pos > limit ? 'truncated' : 'ok';
 }
 
 const MOV_TOP = new Set([
@@ -148,6 +164,9 @@ async function movEnd(fh: FileHandle, fileSize: number): Promise<ContainerEnd> {
       size = Number(h.readBigUInt64BE(8));
     }
     if (size < 8) return 'trailing';
+    const hdr = h.readUInt32BE(0) === 1 ? 16 : 8;
+    if ((type === 'free' || type === 'skip') && !(await zeroPadding(fh, pos + hdr, size - hdr)))
+      return 'trailing';
     pos += size;
   }
   return pos > fileSize ? 'truncated' : 'ok';
