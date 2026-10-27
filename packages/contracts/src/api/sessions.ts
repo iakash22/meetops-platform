@@ -1,18 +1,22 @@
 import { Type, type Static } from '@sinclair/typebox';
-import { Id, IsoDateTime, SAFE_DISPLAY_TEXT_TRIMMED_PATTERN } from '../common.js';
+import { Id, IsoDateTime, UNSAFE_DISPLAY_TEXT_CHARS, UNSAFE_DISPLAY_TEXT_TAGS } from '../common.js';
 import { CursorPage } from './pagination.js';
 
 const strict = { additionalProperties: false } as const;
 
 /**
  * Coarse location text (city, region or country name) from GeoIP (ADR-014). mmdb data is third-party input, so it uses
- * the shared safe display-text rules (no control chars, CR/LF, bidi/invisible or HTML-significant chars, no leading or
- * trailing whitespace) and additionally rejects values that look like an IPv4 or IPv6 address, so an IP cannot be
- * smuggled into "no IP" payloads. Producers must normalise names (e.g. `'` -> U+2019, `&` -> "and") or emit null.
+ * the shared unsafe display-text set (control chars incl. CR/LF, bidi/invisible chars, `<`, `>`, `"`, tag chars; no
+ * leading or trailing whitespace) EXCEPT ASCII `'` and `&`, which real place names need ("St. John's",
+ * "Trinidad & Tobago"). It also rejects values that look like an IPv4 or IPv6 address, so an IP cannot be smuggled into
+ * "no IP" payloads. This is input validation, not output encoding: every renderer (email HTML, web, push) must still
+ * escape these values.
  */
+const GEO_UNSAFE_CHARS = UNSAFE_DISPLAY_TEXT_CHARS.replace("'", '').replace('&', '');
+const GEO_SAFE_CHAR = `(?:(?!${UNSAFE_DISPLAY_TEXT_TAGS})[^${GEO_UNSAFE_CHARS}])`;
 export const GEO_TEXT_PATTERN =
   '^(?!\\d{1,3}(?:\\.\\d{1,3}){3}$)(?![0-9A-Fa-f.]*:[0-9A-Fa-f:.]*(?:%[\\w.-]+)?$)' +
-  SAFE_DISPLAY_TEXT_TRIMMED_PATTERN.slice(1);
+  `(?!\\s)${GEO_SAFE_CHAR}+(?<!\\s)$`;
 export const GeoName = Type.String({ minLength: 1, maxLength: 128, pattern: GEO_TEXT_PATTERN });
 /** ISO 3166-1 alpha-2 country code, upper case. */
 export const GeoCountryCodeString = Type.String({ pattern: '^[A-Z]{2}$' });

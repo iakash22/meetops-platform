@@ -26,10 +26,10 @@ reason }`, every key required, geo values nullable; `reason` is `'new_region' | 
   (`NEW_LOCATION_REASONS`). No IP address.
 - `AuthNewLocationSigninNotificationPayload`: in-app notification payload `{ sessionId, reason, geoCity?, geoCountry? }`
   (optional, not nullable).
-- `GeoName` / `GEO_TEXT_PATTERN`: location text uses the shared safe display-text rules (no control chars, CR/LF,
-  bidi/invisible or HTML-significant chars, no leading/trailing whitespace) and rejects IPv4/IPv6-looking strings.
-  Producers must normalise `'` and `&` in place names or emit null. Also `GeoText`, `GeoCountryCode`,
-  `GeoCountryCodeString`, `AUTH_NEW_LOCATION_SIGNIN_EVENT`.
+- `GeoName` / `GEO_TEXT_PATTERN`: location text rejects control chars (incl. CR/LF), bidi/invisible chars, `<`, `>`,
+  `"`, tag chars, leading/trailing whitespace and IPv4/IPv6-looking strings. ASCII `'` and `&` are allowed for real
+  place names ("St. John's", "Trinidad & Tobago"), so every renderer (email, web, push) must escape output. Also
+  `GeoText`, `GeoCountryCode`, `GeoCountryCodeString`, `AUTH_NEW_LOCATION_SIGNIN_EVENT`.
 
 ## [0.9.0] - 2026-10-27
 
