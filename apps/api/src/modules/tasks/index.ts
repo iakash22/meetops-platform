@@ -1,14 +1,17 @@
 import type { FastifyInstance } from 'fastify';
 import { Type } from '@sinclair/typebox';
 import {
+  AcceptExtractedTaskRequest,
+  CreateTaskRequest,
   CursorPage,
   DEFAULT_PAGE_LIMIT,
   CursorPageQuery,
   ExtractedTask,
   ListTasksQuery,
   Task,
-  TaskPriority,
-  TaskStatus,
+  TASK_PATHS,
+  TaskParams,
+  UpdateTaskRequest,
 } from '@meetops/contracts';
 import type { AuthService } from '../auth/application/auth.service.js';
 import { makeGuards, requestMeta } from '../auth/http/security.js';
@@ -23,6 +26,7 @@ import {
   ExtractedTaskReviewedError,
   TaskAssigneeInvalidError,
   TaskNotFoundError,
+  TaskReferenceInvalidError,
 } from './errors.js';
 import { InMemoryTasks } from './in-memory.repository.js';
 import { PrismaTasks } from './prisma.repository.js';
@@ -31,21 +35,13 @@ import {
   ExtractedTaskMissing,
   TaskAssigneeInvalid,
   TaskMissing,
+  TaskReferenceInvalid,
   type TaskPatch,
   type TaskRepositories,
 } from './ports.js';
 
-/**
- * Paths the web task-review UI (PR #174) builds against. Contracts define the DTOs and ListTasksQuery but no path
- * constants; move these into @meetops/contracts with the next contracts minor.
- */
-export const TASK_PATHS = {
-  tasks: '/orgs/:organizationId/tasks',
-  extractedTasks: '/orgs/:organizationId/extracted-tasks',
-  accept: '/orgs/:organizationId/extracted-tasks/:extractedTaskId/accept',
-  dismiss: '/orgs/:organizationId/extracted-tasks/:extractedTaskId/dismiss',
-  task: '/orgs/:organizationId/tasks/:taskId',
-} as const;
+/** Route templates now come from @meetops/contracts (v0.8.0); re-exported for existing importers. */
+export { TASK_PATHS };
 
 const Uuid = Type.String({ format: 'uuid' });
 const OrgParams = Type.Object({ organizationId: Uuid }, { additionalProperties: false });
@@ -57,54 +53,12 @@ const ExtractedQuery = Type.Object(
   { ...CursorPageQuery.properties, meetingId: Type.Optional(Uuid) },
   { additionalProperties: false },
 );
-/** Body of accept: the reviewer's (possibly edited) values. The LLM hints are never copied server-side. */
-export const AcceptExtractedTaskBody = Type.Object(
-  {
-    title: Type.String({ minLength: 1, maxLength: 500 }),
-    priority: TaskPriority,
-    description: Type.Optional(Type.String({ maxLength: 10_000 })),
-    dueAt: Type.Optional(Type.String({ format: 'date-time' })),
-  },
-  { additionalProperties: false },
-);
+/** Re-exported for existing importers; the schema lives in @meetops/contracts (v0.10.0). */
+export const AcceptExtractedTaskBody = AcceptExtractedTaskRequest;
 
-/**
- * ListTasksQuery as served: contracts put `default` on `limit` inside the anyOf variants, which Ajv strict mode rejects
- * ("default is ignored"). Same schema minus those defaults; the handler applies DEFAULT_PAGE_LIMIT. Contracts follow-up.
- */
-export const ListTasksQuerySchema = (() => {
-  const s = JSON.parse(JSON.stringify(ListTasksQuery)) as {
-    anyOf: { properties: { limit: { default?: unknown } } }[];
-  };
-  for (const v of s.anyOf) delete v.properties.limit.default;
-  return s as unknown as typeof ListTasksQuery;
-})();
-
-const TaskParams = Type.Object(
-  { organizationId: Uuid, taskId: Uuid },
-  { additionalProperties: false },
-);
-/** Null first: Ajv coerceTypes would otherwise turn null into '' on the string branch.
- * Proposed UpdateTaskRequest for contracts. null clears an optional field; at least one key is required. */
-export const UpdateTaskBody = Type.Object(
-  {
-    title: Type.Optional(Type.String({ minLength: 1, maxLength: 500 })),
-    description: Type.Optional(Type.Union([Type.Null(), Type.String({ maxLength: 10000 })])),
-    status: Type.Optional(TaskStatus),
-    priority: Type.Optional(TaskPriority),
-    assigneeId: Type.Optional(Type.Union([Type.Null(), Uuid])),
-    dueAt: Type.Optional(Type.Union([Type.Null(), Type.String({ format: 'date-time' })])),
-  },
-  { additionalProperties: false, minProperties: 1 },
-);
-type UpdateTaskBody = {
-  title?: string;
-  description?: string | null;
-  status?: Task['status'];
-  priority?: Task['priority'];
-  assigneeId?: string | null;
-  dueAt?: string | null;
-};
+/** Body of POST TASK_PATHS.tasks; status defaults to todo, priority to medium. */
+export const CreateTaskBody = CreateTaskRequest;
+type CreateTaskBody = CreateTaskRequest;
 
 type OrgP = { organizationId: string };
 type TaskP = { organizationId: string; taskId: string };
@@ -127,6 +81,7 @@ function translate(e: unknown): unknown {
   if (e instanceof ExtractedTaskAlreadyReviewed) return new ExtractedTaskReviewedError();
   if (e instanceof TaskMissing) return new TaskNotFoundError();
   if (e instanceof TaskAssigneeInvalid) return new TaskAssigneeInvalidError();
+  if (e instanceof TaskReferenceInvalid) return new TaskReferenceInvalidError(e.field);
   return toDirectoryError(e);
 }
 /** Takes a thunk so synchronous repository throws are translated too. */
@@ -150,6 +105,8 @@ export default async function tasksModule(
   const repo = selectTaskRepositories(deps);
   registerDomainErrorHandler(app);
   const g = makeGuards(auth, deps.security);
+  // Origin allowlist + double-submit CSRF on every non-GET route (same as directory/index.ts).
+  app.addHook('onRequest', g.mutationGuard);
   const access = new DirectoryAccess(organizations, deps.audit);
   const caller = async (request: Parameters<typeof g.requireSession>[0], organizationId: string) =>
     access.caller(await g.requireSession(request), organizationId, requestMeta(request));
@@ -161,7 +118,7 @@ export default async function tasksModule(
         tags: ['tasks'],
         summary: 'List tasks',
         params: OrgParams,
-        querystring: ListTasksQuerySchema,
+        querystring: ListTasksQuery,
         response: { 200: CursorPage(Task), ...directoryErrors },
       },
     },
@@ -186,6 +143,45 @@ export default async function tasksModule(
           q: q.q,
         }),
       );
+    },
+  );
+
+  app.post<{ Params: OrgP; Body: CreateTaskBody }>(
+    TASK_PATHS.tasks,
+    {
+      schema: {
+        tags: ['tasks'],
+        summary: 'Create a task',
+        description:
+          'Manual task. status defaults to todo, priority to medium. assigneeId is an employee id; projectId and meetingId must belong to the organization.',
+        params: OrgParams,
+        body: CreateTaskBody,
+        response: { 201: Task, ...directoryWriteErrors },
+      },
+    },
+    async (request, reply) => {
+      const c = await caller(request, request.params.organizationId);
+      organizations.authorize(c.ctx, 'create', 'Task');
+      const b = request.body;
+      const task = await call(() =>
+        repo.createTask(c.ctx.organizationId, {
+          createdById: c.ctx.userId,
+          title: b.title,
+          description: b.description,
+          status: b.status ?? 'todo',
+          priority: b.priority ?? 'medium',
+          assigneeId: b.assigneeId,
+          projectId: b.projectId,
+          meetingId: b.meetingId,
+          dueAt: b.dueAt ? new Date(b.dueAt) : undefined,
+        }),
+      );
+      await access.record(c, {
+        action: 'task.create',
+        targetType: 'task',
+        targetId: task.id,
+      });
+      return reply.code(201).send(task);
     },
   );
 
@@ -299,7 +295,7 @@ export default async function tasksModule(
     },
   );
 
-  app.patch<{ Params: TaskP; Body: UpdateTaskBody }>(
+  app.patch<{ Params: TaskP; Body: UpdateTaskRequest }>(
     TASK_PATHS.task,
     {
       schema: {
@@ -308,7 +304,7 @@ export default async function tasksModule(
         description:
           'Partial update; null clears description, assigneeId or dueAt. assigneeId is an employee id.',
         params: TaskParams,
-        body: UpdateTaskBody,
+        body: UpdateTaskRequest,
         response: { 200: Task, ...directoryWriteErrors },
       },
     },

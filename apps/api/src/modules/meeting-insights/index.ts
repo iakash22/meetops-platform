@@ -54,6 +54,8 @@ export default async function meetingInsightsModule(
   const repo = selectMeetingInsightsRepository(deps);
   registerDomainErrorHandler(app);
   const g = makeGuards(auth, deps.security);
+  // Origin allowlist + double-submit CSRF on every non-GET route (same as directory/index.ts).
+  app.addHook('onRequest', g.mutationGuard);
   const access = new DirectoryAccess(organizations, deps.audit);
 
   async function readableMeeting(request: Parameters<typeof g.requireSession>[0], p: Params) {

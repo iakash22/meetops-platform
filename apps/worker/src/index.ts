@@ -9,11 +9,15 @@ import { createPrismaClient } from '@meetops/database';
 import { createNotificationDeliveryProducer } from '@meetops/notifications';
 import { createRedisEmitter } from './media/realtime.js';
 import { loadNotificationsWorkerEnv, registerNotificationsWorker } from './notifications/index.js';
+import { createQueue, createWorker } from '@meetops/queue';
+import { getPrismaClient, purgeExpiredSessions, redactExpiredIpAddresses } from '@meetops/database';
+import { IP_RETENTION_QUEUE, runIpRetention, scheduleIpRetention } from './privacy/index.js';
 
 export * from './media/index.js';
 export * from './ai/index.js';
 export * from './integrations/index.js';
 export * from './notifications/index.js';
+export * from './privacy/index.js';
 
 async function main() {
   const { close } = startMediaWorker();
@@ -46,6 +50,27 @@ async function main() {
     hostDeps?.executor ??
     (summaryEnabled ? (await createTranscriptionHostDeps()).executor : undefined);
   const summary = registerSummaryWorker({ resolveExecutor: () => summaryExecutor });
+  // ADR-014: daily raw-IP retention (on unless IP_RETENTION_ENABLED=false).
+  const retention =
+    process.env.IP_RETENTION_ENABLED === 'false'
+      ? undefined
+      : (() => {
+          const queue = createQueue(IP_RETENTION_QUEUE);
+          const worker = createWorker(IP_RETENTION_QUEUE, () =>
+            runIpRetention({
+              redact: () => redactExpiredIpAddresses(getPrismaClient()),
+              purge: () => purgeExpiredSessions(getPrismaClient()),
+              log: logger,
+            }),
+          );
+          void scheduleIpRetention(queue).catch((err: unknown) =>
+            logger.warn(
+              { errName: err instanceof Error ? err.name : 'unknown' },
+              'ip retention schedule failed',
+            ),
+          );
+          return { close: () => Promise.all([worker.close(), queue.close()]) };
+        })();
   const shutdown = async () => {
     logger.info('Shutting down worker...');
     await Promise.allSettled([
@@ -53,6 +78,7 @@ async function main() {
       transcription.registered ? transcription.close() : Promise.resolve(),
       notifications.registered ? notifications.close() : Promise.resolve(),
       summary.registered ? summary.close() : Promise.resolve(),
+      retention ? retention.close() : Promise.resolve(),
     ]);
     notifRedis?.disconnect();
     process.exit(0);
