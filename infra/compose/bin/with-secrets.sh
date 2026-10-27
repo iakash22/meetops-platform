@@ -14,7 +14,7 @@ if [ -r "$s/minio_app_password" ]; then
   export STORAGE_SECRET_ACCESS_KEY="$(cat "$s/minio_app_password")"
 fi
 # Optional app secrets: exported only when the secret file is mounted and non-empty.
-for pair in csrf_secret:CSRF_SECRET smtp_password:SMTP_PASSWORD \
+for pair in csrf_secret:CSRF_SECRET smtp_password:SMTP_PASSWORD resend_api_key:RESEND_API_KEY \
   gemini_api_key:GEMINI_API_KEY assemblyai_api_key:ASSEMBLYAI_API_KEY \
   openai_api_key:OPENAI_API_KEY deepgram_api_key:DEEPGRAM_API_KEY; do
   f="$s/${pair%%:*}"

@@ -90,6 +90,7 @@ export function createServer(options: CreateServerOptions = {}) {
     nodeEnv,
     databaseUrl: options.databaseUrl ?? process.env.DATABASE_URL,
     redisUrl: options.redisUrl ?? process.env.REDIS_URL,
+    emailEnv: process.env,
   });
   const app = Fastify({
     loggerInstance: logger,

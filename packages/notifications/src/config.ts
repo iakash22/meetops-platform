@@ -22,6 +22,13 @@ const smtpSchema = z
     error: 'SMTP_USER and SMTP_PASSWORD must be set together',
   });
 
+const resendSchema = z.object({
+  EMAIL_PROVIDER: z.literal('resend'),
+  RESEND_API_KEY: z.string().min(1, 'RESEND_API_KEY is required'),
+  EMAIL_FROM: z.string().min(3, 'EMAIL_FROM is required'),
+  RESEND_API_URL: z.url().optional(),
+});
+
 const consoleSchema = z.object({
   EMAIL_PROVIDER: z.literal('console'),
   EMAIL_FROM: z.string().min(3).default('MeetOps <no-reply@meetops.local>'),
@@ -36,12 +43,20 @@ export interface SmtpEmailConfig {
   from: string;
 }
 
+export interface ResendEmailConfig {
+  provider: 'resend';
+  apiKey: string;
+  from: string;
+  /** Override for tests/proxies. Default https://api.resend.com */
+  apiUrl?: string;
+}
+
 export interface ConsoleEmailConfig {
   provider: 'console';
   from: string;
 }
 
-export type EmailConfig = SmtpEmailConfig | ConsoleEmailConfig;
+export type EmailConfig = SmtpEmailConfig | ResendEmailConfig | ConsoleEmailConfig;
 
 export class EmailConfigError extends Error {
   constructor(message: string) {
@@ -60,7 +75,7 @@ function clean(env: Record<string, string | undefined>) {
 
 /**
  * Load and validate email configuration from env. Error messages never include values.
- * EMAIL_PROVIDER defaults to "smtp". "console" is intended for tests/dev only.
+ * EMAIL_PROVIDER defaults to "smtp"; "resend" uses the Resend HTTP API. "console" is intended for tests/dev only.
  */
 export function loadEmailConfig(
   env: Record<string, string | undefined> = process.env,
@@ -75,8 +90,21 @@ export function loadEmailConfig(
     if (!r.success) throw new EmailConfigError(formatIssues(r.error));
     return { provider: 'console', from: r.data.EMAIL_FROM };
   }
+  if (provider === 'resend') {
+    const r = resendSchema.safeParse({ ...raw, EMAIL_PROVIDER: 'resend' });
+    if (!r.success) throw new EmailConfigError(formatIssues(r.error));
+    const cfg: ResendEmailConfig = {
+      provider: 'resend',
+      apiKey: r.data.RESEND_API_KEY,
+      from: r.data.EMAIL_FROM,
+    };
+    if (r.data.RESEND_API_URL) cfg.apiUrl = r.data.RESEND_API_URL;
+    return cfg;
+  }
   if (provider !== 'smtp') {
-    throw new EmailConfigError(`Unsupported EMAIL_PROVIDER (expected "smtp" or "console")`);
+    throw new EmailConfigError(
+      `Unsupported EMAIL_PROVIDER (expected "smtp", "resend" or "console")`,
+    );
   }
   const r = smtpSchema.safeParse({ ...raw, EMAIL_PROVIDER: 'smtp' });
   if (!r.success) throw new EmailConfigError(formatIssues(r.error));
@@ -103,6 +131,9 @@ function formatIssues(err: z.ZodError): string {
 /** Safe-to-log view of config (secrets masked). */
 export function redactEmailConfig(cfg: EmailConfig): Record<string, unknown> {
   if (cfg.provider === 'console') return { ...cfg };
+  if (cfg.provider === 'resend') {
+    return { provider: cfg.provider, from: cfg.from, apiUrl: cfg.apiUrl, apiKey: '***redacted***' };
+  }
   return {
     provider: cfg.provider,
     host: cfg.host,
