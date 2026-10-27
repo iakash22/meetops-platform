@@ -98,7 +98,9 @@ const NOTIFICATION_TABLES = [
 ] as const;
 /** App-wide GitHub webhook routing by installation id (definer function, identifiers only). */
 const EXTERNAL_ACCOUNT_ROUTING_MIGRATION = '20261028020000_integration_external_account_routing';
-const LATEST_MIGRATION = RELAY_REVOKE_ALL_KINDS_MIGRATION;
+/** #288 L-1 remainder: re-assert migrator ownership + column grants of the IP retention tables. */
+const RETENTION_OWNER_MIGRATION = '20261028040000_geoip_retention_owner_assert';
+const LATEST_MIGRATION = RETENTION_OWNER_MIGRATION;
 const reportDedupeSql = readFileSync(
   resolve(migrationsDir, REPORT_SUMMARY_DEDUPE_MIGRATION, 'migration.sql'),
   'utf8',
@@ -1500,9 +1502,10 @@ describe('integration external-account routing (20261028020000)', () => {
       .map((x) => x.name)
       .sort();
     expect(dirs.at(-1)).toBe(LATEST_MIGRATION);
-    expect(dirs.at(-2)).toBe(EXTERNAL_ACCOUNT_ROUTING_MIGRATION);
-    expect(dirs.at(-3)).toBe(SESSION_AUDIT_GEOIP_MIGRATION);
-    expect(dirs.at(-4)).toBe(RELAY_BY_TYPE_MIGRATION);
+    expect(dirs.at(-2)).toBe(RELAY_REVOKE_ALL_KINDS_MIGRATION);
+    expect(dirs.at(-3)).toBe(EXTERNAL_ACCOUNT_ROUTING_MIGRATION);
+    expect(dirs.at(-4)).toBe(SESSION_AUDIT_GEOIP_MIGRATION);
+    expect(dirs.at(-5)).toBe(RELAY_BY_TYPE_MIGRATION);
   });
   const sql = readFileSync(
     resolve(migrationsDir, EXTERNAL_ACCOUNT_ROUTING_MIGRATION, 'migration.sql'),
@@ -1534,8 +1537,8 @@ describe('ADR-013 notifications tables (static)', () => {
       .filter((x) => x.isDirectory())
       .map((x) => x.name)
       .sort();
-    expect(dirs.at(-4)).toBe(RELAY_BY_TYPE_MIGRATION);
-    expect(dirs.at(-5)).toBe(NOTIFICATIONS_MIGRATION);
+    expect(dirs.at(-5)).toBe(RELAY_BY_TYPE_MIGRATION);
+    expect(dirs.at(-6)).toBe(NOTIFICATIONS_MIGRATION);
     expect(statements).not.toMatch(
       /\bDROP\b|RENAME|ALTER COLUMN|NO FORCE|DISABLE ROW LEVEL SECURITY/i,
     );
@@ -1593,5 +1596,31 @@ describe('integration routing definer policy (20261027140000)', () => {
     expect(dirs.indexOf(INTEGRATION_ROUTING_POLICY_MIGRATION)).toBe(
       dirs.indexOf(RECORDING_BYTES_MIGRATION) + 1,
     );
+  });
+});
+
+describe('IP retention owner re-assert (20261028040000)', () => {
+  const sql = readFileSync(
+    resolve(migrationsDir, RETENTION_OWNER_MIGRATION, 'migration.sql'),
+    'utf8',
+  ).replace(/--.*$/gm, '');
+  it('is the newest migration, after the ADR-014 geoip one', () => {
+    const dirs = readdirSync(migrationsDir, { withFileTypes: true })
+      .filter((x) => x.isDirectory())
+      .map((x) => x.name)
+      .sort();
+    expect(dirs.at(-1)).toBe(LATEST_MIGRATION);
+    expect(dirs.indexOf(RETENTION_OWNER_MIGRATION)).toBeGreaterThan(
+      dirs.indexOf(SESSION_AUDIT_GEOIP_MIGRATION),
+    );
+  });
+  it('only re-owns the three tables to meetops_migrator (guarded) and re-issues the column grants', () => {
+    expect(sql).toMatch(/pg_has_role\(current_user, 'meetops_migrator', 'MEMBER'\)/);
+    expect(sql).toMatch(/ARRAY\['sessions', 'password_resets', 'audit_events'\]/);
+    expect(sql).toMatch(/ALTER TABLE %I OWNER TO meetops_migrator/);
+    expect(sql).toContain(
+      'GRANT SELECT (id, ip_address, created_at), UPDATE (ip_address)\n  ON TABLE "sessions", "password_resets", "audit_events" TO meetops_migrator;',
+    );
+    expect(sql).not.toMatch(/meetops_app|\bDROP\b|DISABLE ROW LEVEL SECURITY|NO FORCE/i);
   });
 });
