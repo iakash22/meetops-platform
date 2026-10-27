@@ -30,7 +30,7 @@ const integration = {
 };
 
 describe('v0.7.0 integrations', () => {
-  it('is 0.7.x', () => expect(pkg.version).toMatch(/^0\.7\.\d+$/));
+  it('is 0.7.0 or later', () => expect(pkg.version).toMatch(/^0\.([7-9]|\d{2,})\.\d+$/));
 
   it('exposes the route templates', () => {
     expect(INTEGRATION_PATHS.webhook).toBe('/webhooks/:provider/:integrationId');
