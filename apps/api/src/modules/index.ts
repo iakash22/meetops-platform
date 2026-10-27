@@ -473,7 +473,9 @@ export async function registerModules(app: FastifyInstance, deps: ModuleDeps) {
   await app.register(organizationRoutes, { auth, organizations, security: deps.security });
   await app.register(extensionAuthRoutes, { auth, extensionAuth, security: deps.security });
   await app.register(import('./directory/index.js'), { auth, organizations, deps });
+  await app.register(import('./tasks/index.js'), { auth, organizations, deps });
   await app.register(import('./meeting-insights/index.js'), { auth, organizations, deps });
+  await app.register(import('./integrations/index.js'), { auth, organizations, deps });
   await app.register(import('./meetings/index.js'), { auth, organizations, deps });
   await app.register(import('./media/index.js'), { auth, organizations, deps });
   return {
