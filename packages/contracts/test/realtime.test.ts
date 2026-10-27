@@ -185,6 +185,7 @@ describe('v0.4.1 AuthRevocationMessage (ADR-011 section 3)', () => {
     expect(AUTH_REVOCATIONS_CHANNEL).toBe('meetops:auth:revocations'));
   it('covers the six API events plus password change and extension revoke', () => {
     expect([...AUTH_REVOCATION_REASONS].sort()).toEqual([
+      'desktop_revoked',
       'extension_revoked',
       'invitation_revoked',
       'logout',
