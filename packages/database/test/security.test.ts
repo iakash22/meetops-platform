@@ -85,6 +85,7 @@ const SESSION_AUDIT_GEOIP_MIGRATION = '20261028010000_session_audit_geoip';
 /** ADR-013 notifications tables. Update LATEST_MIGRATION when adding a migration. */
 const NOTIFICATIONS_MIGRATION = '20261027180000_notifications';
 const RELAY_BY_TYPE_MIGRATION = '20261028000000_relay_claim_by_event_type';
+const RELAY_REVOKE_ALL_KINDS_MIGRATION = '20261028030000_relay_revoke_claim_all_kinds';
 const notificationsSql = readFileSync(
   resolve(migrationsDir, NOTIFICATIONS_MIGRATION, 'migration.sql'),
   'utf8',
@@ -97,7 +98,7 @@ const NOTIFICATION_TABLES = [
 ] as const;
 /** App-wide GitHub webhook routing by installation id (definer function, identifiers only). */
 const EXTERNAL_ACCOUNT_ROUTING_MIGRATION = '20261028020000_integration_external_account_routing';
-const LATEST_MIGRATION = EXTERNAL_ACCOUNT_ROUTING_MIGRATION;
+const LATEST_MIGRATION = RELAY_REVOKE_ALL_KINDS_MIGRATION;
 const reportDedupeSql = readFileSync(
   resolve(migrationsDir, REPORT_SUMMARY_DEDUPE_MIGRATION, 'migration.sql'),
   'utf8',
@@ -1074,6 +1075,23 @@ describe('security review fixes (static)', () => {
     }
   });
 
+  it('(3c) relay loses EXECUTE on the claim-all-kinds overload; scripts no longer grant it', () => {
+    const sql = secDir(RELAY_REVOKE_ALL_KINDS_MIGRATION).replace(/--.*$/gm, '');
+    expect(sql).toContain(
+      'REVOKE EXECUTE ON FUNCTION public.relay_claim_outbox_events(integer) FROM meetops_relay;',
+    );
+    expect(sql).not.toMatch(/\bGRANT\b|DROP FUNCTION|DISABLE ROW LEVEL SECURITY|NO FORCE/);
+    for (const f of ['scripts/bootstrap-roles.sql', 'scripts/create-db-roles.ts']) {
+      const src = readFileSync(resolve(pkgDir, f), 'utf8');
+      expect(src, f).not.toContain(
+        'GRANT EXECUTE ON FUNCTION public.relay_claim_outbox_events(integer) TO meetops_relay;',
+      );
+      expect(src, f).toContain(
+        'REVOKE EXECUTE ON FUNCTION public.relay_claim_outbox_events(integer) FROM meetops_relay;',
+      );
+    }
+  });
+
   it('(4) every NO FORCE is re-forced in the same migration, and a final assertion guards the chain', () => {
     for (const d of readdirSync(migrationsDir, { withFileTypes: true }).filter((e) =>
       e.isDirectory(),
@@ -1476,14 +1494,15 @@ describe('integration routing definer functions', () => {
 });
 
 describe('integration external-account routing (20261028020000)', () => {
-  it('is the newest migration, right after the ADR-014 geoip one', () => {
+  it('sorts right after the ADR-014 geoip migration, before the relay revoke one', () => {
     const dirs = readdirSync(migrationsDir, { withFileTypes: true })
       .filter((x) => x.isDirectory())
       .map((x) => x.name)
       .sort();
     expect(dirs.at(-1)).toBe(LATEST_MIGRATION);
-    expect(dirs.at(-2)).toBe(SESSION_AUDIT_GEOIP_MIGRATION);
-    expect(dirs.at(-3)).toBe(RELAY_BY_TYPE_MIGRATION);
+    expect(dirs.at(-2)).toBe(EXTERNAL_ACCOUNT_ROUTING_MIGRATION);
+    expect(dirs.at(-3)).toBe(SESSION_AUDIT_GEOIP_MIGRATION);
+    expect(dirs.at(-4)).toBe(RELAY_BY_TYPE_MIGRATION);
   });
   const sql = readFileSync(
     resolve(migrationsDir, EXTERNAL_ACCOUNT_ROUTING_MIGRATION, 'migration.sql'),
@@ -1515,8 +1534,8 @@ describe('ADR-013 notifications tables (static)', () => {
       .filter((x) => x.isDirectory())
       .map((x) => x.name)
       .sort();
-    expect(dirs.at(-3)).toBe(RELAY_BY_TYPE_MIGRATION);
-    expect(dirs.at(-4)).toBe(NOTIFICATIONS_MIGRATION);
+    expect(dirs.at(-4)).toBe(RELAY_BY_TYPE_MIGRATION);
+    expect(dirs.at(-5)).toBe(NOTIFICATIONS_MIGRATION);
     expect(statements).not.toMatch(
       /\bDROP\b|RENAME|ALTER COLUMN|NO FORCE|DISABLE ROW LEVEL SECURITY/i,
     );
