@@ -1,7 +1,15 @@
 import { Writable } from 'node:stream';
 import { describe, expect, it } from 'vitest';
 import pino from 'pino';
-import { CENSOR, CIRCULAR, createLogger, redactDeep, TRUNCATED } from '../src/index.js';
+import {
+  CENSOR,
+  CIRCULAR,
+  createLogger,
+  redactDeep,
+  redactUrl,
+  reqSerializer,
+  TRUNCATED,
+} from '../src/index.js';
 
 describe('pino paths are single-level (why the walker exists)', () => {
   it('fast-redact `*.token` misses a nested token', () => {
@@ -150,5 +158,24 @@ describe('#282 M-1 integration secrets and free-text scrub', () => {
   });
   it('redactDeep scrubs nested strings directly', () => {
     expect(JSON.stringify(redactDeep({ a: [`x ${tok('ghs')}`] }, []))).not.toMatch(/ghs_z{36}/);
+  });
+});
+
+describe('#282 M-2 URL redaction', () => {
+  it('redactUrl redacts sensitive query values only', () => {
+    expect(redactUrl('/cb?code=abc&state=def&x=1#frag')).toBe(
+      `/cb?code=${CENSOR}&state=${CENSOR}&x=1#frag`,
+    );
+    expect(redactUrl('https://h/p?TOKEN=t&access_token=a&keep=k')).toBe(
+      `https://h/p?TOKEN=${CENSOR}&access_token=${CENSOR}&keep=k`,
+    );
+    expect(redactUrl('/plain/path')).toBe('/plain/path');
+    expect(redactUrl('/p?%63ode=x&bad=%E0%A4%A')).toBe(`/p?%63ode=${CENSOR}&bad=%E0%A4%A`);
+  });
+  it('reqSerializer and url-like keys are redacted', () => {
+    expect(reqSerializer({ method: 'GET', url: '/cb?code=zz' }).url).toBe(`/cb?code=${CENSOR}`);
+    expect(JSON.stringify(redactDeep({ res: { location: '/x?state=s1' } }, []))).not.toContain(
+      's1',
+    );
   });
 });

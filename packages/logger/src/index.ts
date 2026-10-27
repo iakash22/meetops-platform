@@ -1,5 +1,12 @@
 import pino, { type LoggerOptions, type Logger } from 'pino';
-import { CENSOR, DEFAULT_REDACT_KEYS, redactDeep, scrubText, type RedactLimits } from './redact.js';
+import {
+  CENSOR,
+  DEFAULT_REDACT_KEYS,
+  redactDeep,
+  reqSerializer,
+  scrubText,
+  type RedactLimits,
+} from './redact.js';
 
 export type { Logger };
 export {
@@ -8,7 +15,10 @@ export {
   CONDITIONAL_REDACT_KEYS,
   DEFAULT_REDACT_KEYS,
   redactDeep,
+  redactUrl,
+  reqSerializer,
   scrubText,
+  SENSITIVE_QUERY_PARAMS,
   TRUNCATED,
   type RedactLimits,
 } from './redact.js';
@@ -47,6 +57,8 @@ export function createLogger(
     level: process.env.NODE_ENV === 'production' ? 'info' : 'debug',
     ...rest,
     redact: { paths: [...new Set([...headerPaths, ...extraPaths])], censor: CENSOR },
+    // #282 M-2: request URLs are logged with sensitive query values redacted (caller serializers win per key).
+    serializers: { req: reqSerializer, ...rest.serializers },
     hooks: {
       ...rest.hooks,
       // #282 M-1: scrub PEM blocks / GitHub tokens from the message string (formatters.log never sees it).

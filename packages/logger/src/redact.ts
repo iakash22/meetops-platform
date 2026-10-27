@@ -70,6 +70,85 @@ export function scrubText(s: string): string {
   return s.replace(PEM_BLOCK, CENSOR).replace(GH_TOKEN, CENSOR).replace(GH_FINE_GRAINED, CENSOR);
 }
 
+/**
+ * Query parameters whose values never reach logs (#282 M-2, reusable by #263 M-1): OAuth callback `code`/`state`,
+ * any `token`, and OAuth/OIDC token fields that some providers echo in redirects.
+ */
+export const SENSITIVE_QUERY_PARAMS: readonly string[] = [
+  'code',
+  'state',
+  'token',
+  'access_token',
+  'refresh_token',
+  'id_token',
+  'client_secret',
+  'code_verifier',
+  'signature',
+  'sig',
+];
+const SENSITIVE_QUERY = new Set(SENSITIVE_QUERY_PARAMS);
+
+/**
+ * Redacts sensitive query values in a URL or path (`/cb?code=x&state=y` -> `/cb?code=***redacted***&state=...`).
+ * Works on relative paths, keeps parameter names and order, matches names case-insensitively, and leaves
+ * the path and fragment alone. Malformed percent-encoding is handled (the raw name is compared too).
+ */
+export function redactUrl(url: string): string {
+  const q = url.indexOf('?');
+  if (q < 0) return url;
+  const hash = url.indexOf('#', q);
+  const end = hash < 0 ? url.length : hash;
+  const query = url
+    .slice(q + 1, end)
+    .split('&')
+    .map((pair) => {
+      const eq = pair.indexOf('=');
+      const raw = eq < 0 ? pair : pair.slice(0, eq);
+      let name = raw;
+      try {
+        name = decodeURIComponent(raw.replace(/\+/g, ' '));
+      } catch {
+        /* keep raw */
+      }
+      return SENSITIVE_QUERY.has(name.toLowerCase()) || SENSITIVE_QUERY.has(raw.toLowerCase())
+        ? `${raw}=${CENSOR}`
+        : pair;
+    })
+    .join('&');
+  return `${url.slice(0, q)}?${query}${url.slice(end)}`;
+}
+
+/** Keys whose string values are URLs/paths and get `redactUrl` (in addition to the key list). */
+const URL_KEYS = new Set(['url', 'originalurl', 'path', 'href', 'location', 'referer', 'referrer']);
+
+/**
+ * Shared pino `req` serializer: Fastify's fields, with the query of `url` redacted. Headers are not included
+ * (Fastify's default serializer omits them as well).
+ */
+export function reqSerializer(req: {
+  method?: string;
+  url?: string;
+  originalUrl?: string;
+  hostname?: string;
+  host?: string;
+  ip?: string;
+  socket?: { remotePort?: number };
+  raw?: { url?: string; method?: string };
+}): Record<string, unknown> {
+  const url = req.url ?? req.originalUrl ?? req.raw?.url;
+  if (isPlain(req)) {
+    // Already-serialized/plain objects (tests, manual logs): keep their shape, only redact the URL.
+    return typeof req.url === 'string' ? { ...req, url: redactUrl(req.url) } : { ...req };
+  }
+  return {
+    method: req.method ?? req.raw?.method,
+    url: typeof url === 'string' ? redactUrl(url) : url,
+    host: req.hostname ?? req.host,
+    remoteAddress: req.ip,
+    remotePort: req.socket?.remotePort,
+  };
+}
+
 export interface RedactLimits {
   /** Nesting below this depth is replaced with TRUNCATED. Default 10. */
   maxDepth?: number;
@@ -122,7 +201,9 @@ export function redactDeep(
         out[k] =
           set.has(lk) || (conditional.has(lk) && x != null && !isErrorCode(x))
             ? CENSOR
-            : walk(x, depth + 1);
+            : URL_KEYS.has(lk) && typeof x === 'string'
+              ? scrubText(redactUrl(x))
+              : walk(x, depth + 1);
       }
       return out;
     } finally {
