@@ -53,7 +53,13 @@ struct TokenRequest<'a> {
     device_id: &'a str,
 }
 
-pub fn authorize_url(web: &Url, state: &str, challenge: &str, redirect_uri: &str, device_id: &str) -> Url {
+pub fn authorize_url(
+    web: &Url,
+    state: &str,
+    challenge: &str,
+    redirect_uri: &str,
+    device_id: &str,
+) -> Url {
     let mut url = web.join("/desktop/authorize").expect("static path");
     url.query_pairs_mut()
         .append_pair("state", state)
@@ -73,14 +79,18 @@ fn device_label() -> String {
 pub async fn api_error(res: reqwest::Response) -> CmdError {
     let status = res.status();
     let body: Value = res.json().await.unwrap_or(Value::Null);
-    let code = body["error"]["code"].as_str().unwrap_or(match status.as_u16() {
-        401 => "UNAUTHENTICATED",
-        403 => "FORBIDDEN",
-        404 => "NOT_FOUND",
-        429 => "RATE_LIMITED",
-        _ => "INTERNAL",
-    });
-    let message = body["error"]["message"].as_str().unwrap_or("Request failed.");
+    let code = body["error"]["code"]
+        .as_str()
+        .unwrap_or(match status.as_u16() {
+            401 => "UNAUTHENTICATED",
+            403 => "FORBIDDEN",
+            404 => "NOT_FOUND",
+            429 => "RATE_LIMITED",
+            _ => "INTERNAL",
+        });
+    let message = body["error"]["message"]
+        .as_str()
+        .unwrap_or("Request failed.");
     CmdError::new(code, message)
 }
 
@@ -92,7 +102,12 @@ impl AuthState {
             .timeout(Duration::from_secs(30))
             .build()
             .expect("http client");
-        Self { store, http, access: Mutex::new(None), session: std::sync::Mutex::new(None) }
+        Self {
+            store,
+            http,
+            access: Mutex::new(None),
+            session: std::sync::Mutex::new(None),
+        }
     }
 
     pub fn device_id(&self) -> String {
@@ -106,7 +121,10 @@ impl AuthState {
 
     fn keep(&self, access: &mut Option<Access>, t: TokenResponse) -> Value {
         self.store.set(REFRESH_ACCOUNT, &t.refresh_token);
-        *access = Some(Access { token: t.access_token, expires_at: Instant::now() + Duration::from_secs(t.expires_in) });
+        *access = Some(Access {
+            token: t.access_token,
+            expires_at: Instant::now() + Duration::from_secs(t.expires_in),
+        });
         *self.session.lock().unwrap() = Some(t.session.clone());
         t.session
     }
@@ -117,12 +135,23 @@ impl AuthState {
         *self.session.lock().unwrap() = None;
     }
 
-    pub async fn finish_sign_in(&self, o: &Origins, code: &str, verifier: &str, redirect_uri: &str) -> CmdResult<Value> {
+    pub async fn finish_sign_in(
+        &self,
+        o: &Origins,
+        code: &str,
+        verifier: &str,
+        redirect_uri: &str,
+    ) -> CmdResult<Value> {
         let device_id = self.device_id();
         let res = self
             .http
             .post(o.api.join("/auth/desktop/token").unwrap())
-            .json(&TokenRequest { code, code_verifier: verifier, redirect_uri, device_id: &device_id })
+            .json(&TokenRequest {
+                code,
+                code_verifier: verifier,
+                redirect_uri,
+                device_id: &device_id,
+            })
             .send()
             .await
             .map_err(|_| CmdError::network())?;
@@ -160,12 +189,17 @@ impl AuthState {
     /// A valid access token, refreshing first if it expires within `REFRESH_SKEW` or `force` is set (after a 401).
     pub async fn bearer(&self, o: &Origins, force: bool) -> CmdResult<String> {
         let mut access = self.access.lock().await;
-        let fresh = access.as_ref().filter(|a| !force && a.expires_at > Instant::now() + REFRESH_SKEW);
+        let fresh = access
+            .as_ref()
+            .filter(|a| !force && a.expires_at > Instant::now() + REFRESH_SKEW);
         if let Some(a) = fresh {
             return Ok(a.token.clone());
         }
         self.refresh_locked(o, &mut access).await?;
-        access.as_ref().map(|a| a.token.clone()).ok_or_else(CmdError::unauthenticated)
+        access
+            .as_ref()
+            .map(|a| a.token.clone())
+            .ok_or_else(CmdError::unauthenticated)
     }
 
     /// After the API answered 401 to `stale`: single-flight refresh (H-1). If another request already rotated the
@@ -179,12 +213,18 @@ impl AuthState {
             }
         }
         self.refresh_locked(o, &mut access).await?;
-        access.as_ref().map(|a| a.token.clone()).ok_or_else(CmdError::unauthenticated)
+        access
+            .as_ref()
+            .map(|a| a.token.clone())
+            .ok_or_else(CmdError::unauthenticated)
     }
 
     #[cfg(test)]
     pub async fn seed_access_for_test(&self, token: &str, ttl: Duration) {
-        *self.access.lock().await = Some(Access { token: token.into(), expires_at: Instant::now() + ttl });
+        *self.access.lock().await = Some(Access {
+            token: token.into(),
+            expires_at: Instant::now() + ttl,
+        });
     }
 
     pub async fn session(&self, o: &Origins) -> CmdResult<Option<Value>> {
@@ -232,7 +272,12 @@ fn open_browser(url: &Url) -> std::io::Result<()> {
     };
     #[cfg(all(unix, not(target_os = "macos")))]
     let mut cmd = Command::new("xdg-open");
-    cmd.arg(url.as_str()).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).spawn().map(|_| ())
+    cmd.arg(url.as_str())
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .map(|_| ())
 }
 
 /// Only one browser sign-in at a time (single use loopback, Low): a second call fails instead of opening another
@@ -264,20 +309,40 @@ pub async fn sign_in(state: &AuthState) -> CmdResult<Value> {
     let redirect_uri = lb.redirect_uri();
     let pkce = new_pkce();
     let expected_state = random_b64(32);
-    let url = authorize_url(&o.web, &expected_state, &pkce.challenge, &redirect_uri, &state.device_id());
-    open_browser(&url).map_err(|_| CmdError::new("SERVICE_UNAVAILABLE", "Couldn't open your browser."))?;
-    let cb = tauri::async_runtime::spawn_blocking(move || lb.wait(TIMEOUT))
-        .await
-        .map_err(|_| CmdError::internal())??;
-    let state_ok = cb.state.as_deref().is_some_and(|s| ct_eq(s, &expected_state));
+    let url = authorize_url(
+        &o.web,
+        &expected_state,
+        &pkce.challenge,
+        &redirect_uri,
+        &state.device_id(),
+    );
+    open_browser(&url)
+        .map_err(|_| CmdError::new("SERVICE_UNAVAILABLE", "Couldn't open your browser."))?;
+    let expected = expected_state.clone();
+    let cb = tauri::async_runtime::spawn_blocking(move || {
+        lb.wait_for(TIMEOUT, |cb| {
+            cb.state.as_deref().is_some_and(|s| ct_eq(s, &expected))
+        })
+    })
+    .await
+    .map_err(|_| CmdError::internal())??;
+    let state_ok = cb
+        .state
+        .as_deref()
+        .is_some_and(|s| ct_eq(s, &expected_state));
     if !state_ok {
-        return Err(CmdError::new("UNAUTHENTICATED", "Sign-in didn't match this request. Try again."));
+        return Err(CmdError::new(
+            "UNAUTHENTICATED",
+            "Sign-in didn't match this request. Try again.",
+        ));
     }
     if cb.error.is_some() {
         return Err(CmdError::new("UNAUTHENTICATED", "Sign-in was cancelled."));
     }
     let code = cb.code.ok_or_else(CmdError::unauthenticated)?;
-    state.finish_sign_in(&o, &code, &pkce.verifier, &redirect_uri).await
+    state
+        .finish_sign_in(&o, &code, &pkce.verifier, &redirect_uri)
+        .await
 }
 
 #[cfg(test)]

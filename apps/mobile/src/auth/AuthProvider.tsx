@@ -6,6 +6,7 @@ import {
   useSyncExternalStore,
   type ReactNode,
 } from 'react';
+import { AppState } from 'react-native';
 
 import type { AuthState, SessionManager } from './sessionManager';
 import type { LoginCredentials } from './types';
@@ -21,6 +22,18 @@ export function AuthProvider({
 }) {
   useEffect(() => {
     if (manager.getState().status === 'loading') void manager.restore();
+  }, [manager]);
+  useEffect(() => {
+    // A restore that failed while the keychain was locked leaves us signed out; retry when the app comes back.
+    let running = false;
+    const sub = AppState.addEventListener('change', (next) => {
+      if (next !== 'active' || running || manager.getState().status !== 'signedOut') return;
+      running = true;
+      void manager.restore().finally(() => {
+        running = false;
+      });
+    });
+    return () => sub.remove();
   }, [manager]);
   return <AuthContext.Provider value={manager}>{children}</AuthContext.Provider>;
 }

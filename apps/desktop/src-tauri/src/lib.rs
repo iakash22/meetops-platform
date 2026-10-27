@@ -73,13 +73,22 @@ async fn auth_sign_out(auth: State<'_, AuthState>) -> CmdResult<()> {
 }
 
 #[tauri::command]
-async fn upload_put(auth: State<'_, AuthState>, upload: upload::PresignedPut, body: Vec<u8>) -> CmdResult<()> {
+async fn upload_put(
+    auth: State<'_, AuthState>,
+    upload: upload::PresignedPut,
+    body: Vec<u8>,
+) -> CmdResult<()> {
     let storage = config::storage_origin()?;
     upload::upload_put(&auth.http, &storage, upload, body).await
 }
 
 #[tauri::command]
-fn chunk_put(chunks: State<'_, ChunkStore>, session_id: String, index: u32, data: Vec<u8>) -> CmdResult<()> {
+fn chunk_put(
+    chunks: State<'_, ChunkStore>,
+    session_id: String,
+    index: u32,
+    data: Vec<u8>,
+) -> CmdResult<()> {
     chunks.put(&session_id, index, &data)
 }
 
@@ -98,8 +107,13 @@ pub fn run() {
     tauri::Builder::default()
         .manage(ApiState::new().expect("API http client"))
         .setup(|app| {
-            let store: Arc<dyn keychain::SecretStore> = Arc::new(keychain::KeychainStore::new(config::KEYCHAIN_SERVICE));
-            let dir = app.path().app_local_data_dir().map_err(|_| CmdError::internal().message)?.join("chunks");
+            let store: Arc<dyn keychain::SecretStore> =
+                Arc::new(keychain::KeychainStore::new(config::KEYCHAIN_SERVICE));
+            let dir = app
+                .path()
+                .app_local_data_dir()
+                .map_err(|_| CmdError::internal().message)?
+                .join("chunks");
             // Fail closed: without a persisted chunk key, offline chunk commands are disabled for this launch.
             let chunks = match chunk_store::device_key(store.as_ref(), config::CHUNK_KEY_ACCOUNT) {
                 Ok(key) => ChunkStore::new(dir, &key),

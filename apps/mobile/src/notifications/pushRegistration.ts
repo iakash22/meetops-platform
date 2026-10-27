@@ -159,3 +159,21 @@ export function createHttpPushDeviceApi(request: Requester): PushDeviceApi {
     },
   };
 }
+
+/**
+ * Wipe hook (401 / expiry / forced sign-out): best-effort unregister of every known push service. Fire-and-forget so
+ * it never delays or blocks the wipe; failures are swallowed and never logged (no token in logs).
+ */
+export function createPushWipeHook(services: Map<string, PushRegistrationService>): () => void {
+  return () => {
+    const all = [...services.values()];
+    services.clear();
+    for (const s of all) {
+      try {
+        void s.disable().catch(() => undefined);
+      } catch {
+        // ignore
+      }
+    }
+  };
+}

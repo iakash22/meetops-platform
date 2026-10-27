@@ -22,7 +22,10 @@ pub fn challenge_for(verifier: &str) -> String {
 pub fn new_pkce() -> Pkce {
     let verifier = random_b64(32);
     let challenge = challenge_for(&verifier);
-    Pkce { verifier, challenge }
+    Pkce {
+        verifier,
+        challenge,
+    }
 }
 
 /// Constant-time string comparison (ADR-012 1.7).

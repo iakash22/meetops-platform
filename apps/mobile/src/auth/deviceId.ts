@@ -22,16 +22,27 @@ export function createDeviceIdProvider(
 ): DeviceIdProvider {
   let cached: string | null = null;
   let inflight: Promise<string> | null = null;
+  let ephemeral: string | null = null;
   return {
     get() {
       if (cached) return Promise.resolve(cached);
       inflight ??= (async () => {
         try {
           let id: string | null = null;
+          let readFailed = false;
           try {
             id = await store.getItemAsync(DEVICE_ID_KEY, KEYCHAIN_OPTIONS);
           } catch {
-            id = null; // unreadable now: fall through and mint; persisting is retried next launch
+            readFailed = true; // unreadable now (e.g. locked): the stored id may still exist, so never overwrite it
+          }
+          if (readFailed) {
+            // In-memory id until the store is readable again; not persisted or cached, so the next get() re-reads.
+            ephemeral ??= randomUUID().toLowerCase();
+            if (!UUID_RE.test(ephemeral)) {
+              ephemeral = null;
+              throw new Error('Device id generator returned a non-v4 UUID.');
+            }
+            return ephemeral;
           }
           if (!id || !UUID_RE.test(id)) {
             id = randomUUID().toLowerCase();
