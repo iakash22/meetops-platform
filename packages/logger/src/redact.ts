@@ -119,6 +119,8 @@ export function redactUrl(url: string): string {
 }
 
 /** Keys whose string values are URLs/paths and get `redactUrl` (in addition to the key list). */
+/** Objects under these keys are parsed query strings: SENSITIVE_QUERY_PARAMS are redacted whatever the value shape. */
+const QUERY_KEYS = new Set(['query', 'querystring', 'searchparams']);
 const URL_KEYS = new Set(['url', 'originalurl', 'path', 'href', 'location', 'referer', 'referrer']);
 
 /**
@@ -176,7 +178,7 @@ export function redactDeep(
   const seen = new WeakSet<object>();
 
   const conditional = new Set(CONDITIONAL_REDACT_KEYS.map((k) => k.toLowerCase()));
-  const walk = (v: unknown, depth: number): unknown => {
+  const walk = (v: unknown, depth: number, parentKey = ''): unknown => {
     if (typeof v === 'string') return scrubText(v);
     if (v === null || typeof v !== 'object') return v;
     if (budget-- <= 0 || depth > maxDepth) return TRUNCATED;
@@ -186,6 +188,7 @@ export function redactDeep(
     seen.add(v);
     try {
       if (Array.isArray(v)) return v.map((x) => walk(x, depth + 1));
+      const inQuery = QUERY_KEYS.has(parentKey);
       const out: Record<string, unknown> = {};
       if (isErr) {
         out.type = v.name;
@@ -199,11 +202,13 @@ export function redactDeep(
         }
         const lk = k.toLowerCase();
         out[k] =
-          set.has(lk) || (conditional.has(lk) && x != null && !isErrorCode(x))
+          set.has(lk) ||
+          (inQuery && SENSITIVE_QUERY.has(lk)) ||
+          (conditional.has(lk) && x != null && !isErrorCode(x))
             ? CENSOR
             : URL_KEYS.has(lk) && typeof x === 'string'
               ? scrubText(redactUrl(x))
-              : walk(x, depth + 1);
+              : walk(x, depth + 1, lk);
       }
       return out;
     } finally {
