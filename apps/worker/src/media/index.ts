@@ -5,3 +5,4 @@ export * from './realtime.js';
 export * from './worker.js';
 export * from './enqueue.js';
 export * from './persistence.js';
+export * from './upload-scan.js';
