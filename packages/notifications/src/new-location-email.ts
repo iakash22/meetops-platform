@@ -30,7 +30,7 @@ const escapeHtml = (s: string) => s.replace(/[&<>"']/g, (c) => ESCAPES[c]!);
 /** Plain text: drop anything that could break lines or direction even if upstream validation regressed. */
 const UNSAFE_PLAIN_CLASS =
   '[\\u0000-\\u001F\\u007F-\\u009F\\u2028\\u2029\\u202A-\\u202E\\u2066-\\u2069]';
-// eslint-disable-next-line no-control-regex -- intentional: strip control characters
+
 const UNSAFE_PLAIN = new RegExp(UNSAFE_PLAIN_CLASS, 'g');
 const plain = (s: string) => s.replace(UNSAFE_PLAIN, ' ');
 

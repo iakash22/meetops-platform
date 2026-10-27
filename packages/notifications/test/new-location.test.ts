@@ -196,7 +196,7 @@ function emailService(fail = false) {
     sent,
     send: async (m) => {
       if (fail) throw new Error('smtp said no to user@example.com');
-      sent.push(m as (typeof sent)[number]);
+      sent.push(m);
       return { messageId: 'mid-1', accepted: [], rejected: [], provider: 'test' };
     },
     verify: async () => true,
@@ -242,14 +242,12 @@ describe('email channel delivery', () => {
       deliveryKey: `${NID}:email`,
     },
   };
-  const sender = (
-    svc: EmailService,
-    userEmail = vi.fn(async () => 'user@example.com' as string | undefined),
-  ) => createNewLocationEmailSender({ email: svc, userEmail, webBaseUrl: WEB });
+  const sender = (svc: EmailService, userEmail = vi.fn(async () => 'user@example.com')) =>
+    createNewLocationEmailSender({ email: svc, userEmail, webBaseUrl: WEB });
 
   it('sends to the server-resolved address with the default-on email channel', async () => {
     const svc = emailService();
-    const userEmail = vi.fn(async () => 'user@example.com' as string | undefined);
+    const userEmail = vi.fn(async () => 'user@example.com');
     const { s, attempts } = dstore();
     const proc = createNotificationDeliveryProcessor(
       createNotificationDeliveryHandler({ store: s, email: sender(svc, userEmail) }),
