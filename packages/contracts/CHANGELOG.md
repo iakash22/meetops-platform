@@ -6,6 +6,24 @@ While the version is `0.x`, a minor bump may contain breaking changes (ADR-003).
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-10-27
+
+Notifications (ADR-013, Accepted). Additive; builds on 0.9.0.
+
+### Added
+
+- `NOTIFICATION_PATHS`: feed list, mark-read, preferences (GET/PUT), push device register/unregister, unsubscribe
+  (GET confirm page, POST applies).
+- DTOs: `Notification` (ids-only `data`), `NotificationList` (keyset `nextCursor`, `unreadCount`),
+  `ListNotificationsQuery`, `MarkNotificationsReadRequest`/`Response`, `NotificationPreference(s)`,
+  `UpdateNotificationPreferencesRequest`, `RegisterPushDeviceRequest` (Web Push subscription for web/extension, Expo
+  token for iOS/Android), `PushDevice` (never carries the token), `PushDeviceParams`, `UnsubscribeQuery`/`Response`.
+- `NOTIFICATION_CHANNELS`, `PUSH_PLATFORMS`, `WEB_PUSH_ALLOWED_HOSTS`, `EXPO_PUSH_TOKEN_PATTERN`, `EXPO_PUSH_API_URL`,
+  `GENERIC_PUSH_TITLE`/`GENERIC_PUSH_BODY`.
+- Jobs: `NOTIFICATION_DELIVERY_QUEUE`, `NOTIFICATION_DELIVERY_JOB_RETENTION`, `NotificationDeliveryJobPayload`
+  (mandatory `organizationId`).
+- `REDACT_KEYS`: `expoPushToken`, `p256dh`.
+
 ## [0.9.0] - 2026-10-27
 
 Desktop (Tauri) sign-in schemas for ADR-012 Option A (system browser, authorization code + PKCE S256, loopback

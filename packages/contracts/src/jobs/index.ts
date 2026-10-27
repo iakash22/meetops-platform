@@ -204,3 +204,30 @@ export const EmailJobPayload = Type.Union([
   ),
 ]);
 export type EmailJobPayload = Static<typeof EmailJobPayload>;
+
+/** ADR-013 notification delivery queue (one job per notification x channel). */
+export const NOTIFICATION_DELIVERY_QUEUE = 'notify-delivery' as const;
+export const NOTIFICATION_DELIVERY_JOB_RETENTION = {
+  removeOnComplete: { count: 200, age: 3600 },
+  removeOnFail: { count: 1000, age: 7 * 86400 },
+} as const;
+/**
+ * ids-only payload. `organizationId` is mandatory: the worker enters withOrganizationContext(organizationId) for
+ * every job (forced RLS; no BYPASSRLS role). `deliveryKey` is the BullMQ jobId (idempotent enqueue).
+ */
+export const NotificationDeliveryJobPayload = Type.Object(
+  {
+    jobVersion: Type.Literal(1),
+    kind: Type.Literal('deliver_notification'),
+    organizationId: Id,
+    userId: Id,
+    notificationId: Id,
+    channel: Type.Union(
+      (['in_app', 'email', 'web_push', 'mobile_push', 'desktop'] as const).map((c) => Type.Literal(c)),
+    ),
+    deliveryKey: Type.String({ minLength: 1, maxLength: 200, pattern: '^[A-Za-z0-9_:-]+$' }),
+    requestId: Type.Optional(OpaqueId),
+  },
+  { additionalProperties: false },
+);
+export type NotificationDeliveryJobPayload = Static<typeof NotificationDeliveryJobPayload>;

@@ -226,6 +226,9 @@ export const EXTENSION_AUTH_PATHS = {
  */
 export const REDACT_KEYS = [
   'accessToken',
+  // v0.10.0 (ADR-013): push credentials.
+  'expoPushToken',
+  'p256dh',
   'refreshToken',
   'pairingCode',
   'authorization',
