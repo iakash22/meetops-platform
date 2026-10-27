@@ -15,7 +15,7 @@ import {
   type LLMGenerateStructuredParams,
   type LLMProvider,
 } from '@meetops/ai-core';
-import type { PrismaClient } from '@meetops/database';
+import type { DatabaseClient as PrismaClient } from '@meetops/database';
 import {
   ACTION_ITEMS_PROMPT_VERSION,
   EXTRACTED_TASKS_EVENT,
