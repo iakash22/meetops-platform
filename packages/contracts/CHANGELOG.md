@@ -23,6 +23,8 @@ GeoIP session location (ADR-014, Proposed). Additive. Version numbers 0.10.0-0.1
 
 ### Added
 
+- Geo text (`GeoName` / `GEO_TEXT_PATTERN`) also rejects IP addresses in CIDR form (`10.0.0.0/8`, `2001:db8::/32`).
+
 - `SessionSummary.geoCity`, `geoRegion`, `geoCountry`, `geoCountryCode` (ISO alpha-2) and `geoApproximate` (`true`):
   optional, **not** nullable. Absent means unknown (private/unknown IP, no GeoIP data, older server). No latitude/longitude.
 - `AuthNewLocationSigninEvent` (outbox `auth.new_location_signin`): `{ sessionId, city, region, country, countryCode,
