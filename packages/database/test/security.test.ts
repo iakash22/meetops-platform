@@ -1482,7 +1482,8 @@ describe('ADR-013 notifications tables (static)', () => {
       .map((x) => x.name)
       .sort();
     expect(dirs.at(-1)).toBe(LATEST_MIGRATION);
-    expect(dirs.at(-2)).toBe(NOTIFICATIONS_MIGRATION);
+    expect(dirs.at(-2)).toBe(RELAY_BY_TYPE_MIGRATION);
+    expect(dirs.at(-3)).toBe(NOTIFICATIONS_MIGRATION);
     expect(statements).not.toMatch(
       /\bDROP\b|RENAME|ALTER COLUMN|NO FORCE|DISABLE ROW LEVEL SECURITY/i,
     );
