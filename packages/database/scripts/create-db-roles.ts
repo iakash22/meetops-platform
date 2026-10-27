@@ -83,6 +83,9 @@ BEGIN
     REVOKE ALL ON ALL TABLES IN SCHEMA public FROM meetops_relay;
     GRANT EXECUTE ON FUNCTION public.relay_claim_outbox_events(integer) TO meetops_relay;
     GRANT EXECUTE ON FUNCTION public.relay_complete_outbox_event(uuid, boolean, text, timestamptz) TO meetops_relay;
+    IF to_regprocedure('public.relay_claim_outbox_events(integer, text[])') IS NOT NULL THEN
+      GRANT EXECUTE ON FUNCTION public.relay_claim_outbox_events(integer, text[]) TO meetops_relay;
+    END IF;
   END IF;
 END
 $$`);

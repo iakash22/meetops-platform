@@ -23,7 +23,8 @@ export interface ClaimedOutboxEvent {
 }
 
 export interface OutboxSource {
-  claim(limit: number): Promise<ClaimedOutboxEvent[]>;
+  /** Claims ONLY pending events whose type is in `eventTypes`; other types stay pending for their own consumers. */
+  claim(limit: number, eventTypes: readonly string[]): Promise<ClaimedOutboxEvent[]>;
   complete(
     id: string,
     outcome: { published: true } | { published: false; error: string; retryAt?: Date },
@@ -197,6 +198,11 @@ export async function fanoutEvent(
 
 export const MAX_RELAY_ATTEMPTS = 5;
 /** 30s, 60s, 120s ... capped at 1h. */
+/** Event types this relay claims (one per rule). */
+export const RELAY_EVENT_TYPES: readonly string[] = Object.freeze(
+  Object.keys(OUTBOX_NOTIFICATION_RULES),
+);
+
 export const relayBackoffMs = (attempts: number) =>
   Math.min(30_000 * 2 ** Math.max(0, attempts - 1), 3_600_000);
 
@@ -204,8 +210,9 @@ type Log = { info(o: object, m: string): void; warn(o: object, m: string): void 
 
 /**
  * One relay pass: claim due events, fan out, report the outcome. Bad payloads fail permanently; other errors retry
- * with backoff up to MAX_RELAY_ATTEMPTS. Event types without a rule are marked published (this relay is the only
- * outbox consumer; new consumers add a rule). Logs carry ids/codes only.
+ * with backoff up to MAX_RELAY_ATTEMPTS. Only event types with a rule are claimed (kind filter in the claim query), so
+ * other consumers' events (e.g. auth.new_location_signin) are never touched. A rule-less event that is somehow
+ * claimed is put back to pending, never marked published. Logs carry ids/codes only.
  */
 export async function relayOutboxOnce(deps: {
   source: OutboxSource;
@@ -214,10 +221,16 @@ export async function relayOutboxOnce(deps: {
   logger: Log;
   limit?: number;
   now?: () => number;
-}): Promise<{ claimed: number; published: number; retried: number; failed: number }> {
+}): Promise<{
+  claimed: number;
+  published: number;
+  retried: number;
+  failed: number;
+  skipped: number;
+}> {
   const now = deps.now ?? Date.now;
-  const events = await deps.source.claim(deps.limit ?? 100);
-  const out = { claimed: events.length, published: 0, retried: 0, failed: 0 };
+  const events = await deps.source.claim(deps.limit ?? 100, RELAY_EVENT_TYPES);
+  const out = { claimed: events.length, published: 0, retried: 0, failed: 0, skipped: 0 };
   for (const e of events) {
     const log = {
       outboxEventId: e.id,
@@ -225,6 +238,16 @@ export async function relayOutboxOnce(deps: {
       eventType: e.eventType,
       attempts: e.attempts,
     };
+    if (!Object.hasOwn(OUTBOX_NOTIFICATION_RULES, e.eventType)) {
+      await deps.source.complete(e.id, {
+        published: false,
+        error: 'unhandled_event_type',
+        retryAt: new Date(now()),
+      });
+      out.skipped++;
+      deps.logger.warn(log, 'outbox event type not handled by this relay; released unpublished');
+      continue;
+    }
     try {
       const r = await fanoutEvent(e, deps);
       await deps.source.complete(e.id, { published: true });

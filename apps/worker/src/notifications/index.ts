@@ -34,7 +34,8 @@ type Log = {
  */
 export function createPrismaOutboxSource(relay: DatabaseClient): OutboxSource {
   return {
-    async claim(limit) {
+    async claim(limit, eventTypes) {
+      if (eventTypes.length === 0) return [];
       const rows = await relay.$queryRaw<
         Array<{
           id: string;
@@ -45,7 +46,7 @@ export function createPrismaOutboxSource(relay: DatabaseClient): OutboxSource {
           payload: unknown;
           attempts: number;
         }>
-      >`SELECT * FROM public.relay_claim_outbox_events(${Math.min(Math.max(1, limit), 500)}::int)`;
+      >`SELECT * FROM public.relay_claim_outbox_events(${Math.min(Math.max(1, limit), 500)}::int, ${[...eventTypes]}::text[])`;
       return rows.map((r): ClaimedOutboxEvent => ({
         id: r.id,
         organizationId: r.org_id,

@@ -65,7 +65,7 @@ describe('outbox source (definer functions only)', () => {
   it('claims via relay_claim_outbox_events and completes via relay_complete_outbox_event', async () => {
     const db = fakeDb();
     const src = createPrismaOutboxSource(db.client);
-    expect(await src.claim(9999)).toEqual([
+    expect(await src.claim(9999, ['meeting.summary_ready'])).toEqual([
       {
         id: EV,
         organizationId: ORG,
@@ -76,7 +76,11 @@ describe('outbox source (definer functions only)', () => {
         attempts: 2,
       },
     ]);
-    expect(db.client.$queryRaw.mock.calls[0]!.slice(1)).toEqual([500]);
+    expect(db.client.$queryRaw.mock.calls[0]!.slice(1)).toEqual([500, ['meeting.summary_ready']]);
+    expect(db.sql[0]).toMatch(/::text\[\]/);
+    const n = db.client.$queryRaw.mock.calls.length;
+    expect(await src.claim(10, [])).toEqual([]);
+    expect(db.client.$queryRaw.mock.calls.length).toBe(n);
     await src.complete(EV, { published: false, error: 'E'.repeat(300), retryAt: new Date(5) });
     await src.complete(EV, { published: true });
     expect(db.sql.every((s) => /relay_(claim|complete)_outbox_event/.test(s))).toBe(true);

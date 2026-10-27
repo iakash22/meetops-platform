@@ -13,6 +13,7 @@ import {
   fanoutEvent,
   relayBackoffMs,
   relayOutboxOnce,
+  RELAY_EVENT_TYPES,
   type ClaimedOutboxEvent,
   type DeliveryDevice,
   type DeliveryStore,
@@ -176,8 +177,11 @@ describe('relayOutboxOnce', () => {
       complete: async (id: string, o: unknown) => void done.push([id, o]),
     };
   }
-  it('publishes fanned-out and ignored events', async () => {
-    const s = src([ev(), ev({ id: '77777777-7777-4777-8777-777777777777', eventType: 'other' })]);
+  it('claims only handled kinds and never publishes an unknown kind (released unpublished)', async () => {
+    const s = src([
+      ev(),
+      ev({ id: '77777777-7777-4777-8777-777777777777', eventType: 'auth.new_location_signin' }),
+    ]);
     const r = await relayOutboxOnce({
       source: s,
       store: memStore({ [U(1)]: 'owner' }),
@@ -185,9 +189,15 @@ describe('relayOutboxOnce', () => {
       logger,
       limit: 10,
     });
-    expect(r).toEqual({ claimed: 2, published: 2, retried: 0, failed: 0 });
-    expect(s.claim).toHaveBeenCalledWith(10);
-    expect(s.done.every(([, o]) => (o as { published: boolean }).published)).toBe(true);
+    expect(r).toEqual({ claimed: 2, published: 1, retried: 0, failed: 0, skipped: 1 });
+    expect(s.claim).toHaveBeenCalledWith(10, RELAY_EVENT_TYPES);
+    expect([...RELAY_EVENT_TYPES].sort()).toEqual([
+      'extracted_tasks.pending_review',
+      'meeting.summary_ready',
+    ]);
+    expect(s.done[0]![1]).toEqual({ published: true });
+    expect(s.done[1]![1]).toMatchObject({ published: false, error: 'unhandled_event_type' });
+    expect((s.done[1]![1] as { retryAt?: Date }).retryAt).toBeInstanceOf(Date);
   });
   it('retries transient errors with bounded backoff, fails permanently after MAX or on a bad payload', async () => {
     const store = memStore({ [U(1)]: 'owner' });
@@ -205,7 +215,7 @@ describe('relayOutboxOnce', () => {
       logger,
       now: () => 0,
     });
-    expect(r).toEqual({ claimed: 2, published: 0, retried: 1, failed: 1 });
+    expect(r).toEqual({ claimed: 2, published: 0, retried: 1, failed: 1, skipped: 0 });
     expect(s.done[0]![1]).toEqual({ published: false, error: 'Error', retryAt: new Date(60_000) });
     expect(s.done[1]![1]).toEqual({ published: false, error: 'Error' });
     const bad = src([ev({ payload: { nope: 1 } })]);
