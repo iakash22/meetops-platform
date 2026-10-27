@@ -18,6 +18,7 @@ import {
   runMmdbUpdate,
   scheduleMmdbUpdate,
 } from './geoip/mmdb-updater.js';
+import { createNotificationEmailSender } from './notifications/email.js';
 
 export * from './media/index.js';
 export * from './ai/index.js';
@@ -49,6 +50,7 @@ async function main() {
       : { enqueue: async () => undefined },
     emitter: notifRedis ? createRedisEmitter(notifRedis) : undefined,
     expoAccessToken: process.env.EXPO_ACCESS_TOKEN?.trim() || undefined,
+    email: notifEnv.enabled ? createNotificationEmailSender(process.env, logger) : undefined,
   });
   // Consumer of SUMMARY_QUEUE (enqueued by the transcription worker): summary + action items through the same
   // ai-core executor. Flag-gated by AI_SUMMARY_WORKER_ENABLED (default false).

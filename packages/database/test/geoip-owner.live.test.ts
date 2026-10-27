@@ -54,23 +54,42 @@ describe.skipIf(!ADMIN_URL)('ip retention table ownership and column grants (liv
       .split(/\$\$;/)
       .map((x, i) => (i === 0 ? `${x}$$;` : x))
       .map((x) => x.trim());
-    for (const t of TABLES)
-      await admin.$executeRawUnsafe(`ALTER TABLE "${t}" OWNER TO CURRENT_USER`);
-    const [lost] = await admin.$queryRaw<{ upd: boolean }[]>`
-      SELECT has_column_privilege('meetops_migrator', 'sessions', 'ip_address', 'UPDATE') AS upd`;
-    expect(lost).toEqual({ upd: false });
-    await admin.$executeRawUnsafe(doBlock!);
-    await admin.$executeRawUnsafe(grant!);
-    const owners = await admin.$queryRaw<{ owner: string }[]>`
+    // #291 L: re-owning the shared tables must not leak into other tests, even when an assertion fails. DDL is
+    // transactional in Postgres, so run the scenario in one transaction and always roll it back.
+    const ROLLBACK = new Error('rollback geoip-owner scenario');
+    await expect(
+      admin.$transaction(
+        async (tx) => {
+          for (const t of TABLES)
+            await tx.$executeRawUnsafe(`ALTER TABLE "${t}" OWNER TO CURRENT_USER`);
+          const [lost] = await tx.$queryRaw<{ upd: boolean }[]>`
+          SELECT has_column_privilege('meetops_migrator', 'sessions', 'ip_address', 'UPDATE') AS upd`;
+          expect(lost).toEqual({ upd: false });
+          await tx.$executeRawUnsafe(doBlock!);
+          await tx.$executeRawUnsafe(grant!);
+          const owners = await tx.$queryRaw<{ owner: string }[]>`
+          SELECT tableowner AS owner FROM pg_tables
+          WHERE schemaname = current_schema() AND tablename = ANY(${[...TABLES]}::text[])`;
+          expect(owners.map((o) => o.owner)).toEqual([
+            'meetops_migrator',
+            'meetops_migrator',
+            'meetops_migrator',
+          ]);
+          const [back] = await tx.$queryRaw<{ upd: boolean }[]>`
+          SELECT has_column_privilege('meetops_migrator', 'sessions', 'ip_address', 'UPDATE') AS upd`;
+          expect(back).toEqual({ upd: true });
+          throw ROLLBACK;
+        },
+        { timeout: 30_000 },
+      ),
+    ).rejects.toBe(ROLLBACK);
+    const after = await admin.$queryRaw<{ owner: string }[]>`
       SELECT tableowner AS owner FROM pg_tables
       WHERE schemaname = current_schema() AND tablename = ANY(${[...TABLES]}::text[])`;
-    expect(owners.map((o) => o.owner)).toEqual([
+    expect(after.map((o) => o.owner)).toEqual([
       'meetops_migrator',
       'meetops_migrator',
       'meetops_migrator',
     ]);
-    const [back] = await admin.$queryRaw<{ upd: boolean }[]>`
-      SELECT has_column_privilege('meetops_migrator', 'sessions', 'ip_address', 'UPDATE') AS upd`;
-    expect(back).toEqual({ upd: true });
   });
 });
