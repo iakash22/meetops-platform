@@ -70,10 +70,10 @@ describe('ADR-005 A1.3.1: extension bearer on resolve, recording-session and upl
     const w = await world();
     const r = await w.resolve();
     expect(r.statusCode).toBe(201);
-    const { meetingId } = r.json() as { meetingId: string };
+    const { meetingId } = r.json<{ meetingId: string }>();
     const init = await w.ext('POST', `/orgs/${w.org}/recording-sessions`, sessionBody(meetingId));
     expect(init.statusCode).toBe(201);
-    const { sessionId } = init.json() as { sessionId: string };
+    const { sessionId } = init.json<{ sessionId: string }>();
     const repo = w.media.sessions as InMemoryRecordingSessionRepository;
     expect(repo.rows.get(sessionId)).toBeTruthy();
     const ch = await w.ext('POST', `/recording-sessions/${sessionId}/chunks`, {
