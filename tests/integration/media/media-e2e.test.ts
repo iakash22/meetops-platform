@@ -8,9 +8,9 @@
  * Large fixtures (2 min, 30 min) are generated at test time only with QA_MEDIA_LARGE=1.
  *
  * Known open bugs are `it.fails` with their reference so the suite stays green while documenting them.
- * #269 M-1/M-2/L-1 are fixed at #269 head c52342c and are normal tests here. Still open: N-1 (packet-timestamp
- * squeeze defeats the measured duration), N-2 (HTML hidden in Void / grown Segment / MP4 free box), zero-width
- * filename characters.
+ * #269 M-1/M-2/L-1 (c52342c) and N-1/N-2 (7659ed2) are fixed and are normal tests here. Still open (it.fails):
+ * N-2b (HTML in CRC-32 / MP4 uuid), N-4 (6 kbit/s Opus false positive), N-5 (video outlasting audio false
+ * positive), zero-width filename characters.
  */
 import { execFileSync, spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
@@ -232,7 +232,15 @@ describe.skipIf(!!skipReason)('media e2e (MinIO + Redis + ffprobe)', () => {
     );
     const out = await job.waitUntilFinished(events, 120_000);
     expect(await readdir(tmpRoot)).toEqual([]); // scan temp dir always removed
-    if (out.status !== 'clean') return { stage: 'scan', scan: out.status, code: out.result?.code };
+    if (out.status !== 'clean') {
+      // #274 M-3: a failed scan quarantines (older #274: rejected); never clean, never downloadable.
+      const failed = await w.files.findById(w.org, fileObjectId);
+      expect(['quarantined', 'rejected']).toContain(failed.scanStatus);
+      expect(failed.scanStatus).toBe(out.status);
+      const dl404 = await w.owner.get(`/orgs/${w.org}/uploads/${fileObjectId}/download-url`);
+      expect(dl404.statusCode).toBe(404);
+      return { stage: 'scan', scan: 'rejected', code: out.result?.code };
+    }
     const row = await w.files.findById(w.org, fileObjectId);
     expect(row.scanStatus).toBe('clean');
     // processing: normalize the stored object to 16 kHz mono WAV
@@ -416,7 +424,7 @@ describe.skipIf(!!skipReason)('media e2e (MinIO + Redis + ffprobe)', () => {
   it('#269 M-1 (fixed, truncation): WebM cut to 3 KB of 24 KB (header says 10 s) -> duration_mismatch', async () => {
     expect(await pipeline('trunc.webm', await fx('truncated.webm'), 'audio/webm')).toMatchObject({
       stage: 'scan',
-      code: 'duration_mismatch',
+      code: expect.stringMatching(/^(duration_mismatch|truncated_container)$/),
     });
   });
 
@@ -431,72 +439,310 @@ describe.skipIf(!!skipReason)('media e2e (MinIO + Redis + ffprobe)', () => {
     });
   });
 
+  it('#269 N-1 (fixed): packet timestamps squeezed 20x (setts=ts=N*1) are rejected', async () => {
+    const dir = await mkdtemp(path.join(tmpRoot, 'n1-'));
+    try {
+      const src = path.join(dir, 'in.webm');
+      const out = path.join(dir, 'sq.webm');
+      await writeFile(src, await fx('speech_10s_1ch.webm'));
+      execFileSync('ffmpeg', [
+        '-hide_banner',
+        '-loglevel',
+        'error',
+        '-y',
+        '-i',
+        src,
+        '-c',
+        'copy',
+        '-bsf:a',
+        'setts=ts=N*1',
+        out,
+      ]);
+      const scanMod = await imp('apps/worker/src/media/upload-scan.ts');
+      expect(
+        await scanMod.verifyUploadContent(out, 'audio/webm', w.probe, { maxDurationSeconds: 5 }),
+      ).toMatchObject({ verdict: 'rejected' });
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('#269 N-2 (fixed): HTML inside a WebM Void element at the end of the Segment is rejected', async () => {
+    expect(
+      (
+        await pipeline(
+          'void.webm',
+          webmWithTail(await fx('speech_10s_1ch.webm'), true),
+          'audio/webm',
+        )
+      ).scan,
+    ).toBe('rejected');
+  });
+
+  it('#269 N-2 (fixed): HTML after the last Cluster with the Segment size grown to cover it is rejected', async () => {
+    expect(
+      (
+        await pipeline(
+          'grown.webm',
+          webmWithTail(await fx('speech_10s_1ch.webm'), false),
+          'audio/webm',
+        )
+      ).scan,
+    ).toBe('rejected');
+  });
+
+  it('#269 N-2 (fixed): HTML inside a trailing MP4 `free` box is rejected', async () => {
+    const len = Buffer.alloc(4);
+    len.writeUInt32BE(8 + HTML.length);
+    const b = Buffer.concat([await fx('speech_10s_1ch.mp4'), len, Buffer.from('free'), HTML]);
+    expect((await pipeline('free.mp4', b, 'video/mp4')).scan).toBe('rejected');
+  });
+
+  // #269 @7659ed2: decoded-sample duration, timestamp faults, exact Segment size, zero-only padding, truncation.
+  const mkEl = (id: number[], payload: Buffer) =>
+    Buffer.concat([
+      Buffer.from([...id, 0x40 | (payload.length >> 8), payload.length & 0xff]),
+      payload,
+    ]);
+  const growSeg = (src: Buffer, tail: Buffer) => {
+    const b = Buffer.from(src);
+    const i = b.indexOf(Buffer.from([0x18, 0x53, 0x80, 0x67]));
+    const len = 9 - b[i + 4]!.toString(2).length;
+    let v = 0n;
+    for (let k = 0; k < len; k++) v = (v << 8n) | BigInt(b[i + 4 + k]!);
+    let nv = ((v & ((1n << BigInt(7 * len)) - 1n)) + BigInt(tail.length)) | (1n << BigInt(7 * len));
+    for (let k = len - 1; k >= 0; k--) {
+      b[i + 4 + k] = Number(nv & 0xffn);
+      nv >>= 8n;
+    }
+    return Buffer.concat([b, tail]);
+  };
+  const VOID = [0xec];
+  it.each([
+    [
+      'Void with one non-zero byte',
+      () => mkEl(VOID, Buffer.concat([Buffer.alloc(40), Buffer.from([1]), Buffer.alloc(40)])),
+      'trailing_data',
+    ],
+    ['nested Void', () => mkEl(VOID, mkEl(VOID, Buffer.alloc(16))), 'trailing_data'],
+  ] as const)('#269 N-2 (fixed): WebM %s -> rejected', async (_n, tail, code) => {
+    const b = growSeg(await fx('speech_10s_1ch.webm'), tail());
+    expect(await pipeline('v.webm', b, 'audio/webm')).toMatchObject({ stage: 'scan', code });
+  });
+
+  it('#269 N-2: an all-zero Void inside the Segment stays clean', async () => {
+    const b = growSeg(await fx('speech_10s_1ch.webm'), mkEl(VOID, Buffer.alloc(64)));
+    expect(await pipeline('z.webm', b, 'audio/webm')).toEqual({ stage: 'download', scan: 'clean' });
+  });
+
+  it.each([
+    ['WebM', 'speech_10s_1ch.webm', 'audio/webm'],
+    ['MP4', 'speech_10s_1ch.mp4', 'video/mp4'],
+    ['WAV', 'speech_10s_1ch.wav', 'audio/wav'],
+    ['MediaRecorder WebM', 'mediarecorder_noduration_10s.webm', 'audio/webm'],
+  ])('#269 truncation (fixed): %s cut in half -> truncated_container', async (_n, f, mime) => {
+    const b = await fx(f);
+    expect(await pipeline(f, b.subarray(0, b.length >> 1), mime)).toMatchObject({
+      stage: 'scan',
+      code: 'truncated_container',
+    });
+  });
+
+  it('#269 N-1 (fixed): a backwards timestamp jump -> timestamps_invalid', async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), 'qa-media-' + 'nm-'));
+    try {
+      const src = path.join(dir, 'in.webm');
+      const out = path.join(dir, 'nm.webm');
+      await writeFile(src, await fx('speech_10s_1ch.webm'));
+      execFileSync('ffmpeg', [
+        '-hide_banner',
+        '-loglevel',
+        'error',
+        '-y',
+        '-i',
+        src,
+        '-c',
+        'copy',
+        '-bsf:a',
+        'setts=ts=if(eq(N\\,200)\\,TS-2000\\,TS)',
+        out,
+      ]);
+      expect(await pipeline('nm.webm', await readFile(out), 'audio/webm')).toMatchObject({
+        stage: 'scan',
+        code: 'timestamps_invalid',
+      });
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('video-only MP4 -> no_audio', async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), 'qa-media-' + 'vo-'));
+    try {
+      const out = path.join(dir, 'v.mp4');
+      execFileSync('ffmpeg', [
+        '-hide_banner',
+        '-loglevel',
+        'error',
+        '-y',
+        '-f',
+        'lavfi',
+        '-i',
+        'color=c=gray:s=160x120:r=5:d=3',
+        '-c:v',
+        'libx264',
+        '-preset',
+        'ultrafast',
+        '-pix_fmt',
+        'yuv420p',
+        out,
+      ]);
+      expect(await pipeline('v.mp4', await readFile(out), 'video/mp4')).toMatchObject({
+        stage: 'scan',
+        code: 'no_audio',
+      });
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it.fails('new N-2b: HTML inside a trailing MP4 `uuid` box is rejected', async () => {
+    const len = Buffer.alloc(4);
+    len.writeUInt32BE(8 + 16 + HTML.length);
+    const b = Buffer.concat([
+      await fx('speech_10s_1ch.mp4'),
+      len,
+      Buffer.from('uuid'),
+      Buffer.alloc(16, 0x11),
+      HTML,
+    ]);
+    expect((await pipeline('u.mp4', b, 'video/mp4')).scan).toBe('rejected');
+  });
+
+  it.fails('new N-2b: HTML inside a WebM CRC-32 element is rejected', async () => {
+    const b = growSeg(await fx('speech_10s_1ch.webm'), mkEl([0xbf], HTML));
+    expect((await pipeline('c.webm', b, 'audio/webm')).scan).toBe('rejected');
+  });
+
+  it.fails('new N-4: a legit 6 kbit/s Opus WebM (ffmpeg libopus) is accepted', async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), 'qa-media-' + 'lb-'));
+    try {
+      const out = path.join(dir, 'lb.webm');
+      execFileSync('ffmpeg', [
+        '-hide_banner',
+        '-loglevel',
+        'error',
+        '-y',
+        '-f',
+        'lavfi',
+        '-i',
+        'anoisesrc=c=pink:r=48000:d=10:a=0.3',
+        '-ac',
+        '1',
+        '-c:a',
+        'libopus',
+        '-b:a',
+        '6k',
+        out,
+      ]);
+      expect(await pipeline('lb.webm', await readFile(out), 'audio/webm')).toEqual({
+        stage: 'download',
+        scan: 'clean',
+      });
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   it.fails(
-    'new N-1: packet timestamps squeezed 20x (10 s of audio, pts say ~0.5 s) are rejected by a 5 s cap',
+    'new N-5: an MP4 whose video track (16 s) outlasts its audio (10 s) is accepted',
     async () => {
-      const dir = await mkdtemp(path.join(tmpRoot, 'n1-'));
+      const dir = await mkdtemp(path.join(tmpdir(), 'qa-media-' + 'vfr-'));
       try {
-        const src = path.join(dir, 'in.webm');
-        const out = path.join(dir, 'sq.webm');
-        await writeFile(src, await fx('speech_10s_1ch.webm'));
+        const out = path.join(dir, 'vfr.mp4');
         execFileSync('ffmpeg', [
           '-hide_banner',
           '-loglevel',
           'error',
           '-y',
+          '-f',
+          'lavfi',
           '-i',
-          src,
-          '-c',
-          'copy',
-          '-bsf:a',
-          'setts=ts=N*1',
+          'color=c=gray:s=160x120:r=5:d=16',
+          '-f',
+          'lavfi',
+          '-i',
+          'sine=f=440:r=48000:d=10',
+          '-c:v',
+          'libx264',
+          '-preset',
+          'ultrafast',
+          '-pix_fmt',
+          'yuv420p',
+          '-c:a',
+          'aac',
+          '-b:a',
+          '32k',
           out,
         ]);
-        const scanMod = await imp('apps/worker/src/media/upload-scan.ts');
-        expect(
-          await scanMod.verifyUploadContent(out, 'audio/webm', w.probe, { maxDurationSeconds: 5 }),
-        ).toMatchObject({ verdict: 'rejected' });
+        expect(await pipeline('vfr.mp4', await readFile(out), 'video/mp4')).toEqual({
+          stage: 'download',
+          scan: 'clean',
+        });
       } finally {
         await rm(dir, { recursive: true, force: true });
       }
     },
   );
 
-  it.fails(
-    'new N-2: HTML inside a WebM Void element at the end of the Segment is rejected',
-    async () => {
-      expect(
-        (
-          await pipeline(
-            'void.webm',
-            webmWithTail(await fx('speech_10s_1ch.webm'), true),
-            'audio/webm',
-          )
-        ).scan,
-      ).toBe('rejected');
-    },
-  );
-
-  it.fails(
-    'new N-2: HTML after the last Cluster with the Segment size grown to cover it is rejected',
-    async () => {
-      expect(
-        (
-          await pipeline(
-            'grown.webm',
-            webmWithTail(await fx('speech_10s_1ch.webm'), false),
-            'audio/webm',
-          )
-        ).scan,
-      ).toBe('rejected');
-    },
-  );
-
-  it.fails('new N-2: HTML inside a trailing MP4 `free` box is rejected', async () => {
-    const len = Buffer.alloc(4);
-    len.writeUInt32BE(8 + HTML.length);
-    const b = Buffer.concat([await fx('speech_10s_1ch.mp4'), len, Buffer.from('free'), HTML]);
-    expect((await pipeline('free.mp4', b, 'video/mp4')).scan).toBe('rejected');
+  it('#274 L-2: clamd on but unreachable or hanging -> quarantined on the final attempt, never clean', async () => {
+    if (!existsSync(path.join(root, 'apps/worker/src/media/clamd.ts'))) return;
+    const { createClamdScanner } = await imp('apps/worker/src/media/clamd.ts');
+    const net = await import('node:net');
+    const hang = net.createServer(() => {});
+    await new Promise<void>((r) => hang.listen(0, '127.0.0.1', () => r()));
+    const port = (hang.address() as { port: number }).port;
+    try {
+      for (const av of [
+        createClamdScanner({ host: '127.0.0.1', port: 1, timeoutMs: 2000 }),
+        createClamdScanner({ host: '127.0.0.1', port, timeoutMs: 500 }),
+      ]) {
+        const body = await fx('speech_10s_1ch.webm');
+        let status: string | null = null;
+        const deps = {
+          findUpload: async () => ({
+            id: w.org,
+            key: 'k',
+            mimeType: 'audio/webm',
+            scanStatus: 'pending',
+          }),
+          setScanStatus: async (_o: string, _i: string, s: string) => void (status = s),
+          source: () => ({
+            size: async () => body.length,
+            body: async () => (await import('node:stream')).Readable.from([body]),
+          }),
+          probe: w.probe,
+          antivirus: av,
+          tmpRoot,
+        };
+        const job = {
+          kind: 'process_upload',
+          organizationId: w.org,
+          subjectType: 'upload',
+          subjectId: w.org,
+          consentAttestationId: w.org,
+        };
+        await expect(
+          w.scan.processUploadScan(job, deps, { isFinalAttempt: false }),
+        ).rejects.toThrow();
+        expect(status).toBeNull();
+        const out = await w.scan.processUploadScan(job, deps, { isFinalAttempt: true });
+        expect(out.status).toBe('quarantined');
+        expect(status).toBe('quarantined');
+      }
+    } finally {
+      hang.close();
+    }
   });
 
   it('bucket is private (policy + ACL) via @meetops/storage verifyBucketPrivate', async () => {
