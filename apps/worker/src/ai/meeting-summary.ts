@@ -285,18 +285,16 @@ export async function processMeetingSummary(
   if (!Value.Check(ReportContent, content)) return fail('invalid_model_output', true);
 
   const tasks = toTaskWrites(out, t.segments);
-  const saved = await repo.withOrgContext(organizationId, (r) =>
-    r.saveSummary({
-      ...key,
-      provider: raw.provider,
-      model: raw.model,
-      usage: raw.usage,
-      latencyMs: Math.max(0, Math.round(now() - started)),
-      title: clean(out.title),
-      content,
-      tasks,
-    }),
-  );
+  const saved = await repo.saveSummary(organizationId, {
+    ...key,
+    provider: raw.provider,
+    model: raw.model,
+    usage: raw.usage,
+    latencyMs: Math.max(0, Math.round(now() - started)),
+    title: clean(out.title),
+    content,
+    tasks,
+  });
   deps.logger.info(
     {
       ...log,

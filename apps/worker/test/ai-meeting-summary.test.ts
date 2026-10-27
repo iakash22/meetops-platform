@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { UnrecoverableError } from 'bullmq';
 import {
   GeminiLlmProvider,
@@ -8,6 +8,8 @@ import {
   buildSummaryPrompt,
   createMeetingSummaryProcessor,
   createOrgScopedSummaryRepository,
+  isUniqueViolation,
+  saveSummaryOnce,
   loadGeminiConfig,
   loadSummaryLimits,
   parseSummaryOutput,
@@ -80,7 +82,10 @@ function fakeRepo(opts: { t?: SummaryTranscript | undefined; meetingOrg?: string
     },
     recordFailure: async (w) => void failures.push(w.errorCode),
   };
-  const repository: SummaryRepository = { withOrgContext: (_o, fn) => fn(scoped) };
+  const repository: SummaryRepository = {
+    withOrgContext: (_o, fn) => fn(scoped),
+    saveSummary: (o, w) => saveSummaryOnce(repository, o, w),
+  };
   return { repository, saved, failures };
 }
 function fakeLlm(texts: Array<string | Error>): LlmProvider & { reqs: LlmJsonRequest[] } {
@@ -298,11 +303,12 @@ describe('prisma summary repository (fake tx)', () => {
     let existing: unknown = null;
     const tx = {
       aiRun: {
-        findFirst: async () => existing,
         create: async (a: { data: unknown }) => (created.aiRun!.push(a.data), { id: 'run1' }),
       },
       report: {
-        findFirst: async () => ({ version: 3 }),
+        // Dedupe lookup filters by promptVersion; the version lookup does not.
+        findFirst: async (a: { where: { promptVersion?: string } }) =>
+          a.where.promptVersion ? existing : { version: 3 },
         create: async (a: { data: unknown }) => (created.report!.push(a.data), { id: 'rep1' }),
       },
       extractedTask: {
@@ -337,14 +343,106 @@ describe('prisma summary repository (fake tx)', () => {
       ],
     };
     expect(await repo.saveSummary(w)).toEqual({ reportId: 'rep1', created: true });
-    expect(created.report![0]).toMatchObject({ version: 4, aiRunId: 'run1', organizationId: ORG });
+    expect(created.report![0]).toMatchObject({
+      transcriptRevision: 2,
+      promptVersion: SUMMARY_PROMPT_VERSION,
+      version: 4,
+      aiRunId: 'run1',
+      organizationId: ORG,
+    });
     expect(created.tasks![0]).toMatchObject({
       status: 'pending_review',
       reportId: 'rep1',
       organizationId: ORG,
     });
-    existing = { reports: [{ id: 'rep0' }] };
+    existing = { id: 'rep0' };
     expect(await repo.saveSummary(w)).toEqual({ reportId: 'rep0', created: false });
     expect(created.aiRun).toHaveLength(1);
+  });
+});
+
+describe('summary save: unique conflict on reports_summary_dedupe_key', () => {
+  const w = {
+    meetingId: MEETING,
+    transcriptId: transcript.transcriptId,
+    transcriptRevision: 2,
+    promptVersion: SUMMARY_PROMPT_VERSION,
+  } as SummaryWrite;
+  const p2002 = Object.assign(new Error('Unique constraint failed'), {
+    code: 'P2002',
+    meta: { target: null },
+  });
+  const repoWith = (save: () => Promise<never>, found: { reportId: string } | undefined) => {
+    const calls: string[] = [];
+    const scoped = {
+      saveSummary: async () => (calls.push('save'), save()),
+      findSummary: async () => (calls.push('find'), found),
+    } as unknown as OrgScopedSummaryRepository;
+    return {
+      calls,
+      repo: {
+        withOrgContext: <T>(_o: string, fn: (r: OrgScopedSummaryRepository) => Promise<T>) =>
+          fn(scoped),
+      },
+    };
+  };
+
+  it('treats a concurrent insert of the same key as already done (re-read in a fresh transaction)', async () => {
+    const { repo, calls } = repoWith(() => Promise.reject(p2002), { reportId: 'rep-other' });
+    await expect(saveSummaryOnce(repo, ORG, w)).resolves.toEqual({
+      reportId: 'rep-other',
+      created: false,
+    });
+    expect(calls).toEqual(['save', 'find']);
+  });
+  it('rethrows other unique conflicts (e.g. report version race) so the job retries', async () => {
+    const { repo } = repoWith(() => Promise.reject(p2002), undefined);
+    await expect(saveSummaryOnce(repo, ORG, w)).rejects.toBe(p2002);
+  });
+  it('rethrows non-unique errors without re-reading', async () => {
+    const boom = new Error('db down');
+    const { repo, calls } = repoWith(() => Promise.reject(boom), { reportId: 'x' });
+    await expect(saveSummaryOnce(repo, ORG, w)).rejects.toBe(boom);
+    expect(calls).toEqual(['save']);
+  });
+  it('detects Prisma P2002 and raw Postgres 23505', () => {
+    expect(isUniqueViolation(p2002)).toBe(true);
+    expect(isUniqueViolation({ code: '23505' })).toBe(true);
+    expect(isUniqueViolation({ meta: { code: '23505' } })).toBe(true);
+    expect(isUniqueViolation(new Error('x'))).toBe(false);
+    expect(isUniqueViolation(null)).toBe(false);
+  });
+  it('job reports a conflict-resolved save as duplicate with no tasks counted', async () => {
+    const scopedBase = {
+      findMeeting: async () => ({ id: MEETING, organizationId: ORG }),
+      latestReadyTranscript: async () => transcript,
+      findSummary: vi.fn(async () => undefined as { reportId: string } | undefined),
+      saveSummary: async () => Promise.reject(p2002),
+      recordFailure: async () => {},
+    };
+    let n = 0;
+    scopedBase.findSummary.mockImplementation(async () =>
+      n++ === 0 ? undefined : { reportId: 'rep-other' },
+    );
+    const repository: SummaryRepository = {
+      withOrgContext: (_o, fn) => fn(scopedBase),
+      saveSummary: (o, wr) => saveSummaryOnce(repository, o, wr),
+    };
+    const llm: LlmProvider = {
+      id: 'fake',
+      model: 'fake-1',
+      generateJson: async () => ({
+        provider: 'fake',
+        model: 'fake-1',
+        text: JSON.stringify(good),
+        usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+      }),
+    };
+    await expect(processMeetingSummary(input, { llm, repository, logger })).resolves.toEqual({
+      reportId: 'rep-other',
+      duplicate: true,
+      tasksCreated: 0,
+      transcriptRevision: 2,
+    });
   });
 });

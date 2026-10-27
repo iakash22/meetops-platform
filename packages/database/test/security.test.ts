@@ -74,7 +74,13 @@ const RECORDING_SOURCE_NATIVE_MIGRATION = '20261026210000_recording_source_nativ
 /** Update when adding a migration. */
 const INTEGRATION_CONNECTIONS_MIGRATION = '20261027000000_integration_connections';
 const INTEGRATION_ROUTING_MIGRATION = '20261027100000_integration_routing_functions';
-const LATEST_MIGRATION = INTEGRATION_ROUTING_MIGRATION;
+/** Phase 3 AI summary dedupe (reports unique key). Update LATEST_MIGRATION when adding a migration. */
+const REPORT_SUMMARY_DEDUPE_MIGRATION = '20261027120000_report_summary_dedupe';
+const LATEST_MIGRATION = REPORT_SUMMARY_DEDUPE_MIGRATION;
+const reportDedupeSql = readFileSync(
+  resolve(migrationsDir, REPORT_SUMMARY_DEDUPE_MIGRATION, 'migration.sql'),
+  'utf8',
+);
 const integrationsSql = readFileSync(
   resolve(migrationsDir, INTEGRATION_CONNECTIONS_MIGRATION, 'migration.sql'),
   'utf8',
@@ -1321,13 +1327,17 @@ describe('Phase 5 integration_connections (static)', () => {
   const statements = integrationsSql.replace(/--.*$/gm, '');
   const model = models.find((m) => m.name === 'IntegrationConnection')?.body ?? '';
 
-  it('is the latest migration', () => {
+  it('sorts just before the report summary dedupe migration', () => {
     const dirs = readdirSync(migrationsDir, { withFileTypes: true })
       .filter((x) => x.isDirectory())
       .map((x) => x.name)
       .sort();
-    expect(dirs.at(-2)).toBe(INTEGRATION_CONNECTIONS_MIGRATION);
-    expect(dirs.at(-1)).toBe(LATEST_MIGRATION);
+    expect(dirs.indexOf(INTEGRATION_CONNECTIONS_MIGRATION)).toBe(
+      dirs.indexOf(INTEGRATION_ROUTING_MIGRATION) - 1,
+    );
+    expect(dirs.indexOf(INTEGRATION_ROUTING_MIGRATION)).toBe(
+      dirs.indexOf(LATEST_MIGRATION) - 1,
+    );
   });
 
   it('is additive only', () => {
@@ -1368,6 +1378,34 @@ describe('Phase 5 integration_connections (static)', () => {
       /"status" = 'revoked' AND "revoked_at" IS NOT NULL\s+AND "access_token_enc" IS NULL AND "refresh_token_enc" IS NULL AND "webhook_secret_enc" IS NULL/,
     );
     expect(model).toMatch(/revokedAt\s+DateTime\?\s+@map\("revoked_at"\)/);
+  });
+});
+
+describe('Phase 3 report summary dedupe (static)', () => {
+  const statements = reportDedupeSql.replace(/--.*$/gm, '');
+  const model = models.find((m) => m.name === 'Report')?.body ?? '';
+
+  it('is the latest migration', () => {
+    const dirs = readdirSync(migrationsDir, { withFileTypes: true })
+      .filter((x) => x.isDirectory())
+      .map((x) => x.name)
+      .sort();
+    expect(dirs.at(-1)).toBe(LATEST_MIGRATION);
+  });
+
+  it('is additive only and keeps RLS untouched', () => {
+    expect(statements).not.toMatch(
+      /\bDROP\b|RENAME|ALTER COLUMN|NO FORCE|DISABLE ROW LEVEL SECURITY|POLICY|GRANT|NOT NULL/i,
+    );
+  });
+
+  it('adds one unique index on (meeting, transcript, revision, prompt version) matching the schema', () => {
+    expect(statements).toMatch(
+      /CREATE UNIQUE INDEX "reports_summary_dedupe_key" ON "reports"\("meeting_id", "transcript_id", "transcript_revision", "prompt_version"\)/,
+    );
+    expect(model).toContain(
+      '@@unique([meetingId, transcriptId, transcriptRevision, promptVersion], map: "reports_summary_dedupe_key")',
+    );
   });
 });
 

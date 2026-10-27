@@ -74,6 +74,41 @@ export interface SummaryRepository {
     organizationId: string,
     fn: (repo: OrgScopedSummaryRepository) => Promise<T>,
   ): Promise<T>;
+  /**
+   * Saves in its own org transaction. A unique violation (concurrent writer stored the same
+   * reports_summary_dedupe_key) is treated as already done: the existing report is returned with created=false.
+   */
+  saveSummary(
+    organizationId: string,
+    write: SummaryWrite,
+  ): Promise<{ reportId: string; created: boolean }>;
+}
+
+/** Prisma P2002 / Postgres 23505. Duck-typed: Prisma reports `meta.target: null` for composite keys. */
+export function isUniqueViolation(err: unknown): boolean {
+  if (typeof err !== 'object' || err === null) return false;
+  const e = err as { code?: unknown; meta?: { code?: unknown } };
+  return e.code === 'P2002' || e.code === '23505' || e.meta?.code === '23505';
+}
+
+/**
+ * Shared save path. The failed statement aborts the Postgres transaction (AiRun insert rolls back too), so the
+ * re-read runs in a fresh transaction. Any other unique conflict (e.g. a concurrent report `version`) is rethrown
+ * and the job retries.
+ */
+export async function saveSummaryOnce(
+  repo: Pick<SummaryRepository, 'withOrgContext'>,
+  organizationId: string,
+  write: SummaryWrite,
+): Promise<{ reportId: string; created: boolean }> {
+  try {
+    return await repo.withOrgContext(organizationId, (r) => r.saveSummary(write));
+  } catch (err) {
+    if (!isUniqueViolation(err)) throw err;
+    const existing = await repo.withOrgContext(organizationId, (r) => r.findSummary(write));
+    if (existing) return { reportId: existing.reportId, created: false };
+    throw err;
+  }
 }
 
 const SUMMARY_KIND = 'summary' as const;
@@ -82,20 +117,17 @@ export function createOrgScopedSummaryRepository(
   tx: DatabaseTransaction,
   organizationId: string,
 ): OrgScopedSummaryRepository {
-  const findRun = (k: SummaryRunKey) =>
-    tx.aiRun.findFirst({
+  /** Dedupe lookup by the reports_summary_dedupe_key columns. Includes soft-deleted rows (they still hold the key). */
+  const findReport = (k: SummaryRunKey) =>
+    tx.report.findFirst({
       where: {
         organizationId,
         meetingId: k.meetingId,
         transcriptId: k.transcriptId,
         transcriptRevision: k.transcriptRevision,
         promptVersion: k.promptVersion,
-        kind: SUMMARY_KIND,
-        status: 'succeeded',
       },
-      select: {
-        reports: { where: { organizationId, deletedAt: null }, select: { id: true }, take: 1 },
-      },
+      select: { id: true },
     });
 
   return {
@@ -134,14 +166,12 @@ export function createOrgScopedSummaryRepository(
       };
     },
     async findSummary(key) {
-      const run = await findRun(key);
-      const id = run?.reports[0]?.id;
-      return id ? { reportId: id } : undefined;
+      const r = await findReport(key);
+      return r ? { reportId: r.id } : undefined;
     },
     async saveSummary(w) {
-      const existing = await findRun(w);
-      const existingId = existing?.reports[0]?.id;
-      if (existingId) return { reportId: existingId, created: false };
+      const existing = await findReport(w);
+      if (existing) return { reportId: existing.id, created: false };
       const now = new Date();
       const run = await tx.aiRun.create({
         data: {
@@ -174,6 +204,8 @@ export function createOrgScopedSummaryRepository(
           meetingId: w.meetingId,
           transcriptId: w.transcriptId,
           aiRunId: run.id,
+          transcriptRevision: w.transcriptRevision,
+          promptVersion: w.promptVersion,
           version: (last?.version ?? 0) + 1,
           status: 'draft',
           title: w.title,
@@ -225,7 +257,8 @@ export function createOrgScopedSummaryRepository(
 export function createPrismaSummaryRepository(
   opts: { client?: DatabaseClient; timeoutMs?: number } = {},
 ): SummaryRepository {
-  return {
+  const repo: SummaryRepository = {
+    saveSummary: (organizationId, write) => saveSummaryOnce(repo, organizationId, write),
     withOrgContext: (organizationId, fn) =>
       withOrganizationContext(
         organizationId,
@@ -236,4 +269,5 @@ export function createPrismaSummaryRepository(
         },
       ),
   };
+  return repo;
 }
