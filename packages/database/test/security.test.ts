@@ -1411,7 +1411,7 @@ describe('Phase 3 report summary dedupe (static)', () => {
       .sort();
     const at = (m: string) => dirs.indexOf(m);
     expect(at(RECORDING_BYTES_MIGRATION)).toBe(at(REPORT_SUMMARY_DEDUPE_MIGRATION) + 1);
-    expect(at(LATEST_MIGRATION)).toBe(at(INTEGRATION_ROUTING_POLICY_MIGRATION) + 1);
+    expect(at(NOTIFICATIONS_MIGRATION)).toBe(at(INTEGRATION_ROUTING_POLICY_MIGRATION) + 1);
   });
 
   it('is additive only and keeps RLS untouched', () => {
