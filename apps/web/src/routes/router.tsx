@@ -55,6 +55,10 @@ const MeetingsPage = lazyRouteComponent(meetingsModule, 'MeetingsPage');
 const MeetingDetailPage = lazyRouteComponent(meetingsModule, 'MeetingDetailPage');
 const TasksPage = lazyRouteComponent(() => import('@/features/tasks/tasks-page'), 'TasksPage');
 const DashboardPage = lazyRouteComponent(() => import('@/pages/app-pages'), 'DashboardPage');
+const NotificationsPage = lazyRouteComponent(
+  () => import('@/features/notifications/notifications-page'),
+  'NotificationsPage',
+);
 const ProjectsPage = lazyRouteComponent(
   () => import('@/features/projects/projects-page'),
   'ProjectsPage',
@@ -240,6 +244,11 @@ const tasksRoute = createRoute({
     );
   },
 });
+const notificationsRoute = createRoute({
+  getParentRoute: () => appLayout,
+  path: '/notifications',
+  component: NotificationsPage,
+});
 const projectsRoute = createRoute({
   getParentRoute: () => appLayout,
   path: '/projects',
@@ -300,6 +309,7 @@ export const routeTree = rootRoute.addChildren([
     meetingDetailRoute,
     tasksRoute,
     projectsRoute,
+    notificationsRoute,
     settingsRoute,
     teamMembersRoute,
     createOrganizationRoute,

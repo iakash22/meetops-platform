@@ -172,6 +172,24 @@ describe('recording sessions', () => {
     expect(w.jobs.jobs).toHaveLength(1);
   });
 
+  it('complete 409 when a stored chunk checksum is missing, multipart or different (review B 4.2)', async () => {
+    const w = await setup();
+    const id = await w.start();
+    await w.chunk(w.member, id, 0);
+    const key = w.repo.rows.get(id)!.chunks.get(0)!.key;
+    for (const stored of ['LCa0a2j/xo/5m0U8HTBBNBNCLXBkg7+g+YpeiGJm564=', null, 'x-3']) {
+      w.signer.put(key, 1000, stored);
+      expect((await complete(w, w.member, id, { chunkCount: 1, durationMs: 1 })).statusCode).toBe(
+        409,
+      );
+    }
+    expect(w.jobs.jobs).toHaveLength(0);
+    w.upload(id, 0);
+    expect((await complete(w, w.member, id, { chunkCount: 1, durationMs: 1 })).statusCode).toBe(
+      202,
+    );
+  });
+
   it('complete without a valid stored consent: 422 CONSENT_* and no job', async () => {
     const w = await setup();
     const id = await w.start();
