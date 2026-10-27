@@ -1,4 +1,9 @@
-//! Build-time origins. Unset in dev builds, so every networked command fails closed with `not_configured`.
+//! Build-time origins: the single config source for sign-in, `api_request` and `upload_put` (H-2).
+//! Unset → every networked command fails closed with `not_configured`.
+//! - `MEETOPS_API_ORIGIN`, `MEETOPS_WEB_ORIGIN`: https only. A debug build (never release) may use
+//!   `http://127.0.0.1:<port>` or `http://localhost:<port>` for local dev.
+//! - `MEETOPS_STORAGE_ORIGIN`: the presigned-upload storage origin; https only, in every build.
+//!
 //! DECISION: final API/web origins and the bundle identifier are still TODO-owner placeholders (ADR-012).
 
 use url::Url;
@@ -16,14 +21,29 @@ pub struct Origins {
     pub web: Url,
 }
 
-/// Parses and checks an origin: https only (http allowed for 127.0.0.1 in debug builds), no path, query or userinfo.
+/// Same as `parse_origin_for`, with the dev exception only in debug builds.
 pub fn parse_origin(raw: &str) -> Option<Url> {
+    parse_origin_for(raw, cfg!(debug_assertions))
+}
+
+/// A bare origin: https (or, when `allow_dev_http`, plain http on localhost / 127.0.0.1 with an explicit port),
+/// no path, query, fragment or userinfo.
+pub fn parse_origin_for(raw: &str, allow_dev_http: bool) -> Option<Url> {
     let url = Url::parse(raw).ok()?;
-    let local_dev = cfg!(debug_assertions) && url.scheme() == "http" && url.host_str() == Some("127.0.0.1");
+    let local_dev = allow_dev_http
+        && url.scheme() == "http"
+        && matches!(url.host_str(), Some("127.0.0.1" | "localhost"))
+        && url.port().is_some();
     if url.scheme() != "https" && !local_dev {
         return None;
     }
-    if url.path() != "/" || url.query().is_some() || url.fragment().is_some() || !url.username().is_empty() {
+    if url.host_str().is_none()
+        || url.path() != "/"
+        || url.query().is_some()
+        || url.fragment().is_some()
+        || !url.username().is_empty()
+        || url.password().is_some()
+    {
         return None;
     }
     Some(url)
@@ -38,6 +58,13 @@ pub fn origins() -> CmdResult<Origins> {
     }
 }
 
+/// Storage origin for presigned uploads (M-2). https only, even in debug builds.
+pub fn storage_origin() -> CmdResult<Url> {
+    option_env!("MEETOPS_STORAGE_ORIGIN")
+        .and_then(|raw| parse_origin_for(raw, false))
+        .ok_or_else(CmdError::not_configured)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -49,5 +76,17 @@ mod tests {
         assert!(parse_origin("https://api.example.test/v1").is_none());
         assert!(parse_origin("https://u:p@api.example.test").is_none());
         assert!(parse_origin("https://api.example.test/?x=1").is_none());
+    }
+
+    #[test]
+    fn plain_http_only_for_explicit_dev_localhost() {
+        assert!(parse_origin_for("http://127.0.0.1:3000", true).is_some());
+        assert!(parse_origin_for("http://localhost:3000", true).is_some());
+        assert!(parse_origin_for("http://localhost", true).is_none());
+        assert!(parse_origin_for("http://10.0.0.5:3000", true).is_none());
+        assert!(parse_origin_for("http://localhost.evil.test:3000", true).is_none());
+        // Release builds: never plain http.
+        assert!(parse_origin_for("http://127.0.0.1:3000", false).is_none());
+        assert!(parse_origin_for("http://localhost:3000", false).is_none());
     }
 }
