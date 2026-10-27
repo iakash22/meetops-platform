@@ -19,12 +19,17 @@ GeoIP session location (ADR-014, Proposed). Additive. Version numbers 0.10.0-0.1
 
 ### Added
 
-- `SessionSummary.geoCity`, `geoRegion`, `geoCountry`, `geoCountryCode` (ISO alpha-2) and `geoApproximate`: optional,
-  nullable. Null for private/unknown IPs. No latitude/longitude.
+- `SessionSummary.geoCity`, `geoRegion`, `geoCountry`, `geoCountryCode` (ISO alpha-2) and `geoApproximate` (`true`):
+  optional, **not** nullable. Absent means unknown (private/unknown IP, no GeoIP data, older server). No latitude/longitude.
 - `AuthNewLocationSigninEvent` (outbox `auth.new_location_signin`): `{ sessionId, city, region, country, countryCode,
-reason }`, `reason` is `'new_region' | 'new_country'` (`NEW_LOCATION_REASONS`). No IP address.
-- `AuthNewLocationSigninNotificationPayload`: in-app notification payload `{ sessionId, reason, geoCity?, geoCountry? }`.
-- `GeoText`, `GeoCountryCode`, `AUTH_NEW_LOCATION_SIGNIN_EVENT`.
+reason }`, every key required, geo values nullable; `reason` is `'new_region' | 'new_country'`
+  (`NEW_LOCATION_REASONS`). No IP address.
+- `AuthNewLocationSigninNotificationPayload`: in-app notification payload `{ sessionId, reason, geoCity?, geoCountry? }`
+  (optional, not nullable).
+- `GeoName` / `GEO_TEXT_PATTERN`: location text uses the shared safe display-text rules (no control chars, CR/LF,
+  bidi/invisible or HTML-significant chars, no leading/trailing whitespace) and rejects IPv4/IPv6-looking strings.
+  Producers must normalise `'` and `&` in place names or emit null. Also `GeoText`, `GeoCountryCode`,
+  `GeoCountryCodeString`, `AUTH_NEW_LOCATION_SIGNIN_EVENT`.
 
 ## [0.9.0] - 2026-10-27
 

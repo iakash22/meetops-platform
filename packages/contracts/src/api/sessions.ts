@@ -1,13 +1,24 @@
 import { Type, type Static } from '@sinclair/typebox';
-import { Id, IsoDateTime } from '../common.js';
+import { Id, IsoDateTime, SAFE_DISPLAY_TEXT_TRIMMED_PATTERN } from '../common.js';
 import { CursorPage } from './pagination.js';
 
 const strict = { additionalProperties: false } as const;
 
-/** Nullable coarse location text (city, region or country name) from GeoIP (ADR-014). */
-export const GeoText = Type.Union([Type.String({ minLength: 1, maxLength: 128 }), Type.Null()]);
-/** Nullable ISO 3166-1 alpha-2 country code, upper case. */
-export const GeoCountryCode = Type.Union([Type.String({ pattern: '^[A-Z]{2}$' }), Type.Null()]);
+/**
+ * Coarse location text (city, region or country name) from GeoIP (ADR-014). mmdb data is third-party input, so it uses
+ * the shared safe display-text rules (no control chars, CR/LF, bidi/invisible or HTML-significant chars, no leading or
+ * trailing whitespace) and additionally rejects values that look like an IPv4 or IPv6 address, so an IP cannot be
+ * smuggled into "no IP" payloads. Producers must normalise names (e.g. `'` -> U+2019, `&` -> "and") or emit null.
+ */
+export const GEO_TEXT_PATTERN =
+  '^(?!\\d{1,3}(?:\\.\\d{1,3}){3}$)(?![0-9A-Fa-f.]*:[0-9A-Fa-f:.]*(?:%[\\w.-]+)?$)' +
+  SAFE_DISPLAY_TEXT_TRIMMED_PATTERN.slice(1);
+export const GeoName = Type.String({ minLength: 1, maxLength: 128, pattern: GEO_TEXT_PATTERN });
+/** ISO 3166-1 alpha-2 country code, upper case. */
+export const GeoCountryCodeString = Type.String({ pattern: '^[A-Z]{2}$' });
+/** Nullable variants, used where a field is always present (outbox event). */
+export const GeoText = Type.Union([GeoName, Type.Null()]);
+export const GeoCountryCode = Type.Union([GeoCountryCodeString, Type.Null()]);
 
 /** Why `auth.new_location_signin` fired (ADR-014). */
 export const NEW_LOCATION_REASONS = ['new_region', 'new_country'] as const;
@@ -18,7 +29,8 @@ export type NewLocationReason = Static<typeof NewLocationReason>;
 export const AUTH_NEW_LOCATION_SIGNIN_EVENT = 'auth.new_location_signin' as const;
 
 /**
- * Outbox payload of `auth.new_location_signin` (ADR-014). **Never carries an IP address.**
+ * Outbox payload of `auth.new_location_signin` (ADR-014). **Never carries an IP address.** Every key is required and
+ * the geo values are nullable (not optional): the event is produced server-side, so it always has every key.
  */
 export const AuthNewLocationSigninEvent = Type.Object(
   {
@@ -41,8 +53,9 @@ export const AuthNewLocationSigninNotificationPayload = Type.Object(
   {
     sessionId: Id,
     reason: NewLocationReason,
-    geoCity: Type.Optional(GeoText),
-    geoCountry: Type.Optional(GeoText),
+    // Optional, not nullable: absent means unknown.
+    geoCity: Type.Optional(GeoName),
+    geoCountry: Type.Optional(GeoName),
   },
   strict,
 );
@@ -64,14 +77,15 @@ export const SessionSummary = Type.Object(
     expiresAt: IsoDateTime,
     ip: Type.Union([Type.String({ maxLength: 45 }), Type.Null()]),
     userAgent: Type.Union([Type.String({ maxLength: 1024 }), Type.Null()]),
-    // Coarse GeoIP location (ADR-014, 0.14.0). Null for private/unknown IPs. Optional during rollout so older
-    // servers still validate; clients must treat missing as null. No latitude/longitude is ever exposed.
-    geoCity: Type.Optional(GeoText),
-    geoRegion: Type.Optional(GeoText),
-    geoCountry: Type.Optional(GeoText),
-    geoCountryCode: Type.Optional(GeoCountryCode),
-    /** True whenever the location came from GeoIP (always approximate). */
-    geoApproximate: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
+    // Coarse GeoIP location (ADR-014, 0.14.0). Each field is OPTIONAL, NOT nullable: absent means unknown
+    // (private/unknown IP, no GeoIP database, or an older server). One representation for "unknown" avoids clients
+    // handling both missing and null. No latitude/longitude is ever exposed.
+    geoCity: Type.Optional(GeoName),
+    geoRegion: Type.Optional(GeoName),
+    geoCountry: Type.Optional(GeoName),
+    geoCountryCode: Type.Optional(GeoCountryCodeString),
+    /** Present (always `true`) whenever any geo field is present: GeoIP locations are approximate. */
+    geoApproximate: Type.Optional(Type.Literal(true)),
   },
   strict,
 );
