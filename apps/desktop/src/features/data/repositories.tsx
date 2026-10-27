@@ -9,6 +9,8 @@ import {
 } from '@/features/meetings/native-insights-api';
 import { SAMPLE_MEETINGS } from '@/features/meetings/sample-meetings';
 import { SAMPLE_TASKS } from '@/features/tasks/sample-tasks';
+import { createNativeTaskReviewApi, createSampleTaskReviewApi } from '@/features/tasks/review-api';
+import type { TaskReviewApi } from '@/features/tasks/task-review-core';
 
 export interface DataSource {
   /** True when rows are typed sample data, not the API. */
@@ -17,6 +19,8 @@ export interface DataSource {
   listTasks: (organizationId: string) => Promise<Task[]>;
   /** Transcript and report reads (#212). */
   insights: MeetingInsightsApi;
+  /** Phase 4 review of AI-extracted tasks (#222). */
+  review: TaskReviewApi;
 }
 
 const PAGE = 50;
@@ -35,6 +39,7 @@ export function createDataSource(invoke: Invoke | null): DataSource {
       listMeetings: async (org) => SAMPLE_MEETINGS.filter((m) => m.organizationId === org),
       listTasks: async (org) => SAMPLE_TASKS.filter((t) => t.organizationId === org),
       insights: createSampleInsightsApi(),
+      review: createSampleTaskReviewApi(),
     };
   }
   const get = async <T,>(path: string) =>
@@ -42,6 +47,7 @@ export function createDataSource(invoke: Invoke | null): DataSource {
   return {
     sample: false,
     insights: createNativeInsightsApi(invoke),
+    review: createNativeTaskReviewApi(invoke),
     // Server scopes by org; the client filter is defence in depth (ADR-004).
     listMeetings: async (org) =>
       (await get<Meeting>(`/orgs/${seg(org)}/meetings?limit=${PAGE}`)).filter(
