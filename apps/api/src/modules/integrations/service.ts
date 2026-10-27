@@ -289,7 +289,11 @@ export class IntegrationsService {
     const gh = rt.github;
     if (!gh) throw new WebhookSignatureError();
     const secret = await gh.webhookSecret();
-    const sig = input.headers['x-hub-signature-256'];
+    const h = input.headers;
+    const sig =
+      typeof Headers !== 'undefined' && h instanceof Headers
+        ? (h.get('x-hub-signature-256') ?? undefined)
+        : (h as Record<string, string | string[] | undefined>)['x-hub-signature-256'];
     const pre = verifyGitHubSignature(
       secret,
       input.rawBody,
