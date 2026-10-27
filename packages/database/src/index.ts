@@ -195,3 +195,10 @@ export {
   redactExpiredIpAddresses,
   type IpRetentionResult,
 } from './ip-retention.js';
+
+export {
+  SESSION_PURGE_DAYS,
+  SESSION_PURGE_BATCH,
+  SESSION_PURGE_MAX_BATCHES,
+  purgeExpiredSessions,
+} from './session-purge.js';

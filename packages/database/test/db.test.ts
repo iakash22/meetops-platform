@@ -143,6 +143,10 @@ describe('generated client', () => {
         'IP_RETENTION_BATCH',
         'IP_RETENTION_MAX_BATCHES',
         'redactExpiredIpAddresses',
+        'SESSION_PURGE_DAYS',
+        'SESSION_PURGE_BATCH',
+        'SESSION_PURGE_MAX_BATCHES',
+        'purgeExpiredSessions',
       ].sort(),
     );
   });
