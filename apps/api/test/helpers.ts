@@ -62,10 +62,13 @@ export class Client {
   patch(url: string, payload?: object) {
     return this.send('PATCH', url, payload);
   }
+  put(url: string, payload?: object) {
+    return this.send('PUT', url, payload);
+  }
   delete(url: string) {
     return this.send('DELETE', url);
   }
-  async send(method: 'POST' | 'PATCH' | 'DELETE', url: string, payload?: object, headers: Record<string, string> = {}) {
+  async send(method: 'POST' | 'PUT' | 'PATCH' | 'DELETE', url: string, payload?: object, headers: Record<string, string> = {}) {
     if (!this.jar.has(CSRF)) await this.csrf();
     return this.absorb(
       await this.app.inject({

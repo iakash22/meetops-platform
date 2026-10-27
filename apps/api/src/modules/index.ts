@@ -570,7 +570,13 @@ export async function registerModules(app: FastifyInstance, deps: ModuleDeps) {
   // ADR-005 A1.6 (and ADR-012 when enabled): logout, password reset and member removal also revoke token families.
   const revoker = desktopAuth ? combineRevokers(extensionAuth, desktopAuth) : extensionAuth;
   const auth = new AuthService({ ...deps, extensionRevoker: revoker });
-  const organizations = new OrganizationService({ ...deps, extensionRevoker: revoker });
+  const { selectNotificationsRepository } = await import('./notifications/index.js');
+  const notifications = selectNotificationsRepository(deps);
+  const organizations = new OrganizationService({
+    ...deps,
+    extensionRevoker: revoker,
+    pushDeviceRevoker: notifications,
+  });
   if (deps.mailQueue instanceof InlineAuthMailQueue && !deps.mailQueue.handler) {
     deps.mailQueue.handler = new AuthMailJobHandler({
       ...deps,
@@ -599,6 +605,12 @@ export async function registerModules(app: FastifyInstance, deps: ModuleDeps) {
   await app.register(import('./tasks/index.js'), { auth, organizations, deps });
   await app.register(import('./meeting-insights/index.js'), { auth, organizations, deps });
   await app.register(import('./integrations/index.js'), { auth, organizations, deps });
+  await app.register(import('./notifications/index.js'), {
+    auth,
+    organizations,
+    deps,
+    repo: notifications,
+  });
   await app.register(import('./meetings/index.js'), {
     auth,
     organizations,
