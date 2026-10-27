@@ -105,6 +105,8 @@ export default async function tasksModule(
   const repo = selectTaskRepositories(deps);
   registerDomainErrorHandler(app);
   const g = makeGuards(auth, deps.security);
+  // Origin allowlist + double-submit CSRF on every non-GET route (same as directory/index.ts).
+  app.addHook('onRequest', g.mutationGuard);
   const access = new DirectoryAccess(organizations, deps.audit);
   const caller = async (request: Parameters<typeof g.requireSession>[0], organizationId: string) =>
     access.caller(await g.requireSession(request), organizationId, requestMeta(request));

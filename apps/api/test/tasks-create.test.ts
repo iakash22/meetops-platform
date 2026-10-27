@@ -103,7 +103,8 @@ describe('Phase 4 task create API and list filters', () => {
     expect(
       (await app.inject({ method: 'POST', url: `/orgs/${org}/tasks`, payload: { title: 'x' } }))
         .statusCode,
-    ).toBe(401);
+      // Mutation guard (CSRF/Origin) runs onRequest, before the session check, as in directory routes.
+    ).toBe(403);
     expect(repo.tasks).toHaveLength(0);
   });
 
