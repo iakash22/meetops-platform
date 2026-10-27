@@ -1,16 +1,13 @@
 import type { Id, Report, Transcript } from '@meetops/contracts';
+import { MEETING_INSIGHTS_PATHS } from '@meetops/contracts/types';
 import type { HttpMethod } from '@/lib/api/client';
 
 /**
  * Transcript and report reads for one meeting (Phase 3), served by the API meeting-insights module (#212).
- * Contracts 0.7.0 have the Transcript and Report DTOs but no path constants, so these mirror
- * `apps/api/src/modules/meeting-insights` MEETING_INSIGHTS_PATHS exactly (pinned by a test). The API answers
- * 404 until a merged transcript or a report exists; the UI shows that as "not ready yet".
+ * Paths come from @meetops/contracts 0.8.0 MEETING_INSIGHTS_PATHS (pinned by a test). The API answers 404 until a
+ * merged transcript or a report exists; the UI shows that as "not ready yet".
  */
-export const MEETING_INSIGHTS_PATHS = {
-  transcript: '/orgs/:organizationId/meetings/:meetingId/transcript',
-  report: '/orgs/:organizationId/meetings/:meetingId/report',
-} as const;
+export { MEETING_INSIGHTS_PATHS };
 
 export type MeetingInsightsApi = {
   transcript: (organizationId: Id, meetingId: Id) => Promise<Transcript>;

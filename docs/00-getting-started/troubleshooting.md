@@ -22,9 +22,9 @@ These scripts load the **repo root** `.env` (copy from `.env.example` first):
 
 | Package / command                                         | How env is loaded                                                                           |
 | --------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
-| `@meetops/api` / `worker` / `realtime` `dev`              | `tsx … --env-file=../../.env`                                                               |
-| `@meetops/realtime` `start`                               | `node --env-file=../../.env`                                                                |
-| `@meetops/database` `db:migrate:*`, `db:seed`, `db:roles` | `node` / `tsx` `--env-file=../../.env`                                                      |
+| `@meetops/api` / `worker` / `realtime` `dev`              | `tsx … --import ../../scripts/load-env-if-exists.mjs` (optional `.env`)                     |
+| `@meetops/realtime` `start`                               | `node --import ../../scripts/load-env-if-exists.mjs` (optional `.env`)                      |
+| `@meetops/database` `db:migrate:*`, `db:seed`, `db:roles` | `node` / `tsx` `--import ../../scripts/load-env-if-exists.mjs` (optional `.env`)            |
 | `@meetops/web` `dev`                                      | Vite `envDir` = monorepo root; `/api` proxied to `PORT`/`API_PORT` when `VITE_API_URL=/api` |
 
 Without `NODE_ENV=development` and `DATABASE_URL`, the API exits with `MissingProductionDependencyError` and the worker with `DATABASE_URL is required`. Extension uses `apps/extension/.env` (see its `.env.example`); desktop keeps Tauri’s fixed Vite port `1420`.

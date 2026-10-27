@@ -1,21 +1,13 @@
 import type { Id, Report, Transcript } from '@meetops/contracts';
+import { MEETING_INSIGHTS_PATHS, RECORDING_SESSION_PATHS } from '@meetops/contracts/types';
 
 /**
- * API route templates for the desktop app. Contracts 0.7.0 export no recording-session or meeting-insights path
- * constants, so these mirror the API media module (#197/#206) and meeting-insights module (#212) exactly;
- * test/contract-paths.test.ts pins them.
+ * API route templates for the desktop app, from @meetops/contracts 0.8.0 (RECORDING_SESSION_PATHS and
+ * MEETING_INSIGHTS_PATHS). RECORDING_SESSION_ROUTES is kept as the local alias; test/contract-paths.test.ts pins both.
  */
-export const RECORDING_SESSION_ROUTES = {
-  init: '/orgs/:organizationId/recording-sessions',
-  chunks: '/recording-sessions/:sessionId/chunks',
-  complete: '/recording-sessions/:sessionId/complete',
-  abort: '/recording-sessions/:sessionId/abort',
-} as const;
+export const RECORDING_SESSION_ROUTES = RECORDING_SESSION_PATHS;
 
-export const MEETING_INSIGHTS_PATHS = {
-  transcript: '/orgs/:organizationId/meetings/:meetingId/transcript',
-  report: '/orgs/:organizationId/meetings/:meetingId/report',
-} as const;
+export { MEETING_INSIGHTS_PATHS };
 
 /** Fills `:param` segments, URL-encoding each value. Throws on a missing param instead of sending a broken path. */
 export function fillPath(template: string, params: Record<string, string>): string {

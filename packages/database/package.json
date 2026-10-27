@@ -18,12 +18,12 @@
     "postinstall": "prisma generate",
     "prisma:validate": "prisma validate",
     "prisma:generate": "prisma generate",
-    "db:migrate:dev": "node --env-file=../../.env ./node_modules/prisma/build/index.js migrate dev",
-    "db:migrate:deploy": "node --env-file=../../.env ./node_modules/prisma/build/index.js migrate deploy",
-    "db:seed": "node --env-file=../../.env ./node_modules/prisma/build/index.js db seed",
-    "db:studio": "node --env-file=../../.env ./node_modules/prisma/build/index.js studio",
+    "db:migrate:dev": "node --import ../../scripts/load-env-if-exists.mjs ./node_modules/prisma/build/index.js migrate dev",
+    "db:migrate:deploy": "node --import ../../scripts/load-env-if-exists.mjs ./node_modules/prisma/build/index.js migrate deploy",
+    "db:seed": "node --import ../../scripts/load-env-if-exists.mjs ./node_modules/prisma/build/index.js db seed",
+    "db:studio": "node --import ../../scripts/load-env-if-exists.mjs ./node_modules/prisma/build/index.js studio",
     "test:live": "vitest run test/rls.live.test.ts test/tenant-isolation.live.test.ts test/media.live.test.ts test/key-prefix.live.test.ts test/ai-transcripts.live.test.ts test/directory.live.test.ts test/consent-scan.live.test.ts test/auth-tokens.live.test.ts",
-    "db:roles": "tsx --env-file=../../.env scripts/create-db-roles.ts",
+    "db:roles": "tsx --import ../../scripts/load-env-if-exists.mjs scripts/create-db-roles.ts",
     "db:roles:sh": "sh scripts/create-db-roles.sh"
   },
   "dependencies": {
@@ -35,6 +35,6 @@
     "typescript": "^5.6.3"
   },
   "prisma": {
-    "seed": "tsx --env-file=../../.env prisma/seed.ts"
+    "seed": "tsx --import ../../scripts/load-env-if-exists.mjs prisma/seed.ts"
   }
 }
