@@ -452,6 +452,8 @@ export class IntegrationsService {
       });
       return p.createIssue(input, approval);
     }
+    // One token per push: the provider resolves credentials per request and a refresh rotates the pair.
+    let token: Promise<string> | undefined;
     const p = new JiraIssueTrackerProvider({
       ...ctx,
       approvals,
@@ -461,7 +463,7 @@ export class IntegrationsService {
       credentials: {
         resolve: async () => ({
           kind: 'jira-oauth',
-          accessToken: await this.jiraAccessToken(conn),
+          accessToken: await (token ??= this.jiraAccessToken(conn)),
         }),
       },
       ...(rt.fetch ? { fetch: rt.fetch } : {}),
