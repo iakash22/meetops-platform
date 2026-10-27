@@ -76,7 +76,9 @@ const INTEGRATION_CONNECTIONS_MIGRATION = '20261027000000_integration_connection
 const INTEGRATION_ROUTING_MIGRATION = '20261027100000_integration_routing_functions';
 /** Phase 3 AI summary dedupe (reports unique key). Update LATEST_MIGRATION when adding a migration. */
 const REPORT_SUMMARY_DEDUPE_MIGRATION = '20261027120000_report_summary_dedupe';
-const LATEST_MIGRATION = REPORT_SUMMARY_DEDUPE_MIGRATION;
+/** P1-DB-4 recording bytes_received + add_recording_session_bytes(). */
+const RECORDING_BYTES_MIGRATION = '20261027130000_recording_session_bytes_received';
+const LATEST_MIGRATION = RECORDING_BYTES_MIGRATION;
 const reportDedupeSql = readFileSync(
   resolve(migrationsDir, REPORT_SUMMARY_DEDUPE_MIGRATION, 'migration.sql'),
   'utf8',
@@ -1336,7 +1338,7 @@ describe('Phase 5 integration_connections (static)', () => {
       dirs.indexOf(INTEGRATION_ROUTING_MIGRATION) - 1,
     );
     expect(dirs.indexOf(INTEGRATION_ROUTING_MIGRATION)).toBe(
-      dirs.indexOf(LATEST_MIGRATION) - 1,
+      dirs.indexOf(REPORT_SUMMARY_DEDUPE_MIGRATION) - 1,
     );
   });
 

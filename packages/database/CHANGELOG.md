@@ -7,7 +7,7 @@ All notable changes to `@meetops/database` are documented here (format: [Keep a 
 ### Added
 
 - Migration `20261027130000_recording_session_bytes_received` (P1-DB-4): `recording_sessions.bytes_received`
-  (`BIGINT NOT NULL DEFAULT 0`, CHECK 0..2_000_000_000 = contracts `MAX_RECORDING_SESSION_BYTES`) and
+  (`BIGINT NOT NULL DEFAULT 0`, CHECK 0..1_400_000_000 = contracts `MAX_RECORDING_SESSION_BYTES`) and
   `public.add_recording_session_bytes(uuid, bigint)`: SECURITY INVOKER, org-scoped via `app.current_org_id` under
   forced RLS, atomic and cap-safe under concurrency, EXECUTE granted to `meetops_app` only.
 - `addRecordingSessionBytes(tx, sessionId, delta)` and `RECORDING_SESSION_BYTES_ERRORS`.
