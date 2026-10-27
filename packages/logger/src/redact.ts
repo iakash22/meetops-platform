@@ -15,6 +15,9 @@ export const DEFAULT_REDACT_KEYS: readonly string[] = [
   'accessToken',
   'refreshToken',
   'pairingCode',
+  // ADR-013 push credentials.
+  'expoPushToken',
+  'p256dh',
   'authorization',
   'cookie',
   'set-cookie',
