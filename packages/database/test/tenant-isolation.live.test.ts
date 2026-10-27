@@ -92,6 +92,9 @@ function override(table: string, column: string, organizationId: string): string
     return `now() + interval '30 days'`;
   if (table === 'auth_refresh_tokens' && column === 'token_hash')
     return `encode(sha256(gen_random_uuid()::text::bytea), 'hex')`;
+  // push_device_tokens_token_hash_check: 64 lowercase hex (#279 L-1).
+  if (table === 'push_device_tokens' && column === 'token_hash')
+    return `encode(sha256(gen_random_uuid()::text::bytea), 'hex')`;
   return undefined;
 }
 
