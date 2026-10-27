@@ -9,6 +9,7 @@ import {
 import { MAX_DURATION_MS } from '../../src/lib/contract-limits.js';
 import { formatElapsed } from '../../src/lib/format.js';
 import type { StatusPayload } from '../../src/lib/messages.js';
+import { pendingLabel, type PendingTasks } from '../../src/lib/pending-tasks.js';
 import { OPEN_FROM_TOOLBAR } from './popup-errors.js';
 
 const REASONS: Record<NonNullable<AuthStatus['reason']>, string> = {
@@ -153,6 +154,33 @@ export const PairingView = memo(function PairingView({ auth, onPair, onUnpair }:
           </button>
         </>
       )}
+    </section>
+  );
+});
+
+/** Compact pending-review count with a link to the web review page (opens in a new tab). */
+export const PendingTasksRow = memo(function PendingTasksRow({
+  pending,
+  href,
+}: {
+  pending: PendingTasks;
+  href: string;
+}) {
+  const label = pendingLabel(pending);
+  return (
+    <section className="mo-section mo-tasks" aria-label="Tasks to review">
+      <span className="mo-tasks__count" role="status">
+        {label}
+      </span>
+      <a
+        className="mo-tasks__link"
+        href={href}
+        target="_blank"
+        rel="noopener noreferrer"
+        aria-label={`Review tasks in MeetOps (${label})`}
+      >
+        Review
+      </a>
     </section>
   );
 });
@@ -352,14 +380,29 @@ export const ErrorToast = memo(function ErrorToast({ message }: { message: strin
 export interface PopupViewProps
   extends Omit<RecorderViewProps, 'emphasis' | 'paired'>, PairingViewProps {
   error: string;
+  /** Pending-review count; shown only when paired and known. */
+  pendingTasks?: PendingTasks | undefined;
+  /** Web review page for the count link. */
+  reviewHref?: string | undefined;
 }
 
-export function PopupView({ error, auth, onPair, onUnpair, ...recorder }: PopupViewProps) {
+export function PopupView({
+  error,
+  auth,
+  onPair,
+  onUnpair,
+  pendingTasks,
+  reviewHref,
+  ...recorder
+}: PopupViewProps) {
   return (
     <PopupFrame>
       <BrandHeader auth={auth} />
       <hr className="mo-divider" />
       <PairingView auth={auth} onPair={onPair} onUnpair={onUnpair} />
+      {auth?.state === 'paired' && pendingTasks && reviewHref ? (
+        <PendingTasksRow pending={pendingTasks} href={reviewHref} />
+      ) : null}
       <RecorderView
         {...recorder}
         paired={auth === undefined ? undefined : auth.state === 'paired'}

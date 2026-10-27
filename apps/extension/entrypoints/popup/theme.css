@@ -461,3 +461,34 @@ a {
     transform: rotate(360deg);
   }
 }
+
+/* Pending tasks --------------------------------------------------------- */
+
+.mo-tasks {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.mo-tasks__count {
+  color: var(--mo-foreground);
+  font-size: 14px;
+}
+
+.mo-tasks__link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  min-width: 44px;
+  padding: 0 12px;
+  color: var(--mo-link);
+  font-weight: 600;
+  text-decoration: underline;
+}
+
+.mo-tasks__link:focus-visible {
+  outline: 2px solid var(--mo-link);
+  outline-offset: 2px;
+}
