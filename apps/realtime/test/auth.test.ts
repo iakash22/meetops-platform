@@ -112,6 +112,21 @@ describe('handshake authentication (ADR-011 section 1)', () => {
     await reject(connected(web(cookieIsExtension.url, 'a1')));
   });
 
+  it('rejects a desktop credential on both web and extension handshakes (fail closed)', async () => {
+    const desktop = await start({
+      verifySession: (): AuthContext => ({
+        userId: 'u1',
+        organizationId: ORG_A,
+        sessionId: 's',
+        credential: 'desktop',
+        scopes: ['recordings:write'],
+        expiresAt: new Date(Date.now() + 60_000),
+      }),
+    });
+    await reject(connected(web(desktop.url, 'a1')));
+    await reject(connected(ext(desktop.url, 'xa1')));
+  });
+
   it('rejects an already-expired or malformed verifier answer', async () => {
     const past = await start({
       verifySession: (): AuthContext => ({

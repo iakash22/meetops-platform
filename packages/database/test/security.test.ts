@@ -73,7 +73,8 @@ const MEETINGS_EXTERNAL_ID_MIGRATION = '20261026120000_meetings_external_id';
 const RECORDING_SOURCE_NATIVE_MIGRATION = '20261026210000_recording_source_native';
 /** Update when adding a migration. */
 const INTEGRATION_CONNECTIONS_MIGRATION = '20261027000000_integration_connections';
-const LATEST_MIGRATION = INTEGRATION_CONNECTIONS_MIGRATION;
+const INTEGRATION_ROUTING_MIGRATION = '20261027100000_integration_routing_functions';
+const LATEST_MIGRATION = INTEGRATION_ROUTING_MIGRATION;
 const integrationsSql = readFileSync(
   resolve(migrationsDir, INTEGRATION_CONNECTIONS_MIGRATION, 'migration.sql'),
   'utf8',
@@ -1219,7 +1220,9 @@ describe('ADR-005 durable token families (static)', () => {
       .filter((x) => x.isDirectory())
       .map((x) => x.name)
       .sort();
-    expect(dirs.indexOf(AUTH_TOKENS_MIGRATION)).toBe(dirs.indexOf(LATEST_MIGRATION) - 1);
+    expect(dirs.indexOf(AUTH_TOKENS_MIGRATION)).toBe(
+      dirs.indexOf(INTEGRATION_CONNECTIONS_MIGRATION) - 1,
+    );
   });
   it('is additive only', () => {
     expect(statements).not.toMatch(
@@ -1323,6 +1326,7 @@ describe('Phase 5 integration_connections (static)', () => {
       .filter((x) => x.isDirectory())
       .map((x) => x.name)
       .sort();
+    expect(dirs.at(-2)).toBe(INTEGRATION_CONNECTIONS_MIGRATION);
     expect(dirs.at(-1)).toBe(LATEST_MIGRATION);
   });
 
@@ -1364,5 +1368,29 @@ describe('Phase 5 integration_connections (static)', () => {
       /"status" = 'revoked' AND "revoked_at" IS NOT NULL\s+AND "access_token_enc" IS NULL AND "refresh_token_enc" IS NULL AND "webhook_secret_enc" IS NULL/,
     );
     expect(model).toMatch(/revokedAt\s+DateTime\?\s+@map\("revoked_at"\)/);
+  });
+});
+
+describe('integration routing definer functions', () => {
+  const sql = readFileSync(
+    resolve(migrationsDir, '20261027100000_integration_routing_functions/migration.sql'),
+    'utf8',
+  );
+  for (const fn of [
+    'integration_connection_org(uuid, text)',
+    'integration_connections_due_for_refresh(timestamptz, integer)',
+  ]) {
+    it(`${fn} is locked down`, () => {
+      expect(sql).toContain(`ALTER FUNCTION ${fn} OWNER TO meetops_migrator;`);
+      expect(sql).toContain(`REVOKE ALL ON FUNCTION ${fn} FROM PUBLIC;`);
+      expect(sql).toContain(`GRANT EXECUTE ON FUNCTION ${fn} TO meetops_app;`);
+    });
+  }
+  it('are SECURITY DEFINER with a fixed search_path and never return secret columns', () => {
+    expect(sql.match(/SECURITY DEFINER\nSET search_path = public, pg_temp/g)).toHaveLength(2);
+    const bodies = sql.match(/AS \$\$[\s\S]*?\$\$;/g) ?? [];
+    expect(bodies).toHaveLength(2);
+    for (const b of bodies) expect(b).not.toMatch(/_enc|display_name|\*/);
+    expect(sql).toContain("c.status <> 'revoked'");
   });
 });

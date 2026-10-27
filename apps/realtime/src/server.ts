@@ -34,7 +34,7 @@ export type AuthContext = {
   userId: string;
   organizationId: string;
   sessionId: string;
-  credential: 'session' | 'extension';
+  credential: 'session' | 'extension' | 'desktop';
   scopes?: readonly string[];
   expiresAt: Date;
 };

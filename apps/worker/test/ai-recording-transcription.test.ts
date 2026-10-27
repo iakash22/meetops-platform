@@ -268,3 +268,30 @@ describe('recording transcription job', () => {
     ]);
   });
 });
+
+describe('recording transcription -> summary trigger', () => {
+  it('enqueues once per ready revision, re-enqueues on duplicate replays, and retries when enqueue fails', async () => {
+    const { deps } = setup();
+    const events: unknown[] = [];
+    let failNext = false;
+    deps.summaryTrigger = {
+      transcriptReady: async (e) => {
+        if (failNext) {
+          failNext = false;
+          throw new Error('redis down');
+        }
+        events.push(e);
+      },
+    };
+    await processRecordingTranscription(input, deps);
+    expect(events).toEqual([{ organizationId: ORG, meetingId: MEET, transcriptRevision: 1 }]);
+    failNext = true;
+    await expect(processRecordingTranscription(input, deps)).rejects.toMatchObject({
+      code: 'summary_enqueue_failed',
+      retryable: true,
+    });
+    await processRecordingTranscription(input, deps);
+    expect(events).toHaveLength(2);
+    expect(events[1]).toEqual(events[0]);
+  });
+});

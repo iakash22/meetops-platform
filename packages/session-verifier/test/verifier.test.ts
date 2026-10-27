@@ -245,4 +245,57 @@ describe('verifySession (bearer)', () => {
     expect(await withToken(token()).verifySession({ bearer: COOKIE })).toBeNull();
     expect(await withToken(token()).verifySession({ cookie: BEARER })).toBeNull();
   });
+
+  describe('desktop audience (ADR-012, opt-in)', () => {
+    const desktop = (t: ExtensionTokenRecord | null, aud?: ('extension' | 'desktop')[]) =>
+      createSessionVerifier({
+        sessions: fixture().store,
+        clock: clockAt(MIN),
+        extensionTokens: { findByTokenHash: async (h) => (h === hashToken(BEARER) ? t : null) },
+        ...(aud ? { bearerAudiences: aud } : {}),
+      });
+
+    it('rejects desktop tokens by default (backward compatible)', async () => {
+      expect(
+        await desktop(token({ audience: 'desktop' })).verifySession({ bearer: BEARER }),
+      ).toBeNull();
+    });
+
+    it('accepts desktop tokens as credential "desktop" when opted in', async () => {
+      const v = desktop(token({ audience: 'desktop', scopes: ['meetings:read'] }), [
+        'extension',
+        'desktop',
+      ]);
+      const r = await v.verifySession({ bearer: BEARER });
+      expect(r?.credential).toBe('desktop');
+      expect(r?.scopes).toEqual(['meetings:read']);
+      expect((await v.verifySessionByHash({ bearerHash: hashToken(BEARER) }))?.credential).toBe(
+        'desktop',
+      );
+    });
+
+    it('desktop-only verifier rejects extension tokens', async () => {
+      expect(await desktop(token(), ['desktop']).verifySession({ bearer: BEARER })).toBeNull();
+    });
+
+    it('revoked or expired desktop tokens fail closed', async () => {
+      const aud: ('extension' | 'desktop')[] = ['desktop'];
+      expect(
+        await desktop(token({ audience: 'desktop', revokedAt: T0 }), aud).verifySession({
+          bearer: BEARER,
+        }),
+      ).toBeNull();
+      expect(
+        await desktop(token({ audience: 'desktop', expiresAt: at(MIN) }), aud).verifySession({
+          bearer: BEARER,
+        }),
+      ).toBeNull();
+    });
+
+    it('throws on an unknown audience', () => {
+      expect(() =>
+        createSessionVerifier({ sessions: fixture().store, bearerAudiences: ['api' as 'desktop'] }),
+      ).toThrow(RangeError);
+    });
+  });
 });

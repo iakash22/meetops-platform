@@ -5,6 +5,7 @@ import {
   defaultModuleDeps,
   inMemoryMediaAdapters,
   type MediaAdapters,
+  type ModuleDeps,
 } from '../src/modules/index.js';
 import type {
   FakeMediaSigner,
@@ -35,9 +36,9 @@ export interface MediaWorld {
   otherOrg: string;
 }
 
-export async function mediaWorld(): Promise<MediaWorld> {
+export async function mediaWorld(extra: Partial<ModuleDeps> = {}): Promise<MediaWorld> {
   const media = inMemoryMediaAdapters();
-  const app = await buildApp(defaultModuleDeps({ media }));
+  const app = await buildApp(defaultModuleDeps({ media, ...extra }));
   const createOrg = async (c: Client, name: string) =>
     (await c.post('/orgs', { name })).json<{ organization: { id: string } }>().organization.id;
   const join = async (owner: Client, orgId: string, email: string, role: string) => {
