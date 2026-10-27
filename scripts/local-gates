@@ -1,0 +1,158 @@
+#!/usr/bin/env bash
+# scripts/local-gates: run the CI gates locally, one after another, and print a
+# Markdown summary to paste into a PR. Use it while GitHub Actions minutes are
+# exhausted (or any time you want CI-equivalent evidence without CI).
+#
+# Usage: scripts/local-gates [<branch|ref>]
+#   No ref:   checks the current working tree (uncommitted changes included).
+#   With ref: checks that ref in a temporary detached git worktree, so your
+#             checkout is never touched. The worktree is removed afterwards
+#             unless LOCAL_GATES_KEEP_WORKTREE=1.
+#
+# Env knobs:
+#   LOCAL_GATES_CONCURRENCY=1      turbo --concurrency (default 1)
+#   LOCAL_GATES_NO_DOWNLOAD=1      never download gitleaks; skip if missing
+#   LOCAL_GATES_KEEP_WORKTREE=1    keep the temp worktree for a ref run
+#   LOCAL_GATES_LOG_DIR=<dir>      where step logs and summary.md go
+#   GITLEAKS_VERSION=8.21.2        pinned to match .github/workflows/secrets.yml
+#
+# Exit code: 0 if no step failed (skips are allowed), 1 otherwise, 2 on usage error.
+set -uo pipefail
+
+GITLEAKS_VERSION="${GITLEAKS_VERSION:-8.21.2}"
+CONCURRENCY="${LOCAL_GATES_CONCURRENCY:-1}"
+export COREPACK_HOME="${COREPACK_HOME:-$HOME/.corepack}"
+export COREPACK_ENABLE_DOWNLOAD_PROMPT=0
+
+die() { echo "local-gates: $*" >&2; exit 2; }
+case "${1:-}" in -h|--help) sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'; exit 0;; esac
+[ $# -le 1 ] || die "expected at most one argument (a branch or ref)"
+
+repo_root="$(git rev-parse --show-toplevel 2>/dev/null)" || die "run inside the meetops-platform git repo"
+REF="${1:-}"
+WORKTREE=""
+cleanup() {
+  if [ -n "$WORKTREE" ] && [ "${LOCAL_GATES_KEEP_WORKTREE:-0}" != 1 ]; then
+    git -C "$repo_root" worktree remove --force "$WORKTREE" >/dev/null 2>&1 || true
+  fi
+}
+trap cleanup EXIT
+
+if [ -n "$REF" ]; then
+  sha="$(git -C "$repo_root" rev-parse --verify --quiet "${REF}^{commit}")" \
+    || sha="$(git -C "$repo_root" rev-parse --verify --quiet "origin/${REF}^{commit}")" \
+    || die "unknown ref '$REF' (try: git fetch origin)"
+  WORKTREE="${TMPDIR:-/tmp}/local-gates-wt-${sha:0:12}-$$"
+  git -C "$repo_root" worktree add --detach --quiet "$WORKTREE" "$sha" || die "git worktree add failed"
+  cd "$WORKTREE"
+  TARGET="$REF"
+  DIRTY="no (clean worktree)"
+else
+  cd "$repo_root"
+  sha="$(git rev-parse HEAD)"
+  TARGET="$(git rev-parse --abbrev-ref HEAD) (working tree)"
+  if [ -n "$(git status --porcelain --untracked-files=no)" ]; then DIRTY="YES: results include uncommitted changes"; else DIRTY="no"; fi
+fi
+
+LOG_DIR="${LOCAL_GATES_LOG_DIR:-${TMPDIR:-/tmp}/local-gates-${sha:0:12}-$(date +%Y%m%d-%H%M%S)}"
+mkdir -p "$LOG_DIR"
+
+# Be gentle on shared/loaded machines.
+LOWPRI=()
+command -v nice >/dev/null 2>&1 && LOWPRI+=(nice -n 10)
+command -v ionice >/dev/null 2>&1 && ionice -c2 -n7 true 2>/dev/null && LOWPRI+=(ionice -c2 -n7)
+
+if command -v corepack >/dev/null 2>&1; then PNPM=(corepack pnpm); else PNPM=(pnpm); fi
+NODE_V="$(node -v 2>/dev/null || echo 'not found')"
+PNPM_V="$("${PNPM[@]}" -v 2>/dev/null | tail -n1 || true)"; PNPM_V="${PNPM_V:-not found}"
+
+NAMES=(); RESULTS=(); DURS=(); NOTES=()
+record() { NAMES+=("$1"); RESULTS+=("$2"); DURS+=("$3"); NOTES+=("$4"); }
+
+run_step() { # name, then command...
+  local name="$1"; shift
+  local log="$LOG_DIR/${name}.log" start end rc
+  echo "==> [$name] $*"
+  start=$(date +%s)
+  ${LOWPRI[@]+"${LOWPRI[@]}"} "$@" >"$log" 2>&1; rc=$?
+  end=$(date +%s)
+  if [ $rc -eq 0 ]; then
+    echo "    pass ($((end - start))s)"
+    record "$name" pass "$((end - start))" ""
+  else
+    echo "    FAIL (exit $rc, $((end - start))s), last lines of $log:"
+    tail -n 30 "$log" | sed 's/^/    | /'
+    record "$name" fail "$((end - start))" "exit $rc, log: $log"
+  fi
+}
+
+find_gitleaks() {
+  if command -v gitleaks >/dev/null 2>&1; then command -v gitleaks; return 0; fi
+  [ -x "$HOME/.local/bin/gitleaks" ] && { echo "$HOME/.local/bin/gitleaks"; return 0; }
+  return 1
+}
+
+install_gitleaks() { # pinned release + checksum check into ~/.local/bin
+  [ "${LOCAL_GATES_NO_DOWNLOAD:-0}" = 1 ] && return 1
+  command -v curl >/dev/null 2>&1 || return 1
+  local os arch tgz base tmp
+  case "$(uname -s)" in Linux) os=linux;; Darwin) os=darwin;; *) return 1;; esac
+  case "$(uname -m)" in x86_64|amd64) arch=x64;; aarch64|arm64) arch=arm64;; *) return 1;; esac
+  tgz="gitleaks_${GITLEAKS_VERSION}_${os}_${arch}.tar.gz"
+  base="https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}"
+  tmp="$(mktemp -d)" || return 1
+  ( cd "$tmp" && curl -fsSLO "$base/$tgz" \
+      && curl -fsSL "$base/gitleaks_${GITLEAKS_VERSION}_checksums.txt" | grep " ${tgz}\$" > sums \
+      && { sha256sum -c sums >/dev/null 2>&1 || shasum -a 256 -c sums >/dev/null 2>&1; } \
+      && tar xzf "$tgz" gitleaks && mkdir -p "$HOME/.local/bin" && mv gitleaks "$HOME/.local/bin/gitleaks" )
+  local rc=$?; rm -rf "$tmp"; return $rc
+}
+
+echo "local-gates: target=$TARGET sha=${sha:0:12} node=$NODE_V pnpm=$PNPM_V concurrency=$CONCURRENCY logs=$LOG_DIR"
+[ "$DIRTY" = no ] || echo "local-gates: note: uncommitted changes: $DIRTY"
+
+TURBO=("${PNPM[@]}" exec turbo run)
+run_step install   "${PNPM[@]}" install --frozen-lockfile
+run_step build     "${TURBO[@]}" build     "--concurrency=$CONCURRENCY"
+run_step lint      "${TURBO[@]}" lint      "--concurrency=$CONCURRENCY"
+run_step typecheck "${TURBO[@]}" typecheck "--concurrency=$CONCURRENCY"
+run_step test      "${TURBO[@]}" test      "--concurrency=$CONCURRENCY"
+
+GL="$(find_gitleaks)" || { echo "==> [gitleaks] not installed; trying pinned v$GITLEAKS_VERSION into ~/.local/bin"; install_gitleaks && GL="$(find_gitleaks)"; } || GL=""
+if [ -n "$GL" ]; then
+  GL_V="$("$GL" version 2>/dev/null)"
+  # Same flags as .github/workflows/secrets.yml (history of HEAD only, honours .gitleaksignore).
+  run_step gitleaks "$GL" detect --source . --redact --no-banner --log-opts=HEAD --exit-code 1
+  [ "$GL_V" = "$GITLEAKS_VERSION" ] || NOTES[${#NOTES[@]}-1]="${NOTES[${#NOTES[@]}-1]} gitleaks $GL_V (CI pins $GITLEAKS_VERSION)"
+else
+  echo "==> [gitleaks] SKIPPED: not installed and download unavailable/disabled"
+  record gitleaks skip 0 "gitleaks not installed; install v$GITLEAKS_VERSION to ~/.local/bin or unset LOCAL_GATES_NO_DOWNLOAD"
+fi
+
+failed=0; total=0
+for r in "${RESULTS[@]}"; do [ "$r" = fail ] && failed=$((failed + 1)); done
+for d in "${DURS[@]}"; do total=$((total + d)); done
+icon() { case "$1" in pass) echo "✅ pass";; fail) echo "❌ fail";; *) echo "⏭️ skip";; esac; }
+
+{
+  echo "### Local gates: $([ $failed -eq 0 ] && echo PASS || echo "FAIL ($failed failed)")"
+  echo
+  echo "> Run locally with \`scripts/local-gates\` because GitHub Actions minutes are exhausted; red Actions runs on this PR are not code failures."
+  echo
+  echo "- Commit: \`$sha\` ($TARGET)"
+  echo "- Uncommitted changes: $DIRTY"
+  echo "- Node: \`$NODE_V\`, pnpm: \`$PNPM_V\`, turbo concurrency: $CONCURRENCY"
+  echo "- Host: $(uname -sm), finished $(date '+%Y-%m-%d %H:%M %Z')"
+  echo
+  echo "| Step | Result | Duration | Notes |"
+  echo "|---|---|---|---|"
+  for i in "${!NAMES[@]}"; do
+    echo "| ${NAMES[$i]} | $(icon "${RESULTS[$i]}") | ${DURS[$i]}s | ${NOTES[$i]} |"
+  done
+  echo "| **total** | | ${total}s | |"
+} > "$LOG_DIR/summary.md"
+
+echo
+echo "----- Markdown summary (also at $LOG_DIR/summary.md) -----"
+cat "$LOG_DIR/summary.md"
+[ $failed -eq 0 ]
