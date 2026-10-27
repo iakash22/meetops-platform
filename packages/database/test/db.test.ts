@@ -150,6 +150,14 @@ describe('generated client', () => {
         'NOTIFICATIONS_DEFAULT_PAGE_LIMIT',
         'NOTIFICATIONS_MAX_PAGE_LIMIT',
         'NOTIFICATION_PREFERENCES_MAX',
+        'IP_RETENTION_DAYS',
+        'IP_RETENTION_BATCH',
+        'IP_RETENTION_MAX_BATCHES',
+        'redactExpiredIpAddresses',
+        'SESSION_PURGE_DAYS',
+        'SESSION_PURGE_BATCH',
+        'SESSION_PURGE_MAX_BATCHES',
+        'purgeExpiredSessions',
       ].sort(),
     );
   });

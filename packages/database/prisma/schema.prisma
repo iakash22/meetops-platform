@@ -331,6 +331,12 @@ model Session {
   activeOrgId       String?   @map("active_org_id") @db.Uuid
   ipAddress         String?   @map("ip_address")
   userAgent         String?   @map("user_agent")
+  /// ADR-014 coarse GeoIP (null for private/unknown IPs). No lat/long.
+  geoCity           String?   @map("geo_city") @db.VarChar(128)
+  geoRegion         String?   @map("geo_region") @db.VarChar(128)
+  geoCountry        String?   @map("geo_country") @db.VarChar(128)
+  geoCountryCode    String?   @map("geo_country_code") @db.Char(2)
+  geoApproximate    Boolean?  @map("geo_approximate")
   /// Idle expiry (sliding).
   expiresAt         DateTime  @map("expires_at") @db.Timestamptz(3)
   /// Hard cap regardless of activity.
@@ -922,6 +928,12 @@ model AuditEvent {
   metadata       Json     @default("{}")
   ipAddress      String?  @map("ip_address")
   userAgent      String?  @map("user_agent")
+  /// ADR-014 coarse GeoIP. No lat/long.
+  geoCity        String?  @map("geo_city") @db.VarChar(128)
+  geoRegion      String?  @map("geo_region") @db.VarChar(128)
+  geoCountry     String?  @map("geo_country") @db.VarChar(128)
+  geoCountryCode String?  @map("geo_country_code") @db.Char(2)
+  geoApproximate Boolean? @map("geo_approximate")
   createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
 
   organization Organization? @relation(fields: [organizationId], references: [id], onDelete: Restrict)

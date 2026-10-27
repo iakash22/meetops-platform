@@ -80,9 +80,10 @@ const REPORT_SUMMARY_DEDUPE_MIGRATION = '20261027120000_report_summary_dedupe';
 const RECORDING_BYTES_MIGRATION = '20261027130000_recording_session_bytes_received';
 /** Definer SELECT policy for the integration routing functions (forced RLS binds the owner). */
 const INTEGRATION_ROUTING_POLICY_MIGRATION = '20261027140000_integration_routing_definer_policy';
+/** ADR-014 session/audit geo columns + 30-day IP retention. */
+const SESSION_AUDIT_GEOIP_MIGRATION = '20261028010000_session_audit_geoip';
 /** ADR-013 notifications tables. Update LATEST_MIGRATION when adding a migration. */
 const NOTIFICATIONS_MIGRATION = '20261027180000_notifications';
-const LATEST_MIGRATION = NOTIFICATIONS_MIGRATION;
 const notificationsSql = readFileSync(
   resolve(migrationsDir, NOTIFICATIONS_MIGRATION, 'migration.sql'),
   'utf8',
@@ -93,6 +94,7 @@ const NOTIFICATION_TABLES = [
   'notification_preferences',
   'push_device_tokens',
 ] as const;
+const LATEST_MIGRATION = SESSION_AUDIT_GEOIP_MIGRATION;
 const reportDedupeSql = readFileSync(
   resolve(migrationsDir, REPORT_SUMMARY_DEDUPE_MIGRATION, 'migration.sql'),
   'utf8',
@@ -1461,6 +1463,7 @@ describe('ADR-013 notifications tables (static)', () => {
       .map((x) => x.name)
       .sort();
     expect(dirs.at(-1)).toBe(LATEST_MIGRATION);
+    expect(dirs.at(-2)).toBe(NOTIFICATIONS_MIGRATION);
     expect(statements).not.toMatch(
       /\bDROP\b|RENAME|ALTER COLUMN|NO FORCE|DISABLE ROW LEVEL SECURITY/i,
     );
