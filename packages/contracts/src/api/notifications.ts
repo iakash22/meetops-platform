@@ -4,10 +4,12 @@ import { Id, IsoDateTime } from '../common.js';
 /** v0.10.0 (ADR-013): in-app feed, preferences, push devices and the email unsubscribe flow. */
 export const NOTIFICATION_PATHS = {
   notifications: '/orgs/:organizationId/notifications',
-  markRead: '/orgs/:organizationId/notifications/read',
+  markRead: '/orgs/:organizationId/notifications/:notificationId/read',
+  markAllRead: '/orgs/:organizationId/notifications/read-all',
   preferences: '/orgs/:organizationId/notification-preferences',
-  pushDevices: '/orgs/:organizationId/push-devices',
-  pushDevice: '/orgs/:organizationId/push-devices/:deviceId',
+  /** Mobile PR #262: user-facing paths; the device is bound to the session's active organization (forced RLS). */
+  pushDevices: '/me/push-devices',
+  pushDevice: '/me/push-devices/:id',
   /** GET renders a confirm page (no state change); POST applies (security review C, finding 5). */
   unsubscribe: '/notifications/unsubscribe',
 } as const;
@@ -40,22 +42,19 @@ const strict = { additionalProperties: false } as const;
 const NotificationType = Type.String({ minLength: 1, maxLength: 64, pattern: '^[a-z][a-z0-9_.-]*$' });
 const PreferenceType = Type.Union([Type.Literal('*'), NotificationType]);
 
-/** ids-only payload values; clients render copy from `type` + ids. */
-const DataValue = Type.Union([
-  Type.String({ maxLength: 200 }),
-  Type.Number(),
-  Type.Boolean(),
-  Type.Null(),
-]);
-
+/**
+ * Feed item (web PR #260 shape). `title` / `body` are rendered by the API from `kind` + ids (no stored free text);
+ * `meetingId` / `taskId` are present only when the notification points at one.
+ */
 export const Notification = Type.Object(
   {
     id: Id,
     organizationId: Id,
-    type: NotificationType,
-    subjectType: Type.Union([Type.String({ maxLength: 64 }), Type.Null()]),
-    subjectId: Type.Union([Id, Type.Null()]),
-    data: Type.Record(Type.String({ maxLength: 64 }), DataValue, { maxProperties: 20 }),
+    kind: NotificationType,
+    title: Type.String({ minLength: 1, maxLength: 200 }),
+    body: Type.Optional(Type.String({ maxLength: 1000 })),
+    meetingId: Type.Optional(Id),
+    taskId: Type.Optional(Id),
     readAt: Type.Union([IsoDateTime, Type.Null()]),
     createdAt: IsoDateTime,
   },
@@ -80,19 +79,15 @@ export const NotificationList = Type.Object(
   {
     items: Type.Array(Notification, { maxItems: 100 }),
     nextCursor: Type.Union([Type.String(), Type.Null()]),
-    unreadCount: Type.Integer({ minimum: 0 }),
   },
   strict,
 );
 export type NotificationList = Static<typeof NotificationList>;
 
-/** Either explicit ids or `all: true`. */
-export const MarkNotificationsReadRequest = Type.Union([
-  Type.Object({ ids: Type.Array(Id, { minItems: 1, maxItems: 100, uniqueItems: true }) }, strict),
-  Type.Object({ all: Type.Literal(true) }, strict),
-]);
-export type MarkNotificationsReadRequest = Static<typeof MarkNotificationsReadRequest>;
+export const NotificationParams = Type.Object({ organizationId: Id, notificationId: Id }, strict);
+export type NotificationParams = Static<typeof NotificationParams>;
 
+/** Both mark-read routes take no body and return how many rows changed (0 when already read). */
 export const MarkNotificationsReadResponse = Type.Object({ updated: Type.Integer({ minimum: 0 }) }, strict);
 export type MarkNotificationsReadResponse = Static<typeof MarkNotificationsReadResponse>;
 
@@ -126,43 +121,46 @@ const WebPushSubscription = Type.Object(
   },
   strict,
 );
-const DeviceLabel = Type.Optional(Type.String({ minLength: 1, maxLength: 100, pattern: '^[^\\u0000-\\u001f<>]+$' }));
+const DeviceName = Type.Optional(
+  Type.String({ minLength: 1, maxLength: 100, pattern: '^[^\\u0000-\\u001f<>]+$' }),
+);
 
-/** Web/extension register a Web Push subscription; iOS/Android register an Expo push token. */
+/**
+ * POST /me/push-devices (mobile PR #262). `provider: 'expo'` takes an Expo push token (ExponentPushToken[...] /
+ * ExpoPushToken[...]) for iOS/Android; `provider: 'webpush'` takes a Web Push subscription on an allowlisted host for
+ * web/extension. Anything else is rejected.
+ */
 export const RegisterPushDeviceRequest = Type.Union([
   Type.Object(
     {
-      platform: Type.Union([Type.Literal('web'), Type.Literal('extension')]),
-      subscription: WebPushSubscription,
-      label: DeviceLabel,
+      provider: Type.Literal('expo'),
+      token: Type.String({ pattern: EXPO_PUSH_TOKEN_PATTERN, maxLength: 160 }),
+      platform: Type.Union([Type.Literal('ios'), Type.Literal('android')]),
+      deviceName: DeviceName,
     },
     strict,
   ),
   Type.Object(
     {
-      platform: Type.Union([Type.Literal('ios'), Type.Literal('android')]),
-      expoPushToken: Type.String({ pattern: EXPO_PUSH_TOKEN_PATTERN, maxLength: 160 }),
-      label: DeviceLabel,
+      provider: Type.Literal('webpush'),
+      subscription: WebPushSubscription,
+      platform: Type.Union([Type.Literal('web'), Type.Literal('extension')]),
+      deviceName: DeviceName,
     },
     strict,
   ),
 ]);
 export type RegisterPushDeviceRequest = Static<typeof RegisterPushDeviceRequest>;
 
-/** Never carries the token or subscription. */
+/** Registration result; never carries the token or subscription. */
 export const PushDevice = Type.Object(
-  {
-    id: Id,
-    platform: PushPlatform,
-    label: Type.Union([Type.String(), Type.Null()]),
-    lastSeenAt: IsoDateTime,
-    createdAt: IsoDateTime,
-  },
+  { id: Id, platform: PushPlatform, createdAt: IsoDateTime },
   strict,
 );
 export type PushDevice = Static<typeof PushDevice>;
 
-export const PushDeviceParams = Type.Object({ organizationId: Id, deviceId: Id }, strict);
+/** DELETE /me/push-devices/:id: idempotent 204; only the caller's own devices are affected. */
+export const PushDeviceParams = Type.Object({ id: Id }, strict);
 export type PushDeviceParams = Static<typeof PushDeviceParams>;
 
 export const UnsubscribeQuery = Type.Object(

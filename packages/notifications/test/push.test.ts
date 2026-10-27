@@ -44,9 +44,9 @@ describe('push target validation (security review C, finding 1)', () => {
   });
 
   it('turns registrations into the stored token and never echoes it in errors', () => {
-    expect(JSON.parse(pushTokenFromRegistration({ platform: 'web', subscription: { endpoint: 'https://fcm.googleapis.com/x', keys } })).endpoint).toBe('https://fcm.googleapis.com/x');
+    expect(JSON.parse(pushTokenFromRegistration({ provider: 'webpush', platform: 'web', subscription: { endpoint: 'https://fcm.googleapis.com/x', keys } })).endpoint).toBe('https://fcm.googleapis.com/x');
     try {
-      pushTokenFromRegistration({ platform: 'web', subscription: { endpoint: 'https://secret-host.example/abc', keys } });
+      pushTokenFromRegistration({ provider: 'webpush', platform: 'web', subscription: { endpoint: 'https://secret-host.example/abc', keys } });
       expect.fail('should throw');
     } catch (e) {
       expect((e as Error).message).not.toContain('secret-host');

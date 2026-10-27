@@ -12,12 +12,15 @@ Notifications (ADR-013, Accepted). Additive; builds on 0.9.0.
 
 ### Added
 
-- `NOTIFICATION_PATHS`: feed list, mark-read, preferences (GET/PUT), push device register/unregister, unsubscribe
+- `NOTIFICATION_PATHS`: feed list, mark one read (`/notifications/:notificationId/read`), mark all read
+  (`/notifications/read-all`), preferences (GET/PUT), push device register/unregister (`/me/push-devices`, `/me/push-devices/:id`; mobile PR #262), unsubscribe
   (GET confirm page, POST applies).
-- DTOs: `Notification` (ids-only `data`), `NotificationList` (keyset `nextCursor`, `unreadCount`),
-  `ListNotificationsQuery`, `MarkNotificationsReadRequest`/`Response`, `NotificationPreference(s)`,
-  `UpdateNotificationPreferencesRequest`, `RegisterPushDeviceRequest` (Web Push subscription for web/extension, Expo
-  token for iOS/Android), `PushDevice` (never carries the token), `PushDeviceParams`, `UnsubscribeQuery`/`Response`.
+- DTOs: `Notification` (`id`, `organizationId`, `kind`, `title`, optional `body`/`meetingId`/`taskId`, nullable
+  `readAt`, `createdAt`; web PR #260), `NotificationList` (`items`, keyset `nextCursor`), `ListNotificationsQuery`,
+  `NotificationParams`, `MarkNotificationsReadResponse` (`updated`), `NotificationPreference(s)`,
+  `UpdateNotificationPreferencesRequest`, `RegisterPushDeviceRequest` (`{provider:'expo', token, platform:'ios'|'android',
+  deviceName?}` or `{provider:'webpush', subscription, platform:'web'|'extension', deviceName?}`), `PushDevice`
+  (`{id, platform, createdAt}`), `PushDeviceParams` (`{id}`), `UnsubscribeQuery`/`Response`.
 - `NOTIFICATION_CHANNELS`, `PUSH_PLATFORMS`, `WEB_PUSH_ALLOWED_HOSTS`, `EXPO_PUSH_TOKEN_PATTERN`, `EXPO_PUSH_API_URL`,
   `GENERIC_PUSH_TITLE`/`GENERIC_PUSH_BODY`.
 - Jobs: `NOTIFICATION_DELIVERY_QUEUE`, `NOTIFICATION_DELIVERY_JOB_RETENTION`, `NotificationDeliveryJobPayload`

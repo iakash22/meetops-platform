@@ -51,8 +51,8 @@ export function pushTokenFromRegistration(req: RegisterPushDeviceRequest): strin
     const url = assertWebPushEndpoint(req.subscription.endpoint);
     return JSON.stringify({ endpoint: url.href, keys: req.subscription.keys });
   }
-  assertExpoPushToken(req.expoPushToken);
-  return req.expoPushToken;
+  assertExpoPushToken(req.token);
+  return req.token;
 }
 
 /**

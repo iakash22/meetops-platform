@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest';
 import { Value } from '@sinclair/typebox/value';
 import { readFileSync } from 'node:fs';
 import {
-  MarkNotificationsReadRequest,
   NOTIFICATION_PATHS,
   NotificationDeliveryJobPayload,
   NotificationList,
@@ -21,29 +20,26 @@ describe('v0.10.0 notifications', () => {
 
   it('paths are org-scoped except the token-authenticated unsubscribe', () => {
     for (const [k, p] of Object.entries(NOTIFICATION_PATHS))
-      if (k !== 'unsubscribe') expect(p).toMatch(/^\/orgs\/:organizationId\//);
+      if (k === 'unsubscribe') continue;
+      else if (k.startsWith('pushDevice')) expect(p).toMatch(/^\/me\/push-devices/);
+      else expect(p).toMatch(/^\/orgs\/:organizationId\//);
   });
 
-  it('feed list validates and rejects unknown keys', () => {
+  it('feed list matches the web PR #260 shape and rejects unknown keys', () => {
     const item = {
       id: ID,
       organizationId: ID,
-      type: 'task.assigned',
-      subjectType: 'task',
-      subjectId: ID,
-      data: { taskId: ID },
+      kind: 'task.assigned',
+      title: 'A task was assigned to you',
+      taskId: ID,
       readAt: null,
       createdAt: '2026-10-27T00:00:00.000Z',
     };
-    expect(Value.Check(NotificationList, { items: [item], nextCursor: null, unreadCount: 1 })).toBe(true);
-    expect(Value.Check(NotificationList, { items: [{ ...item, title: 'x' }], nextCursor: null, unreadCount: 1 })).toBe(false);
-  });
-
-  it('mark-read takes ids or all, not both or neither', () => {
-    expect(Value.Check(MarkNotificationsReadRequest, { ids: [ID] })).toBe(true);
-    expect(Value.Check(MarkNotificationsReadRequest, { all: true })).toBe(true);
-    expect(Value.Check(MarkNotificationsReadRequest, { ids: [ID], all: true })).toBe(false);
-    expect(Value.Check(MarkNotificationsReadRequest, {})).toBe(false);
+    expect(Value.Check(NotificationList, { items: [item], nextCursor: null })).toBe(true);
+    expect(Value.Check(NotificationList, { items: [{ ...item, body: 'x', meetingId: ID }], nextCursor: 'abc' })).toBe(true);
+    expect(Value.Check(NotificationList, { items: [{ ...item, data: {} }], nextCursor: null })).toBe(false);
+    expect(NOTIFICATION_PATHS.markRead).toBe('/orgs/:organizationId/notifications/:notificationId/read');
+    expect(NOTIFICATION_PATHS.markAllRead).toBe('/orgs/:organizationId/notifications/read-all');
   });
 
   it('preferences accept * or a type per known channel', () => {
@@ -51,19 +47,20 @@ describe('v0.10.0 notifications', () => {
     expect(Value.Check(UpdateNotificationPreferencesRequest, { items: [{ type: '*', channel: 'sms', enabled: false }] })).toBe(false);
   });
 
-  it('push registration: https subscriptions and Expo token format only', () => {
+  it('push registration (mobile PR #262): Expo token format, or an https Web Push subscription', () => {
     const sub = { endpoint: 'https://fcm.googleapis.com/fcm/send/abc', keys: { p256dh: 'B'.repeat(20), auth: 'a'.repeat(10) } };
-    expect(Value.Check(RegisterPushDeviceRequest, { platform: 'web', subscription: sub })).toBe(true);
-    expect(Value.Check(RegisterPushDeviceRequest, { platform: 'web', subscription: { ...sub, endpoint: 'http://10.0.0.1/x' } })).toBe(false);
-    expect(Value.Check(RegisterPushDeviceRequest, { platform: 'ios', expoPushToken: 'ExponentPushToken[abcdefghijkl]' })).toBe(true);
-    expect(Value.Check(RegisterPushDeviceRequest, { platform: 'ios', expoPushToken: 'https://evil.example' })).toBe(false);
-    expect(Value.Check(RegisterPushDeviceRequest, { platform: 'ios', subscription: sub })).toBe(false);
+    expect(Value.Check(RegisterPushDeviceRequest, { provider: 'expo', token: 'ExponentPushToken[abcdefghijkl]', platform: 'ios', deviceName: 'Pixel' })).toBe(true);
+    expect(Value.Check(RegisterPushDeviceRequest, { provider: 'expo', token: 'ExpoPushToken[abcdefghijkl]', platform: 'android' })).toBe(true);
+    expect(Value.Check(RegisterPushDeviceRequest, { provider: 'expo', token: 'https://evil.example', platform: 'ios' })).toBe(false);
+    expect(Value.Check(RegisterPushDeviceRequest, { provider: 'fcm', token: 'x'.repeat(20), platform: 'android' })).toBe(false);
+    expect(Value.Check(RegisterPushDeviceRequest, { provider: 'webpush', subscription: sub, platform: 'web' })).toBe(true);
+    expect(Value.Check(RegisterPushDeviceRequest, { provider: 'webpush', subscription: { ...sub, endpoint: 'http://10.0.0.1/x' }, platform: 'web' })).toBe(false);
     expect(WEB_PUSH_ALLOWED_HOSTS).toContain('fcm.googleapis.com');
     expect(REDACT_KEYS).toEqual(expect.arrayContaining(['expoPushToken', 'p256dh']));
   });
 
   it('device DTO never carries tokens', () => {
-    expect(Object.keys(PushDevice.properties)).not.toEqual(expect.arrayContaining(['token']));
+    expect(Object.keys(PushDevice.properties).sort()).toEqual(['createdAt', 'id', 'platform']);
     expect(JSON.stringify(PushDevice)).not.toMatch(/token|endpoint|p256dh/i);
   });
 
