@@ -63,6 +63,14 @@ export class PrismaSessionRepository implements SessionRepository {
     const r = await this.db.session.findUnique({ where: { id } });
     return r ? toSession(r) : null;
   }
+  async findLastActiveOrganizationId(userId: string) {
+    const r = await this.db.session.findFirst({
+      where: { userId, activeOrgId: { not: null } },
+      orderBy: [{ lastSeenAt: 'desc' }, { createdAt: 'desc' }],
+      select: { activeOrgId: true },
+    });
+    return r?.activeOrgId ?? null;
+  }
   async listActiveForUser(userId: string, now: Date) {
     const rows = await this.db.session.findMany({
       where: { userId, revokedAt: null, absoluteExpiresAt: { gt: now } },

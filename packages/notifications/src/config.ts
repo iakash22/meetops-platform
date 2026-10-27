@@ -26,7 +26,23 @@ const resendSchema = z.object({
   EMAIL_PROVIDER: z.literal('resend'),
   RESEND_API_KEY: z.string().min(1, 'RESEND_API_KEY is required'),
   EMAIL_FROM: z.string().min(3, 'EMAIL_FROM is required'),
-  RESEND_API_URL: z.url().optional(),
+  // Security review B 1.1: the Bearer API key is sent here, so only https://api.resend.com is accepted.
+  RESEND_API_URL: z
+    .url()
+    .refine(
+      (u) => {
+        const x = new URL(u);
+        return (
+          x.protocol === 'https:' &&
+          x.hostname === 'api.resend.com' &&
+          x.port === '' &&
+          x.username === '' &&
+          x.password === ''
+        );
+      },
+      { error: 'RESEND_API_URL must be https://api.resend.com' },
+    )
+    .optional(),
 });
 
 const consoleSchema = z.object({

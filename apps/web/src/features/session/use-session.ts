@@ -46,14 +46,49 @@ export function useSession() {
   return useQuery(sessionQueryOptions(api));
 }
 
-/** Load the session (cached) and sync organizations into the org store. */
+/**
+ * Load the session (cached) and sync organizations into the org store.
+ *
+ * The API scopes `/orgs/:id/...` to the session's active org. When the session has no active org
+ * (or one the user no longer belongs to) the store falls back to a default org; that choice is made
+ * real with POST /orgs/switch and a session refetch BEFORE any org-scoped data loads, otherwise
+ * every org route answers 404.
+ */
 export async function ensureSession(
   queryClient: QueryClient,
   api: ApiClient,
 ): Promise<GetAuthSessionResponse | null> {
   const session = await queryClient.ensureQueryData(sessionQueryOptions(api));
-  if (session) applySessionToStore(session);
-  return session;
+  if (!session) return null;
+  applySessionToStore(session);
+  return syncDefaultOrganization(queryClient, api, session);
+}
+
+let pendingSwitch: Promise<GetAuthSessionResponse | null> | null = null;
+
+/** If the store's org differs from the session's active org, switch server-side and refetch. */
+export async function syncDefaultOrganization(
+  queryClient: QueryClient,
+  api: ApiClient,
+  session: GetAuthSessionResponse,
+): Promise<GetAuthSessionResponse | null> {
+  const chosen = useOrgStore.getState().currentOrganizationId;
+  if (!chosen || chosen === session.activeOrganizationId) return session;
+  // One switch at a time (guard + concurrent callers share it).
+  pendingSwitch ??= (async () => {
+    try {
+      await api.organizations.switch({ organizationId: chosen });
+      const fresh = await queryClient.fetchQuery({ ...sessionQueryOptions(api), staleTime: 0 });
+      if (fresh) applySessionToStore(fresh);
+      return fresh;
+    } catch {
+      // Keep the user signed in; org-scoped pages show their own error state with retry.
+      return session;
+    } finally {
+      pendingSwitch = null;
+    }
+  })();
+  return pendingSwitch;
 }
 
 export function applySessionToStore(

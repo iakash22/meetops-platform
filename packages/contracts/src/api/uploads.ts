@@ -20,8 +20,33 @@ export const Sha256Base64 = Type.String({ pattern: '^[A-Za-z0-9+/]{43}=$' });
 /** 1.4 GB maximum single upload (= MAX_MEDIA_BYTES). */
 export const MAX_UPLOAD_BYTES = MAX_MEDIA_BYTES;
 
+/** See `filename` below. */
+export const FILENAME_PATTERN =
+  '^[^/\\\\\\u0000-\\u001F\\u007F-\\u009F\\u00AD\\u0600-\\u0605\\u061C\\u06DD\\u070F\\u0890\\u0891\\u08E2\\u180E\\u200B-\\u200F\\u2028-\\u202E\\u2060-\\u2064\\u2066-\\u206F\\uFEFF\\uFFF9-\\uFFFB]+$';
+
+/** Full check, incl. astral code points: no Cc, Cf, Zl, Zp, Co, Cs, `/` or `\\`, and the FILENAME_PATTERN. */
+export function isSafeUploadFilename(name: string): boolean {
+  return (
+    new RegExp(FILENAME_PATTERN, 'u').test(name) &&
+    !/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}\p{Co}\p{Cs}]/u.test(name)
+  );
+}
+
 const uploadFields = {
-  filename: Type.String({ minLength: 1, maxLength: 255, pattern: '^[^/\\\\\\u0000]+$' }),
+  /**
+   * Display name only (never part of a storage key). Security review B 4.3 + #270 L-1. The pattern (BMP, valid with
+   * and without the regex `u` flag, so TypeBox Value and Ajv agree) rejects `/`, `\`, C0/C1 controls, DEL, line and
+   * paragraph separators and every BMP format (Cf) character: soft hyphen, Arabic/Syriac marks, Mongolian vowel
+   * separator, zero-width space/joiners and LRM/RLM (U+200B-U+200F), bidi embeddings/overrides/isolates
+   * (U+202A-U+202E, U+2066-U+2069), word joiner and invisible operators (U+2060-U+2064, U+206A-U+206F), BOM / ZWNBSP
+   * (U+FEFF) and interlinear annotations (U+FFF9-U+FFFB). Astral Cf (e.g. tag characters) is caught by
+   * isSafeUploadFilename, which the API also enforces. Encode it (RFC 5987 `filename*=`) in headers.
+   */
+  filename: Type.String({
+    minLength: 1,
+    maxLength: 255,
+    pattern: FILENAME_PATTERN,
+  }),
   mimeType: MediaMimeType,
   sizeBytes: Type.Integer({ minimum: 1, maximum: MAX_UPLOAD_BYTES }),
   /** REQUIRED: standard base64 (44 chars, padded) sha256 digest of the whole file; signed into the upload. */

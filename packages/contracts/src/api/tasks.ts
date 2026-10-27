@@ -71,3 +71,38 @@ export const UpdateTaskRequest = Type.Object(
   { additionalProperties: false, minProperties: 1 },
 );
 export type UpdateTaskRequest = Static<typeof UpdateTaskRequest>;
+
+/**
+ * v0.10.0: body of POST /orgs/:organizationId/tasks (`TASK_PATHS.tasks`), returning 201 `Task`. A manual task:
+ * `status` defaults to `todo` and `priority` to `medium` server-side. `assigneeId` is an employee id; `projectId` and
+ * `meetingId` must be live rows of the same organization (400 otherwise). Unknown keys are rejected.
+ */
+export const CreateTaskRequest = Type.Object(
+  {
+    title: Type.String({ minLength: 1, maxLength: 500 }),
+    description: Type.Optional(Type.String({ maxLength: 10_000 })),
+    status: Type.Optional(TaskStatus),
+    priority: Type.Optional(TaskPriority),
+    assigneeId: Type.Optional(Id),
+    projectId: Type.Optional(Id),
+    meetingId: Type.Optional(Id),
+    dueAt: Type.Optional(IsoDateTime),
+  },
+  { additionalProperties: false },
+);
+export type CreateTaskRequest = Static<typeof CreateTaskRequest>;
+
+/**
+ * v0.10.0: body of POST /orgs/:organizationId/extracted-tasks/:extractedTaskId/accept (`TASK_PATHS.accept`), returning
+ * 201 `Task`. The reviewer's (possibly edited) values; LLM hints are never copied server-side. Unknown keys rejected.
+ */
+export const AcceptExtractedTaskRequest = Type.Object(
+  {
+    title: Type.String({ minLength: 1, maxLength: 500 }),
+    priority: TaskPriority,
+    description: Type.Optional(Type.String({ maxLength: 10_000 })),
+    dueAt: Type.Optional(IsoDateTime),
+  },
+  { additionalProperties: false },
+);
+export type AcceptExtractedTaskRequest = Static<typeof AcceptExtractedTaskRequest>;

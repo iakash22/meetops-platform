@@ -1,3 +1,4 @@
+import { ALLOWED_MEDIA_MIME_TYPES } from '@meetops/contracts';
 import type { ConsentSubjectType, FileObjectScanStatus } from '@meetops/contracts';
 import { DomainError } from '../../../shared/domain-error.js';
 
@@ -56,7 +57,16 @@ export interface MediaSigner {
     checksumSha256Base64: string;
     ttlSeconds: number;
   }): Promise<SignedRequest>;
-  presignGet(spec: { key: string; ttlSeconds: number }): Promise<SignedRequest>;
+  /**
+   * Presigned download. Adapters MUST force `response-content-disposition=attachment` and
+   * `response-content-type=<downloadContentType(contentType)>` (allowlisted base type, else application/octet-stream)
+   * so an untrusted upload is never rendered inline (security review B 4.1). @meetops/storage does this.
+   */
+  presignGet(spec: {
+    key: string;
+    ttlSeconds: number;
+    contentType: string;
+  }): Promise<SignedRequest>;
   /**
    * Stored object size and full-object SHA-256 (base64), or null when nothing was uploaded at `key`. Adapters must
    * HEAD with checksum mode enabled (S3/MinIO `ChecksumMode: 'ENABLED'` -> `ChecksumSHA256`) and return
@@ -89,4 +99,12 @@ export class UploadStateConflictError extends DomainError {
   constructor(message: string) {
     super('CONFLICT', message, 409);
   }
+}
+
+/** Allowlisted base media type for downloads (`;codecs=` stripped), else application/octet-stream. */
+export function downloadContentType(contentType: string): string {
+  const base = (contentType.split(';')[0] ?? '').trim().toLowerCase();
+  return (ALLOWED_MEDIA_MIME_TYPES as readonly string[]).includes(base)
+    ? base
+    : 'application/octet-stream';
 }

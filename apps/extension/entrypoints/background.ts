@@ -24,7 +24,7 @@ import {
   retryPendingDiscards,
   withSessionGate,
 } from '../src/lib/pending-discard.js';
-import { classifySender, extensionUrls } from '../src/lib/senders.js';
+import { classifySender, extensionUrls, mayUseAuthAndTaskReads } from '../src/lib/senders.js';
 import { sessionKV } from '../src/lib/storage.js';
 import { directUploadEnabled, httpUploadEnabled } from '../src/lib/features.js';
 import { drainDirectUploads } from '../src/lib/direct-drain.js';
@@ -218,7 +218,8 @@ const handle = (...a: Parameters<typeof handleBackgroundMessage>) =>
 export default defineBackground(() => {
   chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     if ((msg as { target?: string } | null)?.target !== 'background') return false;
-    const { fromSelf, fromOffscreen, fromPopup } = classifySender(sender, extensionUrls());
+    const sent = classifySender(sender, extensionUrls());
+    const { fromSelf, fromOffscreen, fromPopup } = sent;
     if (isUploadRpcRequest(msg)) {
       // Only the offscreen recorder, and only when the HTTP client is enabled; anything else gets no response.
       if (!fromOffscreen || !HTTP_UPLOAD) return false;
@@ -226,19 +227,20 @@ export default defineBackground(() => {
       return true;
     }
     if (isAuthRequest(msg)) {
-      if (!fromPopup) return false;
+      if (!mayUseAuthAndTaskReads(sent)) return false; // popup or side panel
       handleAuth(msg).then(sendResponse, (err: unknown) =>
         sendResponse({ ok: false, error: safeErrorMessage(err) }),
       );
       return true;
     }
     if (isPendingTasksRequest(msg)) {
-      if (!fromPopup) return false;
+      if (!mayUseAuthAndTaskReads(sent)) return false; // popup or side panel
       handlePendingTasks().then(sendResponse, (err: unknown) =>
         sendResponse({ ok: false, error: safeErrorMessage(err) }),
       );
       return true;
     }
+    // Recorder control (incl. starting a recording) stays popup-only: the side panel flag is never passed here.
     const done = handle(deps, msg, { fromSelf, fromOffscreen, fromPopup });
     // A finished recording is uploaded as one file as soon as it stops (direct-upload flag only).
     if (direct && fromOffscreen && (msg as { type?: string }).type === 'REC_STOPPED')

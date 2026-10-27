@@ -30,7 +30,13 @@ export default async function meetingsModule(app: FastifyInstance, opts: Meeting
   const { auth, organizations, deps } = opts;
   registerDomainErrorHandler(app);
   const g = makeGuards(auth, deps.security);
-  app.addHook('onRequest', bearerAwareMutationGuard(g.mutationGuard));
+  app.addHook(
+    'onRequest',
+    bearerAwareMutationGuard(g.mutationGuard, {
+      cookieName: deps.security.cookieName,
+      bearerEnabled: opts.extensionBearer !== undefined,
+    }),
+  );
   const access = new DirectoryAccess(organizations, deps.audit);
   const caller: ResolveCaller = async (request, organizationId) =>
     access.caller(await g.requireSession(request), organizationId, requestMeta(request));

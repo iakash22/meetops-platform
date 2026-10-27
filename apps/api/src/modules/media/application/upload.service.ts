@@ -1,5 +1,10 @@
 import { randomUUID } from 'node:crypto';
-import { MAX_PRESIGNED_GET_TTL_SECONDS, type InitUploadRequest } from '@meetops/contracts';
+import {
+  isSafeUploadFilename,
+  MAX_PRESIGNED_GET_TTL_SECONDS,
+  type InitUploadRequest,
+} from '@meetops/contracts';
+import { DomainError } from '../../../shared/domain-error.js';
 import type { DirectoryCaller } from '../../directory/access.js';
 import type { MeetingRepository } from '../../meetings/domain/meeting.js';
 import { MeetingNotFoundError } from '../../meetings/domain/meeting.js';
@@ -47,6 +52,9 @@ export class UploadService {
     body: InitUploadInput,
   ): Promise<{ file: FileObjectRecord; upload: SignedRequest }> {
     authorizeMedia(c, 'create', 'FileObject');
+    // The schema pattern covers BMP characters; this also rejects astral format/control code points (#270 L-1).
+    if (!isSafeUploadFilename(body.filename))
+      throw new DomainError('VALIDATION_FAILED', 'Invalid filename', 400);
     const now = this.d.now();
     const consent = checkConsentInput(body.consent, now);
     const org = c.ctx.organizationId;
@@ -128,11 +136,20 @@ export class UploadService {
     return { ...f, status: 'processing', scanStatus: 'pending' };
   }
 
-  /** Per #168: 404 (same body as other-org / unknown ids) unless the FileObject's scanStatus is `clean`. */
+  /**
+   * Per #168: 404 (same body as other-org / unknown ids) unless the FileObject's scanStatus is `clean`.
+   * Security review B 4.4: the CASL check runs against this row (org + uploader), not just the subject type, so a
+   * row-level rule in the RBAC matrix (e.g. private recordings) applies here. The current matrix grants `read
+   * FileObject` org-wide to every role.
+   */
   async downloadUrl(c: DirectoryCaller, id: string): Promise<SignedRequest> {
     const f = await this.find(c, id);
-    authorizeMedia(c, 'read', 'FileObject');
+    authorizeMedia(c, 'read', 'FileObject', f.uploadedById);
     if (f.scanStatus !== 'clean') throw new UploadNotFoundError();
-    return this.d.signer.presignGet({ key: f.key, ttlSeconds: DOWNLOAD_URL_TTL_SECONDS });
+    return this.d.signer.presignGet({
+      key: f.key,
+      ttlSeconds: DOWNLOAD_URL_TTL_SECONDS,
+      contentType: f.mimeType,
+    });
   }
 }

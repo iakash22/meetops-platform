@@ -62,7 +62,8 @@ export interface OrgScopedSummaryRepository {
   /** Report already produced for this exact (transcript, revision, prompt version), if any. */
   findSummary(key: SummaryRunKey): Promise<{ reportId: string } | undefined>;
   /**
-   * One transaction: AiRun(succeeded) + Report(next version) + ExtractedTask rows, all `pending_review`.
+   * One transaction: AiRun(succeeded) + Report(next version) + ExtractedTask rows, all `pending_review`,
+   * + a `meeting.summary_ready` outbox event (ids/counts only).
    * Returns created=false when a concurrent writer already stored this key.
    */
   saveSummary(write: SummaryWrite): Promise<{ reportId: string; created: boolean }>;
@@ -112,6 +113,9 @@ export async function saveSummaryOnce(
 }
 
 const SUMMARY_KIND = 'summary' as const;
+
+/** Outbox event the notifications relay (#279) fans out as `meeting.summary_ready`. Ids/counts only. */
+export const SUMMARY_READY_EVENT = 'meeting.summary_ready';
 
 export function createOrgScopedSummaryRepository(
   tx: DatabaseTransaction,
@@ -232,6 +236,22 @@ export function createOrgScopedSummaryRepository(
             status: 'pending_review' as const,
           })),
         });
+      // Same transaction as the report: the notification fan-out sees the event iff the summary exists.
+      // Org-scoped (RLS); ids + counts only, never summary/transcript/model text.
+      await tx.outboxEvent.create({
+        data: {
+          organizationId,
+          aggregateType: 'meeting',
+          aggregateId: w.meetingId,
+          eventType: SUMMARY_READY_EVENT,
+          payload: {
+            meetingId: w.meetingId,
+            reportId: report.id,
+            transcriptRevision: w.transcriptRevision,
+            tasksPendingReview: w.tasks.length,
+          },
+        },
+      });
       return { reportId: report.id, created: true };
     },
     async recordFailure(w) {
