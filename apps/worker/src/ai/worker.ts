@@ -1,7 +1,7 @@
 import { Queue, UnrecoverableError, Worker, type Job } from 'bullmq';
 import { Redis } from 'ioredis';
 import { QUEUE_NAMES, type TranscriptionJobPayload } from '@meetops/contracts';
-import { logger as baseLogger } from '@meetops/logger';
+import { logger as baseLogger } from '../logger.js';
 import { createRealtimePublisher, createRedisEmitter } from '../media/realtime.js';
 import {
   processTranscriptionJob,

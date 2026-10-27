@@ -1,6 +1,7 @@
 import Fastify, { type FastifyBaseLogger } from 'fastify';
 import swagger from '@fastify/swagger';
 import swaggerUi from '@fastify/swagger-ui';
+import { REDACT_KEYS } from '@meetops/contracts';
 import { createLogger } from '@meetops/logger';
 import {
   isRelaxedEnv,
@@ -79,6 +80,8 @@ export function createServer(options: CreateServerOptions = {}) {
     name: 'api',
     // Superset of @meetops/logger defaults plus CSRF/auth headers (any case, via lowercased Node headers).
     redact: { paths: REDACT_PATHS, censor: '***redacted***' },
+    // ADR-005 A1.5: contracts REDACT_KEYS at any depth (fast-redact `*.` paths above are one level only).
+    redactKeys: REDACT_KEYS,
   });
   // Throws in production when persistence/rate-limit implementations are neither injected nor
   // backed by DATABASE_URL / REDIS_URL.
