@@ -24,7 +24,20 @@ export type AcceptInput = {
   dueAt?: Date | undefined;
 };
 
+export type TaskPatch = {
+  title?: string | undefined;
+  description?: string | null | undefined;
+  status?: TaskStatus | undefined;
+  priority?: TaskPriority | undefined;
+  /** Employee id in the same org; null unassigns. */
+  assigneeId?: string | null | undefined;
+  dueAt?: Date | null | undefined;
+};
+
 /** Thrown by repositories; mapped to 404 / 409 by the service. */
+export class TaskMissing extends Error {}
+/** assigneeId is not an employee of this org (other-org ids look the same as unknown ones). */
+export class TaskAssigneeInvalid extends Error {}
 export class ExtractedTaskMissing extends Error {}
 export class ExtractedTaskAlreadyReviewed extends Error {}
 
@@ -40,6 +53,10 @@ export interface TaskRepositories {
     organizationId: string,
     q: { meetingId?: string | undefined; cursor?: string | undefined; limit: number },
   ): Promise<Page<ExtractedTask>>;
+  /** Throws TaskMissing for unknown/other-org ids. */
+  getTask(organizationId: string, taskId: string): Promise<Task>;
+  /** Throws TaskMissing or TaskAssigneeInvalid. Absent keys are left unchanged. */
+  updateTask(organizationId: string, taskId: string, patch: TaskPatch): Promise<Task>;
   accept(organizationId: string, input: AcceptInput): Promise<Task>;
   dismiss(
     organizationId: string,

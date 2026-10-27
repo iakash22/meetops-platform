@@ -12,3 +12,14 @@ export class ExtractedTaskReviewedError extends DomainError {
     super('CONFLICT', 'Extracted task was already reviewed', 409);
   }
 }
+
+export class TaskNotFoundError extends DomainError {
+  constructor() {
+    super('NOT_FOUND', 'Task not found', 404);
+  }
+}
+export class TaskAssigneeInvalidError extends DomainError {
+  constructor() {
+    super('VALIDATION_FAILED', 'assigneeId is not an employee of this organization', 400);
+  }
+}

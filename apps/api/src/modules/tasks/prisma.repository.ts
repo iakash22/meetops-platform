@@ -5,8 +5,11 @@ import type { Page } from '../directory/ports.js';
 import {
   ExtractedTaskAlreadyReviewed,
   ExtractedTaskMissing,
+  TaskAssigneeInvalid,
+  TaskMissing,
   type AcceptInput,
   type TaskFilter,
+  type TaskPatch,
   type TaskRepositories,
 } from './ports.js';
 
@@ -174,6 +177,40 @@ export class PrismaTasks implements TaskRepositories {
       select: { id: true },
     });
     throw exists ? new ExtractedTaskAlreadyReviewed() : new ExtractedTaskMissing();
+  }
+
+  getTask(organizationId: string, taskId: string) {
+    return this.run(organizationId, async (tx) => {
+      const t = await tx.task.findFirst({ where: { organizationId, id: taskId } });
+      if (!t) throw new TaskMissing();
+      return toTask(t as TaskRow);
+    });
+  }
+
+  updateTask(organizationId: string, taskId: string, p: TaskPatch) {
+    return this.run(organizationId, async (tx) => {
+      if (p.assigneeId) {
+        const e = await tx.employee.findFirst({
+          where: { organizationId, id: p.assigneeId },
+          select: { id: true },
+        });
+        if (!e) throw new TaskAssigneeInvalid();
+      }
+      const n = await tx.task.updateMany({
+        where: { organizationId, id: taskId },
+        data: {
+          ...(p.title !== undefined ? { title: p.title } : {}),
+          ...(p.description !== undefined ? { description: p.description } : {}),
+          ...(p.status !== undefined ? { status: p.status } : {}),
+          ...(p.priority !== undefined ? { priority: p.priority } : {}),
+          ...(p.assigneeId !== undefined ? { assigneeId: p.assigneeId } : {}),
+          ...(p.dueAt !== undefined ? { dueAt: p.dueAt } : {}),
+        },
+      });
+      if (n.count === 0) throw new TaskMissing();
+      const t = await tx.task.findFirstOrThrow({ where: { organizationId, id: taskId } });
+      return toTask(t as TaskRow);
+    });
   }
 
   accept(organizationId: string, input: AcceptInput) {

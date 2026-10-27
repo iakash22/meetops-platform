@@ -32,6 +32,7 @@ export type AuditAction =
   | 'project.delete'
   | 'extracted_task.accept'
   | 'extracted_task.dismiss'
+  | 'task.update'
   | 'meeting.create'
   // ADR-005 extension pairing and tokens
   | 'extension.pair'
@@ -57,6 +58,7 @@ export interface AuditEvent {
     | 'team_member'
     | 'project'
     | 'extracted_task'
+    | 'task'
     | 'meeting'
     | 'extension_device';
   targetId: string | null;

@@ -4,7 +4,10 @@ import { keysetPage } from '../directory/cursor.js';
 import {
   ExtractedTaskAlreadyReviewed,
   ExtractedTaskMissing,
+  TaskMissing,
+  TaskAssigneeInvalid,
   type AcceptInput,
+  type TaskPatch,
   type TaskFilter,
   type TaskRepositories,
 } from './ports.js';
@@ -71,6 +74,33 @@ export class InMemoryTasks implements TaskRepositories {
     );
     const page = keysetPage(rows, key, q);
     return Promise.resolve({ items: page.items.map(publicExtracted), nextCursor: page.nextCursor });
+  }
+
+  /** Test hook: when set, assigneeIds outside this set are rejected like the Prisma FK check. */
+  employees: Set<string> | undefined;
+
+  getTask(organizationId: string, taskId: string) {
+    const t = this.tasks.find((x) => x.organizationId === organizationId && x.id === taskId);
+    return t ? Promise.resolve(t) : Promise.reject(new TaskMissing());
+  }
+
+  updateTask(organizationId: string, taskId: string, p: TaskPatch) {
+    const i = this.tasks.findIndex((x) => x.organizationId === organizationId && x.id === taskId);
+    if (i < 0) return Promise.reject(new TaskMissing());
+    if (p.assigneeId && this.employees && !this.employees.has(p.assigneeId))
+      return Promise.reject(new TaskAssigneeInvalid());
+    const next: Task = { ...this.tasks[i]!, updatedAt: this.now().toISOString() };
+    if (p.title !== undefined) next.title = p.title;
+    if (p.status !== undefined) next.status = p.status;
+    if (p.priority !== undefined) next.priority = p.priority;
+    if (p.description === null) delete next.description;
+    else if (p.description !== undefined) next.description = p.description;
+    if (p.assigneeId === null) delete next.assigneeId;
+    else if (p.assigneeId !== undefined) next.assigneeId = p.assigneeId;
+    if (p.dueAt === null) delete next.dueAt;
+    else if (p.dueAt !== undefined) next.dueAt = p.dueAt.toISOString();
+    this.tasks[i] = next;
+    return Promise.resolve(next);
   }
 
   private pending(organizationId: string, id: string) {

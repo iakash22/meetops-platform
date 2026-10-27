@@ -8,6 +8,7 @@ import {
   ListTasksQuery,
   Task,
   TaskPriority,
+  TaskStatus,
 } from '@meetops/contracts';
 import type { AuthService } from '../auth/application/auth.service.js';
 import { makeGuards, requestMeta } from '../auth/http/security.js';
@@ -17,12 +18,20 @@ import { isRelaxedEnv, MissingProductionDependencyError, type ModuleDeps } from 
 import { DirectoryAccess } from '../directory/access.js';
 import { toDirectoryError } from '../directory/errors.js';
 import { directoryErrors, directoryWriteErrors } from '../directory/http/route-kit.js';
-import { ExtractedTaskNotFoundError, ExtractedTaskReviewedError } from './errors.js';
+import {
+  ExtractedTaskNotFoundError,
+  ExtractedTaskReviewedError,
+  TaskAssigneeInvalidError,
+  TaskNotFoundError,
+} from './errors.js';
 import { InMemoryTasks } from './in-memory.repository.js';
 import { PrismaTasks } from './prisma.repository.js';
 import {
   ExtractedTaskAlreadyReviewed,
   ExtractedTaskMissing,
+  TaskAssigneeInvalid,
+  TaskMissing,
+  type TaskPatch,
   type TaskRepositories,
 } from './ports.js';
 
@@ -35,6 +44,7 @@ export const TASK_PATHS = {
   extractedTasks: '/orgs/:organizationId/extracted-tasks',
   accept: '/orgs/:organizationId/extracted-tasks/:extractedTaskId/accept',
   dismiss: '/orgs/:organizationId/extracted-tasks/:extractedTaskId/dismiss',
+  task: '/orgs/:organizationId/tasks/:taskId',
 } as const;
 
 const Uuid = Type.String({ format: 'uuid' });
@@ -70,7 +80,34 @@ export const ListTasksQuerySchema = (() => {
   return s as unknown as typeof ListTasksQuery;
 })();
 
+const TaskParams = Type.Object(
+  { organizationId: Uuid, taskId: Uuid },
+  { additionalProperties: false },
+);
+/** Null first: Ajv coerceTypes would otherwise turn null into '' on the string branch.
+ * Proposed UpdateTaskRequest for contracts. null clears an optional field; at least one key is required. */
+export const UpdateTaskBody = Type.Object(
+  {
+    title: Type.Optional(Type.String({ minLength: 1, maxLength: 500 })),
+    description: Type.Optional(Type.Union([Type.Null(), Type.String({ maxLength: 10000 })])),
+    status: Type.Optional(TaskStatus),
+    priority: Type.Optional(TaskPriority),
+    assigneeId: Type.Optional(Type.Union([Type.Null(), Uuid])),
+    dueAt: Type.Optional(Type.Union([Type.Null(), Type.String({ format: 'date-time' })])),
+  },
+  { additionalProperties: false, minProperties: 1 },
+);
+type UpdateTaskBody = {
+  title?: string;
+  description?: string | null;
+  status?: Task['status'];
+  priority?: Task['priority'];
+  assigneeId?: string | null;
+  dueAt?: string | null;
+};
+
 type OrgP = { organizationId: string };
+type TaskP = { organizationId: string; taskId: string };
 type ReviewP = { organizationId: string; extractedTaskId: string };
 
 export type TasksModuleDeps = ModuleDeps & { tasks?: TaskRepositories };
@@ -88,6 +125,8 @@ export function selectTaskRepositories(
 function translate(e: unknown): unknown {
   if (e instanceof ExtractedTaskMissing) return new ExtractedTaskNotFoundError();
   if (e instanceof ExtractedTaskAlreadyReviewed) return new ExtractedTaskReviewedError();
+  if (e instanceof TaskMissing) return new TaskNotFoundError();
+  if (e instanceof TaskAssigneeInvalid) return new TaskAssigneeInvalidError();
   return toDirectoryError(e);
 }
 /** Takes a thunk so synchronous repository throws are translated too. */
@@ -240,6 +279,61 @@ export default async function tasksModule(
         targetId: request.params.extractedTaskId,
       });
       return reply.code(204).send();
+    },
+  );
+
+  app.get<{ Params: TaskP }>(
+    TASK_PATHS.task,
+    {
+      schema: {
+        tags: ['tasks'],
+        summary: 'Get a task',
+        params: TaskParams,
+        response: { 200: Task, ...directoryErrors },
+      },
+    },
+    async (request) => {
+      const c = await caller(request, request.params.organizationId);
+      organizations.authorize(c.ctx, 'read', 'Task');
+      return call(() => repo.getTask(c.ctx.organizationId, request.params.taskId));
+    },
+  );
+
+  app.patch<{ Params: TaskP; Body: UpdateTaskBody }>(
+    TASK_PATHS.task,
+    {
+      schema: {
+        tags: ['tasks'],
+        summary: 'Update a task',
+        description:
+          'Partial update; null clears description, assigneeId or dueAt. assigneeId is an employee id.',
+        params: TaskParams,
+        body: UpdateTaskBody,
+        response: { 200: Task, ...directoryWriteErrors },
+      },
+    },
+    async (request) => {
+      const c = await caller(request, request.params.organizationId);
+      organizations.authorize(c.ctx, 'update', 'Task');
+      const b = request.body;
+      const patch: TaskPatch = {
+        title: b.title,
+        description: b.description,
+        status: b.status,
+        priority: b.priority,
+        assigneeId: b.assigneeId,
+        dueAt: b.dueAt === undefined ? undefined : b.dueAt === null ? null : new Date(b.dueAt),
+      };
+      const task = await call(() =>
+        repo.updateTask(c.ctx.organizationId, request.params.taskId, patch),
+      );
+      await access.record(c, {
+        action: 'task.update',
+        targetType: 'task',
+        targetId: task.id,
+        metadata: { fields: Object.keys(b).sort().join(',') },
+      });
+      return task;
     },
   );
 }
