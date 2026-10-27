@@ -38,21 +38,38 @@ pub fn device_key(store: &dyn SecretStore, account: &str) -> CmdResult<[u8; 32]>
 }
 
 fn key_unavailable() -> CmdError {
-    CmdError::new("SERVICE_UNAVAILABLE", "Secure storage is unavailable, so offline recording is turned off.")
+    CmdError::new(
+        "SERVICE_UNAVAILABLE",
+        "Secure storage is unavailable, so offline recording is turned off.",
+    )
 }
 
 fn safe_id(id: &str) -> CmdResult<&str> {
-    let ok = !id.is_empty() && id.len() <= 128 && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
-    if ok { Ok(id) } else { Err(CmdError::validation("Invalid recording id.")) }
+    let ok = !id.is_empty()
+        && id.len() <= 128
+        && id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
+    if ok {
+        Ok(id)
+    } else {
+        Err(CmdError::validation("Invalid recording id."))
+    }
 }
 
 impl ChunkStore {
     pub fn new(dir: impl AsRef<Path>, key: &[u8; 32]) -> Self {
-        Self { dir: dir.as_ref().to_path_buf(), cipher: Some(Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(key))) }
+        Self {
+            dir: dir.as_ref().to_path_buf(),
+            cipher: Some(Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(key))),
+        }
     }
 
     pub fn unavailable(dir: impl AsRef<Path>) -> Self {
-        Self { dir: dir.as_ref().to_path_buf(), cipher: None }
+        Self {
+            dir: dir.as_ref().to_path_buf(),
+            cipher: None,
+        }
     }
 
     fn cipher(&self) -> CmdResult<&Aes256Gcm> {
@@ -60,7 +77,10 @@ impl ChunkStore {
     }
 
     fn path(&self, session: &str, index: u32) -> CmdResult<PathBuf> {
-        Ok(self.dir.join(safe_id(session)?).join(format!("{index}.chunk")))
+        Ok(self
+            .dir
+            .join(safe_id(session)?)
+            .join(format!("{index}.chunk")))
     }
 
     fn aad(session: &str, index: u32) -> Vec<u8> {
@@ -74,11 +94,18 @@ impl ChunkStore {
         let aad = Self::aad(session, index);
         let sealed = self
             .cipher()?
-            .encrypt(Nonce::from_slice(&nonce), Payload { msg: data, aad: &aad })
+            .encrypt(
+                Nonce::from_slice(&nonce),
+                Payload {
+                    msg: data,
+                    aad: &aad,
+                },
+            )
             .map_err(|_| CmdError::internal())?;
         fs::create_dir_all(path.parent().unwrap()).map_err(|_| CmdError::internal())?;
         let tmp = path.with_extension("tmp");
-        fs::write(&tmp, [nonce.as_slice(), sealed.as_slice()].concat()).map_err(|_| CmdError::internal())?;
+        fs::write(&tmp, [nonce.as_slice(), sealed.as_slice()].concat())
+            .map_err(|_| CmdError::internal())?;
         fs::rename(&tmp, &path).map_err(|_| CmdError::internal())
     }
 
@@ -90,7 +117,13 @@ impl ChunkStore {
         }
         let aad = Self::aad(session, index);
         self.cipher()?
-            .decrypt(Nonce::from_slice(&raw[..12]), Payload { msg: &raw[12..], aad: &aad })
+            .decrypt(
+                Nonce::from_slice(&raw[..12]),
+                Payload {
+                    msg: &raw[12..],
+                    aad: &aad,
+                },
+            )
             .map_err(|_| CmdError::new("INTERNAL", "A recording chunk failed its integrity check."))
     }
 

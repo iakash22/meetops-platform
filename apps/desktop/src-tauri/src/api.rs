@@ -25,11 +25,20 @@ const MAX_PATH_LEN: usize = 2048;
 /// Allowed `(method, path template)` pairs; `:param` matches one id segment. Mirrors `@meetops/contracts`
 /// TASK_PATHS, MEETING_INSIGHTS_PATHS and RECORDING_SESSION_PATHS as used by `src/features/*`.
 pub const ROUTES: &[(&str, &str)] = &[
-    ("GET", "/orgs/:organizationId/meetings/:meetingId/transcript"),
+    (
+        "GET",
+        "/orgs/:organizationId/meetings/:meetingId/transcript",
+    ),
     ("GET", "/orgs/:organizationId/meetings/:meetingId/report"),
     ("GET", "/orgs/:organizationId/extracted-tasks"),
-    ("POST", "/orgs/:organizationId/extracted-tasks/:extractedTaskId/accept"),
-    ("POST", "/orgs/:organizationId/extracted-tasks/:extractedTaskId/dismiss"),
+    (
+        "POST",
+        "/orgs/:organizationId/extracted-tasks/:extractedTaskId/accept",
+    ),
+    (
+        "POST",
+        "/orgs/:organizationId/extracted-tasks/:extractedTaskId/dismiss",
+    ),
     ("PATCH", "/orgs/:organizationId/tasks/:taskId"),
     ("POST", "/orgs/:organizationId/recording-sessions"),
     ("POST", "/recording-sessions/:sessionId/chunks"),
@@ -59,13 +68,19 @@ pub struct CommandError {
 
 impl CommandError {
     fn new(code: &str, message: impl Into<String>) -> Self {
-        Self { code: code.to_owned(), message: message.into() }
+        Self {
+            code: code.to_owned(),
+            message: message.into(),
+        }
     }
 }
 
 impl From<CmdError> for CommandError {
     fn from(e: CmdError) -> Self {
-        Self { code: e.code, message: e.message }
+        Self {
+            code: e.code,
+            message: e.message,
+        }
     }
 }
 
@@ -89,7 +104,11 @@ impl ApiState {
 }
 
 fn is_id_segment(seg: &str) -> bool {
-    !seg.is_empty() && seg.len() <= 128 && seg.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    !seg.is_empty()
+        && seg.len() <= 128
+        && seg
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
 }
 
 /// M-1: the method + path (without query) must match one `ROUTES` entry.
@@ -100,7 +119,13 @@ pub fn route_allowed(method: &Method, path: &str) -> bool {
         let t: Vec<&str> = tpl.split('/').collect();
         *m == method.as_str()
             && t.len() == segs.len()
-            && t.iter().zip(&segs).all(|(t, s)| if t.starts_with(':') { is_id_segment(s) } else { t == s })
+            && t.iter().zip(&segs).all(|(t, s)| {
+                if t.starts_with(':') {
+                    is_id_segment(s)
+                } else {
+                    t == s
+                }
+            })
     })
 }
 
@@ -165,7 +190,6 @@ pub fn error_from_response(status: u16, body: &Value) -> CommandError {
     CommandError::new(code, message)
 }
 
-
 async fn send_once(
     api: &ApiState,
     method: &Method,
@@ -173,13 +197,20 @@ async fn send_once(
     token: &str,
     body: Option<&Value>,
 ) -> Result<(StatusCode, Value), CommandError> {
-    let mut req = api.client.request(method.clone(), url.clone()).header("Accept", "application/json").bearer_auth(token);
+    let mut req = api
+        .client
+        .request(method.clone(), url.clone())
+        .header("Accept", "application/json")
+        .bearer_auth(token);
     if let Some(b) = body {
         req = req.json(b);
     }
     let res = req.send().await.map_err(|e| {
         if e.is_timeout() {
-            CommandError::new("PROVIDER_UNAVAILABLE", "The server took too long to respond.")
+            CommandError::new(
+                "PROVIDER_UNAVAILABLE",
+                "The server took too long to respond.",
+            )
         } else {
             CommandError::new("PROVIDER_UNAVAILABLE", "Could not reach the server.")
         }
@@ -189,7 +220,11 @@ async fn send_once(
         .bytes()
         .await
         .map_err(|_| CommandError::new("PROVIDER_UNAVAILABLE", "The response was interrupted."))?;
-    let json: Value = if bytes.is_empty() { Value::Null } else { serde_json::from_slice(&bytes).unwrap_or(Value::Null) };
+    let json: Value = if bytes.is_empty() {
+        Value::Null
+    } else {
+        serde_json::from_slice(&bytes).unwrap_or(Value::Null)
+    };
     Ok((status, json))
 }
 
@@ -204,11 +239,17 @@ pub async fn request(
 ) -> Result<Value, CommandError> {
     let method = parse_method(method)?;
     if body.is_some() && method == Method::GET {
-        return Err(CommandError::new("BAD_REQUEST", "GET requests cannot have a body."));
+        return Err(CommandError::new(
+            "BAD_REQUEST",
+            "GET requests cannot have a body.",
+        ));
     }
     let url = resolve_path(&o.api, path)?;
     if !route_allowed(&method, path) {
-        return Err(CommandError::new("FORBIDDEN", "That API route isn't allowed from the desktop app."));
+        return Err(CommandError::new(
+            "FORBIDDEN",
+            "That API route isn't allowed from the desktop app.",
+        ));
     }
     let token = auth.bearer(o, false).await?;
     let (mut status, mut json) = send_once(api, &method, &url, &token, body.as_ref()).await?;
@@ -266,7 +307,10 @@ pub(crate) mod test_server {
                 let mut line = String::new();
                 r.read_line(&mut line).unwrap();
                 let mut parts = line.split_whitespace();
-                let (method, path) = (parts.next().unwrap().to_owned(), parts.next().unwrap().to_owned());
+                let (method, path) = (
+                    parts.next().unwrap().to_owned(),
+                    parts.next().unwrap().to_owned(),
+                );
                 let (mut auth, mut len) = (None, 0usize);
                 loop {
                     let mut h = String::new();
@@ -284,7 +328,12 @@ pub(crate) mod test_server {
                 }
                 let mut body = vec![0u8; len];
                 r.read_exact(&mut body).unwrap();
-                let seen = Seen { method, path, authorization: auth, body: String::from_utf8(body).unwrap() };
+                let seen = Seen {
+                    method,
+                    path,
+                    authorization: auth,
+                    body: String::from_utf8(body).unwrap(),
+                };
                 let (status, json) = reply(&seen);
                 log2.lock().unwrap().push(seen);
                 let _ = write!(
@@ -330,7 +379,10 @@ mod tests {
         let ok = [
             (Method::GET, format!("/orgs/{ORG}/meetings/m-1/transcript")),
             (Method::GET, format!("/orgs/{ORG}/extracted-tasks?limit=50")),
-            (Method::POST, format!("/orgs/{ORG}/extracted-tasks/t1/accept")),
+            (
+                Method::POST,
+                format!("/orgs/{ORG}/extracted-tasks/t1/accept"),
+            ),
             (Method::PATCH, format!("/orgs/{ORG}/tasks/t1")),
             (Method::POST, "/recording-sessions/s1/chunks".to_owned()),
         ];
@@ -342,9 +394,15 @@ mod tests {
             (Method::GET, format!("/orgs/{ORG}/tasks/t1")),
             (Method::POST, "/auth/desktop/refresh".to_owned()),
             (Method::GET, "/admin".to_owned()),
-            (Method::GET, format!("/orgs/{ORG}/meetings/a%2Fb/transcript")),
+            (
+                Method::GET,
+                format!("/orgs/{ORG}/meetings/a%2Fb/transcript"),
+            ),
             (Method::GET, format!("/orgs/{ORG}/meetings//transcript")),
-            (Method::GET, format!("/orgs/{ORG}/meetings/m/transcript/extra")),
+            (
+                Method::GET,
+                format!("/orgs/{ORG}/meetings/m/transcript/extra"),
+            ),
         ];
         for (m, p) in &bad {
             assert!(!route_allowed(m, p), "{m} {p}");
@@ -354,7 +412,10 @@ mod tests {
     #[test]
     fn resolves_relative_paths_on_the_base_origin() {
         let u = resolve_path(&base(), "/orgs/o/meetings/m/transcript?cursor=x").unwrap();
-        assert_eq!(u.as_str(), "https://api.meetops.test/orgs/o/meetings/m/transcript?cursor=x");
+        assert_eq!(
+            u.as_str(),
+            "https://api.meetops.test/orgs/o/meetings/m/transcript?cursor=x"
+        );
     }
 
     #[test]
@@ -371,7 +432,11 @@ mod tests {
             "/v1/\nx",
             "",
         ] {
-            assert_eq!(resolve_path(&base(), p).unwrap_err().code, "BAD_REQUEST", "{p:?}");
+            assert_eq!(
+                resolve_path(&base(), p).unwrap_err().code,
+                "BAD_REQUEST",
+                "{p:?}"
+            );
         }
     }
 
@@ -387,7 +452,10 @@ mod tests {
     #[test]
     fn maps_error_responses() {
         assert_eq!(error_from_response(404, &Value::Null).code, "NOT_FOUND");
-        assert_eq!(error_from_response(503, &Value::Null).code, "PROVIDER_UNAVAILABLE");
+        assert_eq!(
+            error_from_response(503, &Value::Null).code,
+            "PROVIDER_UNAVAILABLE"
+        );
         let e = error_from_response(409, &json!({"error":{"code":"CONFLICT","message":"Taken"}}));
         assert_eq!(e, CommandError::new("CONFLICT", "Taken"));
         let e = error_from_response(400, &json!({"code":"NOPE","message":"x"}));
@@ -401,7 +469,10 @@ mod tests {
     }
 
     fn origins(api: &str) -> Origins {
-        Origins { api: Url::parse(api).unwrap(), web: Url::parse("https://app.meetops.test").unwrap() }
+        Origins {
+            api: Url::parse(api).unwrap(),
+            web: Url::parse("https://app.meetops.test").unwrap(),
+        }
     }
 
     fn tokens(n: u32) -> String {
@@ -413,7 +484,9 @@ mod tests {
     fn h1_on_401_refreshes_once_and_retries_once_with_the_fresh_token() {
         let (origin, log) = test_server::serve(3, |s| match s.path.as_str() {
             "/auth/desktop/refresh" => (200, tokens(2)),
-            _ if s.authorization.as_deref() == Some("Bearer access-2") => (200, "{\"ok\":true}".into()),
+            _ if s.authorization.as_deref() == Some("Bearer access-2") => {
+                (200, "{\"ok\":true}".into())
+            }
             _ => (401, "{}".into()),
         });
         let o = origins(&origin);
@@ -423,26 +496,36 @@ mod tests {
         let api = ApiState::new().unwrap();
         let path = format!("/orgs/{ORG}/extracted-tasks?limit=50");
         let out = tauri::async_runtime::block_on(async {
-            auth.seed_access_for_test("access-1", Duration::from_secs(900)).await;
+            auth.seed_access_for_test("access-1", Duration::from_secs(900))
+                .await;
             request(&api, &auth, &o, "GET", &path, None).await
         });
         assert_eq!(out.unwrap(), json!({"ok": true}));
         let log = log.lock().unwrap();
-        let seq: Vec<_> = log.iter().map(|s| (s.path.as_str(), s.authorization.clone())).collect();
+        let seq: Vec<_> = log
+            .iter()
+            .map(|s| (s.path.as_str(), s.authorization.clone()))
+            .collect();
         assert_eq!(seq.len(), 3);
         assert_eq!(seq[0].1.as_deref(), Some("Bearer access-1"));
         assert_eq!(log[0].method, "GET");
         assert_eq!(seq[1].0, "/auth/desktop/refresh");
         assert!(log[1].body.contains("refresh-1"));
         assert_eq!(seq[2].1.as_deref(), Some("Bearer access-2"));
-        assert_eq!(store.get(crate::config::REFRESH_ACCOUNT).as_deref(), Some("refresh-2"));
+        assert_eq!(
+            store.get(crate::config::REFRESH_ACCOUNT).as_deref(),
+            Some("refresh-2")
+        );
     }
 
     #[test]
     fn h1_a_second_401_is_returned_without_another_refresh() {
         let (origin, log) = test_server::serve(3, |s| match s.path.as_str() {
             "/auth/desktop/refresh" => (200, tokens(2)),
-            _ => (401, "{\"error\":{\"code\":\"UNAUTHENTICATED\",\"message\":\"no\"}}".into()),
+            _ => (
+                401,
+                "{\"error\":{\"code\":\"UNAUTHENTICATED\",\"message\":\"no\"}}".into(),
+            ),
         });
         let o = origins(&origin);
         let store = Arc::new(MemoryStore::default());
@@ -451,7 +534,8 @@ mod tests {
         let api = ApiState::new().unwrap();
         let path = format!("/orgs/{ORG}/tasks/t1");
         let err = tauri::async_runtime::block_on(async {
-            auth.seed_access_for_test("access-1", Duration::from_secs(900)).await;
+            auth.seed_access_for_test("access-1", Duration::from_secs(900))
+                .await;
             request(&api, &auth, &o, "PATCH", &path, Some(json!({"title": "x"}))).await
         })
         .unwrap_err();
@@ -471,8 +555,17 @@ mod tests {
         let auth = AuthState::new(store);
         let api = ApiState::new().unwrap();
         tauri::async_runtime::block_on(async {
-            auth.seed_access_for_test("access-6", Duration::from_secs(5)).await;
-            request(&api, &auth, &o, "POST", "/recording-sessions/s1/complete", Some(json!({}))).await
+            auth.seed_access_for_test("access-6", Duration::from_secs(5))
+                .await;
+            request(
+                &api,
+                &auth,
+                &o,
+                "POST",
+                "/recording-sessions/s1/complete",
+                Some(json!({})),
+            )
+            .await
         })
         .unwrap();
         let log = log.lock().unwrap();
@@ -485,9 +578,19 @@ mod tests {
         let auth = AuthState::new(Arc::new(MemoryStore::default()));
         let api = ApiState::new().unwrap();
         let o = origins("https://api.meetops.test");
-        let err = tauri::async_runtime::block_on(request(&api, &auth, &o, "DELETE", "/orgs/o/tasks/t", None)).unwrap_err();
+        let err = tauri::async_runtime::block_on(request(
+            &api,
+            &auth,
+            &o,
+            "DELETE",
+            "/orgs/o/tasks/t",
+            None,
+        ))
+        .unwrap_err();
         assert_eq!(err.code, "FORBIDDEN");
-        let err = tauri::async_runtime::block_on(request(&api, &auth, &o, "GET", "/auth/session", None)).unwrap_err();
+        let err =
+            tauri::async_runtime::block_on(request(&api, &auth, &o, "GET", "/auth/session", None))
+                .unwrap_err();
         assert_eq!(err.code, "FORBIDDEN");
     }
 

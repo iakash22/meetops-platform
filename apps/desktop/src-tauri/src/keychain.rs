@@ -19,7 +19,10 @@ pub struct KeychainStore {
 
 impl KeychainStore {
     pub fn new(service: &str) -> Self {
-        Self { service: service.to_owned(), memory: MemoryStore::default() }
+        Self {
+            service: service.to_owned(),
+            memory: MemoryStore::default(),
+        }
     }
     fn entry(&self, account: &str) -> Option<keyring::Entry> {
         keyring::Entry::new(&self.service, account).ok()
@@ -33,7 +36,10 @@ impl SecretStore for KeychainStore {
             .or_else(|| self.entry(account).and_then(|e| e.get_password().ok()))
     }
     fn set(&self, account: &str, secret: &str) -> bool {
-        let persisted = self.entry(account).map(|e| e.set_password(secret).is_ok()).unwrap_or(false);
+        let persisted = self
+            .entry(account)
+            .map(|e| e.set_password(secret).is_ok())
+            .unwrap_or(false);
         if !persisted {
             self.memory.set(account, secret);
         }

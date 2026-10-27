@@ -11,16 +11,25 @@ pub struct CmdError {
 
 impl CmdError {
     pub fn new(code: &str, message: impl Into<String>) -> Self {
-        Self { code: code.to_owned(), message: message.into() }
+        Self {
+            code: code.to_owned(),
+            message: message.into(),
+        }
     }
     pub fn unauthenticated() -> Self {
         Self::new("UNAUTHENTICATED", "Sign in to continue.")
     }
     pub fn not_configured() -> Self {
-        Self::new("SERVICE_UNAVAILABLE", "Sign-in isn't configured for this build.")
+        Self::new(
+            "SERVICE_UNAVAILABLE",
+            "Sign-in isn't configured for this build.",
+        )
     }
     pub fn network() -> Self {
-        Self::new("SERVICE_UNAVAILABLE", "Couldn't reach MeetOps. Check your connection.")
+        Self::new(
+            "SERVICE_UNAVAILABLE",
+            "Couldn't reach MeetOps. Check your connection.",
+        )
     }
     pub fn validation(message: impl Into<String>) -> Self {
         Self::new("VALIDATION_FAILED", message)

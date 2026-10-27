@@ -29,16 +29,30 @@ pub const ALLOWED_HEADERS: &[&str] = &[
     "x-goog-content-sha256",
 ];
 
+/// Matches `MAX_CHUNK_BYTES` in @meetops/contracts (64 MiB); larger bodies are refused before any network I/O.
+pub const MAX_UPLOAD_BYTES: usize = 64 * 1024 * 1024;
+
+pub fn check_body_size(len: usize) -> CmdResult<()> {
+    if len == 0 || len > MAX_UPLOAD_BYTES {
+        return Err(CmdError::validation("Upload body is empty or too large."));
+    }
+    Ok(())
+}
+
 pub fn check_upload(upload: &PresignedPut, storage: &url::Url) -> CmdResult<url::Url> {
     if upload.method != "PUT" {
-        return Err(CmdError::validation("Only presigned PUT uploads are supported."));
+        return Err(CmdError::validation(
+            "Only presigned PUT uploads are supported.",
+        ));
     }
     let url = url::Url::parse(&upload.url).map_err(|_| CmdError::validation("Bad upload URL."))?;
     if url.scheme() != "https" || !url.username().is_empty() || url.password().is_some() {
         return Err(CmdError::validation("Refusing a non-TLS upload URL."));
     }
     if url.origin() != storage.origin() {
-        return Err(CmdError::validation("Uploads may only go to the configured storage host."));
+        return Err(CmdError::validation(
+            "Uploads may only go to the configured storage host.",
+        ));
     }
     for (k, v) in &upload.headers {
         let name = k.to_ascii_lowercase();
@@ -58,6 +72,7 @@ pub async fn upload_put(
     upload: PresignedPut,
     body: Vec<u8>,
 ) -> CmdResult<()> {
+    check_body_size(body.len())?;
     let url = check_upload(&upload, storage)?;
     let mut req = http.put(url).body(body);
     for (k, v) in &upload.headers {
@@ -67,7 +82,10 @@ pub async fn upload_put(
     if res.status().is_success() {
         Ok(())
     } else {
-        Err(CmdError::new("SERVICE_UNAVAILABLE", "The upload was rejected. It will retry."))
+        Err(CmdError::new(
+            "SERVICE_UNAVAILABLE",
+            "The upload was rejected. It will retry.",
+        ))
     }
 }
 
@@ -79,7 +97,10 @@ mod tests {
         PresignedPut {
             url: url.into(),
             method: method.into(),
-            headers: h.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect(),
+            headers: h
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect(),
         }
     }
 
@@ -90,28 +111,75 @@ mod tests {
     #[test]
     fn uploads_must_be_tls_put_without_credentials() {
         let s = storage();
-        assert!(check_upload(&mk("https://s3.test/k?sig=1", "PUT", &[("Content-Type", "audio/webm")]), &s).is_ok());
+        assert!(check_upload(
+            &mk(
+                "https://s3.test/k?sig=1",
+                "PUT",
+                &[("Content-Type", "audio/webm")]
+            ),
+            &s
+        )
+        .is_ok());
         assert!(check_upload(&mk("http://s3.test/k", "PUT", &[]), &s).is_err());
         assert!(check_upload(&mk("https://s3.test/k", "POST", &[]), &s).is_err());
-        assert!(check_upload(&mk("https://s3.test/k", "PUT", &[("Authorization", "x")]), &s).is_err());
+        assert!(check_upload(
+            &mk("https://s3.test/k", "PUT", &[("Authorization", "x")]),
+            &s
+        )
+        .is_err());
         assert!(check_upload(&mk("https://u:p@s3.test/k", "PUT", &[]), &s).is_err());
     }
 
     #[test]
     fn only_the_configured_storage_origin() {
         let s = storage();
-        for u in ["https://evil.test/k", "https://s3.test.evil.test/k", "https://s3.test:8443/k", "https://api.meetops.test/k"] {
+        for u in [
+            "https://evil.test/k",
+            "https://s3.test.evil.test/k",
+            "https://s3.test:8443/k",
+            "https://api.meetops.test/k",
+        ] {
             assert!(check_upload(&mk(u, "PUT", &[]), &s).is_err(), "{u}");
         }
     }
 
     #[test]
+    fn body_size_is_capped() {
+        assert!(check_body_size(1).is_ok());
+        assert!(check_body_size(MAX_UPLOAD_BYTES).is_ok());
+        assert!(check_body_size(MAX_UPLOAD_BYTES + 1).is_err());
+        assert!(check_body_size(0).is_err());
+    }
+
+    #[test]
     fn header_allowlist() {
         let s = storage();
-        assert!(check_upload(&mk("https://s3.test/k", "PUT", &[("x-amz-checksum-sha256", "abc")]), &s).is_ok());
-        for h in ["cookie", "host", "x-forwarded-for", "proxy-authorization", "x-amz-security-token", "transfer-encoding"] {
-            assert!(check_upload(&mk("https://s3.test/k", "PUT", &[(h, "v")]), &s).is_err(), "{h}");
+        assert!(check_upload(
+            &mk(
+                "https://s3.test/k",
+                "PUT",
+                &[("x-amz-checksum-sha256", "abc")]
+            ),
+            &s
+        )
+        .is_ok());
+        for h in [
+            "cookie",
+            "host",
+            "x-forwarded-for",
+            "proxy-authorization",
+            "x-amz-security-token",
+            "transfer-encoding",
+        ] {
+            assert!(
+                check_upload(&mk("https://s3.test/k", "PUT", &[(h, "v")]), &s).is_err(),
+                "{h}"
+            );
         }
-        assert!(check_upload(&mk("https://s3.test/k", "PUT", &[("content-type", "a\r\nb")]), &s).is_err());
+        assert!(check_upload(
+            &mk("https://s3.test/k", "PUT", &[("content-type", "a\r\nb")]),
+            &s
+        )
+        .is_err());
     }
 }
