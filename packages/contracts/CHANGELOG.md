@@ -6,6 +6,20 @@ While the version is `0.x`, a minor bump may contain breaking changes (ADR-003).
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-10-28
+
+Integrations page support (Phase 5, builds on 0.7.0). Additive. Version numbers 0.10.0 (#261) and 0.11.0
+(#263) are reserved by in-flight PRs; this release only touches integrations files.
+
+### Added
+
+- `INTEGRATION_PATHS.providers` (`GET /orgs/:organizationId/integrations/providers`).
+- `INTEGRATION_CONNECTION_STATES` (`not_connected` + `INTEGRATION_STATUSES`), `IntegrationConnectionState`,
+  `IntegrationProviderStatus` (`provider`, `configured`, `connectionStatus`, optional `integration`) and
+  `IntegrationProviderList` (`items`, max 10).
+- `REDACT_KEYS`: `access_token`, `refresh_token`, `clientSecret`, `client_secret`, `webhookSecret`, `privateKey`,
+  `privateKeyPem`, `apiToken`.
+
 ## [0.9.0] - 2026-10-27
 
 Desktop (Tauri) sign-in schemas for ADR-012 Option A (system browser, authorization code + PKCE S256, loopback

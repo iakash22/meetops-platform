@@ -2,9 +2,10 @@ import { Type, type Static } from '@sinclair/typebox';
 import { Id, IsoDateTime, SafeDisplayText } from '../common.js';
 import { IntegrationProvider } from '../domain/task.js';
 import { HttpsUrl } from '../domain/media.js';
-import { INTEGRATION_STATUSES } from '../constants.js';
+import { INTEGRATION_CONNECTION_STATES, INTEGRATION_STATUSES } from '../constants.js';
 
 export {
+  INTEGRATION_CONNECTION_STATES,
   INTEGRATION_ERROR_REASONS,
   INTEGRATION_PATHS,
   INTEGRATION_STATE_TTL_SECONDS,
@@ -44,6 +45,31 @@ export const IntegrationList = Type.Object(
   strict,
 );
 export type IntegrationList = Static<typeof IntegrationList>;
+
+/**
+ * v0.12.0: GET /orgs/:organizationId/integrations/providers. One entry per supported provider. `configured` is
+ * false when ops has not set the provider app on this deployment (connect would return 503). `integration` is the
+ * most recent non-revoked connection (active or error), else the latest revoked one, else absent. Never carries secrets.
+ */
+export const IntegrationConnectionState = Type.Union(
+  INTEGRATION_CONNECTION_STATES.map((s) => Type.Literal(s)),
+);
+export type IntegrationConnectionState = (typeof INTEGRATION_CONNECTION_STATES)[number];
+export const IntegrationProviderStatus = Type.Object(
+  {
+    provider: IntegrationProvider,
+    configured: Type.Boolean(),
+    connectionStatus: IntegrationConnectionState,
+    integration: Type.Optional(Integration),
+  },
+  strict,
+);
+export type IntegrationProviderStatus = Static<typeof IntegrationProviderStatus>;
+export const IntegrationProviderList = Type.Object(
+  { items: Type.Array(IntegrationProviderStatus, { maxItems: 10 }) },
+  strict,
+);
+export type IntegrationProviderList = Static<typeof IntegrationProviderList>;
 
 export const IntegrationParams = Type.Object({ organizationId: Id, integrationId: Id }, strict);
 export type IntegrationParams = Static<typeof IntegrationParams>;

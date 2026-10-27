@@ -238,6 +238,15 @@ export const REDACT_KEYS = [
   'authorizationCode',
   'codeVerifier',
   'code_verifier',
+  // v0.12.0: integration secrets (provider token responses use snake_case).
+  'access_token',
+  'refresh_token',
+  'clientSecret',
+  'client_secret',
+  'webhookSecret',
+  'privateKey',
+  'privateKeyPem',
+  'apiToken',
 ] as const;
 
 /**
@@ -437,6 +446,8 @@ export const TASK_PATHS = {
  */
 export const INTEGRATION_PATHS = {
   integrations: '/orgs/:organizationId/integrations',
+  /** v0.12.0: provider catalogue with this org's connection status. */
+  providers: '/orgs/:organizationId/integrations/providers',
   connect: '/orgs/:organizationId/integrations/connect',
   callback: '/integrations/:provider/callback',
   integration: '/orgs/:organizationId/integrations/:integrationId',
@@ -446,6 +457,8 @@ export const INTEGRATION_PATHS = {
 
 /** v0.7.0: integration connection lifecycle (Prisma `IntegrationStatus`). */
 export const INTEGRATION_STATUSES = ['active', 'error', 'revoked'] as const;
+/** v0.12.0: per-provider connection state for the web integrations page (`not_connected` = no row). */
+export const INTEGRATION_CONNECTION_STATES = ['not_connected', ...INTEGRATION_STATUSES] as const;
 /** v0.7.0: OAuth/App-install state TTL bounds in seconds (ADR-008: default 600, clamped 60-900). */
 export const INTEGRATION_STATE_TTL_SECONDS = 600;
 /** v0.7.0: webhook body cap in bytes (ADR-007). */
