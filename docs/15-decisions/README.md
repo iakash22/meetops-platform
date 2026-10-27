@@ -15,6 +15,7 @@
 | [ADR-011](ADR-011-realtime-auth.md)                        | Realtime session auth, meeting access and org revalidation | Proposed - needs Architecture and Security sign-off                                                                                                                        | 2026-10-25 |
 | [ADR-012](ADR-012-desktop-auth.md)                         | Desktop (Tauri) sign-in, token storage and revocation      | Proposed - needs Architecture and Security sign-off. Open draft amendment: #192                                                                                            | 2026-10-25 |
 | [ADR-013](ADR-013-notifications-architecture.md)           | Notifications architecture (outbox + BullMQ fan-out)       | Proposed - needs owner, Architecture and Security sign-off                                                                                                                 | 2026-10-27 |
+| [ADR-014](ADR-014-recording-session-chunk-assembly.md)     | Recording session chunk assembly (worker streaming concat) | Proposed - needs Architecture and Security sign-off                                                                                                                        | 2026-10-28 |
 
 New ADRs use the next number, `ADR-NNN-short-title.md`, with Date, Status, Context, Decision and Consequences sections. Add a row here. ADR-003 makes ARCH the owner of this folder. Status notes name a PR only while it is still open (checked with `gh pr list --state open` on 2026-10-27).
 
