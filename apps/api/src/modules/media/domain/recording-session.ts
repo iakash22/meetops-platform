@@ -33,8 +33,12 @@ export type ReserveChunkResult = 'ok' | 'over_limit' | 'not_uploading';
 
 export interface RecordingSessionRepository {
   create(r: RecordingSessionRecord): Promise<void>;
-  /** By id only: session routes carry no org in the path. Callers must compare organizationId themselves. */
-  findById(id: string): Promise<RecordingSessionRecord | null>;
+  /**
+   * Org-scoped lookup (security review B 4.4): returns null for unknown ids and for sessions of another org. A
+   * Prisma adapter MUST run this inside withOrganizationContext(organizationId) so forced RLS applies; callers still
+   * compare organizationId as defense in depth.
+   */
+  findById(organizationId: string, id: string): Promise<RecordingSessionRecord | null>;
   /**
    * Atomically (re)reserve a chunk slot: replaces any previous signature for `seq` and keeps totalBytes the sum of all
    * reserved chunks. Refuses when the new total would exceed `maxTotalBytes` or the session is not uploading.

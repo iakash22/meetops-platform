@@ -44,6 +44,29 @@ Rust (stable, 1.85+ was used to verify) and the platform deps from the
 `libgtk-3-dev`, `librsvg2-dev`, `libayatana-appindicator3-dev`; macOS: Xcode CLT; Windows: WebView2 +
 MSVC). Rust unit tests: `cd apps/desktop/src-tauri && cargo test`.
 
+### Release-mode build (native)
+
+All network origins are baked in at **compile time** from one config source (`src-tauri/src/config.rs`).
+Sign-in, `api_request` and `upload_put` all read from it, and if an origin is missing those commands fail
+closed with `SERVICE_UNAVAILABLE`.
+
+```sh
+MEETOPS_API_ORIGIN=https://api.example.com \
+MEETOPS_WEB_ORIGIN=https://app.example.com \
+MEETOPS_STORAGE_ORIGIN=https://uploads.example.com \
+pnpm --filter @meetops/desktop tauri:build      # cargo build --release under the hood
+```
+
+- **https only in release**: a release build rejects any non-https origin, and its HTTP clients are
+  `https_only`, so the bearer token can't be sent over plain http. Debug builds (`tauri:dev`,
+  `cargo test`) also accept `http://localhost:<port>` / `http://127.0.0.1:<port>` for a local API. That
+  exception is compiled out of release builds.
+- Values must be bare origins (no path, query or credentials) and are not secrets.
+- `MEETOPS_STORAGE_ORIGIN` is the only host `upload_put` will PUT to, and it is https in every build.
+- `api_request` only serves the method + path pairs in `api.rs` `ROUTES`. Add a route there when the UI
+  needs a new endpoint.
+- Verify with `cd src-tauri && cargo check --locked --release && cargo test --locked`.
+
 ## Owner TODOs
 
 - **Bundle identifier**: `src-tauri/tauri.conf.json` uses the placeholder

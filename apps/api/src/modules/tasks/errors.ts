@@ -23,3 +23,8 @@ export class TaskAssigneeInvalidError extends DomainError {
     super('VALIDATION_FAILED', 'assigneeId is not an employee of this organization', 400);
   }
 }
+export class TaskReferenceInvalidError extends DomainError {
+  constructor(field: 'projectId' | 'meetingId') {
+    super('VALIDATION_FAILED', `${field} does not exist in this organization`, 400);
+  }
+}

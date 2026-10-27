@@ -6,6 +6,12 @@ While the version is `0.x`, a minor bump may contain breaking changes (ADR-003).
 
 ## [Unreleased]
 
+### Changed
+
+- Upload `filename` (`CreateUploadRequest` and `InitUploadRequest`) now also rejects C0 control characters (CR, LF, tab
+  and the rest), DEL and bidi embedding/override/isolate characters (U+202A-U+202E, U+2066-U+2069), as well as `/`,
+  `\` and NUL (security review B 4.3).
+
 ## [0.12.0] - 2026-10-28
 
 Integrations page support (Phase 5, builds on 0.7.0). Additive. Version numbers 0.10.0 (#261) and 0.11.0
@@ -27,6 +33,16 @@ Integrations page support (Phase 5, builds on 0.7.0). Additive. Version numbers 
 - `RETURN_TO_PATTERN` (#282 L-2): `ConnectIntegrationRequest.returnTo` now also rejects `//` anywhere, `.`/`..`
   segments and encoded `%2e`/`%2f`/`%5c` (e.g. `/..//evil.com`).
 - `INTEGRATION_PATHS.githubAppWebhook` (`POST /webhooks/github`): App-wide GitHub webhook, routed by installation id.
+
+## [0.10.0] - 2026-10-27
+
+Task write bodies; additive, builds on 0.9.0.
+
+### Added
+
+- `CreateTaskRequest`: body of POST `TASK_PATHS.tasks` (manual task; status/priority default server-side to
+  `todo`/`medium`; unknown keys rejected).
+- `AcceptExtractedTaskRequest`: body of POST `TASK_PATHS.accept` (matches the API's former `AcceptExtractedTaskBody`).
 
 ## [0.9.0] - 2026-10-27
 

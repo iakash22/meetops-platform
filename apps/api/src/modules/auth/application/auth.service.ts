@@ -22,6 +22,7 @@ import {
   type AuthRevocationInput,
   type RevocationPublisher,
 } from './revocations.js';
+import type { MembershipRepository } from '../../organizations/domain/repositories.js';
 import type { ExtensionRevoker } from '../../extension-auth/application/extension-auth.service.js';
 
 export interface AuthServiceDeps {
@@ -43,6 +44,11 @@ export interface AuthServiceDeps {
   sleep?: (ms: number) => Promise<void>;
   /** ADR-011 revocation fan-out to realtime. Omitted: nothing is published. */
   revocations?: RevocationPublisher;
+  /**
+   * Used at login to pick the session's default active org. Omitted: sessions start with no active org (old
+   * behaviour).
+   */
+  memberships?: Pick<MembershipRepository, 'listByUser'>;
   /** ADR-005 A1.6: also revoke the user's extension token families. */
   extensionRevoker?: ExtensionRevoker;
 }
@@ -225,7 +231,12 @@ export class AuthService {
       const old = await this.revokeByToken(currentToken);
       if (old) await this.publishSessionRevoked(old, 'logout');
     }
-    const r = await this.issueSession(user.id, toPublicUser(user), null, meta);
+    const r = await this.issueSession(
+      user.id,
+      toPublicUser(user),
+      await this.defaultOrganizationId(user.id),
+      meta,
+    );
     await this.audit(
       {
         actorId: user.id,
@@ -282,7 +293,11 @@ export class AuthService {
     await this.d.sessions.revokeAllForUser(t.userId, now);
     await this.publish({ kind: 'user', userId: t.userId, reason: 'password_changed' });
     await this.d.extensionRevoker?.revokeForUser(t.userId, 'password_changed');
-    await this.d.mailQueue.enqueue({ kind: 'password_changed', userId: t.userId, changedAt: now.toISOString() });
+    await this.d.mailQueue.enqueue({
+      kind: 'password_changed',
+      userId: t.userId,
+      changedAt: now.toISOString(),
+    });
     await this.d.oneTimeTokens.invalidateForUser(t.userId, 'password_reset', now);
     const user = await this.d.users.findById(t.userId);
     if (user) await this.d.lockout.reset(user.email);
@@ -452,6 +467,24 @@ export class AuthService {
   private getDummyHash() {
     this.dummyHash ??= this.d.hasher.hash('dummy-password-for-timing-equalization');
     return this.dummyHash;
+  }
+
+  /**
+   * Default active org for a new session: the last-used org if that membership is still live, else the user's first
+   * live membership (oldest createdAt, then organizationId, so the choice is deterministic), else null.
+   */
+  private async defaultOrganizationId(userId: string): Promise<string | null> {
+    if (!this.d.memberships) return null;
+    const live = (await this.d.memberships.listByUser(userId)).filter((m) => m.deletedAt === null);
+    if (live.length === 0) return null;
+    const last = await this.d.sessions.findLastActiveOrganizationId(userId);
+    if (last && live.some((m) => m.organizationId === last)) return last;
+    live.sort(
+      (a, b) =>
+        a.createdAt.getTime() - b.createdAt.getTime() ||
+        a.organizationId.localeCompare(b.organizationId),
+    );
+    return live[0]!.organizationId;
   }
 
   private async issueSession(
