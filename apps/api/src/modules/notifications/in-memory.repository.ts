@@ -1,9 +1,10 @@
 import { createHash, randomUUID } from 'node:crypto';
-import type { Notification, NotificationPreference, PushDevice, PushPlatform } from '@meetops/contracts';
+import type { NotificationPreference, PushDevice, PushPlatform } from '@meetops/contracts';
+import { renderNotification, type StoredNotification } from './render.js';
 import type { NotificationPage, NotificationsRepository } from './ports.js';
 
-type NotificationRow = Notification & { userId: string };
-type DeviceRow = PushDevice & { organizationId: string; userId: string; tokenHash: string };
+type NotificationRow = StoredNotification & { userId: string };
+type DeviceRow = PushDevice & { organizationId: string; userId: string; tokenHash: string; label: string | null; lastSeenAt: string };
 
 /** Dev/test only (selectNotificationsRepository refuses it outside development/test). */
 export class InMemoryNotifications implements NotificationsRepository {
@@ -24,9 +25,8 @@ export class InMemoryNotifications implements NotificationsRepository {
     const limit = q.limit ?? 20;
     const page = filtered.slice(start, start + limit);
     return {
-      items: page.map(({ userId: _u, ...n }) => n),
+      items: page.map(renderNotification),
       nextCursor: start + limit < filtered.length ? Buffer.from(String(start + limit)).toString('base64url') : null,
-      unreadCount: mine.filter((n) => !n.readAt).length,
     };
   }
 
@@ -62,7 +62,7 @@ export class InMemoryNotifications implements NotificationsRepository {
       d = { id: randomUUID(), organizationId, userId, tokenHash, platform: input.platform, label: input.label, lastSeenAt: now, createdAt: now };
       this.devices.push(d);
     }
-    return { id: d.id, platform: d.platform, label: d.label, lastSeenAt: d.lastSeenAt, createdAt: d.createdAt };
+    return { id: d.id, platform: d.platform, createdAt: d.createdAt };
   }
   async unregisterDevice(organizationId: string, userId: string, deviceId: string) {
     const i = this.devices.findIndex((x) => x.organizationId === organizationId && x.userId === userId && x.id === deviceId);

@@ -47,7 +47,7 @@ export interface OrganizationServiceDeps {
   /** ADR-005 A1.6: removal from an org revokes the user's extension families for that org. */
   extensionRevoker?: ExtensionRevoker;
   /** ADR-013 / security review C (3): removal from an org deletes the user's push devices in that org. */
-  pushDeviceRevoker?: { deleteDevicesForUser(organizationId: string, userId: string): Promise<number> };
+  pushDeviceRevoker?: { revokeForUser(userId: string, organizationId?: string | null): Promise<void> };
   organizations: OrganizationRepository;
   memberships: MembershipRepository;
   invitations: InvitationRepository;
@@ -374,7 +374,7 @@ export class OrganizationService {
       'member_removed',
       ctx.organizationId,
     );
-    await this.d.pushDeviceRevoker?.deleteDevicesForUser(ctx.organizationId, targetUserId);
+    await this.d.pushDeviceRevoker?.revokeForUser(targetUserId, ctx.organizationId);
     await this.audit(ctx, {
       action: 'membership.remove',
       targetType: 'membership',

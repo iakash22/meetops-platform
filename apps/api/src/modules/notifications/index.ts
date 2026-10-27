@@ -3,11 +3,11 @@ import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { Type } from '@sinclair/typebox';
 import {
   ListNotificationsQuery,
-  MarkNotificationsReadRequest,
   MarkNotificationsReadResponse,
   NOTIFICATION_PATHS,
   NotificationList,
   NotificationOrgParams,
+  NotificationParams,
   NotificationPreferences,
   PushDevice,
   PushDeviceParams,
@@ -28,14 +28,13 @@ import { makeGuards, requestMeta } from '../auth/http/security.js';
 import { registerDomainErrorHandler } from '../../shared/http-errors.js';
 import type { OrganizationService } from '../organizations/application/organization.service.js';
 import { defineAbilityFor, orgSubject } from '../organizations/domain/abilities.js';
-import { ForbiddenError } from '../organizations/domain/errors.js';
+import { ForbiddenError, OrganizationNotFoundError } from '../organizations/domain/errors.js';
 import { isRelaxedEnv, MissingProductionDependencyError, type ModuleDeps } from '../index.js';
 import { DirectoryAccess } from '../directory/access.js';
 import { directoryErrors, directoryWriteErrors } from '../directory/http/route-kit.js';
 import { ErrorBody } from '../auth/http/schemas.js';
 import {
   NotificationsUnavailableError,
-  PushDeviceNotFoundError,
   PushTargetInvalidError,
   UnsubscribeLinkInvalidError,
 } from './errors.js';
@@ -110,8 +109,9 @@ export default async function notificationsModule(
     organizationId: string,
     action: 'read' | 'update' | 'create' | 'delete',
     subject: 'Notification' | 'NotificationPreference' | 'PushDevice',
+    session?: Awaited<ReturnType<typeof g.requireSession>>,
   ) => {
-    const c = await access.caller(await g.requireSession(request), organizationId, requestMeta(request));
+    const c = await access.caller(session ?? (await g.requireSession(request)), organizationId, requestMeta(request));
     const target = orgSubject(subject, { organizationId: c.ctx.organizationId, createdById: c.ctx.userId });
     if (defineAbilityFor(c.ctx).cannot(action, target)) throw new ForbiddenError();
     return c;
@@ -138,21 +138,38 @@ export default async function notificationsModule(
       },
     );
 
-    s.post<{ Params: NotificationOrgParams; Body: MarkNotificationsReadRequest }>(
+    s.post<{ Params: NotificationParams }>(
       NOTIFICATION_PATHS.markRead,
       {
         schema: {
           tags: ['notifications'],
-          summary: 'Mark notifications read (ids or all)',
-          params: NotificationOrgParams,
-          body: MarkNotificationsReadRequest,
+          summary: 'Mark one of the caller notifications read',
+          description: 'Idempotent: `updated` is 0 when it was already read or is not the caller notification.',
+          params: NotificationParams,
           response: { 200: MarkNotificationsReadResponse, ...directoryErrors },
         },
       },
       async (request) => {
         const c = await self(request, request.params.organizationId, 'update', 'Notification');
-        const ids = 'all' in request.body ? 'all' : request.body.ids;
-        return { updated: await repo.markRead(c.ctx.organizationId, c.ctx.userId, ids) };
+        return {
+          updated: await repo.markRead(c.ctx.organizationId, c.ctx.userId, [request.params.notificationId]),
+        };
+      },
+    );
+
+    s.post<{ Params: NotificationOrgParams }>(
+      NOTIFICATION_PATHS.markAllRead,
+      {
+        schema: {
+          tags: ['notifications'],
+          summary: 'Mark all of the caller notifications read',
+          params: NotificationOrgParams,
+          response: { 200: MarkNotificationsReadResponse, ...directoryErrors },
+        },
+      },
+      async (request) => {
+        const c = await self(request, request.params.organizationId, 'update', 'Notification');
+        return { updated: await repo.markRead(c.ctx.organizationId, c.ctx.userId, 'all') };
       },
     );
 
@@ -189,21 +206,28 @@ export default async function notificationsModule(
       },
     );
 
-    s.post<{ Params: NotificationOrgParams; Body: RegisterPushDeviceRequest }>(
+    /** /me routes: the organization is the session's active one (never client input), so forced RLS applies. */
+    const meCaller = async (request: FastifyRequest, action: 'create' | 'delete') => {
+      const session = await g.requireSession(request);
+      const organizationId = session.session.activeOrganizationId;
+      if (!organizationId) throw new OrganizationNotFoundError();
+      return self(request, organizationId, action, 'PushDevice', session);
+    };
+
+    s.post<{ Body: RegisterPushDeviceRequest }>(
       NOTIFICATION_PATHS.pushDevices,
       {
         schema: {
           tags: ['notifications'],
           summary: 'Register (or refresh) a push device for the caller',
           description:
-            'Web Push endpoints must be on an allowlisted push service host (HTTPS, default port); mobile sends an Expo push token. The token is stored encrypted and never returned.',
-          params: NotificationOrgParams,
+            'Expo push tokens (ExponentPushToken[...] / ExpoPushToken[...]) for iOS/Android, or a Web Push subscription on an allowlisted push-service host for web/extension. Bound to the active organization; stored encrypted and never returned.',
           body: RegisterPushDeviceRequest,
           response: { 201: PushDevice, ...directoryWriteErrors, 503: ErrorBody },
         },
       },
       async (request, reply) => {
-        const c = await self(request, request.params.organizationId, 'create', 'PushDevice');
+        const c = await meCaller(request, 'create');
         let token: string;
         try {
           token = pushTokenFromRegistration(request.body);
@@ -214,7 +238,7 @@ export default async function notificationsModule(
         const d = await repo.registerDevice(c.ctx.organizationId, c.ctx.userId, {
           platform: request.body.platform,
           token,
-          label: request.body.label ?? null,
+          label: request.body.deviceName ?? null,
         });
         return reply.status(201).send(d);
       },
@@ -225,15 +249,14 @@ export default async function notificationsModule(
       {
         schema: {
           tags: ['notifications'],
-          summary: "Unregister one of the caller's push devices",
+          summary: "Unregister one of the caller's push devices (idempotent)",
           params: PushDeviceParams,
           response: { 204: Type.Null(), ...directoryErrors },
         },
       },
       async (request, reply) => {
-        const c = await self(request, request.params.organizationId, 'delete', 'PushDevice');
-        if (!(await repo.unregisterDevice(c.ctx.organizationId, c.ctx.userId, request.params.deviceId)))
-          throw new PushDeviceNotFoundError();
+        const c = await meCaller(request, 'delete');
+        await repo.unregisterDevice(c.ctx.organizationId, c.ctx.userId, request.params.id);
         return reply.status(204).send();
       },
     );

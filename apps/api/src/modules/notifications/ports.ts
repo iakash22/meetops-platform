@@ -8,7 +8,6 @@ import type {
 export interface NotificationPage {
   items: Notification[];
   nextCursor: string | null;
-  unreadCount: number;
 }
 
 /**

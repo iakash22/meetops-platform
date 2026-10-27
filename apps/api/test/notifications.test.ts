@@ -14,6 +14,7 @@ import { buildApp, signupAndLogin, type App, type Client } from './helpers.js';
 
 const SECRET = 's'.repeat(40);
 const sub = (endpoint: string) => ({
+  provider: 'webpush',
   platform: 'web',
   subscription: { endpoint, keys: { p256dh: 'B'.repeat(20), auth: 'a'.repeat(10) } },
 });
@@ -46,7 +47,7 @@ describe('ADR-013 notification routes', () => {
       userId,
       type: 'task.assigned',
       subjectType: 'task',
-      subjectId: null,
+      subjectId: '00000000-0000-4000-8000-0000000000f1',
       data: {},
       readAt: null,
       createdAt: `2026-10-27T00:00:0${id.slice(-1)}.000Z`,
@@ -64,16 +65,22 @@ describe('ADR-013 notification routes', () => {
     const list = await viewer.get(`/orgs/${org}/notifications?limit=1`);
     expect(list.statusCode).toBe(200);
     expect(Value.Check(NotificationList, list.json())).toBe(true);
-    expect(list.json()).toMatchObject({ unreadCount: 2 });
-    expect(list.json().items[0].id).toBe('00000000-0000-4000-8000-000000000003');
-    expect(list.json().nextCursor).not.toBeNull();
-    // Another user's id is ignored, not an error.
-    const r = await viewer.post(`/orgs/${org}/notifications/read`, {
-      ids: ['00000000-0000-4000-8000-000000000001', '00000000-0000-4000-8000-000000000002'],
+    expect(list.json().items[0]).toEqual({
+      id: '00000000-0000-4000-8000-000000000003',
+      organizationId: org,
+      kind: 'task.assigned',
+      title: 'A task was assigned to you',
+      taskId: '00000000-0000-4000-8000-0000000000f1',
+      readAt: null,
+      createdAt: '2026-10-27T00:00:03.000Z',
     });
-    expect(r.json()).toEqual({ updated: 1 });
-    expect((await viewer.post(`/orgs/${org}/notifications/read`, { all: true })).json()).toEqual({ updated: 1 });
-    expect((await owner.get(`/orgs/${org}/notifications`)).json().unreadCount).toBe(1);
+    const next = await viewer.get(`/orgs/${org}/notifications?cursor=${list.json().nextCursor}`);
+    expect(next.json().items.map((n: { id: string }) => n.id)).toEqual(['00000000-0000-4000-8000-000000000002']);
+    // Another user's id is a no-op, not an error.
+    expect((await viewer.post(`/orgs/${org}/notifications/00000000-0000-4000-8000-000000000001/read`)).json()).toEqual({ updated: 0 });
+    expect((await viewer.post(`/orgs/${org}/notifications/00000000-0000-4000-8000-000000000002/read`)).json()).toEqual({ updated: 1 });
+    expect((await viewer.post(`/orgs/${org}/notifications/read-all`)).json()).toEqual({ updated: 1 });
+    expect((await owner.get(`/orgs/${org}/notifications?unreadOnly=true`)).json().items).toHaveLength(1);
   });
 
   it('hides other orgs and rejects unauthenticated or malformed requests', async () => {
@@ -83,7 +90,7 @@ describe('ADR-013 notification routes', () => {
     await createOrg(b, 'B');
     expect((await b.get(`/orgs/${orgA}/notifications`)).statusCode).toBe(404);
     expect((await app.inject({ method: 'GET', url: `/orgs/${orgA}/notifications` })).statusCode).toBe(401);
-    expect((await a.post(`/orgs/${orgA}/notifications/read`, {})).statusCode).toBe(400);
+    expect((await a.post(`/orgs/${orgA}/notifications/not-a-uuid/read`)).statusCode).toBe(400);
   });
 
   it('gets and updates preferences', async () => {
@@ -98,35 +105,48 @@ describe('ADR-013 notification routes', () => {
     expect((await owner.put(`/orgs/${org}/notification-preferences`, { items: [{ type: '*', channel: 'sms', enabled: true }] })).statusCode).toBe(400);
   });
 
-  it('registers allowlisted push targets only and never echoes the token', async () => {
+  it('POST /me/push-devices (mobile PR #262): Expo tokens or allowlisted Web Push only, never echoed', async () => {
     const owner = await signupAndLogin(app, 'owner@example.com');
-    const org = await createOrg(owner, 'Acme');
-    const ok = await owner.post(`/orgs/${org}/push-devices`, sub('https://fcm.googleapis.com/fcm/send/abc'));
+    await createOrg(owner, 'Acme');
+    const ok = await owner.post('/me/push-devices', { provider: 'expo', token: 'ExponentPushToken[abcdefghijkl]', platform: 'ios', deviceName: 'iPhone' });
     expect(ok.statusCode).toBe(201);
     expect(Value.Check(PushDevice, ok.json())).toBe(true);
-    expect(ok.body).not.toMatch(/fcm|p256dh|BBBB/);
+    expect(Object.keys(ok.json()).sort()).toEqual(['createdAt', 'id', 'platform']);
+    expect(ok.body).not.toContain('Exponent');
+    expect((await owner.post('/me/push-devices', { provider: 'expo', token: 'nope', platform: 'android' })).statusCode).toBe(400);
+    expect((await owner.post('/me/push-devices', sub('https://fcm.googleapis.com/fcm/send/abc'))).statusCode).toBe(201);
     for (const bad of ['https://evil.example/x', 'https://169.254.169.254/x', 'https://fcm.googleapis.com:8443/x']) {
-      const r = await owner.post(`/orgs/${org}/push-devices`, sub(bad));
+      const r = await owner.post('/me/push-devices', sub(bad));
       expect(r.statusCode, bad).toBe(400);
       expect(r.body).not.toContain(bad);
     }
-    expect((await owner.post(`/orgs/${org}/push-devices`, { platform: 'ios', expoPushToken: 'ExponentPushToken[abcdefghijkl]' })).statusCode).toBe(201);
-    expect((await owner.post(`/orgs/${org}/push-devices`, { platform: 'android', expoPushToken: 'nope' })).statusCode).toBe(400);
     expect(repo.devices).toHaveLength(2);
     const id = ok.json<{ id: string }>().id;
-    expect((await owner.delete(`/orgs/${org}/push-devices/${id}`)).statusCode).toBe(204);
-    expect((await owner.delete(`/orgs/${org}/push-devices/${id}`)).statusCode).toBe(404);
+    expect((await owner.delete(`/me/push-devices/${id}`)).statusCode).toBe(204);
+    expect((await owner.delete(`/me/push-devices/${id}`)).statusCode).toBe(204);
+    expect(repo.devices).toHaveLength(1);
   });
 
-  it('deletes the member devices when their membership is removed', async () => {
+  it('DELETE only affects the caller devices', async () => {
+    const owner = await signupAndLogin(app, 'owner@example.com');
+    const org = await createOrg(owner, 'Acme');
+    const m = await join(owner, org, 'm@example.com', 'member');
+    const id = (await owner.post('/me/push-devices', { provider: 'expo', token: 'ExpoPushToken[abcdefghijkl]', platform: 'android' })).json<{ id: string }>().id;
+    expect((await m.delete(`/me/push-devices/${id}`)).statusCode).toBe(204);
+    expect(repo.devices.map((d) => d.id)).toEqual([id]);
+  });
+
+  it('revokes devices on membership removal and on logout', async () => {
     const owner = await signupAndLogin(app, 'owner@example.com');
     const org = await createOrg(owner, 'Acme');
     const m = await join(owner, org, 'm@example.com', 'member');
     const mId = await meId(m);
-    expect((await m.post(`/orgs/${org}/push-devices`, sub('https://web.push.apple.com/abc'))).statusCode).toBe(201);
-    expect(repo.devices.filter((d) => d.userId === mId)).toHaveLength(1);
+    expect((await m.post('/me/push-devices', sub('https://web.push.apple.com/abc'))).statusCode).toBe(201);
     expect((await owner.delete(`/orgs/${org}/members/${mId}`)).statusCode).toBeLessThan(300);
     expect(repo.devices.filter((d) => d.userId === mId)).toHaveLength(0);
+    expect((await owner.post('/me/push-devices', sub('https://web.push.apple.com/own'))).statusCode).toBe(201);
+    expect((await owner.post('/auth/logout')).statusCode).toBeLessThan(300);
+    expect(repo.devices).toHaveLength(0);
   });
 
   it('unsubscribe: GET shows a confirm page without changing state, POST applies', async () => {

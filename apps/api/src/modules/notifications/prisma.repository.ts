@@ -9,6 +9,7 @@ import {
 import type { DatabaseClient } from '../../shared/prisma/context.js';
 import { InvalidCursorError, NotificationsUnavailableError } from './errors.js';
 import type { NotificationPage, NotificationsRepository } from './ports.js';
+import { renderNotification } from './render.js';
 
 /** Without a configured cipher nothing can be registered (503), and nothing is ever stored in plaintext. */
 export const refusingPushCipher: PushTokenCipher = {
@@ -16,21 +17,15 @@ export const refusingPushCipher: PushTokenCipher = {
   decrypt: () => Promise.reject(new NotificationsUnavailableError('Push token encryption')),
 };
 
-const toDto = (r: NotificationRecord): Notification => ({
-  id: r.id,
-  organizationId: r.organizationId,
-  type: r.type,
-  subjectType: r.subjectType,
-  subjectId: r.subjectId,
-  data: r.data as Notification['data'],
-  readAt: r.readAt ? r.readAt.toISOString() : null,
-  createdAt: r.createdAt.toISOString(),
-});
+const toDto = (r: NotificationRecord): Notification =>
+  renderNotification({
+    ...r,
+    readAt: r.readAt ? r.readAt.toISOString() : null,
+    createdAt: r.createdAt.toISOString(),
+  });
 const toDevice = (d: PushDeviceRecord): PushDevice => ({
   id: d.id,
   platform: d.platform,
-  label: d.label,
-  lastSeenAt: d.lastSeenAt.toISOString(),
   createdAt: d.createdAt.toISOString(),
 });
 
@@ -42,7 +37,7 @@ export class PrismaNotifications implements NotificationsRepository {
   async list(organizationId: string, userId: string, q: { limit?: number; cursor?: string; unreadOnly?: boolean }): Promise<NotificationPage> {
     try {
       const p = await this.repo.list(organizationId, userId, q);
-      return { items: p.items.map(toDto), nextCursor: p.nextCursor, unreadCount: p.unreadCount };
+      return { items: p.items.map(toDto), nextCursor: p.nextCursor };
     } catch (e) {
       if (e instanceof TypeError && /cursor/.test(e.message)) throw new InvalidCursorError();
       throw e;
