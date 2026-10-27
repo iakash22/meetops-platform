@@ -75,6 +75,9 @@ importers:
       '@fastify/cookie':
         specifier: ^11.1.3
         version: 11.1.3
+      '@fastify/cors':
+        specifier: ^11
+        version: 11.3.1
       '@fastify/swagger':
         specifier: ^9.9.2
         version: 9.9.2
@@ -90,9 +93,15 @@ importers:
       '@meetops/database':
         specifier: workspace:*
         version: link:../../packages/database
+      '@meetops/integrations':
+        specifier: workspace:*
+        version: link:../../packages/integrations
       '@meetops/logger':
         specifier: workspace:*
         version: link:../../packages/logger
+      '@meetops/notifications':
+        specifier: workspace:*
+        version: link:../../packages/notifications
       '@meetops/session-verifier':
         specifier: workspace:*
         version: link:../../packages/session-verifier
@@ -480,6 +489,9 @@ importers:
       '@meetops/database':
         specifier: workspace:*
         version: link:../../packages/database
+      '@meetops/integrations':
+        specifier: workspace:*
+        version: link:../../packages/integrations
       '@meetops/logger':
         specifier: workspace:*
         version: link:../../packages/logger
@@ -3102,6 +3114,12 @@ packages:
     resolution:
       {
         integrity: sha512-RBhlMNsmSG6C5KGiTkhSXBF75xIrUMSytDDBcpnVewhJ8XVYnJTu+SV6FYKXClIRsBuRjOfKbBSULvnPD3X/mg==,
+      }
+
+  '@fastify/cors@11.3.1':
+    resolution:
+      {
+        integrity: sha512-gZXNzd6FLHzOIfvoK4+Az3Wko2V6Y0MIsLxpyo4AEYl7a9q1JBPwPaxLea4nkr++8FCiJiPpYYo6E02uZW0dqw==,
       }
 
   '@fastify/deepmerge@3.2.2':
@@ -17091,6 +17109,11 @@ snapshots:
     dependencies:
       cookie: 2.0.1
       fastify-plugin: 6.0.1
+
+  '@fastify/cors@11.3.1':
+    dependencies:
+      fastify-plugin: 6.0.1
+      toad-cache: 3.7.4
 
   '@fastify/deepmerge@3.2.2': {}
 

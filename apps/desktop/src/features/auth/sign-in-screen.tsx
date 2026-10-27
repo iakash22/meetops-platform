@@ -1,19 +1,22 @@
 import { useState, type FormEvent } from 'react';
 import { ExternalLink, Loader2 } from 'lucide-react';
 
-import { Alert } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Toast } from '@/components/ui/toast';
 import { AuthError } from './auth-client';
-import { AuthLayout, AuthSwitch } from './auth-layout';
+import { AuthLayout, AuthSwitch, FieldError } from './auth-layout';
 import { useSession } from './session';
 
 export const SIGN_IN_FOOTER = 'Preview build: sign-in is mocked and no server is contacted.';
 
 export const BROWSER_SIGN_IN_PENDING =
   'Browser sign-in (ADR-012) is not available yet. It will open your default browser once the decision is signed off.';
+
+export const BROWSER_SIGN_IN_HINT =
+  'Opens your default browser. Sign in there and confirm this device; your password never enters the app.';
 
 interface SignInScreenProps {
   onCreateAccount?: () => void;
@@ -24,24 +27,43 @@ interface SignInScreenProps {
 export function SignInScreen({ onCreateAccount, mockAuth = false }: SignInScreenProps) {
   // `import.meta.env.DEV` first so production builds drop the mock form entirely.
   const showMock = import.meta.env.DEV && mockAuth;
-  const { signIn } = useSession();
+  const { signIn, signInWithBrowser } = useSession();
+  const [browserPending, setBrowserPending] = useState(false);
+  const [toast, setToast] = useState<string | null>(null);
+
+  async function browserSignIn() {
+    if (!signInWithBrowser) return;
+    setToast(null);
+    setBrowserPending(true);
+    try {
+      await signInWithBrowser();
+    } catch (err) {
+      setToast(err instanceof AuthError ? err.message : 'Sign-in failed. Try again.');
+      setBrowserPending(false);
+    }
+  }
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [error, setError] = useState<string | null>(null);
+  const [fieldErrors, setFieldErrors] = useState<{ email?: string; password?: string }>({});
   const [pending, setPending] = useState(false);
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!email.trim() || !password) {
-      setError('Enter your email and password.');
+    const found: { email?: string; password?: string } = {};
+    if (!email.trim()) found.email = 'Enter your email.';
+    if (!password) found.password = 'Enter your password.';
+    setFieldErrors(found);
+    if (found.email || found.password) {
+      document.getElementById(found.email ? 'email' : 'password')?.focus();
       return;
     }
-    setError(null);
+    setToast(null);
     setPending(true);
     try {
       await signIn({ email, password });
     } catch (err) {
-      setError(err instanceof AuthError ? err.message : 'Sign-in failed. Try again.');
+      // Non-field error (e.g. invalid credentials): toast, per docs/references.md.
+      setToast(err instanceof AuthError ? err.message : 'Sign-in failed. Try again.');
       setPending(false);
     }
   }
@@ -58,16 +80,21 @@ export function SignInScreen({ onCreateAccount, mockAuth = false }: SignInScreen
               system browser (PKCE + loopback). Disabled until the ADR is signed off, so no auth is faked. */}
           <Button
             type="button"
-            variant="outline"
+            variant={signInWithBrowser ? 'default' : 'outline'}
             className="h-11 w-full"
-            disabled
+            disabled={!signInWithBrowser || browserPending}
             aria-describedby="browser-sign-in-note"
+            onClick={() => void browserSignIn()}
           >
-            <ExternalLink aria-hidden />
-            Sign in with your browser
+            {browserPending ? (
+              <Loader2 className="motion-safe:animate-spin" aria-hidden />
+            ) : (
+              <ExternalLink aria-hidden />
+            )}
+            {browserPending ? 'Waiting for your browser…' : 'Sign in with your browser'}
           </Button>
           <p id="browser-sign-in-note" className="text-xs text-muted-foreground">
-            {BROWSER_SIGN_IN_PENDING}
+            {signInWithBrowser ? BROWSER_SIGN_IN_HINT : BROWSER_SIGN_IN_PENDING}
           </p>
           {showMock ? (
             <form
@@ -84,9 +111,11 @@ export function SignInScreen({ onCreateAccount, mockAuth = false }: SignInScreen
                   autoComplete="email"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
-                  aria-invalid={error ? true : undefined}
+                  aria-invalid={fieldErrors.email ? true : undefined}
+                  aria-describedby={fieldErrors.email ? 'email-error' : undefined}
                   disabled={pending}
                 />
+                <FieldError id="email-error" message={fieldErrors.email} />
               </div>
               <div className="space-y-2">
                 <Label htmlFor="password">Password</Label>
@@ -96,12 +125,13 @@ export function SignInScreen({ onCreateAccount, mockAuth = false }: SignInScreen
                   autoComplete="current-password"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
-                  aria-invalid={error ? true : undefined}
+                  aria-invalid={fieldErrors.password ? true : undefined}
+                  aria-describedby={fieldErrors.password ? 'password-error' : undefined}
                   disabled={pending}
                 />
+                <FieldError id="password-error" message={fieldErrors.password} />
               </div>
-              {error ? <Alert variant="destructive">{error}</Alert> : null}
-              <Button type="submit" className="h-11 w-full" disabled={pending}>
+              <Button type="submit" className="h-11 w-full" disabled={pending} aria-busy={pending}>
                 {pending ? <Loader2 className="motion-safe:animate-spin" aria-hidden /> : null}
                 {pending ? 'Signing in…' : 'Sign in'}
               </Button>
@@ -116,6 +146,7 @@ export function SignInScreen({ onCreateAccount, mockAuth = false }: SignInScreen
           ) : null}
         </CardContent>
       </Card>
+      <Toast message={toast} onDismiss={() => setToast(null)} />
     </AuthLayout>
   );
 }

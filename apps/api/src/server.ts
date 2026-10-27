@@ -1,6 +1,7 @@
 import Fastify, { type FastifyBaseLogger } from 'fastify';
 import swagger from '@fastify/swagger';
 import swaggerUi from '@fastify/swagger-ui';
+import { REDACT_KEYS } from '@meetops/contracts';
 import { createLogger } from '@meetops/logger';
 import {
   isRelaxedEnv,
@@ -10,6 +11,13 @@ import {
 } from './modules/index.js';
 import { registerDomainErrorHandler, registerNotFoundHandler } from './shared/http-errors.js';
 import { parseTrustProxy } from './shared/trust-proxy.js';
+import { metricsTokenFromEnv, registerMetrics, type HttpMetrics } from './shared/metrics.js';
+import {
+  createReadiness,
+  defaultReadinessChecks,
+  readinessTimeoutFromEnv,
+  type ReadinessCheck,
+} from './shared/readiness.js';
 
 /** Node lowercases incoming header names, so these cover any case of X-CSRF-Token/Cookie/Authorization. */
 export const REDACT_PATHS = [
@@ -28,6 +36,10 @@ export const REDACT_PATHS = [
   '*.api_key',
   '*.access_token',
   '*.refresh_token',
+  '*.accessToken',
+  '*.refreshToken',
+  '*.pairingCode',
+  '*.nonce',
 ];
 
 /**
@@ -53,6 +65,14 @@ export interface CreateServerOptions {
   databaseUrl?: string;
   /** Overrides REDIS_URL for the default Redis rate limiter and lockout ('' disables them). */
   redisUrl?: string;
+  /** Overrides METRICS_TOKEN ('' disables /metrics). */
+  metricsToken?: string;
+  /** Inject a metrics registry (tests). */
+  metrics?: HttpMetrics;
+  /** Overrides the default /ready probes (Prisma `SELECT 1`, Redis `PING`). */
+  readinessChecks?: ReadinessCheck[];
+  /** Overrides READINESS_TIMEOUT_MS (per-probe timeout for /ready). */
+  readinessTimeoutMs?: number;
 }
 
 export function createServer(options: CreateServerOptions = {}) {
@@ -60,6 +80,8 @@ export function createServer(options: CreateServerOptions = {}) {
     name: 'api',
     // Superset of @meetops/logger defaults plus CSRF/auth headers (any case, via lowercased Node headers).
     redact: { paths: REDACT_PATHS, censor: '***redacted***' },
+    // ADR-005 A1.5: contracts REDACT_KEYS at any depth (fast-redact `*.` paths above are one level only).
+    redactKeys: REDACT_KEYS,
   });
   // Throws in production when persistence/rate-limit implementations are neither injected nor
   // backed by DATABASE_URL / REDIS_URL.
@@ -68,11 +90,18 @@ export function createServer(options: CreateServerOptions = {}) {
     nodeEnv,
     databaseUrl: options.databaseUrl ?? process.env.DATABASE_URL,
     redisUrl: options.redisUrl ?? process.env.REDIS_URL,
+    emailEnv: process.env,
   });
   const app = Fastify({
     loggerInstance: logger,
     trustProxy: parseTrustProxy(options.trustProxy ?? process.env.TRUST_PROXY),
     ajv: { customOptions: { ...AJV_CUSTOM_OPTIONS } },
+  });
+
+  // Request metrics are recorded always; /metrics is only served when METRICS_TOKEN is configured.
+  registerMetrics(app, {
+    token: metricsTokenFromEnv(options.metricsToken ?? process.env.METRICS_TOKEN),
+    ...(options.metrics ? { metrics: options.metrics } : {}),
   });
 
   registerDomainErrorHandler(app);
@@ -101,8 +130,20 @@ export function createServer(options: CreateServerOptions = {}) {
     return { status: 'ok' };
   });
 
-  app.get('/ready', async () => {
-    return { status: 'ready' };
+  // Liveness (/health) never touches dependencies; readiness (/ready) probes the ones this process uses.
+  const readiness = createReadiness(
+    options.readinessChecks ?? defaultReadinessChecks(deps),
+    options.readinessTimeoutMs ?? readinessTimeoutFromEnv(process.env.READINESS_TIMEOUT_MS),
+  );
+  app.get('/ready', { logLevel: 'warn' }, async (_req, reply) => {
+    const report = await readiness.check();
+    if (readiness.names.length === 0) return { status: 'ready' };
+    if (!report.ready) {
+      // Names and outcomes only: no error text, hosts or connection strings.
+      app.log.warn({ readiness: report.checks }, 'readiness check failed');
+      return reply.code(503).send({ status: 'not_ready', checks: report.checks });
+    }
+    return { status: 'ready', checks: report.checks };
   });
 
   return app;

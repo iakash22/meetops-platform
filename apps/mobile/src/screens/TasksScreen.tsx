@@ -1,4 +1,5 @@
 import type { Task } from '@meetops/contracts';
+import { lazy, Suspense } from 'react';
 import { FlatList, StyleSheet, Text, View } from 'react-native';
 
 import { useActiveOrganization } from '../auth/useActiveOrganization';
@@ -22,10 +23,14 @@ const PRIORITY_LABEL: Record<Task['priority'], string> = {
   urgent: 'Urgent',
 };
 
+const TaskReviewPanel = lazy(() =>
+  import('../tasks/TaskReviewPanel').then((m) => ({ default: m.TaskReviewPanel })),
+);
+
 /** Read-only placeholder list. Real data needs a list-tasks API route (Backend, not in the API yet). */
 export function TasksScreen() {
   const { organizationId } = useActiveOrganization();
-  const { tasks } = useRepositories();
+  const { tasks, review } = useRepositories();
   const { state, reload } = useOrgScopedList(organizationId, tasks.list);
 
   return (
@@ -39,6 +44,17 @@ export function TasksScreen() {
           testID="tasks-list"
           data={state.items}
           keyExtractor={(t) => t.id}
+          initialNumToRender={12}
+          maxToRenderPerBatch={12}
+          windowSize={7}
+          removeClippedSubviews
+          ListHeaderComponent={
+            review && organizationId ? (
+              <Suspense fallback={null}>
+                <TaskReviewPanel api={review} organizationId={organizationId} />
+              </Suspense>
+            ) : null
+          }
           ListEmptyComponent={
             <EmptyState
               testID="tasks-empty"

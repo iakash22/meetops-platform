@@ -1,35 +1,41 @@
 # Implementation board
 
-Last updated: 2026-10-22 (merges only; other rows are from 2026-10-21). Branch names are assigned by the Coordinator. "Pushed?" and PR numbers come from `git ls-remote` and `gh pr list --state all` on that date.
+Last updated: 2026-10-27 ~23:20 IST, from `gh pr list --state open`, `gh pr view` and the tree at `integration/phase-1` `99a6f4f`. Phase percentages and per-phase merge lists are in [`docs/PHASE_STATUS.md`](../PHASE_STATUS.md); this board tracks PR state only.
 
-## Phase 0: Foundation — Done (merged)
+Flow: feature branch → PR into `integration/phase-1` → merge gate (local CI, reviews) → integration → `main` PR merged by the owner. `main` is at `02646a1` (merge of #253) and contains `integration/phase-1` up to `99a6f4f`.
 
-Monorepo, apps (api/web/worker), packages, Docker Compose, CI. Branch `chore/phase-0-foundation`: PR #1 (original scaffold) and PR #2 (Phase 0 fixes) both merged to `main`.
+## Open PRs
 
-## Phase 1: In progress
+| PR   | Branch                                 | Base                  | State | Status                                  |
+| ---- | -------------------------------------- | --------------------- | ----- | --------------------------------------- |
+| #192 | `docs/adr-012-desktop-amendment`       | `integration/phase-1` | Draft | ADR-012 amendment, needs owner sign-off |
+| #193 | `docs/adr-005-mobile-header-token`     | `integration/phase-1` | Draft | ADR-005 amendment, needs owner sign-off |
+| #199 | `docs/adr-005-extension-consent-route` | `integration/phase-1` | Draft | ADR-005 amendment, needs owner sign-off |
+| #254 | `backup/desktop-native-unpushed`       | `integration/phase-1` | Draft | Backup only, do not merge               |
+| #255 | `backup/mobile-securestore-unpushed`   | `integration/phase-1` | Draft | Backup only, do not merge               |
 
-| Agent  | Workstream                                                                                                                                                                                                                                              | Branch                           | Pushed? | PR                                                                                | Status      |
-| ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------- | ------- | --------------------------------------------------------------------------------- | ----------- |
-| ARCH   | Core contracts                                                                                                                                                                                                                                          | `feat/core-contracts`            | Yes     | #17 (open, contracts); #22 `docs/adr-004` (open, ADR-004)                         | In progress |
-| DB     | Database schema and migrations                                                                                                                                                                                                                          | `feat/database-core-schema`      | Yes     | #6 (open); #25 `feat/database-tenancy-rls` (open, stacked on #6)                  | In progress |
-| AI     | AI provider registry                                                                                                                                                                                                                                    | `feat/ai-provider-registry`      | Yes     | #21 (open)                                                                        | In progress |
-| BE     | API auth and organizations                                                                                                                                                                                                                              | `feat/api-auth-orgs`             | Not yet | None                                                                              | In progress |
-| FE     | Web shell                                                                                                                                                                                                                                               | `feat/web-shell`                 | Yes     | #13 (open)                                                                        | In progress |
-| OPS    | Containers and CI                                                                                                                                                                                                                                       | `chore/devops-containers-ci`     | Yes     | #7 (open); #24 `fix/eslint-project-service` (open); #26 `chore/commitlint` (open) | In progress |
-| QA     | QA harness                                                                                                                                                                                                                                              | `test/qa-harness`                | Yes     | #9 (open)                                                                         | In progress |
-| SEC    | Threat model                                                                                                                                                                                                                                            | `docs/security-threat-model`     | Yes     | #4 (open)                                                                         | In progress |
-| INT    | Notifications and email                                                                                                                                                                                                                                 | `feat/notifications-email`       | Yes     | #11 (open); #19 `feat/integrations-webhooks-jira` (open)                          | In progress |
-| MEDIA  | Storage and media core                                                                                                                                                                                                                                  | `feat/storage-and-media-core`    | Yes     | #10 (open); #16 `feat/realtime-scaffold` (open)                                   | In progress |
-| NATIVE | Extension scaffold                                                                                                                                                                                                                                      | `feat/extension-scaffold`        | Yes     | #5 (open); #15 `feat/extension-capture` (open, stacked on #5)                     | In progress |
-| DOC    | P1-DOC #3; P1-DOC-2 #8 (`docs/getting-started`); P1-DOC-3 #12 (`docs/database-and-devops`); P1-DOC-4 #14 (`docs/storage-testing-extension`); P1-DOC-5 #18 (`docs/contributing`); P1-DOC-6 #23 (`docs/contracts`); P1-DOC-7 (`docs/windows-local-setup`) | `docs/agent-board-and-providers` | Yes     | #3 (open)                                                                         | In progress |
+## Merged on 27 Oct 2026 (IST)
 
-Update the branch column when each agent pushes its branch.
+| Base                  | PRs                                                                                          |
+| --------------------- | -------------------------------------------------------------------------------------------- |
+| `integration/phase-1` | #205–#209, #212–#246, #249 (ADR-013 notifications plan), #251 (real mail transport + Resend) |
+| `main`                | #211, #247, #252, #253 (integration → `main`); #248 (status docs); #250 (ADR-013 plan)       |
 
-## Later phases
+## Phases
 
-- Phase 2: Meetings, uploads, FFmpeg pipeline
-- Phase 3: Transcription, reports, task drafts
-- Phase 4: Review/approval, notifications
-- Phase 5: GitHub/Jira integrations, 2-way sync
+| Phase | Scope                                            | State (see `PHASE_STATUS.md`) |
+| ----- | ------------------------------------------------ | ----------------------------- |
+| 0     | Foundation                                       | Done                          |
+| 1     | Auth, orgs, directory, RBAC                      | ~90%                          |
+| 2     | Meetings, uploads, recording                     | ~75%                          |
+| 3     | Transcripts, reports                             | ~65%                          |
+| 4     | Tasks, approval, notifications                   | ~70%                          |
+| 5     | GitHub, Jira                                     | ~65%                          |
+| 6     | Extension, live transcription                    | ~70%                          |
+| 7     | Calendar, search, analytics                      | 5%                            |
+| 8     | Desktop (`apps/desktop`), mobile (`apps/mobile`) | ~55%                          |
+| 9     | Hardening, release                               | ~25%                          |
 
-Merged into `integration/phase-1` on 2026-10-22: #39 (MEDIA, media worker), #35 (DB, P1-DB-3 incl. no-owner-demotion fix), #50 (ARCH, contracts v0.3.0: meeting resolve, extension auth under ADR-005, task list query).
+## History
+
+The 2026-10-21/22 Phase 1 board (PRs #3–#26, #35, #39, #50) is superseded. Every PR on it has merged or been closed; see `git log` for this file.

@@ -13,7 +13,24 @@ export type RealtimeConfig = {
   /** Session cookie read on web handshakes: `__Host-meetops_sid`, or `meetops_sid` only when NODE_ENV=development. */
   sessionCookieName: string;
   path: string;
+  /** Re-verify every live socket's credential this often (REALTIME_REVALIDATE_INTERVAL_MS, default 60 s, min 1 s). */
+  revalidateIntervalMs: number;
+  /** Connection attempts allowed per client IP per window (REALTIME_CONN_LIMIT_PER_IP, default 30). */
+  connLimitPerIp: number;
+  /** Authenticated connections allowed per user per window (REALTIME_CONN_LIMIT_PER_USER, default 20). */
+  connLimitPerUser: number;
+  /** Rate-limit window (REALTIME_CONN_LIMIT_WINDOW_MS, default 60 s). */
+  connLimitWindowMs: number;
 };
+
+function positiveInt(env: NodeJS.ProcessEnv, key: string, fallback: number, min = 1): number {
+  const raw = env[key];
+  if (raw === undefined || raw === '') return fallback;
+  const n = Number(raw);
+  if (!Number.isInteger(n) || n < min)
+    throw new Error(`Invalid ${key}: must be an integer >= ${min}`);
+  return n;
+}
 
 /** Chrome extension ids are 32 characters a-p. */
 const EXTENSION_ID = /^[a-p]{32}$/;
@@ -50,6 +67,10 @@ export function loadRealtimeConfig(env: NodeJS.ProcessEnv = process.env): Realti
     extensionOrigins: extensionIds.map((id) => `chrome-extension://${id}`),
     sessionCookieName: env.NODE_ENV === 'development' ? 'meetops_sid' : '__Host-meetops_sid',
     path: env.REALTIME_SOCKET_PATH || '/socket.io',
+    revalidateIntervalMs: positiveInt(env, 'REALTIME_REVALIDATE_INTERVAL_MS', 60_000, 1_000),
+    connLimitPerIp: positiveInt(env, 'REALTIME_CONN_LIMIT_PER_IP', 30),
+    connLimitPerUser: positiveInt(env, 'REALTIME_CONN_LIMIT_PER_USER', 20),
+    connLimitWindowMs: positiveInt(env, 'REALTIME_CONN_LIMIT_WINDOW_MS', 60_000, 1_000),
   };
   if (env.REDIS_URL) cfg.redisUrl = env.REDIS_URL;
   return cfg;

@@ -1,8 +1,21 @@
+import { EXTENSION_AUTH_PATHS } from '@meetops/contracts';
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { InMemorySessionRepository } from '../src/modules/auth/infrastructure/in-memory-session.repository.js';
 import { InMemoryUserRepository } from '../src/modules/users/infrastructure/in-memory-user.repository.js';
-import { ARGON2_PARAMS, Argon2PasswordHasher } from '../src/modules/auth/infrastructure/argon2-password-hasher.js';
-import { buildApp, Client, CSRF, ORIGIN, PASSWORD, SID, signupAndLogin, type App } from './helpers.js';
+import {
+  ARGON2_PARAMS,
+  Argon2PasswordHasher,
+} from '../src/modules/auth/infrastructure/argon2-password-hasher.js';
+import {
+  buildApp,
+  Client,
+  CSRF,
+  ORIGIN,
+  PASSWORD,
+  SID,
+  signupAndLogin,
+  type App,
+} from './helpers.js';
 
 const MIN = 60_000;
 
@@ -21,7 +34,11 @@ describe('auth', () => {
   describe('signup', () => {
     it('returns 202 and does not set a session', async () => {
       const c = new Client(app);
-      const res = await c.post('/auth/signup', { name: 'Ada', email: 'Ada@Example.com', password: PASSWORD });
+      const res = await c.post('/auth/signup', {
+        name: 'Ada',
+        email: 'Ada@Example.com',
+        password: PASSWORD,
+      });
       expect(res.statusCode).toBe(202);
       expect(res.cookies.find((x) => x.name === SID)).toBeUndefined();
       expect((await users.findByEmail('ada@example.com'))?.name).toBe('Ada');
@@ -30,24 +47,46 @@ describe('auth', () => {
 
     it('is enumeration-safe for an existing email', async () => {
       const c = new Client(app);
-      const a = await c.post('/auth/signup', { name: 'A', email: 'dup@example.com', password: PASSWORD });
-      const b = await c.post('/auth/signup', { name: 'B', email: 'DUP@example.com', password: 'another-password-1' });
+      const a = await c.post('/auth/signup', {
+        name: 'A',
+        email: 'dup@example.com',
+        password: PASSWORD,
+      });
+      const b = await c.post('/auth/signup', {
+        name: 'B',
+        email: 'DUP@example.com',
+        password: 'another-password-1',
+      });
       expect(b.statusCode).toBe(a.statusCode);
       expect(b.body).toBe(a.body);
-      expect(app.mail.sent.map((m) => m.template)).toEqual(['email_verification', 'account_exists']);
+      expect(app.mail.sent.map((m) => m.template)).toEqual([
+        'email_verification',
+        'account_exists',
+      ]);
     });
 
     it.each([
       ['11 chars', 'a'.repeat(11)],
-      ['129 chars', 'a'.repeat(129)]
+      ['129 chars', 'a'.repeat(129)],
     ])('rejects a %s password with 400 in the error envelope', async (_l, password) => {
-      const res = await new Client(app).post('/auth/signup', { name: 'A', email: 'p@example.com', password });
+      const res = await new Client(app).post('/auth/signup', {
+        name: 'A',
+        email: 'p@example.com',
+        password,
+      });
       expect(res.statusCode).toBe(400);
       expect(res.json().error.code).toBe('VALIDATION_FAILED');
     });
 
-    it.each([['12 chars', 'a'.repeat(12)], ['128 chars', 'a'.repeat(128)]])('accepts a %s password', async (_l, password) => {
-      const res = await new Client(app).post('/auth/signup', { name: 'A', email: 'p@example.com', password });
+    it.each([
+      ['12 chars', 'a'.repeat(12)],
+      ['128 chars', 'a'.repeat(128)],
+    ])('accepts a %s password', async (_l, password) => {
+      const res = await new Client(app).post('/auth/signup', {
+        name: 'A',
+        email: 'p@example.com',
+        password,
+      });
       expect(res.statusCode).toBe(202);
     });
   });
@@ -65,10 +104,24 @@ describe('auth', () => {
       await app.close();
       const hasher = new Argon2PasswordHasher();
       app = await buildApp({ users, hasher });
-      const weak = await new Argon2PasswordHasher({ ...ARGON2_PARAMS, memoryCost: 8192 }).hash(PASSWORD);
+      const weak = await new Argon2PasswordHasher({ ...ARGON2_PARAMS, memoryCost: 8192 }).hash(
+        PASSWORD,
+      );
       const now = new Date();
-      await users.create({ id: 'u1', email: 'old@example.com', name: null, passwordHash: weak, emailVerifiedAt: null, createdAt: now, updatedAt: now, deletedAt: null });
-      const res = await new Client(app).post('/auth/login', { email: 'old@example.com', password: PASSWORD });
+      await users.create({
+        id: 'u1',
+        email: 'old@example.com',
+        name: null,
+        passwordHash: weak,
+        emailVerifiedAt: null,
+        createdAt: now,
+        updatedAt: now,
+        deletedAt: null,
+      });
+      const res = await new Client(app).post('/auth/login', {
+        email: 'old@example.com',
+        password: PASSWORD,
+      });
       expect(res.statusCode).toBe(200);
       expect((await users.findById('u1'))!.passwordHash).toMatch(/m=19456,t=2,p=1/);
     });
@@ -83,7 +136,9 @@ describe('auth', () => {
       expect(cookie.domain).toBeUndefined();
       expect(cookie.maxAge).toBe(12 * 60 * 60);
       const stored = [...sessions.items.values()];
-      expect(stored.every((s) => s.tokenHash !== cookie.value && /^[a-f0-9]{64}$/.test(s.tokenHash))).toBe(true);
+      expect(
+        stored.every((s) => s.tokenHash !== cookie.value && /^[a-f0-9]{64}$/.test(s.tokenHash)),
+      ).toBe(true);
       expect(res.body).not.toContain(cookie.value);
       expect(res.body).not.toMatch(/hash|"token"|accessToken|sessionToken/i);
       expect(res.json().csrfToken).toBeTypeOf('string');
@@ -94,7 +149,11 @@ describe('auth', () => {
       const oldCookie = c.cookie;
       await c.post('/auth/login', { email: 'rot@example.com', password: PASSWORD });
       expect(c.cookie).not.toBe(oldCookie);
-      const old = await app.inject({ method: 'GET', url: '/auth/session', headers: { cookie: oldCookie } });
+      const old = await app.inject({
+        method: 'GET',
+        url: '/auth/session',
+        headers: { cookie: oldCookie },
+      });
       expect(old.statusCode).toBe(401);
       expect((await c.get('/auth/session')).statusCode).toBe(200);
     });
@@ -102,11 +161,20 @@ describe('auth', () => {
     it('returns the same 401 for a wrong password and an unknown email', async () => {
       await signupAndLogin(app, 'login@example.com');
       const c = new Client(app);
-      const wrong = await c.post('/auth/login', { email: 'login@example.com', password: 'nope-nope-nope' });
-      const unknown = await c.post('/auth/login', { email: 'ghost@example.com', password: 'nope-nope-nope' });
+      const wrong = await c.post('/auth/login', {
+        email: 'login@example.com',
+        password: 'nope-nope-nope',
+      });
+      const unknown = await c.post('/auth/login', {
+        email: 'ghost@example.com',
+        password: 'nope-nope-nope',
+      });
       for (const r of [wrong, unknown]) {
         expect(r.statusCode).toBe(401);
-        expect(r.json().error).toMatchObject({ code: 'AUTH_FAILED', message: 'Invalid email or password' });
+        expect(r.json().error).toMatchObject({
+          code: 'AUTH_FAILED',
+          message: 'Invalid email or password',
+        });
         expect(r.cookies.find((x) => x.name === SID)).toBeUndefined();
       }
     });
@@ -114,7 +182,8 @@ describe('auth', () => {
     it('locks the account after 10 failures and returns 429 with Retry-After', async () => {
       await signupAndLogin(app, 'lock@example.com');
       const c = new Client(app);
-      for (let i = 0; i < 10; i++) await c.post('/auth/login', { email: 'lock@example.com', password: 'wrong-password' });
+      for (let i = 0; i < 10; i++)
+        await c.post('/auth/login', { email: 'lock@example.com', password: 'wrong-password' });
       const res = await c.post('/auth/login', { email: 'lock@example.com', password: PASSWORD });
       expect(res.statusCode).toBe(429);
       expect(res.json().error.code).toBe('RATE_LIMITED');
@@ -124,7 +193,10 @@ describe('auth', () => {
     it('rate-limits login per IP at 20/min', async () => {
       const c = new Client(app);
       let last = 0;
-      for (let i = 0; i < 21; i++) last = (await c.post('/auth/login', { email: `x${i}@example.com`, password: 'whatever-whatever' })).statusCode;
+      for (let i = 0; i < 21; i++)
+        last = (
+          await c.post('/auth/login', { email: `x${i}@example.com`, password: 'whatever-whatever' })
+        ).statusCode;
       expect(last).toBe(429);
     });
   });
@@ -134,12 +206,33 @@ describe('auth', () => {
       const c = await signupAndLogin(app, 'me@example.com');
       const ok = await c.get('/auth/session');
       expect(ok.statusCode).toBe(200);
-      expect(ok.json()).toMatchObject({ user: { email: 'me@example.com', name: 'Test User' }, organizations: [], activeOrganizationId: null });
+      expect(ok.json()).toMatchObject({
+        user: { email: 'me@example.com', name: 'Test User' },
+        organizations: [],
+        activeOrganizationId: null,
+      });
       expect(ok.body).not.toMatch(/passwordHash|tokenHash|accessToken/);
       expect((await app.inject({ method: 'GET', url: '/auth/session' })).statusCode).toBe(401);
-      const bogus = await app.inject({ method: 'GET', url: '/auth/session', headers: { cookie: `${SID}=bogus` } });
+      const bogus = await app.inject({
+        method: 'GET',
+        url: '/auth/session',
+        headers: { cookie: `${SID}=bogus` },
+      });
       expect(bogus.statusCode).toBe(401);
       expect(bogus.json().error.code).toBe('UNAUTHENTICATED');
+    });
+
+    it('returns user.emailVerifiedAt: an ISO time once verified, null before', async () => {
+      const v = await (await signupAndLogin(app, 'ver@example.com')).get('/auth/session');
+      expect(v.statusCode).toBe(200);
+      expect(v.json().user.emailVerifiedAt).toMatch(
+        /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$/,
+      );
+      const u = await (
+        await signupAndLogin(app, 'unver@example.com', undefined, { verify: false })
+      ).get('/auth/session');
+      expect(u.statusCode).toBe(200);
+      expect(u.json().user.emailVerifiedAt).toBeNull();
     });
 
     it('expires after 30 minutes idle but slides with activity', async () => {
@@ -175,7 +268,11 @@ describe('auth', () => {
       const res = await c.post('/auth/logout');
       expect(res.statusCode).toBe(204);
       expect(res.cookies.find((x) => x.name === SID)!.value).toBe('');
-      const after = await app.inject({ method: 'GET', url: '/auth/session', headers: { cookie: sessionCookie } });
+      const after = await app.inject({
+        method: 'GET',
+        url: '/auth/session',
+        headers: { cookie: sessionCookie },
+      });
       expect(after.statusCode).toBe(401);
     });
   });
@@ -185,7 +282,12 @@ describe('auth', () => {
       const res = await app.inject({ method: 'GET', url: '/auth/csrf' });
       expect(res.statusCode).toBe(200);
       const cookie = res.cookies.find((x) => x.name === CSRF)!;
-      expect(cookie).toMatchObject({ secure: true, path: '/', sameSite: 'Lax', value: res.json().csrfToken });
+      expect(cookie).toMatchObject({
+        secure: true,
+        path: '/',
+        sameSite: 'Lax',
+        value: res.json().csrfToken,
+      });
       expect(cookie.domain).toBeUndefined();
     });
 
@@ -193,7 +295,12 @@ describe('auth', () => {
     it('403s a mutation with a missing token', async () => {
       const c = new Client(app);
       await c.csrf();
-      const res = await app.inject({ method: 'POST', url: '/auth/signup', payload: body, headers: { cookie: c.cookie, origin: ORIGIN } });
+      const res = await app.inject({
+        method: 'POST',
+        url: '/auth/signup',
+        payload: body,
+        headers: { cookie: c.cookie, origin: ORIGIN },
+      });
       expect(res.statusCode).toBe(403);
       expect(res.json().error.code).toBe('CSRF_INVALID');
     });
@@ -206,7 +313,12 @@ describe('auth', () => {
       expect(res.json().error.requestId).toBeTruthy();
     });
     it('403s a mutation with a header but no cookie', async () => {
-      const res = await app.inject({ method: 'POST', url: '/auth/signup', payload: body, headers: { origin: ORIGIN, 'x-csrf-token': 'abc' } });
+      const res = await app.inject({
+        method: 'POST',
+        url: '/auth/signup',
+        payload: body,
+        headers: { origin: ORIGIN, 'x-csrf-token': 'abc' },
+      });
       expect(res.statusCode).toBe(403);
       expect(res.json().error.code).toBe('CSRF_INVALID');
     });
@@ -220,11 +332,83 @@ describe('auth', () => {
       // Origin failures stay FORBIDDEN (distinct from CSRF_INVALID)
       expect(evil.json().error.code).toBe('FORBIDDEN');
       const t = await c.csrf();
-      const none = await app.inject({ method: 'POST', url: '/auth/signup', payload: body, headers: { cookie: c.cookie, 'x-csrf-token': t } });
+      const none = await app.inject({
+        method: 'POST',
+        url: '/auth/signup',
+        payload: body,
+        headers: { cookie: c.cookie, 'x-csrf-token': t },
+      });
       expect(none.statusCode).toBe(403);
       expect(none.json().error.code).toBe('FORBIDDEN');
-      const ref = await app.inject({ method: 'POST', url: '/auth/signup', payload: body, headers: { cookie: c.cookie, 'x-csrf-token': t, referer: `${ORIGIN}/signup` } });
+      const ref = await app.inject({
+        method: 'POST',
+        url: '/auth/signup',
+        payload: body,
+        headers: { cookie: c.cookie, 'x-csrf-token': t, referer: `${ORIGIN}/signup` },
+      });
       expect(ref.statusCode).toBe(202);
+    });
+    it('CORS preflight and credentialed GET reflect allowlisted Origin only', async () => {
+      const preflight = await app.inject({
+        method: 'OPTIONS',
+        url: '/auth/csrf',
+        headers: {
+          origin: ORIGIN,
+          'access-control-request-method': 'GET',
+          'access-control-request-headers': 'x-csrf-token',
+        },
+      });
+      expect(preflight.statusCode).toBe(204);
+      expect(preflight.headers['access-control-allow-origin']).toBe(ORIGIN);
+      expect(preflight.headers['access-control-allow-credentials']).toBe('true');
+
+      const ok = await app.inject({
+        method: 'GET',
+        url: '/auth/csrf',
+        headers: { origin: ORIGIN },
+      });
+      expect(ok.statusCode).toBe(200);
+      expect(ok.headers['access-control-allow-origin']).toBe(ORIGIN);
+      expect(ok.headers['access-control-allow-credentials']).toBe('true');
+
+      const denied = await app.inject({
+        method: 'GET',
+        url: '/auth/csrf',
+        headers: { origin: 'https://evil.example' },
+      });
+      expect(denied.statusCode).toBe(200);
+      expect(denied.headers['access-control-allow-origin']).toBeUndefined();
+    });
+    it('CORS preflight allows the CSRF header and POST for an allowlisted Origin', async () => {
+      const res = await app.inject({
+        method: 'OPTIONS',
+        url: '/auth/signup',
+        headers: {
+          origin: ORIGIN,
+          'access-control-request-method': 'POST',
+          'access-control-request-headers': 'content-type, x-csrf-token',
+        },
+      });
+      expect(res.statusCode).toBe(204);
+      expect(res.headers['access-control-allow-origin']).toBe(ORIGIN);
+      expect(res.headers['access-control-allow-credentials']).toBe('true');
+      expect(String(res.headers['access-control-allow-headers'])).toContain('x-csrf-token');
+      expect(String(res.headers['access-control-allow-methods'])).toContain('POST');
+      expect(res.headers['access-control-allow-origin']).not.toBe('*');
+    });
+    it('CORS never allows a disallowed, look-alike or missing Origin', async () => {
+      for (const origin of ['https://evil.example', `${ORIGIN}.evil.example`, 'null']) {
+        const pre = await app.inject({
+          method: 'OPTIONS',
+          url: '/auth/csrf',
+          headers: { origin, 'access-control-request-method': 'GET' },
+        });
+        expect(pre.headers['access-control-allow-origin']).toBeUndefined();
+        expect(pre.headers['access-control-allow-credentials']).toBeUndefined();
+      }
+      const none = await app.inject({ method: 'GET', url: '/auth/csrf' });
+      expect(none.statusCode).toBe(200);
+      expect(none.headers['access-control-allow-origin']).toBeUndefined();
     });
   });
 
@@ -240,11 +424,29 @@ describe('auth', () => {
       expect(mail).toHaveLength(1);
 
       const newPassword = 'a-brand-new-password';
-      expect((await anon.post('/auth/reset-password', { token: new URL(mail[0]!.data.url!).searchParams.get('token')!, password: newPassword })).statusCode).toBe(204);
+      expect(
+        (
+          await anon.post('/auth/reset-password', {
+            token: new URL(mail[0]!.data.url!).searchParams.get('token')!,
+            password: newPassword,
+          })
+        ).statusCode,
+      ).toBe(204);
       expect((await c.get('/auth/session')).statusCode).toBe(401);
-      expect((await anon.post('/auth/login', { email: 'reset@example.com', password: newPassword })).statusCode).toBe(200);
+      const changed = app.mail.sent.filter((m) => m.template === 'password_changed');
+      expect(changed).toHaveLength(1);
+      expect(changed[0]!.to).toBe('reset@example.com');
+      expect(Number.isNaN(Date.parse(changed[0]!.data.changedAt!))).toBe(false);
+      expect(changed[0]!.data.url).toMatch(/\/forgot-password$/);
+      expect(
+        (await anon.post('/auth/login', { email: 'reset@example.com', password: newPassword }))
+          .statusCode,
+      ).toBe(200);
       // single use
-      const again = await anon.post('/auth/reset-password', { token: new URL(mail[0]!.data.url!).searchParams.get('token')!, password: newPassword });
+      const again = await anon.post('/auth/reset-password', {
+        token: new URL(mail[0]!.data.url!).searchParams.get('token')!,
+        password: newPassword,
+      });
       expect(again.statusCode).toBe(400);
       expect(again.json().error.code).toBe('BAD_REQUEST');
     });
@@ -256,16 +458,34 @@ describe('auth', () => {
       await signupAndLogin(app, 'exp@example.com');
       const anon = new Client(app);
       await anon.post('/auth/forgot-password', { email: 'exp@example.com' });
-      const token = new URL(app.mail.sent.find((m) => m.template === 'password_reset')!.data.url!).searchParams.get('token')!;
+      const token = new URL(
+        app.mail.sent.find((m) => m.template === 'password_reset')!.data.url!,
+      ).searchParams.get('token')!;
       now = new Date(now.getTime() + 31 * MIN);
-      expect((await anon.post('/auth/reset-password', { token, password: 'a-brand-new-password' })).statusCode).toBe(400);
+      expect(
+        (await anon.post('/auth/reset-password', { token, password: 'a-brand-new-password' }))
+          .statusCode,
+      ).toBe(400);
     });
   });
 
-  it('openapi response schemas never expose hashes or tokens (except /auth/csrf)', async () => {
-    const spec = app.swagger() as unknown as { paths: Record<string, Record<string, { responses: Record<string, unknown> }>> };
+  it('openapi response schemas never expose hashes or tokens (except /auth/csrf and extension token issuance)', async () => {
+    const spec = app.swagger() as unknown as {
+      paths: Record<string, Record<string, { responses: Record<string, unknown> }>>;
+    };
+    // ADR-005 A1: these two routes exist to hand the extension its opaque token pair (never a hash).
+    const tokenIssuers = new Set<string>([
+      EXTENSION_AUTH_PATHS.token,
+      EXTENSION_AUTH_PATHS.refresh,
+    ]);
     for (const [path, ops] of Object.entries(spec.paths)) {
       if (path === '/auth/csrf') continue;
+      if (tokenIssuers.has(path)) {
+        expect(JSON.stringify(Object.values(ops).map((o) => o.responses)), path).not.toMatch(
+          /"(passwordHash|tokenHash|sessionToken)"/,
+        );
+        continue;
+      }
       const json = JSON.stringify(Object.values(ops).map((o) => o.responses));
       expect(json, path).not.toMatch(/"(passwordHash|tokenHash|token|accessToken|sessionToken)"/);
     }

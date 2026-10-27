@@ -20,7 +20,11 @@ const OWNER_URL = process.env.RLS_TEST_OWNER_URL;
 
 describe.skipIf(!APP_URL || !OWNER_URL)('AI usage + chunked transcripts (live)', () => {
   const app = new PrismaClient({
-    datasources: { db: { url: `${APP_URL ?? ''}${(APP_URL ?? '').includes('?') ? '&' : '?'}connection_limit=12` } },
+    datasources: {
+      db: {
+        url: `${APP_URL ?? ''}${(APP_URL ?? '').includes('?') ? '&' : '?'}connection_limit=12`,
+      },
+    },
   });
   const owner = new PrismaClient({ datasources: { db: { url: OWNER_URL ?? '' } } });
   const transcripts = createTranscriptRepository({ client: app });
@@ -66,7 +70,9 @@ describe.skipIf(!APP_URL || !OWNER_URL)('AI usage + chunked transcripts (live)',
   });
 
   afterAll(async () => {
-    await owner.organization.deleteMany({ where: { id: { in: [orgA, orgB] } } }).catch(() => undefined);
+    await owner.organization
+      .deleteMany({ where: { id: { in: [orgA, orgB] } } })
+      .catch(() => undefined);
     await app.$disconnect();
     await owner.$disconnect();
   });
@@ -125,8 +131,11 @@ describe.skipIf(!APP_URL || !OWNER_URL)('AI usage + chunked transcripts (live)',
     it('error column itself rejects > 500 chars (VARCHAR(500))', async () => {
       const transcriptId = transcriptOf.get(orgA)!;
       await expect(
-        runWithOrganizationContext(app, orgA, (tx) =>
-          tx.$executeRaw`UPDATE "transcript_chunks" SET "error" = ${'x'.repeat(501)}
+        runWithOrganizationContext(
+          app,
+          orgA,
+          (tx) =>
+            tx.$executeRaw`UPDATE "transcript_chunks" SET "error" = ${'x'.repeat(501)}
             WHERE "transcript_id" = ${transcriptId}::uuid AND "chunk_index" = 2`,
         ),
       ).rejects.toThrow(/too long|22001/);
@@ -146,7 +155,12 @@ describe.skipIf(!APP_URL || !OWNER_URL)('AI usage + chunked transcripts (live)',
                 status: 'pending',
                 text: 'overwrite',
               })
-            : transcripts.markChunk(orgA, { transcriptId, chunkIndex: 0, status: 'failed', error: 'X' }),
+            : transcripts.markChunk(orgA, {
+                transcriptId,
+                chunkIndex: 0,
+                status: 'failed',
+                error: 'X',
+              }),
         ),
       );
       for (const r of results) {
@@ -154,7 +168,13 @@ describe.skipIf(!APP_URL || !OWNER_URL)('AI usage + chunked transcripts (live)',
         expect('applied' in r && r.applied).toBe(false);
       }
       const [c0] = await transcripts.listChunks(orgA, transcriptId);
-      expect(c0).toMatchObject({ status: 'done', text: 'hello', provider: 'deepgram', endMs: 1000, attemptCount: 2 });
+      expect(c0).toMatchObject({
+        status: 'done',
+        text: 'hello',
+        provider: 'deepgram',
+        endMs: 1000,
+        attemptCount: 2,
+      });
     });
 
     it('tryBeginMerge has exactly one winner under concurrency; completeMerge finishes it', async () => {
@@ -176,13 +196,27 @@ describe.skipIf(!APP_URL || !OWNER_URL)('AI usage + chunked transcripts (live)',
 
     it('organization A cannot see or touch organization B chunks or merges', async () => {
       const tB = transcriptOf.get(orgB)!;
-      await transcripts.upsertChunk(orgB, { transcriptId: tB, chunkIndex: 0, startMs: 0, endMs: 1, provider: 'p' });
+      await transcripts.upsertChunk(orgB, {
+        transcriptId: tB,
+        chunkIndex: 0,
+        startMs: 0,
+        endMs: 1,
+        provider: 'p',
+      });
       expect(await transcripts.listChunks(orgA, tB)).toEqual([]);
-      expect(await transcripts.markChunk(orgA, { transcriptId: tB, chunkIndex: 0, status: 'done' })).toBeNull();
+      expect(
+        await transcripts.markChunk(orgA, { transcriptId: tB, chunkIndex: 0, status: 'done' }),
+      ).toBeNull();
       expect(await transcripts.tryBeginMerge(orgA, tB)).toBe(false);
       // Writing a chunk for B's transcript from A fails (RLS WITH CHECK / composite FK), never lands in B.
       await expect(
-        transcripts.upsertChunk(orgA, { transcriptId: tB, chunkIndex: 5, startMs: 0, endMs: 1, provider: 'p' }),
+        transcripts.upsertChunk(orgA, {
+          transcriptId: tB,
+          chunkIndex: 5,
+          startMs: 0,
+          endMs: 1,
+          provider: 'p',
+        }),
       ).rejects.toThrow();
       expect((await transcripts.listChunks(orgB, tB)).map((c) => c.chunkIndex)).toEqual([0]);
     });
@@ -205,7 +239,11 @@ describe.skipIf(!APP_URL || !OWNER_URL)('AI usage + chunked transcripts (live)',
           }),
         ),
       );
-      const totals = await usage.increment(orgA, { provider: 'openai', periodKind: 'day', periodStart: '2026-10-24' });
+      const totals = await usage.increment(orgA, {
+        provider: 'openai',
+        periodKind: 'day',
+        periodStart: '2026-10-24',
+      });
       expect(totals).toEqual({
         requests: N,
         inputTokens: BigInt(100 * N),
@@ -216,10 +254,25 @@ describe.skipIf(!APP_URL || !OWNER_URL)('AI usage + chunked transcripts (live)',
     });
 
     it('organizationCostSince sums cost across providers since a date (month-to-date)', async () => {
-      await usage.increment(orgA, { provider: 'deepgram', periodKind: 'day', periodStart: '2026-10-01', costUsd: '1.25' });
-      await usage.increment(orgA, { provider: 'deepgram', periodKind: 'day', periodStart: '2026-09-30', costUsd: '9' });
+      await usage.increment(orgA, {
+        provider: 'deepgram',
+        periodKind: 'day',
+        periodStart: '2026-10-01',
+        costUsd: '1.25',
+      });
+      await usage.increment(orgA, {
+        provider: 'deepgram',
+        periodKind: 'day',
+        periodStart: '2026-09-30',
+        costUsd: '9',
+      });
       // month bucket is excluded from the default (day) sum, so nothing is double counted
-      await usage.increment(orgA, { provider: 'deepgram', periodKind: 'month', periodStart: '2026-10-01', costUsd: '1.25' });
+      await usage.increment(orgA, {
+        provider: 'deepgram',
+        periodKind: 'month',
+        periodStart: '2026-10-01',
+        costUsd: '1.25',
+      });
       expect(await usage.organizationCostSince(orgA, '2026-10-01')).toBe('1.252460');
       expect(await usage.organizationCostSince(orgA, '2026-10-01', 'month')).toBe('1.250000');
       expect(await usage.organizationCostSince(orgB, '2026-01-01')).toBe('0');
@@ -227,7 +280,12 @@ describe.skipIf(!APP_URL || !OWNER_URL)('AI usage + chunked transcripts (live)',
 
     it('month buckets must start on the first of the month (CHECK)', async () => {
       await expect(
-        usage.increment(orgA, { provider: 'x', periodKind: 'month', periodStart: '2026-10-02', costUsd: 1 }),
+        usage.increment(orgA, {
+          provider: 'x',
+          periodKind: 'month',
+          periodStart: '2026-10-02',
+          costUsd: 1,
+        }),
       ).rejects.toThrow(/period_start_check|23514/);
     });
   });
@@ -235,7 +293,9 @@ describe.skipIf(!APP_URL || !OWNER_URL)('AI usage + chunked transcripts (live)',
   describe('AiIdempotency', () => {
     it('claim has exactly one winner under concurrency', async () => {
       const key = `job-${randomUUID()}`;
-      const wins = await Promise.all(Array.from({ length: 10 }, () => idem.claim(orgA, key, 60_000)));
+      const wins = await Promise.all(
+        Array.from({ length: 10 }, () => idem.claim(orgA, key, 60_000)),
+      );
       expect(wins.filter(Boolean)).toHaveLength(1);
       // other organizations have their own key space
       expect(await idem.claim(orgB, key, 60_000)).toBe(true);
@@ -245,7 +305,9 @@ describe.skipIf(!APP_URL || !OWNER_URL)('AI usage + chunked transcripts (live)',
       const key = `job-${randomUUID()}`;
       expect(await idem.claim(orgA, key, 1)).toBe(true);
       await new Promise((r) => setTimeout(r, 20));
-      const wins = await Promise.all(Array.from({ length: 10 }, () => idem.claim(orgA, key, 60_000)));
+      const wins = await Promise.all(
+        Array.from({ length: 10 }, () => idem.claim(orgA, key, 60_000)),
+      );
       expect(wins.filter(Boolean)).toHaveLength(1);
       expect(await idem.complete(orgA, key, 'succeeded', 'report:1')).toBe(true);
       const done = `job-${randomUUID()}`;
@@ -258,17 +320,31 @@ describe.skipIf(!APP_URL || !OWNER_URL)('AI usage + chunked transcripts (live)',
 
   describe('RLS isolation of the new tables', () => {
     it('organization config is a JSON object, one row per organization, invisible across organizations', async () => {
-      await usage.increment(orgB, { provider: 'openai', periodKind: 'day', periodStart: '2026-10-24', costUsd: '2' });
+      await usage.increment(orgB, {
+        provider: 'openai',
+        periodKind: 'day',
+        periodStart: '2026-10-24',
+        costUsd: '2',
+      });
       await runWithOrganizationContext(app, orgB, (tx) =>
-        tx.aiOrganizationConfig.create({ data: { organizationId: orgB, config: { model: 'x' }, monthlyBudgetUsd: '50.00' } }),
+        tx.aiOrganizationConfig.create({
+          data: { organizationId: orgB, config: { model: 'x' }, monthlyBudgetUsd: '50.00' },
+        }),
       );
       await expect(
-        runWithOrganizationContext(app, orgA, (tx) =>
-          tx.$executeRaw`INSERT INTO "ai_org_config" ("org_id", "config") VALUES (${orgA}::uuid, '[]'::jsonb)`,
+        runWithOrganizationContext(
+          app,
+          orgA,
+          (tx) =>
+            tx.$executeRaw`INSERT INTO "ai_org_config" ("org_id", "config") VALUES (${orgA}::uuid, '[]'::jsonb)`,
         ),
       ).rejects.toThrow(/config_object_check|23514/);
-      expect(await runWithOrganizationContext(app, orgA, (tx) => tx.aiOrganizationConfig.count())).toBe(0);
-      expect(await runWithOrganizationContext(app, orgB, (tx) => tx.aiOrganizationConfig.count())).toBe(1);
+      expect(
+        await runWithOrganizationContext(app, orgA, (tx) => tx.aiOrganizationConfig.count()),
+      ).toBe(0);
+      expect(
+        await runWithOrganizationContext(app, orgB, (tx) => tx.aiOrganizationConfig.count()),
+      ).toBe(1);
     });
 
     it.each(['ai_usage_counters', 'ai_org_config', 'ai_idempotency', 'transcript_chunks'])(
@@ -276,7 +352,10 @@ describe.skipIf(!APP_URL || !OWNER_URL)('AI usage + chunked transcripts (live)',
       async (table) => {
         const countB = (org: string) =>
           runWithOrganizationContext(app, org, (tx) =>
-            tx.$queryRawUnsafe<{ n: bigint }[]>(`SELECT count(*) AS n FROM "${table}" WHERE org_id = $1::uuid`, orgB),
+            tx.$queryRawUnsafe<{ n: bigint }[]>(
+              `SELECT count(*) AS n FROM "${table}" WHERE org_id = $1::uuid`,
+              orgB,
+            ),
           );
         const before = (await countB(orgB))[0]!.n;
         expect(before).toBeGreaterThan(0n);
@@ -287,8 +366,14 @@ describe.skipIf(!APP_URL || !OWNER_URL)('AI usage + chunked transcripts (live)',
           ),
         ).rejects.toThrow(/row-level security/);
         const changed = await runWithOrganizationContext(app, orgA, async (tx) => {
-          const u = await tx.$executeRawUnsafe(`UPDATE "${table}" SET org_id = org_id WHERE org_id = $1::uuid`, orgB);
-          const d = await tx.$executeRawUnsafe(`DELETE FROM "${table}" WHERE org_id = $1::uuid`, orgB);
+          const u = await tx.$executeRawUnsafe(
+            `UPDATE "${table}" SET org_id = org_id WHERE org_id = $1::uuid`,
+            orgB,
+          );
+          const d = await tx.$executeRawUnsafe(
+            `DELETE FROM "${table}" WHERE org_id = $1::uuid`,
+            orgB,
+          );
           return u + d;
         });
         expect(changed).toBe(0);

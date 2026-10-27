@@ -1,19 +1,27 @@
 import { pathToFileURL } from 'node:url';
-import { logger } from '@meetops/logger';
+import { logger } from './logger.js';
 import { startMediaWorker } from './media/index.js';
 import { registerTranscriptionWorker } from './ai/index.js';
+import { createTranscriptionHostDeps } from './ai/bootstrap.js';
+import { loadTranscriptionWorkerEnv } from './ai/env.js';
 
 export * from './media/index.js';
 export * from './ai/index.js';
+export * from './integrations/index.js';
 
 async function main() {
   const { close } = startMediaWorker();
   logger.info('media worker started');
-  // Flag-gated; no repository implementation is injectable yet, so this stays unregistered even when enabled.
-  const transcription = registerTranscriptionWorker();
+  // Flag-gated: deps (Prisma repository, ai-core executor, chunk audio) are only built when the worker is enabled.
+  const env = loadTranscriptionWorkerEnv();
+  const hostDeps = env.enabled ? await createTranscriptionHostDeps() : undefined;
+  const transcription = registerTranscriptionWorker({ env, resolveDeps: () => hostDeps });
   const shutdown = async () => {
     logger.info('Shutting down worker...');
-    await Promise.allSettled([close(), transcription.registered ? transcription.close() : Promise.resolve()]);
+    await Promise.allSettled([
+      close(),
+      transcription.registered ? transcription.close() : Promise.resolve(),
+    ]);
     process.exit(0);
   };
   process.on('SIGINT', () => void shutdown());

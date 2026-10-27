@@ -8,11 +8,12 @@
       "cache": true
     },
     "typecheck": {
-      "dependsOn": ["^typecheck"],
+      "dependsOn": ["^build"],
       "outputs": [],
       "cache": true
     },
     "lint": {
+      "dependsOn": ["^build"],
       "outputs": [],
       "cache": true
     },
@@ -22,6 +23,7 @@
       "cache": true
     },
     "dev": {
+      "dependsOn": ["^build"],
       "cache": false,
       "persistent": true
     },

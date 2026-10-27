@@ -6,7 +6,10 @@ export { hashToken, TOKEN_HASH_PATTERN, TOKEN_HASH_TEST_VECTORS } from './hash.j
 export {
   createSessionVerifier,
   DEFAULT_IDLE_TIMEOUT_MS,
+  BEARER_AUDIENCES,
+  DESKTOP_AUDIENCE,
   EXTENSION_AUDIENCE,
+  type BearerAudience,
   MAX_CREDENTIAL_LENGTH,
   type SessionVerifier,
   type SessionVerifierOptions,

@@ -21,6 +21,7 @@ export const API_ERROR_CODES = [
   'FORBIDDEN',
   'NOT_FOUND',
   'CONFLICT',
+  'PAYLOAD_TOO_LARGE',
   'RATE_LIMITED',
   'PROVIDER_UNAVAILABLE',
   'INTERNAL',
@@ -86,16 +87,37 @@ export const CONSENT_ERROR_REASONS = [
 ] as const;
 /** v0.4.1: HTTP status for every consent rejection (CONSENT_ERROR_REASONS). */
 export const CONSENT_HTTP_STATUS = 422;
+/**
+ * v0.5.0: HTTP status for `code: 'PAYLOAD_TOO_LARGE'`. Returned when a
+ * recording session's running total would exceed MAX_RECORDING_SESSION_BYTES (1.4 GB) on a chunk-URL request, or an
+ * upload's `sizeBytes` exceeds MAX_UPLOAD_BYTES. No presigned URL is issued.
+ */
+export const PAYLOAD_TOO_LARGE_HTTP_STATUS = 413;
 
 /**
  * Every value `ApiErrorEnvelope.error.reason` may take: CONFLICT_REASONS (with `code: 'CONFLICT'`), then
  * NOT_FOUND_REASONS (with `code: 'NOT_FOUND'`), then (v0.4.1) CONSENT_ERROR_REASONS (with `code: 'VALIDATION_FAILED'`).
  * v0.4.0 widened this from an alias of CONFLICT_REASONS.
  */
+/**
+ * v0.7.0: integration error reasons. INTEGRATION_NOT_CONNECTED (409): the integration is revoked or in error.
+ * APPROVAL_REQUIRED (403): issue push without a matching approved WriteApproval. OAUTH_STATE_INVALID (400): callback
+ * state missing, expired, consumed or mismatched. REPLAYED_DELIVERY (409): duplicate webhook delivery id (ADR-007).
+ * WEBHOOK_SIGNATURE_INVALID (401).
+ */
+export const INTEGRATION_ERROR_REASONS = [
+  'INTEGRATION_NOT_CONNECTED',
+  'APPROVAL_REQUIRED',
+  'OAUTH_STATE_INVALID',
+  'REPLAYED_DELIVERY',
+  'WEBHOOK_SIGNATURE_INVALID',
+] as const;
+
 export const API_ERROR_REASONS = [
   ...CONFLICT_REASONS,
   ...NOT_FOUND_REASONS,
   ...CONSENT_ERROR_REASONS,
+  ...INTEGRATION_ERROR_REASONS,
 ] as const;
 
 /** v0.4.0: the error names the directory routes (employees, teams, projects) can return as `error.reason`. */
@@ -152,6 +174,34 @@ export const EXTENSION_TOKEN_AUDIENCE = 'extension' as const;
 export const EXTENSION_TOKEN_TYPE = 'Bearer' as const;
 export const EXTENSION_SCOPES = ['meetings:resolve', 'recordings:write'] as const;
 
+/** v0.9.0 (ADR-012, Proposed): desktop (Tauri) bearer tokens. Access TTL 15 min, refresh family capped at 30 days. */
+export const DESKTOP_TOKEN_TTL_SECONDS = 900;
+export const DESKTOP_REFRESH_FAMILY_MAX_LIFETIME_SECONDS = 30 * 24 * 60 * 60;
+export const DESKTOP_TOKEN_AUDIENCE = 'desktop' as const;
+export const DESKTOP_TOKEN_TYPE = 'Bearer' as const;
+/** ADR-012 section 2.2: fixed subset. No tasks:write, approve, admin, member or integration scope. */
+export const DESKTOP_SCOPES = [
+  'meetings:read',
+  'meetings:resolve',
+  'tasks:read',
+  'recordings:write',
+] as const;
+/** ADR-012 section 1.5: authorization codes are single-use and expire within 60 s. */
+export const DESKTOP_AUTHORIZATION_CODE_TTL_SECONDS = 60;
+/** Endpoint paths for the desktop sign-in and token lifecycle (ADR-012). All are POST. */
+export const DESKTOP_AUTH_PATHS = {
+  /** Web session (`__Host-` cookie + `x-csrf-token`) only. Issues a single-use code bound to the PKCE challenge. */
+  authorize: '/auth/desktop/authorize',
+  /** No cookie; ignores Authorization. Exchanges code + PKCE verifier for the first token pair. */
+  token: '/auth/desktop/token',
+  /** No cookie; ignores Authorization. Rotates the refresh token. */
+  refresh: '/auth/desktop/refresh',
+  /** No cookie; ignores Authorization. Revokes the device's refresh family. Idempotent. */
+  revoke: '/auth/desktop/revoke',
+  /** No cookie; ignores Authorization. Revokes the family and issues a new one for another org the user belongs to. */
+  switchOrg: '/auth/desktop/switch-org',
+} as const;
+
 /**
  * ADR-005 amendment 1: `type` of the pairing handoff message (`PairingCodeMessage`) that the web pairing page sends to
  * the extension over `externally_connectable` messaging after `POST /auth/extension/pair`.
@@ -183,6 +233,11 @@ export const REDACT_KEYS = [
   'set-cookie',
   'password',
   'csrfToken',
+  // v0.9.0 (ADR-012 section 2.5): desktop PKCE exchange. `state` never reaches the server, and plain `code` is not
+  // listed because error bodies use `code`; the desktop token body names the field `authorizationCode` instead.
+  'authorizationCode',
+  'codeVerifier',
+  'code_verifier',
 ] as const;
 
 /**
@@ -262,6 +317,7 @@ export const AUTH_REVOCATION_REASONS = [
   'invitation_revoked',
   'password_changed',
   'extension_revoked',
+  'desktop_revoked',
 ] as const;
 /**
  * v0.4.1 (ADR-011 section 5): realtime re-verifies every socket at least this often (5 min). Deployments may lower it,
@@ -287,3 +343,110 @@ export const REALTIME_CONTROL_EVENTS = {
 export const ORG_ACCESS_CHANGE_REASONS = ['member_removed', 'role_changed'] as const;
 /** v0.4.1: `auth:reauth-required` reasons. */
 export const REAUTH_REASONS = ['org_switch', 'session_expired', 'revalidation_failed'] as const;
+
+/**
+ * v0.5.0: consent / retention settings.
+ * - `mode`: `all_party` (every participant must consent) or `one_party` (the recording user's attestation suffices).
+ */
+export const CONSENT_SETTINGS_MODES = ['all_party', 'one_party'] as const;
+/** v0.5.0: roles allowed to PATCH consent settings. Every role may GET them (rbac-matrix "Consent / retention settings"). */
+export const CONSENT_SETTINGS_WRITE_ROLES = ['owner', 'admin'] as const;
+/** v0.5.0: max length of the consent notice text shown to participants. */
+export const MAX_CONSENT_NOTICE_TEXT_LENGTH = 4000;
+/** v0.5.0: recording retention range in days (1 day .. 10 years). */
+export const MIN_RETENTION_DAYS = 1;
+export const MAX_RETENTION_DAYS = 3650;
+
+/**
+ * v0.5.0: consent settings and upload lifecycle route templates. Org-scoped; the API MUST check
+ * `:organizationId` equals the session's active organization (mismatch or other-org id -> NOT_FOUND).
+ * - `consentSettings`: GET (all roles) and PATCH (owner/admin, partial update, CSRF, audit-logged).
+ * - `uploadComplete`: POST. Verifies size/checksum and the stored consent attestation; 422 + ConsentErrorReason and
+ *   no media job enqueued when the attestation is missing or invalid.
+ * - `uploadDownloadUrl`: GET. Presigned GET valid for at most MAX_PRESIGNED_GET_TTL_SECONDS (300 s).
+ */
+export const CONSENT_UPLOAD_PATHS = {
+  consentSettings: '/orgs/:organizationId/settings/consent',
+  uploads: '/orgs/:organizationId/uploads',
+  uploadComplete: '/orgs/:organizationId/uploads/:fileObjectId/complete',
+  uploadDownloadUrl: '/orgs/:organizationId/uploads/:fileObjectId/download-url',
+} as const;
+
+/**
+ * v0.6.0: meeting route templates. Org-scoped like CONSENT_UPLOAD_PATHS (path org must be the session's active org,
+ * otherwise NOT_FOUND).
+ * - `meetings`: GET, `ListMeetingsQuery` -> `CursorPage<Meeting>` (every role).
+ * - `meeting`: GET -> `Meeting`.
+ */
+export const MEETING_PATHS = {
+  meetings: '/orgs/:organizationId/meetings',
+  meeting: '/orgs/:organizationId/meetings/:meetingId',
+} as const;
+
+/**
+ * v0.8.0: recording-session route templates (chunked capture from the extension, desktop and mobile apps). Matches the
+ * API media module. Only `init` is org-scoped; the other three resolve the org from the caller's active organization.
+ * - `init`: POST `InitRecordingSessionRequest` -> `InitRecordingSessionResponse`.
+ * - `chunks`: POST `ChunkUploadUrlRequest` -> `ChunkUploadUrlResponse` (then PUT the bytes).
+ * - `complete`: POST `CompleteRecordingSessionRequest` -> `CompleteRecordingSessionResponse`.
+ * - `abort`: POST `AbortRecordingSessionRequest` -> 204.
+ */
+export const RECORDING_SESSION_PATHS = {
+  init: '/orgs/:organizationId/recording-sessions',
+  chunks: '/recording-sessions/:sessionId/chunks',
+  complete: '/recording-sessions/:sessionId/complete',
+  abort: '/recording-sessions/:sessionId/abort',
+} as const;
+
+/**
+ * v0.8.0: meeting transcript and report reads (`MeetingInsightsParams`). Both answer 404 until the artifact exists.
+ * - `transcript`: GET -> `Transcript` (latest merged revision).
+ * - `report`: GET -> `Report`.
+ */
+export const MEETING_INSIGHTS_PATHS = {
+  transcript: '/orgs/:organizationId/meetings/:meetingId/transcript',
+  report: '/orgs/:organizationId/meetings/:meetingId/report',
+} as const;
+
+/**
+ * v0.8.0: task route templates, matching the API tasks module.
+ * - `tasks`: GET `ListTasksQuery` -> `Paginated<Task>`.
+ * - `extractedTasks`: GET, extracted tasks awaiting review.
+ * - `accept` / `dismiss`: POST, review one extracted task.
+ * - `task`: GET -> `Task`; PATCH `UpdateTaskRequest` -> `Task` (`TaskParams`).
+ */
+export const TASK_PATHS = {
+  tasks: '/orgs/:organizationId/tasks',
+  extractedTasks: '/orgs/:organizationId/extracted-tasks',
+  accept: '/orgs/:organizationId/extracted-tasks/:extractedTaskId/accept',
+  dismiss: '/orgs/:organizationId/extracted-tasks/:extractedTaskId/dismiss',
+  task: '/orgs/:organizationId/tasks/:taskId',
+} as const;
+
+/**
+ * v0.7.0: integration route templates (ADR-007 webhooks/retries, ADR-008 OAuth state + token encryption).
+ * - `integrations`: GET -> `IntegrationList` (every role; never carries tokens or secrets).
+ * - `connect`: POST `ConnectIntegrationRequest` -> `ConnectIntegrationResponse` (owner/admin; session + CSRF). Issues
+ *   single-use OAuth state (Jira 3LO + PKCE S256) or GitHub App install state.
+ * - `callback`: GET, `IntegrationCallbackQuery`; the browser lands here from the provider. Not org-scoped in the path:
+ *   the org, user and redirect come from the consumed state. Responds 303 to the web app; no JSON body.
+ * - `integration`: DELETE -> 204 (owner/admin). Revokes the stored tokens and the webhook secret.
+ * - `webhook`: POST, raw provider body (≤ 1 MiB); `X-Hub-Signature-256` + `X-GitHub-Delivery` for GitHub. No session.
+ *   -> 202 `WebhookAcceptedResponse`; replayed delivery -> 409 `REPLAYED_DELIVERY`.
+ * - `issuePush`: POST `PushTaskIssueRequest` -> 201 `IntegrationIssue` (requires an approved WriteApproval).
+ */
+export const INTEGRATION_PATHS = {
+  integrations: '/orgs/:organizationId/integrations',
+  connect: '/orgs/:organizationId/integrations/connect',
+  callback: '/integrations/:provider/callback',
+  integration: '/orgs/:organizationId/integrations/:integrationId',
+  webhook: '/webhooks/:provider/:integrationId',
+  issuePush: '/orgs/:organizationId/tasks/:taskId/integration-issues',
+} as const;
+
+/** v0.7.0: integration connection lifecycle (Prisma `IntegrationStatus`). */
+export const INTEGRATION_STATUSES = ['active', 'error', 'revoked'] as const;
+/** v0.7.0: OAuth/App-install state TTL bounds in seconds (ADR-008: default 600, clamped 60-900). */
+export const INTEGRATION_STATE_TTL_SECONDS = 600;
+/** v0.7.0: webhook body cap in bytes (ADR-007). */
+export const INTEGRATION_WEBHOOK_MAX_BYTES = 1_048_576;

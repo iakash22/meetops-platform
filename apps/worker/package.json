@@ -6,7 +6,7 @@
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "scripts": {
-    "dev": "tsx watch src/index.ts",
+    "dev": "tsx watch --import ../../scripts/load-env-if-exists.mjs src/index.ts",
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "eslint .",
@@ -17,6 +17,7 @@
     "@meetops/config": "workspace:*",
     "@meetops/contracts": "workspace:*",
     "@meetops/database": "workspace:*",
+    "@meetops/integrations": "workspace:*",
     "@meetops/logger": "workspace:*",
     "@meetops/media-core": "workspace:*",
     "@meetops/queue": "workspace:*",

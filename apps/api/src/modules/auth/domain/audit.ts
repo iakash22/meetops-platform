@@ -30,7 +30,27 @@ export type AuditAction =
   | 'project.create'
   | 'project.update'
   | 'project.delete'
-  | 'meeting.create';
+  | 'extracted_task.accept'
+  | 'extracted_task.dismiss'
+  | 'task.update'
+  | 'meeting.create'
+  // ADR-005 extension pairing and tokens
+  | 'extension.pair'
+  | 'extension.token.issue'
+  | 'extension.token.refresh'
+  | 'extension.token.reuse_detected'
+  | 'extension.revoke'
+  // ADR-012 desktop sign-in (behind DESKTOP_AUTH_ENABLED)
+  | 'desktop.authorize'
+  | 'desktop.token.issue'
+  | 'desktop.token.refresh'
+  | 'desktop.token.reuse_detected'
+  | 'desktop.revoke'
+  | 'desktop.org_switch'
+  // Phase 5 (ADR-008) integrations
+  | 'integration.disconnect'
+  | 'integration.connect'
+  | 'integration.issue_push';
 
 /** Never put passwords, tokens, cookies or hashes in metadata. */
 export interface AuditEvent {
@@ -48,7 +68,12 @@ export interface AuditEvent {
     | 'team'
     | 'team_member'
     | 'project'
-    | 'meeting';
+    | 'extracted_task'
+    | 'task'
+    | 'meeting'
+    | 'extension_device'
+    | 'desktop_device'
+    | 'integration';
   targetId: string | null;
   metadata: Record<string, string | number | boolean | null>;
   ip: string | null;

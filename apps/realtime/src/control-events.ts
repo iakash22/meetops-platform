@@ -17,7 +17,7 @@ export type ReauthReason = (typeof REAUTH_REASONS)[number];
 /** ARC-2 AuthReauthRequiredEvent: `{ reason, at }`, strict, no ids or credentials. */
 export type AuthReauthRequiredEvent = { reason: ReauthReason; at: string };
 
-/** The control events this server emits today (MR-1: session expiry). MR-2 adds session:revoked and org:access-changed. */
+/** The control events this server emits today: session expiry, and failed periodic / revocation-driven re-verification. */
 export interface ControlServerToClientEvents {
   'auth:reauth-required': (e: AuthReauthRequiredEvent) => void;
 }

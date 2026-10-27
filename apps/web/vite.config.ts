@@ -71,14 +71,59 @@ function apiPreconnect(apiUrl: string | undefined): Plugin {
   };
 }
 
+const monorepoRoot = fileURLToPath(new URL('../..', import.meta.url));
+
+function envPort(raw: string | undefined, fallback: number): number {
+  const n = Number(raw);
+  return Number.isInteger(n) && n > 0 && n < 65536 ? n : fallback;
+}
+
+/** Upstream API for the Vite `/api` proxy (dev only). Prefer VITE_API_PROXY_TARGET, else PORT/API_PORT. */
+function apiProxyTarget(env: Record<string, string>): string {
+  const explicit = env.VITE_API_PROXY_TARGET?.trim();
+  if (explicit) return explicit.replace(/\/$/, '');
+  return `http://127.0.0.1:${envPort(env.PORT ?? env.API_PORT, 3000)}`;
+}
+
+/**
+ * Client base URL for the browser. Same-origin `/api` uses the Vite proxy in `server.proxy`.
+ * An absolute `http(s)://…` URL skips the proxy (needs API CORS).
+ */
+function resolveViteApiUrl(raw: string | undefined): string {
+  const value = raw?.trim();
+  if (!value || value === '/') return '/api';
+  return value.replace(/\/$/, '') || '/api';
+}
+
 export default defineConfig(({ mode }) => {
-  const env = loadEnv(mode, process.cwd(), 'VITE_');
+  // Root `.env` (not apps/web/.env): VITE_API_URL, WEB_PORT, PORT, etc.
+  // Empty prefix so WEB_PORT/PORT are available for the dev server; Vite still only
+  // exposes VITE_* to the client via import.meta.env.
+  const env = loadEnv(mode, monorepoRoot, '');
+  const viteApiUrl = resolveViteApiUrl(env.VITE_API_URL);
+  const proxyTarget = apiProxyTarget(env);
   return {
-    plugins: [react(), apiPreconnect(env.VITE_API_URL)],
+    plugins: [react(), apiPreconnect(viteApiUrl)],
+    envDir: monorepoRoot,
+    // Ensure the client always sees a concrete base (empty .env → `/api` → proxy).
+    define: {
+      'import.meta.env.VITE_API_URL': JSON.stringify(viteApiUrl),
+    },
     resolve: {
       alias: { '@': fileURLToPath(new URL('./src', import.meta.url)) },
     },
-    server: { port: 5173 },
+    server: {
+      port: envPort(env.WEB_PORT, 5173),
+      proxy: {
+        // Browser → http://localhost:WEB_PORT/api/… → API (strips `/api` prefix).
+        // Cookie + CSRF stay same-origin when VITE_API_URL=/api.
+        '/api': {
+          target: proxyTarget,
+          changeOrigin: true,
+          rewrite: (path) => path.replace(/^\/api(?=\/|$)/, '') || '/',
+        },
+      },
+    },
     build: {
       target: 'es2022',
       cssCodeSplit: true,

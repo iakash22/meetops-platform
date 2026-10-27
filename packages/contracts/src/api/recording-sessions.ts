@@ -19,14 +19,35 @@ export {
   MAX_DURATION_MS,
   MAX_RECORDING_CHUNKS,
   MAX_RECORDING_SESSION_BYTES,
+  RECORDING_SESSION_PATHS,
 } from '../constants.js';
+
+/** v0.8.0: path params of `RECORDING_SESSION_PATHS.init`. */
+export const InitRecordingSessionParams = Type.Object(
+  { organizationId: Id },
+  { additionalProperties: false },
+);
+export type InitRecordingSessionParams = Static<typeof InitRecordingSessionParams>;
+/** v0.8.0: path params of `RECORDING_SESSION_PATHS.chunks`, `.complete` and `.abort`. */
+export const RecordingSessionParams = Type.Object(
+  { sessionId: Id },
+  { additionalProperties: false },
+);
+export type RecordingSessionParams = Static<typeof RecordingSessionParams>;
 
 const Sha256Hex = Type.String({ pattern: '^[0-9a-f]{64}$' });
 
 const strict = { additionalProperties: false } as const;
 
-/** Capture source. Extensible: add members via a contracts PR. */
-export const RecordingSource = Type.Union([Type.Literal('tab')]);
+/**
+ * Capture source. Extensible: add members via a contracts PR. v0.6.0 adds `mobile` (native app, PR #173) and
+ * `desktop` (Tauri app, PR #180). Servers persisting the value need the matching DB enum members.
+ */
+export const RecordingSource = Type.Union([
+  Type.Literal('tab'),
+  Type.Literal('mobile'),
+  Type.Literal('desktop'),
+]);
 export type RecordingSource = Static<typeof RecordingSource>;
 
 export const InitRecordingSessionRequest = Type.Object(

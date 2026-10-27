@@ -4,6 +4,7 @@ import { FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { useAuth } from '../auth/AuthProvider';
 import { colors, radius, spacing } from '../theme/colors';
+import { Toast } from '../ui/Toast';
 
 /**
  * Organization switcher. Switching wipes local data for the old org (wipe hooks, R4) and swaps to a token scoped to
@@ -41,11 +42,6 @@ export function OrganizationSwitcherScreen() {
       <Text style={styles.note}>
         Switching clears data stored on this device for the current organization.
       </Text>
-      {error ? (
-        <Text testID="switch-error" style={styles.error} accessibilityRole="alert">
-          {error}
-        </Text>
-      ) : null}
       <FlatList
         data={state.session.organizations}
         keyExtractor={(o) => o.id}
@@ -76,6 +72,7 @@ export function OrganizationSwitcherScreen() {
           );
         }}
       />
+      <Toast testID="switch-error" message={error} onDismiss={() => setError(null)} />
     </View>
   );
 }
@@ -83,7 +80,6 @@ export function OrganizationSwitcherScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.background, padding: spacing.xl },
   note: { color: colors.mutedForeground, fontSize: 13, marginBottom: spacing.lg },
-  error: { color: colors.destructive, marginBottom: spacing.md },
   row: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -95,7 +91,7 @@ const styles = StyleSheet.create({
     padding: spacing.lg,
     marginBottom: spacing.md,
   },
-  activeRow: { borderColor: colors.accent },
+  activeRow: { borderColor: colors.primary },
   pressed: { backgroundColor: colors.secondary },
   avatar: {
     width: 36,
@@ -105,10 +101,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  activeAvatar: { backgroundColor: colors.accent },
+  activeAvatar: { backgroundColor: colors.primary },
   avatarText: { color: colors.foreground, fontSize: 15, fontWeight: '700' },
-  activeAvatarText: { color: colors.accentForeground },
+  activeAvatarText: { color: colors.primaryForeground },
   name: { color: colors.foreground, fontSize: 16, flex: 1 },
-  activeTag: { color: colors.accent, fontSize: 13, fontWeight: '600' },
+  activeTag: { color: colors.link, fontSize: 13, fontWeight: '600' },
   muted: { color: colors.mutedForeground, fontSize: 13, marginLeft: spacing.sm },
 });
