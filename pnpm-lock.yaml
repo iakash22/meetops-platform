@@ -526,6 +526,9 @@ importers:
       ioredis:
         specifier: ^5.4.1
         version: 5.11.1
+      maxmind:
+        specifier: 5.0.7
+        version: 5.0.7
       zod:
         specifier: ^4.6.6
         version: 4.6.7
