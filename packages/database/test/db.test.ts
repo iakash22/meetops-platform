@@ -139,6 +139,10 @@ describe('generated client', () => {
         'isDirectoryError',
         'DIRECTORY_DEFAULT_PAGE_LIMIT',
         'DIRECTORY_MAX_PAGE_LIMIT',
+        'IP_RETENTION_DAYS',
+        'IP_RETENTION_BATCH',
+        'IP_RETENTION_MAX_BATCHES',
+        'redactExpiredIpAddresses',
       ].sort(),
     );
   });
