@@ -182,7 +182,7 @@ export class IntegrationsService {
     const redirectUri = this.redirectUri(provider);
     const returnTo = (await takeReturnTo(rt.stateStore, innerState)) ?? DEFAULT_RETURN_TO;
     const back = (status: 'connected' | 'denied') => {
-      const u = new URL(returnTo, rt.webOrigin);
+      const u = safeReturnUrl(returnTo, rt.webOrigin);
       u.searchParams.set('integration', provider);
       u.searchParams.set('status', status);
       return u.toString();
@@ -569,4 +569,26 @@ export function mapProviderError(err: unknown): unknown {
     return new CallbackRejectedError('Invalid authorization code');
   if (err instanceof DomainError) return err;
   return new ProviderUpstreamError();
+}
+
+/**
+ * #282 L-2 defense in depth (the contract pattern already rejects these): resolve `returnTo` against the web origin
+ * and fall back to the default page unless the result is same-origin and its path has no `//`, `.` or `..`.
+ */
+export function safeReturnUrl(returnTo: string, webOrigin: string): URL {
+  const origin = new URL(webOrigin).origin;
+  const fallback = new URL(DEFAULT_RETURN_TO, origin);
+  if (!returnTo.startsWith('/') || returnTo.includes('//') || returnTo.includes('\\'))
+    return fallback;
+  const path = returnTo.split('?')[0] ?? '';
+  if (path.split('/').some((seg) => seg === '.' || seg === '..')) return fallback;
+  let u: URL;
+  try {
+    u = new URL(returnTo, origin);
+  } catch {
+    return fallback;
+  }
+  if (u.origin !== origin || u.pathname.startsWith('//') || u.username || u.password)
+    return fallback;
+  return u;
 }

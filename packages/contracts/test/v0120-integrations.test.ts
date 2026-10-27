@@ -47,3 +47,28 @@ describe('v0.12.0 integrations providers', () => {
     expect(REDACT_KEYS as readonly string[]).not.toContain('code');
   });
 });
+
+describe('v0.12.0 returnTo pattern (#282 L-2)', () => {
+  it('rejects traversal, protocol-relative and encoded separators; accepts app paths', async () => {
+    const { ConnectIntegrationRequest } = await import('../src/index.js');
+    const ok = (returnTo: string) =>
+      Value.Check(ConnectIntegrationRequest, { provider: 'jira', returnTo });
+    for (const good of ['/settings/integrations', '/settings/x?tab=a', '/a.b/c', '/.well-known'])
+      expect(ok(good), good).toBe(true);
+    for (const bad of [
+      '/..//evil.com',
+      '//evil.com',
+      '/a//b',
+      '/./x',
+      '/a/../b',
+      '/a/..',
+      '/a/.?x',
+      '/%2e%2e/x',
+      '/%2F%2Fevil.com',
+      '/x?next=//e',
+      '/\\evil.com',
+      'https://evil.com',
+    ])
+      expect(ok(bad), bad).toBe(false);
+  });
+});

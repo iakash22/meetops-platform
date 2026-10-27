@@ -75,6 +75,10 @@ export type IntegrationProviderList = Static<typeof IntegrationProviderList>;
 export const IntegrationParams = Type.Object({ organizationId: Id, integrationId: Id }, strict);
 export type IntegrationParams = Static<typeof IntegrationParams>;
 
+/** v0.12.0: allowed `returnTo` web-app path (see ConnectIntegrationRequest). */
+export const RETURN_TO_PATTERN =
+  '^(?!.*//)(?![^?]*/\\.{1,2}(?:/|\\?|$))(?!.*%(?:2[eEfF]|5[cC]))/[A-Za-z0-9/_.~?=&%-]*$';
+
 /**
  * POST /orgs/:organizationId/integrations/connect. `returnTo` is a web-app path (not a URL) the callback redirects to
  * after success; it must start with a single `/`.
@@ -83,7 +87,13 @@ export const ConnectIntegrationRequest = Type.Object(
   {
     provider: IntegrationProvider,
     returnTo: Type.Optional(
-      Type.String({ minLength: 1, maxLength: 512, pattern: '^/(?![/\\\\])[A-Za-z0-9/_.~?=&%-]*$' }),
+      Type.String({
+        minLength: 1,
+        maxLength: 512,
+        // v0.12.0 (#282 L-2): single leading `/`, no `//` anywhere, no `.`/`..` path segments, and no encoded
+        // `.`, `/` or `\` (%2e, %2f, %5c) that a client router could decode into one of those.
+        pattern: RETURN_TO_PATTERN,
+      }),
     ),
   },
   strict,

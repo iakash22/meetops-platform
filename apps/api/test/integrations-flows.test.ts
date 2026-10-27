@@ -282,6 +282,28 @@ describe('Phase 5 integration flows', () => {
       expect(calls.some((x) => x.url.endsWith('/access_tokens'))).toBe(false);
     });
 
+    it('connect rejects traversal and protocol-relative returnTo values (#282 L-2)', async () => {
+      const { c, org } = await owner();
+      for (const returnTo of [
+        '/..//evil.com',
+        '//evil.com',
+        '/a//b',
+        '/./x',
+        '/a/../b',
+        '/%2e%2e/x',
+        '/%2F%2Fevil.com',
+        '/x?next=//evil.com',
+      ]) {
+        const r = await c.post(`/orgs/${org}/integrations/connect`, { provider: 'jira', returnTo });
+        expect(r.statusCode, returnTo).toBe(400);
+      }
+      const ok = await c.post(`/orgs/${org}/integrations/connect`, {
+        provider: 'jira',
+        returnTo: '/settings/integrations?tab=jira',
+      });
+      expect(ok.statusCode).toBe(200);
+    });
+
     it('connect requires update rights, CSRF and origin', async () => {
       const { c, org } = await owner();
       const noCsrf = await app.inject({
@@ -759,5 +781,27 @@ describe('integrationsRuntimeFromEnv (dev overlay)', () => {
     expect(full.github?.appSlug).toBe('slug');
     expect(await full.github?.privateKey()).toBe('pem:/k.pem');
     expect(await full.jira?.clientSecret()).toBe('js');
+  });
+});
+
+describe('returnTo hardening (#282 L-2)', () => {
+  it('safeReturnUrl keeps same-origin app paths and falls back otherwise', async () => {
+    const { safeReturnUrl } = await import('../src/modules/integrations/service.js');
+    const web = 'http://localhost:5173';
+    expect(safeReturnUrl('/settings/x?tab=a', web).toString()).toBe(
+      'http://localhost:5173/settings/x?tab=a',
+    );
+    for (const bad of [
+      '/..//evil.com',
+      '//evil.com',
+      '/a//b',
+      '/./x',
+      '/a/../b',
+      'https://evil.com',
+      '/\\evil.com',
+    ])
+      expect(safeReturnUrl(bad, web).toString()).toBe(
+        'http://localhost:5173/settings/integrations',
+      );
   });
 });

@@ -24,6 +24,8 @@ Integrations page support (Phase 5, builds on 0.7.0). Additive. Version numbers 
 - `REDACT_CONDITIONAL_KEYS` (`code`): redacted unless the value looks like an error code. Plain `code` is still not
   in `REDACT_KEYS`.
 - `INTEGRATION_ERROR_REASONS`: `INTEGRATION_NOT_CONFIGURED` (503 when the provider app is not set up on the deployment).
+- `RETURN_TO_PATTERN` (#282 L-2): `ConnectIntegrationRequest.returnTo` now also rejects `//` anywhere, `.`/`..`
+  segments and encoded `%2e`/`%2f`/`%5c` (e.g. `/..//evil.com`).
 - `INTEGRATION_PATHS.githubAppWebhook` (`POST /webhooks/github`): App-wide GitHub webhook, routed by installation id.
 
 ## [0.9.0] - 2026-10-27
