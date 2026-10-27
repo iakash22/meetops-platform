@@ -187,3 +187,9 @@ export async function addRecordingSessionBytes(
   if (total === undefined) throw new Error('add_recording_session_bytes returned no row');
   return total;
 }
+
+export {
+  IP_RETENTION_DAYS,
+  redactExpiredIpAddresses,
+  type IpRetentionResult,
+} from './ip-retention.js';
