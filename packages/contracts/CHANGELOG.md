@@ -6,8 +6,21 @@ While the version is `0.x`, a minor bump may contain breaking changes (ADR-003).
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-10-27
+
+Route constants and the task update DTO, so the API and the web, desktop, mobile and extension apps can drop their
+pinned local copies. Additive; builds on 0.7.0.
+
 ### Added
 
+- `UpdateTaskRequest` (PATCH `TASK_PATHS.task`): partial task update; `null` clears `description`, `assigneeId` and
+  `dueAt`; at least one key; unknown keys rejected. Matches the API's `UpdateTaskBody` (feat/task-approval-api).
+  `TaskParams` for the single-task routes.
+- `TASK_PATHS`: `tasks`, `extractedTasks`, `accept`, `dismiss`, `task` (same templates as the API tasks module).
+- `RECORDING_SESSION_PATHS`: `init`, `chunks`, `complete`, `abort`, plus `InitRecordingSessionParams` and
+  `RecordingSessionParams`.
+- `MEETING_INSIGHTS_PATHS`: `transcript`, `report`, plus `MeetingInsightsParams`, `MeetingTranscriptResponse`
+  (`Transcript`) and `MeetingReportResponse` (`Report`).
 - `EMAIL_TEMPLATE_IDS` / `EmailJobPayload` (user recipient): `member-added`, `member-removed`, `tasks-ready-for-review`, `integration-error` (product mails; ids-only payloads, variables resolved by the worker).
 
 ## [0.7.0] - 2026-10-26

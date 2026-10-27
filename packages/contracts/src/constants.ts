@@ -350,6 +350,46 @@ export const MEETING_PATHS = {
 } as const;
 
 /**
+ * v0.8.0: recording-session route templates (chunked capture from the extension, desktop and mobile apps). Matches the
+ * API media module. Only `init` is org-scoped; the other three resolve the org from the caller's active organization.
+ * - `init`: POST `InitRecordingSessionRequest` -> `InitRecordingSessionResponse`.
+ * - `chunks`: POST `ChunkUploadUrlRequest` -> `ChunkUploadUrlResponse` (then PUT the bytes).
+ * - `complete`: POST `CompleteRecordingSessionRequest` -> `CompleteRecordingSessionResponse`.
+ * - `abort`: POST `AbortRecordingSessionRequest` -> 204.
+ */
+export const RECORDING_SESSION_PATHS = {
+  init: '/orgs/:organizationId/recording-sessions',
+  chunks: '/recording-sessions/:sessionId/chunks',
+  complete: '/recording-sessions/:sessionId/complete',
+  abort: '/recording-sessions/:sessionId/abort',
+} as const;
+
+/**
+ * v0.8.0: meeting transcript and report reads (`MeetingInsightsParams`). Both answer 404 until the artifact exists.
+ * - `transcript`: GET -> `Transcript` (latest merged revision).
+ * - `report`: GET -> `Report`.
+ */
+export const MEETING_INSIGHTS_PATHS = {
+  transcript: '/orgs/:organizationId/meetings/:meetingId/transcript',
+  report: '/orgs/:organizationId/meetings/:meetingId/report',
+} as const;
+
+/**
+ * v0.8.0: task route templates, matching the API tasks module.
+ * - `tasks`: GET `ListTasksQuery` -> `Paginated<Task>`.
+ * - `extractedTasks`: GET, extracted tasks awaiting review.
+ * - `accept` / `dismiss`: POST, review one extracted task.
+ * - `task`: GET -> `Task`; PATCH `UpdateTaskRequest` -> `Task` (`TaskParams`).
+ */
+export const TASK_PATHS = {
+  tasks: '/orgs/:organizationId/tasks',
+  extractedTasks: '/orgs/:organizationId/extracted-tasks',
+  accept: '/orgs/:organizationId/extracted-tasks/:extractedTaskId/accept',
+  dismiss: '/orgs/:organizationId/extracted-tasks/:extractedTaskId/dismiss',
+  task: '/orgs/:organizationId/tasks/:taskId',
+} as const;
+
+/**
  * v0.7.0: integration route templates (ADR-007 webhooks/retries, ADR-008 OAuth state + token encryption).
  * - `integrations`: GET -> `IntegrationList` (every role; never carries tokens or secrets).
  * - `connect`: POST `ConnectIntegrationRequest` -> `ConnectIntegrationResponse` (owner/admin; session + CSRF). Issues
