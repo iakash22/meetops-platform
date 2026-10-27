@@ -36,7 +36,9 @@
     "db:migrate:dev": "pnpm --filter @meetops/database db:migrate:dev",
     "db:seed": "pnpm --filter @meetops/database db:seed",
     "db:studio": "pnpm --filter @meetops/database db:studio",
-    "db:roles": "pnpm --filter @meetops/database db:roles"
+    "db:roles": "pnpm --filter @meetops/database db:roles",
+    "local-gates": "bash scripts/local-gates",
+    "dev:services": "bash scripts/dev-services.sh"
   },
   "devDependencies": {
     "@commitlint/cli": "^19",

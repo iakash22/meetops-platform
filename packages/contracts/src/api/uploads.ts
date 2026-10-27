@@ -21,7 +21,16 @@ export const Sha256Base64 = Type.String({ pattern: '^[A-Za-z0-9+/]{43}=$' });
 export const MAX_UPLOAD_BYTES = MAX_MEDIA_BYTES;
 
 const uploadFields = {
-  filename: Type.String({ minLength: 1, maxLength: 255, pattern: '^[^/\\\\\\u0000]+$' }),
+  /**
+   * Display name only (never part of a storage key). Rejects `/`, `\`, C0 controls (incl. NUL, CR, LF), DEL and the
+   * bidi embedding/override/isolate characters (U+202A-U+202E, U+2066-U+2069). Security review B 4.3. Encode it
+   * (RFC 5987 `filename*=`) whenever it is emitted in a header.
+   */
+  filename: Type.String({
+    minLength: 1,
+    maxLength: 255,
+    pattern: '^[^/\\\\\\u0000-\\u001F\\u007F\\u202A-\\u202E\\u2066-\\u2069]+$',
+  }),
   mimeType: MediaMimeType,
   sizeBytes: Type.Integer({ minimum: 1, maximum: MAX_UPLOAD_BYTES }),
   /** REQUIRED: standard base64 (44 chars, padded) sha256 digest of the whole file; signed into the upload. */

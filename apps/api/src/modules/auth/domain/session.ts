@@ -35,4 +35,9 @@ export interface SessionRepository {
   touch(id: string, at: Date): Promise<void>;
   revoke(id: string, at: Date): Promise<void>;
   revokeAllForUser(userId: string, at: Date): Promise<void>;
+  /**
+   * Active org of the user's most recently used session (any state, revoked or expired included), or null. Used only to
+   * pick the default org at login; the caller re-checks the membership.
+   */
+  findLastActiveOrganizationId(userId: string): Promise<string | null>;
 }

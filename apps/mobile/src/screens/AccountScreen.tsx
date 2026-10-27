@@ -5,7 +5,8 @@ import { ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { useAuth } from '../auth/AuthProvider';
 import { useActiveOrganization } from '../auth/useActiveOrganization';
-import { IS_DEMO_MODE } from '../services';
+import { PushNotificationsCard } from '../notifications/PushNotificationsCard';
+import { IS_DEMO_MODE, pushServiceFor, unregisterPushOnSignOut } from '../services';
 import { colors, radius, spacing } from '../theme/colors';
 import { Button } from '../ui/Button';
 
@@ -65,6 +66,9 @@ export function AccountScreen() {
         ) : null}
       </View>
 
+      <Text style={styles.section}>Notifications</Text>
+      {user ? <PushNotificationsCard key={user.id} service={pushServiceFor(user.id)} /> : null}
+
       <View style={styles.signOut}>
         <Button
           testID="sign-out"
@@ -74,7 +78,7 @@ export function AccountScreen() {
           loading={signingOut}
           onPress={() => {
             setSigningOut(true);
-            void signOut();
+            void unregisterPushOnSignOut(user?.id).finally(() => void signOut());
           }}
         />
       </View>

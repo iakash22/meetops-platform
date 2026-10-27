@@ -188,14 +188,14 @@ VS Code uses `.vscode/mcp.json` with a top-level `"servers"` key instead of `"mc
 
 ## 8. Framework decisions recap
 
-From `docs/PROJECT_CONTEXT.md`:
+From `docs/PROJECT_CONTEXT.md` (status refreshed 27 Oct 2026; see `docs/PHASE_STATUS.md`):
 
 | Client                               | Stack                                       | Status           |
 | ------------------------------------ | ------------------------------------------- | ---------------- |
 | Web (`apps/web`)                     | React + Vite, TanStack, Tailwind, shadcn/ui | Active           |
-| Mobile                               | React Native + Expo                         | Decided          |
+| Mobile (`apps/mobile`)               | React Native + Expo                         | Built (Phase 8)  |
 | Browser extension (`apps/extension`) | WXT, Manifest V3                            | Built            |
-| Desktop (`apps/desktop`)             | Tauri                                       | Decided, Phase 8 |
+| Desktop (`apps/desktop`)             | Tauri                                       | Built (Phase 8)  |
 
 The same brand tokens (section 1) apply on every client. Only web uses the shadcn-based
 libraries directly; mobile, extension and desktop take the look and patterns, not the code.
