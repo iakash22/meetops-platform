@@ -56,12 +56,16 @@ export class RedisExtensionTokenRepository implements ExtensionTokenRepository {
     const raw = await this.redis.get(this.k('fam', id));
     if (!raw) return null;
     const v = JSON.parse(raw) as Json<TokenFamily>;
+    // The revocation marker is written before the family record, so a revoke is visible even if the
+    // record rewrite is lost or races a concurrent write.
+    const marker = await this.redis.get(this.k('famrev', id));
+    const revokedAt = v.revokedAt ?? (marker === null ? null : Number(marker));
     return {
       ...v,
       scopes: v.scopes,
       createdAt: new Date(v.createdAt),
       maxExpiresAt: new Date(v.maxExpiresAt),
-      revokedAt: v.revokedAt === null ? null : new Date(v.revokedAt),
+      revokedAt: revokedAt === null ? null : new Date(revokedAt),
     };
   }
   async listFamilies(userId: string, now: Date, organizationId?: string) {
@@ -77,6 +81,12 @@ export class RedisExtensionTokenRepository implements ExtensionTokenRepository {
   async revokeFamily(id: string, at: Date) {
     const f = await this.findFamily(id);
     if (!f || f.revokedAt) return;
+    await this.redis.set(
+      this.k('famrev', id),
+      String(at.getTime()),
+      'PX',
+      ttl(f.maxExpiresAt.getTime()),
+    );
     await this.saveFamily({ ...f, revokedAt: at });
   }
   async saveRefresh(tokenHash: string, familyId: string, expiresAt: Date) {
