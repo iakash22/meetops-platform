@@ -38,17 +38,19 @@ export function resolveApiBaseUrl(raw: string | undefined, dev: boolean): string
 }
 
 const API_BASE_URL = resolveApiBaseUrl(
-  process.env.EXPO_PUBLIC_API_URL,
+  process.env.EXPO_PUBLIC_API_URL as string | undefined,
   typeof __DEV__ !== 'undefined' && __DEV__,
 );
 
 export const IS_DEMO_MODE: boolean = API_BASE_URL === null;
 
+const deviceIds = createDeviceIdProvider();
+
 export const sessionManager = createSessionManager({
   client: API_BASE_URL
     ? createHttpAuthClient({
         baseUrl: API_BASE_URL,
-        getDeviceId: createDeviceIdProvider().get,
+        getDeviceId: () => deviceIds.get(),
       })
     : createMockAuthClient({ acceptAnyCredentials: true, latencyMs: 300 }),
   store: createSecureTokenStore(),

@@ -52,7 +52,7 @@ function isPersisted(v: unknown): v is PersistedTokens {
   return (
     t.tokenType === 'Bearer' &&
     ['refreshToken', 'refreshExpiresAt', 'organizationId'].every(
-      (k) => typeof t[k] === 'string' && (t[k] as string).length > 0,
+      (k) => typeof t[k] === 'string' && t[k].length > 0,
     )
   );
 }

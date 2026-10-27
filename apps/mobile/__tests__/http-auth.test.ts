@@ -22,7 +22,7 @@ const ORG = '00000000-0000-4000-8000-0000000000a1';
 const BASE = 'https://api.example.test';
 const DEVICE = '0f8e2c1a-3b4d-4e5f-9a6b-7c8d9e0f1a2b';
 const getDeviceId = () => Promise.resolve(DEVICE);
-const bodyOf = (c?: Call) => JSON.parse(String(c?.init.body)) as Record<string, unknown>;
+const bodyOf = (c?: Call) => JSON.parse(c?.init.body as string) as Record<string, unknown>;
 
 describe('createHttpAuthClient', () => {
   it('sends the stable deviceId on login, refresh and logout (ADR-005)', async () => {

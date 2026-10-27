@@ -43,7 +43,9 @@ describe('secure token store hardening', () => {
   it('uses AFTER_FIRST_UNLOCK_THIS_DEVICE_ONLY', async () => {
     const k = keychain();
     await createSecureTokenStore(k.store).save(pair(1));
-    const opts = (k.store.setItemAsync as jest.Mock).mock.calls[0][2];
+    const opts = (k.store.setItemAsync as jest.Mock).mock.calls[0]?.[2] as {
+      keychainAccessible?: unknown;
+    };
     const SecureStore = jest.requireActual<typeof import('expo-secure-store')>('expo-secure-store');
     expect(opts.keychainAccessible).toBe(SecureStore.AFTER_FIRST_UNLOCK_THIS_DEVICE_ONLY);
   });
@@ -94,12 +96,13 @@ describe('secure token store hardening', () => {
     const store = createSecureTokenStore(k.store);
     k.lock(true);
     await expect(store.load()).rejects.toBeInstanceOf(KeychainUnavailableError);
-    const client = { refresh: jest.fn(), getSession: jest.fn() } as unknown as AuthClient;
+    const refresh = jest.fn();
+    const client = { refresh, getSession: jest.fn() } as unknown as AuthClient;
     const m = createSessionManager({ client, store });
     await m.restore();
     expect(m.getState().status).toBe('signedOut');
     expect(k.items.has(TOKEN_KEY)).toBe(true);
-    expect(client.refresh).not.toHaveBeenCalled();
+    expect(refresh).not.toHaveBeenCalled();
   });
 });
 
