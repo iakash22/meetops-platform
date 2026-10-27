@@ -1,36 +1,39 @@
-import { useId, useState } from 'react';
+import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ExternalLink, GitBranch, Link2Off, SquareKanban } from 'lucide-react';
 import type { IntegrationProvider } from '@meetops/contracts';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { ErrorState, LoadingState } from '@/components/states/states';
-import { ApiError } from '@/lib/api/client';
+import { useCanManageDirectory } from '@/features/directory/queries';
 import { useApi } from '@/lib/api/context';
 import { useOrganizationId } from '@/lib/api/queries';
 import { notify, toastError } from '@/lib/errors/notify';
-import { getIntegrationsApi, safeAuthorizeUrl, validateTarget, type IntegrationDto } from './api';
+import {
+  PROVIDERS,
+  currentByProvider,
+  getIntegrationsApi,
+  isConnectEnabled,
+  safeAuthorizeUrl,
+  type Integration,
+} from './api';
 
-const META: Record<
-  IntegrationProvider,
-  { name: string; target: string; placeholder: string; blurb: string }
-> = {
-  github: {
-    name: 'GitHub',
-    target: 'Default repository',
-    placeholder: 'owner/repo',
-    blurb: 'File accepted meeting tasks as GitHub issues.',
-  },
-  jira: {
-    name: 'Jira',
-    target: 'Default project key',
-    placeholder: 'OPS',
-    blurb: 'File accepted meeting tasks as Jira issues.',
-  },
+const META: Record<IntegrationProvider, { name: string; blurb: string }> = {
+  github: { name: 'GitHub', blurb: 'File accepted meeting tasks as GitHub issues.' },
+  jira: { name: 'Jira', blurb: 'File accepted meeting tasks as Jira issues.' },
 };
+
+/** Full-page redirect to the provider's OAuth screen; an object so tests can stub it. */
+export const oauthRedirect = { assign: (url: string) => window.location.assign(url) };
 
 function useIntegrations() {
   const api = useApi();
@@ -45,80 +48,71 @@ function useIntegrations() {
   return { integrations, organizationId, key, query };
 }
 
-/** Full-page redirect to the provider's OAuth screen; an object so tests can stub it. */
-export const oauthRedirect = { assign: (url: string) => window.location.assign(url) };
-
 export function IntegrationsPanel() {
-  const navigate = (url: string) => oauthRedirect.assign(url);
   const { query } = useIntegrations();
+  const canManage = useCanManageDirectory();
   if (query.isError) return <ErrorState error={query.error} onRetry={() => void query.refetch()} />;
   if (!query.data) return <LoadingState />;
+  const current = currentByProvider(query.data.items);
   return (
-    <div className="grid gap-4 md:grid-cols-2">
-      {query.data.items.map((i) => (
-        <IntegrationCard key={i.provider} item={i} navigate={navigate} />
-      ))}
+    <div className="space-y-3">
+      {!canManage ? (
+        <p className="text-sm text-muted-foreground">
+          Only owners and admins can connect or disconnect integrations.
+        </p>
+      ) : null}
+      <div className="grid gap-4 md:grid-cols-2">
+        {PROVIDERS.map((p) => (
+          <IntegrationCard key={p} provider={p} item={current[p]} canManage={canManage} />
+        ))}
+      </div>
     </div>
   );
 }
 
 function IntegrationCard({
+  provider,
   item,
-  navigate,
+  canManage,
 }: {
-  item: IntegrationDto;
-  navigate: (url: string) => void;
+  provider: IntegrationProvider;
+  item: Integration | null;
+  canManage: boolean;
 }) {
   const { integrations, organizationId, key } = useIntegrations();
   const queryClient = useQueryClient();
-  const meta = META[item.provider];
-  const uid = useId();
-  const [target, setTarget] = useState(item.defaultTarget ?? '');
-  const [fieldError, setFieldError] = useState<string | null>(null);
-  const connected = item.status === 'connected';
+  const meta = META[provider];
+  const [confirming, setConfirming] = useState(false);
+  const connectOn = isConnectEnabled();
 
   const connect = useMutation({
-    mutationFn: () => integrations.connect(organizationId, item.provider),
+    mutationFn: () => integrations.connect(organizationId, provider),
     onSuccess: ({ authorizeUrl }) => {
       const url = safeAuthorizeUrl(authorizeUrl);
       if (!url) notify.error(`Couldn't connect ${meta.name}`, 'The sign-in link was not secure.');
-      else navigate(url);
+      else oauthRedirect.assign(url);
     },
     onError: (err) => toastError(err, { title: `Couldn't connect ${meta.name}` }),
   });
-  const save = useMutation({
-    mutationFn: (defaultTarget: string | null) =>
-      integrations.update(organizationId, item.provider, { defaultTarget }),
+  const disconnect = useMutation({
+    mutationFn: (id: string) => integrations.disconnect(organizationId, id),
     onSuccess: async () => {
-      notify.success(`${meta.name} settings saved`);
+      setConfirming(false);
+      notify.success(`${meta.name} disconnected`);
       await queryClient.invalidateQueries({ queryKey: key });
     },
     onError: (err) => {
-      if (
-        err instanceof ApiError &&
-        (err.status === 422 || err.status === 400) &&
-        err.details.some((d) => d.path.startsWith('/defaultTarget'))
-      )
-        setFieldError(`Enter a valid ${meta.target.toLowerCase()}.`);
-      else toastError(err, { title: `Couldn't save ${meta.name} settings` });
+      setConfirming(false);
+      toastError(err, { title: `Couldn't disconnect ${meta.name}` });
     },
-  });
-  const disconnect = useMutation({
-    mutationFn: () => integrations.disconnect(organizationId, item.provider),
-    onSuccess: async () => {
-      notify.success(`${meta.name} disconnected`);
-      setTarget('');
-      await queryClient.invalidateQueries({ queryKey: key });
-    },
-    onError: (err) => toastError(err, { title: `Couldn't disconnect ${meta.name}` }),
   });
 
-  const inputId = `${uid}-target`;
+  const status = item?.status;
   return (
-    <Card data-testid={`integration-${item.provider}`}>
+    <Card data-testid={`integration-${provider}`}>
       <CardHeader className="flex flex-row items-start justify-between gap-3 space-y-0">
         <div className="flex items-center gap-2">
-          {item.provider === 'github' ? (
+          {provider === 'github' ? (
             <GitBranch aria-hidden className="size-5" />
           ) : (
             <SquareKanban aria-hidden className="size-5" />
@@ -128,85 +122,94 @@ function IntegrationCard({
           </CardTitle>
         </div>
         <Badge
-          variant={item.status === 'error' ? 'destructive' : connected ? 'default' : 'secondary'}
+          variant={
+            status === 'error' ? 'destructive' : status === 'active' ? 'default' : 'secondary'
+          }
         >
-          {item.status === 'error' ? 'Needs attention' : connected ? 'Connected' : 'Not connected'}
+          {status === 'error'
+            ? 'Needs attention'
+            : status === 'active'
+              ? 'Connected'
+              : 'Not connected'}
         </Badge>
       </CardHeader>
       <CardContent className="space-y-4 text-sm">
         <p className="text-muted-foreground">{meta.blurb}</p>
-        {connected && item.accountLabel ? (
+        {item ? (
           <p>
-            Connected to <span className="font-medium">{item.accountLabel}</span>
+            Connected to <span className="font-medium">{item.displayName}</span>
           </p>
         ) : null}
-        {item.status === 'error' && item.lastError ? (
-          <p className="text-destructive">{item.lastError}</p>
+        {status === 'error' ? (
+          <p className="text-destructive">
+            {meta.name} stopped responding to MeetOps. Reconnect it to resume syncing.
+          </p>
         ) : null}
-        {connected ? (
-          <form
-            noValidate
-            className="grid gap-1.5"
-            onSubmit={(e) => {
-              e.preventDefault();
-              const err = validateTarget(item.provider, target);
-              setFieldError(err);
-              if (!err) save.mutate(target.trim() || null);
-            }}
-          >
-            <Label htmlFor={inputId}>{meta.target}</Label>
-            <div className="flex gap-2">
-              <Input
-                id={inputId}
-                value={target}
-                placeholder={meta.placeholder}
-                maxLength={140}
-                autoComplete="off"
-                spellCheck={false}
-                aria-invalid={fieldError ? true : undefined}
-                aria-describedby={fieldError ? `${inputId}-error` : undefined}
-                onChange={(e) => {
-                  setTarget(e.target.value);
-                  if (fieldError) setFieldError(null);
-                }}
-                className="h-11"
-              />
-              <Button className="min-h-11" type="submit" disabled={save.isPending}>
-                {save.isPending ? 'Saving…' : 'Save'}
+        {canManage ? (
+          <div className="flex flex-wrap gap-2">
+            {item ? (
+              <Button
+                className="min-h-11"
+                type="button"
+                variant="outline"
+                disabled={disconnect.isPending}
+                onClick={() => setConfirming(true)}
+              >
+                <Link2Off aria-hidden />
+                Disconnect
               </Button>
-            </div>
-            {fieldError ? (
-              <p id={`${inputId}-error`} role="alert" className="text-destructive">
-                {fieldError}
-              </p>
             ) : null}
-          </form>
+            {(!item || status === 'error') && connectOn ? (
+              <Button
+                className="min-h-11"
+                type="button"
+                disabled={connect.isPending || !organizationId}
+                onClick={() => connect.mutate()}
+              >
+                <ExternalLink aria-hidden />
+                {status === 'error' ? `Reconnect ${meta.name}` : `Connect ${meta.name}`}
+              </Button>
+            ) : null}
+            {(!item || status === 'error') && !connectOn ? (
+              <p className="text-muted-foreground">Connecting {meta.name} is coming soon.</p>
+            ) : null}
+          </div>
         ) : null}
-        <div className="flex gap-2">
-          {connected ? (
+      </CardContent>
+      <Dialog
+        open={confirming}
+        onOpenChange={(o) => (disconnect.isPending ? null : setConfirming(o))}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Disconnect {meta.name}?</DialogTitle>
+            <DialogDescription>
+              MeetOps will stop filing tasks to {item?.displayName ?? meta.name}. You can connect it
+              again later.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="gap-2">
             <Button
-              className="min-h-11"
               type="button"
               variant="outline"
-              disabled={disconnect.isPending}
-              onClick={() => disconnect.mutate()}
-            >
-              <Link2Off aria-hidden />
-              Disconnect
-            </Button>
-          ) : (
-            <Button
               className="min-h-11"
-              type="button"
-              disabled={connect.isPending || !organizationId}
-              onClick={() => connect.mutate()}
+              disabled={disconnect.isPending}
+              onClick={() => setConfirming(false)}
             >
-              <ExternalLink aria-hidden />
-              {item.status === 'error' ? `Reconnect ${meta.name}` : `Connect ${meta.name}`}
+              Cancel
             </Button>
-          )}
-        </div>
-      </CardContent>
+            <Button
+              type="button"
+              variant="destructive"
+              className="min-h-11"
+              disabled={disconnect.isPending || !item}
+              onClick={() => item && disconnect.mutate(item.id)}
+            >
+              {disconnect.isPending ? 'Disconnecting…' : 'Disconnect'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </Card>
   );
 }
