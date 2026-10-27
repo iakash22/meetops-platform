@@ -1,12 +1,14 @@
 import pino, { type LoggerOptions, type Logger } from 'pino';
-import { CENSOR, DEFAULT_REDACT_KEYS, redactDeep, type RedactLimits } from './redact.js';
+import { CENSOR, DEFAULT_REDACT_KEYS, redactDeep, scrubText, type RedactLimits } from './redact.js';
 
 export type { Logger };
 export {
   CENSOR,
   CIRCULAR,
+  CONDITIONAL_REDACT_KEYS,
   DEFAULT_REDACT_KEYS,
   redactDeep,
+  scrubText,
   TRUNCATED,
   type RedactLimits,
 } from './redact.js';
@@ -45,6 +47,16 @@ export function createLogger(
     level: process.env.NODE_ENV === 'production' ? 'info' : 'debug',
     ...rest,
     redact: { paths: [...new Set([...headerPaths, ...extraPaths])], censor: CENSOR },
+    hooks: {
+      ...rest.hooks,
+      // #282 M-1: scrub PEM blocks / GitHub tokens from the message string (formatters.log never sees it).
+      logMethod(args, method, level) {
+        const scrubbed = args.map((a) => (typeof a === 'string' ? scrubText(a) : a)) as typeof args;
+        return rest.hooks?.logMethod
+          ? rest.hooks.logMethod.call(this, scrubbed, method, level)
+          : method.apply(this, scrubbed);
+      },
+    },
     formatters: {
       ...formatters,
       log: (obj) => {

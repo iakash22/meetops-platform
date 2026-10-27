@@ -103,3 +103,52 @@ describe('exports', () => {
     expect(typeof m.logger.info).toBe('function');
   });
 });
+
+describe('#282 M-1 integration secrets and free-text scrub', () => {
+  const lines: string[] = [];
+  const log = createLogger({ level: 'info' }, { write: (l: string) => void lines.push(l) });
+  const kind = ['RSA', 'PRIVATE', 'KEY'].join(' ');
+  const pem = [`-----BEGIN ${kind}-----`, 'x'.repeat(24), `-----END ${kind}-----`].join('\n');
+  const tok = (p: string) => `${p}_${'z'.repeat(36)}`;
+  it('redacts the new keys at any depth', () => {
+    lines.length = 0;
+    const keys = [
+      'webhook_secret',
+      'private_key',
+      'pem',
+      'installationToken',
+      'jwt',
+      'id_token',
+      'GITHUB_APP_CLIENT_SECRET',
+      'JIRA_CLIENT_SECRET',
+    ];
+    log.info({ deep: { nest: Object.fromEntries(keys.map((k) => [k, `SEKRET_${k}`])) } });
+    expect(lines.join('')).not.toMatch(/SEKRET_/);
+  });
+  it('redacts an OAuth `code` but keeps error codes', () => {
+    lines.length = 0;
+    log.info({
+      q: { code: 'a1b2c3d4e5oauthcode' },
+      err: { code: 'ECONNREFUSED' },
+      body: { code: 'VALIDATION_FAILED' },
+      http: { code: 404 },
+    });
+    const out = lines.join('');
+    expect(out).not.toContain('a1b2c3d4e5oauthcode');
+    expect(out).toContain('ECONNREFUSED');
+    expect(out).toContain('VALIDATION_FAILED');
+    expect(out).toContain('404');
+  });
+  it('scrubs PEM blocks and ghs_/ghu_/gho_ tokens in messages, error messages and string values', () => {
+    lines.length = 0;
+    log.info(`key was ${pem} and ${tok('ghs')}`);
+    log.error({ err: new Error(`boom ${tok('ghu')} ${pem}`), note: `t=${tok('gho')}` }, 'failed');
+    const out = lines.join('');
+    expect(out).not.toMatch(/PRIVATE KEY|x{24}|gh[osu]_z{36}/);
+    expect(out).toContain('key was');
+    expect(out).toContain('boom');
+  });
+  it('redactDeep scrubs nested strings directly', () => {
+    expect(JSON.stringify(redactDeep({ a: [`x ${tok('ghs')}`] }, []))).not.toMatch(/ghs_z{36}/);
+  });
+});
