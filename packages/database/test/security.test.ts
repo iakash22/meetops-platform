@@ -82,6 +82,18 @@ const RECORDING_BYTES_MIGRATION = '20261027130000_recording_session_bytes_receiv
 const INTEGRATION_ROUTING_POLICY_MIGRATION = '20261027140000_integration_routing_definer_policy';
 /** ADR-014 session/audit geo columns + 30-day IP retention. */
 const SESSION_AUDIT_GEOIP_MIGRATION = '20261028010000_session_audit_geoip';
+/** ADR-013 notifications tables. Update LATEST_MIGRATION when adding a migration. */
+const NOTIFICATIONS_MIGRATION = '20261027180000_notifications';
+const notificationsSql = readFileSync(
+  resolve(migrationsDir, NOTIFICATIONS_MIGRATION, 'migration.sql'),
+  'utf8',
+);
+const NOTIFICATION_TABLES = [
+  'notifications',
+  'notification_delivery_attempts',
+  'notification_preferences',
+  'push_device_tokens',
+] as const;
 const LATEST_MIGRATION = SESSION_AUDIT_GEOIP_MIGRATION;
 const reportDedupeSql = readFileSync(
   resolve(migrationsDir, REPORT_SUMMARY_DEDUPE_MIGRATION, 'migration.sql'),
@@ -92,7 +104,7 @@ const integrationsSql = readFileSync(
   'utf8',
 );
 /** Migrations whose tenant policies use only the ADR-010 setting. */
-const adr010Sql = teamsSql + authTokensSql + integrationsSql;
+const adr010Sql = teamsSql + authTokensSql + integrationsSql + notificationsSql;
 /** Phase 3 per-recording transcript revision migration. */
 const TRANSCRIPT_REVISION_MIGRATION_DIR = '20261026200000_transcript_recording_revision';
 const consentSql = readFileSync(resolve(migrationsDir, CONSENT_MIGRATION, 'migration.sql'), 'utf8');
@@ -130,6 +142,7 @@ const ADR010_ONLY_TABLES: readonly string[] = [
   'auth_token_families',
   'auth_refresh_tokens',
   'integration_connections',
+  ...NOTIFICATION_TABLES,
 ];
 /** DB-3: append-only tenant tables with their own SELECT/INSERT policies (ADR-010 setting) in consentSql. */
 const CONSENT_TABLES: readonly string[] = ['consent_attestations'];
@@ -655,7 +668,7 @@ describe('schema conventions', () => {
   });
 
   it('every model uses a uuid primary key', () => {
-    expect(models).toHaveLength(36);
+    expect(models).toHaveLength(40);
     for (const m of models.filter((x) => !ORGANIZATION_KEYED.includes(x.table)))
       expect(m.body, m.name).toMatch(/^\s+id\s+String\s+@id @default\(uuid\(\)\) @db\.Uuid$/m);
   });
@@ -1391,12 +1404,14 @@ describe('Phase 3 report summary dedupe (static)', () => {
   const statements = reportDedupeSql.replace(/--.*$/gm, '');
   const model = models.find((m) => m.name === 'Report')?.body ?? '';
 
-  it('is the latest migration', () => {
+  it('sorts before the recording bytes, routing policy and notifications migrations', () => {
     const dirs = readdirSync(migrationsDir, { withFileTypes: true })
       .filter((x) => x.isDirectory())
       .map((x) => x.name)
       .sort();
-    expect(dirs.at(-1)).toBe(LATEST_MIGRATION);
+    const at = (m: string) => dirs.indexOf(m);
+    expect(at(RECORDING_BYTES_MIGRATION)).toBe(at(REPORT_SUMMARY_DEDUPE_MIGRATION) + 1);
+    expect(at(NOTIFICATIONS_MIGRATION)).toBe(at(INTEGRATION_ROUTING_POLICY_MIGRATION) + 1);
   });
 
   it('is additive only and keeps RLS untouched', () => {
@@ -1436,6 +1451,52 @@ describe('integration routing definer functions', () => {
     expect(bodies).toHaveLength(2);
     for (const b of bodies) expect(b).not.toMatch(/_enc|display_name|\*/);
     expect(sql).toContain("c.status <> 'revoked'");
+  });
+});
+
+describe('ADR-013 notifications tables (static)', () => {
+  const statements = notificationsSql.replace(/--.*$/gm, '');
+
+  it('is the latest migration and additive only', () => {
+    const dirs = readdirSync(migrationsDir, { withFileTypes: true })
+      .filter((x) => x.isDirectory())
+      .map((x) => x.name)
+      .sort();
+    expect(dirs.at(-1)).toBe(LATEST_MIGRATION);
+    expect(dirs.at(-2)).toBe(NOTIFICATIONS_MIGRATION);
+    expect(statements).not.toMatch(
+      /\bDROP\b|RENAME|ALTER COLUMN|NO FORCE|DISABLE ROW LEVEL SECURITY/i,
+    );
+  });
+
+  it('enables and forces RLS with an ADR-010 tenant policy on every table, and grants the app role', () => {
+    for (const t of NOTIFICATION_TABLES) {
+      expect(TENANT_TABLES as readonly string[]).toContain(t);
+      expect(statements).toContain(`ALTER TABLE "${t}" ENABLE ROW LEVEL SECURITY;`);
+      expect(statements).toContain(`ALTER TABLE "${t}" FORCE ROW LEVEL SECURITY;`);
+      expect(statements).toContain(`CREATE POLICY tenant_isolation ON "${t}"`);
+    }
+    expect(statements).not.toContain('app.current_org_id');
+    expect(statements).toContain(
+      'GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "notifications", "notification_delivery_attempts", "notification_preferences", "push_device_tokens" TO meetops_app;',
+    );
+    expect(statements).toContain("RAISE EXCEPTION 'RLS enabled but not forced on: %'");
+  });
+
+  it('adds a restrictive owner-only policy on user-owned tables', () => {
+    for (const t of ['notifications', 'notification_preferences', 'push_device_tokens'])
+      expect(statements).toContain(`CREATE POLICY owner_only ON "${t}" AS RESTRICTIVE`);
+  });
+
+  it('links attempts to notifications through a composite tenant FK and stores push tokens only hashed + encrypted', () => {
+    expect(statements).toContain(
+      'FOREIGN KEY ("org_id", "notification_id") REFERENCES "notifications"("org_id", "id")',
+    );
+    const push = /CREATE TABLE "push_device_tokens" \(([\s\S]*?)\);/.exec(statements)?.[1] ?? '';
+    expect(push).toContain('"token_hash" TEXT NOT NULL');
+    expect(push).toContain('"token_enc" TEXT');
+    expect(push).not.toMatch(/"(token|endpoint)" /);
+    expect(statements).toContain('"push_device_tokens"("org_id", "token_hash")');
   });
 });
 
