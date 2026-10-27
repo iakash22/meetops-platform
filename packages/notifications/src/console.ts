@@ -1,5 +1,11 @@
 import { assertValidMessage } from './smtp.js';
-import { recipientEmail, toArray, type EmailMessage, type EmailService, type SendResult } from './types.js';
+import {
+  recipientEmail,
+  toArray,
+  type EmailMessage,
+  type EmailService,
+  type SendResult,
+} from './types.js';
 
 /**
  * In-memory email adapter for tests and local development only.
@@ -14,13 +20,19 @@ export class ConsoleEmailService implements EmailService {
 
   async send(message: EmailMessage): Promise<SendResult> {
     assertValidMessage(message);
-    const stored = { ...message };
+    const stored: EmailMessage = { ...message };
+    if (message.attachments) stored.attachments = message.attachments.map((a) => ({ ...a }));
     if (!stored.from && this.options.from) stored.from = this.options.from;
     this.sent.push(stored);
     this.counter += 1;
     const to = toArray(message.to).map(recipientEmail);
     this.options.log?.(`[console-email] to=${to.join(',')} subject=${message.subject}`);
-    return { messageId: `console-${this.counter}`, accepted: to, rejected: [], provider: this.provider };
+    return {
+      messageId: `console-${this.counter}`,
+      accepted: to,
+      rejected: [],
+      provider: this.provider,
+    };
   }
 
   async verify(): Promise<boolean> {

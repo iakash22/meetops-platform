@@ -25,7 +25,17 @@ describe('email queue constants', () => {
     });
   });
   it('template ids', () => {
-    expect(EMAIL_TEMPLATE_IDS).toEqual(['verification', 'password-reset', 'invitation', 'task-assigned', 'meeting-summary']);
+    expect(EMAIL_TEMPLATE_IDS).toEqual([
+      'verification',
+      'password-reset',
+      'invitation',
+      'task-assigned',
+      'meeting-summary',
+      'member-added',
+      'member-removed',
+      'tasks-ready-for-review',
+      'integration-error',
+    ]);
     for (const t of EMAIL_TEMPLATE_IDS) expect(Value.Check(EmailTemplateId, t)).toBe(true);
     expect(Value.Check(EmailTemplateId, 'reset_password')).toBe(false);
   });
@@ -47,7 +57,16 @@ describe('EmailJobPayload (INT shape)', () => {
   it('binds recipient kind to template', () => {
     expect(Value.Check(EmailJobPayload, { ...base, templateId: 'invitation', recipient: { invitationId: id(5) } })).toBe(true);
     expect(Value.Check(EmailJobPayload, { ...base, templateId: 'invitation', recipient: { userId: id(5) } })).toBe(false);
-    for (const t of ['verification', 'password-reset', 'task-assigned', 'meeting-summary']) {
+    for (const t of [
+      'verification',
+      'password-reset',
+      'task-assigned',
+      'meeting-summary',
+      'member-added',
+      'member-removed',
+      'tasks-ready-for-review',
+      'integration-error',
+    ]) {
       expect(Value.Check(EmailJobPayload, { ...base, templateId: t, recipient: { userId: id(5) } })).toBe(true);
       expect(Value.Check(EmailJobPayload, { ...base, templateId: t, recipient: { invitationId: id(5) } })).toBe(false);
     }

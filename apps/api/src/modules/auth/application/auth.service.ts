@@ -282,6 +282,7 @@ export class AuthService {
     await this.d.sessions.revokeAllForUser(t.userId, now);
     await this.publish({ kind: 'user', userId: t.userId, reason: 'password_changed' });
     await this.d.extensionRevoker?.revokeForUser(t.userId, 'password_changed');
+    await this.d.mailQueue.enqueue({ kind: 'password_changed', userId: t.userId, changedAt: now.toISOString() });
     await this.d.oneTimeTokens.invalidateForUser(t.userId, 'password_reset', now);
     const user = await this.d.users.findById(t.userId);
     if (user) await this.d.lockout.reset(user.email);

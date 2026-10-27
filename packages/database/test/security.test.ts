@@ -68,9 +68,20 @@ const authTokensSql = readFileSync(
   'utf8',
 );
 /** Every migration that creates ADR-010-only tenant policies. */
-const adr010Sql = teamsSql + authTokensSql;
 const CONSENT_MIGRATION = '20261025120000_consent_scan_keycheck';
 const MEETINGS_EXTERNAL_ID_MIGRATION = '20261026120000_meetings_external_id';
+const RECORDING_SOURCE_NATIVE_MIGRATION = '20261026210000_recording_source_native';
+/** Update when adding a migration. */
+const INTEGRATION_CONNECTIONS_MIGRATION = '20261027000000_integration_connections';
+const LATEST_MIGRATION = INTEGRATION_CONNECTIONS_MIGRATION;
+const integrationsSql = readFileSync(
+  resolve(migrationsDir, INTEGRATION_CONNECTIONS_MIGRATION, 'migration.sql'),
+  'utf8',
+);
+/** Migrations whose tenant policies use only the ADR-010 setting. */
+const adr010Sql = teamsSql + authTokensSql + integrationsSql;
+/** Phase 3 per-recording transcript revision migration. */
+const TRANSCRIPT_REVISION_MIGRATION_DIR = '20261026200000_transcript_recording_revision';
 const consentSql = readFileSync(resolve(migrationsDir, CONSENT_MIGRATION, 'migration.sql'), 'utf8');
 const rlsSql =
   readFileSync(resolve(migrationsDir, '20261021110000_tenant_rls_roles/migration.sql'), 'utf8') +
@@ -105,6 +116,7 @@ const ADR010_ONLY_TABLES: readonly string[] = [
   'auth_devices',
   'auth_token_families',
   'auth_refresh_tokens',
+  'integration_connections',
 ];
 /** DB-3: append-only tenant tables with their own SELECT/INSERT policies (ADR-010 setting) in consentSql. */
 const CONSENT_TABLES: readonly string[] = ['consent_attestations'];
@@ -630,7 +642,7 @@ describe('schema conventions', () => {
   });
 
   it('every model uses a uuid primary key', () => {
-    expect(models).toHaveLength(35);
+    expect(models).toHaveLength(36);
     for (const m of models.filter((x) => !ORGANIZATION_KEYED.includes(x.table)))
       expect(m.body, m.name).toMatch(/^\s+id\s+String\s+@id @default\(uuid\(\)\) @db\.Uuid$/m);
   });
@@ -803,7 +815,9 @@ describe('recording sessions (contracts v0.2)', () => {
   });
 
   it('enums and limits match the contract', () => {
-    expect(finalSql).toContain(`CREATE TYPE "RecordingSource" AS ENUM ('tab');`);
+    expect(finalSql).toContain(
+      `CREATE TYPE "RecordingSource" AS ENUM ('tab', 'mobile', 'desktop');`,
+    );
     expect(finalSql).toContain(
       `CREATE TYPE "RecordingAbortReason" AS ENUM ('user_stopped', 'consent_revoked', 'tab_closed', 'local_storage_exhausted', 'error');`,
     );
@@ -1200,12 +1214,12 @@ describe('API-MEETINGS meetings.external_meeting_id (static)', () => {
 
 describe('ADR-005 durable token families (static)', () => {
   const statements = authTokensSql.replace(/--.*$/gm, '');
-  it('is the latest migration', () => {
+  it('sorts just before the integration connections migration', () => {
     const dirs = readdirSync(migrationsDir, { withFileTypes: true })
       .filter((x) => x.isDirectory())
       .map((x) => x.name)
       .sort();
-    expect(dirs.at(-1)).toBe(AUTH_TOKENS_MIGRATION);
+    expect(dirs.indexOf(AUTH_TOKENS_MIGRATION)).toBe(dirs.indexOf(LATEST_MIGRATION) - 1);
   });
   it('is additive only', () => {
     expect(statements).not.toMatch(
@@ -1234,5 +1248,121 @@ describe('ADR-005 durable token families (static)', () => {
       'REVOKE DELETE ON TABLE "auth_devices", "auth_token_families", "auth_refresh_tokens" FROM meetops_app;',
     );
     expect(authTokensSql).toContain("RAISE EXCEPTION 'RLS enabled but not forced on: %'");
+  });
+});
+
+const TRANSCRIPT_REVISION_MIGRATION = TRANSCRIPT_REVISION_MIGRATION_DIR;
+
+describe('Phase 3 transcripts revised per recording (static)', () => {
+  const sql = readFileSync(
+    resolve(migrationsDir, TRANSCRIPT_REVISION_MIGRATION, 'migration.sql'),
+    'utf8',
+  ).replace(/--.*$/gm, '');
+  const transcript = models.find((m) => m.name === 'Transcript')?.body ?? '';
+
+  it('sorts before the auth token families migration', () => {
+    const dirs = readdirSync(migrationsDir, { withFileTypes: true })
+      .filter((d) => d.isDirectory())
+      .map((d) => d.name)
+      .sort();
+    expect(dirs.indexOf(TRANSCRIPT_REVISION_MIGRATION)).toBeLessThan(
+      dirs.indexOf(AUTH_TOKENS_MIGRATION),
+    );
+  });
+
+  it('moves the revision key to (recording_id, revision) and keeps revisions non-negative', () => {
+    expect(sql).toContain('DROP INDEX IF EXISTS "transcripts_meeting_id_revision_key"');
+    expect(sql).toContain(
+      'CREATE UNIQUE INDEX "transcripts_recording_id_revision_key" ON "transcripts"("recording_id", "revision")',
+    );
+    expect(sql).toContain('CHECK ("revision" >= 0)');
+    expect(transcript).toContain('@@unique([recordingId, revision])');
+    expect(transcript).not.toContain('@@unique([meetingId, revision])');
+  });
+
+  it('only adds a nullable merge_state column (no table drop, no RLS change)', () => {
+    expect(sql).toContain('ADD COLUMN "merge_state" JSONB');
+    expect(sql).not.toMatch(
+      /DROP TABLE|DROP COLUMN|NO FORCE ROW LEVEL SECURITY|DISABLE ROW LEVEL SECURITY/i,
+    );
+    expect(transcript).toMatch(/mergeState\s+Json\?/);
+  });
+});
+
+describe('DB recording_source_native: RecordingSource mobile/desktop (static)', () => {
+  const sql = readFileSync(
+    resolve(migrationsDir, RECORDING_SOURCE_NATIVE_MIGRATION, 'migration.sql'),
+    'utf8',
+  );
+  const statements = sql.replace(/--.*$/gm, '');
+
+  it('sorts after the Phase 3 transcript revision and before auth token families', () => {
+    const dirs = readdirSync(migrationsDir, { withFileTypes: true })
+      .filter((x) => x.isDirectory())
+      .map((x) => x.name)
+      .sort();
+    const i = dirs.indexOf(RECORDING_SOURCE_NATIVE_MIGRATION);
+    expect(i).toBeGreaterThan(dirs.indexOf(TRANSCRIPT_REVISION_MIGRATION_DIR));
+    expect(i).toBeLessThan(dirs.indexOf(AUTH_TOKENS_MIGRATION));
+  });
+
+  it('only adds the two enum values, matching the schema and contracts 0.6.0', () => {
+    expect(statements).not.toMatch(/DROP|RENAME|CREATE TABLE|ALTER TABLE|NO FORCE/i);
+    expect(statements).toContain(`ALTER TYPE "RecordingSource" ADD VALUE IF NOT EXISTS 'mobile';`);
+    expect(statements).toContain(`ALTER TYPE "RecordingSource" ADD VALUE IF NOT EXISTS 'desktop';`);
+    expect(schema).toMatch(/enum RecordingSource \{\s+tab\s+mobile\s+desktop\s+\}/);
+  });
+});
+
+describe('Phase 5 integration_connections (static)', () => {
+  const statements = integrationsSql.replace(/--.*$/gm, '');
+  const model = models.find((m) => m.name === 'IntegrationConnection')?.body ?? '';
+
+  it('is the latest migration', () => {
+    const dirs = readdirSync(migrationsDir, { withFileTypes: true })
+      .filter((x) => x.isDirectory())
+      .map((x) => x.name)
+      .sort();
+    expect(dirs.at(-1)).toBe(LATEST_MIGRATION);
+  });
+
+  it('is additive only', () => {
+    expect(statements).not.toMatch(
+      /\bDROP\b|RENAME|ALTER COLUMN|NO FORCE|DISABLE ROW LEVEL SECURITY/i,
+    );
+  });
+
+  it('is a forced-RLS tenant table bound to org_id', () => {
+    expect(TENANT_TABLES).toContain('integration_connections');
+    expect(integrationsSql).toContain(
+      'ALTER TABLE "integration_connections" FORCE ROW LEVEL SECURITY;',
+    );
+    expect(integrationsSql).toContain("RAISE EXCEPTION 'RLS enabled but not forced on: %'");
+    expect(model).toContain('@@unique([organizationId, provider, externalAccountId])');
+    expect(model).toContain('@@unique([organizationId, id])');
+  });
+
+  it('stores secrets only as v1 envelopes, never plaintext columns', () => {
+    for (const c of ['access_token_enc', 'refresh_token_enc', 'webhook_secret_enc']) {
+      expect(integrationsSql).toContain(`"integration_connections_${c}_check" CHECK (`);
+    }
+    expect(model).not.toMatch(/^\s+(accessToken|refreshToken|webhookSecret)\s/m);
+    expect(statements).not.toMatch(/"(access_token|refresh_token|webhook_secret)" /);
+    expect(model).toMatch(/tokenKeyId\s+String\s+@map\("token_key_id"\)/);
+  });
+
+  it('app role cannot DELETE: disconnect is a soft revoke that wipes the secrets (CHECK-enforced)', () => {
+    expect(integrationsSql).toContain(
+      'REVOKE DELETE, TRUNCATE ON TABLE "integration_connections" FROM meetops_app;',
+    );
+    expect(integrationsSql).toContain(
+      'GRANT SELECT, INSERT, UPDATE ON TABLE "integration_connections" TO meetops_app;',
+    );
+    expect(statements).not.toMatch(/GRANT[^;]*DELETE[^;]*"integration_connections"/);
+    expect(statements).toMatch(/"integration_connections_revoked_wipe_check" CHECK \(/);
+    expect(statements).toMatch(
+      /"status" = 'revoked' AND "revoked_at" IS NOT NULL\s+AND "access_token_enc" IS NULL AND "refresh_token_enc" IS NULL AND "webhook_secret_enc" IS NULL/,
+    );
+    expect(model).toMatch(/revokedAt\s+DateTime\?\s+@map\("revoked_at"\)/);
   });
 });

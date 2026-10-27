@@ -2,7 +2,7 @@ import type {
   Membership as MembershipDto,
   Organization as OrganizationDto,
   OrganizationMember as OrganizationMemberDto,
-  UserSummary
+  UserSummary,
 } from '@meetops/contracts';
 import type { Organization } from '../domain/organization.js';
 import type { Membership, Role } from '../domain/membership.js';
@@ -13,7 +13,7 @@ export const toOrganizationDto = (o: Organization): OrganizationDto => ({
   name: o.name,
   slug: o.slug,
   createdAt: o.createdAt.toISOString(),
-  updatedAt: o.updatedAt.toISOString()
+  updatedAt: o.updatedAt.toISOString(),
 });
 
 export const toMembershipDto = (m: Membership): MembershipDto => ({
@@ -21,7 +21,7 @@ export const toMembershipDto = (m: Membership): MembershipDto => ({
   organizationId: m.organizationId,
   userId: m.userId,
   role: m.role,
-  createdAt: m.createdAt.toISOString()
+  createdAt: m.createdAt.toISOString(),
 });
 
 /** Never includes tokenHash. */
@@ -31,7 +31,7 @@ export const toInvitationDto = (i: Invitation) => ({
   email: i.email,
   role: i.role,
   status: i.status,
-  expiresAt: i.expiresAt.toISOString()
+  expiresAt: i.expiresAt.toISOString(),
 });
 
 /**
@@ -41,7 +41,7 @@ export const toInvitationDto = (i: Invitation) => ({
 export const toOrganizationMemberDto = (
   m: Membership,
   user: { id: string; email: string; name: string | null } | null,
-  viewerRole: Role
+  viewerRole: Role,
 ): OrganizationMemberDto => {
   const summary: UserSummary = { id: m.userId };
   if (user && (viewerRole === 'owner' || viewerRole === 'admin')) summary.email = user.email;

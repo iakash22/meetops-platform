@@ -13,3 +13,4 @@ export * from './sessions.js';
 export * from './employees.js';
 export * from './teams.js';
 export * from './projects.js';
+export * from './integrations.js';

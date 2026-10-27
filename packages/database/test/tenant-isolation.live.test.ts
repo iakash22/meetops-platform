@@ -67,6 +67,14 @@ function keyColumns(t: TenantTable, id: string, organizationId: string) {
 }
 
 /** Column values that must satisfy table CHECK constraints. */
+/** integration_connections secrets are nullable (wiped on revoke) but required while active. */
+const EXTRA_COLUMNS: Record<string, [string, string][]> = {
+  integration_connections: [
+    ['access_token_enc', `'v1.isolation.wrapped.ciphertext'`],
+    ['webhook_secret_enc', `'v1.isolation.wrapped.ciphertext'`],
+  ],
+};
+
 function override(table: string, column: string, organizationId: string): string | undefined {
   if (table === 'recording_session_chunks' && column === 'size_bytes') return '1';
   if (table === 'recording_session_chunks' && column === 'storage_key')
@@ -75,6 +83,11 @@ function override(table: string, column: string, organizationId: string): string
   if (table === 'file_objects' && column === 'storage_key')
     return `'organizations/${organizationId}/isolation-test-${randomUUID()}'`;
   if (table === 'consent_attestations' && column === 'consent_version') return `'2026-10'`;
+  // CHECK constraints require v1 cipher envelopes (no real secrets in tests).
+  if (table === 'integration_connections' && column.endsWith('_enc'))
+    return `'v1.isolation.wrapped.ciphertext'`;
+  if (table === 'integration_connections' && column === 'revoked_at') return 'NULL';
+  if (table === 'integration_connections' && column === 'status') return `'active'`;
   if (table === 'auth_token_families' && column === 'max_expires_at')
     return `now() + interval '30 days'`;
   if (table === 'auth_refresh_tokens' && column === 'token_hash')
@@ -146,6 +159,12 @@ describe.skipIf(missingEnv.length > 0)('tenant isolation per table (live, ADR-01
           names.push(c.column_name);
           values.push(override(t, c.column_name, orgB) ?? dummy(c));
         }
+        // Nullable columns a table CHECK still requires for an active row.
+        for (const [col, val] of EXTRA_COLUMNS[t] ?? []) {
+          if (names.includes(col)) continue;
+          names.push(col);
+          values.push(val);
+        }
         await tx.$executeRawUnsafe(
           `INSERT INTO "${t}" (${names.map((n) => `"${n}"`).join(', ')}) VALUES (${values.join(', ')})`,
         );
@@ -182,8 +201,8 @@ describe.skipIf(missingEnv.length > 0)('tenant isolation per table (live, ADR-01
     /** Append-only tables: UPDATE/DELETE are revoked from the app, so they fail on privilege instead. */
     const appendOnly = t === 'audit_events' || t === 'consent_attestations';
     const blockedWrite = appendOnly ? /permission denied|append-only/ : /row-level security/;
-    /** ADR-005 A1.2 token tables: DELETE is revoked (revocation is an UPDATE). */
-    const noDelete = t.startsWith('auth_');
+    /** DELETE is revoked: ADR-005 A1.2 token tables (revocation is an UPDATE) and integration_connections (soft disconnect wipes secrets). */
+    const noDelete = t.startsWith('auth_') || t === 'integration_connections';
     const count = (tx: Prisma.TransactionClient, id: string) =>
       tx.$queryRawUnsafe<{ n: bigint }[]>(
         `SELECT count(*) AS n FROM "${t}" WHERE ${whereKey(t)}`,
@@ -243,5 +262,40 @@ describe.skipIf(missingEnv.length > 0)('tenant isolation per table (live, ADR-01
       const [cross] = await inOrg(orgA, (tx) => count(tx, id));
       expect(cross!.n).toBe(0n);
     });
+  });
+  it('integration_connections: no DELETE even in-org; disconnect must wipe every secret', async () => {
+    const id = rowB.get('integration_connections')!;
+    await expect(
+      inOrg(orgB, (tx) =>
+        tx.$executeRawUnsafe(`DELETE FROM integration_connections WHERE id = $1::uuid`, id),
+      ),
+    ).rejects.toThrow(/permission denied/);
+    // Revoking while keeping ciphertext violates the revoked-wipe CHECK.
+    await expect(
+      inOrg(orgB, (tx) =>
+        tx.$executeRawUnsafe(
+          `UPDATE integration_connections SET status = 'revoked', revoked_at = now() WHERE id = $1::uuid`,
+          id,
+        ),
+      ),
+    ).rejects.toThrow(/revoked_wipe_check/);
+    const n = await inOrg(orgB, (tx) =>
+      tx.$executeRawUnsafe(
+        `UPDATE integration_connections SET status = 'revoked', revoked_at = now(),
+           access_token_enc = NULL, refresh_token_enc = NULL, webhook_secret_enc = NULL
+         WHERE id = $1::uuid`,
+        id,
+      ),
+    );
+    expect(n).toBe(1);
+    const [row] = await inOrg(orgB, (tx) =>
+      tx.$queryRawUnsafe<{ status: string; secrets: bigint }[]>(
+        `SELECT status::text AS status,
+           num_nonnulls(access_token_enc, refresh_token_enc, webhook_secret_enc)::bigint AS secrets
+         FROM integration_connections WHERE id = $1::uuid`,
+        id,
+      ),
+    );
+    expect(row).toEqual({ status: 'revoked', secrets: 0n });
   });
 });

@@ -75,6 +75,16 @@ import type {
 import type { MeetingRepository } from './meetings/domain/meeting.js';
 import { InMemoryMeetingRepository } from './meetings/infrastructure/in-memory.repository.js';
 import { PrismaMeetingRepository } from './meetings/infrastructure/prisma.repository.js';
+import type { ConsentRepository } from './media/domain/consent.js';
+import type { FileObjectRepository, MediaJobQueue, MediaSigner } from './media/domain/ports.js';
+import type { RecordingSessionRepository } from './media/domain/recording-session.js';
+import {
+  FakeMediaSigner,
+  InMemoryConsentRepository,
+  InMemoryFileObjectRepository,
+  InMemoryMediaJobQueue,
+  InMemoryRecordingSessionRepository,
+} from './media/infrastructure/in-memory.js';
 import { systemClock, type Clock, type IdGenerator } from '../shared/ports.js';
 
 export interface ModuleDeps {
@@ -130,6 +140,30 @@ export interface ModuleDeps {
   extensionTokens: ExtensionTokenRepository;
   /** ADR-005 allowlisted Chrome extension ids (EXTENSION_IDS; plus EXTENSION_DEV_IDS in development/test). */
   extensionIds: readonly string[];
+  /**
+   * Media (uploads / recording sessions) adapters. Defaults to in-memory ONLY in development/test; outside them it
+   * stays unset unless injected and the media routes are not registered (no production adapters yet).
+   */
+  media?: MediaAdapters;
+}
+
+/** Ports the media module needs. */
+export interface MediaAdapters {
+  files: FileObjectRepository;
+  consents: ConsentRepository;
+  signer: MediaSigner;
+  jobs: MediaJobQueue;
+  sessions: RecordingSessionRepository;
+}
+
+export function inMemoryMediaAdapters(clock: Clock = systemClock): MediaAdapters {
+  return {
+    files: new InMemoryFileObjectRepository(),
+    consents: new InMemoryConsentRepository(),
+    signer: new FakeMediaSigner(() => clock.now()),
+    jobs: new InMemoryMediaJobQueue(),
+    sessions: new InMemoryRecordingSessionRepository(),
+  };
 }
 
 /** Revocation publisher over the shared Redis client, or a no-op without one. */
@@ -374,6 +408,7 @@ export function defaultModuleDeps(
     invitationTtlMs: 7 * DAY,
     passwordResetTtlMs: 30 * MIN,
     emailVerificationTtlMs: DAY,
+    ...(strict ? {} : { media: inMemoryMediaAdapters(clock) }),
     ...overrides,
     ...(redis ? { redis } : {}),
     ...(ownedRedis ? { ownedRedis } : {}),
@@ -410,7 +445,9 @@ export async function registerModules(app: FastifyInstance, deps: ModuleDeps) {
   await app.register(organizationRoutes, { auth, organizations, security: deps.security });
   await app.register(extensionAuthRoutes, { auth, extensionAuth, security: deps.security });
   await app.register(import('./directory/index.js'), { auth, organizations, deps });
+  await app.register(import('./meeting-insights/index.js'), { auth, organizations, deps });
   await app.register(import('./meetings/index.js'), { auth, organizations, deps });
+  await app.register(import('./media/index.js'), { auth, organizations, deps });
   return {
     auth,
     organizations,

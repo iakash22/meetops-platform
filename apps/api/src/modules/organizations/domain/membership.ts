@@ -20,7 +20,11 @@ export interface Membership {
  * - Admins cannot touch owners or other admins, and cannot grant admin/owner.
  * - Owners can do anything to anyone (last-owner protection still applies).
  */
-export function canChangeMemberRole(actor: { userId: string; role: Role }, target: { userId: string; role: Role }, to: Role): boolean {
+export function canChangeMemberRole(
+  actor: { userId: string; role: Role },
+  target: { userId: string; role: Role },
+  to: Role,
+): boolean {
   if (actor.role === 'owner') return true;
   if (actor.role !== 'admin') return false;
   if (actor.userId === target.userId) return false;
@@ -28,7 +32,10 @@ export function canChangeMemberRole(actor: { userId: string; role: Role }, targe
   return to === 'member' || to === 'viewer';
 }
 
-export function canRemoveMember(actor: { userId: string; role: Role }, target: { userId: string; role: Role }): boolean {
+export function canRemoveMember(
+  actor: { userId: string; role: Role },
+  target: { userId: string; role: Role },
+): boolean {
   // Anyone may leave; the last-owner rule still applies.
   if (actor.userId === target.userId) return true;
   if (actor.role === 'owner') return true;

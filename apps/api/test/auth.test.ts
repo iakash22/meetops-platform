@@ -222,6 +222,19 @@ describe('auth', () => {
       expect(bogus.json().error.code).toBe('UNAUTHENTICATED');
     });
 
+    it('returns user.emailVerifiedAt: an ISO time once verified, null before', async () => {
+      const v = await (await signupAndLogin(app, 'ver@example.com')).get('/auth/session');
+      expect(v.statusCode).toBe(200);
+      expect(v.json().user.emailVerifiedAt).toMatch(
+        /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$/,
+      );
+      const u = await (
+        await signupAndLogin(app, 'unver@example.com', undefined, { verify: false })
+      ).get('/auth/session');
+      expect(u.statusCode).toBe(200);
+      expect(u.json().user.emailVerifiedAt).toBeNull();
+    });
+
     it('expires after 30 minutes idle but slides with activity', async () => {
       let now = new Date('2026-01-01T00:00:00Z');
       await app.close();
@@ -358,10 +371,12 @@ describe('auth', () => {
         ).statusCode,
       ).toBe(204);
       expect((await c.get('/auth/session')).statusCode).toBe(401);
-      expect(
-        (await anon.post('/auth/login', { email: 'reset@example.com', password: newPassword }))
-          .statusCode,
-      ).toBe(200);
+      const changed = app.mail.sent.filter((m) => m.template === 'password_changed');
+      expect(changed).toHaveLength(1);
+      expect(changed[0]!.to).toBe('reset@example.com');
+      expect(Number.isNaN(Date.parse(changed[0]!.data.changedAt!))).toBe(false);
+      expect(changed[0]!.data.url).toMatch(/\/forgot-password$/);
+      expect((await anon.post('/auth/login', { email: 'reset@example.com', password: newPassword })).statusCode).toBe(200);
       // single use
       const again = await anon.post('/auth/reset-password', {
         token: new URL(mail[0]!.data.url!).searchParams.get('token')!,

@@ -4,13 +4,14 @@ import type {
   CompleteRecordingSessionResponse,
   ConsentMethod,
   Id,
+  InitRecordingSessionRequest,
   InitRecordingSessionResponse,
 } from '@meetops/contracts';
 import { CURRENT_CONSENT_VERSION, MAX_CHUNK_BYTES, MAX_CHUNKS } from '@meetops/contracts/types';
 import type { ApiClient } from '@/lib/api/client';
 import { sha256Base64 } from '@/features/meetings/upload-button';
 
-/** contracts 0.4.1 recording-sessions routes (BE: feat/api-recording-sessions). */
+/** Recording-session routes served by the API media module (#197); mirrors its RECORDING_SESSION_PATHS. */
 export const RECORDING_PATHS = {
   init: (organizationId: Id) => `/orgs/${encodeURIComponent(organizationId)}/recording-sessions`,
   chunk: (sessionId: Id) => `/recording-sessions/${encodeURIComponent(sessionId)}/chunks`,
@@ -77,7 +78,7 @@ export class RecordingSessionUploader {
           attestedAt: now.toISOString(),
           method: opts.consent,
         },
-      },
+      } satisfies InitRecordingSessionRequest,
     );
     this.sessionId = sessionId;
     this.emit();

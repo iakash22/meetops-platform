@@ -1,7 +1,14 @@
 import type { EmailTemplateId } from '@meetops/contracts';
-import { renderEmail, type EmailVariables, type RenderedEmail } from './email/catalog.js';
+import {
+  renderEmail,
+  type EmailVariables,
+  type RenderedEmail as CatalogRenderedEmail,
+} from './email/catalog.js';
 
-export type { RenderedEmail } from './email/catalog.js';
+import { safeUrl as checkUrl } from './email/escape.js';
+
+/** #195's rendered mail plus optional transport headers (List-Unsubscribe for product mails). */
+export type RenderedEmail = CatalogRenderedEmail & { headers?: Record<string, string> };
 export { escapeHtml, safeUrl } from './email/escape.js';
 
 /**
@@ -19,7 +26,24 @@ export const templates: { [K in TemplateName]: EmailTemplate<K> } = {
   invitation: (v) => renderEmail('invitation', v),
   'task-assigned': (v) => renderEmail('task-assigned', v),
   'meeting-summary': (v) => renderEmail('meeting-summary', v),
+  'member-added': (v) => renderEmail('member-added', v),
+  'member-removed': (v) => renderEmail('member-removed', v),
+  'tasks-ready-for-review': (v) => renderEmail('tasks-ready-for-review', v),
+  'integration-error': (v) => renderEmail('integration-error', v),
 };
+
+/**
+ * RFC 2369 List-Unsubscribe + RFC 8058 one-click. The URL must be https, contain no whitespace/control chars
+ * or angle brackets, so it cannot break out of the header (no header injection).
+ */
+export function listUnsubscribeHeaders(unsubscribeUrl: string): Record<string, string> {
+  const url = checkUrl(unsubscribeUrl);
+  // eslint-disable-next-line no-control-regex
+  if (!url.startsWith('https://') || /[\s<>\u0000-\u001f\u007f]/.test(url)) {
+    throw new Error('List-Unsubscribe URL must be a clean https URL');
+  }
+  return { 'List-Unsubscribe': `<${url}>`, 'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click' };
+}
 
 export function renderTemplate<K extends TemplateName>(
   name: K,
@@ -28,7 +52,9 @@ export function renderTemplate<K extends TemplateName>(
   const tpl = templates[name] as EmailTemplate<K> | undefined;
   if (!tpl) throw new Error(`Unknown email template: ${String(name)}`);
   // renderEmail already strips CR/LF from subjects (header injection).
-  return tpl(vars);
+  const out: RenderedEmail = tpl(vars);
+  const unsubscribeUrl = (vars as { unsubscribeUrl?: string | undefined }).unsubscribeUrl;
+  return unsubscribeUrl ? { ...out, headers: listUnsubscribeHeaders(unsubscribeUrl) } : out;
 }
 
 export const templateNames = Object.keys(templates) as TemplateName[];

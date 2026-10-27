@@ -113,7 +113,8 @@ hex hashes are stored (CHECK constraint); access tokens and pairing codes stay i
 column (`extension` | `desktop`) lets ADR-012 desktop auth reuse the tables.
 
 **Ordering vs Phase 3:** it sorts after `20261026200000_transcript_recording_revision`,
-`20261026210000_recording_source_native` and `20261026220000_integration_connections`, and depends on
+`20261026210000_recording_source_native`; `integration_connections` was re-timestamped to
+`20261027000000` (before any deploy) so it sorts after this one. It depends on
 none of them, so it can merge before or after those branches; if a Phase 3 migration lands with a later
 timestamp, keep this one's name and let Prisma apply both in timestamp order (no rename once deployed).
 

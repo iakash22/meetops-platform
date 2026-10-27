@@ -25,11 +25,19 @@ export class InvitationError extends DomainError {}
 
 export const invitationErrors = {
   notFound: () => new InvitationError('NOT_FOUND', 'Invitation not found', 404),
-  expired: () => new InvitationError('CONFLICT', 'Invitation has expired', 409, 'INVITATION_EXPIRED'),
-  revoked: () => new InvitationError('CONFLICT', 'Invitation was revoked', 409, 'INVITATION_REVOKED'),
-  accepted: () => new InvitationError('CONFLICT', 'Invitation was already accepted', 409, 'INVITATION_ALREADY_ACCEPTED'),
+  expired: () =>
+    new InvitationError('CONFLICT', 'Invitation has expired', 409, 'INVITATION_EXPIRED'),
+  revoked: () =>
+    new InvitationError('CONFLICT', 'Invitation was revoked', 409, 'INVITATION_REVOKED'),
+  accepted: () =>
+    new InvitationError(
+      'CONFLICT',
+      'Invitation was already accepted',
+      409,
+      'INVITATION_ALREADY_ACCEPTED',
+    ),
   emailMismatch: () =>
-    new InvitationError('FORBIDDEN', 'Invitation was issued to a different email', 403)
+    new InvitationError('FORBIDDEN', 'Invitation was issued to a different email', 403),
 };
 
 export function isExpired(inv: Invitation, now: Date): boolean {
@@ -37,7 +45,11 @@ export function isExpired(inv: Invitation, now: Date): boolean {
 }
 
 /** Pure rule: returns the accepted invitation or throws. */
-export function acceptInvitation(inv: Invitation, by: { userId: string; email: string }, now: Date): Invitation {
+export function acceptInvitation(
+  inv: Invitation,
+  by: { userId: string; email: string },
+  now: Date,
+): Invitation {
   if (inv.status === 'revoked') throw invitationErrors.revoked();
   if (inv.status === 'accepted') throw invitationErrors.accepted();
   if (isExpired(inv, now)) throw invitationErrors.expired();
