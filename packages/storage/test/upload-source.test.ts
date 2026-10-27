@@ -22,7 +22,7 @@ describe('upload source reads (worker scan step)', () => {
   it('HEADs and GETs exactly that key', async () => {
     const sent: { name: string; input: Record<string, unknown> }[] = [];
     const client = new S3Client({ region: 'us-east-1' });
-    client.send = (async (cmd: {
+    client.send = async (cmd: {
       constructor: { name: string };
       input: Record<string, unknown>;
     }) => {
@@ -30,7 +30,7 @@ describe('upload source reads (worker scan step)', () => {
       return cmd.constructor.name === 'GetObjectCommand'
         ? { Body: Readable.from([Buffer.from('x')]), ContentLength: 1 }
         : { ContentLength: 1 };
-    }) as unknown as S3Client['send'];
+    };
     const s = new S3StorageService({ config, client, authorize: () => undefined });
     expect((await s.headUploadSource(ORG, UP))?.sizeBytes).toBe(1);
     await s.getUploadSource(ORG, UP);
