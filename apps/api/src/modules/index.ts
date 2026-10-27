@@ -54,6 +54,7 @@ import {
 import { createRedisRevocationPublisher } from '@meetops/session-verifier';
 import {
   ExtensionAuthService,
+  type ExtensionAuthLog,
   extensionAuthRoutes,
   InMemoryExtensionTokenRepository,
   RedisExtensionTokenRepository,
@@ -142,6 +143,8 @@ export interface ModuleDeps {
   extensionTokens: ExtensionTokenRepository;
   /** ADR-005 allowlisted Chrome extension ids (EXTENSION_IDS; plus EXTENSION_DEV_IDS in development/test). */
   extensionIds: readonly string[];
+  /** ADR-005 A1.4 security-signal logger for extension auth; defaults to the app's (redacting) logger. */
+  extensionAuthLog?: ExtensionAuthLog;
   /**
    * Media (uploads / recording sessions) adapters. Defaults to in-memory ONLY in development/test; outside them it
    * stays unset unless injected and the media routes are not registered (no production adapters yet).
@@ -461,7 +464,10 @@ export async function registerModules(app: FastifyInstance, deps: ModuleDeps) {
       ]);
     });
   }
-  const extensionAuth = new ExtensionAuthService(deps);
+  const extensionAuth = new ExtensionAuthService({
+    ...deps,
+    log: deps.extensionAuthLog ?? app.log,
+  });
   // ADR-005 A1.6: logout, password reset and member removal also revoke extension token families.
   const auth = new AuthService({ ...deps, extensionRevoker: extensionAuth });
   const organizations = new OrganizationService({ ...deps, extensionRevoker: extensionAuth });

@@ -41,7 +41,14 @@ export const EXTENSION_LIMITS = {
   refreshPerIp: { limit: 60, windowMs: MIN },
   revokePerFamily: { limit: 10, windowMs: MIN },
   revokePerIp: { limit: 60, windowMs: MIN },
+  /** A1.4 SHOULD: a refresh sooner than 60 s after the previous one in the same family is logged (never rejected). */
+  refreshFrequentWindow: { limit: 1, windowMs: MIN },
 } as const;
+
+/** Structured logger for security signals. Never pass tokens, codes or hashes. */
+export interface ExtensionAuthLog {
+  warn(obj: Record<string, unknown>, msg: string): void;
+}
 
 export class ExtensionNotAllowedError extends DomainError {
   constructor() {
@@ -75,6 +82,8 @@ export interface ExtensionAuthDeps {
   organizations: OrganizationRepository;
   memberships: MembershipRepository;
   revocations?: RevocationPublisher;
+  /** Security-signal logger (the API's redacting request logger in production). */
+  log?: ExtensionAuthLog;
 }
 
 type Limit = { limit: number; windowMs: number };
@@ -124,6 +133,35 @@ export class ExtensionAuthService implements ExtensionRevoker {
       ip: meta.ip,
       userAgent: meta.userAgent,
     });
+  }
+
+  /**
+   * ADR-005 A1.4 SHOULD: log a refresh that comes less than 60 s after the previous one for the same family. Uses the
+   * shared rate limiter as a 1-per-60 s marker (Redis-backed, so it works across API instances). Best effort: it never
+   * blocks or fails the refresh.
+   */
+  private async noteFrequentRefresh(f: TokenFamily, meta: RequestMeta) {
+    if (!this.d.log) return;
+    const w = EXTENSION_LIMITS.refreshFrequentWindow;
+    try {
+      const r = await this.d.rateLimiter.consume(`ext:refresh:freq:${f.id}`, w.limit, w.windowMs);
+      if (r.allowed) return;
+      this.d.log.warn(
+        {
+          event: 'extension.token.refresh_frequent',
+          familyId: f.id,
+          organizationId: f.organizationId,
+          userId: f.userId,
+          extensionId: f.extensionId,
+          deviceId: f.deviceId,
+          ip: meta.ip ?? null,
+          windowSeconds: w.windowMs / 1000,
+        },
+        'extension refresh sooner than 60s for the same token family',
+      );
+    } catch {
+      // Logging signal only.
+    }
   }
 
   private async liveMember(organizationId: string, userId: string) {
@@ -254,6 +292,7 @@ export class ExtensionAuthService implements ExtensionRevoker {
       throw new UnauthenticatedError();
     }
     await this.limit(`refresh:fam:${f.id}`, EXTENSION_LIMITS.refreshPerFamily);
+    await this.noteFrequentRefresh(f, meta);
     const now = this.d.clock.now();
     if (f.revokedAt || f.maxExpiresAt <= now) throw new UnauthenticatedError();
     if (!(await this.liveMember(f.organizationId, f.userId))) {
