@@ -21,10 +21,10 @@ function apiWith(handler: (method: string, path: string) => unknown) {
     try {
       return Promise.resolve(handler(method, path));
     } catch (e) {
-      return Promise.reject(e);
+      return Promise.reject(e instanceof Error ? e : new Error(String(e)));
     }
   });
-  return createMockApi({ request: request as never });
+  return createMockApi({ request });
 }
 
 describe('notifications client', () => {
