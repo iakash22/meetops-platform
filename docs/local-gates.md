@@ -25,3 +25,18 @@ Set `DOCKER="sudo docker"` if your user is not in the docker group. Credentials 
 
 All workflows use `concurrency` with `cancel-in-progress`. CI, QA and Docker image builds are
 skipped for docs-only changes via `paths-ignore` (`docs/**`, `**/*.md`). Secret scanning always runs.
+
+## Dev email (Mailpit)
+
+`scripts/dev-services.sh up` also starts `techy-mailpit` (SMTP `127.0.0.1:1025`, UI http://localhost:8025).
+Point the API/worker at it in `.env` (no auth):
+
+```
+EMAIL_PROVIDER=smtp
+SMTP_HOST=localhost
+SMTP_PORT=1025
+SMTP_SECURE=false
+```
+
+Email policy: with nothing configured, the console (in-memory) sender is used; Gmail SMTP is
+opt-in (app password); Resend is the production provider. See `docs/08-email/delivery.md`.
