@@ -19,6 +19,11 @@ Integrations page support (Phase 5, builds on 0.7.0). Additive. Version numbers 
   `IntegrationProviderList` (`items`, max 10).
 - `REDACT_KEYS`: `access_token`, `refresh_token`, `clientSecret`, `client_secret`, `webhookSecret`, `privateKey`,
   `privateKeyPem`, `apiToken`.
+- `REDACT_KEYS` (security review M-1): `webhook_secret`, `private_key`, `pem`, `installationToken`, `jwt`,
+  `id_token`, `GITHUB_APP_CLIENT_SECRET`, `JIRA_CLIENT_SECRET`, `GITHUB_APP_WEBHOOK_SECRET`.
+- `REDACT_CONDITIONAL_KEYS` (`code`): redacted unless the value looks like an error code. Plain `code` is still not
+  in `REDACT_KEYS`.
+- `INTEGRATION_PATHS.githubAppWebhook` (`POST /webhooks/github`): App-wide GitHub webhook, routed by installation id.
 
 ## [0.9.0] - 2026-10-27
 

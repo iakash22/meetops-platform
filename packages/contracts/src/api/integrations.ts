@@ -11,6 +11,7 @@ export {
   INTEGRATION_STATE_TTL_SECONDS,
   INTEGRATION_STATUSES,
   INTEGRATION_WEBHOOK_MAX_BYTES,
+  REDACT_CONDITIONAL_KEYS,
 } from '../constants.js';
 
 const strict = { additionalProperties: false } as const;

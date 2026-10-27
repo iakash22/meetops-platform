@@ -4,6 +4,7 @@ import {
   INTEGRATION_CONNECTION_STATES,
   INTEGRATION_PATHS,
   IntegrationProviderList,
+  REDACT_CONDITIONAL_KEYS,
   REDACT_KEYS,
 } from '../src/index.js';
 
@@ -32,7 +33,17 @@ describe('v0.12.0 integrations providers', () => {
       'clientSecret',
       'webhookSecret',
       'privateKey',
+      'webhook_secret',
+      'private_key',
+      'pem',
+      'installationToken',
+      'jwt',
+      'id_token',
+      'GITHUB_APP_CLIENT_SECRET',
+      'JIRA_CLIENT_SECRET',
     ])
       expect(REDACT_KEYS).toContain(k);
+    expect(REDACT_CONDITIONAL_KEYS).toEqual(['code']);
+    expect(REDACT_KEYS as readonly string[]).not.toContain('code');
   });
 });

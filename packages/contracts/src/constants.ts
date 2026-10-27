@@ -247,7 +247,24 @@ export const REDACT_KEYS = [
   'privateKey',
   'privateKeyPem',
   'apiToken',
+  // v0.12.0 (#282 security review M-1): alternate spellings and env names of integration secrets, JWT/OIDC material.
+  'webhook_secret',
+  'private_key',
+  'pem',
+  'installationToken',
+  'jwt',
+  'id_token',
+  'GITHUB_APP_CLIENT_SECRET',
+  'JIRA_CLIENT_SECRET',
+  'GITHUB_APP_WEBHOOK_SECRET',
 ] as const;
+
+/**
+ * v0.12.0: keys redacted only when the value is not shaped like an error code (`VALIDATION_FAILED`, `ECONNREFUSED`,
+ * a number). Plain `code` stays out of REDACT_KEYS because error bodies use it, but OAuth authorization codes must
+ * never be logged. Implemented by @meetops/logger.
+ */
+export const REDACT_CONDITIONAL_KEYS = ['code'] as const;
 
 /**
  * Upload cap shared by direct uploads, recording sessions and the media worker: 1.4 GB (decimal, 1_400_000_000 B
