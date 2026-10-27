@@ -128,10 +128,15 @@ export class UploadService {
     return { ...f, status: 'processing', scanStatus: 'pending' };
   }
 
-  /** Per #168: 404 (same body as other-org / unknown ids) unless the FileObject's scanStatus is `clean`. */
+  /**
+   * Per #168: 404 (same body as other-org / unknown ids) unless the FileObject's scanStatus is `clean`.
+   * Security review B 4.4: the CASL check runs against this row (org + uploader), not just the subject type, so a
+   * row-level rule in the RBAC matrix (e.g. private recordings) applies here. The current matrix grants `read
+   * FileObject` org-wide to every role.
+   */
   async downloadUrl(c: DirectoryCaller, id: string): Promise<SignedRequest> {
     const f = await this.find(c, id);
-    authorizeMedia(c, 'read', 'FileObject');
+    authorizeMedia(c, 'read', 'FileObject', f.uploadedById);
     if (f.scanStatus !== 'clean') throw new UploadNotFoundError();
     return this.d.signer.presignGet({ key: f.key, ttlSeconds: DOWNLOAD_URL_TTL_SECONDS });
   }

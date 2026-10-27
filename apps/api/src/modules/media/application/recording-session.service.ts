@@ -93,7 +93,7 @@ export class RecordingSessionService {
   }
 
   private async own(c: DirectoryCaller, id: string) {
-    const s = isUuid(id) ? await this.d.sessions.findById(id) : null;
+    const s = isUuid(id) ? await this.d.sessions.findById(c.ctx.organizationId, id) : null;
     if (!s || s.organizationId !== c.ctx.organizationId) throw new RecordingSessionNotFoundError();
     authorizeMedia(c, 'update', 'RecordingSession', s.createdById);
     return s;
@@ -173,6 +173,11 @@ export class RecordingSessionService {
       const stored = await this.d.signer.head(ch.key);
       if (!stored || stored.sizeBytes !== ch.sizeBytes) {
         throw new UploadStateConflictError(`Chunk ${ch.seq} has not been uploaded`);
+      }
+      // Security review B 4.2: the stored full-object SHA-256 must equal the one signed into the chunk PUT; a
+      // missing or multipart (`-N`) checksum fails closed, as for direct uploads.
+      if (stored.checksumSha256Base64 !== hexToB64(ch.sha256Hex)) {
+        throw new UploadStateConflictError(`Chunk ${ch.seq} checksum does not match`);
       }
     }
     const ok = await this.d.sessions.finish(s.id, {

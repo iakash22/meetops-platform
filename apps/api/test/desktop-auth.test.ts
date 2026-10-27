@@ -237,6 +237,42 @@ describe('desktop auth (ADR-012, behind DESKTOP_AUTH_ENABLED)', () => {
     expect(await off.verifySession({ bearer: tokens.accessToken })).toBeNull();
   });
 
+  it('token, refresh, revoke and switch-org send no CORS headers to any origin (review B 2.2)', async () => {
+    const s = await setup();
+    const { tokens, deviceId } = await signIn(s);
+    const body = { deviceId, refreshToken: tokens.refreshToken };
+    const origins = [
+      'http://localhost:5173',
+      'https://evil.example',
+      'chrome-extension://abcdefghijklmnopabcdefghijklmnop',
+      'tauri://localhost',
+      'null',
+    ];
+    const paths = [
+      DESKTOP_AUTH_PATHS.token,
+      DESKTOP_AUTH_PATHS.refresh,
+      DESKTOP_AUTH_PATHS.revoke,
+      DESKTOP_AUTH_PATHS.switchOrg,
+    ];
+    for (const url of paths)
+      for (const origin of origins) {
+        const pre = await s.app.inject({
+          method: 'OPTIONS',
+          url,
+          headers: {
+            origin,
+            'access-control-request-method': 'POST',
+            'access-control-request-headers': 'content-type',
+          },
+        });
+        const res = await s.app.inject({ method: 'POST', url, payload: body, headers: { origin } });
+        for (const r of [pre, res]) {
+          const cors = Object.keys(r.headers).filter((h) => h.startsWith('access-control-'));
+          expect(cors, `${r.raw.req.method} ${url} ${origin}`).toEqual([]);
+        }
+      }
+  });
+
   it('pkceS256Matches follows RFC 7636 appendix B', () => {
     expect(
       pkceS256Matches(

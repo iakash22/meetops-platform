@@ -6,6 +6,12 @@ While the version is `0.x`, a minor bump may contain breaking changes (ADR-003).
 
 ## [Unreleased]
 
+### Changed
+
+- Upload `filename` (`CreateUploadRequest` and `InitUploadRequest`) now also rejects C0 control characters (CR, LF, tab
+  and the rest), DEL and bidi embedding/override/isolate characters (U+202A-U+202E, U+2066-U+2069), as well as `/`,
+  `\` and NUL (security review B 4.3).
+
 ## [0.9.0] - 2026-10-27
 
 Desktop (Tauri) sign-in schemas for ADR-012 Option A (system browser, authorization code + PKCE S256, loopback
