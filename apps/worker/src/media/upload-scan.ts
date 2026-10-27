@@ -9,6 +9,7 @@ import { ALLOWED_MEDIA_MIME_TYPES, MAX_MEDIA_BYTES } from '@meetops/contracts';
 import type { AllowedDemuxer, MediaToolsOptions, ProbeResult } from '@meetops/media-core';
 import { assertProbedFormat, measurePacketDuration, probeMedia } from '@meetops/media-core';
 import { hasTrailingData } from './container-end.js';
+import type { Antivirus } from './clamd.js';
 
 /**
  * Upload content verification for the scan step (security review B 4.1). The client-declared MIME type is never
@@ -58,7 +59,8 @@ export type UploadScanCode =
   | 'stream_params_exceeded'
   | 'decoded_size_exceeded'
   | 'duration_mismatch'
-  | 'trailing_data';
+  | 'trailing_data'
+  | 'malware_detected';
 
 export type UploadScanResult = { verdict: 'clean' } | { verdict: 'rejected'; code: UploadScanCode };
 
@@ -200,7 +202,7 @@ export async function scanUploadObject(
   source: UploadObjectSource,
   declaredMime: string,
   probe: UploadProbe,
-  opts: { limits?: Partial<UploadScanLimits>; tmpRoot?: string } = {},
+  opts: { limits?: Partial<UploadScanLimits>; tmpRoot?: string; antivirus?: Antivirus } = {},
 ): Promise<UploadScanResult> {
   const l = { ...DEFAULT_UPLOAD_SCAN_LIMITS, ...opts.limits };
   if (!demuxerForMime(declaredMime)) return reject('unsupported_type');
@@ -228,7 +230,11 @@ export async function scanUploadObject(
       if (tooLarge) return reject('source_too_large');
       throw err;
     }
-    return await verifyUploadContent(file, declaredMime, probe, l);
+    const r = await verifyUploadContent(file, declaredMime, probe, l);
+    // Optional ClamAV (fail-closed: a clamd error throws and the job retries).
+    if (r.verdict === 'clean' && opts.antivirus && (await opts.antivirus.scanFile(file)).infected)
+      return reject('malware_detected');
+    return r;
   } finally {
     await rm(dir, { recursive: true, force: true });
   }

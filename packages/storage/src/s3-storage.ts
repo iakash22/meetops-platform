@@ -40,6 +40,7 @@ import {
   ORGANIZATIONS_KEY_PREFIX,
   refOrganizationId,
   SESSION_CHUNK_PREFIX,
+  uploadSourceKey,
   type MeetingObjectRef,
 } from './keys.js';
 import type {
@@ -212,6 +213,39 @@ export class S3StorageService implements StorageService {
   /** Read an object by its stored key (legacy org/ or organizations/). */
   async getObjectByKey(s: StoredObjectKey): Promise<GetObjectResult> {
     const key = await this.#storedKey(s);
+    const res = await settle(
+      this.#client.send(new GetObjectCommand({ Bucket: this.#bucket, Key: key })),
+    );
+    if (!res.Body) throw mapS3Error({ name: 'NoSuchKey' });
+    const body =
+      res.Body instanceof Readable
+        ? res.Body
+        : Readable.from(res.Body as unknown as AsyncIterable<Uint8Array>);
+    return { body, info: toInfo(res) };
+  }
+
+  /**
+   * Direct-upload source objects (`organizations/{org}/uploads/{uploadId}/source`, written by the API's presigned
+   * upload). They are org- but not meeting-scoped, so they bypass the meeting authorize hook; the key is rebuilt from
+   * validated ids (never taken from a caller), so only that org's upload can be read. Worker scan step only.
+   */
+  async headUploadSource(
+    organizationId: string,
+    uploadId: string,
+  ): Promise<StoredObjectInfo | null> {
+    const key = uploadSourceKey(organizationId, uploadId);
+    try {
+      return toInfo(
+        await settle(this.#client.send(new HeadObjectCommand({ Bucket: this.#bucket, Key: key }))),
+      );
+    } catch (err) {
+      if ((err as { code?: string }).code === 'NOT_FOUND') return null;
+      throw err;
+    }
+  }
+
+  async getUploadSource(organizationId: string, uploadId: string): Promise<GetObjectResult> {
+    const key = uploadSourceKey(organizationId, uploadId);
     const res = await settle(
       this.#client.send(new GetObjectCommand({ Bucket: this.#bucket, Key: key })),
     );

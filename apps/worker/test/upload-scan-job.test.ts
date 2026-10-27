@@ -1,6 +1,6 @@
 import { Readable } from 'node:stream';
 import { describe, expect, it, vi } from 'vitest';
-import type { ProbeResult } from '@meetops/media-core';
+import type { UploadProbeResult } from '../src/media/upload-scan.js';
 import {
   processUploadScan,
   type ScannableUpload,
@@ -11,10 +11,14 @@ const ORG = '00000000-0000-4000-8000-000000000001';
 const ID = '00000000-0000-4000-8000-000000000002';
 const MEET = '00000000-0000-4000-8000-000000000003';
 const CONSENT = '00000000-0000-4000-8000-000000000004';
-const WEBM = Buffer.concat([Buffer.from([0x1a, 0x45, 0xdf, 0xa3]), Buffer.alloc(60)]);
+const WEBM = Buffer.concat([
+  Buffer.from([0x1a, 0x45, 0xdf, 0xa3, 0x80, 0x18, 0x53, 0x80, 0x67, 0x80 | 54]),
+  Buffer.alloc(54),
+]);
 const HTML = Buffer.from('<!doctype html><script>alert(1)</script>'.padEnd(64, ' '));
-const probe: ProbeResult = {
+const probe: UploadProbeResult = {
   durationSeconds: 10,
+  measuredDurationSeconds: 10,
   formatName: 'matroska,webm',
   streams: [{ index: 0, codecType: 'audio', sampleRate: 48000, channels: 1 }],
   hasAudio: true,
@@ -64,16 +68,63 @@ describe('processUploadScan (sets scanStatus from the #269 content check)', () =
     );
   });
 
-  it('marks mismatched content rejected with the reason code', async () => {
+  it('M-3: quarantines mismatched content with the reason code', async () => {
     const { d, setScanStatus, publishUploadStatus } = deps(HTML);
     expect(await processUploadScan(job(), d)).toMatchObject({
-      status: 'rejected',
+      status: 'quarantined',
       result: { code: 'content_type_mismatch' },
     });
-    expect(setScanStatus).toHaveBeenCalledWith(ORG, ID, 'rejected');
+    expect(setScanStatus).toHaveBeenCalledWith(ORG, ID, 'quarantined');
     expect(publishUploadStatus).toHaveBeenCalledWith(
       expect.objectContaining({ status: 'failed', errorCode: 'content_type_mismatch' }),
     );
+  });
+
+  it('M-3: infra errors retry, and the final attempt quarantines (never pending forever)', async () => {
+    const { d, setScanStatus, publishUploadStatus } = deps(WEBM);
+    d.source = () => ({
+      size: async () => {
+        throw new Error('s3 down');
+      },
+      body: async () => Readable.from([]),
+    });
+    await expect(processUploadScan(job(), d, { isFinalAttempt: false })).rejects.toThrow('s3 down');
+    expect(setScanStatus).not.toHaveBeenCalled();
+    expect(await processUploadScan(job(), d, { isFinalAttempt: true })).toEqual({
+      status: 'quarantined',
+      result: { verdict: 'error', code: 'scan_unavailable' },
+    });
+    expect(setScanStatus).toHaveBeenCalledWith(ORG, ID, 'quarantined');
+    expect(publishUploadStatus).toHaveBeenCalledWith(
+      expect.objectContaining({ status: 'failed', errorCode: 'scan_unavailable' }),
+    );
+  });
+
+  it('L-2: antivirus verdicts: infected quarantines, unreachable is fail-closed', async () => {
+    const a = deps(WEBM);
+    a.d.antivirus = {
+      scanFile: async () => ({ infected: true, signature: 'Eicar-Test-Signature' }),
+    };
+    expect(await processUploadScan(job(), a.d)).toMatchObject({
+      status: 'quarantined',
+      result: { code: 'malware_detected' },
+    });
+    const b = deps(WEBM);
+    b.d.antivirus = {
+      scanFile: async () => {
+        throw new Error('clamd unreachable');
+      },
+    };
+    await expect(processUploadScan(job(), b.d, { isFinalAttempt: false })).rejects.toThrow(
+      'clamd unreachable',
+    );
+    expect(b.setScanStatus).not.toHaveBeenCalledWith(ORG, ID, 'clean');
+    expect(await processUploadScan(job(), b.d, { isFinalAttempt: true })).toMatchObject({
+      status: 'quarantined',
+    });
+    const c = deps(WEBM);
+    c.d.antivirus = { scanFile: async () => ({ infected: false }) };
+    expect(await processUploadScan(job(), c.d)).toMatchObject({ status: 'clean' });
   });
 
   it('skips invalid jobs, other-org or unknown uploads, and already-decided rows', async () => {
