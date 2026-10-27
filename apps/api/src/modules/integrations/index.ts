@@ -29,7 +29,11 @@ import { IntegrationNotFoundError, OAuthStateInvalidError } from './errors.js';
 import { InMemoryIntegrations } from './in-memory.repository.js';
 import { PrismaIntegrations } from './prisma.repository.js';
 import type { ConnectedProvider, IntegrationsRepository } from './ports.js';
-import { devIntegrationsRuntime, type IntegrationsRuntime } from './runtime.js';
+import {
+  devIntegrationsRuntime,
+  integrationsRuntimeFromEnv,
+  type IntegrationsRuntime,
+} from './runtime.js';
 import { IntegrationsService, type AuditFn } from './service.js';
 
 const OrgParams = Type.Object(
@@ -56,7 +60,7 @@ export function selectIntegrationsRuntime(
   nodeEnv: string | undefined = process.env.NODE_ENV,
 ): IntegrationsRuntime | undefined {
   if (deps.integrationsRuntime) return deps.integrationsRuntime;
-  return isRelaxedEnv(nodeEnv) ? devIntegrationsRuntime() : undefined;
+  return isRelaxedEnv(nodeEnv) ? devIntegrationsRuntime(integrationsRuntimeFromEnv()) : undefined;
 }
 
 export function selectIntegrationsRepository(

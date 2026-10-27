@@ -11,6 +11,7 @@ import { InMemoryIntegrations } from '../src/modules/integrations/in-memory.repo
 import {
   devIntegrationsRuntime,
   type IntegrationsRuntime,
+  integrationsRuntimeFromEnv,
 } from '../src/modules/integrations/runtime.js';
 import type { ModuleDeps } from '../src/modules/index.js';
 import { selectIntegrationsRuntime } from '../src/modules/integrations/index.js';
@@ -677,5 +678,32 @@ describe('Phase 5 integration flows', () => {
         (await other.get(`/orgs/${org}/integrations/providers`)).statusCode,
       );
     });
+  });
+});
+
+describe('integrationsRuntimeFromEnv (dev overlay)', () => {
+  it('configures nothing without env and both providers when fully set', async () => {
+    expect(integrationsRuntimeFromEnv({})).toEqual({});
+    const partial = integrationsRuntimeFromEnv({ GITHUB_APP_ID: '1', JIRA_CLIENT_ID: 'x' });
+    expect(partial.github).toBeUndefined();
+    expect(partial.jira).toBeUndefined();
+    const full = integrationsRuntimeFromEnv(
+      {
+        GITHUB_APP_ID: '1',
+        GITHUB_APP_SLUG: 'slug',
+        GITHUB_APP_CLIENT_ID: 'cid',
+        GITHUB_APP_CLIENT_SECRET: 'cs',
+        GITHUB_APP_PRIVATE_KEY_FILE: '/k.pem',
+        GITHUB_APP_WEBHOOK_SECRET: 'ws',
+        JIRA_CLIENT_ID: 'jid',
+        JIRA_CLIENT_SECRET: 'js',
+        INTEGRATIONS_API_ORIGIN: 'https://x.trycloudflare.com',
+      },
+      async (p) => `pem:${p}`,
+    );
+    expect(full.apiOrigin).toBe('https://x.trycloudflare.com');
+    expect(full.github?.appSlug).toBe('slug');
+    expect(await full.github?.privateKey()).toBe('pem:/k.pem');
+    expect(await full.jira?.clientSecret()).toBe('js');
   });
 });

@@ -93,3 +93,44 @@ export async function putReturnTo(
 export async function takeReturnTo(store: OAuthStateStore, inner: string): Promise<string | null> {
   return store.take(rtKey(inner));
 }
+
+/**
+ * Dev-only: overlay real provider apps from env onto `devIntegrationsRuntime()` so a developer can connect a real
+ * GitHub App / Jira OAuth app locally (docs/runbooks/integrations-real-setup.md). Secrets are read lazily and never
+ * logged. Production still requires an injected runtime (ADR-008 secret manager); this is not used there.
+ */
+export function integrationsRuntimeFromEnv(
+  env: NodeJS.ProcessEnv = process.env,
+  readFile: (path: string) => Promise<string> = (p) =>
+    import('node:fs/promises').then((fs) => fs.readFile(p, 'utf8')),
+): Partial<IntegrationsRuntime> {
+  const over: Partial<IntegrationsRuntime> = {};
+  if (env.INTEGRATIONS_API_ORIGIN) over.apiOrigin = env.INTEGRATIONS_API_ORIGIN;
+  if (env.INTEGRATIONS_WEB_ORIGIN) over.webOrigin = env.INTEGRATIONS_WEB_ORIGIN;
+  const g = {
+    appId: env.GITHUB_APP_ID,
+    appSlug: env.GITHUB_APP_SLUG,
+    clientId: env.GITHUB_APP_CLIENT_ID,
+    clientSecret: env.GITHUB_APP_CLIENT_SECRET,
+    keyFile: env.GITHUB_APP_PRIVATE_KEY_FILE,
+    webhookSecret: env.GITHUB_APP_WEBHOOK_SECRET,
+  };
+  if (Object.values(g).every(Boolean)) {
+    const clientSecret = g.clientSecret!;
+    const webhookSecret = g.webhookSecret!;
+    const keyFile = g.keyFile!;
+    over.github = {
+      appId: g.appId!,
+      appSlug: g.appSlug!,
+      clientId: g.clientId!,
+      privateKey: () => readFile(keyFile),
+      clientSecret: async () => clientSecret,
+      webhookSecret: async () => webhookSecret,
+    };
+  }
+  if (env.JIRA_CLIENT_ID && env.JIRA_CLIENT_SECRET) {
+    const secret = env.JIRA_CLIENT_SECRET;
+    over.jira = { clientId: env.JIRA_CLIENT_ID, clientSecret: async () => secret };
+  }
+  return over;
+}
