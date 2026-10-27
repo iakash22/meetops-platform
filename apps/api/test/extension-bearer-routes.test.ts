@@ -34,13 +34,13 @@ async function world() {
   const ext = (
     method: 'POST' | 'GET',
     url: string,
-    payload?: object,
+    payload?: Record<string, unknown>,
     headers: Record<string, string> = {},
   ) =>
     w.app.inject({
       method,
       url,
-      payload,
+      ...(payload ? { payload } : {}),
       headers: { origin: EXT_ORIGIN, authorization: `Bearer ${accessToken}`, ...headers },
     });
   const resolve = (headers: Record<string, string> = {}, org = w.org) =>
