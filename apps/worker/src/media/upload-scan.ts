@@ -81,13 +81,22 @@ export type UploadProbe = (
 ) => Promise<UploadProbeResult>;
 
 /** Production probe: ffprobe format/streams + a bounded packet scan (media-core). */
-export function createUploadProbe(tools: MediaToolsOptions = {}): UploadProbe {
+export function createUploadProbe(
+  tools: MediaToolsOptions & { maxDurationSeconds?: number } = {},
+): UploadProbe {
+  const { maxDurationSeconds = DEFAULT_UPLOAD_SCAN_LIMITS.maxDurationSeconds, ...toolOpts } = tools;
   return async (file, opts) => {
-    const p = await probeMedia(file, { ...tools, format: opts.format });
+    const p = await probeMedia(file, { ...toolOpts, format: opts.format });
     const rate = p.streams.find((s) => s.codecType === 'audio')?.sampleRate ?? 0;
     // No audio / no rate: report 0 and let verifyUploadContent reject (no_audio / duration_invalid).
     if (!(rate > 0)) return { ...p, measuredDurationSeconds: 0, timestampFaults: 0 };
-    const m = await measureAudioDuration(file, { ...tools, format: opts.format, sampleRate: rate });
+    // Decoding stops just past the cap (N-3), so an over-long file is reported as such without decoding it all.
+    const m = await measureAudioDuration(file, {
+      ...toolOpts,
+      format: opts.format,
+      sampleRate: rate,
+      maxDurationSeconds,
+    });
     return { ...p, measuredDurationSeconds: m.durationSeconds, timestampFaults: m.timestampFaults };
   };
 }
@@ -175,14 +184,16 @@ export async function verifyUploadContent(
   if ((p.timestampFaults ?? 0) > 0) return reject('timestamps_invalid');
   const duration = p.measuredDurationSeconds;
   if (!Number.isFinite(duration) || duration <= 0) return reject('duration_invalid');
-  const declared = p.durationSeconds;
+  if (duration > l.maxDurationSeconds) return reject('duration_too_long');
+  // N-5: the format duration is the max across streams (video may legitimately outlast audio), so prefer the
+  // declared AUDIO stream duration when the container states one.
+  const declared = p.audioDurationSeconds ?? p.durationSeconds;
   if (
     Number.isFinite(declared) &&
     declared > 0 &&
     Math.abs(declared - duration) > DURATION_TOLERANCE(duration)
   )
     return reject('duration_mismatch');
-  if (duration > l.maxDurationSeconds) return reject('duration_too_long');
 
   let decoded = 0;
   for (const s of audio) {
