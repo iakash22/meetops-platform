@@ -16,6 +16,25 @@ While the version is `0.x`, a minor bump may contain breaking changes (ADR-003).
   U+FFF9-U+FFFB and the rest (`FILENAME_PATTERN`, #270 L-1). New `isSafeUploadFilename()` also rejects astral
   Cc/Cf/Co/Cs code points (e.g. tag characters); the API enforces it.
 
+## [0.14.0] - 2026-10-28
+
+GeoIP session location (ADR-014, Proposed). Additive. Version numbers 0.10.0-0.13.0 are reserved by in-flight PRs
+(#261 tasks, #263 notifications, integrations, notifications fan-out).
+
+### Added
+
+- `SessionSummary.geoCity`, `geoRegion`, `geoCountry`, `geoCountryCode` (ISO alpha-2) and `geoApproximate` (`true`):
+  optional, **not** nullable. Absent means unknown (private/unknown IP, no GeoIP data, older server). No latitude/longitude.
+- `AuthNewLocationSigninEvent` (outbox `auth.new_location_signin`): `{ sessionId, city, region, country, countryCode,
+reason }`, every key required, geo values nullable; `reason` is `'new_region' | 'new_country'`
+  (`NEW_LOCATION_REASONS`). No IP address.
+- `AuthNewLocationSigninNotificationPayload`: in-app notification payload `{ sessionId, reason, geoCity?, geoCountry? }`
+  (optional, not nullable).
+- `GeoName` / `GEO_TEXT_PATTERN`: location text rejects control chars (incl. CR/LF), bidi/invisible chars, `<`, `>`,
+  `"`, tag chars, leading/trailing whitespace and IPv4/IPv6-looking strings. ASCII `'` and `&` are allowed for real
+  place names ("St. John's", "Trinidad & Tobago"), so every renderer (email, web, push) must escape output. Also
+  `GeoText`, `GeoCountryCode`, `GeoCountryCodeString`, `AUTH_NEW_LOCATION_SIGNIN_EVENT`.
+
 ## [0.10.0] - 2026-10-27
 
 Task write bodies; additive, builds on 0.9.0.
