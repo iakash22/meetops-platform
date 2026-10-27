@@ -8,6 +8,7 @@ import {
   buildSummaryPrompt,
   createMeetingSummaryProcessor,
   createOrgScopedSummaryRepository,
+  SUMMARY_READY_EVENT,
   isUniqueViolation,
   saveSummaryOnce,
   loadGeminiConfig,
@@ -299,7 +300,7 @@ describe('gemini provider (mocked fetch)', () => {
 
 describe('prisma summary repository (fake tx)', () => {
   it('creates run, next report version, and pending_review tasks; reuses existing run', async () => {
-    const created: Record<string, unknown[]> = { aiRun: [], report: [], tasks: [] };
+    const created: Record<string, unknown[]> = { aiRun: [], report: [], tasks: [], outbox: [] };
     let existing: unknown = null;
     const tx = {
       aiRun: {
@@ -316,6 +317,9 @@ describe('prisma summary repository (fake tx)', () => {
           created.tasks!.push(...a.data),
           { count: a.data.length }
         ),
+      },
+      outboxEvent: {
+        create: async (a: { data: unknown }) => (created.outbox!.push(a.data), { id: 'ob1' }),
       },
     };
     const repo = createOrgScopedSummaryRepository(tx as never, ORG);
@@ -355,9 +359,27 @@ describe('prisma summary repository (fake tx)', () => {
       reportId: 'rep1',
       organizationId: ORG,
     });
+    // meeting.summary_ready outbox event in the same tx, org-scoped, ids/counts only (matches #279 relay rule).
+    expect(created.outbox).toEqual([
+      {
+        organizationId: ORG,
+        aggregateType: 'meeting',
+        aggregateId: MEETING,
+        eventType: SUMMARY_READY_EVENT,
+        payload: {
+          meetingId: MEETING,
+          reportId: 'rep1',
+          transcriptRevision: 2,
+          tasksPendingReview: 1,
+        },
+      },
+    ]);
+    expect(SUMMARY_READY_EVENT).toBe('meeting.summary_ready');
+    expect(JSON.stringify(created.outbox)).not.toMatch(/"(summary|title|text|content)"/);
     existing = { id: 'rep0' };
     expect(await repo.saveSummary(w)).toEqual({ reportId: 'rep0', created: false });
     expect(created.aiRun).toHaveLength(1);
+    expect(created.outbox).toHaveLength(1);
   });
 });
 
