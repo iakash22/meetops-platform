@@ -1,7 +1,7 @@
 import { Type, type Static } from '@sinclair/typebox';
 import { Id, IsoDateTime } from '../common.js';
 
-/** v0.10.0 (ADR-013): in-app feed, preferences, push devices and the email unsubscribe flow. */
+/** v0.11.0 (ADR-013): in-app feed, preferences, push devices and the email unsubscribe flow. */
 export const NOTIFICATION_PATHS = {
   notifications: '/orgs/:organizationId/notifications',
   markRead: '/orgs/:organizationId/notifications/:notificationId/read',
@@ -14,7 +14,13 @@ export const NOTIFICATION_PATHS = {
   unsubscribe: '/notifications/unsubscribe',
 } as const;
 
-export const NOTIFICATION_CHANNELS = ['in_app', 'email', 'web_push', 'mobile_push', 'desktop'] as const;
+export const NOTIFICATION_CHANNELS = [
+  'in_app',
+  'email',
+  'web_push',
+  'mobile_push',
+  'desktop',
+] as const;
 export const NotificationChannel = Type.Union(NOTIFICATION_CHANNELS.map((c) => Type.Literal(c)));
 export type NotificationChannel = (typeof NOTIFICATION_CHANNELS)[number];
 
@@ -32,14 +38,19 @@ export const WEB_PUSH_ALLOWED_HOSTS = [
   'web.push.apple.com',
 ] as const;
 /** Expo push tokens; the worker only ever calls the fixed Expo push API URL. */
-export const EXPO_PUSH_TOKEN_PATTERN = '^(ExponentPushToken|ExpoPushToken)\\[[A-Za-z0-9_-]{10,128}\\]$';
+export const EXPO_PUSH_TOKEN_PATTERN =
+  '^(ExponentPushToken|ExpoPushToken)\\[[A-Za-z0-9_-]{10,128}\\]$';
 export const EXPO_PUSH_API_URL = 'https://exp.host/--/api/v2/push/send' as const;
 /** Generic push copy: never titles, org names or meeting content on a lock screen (finding 3). */
 export const GENERIC_PUSH_TITLE = 'MeetOps' as const;
 export const GENERIC_PUSH_BODY = 'You have a new notification' as const;
 
 const strict = { additionalProperties: false } as const;
-const NotificationType = Type.String({ minLength: 1, maxLength: 64, pattern: '^[a-z][a-z0-9_.-]*$' });
+const NotificationType = Type.String({
+  minLength: 1,
+  maxLength: 64,
+  pattern: '^[a-z][a-z0-9_.-]*$',
+});
 const PreferenceType = Type.Union([Type.Literal('*'), NotificationType]);
 
 /**
@@ -68,7 +79,9 @@ export type NotificationOrgParams = Static<typeof NotificationOrgParams>;
 export const ListNotificationsQuery = Type.Object(
   {
     limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 100 })),
-    cursor: Type.Optional(Type.String({ minLength: 1, maxLength: 200, pattern: '^[A-Za-z0-9_-]+$' })),
+    cursor: Type.Optional(
+      Type.String({ minLength: 1, maxLength: 200, pattern: '^[A-Za-z0-9_-]+$' }),
+    ),
     unreadOnly: Type.Optional(Type.Boolean()),
   },
   strict,
@@ -88,7 +101,10 @@ export const NotificationParams = Type.Object({ organizationId: Id, notification
 export type NotificationParams = Static<typeof NotificationParams>;
 
 /** Both mark-read routes take no body and return how many rows changed (0 when already read). */
-export const MarkNotificationsReadResponse = Type.Object({ updated: Type.Integer({ minimum: 0 }) }, strict);
+export const MarkNotificationsReadResponse = Type.Object(
+  { updated: Type.Integer({ minimum: 0 }) },
+  strict,
+);
 export type MarkNotificationsReadResponse = Static<typeof MarkNotificationsReadResponse>;
 
 export const NotificationPreference = Type.Object(
@@ -106,7 +122,9 @@ export const UpdateNotificationPreferencesRequest = Type.Object(
   { items: Type.Array(NotificationPreference, { minItems: 1, maxItems: 100 }) },
   strict,
 );
-export type UpdateNotificationPreferencesRequest = Static<typeof UpdateNotificationPreferencesRequest>;
+export type UpdateNotificationPreferencesRequest = Static<
+  typeof UpdateNotificationPreferencesRequest
+>;
 
 const WebPushSubscription = Type.Object(
   {
@@ -164,7 +182,13 @@ export const PushDeviceParams = Type.Object({ id: Id }, strict);
 export type PushDeviceParams = Static<typeof PushDeviceParams>;
 
 export const UnsubscribeQuery = Type.Object(
-  { token: Type.String({ minLength: 20, maxLength: 2048, pattern: '^[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+$' }) },
+  {
+    token: Type.String({
+      minLength: 20,
+      maxLength: 2048,
+      pattern: '^[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+$',
+    }),
+  },
   strict,
 );
 export type UnsubscribeQuery = Static<typeof UnsubscribeQuery>;

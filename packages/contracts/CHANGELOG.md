@@ -6,9 +6,9 @@ While the version is `0.x`, a minor bump may contain breaking changes (ADR-003).
 
 ## [Unreleased]
 
-## [0.10.0] - 2026-10-27
+## [0.11.0] - 2026-10-28
 
-Notifications (ADR-013, Accepted). Additive; builds on 0.9.0.
+Notifications (ADR-013, Accepted). Additive; builds on 0.10.0 (re-versioned from 0.10.0, which PR #261 uses for tasks).
 
 ### Added
 
@@ -19,13 +19,23 @@ Notifications (ADR-013, Accepted). Additive; builds on 0.9.0.
   `readAt`, `createdAt`; web PR #260), `NotificationList` (`items`, keyset `nextCursor`), `ListNotificationsQuery`,
   `NotificationParams`, `MarkNotificationsReadResponse` (`updated`), `NotificationPreference(s)`,
   `UpdateNotificationPreferencesRequest`, `RegisterPushDeviceRequest` (`{provider:'expo', token, platform:'ios'|'android',
-  deviceName?}` or `{provider:'webpush', subscription, platform:'web'|'extension', deviceName?}`), `PushDevice`
+deviceName?}` or `{provider:'webpush', subscription, platform:'web'|'extension', deviceName?}`), `PushDevice`
   (`{id, platform, createdAt}`), `PushDeviceParams` (`{id}`), `UnsubscribeQuery`/`Response`.
 - `NOTIFICATION_CHANNELS`, `PUSH_PLATFORMS`, `WEB_PUSH_ALLOWED_HOSTS`, `EXPO_PUSH_TOKEN_PATTERN`, `EXPO_PUSH_API_URL`,
   `GENERIC_PUSH_TITLE`/`GENERIC_PUSH_BODY`.
 - Jobs: `NOTIFICATION_DELIVERY_QUEUE`, `NOTIFICATION_DELIVERY_JOB_RETENTION`, `NotificationDeliveryJobPayload`
   (mandatory `organizationId`).
-- `REDACT_KEYS`: `expoPushToken`, `p256dh`.
+- `REDACT_KEYS`: `expoPushToken`, `p256dh`, `auth` (Web Push subscription secret).
+
+## [0.10.0] - 2026-10-27
+
+Task write bodies; additive, builds on 0.9.0.
+
+### Added
+
+- `CreateTaskRequest`: body of POST `TASK_PATHS.tasks` (manual task; status/priority default server-side to
+  `todo`/`medium`; unknown keys rejected).
+- `AcceptExtractedTaskRequest`: body of POST `TASK_PATHS.accept` (matches the API's former `AcceptExtractedTaskBody`).
 
 ## [0.9.0] - 2026-10-27
 
