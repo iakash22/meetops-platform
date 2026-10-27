@@ -1,6 +1,7 @@
 import {
   createSessionVerifier,
   type SessionVerifier as SharedSessionVerifier,
+  type BearerAudience,
   type ExtensionTokenStore,
   type SessionStore,
   type VerifiedSession,
@@ -23,6 +24,8 @@ export interface SessionVerifierDeps {
   meetings: MeetingRepository;
   /** ADR-005 extension token store; omitted, every bearer fails closed. */
   extensionTokenStore?: ExtensionTokenStore;
+  /** Bearer audiences accepted; default ['extension']. 'desktop' only when DESKTOP_AUTH_ENABLED (ADR-012). */
+  bearerAudiences?: readonly BearerAudience[];
 }
 
 /**
@@ -70,6 +73,7 @@ export class SessionVerifier {
       clock: deps.clock,
       idleTimeoutMs: deps.sessionPolicy.idleTimeoutMs,
       ...(deps.extensionTokenStore ? { extensionTokens: deps.extensionTokenStore } : {}),
+      ...(deps.bearerAudiences ? { bearerAudiences: deps.bearerAudiences } : {}),
     });
   }
 
