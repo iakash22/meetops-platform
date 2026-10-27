@@ -111,6 +111,18 @@ export class InMemoryIntegrations implements IntegrationsRepository {
     const r = this.rows.get(id);
     return r && r.provider === provider && r.status !== 'revoked' ? r.organizationId : null;
   }
+  async resolveByExternalAccount(provider: ConnectedProvider, externalAccountId: string) {
+    return [...this.rows.values()]
+      .filter(
+        (r) =>
+          r.provider === provider &&
+          r.externalAccountId === externalAccountId &&
+          r.status !== 'revoked',
+      )
+      .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+      .slice(0, 10)
+      .map((r) => ({ organizationId: r.organizationId, id: r.id }));
+  }
   async getTask(organizationId: string, taskId: string): Promise<TaskRef | null> {
     const t = this.tasks.get(taskId);
     return t && t.organizationId === organizationId

@@ -51,6 +51,11 @@ export interface AuthServiceDeps {
   memberships?: Pick<MembershipRepository, 'listByUser'>;
   /** ADR-005 A1.6: also revoke the user's extension token families. */
   extensionRevoker?: ExtensionRevoker;
+  /**
+   * ADR-013 / mobile PR #262: revoking a session (or all of them) deletes the user's push devices, in the session's
+   * active organization or, without one, in every organization the user belongs to.
+   */
+  pushDeviceRevoker?: PushDeviceRevoker;
 }
 
 const realSleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
@@ -85,6 +90,10 @@ export const invalidResetError = () =>
   new DomainError('BAD_REQUEST', 'Reset link is invalid or has expired', 400);
 export const invalidVerificationError = () =>
   new DomainError('BAD_REQUEST', 'Verification link is invalid or has expired', 400);
+
+export interface PushDeviceRevoker {
+  revokeForUser(userId: string, organizationId?: string | null): Promise<void>;
+}
 
 export class AuthService {
   private dummyHash: Promise<string> | null = null;
@@ -293,6 +302,7 @@ export class AuthService {
     await this.d.sessions.revokeAllForUser(t.userId, now);
     await this.publish({ kind: 'user', userId: t.userId, reason: 'password_changed' });
     await this.d.extensionRevoker?.revokeForUser(t.userId, 'password_changed');
+    await this.d.pushDeviceRevoker?.revokeForUser(t.userId);
     await this.d.mailQueue.enqueue({
       kind: 'password_changed',
       userId: t.userId,
@@ -369,6 +379,7 @@ export class AuthService {
     const s = await this.revokeByToken(token);
     if (s) await this.publishSessionRevoked(s, 'logout');
     if (s) await this.d.extensionRevoker?.revokeForUser(s.userId, 'logout');
+    if (s) await this.d.pushDeviceRevoker?.revokeForUser(s.userId, s.activeOrganizationId);
     if (s)
       await this.audit(
         {
@@ -386,6 +397,7 @@ export class AuthService {
     await this.d.sessions.revokeAllForUser(userId, this.d.clock.now());
     await this.publish({ kind: 'user', userId, reason: 'logout_all' });
     await this.d.extensionRevoker?.revokeForUser(userId, 'logout_all');
+    await this.d.pushDeviceRevoker?.revokeForUser(userId);
     await this.audit(
       {
         actorId: userId,
@@ -409,6 +421,7 @@ export class AuthService {
       throw new DomainError('NOT_FOUND', 'Session not found', 404);
     await this.d.sessions.revoke(s.id, this.d.clock.now());
     await this.publishSessionRevoked(s, 'logout');
+    await this.d.pushDeviceRevoker?.revokeForUser(userId, s.activeOrganizationId);
     await this.audit(
       {
         actorId: userId,

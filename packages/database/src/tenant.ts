@@ -46,6 +46,10 @@ export const TENANT_TABLES = [
   'auth_devices',
   'auth_token_families',
   'auth_refresh_tokens',
+  'notifications',
+  'notification_delivery_attempts',
+  'notification_preferences',
+  'push_device_tokens',
 ] as const;
 export type TenantTable = (typeof TENANT_TABLES)[number];
 
