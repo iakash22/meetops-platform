@@ -38,7 +38,9 @@ export type AuditAction =
   | 'extension.token.reuse_detected'
   | 'extension.revoke'
   // Phase 5 (ADR-008) integrations
-  | 'integration.disconnect';
+  | 'integration.disconnect'
+  | 'integration.connect'
+  | 'integration.issue_push';
 
 /** Never put passwords, tokens, cookies or hashes in metadata. */
 export interface AuditEvent {
