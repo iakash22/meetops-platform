@@ -6,6 +6,12 @@ While the version is `0.x`, a minor bump may contain breaking changes (ADR-003).
 
 ## [Unreleased]
 
+### Added
+
+- Media pipeline jobs (ADR-014): `MEDIA_JOB_NAMES`, `UploadScanJobPayload` (`process_upload`),
+  `AssembleRecordingSessionJobPayload` (`assemble_recording_session`); `MEETING_PROCESSING_FAILED_EVENT` and
+  `MeetingProcessingFailedPayload` for the ADR-013 outbox.
+
 ## [0.9.0] - 2026-10-27
 
 Desktop (Tauri) sign-in schemas for ADR-012 Option A (system browser, authorization code + PKCE S256, loopback

@@ -3,6 +3,7 @@ export * from './common.js';
 export * from './domain/index.js';
 export * from './api/index.js';
 export * from './jobs/index.js';
+export * from './jobs/media-pipeline.js';
 /**
  * Phase 0 email types. The deprecated legacy storage types (PresignedUrl, StorageObjectMetadata) are
  * re-exported below for @meetops/storage only; see the @deprecated note there.
