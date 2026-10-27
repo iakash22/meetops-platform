@@ -93,9 +93,15 @@ importers:
       '@meetops/database':
         specifier: workspace:*
         version: link:../../packages/database
+      '@meetops/integrations':
+        specifier: workspace:*
+        version: link:../../packages/integrations
       '@meetops/logger':
         specifier: workspace:*
         version: link:../../packages/logger
+      '@meetops/notifications':
+        specifier: workspace:*
+        version: link:../../packages/notifications
       '@meetops/session-verifier':
         specifier: workspace:*
         version: link:../../packages/session-verifier
@@ -483,6 +489,9 @@ importers:
       '@meetops/database':
         specifier: workspace:*
         version: link:../../packages/database
+      '@meetops/integrations':
+        specifier: workspace:*
+        version: link:../../packages/integrations
       '@meetops/logger':
         specifier: workspace:*
         version: link:../../packages/logger
