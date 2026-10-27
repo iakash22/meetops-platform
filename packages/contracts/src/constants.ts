@@ -111,6 +111,8 @@ export const INTEGRATION_ERROR_REASONS = [
   'OAUTH_STATE_INVALID',
   'REPLAYED_DELIVERY',
   'WEBHOOK_SIGNATURE_INVALID',
+  /** v0.12.0: the provider app is not configured on this deployment (503; see providers `configured`). */
+  'INTEGRATION_NOT_CONFIGURED',
 ] as const;
 
 export const API_ERROR_REASONS = [
@@ -243,7 +245,33 @@ export const REDACT_KEYS = [
   'authorizationCode',
   'codeVerifier',
   'code_verifier',
+  // v0.12.0: integration secrets (provider token responses use snake_case).
+  'access_token',
+  'refresh_token',
+  'clientSecret',
+  'client_secret',
+  'webhookSecret',
+  'privateKey',
+  'privateKeyPem',
+  'apiToken',
+  // v0.12.0 (#282 security review M-1): alternate spellings and env names of integration secrets, JWT/OIDC material.
+  'webhook_secret',
+  'private_key',
+  'pem',
+  'installationToken',
+  'jwt',
+  'id_token',
+  'GITHUB_APP_CLIENT_SECRET',
+  'JIRA_CLIENT_SECRET',
+  'GITHUB_APP_WEBHOOK_SECRET',
 ] as const;
+
+/**
+ * v0.12.0: keys redacted only when the value is not shaped like an error code (`VALIDATION_FAILED`, `ECONNREFUSED`,
+ * a number). Plain `code` stays out of REDACT_KEYS because error bodies use it, but OAuth authorization codes must
+ * never be logged. Implemented by @meetops/logger.
+ */
+export const REDACT_CONDITIONAL_KEYS = ['code'] as const;
 
 /**
  * Upload cap shared by direct uploads, recording sessions and the media worker: 1.4 GB (decimal, 1_400_000_000 B
@@ -442,15 +470,21 @@ export const TASK_PATHS = {
  */
 export const INTEGRATION_PATHS = {
   integrations: '/orgs/:organizationId/integrations',
+  /** v0.12.0: provider catalogue with this org's connection status. */
+  providers: '/orgs/:organizationId/integrations/providers',
   connect: '/orgs/:organizationId/integrations/connect',
   callback: '/integrations/:provider/callback',
   integration: '/orgs/:organizationId/integrations/:integrationId',
   webhook: '/webhooks/:provider/:integrationId',
+  /** v0.12.0: App-wide GitHub webhook (a GitHub App has one webhook URL); routed by payload.installation.id. */
+  githubAppWebhook: '/webhooks/github',
   issuePush: '/orgs/:organizationId/tasks/:taskId/integration-issues',
 } as const;
 
 /** v0.7.0: integration connection lifecycle (Prisma `IntegrationStatus`). */
 export const INTEGRATION_STATUSES = ['active', 'error', 'revoked'] as const;
+/** v0.12.0: per-provider connection state for the web integrations page (`not_connected` = no row). */
+export const INTEGRATION_CONNECTION_STATES = ['not_connected', ...INTEGRATION_STATUSES] as const;
 /** v0.7.0: OAuth/App-install state TTL bounds in seconds (ADR-008: default 600, clamped 60-900). */
 export const INTEGRATION_STATE_TTL_SECONDS = 600;
 /** v0.7.0: webhook body cap in bytes (ADR-007). */

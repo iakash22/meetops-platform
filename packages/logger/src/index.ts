@@ -1,13 +1,24 @@
 import pino, { type LoggerOptions, type Logger } from 'pino';
-import { CENSOR, DEFAULT_REDACT_KEYS, redactDeep, redactUrl, type RedactLimits } from './redact.js';
+import {
+  CENSOR,
+  DEFAULT_REDACT_KEYS,
+  redactDeep,
+  redactUrl,
+  scrubText,
+  type RedactLimits,
+} from './redact.js';
 
 export type { Logger };
 export {
   CENSOR,
   CIRCULAR,
+  CONDITIONAL_REDACT_KEYS,
   DEFAULT_REDACT_KEYS,
   redactDeep,
   redactUrl,
+  reqSerializer,
+  scrubText,
+  SENSITIVE_QUERY_PARAMS,
   SENSITIVE_QUERY_KEYS,
   TRUNCATED,
   type RedactLimits,
@@ -46,9 +57,20 @@ export function createLogger(
   const opts: LoggerOptions = {
     level: process.env.NODE_ENV === 'production' ? 'info' : 'debug',
     ...rest,
-    // Fastify request logs: query values such as signed unsubscribe tokens never reach the log (PR #263 M-1).
+    // Fastify request logs: sensitive query values (signed unsubscribe tokens, OAuth code/state) never reach the log
+    // (PR #263 M-1, #282 M-2). Caller serializers win per key.
     serializers: { req: requestSerializer(keys), ...rest.serializers },
     redact: { paths: [...new Set([...headerPaths, ...extraPaths])], censor: CENSOR },
+    hooks: {
+      ...rest.hooks,
+      // #282 M-1: scrub PEM blocks / GitHub tokens from the message string (formatters.log never sees it).
+      logMethod(args, method, level) {
+        const scrubbed = args.map((a) => (typeof a === 'string' ? scrubText(a) : a)) as typeof args;
+        return rest.hooks?.logMethod
+          ? rest.hooks.logMethod.call(this, scrubbed, method, level)
+          : method.apply(this, scrubbed);
+      },
+    },
     formatters: {
       ...formatters,
       log: (obj) => {

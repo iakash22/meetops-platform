@@ -71,18 +71,23 @@ export interface CreateServerOptions {
   metrics?: HttpMetrics;
   /** Overrides the default /ready probes (Prisma `SELECT 1`, Redis `PING`). */
   readinessChecks?: ReadinessCheck[];
+  /** Log destination (tests capture log lines). Defaults to stdout. */
+  logStream?: { write(line: string): void };
   /** Overrides READINESS_TIMEOUT_MS (per-probe timeout for /ready). */
   readinessTimeoutMs?: number;
 }
 
 export function createServer(options: CreateServerOptions = {}) {
-  const logger: FastifyBaseLogger = createLogger({
-    name: 'api',
-    // Superset of @meetops/logger defaults plus CSRF/auth headers (any case, via lowercased Node headers).
-    redact: { paths: REDACT_PATHS, censor: '***redacted***' },
-    // ADR-005 A1.5: contracts REDACT_KEYS at any depth (fast-redact `*.` paths above are one level only).
-    redactKeys: REDACT_KEYS,
-  });
+  const logger: FastifyBaseLogger = createLogger(
+    {
+      name: 'api',
+      // Superset of @meetops/logger defaults plus CSRF/auth headers (any case, via lowercased Node headers).
+      redact: { paths: REDACT_PATHS, censor: '***redacted***' },
+      // ADR-005 A1.5: contracts REDACT_KEYS at any depth (fast-redact `*.` paths above are one level only).
+      redactKeys: REDACT_KEYS,
+    },
+    options.logStream,
+  );
   // Throws in production when persistence/rate-limit implementations are neither injected nor
   // backed by DATABASE_URL / REDIS_URL.
   const nodeEnv = options.nodeEnv ?? process.env.NODE_ENV;

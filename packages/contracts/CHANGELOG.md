@@ -16,6 +16,25 @@ While the version is `0.x`, a minor bump may contain breaking changes (ADR-003).
   U+FFF9-U+FFFB and the rest (`FILENAME_PATTERN`, #270 L-1). New `isSafeUploadFilename()` also rejects astral
   Cc/Cf/Co/Cs code points (e.g. tag characters); the API enforces it.
 
+## [0.14.0] - 2026-10-28
+
+GeoIP session location (ADR-014, Proposed). Additive. Version numbers 0.10.0-0.13.0 are reserved by in-flight PRs
+(#261 tasks, #263 notifications, integrations, notifications fan-out).
+
+### Added
+
+- `SessionSummary.geoCity`, `geoRegion`, `geoCountry`, `geoCountryCode` (ISO alpha-2) and `geoApproximate` (`true`):
+  optional, **not** nullable. Absent means unknown (private/unknown IP, no GeoIP data, older server). No latitude/longitude.
+- `AuthNewLocationSigninEvent` (outbox `auth.new_location_signin`): `{ sessionId, city, region, country, countryCode,
+reason }`, every key required, geo values nullable; `reason` is `'new_region' | 'new_country'`
+  (`NEW_LOCATION_REASONS`). No IP address.
+- `AuthNewLocationSigninNotificationPayload`: in-app notification payload `{ sessionId, reason, geoCity?, geoCountry? }`
+  (optional, not nullable).
+- `GeoName` / `GEO_TEXT_PATTERN`: location text rejects control chars (incl. CR/LF), bidi/invisible chars, `<`, `>`,
+  `"`, tag chars, leading/trailing whitespace and IPv4/IPv6-looking strings. ASCII `'` and `&` are allowed for real
+  place names ("St. John's", "Trinidad & Tobago"), so every renderer (email, web, push) must escape output. Also
+  `GeoText`, `GeoCountryCode`, `GeoCountryCodeString`, `AUTH_NEW_LOCATION_SIGNIN_EVENT`.
+
 ## [0.13.0] - 2026-10-28
 
 Realtime events for the notifications fan-out (ADR-013) and the AI summary worker (PR #272). Additive; builds on
@@ -28,6 +47,28 @@ transcriptRevision, tasksPendingReview, at}` to the meeting + organization rooms
 - `REALTIME_EVENTS.notificationNew` / `NotificationNewEvent` (`notification:new`): `{organizationId, notificationId,
 kind, at}` to the per-user room only.
 - `RealtimeEventMap` / `ServerToClientEvents` include both.
+
+## [0.12.0] - 2026-10-28
+
+Integrations page support (Phase 5, builds on 0.7.0). Additive. Version numbers 0.10.0 (#261) and 0.11.0
+(#263) are reserved by in-flight PRs; this release only touches integrations files.
+
+### Added
+
+- `INTEGRATION_PATHS.providers` (`GET /orgs/:organizationId/integrations/providers`).
+- `INTEGRATION_CONNECTION_STATES` (`not_connected` + `INTEGRATION_STATUSES`), `IntegrationConnectionState`,
+  `IntegrationProviderStatus` (`provider`, `configured`, `connectionStatus`, optional `integration`) and
+  `IntegrationProviderList` (`items`, max 10).
+- `REDACT_KEYS`: `access_token`, `refresh_token`, `clientSecret`, `client_secret`, `webhookSecret`, `privateKey`,
+  `privateKeyPem`, `apiToken`.
+- `REDACT_KEYS` (security review M-1): `webhook_secret`, `private_key`, `pem`, `installationToken`, `jwt`,
+  `id_token`, `GITHUB_APP_CLIENT_SECRET`, `JIRA_CLIENT_SECRET`, `GITHUB_APP_WEBHOOK_SECRET`.
+- `REDACT_CONDITIONAL_KEYS` (`code`): redacted unless the value looks like an error code. Plain `code` is still not
+  in `REDACT_KEYS`.
+- `INTEGRATION_ERROR_REASONS`: `INTEGRATION_NOT_CONFIGURED` (503 when the provider app is not set up on the deployment).
+- `RETURN_TO_PATTERN` (#282 L-2): `ConnectIntegrationRequest.returnTo` now also rejects `//` anywhere, `.`/`..`
+  segments and encoded `%2e`/`%2f`/`%5c` (e.g. `/..//evil.com`).
+- `INTEGRATION_PATHS.githubAppWebhook` (`POST /webhooks/github`): App-wide GitHub webhook, routed by installation id.
 
 ## [0.11.0] - 2026-10-28
 

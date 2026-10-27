@@ -96,6 +96,8 @@ const NOTIFICATION_TABLES = [
   'notification_preferences',
   'push_device_tokens',
 ] as const;
+/** App-wide GitHub webhook routing by installation id (definer function, identifiers only). */
+const EXTERNAL_ACCOUNT_ROUTING_MIGRATION = '20261028020000_integration_external_account_routing';
 const LATEST_MIGRATION = RELAY_REVOKE_ALL_KINDS_MIGRATION;
 const reportDedupeSql = readFileSync(
   resolve(migrationsDir, REPORT_SUMMARY_DEDUPE_MIGRATION, 'migration.sql'),
@@ -1491,18 +1493,49 @@ describe('integration routing definer functions', () => {
   });
 });
 
-describe('ADR-013 notifications tables (static)', () => {
-  const statements = notificationsSql.replace(/--.*$/gm, '');
-
-  it('is the latest migration and additive only', () => {
+describe('integration external-account routing (20261028020000)', () => {
+  it('sorts right after the ADR-014 geoip migration, before the relay revoke one', () => {
     const dirs = readdirSync(migrationsDir, { withFileTypes: true })
       .filter((x) => x.isDirectory())
       .map((x) => x.name)
       .sort();
     expect(dirs.at(-1)).toBe(LATEST_MIGRATION);
-    expect(dirs.at(-2)).toBe(SESSION_AUDIT_GEOIP_MIGRATION);
-    expect(dirs.at(-3)).toBe(RELAY_BY_TYPE_MIGRATION);
-    expect(dirs.at(-4)).toBe(NOTIFICATIONS_MIGRATION);
+    expect(dirs.at(-2)).toBe(EXTERNAL_ACCOUNT_ROUTING_MIGRATION);
+    expect(dirs.at(-3)).toBe(SESSION_AUDIT_GEOIP_MIGRATION);
+    expect(dirs.at(-4)).toBe(RELAY_BY_TYPE_MIGRATION);
+  });
+  const sql = readFileSync(
+    resolve(migrationsDir, EXTERNAL_ACCOUNT_ROUTING_MIGRATION, 'migration.sql'),
+    'utf8',
+  ).replace(/--.*$/gm, '');
+  it('is a SECURITY DEFINER, identifiers-only, live-rows function granted to the app role only', () => {
+    expect(sql).toMatch(
+      /CREATE FUNCTION integration_connections_by_external_account\(p_provider text, p_external_account_id text\)/,
+    );
+    expect(sql).toMatch(/RETURNS TABLE \(org_id uuid, id uuid\)/);
+    expect(sql).toMatch(/SECURITY DEFINER\s+SET search_path = public, pg_temp/);
+    expect(sql).toMatch(/c\.status <> 'revoked'/);
+    expect(sql).toMatch(
+      /REVOKE ALL ON FUNCTION integration_connections_by_external_account\(text, text\) FROM PUBLIC;/,
+    );
+    expect(sql).toMatch(
+      /GRANT EXECUTE ON FUNCTION integration_connections_by_external_account\(text, text\) TO meetops_app;/,
+    );
+    expect(sql).not.toMatch(/_enc\b|secret|access_token/i);
+    expect(sql).not.toMatch(/\bDROP\b|ALTER TABLE|DISABLE ROW LEVEL SECURITY|NO FORCE/i);
+  });
+});
+
+describe('ADR-013 notifications tables (static)', () => {
+  const statements = notificationsSql.replace(/--.*$/gm, '');
+
+  it('keeps its place in the migration order and is additive only', () => {
+    const dirs = readdirSync(migrationsDir, { withFileTypes: true })
+      .filter((x) => x.isDirectory())
+      .map((x) => x.name)
+      .sort();
+    expect(dirs.at(-4)).toBe(RELAY_BY_TYPE_MIGRATION);
+    expect(dirs.at(-5)).toBe(NOTIFICATIONS_MIGRATION);
     expect(statements).not.toMatch(
       /\bDROP\b|RENAME|ALTER COLUMN|NO FORCE|DISABLE ROW LEVEL SECURITY/i,
     );

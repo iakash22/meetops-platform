@@ -1,12 +1,17 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { createHmac, generateKeyPairSync, randomUUID } from 'node:crypto';
 import { Value } from '@sinclair/typebox/value';
-import { ConnectIntegrationResponse, IntegrationIssue } from '@meetops/contracts';
+import {
+  ConnectIntegrationResponse,
+  IntegrationIssue,
+  IntegrationProviderList,
+} from '@meetops/contracts';
 import { InMemoryAuditLog } from '../src/modules/auth/domain/audit.js';
 import { InMemoryIntegrations } from '../src/modules/integrations/in-memory.repository.js';
 import {
   devIntegrationsRuntime,
   type IntegrationsRuntime,
+  integrationsRuntimeFromEnv,
 } from '../src/modules/integrations/runtime.js';
 import type { ModuleDeps } from '../src/modules/index.js';
 import { selectIntegrationsRuntime } from '../src/modules/integrations/index.js';
@@ -277,6 +282,28 @@ describe('Phase 5 integration flows', () => {
       expect(calls.some((x) => x.url.endsWith('/access_tokens'))).toBe(false);
     });
 
+    it('connect rejects traversal and protocol-relative returnTo values (#282 L-2)', async () => {
+      const { c, org } = await owner();
+      for (const returnTo of [
+        '/..//evil.com',
+        '//evil.com',
+        '/a//b',
+        '/./x',
+        '/a/../b',
+        '/%2e%2e/x',
+        '/%2F%2Fevil.com',
+        '/x?next=//evil.com',
+      ]) {
+        const r = await c.post(`/orgs/${org}/integrations/connect`, { provider: 'jira', returnTo });
+        expect(r.statusCode, returnTo).toBe(400);
+      }
+      const ok = await c.post(`/orgs/${org}/integrations/connect`, {
+        provider: 'jira',
+        returnTo: '/settings/integrations?tab=jira',
+      });
+      expect(ok.statusCode).toBe(200);
+    });
+
     it('connect requires update rights, CSRF and origin', async () => {
       const { c, org } = await owner();
       const noCsrf = await app.inject({
@@ -300,7 +327,7 @@ describe('Phase 5 integration flows', () => {
       expect(delNoCsrf.statusCode).toBe(403);
     });
 
-    it('runtime selection: production without a runtime is 503; dev fallback has no providers (409)', async () => {
+    it('runtime selection: production without a runtime is 503; dev fallback has no providers (503 INTEGRATION_NOT_CONFIGURED)', async () => {
       expect(selectIntegrationsRuntime({} as ModuleDeps, 'production')).toBeUndefined();
       expect(selectIntegrationsRuntime({ integrationsRuntime: rt } as never, 'production')).toBe(
         rt,
@@ -317,7 +344,7 @@ describe('Phase 5 integration flows', () => {
       const { c, org } = await owner();
       expect(
         (await c.post(`/orgs/${org}/integrations/connect`, { provider: 'jira' })).statusCode,
-      ).toBe(409);
+      ).toBe(503);
     });
   });
 
@@ -437,6 +464,53 @@ describe('Phase 5 integration flows', () => {
             'x-hub-signature-256': sign(GH_SECRET, ok),
           })
         ).statusCode,
+      ).toBe(401);
+    });
+
+    it('GitHub App-wide /webhooks/github: routes by installation id; signature checked first', async () => {
+      const { c, org } = await owner();
+      const id = seed(org, 'github');
+      const taskId = linkTask(org, id, 'github', 'acme/app#5');
+      const body = JSON.stringify({
+        action: 'closed',
+        issue: { number: 5, state: 'closed', state_reason: 'completed' },
+        repository: { full_name: 'acme/app' },
+        installation: { id: 99 },
+      });
+      const h = {
+        'x-hub-signature-256': sign(GH_SECRET, body),
+        'x-github-event': 'issues',
+        'x-github-delivery': randomUUID(),
+      };
+      const r = await post('/webhooks/github', body, h);
+      expect(r.statusCode).toBe(202);
+      expect(repo.tasks.get(taskId)!.status).toBe('done');
+      expect((await post('/webhooks/github', body, h)).statusCode).toBe(409);
+      const fresh = { ...h, 'x-github-delivery': randomUUID() };
+      expect(
+        (
+          await post('/webhooks/github', body, {
+            ...fresh,
+            'x-hub-signature-256': sign('wrong', body),
+          })
+        ).statusCode,
+      ).toBe(401);
+      const unsigned: Record<string, string> = { ...fresh };
+      delete unsigned['x-hub-signature-256'];
+      expect((await post('/webhooks/github', body, unsigned)).statusCode).toBe(401);
+      const other = body.replace('"id":99', '"id":98');
+      expect(
+        (
+          await post('/webhooks/github', other, {
+            ...fresh,
+            'x-hub-signature-256': sign(GH_SECRET, other),
+          })
+        ).statusCode,
+      ).toBe(401);
+      await c.delete(`/orgs/${org}/integrations/${id}`);
+      expect(
+        (await post('/webhooks/github', body, { ...h, 'x-github-delivery': randomUUID() }))
+          .statusCode,
       ).toBe(401);
     });
 
@@ -624,5 +698,110 @@ describe('Phase 5 integration flows', () => {
       });
       expect(r.statusCode).toBe(403);
     });
+  });
+
+  describe('providers catalogue (v0.12.0)', () => {
+    it('lists github and jira as configured and not connected, then jira active after connect', async () => {
+      const { c, org } = await owner();
+      const before = await c.get(`/orgs/${org}/integrations/providers`);
+      expect(before.statusCode).toBe(200);
+      expect(Value.Check(IntegrationProviderList, before.json())).toBe(true);
+      expect(before.json()).toEqual({
+        items: [
+          { provider: 'github', configured: true, connectionStatus: 'not_connected' },
+          { provider: 'jira', configured: true, connectionStatus: 'not_connected' },
+        ],
+      });
+      const res = await c.post(`/orgs/${org}/integrations/connect`, { provider: 'jira' });
+      const state = stateOf(res.json<{ authorizeUrl: string }>().authorizeUrl);
+      expect(
+        (await c.get(`/integrations/jira/callback?state=${state}&code=abc123`)).statusCode,
+      ).toBe(302);
+      const after = await c.get(`/orgs/${org}/integrations/providers`);
+      const jira = after.json<IntegrationProviderList>().items.find((i) => i.provider === 'jira')!;
+      expect(jira.connectionStatus).toBe('active');
+      expect(jira.integration?.displayName).toBe('acme.atlassian.net');
+      expect(after.body).not.toMatch(/jira-access|jira-refresh|secret/i);
+    });
+
+    it('reports configured=false when the deployment has no provider app', async () => {
+      await app.close();
+      app = await buildApp({
+        integrations: repo,
+        audit,
+        integrationsRuntime: devIntegrationsRuntime({ apiOrigin: API }),
+      } as Partial<ModuleDeps>);
+      const { c, org } = await owner();
+      const r = await c.get(`/orgs/${org}/integrations/providers`);
+      expect(r.json<IntegrationProviderList>().items.every((i) => !i.configured)).toBe(true);
+      for (const provider of ['jira', 'github']) {
+        const c2 = await c.post(`/orgs/${org}/integrations/connect`, { provider });
+        expect(c2.statusCode).toBe(503);
+        expect(c2.json()).toMatchObject({
+          error: { code: 'PROVIDER_UNAVAILABLE', reason: 'INTEGRATION_NOT_CONFIGURED' },
+        });
+      }
+    });
+
+    it('requires a session and org membership', async () => {
+      const { org } = await owner();
+      expect(
+        (await app.inject({ method: 'GET', url: `/orgs/${org}/integrations/providers` }))
+          .statusCode,
+      ).toBe(401);
+      const other = await signupAndLogin(app, 'stranger@example.com');
+      expect([403, 404]).toContain(
+        (await other.get(`/orgs/${org}/integrations/providers`)).statusCode,
+      );
+    });
+  });
+});
+
+describe('integrationsRuntimeFromEnv (dev overlay)', () => {
+  it('configures nothing without env and both providers when fully set', async () => {
+    expect(integrationsRuntimeFromEnv({})).toEqual({});
+    const partial = integrationsRuntimeFromEnv({ GITHUB_APP_ID: '1', JIRA_CLIENT_ID: 'x' });
+    expect(partial.github).toBeUndefined();
+    expect(partial.jira).toBeUndefined();
+    const full = integrationsRuntimeFromEnv(
+      {
+        GITHUB_APP_ID: '1',
+        GITHUB_APP_SLUG: 'slug',
+        GITHUB_APP_CLIENT_ID: 'cid',
+        GITHUB_APP_CLIENT_SECRET: 'cs',
+        GITHUB_APP_PRIVATE_KEY_FILE: '/k.pem',
+        GITHUB_APP_WEBHOOK_SECRET: 'ws',
+        JIRA_CLIENT_ID: 'jid',
+        JIRA_CLIENT_SECRET: 'js',
+        INTEGRATIONS_API_ORIGIN: 'https://x.trycloudflare.com',
+      },
+      async (p) => `pem:${p}`,
+    );
+    expect(full.apiOrigin).toBe('https://x.trycloudflare.com');
+    expect(full.github?.appSlug).toBe('slug');
+    expect(await full.github?.privateKey()).toBe('pem:/k.pem');
+    expect(await full.jira?.clientSecret()).toBe('js');
+  });
+});
+
+describe('returnTo hardening (#282 L-2)', () => {
+  it('safeReturnUrl keeps same-origin app paths and falls back otherwise', async () => {
+    const { safeReturnUrl } = await import('../src/modules/integrations/service.js');
+    const web = 'http://localhost:5173';
+    expect(safeReturnUrl('/settings/x?tab=a', web).toString()).toBe(
+      'http://localhost:5173/settings/x?tab=a',
+    );
+    for (const bad of [
+      '/..//evil.com',
+      '//evil.com',
+      '/a//b',
+      '/./x',
+      '/a/../b',
+      'https://evil.com',
+      '/\\evil.com',
+    ])
+      expect(safeReturnUrl(bad, web).toString()).toBe(
+        'http://localhost:5173/settings/integrations',
+      );
   });
 });
