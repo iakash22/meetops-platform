@@ -25,6 +25,23 @@ describe('ip retention job', () => {
       expect.any(String),
     );
   });
+  it('also runs the session purge and logs its count', async () => {
+    const l = log();
+    const res = await runIpRetention({
+      redact: async () => ({
+        sessionsRedacted: 0,
+        auditEventsRedacted: 0,
+        passwordResetsRedacted: 0,
+      }),
+      purge: async () => ({ sessionsPurged: 4 }),
+      log: l,
+    });
+    expect(res.sessionsPurged).toBe(4);
+    expect(l.info).toHaveBeenCalledWith(
+      expect.objectContaining({ sessionsPurged: 4 }),
+      expect.any(String),
+    );
+  });
   it('rethrows so BullMQ retries, without logging the error message', async () => {
     const l = log();
     await expect(

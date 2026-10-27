@@ -1,6 +1,9 @@
 import type { IpRetentionResult } from '@meetops/database';
 
-/** ADR-014 retention: daily job that nulls raw IPs older than 30 days on sessions and audit events. */
+/**
+ * ADR-014 retention: daily job that nulls raw IPs older than 30 days (sessions, audit events, password resets) and
+ * deletes sessions that ended more than 90 days ago (with their coarse geo).
+ */
 export const IP_RETENTION_QUEUE = 'privacy.ip-retention';
 export const IP_RETENTION_SCHEDULER_ID = 'privacy.ip-retention.daily';
 /** 03:15 UTC daily. */
@@ -8,13 +11,17 @@ export const IP_RETENTION_CRON = '15 3 * * *';
 
 export interface IpRetentionDeps {
   redact: () => Promise<IpRetentionResult>;
+  /** ADR-014 §16 session purge (geo retention). */
+  purge?: () => Promise<{ sessionsPurged: number }>;
   log: { info(obj: object, msg: string): void; warn(obj: object, msg: string): void };
 }
 
 /** One retention pass. Logs counts only (never IPs). Rethrows so BullMQ retries. */
-export async function runIpRetention(deps: IpRetentionDeps): Promise<IpRetentionResult> {
+export async function runIpRetention(
+  deps: IpRetentionDeps,
+): Promise<IpRetentionResult & { sessionsPurged?: number }> {
   try {
-    const res = await deps.redact();
+    const res = { ...(await deps.redact()), ...(deps.purge ? await deps.purge() : {}) };
     deps.log.info({ ...res }, 'ip retention pass completed');
     return res;
   } catch (err) {

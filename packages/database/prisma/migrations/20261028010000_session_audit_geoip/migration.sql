@@ -69,6 +69,11 @@ CREATE POLICY audit_ip_retention_update ON "audit_events" FOR UPDATE TO meetops_
          AND ip_address IS NOT NULL AND created_at < now() - interval '30 days')
   WITH CHECK (current_setting('meetops.audit_ip_retention', true) = 'on' AND ip_address IS NULL);
 
+-- The definer runs as meetops_migrator; make its UPDATE right explicit instead of relying on table ownership
+-- (security review #288 L-1). Column-level: UPDATE only ip_address, SELECT only what the batch query reads.
+GRANT SELECT (id, ip_address, created_at), UPDATE (ip_address)
+  ON TABLE "sessions", "password_resets", "audit_events" TO meetops_migrator;
+
 -- One batch: null raw IPs older than p_days (>= 30, default 30) on sessions, audit_events and password_resets, at most
 -- p_batch (1..10000) rows per table. Server time (now()). Idempotent; call until every count is 0. Keeps coarse geo.
 CREATE OR REPLACE FUNCTION public.redact_expired_ip_addresses(p_days integer DEFAULT 30, p_batch integer DEFAULT 1000)
