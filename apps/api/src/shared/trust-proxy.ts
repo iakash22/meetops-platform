@@ -17,17 +17,27 @@ export function isIpOrCidr(entry: string): boolean {
 /**
  * Parses TRUST_PROXY into Fastify's trustProxy option.
  * - unset/empty/"false" → false (X-Forwarded-For is ignored; request.ip = socket address)
- * - integer "N"        → trust N hops
+ * - integer "N"        → trust N hops (dev/test only: rejected when opts.production, ADR-014)
  * - "true"             → rejected (trusting every hop lets clients spoof their IP)
  * - "a,b/24,..."       → list of trusted proxy IPs/CIDRs; every entry is validated (startup fails otherwise)
  */
 export function parseTrustProxy(
-  value: string | undefined
+  value: string | undefined,
+  opts: { production?: boolean } = {},
 ): boolean | string[] | ((address: string, hop: number) => boolean) {
   const v = value?.trim();
   if (!v || v === 'false') return false;
-  if (v === 'true') throw new Error('TRUST_PROXY=true is not allowed; use a hop count or a list of proxy IPs/CIDRs');
+  if (v === 'true')
+    throw new Error(
+      'TRUST_PROXY=true is not allowed; use a hop count or a list of proxy IPs/CIDRs',
+    );
   if (/^\d+$/.test(v)) {
+    // ADR-014: a hop count trusts a forged left-most X-Forwarded-For whenever an extra hop exists.
+    if (opts.production) {
+      throw new Error(
+        'TRUST_PROXY hop counts are not allowed in production; use a comma list of proxy IPs/CIDRs',
+      );
+    }
     const hops = parseInt(v, 10);
     return (_address: string, hop: number) => hop < hops;
   }
@@ -36,6 +46,7 @@ export function parseTrustProxy(
     .map((s) => s.trim())
     .filter(Boolean);
   const invalid = entries.filter((e) => !isIpOrCidr(e));
-  if (invalid.length) throw new Error(`TRUST_PROXY has invalid IP/CIDR entries: ${invalid.join(', ')}`);
+  if (invalid.length)
+    throw new Error(`TRUST_PROXY has invalid IP/CIDR entries: ${invalid.join(', ')}`);
   return entries;
 }
