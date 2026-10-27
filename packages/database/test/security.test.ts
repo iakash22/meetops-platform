@@ -77,7 +77,7 @@ const INTEGRATION_ROUTING_MIGRATION = '20261027100000_integration_routing_functi
 /** Phase 3 AI summary dedupe (reports unique key). Update LATEST_MIGRATION when adding a migration. */
 const REPORT_SUMMARY_DEDUPE_MIGRATION = '20261027120000_report_summary_dedupe';
 /** App-wide GitHub webhook routing by installation id (definer function, identifiers only). */
-const EXTERNAL_ACCOUNT_ROUTING_MIGRATION = '20261028000000_integration_external_account_routing';
+const EXTERNAL_ACCOUNT_ROUTING_MIGRATION = '20261028020000_integration_external_account_routing';
 const LATEST_MIGRATION = EXTERNAL_ACCOUNT_ROUTING_MIGRATION;
 const reportDedupeSql = readFileSync(
   resolve(migrationsDir, REPORT_SUMMARY_DEDUPE_MIGRATION, 'migration.sql'),
@@ -1435,7 +1435,7 @@ describe('integration routing definer functions', () => {
   });
 });
 
-describe('integration external-account routing (20261028000000)', () => {
+describe('integration external-account routing (20261028020000)', () => {
   const sql = readFileSync(
     resolve(migrationsDir, EXTERNAL_ACCOUNT_ROUTING_MIGRATION, 'migration.sql'),
     'utf8',
