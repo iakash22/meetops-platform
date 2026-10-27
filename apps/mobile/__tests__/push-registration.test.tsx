@@ -1,5 +1,7 @@
+import { View } from 'react-native';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react-native';
 
+import { pushServiceFor, unregisterPushOnSignOut } from '../src/services';
 import { PushNotificationsCard } from '../src/notifications/PushNotificationsCard';
 import {
   createDemoPushTokenProvider,
@@ -83,5 +85,40 @@ describe('createHttpPushDeviceApi', () => {
     const http = createHttpPushDeviceApi(jest.fn().mockResolvedValue({}));
     const s = createPushRegistrationService(createDemoPushTokenProvider('granted'), http, 'ios');
     expect((await s.enable()).status).toBe('error');
+  });
+});
+
+describe('per-user push state and sign-out', () => {
+  it('says push is unavailable when there is no service (live build without a native provider)', async () => {
+    render(<PushNotificationsCard service={null} />);
+    expect(await screen.findByText(/aren't available in this build/)).toBeTruthy();
+    expect(screen.queryByTestId('push-toggle')).toBeNull();
+  });
+
+  it('resets state for a different user (keyed card, separate service)', async () => {
+    const a = api();
+    const s1 = createPushRegistrationService(createDemoPushTokenProvider('granted'), a, 'ios');
+    const s2 = createPushRegistrationService(createDemoPushTokenProvider('granted'), api(), 'ios');
+    const Account = ({ userId }: { userId: string }) => (
+      <View>
+        <PushNotificationsCard key={userId} service={userId === 'u1' ? s1 : s2} />
+      </View>
+    );
+    const view = render(<Account userId="u1" />);
+    fireEvent.press(await screen.findByTestId('push-toggle'));
+    expect(await screen.findByText(/on for this device/)).toBeTruthy();
+    view.rerender(<Account userId="u2" />);
+    expect(await screen.findByText(/Get notified/)).toBeTruthy();
+  });
+
+  it('unregisters the device on sign-out and forgets the user service', async () => {
+    const s = pushServiceFor('user-1');
+    expect(s).not.toBeNull();
+    await s!.enable();
+    expect((await s!.current()).status).toBe('on');
+    const disable = jest.spyOn(s!, 'disable');
+    await unregisterPushOnSignOut('user-1');
+    expect(disable).toHaveBeenCalled();
+    expect(pushServiceFor('user-1')).not.toBe(s);
   });
 });

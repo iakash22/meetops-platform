@@ -1,4 +1,12 @@
-import { createApiClient } from './api/client';
+import { createApiClient, createApiRequester } from './api/client';
+import { Platform } from 'react-native';
+import {
+  createDemoPushDeviceApi,
+  createDemoPushTokenProvider,
+  createHttpPushDeviceApi,
+  createPushRegistrationService,
+  type PushRegistrationService,
+} from './notifications/pushRegistration';
 import { createHttpAuthClient } from './api/httpAuthClient';
 import { createDemoInsightsApi, createHttpInsightsApi } from './api/insightsApi';
 import { createDemoMicPermission } from './consent/micPermission';
@@ -82,3 +90,37 @@ export const repositories: Repositories = {
   consent: createDemoConsentApi({ latencyMs: 300 }),
   micPermission: createDemoMicPermission(),
 };
+
+/**
+ * One push registration service per signed-in user, so a new user never sees the previous user's "on" state.
+ * Demo mode: simulated OS prompt + in-memory API. Live mode: the real HTTP `/me/push-devices` client, but there is no
+ * native token provider yet (`expo-notifications` is not a dependency), so `null` and the card says it's unavailable
+ * rather than registering a fake token with a real server.
+ */
+const pushServices = new Map<string, PushRegistrationService>();
+const pushPlatform = Platform.OS === 'ios' ? 'ios' : 'android';
+
+export function pushServiceFor(userId: string): PushRegistrationService | null {
+  if (http) return null; // CONTRACT OK, NATIVE GAP: needs an expo-notifications PushTokenProvider.
+  let s = pushServices.get(userId);
+  if (!s) {
+    s = createPushRegistrationService(
+      createDemoPushTokenProvider(),
+      createDemoPushDeviceApi(),
+      pushPlatform,
+    );
+    pushServices.set(userId, s);
+  }
+  return s;
+}
+
+/** Live HTTP client, exported for the native provider follow-up. */
+export const httpPushDeviceApi = http ? createHttpPushDeviceApi(createApiRequester(http)) : null;
+
+/** Best-effort: revoke this device's push registration while the session is still valid, then forget it. */
+export async function unregisterPushOnSignOut(userId: string | undefined): Promise<void> {
+  if (!userId) return;
+  const s = pushServices.get(userId);
+  pushServices.delete(userId);
+  if (s) await s.disable().catch(() => undefined);
+}

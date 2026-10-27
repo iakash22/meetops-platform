@@ -1,21 +1,9 @@
 import { useEffect, useState } from 'react';
-import { Platform, StyleSheet, Text, View } from 'react-native';
+import { StyleSheet, Text, View } from 'react-native';
 
 import { colors, radius, spacing } from '../theme/colors';
 import { Button } from '../ui/Button';
-import {
-  createDemoPushDeviceApi,
-  createDemoPushTokenProvider,
-  createPushRegistrationService,
-  type PushRegistrationService,
-  type PushRegistrationState,
-} from './pushRegistration';
-
-const demoService = createPushRegistrationService(
-  createDemoPushTokenProvider(),
-  createDemoPushDeviceApi(),
-  Platform.OS === 'ios' ? 'ios' : 'android',
-);
+import { type PushRegistrationService, type PushRegistrationState } from './pushRegistration';
 
 const COPY: Record<PushRegistrationState['status'], string> = {
   off: 'Get notified when meeting notes and tasks are ready. Your phone will ask for permission first.',
@@ -24,16 +12,16 @@ const COPY: Record<PushRegistrationState['status'], string> = {
   error: '',
 };
 
-export function PushNotificationsCard({
-  service = demoService,
-}: {
-  service?: PushRegistrationService;
-}) {
+/**
+ * Render with `key={userId}` so state resets per user. `service: null` means push isn't available in this build.
+ */
+export function PushNotificationsCard({ service }: { service: PushRegistrationService | null }) {
   const [state, setState] = useState<PushRegistrationState | null>(null);
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
     let live = true;
+    if (!service) return;
     void service.current().then((s) => live && setState(s));
     return () => {
       live = false;
@@ -48,6 +36,14 @@ export function PushNotificationsCard({
     });
   };
 
+  if (!service)
+    return (
+      <View style={styles.card} testID="push-card">
+        <Text testID="push-status" style={styles.body}>
+          Push notifications aren't available in this build yet.
+        </Text>
+      </View>
+    );
   if (!state) return null;
   const on = state.status === 'on';
   return (
