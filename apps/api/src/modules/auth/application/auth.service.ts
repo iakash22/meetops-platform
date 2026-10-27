@@ -1,3 +1,9 @@
+import {
+  lookupGeo,
+  nullGeoIpProvider,
+  type GeoFields,
+  type GeoIpProvider,
+} from '../../../shared/geoip/provider.js';
 import type { UserRepository } from '../../users/domain/user.repository.js';
 import { normalizeEmail, toPublicUser, type PublicUser } from '../../users/domain/user.js';
 import type { Clock, IdGenerator } from '../../../shared/ports.js';
@@ -42,6 +48,8 @@ export interface AuthServiceDeps {
   emailVerificationTtlMs: number;
   /** Progressive-delay sleeper for failed logins; inject a no-op/fake in tests. */
   sleep?: (ms: number) => Promise<void>;
+  /** ADR-014 local GeoIP provider. Omitted: geo fields stay null. */
+  geoIp?: GeoIpProvider;
   /** ADR-011 revocation fan-out to realtime. Omitted: nothing is published. */
   revocations?: RevocationPublisher;
   /**
@@ -117,12 +125,19 @@ export class AuthService {
     e: Omit<AuditEvent, 'ip' | 'userAgent' | 'organizationId'> & { organizationId?: string | null },
     meta?: RequestMeta,
   ) {
+    const ip = meta?.ip ?? null;
     return safeAudit(this.d.audit, {
       organizationId: null,
-      ip: meta?.ip ?? null,
+      ip,
       userAgent: meta?.userAgent ?? null,
+      geo: this.geo(ip),
       ...e,
     });
+  }
+
+  /** ADR-014: local lookup, never throws; private/unknown IPs give all-null fields. */
+  private geo(ip: string | null): GeoFields {
+    return lookupGeo(this.d.geoIp ?? nullGeoIpProvider, ip);
   }
 
   /** Creates a token row with an unguessable placeholder hash; the mail worker mints the real token. */
@@ -427,7 +442,10 @@ export class AuthService {
   }
 
   /** Resolve the session (idle + absolute timeouts) and slide last_seen_at. */
-  async authenticate(token: string | undefined): Promise<{ user: PublicUser; session: Session }> {
+  async authenticate(
+    token: string | undefined,
+    meta?: RequestMeta,
+  ): Promise<{ user: PublicUser; session: Session }> {
     if (!token) throw new UnauthenticatedError();
     const session = await this.d.sessions.findByTokenHash(this.d.tokens.hash(token));
     const now = this.d.clock.now();
@@ -436,6 +454,15 @@ export class AuthService {
     const user = await this.d.users.findById(session.userId);
     if (!user) throw new UnauthenticatedError();
     await this.d.sessions.touch(session.id, now);
+    // ADR-014: look up again only when the client IP changed (not on every request).
+    if (meta?.ip && meta.ip !== session.ip && this.d.sessions.updateIp) {
+      const geo = this.geo(meta.ip);
+      await this.d.sessions.updateIp(session.id, meta.ip, geo);
+      return {
+        user: toPublicUser(user),
+        session: { ...session, lastSeenAt: now, ip: meta.ip, geo },
+      };
+    }
     return { user: toPublicUser(user), session: { ...session, lastSeenAt: now } };
   }
 
@@ -506,6 +533,7 @@ export class AuthService {
       revokedAt: null,
       ip: meta.ip,
       userAgent: meta.userAgent,
+      geo: this.geo(meta.ip),
     });
     return { user, session, token };
   }

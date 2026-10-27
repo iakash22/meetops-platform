@@ -1,4 +1,5 @@
 import type { UserId } from '../../users/domain/user.js';
+import type { GeoFields } from '../../../shared/geoip/provider.js';
 
 export interface Session {
   id: string;
@@ -13,6 +14,8 @@ export interface Session {
   revokedAt: Date | null;
   ip: string | null;
   userAgent: string | null;
+  /** ADR-014 coarse GeoIP of `ip` (all null for private/unknown IPs). Optional for older fakes. */
+  geo?: GeoFields;
 }
 
 export interface SessionPolicy {
@@ -33,6 +36,8 @@ export interface SessionRepository {
   /** Not revoked and not past the absolute expiry (idle filtering is done by the caller). */
   listActiveForUser(userId: string, now: Date): Promise<Session[]>;
   touch(id: string, at: Date): Promise<void>;
+  /** ADR-014: the session's client IP changed; store the new IP and its coarse geo. */
+  updateIp?(id: string, ip: string | null, geo: GeoFields): Promise<void>;
   revoke(id: string, at: Date): Promise<void>;
   revokeAllForUser(userId: string, at: Date): Promise<void>;
   /**

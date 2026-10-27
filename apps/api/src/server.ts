@@ -11,6 +11,7 @@ import {
 } from './modules/index.js';
 import { registerDomainErrorHandler, registerNotFoundHandler } from './shared/http-errors.js';
 import { parseTrustProxy } from './shared/trust-proxy.js';
+import { clientIpOptionsFromEnv, resolveClientIp } from './shared/geoip/client-ip.js';
 import { metricsTokenFromEnv, registerMetrics, type HttpMetrics } from './shared/metrics.js';
 import {
   createReadiness,
@@ -94,7 +95,9 @@ export function createServer(options: CreateServerOptions = {}) {
   });
   const app = Fastify({
     loggerInstance: logger,
-    trustProxy: parseTrustProxy(options.trustProxy ?? process.env.TRUST_PROXY),
+    trustProxy: parseTrustProxy(options.trustProxy ?? process.env.TRUST_PROXY, {
+      production: nodeEnv === 'production',
+    }),
     ajv: { customOptions: { ...AJV_CUSTOM_OPTIONS } },
   });
 
@@ -102,6 +105,18 @@ export function createServer(options: CreateServerOptions = {}) {
   registerMetrics(app, {
     token: metricsTokenFromEnv(options.metricsToken ?? process.env.METRICS_TOKEN),
     ...(options.metrics ? { metrics: options.metrics } : {}),
+  });
+
+  // ADR-014 client IP: request.ip after the TRUST_PROXY allowlist, or CF-Connecting-IP when BEHIND_CLOUDFLARE=true and
+  // the peer is a pinned Cloudflare edge address. Raw X-Forwarded-For is never read.
+  const clientIpOptions = clientIpOptionsFromEnv(process.env);
+  app.decorateRequest('clientIp', null);
+  app.addHook('onRequest', async (request) => {
+    request.clientIp = resolveClientIp(
+      request.ip,
+      request.headers['cf-connecting-ip'],
+      clientIpOptions,
+    );
   });
 
   registerDomainErrorHandler(app);

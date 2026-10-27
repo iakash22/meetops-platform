@@ -4,6 +4,7 @@ import {
   type DatabaseClient,
 } from '../../../../shared/prisma/context.js';
 import type { AuditEvent, AuditLog } from '../../domain/audit.js';
+import { truncateIp } from '../../../../shared/geoip/ip.js';
 
 /**
  * audit_events (DB #35): org events are written inside withOrgContext; pre-tenant events
@@ -23,6 +24,11 @@ export class PrismaAuditLog implements AuditLog {
       metadata: e.metadata,
       ipAddress: e.ip,
       userAgent: e.userAgent,
+      geoCity: e.geo?.geoCity ?? null,
+      geoRegion: e.geo?.geoRegion ?? null,
+      geoCountry: e.geo?.geoCountry ?? null,
+      geoCountryCode: e.geo?.geoCountryCode ?? null,
+      geoApproximate: e.geo?.geoApproximate ?? null,
     };
     if (!e.organizationId) {
       await this.db.auditEvent.createMany({ data: [data] });
@@ -38,6 +44,7 @@ export class PrismaAuditLog implements AuditLog {
 export class LoggerAuditLog implements AuditLog {
   constructor(private readonly log: { info(obj: object, msg: string): void }) {}
   async record(e: AuditEvent) {
-    this.log.info({ audit: e }, 'audit');
+    // ADR-014: never a full IP at info level.
+    this.log.info({ audit: { ...e, ip: truncateIp(e.ip) } }, 'audit');
   }
 }
