@@ -76,7 +76,9 @@ const INTEGRATION_CONNECTIONS_MIGRATION = '20261027000000_integration_connection
 const INTEGRATION_ROUTING_MIGRATION = '20261027100000_integration_routing_functions';
 /** Phase 3 AI summary dedupe (reports unique key). Update LATEST_MIGRATION when adding a migration. */
 const REPORT_SUMMARY_DEDUPE_MIGRATION = '20261027120000_report_summary_dedupe';
-const LATEST_MIGRATION = REPORT_SUMMARY_DEDUPE_MIGRATION;
+/** Definer SELECT policy for the integration routing functions (forced RLS binds the owner). */
+const INTEGRATION_ROUTING_POLICY_MIGRATION = '20261027140000_integration_routing_definer_policy';
+const LATEST_MIGRATION = INTEGRATION_ROUTING_POLICY_MIGRATION;
 const reportDedupeSql = readFileSync(
   resolve(migrationsDir, REPORT_SUMMARY_DEDUPE_MIGRATION, 'migration.sql'),
   'utf8',
@@ -1336,7 +1338,7 @@ describe('Phase 5 integration_connections (static)', () => {
       dirs.indexOf(INTEGRATION_ROUTING_MIGRATION) - 1,
     );
     expect(dirs.indexOf(INTEGRATION_ROUTING_MIGRATION)).toBe(
-      dirs.indexOf(LATEST_MIGRATION) - 1,
+      dirs.indexOf(REPORT_SUMMARY_DEDUPE_MIGRATION) - 1,
     );
   });
 
@@ -1430,5 +1432,20 @@ describe('integration routing definer functions', () => {
     expect(bodies).toHaveLength(2);
     for (const b of bodies) expect(b).not.toMatch(/_enc|display_name|\*/);
     expect(sql).toContain("c.status <> 'revoked'");
+  });
+});
+
+describe('integration routing definer policy (20261027140000)', () => {
+  const sql = readFileSync(
+    resolve(migrationsDir, INTEGRATION_ROUTING_POLICY_MIGRATION, 'migration.sql'),
+    'utf8',
+  );
+  it('is SELECT-only, TO meetops_migrator, live rows only, and grants meetops_app nothing', () => {
+    expect(sql).toMatch(
+      /CREATE POLICY definer_integration_routing_select ON "integration_connections"\s+FOR SELECT\s+TO meetops_migrator\s+USING \(status <> 'revoked'\);/,
+    );
+    expect(sql).not.toMatch(/WITH CHECK/);
+    expect(sql).not.toMatch(/TO meetops_app\b/);
+    expect(sql).not.toMatch(/DISABLE ROW LEVEL SECURITY|NO FORCE/i);
   });
 });
