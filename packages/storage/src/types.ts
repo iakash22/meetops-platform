@@ -23,7 +23,14 @@ export type UploadSpec = {
   metadata?: Record<string, string>;
 };
 
-export type PresignOptions = { ttlSeconds?: number };
+export type PresignOptions = {
+  ttlSeconds?: number;
+  /**
+   * GET only: the type the download is served as. Presigned GETs always force `Content-Disposition: attachment`; this
+   * picks an allowlisted `Content-Type` (anything else becomes application/octet-stream).
+   */
+  contentType?: string;
+};
 
 /** Client presign spec: checksumSha256 (standard base64 sha256 of the whole object) is REQUIRED. */
 export type PresignUploadSpec = UploadSpec & { checksumSha256: string };
