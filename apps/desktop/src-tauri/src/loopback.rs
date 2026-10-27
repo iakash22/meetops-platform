@@ -1,5 +1,6 @@
 //! One-shot loopback redirect listener (ADR-012 1.2): 127.0.0.1 only, OS-assigned port, one `GET /callback`,
-//! 5-minute timeout, static script-free reply, then closed.
+//! 5-minute overall timeout (checked on every connection), per-connection timeouts, at most 16 stray requests,
+//! static script-free reply, then closed. `auth::sign_in` allows one sign-in (one listener) at a time.
 
 use std::io::{BufRead, BufReader, Write};
 use std::net::{Ipv4Addr, TcpListener, TcpStream};
@@ -10,6 +11,10 @@ use url::Url;
 use crate::error::{CmdError, CmdResult};
 
 pub const TIMEOUT: Duration = Duration::from_secs(300);
+/// Per-connection read/write timeout, so one slow client can't hold the single-threaded listener.
+const PER_CONNECTION_TIMEOUT: Duration = Duration::from_secs(5);
+/// Stray requests (favicon, probes) tolerated before the listener gives up and closes.
+const MAX_CONNECTIONS: usize = 16;
 
 const PAGE: &str = "<!doctype html><meta charset=utf-8><title>MeetOps</title>\
 <body style=\"background:#0A0A0A;color:#F5F5F7;font:16px system-ui;display:grid;place-items:center;height:100vh\">\
@@ -43,17 +48,24 @@ impl Loopback {
     pub fn wait(self, timeout: Duration) -> CmdResult<Callback> {
         self.listener.set_nonblocking(true).map_err(|_| CmdError::internal())?;
         let deadline = Instant::now() + timeout;
+        let timed_out = || CmdError::new("UNAUTHENTICATED", "Sign-in timed out. Try again.");
+        let mut connections = 0usize;
         loop {
+            // Checked on every pass, so a stream of junk connections can't keep the listener alive past the deadline.
+            let Some(remaining) = deadline.checked_duration_since(Instant::now()).filter(|d| !d.is_zero()) else {
+                return Err(timed_out());
+            };
             match self.listener.accept() {
                 Ok((stream, _)) => {
-                    if let Some(cb) = handle(stream) {
-                        return Ok(cb);
+                    connections += 1;
+                    if let Some(cb) = handle(stream, remaining.min(PER_CONNECTION_TIMEOUT)) {
+                        return Ok(cb); // single use: `self` (and the socket) is dropped here
+                    }
+                    if connections >= MAX_CONNECTIONS {
+                        return Err(CmdError::new("UNAUTHENTICATED", "Sign-in was interrupted. Try again."));
                     }
                 }
                 Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                    if Instant::now() >= deadline {
-                        return Err(CmdError::new("UNAUTHENTICATED", "Sign-in timed out. Try again."));
-                    }
                     std::thread::sleep(Duration::from_millis(50));
                 }
                 Err(_) => return Err(CmdError::internal()),
@@ -62,11 +74,13 @@ impl Loopback {
     }
 }
 
-fn handle(mut stream: TcpStream) -> Option<Callback> {
+fn handle(mut stream: TcpStream, timeout: Duration) -> Option<Callback> {
     let _ = stream.set_nonblocking(false);
-    let _ = stream.set_read_timeout(Some(Duration::from_secs(5)));
+    let _ = stream.set_read_timeout(Some(timeout));
+    let _ = stream.set_write_timeout(Some(timeout));
     let mut line = String::new();
-    BufReader::new(&stream).read_line(&mut line).ok()?;
+    // Bounded read: at most 8 KiB for the request line.
+    std::io::Read::take(BufReader::new(&stream), 8192).read_line(&mut line).ok()?;
     let parsed = parse_request_line(&line);
     let (status, body) = if parsed.is_some() { ("200 OK", PAGE) } else { ("404 Not Found", "") };
     let _ = write!(
@@ -124,6 +138,22 @@ mod tests {
         let reply = client.join().unwrap();
         assert!(reply.starts_with("HTTP/1.1 200"));
         assert!(!reply.contains("<script"));
+    }
+
+    #[test]
+    fn junk_connections_cannot_outlive_the_deadline_or_the_cap() {
+        let lb = Loopback::bind().unwrap();
+        let port = lb.port;
+        std::thread::spawn(move || {
+            for _ in 0..(MAX_CONNECTIONS + 4) {
+                if let Ok(mut s) = TcpStream::connect((Ipv4Addr::LOCALHOST, port)) {
+                    let _ = s.write_all(b"GET /favicon.ico HTTP/1.1\r\n\r\n");
+                }
+            }
+        });
+        let started = Instant::now();
+        assert!(lb.wait(Duration::from_secs(10)).is_err());
+        assert!(started.elapsed() < Duration::from_secs(10));
     }
 
     #[test]
