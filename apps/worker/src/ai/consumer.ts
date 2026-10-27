@@ -1,5 +1,8 @@
 import { Value } from '@sinclair/typebox/value';
-import { TranscriptionJobPayload as TranscriptionJobSchema, type TranscriptionJobPayload } from '@meetops/contracts';
+import {
+  TranscriptionJobPayload as TranscriptionJobSchema,
+  type TranscriptionJobPayload,
+} from '@meetops/contracts';
 import {
   InvalidTranscriptionJobError,
   TranscriptionChunkHandler,
@@ -10,9 +13,18 @@ import {
   type AudioResolver,
   type ChunkGeometry,
 } from '@meetops/ai-core';
-import { TRANSCRIPTION_SYSTEM_ACTOR, type TranscriptionAuditEntry, type TranscriptionAuditSink } from './actor.js';
-import { RepositoryTranscriptStore, type RecordingScope, type TranscriptRepository } from './repository.js';
+import {
+  TRANSCRIPTION_SYSTEM_ACTOR,
+  type TranscriptionAuditEntry,
+  type TranscriptionAuditSink,
+} from './actor.js';
+import {
+  RepositoryTranscriptStore,
+  type RecordingScope,
+  type TranscriptRepository,
+} from './repository.js';
 import { chunkProgressEvent, type TranscriptionProgressSink } from './progress.js';
+import type { SummaryTrigger } from './summary-trigger.js';
 
 export type TranscriptionLogger = {
   info(obj: object, msg: string): void;
@@ -32,6 +44,8 @@ export type TranscriptionConsumerDeps = {
   audit: TranscriptionAuditSink;
   logger: TranscriptionLogger;
   geometry: ChunkGeometry;
+  /** Enqueues the meeting summary once the merged transcript is complete (`ready`). Deduped by job id. */
+  summaryTrigger?: SummaryTrigger | undefined;
   now?: () => Date;
 };
 
@@ -43,7 +57,8 @@ export type TranscriptionErrorCode =
   | 'org_mismatch'
   | 'provider_failed'
   | 'provider_retryable'
-  | 'provider_waiting';
+  | 'provider_waiting'
+  | 'summary_enqueue_failed';
 
 /** `retryable=false` maps to BullMQ `UnrecoverableError` in worker.ts (no further attempts). Messages carry no secrets. */
 export class TranscriptionJobError extends Error {
@@ -77,21 +92,41 @@ export async function processTranscriptionJob(
   deps: TranscriptionConsumerDeps,
   ctx: { jobId?: string | undefined } = {},
 ): Promise<TranscriptionJobResult> {
-  if (!Value.Check(TranscriptionJobSchema, data)) throw new TranscriptionJobError('invalid_payload', false);
+  if (!Value.Check(TranscriptionJobSchema, data))
+    throw new TranscriptionJobError('invalid_payload', false);
   const { organizationId, meetingId, recordingId } = data;
-  const log = { actorId: TRANSCRIPTION_SYSTEM_ACTOR.id, organizationId, meetingId, recordingId, chunkIndex: data.chunkIndex, jobId: ctx.jobId };
+  const log = {
+    actorId: TRANSCRIPTION_SYSTEM_ACTOR.id,
+    organizationId,
+    meetingId,
+    recordingId,
+    chunkIndex: data.chunkIndex,
+    jobId: ctx.jobId,
+  };
   const now = deps.now ?? (() => new Date());
-  const audit = async (e: Pick<TranscriptionAuditEntry, 'outcome' | 'errorCode' | 'provider' | 'revision'>) => {
+  const audit = async (
+    e: Pick<TranscriptionAuditEntry, 'outcome' | 'errorCode' | 'provider' | 'revision'>,
+  ) => {
     try {
       await deps.audit.record({
-        actor: TRANSCRIPTION_SYSTEM_ACTOR, organizationId, action: 'transcription.chunk', meetingId, recordingId,
-        chunkIndex: data.chunkIndex, jobId: ctx.jobId, at: now().toISOString(), ...e,
+        actor: TRANSCRIPTION_SYSTEM_ACTOR,
+        organizationId,
+        action: 'transcription.chunk',
+        meetingId,
+        recordingId,
+        chunkIndex: data.chunkIndex,
+        jobId: ctx.jobId,
+        at: now().toISOString(),
+        ...e,
       });
     } catch {
       deps.logger.warn({ ...log }, 'transcription audit write failed');
     }
   };
-  const reject = async (code: TranscriptionErrorCode, level: 'warn' | 'error' = 'warn'): Promise<never> => {
+  const reject = async (
+    code: TranscriptionErrorCode,
+    level: 'warn' | 'error' = 'warn',
+  ): Promise<never> => {
     deps.logger[level]({ ...log, errorCode: code }, 'transcription job rejected');
     await audit({ outcome: 'rejected', errorCode: code });
     throw new TranscriptionJobError(code, false);
@@ -107,9 +142,13 @@ export async function processTranscriptionJob(
   if (scope.meeting.organizationId !== organizationId) return reject('org_mismatch', 'error');
   const recording: RecordingScope | undefined = scope.recording;
   if (!recording) return reject('recording_not_found');
-  if (recording.organizationId !== organizationId || recording.meetingId !== meetingId) return reject('org_mismatch', 'error');
+  if (recording.organizationId !== organizationId || recording.meetingId !== meetingId)
+    return reject('org_mismatch', 'error');
 
-  if (data.chunkIndex === undefined || data.idempotencyKey !== transcriptionIdempotencyKey(recordingId, data.chunkIndex)) {
+  if (
+    data.chunkIndex === undefined ||
+    data.idempotencyKey !== transcriptionIdempotencyKey(recordingId, data.chunkIndex)
+  ) {
     return reject('idempotency_key_mismatch');
   }
   let chunkJob;
@@ -135,15 +174,38 @@ export async function processTranscriptionJob(
     // Provider-level codes only (AttemptError has no messages/keys).
     const errors = out.errors.map((e) => `${e.provider}:${e.code}`);
     const code: TranscriptionErrorCode =
-      out.status === 'failed' ? 'provider_failed' : out.status === 'waiting' ? 'provider_waiting' : 'provider_retryable';
+      out.status === 'failed'
+        ? 'provider_failed'
+        : out.status === 'waiting'
+          ? 'provider_waiting'
+          : 'provider_retryable';
     deps.logger.warn({ ...log, errorCode: code, errors }, 'transcription attempt failed');
     await audit({ outcome: 'failed', errorCode: code, provider: out.errors[0]?.provider });
     throw new TranscriptionJobError(code, out.status !== 'failed', out.errors);
   }
 
-  const chunks = await deps.repository.withOrgContext(organizationId, (repo) => repo.listChunkResults(meetingId, recordingId));
+  const chunks = await deps.repository.withOrgContext(organizationId, (repo) =>
+    repo.listChunkResults(meetingId, recordingId),
+  );
+  // Also on duplicates: covers a crash between the revision write and the enqueue. The job id dedupes.
+  if (out.revision?.complete === true && deps.summaryTrigger) {
+    try {
+      await deps.summaryTrigger.transcriptReady({
+        organizationId,
+        meetingId,
+        transcriptRevision: out.revision.revision,
+      });
+    } catch {
+      deps.logger.warn({ ...log, errorCode: 'summary_enqueue_failed' }, 'summary enqueue failed');
+      throw new TranscriptionJobError('summary_enqueue_failed', true);
+    }
+  }
   const provider = chunks.find((c) => c.chunkIndex === chunkJob.chunk.index)?.provider;
-  await audit({ outcome: out.duplicate ? 'duplicate' : 'succeeded', provider, revision: out.revision?.revision });
+  await audit({
+    outcome: out.duplicate ? 'duplicate' : 'succeeded',
+    provider,
+    revision: out.revision?.revision,
+  });
   try {
     deps.realtime.transcriptionProgress(
       chunkProgressEvent({
@@ -161,7 +223,10 @@ export async function processTranscriptionJob(
     deps.logger.warn({ ...log }, 'transcription progress publish failed');
   }
 
-  deps.logger.info({ ...log, duplicate: out.duplicate, revision: out.revision?.revision }, 'transcription chunk done');
+  deps.logger.info(
+    { ...log, duplicate: out.duplicate, revision: out.revision?.revision },
+    'transcription chunk done',
+  );
   return {
     recordingId,
     chunkIndex: chunkJob.chunk.index,
