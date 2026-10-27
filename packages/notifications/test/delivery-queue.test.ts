@@ -32,8 +32,9 @@ describe('notification delivery producer', () => {
 
   it('refuses a job without an organization context', async () => {
     const add = vi.fn();
-    const p = createNotificationDeliveryProducer({ add, close: async () => {} } as never);
-    const { organizationId: _o, ...noOrg } = job;
+    const p = createNotificationDeliveryProducer({ add, close: async () => {} });
+    const noOrg: Partial<typeof job> = { ...job };
+    delete noOrg.organizationId;
     await expect(p.enqueue(noOrg as never)).rejects.toThrow(InvalidNotificationJobError);
     expect(add).not.toHaveBeenCalled();
   });

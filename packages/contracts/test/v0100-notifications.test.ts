@@ -67,7 +67,8 @@ describe('v0.10.0 notifications', () => {
   it('delivery jobs require an organization context', () => {
     const job = { jobVersion: 1, kind: 'deliver_notification', organizationId: ID, userId: ID, notificationId: ID, channel: 'web_push', deliveryKey: `${ID}:web_push` };
     expect(Value.Check(NotificationDeliveryJobPayload, job)).toBe(true);
-    const { organizationId: _o, ...noOrg } = job;
+    const noOrg: Partial<typeof job> = { ...job };
+    delete noOrg.organizationId;
     expect(Value.Check(NotificationDeliveryJobPayload, noOrg)).toBe(false);
   });
 });

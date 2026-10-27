@@ -151,7 +151,7 @@ const toRecord = (r: {
   ...r,
   data:
     r.data && typeof r.data === 'object' && !Array.isArray(r.data)
-      ? (r.data as Record<string, unknown>)
+      ? (r.data)
       : {},
 });
 
@@ -191,7 +191,7 @@ export function createNotificationRepository(options: NotificationRepositoryOpti
             dedupeKey: input.dedupeKey,
             subjectType: input.subjectType ?? null,
             subjectId: input.subjectId ?? null,
-            data: (input.data ?? {}) as Prisma.InputJsonObject,
+            data: (input.data ?? {}),
           },
           update: {},
           select: NOTIFICATION_SELECT,
