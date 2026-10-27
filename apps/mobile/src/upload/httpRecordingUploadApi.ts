@@ -1,4 +1,5 @@
 import { createApiClient } from '../api/client';
+import { fillPath, RECORDING_SESSION_ROUTES as R } from '../api/paths';
 import type { RecordingUploadApi } from './types';
 
 export interface HttpRecordingUploadApiOptions {
@@ -19,16 +20,13 @@ export function createHttpRecordingUploadApi({
 }: HttpRecordingUploadApiOptions): RecordingUploadApi {
   const { request } = createApiClient({ baseUrl, getAccessToken, fetchImpl });
   const doFetch = fetchImpl ?? fetch;
-  const sid = encodeURIComponent;
   return {
     init: (organizationId, body) =>
-      request('POST', `/orgs/${sid(organizationId)}/recording-sessions`, body, 201),
-    chunkUrl: (sessionId, body) =>
-      request('POST', `/recording-sessions/${sid(sessionId)}/chunks`, body),
-    complete: (sessionId, body) =>
-      request('POST', `/recording-sessions/${sid(sessionId)}/complete`, body),
+      request('POST', fillPath(R.init, { organizationId }), body, 201),
+    chunkUrl: (sessionId, body) => request('POST', fillPath(R.chunks, { sessionId }), body),
+    complete: (sessionId, body) => request('POST', fillPath(R.complete, { sessionId }), body),
     abort: (sessionId, reason) =>
-      request('POST', `/recording-sessions/${sid(sessionId)}/abort`, { reason }, 204),
+      request('POST', fillPath(R.abort, { sessionId }), { reason }, 204),
     async put(upload, body) {
       if (!upload.url.startsWith('https://')) throw new Error('Refusing a non-TLS upload URL.');
       const headers = { ...upload.headers } as Record<string, string>;

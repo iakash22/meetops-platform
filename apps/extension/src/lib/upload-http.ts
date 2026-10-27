@@ -33,19 +33,18 @@ import {
   type RetryDecision,
   type RetryPolicy,
 } from './retry.js';
+import { fillPath, RECORDING_SESSION_ROUTES } from './api-paths.js';
 import { hexToBase64, sha256Hex, type StorageTransport, type UploadClient } from './upload.js';
 
 /** Typed fetch layer for API routes: a path on the API origin plus init (AuthService.apiFetch in production). */
 export type ApiFetch = (path: string, init: RequestInit) => Promise<Response>;
 
-const seg = (id: string) => encodeURIComponent(id);
-
-/** Recording-session routes, as documented in contracts `api/recording-sessions.ts`. */
+/** Recording-session routes (#197/#206), resolved from the API's route templates. */
 export const RECORDING_SESSION_PATHS = {
-  init: (organizationId: string) => `/orgs/${seg(organizationId)}/recording-sessions`,
-  chunks: (sessionId: string) => `/recording-sessions/${seg(sessionId)}/chunks`,
-  complete: (sessionId: string) => `/recording-sessions/${seg(sessionId)}/complete`,
-  abort: (sessionId: string) => `/recording-sessions/${seg(sessionId)}/abort`,
+  init: (organizationId: string) => fillPath(RECORDING_SESSION_ROUTES.init, { organizationId }),
+  chunks: (sessionId: string) => fillPath(RECORDING_SESSION_ROUTES.chunks, { sessionId }),
+  complete: (sessionId: string) => fillPath(RECORDING_SESSION_ROUTES.complete, { sessionId }),
+  abort: (sessionId: string) => fillPath(RECORDING_SESSION_ROUTES.abort, { sessionId }),
 } as const;
 
 export type UploadOp =
