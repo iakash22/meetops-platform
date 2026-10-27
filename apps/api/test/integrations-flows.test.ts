@@ -1,7 +1,11 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { createHmac, generateKeyPairSync, randomUUID } from 'node:crypto';
 import { Value } from '@sinclair/typebox/value';
-import { ConnectIntegrationResponse, IntegrationIssue } from '@meetops/contracts';
+import {
+  ConnectIntegrationResponse,
+  IntegrationIssue,
+  IntegrationProviderList,
+} from '@meetops/contracts';
 import { InMemoryAuditLog } from '../src/modules/auth/domain/audit.js';
 import { InMemoryIntegrations } from '../src/modules/integrations/in-memory.repository.js';
 import {
@@ -623,6 +627,55 @@ describe('Phase 5 integration flows', () => {
         target: 'acme/app',
       });
       expect(r.statusCode).toBe(403);
+    });
+  });
+
+  describe('providers catalogue (v0.12.0)', () => {
+    it('lists github and jira as configured and not connected, then jira active after connect', async () => {
+      const { c, org } = await owner();
+      const before = await c.get(`/orgs/${org}/integrations/providers`);
+      expect(before.statusCode).toBe(200);
+      expect(Value.Check(IntegrationProviderList, before.json())).toBe(true);
+      expect(before.json()).toEqual({
+        items: [
+          { provider: 'github', configured: true, connectionStatus: 'not_connected' },
+          { provider: 'jira', configured: true, connectionStatus: 'not_connected' },
+        ],
+      });
+      const res = await c.post(`/orgs/${org}/integrations/connect`, { provider: 'jira' });
+      const state = stateOf(res.json<{ authorizeUrl: string }>().authorizeUrl);
+      expect(
+        (await c.get(`/integrations/jira/callback?state=${state}&code=abc123`)).statusCode,
+      ).toBe(302);
+      const after = await c.get(`/orgs/${org}/integrations/providers`);
+      const jira = after.json<IntegrationProviderList>().items.find((i) => i.provider === 'jira')!;
+      expect(jira.connectionStatus).toBe('active');
+      expect(jira.integration?.displayName).toBe('acme.atlassian.net');
+      expect(after.body).not.toMatch(/jira-access|jira-refresh|secret/i);
+    });
+
+    it('reports configured=false when the deployment has no provider app', async () => {
+      await app.close();
+      app = await buildApp({
+        integrations: repo,
+        audit,
+        integrationsRuntime: devIntegrationsRuntime({ apiOrigin: API }),
+      } as Partial<ModuleDeps>);
+      const { c, org } = await owner();
+      const r = await c.get(`/orgs/${org}/integrations/providers`);
+      expect(r.json<IntegrationProviderList>().items.every((i) => !i.configured)).toBe(true);
+    });
+
+    it('requires a session and org membership', async () => {
+      const { org } = await owner();
+      expect(
+        (await app.inject({ method: 'GET', url: `/orgs/${org}/integrations/providers` }))
+          .statusCode,
+      ).toBe(401);
+      const other = await signupAndLogin(app, 'stranger@example.com');
+      expect([403, 404]).toContain(
+        (await other.get(`/orgs/${org}/integrations/providers`)).statusCode,
+      );
     });
   });
 });

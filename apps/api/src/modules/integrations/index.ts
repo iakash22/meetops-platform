@@ -10,6 +10,8 @@ import {
   IntegrationCallbackQuery,
   IntegrationIssue,
   IntegrationList,
+  IntegrationProviderList,
+  type IntegrationProviderStatus,
   PushTaskIssueParams,
   PushTaskIssueRequest,
   WebhookAcceptedResponse,
@@ -108,6 +110,37 @@ export default async function integrationsModule(
         const c = await callerFor(request, request.params.organizationId);
         organizations.authorize(c.ctx, 'read', 'Organization');
         return { items: (await repo.list(c.ctx.organizationId)).slice(0, 50) };
+      },
+    );
+
+    s.get<{ Params: { organizationId: string } }>(
+      INTEGRATION_PATHS.providers,
+      {
+        schema: {
+          tags: ['integrations'],
+          summary:
+            "Supported providers, whether each is configured, and this org's connection status",
+          params: OrgParams,
+          response: { 200: IntegrationProviderList, ...directoryErrors },
+        },
+      },
+      async (request) => {
+        const c = await callerFor(request, request.params.organizationId);
+        organizations.authorize(c.ctx, 'read', 'Organization');
+        const rows = await repo.list(c.ctx.organizationId);
+        const items: IntegrationProviderStatus[] = (['github', 'jira'] as const).map((provider) => {
+          const mine = rows
+            .filter((r) => r.provider === provider)
+            .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+          const pick = mine.find((r) => r.status !== 'revoked') ?? mine[0];
+          return {
+            provider,
+            configured: Boolean(runtime?.[provider]),
+            connectionStatus: pick ? pick.status : 'not_connected',
+            ...(pick ? { integration: pick } : {}),
+          };
+        });
+        return { items };
       },
     );
 
