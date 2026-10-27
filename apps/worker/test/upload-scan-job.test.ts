@@ -23,8 +23,8 @@ const probe: ProbeResult = {
 const job = (over: Record<string, unknown> = {}) => ({
   kind: 'process_upload',
   organizationId: ORG,
-  subjectType: 'upload',
-  subjectId: ID,
+  jobVersion: 1,
+  uploadId: ID,
   consentAttestationId: CONSENT,
   meetingId: MEET,
   ...over,
@@ -78,7 +78,7 @@ describe('processUploadScan (sets scanStatus from the #269 content check)', () =
 
   it('skips invalid jobs, other-org or unknown uploads, and already-decided rows', async () => {
     const a = deps(WEBM);
-    expect(await processUploadScan(job({ subjectType: 'recording_session' }), a.d)).toEqual({
+    expect(await processUploadScan(job({ kind: 'process_recording' }), a.d)).toEqual({
       status: 'skipped',
       reason: 'invalid_job',
     });

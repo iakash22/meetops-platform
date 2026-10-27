@@ -351,6 +351,28 @@ describe('processRecording (mocked storage, queue, emitter)', () => {
     expect(readdirSync(tmpRoot)).toEqual([]);
   });
 
+  it('writes the meeting.processing_failed outbox row only on the final attempt', async () => {
+    const { deps } = makeDeps({}, tmpRoot);
+    const rows: unknown[] = [];
+    deps.failureOutbox = { recordProcessingFailed: async (p) => void rows.push(p) };
+    deps.media.normalizeToWav = vi.fn(async () => {
+      throw new Error('ffmpeg exited 1');
+    });
+    await expect(processRecording(payload, deps, { isFinalAttempt: false })).rejects.toThrow();
+    expect(rows).toEqual([]);
+    await expect(processRecording(payload, deps, { isFinalAttempt: true })).rejects.toThrow();
+    expect(rows).toEqual([
+      {
+        organizationId: ORG,
+        meetingId: MEET,
+        subjectType: 'recording',
+        subjectId: REC,
+        errorCode: 'internal_error',
+        failedAt: '2026-10-21T00:00:00.000Z',
+      },
+    ]);
+  });
+
   it('persists the STT chunk count before enqueueing transcription jobs', async () => {
     const { deps, jobs } = makeDeps({}, tmpRoot);
     const order: string[] = [];

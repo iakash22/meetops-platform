@@ -17,6 +17,7 @@ import type {
   TranscriptionStage,
 } from '@meetops/contracts';
 import { Value } from '@sinclair/typebox/value';
+import type { MeetingProcessingFailedPayload } from '@meetops/contracts';
 import type { AllowedDemuxer, AudioChunk, ProbeResult, Waveform } from '@meetops/media-core';
 import { assertProbedFormat, demuxerForExt } from '@meetops/media-core';
 import {
@@ -177,6 +178,13 @@ export type MediaProcessorDeps = {
   media: MediaOps;
   transcriptionQueue: TranscriptionEnqueuer;
   realtime: RealtimePublisher;
+  /**
+   * ADR-013 outbox: on the final failed attempt a `meeting.processing_failed` row is written (in addition to the
+   * realtime emit, which is best-effort). Optional so existing callers keep working; startMediaWorker always sets it.
+   */
+  failureOutbox?: {
+    recordProcessingFailed(p: MeetingProcessingFailedPayload): Promise<void>;
+  };
   logger: MinimalLogger;
   recordings?: RecordingChunkCountRepository;
   chunkFileObjects?: ChunkFileObjectRepository;
@@ -519,12 +527,28 @@ export async function processRecording(
     const errorCode = errorCodeOf(err);
     deps.logger.error({ ...log, errorCode, finalAttempt: ctx.isFinalAttempt }, 'media job failed');
     if (ctx.isFinalAttempt) {
+      const failedAt = now().toISOString();
+      await deps.failureOutbox
+        ?.recordProcessingFailed({
+          organizationId,
+          meetingId,
+          subjectType: 'recording',
+          subjectId: recordingId,
+          errorCode,
+          failedAt,
+        })
+        .catch((e: unknown) =>
+          deps.logger.error(
+            { ...log, outboxError: errorCodeOf(e) },
+            'processing_failed outbox write failed',
+          ),
+        );
       deps.realtime.meetingStatus({
         organizationId,
         meetingId,
         status: 'failed',
         errorCode,
-        at: now().toISOString(),
+        at: failedAt,
       });
       processing('failed', { errorCode });
     }

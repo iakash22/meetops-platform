@@ -1,5 +1,5 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
-import { Queue, Worker, type Job } from 'bullmq';
+import { Queue, UnrecoverableError, Worker, type Job } from 'bullmq';
 import { Redis } from 'ioredis';
 import { chunkAudio, computeWaveform, normalizeToWav, probeMedia } from '@meetops/media-core';
 import { disconnectPrismaClient } from '@meetops/database';
@@ -10,7 +10,7 @@ import {
   StorageAccessError,
   type AuthorizeTarget,
 } from '@meetops/storage';
-import { QUEUE_NAMES, type SttProviderId } from '@meetops/contracts';
+import { MEDIA_JOB_NAMES, QUEUE_NAMES, type SttProviderId } from '@meetops/contracts';
 import { logger as baseLogger } from '../logger.js';
 import {
   DEFAULT_MEDIA_LIMITS,
@@ -29,12 +29,12 @@ import {
   type MediaPersistence,
 } from './persistence.js';
 import { createRealtimePublisher, createRedisEmitter } from './realtime.js';
+import { assembleRecordingSession, type SessionAssemblyDeps } from './assemble-session.js';
 import {
-  MEDIA_QUEUE,
-  type MediaJobPayload,
-  type MediaProcessingResult,
-  type TranscriptionJobPayload,
-} from './types.js';
+  createProcessingFailureOutbox,
+  createSessionAssemblyStore,
+} from './session-assembly-store.js';
+import { MEDIA_QUEUE, type MediaJobPayload, type TranscriptionJobPayload } from './types.js';
 
 export type MediaWorkerConfig = {
   redisUrl: string;
@@ -178,24 +178,64 @@ export function startMediaWorker(cfg: MediaWorkerConfig = loadMediaWorkerConfig(
     logger,
     persistence,
   });
-  const worker = new Worker<MediaJobPayload, MediaProcessingResult>(
+  const failureOutbox = createProcessingFailureOutbox();
+  const mediaQueue = new Queue<MediaJobPayload>(MEDIA_QUEUE, { connection: conn() });
+  const assemblyDeps: SessionAssemblyDeps = {
+    store: createSessionAssemblyStore({
+      bucket: storageConfig.bucket,
+      provider: storageConfig.provider,
+    }),
+    storage,
+    mediaQueue: { add: (name, data, opts) => mediaQueue.add(name, data, opts) },
+    realtime: deps.realtime,
+    logger,
+  };
+  const worker = new Worker<unknown, unknown>(
     MEDIA_QUEUE,
-    (job: Job<MediaJobPayload>) =>
-      runInJobScope(
-        { organizationId: job.data.organizationId, meetingId: job.data.meetingId },
-        () =>
-          processRecording(job.data, deps, {
-            jobId: job.id,
-            isFinalAttempt: job.attemptsMade + 1 >= (job.opts.attempts ?? 1),
-          }),
-      ),
+    (job: Job<unknown>) => dispatchMediaJob(job, { ...deps, failureOutbox }, assemblyDeps),
     { connection: conn(), concurrency: cfg.concurrency },
   );
   worker.on('failed', (job) => logger.warn({ jobId: job?.id }, 'media job attempt failed'));
   const close = async () => {
-    await Promise.allSettled([worker.close(), transcriptionQueue.close()]);
+    await Promise.allSettled([worker.close(), transcriptionQueue.close(), mediaQueue.close()]);
     emitterRedis.disconnect();
     await disconnectPrismaClient().catch(() => undefined);
   };
   return { worker, close };
+}
+
+const scopeOf = (data: unknown) => {
+  const d = (data ?? {}) as { organizationId?: unknown; meetingId?: unknown };
+  const str = (v: unknown) => (typeof v === 'string' ? v : '');
+  return { organizationId: str(d.organizationId), meetingId: str(d.meetingId) };
+};
+
+/**
+ * Routes a MEDIA_QUEUE job by name (= payload kind, ADR-014). Each handler validates its payload against contracts and
+ * runs inside the org+meeting job scope the storage authorize hook checks.
+ * - process_recording: normalize, chunk, transcribe.
+ * - assemble_recording_session: concatenate session chunks, then enqueue process_recording.
+ * - process_upload: not wired here yet (upload keys are not meeting-scoped); fails without retry so the upload stays
+ *   scanStatus=pending (fail closed).
+ */
+export async function dispatchMediaJob(
+  job: Pick<Job<unknown>, 'name' | 'data' | 'id' | 'attemptsMade' | 'opts'>,
+  deps: MediaProcessorDeps,
+  assembly: SessionAssemblyDeps,
+): Promise<unknown> {
+  const isFinalAttempt = job.attemptsMade + 1 >= (job.opts.attempts ?? 1);
+  switch (job.name) {
+    case MEDIA_JOB_NAMES.processRecording:
+      return runInJobScope(scopeOf(job.data), () =>
+        processRecording(job.data as MediaJobPayload, deps, { jobId: job.id, isFinalAttempt }),
+      );
+    case MEDIA_JOB_NAMES.assembleRecordingSession:
+      return runInJobScope(scopeOf(job.data), () =>
+        assembleRecordingSession(job.data, assembly, { isFinalAttempt }),
+      );
+    case MEDIA_JOB_NAMES.processUpload:
+      throw new UnrecoverableError('process_upload is not wired in the media worker yet');
+    default:
+      throw new UnrecoverableError('Unknown media job');
+  }
 }

@@ -7,3 +7,5 @@ export * from './enqueue.js';
 export * from './persistence.js';
 export * from './upload-scan.js';
 export * from './upload-scan-job.js';
+export * from './assemble-session.js';
+export * from './session-assembly-store.js';

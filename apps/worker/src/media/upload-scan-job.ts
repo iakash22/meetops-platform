@@ -1,6 +1,6 @@
-import { Type, type Static } from '@sinclair/typebox';
+import type { Static } from '@sinclair/typebox';
 import { Value } from '@sinclair/typebox/value';
-import type { FileObjectScanStatus } from '@meetops/contracts';
+import { UploadScanJobPayload, type FileObjectScanStatus } from '@meetops/contracts';
 import {
   scanUploadObject,
   type UploadObjectSource,
@@ -10,23 +10,8 @@ import {
 } from './upload-scan.js';
 import type { UploadStatusEvent } from './types.js';
 
-const Uuid = Type.String({ format: 'uuid' });
-
-/**
- * The job the API enqueues on upload complete (`apps/api` `MediaProcessingJob`, kind `process_upload`). Mirrored here
- * until it moves to @meetops/contracts: the contracts `MediaJobPayload` covers recordings only.
- */
-export const UploadScanJob = Type.Object(
-  {
-    kind: Type.Literal('process_upload'),
-    organizationId: Uuid,
-    subjectType: Type.Literal('upload'),
-    subjectId: Uuid,
-    consentAttestationId: Uuid,
-    meetingId: Type.Optional(Uuid),
-  },
-  { additionalProperties: false },
-);
+/** The job the API enqueues on upload complete: contracts `UploadScanJobPayload` (kind `process_upload`). */
+export const UploadScanJob = UploadScanJobPayload;
 export type UploadScanJob = Static<typeof UploadScanJob>;
 
 /** The FileObject fields the scan needs, read under the job's org (forced RLS). */
@@ -73,7 +58,7 @@ export async function processUploadScan(
   deps: UploadScanDeps,
 ): Promise<UploadScanOutcome> {
   if (!Value.Check(UploadScanJob, job)) return { status: 'skipped', reason: 'invalid_job' };
-  const { organizationId, subjectId, meetingId } = job;
+  const { organizationId, uploadId: subjectId, meetingId } = job;
   const f = await deps.findUpload(organizationId, subjectId);
   if (!f) return { status: 'skipped', reason: 'not_found' };
   if (f.scanStatus !== null && f.scanStatus !== 'pending')
