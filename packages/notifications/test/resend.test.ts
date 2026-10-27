@@ -7,6 +7,7 @@ import {
   ResendSendError,
   EmailConfigError,
   type FetchLike,
+  type ResendEmailConfig,
 } from '../src';
 
 const KEY = 're_test_key_do_not_log';
@@ -47,13 +48,11 @@ describe('resend config', () => {
 });
 
 describe('ResendEmailService', () => {
-  const cfg = loadEmailConfig(env) as Parameters<
-    typeof ResendEmailService.prototype.constructor
-  >[0];
+  const cfg = loadEmailConfig(env) as ResendEmailConfig;
 
   it('POSTs /emails with bearer auth, inline attachments and returns the id', async () => {
     const f = mockFetch(200, { id: 'msg_1' });
-    const svc = new ResendEmailService(cfg as never, f);
+    const svc = new ResendEmailService(cfg, f);
     const r = await svc.send({
       to: { email: 'u@example.test', name: 'U' },
       subject: 'Hi',
@@ -77,7 +76,7 @@ describe('ResendEmailService', () => {
     const [url, init] = f.mock.calls[0]!;
     expect(url).toBe('https://api.resend.com/emails');
     expect(init.headers.Authorization).toBe(`Bearer ${KEY}`);
-    const body = JSON.parse(init.body!);
+    const body = JSON.parse(String(init.body)) as Record<string, unknown>;
     expect(body).toMatchObject({
       from: 'MeetOps <no-reply@example.test>',
       to: ['"U" <u@example.test>'],
@@ -96,7 +95,7 @@ describe('ResendEmailService', () => {
     'status %i -> ResendSendError retryable=%s, no key or body in message',
     async (status, retryable) => {
       const svc = new ResendEmailService(
-        cfg as never,
+        cfg,
         mockFetch(status, { name: 'validation_error', message: 'secret body' }),
       );
       const err = await svc
@@ -115,7 +114,7 @@ describe('ResendEmailService', () => {
     const f = vi.fn<FetchLike>(async () => {
       throw new Error(`connect failed ${KEY}`);
     });
-    const err = await new ResendEmailService(cfg as never, f)
+    const err = await new ResendEmailService(cfg, f)
       .send({ to: 'u@example.test', subject: 's', text: 't' })
       .catch((e) => e);
     expect(err).toBeInstanceOf(ResendSendError);
@@ -127,6 +126,6 @@ describe('ResendEmailService', () => {
     const f = vi.fn<FetchLike>(async () => {
       throw new Error('down');
     });
-    await expect(new ResendEmailService(cfg as never, f).verify()).resolves.toBe(false);
+    await expect(new ResendEmailService(cfg, f).verify()).resolves.toBe(false);
   });
 });
