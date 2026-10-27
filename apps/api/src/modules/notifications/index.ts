@@ -53,8 +53,10 @@ export type NotificationsModuleDeps = ModuleDeps & {
 export function devPushTokenCipher(): PushTokenCipher {
   const c = new TokenCipher(new LocalKeyProvider({ dev: randomBytes(32) }, 'dev'));
   return {
-    encrypt: (p, x) => c.encrypt(p, { organizationId: x.organizationId, integrationId: x.deviceId }),
-    decrypt: (e, x) => c.decrypt(e, { organizationId: x.organizationId, integrationId: x.deviceId }),
+    encrypt: (p, x) =>
+      c.encrypt(p, { organizationId: x.organizationId, integrationId: x.deviceId }),
+    decrypt: (e, x) =>
+      c.decrypt(e, { organizationId: x.organizationId, integrationId: x.deviceId }),
   };
 }
 
@@ -73,12 +75,13 @@ export function selectNotificationsRepository(
   return new InMemoryNotifications();
 }
 
-const escapeAttr = (s: string) =>
-  s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
+const escapeAttr = (s: string) => s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 
 /** GET never changes state (link scanners); the form POSTs back to the same URL. */
 export function unsubscribeConfirmPage(token: string): string {
-  const action = `${NOTIFICATION_PATHS.unsubscribe}?token=${encodeURIComponent(token)}`;
+  // Query-only relative action: posts back to the URL the page was served from, so it works behind any path
+  // prefix (e.g. the web origin's /api proxy) without knowing the public API base (PR #263 L-2).
+  const action = `?token=${encodeURIComponent(token)}`;
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="robots" content="noindex">
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>Unsubscribe - MeetOps</title></head>
 <body><main><h1>Unsubscribe from these emails?</h1><p>You can change this later in your notification settings.</p>
@@ -93,7 +96,12 @@ export function unsubscribeConfirmPage(token: string): string {
  */
 export default async function notificationsModule(
   app: FastifyInstance,
-  opts: { auth: AuthService; organizations: OrganizationService; deps: NotificationsModuleDeps; repo?: NotificationsRepository },
+  opts: {
+    auth: AuthService;
+    organizations: OrganizationService;
+    deps: NotificationsModuleDeps;
+    repo?: NotificationsRepository;
+  },
 ) {
   const { auth, organizations, deps } = opts;
   const repo = opts.repo ?? selectNotificationsRepository(deps);
@@ -111,8 +119,15 @@ export default async function notificationsModule(
     subject: 'Notification' | 'NotificationPreference' | 'PushDevice',
     session?: Awaited<ReturnType<typeof g.requireSession>>,
   ) => {
-    const c = await access.caller(session ?? (await g.requireSession(request)), organizationId, requestMeta(request));
-    const target = orgSubject(subject, { organizationId: c.ctx.organizationId, createdById: c.ctx.userId });
+    const c = await access.caller(
+      session ?? (await g.requireSession(request)),
+      organizationId,
+      requestMeta(request),
+    );
+    const target = orgSubject(subject, {
+      organizationId: c.ctx.organizationId,
+      createdById: c.ctx.userId,
+    });
     if (defineAbilityFor(c.ctx).cannot(action, target)) throw new ForbiddenError();
     return c;
   };
@@ -144,7 +159,8 @@ export default async function notificationsModule(
         schema: {
           tags: ['notifications'],
           summary: 'Mark one of the caller notifications read',
-          description: 'Idempotent: `updated` is 0 when it was already read or is not the caller notification.',
+          description:
+            'Idempotent: `updated` is 0 when it was already read or is not the caller notification.',
           params: NotificationParams,
           response: { 200: MarkNotificationsReadResponse, ...directoryErrors },
         },
@@ -152,7 +168,9 @@ export default async function notificationsModule(
       async (request) => {
         const c = await self(request, request.params.organizationId, 'update', 'Notification');
         return {
-          updated: await repo.markRead(c.ctx.organizationId, c.ctx.userId, [request.params.notificationId]),
+          updated: await repo.markRead(c.ctx.organizationId, c.ctx.userId, [
+            request.params.notificationId,
+          ]),
         };
       },
     );
@@ -184,7 +202,12 @@ export default async function notificationsModule(
         },
       },
       async (request) => {
-        const c = await self(request, request.params.organizationId, 'read', 'NotificationPreference');
+        const c = await self(
+          request,
+          request.params.organizationId,
+          'read',
+          'NotificationPreference',
+        );
         return { items: await repo.getPreferences(c.ctx.organizationId, c.ctx.userId) };
       },
     );
@@ -201,8 +224,15 @@ export default async function notificationsModule(
         },
       },
       async (request) => {
-        const c = await self(request, request.params.organizationId, 'update', 'NotificationPreference');
-        return { items: await repo.setPreferences(c.ctx.organizationId, c.ctx.userId, request.body.items) };
+        const c = await self(
+          request,
+          request.params.organizationId,
+          'update',
+          'NotificationPreference',
+        );
+        return {
+          items: await repo.setPreferences(c.ctx.organizationId, c.ctx.userId, request.body.items),
+        };
       },
     );
 
@@ -265,7 +295,9 @@ export default async function notificationsModule(
   await app.register(async (s) => {
     registerDomainErrorHandler(s);
     // RFC 8058 one-click POSTs `List-Unsubscribe=One-Click` as a form; the body is ignored, the token is in the URL.
-    s.addContentTypeParser('application/x-www-form-urlencoded', (_req, _body, done) => done(null, {}));
+    s.addContentTypeParser('application/x-www-form-urlencoded', (_req, _body, done) =>
+      done(null, {}),
+    );
     const verify = (token: string) => {
       if (!linkSecret) throw new NotificationsUnavailableError('Email links');
       return verifyEmailLinkToken(linkSecret, token, 'unsubscribe');
@@ -288,8 +320,15 @@ export default async function notificationsModule(
           .header('content-type', 'text/html; charset=utf-8')
           .header('cache-control', 'no-store')
           .header('referrer-policy', 'no-referrer')
-          .header('content-security-policy', "default-src 'none'; form-action 'self'; frame-ancestors 'none'")
-          .send(ok ? unsubscribeConfirmPage(request.query.token) : '<!doctype html><p>This link is invalid or has expired.</p>');
+          .header(
+            'content-security-policy',
+            "default-src 'none'; form-action 'self'; frame-ancestors 'none'",
+          )
+          .send(
+            ok
+              ? unsubscribeConfirmPage(request.query.token)
+              : '<!doctype html><p>This link is invalid or has expired.</p>',
+          );
       },
     );
 
@@ -307,7 +346,14 @@ export default async function notificationsModule(
         const claims = verify(request.query.token);
         if (!claims) throw new UnsubscribeLinkInvalidError();
         await repo.setPreferences(claims.organizationId, claims.userId, [
-          { type: claims.category === '*' ? '*' : claims.category.replace(/[^a-z0-9_.-]/g, '-').slice(0, 64), channel: 'email', enabled: false },
+          {
+            type:
+              claims.category === '*'
+                ? '*'
+                : claims.category.replace(/[^a-z0-9_.-]/g, '-').slice(0, 64),
+            channel: 'email',
+            enabled: false,
+          },
         ]);
         return { unsubscribed: true as const };
       },

@@ -1,6 +1,11 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { Value } from '@sinclair/typebox/value';
-import { NotificationList, NotificationPreferences, PushDevice, type Role } from '@meetops/contracts';
+import {
+  NotificationList,
+  NotificationPreferences,
+  PushDevice,
+  type Role,
+} from '@meetops/contracts';
 import { signEmailLinkToken } from '@meetops/notifications';
 import { InMemoryNotifications } from '../src/modules/notifications/in-memory.repository.js';
 import { selectNotificationsRepository } from '../src/modules/notifications/index.js';
@@ -30,7 +35,8 @@ describe('ADR-013 notification routes', () => {
 
   const createOrg = async (c: Client, name: string) =>
     (await c.post('/orgs', { name })).json<{ organization: { id: string } }>().organization.id;
-  const meId = async (c: Client) => (await c.get('/auth/session')).json<{ user: { id: string } }>().user.id;
+  const meId = async (c: Client) =>
+    (await c.get('/auth/session')).json<{ user: { id: string } }>().user.id;
   async function join(owner: Client, orgId: string, email: string, role: Role) {
     const c = await signupAndLogin(app, email);
     expect((await owner.post(`/orgs/${orgId}/invitations`, { email, role })).statusCode).toBe(201);
@@ -75,12 +81,26 @@ describe('ADR-013 notification routes', () => {
       createdAt: '2026-10-27T00:00:03.000Z',
     });
     const next = await viewer.get(`/orgs/${org}/notifications?cursor=${list.json().nextCursor}`);
-    expect(next.json().items.map((n: { id: string }) => n.id)).toEqual(['00000000-0000-4000-8000-000000000002']);
+    expect(next.json().items.map((n: { id: string }) => n.id)).toEqual([
+      '00000000-0000-4000-8000-000000000002',
+    ]);
     // Another user's id is a no-op, not an error.
-    expect((await viewer.post(`/orgs/${org}/notifications/00000000-0000-4000-8000-000000000001/read`)).json()).toEqual({ updated: 0 });
-    expect((await viewer.post(`/orgs/${org}/notifications/00000000-0000-4000-8000-000000000002/read`)).json()).toEqual({ updated: 1 });
-    expect((await viewer.post(`/orgs/${org}/notifications/read-all`)).json()).toEqual({ updated: 1 });
-    expect((await owner.get(`/orgs/${org}/notifications?unreadOnly=true`)).json().items).toHaveLength(1);
+    expect(
+      (
+        await viewer.post(`/orgs/${org}/notifications/00000000-0000-4000-8000-000000000001/read`)
+      ).json(),
+    ).toEqual({ updated: 0 });
+    expect(
+      (
+        await viewer.post(`/orgs/${org}/notifications/00000000-0000-4000-8000-000000000002/read`)
+      ).json(),
+    ).toEqual({ updated: 1 });
+    expect((await viewer.post(`/orgs/${org}/notifications/read-all`)).json()).toEqual({
+      updated: 1,
+    });
+    expect(
+      (await owner.get(`/orgs/${org}/notifications?unreadOnly=true`)).json().items,
+    ).toHaveLength(1);
   });
 
   it('hides other orgs and rejects unauthenticated or malformed requests', async () => {
@@ -89,33 +109,63 @@ describe('ADR-013 notification routes', () => {
     const orgA = await createOrg(a, 'A');
     await createOrg(b, 'B');
     expect((await b.get(`/orgs/${orgA}/notifications`)).statusCode).toBe(404);
-    expect((await app.inject({ method: 'GET', url: `/orgs/${orgA}/notifications` })).statusCode).toBe(401);
+    expect(
+      (await app.inject({ method: 'GET', url: `/orgs/${orgA}/notifications` })).statusCode,
+    ).toBe(401);
     expect((await a.post(`/orgs/${orgA}/notifications/not-a-uuid/read`)).statusCode).toBe(400);
   });
 
   it('gets and updates preferences', async () => {
     const owner = await signupAndLogin(app, 'owner@example.com');
     const org = await createOrg(owner, 'Acme');
-    expect((await owner.get(`/orgs/${org}/notification-preferences`)).json()).toEqual({ items: [] });
+    expect((await owner.get(`/orgs/${org}/notification-preferences`)).json()).toEqual({
+      items: [],
+    });
     const put = await owner.put(`/orgs/${org}/notification-preferences`, {
       items: [{ type: '*', channel: 'email', enabled: false }],
     });
     expect(put.statusCode).toBe(200);
     expect(Value.Check(NotificationPreferences, put.json())).toBe(true);
-    expect((await owner.put(`/orgs/${org}/notification-preferences`, { items: [{ type: '*', channel: 'sms', enabled: true }] })).statusCode).toBe(400);
+    expect(
+      (
+        await owner.put(`/orgs/${org}/notification-preferences`, {
+          items: [{ type: '*', channel: 'sms', enabled: true }],
+        })
+      ).statusCode,
+    ).toBe(400);
   });
 
   it('POST /me/push-devices (mobile PR #262): Expo tokens or allowlisted Web Push only, never echoed', async () => {
     const owner = await signupAndLogin(app, 'owner@example.com');
     await createOrg(owner, 'Acme');
-    const ok = await owner.post('/me/push-devices', { provider: 'expo', token: 'ExponentPushToken[abcdefghijkl]', platform: 'ios', deviceName: 'iPhone' });
+    const ok = await owner.post('/me/push-devices', {
+      provider: 'expo',
+      token: 'ExponentPushToken[abcdefghijkl]',
+      platform: 'ios',
+      deviceName: 'iPhone',
+    });
     expect(ok.statusCode).toBe(201);
     expect(Value.Check(PushDevice, ok.json())).toBe(true);
     expect(Object.keys(ok.json()).sort()).toEqual(['createdAt', 'id', 'platform']);
     expect(ok.body).not.toContain('Exponent');
-    expect((await owner.post('/me/push-devices', { provider: 'expo', token: 'nope', platform: 'android' })).statusCode).toBe(400);
-    expect((await owner.post('/me/push-devices', sub('https://fcm.googleapis.com/fcm/send/abc'))).statusCode).toBe(201);
-    for (const bad of ['https://evil.example/x', 'https://169.254.169.254/x', 'https://fcm.googleapis.com:8443/x']) {
+    expect(
+      (
+        await owner.post('/me/push-devices', {
+          provider: 'expo',
+          token: 'nope',
+          platform: 'android',
+        })
+      ).statusCode,
+    ).toBe(400);
+    expect(
+      (await owner.post('/me/push-devices', sub('https://fcm.googleapis.com/fcm/send/abc')))
+        .statusCode,
+    ).toBe(201);
+    for (const bad of [
+      'https://evil.example/x',
+      'https://169.254.169.254/x',
+      'https://fcm.googleapis.com:8443/x',
+    ]) {
       const r = await owner.post('/me/push-devices', sub(bad));
       expect(r.statusCode, bad).toBe(400);
       expect(r.body).not.toContain(bad);
@@ -131,7 +181,13 @@ describe('ADR-013 notification routes', () => {
     const owner = await signupAndLogin(app, 'owner@example.com');
     const org = await createOrg(owner, 'Acme');
     const m = await join(owner, org, 'm@example.com', 'member');
-    const id = (await owner.post('/me/push-devices', { provider: 'expo', token: 'ExpoPushToken[abcdefghijkl]', platform: 'android' })).json<{ id: string }>().id;
+    const id = (
+      await owner.post('/me/push-devices', {
+        provider: 'expo',
+        token: 'ExpoPushToken[abcdefghijkl]',
+        platform: 'android',
+      })
+    ).json<{ id: string }>().id;
     expect((await m.delete(`/me/push-devices/${id}`)).statusCode).toBe(204);
     expect(repo.devices.map((d) => d.id)).toEqual([id]);
   });
@@ -141,10 +197,14 @@ describe('ADR-013 notification routes', () => {
     const org = await createOrg(owner, 'Acme');
     const m = await join(owner, org, 'm@example.com', 'member');
     const mId = await meId(m);
-    expect((await m.post('/me/push-devices', sub('https://web.push.apple.com/abc'))).statusCode).toBe(201);
+    expect(
+      (await m.post('/me/push-devices', sub('https://web.push.apple.com/abc'))).statusCode,
+    ).toBe(201);
     expect((await owner.delete(`/orgs/${org}/members/${mId}`)).statusCode).toBeLessThan(300);
     expect(repo.devices.filter((d) => d.userId === mId)).toHaveLength(0);
-    expect((await owner.post('/me/push-devices', sub('https://web.push.apple.com/own'))).statusCode).toBe(201);
+    expect(
+      (await owner.post('/me/push-devices', sub('https://web.push.apple.com/own'))).statusCode,
+    ).toBe(201);
     expect((await owner.post('/auth/logout')).statusCode).toBeLessThan(300);
     expect(repo.devices).toHaveLength(0);
   });
@@ -153,21 +213,45 @@ describe('ADR-013 notification routes', () => {
     const owner = await signupAndLogin(app, 'owner@example.com');
     const org = await createOrg(owner, 'Acme');
     const userId = await meId(owner);
-    const token = signEmailLinkToken(SECRET, { purpose: 'unsubscribe', userId, organizationId: org, category: 'task-assigned' }, { ttlSeconds: 600 });
-    const get = await app.inject({ method: 'GET', url: `/notifications/unsubscribe?token=${token}` });
+    const token = signEmailLinkToken(
+      SECRET,
+      { purpose: 'unsubscribe', userId, organizationId: org, category: 'task-assigned' },
+      { ttlSeconds: 600 },
+    );
+    const get = await app.inject({
+      method: 'GET',
+      url: `/notifications/unsubscribe?token=${token}`,
+    });
     expect(get.statusCode).toBe(200);
     expect(get.headers['content-type']).toContain('text/html');
     expect(get.body).toContain('<form method="post"');
+    // L-2: query-only relative action, so the POST lands on the same path behind any /api prefix.
+    expect(get.body).toContain(`action="?token=${encodeURIComponent(token)}"`);
+    expect(
+      new URL(`?token=x`, 'https://app.example/api/notifications/unsubscribe?token=y').pathname,
+    ).toBe('/api/notifications/unsubscribe');
     expect(await repo.getPreferences(org, userId)).toEqual([]);
-    const post = await app.inject({ method: 'POST', url: `/notifications/unsubscribe?token=${token}`, headers: { 'content-type': 'application/x-www-form-urlencoded' }, payload: 'List-Unsubscribe=One-Click' });
+    const post = await app.inject({
+      method: 'POST',
+      url: `/notifications/unsubscribe?token=${token}`,
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      payload: 'List-Unsubscribe=One-Click',
+    });
     expect(post.statusCode).toBe(200);
-    expect(await repo.getPreferences(org, userId)).toEqual([{ type: 'task-assigned', channel: 'email', enabled: false }]);
+    expect(await repo.getPreferences(org, userId)).toEqual([
+      { type: 'task-assigned', channel: 'email', enabled: false },
+    ]);
     const forged = `${token.split('.')[0]}.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA`;
-    expect((await app.inject({ method: 'POST', url: `/notifications/unsubscribe?token=${forged}` })).statusCode).toBe(400);
+    expect(
+      (await app.inject({ method: 'POST', url: `/notifications/unsubscribe?token=${forged}` }))
+        .statusCode,
+    ).toBe(400);
   });
 
   it('refuses the in-memory repository outside development/test', () => {
-    expect(() => selectNotificationsRepository({} as ModuleDeps, 'production')).toThrow(MissingProductionDependencyError);
+    expect(() => selectNotificationsRepository({} as ModuleDeps, 'production')).toThrow(
+      MissingProductionDependencyError,
+    );
   });
 });
 
@@ -177,9 +261,15 @@ describe('CASL: notification subjects are self-only for every role', () => {
       it(`${role} manages own ${s}, never another user's`, () => {
         const a = defineAbilityFor({ userId: 'me', organizationId: 'org-a', role });
         for (const act of ['create', 'read', 'update', 'delete'] as const) {
-          expect(a.can(act, orgSubject(s, { organizationId: 'org-a', createdById: 'me' }))).toBe(true);
-          expect(a.can(act, orgSubject(s, { organizationId: 'org-a', createdById: 'other' }))).toBe(false);
-          expect(a.can(act, orgSubject(s, { organizationId: 'org-b', createdById: 'me' }))).toBe(false);
+          expect(a.can(act, orgSubject(s, { organizationId: 'org-a', createdById: 'me' }))).toBe(
+            true,
+          );
+          expect(a.can(act, orgSubject(s, { organizationId: 'org-a', createdById: 'other' }))).toBe(
+            false,
+          );
+          expect(a.can(act, orgSubject(s, { organizationId: 'org-b', createdById: 'me' }))).toBe(
+            false,
+          );
         }
       });
     }
