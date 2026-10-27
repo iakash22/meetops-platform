@@ -33,6 +33,7 @@ export type AuditAction =
   | 'project.delete'
   | 'extracted_task.accept'
   | 'extracted_task.dismiss'
+  | 'task.create'
   | 'task.update'
   | 'meeting.create'
   // ADR-005 extension pairing and tokens

@@ -20,6 +20,7 @@
     "@meetops/integrations": "workspace:*",
     "@meetops/logger": "workspace:*",
     "@meetops/media-core": "workspace:*",
+    "@meetops/notifications": "workspace:*",
     "@meetops/queue": "workspace:*",
     "@meetops/storage": "workspace:*",
     "@sinclair/typebox": "^0.34.0",
