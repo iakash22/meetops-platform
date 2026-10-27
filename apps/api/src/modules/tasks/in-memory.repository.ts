@@ -6,7 +6,9 @@ import {
   ExtractedTaskMissing,
   TaskMissing,
   TaskAssigneeInvalid,
+  TaskReferenceInvalid,
   type AcceptInput,
+  type CreateTaskInput,
   type TaskPatch,
   type TaskFilter,
   type TaskRepositories,
@@ -78,6 +80,36 @@ export class InMemoryTasks implements TaskRepositories {
 
   /** Test hook: when set, assigneeIds outside this set are rejected like the Prisma FK check. */
   employees: Set<string> | undefined;
+
+  /** Test hooks: when set, ids outside these sets are rejected like the Prisma existence checks. */
+  projects: Set<string> | undefined;
+  meetings: Set<string> | undefined;
+
+  createTask(organizationId: string, input: CreateTaskInput) {
+    if (input.assigneeId && this.employees && !this.employees.has(input.assigneeId))
+      return Promise.reject(new TaskAssigneeInvalid());
+    if (input.projectId && this.projects && !this.projects.has(input.projectId))
+      return Promise.reject(new TaskReferenceInvalid('projectId'));
+    if (input.meetingId && this.meetings && !this.meetings.has(input.meetingId))
+      return Promise.reject(new TaskReferenceInvalid('meetingId'));
+    const at = this.now().toISOString();
+    const task: Task = {
+      id: randomUUID(),
+      organizationId,
+      ...(input.projectId ? { projectId: input.projectId } : {}),
+      ...(input.meetingId ? { meetingId: input.meetingId } : {}),
+      title: input.title,
+      ...(input.description !== undefined ? { description: input.description } : {}),
+      status: input.status,
+      priority: input.priority,
+      ...(input.assigneeId ? { assigneeId: input.assigneeId } : {}),
+      ...(input.dueAt ? { dueAt: input.dueAt.toISOString() } : {}),
+      createdAt: at,
+      updatedAt: at,
+    };
+    this.tasks.push(task);
+    return Promise.resolve(task);
+  }
 
   getTask(organizationId: string, taskId: string) {
     const t = this.tasks.find((x) => x.organizationId === organizationId && x.id === taskId);
