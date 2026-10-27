@@ -8,7 +8,7 @@ import { pipeline } from 'node:stream/promises';
 import { ALLOWED_MEDIA_MIME_TYPES, MAX_MEDIA_BYTES } from '@meetops/contracts';
 import type { AllowedDemuxer, MediaToolsOptions, ProbeResult } from '@meetops/media-core';
 import { assertProbedFormat, measurePacketDuration, probeMedia } from '@meetops/media-core';
-import { hasTrailingData } from './container-end.js';
+import { containerEnd } from './container-end.js';
 
 /**
  * Upload content verification for the scan step (security review B 4.1). The client-declared MIME type is never
@@ -58,7 +58,8 @@ export type UploadScanCode =
   | 'stream_params_exceeded'
   | 'decoded_size_exceeded'
   | 'duration_mismatch'
-  | 'trailing_data';
+  | 'trailing_data'
+  | 'truncated_container';
 
 export type UploadScanResult = { verdict: 'clean' } | { verdict: 'rejected'; code: UploadScanCode };
 
@@ -141,7 +142,9 @@ export async function verifyUploadContent(
     await fh.close();
   }
   if (sniffContainer(head) !== demuxer) return reject('content_type_mismatch');
-  if (await hasTrailingData(file, demuxer)) return reject('trailing_data');
+  const end = await containerEnd(file, demuxer);
+  if (end === 'trailing') return reject('trailing_data');
+  if (end === 'truncated') return reject('truncated_container');
 
   let p: UploadProbeResult;
   try {

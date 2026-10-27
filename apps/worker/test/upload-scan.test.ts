@@ -347,6 +347,50 @@ describe.skipIf(!has('ffmpeg') || !has('ffprobe'))('verifyUploadContent with rea
       code: 'trailing_data',
     });
   });
+  const fx = (n: string) => path.join(__dirname, 'fixtures', 'media', n);
+  it('tester fixtures (p2-media): MediaRecorder no-Duration WebM is clean', async () => {
+    expect(
+      await verifyUploadContent(fx('mediarecorder_noduration_10s.webm'), 'audio/webm', probe),
+    ).toEqual({
+      verdict: 'clean',
+    });
+  });
+  it('tester fixtures: a 10 s WebM forged to declare 1 s fails a 5 s cap', async () => {
+    const b = readFileSync(fx('tone_10s.webm'));
+    const i = b.indexOf(Buffer.from([0x44, 0x89]));
+    const sz = b[i + 2]! & 0x7f;
+    if (sz === 8) b.writeDoubleBE(1000, i + 3);
+    else b.writeFloatBE(1000, i + 3);
+    const forged = file('forged-1s.webm', b);
+    const r = await verifyUploadContent(forged, 'audio/webm', probe, { maxDurationSeconds: 5 });
+    expect(r.verdict).toBe('rejected');
+    expect(['duration_mismatch', 'duration_too_long']).toContain((r as { code: string }).code);
+    // Even within tolerance of the header, the measured 10 s still fails the 5 s cap.
+    expect(
+      await verifyUploadContent(fx('tone_10s.webm'), 'audio/webm', probe, {
+        maxDurationSeconds: 5,
+      }),
+    ).toMatchObject({ code: 'duration_too_long' });
+  });
+  it('tester fixtures: truncated WebM / MP4 are rejected, WebM + HTML is trailing data', async () => {
+    expect(await verifyUploadContent(fx('truncated.webm'), 'audio/webm', probe)).toMatchObject({
+      code: 'truncated_container',
+    });
+    expect(await verifyUploadContent(fx('truncated.mp4'), 'video/mp4', probe)).toMatchObject({
+      verdict: 'rejected',
+    });
+    expect(await verifyUploadContent(fx('webm_plus_html.webm'), 'audio/webm', probe)).toMatchObject(
+      {
+        code: 'trailing_data',
+      },
+    );
+    // A truncated live (no Duration) WebM: cut mid-block.
+    const live = readFileSync(fx('mediarecorder_noduration_10s.webm'));
+    const cut = file('live-cut.webm', live.subarray(0, Math.floor(live.length / 2)));
+    expect(await verifyUploadContent(cut, 'audio/webm', probe)).toMatchObject({
+      code: 'truncated_container',
+    });
+  });
   it('rejects bytes that only carry a valid magic header', async () => {
     const fake = file(
       'fake.webm',

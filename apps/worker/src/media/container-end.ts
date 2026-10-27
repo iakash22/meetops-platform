@@ -6,14 +6,25 @@ import type { AllowedDemuxer } from '@meetops/media-core';
  * Walks only element/box headers (payloads are skipped, never read), so cost is O(elements), not O(bytes).
  * Returns true when bytes trail the parsed container. Ogg and MP3 have no container end and are not checked.
  */
+export type ContainerEnd = 'ok' | 'trailing' | 'truncated';
+
+/** True when bytes trail the container (polyglot). Kept for callers that only need that. */
 export async function hasTrailingData(file: string, demuxer: AllowedDemuxer): Promise<boolean> {
+  return (await containerEnd(file, demuxer)) === 'trailing';
+}
+
+/**
+ * 'trailing': bytes after the container end; 'truncated': an element/box (or the declared Segment/RIFF size) runs
+ * past EOF, i.e. an incomplete upload whose header may still claim the full duration (PR #269 M-1 variant).
+ */
+export async function containerEnd(file: string, demuxer: AllowedDemuxer): Promise<ContainerEnd> {
   const fh = await open(file, 'r');
   try {
     const { size } = await fh.stat();
-    if (demuxer === 'matroska') return await matroskaTrailing(fh, size);
-    if (demuxer === 'mov') return await movTrailing(fh, size);
-    if (demuxer === 'wav') return await wavTrailing(fh, size);
-    return false;
+    if (demuxer === 'matroska') return await matroskaEnd(fh, size);
+    if (demuxer === 'mov') return await movEnd(fh, size);
+    if (demuxer === 'wav') return await wavEnd(fh, size);
+    return 'ok';
   } finally {
     await fh.close();
   }
@@ -71,35 +82,38 @@ async function element(fh: FileHandle, pos: number) {
   };
 }
 
-async function matroskaTrailing(fh: FileHandle, fileSize: number): Promise<boolean> {
+async function matroskaEnd(fh: FileHandle, fileSize: number): Promise<ContainerEnd> {
   let pos = 0;
   const ebml = await element(fh, pos);
-  if (!ebml || ebml.unknown) return true;
+  if (!ebml || ebml.unknown) return 'trailing';
   pos = ebml.dataStart + ebml.size;
   const seg = await element(fh, pos);
-  if (!seg || seg.id !== SEGMENT) return true;
-  if (!seg.unknown) return seg.dataStart + seg.size < fileSize;
+  if (!seg || seg.id !== SEGMENT) return 'trailing';
+  if (!seg.unknown) {
+    const end = seg.dataStart + seg.size;
+    return end < fileSize ? 'trailing' : end > fileSize ? 'truncated' : 'ok';
+  }
   // Unknown-size Segment (MediaRecorder / live): walk level-1 children to EOF.
   pos = seg.dataStart;
   while (pos < fileSize) {
     const el = await element(fh, pos);
-    if (!el || !LEVEL1.has(el.id)) return true;
+    if (!el || !LEVEL1.has(el.id)) return 'trailing';
     if (!el.unknown) {
       pos = el.dataStart + el.size;
       continue;
     }
-    if (el.id !== CLUSTER) return true;
+    if (el.id !== CLUSTER) return 'trailing';
     // Unknown-size Cluster ends at the next level-1 element (or EOF).
     pos = el.dataStart;
     while (pos < fileSize) {
       const c = await element(fh, pos);
-      if (!c) return true;
+      if (!c) return 'trailing';
       if (LEVEL1.has(c.id) && !CLUSTER_CHILDREN.has(c.id)) break;
-      if (!CLUSTER_CHILDREN.has(c.id) || c.unknown) return true;
+      if (!CLUSTER_CHILDREN.has(c.id) || c.unknown) return 'trailing';
       pos = c.dataStart + c.size;
     }
   }
-  return false; // a truncated final element (pos > fileSize) is not trailing data
+  return pos > fileSize ? 'truncated' : 'ok';
 }
 
 const MOV_TOP = new Set([
@@ -120,28 +134,29 @@ const MOV_TOP = new Set([
   'prft',
 ]);
 
-async function movTrailing(fh: FileHandle, fileSize: number): Promise<boolean> {
+async function movEnd(fh: FileHandle, fileSize: number): Promise<ContainerEnd> {
   let pos = 0;
   while (pos < fileSize) {
     const h = await readAt(fh, pos, 16);
-    if (h.length < 8) return true;
+    if (h.length < 8) return 'truncated';
     let size = h.readUInt32BE(0);
     const type = h.subarray(4, 8).toString('latin1');
-    if (!MOV_TOP.has(type)) return true;
-    if (size === 0) return false; // box extends to EOF
+    if (!MOV_TOP.has(type)) return 'trailing';
+    if (size === 0) return 'ok'; // box extends to EOF
     if (size === 1) {
-      if (h.length < 16) return true;
+      if (h.length < 16) return 'truncated';
       size = Number(h.readBigUInt64BE(8));
     }
-    if (size < 8) return true;
+    if (size < 8) return 'trailing';
     pos += size;
   }
-  return false;
+  return pos > fileSize ? 'truncated' : 'ok';
 }
 
-async function wavTrailing(fh: FileHandle, fileSize: number): Promise<boolean> {
+async function wavEnd(fh: FileHandle, fileSize: number): Promise<ContainerEnd> {
   const h = await readAt(fh, 0, 8);
-  if (h.length < 8) return true;
+  if (h.length < 8) return 'truncated';
   const end = 8 + h.readUInt32LE(4);
-  return fileSize > end + (end % 2); // RIFF pads odd sizes by one byte
+  if (fileSize > end + (end % 2)) return 'trailing'; // RIFF pads odd sizes by one byte
+  return fileSize < end ? 'truncated' : 'ok';
 }
