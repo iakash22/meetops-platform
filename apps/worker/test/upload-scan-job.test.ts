@@ -13,12 +13,14 @@ const MEET = '00000000-0000-4000-8000-000000000003';
 const CONSENT = '00000000-0000-4000-8000-000000000004';
 const WEBM = Buffer.concat([
   Buffer.from([0x1a, 0x45, 0xdf, 0xa3, 0x80, 0x18, 0x53, 0x80, 0x67, 0x80 | 54]),
-  Buffer.alloc(54),
+  Buffer.from([0xec, 0x80 | 52]), // Segment = one zero-filled Void (no smuggled data)
+  Buffer.alloc(52),
 ]);
 const HTML = Buffer.from('<!doctype html><script>alert(1)</script>'.padEnd(64, ' '));
 const probe: UploadProbeResult = {
   durationSeconds: 10,
   measuredDurationSeconds: 10,
+  timestampFaults: 0,
   formatName: 'matroska,webm',
   streams: [{ index: 0, codecType: 'audio', sampleRate: 48000, channels: 1 }],
   hasAudio: true,

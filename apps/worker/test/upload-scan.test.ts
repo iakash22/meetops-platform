@@ -13,7 +13,7 @@ import {
   type UploadProbe,
   type UploadProbeResult,
 } from '../src/media/upload-scan.js';
-import { hasTrailingData } from '../src/media/container-end.js';
+import { containerEnd, hasTrailingData } from '../src/media/container-end.js';
 
 const root = mkdtempSync(path.join(tmpdir(), 'upload-scan-test-'));
 afterAll(() => rmSync(root, { recursive: true, force: true }));
@@ -22,7 +22,8 @@ const EBML = Buffer.from([0x1a, 0x45, 0xdf, 0xa3, 0, 0, 0, 0]);
 /** Minimal well-formed EBML: empty EBML header + a known-size Segment of 100 bytes (no trailing data). */
 const WEBM = Buffer.concat([
   Buffer.from([0x1a, 0x45, 0xdf, 0xa3, 0x80, 0x18, 0x53, 0x80, 0x67, 0x80 | 100]),
-  Buffer.alloc(100),
+  Buffer.from([0xec, 0x80 | 98]), // Segment = one zero-filled Void
+  Buffer.alloc(98),
 ]);
 const file = (name: string, bytes: Buffer) => {
   const p = path.join(root, name);
@@ -236,6 +237,60 @@ describe('trailing data (L-1)', () => {
   });
 });
 
+describe('smuggled payloads inside the container (N-2)', () => {
+  const html = Buffer.from('<html><script>alert(1)</script></html>');
+  const vsize = (n: number) => Buffer.from([0x40 | (n >> 8), n & 0xff]); // 2-byte EBML size
+  const seg = (children: Buffer, declared = children.length) =>
+    Buffer.concat([
+      Buffer.from([0x1a, 0x45, 0xdf, 0xa3, 0x80, 0x18, 0x53, 0x80, 0x67]),
+      vsize(declared),
+      children,
+    ]);
+  const info = Buffer.from([0x15, 0x49, 0xa9, 0x66, 0x80]);
+  const voidEl = (payload: Buffer) =>
+    Buffer.concat([Buffer.from([0xec]), vsize(payload.length), payload]);
+  it('Matroska: Void with HTML is rejected, zero Void is fine', async () => {
+    expect(
+      await containerEnd(
+        file('v-ok.webm', seg(Buffer.concat([info, voidEl(Buffer.alloc(16))]))),
+        'matroska',
+      ),
+    ).toBe('ok');
+    expect(
+      await containerEnd(file('v-bad.webm', seg(Buffer.concat([info, voidEl(html)]))), 'matroska'),
+    ).toBe('trailing');
+  });
+  it('Matroska: raw HTML hidden behind an enlarged Segment size is rejected', async () => {
+    const children = Buffer.concat([info, html]);
+    expect(await containerEnd(file('seg-big.webm', seg(children)), 'matroska')).toBe('trailing');
+  });
+  it('MP4: a free box holding HTML is rejected, an empty/zero free box is fine', async () => {
+    const box = (type: string, payload: Buffer) => {
+      const h = Buffer.alloc(8);
+      h.writeUInt32BE(8 + payload.length, 0);
+      h.write(type, 4, 'latin1');
+      return Buffer.concat([h, payload]);
+    };
+    const base = [
+      box('ftyp', Buffer.alloc(8)),
+      box('mdat', Buffer.alloc(16)),
+      box('moov', Buffer.alloc(8)),
+    ];
+    expect(
+      await containerEnd(
+        file('free-ok.mp4', Buffer.concat([...base, box('free', Buffer.alloc(0))])),
+        'mov',
+      ),
+    ).toBe('ok');
+    expect(
+      await containerEnd(file('free-bad.mp4', Buffer.concat([...base, box('free', html)])), 'mov'),
+    ).toBe('trailing');
+    expect(
+      await containerEnd(file('skip-bad.mp4', Buffer.concat([...base, box('skip', html)])), 'mov'),
+    ).toBe('trailing');
+  });
+});
+
 describe('scanUploadObject', () => {
   const body = WEBM;
   it('streams to a temp file and verifies it', async () => {
@@ -346,6 +401,67 @@ describe.skipIf(!has('ffmpeg') || !has('ffprobe'))('verifyUploadContent with rea
     expect(await verifyUploadContent(poly2, 'audio/webm', probe)).toMatchObject({
       code: 'trailing_data',
     });
+  });
+  const fx = (n: string) => path.join(__dirname, 'fixtures', 'media', n);
+  it('tester fixtures (p2-media): MediaRecorder no-Duration WebM is clean', async () => {
+    expect(
+      await verifyUploadContent(fx('mediarecorder_noduration_10s.webm'), 'audio/webm', probe),
+    ).toEqual({
+      verdict: 'clean',
+    });
+  });
+  it('tester fixtures: a 10 s WebM forged to declare 1 s fails a 5 s cap', async () => {
+    const b = readFileSync(fx('tone_10s.webm'));
+    const i = b.indexOf(Buffer.from([0x44, 0x89]));
+    const sz = b[i + 2]! & 0x7f;
+    if (sz === 8) b.writeDoubleBE(1000, i + 3);
+    else b.writeFloatBE(1000, i + 3);
+    const forged = file('forged-1s.webm', b);
+    const r = await verifyUploadContent(forged, 'audio/webm', probe, { maxDurationSeconds: 5 });
+    expect(r.verdict).toBe('rejected');
+    expect(['duration_mismatch', 'duration_too_long']).toContain((r as { code: string }).code);
+    // Even within tolerance of the header, the measured 10 s still fails the 5 s cap.
+    expect(
+      await verifyUploadContent(fx('tone_10s.webm'), 'audio/webm', probe, {
+        maxDurationSeconds: 5,
+      }),
+    ).toMatchObject({ code: 'duration_too_long' });
+  });
+  it('tester fixtures: truncated WebM / MP4 are rejected, WebM + HTML is trailing data', async () => {
+    expect(await verifyUploadContent(fx('truncated.webm'), 'audio/webm', probe)).toMatchObject({
+      code: 'truncated_container',
+    });
+    expect(await verifyUploadContent(fx('truncated.mp4'), 'video/mp4', probe)).toMatchObject({
+      verdict: 'rejected',
+    });
+    expect(await verifyUploadContent(fx('webm_plus_html.webm'), 'audio/webm', probe)).toMatchObject(
+      {
+        code: 'trailing_data',
+      },
+    );
+    // A truncated live (no Duration) WebM: cut mid-block.
+    const live = readFileSync(fx('mediarecorder_noduration_10s.webm'));
+    const cut = file('live-cut.webm', live.subarray(0, Math.floor(live.length / 2)));
+    expect(await verifyUploadContent(cut, 'audio/webm', probe)).toMatchObject({
+      code: 'truncated_container',
+    });
+  });
+  it('N-1: setts-remuxed WebM (timestamps rescaled) is measured from samples or rejected', async () => {
+    // ts/20 + duration/20: pts claims 0.5 s, the decoded samples are 10 s.
+    const div = await verifyUploadContent(fx('setts_div20.webm'), 'audio/webm', probe, {
+      maxDurationSeconds: 5,
+    });
+    expect(div.verdict).toBe('rejected');
+    expect(['timestamps_invalid', 'duration_mismatch', 'duration_too_long']).toContain(
+      (div as { code: string }).code,
+    );
+    // ts=N*1: overlapping 1 ms steps for 20 ms frames.
+    expect(await verifyUploadContent(fx('setts_n1.webm'), 'audio/webm', probe)).toMatchObject({
+      code: 'timestamps_invalid',
+    });
+    expect(
+      (await probe(fx('setts_div20.webm'), { format: 'matroska' })).measuredDurationSeconds,
+    ).toBeCloseTo(10, 0);
   });
   it('rejects bytes that only carry a valid magic header', async () => {
     const fake = file(

@@ -7,8 +7,8 @@ import { Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { ALLOWED_MEDIA_MIME_TYPES, MAX_MEDIA_BYTES } from '@meetops/contracts';
 import type { AllowedDemuxer, MediaToolsOptions, ProbeResult } from '@meetops/media-core';
-import { assertProbedFormat, measurePacketDuration, probeMedia } from '@meetops/media-core';
-import { hasTrailingData } from './container-end.js';
+import { assertProbedFormat, measureAudioDuration, probeMedia } from '@meetops/media-core';
+import { containerEnd } from './container-end.js';
 import type { Antivirus } from './clamd.js';
 
 /**
@@ -17,7 +17,8 @@ import type { Antivirus } from './clamd.js';
  *   1. caps the stored size (HEAD and while streaming),
  *   2. sniffs the container magic bytes and requires them to match the declared type,
  *   3. probes with ffprobe using the forced demuxer for that type and checks the reported container,
- *   4. measures the duration from a packet scan (never container metadata) and rejects a declared duration that
+ *   4. measures the duration from decoded samples (never container metadata or packet timestamps), rejects
+ *      backwards/overlapping timestamps, (never container metadata) and rejects a declared duration that
  *      disagrees, rejects bytes trailing the container end (polyglots), and bounds duration, stream count, sample rate, channels, video frame size and the estimated decoded size
  *      (decompression-bomb guard).
  * Any failure yields `rejected` with a stable code; the caller sets scanStatus accordingly (never `clean`).
@@ -60,7 +61,9 @@ export type UploadScanCode =
   | 'decoded_size_exceeded'
   | 'duration_mismatch'
   | 'trailing_data'
-  | 'malware_detected';
+  | 'malware_detected'
+  | 'truncated_container'
+  | 'timestamps_invalid';
 
 export type UploadScanResult = { verdict: 'clean' } | { verdict: 'rejected'; code: UploadScanCode };
 
@@ -68,7 +71,12 @@ export type UploadScanResult = { verdict: 'clean' } | { verdict: 'rejected'; cod
  * Probe result plus the duration MEASURED by a packet scan. `durationSeconds` (container metadata) is
  * uploader-controlled and missing in MediaRecorder WebM, so every limit uses `measuredDurationSeconds`.
  */
-export type UploadProbeResult = ProbeResult & { measuredDurationSeconds: number };
+export type UploadProbeResult = ProbeResult & {
+  /** From decoded samples of the first audio stream (never pts or container metadata). */
+  measuredDurationSeconds: number;
+  /** Frames whose pts went backwards or overlapped the previous frame (forged/remuxed timestamps). */
+  timestampFaults?: number;
+};
 export type UploadProbe = (
   file: string,
   opts: { format: AllowedDemuxer },
@@ -78,8 +86,11 @@ export type UploadProbe = (
 export function createUploadProbe(tools: MediaToolsOptions = {}): UploadProbe {
   return async (file, opts) => {
     const p = await probeMedia(file, { ...tools, format: opts.format });
-    const m = await measurePacketDuration(file, { ...tools, format: opts.format });
-    return { ...p, measuredDurationSeconds: m.durationSeconds };
+    const rate = p.streams.find((s) => s.codecType === 'audio')?.sampleRate ?? 0;
+    // No audio / no rate: report 0 and let verifyUploadContent reject (no_audio / duration_invalid).
+    if (!(rate > 0)) return { ...p, measuredDurationSeconds: 0, timestampFaults: 0 };
+    const m = await measureAudioDuration(file, { ...tools, format: opts.format, sampleRate: rate });
+    return { ...p, measuredDurationSeconds: m.durationSeconds, timestampFaults: m.timestampFaults };
   };
 }
 
@@ -143,7 +154,9 @@ export async function verifyUploadContent(
     await fh.close();
   }
   if (sniffContainer(head) !== demuxer) return reject('content_type_mismatch');
-  if (await hasTrailingData(file, demuxer)) return reject('trailing_data');
+  const end = await containerEnd(file, demuxer);
+  if (end === 'trailing') return reject('trailing_data');
+  if (end === 'truncated') return reject('truncated_container');
 
   let p: UploadProbeResult;
   try {
@@ -161,6 +174,7 @@ export async function verifyUploadContent(
   if (!p.hasAudio || audio.length === 0) return reject('no_audio');
   // Limits use the measured duration only. A missing declared duration (MediaRecorder WebM) is fine; a declared one
   // that disagrees with the packets is a forged header.
+  if ((p.timestampFaults ?? 0) > 0) return reject('timestamps_invalid');
   const duration = p.measuredDurationSeconds;
   if (!Number.isFinite(duration) || duration <= 0) return reject('duration_invalid');
   const declared = p.durationSeconds;
