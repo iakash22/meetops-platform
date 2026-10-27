@@ -6,6 +6,7 @@ import { EMPTY_GEO, MmdbGeoIpProvider, type GeoFields } from '../src/shared/geoi
 import { InMemorySessionRepository } from '../src/modules/auth/infrastructure/in-memory-session.repository.js';
 import {
   buildNewLocationEvent,
+  locationKey,
   newLocationReason,
 } from '../src/modules/auth/application/new-location.js';
 import { buildApp, Client, signupAndLogin, PASSWORD, type App } from './helpers.js';
@@ -41,6 +42,65 @@ describe('newLocationReason (ADR-014)', () => {
     expect(
       newLocationReason(geo('GB', 'Scotland'), [{ countryCode: 'GB', region: null }]),
     ).toBeNull();
+  });
+});
+
+describe('location normalization (#292 L-2)', () => {
+  const nfc = 'Östergötland County';
+  const nfd = nfc.normalize('NFD');
+  it('case, whitespace and NFD variants of a known place are not new', () => {
+    expect(nfd).not.toBe(nfc);
+    const h = [{ countryCode: 'SE', region: nfc }];
+    expect(newLocationReason(geo('SE', nfd), h)).toBeNull();
+    expect(newLocationReason(geo('SE', 'östergötland county'), h)).toBeNull();
+    expect(newLocationReason(geo('SE', ' ÖSTERGÖTLAND COUNTY '), h)).toBeNull();
+    expect(newLocationReason(geo('se', nfc), h)).toBeNull();
+    expect(newLocationReason(geo('SE', 'Skåne'), h)).toBe('new_region');
+  });
+  it('rate-limit key is the same for every variant', () => {
+    const k = locationKey('SE', nfc);
+    expect(locationKey('se ', nfd)).toBe(k);
+    expect(locationKey('SE', ' ÖSTERGÖTLAND COUNTY')).toBe(k);
+    expect(locationKey('SE', 'Skåne')).not.toBe(k);
+  });
+});
+
+describe('per-user cap is checked before the per-location slot (#292 L-3)', () => {
+  it('a capped user does not consume a location slot', async () => {
+    const keys: string[] = [];
+    const counts = new Map<string, number>();
+    const rateLimiter = {
+      consume: async (key: string, limit: number) => {
+        keys.push(key);
+        const n = (counts.get(key) ?? 0) + 1;
+        counts.set(key, n);
+        return { allowed: n <= limit, retryAfterMs: 0 };
+      },
+    };
+    const sessions = new InMemorySessionRepository();
+    const app = await buildApp({ sessions, geoIp: new MmdbGeoIpProvider(FIXTURE), rateLimiter });
+    let peer = LONDON;
+    const inject = app.inject.bind(app) as (o: object) => ReturnType<App['inject']>;
+    (app as unknown as { inject: (o: object) => unknown }).inject = (o: object) =>
+      inject({ ...o, remoteAddress: peer });
+    try {
+      const c = await signupAndLogin(app, 'cap@example.com');
+      expect((await c.post('/orgs', { name: 'Cap Org' })).statusCode).toBe(201);
+      const userId = [
+        ...(sessions as unknown as { items: Map<string, { userId: string }> }).items.values(),
+      ][0]!.userId;
+      // No location slot has been touched yet; exhaust the per-user cap (3 alerts already sent today).
+      expect(keys.filter((k) => k.startsWith('newloc:'))).toEqual([]);
+      counts.set(`newloc:${userId}`, 3);
+      peer = SWEDEN;
+      await new Client(app).post('/auth/login', { email: 'cap@example.com', password: PASSWORD });
+      expect(sessions.outbox).toHaveLength(0);
+      expect(keys.filter((k) => k.startsWith(`newloc:${userId}:`))).toEqual([]);
+      // The per-user key was checked (and refused); the location key never was.
+      expect(keys).toContain(`newloc:${userId}`);
+    } finally {
+      await app.close();
+    }
   });
 });
 

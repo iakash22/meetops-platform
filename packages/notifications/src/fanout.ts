@@ -149,7 +149,7 @@ export const OUTBOX_NOTIFICATION_RULES = {
     parse: parser(AuthNewLocationSigninEvent),
     recipient: (e: ClaimedOutboxEvent) => (e.aggregateType === 'user' ? e.aggregateId : undefined),
     dedupeKey: (e: ClaimedOutboxEvent, p: Static<typeof AuthNewLocationSigninEvent>) =>
-      `newloc:${e.aggregateId}:${p.countryCode ?? ''}:${p.region ?? ''}:${new Date().toISOString().slice(0, 10)}`.slice(
+      `newloc:${e.aggregateId}:${(p.countryCode ?? '').trim().toUpperCase()}:${(p.region ?? '').normalize('NFC').trim().toLowerCase()}:${new Date().toISOString().slice(0, 10)}`.slice(
         0,
         200,
       ),

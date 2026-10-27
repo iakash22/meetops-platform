@@ -1,6 +1,7 @@
 import {
   NEW_LOCATION_LIMITS,
   buildNewLocationEvent,
+  locationKey,
   newLocationReason,
   type NewLocationOutboxEvent,
 } from './new-location.js';
@@ -582,20 +583,21 @@ export class AuthService {
     try {
       const reason = newLocationReason(geo, await this.d.sessions.knownLocations(userId));
       if (!reason) return null;
-      const where = `${geo.geoCountryCode}:${geo.geoRegion ?? ''}`;
+      const where = locationKey(geo.geoCountryCode, geo.geoRegion);
       const L = NEW_LOCATION_LIMITS;
-      const perLocation = await this.d.rateLimiter.consume(
-        `newloc:${userId}:${where}`,
-        L.perLocation.limit,
-        L.perLocation.windowMs,
-      );
-      if (!perLocation.allowed) return null;
+      // Per-user cap first (#292 L-3): a capped user must not burn this location's 24 h slot.
       const perUser = await this.d.rateLimiter.consume(
         `newloc:${userId}`,
         L.perUser.limit,
         L.perUser.windowMs,
       );
       if (!perUser.allowed) return null;
+      const perLocation = await this.d.rateLimiter.consume(
+        `newloc:${userId}:${where}`,
+        L.perLocation.limit,
+        L.perLocation.windowMs,
+      );
+      if (!perLocation.allowed) return null;
       return buildNewLocationEvent({ organizationId, userId, sessionId: s.id, geo, reason });
     } catch {
       return null;

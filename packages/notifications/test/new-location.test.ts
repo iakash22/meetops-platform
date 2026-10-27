@@ -114,6 +114,22 @@ describe('fan-out of auth.new_location_signin (ADR-014)', () => {
     });
     expect(st.rows.size).toBe(1);
   });
+  it('dedupe key is normalized: case and NFD variants of the same place share one row (#292 L-2)', async () => {
+    const st = store({ [USER]: 'member' });
+    await fanoutEvent(ev(), { store: st, producer: producer() });
+    await fanoutEvent(
+      ev(
+        { region: 'Östergötland County'.normalize('NFD') },
+        { id: '77777777-7777-4777-8777-777777777771' },
+      ),
+      { store: st, producer: producer() },
+    );
+    await fanoutEvent(
+      ev({ region: 'östergötland county' }, { id: '77777777-7777-4777-8777-777777777772' }),
+      { store: st, producer: producer() },
+    );
+    expect(st.rows.size).toBe(1);
+  });
   it('non-member aggregate user or non-user aggregate: nobody is notified', async () => {
     const st = store({ [OTHER]: 'owner' });
     expect(await fanoutEvent(ev(), { store: st, producer: producer() })).toMatchObject({
