@@ -45,9 +45,15 @@ const tags = ['meetings'];
 
 export async function meetingRoutes(
   app: FastifyInstance,
-  opts: { meetings: MeetingService; caller: ResolveCaller },
+  opts: {
+    meetings: MeetingService;
+    caller: ResolveCaller;
+    /** Caller for `resolve` (cookie or ADR-005 extension bearer); defaults to `caller`. */
+    resolveCaller?: ResolveCaller;
+  },
 ) {
   const { meetings, caller } = opts;
+  const resolveCaller = opts.resolveCaller ?? caller;
 
   app.get<{ Params: MeetingsParams; Querystring: ListMeetingsQuery }>(
     MEETING_PATHS.meetings,
@@ -83,7 +89,7 @@ export async function meetingRoutes(
       },
     },
     async (request, reply) => {
-      const c = await caller(request, request.params.organizationId);
+      const c = await resolveCaller(request, request.params.organizationId);
       const { meeting, created } = await meetings.resolve(c, request.body);
       return reply.code(created ? 201 : 200).send({ meetingId: meeting.id, created });
     },

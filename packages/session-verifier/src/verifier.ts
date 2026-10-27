@@ -11,8 +11,12 @@ import type {
 
 /** apps/api's default idle timeout (30 min). Deployments pass their own SessionPolicy value. */
 export const DEFAULT_IDLE_TIMEOUT_MS = 30 * 60 * 1000;
-/** The only bearer audience accepted (ADR-005 A1). */
+/** ADR-005 A1 extension bearer audience; the default and only audience unless opted in. */
 export const EXTENSION_AUDIENCE = 'extension';
+/** ADR-012 desktop bearer audience. Accepted only when listed in bearerAudiences. */
+export const DESKTOP_AUDIENCE = 'desktop';
+export type BearerAudience = typeof EXTENSION_AUDIENCE | typeof DESKTOP_AUDIENCE;
+export const BEARER_AUDIENCES: readonly BearerAudience[] = [EXTENSION_AUDIENCE, DESKTOP_AUDIENCE];
 /** Longer raw credentials are rejected before hashing. */
 export const MAX_CREDENTIAL_LENGTH = 512;
 
@@ -23,6 +27,8 @@ export interface SessionVerifierOptions {
   clock?: Clock;
   /** Idle timeout applied on top of sessions.expires_at (whichever is earlier wins). */
   idleTimeoutMs?: number;
+  /** Bearer audiences accepted. Default ['extension']; 'desktop' is opt-in (ADR-012). */
+  bearerAudiences?: readonly BearerAudience[];
 }
 
 export interface SessionVerifier {
@@ -47,6 +53,10 @@ export function createSessionVerifier(opts: SessionVerifierOptions): SessionVeri
   const idleTimeoutMs = opts.idleTimeoutMs ?? DEFAULT_IDLE_TIMEOUT_MS;
   if (!Number.isFinite(idleTimeoutMs) || idleTimeoutMs <= 0)
     throw new RangeError('idleTimeoutMs must be > 0');
+  const audiences = new Set<string>(opts.bearerAudiences ?? [EXTENSION_AUDIENCE]);
+  for (const a of audiences)
+    if (!(BEARER_AUDIENCES as readonly string[]).includes(a))
+      throw new RangeError(`unknown bearer audience: ${a}`);
 
   const liveRole = async (organizationId: string, userId: string): Promise<Role | null> => {
     const m = await opts.sessions.findMembership(organizationId, userId);
@@ -77,7 +87,7 @@ export function createSessionVerifier(opts: SessionVerifierOptions): SessionVeri
   const byBearerHash = async (tokenHash: string): Promise<VerifiedSession | null> => {
     if (!opts.extensionTokens) return null;
     const t = await opts.extensionTokens.findByTokenHash(tokenHash);
-    if (!t || t.audience !== EXTENSION_AUDIENCE || t.revokedAt !== null) return null;
+    if (!t || !audiences.has(t.audience) || t.revokedAt !== null) return null;
     if (t.expiresAt.getTime() <= clock.now().getTime()) return null;
     const role = await liveRole(t.organizationId, t.userId);
     if (!role) return null;
@@ -85,7 +95,7 @@ export function createSessionVerifier(opts: SessionVerifierOptions): SessionVeri
       userId: t.userId,
       organizationId: t.organizationId,
       sessionId: t.familyId,
-      credential: 'extension',
+      credential: t.audience === DESKTOP_AUDIENCE ? 'desktop' : 'extension',
       role,
       scopes: [...t.scopes],
       expiresAt: t.expiresAt,

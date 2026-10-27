@@ -5,7 +5,7 @@ export type VerifyInput = { cookie: string } | { bearer: string };
 /** ADR-011 section 5.3: re-verify from the stored credential hash, never the raw value. */
 export type VerifyByHashInput = { cookieHash: string } | { bearerHash: string };
 
-export type CredentialKind = 'session' | 'extension';
+export type CredentialKind = 'session' | 'extension' | 'desktop';
 
 export interface VerifiedSession {
   userId: string;

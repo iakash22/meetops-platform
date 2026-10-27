@@ -54,6 +54,19 @@ dependencies, no lockfile change). Every test uses mocked fetch or fake provider
 14. **Concurrent duplicates**: idempotency is check-then-insert inside one org transaction, no DB unique key on AiRun; relies on one queue job id per meeting+revision. Option: add a partial unique index (migration) later.
 15. **Enqueue trigger**: not wired yet — who enqueues summary after transcript `ready` (worker chain vs API) is undecided.
 
+## Summary trigger (feat/worker-summary-trigger)
+
+Defaults (change with Shubham if needed):
+
+- **Who enqueues**: the transcription worker. When a job leaves the merged transcript complete (`status = ready`), both the chunk consumer (`processTranscriptionJob`) and the whole-recording job (`processRecordingTranscription`) call `SummaryTrigger.transcriptReady`. Partial (`processing`) revisions never trigger.
+- **Queue / job**: `QUEUE_NAMES.ai` (`ai`), job name `summarize_meeting`, payload `{ organizationId, meetingId }` only (no transcript text, no secrets).
+- **Dedupe**: BullMQ job id `summary__{meetingId}__r{revision}__{promptVersion}` (`:` is not allowed in BullMQ ids). Re-running a transcription job, duplicate chunks, or a crash between transcript write and enqueue all re-call the trigger; the existing job id makes it a no-op. Completed ids are kept 7 days, failed ids 30 days; after that the DB unique index (below) is the backstop.
+- **Attempts**: 3, exponential backoff from 30 s.
+- **Enqueue failure**: the transcription job fails _retryably_ (`summary_enqueue_failed`). The transcript stays durable; the retry takes the duplicate path (no provider call) and enqueues again.
+- **Stale jobs**: the summary job always summarizes the _latest_ ready revision. If r2's job runs after r3 exists it summarizes r3 and r3's job becomes a no-op.
+- **Opt-out**: `startTranscriptionWorker` builds the default BullMQ trigger; hosts can inject a no-op `summaryTrigger`.
+- **Not yet wired**: a BullMQ consumer for `ai`/`summarize_meeting` (needs a Prisma client + Gemini key injected by the host, like the transcription worker). Until then jobs wait in the queue.
+
 ## Report summary dedupe (defaults)
 
 - Migration `20261027120000_report_summary_dedupe` (additive): nullable `reports.transcript_revision` (CHECK NULL or >= 1), nullable `reports.prompt_version`, and unique index `reports_summary_dedupe_key` on `(meeting_id, transcript_id, transcript_revision, prompt_version)`.

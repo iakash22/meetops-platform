@@ -11,7 +11,12 @@ const BEARER = /^Bearer ([A-Za-z0-9_-]{32,512})$/;
  * Order: a session cookie -> 401; missing/invalid bearer -> 401; path org != token org -> 404 (ADR-004);
  * missing scope -> 403. Tokens are read only from the Authorization header, never the query string.
  */
-export function makeExtensionBearerGuard(verifier: SessionVerifier, cookieName: string) {
+export function makeExtensionBearerGuard(
+  verifier: SessionVerifier,
+  cookieName: string,
+  /** Bearer credentials accepted. Default extension only; add 'desktop' (ADR-012) per route. */
+  accept: readonly ('extension' | 'desktop')[] = ['extension'],
+) {
   return async (
     request: FastifyRequest,
     scope: ExtensionScope,
@@ -21,7 +26,8 @@ export function makeExtensionBearerGuard(verifier: SessionVerifier, cookieName: 
     const m = BEARER.exec(request.headers.authorization ?? '');
     if (!m) throw new UnauthenticatedError();
     const v = await verifier.verifyBearer(m[1]);
-    if (!v || v.credential !== 'extension') throw new UnauthenticatedError();
+    if (!v || v.credential === 'session' || !accept.includes(v.credential))
+      throw new UnauthenticatedError();
     if (v.organizationId !== organizationId) throw new DomainError('NOT_FOUND', 'Not found', 404);
     if (!v.scopes?.includes(scope)) throw new DomainError('FORBIDDEN', 'Missing scope', 403);
     return v;
