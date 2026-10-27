@@ -3,9 +3,8 @@ import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
 import pg from 'pg';
-import { isDockerAvailable } from '../support/env.js';
+import { postgresAvailable, startPostgres, type PostgresService } from '../support/services.js';
 import {
   applyDatamodelPlusRls,
   applyMigrations,
@@ -22,7 +21,7 @@ import {
  * Set QA_DB_PACKAGE_DIR to PR #25's packages/database (with its deps installed).
  * QA_RLS_SCHEMA=datamodel works around DB-BUG-1 (broken migration chain).
  */
-const docker = isDockerAvailable();
+const docker = postgresAvailable();
 const hasWithOrgContext =
   hasRlsMigration() &&
   existsSync(join(dbPackageDir, 'src/tenant.ts')) &&
@@ -62,7 +61,8 @@ const unitVec = (i: number) =>
 describe.skipIf(!docker || !hasWithOrgContext)(
   `XT via withOrgContext (PR #25, schema via ${schemaMode})`,
   () => {
-    let container: StartedPostgreSqlContainer;
+    let svc: PostgresService;
+    let appRole = 'qa_xt_app';
     let owner: pg.Client;
     let db: Db;
     let client: { $disconnect(): Promise<void> };
@@ -73,16 +73,17 @@ describe.skipIf(!docker || !hasWithOrgContext)(
     const asA = <T>(fn: (tx: Tx) => Promise<T>) => db.withOrgContext(orgA, fn, { client });
 
     beforeAll(async () => {
-      container = await new PostgreSqlContainer(
-        process.env.QA_POSTGRES_IMAGE ?? 'pgvector/pgvector:pg16',
-      ).start();
-      owner = new pg.Client({ connectionString: container.getConnectionUri() });
+      svc = await startPostgres();
+      // External DB: roles are cluster-global, so the LOGIN role gets a per-run suffix.
+      appRole = `qa_xt_app${svc.suffix}`;
+      owner = new pg.Client({ connectionString: svc.uri });
       await owner.connect();
       if (schemaMode === 'datamodel') await applyDatamodelPlusRls(owner);
-      else await applyMigrations(container.getConnectionUri(), owner);
+      else await applyMigrations(svc.uri, owner);
 
+      svc.trackRole(appRole);
       await owner.query(
-        "CREATE ROLE qa_xt_app LOGIN PASSWORD 'qa-only-not-a-secret' IN ROLE meetops_app",
+        `CREATE ROLE ${appRole} LOGIN PASSWORD 'qa-only-not-a-secret' IN ROLE meetops_app`,
       );
       for (const [org, meet, slug] of [
         [orgA, meetA, 'xt-a'],
@@ -105,8 +106,8 @@ describe.skipIf(!docker || !hasWithOrgContext)(
       }
 
       db = (await import(pathToFileURL(join(dbPackageDir, 'src/index.ts')).href)) as Db;
-      const url = new URL(container.getConnectionUri());
-      url.username = 'qa_xt_app';
+      const url = new URL(svc.uri);
+      url.username = appRole;
       url.password = 'qa-only-not-a-secret';
       client = db.createPrismaClient({ databaseUrl: url.toString() });
     }, 300_000);
@@ -114,7 +115,7 @@ describe.skipIf(!docker || !hasWithOrgContext)(
     afterAll(async () => {
       await client?.$disconnect();
       await owner?.end();
-      await container?.stop();
+      await svc?.stop();
     });
 
     it('[XT-01] A cannot read a B meeting by id', async () => {
