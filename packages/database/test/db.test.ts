@@ -154,6 +154,10 @@ describe('generated client', () => {
         'NOTIFICATIONS_DEFAULT_PAGE_LIMIT',
         'NOTIFICATIONS_MAX_PAGE_LIMIT',
         'NOTIFICATION_PREFERENCES_MAX',
+        'SESSION_PURGE_DAYS',
+        'SESSION_PURGE_BATCH',
+        'SESSION_PURGE_MAX_BATCHES',
+        'purgeExpiredSessions',
       ].sort(),
     );
   });

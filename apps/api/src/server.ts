@@ -12,6 +12,7 @@ import {
 import { registerDomainErrorHandler, registerNotFoundHandler } from './shared/http-errors.js';
 import { parseTrustProxy } from './shared/trust-proxy.js';
 import { clientIpOptionsFromEnv, resolveClientIp } from './shared/geoip/client-ip.js';
+import { truncatingReqSerializer } from './shared/geoip/log-serializer.js';
 import { metricsTokenFromEnv, registerMetrics, type HttpMetrics } from './shared/metrics.js';
 import {
   createReadiness,
@@ -74,16 +75,23 @@ export interface CreateServerOptions {
   readinessChecks?: ReadinessCheck[];
   /** Overrides READINESS_TIMEOUT_MS (per-probe timeout for /ready). */
   readinessTimeoutMs?: number;
+  /** Log destination (tests capture request logs). Defaults to stdout. */
+  logStream?: { write(line: string): void };
 }
 
 export function createServer(options: CreateServerOptions = {}) {
-  const logger: FastifyBaseLogger = createLogger({
-    name: 'api',
-    // Superset of @meetops/logger defaults plus CSRF/auth headers (any case, via lowercased Node headers).
-    redact: { paths: REDACT_PATHS, censor: '***redacted***' },
-    // ADR-005 A1.5: contracts REDACT_KEYS at any depth (fast-redact `*.` paths above are one level only).
-    redactKeys: REDACT_KEYS,
-  });
+  const logger: FastifyBaseLogger = createLogger(
+    {
+      name: 'api',
+      // Superset of @meetops/logger defaults plus CSRF/auth headers (any case, via lowercased Node headers).
+      redact: { paths: REDACT_PATHS, censor: '***redacted***' },
+      // ADR-005 A1.5: contracts REDACT_KEYS at any depth (fast-redact `*.` paths above are one level only).
+      redactKeys: REDACT_KEYS,
+      // ADR-014 / #290 M-1: request logs carry the client IP truncated to /24 or /48, never in full.
+      serializers: { req: truncatingReqSerializer },
+    },
+    options.logStream,
+  );
   // Throws in production when persistence/rate-limit implementations are neither injected nor
   // backed by DATABASE_URL / REDIS_URL.
   const nodeEnv = options.nodeEnv ?? process.env.NODE_ENV;

@@ -5,7 +5,7 @@ import { registerSummaryWorker, registerTranscriptionWorker } from './ai/index.j
 import { createTranscriptionHostDeps } from './ai/bootstrap.js';
 import { loadTranscriptionWorkerEnv } from './ai/env.js';
 import { createQueue, createWorker } from '@meetops/queue';
-import { getPrismaClient, redactExpiredIpAddresses } from '@meetops/database';
+import { getPrismaClient, purgeExpiredSessions, redactExpiredIpAddresses } from '@meetops/database';
 import { IP_RETENTION_QUEUE, runIpRetention, scheduleIpRetention } from './privacy/index.js';
 import { Redis } from 'ioredis';
 import { createPrismaClient } from '@meetops/database';
@@ -59,6 +59,7 @@ async function main() {
           const worker = createWorker(IP_RETENTION_QUEUE, () =>
             runIpRetention({
               redact: () => redactExpiredIpAddresses(getPrismaClient()),
+              purge: () => purgeExpiredSessions(getPrismaClient()),
               log: logger,
             }),
           );

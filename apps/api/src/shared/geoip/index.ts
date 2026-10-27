@@ -6,6 +6,7 @@ export * from './provider.js';
 export * from './ip.js';
 export { MmdbGeoIpProvider } from './mmdb-provider.js';
 export * from './client-ip.js';
+export { truncatingReqSerializer } from './log-serializer.js';
 
 /** Attribution required by CC BY 4.0 when GEOIP_PROVIDER=dbip; show it next to location values. */
 export const DBIP_ATTRIBUTION = 'IP geolocation by DB-IP (https://db-ip.com), CC BY 4.0';
