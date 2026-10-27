@@ -1,6 +1,6 @@
 # ADR-013: Notifications architecture (outbox + BullMQ fan-out, multi-channel)
 
-- Status: **Proposed - needs owner, Architecture and Security sign-off**
+- Status: **Accepted** (2026-10-27, on the project owner's instruction; first implementation: `feat/notifications`)
 - Date: 2026-10-27
 - Related: ADR-001, ADR-002, ADR-004, ADR-007, ADR-008, ADR-010, ADR-011, ADR-012; plan [`docs/plans/notifications-architecture.md`](../plans/notifications-architecture.md)
 
@@ -26,6 +26,13 @@ Only email exists (`packages/notifications`), and it is not yet wired. There is 
 ## Alternatives considered
 
 Direct calls from API handlers (dual-write, no retries) — rejected. Novu self-hosted — heavier ops and separate tenancy model; revisit later. SaaS (Knock, Courier, OneSignal) — cost and data residency. Direct FCM/APNs — more work than Expo Push for an Expo app.
+
+## Implementation notes (2026-10-27)
+
+- `PushDevice` is stored as `push_device_tokens` and is **org-scoped** (`org_id` + `user_id`) so it sits under the same forced tenant RLS as every other table; a device used in two orgs registers once per org. Revocation with the session (ADR-011) is still to be wired.
+- Delivery rows are per attempt (`notification_delivery_attempts`), keyed by `(org, delivery_key, attempt)` where `delivery_key` is the BullMQ `jobId`.
+- `NotificationSettings` (quiet hours, digest cadence) is deferred to the digest follow-up.
+- Email stays on SMTP (Nodemailer, Gmail in dev); there is no automatic fallback to a paid provider.
 
 ## Sign-off
 
