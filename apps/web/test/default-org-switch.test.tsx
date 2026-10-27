@@ -13,7 +13,14 @@ describe('default organization after login', () => {
   it('switches to the fallback org and refetches the session before loading meetings', async () => {
     let active: string | null = null;
     const order: string[] = [];
+    const list = vi.fn((id: string) => {
+      order.push(`meetings:${id}`);
+      return id === active
+        ? Promise.resolve({ items: [], nextCursor: null })
+        : Promise.reject(new ApiError(404, 'NOT_FOUND', 'no', 'r'));
+    });
     const api = createMockApi({
+      meetings: { list },
       auth: {
         session: vi.fn(() => {
           order.push(`session:${active}`);
@@ -27,13 +34,6 @@ describe('default organization after login', () => {
           return Promise.resolve({ organization: orgs[0]!, role: 'owner' as const });
         }),
       },
-    });
-    const list = api.meetings.list as ReturnType<typeof vi.fn>;
-    list.mockImplementation((id: string) => {
-      order.push(`meetings:${id}`);
-      return id === active
-        ? Promise.resolve({ items: [], nextCursor: null })
-        : Promise.reject(new ApiError(404, 'NOT_FOUND', 'no', 'r'));
     });
     renderApp('/meetings', api);
     await waitFor(() => expect(list).toHaveBeenCalled());
