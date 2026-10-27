@@ -1,4 +1,54 @@
-# Phase status — 27 Oct 2026 (~01:30 IST)
+# Phase status — 27 Oct 2026 (~23:20 IST)
+
+## Update — 27 Oct 2026 (~23:20 IST)
+
+Checked against `gh pr list` / `gh pr view` and the tree at `integration/phase-1` `99a6f4f` and `main` `02646a1`. Phase percentages below are unchanged (coordinator estimates, not measured).
+
+- Merged after the ~21:30 IST snapshot:
+  - [#249](https://github.com/iakash22/meetops-platform/pull/249) (into `integration/phase-1`, 22:40 IST) and [#250](https://github.com/iakash22/meetops-platform/pull/250) (into `main`, 22:41 IST): notifications architecture plan and [ADR-013](15-decisions/ADR-013-notifications-architecture.md) (Proposed).
+  - [#251](https://github.com/iakash22/meetops-platform/pull/251) (into `integration/phase-1`, 22:46 IST): the API now wires the real mailer (`EMAIL_PROVIDER=smtp|resend|console`) and `packages/notifications` gains a Resend provider. Production still needs the BullMQ mail queue.
+  - [#252](https://github.com/iakash22/meetops-platform/pull/252) (22:42 IST) and [#253](https://github.com/iakash22/meetops-platform/pull/253) (22:48 IST): `integration/phase-1` → `main`. `main` now contains everything on `integration/phase-1` up to `99a6f4f`.
+- `main` also carries docs merged directly into it (#248 status update, #250), which `integration/phase-1` did not have until this docs PR merged `main` back in.
+- Open PRs (all drafts, base `integration/phase-1`): #192, #193, #199 (ADR amendment drafts, need owner sign-off) and #254, #255 (backup branches for unpushed desktop-native and mobile secure-store commits, marked do-not-merge).
+- The "31 PRs" in the table below counts merges after #211 (integration → `main`, 09:55 IST). #205–#209 and #212–#215 also merged into integration early on 27 Oct IST (01:57–03:50) and reached `main` through #211.
+
+## Status at ~21:30 IST
+
+> `integration/phase-1` (head `4f197bb`) was merged into `main` by Shubham via [#247](https://github.com/iakash22/meetops-platform/pull/247) (merge commit `47dbf97`, 21:19 IST). Everything below is **on `main`**. Percentages are coordinator estimates, not measured.
+
+| Phase                           | 27 Oct AM | 27 Oct PM | Merged today (27 Oct)                                                                                                                                                                                                |
+| ------------------------------- | --------- | --------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| P0 Foundation                   | 100%      | 100%      | —                                                                                                                                                                                                                    |
+| P1 Auth, orgs, roles            | ~90%      | ~90%      | #221 (strict CORS allowlist)                                                                                                                                                                                         |
+| P2 Meetings, uploads, recording | ~62%      | ~75%      | #242 (readiness probes), #227                                                                                                                                                                                        |
+| P3 Transcripts, reports         | ~35%      | ~65%      | #228, #229, #235, #236, #243                                                                                                                                                                                         |
+| P4 Tasks, approval              | ~30%      | ~70%      | #222, #224, #225, #230, #232, #233, #234                                                                                                                                                                             |
+| P5 GitHub, Jira                 | ~30%      | ~65%      | #223, #226, #231                                                                                                                                                                                                     |
+| P6 Extension                    | ~45%      | ~70%      | #216, #217, #238, #239, #244, #245                                                                                                                                                                                   |
+| P7 Calendar, search, analytics  | 5%        | 5%        | —                                                                                                                                                                                                                    |
+| P8 Desktop, mobile              | ~45%      | ~55%      | #218, #219, #220, #237, #240, #241                                                                                                                                                                                   |
+| P9 Hardening, release           | ~15%      | ~25%      | #246 (token-gated /metrics), #243                                                                                                                                                                                    |
+| **Overall**                     |           | **~60%**  | 31 PRs: #216, #217, #218, #219, #220, #221, #222, #223, #224, #225, #226, #227, #228, #229, #230, #231, #232, #233, #234, #235, #236, #237, #238, #239, #240, #241, #242, #243, #244, #245, #246, then #247 → `main` |
+
+Notes:
+
+- #241 desktop auth: desktop tokens are accepted only when `DESKTOP_AUTH_ENABLED` is on (default **off**). The extension guard still accepts extension tokens only.
+- On hold: `feat/worker-ai-queue-consumer` (`4dc75a7`, no PR) — needs `GEMINI_API_KEY`.
+- GitHub Actions runs fail; the local merge gate (build, lint, typecheck, test, gitleaks, Arch/Sec PASS on head) is the CI.
+- Both agents are idle until Shubham says "start work".
+
+## Owner decisions (Shubham)
+
+- ADR drafts #192, #193, #199 and Proposed ADRs 006–013 sign-off.
+- Dependabot lockfile update (9 alerts).
+- Bearer routes: accept token or cookie?
+- MFA/SSO, billing, KMS, malware scanning, media retention, consent law.
+- Keys via secure input: Gemini, AssemblyAI, Gmail SMTP.
+- GitHub Actions failures.
+
+---
+
+## Earlier status (27 Oct ~01:30 IST)
 
 > All code below is merged into `integration/phase-1`, **not yet on `main`**. Percentages are coordinator estimates from merged work, not measured.
 

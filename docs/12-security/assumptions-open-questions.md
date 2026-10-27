@@ -4,7 +4,7 @@
 
 1. Validation library is **Zod** (README, `packages/config`); TypeBox not in use. If TypeBox is adopted for Fastify schemas, same rules apply.
 2. ORM is **Prisma**; RLS uses interactive `$transaction` + `set_config('app.current_org_id', …, true)`.
-3. **CASL** (`@casl/ability`) is the authorization library — not yet a dependency.
+3. **CASL** (`@casl/ability` ^6.7.1, a dependency of `apps/api`) is the authorization library. Rules are in `apps/api/src/modules/organizations/domain/abilities.ts` (`defineAbilityFor`) and are enforced for organizations, the directory (employees, teams, projects), media, meetings, meeting insights, tasks and integrations. The web app only mirrors the rules as UI hints.
 4. Tenant = organization; users can belong to multiple orgs, one active org per session.
 5. Sessions stored in PostgreSQL (or Redis) — opaque tokens, no JWT in browser.
 6. Integrations in scope: GitHub, Jira (README), plus Slack and Linear (brief).

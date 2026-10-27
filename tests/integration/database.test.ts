@@ -1,9 +1,8 @@
 import { execFileSync } from 'node:child_process';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
 import pg from 'pg';
-import { isDockerAvailable } from '../support/env.js';
+import { postgresAvailable, startPostgres, type PostgresService } from '../support/services.js';
 import {
   applyMigrations,
   canSeed,
@@ -13,9 +12,10 @@ import {
 } from '../support/db-package.js';
 import { createRng } from '../factories/rng.js';
 
-const docker = isDockerAvailable();
+const docker = postgresAvailable();
 const schema = hasMigrations();
-if (!docker) console.warn('[integration/db] Docker not available: skipping');
+if (!docker)
+  console.warn('[integration/db] Docker not available and no QA_EXTERNAL_DB_URL: skipping');
 else if (!schema)
   console.warn(
     `[integration/db] no Prisma migrations under ${dbPackageDir}: skipping (set QA_DB_PACKAGE_DIR)`,
@@ -35,24 +35,22 @@ function vec(seed: number): string {
 describe.skipIf(!docker || !schema)(
   'integration: database schema (pgvector, Prisma migrations)',
   () => {
-    let container: StartedPostgreSqlContainer;
+    let svc: PostgresService;
     let db: pg.Client;
 
     beforeAll(async () => {
-      container = await new PostgreSqlContainer(
-        process.env.QA_POSTGRES_IMAGE ?? 'pgvector/pgvector:pg16',
-      ).start();
-      db = new pg.Client({ connectionString: container.getConnectionUri() });
+      svc = await startPostgres();
+      db = new pg.Client({ connectionString: svc.uri });
       await db.connect();
     });
 
     afterAll(async () => {
       await db?.end();
-      await container?.stop();
+      await svc?.stop();
     });
 
     it('applies every migration', async () => {
-      await applyMigrations(container.getConnectionUri(), db);
+      await applyMigrations(svc.uri, db);
       const { rows } = await db.query<{ extname: string }>(
         "SELECT extname FROM pg_extension WHERE extname = 'vector'",
       );
@@ -66,7 +64,7 @@ describe.skipIf(!docker || !schema)(
     it.skipIf(!canSeed())(
       'runs prisma/seed.ts and is idempotent',
       () => {
-        const env = { ...process.env, DATABASE_URL: container.getConnectionUri() };
+        const env = { ...process.env, DATABASE_URL: svc.uri };
         const tsx = join(dbPackageDir, 'node_modules/.bin/tsx');
         for (let i = 0; i < 2; i++)
           execFileSync(tsx, ['prisma/seed.ts'], {
