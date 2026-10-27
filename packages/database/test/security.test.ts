@@ -76,7 +76,9 @@ const INTEGRATION_CONNECTIONS_MIGRATION = '20261027000000_integration_connection
 const INTEGRATION_ROUTING_MIGRATION = '20261027100000_integration_routing_functions';
 /** Phase 3 AI summary dedupe (reports unique key). Update LATEST_MIGRATION when adding a migration. */
 const REPORT_SUMMARY_DEDUPE_MIGRATION = '20261027120000_report_summary_dedupe';
-const LATEST_MIGRATION = REPORT_SUMMARY_DEDUPE_MIGRATION;
+/** App-wide GitHub webhook routing by installation id (definer function, identifiers only). */
+const EXTERNAL_ACCOUNT_ROUTING_MIGRATION = '20261028000000_integration_external_account_routing';
+const LATEST_MIGRATION = EXTERNAL_ACCOUNT_ROUTING_MIGRATION;
 const reportDedupeSql = readFileSync(
   resolve(migrationsDir, REPORT_SUMMARY_DEDUPE_MIGRATION, 'migration.sql'),
   'utf8',
@@ -1336,7 +1338,7 @@ describe('Phase 5 integration_connections (static)', () => {
       dirs.indexOf(INTEGRATION_ROUTING_MIGRATION) - 1,
     );
     expect(dirs.indexOf(INTEGRATION_ROUTING_MIGRATION)).toBe(
-      dirs.indexOf(LATEST_MIGRATION) - 1,
+      dirs.indexOf(REPORT_SUMMARY_DEDUPE_MIGRATION) - 1,
     );
   });
 
@@ -1430,5 +1432,28 @@ describe('integration routing definer functions', () => {
     expect(bodies).toHaveLength(2);
     for (const b of bodies) expect(b).not.toMatch(/_enc|display_name|\*/);
     expect(sql).toContain("c.status <> 'revoked'");
+  });
+});
+
+describe('integration external-account routing (20261028000000)', () => {
+  const sql = readFileSync(
+    resolve(migrationsDir, EXTERNAL_ACCOUNT_ROUTING_MIGRATION, 'migration.sql'),
+    'utf8',
+  ).replace(/--.*$/gm, '');
+  it('is a SECURITY DEFINER, identifiers-only, live-rows function granted to the app role only', () => {
+    expect(sql).toMatch(
+      /CREATE FUNCTION integration_connections_by_external_account\(p_provider text, p_external_account_id text\)/,
+    );
+    expect(sql).toMatch(/RETURNS TABLE \(org_id uuid, id uuid\)/);
+    expect(sql).toMatch(/SECURITY DEFINER\s+SET search_path = public, pg_temp/);
+    expect(sql).toMatch(/c\.status <> 'revoked'/);
+    expect(sql).toMatch(
+      /REVOKE ALL ON FUNCTION integration_connections_by_external_account\(text, text\) FROM PUBLIC;/,
+    );
+    expect(sql).toMatch(
+      /GRANT EXECUTE ON FUNCTION integration_connections_by_external_account\(text, text\) TO meetops_app;/,
+    );
+    expect(sql).not.toMatch(/_enc\b|secret|access_token/i);
+    expect(sql).not.toMatch(/\bDROP\b|ALTER TABLE|DISABLE ROW LEVEL SECURITY|NO FORCE/i);
   });
 });
