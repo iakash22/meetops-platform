@@ -1,5 +1,6 @@
 export {
   ExtensionAuthService,
+  type ExtensionAuthLog,
   type ExtensionRevoker,
   EXTENSION_LIMITS,
   PAIRING_CODE_TTL_MS,
