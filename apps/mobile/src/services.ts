@@ -5,6 +5,7 @@ import {
   createDemoPushTokenProvider,
   createHttpPushDeviceApi,
   createPushRegistrationService,
+  createPushWipeHook,
   type PushRegistrationService,
 } from './notifications/pushRegistration';
 import { createHttpAuthClient } from './api/httpAuthClient';
@@ -121,6 +122,8 @@ export function pushServiceFor(userId: string): PushRegistrationService | null {
   }
   return s;
 }
+
+sessionManager.registerWipeHook(createPushWipeHook(pushServices));
 
 /** Live HTTP client, exported for the native provider follow-up. */
 export const httpPushDeviceApi = http ? createHttpPushDeviceApi(createApiRequester(http)) : null;
