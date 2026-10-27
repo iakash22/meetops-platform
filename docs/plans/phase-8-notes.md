@@ -19,3 +19,14 @@ desktop scopes cover. Mobile tokens need their own ADR (ADR-012 "Mobile stays ou
 | D3  | Redact `state` server-side         | Not added to `REDACT_KEYS`                                                          | `state` stays inside the app (never sent to the API); the Rust logger still redacts it       |
 | D4  | Loopback port range                | 1024-65535                                                                          | OS-assigned ephemeral ports are never privileged                                             |
 | D5  | Mobile audience                    | Not built                                                                           | Needs an ADR-005/ADR-012-style amendment (token type, refresh, org switch)                   |
+
+## Approval status
+
+ADR-012's amendment (PR #192) is still awaiting sign-off. Until it is approved, all desktop auth code stays
+off by default: the session-verifier accepts `desktop` bearers only when a caller passes
+`bearerAudiences: ['extension', 'desktop']`, and the API desktop routes register only when
+`DESKTOP_AUTH_ENABLED=true`.
+
+- **D6 (session-verifier):** `bearerAudiences` defaults to `['extension']`; unknown audiences throw at
+  construction. A `desktop` token verifies as `credential: 'desktop'`, keeping its scopes. apps/realtime
+  rejects `desktop` credentials on both web and extension handshakes (no desktop socket class yet).
