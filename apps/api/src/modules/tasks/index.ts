@@ -1,6 +1,8 @@
 import type { FastifyInstance } from 'fastify';
-import { Type, type Static } from '@sinclair/typebox';
+import { Type } from '@sinclair/typebox';
 import {
+  AcceptExtractedTaskRequest,
+  CreateTaskRequest,
   CursorPage,
   DEFAULT_PAGE_LIMIT,
   CursorPageQuery,
@@ -9,8 +11,6 @@ import {
   Task,
   TASK_PATHS,
   TaskParams,
-  TaskPriority,
-  TaskStatus,
   UpdateTaskRequest,
 } from '@meetops/contracts';
 import type { AuthService } from '../auth/application/auth.service.js';
@@ -53,39 +53,12 @@ const ExtractedQuery = Type.Object(
   { ...CursorPageQuery.properties, meetingId: Type.Optional(Uuid) },
   { additionalProperties: false },
 );
-/**
- * TODO(contracts): body of accept, the reviewer's (possibly edited) values. The LLM hints are never copied
- * server-side. Contracts has no named type yet; propose `AcceptExtractedTaskRequest` with this exact shape.
- */
-export const AcceptExtractedTaskBody = Type.Object(
-  {
-    title: Type.String({ minLength: 1, maxLength: 500 }),
-    priority: TaskPriority,
-    description: Type.Optional(Type.String({ maxLength: 10_000 })),
-    dueAt: Type.Optional(Type.String({ format: 'date-time' })),
-  },
-  { additionalProperties: false },
-);
+/** Re-exported for existing importers; the schema lives in @meetops/contracts (v0.10.0). */
+export const AcceptExtractedTaskBody = AcceptExtractedTaskRequest;
 
-/**
- * TODO(contracts): body of POST /orgs/:organizationId/tasks (manual task), returning 201 `Task`. Contracts has no
- * `CreateTaskRequest` yet; propose this exact shape. status defaults to todo, priority to medium. assigneeId is an
- * employee id; projectId/meetingId must be live rows of the same org (400 otherwise). Unknown keys are rejected.
- */
-export const CreateTaskBody = Type.Object(
-  {
-    title: Type.String({ minLength: 1, maxLength: 500 }),
-    description: Type.Optional(Type.String({ maxLength: 10_000 })),
-    status: Type.Optional(TaskStatus),
-    priority: Type.Optional(TaskPriority),
-    assigneeId: Type.Optional(Uuid),
-    projectId: Type.Optional(Uuid),
-    meetingId: Type.Optional(Uuid),
-    dueAt: Type.Optional(Type.String({ format: 'date-time' })),
-  },
-  { additionalProperties: false },
-);
-type CreateTaskBody = Static<typeof CreateTaskBody>;
+/** Body of POST TASK_PATHS.tasks; status defaults to todo, priority to medium. */
+export const CreateTaskBody = CreateTaskRequest;
+type CreateTaskBody = CreateTaskRequest;
 
 type OrgP = { organizationId: string };
 type TaskP = { organizationId: string; taskId: string };
