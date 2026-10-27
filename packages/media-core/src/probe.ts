@@ -1,4 +1,10 @@
-import { PROTOCOL_WHITELIST, resolveTools, runProcess, FfmpegError, type MediaToolsOptions } from './run.js';
+import {
+  PROTOCOL_WHITELIST,
+  resolveTools,
+  runProcess,
+  FfmpegError,
+  type MediaToolsOptions,
+} from './run.js';
 
 export type MediaStreamInfo = {
   index: number;
@@ -20,7 +26,14 @@ export type ProbeResult = {
 
 type RawProbe = {
   format?: { duration?: string; format_name?: string; size?: string; bit_rate?: string };
-  streams?: Array<{ index: number; codec_type?: string; codec_name?: string; sample_rate?: string; channels?: number; duration?: string }>;
+  streams?: Array<{
+    index: number;
+    codec_type?: string;
+    codec_name?: string;
+    sample_rate?: string;
+    channels?: number;
+    duration?: string;
+  }>;
 };
 
 function num(v: string | undefined): number | undefined {
@@ -52,7 +65,7 @@ export function parseProbeOutput(json: string): ProbeResult {
     formatName: raw.format?.format_name ?? 'unknown',
     streams,
     hasAudio: streams.some((s) => s.codecType === 'audio'),
-    hasVideo: streams.some((s) => s.codecType === 'video')
+    hasVideo: streams.some((s) => s.codecType === 'video'),
   };
   const size = num(raw.format?.size);
   if (size !== undefined) res.sizeBytes = size;
@@ -72,8 +85,19 @@ export async function probeMedia(inputPath: string, opts: ProbeOptions = {}): Pr
   const fmt = opts.format ? ['-f', opts.format] : [];
   const { stdout } = await runProcess(
     t.ffprobe,
-    ['-v', 'error', ...PROTOCOL_WHITELIST, ...fmt, '-print_format', 'json', '-show_format', '-show_streams', '--', inputPath],
-    { timeoutMs: t.timeoutMs, signal: opts.signal }
+    [
+      '-v',
+      'error',
+      ...PROTOCOL_WHITELIST,
+      ...fmt,
+      '-print_format',
+      'json',
+      '-show_format',
+      '-show_streams',
+      '--',
+      inputPath,
+    ],
+    { timeoutMs: t.timeoutMs, signal: opts.signal },
   );
   return parseProbeOutput(stdout);
 }
