@@ -31,6 +31,10 @@ export const REALTIME_EVENTS = {
   meetingStatus: 'meeting:status',
   transcriptionProgress: 'transcription:progress',
   taskUpdate: 'task:update',
+  /** v0.13.0: AI summary (and action-item drafts) stored for a meeting. */
+  summaryReady: 'summary:ready',
+  /** v0.13.0: a new in-app notification row for the receiving user (user room only). */
+  notificationNew: 'notification:new',
 } as const;
 export type RealtimeEventName = (typeof REALTIME_EVENTS)[keyof typeof REALTIME_EVENTS];
 
@@ -101,11 +105,45 @@ export const RealtimeEvent = Type.Union([
 ]);
 export type RealtimeEvent = Static<typeof RealtimeEvent>;
 
+/**
+ * v0.13.0: emitted by the summary worker to the meeting and organization rooms. Ids and counts only; clients fetch
+ * the report / extracted tasks over HTTP.
+ */
+export const SummaryReadyEvent = Type.Object(
+  {
+    organizationId: Id,
+    meetingId: Id,
+    reportId: Id,
+    transcriptRevision: Type.Integer({ minimum: 1 }),
+    tasksPendingReview: Type.Integer({ minimum: 0, maximum: 1000 }),
+    at: IsoDateTime,
+  },
+  { additionalProperties: false },
+);
+export type SummaryReadyEvent = Static<typeof SummaryReadyEvent>;
+
+/**
+ * v0.13.0: emitted to `organizations:{org}:users:{user}` only, when an in-app notification is created. No title or
+ * body: the client refetches the feed (`NOTIFICATION_PATHS`).
+ */
+export const NotificationNewEvent = Type.Object(
+  {
+    organizationId: Id,
+    notificationId: Id,
+    kind: Type.String({ minLength: 1, maxLength: 64 }),
+    at: IsoDateTime,
+  },
+  { additionalProperties: false },
+);
+export type NotificationNewEvent = Static<typeof NotificationNewEvent>;
+
 /** Event name to payload schema. */
 export const RealtimeEventSchemas = {
   'meeting:status': MeetingStatusEvent,
   'transcription:progress': TranscriptionProgressEvent,
   'task:update': TaskUpdateEvent,
+  'summary:ready': SummaryReadyEvent,
+  'notification:new': NotificationNewEvent,
 } as const;
 
 /** Event name to payload type map, usable as Socket.IO ServerToClientEvents. */
@@ -113,6 +151,8 @@ export type RealtimeEventMap = {
   'meeting:status': MeetingStatusEvent;
   'transcription:progress': TranscriptionProgressEvent;
   'task:update': TaskUpdateEvent;
+  'summary:ready': SummaryReadyEvent;
+  'notification:new': NotificationNewEvent;
 };
 
 // ---- v0.4.1: auth revocation and control events (ADR-011 sections 3 and 5) ----

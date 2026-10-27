@@ -1,5 +1,5 @@
 import pino, { type LoggerOptions, type Logger } from 'pino';
-import { CENSOR, DEFAULT_REDACT_KEYS, redactDeep, type RedactLimits } from './redact.js';
+import { CENSOR, DEFAULT_REDACT_KEYS, redactDeep, redactUrl, type RedactLimits } from './redact.js';
 
 export type { Logger };
 export {
@@ -7,6 +7,8 @@ export {
   CIRCULAR,
   DEFAULT_REDACT_KEYS,
   redactDeep,
+  redactUrl,
+  SENSITIVE_QUERY_KEYS,
   TRUNCATED,
   type RedactLimits,
 } from './redact.js';
@@ -44,6 +46,8 @@ export function createLogger(
   const opts: LoggerOptions = {
     level: process.env.NODE_ENV === 'production' ? 'info' : 'debug',
     ...rest,
+    // Fastify request logs: query values such as signed unsubscribe tokens never reach the log (PR #263 M-1).
+    serializers: { req: requestSerializer(keys), ...rest.serializers },
     redact: { paths: [...new Set([...headerPaths, ...extraPaths])], censor: CENSOR },
     formatters: {
       ...formatters,
@@ -59,6 +63,37 @@ export function createLogger(
   };
   const root = destination ? pino(opts, destination) : pino(opts);
   return wrapChild(root, keys, redactLimits);
+}
+
+type ReqLike = {
+  method?: string;
+  url?: string;
+  host?: string;
+  hostname?: string;
+  ip?: string;
+  socket?: { remoteAddress?: string };
+};
+
+/** Fastify-shaped `req` serializer with sensitive query values redacted. */
+export function requestSerializer(keys: Iterable<string> = DEFAULT_REDACT_KEYS) {
+  const list = [...keys];
+  return (req: ReqLike) => {
+    const proto = Object.getPrototypeOf(req) as unknown;
+    if (proto === Object.prototype || proto === null) {
+      // Plain log objects (already-serialized shapes): keep every field, only scrub the URL.
+      return typeof req.url === 'string' ? { ...req, url: redactUrl(req.url, list) } : req;
+    }
+    return fastifyShape(req, list);
+  };
+}
+
+function fastifyShape(req: ReqLike, list: string[]) {
+  return {
+    method: req.method,
+    url: typeof req.url === 'string' ? redactUrl(req.url, list) : req.url,
+    host: req.host ?? req.hostname,
+    remoteAddress: req.ip ?? req.socket?.remoteAddress,
+  };
 }
 
 /**

@@ -14,8 +14,8 @@
 | [ADR-010](ADR-010-organization-id-tenant-key.md)           | `organizationId` as the canonical tenant key               | Proposed - needs Architecture review                                                                                             | 2026-10-24 |
 | [ADR-011](ADR-011-realtime-auth.md)                        | Realtime session auth, meeting access and org revalidation | Proposed - needs Architecture and Security sign-off                                                                              | 2026-10-25 |
 | [ADR-012](ADR-012-desktop-auth.md)                         | Desktop (Tauri) sign-in, token storage and revocation      | Proposed - needs Architecture and Security sign-off. Open draft amendment: #192                                                  | 2026-10-25 |
-| [ADR-013](ADR-013-notifications-architecture.md)           | Notifications architecture (outbox + BullMQ fan-out)       | Proposed - needs owner, Architecture and Security sign-off                                                                       | 2026-10-27 |
+| [ADR-013](ADR-013-notifications-architecture.md)           | Notifications architecture (outbox + BullMQ fan-out)       | Accepted                                                                                                                         | 2026-10-27 |
 
 New ADRs use the next number, `ADR-NNN-short-title.md`, with Date, Status, Context, Decision and Consequences sections. Add a row here. ADR-003 makes ARCH the owner of this folder. Status notes name a PR only while it is still open (checked with `gh pr list --state open` on 2026-10-27).
 
-ADR-013 and its plan (`docs/plans/notifications-architecture.md`) landed through #249 (into `integration/phase-1`) and #250 (into `main`), both merged on 2026-10-27. The decision itself is still Proposed.
+ADR-013 and its plan (`docs/plans/notifications-architecture.md`) landed through #249 (into `integration/phase-1`) and #250 (into `main`), both merged on 2026-10-27. PR #263 marks the decision Accepted.

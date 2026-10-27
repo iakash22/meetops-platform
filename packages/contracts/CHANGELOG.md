@@ -30,6 +30,49 @@ reason }`, every key required, geo values nullable; `reason` is `'new_region' | 
   `"`, tag chars, leading/trailing whitespace and IPv4/IPv6-looking strings. ASCII `'` and `&` are allowed for real
   place names ("St. John's", "Trinidad & Tobago"), so every renderer (email, web, push) must escape output. Also
   `GeoText`, `GeoCountryCode`, `GeoCountryCodeString`, `AUTH_NEW_LOCATION_SIGNIN_EVENT`.
+## [0.13.0] - 2026-10-28
+
+Realtime events for the notifications fan-out (ADR-013) and the AI summary worker (PR #272). Additive; builds on
+0.11.0 (notifications, PR #263). 0.12.0 is reserved by the integrations stream.
+
+### Added
+
+- `REALTIME_EVENTS.summaryReady` / `SummaryReadyEvent` (`summary:ready`): `{organizationId, meetingId, reportId,
+transcriptRevision, tasksPendingReview, at}` to the meeting + organization rooms.
+- `REALTIME_EVENTS.notificationNew` / `NotificationNewEvent` (`notification:new`): `{organizationId, notificationId,
+kind, at}` to the per-user room only.
+- `RealtimeEventMap` / `ServerToClientEvents` include both.
+
+## [0.11.0] - 2026-10-28
+
+Notifications (ADR-013, Accepted). Additive; builds on 0.10.0 (re-versioned from 0.10.0, which PR #261 uses for tasks).
+
+### Added
+
+- `NOTIFICATION_PATHS`: feed list, mark one read (`/notifications/:notificationId/read`), mark all read
+  (`/notifications/read-all`), preferences (GET/PUT), push device register/unregister (`/me/push-devices`, `/me/push-devices/:id`; mobile PR #262), unsubscribe
+  (GET confirm page, POST applies).
+- DTOs: `Notification` (`id`, `organizationId`, `kind`, `title`, optional `body`/`meetingId`/`taskId`, nullable
+  `readAt`, `createdAt`; web PR #260), `NotificationList` (`items`, keyset `nextCursor`), `ListNotificationsQuery`,
+  `NotificationParams`, `MarkNotificationsReadResponse` (`updated`), `NotificationPreference(s)`,
+  `UpdateNotificationPreferencesRequest`, `RegisterPushDeviceRequest` (`{provider:'expo', token, platform:'ios'|'android',
+deviceName?}` or `{provider:'webpush', subscription, platform:'web'|'extension', deviceName?}`), `PushDevice`
+  (`{id, platform, createdAt}`), `PushDeviceParams` (`{id}`), `UnsubscribeQuery`/`Response`.
+- `NOTIFICATION_CHANNELS`, `PUSH_PLATFORMS`, `WEB_PUSH_ALLOWED_HOSTS`, `EXPO_PUSH_TOKEN_PATTERN`, `EXPO_PUSH_API_URL`,
+  `GENERIC_PUSH_TITLE`/`GENERIC_PUSH_BODY`.
+- Jobs: `NOTIFICATION_DELIVERY_QUEUE`, `NOTIFICATION_DELIVERY_JOB_RETENTION`, `NotificationDeliveryJobPayload`
+  (mandatory `organizationId`).
+- `REDACT_KEYS`: `expoPushToken`, `p256dh`, `auth` (Web Push subscription secret).
+
+## [0.10.0] - 2026-10-27
+
+Task write bodies; additive, builds on 0.9.0.
+
+### Added
+
+- `CreateTaskRequest`: body of POST `TASK_PATHS.tasks` (manual task; status/priority default server-side to
+  `todo`/`medium`; unknown keys rejected).
+- `AcceptExtractedTaskRequest`: body of POST `TASK_PATHS.accept` (matches the API's former `AcceptExtractedTaskBody`).
 
 ## [0.9.0] - 2026-10-27
 
