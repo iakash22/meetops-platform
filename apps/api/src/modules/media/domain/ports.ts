@@ -1,5 +1,10 @@
+import type {
+  AssembleRecordingSessionJobPayload,
+  MediaSourceExt,
+  UploadScanJobPayload,
+} from '@meetops/contracts';
 import { ALLOWED_MEDIA_MIME_TYPES } from '@meetops/contracts';
-import type { ConsentSubjectType, FileObjectScanStatus } from '@meetops/contracts';
+import type { FileObjectScanStatus } from '@meetops/contracts';
 import { DomainError } from '../../../shared/domain-error.js';
 
 export type FileObjectStatus = 'pending_upload' | 'uploaded' | 'processing';
@@ -75,18 +80,52 @@ export interface MediaSigner {
   head(key: string): Promise<StoredObjectHead | null>;
 }
 
-/** Processing job. Local shape: contracts MediaJobPayload needs meetingId + recordingId, which uploads may lack. */
-export interface MediaProcessingJob {
-  kind: 'process_upload' | 'process_recording_session';
-  organizationId: string;
-  subjectType: ConsentSubjectType;
-  subjectId: string;
-  consentAttestationId: string;
-  meetingId?: string;
-}
+/**
+ * Media pipeline job (contracts, ADR-014). Uploads enqueue `process_upload`; completed recording sessions enqueue
+ * `assemble_recording_session` (the worker concatenates the chunks and then enqueues `process_recording`).
+ */
+export type MediaProcessingJob = UploadScanJobPayload | AssembleRecordingSessionJobPayload;
 
 export interface MediaJobQueue {
+  /** Idempotent per job: adapters derive a deterministic job id from kind + subject id. */
   enqueue(job: MediaProcessingJob): Promise<void>;
+}
+
+/** Deterministic BullMQ job id: a retried complete/scan call never queues a second job. */
+export function mediaJobId(job: MediaProcessingJob): string {
+  return job.kind === 'process_upload'
+    ? `process_upload:${job.uploadId}`
+    : `assemble_recording_session:${job.sessionId}`;
+}
+
+const SESSION_EXT: Record<string, MediaSourceExt> = {
+  'audio/webm': 'webm',
+  'video/webm': 'webm',
+  'audio/ogg': 'ogg',
+  'audio/mpeg': 'mp3',
+  'audio/mp4': 'm4a',
+  'video/mp4': 'mp4',
+  'audio/wav': 'wav',
+  'audio/x-wav': 'wav',
+};
+
+/** Source container for a recording session from its MIME type (parameters such as `;codecs=` are ignored). */
+export function sessionSourceExt(mimeType: string): MediaSourceExt | null {
+  return SESSION_EXT[mimeType.split(';')[0]!.trim().toLowerCase()] ?? null;
+}
+
+/**
+ * Storage key of a session chunk. Byte-identical to @meetops/storage buildObjectKey({kind:'session_chunk'}):
+ * tmp/session-chunks/organizations/{org}/meetings/{meeting}/sessions/{session}/{seq:5}.part, so the worker's
+ * StorageService (assertKeyOwnedBy) accepts it and the tmp/ lifecycle rule expires abandoned chunks.
+ */
+export function sessionChunkKey(
+  organizationId: string,
+  meetingId: string,
+  sessionId: string,
+  seq: number,
+): string {
+  return `tmp/session-chunks/organizations/${organizationId}/meetings/${meetingId}/sessions/${sessionId}/${String(seq).padStart(5, '0')}.part`;
 }
 
 export class UploadNotFoundError extends DomainError {

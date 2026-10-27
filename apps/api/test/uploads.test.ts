@@ -101,9 +101,9 @@ describe('uploads (init, complete, download-url)', () => {
     });
     expect(w.jobs.jobs).toEqual([
       expect.objectContaining({
+        jobVersion: 1,
         kind: 'process_upload',
-        subjectType: 'upload',
-        subjectId: fileObjectId,
+        uploadId: fileObjectId,
         consentAttestationId: w.consents.rows[0]!.id,
       }),
     ]);

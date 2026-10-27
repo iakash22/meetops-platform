@@ -118,10 +118,10 @@ export class UploadService {
     );
     await this.d.files.setStatus(f.organizationId, f.id, 'processing', 'pending');
     await this.d.jobs.enqueue({
+      jobVersion: 1,
       kind: 'process_upload',
       organizationId: f.organizationId,
-      subjectType: 'upload',
-      subjectId: f.id,
+      uploadId: f.id,
       consentAttestationId: consent.id,
       ...(f.meetingId ? { meetingId: f.meetingId } : {}),
     });

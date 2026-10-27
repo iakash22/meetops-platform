@@ -48,6 +48,12 @@ import {
 } from './organizations/infrastructure/prisma/prisma.repositories.js';
 import { createPrismaClient, type DatabaseClient } from '../shared/prisma/context.js';
 import { Redis } from 'ioredis';
+import { Queue } from 'bullmq';
+import { MEDIA_QUEUE } from '@meetops/contracts';
+import {
+  BullMqMediaJobQueue,
+  type MediaQueueProducer,
+} from './media/infrastructure/bullmq-job-queue.js';
 import type { SessionPolicy, SessionRepository } from './auth/domain/session.js';
 import type {
   LoginLockout,
@@ -99,7 +105,12 @@ import type { MeetingRepository } from './meetings/domain/meeting.js';
 import { InMemoryMeetingRepository } from './meetings/infrastructure/in-memory.repository.js';
 import { PrismaMeetingRepository } from './meetings/infrastructure/prisma.repository.js';
 import type { ConsentRepository } from './media/domain/consent.js';
-import type { FileObjectRepository, MediaJobQueue, MediaSigner } from './media/domain/ports.js';
+import type {
+  FileObjectRepository,
+  MediaJobQueue,
+  MediaProcessingJob,
+  MediaSigner,
+} from './media/domain/ports.js';
 import type { RecordingSessionRepository } from './media/domain/recording-session.js';
 import {
   FakeMediaSigner,
@@ -144,6 +155,8 @@ export interface ModuleDeps {
   redis?: RedisLike;
   /** Set when defaultModuleDeps created the client itself (closed in an onClose hook). */
   ownedRedis?: OwnedRedis;
+  /** BullMQ media producer queue created by defaultModuleDeps (closed on shutdown). */
+  ownedMediaQueue?: { close(): Promise<void> };
   /**
    * Prisma client. When set (or DATABASE_URL is set outside NODE_ENV=test), users, sessions,
    * one-time tokens, organizations, memberships, invitations and the audit log default to the
@@ -186,6 +199,26 @@ export interface MediaAdapters {
   signer: MediaSigner;
   jobs: MediaJobQueue;
   sessions: RecordingSessionRepository;
+}
+
+/**
+ * Media adapters for non-strict modes. With REDIS_URL (outside tests) jobs go to the BullMQ MEDIA_QUEUE the worker
+ * consumes; otherwise the in-memory queue (tests, Redis-less dev).
+ */
+function mediaDeps(
+  clock: Clock,
+  redisUrl: string | undefined,
+  overrides: Partial<ModuleDeps>,
+): Pick<ModuleDeps, 'media' | 'ownedMediaQueue'> {
+  const media = inMemoryMediaAdapters(clock);
+  if (!redisUrl || overrides.media) return { media };
+  const queue = new Queue<MediaProcessingJob>(MEDIA_QUEUE, {
+    connection: new Redis(redisUrl, { lazyConnect: true, maxRetriesPerRequest: null }),
+  });
+  return {
+    media: { ...media, jobs: new BullMqMediaJobQueue(queue as unknown as MediaQueueProducer) },
+    ownedMediaQueue: queue,
+  };
 }
 
 export function inMemoryMediaAdapters(clock: Clock = systemClock): MediaAdapters {
@@ -484,7 +517,7 @@ export function defaultModuleDeps(
     invitationTtlMs: 7 * DAY,
     passwordResetTtlMs: 30 * MIN,
     emailVerificationTtlMs: DAY,
-    ...(strict ? {} : { media: inMemoryMediaAdapters(clock) }),
+    ...(strict ? {} : mediaDeps(clock, urlFor(env, env.redisUrl), overrides)),
     ...overrides,
     ...(redis ? { redis } : {}),
     ...(ownedRedis ? { ownedRedis } : {}),
@@ -547,10 +580,11 @@ export async function registerModules(app: FastifyInstance, deps: ModuleDeps) {
     extensionBearerCorsHook(deps.extensionIds.map((id) => `chrome-extension://${id}`)),
   );
   // Close only the clients defaultModuleDeps created; injected ones belong to the caller.
-  const { ownedRedis, ownedDb } = deps;
-  if (ownedRedis || ownedDb) {
+  const { ownedRedis, ownedDb, ownedMediaQueue } = deps;
+  if (ownedRedis || ownedDb || ownedMediaQueue) {
     app.addHook('onClose', async () => {
       await Promise.allSettled([
+        ownedMediaQueue ? ownedMediaQueue.close() : undefined,
         ownedRedis ? closeOwnedRedis(ownedRedis) : undefined,
         ownedDb ? ownedDb.$disconnect() : undefined,
       ]);

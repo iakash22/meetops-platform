@@ -160,9 +160,11 @@ describe('recording sessions', () => {
     expect(ok.json()).toEqual({ status: 'processing' });
     expect(w.jobs.jobs).toEqual([
       expect.objectContaining({
-        kind: 'process_recording_session',
-        subjectId: id,
+        jobVersion: 1,
+        kind: 'assemble_recording_session',
+        sessionId: id,
         meetingId: w.meetingId,
+        sourceExt: 'webm',
       }),
     ]);
     expect((await complete(w, w.member, id, { chunkCount: 3, durationMs: 1 })).statusCode).toBe(

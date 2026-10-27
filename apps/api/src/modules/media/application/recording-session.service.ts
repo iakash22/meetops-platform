@@ -11,7 +11,12 @@ import type { DirectoryCaller } from '../../directory/access.js';
 import { MeetingNotFoundError } from '../../meetings/domain/meeting.js';
 import { DomainError } from '../../../shared/domain-error.js';
 import { checkConsentInput, checkStoredConsent } from '../domain/consent.js';
-import { UploadStateConflictError, type SignedRequest } from '../domain/ports.js';
+import {
+  sessionChunkKey,
+  sessionSourceExt,
+  UploadStateConflictError,
+  type SignedRequest,
+} from '../domain/ports.js';
 import {
   RecordingSessionNotFoundError,
   type RecordingSessionRecord,
@@ -112,7 +117,7 @@ export class RecordingSessionService {
   ): Promise<SignedRequest> {
     const s = await this.own(c, id);
     RecordingSessionService.assertUploading(s);
-    const key = `organizations/${s.organizationId}/recording-sessions/${s.id}/chunks/${String(body.seq).padStart(5, '0')}`;
+    const key = sessionChunkKey(s.organizationId, s.meetingId, s.id, body.seq);
     const res = await this.d.sessions.reserveChunk(
       s.id,
       { seq: body.seq, sizeBytes: body.sizeBytes, sha256Hex: body.sha256, key },
@@ -175,6 +180,8 @@ export class RecordingSessionService {
         throw new UploadStateConflictError(`Chunk ${ch.seq} has not been uploaded`);
       }
     }
+    const sourceExt = sessionSourceExt(s.mimeType);
+    if (!sourceExt) throw new ChunkSetInvalidError('Unsupported recording MIME type');
     const ok = await this.d.sessions.finish(s.id, {
       status: 'completed',
       chunkCount: body.chunkCount,
@@ -182,12 +189,13 @@ export class RecordingSessionService {
     });
     if (!ok) throw new UploadStateConflictError('Recording session is not uploading');
     await this.d.jobs.enqueue({
-      kind: 'process_recording_session',
+      jobVersion: 1,
+      kind: 'assemble_recording_session',
       organizationId: s.organizationId,
-      subjectType: 'recording_session',
-      subjectId: s.id,
-      consentAttestationId: consent.id,
       meetingId: s.meetingId,
+      sessionId: s.id,
+      consentAttestationId: consent.id,
+      sourceExt,
     });
     return { ...s, status: 'completed', chunkCount: body.chunkCount, durationMs: body.durationMs };
   }
