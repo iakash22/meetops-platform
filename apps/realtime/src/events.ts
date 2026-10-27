@@ -53,7 +53,7 @@ export interface SocketData {
   /** Verified session id (cookie session or extension token id); kept for MR-2 revocation matching. */
   sessionId: string;
   /** 'session' = web cookie socket, 'extension' = bearer socket (never in the org room, ADR-011 section 1.3). */
-  credential: 'session' | 'extension';
+  credential: 'session' | 'extension' | 'desktop';
   /** Epoch ms after which the socket is told to re-authenticate and is disconnected. */
   expiresAt: number;
 }

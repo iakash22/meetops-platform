@@ -11,6 +11,12 @@ import {
 import { registerDomainErrorHandler, registerNotFoundHandler } from './shared/http-errors.js';
 import { parseTrustProxy } from './shared/trust-proxy.js';
 import { metricsTokenFromEnv, registerMetrics, type HttpMetrics } from './shared/metrics.js';
+import {
+  createReadiness,
+  defaultReadinessChecks,
+  readinessTimeoutFromEnv,
+  type ReadinessCheck,
+} from './shared/readiness.js';
 
 /** Node lowercases incoming header names, so these cover any case of X-CSRF-Token/Cookie/Authorization. */
 export const REDACT_PATHS = [
@@ -62,6 +68,10 @@ export interface CreateServerOptions {
   metricsToken?: string;
   /** Inject a metrics registry (tests). */
   metrics?: HttpMetrics;
+  /** Overrides the default /ready probes (Prisma `SELECT 1`, Redis `PING`). */
+  readinessChecks?: ReadinessCheck[];
+  /** Overrides READINESS_TIMEOUT_MS (per-probe timeout for /ready). */
+  readinessTimeoutMs?: number;
 }
 
 export function createServer(options: CreateServerOptions = {}) {
@@ -116,8 +126,20 @@ export function createServer(options: CreateServerOptions = {}) {
     return { status: 'ok' };
   });
 
-  app.get('/ready', async () => {
-    return { status: 'ready' };
+  // Liveness (/health) never touches dependencies; readiness (/ready) probes the ones this process uses.
+  const readiness = createReadiness(
+    options.readinessChecks ?? defaultReadinessChecks(deps),
+    options.readinessTimeoutMs ?? readinessTimeoutFromEnv(process.env.READINESS_TIMEOUT_MS),
+  );
+  app.get('/ready', { logLevel: 'warn' }, async (_req, reply) => {
+    const report = await readiness.check();
+    if (readiness.names.length === 0) return { status: 'ready' };
+    if (!report.ready) {
+      // Names and outcomes only: no error text, hosts or connection strings.
+      app.log.warn({ readiness: report.checks }, 'readiness check failed');
+      return reply.code(503).send({ status: 'not_ready', checks: report.checks });
+    }
+    return { status: 'ready', checks: report.checks };
   });
 
   return app;

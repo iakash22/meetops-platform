@@ -14,6 +14,7 @@ export const AUTH_REVOCATION_REASONS = [
   'invitation_revoked',
   'password_changed',
   'extension_revoked',
+  'desktop_revoked',
 ] as const;
 export type AuthRevocationReason = (typeof AUTH_REVOCATION_REASONS)[number];
 
