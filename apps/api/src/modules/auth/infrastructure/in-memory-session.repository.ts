@@ -1,3 +1,4 @@
+import type { NewLocationOutboxEvent } from '../application/new-location.js';
 import type { GeoFields } from '../../../shared/geoip/provider.js';
 import type { Session, SessionRepository } from '../domain/session.js';
 
@@ -40,6 +41,23 @@ export class InMemorySessionRepository implements SessionRepository {
   async touch(id: string, at: Date) {
     const s = this.items.get(id);
     if (s) s.lastSeenAt = at;
+  }
+  /** Outbox rows written by createWithOutbox (tests). */
+  readonly outbox: NewLocationOutboxEvent[] = [];
+  async knownLocations(userId: string) {
+    const seen = new Map<string, { countryCode: string; region: string | null }>();
+    for (const s of this.items.values()) {
+      const cc = s.geo?.geoCountryCode;
+      if (s.userId !== userId || !cc) continue;
+      const region = s.geo?.geoRegion ?? null;
+      seen.set(`${cc}|${region ?? ''}`, { countryCode: cc, region });
+    }
+    return [...seen.values()];
+  }
+  async createWithOutbox(session: Session, event: NewLocationOutboxEvent) {
+    const s = await this.create(session);
+    this.outbox.push(structuredClone(event));
+    return s;
   }
   async updateIp(id: string, ip: string | null, geo: GeoFields) {
     const s = this.items.get(id);

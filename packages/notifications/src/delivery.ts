@@ -4,7 +4,7 @@ import {
   type ChannelResult,
   type NotificationDeliveryHandler,
 } from './delivery-queue.js';
-import { channelEnabled, type FanoutPreference } from './fanout.js';
+import { channelDefaultsForKind, channelEnabled, type FanoutPreference } from './fanout.js';
 import {
   EXPO_PUSH_URL,
   PushTargetRejectedError,
@@ -50,7 +50,9 @@ export interface DeliveryStore {
     organizationId: string,
     userId: string,
     notificationId: string,
-  ): Promise<{ id: string; type: string; createdAt: Date } | undefined>;
+  ): Promise<
+    { id: string; type: string; createdAt: Date; data?: Record<string, unknown> } | undefined
+  >;
   activeDevices(organizationId: string, userId: string): Promise<DeliveryDevice[]>;
   deleteDevice(organizationId: string, userId: string, deviceId: string): Promise<void>;
   recordAttempt(
@@ -65,6 +67,25 @@ export interface DeliveryStore {
       errorCode?: string | null;
     },
   ): Promise<void>;
+}
+
+/** Result of an email send; mirrors PushSendResult without `gone`. */
+export type EmailNotificationResult =
+  | { status: 'sent'; providerMessageId?: string }
+  | { status: 'skipped' }
+  | { status: 'transient'; code: string }
+  | { status: 'rejected'; code: string };
+
+/**
+ * Email channel sender: resolves the recipient address server-side from userId and renders a kind-specific template.
+ * Only kinds it knows are sent; anything else is `rejected` (never a generic template with unescaped data).
+ */
+export interface EmailNotificationSender {
+  send(input: {
+    organizationId: string;
+    userId: string;
+    notification: { id: string; type: string; data: Record<string, unknown> };
+  }): Promise<EmailNotificationResult>;
 }
 
 export interface InAppPublisher {
@@ -87,6 +108,7 @@ export function createNotificationDeliveryHandler(deps: {
   inApp?: InAppPublisher | undefined;
   webPush?: PushSender | undefined;
   mobilePush?: PushSender | undefined;
+  email?: EmailNotificationSender | undefined;
   now?: () => Date;
 }): NotificationDeliveryHandler {
   const now = deps.now ?? (() => new Date());
@@ -101,7 +123,8 @@ export function createNotificationDeliveryHandler(deps: {
       const n = await deps.store.findNotification(org, userId, p.notificationId);
       if (!n) throw new PermanentNotificationError('notification_not_found');
       const prefs = await deps.store.preferences(org, userId);
-      if (!channelEnabled(prefs, n.type, p.channel)) return skipped();
+      if (!channelEnabled(prefs, n.type, p.channel, channelDefaultsForKind(n.type)))
+        return skipped();
 
       if (p.channel === 'in_app') {
         if (!deps.inApp) return skipped();
@@ -112,6 +135,17 @@ export function createNotificationDeliveryHandler(deps: {
           at: now().toISOString(),
         });
         return { status: 'sent' };
+      }
+      if (p.channel === 'email') {
+        if (!deps.email) return skipped();
+        const r = await deps.email.send({
+          organizationId: org,
+          userId,
+          notification: { id: n.id, type: n.type, data: n.data ?? {} },
+        });
+        if (r.status === 'transient') throw new TransientNotificationError(r.code);
+        if (r.status === 'rejected') throw new PermanentNotificationError(r.code);
+        return r;
       }
       const channel = p.channel;
       if (channel !== 'web_push' && channel !== 'mobile_push') return skipped();

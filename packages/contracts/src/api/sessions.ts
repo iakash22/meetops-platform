@@ -9,13 +9,14 @@ const strict = { additionalProperties: false } as const;
  * the shared unsafe display-text set (control chars incl. CR/LF, bidi/invisible chars, `<`, `>`, `"`, tag chars; no
  * leading or trailing whitespace) EXCEPT ASCII `'` and `&`, which real place names need ("St. John's",
  * "Trinidad & Tobago"). It also rejects values that look like an IPv4 or IPv6 address, so an IP cannot be smuggled into
- * "no IP" payloads. This is input validation, not output encoding: every renderer (email HTML, web, push) must still
+ * "no IP" payloads, including the CIDR form ("10.0.0.0/8", "2001:db8::/32"). This is input validation, not output encoding: every renderer (email HTML, web, push) must still
  * escape these values.
  */
 const GEO_UNSAFE_CHARS = UNSAFE_DISPLAY_TEXT_CHARS.replace("'", '').replace('&', '');
 const GEO_SAFE_CHAR = `(?:(?!${UNSAFE_DISPLAY_TEXT_TAGS})[^${GEO_UNSAFE_CHARS}])`;
 export const GEO_TEXT_PATTERN =
-  '^(?!\\d{1,3}(?:\\.\\d{1,3}){3}$)(?![0-9A-Fa-f.]*:[0-9A-Fa-f:.]*(?:%[\\w.-]+)?$)' +
+  '^(?!\\d{1,3}(?:\\.\\d{1,3}){3}(?:\\/\\d{1,3})?$)' +
+  '(?![0-9A-Fa-f.]*:[0-9A-Fa-f:.]*(?:%[\\w.-]+)?(?:\\/\\d{1,3})?$)' +
   `(?!\\s)${GEO_SAFE_CHAR}+(?<!\\s)$`;
 export const GeoName = Type.String({ minLength: 1, maxLength: 128, pattern: GEO_TEXT_PATTERN });
 /** ISO 3166-1 alpha-2 country code, upper case. */

@@ -23,11 +23,15 @@ GeoIP session location (ADR-014, Proposed). Additive. Version numbers 0.10.0-0.1
 
 ### Added
 
+- Geo text (`GeoName` / `GEO_TEXT_PATTERN`) also rejects IP addresses in CIDR form (`10.0.0.0/8`, `2001:db8::/32`).
+
 - `SessionSummary.geoCity`, `geoRegion`, `geoCountry`, `geoCountryCode` (ISO alpha-2) and `geoApproximate` (`true`):
   optional, **not** nullable. Absent means unknown (private/unknown IP, no GeoIP data, older server). No latitude/longitude.
 - `AuthNewLocationSigninEvent` (outbox `auth.new_location_signin`): `{ sessionId, city, region, country, countryCode,
 reason }`, every key required, geo values nullable; `reason` is `'new_region' | 'new_country'`
   (`NEW_LOCATION_REASONS`). No IP address.
+- `Notification` (feed item) `geoCity?` / `geoCountry?` (`GeoName`, optional, not nullable): set only for
+  `auth.new_location_signin`; the fan-out maps the event's `city`/`country` to them. Web #260 reads these.
 - `AuthNewLocationSigninNotificationPayload`: in-app notification payload `{ sessionId, reason, geoCity?, geoCountry? }`
   (optional, not nullable).
 - `GeoName` / `GEO_TEXT_PATTERN`: location text rejects control chars (incl. CR/LF), bidi/invisible chars, `<`, `>`,

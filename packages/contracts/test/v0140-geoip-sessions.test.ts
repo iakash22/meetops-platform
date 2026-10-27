@@ -86,6 +86,12 @@ describe('0.14.0 GeoIP sessions', () => {
     '::ffff:203.0.113.7',
     'fe80::1%eth0',
     'FE80::1',
+    // CIDR form (#292 L-1)
+    '10.0.0.0/8',
+    '1.2.3.0/24',
+    '2001:db8::/32',
+    '::/0',
+    'fe80::/10',
   ];
   it('rejects CRLF, bidi, control, invisible and HTML chars in every geo text field', () => {
     for (const v of unsafe) {
