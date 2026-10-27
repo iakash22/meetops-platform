@@ -53,3 +53,11 @@ dependencies, no lockfile change). Every test uses mocked fetch or fake provider
 13. **Prompt versioning**: `meeting-summary@1`; bumping it allows a new report version for the same transcript.
 14. **Concurrent duplicates**: idempotency is check-then-insert inside one org transaction, no DB unique key on AiRun; relies on one queue job id per meeting+revision. Option: add a partial unique index (migration) later.
 15. **Enqueue trigger**: not wired yet — who enqueues summary after transcript `ready` (worker chain vs API) is undecided.
+
+## Report summary dedupe (defaults)
+
+- Migration `20261027120000_report_summary_dedupe` (additive): nullable `reports.transcript_revision` (CHECK NULL or >= 1), nullable `reports.prompt_version`, and unique index `reports_summary_dedupe_key` on `(meeting_id, transcript_id, transcript_revision, prompt_version)`.
+- Postgres treats NULLs as distinct, so legacy/manual reports (NULL revision/prompt) are unaffected.
+- The summary repository looks up the existing report by the key (soft-deleted rows included) before calling the LLM and before inserting.
+- A concurrent insert of the same key (Prisma `P2002` / SQLSTATE `23505`) aborts that transaction (AiRun rolled back too); the repository re-reads in a fresh transaction and returns the winner as `created=false` (job result `duplicate: true`). Any other unique conflict (e.g. the `(meeting_id, version)` race) is rethrown and the job retries.
+- A soft-deleted report still holds its key: regenerating a summary for the same transcript revision requires bumping `SUMMARY_PROMPT_VERSION`.
