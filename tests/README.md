@@ -42,19 +42,21 @@ E2E is **not** part of `pnpm test`; run it explicitly (it needs browsers).
 
 ## Environment variables
 
-| Var                                    | Default                                                                            | Used by                                                                                                                                                                                                                     |
-| -------------------------------------- | ---------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `E2E_BASE_URL`                         | unset → container port if set, else `http://localhost:$WEB_PORT` with a dev server | e2e; when set, it wins and no webServer is started                                                                                                                                                                          |
-| `WEB_PORT`                             | `5173`                                                                             | e2e: vite dev server port (matches `apps/web/vite.config.ts`)                                                                                                                                                               |
-| `E2E_CONTAINER_PORT`                   | unset                                                                              | e2e: when set (e.g. `8080`, the web container in `compose.app.yml`), baseURL is `http://localhost:$E2E_CONTAINER_PORT` and no dev server is started                                                                         |
-| `API_BASE_URL`                         | unset → in-process `inject`                                                        | api (hit a running API over HTTP)                                                                                                                                                                                           |
-| `QA_SKIP_DOCKER`                       | unset                                                                              | integration; `1` forces skip                                                                                                                                                                                                |
-| `QA_POSTGRES_IMAGE` / `QA_REDIS_IMAGE` | `pgvector/pgvector:pg16` / `redis:7-alpine`                                        | integration (override the images)                                                                                                                                                                                           |
-| `QA_DB_PACKAGE_DIR`                    | `../packages/database`                                                             | integration/db: where Prisma migrations + `seed.ts` live (e.g. a worktree of PR #6). Suite skips if no migrations; seed test skips if that package has no installed `tsx`/`@prisma/client`                                  |
-| `QA_API_DIR`                           | `../apps/api` (this repo)                                                          | api/auth: `apps/api` with the auth/orgs modules (merged from PR #27). Defaults to the repo's own API so the AU/XT API suites run in CI; set it to test another checkout. They skip only when the target has no auth module. |
-| `QA_RLS_SCHEMA`                        | `migrations`                                                                       | integration/rls: `migrations` = `prisma migrate deploy` (production path); `datamodel` = build tables from `schema.prisma` and apply only the RLS migration (workaround while DB-BUG-1 is open)                             |
-| `QA_CONTRACTS_DIR`                     | `../packages/contracts`                                                            | contract: alias `@meetops/contracts` to another checkout's `packages/contracts` (e.g. PR #17)                                                                                                                               |
-| `CI`                                   | –                                                                                  | Playwright retries, forbidOnly, html report                                                                                                                                                                                 |
+| Var                                    | Default                                                                            | Used by                                                                                                                                                                                                                       |
+| -------------------------------------- | ---------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `E2E_BASE_URL`                         | unset → container port if set, else `http://localhost:$WEB_PORT` with a dev server | e2e; when set, it wins and no webServer is started                                                                                                                                                                            |
+| `WEB_PORT`                             | `5173`                                                                             | e2e: vite dev server port (matches `apps/web/vite.config.ts`)                                                                                                                                                                 |
+| `E2E_CONTAINER_PORT`                   | unset                                                                              | e2e: when set (e.g. `8080`, the web container in `compose.app.yml`), baseURL is `http://localhost:$E2E_CONTAINER_PORT` and no dev server is started                                                                           |
+| `API_BASE_URL`                         | unset → in-process `inject`                                                        | api (hit a running API over HTTP)                                                                                                                                                                                             |
+| `QA_SKIP_DOCKER`                       | unset                                                                              | integration; `1` forces skip                                                                                                                                                                                                  |
+| `QA_EXTERNAL_DB_URL`                   | unset → Testcontainers Postgres                                                    | integration: use an already-running Postgres instead of a container. Each suite creates and drops a throwaway `qa_it_<random>` database. The user needs CREATEDB and CREATEROLE. See [External services](#external-services). |
+| `QA_EXTERNAL_REDIS_URL`                | unset → Testcontainers Redis                                                       | integration: use an already-running Redis instead of a container. Keys get a unique `qa:it:<random>:` prefix and only those keys are deleted afterwards.                                                                      |
+| `QA_POSTGRES_IMAGE` / `QA_REDIS_IMAGE` | `pgvector/pgvector:pg16` / `redis:7-alpine`                                        | integration (override the images)                                                                                                                                                                                             |
+| `QA_DB_PACKAGE_DIR`                    | `../packages/database`                                                             | integration/db: where Prisma migrations + `seed.ts` live (e.g. a worktree of PR #6). Suite skips if no migrations; seed test skips if that package has no installed `tsx`/`@prisma/client`                                    |
+| `QA_API_DIR`                           | `../apps/api` (this repo)                                                          | api/auth: `apps/api` with the auth/orgs modules (merged from PR #27). Defaults to the repo's own API so the AU/XT API suites run in CI; set it to test another checkout. They skip only when the target has no auth module.   |
+| `QA_RLS_SCHEMA`                        | `migrations`                                                                       | integration/rls: `migrations` = `prisma migrate deploy` (production path); `datamodel` = build tables from `schema.prisma` and apply only the RLS migration (workaround while DB-BUG-1 is open)                               |
+| `QA_CONTRACTS_DIR`                     | `../packages/contracts`                                                            | contract: alias `@meetops/contracts` to another checkout's `packages/contracts` (e.g. PR #17)                                                                                                                                 |
+| `CI`                                   | –                                                                                  | Playwright retries, forbidOnly, html report                                                                                                                                                                                   |
 
 ## Docker skip behaviour
 
@@ -67,6 +69,30 @@ E2E is **not** part of `pnpm test`; run it explicitly (it needs browsers).
 - **Turbo:** `CI` is in `tests/turbo.json` `passThroughEnv` so the gate sees it.
 
 **Docker endpoint: local unix socket only.** Testcontainers must reach the engine through the local unix socket (`/var/run/docker.sock`; on the shared box, run the suites through `sudo -E env PATH="$PATH" HOME=<scratch> ./node_modules/.bin/vitest run --project integration`). Never set `DOCKER_HOST` to a `tcp://` address: a TCP engine endpoint is usually unauthenticated, and anything that can reach it controls the host. `DOCKER_HOST` is deliberately not in `tests/turbo.json` `passThroughEnv`.
+
+## External services
+
+Use these when Testcontainers can't run (for example when the Docker daemon can't publish ports). Set
+`QA_EXTERNAL_DB_URL` and/or `QA_EXTERNAL_REDIS_URL` and the integration suites use those servers
+instead of starting containers (see `support/services.ts`). When they are unset, nothing changes.
+
+- **Postgres:** each suite runs `CREATE DATABASE qa_it_<random>` and applies the migrations (or the RLS setup) there.
+  In teardown it terminates that database's sessions and drops it. Teardown runs from `afterAll`, so it also
+  runs when a test or `beforeAll` fails. Roles are cluster-global, so the LOGIN roles the RLS/XT suites
+  create (`qa_app_login_<id>`, `qa_xt_app_<id>`) are suffixed per run and dropped in teardown.
+  Shared roles the migrations create if missing (`meetops_app`, `meetops_migrator`) are never altered or dropped.
+  The RLS assertions still run as that non-superuser, non-BYPASSRLS LOGIN role.
+- **Redis:** the client uses an ioredis `keyPrefix` of `qa:it:<random>:`. Teardown SCANs and DELs only
+  that prefix. It never runs FLUSHALL or FLUSHDB.
+- With an external URL set, the Docker gate is not consulted for that service, so `CI=1` works without Docker.
+- **Never commit these URLs.** They carry credentials, so pass them through the environment only. A killed run
+  (SIGKILL) can leave a `qa_it_*` database or `qa:it:*` keys behind. Remove them by hand.
+
+```bash
+QA_EXTERNAL_DB_URL=postgresql://user:***@127.0.0.1:5432/postgres \
+QA_EXTERNAL_REDIS_URL=redis://:***@127.0.0.1:6379/0 \
+CI=1 pnpm exec vitest run --project integration --no-file-parallelism
+```
 
 ## Security suites
 

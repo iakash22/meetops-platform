@@ -1,8 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
 import pg from 'pg';
-import { isDockerAvailable } from '../support/env.js';
+import { postgresAvailable, startPostgres, type PostgresService } from '../support/services.js';
 import {
   applyDatamodelPlusRls,
   applyMigrations,
@@ -20,7 +19,7 @@ import {
  * Writes go through a LOGIN role that inherits meetops_app (NOSUPERUSER, NOBYPASSRLS), the
  * same privileges the API will have. Setup data is inserted by the container superuser.
  */
-const docker = isDockerAvailable();
+const docker = postgresAvailable();
 const rls = hasRlsMigration();
 if (docker && !rls)
   console.warn(
@@ -35,11 +34,13 @@ const schemaMode = process.env.QA_RLS_SCHEMA === 'datamodel' ? 'datamodel' : 'mi
 // read only the ADR-010 setting (app.current_organization_id), never the legacy one.
 const hasTeams = migrationFiles().some((f) => /CREATE TABLE "teams"/.test(readSql(f)));
 
-const APP_ROLE = 'qa_app_login';
+const APP_ROLE_BASE = 'qa_app_login';
 const APP_PASSWORD = 'qa-only-not-a-secret';
 
 describe.skipIf(!docker || !rls)(`integration: RLS (PR #25, schema via ${schemaMode})`, () => {
-  let container: StartedPostgreSqlContainer;
+  let svc: PostgresService;
+  // External DB: roles are cluster-global, so the LOGIN role gets a per-run suffix.
+  let APP_ROLE = APP_ROLE_BASE;
   let owner: pg.Client;
   let app: pg.Client;
   let tenantTables: string[] = [];
@@ -47,19 +48,19 @@ describe.skipIf(!docker || !rls)(`integration: RLS (PR #25, schema via ${schemaM
   const orgB = randomUUID();
 
   beforeAll(async () => {
-    container = await new PostgreSqlContainer(
-      process.env.QA_POSTGRES_IMAGE ?? 'pgvector/pgvector:pg16',
-    ).start();
-    owner = new pg.Client({ connectionString: container.getConnectionUri() });
+    svc = await startPostgres();
+    APP_ROLE = `${APP_ROLE_BASE}${svc.suffix}`;
+    owner = new pg.Client({ connectionString: svc.uri });
     await owner.connect();
     // In 'migrations' mode a failure here is a product bug (see README "Known bugs").
     if (schemaMode === 'datamodel') await applyDatamodelPlusRls(owner);
-    else await applyMigrations(container.getConnectionUri(), owner);
+    else await applyMigrations(svc.uri, owner);
 
+    svc.trackRole(APP_ROLE);
     await owner.query(
       `CREATE ROLE ${APP_ROLE} LOGIN PASSWORD '${APP_PASSWORD}' IN ROLE meetops_app`,
     );
-    const url = new URL(container.getConnectionUri());
+    const url = new URL(svc.uri);
     url.username = APP_ROLE;
     url.password = APP_PASSWORD;
     app = new pg.Client({ connectionString: url.toString() });
@@ -96,7 +97,7 @@ describe.skipIf(!docker || !rls)(`integration: RLS (PR #25, schema via ${schemaM
   afterAll(async () => {
     await app?.end();
     await owner?.end();
-    await container?.stop();
+    await svc?.stop();
   });
 
   it('app role is a non-superuser without BYPASSRLS', async () => {
