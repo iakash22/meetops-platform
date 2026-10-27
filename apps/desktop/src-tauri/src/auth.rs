@@ -3,6 +3,7 @@
 //! DECISION: ADR-012 is still Proposed (Architecture + Security sign-off), and the `/auth/desktop/*` routes and the
 //! token response shape below are not in contracts yet.
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -167,6 +168,25 @@ impl AuthState {
         access.as_ref().map(|a| a.token.clone()).ok_or_else(CmdError::unauthenticated)
     }
 
+    /// After the API answered 401 to `stale`: single-flight refresh (H-1). If another request already rotated the
+    /// token while we waited for the lock, reuse that token instead of rotating again (a second rotation of the same
+    /// refresh token would look like reuse and revoke the family).
+    pub async fn bearer_after_unauthorized(&self, o: &Origins, stale: &str) -> CmdResult<String> {
+        let mut access = self.access.lock().await;
+        if let Some(a) = access.as_ref() {
+            if a.token != stale && a.expires_at > Instant::now() + REFRESH_SKEW {
+                return Ok(a.token.clone());
+            }
+        }
+        self.refresh_locked(o, &mut access).await?;
+        access.as_ref().map(|a| a.token.clone()).ok_or_else(CmdError::unauthenticated)
+    }
+
+    #[cfg(test)]
+    pub async fn seed_access_for_test(&self, token: &str, ttl: Duration) {
+        *self.access.lock().await = Some(Access { token: token.into(), expires_at: Instant::now() + ttl });
+    }
+
     pub async fn session(&self, o: &Origins) -> CmdResult<Option<Value>> {
         if let Some(s) = self.session.lock().unwrap().clone() {
             return Ok(Some(s));
@@ -215,8 +235,30 @@ fn open_browser(url: &Url) -> std::io::Result<()> {
     cmd.arg(url.as_str()).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).spawn().map(|_| ())
 }
 
+/// Only one browser sign-in at a time (single use loopback, Low): a second call fails instead of opening another
+/// listener and browser tab.
+static SIGN_IN_ACTIVE: AtomicBool = AtomicBool::new(false);
+
+struct SignInGuard;
+
+impl SignInGuard {
+    fn acquire() -> CmdResult<Self> {
+        SIGN_IN_ACTIVE
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .map(|_| SignInGuard)
+            .map_err(|_| CmdError::new("CONFLICT", "Sign-in is already in progress."))
+    }
+}
+
+impl Drop for SignInGuard {
+    fn drop(&mut self) {
+        SIGN_IN_ACTIVE.store(false, Ordering::Release);
+    }
+}
+
 /// Runs the full browser flow.
 pub async fn sign_in(state: &AuthState) -> CmdResult<Value> {
+    let _guard = SignInGuard::acquire()?;
     let o = config::origins()?;
     let lb = Loopback::bind()?;
     let redirect_uri = lb.redirect_uri();

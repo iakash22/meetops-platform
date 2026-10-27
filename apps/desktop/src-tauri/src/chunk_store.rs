@@ -15,20 +15,30 @@ use crate::keychain::SecretStore;
 
 pub struct ChunkStore {
     dir: PathBuf,
-    cipher: Aes256Gcm,
+    /// `None` when the device key couldn't be persisted: chunk commands fail closed.
+    cipher: Option<Aes256Gcm>,
 }
 
-/// Loads the device key, creating it on first use.
-pub fn device_key(store: &dyn SecretStore, account: &str) -> [u8; 32] {
+/// Loads the device key, creating it on first use. Fails closed (Low): if a new key can't be saved to the OS
+/// keychain, it is discarded and an error returned, so chunks are never sealed with a key that dies with the process
+/// (unrecoverable audio) or that lives only in memory.
+pub fn device_key(store: &dyn SecretStore, account: &str) -> CmdResult<[u8; 32]> {
     if let Some(k) = store.get(account).and_then(|b| STANDARD.decode(b).ok()) {
         if let Ok(k) = <[u8; 32]>::try_from(k.as_slice()) {
-            return k;
+            return Ok(k);
         }
     }
     let mut k = [0u8; 32];
     OsRng.fill_bytes(&mut k);
-    store.set(account, &STANDARD.encode(k));
-    k
+    if !store.set(account, &STANDARD.encode(k)) {
+        store.delete(account);
+        return Err(key_unavailable());
+    }
+    Ok(k)
+}
+
+fn key_unavailable() -> CmdError {
+    CmdError::new("SERVICE_UNAVAILABLE", "Secure storage is unavailable, so offline recording is turned off.")
 }
 
 fn safe_id(id: &str) -> CmdResult<&str> {
@@ -38,7 +48,15 @@ fn safe_id(id: &str) -> CmdResult<&str> {
 
 impl ChunkStore {
     pub fn new(dir: impl AsRef<Path>, key: &[u8; 32]) -> Self {
-        Self { dir: dir.as_ref().to_path_buf(), cipher: Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(key)) }
+        Self { dir: dir.as_ref().to_path_buf(), cipher: Some(Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(key))) }
+    }
+
+    pub fn unavailable(dir: impl AsRef<Path>) -> Self {
+        Self { dir: dir.as_ref().to_path_buf(), cipher: None }
+    }
+
+    fn cipher(&self) -> CmdResult<&Aes256Gcm> {
+        self.cipher.as_ref().ok_or_else(key_unavailable)
     }
 
     fn path(&self, session: &str, index: u32) -> CmdResult<PathBuf> {
@@ -55,7 +73,7 @@ impl ChunkStore {
         OsRng.fill_bytes(&mut nonce);
         let aad = Self::aad(session, index);
         let sealed = self
-            .cipher
+            .cipher()?
             .encrypt(Nonce::from_slice(&nonce), Payload { msg: data, aad: &aad })
             .map_err(|_| CmdError::internal())?;
         fs::create_dir_all(path.parent().unwrap()).map_err(|_| CmdError::internal())?;
@@ -71,7 +89,7 @@ impl ChunkStore {
             return Err(CmdError::internal());
         }
         let aad = Self::aad(session, index);
-        self.cipher
+        self.cipher()?
             .decrypt(Nonce::from_slice(&raw[..12]), Payload { msg: &raw[12..], aad: &aad })
             .map_err(|_| CmdError::new("INTERNAL", "A recording chunk failed its integrity check."))
     }
@@ -89,10 +107,28 @@ impl ChunkStore {
 mod tests {
     use super::*;
     use crate::keychain::MemoryStore;
+    use std::collections::HashMap;
+    use std::sync::Mutex;
+
+    /// Behaves like a working OS keychain (set reports persisted).
+    #[derive(Default)]
+    struct Persisting(Mutex<HashMap<String, String>>);
+    impl SecretStore for Persisting {
+        fn get(&self, a: &str) -> Option<String> {
+            self.0.lock().unwrap().get(a).cloned()
+        }
+        fn set(&self, a: &str, s: &str) -> bool {
+            self.0.lock().unwrap().insert(a.into(), s.into());
+            true
+        }
+        fn delete(&self, a: &str) {
+            self.0.lock().unwrap().remove(a);
+        }
+    }
 
     fn store() -> (ChunkStore, PathBuf) {
         let dir = std::env::temp_dir().join(format!("mo-chunks-{}", crate::pkce::random_b64(6)));
-        let key = device_key(&MemoryStore::default(), "k");
+        let key = device_key(&Persisting::default(), "k").unwrap();
         (ChunkStore::new(&dir, &key), dir)
     }
 
@@ -119,7 +155,18 @@ mod tests {
 
     #[test]
     fn device_key_is_stable() {
-        let m = MemoryStore::default();
-        assert_eq!(device_key(&m, "k"), device_key(&m, "k"));
+        let m = Persisting::default();
+        assert_eq!(device_key(&m, "k").unwrap(), device_key(&m, "k").unwrap());
+    }
+
+    #[test]
+    fn device_key_fails_closed_when_the_keychain_save_fails() {
+        let m = MemoryStore::default(); // set() reports "memory only"
+        assert_eq!(device_key(&m, "k").unwrap_err().code, "SERVICE_UNAVAILABLE");
+        assert_eq!(m.get("k"), None, "no in-memory key left behind");
+        let dir = std::env::temp_dir().join(format!("mo-chunks-{}", crate::pkce::random_b64(6)));
+        let s = ChunkStore::unavailable(&dir);
+        assert_eq!(s.put("a", 0, b"x").unwrap_err().code, "SERVICE_UNAVAILABLE");
+        assert!(!dir.join("a/0.chunk").exists());
     }
 }

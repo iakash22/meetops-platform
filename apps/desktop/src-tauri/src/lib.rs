@@ -1,7 +1,7 @@
 //! MeetOps AI desktop shell (Tauri 2).
 //!
 //! Commands: `app_info`; the ADR-012 auth commands (`auth_sign_in`, `auth_session`, `auth_sign_out`); the scoped
-//! `api_request` (api.rs: API origin only, path hardening, bearer kept in Rust) and presigned `upload_put`; and the encrypted offline chunk store (`chunk_put`, `chunk_get`,
+//! `api_request` (api.rs: configured https API origin, route allowlist, fresh bearer + one 401 retry, kept in Rust) and presigned `upload_put`; and the encrypted offline chunk store (`chunk_put`, `chunk_get`,
 //! `chunk_delete`). No command ever returns a token.
 
 mod api;
@@ -53,46 +53,29 @@ fn app_info(app: tauri::AppHandle) -> AppInfo {
     build_app_info(&pkg.name, &pkg.version.to_string())
 }
 
-/// Hands the current access token to `ApiState` so `api_request` can attach it. Never returned over IPC.
-async fn sync_token(auth: &AuthState, api: &ApiState) {
-    let token = match config::origins() {
-        Ok(o) => auth.bearer(&o, false).await.ok(),
-        Err(_) => None,
-    };
-    api.set_access_token(token);
+#[tauri::command]
+async fn auth_sign_in(auth: State<'_, AuthState>) -> CmdResult<Value> {
+    auth::sign_in(&auth).await
 }
 
 #[tauri::command]
-async fn auth_sign_in(auth: State<'_, AuthState>, api: State<'_, ApiState>) -> CmdResult<Value> {
-    let session = auth::sign_in(&auth).await?;
-    sync_token(&auth, &api).await;
-    Ok(session)
-}
-
-#[tauri::command]
-async fn auth_session(auth: State<'_, AuthState>, api: State<'_, ApiState>) -> CmdResult<Option<Value>> {
-    let session = match config::origins() {
-        Ok(o) => auth.session(&o).await?,
-        Err(_) => None,
-    };
-    if session.is_some() {
-        sync_token(&auth, &api).await;
-    } else {
-        api.set_access_token(None);
+async fn auth_session(auth: State<'_, AuthState>) -> CmdResult<Option<Value>> {
+    match config::origins() {
+        Ok(o) => auth.session(&o).await,
+        Err(_) => Ok(None),
     }
-    Ok(session)
 }
 
 #[tauri::command]
-async fn auth_sign_out(auth: State<'_, AuthState>, api: State<'_, ApiState>) -> CmdResult<()> {
-    api.set_access_token(None);
+async fn auth_sign_out(auth: State<'_, AuthState>) -> CmdResult<()> {
     auth.sign_out(config::origins().ok().as_ref()).await;
     Ok(())
 }
 
 #[tauri::command]
 async fn upload_put(auth: State<'_, AuthState>, upload: upload::PresignedPut, body: Vec<u8>) -> CmdResult<()> {
-    upload::upload_put(&auth.http, upload, body).await
+    let storage = config::storage_origin()?;
+    upload::upload_put(&auth.http, &storage, upload, body).await
 }
 
 #[tauri::command]
@@ -113,12 +96,16 @@ fn chunk_delete(chunks: State<'_, ChunkStore>, session_id: String) -> CmdResult<
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
-        .manage(ApiState::from_build_env())
+        .manage(ApiState::new().expect("API http client"))
         .setup(|app| {
             let store: Arc<dyn keychain::SecretStore> = Arc::new(keychain::KeychainStore::new(config::KEYCHAIN_SERVICE));
-            let key = chunk_store::device_key(store.as_ref(), config::CHUNK_KEY_ACCOUNT);
             let dir = app.path().app_local_data_dir().map_err(|_| CmdError::internal().message)?.join("chunks");
-            app.manage(ChunkStore::new(dir, &key));
+            // Fail closed: without a persisted chunk key, offline chunk commands are disabled for this launch.
+            let chunks = match chunk_store::device_key(store.as_ref(), config::CHUNK_KEY_ACCOUNT) {
+                Ok(key) => ChunkStore::new(dir, &key),
+                Err(_) => ChunkStore::unavailable(dir),
+            };
+            app.manage(chunks);
             app.manage(AuthState::new(store));
             Ok(())
         })
