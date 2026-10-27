@@ -498,6 +498,9 @@ importers:
       '@meetops/media-core':
         specifier: workspace:*
         version: link:../../packages/media-core
+      '@meetops/notifications':
+        specifier: workspace:*
+        version: link:../../packages/notifications
       '@meetops/queue':
         specifier: workspace:*
         version: link:../../packages/queue
