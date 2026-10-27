@@ -70,11 +70,14 @@ let n = 0;
 const newEmail = () => `qa-e2e-${process.pid}-${Date.now()}-${n++}@example.test`;
 const PASSWORD = fixturePassword('e2e');
 
+/** Login form submit button (apps/web LoginForm: <SubmitButton>Log in</SubmitButton>). */
+const loginButton = (page: Page) => page.getByRole('button', { name: 'Log in', exact: true });
+
 async function uiLogin(page: Page, email: string, password: string) {
   await page.goto('/login');
   await page.getByLabel('Email').fill(email);
   await page.getByLabel('Password', { exact: true }).fill(password);
-  await page.getByRole('button', { name: 'Sign in' }).click();
+  await loginButton(page).click();
 }
 
 /** User with `orgs` organizations created through the real API. */
@@ -93,7 +96,7 @@ test.describe('web flow (PR #48 web + createServer API)', () => {
   }) => {
     await page.goto('/meetings');
     await expect(page).toHaveURL(/\/login\?next=%2Fmeetings/);
-    await expect(page.getByRole('button', { name: 'Sign in' })).toBeVisible();
+    await expect(loginButton(page)).toBeVisible();
   });
 
   test('[E2E-02] login with a real account lands in the app shell', async ({ page, api }) => {
@@ -116,7 +119,7 @@ test.describe('web flow (PR #48 web + createServer API)', () => {
     await expect(page).toHaveURL(/\/login\?next=/);
     await page.getByLabel('Email').fill(email);
     await page.getByLabel('Password', { exact: true }).fill(PASSWORD);
-    await page.getByRole('button', { name: 'Sign in' }).click();
+    await loginButton(page).click();
     await expect(page).toHaveURL(/\/meetings$/);
   });
 
@@ -394,7 +397,7 @@ test.describe('web flow (PR #48 web + createServer API)', () => {
       await page.goto(`/login?next=${encodeURIComponent(next)}`);
       await page.getByLabel('Email').fill(email);
       await page.getByLabel('Password', { exact: true }).fill(PASSWORD);
-      await page.getByRole('button', { name: 'Sign in' }).click();
+      await loginButton(page).click();
       await expect(page.getByTestId('app-shell')).toBeVisible();
       expect(new URL(page.url()).origin).toBe(stack.origin);
       expect(new URL(page.url()).pathname).not.toMatch(/evil/);
