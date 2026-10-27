@@ -43,7 +43,7 @@ export class ResendEmailService implements EmailService {
     private readonly config: ResendEmailConfig,
     fetchFn?: FetchLike,
   ) {
-    this.fetchFn = fetchFn ?? (globalThis.fetch as unknown as FetchLike);
+    this.fetchFn = fetchFn ?? globalThis.fetch;
     this.baseUrl = (config.apiUrl ?? DEFAULT_API_URL).replace(/\/+$/, '');
   }
 
