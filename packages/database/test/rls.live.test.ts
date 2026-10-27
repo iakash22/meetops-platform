@@ -415,8 +415,9 @@ describe.skipIf(!RELAY_URL || !OWNER_URL)('outbox relay role (live)', () => {
     await expect(
       relay.$executeRaw`UPDATE outbox_events SET status = 'published' WHERE false`,
     ).rejects.toThrow(/permission denied/);
-    const attrs = await owner.$queryRaw<{ bypass: boolean }[]>`
-      SELECT rolbypassrls AS bypass FROM pg_roles WHERE rolname = 'meetops_relay'`;
+    // Role name from the relay connection itself, so this also holds under per-run role names.
+    const attrs = await relay.$queryRaw<{ bypass: boolean }[]>`
+      SELECT rolbypassrls AS bypass FROM pg_roles WHERE rolname = current_user`;
     expect(attrs).toEqual([{ bypass: false }]);
     await relay.$disconnect();
     await owner.$disconnect();
