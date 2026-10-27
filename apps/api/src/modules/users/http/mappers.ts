@@ -7,7 +7,8 @@ export function toUserDto(u: PublicUser & Partial<Pick<User, 'updatedAt'>>): Use
     id: u.id,
     email: u.email,
     ...(u.name ? { name: u.name } : {}),
+    emailVerifiedAt: u.emailVerifiedAt ? u.emailVerifiedAt.toISOString() : null,
     createdAt: u.createdAt.toISOString(),
-    updatedAt: (u.updatedAt ?? u.createdAt).toISOString()
+    updatedAt: (u.updatedAt ?? u.createdAt).toISOString(),
   };
 }

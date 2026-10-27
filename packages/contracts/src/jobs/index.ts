@@ -138,6 +138,10 @@ export const EMAIL_TEMPLATE_IDS = [
   'invitation',
   'task-assigned',
   'meeting-summary',
+  'member-added',
+  'member-removed',
+  'tasks-ready-for-review',
+  'integration-error',
 ] as const;
 export const EmailTemplateId = Type.Union(EMAIL_TEMPLATE_IDS.map((t) => Type.Literal(t)));
 export type EmailTemplateId = (typeof EMAIL_TEMPLATE_IDS)[number];
@@ -189,6 +193,10 @@ export const EmailJobPayload = Type.Union([
         Type.Literal('password-reset'),
         Type.Literal('task-assigned'),
         Type.Literal('meeting-summary'),
+        Type.Literal('member-added'),
+        Type.Literal('member-removed'),
+        Type.Literal('tasks-ready-for-review'),
+        Type.Literal('integration-error'),
       ]),
       recipient: EmailUserRecipient,
     },

@@ -32,7 +32,13 @@ export type AuditAction =
   | 'project.delete'
   | 'extracted_task.accept'
   | 'extracted_task.dismiss'
-  | 'meeting.create';
+  | 'meeting.create'
+  // ADR-005 extension pairing and tokens
+  | 'extension.pair'
+  | 'extension.token.issue'
+  | 'extension.token.refresh'
+  | 'extension.token.reuse_detected'
+  | 'extension.revoke';
 
 /** Never put passwords, tokens, cookies or hashes in metadata. */
 export interface AuditEvent {
@@ -51,7 +57,8 @@ export interface AuditEvent {
     | 'team_member'
     | 'project'
     | 'extracted_task'
-    | 'meeting';
+    | 'meeting'
+    | 'extension_device';
   targetId: string | null;
   metadata: Record<string, string | number | boolean | null>;
   ip: string | null;

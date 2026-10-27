@@ -8,7 +8,7 @@ import type { GetSessionResponseT } from './schemas.js';
 /** Session → contract session DTO (without csrfToken). Never includes the session token or any hash. */
 export async function toSessionResponse(
   ctx: { user: PublicUser; session: Session },
-  orgs: OrganizationService
+  orgs: OrganizationService,
 ): Promise<GetSessionResponseT> {
   const memberships = await orgs.membershipsForUser(ctx.user.id);
   const active = memberships.find((m) => m.organization.id === ctx.session.activeOrganizationId);
@@ -18,6 +18,6 @@ export async function toSessionResponse(
     memberships: memberships.map((m) => toMembershipDto(m.membership)),
     activeOrganizationId: active ? active.organization.id : null,
     role: active ? active.membership.role : null,
-    expiresAt: ctx.session.expiresAt.toISOString()
+    expiresAt: ctx.session.expiresAt.toISOString(),
   };
 }
