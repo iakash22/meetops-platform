@@ -189,6 +189,12 @@ describe('uploads (init, complete, download-url)', () => {
     const out = r.json<DownloadUrlResponse>();
     expect(Value.Check(DownloadUrlResponse, out)).toBe(true);
     expect(out.method).toBe('GET');
+    // Security review B 4.1: always an attachment with a fixed allowlisted type.
+    const q = new URL(out.url).searchParams;
+    expect(q.get('response-content-disposition')).toBe('attachment');
+    expect(q.get('response-content-type')).toMatch(
+      /^(audio|video)\/(webm|ogg|mpeg|mp4|wav|x-wav)$/,
+    );
     expect(out.expiresIn).toBeGreaterThanOrEqual(1);
     expect(out.expiresIn).toBeLessThanOrEqual(300);
     expect(Date.parse(out.expiresAt) - before).toBeLessThanOrEqual(out.expiresIn * 1000 + 1000);
