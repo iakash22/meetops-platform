@@ -32,6 +32,13 @@ export const DEFAULT_REDACT_KEYS: readonly string[] = [
   'authorizationCode',
   'codeVerifier',
   'code_verifier',
+  // contracts 0.12.0 REDACT_KEYS (integration secrets; access_token/refresh_token already listed above).
+  'clientSecret',
+  'client_secret',
+  'webhookSecret',
+  'privateKey',
+  'privateKeyPem',
+  'apiToken',
 ];
 
 export interface RedactLimits {
