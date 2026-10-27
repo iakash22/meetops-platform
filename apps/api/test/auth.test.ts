@@ -348,6 +348,68 @@ describe('auth', () => {
       });
       expect(ref.statusCode).toBe(202);
     });
+    it('CORS preflight and credentialed GET reflect allowlisted Origin only', async () => {
+      const preflight = await app.inject({
+        method: 'OPTIONS',
+        url: '/auth/csrf',
+        headers: {
+          origin: ORIGIN,
+          'access-control-request-method': 'GET',
+          'access-control-request-headers': 'x-csrf-token',
+        },
+      });
+      expect(preflight.statusCode).toBe(204);
+      expect(preflight.headers['access-control-allow-origin']).toBe(ORIGIN);
+      expect(preflight.headers['access-control-allow-credentials']).toBe('true');
+
+      const ok = await app.inject({
+        method: 'GET',
+        url: '/auth/csrf',
+        headers: { origin: ORIGIN },
+      });
+      expect(ok.statusCode).toBe(200);
+      expect(ok.headers['access-control-allow-origin']).toBe(ORIGIN);
+      expect(ok.headers['access-control-allow-credentials']).toBe('true');
+
+      const denied = await app.inject({
+        method: 'GET',
+        url: '/auth/csrf',
+        headers: { origin: 'https://evil.example' },
+      });
+      expect(denied.statusCode).toBe(200);
+      expect(denied.headers['access-control-allow-origin']).toBeUndefined();
+    });
+    it('CORS preflight allows the CSRF header and POST for an allowlisted Origin', async () => {
+      const res = await app.inject({
+        method: 'OPTIONS',
+        url: '/auth/signup',
+        headers: {
+          origin: ORIGIN,
+          'access-control-request-method': 'POST',
+          'access-control-request-headers': 'content-type, x-csrf-token',
+        },
+      });
+      expect(res.statusCode).toBe(204);
+      expect(res.headers['access-control-allow-origin']).toBe(ORIGIN);
+      expect(res.headers['access-control-allow-credentials']).toBe('true');
+      expect(String(res.headers['access-control-allow-headers'])).toContain('x-csrf-token');
+      expect(String(res.headers['access-control-allow-methods'])).toContain('POST');
+      expect(res.headers['access-control-allow-origin']).not.toBe('*');
+    });
+    it('CORS never allows a disallowed, look-alike or missing Origin', async () => {
+      for (const origin of ['https://evil.example', `${ORIGIN}.evil.example`, 'null']) {
+        const pre = await app.inject({
+          method: 'OPTIONS',
+          url: '/auth/csrf',
+          headers: { origin, 'access-control-request-method': 'GET' },
+        });
+        expect(pre.headers['access-control-allow-origin']).toBeUndefined();
+        expect(pre.headers['access-control-allow-credentials']).toBeUndefined();
+      }
+      const none = await app.inject({ method: 'GET', url: '/auth/csrf' });
+      expect(none.statusCode).toBe(200);
+      expect(none.headers['access-control-allow-origin']).toBeUndefined();
+    });
   });
 
   describe('password reset', () => {
@@ -376,7 +438,10 @@ describe('auth', () => {
       expect(changed[0]!.to).toBe('reset@example.com');
       expect(Number.isNaN(Date.parse(changed[0]!.data.changedAt!))).toBe(false);
       expect(changed[0]!.data.url).toMatch(/\/forgot-password$/);
-      expect((await anon.post('/auth/login', { email: 'reset@example.com', password: newPassword })).statusCode).toBe(200);
+      expect(
+        (await anon.post('/auth/login', { email: 'reset@example.com', password: newPassword }))
+          .statusCode,
+      ).toBe(200);
       // single use
       const again = await anon.post('/auth/reset-password', {
         token: new URL(mail[0]!.data.url!).searchParams.get('token')!,

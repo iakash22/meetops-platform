@@ -1,5 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import cookie from '@fastify/cookie';
+import cors from '@fastify/cors';
+import { EXTENSION_AUTH_PATHS } from '@meetops/contracts';
 import { AuthService } from './auth/application/auth.service.js';
 import { authRoutes } from './auth/http/auth.plugin.js';
 import { randomBytes } from 'node:crypto';
@@ -423,6 +425,32 @@ export function defaultModuleDeps(
 
 export async function registerModules(app: FastifyInstance, deps: ModuleDeps) {
   await app.register(cookie);
+  // Web CORS: credentialed, exact-match allowlist from WEB_ORIGINS (same list as the Origin check).
+  // No wildcard, no reflection of unknown origins. Extension lifecycle routes keep their own
+  // credential-less CORS (ADR-005 A1.3.6), so they are skipped here.
+  const webOrigins = new Set(deps.security.allowedOrigins);
+  const extensionPaths = new Set<string>([
+    EXTENSION_AUTH_PATHS.token,
+    EXTENSION_AUTH_PATHS.refresh,
+    EXTENSION_AUTH_PATHS.revoke,
+  ]);
+  await app.register(cors, {
+    hook: 'onRequest',
+    delegator: (request, cb) => {
+      const path = (request.url ?? '').split('?')[0] ?? '';
+      const origin = request.headers.origin;
+      const allowed =
+        !extensionPaths.has(path) && typeof origin === 'string' && webOrigins.has(origin);
+      cb(null, {
+        origin: allowed ? origin : false,
+        credentials: true,
+        methods: ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE'],
+        allowedHeaders: ['content-type', 'x-csrf-token'],
+        maxAge: 600,
+        strictPreflight: true,
+      });
+    },
+  });
   // Close only the clients defaultModuleDeps created; injected ones belong to the caller.
   const { ownedRedis, ownedDb } = deps;
   if (ownedRedis || ownedDb) {
