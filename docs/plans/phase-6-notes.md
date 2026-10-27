@@ -17,6 +17,16 @@ Wires the existing ADR-005 A1.3.1 guard (`makeExtensionBearerGuard`) into the ro
 | Other routes                                                                | Unchanged; a bearer is never accepted (no cookie -> 401)                                                                     | A1.3.1.2                                                                                                                                                                                                  |
 | CORS for `chrome-extension://` origins                                      | Not changed in this PR                                                                                                       | A1.3.1.6 is separate infra work; follow-up                                                                                                                                                                |
 
+## Extension CORS on bearer routes (feat/api-extension-bearer-cors)
+
+| Decision    | Default chosen                                                                                                           | Why                                                               |
+| ----------- | ------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------- |
+| Allowlist   | `chrome-extension://<id>` for each `EXTENSION_IDS` entry (same source as the auth lifecycle routes)                      | One config, A1.3.6                                                |
+| Credentials | Never sent (`Access-Control-Allow-Credentials` absent)                                                                   | A1.3.6                                                            |
+| Preflight   | 204 with `POST`, `authorization, content-type`, max-age 600; a disallowed extension origin gets 204 with no CORS headers | Mirrors the lifecycle routes; adds `authorization` for the bearer |
+| Web CORS    | Skipped for any `chrome-extension://` origin on these routes; unchanged for web origins                                  | Credentialed CORS must never answer an extension origin           |
+| Scope       | Only the 7 bearer route templates (`bearer-cors.ts`); other routes give extension origins no CORS                        | A1.3.1.2                                                          |
+
 ## Not started (blocked on decisions)
 
 - **Standalone consent route `POST /extension/consent`**: ADR-005 Amendment 3 is still _Proposed_
