@@ -79,7 +79,8 @@ const REPORT_SUMMARY_DEDUPE_MIGRATION = '20261027120000_report_summary_dedupe';
 /** ADR-013 notifications tables. Update LATEST_MIGRATION when adding a migration. */
 const NOTIFICATIONS_MIGRATION = '20261027180000_notifications';
 const RELAY_BY_TYPE_MIGRATION = '20261028000000_relay_claim_by_event_type';
-const LATEST_MIGRATION = RELAY_BY_TYPE_MIGRATION;
+const RELAY_REVOKE_ALL_KINDS_MIGRATION = '20261028030000_relay_revoke_claim_all_kinds';
+const LATEST_MIGRATION = RELAY_REVOKE_ALL_KINDS_MIGRATION;
 const notificationsSql = readFileSync(
   resolve(migrationsDir, NOTIFICATIONS_MIGRATION, 'migration.sql'),
   'utf8',
@@ -1066,6 +1067,23 @@ describe('security review fixes (static)', () => {
     }
   });
 
+  it('(3c) relay loses EXECUTE on the claim-all-kinds overload; scripts no longer grant it', () => {
+    const sql = secDir(RELAY_REVOKE_ALL_KINDS_MIGRATION).replace(/--.*$/gm, '');
+    expect(sql).toContain(
+      'REVOKE EXECUTE ON FUNCTION public.relay_claim_outbox_events(integer) FROM meetops_relay;',
+    );
+    expect(sql).not.toMatch(/\bGRANT\b|DROP FUNCTION|DISABLE ROW LEVEL SECURITY|NO FORCE/);
+    for (const f of ['scripts/bootstrap-roles.sql', 'scripts/create-db-roles.ts']) {
+      const src = readFileSync(resolve(pkgDir, f), 'utf8');
+      expect(src, f).not.toContain(
+        'GRANT EXECUTE ON FUNCTION public.relay_claim_outbox_events(integer) TO meetops_relay;',
+      );
+      expect(src, f).toContain(
+        'REVOKE EXECUTE ON FUNCTION public.relay_claim_outbox_events(integer) FROM meetops_relay;',
+      );
+    }
+  });
+
   it('(4) every NO FORCE is re-forced in the same migration, and a final assertion guards the chain', () => {
     for (const d of readdirSync(migrationsDir, { withFileTypes: true }).filter((e) =>
       e.isDirectory(),
@@ -1476,7 +1494,8 @@ describe('ADR-013 notifications tables (static)', () => {
       .map((x) => x.name)
       .sort();
     expect(dirs.at(-1)).toBe(LATEST_MIGRATION);
-    expect(dirs.at(-2)).toBe(NOTIFICATIONS_MIGRATION);
+    expect(dirs.at(-2)).toBe(RELAY_BY_TYPE_MIGRATION);
+    expect(dirs.at(-3)).toBe(NOTIFICATIONS_MIGRATION);
     expect(statements).not.toMatch(
       /\bDROP\b|RENAME|ALTER COLUMN|NO FORCE|DISABLE ROW LEVEL SECURITY/i,
     );
