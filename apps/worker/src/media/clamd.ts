@@ -13,7 +13,10 @@ export type ClamdConfig =
 
 /** Upload scan antivirus from env: UPLOAD_SCAN_CLAMAV=true + CLAMD_SOCKET or CLAMD_HOST/CLAMD_PORT. */
 export function antivirusFromEnv(env: NodeJS.ProcessEnv = process.env): Antivirus | undefined {
-  if (env.UPLOAD_SCAN_CLAMAV !== 'true') return undefined;
+  const flag = env.UPLOAD_SCAN_CLAMAV?.trim();
+  if (flag && flag !== 'true' && flag !== 'false')
+    throw new Error('UPLOAD_SCAN_CLAMAV must be "true" or "false"');
+  if (flag !== 'true') return undefined;
   if (env.CLAMD_SOCKET) return createClamdScanner({ socketPath: env.CLAMD_SOCKET });
   const port = Number(env.CLAMD_PORT ?? 3310);
   if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('Invalid CLAMD_PORT');

@@ -71,7 +71,7 @@ describe('clamd INSTREAM client (L-2)', () => {
 
   it('is off unless UPLOAD_SCAN_CLAMAV=true', () => {
     expect(antivirusFromEnv({})).toBeUndefined();
-    expect(antivirusFromEnv({ UPLOAD_SCAN_CLAMAV: '1' })).toBeUndefined();
+    expect(antivirusFromEnv({ UPLOAD_SCAN_CLAMAV: 'false' })).toBeUndefined();
     expect(antivirusFromEnv({ UPLOAD_SCAN_CLAMAV: 'true' })).toBeDefined();
     expect(() => antivirusFromEnv({ UPLOAD_SCAN_CLAMAV: 'true', CLAMD_PORT: 'x' })).toThrow();
   });
