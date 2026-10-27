@@ -18,8 +18,10 @@ const config: ExpoConfig = {
   },
   android: {
     package: 'com.example.meetops',
+    // Keep Keystore-backed auth items (and everything else) out of Android Auto Backup / device transfer.
+    allowBackup: false,
   },
-  plugins: ['expo-router'],
+  plugins: ['expo-router', ['expo-secure-store', { configureAndroidBackup: true }]],
   experiments: { typedRoutes: false },
 };
 
