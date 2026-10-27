@@ -73,7 +73,8 @@ const MEETINGS_EXTERNAL_ID_MIGRATION = '20261026120000_meetings_external_id';
 const RECORDING_SOURCE_NATIVE_MIGRATION = '20261026210000_recording_source_native';
 /** Update when adding a migration. */
 const INTEGRATION_CONNECTIONS_MIGRATION = '20261027000000_integration_connections';
-const LATEST_MIGRATION = INTEGRATION_CONNECTIONS_MIGRATION;
+const INTEGRATION_ROUTING_MIGRATION = '20261027100000_integration_routing_functions';
+const LATEST_MIGRATION = INTEGRATION_ROUTING_MIGRATION;
 const integrationsSql = readFileSync(
   resolve(migrationsDir, INTEGRATION_CONNECTIONS_MIGRATION, 'migration.sql'),
   'utf8',
@@ -1219,7 +1220,9 @@ describe('ADR-005 durable token families (static)', () => {
       .filter((x) => x.isDirectory())
       .map((x) => x.name)
       .sort();
-    expect(dirs.indexOf(AUTH_TOKENS_MIGRATION)).toBe(dirs.indexOf(LATEST_MIGRATION) - 1);
+    expect(dirs.indexOf(AUTH_TOKENS_MIGRATION)).toBe(
+      dirs.indexOf(INTEGRATION_CONNECTIONS_MIGRATION) - 1,
+    );
   });
   it('is additive only', () => {
     expect(statements).not.toMatch(
@@ -1323,6 +1326,7 @@ describe('Phase 5 integration_connections (static)', () => {
       .filter((x) => x.isDirectory())
       .map((x) => x.name)
       .sort();
+    expect(dirs.at(-2)).toBe(INTEGRATION_CONNECTIONS_MIGRATION);
     expect(dirs.at(-1)).toBe(LATEST_MIGRATION);
   });
 
