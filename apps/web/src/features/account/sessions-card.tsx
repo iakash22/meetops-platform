@@ -11,12 +11,13 @@ import { notify, toastError } from '@/lib/errors/notify';
 import { describeUserAgent, formatDateTime } from './device-label';
 import {
   countryFlag,
+  DBIP_ATTRIBUTION,
+  DBIP_URL,
   formatLocation,
   isNewLocation,
-  type SessionWithGeo,
+  validCountryCode,
 } from './session-location';
 
-const UNKNOWN = 'Unknown location';
 const APPROX_HINT = 'Approximate location based on IP address';
 import { useEndLocalSession } from './end-session';
 import { accountKeys, useMySessions } from './queries';
@@ -77,10 +78,10 @@ export function SessionsCard() {
         ) : (
           <ul className="divide-y rounded-lg border" aria-label="Sessions">
             {query.data.items.map((summary) => {
-              const s: SessionWithGeo = summary;
-              const current = (query.data.items as SessionWithGeo[]).find((x) => x.current);
+              const s = summary;
+              const current = query.data.items.find((x) => x.current);
               const flag = countryFlag(s.geoCountryCode);
-              const code = s.geoCountryCode?.trim().toUpperCase();
+              const code = validCountryCode(s.geoCountryCode);
               const label = describeUserAgent(s.userAgent);
               const location = formatLocation(s);
               const isConfirming = confirming === s.id;
@@ -95,17 +96,13 @@ export function SessionsCard() {
                       className="flex flex-wrap items-center gap-2 font-medium"
                       data-testid="session-location"
                     >
-                      {flag ? (
-                        <span role="img" aria-label={code ?? ''}>
+                      {location && flag && code ? (
+                        <span role="img" aria-label={code}>
                           {flag}
                         </span>
-                      ) : code ? (
-                        <span className="text-xs text-muted-foreground">[{code}]</span>
                       ) : null}
-                      <span>
-                        {label} · {location}
-                      </span>
-                      {location !== UNKNOWN && s.geoApproximate !== false ? (
+                      <span>{location ? `${label} · ${location}` : label}</span>
+                      {location ? (
                         <abbr
                           title={APPROX_HINT}
                           aria-label={APPROX_HINT}
@@ -126,6 +123,19 @@ export function SessionsCard() {
                       <time dateTime={s.lastSeenAt}>{formatDateTime(s.lastSeenAt)}</time>
                       {s.ip ? ` · ${s.ip}` : ''}
                     </span>
+                    {location ? (
+                      <span className="text-xs text-muted-foreground">
+                        <a
+                          href={DBIP_URL}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="underline"
+                          data-testid="dbip-attribution"
+                        >
+                          {DBIP_ATTRIBUTION}
+                        </a>
+                      </span>
+                    ) : null}
                   </div>
                   {isConfirming ? (
                     <div className="flex gap-2">

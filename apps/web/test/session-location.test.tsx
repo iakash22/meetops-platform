@@ -1,11 +1,13 @@
 import { render, screen, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import type { SessionSummary } from '@meetops/contracts';
 import {
   countryFlag,
   formatLocation,
   isNewLocation,
-  type SessionWithGeo,
+  MAX_LOCATION_LENGTH,
+  validCountryCode,
 } from '@/features/account/session-location';
 import { SessionsCard } from '@/features/account/sessions-card';
 import { ApiProvider } from '@/lib/api/context';
@@ -13,7 +15,7 @@ import { createMockApi } from './fixtures/render';
 import { sessionList } from './fixtures/data';
 
 const base = sessionList.items[0]!;
-const mk = (id: string, geo: Partial<SessionWithGeo>, current = false): SessionWithGeo => ({
+const mk = (id: string, geo: Partial<SessionSummary>, current = false): SessionSummary => ({
   ...base,
   id,
   current,
@@ -25,7 +27,7 @@ const mumbai = {
   geoRegion: 'Maharashtra',
   geoCountry: 'India',
   geoCountryCode: 'IN',
-  geoApproximate: true,
+  geoApproximate: true as const,
 };
 
 describe('formatLocation fallbacks', () => {
@@ -39,11 +41,15 @@ describe('formatLocation fallbacks', () => {
     ));
   it('country only', () =>
     expect(formatLocation({ geoCity: '  ', geoCountry: 'India' })).toBe('India'));
-  it('unknown', () => {
-    expect(formatLocation({})).toBe('Unknown location');
-    expect(formatLocation({ geoCity: 'Mumbai', geoRegion: 'MH', geoCountry: null })).toBe(
-      'Unknown location',
-    );
+  it('unknown -> null (omitted)', () => {
+    expect(formatLocation({})).toBeNull();
+    expect(formatLocation({ geoCity: 'Mumbai', geoRegion: 'MH' })).toBeNull();
+  });
+  it('caps displayed length', () => {
+    const long = 'A'.repeat(128);
+    const out = formatLocation({ geoCity: long, geoRegion: long, geoCountry: long })!;
+    expect(out.length).toBeLessThanOrEqual(MAX_LOCATION_LENGTH);
+    expect(out.endsWith('…')).toBe(true);
   });
 });
 
@@ -53,6 +59,14 @@ describe('countryFlag', () => {
     expect(countryFlag('IND')).toBeNull();
     expect(countryFlag('<b>')).toBeNull();
     expect(countryFlag(null)).toBeNull();
+  });
+  it('accepts exactly two ASCII letters A-Z only', () => {
+    expect(validCountryCode(' de ')).toBe('DE');
+    for (const bad of ['', 'D', 'D1', '12', 'ÄB', 'ßa', 'ǅA', 'A\u0301', 'İS', 'ﬀ', '[x]', 'U S']) {
+      expect(validCountryCode(bad)).toBeNull();
+      expect(countryFlag(bad)).toBeNull();
+    }
+    expect(validCountryCode(undefined)).toBeNull();
   });
 });
 
@@ -70,7 +84,7 @@ describe('isNewLocation', () => {
   });
 });
 
-function renderCard(items: SessionWithGeo[]) {
+function renderCard(items: SessionSummary[]) {
   const api = createMockApi({
     auth: { sessions: vi.fn().mockResolvedValue({ items, nextCursor: null }) },
   });
@@ -101,10 +115,31 @@ describe('SessionsCard location', () => {
     ).toBeInTheDocument();
     expect(within(rows[0]!).queryByTestId('new-location')).toBeNull();
     expect(within(rows[1]!).getByTestId('new-location')).toHaveTextContent('New location');
-    // Invalid code: text fallback, no flag, unknown location, no hint.
-    expect(within(rows[2]!).getByText('[ZZZ]')).toBeInTheDocument();
-    expect(within(rows[2]!).getByText('Chrome on Windows · Unknown location')).toBeInTheDocument();
+    // DB-IP attribution wherever a location is shown.
+    for (const r of [rows[0]!, rows[1]!]) {
+      const a = within(r).getByRole('link', { name: 'IP geolocation by DB-IP' });
+      expect(a).toHaveAttribute('href', 'https://db-ip.com');
+      expect(a).toHaveAttribute('target', '_blank');
+      expect(a).toHaveAttribute('rel', 'noopener noreferrer');
+    }
+    // Invalid code + unknown location: no flag, no raw code, no location, hint or attribution.
+    expect(within(rows[2]!).queryByText(/ZZZ/)).toBeNull();
+    expect(within(rows[2]!).queryByRole('img')).toBeNull();
+    expect(within(rows[2]!).getByText('Chrome on Windows')).toBeInTheDocument();
+    expect(within(rows[2]!).queryByText(/Unknown location/)).toBeNull();
     expect(within(rows[2]!).queryByTitle(/Approximate/)).toBeNull();
+    expect(within(rows[2]!).queryByTestId('dbip-attribution')).toBeNull();
+  });
+
+  it('invalid country code with a known location: location shown, no flag, no raw code', async () => {
+    renderCard([
+      mk('c', { geoCountry: 'India', geoCountryCode: 'I1', geoApproximate: true }, true),
+    ]);
+    const [row] = await screen.findAllByTestId('session-row');
+    expect(within(row!).getByText('Chrome on Windows · India')).toBeInTheDocument();
+    expect(within(row!).queryByRole('img')).toBeNull();
+    expect(within(row!).queryByText(/I1/)).toBeNull();
+    expect(within(row!).getByTestId('dbip-attribution')).toBeInTheDocument();
   });
 
   it('renders geo values as plain text (no HTML injection)', async () => {
