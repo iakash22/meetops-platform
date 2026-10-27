@@ -12,7 +12,7 @@ import {
 import { registerDomainErrorHandler, registerNotFoundHandler } from './shared/http-errors.js';
 import { parseTrustProxy } from './shared/trust-proxy.js';
 import { clientIpOptionsFromEnv, resolveClientIp } from './shared/geoip/client-ip.js';
-import { truncatingReqSerializer } from './shared/geoip/log-serializer.js';
+import { truncateIp } from './shared/geoip/ip.js';
 import { metricsTokenFromEnv, registerMetrics, type HttpMetrics } from './shared/metrics.js';
 import {
   createReadiness,
@@ -73,10 +73,10 @@ export interface CreateServerOptions {
   metrics?: HttpMetrics;
   /** Overrides the default /ready probes (Prisma `SELECT 1`, Redis `PING`). */
   readinessChecks?: ReadinessCheck[];
+  /** Log destination (tests capture log lines). Defaults to stdout. */
+  logStream?: { write(line: string): void };
   /** Overrides READINESS_TIMEOUT_MS (per-probe timeout for /ready). */
   readinessTimeoutMs?: number;
-  /** Log destination (tests capture request logs). Defaults to stdout. */
-  logStream?: { write(line: string): void };
 }
 
 export function createServer(options: CreateServerOptions = {}) {
@@ -87,8 +87,9 @@ export function createServer(options: CreateServerOptions = {}) {
       redact: { paths: REDACT_PATHS, censor: '***redacted***' },
       // ADR-005 A1.5: contracts REDACT_KEYS at any depth (fast-redact `*.` paths above are one level only).
       redactKeys: REDACT_KEYS,
-      // ADR-014 / #290 M-1: request logs carry the client IP truncated to /24 or /48, never in full.
-      serializers: { req: truncatingReqSerializer },
+      // ADR-014 / #290 M-1: the single @meetops/logger req serializer truncates the client IP to /24 or /48
+      // (never logged in full) and redacts sensitive query values (code/state/token).
+      requestIp: truncateIp,
     },
     options.logStream,
   );

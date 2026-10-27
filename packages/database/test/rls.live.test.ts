@@ -330,7 +330,7 @@ describe.skipIf(!RELAY_URL || !OWNER_URL)('outbox relay role (live)', () => {
   it('claims due pending events across orgs via the definer function and completes them', async () => {
     const claimed = await relay.$queryRaw<
       { id: string; org_id: string; attempts: number }[]
-    >`SELECT * FROM relay_claim_outbox_events(500)`;
+    >`SELECT * FROM relay_claim_outbox_events(500, ${['meeting.created']}::text[])`;
     const mine = claimed.filter((e) => (orgs as string[]).includes(e.org_id));
     expect(mine.map((e) => e.org_id).sort()).toEqual([...orgs].sort());
     expect(Object.keys(claimed[0] ?? {}).sort()).toEqual(
@@ -347,7 +347,7 @@ describe.skipIf(!RELAY_URL || !OWNER_URL)('outbox relay role (live)', () => {
     // claimed rows are not handed out twice
     const again = await relay.$queryRaw<
       { id: string }[]
-    >`SELECT * FROM relay_claim_outbox_events(500)`;
+    >`SELECT * FROM relay_claim_outbox_events(500, ${['meeting.created']}::text[])`;
     expect(again.filter((e) => mine.some((m) => m.id === e.id))).toHaveLength(0);
     const [first, second] = mine;
     expect(
@@ -402,6 +402,12 @@ describe.skipIf(!RELAY_URL || !OWNER_URL)('outbox relay role (live)', () => {
     ).toEqual([]);
   });
 
+  it('cannot call the claim-all-kinds overload (20261028030000)', async () => {
+    await expect(relay.$queryRaw`SELECT * FROM relay_claim_outbox_events(500)`).rejects.toThrow(
+      /permission denied/,
+    );
+  });
+
   it('has no table privileges at all and no BYPASSRLS', async () => {
     await expect(relay.outboxEvent.findMany()).rejects.toThrow(/permission denied/);
     await expect(relay.meeting.count()).rejects.toThrow(/permission denied/);
@@ -409,8 +415,9 @@ describe.skipIf(!RELAY_URL || !OWNER_URL)('outbox relay role (live)', () => {
     await expect(
       relay.$executeRaw`UPDATE outbox_events SET status = 'published' WHERE false`,
     ).rejects.toThrow(/permission denied/);
-    const attrs = await owner.$queryRaw<{ bypass: boolean }[]>`
-      SELECT rolbypassrls AS bypass FROM pg_roles WHERE rolname = 'meetops_relay'`;
+    // Role name from the relay connection itself, so this also holds under per-run role names.
+    const attrs = await relay.$queryRaw<{ bypass: boolean }[]>`
+      SELECT rolbypassrls AS bypass FROM pg_roles WHERE rolname = current_user`;
     expect(attrs).toEqual([{ bypass: false }]);
     await relay.$disconnect();
     await owner.$disconnect();

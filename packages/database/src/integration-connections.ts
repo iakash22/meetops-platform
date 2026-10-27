@@ -207,6 +207,23 @@ export function createIntegrationConnectionRepository(
       return rows[0]?.org_id ?? null;
     },
 
+    /**
+     * App-wide webhook routing: live connections for a provider account (e.g. a GitHub App installation id), via
+     * the integration_connections_by_external_account SECURITY DEFINER function (identifiers only, max 10).
+     */
+    async resolveByExternalAccount(
+      provider: string,
+      externalAccountId: string,
+    ): Promise<{ organizationId: string; id: string }[]> {
+      if (!/^[1-9]\d{0,19}$/.test(externalAccountId) && provider === 'github') return [];
+      const db = options.client ?? getPrismaClient();
+      const rows = await db.$transaction(
+        (tx) => tx.$queryRaw<{ org_id: string; id: string }[]>`
+          SELECT org_id, id FROM integration_connections_by_external_account(${provider}, ${externalAccountId})`,
+      );
+      return rows.map((r) => ({ organizationId: r.org_id, id: r.id }));
+    },
+
     /** Token-refresh sweep: (org, id, provider) of active rows expiring before `before`. Identifiers only. */
     async listDueForRefresh(
       before: Date,

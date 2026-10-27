@@ -4,21 +4,21 @@ import { startMediaWorker } from './media/index.js';
 import { registerSummaryWorker, registerTranscriptionWorker } from './ai/index.js';
 import { createTranscriptionHostDeps } from './ai/bootstrap.js';
 import { loadTranscriptionWorkerEnv } from './ai/env.js';
-import { createQueue, createWorker } from '@meetops/queue';
-import { getPrismaClient, purgeExpiredSessions, redactExpiredIpAddresses } from '@meetops/database';
-import { IP_RETENTION_QUEUE, runIpRetention, scheduleIpRetention } from './privacy/index.js';
 import { Redis } from 'ioredis';
 import { createPrismaClient } from '@meetops/database';
 import { createNotificationDeliveryProducer } from '@meetops/notifications';
 import { createRedisEmitter } from './media/realtime.js';
 import { loadNotificationsWorkerEnv, registerNotificationsWorker } from './notifications/index.js';
+import { createQueue, createWorker } from '@meetops/queue';
+import { getPrismaClient, purgeExpiredSessions, redactExpiredIpAddresses } from '@meetops/database';
+import { IP_RETENTION_QUEUE, runIpRetention, scheduleIpRetention } from './privacy/index.js';
 import { createNotificationEmailSender } from './notifications/email.js';
 
 export * from './media/index.js';
 export * from './ai/index.js';
 export * from './integrations/index.js';
-export * from './privacy/index.js';
 export * from './notifications/index.js';
+export * from './privacy/index.js';
 
 async function main() {
   const { close } = startMediaWorker();

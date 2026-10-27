@@ -1,13 +1,23 @@
 import pino, { type LoggerOptions, type Logger } from 'pino';
-import { CENSOR, DEFAULT_REDACT_KEYS, redactDeep, redactUrl, type RedactLimits } from './redact.js';
+import {
+  CENSOR,
+  DEFAULT_REDACT_KEYS,
+  redactDeep,
+  redactUrl,
+  scrubText,
+  type RedactLimits,
+} from './redact.js';
 
 export type { Logger };
 export {
   CENSOR,
   CIRCULAR,
+  CONDITIONAL_REDACT_KEYS,
   DEFAULT_REDACT_KEYS,
   redactDeep,
   redactUrl,
+  scrubText,
+  SENSITIVE_QUERY_PARAMS,
   SENSITIVE_QUERY_KEYS,
   TRUNCATED,
   type RedactLimits,
@@ -29,7 +39,14 @@ export type CreateLoggerOptions = LoggerOptions & {
   /** Extra keys to redact at any depth, e.g. contracts REDACT_KEYS. Always merged with DEFAULT_REDACT_KEYS. */
   redactKeys?: readonly string[];
   redactLimits?: RedactLimits;
+  /**
+   * Maps the client IP in `req` logs (e.g. ADR-014 /24-/48 truncation). Applied by the single request serializer
+   * together with the URL query redaction, so one serializer does both (#290).
+   */
+  requestIp?: IpMapper;
 };
+
+export type IpMapper = (ip: string | null) => string | null | undefined;
 
 /**
  * pino logger with two redaction layers: a depth-capped key walker on every log object and child binding
@@ -40,15 +57,26 @@ export function createLogger(
   options: CreateLoggerOptions = {},
   destination?: pino.DestinationStream,
 ): Logger {
-  const { redactKeys = [], redactLimits, formatters, redact, ...rest } = options;
+  const { redactKeys = [], redactLimits, requestIp, formatters, redact, ...rest } = options;
   const keys = [...new Set([...DEFAULT_REDACT_KEYS, ...redactKeys])];
   const extraPaths = Array.isArray(redact) ? redact : (redact?.paths ?? []);
   const opts: LoggerOptions = {
     level: process.env.NODE_ENV === 'production' ? 'info' : 'debug',
     ...rest,
-    // Fastify request logs: query values such as signed unsubscribe tokens never reach the log (PR #263 M-1).
-    serializers: { req: requestSerializer(keys), ...rest.serializers },
+    // Fastify request logs: sensitive query values (signed unsubscribe tokens, OAuth code/state) never reach the log
+    // (PR #263 M-1, #282 M-2). Caller serializers win per key.
+    serializers: { req: requestSerializer(keys, { mapIp: requestIp }), ...rest.serializers },
     redact: { paths: [...new Set([...headerPaths, ...extraPaths])], censor: CENSOR },
+    hooks: {
+      ...rest.hooks,
+      // #282 M-1: scrub PEM blocks / GitHub tokens from the message string (formatters.log never sees it).
+      logMethod(args, method, level) {
+        const scrubbed = args.map((a) => (typeof a === 'string' ? scrubText(a) : a)) as typeof args;
+        return rest.hooks?.logMethod
+          ? rest.hooks.logMethod.call(this, scrubbed, method, level)
+          : method.apply(this, scrubbed);
+      },
+    },
     formatters: {
       ...formatters,
       log: (obj) => {
@@ -71,30 +99,52 @@ type ReqLike = {
   host?: string;
   hostname?: string;
   ip?: string;
+  /** App-resolved client IP (apps/api decorates it from trusted proxy headers); preferred over `ip`. */
+  clientIp?: string | null;
+  remoteAddress?: string;
+  remotePort?: number;
   socket?: { remoteAddress?: string };
 };
 
-/** Fastify-shaped `req` serializer with sensitive query values redacted. */
-export function requestSerializer(keys: Iterable<string> = DEFAULT_REDACT_KEYS) {
+export interface RequestSerializerOptions {
+  /** Maps the client IP (e.g. truncation). When set, `remotePort` is never logged either. */
+  mapIp?: IpMapper | undefined;
+}
+
+/**
+ * The single Fastify-shaped `req` serializer: sensitive query values redacted from `url` (#263 M-1, #282 M-2) and,
+ * with `mapIp`, the client IP mapped (ADR-014 truncation, #290 M-1). `createLogger` installs it for every logger.
+ */
+export function requestSerializer(
+  keys: Iterable<string> = DEFAULT_REDACT_KEYS,
+  { mapIp }: RequestSerializerOptions = {},
+) {
   const list = [...keys];
-  return (req: ReqLike) => {
+  const ip = (v: string | undefined) => (mapIp ? (mapIp(v ?? null) ?? undefined) : v);
+  return (req: ReqLike): Record<string, unknown> => {
     const proto = Object.getPrototypeOf(req) as unknown;
     if (proto === Object.prototype || proto === null) {
-      // Plain log objects (already-serialized shapes): keep every field, only scrub the URL.
-      return typeof req.url === 'string' ? { ...req, url: redactUrl(req.url, list) } : req;
+      // Plain log objects (already-serialized shapes): keep every field, scrub the URL and any IP fields.
+      const out: Record<string, unknown> = { ...req };
+      if (typeof req.url === 'string') out.url = redactUrl(req.url, list);
+      if (mapIp) {
+        if ('ip' in req) out.ip = ip(req.ip);
+        if ('remoteAddress' in req) out.remoteAddress = ip(req.remoteAddress);
+        delete out.remotePort;
+      }
+      return out;
     }
-    return fastifyShape(req, list);
+    return {
+      method: req.method,
+      url: typeof req.url === 'string' ? redactUrl(req.url, list) : req.url,
+      host: req.host ?? req.hostname,
+      remoteAddress: ip(req.clientIp ?? req.ip ?? req.socket?.remoteAddress),
+    };
   };
 }
 
-function fastifyShape(req: ReqLike, list: string[]) {
-  return {
-    method: req.method,
-    url: typeof req.url === 'string' ? redactUrl(req.url, list) : req.url,
-    host: req.host ?? req.hostname,
-    remoteAddress: req.ip ?? req.socket?.remoteAddress,
-  };
-}
+/** @deprecated Alias of the single request serializer with default keys (#282 L); use `createLogger`. */
+export const reqSerializer = requestSerializer();
 
 /**
  * pino serializes child bindings without `formatters.bindings`, so redact them before they reach pino. pino children

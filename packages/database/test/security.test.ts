@@ -80,9 +80,12 @@ const REPORT_SUMMARY_DEDUPE_MIGRATION = '20261027120000_report_summary_dedupe';
 const RECORDING_BYTES_MIGRATION = '20261027130000_recording_session_bytes_received';
 /** Definer SELECT policy for the integration routing functions (forced RLS binds the owner). */
 const INTEGRATION_ROUTING_POLICY_MIGRATION = '20261027140000_integration_routing_definer_policy';
+/** ADR-014 session/audit geo columns + 30-day IP retention. */
+const SESSION_AUDIT_GEOIP_MIGRATION = '20261028010000_session_audit_geoip';
 /** ADR-013 notifications tables. Update LATEST_MIGRATION when adding a migration. */
 const NOTIFICATIONS_MIGRATION = '20261027180000_notifications';
 const RELAY_BY_TYPE_MIGRATION = '20261028000000_relay_claim_by_event_type';
+const RELAY_REVOKE_ALL_KINDS_MIGRATION = '20261028030000_relay_revoke_claim_all_kinds';
 const notificationsSql = readFileSync(
   resolve(migrationsDir, NOTIFICATIONS_MIGRATION, 'migration.sql'),
   'utf8',
@@ -93,9 +96,11 @@ const NOTIFICATION_TABLES = [
   'notification_preferences',
   'push_device_tokens',
 ] as const;
-/** ADR-014 session/audit geo columns + 30-day IP retention. */
-const SESSION_AUDIT_GEOIP_MIGRATION = '20261028010000_session_audit_geoip';
-const LATEST_MIGRATION = SESSION_AUDIT_GEOIP_MIGRATION;
+/** App-wide GitHub webhook routing by installation id (definer function, identifiers only). */
+const EXTERNAL_ACCOUNT_ROUTING_MIGRATION = '20261028020000_integration_external_account_routing';
+/** #288 L-1 remainder: re-assert migrator ownership + column grants of the IP retention tables. */
+const RETENTION_OWNER_MIGRATION = '20261028040000_geoip_retention_owner_assert';
+const LATEST_MIGRATION = RETENTION_OWNER_MIGRATION;
 const reportDedupeSql = readFileSync(
   resolve(migrationsDir, REPORT_SUMMARY_DEDUPE_MIGRATION, 'migration.sql'),
   'utf8',
@@ -1072,6 +1077,23 @@ describe('security review fixes (static)', () => {
     }
   });
 
+  it('(3c) relay loses EXECUTE on the claim-all-kinds overload; scripts no longer grant it', () => {
+    const sql = secDir(RELAY_REVOKE_ALL_KINDS_MIGRATION).replace(/--.*$/gm, '');
+    expect(sql).toContain(
+      'REVOKE EXECUTE ON FUNCTION public.relay_claim_outbox_events(integer) FROM meetops_relay;',
+    );
+    expect(sql).not.toMatch(/\bGRANT\b|DROP FUNCTION|DISABLE ROW LEVEL SECURITY|NO FORCE/);
+    for (const f of ['scripts/bootstrap-roles.sql', 'scripts/create-db-roles.ts']) {
+      const src = readFileSync(resolve(pkgDir, f), 'utf8');
+      expect(src, f).not.toContain(
+        'GRANT EXECUTE ON FUNCTION public.relay_claim_outbox_events(integer) TO meetops_relay;',
+      );
+      expect(src, f).toContain(
+        'REVOKE EXECUTE ON FUNCTION public.relay_claim_outbox_events(integer) FROM meetops_relay;',
+      );
+    }
+  });
+
   it('(4) every NO FORCE is re-forced in the same migration, and a final assertion guards the chain', () => {
     for (const d of readdirSync(migrationsDir, { withFileTypes: true }).filter((e) =>
       e.isDirectory(),
@@ -1473,17 +1495,50 @@ describe('integration routing definer functions', () => {
   });
 });
 
-describe('ADR-013 notifications tables (static)', () => {
-  const statements = notificationsSql.replace(/--.*$/gm, '');
-
-  it('is the latest migration and additive only', () => {
+describe('integration external-account routing (20261028020000)', () => {
+  it('sorts right after the ADR-014 geoip migration, before the relay revoke one', () => {
     const dirs = readdirSync(migrationsDir, { withFileTypes: true })
       .filter((x) => x.isDirectory())
       .map((x) => x.name)
       .sort();
     expect(dirs.at(-1)).toBe(LATEST_MIGRATION);
-    expect(dirs.at(-2)).toBe(RELAY_BY_TYPE_MIGRATION);
-    expect(dirs.at(-3)).toBe(NOTIFICATIONS_MIGRATION);
+    expect(dirs.at(-2)).toBe(RELAY_REVOKE_ALL_KINDS_MIGRATION);
+    expect(dirs.at(-3)).toBe(EXTERNAL_ACCOUNT_ROUTING_MIGRATION);
+    expect(dirs.at(-4)).toBe(SESSION_AUDIT_GEOIP_MIGRATION);
+    expect(dirs.at(-5)).toBe(RELAY_BY_TYPE_MIGRATION);
+  });
+  const sql = readFileSync(
+    resolve(migrationsDir, EXTERNAL_ACCOUNT_ROUTING_MIGRATION, 'migration.sql'),
+    'utf8',
+  ).replace(/--.*$/gm, '');
+  it('is a SECURITY DEFINER, identifiers-only, live-rows function granted to the app role only', () => {
+    expect(sql).toMatch(
+      /CREATE FUNCTION integration_connections_by_external_account\(p_provider text, p_external_account_id text\)/,
+    );
+    expect(sql).toMatch(/RETURNS TABLE \(org_id uuid, id uuid\)/);
+    expect(sql).toMatch(/SECURITY DEFINER\s+SET search_path = public, pg_temp/);
+    expect(sql).toMatch(/c\.status <> 'revoked'/);
+    expect(sql).toMatch(
+      /REVOKE ALL ON FUNCTION integration_connections_by_external_account\(text, text\) FROM PUBLIC;/,
+    );
+    expect(sql).toMatch(
+      /GRANT EXECUTE ON FUNCTION integration_connections_by_external_account\(text, text\) TO meetops_app;/,
+    );
+    expect(sql).not.toMatch(/_enc\b|secret|access_token/i);
+    expect(sql).not.toMatch(/\bDROP\b|ALTER TABLE|DISABLE ROW LEVEL SECURITY|NO FORCE/i);
+  });
+});
+
+describe('ADR-013 notifications tables (static)', () => {
+  const statements = notificationsSql.replace(/--.*$/gm, '');
+
+  it('keeps its place in the migration order and is additive only', () => {
+    const dirs = readdirSync(migrationsDir, { withFileTypes: true })
+      .filter((x) => x.isDirectory())
+      .map((x) => x.name)
+      .sort();
+    expect(dirs.at(-5)).toBe(RELAY_BY_TYPE_MIGRATION);
+    expect(dirs.at(-6)).toBe(NOTIFICATIONS_MIGRATION);
     expect(statements).not.toMatch(
       /\bDROP\b|RENAME|ALTER COLUMN|NO FORCE|DISABLE ROW LEVEL SECURITY/i,
     );
@@ -1541,5 +1596,31 @@ describe('integration routing definer policy (20261027140000)', () => {
     expect(dirs.indexOf(INTEGRATION_ROUTING_POLICY_MIGRATION)).toBe(
       dirs.indexOf(RECORDING_BYTES_MIGRATION) + 1,
     );
+  });
+});
+
+describe('IP retention owner re-assert (20261028040000)', () => {
+  const sql = readFileSync(
+    resolve(migrationsDir, RETENTION_OWNER_MIGRATION, 'migration.sql'),
+    'utf8',
+  ).replace(/--.*$/gm, '');
+  it('is the newest migration, after the ADR-014 geoip one', () => {
+    const dirs = readdirSync(migrationsDir, { withFileTypes: true })
+      .filter((x) => x.isDirectory())
+      .map((x) => x.name)
+      .sort();
+    expect(dirs.at(-1)).toBe(LATEST_MIGRATION);
+    expect(dirs.indexOf(RETENTION_OWNER_MIGRATION)).toBeGreaterThan(
+      dirs.indexOf(SESSION_AUDIT_GEOIP_MIGRATION),
+    );
+  });
+  it('only re-owns the three tables to meetops_migrator (guarded) and re-issues the column grants', () => {
+    expect(sql).toMatch(/pg_has_role\(current_user, 'meetops_migrator', 'MEMBER'\)/);
+    expect(sql).toMatch(/ARRAY\['sessions', 'password_resets', 'audit_events'\]/);
+    expect(sql).toMatch(/ALTER TABLE %I OWNER TO meetops_migrator/);
+    expect(sql).toContain(
+      'GRANT SELECT (id, ip_address, created_at), UPDATE (ip_address)\n  ON TABLE "sessions", "password_resets", "audit_events" TO meetops_migrator;',
+    );
+    expect(sql).not.toMatch(/meetops_app|\bDROP\b|DISABLE ROW LEVEL SECURITY|NO FORCE/i);
   });
 });
