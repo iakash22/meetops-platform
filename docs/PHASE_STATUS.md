@@ -1,4 +1,40 @@
-# Phase status — 27 Oct 2026 (~01:30 IST)
+# Phase status — 27 Oct 2026 (~21:30 IST)
+
+> `integration/phase-1` (head `4f197bb`) was merged into `main` by Shubham via [#247](https://github.com/iakash22/meetops-platform/pull/247) (merge commit `47dbf97`, 21:19 IST). Everything below is **on `main`**. Percentages are coordinator estimates, not measured.
+
+| Phase                          | 27 Oct AM | 27 Oct PM | Merged today (27 Oct)                    |
+| ------------------------------ | --------- | --------- | ---------------------------------------- |
+| P0 Foundation                  | 100%      | 100%      | —                                        |
+| P1 Auth, orgs, roles           | ~90%      | ~90%      | #221 (strict CORS allowlist)             |
+| P2 Meetings, uploads, recording| ~62%      | ~75%      | #242 (readiness probes), #227            |
+| P3 Transcripts, reports        | ~35%      | ~65%      | #228, #229, #235, #236, #243             |
+| P4 Tasks, approval             | ~30%      | ~70%      | #222, #224, #225, #230, #232, #233, #234 |
+| P5 GitHub, Jira                | ~30%      | ~65%      | #223, #226, #231                         |
+| P6 Extension                   | ~45%      | ~70%      | #216, #217, #238, #239, #244, #245       |
+| P7 Calendar, search, analytics | 5%        | 5%        | —                                        |
+| P8 Desktop, mobile             | ~45%      | ~55%      | #218, #219, #220, #237, #240, #241       |
+| P9 Hardening, release          | ~15%      | ~25%      | #246 (token-gated /metrics), #243        |
+| **Overall**                    |           | **~60%**  | 31 PRs: #216, #217, #218, #219, #220, #221, #222, #223, #224, #225, #226, #227, #228, #229, #230, #231, #232, #233, #234, #235, #236, #237, #238, #239, #240, #241, #242, #243, #244, #245, #246, then #247 → `main` |
+
+Notes:
+
+- #241 desktop auth: desktop tokens are accepted only when `DESKTOP_AUTH_ENABLED` is on (default **off**). The extension guard still accepts extension tokens only.
+- On hold: `feat/worker-ai-queue-consumer` (`4dc75a7`, no PR) — needs `GEMINI_API_KEY`.
+- GitHub Actions runs fail; the local merge gate (build, lint, typecheck, test, gitleaks, Arch/Sec PASS on head) is the CI.
+- Both agents are idle until Shubham says "start work".
+
+## Owner decisions (Shubham)
+
+- ADR drafts #192, #193, #199 and Proposed ADRs 006–012 sign-off.
+- Dependabot lockfile update (9 alerts).
+- Bearer routes: accept token or cookie?
+- MFA/SSO, billing, KMS, malware scanning, media retention, consent law.
+- Keys via secure input: Gemini, AssemblyAI, Gmail SMTP.
+- GitHub Actions failures.
+
+---
+
+## Earlier status (27 Oct ~01:30 IST)
 
 > All code below is merged into `integration/phase-1`, **not yet on `main`**. Percentages are coordinator estimates from merged work, not measured.
 
