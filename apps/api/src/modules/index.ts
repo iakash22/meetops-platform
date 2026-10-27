@@ -58,6 +58,7 @@ import {
   InMemoryExtensionTokenRepository,
   RedisExtensionTokenRepository,
   DurableExtensionTokenRepository,
+  makeExtensionBearerGuard,
   type ExtensionTokenRepository,
 } from './extension-auth/index.js';
 import { InMemoryUserRepository } from './users/infrastructure/in-memory-user.repository.js';
@@ -469,6 +470,12 @@ export async function registerModules(app: FastifyInstance, deps: ModuleDeps) {
     deps.mailQueue.handler = new AuthMailJobHandler({ ...deps, transport: deps.mailTransport });
   }
   app.decorateRequest('auth', null);
+  const sessionVerifier = new SessionVerifier({
+    ...deps,
+    extensionTokenStore: extensionAuth.verifierStore(),
+  });
+  // ADR-005 A1.3.1: meetings/resolve and recording/upload routes also accept the extension bearer token.
+  const extensionBearer = makeExtensionBearerGuard(sessionVerifier, deps.security.cookieName);
   await app.register(authRoutes, { auth, organizations, security: deps.security });
   await app.register(organizationRoutes, { auth, organizations, security: deps.security });
   await app.register(extensionAuthRoutes, { auth, extensionAuth, security: deps.security });
@@ -476,15 +483,23 @@ export async function registerModules(app: FastifyInstance, deps: ModuleDeps) {
   await app.register(import('./tasks/index.js'), { auth, organizations, deps });
   await app.register(import('./meeting-insights/index.js'), { auth, organizations, deps });
   await app.register(import('./integrations/index.js'), { auth, organizations, deps });
-  await app.register(import('./meetings/index.js'), { auth, organizations, deps });
-  await app.register(import('./media/index.js'), { auth, organizations, deps });
+  await app.register(import('./meetings/index.js'), {
+    auth,
+    organizations,
+    deps,
+    extensionBearer,
+  });
+  await app.register(import('./media/index.js'), {
+    auth,
+    organizations,
+    deps,
+    extensionBearer,
+    sessionVerifier,
+  });
   return {
     auth,
     organizations,
-    sessionVerifier: new SessionVerifier({
-      ...deps,
-      extensionTokenStore: extensionAuth.verifierStore(),
-    }),
+    sessionVerifier,
     extensionAuth,
   };
 }
