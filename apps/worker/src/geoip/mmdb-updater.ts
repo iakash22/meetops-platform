@@ -25,6 +25,7 @@ export const GEOIP_UPDATE_SCHEDULER_ID = 'geoip.mmdb-update.monthly';
 export const GEOIP_UPDATE_CRON = '30 4 3 * *';
 export const DEFAULT_ALLOWED_HOSTS = ['download.db-ip.com'] as const;
 export const DEFAULT_MAX_BYTES = 256 * 1024 * 1024;
+export const DEFAULT_TOTAL_TIMEOUT_MS = 5 * 60_000;
 export const DEFAULT_TEST_IPS = ['1.1.1.1', '8.8.8.8', '2606:4700:4700::1111'] as const;
 
 export interface MmdbUpdaterConfig {
@@ -36,12 +37,18 @@ export interface MmdbUpdaterConfig {
   dbPath: string;
   maxBytes: number;
   testIps: readonly string[];
+  /** Socket idle timeout per request. */
   timeoutMs: number;
+  /** Overall deadline for the whole run (checksum + download + decompress), against slow-drip responses. */
+  totalTimeoutMs: number;
+  /** Test-only (local HTTPS server on a random port); never read from env. */
+  allowAnyPort?: boolean;
 }
 
 export type UpdaterErrorCode =
   | 'not_https'
   | 'host_not_allowed'
+  | 'port_not_allowed'
   | 'redirect_refused'
   | 'http_status'
   | 'too_large'
@@ -88,8 +95,16 @@ export function expandUrl(template: string, now: Date): string {
   return template.replaceAll('{YYYY}', yyyy).replaceAll('{MM}', mm);
 }
 
-/** https + exact host allowlist (no wildcards, no credentials). */
-export function assertAllowedUrl(raw: string, allowedHosts: readonly string[]): URL {
+/**
+ * https + exact host allowlist (no wildcards, no credentials) on the default port only: any explicit port (even :443
+ * spelled out is normalised away by URL) is refused. `allowAnyPort` exists only for the local-HTTPS test server and
+ * cannot be set from the environment.
+ */
+export function assertAllowedUrl(
+  raw: string,
+  allowedHosts: readonly string[],
+  opts: { allowAnyPort?: boolean } = {},
+): URL {
   let u: URL;
   try {
     u = new URL(raw);
@@ -98,6 +113,7 @@ export function assertAllowedUrl(raw: string, allowedHosts: readonly string[]): 
   }
   if (u.protocol !== 'https:') throw new MmdbUpdateError('not_https');
   if (u.username || u.password) throw new MmdbUpdateError('host_not_allowed');
+  if (u.port !== '' && !opts.allowAnyPort) throw new MmdbUpdateError('port_not_allowed');
   if (!allowedHosts.map((h) => h.toLowerCase()).includes(u.hostname.toLowerCase()))
     throw new MmdbUpdateError('host_not_allowed');
   return u;
@@ -143,7 +159,7 @@ async function fetchChecked(
 }
 
 async function fetchSha256(cfg: MmdbUpdaterConfig, now: Date, get: HttpsGet): Promise<string> {
-  const url = assertAllowedUrl(expandUrl(cfg.sha256Url!, now), cfg.allowedHosts);
+  const url = assertAllowedUrl(expandUrl(cfg.sha256Url!, now), cfg.allowedHosts, cfg);
   const res = await fetchChecked(url, { maxBytes: 4096, timeoutMs: cfg.timeoutMs }, get);
   const chunks: Buffer[] = [];
   await pipeline(res, capStream(4096), async function* (src) {
@@ -206,9 +222,47 @@ export async function updateMmdb(
   cfg: MmdbUpdaterConfig,
   deps: { get?: HttpsGet; now?: () => Date } = {},
 ): Promise<UpdateResult> {
-  const get = deps.get ?? nodeHttpsGet();
-  const now = (deps.now ?? (() => new Date()))();
-  const url = assertAllowedUrl(expandUrl(cfg.url, now), cfg.allowedHosts);
+  const rawGet = deps.get ?? nodeHttpsGet();
+  // Overall deadline: every response opened in this run is destroyed with `timeout` when it fires, and a pending
+  // request rejects. The current file is untouched (the swap only happens after a complete, verified download).
+  const open = new Set<{ destroy(e?: Error): void }>();
+  let expired = false;
+  let onExpire: (() => void) | undefined;
+  const timer = setTimeout(() => {
+    expired = true;
+    for (const r of open) r.destroy(new MmdbUpdateError('timeout'));
+    onExpire?.();
+  }, cfg.totalTimeoutMs);
+  timer.unref?.();
+  const get: HttpsGet = async (u, o) => {
+    if (expired) throw new MmdbUpdateError('timeout');
+    const res = await Promise.race([
+      rawGet(u, o),
+      new Promise<never>((_r, rej) => {
+        onExpire = () => rej(new MmdbUpdateError('timeout'));
+      }),
+    ]);
+    if (expired) {
+      res.destroy();
+      throw new MmdbUpdateError('timeout');
+    }
+    open.add(res);
+    return res;
+  };
+  try {
+    return await updateWithin(cfg, get, deps.now);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function updateWithin(
+  cfg: MmdbUpdaterConfig,
+  get: HttpsGet,
+  nowFn?: () => Date,
+): Promise<UpdateResult> {
+  const now = (nowFn ?? (() => new Date()))();
+  const url = assertAllowedUrl(expandUrl(cfg.url, now), cfg.allowedHosts, cfg);
   const expectedSha = cfg.sha256Url ? await fetchSha256(cfg, now, get) : undefined;
   const dir = dirname(cfg.dbPath);
   const tmp = join(dir, `.${basename(cfg.dbPath)}.${randomBytes(6).toString('hex')}.tmp`);
@@ -277,7 +331,8 @@ const list = (v: string | undefined) =>
 
 /**
  * Off unless GEOIP_UPDATE_URL and GEOIP_DB_PATH are both set. GEOIP_UPDATE_ALLOWED_HOSTS (default download.db-ip.com),
- * GEOIP_UPDATE_SHA256_URL, GEOIP_UPDATE_MAX_BYTES (default 256 MiB), GEOIP_UPDATE_TEST_IPS, GEOIP_UPDATE_TIMEOUT_MS.
+ * GEOIP_UPDATE_SHA256_URL, GEOIP_UPDATE_MAX_BYTES (default 256 MiB), GEOIP_UPDATE_TEST_IPS, GEOIP_UPDATE_TIMEOUT_MS (idle), GEOIP_UPDATE_TOTAL_TIMEOUT_MS (overall,
+ * default 5 min). Only the default https port is accepted.
  * An invalid URL or host throws at startup (fail closed, never a silent fallback).
  */
 export function loadMmdbUpdaterConfig(
@@ -297,6 +352,12 @@ export function loadMmdbUpdaterConfig(
       ? list(env.GEOIP_UPDATE_TEST_IPS)
       : [...DEFAULT_TEST_IPS],
     timeoutMs: intIn(env.GEOIP_UPDATE_TIMEOUT_MS, 120_000, 1000, 3_600_000),
+    totalTimeoutMs: intIn(
+      env.GEOIP_UPDATE_TOTAL_TIMEOUT_MS,
+      DEFAULT_TOTAL_TIMEOUT_MS,
+      5000,
+      3_600_000,
+    ),
   };
   const probe = new Date();
   assertAllowedUrl(expandUrl(cfg.url, probe), cfg.allowedHosts);

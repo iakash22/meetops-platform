@@ -42,6 +42,7 @@ beforeEach(() => {
     maxBytes: 1024 * 1024,
     testIps: ['81.2.69.142'],
     timeoutMs: 5000,
+    totalTimeoutMs: 60_000,
   };
   writeFileSync(cfg.dbPath, OLD);
   return () => rmSync(dir, { recursive: true, force: true });
@@ -87,6 +88,10 @@ describe('URL rules', () => {
     );
     expect(() => assertAllowedUrl(`https://u:p@${HOST}/x`, [HOST])).toThrow('host_not_allowed');
     expect(() => assertAllowedUrl('not a url', [HOST])).toThrow('not_https');
+    // #293 L-1: default https port only.
+    expect(() => assertAllowedUrl(`https://${HOST}:8443/x`, [HOST])).toThrow('port_not_allowed');
+    expect(() => assertAllowedUrl(`https://${HOST}:80/x`, [HOST])).toThrow('port_not_allowed');
+    expect(assertAllowedUrl(`https://${HOST}:443/x`, [HOST]).port).toBe('');
     expect(assertAllowedUrl(`https://${HOST.toUpperCase()}/x`, [HOST]).hostname).toBe(HOST);
     expect(expandUrl('a-{YYYY}-{MM}.mmdb.gz', MONTH())).toBe('a-2026-10.mmdb.gz');
   });
@@ -102,11 +107,36 @@ describe('URL rules', () => {
         GEOIP_DB_PATH: '/tmp/x',
       }),
     ).toThrow('host_not_allowed');
+    expect(() =>
+      loadMmdbUpdaterConfig({
+        GEOIP_UPDATE_URL: `https://${HOST}:8443/x`,
+        GEOIP_DB_PATH: '/tmp/x',
+      }),
+    ).toThrow('port_not_allowed');
+    expect(() =>
+      loadMmdbUpdaterConfig({
+        GEOIP_UPDATE_URL: `https://${HOST}/x`,
+        GEOIP_UPDATE_SHA256_URL: `https://${HOST}:8443/x.sha256`,
+        GEOIP_DB_PATH: '/tmp/x',
+      }),
+    ).toThrow('port_not_allowed');
     const c = loadMmdbUpdaterConfig({
       GEOIP_UPDATE_URL: `https://${HOST}/free/dbip-city-lite-{YYYY}-{MM}.mmdb.gz`,
       GEOIP_DB_PATH: '/data/city.mmdb',
     });
-    expect(c).toMatchObject({ allowedHosts: [HOST], maxBytes: 256 * 1024 * 1024 });
+    expect(c).toMatchObject({
+      allowedHosts: [HOST],
+      maxBytes: 256 * 1024 * 1024,
+      totalTimeoutMs: 300_000,
+    });
+    expect(c).not.toHaveProperty('allowAnyPort');
+    expect(
+      loadMmdbUpdaterConfig({
+        GEOIP_UPDATE_URL: `https://${HOST}/x`,
+        GEOIP_DB_PATH: '/tmp/x',
+        GEOIP_UPDATE_TOTAL_TIMEOUT_MS: '90000',
+      })?.totalTimeoutMs,
+    ).toBe(90_000);
   });
   it('schedules monthly in UTC (idempotent scheduler id)', async () => {
     const q = { upsertJobScheduler: vi.fn(async () => undefined) };
@@ -158,6 +188,28 @@ describe('updateMmdb (mocked transport)', () => {
     const get = serve({ [`${PATH}.gz`]: () => response(bomb) });
     expect(await code(updateMmdb({ ...cfg, url: `${cfg.url}.gz` }, { get, now: MONTH }))).toBe(
       'too_large',
+    );
+    untouched();
+  });
+  it('#293 L-2: a slow-drip response hits the overall deadline; current file kept', async () => {
+    let timer: NodeJS.Timeout | undefined;
+    const drip = new Readable({ read() {} });
+    timer = setInterval(() => drip.push(Buffer.alloc(16)), 20);
+    const get = serve({ [PATH]: () => response(drip) });
+    const t0 = Date.now();
+    expect(await code(updateMmdb({ ...cfg, totalTimeoutMs: 300 }, { get, now: MONTH }))).toBe(
+      'timeout',
+    );
+    clearInterval(timer);
+    timer = undefined;
+    expect(Date.now() - t0).toBeLessThan(3000);
+    expect(drip.destroyed).toBe(true);
+    untouched();
+  });
+  it('#293 L-2: a request that never answers hits the overall deadline', async () => {
+    const get: HttpsGet = () => new Promise(() => undefined);
+    expect(await code(updateMmdb({ ...cfg, totalTimeoutMs: 200 }, { get, now: MONTH }))).toBe(
+      'timeout',
     );
     untouched();
   });
@@ -293,6 +345,10 @@ describe.skipIf(!hasOpenssl)('updateMmdb over local HTTPS', () => {
         res.writeHead(302, { location: '/city.mmdb' }).end();
       } else if (req.url === '/city.mmdb') {
         res.writeHead(200, { 'content-length': FIXTURE.length }).end(FIXTURE);
+      } else if (req.url === '/drip') {
+        res.writeHead(200);
+        const t = setInterval(() => res.write(Buffer.alloc(8)), 25);
+        res.on('close', () => clearInterval(t));
       } else if (req.url === '/big') {
         res.writeHead(200);
         const chunk = Buffer.alloc(256 * 1024);
@@ -317,7 +373,7 @@ describe.skipIf(!hasOpenssl)('updateMmdb over local HTTPS', () => {
   const tls = () => nodeHttpsGet({ ca });
   it('downloads, verifies and swaps', async () => {
     const r = await updateMmdb(
-      { ...cfg, url: `${base}/city.mmdb`, allowedHosts: ['localhost'] },
+      { ...cfg, url: `${base}/city.mmdb`, allowedHosts: ['localhost'], allowAnyPort: true },
       { get: tls() },
     );
     expect(r.updated).toBe(true);
@@ -328,7 +384,7 @@ describe.skipIf(!hasOpenssl)('updateMmdb over local HTTPS', () => {
     expect(
       await code(
         updateMmdb(
-          { ...cfg, url: `${base}/redirect`, allowedHosts: ['localhost'] },
+          { ...cfg, url: `${base}/redirect`, allowedHosts: ['localhost'], allowAnyPort: true },
           { get: tls() },
         ),
       ),
@@ -338,14 +394,54 @@ describe.skipIf(!hasOpenssl)('updateMmdb over local HTTPS', () => {
   it('aborts an oversize stream', async () => {
     expect(
       await code(
-        updateMmdb({ ...cfg, url: `${base}/big`, allowedHosts: ['localhost'] }, { get: tls() }),
+        updateMmdb(
+          { ...cfg, url: `${base}/big`, allowedHosts: ['localhost'], allowAnyPort: true },
+          { get: tls() },
+        ),
       ),
     ).toBe('too_large');
     untouched();
   });
+  it('a slow-drip server (never idle long enough for the socket timeout) is cut by the overall deadline', async () => {
+    const t0 = Date.now();
+    expect(
+      await code(
+        updateMmdb(
+          {
+            ...cfg,
+            url: `${base}/drip`,
+            allowedHosts: ['localhost'],
+            allowAnyPort: true,
+            totalTimeoutMs: 500,
+          },
+          { get: tls() },
+        ),
+      ),
+    ).toBe('timeout');
+    expect(Date.now() - t0).toBeLessThan(5000);
+    untouched();
+  });
+  it('without the test-only flag a non-default port is refused', async () => {
+    expect(
+      await code(
+        updateMmdb(
+          { ...cfg, url: `${base}/city.mmdb`, allowedHosts: ['localhost'] },
+          { get: tls() },
+        ),
+      ),
+    ).toBe('port_not_allowed');
+    untouched();
+  });
   it('rejects an untrusted certificate (no ca)', async () => {
     expect(
-      await code(updateMmdb({ ...cfg, url: `${base}/city.mmdb`, allowedHosts: ['localhost'] })),
+      await code(
+        updateMmdb({
+          ...cfg,
+          url: `${base}/city.mmdb`,
+          allowedHosts: ['localhost'],
+          allowAnyPort: true,
+        }),
+      ),
     ).toBe('network');
     untouched();
   });
