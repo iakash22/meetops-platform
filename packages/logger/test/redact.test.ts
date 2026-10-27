@@ -96,3 +96,10 @@ describe('child loggers', () => {
     expect(rec).toMatchObject({ a: 1, b: { accessToken: CENSOR }, x: 'SERIALIZED' });
   });
 });
+
+describe('exports', () => {
+  it('keeps the shared `logger` singleton', async () => {
+    const m = await import('../src/index.js');
+    expect(typeof m.logger.info).toBe('function');
+  });
+});

@@ -66,9 +66,11 @@ export function createLogger(
  */
 function wrapChild(root: Logger, keys: readonly string[], limits?: RedactLimits): Logger {
   type ChildFn = (this: Logger, b: pino.Bindings, o?: pino.ChildLoggerOptions) => Logger;
-  const pinoChild = root.child as unknown as ChildFn;
+  const pinoChild = Reflect.get(root, 'child') as unknown as ChildFn;
   root.child = function (this: Logger, bindings: pino.Bindings, opts?: pino.ChildLoggerOptions) {
     return pinoChild.call(this, redactDeep(bindings, keys, limits) as pino.Bindings, opts);
   } as unknown as Logger['child'];
   return root;
 }
+
+export const logger = createLogger({ name: 'meetops' });
