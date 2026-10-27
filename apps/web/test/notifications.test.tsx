@@ -81,6 +81,30 @@ describe('notifications page', () => {
     );
   });
 
+  it('shows auth.new_location_signin as "New sign-in from <city>, <country>" linking to sessions', async () => {
+    const signin = {
+      ...n1,
+      id: '40000000-0000-4000-8000-000000000003',
+      kind: 'auth.new_location_signin',
+      title: 'ignored',
+      meetingId: undefined,
+      geoCity: 'Mumbai',
+      geoCountry: 'India',
+    };
+    const bare = {
+      ...signin,
+      id: '40000000-0000-4000-8000-000000000004',
+      geoCity: null,
+      geoCountry: null,
+    };
+    const api = apiWith(() => ({ items: [signin, bare], nextCursor: null }));
+    renderApp('/notifications', api);
+    expect(await screen.findByText('New sign-in from Mumbai, India')).toBeInTheDocument();
+    expect(screen.getByText('New sign-in from a new location')).toBeInTheDocument();
+    const links = screen.getAllByRole('link', { name: 'Review active sessions' });
+    expect(links[0]).toHaveAttribute('href', '/account');
+  });
+
   it('marks one notification read', async () => {
     const api = apiWith((m) => (m === 'GET' ? { items: [n1], nextCursor: null } : { updated: 1 }));
     renderApp('/notifications', api);

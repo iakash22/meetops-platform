@@ -24,7 +24,7 @@ describe('notification preferences matrix', () => {
     const m = toMatrix([{ type: '*', channel: 'email', enabled: false }]);
     expect(m['task.assigned']!.email).toBe(false);
     expect(m['task.assigned']!.in_app).toBe(true);
-    expect(fromMatrix(m)).toHaveLength(30);
+    expect(fromMatrix(m)).toHaveLength(35);
   });
 });
 

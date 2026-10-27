@@ -4,9 +4,15 @@ import { Badge } from '@/components/ui/badge';
 import { EmptyState, ErrorState, LoadingState } from '@/components/states/states';
 import { PageHeader } from '@/components/ui/typography';
 import { isNotAvailable, useMarkRead, useNotifications } from './queries';
-import { notificationTitle, type Notification } from './api';
+import { NEW_LOCATION_SIGNIN, notificationTitle, type Notification } from './api';
 
 function Target({ n }: { n: Notification }) {
+  if (n.kind === NEW_LOCATION_SIGNIN)
+    return (
+      <Link to="/account" className="text-link text-xs hover:underline">
+        Review active sessions
+      </Link>
+    );
   if (n.meetingId)
     return (
       <Link

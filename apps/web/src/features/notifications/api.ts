@@ -31,6 +31,7 @@ export const KNOWN_NOTIFICATION_KINDS = [
   'report.ready',
   'task.assigned',
   'task.updated',
+  'auth.new_location_signin',
 ] as const;
 
 export type Notification = {
@@ -43,6 +44,12 @@ export type Notification = {
   taskId?: Id;
   readAt: string | null;
   createdAt: string;
+  /**
+   * CONTRACT NEED: `auth.new_location_signin` needs the sign-in city/country. Not in the v0.10.0
+   * `Notification` schema yet; read here as optional extras until the contract adds them.
+   */
+  geoCity?: string | null;
+  geoCountry?: string | null;
 };
 export type NotificationList = { items: Notification[]; nextCursor: string | null };
 export type ListNotificationsQuery = { limit?: number; cursor?: string; unreadOnly?: boolean };
@@ -92,7 +99,18 @@ export function createNotificationsApi(request: ApiClient['request']): Notificat
   };
 }
 
-export function notificationTitle(n: Pick<Notification, 'kind' | 'title'>): string {
+export const NEW_LOCATION_SIGNIN = 'auth.new_location_signin';
+
+export function notificationTitle(
+  n: Pick<Notification, 'kind' | 'title' | 'geoCity' | 'geoCountry'>,
+): string {
+  if (n.kind === NEW_LOCATION_SIGNIN) {
+    const place = [n.geoCity, n.geoCountry]
+      .map((v) => (typeof v === 'string' ? v.trim() : ''))
+      .filter(Boolean)
+      .join(', ');
+    return place ? `New sign-in from ${place}` : 'New sign-in from a new location';
+  }
   return (KNOWN_NOTIFICATION_KINDS as readonly string[]).includes(n.kind)
     ? n.title
     : 'New notification';

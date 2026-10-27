@@ -27,6 +27,7 @@ const TYPE_LABEL: Record<string, string> = {
   'report.ready': 'AI summary ready',
   'task.assigned': 'Task assigned',
   'task.updated': 'Task updated',
+  'auth.new_location_signin': 'New sign-in location',
 };
 const TYPES = ['*', ...KNOWN_NOTIFICATION_KINDS] as const;
 
