@@ -16,7 +16,7 @@ ALTER TABLE "recording_sessions"
   ADD CONSTRAINT "recording_sessions_bytes_received_check" CHECK ("bytes_received" BETWEEN 0 AND 1400000000);
 
 -- SECURITY INVOKER: meetops_app already has UPDATE on recording_sessions under forced RLS, so the caller's
--- RLS (app.current_org_id) decides visibility. No definer privileges needed.
+-- RLS (app.current_organization_id, legacy app.current_org_id fallback; ADR-010) decides visibility. No definer privileges needed.
 -- Errors (RAISE ... USING ERRCODE):
 --   recording_session_bytes_invalid_delta  22023  delta NULL or <= 0
 --   recording_session_not_found            P0002  no such session in the current org (incl. other org / no org context)
@@ -42,7 +42,7 @@ BEGIN
   UPDATE public.recording_sessions
      SET bytes_received = bytes_received + p_delta, updated_at = now()
    WHERE id = p_session_id
-     AND org_id = NULLIF(current_setting('app.current_org_id', true), '')::uuid
+     AND org_id = COALESCE(NULLIF(current_setting('app.current_organization_id', true), ''), NULLIF(current_setting('app.current_org_id', true), ''))::uuid
      AND status = 'uploading'
      AND bytes_received + p_delta <= 1400000000
   RETURNING bytes_received INTO v_total;
@@ -54,7 +54,7 @@ BEGIN
   SELECT s.status, s.bytes_received INTO v_status, v_current
     FROM public.recording_sessions s
    WHERE s.id = p_session_id
-     AND s.org_id = NULLIF(current_setting('app.current_org_id', true), '')::uuid;
+     AND s.org_id = COALESCE(NULLIF(current_setting('app.current_organization_id', true), ''), NULLIF(current_setting('app.current_org_id', true), ''))::uuid;
   IF NOT FOUND THEN
     RAISE EXCEPTION 'recording_session_not_found' USING ERRCODE = 'P0002';
   ELSIF v_status <> 'uploading' THEN

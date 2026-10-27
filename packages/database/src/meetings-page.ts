@@ -77,7 +77,7 @@ export async function listMeetingsPage(
     : Prisma.empty;
   const rows = await tx.$queryRaw<{ id: string }[]>`
     SELECT id FROM meetings
-    WHERE org_id = NULLIF(current_setting('app.current_org_id', true), '')::uuid
+    WHERE org_id = COALESCE(NULLIF(current_setting('app.current_organization_id', true), ''), NULLIF(current_setting('app.current_org_id', true), ''))::uuid
       AND deleted_at IS NULL
       ${keyset}
     ORDER BY created_at DESC, id DESC

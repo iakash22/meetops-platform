@@ -17,6 +17,18 @@ const APP_URL = process.env.RLS_TEST_APP_URL;
 const OWNER_URL = process.env.RLS_TEST_OWNER_URL;
 const MAX = 1_400_000_000n;
 
+/** Only the canonical ADR-010 setting (as once the legacy app.current_org_id is dropped). */
+function canonicalOnly<T>(
+  client: PrismaClient,
+  organizationId: string,
+  fn: (tx: Parameters<Parameters<PrismaClient['$transaction']>[0]>[0]) => Promise<T>,
+): Promise<T> {
+  return client.$transaction(async (tx) => {
+    await tx.$executeRaw`SELECT set_config('app.current_organization_id', ${organizationId}, true)`;
+    return fn(tx);
+  });
+}
+
 describe.skipIf(!APP_URL || !OWNER_URL)('add_recording_session_bytes (live)', () => {
   const app = new PrismaClient({
     datasources: {
@@ -89,6 +101,25 @@ describe.skipIf(!APP_URL || !OWNER_URL)('add_recording_session_bytes (live)', ()
     expect(row.bytesReceived).toBe(MAX - 50n);
     await expect(add(org, capSession, 51n)).rejects.toThrow(/recording_session_bytes_exceeded/);
     expect(await add(org, capSession, 50n)).toBe(MAX);
+  });
+
+  it('works with only the canonical app.current_organization_id setting (M-1)', async () => {
+    const fresh = randomUUID();
+    await runWithOrgContext(app, org, (tx) =>
+      tx.recordingSession.create({
+        data: {
+          id: fresh,
+          organizationId: org,
+          meetingId,
+          mimeType: 'audio/webm',
+          startedAt: new Date(),
+        },
+      }),
+    );
+    expect(await canonicalOnly(app, org, (tx) => addRecordingSessionBytes(tx, fresh, 3n))).toBe(3n);
+    await expect(
+      canonicalOnly(app, otherOrg, (tx) => addRecordingSessionBytes(tx, fresh, 1n)),
+    ).rejects.toThrow(/recording_session_not_found/);
   });
 
   it('rejects delta <= 0, other-org, missing and non-uploading sessions; no org context => not found', async () => {
@@ -197,6 +228,11 @@ describe.skipIf(!APP_URL || !OWNER_URL)('listMeetingsPage keyset pagination (liv
     }
     const sameDesc = ids.slice(0, 7).sort().reverse();
     expect(seen).toEqual([ids[9], ids[8], ids[7], ...sameDesc]);
+  });
+
+  it('lists with only the canonical app.current_organization_id setting (M-1)', async () => {
+    const page = await canonicalOnly(app, org, (tx) => listMeetingsPage(tx, { limit: 100 }));
+    expect(page.items).toHaveLength(10);
   });
 
   it('limit is clamped to 1..100 and non-integers are rejected', async () => {
