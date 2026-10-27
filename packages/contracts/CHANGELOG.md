@@ -6,6 +6,19 @@ While the version is `0.x`, a minor bump may contain breaking changes (ADR-003).
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-10-28
+
+Realtime events for the notifications fan-out (ADR-013) and the AI summary worker (PR #272). Additive; builds on
+0.11.0 (notifications, PR #263). 0.12.0 is reserved by the integrations stream.
+
+### Added
+
+- `REALTIME_EVENTS.summaryReady` / `SummaryReadyEvent` (`summary:ready`): `{organizationId, meetingId, reportId,
+transcriptRevision, tasksPendingReview, at}` to the meeting + organization rooms.
+- `REALTIME_EVENTS.notificationNew` / `NotificationNewEvent` (`notification:new`): `{organizationId, notificationId,
+kind, at}` to the per-user room only.
+- `RealtimeEventMap` / `ServerToClientEvents` include both.
+
 ## [0.11.0] - 2026-10-28
 
 Notifications (ADR-013, Accepted). Additive; builds on 0.10.0 (re-versioned from 0.10.0, which PR #261 uses for tasks).
