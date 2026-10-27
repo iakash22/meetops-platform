@@ -15,6 +15,11 @@ export const DEFAULT_REDACT_KEYS: readonly string[] = [
   'accessToken',
   'refreshToken',
   'pairingCode',
+  // ADR-013 push credentials.
+  'expoPushToken',
+  'p256dh',
+  // Web Push subscription `keys.auth` secret (PR #263 L-1).
+  'auth',
   'authorization',
   'cookie',
   'set-cookie',
@@ -86,36 +91,48 @@ export const SENSITIVE_QUERY_PARAMS: readonly string[] = [
   'signature',
   'sig',
 ];
-const SENSITIVE_QUERY = new Set(SENSITIVE_QUERY_PARAMS);
+/** Query parameter names that carry bearer-like values in URLs (signed links, OAuth callbacks, presigned URLs; #263 M-1). */
+export const SENSITIVE_QUERY_KEYS: readonly string[] = [
+  'token',
+  'code',
+  'state',
+  'sig',
+  'signature',
+  'x-amz-signature',
+  'x-amz-credential',
+  'x-amz-security-token',
+];
+const SENSITIVE_QUERY = new Set([...SENSITIVE_QUERY_PARAMS, ...SENSITIVE_QUERY_KEYS]);
 
 /**
  * Redacts sensitive query values in a URL or path (`/cb?code=x&state=y` -> `/cb?code=***redacted***&state=...`).
- * Works on relative paths, keeps parameter names and order, matches names case-insensitively, and leaves
- * the path and fragment alone. Malformed percent-encoding is handled (the raw name is compared too).
+ * Sensitive names: SENSITIVE_QUERY_PARAMS (#282 M-2), SENSITIVE_QUERY_KEYS (#263 M-1) and `keys` (default
+ * DEFAULT_REDACT_KEYS), compared case-insensitively. Keeps parameter names and order and the path; drops the
+ * fragment. A parameter NAME that cannot be percent-decoded fails closed (only the path is kept); a malformed value
+ * is left as is.
  */
-export function redactUrl(url: string): string {
+export function redactUrl(url: string, keys: Iterable<string> = DEFAULT_REDACT_KEYS): string {
   const q = url.indexOf('?');
   if (q < 0) return url;
+  const names = new Set([...SENSITIVE_QUERY, ...[...keys].map((k) => k.toLowerCase())]);
   const hash = url.indexOf('#', q);
   const end = hash < 0 ? url.length : hash;
-  const query = url
-    .slice(q + 1, end)
-    .split('&')
-    .map((pair) => {
-      const eq = pair.indexOf('=');
-      const raw = eq < 0 ? pair : pair.slice(0, eq);
-      let name = raw;
-      try {
-        name = decodeURIComponent(raw.replace(/\+/g, ' '));
-      } catch {
-        /* keep raw */
-      }
-      return SENSITIVE_QUERY.has(name.toLowerCase()) || SENSITIVE_QUERY.has(raw.toLowerCase())
-        ? `${raw}=${CENSOR}`
-        : pair;
-    })
-    .join('&');
-  return `${url.slice(0, q)}?${query}${url.slice(end)}`;
+  try {
+    const query = url
+      .slice(q + 1, end)
+      .split('&')
+      .map((pair) => {
+        if (!pair) return pair;
+        const eq = pair.indexOf('=');
+        const raw = eq < 0 ? pair : pair.slice(0, eq);
+        const name = decodeURIComponent(raw.replace(/\+/g, ' ')).toLowerCase();
+        return names.has(name) ? `${raw}=${CENSOR}` : pair;
+      })
+      .join('&');
+    return `${url.slice(0, q)}?${query}`;
+  } catch {
+    return url.slice(0, q);
+  }
 }
 
 /** Keys whose string values are URLs/paths and get `redactUrl` (in addition to the key list). */

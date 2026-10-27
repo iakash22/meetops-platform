@@ -59,6 +59,12 @@ export interface SocketData {
 }
 
 /** Organization room: organizations:{organizationId}. Every authenticated socket joins its own. */
+/**
+ * ADR-013 per-user notification room: organizations:{organizationId}:users:{userId}. Joined only by the server on
+ * connect, from the verified ADR-011 credential (socket.data); there is no client event to join or name a room.
+ */
+export const userRoom = (organizationId: string, userId: string) =>
+  `organizations:${organizationId}:users:${userId}`;
 export const organizationRoom = (organizationId: string) => `organizations:${organizationId}`;
 /** Organization-scoped meeting room: organizations:{organizationId}:meetings:{meetingId}. */
 export const meetingRoom = (organizationId: string, meetingId: string) =>

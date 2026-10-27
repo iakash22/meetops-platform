@@ -371,6 +371,37 @@ describe.skipIf(!RELAY_URL || !OWNER_URL)('outbox relay role (live)', () => {
     expect(states.map((r) => r.status).sort()).toEqual(['pending', 'published']);
   });
 
+  it('claim by event type leaves other kinds pending and untouched', async () => {
+    const org = orgs[0]!;
+    const mk = (eventType: string) =>
+      runWithOrganizationContext(owner, org, (tx) =>
+        tx.outboxEvent.create({
+          data: {
+            organizationId: org,
+            aggregateType: 'meeting',
+            aggregateId: randomUUID(),
+            eventType,
+            payload: {},
+          },
+        }),
+      );
+    const want = await mk('meeting.summary_ready');
+    const other = await mk('auth.new_location_signin');
+    const claimed = await relay.$queryRaw<
+      { id: string; event_type: string }[]
+    >`SELECT * FROM relay_claim_outbox_events(500, ${['meeting.summary_ready']}::text[])`;
+    expect(claimed.some((e) => e.id === want.id)).toBe(true);
+    expect(claimed.every((e) => e.event_type === 'meeting.summary_ready')).toBe(true);
+    const [o] = await owner.$queryRaw<{ status: string; attempts: number }[]>`
+      SELECT status::text, attempts FROM outbox_events WHERE id = ${other.id}::uuid`;
+    expect(o).toEqual({ status: 'pending', attempts: 0 });
+    expect(
+      await relay.$queryRaw<
+        { id: string }[]
+      >`SELECT * FROM relay_claim_outbox_events(500, ${[] as string[]}::text[])`,
+    ).toEqual([]);
+  });
+
   it('has no table privileges at all and no BYPASSRLS', async () => {
     await expect(relay.outboxEvent.findMany()).rejects.toThrow(/permission denied/);
     await expect(relay.meeting.count()).rejects.toThrow(/permission denied/);

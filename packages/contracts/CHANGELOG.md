@@ -16,6 +16,38 @@ While the version is `0.x`, a minor bump may contain breaking changes (ADR-003).
   U+FFF9-U+FFFB and the rest (`FILENAME_PATTERN`, #270 L-1). New `isSafeUploadFilename()` also rejects astral
   Cc/Cf/Co/Cs code points (e.g. tag characters); the API enforces it.
 
+## [0.14.0] - 2026-10-28
+
+GeoIP session location (ADR-014, Proposed). Additive. Version numbers 0.10.0-0.13.0 are reserved by in-flight PRs
+(#261 tasks, #263 notifications, integrations, notifications fan-out).
+
+### Added
+
+- `SessionSummary.geoCity`, `geoRegion`, `geoCountry`, `geoCountryCode` (ISO alpha-2) and `geoApproximate` (`true`):
+  optional, **not** nullable. Absent means unknown (private/unknown IP, no GeoIP data, older server). No latitude/longitude.
+- `AuthNewLocationSigninEvent` (outbox `auth.new_location_signin`): `{ sessionId, city, region, country, countryCode,
+reason }`, every key required, geo values nullable; `reason` is `'new_region' | 'new_country'`
+  (`NEW_LOCATION_REASONS`). No IP address.
+- `AuthNewLocationSigninNotificationPayload`: in-app notification payload `{ sessionId, reason, geoCity?, geoCountry? }`
+  (optional, not nullable).
+- `GeoName` / `GEO_TEXT_PATTERN`: location text rejects control chars (incl. CR/LF), bidi/invisible chars, `<`, `>`,
+  `"`, tag chars, leading/trailing whitespace and IPv4/IPv6-looking strings. ASCII `'` and `&` are allowed for real
+  place names ("St. John's", "Trinidad & Tobago"), so every renderer (email, web, push) must escape output. Also
+  `GeoText`, `GeoCountryCode`, `GeoCountryCodeString`, `AUTH_NEW_LOCATION_SIGNIN_EVENT`.
+
+## [0.13.0] - 2026-10-28
+
+Realtime events for the notifications fan-out (ADR-013) and the AI summary worker (PR #272). Additive; builds on
+0.11.0 (notifications, PR #263). 0.12.0 is reserved by the integrations stream.
+
+### Added
+
+- `REALTIME_EVENTS.summaryReady` / `SummaryReadyEvent` (`summary:ready`): `{organizationId, meetingId, reportId,
+transcriptRevision, tasksPendingReview, at}` to the meeting + organization rooms.
+- `REALTIME_EVENTS.notificationNew` / `NotificationNewEvent` (`notification:new`): `{organizationId, notificationId,
+kind, at}` to the per-user room only.
+- `RealtimeEventMap` / `ServerToClientEvents` include both.
+
 ## [0.12.0] - 2026-10-28
 
 Integrations page support (Phase 5, builds on 0.7.0). Additive. Version numbers 0.10.0 (#261) and 0.11.0
@@ -37,6 +69,27 @@ Integrations page support (Phase 5, builds on 0.7.0). Additive. Version numbers 
 - `RETURN_TO_PATTERN` (#282 L-2): `ConnectIntegrationRequest.returnTo` now also rejects `//` anywhere, `.`/`..`
   segments and encoded `%2e`/`%2f`/`%5c` (e.g. `/..//evil.com`).
 - `INTEGRATION_PATHS.githubAppWebhook` (`POST /webhooks/github`): App-wide GitHub webhook, routed by installation id.
+
+## [0.11.0] - 2026-10-28
+
+Notifications (ADR-013, Accepted). Additive; builds on 0.10.0 (re-versioned from 0.10.0, which PR #261 uses for tasks).
+
+### Added
+
+- `NOTIFICATION_PATHS`: feed list, mark one read (`/notifications/:notificationId/read`), mark all read
+  (`/notifications/read-all`), preferences (GET/PUT), push device register/unregister (`/me/push-devices`, `/me/push-devices/:id`; mobile PR #262), unsubscribe
+  (GET confirm page, POST applies).
+- DTOs: `Notification` (`id`, `organizationId`, `kind`, `title`, optional `body`/`meetingId`/`taskId`, nullable
+  `readAt`, `createdAt`; web PR #260), `NotificationList` (`items`, keyset `nextCursor`), `ListNotificationsQuery`,
+  `NotificationParams`, `MarkNotificationsReadResponse` (`updated`), `NotificationPreference(s)`,
+  `UpdateNotificationPreferencesRequest`, `RegisterPushDeviceRequest` (`{provider:'expo', token, platform:'ios'|'android',
+deviceName?}` or `{provider:'webpush', subscription, platform:'web'|'extension', deviceName?}`), `PushDevice`
+  (`{id, platform, createdAt}`), `PushDeviceParams` (`{id}`), `UnsubscribeQuery`/`Response`.
+- `NOTIFICATION_CHANNELS`, `PUSH_PLATFORMS`, `WEB_PUSH_ALLOWED_HOSTS`, `EXPO_PUSH_TOKEN_PATTERN`, `EXPO_PUSH_API_URL`,
+  `GENERIC_PUSH_TITLE`/`GENERIC_PUSH_BODY`.
+- Jobs: `NOTIFICATION_DELIVERY_QUEUE`, `NOTIFICATION_DELIVERY_JOB_RETENTION`, `NotificationDeliveryJobPayload`
+  (mandatory `organizationId`).
+- `REDACT_KEYS`: `expoPushToken`, `p256dh`, `auth` (Web Push subscription secret).
 
 ## [0.10.0] - 2026-10-27
 

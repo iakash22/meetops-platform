@@ -163,8 +163,9 @@ describe('#282 M-1 integration secrets and free-text scrub', () => {
 
 describe('#282 M-2 URL redaction', () => {
   it('redactUrl redacts sensitive query values only', () => {
+    // The fragment is dropped (merged #263 behaviour; fragments never reach the server anyway).
     expect(redactUrl('/cb?code=abc&state=def&x=1#frag')).toBe(
-      `/cb?code=${CENSOR}&state=${CENSOR}&x=1#frag`,
+      `/cb?code=${CENSOR}&state=${CENSOR}&x=1`,
     );
     expect(redactUrl('https://h/p?TOKEN=t&access_token=a&keep=k')).toBe(
       `https://h/p?TOKEN=${CENSOR}&access_token=${CENSOR}&keep=k`,
@@ -177,5 +178,58 @@ describe('#282 M-2 URL redaction', () => {
     expect(JSON.stringify(redactDeep({ res: { location: '/x?state=s1' } }, []))).not.toContain(
       's1',
     );
+  });
+});
+
+describe('redactUrl / request serializer (PR #263 M-1)', () => {
+  it('redacts sensitive query values and keeps names and other params', async () => {
+    const { redactUrl } = await import('../src/index.js');
+    expect(redactUrl('/notifications/unsubscribe?token=abc.def')).toBe(
+      '/notifications/unsubscribe?token=***redacted***',
+    );
+    expect(redactUrl('/cb?state=s&code=c&limit=5')).toBe(
+      '/cb?state=***redacted***&code=***redacted***&limit=5',
+    );
+    expect(redactUrl('/x?TOKEN=a#frag')).toBe('/x?TOKEN=***redacted***');
+    expect(redactUrl('/x?accessToken=a&cursor=c')).toBe('/x?accessToken=***redacted***&cursor=c');
+    expect(redactUrl('/plain')).toBe('/plain');
+    expect(redactUrl('/x?%E0%A4%A=1')).toBe('/x');
+  });
+
+  it('createLogger req serializer never writes the token', async () => {
+    const { createLogger } = await import('../src/index.js');
+    const lines: string[] = [];
+    const log = createLogger(
+      { name: 't', level: 'info' },
+      { write: (s: string) => void lines.push(s) },
+    );
+    log.info(
+      {
+        req: {
+          method: 'GET',
+          url: '/notifications/unsubscribe?token=SECRET-TOKEN',
+          host: 'h',
+          ip: '1.2.3.4',
+        },
+      },
+      'incoming request',
+    );
+    expect(lines.join('')).not.toContain('SECRET-TOKEN');
+    expect(JSON.parse(lines[0]!).req).toMatchObject({
+      method: 'GET',
+      url: '/notifications/unsubscribe?token=***redacted***',
+    });
+  });
+
+  it('redacts Web Push keys.auth (L-1)', async () => {
+    const { redactDeep, DEFAULT_REDACT_KEYS } = await import('../src/index.js');
+    expect(
+      redactDeep(
+        { subscription: { endpoint: 'e', keys: { p256dh: 'p', auth: 'a' } } },
+        DEFAULT_REDACT_KEYS,
+      ),
+    ).toEqual({
+      subscription: { endpoint: 'e', keys: { p256dh: '***redacted***', auth: '***redacted***' } },
+    });
   });
 });
