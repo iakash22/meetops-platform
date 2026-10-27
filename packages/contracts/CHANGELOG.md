@@ -6,6 +6,16 @@ While the version is `0.x`, a minor bump may contain breaking changes (ADR-003).
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-10-27
+
+Task write bodies; additive, builds on 0.9.0.
+
+### Added
+
+- `CreateTaskRequest`: body of POST `TASK_PATHS.tasks` (manual task; status/priority default server-side to
+  `todo`/`medium`; unknown keys rejected).
+- `AcceptExtractedTaskRequest`: body of POST `TASK_PATHS.accept` (matches the API's former `AcceptExtractedTaskBody`).
+
 ## [0.9.0] - 2026-10-27
 
 Desktop (Tauri) sign-in schemas for ADR-012 Option A (system browser, authorization code + PKCE S256, loopback
