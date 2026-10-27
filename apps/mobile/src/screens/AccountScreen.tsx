@@ -5,6 +5,7 @@ import { ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { useAuth } from '../auth/AuthProvider';
 import { useActiveOrganization } from '../auth/useActiveOrganization';
+import { PushNotificationsCard } from '../notifications/PushNotificationsCard';
 import { IS_DEMO_MODE } from '../services';
 import { colors, radius, spacing } from '../theme/colors';
 import { Button } from '../ui/Button';
@@ -64,6 +65,9 @@ export function AccountScreen() {
           </Link>
         ) : null}
       </View>
+
+      <Text style={styles.section}>Notifications</Text>
+      <PushNotificationsCard />
 
       <View style={styles.signOut}>
         <Button
