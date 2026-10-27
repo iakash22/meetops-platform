@@ -10,6 +10,7 @@ import {
 } from './modules/index.js';
 import { registerDomainErrorHandler, registerNotFoundHandler } from './shared/http-errors.js';
 import { parseTrustProxy } from './shared/trust-proxy.js';
+import { metricsTokenFromEnv, registerMetrics, type HttpMetrics } from './shared/metrics.js';
 import {
   createReadiness,
   defaultReadinessChecks,
@@ -63,6 +64,10 @@ export interface CreateServerOptions {
   databaseUrl?: string;
   /** Overrides REDIS_URL for the default Redis rate limiter and lockout ('' disables them). */
   redisUrl?: string;
+  /** Overrides METRICS_TOKEN ('' disables /metrics). */
+  metricsToken?: string;
+  /** Inject a metrics registry (tests). */
+  metrics?: HttpMetrics;
   /** Overrides the default /ready probes (Prisma `SELECT 1`, Redis `PING`). */
   readinessChecks?: ReadinessCheck[];
   /** Overrides READINESS_TIMEOUT_MS (per-probe timeout for /ready). */
@@ -87,6 +92,12 @@ export function createServer(options: CreateServerOptions = {}) {
     loggerInstance: logger,
     trustProxy: parseTrustProxy(options.trustProxy ?? process.env.TRUST_PROXY),
     ajv: { customOptions: { ...AJV_CUSTOM_OPTIONS } },
+  });
+
+  // Request metrics are recorded always; /metrics is only served when METRICS_TOKEN is configured.
+  registerMetrics(app, {
+    token: metricsTokenFromEnv(options.metricsToken ?? process.env.METRICS_TOKEN),
+    ...(options.metrics ? { metrics: options.metrics } : {}),
   });
 
   registerDomainErrorHandler(app);
