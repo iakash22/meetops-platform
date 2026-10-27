@@ -12,6 +12,25 @@ While the version is `0.x`, a minor bump may contain breaking changes (ADR-003).
   and the rest), DEL and bidi embedding/override/isolate characters (U+202A-U+202E, U+2066-U+2069), as well as `/`,
   `\` and NUL (security review B 4.3).
 
+## [0.14.0] - 2026-10-28
+
+GeoIP session location (ADR-014, Proposed). Additive. Version numbers 0.10.0-0.13.0 are reserved by in-flight PRs
+(#261 tasks, #263 notifications, integrations, notifications fan-out).
+
+### Added
+
+- `SessionSummary.geoCity`, `geoRegion`, `geoCountry`, `geoCountryCode` (ISO alpha-2) and `geoApproximate` (`true`):
+  optional, **not** nullable. Absent means unknown (private/unknown IP, no GeoIP data, older server). No latitude/longitude.
+- `AuthNewLocationSigninEvent` (outbox `auth.new_location_signin`): `{ sessionId, city, region, country, countryCode,
+reason }`, every key required, geo values nullable; `reason` is `'new_region' | 'new_country'`
+  (`NEW_LOCATION_REASONS`). No IP address.
+- `AuthNewLocationSigninNotificationPayload`: in-app notification payload `{ sessionId, reason, geoCity?, geoCountry? }`
+  (optional, not nullable).
+- `GeoName` / `GEO_TEXT_PATTERN`: location text rejects control chars (incl. CR/LF), bidi/invisible chars, `<`, `>`,
+  `"`, tag chars, leading/trailing whitespace and IPv4/IPv6-looking strings. ASCII `'` and `&` are allowed for real
+  place names ("St. John's", "Trinidad & Tobago"), so every renderer (email, web, push) must escape output. Also
+  `GeoText`, `GeoCountryCode`, `GeoCountryCodeString`, `AUTH_NEW_LOCATION_SIGNIN_EVENT`.
+
 ## [0.9.0] - 2026-10-27
 
 Desktop (Tauri) sign-in schemas for ADR-012 Option A (system browser, authorization code + PKCE S256, loopback
