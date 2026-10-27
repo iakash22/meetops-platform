@@ -15,8 +15,40 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Cheap gate (~seconds): decides whether the heavy jobs below need to run.
+  # Heavy jobs use a job-level `if:` (not workflow `paths:`), so a skipped job reports
+  # "skipped", which GitHub treats as passing for required status checks.
+  changes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      code: ${{ steps.filter.outputs.code }}
+    steps:
+      # paths-filter uses the API for pull_request events and git history for pushes.
+      - name: Checkout
+        if: github.event_name != 'pull_request'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Detect changed paths
+        id: filter
+        uses: dorny/paths-filter@de90cc6fb38fc0963ad72b210f1f284cd68cea36 # v3.0.2
+        with:
+          predicate-quantifier: every
+          filters: |
+            code:
+              - '**'
+              - '!docs/**'
+              - '!**/*.md'
+
   # Required check: Testcontainers starts its own Postgres (pgvector) and Redis containers.
   qa-integration:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     strategy:
@@ -73,6 +105,8 @@ jobs:
 
   # Informational until apps/web has real pages: failures do not fail the workflow.
   qa-e2e:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     strategy:
