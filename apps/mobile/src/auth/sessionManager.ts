@@ -138,7 +138,14 @@ export function createSessionManager({
     },
 
     async restore() {
-      let tokens = await store.load();
+      let tokens: MobileAuthTokens | null;
+      try {
+        tokens = await store.load();
+      } catch {
+        // Keychain unreadable (cold start before first unlock). Not an auth failure: keep the item, show signed out,
+        // and let the next restore() (app foreground) pick the session up again.
+        return setState({ status: 'signedOut' });
+      }
       if (!tokens) return setState({ status: 'signedOut' });
       try {
         if (isExpired(tokens)) tokens = await refresh(tokens);

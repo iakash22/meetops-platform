@@ -35,6 +35,26 @@ describe('resend config', () => {
       expect(String((e as Error).message)).not.toContain(KEY);
     }
   });
+  it('RESEND_API_URL accepts only https://api.resend.com (security review B 1.1)', () => {
+    expect(loadEmailConfig({ ...env, RESEND_API_URL: 'https://api.resend.com' })).toMatchObject({
+      apiUrl: 'https://api.resend.com',
+    });
+    for (const bad of [
+      'http://api.resend.com',
+      'https://evil.example.com',
+      'https://api.resend.com.evil.example',
+      'https://api.resend.com:8443',
+      'https://user:pw@api.resend.com',
+      'ftp://api.resend.com',
+    ]) {
+      expect(() => loadEmailConfig({ ...env, RESEND_API_URL: bad }), bad).toThrow(EmailConfigError);
+      try {
+        loadEmailConfig({ ...env, RESEND_API_URL: bad });
+      } catch (e) {
+        expect(String((e as Error).message)).not.toContain(KEY);
+      }
+    }
+  });
   it('redacts the api key', () => {
     const red = JSON.stringify(redactEmailConfig(loadEmailConfig(env)));
     expect(red).not.toContain(KEY);

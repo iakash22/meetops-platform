@@ -76,6 +76,10 @@ const INTEGRATION_CONNECTIONS_MIGRATION = '20261027000000_integration_connection
 const INTEGRATION_ROUTING_MIGRATION = '20261027100000_integration_routing_functions';
 /** Phase 3 AI summary dedupe (reports unique key). Update LATEST_MIGRATION when adding a migration. */
 const REPORT_SUMMARY_DEDUPE_MIGRATION = '20261027120000_report_summary_dedupe';
+/** P1-DB-4 recording bytes_received + add_recording_session_bytes(). */
+const RECORDING_BYTES_MIGRATION = '20261027130000_recording_session_bytes_received';
+/** Definer SELECT policy for the integration routing functions (forced RLS binds the owner). */
+const INTEGRATION_ROUTING_POLICY_MIGRATION = '20261027140000_integration_routing_definer_policy';
 /** ADR-013 notifications tables. Update LATEST_MIGRATION when adding a migration. */
 const NOTIFICATIONS_MIGRATION = '20261027180000_notifications';
 const LATEST_MIGRATION = NOTIFICATIONS_MIGRATION;
@@ -1455,7 +1459,9 @@ describe('ADR-013 notifications tables (static)', () => {
       .map((x) => x.name)
       .sort();
     expect(dirs.at(-1)).toBe(LATEST_MIGRATION);
-    expect(statements).not.toMatch(/\bDROP\b|RENAME|ALTER COLUMN|NO FORCE|DISABLE ROW LEVEL SECURITY/i);
+    expect(statements).not.toMatch(
+      /\bDROP\b|RENAME|ALTER COLUMN|NO FORCE|DISABLE ROW LEVEL SECURITY/i,
+    );
   });
 
   it('enables and forces RLS with an ADR-010 tenant policy on every table, and grants the app role', () => {
@@ -1486,5 +1492,29 @@ describe('ADR-013 notifications tables (static)', () => {
     expect(push).toContain('"token_enc" TEXT');
     expect(push).not.toMatch(/"(token|endpoint)" /);
     expect(statements).toContain('"push_device_tokens"("org_id", "token_hash")');
+  });
+});
+
+describe('integration routing definer policy (20261027140000)', () => {
+  const sql = readFileSync(
+    resolve(migrationsDir, INTEGRATION_ROUTING_POLICY_MIGRATION, 'migration.sql'),
+    'utf8',
+  );
+  it('is SELECT-only, TO meetops_migrator, live rows only, and grants meetops_app nothing', () => {
+    expect(sql).toMatch(
+      /CREATE POLICY definer_integration_routing_select ON "integration_connections"\s+FOR SELECT\s+TO meetops_migrator\s+USING \(status <> 'revoked'\);/,
+    );
+    expect(sql).not.toMatch(/WITH CHECK/);
+    expect(sql).not.toMatch(/TO meetops_app\b/);
+    expect(sql).not.toMatch(/DISABLE ROW LEVEL SECURITY|NO FORCE/i);
+  });
+  it('sorts right after the recording bytes migration', () => {
+    const dirs = readdirSync(migrationsDir, { withFileTypes: true })
+      .filter((x) => x.isDirectory())
+      .map((x) => x.name)
+      .sort();
+    expect(dirs.indexOf(INTEGRATION_ROUTING_POLICY_MIGRATION)).toBe(
+      dirs.indexOf(RECORDING_BYTES_MIGRATION) + 1,
+    );
   });
 });
