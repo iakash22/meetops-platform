@@ -1,9 +1,8 @@
 import type { ApiErrorCode } from '@meetops/contracts';
 
 import { AuthError } from '@/features/auth/auth-client';
+import { fillPath, RECORDING_SESSION_ROUTES as R } from '@/lib/api-paths';
 import type { RecordingUploadApi } from './upload-queue';
-
-const seg = encodeURIComponent;
 
 /** Same shape as `@tauri-apps/api/core` `invoke`. */
 export type Invoke = <T>(cmd: string, args?: Record<string, unknown>) => Promise<T>;
@@ -28,11 +27,11 @@ export function createNativeUploadApi(invoke: Invoke): RecordingUploadApi {
       throw toError(e);
     });
   return {
-    init: (org, body) => post(`/orgs/${seg(org)}/recording-sessions`, body),
-    chunkUrl: (sid, body) => post(`/recording-sessions/${seg(sid)}/chunks`, body),
-    complete: (sid, body) => post(`/recording-sessions/${seg(sid)}/complete`, body),
+    init: (org, body) => post(fillPath(R.init, { organizationId: org }), body),
+    chunkUrl: (sid, body) => post(fillPath(R.chunks, { sessionId: sid }), body),
+    complete: (sid, body) => post(fillPath(R.complete, { sessionId: sid }), body),
     abort: async (sid, reason) => {
-      await post(`/recording-sessions/${seg(sid)}/abort`, { reason });
+      await post(fillPath(R.abort, { sessionId: sid }), { reason });
     },
     put: async (upload, body) => {
       if (!upload.url.startsWith('https://')) throw new Error('Refusing a non-TLS upload URL.');
