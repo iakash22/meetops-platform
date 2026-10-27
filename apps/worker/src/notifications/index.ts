@@ -14,6 +14,7 @@ import {
   type ClaimedOutboxEvent,
   type DeliveryEnqueuer,
   type DeliveryStore,
+  type EmailNotificationSender,
   type FanoutStore,
   type InAppPublisher,
   type OutboxSource,
@@ -116,7 +117,7 @@ export function createPrismaDeliveryStore(
     preferences: (organizationId, userId) => repo.getPreferences(organizationId, userId),
     findNotification: async (organizationId, userId, id) => {
       const n = await repo.findForUser(organizationId, userId, id);
-      return n ? { id: n.id, type: n.type, createdAt: n.createdAt } : undefined;
+      return n ? { id: n.id, type: n.type, createdAt: n.createdAt, data: n.data } : undefined;
     },
     // Without a configured token cipher there is nothing to decrypt: push channels resolve to "skipped".
     activeDevices: async (organizationId, userId) =>
@@ -131,6 +132,20 @@ export function createPrismaDeliveryStore(
 type EmitterLike = {
   to(room: string | string[]): { emit(event: string, payload: unknown): unknown };
 };
+
+/**
+ * Verified, non-deleted address for the email channel. users is a global table; the lookup is by id only and the
+ * address is never logged.
+ */
+export function createPrismaUserEmailLookup(client: DatabaseClient = getPrismaClient()) {
+  return async (userId: string): Promise<string | undefined> => {
+    const u = await client.user.findUnique({
+      where: { id: userId },
+      select: { email: true, emailVerified: true, deletedAt: true },
+    });
+    return u && u.emailVerified && !u.deletedAt ? u.email : undefined;
+  };
+}
 
 /** Must match apps/realtime userRoom: organizations:{organizationId}:users:{userId}. */
 export const userRoom = (organizationId: string, userId: string) =>
@@ -221,6 +236,8 @@ export type NotificationsWorkerDeps = {
   expoAccessToken?: string | undefined;
   /** No Web Push transport ships yet (VAPID + RFC 8291 encryption): leave undefined and web_push is skipped. */
   webPush?: PushSender | undefined;
+  /** Email channel (ADR-014 new-location alert). Undefined: email deliveries are skipped. */
+  email?: EmailNotificationSender | undefined;
   logger?: Log;
 };
 
@@ -273,6 +290,7 @@ export function registerNotificationsWorker(
       ? createExpoPushSender({ accessToken: deps.expoAccessToken })
       : undefined,
     webPush: pushEnabled ? deps.webPush : undefined,
+    email: deps.email,
   });
   const worker = (start.delivery ?? startNotificationDeliveryWorker)(handler, {
     concurrency: env.concurrency,
