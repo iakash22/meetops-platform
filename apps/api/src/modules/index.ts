@@ -1,3 +1,4 @@
+import { createGeoIpProvider, type GeoIpProvider } from '../shared/geoip/index.js';
 import type { FastifyInstance } from 'fastify';
 import cookie from '@fastify/cookie';
 import cors from '@fastify/cors';
@@ -157,6 +158,8 @@ export interface ModuleDeps {
    * the client supports PUBLISH, otherwise a no-op.
    */
   revocations?: RevocationPublisher;
+  /** ADR-014 local GeoIP provider (GEOIP_PROVIDER / GEOIP_DB_PATH; null provider when unset). */
+  geoIp?: GeoIpProvider;
   /** Meetings repository (Prisma when `db` is set; in-memory only in development/test). */
   meetings: MeetingRepository;
   /** ADR-005 extension pairing/token store (Redis when `redis` is set; in-memory only in development/test). */
@@ -575,8 +578,23 @@ export async function registerModules(app: FastifyInstance, deps: ModuleDeps) {
       : undefined;
   // ADR-005 A1.6 (and ADR-012 when enabled): logout, password reset and member removal also revoke token families.
   const revoker = desktopAuth ? combineRevokers(extensionAuth, desktopAuth) : extensionAuth;
-  const auth = new AuthService({ ...deps, extensionRevoker: revoker });
-  const organizations = new OrganizationService({ ...deps, extensionRevoker: revoker });
+  const { selectNotificationsRepository } = await import('./notifications/index.js');
+  const notifications = selectNotificationsRepository(deps);
+  const pushDeviceRevoker = {
+    async revokeForUser(userId: string, organizationId?: string | null) {
+      const orgs = organizationId
+        ? [organizationId]
+        : (await deps.memberships.listByUser(userId)).map((m) => m.organizationId);
+      for (const o of orgs) await notifications.deleteDevicesForUser(o, userId);
+    },
+  };
+  const geoIp = deps.geoIp ?? createGeoIpProvider(process.env, app.log);
+  const auth = new AuthService({ ...deps, geoIp, extensionRevoker: revoker, pushDeviceRevoker });
+  const organizations = new OrganizationService({
+    ...deps,
+    extensionRevoker: revoker,
+    pushDeviceRevoker,
+  });
   if (deps.mailQueue instanceof InlineAuthMailQueue && !deps.mailQueue.handler) {
     deps.mailQueue.handler = new AuthMailJobHandler({
       ...deps,
@@ -605,6 +623,12 @@ export async function registerModules(app: FastifyInstance, deps: ModuleDeps) {
   await app.register(import('./tasks/index.js'), { auth, organizations, deps });
   await app.register(import('./meeting-insights/index.js'), { auth, organizations, deps });
   await app.register(import('./integrations/index.js'), { auth, organizations, deps });
+  await app.register(import('./notifications/index.js'), {
+    auth,
+    organizations,
+    deps,
+    repo: notifications,
+  });
   await app.register(import('./meetings/index.js'), {
     auth,
     organizations,

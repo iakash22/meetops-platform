@@ -1,5 +1,11 @@
-import { getPrismaClient, type DatabaseClient } from '../../../../shared/prisma/context.js';
+import {
+  getPrismaClient,
+  withOrgContext,
+  type DatabaseClient,
+} from '../../../../shared/prisma/context.js';
+import type { NewLocationOutboxEvent } from '../../application/new-location.js';
 import type { Session, SessionRepository } from '../../domain/session.js';
+import type { GeoFields } from '../../../../shared/geoip/provider.js';
 
 type Row = {
   id: string;
@@ -12,6 +18,11 @@ type Row = {
   revokedAt: Date | null;
   lastSeenAt: Date;
   createdAt: Date;
+  geoCity: string | null;
+  geoRegion: string | null;
+  geoCountry: string | null;
+  geoCountryCode: string | null;
+  geoApproximate: boolean | null;
 };
 const toSession = (r: Row): Session => ({
   id: r.id,
@@ -24,6 +35,20 @@ const toSession = (r: Row): Session => ({
   revokedAt: r.revokedAt,
   ip: r.ipAddress,
   userAgent: r.userAgent,
+  geo: {
+    geoCity: r.geoCity,
+    geoRegion: r.geoRegion,
+    geoCountry: r.geoCountry,
+    geoCountryCode: r.geoCountryCode,
+    geoApproximate: r.geoApproximate ? true : null,
+  },
+});
+const geoData = (g: GeoFields | undefined) => ({
+  geoCity: g?.geoCity ?? null,
+  geoRegion: g?.geoRegion ?? null,
+  geoCountry: g?.geoCountry ?? null,
+  geoCountryCode: g?.geoCountryCode ?? null,
+  geoApproximate: g?.geoApproximate ?? null,
 });
 
 /**
@@ -38,6 +63,51 @@ export class PrismaSessionRepository implements SessionRepository {
   private idle(at: Date, cap: Date) {
     return new Date(Math.min(at.getTime() + this.idleTimeoutMs, cap.getTime()));
   }
+  private sessionData(s: Session) {
+    return {
+      id: s.id,
+      userId: s.userId,
+      tokenHash: s.tokenHash,
+      activeOrgId: s.activeOrganizationId,
+      ipAddress: s.ip,
+      userAgent: s.userAgent,
+      ...geoData(s.geo),
+      expiresAt: this.idle(s.lastSeenAt, s.expiresAt),
+      absoluteExpiresAt: s.expiresAt,
+      lastSeenAt: s.lastSeenAt,
+      createdAt: s.createdAt,
+    };
+  }
+  async knownLocations(userId: string) {
+    const rows = await this.db.session.findMany({
+      where: { userId, geoCountryCode: { not: null } },
+      distinct: ['geoCountryCode', 'geoRegion'],
+      select: { geoCountryCode: true, geoRegion: true },
+      take: 500,
+    });
+    return rows.map((r) => ({ countryCode: r.geoCountryCode!, region: r.geoRegion }));
+  }
+  async createWithOutbox(s: Session, e: NewLocationOutboxEvent) {
+    // sessions is global; outbox_events is org-scoped (forced RLS), so the shared transaction runs in the event's org.
+    const r = await withOrgContext(
+      e.organizationId,
+      async (tx) => {
+        const row = await tx.session.create({ data: this.sessionData(s) });
+        await tx.outboxEvent.create({
+          data: {
+            organizationId: e.organizationId,
+            aggregateType: e.aggregateType,
+            aggregateId: e.aggregateId,
+            eventType: e.eventType,
+            payload: { ...e.payload },
+          },
+        });
+        return row;
+      },
+      { client: this.db },
+    );
+    return toSession(r);
+  }
   async create(s: Session) {
     const r = await this.db.session.create({
       data: {
@@ -47,6 +117,7 @@ export class PrismaSessionRepository implements SessionRepository {
         activeOrgId: s.activeOrganizationId,
         ipAddress: s.ip,
         userAgent: s.userAgent,
+        ...geoData(s.geo),
         expiresAt: this.idle(s.lastSeenAt, s.expiresAt),
         absoluteExpiresAt: s.expiresAt,
         lastSeenAt: s.lastSeenAt,
@@ -87,6 +158,12 @@ export class PrismaSessionRepository implements SessionRepository {
     await this.db.session.updateMany({
       where: { id, revokedAt: null },
       data: { lastSeenAt: at, expiresAt: this.idle(at, s.absoluteExpiresAt) },
+    });
+  }
+  async updateIp(id: string, ip: string | null, geo: GeoFields) {
+    await this.db.session.updateMany({
+      where: { id, revokedAt: null },
+      data: { ipAddress: ip, ...geoData(geo) },
     });
   }
   async revoke(id: string, at: Date) {

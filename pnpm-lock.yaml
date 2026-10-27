@@ -118,6 +118,9 @@ importers:
       ioredis:
         specifier: ^5.4.1
         version: 5.11.1
+      maxmind:
+        specifier: 5.0.7
+        version: 5.0.7
       pino:
         specifier: ^9.4.0
         version: 9.14.0
@@ -505,6 +508,9 @@ importers:
       '@meetops/media-core':
         specifier: workspace:*
         version: link:../../packages/media-core
+      '@meetops/notifications':
+        specifier: workspace:*
+        version: link:../../packages/notifications
       '@meetops/queue':
         specifier: workspace:*
         version: link:../../packages/queue
@@ -523,6 +529,9 @@ importers:
       ioredis:
         specifier: ^5.4.1
         version: 5.11.1
+      maxmind:
+        specifier: 5.0.7
+        version: 5.0.7
       zod:
         specifier: ^4.6.6
         version: 4.6.7
@@ -641,6 +650,9 @@ importers:
 
   packages/notifications:
     dependencies:
+      '@meetops/ai-core':
+        specifier: workspace:*
+        version: link:../ai-core
       '@meetops/contracts':
         specifier: workspace:*
         version: link:../contracts
@@ -6957,6 +6969,10 @@ packages:
     resolution: {integrity: sha512-/IXtbwEk5HTPyEwyKX6hGkYXxM9nbj64B+ilVJnC/R6B0pH5G4V3b0pVbL7DBj4tkhBAppbQUlf6F6Xl9LHu1g==}
     engines: {node: '>= 0.4'}
 
+  maxmind@5.0.7:
+    resolution: {integrity: sha512-+w637dwfv01MKjkrp4sKDBTEKHLPvWLYb647QTjiz3wG/teSemqudIKNShaS6eqZ7ffxC9oZlQQgIqY0rGojog==}
+    engines: {node: '>=12', npm: '>=6'}
+
   md5-file@3.2.3:
     resolution: {integrity: sha512-3Tkp1piAHaworfcCgH0jKbTvj1jWWFgbvh2cXaNCgHwyTCBxxvD1Y04rmfpvdPm1P4oXMOpm6+2H7sr7v9v8Fw==}
     engines: {node: '>=0.10'}
@@ -7140,6 +7156,10 @@ packages:
 
   mlly@1.8.2:
     resolution: {integrity: sha512-d+ObxMQFmbt10sretNDytwt85VrbkhhUA/JBGm1MPaWJ65Cl4wOgLaB1NYvJSZ0Ef03MMEU/0xpPMXUIQ29UfA==}
+
+  mmdb-lib@3.0.3:
+    resolution: {integrity: sha512-xQPoBXcNjjHiOvOraFBKtA++uNWF6aCVHL9dRKFXEov8eI3QJwtgiw3qApsonFT5SpoqsEVISUTg3HIDs2DiXw==}
+    engines: {node: '>=10', npm: '>=6'}
 
   ms@2.0.0:
     resolution: {integrity: sha512-Tpp60P6IUJDTuOq/5Z8cdskzJujfwqfOTkrwIwj7IRISpnkJnT6SyJ4PCPnGMoFjC9ddhal5KVIYtAt97ix05A==}
@@ -8677,6 +8697,10 @@ packages:
 
   through@2.3.8:
     resolution: {integrity: sha512-w89qg7PI8wAdvX60bMDP+bFoD5Dvhm9oLheFp5O4a2QF0cSBGsBX4qZmadPMvVqlLJBBci+WqGGOAPvcDeNSVg==}
+
+  tiny-lru@13.0.0:
+    resolution: {integrity: sha512-xDHxKKS1FdF0Tv2P+QT7IeSEg74K/8cEDzbv3Tv6UyHHUgBOjOiQiBp818MGj66dhurQus/IBcoAbwIKtSGc6Q==}
+    engines: {node: '>=14'}
 
   tinybench@2.9.0:
     resolution: {integrity: sha512-0+DUvqWMValLmha6lr4kD8iAMK1HzV0/aKnCtWb9v9641TnP/MFb7Pc2bxoxQjTXAErryXVgUOfv2YqNllqGeg==}
@@ -16521,6 +16545,11 @@ snapshots:
 
   math-intrinsics@1.1.0: {}
 
+  maxmind@5.0.7:
+    dependencies:
+      mmdb-lib: 3.0.3
+      tiny-lru: 13.0.0
+
   md5-file@3.2.3:
     dependencies:
       buffer-alloc: 1.2.0
@@ -16792,6 +16821,8 @@ snapshots:
       pathe: 2.0.3
       pkg-types: 1.3.1
       ufo: 1.6.4
+
+  mmdb-lib@3.0.3: {}
 
   ms@2.0.0: {}
 
@@ -18478,6 +18509,8 @@ snapshots:
   throat@5.0.0: {}
 
   through@2.3.8: {}
+
+  tiny-lru@13.0.0: {}
 
   tinybench@2.9.0: {}
 

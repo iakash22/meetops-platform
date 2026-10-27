@@ -74,6 +74,9 @@ export interface ConsoleEmailConfig {
 
 export type EmailConfig = SmtpEmailConfig | ResendEmailConfig | ConsoleEmailConfig;
 
+/** Hosts treated as Gmail SMTP (dev-only). */
+export const GMAIL_SMTP_HOSTS = new Set(['smtp.gmail.com', 'smtp.googlemail.com']);
+
 export class EmailConfigError extends Error {
   constructor(message: string) {
     super(message);
@@ -125,6 +128,11 @@ export function loadEmailConfig(
   const r = smtpSchema.safeParse({ ...raw, EMAIL_PROVIDER: 'smtp' });
   if (!r.success) throw new EmailConfigError(formatIssues(r.error));
   const d = r.data;
+  // Gmail SMTP is the development default only (ADR-013; security review C, finding 7). Production must point SMTP
+  // at a real relay or choose EMAIL_PROVIDER=resend explicitly; nothing falls back automatically.
+  if (raw.NODE_ENV === 'production' && GMAIL_SMTP_HOSTS.has(d.SMTP_HOST.toLowerCase())) {
+    throw new EmailConfigError('Gmail SMTP is development-only and is not allowed in production');
+  }
   const cfg: SmtpEmailConfig = {
     provider: 'smtp',
     host: d.SMTP_HOST,

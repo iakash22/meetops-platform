@@ -1,3 +1,4 @@
+import type { GeoFields } from '../../../shared/geoip/provider.js';
 import type { FastifyInstance } from 'fastify';
 import { Type } from '@sinclair/typebox';
 import type { AuthService } from '../application/auth.service.js';
@@ -34,6 +35,18 @@ import { CursorPageQuery } from '@meetops/contracts';
 import { paginate } from '../../../shared/pagination.js';
 import type { OrganizationService } from '../../organizations/application/organization.service.js';
 import { toSessionResponse } from './mappers.js';
+
+/** ADR-014 SessionSummary geo: optional, not nullable (unknown fields are omitted). */
+function sessionGeo(g: GeoFields | undefined) {
+  if (!g?.geoApproximate) return {};
+  return {
+    ...(g.geoCity ? { geoCity: g.geoCity } : {}),
+    ...(g.geoRegion ? { geoRegion: g.geoRegion } : {}),
+    ...(g.geoCountry ? { geoCountry: g.geoCountry } : {}),
+    ...(g.geoCountryCode ? { geoCountryCode: g.geoCountryCode } : {}),
+    geoApproximate: true as const,
+  };
+}
 
 export interface AuthPluginOptions {
   auth: AuthService;
@@ -203,6 +216,7 @@ export async function authRoutes(app: FastifyInstance, opts: AuthPluginOptions) 
         expiresAt: s.expiresAt.toISOString(),
         ip: capIp(s.ip),
         userAgent: capUserAgent(s.userAgent),
+        ...sessionGeo(s.geo),
       }));
       return paginate(items, request.query);
     },

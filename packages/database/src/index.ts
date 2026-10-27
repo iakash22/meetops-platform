@@ -153,6 +153,29 @@ export {
   type AuthRefreshConsumeResult,
 } from './auth-tokens.js';
 export {
+  createNotificationRepository,
+  hashPushToken,
+  encodeNotificationCursor,
+  decodeNotificationCursor,
+  NOTIFICATIONS_DEFAULT_PAGE_LIMIT,
+  NOTIFICATIONS_MAX_PAGE_LIMIT,
+  NOTIFICATION_PREFERENCES_MAX,
+  type NotificationRepository,
+  type NotificationRepositoryOptions,
+  type NotificationRecord,
+  type NotificationPage,
+  type NotificationPreferenceRecord,
+  type NotificationChannelValue,
+  type NotificationDeliveryStatusValue,
+  type PushPlatformValue,
+  type PushDeviceRecord,
+  type PushTokenCipher,
+  type CreateNotificationInput,
+  type ListNotificationsInput,
+  type RegisterPushDeviceInput,
+  type RecordAttemptInput,
+} from './notifications.js';
+export {
   listMeetingsPage,
   encodeMeetingsCursor,
   decodeMeetingsCursor,
@@ -187,3 +210,18 @@ export async function addRecordingSessionBytes(
   if (total === undefined) throw new Error('add_recording_session_bytes returned no row');
   return total;
 }
+
+export {
+  IP_RETENTION_DAYS,
+  IP_RETENTION_BATCH,
+  IP_RETENTION_MAX_BATCHES,
+  redactExpiredIpAddresses,
+  type IpRetentionResult,
+} from './ip-retention.js';
+
+export {
+  SESSION_PURGE_DAYS,
+  SESSION_PURGE_BATCH,
+  SESSION_PURGE_MAX_BATCHES,
+  purgeExpiredSessions,
+} from './session-purge.js';

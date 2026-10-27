@@ -34,7 +34,7 @@ export type StorageObjectMetadata = {
 export type PresignedUrl = {
   url: string;
   expiresAt: Date;
-  method: "GET" | "PUT" | "POST" | "DELETE";
+  method: 'GET' | 'PUT' | 'POST' | 'DELETE';
   headers?: Record<string, string>;
   fields?: Record<string, string>;
 };

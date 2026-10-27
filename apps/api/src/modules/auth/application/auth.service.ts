@@ -1,3 +1,16 @@
+import {
+  NEW_LOCATION_LIMITS,
+  buildNewLocationEvent,
+  locationKey,
+  newLocationReason,
+  type NewLocationOutboxEvent,
+} from './new-location.js';
+import {
+  lookupGeo,
+  nullGeoIpProvider,
+  type GeoFields,
+  type GeoIpProvider,
+} from '../../../shared/geoip/provider.js';
 import type { UserRepository } from '../../users/domain/user.repository.js';
 import { normalizeEmail, toPublicUser, type PublicUser } from '../../users/domain/user.js';
 import type { Clock, IdGenerator } from '../../../shared/ports.js';
@@ -42,6 +55,8 @@ export interface AuthServiceDeps {
   emailVerificationTtlMs: number;
   /** Progressive-delay sleeper for failed logins; inject a no-op/fake in tests. */
   sleep?: (ms: number) => Promise<void>;
+  /** ADR-014 local GeoIP provider. Omitted: geo fields stay null. */
+  geoIp?: GeoIpProvider;
   /** ADR-011 revocation fan-out to realtime. Omitted: nothing is published. */
   revocations?: RevocationPublisher;
   /**
@@ -51,6 +66,11 @@ export interface AuthServiceDeps {
   memberships?: Pick<MembershipRepository, 'listByUser'>;
   /** ADR-005 A1.6: also revoke the user's extension token families. */
   extensionRevoker?: ExtensionRevoker;
+  /**
+   * ADR-013 / mobile PR #262: revoking a session (or all of them) deletes the user's push devices, in the session's
+   * active organization or, without one, in every organization the user belongs to.
+   */
+  pushDeviceRevoker?: PushDeviceRevoker;
 }
 
 const realSleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
@@ -86,6 +106,10 @@ export const invalidResetError = () =>
 export const invalidVerificationError = () =>
   new DomainError('BAD_REQUEST', 'Verification link is invalid or has expired', 400);
 
+export interface PushDeviceRevoker {
+  revokeForUser(userId: string, organizationId?: string | null): Promise<void>;
+}
+
 export class AuthService {
   private dummyHash: Promise<string> | null = null;
   constructor(private readonly d: AuthServiceDeps) {}
@@ -117,12 +141,19 @@ export class AuthService {
     e: Omit<AuditEvent, 'ip' | 'userAgent' | 'organizationId'> & { organizationId?: string | null },
     meta?: RequestMeta,
   ) {
+    const ip = meta?.ip ?? null;
     return safeAudit(this.d.audit, {
       organizationId: null,
-      ip: meta?.ip ?? null,
+      ip,
       userAgent: meta?.userAgent ?? null,
+      geo: this.geo(ip),
       ...e,
     });
+  }
+
+  /** ADR-014: local lookup, never throws; private/unknown IPs give all-null fields. */
+  private geo(ip: string | null): GeoFields {
+    return lookupGeo(this.d.geoIp ?? nullGeoIpProvider, ip);
   }
 
   /** Creates a token row with an unguessable placeholder hash; the mail worker mints the real token. */
@@ -236,6 +267,7 @@ export class AuthService {
       toPublicUser(user),
       await this.defaultOrganizationId(user.id),
       meta,
+      { newLocationAlert: true },
     );
     await this.audit(
       {
@@ -293,6 +325,7 @@ export class AuthService {
     await this.d.sessions.revokeAllForUser(t.userId, now);
     await this.publish({ kind: 'user', userId: t.userId, reason: 'password_changed' });
     await this.d.extensionRevoker?.revokeForUser(t.userId, 'password_changed');
+    await this.d.pushDeviceRevoker?.revokeForUser(t.userId);
     await this.d.mailQueue.enqueue({
       kind: 'password_changed',
       userId: t.userId,
@@ -369,6 +402,7 @@ export class AuthService {
     const s = await this.revokeByToken(token);
     if (s) await this.publishSessionRevoked(s, 'logout');
     if (s) await this.d.extensionRevoker?.revokeForUser(s.userId, 'logout');
+    if (s) await this.d.pushDeviceRevoker?.revokeForUser(s.userId, s.activeOrganizationId);
     if (s)
       await this.audit(
         {
@@ -386,6 +420,7 @@ export class AuthService {
     await this.d.sessions.revokeAllForUser(userId, this.d.clock.now());
     await this.publish({ kind: 'user', userId, reason: 'logout_all' });
     await this.d.extensionRevoker?.revokeForUser(userId, 'logout_all');
+    await this.d.pushDeviceRevoker?.revokeForUser(userId);
     await this.audit(
       {
         actorId: userId,
@@ -409,6 +444,7 @@ export class AuthService {
       throw new DomainError('NOT_FOUND', 'Session not found', 404);
     await this.d.sessions.revoke(s.id, this.d.clock.now());
     await this.publishSessionRevoked(s, 'logout');
+    await this.d.pushDeviceRevoker?.revokeForUser(userId, s.activeOrganizationId);
     await this.audit(
       {
         actorId: userId,
@@ -427,7 +463,10 @@ export class AuthService {
   }
 
   /** Resolve the session (idle + absolute timeouts) and slide last_seen_at. */
-  async authenticate(token: string | undefined): Promise<{ user: PublicUser; session: Session }> {
+  async authenticate(
+    token: string | undefined,
+    meta?: RequestMeta,
+  ): Promise<{ user: PublicUser; session: Session }> {
     if (!token) throw new UnauthenticatedError();
     const session = await this.d.sessions.findByTokenHash(this.d.tokens.hash(token));
     const now = this.d.clock.now();
@@ -436,6 +475,15 @@ export class AuthService {
     const user = await this.d.users.findById(session.userId);
     if (!user) throw new UnauthenticatedError();
     await this.d.sessions.touch(session.id, now);
+    // ADR-014: look up again only when the client IP changed (not on every request).
+    if (meta?.ip && meta.ip !== session.ip && this.d.sessions.updateIp) {
+      const geo = this.geo(meta.ip);
+      await this.d.sessions.updateIp(session.id, meta.ip, geo);
+      return {
+        user: toPublicUser(user),
+        session: { ...session, lastSeenAt: now, ip: meta.ip, geo },
+      };
+    }
     return { user: toPublicUser(user), session: { ...session, lastSeenAt: now } };
   }
 
@@ -492,10 +540,12 @@ export class AuthService {
     user: PublicUser,
     activeOrganizationId: string | null,
     meta: RequestMeta,
+    opts: { newLocationAlert?: boolean } = {},
   ): Promise<SessionResult> {
     const token = this.d.tokens.generate();
     const now = this.d.clock.now();
-    const session = await this.d.sessions.create({
+    const geo = this.geo(meta.ip);
+    const draft: Session = {
       id: this.d.ids.next(),
       userId,
       tokenHash: this.d.tokens.hash(token),
@@ -506,7 +556,51 @@ export class AuthService {
       revokedAt: null,
       ip: meta.ip,
       userAgent: meta.userAgent,
-    });
+      geo,
+    };
+    const event = opts.newLocationAlert
+      ? await this.newLocationEvent(userId, draft, activeOrganizationId)
+      : null;
+    const session =
+      event && this.d.sessions.createWithOutbox
+        ? await this.d.sessions.createWithOutbox(draft, event)
+        : await this.d.sessions.create(draft);
     return { user, session, token };
+  }
+
+  /**
+   * ADR-014: `auth.new_location_signin` when this sign-in's country (or region) was never seen in the user's earlier
+   * sessions. Needs an active organization (outbox and notifications are org-scoped, ADR-013). Deduped per
+   * (country, region) and rate-limited per user; a limiter or history failure never blocks sign-in.
+   */
+  private async newLocationEvent(
+    userId: string,
+    s: Session,
+    organizationId: string | null,
+  ): Promise<NewLocationOutboxEvent | null> {
+    const geo = s.geo;
+    if (!organizationId || !geo?.geoCountryCode || !this.d.sessions.knownLocations) return null;
+    try {
+      const reason = newLocationReason(geo, await this.d.sessions.knownLocations(userId));
+      if (!reason) return null;
+      const where = locationKey(geo.geoCountryCode, geo.geoRegion);
+      const L = NEW_LOCATION_LIMITS;
+      // Per-user cap first (#292 L-3): a capped user must not burn this location's 24 h slot.
+      const perUser = await this.d.rateLimiter.consume(
+        `newloc:${userId}`,
+        L.perUser.limit,
+        L.perUser.windowMs,
+      );
+      if (!perUser.allowed) return null;
+      const perLocation = await this.d.rateLimiter.consume(
+        `newloc:${userId}:${where}`,
+        L.perLocation.limit,
+        L.perLocation.windowMs,
+      );
+      if (!perLocation.allowed) return null;
+      return buildNewLocationEvent({ organizationId, userId, sessionId: s.id, geo, reason });
+    } catch {
+      return null;
+    }
   }
 }
