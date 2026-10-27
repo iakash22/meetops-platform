@@ -1,7 +1,9 @@
 //! MeetOps AI desktop shell (Tauri 2).
 //!
-//! M1 exposes a single read-only command, `app_info`, used by the Settings screen. Offline recording,
+//! Commands: `app_info` (Settings screen) and `api_request` (see `api.rs`). Offline recording,
 //! secure token storage (OS keychain) and uploads are later Phase 8 milestones.
+
+mod api;
 
 use serde::Serialize;
 
@@ -36,7 +38,8 @@ fn app_info(app: tauri::AppHandle) -> AppInfo {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
-        .invoke_handler(tauri::generate_handler![app_info])
+        .manage(api::ApiState::from_build_env())
+        .invoke_handler(tauri::generate_handler![app_info, api::api_request])
         .run(tauri::generate_context!())
         .expect("error while running the MeetOps desktop app");
 }
