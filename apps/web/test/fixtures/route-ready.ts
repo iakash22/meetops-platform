@@ -23,3 +23,9 @@ export async function waitForRouteData(
     await Promise.resolve(mock.mock.results.at(-1)?.value).catch(() => undefined);
   });
 }
+
+/** api.request calls other than the top-bar unread-notifications poll (shell-wide). */
+export function nonNotificationCalls(request: unknown): unknown[][] {
+  const calls = (request as { mock: { calls: unknown[][] } }).mock.calls;
+  return calls.filter(([, path]) => !String(path).includes('/notifications'));
+}

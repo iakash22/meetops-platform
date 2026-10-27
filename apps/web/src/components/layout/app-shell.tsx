@@ -10,6 +10,7 @@ import { OrgSwitcher } from './org-switcher';
 import { SignOutControls } from './sign-out';
 import { displayName, useSession } from '@/features/session/use-session';
 import { VerifyEmailBanner } from '@/features/session/verify-banner';
+import { UnreadBell } from '@/features/notifications/unread-bell';
 
 function UserBadge() {
   const { data } = useSession();
@@ -66,6 +67,7 @@ export function TopBar() {
         <OrgSwitcher />
       </div>
       <div className="flex items-center gap-3">
+        <UnreadBell />
         <UserBadge />
         <SignOutControls />
       </div>

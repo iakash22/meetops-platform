@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import cookie from '@fastify/cookie';
 import cors from '@fastify/cors';
-import { EXTENSION_AUTH_PATHS } from '@meetops/contracts';
+import { DESKTOP_AUTH_PATHS, EXTENSION_AUTH_PATHS } from '@meetops/contracts';
 import {
   extensionBearerCorsHook,
   isExtensionBearerPath,
@@ -514,10 +514,16 @@ export async function registerModules(app: FastifyInstance, deps: ModuleDeps) {
   // No wildcard, no reflection of unknown origins. Extension lifecycle routes keep their own
   // credential-less CORS (ADR-005 A1.3.6), so they are skipped here.
   const webOrigins = new Set(deps.security.allowedOrigins);
+  // Desktop (ADR-012) app routes are called by the native app, never by a browser page: no CORS at all, not even for
+  // the web origins (security review B 2.2). Only `authorize` (a web-session route) keeps web CORS.
   const extensionPaths = new Set<string>([
     EXTENSION_AUTH_PATHS.token,
     EXTENSION_AUTH_PATHS.refresh,
     EXTENSION_AUTH_PATHS.revoke,
+    DESKTOP_AUTH_PATHS.token,
+    DESKTOP_AUTH_PATHS.refresh,
+    DESKTOP_AUTH_PATHS.revoke,
+    DESKTOP_AUTH_PATHS.switchOrg,
   ]);
   await app.register(cors, {
     hook: 'onRequest',

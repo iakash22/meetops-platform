@@ -4,6 +4,8 @@ import type { DirectoryCaller } from '../../directory/access.js';
 import type { ResolveCaller } from '../../directory/http/route-kit.js';
 import type { OrganizationService } from '../../organizations/application/organization.service.js';
 import { requestMeta } from '../../auth/http/security.js';
+import { UnauthenticatedError } from '../../auth/domain/errors.js';
+import { isExtensionBearerPath } from './bearer-cors.js';
 import type { VerifiedSession } from '../../auth/application/session-verifier.js';
 
 export type ExtensionBearerGuard = (
@@ -17,15 +19,20 @@ export const hasBearer = (request: FastifyRequest): boolean =>
   /^Bearer\s/i.test(request.headers.authorization ?? '');
 
 /**
- * CSRF/origin protection is for ambient cookie credentials. A request that sends a Bearer header is routed to the
- * bearer guard, which rejects any request that also carries a session cookie (ADR-005 A1.3.1), so skipping the cookie
- * CSRF check for it is safe. Everything else keeps the normal mutation guard.
+ * CSRF/origin protection is for ambient cookie credentials. A request carrying BOTH a session cookie and a Bearer
+ * header is rejected (401) before anything else (ADR-005 A1.3.1). The cookie CSRF check is skipped only when a bearer
+ * guard is wired for this module AND the path is one of EXTENSION_BEARER_ROUTE_TEMPLATES; a Bearer header on any
+ * other (cookie-only) route does not bypass CSRF. Everything else keeps the normal mutation guard.
  */
 export function bearerAwareMutationGuard(
   mutationGuard: (request: FastifyRequest) => Promise<void>,
+  opts: { cookieName: string; bearerEnabled: boolean },
 ): (request: FastifyRequest) => Promise<void> {
   return async (request) => {
-    if (hasBearer(request)) return;
+    if (hasBearer(request)) {
+      if (request.cookies[opts.cookieName]) throw new UnauthenticatedError();
+      if (opts.bearerEnabled && isExtensionBearerPath(request.url)) return;
+    }
     await mutationGuard(request);
   };
 }

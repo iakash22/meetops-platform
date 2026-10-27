@@ -16,6 +16,8 @@ import { DEFAULT_WEB_ORIGIN, originMatch } from './lib/auth/origins.js';
  *   in-memory, cleared on browser restart, and not exposed to content scripts.
  * - `alarms`: a 30 s watchdog that wakes the (possibly suspended) service worker to
  *   detect a dead offscreen recorder; heartbeats alone cannot detect silence.
+ * - `sidePanel`: the side panel (entrypoints/sidepanel) shows the same consent-first UI as the popup.
+ *   It grants no capture or host access by itself.
  * - `commands._execute_action`: keyboard shortcut to open the popup (an action
  *   invocation, so it grants activeTab like a toolbar click). Not a permission.
  * - `externally_connectable`: ADR-005 A1.1.5. Only the configured web origin (WXT_WEB_ORIGIN, validated at build
@@ -26,7 +28,14 @@ export function buildManifest(webOrigin: string) {
   return {
     name: 'MeetOps AI',
     description: 'Record meetings you are part of, with clear consent.',
-    permissions: ['activeTab', 'tabCapture', 'offscreen', 'storage', 'alarms'] as string[],
+    permissions: [
+      'activeTab',
+      'tabCapture',
+      'offscreen',
+      'storage',
+      'alarms',
+      'sidePanel',
+    ] as string[],
     host_permissions: [] as string[],
     externally_connectable: { matches: [originMatch(webOrigin)] },
     commands: {
@@ -36,6 +45,7 @@ export function buildManifest(webOrigin: string) {
       },
     },
     action: { default_title: 'MeetOps AI' },
+    side_panel: { default_path: 'sidepanel.html' },
   };
 }
 

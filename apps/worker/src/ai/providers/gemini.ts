@@ -98,11 +98,30 @@ export class GeminiLlmProvider implements LlmProvider {
 }
 
 /** Reads Gemini settings from env. Undefined when no key is set. */
+/** Operators may only point at the official Gemini host (no arbitrary/SSRF-able endpoints, ADR-009). */
+export const GEMINI_ALLOWED_HOSTS: readonly string[] = ['generativelanguage.googleapis.com'];
+
+export function isAllowedGeminiBase(raw: string): boolean {
+  let u: URL;
+  try {
+    u = new URL(raw);
+  } catch {
+    return false;
+  }
+  return (
+    u.protocol === 'https:' &&
+    !u.username &&
+    !u.password &&
+    (u.port === '' || u.port === '443') &&
+    GEMINI_ALLOWED_HOSTS.includes(u.hostname.toLowerCase())
+  );
+}
+
 export function loadGeminiConfig(env: NodeJS.ProcessEnv = process.env): GeminiConfig | undefined {
   const apiKey = env.GEMINI_API_KEY?.trim();
   if (!apiKey) return undefined;
   const base = env.GEMINI_BASE_URL?.trim();
-  if (base && !/^https:\/\//.test(base)) throw new ProviderError(ID, 'invalid_request');
+  if (base && !isAllowedGeminiBase(base)) throw new ProviderError(ID, 'invalid_request');
   const t = env.AI_SUMMARY_REQUEST_TIMEOUT_MS;
   const timeout =
     t && /^[0-9]{1,7}$/.test(t) ? Math.min(600_000, Math.max(1_000, Number(t))) : 120_000;

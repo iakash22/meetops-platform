@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+# Run all pre-PR quality gates locally and sequentially (stops on first failure).
+# Usage: scripts/local-gates   (or: pnpm local-gates)
+set -uo pipefail
+cd "$(dirname "$0")/.."
+GATES=(
+  "install|pnpm install --frozen-lockfile"
+  "build|pnpm build"
+  "lint|pnpm lint"
+  "typecheck|pnpm typecheck"
+  "test|pnpm test"
+  "gitleaks|gitleaks detect --source . --redact --no-banner"
+)
+results=(); status=0
+for g in "${GATES[@]}"; do
+  name=${g%%|*}; cmd=${g#*|}
+  echo "==> [$name] $cmd"; start=$(date +%s)
+  if bash -c "$cmd"; then results+=("PASS $name ($(( $(date +%s)-start ))s)")
+  else rc=$?; results+=("FAIL $name (exit $rc, $(( $(date +%s)-start ))s)"); status=$rc; break; fi
+done
+echo; echo "==== local-gates summary ===="
+printf '  %s\n' "${results[@]}"
+[ $status -eq 0 ] && echo "ALL GATES PASSED" || echo "STOPPED ON FIRST FAILURE"
+exit $status
