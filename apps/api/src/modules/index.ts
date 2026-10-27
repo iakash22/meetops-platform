@@ -2,6 +2,11 @@ import type { FastifyInstance } from 'fastify';
 import cookie from '@fastify/cookie';
 import cors from '@fastify/cors';
 import { EXTENSION_AUTH_PATHS } from '@meetops/contracts';
+import {
+  extensionBearerCorsHook,
+  isExtensionBearerPath,
+  isExtensionOrigin,
+} from './extension-auth/http/bearer-cors.js';
 import { AuthService } from './auth/application/auth.service.js';
 import { authRoutes } from './auth/http/auth.plugin.js';
 import { randomBytes } from 'node:crypto';
@@ -440,8 +445,13 @@ export async function registerModules(app: FastifyInstance, deps: ModuleDeps) {
     delegator: (request, cb) => {
       const path = (request.url ?? '').split('?')[0] ?? '';
       const origin = request.headers.origin;
+      // Extension-origin calls to bearer routes get the credential-less CORS below, never this one.
+      const extensionBearer = isExtensionOrigin(origin) && isExtensionBearerPath(path);
       const allowed =
-        !extensionPaths.has(path) && typeof origin === 'string' && webOrigins.has(origin);
+        !extensionPaths.has(path) &&
+        !extensionBearer &&
+        typeof origin === 'string' &&
+        webOrigins.has(origin);
       cb(null, {
         origin: allowed ? origin : false,
         credentials: true,
@@ -452,6 +462,11 @@ export async function registerModules(app: FastifyInstance, deps: ModuleDeps) {
       });
     },
   });
+  // ADR-005 A1.3.6: credential-less CORS for allowlisted extension origins on the bearer-enabled routes.
+  app.addHook(
+    'onRequest',
+    extensionBearerCorsHook(deps.extensionIds.map((id) => `chrome-extension://${id}`)),
+  );
   // Close only the clients defaultModuleDeps created; injected ones belong to the caller.
   const { ownedRedis, ownedDb } = deps;
   if (ownedRedis || ownedDb) {
