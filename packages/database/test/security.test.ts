@@ -82,7 +82,9 @@ const RECORDING_BYTES_MIGRATION = '20261027130000_recording_session_bytes_receiv
 const INTEGRATION_ROUTING_POLICY_MIGRATION = '20261027140000_integration_routing_definer_policy';
 /** ADR-014 session/audit geo columns + 30-day IP retention. */
 const SESSION_AUDIT_GEOIP_MIGRATION = '20261028010000_session_audit_geoip';
-const LATEST_MIGRATION = SESSION_AUDIT_GEOIP_MIGRATION;
+/** #288 L-1 remainder: re-assert migrator ownership + column grants of the IP retention tables. */
+const RETENTION_OWNER_MIGRATION = '20261028040000_geoip_retention_owner_assert';
+const LATEST_MIGRATION = RETENTION_OWNER_MIGRATION;
 const reportDedupeSql = readFileSync(
   resolve(migrationsDir, REPORT_SUMMARY_DEDUPE_MIGRATION, 'migration.sql'),
   'utf8',
@@ -1460,5 +1462,31 @@ describe('integration routing definer policy (20261027140000)', () => {
     expect(dirs.indexOf(INTEGRATION_ROUTING_POLICY_MIGRATION)).toBe(
       dirs.indexOf(RECORDING_BYTES_MIGRATION) + 1,
     );
+  });
+});
+
+describe('IP retention owner re-assert (20261028040000)', () => {
+  const sql = readFileSync(
+    resolve(migrationsDir, RETENTION_OWNER_MIGRATION, 'migration.sql'),
+    'utf8',
+  ).replace(/--.*$/gm, '');
+  it('is the newest migration, after the ADR-014 geoip one', () => {
+    const dirs = readdirSync(migrationsDir, { withFileTypes: true })
+      .filter((x) => x.isDirectory())
+      .map((x) => x.name)
+      .sort();
+    expect(dirs.at(-1)).toBe(LATEST_MIGRATION);
+    expect(dirs.indexOf(RETENTION_OWNER_MIGRATION)).toBeGreaterThan(
+      dirs.indexOf(SESSION_AUDIT_GEOIP_MIGRATION),
+    );
+  });
+  it('only re-owns the three tables to meetops_migrator (guarded) and re-issues the column grants', () => {
+    expect(sql).toMatch(/pg_has_role\(current_user, 'meetops_migrator', 'MEMBER'\)/);
+    expect(sql).toMatch(/ARRAY\['sessions', 'password_resets', 'audit_events'\]/);
+    expect(sql).toMatch(/ALTER TABLE %I OWNER TO meetops_migrator/);
+    expect(sql).toContain(
+      'GRANT SELECT (id, ip_address, created_at), UPDATE (ip_address)\n  ON TABLE "sessions", "password_resets", "audit_events" TO meetops_migrator;',
+    );
+    expect(sql).not.toMatch(/meetops_app|\bDROP\b|DISABLE ROW LEVEL SECURITY|NO FORCE/i);
   });
 });
