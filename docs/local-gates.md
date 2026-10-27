@@ -6,6 +6,7 @@ Remote GitHub Actions minutes are limited, so run gates locally before opening a
 
 `scripts/local-gates` runs, sequentially, stopping on the first failure:
 `pnpm install --frozen-lockfile` → `pnpm build` → `pnpm lint` → `pnpm typecheck` → `pnpm test` → `gitleaks detect --redact`.
+Turbo steps run with `--concurrency=${LOCAL_GATES_CONCURRENCY:-1}` under `nice`/`ionice`; gitleaks uses the same flags as `secrets.yml`.
 It prints a PASS/FAIL summary with timings. Paste the summary tail into the PR.
 On shared boxes, check `pgrep -af 'pnpm|tsc|turbo'` first and run one heavy job at a time.
 
@@ -17,7 +18,7 @@ scripts/dev-services.sh status  # redis-cli PING + MinIO /minio/health/live
 scripts/dev-services.sh down
 ```
 
-Set `DOCKER="sudo docker"` if your user is not in the docker group. Credentials come from
+Plain `docker` is used (override with `DOCKER=...` if needed). Credentials come from
 `.env` (or the dev-only values in `.env.example`); ports from `REDIS_PORT`, `MINIO_API_PORT`,
 `MINIO_CONSOLE_PORT`. The script aborts if a port is already in use. Services bind to 127.0.0.1.
 

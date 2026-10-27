@@ -2,20 +2,26 @@
 # Run all pre-PR quality gates locally and sequentially (stops on first failure).
 # Usage: scripts/local-gates   (or: pnpm local-gates)
 set -uo pipefail
+# Ideas folded in from 46d3493 (chore/devops-local-gates): turbo concurrency knob,
+# nice/ionice on shared boxes, COREPACK_HOME default, gitleaks flags matching secrets.yml.
 cd "$(dirname "$0")/.."
+export COREPACK_HOME="${COREPACK_HOME:-$HOME/.cache/corepack}" COREPACK_ENABLE_DOWNLOAD_PROMPT=0
+C="${LOCAL_GATES_CONCURRENCY:-1}"
+LOWPRI=""; command -v nice >/dev/null && LOWPRI="nice -n 10"
+command -v ionice >/dev/null && ionice -c2 -n7 true 2>/dev/null && LOWPRI="$LOWPRI ionice -c2 -n7"
 GATES=(
   "install|pnpm install --frozen-lockfile"
-  "build|pnpm build"
-  "lint|pnpm lint"
-  "typecheck|pnpm typecheck"
-  "test|pnpm test"
-  "gitleaks|gitleaks detect --source . --redact --no-banner"
+  "build|pnpm exec turbo run build --concurrency=$C"
+  "lint|pnpm exec turbo run lint --concurrency=$C"
+  "typecheck|pnpm exec turbo run typecheck --concurrency=$C"
+  "test|pnpm exec turbo run test --concurrency=$C"
+  "gitleaks|gitleaks detect --source . --redact --no-banner --log-opts=HEAD --exit-code 1"
 )
 results=(); status=0
 for g in "${GATES[@]}"; do
   name=${g%%|*}; cmd=${g#*|}
   echo "==> [$name] $cmd"; start=$(date +%s)
-  if bash -c "$cmd"; then results+=("PASS $name ($(( $(date +%s)-start ))s)")
+  if $LOWPRI bash -c "$cmd"; then results+=("PASS $name ($(( $(date +%s)-start ))s)")
   else rc=$?; results+=("FAIL $name (exit $rc, $(( $(date +%s)-start ))s)"); status=$rc; break; fi
 done
 echo; echo "==== local-gates summary ===="
