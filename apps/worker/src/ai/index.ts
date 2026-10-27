@@ -9,3 +9,4 @@ export * from './recording-transcription.js';
 export * from './summary-repository.js';
 export * from './meeting-summary.js';
 export * from './summary-trigger.js';
+export * from './summary-worker.js';

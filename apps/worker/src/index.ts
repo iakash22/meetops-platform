@@ -1,7 +1,7 @@
 import { pathToFileURL } from 'node:url';
 import { logger } from '@meetops/logger';
 import { startMediaWorker } from './media/index.js';
-import { registerTranscriptionWorker } from './ai/index.js';
+import { registerSummaryWorker, registerTranscriptionWorker } from './ai/index.js';
 import { createTranscriptionHostDeps } from './ai/bootstrap.js';
 import { loadTranscriptionWorkerEnv } from './ai/env.js';
 
@@ -15,11 +15,14 @@ async function main() {
   const env = loadTranscriptionWorkerEnv();
   const hostDeps = env.enabled ? await createTranscriptionHostDeps() : undefined;
   const transcription = registerTranscriptionWorker({ env, resolveDeps: () => hostDeps });
+  // Provider-gated: without GEMINI_API_KEY this logs one warning and summarize_meeting jobs stay queued.
+  const summary = registerSummaryWorker();
   const shutdown = async () => {
     logger.info('Shutting down worker...');
     await Promise.allSettled([
       close(),
       transcription.registered ? transcription.close() : Promise.resolve(),
+      summary.registered ? summary.close() : Promise.resolve(),
     ]);
     process.exit(0);
   };

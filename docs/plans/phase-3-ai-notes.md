@@ -65,7 +65,7 @@ Defaults (change with Shubham if needed):
 - **Enqueue failure**: the transcription job fails _retryably_ (`summary_enqueue_failed`). The transcript stays durable; the retry takes the duplicate path (no provider call) and enqueues again.
 - **Stale jobs**: the summary job always summarizes the _latest_ ready revision. If r2's job runs after r3 exists it summarizes r3 and r3's job becomes a no-op.
 - **Opt-out**: `startTranscriptionWorker` builds the default BullMQ trigger; hosts can inject a no-op `summaryTrigger`.
-- **Not yet wired**: a BullMQ consumer for `ai`/`summarize_meeting` (needs a Prisma client + Gemini key injected by the host, like the transcription worker). Until then jobs wait in the queue.
+- **Consumer**: see "AI queue consumer" below.
 
 ## Report summary dedupe (defaults)
 
@@ -74,3 +74,12 @@ Defaults (change with Shubham if needed):
 - The summary repository looks up the existing report by the key (soft-deleted rows included) before calling the LLM and before inserting.
 - A concurrent insert of the same key (Prisma `P2002` / SQLSTATE `23505`) aborts that transaction (AiRun rolled back too); the repository re-reads in a fresh transaction and returns the winner as `created=false` (job result `duplicate: true`). Any other unique conflict (e.g. the `(meeting_id, version)` race) is rethrown and the job retries.
 - A soft-deleted report still holds its key: regenerating a summary for the same transcript revision requires bumping `SUMMARY_PROMPT_VERSION`.
+
+## AI queue consumer (feat/worker-ai-queue-consumer)
+
+- `registerSummaryWorker()` is called from the worker `main()` next to the transcription worker; it consumes `QUEUE_NAMES.ai` and handles only `summarize_meeting` (other job names fail as unrecoverable).
+- **Provider gate**: starts only when `GEMINI_API_KEY` is set (non-blank). Missing key: one `warn` line (`missing: ['GEMINI_API_KEY']`), no worker, jobs stay queued. Invalid `GEMINI_BASE_URL` (non-https): one `warn` (`invalid: ['GEMINI_BASE_URL']`), no worker. Log lines carry env key names only, never values.
+- **Deps**: `GeminiLlmProvider` (fetch) + `createPrismaSummaryRepository()` (forced RLS via `withOrganizationContext`); cost caps from `AI_SUMMARY_MAX_*`.
+- **Concurrency**: `AI_SUMMARY_WORKER_CONCURRENCY`, default 1, range 1..8 (out of range fails startup with the key name).
+- **Retries**: permanent `MeetingSummaryError`s become `UnrecoverableError`; retryable ones use the job's 3 attempts/backoff from the trigger. Failed attempts log job id + error code only.
+- **Shutdown**: SIGINT/SIGTERM call `close()`, which waits for in-flight jobs (`worker.close()`), same as the transcription consumer.
