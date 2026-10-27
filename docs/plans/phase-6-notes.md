@@ -44,3 +44,9 @@ Wires the existing ADR-005 A1.3.1 guard (`makeExtensionBearerGuard`) into the ro
   It runs after the reuse, binding and per-family limit checks, so replays and 429s are not double-reported. It is best
   effort: a limiter error never fails the refresh. No audit row (it is a signal, not a state change).
 - Logger: `ModuleDeps.extensionAuthLog`, defaulting to the API's redacting `app.log`.
+
+## PHASE_STATUS refresh (P6)
+
+- Updated the P6 row, the extension paragraph, gap 3 and the ADR-005 row to match integration: the extension-auth routes are served and revocation is enforced (#216).
+- Bearer routes and CORS are recorded as "in review" until `feat/api-extension-bearer-routes` and `feat/api-extension-bearer-cors` merge. The percentage columns are unchanged.
+- Desktop PKCE is still recorded as not served.
