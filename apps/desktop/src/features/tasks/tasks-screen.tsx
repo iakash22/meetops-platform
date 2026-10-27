@@ -1,3 +1,4 @@
+import { lazy, Suspense } from 'react';
 import type { Task, TaskPriority, TaskStatus } from '@meetops/contracts';
 
 import { Badge, type BadgeProps } from '@/components/ui/badge';
@@ -27,6 +28,11 @@ const PRIORITY_LABEL: Record<TaskPriority, string> = {
   urgent: 'Urgent',
 };
 
+// Review loads on demand so the task list stays light.
+const TaskReviewPanel = lazy(() =>
+  import('./task-review-panel').then((m) => ({ default: m.TaskReviewPanel })),
+);
+
 function due(iso: string | undefined): string {
   return iso
     ? `Due ${new Date(iso).toLocaleDateString(undefined, { dateStyle: 'medium' })}`
@@ -45,6 +51,9 @@ export function TasksScreen() {
           {data.sample ? 'Sample data.' : 'Tasks in your active organization.'}
         </p>
       </div>
+      <Suspense fallback={<ListLoading label="suggestions" />}>
+        <TaskReviewPanel />
+      </Suspense>
       <Card>
         <CardHeader>
           <CardTitle>Open and recent tasks</CardTitle>
