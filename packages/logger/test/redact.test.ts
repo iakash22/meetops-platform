@@ -1,7 +1,15 @@
 import { Writable } from 'node:stream';
 import { describe, expect, it } from 'vitest';
 import pino from 'pino';
-import { CENSOR, CIRCULAR, createLogger, redactDeep, TRUNCATED } from '../src/index.js';
+import {
+  CENSOR,
+  CIRCULAR,
+  createLogger,
+  redactDeep,
+  redactUrl,
+  reqSerializer,
+  TRUNCATED,
+} from '../src/index.js';
 
 describe('pino paths are single-level (why the walker exists)', () => {
   it('fast-redact `*.token` misses a nested token', () => {
@@ -101,6 +109,75 @@ describe('exports', () => {
   it('keeps the shared `logger` singleton', async () => {
     const m = await import('../src/index.js');
     expect(typeof m.logger.info).toBe('function');
+  });
+});
+
+describe('#282 M-1 integration secrets and free-text scrub', () => {
+  const lines: string[] = [];
+  const log = createLogger({ level: 'info' }, { write: (l: string) => void lines.push(l) });
+  const kind = ['RSA', 'PRIVATE', 'KEY'].join(' ');
+  const pem = [`-----BEGIN ${kind}-----`, 'x'.repeat(24), `-----END ${kind}-----`].join('\n');
+  const tok = (p: string) => `${p}_${'z'.repeat(36)}`;
+  it('redacts the new keys at any depth', () => {
+    lines.length = 0;
+    const keys = [
+      'webhook_secret',
+      'private_key',
+      'pem',
+      'installationToken',
+      'jwt',
+      'id_token',
+      'GITHUB_APP_CLIENT_SECRET',
+      'JIRA_CLIENT_SECRET',
+    ];
+    log.info({ deep: { nest: Object.fromEntries(keys.map((k) => [k, `SEKRET_${k}`])) } });
+    expect(lines.join('')).not.toMatch(/SEKRET_/);
+  });
+  it('redacts an OAuth `code` but keeps error codes', () => {
+    lines.length = 0;
+    log.info({
+      q: { code: 'a1b2c3d4e5oauthcode' },
+      err: { code: 'ECONNREFUSED' },
+      body: { code: 'VALIDATION_FAILED' },
+      http: { code: 404 },
+    });
+    const out = lines.join('');
+    expect(out).not.toContain('a1b2c3d4e5oauthcode');
+    expect(out).toContain('ECONNREFUSED');
+    expect(out).toContain('VALIDATION_FAILED');
+    expect(out).toContain('404');
+  });
+  it('scrubs PEM blocks and ghs_/ghu_/gho_ tokens in messages, error messages and string values', () => {
+    lines.length = 0;
+    log.info(`key was ${pem} and ${tok('ghs')}`);
+    log.error({ err: new Error(`boom ${tok('ghu')} ${pem}`), note: `t=${tok('gho')}` }, 'failed');
+    const out = lines.join('');
+    expect(out).not.toMatch(/PRIVATE KEY|x{24}|gh[osu]_z{36}/);
+    expect(out).toContain('key was');
+    expect(out).toContain('boom');
+  });
+  it('redactDeep scrubs nested strings directly', () => {
+    expect(JSON.stringify(redactDeep({ a: [`x ${tok('ghs')}`] }, []))).not.toMatch(/ghs_z{36}/);
+  });
+});
+
+describe('#282 M-2 URL redaction', () => {
+  it('redactUrl redacts sensitive query values only', () => {
+    // The fragment is dropped (merged #263 behaviour; fragments never reach the server anyway).
+    expect(redactUrl('/cb?code=abc&state=def&x=1#frag')).toBe(
+      `/cb?code=${CENSOR}&state=${CENSOR}&x=1`,
+    );
+    expect(redactUrl('https://h/p?TOKEN=t&access_token=a&keep=k')).toBe(
+      `https://h/p?TOKEN=${CENSOR}&access_token=${CENSOR}&keep=k`,
+    );
+    expect(redactUrl('/plain/path')).toBe('/plain/path');
+    expect(redactUrl('/p?%63ode=x&bad=%E0%A4%A')).toBe(`/p?%63ode=${CENSOR}&bad=%E0%A4%A`);
+  });
+  it('reqSerializer and url-like keys are redacted', () => {
+    expect(reqSerializer({ method: 'GET', url: '/cb?code=zz' }).url).toBe(`/cb?code=${CENSOR}`);
+    expect(JSON.stringify(redactDeep({ res: { location: '/x?state=s1' } }, []))).not.toContain(
+      's1',
+    );
   });
 });
 
