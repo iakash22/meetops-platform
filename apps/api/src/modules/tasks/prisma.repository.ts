@@ -183,7 +183,7 @@ export class PrismaTasks implements TaskRepositories {
     return this.run(organizationId, async (tx) => {
       const t = await tx.task.findFirst({ where: { organizationId, id: taskId } });
       if (!t) throw new TaskMissing();
-      return toTask(t as TaskRow);
+      return toTask(t);
     });
   }
 
@@ -209,7 +209,7 @@ export class PrismaTasks implements TaskRepositories {
       });
       if (n.count === 0) throw new TaskMissing();
       const t = await tx.task.findFirstOrThrow({ where: { organizationId, id: taskId } });
-      return toTask(t as TaskRow);
+      return toTask(t);
     });
   }
 
