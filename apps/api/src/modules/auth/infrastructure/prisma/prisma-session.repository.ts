@@ -1,5 +1,6 @@
 import { getPrismaClient, type DatabaseClient } from '../../../../shared/prisma/context.js';
 import type { Session, SessionRepository } from '../../domain/session.js';
+import type { GeoFields } from '../../../../shared/geoip/provider.js';
 
 type Row = {
   id: string;
@@ -12,6 +13,11 @@ type Row = {
   revokedAt: Date | null;
   lastSeenAt: Date;
   createdAt: Date;
+  geoCity: string | null;
+  geoRegion: string | null;
+  geoCountry: string | null;
+  geoCountryCode: string | null;
+  geoApproximate: boolean | null;
 };
 const toSession = (r: Row): Session => ({
   id: r.id,
@@ -24,6 +30,20 @@ const toSession = (r: Row): Session => ({
   revokedAt: r.revokedAt,
   ip: r.ipAddress,
   userAgent: r.userAgent,
+  geo: {
+    geoCity: r.geoCity,
+    geoRegion: r.geoRegion,
+    geoCountry: r.geoCountry,
+    geoCountryCode: r.geoCountryCode,
+    geoApproximate: r.geoApproximate ? true : null,
+  },
+});
+const geoData = (g: GeoFields | undefined) => ({
+  geoCity: g?.geoCity ?? null,
+  geoRegion: g?.geoRegion ?? null,
+  geoCountry: g?.geoCountry ?? null,
+  geoCountryCode: g?.geoCountryCode ?? null,
+  geoApproximate: g?.geoApproximate ?? null,
 });
 
 /**
@@ -47,6 +67,7 @@ export class PrismaSessionRepository implements SessionRepository {
         activeOrgId: s.activeOrganizationId,
         ipAddress: s.ip,
         userAgent: s.userAgent,
+        ...geoData(s.geo),
         expiresAt: this.idle(s.lastSeenAt, s.expiresAt),
         absoluteExpiresAt: s.expiresAt,
         lastSeenAt: s.lastSeenAt,
@@ -87,6 +108,12 @@ export class PrismaSessionRepository implements SessionRepository {
     await this.db.session.updateMany({
       where: { id, revokedAt: null },
       data: { lastSeenAt: at, expiresAt: this.idle(at, s.absoluteExpiresAt) },
+    });
+  }
+  async updateIp(id: string, ip: string | null, geo: GeoFields) {
+    await this.db.session.updateMany({
+      where: { id, revokedAt: null },
+      data: { ipAddress: ip, ...geoData(geo) },
     });
   }
   async revoke(id: string, at: Date) {

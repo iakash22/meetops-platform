@@ -233,3 +233,33 @@ describe('redactUrl / request serializer (PR #263 M-1)', () => {
     });
   });
 });
+
+describe('redactUrl parser-variant names (#282 Lows)', () => {
+  it.each([
+    ['`;` separator', '/cb?keep=1;code=SECRETX', `/cb?keep=1;code=${CENSOR}`],
+    ['`;` before state', '/cb?code=SECRETX;state=SECRETY', `/cb?code=${CENSOR};state=${CENSOR}`],
+    ['`code+=` (trailing space)', '/cb?code+=SECRETX&keep=1', `/cb?code+=${CENSOR}&keep=1`],
+    ['`code%20=`', '/cb?code%20=SECRETX', `/cb?code%20=${CENSOR}`],
+    ['`code[]=`', '/cb?code[]=SECRETX', `/cb?code[]=${CENSOR}`],
+    ['`code%5B%5D=`', '/cb?code%5B%5D=SECRETX', `/cb?code%5B%5D=${CENSOR}`],
+    ['`state[x]=`', '/cb?state[x]=SECRETX', `/cb?state[x]=${CENSOR}`],
+    ['`code%00=` (NUL)', '/cb?code%00=SECRETX', `/cb?code%00=${CENSOR}`],
+  ])('%s', (_n, input, expected) => {
+    expect(redactUrl(input)).toBe(expected);
+  });
+
+  it('does not over-redact look-alike names', () => {
+    expect(redactUrl('/p?codex=1&zip_code=2&encode=3')).toBe('/p?codex=1&zip_code=2&encode=3');
+  });
+
+  it('reqSerializer is an alias of the single request serializer', () => {
+    const lines: string[] = [];
+    const log = createLogger(
+      {},
+      new Writable({ write: (c: Buffer, _e, cb) => (lines.push(c.toString()), cb()) }),
+    );
+    log.info({ req: { url: '/cb?code[]=SECRETX;state=SECRETY' } }, 'r');
+    expect(lines.join('')).not.toMatch(/SECRET[XY]/);
+    expect(reqSerializer({ url: '/cb?code%00=SECRETX' }).url).toBe(`/cb?code%00=${CENSOR}`);
+  });
+});

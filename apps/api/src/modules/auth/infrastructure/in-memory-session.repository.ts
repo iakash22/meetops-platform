@@ -1,3 +1,4 @@
+import type { GeoFields } from '../../../shared/geoip/provider.js';
 import type { Session, SessionRepository } from '../domain/session.js';
 
 /** Test/dev only. */
@@ -39,6 +40,13 @@ export class InMemorySessionRepository implements SessionRepository {
   async touch(id: string, at: Date) {
     const s = this.items.get(id);
     if (s) s.lastSeenAt = at;
+  }
+  async updateIp(id: string, ip: string | null, geo: GeoFields) {
+    const s = this.items.get(id);
+    if (s) {
+      s.ip = ip;
+      s.geo = { ...geo };
+    }
   }
   async revoke(id: string, at: Date) {
     const s = this.items.get(id);

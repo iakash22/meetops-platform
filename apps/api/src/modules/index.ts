@@ -1,3 +1,4 @@
+import { createGeoIpProvider, type GeoIpProvider } from '../shared/geoip/index.js';
 import type { FastifyInstance } from 'fastify';
 import cookie from '@fastify/cookie';
 import cors from '@fastify/cors';
@@ -157,6 +158,8 @@ export interface ModuleDeps {
    * the client supports PUBLISH, otherwise a no-op.
    */
   revocations?: RevocationPublisher;
+  /** ADR-014 local GeoIP provider (GEOIP_PROVIDER / GEOIP_DB_PATH; null provider when unset). */
+  geoIp?: GeoIpProvider;
   /** Meetings repository (Prisma when `db` is set; in-memory only in development/test). */
   meetings: MeetingRepository;
   /** ADR-005 extension pairing/token store (Redis when `redis` is set; in-memory only in development/test). */
@@ -585,7 +588,8 @@ export async function registerModules(app: FastifyInstance, deps: ModuleDeps) {
       for (const o of orgs) await notifications.deleteDevicesForUser(o, userId);
     },
   };
-  const auth = new AuthService({ ...deps, extensionRevoker: revoker, pushDeviceRevoker });
+  const geoIp = deps.geoIp ?? createGeoIpProvider(process.env, app.log);
+  const auth = new AuthService({ ...deps, geoIp, extensionRevoker: revoker, pushDeviceRevoker });
   const organizations = new OrganizationService({
     ...deps,
     extensionRevoker: revoker,

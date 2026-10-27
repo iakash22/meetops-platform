@@ -118,17 +118,17 @@ export function redactUrl(url: string, keys: Iterable<string> = DEFAULT_REDACT_K
   const hash = url.indexOf('#', q);
   const end = hash < 0 ? url.length : hash;
   try {
+    // `;` is a legacy pair separator some parsers honour (#282 L): split on it too, keeping the original separator.
     const query = url
       .slice(q + 1, end)
-      .split('&')
+      .split(/([&;])/)
       .map((pair) => {
-        if (!pair) return pair;
+        if (!pair || pair === '&' || pair === ';') return pair;
         const eq = pair.indexOf('=');
         const raw = eq < 0 ? pair : pair.slice(0, eq);
-        const name = decodeURIComponent(raw.replace(/\+/g, ' ')).toLowerCase();
-        return names.has(name) ? `${raw}=${CENSOR}` : pair;
+        return names.has(normalizeParamName(raw)) ? `${raw}=${CENSOR}` : pair;
       })
-      .join('&');
+      .join('');
     return `${url.slice(0, q)}?${query}`;
   } catch {
     return url.slice(0, q);
@@ -141,31 +141,20 @@ const QUERY_KEYS = new Set(['query', 'querystring', 'searchparams']);
 const URL_KEYS = new Set(['url', 'originalurl', 'path', 'href', 'location', 'referer', 'referrer']);
 
 /**
- * Shared pino `req` serializer: Fastify's fields, with the query of `url` redacted. Headers are not included
- * (Fastify's default serializer omits them as well).
+ * Canonical form of a query parameter NAME for matching (#282 L): percent/plus-decoded, NUL and other control chars
+ * removed, surrounding whitespace trimmed (`code+=`), array/object suffixes dropped (`code[]=`, `code[x]=`),
+ * lower-cased. Throws on undecodable names (callers fail closed).
  */
-export function reqSerializer(req: {
-  method?: string;
-  url?: string;
-  originalUrl?: string;
-  hostname?: string;
-  host?: string;
-  ip?: string;
-  socket?: { remotePort?: number };
-  raw?: { url?: string; method?: string };
-}): Record<string, unknown> {
-  const url = req.url ?? req.originalUrl ?? req.raw?.url;
-  if (isPlain(req)) {
-    // Already-serialized/plain objects (tests, manual logs): keep their shape, only redact the URL.
-    return typeof req.url === 'string' ? { ...req, url: redactUrl(req.url) } : { ...req };
-  }
-  return {
-    method: req.method ?? req.raw?.method,
-    url: typeof url === 'string' ? redactUrl(url) : url,
-    host: req.hostname ?? req.host,
-    remoteAddress: req.ip,
-    remotePort: req.socket?.remotePort,
-  };
+function normalizeParamName(raw: string): string {
+  return (
+    decodeURIComponent(raw.replace(/\+/g, ' '))
+      // eslint-disable-next-line no-control-regex
+      .replace(/[\u0000-\u001f\u007f]/g, '')
+      .trim()
+      .replace(/\[.*$/, '')
+      .trim()
+      .toLowerCase()
+  );
 }
 
 export interface RedactLimits {

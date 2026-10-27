@@ -22,7 +22,10 @@ Where each variable is read:
 - `PORT` / `HOST`: the listen address (default `3000` / `0.0.0.0`). `API_PORT` is only the compose **host** port mapped to the container's `PORT=3000`.
 - `CSRF_SECRET`: HMAC key for CSRF tokens. **Required in production**, at least 32 bytes (`openssl rand -base64 48`). In dev it's random per process when empty.
 - `WEB_ORIGINS`: comma-separated allowlist for browser CORS (`Access-Control-Allow-Origin` + credentials) and for the API Origin/Referer check on mutations. **Required in production**; the dev default is `http://localhost:5173,http://localhost:3000`. This is not `WEB_ORIGIN` (below).
-- `TRUST_PROXY`: hop count (`1`) or a comma list of proxy IPs/CIDRs. Empty means no proxy; `true` is rejected.
+- `TRUST_PROXY`: comma list of proxy IPs/CIDRs (the allowlist form). Empty means no proxy; `true` and `/0` are rejected. A hop count (`1`) is accepted in dev/test only and **fails startup in production** (ADR-014: it trusts a forged X-Forwarded-For).
+- `BEHIND_CLOUDFLARE`: `true` to use `CF-Connecting-IP`, only when the peer is in the pinned Cloudflare ranges (`apps/api/src/shared/geoip/client-ip.ts`). Default off. Raw X-Forwarded-For is never read.
+- `GEOIP_PROVIDER`: `dbip` (default when `GEOIP_DB_PATH` is set), `geolite2` or `none`. Local mmdb lookups only; no external API, no paid provider, no fallback.
+- `GEOIP_DB_PATH`: path to the DB-IP City Lite (or GeoLite2-City) `.mmdb`. Missing/unreadable: location lookups are off and session geo fields stay empty. See [GeoIP](../12-security/geoip.md).
 
 ### Database
 

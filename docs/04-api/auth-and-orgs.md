@@ -70,13 +70,13 @@ The extension pairing endpoints (`/auth/extension/pair`, `/auth/extension-token`
 
 ## Configuration
 
-| Variable        | Notes                                                                                                        |
-| --------------- | ------------------------------------------------------------------------------------------------------------ |
-| `NODE_ENV`      | Only exactly `development` or `test` relax the checks                                                        |
-| `WEB_ORIGINS`   | Comma-separated allowlist; required in production; dev default `http://localhost:5173,http://localhost:3000` |
-| `CSRF_SECRET`   | HMAC key, at least 32 bytes; required in production; random per process in dev and test                      |
-| `TRUST_PROXY`   | Hop count or comma list of proxy IPs/CIDRs; `true` and `/0` are rejected; default off                        |
-| `PORT` / `HOST` | Default `3000` / `0.0.0.0`                                                                                   |
+| Variable        | Notes                                                                                                                   |
+| --------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| `NODE_ENV`      | Only exactly `development` or `test` relax the checks                                                                   |
+| `WEB_ORIGINS`   | Comma-separated allowlist; required in production; dev default `http://localhost:5173,http://localhost:3000`            |
+| `CSRF_SECRET`   | HMAC key, at least 32 bytes; required in production; random per process in dev and test                                 |
+| `TRUST_PROXY`   | Comma list of proxy IPs/CIDRs (hop count dev/test only, fails in production); `true` and `/0` are rejected; default off |
+| `PORT` / `HOST` | Default `3000` / `0.0.0.0`                                                                                              |
 
 ## Rate limits and lockout
 

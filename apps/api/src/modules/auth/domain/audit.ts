@@ -1,3 +1,4 @@
+import type { GeoFields } from '../../../shared/geoip/provider.js';
 export type AuditAction =
   | 'auth.signup'
   | 'auth.login.success'
@@ -79,6 +80,8 @@ export interface AuditEvent {
   metadata: Record<string, string | number | boolean | null>;
   ip: string | null;
   userAgent: string | null;
+  /** ADR-014 coarse GeoIP of `ip`. */
+  geo?: GeoFields;
 }
 
 export interface AuditLog {
