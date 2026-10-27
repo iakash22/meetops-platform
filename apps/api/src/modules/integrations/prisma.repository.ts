@@ -83,6 +83,9 @@ export class PrismaIntegrations implements IntegrationsRepository {
   resolveOrganization(provider: ConnectedProvider, id: string) {
     return this.repo.resolveOrganization(provider, id);
   }
+  resolveByExternalAccount(provider: ConnectedProvider, externalAccountId: string) {
+    return this.repo.resolveByExternalAccount(provider, externalAccountId);
+  }
   getTask(organizationId: string, taskId: string): Promise<TaskRef | null> {
     return this.org(organizationId, (tx) =>
       tx.task.findFirst({

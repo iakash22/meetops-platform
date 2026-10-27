@@ -28,7 +28,24 @@ import {
   createMediaPersistence,
   type MediaPersistence,
 } from './persistence.js';
-import { createRealtimePublisher, createRedisEmitter } from './realtime.js';
+import {
+  createRealtimePublisher,
+  createRedisEmitter,
+  publishUploadStatus,
+  type EmitterLike,
+} from './realtime.js';
+import {
+  processUploadScan,
+  type UploadScanDeps,
+  type UploadScanOutcome,
+} from './upload-scan-job.js';
+import {
+  createUploadScanStore,
+  uploadSourceFromStorage,
+  type UploadSourceStorage,
+} from './upload-scan-store.js';
+import { createUploadProbe } from './upload-scan.js';
+import { antivirusFromEnv } from './clamd.js';
 import {
   MEDIA_QUEUE,
   type MediaJobPayload,
@@ -155,12 +172,62 @@ export function buildMediaProcessorDeps(
   };
 }
 
+/**
+ * process_upload deps (#274 G-1): Prisma store under forced RLS, the upload source object, ffprobe with the duration
+ * cap, the optional clamd step (UPLOAD_SCAN_CLAMAV, off by default, fail-closed when on) and realtime upload:status.
+ */
+export function buildUploadScanDeps(parts: {
+  storage: UploadSourceStorage;
+  emitter: EmitterLike;
+  maxDurationSeconds: number;
+  tmpRoot?: string;
+  env?: NodeJS.ProcessEnv;
+  store?: Pick<UploadScanDeps, 'findUpload' | 'setScanStatus'>;
+}): UploadScanDeps {
+  const antivirus = antivirusFromEnv(parts.env ?? process.env);
+  return {
+    ...(parts.store ?? createUploadScanStore()),
+    source: uploadSourceFromStorage(parts.storage),
+    probe: createUploadProbe({ maxDurationSeconds: parts.maxDurationSeconds }),
+    publishUploadStatus: (e) => publishUploadStatus(parts.emitter, e),
+    limits: { maxDurationSeconds: parts.maxDurationSeconds },
+    ...(parts.tmpRoot ? { tmpRoot: parts.tmpRoot } : {}),
+    ...(antivirus ? { antivirus } : {}),
+  };
+}
+
+type DispatchJob = Pick<Job, 'id' | 'attemptsMade' | 'opts'> & { data: unknown };
+
+/**
+ * Routes one MEDIA_QUEUE job by kind: `process_upload` goes to the upload scan (the only writer of scanStatus), every
+ * other job to processRecording. isFinalAttempt lets the scan quarantine when BullMQ attempts are exhausted.
+ */
+export function dispatchMediaJob(
+  job: DispatchJob,
+  handlers: {
+    recording(
+      data: MediaJobPayload,
+      ctx: { jobId?: string; isFinalAttempt: boolean },
+    ): Promise<MediaProcessingResult>;
+    upload(data: unknown, ctx: { isFinalAttempt: boolean }): Promise<UploadScanOutcome>;
+  },
+): Promise<MediaProcessingResult | UploadScanOutcome> {
+  const isFinalAttempt = job.attemptsMade + 1 >= (job.opts.attempts ?? 1);
+  const data = job.data as { kind?: unknown };
+  if (data && data.kind === 'process_upload') return handlers.upload(job.data, { isFinalAttempt });
+  const rec = job.data as MediaJobPayload;
+  return runInJobScope({ organizationId: rec.organizationId, meetingId: rec.meetingId }, () =>
+    handlers.recording(rec, { ...(job.id ? { jobId: job.id } : {}), isFinalAttempt }),
+  );
+}
+
 /** Wire the BullMQ media worker with real storage, ffmpeg, Postgres persistence, transcription queue and Redis emitter. */
 export function startMediaWorker(cfg: MediaWorkerConfig = loadMediaWorkerConfig()) {
   assertMediaWorkerDatabaseEnv(process.env);
   const logger = baseLogger.child({ worker: MEDIA_QUEUE });
   const conn = () => new Redis(cfg.redisUrl, { maxRetriesPerRequest: null });
   const emitterRedis = conn();
+  const emitter = createRedisEmitter(emitterRedis);
   const transcriptionQueue = new Queue<TranscriptionJobPayload>(QUEUE_NAMES.transcription, {
     connection: conn(),
   });
@@ -174,21 +241,23 @@ export function startMediaWorker(cfg: MediaWorkerConfig = loadMediaWorkerConfig(
   const deps = buildMediaProcessorDeps(cfg, {
     storage,
     transcriptionQueue: { add: (name, data, opts) => transcriptionQueue.add(name, data, opts) },
-    realtime: createRealtimePublisher(createRedisEmitter(emitterRedis)),
+    realtime: createRealtimePublisher(emitter),
     logger,
     persistence,
   });
-  const worker = new Worker<MediaJobPayload, MediaProcessingResult>(
+  const uploadDeps = buildUploadScanDeps({
+    storage,
+    emitter,
+    maxDurationSeconds: cfg.maxDurationSeconds,
+    ...(cfg.tmpRoot ? { tmpRoot: cfg.tmpRoot } : {}),
+  });
+  const worker = new Worker<MediaJobPayload, MediaProcessingResult | UploadScanOutcome>(
     MEDIA_QUEUE,
     (job: Job<MediaJobPayload>) =>
-      runInJobScope(
-        { organizationId: job.data.organizationId, meetingId: job.data.meetingId },
-        () =>
-          processRecording(job.data, deps, {
-            jobId: job.id,
-            isFinalAttempt: job.attemptsMade + 1 >= (job.opts.attempts ?? 1),
-          }),
-      ),
+      dispatchMediaJob(job, {
+        recording: (data, ctx) => processRecording(data, deps, ctx),
+        upload: (data, ctx) => processUploadScan(data, uploadDeps, ctx),
+      }),
     { connection: conn(), concurrency: cfg.concurrency },
   );
   worker.on('failed', (job) => logger.warn({ jobId: job?.id }, 'media job attempt failed'));

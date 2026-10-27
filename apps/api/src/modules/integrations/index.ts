@@ -10,6 +10,8 @@ import {
   IntegrationCallbackQuery,
   IntegrationIssue,
   IntegrationList,
+  IntegrationProviderList,
+  type IntegrationProviderStatus,
   PushTaskIssueParams,
   PushTaskIssueRequest,
   WebhookAcceptedResponse,
@@ -27,7 +29,11 @@ import { IntegrationNotFoundError, OAuthStateInvalidError } from './errors.js';
 import { InMemoryIntegrations } from './in-memory.repository.js';
 import { PrismaIntegrations } from './prisma.repository.js';
 import type { ConnectedProvider, IntegrationsRepository } from './ports.js';
-import { devIntegrationsRuntime, type IntegrationsRuntime } from './runtime.js';
+import {
+  devIntegrationsRuntime,
+  integrationsRuntimeFromEnv,
+  type IntegrationsRuntime,
+} from './runtime.js';
 import { IntegrationsService, type AuditFn } from './service.js';
 
 const OrgParams = Type.Object(
@@ -54,7 +60,7 @@ export function selectIntegrationsRuntime(
   nodeEnv: string | undefined = process.env.NODE_ENV,
 ): IntegrationsRuntime | undefined {
   if (deps.integrationsRuntime) return deps.integrationsRuntime;
-  return isRelaxedEnv(nodeEnv) ? devIntegrationsRuntime() : undefined;
+  return isRelaxedEnv(nodeEnv) ? devIntegrationsRuntime(integrationsRuntimeFromEnv()) : undefined;
 }
 
 export function selectIntegrationsRepository(
@@ -108,6 +114,37 @@ export default async function integrationsModule(
         const c = await callerFor(request, request.params.organizationId);
         organizations.authorize(c.ctx, 'read', 'Organization');
         return { items: (await repo.list(c.ctx.organizationId)).slice(0, 50) };
+      },
+    );
+
+    s.get<{ Params: { organizationId: string } }>(
+      INTEGRATION_PATHS.providers,
+      {
+        schema: {
+          tags: ['integrations'],
+          summary:
+            "Supported providers, whether each is configured, and this org's connection status",
+          params: OrgParams,
+          response: { 200: IntegrationProviderList, ...directoryErrors },
+        },
+      },
+      async (request) => {
+        const c = await callerFor(request, request.params.organizationId);
+        organizations.authorize(c.ctx, 'read', 'Organization');
+        const rows = await repo.list(c.ctx.organizationId);
+        const items: IntegrationProviderStatus[] = (['github', 'jira'] as const).map((provider) => {
+          const mine = rows
+            .filter((r) => r.provider === provider)
+            .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+          const pick = mine.find((r) => r.status !== 'revoked') ?? mine[0];
+          return {
+            provider,
+            configured: Boolean(runtime?.[provider]),
+            connectionStatus: pick ? pick.status : 'not_connected',
+            ...(pick ? { integration: pick } : {}),
+          };
+        });
+        return { items };
       },
     );
 
@@ -223,6 +260,29 @@ export default async function integrationsModule(
       'application/json',
       { parseAs: 'buffer', bodyLimit: INTEGRATION_WEBHOOK_MAX_BYTES },
       (_req, body, done) => done(null, body),
+    );
+    s.post<{ Body: Buffer }>(
+      INTEGRATION_PATHS.githubAppWebhook,
+      {
+        bodyLimit: INTEGRATION_WEBHOOK_MAX_BYTES,
+        schema: {
+          tags: ['integrations'],
+          summary: 'App-wide GitHub webhook (HMAC with the App secret, routed by installation id)',
+          response: {
+            202: WebhookAcceptedResponse,
+            400: ErrorBody,
+            401: ErrorBody,
+            409: ErrorBody,
+            413: ErrorBody,
+            503: ErrorBody,
+          },
+        },
+      },
+      async (request, reply) => {
+        const body = Buffer.isBuffer(request.body) ? request.body : Buffer.alloc(0);
+        await service.githubAppWebhook({ rawBody: body, headers: request.headers });
+        return reply.status(202).send({ received: true });
+      },
     );
     s.post<{ Params: WebhookParams; Body: Buffer }>(
       INTEGRATION_PATHS.webhook,
