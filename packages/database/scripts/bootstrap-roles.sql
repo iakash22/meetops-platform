@@ -29,8 +29,12 @@ BEGIN
     -- Relay uses only the definer functions (migration 20261022033000); no table privileges.
     GRANT USAGE ON SCHEMA public TO meetops_relay;
     REVOKE ALL ON ALL TABLES IN SCHEMA public FROM meetops_relay;
-    GRANT EXECUTE ON FUNCTION public.relay_claim_outbox_events(integer) TO meetops_relay;
+    -- Claim-all-kinds overload is not granted (migration 20261028030000); the relay claims by event type only.
+    REVOKE EXECUTE ON FUNCTION public.relay_claim_outbox_events(integer) FROM meetops_relay;
     GRANT EXECUTE ON FUNCTION public.relay_complete_outbox_event(uuid, boolean, text, timestamptz) TO meetops_relay;
+    IF to_regprocedure('public.relay_claim_outbox_events(integer, text[])') IS NOT NULL THEN
+      GRANT EXECUTE ON FUNCTION public.relay_claim_outbox_events(integer, text[]) TO meetops_relay;
+    END IF;
   END IF;
 END
 $$;

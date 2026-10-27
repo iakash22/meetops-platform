@@ -34,3 +34,5 @@ packages/**/node_modules/
 
 # TypeScript incremental
 *.tsbuildinfo
+# Local integration secrets (GitHub App private key etc.)
+.secrets/

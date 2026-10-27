@@ -13,6 +13,8 @@ export interface AuthContext {
 declare module 'fastify' {
   interface FastifyRequest {
     auth: AuthContext | null;
+    /** ADR-014 resolved client IP (see shared/geoip/client-ip.ts); set by an onRequest hook in server.ts. */
+    clientIp: string | null;
   }
 }
 
@@ -63,7 +65,7 @@ export const capUserAgent = (ua: string | null | undefined) =>
   ua ? ua.slice(0, MAX_USER_AGENT_LENGTH) : null;
 
 export const requestMeta = (r: FastifyRequest): RequestMeta => ({
-  ip: capIp(r.ip),
+  ip: capIp(r.clientIp ?? r.ip),
   userAgent: capUserAgent(r.headers['user-agent']),
 });
 
@@ -113,7 +115,7 @@ export function makeGuards(auth: AuthService, cfg: HttpSecurityConfig) {
     const token = readToken(request);
     if (token) {
       try {
-        const ctx = await auth.authenticate(token);
+        const ctx = await auth.authenticate(token, requestMeta(request));
         request.auth = ctx;
         return `s:${ctx.session.id}`;
       } catch {
@@ -137,7 +139,7 @@ export function makeGuards(auth: AuthService, cfg: HttpSecurityConfig) {
   };
 
   const requireSession = async (request: FastifyRequest): Promise<AuthContext> => {
-    const ctx = await auth.authenticate(readToken(request));
+    const ctx = await auth.authenticate(readToken(request), requestMeta(request));
     request.auth = ctx;
     return ctx;
   };

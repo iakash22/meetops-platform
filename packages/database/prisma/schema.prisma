@@ -256,6 +256,10 @@ model Organization {
   authDevices            AuthDevice[]
   authTokenFamilies      AuthTokenFamily[]
   authRefreshTokens      AuthRefreshToken[]
+  notifications          Notification[]
+  notificationDeliveryAttempts NotificationDeliveryAttempt[]
+  notificationPreferences NotificationPreference[]
+  pushDeviceTokens       PushDeviceToken[]
 
   createdBy User? @relation("OrgCreator", fields: [createdById], references: [id], onDelete: SetNull)
 
@@ -292,6 +296,9 @@ model User {
   consentAttestations  ConsentAttestation[]   @relation("ConsentAttester")
   authDevices          AuthDevice[]           @relation("AuthDeviceOwner")
   authTokenFamilies    AuthTokenFamily[]      @relation("AuthTokenFamilyOwner")
+  notifications        Notification[]         @relation("NotificationRecipient")
+  notificationPreferences NotificationPreference[] @relation("NotificationPreferenceOwner")
+  pushDeviceTokens     PushDeviceToken[]      @relation("PushDeviceTokenOwner")
 
   @@map("users")
 }
@@ -324,6 +331,12 @@ model Session {
   activeOrgId       String?   @map("active_org_id") @db.Uuid
   ipAddress         String?   @map("ip_address")
   userAgent         String?   @map("user_agent")
+  /// ADR-014 coarse GeoIP (null for private/unknown IPs). No lat/long.
+  geoCity           String?   @map("geo_city") @db.VarChar(128)
+  geoRegion         String?   @map("geo_region") @db.VarChar(128)
+  geoCountry        String?   @map("geo_country") @db.VarChar(128)
+  geoCountryCode    String?   @map("geo_country_code") @db.Char(2)
+  geoApproximate    Boolean?  @map("geo_approximate")
   /// Idle expiry (sliding).
   expiresAt         DateTime  @map("expires_at") @db.Timestamptz(3)
   /// Hard cap regardless of activity.
@@ -915,6 +928,12 @@ model AuditEvent {
   metadata       Json     @default("{}")
   ipAddress      String?  @map("ip_address")
   userAgent      String?  @map("user_agent")
+  /// ADR-014 coarse GeoIP. No lat/long.
+  geoCity        String?  @map("geo_city") @db.VarChar(128)
+  geoRegion      String?  @map("geo_region") @db.VarChar(128)
+  geoCountry     String?  @map("geo_country") @db.VarChar(128)
+  geoCountryCode String?  @map("geo_country_code") @db.Char(2)
+  geoApproximate Boolean? @map("geo_approximate")
   createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
 
   organization Organization? @relation(fields: [organizationId], references: [id], onDelete: Restrict)
@@ -978,6 +997,8 @@ model RecordingSession {
   durationMs     Int?                   @map("duration_ms")
   /// Running total of signed chunk sizes; capped at MAX_RECORDING_SESSION_BYTES.
   totalBytes     BigInt                 @default(0) @map("total_bytes")
+  /// Bytes the API confirmed received; only add_recording_session_bytes() changes it. Max 1_400_000_000.
+  bytesReceived  BigInt                 @default(0) @map("bytes_received")
   failureCode    String?                @map("failure_code")
   completedAt    DateTime?              @map("completed_at") @db.Timestamptz(3)
   abortedAt      DateTime?              @map("aborted_at") @db.Timestamptz(3)
@@ -1208,4 +1229,123 @@ model AuthRefreshToken {
   @@unique([organizationId, id])
   @@index([organizationId, familyId])
   @@map("auth_refresh_tokens")
+}
+
+/// ADR-013 delivery channels. `in_app` is the Postgres feed (source of truth); the others only point back to it.
+enum NotificationChannel {
+  in_app
+  email
+  web_push
+  mobile_push
+  desktop
+}
+
+/// Outcome of one delivery attempt. `skipped` = suppressed by preferences / no device; `failed` may be retried.
+enum NotificationDeliveryStatus {
+  pending
+  sent
+  failed
+  skipped
+}
+
+/// Push token family: Web Push (VAPID; web + MV3 extension) or Expo Push (mobile).
+enum PushPlatform {
+  web
+  extension
+  ios
+  android
+}
+
+/// ADR-013 in-app feed item for one recipient. Payload is ids-only (`data`), rendered by clients. Idempotent on
+/// (org, user, dedupe_key) so a replayed outbox event never creates a second row.
+model Notification {
+  id             String    @id @default(uuid()) @db.Uuid
+  organizationId String    @map("org_id") @db.Uuid
+  userId         String    @map("user_id") @db.Uuid
+  type           String
+  subjectType    String?   @map("subject_type")
+  subjectId      String?   @map("subject_id") @db.Uuid
+  data           Json      @default("{}")
+  dedupeKey      String    @map("dedupe_key")
+  readAt         DateTime? @map("read_at") @db.Timestamptz(3)
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  organization Organization                  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user         User                          @relation("NotificationRecipient", fields: [userId], references: [id], onDelete: Cascade)
+  attempts     NotificationDeliveryAttempt[]
+
+  @@unique([organizationId, id])
+  @@unique([organizationId, userId, dedupeKey])
+  @@index([organizationId, userId, createdAt(sort: Desc)])
+  @@index([organizationId, userId, readAt])
+  @@map("notifications")
+}
+
+/// One row per channel delivery attempt. `deliveryKey` is the BullMQ jobId; (org, deliveryKey, attempt) is unique so
+/// a retried job records each attempt once. Never stores message bodies or push tokens.
+model NotificationDeliveryAttempt {
+  id                String                     @id @default(uuid()) @db.Uuid
+  organizationId    String                     @map("org_id") @db.Uuid
+  notificationId    String                     @map("notification_id") @db.Uuid
+  channel           NotificationChannel
+  deliveryKey       String                     @map("delivery_key")
+  attempt           Int                        @default(1)
+  status            NotificationDeliveryStatus @default(pending)
+  pushDeviceTokenId String?                    @map("push_device_token_id") @db.Uuid
+  providerMessageId String?                    @map("provider_message_id")
+  errorCode         String?                    @map("error_code")
+  createdAt         DateTime                   @default(now()) @map("created_at") @db.Timestamptz(3)
+  completedAt       DateTime?                  @map("completed_at") @db.Timestamptz(3)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  notification Notification @relation(fields: [organizationId, notificationId], references: [organizationId, id], onDelete: Cascade)
+
+  @@unique([organizationId, id])
+  @@unique([organizationId, deliveryKey, attempt])
+  @@index([organizationId, notificationId])
+  @@map("notification_delivery_attempts")
+}
+
+/// Per-user, per-type, per-channel opt in/out. `type` = '*' is the channel-wide default. Absent row = product default.
+model NotificationPreference {
+  id             String              @id @default(uuid()) @db.Uuid
+  organizationId String              @map("org_id") @db.Uuid
+  userId         String              @map("user_id") @db.Uuid
+  type           String
+  channel        NotificationChannel
+  enabled        Boolean
+  createdAt      DateTime            @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime            @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user         User         @relation("NotificationPreferenceOwner", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, id])
+  @@unique([organizationId, userId, type, channel])
+  @@map("notification_preferences")
+}
+
+/// Push device token (ADR-013 `PushDevice`), org-scoped so it sits under forced tenant RLS. The token is stored only
+/// encrypted (ADR-008 envelope, AAD = org + row id) plus a SHA-256 hash for idempotent registration and lookup.
+model PushDeviceToken {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @map("org_id") @db.Uuid
+  userId         String       @map("user_id") @db.Uuid
+  platform       PushPlatform
+  tokenHash      String       @map("token_hash")
+  tokenEnc       String?      @map("token_enc")
+  tokenKeyId     String?      @map("token_key_id")
+  label          String?
+  lastSeenAt     DateTime     @default(now()) @map("last_seen_at") @db.Timestamptz(3)
+  revokedAt      DateTime?    @map("revoked_at") @db.Timestamptz(3)
+  createdAt      DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime     @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user         User         @relation("PushDeviceTokenOwner", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, id])
+  @@unique([organizationId, tokenHash])
+  @@index([organizationId, userId])
+  @@map("push_device_tokens")
 }

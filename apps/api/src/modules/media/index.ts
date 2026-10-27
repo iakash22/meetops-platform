@@ -41,13 +41,19 @@ export default async function mediaModule(app: FastifyInstance, opts: MediaPlugi
   if (!media) return;
   registerDomainErrorHandler(app);
   const g = makeGuards(auth, deps.security);
-  app.addHook('onRequest', bearerAwareMutationGuard(g.mutationGuard));
   const access = new DirectoryAccess(organizations, deps.audit);
   const caller: ResolveCaller = async (request, organizationId) =>
     access.caller(await g.requireSession(request), organizationId, requestMeta(request));
   const mediaDeps = { ...media, meetings: deps.meetings, now: () => deps.clock.now() };
   const { extensionBearer, sessionVerifier } = opts;
   const bearer = extensionBearer && sessionVerifier ? extensionBearer : undefined;
+  app.addHook(
+    'onRequest',
+    bearerAwareMutationGuard(g.mutationGuard, {
+      cookieName: deps.security.cookieName,
+      bearerEnabled: bearer !== undefined,
+    }),
+  );
   const writeCaller = dualCaller(caller, bearer, organizations, 'recordings:write');
   await app.register(uploadRoutes, { uploads: new UploadService(mediaDeps), caller, writeCaller });
   // Session routes have no org in the path: resolve it from the session's active organization.

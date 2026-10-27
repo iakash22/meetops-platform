@@ -1,7 +1,12 @@
 import { describe, it, expect } from 'vitest';
 import { Value } from '@sinclair/typebox/value';
 import {
-  EMAIL_JOB_RETENTION, EMAIL_QUEUE, EMAIL_TEMPLATE_IDS, EmailJobPayload, EmailTemplateId, QUEUE_NAMES,
+  EMAIL_JOB_RETENTION,
+  EMAIL_QUEUE,
+  EMAIL_TEMPLATE_IDS,
+  EmailJobPayload,
+  EmailTemplateId,
+  QUEUE_NAMES,
   WriteApproval,
 } from '../src/index.js';
 
@@ -55,8 +60,20 @@ describe('EmailJobPayload (INT shape)', () => {
     ).toBe(true);
   });
   it('binds recipient kind to template', () => {
-    expect(Value.Check(EmailJobPayload, { ...base, templateId: 'invitation', recipient: { invitationId: id(5) } })).toBe(true);
-    expect(Value.Check(EmailJobPayload, { ...base, templateId: 'invitation', recipient: { userId: id(5) } })).toBe(false);
+    expect(
+      Value.Check(EmailJobPayload, {
+        ...base,
+        templateId: 'invitation',
+        recipient: { invitationId: id(5) },
+      }),
+    ).toBe(true);
+    expect(
+      Value.Check(EmailJobPayload, {
+        ...base,
+        templateId: 'invitation',
+        recipient: { userId: id(5) },
+      }),
+    ).toBe(false);
     for (const t of [
       'verification',
       'password-reset',
@@ -67,8 +84,16 @@ describe('EmailJobPayload (INT shape)', () => {
       'tasks-ready-for-review',
       'integration-error',
     ]) {
-      expect(Value.Check(EmailJobPayload, { ...base, templateId: t, recipient: { userId: id(5) } })).toBe(true);
-      expect(Value.Check(EmailJobPayload, { ...base, templateId: t, recipient: { invitationId: id(5) } })).toBe(false);
+      expect(
+        Value.Check(EmailJobPayload, { ...base, templateId: t, recipient: { userId: id(5) } }),
+      ).toBe(true);
+      expect(
+        Value.Check(EmailJobPayload, {
+          ...base,
+          templateId: t,
+          recipient: { invitationId: id(5) },
+        }),
+      ).toBe(false);
     }
   });
   it('requestId must be opaque and at most 200 chars', () => {
@@ -78,15 +103,28 @@ describe('EmailJobPayload (INT shape)', () => {
   });
   it('rejects bad recipients', () => {
     expect(Value.Check(EmailJobPayload, { ...base, recipient: {} })).toBe(false);
-    expect(Value.Check(EmailJobPayload, { ...base, recipient: { userId: id(2), invitationId: id(5) } })).toBe(false);
-    expect(Value.Check(EmailJobPayload, { ...base, recipient: { userId: id(2), email: 'a@b.co' } })).toBe(false);
-    expect(Value.Check(EmailJobPayload, { ...base, recipient: { userId: 'not-a-uuid' } })).toBe(false);
+    expect(
+      Value.Check(EmailJobPayload, { ...base, recipient: { userId: id(2), invitationId: id(5) } }),
+    ).toBe(false);
+    expect(
+      Value.Check(EmailJobPayload, { ...base, recipient: { userId: id(2), email: 'a@b.co' } }),
+    ).toBe(false);
+    expect(Value.Check(EmailJobPayload, { ...base, recipient: { userId: 'not-a-uuid' } })).toBe(
+      false,
+    );
   });
   it('rejects addresses, variables, URLs and tokens at any level', () => {
-    for (const extra of [{ to: 'a@b.co' }, { variables: {} }, { url: 'https://x' }, { token: 'abc' }]) {
+    for (const extra of [
+      { to: 'a@b.co' },
+      { variables: {} },
+      { url: 'https://x' },
+      { token: 'abc' },
+    ]) {
       expect(Value.Check(EmailJobPayload, { ...base, ...extra })).toBe(false);
     }
-    expect(Value.Check(EmailJobPayload, { ...base, refs: { link: 'https://evil.test/x' } })).toBe(false);
+    expect(Value.Check(EmailJobPayload, { ...base, refs: { link: 'https://evil.test/x' } })).toBe(
+      false,
+    );
     expect(Value.Check(EmailJobPayload, { ...base, refs: { email: 'a@b.co' } })).toBe(false);
     expect(Value.Check(EmailJobPayload, { ...base, refs: { 'bad key': id(3) } })).toBe(false);
   });
@@ -107,7 +145,12 @@ describe('EmailJobPayload (INT shape)', () => {
 });
 
 describe('WriteApproval', () => {
-  const a = { approvalId: id(1), organizationId: id(2), approverUserId: id(3), payloadHash: 'a'.repeat(64) };
+  const a = {
+    approvalId: id(1),
+    organizationId: id(2),
+    approverUserId: id(3),
+    payloadHash: 'a'.repeat(64),
+  };
   it('accepts a complete reference', () => {
     expect(Value.Check(WriteApproval, a)).toBe(true);
     expect(Value.Check(WriteApproval, { ...a, approvedAt: '2026-10-21T17:00:00.000Z' })).toBe(true);

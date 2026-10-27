@@ -3,7 +3,9 @@ name: Docker
 on:
   push:
     branches: [main, 'integration/**']
+    paths-ignore: ['docs/**', '**/*.md', 'LICENSE', '.editorconfig']
   pull_request:
+    paths-ignore: ['docs/**', '**/*.md', 'LICENSE', '.editorconfig']
 
 permissions:
   contents: read

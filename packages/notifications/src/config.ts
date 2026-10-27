@@ -26,7 +26,23 @@ const resendSchema = z.object({
   EMAIL_PROVIDER: z.literal('resend'),
   RESEND_API_KEY: z.string().min(1, 'RESEND_API_KEY is required'),
   EMAIL_FROM: z.string().min(3, 'EMAIL_FROM is required'),
-  RESEND_API_URL: z.url().optional(),
+  // Security review B 1.1: the Bearer API key is sent here, so only https://api.resend.com is accepted.
+  RESEND_API_URL: z
+    .url()
+    .refine(
+      (u) => {
+        const x = new URL(u);
+        return (
+          x.protocol === 'https:' &&
+          x.hostname === 'api.resend.com' &&
+          x.port === '' &&
+          x.username === '' &&
+          x.password === ''
+        );
+      },
+      { error: 'RESEND_API_URL must be https://api.resend.com' },
+    )
+    .optional(),
 });
 
 const consoleSchema = z.object({
@@ -57,6 +73,9 @@ export interface ConsoleEmailConfig {
 }
 
 export type EmailConfig = SmtpEmailConfig | ResendEmailConfig | ConsoleEmailConfig;
+
+/** Hosts treated as Gmail SMTP (dev-only). */
+export const GMAIL_SMTP_HOSTS = new Set(['smtp.gmail.com', 'smtp.googlemail.com']);
 
 export class EmailConfigError extends Error {
   constructor(message: string) {
@@ -109,6 +128,11 @@ export function loadEmailConfig(
   const r = smtpSchema.safeParse({ ...raw, EMAIL_PROVIDER: 'smtp' });
   if (!r.success) throw new EmailConfigError(formatIssues(r.error));
   const d = r.data;
+  // Gmail SMTP is the development default only (ADR-013; security review C, finding 7). Production must point SMTP
+  // at a real relay or choose EMAIL_PROVIDER=resend explicitly; nothing falls back automatically.
+  if (raw.NODE_ENV === 'production' && GMAIL_SMTP_HOSTS.has(d.SMTP_HOST.toLowerCase())) {
+    throw new EmailConfigError('Gmail SMTP is development-only and is not allowed in production');
+  }
   const cfg: SmtpEmailConfig = {
     provider: 'smtp',
     host: d.SMTP_HOST,

@@ -16,6 +16,7 @@ import type {
   SignedRequest,
   StoredObjectHead,
 } from '../domain/ports.js';
+import { downloadContentType } from '../domain/ports.js';
 
 export class InMemoryConsentRepository implements ConsentRepository {
   readonly rows: ConsentRecord[] = [];
@@ -88,8 +89,13 @@ export class FakeMediaSigner implements MediaSigner {
       'x-amz-checksum-sha256': s.checksumSha256Base64,
     });
   }
-  async presignGet(s: { key: string; ttlSeconds: number }) {
-    return this.sign('GET', s.key, s.ttlSeconds, {});
+  async presignGet(s: { key: string; ttlSeconds: number; contentType: string }) {
+    const r = this.sign('GET', s.key, s.ttlSeconds, {});
+    const q = new URLSearchParams({
+      'response-content-disposition': 'attachment',
+      'response-content-type': downloadContentType(s.contentType),
+    });
+    return { ...r, url: `${r.url}&${q.toString()}` };
   }
   async head(key: string) {
     const h = this.stored.get(key);
@@ -115,9 +121,9 @@ export class InMemoryRecordingSessionRepository implements RecordingSessionRepos
   async create(r: RecordingSessionRecord) {
     this.rows.set(r.id, { ...r, chunks: new Map(r.chunks) });
   }
-  async findById(id: string) {
+  async findById(organizationId: string, id: string) {
     const r = this.rows.get(id);
-    return r ? { ...r, chunks: new Map(r.chunks) } : null;
+    return r && r.organizationId === organizationId ? { ...r, chunks: new Map(r.chunks) } : null;
   }
   async reserveChunk(id: string, chunk: RecordingChunkRecord, maxTotalBytes: number) {
     const r = this.rows.get(id);

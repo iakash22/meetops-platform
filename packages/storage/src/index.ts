@@ -7,3 +7,4 @@ export * from './s3-storage.js';
 export * from './mappers.js';
 export * from './upload-tokens.js';
 export * from './audio-resolver.js';
+export * from './download-headers.js';

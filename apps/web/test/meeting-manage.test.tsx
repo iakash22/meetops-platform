@@ -1,3 +1,4 @@
+import { nonNotificationCalls } from './fixtures/route-ready';
 import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
@@ -63,7 +64,7 @@ describe('meeting create/edit', () => {
     await userEvent.click(screen.getByRole('button', { name: 'New meeting' }));
     await userEvent.click(screen.getByRole('button', { name: 'Create meeting' }));
     expect(await screen.findByText('Enter a title.')).toBeInTheDocument();
-    expect(api.request).not.toHaveBeenCalled();
+    expect(nonNotificationCalls(api.request)).toEqual([]);
     await userEvent.type(screen.getByLabelText('Title'), '  Kickoff ');
     await userEvent.click(screen.getByRole('button', { name: 'Create meeting' }));
     expect(await screen.findByText('Meeting created')).toBeInTheDocument();
