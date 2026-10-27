@@ -115,9 +115,9 @@ export class InMemoryRecordingSessionRepository implements RecordingSessionRepos
   async create(r: RecordingSessionRecord) {
     this.rows.set(r.id, { ...r, chunks: new Map(r.chunks) });
   }
-  async findById(id: string) {
+  async findById(organizationId: string, id: string) {
     const r = this.rows.get(id);
-    return r ? { ...r, chunks: new Map(r.chunks) } : null;
+    return r && r.organizationId === organizationId ? { ...r, chunks: new Map(r.chunks) } : null;
   }
   async reserveChunk(id: string, chunk: RecordingChunkRecord, maxTotalBytes: number) {
     const r = this.rows.get(id);
