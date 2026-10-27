@@ -50,10 +50,7 @@ import { createPrismaClient, type DatabaseClient } from '../shared/prisma/contex
 import { Redis } from 'ioredis';
 import { Queue } from 'bullmq';
 import { MEDIA_QUEUE } from '@meetops/contracts';
-import {
-  BullMqMediaJobQueue,
-  type MediaQueueProducer,
-} from './media/infrastructure/bullmq-job-queue.js';
+import { BullMqMediaJobQueue } from './media/infrastructure/bullmq-job-queue.js';
 import type { SessionPolicy, SessionRepository } from './auth/domain/session.js';
 import type {
   LoginLockout,
@@ -216,7 +213,7 @@ function mediaDeps(
     connection: new Redis(redisUrl, { lazyConnect: true, maxRetriesPerRequest: null }),
   });
   return {
-    media: { ...media, jobs: new BullMqMediaJobQueue(queue as unknown as MediaQueueProducer) },
+    media: { ...media, jobs: new BullMqMediaJobQueue(queue) },
     ownedMediaQueue: queue,
   };
 }
