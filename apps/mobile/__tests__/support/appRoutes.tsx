@@ -9,6 +9,7 @@ import AccountTab from '../../app/(app)/(tabs)/account';
 import MeetingsTab from '../../app/(app)/(tabs)/index';
 import RecordTab from '../../app/(app)/(tabs)/record';
 import TasksTab from '../../app/(app)/(tabs)/tasks';
+import MeetingInsights from '../../app/(app)/meeting/[id]';
 import Organizations from '../../app/(app)/organizations';
 import AuthLayout from '../../app/(auth)/_layout';
 import Login from '../../app/(auth)/login';
@@ -26,6 +27,7 @@ import { createPlaceholderMeetingsRepository } from '../../src/data/meetingsRepo
 import { RepositoriesProvider, type Repositories } from '../../src/data/RepositoriesProvider';
 import { createPlaceholderTasksRepository } from '../../src/data/tasksRepository';
 import { createPlaceholderUploadQueue } from '../../src/data/uploadQueue';
+import { createDemoInsightsApi } from '../../src/api/insightsApi';
 
 export const account = demoAccount('ada@example.com', 'correct horse battery');
 
@@ -33,6 +35,7 @@ export function makeRepositories(overrides: Partial<Repositories> = {}): Reposit
   return {
     meetings: createPlaceholderMeetingsRepository(),
     tasks: createPlaceholderTasksRepository(),
+    insights: createDemoInsightsApi(),
     uploadQueue: createPlaceholderUploadQueue(),
     consent: createDemoConsentApi(),
     micPermission: createDemoMicPermission({ initial: 'granted' }),
@@ -66,6 +69,7 @@ export function routes(
     '(app)/(tabs)/tasks': TasksTab,
     '(app)/(tabs)/account': AccountTab,
     '(app)/organizations': Organizations,
+    '(app)/meeting/[id]': MeetingInsights,
     '+not-found': NotFound,
   };
 }

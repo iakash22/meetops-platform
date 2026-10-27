@@ -12,17 +12,17 @@ import type {
   InitUploadRequest,
   InitUploadResponse,
 } from '@meetops/contracts/types';
-import { MAX_MEDIA_BYTES } from '@meetops/contracts/types';
+import { CONSENT_UPLOAD_PATHS, MAX_MEDIA_BYTES } from '@meetops/contracts/types';
+import { fillPath } from './api-paths.js';
 import { parseRetryAfter, retryPolicy, withRetry, type RetryPolicy } from './retry.js';
 import { classifyUploadError, UploadApiError, type ApiFetch } from './upload-http.js';
 import { hexToBase64, sha256Hex, type StorageTransport } from './upload.js';
 
-const seg = (id: string) => encodeURIComponent(id);
-
+/** Resolved from contracts CONSENT_UPLOAD_PATHS (#196). */
 export const DIRECT_UPLOAD_PATHS = {
-  init: (org: string) => `/orgs/${seg(org)}/uploads`,
-  complete: (org: string, fileObjectId: string) =>
-    `/orgs/${seg(org)}/uploads/${seg(fileObjectId)}/complete`,
+  init: (organizationId: string) => fillPath(CONSENT_UPLOAD_PATHS.uploads, { organizationId }),
+  complete: (organizationId: string, fileObjectId: string) =>
+    fillPath(CONSENT_UPLOAD_PATHS.uploadComplete, { organizationId, fileObjectId }),
 } as const;
 
 export type DirectUploadOp = 'initUpload' | 'put' | 'completeUpload';

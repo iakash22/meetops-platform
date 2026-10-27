@@ -372,23 +372,34 @@ export class ExtensionAuthService implements ExtensionRevoker {
     };
   }
 
-  /** @meetops/session-verifier ExtensionTokenStore: the family's revocation applies to every access token in it. */
+  /**
+   * @meetops/session-verifier ExtensionTokenStore, consulted on every bearer verify. The family's revocation
+   * (Redis marker, then Postgres as the authority via DurableExtensionTokenRepository) applies to every access
+   * token in it at once, so a revoked token stops working immediately rather than at its expiry. The family
+   * must also still belong to the token's user and org and be inside its absolute lifetime. Lookup errors
+   * fail closed (null), never open.
+   */
   verifierStore(): ExtensionTokenStore {
     return {
       findByTokenHash: async (tokenHash): Promise<ExtensionTokenRecord | null> => {
-        const a = await this.d.extensionTokens.findAccess(tokenHash);
-        if (!a) return null;
-        const f = await this.d.extensionTokens.findFamily(a.familyId);
-        if (!f) return null;
-        return {
-          familyId: a.familyId,
-          userId: a.userId,
-          organizationId: a.organizationId,
-          audience: EXTENSION_TOKEN_AUDIENCE,
-          scopes: a.scopes,
-          expiresAt: a.expiresAt,
-          revokedAt: f.revokedAt,
-        };
+        try {
+          const a = await this.d.extensionTokens.findAccess(tokenHash);
+          if (!a) return null;
+          const f = await this.d.extensionTokens.findFamily(a.familyId);
+          if (!f || f.userId !== a.userId || f.organizationId !== a.organizationId) return null;
+          const now = this.d.clock.now();
+          return {
+            familyId: a.familyId,
+            userId: a.userId,
+            organizationId: a.organizationId,
+            audience: EXTENSION_TOKEN_AUDIENCE,
+            scopes: a.scopes,
+            expiresAt: f.maxExpiresAt < a.expiresAt ? f.maxExpiresAt : a.expiresAt,
+            revokedAt: f.revokedAt ?? (f.maxExpiresAt <= now ? f.maxExpiresAt : null),
+          };
+        } catch {
+          return null;
+        }
       },
     };
   }
