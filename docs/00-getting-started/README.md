@@ -7,4 +7,5 @@
 - [Testing](testing.md)
 - [Troubleshooting](troubleshooting.md)
 - [Agent workflow](agent-workflow.md): clones, pnpm pinning, git rules, stacked PRs, merge order
+- [Phase status](../PHASE_STATUS.md): what is done, in progress, and still open on `main`
 - Contributing guide: [`CONTRIBUTING.md`](../../CONTRIBUTING.md)
