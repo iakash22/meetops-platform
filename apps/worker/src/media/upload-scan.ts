@@ -6,8 +6,9 @@ import type { Readable } from 'node:stream';
 import { Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { ALLOWED_MEDIA_MIME_TYPES, MAX_MEDIA_BYTES } from '@meetops/contracts';
-import type { AllowedDemuxer, ProbeResult } from '@meetops/media-core';
-import { assertProbedFormat } from '@meetops/media-core';
+import type { AllowedDemuxer, MediaToolsOptions, ProbeResult } from '@meetops/media-core';
+import { assertProbedFormat, measurePacketDuration, probeMedia } from '@meetops/media-core';
+import { hasTrailingData } from './container-end.js';
 
 /**
  * Upload content verification for the scan step (security review B 4.1). The client-declared MIME type is never
@@ -15,7 +16,8 @@ import { assertProbedFormat } from '@meetops/media-core';
  *   1. caps the stored size (HEAD and while streaming),
  *   2. sniffs the container magic bytes and requires them to match the declared type,
  *   3. probes with ffprobe using the forced demuxer for that type and checks the reported container,
- *   4. bounds duration, stream count, sample rate, channels, video frame size and the estimated decoded size
+ *   4. measures the duration from a packet scan (never container metadata) and rejects a declared duration that
+ *      disagrees, rejects bytes trailing the container end (polyglots), and bounds duration, stream count, sample rate, channels, video frame size and the estimated decoded size
  *      (decompression-bomb guard).
  * Any failure yields `rejected` with a stable code; the caller sets scanStatus accordingly (never `clean`).
  */
@@ -54,11 +56,33 @@ export type UploadScanCode =
   | 'duration_invalid'
   | 'duration_too_long'
   | 'stream_params_exceeded'
-  | 'decoded_size_exceeded';
+  | 'decoded_size_exceeded'
+  | 'duration_mismatch'
+  | 'trailing_data';
 
 export type UploadScanResult = { verdict: 'clean' } | { verdict: 'rejected'; code: UploadScanCode };
 
-export type UploadProbe = (file: string, opts: { format: AllowedDemuxer }) => Promise<ProbeResult>;
+/**
+ * Probe result plus the duration MEASURED by a packet scan. `durationSeconds` (container metadata) is
+ * uploader-controlled and missing in MediaRecorder WebM, so every limit uses `measuredDurationSeconds`.
+ */
+export type UploadProbeResult = ProbeResult & { measuredDurationSeconds: number };
+export type UploadProbe = (
+  file: string,
+  opts: { format: AllowedDemuxer },
+) => Promise<UploadProbeResult>;
+
+/** Production probe: ffprobe format/streams + a bounded packet scan (media-core). */
+export function createUploadProbe(tools: MediaToolsOptions = {}): UploadProbe {
+  return async (file, opts) => {
+    const p = await probeMedia(file, { ...tools, format: opts.format });
+    const m = await measurePacketDuration(file, { ...tools, format: opts.format });
+    return { ...p, measuredDurationSeconds: m.durationSeconds };
+  };
+}
+
+/** Declared and measured duration may differ by this much (container rounding, encoder padding). */
+const DURATION_TOLERANCE = (measured: number) => Math.max(2, measured * 0.05);
 
 /** Declared MIME (base type) -> the only demuxer ffprobe may use for it. */
 const DEMUXER_BY_MIME: Record<(typeof ALLOWED_MEDIA_MIME_TYPES)[number], AllowedDemuxer> = {
@@ -117,8 +141,9 @@ export async function verifyUploadContent(
     await fh.close();
   }
   if (sniffContainer(head) !== demuxer) return reject('content_type_mismatch');
+  if (await hasTrailingData(file, demuxer)) return reject('trailing_data');
 
-  let p: ProbeResult;
+  let p: UploadProbeResult;
   try {
     p = await probe(file, { format: demuxer });
   } catch {
@@ -132,9 +157,18 @@ export async function verifyUploadContent(
   if (p.streams.length > l.maxStreams) return reject('too_many_streams');
   const audio = p.streams.filter((s) => s.codecType === 'audio');
   if (!p.hasAudio || audio.length === 0) return reject('no_audio');
-  if (!Number.isFinite(p.durationSeconds) || p.durationSeconds <= 0)
-    return reject('duration_invalid');
-  if (p.durationSeconds > l.maxDurationSeconds) return reject('duration_too_long');
+  // Limits use the measured duration only. A missing declared duration (MediaRecorder WebM) is fine; a declared one
+  // that disagrees with the packets is a forged header.
+  const duration = p.measuredDurationSeconds;
+  if (!Number.isFinite(duration) || duration <= 0) return reject('duration_invalid');
+  const declared = p.durationSeconds;
+  if (
+    Number.isFinite(declared) &&
+    declared > 0 &&
+    Math.abs(declared - duration) > DURATION_TOLERANCE(duration)
+  )
+    return reject('duration_mismatch');
+  if (duration > l.maxDurationSeconds) return reject('duration_too_long');
 
   let decoded = 0;
   for (const s of audio) {
@@ -142,7 +176,7 @@ export async function verifyUploadContent(
     const ch = s.channels ?? 0;
     if (rate <= 0 || ch <= 0 || rate > l.maxSampleRate || ch > l.maxChannels)
       return reject('stream_params_exceeded');
-    decoded += rate * ch * 4 * p.durationSeconds;
+    decoded += rate * ch * 4 * duration;
   }
   if (decoded > l.maxDecodedAudioBytes) return reject('decoded_size_exceeded');
   for (const s of p.streams) {
