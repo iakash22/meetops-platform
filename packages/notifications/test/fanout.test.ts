@@ -204,7 +204,7 @@ describe('relayOutboxOnce', () => {
   it('claims only handled kinds and never publishes an unknown kind (released unpublished)', async () => {
     const s = src([
       ev(),
-      ev({ id: '77777777-7777-4777-8777-777777777777', eventType: 'auth.new_location_signin' }),
+      ev({ id: '77777777-7777-4777-8777-777777777777', eventType: 'some.other_consumer_event' }),
     ]);
     const r = await relayOutboxOnce({
       source: s,
@@ -216,6 +216,7 @@ describe('relayOutboxOnce', () => {
     expect(r).toEqual({ claimed: 2, published: 1, retried: 0, failed: 0, skipped: 1 });
     expect(s.claim).toHaveBeenCalledWith(10, RELAY_EVENT_TYPES);
     expect([...RELAY_EVENT_TYPES].sort()).toEqual([
+      'auth.new_location_signin',
       'extracted_tasks.pending_review',
       'meeting.summary_ready',
     ]);

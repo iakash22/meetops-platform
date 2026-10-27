@@ -157,11 +157,12 @@ export const OUTBOX_NOTIFICATION_RULES = {
       subjectType: 'session',
       subjectId: p.sessionId,
     }),
+    // Contract AuthNewLocationSigninNotificationPayload: geo keys are optional, never null.
     data: (p: Static<typeof AuthNewLocationSigninEvent>) => ({
       sessionId: p.sessionId,
       reason: p.reason,
-      geoCity: p.city,
-      geoCountry: p.country,
+      ...(p.city ? { geoCity: p.city } : {}),
+      ...(p.country ? { geoCountry: p.country } : {}),
     }),
   } satisfies Rule<Static<typeof AuthNewLocationSigninEvent>>,
 } as const;
@@ -177,6 +178,14 @@ export const DEFAULT_CHANNEL_ENABLED: Readonly<Record<FanoutChannel, boolean>> =
 };
 
 /** Most specific wins: (kind, channel) > ('*', channel) > default. */
+/** Per-kind channel defaults (delivery re-checks preferences with the same defaults the fan-out used). */
+export function channelDefaultsForKind(kind: string): Partial<Record<FanoutChannel, boolean>> {
+  for (const r of Object.values(OUTBOX_NOTIFICATION_RULES) as Rule<unknown>[]) {
+    if (r.kind === kind) return r.channelDefaults ?? {};
+  }
+  return {};
+}
+
 export function channelEnabled(
   prefs: readonly FanoutPreference[],
   kind: string,
@@ -263,7 +272,7 @@ type Log = { info(o: object, m: string): void; warn(o: object, m: string): void 
 /**
  * One relay pass: claim due events, fan out, report the outcome. Bad payloads fail permanently; other errors retry
  * with backoff up to MAX_RELAY_ATTEMPTS. Only event types with a rule are claimed (kind filter in the claim query), so
- * other consumers' events (e.g. auth.new_location_signin) are never touched. A rule-less event that is somehow
+ * other consumers' events are never touched. A rule-less event that is somehow
  * claimed is put back to pending, never marked published. Logs carry ids/codes only.
  */
 export async function relayOutboxOnce(deps: {
