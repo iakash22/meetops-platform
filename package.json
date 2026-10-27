@@ -74,7 +74,8 @@
       "@expo/cli>tar": "^7.5.21",
       "cacache>tar": "^7.5.21",
       "@expo/plist>@xmldom/xmldom": "^0.8.15",
-      "@expo/metro-config>postcss": "^8.5.18"
+      "@expo/metro-config>postcss": "^8.5.18",
+      "node-forge@<=1.4.0": "1.4.1"
     },
     "patchedDependencies": {
       "@expo/cli@0.22.28": "patches/@expo__cli@0.22.28.patch"
