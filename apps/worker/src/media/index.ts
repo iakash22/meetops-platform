@@ -6,3 +6,7 @@ export * from './worker.js';
 export * from './enqueue.js';
 export * from './persistence.js';
 export * from './upload-scan.js';
+export * from './upload-scan-job.js';
+export * from './clamd.js';
+export * from './container-end.js';
+export * from './upload-scan-store.js';
