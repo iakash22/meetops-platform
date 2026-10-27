@@ -90,7 +90,7 @@ export function createApiRequester({ baseUrl, getAccessToken, fetchImpl }: ApiCl
   const origin = baseUrl.replace(/\/+$/, '');
 
   return async function request<T>(
-    method: 'GET' | 'POST',
+    method: 'GET' | 'POST' | 'PATCH',
     path: string,
     body?: unknown,
     expect = 200,

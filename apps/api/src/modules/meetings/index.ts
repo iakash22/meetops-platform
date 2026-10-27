@@ -8,11 +8,18 @@ import type { ResolveCaller } from '../directory/http/route-kit.js';
 import type { ModuleDeps } from '../index.js';
 import { MeetingService } from './application/meeting.service.js';
 import { meetingRoutes } from './http/meetings.routes.js';
+import {
+  bearerAwareMutationGuard,
+  dualCaller,
+  type ExtensionBearerGuard,
+} from '../extension-auth/http/dual-caller.js';
 
 export interface MeetingsPluginOptions {
   auth: AuthService;
   organizations: OrganizationService;
   deps: ModuleDeps;
+  /** ADR-005 bearer guard; when set, `meetings/resolve` also accepts an extension token (`meetings:resolve`). */
+  extensionBearer?: ExtensionBearerGuard;
 }
 
 /**
@@ -23,12 +30,13 @@ export default async function meetingsModule(app: FastifyInstance, opts: Meeting
   const { auth, organizations, deps } = opts;
   registerDomainErrorHandler(app);
   const g = makeGuards(auth, deps.security);
-  app.addHook('onRequest', g.mutationGuard);
+  app.addHook('onRequest', bearerAwareMutationGuard(g.mutationGuard));
   const access = new DirectoryAccess(organizations, deps.audit);
   const caller: ResolveCaller = async (request, organizationId) =>
     access.caller(await g.requireSession(request), organizationId, requestMeta(request));
   await app.register(meetingRoutes, {
     meetings: new MeetingService(deps.meetings, access, organizations),
     caller,
+    resolveCaller: dualCaller(caller, opts.extensionBearer, organizations, 'meetings:resolve'),
   });
 }

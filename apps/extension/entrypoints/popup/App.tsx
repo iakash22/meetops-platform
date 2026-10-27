@@ -17,6 +17,11 @@ import { getTabStreamId } from '../../src/lib/tab-capture.js';
 import { detectPopupContext, popupErrorMessage, type PopupContext } from './popup-errors.js';
 import { OpenFromToolbar, PopupFrame, BrandHeader, PopupView } from './PopupView.js';
 import { usePairing } from './usePairing.js';
+import { usePendingTasks } from './usePendingTasks.js';
+import { authConfig } from '../../src/lib/auth/config.js';
+import { reviewUrl } from '../../src/lib/pending-tasks.js';
+
+const REVIEW_HREF = reviewUrl(authConfig().webOrigin);
 
 const send = (msg: PopupToBackground): Promise<BackgroundResponse> =>
   chrome.runtime.sendMessage<PopupToBackground, BackgroundResponse>(msg);
@@ -53,6 +58,7 @@ function PopupApp() {
   const [now, setNow] = useState(Date.now());
   const [starting, setStarting] = useState(false);
   const { error: pairingError, ...pairing } = usePairing();
+  const pendingTasks = usePendingTasks(pairing.auth);
 
   const apply = useCallback((res: BackgroundResponse) => {
     if (res.ok) {
@@ -124,6 +130,8 @@ function PopupApp() {
   return (
     <PopupView
       {...pairing}
+      pendingTasks={pendingTasks}
+      reviewHref={REVIEW_HREF}
       status={status}
       consent={consent}
       now={now}
