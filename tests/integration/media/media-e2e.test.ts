@@ -7,9 +7,10 @@
  * the suite skips with a reason when either is unreachable). ffmpeg/ffprobe must be on PATH.
  * Large fixtures (2 min, 30 min) are generated at test time only with QA_MEDIA_LARGE=1.
  *
- * Known open bugs are `it.fails` with their reference so the suite stays green while documenting them:
- *   #269 M-1 container duration is trusted, #269 M-2 MediaRecorder WebM (no Duration) rejected,
- *   #269 L-1 WebM with appended HTML is marked clean.
+ * Known open bugs are `it.fails` with their reference so the suite stays green while documenting them.
+ * #269 M-1/M-2/L-1 are fixed at #269 head c52342c and are normal tests here. Still open: N-1 (packet-timestamp
+ * squeeze defeats the measured duration), N-2 (HTML hidden in Void / grown Segment / MP4 free box), zero-width
+ * filename characters.
  */
 import { execFileSync, spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
@@ -120,6 +121,15 @@ describe.skipIf(!!skipReason)('media e2e (MinIO + Redis + ffprobe)', () => {
     const { Queue, Worker, QueueEvents } = await import(pathToFileURL(qreq.resolve('bullmq')).href);
     const { Redis } = await import('ioredis');
 
+    // Production probe from #269 (ffprobe + packet-scan duration) when present; else metadata only (older #269).
+    const scanCore = await imp('apps/worker/src/media/upload-scan.ts');
+    const uploadProbe =
+      typeof scanCore.createUploadProbe === 'function'
+        ? scanCore.createUploadProbe({ timeoutMs: 120_000 })
+        : async (file: string, o: { format: string }) => {
+            const p = await mediaCore.probeMedia(file, { format: o.format, timeoutMs: 120_000 });
+            return { ...p, measuredDurationSeconds: p.durationSeconds };
+          };
     const base = mods.inMemoryMediaAdapters();
     const media = { ...base, signer: mb.signer };
     const conn = () => new Redis(redisUrl!, { maxRetriesPerRequest: null });
@@ -141,8 +151,7 @@ describe.skipIf(!!skipReason)('media e2e (MinIO + Redis + ffprobe)', () => {
           setScanStatus: async (org: string, id: string, st: string) =>
             files.setStatus(org, id, 'processing', st),
           source: (key: string) => mb.source(key),
-          probe: (file: string, o: { format: string }) =>
-            mediaCore.probeMedia(file, { format: o.format, timeoutMs: 60_000 }),
+          probe: uploadProbe,
           tmpRoot,
         }),
       { connection: conn(), prefix, concurrency: 1 },
@@ -158,7 +167,17 @@ describe.skipIf(!!skipReason)('media e2e (MinIO + Redis + ffprobe)', () => {
         title: 'QA media',
       })
     ).json().meetingId as string;
-    w = { app, owner, org, meetingId, files, sessions: base.sessions, mediaCore, scan };
+    w = {
+      app,
+      owner,
+      org,
+      meetingId,
+      files,
+      sessions: base.sessions,
+      mediaCore,
+      scan,
+      probe: uploadProbe,
+    };
   });
 
   afterAll(async () => {
@@ -284,7 +303,7 @@ describe.skipIf(!!skipReason)('media e2e (MinIO + Redis + ffprobe)', () => {
       'duration bomb (5 KB WebM, Duration 10 days)',
       'audio/webm',
       () => fx('bomb_duration_10days.webm'),
-      { stage: 'scan', code: 'duration_too_long' },
+      { stage: 'scan', scan: 'rejected' },
     ],
     [
       'webm declared as audio/mpeg',
@@ -378,66 +397,107 @@ describe.skipIf(!!skipReason)('media e2e (MinIO + Redis + ffprobe)', () => {
     },
   );
 
-  it.fails('#269 M-2: MediaRecorder-style WebM with no Duration element is accepted', async () => {
+  // #269 fixes (head c52342c): measured packet duration, duration_mismatch, trailing_data.
+  it('#269 M-2 (fixed): MediaRecorder-style WebM with no Duration element is accepted', async () => {
     expect(
       await pipeline('mr.webm', await fx('mediarecorder_noduration_10s.webm'), 'audio/webm'),
     ).toEqual({ stage: 'download', scan: 'clean' });
   });
 
-  it.fails('#269 L-1: WebM with appended HTML is rejected', async () => {
-    const b = Buffer.concat([
-      await fx('tone_10s_2ch.webm'),
-      Buffer.from('<html><script>alert(1)</script></html>'),
-    ]);
-    expect((await pipeline('poly.webm', b, 'audio/webm')).scan).toBe('rejected');
+  it.each([
+    ['WebM + appended HTML', 'tone_10s_2ch.webm', 'audio/webm'],
+    ['MediaRecorder WebM + appended HTML', 'mediarecorder_noduration_10s.webm', 'audio/webm'],
+    ['MP4 + HTML after the last box', 'speech_10s_1ch.mp4', 'video/mp4'],
+  ])('#269 L-1 (fixed): %s -> rejected trailing_data', async (_n, f, mime) => {
+    const b = Buffer.concat([await fx(f), HTML]);
+    expect(await pipeline(f, b, mime)).toMatchObject({ stage: 'scan', code: 'trailing_data' });
   });
 
-  it.fails(
-    '#269 M-1 (truncation variant): WebM cut to its first 3 KB of 24 KB (header still says 10 s) is rejected',
-    async () => {
-      expect((await pipeline('trunc.webm', await fx('truncated.webm'), 'audio/webm')).scan).toBe(
-        'rejected',
-      );
-    },
-  );
-
-  it('#269 M-1 (truncation variant) is currently marked clean (documents the gap)', async () => {
-    expect(await pipeline('trunc2.webm', await fx('truncated.webm'), 'audio/webm')).toEqual({
-      stage: 'download',
-      scan: 'clean',
+  it('#269 M-1 (fixed, truncation): WebM cut to 3 KB of 24 KB (header says 10 s) -> duration_mismatch', async () => {
+    expect(await pipeline('trunc.webm', await fx('truncated.webm'), 'audio/webm')).toMatchObject({
+      stage: 'scan',
+      code: 'duration_mismatch',
     });
   });
 
-  it('#269 L-1 mitigation: the polyglot downloads only as attachment with a fixed audio type', async () => {
-    const b = Buffer.concat([
-      await fx('tone_10s_2ch.webm'),
-      Buffer.from('<html><script>alert(2)</script></html>'),
-    ]);
-    // pipeline() asserts attachment + fixed content-type + private bucket when it reaches download
-    expect(await pipeline('poly2.webm', b, 'audio/webm')).toEqual({
-      stage: 'download',
-      scan: 'clean',
+  it.each([
+    ['lower (10 s as 1 s)', 1000],
+    ['higher (10 s as 100 s)', 100_000],
+  ])('#269 M-1 (fixed): Duration forged %s -> duration_mismatch', async (_n, ms) => {
+    const b = forgeWebmDuration(await fx('speech_10s_1ch.webm'), ms);
+    expect(await pipeline('forged.webm', b, 'audio/webm')).toMatchObject({
+      stage: 'scan',
+      code: 'duration_mismatch',
     });
   });
 
   it.fails(
-    '#269 M-1: real 10 s WebM whose Duration is forged to 1 s is rejected by a 5 s duration cap',
+    'new N-1: packet timestamps squeezed 20x (10 s of audio, pts say ~0.5 s) are rejected by a 5 s cap',
     async () => {
-      const scanMod = await imp('apps/worker/src/media/upload-scan.ts');
-      const dir = await mkdtemp(path.join(tmpRoot, 'm1-'));
+      const dir = await mkdtemp(path.join(tmpRoot, 'n1-'));
       try {
-        const f = path.join(dir, 'f.webm');
-        await writeFile(f, forgeWebmDuration(await fx('speech_10s_1ch.webm'), 1000));
-        const probe = (file: string, o: { format: string }) =>
-          w.mediaCore.probeMedia(file, { format: o.format });
+        const src = path.join(dir, 'in.webm');
+        const out = path.join(dir, 'sq.webm');
+        await writeFile(src, await fx('speech_10s_1ch.webm'));
+        execFileSync('ffmpeg', [
+          '-hide_banner',
+          '-loglevel',
+          'error',
+          '-y',
+          '-i',
+          src,
+          '-c',
+          'copy',
+          '-bsf:a',
+          'setts=ts=N*1',
+          out,
+        ]);
+        const scanMod = await imp('apps/worker/src/media/upload-scan.ts');
         expect(
-          await scanMod.verifyUploadContent(f, 'audio/webm', probe, { maxDurationSeconds: 5 }),
+          await scanMod.verifyUploadContent(out, 'audio/webm', w.probe, { maxDurationSeconds: 5 }),
         ).toMatchObject({ verdict: 'rejected' });
       } finally {
         await rm(dir, { recursive: true, force: true });
       }
     },
   );
+
+  it.fails(
+    'new N-2: HTML inside a WebM Void element at the end of the Segment is rejected',
+    async () => {
+      expect(
+        (
+          await pipeline(
+            'void.webm',
+            webmWithTail(await fx('speech_10s_1ch.webm'), true),
+            'audio/webm',
+          )
+        ).scan,
+      ).toBe('rejected');
+    },
+  );
+
+  it.fails(
+    'new N-2: HTML after the last Cluster with the Segment size grown to cover it is rejected',
+    async () => {
+      expect(
+        (
+          await pipeline(
+            'grown.webm',
+            webmWithTail(await fx('speech_10s_1ch.webm'), false),
+            'audio/webm',
+          )
+        ).scan,
+      ).toBe('rejected');
+    },
+  );
+
+  it.fails('new N-2: HTML inside a trailing MP4 `free` box is rejected', async () => {
+    const len = Buffer.alloc(4);
+    len.writeUInt32BE(8 + HTML.length);
+    const b = Buffer.concat([await fx('speech_10s_1ch.mp4'), len, Buffer.from('free'), HTML]);
+    expect((await pipeline('free.mp4', b, 'video/mp4')).scan).toBe('rejected');
+  });
 
   it('bucket is private (policy + ACL) via @meetops/storage verifyBucketPrivate', async () => {
     const svc = await mb.storageService();
@@ -493,8 +553,7 @@ describe.skipIf(!!skipReason)('media e2e (MinIO + Redis + ffprobe)', () => {
       expect(all.equals(src)).toBe(true);
       const key = `organizations/${w.org}/recording-sessions/${id}/assembled`;
       await mb.putBuffer(key, all, 'audio/webm');
-      const probe = (f: string, o: { format: string }) =>
-        w.mediaCore.probeMedia(f, { format: o.format });
+      const probe = w.probe;
       const scanMod = await imp('apps/worker/src/media/upload-scan.ts');
       expect(
         await scanMod.scanUploadObject(mb.source(key), 'audio/webm', probe, { tmpRoot }),
@@ -612,6 +671,28 @@ describe.skipIf(!!skipReason)('media e2e (MinIO + Redis + ffprobe)', () => {
     expect(await readdir(tmpRoot)).toEqual([]);
   });
 });
+
+const HTML = Buffer.from('<html><script>alert(1)</script></html>');
+
+/**
+ * Hide HTML inside the WebM Segment: as a Void (0xEC) element, or as raw bytes after the last Cluster with the
+ * known-size Segment grown to cover them.
+ */
+function webmWithTail(src: Buffer, asVoid: boolean): Buffer {
+  const tail = asVoid ? Buffer.concat([Buffer.from([0xec, 0x80 | HTML.length]), HTML]) : HTML;
+  const b = Buffer.from(src);
+  const i = b.indexOf(Buffer.from([0x18, 0x53, 0x80, 0x67]));
+  const len = 9 - b[i + 4]!.toString(2).length;
+  let v = 0n;
+  for (let k = 0; k < len; k++) v = (v << 8n) | BigInt(b[i + 4 + k]!);
+  const mask = (1n << BigInt(7 * len)) - 1n;
+  let nv = ((v & mask) + BigInt(tail.length)) | (1n << BigInt(7 * len));
+  for (let k = len - 1; k >= 0; k--) {
+    b[i + 4 + k] = Number(nv & 0xffn);
+    nv >>= 8n;
+  }
+  return Buffer.concat([b, tail]);
+}
 
 /** Minimal 64-bit ELF header (no code): enough for magic-byte checks. */
 function elf(): Buffer {
