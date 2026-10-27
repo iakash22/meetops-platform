@@ -147,6 +147,11 @@ test.describe('web flow (PR #48 web + createServer API)', () => {
     const sessionRefetch = page.waitForResponse(
       (r) => r.url().endsWith('/api/auth/session') && r.request().method() === 'GET',
     );
+    // Register before the switch: the new org's meetings fetch can fire before the switcher
+    // text assertion below resolves, so waiting for it afterwards races.
+    const otherMeetings = page.waitForRequest((r) =>
+      r.url().includes(`/api/orgs/${other.id}/meetings`),
+    );
     await switcher.click();
     await expect(page.getByRole('option')).toHaveText(['Alpha QA', 'Beta QA']);
     await page.getByRole('option', { name: other.name }).click();
@@ -155,7 +160,7 @@ test.describe('web flow (PR #48 web + createServer API)', () => {
     expect(resp.status()).toBe(200);
     expect((await sessionRefetch).status()).toBe(200);
     await expect(switcher).toContainText(other.name);
-    await page.waitForRequest((r) => r.url().includes(`/api/orgs/${other.id}/meetings`));
+    await otherMeetings;
   });
 
   test('[E2E-05b] a failed org switch keeps the current org (no cross-org requests)', async ({
