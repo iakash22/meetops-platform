@@ -138,6 +138,10 @@ export class UploadService {
     const f = await this.find(c, id);
     authorizeMedia(c, 'read', 'FileObject', f.uploadedById);
     if (f.scanStatus !== 'clean') throw new UploadNotFoundError();
-    return this.d.signer.presignGet({ key: f.key, ttlSeconds: DOWNLOAD_URL_TTL_SECONDS });
+    return this.d.signer.presignGet({
+      key: f.key,
+      ttlSeconds: DOWNLOAD_URL_TTL_SECONDS,
+      contentType: f.mimeType,
+    });
   }
 }
