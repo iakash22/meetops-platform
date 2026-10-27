@@ -123,6 +123,20 @@ describe('verifyUploadContent (security review B 4.1)', () => {
     // M-1: a forged short header no longer hides a long recording; limits use the measured duration.
     expect(
       await v(probeResult({ durationSeconds: 1, measuredDurationSeconds: 5 * 3600 })),
+    ).toMatchObject({ code: 'duration_too_long' });
+    expect(
+      await v(probeResult({ durationSeconds: 1, measuredDurationSeconds: 600 })),
+    ).toMatchObject({ code: 'duration_mismatch' });
+    // N-5: the declared AUDIO duration is compared, not the format max (longer video track).
+    expect(
+      await v(
+        probeResult({ durationSeconds: 16, audioDurationSeconds: 10, measuredDurationSeconds: 10 }),
+      ),
+    ).toEqual({ verdict: 'clean' });
+    expect(
+      await v(
+        probeResult({ durationSeconds: 16, audioDurationSeconds: 1, measuredDurationSeconds: 10 }),
+      ),
     ).toMatchObject({ code: 'duration_mismatch' });
     expect(
       await v(probeResult({ durationSeconds: 0, measuredDurationSeconds: 5 * 3600 })),
@@ -401,6 +415,43 @@ describe.skipIf(!has('ffmpeg') || !has('ffprobe'))('verifyUploadContent with rea
     expect(await verifyUploadContent(poly2, 'audio/webm', probe)).toMatchObject({
       code: 'trailing_data',
     });
+  });
+  it('N-3: decoding stops just past the duration cap instead of decoding the whole file', async () => {
+    const long = tone('n3-long.webm', 60, ['-b:a', '6k']);
+    const capped = createUploadProbe({ maxDurationSeconds: 5 });
+    const r = await capped(long, { format: 'webm' });
+    expect(r.measuredDurationSeconds).toBeGreaterThan(5);
+    expect(r.measuredDurationSeconds).toBeLessThan(10);
+    expect(
+      await verifyUploadContent(long, 'audio/webm', capped, { maxDurationSeconds: 5 }),
+    ).toMatchObject({ code: 'duration_too_long' });
+  });
+  it('N-4: a valid low-bitrate (6 kbit/s) Opus file is not flagged timestamps_invalid', async () => {
+    const low = tone('n4-6k.webm', 10, ['-b:a', '6k']);
+    expect(await verifyUploadContent(low, 'audio/webm', probe)).toEqual({ verdict: 'clean' });
+  });
+  it('N-5: an MP4 whose video outlasts its audio is not a duration_mismatch', async () => {
+    const out = path.join(root, 'n5-video-longer.mp4');
+    execFileSync('ffmpeg', [
+      '-hide_banner',
+      '-loglevel',
+      'error',
+      '-y',
+      '-f',
+      'lavfi',
+      '-i',
+      'testsrc=size=160x120:rate=10:duration=16',
+      '-f',
+      'lavfi',
+      '-i',
+      'sine=frequency=440:sample_rate=48000:duration=10',
+      '-c:v',
+      'mpeg4',
+      '-c:a',
+      'aac',
+      out,
+    ]);
+    expect(await verifyUploadContent(out, 'video/mp4', probe)).toEqual({ verdict: 'clean' });
   });
   const fx = (n: string) => path.join(__dirname, 'fixtures', 'media', n);
   it('tester fixtures (p2-media): MediaRecorder no-Duration WebM is clean', async () => {
