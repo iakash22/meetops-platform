@@ -51,11 +51,12 @@ GEOIP_UPDATE_URL=https://download.db-ip.com/free/dbip-city-lite-{YYYY}-{MM}.mmdb
 - `GEOIP_UPDATE_SHA256_URL`: a URL whose body starts with the hex SHA-256 of the downloaded file. It follows the same rules as the download URL. DB-IP Lite does not publish one, so it is unset by default.
 - `GEOIP_UPDATE_MAX_BYTES`: default 256 MiB.
 - `GEOIP_UPDATE_TEST_IPS`: default `1.1.1.1,8.8.8.8,2606:4700:4700::1111`.
-- `GEOIP_UPDATE_TIMEOUT_MS`: default 120000.
+- `GEOIP_UPDATE_TIMEOUT_MS`: socket idle timeout, default 120000.
+- `GEOIP_UPDATE_TOTAL_TIMEOUT_MS`: overall deadline for the whole run, default 300000 (5 min). A slow-drip response is aborted and the current file is kept.
 
 Rules:
 
-- **Download:** `https:` only, and the host must be on the allowlist; a URL with credentials is refused. **Redirects are never followed**: any 3xx fails the run. A Content-Length over the cap is refused, and the stream is aborted as soon as it passes the cap. For `.gz` files the decompressed size is capped too, which guards against gzip bombs. An invalid URL or host makes the worker fail at startup rather than skip silently.
+- **Download:** `https:` only, and the host must be on the allowlist; a URL with credentials or any explicit non-default port (e.g. `:8443`) is refused. **Redirects are never followed**: any 3xx fails the run. A Content-Length over the cap is refused, and the stream is aborted as soon as it passes the cap. For `.gz` files the decompressed size is capped too, which guards against gzip bombs. An invalid URL or host makes the worker fail at startup rather than skip silently.
 - **Verify:** the SHA-256 is checked when `GEOIP_UPDATE_SHA256_URL` is set. Then the file is opened with `maxmind`, its database type must be a City database, and at least one test IP must resolve to a country.
 - **Swap:** the file is downloaded to a temp file in the same directory and fsynced. After verification, the current file is copied to `<GEOIP_DB_PATH>.prev` (the last good copy), and the new file is `rename`d over `GEOIP_DB_PATH`, which is atomic on one filesystem, so readers see either the old or the new file. **On any failure the current file is kept** and the temp file is removed. Logs carry only error codes and sizes, never paths or URLs.
 - **Pick-up:** the API opens the file at startup, so restart the API (rolling) after an update to use the new month's data. To roll back, move `city.mmdb.prev` over `city.mmdb` and restart.
