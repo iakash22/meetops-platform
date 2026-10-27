@@ -59,6 +59,7 @@ import {
 import { createRedisRevocationPublisher } from '@meetops/session-verifier';
 import {
   ExtensionAuthService,
+  type ExtensionAuthLog,
   extensionAuthRoutes,
   InMemoryExtensionTokenRepository,
   RedisExtensionTokenRepository,
@@ -154,6 +155,8 @@ export interface ModuleDeps {
   extensionTokens: ExtensionTokenRepository;
   /** ADR-005 allowlisted Chrome extension ids (EXTENSION_IDS; plus EXTENSION_DEV_IDS in development/test). */
   extensionIds: readonly string[];
+  /** ADR-005 A1.4 security-signal logger for extension auth; defaults to the app's (redacting) logger. */
+  extensionAuthLog?: ExtensionAuthLog;
   /**
    * ADR-012 desktop sign-in. Off unless DESKTOP_AUTH_ENABLED=true (the ADR-012 amendment, PR #192, awaits sign-off).
    * When off, the /auth/desktop/* routes are not registered and desktop bearers never verify.
@@ -494,7 +497,10 @@ export async function registerModules(app: FastifyInstance, deps: ModuleDeps) {
       ]);
     });
   }
-  const extensionAuth = new ExtensionAuthService(deps);
+  const extensionAuth = new ExtensionAuthService({
+    ...deps,
+    log: deps.extensionAuthLog ?? app.log,
+  });
   const desktopAuth =
     deps.desktopAuthEnabled === true
       ? new DesktopAuthService({
