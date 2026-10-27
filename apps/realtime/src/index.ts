@@ -1,7 +1,6 @@
 import { pathToFileURL } from 'node:url';
-import { createLogger } from '@meetops/logger';
 import { loadRealtimeConfig } from './config.js';
-import { createRealtimeServer } from './server.js';
+import { createRealtimeLogger, createRealtimeServer } from './server.js';
 
 export * from './config.js';
 export * from './events.js';
@@ -10,7 +9,7 @@ export * from './handshake.js';
 export * from './control-events.js';
 
 async function main(): Promise<void> {
-  const log = createLogger({ name: 'realtime' });
+  const log = createRealtimeLogger();
   const config = loadRealtimeConfig();
   // ADR-011: real, read-only session verification (BE-6) and an org-scoped meeting lookup under RLS.
   // denyAllVerifier stays exported for tests only.

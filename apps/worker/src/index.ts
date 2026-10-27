@@ -1,5 +1,5 @@
 import { pathToFileURL } from 'node:url';
-import { logger } from '@meetops/logger';
+import { logger } from './logger.js';
 import { startMediaWorker } from './media/index.js';
 import { registerTranscriptionWorker } from './ai/index.js';
 import { createTranscriptionHostDeps } from './ai/bootstrap.js';

@@ -11,7 +11,7 @@ import {
   type AuthorizeTarget,
 } from '@meetops/storage';
 import { QUEUE_NAMES, type SttProviderId } from '@meetops/contracts';
-import { logger as baseLogger } from '@meetops/logger';
+import { logger as baseLogger } from '../logger.js';
 import {
   DEFAULT_MEDIA_LIMITS,
   DEFAULT_WORK_TMP_BYTES,
