@@ -43,6 +43,10 @@ function fakeClient() {
       return 1;
     },
     notification: {
+      findFirst: async ({ where, select }: { where: Row; select: Record<string, boolean> }) => {
+        const r = notifications.find((x) => match(x, where));
+        return r ? pick(r, select) : null;
+      },
       upsert: async ({
         where,
         create,
@@ -250,6 +254,17 @@ describe('notification repository', () => {
         expect(f.settings.length).toBe(n);
       }
     }
+  });
+
+  it('findForUser returns only the caller own row inside the user context', async () => {
+    const f = fakeClient();
+    const repo = createNotificationRepository({ client: f.client, cipher });
+    const mine = await repo.create(ORG, { userId: USER, type: 't', dedupeKey: 'a' });
+    const theirs = await repo.create(ORG, { userId: OTHER, type: 't', dedupeKey: 'b' });
+    expect((await repo.findForUser(ORG, USER, mine.id))?.id).toBe(mine.id);
+    expect(f.settings.at(-1)).toContain(`app.current_user_id=${USER}`);
+    expect(await repo.findForUser(ORG, USER, theirs.id)).toBeUndefined();
+    await expect(repo.findForUser(ORG, '', mine.id)).rejects.toThrow();
   });
 
   it('round-trips cursors and rejects garbage', () => {

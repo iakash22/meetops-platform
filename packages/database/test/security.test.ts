@@ -84,6 +84,7 @@ const INTEGRATION_ROUTING_POLICY_MIGRATION = '20261027140000_integration_routing
 const SESSION_AUDIT_GEOIP_MIGRATION = '20261028010000_session_audit_geoip';
 /** ADR-013 notifications tables. Update LATEST_MIGRATION when adding a migration. */
 const NOTIFICATIONS_MIGRATION = '20261027180000_notifications';
+const RELAY_BY_TYPE_MIGRATION = '20261028000000_relay_claim_by_event_type';
 const notificationsSql = readFileSync(
   resolve(migrationsDir, NOTIFICATIONS_MIGRATION, 'migration.sql'),
   'utf8',
@@ -1053,6 +1054,24 @@ describe('security review fixes (static)', () => {
     }
   });
 
+  it('(3b) relay claim by event type: definer, least privilege, filters on event_type', () => {
+    const sql = secDir('20261028000000_relay_claim_by_event_type');
+    expect(sql).toContain('SECURITY DEFINER');
+    expect(sql).toContain('c.event_type = ANY (COALESCE(p_event_types, ARRAY[]::text[]))');
+    expect(sql).toContain(
+      'REVOKE ALL ON FUNCTION public.relay_claim_outbox_events(integer, text[]) FROM PUBLIC;',
+    );
+    expect(sql).toContain(
+      'GRANT EXECUTE ON FUNCTION public.relay_claim_outbox_events(integer, text[]) TO meetops_relay;',
+    );
+    expect(sql).not.toMatch(/GRANT (SELECT|UPDATE|INSERT|DELETE)/);
+    for (const f of ['scripts/bootstrap-roles.sql', 'scripts/create-db-roles.ts']) {
+      expect(readFileSync(resolve(pkgDir, f), 'utf8'), f).toContain(
+        'GRANT EXECUTE ON FUNCTION public.relay_claim_outbox_events(integer, text[]) TO meetops_relay;',
+      );
+    }
+  });
+
   it('(4) every NO FORCE is re-forced in the same migration, and a final assertion guards the chain', () => {
     for (const d of readdirSync(migrationsDir, { withFileTypes: true }).filter((e) =>
       e.isDirectory(),
@@ -1463,7 +1482,8 @@ describe('ADR-013 notifications tables (static)', () => {
       .map((x) => x.name)
       .sort();
     expect(dirs.at(-1)).toBe(LATEST_MIGRATION);
-    expect(dirs.at(-2)).toBe(NOTIFICATIONS_MIGRATION);
+    expect(dirs.at(-2)).toBe(RELAY_BY_TYPE_MIGRATION);
+    expect(dirs.at(-3)).toBe(NOTIFICATIONS_MIGRATION);
     expect(statements).not.toMatch(
       /\bDROP\b|RENAME|ALTER COLUMN|NO FORCE|DISABLE ROW LEVEL SECURITY/i,
     );

@@ -254,6 +254,22 @@ export function createNotificationRepository(options: NotificationRepositoryOpti
       });
     },
 
+    /** Worker: one of the caller's own notifications (owner_only applies), or undefined. */
+    async findForUser(
+      organizationId: string,
+      userId: string,
+      notificationId: string,
+    ): Promise<NotificationRecord | undefined> {
+      assertUuid(notificationId, 'notificationId');
+      const row = await self(organizationId, userId, (tx) =>
+        tx.notification.findFirst({
+          where: { organizationId, userId, id: notificationId },
+          select: NOTIFICATION_SELECT,
+        }),
+      );
+      return row ? toRecord(row) : undefined;
+    },
+
     /** Marks the given ids (or every unread one when ids is 'all') read. Other users' ids are silently ignored. */
     async markRead(
       organizationId: string,
