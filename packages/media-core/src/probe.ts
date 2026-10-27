@@ -1,3 +1,4 @@
+import { spawn } from 'node:child_process';
 import {
   PROTOCOL_WHITELIST,
   resolveTools,
@@ -107,4 +108,71 @@ export async function probeMedia(inputPath: string, opts: ProbeOptions = {}): Pr
     { timeoutMs: t.timeoutMs, signal: opts.signal },
   );
   return parseProbeOutput(stdout);
+}
+
+/**
+ * Measured duration from a packet scan (security review B, PR #269 M-1/M-2). Container metadata (`format.duration`,
+ * the EBML Duration element) is uploader-controlled and absent in MediaRecorder WebM, so the scan reads every packet
+ * of the first audio stream (demux only, no decode) and returns max(pts + duration). Streams stdout line by line
+ * (never buffered whole) and is bounded by the tool timeout.
+ */
+export async function measurePacketDuration(
+  inputPath: string,
+  opts: ProbeOptions = {},
+): Promise<{ durationSeconds: number; packets: number }> {
+  const t = resolveTools(opts);
+  const fmt = opts.format ? ['-f', opts.format] : [];
+  const args = [
+    '-v',
+    'error',
+    ...PROTOCOL_WHITELIST,
+    ...fmt,
+    '-select_streams',
+    'a:0',
+    '-show_entries',
+    'packet=pts_time,duration_time',
+    '-of',
+    'csv=p=0',
+    '--',
+    inputPath,
+  ];
+  return new Promise((resolve, reject) => {
+    const child = spawn(t.ffprobe, args, {
+      stdio: ['ignore', 'pipe', 'pipe'],
+      signal: opts.signal,
+    });
+    let max = 0;
+    let packets = 0;
+    let rest = '';
+    let stderr = '';
+    const line = (l: string) => {
+      const [pts, dur] = l.split(',');
+      const p = Number(pts);
+      if (!Number.isFinite(p)) return;
+      const d = Number(dur);
+      packets++;
+      max = Math.max(max, p + (Number.isFinite(d) ? d : 0));
+    };
+    child.stdout.setEncoding('utf8');
+    child.stdout.on('data', (d: string) => {
+      const lines = (rest + d).split('\n');
+      rest = lines.pop() ?? '';
+      if (rest.length > 4096) rest = '';
+      lines.forEach(line);
+    });
+    child.stderr.on('data', (d: Buffer) => {
+      stderr = (stderr + d.toString()).slice(-4096);
+    });
+    const timer = setTimeout(() => child.kill('SIGKILL'), t.timeoutMs);
+    child.on('error', (err) => {
+      clearTimeout(timer);
+      reject(new FfmpegError(`Failed to run ${t.ffprobe}: ${err.message}`, null, stderr));
+    });
+    child.on('close', (code, sig) => {
+      clearTimeout(timer);
+      if (rest) line(rest);
+      if (code === 0) resolve({ durationSeconds: max, packets });
+      else reject(new FfmpegError(`${t.ffprobe} exited with ${code ?? sig}`, code, stderr));
+    });
+  });
 }
