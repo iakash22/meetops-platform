@@ -1,5 +1,14 @@
 # MeetOps AI — Project Context Handoff
 
+## Update — 27 Oct 2026
+
+- **Agents:** Coordinator (merge gate, PRs, frontend) + All Rounder (backend, DB, contracts, security; full local CI incl. live DB tests).
+- **Flow:** feature branch → PR into `integration/phase-1` → merge gate → later one integration → `main` PR merged by Shubham.
+- **Merge gate:** PR rebased on current integration, full CI green (audit-gate must pass; known mobile/extension advisories excepted), review, then merge in dependency order.
+- **Lockfile rule:** only one branch at a time may change `pnpm-lock.yaml`; others wait for the slot.
+- Work paused overnight 27 Oct; see `PHASE_STATUS.md` for the resume list.
+
+
 > Snapshot: 2026-10-24 ~15:25 IST (refreshed; first written ~15:10 IST) (updated by the Project Lead from the coordinator's records and live `gh pr list`). The previous 2026-10-23 snapshot is superseded. Verify live state with `gh` before acting. Contains no secrets, tokens or key values.
 
 ## Resume checklist (do this first)
@@ -57,6 +66,7 @@ Client apps at a glance: Web (built), Browser extension (built), Desktop (planne
 ## 3. Architecture and key decisions
 
 ADRs (in `docs/15-decisions/` on `integration/phase-1`):
+
 - ADR-001: modular monolith.
 - ADR-002: provider interfaces (every external service sits behind an adapter).
 - ADR-003: contracts ownership.
@@ -64,6 +74,7 @@ ADRs (in `docs/15-decisions/` on `integration/phase-1`):
 - ADR-005: extension auth (pairing, single-use nonce, exact `sender.origin`, session-only tokens, rotating bearer tokens, refresh-family revocation).
 
 Decisions:
+
 - **AI**: switchable AI Provider Registry and Model Router.
   - LLM: Gemini (primary, `gemini-2.5-flash-lite`, free tier), OpenAI, Ollama, OpenAI-compatible.
   - STT: **AssemblyAI is the default for background transcription**, with a Whisper (faster-whisper, local) option. **No Deepgram.** Live streaming transcription and embeddings are deferred.
@@ -98,22 +109,24 @@ Decisions:
 - Agents: Architecture, Security, Backend, Frontend, Database, DevOps, Media and Realtime, AI, Integrations, Native Apps, QA, Documentation.
 - All agents report to the coordinator; Project Lead reports to Akash. Per-agent status is in `docs/AGENT_STATUS.md`.
 
-| Agent | Owns |
-|---|---|
-| Architecture | system design, monorepo, contracts, ADRs, boundary lint, reviews |
-| Security | threat model, auth, tenancy, reviews |
-| Backend | `apps/api` |
-| Frontend | `apps/web` |
-| Database | `packages/database` |
-| DevOps | `infra/`, `.github/workflows`, scripts, deps |
+| Agent              | Owns                                                                      |
+| ------------------ | ------------------------------------------------------------------------- |
+| Architecture       | system design, monorepo, contracts, ADRs, boundary lint, reviews          |
+| Security           | threat model, auth, tenancy, reviews                                      |
+| Backend            | `apps/api`                                                                |
+| Frontend           | `apps/web`                                                                |
+| Database           | `packages/database`                                                       |
+| DevOps             | `infra/`, `.github/workflows`, scripts, deps                              |
 | Media and Realtime | `apps/realtime`, `packages/media-core`, `packages/storage`, FFmpeg worker |
-| AI | `packages/ai-core`, AI worker jobs |
-| Integrations | `packages/integrations` (GitHub App, Jira) |
-| Native Apps | `apps/extension`, `apps/desktop` (Tauri), mobile (Expo) |
-| QA | tests and test suites |
-| Documentation | `docs/`, READMEs |
+| AI                 | `packages/ai-core`, AI worker jobs                                        |
+| Integrations       | `packages/integrations` (GitHub App, Jira)                                |
+| Native Apps        | `apps/extension`, `apps/desktop` (Tauri), mobile (Expo)                   |
+| QA                 | tests and test suites                                                     |
+| Documentation      | `docs/`, READMEs                                                          |
 
 ## 6. Phase status
+
+Current phase report (done, in progress, and still open), taken from `main` on 2026-10-25: [`docs/PHASE_STATUS.md`](PHASE_STATUS.md). The bullets below are the 2026-10-24 ~15:25 IST snapshot.
 
 Roadmap (`README.md`): 0 foundation · 1 auth/orgs/employees/teams/projects/RBAC · 2 meetings, uploads, recording, FFmpeg · 3 transcription, reports, task drafts · 4 task review/notifications · 5 GitHub/Jira two-way sync · 6 live transcription + extension · 7 calendar/imports/search/analytics · 8 desktop + mobile offline recording · 9 production hardening, billing, release.
 
@@ -127,40 +140,40 @@ Roadmap (`README.md`): 0 foundation · 1 auth/orgs/employees/teams/projects/RBAC
 
 Review note: Security PASS status above was read from PR comments. **No Architecture PASS/FAIL comments were found on any open PR** with the token's comment view, so Architecture status is **unverified** (it may be recorded elsewhere, e.g. agent chats); treat every open PR as needing an Arch PASS on its exact head SHA. Mergeability: only #78 reports a conflict; most others reported UNKNOWN (GitHub had not computed it), #83, #99, #100 report MERGEABLE.
 
-| Agent (from branch) | PR | Branch → base | Head | Security PASS comment | Title |
-|---|---|---|---|---|---|
-| AI | [#83](https://github.com/iakash22/meetops-platform/pull/83) | `feat/ai-worker-transcription` → `integration/phase-1` | `087b556` | PASS on head | feat(worker): AI transcription consumer |
-| Architecture | [#104](https://github.com/iakash22/meetops-platform/pull/104) | `feat/contracts-cursor-page-conflicts` → `integration/phase-1` | `2b411c4` | none | feat(contracts): v0.3.3 conflict reasons, page limits, /types default condition |
-| Architecture | [#105](https://github.com/iakash22/meetops-platform/pull/105) | `chore/boundary-lint` → `integration/phase-1` | `2ceb86f` | none | chore(lint): enforce module boundary imports |
-| Backend | [#98](https://github.com/iakash22/meetops-platform/pull/98) | `fix/api-lockout-redis` → `integration/phase-1` | `71cf1a8` | PASS on head | fix(api): atomic redis lockout counters, Redis lockout wiring, lockout notice email |
-| Backend | [#103](https://github.com/iakash22/meetops-platform/pull/103) | `fix/api-error-envelope` → `integration/phase-1` | `0dd4d6e` | PASS on head | fix(api): contracts v0.3.3 error envelope (reason, LAST_OWNER 409, organizationId params) |
-| Database | [#89](https://github.com/iakash22/meetops-platform/pull/89) | `feat/db-tenant-isolation-tests` → `integration/phase-1` | `107cb64` | PASS on head | test(database): per-table cross-organization RLS isolation (ADR-010) |
-| Database | [#91](https://github.com/iakash22/meetops-platform/pull/91) | `feat/db-seeds-organizations` → `integration/phase-1` | `c9c0c8a` | PASS on head | feat(database): multi-organization seed (ADR-010) |
-| Database | [#93](https://github.com/iakash22/meetops-platform/pull/93) | `feat/db-ai-usage-transcripts` → `integration/phase-1` | `faa2ff7` | PASS on head | feat(database): AI usage counters, idempotency, org config and transcript chunks with RLS |
-| Database | [#97](https://github.com/iakash22/meetops-platform/pull/97) | `feat/db-recording-chunks` → `integration/phase-1` | `6398b00` | none | feat(database): recordings.chunk_count, chunk FileObject repository + lookup for Media #92 |
-| Database | [#100](https://github.com/iakash22/meetops-platform/pull/100) | `feat/db-key-prefix-transition` → `integration/phase-1` | `c049c4c` | none | feat(database): accept org/ and organizations/ storage key prefixes (ADR-010 phase A) |
-| DevOps | [#7](https://github.com/iakash22/meetops-platform/pull/7) | `chore/devops-containers-ci` → `integration/phase-1` | `e7e5cfa` | none | chore(devops): Dockerfiles, compose.app, docker CI, audit, dependabot, CODEOWNERS |
-| DevOps | [#26](https://github.com/iakash22/meetops-platform/pull/26) | `chore/commitlint` → `integration/phase-1` | `8629f10` | none | chore: add commitlint commit-msg hook |
-| DevOps | [#32](https://github.com/iakash22/meetops-platform/pull/32) | `chore/windows-node24-setup` → `integration/phase-1` | `6f59edc` | none | chore: Windows and Node 24 dev setup |
-| DevOps | [#40](https://github.com/iakash22/meetops-platform/pull/40) | `chore/fast-pre-commit` → `integration/phase-1` | `96092ca` | none | chore(hooks): fast pre-commit, type-aware checks on pre-push |
-| DevOps | [#95](https://github.com/iakash22/meetops-platform/pull/95) | `fix/compose-dev-minio` → `integration/phase-1` | `23be850` | none | fix(compose): replace unpullable minio/minio and minio/mc images |
-| DevOps | [#99](https://github.com/iakash22/meetops-platform/pull/99) | `chore/nodemailer-10` → `integration/phase-1` | `8ee3d2e` | PASS on head | chore(deps): nodemailer 10.2.1 (high-severity advisories) |
-| DevOps | [#101](https://github.com/iakash22/meetops-platform/pull/101) | `chore/testcontainers-11` → `integration/phase-1` | `2d14358` | none | chore(deps): testcontainers 11 (undici / @fastify/busboy high advisories) |
-| DevOps | [#102](https://github.com/iakash22/meetops-platform/pull/102) | `chore/vitest-4-upgrade` → `integration/phase-1` | `636d33e` | none | chore(deps): vitest 4.1.12 + web vite 7 (GHSA-82fw-gwwq-j7x9, vite advisories) |
-| Documentation | [#31](https://github.com/iakash22/meetops-platform/pull/31) | `docs/refresh-heads` → `integration/phase-1` | `b13b4d8` | PASS on older SHA (re-review needed) | docs: refresh DB/ops pages, auth and orgs API, integration merge flow (P1-DOC-8) |
-| Documentation | [#56](https://github.com/iakash22/meetops-platform/pull/56) | `docs/merged-phase1` → `docs/refresh-heads` | `8598338` | PASS on head | docs: auth, contracts v0.2 and extension pages for merged Phase 1 PRs; board refresh |
-| Documentation | [#80](https://github.com/iakash22/meetops-platform/pull/80) | `docs/zod4-migration-plan` → `integration/phase-1` | `8212031` | PASS on older SHA (re-review needed) | docs: zod 4 migration plan |
-| Media and Realtime | [#77](https://github.com/iakash22/meetops-platform/pull/77) | `feat/media-security-followups` → `integration/phase-1` | `f40fc15` | PASS on older SHA (re-review needed) | feat(media): security follow-ups — 1.4 GB cap, required sha256, single-use presigned uploads |
-| Media and Realtime | [#82](https://github.com/iakash22/meetops-platform/pull/82) | `feat/media-organization-keys` → `integration/phase-1` | `be5c5ce` | PASS on older SHA (re-review needed) | feat(storage)!: organizations/{organizationId}/ object keys (stacked on #77) |
-| Media and Realtime | [#85](https://github.com/iakash22/meetops-platform/pull/85) | `feat/media-upload-verify` → `integration/phase-1` | `1420cac` | PASS on older SHA (re-review needed) | feat(storage): idempotent verify-on-complete {verified:true, sha256} (stacked on #82) |
-| Media and Realtime | [#88](https://github.com/iakash22/meetops-platform/pull/88) | `feat/media-ffmpeg-worker` → `integration/phase-1` | `6fa0b5c` | PASS on older SHA (re-review needed) | feat(media): waveform artifact for the STT normalisation pipeline (stacked on #82) |
-| Media and Realtime | [#90](https://github.com/iakash22/meetops-platform/pull/90) | `feat/media-realtime-status` → `integration/phase-1` | `954aa9a` | PASS on older SHA (re-review needed) | feat(realtime): organizations:{organizationId} rooms and typed upload/processing status events (stacked on #88) |
-| Media and Realtime | [#92](https://github.com/iakash22/meetops-platform/pull/92) | `feat/media-audio-resolver` → `integration/phase-1` | `2f055c4` | PASS on older SHA (re-review needed) | feat(media): organization-scoped chunk audio resolver + chunk-count port (stacked on #82) |
-| Media and Realtime | [#94](https://github.com/iakash22/meetops-platform/pull/94) | `fix/storage-checksum-hex` → `integration/phase-1` | `2506469` | none | fix(storage)!: checksumSha256 as lowercase hex at the S3 boundary (stacked on #85) |
-| Media and Realtime | [#96](https://github.com/iakash22/meetops-platform/pull/96) | `docs/storage-key-migration-runbook` → `integration/phase-1` | `33abe7e` | none | docs(runbooks): storage key migration (dev wipe/reseed + staging copy) |
-| Native Apps | [#78](https://github.com/iakash22/meetops-platform/pull/78) | `feat/mobile-scaffold` → `integration/phase-1` | `f037dee` | PASS on head · **merge conflict** | feat(mobile): M1 Expo app scaffold (expo-router, strict TS, jest-expo) |
-| Project Lead | [#109](https://github.com/iakash22/meetops-platform/pull/109) | `docs/handover-context-main-2026-10-24` → `main` | `` |  | docs: handover context update (24 Oct 2026) |
-| QA | [#34](https://github.com/iakash22/meetops-platform/pull/34) | `ci/qa-jobs` → `integration/phase-1` | `9ab3b00` | none | ci: add QA integration (required) and e2e (informational) jobs |
+| Agent (from branch) | PR                                                            | Branch → base                                                  | Head      | Security PASS comment                | Title                                                                                                           |
+| ------------------- | ------------------------------------------------------------- | -------------------------------------------------------------- | --------- | ------------------------------------ | --------------------------------------------------------------------------------------------------------------- |
+| AI                  | [#83](https://github.com/iakash22/meetops-platform/pull/83)   | `feat/ai-worker-transcription` → `integration/phase-1`         | `087b556` | PASS on head                         | feat(worker): AI transcription consumer                                                                         |
+| Architecture        | [#104](https://github.com/iakash22/meetops-platform/pull/104) | `feat/contracts-cursor-page-conflicts` → `integration/phase-1` | `2b411c4` | none                                 | feat(contracts): v0.3.3 conflict reasons, page limits, /types default condition                                 |
+| Architecture        | [#105](https://github.com/iakash22/meetops-platform/pull/105) | `chore/boundary-lint` → `integration/phase-1`                  | `2ceb86f` | none                                 | chore(lint): enforce module boundary imports                                                                    |
+| Backend             | [#98](https://github.com/iakash22/meetops-platform/pull/98)   | `fix/api-lockout-redis` → `integration/phase-1`                | `71cf1a8` | PASS on head                         | fix(api): atomic redis lockout counters, Redis lockout wiring, lockout notice email                             |
+| Backend             | [#103](https://github.com/iakash22/meetops-platform/pull/103) | `fix/api-error-envelope` → `integration/phase-1`               | `0dd4d6e` | PASS on head                         | fix(api): contracts v0.3.3 error envelope (reason, LAST_OWNER 409, organizationId params)                       |
+| Database            | [#89](https://github.com/iakash22/meetops-platform/pull/89)   | `feat/db-tenant-isolation-tests` → `integration/phase-1`       | `107cb64` | PASS on head                         | test(database): per-table cross-organization RLS isolation (ADR-010)                                            |
+| Database            | [#91](https://github.com/iakash22/meetops-platform/pull/91)   | `feat/db-seeds-organizations` → `integration/phase-1`          | `c9c0c8a` | PASS on head                         | feat(database): multi-organization seed (ADR-010)                                                               |
+| Database            | [#93](https://github.com/iakash22/meetops-platform/pull/93)   | `feat/db-ai-usage-transcripts` → `integration/phase-1`         | `faa2ff7` | PASS on head                         | feat(database): AI usage counters, idempotency, org config and transcript chunks with RLS                       |
+| Database            | [#97](https://github.com/iakash22/meetops-platform/pull/97)   | `feat/db-recording-chunks` → `integration/phase-1`             | `6398b00` | none                                 | feat(database): recordings.chunk_count, chunk FileObject repository + lookup for Media #92                      |
+| Database            | [#100](https://github.com/iakash22/meetops-platform/pull/100) | `feat/db-key-prefix-transition` → `integration/phase-1`        | `c049c4c` | none                                 | feat(database): accept org/ and organizations/ storage key prefixes (ADR-010 phase A)                           |
+| DevOps              | [#7](https://github.com/iakash22/meetops-platform/pull/7)     | `chore/devops-containers-ci` → `integration/phase-1`           | `e7e5cfa` | none                                 | chore(devops): Dockerfiles, compose.app, docker CI, audit, dependabot, CODEOWNERS                               |
+| DevOps              | [#26](https://github.com/iakash22/meetops-platform/pull/26)   | `chore/commitlint` → `integration/phase-1`                     | `8629f10` | none                                 | chore: add commitlint commit-msg hook                                                                           |
+| DevOps              | [#32](https://github.com/iakash22/meetops-platform/pull/32)   | `chore/windows-node24-setup` → `integration/phase-1`           | `6f59edc` | none                                 | chore: Windows and Node 24 dev setup                                                                            |
+| DevOps              | [#40](https://github.com/iakash22/meetops-platform/pull/40)   | `chore/fast-pre-commit` → `integration/phase-1`                | `96092ca` | none                                 | chore(hooks): fast pre-commit, type-aware checks on pre-push                                                    |
+| DevOps              | [#95](https://github.com/iakash22/meetops-platform/pull/95)   | `fix/compose-dev-minio` → `integration/phase-1`                | `23be850` | none                                 | fix(compose): replace unpullable minio/minio and minio/mc images                                                |
+| DevOps              | [#99](https://github.com/iakash22/meetops-platform/pull/99)   | `chore/nodemailer-10` → `integration/phase-1`                  | `8ee3d2e` | PASS on head                         | chore(deps): nodemailer 10.2.1 (high-severity advisories)                                                       |
+| DevOps              | [#101](https://github.com/iakash22/meetops-platform/pull/101) | `chore/testcontainers-11` → `integration/phase-1`              | `2d14358` | none                                 | chore(deps): testcontainers 11 (undici / @fastify/busboy high advisories)                                       |
+| DevOps              | [#102](https://github.com/iakash22/meetops-platform/pull/102) | `chore/vitest-4-upgrade` → `integration/phase-1`               | `636d33e` | none                                 | chore(deps): vitest 4.1.12 + web vite 7 (GHSA-82fw-gwwq-j7x9, vite advisories)                                  |
+| Documentation       | [#31](https://github.com/iakash22/meetops-platform/pull/31)   | `docs/refresh-heads` → `integration/phase-1`                   | `b13b4d8` | PASS on older SHA (re-review needed) | docs: refresh DB/ops pages, auth and orgs API, integration merge flow (P1-DOC-8)                                |
+| Documentation       | [#56](https://github.com/iakash22/meetops-platform/pull/56)   | `docs/merged-phase1` → `docs/refresh-heads`                    | `8598338` | PASS on head                         | docs: auth, contracts v0.2 and extension pages for merged Phase 1 PRs; board refresh                            |
+| Documentation       | [#80](https://github.com/iakash22/meetops-platform/pull/80)   | `docs/zod4-migration-plan` → `integration/phase-1`             | `8212031` | PASS on older SHA (re-review needed) | docs: zod 4 migration plan                                                                                      |
+| Media and Realtime  | [#77](https://github.com/iakash22/meetops-platform/pull/77)   | `feat/media-security-followups` → `integration/phase-1`        | `f40fc15` | PASS on older SHA (re-review needed) | feat(media): security follow-ups — 1.4 GB cap, required sha256, single-use presigned uploads                    |
+| Media and Realtime  | [#82](https://github.com/iakash22/meetops-platform/pull/82)   | `feat/media-organization-keys` → `integration/phase-1`         | `be5c5ce` | PASS on older SHA (re-review needed) | feat(storage)!: organizations/{organizationId}/ object keys (stacked on #77)                                    |
+| Media and Realtime  | [#85](https://github.com/iakash22/meetops-platform/pull/85)   | `feat/media-upload-verify` → `integration/phase-1`             | `1420cac` | PASS on older SHA (re-review needed) | feat(storage): idempotent verify-on-complete {verified:true, sha256} (stacked on #82)                           |
+| Media and Realtime  | [#88](https://github.com/iakash22/meetops-platform/pull/88)   | `feat/media-ffmpeg-worker` → `integration/phase-1`             | `6fa0b5c` | PASS on older SHA (re-review needed) | feat(media): waveform artifact for the STT normalisation pipeline (stacked on #82)                              |
+| Media and Realtime  | [#90](https://github.com/iakash22/meetops-platform/pull/90)   | `feat/media-realtime-status` → `integration/phase-1`           | `954aa9a` | PASS on older SHA (re-review needed) | feat(realtime): organizations:{organizationId} rooms and typed upload/processing status events (stacked on #88) |
+| Media and Realtime  | [#92](https://github.com/iakash22/meetops-platform/pull/92)   | `feat/media-audio-resolver` → `integration/phase-1`            | `2f055c4` | PASS on older SHA (re-review needed) | feat(media): organization-scoped chunk audio resolver + chunk-count port (stacked on #82)                       |
+| Media and Realtime  | [#94](https://github.com/iakash22/meetops-platform/pull/94)   | `fix/storage-checksum-hex` → `integration/phase-1`             | `2506469` | none                                 | fix(storage)!: checksumSha256 as lowercase hex at the S3 boundary (stacked on #85)                              |
+| Media and Realtime  | [#96](https://github.com/iakash22/meetops-platform/pull/96)   | `docs/storage-key-migration-runbook` → `integration/phase-1`   | `33abe7e` | none                                 | docs(runbooks): storage key migration (dev wipe/reseed + staging copy)                                          |
+| Native Apps         | [#78](https://github.com/iakash22/meetops-platform/pull/78)   | `feat/mobile-scaffold` → `integration/phase-1`                 | `f037dee` | PASS on head · **merge conflict**    | feat(mobile): M1 Expo app scaffold (expo-router, strict TS, jest-expo)                                          |
+| Project Lead        | [#109](https://github.com/iakash22/meetops-platform/pull/109) | `docs/handover-context-main-2026-10-24` → `main`               | ``        |                                      | docs: handover context update (24 Oct 2026)                                                                     |
+| QA                  | [#34](https://github.com/iakash22/meetops-platform/pull/34)   | `ci/qa-jobs` → `integration/phase-1`                           | `9ab3b00` | none                                 | ci: add QA integration (required) and e2e (informational) jobs                                                  |
 
 ### Merged and closed (all time)
 
@@ -175,12 +188,14 @@ Closed (not merged): #5, #6, #15, #20, #25, #33, #36, #37, #41, #42, #43, #44, #
 ## 7. Open decisions and environment blockers
 
 Waiting on Akash:
+
 - The Architecture push OK for contracts v0.3.3 and boundary lint (#104, #105) needs Akash's own line in Architecture's own chat.
 - Optional: rotate the GitHub token.
 - `main` merges (Akash only).
 - Closure approval for any open PR that won't be merged.
 
 Environment:
+
 - Docker isn't running on Akash's PC.
 - GitHub Actions free minutes are exhausted: local gates replace CI (section 4) until they return.
 - The Grok Bot box has no Docker; run heavy gates sequentially (`--concurrency=1`).

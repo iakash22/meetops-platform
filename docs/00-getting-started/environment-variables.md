@@ -21,7 +21,7 @@ Where each variable is read:
 
 - `PORT` / `HOST`: the listen address (default `3000` / `0.0.0.0`). `API_PORT` is only the compose **host** port mapped to the container's `PORT=3000`.
 - `CSRF_SECRET`: HMAC key for CSRF tokens. **Required in production**, at least 32 bytes (`openssl rand -base64 48`). In dev it's random per process when empty.
-- `WEB_ORIGINS`: comma-separated allowlist for the API Origin/Referer check on mutations. **Required in production**; the dev default is `http://localhost:5173,http://localhost:3000`. This is not `WEB_ORIGIN` (below).
+- `WEB_ORIGINS`: comma-separated allowlist for browser CORS (`Access-Control-Allow-Origin` + credentials) and for the API Origin/Referer check on mutations. **Required in production**; the dev default is `http://localhost:5173,http://localhost:3000`. This is not `WEB_ORIGIN` (below).
 - `TRUST_PROXY`: hop count (`1`) or a comma list of proxy IPs/CIDRs. Empty means no proxy; `true` is rejected.
 
 ### Database
@@ -71,7 +71,7 @@ Where each variable is read:
 ### Compose host ports / web build
 
 - `API_PORT` (3000), `WEB_PORT` (5173, `vite dev`), `WEB_APP_PORT` (8080, containerised nginx; must differ from `WEB_PORT`).
-- `VITE_API_URL`: API base URL baked into the web build.
+- `VITE_API_URL`: API base URL baked into the web build. Local Vite: use `/api` (or empty) so requests go through the Vite proxy to `PORT`/`API_PORT` (same-origin). An absolute `http(s)://…` URL skips the proxy and needs API CORS (`WEB_ORIGINS`). Optional `VITE_API_PROXY_TARGET` overrides the proxy upstream.
 
 ### Email (dev: SMTP/Gmail via Nodemailer)
 

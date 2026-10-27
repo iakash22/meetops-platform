@@ -63,11 +63,12 @@ Fill in `.env` locally and never commit it. **(requires PR #7, unmerged)**: #7 m
 ## 5. Start the infra
 
 ```powershell
-pnpm dev:infra:up     # docker compose --env-file .env -f infra/compose/compose.dev.yml up -d
+pnpm docker:ensure    # opens Docker Desktop if needed, waits until ready
+pnpm dev:infra:up     # ensure-docker + compose up -d (infra/compose/compose.dev.yml)
 docker compose -f infra/compose/compose.dev.yml ps
 ```
 
-This starts Postgres (pgvector pg16), Redis, MinIO and `minio-init` (bucket creation). Stop it with `pnpm dev:infra:down`, and follow logs with `pnpm dev:infra:logs`.
+`dev:infra:up` already runs `docker:ensure`. This starts Postgres (pgvector pg16), Redis, MinIO and `minio-init` (bucket creation). Stop it with `pnpm dev:infra:down`, and follow logs with `pnpm dev:infra:logs`.
 
 ## 6. Database: migrations with two roles
 
@@ -109,17 +110,20 @@ On #6 alone (without #25), there's a single `DATABASE_URL`: run `db:migrate:depl
 ## 7. Run the apps
 
 ```powershell
-pnpm dev                                    # turbo run dev: every app with a dev script
+pnpm dev:stack                              # api + web + worker (usual local loop)
+pnpm dev                                    # every package with a dev script
 ```
 
 Or run one app per terminal:
 
-| App                                      | Command                               | Port                           |
-| ---------------------------------------- | ------------------------------------- | ------------------------------ |
-| api                                      | `pnpm --filter @meetops/api dev`      | `PORT` (default 3000)          |
-| web                                      | `pnpm --filter @meetops/web dev`      | 5173                           |
-| worker                                   | `pnpm --filter @meetops/worker dev`   | None                           |
-| realtime **(requires PR #16, unmerged)** | `pnpm --filter @meetops/realtime dev` | `REALTIME_PORT` (default 4001) |
+| App       | Command              | Port                           |
+| --------- | -------------------- | ------------------------------ |
+| api       | `pnpm dev:api`       | `PORT` (default 3000)          |
+| web       | `pnpm dev:web`       | 5173                           |
+| worker    | `pnpm dev:worker`    | None                           |
+| realtime  | `pnpm dev:realtime`  | `REALTIME_PORT` (default 4001) |
+| desktop   | `pnpm dev:desktop`   | 1420                           |
+| extension | `pnpm dev:extension` | 3000 (WXT)                     |
 
 ## 8. Port conflicts
 
