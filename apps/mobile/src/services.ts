@@ -5,7 +5,8 @@ import { createDemoMicPermission } from './consent/micPermission';
 import { createMockAuthClient } from './auth/mockAuthClient';
 import { createDemoSignupApi, type SignupApi } from './auth/SignupApiProvider';
 import { createSessionManager } from './auth/sessionManager';
-import { createInMemoryTokenStore } from './auth/tokenStore';
+import { createSecureTokenStore } from './auth/secureTokenStore';
+import { createDeviceIdProvider } from './auth/deviceId';
 import { createDemoConsentApi } from './consent/consentApi';
 import { createHttpMeetingsRepository, createHttpTasksRepository } from './data/httpRepositories';
 import { createPlaceholderMeetingsRepository } from './data/meetingsRepository';
@@ -24,7 +25,9 @@ import { createUploadQueueEngine } from './upload/uploadQueueEngine';
  * Demo mode (no URL, or a non-https URL outside dev): typed mocks, nothing leaves the device.
  * Still mocked in both modes: consent (no Backend consent route), recorder (SIMULATED: no audio, placeholder chunks into the
  * real upload queue engine with a simulated upload API, in-memory queue, always online),
- * token storage (in memory until `expo-secure-store` lands in a lockfile-owning PR).
+ * Tokens: Keychain / Keystore via expo-secure-store (`AFTER_FIRST_UNLOCK_THIS_DEVICE_ONLY`: device-only, Android
+ * backup disabled). Only the refresh token is persisted; the access token is memory-only. A failed write keeps the
+ * rotated pair in memory and retries. A stable per-install `deviceId` (ADR-005) is sent on login, refresh and logout.
  */
 export function resolveApiBaseUrl(raw: string | undefined, dev: boolean): string | null {
   const url = raw?.trim().replace(/\/+$/, '');
@@ -35,17 +38,22 @@ export function resolveApiBaseUrl(raw: string | undefined, dev: boolean): string
 }
 
 const API_BASE_URL = resolveApiBaseUrl(
-  process.env.EXPO_PUBLIC_API_URL,
+  process.env.EXPO_PUBLIC_API_URL as string | undefined,
   typeof __DEV__ !== 'undefined' && __DEV__,
 );
 
 export const IS_DEMO_MODE: boolean = API_BASE_URL === null;
 
+const deviceIds = createDeviceIdProvider();
+
 export const sessionManager = createSessionManager({
   client: API_BASE_URL
-    ? createHttpAuthClient({ baseUrl: API_BASE_URL })
+    ? createHttpAuthClient({
+        baseUrl: API_BASE_URL,
+        getDeviceId: () => deviceIds.get(),
+      })
     : createMockAuthClient({ acceptAnyCredentials: true, latencyMs: 300 }),
-  store: createInMemoryTokenStore(),
+  store: createSecureTokenStore(),
 });
 
 /** Same signature as `ApiClient['signup']` (`POST /auth/signup`, 202, no session). */
