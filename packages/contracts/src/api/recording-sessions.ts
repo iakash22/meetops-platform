@@ -2,6 +2,7 @@ import { Type, type Static } from '@sinclair/typebox';
 import { Id, IsoDateTime } from '../common.js';
 import { MAX_CHUNK_BYTES, MAX_CHUNKS, MAX_DURATION_MS } from '../constants.js';
 import { MediaMimeType, PresignedUrlString, RecordingStatus } from '../domain/media.js';
+import { ConsentAttestationInput } from './consent.js';
 
 /**
  * Chunked recording upload (extension/desktop capture), matching apps/extension UploadClient:
@@ -12,15 +13,27 @@ import { MediaMimeType, PresignedUrlString, RecordingStatus } from '../domain/me
  */
 /** Chunk limits live in constants.ts (also exported from `@meetops/contracts/types`). */
 export {
-  CHUNK_UPLOAD_URL_TTL_SECONDS, MAX_CHUNK_BYTES, MAX_CHUNKS, MAX_DURATION_MS, MAX_RECORDING_CHUNKS, MAX_RECORDING_SESSION_BYTES,
+  CHUNK_UPLOAD_URL_TTL_SECONDS,
+  MAX_CHUNK_BYTES,
+  MAX_CHUNKS,
+  MAX_DURATION_MS,
+  MAX_RECORDING_CHUNKS,
+  MAX_RECORDING_SESSION_BYTES,
 } from '../constants.js';
 
 const Sha256Hex = Type.String({ pattern: '^[0-9a-f]{64}$' });
 
 const strict = { additionalProperties: false } as const;
 
-/** Capture source. Extensible: add members via a contracts PR. */
-export const RecordingSource = Type.Union([Type.Literal('tab')]);
+/**
+ * Capture source. Extensible: add members via a contracts PR. v0.6.0 adds `mobile` (native app, PR #173) and
+ * `desktop` (Tauri app, PR #180). Servers persisting the value need the matching DB enum members.
+ */
+export const RecordingSource = Type.Union([
+  Type.Literal('tab'),
+  Type.Literal('mobile'),
+  Type.Literal('desktop'),
+]);
 export type RecordingSource = Static<typeof RecordingSource>;
 
 export const InitRecordingSessionRequest = Type.Object(
@@ -29,6 +42,11 @@ export const InitRecordingSessionRequest = Type.Object(
     startedAt: IsoDateTime,
     source: RecordingSource,
     meetingId: Id,
+    /**
+     * v0.4.1: REQUIRED consent attestation (G11). Without it the API answers 422 `VALIDATION_FAILED` +
+     * `reason: 'CONSENT_REQUIRED'` and creates no session.
+     */
+    consent: ConsentAttestationInput,
   },
   strict,
 );
@@ -42,7 +60,7 @@ export type InitRecordingSessionResponse = Static<typeof InitRecordingSessionRes
  * The API signs `Content-Length: sizeBytes` and the REQUIRED sha256 checksum ( e.g. `x-amz-checksum-sha256`)
  * into the presigned request, and returns them in `upload.headers`, so the client can't upload a different size or body.
  * The API MUST refuse to issue a URL once the session's running total plus `sizeBytes` would exceed
- * MAX_RECORDING_SESSION_BYTES (1.4 GB), or when `seq` is out of range or already completed. The schema's per-chunk limits
+ * MAX_RECORDING_SESSION_BYTES (1.4 GB, G9), or when `seq` is out of range or already completed. The schema's per-chunk limits
  * (MAX_CHUNK_BYTES, MAX_CHUNKS) cannot enforce the 1.4 GB total; only the backend's running total can.
  */
 export const ChunkUploadUrlRequest = Type.Object(
@@ -89,7 +107,11 @@ export const ChunkUploadUrlResponse = Type.Object({
 export type ChunkUploadUrlResponse = Static<typeof ChunkUploadUrlResponse>;
 
 export const CompletedChunk = Type.Object(
-  { seq: Type.Integer({ minimum: 0, maximum: MAX_CHUNKS - 1 }), sha256: Sha256Hex, sizeBytes: Type.Optional(Type.Integer({ minimum: 1, maximum: MAX_CHUNK_BYTES })) },
+  {
+    seq: Type.Integer({ minimum: 0, maximum: MAX_CHUNKS - 1 }),
+    sha256: Sha256Hex,
+    sizeBytes: Type.Optional(Type.Integer({ minimum: 1, maximum: MAX_CHUNK_BYTES })),
+  },
   strict,
 );
 export type CompletedChunk = Static<typeof CompletedChunk>;

@@ -23,7 +23,7 @@ const toSession = (r: Row): Session => ({
   expiresAt: r.absoluteExpiresAt,
   revokedAt: r.revokedAt,
   ip: r.ipAddress,
-  userAgent: r.userAgent
+  userAgent: r.userAgent,
 });
 
 /**
@@ -33,7 +33,7 @@ const toSession = (r: Row): Session => ({
 export class PrismaSessionRepository implements SessionRepository {
   constructor(
     private readonly db: DatabaseClient = getPrismaClient(),
-    private readonly idleTimeoutMs = 30 * 60_000
+    private readonly idleTimeoutMs = 30 * 60_000,
   ) {}
   private idle(at: Date, cap: Date) {
     return new Date(Math.min(at.getTime() + this.idleTimeoutMs, cap.getTime()));
@@ -50,8 +50,8 @@ export class PrismaSessionRepository implements SessionRepository {
         expiresAt: this.idle(s.lastSeenAt, s.expiresAt),
         absoluteExpiresAt: s.expiresAt,
         lastSeenAt: s.lastSeenAt,
-        createdAt: s.createdAt
-      }
+        createdAt: s.createdAt,
+      },
     });
     return toSession(r);
   }
@@ -66,22 +66,28 @@ export class PrismaSessionRepository implements SessionRepository {
   async listActiveForUser(userId: string, now: Date) {
     const rows = await this.db.session.findMany({
       where: { userId, revokedAt: null, absoluteExpiresAt: { gt: now } },
-      orderBy: { lastSeenAt: 'desc' }
+      orderBy: { lastSeenAt: 'desc' },
     });
     return rows.map(toSession);
   }
   async touch(id: string, at: Date) {
-    const s = await this.db.session.findUnique({ where: { id }, select: { absoluteExpiresAt: true } });
+    const s = await this.db.session.findUnique({
+      where: { id },
+      select: { absoluteExpiresAt: true },
+    });
     if (!s) return;
     await this.db.session.updateMany({
       where: { id, revokedAt: null },
-      data: { lastSeenAt: at, expiresAt: this.idle(at, s.absoluteExpiresAt) }
+      data: { lastSeenAt: at, expiresAt: this.idle(at, s.absoluteExpiresAt) },
     });
   }
   async revoke(id: string, at: Date) {
     await this.db.session.updateMany({ where: { id, revokedAt: null }, data: { revokedAt: at } });
   }
   async revokeAllForUser(userId: string, at: Date) {
-    await this.db.session.updateMany({ where: { userId, revokedAt: null }, data: { revokedAt: at } });
+    await this.db.session.updateMany({
+      where: { userId, revokedAt: null },
+      data: { revokedAt: at },
+    });
   }
 }

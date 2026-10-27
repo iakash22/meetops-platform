@@ -1,5 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import cookie from '@fastify/cookie';
+import cors from '@fastify/cors';
+import { EXTENSION_AUTH_PATHS } from '@meetops/contracts';
 import { AuthService } from './auth/application/auth.service.js';
 import { authRoutes } from './auth/http/auth.plugin.js';
 import { randomBytes } from 'node:crypto';
@@ -45,6 +47,19 @@ import type { AuthMailQueue, MailTransport } from './auth/domain/mail-jobs.js';
 import { InMemoryAuditLog, type AuditLog } from './auth/domain/audit.js';
 import { AuthMailJobHandler, InlineAuthMailQueue } from './auth/application/auth-mail.handler.js';
 import { SessionVerifier } from './auth/application/session-verifier.js';
+import {
+  noopRevocationPublisher,
+  type RevocationPublisher,
+} from './auth/application/revocations.js';
+import { createRedisRevocationPublisher } from '@meetops/session-verifier';
+import {
+  ExtensionAuthService,
+  extensionAuthRoutes,
+  InMemoryExtensionTokenRepository,
+  RedisExtensionTokenRepository,
+  DurableExtensionTokenRepository,
+  type ExtensionTokenRepository,
+} from './extension-auth/index.js';
 import { InMemoryUserRepository } from './users/infrastructure/in-memory-user.repository.js';
 import type { UserRepository } from './users/domain/user.repository.js';
 import { OrganizationService } from './organizations/application/organization.service.js';
@@ -59,6 +74,19 @@ import type {
   MembershipRepository,
   OrganizationRepository,
 } from './organizations/domain/repositories.js';
+import type { MeetingRepository } from './meetings/domain/meeting.js';
+import { InMemoryMeetingRepository } from './meetings/infrastructure/in-memory.repository.js';
+import { PrismaMeetingRepository } from './meetings/infrastructure/prisma.repository.js';
+import type { ConsentRepository } from './media/domain/consent.js';
+import type { FileObjectRepository, MediaJobQueue, MediaSigner } from './media/domain/ports.js';
+import type { RecordingSessionRepository } from './media/domain/recording-session.js';
+import {
+  FakeMediaSigner,
+  InMemoryConsentRepository,
+  InMemoryFileObjectRepository,
+  InMemoryMediaJobQueue,
+  InMemoryRecordingSessionRepository,
+} from './media/infrastructure/in-memory.js';
 import { systemClock, type Clock, type IdGenerator } from '../shared/ports.js';
 
 export interface ModuleDeps {
@@ -103,6 +131,50 @@ export interface ModuleDeps {
   db?: DatabaseClient;
   /** Set when defaultModuleDeps created the Prisma client itself (disconnected in an onClose hook). */
   ownedDb?: { $disconnect(): Promise<void> };
+  /**
+   * ADR-011 revocation fan-out (meetops:auth:revocations). Defaults to publishing on `redis` when
+   * the client supports PUBLISH, otherwise a no-op.
+   */
+  revocations?: RevocationPublisher;
+  /** Meetings repository (Prisma when `db` is set; in-memory only in development/test). */
+  meetings: MeetingRepository;
+  /** ADR-005 extension pairing/token store (Redis when `redis` is set; in-memory only in development/test). */
+  extensionTokens: ExtensionTokenRepository;
+  /** ADR-005 allowlisted Chrome extension ids (EXTENSION_IDS; plus EXTENSION_DEV_IDS in development/test). */
+  extensionIds: readonly string[];
+  /**
+   * Media (uploads / recording sessions) adapters. Defaults to in-memory ONLY in development/test; outside them it
+   * stays unset unless injected and the media routes are not registered (no production adapters yet).
+   */
+  media?: MediaAdapters;
+}
+
+/** Ports the media module needs. */
+export interface MediaAdapters {
+  files: FileObjectRepository;
+  consents: ConsentRepository;
+  signer: MediaSigner;
+  jobs: MediaJobQueue;
+  sessions: RecordingSessionRepository;
+}
+
+export function inMemoryMediaAdapters(clock: Clock = systemClock): MediaAdapters {
+  return {
+    files: new InMemoryFileObjectRepository(),
+    consents: new InMemoryConsentRepository(),
+    signer: new FakeMediaSigner(() => clock.now()),
+    jobs: new InMemoryMediaJobQueue(),
+    sessions: new InMemoryRecordingSessionRepository(),
+  };
+}
+
+/** Revocation publisher over the shared Redis client, or a no-op without one. */
+export function defaultRevocationPublisher(
+  redis: RedisLike | undefined,
+  clock: Clock,
+): RevocationPublisher {
+  const publish = redis?.publish?.bind(redis);
+  return publish ? createRedisRevocationPublisher({ publish }, clock) : noopRevocationPublisher;
 }
 
 /** Owned Redis client; `status`/`disconnect` let shutdown skip QUIT on a never-connected lazy client. */
@@ -129,6 +201,7 @@ export const DATABASE_BACKED_DEPS = [
   'organizations',
   'memberships',
   'invitations',
+  'meetings',
   'audit',
 ] as const satisfies readonly (keyof ModuleDeps)[];
 
@@ -136,6 +209,8 @@ export const DATABASE_BACKED_DEPS = [
 export const REDIS_BACKED_DEPS = [
   'rateLimiter',
   'lockout',
+  'revocations',
+  'extensionTokens',
 ] as const satisfies readonly (keyof ModuleDeps)[];
 
 /** Connection URLs are ignored under NODE_ENV=test: tests stay hermetic unless they inject a client. */
@@ -184,6 +259,12 @@ export async function closeOwnedRedis(client: OwnedRedis): Promise<void> {
   await client.quit().catch(() => client.disconnect());
 }
 
+const csv = (v: string | undefined) =>
+  (v ?? '')
+    .split(',')
+    .map((x) => x.trim())
+    .filter(Boolean);
+
 const MIN = 60 * 1000;
 const HOUR = 60 * MIN;
 const DAY = 24 * HOUR;
@@ -205,10 +286,15 @@ export const PRODUCTION_REQUIRED_DEPS = [
   'organizations',
   'memberships',
   'invitations',
+  'meetings',
   'rateLimiter',
   'lockout',
   'mailQueue',
+  // The default transport drops every mail (no-op); production must inject a real one, e.g.
+  // createAuthMailTransport(createEmailService(loadEmailConfig())) from @meetops/notifications.
+  'mailTransport',
   'audit',
+  'extensionTokens',
 ] as const satisfies readonly (keyof ModuleDeps)[];
 
 export class MissingProductionDependencyError extends Error {
@@ -238,7 +324,8 @@ export function defaultModuleDeps(
   const hasRedis = !!overrides.redis || !!urlFor(env, env.redisUrl);
   const provided = (k: keyof ModuleDeps) =>
     ((DATABASE_BACKED_DEPS as readonly string[]).includes(k) && hasDb) ||
-    ((REDIS_BACKED_DEPS as readonly string[]).includes(k) && hasRedis);
+    ((REDIS_BACKED_DEPS as readonly string[]).includes(k) && hasRedis) ||
+    (k === 'mailTransport' && (overrides as { mailer?: unknown }).mailer !== undefined);
   if (strict) {
     const missing = PRODUCTION_REQUIRED_DEPS.filter(
       (k) => overrides[k] === undefined && !provided(k),
@@ -284,6 +371,7 @@ export function defaultModuleDeps(
         oneTimeTokens: new PrismaOneTimeTokenRepository(db),
         organizations: new PrismaOrganizationRepository(db),
         invitations: new PrismaInvitationRepository(db),
+        meetings: new PrismaMeetingRepository(db),
         audit: new PrismaAuditLog(db),
       }
     : {
@@ -294,6 +382,7 @@ export function defaultModuleDeps(
         invitations: new InMemoryInvitationRepository(
           memberships instanceof InMemoryMembershipRepository ? memberships : undefined,
         ),
+        meetings: new InMemoryMeetingRepository(() => clock.now()),
         audit: new InMemoryAuditLog(),
       };
   return {
@@ -304,6 +393,16 @@ export function defaultModuleDeps(
     rateLimiter: redis ? new RedisRateLimiter(redis) : new InMemoryRateLimiter(clock),
     lockout: redis ? new RedisLoginLockout(redis) : new InMemoryLoginLockout(clock),
     mailQueue: new InlineAuthMailQueue(),
+    // ADR-005 A1.2: Redis fast path, Postgres durable authority when both are configured.
+    extensionTokens: redis
+      ? db
+        ? new DurableExtensionTokenRepository(new RedisExtensionTokenRepository(redis), db)
+        : new RedisExtensionTokenRepository(redis)
+      : new InMemoryExtensionTokenRepository(),
+    extensionIds: [
+      ...csv(process.env.EXTENSION_IDS),
+      ...(strict ? [] : csv(process.env.EXTENSION_DEV_IDS)),
+    ],
     // `mailer` is a legacy alias used only by the repo-level QA harness (tests/support).
     mailTransport: (overrides as { mailer?: MailTransport }).mailer ?? { send: async () => {} },
     webBaseUrl: process.env.WEB_BASE_URL ?? 'http://localhost:5173',
@@ -311,11 +410,13 @@ export function defaultModuleDeps(
     invitationTtlMs: 7 * DAY,
     passwordResetTtlMs: 30 * MIN,
     emailVerificationTtlMs: DAY,
+    ...(strict ? {} : { media: inMemoryMediaAdapters(clock) }),
     ...overrides,
     ...(redis ? { redis } : {}),
     ...(ownedRedis ? { ownedRedis } : {}),
     ...(db ? { db } : {}),
     ...(ownedDb ? { ownedDb } : {}),
+    revocations: overrides.revocations ?? defaultRevocationPublisher(redis, clock),
     clock,
     sessionPolicy,
     security,
@@ -324,6 +425,32 @@ export function defaultModuleDeps(
 
 export async function registerModules(app: FastifyInstance, deps: ModuleDeps) {
   await app.register(cookie);
+  // Web CORS: credentialed, exact-match allowlist from WEB_ORIGINS (same list as the Origin check).
+  // No wildcard, no reflection of unknown origins. Extension lifecycle routes keep their own
+  // credential-less CORS (ADR-005 A1.3.6), so they are skipped here.
+  const webOrigins = new Set(deps.security.allowedOrigins);
+  const extensionPaths = new Set<string>([
+    EXTENSION_AUTH_PATHS.token,
+    EXTENSION_AUTH_PATHS.refresh,
+    EXTENSION_AUTH_PATHS.revoke,
+  ]);
+  await app.register(cors, {
+    hook: 'onRequest',
+    delegator: (request, cb) => {
+      const path = (request.url ?? '').split('?')[0] ?? '';
+      const origin = request.headers.origin;
+      const allowed =
+        !extensionPaths.has(path) && typeof origin === 'string' && webOrigins.has(origin);
+      cb(null, {
+        origin: allowed ? origin : false,
+        credentials: true,
+        methods: ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE'],
+        allowedHeaders: ['content-type', 'x-csrf-token'],
+        maxAge: 600,
+        strictPreflight: true,
+      });
+    },
+  });
   // Close only the clients defaultModuleDeps created; injected ones belong to the caller.
   const { ownedRedis, ownedDb } = deps;
   if (ownedRedis || ownedDb) {
@@ -334,14 +461,28 @@ export async function registerModules(app: FastifyInstance, deps: ModuleDeps) {
       ]);
     });
   }
-  const auth = new AuthService(deps);
-  const organizations = new OrganizationService(deps);
+  const extensionAuth = new ExtensionAuthService(deps);
+  // ADR-005 A1.6: logout, password reset and member removal also revoke extension token families.
+  const auth = new AuthService({ ...deps, extensionRevoker: extensionAuth });
+  const organizations = new OrganizationService({ ...deps, extensionRevoker: extensionAuth });
   if (deps.mailQueue instanceof InlineAuthMailQueue && !deps.mailQueue.handler) {
     deps.mailQueue.handler = new AuthMailJobHandler({ ...deps, transport: deps.mailTransport });
   }
   app.decorateRequest('auth', null);
   await app.register(authRoutes, { auth, organizations, security: deps.security });
   await app.register(organizationRoutes, { auth, organizations, security: deps.security });
+  await app.register(extensionAuthRoutes, { auth, extensionAuth, security: deps.security });
   await app.register(import('./directory/index.js'), { auth, organizations, deps });
-  return { auth, organizations, sessionVerifier: new SessionVerifier(auth, deps.memberships) };
+  await app.register(import('./meeting-insights/index.js'), { auth, organizations, deps });
+  await app.register(import('./meetings/index.js'), { auth, organizations, deps });
+  await app.register(import('./media/index.js'), { auth, organizations, deps });
+  return {
+    auth,
+    organizations,
+    sessionVerifier: new SessionVerifier({
+      ...deps,
+      extensionTokenStore: extensionAuth.verifierStore(),
+    }),
+    extensionAuth,
+  };
 }

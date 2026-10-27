@@ -27,11 +27,25 @@ describe.skipIf(!has)('contracts: recording-session request schemas (UP pre-chec
     startedAt: '2026-10-22T10:00:00.000Z',
     source: 'tab',
     meetingId: randomUUID(),
+    // G11 (contracts v0.4.1): init requires a consent attestation.
+    consent: {
+      method: 'all_parties_notified',
+      consentVersion: '2026-10',
+      attestedAt: '2026-10-22T09:59:30.000Z',
+    },
   };
 
   it('control: a valid init and chunk request pass', () => {
     expect(Value.Check(S.InitRecordingSessionRequest, init)).toBe(true);
-    expect(Value.Check(S.ChunkUploadUrlRequest, { seq: 0, sizeBytes: 1024, sha256: 'a'.repeat(64) })).toBe(true);
+    expect(
+      Value.Check(S.ChunkUploadUrlRequest, { seq: 0, sizeBytes: 1024, sha256: 'a'.repeat(64) }),
+    ).toBe(true);
+  });
+
+  it('[G11] init without a consent attestation is invalid', () => {
+    const noConsent: Record<string, unknown> = { ...init };
+    delete noConsent.consent;
+    expect(Value.Check(S.InitRecordingSessionRequest, noConsent)).toBe(false);
   });
 
   it('[UP-01] chunk request without sizeBytes is invalid', () => {

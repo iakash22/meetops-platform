@@ -3,11 +3,26 @@ import { normalizeEmail, toPublicUser, type PublicUser } from '../../users/domai
 import type { Clock, IdGenerator } from '../../../shared/ports.js';
 import { DomainError } from '../../../shared/domain-error.js';
 import type { LoginLockout, PasswordHasher, RateLimiter, TokenService } from '../domain/ports.js';
-import { isSessionActive, type Session, type SessionPolicy, type SessionRepository } from '../domain/session.js';
-import { InvalidCredentialsError, RateLimitedError, UnauthenticatedError } from '../domain/errors.js';
+import {
+  isSessionActive,
+  type Session,
+  type SessionPolicy,
+  type SessionRepository,
+} from '../domain/session.js';
+import {
+  InvalidCredentialsError,
+  RateLimitedError,
+  UnauthenticatedError,
+} from '../domain/errors.js';
 import type { AuthMailQueue } from '../domain/mail-jobs.js';
 import type { OneTimeTokenPurpose, OneTimeTokenRepository } from '../domain/one-time-token.js';
 import { safeAudit, type AuditEvent, type AuditLog } from '../domain/audit.js';
+import {
+  publishRevocation,
+  type AuthRevocationInput,
+  type RevocationPublisher,
+} from './revocations.js';
+import type { ExtensionRevoker } from '../../extension-auth/application/extension-auth.service.js';
 
 export interface AuthServiceDeps {
   users: UserRepository;
@@ -26,6 +41,10 @@ export interface AuthServiceDeps {
   emailVerificationTtlMs: number;
   /** Progressive-delay sleeper for failed logins; inject a no-op/fake in tests. */
   sleep?: (ms: number) => Promise<void>;
+  /** ADR-011 revocation fan-out to realtime. Omitted: nothing is published. */
+  revocations?: RevocationPublisher;
+  /** ADR-005 A1.6: also revoke the user's extension token families. */
+  extensionRevoker?: ExtensionRevoker;
 }
 
 const realSleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
@@ -53,10 +72,11 @@ export const AUTH_LIMITS = {
   resetSubmitPerIp: { limit: 10, windowMs: HOUR },
   verifySubmitPerIp: { limit: 10, windowMs: HOUR },
   resendPerIp: { limit: 5, windowMs: HOUR },
-  resendPerEmail: { limit: 3, windowMs: HOUR }
+  resendPerEmail: { limit: 3, windowMs: HOUR },
 } as const;
 
-export const invalidResetError = () => new DomainError('BAD_REQUEST', 'Reset link is invalid or has expired', 400);
+export const invalidResetError = () =>
+  new DomainError('BAD_REQUEST', 'Reset link is invalid or has expired', 400);
 export const invalidVerificationError = () =>
   new DomainError('BAD_REQUEST', 'Verification link is invalid or has expired', 400);
 
@@ -69,12 +89,33 @@ export class AuthService {
     if (!r.allowed) throw new RateLimitedError(r.retryAfterMs);
   }
 
-  private audit(e: Omit<AuditEvent, 'ip' | 'userAgent' | 'organizationId'> & { organizationId?: string | null }, meta?: RequestMeta) {
+  /** Call only after the revocation has been written. */
+  private publish(input: AuthRevocationInput) {
+    return publishRevocation(this.d.revocations, input);
+  }
+
+  private publishSessionRevoked(
+    s: Session,
+    reason: 'logout' | 'org_switch' | 'role_changed' | 'member_removed',
+  ) {
+    return this.publish({
+      kind: 'session',
+      sessionId: s.id,
+      userId: s.userId,
+      organizationId: s.activeOrganizationId,
+      reason,
+    });
+  }
+
+  private audit(
+    e: Omit<AuditEvent, 'ip' | 'userAgent' | 'organizationId'> & { organizationId?: string | null },
+    meta?: RequestMeta,
+  ) {
     return safeAudit(this.d.audit, {
       organizationId: null,
       ip: meta?.ip ?? null,
       userAgent: meta?.userAgent ?? null,
-      ...e
+      ...e,
     });
   }
 
@@ -88,12 +129,15 @@ export class AuthService {
       tokenHash: this.d.tokens.hash(this.d.tokens.generate()),
       expiresAt: new Date(now.getTime() + ttlMs),
       usedAt: null,
-      createdAt: now
+      createdAt: now,
     });
   }
 
   /** Enumeration-safe: same 202 whether or not the email exists. Does not start a session. */
-  async signup(input: { email: string; password: string; name?: string | undefined }, meta: RequestMeta) {
+  async signup(
+    input: { email: string; password: string; name?: string | undefined },
+    meta: RequestMeta,
+  ) {
     const email = normalizeEmail(input.email);
     await this.limit(`signup:ip:${meta.ip ?? 'unknown'}`, AUTH_LIMITS.signupPerIp);
     await this.limit(`signup:email:${email}`, AUTH_LIMITS.signupPerEmail);
@@ -113,11 +157,24 @@ export class AuthService {
         emailVerifiedAt: null,
         createdAt: now,
         updatedAt: now,
-        deletedAt: null
+        deletedAt: null,
       });
-      const t = await this.createOneTimeToken(user.id, 'email_verification', this.d.emailVerificationTtlMs);
+      const t = await this.createOneTimeToken(
+        user.id,
+        'email_verification',
+        this.d.emailVerificationTtlMs,
+      );
       await this.d.mailQueue.enqueue({ kind: 'email_verification', tokenId: t.id });
-      await this.audit({ actorId: user.id, action: 'auth.signup', targetType: 'user', targetId: user.id, metadata: {} }, meta);
+      await this.audit(
+        {
+          actorId: user.id,
+          action: 'auth.signup',
+          targetType: 'user',
+          targetId: user.id,
+          metadata: {},
+        },
+        meta,
+      );
     } catch {
       // Race on unique email: still respond identically.
     }
@@ -125,7 +182,11 @@ export class AuthService {
   }
 
   /** Rotates: any presented session is revoked and a new one is issued. */
-  async login(input: { email: string; password: string }, meta: RequestMeta, currentToken?: string): Promise<SessionResult> {
+  async login(
+    input: { email: string; password: string },
+    meta: RequestMeta,
+    currentToken?: string,
+  ): Promise<SessionResult> {
     const email = normalizeEmail(input.email);
     await this.limit(`login:ip:${meta.ip ?? 'unknown'}`, AUTH_LIMITS.loginPerIp);
     const lock = await this.d.lockout.isLocked(email);
@@ -138,8 +199,15 @@ export class AuthService {
     if (!user || !ok) {
       // Keyed by normalized email whether or not the account exists (enumeration-safe).
       const { lockedForMs, delayMs } = await this.d.lockout.recordFailure(email);
-      const base = { actorId: user?.id ?? null, targetType: 'user' as const, targetId: user?.id ?? null };
-      await this.audit({ ...base, action: 'auth.login.failure', metadata: { knownUser: !!user } }, meta);
+      const base = {
+        actorId: user?.id ?? null,
+        targetType: 'user' as const,
+        targetId: user?.id ?? null,
+      };
+      await this.audit(
+        { ...base, action: 'auth.login.failure', metadata: { knownUser: !!user } },
+        meta,
+      );
       if (lockedForMs) {
         await this.audit({ ...base, action: 'auth.lockout', metadata: { lockedForMs } }, meta);
         // Lockout notice (spec §5). Enqueued for unknown emails too (userId null, dropped by the
@@ -153,11 +221,20 @@ export class AuthService {
     if (this.d.hasher.needsRehash(user.passwordHash)) {
       await this.d.users.updatePasswordHash(user.id, await this.d.hasher.hash(input.password));
     }
-    if (currentToken) await this.revokeByToken(currentToken);
+    if (currentToken) {
+      const old = await this.revokeByToken(currentToken);
+      if (old) await this.publishSessionRevoked(old, 'logout');
+    }
     const r = await this.issueSession(user.id, toPublicUser(user), null, meta);
     await this.audit(
-      { actorId: user.id, action: 'auth.login.success', targetType: 'session', targetId: r.session.id, metadata: {} },
-      meta
+      {
+        actorId: user.id,
+        action: 'auth.login.success',
+        targetType: 'session',
+        targetId: r.session.id,
+        metadata: {},
+      },
+      meta,
     );
     return r;
   }
@@ -179,8 +256,14 @@ export class AuthService {
     const t = await this.createOneTimeToken(user.id, 'password_reset', this.d.passwordResetTtlMs);
     await this.d.mailQueue.enqueue({ kind: 'password_reset', tokenId: t.id });
     await this.audit(
-      { actorId: null, action: 'auth.password_reset.request', targetType: 'user', targetId: user.id, metadata: {} },
-      meta
+      {
+        actorId: null,
+        action: 'auth.password_reset.request',
+        targetType: 'user',
+        targetId: user.id,
+        metadata: {},
+      },
+      meta,
     );
     return { accepted: true as const };
   }
@@ -189,27 +272,53 @@ export class AuthService {
   async resetPassword(input: { token: string; password: string }, meta: RequestMeta) {
     await this.limit(`reset:submit:ip:${meta.ip ?? 'unknown'}`, AUTH_LIMITS.resetSubmitPerIp);
     const now = this.d.clock.now();
-    const t = await this.d.oneTimeTokens.consume('password_reset', this.d.tokens.hash(input.token), now);
+    const t = await this.d.oneTimeTokens.consume(
+      'password_reset',
+      this.d.tokens.hash(input.token),
+      now,
+    );
     if (!t) throw invalidResetError();
     await this.d.users.updatePasswordHash(t.userId, await this.d.hasher.hash(input.password));
     await this.d.sessions.revokeAllForUser(t.userId, now);
+    await this.publish({ kind: 'user', userId: t.userId, reason: 'password_changed' });
+    await this.d.extensionRevoker?.revokeForUser(t.userId, 'password_changed');
+    await this.d.mailQueue.enqueue({ kind: 'password_changed', userId: t.userId, changedAt: now.toISOString() });
     await this.d.oneTimeTokens.invalidateForUser(t.userId, 'password_reset', now);
     const user = await this.d.users.findById(t.userId);
     if (user) await this.d.lockout.reset(user.email);
     await this.audit(
-      { actorId: t.userId, action: 'auth.password_reset.complete', targetType: 'user', targetId: t.userId, metadata: {} },
-      meta
+      {
+        actorId: t.userId,
+        action: 'auth.password_reset.complete',
+        targetType: 'user',
+        targetId: t.userId,
+        metadata: {},
+      },
+      meta,
     );
   }
 
   async verifyEmail(token: string, meta: RequestMeta) {
     await this.limit(`verify:ip:${meta.ip ?? 'unknown'}`, AUTH_LIMITS.verifySubmitPerIp);
     const now = this.d.clock.now();
-    const t = await this.d.oneTimeTokens.consume('email_verification', this.d.tokens.hash(token), now);
+    const t = await this.d.oneTimeTokens.consume(
+      'email_verification',
+      this.d.tokens.hash(token),
+      now,
+    );
     if (!t) throw invalidVerificationError();
     await this.d.users.markEmailVerified(t.userId, now);
     await this.d.oneTimeTokens.invalidateForUser(t.userId, 'email_verification', now);
-    await this.audit({ actorId: t.userId, action: 'auth.email.verify', targetType: 'user', targetId: t.userId, metadata: {} }, meta);
+    await this.audit(
+      {
+        actorId: t.userId,
+        action: 'auth.email.verify',
+        targetType: 'user',
+        targetId: t.userId,
+        metadata: {},
+      },
+      meta,
+    );
   }
 
   /** Enumeration-safe: always resolves the same; only unverified accounts get a new link. */
@@ -221,11 +330,21 @@ export class AuthService {
     if (!user || user.emailVerifiedAt) return { accepted: true as const };
     const now = this.d.clock.now();
     await this.d.oneTimeTokens.invalidateForUser(user.id, 'email_verification', now);
-    const t = await this.createOneTimeToken(user.id, 'email_verification', this.d.emailVerificationTtlMs);
+    const t = await this.createOneTimeToken(
+      user.id,
+      'email_verification',
+      this.d.emailVerificationTtlMs,
+    );
     await this.d.mailQueue.enqueue({ kind: 'email_verification', tokenId: t.id });
     await this.audit(
-      { actorId: null, action: 'auth.email.verification_resend', targetType: 'user', targetId: user.id, metadata: {} },
-      meta
+      {
+        actorId: null,
+        action: 'auth.email.verification_resend',
+        targetType: 'user',
+        targetId: user.id,
+        metadata: {},
+      },
+      meta,
     );
     return { accepted: true as const };
   }
@@ -233,12 +352,35 @@ export class AuthService {
   async logout(token: string | undefined, meta: RequestMeta): Promise<void> {
     if (!token) return;
     const s = await this.revokeByToken(token);
-    if (s) await this.audit({ actorId: s.userId, action: 'auth.logout', targetType: 'session', targetId: s.id, metadata: {} }, meta);
+    if (s) await this.publishSessionRevoked(s, 'logout');
+    if (s) await this.d.extensionRevoker?.revokeForUser(s.userId, 'logout');
+    if (s)
+      await this.audit(
+        {
+          actorId: s.userId,
+          action: 'auth.logout',
+          targetType: 'session',
+          targetId: s.id,
+          metadata: {},
+        },
+        meta,
+      );
   }
 
   async logoutAll(userId: string, meta: RequestMeta) {
     await this.d.sessions.revokeAllForUser(userId, this.d.clock.now());
-    await this.audit({ actorId: userId, action: 'auth.logout_all', targetType: 'user', targetId: userId, metadata: {} }, meta);
+    await this.publish({ kind: 'user', userId, reason: 'logout_all' });
+    await this.d.extensionRevoker?.revokeForUser(userId, 'logout_all');
+    await this.audit(
+      {
+        actorId: userId,
+        action: 'auth.logout_all',
+        targetType: 'user',
+        targetId: userId,
+        metadata: {},
+      },
+      meta,
+    );
   }
 
   async listSessions(userId: string) {
@@ -248,9 +390,20 @@ export class AuthService {
   /** Revoke one of the caller's own sessions. Unknown or someone else's → 404. */
   async revokeSession(userId: string, sessionId: string, meta: RequestMeta) {
     const s = await this.d.sessions.findById(sessionId);
-    if (!s || s.userId !== userId || s.revokedAt) throw new DomainError('NOT_FOUND', 'Session not found', 404);
+    if (!s || s.userId !== userId || s.revokedAt)
+      throw new DomainError('NOT_FOUND', 'Session not found', 404);
     await this.d.sessions.revoke(s.id, this.d.clock.now());
-    await this.audit({ actorId: userId, action: 'auth.session.revoke', targetType: 'session', targetId: s.id, metadata: {} }, meta);
+    await this.publishSessionRevoked(s, 'logout');
+    await this.audit(
+      {
+        actorId: userId,
+        action: 'auth.session.revoke',
+        targetType: 'session',
+        targetId: s.id,
+        metadata: {},
+      },
+      meta,
+    );
   }
 
   /** Used on privilege changes of another user (role change / removal). */
@@ -263,16 +416,27 @@ export class AuthService {
     if (!token) throw new UnauthenticatedError();
     const session = await this.d.sessions.findByTokenHash(this.d.tokens.hash(token));
     const now = this.d.clock.now();
-    if (!session || !isSessionActive(session, now, this.d.sessionPolicy)) throw new UnauthenticatedError();
+    if (!session || !isSessionActive(session, now, this.d.sessionPolicy))
+      throw new UnauthenticatedError();
     const user = await this.d.users.findById(session.userId);
     if (!user) throw new UnauthenticatedError();
     await this.d.sessions.touch(session.id, now);
     return { user: toPublicUser(user), session: { ...session, lastSeenAt: now } };
   }
 
-  /** Privilege change (org switch/create): revoke the old session, issue a new one. */
-  async rotate(session: Session, user: PublicUser, activeOrganizationId: string | null, meta: RequestMeta) {
+  /**
+   * Privilege change (org switch/create, own role change or leave): revoke the old session, issue a
+   * new one, and tell realtime the old session is gone.
+   */
+  async rotate(
+    session: Session,
+    user: PublicUser,
+    activeOrganizationId: string | null,
+    meta: RequestMeta,
+    reason: 'org_switch' | 'role_changed' | 'member_removed' = 'org_switch',
+  ) {
     await this.d.sessions.revoke(session.id, this.d.clock.now());
+    await this.publishSessionRevoked(session, reason);
     return this.issueSession(session.userId, user, activeOrganizationId, meta);
   }
 
@@ -294,7 +458,7 @@ export class AuthService {
     userId: string,
     user: PublicUser,
     activeOrganizationId: string | null,
-    meta: RequestMeta
+    meta: RequestMeta,
   ): Promise<SessionResult> {
     const token = this.d.tokens.generate();
     const now = this.d.clock.now();
@@ -308,7 +472,7 @@ export class AuthService {
       expiresAt: new Date(now.getTime() + this.d.sessionPolicy.absoluteTimeoutMs),
       revokedAt: null,
       ip: meta.ip,
-      userAgent: meta.userAgent
+      userAgent: meta.userAgent,
     });
     return { user, session, token };
   }

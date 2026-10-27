@@ -1,7 +1,14 @@
-import { INCR_WITH_EXPIRY_LUA, type RedisLike } from '../src/modules/auth/infrastructure/rate-limit/redis.js';
+import {
+  INCR_WITH_EXPIRY_LUA,
+  type RedisLike,
+} from '../src/modules/auth/infrastructure/rate-limit/redis.js';
 
-/** In-process fake of the RedisLike subset, with a manual clock. */
-export const fakeRedis = (): RedisLike & { advance(ms: number): void } => {
+/** In-process fake of the RedisLike subset, with a manual clock. PUBLISH calls are recorded. */
+export const fakeRedis = (): RedisLike & {
+  advance(ms: number): void;
+  published: { channel: string; message: string }[];
+} => {
+  const published: { channel: string; message: string }[] = [];
   const store = new Map<string, { v: string; exp: number }>();
   const sets = new Map<string, Set<string>>();
   let t = 0;
@@ -12,6 +19,11 @@ export const fakeRedis = (): RedisLike & { advance(ms: number): void } => {
   };
   return {
     advance: (ms) => void (t += ms),
+    published,
+    publish: async (channel, message) => {
+      published.push({ channel, message });
+      return 0;
+    },
     incr: async (k) => {
       const e = alive(k) ?? { v: '0', exp: Infinity };
       e.v = String(Number(e.v) + 1);
@@ -54,6 +66,6 @@ export const fakeRedis = (): RedisLike & { advance(ms: number): void } => {
       if (e.v === '1' || e.exp === Infinity) e.exp = t + Number(ms);
       store.set(key, e);
       return [Number(e.v), e.exp - t];
-    }
+    },
   };
 };

@@ -47,28 +47,39 @@ export interface OrgScopedTranscriptRepository {
   findRecording(recordingId: string): Promise<RecordingScope | undefined>;
   /** Per-chunk raw STT result. First write wins: false if one already exists for (recording, chunkIndex). */
   putChunkResult(meetingId: string, recordingId: string, chunk: ChunkTranscript): Promise<boolean>;
-  getChunkResult(meetingId: string, recordingId: string, chunkIndex: number): Promise<ChunkTranscript | undefined>;
+  getChunkResult(
+    meetingId: string,
+    recordingId: string,
+    chunkIndex: number,
+  ): Promise<ChunkTranscript | undefined>;
   listChunkResults(meetingId: string, recordingId: string): Promise<ChunkTranscript[]>;
   latestTranscript(meetingId: string, recordingId: string): Promise<TranscriptRevision | undefined>;
   /**
    * Insert a `Transcript` row with `revision` and its `TranscriptSegment` rows, only if the latest revision equals
-   * `expectedPrev` (compare-and-set; `@@unique([meetingId, revision])`). Returns false on conflict.
+   * `expectedPrev` (compare-and-set; `@@unique([recordingId, revision])`). Returns false on conflict.
    */
   writeTranscriptRevision(write: TranscriptRevisionWrite, expectedPrev: number): Promise<boolean>;
 }
 
 /**
- * Persistence port for the AI transcription consumer. The production implementation (Database Agent,
- * feat/db-ai-usage-transcripts) must wrap `withOrgContext` from the `@meetops/database` public entry only.
+ * Persistence port for the AI transcription consumer. The production implementation (`createPrismaTranscriptRepository`)
+ * wraps `withOrgContext` from the `@meetops/database` public entry only.
  */
 export interface TranscriptRepository {
-  withOrgContext<T>(organizationId: string, fn: (repo: OrgScopedTranscriptRepository) => Promise<T>): Promise<T>;
+  withOrgContext<T>(
+    organizationId: string,
+    fn: (repo: OrgScopedTranscriptRepository) => Promise<T>,
+  ): Promise<T>;
 }
 
 const ms = (sec: number) => Math.max(0, Math.round(sec * 1000));
 
 /** Pure mapping from ai-core's merged revision to DB rows. */
-export function toRevisionWrite(rev: TranscriptRevision, provider: string, language: string | undefined): TranscriptRevisionWrite {
+export function toRevisionWrite(
+  rev: TranscriptRevision,
+  provider: string,
+  language: string | undefined,
+): TranscriptRevisionWrite {
   return {
     organizationId: rev.organizationId,
     meetingId: rev.meetingId,
@@ -109,7 +120,10 @@ export class RepositoryTranscriptStore implements TranscriptStore {
     return this.repo.withOrgContext(rev.organizationId, async (x) => {
       const chunks = await x.listChunkResults(rev.meetingId, rev.recordingId);
       const first = [...chunks].sort((a, b) => a.chunkIndex - b.chunkIndex)[0];
-      return x.writeTranscriptRevision(toRevisionWrite(rev, first?.provider ?? 'unknown', first?.language), expectedPrev);
+      return x.writeTranscriptRevision(
+        toRevisionWrite(rev, first?.provider ?? 'unknown', first?.language),
+        expectedPrev,
+      );
     });
   }
 }

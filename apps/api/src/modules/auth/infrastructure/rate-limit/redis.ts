@@ -1,5 +1,10 @@
 import type { LoginLockout, RateLimiter } from '../../domain/ports.js';
-import { DEFAULT_LOCKOUT, failureDelayMs, lockDurationMs, type LockoutPolicy } from './lockout-policy.js';
+import {
+  DEFAULT_LOCKOUT,
+  failureDelayMs,
+  lockDurationMs,
+  type LockoutPolicy,
+} from './lockout-policy.js';
 
 /** Minimal subset of an ioredis client (keeps tests on a fake). */
 export interface RedisLike {
@@ -14,6 +19,8 @@ export interface RedisLike {
   smembers(key: string): Promise<string[]>;
   /** EVAL (ioredis signature): script, number of keys, then keys and args. */
   eval(script: string, numKeys: number, ...keysAndArgs: (string | number)[]): Promise<unknown>;
+  /** PUBLISH (ADR-011 revocation fan-out). Optional so lockout-only fakes stay valid. */
+  publish?(channel: string, message: string): Promise<number>;
 }
 
 /**
@@ -25,8 +32,15 @@ export const INCR_WITH_EXPIRY_LUA = `local n = redis.call('INCR', KEYS[1])
 if n == 1 or redis.call('PTTL', KEYS[1]) < 0 then redis.call('PEXPIRE', KEYS[1], ARGV[1]) end
 return {n, redis.call('PTTL', KEYS[1])}`;
 
-export async function incrWithExpiry(redis: RedisLike, key: string, windowMs: number): Promise<{ count: number; ttlMs: number }> {
-  const r = (await redis.eval(INCR_WITH_EXPIRY_LUA, 1, key, String(windowMs))) as [number | string, number | string];
+export async function incrWithExpiry(
+  redis: RedisLike,
+  key: string,
+  windowMs: number,
+): Promise<{ count: number; ttlMs: number }> {
+  const r = (await redis.eval(INCR_WITH_EXPIRY_LUA, 1, key, String(windowMs))) as [
+    number | string,
+    number | string,
+  ];
   return { count: Number(r[0]), ttlMs: Number(r[1]) };
 }
 
@@ -34,7 +48,7 @@ export async function incrWithExpiry(redis: RedisLike, key: string, windowMs: nu
 export class RedisRateLimiter implements RateLimiter {
   constructor(
     private readonly redis: RedisLike,
-    private readonly prefix = 'meetops:rl:'
+    private readonly prefix = 'meetops:rl:',
   ) {}
   async consume(key: string, limit: number, windowMs: number) {
     const k = this.prefix + key;
@@ -49,7 +63,7 @@ export class RedisLoginLockout implements LoginLockout {
   constructor(
     private readonly redis: RedisLike,
     private readonly policy: LockoutPolicy = DEFAULT_LOCKOUT,
-    private readonly prefix = 'meetops:lock:'
+    private readonly prefix = 'meetops:lock:',
   ) {}
   async isLocked(key: string) {
     const ttl = await this.redis.pttl(`${this.prefix}locked:${key}`);

@@ -1,27 +1,45 @@
+import { lazy, Suspense } from 'react';
 import { Link } from '@tanstack/react-router';
+import { LoadingState } from '@/components/states/states';
+import { useCanManageConsentSettings } from './consent-gate';
 import { cn } from '@/lib/utils';
 import { PageHeader } from '@/pages/resource-list';
 import { EmployeesPanel } from '@/features/employees/employees-panel';
 import { TeamsPanel } from '@/features/teams/teams-panel';
+import { IntegrationsPanel } from '@/features/integrations/integrations-panel';
 
-export const SETTINGS_TABS = ['employees', 'teams'] as const;
-export type SettingsTab = (typeof SETTINGS_TABS)[number];
-export type SettingsSearch = { tab?: SettingsTab };
+import { SETTINGS_TABS, type SettingsTab } from './settings-search';
+export {
+  SETTINGS_TABS,
+  parseSettingsSearch,
+  type SettingsSearch,
+  type SettingsTab,
+} from './settings-search';
 
-/** `?tab=` is untrusted: anything but a known tab falls back to the default. */
-export function parseSettingsSearch(search: Record<string, unknown>): SettingsSearch {
-  const tab = SETTINGS_TABS.find((t) => t === search.tab);
-  return tab ? { tab } : {};
-}
+const LABELS: Record<SettingsTab, string> = {
+  employees: 'Employees',
+  teams: 'Teams',
+  integrations: 'Integrations',
+  consent: 'Consent',
+};
 
-const LABELS: Record<SettingsTab, string> = { employees: 'Employees', teams: 'Teams' };
+// Owner/admin only, so it is split out of the settings chunk.
+const ConsentSettingsPanel = lazy(() =>
+  import('./consent-settings-panel').then((m) => ({ default: m.ConsentSettingsPanel })),
+);
 
-export function SettingsPage({ tab = 'employees' }: { tab?: SettingsTab | undefined }) {
+export function SettingsPage({ tab: requested = 'employees' }: { tab?: SettingsTab | undefined }) {
+  const canConsent = useCanManageConsentSettings();
+  const tab = requested === 'consent' && !canConsent ? 'employees' : requested;
+  const tabs = SETTINGS_TABS.filter((t) => t !== 'consent' || canConsent);
   return (
     <>
-      <PageHeader title="Settings" description="Organization directory: people and teams" />
+      <PageHeader
+        title="Settings"
+        description="Organization directory, teams, integrations and recording consent"
+      />
       <nav aria-label="Settings sections" className="mb-6 flex gap-2 border-b">
-        {SETTINGS_TABS.map((t) => (
+        {tabs.map((t) => (
           <Link
             key={t}
             to="/settings"
@@ -38,7 +56,17 @@ export function SettingsPage({ tab = 'employees' }: { tab?: SettingsTab | undefi
           </Link>
         ))}
       </nav>
-      {tab === 'teams' ? <TeamsPanel /> : <EmployeesPanel />}
+      {tab === 'consent' ? (
+        <Suspense fallback={<LoadingState label="Loading consent settings…" />}>
+          <ConsentSettingsPanel />
+        </Suspense>
+      ) : tab === 'teams' ? (
+        <TeamsPanel />
+      ) : tab === 'integrations' ? (
+        <IntegrationsPanel />
+      ) : (
+        <EmployeesPanel />
+      )}
     </>
   );
 }

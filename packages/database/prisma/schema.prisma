@@ -140,6 +140,8 @@ enum RecordingStatus {
 /// Contracts v0.2 RecordingSource.
 enum RecordingSource {
   tab
+  mobile
+  desktop
 }
 
 /// Upload-session lifecycle. After `completed`, the contract's RecordingStatus lives on the linked recording.
@@ -193,6 +195,26 @@ enum StorageObjectStatus {
   failed
 }
 
+/// G11 (DB-3): content / malware scan state of a FileObject. Only `clean` objects may be processed or downloaded.
+enum FileScanStatus {
+  pending
+  clean
+  quarantined
+  rejected
+}
+
+/// G11 (DB-3): what a consent attestation is attached to (contracts CONSENT_SUBJECT_TYPES).
+enum ConsentSubjectType {
+  upload
+  recording_session
+}
+
+/// G11 (DB-3): how consent was obtained (contracts CONSENT_METHODS).
+enum ConsentMethod {
+  all_parties_notified
+  all_parties_consented
+}
+
 model Organization {
   id          String    @id @default(uuid()) @db.Uuid
   name        String
@@ -229,6 +251,11 @@ model Organization {
   transcriptChunks       TranscriptChunk[]
   teams                  Team[]
   teamMembers            TeamMember[]
+  consentAttestations    ConsentAttestation[]
+  integrationConnections IntegrationConnection[]
+  authDevices            AuthDevice[]
+  authTokenFamilies      AuthTokenFamily[]
+  authRefreshTokens      AuthRefreshToken[]
 
   createdBy User? @relation("OrgCreator", fields: [createdById], references: [id], onDelete: SetNull)
 
@@ -262,6 +289,9 @@ model User {
   passwordResets       PasswordReset[]
   recordingSessions    RecordingSession[]     @relation("RecordingSessionCreator")
   aiConfigsUpdated     AiOrganizationConfig[] @relation("AiOrganizationConfigUpdater")
+  consentAttestations  ConsentAttestation[]   @relation("ConsentAttester")
+  authDevices          AuthDevice[]           @relation("AuthDeviceOwner")
+  authTokenFamilies    AuthTokenFamily[]      @relation("AuthTokenFamilyOwner")
 
   @@map("users")
 }
@@ -434,21 +464,23 @@ model TeamMember {
 }
 
 model Meeting {
-  id             String        @id @default(uuid()) @db.Uuid
-  organizationId String        @map("org_id") @db.Uuid
-  projectId      String?       @map("project_id") @db.Uuid
-  createdById    String?       @map("created_by_id") @db.Uuid
-  title          String
-  description    String?
-  source         MeetingSource @default(upload)
-  status         MeetingStatus @default(scheduled)
-  scheduledAt    DateTime?     @map("scheduled_at") @db.Timestamptz(3)
-  startedAt      DateTime?     @map("started_at") @db.Timestamptz(3)
-  endedAt        DateTime?     @map("ended_at") @db.Timestamptz(3)
-  durationSec    Int?          @map("duration_sec")
-  createdAt      DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt      DateTime      @updatedAt @map("updated_at") @db.Timestamptz(3)
-  deletedAt      DateTime?     @map("deleted_at") @db.Timestamptz(3)
+  id                String        @id @default(uuid()) @db.Uuid
+  organizationId    String        @map("org_id") @db.Uuid
+  projectId         String?       @map("project_id") @db.Uuid
+  createdById       String?       @map("created_by_id") @db.Uuid
+  title             String
+  description       String?
+  source            MeetingSource @default(upload)
+  /// External call id for extension/desktop/bot meetings (meetings/resolve idempotency key). Null for uploads.
+  externalMeetingId String?       @map("external_meeting_id")
+  status            MeetingStatus @default(scheduled)
+  scheduledAt       DateTime?     @map("scheduled_at") @db.Timestamptz(3)
+  startedAt         DateTime?     @map("started_at") @db.Timestamptz(3)
+  endedAt           DateTime?     @map("ended_at") @db.Timestamptz(3)
+  durationSec       Int?          @map("duration_sec")
+  createdAt         DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt         DateTime      @updatedAt @map("updated_at") @db.Timestamptz(3)
+  deletedAt         DateTime?     @map("deleted_at") @db.Timestamptz(3)
 
   organization      Organization         @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   project           Project?             @relation(fields: [organizationId, projectId], references: [organizationId, id], onDelete: Restrict)
@@ -464,9 +496,11 @@ model Meeting {
   tasks             Task[]
 
   @@unique([organizationId, id])
+  @@unique([organizationId, source, externalMeetingId])
   @@index([organizationId, status])
   @@index([organizationId, projectId])
   @@index([organizationId, scheduledAt])
+  @@index([organizationId, createdAt, id])
   @@map("meetings")
 }
 
@@ -527,6 +561,8 @@ model FileObject {
   createdAt       DateTime            @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt       DateTime            @updatedAt @map("updated_at") @db.Timestamptz(3)
   deletedAt       DateTime?           @map("deleted_at") @db.Timestamptz(3)
+  /// G11 (DB-3): every new object starts `pending` until the scanner records a verdict.
+  scanStatus      FileScanStatus      @default(pending) @map("scan_status")
 
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   meeting      Meeting?     @relation(fields: [organizationId, meetingId], references: [organizationId, id], onDelete: Restrict)
@@ -541,7 +577,35 @@ model FileObject {
   @@index([organizationId, meetingId, kind])
   @@index([organizationId, status])
   @@index([organizationId, createdAt])
+  @@index([organizationId, scanStatus])
   @@map("file_objects")
+}
+
+/// G11 (DB-3): server-side consent evidence for an upload (FileObject id) or a recording session. Append-only
+/// (UPDATE/DELETE/TRUNCATE raise, like audit_events) under forced RLS. organizationId and attestedByUserId come
+/// from the authenticated session, never from the request. subjectId is checked by a trigger to be a row of the
+/// same organization at insert time (no FK: the subject is polymorphic and the evidence outlives it).
+model ConsentAttestation {
+  id               String             @id @default(uuid()) @db.Uuid
+  organizationId   String             @map("org_id") @db.Uuid
+  subjectType      ConsentSubjectType @map("subject_type")
+  subjectId        String             @map("subject_id") @db.Uuid
+  /// contracts CONSENT_VERSION_PATTERN, CHECK in SQL.
+  consentVersion   String             @map("consent_version")
+  method           ConsentMethod
+  attestedByUserId String             @map("attested_by_user_id") @db.Uuid
+  /// Client clock; CHECK: at most 300 s after recordedAt (contracts CONSENT_ATTESTATION_MAX_SKEW_SECONDS).
+  attestedAt       DateTime           @map("attested_at") @db.Timestamptz(3)
+  /// Server receive time.
+  recordedAt       DateTime           @default(now()) @map("recorded_at") @db.Timestamptz(3)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  attestedBy   User         @relation("ConsentAttester", fields: [attestedByUserId], references: [id], onDelete: Restrict)
+
+  @@unique([organizationId, id])
+  @@index([organizationId, subjectType, subjectId])
+  @@index([organizationId, attestedByUserId])
+  @@map("consent_attestations")
 }
 
 model Recording {
@@ -585,6 +649,8 @@ model Transcript {
   /// Chunked transcription: merge of TranscriptChunk rows into fullText/segments (single winner via tryBeginMerge).
   mergeStatus    TranscriptMergeStatus @default(pending) @map("merge_status")
   mergedAt       DateTime?             @map("merged_at") @db.Timestamptz(3)
+  /// ai-core merge state for this revision (content hash, chunk indexes, speaker map). Null on the revision-0 anchor.
+  mergeState     Json?                 @map("merge_state")
   createdAt      DateTime              @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt      DateTime              @updatedAt @map("updated_at") @db.Timestamptz(3)
   deletedAt      DateTime?             @map("deleted_at") @db.Timestamptz(3)
@@ -597,7 +663,8 @@ model Transcript {
   aiRuns       AiRun[]
   chunks       TranscriptChunk[]
 
-  @@unique([meetingId, revision])
+  /// Revision 0 is the per-recording anchor that owns TranscriptChunk rows; >= 1 are merged revisions.
+  @@unique([recordingId, revision])
   @@unique([organizationId, provider, providerJobId])
   @@unique([organizationId, id])
   @@index([organizationId, meetingId])
@@ -1027,4 +1094,114 @@ model TranscriptChunk {
   @@unique([organizationId, id])
   @@index([organizationId, transcriptId])
   @@map("transcript_chunks")
+}
+
+enum IntegrationConnectionStatus {
+  active
+  error
+  revoked
+}
+
+/// Phase 5 (ADR-008): one connected provider account per organization. Secrets are stored only as TokenCipher
+/// envelopes (`v1.<keyId>.<wrappedKey>.<iv|ct|tag>`, AAD = org + integration id) produced by
+/// @meetops/integrations; this package never sees a KEK. `tokenKeyId` mirrors the envelope key id so key
+/// rotation can find rows to re-wrap. The webhook secret is per connection and bound to org_id by RLS.
+model IntegrationConnection {
+  id                   String                      @id @default(uuid()) @db.Uuid
+  organizationId       String                      @map("org_id") @db.Uuid
+  provider             String
+  status               IntegrationConnectionStatus @default(active)
+  displayName          String                      @map("display_name")
+  externalAccountId    String                      @map("external_account_id")
+  connectedById        String?                     @map("connected_by_id") @db.Uuid
+  /// NULL only once revoked (disconnect wipes every secret; enforced by a CHECK).
+  accessTokenEnc       String?                     @map("access_token_enc")
+  refreshTokenEnc      String?                     @map("refresh_token_enc")
+  webhookSecretEnc     String?                     @map("webhook_secret_enc")
+  tokenKeyId           String                      @map("token_key_id")
+  accessTokenExpiresAt DateTime?                   @map("access_token_expires_at") @db.Timestamptz(3)
+  /// Set by soft disconnect (status revoked). The app role has no DELETE on this table.
+  revokedAt            DateTime?                   @map("revoked_at") @db.Timestamptz(3)
+  createdAt            DateTime                    @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt            DateTime                    @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, id])
+  @@unique([organizationId, provider, externalAccountId])
+  @@index([tokenKeyId])
+  @@map("integration_connections")
+}
+
+/// ADR-005 A1.2 / ADR-012: who a bearer token family was issued to. `extension` today; `desktop` once ADR-012 is accepted.
+enum AuthTokenAudience {
+  extension
+  desktop
+}
+
+/// A paired client install (ADR-005 A1.1: per-install deviceId) for one user in one organization. clientId is the
+/// allowlisted extension id (or the desktop app id). Tenant table: forced RLS, ADR-010 setting only.
+model AuthDevice {
+  id             String            @id @default(uuid()) @db.Uuid
+  organizationId String            @map("org_id") @db.Uuid
+  userId         String            @map("user_id") @db.Uuid
+  audience       AuthTokenAudience
+  clientId       String            @map("client_id")
+  /// Client-generated per-install id (UUID per ADR-005 A1.1.2).
+  deviceId       String            @map("device_id") @db.Uuid
+  label          String?
+  createdAt      DateTime          @default(now()) @map("created_at") @db.Timestamptz(3)
+  lastSeenAt     DateTime          @default(now()) @map("last_seen_at") @db.Timestamptz(3)
+
+  organization Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user         User              @relation("AuthDeviceOwner", fields: [userId], references: [id], onDelete: Cascade)
+  families     AuthTokenFamily[]
+
+  @@unique([organizationId, id])
+  @@unique([organizationId, userId, audience, clientId, deviceId])
+  @@index([organizationId, userId])
+  @@map("auth_devices")
+}
+
+/// A rotating refresh family (ADR-005 A1.2.3-4). Rotation never extends maxExpiresAt. Revocation is durable here;
+/// access tokens (15 min) stay in Redis only.
+model AuthTokenFamily {
+  id             String            @id @default(uuid()) @db.Uuid
+  organizationId String            @map("org_id") @db.Uuid
+  userId         String            @map("user_id") @db.Uuid
+  authDeviceId   String            @map("auth_device_id") @db.Uuid
+  audience       AuthTokenAudience
+  scopes         String[]
+  createdAt      DateTime          @default(now()) @map("created_at") @db.Timestamptz(3)
+  maxExpiresAt   DateTime          @map("max_expires_at") @db.Timestamptz(3)
+  revokedAt      DateTime?         @map("revoked_at") @db.Timestamptz(3)
+
+  organization  Organization       @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user          User               @relation("AuthTokenFamilyOwner", fields: [userId], references: [id], onDelete: Cascade)
+  device        AuthDevice         @relation(fields: [organizationId, authDeviceId], references: [organizationId, id], onDelete: Cascade)
+  refreshTokens AuthRefreshToken[]
+
+  @@unique([organizationId, id])
+  @@index([organizationId, userId])
+  @@index([organizationId, authDeviceId])
+  @@map("auth_token_families")
+}
+
+/// One issued refresh token, stored only as a SHA-256 hash (CHECK: 64 lowercase hex). consumedAt set = rotated;
+/// presenting it again is reuse and revokes the family (ADR-005 A1.2.3).
+model AuthRefreshToken {
+  id             String    @id @default(uuid()) @db.Uuid
+  organizationId String    @map("org_id") @db.Uuid
+  familyId       String    @map("family_id") @db.Uuid
+  tokenHash      String    @unique @map("token_hash")
+  expiresAt      DateTime  @map("expires_at") @db.Timestamptz(3)
+  consumedAt     DateTime? @map("consumed_at") @db.Timestamptz(3)
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  organization Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  family       AuthTokenFamily @relation(fields: [organizationId, familyId], references: [organizationId, id], onDelete: Cascade)
+
+  @@unique([organizationId, id])
+  @@index([organizationId, familyId])
+  @@map("auth_refresh_tokens")
 }

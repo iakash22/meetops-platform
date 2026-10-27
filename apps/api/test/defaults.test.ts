@@ -74,6 +74,8 @@ describe('BE-1: strict environments without DATABASE_URL / REDIS_URL', () => {
       'rateLimiter',
       'lockout',
       'mailQueue',
+      'mailTransport',
+      'extensionTokens',
     ]);
   });
 
@@ -85,21 +87,43 @@ describe('BE-1: strict environments without DATABASE_URL / REDIS_URL', () => {
       'organizations',
       'memberships',
       'invitations',
+      'meetings',
       'mailQueue',
+      'mailTransport',
       'audit',
     ]);
   });
 
-  it('DATABASE_URL + REDIS_URL leave only the mail queue to inject', () => {
+  it('DATABASE_URL + REDIS_URL leave only the mail queue and mail transport to inject', () => {
     expect(
       missingFor({}, { nodeEnv: undefined, databaseUrl: DB_URL, redisUrl: REDIS_URL }),
-    ).toEqual(['mailQueue']);
+    ).toEqual(['mailQueue', 'mailTransport']);
+  });
+
+  it('production refuses the no-op mail transport unless one (or the legacy mailer alias) is injected', () => {
+    const transport = { send: async () => {} };
+    expect(
+      missingFor(
+        { mailQueue: {} as never, mailTransport: transport },
+        { nodeEnv: 'production', databaseUrl: '', redisUrl: '' },
+      ),
+    ).not.toContain('mailTransport');
+    expect(
+      missingFor({ mailQueue: {} as never, mailer: transport } as never, {
+        nodeEnv: 'production',
+        databaseUrl: '',
+        redisUrl: '',
+      }),
+    ).not.toContain('mailTransport');
+    expect(missingFor({}, { nodeEnv: 'production', databaseUrl: '', redisUrl: '' })).toContain(
+      'mailTransport',
+    );
   });
 
   it('createServer reads DATABASE_URL / REDIS_URL (or its overrides) for the same check', () => {
     expect(() =>
       createServer({ nodeEnv: 'production', databaseUrl: DB_URL, redisUrl: REDIS_URL }),
-    ).toThrow(/implementations for: mailQueue$/);
+    ).toThrow(/implementations for: mailQueue, mailTransport$/);
   });
 });
 

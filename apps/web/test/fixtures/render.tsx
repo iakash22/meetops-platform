@@ -5,7 +5,7 @@ import { vi } from 'vitest';
 import { App } from '@/app';
 import { useToastStore } from '@/components/ui/toast';
 import type { Role } from '@meetops/contracts';
-import type { ApiClient, CreateInvitationRequest } from '@/lib/api/client';
+import { ApiError, type ApiClient, type CreateInvitationRequest } from '@/lib/api/client';
 import { createMockDirectoryApi } from '@/features/directory/mock-api';
 import { useOrgStore, useUiStore } from '@/stores/org-store';
 import {
@@ -17,6 +17,9 @@ import {
   sessionResponse,
   tasks,
   uploadResponse,
+  completeResponse,
+  downloadUrlResponse,
+  consentSettings,
   pairResponse,
   sessionList,
   memberList,
@@ -29,7 +32,10 @@ export function createMockApi(
   }> & { onUnauthorized?: ApiClient['onUnauthorized'] } = {},
 ): ApiClient {
   return {
-    request: vi.fn().mockResolvedValue(undefined),
+    // Honour a passed-in request mock (e.g. a path-routed vi.fn) instead of always replacing it.
+    request:
+      (overrides.request as ApiClient['request'] | undefined) ??
+      vi.fn().mockResolvedValue(undefined),
     onUnauthorized: overrides.onUnauthorized ?? vi.fn(() => () => {}),
     auth: {
       login: vi.fn().mockResolvedValue(session),
@@ -86,18 +92,38 @@ export function createMockApi(
       pair: vi.fn().mockResolvedValue(pairResponse),
       ...overrides.extension,
     },
+    desktop: {
+      authorize: vi.fn().mockResolvedValue({ code: 'C'.repeat(43) }),
+      ...overrides.desktop,
+    },
     meetings: {
       list: vi.fn().mockResolvedValue(meetings),
       get: vi.fn().mockResolvedValue(meeting1),
       ...overrides.meetings,
     },
     tasks: { list: vi.fn().mockResolvedValue(tasks), ...overrides.tasks },
+    meetingInsights: {
+      transcript: vi.fn().mockRejectedValue(new ApiError(404, 'NOT_FOUND', 'Not found')),
+      report: vi.fn().mockRejectedValue(new ApiError(404, 'NOT_FOUND', 'Not found')),
+      ...overrides.meetingInsights,
+    },
     // In-memory directory (empty); pass `directory: createMockDirectoryApi(seed)` to seed it.
     directory: { ...createMockDirectoryApi(), ...overrides.directory },
     storage: {
       createUpload: vi.fn().mockResolvedValue(uploadResponse),
       putToPresignedUrl: vi.fn().mockResolvedValue(undefined),
+      completeUpload: vi.fn().mockResolvedValue(completeResponse),
+      getDownloadUrl: vi.fn().mockResolvedValue(downloadUrlResponse),
       ...overrides.storage,
+    },
+    consentSettings: {
+      get: vi.fn().mockResolvedValue(consentSettings),
+      update: vi
+        .fn()
+        .mockImplementation((_o: string, body: object) =>
+          Promise.resolve({ ...consentSettings, ...body }),
+        ),
+      ...overrides.consentSettings,
     },
   };
 }

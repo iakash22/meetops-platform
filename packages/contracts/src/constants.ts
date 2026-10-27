@@ -21,6 +21,7 @@ export const API_ERROR_CODES = [
   'FORBIDDEN',
   'NOT_FOUND',
   'CONFLICT',
+  'PAYLOAD_TOO_LARGE',
   'RATE_LIMITED',
   'PROVIDER_UNAVAILABLE',
   'INTERNAL',
@@ -72,10 +73,52 @@ export const NOT_FOUND_REASONS = [
 export const NOT_FOUND_HTTP_STATUS = 404;
 
 /**
- * Every value `ApiErrorEnvelope.error.reason` may take: CONFLICT_REASONS (with `code: 'CONFLICT'`) followed by
- * NOT_FOUND_REASONS (with `code: 'NOT_FOUND'`). v0.4.0 widened this from an alias of CONFLICT_REASONS.
+ * v0.4.1 (G11): named reasons for a rejected consent attestation. Sent as `error.reason` next to
+ * `code: 'VALIDATION_FAILED'` with HTTP CONSENT_HTTP_STATUS (422) by upload init and recording-session init.
+ * - `CONSENT_REQUIRED`: the request has no `consent` object (or it fails the ConsentAttestationInput schema).
+ * - `CONSENT_VERSION_UNSUPPORTED`: `consent.consentVersion` is not a version the server accepts (CURRENT_CONSENT_VERSION).
+ * - `CONSENT_INVALID`: `consent.attestedAt` is outside the accepted window (see CONSENT_ATTESTATION_MAX_SKEW_SECONDS).
+ * Nothing is created (no FileObject, no session, no presigned URL) when one of these is returned.
  */
-export const API_ERROR_REASONS = [...CONFLICT_REASONS, ...NOT_FOUND_REASONS] as const;
+export const CONSENT_ERROR_REASONS = [
+  'CONSENT_REQUIRED',
+  'CONSENT_VERSION_UNSUPPORTED',
+  'CONSENT_INVALID',
+] as const;
+/** v0.4.1: HTTP status for every consent rejection (CONSENT_ERROR_REASONS). */
+export const CONSENT_HTTP_STATUS = 422;
+/**
+ * v0.5.0: HTTP status for `code: 'PAYLOAD_TOO_LARGE'`. Returned when a
+ * recording session's running total would exceed MAX_RECORDING_SESSION_BYTES (1.4 GB) on a chunk-URL request, or an
+ * upload's `sizeBytes` exceeds MAX_UPLOAD_BYTES. No presigned URL is issued.
+ */
+export const PAYLOAD_TOO_LARGE_HTTP_STATUS = 413;
+
+/**
+ * Every value `ApiErrorEnvelope.error.reason` may take: CONFLICT_REASONS (with `code: 'CONFLICT'`), then
+ * NOT_FOUND_REASONS (with `code: 'NOT_FOUND'`), then (v0.4.1) CONSENT_ERROR_REASONS (with `code: 'VALIDATION_FAILED'`).
+ * v0.4.0 widened this from an alias of CONFLICT_REASONS.
+ */
+/**
+ * v0.7.0: integration error reasons. INTEGRATION_NOT_CONNECTED (409): the integration is revoked or in error.
+ * APPROVAL_REQUIRED (403): issue push without a matching approved WriteApproval. OAUTH_STATE_INVALID (400): callback
+ * state missing, expired, consumed or mismatched. REPLAYED_DELIVERY (409): duplicate webhook delivery id (ADR-007).
+ * WEBHOOK_SIGNATURE_INVALID (401).
+ */
+export const INTEGRATION_ERROR_REASONS = [
+  'INTEGRATION_NOT_CONNECTED',
+  'APPROVAL_REQUIRED',
+  'OAUTH_STATE_INVALID',
+  'REPLAYED_DELIVERY',
+  'WEBHOOK_SIGNATURE_INVALID',
+] as const;
+
+export const API_ERROR_REASONS = [
+  ...CONFLICT_REASONS,
+  ...NOT_FOUND_REASONS,
+  ...CONSENT_ERROR_REASONS,
+  ...INTEGRATION_ERROR_REASONS,
+] as const;
 
 /** v0.4.0: the error names the directory routes (employees, teams, projects) can return as `error.reason`. */
 export const DIRECTORY_ERROR_REASONS = [
@@ -185,5 +228,151 @@ export const MAX_RECORDING_SESSION_BYTES = MAX_MEDIA_BYTES;
 export const MAX_RECORDING_CHUNKS = 10_000;
 /** Alias of MAX_RECORDING_CHUNKS. */
 export const MAX_CHUNKS = MAX_RECORDING_CHUNKS;
-/** Longest recording `durationMs` accepted by `CompleteRecordingSessionRequest`: 24 h. */
-export const MAX_DURATION_MS = 24 * 60 * 60 * 1000;
+/**
+ * Longest recording `durationMs` accepted by `CompleteRecordingSessionRequest`: 4 h (v0.4.1, G9; was 24 h). Equals the
+ * media worker's default `maxDurationSeconds` and the duration the MAX_MEDIA_BYTES tmpfs budget is sized for: a 24 h
+ * 16 kHz mono WAV alone is ~2.76 GB and would not fit the 3 GiB /tmp/work.
+ */
+export const MAX_DURATION_MS = 4 * 60 * 60 * 1000;
+/**
+ * v0.4.1 (G9): longest lifetime of a presigned GET (download) URL, in seconds (5 min). The API and @meetops/storage
+ * MUST NOT issue a download URL that expires later than this. Upload URLs use their own TTLs
+ * (CHUNK_UPLOAD_URL_TTL_SECONDS for session chunks).
+ */
+export const MAX_PRESIGNED_GET_TTL_SECONDS = 300;
+
+/**
+ * v0.4.1 (G11): how the recording user attested consent before capture or upload. Extensible via a contracts PR.
+ * - `all_parties_notified`: every participant was told the meeting is recorded (banner, announcement or invite text).
+ * - `all_parties_consented`: every participant explicitly agreed.
+ */
+export const CONSENT_METHODS = ['all_parties_notified', 'all_parties_consented'] as const;
+/** v0.4.1: the consent notice version clients attest to today. The API rejects other versions (CONSENT_VERSION_UNSUPPORTED). */
+export const CURRENT_CONSENT_VERSION = '2026-10';
+/** v0.4.1: `consentVersion` format: 1-32 chars, a letter or digit, then letters, digits, `.`, `_` or `-`. */
+export const CONSENT_VERSION_PATTERN = '^[A-Za-z0-9][A-Za-z0-9._-]{0,31}$';
+/**
+ * v0.4.1: the API rejects an `attestedAt` more than this many seconds ahead of its own clock (CONSENT_INVALID). The stored
+ * attestation also keeps the server's receive time (`recordedAt`), so a back-dated `attestedAt` stays visible in audit.
+ */
+export const CONSENT_ATTESTATION_MAX_SKEW_SECONDS = 300;
+/** v0.4.1: what a stored consent attestation (DB-3 `consent_attestations.subject`) is attached to. */
+export const CONSENT_SUBJECT_TYPES = ['upload', 'recording_session'] as const;
+
+/** v0.4.1 (G11): malware / content scan state of a FileObject (DB-3 `file_objects.scan_status`). */
+export const FILE_OBJECT_SCAN_STATUSES = ['pending', 'clean', 'quarantined', 'rejected'] as const;
+
+/**
+ * v0.4.1 (ADR-011 section 3): Redis pub/sub channel the API publishes AuthRevocationMessage to, after the change commits.
+ * Realtime nodes subscribe and disconnect matching sockets.
+ */
+export const AUTH_REVOCATIONS_CHANNEL = 'meetops:auth:revocations';
+/** v0.4.1: AuthRevocationMessage `v`. */
+export const AUTH_REVOCATION_MESSAGE_VERSION = 1;
+/**
+ * v0.4.1: AuthRevocationMessage `kind`: `session` (one session or extension token family), `user` (every session of
+ * the user) or `membership` (every socket of the user in one organization).
+ */
+export const AUTH_REVOCATION_KINDS = ['session', 'user', 'membership'] as const;
+/** v0.4.1: why access was revoked (ADR-011 section 3.2). */
+export const AUTH_REVOCATION_REASONS = [
+  'logout',
+  'logout_all',
+  'org_switch',
+  'member_removed',
+  'role_changed',
+  'invitation_revoked',
+  'password_changed',
+  'extension_revoked',
+] as const;
+/**
+ * v0.4.1 (ADR-011 section 5): realtime re-verifies every socket at least this often (5 min). Deployments may lower it,
+ * never raise it above MAX_REALTIME_REAUTH_INTERVAL_MS.
+ */
+export const REALTIME_REAUTH_INTERVAL_MS = 300_000;
+/** v0.4.1: upper bound for a configured realtime re-auth interval. */
+export const MAX_REALTIME_REAUTH_INTERVAL_MS = 300_000;
+/**
+ * v0.4.1: server-to-client realtime control events (ADR-011). Each is sent immediately before the server disconnects the
+ * socket; the client must not retry with the same credential, except after `auth:reauth-required` (reconnect with the
+ * current session).
+ * - `session:revoked`: the socket's session or token family was revoked (logout, logout-all, password change, ...).
+ * - `org:access-changed`: the user's membership in the socket's organization was removed or its role changed.
+ * - `auth:reauth-required`: the socket must reconnect, e.g. after an org switch or a failed periodic re-verification.
+ */
+export const REALTIME_CONTROL_EVENTS = {
+  sessionRevoked: 'session:revoked',
+  orgAccessChanged: 'org:access-changed',
+  authReauthRequired: 'auth:reauth-required',
+} as const;
+/** v0.4.1: `org:access-changed` reasons. */
+export const ORG_ACCESS_CHANGE_REASONS = ['member_removed', 'role_changed'] as const;
+/** v0.4.1: `auth:reauth-required` reasons. */
+export const REAUTH_REASONS = ['org_switch', 'session_expired', 'revalidation_failed'] as const;
+
+/**
+ * v0.5.0: consent / retention settings.
+ * - `mode`: `all_party` (every participant must consent) or `one_party` (the recording user's attestation suffices).
+ */
+export const CONSENT_SETTINGS_MODES = ['all_party', 'one_party'] as const;
+/** v0.5.0: roles allowed to PATCH consent settings. Every role may GET them (rbac-matrix "Consent / retention settings"). */
+export const CONSENT_SETTINGS_WRITE_ROLES = ['owner', 'admin'] as const;
+/** v0.5.0: max length of the consent notice text shown to participants. */
+export const MAX_CONSENT_NOTICE_TEXT_LENGTH = 4000;
+/** v0.5.0: recording retention range in days (1 day .. 10 years). */
+export const MIN_RETENTION_DAYS = 1;
+export const MAX_RETENTION_DAYS = 3650;
+
+/**
+ * v0.5.0: consent settings and upload lifecycle route templates. Org-scoped; the API MUST check
+ * `:organizationId` equals the session's active organization (mismatch or other-org id -> NOT_FOUND).
+ * - `consentSettings`: GET (all roles) and PATCH (owner/admin, partial update, CSRF, audit-logged).
+ * - `uploadComplete`: POST. Verifies size/checksum and the stored consent attestation; 422 + ConsentErrorReason and
+ *   no media job enqueued when the attestation is missing or invalid.
+ * - `uploadDownloadUrl`: GET. Presigned GET valid for at most MAX_PRESIGNED_GET_TTL_SECONDS (300 s).
+ */
+export const CONSENT_UPLOAD_PATHS = {
+  consentSettings: '/orgs/:organizationId/settings/consent',
+  uploads: '/orgs/:organizationId/uploads',
+  uploadComplete: '/orgs/:organizationId/uploads/:fileObjectId/complete',
+  uploadDownloadUrl: '/orgs/:organizationId/uploads/:fileObjectId/download-url',
+} as const;
+
+/**
+ * v0.6.0: meeting route templates. Org-scoped like CONSENT_UPLOAD_PATHS (path org must be the session's active org,
+ * otherwise NOT_FOUND).
+ * - `meetings`: GET, `ListMeetingsQuery` -> `CursorPage<Meeting>` (every role).
+ * - `meeting`: GET -> `Meeting`.
+ */
+export const MEETING_PATHS = {
+  meetings: '/orgs/:organizationId/meetings',
+  meeting: '/orgs/:organizationId/meetings/:meetingId',
+} as const;
+
+/**
+ * v0.7.0: integration route templates (ADR-007 webhooks/retries, ADR-008 OAuth state + token encryption).
+ * - `integrations`: GET -> `IntegrationList` (every role; never carries tokens or secrets).
+ * - `connect`: POST `ConnectIntegrationRequest` -> `ConnectIntegrationResponse` (owner/admin; session + CSRF). Issues
+ *   single-use OAuth state (Jira 3LO + PKCE S256) or GitHub App install state.
+ * - `callback`: GET, `IntegrationCallbackQuery`; the browser lands here from the provider. Not org-scoped in the path:
+ *   the org, user and redirect come from the consumed state. Responds 303 to the web app; no JSON body.
+ * - `integration`: DELETE -> 204 (owner/admin). Revokes the stored tokens and the webhook secret.
+ * - `webhook`: POST, raw provider body (≤ 1 MiB); `X-Hub-Signature-256` + `X-GitHub-Delivery` for GitHub. No session.
+ *   -> 202 `WebhookAcceptedResponse`; replayed delivery -> 409 `REPLAYED_DELIVERY`.
+ * - `issuePush`: POST `PushTaskIssueRequest` -> 201 `IntegrationIssue` (requires an approved WriteApproval).
+ */
+export const INTEGRATION_PATHS = {
+  integrations: '/orgs/:organizationId/integrations',
+  connect: '/orgs/:organizationId/integrations/connect',
+  callback: '/integrations/:provider/callback',
+  integration: '/orgs/:organizationId/integrations/:integrationId',
+  webhook: '/webhooks/:provider/:integrationId',
+  issuePush: '/orgs/:organizationId/tasks/:taskId/integration-issues',
+} as const;
+
+/** v0.7.0: integration connection lifecycle (Prisma `IntegrationStatus`). */
+export const INTEGRATION_STATUSES = ['active', 'error', 'revoked'] as const;
+/** v0.7.0: OAuth/App-install state TTL bounds in seconds (ADR-008: default 600, clamped 60-900). */
+export const INTEGRATION_STATE_TTL_SECONDS = 600;
+/** v0.7.0: webhook body cap in bytes (ADR-007). */
+export const INTEGRATION_WEBHOOK_MAX_BYTES = 1_048_576;

@@ -18,13 +18,20 @@ export const ApiErrorCode = Type.Union([
   Type.Literal('FORBIDDEN'),
   Type.Literal('NOT_FOUND'),
   Type.Literal('CONFLICT'),
+  /** v0.5.0: HTTP 413 (PAYLOAD_TOO_LARGE_HTTP_STATUS). Size caps (1.4 GB). */
+  Type.Literal('PAYLOAD_TOO_LARGE'),
   Type.Literal('RATE_LIMITED'),
   Type.Literal('PROVIDER_UNAVAILABLE'),
   Type.Literal('INTERNAL'),
 ]);
 export type ApiErrorCode = Static<typeof ApiErrorCode>;
 export { API_ERROR_CODES } from '../constants.js';
-import { API_ERROR_REASONS, CONFLICT_REASONS, NOT_FOUND_REASONS } from '../constants.js';
+import {
+  API_ERROR_REASONS,
+  CONFLICT_REASONS,
+  CONSENT_ERROR_REASONS,
+  NOT_FOUND_REASONS,
+} from '../constants.js';
 export {
   CONFLICT_REASONS,
   CONFLICT_HTTP_STATUS,
@@ -32,6 +39,7 @@ export {
   NOT_FOUND_REASONS,
   NOT_FOUND_HTTP_STATUS,
   DIRECTORY_ERROR_REASONS,
+  PAYLOAD_TOO_LARGE_HTTP_STATUS,
 } from '../constants.js';
 
 /** Named reason for a `CONFLICT` (409) error. See CONFLICT_REASONS. */
@@ -41,8 +49,8 @@ export type ConflictReason = (typeof CONFLICT_REASONS)[number];
 export const NotFoundReason = Type.Union(NOT_FOUND_REASONS.map((r) => Type.Literal(r)));
 export type NotFoundReason = (typeof NOT_FOUND_REASONS)[number];
 /**
- * The `error.reason` schema of ApiErrorEnvelope: a ConflictReason or (v0.4.0) a NotFoundReason. Until v0.3.3 this was
- * an alias of ConflictReason.
+ * The `error.reason` schema of ApiErrorEnvelope: a ConflictReason, (v0.4.0) a NotFoundReason or (v0.4.1) a
+ * ConsentErrorReason. Until v0.3.3 this was an alias of ConflictReason.
  */
 export const ApiErrorReason = Type.Union(API_ERROR_REASONS.map((r) => Type.Literal(r)));
 export type ApiErrorReason = (typeof API_ERROR_REASONS)[number];
@@ -58,7 +66,8 @@ export const ApiErrorEnvelope = Type.Object({
     requestId: Type.String({ minLength: 1 }),
     /**
      * Optional so older servers stay valid. A ConflictReason only with `code: 'CONFLICT'` (409, v0.3.3); a
-     * NotFoundReason only with `code: 'NOT_FOUND'` (404, v0.4.0).
+     * NotFoundReason only with `code: 'NOT_FOUND'` (404, v0.4.0); a ConsentErrorReason only with
+     * `code: 'VALIDATION_FAILED'` (422, v0.4.1).
      */
     reason: Type.Optional(ApiErrorReason),
     details: Type.Optional(
@@ -82,4 +91,20 @@ export type NotFoundErrorEnvelope = {
     code: 'NOT_FOUND';
     reason: NotFoundReason;
   };
+};
+
+/** v0.4.1: a 422 consent rejection body: `code` is `VALIDATION_FAILED` and `reason` is a ConsentErrorReason. */
+export type ConsentErrorEnvelope = {
+  error: Omit<ApiErrorEnvelope['error'], 'code' | 'reason'> & {
+    code: 'VALIDATION_FAILED';
+    reason: (typeof CONSENT_ERROR_REASONS)[number];
+  };
+};
+
+/**
+ * v0.5.0: a 413 body for the 1.4 GB caps (recording-session running total,
+ * upload `sizeBytes`). `code` is `PAYLOAD_TOO_LARGE`; no `reason`.
+ */
+export type PayloadTooLargeErrorEnvelope = {
+  error: Omit<ApiErrorEnvelope['error'], 'code' | 'reason'> & { code: 'PAYLOAD_TOO_LARGE' };
 };

@@ -2,6 +2,7 @@ import {
   createRootRouteWithContext,
   createRoute,
   createRouter,
+  lazyRouteComponent,
   Outlet,
   redirect,
   useRouter,
@@ -11,31 +12,69 @@ import { useQueryClient, type QueryClient } from '@tanstack/react-query';
 import type { AuthSession, GetAuthSessionResponse } from '@meetops/contracts';
 import { AppShell } from '@/components/layout/app-shell';
 import { EmptyState, ErrorState } from '@/components/states/states';
-import { useEffect } from 'react';
+import { lazy, Suspense, useEffect } from 'react';
 import { AuthLayout } from '@/features/auth/auth-layout';
-import { ForgotPasswordForm, LoginForm, SignupForm } from '@/features/auth/forms';
-import { MeetingDetailPage, MeetingsPage } from '@/features/meetings/meetings-pages';
 import {
   applySessionToStore,
   ensureSession,
   isAuthOrUnavailable,
   useSession,
 } from '@/features/session/use-session';
-import { parseTaskSearch, TasksPage } from '@/features/tasks/tasks-page';
+import { parseTaskSearch } from '@/features/tasks/task-search';
 import { useApi } from '@/lib/api/context';
 import type { ApiClient } from '@/lib/api/client';
 import { queryKeys } from '@/lib/api/queries';
 import { safeRedirect } from '@/lib/safe-redirect';
-import { DashboardPage } from '@/pages/app-pages';
-import { ProjectsPage } from '@/features/projects/projects-page';
-import { parseSettingsSearch, SettingsPage } from '@/features/settings/settings-page';
-import { TeamMembersPage } from '@/features/teams/team-members-page';
-import { CreateOrganizationPage } from '@/features/organizations/create-organization';
-import { ExtensionPairPage } from '@/features/extension/pair-page';
+import { parseSettingsSearch } from '@/features/settings/settings-search';
 import { parsePairSearch } from '@/features/extension/pairing';
+import { parseDesktopAuthorizeSearch } from '@/features/desktop/authorize';
+
+/** Rarely visited (only from the desktop app's sign-in), so it ships as its own chunk. */
+const DesktopAuthorizePage = lazy(() =>
+  import('@/features/desktop/authorize-page').then((m) => ({ default: m.DesktopAuthorizePage })),
+);
 import { createAuthPublicRoutes } from './auth-public';
 import { createAccountRoutes } from './account';
 import { createOrganizationRoutes } from './organization';
+import { createTaskReviewRoutes } from './task-review';
+import { RoutePending } from './route-pending';
+
+/*
+ * Route-level code splitting (docs/05-web/performance.md): every page module is its own
+ * chunk, fetched on navigation or on link hover/focus (defaultPreload: 'intent'). Layouts,
+ * guards and search parsers stay in the entry so redirects never wait on a page chunk.
+ */
+const LoginForm = lazyRouteComponent(() => import('@/features/auth/forms'), 'LoginForm');
+const SignupForm = lazyRouteComponent(() => import('@/features/auth/forms'), 'SignupForm');
+const ForgotPasswordForm = lazyRouteComponent(
+  () => import('@/features/auth/forms'),
+  'ForgotPasswordForm',
+);
+const meetingsModule = () => import('@/features/meetings/meetings-pages');
+const MeetingsPage = lazyRouteComponent(meetingsModule, 'MeetingsPage');
+const MeetingDetailPage = lazyRouteComponent(meetingsModule, 'MeetingDetailPage');
+const TasksPage = lazyRouteComponent(() => import('@/features/tasks/tasks-page'), 'TasksPage');
+const DashboardPage = lazyRouteComponent(() => import('@/pages/app-pages'), 'DashboardPage');
+const ProjectsPage = lazyRouteComponent(
+  () => import('@/features/projects/projects-page'),
+  'ProjectsPage',
+);
+const SettingsPage = lazyRouteComponent(
+  () => import('@/features/settings/settings-page'),
+  'SettingsPage',
+);
+const TeamMembersPage = lazyRouteComponent(
+  () => import('@/features/teams/team-members-page'),
+  'TeamMembersPage',
+);
+const CreateOrganizationPage = lazyRouteComponent(
+  () => import('@/features/organizations/create-organization'),
+  'CreateOrganizationPage',
+);
+const ExtensionPairPage = lazyRouteComponent(
+  () => import('@/features/extension/pair-page'),
+  'ExtensionPairPage',
+);
 
 export type RouterContext = { queryClient: QueryClient; api: ApiClient };
 
@@ -238,6 +277,20 @@ const extensionPairRoute = createRoute({
   },
 });
 
+const desktopAuthorizeRoute = createRoute({
+  getParentRoute: () => appLayout,
+  path: '/desktop/authorize',
+  validateSearch: parseDesktopAuthorizeSearch,
+  component: function DesktopAuthorizeRoute() {
+    const search = desktopAuthorizeRoute.useSearch();
+    return (
+      <Suspense fallback={<div className="p-6" aria-busy="true" />}>
+        <DesktopAuthorizePage search={search} />
+      </Suspense>
+    );
+  },
+});
+
 export const routeTree = rootRoute.addChildren([
   authLayout.addChildren([loginRoute, signupRoute, forgotPasswordRoute]),
   createAuthPublicRoutes(() => rootRoute),
@@ -251,8 +304,10 @@ export const routeTree = rootRoute.addChildren([
     teamMembersRoute,
     createOrganizationRoute,
     extensionPairRoute,
+    desktopAuthorizeRoute,
     createAccountRoutes(() => appLayout),
     createOrganizationRoutes(() => appLayout),
+    createTaskReviewRoutes(() => appLayout),
   ]),
 ]);
 
@@ -263,6 +318,7 @@ export function createAppRouter(context: RouterContext, history?: RouterHistory)
     ...(history ? { history } : {}),
     defaultPreload: 'intent',
     defaultErrorComponent: RouteError,
+    defaultPendingComponent: RoutePending,
   });
 }
 

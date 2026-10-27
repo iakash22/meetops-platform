@@ -1,3 +1,4 @@
+import { EXTENSION_AUTH_PATHS } from '@meetops/contracts';
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { InMemorySessionRepository } from '../src/modules/auth/infrastructure/in-memory-session.repository.js';
 import { InMemoryUserRepository } from '../src/modules/users/infrastructure/in-memory-user.repository.js';
@@ -221,6 +222,19 @@ describe('auth', () => {
       expect(bogus.json().error.code).toBe('UNAUTHENTICATED');
     });
 
+    it('returns user.emailVerifiedAt: an ISO time once verified, null before', async () => {
+      const v = await (await signupAndLogin(app, 'ver@example.com')).get('/auth/session');
+      expect(v.statusCode).toBe(200);
+      expect(v.json().user.emailVerifiedAt).toMatch(
+        /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$/,
+      );
+      const u = await (
+        await signupAndLogin(app, 'unver@example.com', undefined, { verify: false })
+      ).get('/auth/session');
+      expect(u.statusCode).toBe(200);
+      expect(u.json().user.emailVerifiedAt).toBeNull();
+    });
+
     it('expires after 30 minutes idle but slides with activity', async () => {
       let now = new Date('2026-01-01T00:00:00Z');
       await app.close();
@@ -365,6 +379,37 @@ describe('auth', () => {
       expect(denied.statusCode).toBe(200);
       expect(denied.headers['access-control-allow-origin']).toBeUndefined();
     });
+    it('CORS preflight allows the CSRF header and POST for an allowlisted Origin', async () => {
+      const res = await app.inject({
+        method: 'OPTIONS',
+        url: '/auth/signup',
+        headers: {
+          origin: ORIGIN,
+          'access-control-request-method': 'POST',
+          'access-control-request-headers': 'content-type, x-csrf-token',
+        },
+      });
+      expect(res.statusCode).toBe(204);
+      expect(res.headers['access-control-allow-origin']).toBe(ORIGIN);
+      expect(res.headers['access-control-allow-credentials']).toBe('true');
+      expect(String(res.headers['access-control-allow-headers'])).toContain('x-csrf-token');
+      expect(String(res.headers['access-control-allow-methods'])).toContain('POST');
+      expect(res.headers['access-control-allow-origin']).not.toBe('*');
+    });
+    it('CORS never allows a disallowed, look-alike or missing Origin', async () => {
+      for (const origin of ['https://evil.example', `${ORIGIN}.evil.example`, 'null']) {
+        const pre = await app.inject({
+          method: 'OPTIONS',
+          url: '/auth/csrf',
+          headers: { origin, 'access-control-request-method': 'GET' },
+        });
+        expect(pre.headers['access-control-allow-origin']).toBeUndefined();
+        expect(pre.headers['access-control-allow-credentials']).toBeUndefined();
+      }
+      const none = await app.inject({ method: 'GET', url: '/auth/csrf' });
+      expect(none.statusCode).toBe(200);
+      expect(none.headers['access-control-allow-origin']).toBeUndefined();
+    });
   });
 
   describe('password reset', () => {
@@ -388,6 +433,11 @@ describe('auth', () => {
         ).statusCode,
       ).toBe(204);
       expect((await c.get('/auth/session')).statusCode).toBe(401);
+      const changed = app.mail.sent.filter((m) => m.template === 'password_changed');
+      expect(changed).toHaveLength(1);
+      expect(changed[0]!.to).toBe('reset@example.com');
+      expect(Number.isNaN(Date.parse(changed[0]!.data.changedAt!))).toBe(false);
+      expect(changed[0]!.data.url).toMatch(/\/forgot-password$/);
       expect(
         (await anon.post('/auth/login', { email: 'reset@example.com', password: newPassword }))
           .statusCode,
@@ -419,12 +469,23 @@ describe('auth', () => {
     });
   });
 
-  it('openapi response schemas never expose hashes or tokens (except /auth/csrf)', async () => {
+  it('openapi response schemas never expose hashes or tokens (except /auth/csrf and extension token issuance)', async () => {
     const spec = app.swagger() as unknown as {
       paths: Record<string, Record<string, { responses: Record<string, unknown> }>>;
     };
+    // ADR-005 A1: these two routes exist to hand the extension its opaque token pair (never a hash).
+    const tokenIssuers = new Set<string>([
+      EXTENSION_AUTH_PATHS.token,
+      EXTENSION_AUTH_PATHS.refresh,
+    ]);
     for (const [path, ops] of Object.entries(spec.paths)) {
       if (path === '/auth/csrf') continue;
+      if (tokenIssuers.has(path)) {
+        expect(JSON.stringify(Object.values(ops).map((o) => o.responses)), path).not.toMatch(
+          /"(passwordHash|tokenHash|sessionToken)"/,
+        );
+        continue;
+      }
       const json = JSON.stringify(Object.values(ops).map((o) => o.responses));
       expect(json, path).not.toMatch(/"(passwordHash|tokenHash|token|accessToken|sessionToken)"/);
     }

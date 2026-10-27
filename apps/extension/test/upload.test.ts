@@ -17,6 +17,7 @@ import {
   type UploadClient,
   type SignedHeaders,
 } from '../src/lib/upload.js';
+import { CONSENT } from './helpers/consent.js';
 
 const hdrs = (o: Record<string, string>) => o as unknown as SignedHeaders;
 
@@ -26,6 +27,7 @@ const init = {
   mimeType: 'audio/webm;codecs=opus',
   startedAt: '2026-10-21T00:00:00.000Z',
   source: 'tab' as const,
+  consent: CONSENT,
   meetingId: MID,
 };
 const ABC_SHA = 'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad';
@@ -64,9 +66,15 @@ describe('StubUploadClient (contracts v0.2 flow)', () => {
   it('validates sizeBytes and sha256 format', async () => {
     const c = new StubUploadClient();
     const { sessionId } = await c.initSession(init);
-    await expect(c.requestChunkUrl(sessionId, { seq: 0, sizeBytes: 0, sha256: '0'.repeat(64) })).rejects.toThrow();
     await expect(
-      c.requestChunkUrl(sessionId, { seq: 0, sizeBytes: MAX_CHUNK_BYTES + 1, sha256: '0'.repeat(64) }),
+      c.requestChunkUrl(sessionId, { seq: 0, sizeBytes: 0, sha256: '0'.repeat(64) }),
+    ).rejects.toThrow();
+    await expect(
+      c.requestChunkUrl(sessionId, {
+        seq: 0,
+        sizeBytes: MAX_CHUNK_BYTES + 1,
+        sha256: '0'.repeat(64),
+      }),
     ).rejects.toThrow();
     await expect(
       c.requestChunkUrl(sessionId, { seq: 0, sizeBytes: 3, sha256: ABC_SHA.toUpperCase() }),
@@ -118,7 +126,9 @@ describe('StubUploadClient (contracts v0.2 flow)', () => {
     const b = (await c.initSession(init)).sessionId;
     await c.abort(b, { reason: 'error' });
     expect(c.sessions.get(b)!.aborted).toBe('error');
-    await expect(c.requestChunkUrl(b, { seq: 0, sizeBytes: 1, sha256: '0'.repeat(64) })).rejects.toThrow('closed');
+    await expect(
+      c.requestChunkUrl(b, { seq: 0, sizeBytes: 1, sha256: '0'.repeat(64) }),
+    ).rejects.toThrow('closed');
   });
 });
 

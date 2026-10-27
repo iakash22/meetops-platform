@@ -3,7 +3,7 @@ import type {
   AuthSession,
   CreateOrganizationRequest,
   CreateOrganizationResponse,
-  CreateUploadRequest,
+  InitUploadRequest,
   CreateUploadResponse,
   CsrfResponse,
   ExtensionPairRequest,
@@ -31,16 +31,36 @@ import type {
 import {
   API_ERROR_CODES,
   CONFLICT_REASONS,
+  CONSENT_ERROR_REASONS,
   EXTENSION_AUTH_PATHS,
   type ConflictReason,
 } from '@meetops/contracts/types';
 import { createHttpDirectoryApi, type DirectoryApi } from '@/features/directory/api';
+import {
+  createHttpMeetingInsightsApi,
+  type MeetingInsightsApi,
+} from '@/features/meetings/insights-api';
+import {
+  DESKTOP_AUTHORIZE_PATH,
+  type DesktopAuthorizeRequest,
+  type DesktopAuthorizeResponse,
+} from '@/features/desktop/authorize';
+import {
+  uploadPaths,
+  type CompleteUploadResponse,
+  type ConsentSettings,
+  type DownloadUrlResponse,
+  type UpdateConsentSettingsRequest,
+} from '@/features/uploads/types';
 
 /** Contracts ApiErrorEnvelope codes plus 'UNKNOWN' when the body is unparseable. */
 export type ApiErrorCode = ContractApiErrorCode | 'UNKNOWN';
 
 const KNOWN_CODES = new Set<string>(API_ERROR_CODES);
-const KNOWN_REASONS = new Set<string>(CONFLICT_REASONS);
+const KNOWN_REASONS = new Set<string>([...CONFLICT_REASONS, ...CONSENT_ERROR_REASONS]);
+
+/** 422 consent sub-reason (contracts CONSENT_ERROR_REASONS). */
+export type ConsentErrorReason = (typeof CONSENT_ERROR_REASONS)[number];
 
 /**
  * Error from the API. `message` is the server-provided envelope message (never
@@ -50,8 +70,13 @@ export class ApiError extends Error {
   readonly code: ApiErrorCode;
   readonly requestId: string | undefined;
   readonly details: ReadonlyArray<{ path: string; message: string }>;
-  /** 409 sub-reason (contracts CONFLICT_REASONS, e.g. LAST_OWNER), when the envelope carries a known one. */
-  reason: ConflictReason | undefined = undefined;
+  /**
+   * Known sub-reason, when the envelope carries one: 409 CONFLICT_REASONS (e.g. LAST_OWNER) or
+   * 422 CONSENT_ERROR_REASONS (e.g. CONSENT_REQUIRED).
+   */
+  reason: ConflictReason | ConsentErrorReason | undefined = undefined;
+  /** Seconds from a 429/503 `Retry-After` header (delta-seconds or HTTP date), when present. */
+  retryAfterSeconds: number | undefined = undefined;
   constructor(
     public readonly status: number,
     code: ApiErrorCode,
@@ -95,9 +120,24 @@ export class ApiError extends Error {
       : [];
     const error = new ApiError(status, code, message, requestId, details);
     if (typeof e.reason === 'string' && KNOWN_REASONS.has(e.reason))
-      error.reason = e.reason as ConflictReason;
+      error.reason = e.reason as ConflictReason | ConsentErrorReason;
     return error;
   }
+}
+
+/** Parse `Retry-After` (RFC 9110 §10.2.3): delta-seconds or an HTTP-date. Capped at 1 h. */
+export function parseRetryAfter(value: string | null, now = Date.now()): number | undefined {
+  if (!value) return undefined;
+  const trimmed = value.trim();
+  let seconds: number;
+  if (/^\d+$/.test(trimmed)) seconds = Number(trimmed);
+  else {
+    const at = Date.parse(trimmed);
+    if (Number.isNaN(at)) return undefined;
+    seconds = Math.ceil((at - now) / 1000);
+  }
+  if (!Number.isFinite(seconds) || seconds <= 0) return undefined;
+  return Math.min(seconds, 3600);
 }
 
 function safeJson(text: string): unknown {
@@ -251,22 +291,48 @@ export type ApiClient = {
     /** POST /auth/extension/pair (ADR-005 A1.1). Cookie + CSRF; returns a single-use pairing code. */
     pair: (body: ExtensionPairRequest) => Promise<ExtensionPairResponse>;
   };
+  desktop: {
+    /**
+     * POST /auth/desktop/authorize (ADR-012 §1.4, Proposed). Cookie + CSRF; returns a single-use code for the
+     * loopback redirect. Not served by the API yet, so callers must handle 404/network errors.
+     */
+    authorize: (body: DesktopAuthorizeRequest) => Promise<DesktopAuthorizeResponse>;
+  };
   meetings: {
-    list: (organizationId: Id) => Promise<Paginated<Meeting>>;
+    /** Newest first. Omit `page` for the first page (server default limit 25, max 100). */
+    list: (organizationId: Id, page?: CursorParams) => Promise<Paginated<Meeting>>;
     get: (organizationId: Id, meetingId: Id) => Promise<Meeting>;
   };
   tasks: {
     list: (organizationId: Id, filters?: TaskListFilters) => Promise<Paginated<Task>>;
   };
+  /** Transcript + report per meeting (Phase 3; routes pending on the backend). */
+  meetingInsights: MeetingInsightsApi;
   /** Employees, teams, team members and projects (contracts v0.4 directory, BE-3). */
   directory: DirectoryApi;
   /** Low-level request (cookie session + CSRF on non-GET). */
   request: <T>(method: HttpMethod, path: string, body?: unknown) => Promise<T>;
   storage: {
     /** POST /orgs/:organizationId/uploads; returns a presigned PUT (PresignedUrlDto). */
-    createUpload: (organizationId: Id, body: CreateUploadRequest) => Promise<CreateUploadResponse>;
+    createUpload: (organizationId: Id, body: InitUploadRequest) => Promise<CreateUploadResponse>;
     /** PUT the file to object storage. No cookies, no CSRF (third-party origin). */
-    putToPresignedUrl: (upload: PresignedUrlDto, file: Blob) => Promise<void>;
+    putToPresignedUrl: (
+      upload: PresignedUrlDto,
+      file: Blob,
+      opts?: { onProgress?: (fraction: number) => void; signal?: AbortSignal },
+    ) => Promise<void>;
+    /** POST .../uploads/:fileObjectId/complete. Contracts CompleteUploadResponse. */
+    completeUpload: (organizationId: Id, fileObjectId: Id) => Promise<CompleteUploadResponse>;
+    /**
+     * GET .../uploads/:fileObjectId/download-url. The API answers 404 until scanStatus is `clean`
+     * (same body as an unknown id); 409 is also treated as "not ready" by callers. Never cache.
+     */
+    getDownloadUrl: (organizationId: Id, fileObjectId: Id) => Promise<DownloadUrlResponse>;
+  };
+  /** Org consent / retention settings (contracts #168). GET all roles; PATCH owner/admin. */
+  consentSettings: {
+    get: (organizationId: Id) => Promise<ConsentSettings>;
+    update: (organizationId: Id, body: UpdateConsentSettingsRequest) => Promise<ConsentSettings>;
   };
   /** Register a handler for 401 responses (excluding auth endpoints). Returns unsubscribe. */
   onUnauthorized: (handler: () => void) => () => void;
@@ -352,7 +418,10 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
         cachedCsrf = null;
         unauthorizedHandlers.forEach((h) => h());
       }
-      throw ApiError.fromResponse(res.status, data);
+      const error = ApiError.fromResponse(res.status, data);
+      if (res.status === 429 || res.status === 503)
+        error.retryAfterSeconds = parseRetryAfter(res.headers?.get?.('retry-after') ?? null);
+      throw error;
     }
     return data as T;
   }
@@ -476,26 +545,88 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
     extension: {
       pair: (body) => request('POST', EXTENSION_AUTH_PATHS.pair, body),
     },
+    desktop: {
+      authorize: (body) => request('POST', DESKTOP_AUTHORIZE_PATH, body),
+    },
     meetings: {
-      list: (id) => request('GET', `${org(id)}/meetings`),
+      list: (id, page) => request('GET', `${org(id)}/meetings${pageQuery(page)}`),
       get: (id, meetingId) =>
         request('GET', `${org(id)}/meetings/${encodeURIComponent(meetingId)}`),
     },
     tasks: { list: (id, filters) => request('GET', `${org(id)}/tasks${taskQuery(filters)}`) },
     directory: createHttpDirectoryApi(request),
+    meetingInsights: createHttpMeetingInsightsApi(request),
     storage: {
-      createUpload: (id, body) => request('POST', `${org(id)}/uploads`, body),
-      putToPresignedUrl: async (upload, file) => {
-        if (!upload.url.startsWith('https://'))
-          throw new ApiError(0, 'BAD_REQUEST', 'Insecure upload URL');
+      createUpload: (id, body) => request('POST', uploadPaths.uploads(id), body),
+      putToPresignedUrl: async (upload, file, opts = {}) => {
+        assertHttpsUrl(upload.url);
+        const { onProgress, signal } = opts;
+        // fetch has no upload progress; use XHR only when the caller wants progress.
+        if (onProgress && typeof XMLHttpRequest !== 'undefined') {
+          await putWithProgress(upload, file, onProgress, signal);
+          return;
+        }
         const res = await doFetch(upload.url, {
           method: upload.method,
           headers: { ...(upload.headers ?? {}) },
           body: file,
           credentials: 'omit',
+          ...(signal ? { signal } : {}),
         });
         if (!res.ok) throw new ApiError(res.status, 'UNKNOWN', 'Upload failed');
       },
+      completeUpload: (id, fileObjectId) =>
+        request('POST', uploadPaths.complete(id, fileObjectId), {}),
+      getDownloadUrl: (id, fileObjectId) =>
+        request('GET', uploadPaths.downloadUrl(id, fileObjectId)),
+    },
+    consentSettings: {
+      get: (id) => request('GET', uploadPaths.consentSettings(id)),
+      update: (id, body) => request('PATCH', uploadPaths.consentSettings(id), body),
     },
   };
+}
+
+/** PUT to a presigned URL with upload progress (0..1) and abort. Rejects with AbortError on cancel. */
+function putWithProgress(
+  upload: PresignedUrlDto,
+  file: Blob,
+  onProgress: (fraction: number) => void,
+  signal?: AbortSignal,
+): Promise<void> {
+  assertHttpsUrl(upload.url);
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open(upload.method, upload.url);
+    xhr.withCredentials = false;
+    for (const [k, v] of Object.entries(upload.headers ?? {})) xhr.setRequestHeader(k, v);
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable && e.total > 0) onProgress(e.loaded / e.total);
+    };
+    xhr.onload = () =>
+      xhr.status >= 200 && xhr.status < 300
+        ? (onProgress(1), resolve())
+        : reject(new ApiError(xhr.status, 'UNKNOWN', 'Upload failed'));
+    xhr.onerror = () => reject(new ApiError(0, 'UNKNOWN', 'Upload failed'));
+    xhr.onabort = () => reject(new DOMException('Upload cancelled', 'AbortError'));
+    if (signal) {
+      if (signal.aborted) return xhr.abort();
+      signal.addEventListener('abort', () => xhr.abort(), { once: true });
+    }
+    xhr.send(file);
+  });
+}
+
+/**
+ * Presigned storage URLs must be absolute https:// before any file bytes or navigation go to them.
+ * Parsed (not prefix-matched) so `https:` look-alikes and relative URLs are rejected.
+ */
+export function assertHttpsUrl(url: string): void {
+  let ok = false;
+  try {
+    ok = new URL(url).protocol === 'https:';
+  } catch {
+    ok = false;
+  }
+  if (!ok) throw new ApiError(0, 'BAD_REQUEST', 'Insecure storage URL');
 }

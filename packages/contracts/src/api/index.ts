@@ -1,6 +1,8 @@
 export * from './auth.js';
 export * from './errors.js';
 export * from './pagination.js';
+export * from './consent.js';
+export * from './consent-settings.js';
 export * from './uploads.js';
 export * from './recording-sessions.js';
 export * from './meetings.js';
@@ -11,3 +13,4 @@ export * from './sessions.js';
 export * from './employees.js';
 export * from './teams.js';
 export * from './projects.js';
+export * from './integrations.js';

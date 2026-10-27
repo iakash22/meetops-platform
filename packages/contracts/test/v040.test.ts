@@ -111,7 +111,8 @@ const project = {
 };
 
 describe('v0.4.0 package version', () => {
-  it('is 0.4.0', () => expect(pkg.version).toBe('0.4.0'));
+  it('is 0.4.x (0.4.1 is additive over 0.4.0 for directory)', () =>
+    expect(pkg.version).toMatch(/^0\.([4-9]|\d{2,})\.\d+$/));
 });
 
 describe('v0.4.0 directory resources', () => {

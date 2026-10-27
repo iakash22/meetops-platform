@@ -1,4 +1,21 @@
 import { useState, type FormEvent } from 'react';
+
+export type PasswordStrength = 'too-short' | 'weak' | 'fair' | 'strong';
+
+/** Advisory meter (docs/references.md section 5); only length 12..128 is enforced. */
+export function passwordStrength(password: string, min = 12): PasswordStrength {
+  if (password.length < min) return 'too-short';
+  const classes = [/[a-z]/, /[A-Z]/, /\d/, /[^A-Za-z0-9]/].filter((r) => r.test(password)).length;
+  const score = classes + (password.length >= 16 ? 1 : 0) + (password.length >= 20 ? 1 : 0);
+  return score >= 4 ? 'strong' : score >= 2 ? 'fair' : 'weak';
+}
+
+const STRENGTH: Record<PasswordStrength, { label: string; bars: number; bar: string }> = {
+  'too-short': { label: 'Too short', bars: 0, bar: 'bg-border' },
+  weak: { label: 'Weak', bars: 1, bar: 'bg-destructive' },
+  fair: { label: 'Fair', bars: 2, bar: 'bg-amber-500' },
+  strong: { label: 'Strong', bars: 3, bar: 'bg-primary' },
+};
 import { Check, Eye, EyeOff, Loader2, MailCheck } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
@@ -16,7 +33,8 @@ import {
 import { AuthLayout, AuthSwitch, FieldError } from './auth-layout';
 import { useSession } from './session';
 
-type Field = 'name' | 'email' | 'password' | 'confirm';
+type Field = 'name' | 'email' | 'password';
+const FIELD_ORDER: Field[] = ['name', 'email', 'password'];
 type FieldErrors = Partial<Record<Field, string>>;
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -36,8 +54,6 @@ export function validateSignUp(values: Record<Field, string>): FieldErrors {
     errors.password = `Use at least ${MIN_PASSWORD_LENGTH} characters.`;
   else if (values.password.length > MAX_PASSWORD_LENGTH)
     errors.password = `Use at most ${MAX_PASSWORD_LENGTH} characters.`;
-  if (!values.confirm) errors.confirm = 'Confirm your password.';
-  else if (values.confirm !== values.password) errors.confirm = 'Passwords do not match.';
   return errors;
 }
 
@@ -47,7 +63,6 @@ export function SignUpScreen({ onSignIn }: { onSignIn: () => void }) {
     name: '',
     email: '',
     password: '',
-    confirm: '',
   });
   const [errors, setErrors] = useState<FieldErrors>({});
   const [toast, setToast] = useState<string | null>(null);
@@ -64,7 +79,11 @@ export function SignUpScreen({ onSignIn }: { onSignIn: () => void }) {
     event.preventDefault();
     const found = validateSignUp(values);
     setErrors(found);
-    if (Object.values(found).some(Boolean)) return;
+    const first = FIELD_ORDER.find((f) => found[f]);
+    if (first) {
+      document.getElementById(`signup-${first}`)?.focus();
+      return;
+    }
     setToast(null);
     setPending(true);
     try {
@@ -75,8 +94,9 @@ export function SignUpScreen({ onSignIn }: { onSignIn: () => void }) {
       });
       setSentTo(result.email);
     } catch (err) {
+      // Enumeration-safe: an existing email ends on the same "Check your email" state.
       if (err instanceof AuthError && err.reason === 'EMAIL_TAKEN') {
-        setErrors({ email: err.message });
+        setSentTo(values.email.trim());
       } else {
         setToast(err instanceof AuthError ? err.message : 'Sign-up failed. Try again.');
       }
@@ -116,6 +136,7 @@ export function SignUpScreen({ onSignIn }: { onSignIn: () => void }) {
     [errors[field] ? `${field}-error` : null, extra].filter(Boolean).join(' ') || undefined;
   const longEnough = values.password.length >= MIN_PASSWORD_LENGTH;
   const passwordType = showPassword ? 'text' : 'password';
+  const strength = passwordStrength(values.password, MIN_PASSWORD_LENGTH);
 
   return (
     <AuthLayout footer={SIGN_UP_FOOTER}>
@@ -165,7 +186,7 @@ export function SignUpScreen({ onSignIn }: { onSignIn: () => void }) {
                   type="button"
                   onClick={() => setShowPassword((s) => !s)}
                   aria-pressed={showPassword}
-                  aria-controls="signup-password signup-confirm"
+                  aria-controls="signup-password"
                   className="inline-flex items-center gap-1 rounded-sm text-xs text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 >
                   {showPassword ? (
@@ -204,23 +225,29 @@ export function SignUpScreen({ onSignIn }: { onSignIn: () => void }) {
                   {Math.min(values.password.length, MIN_PASSWORD_LENGTH)}/{MIN_PASSWORD_LENGTH}
                 </span>
               </p>
+              <div
+                className="flex items-center gap-1.5"
+                role="img"
+                aria-label={`Password strength: ${STRENGTH[strength].label}`}
+                data-testid="signup-strength"
+              >
+                {[0, 1, 2].map((i) => (
+                  <span
+                    key={i}
+                    aria-hidden
+                    className={cn(
+                      'h-1 flex-1 rounded-full',
+                      i < STRENGTH[strength].bars ? STRENGTH[strength].bar : 'bg-border',
+                    )}
+                  />
+                ))}
+                <span className="ml-2 min-w-16 text-xs text-muted-foreground" aria-hidden>
+                  {STRENGTH[strength].label}
+                </span>
+              </div>
             </div>
-            <div className="space-y-2">
-              <Label htmlFor="signup-confirm">Confirm password</Label>
-              <Input
-                id="signup-confirm"
-                type={passwordType}
-                autoComplete="new-password"
-                value={values.confirm}
-                onChange={(e) => set('confirm')(e.target.value)}
-                aria-invalid={errors.confirm ? true : undefined}
-                aria-describedby={describedBy('confirm')}
-                disabled={pending}
-              />
-              <FieldError id="confirm-error" message={errors.confirm} />
-            </div>
-            <Button type="submit" className="w-full" disabled={pending}>
-              {pending ? <Loader2 className="animate-spin" aria-hidden /> : null}
+            <Button type="submit" className="w-full" disabled={pending} aria-busy={pending}>
+              {pending ? <Loader2 className="motion-safe:animate-spin" aria-hidden /> : null}
               {pending ? 'Creating account…' : 'Create account'}
             </Button>
           </form>

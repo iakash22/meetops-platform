@@ -26,5 +26,12 @@ export function normalizeEmail(email: string): string {
 }
 
 export function toPublicUser(user: User): PublicUser {
-  return { id: user.id, email: user.email, name: user.name, emailVerifiedAt: user.emailVerifiedAt, createdAt: user.createdAt, updatedAt: user.updatedAt };
+  return {
+    id: user.id,
+    email: user.email,
+    name: user.name,
+    emailVerifiedAt: user.emailVerifiedAt,
+    createdAt: user.createdAt,
+    updatedAt: user.updatedAt,
+  };
 }

@@ -1,5 +1,8 @@
+import { createDemoMicPermission } from '../../src/consent/micPermission';
+import { createDemoConsentApi } from '../../src/consent/consentApi';
 import { Slot } from 'expo-router';
 
+import NotFound from '../../app/+not-found';
 import AppLayout from '../../app/(app)/_layout';
 import TabsLayout from '../../app/(app)/(tabs)/_layout';
 import AccountTab from '../../app/(app)/(tabs)/account';
@@ -31,6 +34,8 @@ export function makeRepositories(overrides: Partial<Repositories> = {}): Reposit
     meetings: createPlaceholderMeetingsRepository(),
     tasks: createPlaceholderTasksRepository(),
     uploadQueue: createPlaceholderUploadQueue(),
+    consent: createDemoConsentApi(),
+    micPermission: createDemoMicPermission({ initial: 'granted' }),
     ...overrides,
   };
 }
@@ -61,6 +66,7 @@ export function routes(
     '(app)/(tabs)/tasks': TasksTab,
     '(app)/(tabs)/account': AccountTab,
     '(app)/organizations': Organizations,
+    '+not-found': NotFound,
   };
 }
 

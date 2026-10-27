@@ -61,6 +61,10 @@ export function MeetingsScreen() {
           testID="meetings-list"
           data={state.items}
           keyExtractor={(m) => m.id}
+          initialNumToRender={12}
+          maxToRenderPerBatch={12}
+          windowSize={7}
+          removeClippedSubviews
           ListEmptyComponent={
             <EmptyState
               testID="meetings-empty"
@@ -132,9 +136,9 @@ const styles = StyleSheet.create({
     padding: spacing.lg,
     marginBottom: spacing.md,
   },
-  liveRow: { borderColor: colors.accent },
+  liveRow: { borderColor: colors.primary },
   statusRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
-  live: { color: colors.accent, fontSize: 14, fontWeight: '600' },
+  live: { color: colors.foreground, fontSize: 14, fontWeight: '600' },
   title: { color: colors.foreground, fontSize: 16, fontWeight: '600', marginBottom: spacing.xs },
   placeholder: {
     color: colors.mutedForeground,

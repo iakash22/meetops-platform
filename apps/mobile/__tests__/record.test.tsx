@@ -9,9 +9,16 @@ import {
   recorderReducer,
   spokenElapsed,
 } from '../src/record/recorderShell';
+import { createDemoConsentApi } from '../src/consent/consentApi';
 import { RepositoriesProvider } from '../src/data/RepositoriesProvider';
 import { RecordScreen } from '../src/screens/RecordScreen';
 import { makeRepositories } from './support/appRoutes';
+import { ApiError } from '../src/api/client';
+import { sha256Hex } from '../src/record/sha256';
+import { createSimulatedCapture } from '../src/record/simulatedRecorder';
+import { createMemoryQueueStore, createSimulatedUploadApi } from '../src/upload/simulatedUploadApi';
+import type { RecordingUploadApi } from '../src/upload/types';
+import { createUploadQueueEngine } from '../src/upload/uploadQueueEngine';
 
 describe('recorder state machine', () => {
   it('follows idle → recording → paused → recording → stopped → idle and keeps time', () => {
@@ -64,13 +71,24 @@ describe('Record tab UI', () => {
     jest.restoreAllMocks();
   });
 
-  async function renderRecord(reducedMotion = false, repos = makeRepositories()) {
+  async function renderRecord(
+    reducedMotion = false,
+    repos = makeRepositories({ consent: createDemoConsentApi({ optedIn: true }) }),
+  ) {
     jest.spyOn(AccessibilityInfo, 'isReduceMotionEnabled').mockResolvedValue(reducedMotion);
     render(
       <RepositoriesProvider value={repos}>
         <RecordScreen />
       </RepositoriesProvider>,
     );
+    await act(async () => {});
+  }
+
+  /** Start passes the per-recording participant notice (opt-in already given). */
+  async function startRecording() {
+    fireEvent.press(screen.getByTestId('record-button'));
+    await act(async () => {});
+    fireEvent.press(screen.getByTestId('consent-notice-accept'));
     await act(async () => {});
   }
 
@@ -99,7 +117,7 @@ describe('Record tab UI', () => {
 
   it('runs the timer while recording, pauses, resumes and stops without saving', async () => {
     await renderRecord();
-    fireEvent.press(screen.getByTestId('record-button'));
+    await startRecording();
     expect(screen.getByTestId('record-status')).toHaveTextContent('Recording');
     expect(screen.getByTestId('record-button')).toHaveProp('accessibilityLabel', 'Stop recording');
     expect(screen.getAllByTestId('record-live-dot', { includeHiddenElements: true })).toHaveLength(
@@ -137,13 +155,13 @@ describe('Record tab UI', () => {
   it('pulses the halo while recording when motion is allowed', async () => {
     await renderRecord(false);
     expect(loop).not.toHaveBeenCalled();
-    fireEvent.press(screen.getByTestId('record-button'));
+    await startRecording();
     expect(loop).toHaveBeenCalled();
   });
 
   it('keeps the halo still when reduce motion is on', async () => {
     await renderRecord(true);
-    fireEvent.press(screen.getByTestId('record-button'));
+    await startRecording();
     advance(2_000);
     expect(loop).not.toHaveBeenCalled();
     expect(screen.getByTestId('record-timer')).toHaveTextContent('00:02');
@@ -158,6 +176,119 @@ describe('Record tab UI', () => {
     );
     expect(screen.getByTestId('upload-queue-status')).toHaveTextContent(
       "Offline. 2 recordings waiting to upload. Uploads resume when you're back online.",
+    );
+  });
+});
+
+describe('Record tab with the simulated recorder', () => {
+  beforeEach(() => {
+    jest.useFakeTimers({ now: new Date('2026-10-25T10:00:00Z') });
+    jest
+      .spyOn(Animated, 'loop')
+      .mockReturnValue({ start: jest.fn(), stop: jest.fn(), reset: jest.fn() });
+    jest.spyOn(AccessibilityInfo, 'isReduceMotionEnabled').mockResolvedValue(false);
+  });
+  afterEach(() => {
+    jest.useRealTimers();
+    jest.restoreAllMocks();
+  });
+
+  function setup(api: Partial<RecordingUploadApi> = {}) {
+    const capture = createSimulatedCapture();
+    const engine = createUploadQueueEngine({
+      store: createMemoryQueueStore(),
+      chunks: capture,
+      api: { ...createSimulatedUploadApi(0), ...api },
+      network: { isOnline: () => true },
+    });
+    const repos = makeRepositories({
+      consent: createDemoConsentApi({ optedIn: true }),
+      uploadQueue: engine,
+      recordings: { engine, capture, organizationId: () => 'org-1' },
+    });
+    render(
+      <RepositoriesProvider value={repos}>
+        <RecordScreen />
+      </RepositoriesProvider>,
+    );
+    return { engine, capture };
+  }
+
+  async function recordFor(ms: number) {
+    await act(async () => {});
+    fireEvent.press(screen.getByTestId('record-button'));
+    await act(async () => {});
+    fireEvent.press(screen.getByTestId('consent-notice-accept'));
+    await act(async () => {});
+    act(() => {
+      jest.advanceTimersByTime(ms);
+    });
+    fireEvent.press(screen.getByTestId('record-button'));
+    await act(async () => {
+      await jest.runAllTimersAsync();
+    });
+  }
+
+  it('labels the simulated recorder clearly', async () => {
+    setup();
+    await act(async () => {});
+    expect(screen.getByTestId('record-simulated-notice')).toHaveTextContent(
+      /No audio is captured.*Uploads are simulated/,
+    );
+  });
+
+  it('queues the recording on stop with its consent and uploads it', async () => {
+    const init = jest.fn(() => Promise.resolve({ sessionId: 's-1' }));
+    const remove = jest.fn();
+    const { capture, engine } = setup({ init });
+    const realRemove = capture.remove.bind(capture);
+    capture.remove = (id) => {
+      remove(id);
+      return realRemove(id);
+    };
+    await recordFor(25_000);
+    expect(screen.getByTestId('record-summary')).toHaveTextContent(
+      "Simulated recording saved at 00:25. It's in the upload queue.",
+    );
+    expect(init).toHaveBeenCalledWith(
+      'org-1',
+      expect.objectContaining({
+        source: 'mobile',
+        consent: expect.objectContaining({ method: 'all_parties_notified' }),
+      }),
+    );
+    expect(screen.getByTestId('upload-queue-status')).toHaveTextContent(/Nothing waiting/);
+    expect(screen.queryByTestId('upload-queue-items')).toBeNull();
+    await expect(engine.items()).resolves.toHaveLength(0);
+    // Verified local delete after upload (R6).
+    const id = remove.mock.calls[0]?.[0] as string;
+    expect(id).toMatch(/^rec-/);
+    await expect(capture.exists(id)).resolves.toBe(false);
+  });
+
+  it('keeps a rejected upload for retry or delete', async () => {
+    const { engine } = setup({
+      init: () => Promise.reject(new ApiError(422, 'VALIDATION_FAILED', 'bad')),
+    });
+    await recordFor(5_000);
+    const [item] = await engine.items();
+    expect(item?.state).toBe('failed');
+    expect(screen.getByTestId(`queue-retry-${item!.id}`)).toBeTruthy();
+    expect(screen.getByTestId('upload-queue-status')).toHaveTextContent(/1 needs attention\./);
+    fireEvent.press(screen.getByTestId(`queue-delete-${item!.id}`));
+    await act(async () => {});
+    await expect(engine.items()).resolves.toHaveLength(0);
+    expect(screen.queryByTestId('upload-queue-items')).toBeNull();
+  });
+});
+
+describe('sha256Hex', () => {
+  it('matches known vectors', () => {
+    expect(sha256Hex(new Uint8Array())).toBe(
+      'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',
+    );
+    expect(sha256Hex(new TextEncoder().encode('abc'))).toBe(
+      'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad',
     );
   });
 });
