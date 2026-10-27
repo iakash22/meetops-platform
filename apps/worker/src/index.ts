@@ -12,6 +12,12 @@ import { loadNotificationsWorkerEnv, registerNotificationsWorker } from './notif
 import { createQueue, createWorker } from '@meetops/queue';
 import { getPrismaClient, purgeExpiredSessions, redactExpiredIpAddresses } from '@meetops/database';
 import { IP_RETENTION_QUEUE, runIpRetention, scheduleIpRetention } from './privacy/index.js';
+import {
+  GEOIP_UPDATE_QUEUE,
+  loadMmdbUpdaterConfig,
+  runMmdbUpdate,
+  scheduleMmdbUpdate,
+} from './geoip/mmdb-updater.js';
 import { createNotificationEmailSender } from './notifications/email.js';
 
 export * from './media/index.js';
@@ -19,6 +25,7 @@ export * from './ai/index.js';
 export * from './integrations/index.js';
 export * from './notifications/index.js';
 export * from './privacy/index.js';
+export * from './geoip/mmdb-updater.js';
 
 async function main() {
   const { close } = startMediaWorker();
@@ -73,6 +80,22 @@ async function main() {
           );
           return { close: () => Promise.all([worker.close(), queue.close()]) };
         })();
+  // ADR-014: monthly GeoIP mmdb update. Off unless GEOIP_UPDATE_URL and GEOIP_DB_PATH are set; a bad URL/host
+  // throws here (fail closed at startup).
+  const geoipCfg = loadMmdbUpdaterConfig();
+  const geoipUpdate = geoipCfg
+    ? (() => {
+        const queue = createQueue(GEOIP_UPDATE_QUEUE);
+        const worker = createWorker(GEOIP_UPDATE_QUEUE, () => runMmdbUpdate(geoipCfg, logger));
+        void scheduleMmdbUpdate(queue).catch((err: unknown) =>
+          logger.warn(
+            { errName: err instanceof Error ? err.name : 'unknown' },
+            'geoip update schedule failed',
+          ),
+        );
+        return { close: () => Promise.all([worker.close(), queue.close()]) };
+      })()
+    : undefined;
   const shutdown = async () => {
     logger.info('Shutting down worker...');
     await Promise.allSettled([
@@ -81,6 +104,7 @@ async function main() {
       notifications.registered ? notifications.close() : Promise.resolve(),
       summary.registered ? summary.close() : Promise.resolve(),
       retention ? retention.close() : Promise.resolve(),
+      geoipUpdate ? geoipUpdate.close() : Promise.resolve(),
     ]);
     notifRedis?.disconnect();
     process.exit(0);

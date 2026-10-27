@@ -59,8 +59,31 @@ The worker sends it only when `WEB_BASE_URL` (https) is set and the shared `EMAI
 `generate-fixture.py` in the same folder with `mmdb-writer` 0.2.7 (PyPI) and `netaddr` 1.3.0. It contains no DB-IP or
 MaxMind data. Tests never download the real database.
 
-## Getting the database
+## Getting the database (monthly updater)
 
-The monthly updater job (ADR-014 PR 6) will download and verify the file. Until then, download
-`dbip-city-lite-YYYY-MM.mmdb.gz` manually from `https://download.db-ip.com/free/`, gunzip it, and point
-`GEOIP_DB_PATH` at it.
+The worker runs a BullMQ job on the 3rd of each month at 04:30 UTC (`geoip.mmdb-update`, an idempotent scheduler, 3 attempts with backoff). It is **off unless both `GEOIP_UPDATE_URL` and `GEOIP_DB_PATH` are set**. Example (DB-IP City Lite, free, no account and no key):
+
+```
+GEOIP_DB_PATH=/var/lib/meetops/geoip/city.mmdb
+GEOIP_UPDATE_URL=https://download.db-ip.com/free/dbip-city-lite-{YYYY}-{MM}.mmdb.gz
+```
+
+`{YYYY}` and `{MM}` are replaced with the current UTC month. Optional settings:
+
+- `GEOIP_UPDATE_ALLOWED_HOSTS`: exact host names, comma-separated. Default `download.db-ip.com`.
+- `GEOIP_UPDATE_SHA256_URL`: a URL whose body starts with the hex SHA-256 of the downloaded file. It follows the same rules as the download URL. DB-IP Lite does not publish one, so it is unset by default.
+- `GEOIP_UPDATE_MAX_BYTES`: default 256 MiB.
+- `GEOIP_UPDATE_TEST_IPS`: default `1.1.1.1,8.8.8.8,2606:4700:4700::1111`.
+- `GEOIP_UPDATE_TIMEOUT_MS`: socket idle timeout, default 120000.
+- `GEOIP_UPDATE_TOTAL_TIMEOUT_MS`: overall deadline for the whole run, default 300000 (5 min). A slow-drip response is aborted and the current file is kept.
+
+Rules:
+
+- **Download:** `https:` only, and the host must be on the allowlist; a URL with credentials or any explicit non-default port (e.g. `:8443`) is refused. **Redirects are never followed**: any 3xx fails the run. A Content-Length over the cap is refused, and the stream is aborted as soon as it passes the cap. For `.gz` files the decompressed size is capped too, which guards against gzip bombs. An invalid URL or host makes the worker fail at startup rather than skip silently.
+- **Verify:** the SHA-256 is checked when `GEOIP_UPDATE_SHA256_URL` is set. Then the file is opened with `maxmind`, its database type must be a City database, and at least one test IP must resolve to a country.
+- **Swap:** the file is downloaded to a temp file in the same directory and fsynced. After verification, the current file is copied to `<GEOIP_DB_PATH>.prev` (the last good copy), and the new file is `rename`d over `GEOIP_DB_PATH`, which is atomic on one filesystem, so readers see either the old or the new file. **On any failure the current file is kept** and the temp file is removed. Logs carry only error codes and sizes, never paths or URLs.
+- **Pick-up:** the API opens the file at startup, so restart the API (rolling) after an update to use the new month's data. To roll back, move `city.mmdb.prev` over `city.mmdb` and restart.
+
+There is no paid provider and no fallback source. If the job keeps failing, the previous month's file stays in use.
+
+Manual alternative: download `dbip-city-lite-YYYY-MM.mmdb.gz` from `https://download.db-ip.com/free/`, gunzip it, and point `GEOIP_DB_PATH` at it.
