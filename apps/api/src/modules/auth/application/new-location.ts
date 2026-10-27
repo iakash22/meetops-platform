@@ -1,6 +1,7 @@
+import { Value } from '@sinclair/typebox/value';
 import {
   AUTH_NEW_LOCATION_SIGNIN_EVENT,
-  type AuthNewLocationSigninEvent,
+  AuthNewLocationSigninEvent,
   type NewLocationReason,
 } from '@meetops/contracts';
 import type { GeoFields } from '../../../shared/geoip/provider.js';
@@ -46,7 +47,7 @@ export function buildNewLocationEvent(input: {
   geo: GeoFields;
   reason: NewLocationReason;
 }): NewLocationOutboxEvent {
-  return {
+  const event: NewLocationOutboxEvent = {
     organizationId: input.organizationId,
     aggregateType: 'user',
     aggregateId: input.userId,
@@ -60,6 +61,11 @@ export function buildNewLocationEvent(input: {
       reason: input.reason,
     },
   };
+  // Strict schema (additionalProperties: false): a payload carrying anything else (an IP, a raw header) never ships.
+  if (!Value.Check(AuthNewLocationSigninEvent, event.payload)) {
+    throw new Error('new_location_signin payload does not match the contract');
+  }
+  return event;
 }
 
 /** Per-user limits (VPN flapping): one alert per (country, region) per 24 h, at most 3 alerts per user per 24 h. */
