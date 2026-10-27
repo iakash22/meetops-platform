@@ -1,6 +1,13 @@
 # MeetOps AI — Project Context Handoff
 
-## Update — 27 Oct 2026
+## Update — 27 Oct 2026 (~21:30 IST)
+
+- `integration/phase-1` was merged into `main` via #247 (merge commit `47dbf97`); `main` now carries Phases 0–9 work to date (overall ~60%, see [`PHASE_STATUS.md`](PHASE_STATUS.md)).
+- Agents: All Rounder (backend) and the coordinator (frontend: web, extension, mobile, desktop). Both idle until Shubham says "start work".
+- Desktop auth (#241) is behind `DESKTOP_AUTH_ENABLED` (default off).
+- Pending owner decisions and keys: see `PHASE_STATUS.md` → "Owner decisions". No secrets in docs.
+
+## Update — 27 Oct 2026 (morning)
 
 - **Agents:** Coordinator (merge gate, PRs, frontend) + All Rounder (backend, DB, contracts, security; full local CI incl. live DB tests).
 - **Flow:** feature branch → PR into `integration/phase-1` → merge gate → later one integration → `main` PR merged by Shubham.
