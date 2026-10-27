@@ -11,6 +11,10 @@ While the version is `0.x`, a minor bump may contain breaking changes (ADR-003).
 - Upload `filename` (`CreateUploadRequest` and `InitUploadRequest`) now also rejects C0 control characters (CR, LF, tab
   and the rest), DEL and bidi embedding/override/isolate characters (U+202A-U+202E, U+2066-U+2069), as well as `/`,
   `\` and NUL (security review B 4.3).
+- Upload `filename` additionally rejects C1 controls, line/paragraph separators and every BMP format (Cf) character:
+  zero-width space/joiners and LRM/RLM (U+200B-U+200F), U+2060-U+2064, U+206A-U+206F, U+FEFF, U+00AD, U+061C, U+180E,
+  U+FFF9-U+FFFB and the rest (`FILENAME_PATTERN`, #270 L-1). New `isSafeUploadFilename()` also rejects astral
+  Cc/Cf/Co/Cs code points (e.g. tag characters); the API enforces it.
 
 ## [0.10.0] - 2026-10-27
 
