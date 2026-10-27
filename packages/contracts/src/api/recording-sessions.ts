@@ -19,7 +19,21 @@ export {
   MAX_DURATION_MS,
   MAX_RECORDING_CHUNKS,
   MAX_RECORDING_SESSION_BYTES,
+  RECORDING_SESSION_PATHS,
 } from '../constants.js';
+
+/** v0.8.0: path params of `RECORDING_SESSION_PATHS.init`. */
+export const InitRecordingSessionParams = Type.Object(
+  { organizationId: Id },
+  { additionalProperties: false },
+);
+export type InitRecordingSessionParams = Static<typeof InitRecordingSessionParams>;
+/** v0.8.0: path params of `RECORDING_SESSION_PATHS.chunks`, `.complete` and `.abort`. */
+export const RecordingSessionParams = Type.Object(
+  { sessionId: Id },
+  { additionalProperties: false },
+);
+export type RecordingSessionParams = Static<typeof RecordingSessionParams>;
 
 const Sha256Hex = Type.String({ pattern: '^[0-9a-f]{64}$' });
 

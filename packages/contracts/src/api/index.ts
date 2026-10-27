@@ -6,6 +6,7 @@ export * from './consent-settings.js';
 export * from './uploads.js';
 export * from './recording-sessions.js';
 export * from './meetings.js';
+export * from './meeting-insights.js';
 export * from './extension-auth.js';
 export * from './tasks.js';
 export * from './organizations.js';
