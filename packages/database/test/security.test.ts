@@ -73,6 +73,7 @@ const MEETINGS_EXTERNAL_ID_MIGRATION = '20261026120000_meetings_external_id';
 const RECORDING_SOURCE_NATIVE_MIGRATION = '20261026210000_recording_source_native';
 /** Update when adding a migration. */
 const INTEGRATION_CONNECTIONS_MIGRATION = '20261027000000_integration_connections';
+const INTEGRATION_ROUTING_MIGRATION = '20261027100000_integration_routing_functions';
 /** Phase 3 AI summary dedupe (reports unique key). Update LATEST_MIGRATION when adding a migration. */
 const REPORT_SUMMARY_DEDUPE_MIGRATION = '20261027120000_report_summary_dedupe';
 const LATEST_MIGRATION = REPORT_SUMMARY_DEDUPE_MIGRATION;
@@ -1332,6 +1333,9 @@ describe('Phase 5 integration_connections (static)', () => {
       .map((x) => x.name)
       .sort();
     expect(dirs.indexOf(INTEGRATION_CONNECTIONS_MIGRATION)).toBe(
+      dirs.indexOf(INTEGRATION_ROUTING_MIGRATION) - 1,
+    );
+    expect(dirs.indexOf(INTEGRATION_ROUTING_MIGRATION)).toBe(
       dirs.indexOf(LATEST_MIGRATION) - 1,
     );
   });
@@ -1402,5 +1406,29 @@ describe('Phase 3 report summary dedupe (static)', () => {
     expect(model).toContain(
       '@@unique([meetingId, transcriptId, transcriptRevision, promptVersion], map: "reports_summary_dedupe_key")',
     );
+  });
+});
+
+describe('integration routing definer functions', () => {
+  const sql = readFileSync(
+    resolve(migrationsDir, '20261027100000_integration_routing_functions/migration.sql'),
+    'utf8',
+  );
+  for (const fn of [
+    'integration_connection_org(uuid, text)',
+    'integration_connections_due_for_refresh(timestamptz, integer)',
+  ]) {
+    it(`${fn} is locked down`, () => {
+      expect(sql).toContain(`ALTER FUNCTION ${fn} OWNER TO meetops_migrator;`);
+      expect(sql).toContain(`REVOKE ALL ON FUNCTION ${fn} FROM PUBLIC;`);
+      expect(sql).toContain(`GRANT EXECUTE ON FUNCTION ${fn} TO meetops_app;`);
+    });
+  }
+  it('are SECURITY DEFINER with a fixed search_path and never return secret columns', () => {
+    expect(sql.match(/SECURITY DEFINER\nSET search_path = public, pg_temp/g)).toHaveLength(2);
+    const bodies = sql.match(/AS \$\$[\s\S]*?\$\$;/g) ?? [];
+    expect(bodies).toHaveLength(2);
+    for (const b of bodies) expect(b).not.toMatch(/_enc|display_name|\*/);
+    expect(sql).toContain("c.status <> 'revoked'");
   });
 });

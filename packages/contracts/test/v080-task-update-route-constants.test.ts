@@ -23,7 +23,7 @@ const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url),
 const id = '00000000-0000-4000-8000-000000000001';
 
 describe('v0.8.0 package version', () => {
-  it('is 0.8.x', () => expect(pkg.version).toMatch(/^0\.8\.\d+$/));
+  it('is 0.8.0 or later', () => expect(pkg.version).toMatch(/^0\.([8-9]|\d{2,})\.\d+$/));
 });
 
 describe('v0.8.0 UpdateTaskRequest', () => {

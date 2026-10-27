@@ -176,3 +176,35 @@ describe('integration connection repository', () => {
     expect(f.rows).toHaveLength(0);
   });
 });
+
+describe('integration routing helpers', () => {
+  it('call the SECURITY DEFINER functions with bound parameters and map rows', async () => {
+    const calls: { sql: string; values: unknown[] }[] = [];
+    const reply: Record<string, unknown[]> = {
+      org: [{ org_id: '00000000-0000-4000-8000-000000000001' }],
+      due: [{ org_id: 'o', id: 'i', provider: 'jira' }],
+    };
+    const tx = {
+      $queryRaw: async (s: TemplateStringsArray, ...values: unknown[]) => {
+        const sql = s.join('?');
+        calls.push({ sql, values });
+        return sql.includes('due_for_refresh') ? reply.due : reply.org;
+      },
+    };
+    const client = {
+      $transaction: (fn: (t: typeof tx) => unknown) => fn(tx),
+    } as unknown as PrismaClient;
+    const repo = createIntegrationConnectionRepository({ client, cipher });
+    expect(await repo.resolveOrganization('jira', 'not-a-uuid')).toBeNull();
+    expect(calls).toHaveLength(0);
+    const id = '00000000-0000-4000-8000-0000000000aa';
+    expect(await repo.resolveOrganization('jira', id)).toBe('00000000-0000-4000-8000-000000000001');
+    expect(calls[0]!.sql).toContain('integration_connection_org(');
+    expect(calls[0]!.values).toEqual([id, 'jira']);
+    const before = new Date();
+    expect(await repo.listDueForRefresh(before, 5)).toEqual([
+      { organizationId: 'o', id: 'i', provider: 'jira' },
+    ]);
+    expect(calls[1]!.values).toEqual([before, 5]);
+  });
+});

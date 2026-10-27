@@ -11,3 +11,5 @@ export * from './token-crypto.js';
 export * from './oauth-state.js';
 export * from './jira-oauth.js';
 export * from './github-app-install.js';
+export * from './github-app.js';
+export * from './jira-webhook.js';
