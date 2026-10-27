@@ -445,6 +445,53 @@ describe('Phase 5 integration flows', () => {
       ).toBe(401);
     });
 
+    it('GitHub App-wide /webhooks/github: routes by installation id; signature checked first', async () => {
+      const { c, org } = await owner();
+      const id = seed(org, 'github');
+      const taskId = linkTask(org, id, 'github', 'acme/app#5');
+      const body = JSON.stringify({
+        action: 'closed',
+        issue: { number: 5, state: 'closed', state_reason: 'completed' },
+        repository: { full_name: 'acme/app' },
+        installation: { id: 99 },
+      });
+      const h = {
+        'x-hub-signature-256': sign(GH_SECRET, body),
+        'x-github-event': 'issues',
+        'x-github-delivery': randomUUID(),
+      };
+      const r = await post('/webhooks/github', body, h);
+      expect(r.statusCode).toBe(202);
+      expect(repo.tasks.get(taskId)!.status).toBe('done');
+      expect((await post('/webhooks/github', body, h)).statusCode).toBe(409);
+      const fresh = { ...h, 'x-github-delivery': randomUUID() };
+      expect(
+        (
+          await post('/webhooks/github', body, {
+            ...fresh,
+            'x-hub-signature-256': sign('wrong', body),
+          })
+        ).statusCode,
+      ).toBe(401);
+      const unsigned: Record<string, string> = { ...fresh };
+      delete unsigned['x-hub-signature-256'];
+      expect((await post('/webhooks/github', body, unsigned)).statusCode).toBe(401);
+      const other = body.replace('"id":99', '"id":98');
+      expect(
+        (
+          await post('/webhooks/github', other, {
+            ...fresh,
+            'x-hub-signature-256': sign(GH_SECRET, other),
+          })
+        ).statusCode,
+      ).toBe(401);
+      await c.delete(`/orgs/${org}/integrations/${id}`);
+      expect(
+        (await post('/webhooks/github', body, { ...h, 'x-github-delivery': randomUUID() }))
+          .statusCode,
+      ).toBe(401);
+    });
+
     it('Jira: per-connection secret, status category mapping, replay rejection', async () => {
       const { org } = await owner();
       const id = seed(org, 'jira');

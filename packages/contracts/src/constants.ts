@@ -452,6 +452,8 @@ export const INTEGRATION_PATHS = {
   callback: '/integrations/:provider/callback',
   integration: '/orgs/:organizationId/integrations/:integrationId',
   webhook: '/webhooks/:provider/:integrationId',
+  /** v0.12.0: App-wide GitHub webhook (a GitHub App has one webhook URL); routed by payload.installation.id. */
+  githubAppWebhook: '/webhooks/github',
   issuePush: '/orgs/:organizationId/tasks/:taskId/integration-issues',
 } as const;
 

@@ -15,6 +15,7 @@ import {
   mapGitHubIssueEvent,
   mapJiraIssueEvent,
   randomUrlToken,
+  verifyGitHubSignature,
   verifyGitHubWebhook,
   verifyJiraWebhook,
   type AuditEvent as IntegrationAuditEvent,
@@ -274,6 +275,60 @@ export class IntegrationsService {
       webhookSecret: randomUrlToken(32),
       accessTokenExpiresAt: tok.expiresAt,
     });
+  }
+
+  /**
+   * App-wide GitHub webhook (POST /webhooks/github). Checks the HMAC with the App webhook secret before any
+   * lookup, then routes by payload.installation.id through the definer routing function, re-enters RLS per
+   * org and applies the status change. The install is single-account ("Only on this account"), but nothing
+   * here assumes it: every live connection of that installation (max 10) gets the update.
+   */
+  async githubAppWebhook(input: { rawBody: Buffer; headers: HeaderBag }): Promise<number> {
+    const rt = this.runtime();
+    const gh = rt.github;
+    if (!gh) throw new WebhookSignatureError();
+    const secret = await gh.webhookSecret();
+    const sig = input.headers['x-hub-signature-256'];
+    const pre = verifyGitHubSignature(
+      secret,
+      input.rawBody,
+      typeof sig === 'string' ? sig : undefined,
+    );
+    // missing/malformed/invalid signature are all 401, and the check runs before any database lookup.
+    if (pre) throw webhookFailure(401);
+    let targets: { organizationId: string; id: string }[] = [];
+    const r = await verifyGitHubWebhook({
+      rawBody: input.rawBody,
+      headers: input.headers,
+      deliveryStore: rt.deliveryStore,
+      maxBodyBytes: INTEGRATION_WEBHOOK_MAX_BYTES,
+      secretResolver: {
+        resolve: async (ref) => {
+          if (!ref.installationId) return null;
+          targets = await this.repo.resolveByExternalAccount('github', ref.installationId);
+          const first = targets[0];
+          return first
+            ? { organizationId: first.organizationId, integrationId: first.id, secret }
+            : null;
+        },
+      },
+    });
+    if (!r.ok) throw webhookFailure(r.status);
+    let applied = 0;
+    for (const t of targets) {
+      const change = mapGitHubIssueEvent(r.event, r.payload, {
+        organizationId: t.organizationId,
+        integrationId: t.id,
+      });
+      if (!change) continue;
+      applied += await this.repo.applyIssueStatus(t.organizationId, {
+        integrationId: t.id,
+        provider: 'github',
+        externalId: change.externalId,
+        taskStatus: ISSUE_TO_TASK_STATUS[change.status],
+      });
+    }
+    return applied;
   }
 
   /** Verifies, de-duplicates and applies a webhook delivery. No session; the org comes from the routing function. */

@@ -261,6 +261,29 @@ export default async function integrationsModule(
       { parseAs: 'buffer', bodyLimit: INTEGRATION_WEBHOOK_MAX_BYTES },
       (_req, body, done) => done(null, body),
     );
+    s.post<{ Body: Buffer }>(
+      INTEGRATION_PATHS.githubAppWebhook,
+      {
+        bodyLimit: INTEGRATION_WEBHOOK_MAX_BYTES,
+        schema: {
+          tags: ['integrations'],
+          summary: 'App-wide GitHub webhook (HMAC with the App secret, routed by installation id)',
+          response: {
+            202: WebhookAcceptedResponse,
+            400: ErrorBody,
+            401: ErrorBody,
+            409: ErrorBody,
+            413: ErrorBody,
+            503: ErrorBody,
+          },
+        },
+      },
+      async (request, reply) => {
+        const body = Buffer.isBuffer(request.body) ? request.body : Buffer.alloc(0);
+        await service.githubAppWebhook({ rawBody: body, headers: request.headers });
+        return reply.status(202).send({ received: true });
+      },
+    );
     s.post<{ Params: WebhookParams; Body: Buffer }>(
       INTEGRATION_PATHS.webhook,
       {
