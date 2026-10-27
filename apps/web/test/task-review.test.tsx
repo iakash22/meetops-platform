@@ -3,7 +3,13 @@ import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ExtractedTask } from '@meetops/contracts';
 import { ApiError } from '@/lib/api/client';
-import { createTaskReviewApi } from '@/features/task-review/api';
+import { TASK_PATHS, createTaskReviewApi } from '@/features/task-review/api';
+import {
+  buildUpdate,
+  serverFieldErrors,
+  validateEdit,
+} from '@/features/task-review/edit-task-form';
+import type { Task } from '@meetops/contracts';
 import { confidenceLabel, validateTitle } from '@/features/task-review/review-page';
 import { createMockApi, renderApp, resetStores } from './fixtures/render';
 import { waitForRouteData } from './fixtures/route-ready';
@@ -51,11 +57,14 @@ describe('task review', () => {
     await api.pending(ORG, { meetingId: 'm 1' });
     await api.accept(ORG, 'a/b', { title: 't', priority: 'low' });
     await api.dismiss(ORG, 'x');
+    await api.update(ORG, 't 1', { title: 'n' });
     expect(req.mock.calls).toEqual([
       ['GET', `/orgs/${ORG}/extracted-tasks?meetingId=m+1`],
       ['POST', `/orgs/${ORG}/extracted-tasks/a%2Fb/accept`, { title: 't', priority: 'low' }],
       ['POST', `/orgs/${ORG}/extracted-tasks/x/dismiss`],
+      ['PATCH', `/orgs/${ORG}/tasks/t%201`, { title: 'n' }],
     ]);
+    expect(TASK_PATHS.task).toBe('/orgs/:organizationId/tasks/:taskId');
   });
 
   it('still shows the empty state for a legacy 404', async () => {
@@ -136,5 +145,124 @@ describe('task review', () => {
     expect(await screen.findByText('Task already reviewed')).toBeInTheDocument();
     expect(screen.queryByText("Couldn't accept the task")).not.toBeInTheDocument();
     expect(await screen.findByText('Nothing to review')).toBeInTheDocument();
+  });
+
+  it('edit helpers send only changed keys and null to clear', () => {
+    const t: Task = {
+      id: 't1',
+      organizationId: ORG,
+      title: 'A',
+      description: 'd',
+      status: 'todo',
+      priority: 'medium',
+      dueAt: '2026-11-01T00:00:00.000Z',
+      createdAt: T,
+      updatedAt: T,
+    };
+    const base = {
+      title: 'A',
+      description: 'd',
+      priority: 'medium',
+      status: 'todo',
+      due: '2026-11-01',
+    } as const;
+    expect(buildUpdate(t, base)).toEqual({});
+    expect(
+      buildUpdate(t, { ...base, title: ' B ', description: '', due: '', status: 'done' }),
+    ).toEqual({
+      title: 'B',
+      description: null,
+      dueAt: null,
+      status: 'done',
+    });
+    expect(buildUpdate({ ...t, dueAt: '' }, { ...base, due: '2026-12-05' }).dueAt).toBe(
+      '2026-12-05T00:00:00.000Z',
+    );
+    expect(validateEdit({ ...base, title: '' })).toEqual({ title: 'Enter a title.' });
+    expect(
+      serverFieldErrors(
+        new ApiError(422, 'VALIDATION_FAILED', 'x', undefined, [{ path: '/dueAt', message: 'm' }]),
+      ),
+    ).toEqual({ dueAt: 'Enter a valid date.' });
+    expect(serverFieldErrors(new ApiError(500, 'INTERNAL', 'x'))).toBeNull();
+  });
+
+  it('edits an accepted task: inline server error, then saves the patch', async () => {
+    const created: Task = {
+      id: '50000000-0000-4000-8000-000000000001',
+      organizationId: ORG,
+      title: 'Suggested 1',
+      status: 'todo',
+      priority: 'medium',
+      createdAt: T,
+      updatedAt: T,
+    };
+    let patches = 0;
+    const patch = vi.fn((b: unknown) => {
+      if (patches++ === 0)
+        throw new ApiError(422, 'VALIDATION_FAILED', 'x', undefined, [
+          { path: '/title', message: 'm' },
+        ]);
+      return { ...created, ...(b as object) };
+    });
+    const request = routedRequest({
+      [`GET /orgs/${ORG}/extracted-tasks`]: () => ({ items: [item(1)], nextCursor: null }),
+      [`POST /orgs/${ORG}/extracted-tasks/40000000-0000-4000-8000-000000000001/accept`]: () =>
+        created,
+      [`PATCH /orgs/${ORG}/tasks/${created.id}`]: patch,
+    });
+    renderApp('/tasks/review', withRequest(request));
+    await waitForRouteData(request);
+    await userEvent.click(await screen.findByRole('button', { name: 'Accept' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Edit Suggested 1' }));
+    const form = await screen.findByRole('form', { name: 'Edit task' });
+    const title = within(form).getByLabelText('Title');
+    await userEvent.clear(title);
+    await userEvent.click(within(form).getByRole('button', { name: 'Save changes' }));
+    expect(await within(form).findByText('Enter a title.')).toBeInTheDocument();
+    expect(patch).not.toHaveBeenCalled();
+    await userEvent.type(title, 'Bad');
+    await userEvent.click(within(form).getByRole('button', { name: 'Save changes' }));
+    expect(await within(form).findByText('Enter a valid title.')).toBeInTheDocument();
+    expect(title).toHaveAttribute('aria-invalid', 'true');
+    await userEvent.clear(title);
+    await userEvent.type(title, 'Ship it');
+    await userEvent.selectOptions(within(form).getByLabelText('Priority'), 'urgent');
+    await userEvent.click(within(form).getByRole('button', { name: 'Save changes' }));
+    await waitFor(() =>
+      expect(patch).toHaveBeenLastCalledWith({ title: 'Ship it', priority: 'urgent' }),
+    );
+    expect(await screen.findByText('Task updated')).toBeInTheDocument();
+    await waitFor(() =>
+      expect(screen.queryByRole('form', { name: 'Edit task' })).not.toBeInTheDocument(),
+    );
+  });
+
+  it('toasts a non-field edit error', async () => {
+    const created: Task = {
+      id: '50000000-0000-4000-8000-000000000002',
+      organizationId: ORG,
+      title: 'Suggested 1',
+      status: 'todo',
+      priority: 'medium',
+      createdAt: T,
+      updatedAt: T,
+    };
+    const request = routedRequest({
+      [`GET /orgs/${ORG}/extracted-tasks`]: () => ({ items: [item(1)], nextCursor: null }),
+      [`POST /orgs/${ORG}/extracted-tasks/40000000-0000-4000-8000-000000000001/accept`]: () =>
+        created,
+      [`PATCH /orgs/${ORG}/tasks/${created.id}`]: () => {
+        throw new ApiError(500, 'INTERNAL', 'x');
+      },
+    });
+    renderApp('/tasks/review', withRequest(request));
+    await waitForRouteData(request);
+    await userEvent.click(await screen.findByRole('button', { name: 'Accept' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Edit Suggested 1' }));
+    const form = await screen.findByRole('form', { name: 'Edit task' });
+    await userEvent.selectOptions(within(form).getByLabelText('Status'), 'done');
+    await userEvent.click(within(form).getByRole('button', { name: 'Save changes' }));
+    expect(await screen.findByText("Couldn't update the task")).toBeInTheDocument();
   });
 });

@@ -193,6 +193,34 @@ export function createIntegrationConnectionRepository(
       };
     },
 
+    /**
+     * Webhook routing: the org owning a live connection, via the integration_connection_org SECURITY DEFINER
+     * function (identifiers only). Callers must then re-enter RLS with that org before reading anything else.
+     */
+    async resolveOrganization(provider: string, id: string): Promise<string | null> {
+      if (!UUID_RE.test(id)) return null;
+      const db = options.client ?? getPrismaClient();
+      const rows = await db.$transaction(
+        (tx) => tx.$queryRaw<{ org_id: string | null }[]>`
+          SELECT integration_connection_org(${id}::uuid, ${provider}) AS org_id`,
+      );
+      return rows[0]?.org_id ?? null;
+    },
+
+    /** Token-refresh sweep: (org, id, provider) of active rows expiring before `before`. Identifiers only. */
+    async listDueForRefresh(
+      before: Date,
+      limit = 100,
+    ): Promise<{ organizationId: string; id: string; provider: string }[]> {
+      const db = options.client ?? getPrismaClient();
+      const rows = await db.$transaction(
+        (tx) => tx.$queryRaw<{ org_id: string; id: string; provider: string }[]>`
+          SELECT org_id, id, provider
+          FROM integration_connections_due_for_refresh(${before}, ${limit}::int)`,
+      );
+      return rows.map((r) => ({ organizationId: r.org_id, id: r.id, provider: r.provider }));
+    },
+
     /** active <-> error only; use `disconnect` to revoke (it must wipe the secrets in the same write). */
     async setStatus(
       organizationId: string,
