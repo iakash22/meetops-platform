@@ -1,15 +1,14 @@
 /**
- * ADR-014 IP retention + geo columns. Input checks are unit tests; the live block needs RLS_TEST_APP_URL (meetops_app),
- * RLS_TEST_OWNER_URL (meetops_migrator) and RLS_TEST_ADMIN_URL (superuser, only to seed/read audit rows back, since
- * forced RLS hides org-NULL audit rows from the migrator) pointing at a migrated database.
+ * ADR-014 IP retention, session purge and geo columns. Input checks are unit tests; the live block needs
+ * RLS_TEST_APP_URL (meetops_app) and RLS_TEST_ADMIN_URL (superuser: seeds rows, reads audit rows back, and acts as
+ * meetops_migrator through SET LOCAL ROLE, so no migrator login is needed) pointing at a migrated database.
  */
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { PrismaClient } from '@prisma/client';
-import { redactExpiredIpAddresses } from '../src/index.js';
+import { purgeExpiredSessions, redactExpiredIpAddresses } from '../src/index.js';
 
 const APP_URL = process.env.RLS_TEST_APP_URL;
-const OWNER_URL = process.env.RLS_TEST_OWNER_URL;
 const ADMIN_URL = process.env.RLS_TEST_ADMIN_URL;
 const IP = '203.0.113.9';
 
@@ -26,9 +25,19 @@ describe('redactExpiredIpAddresses input checks', () => {
   });
 });
 
-describe.skipIf(!APP_URL || !OWNER_URL || !ADMIN_URL)('ip retention (live)', () => {
+describe('purgeExpiredSessions input checks', () => {
+  it('rejects bad windows and batch sizes before touching the database', async () => {
+    for (const d of [0, 91, 1.5, Number.NaN]) {
+      await expect(purgeExpiredSessions({} as never, d)).rejects.toThrow(RangeError);
+    }
+    await expect(purgeExpiredSessions({} as never, 90, { batchSize: 0 })).rejects.toThrow(
+      RangeError,
+    );
+  });
+});
+
+describe.skipIf(!APP_URL || !ADMIN_URL)('ip retention (live)', () => {
   const app = new PrismaClient({ datasources: { db: { url: APP_URL ?? '' } } });
-  const owner = new PrismaClient({ datasources: { db: { url: OWNER_URL ?? '' } } });
   const admin = new PrismaClient({ datasources: { db: { url: ADMIN_URL ?? '' } } });
   const user = randomUUID();
   const old = new Date(Date.now() - 31 * 86_400_000);
@@ -53,13 +62,13 @@ describe.skipIf(!APP_URL || !OWNER_URL || !ADMIN_URL)('ip retention (live)', () 
     )[0]!.id;
 
   beforeAll(async () => {
-    await owner.$executeRaw`INSERT INTO users (id, email, name, updated_at)
+    await admin.$executeRaw`INSERT INTO users (id, email, name, updated_at)
       VALUES (${user}::uuid, ${`${user}@example.test`}, 'Geo', now())`;
     for (const [id, createdAt] of [
       ...oldSessions.map((id) => [id, old] as const),
       [newSession, new Date()] as const,
     ]) {
-      await owner.$executeRaw`INSERT INTO sessions (id, user_id, token_hash, ip_address, expires_at,
+      await admin.$executeRaw`INSERT INTO sessions (id, user_id, token_hash, ip_address, expires_at,
           absolute_expires_at, created_at, updated_at, geo_city, geo_country_code, geo_approximate)
         VALUES (${id}::uuid, ${user}::uuid, ${randomUUID()}, ${IP}, now() + interval '1 day',
           now() + interval '1 day', ${createdAt}, now(), 'Pune', 'IN', true)`;
@@ -68,7 +77,7 @@ describe.skipIf(!APP_URL || !OWNER_URL || !ADMIN_URL)('ip retention (live)', () 
       [oldReset, old],
       [newReset, new Date()],
     ] as const) {
-      await owner.$executeRaw`INSERT INTO password_resets (id, user_id, token_hash, expires_at, ip_address, created_at)
+      await admin.$executeRaw`INSERT INTO password_resets (id, user_id, token_hash, expires_at, ip_address, created_at)
         VALUES (${id}::uuid, ${user}::uuid, ${randomUUID()}, now(), ${IP}, ${createdAt})`;
     }
     oldAudit = await authEvent();
@@ -81,8 +90,8 @@ describe.skipIf(!APP_URL || !OWNER_URL || !ADMIN_URL)('ip retention (live)', () 
     ]);
   });
   afterAll(async () => {
-    await owner.$executeRaw`DELETE FROM users WHERE id = ${user}::uuid`;
-    await Promise.all([app.$disconnect(), owner.$disconnect(), admin.$disconnect()]);
+    await admin.$executeRaw`DELETE FROM users WHERE id = ${user}::uuid`;
+    await Promise.all([app.$disconnect(), admin.$disconnect()]);
   });
 
   it('app role cannot UPDATE audit_events (no grant), even with the retention GUC set', async () => {
@@ -95,29 +104,30 @@ describe.skipIf(!APP_URL || !OWNER_URL || !ADMIN_URL)('ip retention (live)', () 
   });
 
   it('migrator with the GUC: a non-NULL update and a <30-day row are refused; DELETE/TRUNCATE refused', async () => {
-    const asMigrator = (sql: ReturnType<typeof owner.$executeRaw>) =>
-      owner.$transaction([
-        owner.$executeRaw`SELECT set_config('meetops.audit_ip_retention', 'on', true)`,
+    // Portable: the admin connection drops to meetops_migrator with SET LOCAL ROLE (current_user = migrator).
+    const asMigrator = (sql: ReturnType<typeof admin.$executeRaw>) =>
+      admin.$transaction([
+        admin.$executeRaw`SET LOCAL ROLE meetops_migrator`,
+        admin.$executeRaw`SELECT set_config('meetops.audit_ip_retention', 'on', true)`,
         sql,
       ]);
     // Changing the IP to another value: the policy WITH CHECK and the trigger both refuse it.
     await expect(
       asMigrator(
-        owner.$executeRaw`UPDATE audit_events SET ip_address = '198.51.100.1' WHERE id = ${oldAudit}::uuid`,
+        admin.$executeRaw`UPDATE audit_events SET ip_address = '198.51.100.1' WHERE id = ${oldAudit}::uuid`,
       ),
     ).rejects.toThrow();
     // Nulling IP together with another column: refused by the trigger.
     await expect(
       asMigrator(
-        owner.$executeRaw`UPDATE audit_events SET ip_address = NULL, user_agent = 'x' WHERE id = ${oldAudit}::uuid`,
+        admin.$executeRaw`UPDATE audit_events SET ip_address = NULL, user_agent = 'x' WHERE id = ${oldAudit}::uuid`,
       ),
     ).rejects.toThrow();
     // A row under 30 days: not visible to the scoped policy, so nothing is updated.
-    const n = await owner.$transaction([
-      owner.$executeRaw`SELECT set_config('meetops.audit_ip_retention', 'on', true)`,
-      owner.$executeRaw`UPDATE audit_events SET ip_address = NULL WHERE id = ${newAudit}::uuid`,
-    ]);
-    expect(n[1]).toBe(0);
+    const n = await asMigrator(
+      admin.$executeRaw`UPDATE audit_events SET ip_address = NULL WHERE id = ${newAudit}::uuid`,
+    );
+    expect(n[2]).toBe(0);
     expect((await audit(newAudit))?.ip_address).toBe(IP);
     // Even a superuser (bypasses RLS) is stopped by the trigger for a <30-day row.
     await expect(
@@ -162,7 +172,7 @@ describe.skipIf(!APP_URL || !OWNER_URL || !ADMIN_URL)('ip retention (live)', () 
     expect(res.auditEventsRedacted).toBeGreaterThanOrEqual(1);
     expect(res.passwordResetsRedacted).toBeGreaterThanOrEqual(1);
 
-    const sessions = await owner.$queryRaw<
+    const sessions = await admin.$queryRaw<
       { id: string; ip_address: string | null; geo_city: string | null }[]
     >`
       SELECT id::text, ip_address, geo_city FROM sessions WHERE user_id = ${user}::uuid`;
@@ -171,7 +181,7 @@ describe.skipIf(!APP_URL || !OWNER_URL || !ADMIN_URL)('ip retention (live)', () 
       expect(byId.get(id)).toMatchObject({ ip_address: null, geo_city: 'Pune' });
     expect(byId.get(newSession)?.ip_address).toBe(IP);
 
-    const resets = await owner.$queryRaw<{ id: string; ip_address: string | null }[]>`
+    const resets = await admin.$queryRaw<{ id: string; ip_address: string | null }[]>`
       SELECT id::text, ip_address FROM password_resets WHERE user_id = ${user}::uuid`;
     expect(new Map(resets.map((r) => [r.id, r.ip_address]))).toEqual(
       new Map([
@@ -197,5 +207,46 @@ describe.skipIf(!APP_URL || !OWNER_URL || !ADMIN_URL)('ip retention (live)', () 
       auditEventsRedacted: 0,
       passwordResetsRedacted: 0,
     });
+  });
+
+  it('purges sessions that ended over 90 days ago (with their geo), keeps recent and active ones; idempotent', async () => {
+    const ended = new Date(Date.now() - 91 * 86_400_000);
+    const recent = new Date(Date.now() - 10 * 86_400_000);
+    const [oldRevoked, oldExpired, recentRevoked, active] = [
+      randomUUID(),
+      randomUUID(),
+      randomUUID(),
+      randomUUID(),
+    ];
+    const add = (id: string, revokedAt: Date | null, absExp: Date) =>
+      admin.$executeRaw`INSERT INTO sessions (id, user_id, token_hash, expires_at, absolute_expires_at, revoked_at,
+          created_at, updated_at, geo_city, geo_country_code, geo_approximate)
+        VALUES (${id}::uuid, ${user}::uuid, ${randomUUID()}, ${absExp}, ${absExp}, ${revokedAt},
+          ${new Date(Date.now() - 200 * 86_400_000)}, now(), 'Pune', 'IN', true)`;
+    await add(oldRevoked, ended, new Date(Date.now() + 86_400_000));
+    await add(oldExpired, null, ended);
+    await add(recentRevoked, recent, new Date(Date.now() + 86_400_000));
+    await add(active, null, new Date(Date.now() + 86_400_000));
+    const r = await purgeExpiredSessions(app, 90, { batchSize: 1 });
+    expect(r.sessionsPurged).toBeGreaterThanOrEqual(2);
+    const left = new Set(
+      (
+        await admin.$queryRaw<
+          { id: string }[]
+        >`SELECT id::text FROM sessions WHERE user_id = ${user}::uuid`
+      ).map((x) => x.id),
+    );
+    expect(left.has(oldRevoked)).toBe(false);
+    expect(left.has(oldExpired)).toBe(false);
+    expect(left.has(recentRevoked)).toBe(true);
+    expect(left.has(active)).toBe(true);
+    expect((await purgeExpiredSessions(app, 90)).sessionsPurged).toBe(0);
+  });
+
+  it('meetops_migrator holds explicit UPDATE(ip_address) on sessions, password_resets and audit_events', async () => {
+    const g = await admin.$queryRaw<{ t: string; ok: boolean }[]>`
+      SELECT t, has_column_privilege('meetops_migrator', t, 'ip_address', 'UPDATE') AS ok
+      FROM unnest(ARRAY['sessions', 'password_resets', 'audit_events']) AS t`;
+    for (const r of g) expect(r.ok, r.t).toBe(true);
   });
 });
