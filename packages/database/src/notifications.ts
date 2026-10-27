@@ -145,14 +145,13 @@ export function decodeNotificationCursor(cursor: string): { createdAt: Date; id:
   return { createdAt, id };
 }
 
-const toRecord = (r: {
-  data: Prisma.JsonValue;
-} & Omit<NotificationRecord, 'data'>): NotificationRecord => ({
+const toRecord = (
+  r: {
+    data: Prisma.JsonValue;
+  } & Omit<NotificationRecord, 'data'>,
+): NotificationRecord => ({
   ...r,
-  data:
-    r.data && typeof r.data === 'object' && !Array.isArray(r.data)
-      ? (r.data)
-      : {},
+  data: r.data && typeof r.data === 'object' && !Array.isArray(r.data) ? r.data : {},
 });
 
 export function createNotificationRepository(options: NotificationRepositoryOptions) {
@@ -167,13 +166,22 @@ export function createNotificationRepository(options: NotificationRepositoryOpti
     organizationId: string,
     userId: string,
     fn: (tx: Prisma.TransactionClient) => Promise<T>,
-  ) => runWithOrganizationContext(client(), organizationId, fn, { ...timeout, userId });
+  ) => {
+    // owner_only is permissive when app.current_user_id is unset (org-level workers). A per-user call must never
+    // reach the DB without it, so a missing/empty/non-UUID id fails closed here (PR #263 Info-2).
+    assertUuid(userId, 'userId');
+    return runWithOrganizationContext(client(), organizationId, fn, { ...timeout, userId });
+  };
 
   return {
     /** Idempotent on (org, user, dedupeKey): a replayed event returns the existing row. */
-    async create(organizationId: string, input: CreateNotificationInput): Promise<NotificationRecord> {
+    async create(
+      organizationId: string,
+      input: CreateNotificationInput,
+    ): Promise<NotificationRecord> {
       assertUuid(input.userId, 'userId');
-      if (!input.type.trim() || !input.dedupeKey.trim()) throw new TypeError('type and dedupeKey are required');
+      if (!input.type.trim() || !input.dedupeKey.trim())
+        throw new TypeError('type and dedupeKey are required');
       return org(organizationId, async (tx) => {
         const row = await tx.notification.upsert({
           where: {
@@ -191,7 +199,7 @@ export function createNotificationRepository(options: NotificationRepositoryOpti
             dedupeKey: input.dedupeKey,
             subjectType: input.subjectType ?? null,
             subjectId: input.subjectId ?? null,
-            data: (input.data ?? {}),
+            data: input.data ?? {},
           },
           update: {},
           select: NOTIFICATION_SELECT,
@@ -269,7 +277,8 @@ export function createNotificationRepository(options: NotificationRepositoryOpti
     },
 
     async recordAttempt(organizationId: string, input: RecordAttemptInput): Promise<void> {
-      if (!Number.isInteger(input.attempt) || input.attempt < 1) throw new TypeError('attempt must be >= 1');
+      if (!Number.isInteger(input.attempt) || input.attempt < 1)
+        throw new TypeError('attempt must be >= 1');
       const done = input.status === 'pending' ? null : new Date();
       const errorCode = input.errorCode ? input.errorCode.slice(0, ERROR_CODE_MAX) : null;
       await org(organizationId, async (tx) => {
@@ -304,7 +313,10 @@ export function createNotificationRepository(options: NotificationRepositoryOpti
       });
     },
 
-    async getPreferences(organizationId: string, userId: string): Promise<NotificationPreferenceRecord[]> {
+    async getPreferences(
+      organizationId: string,
+      userId: string,
+    ): Promise<NotificationPreferenceRecord[]> {
       return self(organizationId, userId, (tx) =>
         tx.notificationPreference.findMany({
           where: { organizationId, userId },
@@ -333,7 +345,14 @@ export function createNotificationRepository(options: NotificationRepositoryOpti
                 channel: p.channel,
               },
             },
-            create: { id: randomUUID(), organizationId, userId, type: p.type, channel: p.channel, enabled: p.enabled },
+            create: {
+              id: randomUUID(),
+              organizationId,
+              userId,
+              type: p.type,
+              channel: p.channel,
+              enabled: p.enabled,
+            },
             update: { enabled: p.enabled },
           });
         }
@@ -387,10 +406,16 @@ export function createNotificationRepository(options: NotificationRepositoryOpti
     },
 
     /** Hard delete of the caller's own device. False when not found (or another user's). */
-    async unregisterDevice(organizationId: string, userId: string, deviceId: string): Promise<boolean> {
+    async unregisterDevice(
+      organizationId: string,
+      userId: string,
+      deviceId: string,
+    ): Promise<boolean> {
       assertUuid(deviceId, 'deviceId');
       return self(organizationId, userId, async (tx) => {
-        const r = await tx.pushDeviceToken.deleteMany({ where: { organizationId, userId, id: deviceId } });
+        const r = await tx.pushDeviceToken.deleteMany({
+          where: { organizationId, userId, id: deviceId },
+        });
         return r.count > 0;
       });
     },
@@ -431,7 +456,10 @@ export function createNotificationRepository(options: NotificationRepositoryOpti
       const out: Array<PushDeviceRecord & { token: string }> = [];
       for (const { tokenEnc, ...r } of rows) {
         if (!tokenEnc) continue;
-        out.push({ ...r, token: await cipher.decrypt(tokenEnc, { organizationId, deviceId: r.id }) });
+        out.push({
+          ...r,
+          token: await cipher.decrypt(tokenEnc, { organizationId, deviceId: r.id }),
+        });
       }
       return out;
     },

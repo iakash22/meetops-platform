@@ -33,7 +33,8 @@ function fakeClient() {
   const match = (r: Row, w: Row) =>
     Object.entries(w).every(([k, v]) => {
       if (k === 'OR' || k === 'tokenEnc') return true;
-      if (v && typeof v === 'object' && 'in' in (v as Row)) return ((v as { in: unknown[] }).in).includes(r[k]);
+      if (v && typeof v === 'object' && 'in' in (v as Row))
+        return (v as { in: unknown[] }).in.includes(r[k]);
       return r[k] === v;
     });
   const tx = {
@@ -42,7 +43,15 @@ function fakeClient() {
       return 1;
     },
     notification: {
-      upsert: async ({ where, create, select }: { where: { organizationId_userId_dedupeKey: Row }; create: Row; select: Record<string, boolean> }) => {
+      upsert: async ({
+        where,
+        create,
+        select,
+      }: {
+        where: { organizationId_userId_dedupeKey: Row };
+        create: Row;
+        select: Record<string, boolean>;
+      }) => {
         let r = notifications.find((x) => match(x, where.organizationId_userId_dedupeKey));
         if (!r) {
           r = { ...create, readAt: null, createdAt: new Date(Date.now() + notifications.length) };
@@ -50,13 +59,22 @@ function fakeClient() {
         }
         return pick(r, select);
       },
-      findMany: async ({ where, take, select }: { where: Row; take: number; select: Record<string, boolean> }) =>
+      findMany: async ({
+        where,
+        take,
+        select,
+      }: {
+        where: Row;
+        take: number;
+        select: Record<string, boolean>;
+      }) =>
         notifications
           .filter((x) => match(x, where))
           .sort((a, b) => (b.createdAt as Date).getTime() - (a.createdAt as Date).getTime())
           .slice(0, take)
           .map((r) => pick(r, select)),
-      count: async ({ where }: { where: Row }) => notifications.filter((x) => match(x, where)).length,
+      count: async ({ where }: { where: Row }) =>
+        notifications.filter((x) => match(x, where)).length,
       updateMany: async ({ where, data }: { where: Row; data: Row }) => {
         const hit = notifications.filter((x) => match(x, where));
         for (const r of hit) Object.assign(r, data);
@@ -70,7 +88,15 @@ function fakeClient() {
       },
     },
     notificationPreference: {
-      upsert: async ({ where, create, update }: { where: { organizationId_userId_type_channel: Row }; create: Row; update: Row }) => {
+      upsert: async ({
+        where,
+        create,
+        update,
+      }: {
+        where: { organizationId_userId_type_channel: Row };
+        create: Row;
+        update: Row;
+      }) => {
         const r = prefs.find((x) => match(x, where.organizationId_userId_type_channel));
         if (r) Object.assign(r, update);
         else prefs.push(create);
@@ -86,14 +112,23 @@ function fakeClient() {
         devices.push(r);
         return pick(r, select);
       },
-      update: async ({ where, data, select }: { where: Row; data: Row; select: Record<string, boolean> }) => {
+      update: async ({
+        where,
+        data,
+        select,
+      }: {
+        where: Row;
+        data: Row;
+        select: Record<string, boolean>;
+      }) => {
         const r = devices.find((x) => x.id === where.id)!;
         Object.assign(r, data);
         return pick(r, select);
       },
       deleteMany: async ({ where }: { where: Row }) => {
         const before = devices.length;
-        for (let i = devices.length - 1; i >= 0; i--) if (match(devices[i]!, where)) devices.splice(i, 1);
+        for (let i = devices.length - 1; i >= 0; i--)
+          if (match(devices[i]!, where)) devices.splice(i, 1);
         return { count: before - devices.length };
       },
       findMany: async ({ where, select }: { where: Row; select: Record<string, boolean> }) =>
@@ -124,7 +159,8 @@ describe('notification repository', () => {
   it('lists only the caller and sets the user context (owner_only RLS)', async () => {
     const f = fakeClient();
     const repo = createNotificationRepository({ client: f.client, cipher });
-    for (let i = 0; i < 3; i++) await repo.create(ORG, { userId: USER, type: 't', dedupeKey: `e${i}` });
+    for (let i = 0; i < 3; i++)
+      await repo.create(ORG, { userId: USER, type: 't', dedupeKey: `e${i}` });
     await repo.create(ORG, { userId: OTHER, type: 't', dedupeKey: 'x' });
     const page = await repo.list(ORG, USER, { limit: 2 });
     expect(page.items).toHaveLength(2);
@@ -165,7 +201,9 @@ describe('notification repository', () => {
     const f = fakeClient();
     const repo = createNotificationRepository({ client: f.client, cipher });
     await repo.setPreferences(ORG, USER, [{ type: '*', channel: 'email', enabled: false }]);
-    const prefs = await repo.setPreferences(ORG, USER, [{ type: '*', channel: 'email', enabled: true }]);
+    const prefs = await repo.setPreferences(ORG, USER, [
+      { type: '*', channel: 'email', enabled: true },
+    ]);
     expect(prefs).toEqual([{ type: '*', channel: 'email', enabled: true }]);
     await repo.recordAttempt(ORG, {
       notificationId: USER,
@@ -177,13 +215,49 @@ describe('notification repository', () => {
     });
     expect(String(f.attempts[0]!.errorCode)).toHaveLength(64);
     await expect(
-      repo.recordAttempt(ORG, { notificationId: USER, channel: 'email', deliveryKey: 'd', attempt: 0, status: 'sent' }),
+      repo.recordAttempt(ORG, {
+        notificationId: USER,
+        channel: 'email',
+        deliveryKey: 'd',
+        attempt: 0,
+        status: 'sent',
+      }),
     ).rejects.toThrow(TypeError);
+  });
+
+  it('every per-user method sets app.current_user_id and fails closed without a valid user id', async () => {
+    const f = fakeClient();
+    const repo = createNotificationRepository({ client: f.client, cipher });
+    const D = '00000000-0000-4000-8000-0000000000dd';
+    const calls: Array<(u: string) => Promise<unknown>> = [
+      (u) => repo.list(ORG, u, { limit: 5 }),
+      (u) => repo.markRead(ORG, u, 'all'),
+      (u) => repo.getPreferences(ORG, u),
+      (u) => repo.setPreferences(ORG, u, [{ type: '*', channel: 'email', enabled: true }]),
+      (u) => repo.unregisterDevice(ORG, u, D),
+      (u) => repo.listDevices(ORG, u),
+      (u) => repo.listActiveDevices(ORG, u),
+    ];
+    for (const call of calls) {
+      const before = f.settings.length;
+      await call(USER);
+      expect(f.settings.length).toBe(before + 1);
+      expect(f.settings.at(-1)).toContain(`app.current_user_id=${USER}`);
+      for (const bad of ['', 'not-a-uuid', undefined as unknown as string]) {
+        const n = f.settings.length;
+        await expect(call(bad)).rejects.toThrow();
+        // Rejected before any transaction: owner_only can never run with the user id unset.
+        expect(f.settings.length).toBe(n);
+      }
+    }
   });
 
   it('round-trips cursors and rejects garbage', () => {
     const c = encodeNotificationCursor({ createdAt: new Date('2026-10-27T00:00:00Z'), id: USER });
-    expect(decodeNotificationCursor(c)).toEqual({ createdAt: new Date('2026-10-27T00:00:00Z'), id: USER });
+    expect(decodeNotificationCursor(c)).toEqual({
+      createdAt: new Date('2026-10-27T00:00:00Z'),
+      id: USER,
+    });
     expect(decodeNotificationCursor('zzz')).toBeNull();
   });
 });
