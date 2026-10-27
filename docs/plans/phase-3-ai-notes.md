@@ -66,3 +66,11 @@ Defaults (change with Shubham if needed):
 - **Stale jobs**: the summary job always summarizes the _latest_ ready revision. If r2's job runs after r3 exists it summarizes r3 and r3's job becomes a no-op.
 - **Opt-out**: `startTranscriptionWorker` builds the default BullMQ trigger; hosts can inject a no-op `summaryTrigger`.
 - **Not yet wired**: a BullMQ consumer for `ai`/`summarize_meeting` (needs a Prisma client + Gemini key injected by the host, like the transcription worker). Until then jobs wait in the queue.
+
+## Report summary dedupe (defaults)
+
+- Migration `20261027120000_report_summary_dedupe` (additive): nullable `reports.transcript_revision` (CHECK NULL or >= 1), nullable `reports.prompt_version`, and unique index `reports_summary_dedupe_key` on `(meeting_id, transcript_id, transcript_revision, prompt_version)`.
+- Postgres treats NULLs as distinct, so legacy/manual reports (NULL revision/prompt) are unaffected.
+- The summary repository looks up the existing report by the key (soft-deleted rows included) before calling the LLM and before inserting.
+- A concurrent insert of the same key (Prisma `P2002` / SQLSTATE `23505`) aborts that transaction (AiRun rolled back too); the repository re-reads in a fresh transaction and returns the winner as `created=false` (job result `duplicate: true`). Any other unique conflict (e.g. the `(meeting_id, version)` race) is rethrown and the job retries.
+- A soft-deleted report still holds its key: regenerating a summary for the same transcript revision requires bumping `SUMMARY_PROMPT_VERSION`.

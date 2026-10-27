@@ -703,6 +703,9 @@ model Report {
   meetingId      String       @map("meeting_id") @db.Uuid
   transcriptId   String?      @map("transcript_id") @db.Uuid
   aiRunId        String?      @map("ai_run_id") @db.Uuid
+  /// AI summary dedupe key parts (NULL for manual/legacy reports). See reports_summary_dedupe_key.
+  transcriptRevision Int?     @map("transcript_revision")
+  promptVersion  String?      @map("prompt_version")
   version        Int          @default(1)
   status         ReportStatus @default(draft)
   title          String?
@@ -720,6 +723,7 @@ model Report {
 
   @@unique([meetingId, version])
   @@unique([organizationId, id])
+  @@unique([meetingId, transcriptId, transcriptRevision, promptVersion], map: "reports_summary_dedupe_key")
   @@index([organizationId, meetingId])
   @@map("reports")
 }
