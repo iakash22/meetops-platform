@@ -5,8 +5,8 @@ import {
   type DatabaseTransaction,
 } from '@meetops/database';
 import type {
-  OrgScopedTranscriptRepository,
-  TranscriptRepository,
+  OrgScopedRecordingTranscriptRepository,
+  RecordingTranscriptRepository,
   TranscriptRevisionWrite,
 } from './repository.js';
 
@@ -42,7 +42,7 @@ const isRevision = (v: unknown): v is TranscriptRevision =>
 export function createOrgScopedTranscriptRepository(
   tx: DatabaseTransaction,
   organizationId: string,
-): OrgScopedTranscriptRepository {
+): OrgScopedRecordingTranscriptRepository {
   const findRecordingRow = (recordingId: string) =>
     tx.recording.findFirst({
       where: { id: recordingId, organizationId, deletedAt: null },
@@ -91,6 +91,13 @@ export function createOrgScopedTranscriptRepository(
     rows.map((r) => r.segments).filter(isChunkTranscript);
 
   return {
+    async markTranscriptFailed(meetingId, recordingId, provider) {
+      const anchorId = await ensureAnchor(meetingId, recordingId, provider);
+      await tx.transcript.updateMany({
+        where: { organizationId, id: anchorId, revision: ANCHOR_REVISION },
+        data: { status: 'failed' },
+      });
+    },
     async findMeeting(meetingId) {
       const m = await tx.meeting.findFirst({
         where: { id: meetingId, organizationId, deletedAt: null },
@@ -188,7 +195,7 @@ export function createOrgScopedTranscriptRepository(
 
 export function createPrismaTranscriptRepository(
   opts: PrismaTranscriptRepositoryOptions = {},
-): TranscriptRepository {
+): RecordingTranscriptRepository {
   return {
     withOrgContext: (organizationId, fn) =>
       withOrganizationContext(

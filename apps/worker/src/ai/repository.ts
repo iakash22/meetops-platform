@@ -127,3 +127,16 @@ export class RepositoryTranscriptStore implements TranscriptStore {
     });
   }
 }
+
+/** Recording-level transcription (one provider job per recording, stored as chunk 0) also records failure. */
+export interface OrgScopedRecordingTranscriptRepository extends OrgScopedTranscriptRepository {
+  /** Set the per-recording anchor transcript (revision 0) to `failed`. Idempotent. */
+  markTranscriptFailed(meetingId: string, recordingId: string, provider: string): Promise<void>;
+}
+
+export interface RecordingTranscriptRepository {
+  withOrgContext<T>(
+    organizationId: string,
+    fn: (repo: OrgScopedRecordingTranscriptRepository) => Promise<T>,
+  ): Promise<T>;
+}
