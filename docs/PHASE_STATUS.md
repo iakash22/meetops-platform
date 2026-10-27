@@ -2,20 +2,21 @@
 
 > All code below is merged into `integration/phase-1`, **not yet on `main`**. Percentages are coordinator estimates from merged work, not measured.
 
-| Phase | 25 Oct | 27 Oct | Merged (integration) | Open PRs | Missing |
-|---|---|---|---|---|---|
-| P0 Foundation | 100% | 100% | — | — | Nothing |
-| P1 Auth, orgs, roles | 85% | ~90% | #149, #140, #188, #195, #201 | #205, #208 | Notification prefs + unsubscribe routes (signing secret, user timezone); MFA/SSO decision; ADR-006/010 sign-off |
-| P2 Meetings, uploads, recording | 45% | ~62% | #164, #166, #167, #168, #169, #177, #179, #181, #202 | #196, #197, #206 | Upload checksum verification on complete; live-DB tests |
-| P3 Transcripts, reports | 30% | ~35% | #172 (web views) | — (p3 branch unpushed) | Transcript/report API |
-| P4 Tasks, approval | 20% | ~30% | #174 (review UI) | #203 | Task API |
-| P5 GitHub, Jira | 25% | ~30% | #183 (settings on mocks) | #204, #207 | Sync engine; real connections |
-| P6 Extension | 35% | ~45% | #145, #159, #185, #191 | #209, #200, #199 | Extension auth live; revoked tokens valid until expiry; direct upload flagged off |
-| P7 Calendar, search, analytics | 5% | 5% | — | — | Not started |
-| P8 Desktop, mobile | 20% | ~45% | #138, #146, #161, #176, #180, #187, #141, #148, #170, #171, #173, #184, #186 | #192, #193 | Real mobile recording; real app ids |
-| P9 Hardening, release | 15% | ~15% | #133, #194, #198 | — | Billing, monitoring, Dependabot (9 alerts), 3 medium security fixes |
+| Phase                           | 25 Oct | 27 Oct | Merged (integration)                                                         | Open PRs               | Missing                                                                                                         |
+| ------------------------------- | ------ | ------ | ---------------------------------------------------------------------------- | ---------------------- | --------------------------------------------------------------------------------------------------------------- |
+| P0 Foundation                   | 100%   | 100%   | —                                                                            | —                      | Nothing                                                                                                         |
+| P1 Auth, orgs, roles            | 85%    | ~90%   | #149, #140, #188, #195, #201                                                 | #205, #208             | Notification prefs + unsubscribe routes (signing secret, user timezone); MFA/SSO decision; ADR-006/010 sign-off |
+| P2 Meetings, uploads, recording | 45%    | ~62%   | #164, #166, #167, #168, #169, #177, #179, #181, #202                         | #196, #197, #206       | Upload checksum verification on complete; live-DB tests                                                         |
+| P3 Transcripts, reports         | 30%    | ~35%   | #172 (web views)                                                             | — (p3 branch unpushed) | Transcript/report API                                                                                           |
+| P4 Tasks, approval              | 20%    | ~30%   | #174 (review UI)                                                             | #203                   | Task API                                                                                                        |
+| P5 GitHub, Jira                 | 25%    | ~30%   | #183 (settings on mocks)                                                     | #204, #207             | Sync engine; real connections                                                                                   |
+| P6 Extension                    | 35%    | ~45%   | #145, #159, #185, #191                                                       | #209, #200, #199       | Extension auth live, revocation enforced (#216); bearer routes and CORS in review; direct upload flagged off    |
+| P7 Calendar, search, analytics  | 5%     | 5%     | —                                                                            | —                      | Not started                                                                                                     |
+| P8 Desktop, mobile              | 20%    | ~45%   | #138, #146, #161, #176, #180, #187, #141, #148, #170, #171, #173, #184, #186 | #192, #193             | Real mobile recording; real app ids                                                                             |
+| P9 Hardening, release           | 15%    | ~15%   | #133, #194, #198                                                             | —                      | Billing, monitoring, Dependabot (9 alerts), 3 medium security fixes                                             |
 
 ## Next (resume 27 Oct)
+
 1. #202 — merged (verify downstream rebases).
 2. All Rounder merges integration into #196, #197 and #205.
 3. p3 branch `207ae20`: full CI, then push/PR.
@@ -25,6 +26,7 @@
 7. Open the integration/phase-1 → main PR.
 
 ## Owner decisions (Shubham)
+
 - ADR drafts #192, #193, #199; ADR-006, ADR-010, ADR-011, ADR-012 sign-off.
 - MFA / SSO scope.
 - Real app ids and domain.
@@ -127,7 +129,7 @@ GitHub and Jira with two-way sync.
 
 Live transcription and the browser extension.
 
-The extension (WXT, Manifest V3) has pairing UI, a recorder, and a chunk store. The web app has `/extension/pair`. [ADR-005](15-decisions/ADR-005-extension-auth.md) is accepted. `apps/api` has no extension or pair routes. The extension consent registry has no consent API (user, time, meeting, `organizationId`). Live speech-to-text is deferred; background AssemblyAI is the chosen path.
+The extension (WXT, Manifest V3) has pairing UI, a recorder, and a chunk store. The web app has `/extension/pair`. [ADR-005](15-decisions/ADR-005-extension-auth.md) is accepted. `apps/api` serves the extension pair, token, refresh and revoke routes (`extension-auth` module); revoked tokens are rejected (#216). Bearer-authenticated API routes and extension-origin CORS are in review (`feat/api-extension-bearer-routes`, `feat/api-extension-bearer-cors`). The extension consent registry has no consent API (user, time, meeting, `organizationId`). Live speech-to-text is deferred; background AssemblyAI is the chosen path.
 
 ## Phase 7 — Pending
 
@@ -150,21 +152,21 @@ Production hardening, billing, monitoring, and release are not started. CI workf
 
 1. **Contract without a route.** Meetings, uploads, recording sessions, tasks, and extension auth are in `@meetops/contracts` 0.4.0. `registerModules` only mounts auth, organizations, and the directory.
 2. **Jobs that do not run.** The media worker can start. Transcription will not, because no repository is injected. Email and integration queues have packages and no process in `apps/worker`.
-3. **Three clients, one real session.** Web cookies are real. The extension bearer flow and the desktop PKCE flow are specified and not served. Mobile is hard-coded to demo mode.
+3. **Three clients, one real session.** Web cookies are real. The extension bearer flow is served (pairing, rotation, revocation); bearer access to the wider API is in review. The desktop PKCE flow is specified and not served. Mobile is hard-coded to demo mode.
 4. **Boards lag the branch.** The implementation board, agent status, project context, and `docs/12-security/assumptions-open-questions.md` still describe Phase 0 or 22–24 Oct. CASL is a dependency and is used for organizations and the directory; the assumptions note still says it is not.
 
 ## Decisions still marked open
 
-| Decision                                                                                                                             | Doc status     | Code on this commit              |
-| ------------------------------------------------------------------------------------------------------------------------------------ | -------------- | -------------------------------- |
-| [ADR-005](15-decisions/ADR-005-extension-auth.md) extension auth                                                                     | Accepted       | Client built. API routes missing |
-| [ADR-011](15-decisions/ADR-011-realtime-auth.md) realtime auth                                                                       | Proposed       | Server fail-closed               |
-| [ADR-012](15-decisions/ADR-012-desktop-auth.md) desktop sign-in                                                                      | Proposed       | Mock client only                 |
-| [ADR-006](15-decisions/ADR-006-login-lockout-one-time-tokens.md) lockout and one-time tokens                                         | Proposed       | Implemented in the API           |
-| [ADR-007](15-decisions/ADR-007-integrations-retry-webhook-replay.md), [ADR-008](15-decisions/ADR-008-oauth-pkce-token-encryption.md) | Proposed       | Package only                     |
-| [ADR-009](15-decisions/ADR-009-ai-provider-routing-credentials-ssrf.md) AI routing and SSRF                                          | Proposed       | Guards exist in `ai-core`        |
-| [ADR-010](15-decisions/ADR-010-organization-id-tenant-key.md) `organizationId`                                                       | Proposed       | Used as the tenant key           |
-| KMS, malware scan, retention, consent law, MFA                                                                                       | Open questions | No product choice in code        |
+| Decision                                                                                                                             | Doc status     | Code on this commit                                       |
+| ------------------------------------------------------------------------------------------------------------------------------------ | -------------- | --------------------------------------------------------- |
+| [ADR-005](15-decisions/ADR-005-extension-auth.md) extension auth                                                                     | Accepted       | Client built. Auth routes served; bearer routes in review |
+| [ADR-011](15-decisions/ADR-011-realtime-auth.md) realtime auth                                                                       | Proposed       | Server fail-closed                                        |
+| [ADR-012](15-decisions/ADR-012-desktop-auth.md) desktop sign-in                                                                      | Proposed       | Mock client only                                          |
+| [ADR-006](15-decisions/ADR-006-login-lockout-one-time-tokens.md) lockout and one-time tokens                                         | Proposed       | Implemented in the API                                    |
+| [ADR-007](15-decisions/ADR-007-integrations-retry-webhook-replay.md), [ADR-008](15-decisions/ADR-008-oauth-pkce-token-encryption.md) | Proposed       | Package only                                              |
+| [ADR-009](15-decisions/ADR-009-ai-provider-routing-credentials-ssrf.md) AI routing and SSRF                                          | Proposed       | Guards exist in `ai-core`                                 |
+| [ADR-010](15-decisions/ADR-010-organization-id-tenant-key.md) `organizationId`                                                       | Proposed       | Used as the tenant key                                    |
+| KMS, malware scan, retention, consent law, MFA                                                                                       | Open questions | No product choice in code                                 |
 
 ## Next slice
 
