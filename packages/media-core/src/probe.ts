@@ -12,6 +12,9 @@ export type MediaStreamInfo = {
   codecName?: string;
   sampleRate?: number;
   channels?: number;
+  /** Video frame size (decoded-size guard). */
+  width?: number;
+  height?: number;
 };
 
 export type ProbeResult = {
@@ -32,6 +35,8 @@ type RawProbe = {
     codec_name?: string;
     sample_rate?: string;
     channels?: number;
+    width?: number;
+    height?: number;
     duration?: string;
   }>;
 };
@@ -55,6 +60,8 @@ export function parseProbeOutput(json: string): ProbeResult {
     const sr = num(s.sample_rate);
     if (sr !== undefined) out.sampleRate = sr;
     if (s.channels !== undefined) out.channels = s.channels;
+    if (s.width !== undefined) out.width = s.width;
+    if (s.height !== undefined) out.height = s.height;
     return out;
   });
   const duration =
