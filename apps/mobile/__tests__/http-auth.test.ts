@@ -20,11 +20,26 @@ function fakeFetch(status: number, body?: unknown) {
 
 const ORG = '00000000-0000-4000-8000-0000000000a1';
 const BASE = 'https://api.example.test';
+const DEVICE = '0f8e2c1a-3b4d-4e5f-9a6b-7c8d9e0f1a2b';
+const getDeviceId = () => Promise.resolve(DEVICE);
+const bodyOf = (c?: Call) => JSON.parse(String(c?.init.body)) as Record<string, unknown>;
 
 describe('createHttpAuthClient', () => {
+  it('sends the stable deviceId on login, refresh and logout (ADR-005)', async () => {
+    const { impl, calls } = fakeFetch(200, { tokens: {}, session: {} });
+    const c = createHttpAuthClient({ baseUrl: BASE, fetchImpl: impl, getDeviceId });
+    await c.login({ email: 'ada@example.com', password: 'long enough pw' });
+    await c.refresh('r1');
+    expect(bodyOf(calls[0])).toMatchObject({ email: 'ada@example.com', deviceId: DEVICE });
+    expect(bodyOf(calls[1])).toEqual({ deviceId: DEVICE, refreshToken: 'r1' });
+    const out = fakeFetch(204);
+    await createHttpAuthClient({ baseUrl: BASE, fetchImpl: out.impl, getDeviceId }).logout('r2');
+    expect(bodyOf(out.calls[0])).toEqual({ deviceId: DEVICE, refreshToken: 'r2' });
+  });
+
   it('logs in with a JSON body, no cookies, no token in the URL', async () => {
     const { impl, calls } = fakeFetch(200, { tokens: { accessToken: 'a' }, session: {} });
-    const c = createHttpAuthClient({ baseUrl: BASE, fetchImpl: impl });
+    const c = createHttpAuthClient({ baseUrl: BASE, fetchImpl: impl, getDeviceId });
     await c.login({ email: 'ada@example.com', password: 'long enough pw' });
     expect(calls[0]?.url).toBe(`${BASE}/auth/mobile/token`);
     expect(calls[0]?.init.credentials).toBe('omit');
@@ -33,7 +48,9 @@ describe('createHttpAuthClient', () => {
 
   it('sends the access token only as a Bearer header', async () => {
     const { impl, calls } = fakeFetch(200, {});
-    await createHttpAuthClient({ baseUrl: BASE, fetchImpl: impl }).getSession('secret-access');
+    await createHttpAuthClient({ baseUrl: BASE, fetchImpl: impl, getDeviceId }).getSession(
+      'secret-access',
+    );
     expect((calls[0]?.init.headers as Record<string, string>).authorization).toBe(
       'Bearer secret-access',
     );
@@ -44,7 +61,7 @@ describe('createHttpAuthClient', () => {
     const { impl } = fakeFetch(401, {
       error: { code: 'UNAUTHENTICATED', message: 'Invalid credentials.' },
     });
-    const err = await createHttpAuthClient({ baseUrl: BASE, fetchImpl: impl })
+    const err = await createHttpAuthClient({ baseUrl: BASE, fetchImpl: impl, getDeviceId })
       .login({ email: 'ada@example.com', password: 'long enough pw' })
       .catch((e: unknown) => e);
     expect(err).toBeInstanceOf(AuthClientError);
@@ -55,7 +72,7 @@ describe('createHttpAuthClient', () => {
     const impl = (() =>
       Promise.reject(new TypeError('Network request failed'))) as unknown as typeof fetch;
     await expect(
-      createHttpAuthClient({ baseUrl: BASE, fetchImpl: impl }).refresh('r'),
+      createHttpAuthClient({ baseUrl: BASE, fetchImpl: impl, getDeviceId }).refresh('r'),
     ).rejects.toMatchObject({
       code: 'INTERNAL',
     });
@@ -64,7 +81,7 @@ describe('createHttpAuthClient', () => {
   it('treats an already-revoked refresh token as a successful logout', async () => {
     const { impl } = fakeFetch(401, { error: { code: 'UNAUTHENTICATED', message: 'gone' } });
     await expect(
-      createHttpAuthClient({ baseUrl: BASE, fetchImpl: impl }).logout('r'),
+      createHttpAuthClient({ baseUrl: BASE, fetchImpl: impl, getDeviceId }).logout('r'),
     ).resolves.toBeUndefined();
   });
 });
