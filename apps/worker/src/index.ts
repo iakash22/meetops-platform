@@ -4,10 +4,14 @@ import { startMediaWorker } from './media/index.js';
 import { registerSummaryWorker, registerTranscriptionWorker } from './ai/index.js';
 import { createTranscriptionHostDeps } from './ai/bootstrap.js';
 import { loadTranscriptionWorkerEnv } from './ai/env.js';
+import { createQueue, createWorker } from '@meetops/queue';
+import { getPrismaClient, redactExpiredIpAddresses } from '@meetops/database';
+import { IP_RETENTION_QUEUE, runIpRetention, scheduleIpRetention } from './privacy/index.js';
 
 export * from './media/index.js';
 export * from './ai/index.js';
 export * from './integrations/index.js';
+export * from './privacy/index.js';
 
 async function main() {
   const { close } = startMediaWorker();
@@ -23,12 +27,33 @@ async function main() {
     hostDeps?.executor ??
     (summaryEnabled ? (await createTranscriptionHostDeps()).executor : undefined);
   const summary = registerSummaryWorker({ resolveExecutor: () => summaryExecutor });
+  // ADR-014: daily raw-IP retention (on unless IP_RETENTION_ENABLED=false).
+  const retention =
+    process.env.IP_RETENTION_ENABLED === 'false'
+      ? undefined
+      : (() => {
+          const queue = createQueue(IP_RETENTION_QUEUE);
+          const worker = createWorker(IP_RETENTION_QUEUE, () =>
+            runIpRetention({
+              redact: () => redactExpiredIpAddresses(getPrismaClient()),
+              log: logger,
+            }),
+          );
+          void scheduleIpRetention(queue).catch((err: unknown) =>
+            logger.warn(
+              { errName: err instanceof Error ? err.name : 'unknown' },
+              'ip retention schedule failed',
+            ),
+          );
+          return { close: () => Promise.all([worker.close(), queue.close()]) };
+        })();
   const shutdown = async () => {
     logger.info('Shutting down worker...');
     await Promise.allSettled([
       close(),
       transcription.registered ? transcription.close() : Promise.resolve(),
       summary.registered ? summary.close() : Promise.resolve(),
+      retention ? retention.close() : Promise.resolve(),
     ]);
     process.exit(0);
   };
