@@ -2,11 +2,11 @@ import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ApiError } from '@/lib/api/client';
-import { createNotificationsApi, type AppNotification } from '@/features/notifications/api';
+import { createNotificationsApi, type Notification } from '@/features/notifications/api';
 import { createMockApi, renderApp, resetStores } from './fixtures/render';
 
 const ORG = '00000000-0000-4000-8000-000000000001';
-const n1: AppNotification = {
+const n1: Notification = {
   id: '40000000-0000-4000-8000-000000000001',
   organizationId: ORG,
   kind: 'report.ready',
@@ -31,13 +31,21 @@ describe('notifications client', () => {
   it('builds encoded org-scoped paths', async () => {
     const request = vi.fn().mockResolvedValue(undefined);
     const api = createNotificationsApi(request);
-    await api.list('o/1', 'c 1');
+    await api.list('o/1', { cursor: 'c1', limit: 20, unreadOnly: true });
     await api.markRead('o', 'n1');
     await api.markAllRead('o');
+    await api.getPreferences('o');
+    await api.putPreferences('o', { items: [{ type: '*', channel: 'email', enabled: false }] });
     expect(request.mock.calls).toEqual([
-      ['GET', '/orgs/o%2F1/notifications?cursor=c%201'],
+      ['GET', '/orgs/o%2F1/notifications?cursor=c1&limit=20&unreadOnly=true'],
       ['POST', '/orgs/o/notifications/n1/read'],
       ['POST', '/orgs/o/notifications/read-all'],
+      ['GET', '/orgs/o/notification-preferences'],
+      [
+        'PUT',
+        '/orgs/o/notification-preferences',
+        { items: [{ type: '*', channel: 'email', enabled: false }] },
+      ],
     ]);
   });
 });
@@ -50,11 +58,31 @@ describe('notifications page', () => {
     renderApp('/notifications', api);
     expect(await screen.findByText('Summary ready: Weekly sync')).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Open meeting' })).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'Notifications' })).toBeInTheDocument();
+    expect(
+      screen.getByRole('navigation', { name: 'Main' }).querySelector('a[href="/notifications"]'),
+    ).not.toBeNull();
+  });
+
+  it('shows unknown kinds as "New notification" and the unread count in the bell', async () => {
+    const odd = {
+      ...n1,
+      id: '40000000-0000-4000-8000-000000000002',
+      kind: 'future.thing',
+      title: 'raw',
+    };
+    const api = apiWith(() => ({ items: [n1, odd], nextCursor: null }));
+    renderApp('/notifications', api);
+    expect(await screen.findByText('New notification')).toBeInTheDocument();
+    expect(screen.queryByText('raw')).not.toBeInTheDocument();
+    expect(await screen.findByTestId('unread-count')).toHaveTextContent('2');
+    expect(api.request).toHaveBeenCalledWith(
+      'GET',
+      `/orgs/${ORG}/notifications?limit=100&unreadOnly=true`,
+    );
   });
 
   it('marks one notification read', async () => {
-    const api = apiWith((m) => (m === 'GET' ? { items: [n1], nextCursor: null } : undefined));
+    const api = apiWith((m) => (m === 'GET' ? { items: [n1], nextCursor: null } : { updated: 1 }));
     renderApp('/notifications', api);
     await userEvent.click(await screen.findByRole('button', { name: /Mark "Summary/ }));
     await waitFor(() =>

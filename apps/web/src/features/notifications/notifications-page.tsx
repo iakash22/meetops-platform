@@ -4,9 +4,9 @@ import { Badge } from '@/components/ui/badge';
 import { EmptyState, ErrorState, LoadingState } from '@/components/states/states';
 import { PageHeader } from '@/components/ui/typography';
 import { isNotAvailable, useMarkRead, useNotifications } from './queries';
-import type { AppNotification } from './api';
+import { notificationTitle, type Notification } from './api';
 
-function Target({ n }: { n: AppNotification }) {
+function Target({ n }: { n: Notification }) {
   if (n.meetingId)
     return (
       <Link
@@ -74,7 +74,7 @@ export function NotificationsPage() {
               <div className="min-w-0 space-y-1">
                 <div className="flex items-center gap-2">
                   {/* Plain text only: may include AI-generated titles. */}
-                  <span className="text-sm font-medium">{n.title}</span>
+                  <span className="text-sm font-medium">{notificationTitle(n)}</span>
                   {!n.readAt ? <Badge>New</Badge> : null}
                 </div>
                 {n.body ? <p className="text-sm text-muted-foreground">{n.body}</p> : null}
@@ -84,7 +84,7 @@ export function NotificationsPage() {
                 <Button
                   variant="ghost"
                   size="sm"
-                  aria-label={`Mark "${n.title}" read`}
+                  aria-label={`Mark "${notificationTitle(n)}" read`}
                   disabled={mark.isPending}
                   onClick={() => mark.mutate(n.id)}
                 >

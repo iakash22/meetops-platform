@@ -1,25 +1,42 @@
-import type { Id, Paginated } from '@meetops/contracts';
+import type { Id } from '@meetops/contracts';
 import type { ApiClient } from '@/lib/api/client';
 
 /**
- * In-app notification feed (ADR-013). NOT yet in @meetops/contracts or the API: these
- * shapes and paths are the web's proposal and live here (web-local) until contracts
- * ships them. The API answers 404 today; the UI shows that as "not available yet".
+ * In-app notifications (ADR-013), per the contract in PR #263 (@meetops/contracts v0.10.0,
+ * api/notifications.ts). That PR is not merged into integration/phase-1, so these types and
+ * paths are kept here IDENTICAL to it; swap to `@meetops/contracts` imports once #263 lands.
  */
 export const NOTIFICATION_PATHS = {
-  list: '/orgs/:organizationId/notifications',
-  read: '/orgs/:organizationId/notifications/:notificationId/read',
-  readAll: '/orgs/:organizationId/notifications/read-all',
+  notifications: '/orgs/:organizationId/notifications',
+  markRead: '/orgs/:organizationId/notifications/:notificationId/read',
+  markAllRead: '/orgs/:organizationId/notifications/read-all',
+  preferences: '/orgs/:organizationId/notification-preferences',
+  pushDevices: '/me/push-devices',
+  pushDevice: '/me/push-devices/:id',
 } as const;
 
-export type NotificationKind =
-  'meeting.processed' | 'transcript.ready' | 'report.ready' | 'task.assigned' | 'task.updated';
+export const NOTIFICATION_CHANNELS = [
+  'in_app',
+  'email',
+  'web_push',
+  'mobile_push',
+  'desktop',
+] as const;
+export type NotificationChannel = (typeof NOTIFICATION_CHANNELS)[number];
 
-/** Ids-only payload per ADR-013; text is rendered as plain text, never HTML. */
-export type AppNotification = {
+/** Known kinds get friendly labels; any other kind renders as "New notification". */
+export const KNOWN_NOTIFICATION_KINDS = [
+  'meeting.processed',
+  'transcript.ready',
+  'report.ready',
+  'task.assigned',
+  'task.updated',
+] as const;
+
+export type Notification = {
   id: Id;
   organizationId: Id;
-  kind: NotificationKind | (string & {});
+  kind: string;
   title: string;
   body?: string;
   meetingId?: Id;
@@ -27,27 +44,56 @@ export type AppNotification = {
   readAt: string | null;
   createdAt: string;
 };
+export type NotificationList = { items: Notification[]; nextCursor: string | null };
+export type ListNotificationsQuery = { limit?: number; cursor?: string; unreadOnly?: boolean };
+export type MarkNotificationsReadResponse = { updated: number };
+export type NotificationPreference = {
+  type: '*' | string;
+  channel: NotificationChannel;
+  enabled: boolean;
+};
+export type NotificationPreferences = { items: NotificationPreference[] };
 
 export type NotificationsApi = {
-  list: (organizationId: Id, cursor?: string) => Promise<Paginated<AppNotification>>;
-  markRead: (organizationId: Id, notificationId: Id) => Promise<void>;
-  markAllRead: (organizationId: Id) => Promise<void>;
+  list: (organizationId: Id, query?: ListNotificationsQuery) => Promise<NotificationList>;
+  markRead: (organizationId: Id, notificationId: Id) => Promise<MarkNotificationsReadResponse>;
+  markAllRead: (organizationId: Id) => Promise<MarkNotificationsReadResponse>;
+  getPreferences: (organizationId: Id) => Promise<NotificationPreferences>;
+  putPreferences: (
+    organizationId: Id,
+    body: NotificationPreferences,
+  ) => Promise<NotificationPreferences>;
 };
 
 const fill = (template: string, params: Record<string, string>) =>
   template.replace(/:(\w+)/g, (_, k: string) => encodeURIComponent(params[k] ?? ''));
 
+function listQuery(q: ListNotificationsQuery = {}): string {
+  const p = new URLSearchParams();
+  if (q.cursor) p.set('cursor', q.cursor);
+  if (q.limit !== undefined) p.set('limit', String(q.limit));
+  if (q.unreadOnly) p.set('unreadOnly', 'true');
+  const s = p.toString();
+  return s ? `?${s}` : '';
+}
+
 export function createNotificationsApi(request: ApiClient['request']): NotificationsApi {
   return {
-    list: (organizationId, cursor) =>
-      request(
-        'GET',
-        fill(NOTIFICATION_PATHS.list, { organizationId }) +
-          (cursor ? `?cursor=${encodeURIComponent(cursor)}` : ''),
-      ),
+    list: (organizationId, query) =>
+      request('GET', fill(NOTIFICATION_PATHS.notifications, { organizationId }) + listQuery(query)),
     markRead: (organizationId, notificationId) =>
-      request('POST', fill(NOTIFICATION_PATHS.read, { organizationId, notificationId })),
+      request('POST', fill(NOTIFICATION_PATHS.markRead, { organizationId, notificationId })),
     markAllRead: (organizationId) =>
-      request('POST', fill(NOTIFICATION_PATHS.readAll, { organizationId })),
+      request('POST', fill(NOTIFICATION_PATHS.markAllRead, { organizationId })),
+    getPreferences: (organizationId) =>
+      request('GET', fill(NOTIFICATION_PATHS.preferences, { organizationId })),
+    putPreferences: (organizationId, body) =>
+      request('PUT', fill(NOTIFICATION_PATHS.preferences, { organizationId }), body),
   };
+}
+
+export function notificationTitle(n: Pick<Notification, 'kind' | 'title'>): string {
+  return (KNOWN_NOTIFICATION_KINDS as readonly string[]).includes(n.kind)
+    ? n.title
+    : 'New notification';
 }
