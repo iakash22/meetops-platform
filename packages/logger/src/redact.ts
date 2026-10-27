@@ -28,6 +28,10 @@ export const DEFAULT_REDACT_KEYS: readonly string[] = [
   'access_token',
   'refresh_token',
   'nonce',
+  // contracts 0.9.0 REDACT_KEYS (ADR-012 desktop PKCE exchange).
+  'authorizationCode',
+  'codeVerifier',
+  'code_verifier',
 ];
 
 export interface RedactLimits {
