@@ -16,6 +16,21 @@ export class InMemorySessionRepository implements SessionRepository {
     const s = this.items.get(id);
     return s ? { ...s } : null;
   }
+  async findLastActiveOrganizationId(userId: string) {
+    // Latest lastSeenAt, then createdAt; on a full tie (frozen test clocks) the later-created row wins.
+    let last: Session | undefined;
+    for (const s of this.items.values()) {
+      if (s.userId !== userId || s.activeOrganizationId === null) continue;
+      if (
+        !last ||
+        s.lastSeenAt.getTime() > last.lastSeenAt.getTime() ||
+        (s.lastSeenAt.getTime() === last.lastSeenAt.getTime() &&
+          s.createdAt.getTime() >= last.createdAt.getTime())
+      )
+        last = s;
+    }
+    return last?.activeOrganizationId ?? null;
+  }
   async listActiveForUser(userId: string, now: Date) {
     return [...this.items.values()]
       .filter((s) => s.userId === userId && !s.revokedAt && s.expiresAt > now)
