@@ -11,11 +11,23 @@ import { uploadRoutes } from './http/uploads.routes.js';
 import { RecordingSessionService } from './application/recording-session.service.js';
 import { recordingSessionRoutes } from './http/recording-sessions.routes.js';
 import { RecordingSessionNotFoundError } from './domain/recording-session.js';
+import type { SessionVerifier } from '../auth/application/session-verifier.js';
+import { UnauthenticatedError } from '../auth/domain/errors.js';
+import {
+  bearerAwareMutationGuard,
+  dualActiveCaller,
+  dualCaller,
+  type ExtensionBearerGuard,
+} from '../extension-auth/http/dual-caller.js';
 
 export interface MediaPluginOptions {
   auth: AuthService;
   organizations: OrganizationService;
   deps: ModuleDeps;
+  /** ADR-005 bearer guard; when set, recording-session and upload init/complete accept `recordings:write` tokens. */
+  extensionBearer?: ExtensionBearerGuard;
+  /** Needed with extensionBearer to read a bearer's org on session-scoped routes (no org in the path). */
+  sessionVerifier?: SessionVerifier;
 }
 
 /**
@@ -29,12 +41,15 @@ export default async function mediaModule(app: FastifyInstance, opts: MediaPlugi
   if (!media) return;
   registerDomainErrorHandler(app);
   const g = makeGuards(auth, deps.security);
-  app.addHook('onRequest', g.mutationGuard);
+  app.addHook('onRequest', bearerAwareMutationGuard(g.mutationGuard));
   const access = new DirectoryAccess(organizations, deps.audit);
   const caller: ResolveCaller = async (request, organizationId) =>
     access.caller(await g.requireSession(request), organizationId, requestMeta(request));
   const mediaDeps = { ...media, meetings: deps.meetings, now: () => deps.clock.now() };
-  await app.register(uploadRoutes, { uploads: new UploadService(mediaDeps), caller });
+  const { extensionBearer, sessionVerifier } = opts;
+  const bearer = extensionBearer && sessionVerifier ? extensionBearer : undefined;
+  const writeCaller = dualCaller(caller, bearer, organizations, 'recordings:write');
+  await app.register(uploadRoutes, { uploads: new UploadService(mediaDeps), caller, writeCaller });
   // Session routes have no org in the path: resolve it from the session's active organization.
   const activeCaller = async (request: FastifyRequest) => {
     const ctx = await g.requireSession(request);
@@ -42,9 +57,16 @@ export default async function mediaModule(app: FastifyInstance, opts: MediaPlugi
     if (!org) throw new RecordingSessionNotFoundError();
     return access.caller(ctx, org, requestMeta(request));
   };
+  // A bearer's org is the token's org; the guard then re-checks cookie absence and scope.
+  const bearerOrg = async (request: FastifyRequest) => {
+    const token = /^Bearer ([A-Za-z0-9_-]{32,512})$/.exec(request.headers.authorization ?? '')?.[1];
+    const v = token ? await sessionVerifier?.verifyBearer(token) : null;
+    if (!v) throw new UnauthenticatedError();
+    return v.organizationId;
+  };
   await app.register(recordingSessionRoutes, {
     sessions: new RecordingSessionService(mediaDeps),
-    caller,
-    activeCaller,
+    caller: writeCaller,
+    activeCaller: dualActiveCaller(activeCaller, bearer, bearerOrg, writeCaller),
   });
 }

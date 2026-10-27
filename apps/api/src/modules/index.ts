@@ -2,6 +2,11 @@ import type { FastifyInstance } from 'fastify';
 import cookie from '@fastify/cookie';
 import cors from '@fastify/cors';
 import { EXTENSION_AUTH_PATHS } from '@meetops/contracts';
+import {
+  extensionBearerCorsHook,
+  isExtensionBearerPath,
+  isExtensionOrigin,
+} from './extension-auth/http/bearer-cors.js';
 import { AuthService } from './auth/application/auth.service.js';
 import { authRoutes } from './auth/http/auth.plugin.js';
 import { randomBytes } from 'node:crypto';
@@ -58,6 +63,7 @@ import {
   InMemoryExtensionTokenRepository,
   RedisExtensionTokenRepository,
   DurableExtensionTokenRepository,
+  makeExtensionBearerGuard,
   type ExtensionTokenRepository,
 } from './extension-auth/index.js';
 import {
@@ -456,8 +462,13 @@ export async function registerModules(app: FastifyInstance, deps: ModuleDeps) {
     delegator: (request, cb) => {
       const path = (request.url ?? '').split('?')[0] ?? '';
       const origin = request.headers.origin;
+      // Extension-origin calls to bearer routes get the credential-less CORS below, never this one.
+      const extensionBearer = isExtensionOrigin(origin) && isExtensionBearerPath(path);
       const allowed =
-        !extensionPaths.has(path) && typeof origin === 'string' && webOrigins.has(origin);
+        !extensionPaths.has(path) &&
+        !extensionBearer &&
+        typeof origin === 'string' &&
+        webOrigins.has(origin);
       cb(null, {
         origin: allowed ? origin : false,
         credentials: true,
@@ -468,6 +479,11 @@ export async function registerModules(app: FastifyInstance, deps: ModuleDeps) {
       });
     },
   });
+  // ADR-005 A1.3.6: credential-less CORS for allowlisted extension origins on the bearer-enabled routes.
+  app.addHook(
+    'onRequest',
+    extensionBearerCorsHook(deps.extensionIds.map((id) => `chrome-extension://${id}`)),
+  );
   // Close only the clients defaultModuleDeps created; injected ones belong to the caller.
   const { ownedRedis, ownedDb } = deps;
   if (ownedRedis || ownedDb) {
@@ -494,6 +510,16 @@ export async function registerModules(app: FastifyInstance, deps: ModuleDeps) {
     deps.mailQueue.handler = new AuthMailJobHandler({ ...deps, transport: deps.mailTransport });
   }
   app.decorateRequest('auth', null);
+  // ADR-012: when desktop auth is enabled the verifier also accepts desktop bearers; route guards still default to extension-only.
+  const sessionVerifier = new SessionVerifier({
+    ...deps,
+      extensionTokenStore: desktopAuth
+        ? combineBearerStores(extensionAuth.verifierStore(), desktopAuth.verifierStore())
+        : extensionAuth.verifierStore(),
+      ...(desktopAuth ? { bearerAudiences: ['extension', 'desktop'] as const } : {}),
+    });
+  // ADR-005 A1.3.1: meetings/resolve and recording/upload routes also accept the extension bearer token.
+  const extensionBearer = makeExtensionBearerGuard(sessionVerifier, deps.security.cookieName);
   await app.register(authRoutes, { auth, organizations, security: deps.security });
   await app.register(organizationRoutes, { auth, organizations, security: deps.security });
   await app.register(extensionAuthRoutes, { auth, extensionAuth, security: deps.security });
@@ -503,18 +529,23 @@ export async function registerModules(app: FastifyInstance, deps: ModuleDeps) {
   await app.register(import('./tasks/index.js'), { auth, organizations, deps });
   await app.register(import('./meeting-insights/index.js'), { auth, organizations, deps });
   await app.register(import('./integrations/index.js'), { auth, organizations, deps });
-  await app.register(import('./meetings/index.js'), { auth, organizations, deps });
-  await app.register(import('./media/index.js'), { auth, organizations, deps });
+  await app.register(import('./meetings/index.js'), {
+    auth,
+    organizations,
+    deps,
+    extensionBearer,
+  });
+  await app.register(import('./media/index.js'), {
+    auth,
+    organizations,
+    deps,
+    extensionBearer,
+    sessionVerifier,
+  });
   return {
     auth,
     organizations,
-    sessionVerifier: new SessionVerifier({
-      ...deps,
-      extensionTokenStore: desktopAuth
-        ? combineBearerStores(extensionAuth.verifierStore(), desktopAuth.verifierStore())
-        : extensionAuth.verifierStore(),
-      ...(desktopAuth ? { bearerAudiences: ['extension', 'desktop'] as const } : {}),
-    }),
+    sessionVerifier,
     extensionAuth,
     desktopAuth,
   };

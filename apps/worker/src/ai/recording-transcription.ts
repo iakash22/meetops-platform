@@ -18,6 +18,7 @@ import {
   type RecordingScope,
   type RecordingTranscriptRepository,
 } from './repository.js';
+import type { SummaryTrigger } from './summary-trigger.js';
 import type { TranscriptionLogger } from './consumer.js';
 
 const Uuid = Type.String({ format: 'uuid', pattern: '^[0-9a-fA-F-]{36}$' });
@@ -44,6 +45,8 @@ export type RecordingTranscriptionDeps = {
   resolveAudio: (recording: RecordingScope) => Promise<TranscriptionAudio>;
   logger: TranscriptionLogger;
   speakerLabels?: boolean | undefined;
+  /** Enqueues the meeting summary once the transcript is `ready` (deduped by meeting + revision + prompt version). */
+  summaryTrigger?: SummaryTrigger | undefined;
   now?: () => Date;
 };
 
@@ -54,6 +57,7 @@ export type RecordingTranscriptionErrorCode =
   | 'org_mismatch'
   | 'audio_unavailable'
   | 'revision_conflict'
+  | 'summary_enqueue_failed'
   | `provider_${ProviderErrorCode}`;
 
 export class RecordingTranscriptionError extends Error {
@@ -201,6 +205,19 @@ export async function processRecordingTranscription(
       return ok ? { revision: rev.revision, duplicate: false } : undefined;
     });
     if (out) {
+      // Also on duplicates: covers a crash between the transcript write and the enqueue (job id dedupes).
+      if (merged.complete && deps.summaryTrigger) {
+        try {
+          await deps.summaryTrigger.transcriptReady({
+            organizationId,
+            meetingId,
+            transcriptRevision: out.revision,
+          });
+        } catch {
+          // Transcript is durable; retrying this job is cheap (duplicate path, no provider call) and re-enqueues.
+          return fail('summary_enqueue_failed', true);
+        }
+      }
       deps.logger.info(
         { ...log, revision: out.revision, duplicate: out.duplicate && !providerCalled },
         'recording transcription done',

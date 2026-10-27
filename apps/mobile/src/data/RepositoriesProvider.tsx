@@ -1,4 +1,5 @@
 import type { MeetingInsightsApi } from '../api/paths';
+import type { TaskReviewApi } from '../tasks/taskReviewCore';
 import type { SimulatedCapture } from '../record/simulatedRecorder';
 import type { UploadQueueEngine } from '../upload/uploadQueueEngine';
 import type { MicPermission } from '../consent/micPermission';
@@ -14,6 +15,8 @@ export interface Repositories {
   tasks: TasksRepository;
   /** Transcript and report reads (#212). */
   insights: MeetingInsightsApi;
+  /** Phase 4 task review (contracts 0.8.0 TASK_PATHS). Absent = no review section. */
+  review?: TaskReviewApi | undefined;
   uploadQueue: UploadQueue;
   /** Recording consent (R1 opt-in local; R3 attestation travels with the upload, contracts v0.4.1). */
   consent: ConsentApi;

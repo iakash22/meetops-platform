@@ -48,7 +48,9 @@ export type AuditAction =
   | 'desktop.revoke'
   | 'desktop.org_switch'
   // Phase 5 (ADR-008) integrations
-  | 'integration.disconnect';
+  | 'integration.disconnect'
+  | 'integration.connect'
+  | 'integration.issue_push';
 
 /** Never put passwords, tokens, cookies or hashes in metadata. */
 export interface AuditEvent {

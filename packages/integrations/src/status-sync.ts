@@ -4,8 +4,8 @@ import type { IssueStatus } from './types.js';
 export interface StatusChange {
   organizationId: string;
   integrationId: string;
-  provider: 'github';
-  /** "owner/repo#N" — look up the task by (organizationId, provider, externalId). */
+  provider: 'github' | 'jira';
+  /** "owner/repo#N" or "PROJ-12" — look up the task by (organizationId, provider, externalId). */
   externalId: string;
   status: IssueStatus;
   action: string;
@@ -20,7 +20,13 @@ interface IssuesEventPayload {
 
 function labelNames(labels: unknown): string[] {
   if (!Array.isArray(labels)) return [];
-  return labels.flatMap((l) => (typeof l === 'string' ? [l] : l && typeof (l as { name?: unknown }).name === 'string' ? [(l as { name: string }).name] : []));
+  return labels.flatMap((l) =>
+    typeof l === 'string'
+      ? [l]
+      : l && typeof (l as { name?: unknown }).name === 'string'
+        ? [(l as { name: string }).name]
+        : [],
+  );
 }
 
 /**
@@ -31,7 +37,7 @@ export function mapGitHubIssueEvent(
   event: string | undefined,
   payload: unknown,
   ctx: { organizationId: string; integrationId: string },
-  options: { inProgressLabel?: string } = {}
+  options: { inProgressLabel?: string } = {},
 ): StatusChange | null {
   if (event !== 'issues' || !payload || typeof payload !== 'object') return null;
   const p = payload as IssuesEventPayload;
@@ -61,6 +67,51 @@ export function mapGitHubIssueEvent(
       status = null;
   }
   return status
-    ? { organizationId: ctx.organizationId, integrationId: ctx.integrationId, provider: 'github', externalId: `${repo}#${num}`, status, action }
+    ? {
+        organizationId: ctx.organizationId,
+        integrationId: ctx.integrationId,
+        provider: 'github',
+        externalId: `${repo}#${num}`,
+        status,
+        action,
+      }
+    : null;
+}
+
+/**
+ * Pure mapper: Jira `jira:issue_created` / `jira:issue_updated` webhook -> internal status change, keyed by the
+ * issue key. Uses the status category (new / indeterminate / done), which is stable across custom workflows.
+ */
+export function mapJiraIssueEvent(
+  payload: unknown,
+  ctx: { organizationId: string; integrationId: string },
+): StatusChange | null {
+  if (!payload || typeof payload !== 'object') return null;
+  const p = payload as {
+    webhookEvent?: unknown;
+    issue?: { key?: unknown; fields?: { status?: { statusCategory?: { key?: unknown } } } };
+  };
+  if (p.webhookEvent !== 'jira:issue_updated' && p.webhookEvent !== 'jira:issue_created')
+    return null;
+  const key = p.issue?.key;
+  if (typeof key !== 'string' || !/^[A-Z][A-Z0-9_]{0,19}-\d{1,10}$/.test(key)) return null;
+  const cat = p.issue?.fields?.status?.statusCategory?.key;
+  const status: IssueStatus | null =
+    cat === 'new'
+      ? 'open'
+      : cat === 'indeterminate'
+        ? 'in_progress'
+        : cat === 'done'
+          ? 'done'
+          : null;
+  return status
+    ? {
+        organizationId: ctx.organizationId,
+        integrationId: ctx.integrationId,
+        provider: 'jira',
+        externalId: key,
+        status,
+        action: p.webhookEvent,
+      }
     : null;
 }

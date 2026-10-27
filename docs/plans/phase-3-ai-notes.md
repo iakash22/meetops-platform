@@ -34,3 +34,35 @@ dependencies, no lockfile change). Every test uses mocked fetch or fake provider
 6. A later success after `failed` leaves the anchor at `failed`, while revision >= 1 is `ready`. Readers should use the
    latest revision >= 1. [Accepted.]
 7. PII redaction (AssemblyAI `redact_pii`): [off]. Turning it on changes transcript text for every downstream step.
+
+## PR 2: feat/worker-ai-summary-provider
+
+- `LlmProvider` interface (`providers/llm-provider.ts`) + `GeminiLlmProvider` fetch adapter (`generateContent`, JSON mime type, key in `x-goog-api-key` header, never in URL or logs). Safety block → `provider_failed`; `MAX_TOKENS` → `bad_response`.
+- `processMeetingSummary` / `createMeetingSummaryProcessor` (`ai/meeting-summary.ts`): loads the latest `ready` merged transcript, prompts the model, validates strict JSON (TypeBox, built from contracts `ReportContent`, `ReportActionItem`, `TaskPriority`, `additionalProperties: false`), stores via `SummaryRepository`.
+- Prompt-injection posture: transcript is untrusted data inside a random per-call nonce fence; fence-like tags, control and bidi chars are stripped; the model is told never to follow transcript instructions; output is only parsed as data — no tools, no execution, extra keys (e.g. `status: "approved"`) reject the whole output. Assignee/due values stay _hints_ and are never resolved to users.
+- Extracted tasks are always inserted as `pending_review` by the repository; the model cannot set status.
+- Idempotent per (transcript, revision, `SUMMARY_PROMPT_VERSION`): an existing succeeded `summary` AiRun with a report short-circuits. Failures write a `failed` AiRun (non-retryable immediately, retryable on the final attempt).
+
+### Parked decisions (PR 2) — defaults in place, need Shubham
+
+8. **LLM model**: default `gemini-2.5-flash-lite` (override `GEMINI_MODEL`). Alternative: `gemini-2.5-flash` for quality.
+9. **Data retention at Google**: paid Gemini API tier assumed (no training on data; abuse-monitoring retention per Google terms). Free tier must NOT be used with customer data.
+10. **PII redaction before LLM**: off; transcript sent as-is. Option: redact emails/phones before prompting.
+11. **Cost cap**: refuse (not truncate) transcripts over `AI_SUMMARY_MAX_TRANSCRIPT_CHARS` = 200 000 chars (~50k tokens); output capped at `AI_SUMMARY_MAX_OUTPUT_TOKENS` = 8192. No per-org monthly budget yet.
+12. **Long-meeting policy**: refuse with `transcript_too_large`; alternative is map-reduce chunked summarization (later PR).
+13. **Prompt versioning**: `meeting-summary@1`; bumping it allows a new report version for the same transcript.
+14. **Concurrent duplicates**: idempotency is check-then-insert inside one org transaction, no DB unique key on AiRun; relies on one queue job id per meeting+revision. Option: add a partial unique index (migration) later.
+15. **Enqueue trigger**: not wired yet — who enqueues summary after transcript `ready` (worker chain vs API) is undecided.
+
+## Summary trigger (feat/worker-summary-trigger)
+
+Defaults (change with Shubham if needed):
+
+- **Who enqueues**: the transcription worker. When a job leaves the merged transcript complete (`status = ready`), both the chunk consumer (`processTranscriptionJob`) and the whole-recording job (`processRecordingTranscription`) call `SummaryTrigger.transcriptReady`. Partial (`processing`) revisions never trigger.
+- **Queue / job**: `QUEUE_NAMES.ai` (`ai`), job name `summarize_meeting`, payload `{ organizationId, meetingId }` only (no transcript text, no secrets).
+- **Dedupe**: BullMQ job id `summary__{meetingId}__r{revision}__{promptVersion}` (`:` is not allowed in BullMQ ids). Re-running a transcription job, duplicate chunks, or a crash between transcript write and enqueue all re-call the trigger; the existing job id makes it a no-op. Completed ids are kept 7 days, failed ids 30 days; after that the DB unique index (below) is the backstop.
+- **Attempts**: 3, exponential backoff from 30 s.
+- **Enqueue failure**: the transcription job fails _retryably_ (`summary_enqueue_failed`). The transcript stays durable; the retry takes the duplicate path (no provider call) and enqueues again.
+- **Stale jobs**: the summary job always summarizes the _latest_ ready revision. If r2's job runs after r3 exists it summarizes r3 and r3's job becomes a no-op.
+- **Opt-out**: `startTranscriptionWorker` builds the default BullMQ trigger; hosts can inject a no-op `summaryTrigger`.
+- **Not yet wired**: a BullMQ consumer for `ai`/`summarize_meeting` (needs a Prisma client + Gemini key injected by the host, like the transcription worker). Until then jobs wait in the queue.
