@@ -23,9 +23,15 @@ const errors = { ...directoryErrors, 409: ErrorBody, 422: ErrorBody } as const;
 
 export async function uploadRoutes(
   app: FastifyInstance,
-  opts: { uploads: UploadService; caller: ResolveCaller },
+  opts: {
+    uploads: UploadService;
+    caller: ResolveCaller;
+    /** Caller for init/complete (cookie or ADR-005 extension bearer); defaults to `caller`. */
+    writeCaller?: ResolveCaller;
+  },
 ) {
   const { uploads, caller } = opts;
+  const writeCaller = opts.writeCaller ?? caller;
 
   app.post<{ Params: OrgParams; Body: InitUploadInput }>(
     CONSENT_UPLOAD_PATHS.uploads,
@@ -41,7 +47,7 @@ export async function uploadRoutes(
       },
     },
     async (request, reply) => {
-      const c = await caller(request, request.params.organizationId);
+      const c = await writeCaller(request, request.params.organizationId);
       const { file, upload } = await uploads.init(c, request.body);
       return reply.code(201).send({
         fileObjectId: file.id,
@@ -69,7 +75,7 @@ export async function uploadRoutes(
       },
     },
     async (request, reply) => {
-      const c = await caller(request, request.params.organizationId);
+      const c = await writeCaller(request, request.params.organizationId);
       const f = await uploads.complete(c, request.params.fileObjectId);
       return reply.code(200).send({ fileObject: toPublicFileObject(f), scanStatus: 'pending' });
     },
