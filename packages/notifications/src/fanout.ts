@@ -1,6 +1,11 @@
 import { Type, type Static } from '@sinclair/typebox';
 import { Value } from '@sinclair/typebox/value';
-import { Id, type NotificationDeliveryJobPayload } from '@meetops/contracts';
+import {
+  AUTH_NEW_LOCATION_SIGNIN_EVENT,
+  AuthNewLocationSigninEvent,
+  Id,
+  type NotificationDeliveryJobPayload,
+} from '@meetops/contracts';
 
 /**
  * ADR-013 outbox relay -> notification fan-out. Storage, queue and clock are ports so the logic is unit-testable;
@@ -80,6 +85,15 @@ type Rule<P> = {
   parse(payload: unknown): P | undefined;
   subject(p: P): { subjectType: string; subjectId: string };
   data(p: P): Record<string, string | number | boolean | null>;
+  /**
+   * Personal events: the single recipient derived from the SERVER-written outbox aggregate (not the payload). The
+   * user must still be an active member of the event's org (checked against `roles`). Omitted: all members by role.
+   */
+  recipient?(e: ClaimedOutboxEvent): string | undefined;
+  /** Channel defaults that differ from DEFAULT_CHANNEL_ENABLED for this kind (user preferences still win). */
+  channelDefaults?: Partial<Record<FanoutChannel, boolean>>;
+  /** Notification dedupe key (default `outbox:<eventId>`). */
+  dedupeKey?(e: ClaimedOutboxEvent, p: P): string;
 };
 
 const parser =
@@ -122,6 +136,34 @@ export const OUTBOX_NOTIFICATION_RULES = {
       reportId: p.reportId,
     }),
   } satisfies Rule<Static<typeof SummaryReadyPayload>>,
+  /**
+   * ADR-014: sign-in from a new country/region. Only to the signed-in user (outbox aggregate 'user'), in-app + email
+   * (email on by default for this security alert). Maps the event's `city`/`country` to the feed's
+   * `geoCity`/`geoCountry`; never an IP. Deduped per user, location and UTC day.
+   */
+  [AUTH_NEW_LOCATION_SIGNIN_EVENT]: {
+    kind: 'auth.new_location_signin',
+    roles: ['owner', 'admin', 'member', 'viewer'],
+    channels: ['in_app', 'email'],
+    channelDefaults: { email: true },
+    parse: parser(AuthNewLocationSigninEvent),
+    recipient: (e: ClaimedOutboxEvent) => (e.aggregateType === 'user' ? e.aggregateId : undefined),
+    dedupeKey: (e: ClaimedOutboxEvent, p: Static<typeof AuthNewLocationSigninEvent>) =>
+      `newloc:${e.aggregateId}:${p.countryCode ?? ''}:${p.region ?? ''}:${new Date().toISOString().slice(0, 10)}`.slice(
+        0,
+        200,
+      ),
+    subject: (p: Static<typeof AuthNewLocationSigninEvent>) => ({
+      subjectType: 'session',
+      subjectId: p.sessionId,
+    }),
+    data: (p: Static<typeof AuthNewLocationSigninEvent>) => ({
+      sessionId: p.sessionId,
+      reason: p.reason,
+      geoCity: p.city,
+      geoCountry: p.country,
+    }),
+  } satisfies Rule<Static<typeof AuthNewLocationSigninEvent>>,
 } as const;
 export type OutboxNotificationEventType = keyof typeof OUTBOX_NOTIFICATION_RULES;
 
@@ -139,12 +181,13 @@ export function channelEnabled(
   prefs: readonly FanoutPreference[],
   kind: string,
   channel: FanoutChannel,
+  defaults: Partial<Record<FanoutChannel, boolean>> = {},
 ): boolean {
   const exact = prefs.find((p) => p.type === kind && p.channel === channel);
   if (exact) return exact.enabled;
   const wild = prefs.find((p) => p.type === '*' && p.channel === channel);
   if (wild) return wild.enabled;
-  return DEFAULT_CHANNEL_ENABLED[channel];
+  return defaults[channel] ?? DEFAULT_CHANNEL_ENABLED[channel];
 }
 
 export class OutboxPayloadError extends Error {
@@ -167,17 +210,24 @@ export async function fanoutEvent(
   const payload = rule.parse(e.payload);
   if (payload === undefined) throw new OutboxPayloadError();
   const org = e.organizationId;
-  const users = [...new Set(await deps.store.recipients(org, rule.roles))];
+  const members = [...new Set(await deps.store.recipients(org, rule.roles))];
+  let users = members;
+  if (rule.recipient) {
+    const only = rule.recipient(e);
+    users = only && members.includes(only) ? [only] : [];
+  }
   let notifications = 0;
   let jobs = 0;
   for (const userId of users) {
     const prefs = await deps.store.preferences(org, userId);
-    const channels = rule.channels.filter((c) => channelEnabled(prefs, rule.kind, c));
+    const channels = rule.channels.filter((c) =>
+      channelEnabled(prefs, rule.kind, c, rule.channelDefaults),
+    );
     if (channels.length === 0) continue;
     const n = await deps.store.createNotification(org, {
       userId,
       type: rule.kind,
-      dedupeKey: `outbox:${e.id}`,
+      dedupeKey: rule.dedupeKey ? rule.dedupeKey(e, payload) : `outbox:${e.id}`,
       ...rule.subject(payload),
       data: rule.data(payload),
     });

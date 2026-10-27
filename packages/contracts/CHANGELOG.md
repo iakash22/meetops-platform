@@ -24,12 +24,15 @@ GeoIP session location (ADR-014, Proposed). Additive. Version numbers 0.10.0-0.1
 - `AuthNewLocationSigninEvent` (outbox `auth.new_location_signin`): `{ sessionId, city, region, country, countryCode,
 reason }`, every key required, geo values nullable; `reason` is `'new_region' | 'new_country'`
   (`NEW_LOCATION_REASONS`). No IP address.
+- `Notification` (feed item) `geoCity?` / `geoCountry?` (`GeoName`, optional, not nullable): set only for
+  `auth.new_location_signin`; the fan-out maps the event's `city`/`country` to them. Web #260 reads these.
 - `AuthNewLocationSigninNotificationPayload`: in-app notification payload `{ sessionId, reason, geoCity?, geoCountry? }`
   (optional, not nullable).
 - `GeoName` / `GEO_TEXT_PATTERN`: location text rejects control chars (incl. CR/LF), bidi/invisible chars, `<`, `>`,
   `"`, tag chars, leading/trailing whitespace and IPv4/IPv6-looking strings. ASCII `'` and `&` are allowed for real
   place names ("St. John's", "Trinidad & Tobago"), so every renderer (email, web, push) must escape output. Also
   `GeoText`, `GeoCountryCode`, `GeoCountryCodeString`, `AUTH_NEW_LOCATION_SIGNIN_EVENT`.
+
 ## [0.13.0] - 2026-10-28
 
 Realtime events for the notifications fan-out (ADR-013) and the AI summary worker (PR #272). Additive; builds on

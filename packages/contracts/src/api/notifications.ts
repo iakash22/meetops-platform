@@ -1,5 +1,6 @@
 import { Type, type Static } from '@sinclair/typebox';
 import { Id, IsoDateTime } from '../common.js';
+import { GeoName } from './sessions.js';
 
 /** v0.11.0 (ADR-013): in-app feed, preferences, push devices and the email unsubscribe flow. */
 export const NOTIFICATION_PATHS = {
@@ -66,6 +67,9 @@ export const Notification = Type.Object(
     body: Type.Optional(Type.String({ maxLength: 1000 })),
     meetingId: Type.Optional(Id),
     taskId: Type.Optional(Id),
+    /** v0.14.0 (ADR-014), `auth.new_location_signin` only: coarse location, optional (absent = unknown). No IP. */
+    geoCity: Type.Optional(GeoName),
+    geoCountry: Type.Optional(GeoName),
     readAt: Type.Union([IsoDateTime, Type.Null()]),
     createdAt: IsoDateTime,
   },

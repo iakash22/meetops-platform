@@ -1,4 +1,10 @@
 import {
+  NEW_LOCATION_LIMITS,
+  buildNewLocationEvent,
+  newLocationReason,
+  type NewLocationOutboxEvent,
+} from './new-location.js';
+import {
   lookupGeo,
   nullGeoIpProvider,
   type GeoFields,
@@ -260,6 +266,7 @@ export class AuthService {
       toPublicUser(user),
       await this.defaultOrganizationId(user.id),
       meta,
+      { newLocationAlert: true },
     );
     await this.audit(
       {
@@ -532,10 +539,12 @@ export class AuthService {
     user: PublicUser,
     activeOrganizationId: string | null,
     meta: RequestMeta,
+    opts: { newLocationAlert?: boolean } = {},
   ): Promise<SessionResult> {
     const token = this.d.tokens.generate();
     const now = this.d.clock.now();
-    const session = await this.d.sessions.create({
+    const geo = this.geo(meta.ip);
+    const draft: Session = {
       id: this.d.ids.next(),
       userId,
       tokenHash: this.d.tokens.hash(token),
@@ -546,8 +555,50 @@ export class AuthService {
       revokedAt: null,
       ip: meta.ip,
       userAgent: meta.userAgent,
-      geo: this.geo(meta.ip),
-    });
+      geo,
+    };
+    const event = opts.newLocationAlert
+      ? await this.newLocationEvent(userId, draft, activeOrganizationId)
+      : null;
+    const session =
+      event && this.d.sessions.createWithOutbox
+        ? await this.d.sessions.createWithOutbox(draft, event)
+        : await this.d.sessions.create(draft);
     return { user, session, token };
+  }
+
+  /**
+   * ADR-014: `auth.new_location_signin` when this sign-in's country (or region) was never seen in the user's earlier
+   * sessions. Needs an active organization (outbox and notifications are org-scoped, ADR-013). Deduped per
+   * (country, region) and rate-limited per user; a limiter or history failure never blocks sign-in.
+   */
+  private async newLocationEvent(
+    userId: string,
+    s: Session,
+    organizationId: string | null,
+  ): Promise<NewLocationOutboxEvent | null> {
+    const geo = s.geo;
+    if (!organizationId || !geo?.geoCountryCode || !this.d.sessions.knownLocations) return null;
+    try {
+      const reason = newLocationReason(geo, await this.d.sessions.knownLocations(userId));
+      if (!reason) return null;
+      const where = `${geo.geoCountryCode}:${geo.geoRegion ?? ''}`;
+      const L = NEW_LOCATION_LIMITS;
+      const perLocation = await this.d.rateLimiter.consume(
+        `newloc:${userId}:${where}`,
+        L.perLocation.limit,
+        L.perLocation.windowMs,
+      );
+      if (!perLocation.allowed) return null;
+      const perUser = await this.d.rateLimiter.consume(
+        `newloc:${userId}`,
+        L.perUser.limit,
+        L.perUser.windowMs,
+      );
+      if (!perUser.allowed) return null;
+      return buildNewLocationEvent({ organizationId, userId, sessionId: s.id, geo, reason });
+    } catch {
+      return null;
+    }
   }
 }
