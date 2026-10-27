@@ -1,6 +1,6 @@
 import type { Meeting } from '@meetops/contracts';
-import { Link } from 'expo-router';
-import { FlatList, StyleSheet, Text, View } from 'react-native';
+import { Link, useRouter } from 'expo-router';
+import { FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { useActiveOrganization } from '../auth/useActiveOrganization';
 import { useRepositories } from '../data/RepositoriesProvider';
@@ -24,6 +24,7 @@ export function MeetingsScreen() {
   const { meetings } = useRepositories();
   const { state, reload } = useOrgScopedList(organizationId, meetings.list);
   const orgName = organization?.name ?? 'Organization';
+  const router = useRouter();
 
   return (
     <View style={styles.container}>
@@ -82,18 +83,29 @@ export function MeetingsScreen() {
           renderItem={({ item }) => {
             const live = item.status === 'recording';
             return (
-              <View
-                style={[styles.row, live && styles.liveRow]}
+              <Pressable
+                style={({ pressed }) => [
+                  styles.row,
+                  live && styles.liveRow,
+                  pressed && styles.pressed,
+                ]}
                 testID="meeting-row"
-                accessible
+                accessibilityRole="button"
                 accessibilityLabel={`${item.title}, ${STATUS_LABEL[item.status]}`}
+                accessibilityHint="Opens the transcript and report"
+                onPress={() =>
+                  router.push({
+                    pathname: '/meeting/[id]',
+                    params: { id: item.id, title: item.title },
+                  })
+                }
               >
                 <Text style={styles.title}>{item.title}</Text>
                 <View style={styles.statusRow}>
                   {live ? <LiveDot testID="live-dot" /> : null}
                   <Text style={live ? styles.live : styles.muted}>{STATUS_LABEL[item.status]}</Text>
                 </View>
-              </View>
+              </Pressable>
             );
           }}
         />
@@ -105,6 +117,7 @@ export function MeetingsScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.background, padding: spacing.xl, paddingBottom: 0 },
   flex: { flex: 1 },
+  pressed: { backgroundColor: colors.secondary },
   orgRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -129,6 +142,7 @@ const styles = StyleSheet.create({
   link: { color: colors.link, fontSize: 16, fontWeight: '600', padding: spacing.sm },
   muted: { color: colors.mutedForeground, fontSize: 14 },
   row: {
+    minHeight: 44,
     backgroundColor: colors.card,
     borderColor: colors.border,
     borderWidth: 1,
