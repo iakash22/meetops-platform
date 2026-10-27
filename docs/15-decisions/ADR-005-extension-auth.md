@@ -200,7 +200,8 @@ MobileRefreshRequest = { refreshToken: RefreshToken };
 MobileLogoutRequest = { refreshToken: RefreshToken };
 ```
 
-- `MobileAuthTokens` is a strict subset of the extension `tokenPair` and of `DesktopTokenResponse` (ADR-012 A1), so a
+- `MobileAuthTokens` is a strict subset of the extension `tokenPair` and of contracts v0.9.0 `DesktopTokenResponse`
+  (`packages/contracts/src/api/desktop-auth.ts`), so a
   shared client helper reads all three. `audience` and `scopes` are omitted to match PR #170; the server still records
   both on the token row and enforces them.
 - `POST /auth/mobile/token` runs the full ADR-006 login path (lockout, constant-time failure, generic
@@ -223,7 +224,17 @@ MobileLogoutRequest = { refreshToken: RefreshToken };
 5. **Scopes** (`MOBILE_SCOPES`): `meetings:read`, `tasks:read`, `recordings:write`. Read-only for tasks, like desktop;
    task write or approve from mobile needs a further amendment. Enforced server-side in each route's auth hook.
 6. No CORS headers on mobile routes: a native client sends no `Origin`, and a browser must not be able to call them
-   cross-site.
+   cross-site. Missing CORS only stops a browser from _reading_ the response, not from _sending_ the request, so
+   `/auth/mobile/*` MUST also reject (403 `FORBIDDEN`, before any credential check or lockout counter) any request that
+   carries an `Origin` header, and MUST require `Content-Type: application/json` (415 otherwise). A cross-site page
+   therefore can't use `/auth/mobile/token` as a credential-stuffing oracle or to trip a victim's lockout.
+7. **Tenant context.** The mobile auth hook resolves tenant context exactly like the cookie path. The token only names
+   the user and org. The hook loads the **live** membership and role (`resolveTenant`), builds the CASL ability from that
+   role (never from token claims), and runs the request's DB work inside `withOrganizationContext(organizationId)` so
+   **forced RLS** applies. A removed member gets `NOT_FOUND` even with an unexpired token. Required test: a mobile token
+   for org A that calls an org B route (path org B, or a forged org B id in the body) gets `NOT_FOUND`, with RLS on.
+8. **No header overrides.** The org comes only from the verified token (and the path, which must match it). The server
+   ignores any `x-organization-id`, `x-tenant-id`, `x-user-id` or similar client header; only `Authorization` is trusted.
 
 ### A3.4 CSRF exemption reasoning
 
@@ -244,6 +255,17 @@ either, but it is rate limited and lockout-protected.
 4. Presenting a consumed refresh token is reuse: revoke the whole family and its access tokens, return 401, publish
    `{ kind: 'session', sessionId: <familyId>, reason: 'mobile_revoked' }` on `meetops:auth:revocations`, and write an
    audit event. The app MUST serialise refreshes (one in flight) so normal use never trips this.
+5. **Revocation is checked on every request.** Access tokens are opaque, so each bearer request looks up the token row
+   (DB, or a Redis mirror that revocation writes through synchronously) and rejects a revoked, expired or
+   family-revoked token. No positive verification cache may outlive a revocation. In particular, the ADR-011 ≤5 min
+   revalidation ceiling applies only to already-open sockets, never to HTTP requests, and never after membership
+   removal or reuse detection.
+6. **Concurrent or dropped refresh.** If a refresh response is lost (network drop, app killed), the client retries with
+   the same refresh token. The server keeps a **30-second idempotent grace window**: re-presenting the token that was
+   just consumed, with the same device id inside that window, returns the **same** new pair (stored hashed with the
+   consumption record) and is not treated as reuse. After the window, or from a different device id, it is reuse
+   (item 4). If even that fails, the user is signed out on that device and must log in again. This is the documented
+   lockout UX: no data loss, only a re-login.
 
 ### A3.6 Revocation
 
@@ -257,6 +279,13 @@ revocation publishes to `meetops:auth:revocations` so open sockets drop (ADR-011
 - Refresh token: OS secure storage only. iOS Keychain with `WHEN_UNLOCKED_THIS_DEVICE_ONLY` (no iCloud sync, not
   restored to another device); Android Keystore-backed storage (`expo-secure-store`, or EncryptedSharedPreferences).
   Access token: in memory only.
+- `WHEN_UNLOCKED_THIS_DEVICE_ONLY` is deliberate: the app cannot refresh while the device is locked, so background
+  refresh (e.g. a background fetch task) fails until the next unlock and then refreshes normally. M2 has no background
+  sync that needs tokens. A future background feature must make a new decision (for example
+  `AFTER_FIRST_UNLOCK_THIS_DEVICE_ONLY`) rather than silently weakening this one.
+- The server binds a client-generated device id (UUID kept in secure storage) and a user-visible device name to the
+  refresh family at `POST /auth/mobile/token`. Refresh with a different device id is rejected as reuse. Per-device revoke
+  in web account settings lists families by that name and revokes by family.
 - Never AsyncStorage, MMKV without encryption, files, logs, crash reports, analytics or deep links.
 - Android: exclude the secure store from Auto Backup (`android:allowBackup` rules). iOS: no shared keychain group.
 - On logout, reuse 401 or `session:revoked`, wipe both tokens and any cached org data.
@@ -283,7 +312,7 @@ same list. Audit events (no token values): `mobile.login`, `mobile.refresh_reuse
 | Credential stuffing on `/auth/mobile/token` | ADR-006 lockout, per-IP limits, generic errors                                                    | Same as web login                                          |
 | CSRF                                        | No ambient credential; cookie + bearer rejected                                                   | None known                                                 |
 | Token leaks via logs, URLs, deep links      | Header/body only; `REDACT_KEYS`; no query tokens                                                  | None known                                                 |
-| Stale org access after removal              | Org-scoped tokens; verifier checks live membership; revocation fan-out                            | ≤ 5 min without Redis (ADR-011 ceiling)                    |
+| Stale org access after removal              | Org-scoped tokens; live membership + revocation checked on every HTTP request (A3.5.5)            | Open sockets only: ≤ 5 min without Redis (ADR-011 ceiling) |
 | Phishing app collecting passwords           | Store-signed app; future SSO/MFA via system browser (open question)                               | In-app password entry remains (see A3.11)                  |
 | Cross-audience misuse                       | `aud=mobile` checked per route; mobile tokens rejected on extension/desktop routes and vice versa | None known                                                 |
 
