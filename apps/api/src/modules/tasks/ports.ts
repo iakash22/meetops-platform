@@ -24,6 +24,19 @@ export type AcceptInput = {
   dueAt?: Date | undefined;
 };
 
+export type CreateTaskInput = {
+  createdById: string;
+  title: string;
+  description?: string | undefined;
+  status: TaskStatus;
+  priority: TaskPriority;
+  /** Employee id in the same org. */
+  assigneeId?: string | undefined;
+  projectId?: string | undefined;
+  meetingId?: string | undefined;
+  dueAt?: Date | undefined;
+};
+
 export type TaskPatch = {
   title?: string | undefined;
   description?: string | null | undefined;
@@ -38,6 +51,12 @@ export type TaskPatch = {
 export class TaskMissing extends Error {}
 /** assigneeId is not an employee of this org (other-org ids look the same as unknown ones). */
 export class TaskAssigneeInvalid extends Error {}
+/** projectId / meetingId is not a live row of this org (other-org ids look the same as unknown ones). */
+export class TaskReferenceInvalid extends Error {
+  constructor(readonly field: 'projectId' | 'meetingId') {
+    super(field);
+  }
+}
 export class ExtractedTaskMissing extends Error {}
 export class ExtractedTaskAlreadyReviewed extends Error {}
 
@@ -55,6 +74,8 @@ export interface TaskRepositories {
   ): Promise<Page<ExtractedTask>>;
   /** Throws TaskMissing for unknown/other-org ids. */
   getTask(organizationId: string, taskId: string): Promise<Task>;
+  /** Manual task (not from review). Throws TaskAssigneeInvalid or TaskReferenceInvalid. */
+  createTask(organizationId: string, input: CreateTaskInput): Promise<Task>;
   /** Throws TaskMissing or TaskAssigneeInvalid. Absent keys are left unchanged. */
   updateTask(organizationId: string, taskId: string, patch: TaskPatch): Promise<Task>;
   accept(organizationId: string, input: AcceptInput): Promise<Task>;

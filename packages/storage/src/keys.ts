@@ -3,7 +3,15 @@ import { StorageAccessError, StorageValidationError } from './errors.js';
 const ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
 const EXT = /^[a-z0-9]{1,8}$/;
 
-export type MeetingObjectKind = 'recording' | 'normalized' | 'chunk' | 'session_chunk' | 'transcript' | 'export' | 'attachment' | 'waveform';
+export type MeetingObjectKind =
+  | 'recording'
+  | 'normalized'
+  | 'chunk'
+  | 'session_chunk'
+  | 'transcript'
+  | 'export'
+  | 'attachment'
+  | 'waveform';
 
 /**
  * Server-side object reference. Callers pass IDs and a kind; the storage
@@ -48,13 +56,16 @@ export function refOrganizationId(ref: { organizationId?: string; orgId?: string
  * Returns a copy of ref with both organizationId and the deprecated orgId set, so authorize hooks written
  * against either name keep working during the ADR-010 compatibility phase.
  */
-export function normalizeMeetingObjectRef(ref: MeetingObjectRef): MeetingObjectRef & { organizationId: string; orgId: string } {
+export function normalizeMeetingObjectRef(
+  ref: MeetingObjectRef,
+): MeetingObjectRef & { organizationId: string; orgId: string } {
   const organizationId = refOrganizationId(ref);
   return { ...ref, organizationId, orgId: organizationId };
 }
 
 function idx(i: number | undefined): string {
-  if (i === undefined || !Number.isInteger(i) || i < 0 || i > 99999) throw new StorageValidationError('Invalid chunk index');
+  if (i === undefined || !Number.isInteger(i) || i < 0 || i > 99999)
+    throw new StorageValidationError('Invalid chunk index');
   return String(i).padStart(5, '0');
 }
 
@@ -134,7 +145,13 @@ export function parseMeetingKey(key: string): ParsedMeetingKey | null {
   const k = key.startsWith(SESSION_CHUNK_PREFIX) ? key.slice(SESSION_CHUNK_PREFIX.length) : key;
   const m = /^(organizations|org)\/([^/]+)\/meetings\/([^/]+)\/(.+)$/.exec(k);
   if (!m || !ID.test(m[2]!) || !ID.test(m[3]!)) return null;
-  return { organizationId: m[2]!, orgId: m[2]!, meetingId: m[3]!, rest: m[4]!, legacy: m[1] === 'org' };
+  return {
+    organizationId: m[2]!,
+    orgId: m[2]!,
+    meetingId: m[3]!,
+    rest: m[4]!,
+    legacy: m[1] === 'org',
+  };
 }
 
 /**
@@ -143,13 +160,25 @@ export function parseMeetingKey(key: string): ParsedMeetingKey | null {
  * with a valid meetingId segment (and meetingId equal to `meetingId` when given). Never echoes the key.
  */
 export function assertKeyOwnedBy(key: string, organizationId: string, meetingId?: string): void {
-  if (typeof organizationId !== 'string' || !ID.test(organizationId)) throw new StorageAccessError('organizationId is required');
-  if (typeof key !== 'string' || key.includes('..') || key.includes('//') || key.includes('\\')) throw new StorageAccessError();
+  if (typeof organizationId !== 'string' || !ID.test(organizationId))
+    throw new StorageAccessError('organizationId is required');
+  if (typeof key !== 'string' || key.includes('..') || key.includes('//') || key.includes('\\'))
+    throw new StorageAccessError();
   const isSession = key.startsWith(SESSION_CHUNK_PREFIX);
   const k = isSession ? key.slice(SESSION_CHUNK_PREFIX.length) : key;
-  if (!k.startsWith(organizationPrefix(organizationId)) && !k.startsWith(legacyOrganizationPrefix(organizationId))) throw new StorageAccessError();
+  if (
+    !k.startsWith(organizationPrefix(organizationId)) &&
+    !k.startsWith(legacyOrganizationPrefix(organizationId))
+  )
+    throw new StorageAccessError();
   const parsed = parseMeetingKey(key);
   if (!parsed || parsed.organizationId !== organizationId) throw new StorageAccessError();
   if (meetingId !== undefined && parsed.meetingId !== meetingId) throw new StorageAccessError();
-  if (isSession && !/^sessions\/[A-Za-z0-9][A-Za-z0-9_-]{0,127}\/\d{5}\.part$/.test(parsed.rest)) throw new StorageAccessError();
+  if (isSession && !/^sessions\/[A-Za-z0-9][A-Za-z0-9_-]{0,127}\/\d{5}\.part$/.test(parsed.rest))
+    throw new StorageAccessError();
+}
+
+/** Key of a direct upload's source object (API presigned upload): organizations/{organizationId}/uploads/{uploadId}/source. */
+export function uploadSourceKey(organizationId: string, uploadId: string): string {
+  return `${organizationPrefix(organizationId)}uploads/${id('uploadId', uploadId)}/source`;
 }
