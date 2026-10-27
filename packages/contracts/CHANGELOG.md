@@ -6,8 +6,41 @@ While the version is `0.x`, a minor bump may contain breaking changes (ADR-003).
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-10-27
+
+Desktop (Tauri) sign-in schemas for ADR-012 Option A (system browser, authorization code + PKCE S256, loopback
+redirect). ADR-012 is still Proposed; additive, builds on 0.8.0.
+
 ### Added
 
+- `DESKTOP_TOKEN_AUDIENCE`, `DESKTOP_TOKEN_TYPE`, `DESKTOP_SCOPES` (`meetings:read`, `meetings:resolve`, `tasks:read`,
+  `recordings:write`), `DESKTOP_TOKEN_TTL_SECONDS` (900), `DESKTOP_REFRESH_FAMILY_MAX_LIFETIME_SECONDS` (30 days),
+  `DESKTOP_AUTHORIZATION_CODE_TTL_SECONDS` (60) and `DESKTOP_AUTH_PATHS`.
+- Strict `Desktop{Authorize,Token,Refresh,Revoke,SwitchOrg}{Request,Response}`, `PkceCodeChallenge`,
+  `PkceCodeVerifier`, `DesktopRedirectUri` (`http://127.0.0.1:<1024-65535>/callback` only).
+- `desktop_revoked` in `AUTH_REVOCATION_REASONS`.
+- `REDACT_KEYS`: `authorizationCode`, `codeVerifier`, `code_verifier`.
+
+### Changed
+
+- The token body field is `authorizationCode`, not ADR-012's `code`: `code` is the error-body key, so redacting it
+  everywhere would hide error codes in logs. `state` stays client-only and never reaches the server.
+
+## [0.8.0] - 2026-10-27
+
+Route constants and the task update DTO, so the API and the web, desktop, mobile and extension apps can drop their
+pinned local copies. Additive; builds on 0.7.0.
+
+### Added
+
+- `UpdateTaskRequest` (PATCH `TASK_PATHS.task`): partial task update; `null` clears `description`, `assigneeId` and
+  `dueAt`; at least one key; unknown keys rejected. Matches the API's `UpdateTaskBody` (feat/task-approval-api).
+  `TaskParams` for the single-task routes.
+- `TASK_PATHS`: `tasks`, `extractedTasks`, `accept`, `dismiss`, `task` (same templates as the API tasks module).
+- `RECORDING_SESSION_PATHS`: `init`, `chunks`, `complete`, `abort`, plus `InitRecordingSessionParams` and
+  `RecordingSessionParams`.
+- `MEETING_INSIGHTS_PATHS`: `transcript`, `report`, plus `MeetingInsightsParams`, `MeetingTranscriptResponse`
+  (`Transcript`) and `MeetingReportResponse` (`Report`).
 - `EMAIL_TEMPLATE_IDS` / `EmailJobPayload` (user recipient): `member-added`, `member-removed`, `tasks-ready-for-review`, `integration-error` (product mails; ids-only payloads, variables resolved by the worker).
 
 ## [0.7.0] - 2026-10-26

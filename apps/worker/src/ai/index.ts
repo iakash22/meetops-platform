@@ -4,3 +4,8 @@ export * from './repository.js';
 export * from './progress.js';
 export * from './consumer.js';
 export * from './worker.js';
+export * from './providers/index.js';
+export * from './recording-transcription.js';
+export * from './summary-repository.js';
+export * from './meeting-summary.js';
+export * from './summary-trigger.js';

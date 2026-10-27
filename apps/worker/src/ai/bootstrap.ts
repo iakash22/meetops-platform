@@ -11,7 +11,7 @@ import {
   type AuditSink,
 } from '@meetops/ai-core';
 import { loadStorageConfig, S3StorageService } from '@meetops/storage';
-import { logger as baseLogger } from '@meetops/logger';
+import { logger as baseLogger } from '../logger.js';
 import { createMediaPersistence, createPersistedChunkAudioResolver } from '../media/persistence.js';
 import { workerAuthorize } from '../media/worker.js';
 import { createPrismaTranscriptRepository } from './prisma-repository.js';

@@ -2,6 +2,11 @@ import type { FastifyInstance } from 'fastify';
 import cookie from '@fastify/cookie';
 import cors from '@fastify/cors';
 import { EXTENSION_AUTH_PATHS } from '@meetops/contracts';
+import {
+  extensionBearerCorsHook,
+  isExtensionBearerPath,
+  isExtensionOrigin,
+} from './extension-auth/http/bearer-cors.js';
 import { AuthService } from './auth/application/auth.service.js';
 import { authRoutes } from './auth/http/auth.plugin.js';
 import { randomBytes } from 'node:crypto';
@@ -54,12 +59,20 @@ import {
 import { createRedisRevocationPublisher } from '@meetops/session-verifier';
 import {
   ExtensionAuthService,
+  type ExtensionAuthLog,
   extensionAuthRoutes,
   InMemoryExtensionTokenRepository,
   RedisExtensionTokenRepository,
   DurableExtensionTokenRepository,
+  makeExtensionBearerGuard,
   type ExtensionTokenRepository,
 } from './extension-auth/index.js';
+import {
+  combineBearerStores,
+  combineRevokers,
+  DesktopAuthService,
+  desktopAuthRoutes,
+} from './desktop-auth/index.js';
 import { InMemoryUserRepository } from './users/infrastructure/in-memory-user.repository.js';
 import type { UserRepository } from './users/domain/user.repository.js';
 import { OrganizationService } from './organizations/application/organization.service.js';
@@ -142,6 +155,15 @@ export interface ModuleDeps {
   extensionTokens: ExtensionTokenRepository;
   /** ADR-005 allowlisted Chrome extension ids (EXTENSION_IDS; plus EXTENSION_DEV_IDS in development/test). */
   extensionIds: readonly string[];
+  /** ADR-005 A1.4 security-signal logger for extension auth; defaults to the app's (redacting) logger. */
+  extensionAuthLog?: ExtensionAuthLog;
+  /**
+   * ADR-012 desktop sign-in. Off unless DESKTOP_AUTH_ENABLED=true (the ADR-012 amendment, PR #192, awaits sign-off).
+   * When off, the /auth/desktop/* routes are not registered and desktop bearers never verify.
+   */
+  desktopAuthEnabled?: boolean;
+  /** Desktop token store: its own Redis prefix (meetops:desktop:) when `redis` is set; in-memory otherwise. */
+  desktopTokens?: ExtensionTokenRepository;
   /**
    * Media (uploads / recording sessions) adapters. Defaults to in-memory ONLY in development/test; outside them it
    * stays unset unless injected and the media routes are not registered (no production adapters yet).
@@ -399,6 +421,10 @@ export function defaultModuleDeps(
         ? new DurableExtensionTokenRepository(new RedisExtensionTokenRepository(redis), db)
         : new RedisExtensionTokenRepository(redis)
       : new InMemoryExtensionTokenRepository(),
+    desktopAuthEnabled: process.env.DESKTOP_AUTH_ENABLED === 'true',
+    desktopTokens: redis
+      ? new RedisExtensionTokenRepository(redis, 'meetops:desktop:')
+      : new InMemoryExtensionTokenRepository(),
     extensionIds: [
       ...csv(process.env.EXTENSION_IDS),
       ...(strict ? [] : csv(process.env.EXTENSION_DEV_IDS)),
@@ -439,8 +465,13 @@ export async function registerModules(app: FastifyInstance, deps: ModuleDeps) {
     delegator: (request, cb) => {
       const path = (request.url ?? '').split('?')[0] ?? '';
       const origin = request.headers.origin;
+      // Extension-origin calls to bearer routes get the credential-less CORS below, never this one.
+      const extensionBearer = isExtensionOrigin(origin) && isExtensionBearerPath(path);
       const allowed =
-        !extensionPaths.has(path) && typeof origin === 'string' && webOrigins.has(origin);
+        !extensionPaths.has(path) &&
+        !extensionBearer &&
+        typeof origin === 'string' &&
+        webOrigins.has(origin);
       cb(null, {
         origin: allowed ? origin : false,
         credentials: true,
@@ -451,6 +482,11 @@ export async function registerModules(app: FastifyInstance, deps: ModuleDeps) {
       });
     },
   });
+  // ADR-005 A1.3.6: credential-less CORS for allowlisted extension origins on the bearer-enabled routes.
+  app.addHook(
+    'onRequest',
+    extensionBearerCorsHook(deps.extensionIds.map((id) => `chrome-extension://${id}`)),
+  );
   // Close only the clients defaultModuleDeps created; injected ones belong to the caller.
   const { ownedRedis, ownedDb } = deps;
   if (ownedRedis || ownedDb) {
@@ -461,28 +497,62 @@ export async function registerModules(app: FastifyInstance, deps: ModuleDeps) {
       ]);
     });
   }
-  const extensionAuth = new ExtensionAuthService(deps);
-  // ADR-005 A1.6: logout, password reset and member removal also revoke extension token families.
-  const auth = new AuthService({ ...deps, extensionRevoker: extensionAuth });
-  const organizations = new OrganizationService({ ...deps, extensionRevoker: extensionAuth });
+  const extensionAuth = new ExtensionAuthService({
+    ...deps,
+    log: deps.extensionAuthLog ?? app.log,
+  });
+  const desktopAuth =
+    deps.desktopAuthEnabled === true
+      ? new DesktopAuthService({
+          ...deps,
+          desktopTokens: deps.desktopTokens ?? new InMemoryExtensionTokenRepository(),
+        })
+      : undefined;
+  // ADR-005 A1.6 (and ADR-012 when enabled): logout, password reset and member removal also revoke token families.
+  const revoker = desktopAuth ? combineRevokers(extensionAuth, desktopAuth) : extensionAuth;
+  const auth = new AuthService({ ...deps, extensionRevoker: revoker });
+  const organizations = new OrganizationService({ ...deps, extensionRevoker: revoker });
   if (deps.mailQueue instanceof InlineAuthMailQueue && !deps.mailQueue.handler) {
     deps.mailQueue.handler = new AuthMailJobHandler({ ...deps, transport: deps.mailTransport });
   }
   app.decorateRequest('auth', null);
+  // ADR-012: when desktop auth is enabled the verifier also accepts desktop bearers; route guards still default to extension-only.
+  const sessionVerifier = new SessionVerifier({
+    ...deps,
+      extensionTokenStore: desktopAuth
+        ? combineBearerStores(extensionAuth.verifierStore(), desktopAuth.verifierStore())
+        : extensionAuth.verifierStore(),
+      ...(desktopAuth ? { bearerAudiences: ['extension', 'desktop'] as const } : {}),
+    });
+  // ADR-005 A1.3.1: meetings/resolve and recording/upload routes also accept the extension bearer token.
+  const extensionBearer = makeExtensionBearerGuard(sessionVerifier, deps.security.cookieName);
   await app.register(authRoutes, { auth, organizations, security: deps.security });
   await app.register(organizationRoutes, { auth, organizations, security: deps.security });
   await app.register(extensionAuthRoutes, { auth, extensionAuth, security: deps.security });
+  if (desktopAuth)
+    await app.register(desktopAuthRoutes, { auth, desktopAuth, security: deps.security });
   await app.register(import('./directory/index.js'), { auth, organizations, deps });
+  await app.register(import('./tasks/index.js'), { auth, organizations, deps });
   await app.register(import('./meeting-insights/index.js'), { auth, organizations, deps });
-  await app.register(import('./meetings/index.js'), { auth, organizations, deps });
-  await app.register(import('./media/index.js'), { auth, organizations, deps });
+  await app.register(import('./integrations/index.js'), { auth, organizations, deps });
+  await app.register(import('./meetings/index.js'), {
+    auth,
+    organizations,
+    deps,
+    extensionBearer,
+  });
+  await app.register(import('./media/index.js'), {
+    auth,
+    organizations,
+    deps,
+    extensionBearer,
+    sessionVerifier,
+  });
   return {
     auth,
     organizations,
-    sessionVerifier: new SessionVerifier({
-      ...deps,
-      extensionTokenStore: extensionAuth.verifierStore(),
-    }),
+    sessionVerifier,
     extensionAuth,
+    desktopAuth,
   };
 }

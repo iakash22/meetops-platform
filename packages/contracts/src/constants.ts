@@ -174,6 +174,34 @@ export const EXTENSION_TOKEN_AUDIENCE = 'extension' as const;
 export const EXTENSION_TOKEN_TYPE = 'Bearer' as const;
 export const EXTENSION_SCOPES = ['meetings:resolve', 'recordings:write'] as const;
 
+/** v0.9.0 (ADR-012, Proposed): desktop (Tauri) bearer tokens. Access TTL 15 min, refresh family capped at 30 days. */
+export const DESKTOP_TOKEN_TTL_SECONDS = 900;
+export const DESKTOP_REFRESH_FAMILY_MAX_LIFETIME_SECONDS = 30 * 24 * 60 * 60;
+export const DESKTOP_TOKEN_AUDIENCE = 'desktop' as const;
+export const DESKTOP_TOKEN_TYPE = 'Bearer' as const;
+/** ADR-012 section 2.2: fixed subset. No tasks:write, approve, admin, member or integration scope. */
+export const DESKTOP_SCOPES = [
+  'meetings:read',
+  'meetings:resolve',
+  'tasks:read',
+  'recordings:write',
+] as const;
+/** ADR-012 section 1.5: authorization codes are single-use and expire within 60 s. */
+export const DESKTOP_AUTHORIZATION_CODE_TTL_SECONDS = 60;
+/** Endpoint paths for the desktop sign-in and token lifecycle (ADR-012). All are POST. */
+export const DESKTOP_AUTH_PATHS = {
+  /** Web session (`__Host-` cookie + `x-csrf-token`) only. Issues a single-use code bound to the PKCE challenge. */
+  authorize: '/auth/desktop/authorize',
+  /** No cookie; ignores Authorization. Exchanges code + PKCE verifier for the first token pair. */
+  token: '/auth/desktop/token',
+  /** No cookie; ignores Authorization. Rotates the refresh token. */
+  refresh: '/auth/desktop/refresh',
+  /** No cookie; ignores Authorization. Revokes the device's refresh family. Idempotent. */
+  revoke: '/auth/desktop/revoke',
+  /** No cookie; ignores Authorization. Revokes the family and issues a new one for another org the user belongs to. */
+  switchOrg: '/auth/desktop/switch-org',
+} as const;
+
 /**
  * ADR-005 amendment 1: `type` of the pairing handoff message (`PairingCodeMessage`) that the web pairing page sends to
  * the extension over `externally_connectable` messaging after `POST /auth/extension/pair`.
@@ -205,6 +233,11 @@ export const REDACT_KEYS = [
   'set-cookie',
   'password',
   'csrfToken',
+  // v0.9.0 (ADR-012 section 2.5): desktop PKCE exchange. `state` never reaches the server, and plain `code` is not
+  // listed because error bodies use `code`; the desktop token body names the field `authorizationCode` instead.
+  'authorizationCode',
+  'codeVerifier',
+  'code_verifier',
 ] as const;
 
 /**
@@ -284,6 +317,7 @@ export const AUTH_REVOCATION_REASONS = [
   'invitation_revoked',
   'password_changed',
   'extension_revoked',
+  'desktop_revoked',
 ] as const;
 /**
  * v0.4.1 (ADR-011 section 5): realtime re-verifies every socket at least this often (5 min). Deployments may lower it,
@@ -347,6 +381,46 @@ export const CONSENT_UPLOAD_PATHS = {
 export const MEETING_PATHS = {
   meetings: '/orgs/:organizationId/meetings',
   meeting: '/orgs/:organizationId/meetings/:meetingId',
+} as const;
+
+/**
+ * v0.8.0: recording-session route templates (chunked capture from the extension, desktop and mobile apps). Matches the
+ * API media module. Only `init` is org-scoped; the other three resolve the org from the caller's active organization.
+ * - `init`: POST `InitRecordingSessionRequest` -> `InitRecordingSessionResponse`.
+ * - `chunks`: POST `ChunkUploadUrlRequest` -> `ChunkUploadUrlResponse` (then PUT the bytes).
+ * - `complete`: POST `CompleteRecordingSessionRequest` -> `CompleteRecordingSessionResponse`.
+ * - `abort`: POST `AbortRecordingSessionRequest` -> 204.
+ */
+export const RECORDING_SESSION_PATHS = {
+  init: '/orgs/:organizationId/recording-sessions',
+  chunks: '/recording-sessions/:sessionId/chunks',
+  complete: '/recording-sessions/:sessionId/complete',
+  abort: '/recording-sessions/:sessionId/abort',
+} as const;
+
+/**
+ * v0.8.0: meeting transcript and report reads (`MeetingInsightsParams`). Both answer 404 until the artifact exists.
+ * - `transcript`: GET -> `Transcript` (latest merged revision).
+ * - `report`: GET -> `Report`.
+ */
+export const MEETING_INSIGHTS_PATHS = {
+  transcript: '/orgs/:organizationId/meetings/:meetingId/transcript',
+  report: '/orgs/:organizationId/meetings/:meetingId/report',
+} as const;
+
+/**
+ * v0.8.0: task route templates, matching the API tasks module.
+ * - `tasks`: GET `ListTasksQuery` -> `Paginated<Task>`.
+ * - `extractedTasks`: GET, extracted tasks awaiting review.
+ * - `accept` / `dismiss`: POST, review one extracted task.
+ * - `task`: GET -> `Task`; PATCH `UpdateTaskRequest` -> `Task` (`TaskParams`).
+ */
+export const TASK_PATHS = {
+  tasks: '/orgs/:organizationId/tasks',
+  extractedTasks: '/orgs/:organizationId/extracted-tasks',
+  accept: '/orgs/:organizationId/extracted-tasks/:extractedTaskId/accept',
+  dismiss: '/orgs/:organizationId/extracted-tasks/:extractedTaskId/dismiss',
+  task: '/orgs/:organizationId/tasks/:taskId',
 } as const;
 
 /**

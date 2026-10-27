@@ -1,3 +1,4 @@
+import type { Meeting } from '@meetops/contracts';
 import { lazy, Suspense, useMemo, useRef, useState } from 'react';
 
 import { AppShell, type View } from '@/components/layout/app-shell';
@@ -24,6 +25,9 @@ const SignUpScreen = import.meta.env.DEV
   : null;
 const MeetingsScreen = lazy(() =>
   import('@/features/meetings/meetings-screen').then((m) => ({ default: m.MeetingsScreen })),
+);
+const InsightsScreen = lazy(() =>
+  import('@/features/meetings/insights-screen').then((m) => ({ default: m.InsightsScreen })),
 );
 const TasksScreen = lazy(() =>
   import('@/features/tasks/tasks-screen').then((m) => ({ default: m.TasksScreen })),
@@ -84,6 +88,7 @@ function Screens({
   const { session, restoring } = useSession();
   const recordingDeps = useRecordingDeps(recording);
   const [view, setView] = useState<View>('meetings');
+  const [openMeeting, setOpenMeeting] = useState<Meeting | null>(null);
   const [authView, setAuthView] = useState<'sign-in' | 'sign-up'>('sign-in');
 
   if (restoring) return <Loading />;
@@ -97,10 +102,18 @@ function Screens({
     );
   }
   return (
-    <AppShell view={view} onNavigate={setView}>
+    <AppShell
+      view={view}
+      onNavigate={(v) => {
+        setOpenMeeting(null);
+        setView(v);
+      }}
+    >
       <Suspense fallback={<Loading />}>
-        {view === 'meetings' ? (
-          <MeetingsScreen onRecord={() => setView('record')} />
+        {view === 'meetings' && openMeeting ? (
+          <InsightsScreen meeting={openMeeting} onBack={() => setOpenMeeting(null)} />
+        ) : view === 'meetings' ? (
+          <MeetingsScreen onRecord={() => setView('record')} onOpen={setOpenMeeting} />
         ) : view === 'tasks' ? (
           <TasksScreen />
         ) : view === 'record' ? (

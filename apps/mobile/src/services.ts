@@ -1,5 +1,6 @@
 import { createApiClient } from './api/client';
 import { createHttpAuthClient } from './api/httpAuthClient';
+import { createDemoInsightsApi, createHttpInsightsApi } from './api/insightsApi';
 import { createDemoMicPermission } from './consent/micPermission';
 import { createMockAuthClient } from './auth/mockAuthClient';
 import { createDemoSignupApi, type SignupApi } from './auth/SignupApiProvider';
@@ -10,6 +11,7 @@ import { createHttpMeetingsRepository, createHttpTasksRepository } from './data/
 import { createPlaceholderMeetingsRepository } from './data/meetingsRepository';
 import type { Repositories } from './data/RepositoriesProvider';
 import { createPlaceholderTasksRepository } from './data/tasksRepository';
+import { createDemoTaskReviewApi, createHttpTaskReviewApi } from './tasks/reviewApi';
 import { createSimulatedCapture } from './record/simulatedRecorder';
 import { createMemoryQueueStore, createSimulatedUploadApi } from './upload/simulatedUploadApi';
 import { createUploadQueueEngine } from './upload/uploadQueueEngine';
@@ -66,6 +68,8 @@ const engine = createUploadQueueEngine({
 export const repositories: Repositories = {
   meetings: http ? createHttpMeetingsRepository(http) : createPlaceholderMeetingsRepository(400),
   tasks: http ? createHttpTasksRepository(http) : createPlaceholderTasksRepository(400),
+  insights: http ? createHttpInsightsApi(http) : createDemoInsightsApi(),
+  review: http ? createHttpTaskReviewApi(http) : createDemoTaskReviewApi(),
   uploadQueue: engine,
   recordings: {
     engine,

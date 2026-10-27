@@ -29,7 +29,10 @@ function formatDate(iso: string | undefined): string {
   return new Date(iso).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
 }
 
-export function MeetingsScreen({ onRecord }: { onRecord?: (() => void) | undefined } = {}) {
+export function MeetingsScreen({
+  onRecord,
+  onOpen,
+}: { onRecord?: (() => void) | undefined; onOpen?: ((m: Meeting) => void) | undefined } = {}) {
   const data = useDataSource();
   const { state, retry } = useOrgList(data.listMeetings);
   const meetings: readonly Meeting[] = state.status === 'ready' ? state.items : [];
@@ -74,7 +77,14 @@ export function MeetingsScreen({ onRecord }: { onRecord?: (() => void) | undefin
                       {formatDate(m.startedAt ?? m.createdAt)} · {m.source}
                     </p>
                   </div>
-                  <Badge variant={STATUS_VARIANT[m.status]}>{STATUS_LABEL[m.status]}</Badge>
+                  <div className="flex shrink-0 items-center gap-3">
+                    <Badge variant={STATUS_VARIANT[m.status]}>{STATUS_LABEL[m.status]}</Badge>
+                    {onOpen ? (
+                      <Button variant="outline" size="sm" onClick={() => onOpen(m)}>
+                        Transcript &amp; report
+                      </Button>
+                    ) : null}
+                  </div>
                 </li>
               ))}
             </ul>

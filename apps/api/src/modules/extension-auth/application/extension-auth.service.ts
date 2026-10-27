@@ -41,7 +41,14 @@ export const EXTENSION_LIMITS = {
   refreshPerIp: { limit: 60, windowMs: MIN },
   revokePerFamily: { limit: 10, windowMs: MIN },
   revokePerIp: { limit: 60, windowMs: MIN },
+  /** A1.4 SHOULD: a refresh sooner than 60 s after the previous one in the same family is logged (never rejected). */
+  refreshFrequentWindow: { limit: 1, windowMs: MIN },
 } as const;
+
+/** Structured logger for security signals. Never pass tokens, codes or hashes. */
+export interface ExtensionAuthLog {
+  warn(obj: Record<string, unknown>, msg: string): void;
+}
 
 export class ExtensionNotAllowedError extends DomainError {
   constructor() {
@@ -75,6 +82,8 @@ export interface ExtensionAuthDeps {
   organizations: OrganizationRepository;
   memberships: MembershipRepository;
   revocations?: RevocationPublisher;
+  /** Security-signal logger (the API's redacting request logger in production). */
+  log?: ExtensionAuthLog;
 }
 
 type Limit = { limit: number; windowMs: number };
@@ -124,6 +133,35 @@ export class ExtensionAuthService implements ExtensionRevoker {
       ip: meta.ip,
       userAgent: meta.userAgent,
     });
+  }
+
+  /**
+   * ADR-005 A1.4 SHOULD: log a refresh that comes less than 60 s after the previous one for the same family. Uses the
+   * shared rate limiter as a 1-per-60 s marker (Redis-backed, so it works across API instances). Best effort: it never
+   * blocks or fails the refresh.
+   */
+  private async noteFrequentRefresh(f: TokenFamily, meta: RequestMeta) {
+    if (!this.d.log) return;
+    const w = EXTENSION_LIMITS.refreshFrequentWindow;
+    try {
+      const r = await this.d.rateLimiter.consume(`ext:refresh:freq:${f.id}`, w.limit, w.windowMs);
+      if (r.allowed) return;
+      this.d.log.warn(
+        {
+          event: 'extension.token.refresh_frequent',
+          familyId: f.id,
+          organizationId: f.organizationId,
+          userId: f.userId,
+          extensionId: f.extensionId,
+          deviceId: f.deviceId,
+          ip: meta.ip ?? null,
+          windowSeconds: w.windowMs / 1000,
+        },
+        'extension refresh sooner than 60s for the same token family',
+      );
+    } catch {
+      // Logging signal only.
+    }
   }
 
   private async liveMember(organizationId: string, userId: string) {
@@ -254,6 +292,7 @@ export class ExtensionAuthService implements ExtensionRevoker {
       throw new UnauthenticatedError();
     }
     await this.limit(`refresh:fam:${f.id}`, EXTENSION_LIMITS.refreshPerFamily);
+    await this.noteFrequentRefresh(f, meta);
     const now = this.d.clock.now();
     if (f.revokedAt || f.maxExpiresAt <= now) throw new UnauthenticatedError();
     if (!(await this.liveMember(f.organizationId, f.userId))) {
@@ -372,23 +411,34 @@ export class ExtensionAuthService implements ExtensionRevoker {
     };
   }
 
-  /** @meetops/session-verifier ExtensionTokenStore: the family's revocation applies to every access token in it. */
+  /**
+   * @meetops/session-verifier ExtensionTokenStore, consulted on every bearer verify. The family's revocation
+   * (Redis marker, then Postgres as the authority via DurableExtensionTokenRepository) applies to every access
+   * token in it at once, so a revoked token stops working immediately rather than at its expiry. The family
+   * must also still belong to the token's user and org and be inside its absolute lifetime. Lookup errors
+   * fail closed (null), never open.
+   */
   verifierStore(): ExtensionTokenStore {
     return {
       findByTokenHash: async (tokenHash): Promise<ExtensionTokenRecord | null> => {
-        const a = await this.d.extensionTokens.findAccess(tokenHash);
-        if (!a) return null;
-        const f = await this.d.extensionTokens.findFamily(a.familyId);
-        if (!f) return null;
-        return {
-          familyId: a.familyId,
-          userId: a.userId,
-          organizationId: a.organizationId,
-          audience: EXTENSION_TOKEN_AUDIENCE,
-          scopes: a.scopes,
-          expiresAt: a.expiresAt,
-          revokedAt: f.revokedAt,
-        };
+        try {
+          const a = await this.d.extensionTokens.findAccess(tokenHash);
+          if (!a) return null;
+          const f = await this.d.extensionTokens.findFamily(a.familyId);
+          if (!f || f.userId !== a.userId || f.organizationId !== a.organizationId) return null;
+          const now = this.d.clock.now();
+          return {
+            familyId: a.familyId,
+            userId: a.userId,
+            organizationId: a.organizationId,
+            audience: EXTENSION_TOKEN_AUDIENCE,
+            scopes: a.scopes,
+            expiresAt: f.maxExpiresAt < a.expiresAt ? f.maxExpiresAt : a.expiresAt,
+            revokedAt: f.revokedAt ?? (f.maxExpiresAt <= now ? f.maxExpiresAt : null),
+          };
+        } catch {
+          return null;
+        }
       },
     };
   }

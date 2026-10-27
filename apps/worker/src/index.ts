@@ -1,5 +1,5 @@
 import { pathToFileURL } from 'node:url';
-import { logger } from '@meetops/logger';
+import { logger } from './logger.js';
 import { startMediaWorker } from './media/index.js';
 import { registerTranscriptionWorker } from './ai/index.js';
 import { createTranscriptionHostDeps } from './ai/bootstrap.js';
@@ -7,6 +7,7 @@ import { loadTranscriptionWorkerEnv } from './ai/env.js';
 
 export * from './media/index.js';
 export * from './ai/index.js';
+export * from './integrations/index.js';
 
 async function main() {
   const { close } = startMediaWorker();

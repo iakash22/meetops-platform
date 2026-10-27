@@ -1,6 +1,7 @@
 import { Type, type Static } from '@sinclair/typebox';
 import { Id, IsoDateTime } from '../common.js';
 import { TaskPriority, TaskStatus } from '../domain/task.js';
+export { TASK_PATHS } from '../constants.js';
 import { CursorPageQuery, MAX_PAGE_LIMIT } from './pagination.js';
 
 const ListTasksQueryBase = {
@@ -43,3 +44,30 @@ export const ListTasksQuery = Type.Union([
   ),
 ]);
 export type ListTasksQuery = Static<typeof ListTasksQuery>;
+
+/** v0.8.0: path params of the single-task routes (`TASK_PATHS.task`). */
+export const TaskParams = Type.Object(
+  { organizationId: Id, taskId: Id },
+  { additionalProperties: false },
+);
+export type TaskParams = Static<typeof TaskParams>;
+
+/**
+ * v0.8.0: body of PATCH /orgs/:organizationId/tasks/:taskId (`TASK_PATHS.task`), returning `Task`. A partial update:
+ * omitted keys are left unchanged, and `null` clears the optional `description`, `assigneeId` and `dueAt`. At least
+ * one key is required and unknown keys are rejected. Matches the API's UpdateTaskBody (feat/task-approval-api).
+ *
+ * `Null` comes first in each union so Ajv `coerceTypes` cannot turn `null` into `''` on the string branch.
+ */
+export const UpdateTaskRequest = Type.Object(
+  {
+    title: Type.Optional(Type.String({ minLength: 1, maxLength: 500 })),
+    description: Type.Optional(Type.Union([Type.Null(), Type.String({ maxLength: 10_000 })])),
+    status: Type.Optional(TaskStatus),
+    priority: Type.Optional(TaskPriority),
+    assigneeId: Type.Optional(Type.Union([Type.Null(), Id])),
+    dueAt: Type.Optional(Type.Union([Type.Null(), IsoDateTime])),
+  },
+  { additionalProperties: false, minProperties: 1 },
+);
+export type UpdateTaskRequest = Static<typeof UpdateTaskRequest>;
