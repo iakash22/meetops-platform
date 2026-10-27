@@ -111,15 +111,19 @@ export async function probeMedia(inputPath: string, opts: ProbeOptions = {}): Pr
 }
 
 /**
- * Measured duration from a packet scan (security review B, PR #269 M-1/M-2). Container metadata (`format.duration`,
- * the EBML Duration element) is uploader-controlled and absent in MediaRecorder WebM, so the scan reads every packet
- * of the first audio stream (demux only, no decode) and returns max(pts + duration). Streams stdout line by line
- * (never buffered whole) and is bounded by the tool timeout.
+ * Measured audio duration (security review B, PR #269 M-1/M-2/N-1). Container metadata and packet timestamps are both
+ * uploader-controlled (`setts` can rescale pts and durations), so the duration is derived from DECODED SAMPLES:
+ * ffprobe decodes the first audio stream frame by frame (no output written) and the sum of `nb_samples` divided by the
+ * stream sample rate is returned. Timestamps that go backwards or overlap (pts[n] + dur[n] > pts[n+1] + 1 ms) are
+ * counted as `timestampFaults`; callers reject them. stdout is parsed line by line (never buffered whole) and the run
+ * is bounded by the tool timeout.
  */
-export async function measurePacketDuration(
+export async function measureAudioDuration(
   inputPath: string,
-  opts: ProbeOptions = {},
-): Promise<{ durationSeconds: number; packets: number }> {
+  opts: ProbeOptions & { sampleRate: number },
+): Promise<{ durationSeconds: number; frames: number; samples: number; timestampFaults: number }> {
+  if (!Number.isFinite(opts.sampleRate) || opts.sampleRate <= 0)
+    throw new TypeError('sampleRate is required');
   const t = resolveTools(opts);
   const fmt = opts.format ? ['-f', opts.format] : [];
   const args = [
@@ -130,9 +134,9 @@ export async function measurePacketDuration(
     '-select_streams',
     'a:0',
     '-show_entries',
-    'packet=pts_time,duration_time',
+    'frame=pts_time,duration_time,nb_samples',
     '-of',
-    'csv=p=0',
+    'compact=p=0',
     '--',
     inputPath,
   ];
@@ -141,17 +145,28 @@ export async function measurePacketDuration(
       stdio: ['ignore', 'pipe', 'pipe'],
       signal: opts.signal,
     });
-    let max = 0;
-    let packets = 0;
+    let samples = 0;
+    let frames = 0;
+    let faults = 0;
+    let prevEnd: number | null = null;
     let rest = '';
     let stderr = '';
     const line = (l: string) => {
-      const [pts, dur] = l.split(',');
-      const p = Number(pts);
-      if (!Number.isFinite(p)) return;
-      const d = Number(dur);
-      packets++;
-      max = Math.max(max, p + (Number.isFinite(d) ? d : 0));
+      const kv: Record<string, string> = {};
+      for (const part of l.split('|')) {
+        const i = part.indexOf('=');
+        if (i > 0) kv[part.slice(0, i)] = part.slice(i + 1);
+      }
+      const n = Number(kv.nb_samples);
+      if (!Number.isFinite(n) || n < 0) return;
+      frames++;
+      samples += n;
+      const pts = Number(kv.pts_time);
+      const dur = Number(kv.duration_time);
+      if (Number.isFinite(pts)) {
+        if (prevEnd !== null && pts + 0.001 < prevEnd) faults++;
+        prevEnd = pts + (Number.isFinite(dur) ? dur : 0);
+      }
     };
     child.stdout.setEncoding('utf8');
     child.stdout.on('data', (d: string) => {
@@ -171,7 +186,13 @@ export async function measurePacketDuration(
     child.on('close', (code, sig) => {
       clearTimeout(timer);
       if (rest) line(rest);
-      if (code === 0) resolve({ durationSeconds: max, packets });
+      if (code === 0)
+        resolve({
+          durationSeconds: samples / opts.sampleRate,
+          frames,
+          samples,
+          timestampFaults: faults,
+        });
       else reject(new FfmpegError(`${t.ffprobe} exited with ${code ?? sig}`, code, stderr));
     });
   });
