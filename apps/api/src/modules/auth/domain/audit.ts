@@ -36,7 +36,9 @@ export type AuditAction =
   | 'extension.token.issue'
   | 'extension.token.refresh'
   | 'extension.token.reuse_detected'
-  | 'extension.revoke';
+  | 'extension.revoke'
+  // Phase 5 (ADR-008) integrations
+  | 'integration.disconnect';
 
 /** Never put passwords, tokens, cookies or hashes in metadata. */
 export interface AuditEvent {
@@ -55,7 +57,8 @@ export interface AuditEvent {
     | 'team_member'
     | 'project'
     | 'meeting'
-    | 'extension_device';
+    | 'extension_device'
+    | 'integration';
   targetId: string | null;
   metadata: Record<string, string | number | boolean | null>;
   ip: string | null;
