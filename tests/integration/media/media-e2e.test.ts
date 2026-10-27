@@ -9,11 +9,11 @@
  *
  * Known open bugs are `it.fails` with their reference so the suite stays green while documenting them.
  * #269 M-1/M-2/L-1 (c52342c) and N-1/N-2 (7659ed2) are fixed and are normal tests here. Still open (it.fails):
- * N-2b (HTML in CRC-32 / MP4 uuid), N-4 (6 kbit/s Opus false positive), N-5 (video outlasting audio false
- * positive), zero-width filename characters.
+ * N-2b (HTML in CRC-32 / MP4 uuid). N-4, N-5 (df1675e) and the #274 G-1 runtime dispatch are normal tests; the
+ * zero-width filename test is normal once #289 is present, else expected-fail.
  */
 import { execFileSync, spawnSync } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { randomBytes } from 'node:crypto';
 import { mkdtemp, readdir, readFile, rm, stat, truncate, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
@@ -95,6 +95,9 @@ describe.skipIf(!!skipReason)('media e2e (MinIO + Redis + ffprobe)', () => {
   let events: Any;
   let redis: Any;
   const prefix = `qa:it:media:${randomBytes(6).toString('hex')}`;
+  let runtimeDispatch = false;
+  let mwMod: Any = null;
+  let rtStorage: Any = null;
   const restore: (() => void)[] = [];
 
   beforeAll(async () => {
@@ -143,19 +146,61 @@ describe.skipIf(!!skipReason)('media e2e (MinIO + Redis + ffprobe)', () => {
       enqueue: async (job: Any) => void (await queue.add(job.kind, job, { attempts: 1 })),
     };
     const files = base.files;
-    worker = new Worker(
-      qname,
-      async (job: Any) =>
+    const store = {
+      findUpload: async (org: string, id: string) => files.findById(org, id),
+      setScanStatus: async (org: string, id: string, st: string) =>
+        files.setStatus(org, id, 'processing', st),
+    };
+    // #274 G-1: when the worker runtime exposes its MEDIA_QUEUE dispatcher and deps builder, jobs go through the
+    // production path (dispatchMediaJob -> processUploadScan with buildUploadScanDeps: S3StorageService upload source,
+    // createUploadProbe with the duration cap, antivirusFromEnv). Older branches fall back to calling the scan directly.
+    const mw = await imp('apps/worker/src/media/worker.ts').catch(() => null);
+    runtimeDispatch =
+      typeof mw?.dispatchMediaJob === 'function' && typeof mw?.buildUploadScanDeps === 'function';
+    let process_: (job: Any) => Promise<unknown>;
+    if (runtimeDispatch) {
+      const st = await imp('packages/storage/src/index.ts');
+      const config = st.loadStorageConfig({
+        STORAGE_PROVIDER: 'minio',
+        STORAGE_ENDPOINT: mb.endpoint,
+        STORAGE_REGION: 'us-east-1',
+        STORAGE_BUCKET: mb.bucket,
+        STORAGE_ACCESS_KEY_ID: mb.secrets[1],
+        STORAGE_SECRET_ACCESS_KEY: mb.secrets[0],
+        STORAGE_FORCE_PATH_STYLE: 'true',
+      });
+      const storage = new st.S3StorageService({ config, authorize: () => undefined });
+      mwMod = mw;
+      rtStorage = storage;
+      const deps = mw.buildUploadScanDeps({
+        storage,
+        emitter: { to: () => ({ emit: () => true }) },
+        maxDurationSeconds: 4 * 60 * 60,
+        tmpRoot,
+        env: {},
+        store,
+      });
+      process_ = (job: Any) =>
+        mw.dispatchMediaJob(job, {
+          recording: async () => {
+            throw new Error('unexpected recording job');
+          },
+          upload: (data: unknown, ctx: Any) => scan.processUploadScan(data, deps, ctx),
+        });
+    } else {
+      process_ = (job: Any) =>
         scan.processUploadScan(job.data, {
-          findUpload: async (org: string, id: string) => files.findById(org, id),
-          setScanStatus: async (org: string, id: string, st: string) =>
-            files.setStatus(org, id, 'processing', st),
+          ...store,
           source: (key: string) => mb.source(key),
           probe: uploadProbe,
           tmpRoot,
-        }),
-      { connection: conn(), prefix, concurrency: 1 },
-    );
+        });
+    }
+    worker = new Worker(qname, async (job: Any) => process_(job), {
+      connection: conn(),
+      prefix,
+      concurrency: 1,
+    });
 
     const app = await helpers.buildApp(mods.defaultModuleDeps({ media }));
     const owner = await helpers.signupAndLogin(app, 'qa-media-owner@example.com');
@@ -391,8 +436,19 @@ describe.skipIf(!!skipReason)('media e2e (MinIO + Redis + ffprobe)', () => {
     });
   });
 
-  it.fails(
-    'filename with zero-width / invisible chars (U+200B, U+2060, U+FEFF) is refused (finding: accepted)',
+  // #289 (contracts isSafeUploadFilename) fixes the zero-width finding; until it is merged this stays expected-fail.
+  const zeroWidthFixed = (() => {
+    try {
+      return readFileSync(
+        path.join(root, 'packages/contracts/src/api/uploads.ts'),
+        'utf8',
+      ).includes('isSafeUploadFilename');
+    } catch {
+      return false;
+    }
+  })();
+  (zeroWidthFixed ? it : it.fails)(
+    'filename with zero-width / invisible chars (U+200B, U+2060, U+FEFF) is refused (#289)',
     async () => {
       expect(
         await pipeline(
@@ -624,7 +680,7 @@ describe.skipIf(!!skipReason)('media e2e (MinIO + Redis + ffprobe)', () => {
     expect((await pipeline('c.webm', b, 'audio/webm')).scan).toBe('rejected');
   });
 
-  it.fails('new N-4: a legit 6 kbit/s Opus WebM (ffmpeg libopus) is accepted', async () => {
+  it('#269 N-4 (fixed): a legit 6 kbit/s Opus WebM (ffmpeg libopus) is accepted', async () => {
     const dir = await mkdtemp(path.join(tmpdir(), 'qa-media-' + 'lb-'));
     try {
       const out = path.join(dir, 'lb.webm');
@@ -654,46 +710,43 @@ describe.skipIf(!!skipReason)('media e2e (MinIO + Redis + ffprobe)', () => {
     }
   });
 
-  it.fails(
-    'new N-5: an MP4 whose video track (16 s) outlasts its audio (10 s) is accepted',
-    async () => {
-      const dir = await mkdtemp(path.join(tmpdir(), 'qa-media-' + 'vfr-'));
-      try {
-        const out = path.join(dir, 'vfr.mp4');
-        execFileSync('ffmpeg', [
-          '-hide_banner',
-          '-loglevel',
-          'error',
-          '-y',
-          '-f',
-          'lavfi',
-          '-i',
-          'color=c=gray:s=160x120:r=5:d=16',
-          '-f',
-          'lavfi',
-          '-i',
-          'sine=f=440:r=48000:d=10',
-          '-c:v',
-          'libx264',
-          '-preset',
-          'ultrafast',
-          '-pix_fmt',
-          'yuv420p',
-          '-c:a',
-          'aac',
-          '-b:a',
-          '32k',
-          out,
-        ]);
-        expect(await pipeline('vfr.mp4', await readFile(out), 'video/mp4')).toEqual({
-          stage: 'download',
-          scan: 'clean',
-        });
-      } finally {
-        await rm(dir, { recursive: true, force: true });
-      }
-    },
-  );
+  it('#269 N-5 (fixed): an MP4 whose video track (16 s) outlasts its audio (10 s) is accepted', async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), 'qa-media-' + 'vfr-'));
+    try {
+      const out = path.join(dir, 'vfr.mp4');
+      execFileSync('ffmpeg', [
+        '-hide_banner',
+        '-loglevel',
+        'error',
+        '-y',
+        '-f',
+        'lavfi',
+        '-i',
+        'color=c=gray:s=160x120:r=5:d=16',
+        '-f',
+        'lavfi',
+        '-i',
+        'sine=f=440:r=48000:d=10',
+        '-c:v',
+        'libx264',
+        '-preset',
+        'ultrafast',
+        '-pix_fmt',
+        'yuv420p',
+        '-c:a',
+        'aac',
+        '-b:a',
+        '32k',
+        out,
+      ]);
+      expect(await pipeline('vfr.mp4', await readFile(out), 'video/mp4')).toEqual({
+        stage: 'download',
+        scan: 'clean',
+      });
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
 
   it('#274 L-2: clamd on but unreachable or hanging -> quarantined on the final attempt, never clean', async () => {
     if (!existsSync(path.join(root, 'apps/worker/src/media/clamd.ts'))) return;
@@ -743,6 +796,63 @@ describe.skipIf(!!skipReason)('media e2e (MinIO + Redis + ffprobe)', () => {
     } finally {
       hang.close();
     }
+  });
+
+  it('#274 G-1: process_upload runs through dispatchMediaJob with clamd from env; the last failed attempt quarantines', async (ctx) => {
+    if (!runtimeDispatch) return ctx.skip();
+    const emitter = { to: () => ({ emit: () => true }) };
+    let status: string | null = null;
+    const store = {
+      findUpload: async () => ({
+        id: w.org,
+        key: 'k',
+        mimeType: 'audio/webm',
+        scanStatus: 'pending',
+      }),
+      setScanStatus: async (_o: string, _i: string, s: string) => void (status = s),
+    };
+    const build = (env: Record<string, string>) =>
+      mwMod.buildUploadScanDeps({
+        storage: rtStorage,
+        emitter,
+        maxDurationSeconds: 4 * 60 * 60,
+        tmpRoot,
+        env,
+        store,
+      });
+    expect(() => build({ UPLOAD_SCAN_CLAMAV: '1' })).toThrow(/UPLOAD_SCAN_CLAMAV/);
+    expect(build({}).antivirus).toBeUndefined();
+    const deps = build({ UPLOAD_SCAN_CLAMAV: 'true', CLAMD_HOST: '127.0.0.1', CLAMD_PORT: '1' });
+    expect(deps.antivirus).toBeTruthy();
+    const body = await fx('speech_10s_1ch.webm');
+    const { Readable } = await import('node:stream');
+    deps.source = () => ({
+      size: async () => body.length,
+      body: async () => Readable.from([body]),
+    });
+    const data = {
+      kind: 'process_upload',
+      organizationId: w.org,
+      subjectType: 'upload',
+      subjectId: w.org,
+      consentAttestationId: w.org,
+    };
+    const handlers = {
+      recording: async () => {
+        throw new Error('unexpected recording job');
+      },
+      upload: (d: unknown, c: Any) => w.scan.processUploadScan(d, deps, c),
+    };
+    await expect(
+      mwMod.dispatchMediaJob({ id: 'g1', attemptsMade: 0, opts: { attempts: 2 }, data }, handlers),
+    ).rejects.toThrow();
+    expect(status).toBeNull();
+    const out = await mwMod.dispatchMediaJob(
+      { id: 'g1', attemptsMade: 1, opts: { attempts: 2 }, data },
+      handlers,
+    );
+    expect(out.status).toBe('quarantined');
+    expect(status).toBe('quarantined');
   });
 
   it('bucket is private (policy + ACL) via @meetops/storage verifyBucketPrivate', async () => {
