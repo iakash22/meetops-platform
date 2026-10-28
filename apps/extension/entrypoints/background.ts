@@ -22,7 +22,7 @@ import {
   type PendingTasksResponse,
 } from '../src/lib/pending-tasks.js';
 import { safeErrorMessage } from '../src/lib/redact.js';
-import { drainQueue, listHeldSessions } from '../src/lib/drain.js';
+import { discardHeldSessions, drainQueue, summarizeHeld } from '../src/lib/drain.js';
 import {
   isPendingDiscard,
   listFailedDiscards,
@@ -157,8 +157,14 @@ async function retryDiscards(): Promise<void> {
   }
 }
 
-async function heldRecordings(): Promise<number> {
-  return (await listHeldSessions(await store())).length;
+async function heldRecordings() {
+  return summarizeHeld(await store());
+}
+
+async function syncHeldBadge(): Promise<void> {
+  const { count } = await heldRecordings();
+  const failed = (await listFailedDiscards(durableKV)).length;
+  await chrome.action.setBadgeText({ text: count || failed ? '!' : '' }).catch(() => undefined);
 }
 
 /** Popup Retry upload: re-attempt sessions held after a 409/413 (kept locally, never aborted). */
@@ -171,9 +177,13 @@ async function retryHeld(): Promise<void> {
     { isMarked: (id) => isPendingDiscard(durableKV, id), gate: withSessionGate },
     { includeHeld: true },
   );
-  await chrome.action
-    .setBadgeText({ text: (await heldRecordings()) ? '!' : '' })
-    .catch(() => undefined);
+  await syncHeldBadge();
+}
+
+/** Popup Discard (confirmed): delete held recordings locally; the badge clears when nothing is left. */
+async function discardHeld(): Promise<void> {
+  await discardHeldSessions(await store(), client);
+  await syncHeldBadge();
 }
 
 async function drain(): Promise<void> {
@@ -202,6 +212,7 @@ async function drain(): Promise<void> {
 const deps: BackgroundDeps = {
   heldRecordings,
   retryHeld,
+  discardHeld,
   kv: sessionKV(),
   now: () => Date.now(),
   hasOffscreen,

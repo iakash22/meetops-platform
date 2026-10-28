@@ -53,6 +53,8 @@ export const CONFLICT_REASONS = [
   // v0.4.0 (directory)
   'PROJECT_KEY_TAKEN',
   'TEAM_MEMBER_EXISTS',
+  // Unreleased: the recording session is closed for good on the server (aborted, e.g. consent_revoked, or failed).
+  'RECORDING_SESSION_CLOSED',
 ] as const;
 /** HTTP status for every `CONFLICT` error, including all CONFLICT_REASONS. */
 export const CONFLICT_HTTP_STATUS = 409;

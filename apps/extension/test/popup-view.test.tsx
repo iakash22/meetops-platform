@@ -153,6 +153,49 @@ describe('popup render states', () => {
     expect(html).toContain('aria-label="Incomplete recording"');
   });
 
+  it('held recordings: Discard asks for confirmation before anything is deleted', () => {
+    const idle = { status: 'idle' as const, heldRecordings: 1 };
+    const html = render({ status: idle, onRetryHeld: noop, onDiscardHeld: noop });
+    expect(html).toContain('>Discard<');
+    expect(html).not.toContain('aria-label="Confirm discard"');
+    const confirm = render({
+      status: idle,
+      onDiscardHeld: noop,
+      discardConfirm: true,
+      onConfirmDiscard: noop,
+      onCancelDiscard: noop,
+    });
+    expect(confirm).toContain('aria-label="Confirm discard"');
+    expect(confirm).toContain('Discard 1 held recording from this device? This cannot be undone.');
+    expect(confirm).toContain('Discard recordings');
+    expect(confirm).toContain('Cancel');
+    expect(confirm).not.toContain('>Retry upload<');
+  });
+
+  it('server-closed held recordings show a terminal notice with Discard and no Retry', () => {
+    const html = render({
+      status: { status: 'idle', heldRecordings: 1, heldClosed: 1 },
+      onRetryHeld: noop,
+      onDiscardHeld: noop,
+    });
+    expect(html).toContain('can no longer be submitted');
+    expect(html).toContain('consent was revoked');
+    expect(html).not.toContain('>Retry upload<');
+    expect(html).toContain('>Discard<');
+    expect(html).toContain('mo-callout--error');
+  });
+
+  it('storage full with held recordings does not claim they are safely kept', () => {
+    const html = render({
+      status: { status: 'idle', heldRecordings: 2, heldStorageFull: true },
+      onRetryHeld: noop,
+      onDiscardHeld: noop,
+    });
+    expect(html).toContain('Local storage is full');
+    expect(html).not.toContain('They are kept on this device');
+    expect(html).not.toContain('It is kept on this device');
+  });
+
   it('non-field errors render as a toast; none when empty', () => {
     expect(render()).not.toContain('mo-toast');
     expect(render({ error: 'No active tab' })).toContain(

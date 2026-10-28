@@ -6,6 +6,12 @@ While the version is `0.x`, a minor bump may contain breaking changes (ADR-003).
 
 ## [Unreleased]
 
+### Added
+
+- `CONFLICT_REASONS` / `ConflictReason`: `RECORDING_SESSION_CLOSED`. Sent with a recording-session 409 when the
+  session is aborted (e.g. `consent_revoked`) or failed on the server, so clients can treat it as terminal instead of
+  retrying. Additive: other 409s keep their reason (generic `CONFLICT`).
+
 ### Changed
 
 - Upload `filename` (`CreateUploadRequest` and `InitUploadRequest`) now also rejects C0 control characters (CR, LF, tab

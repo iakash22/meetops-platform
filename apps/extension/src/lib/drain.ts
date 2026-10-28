@@ -59,17 +59,81 @@ function digestsFor(s: StoredSession, chunkCount: number): CompletedChunk[] | un
  * the drain HOLDS it locally (no abort, no delete) and the popup offers a retry. 404 is not a refusal: an API without
  * media routes answers 404 and the session simply retries on the next drain. Duck-typed for other upload clients.
  */
-export function isHoldUploadError(err: unknown): { status: number; op: string } | null {
+export function isHoldUploadError(
+  err: unknown,
+): { status: number; op: string; closed?: true } | null {
   if (!(err instanceof Error) || err.name !== 'UploadApiError') return null;
-  const e = err as Error & { status?: unknown; op?: unknown };
+  const e = err as Error & { status?: unknown; op?: unknown; reason?: unknown };
   if (e.status !== 413 && e.status !== 409) return null;
-  return { status: e.status, op: typeof e.op === 'string' ? e.op : 'unknown' };
+  return {
+    status: e.status,
+    op: typeof e.op === 'string' ? e.op : 'unknown',
+    // Terminal: the server aborted (e.g. consent_revoked) or failed the session. Retrying can never succeed.
+    ...(e.status === 409 && e.reason === SESSION_CLOSED_REASON ? { closed: true as const } : {}),
+  };
 }
 
+/** Contracts ConflictReason sent when the recording session is aborted or failed on the server. */
+export const SESSION_CLOSED_REASON = 'RECORDING_SESSION_CLOSED';
+
+export interface HeldSummary {
+  /** Held recordings in total. */
+  count: number;
+  /** Of those, closed by the server for good (discard only). */
+  closed: number;
+  /** The local storage cap was hit while recordings were held. */
+  storageFull?: boolean;
+}
+
+const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
+
 /** Popup copy for held recordings (never contains server text). */
-export const HELD_MESSAGE = (n: number) =>
-  `${n} recording${n === 1 ? '' : 's'} could not be submitted (the server rejected the upload). ` +
-  `${n === 1 ? 'It is' : 'They are'} kept on this device; press Retry upload to try again.`;
+export function heldMessage(h: HeldSummary): string {
+  const parts: string[] = [];
+  const retryable = h.count - h.closed;
+  if (h.closed > 0)
+    parts.push(
+      `${plural(h.closed, 'recording', 'recordings')} can no longer be submitted: the server closed the ` +
+        `session (for example, recording consent was revoked). Discard to remove ${h.closed === 1 ? 'it' : 'them'} ` +
+        'from this device.',
+    );
+  if (retryable > 0)
+    parts.push(
+      h.storageFull
+        ? `Local storage is full: ${plural(retryable, 'held recording is', 'held recordings are')} using the ` +
+            'space, so new audio could not be saved. Retry upload or discard to free space.'
+        : `${plural(retryable, 'recording', 'recordings')} could not be submitted (the server rejected the ` +
+            `upload). ${retryable === 1 ? 'It is' : 'They are'} kept on this device; press Retry upload to try ` +
+            'again, or Discard.',
+    );
+  return parts.join(' ');
+}
+
+/** Confirmation shown before held recordings are deleted. */
+export const discardConfirmMessage = (n: number) =>
+  `Discard ${plural(n, 'held recording', 'held recordings')} from this device? This cannot be undone.`;
+
+export async function summarizeHeld(store: ChunkStore): Promise<HeldSummary> {
+  const held = await listHeldSessions(store);
+  return { count: held.length, closed: held.filter((s) => s.held?.closed).length };
+}
+
+/**
+ * Delete every held recording locally (after the user confirmed in the popup). Sessions the server has not closed
+ * are aborted best effort ('user_stopped': the user chose to drop them); closed ones are already gone server-side.
+ */
+export async function discardHeldSessions(
+  store: ChunkStore,
+  client: UploadClient,
+): Promise<number> {
+  const held = await listHeldSessions(store);
+  for (const s of held) {
+    if (!s.held?.closed)
+      await client.abort(s.sessionId, { reason: 'user_stopped' }).catch(() => undefined);
+    await store.deleteSession(s.sessionId);
+  }
+  return held.length;
+}
 
 /** Sessions held after a server refusal (not completed). */
 export async function listHeldSessions(store: ChunkStore): Promise<StoredSession[]> {
@@ -121,7 +185,7 @@ export async function drainQueue(
     (s) => !s.completed && (onlySession === undefined || s.sessionId === onlySession),
   );
   for (const s of sessions) {
-    if (s.held && !opts.includeHeld) {
+    if (s.held && (!opts.includeHeld || s.held.closed)) {
       result.held++;
       continue;
     }

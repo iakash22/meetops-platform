@@ -169,7 +169,10 @@ describe('recording sessions', () => {
     expect((await complete(w, w.member, id, { chunkCount: 3, durationMs: 1 })).statusCode).toBe(
       202,
     );
-    expect((await w.chunk(w.member, id, 3)).statusCode).toBe(409);
+    const late = await w.chunk(w.member, id, 3);
+    expect(late.statusCode).toBe(409);
+    // Completed (processing) is not "closed": the generic reason stays.
+    expect(late.json().error.reason).toBe('CONFLICT');
     expect(w.jobs.jobs).toHaveLength(1);
   });
 
@@ -280,7 +283,16 @@ describe('recording sessions', () => {
     expect(
       (await w.member.post(`/recording-sessions/${id}/abort`, { reason: 'error' })).statusCode,
     ).toBe(409);
-    expect((await w.chunk(w.member, id, 0)).statusCode).toBe(409);
+    const closed = await w.chunk(w.member, id, 0);
+    expect(closed.statusCode).toBe(409);
+    // An aborted session is terminal: clients get the RECORDING_SESSION_CLOSED reason, not the generic CONFLICT.
+    expect(closed.json().error).toMatchObject({
+      code: 'CONFLICT',
+      reason: 'RECORDING_SESSION_CLOSED',
+    });
+    const done = await complete(w, w.member, id, { chunkCount: 1, durationMs: 1 });
+    expect(done.statusCode).toBe(409);
+    expect(done.json().error.reason).toBe('RECORDING_SESSION_CLOSED');
     expect(w.jobs.jobs).toHaveLength(0);
   });
 });

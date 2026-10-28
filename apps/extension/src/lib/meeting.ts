@@ -74,7 +74,9 @@ export const MEETING_HOSTS = {
 } as const;
 
 export function isAllowedMeetingHost(hostname: string): boolean {
-  const h = hostname.toLowerCase().replace(/\.$/, '');
+  const h = hostname.toLowerCase();
+  // No trailing, leading or double dots: `meet.google.com.` and `a..zoom.us` are refused, not normalized.
+  if (!h || h.startsWith('.') || h.endsWith('.') || h.includes('..')) return false;
   return (
     (MEETING_HOSTS.exact as readonly string[]).includes(h) ||
     MEETING_HOSTS.suffix.some((s) => h.endsWith(s) && h.length > s.length)
@@ -107,7 +109,10 @@ export function meetingUrlFromTab(url: string | undefined): string | null {
   }
   if (u.protocol !== 'https:' || u.username || u.password || u.port) return null;
   if (!isAllowedMeetingHost(u.hostname)) return null;
-  const path = (isTeamsHost(u.hostname) && teamsFragmentPath(u.pathname, u.hash)) || u.pathname;
+  const folded = isTeamsHost(u.hostname) ? teamsFragmentPath(u.pathname, u.hash) : null;
+  // Re-parse the fragment path as a URL path (dot segments resolved, `\` -> `/`, path %-encoding), the same
+  // canonical form the API derives from a raw link (meetings domain deriveExternalMeetingId).
+  const path = folded ? new URL(folded, u.origin).pathname : u.pathname;
   return `${u.origin}${path}`;
 }
 

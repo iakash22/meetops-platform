@@ -133,6 +133,17 @@ function PopupApp() {
     );
   }, [apply]);
 
+  const [discardConfirm, setDiscardConfirm] = useState(false);
+  const onDiscardHeld = useCallback(() => setDiscardConfirm(true), []);
+  const onCancelDiscard = useCallback(() => setDiscardConfirm(false), []);
+  const onConfirmDiscard = useCallback(() => {
+    setDiscardConfirm(false);
+    send({ target: 'background', type: 'DISCARD_HELD_UPLOADS', confirmed: true }).then(
+      apply,
+      (e: unknown) => setRawError(errText(e)),
+    );
+  }, [apply]);
+
   const onRetryHeld = useCallback(() => {
     send({ target: 'background', type: 'RETRY_HELD_UPLOADS' }).then(apply, (e: unknown) =>
       setRawError(errText(e)),
@@ -154,6 +165,10 @@ function PopupApp() {
       onStop={onStop}
       onDismissWarning={onDismissWarning}
       onRetryHeld={onRetryHeld}
+      onDiscardHeld={onDiscardHeld}
+      discardConfirm={discardConfirm}
+      onConfirmDiscard={onConfirmDiscard}
+      onCancelDiscard={onCancelDiscard}
     />
   );
 }

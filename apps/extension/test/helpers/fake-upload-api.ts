@@ -35,8 +35,8 @@ export function route(url: string, method: string | undefined): Route | undefine
 
 export const STORAGE = 'https://storage.meetops.test';
 
-export function errorBody(code: string, message = 'safe message') {
-  return { error: { code, message, requestId: 'req_1' } };
+export function errorBody(code: string, message = 'safe message', reason?: string) {
+  return { error: { code, message, requestId: 'req_1', ...(reason ? { reason } : {}) } };
 }
 
 export function createFakeUploadApi(
