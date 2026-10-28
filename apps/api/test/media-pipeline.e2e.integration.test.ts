@@ -1,17 +1,18 @@
 /**
  * Live end to end with MEDIA_STORAGE_ENABLED-style adapters (dummy media only): API init -> complete over Prisma
  * (file_objects, consent_attestations, recording_sessions) -> durable BullMQ job on MEDIA_QUEUE -> the worker's
- * dispatchMediaJob + processUploadScan with its Prisma scan store. The object store is a fake signer/source holding
+ * dispatchMediaJob + processUploadScan / processSessionAssembly with their Prisma stores. The object store is a fake signer/source holding
  * a few synthetic bytes, so the scan quarantines them (not media) and download stays 404.
  * Skips unless TEST_DATABASE_URL (meetops_app) and TEST_REDIS_URL are set. Uses fixed mediaWorld emails: run it
  * against a fresh database (not in the same run as media-storage.prisma.integration.test.ts).
  */
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { Readable } from 'node:stream';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { Queue, QueueEvents, Worker, type Job } from 'bullmq';
 import { MEDIA_QUEUE } from '@meetops/contracts';
-import { createPrismaClient, type DatabaseClient } from '@meetops/database';
+import { buildObjectKey, StorageNotFoundError, type MeetingObjectRef } from '@meetops/storage';
+import { createPrismaClient, withOrganizationContext, type DatabaseClient } from '@meetops/database';
 import { storageMediaAdapters, type MediaAdapters } from '../src/modules/index.js';
 import { BullMqMediaJobQueue } from '../src/modules/media/infrastructure/bullmq.js';
 import { FakeMediaSigner } from '../src/modules/media/infrastructure/in-memory.js';
@@ -25,9 +26,16 @@ const redisUrl = process.env.TEST_REDIS_URL;
 interface WorkerMedia {
   dispatchMediaJob(
     job: Pick<Job, 'id' | 'attemptsMade' | 'opts'> & { data: unknown },
-    h: { recording(): Promise<never>; upload(d: unknown, ctx: { isFinalAttempt: boolean }): Promise<unknown> },
+    h: {
+      recording(): Promise<never>;
+      upload(d: unknown, ctx: { isFinalAttempt: boolean }): Promise<unknown>;
+      session(d: unknown, ctx: { isFinalAttempt: boolean }): Promise<unknown>;
+    },
   ): Promise<{ status: string; reason?: string }>;
   processUploadScan(d: unknown, deps: unknown, ctx: { isFinalAttempt: boolean }): Promise<unknown>;
+  processSessionAssembly(d: unknown, deps: unknown, ctx: { isFinalAttempt: boolean }): Promise<unknown>;
+  buildSessionAssemblyDeps(p: Record<string, unknown>): unknown;
+  createSessionAssemblyStore(o: { client: DatabaseClient }): unknown;
   buildUploadScanDeps(p: Record<string, unknown>): unknown;
   createUploadScanStore(o: { client: DatabaseClient }): unknown;
 }
@@ -38,6 +46,9 @@ describe.skipIf(!url || !redisUrl)('media pipeline e2e (Prisma + BullMQ + worker
   const connection = { url: redisUrl!, maxRetriesPerRequest: null };
   const DUMMY = Buffer.from('not-media-dummy-bytes'.padEnd(1000, '.'));
   const signer = new FakeMediaSigner();
+  const blobs = new Map<string, Buffer>();
+  const CHUNK = Buffer.from('dummy-session-chunk'.padEnd(1000, '#'));
+  const CHUNK_SHA = createHash('sha256').update(CHUNK).digest('hex');
   let db: DatabaseClient;
   let queue: Queue<MediaProcessingJob>;
   let events: QueueEvents;
@@ -69,12 +80,50 @@ describe.skipIf(!url || !redisUrl)('media pipeline e2e (Prisma + BullMQ + worker
       env: {},
       store: wm.createUploadScanStore({ client: db }),
     });
+    // Fake object store for the session path (dummy bytes in memory); real Prisma store + real content scan.
+    const sessionDeps = wm.buildSessionAssemblyDeps({
+      storage: {
+        putObject: async (ref: MeetingObjectRef, body: Readable) => {
+          const got: Buffer[] = [];
+          for await (const p of body) got.push(Buffer.from(p as Buffer));
+          blobs.set(buildObjectKey(ref), Buffer.concat(got));
+          return {};
+        },
+        headObject: async (ref: MeetingObjectRef) => {
+          const b = blobs.get(buildObjectKey(ref));
+          return b ? { sizeBytes: b.length } : null;
+        },
+        deleteObject: async (ref: MeetingObjectRef) => {
+          blobs.delete(buildObjectKey(ref));
+        },
+        getObject: async (ref: MeetingObjectRef) => {
+          const b = blobs.get(buildObjectKey(ref))!;
+          return { body: Readable.from([b]), info: { sizeBytes: b.length } };
+        },
+      },
+      chunks: {
+        readChunk: async (_o: string, _s: string, key: string) => {
+          const b = blobs.get(key);
+          if (!b) throw new StorageNotFoundError();
+          return Readable.from([b]);
+        },
+        deleteChunk: async (_o: string, _s: string, key: string) => {
+          blobs.delete(key);
+        },
+      },
+      store: wm.createSessionAssemblyStore({ client: db }),
+      maxSourceBytes: 10 * 1024 * 1024,
+      maxDurationSeconds: 60,
+      env: {},
+      process: () => Promise.reject(new Error('dummy media never reaches processing')),
+    });
     worker = new Worker(
       MEDIA_QUEUE,
       (job) =>
         wm.dispatchMediaJob(job, {
           recording: () => Promise.reject(new Error('unexpected recording job')),
           upload: (d, ctx) => wm.processUploadScan(d, deps, ctx),
+          session: (d, ctx) => wm.processSessionAssembly(d, sessionDeps, ctx),
         }),
       { connection, prefix },
     );
@@ -111,7 +160,7 @@ describe.skipIf(!url || !redisUrl)('media pipeline e2e (Prisma + BullMQ + worker
     expect(dl.statusCode).toBe(404);
   });
 
-  it('recording session: Prisma chunks + completion create the recording; job is durable and acknowledged', async () => {
+  it('recording session: chunks -> complete -> durable job -> worker assembles, verifies and scans', async () => {
     const meetingId = (
       await w.member.post(`/orgs/${w.org}/meetings/resolve`, {
         source: 'extension',
@@ -128,12 +177,17 @@ describe.skipIf(!url || !redisUrl)('media pipeline e2e (Prisma + BullMQ + worker
     });
     expect(s.statusCode).toBe(201);
     const sid = s.json<{ sessionId: string }>().sessionId;
-    const sha = 'a'.repeat(64);
-    const c = await w.member.post(`/recording-sessions/${sid}/chunks`, { seq: 0, sizeBytes: 1000, sha256: sha });
+    const c = await w.member.post(`/recording-sessions/${sid}/chunks`, {
+      seq: 0,
+      sizeBytes: CHUNK.length,
+      sha256: CHUNK_SHA,
+    });
     expect(c.statusCode).toBe(200);
     const row = await media.sessions.findById(w.org, sid);
     expect(row?.totalBytes).toBe(1000);
-    signer.put(row!.chunks.get(0)!.key, 1000);
+    const chunkKey = row!.chunks.get(0)!.key;
+    signer.put(chunkKey, CHUNK.length);
+    blobs.set(chunkKey, CHUNK);
     const done = await w.member.post(`/recording-sessions/${sid}/complete`, { chunkCount: 1, durationMs: 1000 });
     expect(done.statusCode).toBe(202);
     expect((await media.sessions.findById(w.org, sid))?.status).toBe('completed');
@@ -141,7 +195,38 @@ describe.skipIf(!url || !redisUrl)('media pipeline e2e (Prisma + BullMQ + worker
 
     const job = await queue.getJob(`session_${w.org}_${sid}`);
     expect(job?.data).toMatchObject({ kind: 'process_recording_session', subjectId: sid, meetingId });
-    const out = (await job!.waitUntilFinished(events, 30_000)) as { reason: string };
-    expect(out.reason).toBe('session_assembly_pending');
+    const out = (await job!.waitUntilFinished(events, 30_000)) as {
+      status: string;
+      sizeBytes: number;
+      sha256Hex: string;
+    };
+    // Dummy bytes are not media: assembled + verified, then the content scan quarantines them.
+    expect(out).toEqual({ status: 'quarantined', sizeBytes: CHUNK.length, sha256Hex: CHUNK_SHA });
+    expect(blobs.has(chunkKey)).toBe(false);
+    const rows = await withOrganizationContext(
+      w.org,
+      (tx) =>
+        tx.recordingSession.findFirst({
+          where: { id: sid },
+          select: {
+            status: true,
+            recording: {
+              select: {
+                status: true,
+                file: { select: { status: true, scanStatus: true, checksumSha256: true, sizeBytes: true, key: true } },
+              },
+            },
+          },
+        }),
+      { client: db },
+    );
+    expect(rows).toMatchObject({
+      status: 'completed',
+      recording: {
+        status: 'uploaded',
+        file: { status: 'uploaded', scanStatus: 'quarantined', checksumSha256: CHUNK_SHA, sizeBytes: BigInt(CHUNK.length) },
+      },
+    });
+    expect(blobs.get(rows!.recording!.file.key)).toEqual(CHUNK);
   });
 });
