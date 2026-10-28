@@ -24,6 +24,8 @@ pub struct ChunkStore {
     owner_key: Option<[u8; 32]>,
 }
 
+const DISCARDED_SUFFIX: &str = ":discarded";
+
 /// A session id on disk, and whether it was discarded (tombstoned) and must only ever be deleted.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -129,12 +131,19 @@ impl ChunkStore {
         Ok(self.dir.join("owners").join(safe_id(session)?))
     }
 
-    fn pinned(&self, session: &str) -> CmdResult<Option<String>> {
+    /// Pin file is `<owner-name>` or `<owner-name>:discarded` (L-6: a second, per-recording discard marker).
+    fn pin_raw(&self, session: &str) -> CmdResult<Option<String>> {
         match fs::read_to_string(self.pin_path(session)?) {
             Ok(v) => Ok(Some(v)),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
             Err(_) => Err(CmdError::internal()),
         }
+    }
+
+    fn pinned(&self, session: &str) -> CmdResult<Option<String>> {
+        Ok(self
+            .pin_raw(session)?
+            .map(|v| v.trim_end_matches(DISCARDED_SUFFIX).to_owned()))
     }
 
     /// Rejects any op on a recording pinned to a different owner (e.g. the session's org changed mid-recording), so a
@@ -164,14 +173,38 @@ impl ChunkStore {
 
     /// Marks a recording as discarded before any delete is attempted; it will never be re-queued.
     /// Errors are returned, never swallowed, so the caller can keep the recording blocked and retry.
+    /// Records the discard in two independent places: the device-wide tombstone and the recording's own pin file
+    /// (atomic tmp + rename). Succeeds if either is durable; either one alone makes the recording discarded (L-6).
     pub fn tombstone(&self, session: &str) -> CmdResult<()> {
         let path = self.tombstone_path(session)?;
-        fs::create_dir_all(path.parent().unwrap()).map_err(|_| CmdError::internal())?;
-        fs::write(path, b"").map_err(|_| CmdError::internal())
+        let tomb = fs::create_dir_all(path.parent().unwrap())
+            .and_then(|_| fs::write(&path, b""))
+            .is_ok();
+        let pin = match self.pin_raw(session) {
+            Ok(Some(v)) if v.ends_with(DISCARDED_SUFFIX) => true,
+            Ok(Some(v)) => {
+                let pin = self.pin_path(session)?;
+                let tmp = pin.with_extension("tmp");
+                fs::write(&tmp, format!("{v}{DISCARDED_SUFFIX}"))
+                    .and_then(|_| fs::rename(&tmp, &pin))
+                    .is_ok()
+            }
+            _ => false,
+        };
+        if tomb || pin {
+            Ok(())
+        } else {
+            Err(CmdError::internal())
+        }
     }
 
     fn is_tombstoned(&self, session: &str) -> CmdResult<bool> {
-        Ok(self.tombstone_path(session)?.exists())
+        if self.tombstone_path(session)?.exists() {
+            return Ok(true);
+        }
+        Ok(self
+            .pin_raw(session)?
+            .is_some_and(|v| v.ends_with(DISCARDED_SUFFIX)))
     }
 
     fn session_dir(&self, owner: &str, session: &str) -> CmdResult<PathBuf> {
@@ -217,6 +250,10 @@ impl ChunkStore {
 
     pub fn get(&self, owner: &str, session: &str, index: u32) -> CmdResult<Vec<u8>> {
         self.check_owner(owner, session, false)?;
+        // Discarded recordings are never readable again, so nothing can upload them (L-6).
+        if self.is_tombstoned(session)? {
+            return Err(CmdError::validation("That recording was discarded."));
+        }
         let raw = fs::read(self.path(owner, session, index)?)
             .map_err(|_| CmdError::new("NOT_FOUND", "That recording chunk is missing."))?;
         if raw.len() < 12 {
@@ -416,7 +453,22 @@ mod tests {
         fs::create_dir_all(&dir).unwrap();
         // Stand-in for a read-only `discarded/` dir (works as root too): a file where the dir should be.
         fs::write(dir.join("discarded"), b"").unwrap();
+        // No pin either (nothing written yet): both markers fail, so the error is reported.
         assert_eq!(s.tombstone("r").unwrap_err().code, "INTERNAL");
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn pin_marker_alone_makes_a_recording_discarded() {
+        let (s, dir) = store();
+        s.put(O, "r", 0, b"x").unwrap();
+        fs::write(dir.join("discarded"), b"").unwrap(); // device-wide tombstone dir unwritable
+        s.tombstone("r").unwrap(); // durable via the pin file
+        assert!(s.list(O).unwrap()[0].discarded);
+        assert!(s.get(O, "r", 0).is_err(), "discarded chunks are unreadable");
+        assert!(s.put(O, "r", 1, b"y").is_err());
+        s.delete_session(O, "r").unwrap();
+        assert!(s.pinned("r").unwrap().is_none());
         let _ = fs::remove_dir_all(dir);
     }
 

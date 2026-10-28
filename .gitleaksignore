@@ -1,3 +1,4 @@
 76ee1cc230312fbd020be08b6d8fa2f901fe83e8:packages/ai-core/test/credential-ref.test.ts:generic-api-key:26
 2c511b67aef84b5316877cae69d499768e41641d:apps/web/test/auth-public.test.tsx:generic-api-key:8
 02c66c69e16c79680ac88a47dd73e109f5ba3f0c:packages/session-verifier/src/hash.ts:generic-api-key:21
+69e007604b9d0bc7d13adf8d72cce9baa31eda31:apps/desktop/src/features/recording/upload-queue.ts:generic-api-key:79

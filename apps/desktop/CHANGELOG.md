@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Fix (L-6): a discard is also recorded in the recording's own pin file (`owners/<id>` becomes `<owner>:discarded`, written atomically), and either marker makes the recording discarded. Rust also refuses `chunk_get` for a discarded recording, so nothing can read and upload it. The discard error no longer says "It won't upload" unless the discard is durable: it says "may still upload if the app closes now" when nothing durable was written, and "Discard saved. Finishing local cleanup." when only the cleanup is pending.
+- Fix (L-7): a recording stays bound to the account and org it started under. If the account or org changes mid-recording, or a chunk can't be saved, recording stops with a clear message. The chunks saved so far, up to the first failed write, are queued for upload under the original account instead of being left un-uploadable.
+- Chore: `.gitleaksignore` adds one narrow entry for a Tester-confirmed false positive (a localStorage slot name in 69e0076).
 - Fix (M-1b): a failed tombstone write is no longer swallowed. Discard throws, the UI shows a toast, and the item is held in memory (no upload) while the tombstone is retried every pass. The discard is also recorded first in a localStorage ledger (ids only) and, for your own recording, as an awaited discarded metadata state. At startup, anything marked discarded in any of these is only deleted.
 - Fix (M-2): once the server upload completes, an `uploaded` ledger mark and an awaited `done` metadata write land before saves stop and the delete runs. Queued saves now always finish in order. At startup, a `done` recording is only deleted, never uploaded again. A stress test covers this (x10).
 - Security (L-4): each recording is pinned in Rust to its first owner (`owners/<id>`). Chunk ops from a different session owner get FORBIDDEN, so a recording can't be split across folders.
