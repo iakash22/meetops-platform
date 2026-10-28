@@ -235,7 +235,8 @@ export function storageMediaAdapters(
   let owned: BullMqMediaJobQueue | undefined;
   let jobs = opts.jobs;
   if (!jobs) {
-    if (!env.REDIS_URL) throw new Error('MEDIA_STORAGE_ENABLED=true requires REDIS_URL (media job queue)');
+    if (!env.REDIS_URL)
+      throw new Error('MEDIA_STORAGE_ENABLED=true requires REDIS_URL (media job queue)');
     jobs = owned = new BullMqMediaJobQueue(createMediaQueueProducer(env.REDIS_URL));
   }
   return {
@@ -485,7 +486,8 @@ export function defaultModuleDeps(
   const { db, owned: ownedDb } = resolveDatabase(overrides, env);
   const useStorageMedia = !overrides.media && mediaStorageEnabled(env.storageEnv ?? {});
   if (useStorageMedia && !db) throw new Error('MEDIA_STORAGE_ENABLED=true requires DATABASE_URL');
-  const storageMedia = useStorageMedia && db ? storageMediaAdapters(db, env.storageEnv ?? {}, clock) : undefined;
+  const storageMedia =
+    useStorageMedia && db ? storageMediaAdapters(db, env.storageEnv ?? {}, clock) : undefined;
   // Dev/test fallback only below: strict envs reach here with a client or an injected dep for
   // every PRODUCTION_REQUIRED_DEPS entry (checked above).
   const memberships =
@@ -542,7 +544,8 @@ export function defaultModuleDeps(
     invitationTtlMs: 7 * DAY,
     passwordResetTtlMs: 30 * MIN,
     emailVerificationTtlMs: DAY,
-    ...(storageMedia ? { media: storageMedia, ownedMedia: storageMedia }
+    ...(storageMedia
+      ? { media: storageMedia, ownedMedia: storageMedia }
       : strict
         ? {}
         : { media: inMemoryMediaAdapters(clock) }),

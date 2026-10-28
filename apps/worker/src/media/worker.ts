@@ -232,7 +232,9 @@ export function buildSessionAssemblyDeps(parts: {
       const scoped =
         <A extends unknown[], R>(fn: (...a: A) => Promise<R>) =>
         (...a: A) =>
-          runInJobScope({ organizationId: s.organizationId, meetingId: s.meetingId }, () => fn(...a));
+          runInJobScope({ organizationId: s.organizationId, meetingId: s.meetingId }, () =>
+            fn(...a),
+          );
       return {
         readChunk: o.readChunk,
         deleteChunk: o.deleteChunk,
