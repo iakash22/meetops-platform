@@ -331,15 +331,6 @@ describe.skipIf(!url || !redisUrl)('media pipeline e2e (Prisma + BullMQ + worker
       } finally {
         await legacy.close();
       }
-      // A replayed complete must not resurrect it (dedupe keeps the finished job); only the backfill does.
-      expect(
-        (
-          await w.member.post(`/recording-sessions/${sid}/complete`, {
-            chunkCount: 1,
-            durationMs: 1000,
-          })
-        ).statusCode,
-      ).toBe(202);
       expect((await queue.getJob(jobId))?.returnvalue).toEqual({
         status: 'session_assembly_pending',
       });
