@@ -208,7 +208,9 @@ export function inMemoryMediaAdapters(clock: Clock = systemClock): MediaAdapters
 }
 
 /** MEDIA_STORAGE_ENABLED: real storage for the media routes (off by default). */
-export function mediaStorageEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+export function mediaStorageEnabled(
+  env: Record<string, string | undefined> = process.env,
+): boolean {
   const v = (env.MEDIA_STORAGE_ENABLED ?? '').trim().toLowerCase();
   if (v === '' || ['false', '0', 'no', 'off'].includes(v)) return false;
   if (['true', '1', 'yes', 'on'].includes(v)) return true;
@@ -221,7 +223,7 @@ export function mediaStorageEnabled(env: NodeJS.ProcessEnv = process.env): boole
  */
 export function storageMediaAdapters(
   db: DatabaseClient,
-  env: NodeJS.ProcessEnv = process.env,
+  env: Record<string, string | undefined> = process.env,
   clock: Clock = systemClock,
   signer?: MediaSigner,
 ): MediaAdapters {
@@ -257,6 +259,8 @@ export interface ModuleEnv {
    * unconfigured: dev/test fall back to the in-memory console sender, strict envs refuse to start.
    */
   emailEnv?: Record<string, string | undefined> | undefined;
+  /** MEDIA_STORAGE_ENABLED and STORAGE_* (#300 L-2). Omitted means unset: the flag is off. */
+  storageEnv?: Record<string, string | undefined> | undefined;
 }
 
 export const moduleEnvFromProcess = (): ModuleEnv => ({
@@ -264,6 +268,7 @@ export const moduleEnvFromProcess = (): ModuleEnv => ({
   redisUrl: process.env.REDIS_URL,
   databaseUrl: process.env.DATABASE_URL,
   emailEnv: process.env,
+  storageEnv: process.env,
 });
 
 const EMAIL_ENV_KEYS = ['EMAIL_PROVIDER', 'SMTP_HOST', 'RESEND_API_KEY'] as const;
@@ -465,7 +470,7 @@ export function defaultModuleDeps(
   if (strict) assertProductionCookies(security);
   const { redis, owned: ownedRedis } = resolveRedis(overrides, env);
   const { db, owned: ownedDb } = resolveDatabase(overrides, env);
-  const useStorageMedia = !overrides.media && mediaStorageEnabled();
+  const useStorageMedia = !overrides.media && mediaStorageEnabled(env.storageEnv ?? {});
   if (useStorageMedia && !db) throw new Error('MEDIA_STORAGE_ENABLED=true requires DATABASE_URL');
   // Dev/test fallback only below: strict envs reach here with a client or an injected dep for
   // every PRODUCTION_REQUIRED_DEPS entry (checked above).
@@ -524,7 +529,7 @@ export function defaultModuleDeps(
     passwordResetTtlMs: 30 * MIN,
     emailVerificationTtlMs: DAY,
     ...(useStorageMedia && db
-      ? { media: storageMediaAdapters(db, process.env, clock) }
+      ? { media: storageMediaAdapters(db, env.storageEnv ?? {}, clock) }
       : strict
         ? {}
         : { media: inMemoryMediaAdapters(clock) }),

@@ -1,12 +1,12 @@
 import type { ConsentSubjectType, FileObjectScanStatus } from '@meetops/contracts';
 import { sha256Base64ToHex, sha256HexToBase64 } from '@meetops/storage';
-import { withOrganizationContext, type DatabaseClient } from '../../../shared/prisma/context.js';
+import {
+  withOrganizationContext,
+  type DatabaseClient,
+  type DatabaseTransaction,
+} from '../../../shared/prisma/context.js';
 import type { ConsentRecord, ConsentRepository } from '../domain/consent.js';
-import type {
-  FileObjectRecord,
-  FileObjectRepository,
-  FileObjectStatus,
-} from '../domain/ports.js';
+import type { FileObjectRecord, FileObjectRepository, FileObjectStatus } from '../domain/ports.js';
 
 const fileSelect = {
   id: true,
@@ -42,7 +42,11 @@ const API_STATUSES: readonly FileObjectStatus[] = ['pending_upload', 'uploaded',
 
 function toFileRecord(r: FileRow): FileObjectRecord | null {
   // Rows the upload routes did not create (worker-derived, ready/failed) are not upload records.
-  if (!API_STATUSES.includes(r.status as FileObjectStatus) || !r.uploadedById || !r.checksumSha256) {
+  if (
+    !API_STATUSES.includes(r.status as FileObjectStatus) ||
+    !r.uploadedById ||
+    !r.checksumSha256
+  ) {
     return null;
   }
   const status = r.status as FileObjectStatus;
@@ -72,32 +76,53 @@ export class PrismaFileObjectRepository implements FileObjectRepository {
   ) {}
 
   async create(r: FileObjectRecord): Promise<FileObjectRecord> {
+    await withOrganizationContext(r.organizationId, (tx) => this.insertFile(tx, r), {
+      client: this.client,
+      userId: r.uploadedById,
+    });
+    return { ...r };
+  }
+
+  /** File row + consent attestation in one transaction (#300 L-1): a failure in either rolls both back. */
+  async createWithConsent(
+    r: FileObjectRecord,
+    consent: Omit<ConsentRecord, 'id' | 'recordedAt'> & { recordedAt: Date },
+  ): Promise<FileObjectRecord> {
+    if (consent.organizationId !== r.organizationId || consent.subjectId !== r.id) {
+      throw new Error('Consent attestation does not match the file object');
+    }
     await withOrganizationContext(
       r.organizationId,
-      (tx) =>
-        tx.fileObject.create({
-          data: {
-            id: r.id,
-            organizationId: r.organizationId,
-            meetingId: r.meetingId,
-            uploadedById: r.uploadedById,
-            kind: 'raw',
-            status: r.status,
-            provider: this.provider,
-            bucket: this.bucket,
-            key: r.key,
-            mimeType: r.mimeType,
-            sizeBytes: BigInt(r.sizeBytes),
-            checksumSha256: sha256Base64ToHex(r.checksumSha256Base64),
-            originalName: r.originalName,
-            createdAt: r.createdAt,
-            ...(r.scanStatus ? { scanStatus: r.scanStatus } : {}),
-          },
-          select: { id: true },
-        }),
+      async (tx) => {
+        await this.insertFile(tx, r);
+        await tx.consentAttestation.create({ data: consentData(consent), select: { id: true } });
+      },
       { client: this.client, userId: r.uploadedById },
     );
     return { ...r };
+  }
+
+  private insertFile(tx: DatabaseTransaction, r: FileObjectRecord) {
+    return tx.fileObject.create({
+      data: {
+        id: r.id,
+        organizationId: r.organizationId,
+        meetingId: r.meetingId,
+        uploadedById: r.uploadedById,
+        kind: 'raw',
+        status: r.status,
+        provider: this.provider,
+        bucket: this.bucket,
+        key: r.key,
+        mimeType: r.mimeType,
+        sizeBytes: BigInt(r.sizeBytes),
+        checksumSha256: sha256Base64ToHex(r.checksumSha256Base64),
+        originalName: r.originalName,
+        createdAt: r.createdAt,
+        ...(r.scanStatus ? { scanStatus: r.scanStatus } : {}),
+      },
+      select: { id: true },
+    });
   }
 
   async findById(organizationId: string, id: string): Promise<FileObjectRecord | null> {
@@ -143,6 +168,17 @@ const consentSelect = {
   recordedAt: true,
 } as const;
 
+const consentData = (r: Omit<ConsentRecord, 'id' | 'recordedAt'> & { recordedAt: Date }) => ({
+  organizationId: r.organizationId,
+  subjectType: r.subjectType,
+  subjectId: r.subjectId,
+  consentVersion: r.consentVersion,
+  method: r.method,
+  attestedByUserId: r.attestedByUserId,
+  attestedAt: r.attestedAt,
+  recordedAt: r.recordedAt,
+});
+
 /** consent_attestations (DB-3): append-only, INSERT + SELECT only. */
 export class PrismaConsentRepository implements ConsentRepository {
   constructor(private readonly client: DatabaseClient) {}
@@ -152,16 +188,7 @@ export class PrismaConsentRepository implements ConsentRepository {
       r.organizationId,
       (tx) =>
         tx.consentAttestation.create({
-          data: {
-            organizationId: r.organizationId,
-            subjectType: r.subjectType,
-            subjectId: r.subjectId,
-            consentVersion: r.consentVersion,
-            method: r.method,
-            attestedByUserId: r.attestedByUserId,
-            attestedAt: r.attestedAt,
-            recordedAt: r.recordedAt,
-          },
+          data: consentData(r),
           select: consentSelect,
         }),
       { client: this.client, userId: r.attestedByUserId },
@@ -180,6 +207,6 @@ export class PrismaConsentRepository implements ConsentRepository {
         }),
       { client: this.client },
     );
-    return (row) ?? null;
+    return row ?? null;
   }
 }
