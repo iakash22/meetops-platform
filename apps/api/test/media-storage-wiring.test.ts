@@ -56,8 +56,7 @@ describe('MEDIA_STORAGE_ENABLED', () => {
   });
 
   it('storageMediaAdapters refuses to run without REDIS_URL (no silent in-memory queue)', () => {
-    const { REDIS_URL: _r, ...noRedis } = STORAGE_ENV;
-    expect(() => storageMediaAdapters(fakeDb, noRedis)).toThrow(/REDIS_URL/);
+    expect(() => storageMediaAdapters(fakeDb, { ...STORAGE_ENV, REDIS_URL: '' })).toThrow(/REDIS_URL/);
   });
 
   it('storageMediaAdapters refuses an incomplete storage config', () => {

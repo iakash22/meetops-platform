@@ -36,13 +36,29 @@ export class BullMqMediaJobQueue implements MediaJobQueue {
   }
 }
 
-/** BullMQ producer on REDIS_URL (its own connection: BullMQ needs maxRetriesPerRequest: null). */
-export function createMediaQueueProducer(redisUrl: string): MediaQueueProducer {
-  const queue = new Queue<MediaProcessingJob>(MEDIA_QUEUE, {
-    connection: { url: redisUrl, maxRetriesPerRequest: null, lazyConnect: true },
-  });
+/**
+ * BullMQ producer on REDIS_URL (its own connection: BullMQ needs maxRetriesPerRequest: null), created on the first
+ * enqueue so building the deps never opens a connection. Connection errors go to `onError` (an unhandled Queue
+ * 'error' event would crash the process); enqueue() itself still rejects.
+ */
+export function createMediaQueueProducer(
+  redisUrl: string,
+  onError: (err: Error) => void = (err) => process.emitWarning(`media queue: ${err.message}`),
+): MediaQueueProducer {
+  let queue: Queue<MediaProcessingJob> | undefined;
+  const get = () => {
+    if (!queue) {
+      queue = new Queue<MediaProcessingJob>(MEDIA_QUEUE, {
+        connection: { url: redisUrl, maxRetriesPerRequest: null },
+      });
+      queue.on('error', onError);
+    }
+    return queue;
+  };
   return {
-    add: (name, data, opts) => queue.add(name, data, opts),
-    close: () => queue.close(),
+    add: (name, data, opts) => get().add(name, data, opts),
+    close: async () => {
+      await queue?.close();
+    },
   };
 }
