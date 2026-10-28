@@ -48,6 +48,7 @@ Where each variable is read:
 
 **Local dev only:** the compose stack runs the pinned MinIO fork `pgsty/silo`. Production uses R2/S3 via StorageService.
 
+- `MEDIA_STORAGE_ENABLED`: `true` backs the API upload routes with S3/MinIO (`STORAGE_*`) and the Prisma `file_objects` / `consent_attestations` tables; requires `DATABASE_URL`. Empty/`false` (default) keeps the in-memory adapters in development/test and leaves the media routes off elsewhere. Job queue and recording sessions stay in-memory for now.
 - `STORAGE_PROVIDER`: `minio` | `r2` | `s3`.
 - `STORAGE_ENDPOINT`, `STORAGE_REGION`, `STORAGE_BUCKET`.
 - `STORAGE_ACCESS_KEY_ID`, `STORAGE_SECRET_ACCESS_KEY`: in dev these are also the MinIO root credentials (dev-only placeholders).
