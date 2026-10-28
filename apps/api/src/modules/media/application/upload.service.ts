@@ -24,8 +24,11 @@ import {
 } from '../domain/ports.js';
 import { authorizeMedia } from './media-access.js';
 
-/** Lifetime of the presigned upload PUT. */
-export const UPLOAD_URL_TTL_SECONDS = 900;
+/**
+ * Lifetime of the presigned upload PUT. Must stay within the storage signer's MAX_PRESIGN_TTL_SECONDS (600 s);
+ * 300 s matches the chunk and download URLs (#300 M-1).
+ */
+export const UPLOAD_URL_TTL_SECONDS = 300;
 /** Download URLs: never above contracts MAX_PRESIGNED_GET_TTL_SECONDS (300 s). */
 export const DOWNLOAD_URL_TTL_SECONDS = Math.min(300, MAX_PRESIGNED_GET_TTL_SECONDS);
 
@@ -77,17 +80,8 @@ export class UploadService {
       scanStatus: null,
       createdAt: now,
     };
-    await this.d.files.create(file);
-    await this.d.consents.record({
-      organizationId: org,
-      subjectType: 'upload',
-      subjectId: id,
-      consentVersion: consent.consentVersion,
-      method: consent.method,
-      attestedByUserId: c.ctx.userId,
-      attestedAt: new Date(consent.attestedAt),
-      recordedAt: now,
-    });
+    // #300 M-1/L-1: sign first (no I/O, fails without side effects), then persist the file row and its consent
+    // attestation atomically, so a signer or DB failure leaves no orphan pending_upload row or attestation.
     const upload = await this.d.signer.presignPut({
       key: file.key,
       mimeType: file.mimeType,
@@ -95,6 +89,22 @@ export class UploadService {
       checksumSha256Base64: file.checksumSha256Base64,
       ttlSeconds: UPLOAD_URL_TTL_SECONDS,
     });
+    const attestation = {
+      organizationId: org,
+      subjectType: 'upload' as const,
+      subjectId: id,
+      consentVersion: consent.consentVersion,
+      method: consent.method,
+      attestedByUserId: c.ctx.userId,
+      attestedAt: new Date(consent.attestedAt),
+      recordedAt: now,
+    };
+    if (this.d.files.createWithConsent) {
+      await this.d.files.createWithConsent(file, attestation);
+    } else {
+      await this.d.files.create(file);
+      await this.d.consents.record(attestation);
+    }
     return { file, upload };
   }
 

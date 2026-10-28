@@ -1,3 +1,4 @@
+import type { ConsentRecord } from './consent.js';
 import { ALLOWED_MEDIA_MIME_TYPES } from '@meetops/contracts';
 import type { ConsentSubjectType, FileObjectScanStatus } from '@meetops/contracts';
 import { DomainError } from '../../../shared/domain-error.js';
@@ -23,6 +24,14 @@ export interface FileObjectRecord {
 
 export interface FileObjectRepository {
   create(r: FileObjectRecord): Promise<FileObjectRecord>;
+  /**
+   * Atomic init: the file row and its consent attestation in one transaction (all or nothing). Optional: adapters
+   * without transactions (in-memory) fall back to create + ConsentRepository.record.
+   */
+  createWithConsent?(
+    r: FileObjectRecord,
+    consent: Omit<ConsentRecord, 'id' | 'recordedAt'> & { recordedAt: Date },
+  ): Promise<FileObjectRecord>;
   findById(organizationId: string, id: string): Promise<FileObjectRecord | null>;
   setStatus(
     organizationId: string,

@@ -1143,3 +1143,130 @@ export function createStorageServiceFromEnv(
 ): S3StorageService {
   return new S3StorageService({ ...opts, config: loadStorageConfig(env) });
 }
+
+const UPLOAD_SOURCE_KEY_RE = /^organizations\/([^/]+)\/uploads\/([^/]+)\/source$/;
+
+/** Rebuilds a direct-upload source key from its parsed ids; rejects anything else (no arbitrary keys). */
+function assertUploadSourceKey(key: string): string {
+  const m = UPLOAD_SOURCE_KEY_RE.exec(typeof key === 'string' ? key : '');
+  if (!m || uploadSourceKey(m[1]!, m[2]!) !== key) {
+    throw new StorageValidationError('Invalid upload source key');
+  }
+  return key;
+}
+
+export type S3UploadSourceSignerOptions = {
+  config: StorageConfig;
+  client?: S3Client;
+  presign?: typeof getSignedUrl;
+  now?: () => Date;
+};
+
+/**
+ * Key-level signer for the API's direct uploads (organizations/{org}/uploads/{uploadId}/source), shaped like the
+ * apps/api MediaSigner port. Only upload-source keys are accepted. PUTs sign Content-Type, Content-Length and
+ * x-amz-checksum-sha256; GETs force attachment + an allowlisted content type; HEAD uses checksum mode.
+ */
+export class S3UploadSourceSigner {
+  readonly #client: S3Client;
+  readonly #bucket: string;
+  readonly #cfg: StorageConfig;
+  readonly #presign: typeof getSignedUrl;
+  readonly #now: () => Date;
+
+  constructor(opts: S3UploadSourceSignerOptions) {
+    this.#cfg = opts.config;
+    this.#bucket = opts.config.bucket;
+    this.#client = opts.client ?? createS3Client(opts.config);
+    this.#presign = opts.presign ?? getSignedUrl;
+    this.#now = opts.now ?? (() => new Date());
+  }
+
+  get bucket(): string {
+    return this.#bucket;
+  }
+
+  #expiresAt(ttl: number): Date {
+    return new Date(this.#now().getTime() + ttl * 1000);
+  }
+
+  async presignPut(s: {
+    key: string;
+    mimeType: string;
+    sizeBytes: number;
+    checksumSha256Base64: string;
+    ttlSeconds: number;
+  }): Promise<{ url: string; method: 'PUT'; headers: Record<string, string>; expiresAt: Date }> {
+    const key = assertUploadSourceKey(s.key);
+    validateUploadSpec({ mimeType: s.mimeType, sizeBytes: s.sizeBytes }, this.#cfg.limits);
+    const checksum = assertSha256Base64(s.checksumSha256Base64);
+    const ttl = assertTtl(s.ttlSeconds);
+    const mime = normalizeMimeType(s.mimeType);
+    const signed = ['content-type', 'content-length', 'x-amz-checksum-sha256'];
+    const url = await settle(
+      this.#presign(
+        this.#client,
+        new PutObjectCommand({
+          Bucket: this.#bucket,
+          Key: key,
+          ContentType: mime,
+          ContentLength: s.sizeBytes,
+          ChecksumSHA256: checksum,
+        }),
+        { expiresIn: ttl, signableHeaders: new Set(signed), unhoistableHeaders: new Set(signed) },
+      ),
+    );
+    return {
+      url,
+      method: 'PUT',
+      headers: {
+        'content-type': mime,
+        'content-length': String(s.sizeBytes),
+        'x-amz-checksum-sha256': checksum,
+      },
+      expiresAt: this.#expiresAt(ttl),
+    };
+  }
+
+  async presignGet(s: {
+    key: string;
+    ttlSeconds: number;
+    contentType: string;
+  }): Promise<{ url: string; method: 'GET'; headers: Record<string, string>; expiresAt: Date }> {
+    const key = assertUploadSourceKey(s.key);
+    const ttl = assertTtl(s.ttlSeconds);
+    const url = await settle(
+      this.#presign(
+        this.#client,
+        new GetObjectCommand({
+          Bucket: this.#bucket,
+          Key: key,
+          ...downloadResponseOverrides(s.contentType),
+        }),
+        { expiresIn: ttl },
+      ),
+    );
+    return { url, method: 'GET', headers: {}, expiresAt: this.#expiresAt(ttl) };
+  }
+
+  /** Size + full-object SHA-256 (base64); checksum null when absent or a multipart composite. Null when missing. */
+  async head(key: string): Promise<{ sizeBytes: number; checksumSha256Base64: string | null } | null> {
+    const k = assertUploadSourceKey(key);
+    let res;
+    try {
+      res = await settle(
+        this.#client.send(
+          new HeadObjectCommand({ Bucket: this.#bucket, Key: k, ChecksumMode: 'ENABLED' }),
+        ),
+      );
+    } catch (err) {
+      if ((err as { code?: string }).code === 'NOT_FOUND') return null;
+      throw err;
+    }
+    const c = res.ChecksumSHA256;
+    return {
+      sizeBytes: res.ContentLength ?? 0,
+      checksumSha256Base64: c && !c.includes('-') ? c : null,
+    };
+  }
+}
