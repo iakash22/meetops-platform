@@ -279,6 +279,18 @@ describe.skipIf(!url || !redisUrl)('media pipeline e2e (Prisma + BullMQ + worker
       },
     });
     expect(blobs.get(rows!.recording!.file.key)).toEqual(CHUNK);
+    // #303 M-2: replaying complete on the finished session never requeues (no re-process / re-upload).
+    const finishedOn = (await queue.getJob(`session_${w.org}_${sid}`))!.finishedOn;
+    for (let i = 0; i < 2; i++) {
+      const again = await w.member.post(`/recording-sessions/${sid}/complete`, {
+        chunkCount: 1,
+        durationMs: 1000,
+      });
+      expect(again.statusCode).toBe(202);
+    }
+    const kept = (await queue.getJob(`session_${w.org}_${sid}`))!;
+    expect(await kept.getState()).toBe('completed');
+    expect(kept.finishedOn).toBe(finishedOn);
   });
 
   it('#303 backfill: a session acked as session_assembly_pending (pre-#303 worker) is requeued and assembled once', async () => {

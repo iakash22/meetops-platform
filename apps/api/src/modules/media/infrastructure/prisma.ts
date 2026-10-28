@@ -245,6 +245,7 @@ const sessionSelect = {
   abortReason: true,
   createdAt: true,
   chunks: { select: { seq: true, sizeBytes: true, sha256: true, storageKey: true } },
+  recording: { select: { file: { select: { status: true } } } },
 } as const;
 
 interface SessionRow {
@@ -262,6 +263,7 @@ interface SessionRow {
   abortReason: string | null;
   createdAt: Date;
   chunks: { seq: number; sizeBytes: number; sha256: string | null; storageKey: string }[];
+  recording?: { file: { status: string } } | null;
 }
 
 function toSessionRecord(r: SessionRow): RecordingSessionRecord {
@@ -285,6 +287,7 @@ function toSessionRecord(r: SessionRow): RecordingSessionRecord {
     durationMs: r.durationMs,
     abortReason: r.abortReason as AbortReason | null,
     createdAt: r.createdAt,
+    sourcePending: r.recording?.file.status === 'pending_upload',
   };
 }
 

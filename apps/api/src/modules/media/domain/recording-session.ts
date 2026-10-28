@@ -27,6 +27,11 @@ export interface RecordingSessionRecord {
   durationMs: number | null;
   abortReason: AbortReason | null;
   createdAt: Date;
+  /**
+   * #303 M-2: true while a completed session's source FileObject is still `pending_upload` (not yet assembled).
+   * Replays requeue only then, so a finished recording is never re-processed.
+   */
+  sourcePending?: boolean;
 }
 
 export type ReserveChunkResult = 'ok' | 'over_limit' | 'not_uploading';

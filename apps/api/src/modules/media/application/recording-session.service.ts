@@ -143,8 +143,11 @@ export class RecordingSessionService {
   ): Promise<RecordingSessionRecord> {
     const s = await this.own(c, id);
     if (s.status === 'completed') {
-      // #302 M-1: finish() committed but the enqueue may have failed. A replay re-enqueues with the same
-      // deterministic job id (a no-op while that job exists); the stored chunk set is final, the body is ignored.
+      // #302 M-1: finish() committed but the enqueue may have failed. A replay re-queues with the same
+      // deterministic job id; the stored chunk set is final, the body is ignored.
+      // #303 M-2: only while the source is still pending_upload. Once assembled (or failed) a replay is a no-op, so
+      // a finished recording is never re-transcoded / re-uploaded / re-announced.
+      if (!s.sourcePending) return s;
       const consent = checkStoredConsent(
         await this.d.consents.findLatest(s.organizationId, 'recording_session', s.id),
       );

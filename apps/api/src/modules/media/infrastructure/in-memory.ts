@@ -170,7 +170,7 @@ export class InMemoryRecordingSessionRepository implements RecordingSessionRepos
   ) {
     const r = this.rows.get(id);
     if (!r || r.organizationId !== organizationId || r.status !== 'uploading') return false;
-    Object.assign(r, next);
+    Object.assign(r, next, next.status === 'completed' ? { sourcePending: true } : {});
     return true;
   }
 }
