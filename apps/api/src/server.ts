@@ -77,6 +77,8 @@ export interface CreateServerOptions {
   logStream?: { write(line: string): void };
   /** Overrides READINESS_TIMEOUT_MS (per-probe timeout for /ready). */
   readinessTimeoutMs?: number;
+  /** Overrides AUTH_MAIL_QUEUE* / AUTH_MAIL_WORKER_* (auth mail queue selection). */
+  mailQueueEnv?: Record<string, string | undefined>;
 }
 
 export function createServer(options: CreateServerOptions = {}) {
@@ -101,6 +103,7 @@ export function createServer(options: CreateServerOptions = {}) {
     databaseUrl: options.databaseUrl ?? process.env.DATABASE_URL,
     redisUrl: options.redisUrl ?? process.env.REDIS_URL,
     emailEnv: process.env,
+    mailQueueEnv: options.mailQueueEnv ?? process.env,
   });
   const app = Fastify({
     loggerInstance: logger,
