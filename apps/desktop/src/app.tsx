@@ -15,6 +15,8 @@ import { isBrowserAuthEnabled, isMockAuthEnabled } from '@/lib/config';
 import { createNativeAuthClient } from '@/lib/native-auth';
 import { createMediaRecorder } from '@/features/recording/recorder';
 import type { RecordingDeps } from '@/features/recording/recording-screen';
+import { createNativeChunkStore } from '@/features/recording/native-chunk-store';
+import { createNativeUploadApi } from '@/features/recording/native-upload-api';
 import { createSimulatedUploadApi } from '@/features/recording/simulated-upload-api';
 import { createMemoryChunkStore, createUploadQueue } from '@/features/recording/upload-queue';
 
@@ -56,16 +58,17 @@ function RecordingRoute({ deps }: { deps: RecordingDeps }) {
   return <RecordingScreen meetings={state.items} deps={deps} />;
 }
 
-function useRecordingDeps(override: RecordingDeps | undefined): RecordingDeps {
+function useRecordingDeps(override: RecordingDeps | undefined, native: boolean): RecordingDeps {
   const { session } = useSession();
   const sessionRef = useRef(session);
   sessionRef.current = session;
   return useMemo(() => {
     if (override) return override;
-    // TODO(desktop-recording): swap for createNativeUploadApi(invoke) + encrypted disk store once the
-    // Rust commands land (Cargo.lock slot). Until then chunks stay in memory and uploads are simulated.
-    const chunks = createMemoryChunkStore();
-    const queue = createUploadQueue(createSimulatedUploadApi(), chunks, {
+    // Native (Tauri): presigned PUTs via Rust `upload_put` and pending chunks in the encrypted disk store.
+    // Otherwise (web dev, tests) chunks stay in memory and uploads are simulated.
+    const chunks = native ? createNativeChunkStore(invoke) : createMemoryChunkStore();
+    const api = native ? createNativeUploadApi(invoke) : createSimulatedUploadApi();
+    const queue = createUploadQueue(api, chunks, {
       isOnline: () => navigator.onLine,
       identity: () => {
         const s = sessionRef.current;
@@ -74,19 +77,21 @@ function useRecordingDeps(override: RecordingDeps | undefined): RecordingDeps {
           : null;
       },
     });
-    return { queue, chunks, makeRecorder: createMediaRecorder, simulated: true };
-  }, [override]);
+    return { queue, chunks, makeRecorder: createMediaRecorder, simulated: !native };
+  }, [override, native]);
 }
 
 function Screens({
   mockAuth,
+  native,
   recording,
 }: {
   mockAuth: boolean;
+  native: boolean;
   recording?: RecordingDeps | undefined;
 }) {
   const { session, restoring } = useSession();
-  const recordingDeps = useRecordingDeps(recording);
+  const recordingDeps = useRecordingDeps(recording, native);
   const [view, setView] = useState<View>('meetings');
   const [openMeeting, setOpenMeeting] = useState<Meeting | null>(null);
   const [authView, setAuthView] = useState<'sign-in' | 'sign-up'>('sign-in');
@@ -167,7 +172,7 @@ export function App({
   return (
     <SessionProvider client={client}>
       <DataProvider value={data}>
-        <Screens mockAuth={mock} recording={recording} />
+        <Screens mockAuth={mock} native={native && !authClient} recording={recording} />
       </DataProvider>
     </SessionProvider>
   );
