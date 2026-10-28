@@ -3,11 +3,12 @@
  * TEST_DATABASE_URL and STORAGE_IT_ENDPOINT/BUCKET/ACCESS_KEY_ID/SECRET_ACCESS_KEY are set (throwaway local
  * values from the test environment; none live in this file), and skips when MinIO is not reachable.
  */
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createPrismaClient, type DatabaseClient } from '@meetops/database';
 import { S3UploadSourceSigner } from '@meetops/storage';
 import { storageMediaAdapters, type MediaAdapters } from '../src/modules/index.js';
+import { InMemoryMediaJobQueue } from '../src/modules/media/infrastructure/in-memory.js';
 import { consent, mediaWorld, type MediaWorld } from './media-helpers.js';
 
 const env = process.env;
@@ -45,15 +46,15 @@ describe.skipIf(!available)('upload flow with the real S3 signer (MinIO, live)',
       STORAGE_ACCESS_KEY_ID: env.STORAGE_IT_ACCESS_KEY_ID,
       STORAGE_SECRET_ACCESS_KEY: env.STORAGE_IT_SECRET_ACCESS_KEY,
       STORAGE_FORCE_PATH_STYLE: 'true',
-    });
-    w = await mediaWorld({ db, media });
+    }, undefined, { jobs: new InMemoryMediaJobQueue() }); // #302 L-1: no Redis here; inject the queue
+    w = await mediaWorld({ db, media }, randomUUID().slice(0, 8));
   });
   afterAll(async () => {
     await w?.app.close();
     await db?.$disconnect();
   });
 
-  it('init (201, 300 s URL) -> PUT to MinIO -> complete (200); replay 409; other org 404', async () => {
+  it('init (201, 300 s URL) -> PUT to MinIO -> complete (200); replay 200 (idempotent, #302 M-1); other org 404', async () => {
     expect(media.signer).toBeInstanceOf(S3UploadSourceSigner);
     const data = Buffer.from(`meetops-live-${Date.now()}`);
     const sha = createHash('sha256').update(data).digest('base64');
@@ -87,7 +88,7 @@ describe.skipIf(!available)('upload flow with the real S3 signer (MinIO, live)',
     expect(done.statusCode).toBe(200);
     expect(
       (await w.member.post(`/orgs/${w.org}/uploads/${fileObjectId}/complete`, {})).statusCode,
-    ).toBe(409);
+    ).toBe(200);
     expect((await media.files.findById(w.org, fileObjectId))?.status).toBe('processing');
   });
 });
