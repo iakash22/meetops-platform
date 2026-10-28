@@ -10,3 +10,5 @@ export * from './upload-scan-job.js';
 export * from './clamd.js';
 export * from './container-end.js';
 export * from './upload-scan-store.js';
+export * from './session-assembly.js';
+export * from './session-assembly-store.js';
