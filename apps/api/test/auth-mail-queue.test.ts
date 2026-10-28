@@ -190,37 +190,194 @@ describe('auth mail queue selection', () => {
     expect(() => loadAuthMailQueueEnv({ AUTH_MAIL_QUEUE_PREFIX: 'a b' })).toThrow();
   });
 
-  it('bullmq refuses non-SMTP providers and a missing REDIS_URL', () => {
+  it('bullmq accepts smtp and resend and still requires REDIS_URL', () => {
     const env = {
       nodeEnv: 'development',
       mailQueueEnv: { AUTH_MAIL_QUEUE: 'bullmq' },
       redisUrl: 'redis://127.0.0.1:1',
     };
     expect(() =>
-      defaultModuleDeps(
-        { hasher: fakeHasher },
-        {
-          ...env,
-          emailEnv: { EMAIL_PROVIDER: 'resend', RESEND_API_KEY: 'x', EMAIL_FROM: 'a <a@b.c>' },
-        },
-      ),
-    ).toThrow(/EMAIL_PROVIDER=smtp/);
-    expect(() =>
       defaultModuleDeps({ hasher: fakeHasher }, { ...env, redisUrl: undefined }),
     ).toThrow(/REDIS_URL/);
-    const deps = defaultModuleDeps(
-      { hasher: fakeHasher },
-      {
-        ...env,
-        emailEnv: {
-          EMAIL_PROVIDER: 'smtp',
-          SMTP_HOST: 'localhost',
-          SMTP_PORT: '1025',
-          EMAIL_FROM: 'a <a@b.c>',
-        },
+    for (const emailEnv of [SMTP_ENV, RESEND_ENV]) {
+      const deps = defaultModuleDeps({ hasher: fakeHasher }, { ...env, emailEnv });
+      expect(deps.mailQueue).toBeInstanceOf(BullMqAuthMailQueue);
+      expect(deps.authMailWorker).toMatchObject({ concurrency: 5 });
+    }
+  });
+});
+
+const SMTP_ENV = {
+  EMAIL_PROVIDER: 'smtp',
+  SMTP_HOST: 'localhost',
+  SMTP_PORT: '1025',
+  SMTP_SECURE: 'false',
+  EMAIL_FROM: 'MeetOps <no-reply@meetops.test>',
+};
+const RESEND_ENV = {
+  EMAIL_PROVIDER: 'resend',
+  RESEND_API_KEY: 're_fake_test_key_not_real',
+  EMAIL_FROM: 'MeetOps <no-reply@meetops.test>',
+};
+
+type FetchRes = { ok: boolean; status: number; json(): Promise<unknown> };
+
+/** Both providers faked (no network); only the one EMAIL_PROVIDER selects may ever be called. */
+function providers(
+  opts: { resend?: () => FetchRes | Promise<FetchRes>; smtp?: () => unknown } = {},
+) {
+  const fetch = vi.fn(async (url: string, init: unknown): Promise<FetchRes> => {
+    void init;
+    expect(url.startsWith('https://api.resend.com/')).toBe(true);
+    return opts.resend
+      ? opts.resend()
+      : { ok: true, status: 200, json: async () => ({ id: 'msg_1' }) };
+  });
+  const sendMail = vi.fn(async () =>
+    opts.smtp ? opts.smtp() : { messageId: '<m1@test>', accepted: [EMAIL], rejected: [] },
+  );
+  const smtpTransportFactory = vi.fn(() => ({
+    sendMail,
+    verify: async () => true as const,
+    close: () => {},
+  }));
+  return { fetch, sendMail, smtpTransportFactory };
+}
+
+async function queuedSignup(emailEnv: Record<string, string>, fakes: ReturnType<typeof providers>) {
+  const p = new FakeProducer();
+  const deps = defaultModuleDeps(
+    { hasher: fakeHasher },
+    {
+      nodeEnv: 'test',
+      emailEnv,
+      emailServiceDeps: {
+        fetch: fakes.fetch,
+        smtpTransportFactory: fakes.smtpTransportFactory as never,
       },
-    );
-    expect(deps.mailQueue).toBeInstanceOf(BullMqAuthMailQueue);
-    expect(deps.authMailWorker).toMatchObject({ concurrency: 5 });
+      mailQueueEnv: { AUTH_MAIL_QUEUE: 'bullmq' },
+      mailQueueProducer: p,
+    },
+  );
+  const app = createServer({ deps });
+  await app.ready();
+  const r = await new Client(app as never).post('/auth/signup', {
+    name: 'Pat',
+    email: EMAIL,
+    password: PASSWORD,
+  });
+  expect(r.statusCode).toBe(202);
+  const [id, queued] = [...p.jobs.entries()][0]!;
+  const l = log();
+  const run = createAuthMailProcessor(
+    new AuthMailJobHandler({ ...deps, transport: deps.mailTransport }),
+    l,
+  );
+  const attempt = (attemptsMade = 0) =>
+    run({ id, data: queued.data, attemptsMade, opts: queued.opts });
+  return { app, attempt, log: l };
+}
+
+describe('auth mail worker providers (EMAIL_PROVIDER-selected, no fallback)', () => {
+  it('resend selected: the worker sends via the resend adapter only', async () => {
+    const f = providers();
+    const { app, attempt } = await queuedSignup(RESEND_ENV, f);
+    await attempt();
+    expect(f.fetch).toHaveBeenCalledOnce();
+    expect(f.fetch.mock.calls[0]![0]).toBe('https://api.resend.com/emails');
+    expect(f.sendMail).not.toHaveBeenCalled();
+    await app.close();
+  });
+
+  it('smtp selected: the worker sends via smtp only', async () => {
+    const f = providers();
+    const { app, attempt } = await queuedSignup(SMTP_ENV, f);
+    await attempt();
+    expect(f.sendMail).toHaveBeenCalledOnce();
+    expect(f.fetch).not.toHaveBeenCalled();
+    await app.close();
+  });
+
+  const res = (status: number, name = 'some_error'): FetchRes => ({
+    ok: false,
+    status,
+    json: async () => ({ name, message: `bad ${EMAIL}` }),
+  });
+
+  it.each([
+    [429, 'retry'],
+    [500, 'retry'],
+    [503, 'retry'],
+    [400, 'fail-fast'],
+    [401, 'fail-fast'],
+    [422, 'fail-fast'],
+  ] as const)(
+    'resend %i -> %s, never calls smtp, no PII or key in errors',
+    async (status, mode) => {
+      const f = providers({ resend: () => res(status) });
+      const { app, attempt, log: l } = await queuedSignup(RESEND_ENV, f);
+      const err = (await attempt().catch((e: unknown) => e)) as Error;
+      expect(err).toBeInstanceOf(Error);
+      expect(err instanceof UnrecoverableError).toBe(mode === 'fail-fast');
+      expect(f.sendMail).not.toHaveBeenCalled();
+      expect(f.fetch).toHaveBeenCalledOnce();
+      const out = err.message + JSON.stringify([l.warn.mock.calls, l.error.mock.calls]);
+      expect(out).not.toContain(EMAIL);
+      expect(out).not.toContain(RESEND_ENV.RESEND_API_KEY);
+      expect(mode === 'fail-fast' ? l.error : l.warn).toHaveBeenCalledOnce();
+      await app.close();
+    },
+  );
+
+  it('resend network failure retries on resend', async () => {
+    const f = providers({
+      resend: () => {
+        throw new TypeError('fetch failed');
+      },
+    });
+    const { app, attempt } = await queuedSignup(RESEND_ENV, f);
+    const err = await attempt().catch((e: unknown) => e);
+    expect(err).not.toBeInstanceOf(UnrecoverableError);
+    expect(f.sendMail).not.toHaveBeenCalled();
+    await app.close();
+  });
+
+  it.each([
+    [550, undefined, 'fail-fast'],
+    [535, 'EAUTH', 'fail-fast'],
+    [421, undefined, 'retry'],
+    [451, undefined, 'retry'],
+    [undefined, 'ECONNECTION', 'retry'],
+  ] as const)(
+    'smtp %s/%s -> %s, never calls resend, no PII in errors',
+    async (code, ecode, mode) => {
+      const f = providers({
+        smtp: () => {
+          throw Object.assign(new Error(`SMTP said no to ${EMAIL}`), {
+            ...(code ? { responseCode: code } : {}),
+            ...(ecode ? { code: ecode } : {}),
+          });
+        },
+      });
+      const { app, attempt, log: l } = await queuedSignup(SMTP_ENV, f);
+      const err = (await attempt().catch((e: unknown) => e)) as Error;
+      expect(err instanceof UnrecoverableError).toBe(mode === 'fail-fast');
+      expect(f.fetch).not.toHaveBeenCalled();
+      expect(f.sendMail).toHaveBeenCalledOnce();
+      expect(err.message + JSON.stringify([l.warn.mock.calls, l.error.mock.calls])).not.toContain(
+        EMAIL,
+      );
+      await app.close();
+    },
+  );
+
+  it('a final retryable failure fails on the same provider (no fallback)', async () => {
+    const f = providers({ resend: () => res(503) });
+    const { app, attempt, log: l } = await queuedSignup(RESEND_ENV, f);
+    await attempt(AUTH_MAIL_JOB_OPTIONS.attempts - 1).catch(() => {});
+    expect(l.error).toHaveBeenCalledOnce();
+    expect(f.fetch).toHaveBeenCalledOnce();
+    expect(f.sendMail).not.toHaveBeenCalled();
+    await app.close();
   });
 });

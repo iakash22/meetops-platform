@@ -7,7 +7,7 @@ import type { Clock } from '../../../../shared/ports.js';
 /**
  * notifications #11 / ADR-013: production auth mail queue. The API enqueues ids-only AuthMailJobs on the
  * `auth-mail` BullMQ queue; a worker consumer (startAuthMailWorker) runs AuthMailJobHandler, which resolves
- * recipients, mints tokens and sends through the configured SMTP transport.
+ * recipients, mints tokens and sends through the EmailService EMAIL_PROVIDER selects (smtp or resend).
  */
 export const AUTH_MAIL_QUEUE = 'auth-mail';
 
@@ -153,17 +153,24 @@ export function createAuthMailProducer(
   };
 }
 
-/** Errors that will not succeed on retry (bad payload, unknown template, rejected address). */
+/**
+ * Errors that will not succeed on retry, per provider (the job always stays on the provider EMAIL_PROVIDER selected;
+ * there is no fallback):
+ * - payload / template / address validation: permanent.
+ * - Resend (ResendSendError.retryable): 429, 5xx and network errors retry; any other 4xx fails fast.
+ * - SMTP (nodemailer responseCode): 5xx fails fast (rejected mailbox, auth); 4xx and connection errors retry.
+ * Anything unrecognised retries.
+ */
 export function isPermanentMailError(err: unknown): boolean {
   if (!(err instanceof Error)) return false;
-  const e = err as Error & { responseCode?: unknown };
-  if (
-    ['UnknownAuthMailTemplateError', 'EmailValidationError', 'InvalidAuthMailJobError'].includes(
-      e.name,
-    )
-  )
-    return true;
-  // SMTP 5xx except 421-style transient codes; 550/553 = mailbox/address rejected.
+  const e = err as Error & { responseCode?: unknown; retryable?: unknown };
+  const permanentNames = [
+    'UnknownAuthMailTemplateError',
+    'EmailValidationError',
+    'InvalidAuthMailJobError',
+  ];
+  if (permanentNames.includes(e.name)) return true;
+  if (typeof e.retryable === 'boolean') return !e.retryable;
   return typeof e.responseCode === 'number' && e.responseCode >= 500 && e.responseCode < 600;
 }
 

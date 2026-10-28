@@ -141,7 +141,7 @@ export interface ModuleDeps {
    * auth-mail worker (authMailWorker). Otherwise (dev/test default) the inline queue + transport below.
    */
   mailQueue: AuthMailQueue;
-  /** Used by the inline queue and by the auth-mail worker consumer (SMTP only with the BullMQ queue). */
+  /** Used by the inline queue and by the auth-mail worker consumer (the EMAIL_PROVIDER-selected EmailService). */
   mailTransport: MailTransport;
   /** When set with a BullMqAuthMailQueue, registerModules starts the auth-mail BullMQ consumer in-process. */
   authMailWorker?: { redisUrl: string; prefix?: string | undefined; concurrency: number };
@@ -293,7 +293,14 @@ export interface ModuleEnv {
   mailQueueEnv?: Record<string, string | undefined> | undefined;
   /** Test seam: BullMQ producer used instead of one on REDIS_URL when AUTH_MAIL_QUEUE=bullmq. */
   mailQueueProducer?: AuthMailProducer | undefined;
+  /** Test seam: fake SMTP transport factory / fetch for the selected EmailService (no network in tests). */
+  emailServiceDeps?: EmailServiceDeps | undefined;
 }
+
+type EmailServiceDeps = Pick<
+  NonNullable<Parameters<typeof createEmailService>[1]>,
+  'fetch' | 'smtpTransportFactory'
+>;
 
 export const moduleEnvFromProcess = (): ModuleEnv => ({
   nodeEnv: process.env.NODE_ENV,
@@ -316,7 +323,9 @@ export const emailConfigured = (emailEnv: ModuleEnv['emailEnv']) =>
  * NODE_ENV=test the env is ignored so tests never reach a real provider.
  */
 function resolveEmailConfig(env: ModuleEnv): EmailConfig | null {
-  if (env.nodeEnv === 'test' || !emailConfigured(env.emailEnv)) return null;
+  // emailServiceDeps (fakes only) lets tests exercise a configured provider without any network.
+  if ((env.nodeEnv === 'test' && !env.emailServiceDeps) || !emailConfigured(env.emailEnv))
+    return null;
   return loadEmailConfig(env.emailEnv);
 }
 
@@ -471,9 +480,7 @@ export function defaultModuleDeps(
   if (useBullMail) {
     if (!mailRedisUrl && !env.mailQueueProducer)
       throw new Error('AUTH_MAIL_QUEUE=bullmq requires REDIS_URL');
-    // ADR-013: the queue delivers only through configured SMTP; no Resend / paid provider, no fallback.
-    if (!injectedMail && emailConfig?.provider !== 'smtp')
-      throw new Error('AUTH_MAIL_QUEUE=bullmq requires EMAIL_PROVIDER=smtp');
+    // The worker sends through the one EmailService EMAIL_PROVIDER selects (smtp or resend); never a fallback.
   }
   const provided = (k: keyof ModuleDeps) =>
     ((DATABASE_BACKED_DEPS as readonly string[]).includes(k) && hasDb) ||
@@ -614,7 +621,7 @@ export function defaultModuleDeps(
   if (!injectedMail) {
     // Strict envs only get here with a valid emailConfig (PRODUCTION_REQUIRED_DEPS check above).
     const service = emailConfig
-      ? createEmailService(emailConfig, { nodeEnv: env.nodeEnv })
+      ? createEmailService(emailConfig, { ...env.emailServiceDeps, nodeEnv: env.nodeEnv })
       : devConsoleEmailService();
     deps.mailTransport = createAuthMailTransport(service, {
       verificationExpiresInHours: Math.max(1, Math.round(deps.emailVerificationTtlMs / HOUR)),
