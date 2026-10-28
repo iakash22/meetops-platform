@@ -51,7 +51,7 @@ export const envSchema = z.object({
   EMAIL_FROM: z.string().default('noreply@example.com'),
   /**
    * Auth mail queue (ADR-013, notifications #11). `inline` (default) sends in-process (dev/test); `bullmq` enqueues
-   * ids-only jobs on the `auth-mail` queue (REDIS_URL) and delivers via SMTP only. Read by apps/api.
+   * ids-only jobs on the `auth-mail` queue (REDIS_URL) and delivers via the EMAIL_PROVIDER-selected service (smtp | resend), no fallback. Read by apps/api.
    */
   AUTH_MAIL_QUEUE: z.enum(['inline', 'bullmq']).default('inline'),
   /** BullMQ key prefix for the auth-mail queue (empty = BullMQ default `bull`). */

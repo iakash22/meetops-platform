@@ -87,7 +87,7 @@ Where each variable is read:
 - `SMTP_USER`
 - `SMTP_PASSWORD`
 - `EMAIL_FROM`: e.g. "MeetOps AI <noreply@example.com>"
-- `AUTH_MAIL_QUEUE`: `inline` (default) or `bullmq`. `bullmq` (production, ADR-013 / notifications #11) enqueues ids-only auth mail jobs on the BullMQ `auth-mail` queue on `REDIS_URL` (deterministic, PII-free job ids `authmail_<kind>_<sha256>`; 5 attempts, exponential backoff from 2 s) and requires `EMAIL_PROVIDER=smtp`: Resend or any other provider is refused and there is no fallback. In strict environments it satisfies the `mailQueue` production dependency.
+- `AUTH_MAIL_QUEUE`: `inline` (default) or `bullmq`. `bullmq` (production, ADR-013 / notifications #11) enqueues ids-only auth mail jobs on the BullMQ `auth-mail` queue on `REDIS_URL` (deterministic, PII-free job ids `authmail_<kind>_<sha256>`; 5 attempts, exponential backoff from 2 s) and the worker sends through the provider-independent `EmailService` that `EMAIL_PROVIDER` explicitly selects (`smtp`: Mailpit in dev, Gmail opt-in; `resend`: production). There is never an automatic fallback: a failing provider retries or fails on that same provider. Resend 429/5xx/network errors and SMTP 4xx/connection errors retry; Resend other 4xx and SMTP 5xx fail fast. In strict environments it satisfies the `mailQueue` production dependency.
 - `AUTH_MAIL_QUEUE_PREFIX`: optional BullMQ key prefix for that queue (default `bull`; the live test uses `qa:it:`).
 - `AUTH_MAIL_WORKER_ENABLED`: `true` (default) runs the auth-mail consumer inside the API process when `AUTH_MAIL_QUEUE=bullmq`; set `false` on API replicas that should only enqueue.
 - `AUTH_MAIL_WORKER_CONCURRENCY`: consumer concurrency, 1-50 (default 5).

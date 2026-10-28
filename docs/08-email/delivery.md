@@ -70,10 +70,14 @@ the BullMQ follow-up removes that.
   no-op while it is retained (24 h completed, 7 d failed). `account_exists` and `login_lockout` also hash a 15-minute
   bucket, so repeated triggers send at most one notice per user per window.
 - The consumer (`startAuthMailWorker`, in the API process unless `AUTH_MAIL_WORKER_ENABLED=false`) runs
-  `AuthMailJobHandler`, which resolves the recipient, mints the token and sends through the configured SMTP
-  transport. Transient errors retry 5 times with exponential backoff (2 s base); SMTP 5xx, validation and unknown
+  `AuthMailJobHandler`, which resolves the recipient, mints the token and sends through the selected
+  provider. Transient errors retry 5 times with exponential backoff (2 s base); SMTP 5xx, validation and unknown
   template errors fail at once. Stored failure reasons and logs hold no addresses or provider messages.
-- `bullmq` requires `EMAIL_PROVIDER=smtp` (Mailpit locally, `localhost:1025`). Resend or any other provider is
-  refused at startup, with no fallback.
+- The worker sends through the provider-independent `EmailService` that `EMAIL_PROVIDER` explicitly selects:
+  `smtp` (Mailpit locally on `localhost:1025`; Gmail SMTP opt-in) or `resend` (production). There is never an
+  automatic fallback: a job that fails retries, or fails, on that same provider.
+- Error mapping: Resend 429, 5xx and network errors retry; any other Resend 4xx fails fast. SMTP 4xx and
+  connection errors retry; SMTP 5xx (rejected mailbox, auth) fails fast. Logged and stored errors keep only the
+  class, code and status: no addresses, provider message text or API keys.
 - Live test: `AUTH_MAIL_LIVE_REDIS_URL` + `AUTH_MAIL_LIVE_SMTP_PORT` / `AUTH_MAIL_LIVE_MAILPIT_URL`
   (`apps/api/test/auth-mail-queue.live.integration.test.ts`, keys under `qa:it:`); skipped when unavailable.
