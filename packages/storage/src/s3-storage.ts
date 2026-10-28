@@ -35,6 +35,7 @@ import {
   assertKeyOwnedBy,
   buildObjectKey,
   normalizeMeetingObjectRef,
+  organizationPrefix,
   parseMeetingKey,
   LEGACY_ORG_KEY_PREFIX,
   ORGANIZATIONS_KEY_PREFIX,
@@ -1145,14 +1146,25 @@ export function createStorageServiceFromEnv(
 }
 
 const UPLOAD_SOURCE_KEY_RE = /^organizations\/([^/]+)\/uploads\/([^/]+)\/source$/;
+/** API recording-session chunk keys: organizations/{org}/recording-sessions/{sessionId}/chunks/{seq:5}. */
+const SESSION_CHUNK_KEY_RE = /^organizations\/([^/]+)\/recording-sessions\/([^/]+)\/chunks\/(\d{5})$/;
 
-/** Rebuilds a direct-upload source key from its parsed ids; rejects anything else (no arbitrary keys). */
-function assertUploadSourceKey(key: string): string {
-  const m = UPLOAD_SOURCE_KEY_RE.exec(typeof key === 'string' ? key : '');
-  if (!m || uploadSourceKey(m[1]!, m[2]!) !== key) {
-    throw new StorageValidationError('Invalid upload source key');
+/** Rebuilds an upload-source or session-chunk key from its parsed ids; rejects anything else (no arbitrary keys). */
+function assertUploadSourceKey(key: string, allowChunks = false): string {
+  const k = typeof key === 'string' ? key : '';
+  const m = UPLOAD_SOURCE_KEY_RE.exec(k);
+  if (m && uploadSourceKey(m[1]!, m[2]!) === k) return k;
+  const c = allowChunks ? SESSION_CHUNK_KEY_RE.exec(k) : null;
+  if (c && `${organizationPrefix(c[1]!)}recording-sessions/${uploadSourceIdCheck(c[2]!)}/chunks/${c[3]!}` === k) {
+    return k;
   }
-  return key;
+  throw new StorageValidationError('Invalid upload source key');
+}
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+function uploadSourceIdCheck(v: string): string {
+  if (!UUID_RE.test(v)) throw new StorageValidationError('Invalid sessionId');
+  return v;
 }
 
 export type S3UploadSourceSignerOptions = {
@@ -1197,7 +1209,7 @@ export class S3UploadSourceSigner {
     checksumSha256Base64: string;
     ttlSeconds: number;
   }): Promise<{ url: string; method: 'PUT'; headers: Record<string, string>; expiresAt: Date }> {
-    const key = assertUploadSourceKey(s.key);
+    const key = assertUploadSourceKey(s.key, true);
     validateUploadSpec({ mimeType: s.mimeType, sizeBytes: s.sizeBytes }, this.#cfg.limits);
     const checksum = assertSha256Base64(s.checksumSha256Base64);
     const ttl = assertTtl(s.ttlSeconds);
@@ -1251,7 +1263,7 @@ export class S3UploadSourceSigner {
 
   /** Size + full-object SHA-256 (base64); checksum null when absent or a multipart composite. Null when missing. */
   async head(key: string): Promise<{ sizeBytes: number; checksumSha256Base64: string | null } | null> {
-    const k = assertUploadSourceKey(key);
+    const k = assertUploadSourceKey(key, true);
     let res;
     try {
       res = await settle(

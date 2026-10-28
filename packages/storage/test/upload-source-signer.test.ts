@@ -62,6 +62,26 @@ describe('S3UploadSourceSigner', () => {
     });
   });
 
+  it('signs and heads session chunk keys, but never presigns a GET for them', async () => {
+    const chunk = `organizations/${ORG}/recording-sessions/${UP}/chunks/00000`;
+    const put = await signer.presignPut({
+      key: chunk,
+      mimeType: 'video/webm',
+      sizeBytes: DUMMY.length,
+      checksumSha256Base64: SHA,
+      ttlSeconds: 300,
+    });
+    expect(put.method).toBe('PUT');
+    s3.on(HeadObjectCommand).resolvesOnce({ ContentLength: DUMMY.length, ChecksumSHA256: SHA });
+    expect(await signer.head(chunk)).toEqual({ sizeBytes: DUMMY.length, checksumSha256Base64: SHA });
+    await expect(
+      signer.presignGet({ key: chunk, ttlSeconds: 60, contentType: 'video/webm' }),
+    ).rejects.toBeInstanceOf(StorageValidationError);
+    await expect(
+      signer.head(`organizations/${ORG}/recording-sessions/not-a-uuid/chunks/00000`),
+    ).rejects.toBeInstanceOf(StorageValidationError);
+  });
+
   it('rejects keys that are not upload sources', async () => {
     for (const key of [`organizations/${ORG}/meetings/x/raw`, `../${KEY}`, `org/${ORG}/uploads/${UP}/source`]) {
       await expect(
