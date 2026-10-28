@@ -170,7 +170,7 @@ describe('auth mail worker processor', () => {
     const [id, queued] = [...p.jobs.entries()][0]!;
     expect(id + JSON.stringify(queued)).not.toMatch(/@|Pat|token=/);
     const run = createAuthMailProcessor(new AuthMailJobHandler({ ...deps, transport: mail }));
-    await run({ id, data: queued!.data, attemptsMade: 0, opts: queued!.opts });
+    await run({ id, data: queued.data, attemptsMade: 0, opts: queued.opts });
     expect(mail.sent).toHaveLength(1);
     expect(mail.sent[0]).toMatchObject({ to: EMAIL, template: 'email_verification' });
     expect(mail.lastToken(EMAIL, 'email_verification')).toBeTruthy();
