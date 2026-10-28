@@ -177,6 +177,25 @@ export class PrismaFileObjectRepository implements FileObjectRepository {
       { client: this.client },
     );
   }
+
+  async unassembledSessions(organizationId: string, before: Date, limit: number): Promise<StaleMediaSubject[]> {
+    return withOrganizationContext(
+      organizationId,
+      (tx) =>
+        tx.recordingSession.findMany({
+          where: {
+            organizationId,
+            status: 'completed',
+            updatedAt: { lt: before },
+            recording: { file: { status: 'pending_upload', deletedAt: null } },
+          },
+          select: { id: true, meetingId: true },
+          orderBy: { updatedAt: 'asc' },
+          take: limit,
+        }),
+      { client: this.client },
+    );
+  }
 }
 
 const consentSelect = {

@@ -202,12 +202,47 @@ describe('#302 M-1 requeue + reconciler', () => {
     };
     const now = new Date('2026-10-28T12:00:00Z');
     const r = await reconcileStaleMedia({ store, consents, jobs, now: () => now, olderThanMs: 60_000 });
-    expect(r).toEqual({ organizations: 1, uploads: 1, skipped: 1 });
+    expect(r).toEqual({ organizations: 1, uploads: 1, sessions: 0, skipped: 1 });
     expect(store.staleUploads).toHaveBeenCalledWith(ORG, new Date(now.getTime() - 60_000), 500);
     expect(jobs.jobs).toEqual([
       { kind: 'process_upload', organizationId: ORG, subjectType: 'upload', subjectId: SUB, consentAttestationId: ok.id },
     ]);
     await reconcileStaleMedia({ store, consents, jobs, now: () => now, olderThanMs: 60_000 });
+    expect(jobs.jobs).toHaveLength(1);
+  });
+
+  it('#303 backfill: unassembled completed sessions are requeued (finished job replaced), no consent skipped', async () => {
+    const jobs = new InMemoryMediaJobQueue();
+    const consents = new InMemoryConsentRepository();
+    const att = await consents.record({
+      organizationId: ORG,
+      subjectType: 'recording_session',
+      subjectId: SUB,
+      consentVersion: CURRENT_CONSENT_VERSION,
+      method: 'all_parties_consented',
+      attestedByUserId: SUB,
+      attestedAt: new Date(),
+      recordedAt: new Date(),
+    });
+    const MEET = '44444444-4444-4444-8444-444444444444';
+    const legacy = { ...job, consentAttestationId: att.id, meetingId: MEET };
+    await jobs.enqueue(legacy);
+    jobs.finished.add(`process_recording_session_${ORG}_${SUB}`); // acked as session_assembly_pending
+    const store = {
+      organizationIds: async () => [ORG],
+      staleUploads: async () => [],
+      unassembledSessions: async () => [
+        { id: SUB, meetingId: MEET },
+        { id: '55555555-5555-4555-8555-555555555555', meetingId: MEET },
+      ],
+    };
+    const requeue = vi.spyOn(jobs, 'requeue');
+    const run = () => reconcileStaleMedia({ store, consents, jobs, now: () => new Date(), olderThanMs: 0 });
+    expect(await run()).toEqual({ organizations: 1, uploads: 0, sessions: 1, skipped: 1 });
+    expect(requeue).toHaveBeenCalledWith(legacy);
+    expect(jobs.finished.size).toBe(0);
+    expect(jobs.jobs).toEqual([legacy]);
+    await run(); // the requeued job is live: still exactly one
     expect(jobs.jobs).toHaveLength(1);
   });
 });

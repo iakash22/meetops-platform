@@ -13,6 +13,8 @@ import { Queue, QueueEvents, Worker, type Job } from 'bullmq';
 import { MEDIA_QUEUE } from '@meetops/contracts';
 import { buildObjectKey, StorageNotFoundError, type MeetingObjectRef } from '@meetops/storage';
 import { createPrismaClient, withOrganizationContext, type DatabaseClient } from '@meetops/database';
+import { reconcileStaleMedia } from '../src/modules/media/application/reconcile.js';
+import { PrismaStaleMediaStore } from '../src/modules/media/infrastructure/prisma.js';
 import { storageMediaAdapters, type MediaAdapters } from '../src/modules/index.js';
 import { BullMqMediaJobQueue } from '../src/modules/media/infrastructure/bullmq.js';
 import { FakeMediaSigner } from '../src/modules/media/infrastructure/in-memory.js';
@@ -65,7 +67,18 @@ describe.skipIf(!url || !redisUrl)('media pipeline e2e (Prisma + BullMQ + worker
       db,
       { STORAGE_PROVIDER: 's3', STORAGE_BUCKET: 'live-test' },
       undefined,
-      { signer, jobs: new BullMqMediaJobQueue({ add: (n, d, o) => queue.add(n, d, o) }) },
+      {
+        signer,
+        jobs: new BullMqMediaJobQueue({
+          add: (n, d, o) => queue.add(n, d, o),
+          removeIfFinished: async (id) => {
+            const j = await queue.getJob(id);
+            if (!j || !['completed', 'failed'].includes(await j.getState())) return false;
+            await j.remove();
+            return true;
+          },
+        }),
+      },
     );
     w = await mediaWorld({ db, media }, randomUUID().slice(0, 8));
     const wm = (await import(workerPath)) as WorkerMedia;
@@ -228,5 +241,66 @@ describe.skipIf(!url || !redisUrl)('media pipeline e2e (Prisma + BullMQ + worker
       },
     });
     expect(blobs.get(rows!.recording!.file.key)).toEqual(CHUNK);
+  });
+
+  it('#303 backfill: a session acked as session_assembly_pending (pre-#303 worker) is requeued and assembled once', async () => {
+    const meetingId = (
+      await w.member.post(`/orgs/${w.org}/meetings/resolve`, {
+        source: 'extension',
+        externalMeetingUrl: 'https://meet.google.com/bck-fill-abc',
+        title: 'Dummy backfill',
+      })
+    ).json<{ meetingId: string }>().meetingId;
+    const sid = (
+      await w.member.post(`/orgs/${w.org}/recording-sessions`, {
+        mimeType: 'video/webm',
+        startedAt: new Date().toISOString(),
+        source: 'tab',
+        meetingId,
+        consent: consent(),
+      })
+    ).json<{ sessionId: string }>().sessionId;
+    await w.member.post(`/recording-sessions/${sid}/chunks`, { seq: 0, sizeBytes: CHUNK.length, sha256: CHUNK_SHA });
+    const chunkKey = (await media.sessions.findById(w.org, sid))!.chunks.get(0)!.key;
+    signer.put(chunkKey, CHUNK.length);
+    blobs.set(chunkKey, CHUNK);
+
+    // Simulate the pre-#303 worker: it acked the session job without assembling.
+    await worker.pause();
+    try {
+      const done = await w.member.post(`/recording-sessions/${sid}/complete`, { chunkCount: 1, durationMs: 1000 });
+      expect(done.statusCode).toBe(202);
+      const jobId = `session_${w.org}_${sid}`;
+      const first = (await queue.getJob(jobId))!;
+      const { name, data, opts } = first;
+      await first.remove();
+      const legacy = new Worker(MEDIA_QUEUE, async () => ({ status: 'session_assembly_pending' }), { connection, prefix });
+      try {
+        const acked = await queue.add(name, data, opts);
+        expect(await acked.waitUntilFinished(events, 30_000)).toEqual({ status: 'session_assembly_pending' });
+      } finally {
+        await legacy.close();
+      }
+      // A replayed complete must not resurrect it (dedupe keeps the finished job); only the backfill does.
+      expect((await w.member.post(`/recording-sessions/${sid}/complete`, { chunkCount: 1, durationMs: 1000 })).statusCode).toBe(202);
+      expect((await queue.getJob(jobId))?.returnvalue).toEqual({ status: 'session_assembly_pending' });
+    } finally {
+      worker.resume();
+    }
+    const store = new PrismaStaleMediaStore(db);
+    const later = new Date(Date.now() + 1000);
+    expect((await store.unassembledSessions(w.org, later, 100)).map((r) => r.id)).toContain(sid);
+
+    const r = await reconcileStaleMedia({ store, consents: media.consents, jobs: media.jobs, now: () => later, olderThanMs: 0 });
+    expect(r.sessions).toBeGreaterThanOrEqual(1);
+    const job = (await queue.getJob(`session_${w.org}_${sid}`))!;
+    expect(await job.waitUntilFinished(events, 30_000)).toEqual({
+      status: 'quarantined',
+      sizeBytes: CHUNK.length,
+      sha256Hex: CHUNK_SHA,
+    });
+    expect(blobs.has(chunkKey)).toBe(false);
+    // Idempotent: once assembled it is no longer selected, so a rerun queues nothing for it.
+    expect((await store.unassembledSessions(w.org, new Date(Date.now() + 1000), 100)).map((x) => x.id)).not.toContain(sid);
   });
 });
