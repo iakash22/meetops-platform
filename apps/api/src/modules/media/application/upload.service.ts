@@ -19,6 +19,7 @@ import {
   type FileObjectRecord,
   type FileObjectRepository,
   type MediaJobQueue,
+  type MediaProcessingJob,
   type MediaSigner,
   type SignedRequest,
 } from '../domain/ports.js';
@@ -124,7 +125,7 @@ export class UploadService {
       const consent = checkStoredConsent(
         await this.d.consents.findLatest(f.organizationId, 'upload', f.id),
       );
-      await this.enqueue(f, consent.id);
+      await this.enqueue(f, consent.id, true);
       return { ...f };
     }
     if (f.status !== 'pending_upload')
@@ -148,15 +149,21 @@ export class UploadService {
     return { ...f, status: 'processing', scanStatus: 'pending' };
   }
 
-  private async enqueue(f: FileObjectRecord, consentAttestationId: string): Promise<void> {
-    await this.d.jobs.enqueue({
+  /** `replay` (#302 L-3): requeue, so a finished job held under the id is replaced. */
+  private async enqueue(
+    f: FileObjectRecord,
+    consentAttestationId: string,
+    replay = false,
+  ): Promise<void> {
+    const job = {
       kind: 'process_upload',
       organizationId: f.organizationId,
       subjectType: 'upload',
       subjectId: f.id,
       consentAttestationId,
       ...(f.meetingId ? { meetingId: f.meetingId } : {}),
-    });
+    } satisfies MediaProcessingJob;
+    await (replay ? this.d.jobs.requeue(job) : this.d.jobs.enqueue(job));
   }
 
   /**

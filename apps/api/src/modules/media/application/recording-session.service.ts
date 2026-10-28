@@ -12,7 +12,11 @@ import type { DirectoryCaller } from '../../directory/access.js';
 import { MeetingNotFoundError } from '../../meetings/domain/meeting.js';
 import { DomainError } from '../../../shared/domain-error.js';
 import { checkConsentInput, checkStoredConsent } from '../domain/consent.js';
-import { UploadStateConflictError, type SignedRequest } from '../domain/ports.js';
+import {
+  UploadStateConflictError,
+  type MediaProcessingJob,
+  type SignedRequest,
+} from '../domain/ports.js';
 import {
   RecordingSessionNotFoundError,
   type RecordingSessionRecord,
@@ -144,7 +148,7 @@ export class RecordingSessionService {
       const consent = checkStoredConsent(
         await this.d.consents.findLatest(s.organizationId, 'recording_session', s.id),
       );
-      await this.enqueue(s, consent.id);
+      await this.enqueue(s, consent.id, true);
       return s;
     }
     RecordingSessionService.assertUploading(s);
@@ -198,15 +202,21 @@ export class RecordingSessionService {
     return { ...s, status: 'completed', chunkCount: body.chunkCount, durationMs: body.durationMs };
   }
 
-  private async enqueue(s: RecordingSessionRecord, consentAttestationId: string): Promise<void> {
-    await this.d.jobs.enqueue({
+  /** `replay` (#302 L-3): requeue, so a finished job held under the id is replaced. */
+  private async enqueue(
+    s: RecordingSessionRecord,
+    consentAttestationId: string,
+    replay = false,
+  ): Promise<void> {
+    const job = {
       kind: 'process_recording_session',
       organizationId: s.organizationId,
       subjectType: 'recording_session',
       subjectId: s.id,
       consentAttestationId,
       meetingId: s.meetingId,
-    });
+    } satisfies MediaProcessingJob;
+    await (replay ? this.d.jobs.requeue(job) : this.d.jobs.enqueue(job));
   }
 
   async abort(c: DirectoryCaller, id: string, reason: AbortReason): Promise<void> {

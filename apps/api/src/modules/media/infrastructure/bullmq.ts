@@ -5,8 +5,11 @@ import type { MediaJobQueue, MediaProcessingJob } from '../domain/ports.js';
 /** Minimal producer surface (BullMQ Queue#add), injectable for tests. */
 export interface MediaQueueProducer {
   add: (name: string, data: MediaProcessingJob, opts: JobsOptions) => Promise<unknown>;
-  /** Finished-state lookup + removal for requeue (BullMQ Queue#getJob -> Job#getState / Job#remove). */
-  removeIfFinished?: (jobId: string) => Promise<boolean>;
+  /**
+   * For requeue (BullMQ Queue#getJob -> Job#getState / Job#remove): removes a completed/failed job and reports
+   * 'removed'; 'live' when a job with the id is still pending; 'absent' when there is none.
+   */
+  removeIfFinished: (jobId: string) => Promise<'removed' | 'live' | 'absent'>;
   close?: () => Promise<void>;
 }
 
@@ -36,9 +39,10 @@ export class BullMqMediaJobQueue implements MediaJobQueue {
     });
   }
 
-  async requeue(job: MediaProcessingJob): Promise<void> {
-    await this.producer.removeIfFinished?.(mediaProcessingJobId(job));
+  async requeue(job: MediaProcessingJob): Promise<boolean> {
+    if ((await this.producer.removeIfFinished(mediaProcessingJobId(job))) === 'live') return false;
     await this.enqueue(job);
+    return true;
   }
 
   async close(): Promise<void> {
@@ -69,11 +73,12 @@ export function createMediaQueueProducer(
     add: (name, data, opts) => get().add(name, data, opts),
     removeIfFinished: async (jobId) => {
       const job = await get().getJob(jobId);
-      if (!job) return false;
+      if (!job) return 'absent';
       const state = await job.getState();
-      if (state !== 'completed' && state !== 'failed') return false;
+      if (state === 'unknown') return 'absent';
+      if (state !== 'completed' && state !== 'failed') return 'live';
       await job.remove();
-      return true;
+      return 'removed';
     },
     close: async () => {
       await queue?.close();

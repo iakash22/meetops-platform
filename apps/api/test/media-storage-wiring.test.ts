@@ -144,7 +144,7 @@ describe('BullMqMediaJobQueue', () => {
   const SUB = '22222222-2222-4222-8222-222222222222';
   it('adds the job on MEDIA_QUEUE with the worker job options and a deterministic, colon-free id', async () => {
     const add = vi.fn(async () => undefined);
-    const q = new BullMqMediaJobQueue({ add });
+    const q = new BullMqMediaJobQueue({ add, removeIfFinished: async () => 'absent' as const });
     const job = {
       kind: 'process_upload' as const,
       organizationId: ORG,
@@ -176,9 +176,9 @@ describe('#302 M-1 requeue + reconciler', () => {
   };
   it('requeue removes only a finished job with the same id, then adds it again', async () => {
     const add = vi.fn(async () => undefined);
-    const removeIfFinished = vi.fn(async () => true);
+    const removeIfFinished = vi.fn(async () => 'removed' as const);
     const q = new BullMqMediaJobQueue({ add, removeIfFinished });
-    await q.requeue(job);
+    expect(await q.requeue(job)).toBe(true);
     expect(removeIfFinished).toHaveBeenCalledWith(`session_${ORG}_${SUB}`);
     expect(add).toHaveBeenCalledWith(
       'process_recording_session',
@@ -227,8 +227,30 @@ describe('#302 M-1 requeue + reconciler', () => {
         consentAttestationId: ok.id,
       },
     ]);
-    await reconcileStaleMedia({ store, consents, jobs, now: () => now, olderThanMs: 60_000 });
+    // #302 L-3: a rerun while the job is live adds nothing and counts nothing.
+    expect(
+      await reconcileStaleMedia({ store, consents, jobs, now: () => now, olderThanMs: 60_000 }),
+    ).toEqual({ organizations: 1, uploads: 0, sessions: 0, skipped: 1 });
     expect(jobs.jobs).toHaveLength(1);
+    // A FAILED/COMPLETED job held under the id is replaced and counted.
+    jobs.finished.add(`process_upload_${ORG}_${SUB}`);
+    expect(
+      (await reconcileStaleMedia({ store, consents, jobs, now: () => now, olderThanMs: 60_000 }))
+        .uploads,
+    ).toBe(1);
+    expect(jobs.finished.size).toBe(0);
+    expect(jobs.jobs).toHaveLength(1);
+  });
+
+  it('#302 L-3: requeue keeps a live job (no add, false) and replaces a finished one', async () => {
+    const add = vi.fn(async () => undefined);
+    const state = { v: 'live' as 'live' | 'removed' | 'absent' };
+    const q = new BullMqMediaJobQueue({ add, removeIfFinished: async () => state.v });
+    expect(await q.requeue(job)).toBe(false);
+    expect(add).not.toHaveBeenCalled();
+    state.v = 'removed';
+    expect(await q.requeue(job)).toBe(true);
+    expect(add).toHaveBeenCalledTimes(1);
   });
 
   it('#303 backfill: unassembled completed sessions are requeued (finished job replaced), no consent skipped', async () => {
@@ -263,7 +285,8 @@ describe('#302 M-1 requeue + reconciler', () => {
     expect(requeue).toHaveBeenCalledWith(legacy);
     expect(jobs.finished.size).toBe(0);
     expect(jobs.jobs).toEqual([legacy]);
-    await run(); // the requeued job is live: still exactly one
+    // the requeued job is live: still exactly one, and nothing counted (#302 L-3)
+    expect((await run()).sessions).toBe(0);
     expect(jobs.jobs).toHaveLength(1);
   });
 });

@@ -32,8 +32,9 @@ export interface ReconcileResult {
 }
 
 /**
- * #302 M-1 reconciler: re-enqueues stale `processing/pending` uploads with their deterministic job id (BullMQ keeps
- * one job per id, so a subject that still has a job is untouched). Subjects without a valid stored consent are
+ * #302 M-1 reconciler: re-queues stale `processing/pending` uploads and unassembled sessions with their deterministic job
+ * id via requeue (#302 L-3: a finished job held under that id is replaced; a pending one is untouched). Counts only
+ * jobs actually added. Subjects without a valid stored consent are
  * skipped (they never get a job). Safe to run repeatedly / concurrently.
  */
 export async function reconcileStaleMedia(d: {
@@ -57,7 +58,7 @@ export async function reconcileStaleMedia(d: {
         out.skipped++;
         continue;
       }
-      await d.jobs.enqueue({
+      const added = await d.jobs.requeue({
         kind: 'process_upload',
         organizationId: org,
         subjectType: 'upload',
@@ -65,7 +66,7 @@ export async function reconcileStaleMedia(d: {
         consentAttestationId: consentId,
         ...(u.meetingId ? { meetingId: u.meetingId } : {}),
       });
-      out.uploads++;
+      if (added) out.uploads++;
     }
     for (const s of (await d.store.unassembledSessions?.(org, before, limit)) ?? []) {
       let consentId: string;
@@ -87,8 +88,7 @@ export async function reconcileStaleMedia(d: {
       };
       // The acked pre-#303 job is kept by removeOnComplete: requeue drops a finished job with the same id, then adds.
       // A job still waiting/active is left alone, so reruns stay at one job per session.
-      await (d.jobs.requeue ? d.jobs.requeue(job) : d.jobs.enqueue(job));
-      out.sessions++;
+      if (await d.jobs.requeue(job)) out.sessions++;
     }
   }
   return out;

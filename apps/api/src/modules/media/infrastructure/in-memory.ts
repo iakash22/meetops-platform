@@ -131,7 +131,9 @@ export class InMemoryMediaJobQueue implements MediaJobQueue {
       const i = this.jobs.findIndex((j) => InMemoryMediaJobQueue.id(j) === id);
       if (i >= 0) this.jobs.splice(i, 1);
     }
-    await this.enqueue(job);
+    if (this.jobs.some((j) => InMemoryMediaJobQueue.id(j) === id)) return false;
+    this.jobs.push(job);
+    return true;
   }
 }
 
