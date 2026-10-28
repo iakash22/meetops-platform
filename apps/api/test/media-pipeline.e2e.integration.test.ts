@@ -3,7 +3,8 @@
  * (file_objects, consent_attestations, recording_sessions) -> durable BullMQ job on MEDIA_QUEUE -> the worker's
  * dispatchMediaJob + processUploadScan with its Prisma scan store. The object store is a fake signer/source holding
  * a few synthetic bytes, so the scan quarantines them (not media) and download stays 404.
- * Skips unless TEST_DATABASE_URL (meetops_app) and TEST_REDIS_URL are set.
+ * Skips unless TEST_DATABASE_URL (meetops_app) and TEST_REDIS_URL are set. Uses fixed mediaWorld emails: run it
+ * against a fresh database (not in the same run as media-storage.prisma.integration.test.ts).
  */
 import { randomBytes } from 'node:crypto';
 import { Readable } from 'node:stream';
@@ -30,7 +31,7 @@ interface WorkerMedia {
   buildUploadScanDeps(p: Record<string, unknown>): unknown;
   createUploadScanStore(o: { client: DatabaseClient }): unknown;
 }
-const workerPath = '../../worker/src/media/index.js';
+const workerPath = new URL('../../worker/src/media/index.ts', import.meta.url).href;
 
 describe.skipIf(!url || !redisUrl)('media pipeline e2e (Prisma + BullMQ + worker, live)', () => {
   const prefix = `it-media-${randomBytes(4).toString('hex')}`;
@@ -134,7 +135,7 @@ describe.skipIf(!url || !redisUrl)('media pipeline e2e (Prisma + BullMQ + worker
     expect(row?.totalBytes).toBe(1000);
     signer.put(row!.chunks.get(0)!.key, 1000);
     const done = await w.member.post(`/recording-sessions/${sid}/complete`, { chunkCount: 1, durationMs: 1000 });
-    expect(done.statusCode).toBe(200);
+    expect(done.statusCode).toBe(202);
     expect((await media.sessions.findById(w.org, sid))?.status).toBe('completed');
     expect(await media.sessions.findById(w.otherOrg, sid)).toBeNull();
 
