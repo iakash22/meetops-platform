@@ -95,7 +95,13 @@ export interface MediaProcessingJob {
 }
 
 export interface MediaJobQueue {
+  /** Idempotent per subject: a job with the same deterministic id that still exists (any state) is kept. */
   enqueue(job: MediaProcessingJob): Promise<void>;
+  /**
+   * Backfill/reconciler only: like enqueue, but a FINISHED job with the same id (completed or failed, still kept by
+   * removeOnComplete/removeOnFail) is removed first so the subject runs again. Waiting/active jobs are kept.
+   */
+  requeue?(job: MediaProcessingJob): Promise<void>;
 }
 
 export class UploadNotFoundError extends DomainError {

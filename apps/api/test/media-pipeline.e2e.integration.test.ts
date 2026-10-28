@@ -3,10 +3,10 @@
  * (file_objects, consent_attestations, recording_sessions) -> durable BullMQ job on MEDIA_QUEUE -> the worker's
  * dispatchMediaJob + processUploadScan / processSessionAssembly with their Prisma stores. The object store is a fake signer/source holding
  * a few synthetic bytes, so the scan quarantines them (not media) and download stays 404.
- * Skips unless TEST_DATABASE_URL (meetops_app) and TEST_REDIS_URL are set. Uses fixed mediaWorld emails: run it
- * against a fresh database (not in the same run as media-storage.prisma.integration.test.ts).
+ * Skips unless TEST_DATABASE_URL (meetops_app) and TEST_REDIS_URL are set. Per-run emails (#302 L-2): can share a database
+ * with the other live suites.
  */
-import { createHash, randomBytes } from 'node:crypto';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { Readable } from 'node:stream';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { Queue, QueueEvents, Worker, type Job } from 'bullmq';
@@ -67,7 +67,7 @@ describe.skipIf(!url || !redisUrl)('media pipeline e2e (Prisma + BullMQ + worker
       undefined,
       { signer, jobs: new BullMqMediaJobQueue({ add: (n, d, o) => queue.add(n, d, o) }) },
     );
-    w = await mediaWorld({ db, media });
+    w = await mediaWorld({ db, media }, randomUUID().slice(0, 8));
     const wm = (await import(workerPath)) as WorkerMedia;
     const storage = {
       headUploadSource: async () => ({ sizeBytes: DUMMY.length }),

@@ -29,6 +29,7 @@ import type {
   RecordingSessionStatus,
   ReserveChunkResult,
 } from '../domain/recording-session.js';
+import type { StaleMediaStore, StaleMediaSubject } from '../application/reconcile.js';
 
 const fileSelect = {
   id: true,
@@ -462,6 +463,42 @@ export class PrismaRecordingSessionRepository implements RecordingSessionReposit
         });
         return true;
       },
+      { client: this.client },
+    );
+  }
+}
+
+/**
+ * Reconciler discovery. organizations has no RLS (ids only); every subject query runs under
+ * withOrganizationContext(org), so forced RLS still scopes it.
+ */
+export class PrismaStaleMediaStore implements StaleMediaStore {
+  constructor(private readonly client: DatabaseClient) {}
+
+  async organizationIds(): Promise<string[]> {
+    const rows = await this.client.organization.findMany({ select: { id: true }, orderBy: { id: 'asc' } });
+    return rows.map((r) => r.id);
+  }
+
+  async staleUploads(organizationId: string, before: Date, limit: number): Promise<StaleMediaSubject[]> {
+    return withOrganizationContext(
+      organizationId,
+      (tx) =>
+        tx.fileObject.findMany({
+          where: {
+            organizationId,
+            kind: 'raw',
+            status: 'processing',
+            scanStatus: 'pending',
+            deletedAt: null,
+            updatedAt: { lt: before },
+            // Upload sources only (organizations/{org}/uploads/{id}/source).
+            key: { startsWith: `organizations/${organizationId}/uploads/` },
+          },
+          select: { id: true, meetingId: true },
+          orderBy: { updatedAt: 'asc' },
+          take: limit,
+        }),
       { client: this.client },
     );
   }

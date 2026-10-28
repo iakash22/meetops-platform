@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { Value } from '@sinclair/typebox/value';
 import {
   ChunkUploadUrlResponse,
@@ -165,11 +165,28 @@ describe('recording sessions', () => {
         meetingId: w.meetingId,
       }),
     ]);
+    // #302 M-1: a replay of an already-completed session re-enqueues idempotently (still one job).
     expect((await complete(w, w.member, id, { chunkCount: 3, durationMs: 1 })).statusCode).toBe(
-      409,
+      202,
     );
     expect((await w.chunk(w.member, id, 3)).statusCode).toBe(409);
     expect(w.jobs.jobs).toHaveLength(1);
+  });
+
+  it('#302 M-1: enqueue fails after finish() -> 500; a retried complete recovers with one job', async () => {
+    const w = await setup();
+    const id = await w.start();
+    await w.chunk(w.member, id, 0);
+    w.upload(id, 0);
+    const spy = vi.spyOn(w.jobs, 'enqueue').mockRejectedValueOnce(new Error('redis down'));
+    expect((await complete(w, w.member, id, { chunkCount: 1, durationMs: 5 })).statusCode).toBe(500);
+    expect(w.repo.rows.get(id)!.status).toBe('completed');
+    expect(w.jobs.jobs).toHaveLength(0);
+    expect((await complete(w, w.member, id, { chunkCount: 1, durationMs: 5 })).statusCode).toBe(202);
+    expect(w.jobs.jobs).toEqual([
+      expect.objectContaining({ kind: 'process_recording_session', subjectId: id }),
+    ]);
+    spy.mockRestore();
   });
 
   it('complete 409 when a stored chunk checksum is missing, multipart or different (review B 4.2)', async () => {

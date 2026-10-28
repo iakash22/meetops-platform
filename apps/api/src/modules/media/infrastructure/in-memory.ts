@@ -112,10 +112,25 @@ export class FakeMediaSigner implements MediaSigner {
   }
 }
 
+/** Mirrors BullMQ's deterministic-id dedupe: one job per (kind, org, subject). */
 export class InMemoryMediaJobQueue implements MediaJobQueue {
   readonly jobs: MediaProcessingJob[] = [];
+  /** Ids treated as finished (tests): requeue replaces them. */
+  readonly finished = new Set<string>();
+  private static id(j: MediaProcessingJob) {
+    return `${j.kind}_${j.organizationId}_${j.subjectId}`;
+  }
   async enqueue(job: MediaProcessingJob) {
+    if (this.jobs.some((j) => InMemoryMediaJobQueue.id(j) === InMemoryMediaJobQueue.id(job))) return;
     this.jobs.push(job);
+  }
+  async requeue(job: MediaProcessingJob) {
+    const id = InMemoryMediaJobQueue.id(job);
+    if (this.finished.delete(id)) {
+      const i = this.jobs.findIndex((j) => InMemoryMediaJobQueue.id(j) === id);
+      if (i >= 0) this.jobs.splice(i, 1);
+    }
+    await this.enqueue(job);
   }
 }
 

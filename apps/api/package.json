@@ -10,7 +10,8 @@
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc -p tsconfig.test.json --noEmit",
     "lint": "eslint .",
-    "test": "vitest run"
+    "test": "vitest run",
+    "media:reconcile": "node dist/scripts/reconcile-media-jobs.js"
   },
   "dependencies": {
     "@casl/ability": "^6.7.1",
