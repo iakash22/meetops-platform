@@ -392,7 +392,11 @@ export function RecordingScreen({
                       size="sm"
                       variant="ghost"
                       aria-label={`Delete recording of ${i.meetingTitle}`}
-                      onClick={() => void queue.discard(i.id)}
+                      onClick={() =>
+                        void queue
+                          .discard(i.id)
+                          .catch((e: unknown) => setToast((e as Error).message))
+                      }
                     >
                       <Trash2 aria-hidden />
                     </Button>

@@ -40,9 +40,8 @@ export function describeUploadError(e: unknown): string {
       return 'The consent notice has changed. Review it and confirm again.';
     if (e.reason === 'CONSENT_INVALID')
       return "Consent couldn't be verified. Check your device clock and try again.";
-    // Size caps: 413 PAYLOAD_TOO_LARGE (contracts 0.5.0); the uploads API returns 409 for the
-    // recording running total until it adopts 413, so both map to the same copy.
-    if (e.code === 'PAYLOAD_TOO_LARGE' || e.status === 413 || e.status === 409)
+    // Size caps: 413 PAYLOAD_TOO_LARGE (contracts 0.5.0). A 409 is a real conflict and uses the generic mapping.
+    if (e.code === 'PAYLOAD_TOO_LARGE' || e.status === 413)
       return 'This recording would exceed the 1.4 GB total. Upload a smaller file.';
     if (e.status === 400) return 'The file is larger than 1.4 GB or not a supported type.';
   }
