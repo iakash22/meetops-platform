@@ -1,12 +1,28 @@
-import type { ConsentSubjectType, FileObjectScanStatus } from '@meetops/contracts';
+import type {
+  AbortReason,
+  ConsentSubjectType,
+  FileObjectScanStatus,
+  RecordingSource,
+} from '@meetops/contracts';
 import { sha256Base64ToHex, sha256HexToBase64 } from '@meetops/storage';
-import { withOrganizationContext, type DatabaseClient } from '../../../shared/prisma/context.js';
+import {
+  withOrganizationContext,
+  type DatabaseClient,
+  type DatabaseTransaction,
+} from '../../../shared/prisma/context.js';
 import type { ConsentRecord, ConsentRepository } from '../domain/consent.js';
 import type {
   FileObjectRecord,
   FileObjectRepository,
   FileObjectStatus,
 } from '../domain/ports.js';
+import type {
+  RecordingChunkRecord,
+  RecordingSessionRecord,
+  RecordingSessionRepository,
+  RecordingSessionStatus,
+  ReserveChunkResult,
+} from '../domain/recording-session.js';
 
 const fileSelect = {
   id: true,
@@ -181,5 +197,224 @@ export class PrismaConsentRepository implements ConsentRepository {
       { client: this.client },
     );
     return (row) ?? null;
+  }
+}
+
+const sessionSelect = {
+  id: true,
+  organizationId: true,
+  meetingId: true,
+  createdById: true,
+  mimeType: true,
+  source: true,
+  startedAt: true,
+  status: true,
+  totalBytes: true,
+  chunkCount: true,
+  durationMs: true,
+  abortReason: true,
+  createdAt: true,
+  chunks: { select: { seq: true, sizeBytes: true, sha256: true, storageKey: true } },
+} as const;
+
+interface SessionRow {
+  id: string;
+  organizationId: string;
+  meetingId: string;
+  createdById: string | null;
+  mimeType: string;
+  source: string;
+  startedAt: Date;
+  status: string;
+  totalBytes: bigint;
+  chunkCount: number | null;
+  durationMs: number | null;
+  abortReason: string | null;
+  createdAt: Date;
+  chunks: { seq: number; sizeBytes: number; sha256: string | null; storageKey: string }[];
+}
+
+function toSessionRecord(r: SessionRow): RecordingSessionRecord {
+  return {
+    id: r.id,
+    organizationId: r.organizationId,
+    meetingId: r.meetingId,
+    createdById: r.createdById ?? '',
+    mimeType: r.mimeType,
+    source: r.source as RecordingSource,
+    startedAt: r.startedAt,
+    status: r.status as RecordingSessionStatus,
+    totalBytes: Number(r.totalBytes),
+    chunks: new Map(
+      r.chunks.map((c) => [
+        c.seq,
+        { seq: c.seq, sizeBytes: c.sizeBytes, sha256Hex: c.sha256 ?? '', key: c.storageKey },
+      ]),
+    ),
+    chunkCount: r.chunkCount,
+    durationMs: r.durationMs,
+    abortReason: r.abortReason as AbortReason | null,
+    createdAt: r.createdAt,
+  };
+}
+
+/** Session source object key (assembled by the worker from the chunks; tracked as the recording's FileObject). */
+export const sessionSourceKey = (organizationId: string, sessionId: string) =>
+  `organizations/${organizationId}/recording-sessions/${sessionId}/source`;
+
+/**
+ * recording_sessions + recording_session_chunks (forced RLS). reserveChunk/finish lock the session row (FOR UPDATE)
+ * so concurrent chunk signatures keep total_bytes exact and a session finishes once.
+ */
+export class PrismaRecordingSessionRepository implements RecordingSessionRepository {
+  constructor(
+    private readonly client: DatabaseClient,
+    private readonly bucket: string,
+    private readonly provider: string,
+  ) {}
+
+  async create(r: RecordingSessionRecord): Promise<void> {
+    await withOrganizationContext(
+      r.organizationId,
+      (tx) =>
+        tx.recordingSession.create({
+          data: {
+            id: r.id,
+            organizationId: r.organizationId,
+            meetingId: r.meetingId,
+            createdById: r.createdById,
+            mimeType: r.mimeType,
+            source: r.source,
+            status: r.status,
+            startedAt: r.startedAt,
+            totalBytes: BigInt(r.totalBytes),
+            createdAt: r.createdAt,
+          },
+          select: { id: true },
+        }),
+      { client: this.client, userId: r.createdById },
+    );
+  }
+
+  async findById(organizationId: string, id: string): Promise<RecordingSessionRecord | null> {
+    const row = await withOrganizationContext(
+      organizationId,
+      (tx) =>
+        tx.recordingSession.findFirst({ where: { organizationId, id }, select: sessionSelect }),
+      { client: this.client },
+    );
+    return row ? toSessionRecord(row) : null;
+  }
+
+  private static async lock(tx: DatabaseTransaction, organizationId: string, id: string) {
+    const rows = await tx.$queryRaw<{ status: string; total_bytes: bigint }[]>`
+      SELECT status::text AS status, total_bytes FROM recording_sessions
+      WHERE org_id = ${organizationId}::uuid AND id = ${id}::uuid FOR UPDATE`;
+    return rows[0] ?? null;
+  }
+
+  async reserveChunk(
+    organizationId: string,
+    id: string,
+    chunk: RecordingChunkRecord,
+    maxTotalBytes: number,
+  ): Promise<ReserveChunkResult> {
+    return withOrganizationContext(
+      organizationId,
+      async (tx) => {
+        const s = await PrismaRecordingSessionRepository.lock(tx, organizationId, id);
+        if (s?.status !== 'uploading') return 'not_uploading';
+        const prev = await tx.recordingSessionChunk.findFirst({
+          where: { organizationId, sessionId: id, seq: chunk.seq },
+          select: { sizeBytes: true },
+        });
+        const total = Number(s.total_bytes) - (prev?.sizeBytes ?? 0) + chunk.sizeBytes;
+        if (total > maxTotalBytes) return 'over_limit';
+        await tx.recordingSessionChunk.upsert({
+          where: { sessionId_seq: { sessionId: id, seq: chunk.seq } },
+          create: {
+            organizationId,
+            sessionId: id,
+            seq: chunk.seq,
+            sizeBytes: chunk.sizeBytes,
+            sha256: chunk.sha256Hex,
+            storageKey: chunk.key,
+          },
+          update: { sizeBytes: chunk.sizeBytes, sha256: chunk.sha256Hex, uploadedAt: null },
+          select: { id: true },
+        });
+        await tx.recordingSession.updateMany({
+          where: { organizationId, id },
+          data: { totalBytes: BigInt(total) },
+        });
+        return 'ok';
+      },
+      { client: this.client },
+    );
+  }
+
+  async finish(
+    organizationId: string,
+    id: string,
+    next:
+      | { status: 'completed'; chunkCount: number; durationMs: number }
+      | { status: 'aborted'; abortReason: AbortReason },
+  ): Promise<boolean> {
+    return withOrganizationContext(
+      organizationId,
+      async (tx) => {
+        const s = await PrismaRecordingSessionRepository.lock(tx, organizationId, id);
+        if (s?.status !== 'uploading') return false;
+        const now = new Date();
+        if (next.status === 'aborted') {
+          await tx.recordingSession.updateMany({
+            where: { organizationId, id },
+            data: { status: 'aborted', abortReason: next.abortReason, abortedAt: now },
+          });
+          return true;
+        }
+        const row = await tx.recordingSession.findFirstOrThrow({
+          where: { organizationId, id },
+          select: { meetingId: true, mimeType: true, createdById: true },
+        });
+        const file = await tx.fileObject.create({
+          data: {
+            organizationId,
+            meetingId: row.meetingId,
+            uploadedById: row.createdById,
+            kind: 'raw',
+            status: 'uploaded',
+            provider: this.provider,
+            bucket: this.bucket,
+            key: sessionSourceKey(organizationId, id),
+            mimeType: row.mimeType,
+            sizeBytes: s.total_bytes,
+          },
+          select: { id: true },
+        });
+        const rec = await tx.recording.create({
+          data: {
+            organizationId,
+            meetingId: row.meetingId,
+            fileObjectId: file.id,
+            durationMs: next.durationMs,
+            status: 'uploaded',
+          },
+          select: { id: true },
+        });
+        await tx.recordingSession.updateMany({
+          where: { organizationId, id },
+          data: {
+            status: 'completed',
+            chunkCount: next.chunkCount,
+            durationMs: next.durationMs,
+            recordingId: rec.id,
+            completedAt: now,
+          },
+        });
+        return true;
+      },
+      { client: this.client },
+    );
   }
 }
