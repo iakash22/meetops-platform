@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Fix (M-1b): a failed tombstone write is no longer swallowed. Discard throws, the UI shows a toast, and the item is held in memory (no upload) while the tombstone is retried every pass. The discard is also recorded first in a localStorage ledger (ids only) and, for your own recording, as an awaited discarded metadata state. At startup, anything marked discarded in any of these is only deleted.
+- Fix (M-2): once the server upload completes, an `uploaded` ledger mark and an awaited `done` metadata write land before saves stop and the delete runs. Queued saves now always finish in order. At startup, a `done` recording is only deleted, never uploaded again. A stress test covers this (x10).
+- Security (L-4): each recording is pinned in Rust to its first owner (`owners/<id>`). Chunk ops from a different session owner get FORBIDDEN, so a recording can't be split across folders.
+- Security (L-5): only the pinned owner can clear a tombstone, and only after its chunks are gone. A foreign delete gets FORBIDDEN and changes nothing.
 - Fix (M-1, consent): discards are durable. A device-wide tombstone (`chunk_tombstone`) is written before any delete is attempted, and Rust refuses chunk and metadata writes for a tombstoned recording. At startup, tombstoned recordings are only deleted and never re-queued. This covers two cases: a delete that failed before a restart, and one account discarding another account's recording.
 - Security (N-1): the chunk-store owner is derived in Rust from the authenticated session (`AuthState::owner`), and chunk commands no longer accept an `owner` from the webview. Account dir names are now an HMAC keyed from the device key (`chunk-owner.v2`).
 - Fix (N-2): local-delete retries back off and are capped at 8 per launch. The tombstone retries on the next launch.

@@ -46,6 +46,54 @@ export interface QueueItem {
   pendingDelete?: boolean;
   /** Failed local-delete attempts this launch (bounded with backoff; a durable tombstone retries next launch). */
   deleteAttempts?: number;
+  /** True once the device-wide discard tombstone is durable; until then the item is held and the write retried. */
+  tombstoned?: boolean;
+}
+
+export type LedgerMark = 'discarded' | 'uploaded';
+
+/**
+ * Small durable record of recording ids that must never upload again (discarded) or again (server upload complete).
+ * Independent of the chunk store and of which account is signed in, so it holds even when a store write fails.
+ * Ids only (random UUIDs); no recording data.
+ */
+export interface RecordingLedger {
+  /** Throws when it can't be saved. */
+  mark: (id: string, kind: LedgerMark) => void;
+  get: (id: string) => LedgerMark | null;
+  clear: (id: string) => void;
+}
+
+export function createMemoryLedger(): RecordingLedger {
+  const m = new Map<string, LedgerMark>();
+  return {
+    mark: (id, k) => void m.set(id, k),
+    get: (id) => m.get(id) ?? null,
+    clear: (id) => void m.delete(id),
+  };
+}
+
+/** localStorage-backed ledger for the desktop webview. */
+export function createLocalLedger(
+  storage: Storage,
+  key = 'meetops.recording-ledger.v1',
+): RecordingLedger {
+  const read = (): Record<string, LedgerMark> => {
+    try {
+      return JSON.parse(storage.getItem(key) ?? '{}') as Record<string, LedgerMark>;
+    } catch {
+      return {};
+    }
+  };
+  return {
+    mark: (id, k) => storage.setItem(key, JSON.stringify({ ...read(), [id]: k })),
+    get: (id) => read()[id] ?? null,
+    clear: (id) => {
+      const all = read();
+      delete all[id];
+      storage.setItem(key, JSON.stringify(all));
+    },
+  };
 }
 
 export interface StoredRecording {
@@ -86,6 +134,8 @@ export interface QueueContext {
   isOnline: () => boolean;
   /** Current signed-in user and org; null when signed out. */
   identity: () => { userId: string; organizationId: string } | null;
+  /** Durable discard/upload marks (default: in memory). */
+  ledger?: RecordingLedger;
 }
 
 export const RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
@@ -131,6 +181,7 @@ export function createUploadQueue(
   ctx: QueueContext,
   now: () => number = Date.now,
 ): UploadQueue {
+  const ledger = ctx.ledger ?? createMemoryLedger();
   let items: QueueItem[] = [];
   let running: Promise<void> | null = null;
   const hydrated = new Set<string>();
@@ -140,24 +191,26 @@ export function createUploadQueue(
     listeners.forEach((l) => l());
   };
   const get = (id: string) => items.find((i) => i.id === id);
-  // Metadata writes are serialized per recording (each waits for the previous, so the newest state lands last) and
-  // stop for good once a delete starts, so a late write can't recreate the folder (N-3). Best effort: a failed write
-  // only loses restart-resume for that item, never the upload.
+  // Metadata writes are serialized per recording, so the newest state always lands last. `finalize` stops new
+  // writes, lets queued ones finish, then writes and awaits the final state ('done' or discarded) before any delete,
+  // so a late write can't recreate the folder and an older state can't win (N-3, M-2).
   const saving = new Map<string, Promise<void>>();
   const closed = new Set<string>();
   const persist = (item: QueueItem | undefined) => {
     if (!item || item.pendingDelete || closed.has(item.id)) return;
     const json = JSON.stringify(item);
     const next = (saving.get(item.id) ?? Promise.resolve()).then(() =>
-      closed.has(item.id) ? undefined : chunks.saveMeta(item.id, json).catch(() => undefined),
+      chunks.saveMeta(item.id, json).catch(() => undefined),
     );
     saving.set(item.id, next);
   };
-  const flushed = async (id: string) => {
+  async function finalize(id: string, final?: QueueItem) {
+    if (closed.has(id)) return;
     closed.add(id);
     await saving.get(id);
     saving.delete(id);
-  };
+    if (final) await chunks.saveMeta(id, JSON.stringify(final)).catch(() => undefined);
+  }
   const patch = (id: string, p: Partial<QueueItem>) => {
     set(items.map((i) => (i.id === id ? { ...i, ...p } : i)));
     persist(get(id));
@@ -165,17 +218,46 @@ export function createUploadQueue(
   const drop = (id: string) => set(items.filter((i) => i.id !== id));
 
   async function deleteVerified(id: string) {
-    await flushed(id);
+    await finalize(id);
     await chunks.remove(id);
     if (await chunks.exists(id)) throw new Error('Local copy still present after delete.');
     drop(id);
+    try {
+      ledger.clear(id);
+    } catch {
+      // A stale mark only forces delete-only handling for an id that no longer exists.
+    }
   }
 
-  /** Mark discarded in memory and durably (tombstone) before any delete, so it can never upload again (M-1). */
-  async function markDiscarded(id: string) {
+  const NOT_DURABLE = "Couldn't save the discard yet. It won't upload; retrying.";
+
+  async function writeTombstone(id: string): Promise<boolean> {
+    try {
+      await chunks.tombstone(id);
+      set(items.map((i) => (i.id === id ? { ...i, tombstoned: true } : i)));
+      return true;
+    } catch {
+      set(items.map((i) => (i.id === id ? { ...i, lastError: NOT_DURABLE } : i)));
+      return false;
+    }
+  }
+
+  /**
+   * Blocks the recording in memory at once, then records the discard durably before any delete (M-1, M-1b): the
+   * ledger mark, a discarded metadata state (own account), and the device-wide tombstone. A failed tombstone is
+   * reported (returns false), the item stays blocked, and the tombstone is retried every pass.
+   */
+  async function markDiscarded(id: string): Promise<boolean> {
+    const item = get(id);
+    if (!item) return true;
     set(items.map((i) => (i.id === id ? { ...i, pendingDelete: true } : i)));
-    await flushed(id);
-    await chunks.tombstone(id).catch(() => undefined);
+    try {
+      ledger.mark(id, 'discarded');
+    } catch {
+      // Still covered by the tombstone/metadata below; a full failure is reported.
+    }
+    if (owns(item)) await finalize(id, { ...item, pendingDelete: true });
+    return writeTombstone(id);
   }
 
   /** Delete now, or keep the record flagged and retry with backoff, up to MAX_ATTEMPTS per launch (L-3, N-2). */
@@ -195,9 +277,11 @@ export function createUploadQueue(
             nextAttemptAt:
               t + Math.min(MAX_BACKOFF_MS, BASE_BACKOFF_MS * 2 ** (deleteAttempts - 1)),
             lastError:
-              deleteAttempts >= MAX_ATTEMPTS
-                ? "Couldn't remove the local copy. It will be retried next launch."
-                : "Couldn't remove the local copy. Retrying.",
+              i.lastError === NOT_DURABLE
+                ? NOT_DURABLE
+                : deleteAttempts >= MAX_ATTEMPTS
+                  ? "Couldn't remove the local copy. It will be retried next launch."
+                  : "Couldn't remove the local copy. Retrying.",
           };
         }),
       );
@@ -210,7 +294,7 @@ export function createUploadQueue(
     const known = new Set(items.map((i) => i.id));
     for (const { id, discarded } of await chunks.list()) {
       if (known.has(id)) continue;
-      if (discarded) {
+      if (discarded || ledger.get(id) === 'discarded') {
         // Discarded or expired earlier (maybe by another account): delete only. A failure leaves the tombstone,
         // so the next launch tries again; it is never re-queued.
         await chunks.remove(id).catch(() => undefined);
@@ -222,6 +306,11 @@ export function createUploadQueue(
         item = raw ? (JSON.parse(raw) as QueueItem) : null;
       } catch {
         item = null;
+      }
+      if (item?.pendingDelete || item?.state === 'done' || ledger.get(id)) {
+        // Discarded, or its server upload already completed: delete only, never upload again (M-1b, M-2).
+        await chunks.remove(id).catch(() => undefined);
+        continue;
       }
       if (!item || item.id !== id || !Array.isArray(item.chunks)) {
         // No usable metadata (quit mid-recording or corrupt): it can never be uploaded, so don't keep it.
@@ -262,7 +351,16 @@ export function createUploadQueue(
       chunks: item.chunks,
       durationMs: item.durationMs,
     });
+    // Server upload is complete: record that durably (ledger + awaited 'done' metadata) before stopping saves and
+    // deleting, so a restart after a failed delete never uploads it again (M-2).
+    try {
+      ledger.mark(item.id, 'uploaded');
+    } catch {
+      // The awaited 'done' metadata below still covers it.
+    }
     patch(item.id, { state: 'done' });
+    const final = get(item.id);
+    await finalize(item.id, final ? { ...final, state: 'done' } : undefined);
     await deleteVerified(item.id);
   }
 
@@ -277,6 +375,7 @@ export function createUploadQueue(
     const t = now();
     // Local deletes and retention need only the owning account (the store is namespaced per account), not network.
     for (const item of [...items]) {
+      if (item.pendingDelete && !item.tombstoned) await writeTombstone(item.id);
       if (!owns(item)) continue;
       if (item.pendingDelete) {
         if (item.nextAttemptAt <= t && (item.deleteAttempts ?? 0) < MAX_ATTEMPTS)
@@ -342,11 +441,12 @@ export function createUploadQueue(
       const item = get(id);
       if (!item) return;
       // Durable first: the tombstone is device-wide, so it holds even for another account's recording.
-      await markDiscarded(id);
+      const durable = await markDiscarded(id);
       if (item.sessionId && item.state !== 'done')
         await api.abort(item.sessionId, 'user_stopped').catch(() => undefined);
       // Another account's store namespace isn't addressable now; its tombstone makes it delete-only at its next sign-in.
       if (owns(item)) await deleteOrFlag(id);
+      if (!durable && get(id)) throw new Error(NOT_DURABLE);
     },
     items: () => items,
     subscribe(l) {
@@ -382,6 +482,7 @@ export function createMemoryChunkStore(): ChunkStore {
         .filter((id) => meta.has(id))
         .map((id) => ({ id, discarded: tombs.has(id) })),
     tombstone: async (id) => void tombs.add(id),
+
     saveMeta: async (id, m) => {
       if (!tombs.has(id)) meta.set(id, m);
     },

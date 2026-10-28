@@ -111,14 +111,49 @@ impl ChunkStore {
 
     /// Account dir: first 32 hex chars of HMAC-SHA256(device-derived key, owner), so dir names can't be linked to
     /// known account ids without the device key.
-    fn owner_root(&self, owner: &str) -> CmdResult<PathBuf> {
+    fn owner_name(&self, owner: &str) -> CmdResult<String> {
         if owner.is_empty() || owner.len() > 512 {
             return Err(CmdError::validation("Invalid recording owner."));
         }
         let key = self.owner_key.as_ref().ok_or_else(key_unavailable)?;
         let mac = hmac_sha256(key, format!("meetops.chunk-owner.v2:{owner}").as_bytes());
-        let name: String = mac.iter().take(16).map(|b| format!("{b:02x}")).collect();
-        Ok(self.dir.join(name))
+        Ok(mac.iter().take(16).map(|b| format!("{b:02x}")).collect())
+    }
+
+    fn owner_root(&self, owner: &str) -> CmdResult<PathBuf> {
+        Ok(self.dir.join(self.owner_name(owner)?))
+    }
+
+    /// Device-wide pin `owners/<session>` = the owner dir name fixed at the recording's first write (L-4).
+    fn pin_path(&self, session: &str) -> CmdResult<PathBuf> {
+        Ok(self.dir.join("owners").join(safe_id(session)?))
+    }
+
+    fn pinned(&self, session: &str) -> CmdResult<Option<String>> {
+        match fs::read_to_string(self.pin_path(session)?) {
+            Ok(v) => Ok(Some(v)),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(_) => Err(CmdError::internal()),
+        }
+    }
+
+    /// Rejects any op on a recording pinned to a different owner (e.g. the session's org changed mid-recording), so a
+    /// recording is never split across account folders. `create` pins an unpinned recording to `owner`.
+    fn check_owner(&self, owner: &str, session: &str, create: bool) -> CmdResult<()> {
+        let name = self.owner_name(owner)?;
+        match self.pinned(session)? {
+            Some(p) if p == name => Ok(()),
+            Some(_) => Err(CmdError::new(
+                "FORBIDDEN",
+                "This recording belongs to another account.",
+            )),
+            None if create => {
+                let pin = self.pin_path(session)?;
+                fs::create_dir_all(pin.parent().unwrap()).map_err(|_| CmdError::internal())?;
+                fs::write(pin, name).map_err(|_| CmdError::internal())
+            }
+            None => Ok(()),
+        }
     }
 
     /// Device-wide tombstones (no account in the name), so a discard by any account is durable even when the
@@ -128,6 +163,7 @@ impl ChunkStore {
     }
 
     /// Marks a recording as discarded before any delete is attempted; it will never be re-queued.
+    /// Errors are returned, never swallowed, so the caller can keep the recording blocked and retry.
     pub fn tombstone(&self, session: &str) -> CmdResult<()> {
         let path = self.tombstone_path(session)?;
         fs::create_dir_all(path.parent().unwrap()).map_err(|_| CmdError::internal())?;
@@ -157,6 +193,7 @@ impl ChunkStore {
         if self.is_tombstoned(session)? {
             return Err(CmdError::validation("That recording was discarded."));
         }
+        self.check_owner(owner, session, true)?;
         let path = self.path(owner, session, index)?;
         let mut nonce = [0u8; 12];
         OsRng.fill_bytes(&mut nonce);
@@ -179,6 +216,7 @@ impl ChunkStore {
     }
 
     pub fn get(&self, owner: &str, session: &str, index: u32) -> CmdResult<Vec<u8>> {
+        self.check_owner(owner, session, false)?;
         let raw = fs::read(self.path(owner, session, index)?)
             .map_err(|_| CmdError::new("NOT_FOUND", "That recording chunk is missing."))?;
         if raw.len() < 12 {
@@ -196,20 +234,27 @@ impl ChunkStore {
             .map_err(|_| CmdError::new("INTERNAL", "A recording chunk failed its integrity check."))
     }
 
+    /// Deletes this owner's copy. The tombstone and pin are cleared only by the pinned owner and only after the
+    /// chunks are gone (L-5); another owner gets FORBIDDEN and changes nothing.
     pub fn delete_session(&self, owner: &str, session: &str) -> CmdResult<()> {
+        self.check_owner(owner, session, false)?;
         let dir = self.session_dir(owner, session)?;
         if dir.exists() {
-            fs::remove_dir_all(dir).map_err(|_| CmdError::internal())?;
+            fs::remove_dir_all(&dir).map_err(|_| CmdError::internal())?;
+        }
+        if dir.exists() || self.pinned(session)?.is_none() {
+            return Ok(());
         }
         let tomb = self.tombstone_path(session)?;
         if tomb.exists() {
             fs::remove_file(tomb).map_err(|_| CmdError::internal())?;
         }
-        Ok(())
+        fs::remove_file(self.pin_path(session)?).map_err(|_| CmdError::internal())
     }
 
     /// True while any file of the session is still on disk (from this or an earlier launch).
     pub fn exists(&self, owner: &str, session: &str) -> CmdResult<bool> {
+        self.check_owner(owner, session, false)?;
         Ok(self.session_dir(owner, session)?.exists())
     }
 
@@ -336,6 +381,46 @@ mod tests {
     }
 
     #[test]
+    fn recordings_are_pinned_to_their_first_owner() {
+        let (s, dir) = store();
+        s.put(O, "a", 0, b"x").unwrap();
+        // Session owner changed mid-recording: every op is refused, nothing lands in the other folder.
+        assert_eq!(s.put("u1:o2", "a", 1, b"y").unwrap_err().code, "FORBIDDEN");
+        assert_eq!(s.get("u1:o2", "a", 0).unwrap_err().code, "FORBIDDEN");
+        assert_eq!(s.exists("u1:o2", "a").unwrap_err().code, "FORBIDDEN");
+        assert!(s.list("u1:o2").unwrap().is_empty());
+        assert_eq!(s.get(O, "a", 0).unwrap(), b"x");
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn only_the_pinned_owner_clears_a_tombstone_after_its_chunks_are_gone() {
+        let (s, dir) = store();
+        s.put(O, "r", 0, b"x").unwrap();
+        s.tombstone("r").unwrap();
+        assert_eq!(
+            s.delete_session("other:o", "r").unwrap_err().code,
+            "FORBIDDEN"
+        );
+        assert!(s.is_tombstoned("r").unwrap());
+        assert!(s.list(O).unwrap()[0].discarded);
+        s.delete_session(O, "r").unwrap();
+        assert!(!s.is_tombstoned("r").unwrap());
+        assert!(s.pinned("r").unwrap().is_none());
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn tombstone_write_failure_is_reported() {
+        let (s, dir) = store();
+        fs::create_dir_all(&dir).unwrap();
+        // Stand-in for a read-only `discarded/` dir (works as root too): a file where the dir should be.
+        fs::write(dir.join("discarded"), b"").unwrap();
+        assert_eq!(s.tombstone("r").unwrap_err().code, "INTERNAL");
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
     fn owner_dirs_are_keyed_by_the_device_key() {
         let (s, dir) = store();
         let other = ChunkStore::new(&dir, &[7u8; 32]);
@@ -348,9 +433,9 @@ mod tests {
     fn chunks_are_bound_to_their_owner() {
         let (s, dir) = store();
         s.put(O, "a", 0, b"secret").unwrap();
-        assert!(!s.exists("u2:o1", "a").unwrap());
+        assert_eq!(s.exists("u2:o1", "a").unwrap_err().code, "FORBIDDEN");
         assert!(s.list("u2:o1").unwrap().is_empty());
-        assert_eq!(s.get("u2:o1", "a", 0).unwrap_err().code, "NOT_FOUND");
+        assert_eq!(s.get("u2:o1", "a", 0).unwrap_err().code, "FORBIDDEN");
         // Copying the ciphertext into another owner's dir still fails (owner is in the AAD).
         let other = s.path("u2:o1", "a", 0).unwrap();
         fs::create_dir_all(other.parent().unwrap()).unwrap();

@@ -2,9 +2,12 @@ import { describe, expect, it } from 'vitest';
 
 import { createNativeChunkStore } from '@/features/recording/native-chunk-store';
 import { createNativeUploadApi, type Invoke } from '@/features/recording/native-upload-api';
+import { META_INDEX } from '@/features/recording/native-chunk-store';
 import {
   RETENTION_MS,
+  createMemoryLedger,
   createUploadQueue,
+  type RecordingLedger,
   type NewRecording,
   type QueueContext,
 } from '@/features/recording/upload-queue';
@@ -16,12 +19,13 @@ const rustError = (code: string) => Object.assign(new Error(code), { code });
  * Fake Tauri backend sharing one "disk" across store/queue instances (= app restarts). Like Rust, the chunk owner
  * comes from the backend's own session (`rust.signedIn`), never from the webview; tombstones are device-wide.
  */
-function fakeRust(opts: { failPutsOnce?: number } = {}) {
+function fakeRust(opts: { failPutsOnce?: number; metaDelayMs?: () => number } = {}) {
   const disk = new Map<string, number[]>();
   const tombs = new Set<string>();
+  const pins = new Map<string, string>();
   const calls: { cmd: string; args: unknown; headers?: HeadersInit | undefined }[] = [];
   let failPuts = opts.failPutsOnce ?? 0;
-  const state = { signedIn: 'u1:o1' as string | null, failDeletes: 0 };
+  const state = { signedIn: 'u1:o1' as string | null, failDeletes: 0, failTombstones: 0 };
   const invoke = (async (cmd: string, args?: unknown, o?: { headers: HeadersInit }) => {
     calls.push({ cmd, args, headers: o?.headers });
     const a = (args ?? {}) as { sessionId: string; index: number; data: number[]; path: string };
@@ -29,10 +33,21 @@ function fakeRust(opts: { failPutsOnce?: number } = {}) {
       if (!state.signedIn) throw rustError('UNAUTHENTICATED');
       return state.signedIn;
     };
+    // Like Rust: a recording is pinned to its first owner; other owners get FORBIDDEN (L-4).
+    const pinned = (create: boolean) => {
+      const o = owner();
+      const p = pins.get(a.sessionId);
+      if (p && p !== o) throw rustError('FORBIDDEN');
+      if (!p && create) pins.set(a.sessionId, o);
+    };
     const dir = () => `${owner()}/${a.sessionId}/`;
+    if (cmd.startsWith('chunk_') && cmd !== 'chunk_list' && cmd !== 'chunk_tombstone')
+      pinned(cmd === 'chunk_put');
     switch (cmd) {
       case 'chunk_put':
         if (tombs.has(a.sessionId)) throw rustError('VALIDATION_FAILED');
+        if (a.index === META_INDEX && opts.metaDelayMs)
+          await new Promise((r) => setTimeout(r, opts.metaDelayMs?.()));
         disk.set(`${dir()}${a.index}`, a.data);
         return null;
       case 'chunk_get': {
@@ -47,7 +62,10 @@ function fakeRust(opts: { failPutsOnce?: number } = {}) {
           throw rustError('INTERNAL');
         }
         for (const k of [...disk.keys()]) if (k.startsWith(d)) disk.delete(k);
-        tombs.delete(a.sessionId);
+        if (pins.get(a.sessionId) === owner()) {
+          tombs.delete(a.sessionId);
+          pins.delete(a.sessionId);
+        }
         return null;
       }
       case 'chunk_exists': {
@@ -65,6 +83,10 @@ function fakeRust(opts: { failPutsOnce?: number } = {}) {
       }
       case 'chunk_tombstone':
         owner();
+        if (state.failTombstones > 0) {
+          state.failTombstones -= 1;
+          throw rustError('INTERNAL'); // e.g. read-only discarded/ dir
+        }
         tombs.add(a.sessionId);
         return null;
       case 'api_request':
@@ -97,12 +119,18 @@ const ctxFor = (rust: Rust, online = true): QueueContext => ({
   },
 });
 
-const launch = (rust: Rust, now: () => number, online = true) => {
+const launch = (rust: Rust, now: () => number, online = true, ledger?: RecordingLedger) => {
   const chunks = createNativeChunkStore(rust.invoke);
-  return {
-    chunks,
-    queue: createUploadQueue(createNativeUploadApi(rust.invoke), chunks, ctxFor(rust, online), now),
-  };
+  const ctx = { ...ctxFor(rust, online), ...(ledger ? { ledger } : {}) };
+  return { chunks, queue: createUploadQueue(createNativeUploadApi(rust.invoke), chunks, ctx, now) };
+};
+
+const brokenLedger: RecordingLedger = {
+  mark: () => {
+    throw new Error('quota');
+  },
+  get: () => null,
+  clear: () => undefined,
 };
 
 const rec = (id: string, userId = 'u1'): NewRecording => ({
@@ -282,5 +310,81 @@ describe('native recording upload', () => {
     await flush();
     expect(queue.items()).toHaveLength(0);
     expect(rust.disk.size).toBe(0);
+  });
+
+  it('M-1b: own recording, tombstone + delete + ledger all fail: discard reports it, and a restart never uploads', async () => {
+    const rust = fakeRust();
+    const first = launch(rust, () => 0, false, brokenLedger);
+    await record(first.chunks, 'r1');
+    first.queue.enqueue(rec('r1'));
+    await flush();
+    rust.state.failTombstones = 1;
+    rust.state.failDeletes = 1;
+    await expect(first.queue.discard('r1')).rejects.toThrow(/won't upload/);
+    expect(first.queue.items()[0]?.pendingDelete).toBe(true);
+    expect(first.queue.items()[0]?.lastError).toMatch(/won't upload/);
+
+    const second = launch(rust, () => 0, true, brokenLedger); // restart, online
+    await second.queue.process();
+    expect(puts(rust)).toBe(0);
+    expect(rust.disk.size).toBe(0);
+  });
+
+  it("M-1b: B discards A's recording while the tombstone write fails: reported, held, retried; never uploaded", async () => {
+    const rust = fakeRust();
+    const ledger = createMemoryLedger(); // stands in for localStorage (survives restart)
+    const first = launch(rust, () => 0, false, ledger);
+    await record(first.chunks, 'rA');
+    first.queue.enqueue(rec('rA'));
+    await flush();
+    rust.state.signedIn = 'u2:o1';
+    rust.state.failTombstones = 1;
+    await expect(first.queue.discard('rA')).rejects.toThrow();
+    expect(first.queue.items()[0]?.tombstoned).toBeFalsy();
+    await first.queue.process(); // tombstone retried
+    expect(first.queue.items()[0]?.tombstoned).toBe(true);
+
+    rust.state.signedIn = 'u1:o1';
+    rust.tombs.clear(); // even with the tombstone lost, the ledger keeps it delete-only
+    const second = launch(rust, () => 0, true, ledger);
+    await second.queue.process();
+    expect(puts(rust)).toBe(0);
+    expect(rust.disk.size).toBe(0);
+  });
+
+  it('M-2 stress: upload done + failed delete + restart, x10 with slow metadata writes: zero re-uploads', async () => {
+    for (let run = 0; run < 10; run += 1) {
+      const rust = fakeRust({ metaDelayMs: () => Math.floor(Math.random() * 15) });
+      let t = 0;
+      const first = launch(rust, () => t); // per-launch in-memory ledger: relies on the awaited 'done' metadata
+      await record(first.chunks, `r${run}`);
+      first.queue.enqueue(rec(`r${run}`));
+      await new Promise((r) => setTimeout(r, 20));
+      rust.state.failDeletes = 1;
+      await first.queue.process();
+      expect(puts(rust)).toBe(2);
+      expect(first.queue.items()[0]?.state).toBe('done');
+      t = 60_000;
+      const second = launch(rust, () => t);
+      await second.queue.process();
+      expect(puts(rust)).toBe(2);
+      expect(
+        rust.calls.filter(
+          (c) =>
+            c.cmd === 'api_request' &&
+            String((c.args as { path: string }).path).endsWith('/complete'),
+        ).length,
+      ).toBe(1);
+      expect(rust.disk.size).toBe(0);
+    }
+  });
+
+  it('L-4: a recording is pinned to its first owner; an owner change mid-recording is refused', async () => {
+    const rust = fakeRust();
+    const c = createNativeChunkStore(rust.invoke);
+    await c.put('r1', 0, new Uint8Array([1]));
+    rust.state.signedIn = 'u1:o2';
+    await expect(c.put('r1', 1, new Uint8Array([2]))).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    expect([...rust.disk.keys()].every((k) => k.startsWith('u1:o1/'))).toBe(true);
   });
 });

@@ -18,7 +18,11 @@ import type { RecordingDeps } from '@/features/recording/recording-screen';
 import { createNativeChunkStore } from '@/features/recording/native-chunk-store';
 import { createNativeUploadApi } from '@/features/recording/native-upload-api';
 import { createSimulatedUploadApi } from '@/features/recording/simulated-upload-api';
-import { createMemoryChunkStore, createUploadQueue } from '@/features/recording/upload-queue';
+import {
+  createLocalLedger,
+  createMemoryChunkStore,
+  createUploadQueue,
+} from '@/features/recording/upload-queue';
 
 // Only the sign-in screen is in the entry chunk; everything behind it loads on demand.
 // Sign-up is mock-only for now; the guard keeps its chunk out of production builds.
@@ -70,6 +74,7 @@ function useRecordingDeps(override: RecordingDeps | undefined, native: boolean):
     const api = native ? createNativeUploadApi(invoke) : createSimulatedUploadApi();
     const queue = createUploadQueue(api, chunks, {
       isOnline: () => navigator.onLine,
+      ...(native ? { ledger: createLocalLedger(window.localStorage) } : {}),
       identity: () => {
         const s = sessionRef.current;
         return s?.activeOrganizationId
