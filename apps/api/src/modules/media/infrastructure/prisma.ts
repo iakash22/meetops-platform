@@ -110,7 +110,7 @@ export class PrismaFileObjectRepository implements FileObjectRepository {
         }),
       { client: this.client },
     );
-    return row ? toFileRecord(row as FileRow) : null;
+    return row ? toFileRecord(row) : null;
   }
 
   async setStatus(
@@ -166,7 +166,7 @@ export class PrismaConsentRepository implements ConsentRepository {
         }),
       { client: this.client, userId: r.attestedByUserId },
     );
-    return row as ConsentRecord;
+    return row;
   }
 
   async findLatest(organizationId: string, subjectType: ConsentSubjectType, subjectId: string) {
@@ -180,6 +180,6 @@ export class PrismaConsentRepository implements ConsentRepository {
         }),
       { client: this.client },
     );
-    return (row as ConsentRecord | null) ?? null;
+    return (row) ?? null;
   }
 }

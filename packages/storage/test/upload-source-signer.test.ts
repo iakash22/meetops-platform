@@ -71,12 +71,13 @@ describe('S3UploadSourceSigner', () => {
   });
 
   it('heads with checksum mode; null when missing, null checksum for composites', async () => {
-    s3.on(HeadObjectCommand).resolvesOnce({ ContentLength: 17, ChecksumSHA256: SHA });
+    s3.on(HeadObjectCommand)
+      .resolvesOnce({ ContentLength: 17, ChecksumSHA256: SHA })
+      .resolvesOnce({ ContentLength: 17, ChecksumSHA256: `${SHA}-2` })
+      .rejectsOnce(Object.assign(new Error('nf'), { name: 'NotFound' }));
     expect(await signer.head(KEY)).toEqual({ sizeBytes: 17, checksumSha256Base64: SHA });
     expect(s3.commandCalls(HeadObjectCommand)[0]!.args[0].input.ChecksumMode).toBe('ENABLED');
-    s3.on(HeadObjectCommand).resolvesOnce({ ContentLength: 17, ChecksumSHA256: `${SHA}-2` });
     expect((await signer.head(KEY))?.checksumSha256Base64).toBeNull();
-    s3.on(HeadObjectCommand).rejectsOnce(Object.assign(new Error('nf'), { name: 'NotFound' }));
     expect(await signer.head(KEY)).toBeNull();
     expect(s3.commandCalls(PutObjectCommand)).toHaveLength(0);
     expect(s3.commandCalls(GetObjectCommand)).toHaveLength(0);

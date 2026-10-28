@@ -15,7 +15,7 @@ describe.skipIf(!url)('media storage wiring (Prisma, live)', () => {
   let w: MediaWorld;
   const signer = new FakeMediaSigner();
   beforeAll(async () => {
-    db = createPrismaClient({ databaseUrl: url! }) as DatabaseClient;
+    db = createPrismaClient({ databaseUrl: url! });
     const media = storageMediaAdapters(db, { STORAGE_PROVIDER: 's3', STORAGE_BUCKET: 'live-test' }, undefined, signer);
     w = await mediaWorld({ db, media });
   });
