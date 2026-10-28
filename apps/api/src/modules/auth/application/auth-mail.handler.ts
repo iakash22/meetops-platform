@@ -171,8 +171,8 @@ export class AuthMailJobHandler {
 }
 
 /**
- * Runs jobs in-process right after enqueue. Dev/test only. TODO(notifications #11): production
- * adapter that enqueues to @meetops/notifications and runs AuthMailJobHandler in startEmailWorker.
+ * Runs jobs in-process right after enqueue. Dev/test default. Production uses BullMqAuthMailQueue
+ * (AUTH_MAIL_QUEUE=bullmq, infrastructure/mail-queue), whose consumer runs this same handler.
  */
 export class InlineAuthMailQueue implements AuthMailQueue {
   readonly jobs: AuthMailJob[] = [];

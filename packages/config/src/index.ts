@@ -49,6 +49,20 @@ export const envSchema = z.object({
   SMTP_USER: z.string().default(''),
   SMTP_PASSWORD: z.string().default(''),
   EMAIL_FROM: z.string().default('noreply@example.com'),
+  /**
+   * Auth mail queue (ADR-013, notifications #11). `inline` (default) sends in-process (dev/test); `bullmq` enqueues
+   * ids-only jobs on the `auth-mail` queue (REDIS_URL) and delivers via SMTP only. Read by apps/api.
+   */
+  AUTH_MAIL_QUEUE: z.enum(['inline', 'bullmq']).default('inline'),
+  /** BullMQ key prefix for the auth-mail queue (empty = BullMQ default `bull`). */
+  AUTH_MAIL_QUEUE_PREFIX: z
+    .string()
+    .regex(/^[A-Za-z0-9:_-]{0,64}$/)
+    .default(''),
+  /** Run the auth-mail consumer inside the API process when AUTH_MAIL_QUEUE=bullmq (default true). */
+  AUTH_MAIL_WORKER_ENABLED: boolEnv(true),
+  /** Auth-mail consumer concurrency (1-50, default 5). */
+  AUTH_MAIL_WORKER_CONCURRENCY: numberFromString.default(5),
 
   // AI providers.
   // @deprecated: packages/ai-core owns the AI_* and provider-toggle keys and reads them via

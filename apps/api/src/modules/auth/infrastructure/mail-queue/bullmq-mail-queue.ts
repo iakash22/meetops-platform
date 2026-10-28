@@ -5,7 +5,7 @@ import { safeMailError, type MailLog } from '../../application/auth-mail.handler
 import type { Clock } from '../../../../shared/ports.js';
 
 /**
- * TODO(notifications #11) / ADR-013: production auth mail queue. The API enqueues ids-only AuthMailJobs on the
+ * notifications #11 / ADR-013: production auth mail queue. The API enqueues ids-only AuthMailJobs on the
  * `auth-mail` BullMQ queue; a worker consumer (startAuthMailWorker) runs AuthMailJobHandler, which resolves
  * recipients, mints tokens and sends through the configured SMTP transport.
  */
