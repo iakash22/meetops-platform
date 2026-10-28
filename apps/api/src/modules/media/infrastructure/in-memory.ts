@@ -125,9 +125,14 @@ export class InMemoryRecordingSessionRepository implements RecordingSessionRepos
     const r = this.rows.get(id);
     return r && r.organizationId === organizationId ? { ...r, chunks: new Map(r.chunks) } : null;
   }
-  async reserveChunk(id: string, chunk: RecordingChunkRecord, maxTotalBytes: number) {
+  async reserveChunk(
+    organizationId: string,
+    id: string,
+    chunk: RecordingChunkRecord,
+    maxTotalBytes: number,
+  ) {
     const r = this.rows.get(id);
-    if (!r || r.status !== 'uploading') return 'not_uploading' as const;
+    if (!r || r.organizationId !== organizationId || r.status !== 'uploading') return 'not_uploading' as const;
     const total = r.totalBytes - (r.chunks.get(chunk.seq)?.sizeBytes ?? 0) + chunk.sizeBytes;
     if (total > maxTotalBytes) return 'over_limit' as const;
     r.chunks.set(chunk.seq, { ...chunk });
@@ -135,13 +140,14 @@ export class InMemoryRecordingSessionRepository implements RecordingSessionRepos
     return 'ok' as const;
   }
   async finish(
+    organizationId: string,
     id: string,
     next:
       | { status: 'completed'; chunkCount: number; durationMs: number }
       | { status: 'aborted'; abortReason: AbortReason },
   ) {
     const r = this.rows.get(id);
-    if (!r || r.status !== 'uploading') return false;
+    if (!r || r.organizationId !== organizationId || r.status !== 'uploading') return false;
     Object.assign(r, next);
     return true;
   }

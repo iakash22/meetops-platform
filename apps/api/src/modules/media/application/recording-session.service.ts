@@ -114,6 +114,7 @@ export class RecordingSessionService {
     RecordingSessionService.assertUploading(s);
     const key = `organizations/${s.organizationId}/recording-sessions/${s.id}/chunks/${String(body.seq).padStart(5, '0')}`;
     const res = await this.d.sessions.reserveChunk(
+      s.organizationId,
       s.id,
       { seq: body.seq, sizeBytes: body.sizeBytes, sha256Hex: body.sha256, key },
       MAX_RECORDING_SESSION_BYTES,
@@ -180,7 +181,7 @@ export class RecordingSessionService {
         throw new UploadStateConflictError(`Chunk ${ch.seq} checksum does not match`);
       }
     }
-    const ok = await this.d.sessions.finish(s.id, {
+    const ok = await this.d.sessions.finish(s.organizationId, s.id, {
       status: 'completed',
       chunkCount: body.chunkCount,
       durationMs: body.durationMs,
@@ -200,7 +201,7 @@ export class RecordingSessionService {
   async abort(c: DirectoryCaller, id: string, reason: AbortReason): Promise<void> {
     const s = await this.own(c, id);
     RecordingSessionService.assertUploading(s);
-    if (!(await this.d.sessions.finish(s.id, { status: 'aborted', abortReason: reason }))) {
+    if (!(await this.d.sessions.finish(s.organizationId, s.id, { status: 'aborted', abortReason: reason }))) {
       throw new UploadStateConflictError('Recording session is not uploading');
     }
   }

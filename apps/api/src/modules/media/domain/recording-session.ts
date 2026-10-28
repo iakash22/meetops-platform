@@ -44,12 +44,17 @@ export interface RecordingSessionRepository {
    * reserved chunks. Refuses when the new total would exceed `maxTotalBytes` or the session is not uploading.
    */
   reserveChunk(
+    organizationId: string,
     id: string,
     chunk: RecordingChunkRecord,
     maxTotalBytes: number,
   ): Promise<ReserveChunkResult>;
-  /** Moves an `uploading` session to `next`; false when it was no longer uploading. */
+  /**
+   * Moves an `uploading` session to `next`; false when it was no longer uploading. Prisma: `completed` also creates
+   * the session's source FileObject + Recording (recording_sessions_completed_check needs recording_id).
+   */
   finish(
+    organizationId: string,
     id: string,
     next:
       | { status: 'completed'; chunkCount: number; durationMs: number }
