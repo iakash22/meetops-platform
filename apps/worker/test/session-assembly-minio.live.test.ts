@@ -23,12 +23,17 @@ import {
 
 const env = process.env;
 const configured = Boolean(
-  env.STORAGE_IT_ENDPOINT && env.STORAGE_IT_BUCKET && env.STORAGE_IT_ACCESS_KEY_ID && env.STORAGE_IT_SECRET_ACCESS_KEY,
+  env.STORAGE_IT_ENDPOINT &&
+  env.STORAGE_IT_BUCKET &&
+  env.STORAGE_IT_ACCESS_KEY_ID &&
+  env.STORAGE_IT_SECRET_ACCESS_KEY,
 );
 async function minioUp(): Promise<boolean> {
   if (!configured) return false;
   try {
-    const r = await fetch(new URL('/minio/health/live', env.STORAGE_IT_ENDPOINT), { signal: AbortSignal.timeout(2000) });
+    const r = await fetch(new URL('/minio/health/live', env.STORAGE_IT_ENDPOINT), {
+      signal: AbortSignal.timeout(2000),
+    });
     return r.ok;
   } catch {
     return false;
@@ -50,7 +55,10 @@ describe.skipIf(!available)('session assembly with real MinIO (live)', () => {
     });
     const [org, meeting, sid, rec, file, consent] = Array.from({ length: 6 }, () => randomUUID());
     const signer = new S3UploadSourceSigner({ config, now: () => new Date() });
-    const parts = [Buffer.from('dummy-chunk-0'.padEnd(700, 'a')), Buffer.from('dummy-chunk-1'.padEnd(300, 'b'))];
+    const parts = [
+      Buffer.from('dummy-chunk-0'.padEnd(700, 'a')),
+      Buffer.from('dummy-chunk-1'.padEnd(300, 'b')),
+    ];
     const chunks = [];
     for (const [seq, b] of parts.entries()) {
       const key = `organizations/${org}/recording-sessions/${sid}/chunks/${String(seq).padStart(5, '0')}`;
@@ -63,7 +71,9 @@ describe.skipIf(!available)('session assembly with real MinIO (live)', () => {
       });
       const res = await fetch(put.url, {
         method: 'PUT',
-        headers: Object.fromEntries(Object.entries(put.headers).filter(([k]) => k !== 'content-length')),
+        headers: Object.fromEntries(
+          Object.entries(put.headers).filter(([k]) => k !== 'content-length'),
+        ),
         body: b,
       });
       expect(res.status).toBe(200);
@@ -128,7 +138,9 @@ describe.skipIf(!available)('session assembly with real MinIO (live)', () => {
     expect(out).toEqual({ status: 'quarantined', sizeBytes: whole.length, sha256Hex: hex(whole) });
     expect(assembled).toEqual([{ sizeBytes: whole.length, sha256Hex: hex(whole) }]);
     for (const c of chunks) {
-      await expect(chunkStore.readChunk(org!, sid!, c.key)).rejects.toBeInstanceOf(StorageNotFoundError);
+      await expect(chunkStore.readChunk(org!, sid!, c.key)).rejects.toBeInstanceOf(
+        StorageNotFoundError,
+      );
     }
     // Clean up the dummy source (no orphan objects in the throwaway bucket).
     const o = deps.objects({ ...session, recordingId: rec!, file: session.file! });

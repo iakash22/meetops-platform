@@ -17,7 +17,11 @@ export interface StaleMediaStore {
    * #303 backfill: recording sessions `completed` before `before` whose recording file is still `pending_upload`
    * (acked as session_assembly_pending by a pre-#303 worker, or the enqueue failed).
    */
-  unassembledSessions?(organizationId: string, before: Date, limit: number): Promise<StaleMediaSubject[]>;
+  unassembledSessions?(
+    organizationId: string,
+    before: Date,
+    limit: number,
+  ): Promise<StaleMediaSubject[]>;
 }
 
 export interface ReconcileResult {
@@ -66,7 +70,9 @@ export async function reconcileStaleMedia(d: {
     for (const s of (await d.store.unassembledSessions?.(org, before, limit)) ?? []) {
       let consentId: string;
       try {
-        consentId = checkStoredConsent(await d.consents.findLatest(org, 'recording_session', s.id)).id;
+        consentId = checkStoredConsent(
+          await d.consents.findLatest(org, 'recording_session', s.id),
+        ).id;
       } catch {
         out.skipped++;
         continue;
