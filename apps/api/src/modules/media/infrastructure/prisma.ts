@@ -4,7 +4,13 @@ import type {
   FileObjectScanStatus,
   RecordingSource,
 } from '@meetops/contracts';
-import { sha256Base64ToHex, sha256HexToBase64 } from '@meetops/storage';
+import { randomUUID } from 'node:crypto';
+import {
+  buildObjectKey,
+  sha256Base64ToHex,
+  sha256HexToBase64,
+  sourceExtForMime,
+} from '@meetops/storage';
 import {
   withOrganizationContext,
   type DatabaseClient,
@@ -285,9 +291,20 @@ function toSessionRecord(r: SessionRow): RecordingSessionRecord {
   };
 }
 
-/** Session source object key (assembled by the worker from the chunks; tracked as the recording's FileObject). */
-export const sessionSourceKey = (organizationId: string, sessionId: string) =>
-  `organizations/${organizationId}/recording-sessions/${sessionId}/source`;
+/**
+ * Session source object key: the recording's canonical source key (organizations/{org}/meetings/{meeting}/recordings/
+ * {recordingId}.{ext}), which the worker assembles from the chunks and processRecording reads.
+ */
+export function sessionSourceKey(
+  organizationId: string,
+  meetingId: string,
+  recordingId: string,
+  mimeType: string,
+): string {
+  const ext = sourceExtForMime(mimeType);
+  if (!ext) throw new Error('Recording session mime type has no source extension');
+  return buildObjectKey({ organizationId, meetingId, kind: 'recording', objectId: recordingId, ext });
+}
 
 /**
  * recording_sessions + recording_session_chunks (forced RLS). reserveChunk/finish lock the session row (FOR UPDATE)
@@ -404,16 +421,19 @@ export class PrismaRecordingSessionRepository implements RecordingSessionReposit
           where: { organizationId, id },
           select: { meetingId: true, mimeType: true, createdById: true },
         });
+        // Ids up front: the source key embeds the recording id. The FileObject stays pending_upload (no bytes yet)
+        // until the worker has assembled and verified the chunks.
+        const recordingId = randomUUID();
         const file = await tx.fileObject.create({
           data: {
             organizationId,
             meetingId: row.meetingId,
             uploadedById: row.createdById,
             kind: 'raw',
-            status: 'uploaded',
+            status: 'pending_upload',
             provider: this.provider,
             bucket: this.bucket,
-            key: sessionSourceKey(organizationId, id),
+            key: sessionSourceKey(organizationId, row.meetingId, recordingId, row.mimeType),
             mimeType: row.mimeType,
             sizeBytes: s.total_bytes,
           },
@@ -421,11 +441,12 @@ export class PrismaRecordingSessionRepository implements RecordingSessionReposit
         });
         const rec = await tx.recording.create({
           data: {
+            id: recordingId,
             organizationId,
             meetingId: row.meetingId,
             fileObjectId: file.id,
             durationMs: next.durationMs,
-            status: 'uploaded',
+            status: 'uploading',
           },
           select: { id: true },
         });
