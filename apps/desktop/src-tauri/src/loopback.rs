@@ -52,6 +52,7 @@ impl Loopback {
     }
 
     /// Blocks until one `/callback` request arrives or `timeout` passes. Other paths get a 404 and are ignored.
+    #[cfg(test)]
     pub fn wait(self, timeout: Duration) -> CmdResult<Callback> {
         self.wait_for(timeout, |_| true)
     }

@@ -73,11 +73,15 @@ async fn auth_sign_out(auth: State<'_, AuthState>) -> CmdResult<()> {
 }
 
 #[tauri::command]
-async fn upload_put(
-    auth: State<'_, AuthState>,
-    upload: upload::PresignedPut,
-    body: Vec<u8>,
-) -> CmdResult<()> {
+async fn upload_put(auth: State<'_, AuthState>, request: tauri::ipc::Request<'_>) -> CmdResult<()> {
+    // Raw IPC body: bytes arrive as-is (no JSON number array), and the size cap runs before any copy.
+    let body = upload::raw_body(request.body())?.to_vec();
+    let upload = upload::upload_header(
+        request
+            .headers()
+            .get(upload::UPLOAD_HEADER)
+            .and_then(|v| v.to_str().ok()),
+    )?;
     let storage = config::storage_origin()?;
     upload::upload_put(&auth.http, &storage, upload, body).await
 }

@@ -6,6 +6,7 @@
 //!   one single-flight refresh and exactly one retry (H-1). The token is never sent back over IPC.
 //! - Method + path allowlist (M-1): only the routes the desktop UI uses (`ROUTES`), matched segment by segment.
 //! - Connect and total timeouts on every request.
+//!
 //! Errors cross IPC as `{ code, message }` using the contracts' `ApiErrorCode` values.
 
 use std::time::Duration;

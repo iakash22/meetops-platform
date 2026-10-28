@@ -39,6 +39,29 @@ pub fn check_body_size(len: usize) -> CmdResult<()> {
     Ok(())
 }
 
+/// IPC header carrying the JSON `PresignedPut` when the body is sent raw.
+pub const UPLOAD_HEADER: &str = "x-meetops-upload";
+
+/// Accept only a raw (`InvokeBody::Raw`) body and check its length before any copy; JSON bodies are refused so
+/// a caller cannot force a number-array deserialisation (~4x memory) of a large payload.
+pub fn raw_body(body: &tauri::ipc::InvokeBody) -> CmdResult<&[u8]> {
+    match body {
+        tauri::ipc::InvokeBody::Raw(b) => {
+            check_body_size(b.len())?;
+            Ok(b.as_slice())
+        }
+        _ => Err(CmdError::validation("Upload body must be raw bytes.")),
+    }
+}
+
+pub fn upload_header(v: Option<&str>) -> CmdResult<PresignedPut> {
+    let v = v.ok_or_else(|| CmdError::validation("Missing upload descriptor."))?;
+    if v.len() > 16 * 1024 {
+        return Err(CmdError::validation("Upload descriptor too large."));
+    }
+    serde_json::from_str(v).map_err(|_| CmdError::validation("Bad upload descriptor."))
+}
+
 pub fn check_upload(upload: &PresignedPut, storage: &url::Url) -> CmdResult<url::Url> {
     if upload.method != "PUT" {
         return Err(CmdError::validation(
@@ -102,6 +125,27 @@ mod tests {
                 .map(|(k, v)| (k.to_string(), v.to_string()))
                 .collect(),
         }
+    }
+
+    #[test]
+    fn raw_body_caps_and_rejects_json() {
+        use tauri::ipc::InvokeBody;
+        assert!(raw_body(&InvokeBody::Raw(vec![1; 8])).is_ok());
+        assert!(raw_body(&InvokeBody::Raw(vec![])).is_err());
+        assert!(raw_body(&InvokeBody::Raw(vec![0; MAX_UPLOAD_BYTES + 1])).is_err());
+        assert!(raw_body(&InvokeBody::Json(serde_json::json!([1, 2, 3]))).is_err());
+    }
+
+    #[test]
+    fn upload_header_parses_descriptor() {
+        assert!(upload_header(None).is_err());
+        assert!(upload_header(Some("nope")).is_err());
+        let p = upload_header(Some(
+            r#"{"url":"https://s3.test/k","method":"PUT","headers":{}}"#,
+        ))
+        .unwrap();
+        assert_eq!(p.method, "PUT");
+        assert!(upload_header(Some(&"x".repeat(17 * 1024))).is_err());
     }
 
     fn storage() -> url::Url {
