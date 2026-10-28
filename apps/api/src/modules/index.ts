@@ -112,7 +112,9 @@ import {
 import {
   PrismaConsentRepository,
   PrismaFileObjectRepository,
+  PrismaRecordingSessionRepository,
 } from './media/infrastructure/prisma.js';
+import { BullMqMediaJobQueue, createMediaQueueProducer } from './media/infrastructure/bullmq.js';
 import { loadStorageConfig, S3UploadSourceSigner } from '@meetops/storage';
 import { systemClock, type Clock, type IdGenerator } from '../shared/ports.js';
 
@@ -186,6 +188,8 @@ export interface ModuleDeps {
    * in development/test; outside them it stays unset unless injected and the media routes are not registered.
    */
   media?: MediaAdapters;
+  /** Set when defaultModuleDeps built the storage-backed media adapters (BullMQ producer closed in onClose). */
+  ownedMedia?: { close(): Promise<void> };
 }
 
 /** Ports the media module needs. */
@@ -216,22 +220,31 @@ export function mediaStorageEnabled(env: NodeJS.ProcessEnv = process.env): boole
 }
 
 /**
- * Storage-backed media adapters: S3/MinIO signer (STORAGE_* env) + Prisma file and consent tables. The job queue
- * and recording-session store stay in-memory until their durable adapters land.
+ * Storage-backed media adapters: S3/MinIO signer (STORAGE_* env), Prisma file / consent / recording-session tables
+ * and a BullMQ producer on the worker's MEDIA_QUEUE (REDIS_URL). `close` shuts the producer it created.
  */
 export function storageMediaAdapters(
   db: DatabaseClient,
   env: NodeJS.ProcessEnv = process.env,
   clock: Clock = systemClock,
-  signer?: MediaSigner,
-): MediaAdapters {
+  opts: { signer?: MediaSigner; jobs?: MediaJobQueue } = {},
+): MediaAdapters & { close(): Promise<void> } {
   const config = loadStorageConfig(env);
+  let owned: BullMqMediaJobQueue | undefined;
+  let jobs = opts.jobs;
+  if (!jobs) {
+    if (!env.REDIS_URL) throw new Error('MEDIA_STORAGE_ENABLED=true requires REDIS_URL (media job queue)');
+    jobs = owned = new BullMqMediaJobQueue(createMediaQueueProducer(env.REDIS_URL));
+  }
   return {
     files: new PrismaFileObjectRepository(db, config.bucket, config.provider),
     consents: new PrismaConsentRepository(db),
-    signer: signer ?? new S3UploadSourceSigner({ config, now: () => clock.now() }),
-    jobs: new InMemoryMediaJobQueue(),
-    sessions: new InMemoryRecordingSessionRepository(),
+    signer: opts.signer ?? new S3UploadSourceSigner({ config, now: () => clock.now() }),
+    jobs,
+    sessions: new PrismaRecordingSessionRepository(db, config.bucket, config.provider),
+    close: async () => {
+      await owned?.close();
+    },
   };
 }
 
@@ -467,6 +480,7 @@ export function defaultModuleDeps(
   const { db, owned: ownedDb } = resolveDatabase(overrides, env);
   const useStorageMedia = !overrides.media && mediaStorageEnabled();
   if (useStorageMedia && !db) throw new Error('MEDIA_STORAGE_ENABLED=true requires DATABASE_URL');
+  const storageMedia = useStorageMedia && db ? storageMediaAdapters(db, process.env, clock) : undefined;
   // Dev/test fallback only below: strict envs reach here with a client or an injected dep for
   // every PRODUCTION_REQUIRED_DEPS entry (checked above).
   const memberships =
@@ -523,8 +537,7 @@ export function defaultModuleDeps(
     invitationTtlMs: 7 * DAY,
     passwordResetTtlMs: 30 * MIN,
     emailVerificationTtlMs: DAY,
-    ...(useStorageMedia && db
-      ? { media: storageMediaAdapters(db, process.env, clock) }
+    ...(storageMedia ? { media: storageMedia, ownedMedia: storageMedia }
       : strict
         ? {}
         : { media: inMemoryMediaAdapters(clock) }),
@@ -596,10 +609,11 @@ export async function registerModules(app: FastifyInstance, deps: ModuleDeps) {
     extensionBearerCorsHook(deps.extensionIds.map((id) => `chrome-extension://${id}`)),
   );
   // Close only the clients defaultModuleDeps created; injected ones belong to the caller.
-  const { ownedRedis, ownedDb } = deps;
-  if (ownedRedis || ownedDb) {
+  const { ownedRedis, ownedDb, ownedMedia } = deps;
+  if (ownedRedis || ownedDb || ownedMedia) {
     app.addHook('onClose', async () => {
       await Promise.allSettled([
+        ownedMedia ? ownedMedia.close() : undefined,
         ownedRedis ? closeOwnedRedis(ownedRedis) : undefined,
         ownedDb ? ownedDb.$disconnect() : undefined,
       ]);

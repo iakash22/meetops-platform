@@ -31,7 +31,7 @@ export const envSchema = z.object({
   REDIS_URL: z.url().default('redis://localhost:6379'),
 
   // Storage
-  /** Back the API upload routes with S3/MinIO + Prisma (off by default; needs DATABASE_URL). */
+  /** Back the API media routes with S3/MinIO + Prisma + BullMQ (off by default; needs DATABASE_URL, REDIS_URL). */
   MEDIA_STORAGE_ENABLED: boolEnv(false),
   STORAGE_PROVIDER: z.enum(['minio', 'r2', 's3']).default('minio'),
   STORAGE_ENDPOINT: z.string().default('http://localhost:9000'),
