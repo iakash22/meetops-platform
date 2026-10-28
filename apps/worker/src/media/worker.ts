@@ -196,6 +196,8 @@ export function buildUploadScanDeps(parts: {
   };
 }
 
+export type SessionJobOutcome = { status: 'skipped'; reason: 'session_assembly_pending' };
+
 type DispatchJob = Pick<Job, 'id' | 'attemptsMade' | 'opts'> & { data: unknown };
 
 /**
@@ -211,10 +213,14 @@ export function dispatchMediaJob(
     ): Promise<MediaProcessingResult>;
     upload(data: unknown, ctx: { isFinalAttempt: boolean }): Promise<UploadScanOutcome>;
   },
-): Promise<MediaProcessingResult | UploadScanOutcome> {
+): Promise<MediaProcessingResult | UploadScanOutcome | SessionJobOutcome> {
   const isFinalAttempt = job.attemptsMade + 1 >= (job.opts.attempts ?? 1);
   const data = job.data as { kind?: unknown };
   if (data && data.kind === 'process_upload') return handlers.upload(job.data, { isFinalAttempt });
+  // API recording-session jobs carry no recordingId/fileObjectId and their chunks are not assembled yet: never route
+  // them into processRecording (it would fail every attempt). Acknowledged as skipped until session assembly lands.
+  if (data && data.kind === 'process_recording_session')
+    return Promise.resolve({ status: 'skipped', reason: 'session_assembly_pending' });
   const rec = job.data as MediaJobPayload;
   return runInJobScope({ organizationId: rec.organizationId, meetingId: rec.meetingId }, () =>
     handlers.recording(rec, { ...(job.id ? { jobId: job.id } : {}), isFinalAttempt }),
@@ -251,7 +257,10 @@ export function startMediaWorker(cfg: MediaWorkerConfig = loadMediaWorkerConfig(
     maxDurationSeconds: cfg.maxDurationSeconds,
     ...(cfg.tmpRoot ? { tmpRoot: cfg.tmpRoot } : {}),
   });
-  const worker = new Worker<MediaJobPayload, MediaProcessingResult | UploadScanOutcome>(
+  const worker = new Worker<
+    MediaJobPayload,
+    MediaProcessingResult | UploadScanOutcome | SessionJobOutcome
+  >(
     MEDIA_QUEUE,
     (job: Job<MediaJobPayload>) =>
       dispatchMediaJob(job, {

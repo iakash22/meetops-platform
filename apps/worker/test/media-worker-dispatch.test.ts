@@ -23,6 +23,15 @@ describe('media worker dispatch (#274 G-1)', () => {
     expect(h.recording).not.toHaveBeenCalled();
   });
 
+  it('acknowledges API process_recording_session jobs without routing them to processRecording', async () => {
+    const h = handlers();
+    const data = { kind: 'process_recording_session', organizationId: org, subjectId: meeting };
+    const out = await dispatchMediaJob({ id: '4', attemptsMade: 0, opts: { attempts: 3 }, data }, h);
+    expect(out).toEqual({ status: 'skipped', reason: 'session_assembly_pending' });
+    expect(h.recording).not.toHaveBeenCalled();
+    expect(h.upload).not.toHaveBeenCalled();
+  });
+
   it('routes every other job to processRecording', async () => {
     const h = handlers();
     const data = { kind: 'process_recording', organizationId: org, meetingId: meeting };
