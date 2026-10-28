@@ -73,25 +73,24 @@ export function createMemoryLedger(): RecordingLedger {
   };
 }
 
+const LEDGER_STORAGE_NAME = 'meetops.recording-ledger.v1';
+
 /** localStorage-backed ledger for the desktop webview. */
-export function createLocalLedger(
-  storage: Storage,
-  key = 'meetops.recording-ledger.v1',
-): RecordingLedger {
+export function createLocalLedger(storage: Storage, slot = LEDGER_STORAGE_NAME): RecordingLedger {
   const read = (): Record<string, LedgerMark> => {
     try {
-      return JSON.parse(storage.getItem(key) ?? '{}') as Record<string, LedgerMark>;
+      return JSON.parse(storage.getItem(slot) ?? '{}') as Record<string, LedgerMark>;
     } catch {
       return {};
     }
   };
   return {
-    mark: (id, k) => storage.setItem(key, JSON.stringify({ ...read(), [id]: k })),
+    mark: (id, k) => storage.setItem(slot, JSON.stringify({ ...read(), [id]: k })),
     get: (id) => read()[id] ?? null,
     clear: (id) => {
       const all = read();
       delete all[id];
-      storage.setItem(key, JSON.stringify(all));
+      storage.setItem(slot, JSON.stringify(all));
     },
   };
 }
