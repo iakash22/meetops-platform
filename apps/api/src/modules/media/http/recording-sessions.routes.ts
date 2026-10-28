@@ -22,7 +22,7 @@ import {
 } from './recording-session.types.js';
 
 const tags = ['recording-sessions'];
-const errors = { ...directoryErrors, 409: ErrorBody, 422: ErrorBody } as const;
+const errors = { ...directoryErrors, 409: ErrorBody, 413: ErrorBody, 422: ErrorBody } as const;
 
 export async function recordingSessionRoutes(
   app: FastifyInstance,
@@ -61,7 +61,7 @@ export async function recordingSessionRoutes(
         tags,
         summary: 'Presign one chunk PUT',
         description:
-          'Running total across all signed chunks is capped at MAX_RECORDING_SESSION_BYTES (1.4 GB): over -> 409. Re-signing a seq replaces it. URL lives CHUNK_UPLOAD_URL_TTL_SECONDS.',
+          'Running total across all signed chunks is capped at MAX_RECORDING_SESSION_BYTES (1.4 GB): over -> 413 PAYLOAD_TOO_LARGE. Re-signing a seq replaces it. URL lives CHUNK_UPLOAD_URL_TTL_SECONDS.',
         params: SessionParams,
         body: ChunkUploadUrlRequest,
         response: { 200: ChunkUploadUrlResponse, ...errors },
