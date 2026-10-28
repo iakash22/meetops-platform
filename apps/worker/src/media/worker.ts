@@ -6,7 +6,9 @@ import { disconnectPrismaClient } from '@meetops/database';
 import {
   loadStorageConfig,
   refOrganizationId,
+  S3SessionChunkStore,
   S3StorageService,
+  sourceExtForMime,
   StorageAccessError,
   type AuthorizeTarget,
 } from '@meetops/storage';
@@ -44,7 +46,14 @@ import {
   uploadSourceFromStorage,
   type UploadSourceStorage,
 } from './upload-scan-store.js';
-import { createUploadProbe } from './upload-scan.js';
+import { createUploadProbe, scanUploadObject, type UploadProbe } from './upload-scan.js';
+import {
+  processSessionAssembly,
+  type SessionAssemblyDeps,
+  type SessionAssemblyOutcome,
+  type SessionAssemblyStore,
+} from './session-assembly.js';
+import { createSessionAssemblyStore, sessionObjectsFromStorage } from './session-assembly-store.js';
 import { antivirusFromEnv } from './clamd.js';
 import {
   MEDIA_QUEUE,
@@ -196,7 +205,57 @@ export function buildUploadScanDeps(parts: {
   };
 }
 
-export type SessionJobOutcome = { status: 'skipped'; reason: 'session_assembly_pending' };
+/**
+ * process_recording_session deps: Prisma session store, chunk reader + source writer bound to the job's session and
+ * meeting (source writes run inside runInJobScope), the same content scan as uploads (ffprobe + optional clamd from
+ * the injected env), then processRecording. Never reads process.env.
+ */
+export function buildSessionAssemblyDeps(parts: {
+  storage: Pick<S3StorageService, 'putObject' | 'headObject' | 'deleteObject' | 'getObject'>;
+  chunks: Pick<S3SessionChunkStore, 'readChunk' | 'deleteChunk'>;
+  store: SessionAssemblyStore;
+  maxSourceBytes: number;
+  maxDurationSeconds: number;
+  env: Record<string, string | undefined>;
+  process: SessionAssemblyDeps['process'];
+  probe?: UploadProbe;
+  tmpRoot?: string;
+}): SessionAssemblyDeps {
+  const antivirus = antivirusFromEnv(parts.env);
+  const probe = parts.probe ?? createUploadProbe({ maxDurationSeconds: parts.maxDurationSeconds });
+  return {
+    store: parts.store,
+    maxSourceBytes: parts.maxSourceBytes,
+    sourceExt: (m) => sourceExtForMime(m),
+    objects: (s) => {
+      const o = sessionObjectsFromStorage(parts.storage, parts.chunks, s);
+      const scoped =
+        <A extends unknown[], R>(fn: (...a: A) => Promise<R>) =>
+        (...a: A) =>
+          runInJobScope({ organizationId: s.organizationId, meetingId: s.meetingId }, () => fn(...a));
+      return {
+        readChunk: o.readChunk,
+        deleteChunk: o.deleteChunk,
+        putSource: scoped(o.putSource),
+        headSource: scoped(o.headSource),
+        deleteSource: scoped(o.deleteSource),
+        sourceBody: scoped(o.sourceBody),
+      };
+    },
+    scan: async (source, mime) => {
+      const r = await scanUploadObject(source, mime, probe, {
+        limits: { maxDurationSeconds: parts.maxDurationSeconds },
+        ...(parts.tmpRoot ? { tmpRoot: parts.tmpRoot } : {}),
+        ...(antivirus ? { antivirus } : {}),
+      });
+      return r.verdict === 'clean' ? 'clean' : 'quarantined';
+    },
+    process: (payload, ctx) =>
+      runInJobScope({ organizationId: payload.organizationId, meetingId: payload.meetingId }, () =>
+        parts.process(payload, ctx),
+      ),
+  };
+}
 
 type DispatchJob = Pick<Job, 'id' | 'attemptsMade' | 'opts'> & { data: unknown };
 
@@ -212,15 +271,15 @@ export function dispatchMediaJob(
       ctx: { jobId?: string; isFinalAttempt: boolean },
     ): Promise<MediaProcessingResult>;
     upload(data: unknown, ctx: { isFinalAttempt: boolean }): Promise<UploadScanOutcome>;
+    session(data: unknown, ctx: { isFinalAttempt: boolean }): Promise<SessionAssemblyOutcome>;
   },
-): Promise<MediaProcessingResult | UploadScanOutcome | SessionJobOutcome> {
+): Promise<MediaProcessingResult | UploadScanOutcome | SessionAssemblyOutcome> {
   const isFinalAttempt = job.attemptsMade + 1 >= (job.opts.attempts ?? 1);
   const data = job.data as { kind?: unknown };
   if (data && data.kind === 'process_upload') return handlers.upload(job.data, { isFinalAttempt });
-  // API recording-session jobs carry no recordingId/fileObjectId and their chunks are not assembled yet: never route
-  // them into processRecording (it would fail every attempt). Acknowledged as skipped until session assembly lands.
+  // API recording-session jobs: assemble the chunks into the recording source, then scan + processRecording.
   if (data && data.kind === 'process_recording_session')
-    return Promise.resolve({ status: 'skipped', reason: 'session_assembly_pending' });
+    return handlers.session(job.data, { isFinalAttempt });
   const rec = job.data as MediaJobPayload;
   return runInJobScope({ organizationId: rec.organizationId, meetingId: rec.meetingId }, () =>
     handlers.recording(rec, { ...(job.id ? { jobId: job.id } : {}), isFinalAttempt }),
@@ -228,8 +287,11 @@ export function dispatchMediaJob(
 }
 
 /** Wire the BullMQ media worker with real storage, ffmpeg, Postgres persistence, transcription queue and Redis emitter. */
-export function startMediaWorker(cfg: MediaWorkerConfig = loadMediaWorkerConfig()) {
-  assertMediaWorkerDatabaseEnv(process.env);
+export function startMediaWorker(
+  cfg: MediaWorkerConfig = loadMediaWorkerConfig(),
+  env: NodeJS.ProcessEnv = process.env,
+) {
+  assertMediaWorkerDatabaseEnv(env);
   const logger = baseLogger.child({ worker: MEDIA_QUEUE });
   const conn = () => new Redis(cfg.redisUrl, { maxRetriesPerRequest: null });
   const emitterRedis = conn();
@@ -237,7 +299,7 @@ export function startMediaWorker(cfg: MediaWorkerConfig = loadMediaWorkerConfig(
   const transcriptionQueue = new Queue<TranscriptionJobPayload>(QUEUE_NAMES.transcription, {
     connection: conn(),
   });
-  const storageConfig = loadStorageConfig(process.env);
+  const storageConfig = loadStorageConfig(env);
   const storage = new S3StorageService({ config: storageConfig, authorize: workerAuthorize });
   // Shared Prisma client (DATABASE_URL, the NOBYPASSRLS app role); every write runs in runWithOrganizationContext.
   const persistence = createMediaPersistence({
@@ -255,17 +317,29 @@ export function startMediaWorker(cfg: MediaWorkerConfig = loadMediaWorkerConfig(
     storage,
     emitter,
     maxDurationSeconds: cfg.maxDurationSeconds,
+    env,
+    ...(cfg.tmpRoot ? { tmpRoot: cfg.tmpRoot } : {}),
+  });
+  const sessionDeps = buildSessionAssemblyDeps({
+    storage,
+    chunks: new S3SessionChunkStore({ config: storageConfig }),
+    store: createSessionAssemblyStore(),
+    maxSourceBytes: cfg.maxSourceBytes,
+    maxDurationSeconds: cfg.maxDurationSeconds,
+    env,
+    process: (payload, ctx) => processRecording(payload, deps, ctx),
     ...(cfg.tmpRoot ? { tmpRoot: cfg.tmpRoot } : {}),
   });
   const worker = new Worker<
     MediaJobPayload,
-    MediaProcessingResult | UploadScanOutcome | SessionJobOutcome
+    MediaProcessingResult | UploadScanOutcome | SessionAssemblyOutcome
   >(
     MEDIA_QUEUE,
     (job: Job<MediaJobPayload>) =>
       dispatchMediaJob(job, {
         recording: (data, ctx) => processRecording(data, deps, ctx),
         upload: (data, ctx) => processUploadScan(data, uploadDeps, ctx),
+        session: (data, ctx) => processSessionAssembly(data, sessionDeps, ctx),
       }),
     { connection: conn(), concurrency: cfg.concurrency },
   );

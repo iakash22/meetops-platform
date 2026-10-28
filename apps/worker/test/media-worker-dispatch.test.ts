@@ -11,6 +11,7 @@ describe('media worker dispatch (#274 G-1)', () => {
   const handlers = () => ({
     recording: vi.fn(async () => ({ chunks: [] }) as never),
     upload: vi.fn(async () => ({ status: 'skipped', reason: 'not_found' }) as const),
+    session: vi.fn(async () => ({ status: 'skipped', reason: 'not_found' }) as const),
   });
 
   it('routes process_upload to the upload scan with isFinalAttempt from BullMQ attempts', async () => {
@@ -23,11 +24,11 @@ describe('media worker dispatch (#274 G-1)', () => {
     expect(h.recording).not.toHaveBeenCalled();
   });
 
-  it('acknowledges API process_recording_session jobs without routing them to processRecording', async () => {
+  it('routes API process_recording_session jobs to session assembly with isFinalAttempt', async () => {
     const h = handlers();
     const data = { kind: 'process_recording_session', organizationId: org, subjectId: meeting };
-    const out = await dispatchMediaJob({ id: '4', attemptsMade: 0, opts: { attempts: 3 }, data }, h);
-    expect(out).toEqual({ status: 'skipped', reason: 'session_assembly_pending' });
+    await dispatchMediaJob({ id: '4', attemptsMade: 2, opts: { attempts: 3 }, data }, h);
+    expect(h.session).toHaveBeenCalledWith(data, { isFinalAttempt: true });
     expect(h.recording).not.toHaveBeenCalled();
     expect(h.upload).not.toHaveBeenCalled();
   });
