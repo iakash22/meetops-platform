@@ -17,11 +17,7 @@ import {
   type DatabaseTransaction,
 } from '../../../shared/prisma/context.js';
 import type { ConsentRecord, ConsentRepository } from '../domain/consent.js';
-import type {
-  FileObjectRecord,
-  FileObjectRepository,
-  FileObjectStatus,
-} from '../domain/ports.js';
+import type { FileObjectRecord, FileObjectRepository, FileObjectStatus } from '../domain/ports.js';
 import type {
   RecordingChunkRecord,
   RecordingSessionRecord,
@@ -177,25 +173,6 @@ export class PrismaFileObjectRepository implements FileObjectRepository {
       { client: this.client },
     );
   }
-
-  async unassembledSessions(organizationId: string, before: Date, limit: number): Promise<StaleMediaSubject[]> {
-    return withOrganizationContext(
-      organizationId,
-      (tx) =>
-        tx.recordingSession.findMany({
-          where: {
-            organizationId,
-            status: 'completed',
-            updatedAt: { lt: before },
-            recording: { file: { status: 'pending_upload', deletedAt: null } },
-          },
-          select: { id: true, meetingId: true },
-          orderBy: { updatedAt: 'asc' },
-          take: limit,
-        }),
-      { client: this.client },
-    );
-  }
 }
 
 const consentSelect = {
@@ -323,7 +300,13 @@ export function sessionSourceKey(
 ): string {
   const ext = sourceExtForMime(mimeType);
   if (!ext) throw new Error('Recording session mime type has no source extension');
-  return buildObjectKey({ organizationId, meetingId, kind: 'recording', objectId: recordingId, ext });
+  return buildObjectKey({
+    organizationId,
+    meetingId,
+    kind: 'recording',
+    objectId: recordingId,
+    ext,
+  });
 }
 
 /**
@@ -495,11 +478,18 @@ export class PrismaStaleMediaStore implements StaleMediaStore {
   constructor(private readonly client: DatabaseClient) {}
 
   async organizationIds(): Promise<string[]> {
-    const rows = await this.client.organization.findMany({ select: { id: true }, orderBy: { id: 'asc' } });
+    const rows = await this.client.organization.findMany({
+      select: { id: true },
+      orderBy: { id: 'asc' },
+    });
     return rows.map((r) => r.id);
   }
 
-  async staleUploads(organizationId: string, before: Date, limit: number): Promise<StaleMediaSubject[]> {
+  async staleUploads(
+    organizationId: string,
+    before: Date,
+    limit: number,
+  ): Promise<StaleMediaSubject[]> {
     return withOrganizationContext(
       organizationId,
       (tx) =>
@@ -513,6 +503,29 @@ export class PrismaStaleMediaStore implements StaleMediaStore {
             updatedAt: { lt: before },
             // Upload sources only (organizations/{org}/uploads/{id}/source).
             key: { startsWith: `organizations/${organizationId}/uploads/` },
+          },
+          select: { id: true, meetingId: true },
+          orderBy: { updatedAt: 'asc' },
+          take: limit,
+        }),
+      { client: this.client },
+    );
+  }
+
+  async unassembledSessions(
+    organizationId: string,
+    before: Date,
+    limit: number,
+  ): Promise<StaleMediaSubject[]> {
+    return withOrganizationContext(
+      organizationId,
+      (tx) =>
+        tx.recordingSession.findMany({
+          where: {
+            organizationId,
+            status: 'completed',
+            updatedAt: { lt: before },
+            recording: { file: { status: 'pending_upload', deletedAt: null } },
           },
           select: { id: true, meetingId: true },
           orderBy: { updatedAt: 'asc' },
