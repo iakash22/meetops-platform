@@ -84,7 +84,13 @@ export function RecordingScreen({
     startedAt: Date;
     chunks: LocalChunk[];
     writes: Promise<void>[];
+    /** Account the recording is bound to, fixed when it starts (L-7). */
+    userId: string;
+    organizationId: string;
+    /** First chunk seq whose write failed; later chunks are dropped so the upload stays contiguous. */
+    failedAt: number | null;
   } | null>(null);
+  const stopRef = useRef<(reason?: string) => Promise<void>>(async () => undefined);
   const timer = useRef<{ base: number; acc: number }>({ base: 0, acc: 0 });
 
   // Keep the queue moving: on reconnect and every 15 s.
@@ -112,16 +118,36 @@ export function RecordingScreen({
     if (!session || !meeting) return;
     const rec = deps.makeRecorder();
     const id = crypto.randomUUID();
-    local.current = { id, startedAt: new Date(), chunks: [], writes: [] };
+    local.current = {
+      id,
+      startedAt: new Date(),
+      chunks: [],
+      writes: [],
+      userId: session.user.id,
+      // Queue items are bound to the active org (ADR-012 3.5); live meetings are already org-filtered.
+      organizationId: session.activeOrganizationId ?? meeting.organizationId,
+      failedAt: null,
+    };
     try {
       await rec.start((bytes) => {
         const l = local.current;
         if (!l) return;
-        const seq = l.chunks.length + l.writes.length;
+        if (l.failedAt !== null) return;
+        const seq = l.writes.length;
         l.writes.push(
           (async () => {
             const sha256 = await sha256Hex(bytes);
-            await deps.chunks.put(id, seq, bytes);
+            try {
+              await deps.chunks.put(id, seq, bytes);
+            } catch {
+              // e.g. the signed-in account changed (Rust refuses writes for another owner). Stop rather than
+              // silently keep recording audio that can never be uploaded.
+              if (l.failedAt === null || seq < l.failedAt) l.failedAt = seq;
+              void stopRef.current(
+                "Recording stopped: it couldn't be saved on this device. What was saved so far will still upload.",
+              );
+              return;
+            }
             l.chunks.push({ seq, sizeBytes: bytes.byteLength, sha256 });
           })(),
         );
@@ -171,37 +197,55 @@ export function RecordingScreen({
     setPaused(!paused);
   }
 
-  async function stop() {
+  async function stop(reason?: string) {
     const rec = recorder.current;
     const l = local.current;
+    if (!rec || !l) return;
     recorder.current = null;
     if (!paused) timer.current.acc += Date.now() - timer.current.base;
-    await rec?.stop();
-    await Promise.all(l?.writes ?? []);
+    await rec.stop();
+    await Promise.allSettled(l.writes);
     setStep('pick');
     setNotified(false);
     setAllAgreed(false);
     local.current = null;
-    if (!l || !session || !meeting || !consent.current || !rec) return;
-    if (l.chunks.length === 0) {
-      setToast('Nothing was recorded.');
+    if (reason) setToast(reason);
+    if (!meeting || !consent.current) return;
+    const kept = l.chunks.filter((c) => l.failedAt === null || c.seq < l.failedAt);
+    if (kept.length === 0) {
+      if (!reason) setToast('Nothing was recorded.');
       return;
     }
+    // Bound to the account it started under, even if the session changed since (L-7).
     queue.enqueue({
       id: l.id,
-      userId: session.user.id,
-      // Queue items are bound to the active org (ADR-012 3.5); live meetings are already org-filtered.
-      organizationId: session.activeOrganizationId ?? meeting.organizationId,
+      userId: l.userId,
+      organizationId: l.organizationId,
       meetingId: meeting.id,
       meetingTitle: meeting.title,
       mimeType: rec.mimeType,
       startedAt: l.startedAt.toISOString(),
       durationMs: timer.current.acc,
-      chunks: [...l.chunks].sort((a, b) => a.seq - b.seq),
+      chunks: [...kept].sort((a, b) => a.seq - b.seq),
       consent: consent.current,
     });
     void queue.process();
   }
+
+  stopRef.current = stop;
+
+  // L-7: a recording belongs to the account it started under. If the user or org changes mid-recording, stop it
+  // with a clear message; what was saved uploads when that account is active again.
+  const sessionUser = session?.user.id ?? null;
+  const sessionOrg = session?.activeOrganizationId ?? null;
+  useEffect(() => {
+    const l = local.current;
+    if (step !== 'recording' || !l) return;
+    if (sessionUser !== l.userId || (sessionOrg ?? l.organizationId) !== l.organizationId)
+      void stopRef.current(
+        'Recording stopped because your account or organization changed. It will upload when you switch back.',
+      );
+  }, [sessionUser, sessionOrg, step]);
 
   return (
     <div className="space-y-6">

@@ -48,6 +48,8 @@ export interface QueueItem {
   deleteAttempts?: number;
   /** True once the device-wide discard tombstone is durable; until then the item is held and the write retried. */
   tombstoned?: boolean;
+  /** True once the discard is recorded durably somewhere (ledger or tombstone). */
+  discardDurable?: boolean;
 }
 
 export type LedgerMark = 'discarded' | 'uploaded';
@@ -228,16 +230,33 @@ export function createUploadQueue(
     }
   }
 
-  const NOT_DURABLE = "Couldn't save the discard yet. It won't upload; retrying.";
+  // Only claim it won't upload once the discard is durable somewhere (L-6).
+  const NOT_DURABLE =
+    "Couldn't save the discard yet. It may still upload if the app closes now. Retrying.";
+  const CLEANUP_PENDING = 'Discard saved. Finishing local cleanup.';
 
-  async function writeTombstone(id: string): Promise<boolean> {
+  async function writeTombstone(id: string, ledgerOk: boolean): Promise<boolean> {
     try {
       await chunks.tombstone(id);
-      set(items.map((i) => (i.id === id ? { ...i, tombstoned: true } : i)));
+      set(
+        items.map((i) =>
+          i.id === id
+            ? {
+                ...i,
+                tombstoned: true,
+                lastError:
+                  i.lastError === NOT_DURABLE || i.lastError === CLEANUP_PENDING
+                    ? null
+                    : i.lastError,
+              }
+            : i,
+        ),
+      );
       return true;
     } catch {
-      set(items.map((i) => (i.id === id ? { ...i, lastError: NOT_DURABLE } : i)));
-      return false;
+      const msg = ledgerOk || get(id)?.discardDurable ? CLEANUP_PENDING : NOT_DURABLE;
+      set(items.map((i) => (i.id === id ? { ...i, lastError: msg } : i)));
+      return ledgerOk;
     }
   }
 
@@ -250,13 +269,16 @@ export function createUploadQueue(
     const item = get(id);
     if (!item) return true;
     set(items.map((i) => (i.id === id ? { ...i, pendingDelete: true } : i)));
+    let ledgerOk = false;
     try {
       ledger.mark(id, 'discarded');
+      ledgerOk = true;
     } catch {
-      // Still covered by the tombstone/metadata below; a full failure is reported.
+      // Still covered by the tombstone below; a full failure is reported.
     }
+    if (ledgerOk) set(items.map((i) => (i.id === id ? { ...i, discardDurable: true } : i)));
     if (owns(item)) await finalize(id, { ...item, pendingDelete: true });
-    return writeTombstone(id);
+    return writeTombstone(id, ledgerOk);
   }
 
   /** Delete now, or keep the record flagged and retry with backoff, up to MAX_ATTEMPTS per launch (L-3, N-2). */
@@ -276,8 +298,8 @@ export function createUploadQueue(
             nextAttemptAt:
               t + Math.min(MAX_BACKOFF_MS, BASE_BACKOFF_MS * 2 ** (deleteAttempts - 1)),
             lastError:
-              i.lastError === NOT_DURABLE
-                ? NOT_DURABLE
+              i.lastError === NOT_DURABLE || i.lastError === CLEANUP_PENDING
+                ? i.lastError
                 : deleteAttempts >= MAX_ATTEMPTS
                   ? "Couldn't remove the local copy. It will be retried next launch."
                   : "Couldn't remove the local copy. Retrying.",
@@ -374,7 +396,8 @@ export function createUploadQueue(
     const t = now();
     // Local deletes and retention need only the owning account (the store is namespaced per account), not network.
     for (const item of [...items]) {
-      if (item.pendingDelete && !item.tombstoned) await writeTombstone(item.id);
+      if (item.pendingDelete && !item.tombstoned)
+        await writeTombstone(item.id, item.discardDurable ?? false);
       if (!owns(item)) continue;
       if (item.pendingDelete) {
         if (item.nextAttemptAt <= t && (item.deleteAttempts ?? 0) < MAX_ATTEMPTS)
