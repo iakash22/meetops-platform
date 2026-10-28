@@ -17,6 +17,7 @@ import {
 import { reconcileStaleMedia } from '../src/modules/media/application/reconcile.js';
 import { PrismaStaleMediaStore } from '../src/modules/media/infrastructure/prisma.js';
 import { consent, mediaWorld, SHA_B64, type MediaWorld } from './media-helpers.js';
+import { signupAndLogin } from './helpers.js';
 
 const url = process.env.TEST_DATABASE_URL;
 
@@ -165,5 +166,18 @@ describe.skipIf(!url)('media storage wiring (Prisma, live)', () => {
     await run(); // idempotent: same deterministic id, still one job
     expect(jobs.jobs.filter((j) => j.subjectId === id)).toHaveLength(1);
     expect(jobs.jobs.length).toBeGreaterThan(before);
+  });
+
+  it('#302 L-2b: concurrent org creates with the same name never 500 (unique slug -> 409)', async () => {
+    const name = `Race ${randomUUID().slice(0, 8)}`;
+    const tag = randomUUID().slice(0, 8);
+    const users = await Promise.all(
+      Array.from({ length: 4 }, (_, i) => signupAndLogin(w.app, `race${i}+${tag}@example.com`)),
+    );
+    const codes = await Promise.all(
+      users.map(async (u) => (await u.post('/orgs', { name })).statusCode),
+    );
+    expect(codes.every((c) => c === 201 || c === 409)).toBe(true);
+    expect(codes).toContain(201);
   });
 });

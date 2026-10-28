@@ -1,3 +1,4 @@
+import { OrganizationSlugConflictError } from '../domain/errors.js';
 import { AlreadyMemberError } from '../domain/errors.js';
 import type { Organization } from '../domain/organization.js';
 import type { Membership, Role } from '../domain/membership.js';
@@ -16,6 +17,10 @@ const live = <T extends { deletedAt: Date | null }>(x: T | undefined | null) =>
 export class InMemoryOrganizationRepository implements OrganizationRepository {
   private readonly items = new Map<string, Organization>();
   async create(org: Organization) {
+    // Mirrors the unique slug index (#302 L-2b).
+    if ([...this.items.values()].some((o) => o.slug === org.slug)) {
+      throw new OrganizationSlugConflictError();
+    }
     this.items.set(org.id, { ...org });
     return org;
   }

@@ -37,7 +37,7 @@ export interface MediaWorld {
 }
 
 /**
- * `emailTag` makes the four users' emails unique (e.g. per run) so live suites can share one database (#302 L-2).
+ * `emailTag` makes the four users' emails and the two org names (#302 L-2b) unique (e.g. per run) so live suites can share one database (#302 L-2).
  */
 export async function mediaWorld(
   extra: Partial<ModuleDeps> = {},
@@ -58,11 +58,11 @@ export async function mediaWorld(
     return c;
   };
   const owner = await signupAndLogin(app, email('owner'));
-  const org = await createOrg(owner, 'Acme');
+  const org = await createOrg(owner, emailTag ? `Acme ${emailTag}` : 'Acme');
   const member = await join(owner, org, email('member'), 'member');
   const viewer = await join(owner, org, email('viewer'), 'viewer');
   const other = await signupAndLogin(app, email('other'));
-  const otherOrg = await createOrg(other, 'Globex');
+  const otherOrg = await createOrg(other, emailTag ? `Globex ${emailTag}` : 'Globex');
   return {
     app,
     media,

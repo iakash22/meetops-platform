@@ -11,6 +11,12 @@ export class LastOwnerError extends DomainError {
     super('CONFLICT', 'An organization must keep at least one owner', 409, 'LAST_OWNER');
   }
 }
+/** #302 L-2b: the slug check-then-insert lost a race to a concurrent create (unique violation), so 409, not 500. */
+export class OrganizationSlugConflictError extends DomainError {
+  constructor() {
+    super('CONFLICT', 'An organization with this name was just created; try again', 409);
+  }
+}
 export class EmailNotVerifiedError extends DomainError {
   constructor() {
     super('FORBIDDEN', 'Verify your email address first', 403);
