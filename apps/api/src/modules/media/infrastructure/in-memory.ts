@@ -17,6 +17,7 @@ import type {
   StoredObjectHead,
 } from '../domain/ports.js';
 import { downloadContentType } from '../domain/ports.js';
+import { assertTtl } from '@meetops/storage';
 
 export class InMemoryConsentRepository implements ConsentRepository {
   readonly rows: ConsentRecord[] = [];
@@ -82,6 +83,8 @@ export class FakeMediaSigner implements MediaSigner {
     checksumSha256Base64: string;
     ttlSeconds: number;
   }) {
+    // Same cap as the real S3UploadSourceSigner, so a TTL above it fails here too (#300 M-1).
+    assertTtl(s.ttlSeconds);
     this.signedChecksums.set(s.key, s.checksumSha256Base64);
     return this.sign('PUT', s.key, s.ttlSeconds, {
       'content-length': String(s.sizeBytes),
