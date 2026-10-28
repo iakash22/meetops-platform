@@ -9,7 +9,7 @@ import {
 } from '../src/lib/auth/auth-service.js';
 import { uploadValidators, validators } from '../src/lib/auth/validate.js';
 import { ChunkStore } from '../src/lib/chunk-store.js';
-import { drainQueue } from '../src/lib/drain.js';
+import { drainQueue, listHeldSessions } from '../src/lib/drain.js';
 import { safeErrorMessage } from '../src/lib/redact.js';
 import {
   ChunkChecksumMismatchError,
@@ -554,26 +554,49 @@ describe('HttpUploadClient + drain: real-API edge cases (dummy media)', () => {
     return store;
   }
 
-  it('413 PAYLOAD_TOO_LARGE on a chunk is terminal: aborted and removed locally, not retried', async () => {
+  it('413 PAYLOAD_TOO_LARGE on a chunk holds the recording locally: no abort, no delete, not auto-retried', async () => {
     const { fake, client } = setup();
     const store = await seededStore();
     fake.reply('chunks', { status: 413, body: errorBody('PAYLOAD_TOO_LARGE') });
     const r = await drainQueue(store, client);
-    expect(r).toMatchObject({ aborted: 1, failed: 0, completed: 0 });
-    expect(fake.of('chunks')).toHaveLength(1);
-    expect(fake.of('abort')).toHaveLength(1);
-    expect(await store.getSession(SID)).toBeUndefined();
-    expect((await drainQueue(store, client)).aborted).toBe(0); // nothing left to retry
+    expect(r).toMatchObject({ held: 1, aborted: 0, failed: 0, completed: 0 });
+    expect(fake.of('abort')).toHaveLength(0);
+    expect((await store.getSession(SID))!.held).toMatchObject({ status: 413 });
+    expect(await store.listChunks(SID)).toHaveLength(2);
+    expect(await listHeldSessions(store)).toHaveLength(1);
+    expect(await drainQueue(store, client)).toMatchObject({ held: 1, uploaded: 0 });
+    expect(fake.of('chunks')).toHaveLength(1); // not retried without the user
   });
 
-  it('409 on complete (session no longer uploading) is terminal', async () => {
+  it('409 on the chunk-URL request keeps local chunks and holds the session (L-2)', async () => {
+    const { fake, client } = setup();
+    const store = await seededStore();
+    fake.reply('chunks', { status: 409, body: errorBody('CONFLICT') });
+    const r = await drainQueue(store, client);
+    expect(r).toMatchObject({ held: 1, aborted: 0 });
+    expect(fake.of('abort')).toHaveLength(0);
+    expect(await store.listChunks(SID)).toHaveLength(2);
+    expect((await store.getSession(SID))!).toMatchObject({
+      completed: false,
+      held: { status: 409 },
+    });
+  });
+
+  it('409 on complete (checksum mismatch / missing chunk) holds the session, never aborts it (M-1), and a user retry completes it', async () => {
     const { fake, client } = setup();
     const store = await seededStore();
     fake.reply('complete', { status: 409, body: errorBody('CONFLICT') });
     const r = await drainQueue(store, client);
-    expect(r).toMatchObject({ uploaded: 2, aborted: 1, completed: 0, failed: 0 });
-    expect(fake.of('complete')).toHaveLength(1);
-    expect(await store.getSession(SID)).toBeUndefined();
+    expect(r).toMatchObject({ uploaded: 2, held: 1, aborted: 0, completed: 0, failed: 0 });
+    expect(fake.of('abort')).toHaveLength(0);
+    const s = (await store.getSession(SID))!;
+    expect(s).toMatchObject({ completed: false, held: { status: 409, op: 'complete' } });
+    expect(s.abortedReason).toBeUndefined();
+    const again = await drainQueue(store, client, undefined, Date.now, undefined, {
+      includeHeld: true,
+    });
+    expect(again).toMatchObject({ completed: 1, held: 0 });
+    expect(fake.of('abort')).toHaveLength(0);
   });
 
   it('404 (media routes not enabled) keeps the local recording for a later drain', async () => {

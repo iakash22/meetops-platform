@@ -22,7 +22,7 @@ import {
   type PendingTasksResponse,
 } from '../src/lib/pending-tasks.js';
 import { safeErrorMessage } from '../src/lib/redact.js';
-import { drainQueue } from '../src/lib/drain.js';
+import { drainQueue, listHeldSessions } from '../src/lib/drain.js';
 import {
   isPendingDiscard,
   listFailedDiscards,
@@ -157,6 +157,25 @@ async function retryDiscards(): Promise<void> {
   }
 }
 
+async function heldRecordings(): Promise<number> {
+  return (await listHeldSessions(await store())).length;
+}
+
+/** Popup Retry upload: re-attempt sessions held after a 409/413 (kept locally, never aborted). */
+async function retryHeld(): Promise<void> {
+  await drainQueue(
+    await store(),
+    client,
+    undefined,
+    Date.now,
+    { isMarked: (id) => isPendingDiscard(durableKV, id), gate: withSessionGate },
+    { includeHeld: true },
+  );
+  await chrome.action
+    .setBadgeText({ text: (await heldRecordings()) ? '!' : '' })
+    .catch(() => undefined);
+}
+
 async function drain(): Promise<void> {
   try {
     await retryDiscards().catch((err: unknown) =>
@@ -164,10 +183,11 @@ async function drain(): Promise<void> {
     );
     // Marked sessions are skipped (re-checked before each PUT and before complete, under a
     // per-session gate shared with marking); every other session still drains.
-    await drainQueue(await store(), client, undefined, Date.now, {
+    const r = await drainQueue(await store(), client, undefined, Date.now, {
       isMarked: (id) => isPendingDiscard(durableKV, id),
       gate: withSessionGate,
     });
+    if (r.held) await chrome.action.setBadgeText({ text: '!' }).catch(() => undefined);
     if (direct) {
       const { failed } = await drainDirectUploads(await store(), direct, {
         isMarked: (id) => isPendingDiscard(durableKV, id),
@@ -180,6 +200,8 @@ async function drain(): Promise<void> {
 }
 
 const deps: BackgroundDeps = {
+  heldRecordings,
+  retryHeld,
   kv: sessionKV(),
   now: () => Date.now(),
   hasOffscreen,

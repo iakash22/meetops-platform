@@ -41,7 +41,7 @@ export default async function meetingsModule(app: FastifyInstance, opts: Meeting
   const caller: ResolveCaller = async (request, organizationId) =>
     access.caller(await g.requireSession(request), organizationId, requestMeta(request));
   await app.register(meetingRoutes, {
-    meetings: new MeetingService(deps.meetings, access, organizations),
+    meetings: new MeetingService(deps.meetings, access, organizations, deps.rateLimiter),
     caller,
     resolveCaller: dualCaller(caller, opts.extensionBearer, organizations, 'meetings:resolve'),
   });

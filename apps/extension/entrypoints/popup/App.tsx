@@ -133,6 +133,12 @@ function PopupApp() {
     );
   }, [apply]);
 
+  const onRetryHeld = useCallback(() => {
+    send({ target: 'background', type: 'RETRY_HELD_UPLOADS' }).then(apply, (e: unknown) =>
+      setRawError(errText(e)),
+    );
+  }, [apply]);
+
   return (
     <PopupView
       {...pairing}
@@ -147,6 +153,7 @@ function PopupApp() {
       onRecord={() => void onRecord()}
       onStop={onStop}
       onDismissWarning={onDismissWarning}
+      onRetryHeld={onRetryHeld}
     />
   );
 }

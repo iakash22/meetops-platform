@@ -44,6 +44,10 @@ export interface BackgroundDeps {
   discardLocal: (sessionId: string) => Promise<void>;
   /** Fallback after repeated discard failures: delete the session from IndexedDB only. */
   deleteLocal?: (sessionId: string) => Promise<void>;
+  /** Number of recordings held after a server refusal (409/413); surfaced in the popup. */
+  heldRecordings?: () => Promise<number>;
+  /** Retry the held recordings (popup Retry upload). */
+  retryHeld?: () => Promise<void>;
   /** Override OFFSCREEN_TIMEOUT_MS (tests). */
   offscreenTimeoutMs?: number;
 }
@@ -180,15 +184,26 @@ export async function handleBackgroundMessage(
 
   switch (msg.type) {
     case 'GET_STATUS': {
+      const held = (await deps.heldRecordings?.().catch(() => 0)) ?? 0;
+      const withHeld = (r: BackgroundResponse): BackgroundResponse =>
+        r.ok && held > 0 ? { ...r, heldRecordings: held } : r;
       // A discard that could not be completed is surfaced until the user clears extension data.
       const failed = await listFailedDiscards(deps.durableKV).catch(() => [] as string[]);
       if (failed.length && state.status === 'idle') {
         const lastError = state.lastError
           ? `${state.lastError} ${DISCARD_FAILED_MESSAGE}`
           : DISCARD_FAILED_MESSAGE;
-        return status({ ...state, lastError });
+        return withHeld(status({ ...state, lastError }));
       }
-      return status(state);
+      return withHeld(status(state));
+    }
+
+    case 'RETRY_HELD_UPLOADS': {
+      if (!deps.retryHeld) return fail('Retry is not available');
+      await deps.retryHeld().catch(() => undefined);
+      const held = (await deps.heldRecordings?.().catch(() => 0)) ?? 0;
+      const r = status(state);
+      return r.ok && held > 0 ? { ...r, heldRecordings: held } : r;
     }
 
     case 'DISMISS_WARNING': {

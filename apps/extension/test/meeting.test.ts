@@ -50,6 +50,45 @@ describe('meetingUrlFromTab', () => {
     ])
       expect(meetingUrlFromTab(u)).toBeNull();
   });
+  it('allows only meeting hosts (L-1)', () => {
+    expect(meetingUrlFromTab('https://us02web.zoom.us/j/1')).toBe('https://us02web.zoom.us/j/1');
+    expect(meetingUrlFromTab('https://teams.live.com/meet/9')).toBe(
+      'https://teams.live.com/meet/9',
+    );
+    for (const u of [
+      'https://evil.example/j/1',
+      'https://zoom.us.evil.example/j/1',
+      'https://notzoom.us/j/1',
+      'https://meet.google.com.evil.example/a',
+      'https://meet.google.com:8443/a',
+    ])
+      expect(meetingUrlFromTab(u)).toBeNull();
+  });
+  it('keeps the Teams fragment path so /_# and /v2 links of different meetings do not collide (M-2)', () => {
+    const t = '19%3ameeting_ABC%40thread.v2';
+    const want = `https://teams.microsoft.com/l/meetup-join/${t}/0`;
+    expect(
+      meetingUrlFromTab(`https://teams.microsoft.com/_#/l/meetup-join/${t}/0?ctx=secret`),
+    ).toBe(want);
+    expect(
+      meetingUrlFromTab(`https://teams.microsoft.com/v2/?meetingjoin=true#/l/meetup-join/${t}/0`),
+    ).toBe(want);
+    expect(meetingUrlFromTab(`https://teams.microsoft.com/l/meetup-join/${t}/0?context=x`)).toBe(
+      want,
+    );
+    expect(meetingUrlFromTab('https://teams.microsoft.com/_#/l/meetup-join/19%3aOTHER/0')).not.toBe(
+      want,
+    );
+    // Non-Teams fragments are still dropped.
+    expect(meetingUrlFromTab('https://zoom.us/#/j/1')).toBe('https://zoom.us/');
+  });
+  it('passes IDN paths through percent-encoded and long paths unchanged (the API bounds them)', () => {
+    expect(meetingUrlFromTab('https://zoom.us/j/r\u00e9union')).toBe(
+      'https://zoom.us/j/r%C3%A9union',
+    );
+    const long = `https://zoom.us/j/${'a'.repeat(400)}`;
+    expect(meetingUrlFromTab(long)).toBe(long);
+  });
 });
 
 describe('createMeetingResolver (POST /orgs/:org/meetings/resolve)', () => {

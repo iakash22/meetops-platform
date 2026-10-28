@@ -58,7 +58,45 @@ export class MeetingResolveError extends Error {
   }
 }
 
-/** The tab must be an https page; only origin + path are sent (no query, no fragment, no credentials). */
+/** L-1: meeting hosts the extension resolves (exact host, or a subdomain of a `.` suffix). Mirrors the API list. */
+export const MEETING_HOSTS = {
+  exact: [
+    'meet.google.com',
+    'teams.microsoft.com',
+    'teams.live.com',
+    'teams.microsoft.us',
+    'gov.teams.microsoft.us',
+    'dod.teams.microsoft.us',
+    'zoom.us',
+    'zoomgov.com',
+  ],
+  suffix: ['.zoom.us', '.zoomgov.com', '.zoom.com'],
+} as const;
+
+export function isAllowedMeetingHost(hostname: string): boolean {
+  const h = hostname.toLowerCase().replace(/\.$/, '');
+  return (
+    (MEETING_HOSTS.exact as readonly string[]).includes(h) ||
+    MEETING_HOSTS.suffix.some((s) => h.endsWith(s) && h.length > s.length)
+  );
+}
+
+const isTeamsHost = (h: string) => h.startsWith('teams.') || h.includes('.teams.');
+
+/**
+ * M-2: Teams web links put the meeting in the fragment (`/_#/l/meetup-join/...`, `/v2/?meetingjoin=true#/l/...`).
+ * Only the fragment's path is kept (its query is dropped), so different meetings don't all collapse onto `/_` or `/v2`.
+ */
+function teamsFragmentPath(pathname: string, hash: string): string | null {
+  if (!/^\/(?:_|v2)?\/?$/.test(pathname) || !hash.startsWith('#/')) return null;
+  const p = hash.slice(1).split('?')[0]!;
+  return p.length > 1 ? p : null;
+}
+
+/**
+ * The tab must be an https page on a meeting host (L-1); only origin + path are sent (no query, no credentials).
+ * The fragment is dropped too, except the path inside a Teams `#/l/...` fragment (see teamsFragmentPath).
+ */
 export function meetingUrlFromTab(url: string | undefined): string | null {
   if (!url) return null;
   let u: URL;
@@ -67,8 +105,10 @@ export function meetingUrlFromTab(url: string | undefined): string | null {
   } catch {
     return null;
   }
-  if (u.protocol !== 'https:' || u.username || u.password) return null;
-  return `${u.origin}${u.pathname}`;
+  if (u.protocol !== 'https:' || u.username || u.password || u.port) return null;
+  if (!isAllowedMeetingHost(u.hostname)) return null;
+  const path = (isTeamsHost(u.hostname) && teamsFragmentPath(u.pathname, u.hash)) || u.pathname;
+  return `${u.origin}${path}`;
 }
 
 export interface MeetingResolverDeps {

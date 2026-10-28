@@ -34,6 +34,15 @@ export interface StoredChunk {
   sha256?: string;
 }
 
+export interface HeldInfo {
+  /** HTTP status of the refusal (409 or 413). */
+  status: number;
+  /** Upload operation that was refused. */
+  op: string;
+  /** Epoch ms when it was held. */
+  at: number;
+}
+
 export interface StoredSession {
   sessionId: string;
   /**
@@ -50,6 +59,11 @@ export interface StoredSession {
   incomplete?: { lostChunks: number };
   /** Set when the session was aborted instead of completed. */
   abortedReason?: string;
+  /**
+   * Held locally after the server refused it (409 on a chunk URL / complete, or 413). Never aborted or deleted for
+   * that: the drain skips it until the user retries from the popup (see drain.ts releaseHeldSessions).
+   */
+  held?: HeldInfo;
   /** Digests of uploaded chunks, sent with complete(). */
   digests?: CompletedChunk[];
 }

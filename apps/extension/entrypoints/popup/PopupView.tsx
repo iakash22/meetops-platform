@@ -1,3 +1,4 @@
+import { HELD_MESSAGE } from '../../src/lib/drain.js';
 import { memo, useId, type ReactNode } from 'react';
 import type { AuthStatus } from '../../src/lib/auth/messages.js';
 import {
@@ -199,6 +200,8 @@ export interface RecorderViewProps {
   onRecord: () => void;
   onStop: () => void;
   onDismissWarning: () => void;
+  /** Retry recordings held after a server refusal. */
+  onRetryHeld?: () => void;
 }
 
 export function RecorderView(p: RecorderViewProps) {
@@ -217,6 +220,16 @@ export function RecorderView(p: RecorderViewProps) {
             <strong>Recording incomplete.</strong> Some audio was lost because local storage was
             full, so this recording will be discarded instead of submitted.
           </p>
+        </div>
+      )}
+      {(status.heldRecordings ?? 0) > 0 && (
+        <div className="mo-callout mo-callout--warning" role="alert" aria-label="Upload held">
+          <p>{HELD_MESSAGE(status.heldRecordings ?? 0)}</p>
+          {p.onRetryHeld && (
+            <button type="button" className="mo-btn mo-btn--ghost" onClick={p.onRetryHeld}>
+              Retry upload
+            </button>
+          )}
         </div>
       )}
       {status.storageWarning && (
