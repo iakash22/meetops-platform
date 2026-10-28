@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Fix (M-1, consent): discards are durable. A device-wide tombstone (`chunk_tombstone`) is written before any delete is attempted, and Rust refuses chunk and metadata writes for a tombstoned recording. At startup, tombstoned recordings are only deleted and never re-queued. This covers two cases: a delete that failed before a restart, and one account discarding another account's recording.
+- Security (N-1): the chunk-store owner is derived in Rust from the authenticated session (`AuthState::owner`), and chunk commands no longer accept an `owner` from the webview. Account dir names are now an HMAC keyed from the device key (`chunk-owner.v2`).
+- Fix (N-2): local-delete retries back off and are capped at 8 per launch. The tombstone retries on the next launch.
+- Fix (N-3): metadata saves are serialized per recording, and they are flushed and closed before a delete. In-flight uploads stop at the next chunk once a recording is discarded.
 - Fix: the pending upload queue now survives restarts. Queue metadata is stored encrypted beside the chunks, and on the first pass for each account, leftover recordings are re-queued. Leftovers with no metadata are deleted, and the 7-day retention applies to restored items.
 - Fix (L-2): verified deletion uses the new `chunk_exists` command, so it also sees chunks written by earlier launches.
 - Fix (L-3): if a delete fails during discard or retention, the record is kept with `pendingDelete` and the delete is retried on every pass, so no orphans are left.

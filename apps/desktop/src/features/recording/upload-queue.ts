@@ -44,6 +44,14 @@ export interface QueueItem {
   /** Set when the local copy must be deleted (discard, retention, or after upload) but the delete hasn't been
    * verified yet. The record is kept, and the delete retried every pass, so no encrypted orphans are left behind. */
   pendingDelete?: boolean;
+  /** Failed local-delete attempts this launch (bounded with backoff; a durable tombstone retries next launch). */
+  deleteAttempts?: number;
+}
+
+export interface StoredRecording {
+  id: string;
+  /** Tombstoned (discarded or expired): only ever deleted, never re-queued or uploaded. */
+  discarded: boolean;
 }
 
 /** Local chunk bytes. Persistent impl (encrypted files, per-device keychain key, ADR-012 3.5) is Rust-side. */
@@ -53,8 +61,10 @@ export interface ChunkStore {
   remove: (recordingId: string) => Promise<void>;
   /** True while anything of the recording is still stored, including data from earlier launches. */
   exists: (recordingId: string) => Promise<boolean>;
-  /** Recording ids stored for the signed-in account, excluding ones still being written this launch. */
-  list: () => Promise<string[]>;
+  /** Recordings stored for the signed-in account, excluding ones still being written this launch. */
+  list: () => Promise<StoredRecording[]>;
+  /** Durable, device-wide discard marker, written before any delete is attempted (consent: M-1). */
+  tombstone: (recordingId: string) => Promise<void>;
   /** Queue metadata, stored (encrypted) beside the chunks so the queue survives restarts. */
   saveMeta: (recordingId: string, meta: string) => Promise<void>;
   /** Null when the recording has no metadata (e.g. the app quit mid-recording). */
@@ -130,10 +140,23 @@ export function createUploadQueue(
     listeners.forEach((l) => l());
   };
   const get = (id: string) => items.find((i) => i.id === id);
-  // Best effort: a failed metadata write only loses restart-resume for that item, never the upload.
+  // Metadata writes are serialized per recording (each waits for the previous, so the newest state lands last) and
+  // stop for good once a delete starts, so a late write can't recreate the folder (N-3). Best effort: a failed write
+  // only loses restart-resume for that item, never the upload.
+  const saving = new Map<string, Promise<void>>();
+  const closed = new Set<string>();
   const persist = (item: QueueItem | undefined) => {
-    if (item && !item.pendingDelete)
-      void chunks.saveMeta(item.id, JSON.stringify(item)).catch(() => undefined);
+    if (!item || item.pendingDelete || closed.has(item.id)) return;
+    const json = JSON.stringify(item);
+    const next = (saving.get(item.id) ?? Promise.resolve()).then(() =>
+      closed.has(item.id) ? undefined : chunks.saveMeta(item.id, json).catch(() => undefined),
+    );
+    saving.set(item.id, next);
+  };
+  const flushed = async (id: string) => {
+    closed.add(id);
+    await saving.get(id);
+    saving.delete(id);
   };
   const patch = (id: string, p: Partial<QueueItem>) => {
     set(items.map((i) => (i.id === id ? { ...i, ...p } : i)));
@@ -142,22 +165,41 @@ export function createUploadQueue(
   const drop = (id: string) => set(items.filter((i) => i.id !== id));
 
   async function deleteVerified(id: string) {
+    await flushed(id);
     await chunks.remove(id);
     if (await chunks.exists(id)) throw new Error('Local copy still present after delete.');
     drop(id);
   }
 
-  /** Delete now, or keep the record flagged so the next pass retries (L-3). */
+  /** Mark discarded in memory and durably (tombstone) before any delete, so it can never upload again (M-1). */
+  async function markDiscarded(id: string) {
+    set(items.map((i) => (i.id === id ? { ...i, pendingDelete: true } : i)));
+    await flushed(id);
+    await chunks.tombstone(id).catch(() => undefined);
+  }
+
+  /** Delete now, or keep the record flagged and retry with backoff, up to MAX_ATTEMPTS per launch (L-3, N-2). */
   async function deleteOrFlag(id: string) {
     try {
       await deleteVerified(id);
     } catch {
+      const t = now();
       set(
-        items.map((i) =>
-          i.id === id
-            ? { ...i, pendingDelete: true, lastError: "Couldn't remove the local copy. Retrying." }
-            : i,
-        ),
+        items.map((i) => {
+          if (i.id !== id) return i;
+          const deleteAttempts = (i.deleteAttempts ?? 0) + 1;
+          return {
+            ...i,
+            pendingDelete: true,
+            deleteAttempts,
+            nextAttemptAt:
+              t + Math.min(MAX_BACKOFF_MS, BASE_BACKOFF_MS * 2 ** (deleteAttempts - 1)),
+            lastError:
+              deleteAttempts >= MAX_ATTEMPTS
+                ? "Couldn't remove the local copy. It will be retried next launch."
+                : "Couldn't remove the local copy. Retrying.",
+          };
+        }),
       );
     }
   }
@@ -166,8 +208,14 @@ export function createUploadQueue(
   async function hydrate(key: string) {
     if (hydrated.has(key)) return;
     const known = new Set(items.map((i) => i.id));
-    for (const id of await chunks.list()) {
+    for (const { id, discarded } of await chunks.list()) {
       if (known.has(id)) continue;
+      if (discarded) {
+        // Discarded or expired earlier (maybe by another account): delete only. A failure leaves the tombstone,
+        // so the next launch tries again; it is never re-queued.
+        await chunks.remove(id).catch(() => undefined);
+        continue;
+      }
       let item: QueueItem | null = null;
       try {
         const raw = await chunks.readMeta(id);
@@ -201,6 +249,8 @@ export function createUploadQueue(
     const done = new Set(item.uploadedSeqs);
     for (const c of item.chunks) {
       if (done.has(c.seq)) continue;
+      const current = get(item.id);
+      if (!current || current.pendingDelete) throw new Error('discarded');
       if (!ctx.isOnline()) throw new Error('offline');
       const { upload: signed } = await api.chunkUrl(sessionId, c);
       await api.put(signed, await chunks.read(item.id, c.seq));
@@ -229,10 +279,12 @@ export function createUploadQueue(
     for (const item of [...items]) {
       if (!owns(item)) continue;
       if (item.pendingDelete) {
-        await deleteOrFlag(item.id);
+        if (item.nextAttemptAt <= t && (item.deleteAttempts ?? 0) < MAX_ATTEMPTS)
+          await deleteOrFlag(item.id);
         continue;
       }
       if (t - item.queuedAt < RETENTION_MS) continue;
+      await markDiscarded(item.id);
       if (item.sessionId)
         await api.abort(item.sessionId, 'local_storage_exhausted').catch(() => undefined);
       await deleteOrFlag(item.id);
@@ -289,11 +341,12 @@ export function createUploadQueue(
     async discard(id) {
       const item = get(id);
       if (!item) return;
+      // Durable first: the tombstone is device-wide, so it holds even for another account's recording.
+      await markDiscarded(id);
       if (item.sessionId && item.state !== 'done')
         await api.abort(item.sessionId, 'user_stopped').catch(() => undefined);
-      // Another account's store namespace isn't addressable now: flag it and delete when its owner signs in.
+      // Another account's store namespace isn't addressable now; its tombstone makes it delete-only at its next sign-in.
       if (owns(item)) await deleteOrFlag(id);
-      else set(items.map((i) => (i.id === id ? { ...i, pendingDelete: true } : i)));
     },
     items: () => items,
     subscribe(l) {
@@ -307,6 +360,7 @@ export function createUploadQueue(
 export function createMemoryChunkStore(): ChunkStore {
   const map = new Map<string, Map<number, Uint8Array>>();
   const meta = new Map<string, string>();
+  const tombs = new Set<string>();
   return {
     put: async (id, seq, bytes) => {
       if (!map.has(id)) map.set(id, new Map());
@@ -320,10 +374,17 @@ export function createMemoryChunkStore(): ChunkStore {
     remove: async (id) => {
       map.delete(id);
       meta.delete(id);
+      tombs.delete(id);
     },
     exists: async (id) => map.has(id) || meta.has(id),
-    list: async () => [...new Set([...map.keys(), ...meta.keys()])].filter((id) => meta.has(id)),
-    saveMeta: async (id, m) => void meta.set(id, m),
+    list: async () =>
+      [...new Set([...map.keys(), ...meta.keys()])]
+        .filter((id) => meta.has(id))
+        .map((id) => ({ id, discarded: tombs.has(id) })),
+    tombstone: async (id) => void tombs.add(id),
+    saveMeta: async (id, m) => {
+      if (!tombs.has(id)) meta.set(id, m);
+    },
     readMeta: async (id) => meta.get(id) ?? null,
   };
 }

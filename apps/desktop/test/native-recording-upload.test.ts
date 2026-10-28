@@ -6,53 +6,67 @@ import {
   RETENTION_MS,
   createUploadQueue,
   type NewRecording,
+  type QueueContext,
 } from '@/features/recording/upload-queue';
 
 /** Shaped like Rust's `{ code, message }` rejection. */
 const rustError = (code: string) => Object.assign(new Error(code), { code });
 
-/** Fake Tauri backend: encrypted store stand-in plus api_request/upload_put. */
+/**
+ * Fake Tauri backend sharing one "disk" across store/queue instances (= app restarts). Like Rust, the chunk owner
+ * comes from the backend's own session (`rust.signedIn`), never from the webview; tombstones are device-wide.
+ */
 function fakeRust(opts: { failPutsOnce?: number } = {}) {
   const disk = new Map<string, number[]>();
+  const tombs = new Set<string>();
   const calls: { cmd: string; args: unknown; headers?: HeadersInit | undefined }[] = [];
   let failPuts = opts.failPutsOnce ?? 0;
-  const failDeletes = { n: 0 };
+  const state = { signedIn: 'u1:o1' as string | null, failDeletes: 0 };
   const invoke = (async (cmd: string, args?: unknown, o?: { headers: HeadersInit }) => {
     calls.push({ cmd, args, headers: o?.headers });
-    const a = args as {
-      owner: string;
-      sessionId: string;
-      index: number;
-      data: number[];
-      path: string;
+    const a = (args ?? {}) as { sessionId: string; index: number; data: number[]; path: string };
+    const owner = () => {
+      if (!state.signedIn) throw rustError('UNAUTHENTICATED');
+      return state.signedIn;
     };
-    const dir = `${a.owner}/${a.sessionId}/`;
+    const dir = () => `${owner()}/${a.sessionId}/`;
     switch (cmd) {
       case 'chunk_put':
-        disk.set(`${dir}${a.index}`, a.data);
+        if (tombs.has(a.sessionId)) throw rustError('VALIDATION_FAILED');
+        disk.set(`${dir()}${a.index}`, a.data);
         return null;
       case 'chunk_get': {
-        const v = disk.get(`${dir}${a.index}`);
+        const v = disk.get(`${dir()}${a.index}`);
         if (!v) throw rustError('NOT_FOUND');
         return v;
       }
-      case 'chunk_delete':
-        if (failDeletes.n > 0) {
-          failDeletes.n -= 1;
+      case 'chunk_delete': {
+        const d = dir();
+        if (state.failDeletes > 0) {
+          state.failDeletes -= 1;
           throw rustError('INTERNAL');
         }
-        for (const k of [...disk.keys()]) if (k.startsWith(dir)) disk.delete(k);
+        for (const k of [...disk.keys()]) if (k.startsWith(d)) disk.delete(k);
+        tombs.delete(a.sessionId);
         return null;
-      case 'chunk_exists':
-        return [...disk.keys()].some((k) => k.startsWith(dir));
-      case 'chunk_list':
-        return [
+      }
+      case 'chunk_exists': {
+        const d = dir();
+        return [...disk.keys()].some((k) => k.startsWith(d));
+      }
+      case 'chunk_list': {
+        const p = `${owner()}/`;
+        const ids = [
           ...new Set(
-            [...disk.keys()]
-              .filter((k) => k.startsWith(`${a.owner}/`))
-              .map((k) => k.split('/')[1] ?? ''),
+            [...disk.keys()].filter((k) => k.startsWith(p)).map((k) => k.split('/')[1] ?? ''),
           ),
         ].sort();
+        return ids.map((id) => ({ id, discarded: tombs.has(id) }));
+      }
+      case 'chunk_tombstone':
+        owner();
+        tombs.add(a.sessionId);
+        return null;
       case 'api_request':
         if (a.path.endsWith('/chunks'))
           return { upload: { url: 'https://storage.example/put', method: 'PUT', headers: {} } };
@@ -69,15 +83,31 @@ function fakeRust(opts: { failPutsOnce?: number } = {}) {
         throw new Error(`unexpected ${cmd}`);
     }
   }) as Invoke;
-  return { invoke, disk, calls, failDeletes };
+  return { invoke, disk, tombs, calls, state };
 }
 
-const owner = () => 'u1:o1';
-const ctx = { isOnline: () => true, identity: () => ({ userId: 'u1', organizationId: 'o1' }) };
+type Rust = ReturnType<typeof fakeRust>;
 
-const rec = (id: string): NewRecording => ({
+/** Queue identity follows the fake backend's session, as the real app's session does. */
+const ctxFor = (rust: Rust, online = true): QueueContext => ({
+  isOnline: () => online,
+  identity: () => {
+    const [userId, organizationId] = (rust.state.signedIn ?? '').split(':');
+    return userId && organizationId ? { userId, organizationId } : null;
+  },
+});
+
+const launch = (rust: Rust, now: () => number, online = true) => {
+  const chunks = createNativeChunkStore(rust.invoke);
+  return {
+    chunks,
+    queue: createUploadQueue(createNativeUploadApi(rust.invoke), chunks, ctxFor(rust, online), now),
+  };
+};
+
+const rec = (id: string, userId = 'u1'): NewRecording => ({
   id,
-  userId: 'u1',
+  userId,
   organizationId: 'o1',
   meetingId: 'm1',
   meetingTitle: 'Standup',
@@ -91,85 +121,112 @@ const rec = (id: string): NewRecording => ({
   consent: {} as NewRecording['consent'],
 });
 
+async function record(chunks: ReturnType<typeof createNativeChunkStore>, id: string) {
+  await chunks.put(id, 0, new Uint8Array([1, 2, 3]));
+  await chunks.put(id, 1, new Uint8Array([4, 5, 6]));
+}
+
+const flush = () => new Promise((r) => setTimeout(r, 0));
+const puts = (rust: Rust) => rust.calls.filter((c) => c.cmd === 'upload_put').length;
+
 describe('native recording upload', () => {
   it('stores chunks via the encrypted Rust store and round-trips bytes', async () => {
-    const { invoke, disk } = fakeRust();
-    const store = createNativeChunkStore(invoke, owner);
+    const rust = fakeRust();
+    const store = createNativeChunkStore(rust.invoke);
     await store.put('r1', 0, new Uint8Array([1, 2, 3]));
-    expect(disk.size).toBe(1);
     expect(await store.read('r1', 0)).toEqual(new Uint8Array([1, 2, 3]));
     expect(await store.exists('r1')).toBe(true);
     await store.remove('r1');
     expect(await store.exists('r1')).toBe(false);
   });
 
-  it('sends raw bytes to upload_put with the x-meetops-upload header, resumes after a failure, then deletes local chunks', async () => {
-    const { invoke, disk, calls } = fakeRust({ failPutsOnce: 1 });
-    const chunks = createNativeChunkStore(invoke, owner);
-    let t = 0;
-    const queue = createUploadQueue(
-      createNativeUploadApi(invoke),
-      chunks,
-      { isOnline: () => true, identity: () => ({ userId: 'u1', organizationId: 'o1' }) },
-      () => t,
-    );
-    await chunks.put('r1', 0, new Uint8Array([1, 2, 3]));
-    await chunks.put('r1', 1, new Uint8Array([4, 5, 6]));
-    queue.enqueue(rec('r1'));
+  it('never sends an owner from the webview (Rust derives it from its session)', async () => {
+    const rust = fakeRust();
+    const { chunks } = launch(rust, () => 0);
+    await chunks.put('r1', 0, new Uint8Array([1]));
+    await chunks.exists('r1');
+    await chunks.list();
+    expect(
+      rust.calls.every((c) => !(c.args && typeof c.args === 'object' && 'owner' in c.args)),
+    ).toBe(true);
+    rust.state.signedIn = null;
+    await expect(chunks.put('r1', 1, new Uint8Array([1]))).rejects.toThrow();
+  });
 
+  it('sends raw bytes to upload_put with the header, resumes after a failure, then deletes local chunks', async () => {
+    const rust = fakeRust({ failPutsOnce: 1 });
+    let t = 0;
+    const { chunks, queue } = launch(rust, () => t);
+    await record(chunks, 'r1');
+    queue.enqueue(rec('r1'));
     await queue.process();
     expect(queue.items()[0]?.state).toBe('pending');
     expect(queue.items()[0]?.lastError).toBeTruthy();
-
-    t = 60_000; // past backoff ("reconnect")
+    t = 60_000;
     await queue.process();
     expect(queue.items()).toHaveLength(0);
-    expect(disk.size).toBe(0);
-
-    const puts = calls.filter((c) => c.cmd === 'upload_put');
-    expect(puts).toHaveLength(3);
-    expect(puts[0]?.args).toBeInstanceOf(Uint8Array);
-    expect(
-      JSON.parse(
-        (puts[0]?.headers as Record<string, string> | undefined)?.['x-meetops-upload'] ?? '{}',
-      ).url,
-    ).toBe('https://storage.example/put');
-    // init only once: resume reuses the session
-    const inits = calls.filter(
-      (c) => c.cmd === 'api_request' && !(c.args as { path: string }).path.includes('rs_1'),
-    );
-    expect(inits).toHaveLength(1);
+    expect(rust.disk.size).toBe(0);
+    const p = rust.calls.filter((c) => c.cmd === 'upload_put');
+    expect(p).toHaveLength(3);
+    expect(p[0]?.args).toBeInstanceOf(Uint8Array);
+    const h = p[0]?.headers as Record<string, string> | undefined;
+    expect(JSON.parse(h?.['x-meetops-upload'] ?? '{}').url).toBe('https://storage.example/put');
   });
 
-  it('re-queues a recording left on disk by an earlier launch and uploads it (restart resume, L-2)', async () => {
+  it('re-queues a recording left on disk by an earlier launch and uploads it', async () => {
     const rust = fakeRust({ failPutsOnce: 1 });
     let t = 0;
-    const first = createUploadQueue(
-      createNativeUploadApi(rust.invoke),
-      createNativeChunkStore(rust.invoke, owner),
-      ctx,
-      () => t,
-    );
-    const c1 = createNativeChunkStore(rust.invoke, owner);
-    await c1.put('r1', 0, new Uint8Array([1]));
-    await c1.put('r1', 1, new Uint8Array([2]));
-    first.enqueue(rec('r1'));
-    await first.process(); // fails once, metadata persisted
-    await Promise.resolve();
-
-    // "Restart": fresh store and queue over the same disk.
+    const first = launch(rust, () => t);
+    await record(first.chunks, 'r1');
+    first.queue.enqueue(rec('r1'));
+    await first.queue.process();
+    await flush();
     t = 60_000;
-    const chunks = createNativeChunkStore(rust.invoke, owner);
-    expect(await chunks.exists('r1')).toBe(true);
-    const queue = createUploadQueue(createNativeUploadApi(rust.invoke), chunks, ctx, () => t);
-    await queue.process();
-    expect(queue.items()).toHaveLength(0);
+    const second = launch(rust, () => t);
+    expect(await second.chunks.exists('r1')).toBe(true);
+    await second.queue.process();
+    expect(second.queue.items()).toHaveLength(0);
+    expect(rust.disk.size).toBe(0);
+  });
+
+  it('M-1a: a discard whose delete fails is never uploaded after a restart', async () => {
+    const rust = fakeRust();
+    const first = launch(rust, () => 0, false);
+    await record(first.chunks, 'r1');
+    first.queue.enqueue(rec('r1'));
+    await flush();
+    rust.state.failDeletes = 1;
+    await first.queue.discard('r1');
+    expect(first.queue.items()[0]?.pendingDelete).toBe(true);
+
+    const second = launch(rust, () => 0); // restart, online
+    await second.queue.process();
+    expect(puts(rust)).toBe(0);
+    expect(second.queue.items()).toHaveLength(0);
+    expect(rust.disk.size).toBe(0);
+    expect(rust.tombs.size).toBe(0);
+  });
+
+  it("M-1b: account B discarding A's recording sticks; A signs in after restart and it is deleted, not uploaded", async () => {
+    const rust = fakeRust();
+    const first = launch(rust, () => 0, false);
+    await record(first.chunks, 'rA');
+    first.queue.enqueue(rec('rA'));
+    await flush();
+    rust.state.signedIn = 'u2:o1'; // B signs in on the same launch
+    await first.queue.discard('rA');
+    expect([...rust.disk.keys()].some((k) => k.startsWith('u1:o1/rA/'))).toBe(true);
+
+    rust.state.signedIn = 'u1:o1'; // restart, A signs in
+    const second = launch(rust, () => 0);
+    await second.queue.process();
+    expect(puts(rust)).toBe(0);
     expect(rust.disk.size).toBe(0);
   });
 
   it('deletes leftovers with no metadata and expires old recordings on startup', async () => {
     const rust = fakeRust();
-    const c = createNativeChunkStore(rust.invoke, owner);
+    const c = createNativeChunkStore(rust.invoke);
     await c.put('orphan', 0, new Uint8Array([1]));
     await c.saveMeta(
       'old',
@@ -184,54 +241,46 @@ describe('native recording upload', () => {
         lastError: null,
       }),
     );
-    await c.put('old', 0, new Uint8Array([1]));
-    const queue = createUploadQueue(
-      createNativeUploadApi(rust.invoke),
-      createNativeChunkStore(rust.invoke, owner),
-      ctx,
-      () => RETENTION_MS + 1,
-    );
+    const { queue } = launch(rust, () => RETENTION_MS + 1);
     await queue.process();
     expect(queue.items()).toHaveLength(0);
     expect(rust.disk.size).toBe(0);
+    expect(puts(rust)).toBe(0);
   });
 
-  it('keeps discarded and expired records until their delete succeeds (L-3)', async () => {
+  it('retries failed deletes with backoff, capped per launch (L-3, N-2)', async () => {
     const rust = fakeRust();
-    const chunks = createNativeChunkStore(rust.invoke, owner);
     let t = 0;
-    const queue = createUploadQueue(
-      createNativeUploadApi(rust.invoke),
-      chunks,
-      { ...ctx, isOnline: () => false },
-      () => t,
-    );
-    await chunks.put('d1', 0, new Uint8Array([1]));
+    const { chunks, queue } = launch(rust, () => t, false);
+    await record(chunks, 'd1');
     queue.enqueue(rec('d1'));
-    await chunks.put('e1', 0, new Uint8Array([1]));
-    queue.enqueue(rec('e1'));
-
-    rust.failDeletes.n = 1;
+    rust.state.failDeletes = 100;
     await queue.discard('d1');
-    expect(queue.items().find((i) => i.id === 'd1')?.pendingDelete).toBe(true);
-
-    t = RETENTION_MS + 1;
-    rust.failDeletes.n = 2;
-    await queue.process(); // d1's retried delete and e1's retention delete both fail: both kept, flagged
-    expect(queue.items().map((i) => i.id)).toEqual(['d1', 'e1']);
+    const deletes = () => rust.calls.filter((c) => c.cmd === 'chunk_delete').length;
+    await queue.process(); // within backoff: no retry
+    expect(deletes()).toBe(1);
+    for (let i = 0; i < 20; i += 1) {
+      t += 60 * 60 * 1000;
+      await queue.process();
+    }
+    expect(deletes()).toBe(8); // MAX_ATTEMPTS
     expect(queue.items()[0]?.pendingDelete).toBe(true);
-
-    await queue.process();
-    expect(queue.items()).toHaveLength(0);
+    rust.state.failDeletes = 0;
+    const again = launch(rust, () => t); // next launch: tombstone makes it delete-only
+    await again.queue.process();
     expect(rust.disk.size).toBe(0);
+    expect(puts(rust)).toBe(0);
   });
 
-  it('namespaces every chunk call by the signed-in owner', async () => {
+  it('N-3: metadata writes are serialized and none lands after the delete', async () => {
     const rust = fakeRust();
-    await createNativeChunkStore(rust.invoke, owner).put('r1', 0, new Uint8Array([1]));
-    expect(await createNativeChunkStore(rust.invoke, () => 'u2:o1').exists('r1')).toBe(false);
-    await expect(
-      createNativeChunkStore(rust.invoke, () => null).put('r1', 0, new Uint8Array([1])),
-    ).rejects.toThrow();
+    const { chunks, queue } = launch(rust, () => 0);
+    await record(chunks, 'r1');
+    queue.enqueue(rec('r1'));
+    await queue.process(); // many patches → many saves, then delete
+    await flush();
+    await flush();
+    expect(queue.items()).toHaveLength(0);
+    expect(rust.disk.size).toBe(0);
   });
 });

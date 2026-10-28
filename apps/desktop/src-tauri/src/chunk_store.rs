@@ -20,6 +20,34 @@ pub struct ChunkStore {
     dir: PathBuf,
     /// `None` when the device key couldn't be persisted: chunk commands fail closed.
     cipher: Option<Aes256Gcm>,
+    /// HMAC key for account dir names, derived from the device key (unavailable with it).
+    owner_key: Option<[u8; 32]>,
+}
+
+/// A session id on disk, and whether it was discarded (tombstoned) and must only ever be deleted.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StoredSession {
+    pub id: String,
+    pub discarded: bool,
+}
+
+fn hmac_sha256(key: &[u8; 32], msg: &[u8]) -> [u8; 32] {
+    let mut ipad = [0x36u8; 64];
+    let mut opad = [0x5cu8; 64];
+    for (i, k) in key.iter().enumerate() {
+        ipad[i] ^= k;
+        opad[i] ^= k;
+    }
+    let inner = Sha256::new()
+        .chain_update(ipad)
+        .chain_update(msg)
+        .finalize();
+    Sha256::new()
+        .chain_update(opad)
+        .chain_update(inner)
+        .finalize()
+        .into()
 }
 
 /// Loads the device key, creating it on first use. Fails closed (Low): if a new key can't be saved to the OS
@@ -60,20 +88,12 @@ fn safe_id(id: &str) -> CmdResult<&str> {
     }
 }
 
-/// Directory name for an account: first 32 hex chars of sha256 over a domain-separated owner string.
-fn owner_dir(owner: &str) -> CmdResult<String> {
-    if owner.is_empty() || owner.len() > 512 {
-        return Err(CmdError::validation("Invalid recording owner."));
-    }
-    let digest = Sha256::digest(format!("meetops.chunk-owner.v1:{owner}").as_bytes());
-    Ok(digest.iter().take(16).map(|b| format!("{b:02x}")).collect())
-}
-
 impl ChunkStore {
     pub fn new(dir: impl AsRef<Path>, key: &[u8; 32]) -> Self {
         Self {
             dir: dir.as_ref().to_path_buf(),
             cipher: Some(Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(key))),
+            owner_key: Some(hmac_sha256(key, b"meetops.chunk-owner-key.v1")),
         }
     }
 
@@ -81,6 +101,7 @@ impl ChunkStore {
         Self {
             dir: dir.as_ref().to_path_buf(),
             cipher: None,
+            owner_key: None,
         }
     }
 
@@ -88,8 +109,33 @@ impl ChunkStore {
         self.cipher.as_ref().ok_or_else(key_unavailable)
     }
 
+    /// Account dir: first 32 hex chars of HMAC-SHA256(device-derived key, owner), so dir names can't be linked to
+    /// known account ids without the device key.
     fn owner_root(&self, owner: &str) -> CmdResult<PathBuf> {
-        Ok(self.dir.join(owner_dir(owner)?))
+        if owner.is_empty() || owner.len() > 512 {
+            return Err(CmdError::validation("Invalid recording owner."));
+        }
+        let key = self.owner_key.as_ref().ok_or_else(key_unavailable)?;
+        let mac = hmac_sha256(key, format!("meetops.chunk-owner.v2:{owner}").as_bytes());
+        let name: String = mac.iter().take(16).map(|b| format!("{b:02x}")).collect();
+        Ok(self.dir.join(name))
+    }
+
+    /// Device-wide tombstones (no account in the name), so a discard by any account is durable even when the
+    /// recording's own account isn't signed in.
+    fn tombstone_path(&self, session: &str) -> CmdResult<PathBuf> {
+        Ok(self.dir.join("discarded").join(safe_id(session)?))
+    }
+
+    /// Marks a recording as discarded before any delete is attempted; it will never be re-queued.
+    pub fn tombstone(&self, session: &str) -> CmdResult<()> {
+        let path = self.tombstone_path(session)?;
+        fs::create_dir_all(path.parent().unwrap()).map_err(|_| CmdError::internal())?;
+        fs::write(path, b"").map_err(|_| CmdError::internal())
+    }
+
+    fn is_tombstoned(&self, session: &str) -> CmdResult<bool> {
+        Ok(self.tombstone_path(session)?.exists())
     }
 
     fn session_dir(&self, owner: &str, session: &str) -> CmdResult<PathBuf> {
@@ -108,6 +154,9 @@ impl ChunkStore {
 
     pub fn put(&self, owner: &str, session: &str, index: u32, data: &[u8]) -> CmdResult<()> {
         crate::upload::check_body_size(data.len())?;
+        if self.is_tombstoned(session)? {
+            return Err(CmdError::validation("That recording was discarded."));
+        }
         let path = self.path(owner, session, index)?;
         let mut nonce = [0u8; 12];
         OsRng.fill_bytes(&mut nonce);
@@ -152,6 +201,10 @@ impl ChunkStore {
         if dir.exists() {
             fs::remove_dir_all(dir).map_err(|_| CmdError::internal())?;
         }
+        let tomb = self.tombstone_path(session)?;
+        if tomb.exists() {
+            fs::remove_file(tomb).map_err(|_| CmdError::internal())?;
+        }
         Ok(())
     }
 
@@ -162,19 +215,25 @@ impl ChunkStore {
 
     /// Session ids with data on disk for this owner (sorted), so leftovers from earlier launches can be re-queued
     /// or expired. Entries that aren't valid ids are ignored.
-    pub fn list(&self, owner: &str) -> CmdResult<Vec<String>> {
+    pub fn list(&self, owner: &str) -> CmdResult<Vec<StoredSession>> {
         let root = self.owner_root(owner)?;
         let Ok(entries) = fs::read_dir(&root) else {
             return Ok(Vec::new());
         };
-        let mut out: Vec<String> = entries
+        // file_type() doesn't follow symlinks: linked dirs are skipped.
+        let mut ids: Vec<String> = entries
             .filter_map(Result::ok)
-            .filter(|e| e.path().is_dir())
+            .filter(|e| e.file_type().map(|t| t.is_dir()).unwrap_or(false))
             .filter_map(|e| e.file_name().into_string().ok())
             .filter(|n| safe_id(n).is_ok())
             .collect();
-        out.sort();
-        Ok(out)
+        ids.sort();
+        ids.into_iter()
+            .map(|id| {
+                let discarded = self.is_tombstoned(&id)?;
+                Ok(StoredSession { id, discarded })
+            })
+            .collect()
     }
 }
 
@@ -205,7 +264,7 @@ mod tests {
 
     fn store() -> (ChunkStore, PathBuf) {
         let dir = std::env::temp_dir().join(format!("mo-chunks-{}", crate::pkce::random_b64(6)));
-        let key = device_key(&Persisting::default(), "k").unwrap();
+        let key = [1u8; 32];
         (ChunkStore::new(&dir, &key), dir)
     }
 
@@ -237,13 +296,51 @@ mod tests {
         s.put(O, "b", 0, b"x").unwrap();
         s.put(O, "a", 3, b"y").unwrap();
         // A fresh instance (new launch) still sees what is on disk.
-        let key = device_key(&Persisting::default(), "k").unwrap();
+        let key = [1u8; 32];
         let again = ChunkStore::new(&dir, &key);
-        assert_eq!(again.list(O).unwrap(), vec!["a".to_owned(), "b".to_owned()]);
+        let ids = |v: Vec<StoredSession>| v.into_iter().map(|s| s.id).collect::<Vec<_>>();
+        assert_eq!(
+            ids(again.list(O).unwrap()),
+            vec!["a".to_owned(), "b".to_owned()]
+        );
         assert!(again.exists(O, "a").unwrap());
         again.delete_session(O, "a").unwrap();
         assert!(!again.exists(O, "a").unwrap());
-        assert_eq!(again.list(O).unwrap(), vec!["b".to_owned()]);
+        assert_eq!(ids(again.list(O).unwrap()), vec!["b".to_owned()]);
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn tombstones_are_durable_block_writes_and_clear_on_delete() {
+        let (s, dir) = store();
+        s.put(O, "a", 0, b"x").unwrap();
+        // Discarded from another account: no access to O's namespace, but the tombstone is device-wide.
+        s.tombstone("a").unwrap();
+        let key = [1u8; 32];
+        let again = ChunkStore::new(&dir, &key);
+        assert_eq!(
+            again.list(O).unwrap(),
+            vec![StoredSession {
+                id: "a".into(),
+                discarded: true
+            }]
+        );
+        assert!(
+            again.put(O, "a", 1, b"y").is_err(),
+            "no writes after discard"
+        );
+        again.delete_session(O, "a").unwrap();
+        assert!(again.list(O).unwrap().is_empty());
+        assert!(!again.is_tombstoned("a").unwrap());
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn owner_dirs_are_keyed_by_the_device_key() {
+        let (s, dir) = store();
+        let other = ChunkStore::new(&dir, &[7u8; 32]);
+        assert_ne!(s.owner_root(O).unwrap(), other.owner_root(O).unwrap());
+        assert!(ChunkStore::unavailable(&dir).owner_root(O).is_err());
         let _ = fs::remove_dir_all(dir);
     }
 
@@ -290,6 +387,6 @@ mod tests {
             s.put(O, "a", 0, b"x").unwrap_err().code,
             "SERVICE_UNAVAILABLE"
         );
-        assert!(!s.exists(O, "a").unwrap());
+        assert!(!dir.exists(), "nothing written");
     }
 }

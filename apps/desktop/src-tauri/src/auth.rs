@@ -53,6 +53,15 @@ struct TokenRequest<'a> {
     device_id: &'a str,
 }
 
+/// Chunk-store owner from a token-free session: needs both a user id and an active organization.
+pub fn owner_of(session: &Value) -> Option<String> {
+    let user = session["user"]["id"].as_str().filter(|v| !v.is_empty())?;
+    let org = session["activeOrganizationId"]
+        .as_str()
+        .filter(|v| !v.is_empty())?;
+    Some(format!("{user}:{org}"))
+}
+
 pub fn authorize_url(
     web: &Url,
     state: &str,
@@ -108,6 +117,11 @@ impl AuthState {
             access: Mutex::new(None),
             session: std::sync::Mutex::new(None),
         }
+    }
+
+    /// `userId:activeOrganizationId` of the signed-in session, from Rust's own session state (never the webview).
+    pub fn owner(&self) -> Option<String> {
+        owner_of(self.session.lock().unwrap().as_ref()?)
     }
 
     pub fn device_id(&self) -> String {
@@ -348,6 +362,17 @@ pub async fn sign_in(state: &AuthState) -> CmdResult<Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn owner_needs_user_and_active_org() {
+        let s = serde_json::json!({ "user": { "id": "u1" }, "activeOrganizationId": "o1" });
+        assert_eq!(owner_of(&s).as_deref(), Some("u1:o1"));
+        assert_eq!(
+            owner_of(&serde_json::json!({ "user": { "id": "u1" }, "activeOrganizationId": null })),
+            None
+        );
+        assert_eq!(owner_of(&serde_json::json!({})), None);
+    }
 
     #[test]
     fn authorize_url_carries_pkce_and_loopback_redirect() {
