@@ -52,7 +52,7 @@ interface WorkerMedia {
 const workerPath = new URL('../../worker/src/media/index.ts', import.meta.url).href;
 
 describe.skipIf(!url || !redisUrl)('media pipeline e2e (Prisma + BullMQ + worker, live)', () => {
-  const prefix = `it-media-${randomBytes(4).toString('hex')}`;
+  const prefix = `qa:it:media-${randomBytes(4).toString('hex')}`;
   const connection = { url: redisUrl!, maxRetriesPerRequest: null };
   const DUMMY = Buffer.from('not-media-dummy-bytes'.padEnd(1000, '.'));
   const signer = new FakeMediaSigner();
@@ -81,9 +81,12 @@ describe.skipIf(!url || !redisUrl)('media pipeline e2e (Prisma + BullMQ + worker
           add: (n, d, o) => queue.add(n, d, o),
           removeIfFinished: async (id) => {
             const j = await queue.getJob(id);
-            if (!j || !['completed', 'failed'].includes(await j.getState())) return false;
+            if (!j) return 'absent' as const;
+            const st = await j.getState();
+            if (st === 'unknown') return 'absent' as const;
+            if (st !== 'completed' && st !== 'failed') return 'live' as const;
             await j.remove();
-            return true;
+            return 'removed' as const;
           },
         }),
       },
@@ -365,6 +368,81 @@ describe.skipIf(!url || !redisUrl)('media pipeline e2e (Prisma + BullMQ + worker
     // Idempotent: once assembled it is no longer selected, so a rerun queues nothing for it.
     expect(
       (await store.unassembledSessions(w.org, new Date(Date.now() + 1000), 100)).map((x) => x.id),
+    ).not.toContain(sid);
+  });
+
+  it('#303 M-1: a recording soft-deleted after complete is never assembled; its chunks are reclaimed', async () => {
+    const meetingId = (
+      await w.member.post(`/orgs/${w.org}/meetings/resolve`, {
+        source: 'extension',
+        externalMeetingUrl: 'https://meet.google.com/del-eted-abc',
+        title: 'Dummy deleted',
+      })
+    ).json<{ meetingId: string }>().meetingId;
+    const sid = (
+      await w.member.post(`/orgs/${w.org}/recording-sessions`, {
+        mimeType: 'video/webm',
+        startedAt: new Date().toISOString(),
+        source: 'tab',
+        meetingId,
+        consent: consent(),
+      })
+    ).json<{ sessionId: string }>().sessionId;
+    await w.member.post(`/recording-sessions/${sid}/chunks`, {
+      seq: 0,
+      sizeBytes: CHUNK.length,
+      sha256: CHUNK_SHA,
+    });
+    const chunkKey = (await media.sessions.findById(w.org, sid))!.chunks.get(0)!.key;
+    signer.put(chunkKey, CHUNK.length);
+    blobs.set(chunkKey, CHUNK);
+    await worker.pause();
+    let jobId = '';
+    try {
+      const done = await w.member.post(`/recording-sessions/${sid}/complete`, {
+        chunkCount: 1,
+        durationMs: 1000,
+      });
+      expect(done.statusCode).toBe(202);
+      jobId = `session_${w.org}_${sid}`;
+      await withOrganizationContext(
+        w.org,
+        async (tx) => {
+          const s = await tx.recordingSession.findFirst({
+            where: { id: sid },
+            select: { recordingId: true },
+          });
+          await tx.recording.updateMany({
+            where: { id: s!.recordingId! },
+            data: { deletedAt: new Date() },
+          });
+        },
+        { client: db },
+      );
+    } finally {
+      worker.resume();
+    }
+    const job = (await queue.getJob(jobId))!;
+    expect(await job.waitUntilFinished(events, 30_000)).toEqual({
+      status: 'skipped',
+      reason: 'deleted',
+    });
+    expect(blobs.has(chunkKey)).toBe(false);
+    const row = await withOrganizationContext(
+      w.org,
+      (tx) =>
+        tx.recordingSession.findFirst({
+          where: { id: sid },
+          select: { recording: { select: { file: { select: { status: true, key: true } } } } },
+        }),
+      { client: db },
+    );
+    expect(row?.recording?.file.status).toBe('pending_upload');
+    expect(blobs.has(row!.recording!.file.key)).toBe(false);
+    // The backfill never re-queues it.
+    const later = new Date(Date.now() + 1000);
+    expect(
+      (await new PrismaStaleMediaStore(db).unassembledSessions(w.org, later, 100)).map((r) => r.id),
     ).not.toContain(sid);
   });
 });
