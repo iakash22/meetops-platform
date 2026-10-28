@@ -2,7 +2,12 @@ import { createHash } from 'node:crypto';
 import { Readable } from 'node:stream';
 import { Type, type Static } from '@sinclair/typebox';
 import { Value } from '@sinclair/typebox/value';
-import { MAX_RECORDING_SESSION_BYTES, type MediaJobPayload } from '@meetops/contracts';
+import {
+  CONSENT_ATTESTATION_MAX_SKEW_SECONDS,
+  CURRENT_CONSENT_VERSION,
+  MAX_RECORDING_SESSION_BYTES,
+  type MediaJobPayload,
+} from '@meetops/contracts';
 import { StorageNotFoundError } from '@meetops/storage';
 import './ids.js'; // registers the contracts uuid format
 
@@ -25,8 +30,23 @@ export type SessionAssemblyJob = Static<typeof SessionAssemblyJob>;
 export type AssemblyChunk = { seq: number; sizeBytes: number; sha256Hex: string; key: string };
 
 /** A completed session with its recording + source FileObject, read under the job's org (forced RLS). */
+/** Latest stored consent attestation for the session (append-only table; newest wins, as in the API). */
+export type AssemblyConsent = {
+  id: string;
+  consentVersion: string;
+  attestedAt: Date;
+  recordedAt: Date;
+};
+
 export type AssemblySession = {
   id: string;
+  /**
+   * #303 M-1: the first soft-deleted parent (null when all are live). Loaded with the session so a deletion after
+   * complete stops assembly instead of re-materializing the media.
+   */
+  deleted?: 'organization' | 'meeting' | 'recording' | 'file' | null;
+  /** #303 M-1: latest consent for (org, 'recording_session', session); null when none. */
+  consent?: AssemblyConsent | null;
   organizationId: string;
   meetingId: string;
   status: 'uploading' | 'completed' | 'aborted' | 'failed';
@@ -50,15 +70,30 @@ export type SessionAssemblyStore = {
   /** Source FileObject -> uploaded (size + final sha256), recording -> uploaded. One transaction. */
   markAssembled: (
     organizationId: string,
-    s: { sessionId: string; fileObjectId: string; recordingId: string; sizeBytes: number; sha256Hex: string },
+    s: {
+      sessionId: string;
+      fileObjectId: string;
+      recordingId: string;
+      sizeBytes: number;
+      sha256Hex: string;
+    },
   ) => Promise<void>;
   /** Session -> failed (failure_code), source FileObject + recording -> failed. One transaction. */
   markFailed: (
     organizationId: string,
-    s: { sessionId: string; fileObjectId: string | null; recordingId: string | null; code: AssemblyFailureCode },
+    s: {
+      sessionId: string;
+      fileObjectId: string | null;
+      recordingId: string | null;
+      code: AssemblyFailureCode;
+    },
   ) => Promise<void>;
   /** Sets scanStatus only while it is still pending (idempotent). */
-  setScanStatus: (organizationId: string, fileObjectId: string, status: 'clean' | 'quarantined') => Promise<void>;
+  setScanStatus: (
+    organizationId: string,
+    fileObjectId: string,
+    status: 'clean' | 'quarantined',
+  ) => Promise<void>;
 };
 
 /** Object access for one session; implementations bind keys to the job's org + meeting/session. */
@@ -91,7 +126,9 @@ export class AssemblyError extends Error {
 
 export type SessionAssemblyDeps = {
   store: SessionAssemblyStore;
-  objects: (s: AssemblySession & { recordingId: string; file: NonNullable<AssemblySession['file']> }) => SessionObjects;
+  objects: (
+    s: AssemblySession & { recordingId: string; file: NonNullable<AssemblySession['file']> },
+  ) => SessionObjects;
   /** Hard cap on the assembled source (worker MEDIA_MAX_SOURCE_BYTES), never above MAX_RECORDING_SESSION_BYTES. */
   maxSourceBytes: number;
   /** The normal content scan (magic bytes, ffprobe, optional clamd) on the assembled source. */
@@ -105,7 +142,16 @@ export type SessionAssemblyDeps = {
 };
 
 export type SessionAssemblyOutcome =
-  | { status: 'skipped'; reason: 'invalid_job' | 'not_found' | 'not_completed' | 'already_failed' }
+  | {
+      status: 'skipped';
+      reason:
+        | 'invalid_job'
+        | 'not_found'
+        | 'not_completed'
+        | 'already_failed'
+        | 'deleted'
+        | 'consent_invalid';
+    }
   | { status: 'failed'; code: AssemblyFailureCode }
   | { status: 'quarantined'; sizeBytes: number; sha256Hex: string }
   | { status: 'processed'; sizeBytes: number; sha256Hex: string };
@@ -113,7 +159,8 @@ export type SessionAssemblyOutcome =
 /** Ordered, contiguous 0..n-1 chunk set whose sizes add up to the session total and fit the cap. */
 export function checkChunkSet(s: AssemblySession, maxSourceBytes: number): number {
   const n = s.chunkCount ?? 0;
-  if (n < 1 || s.chunks.length !== n) throw new AssemblyError(s.chunks.length < n ? 'chunk_missing' : 'chunk_set_invalid');
+  if (n < 1 || s.chunks.length !== n)
+    throw new AssemblyError(s.chunks.length < n ? 'chunk_missing' : 'chunk_set_invalid');
   let total = 0;
   s.chunks.forEach((c, i) => {
     if (c.seq !== i || !/^[0-9a-f]{64}$/.test(c.sha256Hex) || c.sizeBytes < 1) {
@@ -122,7 +169,8 @@ export function checkChunkSet(s: AssemblySession, maxSourceBytes: number): numbe
     total += c.sizeBytes;
   });
   if (total !== s.totalBytes) throw new AssemblyError('total_size_mismatch');
-  if (total > Math.min(maxSourceBytes, MAX_RECORDING_SESSION_BYTES)) throw new AssemblyError('size_cap_exceeded');
+  if (total > Math.min(maxSourceBytes, MAX_RECORDING_SESSION_BYTES))
+    throw new AssemblyError('size_cap_exceeded');
   return total;
 }
 
@@ -178,6 +226,15 @@ export function concatenateChunks(
  * mark the session/file/recording failed and leave no source object; infra errors are rethrown so BullMQ retries
  * (and fail the session on the final attempt).
  */
+/** The job's attestation must be the latest stored one for the session and itself valid. */
+export function consentMatches(c: AssemblyConsent | null, consentAttestationId: string): boolean {
+  if (!c || c.id !== consentAttestationId) return false;
+  if (c.consentVersion !== CURRENT_CONSENT_VERSION) return false;
+  return (
+    c.attestedAt.getTime() <= c.recordedAt.getTime() + CONSENT_ATTESTATION_MAX_SKEW_SECONDS * 1000
+  );
+}
+
 export async function processSessionAssembly(
   job: unknown,
   deps: SessionAssemblyDeps,
@@ -196,8 +253,23 @@ export async function processSessionAssembly(
   }
   const session = { ...s, recordingId: s.recordingId, file: s.file };
   const objects = deps.objects(session);
+  /** #303 L-1 / M-1: chunks live outside the lifecycle-expiring tmp prefix, so terminal outcomes reclaim them. */
+  const reclaimChunks = async () => {
+    for (const c of session.chunks) await objects.deleteChunk(c).catch(() => undefined);
+  };
+  // #303 M-1: never assemble media whose org/meeting/recording/file was deleted after complete, or whose job does
+  // not carry the session's current valid consent (same rule as the API's checkStoredConsent / the backfill).
+  if (s.deleted) {
+    await reclaimChunks();
+    return { status: 'skipped', reason: 'deleted' };
+  }
+  if (!consentMatches(s.consent ?? null, job.consentAttestationId)) {
+    await reclaimChunks();
+    return { status: 'skipped', reason: 'consent_invalid' };
+  }
   const fail = async (code: AssemblyFailureCode): Promise<SessionAssemblyOutcome> => {
     await objects.deleteSource().catch(() => undefined);
+    await reclaimChunks();
     await deps.store.markFailed(organizationId, {
       sessionId,
       fileObjectId: session.file.id,
@@ -209,7 +281,8 @@ export async function processSessionAssembly(
 
   let sizeBytes: number;
   let sha256Hex: string;
-  const assembled = session.file.status !== 'pending_upload' && session.file.checksumSha256Hex !== null;
+  const assembled =
+    session.file.status !== 'pending_upload' && session.file.checksumSha256Hex !== null;
   if (assembled) {
     // Retry after a verified assembly: never re-read chunks that may already be deleted.
     const head = await objects.headSource();

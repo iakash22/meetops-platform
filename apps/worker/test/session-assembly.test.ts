@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { Readable } from 'node:stream';
 import { describe, expect, it, vi } from 'vitest';
+import { CURRENT_CONSENT_VERSION } from '@meetops/contracts';
 import { StorageNotFoundError } from '@meetops/storage';
 import {
   processSessionAssembly,
@@ -44,8 +45,21 @@ function world(parts: Buffer[], tweak: (s: AssemblySession) => void = () => unde
     totalBytes: parts.reduce((n, b) => n + b.length, 0),
     mimeType: 'video/webm',
     recordingId: REC,
-    file: { id: FILE, key: sourceKey, status: 'pending_upload', checksumSha256Hex: null, scanStatus: 'pending' },
+    file: {
+      id: FILE,
+      key: sourceKey,
+      status: 'pending_upload',
+      checksumSha256Hex: null,
+      scanStatus: 'pending',
+    },
     chunks,
+    deleted: null,
+    consent: {
+      id: CONSENT,
+      consentVersion: CURRENT_CONSENT_VERSION,
+      attestedAt: new Date(),
+      recordedAt: new Date(),
+    },
   };
   tweak(session);
   const store = {
@@ -137,10 +151,13 @@ describe('processSessionAssembly', () => {
     expect(w.deps.process).not.toHaveBeenCalled();
   });
 
-  it('size mismatch: fails the session, leaves no source, keeps chunks', async () => {
+  it('size mismatch: fails the session, leaves no source, reclaims the chunks (#303 L-1)', async () => {
     const w = world([A, B]);
     w.objects.set(w.chunks[1]!.key, Buffer.concat([B, Buffer.from('extra')]));
-    expect(await processSessionAssembly(job, w.deps)).toEqual({ status: 'failed', code: 'chunk_size_mismatch' });
+    expect(await processSessionAssembly(job, w.deps)).toEqual({
+      status: 'failed',
+      code: 'chunk_size_mismatch',
+    });
     expect(w.objects.has(w.sourceKey)).toBe(false);
     expect(w.store.markFailed).toHaveBeenCalledWith(ORG, {
       sessionId: SID,
@@ -149,7 +166,7 @@ describe('processSessionAssembly', () => {
       code: 'chunk_size_mismatch',
     });
     expect(w.store.markAssembled).not.toHaveBeenCalled();
-    expect(w.objects.has(w.chunks[0]!.key)).toBe(true);
+    for (const c of w.chunks) expect(w.objects.has(c.key)).toBe(false);
     expect(w.deps.scan).not.toHaveBeenCalled();
   });
 
@@ -157,7 +174,10 @@ describe('processSessionAssembly', () => {
     const w = world([A, B], (s) => {
       s.totalBytes += 1;
     });
-    expect(await processSessionAssembly(job, w.deps)).toEqual({ status: 'failed', code: 'total_size_mismatch' });
+    expect(await processSessionAssembly(job, w.deps)).toEqual({
+      status: 'failed',
+      code: 'total_size_mismatch',
+    });
     expect(w.reads.n).toBe(0);
   });
 
@@ -166,32 +186,48 @@ describe('processSessionAssembly', () => {
     const evil = Buffer.from(B);
     evil[0] = evil[0]! ^ 1;
     w.objects.set(w.chunks[1]!.key, evil);
-    expect(await processSessionAssembly(job, w.deps)).toEqual({ status: 'failed', code: 'chunk_sha256_mismatch' });
+    expect(await processSessionAssembly(job, w.deps)).toEqual({
+      status: 'failed',
+      code: 'chunk_sha256_mismatch',
+    });
     expect(w.objects.has(w.sourceKey)).toBe(false);
+    for (const c of w.chunks) expect(w.objects.has(c.key)).toBe(false); // #303 L-1
   });
 
   it('missing chunk object or row: fails cleanly', async () => {
     const w = world([A, B]);
     w.objects.delete(w.chunks[1]!.key);
-    expect(await processSessionAssembly(job, w.deps)).toEqual({ status: 'failed', code: 'chunk_missing' });
+    expect(await processSessionAssembly(job, w.deps)).toEqual({
+      status: 'failed',
+      code: 'chunk_missing',
+    });
     expect(w.objects.has(w.sourceKey)).toBe(false);
+    expect(w.objects.has(w.chunks[0]!.key)).toBe(false); // #303 L-1: the remaining chunk is reclaimed
     const w2 = world([A, B], (s) => {
       s.chunks = [s.chunks[0]!];
     });
-    expect(await processSessionAssembly(job, w2.deps)).toEqual({ status: 'failed', code: 'chunk_missing' });
+    expect(await processSessionAssembly(job, w2.deps)).toEqual({
+      status: 'failed',
+      code: 'chunk_missing',
+    });
   });
 
   it('size cap: refuses before reading', async () => {
     const w = world([A, B]);
     w.deps.maxSourceBytes = A.length;
-    expect(await processSessionAssembly(job, w.deps)).toEqual({ status: 'failed', code: 'size_cap_exceeded' });
+    expect(await processSessionAssembly(job, w.deps)).toEqual({
+      status: 'failed',
+      code: 'size_cap_exceeded',
+    });
     expect(w.reads.n).toBe(0);
   });
 
   it('retry is idempotent: after a verified assembly it never re-reads chunks or re-assembles', async () => {
     const w = world([A, B]);
     vi.mocked(w.deps.process).mockRejectedValueOnce(new Error('ffmpeg down'));
-    await expect(processSessionAssembly(job, w.deps, { isFinalAttempt: false })).rejects.toThrow('ffmpeg down');
+    await expect(processSessionAssembly(job, w.deps, { isFinalAttempt: false })).rejects.toThrow(
+      'ffmpeg down',
+    );
     const reads = w.reads.n;
     const out = await processSessionAssembly(job, w.deps);
     expect(out.status).toBe('processed');
@@ -210,9 +246,14 @@ describe('processSessionAssembly', () => {
         throw new Error('s3 down');
       },
     });
-    await expect(processSessionAssembly(job, w.deps, { isFinalAttempt: false })).rejects.toThrow('s3 down');
+    await expect(processSessionAssembly(job, w.deps, { isFinalAttempt: false })).rejects.toThrow(
+      's3 down',
+    );
     expect(w.store.markFailed).not.toHaveBeenCalled();
-    expect(await processSessionAssembly(job, w.deps)).toEqual({ status: 'failed', code: 'assembly_unavailable' });
+    expect(await processSessionAssembly(job, w.deps)).toEqual({
+      status: 'failed',
+      code: 'assembly_unavailable',
+    });
     expect(w.objects.has(w.sourceKey)).toBe(false);
   });
 
@@ -227,6 +268,65 @@ describe('processSessionAssembly', () => {
     const w2 = world([A], (s) => {
       s.status = 'failed';
     });
-    expect(await processSessionAssembly(job, w2.deps)).toEqual({ status: 'skipped', reason: 'already_failed' });
+    expect(await processSessionAssembly(job, w2.deps)).toEqual({
+      status: 'skipped',
+      reason: 'already_failed',
+    });
+  });
+
+  describe('#303 M-1: deleted parents or invalid consent skip and reclaim the chunks', () => {
+    const expectSkippedClean = async (
+      w: ReturnType<typeof world>,
+      reason: string,
+      j: object = job,
+    ) => {
+      expect(await processSessionAssembly(j, w.deps)).toEqual({ status: 'skipped', reason });
+      expect(w.reads.n).toBe(0);
+      expect(w.objects.has(w.sourceKey)).toBe(false);
+      for (const c of w.chunks) expect(w.objects.has(c.key)).toBe(false);
+      expect(w.store.markAssembled).not.toHaveBeenCalled();
+      expect(w.deps.scan).not.toHaveBeenCalled();
+      expect(w.deps.process).not.toHaveBeenCalled();
+    };
+    for (const d of ['organization', 'meeting', 'recording', 'file'] as const) {
+      it(`${d} soft-deleted after complete`, async () => {
+        await expectSkippedClean(
+          world([A, B], (s) => {
+            s.deleted = d;
+          }),
+          'deleted',
+        );
+      });
+    }
+    it('no stored consent', async () => {
+      await expectSkippedClean(
+        world([A], (s) => {
+          s.consent = null;
+        }),
+        'consent_invalid',
+      );
+    });
+    it("job's consentAttestationId is not the session's latest attestation", async () => {
+      await expectSkippedClean(world([A]), 'consent_invalid', {
+        ...job,
+        consentAttestationId: '77777777-7777-4777-8777-777777777777',
+      });
+    });
+    it('stored consent has an unsupported version', async () => {
+      await expectSkippedClean(
+        world([A], (s) => {
+          s.consent!.consentVersion = '1999-01';
+        }),
+        'consent_invalid',
+      );
+    });
+    it('stored consent attested outside the skew window', async () => {
+      await expectSkippedClean(
+        world([A], (s) => {
+          s.consent!.attestedAt = new Date(s.consent!.recordedAt.getTime() + 301_000);
+        }),
+        'consent_invalid',
+      );
+    });
   });
 });

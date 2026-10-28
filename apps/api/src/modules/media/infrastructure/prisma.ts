@@ -525,7 +525,10 @@ export class PrismaStaleMediaStore implements StaleMediaStore {
             organizationId,
             status: 'completed',
             updatedAt: { lt: before },
-            recording: { file: { status: 'pending_upload', deletedAt: null } },
+            // #303 M-1: deleted parents are never re-queued (the worker would skip them anyway).
+            organization: { deletedAt: null },
+            meeting: { deletedAt: null },
+            recording: { deletedAt: null, file: { status: 'pending_upload', deletedAt: null } },
           },
           select: { id: true, meetingId: true },
           orderBy: { updatedAt: 'asc' },

@@ -6,6 +6,7 @@
  */
 import { createHash, randomUUID } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
+import { CURRENT_CONSENT_VERSION } from '@meetops/contracts';
 import {
   loadStorageConfig,
   S3SessionChunkStore,
@@ -97,6 +98,13 @@ describe.skipIf(!available)('session assembly with real MinIO (live)', () => {
         scanStatus: 'pending',
       },
       chunks,
+      deleted: null,
+      consent: {
+        id: consent!,
+        consentVersion: CURRENT_CONSENT_VERSION,
+        attestedAt: new Date(),
+        recordedAt: new Date(),
+      },
     };
     const assembled: { sizeBytes: number; sha256Hex: string }[] = [];
     const store: SessionAssemblyStore = {

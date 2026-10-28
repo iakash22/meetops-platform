@@ -15,7 +15,9 @@ import type {
 } from './session-assembly.js';
 
 /** Prisma-backed SessionAssemblyStore; every statement runs under withOrganizationContext (forced RLS). */
-export function createSessionAssemblyStore(opts: MediaRepositoryOptions = {}): SessionAssemblyStore {
+export function createSessionAssemblyStore(
+  opts: MediaRepositoryOptions = {},
+): SessionAssemblyStore {
   const o = {
     ...(opts.client ? { client: opts.client } : {}),
     ...(opts.timeoutMs !== undefined ? { timeoutMs: opts.timeoutMs } : {}),
@@ -36,10 +38,20 @@ export function createSessionAssemblyStore(opts: MediaRepositoryOptions = {}): S
               totalBytes: true,
               mimeType: true,
               recordingId: true,
+              organization: { select: { deletedAt: true } },
+              meeting: { select: { deletedAt: true } },
               recording: {
                 select: {
+                  deletedAt: true,
                   file: {
-                    select: { id: true, key: true, status: true, checksumSha256: true, scanStatus: true },
+                    select: {
+                      id: true,
+                      key: true,
+                      status: true,
+                      checksumSha256: true,
+                      scanStatus: true,
+                      deletedAt: true,
+                    },
                   },
                 },
               },
@@ -51,8 +63,24 @@ export function createSessionAssemblyStore(opts: MediaRepositoryOptions = {}): S
           });
           if (!s) return null;
           const f = s.recording?.file ?? null;
+          const consent = await tx.consentAttestation.findFirst({
+            where: { organizationId, subjectType: 'recording_session', subjectId: sessionId },
+            orderBy: [{ recordedAt: 'desc' }, { id: 'desc' }],
+            select: { id: true, consentVersion: true, attestedAt: true, recordedAt: true },
+          });
+          const deleted = s.organization.deletedAt
+            ? 'organization'
+            : s.meeting.deletedAt
+              ? 'meeting'
+              : s.recording?.deletedAt
+                ? 'recording'
+                : f?.deletedAt
+                  ? 'file'
+                  : null;
           return {
             id: s.id,
+            deleted,
+            consent,
             organizationId: s.organizationId,
             meetingId: s.meetingId,
             status: s.status,
@@ -85,7 +113,11 @@ export function createSessionAssemblyStore(opts: MediaRepositoryOptions = {}): S
         async (tx) => {
           await tx.fileObject.updateMany({
             where: { organizationId, id: a.fileObjectId, status: 'pending_upload' },
-            data: { status: 'uploaded', sizeBytes: BigInt(a.sizeBytes), checksumSha256: a.sha256Hex },
+            data: {
+              status: 'uploaded',
+              sizeBytes: BigInt(a.sizeBytes),
+              checksumSha256: a.sha256Hex,
+            },
           });
           await tx.recording.updateMany({
             where: { organizationId, id: a.recordingId, status: 'uploading' },
@@ -140,11 +172,24 @@ export function createSessionAssemblyStore(opts: MediaRepositoryOptions = {}): S
 export function sessionObjectsFromStorage(
   storage: Pick<S3StorageService, 'putObject' | 'headObject' | 'deleteObject' | 'getObject'>,
   chunks: Pick<S3SessionChunkStore, 'readChunk' | 'deleteChunk'>,
-  s: { organizationId: string; meetingId: string; id: string; recordingId: string; mimeType: string; file: { key: string } },
+  s: {
+    organizationId: string;
+    meetingId: string;
+    id: string;
+    recordingId: string;
+    mimeType: string;
+    file: { key: string };
+  },
 ): SessionObjects {
   const ext = sourceExtForMime(s.mimeType);
   const ref: MeetingObjectRef | null = ext
-    ? { organizationId: s.organizationId, meetingId: s.meetingId, kind: 'recording', objectId: s.recordingId, ext }
+    ? {
+        organizationId: s.organizationId,
+        meetingId: s.meetingId,
+        kind: 'recording',
+        objectId: s.recordingId,
+        ext,
+      }
     : null;
   const target = () => {
     // The row's key must be the canonical source key: never write anywhere else.
@@ -155,7 +200,10 @@ export function sessionObjectsFromStorage(
     readChunk: (c: AssemblyChunk) => chunks.readChunk(s.organizationId, s.id, c.key),
     deleteChunk: (c: AssemblyChunk) => chunks.deleteChunk(s.organizationId, s.id, c.key),
     putSource: async (body: Readable, spec) => {
-      await storage.putObject(target(), body, { mimeType: spec.mimeType, sizeBytes: spec.sizeBytes });
+      await storage.putObject(target(), body, {
+        mimeType: spec.mimeType,
+        sizeBytes: spec.sizeBytes,
+      });
     },
     headSource: async () => {
       const h = await storage.headObject(target());
