@@ -4,8 +4,10 @@ import type { MediaJobQueue, MediaProcessingJob } from '../domain/ports.js';
 
 /** Minimal producer surface (BullMQ Queue#add), injectable for tests. */
 export interface MediaQueueProducer {
-  add(name: string, data: MediaProcessingJob, opts: JobsOptions): Promise<unknown>;
-  close?(): Promise<void>;
+  add: (name: string, data: MediaProcessingJob, opts: JobsOptions) => Promise<unknown>;
+  /** Finished-state lookup + removal for requeue (BullMQ Queue#getJob -> Job#getState / Job#remove). */
+  removeIfFinished?: (jobId: string) => Promise<boolean>;
+  close?: () => Promise<void>;
 }
 
 /**
@@ -29,6 +31,11 @@ export class BullMqMediaJobQueue implements MediaJobQueue {
 
   async enqueue(job: MediaProcessingJob): Promise<void> {
     await this.producer.add(job.kind, job, { ...MEDIA_JOB_OPTIONS, jobId: mediaProcessingJobId(job) });
+  }
+
+  async requeue(job: MediaProcessingJob): Promise<void> {
+    await this.producer.removeIfFinished?.(mediaProcessingJobId(job));
+    await this.enqueue(job);
   }
 
   async close(): Promise<void> {
@@ -57,6 +64,14 @@ export function createMediaQueueProducer(
   };
   return {
     add: (name, data, opts) => get().add(name, data, opts),
+    removeIfFinished: async (jobId) => {
+      const job = await get().getJob(jobId);
+      if (!job) return false;
+      const state = await job.getState();
+      if (state !== 'completed' && state !== 'failed') return false;
+      await job.remove();
+      return true;
+    },
     close: async () => {
       await queue?.close();
     },

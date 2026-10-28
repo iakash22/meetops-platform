@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { Value } from '@sinclair/typebox/value';
 import { InitUploadResponse, MAX_UPLOAD_BYTES } from '@meetops/contracts';
 import { CompleteUploadResponse, DownloadUrlResponse } from '../src/modules/media/http/types.js';
@@ -122,6 +122,30 @@ describe('uploads (init, complete, download-url)', () => {
         consentAttestationId: w.consents.rows[0]!.id,
       }),
     ]);
+    // #302 M-1: a replay while processing/pending re-enqueues idempotently (same job id -> still one job).
+    expect((await w.member.post(done, {})).statusCode).toBe(200);
+    expect(w.jobs.jobs).toHaveLength(1);
+  });
+
+  it('#302 M-1: enqueue fails after the commit -> 500; a retried complete recovers with one job', async () => {
+    const { fileObjectId } = await init();
+    w.signer.put(keyOf(fileObjectId), 1000);
+    const done = `${url()}/${fileObjectId}/complete`;
+    const spy = vi.spyOn(w.jobs, 'enqueue').mockRejectedValueOnce(new Error('redis down'));
+    expect((await w.member.post(done, {})).statusCode).toBe(500);
+    expect((w.media.files as InMemoryFileObjectRepository).rows.get(fileObjectId)).toMatchObject({
+      status: 'processing',
+      scanStatus: 'pending',
+    });
+    expect(w.jobs.jobs).toHaveLength(0);
+    const r = await w.member.post(done, {});
+    expect(r.statusCode).toBe(200);
+    expect(w.jobs.jobs).toEqual([
+      expect.objectContaining({ kind: 'process_upload', subjectId: fileObjectId }),
+    ]);
+    spy.mockRestore();
+    // Once scanned, a replay is a conflict again (nothing to re-run).
+    (w.media.files as InMemoryFileObjectRepository).rows.get(fileObjectId)!.scanStatus = 'clean';
     expect((await w.member.post(done, {})).statusCode).toBe(409);
     expect(w.jobs.jobs).toHaveLength(1);
   });
