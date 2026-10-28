@@ -167,7 +167,7 @@ describe('auth mail worker processor', () => {
     expect(r.statusCode).toBeLessThan(300);
     expect(mail.sent).toHaveLength(0);
     expect(p.jobs.size).toBe(1);
-    const [[id, queued]] = [...p.jobs.entries()];
+    const [id, queued] = [...p.jobs.entries()][0]!;
     expect(id + JSON.stringify(queued)).not.toMatch(/@|Pat|token=/);
     const run = createAuthMailProcessor(new AuthMailJobHandler({ ...deps, transport: mail }));
     await run({ id, data: queued!.data, attemptsMade: 0, opts: queued!.opts });
