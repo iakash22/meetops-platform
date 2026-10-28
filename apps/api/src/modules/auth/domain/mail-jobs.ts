@@ -31,7 +31,7 @@ export interface OutboundMail {
   data: Record<string, string>;
 }
 
-/** Delivery port. TODO(notifications #11): adapter over sendTemplate. Must never log data.url. */
+/** Delivery port (adapter over @meetops/notifications createAuthMailTransport). Must never log data.url. */
 export interface MailTransport {
   send(mail: OutboundMail): Promise<void>;
 }
