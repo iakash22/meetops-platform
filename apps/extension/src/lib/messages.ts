@@ -24,7 +24,7 @@ export type PopupToBackground =
       streamId: string;
       /**
        * UUID of the meeting this recording belongs to (InitRecordingSession.meetingId).
-       * Comes from resolveMeetingId() (src/lib/meeting.ts); see its TODO(meeting-api).
+       * Comes from resolveMeetingId() (src/lib/meeting.ts): the API's meetings/resolve when HTTP uploads are on.
        */
       meetingId: string;
     }

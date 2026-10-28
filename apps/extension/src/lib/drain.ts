@@ -46,6 +46,21 @@ function digestsFor(s: StoredSession, chunkCount: number): CompletedChunk[] | un
   return out;
 }
 
+/**
+ * The server refused the session for good: 413 PAYLOAD_TOO_LARGE (over the recording cap) or 409 (the session is no
+ * longer uploading: aborted, failed, or its chunk set can't complete). Retrying can't succeed, so the drain gives up
+ * on it instead of retrying forever. 404 is deliberately not terminal: an API without media routes enabled answers
+ * 404, and local recordings must survive that. Duck-typed so it also matches errors from other upload clients.
+ */
+export function isTerminalUploadError(err: unknown): boolean {
+  if (!(err instanceof Error) || err.name !== 'UploadApiError') return false;
+  const status = (err as Error & { status?: unknown }).status;
+  return status === 413 || status === 409;
+}
+
+/** Note kept on a non-durable client's closed session (never contains server text). */
+export const REJECTED_NOTE = 'rejected by the server (too large or no longer uploading)';
+
 async function close(
   store: ChunkStore,
   client: UploadClient,
@@ -68,7 +83,8 @@ async function close(
  * aborted (reason 'local_storage_exhausted') instead: the server requires seq 0..chunkCount-1 with no gaps.
  * Sessions with no chunks are aborted ('user_stopped'). Safe to call repeatedly. Chunks are
  * deleted only when the client is durable; otherwise they are marked uploaded and kept.
- * A failing session is skipped and retried on the next drain.
+ * A failing session is skipped and retried on the next drain, except a terminal server refusal (413, 409), which is
+ * aborted and closed locally (see isTerminalUploadError).
  */
 export async function drainQueue(
   store: ChunkStore,
@@ -130,7 +146,12 @@ export async function drainQueue(
     } catch (err) {
       // A marked session is abandoned; the drain continues with the others.
       if (err instanceof Abandoned) result.skipped++;
-      else result.failed++;
+      else if (isTerminalUploadError(err)) {
+        await client.abort(s.sessionId, { reason: 'user_stopped' }).catch(() => undefined);
+        const fresh = await store.getSession(s.sessionId).catch(() => undefined);
+        await close(store, client, fresh ?? s, REJECTED_NOTE).catch(() => undefined);
+        result.aborted++;
+      } else result.failed++;
     }
   }
   return result;

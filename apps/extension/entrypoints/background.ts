@@ -8,7 +8,12 @@ import {
 import { AuthService, NONCE_ALARM } from '../src/lib/auth/auth-service.js';
 import { authConfig } from '../src/lib/auth/config.js';
 import { isAuthRequest, type AuthRequest, type AuthResponse } from '../src/lib/auth/messages.js';
-import { uploadValidators, validators } from '../src/lib/auth/validate.js';
+import { meetingValidators, uploadValidators, validators } from '../src/lib/auth/validate.js';
+import {
+  createMeetingResolver,
+  isResolveMeetingMessage,
+  type ResolveMeetingResult,
+} from '../src/lib/meeting.js';
 import { routeAlarm, WATCHDOG_ALARM } from '../src/lib/alarms.js';
 import { ChunkStore } from '../src/lib/chunk-store.js';
 import {
@@ -105,6 +110,20 @@ const direct = DIRECT_UPLOAD
       ...directUploadValidators,
     })
   : undefined;
+// Meeting for a new recording. HTTP uploads: find-or-create via the API from the tab URL (origin + path only).
+// Stub uploads: a random UUID, as no meeting row is needed.
+const resolveMeeting = createMeetingResolver({
+  api: (path, init) => auth.apiFetch(path, init),
+  organizationId: pairedOrganizationId(auth),
+  validators: meetingValidators,
+});
+async function handleResolveMeeting(tabId: number): Promise<ResolveMeetingResult> {
+  if (!HTTP_UPLOAD) return { ok: true, meetingId: crypto.randomUUID() };
+  // activeTab: the popup click grants this tab's URL for the gesture; no host permissions needed.
+  const tab = await chrome.tabs.get(tabId);
+  return { ok: true, meetingId: await resolveMeeting(tab.url) };
+}
+
 let storePromise: Promise<ChunkStore> | undefined;
 const store = () => (storePromise ??= ChunkStore.open());
 
@@ -229,6 +248,13 @@ export default defineBackground(() => {
     if (isAuthRequest(msg)) {
       if (!mayUseAuthAndTaskReads(sent)) return false; // popup or side panel
       handleAuth(msg).then(sendResponse, (err: unknown) =>
+        sendResponse({ ok: false, error: safeErrorMessage(err) }),
+      );
+      return true;
+    }
+    if (isResolveMeetingMessage(msg)) {
+      if (!fromPopup) return false; // recording control is popup-only
+      handleResolveMeeting(msg.tabId).then(sendResponse, (err: unknown) =>
         sendResponse({ ok: false, error: safeErrorMessage(err) }),
       );
       return true;
