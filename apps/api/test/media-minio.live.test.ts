@@ -39,14 +39,19 @@ describe.skipIf(!available)('upload flow with the real S3 signer (MinIO, live)',
   let media: MediaAdapters;
   beforeAll(async () => {
     db = createPrismaClient({ databaseUrl: url! });
-    media = storageMediaAdapters(db, {
-      STORAGE_PROVIDER: 'minio',
-      STORAGE_ENDPOINT: env.STORAGE_IT_ENDPOINT,
-      STORAGE_BUCKET: env.STORAGE_IT_BUCKET,
-      STORAGE_ACCESS_KEY_ID: env.STORAGE_IT_ACCESS_KEY_ID,
-      STORAGE_SECRET_ACCESS_KEY: env.STORAGE_IT_SECRET_ACCESS_KEY,
-      STORAGE_FORCE_PATH_STYLE: 'true',
-    }, undefined, { jobs: new InMemoryMediaJobQueue() }); // #302 L-1: no Redis here; inject the queue
+    media = storageMediaAdapters(
+      db,
+      {
+        STORAGE_PROVIDER: 'minio',
+        STORAGE_ENDPOINT: env.STORAGE_IT_ENDPOINT,
+        STORAGE_BUCKET: env.STORAGE_IT_BUCKET,
+        STORAGE_ACCESS_KEY_ID: env.STORAGE_IT_ACCESS_KEY_ID,
+        STORAGE_SECRET_ACCESS_KEY: env.STORAGE_IT_SECRET_ACCESS_KEY,
+        STORAGE_FORCE_PATH_STYLE: 'true',
+      },
+      undefined,
+      { jobs: new InMemoryMediaJobQueue() },
+    ); // #302 L-1: no Redis here; inject the queue
     w = await mediaWorld({ db, media }, randomUUID().slice(0, 8));
   });
   afterAll(async () => {

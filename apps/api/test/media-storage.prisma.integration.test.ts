@@ -10,7 +10,10 @@ import {
   type DatabaseClient,
 } from '@meetops/database';
 import { storageMediaAdapters, type MediaAdapters } from '../src/modules/index.js';
-import { FakeMediaSigner, InMemoryMediaJobQueue } from '../src/modules/media/infrastructure/in-memory.js';
+import {
+  FakeMediaSigner,
+  InMemoryMediaJobQueue,
+} from '../src/modules/media/infrastructure/in-memory.js';
 import { reconcileStaleMedia } from '../src/modules/media/application/reconcile.js';
 import { PrismaStaleMediaStore } from '../src/modules/media/infrastructure/prisma.js';
 import { consent, mediaWorld, SHA_B64, type MediaWorld } from './media-helpers.js';
@@ -143,7 +146,10 @@ describe.skipIf(!url)('media storage wiring (Prisma, live)', () => {
     const spy = vi.spyOn(jobs, 'enqueue').mockRejectedValueOnce(new Error('redis down'));
     expect((await w.member.post(`/orgs/${w.org}/uploads/${id}/complete`, {})).statusCode).toBe(500);
     spy.mockRestore();
-    expect(await media.files.findById(w.org, id)).toMatchObject({ status: 'processing', scanStatus: 'pending' });
+    expect(await media.files.findById(w.org, id)).toMatchObject({
+      status: 'processing',
+      scanStatus: 'pending',
+    });
     const before = jobs.jobs.length;
     const run = () =>
       reconcileStaleMedia({

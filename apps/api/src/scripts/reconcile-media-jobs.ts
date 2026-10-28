@@ -17,7 +17,8 @@ import {
 } from '../modules/media/infrastructure/prisma.js';
 
 export async function main(env: Record<string, string | undefined>) {
-  if (!env.DATABASE_URL || !env.REDIS_URL) throw new Error('DATABASE_URL and REDIS_URL are required');
+  if (!env.DATABASE_URL || !env.REDIS_URL)
+    throw new Error('DATABASE_URL and REDIS_URL are required');
   const olderThanMs = Number(env.MEDIA_RECONCILE_OLDER_THAN_MS || 15 * 60_000);
   if (!Number.isInteger(olderThanMs) || olderThanMs < 0) {
     throw new Error('MEDIA_RECONCILE_OLDER_THAN_MS must be a non-negative integer');

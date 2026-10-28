@@ -1147,7 +1147,8 @@ export function createStorageServiceFromEnv(
 
 const UPLOAD_SOURCE_KEY_RE = /^organizations\/([^/]+)\/uploads\/([^/]+)\/source$/;
 /** API recording-session chunk keys: organizations/{org}/recording-sessions/{sessionId}/chunks/{seq:5}. */
-const SESSION_CHUNK_KEY_RE = /^organizations\/([^/]+)\/recording-sessions\/([^/]+)\/chunks\/(\d{5})$/;
+const SESSION_CHUNK_KEY_RE =
+  /^organizations\/([^/]+)\/recording-sessions\/([^/]+)\/chunks\/(\d{5})$/;
 
 /** Rebuilds an upload-source or session-chunk key from its parsed ids; rejects anything else (no arbitrary keys). */
 function assertUploadSourceKey(key: string, allowChunks = false): string {
@@ -1155,7 +1156,11 @@ function assertUploadSourceKey(key: string, allowChunks = false): string {
   const m = UPLOAD_SOURCE_KEY_RE.exec(k);
   if (m && uploadSourceKey(m[1]!, m[2]!) === k) return k;
   const c = allowChunks ? SESSION_CHUNK_KEY_RE.exec(k) : null;
-  if (c && `${organizationPrefix(c[1]!)}recording-sessions/${uploadSourceIdCheck(c[2]!)}/chunks/${c[3]!}` === k) {
+  if (
+    c &&
+    `${organizationPrefix(c[1]!)}recording-sessions/${uploadSourceIdCheck(c[2]!)}/chunks/${c[3]!}` ===
+      k
+  ) {
     return k;
   }
   throw new StorageValidationError('Invalid upload source key');
@@ -1262,7 +1267,9 @@ export class S3UploadSourceSigner {
   }
 
   /** Size + full-object SHA-256 (base64); checksum null when absent or a multipart composite. Null when missing. */
-  async head(key: string): Promise<{ sizeBytes: number; checksumSha256Base64: string | null } | null> {
+  async head(
+    key: string,
+  ): Promise<{ sizeBytes: number; checksumSha256Base64: string | null } | null> {
     const k = assertUploadSourceKey(key, true);
     let res;
     try {
@@ -1284,14 +1291,19 @@ export class S3UploadSourceSigner {
 }
 
 /** Throws unless `key` is an API recording-session chunk key of `organizationId` (and `sessionId` when given). */
-export function assertSessionChunkKey(key: string, organizationId: string, sessionId?: string): string {
+export function assertSessionChunkKey(
+  key: string,
+  organizationId: string,
+  sessionId?: string,
+): string {
   const k = typeof key === 'string' ? key : '';
   const c = SESSION_CHUNK_KEY_RE.exec(k);
   if (
     !c ||
     c[1] !== organizationId ||
     (sessionId !== undefined && c[2] !== sessionId) ||
-    `${organizationPrefix(c[1])}recording-sessions/${uploadSourceIdCheck(c[2]!)}/chunks/${c[3]!}` !== k
+    `${organizationPrefix(c[1])}recording-sessions/${uploadSourceIdCheck(c[2]!)}/chunks/${c[3]!}` !==
+      k
   ) {
     throw new StorageAccessError();
   }
@@ -1314,7 +1326,9 @@ export class S3SessionChunkStore {
   /** Streams a chunk; StorageNotFoundError when it is missing. */
   async readChunk(organizationId: string, sessionId: string, key: string): Promise<Readable> {
     const k = assertSessionChunkKey(key, organizationId, sessionId);
-    const res = await settle(this.#client.send(new GetObjectCommand({ Bucket: this.#bucket, Key: k })));
+    const res = await settle(
+      this.#client.send(new GetObjectCommand({ Bucket: this.#bucket, Key: k })),
+    );
     if (!res.Body) throw mapS3Error({ name: 'NoSuchKey' });
     return res.Body instanceof Readable
       ? res.Body

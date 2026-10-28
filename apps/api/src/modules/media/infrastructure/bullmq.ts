@@ -30,7 +30,10 @@ export class BullMqMediaJobQueue implements MediaJobQueue {
   constructor(private readonly producer: MediaQueueProducer) {}
 
   async enqueue(job: MediaProcessingJob): Promise<void> {
-    await this.producer.add(job.kind, job, { ...MEDIA_JOB_OPTIONS, jobId: mediaProcessingJobId(job) });
+    await this.producer.add(job.kind, job, {
+      ...MEDIA_JOB_OPTIONS,
+      jobId: mediaProcessingJobId(job),
+    });
   }
 
   async requeue(job: MediaProcessingJob): Promise<void> {

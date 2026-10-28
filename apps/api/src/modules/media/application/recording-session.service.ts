@@ -214,7 +214,12 @@ export class RecordingSessionService {
   async abort(c: DirectoryCaller, id: string, reason: AbortReason): Promise<void> {
     const s = await this.own(c, id);
     RecordingSessionService.assertUploading(s);
-    if (!(await this.d.sessions.finish(s.organizationId, s.id, { status: 'aborted', abortReason: reason }))) {
+    if (
+      !(await this.d.sessions.finish(s.organizationId, s.id, {
+        status: 'aborted',
+        abortReason: reason,
+      }))
+    ) {
       throw new UploadStateConflictError('Recording session is not uploading');
     }
   }

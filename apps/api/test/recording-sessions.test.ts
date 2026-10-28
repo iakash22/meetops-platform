@@ -179,10 +179,14 @@ describe('recording sessions', () => {
     await w.chunk(w.member, id, 0);
     w.upload(id, 0);
     const spy = vi.spyOn(w.jobs, 'enqueue').mockRejectedValueOnce(new Error('redis down'));
-    expect((await complete(w, w.member, id, { chunkCount: 1, durationMs: 5 })).statusCode).toBe(500);
+    expect((await complete(w, w.member, id, { chunkCount: 1, durationMs: 5 })).statusCode).toBe(
+      500,
+    );
     expect(w.repo.rows.get(id)!.status).toBe('completed');
     expect(w.jobs.jobs).toHaveLength(0);
-    expect((await complete(w, w.member, id, { chunkCount: 1, durationMs: 5 })).statusCode).toBe(202);
+    expect((await complete(w, w.member, id, { chunkCount: 1, durationMs: 5 })).statusCode).toBe(
+      202,
+    );
     expect(w.jobs.jobs).toEqual([
       expect.objectContaining({ kind: 'process_recording_session', subjectId: id }),
     ]);

@@ -12,7 +12,11 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { Queue, QueueEvents, Worker, type Job } from 'bullmq';
 import { MEDIA_QUEUE } from '@meetops/contracts';
 import { buildObjectKey, StorageNotFoundError, type MeetingObjectRef } from '@meetops/storage';
-import { createPrismaClient, withOrganizationContext, type DatabaseClient } from '@meetops/database';
+import {
+  createPrismaClient,
+  withOrganizationContext,
+  type DatabaseClient,
+} from '@meetops/database';
 import { reconcileStaleMedia } from '../src/modules/media/application/reconcile.js';
 import { PrismaStaleMediaStore } from '../src/modules/media/infrastructure/prisma.js';
 import { storageMediaAdapters, type MediaAdapters } from '../src/modules/index.js';
@@ -35,7 +39,11 @@ interface WorkerMedia {
     },
   ): Promise<{ status: string; reason?: string }>;
   processUploadScan(d: unknown, deps: unknown, ctx: { isFinalAttempt: boolean }): Promise<unknown>;
-  processSessionAssembly(d: unknown, deps: unknown, ctx: { isFinalAttempt: boolean }): Promise<unknown>;
+  processSessionAssembly(
+    d: unknown,
+    deps: unknown,
+    ctx: { isFinalAttempt: boolean },
+  ): Promise<unknown>;
   buildSessionAssemblyDeps(p: Record<string, unknown>): unknown;
   createSessionAssemblyStore(o: { client: DatabaseClient }): unknown;
   buildUploadScanDeps(p: Record<string, unknown>): unknown;
@@ -84,7 +92,10 @@ describe.skipIf(!url || !redisUrl)('media pipeline e2e (Prisma + BullMQ + worker
     const wm = (await import(workerPath)) as WorkerMedia;
     const storage = {
       headUploadSource: async () => ({ sizeBytes: DUMMY.length }),
-      getUploadSource: async () => ({ body: Readable.from([DUMMY]), info: { sizeBytes: DUMMY.length } }),
+      getUploadSource: async () => ({
+        body: Readable.from([DUMMY]),
+        info: { sizeBytes: DUMMY.length },
+      }),
     };
     const deps = wm.buildUploadScanDeps({
       storage,
@@ -165,7 +176,11 @@ describe.skipIf(!url || !redisUrl)('media pipeline e2e (Prisma + BullMQ + worker
     expect(done.statusCode).toBe(200);
 
     const job = await queue.getJob(`upload_${w.org}_${id}`);
-    expect(job?.data).toMatchObject({ kind: 'process_upload', organizationId: w.org, subjectId: id });
+    expect(job?.data).toMatchObject({
+      kind: 'process_upload',
+      organizationId: w.org,
+      subjectId: id,
+    });
     const out = (await job!.waitUntilFinished(events, 30_000)) as { status: string };
     expect(out.status).toBe('quarantined');
     expect((await media.files.findById(w.org, id))?.scanStatus).toBe('quarantined');
@@ -201,13 +216,20 @@ describe.skipIf(!url || !redisUrl)('media pipeline e2e (Prisma + BullMQ + worker
     const chunkKey = row!.chunks.get(0)!.key;
     signer.put(chunkKey, CHUNK.length);
     blobs.set(chunkKey, CHUNK);
-    const done = await w.member.post(`/recording-sessions/${sid}/complete`, { chunkCount: 1, durationMs: 1000 });
+    const done = await w.member.post(`/recording-sessions/${sid}/complete`, {
+      chunkCount: 1,
+      durationMs: 1000,
+    });
     expect(done.statusCode).toBe(202);
     expect((await media.sessions.findById(w.org, sid))?.status).toBe('completed');
     expect(await media.sessions.findById(w.otherOrg, sid)).toBeNull();
 
     const job = await queue.getJob(`session_${w.org}_${sid}`);
-    expect(job?.data).toMatchObject({ kind: 'process_recording_session', subjectId: sid, meetingId });
+    expect(job?.data).toMatchObject({
+      kind: 'process_recording_session',
+      subjectId: sid,
+      meetingId,
+    });
     const out = (await job!.waitUntilFinished(events, 30_000)) as {
       status: string;
       sizeBytes: number;
@@ -226,7 +248,15 @@ describe.skipIf(!url || !redisUrl)('media pipeline e2e (Prisma + BullMQ + worker
             recording: {
               select: {
                 status: true,
-                file: { select: { status: true, scanStatus: true, checksumSha256: true, sizeBytes: true, key: true } },
+                file: {
+                  select: {
+                    status: true,
+                    scanStatus: true,
+                    checksumSha256: true,
+                    sizeBytes: true,
+                    key: true,
+                  },
+                },
               },
             },
           },
@@ -237,7 +267,12 @@ describe.skipIf(!url || !redisUrl)('media pipeline e2e (Prisma + BullMQ + worker
       status: 'completed',
       recording: {
         status: 'uploaded',
-        file: { status: 'uploaded', scanStatus: 'quarantined', checksumSha256: CHUNK_SHA, sizeBytes: BigInt(CHUNK.length) },
+        file: {
+          status: 'uploaded',
+          scanStatus: 'quarantined',
+          checksumSha256: CHUNK_SHA,
+          sizeBytes: BigInt(CHUNK.length),
+        },
       },
     });
     expect(blobs.get(rows!.recording!.file.key)).toEqual(CHUNK);
@@ -260,7 +295,11 @@ describe.skipIf(!url || !redisUrl)('media pipeline e2e (Prisma + BullMQ + worker
         consent: consent(),
       })
     ).json<{ sessionId: string }>().sessionId;
-    await w.member.post(`/recording-sessions/${sid}/chunks`, { seq: 0, sizeBytes: CHUNK.length, sha256: CHUNK_SHA });
+    await w.member.post(`/recording-sessions/${sid}/chunks`, {
+      seq: 0,
+      sizeBytes: CHUNK.length,
+      sha256: CHUNK_SHA,
+    });
     const chunkKey = (await media.sessions.findById(w.org, sid))!.chunks.get(0)!.key;
     signer.put(chunkKey, CHUNK.length);
     blobs.set(chunkKey, CHUNK);
@@ -268,22 +307,39 @@ describe.skipIf(!url || !redisUrl)('media pipeline e2e (Prisma + BullMQ + worker
     // Simulate the pre-#303 worker: it acked the session job without assembling.
     await worker.pause();
     try {
-      const done = await w.member.post(`/recording-sessions/${sid}/complete`, { chunkCount: 1, durationMs: 1000 });
+      const done = await w.member.post(`/recording-sessions/${sid}/complete`, {
+        chunkCount: 1,
+        durationMs: 1000,
+      });
       expect(done.statusCode).toBe(202);
       const jobId = `session_${w.org}_${sid}`;
       const first = (await queue.getJob(jobId))!;
       const { name, data, opts } = first;
       await first.remove();
-      const legacy = new Worker(MEDIA_QUEUE, async () => ({ status: 'session_assembly_pending' }), { connection, prefix });
+      const legacy = new Worker(MEDIA_QUEUE, async () => ({ status: 'session_assembly_pending' }), {
+        connection,
+        prefix,
+      });
       try {
         const acked = await queue.add(name, data, opts);
-        expect(await acked.waitUntilFinished(events, 30_000)).toEqual({ status: 'session_assembly_pending' });
+        expect(await acked.waitUntilFinished(events, 30_000)).toEqual({
+          status: 'session_assembly_pending',
+        });
       } finally {
         await legacy.close();
       }
       // A replayed complete must not resurrect it (dedupe keeps the finished job); only the backfill does.
-      expect((await w.member.post(`/recording-sessions/${sid}/complete`, { chunkCount: 1, durationMs: 1000 })).statusCode).toBe(202);
-      expect((await queue.getJob(jobId))?.returnvalue).toEqual({ status: 'session_assembly_pending' });
+      expect(
+        (
+          await w.member.post(`/recording-sessions/${sid}/complete`, {
+            chunkCount: 1,
+            durationMs: 1000,
+          })
+        ).statusCode,
+      ).toBe(202);
+      expect((await queue.getJob(jobId))?.returnvalue).toEqual({
+        status: 'session_assembly_pending',
+      });
     } finally {
       worker.resume();
     }
@@ -291,7 +347,13 @@ describe.skipIf(!url || !redisUrl)('media pipeline e2e (Prisma + BullMQ + worker
     const later = new Date(Date.now() + 1000);
     expect((await store.unassembledSessions(w.org, later, 100)).map((r) => r.id)).toContain(sid);
 
-    const r = await reconcileStaleMedia({ store, consents: media.consents, jobs: media.jobs, now: () => later, olderThanMs: 0 });
+    const r = await reconcileStaleMedia({
+      store,
+      consents: media.consents,
+      jobs: media.jobs,
+      now: () => later,
+      olderThanMs: 0,
+    });
     expect(r.sessions).toBeGreaterThanOrEqual(1);
     const job = (await queue.getJob(`session_${w.org}_${sid}`))!;
     expect(await job.waitUntilFinished(events, 30_000)).toEqual({
@@ -301,6 +363,8 @@ describe.skipIf(!url || !redisUrl)('media pipeline e2e (Prisma + BullMQ + worker
     });
     expect(blobs.has(chunkKey)).toBe(false);
     // Idempotent: once assembled it is no longer selected, so a rerun queues nothing for it.
-    expect((await store.unassembledSessions(w.org, new Date(Date.now() + 1000), 100)).map((x) => x.id)).not.toContain(sid);
+    expect(
+      (await store.unassembledSessions(w.org, new Date(Date.now() + 1000), 100)).map((x) => x.id),
+    ).not.toContain(sid);
   });
 });

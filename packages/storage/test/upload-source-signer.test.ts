@@ -45,7 +45,12 @@ describe('S3UploadSourceSigner', () => {
   beforeEach(() => {
     s3.reset();
     calls.length = 0;
-    signer = new S3UploadSourceSigner({ config, client: new S3Client({}), presign, now: () => now });
+    signer = new S3UploadSourceSigner({
+      config,
+      client: new S3Client({}),
+      presign,
+      now: () => now,
+    });
   });
 
   it('signs a PUT with content-length, type and sha256', async () => {
@@ -87,7 +92,10 @@ describe('S3UploadSourceSigner', () => {
     });
     expect(put.method).toBe('PUT');
     s3.on(HeadObjectCommand).resolvesOnce({ ContentLength: DUMMY.length, ChecksumSHA256: SHA });
-    expect(await signer.head(chunk)).toEqual({ sizeBytes: DUMMY.length, checksumSha256Base64: SHA });
+    expect(await signer.head(chunk)).toEqual({
+      sizeBytes: DUMMY.length,
+      checksumSha256Base64: SHA,
+    });
     await expect(
       signer.presignGet({ key: chunk, ttlSeconds: 60, contentType: 'video/webm' }),
     ).rejects.toBeInstanceOf(StorageValidationError);
@@ -97,7 +105,11 @@ describe('S3UploadSourceSigner', () => {
   });
 
   it('rejects keys that are not upload sources', async () => {
-    for (const key of [`organizations/${ORG}/meetings/x/raw`, `../${KEY}`, `org/${ORG}/uploads/${UP}/source`]) {
+    for (const key of [
+      `organizations/${ORG}/meetings/x/raw`,
+      `../${KEY}`,
+      `org/${ORG}/uploads/${UP}/source`,
+    ]) {
       await expect(
         signer.presignGet({ key, ttlSeconds: 60, contentType: 'audio/webm' }),
       ).rejects.toBeInstanceOf(StorageValidationError);

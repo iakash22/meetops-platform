@@ -60,7 +60,9 @@ describe('MEDIA_STORAGE_ENABLED', () => {
   });
 
   it('storageMediaAdapters refuses to run without REDIS_URL (no silent in-memory queue)', () => {
-    expect(() => storageMediaAdapters(fakeDb, { ...STORAGE_ENV, REDIS_URL: '' })).toThrow(/REDIS_URL/);
+    expect(() => storageMediaAdapters(fakeDb, { ...STORAGE_ENV, REDIS_URL: '' })).toThrow(
+      /REDIS_URL/,
+    );
   });
 
   it('storageMediaAdapters refuses an incomplete storage config', () => {
@@ -155,7 +157,9 @@ describe('BullMqMediaJobQueue', () => {
       ...MEDIA_JOB_OPTIONS,
       jobId: `upload_${ORG}_${SUB}`,
     });
-    expect(mediaProcessingJobId({ ...job, kind: 'process_recording_session' })).toBe(`session_${ORG}_${SUB}`);
+    expect(mediaProcessingJobId({ ...job, kind: 'process_recording_session' })).toBe(
+      `session_${ORG}_${SUB}`,
+    );
     expect(mediaProcessingJobId(job)).not.toContain(':');
   });
 });
@@ -176,7 +180,11 @@ describe('#302 M-1 requeue + reconciler', () => {
     const q = new BullMqMediaJobQueue({ add, removeIfFinished });
     await q.requeue(job);
     expect(removeIfFinished).toHaveBeenCalledWith(`session_${ORG}_${SUB}`);
-    expect(add).toHaveBeenCalledWith('process_recording_session', job, expect.objectContaining({ jobId: `session_${ORG}_${SUB}` }));
+    expect(add).toHaveBeenCalledWith(
+      'process_recording_session',
+      job,
+      expect.objectContaining({ jobId: `session_${ORG}_${SUB}` }),
+    );
   });
 
   it('reconciler re-enqueues stale uploads with a valid consent and skips the rest', async () => {
@@ -201,11 +209,23 @@ describe('#302 M-1 requeue + reconciler', () => {
       ]),
     };
     const now = new Date('2026-10-28T12:00:00Z');
-    const r = await reconcileStaleMedia({ store, consents, jobs, now: () => now, olderThanMs: 60_000 });
+    const r = await reconcileStaleMedia({
+      store,
+      consents,
+      jobs,
+      now: () => now,
+      olderThanMs: 60_000,
+    });
     expect(r).toEqual({ organizations: 1, uploads: 1, sessions: 0, skipped: 1 });
     expect(store.staleUploads).toHaveBeenCalledWith(ORG, new Date(now.getTime() - 60_000), 500);
     expect(jobs.jobs).toEqual([
-      { kind: 'process_upload', organizationId: ORG, subjectType: 'upload', subjectId: SUB, consentAttestationId: ok.id },
+      {
+        kind: 'process_upload',
+        organizationId: ORG,
+        subjectType: 'upload',
+        subjectId: SUB,
+        consentAttestationId: ok.id,
+      },
     ]);
     await reconcileStaleMedia({ store, consents, jobs, now: () => now, olderThanMs: 60_000 });
     expect(jobs.jobs).toHaveLength(1);
@@ -237,7 +257,8 @@ describe('#302 M-1 requeue + reconciler', () => {
       ],
     };
     const requeue = vi.spyOn(jobs, 'requeue');
-    const run = () => reconcileStaleMedia({ store, consents, jobs, now: () => new Date(), olderThanMs: 0 });
+    const run = () =>
+      reconcileStaleMedia({ store, consents, jobs, now: () => new Date(), olderThanMs: 0 });
     expect(await run()).toEqual({ organizations: 1, uploads: 0, sessions: 1, skipped: 1 });
     expect(requeue).toHaveBeenCalledWith(legacy);
     expect(jobs.finished.size).toBe(0);
