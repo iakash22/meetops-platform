@@ -27,6 +27,11 @@ export interface RecordingSessionRecord {
   durationMs: number | null;
   abortReason: AbortReason | null;
   createdAt: Date;
+  /**
+   * #303 M-2: true while a completed session's source FileObject is still `pending_upload` (not yet assembled).
+   * Replays requeue only then, so a finished recording is never re-processed.
+   */
+  sourcePending?: boolean;
 }
 
 export type ReserveChunkResult = 'ok' | 'over_limit' | 'not_uploading';
@@ -44,12 +49,17 @@ export interface RecordingSessionRepository {
    * reserved chunks. Refuses when the new total would exceed `maxTotalBytes` or the session is not uploading.
    */
   reserveChunk(
+    organizationId: string,
     id: string,
     chunk: RecordingChunkRecord,
     maxTotalBytes: number,
   ): Promise<ReserveChunkResult>;
-  /** Moves an `uploading` session to `next`; false when it was no longer uploading. */
+  /**
+   * Moves an `uploading` session to `next`; false when it was no longer uploading. Prisma: `completed` also creates
+   * the session's source FileObject + Recording (recording_sessions_completed_check needs recording_id).
+   */
   finish(
+    organizationId: string,
     id: string,
     next:
       | { status: 'completed'; chunkCount: number; durationMs: number }

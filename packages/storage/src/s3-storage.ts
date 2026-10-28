@@ -35,6 +35,7 @@ import {
   assertKeyOwnedBy,
   buildObjectKey,
   normalizeMeetingObjectRef,
+  organizationPrefix,
   parseMeetingKey,
   LEGACY_ORG_KEY_PREFIX,
   ORGANIZATIONS_KEY_PREFIX,
@@ -306,7 +307,13 @@ export class S3StorageService implements StorageService {
     return { url, method, expiresAt: new Date(Date.now() + ttl * 1000), ...extra };
   }
 
-  async putObject(ref: MeetingObjectRef, body: PutObjectBody, spec: UploadSpec) {
+  /** `opts.abortSignal` aborts the in-flight PUT (e.g. when a streamed body is found invalid mid-way). */
+  async putObject(
+    ref: MeetingObjectRef,
+    body: PutObjectBody,
+    spec: UploadSpec,
+    opts: { abortSignal?: AbortSignal } = {},
+  ) {
     const key = await this.#key(ref);
     validateUploadSpec(spec, this.#cfg.limits);
     if (!(body instanceof Readable)) {
@@ -325,6 +332,7 @@ export class S3StorageService implements StorageService {
           ChecksumSHA256: spec.checksumSha256,
           Metadata: spec.metadata,
         }),
+        opts.abortSignal ? { abortSignal: opts.abortSignal } : {},
       ),
     );
     return res.ETag ? { etag: res.ETag } : {};
@@ -1145,14 +1153,30 @@ export function createStorageServiceFromEnv(
 }
 
 const UPLOAD_SOURCE_KEY_RE = /^organizations\/([^/]+)\/uploads\/([^/]+)\/source$/;
+/** API recording-session chunk keys: organizations/{org}/recording-sessions/{sessionId}/chunks/{seq:5}. */
+const SESSION_CHUNK_KEY_RE =
+  /^organizations\/([^/]+)\/recording-sessions\/([^/]+)\/chunks\/(\d{5})$/;
 
-/** Rebuilds a direct-upload source key from its parsed ids; rejects anything else (no arbitrary keys). */
-function assertUploadSourceKey(key: string): string {
-  const m = UPLOAD_SOURCE_KEY_RE.exec(typeof key === 'string' ? key : '');
-  if (!m || uploadSourceKey(m[1]!, m[2]!) !== key) {
-    throw new StorageValidationError('Invalid upload source key');
+/** Rebuilds an upload-source or session-chunk key from its parsed ids; rejects anything else (no arbitrary keys). */
+function assertUploadSourceKey(key: string, allowChunks = false): string {
+  const k = typeof key === 'string' ? key : '';
+  const m = UPLOAD_SOURCE_KEY_RE.exec(k);
+  if (m && uploadSourceKey(m[1]!, m[2]!) === k) return k;
+  const c = allowChunks ? SESSION_CHUNK_KEY_RE.exec(k) : null;
+  if (
+    c &&
+    `${organizationPrefix(c[1]!)}recording-sessions/${uploadSourceIdCheck(c[2]!)}/chunks/${c[3]!}` ===
+      k
+  ) {
+    return k;
   }
-  return key;
+  throw new StorageValidationError('Invalid upload source key');
+}
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+function uploadSourceIdCheck(v: string): string {
+  if (!UUID_RE.test(v)) throw new StorageValidationError('Invalid sessionId');
+  return v;
 }
 
 export type S3UploadSourceSignerOptions = {
@@ -1197,7 +1221,7 @@ export class S3UploadSourceSigner {
     checksumSha256Base64: string;
     ttlSeconds: number;
   }): Promise<{ url: string; method: 'PUT'; headers: Record<string, string>; expiresAt: Date }> {
-    const key = assertUploadSourceKey(s.key);
+    const key = assertUploadSourceKey(s.key, true);
     validateUploadSpec({ mimeType: s.mimeType, sizeBytes: s.sizeBytes }, this.#cfg.limits);
     const checksum = assertSha256Base64(s.checksumSha256Base64);
     const ttl = assertTtl(s.ttlSeconds);
@@ -1250,8 +1274,10 @@ export class S3UploadSourceSigner {
   }
 
   /** Size + full-object SHA-256 (base64); checksum null when absent or a multipart composite. Null when missing. */
-  async head(key: string): Promise<{ sizeBytes: number; checksumSha256Base64: string | null } | null> {
-    const k = assertUploadSourceKey(key);
+  async head(
+    key: string,
+  ): Promise<{ sizeBytes: number; checksumSha256Base64: string | null } | null> {
+    const k = assertUploadSourceKey(key, true);
     let res;
     try {
       res = await settle(
@@ -1269,4 +1295,76 @@ export class S3UploadSourceSigner {
       checksumSha256Base64: c && !c.includes('-') ? c : null,
     };
   }
+}
+
+/** Throws unless `key` is an API recording-session chunk key of `organizationId` (and `sessionId` when given). */
+export function assertSessionChunkKey(
+  key: string,
+  organizationId: string,
+  sessionId?: string,
+): string {
+  const k = typeof key === 'string' ? key : '';
+  const c = SESSION_CHUNK_KEY_RE.exec(k);
+  if (
+    !c ||
+    c[1] !== organizationId ||
+    (sessionId !== undefined && c[2] !== sessionId) ||
+    `${organizationPrefix(c[1])}recording-sessions/${uploadSourceIdCheck(c[2]!)}/chunks/${c[3]!}` !==
+      k
+  ) {
+    throw new StorageAccessError();
+  }
+  return k;
+}
+
+/**
+ * Worker-side reader/deleter for API recording-session chunks (organizations/{org}/recording-sessions/{sid}/chunks/
+ * {seq5}). Every call is bound to an org + session; keys of another org or session are refused.
+ */
+export class S3SessionChunkStore {
+  readonly #client: S3Client;
+  readonly #bucket: string;
+
+  constructor(opts: { config: StorageConfig; client?: S3Client }) {
+    this.#bucket = opts.config.bucket;
+    this.#client = opts.client ?? createS3Client(opts.config);
+  }
+
+  /** Streams a chunk; StorageNotFoundError when it is missing. */
+  async readChunk(organizationId: string, sessionId: string, key: string): Promise<Readable> {
+    const k = assertSessionChunkKey(key, organizationId, sessionId);
+    const res = await settle(
+      this.#client.send(new GetObjectCommand({ Bucket: this.#bucket, Key: k })),
+    );
+    if (!res.Body) throw mapS3Error({ name: 'NoSuchKey' });
+    return res.Body instanceof Readable
+      ? res.Body
+      : Readable.from(res.Body as unknown as AsyncIterable<Uint8Array>);
+  }
+
+  /** Idempotent delete (S3 DeleteObject succeeds for a missing key). */
+  async deleteChunk(organizationId: string, sessionId: string, key: string): Promise<void> {
+    const k = assertSessionChunkKey(key, organizationId, sessionId);
+    await settle(this.#client.send(new DeleteObjectCommand({ Bucket: this.#bucket, Key: k })));
+  }
+}
+
+const SOURCE_EXT_BY_MIME: Record<string, MediaSourceExtLike> = {
+  'audio/webm': 'webm',
+  'video/webm': 'webm',
+  'audio/ogg': 'ogg',
+  'audio/mpeg': 'mp3',
+  'audio/mp4': 'm4a',
+  'audio/x-m4a': 'm4a',
+  'video/mp4': 'mp4',
+  'audio/wav': 'wav',
+  'audio/x-wav': 'wav',
+  'audio/wave': 'wav',
+};
+type MediaSourceExtLike = 'webm' | 'ogg' | 'mp3' | 'm4a' | 'mp4' | 'wav';
+
+/** Recording source extension for a (parameterised) media mime type, or null when it is not a source type. */
+export function sourceExtForMime(mimeType: string): MediaSourceExtLike | null {
+  const base = (mimeType.split(';')[0] ?? '').trim().toLowerCase();
+  return SOURCE_EXT_BY_MIME[base] ?? null;
 }

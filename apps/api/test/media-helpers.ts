@@ -36,7 +36,14 @@ export interface MediaWorld {
   otherOrg: string;
 }
 
-export async function mediaWorld(extra: Partial<ModuleDeps> = {}): Promise<MediaWorld> {
+/**
+ * `emailTag` makes the four users' emails and the two org names (#302 L-2b) unique (e.g. per run) so live suites can share one database (#302 L-2).
+ */
+export async function mediaWorld(
+  extra: Partial<ModuleDeps> = {},
+  emailTag = '',
+): Promise<MediaWorld> {
+  const email = (u: string) => (emailTag ? `${u}+${emailTag}@example.com` : `${u}@example.com`);
   const media = inMemoryMediaAdapters();
   const app = await buildApp(defaultModuleDeps({ media, ...extra }));
   const createOrg = async (c: Client, name: string) =>
@@ -50,12 +57,12 @@ export async function mediaWorld(extra: Partial<ModuleDeps> = {}): Promise<Media
     expect((await c.post('/orgs/switch', { organizationId: orgId })).statusCode).toBe(200);
     return c;
   };
-  const owner = await signupAndLogin(app, 'owner@example.com');
-  const org = await createOrg(owner, 'Acme');
-  const member = await join(owner, org, 'member@example.com', 'member');
-  const viewer = await join(owner, org, 'viewer@example.com', 'viewer');
-  const other = await signupAndLogin(app, 'other@example.com');
-  const otherOrg = await createOrg(other, 'Globex');
+  const owner = await signupAndLogin(app, email('owner'));
+  const org = await createOrg(owner, emailTag ? `Acme ${emailTag}` : 'Acme');
+  const member = await join(owner, org, email('member'), 'member');
+  const viewer = await join(owner, org, email('viewer'), 'viewer');
+  const other = await signupAndLogin(app, email('other'));
+  const otherOrg = await createOrg(other, emailTag ? `Globex ${emailTag}` : 'Globex');
   return {
     app,
     media,

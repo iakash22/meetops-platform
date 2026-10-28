@@ -19,6 +19,7 @@ import {
   type FileObjectRecord,
   type FileObjectRepository,
   type MediaJobQueue,
+  type MediaProcessingJob,
   type MediaSigner,
   type SignedRequest,
 } from '../domain/ports.js';
@@ -118,6 +119,15 @@ export class UploadService {
   async complete(c: DirectoryCaller, id: string): Promise<FileObjectRecord> {
     const f = await this.find(c, id);
     authorizeMedia(c, 'update', 'FileObject', f.uploadedById);
+    if (f.status === 'processing' && f.scanStatus === 'pending') {
+      // #302 M-1: the status commit happened but the enqueue may have failed. A replay re-enqueues with the same
+      // deterministic job id (a no-op while that job exists), so the upload can never be stuck in processing.
+      const consent = checkStoredConsent(
+        await this.d.consents.findLatest(f.organizationId, 'upload', f.id),
+      );
+      await this.enqueue(f, consent.id, true);
+      return { ...f };
+    }
     if (f.status !== 'pending_upload')
       throw new UploadStateConflictError('Upload already completed');
     // #168 order: stored size/checksum first, then the stored consent attestation.
@@ -135,15 +145,25 @@ export class UploadService {
       await this.d.consents.findLatest(f.organizationId, 'upload', f.id),
     );
     await this.d.files.setStatus(f.organizationId, f.id, 'processing', 'pending');
-    await this.d.jobs.enqueue({
+    await this.enqueue(f, consent.id);
+    return { ...f, status: 'processing', scanStatus: 'pending' };
+  }
+
+  /** `replay` (#302 L-3): requeue, so a finished job held under the id is replaced. */
+  private async enqueue(
+    f: FileObjectRecord,
+    consentAttestationId: string,
+    replay = false,
+  ): Promise<void> {
+    const job = {
       kind: 'process_upload',
       organizationId: f.organizationId,
       subjectType: 'upload',
       subjectId: f.id,
-      consentAttestationId: consent.id,
+      consentAttestationId,
       ...(f.meetingId ? { meetingId: f.meetingId } : {}),
-    });
-    return { ...f, status: 'processing', scanStatus: 'pending' };
+    } satisfies MediaProcessingJob;
+    await (replay ? this.d.jobs.requeue(job) : this.d.jobs.enqueue(job));
   }
 
   /**

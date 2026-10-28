@@ -83,6 +83,7 @@ export interface StorageService {
     ref: MeetingObjectRef,
     body: PutObjectBody,
     spec: UploadSpec,
+    opts?: { abortSignal?: AbortSignal },
   ): Promise<{ etag?: string }>;
   getObject(ref: MeetingObjectRef): Promise<GetObjectResult>;
   headObject(ref: MeetingObjectRef): Promise<StoredObjectInfo | null>;

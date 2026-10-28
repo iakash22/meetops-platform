@@ -1,6 +1,7 @@
-import { AlreadyMemberError } from '../../domain/errors.js';
+import { AlreadyMemberError, OrganizationSlugConflictError } from '../../domain/errors.js';
 import {
   getPrismaClient,
+  isUniqueViolation,
   withOrgContext,
   withUserContext,
   type DatabaseClient,
@@ -37,16 +38,22 @@ const toOrg = (r: OrgRow): Organization => ({ ...r });
 export class PrismaOrganizationRepository implements OrganizationRepository {
   constructor(private readonly db: DatabaseClient = getPrismaClient()) {}
   async create(o: Organization) {
-    const r = await this.db.organization.create({
-      data: {
-        id: o.id,
-        name: o.name,
-        slug: o.slug,
-        createdById: o.createdById,
-        createdAt: o.createdAt,
-      },
-    });
-    return toOrg(r);
+    try {
+      const r = await this.db.organization.create({
+        data: {
+          id: o.id,
+          name: o.name,
+          slug: o.slug,
+          createdById: o.createdById,
+          createdAt: o.createdAt,
+        },
+      });
+      return toOrg(r);
+    } catch (e) {
+      // #302 L-2b: slugExists-then-insert race; the unique slug index is the arbiter.
+      if (isUniqueViolation(e)) throw new OrganizationSlugConflictError();
+      throw e;
+    }
   }
   async findById(organizationId: string) {
     const r = await this.db.organization.findFirst({
