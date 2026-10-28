@@ -1,7 +1,12 @@
 import { createHash } from 'node:crypto';
 import { describe, expect, it, beforeEach } from 'vitest';
 import { mockClient } from 'aws-sdk-client-mock';
-import { GetObjectCommand, HeadObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
+import {
+  GetObjectCommand,
+  HeadObjectCommand,
+  PutObjectCommand,
+  S3Client,
+} from '@aws-sdk/client-s3';
 import { S3UploadSourceSigner, StorageValidationError, loadStorageConfig } from '../src/index.js';
 
 const ORG = '11111111-1111-4111-8111-111111111111';
@@ -31,7 +36,12 @@ describe('S3UploadSourceSigner', () => {
   beforeEach(() => {
     s3.reset();
     calls.length = 0;
-    signer = new S3UploadSourceSigner({ config, client: new S3Client({}), presign, now: () => now });
+    signer = new S3UploadSourceSigner({
+      config,
+      client: new S3Client({}),
+      presign,
+      now: () => now,
+    });
   });
 
   it('signs a PUT with content-length, type and sha256', async () => {
@@ -62,8 +72,35 @@ describe('S3UploadSourceSigner', () => {
     });
   });
 
+  it('signs and heads session chunk keys, but never presigns a GET for them', async () => {
+    const chunk = `organizations/${ORG}/recording-sessions/${UP}/chunks/00000`;
+    const put = await signer.presignPut({
+      key: chunk,
+      mimeType: 'video/webm',
+      sizeBytes: DUMMY.length,
+      checksumSha256Base64: SHA,
+      ttlSeconds: 300,
+    });
+    expect(put.method).toBe('PUT');
+    s3.on(HeadObjectCommand).resolvesOnce({ ContentLength: DUMMY.length, ChecksumSHA256: SHA });
+    expect(await signer.head(chunk)).toEqual({
+      sizeBytes: DUMMY.length,
+      checksumSha256Base64: SHA,
+    });
+    await expect(
+      signer.presignGet({ key: chunk, ttlSeconds: 60, contentType: 'video/webm' }),
+    ).rejects.toBeInstanceOf(StorageValidationError);
+    await expect(
+      signer.head(`organizations/${ORG}/recording-sessions/not-a-uuid/chunks/00000`),
+    ).rejects.toBeInstanceOf(StorageValidationError);
+  });
+
   it('rejects keys that are not upload sources', async () => {
-    for (const key of [`organizations/${ORG}/meetings/x/raw`, `../${KEY}`, `org/${ORG}/uploads/${UP}/source`]) {
+    for (const key of [
+      `organizations/${ORG}/meetings/x/raw`,
+      `../${KEY}`,
+      `org/${ORG}/uploads/${UP}/source`,
+    ]) {
       await expect(
         signer.presignGet({ key, ttlSeconds: 60, contentType: 'audio/webm' }),
       ).rejects.toBeInstanceOf(StorageValidationError);

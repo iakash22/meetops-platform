@@ -114,6 +114,7 @@ export class RecordingSessionService {
     RecordingSessionService.assertUploading(s);
     const key = `organizations/${s.organizationId}/recording-sessions/${s.id}/chunks/${String(body.seq).padStart(5, '0')}`;
     const res = await this.d.sessions.reserveChunk(
+      s.organizationId,
       s.id,
       { seq: body.seq, sizeBytes: body.sizeBytes, sha256Hex: body.sha256, key },
       MAX_RECORDING_SESSION_BYTES,
@@ -139,6 +140,15 @@ export class RecordingSessionService {
     body: CompleteRecordingSessionRequest,
   ): Promise<RecordingSessionRecord> {
     const s = await this.own(c, id);
+    if (s.status === 'completed') {
+      // #302 M-1: finish() committed but the enqueue may have failed. A replay re-enqueues with the same
+      // deterministic job id (a no-op while that job exists); the stored chunk set is final, the body is ignored.
+      const consent = checkStoredConsent(
+        await this.d.consents.findLatest(s.organizationId, 'recording_session', s.id),
+      );
+      await this.enqueue(s, consent.id);
+      return s;
+    }
     RecordingSessionService.assertUploading(s);
     const consent = checkStoredConsent(
       await this.d.consents.findLatest(s.organizationId, 'recording_session', s.id),
@@ -180,27 +190,36 @@ export class RecordingSessionService {
         throw new UploadStateConflictError(`Chunk ${ch.seq} checksum does not match`);
       }
     }
-    const ok = await this.d.sessions.finish(s.id, {
+    const ok = await this.d.sessions.finish(s.organizationId, s.id, {
       status: 'completed',
       chunkCount: body.chunkCount,
       durationMs: body.durationMs,
     });
     if (!ok) throw new UploadStateConflictError('Recording session is not uploading');
+    await this.enqueue(s, consent.id);
+    return { ...s, status: 'completed', chunkCount: body.chunkCount, durationMs: body.durationMs };
+  }
+
+  private async enqueue(s: RecordingSessionRecord, consentAttestationId: string): Promise<void> {
     await this.d.jobs.enqueue({
       kind: 'process_recording_session',
       organizationId: s.organizationId,
       subjectType: 'recording_session',
       subjectId: s.id,
-      consentAttestationId: consent.id,
+      consentAttestationId,
       meetingId: s.meetingId,
     });
-    return { ...s, status: 'completed', chunkCount: body.chunkCount, durationMs: body.durationMs };
   }
 
   async abort(c: DirectoryCaller, id: string, reason: AbortReason): Promise<void> {
     const s = await this.own(c, id);
     RecordingSessionService.assertUploading(s);
-    if (!(await this.d.sessions.finish(s.id, { status: 'aborted', abortReason: reason }))) {
+    if (
+      !(await this.d.sessions.finish(s.organizationId, s.id, {
+        status: 'aborted',
+        abortReason: reason,
+      }))
+    ) {
       throw new UploadStateConflictError('Recording session is not uploading');
     }
   }
