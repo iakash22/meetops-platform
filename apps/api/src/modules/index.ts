@@ -60,6 +60,13 @@ import type { OneTimeTokenRepository } from './auth/domain/one-time-token.js';
 import type { AuthMailQueue, MailTransport } from './auth/domain/mail-jobs.js';
 import { InMemoryAuditLog, type AuditLog } from './auth/domain/audit.js';
 import { AuthMailJobHandler, InlineAuthMailQueue } from './auth/application/auth-mail.handler.js';
+import {
+  BullMqAuthMailQueue,
+  createAuthMailProducer,
+  startAuthMailWorker,
+  type AuthMailProducer,
+} from './auth/infrastructure/mail-queue/bullmq-mail-queue.js';
+import { loadAuthMailQueueEnv } from './auth/infrastructure/mail-queue/env.js';
 import { SessionVerifier } from './auth/application/session-verifier.js';
 import {
   noopRevocationPublisher,
@@ -129,10 +136,17 @@ export interface ModuleDeps {
   tokens: TokenService;
   rateLimiter: RateLimiter;
   lockout: LoginLockout;
-  /** Production: inject a real queue (TODO(notifications #11)); dev/test: inline + transport below. */
+  /**
+   * AUTH_MAIL_QUEUE=bullmq: BullMqAuthMailQueue on REDIS_URL (ADR-013, notifications #11), consumed by the
+   * auth-mail worker (authMailWorker). Otherwise (dev/test default) the inline queue + transport below.
+   */
   mailQueue: AuthMailQueue;
-  /** Only used by the dev/test inline queue. */
+  /** Used by the inline queue and by the auth-mail worker consumer (SMTP only with the BullMQ queue). */
   mailTransport: MailTransport;
+  /** When set with a BullMqAuthMailQueue, registerModules starts the auth-mail BullMQ consumer in-process. */
+  authMailWorker?: { redisUrl: string; prefix?: string | undefined; concurrency: number };
+  /** Set when defaultModuleDeps created the BullMQ mail queue itself (closed in onClose). */
+  ownedMailQueue?: { close(): Promise<void> };
   audit: AuditLog;
   webBaseUrl: string;
   clock: Clock;
@@ -275,6 +289,10 @@ export interface ModuleEnv {
   emailEnv?: Record<string, string | undefined> | undefined;
   /** MEDIA_STORAGE_ENABLED and STORAGE_* (#300 L-2). Omitted means unset: the flag is off. */
   storageEnv?: Record<string, string | undefined> | undefined;
+  /** AUTH_MAIL_QUEUE, AUTH_MAIL_QUEUE_PREFIX, AUTH_MAIL_WORKER_ENABLED, AUTH_MAIL_WORKER_CONCURRENCY. */
+  mailQueueEnv?: Record<string, string | undefined> | undefined;
+  /** Test seam: BullMQ producer used instead of one on REDIS_URL when AUTH_MAIL_QUEUE=bullmq. */
+  mailQueueProducer?: AuthMailProducer | undefined;
 }
 
 export const moduleEnvFromProcess = (): ModuleEnv => ({
@@ -283,6 +301,7 @@ export const moduleEnvFromProcess = (): ModuleEnv => ({
   databaseUrl: process.env.DATABASE_URL,
   emailEnv: process.env,
   storageEnv: process.env,
+  mailQueueEnv: process.env,
 });
 
 const EMAIL_ENV_KEYS = ['EMAIL_PROVIDER', 'SMTP_HOST', 'RESEND_API_KEY'] as const;
@@ -446,9 +465,20 @@ export function defaultModuleDeps(
   const emailConfig = injectedMail ? null : resolveEmailConfig(env);
   const hasDb = !!overrides.db || !!urlFor(env, env.databaseUrl);
   const hasRedis = !!overrides.redis || !!urlFor(env, env.redisUrl);
+  const mailQueueCfg = loadAuthMailQueueEnv(env.mailQueueEnv);
+  const useBullMail = !overrides.mailQueue && mailQueueCfg.mode === 'bullmq';
+  const mailRedisUrl = useBullMail ? urlFor(env, env.redisUrl) : undefined;
+  if (useBullMail) {
+    if (!mailRedisUrl && !env.mailQueueProducer)
+      throw new Error('AUTH_MAIL_QUEUE=bullmq requires REDIS_URL');
+    // ADR-013: the queue delivers only through configured SMTP; no Resend / paid provider, no fallback.
+    if (!injectedMail && emailConfig?.provider !== 'smtp')
+      throw new Error('AUTH_MAIL_QUEUE=bullmq requires EMAIL_PROVIDER=smtp');
+  }
   const provided = (k: keyof ModuleDeps) =>
     ((DATABASE_BACKED_DEPS as readonly string[]).includes(k) && hasDb) ||
     ((REDIS_BACKED_DEPS as readonly string[]).includes(k) && hasRedis) ||
+    (k === 'mailQueue' && useBullMail) ||
     (k === 'mailTransport' &&
       ((overrides as { mailer?: unknown }).mailer !== undefined || emailConfig !== null));
   if (strict) {
@@ -522,6 +552,28 @@ export function defaultModuleDeps(
     rateLimiter: redis ? new RedisRateLimiter(redis) : new InMemoryRateLimiter(clock),
     lockout: redis ? new RedisLoginLockout(redis) : new InMemoryLoginLockout(clock),
     mailQueue: new InlineAuthMailQueue(),
+    ...(useBullMail
+      ? (() => {
+          const q = new BullMqAuthMailQueue(
+            env.mailQueueProducer ??
+              createAuthMailProducer({ redisUrl: mailRedisUrl!, prefix: mailQueueCfg.prefix }),
+            clock,
+          );
+          return {
+            mailQueue: q,
+            ownedMailQueue: q,
+            ...(mailQueueCfg.workerEnabled && mailRedisUrl
+              ? {
+                  authMailWorker: {
+                    redisUrl: mailRedisUrl,
+                    prefix: mailQueueCfg.prefix,
+                    concurrency: mailQueueCfg.concurrency,
+                  },
+                }
+              : {}),
+          };
+        })()
+      : {}),
     // ADR-005 A1.2: Redis fast path, Postgres durable authority when both are configured.
     extensionTokens: redis
       ? db
@@ -617,10 +669,11 @@ export async function registerModules(app: FastifyInstance, deps: ModuleDeps) {
     extensionBearerCorsHook(deps.extensionIds.map((id) => `chrome-extension://${id}`)),
   );
   // Close only the clients defaultModuleDeps created; injected ones belong to the caller.
-  const { ownedRedis, ownedDb, ownedMedia } = deps;
-  if (ownedRedis || ownedDb || ownedMedia) {
+  const { ownedRedis, ownedDb, ownedMedia, ownedMailQueue } = deps;
+  if (ownedRedis || ownedDb || ownedMedia || ownedMailQueue) {
     app.addHook('onClose', async () => {
       await Promise.allSettled([
+        ownedMailQueue ? ownedMailQueue.close() : undefined,
         ownedMedia ? ownedMedia.close() : undefined,
         ownedRedis ? closeOwnedRedis(ownedRedis) : undefined,
         ownedDb ? ownedDb.$disconnect() : undefined,
@@ -664,6 +717,19 @@ export async function registerModules(app: FastifyInstance, deps: ModuleDeps) {
       log: app.log,
     });
     deps.mailQueue.log ??= app.log;
+  }
+  if (deps.mailQueue instanceof BullMqAuthMailQueue) {
+    deps.mailQueue.log ??= app.log;
+    if (deps.authMailWorker) {
+      const worker = startAuthMailWorker(
+        new AuthMailJobHandler({ ...deps, transport: deps.mailTransport, log: app.log }),
+        deps.authMailWorker,
+        app.log,
+      );
+      app.addHook('onClose', async () => {
+        await worker.close();
+      });
+    }
   }
   app.decorateRequest('auth', null);
   // ADR-012: when desktop auth is enabled the verifier also accepts desktop bearers; route guards still default to extension-only.
