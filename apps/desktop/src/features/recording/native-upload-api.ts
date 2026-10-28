@@ -1,15 +1,12 @@
 import type { ApiErrorCode } from '@meetops/contracts';
+import type { InvokeArgs, InvokeOptions } from '@tauri-apps/api/core';
 
 import { AuthError } from '@/features/auth/auth-client';
 import { fillPath, RECORDING_SESSION_ROUTES as R } from '@/lib/api-paths';
 import type { RecordingUploadApi } from './upload-queue';
 
 /** Same shape as `@tauri-apps/api/core` `invoke`. */
-export type Invoke = <T>(
-  cmd: string,
-  args?: Record<string, unknown> | Uint8Array | ArrayBuffer,
-  options?: { headers?: Record<string, string> },
-) => Promise<T>;
+export type Invoke = <T>(cmd: string, args?: InvokeArgs, options?: InvokeOptions) => Promise<T>;
 
 /**
  * Recording-session routes through Rust (ADR-012 3.3: the webview CSP has no API or storage origin, and the bearer
