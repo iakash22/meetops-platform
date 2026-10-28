@@ -115,7 +115,8 @@ export type AssemblyFailureCode =
   | 'total_size_mismatch'
   | 'size_cap_exceeded'
   | 'unsupported_mime'
-  | 'assembly_unavailable';
+  | 'assembly_unavailable'
+  | 'consent_invalid';
 
 export class AssemblyError extends Error {
   constructor(readonly code: AssemblyFailureCode) {
@@ -150,7 +151,8 @@ export type SessionAssemblyOutcome =
         | 'not_completed'
         | 'already_failed'
         | 'deleted'
-        | 'consent_invalid';
+        | 'consent_invalid'
+        | 'consent_mismatch';
     }
   | { status: 'failed'; code: AssemblyFailureCode }
   | { status: 'quarantined'; sizeBytes: number; sha256Hex: string }
@@ -194,18 +196,24 @@ export function concatenateChunks(
           if (err instanceof StorageNotFoundError) throw new AssemblyError('chunk_missing');
           throw err;
         }
+        // #303 M-3: a late error from an abandoned chunk stream must never become an unhandled 'error' event.
+        body.on('error', noop);
         const h = createHash('sha256');
         let n = 0;
-        for await (const part of body as AsyncIterable<Buffer | Uint8Array | string>) {
-          const buf = typeof part === 'string' ? Buffer.from(part) : Buffer.from(part);
-          n += buf.length;
-          if (n > c.sizeBytes) {
-            body.destroy();
-            throw new AssemblyError('chunk_size_mismatch');
+        try {
+          for await (const part of body as AsyncIterable<Buffer | Uint8Array | string>) {
+            const buf = typeof part === 'string' ? Buffer.from(part) : Buffer.from(part);
+            n += buf.length;
+            if (n > c.sizeBytes) {
+              body.destroy();
+              throw new AssemblyError('chunk_size_mismatch');
+            }
+            h.update(buf);
+            total.update(buf);
+            yield buf;
           }
-          h.update(buf);
-          total.update(buf);
-          yield buf;
+        } finally {
+          if (!body.destroyed) body.destroy();
         }
         if (n !== c.sizeBytes) throw new AssemblyError('chunk_size_mismatch');
         if (h.digest('hex') !== c.sha256Hex) throw new AssemblyError('chunk_sha256_mismatch');
@@ -216,7 +224,40 @@ export function concatenateChunks(
       throw err;
     }
   }
-  return Readable.from(gen(), { objectMode: false });
+  const stream = Readable.from(gen(), { objectMode: false });
+  // #303 M-3: the S3 SDK detaches its listeners once the request fails, so the generator's error would otherwise be
+  // re-emitted with no listener and crash the worker. The failure still reaches the caller via `out` / putSource.
+  stream.on('error', noop);
+  return stream;
+}
+
+const noop = () => undefined;
+
+/**
+ * #303 M-3: runs `put` with `body`, rejecting as soon as the body stream errors (the SDK may otherwise wait for a
+ * body that will never end). The body is destroyed on any failure; the losing promise is always observed.
+ */
+export async function putWithBody(
+  body: Readable,
+  put: (b: Readable) => Promise<void>,
+): Promise<void> {
+  body.on('error', noop);
+  let onError: (e: unknown) => void = noop;
+  const failed = new Promise<never>((_, reject) => {
+    onError = reject;
+    body.once('error', onError);
+  });
+  const p = put(body);
+  p.catch(noop);
+  failed.catch(noop);
+  try {
+    await Promise.race([p, failed]);
+  } catch (err) {
+    if (!body.destroyed) body.destroy();
+    throw err;
+  } finally {
+    body.off('error', onError);
+  }
 }
 
 /**
@@ -263,8 +304,21 @@ export async function processSessionAssembly(
     await reclaimChunks();
     return { status: 'skipped', reason: 'deleted' };
   }
-  if (!consentMatches(s.consent ?? null, job.consentAttestationId)) {
+  const consent = s.consent ?? null;
+  if (!consentMatches(consent, job.consentAttestationId)) {
+    if (consent && consentMatches(consent, consent.id)) {
+      // #303 L-4: the session HAS a valid consent, the job just carries a stale/other id: leave everything intact
+      // (the backfill / a replay re-queues it with the right one).
+      return { status: 'skipped', reason: 'consent_mismatch' };
+    }
+    // No valid stored consent at all: reclaim and fail the rows so the backfill never re-picks the session.
     await reclaimChunks();
+    await deps.store.markFailed(organizationId, {
+      sessionId,
+      fileObjectId: session.file.id,
+      recordingId: session.recordingId,
+      code: 'consent_invalid',
+    });
     return { status: 'skipped', reason: 'consent_invalid' };
   }
   const fail = async (code: AssemblyFailureCode): Promise<SessionAssemblyOutcome> => {

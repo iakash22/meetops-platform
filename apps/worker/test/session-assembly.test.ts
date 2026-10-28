@@ -4,7 +4,9 @@ import { describe, expect, it, vi } from 'vitest';
 import { CURRENT_CONSENT_VERSION } from '@meetops/contracts';
 import { StorageNotFoundError } from '@meetops/storage';
 import {
+  concatenateChunks,
   processSessionAssembly,
+  putWithBody,
   type AssemblyChunk,
   type AssemblySession,
   type SessionAssemblyDeps,
@@ -287,6 +289,18 @@ describe('processSessionAssembly', () => {
       expect(w.store.markAssembled).not.toHaveBeenCalled();
       expect(w.deps.scan).not.toHaveBeenCalled();
       expect(w.deps.process).not.toHaveBeenCalled();
+      if (reason === 'consent_invalid') {
+        // #303 L-4: rows failed so the backfill never re-picks it.
+        expect(w.store.markFailed).toHaveBeenCalledWith(ORG, {
+          sessionId: SID,
+          fileObjectId: FILE,
+          recordingId: REC,
+          code: 'consent_invalid',
+        });
+        expect(w.session.status).toBe('failed');
+      } else {
+        expect(w.store.markFailed).not.toHaveBeenCalled();
+      }
     };
     for (const d of ['organization', 'meeting', 'recording', 'file'] as const) {
       it(`${d} soft-deleted after complete`, async () => {
@@ -306,11 +320,19 @@ describe('processSessionAssembly', () => {
         'consent_invalid',
       );
     });
-    it("job's consentAttestationId is not the session's latest attestation", async () => {
-      await expectSkippedClean(world([A]), 'consent_invalid', {
-        ...job,
-        consentAttestationId: '77777777-7777-4777-8777-777777777777',
-      });
+    it("#303 L-4: job's consentAttestationId differs from a VALID stored one: skip, keep everything", async () => {
+      const w = world([A, B]);
+      expect(
+        await processSessionAssembly(
+          { ...job, consentAttestationId: '77777777-7777-4777-8777-777777777777' },
+          w.deps,
+        ),
+      ).toEqual({ status: 'skipped', reason: 'consent_mismatch' });
+      for (const c of w.chunks) expect(w.objects.has(c.key)).toBe(true);
+      expect(w.store.markFailed).not.toHaveBeenCalled();
+      expect(w.reads.n).toBe(0);
+      // The right job later assembles it normally.
+      expect((await processSessionAssembly(job, w.deps)).status).toBe('processed');
     });
     it('stored consent has an unsupported version', async () => {
       await expectSkippedClean(
@@ -327,6 +349,81 @@ describe('processSessionAssembly', () => {
         }),
         'consent_invalid',
       );
+    });
+  });
+
+  describe('#303 M-3: stream errors fail one job, never the process', () => {
+    const watchUncaught = () => {
+      const seen: unknown[] = [];
+      const h = (e: unknown) => seen.push(e);
+      process.on('uncaughtException', h);
+      return { seen, stop: () => process.off('uncaughtException', h) };
+    };
+    it('a chunk read error / sha mismatch with an SDK-like consumer that detaches its listener', async () => {
+      const u = watchUncaught();
+      try {
+        const out: { failure?: unknown } = {};
+        const evil = Buffer.from(B);
+        evil[0] = evil[0]! ^ 1;
+        const body = concatenateChunks(
+          [
+            { seq: 0, sizeBytes: A.length, sha256Hex: hex(A), key: 'k0' },
+            { seq: 1, sizeBytes: B.length, sha256Hex: hex(B), key: 'k1' },
+          ],
+          async (c) => {
+            const r = Readable.from([c.key === 'k0' ? A : evil]);
+            return r;
+          },
+          out,
+        );
+        // Mimic the SDK: consume, but drop its error listener on failure and never resolve on its own.
+        const put = vi.fn(
+          (b: Readable) =>
+            new Promise<void>(() => {
+              b.on('data', () => undefined);
+            }),
+        );
+        await expect(putWithBody(body, put)).rejects.toThrow('chunk_sha256_mismatch');
+        await new Promise((r) => setTimeout(r, 20));
+        expect(u.seen).toEqual([]);
+        expect(body.destroyed).toBe(true);
+      } finally {
+        u.stop();
+      }
+    });
+    it('the worker fails the bad job and then processes the next one', async () => {
+      const u = watchUncaught();
+      try {
+        const bad = world([A, B]);
+        const objs = bad.deps.objects;
+        bad.deps.objects = (s) => ({
+          ...objs(s),
+          readChunk: async (c) => {
+            if (c.seq === 0) return Readable.from([A]);
+            const r = new Readable({ read() {} });
+            setImmediate(() =>
+              r.destroy(Object.assign(new Error('read ECONNRESET'), { code: 'ECONNRESET' })),
+            );
+            return r;
+          },
+          putSource: (body, spec) =>
+            putWithBody(body, async (b) => {
+              const got: Buffer[] = [];
+              for await (const p of b) got.push(Buffer.from(p as Buffer));
+              if (Buffer.concat(got).length !== spec.sizeBytes) throw new Error('short body');
+            }),
+        });
+        expect(await processSessionAssembly(job, bad.deps)).toEqual({
+          status: 'failed',
+          code: 'assembly_unavailable',
+        });
+        const good = world([A, B]);
+        expect((await processSessionAssembly(job, good.deps)).status).toBe('processed');
+        await new Promise((r) => setTimeout(r, 20));
+        expect(u.seen).toEqual([]);
+      } finally {
+        u.stop();
+      }
     });
   });
 });

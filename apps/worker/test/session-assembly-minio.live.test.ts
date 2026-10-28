@@ -44,7 +44,7 @@ const available = await minioUp();
 const hex = (b: Buffer) => createHash('sha256').update(b).digest('hex');
 
 describe.skipIf(!available)('session assembly with real MinIO (live)', () => {
-  it('assembles real chunks into the source, verifies the SHA-256 and deletes the chunks', async () => {
+  const runCase = async (corrupt: boolean) => {
     const config = loadStorageConfig({
       STORAGE_PROVIDER: 'minio',
       STORAGE_BUCKET: env.STORAGE_IT_BUCKET,
@@ -78,7 +78,9 @@ describe.skipIf(!available)('session assembly with real MinIO (live)', () => {
         body: b,
       });
       expect(res.status).toBe(200);
-      chunks.push({ seq, sizeBytes: b.length, sha256Hex: hex(b), key });
+      // corrupt: the stored row expects other bytes for the last chunk (same size), i.e. a sha256 mismatch.
+      const expected = corrupt && seq === parts.length - 1 ? Buffer.from(b).fill(0x7a) : b;
+      chunks.push({ seq, sizeBytes: b.length, sha256Hex: hex(expected), key });
     }
     const whole = Buffer.concat(parts);
     const session: AssemblySession = {
@@ -142,6 +144,18 @@ describe.skipIf(!available)('session assembly with real MinIO (live)', () => {
       },
       deps,
     );
+    const o = deps.objects({ ...session, recordingId: rec!, file: session.file! });
+    if (corrupt) {
+      expect(out).toEqual({ status: 'failed', code: 'chunk_sha256_mismatch' });
+      expect(session.status).toBe('failed');
+      expect(await o.headSource()).toBeNull();
+      for (const c of chunks) {
+        await expect(chunkStore.readChunk(org!, sid!, c.key)).rejects.toBeInstanceOf(
+          StorageNotFoundError,
+        );
+      }
+      return;
+    }
     // Dummy bytes are not media: assembled + verified, then the content scan quarantines them.
     expect(out).toEqual({ status: 'quarantined', sizeBytes: whole.length, sha256Hex: hex(whole) });
     expect(assembled).toEqual([{ sizeBytes: whole.length, sha256Hex: hex(whole) }]);
@@ -151,7 +165,26 @@ describe.skipIf(!available)('session assembly with real MinIO (live)', () => {
       );
     }
     // Clean up the dummy source (no orphan objects in the throwaway bucket).
-    const o = deps.objects({ ...session, recordingId: rec!, file: session.file! });
     await o.deleteSource();
+  };
+
+  it('assembles real chunks into the source, verifies the SHA-256 and deletes the chunks', async () => {
+    await runCase(false);
+  });
+
+  it('#303 M-3: a bad chunk over real S3 fails that job only (no uncaught error); the next job assembles', async () => {
+    const seen: unknown[] = [];
+    const h = (e: unknown) => seen.push(e);
+    process.on('uncaughtException', h);
+    try {
+      const t0 = Date.now();
+      await runCase(true);
+      expect(Date.now() - t0).toBeLessThan(10_000); // no ~30 s hang waiting for the body
+      await runCase(false);
+      await new Promise((r) => setTimeout(r, 200));
+      expect(seen).toEqual([]);
+    } finally {
+      process.off('uncaughtException', h);
+    }
   });
 });
