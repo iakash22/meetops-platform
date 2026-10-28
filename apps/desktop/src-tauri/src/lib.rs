@@ -2,7 +2,7 @@
 //!
 //! Commands: `app_info`; the ADR-012 auth commands (`auth_sign_in`, `auth_session`, `auth_sign_out`); the scoped
 //! `api_request` (api.rs: configured https API origin, route allowlist, fresh bearer + one 401 retry, kept in Rust) and presigned `upload_put`; and the encrypted offline chunk store (`chunk_put`, `chunk_get`,
-//! `chunk_delete`). No command ever returns a token.
+//! `chunk_delete`, `chunk_exists`, `chunk_list`; namespaced by a hashed owner). No command ever returns a token.
 
 mod api;
 mod auth;
@@ -89,21 +89,41 @@ async fn upload_put(auth: State<'_, AuthState>, request: tauri::ipc::Request<'_>
 #[tauri::command]
 fn chunk_put(
     chunks: State<'_, ChunkStore>,
+    owner: String,
     session_id: String,
     index: u32,
     data: Vec<u8>,
 ) -> CmdResult<()> {
-    chunks.put(&session_id, index, &data)
+    chunks.put(&owner, &session_id, index, &data)
 }
 
 #[tauri::command]
-fn chunk_get(chunks: State<'_, ChunkStore>, session_id: String, index: u32) -> CmdResult<Vec<u8>> {
-    chunks.get(&session_id, index)
+fn chunk_get(
+    chunks: State<'_, ChunkStore>,
+    owner: String,
+    session_id: String,
+    index: u32,
+) -> CmdResult<Vec<u8>> {
+    chunks.get(&owner, &session_id, index)
 }
 
 #[tauri::command]
-fn chunk_delete(chunks: State<'_, ChunkStore>, session_id: String) -> CmdResult<()> {
-    chunks.delete_session(&session_id)
+fn chunk_delete(chunks: State<'_, ChunkStore>, owner: String, session_id: String) -> CmdResult<()> {
+    chunks.delete_session(&owner, &session_id)
+}
+
+#[tauri::command]
+fn chunk_exists(
+    chunks: State<'_, ChunkStore>,
+    owner: String,
+    session_id: String,
+) -> CmdResult<bool> {
+    chunks.exists(&owner, &session_id)
+}
+
+#[tauri::command]
+fn chunk_list(chunks: State<'_, ChunkStore>, owner: String) -> CmdResult<Vec<String>> {
+    chunks.list(&owner)
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -136,7 +156,9 @@ pub fn run() {
             upload_put,
             chunk_put,
             chunk_get,
-            chunk_delete
+            chunk_delete,
+            chunk_exists,
+            chunk_list
         ])
         .run(tauri::generate_context!())
         .expect("error while running the MeetOps desktop app");

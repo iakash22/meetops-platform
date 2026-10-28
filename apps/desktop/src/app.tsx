@@ -66,7 +66,11 @@ function useRecordingDeps(override: RecordingDeps | undefined, native: boolean):
     if (override) return override;
     // Native (Tauri): presigned PUTs via Rust `upload_put` and pending chunks in the encrypted disk store.
     // Otherwise (web dev, tests) chunks stay in memory and uploads are simulated.
-    const chunks = native ? createNativeChunkStore(invoke) : createMemoryChunkStore();
+    const owner = () => {
+      const s = sessionRef.current;
+      return s?.activeOrganizationId ? `${s.user.id}:${s.activeOrganizationId}` : null;
+    };
+    const chunks = native ? createNativeChunkStore(invoke, owner) : createMemoryChunkStore();
     const api = native ? createNativeUploadApi(invoke) : createSimulatedUploadApi();
     const queue = createUploadQueue(api, chunks, {
       isOnline: () => navigator.onLine,

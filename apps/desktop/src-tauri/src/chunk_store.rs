@@ -1,6 +1,8 @@
 //! Encrypted offline chunk store (ADR-012 3.5). Each chunk is AES-256-GCM sealed with a per-device key held in the
-//! keychain (never derived from a token) and written as `<dir>/<session>/<index>.chunk` = 12-byte nonce || ciphertext.
-//! The session id and index are bound as associated data, so chunks can't be swapped between slots.
+//! keychain (never derived from a token) and written as `<dir>/<owner>/<session>/<index>.chunk` = 12-byte nonce ||
+//! ciphertext. `<owner>` is a hash of the signed-in `userId:organizationId` (L-1), so one account's chunks are not
+//! addressable under another's. Owner, session id and index are bound as associated data, so chunks can't be swapped
+//! between slots or accounts.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -9,6 +11,7 @@ use aes_gcm::aead::{Aead, KeyInit, Payload};
 use aes_gcm::{Aes256Gcm, Key, Nonce};
 use base64::{engine::general_purpose::STANDARD, Engine};
 use rand::{rngs::OsRng, RngCore};
+use sha2::{Digest, Sha256};
 
 use crate::error::{CmdError, CmdResult};
 use crate::keychain::SecretStore;
@@ -57,6 +60,15 @@ fn safe_id(id: &str) -> CmdResult<&str> {
     }
 }
 
+/// Directory name for an account: first 32 hex chars of sha256 over a domain-separated owner string.
+fn owner_dir(owner: &str) -> CmdResult<String> {
+    if owner.is_empty() || owner.len() > 512 {
+        return Err(CmdError::validation("Invalid recording owner."));
+    }
+    let digest = Sha256::digest(format!("meetops.chunk-owner.v1:{owner}").as_bytes());
+    Ok(digest.iter().take(16).map(|b| format!("{b:02x}")).collect())
+}
+
 impl ChunkStore {
     pub fn new(dir: impl AsRef<Path>, key: &[u8; 32]) -> Self {
         Self {
@@ -76,23 +88,30 @@ impl ChunkStore {
         self.cipher.as_ref().ok_or_else(key_unavailable)
     }
 
-    fn path(&self, session: &str, index: u32) -> CmdResult<PathBuf> {
+    fn owner_root(&self, owner: &str) -> CmdResult<PathBuf> {
+        Ok(self.dir.join(owner_dir(owner)?))
+    }
+
+    fn session_dir(&self, owner: &str, session: &str) -> CmdResult<PathBuf> {
+        Ok(self.owner_root(owner)?.join(safe_id(session)?))
+    }
+
+    fn path(&self, owner: &str, session: &str, index: u32) -> CmdResult<PathBuf> {
         Ok(self
-            .dir
-            .join(safe_id(session)?)
+            .session_dir(owner, session)?
             .join(format!("{index}.chunk")))
     }
 
-    fn aad(session: &str, index: u32) -> Vec<u8> {
-        format!("meetops.chunk.v1:{session}:{index}").into_bytes()
+    fn aad(owner: &str, session: &str, index: u32) -> Vec<u8> {
+        format!("meetops.chunk.v2:{owner}:{session}:{index}").into_bytes()
     }
 
-    pub fn put(&self, session: &str, index: u32, data: &[u8]) -> CmdResult<()> {
+    pub fn put(&self, owner: &str, session: &str, index: u32, data: &[u8]) -> CmdResult<()> {
         crate::upload::check_body_size(data.len())?;
-        let path = self.path(session, index)?;
+        let path = self.path(owner, session, index)?;
         let mut nonce = [0u8; 12];
         OsRng.fill_bytes(&mut nonce);
-        let aad = Self::aad(session, index);
+        let aad = Self::aad(owner, session, index);
         let sealed = self
             .cipher()?
             .encrypt(
@@ -110,13 +129,13 @@ impl ChunkStore {
         fs::rename(&tmp, &path).map_err(|_| CmdError::internal())
     }
 
-    pub fn get(&self, session: &str, index: u32) -> CmdResult<Vec<u8>> {
-        let raw = fs::read(self.path(session, index)?)
+    pub fn get(&self, owner: &str, session: &str, index: u32) -> CmdResult<Vec<u8>> {
+        let raw = fs::read(self.path(owner, session, index)?)
             .map_err(|_| CmdError::new("NOT_FOUND", "That recording chunk is missing."))?;
         if raw.len() < 12 {
             return Err(CmdError::internal());
         }
-        let aad = Self::aad(session, index);
+        let aad = Self::aad(owner, session, index);
         self.cipher()?
             .decrypt(
                 Nonce::from_slice(&raw[..12]),
@@ -128,12 +147,34 @@ impl ChunkStore {
             .map_err(|_| CmdError::new("INTERNAL", "A recording chunk failed its integrity check."))
     }
 
-    pub fn delete_session(&self, session: &str) -> CmdResult<()> {
-        let dir = self.dir.join(safe_id(session)?);
+    pub fn delete_session(&self, owner: &str, session: &str) -> CmdResult<()> {
+        let dir = self.session_dir(owner, session)?;
         if dir.exists() {
             fs::remove_dir_all(dir).map_err(|_| CmdError::internal())?;
         }
         Ok(())
+    }
+
+    /// True while any file of the session is still on disk (from this or an earlier launch).
+    pub fn exists(&self, owner: &str, session: &str) -> CmdResult<bool> {
+        Ok(self.session_dir(owner, session)?.exists())
+    }
+
+    /// Session ids with data on disk for this owner (sorted), so leftovers from earlier launches can be re-queued
+    /// or expired. Entries that aren't valid ids are ignored.
+    pub fn list(&self, owner: &str) -> CmdResult<Vec<String>> {
+        let root = self.owner_root(owner)?;
+        let Ok(entries) = fs::read_dir(&root) else {
+            return Ok(Vec::new());
+        };
+        let mut out: Vec<String> = entries
+            .filter_map(Result::ok)
+            .filter(|e| e.path().is_dir())
+            .filter_map(|e| e.file_name().into_string().ok())
+            .filter(|n| safe_id(n).is_ok())
+            .collect();
+        out.sort();
+        Ok(out)
     }
 }
 
@@ -160,6 +201,8 @@ mod tests {
         }
     }
 
+    const O: &str = "u1:o1";
+
     fn store() -> (ChunkStore, PathBuf) {
         let dir = std::env::temp_dir().join(format!("mo-chunks-{}", crate::pkce::random_b64(6)));
         let key = device_key(&Persisting::default(), "k").unwrap();
@@ -170,29 +213,63 @@ mod tests {
     fn put_rejects_empty_and_oversized_chunks() {
         let (s, dir) = store();
         let max = crate::upload::MAX_UPLOAD_BYTES;
-        assert_eq!(s.put("a", 0, b"").unwrap_err().code, "VALIDATION_FAILED");
-        assert!(s.put("a", 1, &vec![0u8; max + 1]).is_err());
-        assert!(!dir.join("a/1.chunk").exists());
+        assert_eq!(s.put(O, "a", 0, b"").unwrap_err().code, "VALIDATION_FAILED");
+        assert!(s.put(O, "a", 1, &vec![0u8; max + 1]).is_err());
+        assert!(!s.exists(O, "a").unwrap());
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[test]
     fn round_trips_and_is_not_plaintext_on_disk() {
         let (s, dir) = store();
-        s.put("sess-1", 0, b"hello audio").unwrap();
-        let raw = fs::read(dir.join("sess-1/0.chunk")).unwrap();
+        s.put(O, "sess-1", 0, b"hello audio").unwrap();
+        let raw = fs::read(s.path(O, "sess-1", 0).unwrap()).unwrap();
         assert!(!raw.windows(5).any(|w| w == b"hello"));
-        assert_eq!(s.get("sess-1", 0).unwrap(), b"hello audio");
-        s.delete_session("sess-1").unwrap();
-        assert!(s.get("sess-1", 0).is_err());
+        assert_eq!(s.get(O, "sess-1", 0).unwrap(), b"hello audio");
+        s.delete_session(O, "sess-1").unwrap();
+        assert!(s.get(O, "sess-1", 0).is_err());
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn lists_and_reports_sessions_across_store_instances() {
+        let (s, dir) = store();
+        s.put(O, "b", 0, b"x").unwrap();
+        s.put(O, "a", 3, b"y").unwrap();
+        // A fresh instance (new launch) still sees what is on disk.
+        let key = device_key(&Persisting::default(), "k").unwrap();
+        let again = ChunkStore::new(&dir, &key);
+        assert_eq!(again.list(O).unwrap(), vec!["a".to_owned(), "b".to_owned()]);
+        assert!(again.exists(O, "a").unwrap());
+        again.delete_session(O, "a").unwrap();
+        assert!(!again.exists(O, "a").unwrap());
+        assert_eq!(again.list(O).unwrap(), vec!["b".to_owned()]);
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn chunks_are_bound_to_their_owner() {
+        let (s, dir) = store();
+        s.put(O, "a", 0, b"secret").unwrap();
+        assert!(!s.exists("u2:o1", "a").unwrap());
+        assert!(s.list("u2:o1").unwrap().is_empty());
+        assert_eq!(s.get("u2:o1", "a", 0).unwrap_err().code, "NOT_FOUND");
+        // Copying the ciphertext into another owner's dir still fails (owner is in the AAD).
+        let other = s.path("u2:o1", "a", 0).unwrap();
+        fs::create_dir_all(other.parent().unwrap()).unwrap();
+        fs::copy(s.path(O, "a", 0).unwrap(), &other).unwrap();
+        assert!(s.get("u2:o1", "a", 0).is_err());
+        assert!(s.put("", "a", 0, b"x").is_err());
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[test]
     fn rejects_swapped_or_tampered_chunks_and_bad_ids() {
         let (s, dir) = store();
-        s.put("a", 0, b"zero").unwrap();
-        fs::copy(dir.join("a/0.chunk"), dir.join("a/1.chunk")).unwrap();
-        assert!(s.get("a", 1).is_err());
-        assert!(s.put("../x", 0, b"x").is_err());
+        s.put(O, "a", 0, b"zero").unwrap();
+        fs::copy(s.path(O, "a", 0).unwrap(), s.path(O, "a", 1).unwrap()).unwrap();
+        assert!(s.get(O, "a", 1).is_err());
+        assert!(s.put(O, "../x", 0, b"x").is_err());
         let _ = fs::remove_dir_all(dir);
     }
 
@@ -209,7 +286,10 @@ mod tests {
         assert_eq!(m.get("k"), None, "no in-memory key left behind");
         let dir = std::env::temp_dir().join(format!("mo-chunks-{}", crate::pkce::random_b64(6)));
         let s = ChunkStore::unavailable(&dir);
-        assert_eq!(s.put("a", 0, b"x").unwrap_err().code, "SERVICE_UNAVAILABLE");
-        assert!(!dir.join("a/0.chunk").exists());
+        assert_eq!(
+            s.put(O, "a", 0, b"x").unwrap_err().code,
+            "SERVICE_UNAVAILABLE"
+        );
+        assert!(!s.exists(O, "a").unwrap());
     }
 }

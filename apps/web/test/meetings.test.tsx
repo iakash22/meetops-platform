@@ -2,7 +2,11 @@ import { act, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ApiError } from '@/lib/api/client';
-import { MAX_UPLOAD_BYTES, validateUploadFile } from '@/features/meetings/upload-button';
+import {
+  MAX_UPLOAD_BYTES,
+  describeUploadError,
+  validateUploadFile,
+} from '@/features/meetings/upload-button';
 import { meeting1, uploadResponse } from './fixtures/data';
 import { createMockApi, renderApp, resetStores } from './fixtures/render';
 import { waitForRouteData } from './fixtures/route-ready';
@@ -148,7 +152,6 @@ describe('meetings', () => {
   });
 
   it.each([
-    [new ApiError(409, 'CONFLICT', 'x'), /exceed the 1.4 GB total/],
     [new ApiError(413, 'BAD_REQUEST', 'x'), /exceed the 1.4 GB total/],
     [new ApiError(413, 'PAYLOAD_TOO_LARGE', 'x'), /exceed the 1.4 GB total/],
     [
@@ -235,5 +238,14 @@ describe('meetings', () => {
     expect(validateUploadFile(new File(['a'], 'a.mp3', { type: 'audio/mpeg' }))).toBeNull();
     expect(validateUploadFile(new File([], 'a.mp3', { type: 'audio/mpeg' }))).toMatch(/empty/);
     expect(validateUploadFile(new File(['a'], 'a.txt', { type: 'text/plain' }))).toMatch(/audio/);
+  });
+});
+
+describe('describeUploadError', () => {
+  it('does not treat a 409 conflict as a size cap', () => {
+    expect(describeUploadError(new ApiError(409, 'CONFLICT', 'x'))).not.toMatch(/1\.4 GB/);
+    expect(describeUploadError(new ApiError(413, 'PAYLOAD_TOO_LARGE', 'x'))).toMatch(
+      /1\.4 GB total/,
+    );
   });
 });

@@ -41,6 +41,9 @@ export interface QueueItem {
   nextAttemptAt: number;
   queuedAt: number;
   lastError: string | null;
+  /** Set when the local copy must be deleted (discard, retention, or after upload) but the delete hasn't been
+   * verified yet. The record is kept, and the delete retried every pass, so no encrypted orphans are left behind. */
+  pendingDelete?: boolean;
 }
 
 /** Local chunk bytes. Persistent impl (encrypted files, per-device keychain key, ADR-012 3.5) is Rust-side. */
@@ -48,7 +51,14 @@ export interface ChunkStore {
   put: (recordingId: string, seq: number, bytes: Uint8Array) => Promise<void>;
   read: (recordingId: string, seq: number) => Promise<Uint8Array>;
   remove: (recordingId: string) => Promise<void>;
+  /** True while anything of the recording is still stored, including data from earlier launches. */
   exists: (recordingId: string) => Promise<boolean>;
+  /** Recording ids stored for the signed-in account, excluding ones still being written this launch. */
+  list: () => Promise<string[]>;
+  /** Queue metadata, stored (encrypted) beside the chunks so the queue survives restarts. */
+  saveMeta: (recordingId: string, meta: string) => Promise<void>;
+  /** Null when the recording has no metadata (e.g. the app quit mid-recording). */
+  readMeta: (recordingId: string) => Promise<string | null>;
 }
 
 export interface RecordingUploadApi {
@@ -103,7 +113,7 @@ export interface UploadQueue {
  * Offline upload queue for desktop recordings (same algorithm as mobile M5): init with consent, per-chunk signed URL,
  * PUT with signed headers verbatim, complete with every chunk's size + sha256, then verified local deletion. Backoff,
  * offline pause, resume from the last confirmed chunk, 7-day retention, and items wait while a different user/org is
- * signed in. Metadata is in memory until the Rust store lands, so the queue survives network loss, not app restarts.
+ * signed in. Metadata is persisted beside the chunks, and each account's leftovers are re-queued on its first pass after a restart.
  */
 export function createUploadQueue(
   api: RecordingUploadApi,
@@ -113,20 +123,66 @@ export function createUploadQueue(
 ): UploadQueue {
   let items: QueueItem[] = [];
   let running: Promise<void> | null = null;
+  const hydrated = new Set<string>();
   const listeners = new Set<() => void>();
   const set = (next: QueueItem[]) => {
     items = next;
     listeners.forEach((l) => l());
   };
-  const patch = (id: string, p: Partial<QueueItem>) =>
-    set(items.map((i) => (i.id === id ? { ...i, ...p } : i)));
-  const drop = (id: string) => set(items.filter((i) => i.id !== id));
   const get = (id: string) => items.find((i) => i.id === id);
+  // Best effort: a failed metadata write only loses restart-resume for that item, never the upload.
+  const persist = (item: QueueItem | undefined) => {
+    if (item && !item.pendingDelete)
+      void chunks.saveMeta(item.id, JSON.stringify(item)).catch(() => undefined);
+  };
+  const patch = (id: string, p: Partial<QueueItem>) => {
+    set(items.map((i) => (i.id === id ? { ...i, ...p } : i)));
+    persist(get(id));
+  };
+  const drop = (id: string) => set(items.filter((i) => i.id !== id));
 
   async function deleteVerified(id: string) {
     await chunks.remove(id);
     if (await chunks.exists(id)) throw new Error('Local copy still present after delete.');
     drop(id);
+  }
+
+  /** Delete now, or keep the record flagged so the next pass retries (L-3). */
+  async function deleteOrFlag(id: string) {
+    try {
+      await deleteVerified(id);
+    } catch {
+      set(
+        items.map((i) =>
+          i.id === id
+            ? { ...i, pendingDelete: true, lastError: "Couldn't remove the local copy. Retrying." }
+            : i,
+        ),
+      );
+    }
+  }
+
+  /** Once per account: re-queue recordings left on disk by earlier launches; delete ones that can't be resumed. */
+  async function hydrate(key: string) {
+    if (hydrated.has(key)) return;
+    const known = new Set(items.map((i) => i.id));
+    for (const id of await chunks.list()) {
+      if (known.has(id)) continue;
+      let item: QueueItem | null = null;
+      try {
+        const raw = await chunks.readMeta(id);
+        item = raw ? (JSON.parse(raw) as QueueItem) : null;
+      } catch {
+        item = null;
+      }
+      if (!item || item.id !== id || !Array.isArray(item.chunks)) {
+        // No usable metadata (quit mid-recording or corrupt): it can never be uploaded, so don't keep it.
+        await chunks.remove(id).catch(() => undefined);
+        continue;
+      }
+      set([...items, { ...item, state: item.state === 'uploading' ? 'pending' : item.state }]);
+    }
+    hydrated.add(key);
   }
 
   async function upload(item: QueueItem) {
@@ -160,20 +216,30 @@ export function createUploadQueue(
     await deleteVerified(item.id);
   }
 
+  const owns = (i: QueueItem) => {
+    const who = ctx.identity();
+    return !!who && who.userId === i.userId && who.organizationId === i.organizationId;
+  };
+
   async function pass() {
+    const who = ctx.identity();
+    if (who) await hydrate(`${who.userId}:${who.organizationId}`).catch(() => undefined);
     const t = now();
+    // Local deletes and retention need only the owning account (the store is namespaced per account), not network.
     for (const item of [...items]) {
+      if (!owns(item)) continue;
+      if (item.pendingDelete) {
+        await deleteOrFlag(item.id);
+        continue;
+      }
       if (t - item.queuedAt < RETENTION_MS) continue;
       if (item.sessionId)
         await api.abort(item.sessionId, 'local_storage_exhausted').catch(() => undefined);
-      await chunks.remove(item.id).catch(() => undefined);
-      drop(item.id);
+      await deleteOrFlag(item.id);
     }
     for (const snapshot of [...items]) {
       if (!ctx.isOnline()) return;
-      const who = ctx.identity();
-      if (!who || who.userId !== snapshot.userId || who.organizationId !== snapshot.organizationId)
-        continue;
+      if (!owns(snapshot) || snapshot.pendingDelete) continue;
       if (snapshot.state === 'failed' || snapshot.nextAttemptAt > t) continue;
       try {
         if (snapshot.state === 'done') await deleteVerified(snapshot.id);
@@ -197,19 +263,18 @@ export function createUploadQueue(
   return {
     enqueue(r) {
       if (r.chunks.length === 0) throw new Error('A recording needs at least one chunk.');
-      set([
-        ...items,
-        {
-          ...r,
-          state: 'pending',
-          sessionId: null,
-          uploadedSeqs: [],
-          attempts: 0,
-          nextAttemptAt: 0,
-          queuedAt: now(),
-          lastError: null,
-        },
-      ]);
+      const item: QueueItem = {
+        ...r,
+        state: 'pending',
+        sessionId: null,
+        uploadedSeqs: [],
+        attempts: 0,
+        nextAttemptAt: 0,
+        queuedAt: now(),
+        lastError: null,
+      };
+      set([...items, item]);
+      persist(item);
     },
     process() {
       running ??= pass().finally(() => {
@@ -226,8 +291,9 @@ export function createUploadQueue(
       if (!item) return;
       if (item.sessionId && item.state !== 'done')
         await api.abort(item.sessionId, 'user_stopped').catch(() => undefined);
-      await chunks.remove(id).catch(() => undefined);
-      drop(id);
+      // Another account's store namespace isn't addressable now: flag it and delete when its owner signs in.
+      if (owns(item)) await deleteOrFlag(id);
+      else set(items.map((i) => (i.id === id ? { ...i, pendingDelete: true } : i)));
     },
     items: () => items,
     subscribe(l) {
@@ -240,6 +306,7 @@ export function createUploadQueue(
 /** In-memory chunk store (dev, tests, and until the encrypted Rust store ships). */
 export function createMemoryChunkStore(): ChunkStore {
   const map = new Map<string, Map<number, Uint8Array>>();
+  const meta = new Map<string, string>();
   return {
     put: async (id, seq, bytes) => {
       if (!map.has(id)) map.set(id, new Map());
@@ -250,8 +317,14 @@ export function createMemoryChunkStore(): ChunkStore {
       if (!b) throw new Error('Missing local chunk.');
       return b;
     },
-    remove: async (id) => void map.delete(id),
-    exists: async (id) => map.has(id),
+    remove: async (id) => {
+      map.delete(id);
+      meta.delete(id);
+    },
+    exists: async (id) => map.has(id) || meta.has(id),
+    list: async () => [...new Set([...map.keys(), ...meta.keys()])].filter((id) => meta.has(id)),
+    saveMeta: async (id, m) => void meta.set(id, m),
+    readMeta: async (id) => meta.get(id) ?? null,
   };
 }
 
