@@ -1282,3 +1282,68 @@ export class S3UploadSourceSigner {
     };
   }
 }
+
+/** Throws unless `key` is an API recording-session chunk key of `organizationId` (and `sessionId` when given). */
+export function assertSessionChunkKey(key: string, organizationId: string, sessionId?: string): string {
+  const k = typeof key === 'string' ? key : '';
+  const c = SESSION_CHUNK_KEY_RE.exec(k);
+  if (
+    !c ||
+    c[1] !== organizationId ||
+    (sessionId !== undefined && c[2] !== sessionId) ||
+    `${organizationPrefix(c[1])}recording-sessions/${uploadSourceIdCheck(c[2]!)}/chunks/${c[3]!}` !== k
+  ) {
+    throw new StorageAccessError();
+  }
+  return k;
+}
+
+/**
+ * Worker-side reader/deleter for API recording-session chunks (organizations/{org}/recording-sessions/{sid}/chunks/
+ * {seq5}). Every call is bound to an org + session; keys of another org or session are refused.
+ */
+export class S3SessionChunkStore {
+  readonly #client: S3Client;
+  readonly #bucket: string;
+
+  constructor(opts: { config: StorageConfig; client?: S3Client }) {
+    this.#bucket = opts.config.bucket;
+    this.#client = opts.client ?? createS3Client(opts.config);
+  }
+
+  /** Streams a chunk; StorageNotFoundError when it is missing. */
+  async readChunk(organizationId: string, sessionId: string, key: string): Promise<Readable> {
+    const k = assertSessionChunkKey(key, organizationId, sessionId);
+    const res = await settle(this.#client.send(new GetObjectCommand({ Bucket: this.#bucket, Key: k })));
+    if (!res.Body) throw mapS3Error({ name: 'NoSuchKey' });
+    return res.Body instanceof Readable
+      ? res.Body
+      : Readable.from(res.Body as unknown as AsyncIterable<Uint8Array>);
+  }
+
+  /** Idempotent delete (S3 DeleteObject succeeds for a missing key). */
+  async deleteChunk(organizationId: string, sessionId: string, key: string): Promise<void> {
+    const k = assertSessionChunkKey(key, organizationId, sessionId);
+    await settle(this.#client.send(new DeleteObjectCommand({ Bucket: this.#bucket, Key: k })));
+  }
+}
+
+const SOURCE_EXT_BY_MIME: Record<string, MediaSourceExtLike> = {
+  'audio/webm': 'webm',
+  'video/webm': 'webm',
+  'audio/ogg': 'ogg',
+  'audio/mpeg': 'mp3',
+  'audio/mp4': 'm4a',
+  'audio/x-m4a': 'm4a',
+  'video/mp4': 'mp4',
+  'audio/wav': 'wav',
+  'audio/x-wav': 'wav',
+  'audio/wave': 'wav',
+};
+type MediaSourceExtLike = 'webm' | 'ogg' | 'mp3' | 'm4a' | 'mp4' | 'wav';
+
+/** Recording source extension for a (parameterised) media mime type, or null when it is not a source type. */
+export function sourceExtForMime(mimeType: string): MediaSourceExtLike | null {
+  const base = (mimeType.split(';')[0] ?? '').trim().toLowerCase();
+  return SOURCE_EXT_BY_MIME[base] ?? null;
+}
