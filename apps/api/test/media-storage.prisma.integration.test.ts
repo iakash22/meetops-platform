@@ -11,6 +11,8 @@ import {
 } from '@meetops/database';
 import { storageMediaAdapters, type MediaAdapters } from '../src/modules/index.js';
 import { FakeMediaSigner, InMemoryMediaJobQueue } from '../src/modules/media/infrastructure/in-memory.js';
+import { reconcileStaleMedia } from '../src/modules/media/application/reconcile.js';
+import { PrismaStaleMediaStore } from '../src/modules/media/infrastructure/prisma.js';
 import { consent, mediaWorld, SHA_B64, type MediaWorld } from './media-helpers.js';
 
 const url = process.env.TEST_DATABASE_URL;
@@ -29,7 +31,7 @@ describe.skipIf(!url)('media storage wiring (Prisma, live)', () => {
       { signer, jobs: new InMemoryMediaJobQueue() },
     );
     // mediaWorld returns its own in-memory adapters; the app uses the injected storage-backed ones.
-    w = await mediaWorld({ db, media });
+    w = await mediaWorld({ db, media }, randomUUID().slice(0, 8));
   });
   afterAll(async () => {
     await w?.app.close();
@@ -125,5 +127,37 @@ describe.skipIf(!url)('media storage wiring (Prisma, live)', () => {
     expect(await media.files.findById(w.org, id)).toBeNull();
     const after = await counts(w.org);
     expect(after).toEqual({ files: before.files + 1, consents: before.consents + 1 });
+  });
+
+  it('#302 M-1: enqueue fails after the commit; the reconciler re-enqueues the stuck upload once', async () => {
+    const init = await w.member.post(`/orgs/${w.org}/uploads`, {
+      filename: 'dummy.webm',
+      mimeType: 'audio/webm',
+      sizeBytes: 1000,
+      checksumSha256: SHA_B64,
+      consent: consent(),
+    });
+    const id = init.json<{ fileObjectId: string }>().fileObjectId;
+    signer.put((await media.files.findById(w.org, id))!.key, 1000);
+    const jobs = media.jobs as InMemoryMediaJobQueue;
+    const spy = vi.spyOn(jobs, 'enqueue').mockRejectedValueOnce(new Error('redis down'));
+    expect((await w.member.post(`/orgs/${w.org}/uploads/${id}/complete`, {})).statusCode).toBe(500);
+    spy.mockRestore();
+    expect(await media.files.findById(w.org, id)).toMatchObject({ status: 'processing', scanStatus: 'pending' });
+    const before = jobs.jobs.length;
+    const run = () =>
+      reconcileStaleMedia({
+        store: new PrismaStaleMediaStore(db),
+        consents: media.consents,
+        jobs,
+        now: () => new Date(Date.now() + 1000),
+        olderThanMs: 0,
+      });
+    const r1 = await run();
+    expect(r1.uploads).toBeGreaterThanOrEqual(1);
+    expect(jobs.jobs.filter((j) => j.subjectId === id)).toHaveLength(1);
+    await run(); // idempotent: same deterministic id, still one job
+    expect(jobs.jobs.filter((j) => j.subjectId === id)).toHaveLength(1);
+    expect(jobs.jobs.length).toBeGreaterThan(before);
   });
 });
