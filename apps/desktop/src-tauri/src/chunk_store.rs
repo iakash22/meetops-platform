@@ -88,6 +88,7 @@ impl ChunkStore {
     }
 
     pub fn put(&self, session: &str, index: u32, data: &[u8]) -> CmdResult<()> {
+        crate::upload::check_body_size(data.len())?;
         let path = self.path(session, index)?;
         let mut nonce = [0u8; 12];
         OsRng.fill_bytes(&mut nonce);
@@ -163,6 +164,15 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("mo-chunks-{}", crate::pkce::random_b64(6)));
         let key = device_key(&Persisting::default(), "k").unwrap();
         (ChunkStore::new(&dir, &key), dir)
+    }
+
+    #[test]
+    fn put_rejects_empty_and_oversized_chunks() {
+        let (s, dir) = store();
+        let max = crate::upload::MAX_UPLOAD_BYTES;
+        assert_eq!(s.put("a", 0, b"").unwrap_err().code, "VALIDATION_FAILED");
+        assert!(s.put("a", 1, &vec![0u8; max + 1]).is_err());
+        assert!(!dir.join("a/1.chunk").exists());
     }
 
     #[test]
