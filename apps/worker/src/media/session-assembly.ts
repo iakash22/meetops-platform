@@ -46,30 +46,30 @@ export type AssemblySession = {
 };
 
 export type SessionAssemblyStore = {
-  load(organizationId: string, sessionId: string): Promise<AssemblySession | null>;
+  load: (organizationId: string, sessionId: string) => Promise<AssemblySession | null>;
   /** Source FileObject -> uploaded (size + final sha256), recording -> uploaded. One transaction. */
-  markAssembled(
+  markAssembled: (
     organizationId: string,
     s: { sessionId: string; fileObjectId: string; recordingId: string; sizeBytes: number; sha256Hex: string },
-  ): Promise<void>;
+  ) => Promise<void>;
   /** Session -> failed (failure_code), source FileObject + recording -> failed. One transaction. */
-  markFailed(
+  markFailed: (
     organizationId: string,
     s: { sessionId: string; fileObjectId: string | null; recordingId: string | null; code: AssemblyFailureCode },
-  ): Promise<void>;
+  ) => Promise<void>;
   /** Sets scanStatus only while it is still pending (idempotent). */
-  setScanStatus(organizationId: string, fileObjectId: string, status: 'clean' | 'quarantined'): Promise<void>;
+  setScanStatus: (organizationId: string, fileObjectId: string, status: 'clean' | 'quarantined') => Promise<void>;
 };
 
 /** Object access for one session; implementations bind keys to the job's org + meeting/session. */
 export type SessionObjects = {
-  readChunk(chunk: AssemblyChunk): Promise<Readable>;
-  deleteChunk(chunk: AssemblyChunk): Promise<void>;
+  readChunk: (chunk: AssemblyChunk) => Promise<Readable>;
+  deleteChunk: (chunk: AssemblyChunk) => Promise<void>;
   /** Single PUT of the assembled source (atomic: a failed body stream stores nothing). */
-  putSource(body: Readable, spec: { sizeBytes: number; mimeType: string }): Promise<void>;
-  headSource(): Promise<{ sizeBytes: number } | null>;
-  deleteSource(): Promise<void>;
-  sourceBody(): Promise<Readable>;
+  putSource: (body: Readable, spec: { sizeBytes: number; mimeType: string }) => Promise<void>;
+  headSource: () => Promise<{ sizeBytes: number } | null>;
+  deleteSource: () => Promise<void>;
+  sourceBody: () => Promise<Readable>;
 };
 
 export type AssemblyFailureCode =
@@ -91,14 +91,17 @@ export class AssemblyError extends Error {
 
 export type SessionAssemblyDeps = {
   store: SessionAssemblyStore;
-  objects(s: AssemblySession & { recordingId: string; file: NonNullable<AssemblySession['file']> }): SessionObjects;
+  objects: (s: AssemblySession & { recordingId: string; file: NonNullable<AssemblySession['file']> }) => SessionObjects;
   /** Hard cap on the assembled source (worker MEDIA_MAX_SOURCE_BYTES), never above MAX_RECORDING_SESSION_BYTES. */
   maxSourceBytes: number;
   /** The normal content scan (magic bytes, ffprobe, optional clamd) on the assembled source. */
-  scan(source: { size(): Promise<number | null>; body(): Promise<Readable> }, mimeType: string): Promise<'clean' | 'quarantined'>;
+  scan: (
+    source: { size: () => Promise<number | null>; body: () => Promise<Readable> },
+    mimeType: string,
+  ) => Promise<'clean' | 'quarantined'>;
   /** The normal recording pipeline (processRecording) for a clean source. */
-  process(payload: MediaJobPayload, ctx: { isFinalAttempt: boolean }): Promise<unknown>;
-  sourceExt(mimeType: string): MediaJobPayload['sourceExt'] | null;
+  process: (payload: MediaJobPayload, ctx: { isFinalAttempt: boolean }) => Promise<unknown>;
+  sourceExt: (mimeType: string) => MediaJobPayload['sourceExt'] | null;
 };
 
 export type SessionAssemblyOutcome =
@@ -281,7 +284,7 @@ export async function processSessionAssembly(
       recordingId: session.recordingId,
       sourceExt: ext,
       sourceKey: session.file.key,
-    } as MediaJobPayload,
+    },
     ctx,
   );
   return { status: 'processed', sizeBytes, sha256Hex };
