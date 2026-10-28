@@ -101,7 +101,11 @@ export type SessionObjects = {
   readChunk: (chunk: AssemblyChunk) => Promise<Readable>;
   deleteChunk: (chunk: AssemblyChunk) => Promise<void>;
   /** Single PUT of the assembled source (atomic: a failed body stream stores nothing). */
-  putSource: (body: Readable, spec: { sizeBytes: number; mimeType: string }) => Promise<void>;
+  /** `signal` aborts the PUT when the streamed body turns out invalid (#303 M-3). */
+  putSource: (
+    body: Readable,
+    spec: { sizeBytes: number; mimeType: string; signal?: AbortSignal },
+  ) => Promise<void>;
   headSource: () => Promise<{ sizeBytes: number } | null>;
   deleteSource: () => Promise<void>;
   sourceBody: () => Promise<Readable>;
@@ -180,85 +184,74 @@ export function checkChunkSet(s: AssemblySession, maxSourceBytes: number): numbe
  * Streams the chunks in order (never buffering a whole chunk or file), verifying each chunk's size + sha256 as it
  * passes, and the full-file sha256. A mismatch aborts the body stream, so the single PUT stores nothing.
  */
+export type ConcatOutcome = {
+  sha256Hex?: string;
+  /** Verification failure (size / sha / missing chunk). */
+  failure?: AssemblyError;
+  /** Infra error while reading a chunk (retryable). */
+  error?: unknown;
+  /** Called once on failure/error, e.g. to abort the in-flight PUT. */
+  onFail?: () => void;
+};
+
+/**
+ * #303 M-3: the body stream NEVER emits 'error'. The S3 SDK wraps the body in its own streams and drops its
+ * listeners once a request fails, so an error emitted on the body (or re-emitted by a wrapper) became an unhandled
+ * 'error' event / uncaughtException that crashed the whole worker. Instead, any failure is recorded in `out`, the
+ * body ends early (short of Content-Length, so nothing is stored) and `out.onFail` aborts the request.
+ */
 export function concatenateChunks(
   chunks: AssemblyChunk[],
   read: (c: AssemblyChunk) => Promise<Readable>,
-  out: { sha256Hex?: string; failure?: AssemblyError },
+  out: ConcatOutcome,
 ): Readable {
   const total = createHash('sha256');
+  const stop = (e: unknown) => {
+    if (e instanceof AssemblyError) out.failure = e;
+    else out.error = e;
+    out.onFail?.();
+  };
   async function* gen() {
-    try {
-      for (const c of chunks) {
-        let body: Readable;
-        try {
-          body = await read(c);
-        } catch (err) {
-          if (err instanceof StorageNotFoundError) throw new AssemblyError('chunk_missing');
-          throw err;
-        }
-        // #303 M-3: a late error from an abandoned chunk stream must never become an unhandled 'error' event.
-        body.on('error', noop);
-        const h = createHash('sha256');
-        let n = 0;
-        try {
-          for await (const part of body as AsyncIterable<Buffer | Uint8Array | string>) {
-            const buf = typeof part === 'string' ? Buffer.from(part) : Buffer.from(part);
-            n += buf.length;
-            if (n > c.sizeBytes) {
-              body.destroy();
-              throw new AssemblyError('chunk_size_mismatch');
-            }
-            h.update(buf);
-            total.update(buf);
-            yield buf;
+    for (const c of chunks) {
+      let body: Readable;
+      try {
+        body = await read(c);
+      } catch (err) {
+        stop(err instanceof StorageNotFoundError ? new AssemblyError('chunk_missing') : err);
+        return;
+      }
+      body.on('error', noop); // late errors from an abandoned chunk stream are ignored
+      const h = createHash('sha256');
+      let n = 0;
+      try {
+        for await (const part of body as AsyncIterable<Buffer | Uint8Array | string>) {
+          const buf = typeof part === 'string' ? Buffer.from(part) : Buffer.from(part);
+          n += buf.length;
+          if (n > c.sizeBytes) throw new AssemblyError('chunk_size_mismatch');
+          h.update(buf);
+          if (n === c.sizeBytes && h.copy().digest('hex') !== c.sha256Hex) {
+            // Never send the last bytes of a bad chunk, so the PUT can not complete with it.
+            throw new AssemblyError('chunk_sha256_mismatch');
           }
-        } finally {
-          if (!body.destroyed) body.destroy();
+          total.update(buf);
+          yield buf;
         }
         if (n !== c.sizeBytes) throw new AssemblyError('chunk_size_mismatch');
-        if (h.digest('hex') !== c.sha256Hex) throw new AssemblyError('chunk_sha256_mismatch');
+      } catch (err) {
+        stop(err);
+        return;
+      } finally {
+        if (!body.destroyed) body.destroy();
       }
-      out.sha256Hex = total.digest('hex');
-    } catch (err) {
-      if (err instanceof AssemblyError) out.failure = err;
-      throw err;
     }
+    out.sha256Hex = total.digest('hex');
   }
   const stream = Readable.from(gen(), { objectMode: false });
-  // #303 M-3: the S3 SDK detaches its listeners once the request fails, so the generator's error would otherwise be
-  // re-emitted with no listener and crash the worker. The failure still reaches the caller via `out` / putSource.
-  stream.on('error', noop);
+  stream.on('error', noop); // defense in depth: never an unhandled 'error' event
   return stream;
 }
 
 const noop = () => undefined;
-
-/**
- * #303 M-3: runs `put` with `body`, rejecting as soon as the body stream errors (the SDK may otherwise wait for a
- * body that will never end). The body is destroyed on any failure; the losing promise is always observed.
- */
-export async function putWithBody(
-  body: Readable,
-  put: (b: Readable) => Promise<void>,
-): Promise<void> {
-  body.on('error', noop);
-  let onError: (e: unknown) => void = noop;
-  const failed = new Promise<never>((_, reject) => {
-    onError = reject;
-    body.once('error', onError);
-  });
-  const p = put(body);
-  p.catch(noop);
-  failed.catch(noop);
-  try {
-    await Promise.race([p, failed]);
-  } catch (err) {
-    if (!body.destroyed) body.destroy();
-    throw err;
-  } finally {
-    body.off('error', onError);
-  }
-}
 
 /**
  * Worker handler for `process_recording_session`: assemble the chunks into the recording's source object, verify it,
@@ -353,20 +346,26 @@ export async function processSessionAssembly(
       if (err instanceof AssemblyError) return fail(err.code);
       throw err;
     }
-    const out: { sha256Hex?: string; failure?: AssemblyError } = {};
+    const abort = new AbortController();
+    const out: ConcatOutcome = { onFail: () => abort.abort() };
+    let putError: unknown;
     try {
       await objects.putSource(concatenateChunks(session.chunks, objects.readChunk, out), {
         sizeBytes: total,
         mimeType: session.mimeType,
+        signal: abort.signal,
       });
     } catch (err) {
-      if (out.failure) return fail(out.failure.code);
-      if (err instanceof AssemblyError) return fail(err.code);
-      await objects.deleteSource().catch(() => undefined);
-      if (ctx.isFinalAttempt) return fail('assembly_unavailable');
-      throw err;
+      putError = err;
     }
     if (out.failure) return fail(out.failure.code);
+    const infra = out.error ?? putError;
+    if (infra !== undefined) {
+      if (infra instanceof AssemblyError) return fail(infra.code);
+      await objects.deleteSource().catch(() => undefined);
+      if (ctx.isFinalAttempt) return fail('assembly_unavailable');
+      throw infra instanceof Error ? infra : new Error('assembly failed', { cause: infra });
+    }
     const head = await objects.headSource();
     if (!head || head.sizeBytes !== total || !out.sha256Hex) return fail('total_size_mismatch');
     sizeBytes = total;

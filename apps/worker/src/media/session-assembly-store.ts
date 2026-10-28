@@ -13,7 +13,6 @@ import type {
   SessionAssemblyStore,
   SessionObjects,
 } from './session-assembly.js';
-import { putWithBody } from './session-assembly.js';
 
 /** Prisma-backed SessionAssemblyStore; every statement runs under withOrganizationContext (forced RLS). */
 export function createSessionAssemblyStore(
@@ -200,13 +199,14 @@ export function sessionObjectsFromStorage(
   return {
     readChunk: (c: AssemblyChunk) => chunks.readChunk(s.organizationId, s.id, c.key),
     deleteChunk: (c: AssemblyChunk) => chunks.deleteChunk(s.organizationId, s.id, c.key),
-    putSource: (body: Readable, spec) =>
-      putWithBody(body, async (b) => {
-        await storage.putObject(target(), b, {
-          mimeType: spec.mimeType,
-          sizeBytes: spec.sizeBytes,
-        });
-      }),
+    putSource: async (body: Readable, spec) => {
+      await storage.putObject(
+        target(),
+        body,
+        { mimeType: spec.mimeType, sizeBytes: spec.sizeBytes },
+        spec.signal ? { abortSignal: spec.signal } : {},
+      );
+    },
     headSource: async () => {
       const h = await storage.headObject(target());
       return h ? { sizeBytes: h.sizeBytes } : null;

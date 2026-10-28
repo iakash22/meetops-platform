@@ -307,7 +307,13 @@ export class S3StorageService implements StorageService {
     return { url, method, expiresAt: new Date(Date.now() + ttl * 1000), ...extra };
   }
 
-  async putObject(ref: MeetingObjectRef, body: PutObjectBody, spec: UploadSpec) {
+  /** `opts.abortSignal` aborts the in-flight PUT (e.g. when a streamed body is found invalid mid-way). */
+  async putObject(
+    ref: MeetingObjectRef,
+    body: PutObjectBody,
+    spec: UploadSpec,
+    opts: { abortSignal?: AbortSignal } = {},
+  ) {
     const key = await this.#key(ref);
     validateUploadSpec(spec, this.#cfg.limits);
     if (!(body instanceof Readable)) {
@@ -326,6 +332,7 @@ export class S3StorageService implements StorageService {
           ChecksumSHA256: spec.checksumSha256,
           Metadata: spec.metadata,
         }),
+        opts.abortSignal ? { abortSignal: opts.abortSignal } : {},
       ),
     );
     return res.ETag ? { etag: res.ETag } : {};

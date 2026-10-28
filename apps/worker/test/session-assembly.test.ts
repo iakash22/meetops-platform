@@ -6,8 +6,8 @@ import { StorageNotFoundError } from '@meetops/storage';
 import {
   concatenateChunks,
   processSessionAssembly,
-  putWithBody,
   type AssemblyChunk,
+  type ConcatOutcome,
   type AssemblySession,
   type SessionAssemblyDeps,
   type SessionAssemblyStore,
@@ -359,34 +359,47 @@ describe('processSessionAssembly', () => {
       process.on('uncaughtException', h);
       return { seen, stop: () => process.off('uncaughtException', h) };
     };
-    it('a chunk read error / sha mismatch with an SDK-like consumer that detaches its listener', async () => {
+    it('a sha mismatch / read error ends the body without an error event, withholds the bad bytes, aborts', async () => {
       const u = watchUncaught();
       try {
-        const out: { failure?: unknown } = {};
         const evil = Buffer.from(B);
         evil[0] = evil[0]! ^ 1;
-        const body = concatenateChunks(
+        for (const [name, read] of [
+          ['sha', async (c: { key: string }) => Readable.from([c.key === 'k0' ? A : evil])],
           [
-            { seq: 0, sizeBytes: A.length, sha256Hex: hex(A), key: 'k0' },
-            { seq: 1, sizeBytes: B.length, sha256Hex: hex(B), key: 'k1' },
+            'econnreset',
+            async (c: { key: string }) => {
+              if (c.key === 'k0') return Readable.from([A]);
+              const r = new Readable({ read() {} });
+              setImmediate(() =>
+                r.destroy(Object.assign(new Error('read ECONNRESET'), { code: 'ECONNRESET' })),
+              );
+              return r;
+            },
           ],
-          async (c) => {
-            const r = Readable.from([c.key === 'k0' ? A : evil]);
-            return r;
-          },
-          out,
-        );
-        // Mimic the SDK: consume, but drop its error listener on failure and never resolve on its own.
-        const put = vi.fn(
-          (b: Readable) =>
-            new Promise<void>(() => {
-              b.on('data', () => undefined);
-            }),
-        );
-        await expect(putWithBody(body, put)).rejects.toThrow('chunk_sha256_mismatch');
+        ] as const) {
+          const onFail = vi.fn();
+          const out: ConcatOutcome = { onFail };
+          const body = concatenateChunks(
+            [
+              { seq: 0, sizeBytes: A.length, sha256Hex: hex(A), key: 'k0' },
+              { seq: 1, sizeBytes: B.length, sha256Hex: hex(B), key: 'k1' },
+            ],
+            read,
+            out,
+          );
+          const errors: unknown[] = [];
+          body.on('error', (e) => errors.push(e));
+          const got: Buffer[] = [];
+          for await (const p of body) got.push(Buffer.from(p as Buffer));
+          expect(errors, name).toEqual([]);
+          expect(Buffer.concat(got).length, name).toBeLessThan(A.length + B.length);
+          expect(onFail, name).toHaveBeenCalledOnce();
+          if (name === 'sha') expect(out.failure?.code).toBe('chunk_sha256_mismatch');
+          else expect((out.error as { code?: string }).code).toBe('ECONNRESET');
+        }
         await new Promise((r) => setTimeout(r, 20));
         expect(u.seen).toEqual([]);
-        expect(body.destroyed).toBe(true);
       } finally {
         u.stop();
       }
@@ -406,12 +419,11 @@ describe('processSessionAssembly', () => {
             );
             return r;
           },
-          putSource: (body, spec) =>
-            putWithBody(body, async (b) => {
-              const got: Buffer[] = [];
-              for await (const p of b) got.push(Buffer.from(p as Buffer));
-              if (Buffer.concat(got).length !== spec.sizeBytes) throw new Error('short body');
-            }),
+          putSource: async (body, spec) => {
+            const got: Buffer[] = [];
+            for await (const p of body) got.push(Buffer.from(p as Buffer));
+            if (Buffer.concat(got).length !== spec.sizeBytes) throw new Error('short body');
+          },
         });
         expect(await processSessionAssembly(job, bad.deps)).toEqual({
           status: 'failed',
