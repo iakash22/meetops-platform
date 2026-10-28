@@ -5,7 +5,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createPrismaClient, type DatabaseClient } from '@meetops/database';
 import { storageMediaAdapters, type MediaAdapters } from '../src/modules/index.js';
-import { FakeMediaSigner } from '../src/modules/media/infrastructure/in-memory.js';
+import { FakeMediaSigner, InMemoryMediaJobQueue } from '../src/modules/media/infrastructure/in-memory.js';
 import { consent, mediaWorld, SHA_B64, type MediaWorld } from './media-helpers.js';
 
 const url = process.env.TEST_DATABASE_URL;
@@ -17,7 +17,12 @@ describe.skipIf(!url)('media storage wiring (Prisma, live)', () => {
   const signer = new FakeMediaSigner();
   beforeAll(async () => {
     db = createPrismaClient({ databaseUrl: url! });
-    media = storageMediaAdapters(db, { STORAGE_PROVIDER: 's3', STORAGE_BUCKET: 'live-test' }, undefined, signer);
+    media = storageMediaAdapters(
+      db,
+      { STORAGE_PROVIDER: 's3', STORAGE_BUCKET: 'live-test' },
+      undefined,
+      { signer, jobs: new InMemoryMediaJobQueue() },
+    );
     // mediaWorld returns its own in-memory adapters; the app uses the injected storage-backed ones.
     w = await mediaWorld({ db, media });
   });

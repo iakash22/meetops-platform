@@ -14,11 +14,18 @@ import {
 import {
   PrismaConsentRepository,
   PrismaFileObjectRepository,
+  PrismaRecordingSessionRepository,
 } from '../src/modules/media/infrastructure/prisma.js';
+import {
+  BullMqMediaJobQueue,
+  MEDIA_JOB_OPTIONS,
+  mediaProcessingJobId,
+} from '../src/modules/media/infrastructure/bullmq.js';
 
 // Placeholder values only: nothing here connects (Prisma and S3 are lazy, no query is issued).
 const DB_URL = 'postgresql://unit:unit@127.0.0.1:1/unit';
 const STORAGE_ENV = {
+  REDIS_URL: 'redis://127.0.0.1:1',
   STORAGE_PROVIDER: 'minio',
   STORAGE_ENDPOINT: 'http://127.0.0.1:1',
   STORAGE_BUCKET: 'unit-bucket',
@@ -37,12 +44,20 @@ describe('MEDIA_STORAGE_ENABLED', () => {
     expect(() => mediaStorageEnabled({ MEDIA_STORAGE_ENABLED: 'maybe' })).toThrow();
   });
 
-  it('storageMediaAdapters wires S3 signer + Prisma file/consent repositories', () => {
+  it('storageMediaAdapters wires S3 signer, Prisma repositories and the BullMQ queue', async () => {
     const m = storageMediaAdapters(fakeDb, STORAGE_ENV);
+    expect(m.sessions).toBeInstanceOf(PrismaRecordingSessionRepository);
+    expect(m.jobs).toBeInstanceOf(BullMqMediaJobQueue);
+    await m.close();
     expect(m.files).toBeInstanceOf(PrismaFileObjectRepository);
     expect(m.consents).toBeInstanceOf(PrismaConsentRepository);
     expect(m.signer).toBeInstanceOf(S3UploadSourceSigner);
     expect((m.signer as S3UploadSourceSigner).bucket).toBe('unit-bucket');
+  });
+
+  it('storageMediaAdapters refuses to run without REDIS_URL (no silent in-memory queue)', () => {
+    const { REDIS_URL: _r, ...noRedis } = STORAGE_ENV;
+    expect(() => storageMediaAdapters(fakeDb, noRedis)).toThrow(/REDIS_URL/);
   });
 
   it('storageMediaAdapters refuses an incomplete storage config', () => {
@@ -55,13 +70,16 @@ describe('MEDIA_STORAGE_ENABLED', () => {
     expect(dev.media?.signer).toBeInstanceOf(FakeMediaSigner);
   });
 
-  it('on with a database: uses the storage-backed adapters', () => {
+  it('on with a database: uses the storage-backed adapters', async () => {
     vi.stubEnv('MEDIA_STORAGE_ENABLED', 'true');
     for (const [k, v] of Object.entries(STORAGE_ENV)) vi.stubEnv(k, v);
     const deps = defaultModuleDeps({}, { nodeEnv: 'development', databaseUrl: DB_URL });
     expect(deps.media?.files).toBeInstanceOf(PrismaFileObjectRepository);
     expect(deps.media?.consents).toBeInstanceOf(PrismaConsentRepository);
     expect(deps.media?.signer).toBeInstanceOf(S3UploadSourceSigner);
+    expect(deps.media?.jobs).toBeInstanceOf(BullMqMediaJobQueue);
+    expect(deps.media?.sessions).toBeInstanceOf(PrismaRecordingSessionRepository);
+    await deps.ownedMedia?.close();
   });
 
   it('on without a database: refuses to start', () => {
@@ -73,5 +91,28 @@ describe('MEDIA_STORAGE_ENABLED', () => {
     vi.stubEnv('MEDIA_STORAGE_ENABLED', 'true');
     const media = inMemoryMediaAdapters();
     expect(defaultModuleDeps({ media }, { nodeEnv: 'test' }).media).toBe(media);
+  });
+});
+
+describe('BullMqMediaJobQueue', () => {
+  const ORG = '11111111-1111-4111-8111-111111111111';
+  const SUB = '22222222-2222-4222-8222-222222222222';
+  it('adds the job on MEDIA_QUEUE with the worker job options and a deterministic, colon-free id', async () => {
+    const add = vi.fn(async () => undefined);
+    const q = new BullMqMediaJobQueue({ add });
+    const job = {
+      kind: 'process_upload' as const,
+      organizationId: ORG,
+      subjectType: 'upload' as const,
+      subjectId: SUB,
+      consentAttestationId: SUB,
+    };
+    await q.enqueue(job);
+    expect(add).toHaveBeenCalledWith('process_upload', job, {
+      ...MEDIA_JOB_OPTIONS,
+      jobId: `upload_${ORG}_${SUB}`,
+    });
+    expect(mediaProcessingJobId({ ...job, kind: 'process_recording_session' })).toBe(`session_${ORG}_${SUB}`);
+    expect(mediaProcessingJobId(job)).not.toContain(':');
   });
 });
