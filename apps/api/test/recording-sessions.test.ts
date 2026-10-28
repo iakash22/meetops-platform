@@ -109,15 +109,15 @@ describe('recording sessions', () => {
     expect((await w.chunk(w.member, id, 1, MAX_CHUNK_BYTES + 1)).statusCode).toBe(400);
   });
 
-  it('running total capped at 1.4 GB (409), re-signing a seq replaces its size', async () => {
+  it('running total capped at 1.4 GB (413 PAYLOAD_TOO_LARGE), re-signing a seq replaces its size', async () => {
     const w = await setup();
     const id = await w.start();
     // 20 x 64 MiB = 1_342_177_280 bytes; one more full chunk crosses 1.4e9.
     for (let s = 0; s < 20; s++)
       expect((await w.chunk(w.member, id, s, MAX_CHUNK_BYTES)).statusCode).toBe(200);
     const over = await w.chunk(w.member, id, 20, MAX_CHUNK_BYTES);
-    expect(over.statusCode).toBe(409);
-    expect(errorOf(over).code).toBe('CONFLICT');
+    expect(over.statusCode).toBe(413);
+    expect(errorOf(over).code).toBe('PAYLOAD_TOO_LARGE');
     expect((await w.chunk(w.member, id, 20, 1_400_000_000 - 20 * MAX_CHUNK_BYTES)).statusCode).toBe(
       200,
     );

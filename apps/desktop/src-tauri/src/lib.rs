@@ -2,7 +2,8 @@
 //!
 //! Commands: `app_info`; the ADR-012 auth commands (`auth_sign_in`, `auth_session`, `auth_sign_out`); the scoped
 //! `api_request` (api.rs: configured https API origin, route allowlist, fresh bearer + one 401 retry, kept in Rust) and presigned `upload_put`; and the encrypted offline chunk store (`chunk_put`, `chunk_get`,
-//! `chunk_delete`). No command ever returns a token.
+//! `chunk_delete`, `chunk_exists`, `chunk_list`,
+//! `chunk_tombstone`; namespaced by an HMAC of the Rust-side session owner). No command ever returns a token.
 
 mod api;
 mod auth;
@@ -86,24 +87,67 @@ async fn upload_put(auth: State<'_, AuthState>, request: tauri::ipc::Request<'_>
     upload::upload_put(&auth.http, &storage, upload, body).await
 }
 
+/// The chunk-store account comes from Rust's authenticated session, never from the webview (N-1).
+fn chunk_owner(auth: &AuthState) -> CmdResult<String> {
+    auth.owner().ok_or_else(CmdError::unauthenticated)
+}
+
 #[tauri::command]
 fn chunk_put(
+    auth: State<'_, AuthState>,
     chunks: State<'_, ChunkStore>,
     session_id: String,
     index: u32,
     data: Vec<u8>,
 ) -> CmdResult<()> {
-    chunks.put(&session_id, index, &data)
+    chunks.put(&chunk_owner(&auth)?, &session_id, index, &data)
 }
 
 #[tauri::command]
-fn chunk_get(chunks: State<'_, ChunkStore>, session_id: String, index: u32) -> CmdResult<Vec<u8>> {
-    chunks.get(&session_id, index)
+fn chunk_get(
+    auth: State<'_, AuthState>,
+    chunks: State<'_, ChunkStore>,
+    session_id: String,
+    index: u32,
+) -> CmdResult<Vec<u8>> {
+    chunks.get(&chunk_owner(&auth)?, &session_id, index)
 }
 
 #[tauri::command]
-fn chunk_delete(chunks: State<'_, ChunkStore>, session_id: String) -> CmdResult<()> {
-    chunks.delete_session(&session_id)
+fn chunk_delete(
+    auth: State<'_, AuthState>,
+    chunks: State<'_, ChunkStore>,
+    session_id: String,
+) -> CmdResult<()> {
+    chunks.delete_session(&chunk_owner(&auth)?, &session_id)
+}
+
+#[tauri::command]
+fn chunk_exists(
+    auth: State<'_, AuthState>,
+    chunks: State<'_, ChunkStore>,
+    session_id: String,
+) -> CmdResult<bool> {
+    chunks.exists(&chunk_owner(&auth)?, &session_id)
+}
+
+#[tauri::command]
+fn chunk_list(
+    auth: State<'_, AuthState>,
+    chunks: State<'_, ChunkStore>,
+) -> CmdResult<Vec<chunk_store::StoredSession>> {
+    chunks.list(&chunk_owner(&auth)?)
+}
+
+/// Device-wide discard marker; needs a signed-in session but not the recording's own account.
+#[tauri::command]
+fn chunk_tombstone(
+    auth: State<'_, AuthState>,
+    chunks: State<'_, ChunkStore>,
+    session_id: String,
+) -> CmdResult<()> {
+    chunk_owner(&auth)?;
+    chunks.tombstone(&session_id)
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -136,7 +180,10 @@ pub fn run() {
             upload_put,
             chunk_put,
             chunk_get,
-            chunk_delete
+            chunk_delete,
+            chunk_exists,
+            chunk_list,
+            chunk_tombstone
         ])
         .run(tauri::generate_context!())
         .expect("error while running the MeetOps desktop app");

@@ -36,6 +36,7 @@ function fakeRecorder() {
 function setup(
   api: Partial<RecordingUploadApi> = {},
   mic: 'granted' | 'denied' | 'prompt' = 'granted',
+  failPutFromSeq: number | null = null,
 ) {
   const fullApi: RecordingUploadApi = {
     init: vi.fn(() => Promise.resolve({ sessionId: 's1' })),
@@ -55,7 +56,14 @@ function setup(
     abort: vi.fn(() => Promise.resolve()),
     ...api,
   };
-  const chunks = createMemoryChunkStore();
+  const mem = createMemoryChunkStore();
+  const chunks = {
+    ...mem,
+    put: (id: string, seq: number, b: Uint8Array) =>
+      failPutFromSeq !== null && seq >= failPutFromSeq
+        ? Promise.reject(Object.assign(new Error('FORBIDDEN'), { code: 'FORBIDDEN' }))
+        : mem.put(id, seq, b),
+  };
   const queue = createUploadQueue(fullApi, chunks, {
     isOnline: () => true,
     identity: () => ({
@@ -122,6 +130,22 @@ describe('desktop recording', () => {
     await waitFor(() =>
       expect(screen.getByTestId('queue-summary')).toHaveTextContent('Nothing waiting'),
     );
+  });
+
+  it('L-7: stops with a clear message when chunks can no longer be saved, and uploads what was saved', async () => {
+    const { user, rec, api } = setup({}, 'granted', 1);
+    await toRecord(user);
+    await user.click(screen.getByRole('button', { name: 'Start recording' }));
+    await user.click(screen.getByRole('button', { name: 'Turn on recording' }));
+    await user.click(screen.getByLabelText(/i told everyone/i));
+    await user.click(screen.getByRole('button', { name: 'Start recording' }));
+    expect(await screen.findByTestId('recording-indicator')).toHaveTextContent('Recording');
+    act(() => rec.emit(new Uint8Array([1])));
+    act(() => rec.emit(new Uint8Array([2])));
+    expect(await screen.findByText(/Recording stopped/)).toBeInTheDocument();
+    expect(rec.stopped).toBe(true);
+    await waitFor(() => expect(api.complete).toHaveBeenCalled());
+    expect(vi.mocked(api.complete).mock.calls[0]![1]).toMatchObject({ chunkCount: 1 });
   });
 
   it('shows OS guidance when the microphone is blocked', async () => {

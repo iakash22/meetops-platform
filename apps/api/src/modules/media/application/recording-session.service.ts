@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import {
   CHUNK_UPLOAD_URL_TTL_SECONDS,
   MAX_RECORDING_SESSION_BYTES,
+  PAYLOAD_TOO_LARGE_HTTP_STATUS,
   type AbortReason,
   type ChunkUploadUrlRequest,
   type CompleteRecordingSessionRequest,
@@ -28,13 +29,10 @@ export interface RecordingDeps extends MediaDeps {
   sessions: RecordingSessionRepository;
 }
 
-/**
- * Running-total (1.4 GB) refusal, sent as 409 CONFLICT for now.
- * TODO(#168): 413 PAYLOAD_TOO_LARGE is being proposed in contracts PR #168; switch status/code once it lands.
- */
+/** Running-total (1.4 GB) refusal: 413 PAYLOAD_TOO_LARGE (contracts v0.5.0). */
 export class RecordingLimitError extends DomainError {
   constructor(message: string) {
-    super('CONFLICT', message, 409);
+    super('PAYLOAD_TOO_LARGE', message, PAYLOAD_TOO_LARGE_HTTP_STATUS);
   }
 }
 
