@@ -25,7 +25,10 @@ const redisUrl = process.env.TEST_REDIS_URL;
 interface WorkerMedia {
   dispatchMediaJob(
     job: Pick<Job, 'id' | 'attemptsMade' | 'opts'> & { data: unknown },
-    h: { recording(): Promise<never>; upload(d: unknown, ctx: { isFinalAttempt: boolean }): Promise<unknown> },
+    h: {
+      recording(): Promise<never>;
+      upload(d: unknown, ctx: { isFinalAttempt: boolean }): Promise<unknown>;
+    },
   ): Promise<{ status: string; reason?: string }>;
   processUploadScan(d: unknown, deps: unknown, ctx: { isFinalAttempt: boolean }): Promise<unknown>;
   buildUploadScanDeps(p: Record<string, unknown>): unknown;
@@ -60,7 +63,10 @@ describe.skipIf(!url || !redisUrl)('media pipeline e2e (Prisma + BullMQ + worker
     const wm = (await import(workerPath)) as WorkerMedia;
     const storage = {
       headUploadSource: async () => ({ sizeBytes: DUMMY.length }),
-      getUploadSource: async () => ({ body: Readable.from([DUMMY]), info: { sizeBytes: DUMMY.length } }),
+      getUploadSource: async () => ({
+        body: Readable.from([DUMMY]),
+        info: { sizeBytes: DUMMY.length },
+      }),
     };
     const deps = wm.buildUploadScanDeps({
       storage,
@@ -103,7 +109,11 @@ describe.skipIf(!url || !redisUrl)('media pipeline e2e (Prisma + BullMQ + worker
     expect(done.statusCode).toBe(200);
 
     const job = await queue.getJob(`upload_${w.org}_${id}`);
-    expect(job?.data).toMatchObject({ kind: 'process_upload', organizationId: w.org, subjectId: id });
+    expect(job?.data).toMatchObject({
+      kind: 'process_upload',
+      organizationId: w.org,
+      subjectId: id,
+    });
     const out = (await job!.waitUntilFinished(events, 30_000)) as { status: string };
     expect(out.status).toBe('quarantined');
     expect((await media.files.findById(w.org, id))?.scanStatus).toBe('quarantined');
@@ -129,18 +139,29 @@ describe.skipIf(!url || !redisUrl)('media pipeline e2e (Prisma + BullMQ + worker
     expect(s.statusCode).toBe(201);
     const sid = s.json<{ sessionId: string }>().sessionId;
     const sha = 'a'.repeat(64);
-    const c = await w.member.post(`/recording-sessions/${sid}/chunks`, { seq: 0, sizeBytes: 1000, sha256: sha });
+    const c = await w.member.post(`/recording-sessions/${sid}/chunks`, {
+      seq: 0,
+      sizeBytes: 1000,
+      sha256: sha,
+    });
     expect(c.statusCode).toBe(200);
     const row = await media.sessions.findById(w.org, sid);
     expect(row?.totalBytes).toBe(1000);
     signer.put(row!.chunks.get(0)!.key, 1000);
-    const done = await w.member.post(`/recording-sessions/${sid}/complete`, { chunkCount: 1, durationMs: 1000 });
+    const done = await w.member.post(`/recording-sessions/${sid}/complete`, {
+      chunkCount: 1,
+      durationMs: 1000,
+    });
     expect(done.statusCode).toBe(202);
     expect((await media.sessions.findById(w.org, sid))?.status).toBe('completed');
     expect(await media.sessions.findById(w.otherOrg, sid)).toBeNull();
 
     const job = await queue.getJob(`session_${w.org}_${sid}`);
-    expect(job?.data).toMatchObject({ kind: 'process_recording_session', subjectId: sid, meetingId });
+    expect(job?.data).toMatchObject({
+      kind: 'process_recording_session',
+      subjectId: sid,
+      meetingId,
+    });
     const out = (await job!.waitUntilFinished(events, 30_000)) as { reason: string };
     expect(out.reason).toBe('session_assembly_pending');
   });

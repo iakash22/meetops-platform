@@ -121,7 +121,8 @@ export class InMemoryMediaJobQueue implements MediaJobQueue {
     return `${j.kind}_${j.organizationId}_${j.subjectId}`;
   }
   async enqueue(job: MediaProcessingJob) {
-    if (this.jobs.some((j) => InMemoryMediaJobQueue.id(j) === InMemoryMediaJobQueue.id(job))) return;
+    if (this.jobs.some((j) => InMemoryMediaJobQueue.id(j) === InMemoryMediaJobQueue.id(job)))
+      return;
     this.jobs.push(job);
   }
   async requeue(job: MediaProcessingJob) {
@@ -150,7 +151,8 @@ export class InMemoryRecordingSessionRepository implements RecordingSessionRepos
     maxTotalBytes: number,
   ) {
     const r = this.rows.get(id);
-    if (!r || r.organizationId !== organizationId || r.status !== 'uploading') return 'not_uploading' as const;
+    if (!r || r.organizationId !== organizationId || r.status !== 'uploading')
+      return 'not_uploading' as const;
     const total = r.totalBytes - (r.chunks.get(chunk.seq)?.sizeBytes ?? 0) + chunk.sizeBytes;
     if (total > maxTotalBytes) return 'over_limit' as const;
     r.chunks.set(chunk.seq, { ...chunk });

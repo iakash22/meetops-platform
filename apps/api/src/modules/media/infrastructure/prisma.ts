@@ -11,11 +11,7 @@ import {
   type DatabaseTransaction,
 } from '../../../shared/prisma/context.js';
 import type { ConsentRecord, ConsentRepository } from '../domain/consent.js';
-import type {
-  FileObjectRecord,
-  FileObjectRepository,
-  FileObjectStatus,
-} from '../domain/ports.js';
+import type { FileObjectRecord, FileObjectRepository, FileObjectStatus } from '../domain/ports.js';
 import type {
   RecordingChunkRecord,
   RecordingSessionRecord,
@@ -455,11 +451,18 @@ export class PrismaStaleMediaStore implements StaleMediaStore {
   constructor(private readonly client: DatabaseClient) {}
 
   async organizationIds(): Promise<string[]> {
-    const rows = await this.client.organization.findMany({ select: { id: true }, orderBy: { id: 'asc' } });
+    const rows = await this.client.organization.findMany({
+      select: { id: true },
+      orderBy: { id: 'asc' },
+    });
     return rows.map((r) => r.id);
   }
 
-  async staleUploads(organizationId: string, before: Date, limit: number): Promise<StaleMediaSubject[]> {
+  async staleUploads(
+    organizationId: string,
+    before: Date,
+    limit: number,
+  ): Promise<StaleMediaSubject[]> {
     return withOrganizationContext(
       organizationId,
       (tx) =>
