@@ -8,7 +8,12 @@ import {
 import { AuthService, NONCE_ALARM } from '../src/lib/auth/auth-service.js';
 import { authConfig } from '../src/lib/auth/config.js';
 import { isAuthRequest, type AuthRequest, type AuthResponse } from '../src/lib/auth/messages.js';
-import { uploadValidators, validators } from '../src/lib/auth/validate.js';
+import { meetingValidators, uploadValidators, validators } from '../src/lib/auth/validate.js';
+import {
+  createMeetingResolver,
+  isResolveMeetingMessage,
+  type ResolveMeetingResult,
+} from '../src/lib/meeting.js';
 import { routeAlarm, WATCHDOG_ALARM } from '../src/lib/alarms.js';
 import { ChunkStore } from '../src/lib/chunk-store.js';
 import {
@@ -17,7 +22,7 @@ import {
   type PendingTasksResponse,
 } from '../src/lib/pending-tasks.js';
 import { safeErrorMessage } from '../src/lib/redact.js';
-import { drainQueue } from '../src/lib/drain.js';
+import { drainQueue, listHeldSessions } from '../src/lib/drain.js';
 import {
   isPendingDiscard,
   listFailedDiscards,
@@ -105,6 +110,20 @@ const direct = DIRECT_UPLOAD
       ...directUploadValidators,
     })
   : undefined;
+// Meeting for a new recording. HTTP uploads: find-or-create via the API from the tab URL (origin + path only).
+// Stub uploads: a random UUID, as no meeting row is needed.
+const resolveMeeting = createMeetingResolver({
+  api: (path, init) => auth.apiFetch(path, init),
+  organizationId: pairedOrganizationId(auth),
+  validators: meetingValidators,
+});
+async function handleResolveMeeting(tabId: number): Promise<ResolveMeetingResult> {
+  if (!HTTP_UPLOAD) return { ok: true, meetingId: crypto.randomUUID() };
+  // activeTab: the popup click grants this tab's URL for the gesture; no host permissions needed.
+  const tab = await chrome.tabs.get(tabId);
+  return { ok: true, meetingId: await resolveMeeting(tab.url) };
+}
+
 let storePromise: Promise<ChunkStore> | undefined;
 const store = () => (storePromise ??= ChunkStore.open());
 
@@ -138,6 +157,25 @@ async function retryDiscards(): Promise<void> {
   }
 }
 
+async function heldRecordings(): Promise<number> {
+  return (await listHeldSessions(await store())).length;
+}
+
+/** Popup Retry upload: re-attempt sessions held after a 409/413 (kept locally, never aborted). */
+async function retryHeld(): Promise<void> {
+  await drainQueue(
+    await store(),
+    client,
+    undefined,
+    Date.now,
+    { isMarked: (id) => isPendingDiscard(durableKV, id), gate: withSessionGate },
+    { includeHeld: true },
+  );
+  await chrome.action
+    .setBadgeText({ text: (await heldRecordings()) ? '!' : '' })
+    .catch(() => undefined);
+}
+
 async function drain(): Promise<void> {
   try {
     await retryDiscards().catch((err: unknown) =>
@@ -145,10 +183,11 @@ async function drain(): Promise<void> {
     );
     // Marked sessions are skipped (re-checked before each PUT and before complete, under a
     // per-session gate shared with marking); every other session still drains.
-    await drainQueue(await store(), client, undefined, Date.now, {
+    const r = await drainQueue(await store(), client, undefined, Date.now, {
       isMarked: (id) => isPendingDiscard(durableKV, id),
       gate: withSessionGate,
     });
+    if (r.held) await chrome.action.setBadgeText({ text: '!' }).catch(() => undefined);
     if (direct) {
       const { failed } = await drainDirectUploads(await store(), direct, {
         isMarked: (id) => isPendingDiscard(durableKV, id),
@@ -161,6 +200,8 @@ async function drain(): Promise<void> {
 }
 
 const deps: BackgroundDeps = {
+  heldRecordings,
+  retryHeld,
   kv: sessionKV(),
   now: () => Date.now(),
   hasOffscreen,
@@ -229,6 +270,13 @@ export default defineBackground(() => {
     if (isAuthRequest(msg)) {
       if (!mayUseAuthAndTaskReads(sent)) return false; // popup or side panel
       handleAuth(msg).then(sendResponse, (err: unknown) =>
+        sendResponse({ ok: false, error: safeErrorMessage(err) }),
+      );
+      return true;
+    }
+    if (isResolveMeetingMessage(msg)) {
+      if (!fromPopup) return false; // recording control is popup-only
+      handleResolveMeeting(msg.tabId).then(sendResponse, (err: unknown) =>
         sendResponse({ ok: false, error: safeErrorMessage(err) }),
       );
       return true;

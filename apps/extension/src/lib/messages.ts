@@ -24,13 +24,15 @@ export type PopupToBackground =
       streamId: string;
       /**
        * UUID of the meeting this recording belongs to (InitRecordingSession.meetingId).
-       * Comes from resolveMeetingId() (src/lib/meeting.ts); see its TODO(meeting-api).
+       * Comes from resolveMeetingId() (src/lib/meeting.ts): the API's meetings/resolve when HTTP uploads are on.
        */
       meetingId: string;
     }
   /** Stops an active recording, or dismisses an 'error' state. */
   | { target: 'background'; type: 'STOP_RECORDING' }
-  | { target: 'background'; type: 'DISMISS_WARNING' };
+  | { target: 'background'; type: 'DISMISS_WARNING' }
+  /** Retry recordings held after a server refusal (409/413). */
+  | { target: 'background'; type: 'RETRY_HELD_UPLOADS' };
 
 /** background -> offscreen */
 export type BackgroundToOffscreen =
@@ -77,6 +79,8 @@ export interface StatusPayload {
   storageWarning?: string;
   /** Audio was lost to the storage cap: the recording will be aborted, not submitted. */
   incomplete?: boolean;
+  /** Recordings the server refused (409/413), kept on this device for a user retry. */
+  heldRecordings?: number;
 }
 
 export type BackgroundResponse = ({ ok: true } & StatusPayload) | { ok: false; error: string };
@@ -120,6 +124,7 @@ export function isBackgroundMessage(msg: unknown): msg is BackgroundMessage {
     case 'GET_STATUS':
     case 'STOP_RECORDING':
     case 'DISMISS_WARNING':
+    case 'RETRY_HELD_UPLOADS':
       return true;
     case 'ACK_CONSENT':
       return isNum(m.tabId) && isUuid(m.meetingId) && isConsentMethod(m.method);

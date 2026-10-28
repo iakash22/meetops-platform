@@ -9,7 +9,7 @@ import {
 } from '../src/lib/auth/auth-service.js';
 import { uploadValidators, validators } from '../src/lib/auth/validate.js';
 import { ChunkStore } from '../src/lib/chunk-store.js';
-import { drainQueue } from '../src/lib/drain.js';
+import { drainQueue, listHeldSessions } from '../src/lib/drain.js';
 import { safeErrorMessage } from '../src/lib/redact.js';
 import {
   ChunkChecksumMismatchError,
@@ -533,5 +533,101 @@ describe('ADR-005 auth: bearer through AuthService.apiFetch only', () => {
     for (const l of logs) {
       for (const args of l.mock.calls) expect(JSON.stringify(args)).not.toContain(ACCESS);
     }
+  });
+});
+
+describe('HttpUploadClient + drain: real-API edge cases (dummy media)', () => {
+  async function seededStore(chunks = 2) {
+    const store = await ChunkStore.open({ maxBytes: 10_000, policy: 'refuse' }, new IDBFactory());
+    await store.putSession({ sessionId: SID, meta: { ...initReq }, completed: false });
+    for (let seq = 0; seq < chunks; seq++) {
+      await store.putChunk({
+        sessionId: SID,
+        seq,
+        // Dummy media: a few fixed bytes, never real audio.
+        data: new Uint8Array([0x1a, 0x45, 0xdf, 0xa3, seq]).buffer,
+        mimeType: initReq.mimeType,
+        createdAt: T0 + seq,
+      });
+    }
+    await store.finalizeSession(SID, { chunkCount: chunks, durationMs: 4_000 });
+    return store;
+  }
+
+  it('413 PAYLOAD_TOO_LARGE on a chunk holds the recording locally: no abort, no delete, not auto-retried', async () => {
+    const { fake, client } = setup();
+    const store = await seededStore();
+    fake.reply('chunks', { status: 413, body: errorBody('PAYLOAD_TOO_LARGE') });
+    const r = await drainQueue(store, client);
+    expect(r).toMatchObject({ held: 1, aborted: 0, failed: 0, completed: 0 });
+    expect(fake.of('abort')).toHaveLength(0);
+    expect((await store.getSession(SID))!.held).toMatchObject({ status: 413 });
+    expect(await store.listChunks(SID)).toHaveLength(2);
+    expect(await listHeldSessions(store)).toHaveLength(1);
+    expect(await drainQueue(store, client)).toMatchObject({ held: 1, uploaded: 0 });
+    expect(fake.of('chunks')).toHaveLength(1); // not retried without the user
+  });
+
+  it('409 on the chunk-URL request keeps local chunks and holds the session (L-2)', async () => {
+    const { fake, client } = setup();
+    const store = await seededStore();
+    fake.reply('chunks', { status: 409, body: errorBody('CONFLICT') });
+    const r = await drainQueue(store, client);
+    expect(r).toMatchObject({ held: 1, aborted: 0 });
+    expect(fake.of('abort')).toHaveLength(0);
+    expect(await store.listChunks(SID)).toHaveLength(2);
+    expect((await store.getSession(SID))!).toMatchObject({
+      completed: false,
+      held: { status: 409 },
+    });
+  });
+
+  it('409 on complete (checksum mismatch / missing chunk) holds the session, never aborts it (M-1), and a user retry completes it', async () => {
+    const { fake, client } = setup();
+    const store = await seededStore();
+    fake.reply('complete', { status: 409, body: errorBody('CONFLICT') });
+    const r = await drainQueue(store, client);
+    expect(r).toMatchObject({ uploaded: 2, held: 1, aborted: 0, completed: 0, failed: 0 });
+    expect(fake.of('abort')).toHaveLength(0);
+    const s = (await store.getSession(SID))!;
+    expect(s).toMatchObject({ completed: false, held: { status: 409, op: 'complete' } });
+    expect(s.abortedReason).toBeUndefined();
+    const again = await drainQueue(store, client, undefined, Date.now, undefined, {
+      includeHeld: true,
+    });
+    expect(again).toMatchObject({ completed: 1, held: 0 });
+    expect(fake.of('abort')).toHaveLength(0);
+  });
+
+  it('404 (media routes not enabled) keeps the local recording for a later drain', async () => {
+    const { fake, client } = setup();
+    const store = await seededStore();
+    fake.reply('chunks', { status: 404, body: errorBody('NOT_FOUND') });
+    const r = await drainQueue(store, client);
+    expect(r).toMatchObject({ failed: 1, aborted: 0 });
+    expect(await store.listChunks(SID)).toHaveLength(2);
+    expect(fake.of('abort')).toHaveLength(0);
+  });
+
+  it('a lost complete response is replayed (idempotent server-side) and completes once locally', async () => {
+    const { fake, client } = setup();
+    const store = await seededStore(1);
+    fake.reply('complete', new TypeError('Failed to fetch'));
+    const r = await drainQueue(store, client);
+    expect(r).toMatchObject({ uploaded: 1, completed: 1, failed: 0 });
+    expect(fake.of('complete')).toHaveLength(2);
+    expect(jsonBody(fake.of('complete')[0]!)).toEqual(jsonBody(fake.of('complete')[1]!));
+    expect(await store.getSession(SID)).toBeUndefined();
+  });
+
+  it('a retried chunk URL request re-signs the same seq and the PUT carries the same bytes', async () => {
+    const { fake, client } = setup();
+    const store = await seededStore(1);
+    fake.reply('chunks', { status: 503, body: errorBody('SERVICE_UNAVAILABLE') });
+    await drainQueue(store, client);
+    const reqs = fake.of('chunks').map(jsonBody);
+    expect(reqs.length).toBeGreaterThanOrEqual(2);
+    for (const r of reqs) expect(r).toEqual(reqs[0]);
+    expect(fake.objects.get(0)?.bytes).toBe(5);
   });
 });

@@ -1,4 +1,6 @@
 import type { OrganizationService } from '../../organizations/application/organization.service.js';
+import type { RateLimiter } from '../../auth/domain/ports.js';
+import { RateLimitedError } from '../../auth/domain/errors.js';
 import type { DirectoryAccess, DirectoryCaller } from '../../directory/access.js';
 import {
   deriveExternalMeetingId,
@@ -18,6 +20,12 @@ export interface ResolveMeetingInput {
   externalMeetingUrl?: string | undefined;
 }
 
+/** L-3: per caller and per organization fixed windows on POST /orgs/:org/meetings/resolve. */
+export const RESOLVE_LIMITS = {
+  perUser: { limit: 30, windowMs: 60_000 },
+  perOrg: { limit: 300, windowMs: 60_000 },
+} as const;
+
 export const DEFAULT_MEETING_TITLE = 'Untitled meeting';
 
 /** Meetings use cases. Order on every call: tenant (404) -> CASL (403) -> repository. */
@@ -26,7 +34,14 @@ export class MeetingService {
     private readonly meetings: MeetingRepository,
     private readonly access: DirectoryAccess,
     private readonly orgs: Pick<OrganizationService, 'authorize'>,
+    private readonly rateLimiter?: RateLimiter,
   ) {}
+
+  private async limit(key: string, l: { limit: number; windowMs: number }) {
+    if (!this.rateLimiter) return;
+    const r = await this.rateLimiter.consume(key, l.limit, l.windowMs);
+    if (!r.allowed) throw new RateLimitedError(r.retryAfterMs);
+  }
 
   list(
     c: DirectoryCaller,
@@ -49,6 +64,9 @@ export class MeetingService {
     input: ResolveMeetingInput,
   ): Promise<{ meeting: MeetingRecord; created: boolean }> {
     this.orgs.authorize(c.ctx, 'create', 'Meeting');
+    const org = c.ctx.organizationId;
+    await this.limit(`meetings:resolve:user:${org}:${c.ctx.userId}`, RESOLVE_LIMITS.perUser);
+    await this.limit(`meetings:resolve:org:${org}`, RESOLVE_LIMITS.perOrg);
     const externalMeetingId =
       input.externalMeetingId ?? deriveExternalMeetingId(input.externalMeetingUrl ?? '');
     const out = await this.meetings.resolve(c.ctx.organizationId, {

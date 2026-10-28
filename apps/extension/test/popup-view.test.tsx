@@ -4,8 +4,10 @@ import { describe, expect, it } from 'vitest';
 import { CONSENT_CONFIRMATION, CONSENT_NOTICE, setConfirmed } from '../src/lib/consent.js';
 import { MAX_DURATION_MS } from '../src/lib/contract-limits.js';
 import {
+  MEETING_RESOLVE_MESSAGE,
   OFFLINE_MESSAGE,
   OPEN_FROM_TOOLBAR,
+  UNSUPPORTED_PAGE_MESSAGE,
   RELOADED_MESSAGE,
   POPUP_ONLY_ERROR,
   detectPopupContext,
@@ -214,6 +216,15 @@ describe('popup UI pass: status, re-auth, a11y', () => {
     expect(
       popupErrorMessage('Could not establish connection. Receiving end does not exist.', true),
     ).toBe(RELOADED_MESSAGE);
+  });
+
+  it('maps meeting-resolve failures without showing raw status text', () => {
+    expect(popupErrorMessage('Meeting resolve failed: HTTP 0 UNSUPPORTED_PAGE', true)).toBe(
+      UNSUPPORTED_PAGE_MESSAGE,
+    );
+    expect(popupErrorMessage('Meeting resolve failed: HTTP 403 FORBIDDEN', true)).toBe(
+      MEETING_RESOLVE_MESSAGE,
+    );
   });
 });
 

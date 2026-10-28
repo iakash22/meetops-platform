@@ -19,6 +19,8 @@ import {
   InitRecordingSessionRequest,
   InitRecordingSessionResponse,
   InitUploadResponse,
+  ResolveMeetingRequest,
+  ResolveMeetingResponse,
   registerContractFormats,
 } from '@meetops/contracts';
 import { Type } from '@sinclair/typebox';
@@ -30,6 +32,7 @@ import type {
   ExtensionTokenResponse as TokenT,
 } from '@meetops/contracts/types';
 import type { UploadValidators } from '../upload-http.js';
+import type { MeetingResolverDeps } from '../meeting.js';
 
 // contracts is sideEffects:false, so the format registration must be invoked explicitly.
 registerContractFormats();
@@ -78,6 +81,13 @@ export const uploadValidators: UploadValidators = {
   chunkUrlResponse: (v): v is ChunkUploadUrlResponse => Value.Check(ChunkUploadUrlResponse, v),
   completeResponse: (v): v is CompleteRecordingSessionResponse =>
     Value.Check(CompleteRecordingSessionResponse, v),
+  apiError: (v): v is ApiErrorT => Value.Check(ApiErrorEnvelope, v),
+};
+
+/** Meeting resolve (POST /orgs/:org/meetings/resolve): request, response and API error. */
+export const meetingValidators: MeetingResolverDeps['validators'] = {
+  request: (v): v is ResolveMeetingRequest => Value.Check(ResolveMeetingRequest, v),
+  response: (v): v is ResolveMeetingResponse => Value.Check(ResolveMeetingResponse, v),
   apiError: (v): v is ApiErrorT => Value.Check(ApiErrorEnvelope, v),
 };
 

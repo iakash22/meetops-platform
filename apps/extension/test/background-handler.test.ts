@@ -562,3 +562,26 @@ describe('retryPendingDiscards (worker start)', () => {
     expect(client.sessions.get(sessionId)!.aborted).toBe('consent_revoked');
   });
 });
+
+describe('held recordings (409/413 refusals kept locally, M-1)', () => {
+  it('GET_STATUS reports held recordings and RETRY_HELD_UPLOADS retries them from the popup only', async () => {
+    let held = 1;
+    const { deps } = makeDeps();
+    const retryHeld = vi.fn(async () => {
+      held = 0;
+    });
+    const d = { ...deps, heldRecordings: async () => held, retryHeld };
+    expect(await handleBackgroundMessage(d, bg({ type: 'GET_STATUS' }), popup)).toMatchObject({
+      ok: true,
+      heldRecordings: 1,
+    });
+    expect(
+      (await handleBackgroundMessage(d, bg({ type: 'RETRY_HELD_UPLOADS' }), offscreen)).ok,
+    ).toBe(false);
+    expect(retryHeld).not.toHaveBeenCalled();
+    const r = await handleBackgroundMessage(d, bg({ type: 'RETRY_HELD_UPLOADS' }), popup);
+    expect(retryHeld).toHaveBeenCalledTimes(1);
+    expect(r).toMatchObject({ ok: true });
+    expect(r).not.toHaveProperty('heldRecordings');
+  });
+});
