@@ -112,8 +112,8 @@ export class UploadNotFoundError extends DomainError {
 }
 
 export class UploadStateConflictError extends DomainError {
-  constructor(message: string) {
-    super('CONFLICT', message, 409);
+  constructor(message: string, reason?: 'RECORDING_SESSION_CLOSED') {
+    super('CONFLICT', message, 409, reason);
   }
 }
 

@@ -32,7 +32,9 @@ export type PopupToBackground =
   | { target: 'background'; type: 'STOP_RECORDING' }
   | { target: 'background'; type: 'DISMISS_WARNING' }
   /** Retry recordings held after a server refusal (409/413). */
-  | { target: 'background'; type: 'RETRY_HELD_UPLOADS' };
+  | { target: 'background'; type: 'RETRY_HELD_UPLOADS' }
+  /** Delete held recordings locally. Sent only after the user confirmed in the popup. */
+  | { target: 'background'; type: 'DISCARD_HELD_UPLOADS'; confirmed: true };
 
 /** background -> offscreen */
 export type BackgroundToOffscreen =
@@ -81,6 +83,10 @@ export interface StatusPayload {
   incomplete?: boolean;
   /** Recordings the server refused (409/413), kept on this device for a user retry. */
   heldRecordings?: number;
+  /** Of heldRecordings, closed by the server for good (e.g. consent_revoked): discard only, no retry. */
+  heldClosed?: number;
+  /** Storage cap hit while recordings are held. */
+  heldStorageFull?: boolean;
 }
 
 export type BackgroundResponse = ({ ok: true } & StatusPayload) | { ok: false; error: string };
@@ -126,6 +132,8 @@ export function isBackgroundMessage(msg: unknown): msg is BackgroundMessage {
     case 'DISMISS_WARNING':
     case 'RETRY_HELD_UPLOADS':
       return true;
+    case 'DISCARD_HELD_UPLOADS':
+      return m.confirmed === true;
     case 'ACK_CONSENT':
       return isNum(m.tabId) && isUuid(m.meetingId) && isConsentMethod(m.method);
     case 'START_RECORDING':

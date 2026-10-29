@@ -104,7 +104,9 @@ export const MEETING_HOSTS = {
 } as const;
 
 export function isAllowedMeetingHost(hostname: string): boolean {
-  const h = hostname.toLowerCase().replace(/\.$/, '');
+  const h = hostname.toLowerCase();
+  // No trailing, leading or double dots: `meet.google.com.` and `a..zoom.us` are refused, not normalized.
+  if (!h || h.startsWith('.') || h.endsWith('.') || h.includes('..')) return false;
   return (
     (MEETING_HOSTS.exact as readonly string[]).includes(h) ||
     MEETING_HOSTS.suffix.some((s) => h.endsWith(s) && h.length > s.length)
@@ -156,11 +158,15 @@ export function deriveExternalMeetingId(url: string): string {
   } catch {
     throw new InvalidExternalMeetingError();
   }
-  const host = u.hostname.toLowerCase().replace(/\.$/, '');
-  if (u.protocol !== 'https:' || !isAllowedMeetingHost(host))
+  const host = u.hostname.toLowerCase();
+  if (u.protocol !== 'https:' || u.username || u.password || u.port || !isAllowedMeetingHost(host))
     throw new UnsupportedMeetingHostError();
-  const rawPath = (isTeamsHost(host) && teamsFragmentPath(u.pathname, u.hash)) || u.pathname;
-  const path = decodeSegments(rawPath).replace(/\/+$/, '');
+  // Same as the extension (meetingUrlFromTab): a Teams `#/l/...` fragment path is folded in, then re-parsed as a URL
+  // path exactly as the API sees the extension's `origin + path`, so raw and extension-normalized links agree.
+  const folded = isTeamsHost(host) ? teamsFragmentPath(u.pathname, u.hash) : null;
+  const rawPath = folded ? new URL(folded, `https://${host}`).pathname : u.pathname;
+  // Decode %-escapes, then NFC so composed and decomposed Unicode (raw or %-encoded) give one id and one hash.
+  const path = decodeSegments(rawPath).normalize('NFC').replace(/\/+$/, '');
   const id = `${host}${path}`;
   if (EXTERNAL_ID_RE.test(id)) return id;
   const hashed = `${host}/_h/${sha256Hex(id)}`;

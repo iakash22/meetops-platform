@@ -1,3 +1,4 @@
+import type { HeldSummary } from './drain.js';
 import {
   addPendingDiscard,
   clearPendingDiscard,
@@ -45,9 +46,11 @@ export interface BackgroundDeps {
   /** Fallback after repeated discard failures: delete the session from IndexedDB only. */
   deleteLocal?: (sessionId: string) => Promise<void>;
   /** Number of recordings held after a server refusal (409/413); surfaced in the popup. */
-  heldRecordings?: () => Promise<number>;
+  heldRecordings?: () => Promise<HeldSummary>;
   /** Retry the held recordings (popup Retry upload). */
   retryHeld?: () => Promise<void>;
+  /** Delete the held recordings locally (popup Discard, after confirmation). */
+  discardHeld?: () => Promise<void>;
   /** Override OFFSCREEN_TIMEOUT_MS (tests). */
   offscreenTimeoutMs?: number;
 }
@@ -165,6 +168,32 @@ async function toIdle(deps: BackgroundDeps, prev: RecorderState, lastError?: str
   return next;
 }
 
+/**
+ * Adds the held-recordings summary to a status answer and keeps the toolbar badge in sync: '!' while anything is
+ * held, cleared once nothing is held and nothing else needs attention (idle, no error, no failed discard).
+ */
+async function withHeld(
+  deps: BackgroundDeps,
+  state: RecorderState,
+  r: BackgroundResponse,
+  otherAlert: boolean,
+): Promise<BackgroundResponse> {
+  if (!deps.heldRecordings || !r.ok) return r;
+  const h = await deps.heldRecordings().catch(() => undefined);
+  if (!h) return r;
+  if (state.status === 'idle') {
+    const alert = h.count > 0 || otherAlert || Boolean(state.lastError);
+    await deps.setBadge(alert ? '!' : '').catch(() => undefined);
+  }
+  if (h.count === 0) return r;
+  return {
+    ...r,
+    heldRecordings: h.count,
+    ...(h.closed ? { heldClosed: h.closed } : {}),
+    ...(state.storageWarning ? { heldStorageFull: true } : {}),
+  };
+}
+
 export async function handleBackgroundMessage(
   deps: BackgroundDeps,
   msg: unknown,
@@ -184,26 +213,27 @@ export async function handleBackgroundMessage(
 
   switch (msg.type) {
     case 'GET_STATUS': {
-      const held = (await deps.heldRecordings?.().catch(() => 0)) ?? 0;
-      const withHeld = (r: BackgroundResponse): BackgroundResponse =>
-        r.ok && held > 0 ? { ...r, heldRecordings: held } : r;
       // A discard that could not be completed is surfaced until the user clears extension data.
       const failed = await listFailedDiscards(deps.durableKV).catch(() => [] as string[]);
       if (failed.length && state.status === 'idle') {
         const lastError = state.lastError
           ? `${state.lastError} ${DISCARD_FAILED_MESSAGE}`
           : DISCARD_FAILED_MESSAGE;
-        return withHeld(status({ ...state, lastError }));
+        return withHeld(deps, state, status({ ...state, lastError }), true);
       }
-      return withHeld(status(state));
+      return withHeld(deps, state, status(state), false);
     }
 
     case 'RETRY_HELD_UPLOADS': {
       if (!deps.retryHeld) return fail('Retry is not available');
       await deps.retryHeld().catch(() => undefined);
-      const held = (await deps.heldRecordings?.().catch(() => 0)) ?? 0;
-      const r = status(state);
-      return r.ok && held > 0 ? { ...r, heldRecordings: held } : r;
+      return withHeld(deps, state, status(state), false);
+    }
+
+    case 'DISCARD_HELD_UPLOADS': {
+      if (!deps.discardHeld) return fail('Discard is not available');
+      await deps.discardHeld().catch(() => undefined);
+      return withHeld(deps, state, status(state), false);
     }
 
     case 'DISMISS_WARNING': {

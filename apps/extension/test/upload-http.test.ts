@@ -9,7 +9,12 @@ import {
 } from '../src/lib/auth/auth-service.js';
 import { uploadValidators, validators } from '../src/lib/auth/validate.js';
 import { ChunkStore } from '../src/lib/chunk-store.js';
-import { drainQueue, listHeldSessions } from '../src/lib/drain.js';
+import {
+  discardHeldSessions,
+  drainQueue,
+  listHeldSessions,
+  summarizeHeld,
+} from '../src/lib/drain.js';
 import { safeErrorMessage } from '../src/lib/redact.js';
 import {
   ChunkChecksumMismatchError,
@@ -597,6 +602,41 @@ describe('HttpUploadClient + drain: real-API edge cases (dummy media)', () => {
     });
     expect(again).toMatchObject({ completed: 1, held: 0 });
     expect(fake.of('abort')).toHaveLength(0);
+  });
+
+  it('409 RECORDING_SESSION_CLOSED (server aborted, e.g. consent_revoked) is terminal: held as closed, never retried, discard only', async () => {
+    const { fake, client } = setup();
+    const store = await seededStore();
+    fake.reply('chunks', {
+      status: 409,
+      body: errorBody('CONFLICT', 'Recording session is aborted', 'RECORDING_SESSION_CLOSED'),
+    });
+    expect(await drainQueue(store, client)).toMatchObject({ held: 1, aborted: 0 });
+    expect((await store.getSession(SID))!.held).toMatchObject({ status: 409, closed: true });
+    expect(await summarizeHeld(store)).toEqual({ count: 1, closed: 1 });
+    // A user Retry skips it: no new request is made for a closed session.
+    const before = fake.of('chunks').length;
+    expect(
+      await drainQueue(store, client, undefined, Date.now, undefined, { includeHeld: true }),
+    ).toMatchObject({ held: 1, uploaded: 0 });
+    expect(fake.of('chunks')).toHaveLength(before);
+    // Discard deletes it locally without aborting (the server already closed it).
+    expect(await discardHeldSessions(store, client)).toBe(1);
+    expect(await store.getSession(SID)).toBeUndefined();
+    expect(await store.listChunks(SID)).toHaveLength(0);
+    expect(fake.of('abort')).toHaveLength(0);
+  });
+
+  it('discarding a retryable held recording aborts it best effort (user_stopped) and deletes it locally', async () => {
+    const { fake, client } = setup();
+    const store = await seededStore();
+    fake.reply('complete', { status: 409, body: errorBody('CONFLICT') });
+    await drainQueue(store, client);
+    expect(await summarizeHeld(store)).toEqual({ count: 1, closed: 0 });
+    expect(await discardHeldSessions(store, client)).toBe(1);
+    expect(fake.of('abort')).toHaveLength(1);
+    expect(jsonBody(fake.of('abort')[0]!)).toEqual({ reason: 'user_stopped' });
+    expect(await listHeldSessions(store)).toHaveLength(0);
   });
 
   it('404 (media routes not enabled) keeps the local recording for a later drain', async () => {

@@ -32,7 +32,57 @@ function setup(...replies: (Response | Error)[]) {
   return { resolve, calls, api };
 }
 
+/**
+ * Shared vectors (keep identical in apps/api/test/meetings.test.ts and apps/extension/test/meeting.test.ts):
+ * raw tab URL -> what the extension sends (meetingUrlFromTab). The API must derive the same id from both.
+ */
+const EXT_VECTORS: ReadonlyArray<readonly [string, string]> = [
+  [
+    'https://teams.microsoft.com/_#/l/meetup-join/19%3ameeting_X%40thread.v2/0?ctx=1',
+    'https://teams.microsoft.com/l/meetup-join/19%3ameeting_X%40thread.v2/0',
+  ],
+  [
+    'https://teams.microsoft.com/_#/l/meetup-join/19:meeting_X@thread.v2/0',
+    'https://teams.microsoft.com/l/meetup-join/19:meeting_X@thread.v2/0',
+  ],
+  [
+    'https://teams.microsoft.com/v2/?meetingjoin=true#/l/meetup-join/19%3Ameeting_X%40thread.v2/0/',
+    'https://teams.microsoft.com/l/meetup-join/19%3Ameeting_X%40thread.v2/0/',
+  ],
+  [
+    'https://teams.microsoft.com/_#/l/meetup-join/a/../19%3ameeting_X%40thread.v2/0',
+    'https://teams.microsoft.com/l/meetup-join/19%3ameeting_X%40thread.v2/0',
+  ],
+  [
+    'https://teams.microsoft.com/_#/l\\meetup-join\\19%3ameeting_X%40thread.v2\\0',
+    'https://teams.microsoft.com/l/meetup-join/19%3ameeting_X%40thread.v2/0',
+  ],
+  ['https://zoom.us/j/r\u00e9union', 'https://zoom.us/j/r%C3%A9union'],
+  ['https://zoom.us/j/re\u0301union', 'https://zoom.us/j/re%CC%81union'],
+  ['https://zoom.us/j/r%C3%A9union', 'https://zoom.us/j/r%C3%A9union'],
+  ['https://zoom.us/j/re%CC%81union', 'https://zoom.us/j/re%CC%81union'],
+  [
+    'https://teams.microsoft.com/_#/l/meetup-join/r\u00e9union/0',
+    'https://teams.microsoft.com/l/meetup-join/r%C3%A9union/0',
+  ],
+];
+
 describe('meetingUrlFromTab', () => {
+  it('matches the shared ext->API vectors (raw Unicode, NFC/NFD, Teams fragments, dot segments)', () => {
+    for (const [raw, sent] of EXT_VECTORS) expect(meetingUrlFromTab(raw)).toBe(sent);
+  });
+  it('rejects the hosts and ports the API rejects', () => {
+    for (const bad of [
+      'https://meet.google.com./a',
+      'https://us02web..zoom.us/j/1',
+      'https://.zoom.us/j/1',
+      'https://meet.google.com:8443/a',
+      'https://u:p@meet.google.com/a',
+    ])
+      expect(meetingUrlFromTab(bad)).toBeNull();
+    expect(meetingUrlFromTab('https://meet.google.com:443/a')).toBe('https://meet.google.com/a');
+  });
+
   it('keeps only origin + path (no query, fragment or credentials)', () => {
     expect(meetingUrlFromTab('https://zoom.us/j/123?pwd=secret#x')).toBe('https://zoom.us/j/123');
     expect(meetingUrlFromTab('https://meet.google.com/abc-defg-hij?authuser=1')).toBe(
@@ -61,6 +111,9 @@ describe('meetingUrlFromTab', () => {
       'https://notzoom.us/j/1',
       'https://meet.google.com.evil.example/a',
       'https://meet.google.com:8443/a',
+      'https://meet.google.com./a',
+      'https://us02web..zoom.us/j/1',
+      'https://.zoom.us/j/1',
     ])
       expect(meetingUrlFromTab(u)).toBeNull();
   });

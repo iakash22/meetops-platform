@@ -103,7 +103,11 @@ export class RecordingSessionService {
 
   private static assertUploading(s: RecordingSessionRecord) {
     if (s.status !== 'uploading') {
-      throw new UploadStateConflictError(`Recording session is ${s.status}`);
+      const closed = s.status === 'aborted' || s.status === 'failed';
+      throw new UploadStateConflictError(
+        `Recording session is ${s.status}`,
+        closed ? 'RECORDING_SESSION_CLOSED' : undefined,
+      );
     }
   }
 

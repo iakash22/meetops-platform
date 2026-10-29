@@ -17,6 +17,43 @@ import {
 import { RESOLVE_LIMITS } from '../src/modules/meetings/application/meeting.service.js';
 import { buildApp, signupAndLogin, SID, type App, type Client } from './helpers.js';
 
+/**
+ * Shared vectors (keep identical in apps/api/test/meetings.test.ts and apps/extension/test/meeting.test.ts):
+ * raw tab URL -> what the extension sends (meetingUrlFromTab). The API must derive the same id from both.
+ */
+const EXT_VECTORS: ReadonlyArray<readonly [string, string]> = [
+  [
+    'https://teams.microsoft.com/_#/l/meetup-join/19%3ameeting_X%40thread.v2/0?ctx=1',
+    'https://teams.microsoft.com/l/meetup-join/19%3ameeting_X%40thread.v2/0',
+  ],
+  [
+    'https://teams.microsoft.com/_#/l/meetup-join/19:meeting_X@thread.v2/0',
+    'https://teams.microsoft.com/l/meetup-join/19:meeting_X@thread.v2/0',
+  ],
+  [
+    'https://teams.microsoft.com/v2/?meetingjoin=true#/l/meetup-join/19%3Ameeting_X%40thread.v2/0/',
+    'https://teams.microsoft.com/l/meetup-join/19%3Ameeting_X%40thread.v2/0/',
+  ],
+  [
+    'https://teams.microsoft.com/_#/l/meetup-join/a/../19%3ameeting_X%40thread.v2/0',
+    'https://teams.microsoft.com/l/meetup-join/19%3ameeting_X%40thread.v2/0',
+  ],
+  [
+    'https://teams.microsoft.com/_#/l\\meetup-join\\19%3ameeting_X%40thread.v2\\0',
+    'https://teams.microsoft.com/l/meetup-join/19%3ameeting_X%40thread.v2/0',
+  ],
+  ['https://zoom.us/j/r\u00e9union', 'https://zoom.us/j/r%C3%A9union'],
+  ['https://zoom.us/j/re\u0301union', 'https://zoom.us/j/re%CC%81union'],
+  ['https://zoom.us/j/r%C3%A9union', 'https://zoom.us/j/r%C3%A9union'],
+  ['https://zoom.us/j/re%CC%81union', 'https://zoom.us/j/re%CC%81union'],
+  [
+    'https://teams.microsoft.com/_#/l/meetup-join/r\u00e9union/0',
+    'https://teams.microsoft.com/l/meetup-join/r%C3%A9union/0',
+  ],
+];
+
+const ext = (u: string) => EXT_VECTORS.find(([raw]) => raw === u)![1];
+
 const MISSING = '00000000-0000-4000-8000-0000000000ff';
 type Role = 'admin' | 'member' | 'viewer';
 
@@ -261,6 +298,46 @@ describe('meetings module (list, detail, resolve, meeting access)', () => {
       expect(id).toMatch(/^zoom\.us\/_h\/[0-9a-f]{64}$/);
       expect(deriveExternalMeetingId(long)).toBe(id);
       expect(deriveExternalMeetingId(`${long}b`)).not.toBe(id);
+    });
+
+    it('normalizes Teams fragment paths exactly like the extension (raw link == extension output)', () => {
+      for (const [u, sent] of EXT_VECTORS.slice(0, 5)) {
+        expect(deriveExternalMeetingId(u)).toBe(deriveExternalMeetingId(sent));
+        expect(deriveExternalMeetingId(u)).toBe(
+          'teams.microsoft.com/l/meetup-join/19:meeting_X@thread.v2/0',
+        );
+      }
+    });
+
+    it('NFC-normalizes before hashing: composed, decomposed, raw and %-encoded Unicode give one id', () => {
+      const forms = [
+        'https://zoom.us/j/r\u00e9union', // raw composed
+        'https://zoom.us/j/re\u0301union', // raw decomposed
+        'https://zoom.us/j/r%C3%A9union', // encoded composed
+        'https://zoom.us/j/re%CC%81union', // encoded decomposed
+      ];
+      const ids = forms.map(deriveExternalMeetingId);
+      expect(new Set(ids).size).toBe(1);
+      expect(ids[0]).toMatch(/^zoom\.us\/_h\/[0-9a-f]{64}$/);
+      // Raw Unicode sent to the API matches what the extension sends for the same tab URL.
+      for (const u of forms) expect(deriveExternalMeetingId(ext(u))).toBe(ids[0]);
+      const teams = 'https://teams.microsoft.com/_#/l/meetup-join/r\u00e9union/0';
+      expect(deriveExternalMeetingId(teams)).toBe(deriveExternalMeetingId(ext(teams)));
+    });
+
+    it('rejects trailing, leading or double dots in hosts and explicit ports (like the extension)', () => {
+      for (const bad of [
+        'https://meet.google.com./a',
+        'https://us02web..zoom.us/j/1',
+        'https://.zoom.us/j/1',
+        'https://meet.google.com:8443/a',
+        'https://meet.google.com:443x/a',
+        'https://u:p@meet.google.com/a',
+      ]) {
+        expect(() => deriveExternalMeetingId(bad)).toThrow();
+      }
+      // :443 is the default port: WHATWG drops it, so both sides accept it.
+      expect(deriveExternalMeetingId('https://meet.google.com:443/a')).toBe('meet.google.com/a');
     });
 
     it('allows only meeting hosts (Meet, Zoom, Teams)', () => {
