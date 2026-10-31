@@ -1532,13 +1532,14 @@ describe('integration external-account routing (20261028020000)', () => {
       .map((x) => x.name)
       .sort();
     expect(dirs.at(-1)).toBe(LATEST_MIGRATION);
-    expect(dirs.at(-2)).toBe(MEETING_SEARCH_MIGRATION);
-    expect(dirs.at(-3)).toBe(CALENDAR_CONNECTIONS_MIGRATION);
-    expect(dirs.at(-4)).toBe(RETENTION_OWNER_MIGRATION);
-    expect(dirs.at(-5)).toBe(RELAY_REVOKE_ALL_KINDS_MIGRATION);
-    expect(dirs.at(-6)).toBe(EXTERNAL_ACCOUNT_ROUTING_MIGRATION);
-    expect(dirs.at(-7)).toBe(SESSION_AUDIT_GEOIP_MIGRATION);
-    expect(dirs.at(-8)).toBe(RELAY_BY_TYPE_MIGRATION);
+    expect(dirs.at(-2)).toBe(CALENDAR_EVENTS_MIGRATION);
+    expect(dirs.at(-3)).toBe(MEETING_SEARCH_MIGRATION);
+    expect(dirs.at(-4)).toBe(CALENDAR_CONNECTIONS_MIGRATION);
+    expect(dirs.at(-5)).toBe(RETENTION_OWNER_MIGRATION);
+    expect(dirs.at(-6)).toBe(RELAY_REVOKE_ALL_KINDS_MIGRATION);
+    expect(dirs.at(-7)).toBe(EXTERNAL_ACCOUNT_ROUTING_MIGRATION);
+    expect(dirs.at(-8)).toBe(SESSION_AUDIT_GEOIP_MIGRATION);
+    expect(dirs.at(-9)).toBe(RELAY_BY_TYPE_MIGRATION);
   });
   const sql = readFileSync(
     resolve(migrationsDir, EXTERNAL_ACCOUNT_ROUTING_MIGRATION, 'migration.sql'),
@@ -1643,9 +1644,10 @@ describe('IP retention owner re-assert (20261028040000)', () => {
       .map((x) => x.name)
       .sort();
     expect(dirs.at(-1)).toBe(LATEST_MIGRATION);
-    expect(dirs.at(-2)).toBe(MEETING_SEARCH_MIGRATION);
-    expect(dirs.at(-3)).toBe(CALENDAR_CONNECTIONS_MIGRATION);
-    expect(dirs.at(-4)).toBe(RETENTION_OWNER_MIGRATION);
+    expect(dirs.at(-2)).toBe(CALENDAR_EVENTS_MIGRATION);
+    expect(dirs.at(-3)).toBe(MEETING_SEARCH_MIGRATION);
+    expect(dirs.at(-4)).toBe(CALENDAR_CONNECTIONS_MIGRATION);
+    expect(dirs.at(-5)).toBe(RETENTION_OWNER_MIGRATION);
     expect(dirs.indexOf(RETENTION_OWNER_MIGRATION)).toBeGreaterThan(
       dirs.indexOf(SESSION_AUDIT_GEOIP_MIGRATION),
     );
