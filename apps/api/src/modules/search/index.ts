@@ -14,16 +14,31 @@ import type { OrganizationService } from '../organizations/application/organizat
 import { isRelaxedEnv, MissingProductionDependencyError, type ModuleDeps } from '../index.js';
 import { DirectoryAccess } from '../directory/access.js';
 import { directoryErrors } from '../directory/http/route-kit.js';
+import { ErrorBody } from '../auth/http/schemas.js';
+import { RateLimitedError } from '../auth/domain/errors.js';
 import { InMemorySearch } from './in-memory.repository.js';
 import { PrismaSearch } from './prisma.repository.js';
+import { DomainError } from '../../shared/domain-error.js';
 import type { SearchRepository } from './ports.js';
 
 export { SEARCH_PATHS };
+
+/** Per user per org: 30 searches per minute. */
+export const SEARCH_RATE_LIMIT = { limit: 30, windowMs: 60_000 } as const;
+/** Matches the pattern in SearchQuery; the handler re-checks in case validation is bypassed. */
+// eslint-disable-next-line no-control-regex
+const CONTROL_CHARS = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/;
 
 const OrgParams = Type.Object(
   { organizationId: Type.String({ format: 'uuid' }) },
   { additionalProperties: false },
 );
+
+export class SearchQueryInvalidError extends DomainError {
+  constructor() {
+    super('VALIDATION_FAILED', 'Search query contains invalid characters', 400);
+  }
+}
 
 export type SearchModuleDeps = ModuleDeps & { search?: SearchRepository };
 
@@ -60,7 +75,7 @@ export default async function searchModule(
         summary: 'Full-text search across meetings, transcripts, summaries and tasks',
         params: OrgParams,
         querystring: SearchQuery,
-        response: { 200: SearchResponse, ...directoryErrors },
+        response: { 200: SearchResponse, ...directoryErrors, 429: ErrorBody, 503: ErrorBody },
       },
     },
     async (request, reply) => {
@@ -71,7 +86,14 @@ export default async function searchModule(
       );
       organizations.authorize(c.ctx, 'read', 'Meeting');
       organizations.authorize(c.ctx, 'read', 'Task');
+      const rl = await deps.rateLimiter.consume(
+        `search:${c.ctx.organizationId}:${c.ctx.userId}`,
+        SEARCH_RATE_LIMIT.limit,
+        SEARCH_RATE_LIMIT.windowMs,
+      );
+      if (!rl.allowed) throw new RateLimitedError(rl.retryAfterMs);
       const q = request.query.q.trim();
+      if (CONTROL_CHARS.test(q)) throw new SearchQueryInvalidError();
       const kinds = request.query.kinds
         ? ([...new Set(request.query.kinds.split(','))] as SearchResultKind[])
         : [...SEARCH_RESULT_KINDS];

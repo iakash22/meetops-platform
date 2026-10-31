@@ -1,6 +1,22 @@
 import type { SearchResult, SearchResultKind } from '@meetops/contracts';
 import { withOrganizationContext, type DatabaseClient } from '../../shared/prisma/context.js';
+import { DomainError } from '../../shared/domain-error.js';
 import type { SearchInput, SearchRepository } from './ports.js';
+
+/** Statement timeout for one search, set per transaction (SET LOCAL). */
+export const SEARCH_STATEMENT_TIMEOUT_MS = 2000;
+
+export class SearchTimeoutError extends DomainError {
+  constructor() {
+    super('PROVIDER_UNAVAILABLE', 'Search took too long; refine the query', 503);
+  }
+}
+const isStatementTimeout = (e: unknown): boolean => {
+  const o = (e ?? {}) as { code?: unknown; message?: unknown; meta?: unknown };
+  const parts = [o.code, o.message].map((v) => (typeof v === 'string' ? v : ''));
+  parts.push(JSON.stringify(o.meta ?? ''));
+  return /57014|statement timeout|canceling statement/i.test(parts.join(' '));
+};
 
 type Row = {
   kind: SearchResultKind;
@@ -30,7 +46,11 @@ export class PrismaSearch implements SearchRepository {
     const per = input.limit;
     const rows = await withOrganizationContext(
       organizationId,
-      (tx) => tx.$queryRaw<Row[]>`
+      async (tx) => {
+        await tx.$executeRawUnsafe(
+          `SET LOCAL statement_timeout = '${SEARCH_STATEMENT_TIMEOUT_MS}ms'`,
+        );
+        return tx.$queryRaw<Row[]>`
         WITH q AS (SELECT websearch_to_tsquery('english'::regconfig, ${input.q}) AS query),
         hits AS (
           (SELECT 'meeting'::text AS kind, mt.id, mt.id AS meeting_id, mt.title,
@@ -75,19 +95,24 @@ export class PrismaSearch implements SearchRepository {
             ORDER BY 6 DESC LIMIT ${per})
         )
         SELECT h.kind, h.id, h.meeting_id, h.title, h.rank::float8 AS rank, h.start_ms, h.occurred_at,
-               ts_headline('english'::regconfig, h.body, q.query,
+               ts_headline('english'::regconfig, translate(h.body, chr(2) || chr(3), ''), q.query,
                  'StartSel=' || chr(2) || ', StopSel=' || chr(3) || ', MaxWords=30, MinWords=10, MaxFragments=2, FragmentDelimiter=" … "') AS snippet
           FROM hits h, q
          ORDER BY h.rank DESC, h.occurred_at DESC, h.id
          LIMIT ${per}
-      `,
+      `;
+      },
       { client: this.db },
-    );
+    ).catch((e: unknown) => {
+      if (isStatementTimeout(e)) throw new SearchTimeoutError();
+      throw e;
+    });
     return rows.map((r) => ({
       kind: r.kind,
       id: r.id,
       ...(r.meeting_id ? { meetingId: r.meeting_id } : {}),
-      title: (r.title ?? '').slice(0, 500),
+      // eslint-disable-next-line no-control-regex
+      title: (r.title ?? '').replace(/[\u0002\u0003]/g, '').slice(0, 500),
       snippet: (r.snippet ?? '').slice(0, 2000),
       rank: Number.isFinite(r.rank) && r.rank > 0 ? r.rank : 0,
       ...(r.start_ms !== null && r.start_ms >= 0 ? { startMs: r.start_ms } : {}),

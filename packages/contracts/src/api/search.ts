@@ -17,7 +17,12 @@ export const SEARCH_HIGHLIGHT_STOP = '\u0003';
 export const SearchQuery = Type.Object(
   {
     /** Web-search syntax: words, "quoted phrases", OR, -exclude. */
-    q: Type.String({ minLength: 2, maxLength: 200 }),
+    q: Type.String({
+      minLength: 2,
+      maxLength: 200,
+      // No NUL / C0 control characters (Postgres text cannot hold NUL; markers are reserved for highlights).
+      pattern: '^[^\\u0000-\\u0008\\u000B\\u000C\\u000E-\\u001F\\u007F]*$',
+    }),
     /** Comma-separated subset of SEARCH_RESULT_KINDS; default all. */
     kinds: Type.Optional(
       Type.String({

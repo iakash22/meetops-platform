@@ -32,7 +32,8 @@ export class InMemorySearch implements SearchRepository {
       .map(({ d }) => {
         // eslint-disable-next-line @typescript-eslint/no-unused-vars
         const { organizationId: _o, body, ...rest } = d;
-        let snippet = body.slice(0, 200);
+        // eslint-disable-next-line no-control-regex
+        let snippet = body.replace(/[\u0002\u0003]/g, '').slice(0, 200);
         for (const t of terms) snippet = snippet.replace(new RegExp(`(${t})`, 'ig'), `${S}$1${E}`);
         return { ...rest, snippet, rank: 1 };
       });
