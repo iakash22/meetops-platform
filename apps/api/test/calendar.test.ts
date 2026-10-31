@@ -200,6 +200,25 @@ describe('Phase 7 calendar', () => {
     expect([...repo.rows.values()][0]!.status).toBe('revoked');
   });
 
+  it('an over-scoped grant is a 400 (not 502), stores nothing, and is revoked at Google', async () => {
+    const c = await signupAndLogin(app, 'owner@example.com');
+    const org = await createOrg(c, 'Acme');
+    const state = (await connect(c, org)).searchParams.get('state')!;
+    over['POST https://oauth2.googleapis.com/token'] = () =>
+      json({
+        access_token: 'g-access-x',
+        refresh_token: 'g-refresh-x',
+        expires_in: 3600,
+        token_type: 'Bearer',
+        scope: `${SCOPE} https://www.googleapis.com/auth/calendar`,
+      });
+    const res = await c.get(`/calendar/google/callback?state=${state}&code=abc`);
+    expect(res.statusCode).toBe(400);
+    expect(repo.rows.size).toBe(0);
+    const revoke = calls.find((x) => x.url === 'https://oauth2.googleapis.com/revoke');
+    expect(revoke?.body).toBe('token=g-refresh-x');
+  });
+
   it('L-1: disconnect still wipes locally when the provider revoke fails', async () => {
     const c = await signupAndLogin(app, 'owner@example.com');
     const org = await createOrg(c, 'Acme');

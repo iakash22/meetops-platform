@@ -96,5 +96,59 @@ describe.skipIf(!url || !owner)(
       expect(await repo.readSecrets(orgA, user, row.id)).toBeNull();
       expect((await repo.listForUser(orgA, user))[0]!.status).toBe('revoked');
     });
+
+    it('re-encrypts rows from the old AAD context and treats undecryptable rows as disconnected', async () => {
+      const repo = new PrismaCalendarConnections(db, cipher);
+      const legacy = await repo.upsert(orgB, {
+        userId: user,
+        provider: 'google',
+        displayName: 'Old',
+        externalAccountId: 'old@example.test',
+        accessToken: 'x',
+        refreshToken: 'y',
+        accessTokenExpiresAt: new Date(Date.now() + 3600e3),
+      });
+      const old = { organizationId: orgB, integrationId: legacy.id };
+      const oa = await cipher.encrypt('old-access', old);
+      const or = await cipher.encrypt('old-refresh', old);
+      await withOrganizationContext(
+        orgB,
+        (tx) =>
+          tx.calendarConnection.update({
+            where: { id: legacy.id },
+            data: { accessTokenEnc: oa, refreshTokenEnc: or },
+          }),
+        { client: db },
+      );
+      const s1 = await repo.readSecrets(orgB, user, legacy.id);
+      expect(s1).toMatchObject({ accessToken: 'old-access', refreshToken: 'old-refresh' });
+      const after = await withOrganizationContext(
+        orgB,
+        (tx) => tx.calendarConnection.findUniqueOrThrow({ where: { id: legacy.id } }),
+        { client: db },
+      );
+      await expect(
+        cipher.decrypt(after.accessTokenEnc!, {
+          organizationId: orgB,
+          integrationId: `calendar:${legacy.id}:access`,
+        }),
+      ).resolves.toBe('old-access');
+
+      // A row that no known context can open: no throw (no 500), marked error so the user reconnects.
+      const foreign = await new TokenCipher(
+        new LocalKeyProvider({ k1: randomBytes(32) }, 'k1'),
+      ).encrypt('z', old);
+      await withOrganizationContext(
+        orgB,
+        (tx) =>
+          tx.calendarConnection.update({
+            where: { id: legacy.id },
+            data: { accessTokenEnc: foreign },
+          }),
+        { client: db },
+      );
+      await expect(repo.readSecrets(orgB, user, legacy.id)).resolves.toBeNull();
+      expect((await repo.listForUser(orgB, user))[0]!.status).toBe('error');
+    });
   },
 );

@@ -260,7 +260,9 @@ export function mapCalendarError(err: unknown): unknown {
     return new CallbackRejectedError('Invalid authorization code');
   if (
     err instanceof CalendarProviderError &&
-    (err.code === 'insufficient_scope' || err.code === 'missing_refresh_token')
+    (err.code === 'insufficient_scope' ||
+      err.code === 'excess_scope' ||
+      err.code === 'missing_refresh_token')
   )
     return new CallbackRejectedError('Calendar access was not fully granted');
   if (err instanceof CalendarProviderError) return new ProviderUpstreamError();
