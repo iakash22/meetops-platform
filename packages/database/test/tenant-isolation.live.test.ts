@@ -100,6 +100,17 @@ function override(table: string, column: string, organizationId: string): string
   if (table === 'calendar_events' && column === 'status') return `'confirmed'`;
   if (table === 'calendar_events' && column === 'connection_id')
     return `(SELECT id FROM calendar_connections WHERE org_id = '${organizationId}'::uuid LIMIT 1)`;
+  // meeting_embeddings: a summary row pointing at the same org's meeting and report fixtures; a zero vector.
+  if (table === 'meeting_embeddings' && column === 'source_kind') return `'summary'`;
+  if (table === 'meeting_embeddings' && column === 'segment_id') return 'NULL';
+  if (table === 'meeting_embeddings' && column === 'meeting_id')
+    return `(SELECT meeting_id FROM reports WHERE org_id = '${organizationId}'::uuid LIMIT 1)`;
+  if (table === 'meeting_embeddings' && column === 'report_id')
+    return `(SELECT id FROM reports WHERE org_id = '${organizationId}'::uuid LIMIT 1)`;
+  if (table === 'meeting_embeddings' && column === 'content_sha256')
+    return `encode(sha256(gen_random_uuid()::text::bytea), 'hex')`;
+  if (table === 'meeting_embeddings' && column === 'embedding')
+    return `array_fill(0, ARRAY[1536])::real[]::vector`;
   if (table === 'auth_token_families' && column === 'max_expires_at')
     return `now() + interval '30 days'`;
   if (table === 'auth_refresh_tokens' && column === 'token_hash')

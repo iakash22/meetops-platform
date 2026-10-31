@@ -234,6 +234,7 @@ model Organization {
   transcripts            Transcript[]
   transcriptSegments     TranscriptSegment[]
   reports                Report[]
+  meetingEmbeddings      MeetingEmbedding[]
   extractedTasks         ExtractedTask[]
   taskApprovals          TaskApproval[]
   tasks                  Task[]
@@ -505,6 +506,7 @@ model Meeting {
   participants      MeetingParticipant[]
   transcripts       Transcript[]
   reports           Report[]
+  embeddings        MeetingEmbedding[]
   extractedTasks    ExtractedTask[]
   aiRuns            AiRun[]
   recordings        Recording[]
@@ -707,6 +709,7 @@ model TranscriptSegment {
   organization Organization        @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   transcript   Transcript          @relation(fields: [organizationId, transcriptId], references: [organizationId, id], onDelete: Cascade)
   participant  MeetingParticipant? @relation(fields: [organizationId, participantId], references: [organizationId, id], onDelete: Restrict)
+  embeddings   MeetingEmbedding[]
 
   @@unique([transcriptId, revision, sequence])
   @@unique([organizationId, id])
@@ -737,6 +740,7 @@ model Report {
   transcript     Transcript?     @relation(fields: [organizationId, transcriptId], references: [organizationId, id], onDelete: Restrict)
   aiRun          AiRun?          @relation(fields: [organizationId, aiRunId], references: [organizationId, id], onDelete: Restrict)
   extractedTasks ExtractedTask[]
+  embeddings     MeetingEmbedding[]
 
   @@unique([meetingId, version])
   @@unique([organizationId, id])
@@ -1425,4 +1429,33 @@ model CalendarEvent {
   @@index([organizationId, userId, startsAt])
   @@index([organizationId, connectionId, startsAt])
   @@map("calendar_events")
+}
+
+/// Phase 7 semantic search: one pgvector embedding per transcript segment or summary report and model. The text is
+/// not copied (search joins back to the source). Forced RLS (ADR-010); composite tenant FKs; no ANN index so queries
+/// rank only the caller's organization's rows (migration 20261031050000).
+model MeetingEmbedding {
+  id             String                      @id @default(uuid()) @db.Uuid
+  organizationId String                      @map("org_id") @db.Uuid
+  meetingId      String                      @map("meeting_id") @db.Uuid
+  sourceKind     String                      @map("source_kind")
+  segmentId      String?                     @map("segment_id") @db.Uuid
+  reportId       String?                     @map("report_id") @db.Uuid
+  model          String
+  contentSha256  String                      @map("content_sha256")
+  embedding      Unsupported("vector(1536)")
+  createdAt      DateTime                    @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime                    @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  organization Organization       @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  meeting      Meeting            @relation(fields: [organizationId, meetingId], references: [organizationId, id], onDelete: Cascade)
+  segment      TranscriptSegment? @relation(fields: [organizationId, segmentId], references: [organizationId, id], onDelete: Cascade)
+  report       Report?            @relation(fields: [organizationId, reportId], references: [organizationId, id], onDelete: Cascade)
+
+  @@unique([organizationId, id])
+  @@unique([organizationId, segmentId, model])
+  @@unique([organizationId, reportId, model])
+  @@index([organizationId, model])
+  @@index([organizationId, meetingId])
+  @@map("meeting_embeddings")
 }
