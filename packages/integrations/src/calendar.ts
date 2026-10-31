@@ -438,7 +438,7 @@ export class GoogleCalendarProvider implements CalendarProvider {
       if (!res.ok) {
         const e = (json as { error?: unknown } | undefined)?.error;
         throw new CalendarProviderError(
-          typeof e === 'string' && /^[a-z_]{1,64}$/.test(e) ? e : 'http_error',
+          typeof e === 'string' && /^[a-z_]{1,64}$/.test(e) ? e : googleApiErrorCode(e),
           res.status,
         );
       }
@@ -481,4 +481,23 @@ async function readCapped(
   if (Buffer.byteLength(text, 'utf8') > CALENDAR_MAX_RESPONSE_BYTES)
     throw new CalendarProviderError('response_too_large', res.status);
   return text;
+}
+
+/** Google API quota reasons that arrive as 403 but mean "slow down", not "re-consent". */
+const GOOGLE_RATE_LIMIT_REASONS = new Set(['rateLimitExceeded', 'userRateLimitExceeded']);
+
+/**
+ * Maps a Google API error object (`{ error: { errors: [{ reason }], details: [{ reason }] } }`) to a stable code:
+ * `rate_limited` for quota reasons, otherwise `http_error`. Only the reason is inspected; nothing else is kept.
+ */
+export function googleApiErrorCode(e: unknown): string {
+  if (!e || typeof e !== 'object') return 'http_error';
+  const o = e as { errors?: unknown; details?: unknown };
+  const reasons = [
+    ...(Array.isArray(o.errors) ? o.errors : []),
+    ...(Array.isArray(o.details) ? o.details : []),
+  ].map((x) => (x as { reason?: unknown } | null)?.reason);
+  return reasons.some((r) => typeof r === 'string' && GOOGLE_RATE_LIMIT_REASONS.has(r))
+    ? 'rate_limited'
+    : 'http_error';
 }

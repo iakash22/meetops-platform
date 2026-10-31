@@ -1,11 +1,11 @@
 import type { FastifyInstance } from 'fastify';
 import { Type, type Static } from '@sinclair/typebox';
 import {
-  CursorPage,
-  CursorPageQuery,
   DEFAULT_PAGE_LIMIT,
   GetMeetingParams,
   Id,
+  ListMeetingsQuery as ContractListMeetingsQuery,
+  ListMeetingsResponse,
   Meeting,
   ResolveMeetingRequest,
   ResolveMeetingResponse,
@@ -23,9 +23,18 @@ export const MEETING_PATHS = {
 
 export const MeetingsParams = Type.Object({ organizationId: Id }, { additionalProperties: false });
 export type MeetingsParams = Static<typeof MeetingsParams>;
-export const ListMeetingsQuery = CursorPageQuery;
+/**
+ * The contracts `ListMeetingsQuery` filters this route implements: `cursor`, `limit` and `source`. Other contract
+ * filters (status, projectId, dates, q) are rejected with 400 rather than silently ignored.
+ */
+export const ListMeetingsQuery = Type.Pick(
+  ContractListMeetingsQuery,
+  ['cursor', 'limit', 'source'],
+  {
+    additionalProperties: false,
+  },
+);
 export type ListMeetingsQuery = Static<typeof ListMeetingsQuery>;
-export const ListMeetingsResponse = CursorPage(Meeting);
 
 export const toMeetingDto = (m: MeetingRecord): Meeting => ({
   id: m.id,
@@ -61,7 +70,8 @@ export async function meetingRoutes(
       schema: {
         tags,
         summary: 'List meetings',
-        description: 'Newest first (createdAt, id desc). Keyset cursor; limit 1..100, default 25.',
+        description:
+          'Newest first (createdAt, id desc). Keyset cursor; limit 1..100, default 25. Optional `source` filter; the cursor is only valid for the same filter.',
         params: MeetingsParams,
         querystring: ListMeetingsQuery,
         response: { 200: ListMeetingsResponse, ...directoryErrors },
@@ -69,8 +79,9 @@ export async function meetingRoutes(
     },
     async (request) => {
       const c = await caller(request, request.params.organizationId);
-      const { cursor, limit } = request.query;
-      const page = await meetings.list(c, { cursor, limit: limit ?? DEFAULT_PAGE_LIMIT });
+      const { cursor, limit, source } = request.query;
+      // Always scoped to the caller's organization (service + repository); `source` only narrows within it.
+      const page = await meetings.list(c, { cursor, limit: limit ?? DEFAULT_PAGE_LIMIT, source });
       return { items: page.items.map(toMeetingDto), nextCursor: page.nextCursor };
     },
   );

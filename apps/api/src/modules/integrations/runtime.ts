@@ -3,6 +3,7 @@ import {
   InMemoryDeliveryStore,
   InMemoryOAuthStateStore,
   LocalKeyProvider,
+  parseSharedKek,
   TokenCipher,
   constantTimeEqual,
   type DeliveryStore,
@@ -109,6 +110,10 @@ export function integrationsRuntimeFromEnv(
   const over: Partial<IntegrationsRuntime> = {};
   if (env.INTEGRATIONS_API_ORIGIN) over.apiOrigin = env.INTEGRATIONS_API_ORIGIN;
   if (env.INTEGRATIONS_WEB_ORIGIN) over.webOrigin = env.INTEGRATIONS_WEB_ORIGIN;
+  // Shared dev KEK so apps/worker (token refresh) can decrypt what the API sealed. Same key id as the worker.
+  // Unset keeps the random per-process key. Set but invalid, or set with NODE_ENV=production, throws at startup.
+  const kek = parseSharedKek(env);
+  if (kek) over.cipher = new TokenCipher(new LocalKeyProvider({ shared: kek }, 'shared'));
   const g = {
     appId: env.GITHUB_APP_ID,
     appSlug: env.GITHUB_APP_SLUG,
