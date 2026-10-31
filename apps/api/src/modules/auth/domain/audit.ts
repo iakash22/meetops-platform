@@ -53,6 +53,7 @@ export type AuditAction =
   | 'integration.disconnect'
   | 'integration.connect'
   | 'integration.issue_push'
+  | 'integration.task_sync_requested'
   // Phase 7 calendar (self-service, per user)
   | 'calendar.connect'
   | 'calendar.disconnect';
