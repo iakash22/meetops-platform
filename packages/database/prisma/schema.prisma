@@ -1425,7 +1425,8 @@ model CalendarConnection {
   events       CalendarEvent[]
 
   @@unique([organizationId, id])
-  @@unique([organizationId, userId, provider, externalAccountId])
+  // Postgres truncates the 68-char default name to 63; map the name the migration actually created.
+  @@unique([organizationId, userId, provider, externalAccountId], map: "calendar_connections_org_id_user_id_provider_external_account_i")
   @@index([organizationId, userId])
   @@index([tokenKeyId])
   @@index([status, nextSyncAt])

@@ -60,13 +60,17 @@ export class PrismaMeetingRepository implements MeetingRepository {
     return withOrganizationContext(organizationId, fn, { client: this.client });
   }
 
-  async list(organizationId: string, q: { cursor?: string | undefined; limit: number }) {
+  async list(
+    organizationId: string,
+    q: { cursor?: string | undefined; limit: number; source?: MeetingSource | undefined },
+  ) {
     const after = q.cursor === undefined ? null : decodeMeetingCursor(q.cursor);
     const rows = await this.ctx(organizationId, (tx) =>
       tx.meeting.findMany({
         where: {
           organizationId,
           deletedAt: null,
+          ...(q.source ? { source: q.source } : {}),
           ...(after
             ? {
                 OR: [

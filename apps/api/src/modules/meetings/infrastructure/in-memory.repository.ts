@@ -4,6 +4,7 @@ import type {
   MeetingPage,
   MeetingRecord,
   MeetingRepository,
+  MeetingSource,
 } from '../domain/meeting.js';
 import { compareDesc, decodeMeetingCursor, encodeMeetingCursor } from './cursor.js';
 
@@ -44,11 +45,13 @@ export class InMemoryMeetingRepository implements MeetingRepository {
 
   list(
     organizationId: string,
-    q: { cursor?: string | undefined; limit: number },
+    q: { cursor?: string | undefined; limit: number; source?: MeetingSource | undefined },
   ): Promise<MeetingPage> {
     try {
       const after = q.cursor === undefined ? null : decodeMeetingCursor(q.cursor);
-      const sorted = this.live(organizationId).sort(compareDesc);
+      const sorted = this.live(organizationId)
+        .filter((r) => q.source === undefined || r.source === q.source)
+        .sort(compareDesc);
       const rest = after ? sorted.filter((r) => compareDesc(r, after) > 0) : sorted;
       const items = rest.slice(0, q.limit).map(strip);
       const last = items[items.length - 1];

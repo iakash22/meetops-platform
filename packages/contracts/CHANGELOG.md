@@ -12,6 +12,8 @@ While the version is `0.x`, a minor bump may contain breaking changes (ADR-003).
   `RevokeMeetingConsentRequest`, `MeetingConsentEvent`, `MeetingConsentStatus`, `MEETING_CONSENT_EVENT_TYPES`,
   `MEETING_CONSENT_STATES`. Append-only: a revocation is a new event. Additive; no existing schema changes.
 
+- `ListMeetingsResponse` (`CursorPage<Meeting>`) for `GET /orgs/:organizationId/meetings`. The API now validates the
+  query against `ListMeetingsQuery` (`cursor`, `limit`, `source`) and honours `source`. Additive.
 - `CONFLICT_REASONS` / `ConflictReason`: `RECORDING_SESSION_CLOSED`. Sent with a recording-session 409 when the
   session is aborted (e.g. `consent_revoked`) or failed on the server, so clients can treat it as terminal instead of
   retrying. Additive: other 409s keep their reason (generic `CONFLICT`).

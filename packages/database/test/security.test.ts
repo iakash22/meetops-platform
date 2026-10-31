@@ -1682,7 +1682,14 @@ describe('Phase 7 calendar_connections (static)', () => {
     }
     expect(statements).toMatch(/"calendar_connections_revoked_wipe_check" CHECK \(/);
     expect(model).not.toMatch(/^\s+(accessToken|refreshToken)\s/m);
-    expect(model).toContain('@@unique([organizationId, userId, provider, externalAccountId])');
+    expect(model).toContain(
+      '@@unique([organizationId, userId, provider, externalAccountId], map: "calendar_connections_org_id_user_id_provider_external_account_i")',
+    );
+    // The default name is 68 chars; Postgres truncates it to 63, which is what the migration created.
+    expect(sql).toContain(
+      'CREATE UNIQUE INDEX "calendar_connections_org_id_user_id_provider_external_account_id_key"',
+    );
+    expect('calendar_connections_org_id_user_id_provider_external_account_i').toHaveLength(63);
   });
 });
 

@@ -36,6 +36,7 @@ import {
 import { withBackupExclusion } from './record/backupExclusion';
 import { createFileChunkStore } from './record/fileChunkStore';
 import { createNativeCapture } from './record/nativeCapture';
+import { createIosLiveActivity } from './record/liveActivity';
 import { createSimulatedCapture } from './record/simulatedRecorder';
 import { createHttpRecordingUploadApi } from './upload/httpRecordingUploadApi';
 import { createMemoryQueueStore, createSimulatedUploadApi } from './upload/simulatedUploadApi';
@@ -106,6 +107,7 @@ const chunkFiles = fileSystem && chunkCipher ? createFileChunkStore(fileSystem, 
 const nativeCapture = chunkFiles
   ? createNativeCapture(createExpoAudioDriver(), chunkFiles, createAndroidForegroundIndicator(), {
       recorderFiles: recorderFileGuard(),
+      liveActivity: createIosLiveActivity(),
     })
   : null;
 const capture: RecordingCapture = nativeCapture ?? createSimulatedCapture();

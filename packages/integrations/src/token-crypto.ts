@@ -38,7 +38,9 @@ function gcmEncrypt(key: Uint8Array, plaintext: Uint8Array, aad: Uint8Array): Bu
 function gcmDecrypt(key: Uint8Array, blob: Uint8Array, aad: Uint8Array): Buffer {
   if (blob.length < IV_BYTES + TAG_BYTES) throw new TokenDecryptionError();
   const b = Buffer.from(blob);
-  const d = createDecipheriv('aes-256-gcm', key, b.subarray(0, IV_BYTES), { authTagLength: TAG_BYTES });
+  const d = createDecipheriv('aes-256-gcm', key, b.subarray(0, IV_BYTES), {
+    authTagLength: TAG_BYTES,
+  });
   d.setAAD(aad);
   d.setAuthTag(b.subarray(b.length - TAG_BYTES));
   try {
@@ -53,7 +55,7 @@ export class LocalKeyProvider implements KeyEncryptionProvider {
   private readonly keys: Map<string, Buffer>;
   constructor(
     keys: Record<string, Uint8Array>,
-    private readonly current: string
+    private readonly current: string,
   ) {
     this.keys = new Map();
     for (const [id, k] of Object.entries(keys)) {
@@ -81,8 +83,12 @@ export class LocalKeyProvider implements KeyEncryptionProvider {
 
 /** AAD binds ciphertext to its tenant row: a blob copied to another org/integration fails to decrypt. */
 export function tokenAad(ctx: TokenEncryptionContext): Buffer {
-  if (!ctx.organizationId || !ctx.integrationId) throw new Error('organizationId and integrationId are required');
-  return Buffer.from(JSON.stringify(['meetops.token.v1', ctx.organizationId, ctx.integrationId]), 'utf8');
+  if (!ctx.organizationId || !ctx.integrationId)
+    throw new Error('organizationId and integrationId are required');
+  return Buffer.from(
+    JSON.stringify(['meetops.token.v1', ctx.organizationId, ctx.integrationId]),
+    'utf8',
+  );
 }
 
 const b64u = (b: Uint8Array) => Buffer.from(b).toString('base64url');
@@ -116,7 +122,8 @@ export class TokenCipher {
   async decrypt(envelope: string, ctx: TokenEncryptionContext): Promise<string> {
     const aad = tokenAad(ctx);
     const parts = envelope.split('.');
-    if (parts.length !== 4 || parts[0] !== 'v1' || !KEY_ID_RE.test(parts[1] ?? '')) throw new TokenDecryptionError('Malformed token envelope');
+    if (parts.length !== 4 || parts[0] !== 'v1' || !KEY_ID_RE.test(parts[1] ?? ''))
+      throw new TokenDecryptionError('Malformed token envelope');
     const [, keyId, wrapped, body] = parts as [string, string, string, string];
     const dek = await this.kek.unwrap(keyId, unb64u(wrapped), aad);
     try {
@@ -141,4 +148,28 @@ export class TokenCipher {
   async rotate(envelope: string, ctx: TokenEncryptionContext): Promise<string> {
     return this.encrypt(await this.decrypt(envelope, ctx), ctx);
   }
+}
+
+export class SharedKekError extends Error {}
+
+/**
+ * Dev-only shared KEK (INTEGRATIONS_TOKEN_KEK) used by apps/api and apps/worker so both can open the same token
+ * envelopes. Unset/blank → undefined. Set but not canonical base64 of exactly 32 bytes → throws. Set while
+ * NODE_ENV=production → throws (production must use the ADR-008 secret manager). Errors name the variable only.
+ */
+export function parseSharedKek(env: NodeJS.ProcessEnv): Buffer | undefined {
+  const raw = env.INTEGRATIONS_TOKEN_KEK;
+  if (raw === undefined || raw.trim() === '') return undefined;
+  if (env.NODE_ENV === 'production')
+    throw new SharedKekError(
+      'INTEGRATIONS_TOKEN_KEK is dev-only and is refused when NODE_ENV=production',
+    );
+  const v = raw.trim();
+  // 32 bytes = 43 base64 chars + one '=' pad; round-trip rejects non-canonical trailing bits.
+  if (!/^[A-Za-z0-9+/]{43}=$/.test(v))
+    throw new SharedKekError('INTEGRATIONS_TOKEN_KEK must be canonical base64 of 32 bytes');
+  const buf = Buffer.from(v, 'base64');
+  if (buf.length !== 32 || buf.toString('base64') !== v)
+    throw new SharedKekError('INTEGRATIONS_TOKEN_KEK must be canonical base64 of 32 bytes');
+  return buf;
 }
