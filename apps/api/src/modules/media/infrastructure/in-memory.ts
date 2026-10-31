@@ -7,6 +7,11 @@ import type {
 } from '../domain/recording-session.js';
 import type { ConsentRecord, ConsentRepository } from '../domain/consent.js';
 import type {
+  MeetingConsentEventRecord,
+  MeetingConsentRepository,
+  NewMeetingConsentEvent,
+} from '../domain/meeting-consent.js';
+import type {
   FileObjectRecord,
   FileObjectRepository,
   FileObjectStatus,
@@ -172,5 +177,21 @@ export class InMemoryRecordingSessionRepository implements RecordingSessionRepos
     if (!r || r.organizationId !== organizationId || r.status !== 'uploading') return false;
     Object.assign(r, next, next.status === 'completed' ? { sourcePending: true } : {});
     return true;
+  }
+}
+
+export class InMemoryMeetingConsentRepository implements MeetingConsentRepository {
+  readonly rows: MeetingConsentEventRecord[] = [];
+  async append(e: NewMeetingConsentEvent): Promise<MeetingConsentEventRecord> {
+    const row = { ...e, id: randomUUID() };
+    this.rows.push(row);
+    return { ...row };
+  }
+  async list(organizationId: string, meetingId: string, limit: number) {
+    return this.rows
+      .filter((r) => r.organizationId === organizationId && r.meetingId === meetingId)
+      .reverse()
+      .slice(0, limit)
+      .map((r) => ({ ...r }));
   }
 }

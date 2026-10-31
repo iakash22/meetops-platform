@@ -215,6 +215,12 @@ enum ConsentMethod {
   all_parties_consented
 }
 
+/// Consent API: kind of a meeting consent event (contracts MEETING_CONSENT_EVENT_TYPES).
+enum MeetingConsentEventType {
+  granted
+  revoked
+}
+
 model Organization {
   id          String    @id @default(uuid()) @db.Uuid
   name        String
@@ -224,43 +230,44 @@ model Organization {
   updatedAt   DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
   deletedAt   DateTime? @map("deleted_at") @db.Timestamptz(3)
 
-  memberships            Membership[]
-  invitations            Invitation[]
-  employees              Employee[]
-  projects               Project[]
-  meetings               Meeting[]
-  meetingParticipants    MeetingParticipant[]
-  fileObjects            FileObject[]
-  transcripts            Transcript[]
-  transcriptSegments     TranscriptSegment[]
-  reports                Report[]
-  extractedTasks         ExtractedTask[]
-  taskApprovals          TaskApproval[]
-  tasks                  Task[]
-  integrationIssues      IntegrationIssue[]
-  aiRuns                 AiRun[]
-  outboxEvents           OutboxEvent[]
-  auditEvents            AuditEvent[]
-  recordings             Recording[]
-  recordingSessions      RecordingSession[]
-  recordingSessionChunks RecordingSessionChunk[]
-  activeSessions         Session[]
-  aiUsageCounters        AiUsageCounter[]
-  aiConfig               AiOrganizationConfig?
-  aiIdempotencyKeys      AiIdempotency[]
-  transcriptChunks       TranscriptChunk[]
-  teams                  Team[]
-  teamMembers            TeamMember[]
-  consentAttestations    ConsentAttestation[]
-  integrationConnections IntegrationConnection[]
-  calendarConnections    CalendarConnection[]
-  authDevices            AuthDevice[]
-  authTokenFamilies      AuthTokenFamily[]
-  authRefreshTokens      AuthRefreshToken[]
-  notifications          Notification[]
+  memberships                  Membership[]
+  invitations                  Invitation[]
+  employees                    Employee[]
+  projects                     Project[]
+  meetings                     Meeting[]
+  meetingParticipants          MeetingParticipant[]
+  fileObjects                  FileObject[]
+  transcripts                  Transcript[]
+  transcriptSegments           TranscriptSegment[]
+  reports                      Report[]
+  extractedTasks               ExtractedTask[]
+  taskApprovals                TaskApproval[]
+  tasks                        Task[]
+  integrationIssues            IntegrationIssue[]
+  aiRuns                       AiRun[]
+  outboxEvents                 OutboxEvent[]
+  auditEvents                  AuditEvent[]
+  recordings                   Recording[]
+  recordingSessions            RecordingSession[]
+  recordingSessionChunks       RecordingSessionChunk[]
+  activeSessions               Session[]
+  aiUsageCounters              AiUsageCounter[]
+  aiConfig                     AiOrganizationConfig?
+  aiIdempotencyKeys            AiIdempotency[]
+  transcriptChunks             TranscriptChunk[]
+  teams                        Team[]
+  teamMembers                  TeamMember[]
+  consentAttestations          ConsentAttestation[]
+  meetingConsentEvents         MeetingConsentEvent[]
+  integrationConnections       IntegrationConnection[]
+  calendarConnections          CalendarConnection[]
+  authDevices                  AuthDevice[]
+  authTokenFamilies            AuthTokenFamily[]
+  authRefreshTokens            AuthRefreshToken[]
+  notifications                Notification[]
   notificationDeliveryAttempts NotificationDeliveryAttempt[]
-  notificationPreferences NotificationPreference[]
-  pushDeviceTokens       PushDeviceToken[]
+  notificationPreferences      NotificationPreference[]
+  pushDeviceTokens             PushDeviceToken[]
 
   createdBy User? @relation("OrgCreator", fields: [createdById], references: [id], onDelete: SetNull)
 
@@ -288,19 +295,20 @@ model User {
   meetingParticipations MeetingParticipant[] @relation("ParticipantUser")
   auditEvents           AuditEvent[]
 
-  organizationsCreated Organization[]         @relation("OrgCreator")
-  invitationsAccepted  Invitation[]           @relation("InvitationAcceptor")
-  emailVerifications   EmailVerification[]
-  passwordResets       PasswordReset[]
-  recordingSessions    RecordingSession[]     @relation("RecordingSessionCreator")
-  aiConfigsUpdated     AiOrganizationConfig[] @relation("AiOrganizationConfigUpdater")
-  consentAttestations  ConsentAttestation[]   @relation("ConsentAttester")
-  authDevices          AuthDevice[]           @relation("AuthDeviceOwner")
-  authTokenFamilies    AuthTokenFamily[]      @relation("AuthTokenFamilyOwner")
-  notifications        Notification[]         @relation("NotificationRecipient")
+  organizationsCreated    Organization[]           @relation("OrgCreator")
+  invitationsAccepted     Invitation[]             @relation("InvitationAcceptor")
+  emailVerifications      EmailVerification[]
+  passwordResets          PasswordReset[]
+  recordingSessions       RecordingSession[]       @relation("RecordingSessionCreator")
+  aiConfigsUpdated        AiOrganizationConfig[]   @relation("AiOrganizationConfigUpdater")
+  consentAttestations     ConsentAttestation[]     @relation("ConsentAttester")
+  meetingConsentEvents    MeetingConsentEvent[]    @relation("MeetingConsentActor")
+  authDevices             AuthDevice[]             @relation("AuthDeviceOwner")
+  authTokenFamilies       AuthTokenFamily[]        @relation("AuthTokenFamilyOwner")
+  notifications           Notification[]           @relation("NotificationRecipient")
   notificationPreferences NotificationPreference[] @relation("NotificationPreferenceOwner")
-  pushDeviceTokens     PushDeviceToken[]      @relation("PushDeviceTokenOwner")
-  calendarConnections  CalendarConnection[]   @relation("CalendarConnectionOwner")
+  pushDeviceTokens        PushDeviceToken[]        @relation("PushDeviceTokenOwner")
+  calendarConnections     CalendarConnection[]     @relation("CalendarConnectionOwner")
 
   @@map("users")
 }
@@ -497,9 +505,9 @@ model Meeting {
   updatedAt         DateTime      @updatedAt @map("updated_at") @db.Timestamptz(3)
   deletedAt         DateTime?     @map("deleted_at") @db.Timestamptz(3)
 
-  organization      Organization         @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  project           Project?             @relation(fields: [organizationId, projectId], references: [organizationId, id], onDelete: Restrict)
-  createdBy         User?                @relation("MeetingCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  organization      Organization          @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  project           Project?              @relation(fields: [organizationId, projectId], references: [organizationId, id], onDelete: Restrict)
+  createdBy         User?                 @relation("MeetingCreator", fields: [createdById], references: [id], onDelete: SetNull)
   participants      MeetingParticipant[]
   transcripts       Transcript[]
   reports           Report[]
@@ -507,6 +515,7 @@ model Meeting {
   aiRuns            AiRun[]
   recordings        Recording[]
   recordingSessions RecordingSession[]
+  consentEvents     MeetingConsentEvent[]
   fileObjects       FileObject[]
   tasks             Task[]
 
@@ -623,6 +632,34 @@ model ConsentAttestation {
   @@map("consent_attestations")
 }
 
+/// Consent API: meeting-level recording consent ledger. Append-only (UPDATE/DELETE/TRUNCATE raise; the app has
+/// SELECT, INSERT only) under forced RLS. A revocation is a new `revoked` event, never a delete. organizationId and
+/// actorUserId come from the authenticated session. The meeting FK is RESTRICT (meetings are soft-deleted).
+model MeetingConsentEvent {
+  id             String                  @id @default(uuid()) @db.Uuid
+  organizationId String                  @map("org_id") @db.Uuid
+  meetingId      String                  @map("meeting_id") @db.Uuid
+  eventType      MeetingConsentEventType @map("event_type")
+  /// Set on `granted` only (CHECK); contracts CONSENT_VERSION_PATTERN.
+  consentVersion String?                 @map("consent_version")
+  /// Set on `granted` only (CHECK).
+  method         ConsentMethod?
+  /// Optional revocation reason (`revoked` only, <= 500 chars).
+  reason         String?
+  actorUserId    String                  @map("actor_user_id") @db.Uuid
+  /// Client attestation time for a grant (<= recordedAt + 300 s), server time for a revocation.
+  occurredAt     DateTime                @map("occurred_at") @db.Timestamptz(3)
+  recordedAt     DateTime                @default(now()) @map("recorded_at") @db.Timestamptz(3)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  meeting      Meeting      @relation(fields: [organizationId, meetingId], references: [organizationId, id], onDelete: Restrict)
+  actor        User         @relation("MeetingConsentActor", fields: [actorUserId], references: [id], onDelete: Restrict)
+
+  @@unique([organizationId, id])
+  @@index([organizationId, meetingId, recordedAt])
+  @@map("meeting_consent_events")
+}
+
 model Recording {
   id             String          @id @default(uuid()) @db.Uuid
   organizationId String          @map("org_id") @db.Uuid
@@ -713,22 +750,22 @@ model TranscriptSegment {
 }
 
 model Report {
-  id             String       @id @default(uuid()) @db.Uuid
-  organizationId String       @map("org_id") @db.Uuid
-  meetingId      String       @map("meeting_id") @db.Uuid
-  transcriptId   String?      @map("transcript_id") @db.Uuid
-  aiRunId        String?      @map("ai_run_id") @db.Uuid
+  id                 String       @id @default(uuid()) @db.Uuid
+  organizationId     String       @map("org_id") @db.Uuid
+  meetingId          String       @map("meeting_id") @db.Uuid
+  transcriptId       String?      @map("transcript_id") @db.Uuid
+  aiRunId            String?      @map("ai_run_id") @db.Uuid
   /// AI summary dedupe key parts (NULL for manual/legacy reports). See reports_summary_dedupe_key.
-  transcriptRevision Int?     @map("transcript_revision")
-  promptVersion  String?      @map("prompt_version")
-  version        Int          @default(1)
-  status         ReportStatus @default(draft)
-  title          String?
-  summary        String?
-  content        Json?
-  createdAt      DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt      DateTime     @updatedAt @map("updated_at") @db.Timestamptz(3)
-  deletedAt      DateTime?    @map("deleted_at") @db.Timestamptz(3)
+  transcriptRevision Int?         @map("transcript_revision")
+  promptVersion      String?      @map("prompt_version")
+  version            Int          @default(1)
+  status             ReportStatus @default(draft)
+  title              String?
+  summary            String?
+  content            Json?
+  createdAt          DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt          DateTime     @updatedAt @map("updated_at") @db.Timestamptz(3)
+  deletedAt          DateTime?    @map("deleted_at") @db.Timestamptz(3)
 
   organization   Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   meeting        Meeting         @relation(fields: [organizationId, meetingId], references: [organizationId, id], onDelete: Cascade)

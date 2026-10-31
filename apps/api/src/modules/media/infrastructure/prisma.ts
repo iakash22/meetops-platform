@@ -17,6 +17,11 @@ import {
   type DatabaseTransaction,
 } from '../../../shared/prisma/context.js';
 import type { ConsentRecord, ConsentRepository } from '../domain/consent.js';
+import type {
+  MeetingConsentEventRecord,
+  MeetingConsentRepository,
+  NewMeetingConsentEvent,
+} from '../domain/meeting-consent.js';
 import type { FileObjectRecord, FileObjectRepository, FileObjectStatus } from '../domain/ports.js';
 import type {
   RecordingChunkRecord,
@@ -227,6 +232,61 @@ export class PrismaConsentRepository implements ConsentRepository {
       { client: this.client },
     );
     return row ?? null;
+  }
+}
+
+const meetingConsentSelect = {
+  id: true,
+  organizationId: true,
+  meetingId: true,
+  eventType: true,
+  consentVersion: true,
+  method: true,
+  reason: true,
+  actorUserId: true,
+  occurredAt: true,
+  recordedAt: true,
+} as const;
+
+/** Consent API ledger (meeting_consent_events): SELECT/INSERT only, forced RLS, every query org-scoped. */
+export class PrismaMeetingConsentRepository implements MeetingConsentRepository {
+  constructor(private readonly client: DatabaseClient) {}
+
+  async append(e: NewMeetingConsentEvent): Promise<MeetingConsentEventRecord> {
+    return withOrganizationContext(
+      e.organizationId,
+      (tx) =>
+        tx.meetingConsentEvent.create({
+          data: {
+            organizationId: e.organizationId,
+            meetingId: e.meetingId,
+            eventType: e.eventType,
+            consentVersion: e.consentVersion,
+            method: e.method,
+            reason: e.reason,
+            actorUserId: e.actorUserId,
+            occurredAt: e.occurredAt,
+            recordedAt: e.recordedAt,
+          },
+          select: meetingConsentSelect,
+        }),
+      { client: this.client, userId: e.actorUserId },
+    );
+  }
+
+  async list(organizationId: string, meetingId: string, limit: number) {
+    return withOrganizationContext(
+      organizationId,
+      (tx) =>
+        tx.meetingConsentEvent.findMany({
+          where: { organizationId, meetingId },
+          // Fail closed on a same-millisecond tie: enum order is granted < revoked, so a revocation sorts first.
+          orderBy: [{ recordedAt: 'desc' }, { eventType: 'desc' }, { id: 'desc' }],
+          take: limit,
+          select: meetingConsentSelect,
+        }),
+      { client: this.client },
+    );
   }
 }
 

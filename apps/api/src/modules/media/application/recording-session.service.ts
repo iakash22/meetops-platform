@@ -12,6 +12,7 @@ import type { DirectoryCaller } from '../../directory/access.js';
 import { MeetingNotFoundError } from '../../meetings/domain/meeting.js';
 import { DomainError } from '../../../shared/domain-error.js';
 import { checkConsentInput, checkStoredConsent } from '../domain/consent.js';
+import { enforceMeetingConsent } from '../domain/meeting-consent.js';
 import {
   UploadStateConflictError,
   type MediaProcessingJob,
@@ -64,6 +65,8 @@ export class RecordingSessionService {
     const org = c.ctx.organizationId;
     const m = isUuid(body.meetingId) ? await this.d.meetings.findById(org, body.meetingId) : null;
     if (!m) throw new MeetingNotFoundError();
+    // CONSENT_ENFORCEMENT_ENABLED: the meeting needs a current consent grant before any session exists.
+    await enforceMeetingConsent(this.d, org, body.meetingId);
     const s: RecordingSessionRecord = {
       id: randomUUID(),
       organizationId: org,
@@ -118,6 +121,8 @@ export class RecordingSessionService {
   ): Promise<SignedRequest> {
     const s = await this.own(c, id);
     RecordingSessionService.assertUploading(s);
+    // A revocation mid-recording stops new chunk URLs (fail closed) while enforcement is on.
+    await enforceMeetingConsent(this.d, s.organizationId, s.meetingId);
     const key = `organizations/${s.organizationId}/recording-sessions/${s.id}/chunks/${String(body.seq).padStart(5, '0')}`;
     const res = await this.d.sessions.reserveChunk(
       s.organizationId,
@@ -155,6 +160,7 @@ export class RecordingSessionService {
       const consent = checkStoredConsent(
         await this.d.consents.findLatest(s.organizationId, 'recording_session', s.id),
       );
+      await enforceMeetingConsent(this.d, s.organizationId, s.meetingId);
       await this.enqueue(s, consent.id, true);
       return s;
     }
@@ -162,6 +168,7 @@ export class RecordingSessionService {
     const consent = checkStoredConsent(
       await this.d.consents.findLatest(s.organizationId, 'recording_session', s.id),
     );
+    await enforceMeetingConsent(this.d, s.organizationId, s.meetingId);
     if (s.chunks.size !== body.chunkCount) {
       throw new ChunkSetInvalidError(
         `Expected ${s.chunks.size} chunks, got chunkCount ${body.chunkCount}`,
