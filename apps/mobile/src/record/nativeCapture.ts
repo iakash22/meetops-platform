@@ -25,13 +25,24 @@ export interface AudioDriver {
   currentUri(): string | null;
 }
 
+/** Visible OS recording indicator (Android microphone foreground service with Stop/Open). */
+export interface ForegroundIndicator {
+  start(): void;
+  stop(): void;
+  onStopRequested(listener: () => void): () => void;
+}
+
 export interface NativeCapture extends RecordingCapture {
   readonly simulated: false;
   /** Called once at app start: deletes recorder output left by a crash or kill. Never resumes capture. */
   recoverOnLaunch(): Promise<void>;
 }
 
-export function createNativeCapture(driver: AudioDriver, store: FileChunkStore): NativeCapture {
+export function createNativeCapture(
+  driver: AudioDriver,
+  store: FileChunkStore,
+  indicator: ForegroundIndicator | null = null,
+): NativeCapture {
   let active: string | null = null;
   let paused = false;
 
@@ -41,6 +52,11 @@ export function createNativeCapture(driver: AudioDriver, store: FileChunkStore):
     try {
       return await driver.stop();
     } finally {
+      try {
+        indicator?.stop();
+      } catch {
+        // The service may already be gone (Stop from the notification).
+      }
       await driver.setRecordingMode(false).catch(() => undefined);
       await store.setInProgress(null).catch(() => undefined);
     }
@@ -48,17 +64,22 @@ export function createNativeCapture(driver: AudioDriver, store: FileChunkStore):
 
   return {
     simulated: false,
+    backgroundIndicator: indicator !== null,
+    onStopRequested: (listener) => indicator?.onStopRequested(listener) ?? (() => undefined),
     async begin(recordingId) {
       if (active) throw new Error('Already recording.');
       if (!(await driver.canRecord())) throw new Error('Microphone permission is required.');
-      await driver.setRecordingMode(true);
+      // The foreground service (and its notification) starts before the mic opens; if it can't, nothing records.
+      indicator?.start();
       try {
+        await driver.setRecordingMode(true);
         await driver.prepare();
         await store.setInProgress(driver.currentUri());
         driver.record();
       } catch (e) {
         await driver.setRecordingMode(false).catch(() => undefined);
         await store.setInProgress(null).catch(() => undefined);
+        indicator?.stop();
         throw e;
       }
       active = recordingId;

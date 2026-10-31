@@ -23,4 +23,8 @@ export interface RecordingCapture extends ChunkSource {
   capture(recordingId: string, durationMs: number): Promise<LocalChunk[]>;
   /** Stops any capture and deletes the in-progress file. Never resumes (R7). */
   abort(): Promise<void>;
+  /** True when a visible OS indicator keeps capture allowed in the background (Android foreground service). */
+  readonly backgroundIndicator?: boolean;
+  /** Stop pressed outside the app (the Android notification's Stop action). Returns an unsubscribe. */
+  onStopRequested?(listener: () => void): () => void;
 }

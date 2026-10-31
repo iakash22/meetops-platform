@@ -149,3 +149,50 @@ describe('native capture (M4)', () => {
     expect(cap.isLive()).toBe(false);
   });
 });
+
+describe('android foreground service indicator (R2)', () => {
+  const indicator = () => {
+    const calls: string[] = [];
+    let stopListener: () => void = () => undefined;
+    return {
+      calls,
+      press: () => stopListener(),
+      start: () => void calls.push('fgs:start'),
+      stop: () => void calls.push('fgs:stop'),
+      onStopRequested: (l: () => void) => {
+        stopListener = l;
+        return () => undefined;
+      },
+    };
+  };
+
+  it('starts the service before the mic and stops it with capture', async () => {
+    const fs = createMemoryFs();
+    const { driver, uri } = fakeDriver();
+    const fgs = indicator();
+    const cap = createNativeCapture(driver, createFileChunkStore(fs), fgs);
+    expect(cap.backgroundIndicator).toBe(true);
+    await cap.begin('rec-1');
+    expect(fgs.calls).toEqual(['fgs:start']);
+    fs.put(uri, bytes(3));
+    await cap.capture('rec-1', 1);
+    expect(fgs.calls).toEqual(['fgs:start', 'fgs:stop']);
+    const stop = jest.fn();
+    cap.onStopRequested?.(stop);
+    fgs.press();
+    expect(stop).toHaveBeenCalled();
+  });
+
+  it('records nothing when the service cannot start', async () => {
+    const { driver } = fakeDriver();
+    const fgs = {
+      ...indicator(),
+      start: () => {
+        throw new Error('denied');
+      },
+    };
+    const cap = createNativeCapture(driver, createFileChunkStore(createMemoryFs()), fgs);
+    await expect(cap.begin('rec-1')).rejects.toThrow('denied');
+    expect(driver.calls).not.toContain('record');
+  });
+});

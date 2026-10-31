@@ -24,6 +24,7 @@ import { createPlaceholderTasksRepository } from './data/tasksRepository';
 import { createDemoTaskReviewApi, createHttpTaskReviewApi } from './tasks/reviewApi';
 import type { RecordingCapture } from './record/capture';
 import {
+  createAndroidForegroundIndicator,
   createExpoAudioDriver,
   createNativeMicPermission,
   expoFileSystem,
@@ -89,7 +90,9 @@ const http = API_BASE_URL
 
 const fileSystem = http ? expoFileSystem() : null;
 const chunkFiles = fileSystem ? createFileChunkStore(fileSystem) : null;
-const nativeCapture = chunkFiles ? createNativeCapture(createExpoAudioDriver(), chunkFiles) : null;
+const nativeCapture = chunkFiles
+  ? createNativeCapture(createExpoAudioDriver(), chunkFiles, createAndroidForegroundIndicator())
+  : null;
 const capture: RecordingCapture = nativeCapture ?? createSimulatedCapture();
 // R7: after a crash or kill, partial recorder output is discarded and capture never resumes.
 void nativeCapture?.recoverOnLaunch().catch(() => undefined);

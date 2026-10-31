@@ -401,4 +401,18 @@ describe('Record tab with a live capture (M4)', () => {
     expect(capture.abort).toHaveBeenCalled();
     expect(getRecordingPhase()).toBe('idle');
   });
+
+  it('stops when Stop is pressed in the Android notification', async () => {
+    let press: () => void = () => undefined;
+    setup({
+      onStopRequested: (l) => {
+        press = l;
+        return () => undefined;
+      },
+    });
+    await start();
+    expect(getRecordingPhase()).toBe('recording');
+    act(() => press());
+    expect(getRecordingPhase()).toBe('stopped');
+  });
 });

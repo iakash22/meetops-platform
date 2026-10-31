@@ -83,14 +83,21 @@ export function RecordScreen() {
     return () => clearInterval(id);
   }, [pauseForInterruption, recorder.phase, recordings, simulated]);
 
-  // Android has no microphone foreground service yet (plan NATIVE GAP), so capture never continues out of sight.
+  // Without the microphone foreground service (and its notification), Android capture never continues out of sight.
+  const backgroundOk = recordings?.capture.backgroundIndicator ?? false;
   useEffect(() => {
-    if (Platform.OS !== 'android' || recorder.phase !== 'recording' || simulated) return;
+    if (Platform.OS !== 'android' || recorder.phase !== 'recording' || simulated || backgroundOk)
+      return;
     const sub = AppState.addEventListener('change', (next) => {
       if (next !== 'active') pauseForInterruption();
     });
     return () => sub.remove();
-  }, [pauseForInterruption, recorder.phase, simulated]);
+  }, [backgroundOk, pauseForInterruption, recorder.phase, simulated]);
+
+  // Stop from the Android notification ends capture immediately, same as the in-app Stop (R2, R7).
+  const stopRef = useRef(recorder.stop);
+  stopRef.current = recorder.stop;
+  useEffect(() => recordings?.capture.onStopRequested?.(() => stopRef.current()), [recordings]);
 
   useEffect(() => {
     let mounted = true;
