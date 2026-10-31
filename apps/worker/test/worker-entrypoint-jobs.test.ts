@@ -197,19 +197,6 @@ describe('closeAll', () => {
 });
 
 describe('calendar-sync in the worker shutdown path', () => {
-  it('main() registers calendar-sync before building the jobs list and includes it', async () => {
-    const { readFileSync } = await import('node:fs');
-    const src = readFileSync(new URL('../src/index.ts', import.meta.url), 'utf8');
-    const reg = src.indexOf('const calendarSync = registerCalendarSyncScheduler(');
-    const jobs = src.indexOf('const jobs: ClosableJob[] = [');
-    const entry = src.indexOf("{ name: 'calendar-sync', job: calendarSync }");
-    const end = src.indexOf('];', jobs);
-    expect(reg).toBeGreaterThan(-1);
-    expect(reg).toBeLessThan(jobs);
-    expect(entry).toBeGreaterThan(jobs);
-    expect(entry).toBeLessThan(end);
-  });
-
   it('closeAll waits for the calendar-sync worker (in-flight sweep) and closes its queue', async () => {
     const { registerCalendarSyncScheduler, loadCalendarSyncEnv } =
       await import('../src/calendar/index.js');

@@ -31,7 +31,7 @@ export * from './privacy/index.js';
 export * from './geoip/mmdb-updater.js';
 export * from './shutdown.js';
 
-async function main() {
+export async function main() {
   const { close } = startMediaWorker();
   logger.info('media worker started');
   // Flag-gated: deps (Prisma repository, ai-core executor, chunk audio) are only built when the worker is enabled.
@@ -107,7 +107,10 @@ async function main() {
   // an enabled sync with a missing/bad INTEGRATIONS_TOKEN_KEK throws here, as does a bad
   // CALENDAR_SYNC_TICK_MS (fail closed at startup).
   const calendarSync = registerCalendarSyncScheduler({ env: loadCalendarSyncEnv(), log: logger });
-  if (calendarSync.registered) logger.info('calendar sync scheduler started');
+  if (calendarSync.registered) {
+    await calendarSync.ready;
+    logger.info('calendar sync scheduler started');
+  }
   const jobs: ClosableJob[] = [
     { name: 'media', close },
     { name: 'transcription', job: transcription },

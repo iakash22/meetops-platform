@@ -114,12 +114,15 @@ describe('calendar sync scheduler', () => {
     expect(order).toEqual(['worker', 'queue']);
   });
 
-  it('logs and survives a schedule failure', async () => {
+  it('surfaces a schedule failure (startup fails) and still closes cleanly', async () => {
     const queue = fakeQueue();
     queue.upsertJobScheduler.mockRejectedValueOnce(new Error('redis down'));
-    const { reg } = setup({ queue });
+    const { reg, worker } = setup({ queue });
     if (!reg.registered) throw new Error('expected registered');
-    await expect(reg.ready).resolves.toBeUndefined();
+    await expect(reg.ready).rejects.toThrow('redis down');
+    await reg.close();
+    expect(worker.close).toHaveBeenCalled();
+    expect(queue.close).toHaveBeenCalled();
   });
 
   it('scheduleCalendarSync uses the fixed id', async () => {

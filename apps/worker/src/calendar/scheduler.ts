@@ -119,18 +119,15 @@ export function registerCalendarSyncScheduler(
     opts.createWorker ??
     ((n: string, p: () => Promise<unknown>, o: { concurrency: number }) => createWorker(n, p, o))
   )(CALENDAR_SYNC_QUEUE, () => runCalendarSyncSweep(deps), { concurrency: 1 });
-  const ready = scheduleCalendarSync(queue, opts.env.tickMs).catch((err: unknown) => {
-    opts.log.warn(
-      { errName: err instanceof Error ? err.name : 'unknown' },
-      'calendar sync schedule failed',
-    );
-  });
+  // Rejects on a scheduling failure (e.g. Redis down): main() awaits it, so startup fails instead of running a
+  // worker that never gets a job.
+  const ready = scheduleCalendarSync(queue, opts.env.tickMs);
   return {
     registered: true,
     ready,
     // Worker first: close() waits for an in-flight sweep, then the queue connection goes.
     close: async () => {
-      await ready;
+      await ready.catch(() => undefined);
       await worker.close();
       await queue.close();
     },

@@ -167,31 +167,32 @@ export function createCalendarSyncRepository(options: CalendarSyncRepositoryOpti
     },
 
     /**
-     * Atomic per-connection claim for a sweep: moves next_sync_at to `leaseUntil` only if the connection is still
-     * active and due. Under READ COMMITTED a concurrent UPDATE of the same row waits for the row lock, then re-checks
-     * the predicate and matches nothing, so exactly one replica wins (same effect as FOR UPDATE SKIP LOCKED, no
-     * migration). The lease also covers a crash mid-sync: the connection is due again once it expires. applySync /
-     * recordFailure overwrite next_sync_at with the real next due time.
+     * Atomic per-connection claim for a sweep. One conditional UPDATE, timed by the database clock at the moment of
+     * the claim (clock_timestamp(), not the sweep's start): it only matches an active connection that is due *now*,
+     * and moves next_sync_at to now + leaseMs. Under READ COMMITTED a concurrent UPDATE waits for the row lock,
+     * re-checks the predicate and matches nothing, so exactly one replica wins (same effect as FOR UPDATE SKIP
+     * LOCKED; no migration). The returned `lease` (the stored next_sync_at) is the claim token: applySync and
+     * recordFailure only write while next_sync_at still equals it. If the holder dies or overruns, the lease
+     * expires, another sweep may claim it, and the old holder's writes are then refused.
      */
     async claimForSync(
       organizationId: string,
       id: string,
-      now: Date,
-      leaseUntil: Date,
-    ): Promise<boolean> {
-      if (!UUID_RE.test(id) || !(leaseUntil > now)) return false;
-      const r = await run(organizationId, (tx) =>
-        tx.calendarConnection.updateMany({
-          where: {
-            id,
-            organizationId,
-            status: 'active',
-            OR: [{ nextSyncAt: null }, { nextSyncAt: { lte: now } }],
-          },
-          data: { nextSyncAt: leaseUntil },
-        }),
+      leaseMs: number,
+    ): Promise<{ lease: Date } | null> {
+      if (!UUID_RE.test(id) || !Number.isInteger(leaseMs) || leaseMs <= 0) return null;
+      const rows = await run(
+        organizationId,
+        (tx) =>
+          tx.$queryRaw<{ next_sync_at: Date }[]>`
+          UPDATE calendar_connections
+             SET next_sync_at = clock_timestamp() + (${leaseMs}::int * interval '1 millisecond')
+           WHERE id = ${id}::uuid AND org_id = ${organizationId}::uuid AND status = 'active'
+             AND (next_sync_at IS NULL OR next_sync_at <= clock_timestamp())
+          RETURNING next_sync_at`,
       );
-      return r.count === 1;
+      const lease = rows[0]?.next_sync_at;
+      return lease ? { lease } : null;
     },
 
     /** Permanent failure (grant gone): the UI asks the user to reconnect. */
@@ -205,26 +206,54 @@ export function createCalendarSyncRepository(options: CalendarSyncRepositoryOpti
       );
     },
 
-    /** Transient failure: bump the failure count and push the next attempt out (backoff computed by the caller). */
+    /**
+     * Transient failure: bump the failure count and push the next attempt out (backoff computed by the caller).
+     * `retryInMs` is applied to the database clock at write time. With `lease`, it only writes while the claim
+     * is still held (returns false otherwise).
+     */
     async recordFailure(
       organizationId: string,
       id: string,
-      s: { syncFailures: number; nextSyncAt: Date },
-    ): Promise<void> {
-      if (!UUID_RE.test(id)) return;
-      await run(organizationId, (tx) =>
+      s: { syncFailures: number; nextSyncAt?: Date; retryInMs?: number; lease?: Date },
+    ): Promise<boolean> {
+      if (!UUID_RE.test(id)) return false;
+      const failures = Math.max(0, Math.trunc(s.syncFailures) || 0);
+      if (s.retryInMs !== undefined) {
+        const ms = Math.max(0, Math.trunc(s.retryInMs) || 0);
+        const n = await run(
+          organizationId,
+          (tx) => tx.$executeRaw`
+            UPDATE calendar_connections
+               SET sync_failures = ${failures}::int,
+                   next_sync_at = clock_timestamp() + (${ms}::int * interval '1 millisecond')
+             WHERE id = ${id}::uuid AND org_id = ${organizationId}::uuid AND status <> 'revoked'
+               AND (${s.lease ?? null}::timestamptz IS NULL OR next_sync_at = ${s.lease ?? null}::timestamptz)`,
+        );
+        return n === 1;
+      }
+      if (!s.nextSyncAt) throw new Error('recordFailure needs nextSyncAt or retryInMs');
+      const nextSyncAt = s.nextSyncAt;
+      const r = await run(organizationId, (tx) =>
         tx.calendarConnection.updateMany({
-          where: { id, organizationId, status: { not: 'revoked' } },
-          data: { syncFailures: Math.max(0, s.syncFailures), nextSyncAt: s.nextSyncAt },
+          where: {
+            id,
+            organizationId,
+            status: { not: 'revoked' },
+            ...(s.lease ? { nextSyncAt: s.lease } : {}),
+          },
+          data: { syncFailures: failures, nextSyncAt },
         }),
       );
+      return r.count === 1;
     },
 
     /**
      * Applies one sync of [from, to) atomically: upserts every event, and when the provider list was complete
      * (not truncated) soft-cancels stored events in the window that the provider no longer returns. Then advances
      * the cursor (window, last_synced_at, failures reset, next due time). Skips silently if the connection is no
-     * longer active (revoked mid-sweep).
+     * longer active (revoked mid-sweep) or, with `lease`, if the claim was lost (lease expired and re-claimed): the
+     * row is locked FOR UPDATE first, so nothing is written for a lost claim. `nextSyncInMs` is applied to the
+     * database clock at commit time (takes precedence over `nextSyncAt`).
      */
     async applySync(
       organizationId: string,
@@ -235,12 +264,24 @@ export function createCalendarSyncRepository(options: CalendarSyncRepositoryOpti
         events: CalendarSyncEventInput[];
         complete: boolean;
         now: Date;
-        nextSyncAt: Date;
+        nextSyncAt?: Date;
+        nextSyncInMs?: number;
+        lease?: Date;
       },
     ): Promise<{ upserted: number; cancelled: number; applied: boolean }> {
       const { connectionId, from, to, now } = input;
       if (!UUID_RE.test(connectionId) || !(to > from)) throw new Error('invalid sync input');
+      if (input.nextSyncAt === undefined && input.nextSyncInMs === undefined)
+        throw new Error('invalid sync input');
       return run(organizationId, async (tx) => {
+        if (input.lease) {
+          const held = await tx.$queryRaw<{ id: string }[]>`
+            SELECT id FROM calendar_connections
+             WHERE id = ${connectionId}::uuid AND org_id = ${organizationId}::uuid AND status = 'active'
+               AND next_sync_at = ${input.lease}::timestamptz
+             FOR UPDATE`;
+          if (held.length === 0) return { upserted: 0, cancelled: 0, applied: false };
+        }
         const conn = await tx.calendarConnection.findFirst({
           where: { id: connectionId, organizationId, status: 'active' },
           select: { userId: true, provider: true },
@@ -316,9 +357,16 @@ export function createCalendarSyncRepository(options: CalendarSyncRepositoryOpti
             syncedFrom: from,
             syncedTo: to,
             syncFailures: 0,
-            nextSyncAt: input.nextSyncAt,
+            ...(input.nextSyncAt ? { nextSyncAt: input.nextSyncAt } : {}),
           },
         });
+        if (input.nextSyncInMs !== undefined) {
+          const ms = Math.max(0, Math.trunc(input.nextSyncInMs) || 0);
+          await tx.$executeRaw`
+            UPDATE calendar_connections
+               SET next_sync_at = clock_timestamp() + (${ms}::int * interval '1 millisecond')
+             WHERE id = ${connectionId}::uuid AND org_id = ${organizationId}::uuid AND status = 'active'`;
+        }
         return { upserted, cancelled, applied: true };
       });
     },

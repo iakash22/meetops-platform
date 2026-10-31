@@ -15,8 +15,15 @@ export interface CalendarSyncSweepRepository {
     now: Date,
     limit?: number,
   ): Promise<{ organizationId: string; id: string; userId: string; provider: string }[]>;
-  /** Atomic claim (one replica wins); false = another sweep owns it or it is no longer due. */
-  claimForSync(organizationId: string, id: string, now: Date, leaseUntil: Date): Promise<boolean>;
+  /**
+   * Atomic claim timed by the database clock (one replica wins); null = another sweep holds it or it is not due.
+   * `lease` is the claim token passed back to applySync/recordFailure, which refuse to write once it is lost.
+   */
+  claimForSync(
+    organizationId: string,
+    id: string,
+    leaseMs: number,
+  ): Promise<{ lease: Date } | null>;
   readSecrets(organizationId: string, id: string): Promise<CalendarSyncSecrets | null>;
   updateTokens(
     organizationId: string,
@@ -27,8 +34,8 @@ export interface CalendarSyncSweepRepository {
   recordFailure(
     organizationId: string,
     id: string,
-    s: { syncFailures: number; nextSyncAt: Date },
-  ): Promise<void>;
+    s: { syncFailures: number; retryInMs: number; lease: Date },
+  ): Promise<boolean>;
   applySync(
     organizationId: string,
     input: {
@@ -38,7 +45,8 @@ export interface CalendarSyncSweepRepository {
       events: CalendarSyncEventInput[];
       complete: boolean;
       now: Date;
-      nextSyncAt: Date;
+      nextSyncInMs: number;
+      lease: Date;
     },
   ): Promise<{ upserted: number; cancelled: number; applied: boolean }>;
 }
@@ -156,12 +164,9 @@ function errInfo(err: unknown) {
 
 export async function runCalendarSyncSweep(deps: CalendarSyncDeps): Promise<CalendarSyncResult> {
   const cfg: CalendarSyncConfig = { ...CALENDAR_SYNC_DEFAULTS, ...deps.config };
-  const nowMs = (deps.now ?? Date.now)();
-  const now = new Date(nowMs);
+  const clock = deps.now ?? Date.now;
   const span = Math.min(cfg.pastMs + cfg.futureMs, CALENDAR_SYNC_MAX_WINDOW_MS);
-  const from = new Date(nowMs - Math.min(cfg.pastMs, span));
-  const to = new Date(from.getTime() + span);
-  const due = await deps.repo.listDueForSync(now, cfg.limit);
+  const due = await deps.repo.listDueForSync(new Date(clock()), cfg.limit);
   const result: CalendarSyncResult = {
     synced: 0,
     failed: 0,
@@ -178,18 +183,19 @@ export async function runCalendarSyncSweep(deps: CalendarSyncDeps): Promise<Cale
       continue;
     }
     let failures = 0;
+    let lease: Date | undefined;
     try {
-      if (
-        !(await deps.repo.claimForSync(
-          d.organizationId,
-          d.id,
-          now,
-          new Date(nowMs + CALENDAR_SYNC_LEASE_MS),
-        ))
-      ) {
+      // Claimed per connection at the database's current time, never the sweep's start: a connection reached late
+      // in a long sweep gets a full lease, and one that another sweep holds stays skipped.
+      lease = (await deps.repo.claimForSync(d.organizationId, d.id, CALENDAR_SYNC_LEASE_MS))?.lease;
+      if (!lease) {
         result.skipped++;
         continue;
       }
+      const nowMs = clock();
+      const now = new Date(nowMs);
+      const from = new Date(nowMs - Math.min(cfg.pastMs, span));
+      const to = new Date(from.getTime() + span);
       const s = await deps.repo.readSecrets(d.organizationId, d.id);
       if (!s) {
         result.skipped++;
@@ -221,7 +227,8 @@ export async function runCalendarSyncSweep(deps: CalendarSyncDeps): Promise<Cale
         events,
         complete: events.length < cfg.maxEvents,
         now,
-        nextSyncAt: new Date(nowMs + calendarSyncNextMs(cfg, deps.random)),
+        nextSyncInMs: calendarSyncNextMs(cfg, deps.random),
+        lease,
       });
       if (!r.applied) {
         result.skipped++;
@@ -237,10 +244,11 @@ export async function runCalendarSyncSweep(deps: CalendarSyncDeps): Promise<Cale
       deps.log.warn({ ...ids, ...errInfo(err), permanent, failures: next }, 'calendar sync failed');
       try {
         if (permanent) await deps.repo.markError(d.organizationId, d.id);
-        else
+        else if (lease)
           await deps.repo.recordFailure(d.organizationId, d.id, {
             syncFailures: next,
-            nextSyncAt: new Date(nowMs + calendarSyncBackoffMs(next, cfg, deps.random)),
+            retryInMs: calendarSyncBackoffMs(next, cfg, deps.random),
+            lease,
           });
       } catch {
         // the next sweep retries
