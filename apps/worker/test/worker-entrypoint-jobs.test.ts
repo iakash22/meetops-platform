@@ -103,7 +103,7 @@ describe('AI workers from the entrypoint', () => {
         concurrency: 1,
         redisUrl: 'redis://x',
         actionItemsEnabled: false,
-      } as never,
+      },
       resolveExecutor: () => ({}) as never,
       deps: () => ({}) as never,
       start: (() => ({ close: sClose })) as never,
@@ -132,7 +132,7 @@ describe('AI workers from the entrypoint', () => {
         concurrency: 1,
         redisUrl: 'redis://x',
         actionItemsEnabled: false,
-      } as never,
+      },
       logger: log,
     });
     expect(
