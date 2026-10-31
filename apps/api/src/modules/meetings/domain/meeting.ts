@@ -42,7 +42,7 @@ export interface MeetingRepository {
   /** Newest first, keyset on (createdAt, id) descending. Throws InvalidMeetingCursorError. */
   list(
     organizationId: string,
-    q: { cursor?: string | undefined; limit: number },
+    q: { cursor?: string | undefined; limit: number; source?: MeetingSource | undefined },
   ): Promise<MeetingPage>;
   findById(organizationId: string, id: string): Promise<MeetingRecord | null>;
   /**
