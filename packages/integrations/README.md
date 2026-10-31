@@ -291,5 +291,7 @@ only key source by default; the inline `GITHUB_APP_PRIVATE_KEY` is used instead 
 `e2e`/`throwaway` segment (split on `-`, `_`, `.`; e.g. `e2e-foo`, `foo-e2e`, `throwaway-bar`, but not `prod-e2e-svc`),
 or the repo must be listed in `GITHUB_E2E_REPO_ALLOWLIST` (comma-separated `owner/repo`); otherwise the run fails with a
 clear refusal. The test also checks that the installation's granted repositories (`GET /installation/repositories`)
-include `GITHUB_E2E_REPO`. Cleanup closes the issue (falling back to a direct PATCH by the raw issue number) and revokes
+include `GITHUB_E2E_REPO` (paginated to the end; it fails explicitly past 10,000 repos), and the issue-writing test refuses
+to run unless that check passed. If creating the issue throws, the test closes any issue GitHub already created, using
+the raw response number or a unique title marker. Cleanup closes the issue (falling back to a direct PATCH by the raw issue number) and revokes
 the installation token, which is stored right after minting. Never commit or print the key or tokens.
