@@ -3,7 +3,11 @@ import { Type } from '@sinclair/typebox';
 import {
   SEARCH_PATHS,
   SEARCH_RESULT_KINDS,
+  SEMANTIC_SEARCH_KINDS,
   SearchQuery,
+  SemanticSearchQuery,
+  SemanticSearchResponse,
+  type SemanticSearchKind,
   SearchResponse,
   type SearchResultKind,
 } from '@meetops/contracts';
@@ -20,6 +24,14 @@ import { InMemorySearch } from './in-memory.repository.js';
 import { PrismaSearch } from './prisma.repository.js';
 import { DomainError } from '../../shared/domain-error.js';
 import type { SearchRepository } from './ports.js';
+import {
+  InMemorySemanticSearch,
+  PrismaSemanticSearch,
+  semanticSearchEnabled,
+  SemanticSearchUnavailableError,
+  type QueryEmbedder,
+  type SemanticSearchRepository,
+} from './semantic.js';
 
 export { SEARCH_PATHS };
 
@@ -40,7 +52,23 @@ export class SearchQueryInvalidError extends DomainError {
   }
 }
 
-export type SearchModuleDeps = ModuleDeps & { search?: SearchRepository };
+export type SearchModuleDeps = ModuleDeps & {
+  search?: SearchRepository;
+  /** Phase 7 semantic search (only used when SEMANTIC_SEARCH_ENABLED=true). */
+  semanticSearch?: SemanticSearchRepository;
+  /** Query embedder (ai-core Embeddings). Without one the semantic route answers 503. */
+  queryEmbedder?: QueryEmbedder;
+};
+
+export function selectSemanticSearchRepository(
+  deps: SearchModuleDeps,
+  nodeEnv: string | undefined = process.env.NODE_ENV,
+): SemanticSearchRepository {
+  if (deps.semanticSearch) return deps.semanticSearch;
+  if (deps.db) return new PrismaSemanticSearch(deps.db);
+  if (!isRelaxedEnv(nodeEnv)) throw new MissingProductionDependencyError(['semanticSearch']);
+  return new InMemorySemanticSearch();
+}
 
 export function selectSearchRepository(
   deps: SearchModuleDeps,
@@ -103,6 +131,62 @@ export default async function searchModule(
         q,
         kinds,
         limit: request.query.limit ?? 20,
+      });
+      return { items };
+    },
+  );
+
+  if (!semanticSearchEnabled()) return;
+  const semantic = selectSemanticSearchRepository(deps);
+  app.get<{ Params: { organizationId: string }; Querystring: SemanticSearchQuery }>(
+    SEARCH_PATHS.semantic,
+    {
+      schema: {
+        tags: ['search'],
+        summary: 'Semantic (vector) search across transcripts and summaries',
+        params: OrgParams,
+        querystring: SemanticSearchQuery,
+        response: {
+          200: SemanticSearchResponse,
+          ...directoryErrors,
+          429: ErrorBody,
+          503: ErrorBody,
+        },
+      },
+    },
+    async (request, reply) => {
+      const c = await access.caller(
+        await g.requireSession(request),
+        request.params.organizationId,
+        requestMeta(request),
+      );
+      organizations.authorize(c.ctx, 'read', 'Meeting');
+      const rl = await deps.rateLimiter.consume(
+        `search:${c.ctx.organizationId}:${c.ctx.userId}`,
+        SEARCH_RATE_LIMIT.limit,
+        SEARCH_RATE_LIMIT.windowMs,
+      );
+      if (!rl.allowed) throw new RateLimitedError(rl.retryAfterMs);
+      const q = request.query.q.trim();
+      if (CONTROL_CHARS.test(q)) throw new SearchQueryInvalidError();
+      reply.header('cache-control', 'private, no-store');
+      if (q.length < 2) return { items: [] };
+      const embedder = deps.queryEmbedder;
+      if (!embedder) throw new SemanticSearchUnavailableError();
+      let vector: number[];
+      try {
+        vector = await embedder.embed(q);
+      } catch {
+        throw new SemanticSearchUnavailableError();
+      }
+      const kinds = request.query.kinds
+        ? ([...new Set(request.query.kinds.split(','))] as SemanticSearchKind[])
+        : [...SEMANTIC_SEARCH_KINDS];
+      const items = await semantic.search(c.ctx.organizationId, {
+        vector,
+        model: embedder.model,
+        kinds,
+        limit: request.query.limit ?? 10,
       });
       return { items };
     },
