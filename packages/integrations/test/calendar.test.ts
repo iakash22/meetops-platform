@@ -7,9 +7,8 @@ import {
   GoogleCalendarProvider,
   InMemoryOAuthStateStore,
   assertCalendarWindow,
-  type FetchLike,
-} from '../src';
-import { ORG, OTHER_ORG } from './helpers';
+} from '../src/index.js';
+import { ORG, OTHER_ORG } from './helpers.js';
 
 const REDIRECT = 'https://api.meetops.test/calendar/google/callback';
 const USER = 'user-1';
@@ -45,7 +44,7 @@ function provider(queue: Res[]) {
     clientSecret: async () => 'placeholder-secret',
     redirectUriAllowlist: [REDIRECT],
     stateStore: new InMemoryOAuthStateStore(),
-    fetch: fetch as unknown as FetchLike,
+    fetch: fetch,
     now: () => 1_000,
   });
   return { p, fetch };
