@@ -36,12 +36,14 @@ import {
 import { withBackupExclusion } from './record/backupExclusion';
 import { createFileChunkStore } from './record/fileChunkStore';
 import { createNativeCapture } from './record/nativeCapture';
+import { createIosLiveActivity } from './record/liveActivity';
 import { createSimulatedCapture } from './record/simulatedRecorder';
 import { createHttpRecordingUploadApi } from './upload/httpRecordingUploadApi';
 import { createMemoryQueueStore, createSimulatedUploadApi } from './upload/simulatedUploadApi';
 import { createFileQueueStore } from './upload/fileQueueStore';
 import { createUploadQueueEngine } from './upload/uploadQueueEngine';
 import { reconcileOrphans, startUploadScheduler } from './upload/uploadScheduler';
+import { createNetInfoStatus, loadNetInfo } from './upload/netInfoStatus';
 
 /**
  * App composition root.
@@ -106,16 +108,19 @@ const chunkFiles = fileSystem && chunkCipher ? createFileChunkStore(fileSystem, 
 const nativeCapture = chunkFiles
   ? createNativeCapture(createExpoAudioDriver(), chunkFiles, createAndroidForegroundIndicator(), {
       recorderFiles: recorderFileGuard(),
+      liveActivity: createIosLiveActivity(),
     })
   : null;
 const capture: RecordingCapture = nativeCapture ?? createSimulatedCapture();
+const networkStatus = http ? createNetInfoStatus(loadNetInfo()) : null;
 const engine = createUploadQueueEngine({
   // Live: durable queue file in the sandbox (M5). Demo: in memory.
   store: fileSystem ? createFileQueueStore(fileSystem) : createMemoryQueueStore(),
   chunks: capture,
   api: http ? createHttpRecordingUploadApi(http) : createSimulatedUploadApi(300),
-  // No NetInfo dependency: a failed request backs off (5 s to 15 min) and foreground passes retry.
-  network: { isOnline: () => true },
+  // Live: NetInfo pauses passes while offline (no attempt is used up); a failed request still backs off
+  // (5 s to 15 min). Demo: always online.
+  network: networkStatus ?? { isOnline: () => true },
 });
 if (chunkFiles) {
   // R7: after a crash or kill, unfinalized recorder output is discarded and capture never resumes; a recording whose
@@ -133,7 +138,7 @@ if (chunkFiles) {
     // Chunks saved in plaintext by an older build are re-sealed before any upload pass reads them.
     .then(() => chunkFiles.migrateLegacy())
     .catch(() => undefined)
-    .then(() => startUploadScheduler(engine, AppState));
+    .then(() => startUploadScheduler(engine, AppState, undefined, networkStatus ?? undefined));
 }
 // R4 + R7: logout and organization switch stop any capture and wipe every local recording.
 sessionManager.registerWipeHook(async () => {
