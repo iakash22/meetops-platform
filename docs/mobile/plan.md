@@ -66,6 +66,10 @@ Each requirement gets automated tests (unit + device E2E) in M3–M6 and a sign-
 - **Media**: the upload contract (chunking, checksum algorithm, pre-signed URL TTL/scope, server confirmation response).
 - **DevOps**: CI runtime for jest-expo (first run is about 25s), cache for pnpm store, and later an EAS secrets setup outside the repo.
 
+## Device build checklists
+
+- Android: `docs/mobile/android-device-build-checklist.md`. iOS: `docs/mobile/ios-device-build-checklist.md`.
+
 ## Follow-ups
 
 - **tar via @expo/cli (track):** Expo SDK 52's `@expo/cli` (and its `cacache`) pins `tar@6.2.1`, which has high and critical advisories (all fixed only in tar 7.x). It's used at build/CLI time only and never ships in the app bundle. For now the root `pnpm.overrides` pins `@expo/cli>tar` and `cacache>tar` to `^7.5.21`, and `bundle:check` passes with it. `@expo/cli@0.22.28` read tar through a default export, which tar 7 doesn't have, so `expo prebuild` failed with "Cannot read properties of undefined (reading 'extract')". `patches/@expo__cli@0.22.28.patch` (a pnpm patch) fixes the two call sites, and `expo prebuild --clean --no-install` now succeeds for Android and iOS. Remove the overrides and the patch once an Expo SDK upgrade ships a patched tar.
