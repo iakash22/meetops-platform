@@ -1,4 +1,26 @@
-# Phase status — 27 Oct 2026 (~23:20 IST)
+# Phase status — 31 Oct 2026 (~13:30 IST)
+
+## Update — 31 Oct 2026 (~13:30 IST)
+
+Tree: `integration/phase-1` at `a868a4c` (merge of #317). [#257](https://github.com/iakash22/meetops-platform/pull/257) was merged to `main` by Akash on 31 Oct. Percentages are coordinator estimates, not measured. Full handoff for a new agent: [HANDOFF.md](HANDOFF.md).
+
+Merged into `integration/phase-1` today (#305–#317): extension real meeting API (#305) and held-recording cleanup/starvation fixes (#307, #308); auth mail queue (#306); GitHub App E2E harness (#309) and its Lows (#313, incl. wxt watcher ENOSPC fix); mobile M3–M4 recorder (#310), M5 storage/upload (#311), M6 hardening (#312); P7 calendar (#314), search (#315), web (#316), follow-ups (#317).
+
+| Phase                           | 27 Oct PM | 31 Oct   | Still missing                                                                                          |
+| ------------------------------- | --------- | -------- | ------------------------------------------------------------------------------------------------------ |
+| P0 Foundation                   | 100%      | 100%     | —                                                                                                      |
+| P1 Auth, orgs, roles            | ~90%      | ~95%     | Google OAuth client (Akash); MFA/SSO decision; ADR-006/010 sign-off                                    |
+| P2 Meetings, uploads, recording | ~75%      | ~85%     | Desktop old chunk-folder migration; chunk_put JSON-array body                                          |
+| P3 Transcripts, reports         | ~65%      | ~70%     | Gemini key (Akash) for the worker AI consumer                                                          |
+| P4 Tasks, approval              | ~70%      | ~75%     | —                                                                                                      |
+| P5 GitHub, Jira                 | ~65%      | ~80%     | E2E on a throwaway repo with meetops-dev installed; Jira credentials; #313 follow-ups                  |
+| P6 Extension                    | ~70%      | ~85%     | Info items: Start fails open, unheld pending eviction, 8 MB vs 64 MB chunk                             |
+| P7 Calendar, search, analytics  | 5%        | ~45%     | Background sync job, Outlook adapter, event↔meeting linking, pgvector semantic search, analytics       |
+| P8 Desktop, mobile              | ~55%      | ~75%     | Android foreground service, iOS Live Activity, Android Keystore, iOS backup exclusion; real bundle ids |
+| P9 Hardening, release           | ~25%      | ~35%     | Dependabot, billing, store submission, Windows test/cargo check                                        |
+| **Overall**                     | **~60%**  | **~72%** |                                                                                                        |
+
+---
 
 ## Update — 27 Oct 2026 (~23:20 IST)
 
