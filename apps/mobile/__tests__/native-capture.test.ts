@@ -68,15 +68,15 @@ describe('file chunk store (R4, R6)', () => {
     await expect(store.exists('rec-1')).resolves.toBe(false);
   });
 
-  it('rejects path-like ids and leaves nothing behind on failure', async () => {
+  it('rejects path-like ids and keeps the source on failure so launch can resume (crash-safe)', async () => {
     const fs = createMemoryFs();
     const store = createFileChunkStore(fs, testCipher, 4);
     await expect(store.ingest('../x', 'file:///cache/a.m4a')).rejects.toThrow();
     fs.put('file:///cache/b.m4a', bytes(9));
     fs.readAsStringAsync = () => Promise.reject(new Error('io'));
     await expect(store.ingest('rec-2', 'file:///cache/b.m4a')).rejects.toThrow('io');
-    await expect(store.exists('rec-2')).resolves.toBe(false);
-    expect(fs.files.has('file:///cache/b.m4a')).toBe(false);
+    expect(fs.files.has('file:///cache/b.m4a')).toBe(true);
+    await expect(store.manifest('rec-2')).resolves.toBeNull();
   });
 });
 
@@ -349,7 +349,9 @@ describe('r3: one file per recording, sealed before the marker clears', () => {
     >('../src/record/recorderFiles');
     const fs = createMemoryFs();
     fs.put('file:///cache/ExpoAudio/old.m4a', bytes(3));
+    fs.put('file:///cache/Audio/recording-1.m4a', bytes(3));
     fs.put('file:///cache/recording-1.m4a', bytes(3));
+    fs.put('file:///cache/OtherLib/clip.m4a', bytes(3));
     fs.put('file:///cache/other.json', bytes(1));
     fs.put('file:///doc/recordings/rec-1/0.chunk', bytes(1));
     const guard = createRecorderFileGuard(fs, 'file:///cache/', null);
@@ -358,9 +360,144 @@ describe('r3: one file per recording, sealed before the marker clears', () => {
       recorderFiles: guard,
     }).recoverOnLaunch();
     expect(fs.files.has('file:///cache/ExpoAudio/old.m4a')).toBe(false);
-    expect(fs.files.has('file:///cache/recording-1.m4a')).toBe(false);
+    expect(fs.files.has('file:///cache/Audio/recording-1.m4a')).toBe(false);
+    // Scoped to expo-audio's folders only: other cache files are not ours.
+    expect(fs.files.has('file:///cache/recording-1.m4a')).toBe(true);
+    expect(fs.files.has('file:///cache/OtherLib/clip.m4a')).toBe(true);
     expect(fs.files.has('file:///cache/other.json')).toBe(true);
     expect(fs.files.has('file:///doc/recordings/rec-1/0.chunk')).toBe(true);
     await expect(guard.protect('x')).resolves.toBe(true);
+  });
+});
+
+describe('Tester r4 mobile hardening', () => {
+  const draft = {
+    id: 'rec-1',
+    organizationId: 'org-1',
+    meetingId: 'm-1',
+    mimeType: 'audio/mp4' as const,
+    startedAt: '2026-10-31T00:00:00.000Z',
+    durationMs: 1,
+    consent: {} as never,
+  };
+
+  it('begin waits for the launch sweep, so it can never delete the live recorder file', async () => {
+    const { createRecorderFileGuard } = jest.requireActual<
+      typeof import('../src/record/recorderFiles')
+    >('../src/record/recorderFiles');
+    const fs = createMemoryFs();
+    const { driver, uri } = fakeDriver({
+      prepare: () => {
+        fs.put(uri, bytes(2));
+        return Promise.resolve();
+      },
+    });
+    const real = createRecorderFileGuard(fs, 'file:///cache/', null);
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    const guard = {
+      protect: (u: string) => real.protect(u),
+      sweep: async (k?: readonly string[]) => (await gate, real.sweep(k)),
+    };
+    const cap = createNativeCapture(driver, createFileChunkStore(fs, testCipher), null, {
+      recorderFiles: guard,
+    });
+    const rec = cap.recoverOnLaunch();
+    const started = cap.begin('rec-1');
+    await Promise.resolve();
+    expect(driver.calls).not.toContain('prepare');
+    release();
+    await rec;
+    await started;
+    expect(fs.files.has(uri)).toBe(true);
+    expect(cap.recoverOnLaunch()).toBe(rec);
+  });
+
+  it('a kill mid-seal keeps the recording: launch resumes sealing and enqueues it', async () => {
+    const fs = createMemoryFs();
+    const { driver, uri } = fakeDriver();
+    const cap = createNativeCapture(driver, createFileChunkStore(fs, testCipher, 4));
+    await cap.begin('rec-1');
+    fs.put(uri, bytes(10));
+    const read = fs.readAsStringAsync.bind(fs);
+    fs.readAsStringAsync = (u, o) =>
+      u === uri && o.position === 4 ? Promise.reject(new Error('killed')) : read(u, o);
+    await expect(cap.capture('rec-1', 1, draft)).rejects.toThrow('killed');
+    expect(fs.files.has(uri)).toBe(true);
+    fs.readAsStringAsync = read;
+    const { driver: fresh } = fakeDriver({ currentUri: () => null });
+    const store = createFileChunkStore(fs, testCipher, 4);
+    const enqueue = jest.fn(() => Promise.resolve());
+    await createNativeCapture(fresh, store).recoverOnLaunch(enqueue);
+    expect(enqueue).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'rec-1', meetingId: 'm-1' }),
+    );
+    expect((enqueue.mock.calls[0] as unknown as [{ chunks: unknown[] }])[0].chunks).toHaveLength(3);
+    expect(fs.files.has(uri)).toBe(false);
+    await expect(store.getMarker()).resolves.toBeNull();
+    expect(fresh.calls).not.toContain('record');
+  });
+
+  it('without a draft the resealed recording is held (encrypted), not deleted as an orphan', async () => {
+    const { reconcileOrphans } = jest.requireActual<typeof import('../src/upload/uploadScheduler')>(
+      '../src/upload/uploadScheduler',
+    );
+    const fs = createMemoryFs();
+    const store = createFileChunkStore(fs, testCipher, 4);
+    fs.put('file:///cache/Audio/r.m4a', bytes(5));
+    await store.setMarker({
+      uri: 'file:///cache/Audio/r.m4a',
+      phase: 'sealing',
+      recordingId: 'rec-9',
+    });
+    const { driver } = fakeDriver({ currentUri: () => null });
+    await createNativeCapture(driver, store).recoverOnLaunch();
+    await expect(store.held()).resolves.toEqual(['rec-9']);
+    await reconcileOrphans({ items: () => Promise.resolve([]) }, store);
+    await expect(store.exists('rec-9')).resolves.toBe(true);
+  });
+
+  it('gives up after repeated failed resumes and deletes the plaintext', async () => {
+    const fs = createMemoryFs();
+    const store = createFileChunkStore(fs, testCipher, 4);
+    fs.put('file:///cache/Audio/r.m4a', bytes(5));
+    await store.setMarker({
+      uri: 'file:///cache/Audio/r.m4a',
+      phase: 'sealing',
+      recordingId: 'rec-8',
+      attempts: 3,
+    });
+    const { driver } = fakeDriver({ currentUri: () => null });
+    await createNativeCapture(driver, store).recoverOnLaunch(() => Promise.resolve());
+    expect(fs.files.has('file:///cache/Audio/r.m4a')).toBe(false);
+    await expect(store.getMarker()).resolves.toBeNull();
+  });
+
+  it('uses the native file sealer when the cipher provides one', async () => {
+    const fs = createMemoryFs();
+    fs.put('file:///cache/Audio/a.m4a', bytes(6));
+    const sealFile = jest.fn(() => Promise.resolve([{ seq: 0, sizeBytes: 6, sha256: 'x' }]));
+    const store = createFileChunkStore(fs, { ...testCipher, sealFile }, 4);
+    await expect(store.ingest('rec-1', 'file:///cache/Audio/a.m4a')).resolves.toHaveLength(1);
+    expect(sealFile).toHaveBeenCalledWith(
+      'file:///cache/Audio/a.m4a',
+      'file:///doc/recordings/rec-1/',
+      4,
+    );
+    expect(fs.files.has('file:///cache/Audio/a.m4a')).toBe(false);
+    await expect(store.manifest('rec-1')).resolves.toHaveLength(1);
+  });
+
+  it('reads the bare-uri marker written by older builds as still recording', async () => {
+    const fs = createMemoryFs();
+    fs.put(
+      'file:///doc/recordings/in-progress.uri',
+      new TextEncoder().encode('file:///cache/Audio/o.m4a'),
+    );
+    const store = createFileChunkStore(fs, testCipher);
+    await expect(store.getMarker()).resolves.toEqual({
+      uri: 'file:///cache/Audio/o.m4a',
+      phase: 'recording',
+    });
   });
 });

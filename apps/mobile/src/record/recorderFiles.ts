@@ -3,8 +3,12 @@ import type { RecorderFileGuard } from './nativeCapture';
 
 /** Extensions expo-audio's recorder writes (m4a on both platforms; others from older builds/presets). */
 const RECORDER_EXT = /\.(m4a|aac|3gp|caf|wav|amr|webm|ts)$/i;
-/** Our own encrypted store lives under documentDirectory, never in the cache, so the sweep can't touch it. */
-const MAX_DEPTH = 2;
+/**
+ * Only expo-audio's own output folders are swept (Android `cacheDir/Audio`, iOS `Caches/ExpoAudio`), never the
+ * whole cache: other libraries' files are not ours to delete. Our encrypted store lives under documentDirectory.
+ */
+export const RECORDER_DIRS = ['Audio', 'ExpoAudio'] as const;
+const MAX_DEPTH = 1;
 
 /**
  * Recorder output guard (see `RecorderFileGuard`). `protect` is the platform hook (iOS backup exclusion + file
@@ -16,7 +20,7 @@ export function createRecorderFileGuard(
   cacheDirectory: string | null,
   protect: ((uri: string) => Promise<boolean>) | null,
 ): RecorderFileGuard {
-  const scan = async (dir: string, depth: number): Promise<number> => {
+  const scan = async (dir: string, depth: number, keep: ReadonlySet<string>): Promise<number> => {
     let names: string[];
     try {
       names = await fs.readDirectoryAsync(dir);
@@ -26,13 +30,14 @@ export function createRecorderFileGuard(
     let removed = 0;
     for (const name of names) {
       const uri = `${dir.endsWith('/') ? dir : `${dir}/`}${name}`;
+      if (keep.has(uri)) continue;
       if (RECORDER_EXT.test(name)) {
         await fs.deleteAsync(uri, { idempotent: true }).then(
           () => (removed += 1),
           () => undefined,
         );
       } else if (depth < MAX_DEPTH && !name.includes('.')) {
-        removed += await scan(uri, depth + 1);
+        removed += await scan(uri, depth + 1, keep);
       }
     }
     return removed;
@@ -46,6 +51,13 @@ export function createRecorderFileGuard(
         return false; // fail closed
       }
     },
-    sweep: () => (cacheDirectory ? scan(cacheDirectory, 0) : Promise.resolve(0)),
+    async sweep(keep = []) {
+      if (!cacheDirectory) return 0;
+      const base = cacheDirectory.endsWith('/') ? cacheDirectory : `${cacheDirectory}/`;
+      const keepSet = new Set(keep);
+      let removed = 0;
+      for (const d of RECORDER_DIRS) removed += await scan(`${base}${d}`, 0, keepSet);
+      return removed;
+    },
   };
 }

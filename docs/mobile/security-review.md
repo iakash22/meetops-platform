@@ -40,3 +40,18 @@ remux of multi-part uploads. Tracked as a follow-up; not shipped here.
 2. Device E2E (`apps/mobile/e2e/`, Maestro) on a physical iPhone and an Android 14 device.
 3. Security sign-off on this document.
 4. The owner picks the real bundle id / package (still `com.example.meetops`) and the Expo/RN upgrade decision.
+
+## Tester r4 follow-ups (fix/mobile-recorder-hardening)
+
+1. Start-failure race: `stop()` now also cancels a still-pending start; the service removes its notification on
+   arrival and in `onDestroy`.
+2. Launch recovery is memoized and `begin` awaits it; the sweep covers only `cache/Audio` and `cache/ExpoAudio`
+   and never touches a file whose sealing is pending.
+3. R5 plaintext while recording: **still residual.** Needs the contract/server decision above (allow `audio/aac`
+   - ADTS segments, or server-side remux). This branch only shortens the post-Stop window (native sealing).
+4. Sealing runs natively (`ChunkCrypto.sealFile`, off the JS thread), atomic per chunk with a resume journal. The
+   marker moves to phase `sealing` at Stop; a kill or failure resumes at the next launch (max 3 attempts) and
+   enqueues via the draft, or holds the sealed recording (encrypted) when no draft was supplied.
+5. Notification Stop / swipe-away are native-driven: the notification goes at once and, if JS doesn't end
+   capture within 3 s (or has no listener), the process is ended so the mic closes; the unfinalized file is
+   discarded at launch. Open is omitted instead of falling back to an empty Intent.

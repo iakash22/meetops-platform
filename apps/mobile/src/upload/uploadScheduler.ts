@@ -7,9 +7,11 @@ import type { UploadQueueEngine } from './uploadQueueEngine';
  */
 export async function reconcileOrphans(
   engine: Pick<UploadQueueEngine, 'items'>,
-  store: Pick<FileChunkStore, 'list' | 'remove'>,
+  store: Pick<FileChunkStore, 'list' | 'remove'> & Partial<Pick<FileChunkStore, 'held'>>,
 ): Promise<string[]> {
-  const known = new Set((await engine.items()).map((i) => i.id));
+  // Held = sealed by crash recovery without a draft: kept encrypted (not an orphan) until enqueued or wiped.
+  const held = (await store.held?.().catch(() => [])) ?? [];
+  const known = new Set([...(await engine.items()).map((i) => i.id), ...held]);
   const orphans = (await store.list()).filter((id) => !known.has(id));
   for (const id of orphans) await store.remove(id);
   return orphans;

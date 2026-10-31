@@ -104,6 +104,8 @@ const RETENTION_OWNER_MIGRATION = '20261028040000_geoip_retention_owner_assert';
 const CALENDAR_CONNECTIONS_MIGRATION = '20261031000000_calendar_connections';
 /** Phase 7 meeting search: FTS expression GIN indexes only. */
 const MEETING_SEARCH_MIGRATION = '20261031010000_meeting_search_fts';
+/** Phase 7 calendar background sync (calendar_events + sync cursor + due-for-sync definer function). */
+const CALENDAR_EVENTS_MIGRATION = '20261031020000_calendar_events';
 /** MeetingSource gains 'mobile' (additive ADD VALUE). */
 const MEETING_SOURCE_MOBILE_MIGRATION = '20261031120000_meeting_source_mobile';
 const LATEST_MIGRATION = MEETING_SOURCE_MOBILE_MIGRATION;
@@ -120,7 +122,12 @@ const calendarSql = readFileSync(
   resolve(migrationsDir, CALENDAR_CONNECTIONS_MIGRATION, 'migration.sql'),
   'utf8',
 );
-const adr010Sql = teamsSql + authTokensSql + integrationsSql + notificationsSql + calendarSql;
+const calendarEventsSql = readFileSync(
+  resolve(migrationsDir, CALENDAR_EVENTS_MIGRATION, 'migration.sql'),
+  'utf8',
+);
+const adr010Sql =
+  teamsSql + authTokensSql + integrationsSql + notificationsSql + calendarSql + calendarEventsSql;
 /** Phase 3 per-recording transcript revision migration. */
 const TRANSCRIPT_REVISION_MIGRATION_DIR = '20261026200000_transcript_recording_revision';
 const consentSql = readFileSync(resolve(migrationsDir, CONSENT_MIGRATION, 'migration.sql'), 'utf8');
@@ -160,6 +167,7 @@ const ADR010_ONLY_TABLES: readonly string[] = [
   'integration_connections',
   ...NOTIFICATION_TABLES,
   'calendar_connections',
+  'calendar_events',
 ];
 /** DB-3: append-only tenant tables with their own SELECT/INSERT policies (ADR-010 setting) in consentSql. */
 const CONSENT_TABLES: readonly string[] = ['consent_attestations'];
@@ -685,7 +693,7 @@ describe('schema conventions', () => {
   });
 
   it('every model uses a uuid primary key', () => {
-    expect(models).toHaveLength(41);
+    expect(models).toHaveLength(42);
     for (const m of models.filter((x) => !ORGANIZATION_KEYED.includes(x.table)))
       expect(m.body, m.name).toMatch(/^\s+id\s+String\s+@id @default\(uuid\(\)\) @db\.Uuid$/m);
   });
@@ -1513,13 +1521,14 @@ describe('integration external-account routing (20261028020000)', () => {
       .map((x) => x.name)
       .sort();
     expect(dirs.at(-1)).toBe(LATEST_MIGRATION);
-    expect(dirs.at(-2)).toBe(MEETING_SEARCH_MIGRATION);
-    expect(dirs.at(-3)).toBe(CALENDAR_CONNECTIONS_MIGRATION);
-    expect(dirs.at(-4)).toBe(RETENTION_OWNER_MIGRATION);
-    expect(dirs.at(-5)).toBe(RELAY_REVOKE_ALL_KINDS_MIGRATION);
-    expect(dirs.at(-6)).toBe(EXTERNAL_ACCOUNT_ROUTING_MIGRATION);
-    expect(dirs.at(-7)).toBe(SESSION_AUDIT_GEOIP_MIGRATION);
-    expect(dirs.at(-8)).toBe(RELAY_BY_TYPE_MIGRATION);
+    expect(dirs.at(-2)).toBe(CALENDAR_EVENTS_MIGRATION);
+    expect(dirs.at(-3)).toBe(MEETING_SEARCH_MIGRATION);
+    expect(dirs.at(-4)).toBe(CALENDAR_CONNECTIONS_MIGRATION);
+    expect(dirs.at(-5)).toBe(RETENTION_OWNER_MIGRATION);
+    expect(dirs.at(-6)).toBe(RELAY_REVOKE_ALL_KINDS_MIGRATION);
+    expect(dirs.at(-7)).toBe(EXTERNAL_ACCOUNT_ROUTING_MIGRATION);
+    expect(dirs.at(-8)).toBe(SESSION_AUDIT_GEOIP_MIGRATION);
+    expect(dirs.at(-9)).toBe(RELAY_BY_TYPE_MIGRATION);
   });
   const sql = readFileSync(
     resolve(migrationsDir, EXTERNAL_ACCOUNT_ROUTING_MIGRATION, 'migration.sql'),
@@ -1551,8 +1560,8 @@ describe('ADR-013 notifications tables (static)', () => {
       .filter((x) => x.isDirectory())
       .map((x) => x.name)
       .sort();
-    expect(dirs.at(-8)).toBe(RELAY_BY_TYPE_MIGRATION);
-    expect(dirs.at(-9)).toBe(NOTIFICATIONS_MIGRATION);
+    expect(dirs.at(-9)).toBe(RELAY_BY_TYPE_MIGRATION);
+    expect(dirs.at(-10)).toBe(NOTIFICATIONS_MIGRATION);
     expect(statements).not.toMatch(
       /\bDROP\b|RENAME|ALTER COLUMN|NO FORCE|DISABLE ROW LEVEL SECURITY/i,
     );
@@ -1624,9 +1633,10 @@ describe('IP retention owner re-assert (20261028040000)', () => {
       .map((x) => x.name)
       .sort();
     expect(dirs.at(-1)).toBe(LATEST_MIGRATION);
-    expect(dirs.at(-2)).toBe(MEETING_SEARCH_MIGRATION);
-    expect(dirs.at(-3)).toBe(CALENDAR_CONNECTIONS_MIGRATION);
-    expect(dirs.at(-4)).toBe(RETENTION_OWNER_MIGRATION);
+    expect(dirs.at(-2)).toBe(CALENDAR_EVENTS_MIGRATION);
+    expect(dirs.at(-3)).toBe(MEETING_SEARCH_MIGRATION);
+    expect(dirs.at(-4)).toBe(CALENDAR_CONNECTIONS_MIGRATION);
+    expect(dirs.at(-5)).toBe(RETENTION_OWNER_MIGRATION);
     expect(dirs.indexOf(RETENTION_OWNER_MIGRATION)).toBeGreaterThan(
       dirs.indexOf(SESSION_AUDIT_GEOIP_MIGRATION),
     );
@@ -1682,5 +1692,84 @@ describe('Phase 7 meeting search FTS indexes (static)', () => {
         /^CREATE INDEX "\w+_search_fts_idx" ON "\w+"\s+USING GIN \(to_tsvector\('english'::regconfig, /,
       );
     expect(statements).not.toMatch(/POLICY|GRANT|REVOKE|ROW LEVEL SECURITY|ALTER TABLE|DROP/i);
+  });
+});
+
+describe('Phase 7 calendar_events + sync cursor (static)', () => {
+  const statements = calendarEventsSql.replace(/--.*$/gm, '');
+  const model = models.find((m) => m.name === 'CalendarEvent')?.body ?? '';
+
+  it('is additive only and forces RLS with an ADR-010 tenant policy; the app role cannot DELETE', () => {
+    expect(statements).not.toMatch(
+      /\bDROP (TABLE|COLUMN|FUNCTION)\b|RENAME|ALTER COLUMN|NO FORCE|DISABLE ROW LEVEL SECURITY/i,
+    );
+    expect(TENANT_TABLES).toContain('calendar_events');
+    expect(statements).toContain('ALTER TABLE "calendar_events" FORCE ROW LEVEL SECURITY;');
+    expect(statements).toContain('CREATE POLICY tenant_isolation ON "calendar_events"');
+    expect(statements).not.toContain('app.current_org_id');
+    expect(statements).toContain(
+      'REVOKE DELETE, TRUNCATE ON TABLE "calendar_events" FROM meetops_app;',
+    );
+    expect(statements).toContain(
+      'GRANT SELECT, INSERT, UPDATE ON TABLE "calendar_events" TO meetops_app;',
+    );
+    expect(statements).toContain("RAISE EXCEPTION 'RLS enabled but not forced on: %'");
+  });
+
+  it('ties events to their connection through a composite tenant FK and https-only links', () => {
+    expect(statements).toContain(
+      'FOREIGN KEY ("org_id", "connection_id") REFERENCES "calendar_connections"("org_id", "id")',
+    );
+    expect(statements).toMatch(
+      /"calendar_events_conference_url_check" CHECK \("conference_url" IS NULL OR "conference_url" ~ '\^https:\/\/'\)/,
+    );
+    expect(statements).toMatch(
+      /"calendar_events_status_check" CHECK \("status" IN \('confirmed', 'tentative', 'cancelled'\)\)/,
+    );
+    expect(model).toContain('@@unique([organizationId, connectionId, providerEventId])');
+  });
+
+  it('routes the sweep through an identifiers-only SECURITY DEFINER function and a SELECT-only migrator policy', () => {
+    expect(statements).toMatch(
+      /CREATE FUNCTION calendar_connections_due_for_sync\(p_now timestamptz, p_limit integer\)\s+RETURNS TABLE \(org_id uuid, id uuid, user_id uuid, provider text\)/,
+    );
+    expect(statements).toMatch(/SECURITY DEFINER\s+SET search_path = public, pg_temp/);
+    const body = /AS \$\$([\s\S]*?)\$\$;/.exec(statements)?.[1] ?? '';
+    expect(body).not.toMatch(/_enc|display_name|\*/);
+    expect(body).toContain("c.status = 'active'");
+    expect(statements).toMatch(
+      /CREATE POLICY definer_calendar_sync_select ON "calendar_connections"\s+FOR SELECT\s+TO meetops_migrator\s+USING \(status = 'active'\);/,
+    );
+    expect(statements).toContain(
+      'REVOKE ALL ON FUNCTION calendar_connections_due_for_sync(timestamptz, integer) FROM PUBLIC;',
+    );
+    expect(statements).toContain(
+      'GRANT EXECUTE ON FUNCTION calendar_connections_due_for_sync(timestamptz, integer) TO meetops_app;',
+    );
+    expect(statements).not.toMatch(/GRANT [^;]*"calendar_connections"[^;]*TO meetops_app/);
+  });
+
+  it("#324 L-3: purges a revoked connection's events only through an org-context-checked definer function", () => {
+    const fn =
+      /CREATE FUNCTION calendar_events_purge_for_connection\(p_org uuid, p_connection uuid\)[\s\S]*?\$\$;/.exec(
+        statements,
+      )?.[0] ?? '';
+    expect(fn).toMatch(/SECURITY DEFINER\s+SET search_path = public, pg_temp/);
+    expect(fn).toContain(
+      "current_setting('app.current_organization_id', true) IS DISTINCT FROM p_org::text",
+    );
+    expect(fn).toContain("c.status = 'revoked'");
+    expect(fn).toContain(
+      'DELETE FROM public.calendar_events e WHERE e.org_id = p_org AND e.connection_id = p_connection',
+    );
+    expect(statements).toContain(
+      'ALTER FUNCTION calendar_events_purge_for_connection(uuid, uuid) OWNER TO meetops_migrator;',
+    );
+    expect(statements).toContain(
+      'REVOKE ALL ON FUNCTION calendar_events_purge_for_connection(uuid, uuid) FROM PUBLIC;',
+    );
+    expect(statements).toContain(
+      'GRANT EXECUTE ON FUNCTION calendar_events_purge_for_connection(uuid, uuid) TO meetops_app;',
+    );
   });
 });

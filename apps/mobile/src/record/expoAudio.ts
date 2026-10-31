@@ -109,6 +109,10 @@ export function createNativeChunkCipher(): ChunkCipher & { deleteKey(): Promise<
       },
       seal: (b) => native.seal(b),
       open: (b) => native.open(b),
+      // Off the JS thread and crash-safe (see modules/chunk-crypto). Older native builds: per-chunk JS path.
+      ...(native.sealFile
+        ? { sealFile: (src: string, dest: string, n: number) => native.sealFile!(src, dest, n) }
+        : {}),
       deleteKey: () => native.deleteKey(),
     };
   }

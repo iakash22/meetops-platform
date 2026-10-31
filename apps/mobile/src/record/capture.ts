@@ -1,4 +1,8 @@
 import type { ChunkSource, LocalChunk } from '../upload/types';
+import type { NewRecording } from '../upload/uploadQueueEngine';
+
+/** The queue entry minus its chunks. Given to `capture` so a kill mid-seal can still enqueue it at the next launch. */
+export type RecordingDraft = Omit<NewRecording, 'chunks'>;
 
 /**
  * Capture port used by the Record tab. The simulated capture (demo mode) and the native expo-audio capture (M4)
@@ -20,7 +24,7 @@ export interface RecordingCapture extends ChunkSource {
    */
   isLive(): boolean;
   /** Stop: ends capture immediately, then splits the file into hashed chunks for the upload queue. */
-  capture(recordingId: string, durationMs: number): Promise<LocalChunk[]>;
+  capture(recordingId: string, durationMs: number, draft?: RecordingDraft): Promise<LocalChunk[]>;
   /** Stops any capture and deletes the in-progress file. Never resumes (R7). */
   abort(): Promise<void>;
   /**
