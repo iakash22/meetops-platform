@@ -29,6 +29,7 @@ import { IntegrationNotFoundError, OAuthStateInvalidError } from './errors.js';
 import { InMemoryIntegrations } from './in-memory.repository.js';
 import { PrismaIntegrations } from './prisma.repository.js';
 import type { ConnectedProvider, IntegrationsRepository } from './ports.js';
+import { parseSharedKek } from '@meetops/integrations';
 import {
   devIntegrationsRuntime,
   integrationsRuntimeFromEnv,
@@ -58,7 +59,11 @@ export type IntegrationsModuleDeps = ModuleDeps & {
 export function selectIntegrationsRuntime(
   deps: IntegrationsModuleDeps,
   nodeEnv: string | undefined = process.env.NODE_ENV,
+  env: NodeJS.ProcessEnv = process.env,
 ): IntegrationsRuntime | undefined {
+  // Fail closed at startup: the dev-only shared KEK must never be set in production (ADR-008), even when the
+  // runtime is injected or the dev runtime is skipped. parseSharedKek names the variable only, never the value.
+  if (nodeEnv === 'production') parseSharedKek({ ...env, NODE_ENV: 'production' });
   if (deps.integrationsRuntime) return deps.integrationsRuntime;
   return isRelaxedEnv(nodeEnv) ? devIntegrationsRuntime(integrationsRuntimeFromEnv()) : undefined;
 }

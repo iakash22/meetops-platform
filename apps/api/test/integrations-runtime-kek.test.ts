@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { randomBytes } from 'node:crypto';
 import { LocalKeyProvider, TokenCipher } from '@meetops/integrations';
 import { integrationsRuntimeFromEnv } from '../src/modules/integrations/runtime.js';
+import { selectIntegrationsRuntime } from '../src/modules/integrations/index.js';
 
 const ctx = {
   organizationId: '00000000-0000-4000-8000-00000000000a',
@@ -50,5 +51,39 @@ describe('integrations runtime shared KEK (worker token refresh)', () => {
     const sealed = await cipher.encrypt('tok', ctx);
     const worker = new TokenCipher(new LocalKeyProvider({ shared: kek }, 'shared'));
     await expect(worker.decrypt(sealed, ctx)).resolves.toBe('tok');
+  });
+});
+
+describe('API startup refuses INTEGRATIONS_TOKEN_KEK under NODE_ENV=production', () => {
+  const value = randomBytes(32).toString('base64');
+  const env = { NODE_ENV: 'production', INTEGRATIONS_TOKEN_KEK: value };
+
+  it('throws instead of silently ignoring the KEK, naming only the variable', () => {
+    let msg = '';
+    try {
+      selectIntegrationsRuntime({} as never, 'production', env);
+    } catch (e) {
+      msg = (e as Error).message;
+    }
+    expect(msg).toMatch(/INTEGRATIONS_TOKEN_KEK.*production/);
+    expect(msg).not.toContain(value);
+  });
+
+  it('throws even when a runtime is injected', () => {
+    expect(() =>
+      selectIntegrationsRuntime({ integrationsRuntime: {} } as never, 'production', env),
+    ).toThrow(/INTEGRATIONS_TOKEN_KEK/);
+  });
+
+  it('starts normally in production when the KEK is unset or blank', () => {
+    expect(
+      selectIntegrationsRuntime({} as never, 'production', { NODE_ENV: 'production' }),
+    ).toBeUndefined();
+    expect(
+      selectIntegrationsRuntime({} as never, 'production', {
+        NODE_ENV: 'production',
+        INTEGRATIONS_TOKEN_KEK: ' ',
+      }),
+    ).toBeUndefined();
   });
 });

@@ -8,8 +8,9 @@ import {
   TokenCipher,
 } from '@meetops/integrations';
 import { createIntegrationConnectionRepository } from '@meetops/database';
+import { createQueue, createWorker } from '@meetops/queue';
 import {
-  startTokenRefreshScheduler,
+  runTokenRefreshSweep,
   type TokenRefreshDeps,
   type TokenRefreshLog,
   type TokenRefreshProviders,
@@ -95,15 +96,82 @@ export type TokenRefreshRegistration =
   | { registered: false; reason: 'disabled' }
   | { registered: true; close: () => Promise<void>; tick: () => Promise<void> };
 
+export const TOKEN_REFRESH_QUEUE = 'integrations-token-refresh';
+export const TOKEN_REFRESH_SCHEDULER_ID = 'integrations-token-refresh-sweep';
+
+/** Minimal BullMQ Queue surface; upsertJobScheduler is idempotent across replicas (one scheduler per id). */
+export interface TokenRefreshQueuePort {
+  upsertJobScheduler(
+    id: string,
+    repeat: { every: number },
+    template: { name: string; data?: unknown; opts?: Record<string, unknown> },
+  ): Promise<unknown>;
+  close(): Promise<void>;
+}
+export interface TokenRefreshWorkerPort {
+  close(): Promise<void>;
+}
+export interface TokenRefreshQueueFactories {
+  queue: () => TokenRefreshQueuePort;
+  worker: (process: () => Promise<unknown>) => TokenRefreshWorkerPort;
+}
+
+const bullmqFactories: TokenRefreshQueueFactories = {
+  queue: () => createQueue(TOKEN_REFRESH_QUEUE) as unknown as TokenRefreshQueuePort,
+  // concurrency 1: a replica never runs two sweeps at once.
+  worker: (process) => createWorker(TOKEN_REFRESH_QUEUE, () => process(), { concurrency: 1 }),
+};
+
+/**
+ * Single-replica token refresh (Jira rotates refresh tokens, so concurrent sweeps can invalidate each other's
+ * grant). Every replica upserts the SAME BullMQ job scheduler id, so Redis holds exactly one repeatable job and
+ * each tick is delivered to exactly one worker, instead of one setInterval per replica.
+ */
+export function startTokenRefreshQueueScheduler(
+  deps: TokenRefreshDeps,
+  opts: { intervalMs: number; factories?: TokenRefreshQueueFactories },
+): { close: () => Promise<void>; tick: () => Promise<void> } {
+  const f = opts.factories ?? bullmqFactories;
+  const sweep = () =>
+    runTokenRefreshSweep(deps).catch((err: unknown) => {
+      deps.log.warn(
+        { errName: err instanceof Error ? err.name : 'unknown' },
+        'integration token refresh sweep failed',
+      );
+      throw err;
+    });
+  const queue = f.queue();
+  const worker = f.worker(sweep);
+  void queue
+    .upsertJobScheduler(
+      TOKEN_REFRESH_SCHEDULER_ID,
+      { every: opts.intervalMs },
+      { name: 'sweep', data: {}, opts: { attempts: 1, removeOnComplete: 12, removeOnFail: 24 } },
+    )
+    .catch((err: unknown) =>
+      deps.log.warn(
+        { errName: err instanceof Error ? err.name : 'unknown' },
+        'integration token refresh schedule failed',
+      ),
+    );
+  return {
+    tick: () => sweep().then(() => undefined),
+    close: async () => {
+      await worker.close();
+      await queue.close();
+    },
+  };
+}
+
 export interface RegisterTokenRefreshOptions {
   env: TokenRefreshEnv;
   log: TokenRefreshLog;
   /** Test seam; defaults to the Prisma repository + env providers. */
   buildDeps?: (env: TokenRefreshEnv & { kek: Buffer }) => Omit<TokenRefreshDeps, 'log'>;
-  start?: typeof startTokenRefreshScheduler;
+  start?: typeof startTokenRefreshQueueScheduler;
 }
 
-/** Integrations token-refresh job for apps/worker main(). Run on ONE replica (Jira rotates refresh tokens). */
+/** Integrations token-refresh job for apps/worker main(); single-replica via a BullMQ job scheduler. */
 export function registerTokenRefreshJob(
   opts: RegisterTokenRefreshOptions,
 ): TokenRefreshRegistration {
@@ -117,7 +185,7 @@ export function registerTokenRefreshJob(
       }),
       providers: tokenRefreshProvidersFromEnv(),
     } satisfies Omit<TokenRefreshDeps, 'log'>);
-  const scheduler = (opts.start ?? startTokenRefreshScheduler)(
+  const scheduler = (opts.start ?? startTokenRefreshQueueScheduler)(
     { ...deps, log: opts.log },
     { intervalMs: env.intervalMs },
   );
