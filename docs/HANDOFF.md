@@ -48,12 +48,18 @@ Merged 31 Oct (#305–#317): extension real meeting API + held recordings (#305,
 
 ## 6. Next tasks (priority order)
 
-1. **Native mobile** (blocks store submission): Android foreground service, iOS Live Activity, Android Keystore encryption, iOS backup exclusion.
+1. **Native mobile** (blocks store submission). Status 31 Oct:
+   - Android microphone foreground service: **#318** (Kotlin service + module; the background pause lifts only when the service and its notification are confirmed).
+   - Encryption at rest: **#320** (Android Keystore + iOS Keychain/CryptoKit AES-256-GCM, fail closed, legacy plaintext re-seal).
+   - iOS backup exclusion + file protection: **#321** (Swift, fail closed).
+   - iOS Live Activity / Dynamic Island: **not started**.
+   - **None of the native code has been compiled** (the box has no Android SDK or Xcode). Each PR has a device-build checklist. `#318`, `#320` and `#321` each edit `src/services.ts`, so merge them one at a time and re-run mobile jest.
+   - Still open on Akash: the real bundle id (still `com.example.meetops`), the Expo/RN upgrade decision, and EAS credentials.
 2. **P7**: calendar background sync job, Outlook adapter, linking calendar events to meetings, pgvector semantic search.
 3. **#313 follow-ups**: prettier on `github-app.e2e.test.ts`, segment-only E2E name matching, env PEM opt-in, check the selected repos.
 4. **Extension Info items**: Start fails open; unheld pending eviction; 8 MB vs 64 MB chunk size mismatch.
 5. **Desktop**: migrate old chunk folders; `chunk_put` sends JSON arrays (switch to binary).
-6. **Mobile Lows**: consent meeting id should come from the server; a failed delete is ignored on wipe.
+6. ~~**Mobile Lows**~~: done in #322 (server meeting id via `meetings/resolve` with `source: 'upload'`; wipe retries and surfaces failed deletes). Follow-up for Arch: a `mobile` `MeetingSource`.
 
 ## 7. How to resume (checklist)
 

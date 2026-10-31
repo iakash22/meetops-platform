@@ -57,6 +57,10 @@ export function createNativeCapture(driver: AudioDriver, store: FileChunkStore):
         await store.setInProgress(driver.currentUri());
         driver.record();
       } catch (e) {
+        // prepare() may already have created an (empty) recorder file: release the recorder and delete it.
+        const leftover = driver.currentUri();
+        await driver.stop().catch(() => null);
+        if (leftover) await store.deleteFile(leftover).catch(() => undefined);
         await driver.setRecordingMode(false).catch(() => undefined);
         await store.setInProgress(null).catch(() => undefined);
         throw e;

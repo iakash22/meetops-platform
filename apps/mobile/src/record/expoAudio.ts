@@ -88,3 +88,15 @@ export function createExpoAudioDriver(): AudioDriver {
 export function expoFileSystem(): FileSystemLike {
   return require('expo-file-system') as FileSystemLike;
 }
+
+/**
+ * iOS backup exclusion + file protection for the recordings folder (modules/backup-exclusion). Null on Android.
+ * FAIL CLOSED: on iOS without the native module it reports failure, so `withBackupExclusion` blocks every write.
+ */
+export function iosBackupExclusion(): ((uri: string) => Promise<boolean>) | null {
+  if (Platform.OS !== 'ios') return null;
+  const { BackupExclusionModule } =
+    require('../../modules/backup-exclusion') as typeof import('../../modules/backup-exclusion');
+  if (!BackupExclusionModule) return () => Promise.resolve(false);
+  return (uri) => BackupExclusionModule.exclude(uri);
+}

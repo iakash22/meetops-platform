@@ -28,7 +28,9 @@ import {
   createExpoAudioDriver,
   createNativeMicPermission,
   expoFileSystem,
+  iosBackupExclusion,
 } from './record/expoAudio';
+import { withBackupExclusion } from './record/backupExclusion';
 import { createFileChunkStore } from './record/fileChunkStore';
 import { createNativeCapture } from './record/nativeCapture';
 import { createSimulatedCapture } from './record/simulatedRecorder';
@@ -88,7 +90,13 @@ const http = API_BASE_URL
   ? { baseUrl: API_BASE_URL, getAccessToken: () => sessionManager.getAccessToken() }
   : null;
 
-const fileSystem = http ? expoFileSystem() : null;
+// R4 (iOS): the recordings folder is excluded from iCloud/Finder backups before anything is written to it.
+const excludeFromBackup = http ? iosBackupExclusion() : null;
+const fileSystem = http
+  ? excludeFromBackup
+    ? withBackupExclusion(expoFileSystem(), excludeFromBackup)
+    : expoFileSystem()
+  : null;
 const chunkFiles = fileSystem ? createFileChunkStore(fileSystem) : null;
 const nativeCapture = chunkFiles ? createNativeCapture(createExpoAudioDriver(), chunkFiles) : null;
 const capture: RecordingCapture = nativeCapture ?? createSimulatedCapture();
