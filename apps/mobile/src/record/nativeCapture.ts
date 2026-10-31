@@ -1,5 +1,5 @@
 import type { LocalChunk } from '../upload/types';
-import type { RecordingCapture } from './capture';
+import type { RecordingCapture, RecordingDraft } from './capture';
 import type { FileChunkStore } from './fileChunkStore';
 
 /**
@@ -41,7 +41,7 @@ export interface ForegroundIndicator {
  */
 export interface RecorderFileGuard {
   protect(uri: string): Promise<boolean>;
-  sweep(): Promise<number>;
+  sweep(keep?: readonly string[]): Promise<number>;
 }
 
 export interface NativeCaptureOptions {
@@ -50,8 +50,14 @@ export interface NativeCaptureOptions {
 
 export interface NativeCapture extends RecordingCapture {
   readonly simulated: false;
-  /** Called once at app start: deletes recorder output left by a crash or kill. Never resumes capture. */
-  recoverOnLaunch(): Promise<void>;
+  /**
+   * Called once at app start (memoized; `begin` waits for it). A file still being recorded when the app died is
+   * deleted (unfinalized). A file whose sealing was interrupted is sealed now and enqueued via `enqueue` when the
+   * draft is known, otherwise kept encrypted as `held`. Then leftover recorder files are swept. Never resumes capture.
+   */
+  recoverOnLaunch(
+    enqueue?: (r: RecordingDraft & { chunks: LocalChunk[] }) => Promise<void>,
+  ): Promise<void>;
 }
 
 /**
@@ -68,6 +74,8 @@ export function createNativeCapture(
   const guard = options.recorderFiles ?? null;
   let active: string | null = null;
   let paused = false;
+  let recovery: Promise<void> | null = null;
+  const MAX_SEAL_ATTEMPTS = 3;
 
   const stopIndicator = () => {
     try {
@@ -106,6 +114,8 @@ export function createNativeCapture(
       }) ?? (() => undefined),
     async begin(recordingId) {
       if (active) throw new Error('Already recording.');
+      // The launch sweep must finish before a new recorder file exists, or it could delete the live file.
+      if (recovery) await recovery.catch(() => undefined);
       if (!(await driver.canRecord())) throw new Error('Microphone permission is required.');
       // R5 fail closed: the encryption self-test runs before the service starts and before the mic opens.
       await store.ready();
@@ -147,32 +157,67 @@ export function createNativeCapture(
       if (!active) return false;
       return paused || driver.isRecording();
     },
-    async capture(recordingId): Promise<LocalChunk[]> {
+    async capture(recordingId, _durationMs, draft): Promise<LocalChunk[]> {
       if (active !== recordingId) throw new Error('No active recording.');
       const uri = await end();
       if (!uri) {
         await store.setInProgress(null).catch(() => undefined);
         throw new Error('Recording file missing.');
       }
-      try {
-        // Seal first; only then clear the marker (ingest deletes the plaintext file either way).
-        return await store.ingest(recordingId, uri);
-      } finally {
-        await store.setInProgress(null).catch(() => undefined);
-      }
+      // From here a kill or failure resumes sealing at the next launch instead of deleting the recording.
+      await store
+        .setMarker({ uri, phase: 'sealing', recordingId, attempts: 0, draft })
+        .catch(() => undefined);
+      const chunks = await store.ingest(recordingId, uri);
+      await store.setMarker(null).catch(() => undefined);
+      return chunks;
     },
     async abort() {
       const uri = driver.currentUri();
       if (active) await end().catch(() => null);
       if (uri) await store.deleteFile(uri).catch(() => undefined);
-      await store.setInProgress(null).catch(() => undefined);
+      const marker = await store.getMarker().catch(() => null);
+      if (marker) {
+        await store.deleteFile(marker.uri).catch(() => undefined);
+        if (marker.recordingId) await store.remove(marker.recordingId).catch(() => undefined);
+      }
+      await store.setMarker(null).catch(() => undefined);
     },
-    async recoverOnLaunch() {
-      if (driver.isRecording()) await end().catch(() => null);
-      const uri = await store.getInProgress().catch(() => null);
-      if (uri) await store.deleteFile(uri).catch(() => undefined);
-      await store.setInProgress(null).catch(() => undefined);
-      await guard?.sweep().catch(() => 0);
+    recoverOnLaunch(enqueue) {
+      recovery ??= (async () => {
+        if (driver.isRecording()) await end().catch(() => null);
+        const marker = await store.getMarker().catch(() => null);
+        if (marker?.phase === 'sealing' && marker.recordingId) {
+          const id = marker.recordingId;
+          const attempts = (marker.attempts ?? 0) + 1;
+          try {
+            if (attempts > MAX_SEAL_ATTEMPTS) throw new Error('Gave up sealing.');
+            await store.setMarker({ ...marker, attempts });
+            const source = await store.manifest(id).catch(() => null);
+            const chunks = source ?? (await store.ingest(id, marker.uri));
+            const draft = marker.draft as RecordingDraft | undefined;
+            if (draft && enqueue) await enqueue({ ...draft, chunks });
+            else await store.setHeld([...new Set([...(await store.held()), id])]);
+            await store.deleteFile(marker.uri).catch(() => undefined);
+            await store.setMarker(null);
+          } catch {
+            if (attempts > MAX_SEAL_ATTEMPTS) {
+              await store.deleteFile(marker.uri).catch(() => undefined);
+              await store.remove(id).catch(() => undefined);
+              await store.setMarker(null).catch(() => undefined);
+            }
+            // Otherwise the marker stays (attempt counted) and the next launch retries.
+          }
+        } else if (marker) {
+          // Still recording when the app died: the file is unfinalized and unplayable. Discard (R7).
+          await store.deleteFile(marker.uri).catch(() => undefined);
+          await store.setMarker(null).catch(() => undefined);
+        }
+        // Never sweep a file whose sealing is still pending a retry.
+        const pending = await store.getMarker().catch(() => null);
+        await guard?.sweep(pending ? [pending.uri] : []).catch(() => 0);
+      })();
+      return recovery;
     },
     read: (id, seq) => store.read(id, seq),
     remove: (id) => store.remove(id),

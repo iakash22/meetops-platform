@@ -31,7 +31,11 @@ export interface FileSystemLike {
 }
 
 export interface FileChunkStore extends ChunkSource {
-  /** Splits a finished recording file into hashed chunk files, then deletes the source file. */
+  /**
+   * Splits a finished recording file into sealed, hashed chunk files, then deletes the source file. Crash-safe and
+   * resumable: the source is deleted only after every chunk is written, so a kill or a failure mid-way keeps the
+   * recording (the caller's in-progress marker says to resume at the next launch).
+   */
   ingest(recordingId: string, sourceUri: string): Promise<LocalChunk[]>;
   /** Recording ids that have files on disk. */
   list(): Promise<string[]>;
@@ -44,6 +48,27 @@ export interface FileChunkStore extends ChunkSource {
   /** Crash recovery marker: the recorder output uri of the capture in progress (null clears it). */
   setInProgress(uri: string | null): Promise<void>;
   getInProgress(): Promise<string | null>;
+  /** Full crash recovery marker (phase `recording` or `sealing`). Null clears it. */
+  setMarker(marker: CaptureMarker | null): Promise<void>;
+  getMarker(): Promise<CaptureMarker | null>;
+  /** Recording ids sealed by crash recovery that have no queue entry yet (kept, encrypted, until enqueued or wiped). */
+  held(): Promise<string[]>;
+  /** Chunks written by a completed `ingest` (null when it never finished). */
+  manifest(recordingId: string): Promise<LocalChunk[] | null>;
+  setHeld(ids: string[]): Promise<void>;
+}
+
+/**
+ * In-progress marker. `recording`: the recorder file is still open (an unfinalized m4a is unplayable, so a crash
+ * discards it). `sealing`: Stop finalized the file and sealing started; a crash resumes sealing instead of deleting.
+ * `draft` is the queue entry minus chunks (consent attestation etc.) when the caller supplied it.
+ */
+export interface CaptureMarker {
+  uri: string;
+  phase: 'recording' | 'sealing';
+  recordingId?: string;
+  attempts?: number;
+  draft?: unknown;
 }
 
 const SAFE_ID = /^[A-Za-z0-9_-]{1,64}$/;
@@ -58,6 +83,12 @@ export interface ChunkCipher {
   open(sealedBase64: string): Promise<string>;
   /** Rejects when encryption can't work (no native module, no key). Capture checks it before the mic opens. */
   ready?(): Promise<void>;
+  /**
+   * Native, off the JS thread: reads `sourceUri` in `chunkBytes` slices, seals each into `<destDir><seq>.chunk` (same
+   * MAGIC envelope) atomically (tmp + rename), and journals progress so a re-run after a kill resumes. Returns
+   * plaintext sizes and sha256. Never deletes the source.
+   */
+  sealFile?(sourceUri: string, destDir: string, chunkBytes: number): Promise<LocalChunk[]>;
 }
 
 /**
@@ -90,13 +121,17 @@ export function createFileChunkStore(
   };
   const file = (id: string, seq: number) => `${dir(id)}${seq}.chunk`;
 
-  return {
+  const store: FileChunkStore = {
     async ingest(recordingId, sourceUri) {
       const info = await fs.getInfoAsync(sourceUri);
       if (!info.exists || !info.size) throw new Error('Recording file missing.');
       await fs.makeDirectoryAsync(dir(recordingId), { intermediates: true });
-      const chunks: LocalChunk[] = [];
-      try {
+      let chunks: LocalChunk[];
+      if (cipher.sealFile) {
+        chunks = await cipher.sealFile(sourceUri, dir(recordingId), chunkBytes);
+      } else {
+        // JS fallback (tests / no native file sealer): idempotent, so a re-run simply rewrites every chunk.
+        chunks = [];
         for (let seq = 0, pos = 0; pos < info.size; seq++, pos += chunkBytes) {
           const length = Math.min(chunkBytes, info.size - pos);
           const b64 = await fs.readAsStringAsync(sourceUri, {
@@ -110,12 +145,13 @@ export function createFileChunkStore(
           });
           chunks.push({ seq, sizeBytes: bytes.byteLength, sha256: sha256Hex(bytes) });
         }
-      } catch (e) {
-        await fs.deleteAsync(dir(recordingId), { idempotent: true });
-        throw e;
-      } finally {
-        await fs.deleteAsync(sourceUri, { idempotent: true });
       }
+      // Hashes survive a kill between here and the caller clearing its marker (the plaintext is gone after this).
+      await fs.writeAsStringAsync(`${dir(recordingId)}manifest.json`, JSON.stringify(chunks), {
+        encoding: 'utf8',
+      });
+      // Only now is the plaintext redundant. On any failure above it stays for the launch resume.
+      await fs.deleteAsync(sourceUri, { idempotent: true });
       return chunks;
     },
     async read(recordingId, seq) {
@@ -161,15 +197,62 @@ export function createFileChunkStore(
     },
     deleteFile: (uri) => fs.deleteAsync(uri, { idempotent: true }),
     async setInProgress(uri) {
-      const marker = `${root()}in-progress.uri`;
-      if (uri === null) return fs.deleteAsync(marker, { idempotent: true });
-      await fs.makeDirectoryAsync(root(), { intermediates: true });
-      await fs.writeAsStringAsync(marker, uri, { encoding: 'utf8' });
+      await store.setMarker(uri === null ? null : { uri, phase: 'recording' });
     },
     async getInProgress() {
-      const marker = `${root()}in-progress.uri`;
-      if (!(await fs.getInfoAsync(marker)).exists) return null;
-      return (await fs.readAsStringAsync(marker, { encoding: 'utf8' })) || null;
+      return (await store.getMarker())?.uri ?? null;
+    },
+    async setMarker(marker) {
+      const path = `${root()}in-progress.uri`;
+      if (marker === null) return fs.deleteAsync(path, { idempotent: true });
+      await fs.makeDirectoryAsync(root(), { intermediates: true });
+      await fs.writeAsStringAsync(path, JSON.stringify(marker), { encoding: 'utf8' });
+    },
+    async getMarker() {
+      const path = `${root()}in-progress.uri`;
+      if (!(await fs.getInfoAsync(path)).exists) return null;
+      const raw = (await fs.readAsStringAsync(path, { encoding: 'utf8' })).trim();
+      if (!raw) return null;
+      try {
+        const m = JSON.parse(raw) as CaptureMarker;
+        if (m && typeof m.uri === 'string' && (m.phase === 'recording' || m.phase === 'sealing'))
+          return m;
+        return null;
+      } catch {
+        // Older builds wrote the bare uri: that was always a still-recording file.
+        return { uri: raw, phase: 'recording' };
+      }
+    },
+    async manifest(recordingId) {
+      const path = `${dir(recordingId)}manifest.json`;
+      if (!(await fs.getInfoAsync(path)).exists) return null;
+      try {
+        const c = JSON.parse(
+          await fs.readAsStringAsync(path, { encoding: 'utf8' }),
+        ) as LocalChunk[];
+        return Array.isArray(c) && c.length > 0 ? c : null;
+      } catch {
+        return null;
+      }
+    },
+    async held() {
+      const path = `${root()}held.json`;
+      if (!(await fs.getInfoAsync(path)).exists) return [];
+      try {
+        const ids = JSON.parse(await fs.readAsStringAsync(path, { encoding: 'utf8' })) as unknown;
+        return Array.isArray(ids)
+          ? ids.filter((i): i is string => typeof i === 'string' && SAFE_ID.test(i))
+          : [];
+      } catch {
+        return [];
+      }
+    },
+    async setHeld(ids) {
+      const path = `${root()}held.json`;
+      if (ids.length === 0) return fs.deleteAsync(path, { idempotent: true });
+      await fs.makeDirectoryAsync(root(), { intermediates: true });
+      await fs.writeAsStringAsync(path, JSON.stringify(ids), { encoding: 'utf8' });
     },
   };
+  return store;
 }
