@@ -50,6 +50,7 @@ export const TENANT_TABLES = [
   'notification_delivery_attempts',
   'notification_preferences',
   'push_device_tokens',
+  'calendar_connections',
 ] as const;
 export type TenantTable = (typeof TENANT_TABLES)[number];
 

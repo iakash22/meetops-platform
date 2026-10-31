@@ -100,7 +100,9 @@ const NOTIFICATION_TABLES = [
 const EXTERNAL_ACCOUNT_ROUTING_MIGRATION = '20261028020000_integration_external_account_routing';
 /** #288 L-1 remainder: re-assert migrator ownership + column grants of the IP retention tables. */
 const RETENTION_OWNER_MIGRATION = '20261028040000_geoip_retention_owner_assert';
-const LATEST_MIGRATION = RETENTION_OWNER_MIGRATION;
+/** Phase 7 calendar_connections (forced RLS, envelope-only tokens). */
+const CALENDAR_CONNECTIONS_MIGRATION = '20261031000000_calendar_connections';
+const LATEST_MIGRATION = CALENDAR_CONNECTIONS_MIGRATION;
 const reportDedupeSql = readFileSync(
   resolve(migrationsDir, REPORT_SUMMARY_DEDUPE_MIGRATION, 'migration.sql'),
   'utf8',
@@ -110,7 +112,11 @@ const integrationsSql = readFileSync(
   'utf8',
 );
 /** Migrations whose tenant policies use only the ADR-010 setting. */
-const adr010Sql = teamsSql + authTokensSql + integrationsSql + notificationsSql;
+const calendarSql = readFileSync(
+  resolve(migrationsDir, CALENDAR_CONNECTIONS_MIGRATION, 'migration.sql'),
+  'utf8',
+);
+const adr010Sql = teamsSql + authTokensSql + integrationsSql + notificationsSql + calendarSql;
 /** Phase 3 per-recording transcript revision migration. */
 const TRANSCRIPT_REVISION_MIGRATION_DIR = '20261026200000_transcript_recording_revision';
 const consentSql = readFileSync(resolve(migrationsDir, CONSENT_MIGRATION, 'migration.sql'), 'utf8');
@@ -149,6 +155,7 @@ const ADR010_ONLY_TABLES: readonly string[] = [
   'auth_refresh_tokens',
   'integration_connections',
   ...NOTIFICATION_TABLES,
+  'calendar_connections',
 ];
 /** DB-3: append-only tenant tables with their own SELECT/INSERT policies (ADR-010 setting) in consentSql. */
 const CONSENT_TABLES: readonly string[] = ['consent_attestations'];
@@ -674,7 +681,7 @@ describe('schema conventions', () => {
   });
 
   it('every model uses a uuid primary key', () => {
-    expect(models).toHaveLength(40);
+    expect(models).toHaveLength(41);
     for (const m of models.filter((x) => !ORGANIZATION_KEYED.includes(x.table)))
       expect(m.body, m.name).toMatch(/^\s+id\s+String\s+@id @default\(uuid\(\)\) @db\.Uuid$/m);
   });
@@ -1502,10 +1509,11 @@ describe('integration external-account routing (20261028020000)', () => {
       .map((x) => x.name)
       .sort();
     expect(dirs.at(-1)).toBe(LATEST_MIGRATION);
-    expect(dirs.at(-2)).toBe(RELAY_REVOKE_ALL_KINDS_MIGRATION);
-    expect(dirs.at(-3)).toBe(EXTERNAL_ACCOUNT_ROUTING_MIGRATION);
-    expect(dirs.at(-4)).toBe(SESSION_AUDIT_GEOIP_MIGRATION);
-    expect(dirs.at(-5)).toBe(RELAY_BY_TYPE_MIGRATION);
+    expect(dirs.at(-2)).toBe(RETENTION_OWNER_MIGRATION);
+    expect(dirs.at(-3)).toBe(RELAY_REVOKE_ALL_KINDS_MIGRATION);
+    expect(dirs.at(-4)).toBe(EXTERNAL_ACCOUNT_ROUTING_MIGRATION);
+    expect(dirs.at(-5)).toBe(SESSION_AUDIT_GEOIP_MIGRATION);
+    expect(dirs.at(-6)).toBe(RELAY_BY_TYPE_MIGRATION);
   });
   const sql = readFileSync(
     resolve(migrationsDir, EXTERNAL_ACCOUNT_ROUTING_MIGRATION, 'migration.sql'),
@@ -1537,8 +1545,8 @@ describe('ADR-013 notifications tables (static)', () => {
       .filter((x) => x.isDirectory())
       .map((x) => x.name)
       .sort();
-    expect(dirs.at(-5)).toBe(RELAY_BY_TYPE_MIGRATION);
-    expect(dirs.at(-6)).toBe(NOTIFICATIONS_MIGRATION);
+    expect(dirs.at(-6)).toBe(RELAY_BY_TYPE_MIGRATION);
+    expect(dirs.at(-7)).toBe(NOTIFICATIONS_MIGRATION);
     expect(statements).not.toMatch(
       /\bDROP\b|RENAME|ALTER COLUMN|NO FORCE|DISABLE ROW LEVEL SECURITY/i,
     );
@@ -1610,6 +1618,7 @@ describe('IP retention owner re-assert (20261028040000)', () => {
       .map((x) => x.name)
       .sort();
     expect(dirs.at(-1)).toBe(LATEST_MIGRATION);
+    expect(dirs.at(-2)).toBe(RETENTION_OWNER_MIGRATION);
     expect(dirs.indexOf(RETENTION_OWNER_MIGRATION)).toBeGreaterThan(
       dirs.indexOf(SESSION_AUDIT_GEOIP_MIGRATION),
     );
@@ -1622,5 +1631,28 @@ describe('IP retention owner re-assert (20261028040000)', () => {
       'GRANT SELECT (id, ip_address, created_at), UPDATE (ip_address)\n  ON TABLE "sessions", "password_resets", "audit_events" TO meetops_migrator;',
     );
     expect(sql).not.toMatch(/meetops_app|\bDROP\b|DISABLE ROW LEVEL SECURITY|NO FORCE/i);
+  });
+});
+
+describe('Phase 7 calendar_connections (static)', () => {
+  const sql = calendarSql;
+  const statements = sql.replace(/--.*$/gm, '');
+  const model = models.find((m) => m.name === 'CalendarConnection')?.body ?? '';
+
+  it('is additive, forced-RLS, envelope-only and soft-delete only', () => {
+    expect(statements).not.toMatch(
+      /\bDROP\b|RENAME|ALTER COLUMN|NO FORCE|DISABLE ROW LEVEL SECURITY/i,
+    );
+    expect(TENANT_TABLES).toContain('calendar_connections');
+    expect(sql).toContain('ALTER TABLE "calendar_connections" FORCE ROW LEVEL SECURITY;');
+    expect(sql).toContain(
+      'REVOKE DELETE, TRUNCATE ON TABLE "calendar_connections" FROM meetops_app;',
+    );
+    for (const c of ['access_token_enc', 'refresh_token_enc']) {
+      expect(sql).toContain(`"calendar_connections_${c}_check" CHECK (`);
+    }
+    expect(statements).toMatch(/"calendar_connections_revoked_wipe_check" CHECK \(/);
+    expect(model).not.toMatch(/^\s+(accessToken|refreshToken)\s/m);
+    expect(model).toContain('@@unique([organizationId, userId, provider, externalAccountId])');
   });
 });
