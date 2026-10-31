@@ -147,38 +147,3 @@ export async function runTokenRefreshSweep(deps: TokenRefreshDeps): Promise<Toke
   if (due.length) deps.log.info({ ...result }, 'integration token refresh sweep');
   return result;
 }
-
-/**
- * Interval scheduler (no overlap within a process). Run it on a single worker replica: Jira rotates refresh
- * tokens, so two concurrent sweeps could invalidate each other's grant.
- */
-export function startTokenRefreshScheduler(
-  deps: TokenRefreshDeps,
-  opts: { intervalMs?: number } = {},
-): { close: () => Promise<void>; tick: () => Promise<void> } {
-  let running: Promise<void> | null = null;
-  const tick = () => {
-    if (!running)
-      running = runTokenRefreshSweep(deps)
-        .then(() => undefined)
-        .catch((err: unknown) => {
-          deps.log.warn(
-            { errName: err instanceof Error ? err.name : 'unknown' },
-            'integration token refresh sweep failed',
-          );
-        })
-        .finally(() => {
-          running = null;
-        });
-    return running;
-  };
-  const timer = setInterval(() => void tick(), opts.intervalMs ?? 300_000);
-  timer.unref();
-  return {
-    tick,
-    close: async () => {
-      clearInterval(timer);
-      await running;
-    },
-  };
-}
