@@ -201,3 +201,29 @@ describe('Consent API', { timeout: 30_000 }, () => {
     expect(() => consentEnforcementEnabled({ CONSENT_ENFORCEMENT_ENABLED: 'maybe' })).toThrow();
   });
 });
+
+describe('in-memory consent ledger ordering', () => {
+  it('breaks a recordedAt tie deterministically: revoked first, then id desc', async () => {
+    const { InMemoryMeetingConsentRepository: Repo } =
+      await import('../src/modules/media/infrastructure/in-memory.js');
+    const repo = new Repo();
+    const at = new Date('2026-10-31T10:00:00.000Z');
+    const base = {
+      organizationId: 'o',
+      meetingId: 'm',
+      consentVersion: null,
+      method: null,
+      reason: null,
+      actorUserId: 'u',
+      occurredAt: at,
+      recordedAt: at,
+    };
+    repo.rows.push(
+      { ...base, id: 'a', eventType: 'granted' },
+      { ...base, id: 'c', eventType: 'granted' },
+      { ...base, id: 'b', eventType: 'revoked' },
+      { ...base, id: 'z', eventType: 'granted', recordedAt: new Date(at.getTime() - 1) },
+    );
+    expect((await repo.list('o', 'm', 10)).map((r) => r.id)).toEqual(['b', 'c', 'a', 'z']);
+  });
+});
