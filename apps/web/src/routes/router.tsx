@@ -21,6 +21,7 @@ import {
   useSession,
 } from '@/features/session/use-session';
 import { parseTaskSearch } from '@/features/tasks/task-search';
+import { parseSearchPageSearch } from '@/features/search/api';
 import { useApi } from '@/lib/api/context';
 import type { ApiClient } from '@/lib/api/client';
 import { queryKeys } from '@/lib/api/queries';
@@ -54,6 +55,11 @@ const meetingsModule = () => import('@/features/meetings/meetings-pages');
 const MeetingsPage = lazyRouteComponent(meetingsModule, 'MeetingsPage');
 const MeetingDetailPage = lazyRouteComponent(meetingsModule, 'MeetingDetailPage');
 const TasksPage = lazyRouteComponent(() => import('@/features/tasks/tasks-page'), 'TasksPage');
+const CalendarPage = lazyRouteComponent(
+  () => import('@/features/calendar/calendar-page'),
+  'CalendarPage',
+);
+const SearchPage = lazyRouteComponent(() => import('@/features/search/search-page'), 'SearchPage');
 const DashboardPage = lazyRouteComponent(() => import('@/pages/app-pages'), 'DashboardPage');
 const NotificationsPage = lazyRouteComponent(
   () => import('@/features/notifications/notifications-page'),
@@ -244,6 +250,26 @@ const tasksRoute = createRoute({
     );
   },
 });
+const calendarRoute = createRoute({
+  getParentRoute: () => appLayout,
+  path: '/calendar',
+  component: () => <CalendarPage />,
+});
+const searchRoute = createRoute({
+  getParentRoute: () => appLayout,
+  path: '/search',
+  validateSearch: parseSearchPageSearch,
+  component: function SearchRoute() {
+    const search = searchRoute.useSearch();
+    const navigate = searchRoute.useNavigate();
+    return (
+      <SearchPage
+        search={search}
+        onSearchChange={(next) => void navigate({ search: next, replace: true })}
+      />
+    );
+  },
+});
 const notificationsRoute = createRoute({
   getParentRoute: () => appLayout,
   path: '/notifications',
@@ -308,6 +334,8 @@ export const routeTree = rootRoute.addChildren([
     meetingsRoute,
     meetingDetailRoute,
     tasksRoute,
+    calendarRoute,
+    searchRoute,
     projectsRoute,
     notificationsRoute,
     settingsRoute,

@@ -3,16 +3,16 @@ import { Id, IsoDateTime } from '../common.js';
 
 const strict = { additionalProperties: false } as const;
 
-/** Phase 7: org-scoped full-text search (Postgres FTS, forced RLS). */
-export const SEARCH_PATHS = { search: '/orgs/:organizationId/search' } as const;
+export {
+  SEARCH_HIGHLIGHT_START,
+  SEARCH_HIGHLIGHT_STOP,
+  SEARCH_PATHS,
+  SEARCH_RESULT_KINDS,
+} from '../constants.js';
+import { SEARCH_RESULT_KINDS } from '../constants.js';
 
-export const SEARCH_RESULT_KINDS = ['meeting', 'transcript', 'summary', 'task'] as const;
 export const SearchResultKind = Type.Union(SEARCH_RESULT_KINDS.map((k) => Type.Literal(k)));
 export type SearchResultKind = (typeof SEARCH_RESULT_KINDS)[number];
-
-/** Highlight markers in `snippet`: text between them matched the query. Render as text, never as HTML. */
-export const SEARCH_HIGHLIGHT_START = '\u0002';
-export const SEARCH_HIGHLIGHT_STOP = '\u0003';
 
 export const SearchQuery = Type.Object(
   {

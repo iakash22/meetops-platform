@@ -5,17 +5,9 @@ import { RETURN_TO_PATTERN } from './integrations.js';
 
 const strict = { additionalProperties: false } as const;
 
-/** Phase 7: calendar routes. Connections are per user within an organization. */
-export const CALENDAR_PATHS = {
-  providers: '/orgs/:organizationId/calendar/providers',
-  connect: '/orgs/:organizationId/calendar/connect',
-  callback: '/calendar/:provider/callback',
-  connection: '/orgs/:organizationId/calendar/connections/:connectionId',
-  events: '/orgs/:organizationId/calendar/events',
-} as const;
+export { CALENDAR_PATHS, CALENDAR_PROVIDERS } from '../constants.js';
+import { CALENDAR_PROVIDERS } from '../constants.js';
 
-/** Server-known providers only; clients never supply an endpoint or base URL. */
-export const CALENDAR_PROVIDERS = ['google'] as const;
 export const CalendarProviderId = Type.Union(CALENDAR_PROVIDERS.map((p) => Type.Literal(p)));
 export type CalendarProviderId = (typeof CALENDAR_PROVIDERS)[number];
 
