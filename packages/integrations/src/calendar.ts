@@ -239,12 +239,15 @@ export class GoogleCalendarProvider implements CalendarProvider {
     if (typeof input.code !== 'string' || !CODE_RE.test(input.code))
       throw new CalendarProviderError('invalid_code');
     if (!rec.codeVerifier) throw new CalendarProviderError('missing_verifier');
-    const tokens = await this.tokenRequest({
-      grant_type: 'authorization_code',
-      code: input.code,
-      redirect_uri: rec.redirectUri,
-      code_verifier: rec.codeVerifier,
-    });
+    const tokens = await this.tokenRequest(
+      {
+        grant_type: 'authorization_code',
+        code: input.code,
+        redirect_uri: rec.redirectUri,
+        code_verifier: rec.codeVerifier,
+      },
+      'connect',
+    );
     if (!tokens.refreshToken) throw new CalendarProviderError('missing_refresh_token');
     const account = await this.primaryCalendar(tokens.accessToken);
     return { ...tokens, account };
@@ -252,7 +255,10 @@ export class GoogleCalendarProvider implements CalendarProvider {
 
   async refresh(refreshToken: string): Promise<CalendarTokens> {
     if (!refreshToken) throw new CalendarProviderError('missing_refresh_token');
-    const t = await this.tokenRequest({ grant_type: 'refresh_token', refresh_token: refreshToken });
+    const t = await this.tokenRequest(
+      { grant_type: 'refresh_token', refresh_token: refreshToken },
+      'refresh',
+    );
     // Google normally keeps the refresh token; keep the old one when none is returned.
     return t.refreshToken ? t : { ...t, refreshToken };
   }
@@ -339,7 +345,10 @@ export class GoogleCalendarProvider implements CalendarProvider {
     };
   }
 
-  private async tokenRequest(params: Record<string, string>): Promise<CalendarTokens> {
+  private async tokenRequest(
+    params: Record<string, string>,
+    phase: 'connect' | 'refresh',
+  ): Promise<CalendarTokens> {
     const body = await this.call(GOOGLE_TOKEN_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' },
@@ -360,14 +369,23 @@ export class GoogleCalendarProvider implements CalendarProvider {
       throw new CalendarProviderError('invalid_token_response');
     if (typeof b.token_type === 'string' && b.token_type.toLowerCase() !== 'bearer')
       throw new CalendarProviderError('invalid_token_type');
-    const scopes = (typeof b.scope === 'string' ? b.scope.split(/\s+/) : []).filter(Boolean);
+    // RFC 6749 s5.1: on refresh an omitted `scope` means "same as originally granted" (already checked at connect).
+    const scopeOmitted = phase === 'refresh' && typeof b.scope !== 'string';
+    const scopes = scopeOmitted
+      ? [...GOOGLE_CALENDAR_SCOPES]
+      : (typeof b.scope === 'string' ? b.scope.split(/\s+/) : []).filter(Boolean);
     try {
       assertReadOnlyCalendarScopes(scopes);
     } catch (err) {
-      // Never keep (or leave live at Google) a grant we refuse: revoke it, best effort, then reject.
-      const grant =
-        typeof b.refresh_token === 'string' && b.refresh_token ? b.refresh_token : b.access_token;
-      await this.revoke(grant).catch(() => undefined);
+      // Never keep (or leave live at Google) a grant we refuse. Revoke (best effort) on any refusal during the
+      // initial connect, but on refresh only for excess scope: a narrower/odd refresh response must not kill the
+      // user's existing read-only grant (#317 L-1).
+      const excess = err instanceof CalendarProviderError && err.code === 'excess_scope';
+      if (phase === 'connect' || excess) {
+        const grant =
+          typeof b.refresh_token === 'string' && b.refresh_token ? b.refresh_token : b.access_token;
+        await this.revoke(grant).catch(() => undefined);
+      }
       throw err;
     }
     const expiresIn = typeof b.expires_in === 'number' && b.expires_in > 0 ? b.expires_in : 3600;

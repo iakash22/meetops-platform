@@ -3,7 +3,7 @@ import type { QueueItem } from '../upload/types';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Animated, AppState, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 
-import { newLocalMeetingId } from '../consent/consentApi';
+import { createDemoMeetingResolver } from '../consent/meetingResolver';
 import { ConsentSheet, type ConsentStep } from '../consent/ConsentSheet';
 import { useRepositories } from '../data/RepositoriesProvider';
 import type { UploadQueueStatus } from '../data/uploadQueue';
@@ -35,7 +35,9 @@ const INTERRUPTION_POLL_MS = 1000;
 export function RecordScreen() {
   const recorder = useRecorderShell();
   const reducedMotion = useReducedMotion();
-  const { uploadQueue, consent, micPermission, recordings } = useRepositories();
+  const { uploadQueue, consent, micPermission, recordings, meetingResolver } = useRepositories();
+  const resolverRef = useRef(meetingResolver ?? createDemoMeetingResolver());
+  resolverRef.current = meetingResolver ?? resolverRef.current;
   const [items, setItems] = useState<QueueItem[]>([]);
   const [saved, setSaved] = useState(false);
   const meetingIdRef = useRef<string | null>(null);
@@ -204,8 +206,10 @@ export function RecordScreen() {
         setConsentStep(null);
         await micPermission.openSettings();
       } else {
-        // CONTRACTS DEPENDENCY: a real recording needs a server meeting id (meeting picker, list-meetings route).
-        const meetingId = newLocalMeetingId();
+        // Server meeting id first: no id, no notice, no recording (fail closed).
+        const orgId = recordings?.organizationId() ?? null;
+        if (recordings && !orgId) throw new Error('No active organization.');
+        const meetingId = await resolverRef.current.resolve(orgId ?? '', new Date().toISOString());
         meetingIdRef.current = meetingId;
         attestationRef.current = await consent.confirmParticipantNotice({
           meetingId,
