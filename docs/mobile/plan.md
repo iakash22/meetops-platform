@@ -82,6 +82,7 @@ Each requirement gets automated tests (unit + device E2E) in M3–M6 and a sign-
 
 ### M3/M4 status (native recorder)
 
+- **iOS Live Activity / Dynamic Island:** implemented (`modules/live-activity`, `targets/RecordingLiveActivity`, `plugins/withLiveActivity.js`) and driven by the recorder. It has never been compiled or run on a device; see `docs/mobile/live-activity.md` for what is unverified.
 - `src/record/nativeCapture.ts`: expo-audio (~0.3.5, SDK 52) capture behind the `RecordingCapture` port (`src/record/capture.ts`), shared with the simulated capture. `begin` runs only from the participant-notice confirmation and refuses without permission; Stop ends capture, then `src/record/fileChunkStore.ts` splits the m4a into 4 MiB sha256-hashed chunk files in the app sandbox (`documentDirectory/recordings/<id>/`) and deletes the recorder output.
 - `src/record/expoAudio.ts`: native mic permission (`createNativeMicPermission`, Android 13+ also `POST_NOTIFICATIONS`; a denial goes to Settings, never re-prompts), the expo-audio driver (audio session for recording only while a capture is active), and expo-file-system bindings. Loaded lazily; used only in live mode (`EXPO_PUBLIC_API_URL`), together with the HTTP recording-session upload API.
 - R2: `RecordingBanner` on every signed-in screen while recording or paused (`src/record/indicator.ts`).

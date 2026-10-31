@@ -25,6 +25,13 @@ export function useOrganizationId(): Id {
  * GET /orgs/:id/meetings, newest first, cursor-paginated. The first page omits `cursor`
  * (server default limit 25); `fetchNextPage` follows `nextCursor` until it is null.
  */
+const IN_FLIGHT = new Set<Meeting['status']>(['recording', 'processing']);
+/** Poll every 5s while a meeting is recording or processing; stop once it settles. */
+export const MEETING_POLL_MS = 5_000;
+export function meetingPollInterval(status: Meeting['status'] | undefined): number | false {
+  return status && IN_FLIGHT.has(status) ? MEETING_POLL_MS : false;
+}
+
 export function useMeetings() {
   const api = useApi();
   const organizationId = useOrganizationId();
@@ -37,6 +44,12 @@ export function useMeetings() {
     initialPageParam: null as string | null,
     getNextPageParam: (last: Paginated<Meeting>) => last.nextCursor,
     enabled: !!organizationId,
+    refetchInterval: (q) =>
+      meetingPollInterval(
+        q.state.data?.pages.some((p) => p.items.some((m) => IN_FLIGHT.has(m.status)))
+          ? 'processing'
+          : undefined,
+      ),
   });
 }
 
@@ -52,6 +65,8 @@ export function useMeeting(meetingId: Id) {
     queryFn: () => api.meetings.get(organizationId, meetingId),
     enabled: !!organizationId && !!meetingId,
     retry: (count, err) => !isFinalClientError(err) && count < 1,
+    // Poll while the pipeline is running so status, transcript and summary appear without a reload.
+    refetchInterval: (q) => meetingPollInterval(q.state.data?.status),
   });
 }
 
