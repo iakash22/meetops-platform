@@ -125,7 +125,9 @@ describe('main barrel', () => {
     expectTypeOf<Role>().toEqualTypeOf<'owner' | 'admin' | 'member' | 'viewer'>();
     expectTypeOf<TaskStatus>().toEqualTypeOf<'todo' | 'in_progress' | 'done' | 'cancelled'>();
     expectTypeOf<TaskPriority>().toEqualTypeOf<'low' | 'medium' | 'high' | 'urgent'>();
-    expectTypeOf<MeetingSource>().toEqualTypeOf<'upload' | 'extension' | 'desktop' | 'bot'>();
+    expectTypeOf<MeetingSource>().toEqualTypeOf<
+      'upload' | 'extension' | 'desktop' | 'bot' | 'mobile'
+    >();
     expectTypeOf<ApiErrorCode>().toMatchTypeOf<string>();
     expectTypeOf<ApiErrorEnvelope['error']['requestId']>().toEqualTypeOf<string>();
     expectTypeOf<Paginated<User>>().toEqualTypeOf<CursorPage<User>>();
