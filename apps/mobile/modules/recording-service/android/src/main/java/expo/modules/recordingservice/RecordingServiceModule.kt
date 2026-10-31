@@ -30,14 +30,20 @@ class RecordingServiceModule : Module() {
         .setAction(RecordingForegroundService.ACTION_START)
         .putExtra("title", title)
         .putExtra("body", body)
+      RecordingForegroundService.cancelRequested = false
+      RecordingForegroundService.cancelWatchdog()
       ContextCompat.startForegroundService(ctx, intent)
     }
 
     Function("stop") {
-      val ctx = appContext.reactContext ?: return@Function
-      // Idempotent: a second stop (or a stop after the service is gone) does nothing.
-      if (!RecordingForegroundService.running) return@Function
+      // JS is alive and ending capture itself: no native fallback needed.
+      RecordingForegroundService.cancelWatchdog()
+      // Also covers a start that is still pending (fast Start failure): it tears itself down on arrival.
+      RecordingForegroundService.cancelRequested = true
       RecordingForegroundService.stopRequestedByApp = true
+      val ctx = appContext.reactContext ?: return@Function
+      // Idempotent: a stop after the service is gone does nothing more.
+      if (!RecordingForegroundService.running) return@Function
       ctx.stopService(Intent(ctx, RecordingForegroundService::class.java))
     }
 
