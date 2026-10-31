@@ -192,9 +192,27 @@ describe('Phase 7 calendar', () => {
         .items[0]!.connection,
     ).toBeUndefined();
 
+    calls = [];
+    expect((await c.delete(`/orgs/${org}/calendar/connections/${id}`)).statusCode).toBe(204);
+    expect(calls.map((x) => x.url)).toEqual(['https://oauth2.googleapis.com/revoke']);
+    expect(calls[0]!.body).toBe('token=g-refresh');
+    expect(repo.secrets.has(id)).toBe(false);
+    expect([...repo.rows.values()][0]!.status).toBe('revoked');
+  });
+
+  it('L-1: disconnect still wipes locally when the provider revoke fails', async () => {
+    const c = await signupAndLogin(app, 'owner@example.com');
+    const org = await createOrg(c, 'Acme');
+    const state = (await connect(c, org)).searchParams.get('state')!;
+    await c.get(`/calendar/google/callback?state=${state}&code=abc`);
+    const id = [...repo.rows.values()][0]!.id;
+    over['POST https://oauth2.googleapis.com/revoke'] = () => json({ error: 'invalid_token' }, 400);
     expect((await c.delete(`/orgs/${org}/calendar/connections/${id}`)).statusCode).toBe(204);
     expect(repo.secrets.has(id)).toBe(false);
     expect([...repo.rows.values()][0]!.status).toBe('revoked');
+    expect(audit.events.find((e) => e.action === 'calendar.disconnect')!.metadata).toMatchObject({
+      providerRevoked: 'false',
+    });
   });
 
   it('answers 503 when the Google OAuth client is not configured, and never accepts an endpoint', async () => {

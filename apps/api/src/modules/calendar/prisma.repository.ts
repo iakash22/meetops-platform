@@ -49,8 +49,12 @@ export class PrismaCalendarConnections implements CalendarConnectionsRepository 
   private org<T>(organizationId: string, fn: Parameters<typeof withOrganizationContext<T>>[1]) {
     return withOrganizationContext(organizationId, fn, { client: this.db });
   }
-  private enc(organizationId: string, id: string, v: string) {
-    return this.cipher.encrypt(v, { organizationId, integrationId: id });
+  /** Separate AAD per field: an access-token envelope can't be swapped into the refresh column or vice versa. */
+  private ctx(organizationId: string, id: string, field: 'access' | 'refresh') {
+    return { organizationId, integrationId: `calendar:${id}:${field}` };
+  }
+  private enc(organizationId: string, id: string, v: string, field: 'access' | 'refresh') {
+    return this.cipher.encrypt(v, this.ctx(organizationId, id, field));
   }
 
   async listForUser(organizationId: string, userId: string) {
@@ -80,8 +84,8 @@ export class PrismaCalendarConnections implements CalendarConnectionsRepository 
         select: { id: true },
       });
       const id = existing?.id ?? crypto.randomUUID();
-      const accessTokenEnc = await this.enc(organizationId, id, i.accessToken);
-      const refreshTokenEnc = await this.enc(organizationId, id, i.refreshToken);
+      const accessTokenEnc = await this.enc(organizationId, id, i.accessToken, 'access');
+      const refreshTokenEnc = await this.enc(organizationId, id, i.refreshToken, 'refresh');
       const data = {
         status: 'active' as const,
         displayName: i.displayName,
@@ -113,11 +117,16 @@ export class PrismaCalendarConnections implements CalendarConnectionsRepository 
       tx.calendarConnection.findFirst({ where: { id, organizationId, userId } }),
     )) as Row | null;
     if (!row || row.status === 'revoked' || !row.accessTokenEnc) return null;
-    const ctx = { organizationId, integrationId: row.id };
     const out: CalendarSecrets = {
-      accessToken: await this.cipher.decrypt(row.accessTokenEnc, ctx),
+      accessToken: await this.cipher.decrypt(
+        row.accessTokenEnc,
+        this.ctx(organizationId, row.id, 'access'),
+      ),
       refreshToken: row.refreshTokenEnc
-        ? await this.cipher.decrypt(row.refreshTokenEnc, ctx)
+        ? await this.cipher.decrypt(
+            row.refreshTokenEnc,
+            this.ctx(organizationId, row.id, 'refresh'),
+          )
         : null,
       accessTokenExpiresAt: row.accessTokenExpiresAt,
     };
@@ -129,8 +138,8 @@ export class PrismaCalendarConnections implements CalendarConnectionsRepository 
     id: string,
     t: { accessToken: string; refreshToken: string; accessTokenExpiresAt: Date },
   ) {
-    const accessTokenEnc = await this.enc(organizationId, id, t.accessToken);
-    const refreshTokenEnc = await this.enc(organizationId, id, t.refreshToken);
+    const accessTokenEnc = await this.enc(organizationId, id, t.accessToken, 'access');
+    const refreshTokenEnc = await this.enc(organizationId, id, t.refreshToken, 'refresh');
     await this.org(organizationId, (tx) =>
       tx.calendarConnection.updateMany({
         where: { id, organizationId, status: { not: 'revoked' } },
