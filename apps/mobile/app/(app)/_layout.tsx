@@ -31,6 +31,7 @@ export default function AppLayout() {
       <Stack screenOptions={stackScreenOptions}>
         <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
         <Stack.Screen name="meeting/[id]" options={{ title: 'Meeting' }} />
+        <Stack.Screen name="uploads" options={{ title: 'Uploads' }} />
         <Stack.Screen
           name="organizations"
           options={{ title: 'Switch organization', presentation: 'modal' }}
