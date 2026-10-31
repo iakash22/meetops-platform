@@ -133,6 +133,8 @@ describe.skipIf(!url || !owner)(
           integrationId: `calendar:${legacy.id}:access`,
         }),
       ).resolves.toBe('old-access');
+      // #317 Info 3: token_key_id tracks the key that wrote the re-encrypted envelope.
+      expect(after.tokenKeyId).toBe(after.accessTokenEnc!.split('.')[1]);
 
       // A row that no known context can open: no throw (no 500), marked error so the user reconnects.
       const foreign = await new TokenCipher(
