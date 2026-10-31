@@ -130,3 +130,34 @@ describe('upload scheduler', () => {
     expect(remove).toHaveBeenCalled();
   });
 });
+
+describe('logout wipe surfaces failed deletes (Low)', () => {
+  it('retries a failed delete once, then throws with the ids and keeps the queue empty', async () => {
+    const fs = createMemoryFs();
+    const store = createFileChunkStore(fs, 2);
+    let removes = 0;
+    const chunks = {
+      ...store,
+      remove: (id: string) => {
+        removes += 1;
+        return id === 'rec-stuck' ? Promise.resolve() : store.remove(id);
+      },
+    };
+    const engine = createUploadQueueEngine({
+      store: createFileQueueStore(fs),
+      chunks,
+      api: createSimulatedUploadApi(0),
+      network: { isOnline: () => false },
+    });
+    await engine.enqueue(recording('rec-ok', await seed(fs, 'rec-ok')));
+    await engine.enqueue(recording('rec-stuck', await seed(fs, 'rec-stuck')));
+    await expect(engine.wipe()).rejects.toMatchObject({
+      name: 'WipeIncompleteError',
+      recordingIds: ['rec-stuck'],
+    });
+    expect(removes).toBe(3);
+    await expect(engine.items()).resolves.toEqual([]);
+    // Next launch: the leftover has no queue entry, so reconciliation deletes it.
+    await expect(reconcileOrphans(engine, store)).resolves.toEqual(['rec-stuck']);
+  });
+});
