@@ -167,3 +167,47 @@ describe('chunk encryption at rest (R5)', () => {
     expect(cipher.seal).toHaveBeenCalledTimes(2);
   });
 });
+
+describe('encryption fail-closed and legacy migration (R5)', () => {
+  const refuse = () => Promise.reject(new Error('unavailable'));
+
+  it('never starts capture when encryption is unavailable', async () => {
+    const { driver } = fakeDriver();
+    const store = createFileChunkStore(createMemoryFs(), 4, {
+      seal: refuse,
+      open: refuse,
+      ready: refuse,
+    });
+    const cap = createNativeCapture(driver, store);
+    await expect(cap.begin('rec-1')).rejects.toThrow('unavailable');
+    expect(driver.calls).not.toContain('record');
+  });
+
+  it('never writes plaintext when sealing fails', async () => {
+    const fs = createMemoryFs();
+    fs.put('file:///cache/a.m4a', bytes(6));
+    const store = createFileChunkStore(fs, 4, { seal: refuse, open: refuse });
+    await expect(store.ingest('rec-1', 'file:///cache/a.m4a')).rejects.toThrow();
+    expect([...fs.files.keys()].some((k) => k.endsWith('.chunk'))).toBe(false);
+  });
+
+  it('re-seals plaintext chunks from an older build, on launch and on read', async () => {
+    const fs = createMemoryFs();
+    const xor = (b64: string) => bytesToBase64(base64ToBytes(b64).map((v) => v ^ 0x5a));
+    const cipher = {
+      seal: (b: string) => Promise.resolve(xor(b)),
+      open: (b: string) => Promise.resolve(xor(b)),
+    };
+    fs.put('file:///doc/recordings/rec-old/0.chunk', bytes(4));
+    fs.put('file:///doc/recordings/rec-old/1.chunk', bytes(3));
+    fs.dirs.add('file:///doc/recordings/rec-old/');
+    const store = createFileChunkStore(fs, 4, cipher);
+    await expect(store.migrateLegacy()).resolves.toBe(2);
+    expect(fs.files.get('file:///doc/recordings/rec-old/0.chunk')).not.toEqual(bytes(4));
+    await expect(store.migrateLegacy()).resolves.toBe(0);
+    await expect(store.read('rec-old', 0)).resolves.toEqual(bytes(4));
+    fs.put('file:///doc/recordings/rec-old/2.chunk', bytes(2));
+    await expect(store.read('rec-old', 2)).resolves.toEqual(bytes(2));
+    expect(fs.files.get('file:///doc/recordings/rec-old/2.chunk')).not.toEqual(bytes(2));
+  });
+});

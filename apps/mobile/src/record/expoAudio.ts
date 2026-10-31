@@ -89,10 +89,29 @@ export function expoFileSystem(): FileSystemLike {
   return require('expo-file-system') as FileSystemLike;
 }
 
-/** Android Keystore AES-GCM for chunk files (modules/chunk-crypto). Null on iOS or without the native module. */
-export function createAndroidChunkCipher(): (ChunkCipher & { deleteKey(): Promise<void> }) | null {
-  if (Platform.OS !== 'android') return null;
+/**
+ * Native AES-256-GCM for chunk files (modules/chunk-crypto): Android Keystore, iOS Keychain + CryptoKit.
+ * FAIL CLOSED: without the native module this returns a cipher that rejects every call, so recording refuses to start
+ * and nothing is ever written in plaintext.
+ */
+export function createNativeChunkCipher(): ChunkCipher & { deleteKey(): Promise<void> } {
   const { ChunkCryptoModule } =
     require('../../modules/chunk-crypto') as typeof import('../../modules/chunk-crypto');
-  return ChunkCryptoModule;
+  if (ChunkCryptoModule) {
+    const native = ChunkCryptoModule;
+    return {
+      ready: async () => {
+        // Round-trip once so a missing or broken key fails before the mic opens.
+        const probe = 'AA==';
+        if ((await native.open(await native.seal(probe))) !== probe)
+          throw new Error('Encryption self-test failed.');
+      },
+      seal: (b) => native.seal(b),
+      open: (b) => native.open(b),
+      deleteKey: () => native.deleteKey(),
+    };
+  }
+  const refuse = () =>
+    Promise.reject(new Error('Encryption at rest is unavailable on this build.'));
+  return { ready: refuse, seal: refuse, open: refuse, deleteKey: () => Promise.resolve() };
 }

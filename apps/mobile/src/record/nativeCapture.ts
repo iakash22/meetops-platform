@@ -51,6 +51,8 @@ export function createNativeCapture(driver: AudioDriver, store: FileChunkStore):
     async begin(recordingId) {
       if (active) throw new Error('Already recording.');
       if (!(await driver.canRecord())) throw new Error('Microphone permission is required.');
+      // R5 fail closed: no working encryption at rest, no recording.
+      await store.ready();
       await driver.setRecordingMode(true);
       try {
         await driver.prepare();

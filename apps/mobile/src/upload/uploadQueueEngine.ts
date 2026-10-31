@@ -53,6 +53,14 @@ export interface UploadQueueEngine extends UploadQueue {
   subscribe(listener: () => void): () => void;
 }
 
+/** Thrown by `wipe()` when a local copy survived two verified deletes. Ids only, no content. */
+export class WipeIncompleteError extends Error {
+  constructor(readonly recordingIds: string[]) {
+    super(`Local wipe incomplete for ${recordingIds.length} recording(s).`);
+    this.name = 'WipeIncompleteError';
+  }
+}
+
 /** Non-retryable: the server rejected the recording itself (consent, validation, gone). */
 const isPermanent = (e: unknown) =>
   e instanceof ApiError &&
@@ -229,12 +237,23 @@ export function createUploadQueueEngine({
     },
     async wipe() {
       await running?.catch(() => undefined);
+      const failed: string[] = [];
       for (const item of await load()) {
         if (item.sessionId && item.state !== 'done')
           await api.abort(item.sessionId, 'user_stopped').catch(() => undefined);
-        await deleteVerified(item.id, 'wipe').catch(() => undefined);
+        // Retry once, then surface it: the caller learns the wipe was incomplete instead of a silent success.
+        try {
+          await deleteVerified(item.id, 'wipe');
+        } catch {
+          try {
+            await deleteVerified(item.id, 'wipe');
+          } catch {
+            failed.push(item.id);
+          }
+        }
       }
       await persist([]);
+      if (failed.length > 0) throw new WipeIncompleteError(failed);
     },
     subscribe(listener) {
       listeners.add(listener);

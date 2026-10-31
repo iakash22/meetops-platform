@@ -17,6 +17,7 @@ import { createSessionManager } from './auth/sessionManager';
 import { createSecureTokenStore } from './auth/secureTokenStore';
 import { createDeviceIdProvider } from './auth/deviceId';
 import { createDemoConsentApi } from './consent/consentApi';
+import { createDemoMeetingResolver, createHttpMeetingResolver } from './consent/meetingResolver';
 import { createHttpMeetingsRepository, createHttpTasksRepository } from './data/httpRepositories';
 import { createPlaceholderMeetingsRepository } from './data/meetingsRepository';
 import type { Repositories } from './data/RepositoriesProvider';
@@ -27,7 +28,7 @@ import {
   createExpoAudioDriver,
   createNativeMicPermission,
   expoFileSystem,
-  createAndroidChunkCipher,
+  createNativeChunkCipher,
 } from './record/expoAudio';
 import { createFileChunkStore } from './record/fileChunkStore';
 import { createNativeCapture } from './record/nativeCapture';
@@ -89,8 +90,8 @@ const http = API_BASE_URL
   : null;
 
 const fileSystem = http ? expoFileSystem() : null;
-// R5: Android chunk files are AES-256-GCM sealed with a Keystore key; iOS relies on Data Protection.
-const chunkCipher = fileSystem ? createAndroidChunkCipher() : null;
+// R5: chunk files are AES-256-GCM sealed (Android Keystore / iOS Keychain). Fails closed without the native module.
+const chunkCipher = fileSystem ? createNativeChunkCipher() : null;
 const chunkFiles = fileSystem
   ? createFileChunkStore(fileSystem, undefined, chunkCipher ?? undefined)
   : null;
@@ -109,15 +110,26 @@ const engine = createUploadQueueEngine({
 if (chunkFiles) {
   void reconcileOrphans(engine, chunkFiles)
     .catch(() => undefined)
+    // Chunks saved in plaintext by an older build are re-sealed before any upload pass reads them.
+    .then(() => chunkFiles.migrateLegacy())
+    .catch(() => undefined)
     .then(() => startUploadScheduler(engine, AppState));
 }
 // R4 + R7: logout and organization switch stop any capture and wipe every local recording.
 sessionManager.registerWipeHook(async () => {
   await capture.abort();
-  await engine.wipe();
-  if (chunkFiles) for (const id of await chunkFiles.list()) await chunkFiles.remove(id);
-  // Anything a failed delete left behind becomes unreadable: the next capture gets a new key.
+  let incomplete: unknown = null;
+  await engine.wipe().catch((e: unknown) => {
+    incomplete = e;
+  });
+  // Sweep every folder (including ones the engine couldn't delete). Anything still left is an orphan with no queue
+  // entry, which `reconcileOrphans` deletes at the next launch, so a failed delete is retried rather than forgotten.
+  if (chunkFiles)
+    for (const id of await chunkFiles.list()) await chunkFiles.remove(id).catch(() => undefined);
+  // Before the re-throw: anything a failed delete left behind becomes unreadable (the next capture gets a new key).
   await chunkCipher?.deleteKey().catch(() => undefined);
+  if (incomplete)
+    throw incomplete instanceof Error ? incomplete : new Error('Local wipe incomplete.');
 });
 
 export const repositories: Repositories = {
@@ -135,6 +147,9 @@ export const repositories: Repositories = {
     },
   },
   consent: createDemoConsentApi({ latencyMs: 300 }),
+  meetingResolver: http
+    ? createHttpMeetingResolver(createApiRequester(http))
+    : createDemoMeetingResolver(),
   micPermission: http ? createNativeMicPermission() : createDemoMicPermission(),
 };
 

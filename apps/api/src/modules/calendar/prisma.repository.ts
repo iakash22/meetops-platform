@@ -151,11 +151,14 @@ export class PrismaCalendarConnections implements CalendarConnectionsRepository 
     }
     if (access.legacy || refresh?.legacy) {
       // Rows written before per-field AAD: re-encrypt under the current context.
+      const newAccess = await this.enc(organizationId, row.id, access.value, 'access');
       await this.org(organizationId, async (tx) =>
         tx.calendarConnection.updateMany({
-          where: { id: row.id, organizationId },
+          // Never resurrect secrets on a row revoked between the read and this write.
+          where: { id: row.id, organizationId, status: { not: 'revoked' } },
           data: {
-            accessTokenEnc: await this.enc(organizationId, row.id, access.value, 'access'),
+            accessTokenEnc: newAccess,
+            tokenKeyId: keyIdOf(newAccess),
             ...(refresh
               ? {
                   refreshTokenEnc: await this.enc(organizationId, row.id, refresh.value, 'refresh'),
