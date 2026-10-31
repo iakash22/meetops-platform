@@ -13,7 +13,9 @@ import {
   probeMedia,
   runProcess,
   assertProbedFormat,
-  demuxerForExt
+  demuxerForExt,
+  measureAudioDuration,
+  MEASURE_TIMEOUT_MS,
 } from '../src/index.js';
 
 function has(bin: string): boolean {
@@ -24,7 +26,8 @@ function has(bin: string): boolean {
     return false;
   }
 }
-const HAS_FFMPEG = has(process.env.FFMPEG_PATH ?? 'ffmpeg') && has(process.env.FFPROBE_PATH ?? 'ffprobe');
+const HAS_FFMPEG =
+  has(process.env.FFMPEG_PATH ?? 'ffmpeg') && has(process.env.FFPROBE_PATH ?? 'ffprobe');
 
 describe('pure helpers', () => {
   it('parses ffprobe json', () => {
@@ -33,15 +36,32 @@ describe('pure helpers', () => {
         format: { duration: '12.5', format_name: 'mov,mp4', size: '1000', bit_rate: '64000' },
         streams: [
           { index: 0, codec_type: 'video', codec_name: 'h264' },
-          { index: 1, codec_type: 'audio', codec_name: 'aac', sample_rate: '48000', channels: 2 }
-        ]
-      })
+          { index: 1, codec_type: 'audio', codec_name: 'aac', sample_rate: '48000', channels: 2 },
+        ],
+      }),
     );
-    expect(r).toMatchObject({ durationSeconds: 12.5, formatName: 'mov,mp4', sizeBytes: 1000, bitRate: 64000, hasAudio: true, hasVideo: true });
-    expect(r.streams[1]).toEqual({ index: 1, codecType: 'audio', codecName: 'aac', sampleRate: 48000, channels: 2 });
+    expect(r).toMatchObject({
+      durationSeconds: 12.5,
+      formatName: 'mov,mp4',
+      sizeBytes: 1000,
+      bitRate: 64000,
+      hasAudio: true,
+      hasVideo: true,
+    });
+    expect(r.streams[1]).toEqual({
+      index: 1,
+      codecType: 'audio',
+      codecName: 'aac',
+      sampleRate: 48000,
+      channels: 2,
+    });
   });
   it('falls back to stream duration and rejects bad json', () => {
-    expect(parseProbeOutput(JSON.stringify({ streams: [{ index: 0, codec_type: 'audio', duration: '3' }] })).durationSeconds).toBe(3);
+    expect(
+      parseProbeOutput(
+        JSON.stringify({ streams: [{ index: 0, codec_type: 'audio', duration: '3' }] }),
+      ).durationSeconds,
+    ).toBe(3);
     expect(() => parseProbeOutput('nope')).toThrow(FfmpegError);
   });
   it('builds normalize args for 16k mono', () => {
@@ -51,7 +71,11 @@ describe('pure helpers', () => {
     expect(a.join(' ')).toContain('-protocol_whitelist file,pipe -i in.mp4');
   });
   it('normalize args force the demuxer and add -t/-fs caps', () => {
-    const a = buildNormalizeArgs('in.webm', 'o.wav', { inputFormat: 'matroska', maxDurationSeconds: 60, maxOutputBytes: 1000 }).join(' ');
+    const a = buildNormalizeArgs('in.webm', 'o.wav', {
+      inputFormat: 'matroska',
+      maxDurationSeconds: 60,
+      maxOutputBytes: 1000,
+    }).join(' ');
     expect(a).toContain('-protocol_whitelist file,pipe -f matroska -i in.webm');
     expect(a).toContain('-t 60 -fs 1000 -f wav o.wav');
     expect(() => buildNormalizeArgs('i', 'o', { maxDurationSeconds: 0 })).toThrow();
@@ -60,7 +84,13 @@ describe('pure helpers', () => {
     expect(demuxerForExt('webm')).toBe('matroska');
     expect(demuxerForExt('M4A')).toBe('mov');
     expect(() => demuxerForExt('m3u8')).toThrow(FfmpegError);
-    const p = (formatName: string) => ({ durationSeconds: 1, formatName, streams: [], hasAudio: true, hasVideo: false });
+    const p = (formatName: string) => ({
+      durationSeconds: 1,
+      formatName,
+      streams: [],
+      hasAudio: true,
+      hasVideo: false,
+    });
     expect(() => assertProbedFormat(p('matroska,webm'), 'matroska')).not.toThrow();
     expect(() => assertProbedFormat(p('mov,mp4,m4a,3gp,3g2,mj2'), 'mov')).not.toThrow();
     expect(() => assertProbedFormat(p('hls'), 'matroska')).toThrow(/Forbidden/);
@@ -68,13 +98,21 @@ describe('pure helpers', () => {
     expect(() => assertProbedFormat(p('ogg'), 'matroska')).toThrow(/Unexpected/);
   });
   it('builds chunk args', () => {
-    expect(buildChunkArgs('in.wav', '/o', 30, 'c').join(' ')).toContain('-f segment -segment_time 30');
+    expect(buildChunkArgs('in.wav', '/o', 30, 'c').join(' ')).toContain(
+      '-f segment -segment_time 30',
+    );
   });
   it('caps stdout and kills the process', async () => {
-    await expect(runProcess('node', ['-e', 'process.stdout.write("x".repeat(5*1024*1024))'], { timeoutMs: 10000 })).rejects.toThrow(/exceeded/);
+    await expect(
+      runProcess('node', ['-e', 'process.stdout.write("x".repeat(5*1024*1024))'], {
+        timeoutMs: 10000,
+      }),
+    ).rejects.toThrow(/exceeded/);
   });
   it('reports a missing binary as FfmpegError', async () => {
-    await expect(probeMedia('x', { ffprobePath: '/nonexistent/ffprobe' })).rejects.toThrow(FfmpegError);
+    await expect(probeMedia('x', { ffprobePath: '/nonexistent/ffprobe' })).rejects.toThrow(
+      FfmpegError,
+    );
   });
 });
 
@@ -83,8 +121,57 @@ describe.skipIf(!HAS_FFMPEG)('with real ffmpeg', () => {
   afterAll(() => rmSync(dir, { recursive: true, force: true }));
   const src = path.join(dir, 'tone.mp3');
 
+  it('measureAudioDuration stops early past maxDurationSeconds (N-3) and has a short default timeout', async () => {
+    const long = path.join(dir, 'long.wav');
+    execFileSync('ffmpeg', [
+      '-hide_banner',
+      '-loglevel',
+      'error',
+      '-y',
+      '-f',
+      'lavfi',
+      '-i',
+      'sine=frequency=440:sample_rate=8000:duration=120',
+      long,
+    ]);
+    const full = await measureAudioDuration(long, { sampleRate: 8000 });
+    expect(full.exceeded).toBe(false);
+    expect(full.durationSeconds).toBeCloseTo(120, 0);
+    const capped = await measureAudioDuration(long, { sampleRate: 8000, maxDurationSeconds: 3 });
+    expect(capped.exceeded).toBe(true);
+    expect(capped.durationSeconds).toBeGreaterThan(3);
+    expect(capped.durationSeconds).toBeLessThan(full.durationSeconds);
+    expect(MEASURE_TIMEOUT_MS).toBeLessThanOrEqual(2 * 60 * 1000);
+  });
+
+  it('parseProbeOutput exposes the declared audio stream duration (N-5)', () => {
+    const p = parseProbeOutput(
+      JSON.stringify({
+        format: { duration: '16.0' },
+        streams: [
+          { index: 0, codec_type: 'video', duration: '16.0' },
+          { index: 1, codec_type: 'audio', sample_rate: '48000', duration: '10.0' },
+        ],
+      }),
+    );
+    expect(p.durationSeconds).toBe(16);
+    expect(p.audioDurationSeconds).toBe(10);
+  });
+
   it('probes, normalizes and chunks', async () => {
-    execFileSync('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-y', '-f', 'lavfi', '-i', 'sine=frequency=440:sample_rate=44100:duration=25', '-ac', '2', src]);
+    execFileSync('ffmpeg', [
+      '-hide_banner',
+      '-loglevel',
+      'error',
+      '-y',
+      '-f',
+      'lavfi',
+      '-i',
+      'sine=frequency=440:sample_rate=44100:duration=25',
+      '-ac',
+      '2',
+      src,
+    ]);
     const p = await probeMedia(src);
     expect(p.hasAudio).toBe(true);
     expect(p.durationSeconds).toBeGreaterThan(24.5);
@@ -108,11 +195,16 @@ describe.skipIf(!HAS_FFMPEG)('with real ffmpeg', () => {
 
   it('forced demuxer rejects an HLS playlist and a concat list disguised as media', async () => {
     const m3u8 = path.join(dir, 'evil.webm');
-    writeFileSync(m3u8, '#EXTM3U\n#EXT-X-TARGETDURATION:1\n#EXTINF:1,\n/etc/passwd\n#EXT-X-ENDLIST\n');
+    writeFileSync(
+      m3u8,
+      '#EXTM3U\n#EXT-X-TARGETDURATION:1\n#EXTINF:1,\n/etc/passwd\n#EXT-X-ENDLIST\n',
+    );
     await expect(probeMedia(m3u8, { format: demuxerForExt('webm') })).rejects.toThrow(FfmpegError);
     const cc = path.join(dir, 'evil.wav');
     writeFileSync(cc, "ffconcat version 1.0\nfile '/etc/passwd'\n");
-    await expect(normalizeToWav(cc, path.join(dir, 'evil-out.wav'), { inputFormat: 'wav' })).rejects.toThrow(FfmpegError);
+    await expect(
+      normalizeToWav(cc, path.join(dir, 'evil-out.wav'), { inputFormat: 'wav' }),
+    ).rejects.toThrow(FfmpegError);
   });
 
   it('caps output with -t and -fs', async () => {
@@ -126,7 +218,9 @@ describe.skipIf(!HAS_FFMPEG)('with real ffmpeg', () => {
   });
 
   it('fails cleanly on a corrupt input', async () => {
-    await expect(normalizeToWav(path.join(dir, 'missing.mp3'), path.join(dir, 'x.wav'))).rejects.toThrow(FfmpegError);
+    await expect(
+      normalizeToWav(path.join(dir, 'missing.mp3'), path.join(dir, 'x.wav')),
+    ).rejects.toThrow(FfmpegError);
   });
 
   it('removes stale chunk files before writing (cleanup default)', async () => {
@@ -144,7 +238,9 @@ describe.skipIf(!HAS_FFMPEG)('with real ffmpeg', () => {
     const out = path.join(dir, 'nocleanup');
     mkdirSync(out, { recursive: true });
     writeFileSync(path.join(out, 'chunk-00007.wav'), 'stale');
-    await expect(chunkAudio(src, out, { segmentSeconds: 10, cleanup: false })).rejects.toThrow(FfmpegError);
+    await expect(chunkAudio(src, out, { segmentSeconds: 10, cleanup: false })).rejects.toThrow(
+      FfmpegError,
+    );
     expect(existsSync(path.join(out, 'chunk-00007.wav'))).toBe(true);
   }, 60000);
 
@@ -153,7 +249,12 @@ describe.skipIf(!HAS_FFMPEG)('with real ffmpeg', () => {
     mkdirSync(out, { recursive: true });
     writeFileSync(path.join(out, 'other.txt'), 'x');
     // ffmpeg succeeds but probing the chunks fails, leaving outputs that must be removed.
-    await expect(chunkAudio(path.join(dir, 'norm', 'out.wav'), out, { segmentSeconds: 10, ffprobePath: '/nonexistent/ffprobe' })).rejects.toThrow(FfmpegError);
+    await expect(
+      chunkAudio(path.join(dir, 'norm', 'out.wav'), out, {
+        segmentSeconds: 10,
+        ffprobePath: '/nonexistent/ffprobe',
+      }),
+    ).rejects.toThrow(FfmpegError);
     expect(readdirSync(out)).toEqual(['other.txt']);
     await expect(chunkAudio(path.join(dir, 'missing.mp3'), out)).rejects.toThrow(FfmpegError);
     expect(readdirSync(out)).toEqual(['other.txt']);

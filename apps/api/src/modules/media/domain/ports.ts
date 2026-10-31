@@ -1,3 +1,5 @@
+import type { ConsentRecord } from './consent.js';
+import { ALLOWED_MEDIA_MIME_TYPES } from '@meetops/contracts';
 import type { ConsentSubjectType, FileObjectScanStatus } from '@meetops/contracts';
 import { DomainError } from '../../../shared/domain-error.js';
 
@@ -22,6 +24,14 @@ export interface FileObjectRecord {
 
 export interface FileObjectRepository {
   create(r: FileObjectRecord): Promise<FileObjectRecord>;
+  /**
+   * Atomic init: the file row and its consent attestation in one transaction (all or nothing). Optional: adapters
+   * without transactions (in-memory) fall back to create + ConsentRepository.record.
+   */
+  createWithConsent?(
+    r: FileObjectRecord,
+    consent: Omit<ConsentRecord, 'id' | 'recordedAt'> & { recordedAt: Date },
+  ): Promise<FileObjectRecord>;
   findById(organizationId: string, id: string): Promise<FileObjectRecord | null>;
   setStatus(
     organizationId: string,
@@ -56,7 +66,16 @@ export interface MediaSigner {
     checksumSha256Base64: string;
     ttlSeconds: number;
   }): Promise<SignedRequest>;
-  presignGet(spec: { key: string; ttlSeconds: number }): Promise<SignedRequest>;
+  /**
+   * Presigned download. Adapters MUST force `response-content-disposition=attachment` and
+   * `response-content-type=<downloadContentType(contentType)>` (allowlisted base type, else application/octet-stream)
+   * so an untrusted upload is never rendered inline (security review B 4.1). @meetops/storage does this.
+   */
+  presignGet(spec: {
+    key: string;
+    ttlSeconds: number;
+    contentType: string;
+  }): Promise<SignedRequest>;
   /**
    * Stored object size and full-object SHA-256 (base64), or null when nothing was uploaded at `key`. Adapters must
    * HEAD with checksum mode enabled (S3/MinIO `ChecksumMode: 'ENABLED'` -> `ChecksumSHA256`) and return
@@ -76,7 +95,14 @@ export interface MediaProcessingJob {
 }
 
 export interface MediaJobQueue {
+  /** Idempotent per subject: a job with the same deterministic id that still exists (any state) is kept. */
   enqueue(job: MediaProcessingJob): Promise<void>;
+  /**
+   * Replay / reconciler / backfill: like enqueue, but a FINISHED job with the same id (completed or failed, still
+   * kept by removeOnComplete/removeOnFail) is removed first so the subject runs again. A waiting/active/delayed job
+   * is kept. Resolves true only when a job was actually added (#302 L-3: callers count real adds only).
+   */
+  requeue(job: MediaProcessingJob): Promise<boolean>;
 }
 
 export class UploadNotFoundError extends DomainError {
@@ -86,7 +112,15 @@ export class UploadNotFoundError extends DomainError {
 }
 
 export class UploadStateConflictError extends DomainError {
-  constructor(message: string) {
-    super('CONFLICT', message, 409);
+  constructor(message: string, reason?: 'RECORDING_SESSION_CLOSED') {
+    super('CONFLICT', message, 409, reason);
   }
+}
+
+/** Allowlisted base media type for downloads (`;codecs=` stripped), else application/octet-stream. */
+export function downloadContentType(contentType: string): string {
+  const base = (contentType.split(';')[0] ?? '').trim().toLowerCase();
+  return (ALLOWED_MEDIA_MIME_TYPES as readonly string[]).includes(base)
+    ? base
+    : 'application/octet-stream';
 }

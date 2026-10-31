@@ -60,21 +60,24 @@ const JobMeta = {
   idempotencyKey: Type.String({ minLength: 1 }),
 };
 
-export const TranscriptionJobPayload = Type.Object({
-  ...JobMeta,
-  kind: Type.Literal('transcribe_recording'),
-  meetingId: Id,
-  recordingId: Id,
-  fileObjectId: Id,
-  sttProviderId: SttProviderId,
-  languageHint: Type.Optional(Type.String()),
-  /** Index of the normalized chunk this job transcribes. Omit for whole-file jobs. */
-  chunkIndex: Type.Optional(Type.Integer({ minimum: 0, maximum: MAX_CHUNKS - 1 })),
-  /** Offset of the chunk within the recording. Segment timestamps are shifted by this. 0 for whole-file jobs. */
-  startMs: Type.Optional(Type.Integer({ minimum: 0 })),
-  diarize: Type.Boolean({ default: true }),
-  fallback: Type.Optional(FallbackPolicy),
-}, { additionalProperties: false });
+export const TranscriptionJobPayload = Type.Object(
+  {
+    ...JobMeta,
+    kind: Type.Literal('transcribe_recording'),
+    meetingId: Id,
+    recordingId: Id,
+    fileObjectId: Id,
+    sttProviderId: SttProviderId,
+    languageHint: Type.Optional(Type.String()),
+    /** Index of the normalized chunk this job transcribes. Omit for whole-file jobs. */
+    chunkIndex: Type.Optional(Type.Integer({ minimum: 0, maximum: MAX_CHUNKS - 1 })),
+    /** Offset of the chunk within the recording. Segment timestamps are shifted by this. 0 for whole-file jobs. */
+    startMs: Type.Optional(Type.Integer({ minimum: 0 })),
+    diarize: Type.Boolean({ default: true }),
+    fallback: Type.Optional(FallbackPolicy),
+  },
+  { additionalProperties: false },
+);
 export type TranscriptionJobPayload = Static<typeof TranscriptionJobPayload>;
 
 /** Media processing queue (normalize, chunk, then fan out transcription jobs). */
@@ -97,10 +100,16 @@ export const MediaJobPayload = Type.Object(
      * INTERNAL storage key of the uploaded source. Never expose it to clients. The worker must verify that it
      * matches the key derived from {organizationId, meetingId, recordingId, sourceExt}.
      */
-    sourceKey: Type.Optional(Type.String({ minLength: 1, maxLength: 1024, pattern: '^[A-Za-z0-9!_.*()/-]+$' })),
+    sourceKey: Type.Optional(
+      Type.String({ minLength: 1, maxLength: 1024, pattern: '^[A-Za-z0-9!_.*()/-]+$' }),
+    ),
     sttProviderId: Type.Optional(SttProviderId),
-    languageHint: Type.Optional(Type.String({ maxLength: 35, pattern: '^[A-Za-z]{2,3}(-[A-Za-z0-9]{2,8})*$' })),
-    requestId: Type.Optional(Type.String({ minLength: 1, maxLength: 200, pattern: '^[A-Za-z0-9_-]+$' })),
+    languageHint: Type.Optional(
+      Type.String({ maxLength: 35, pattern: '^[A-Za-z]{2,3}(-[A-Za-z0-9]{2,8})*$' }),
+    ),
+    requestId: Type.Optional(
+      Type.String({ minLength: 1, maxLength: 200, pattern: '^[A-Za-z0-9_-]+$' }),
+    ),
   },
   { additionalProperties: false },
 );
@@ -113,15 +122,18 @@ export const AiTaskKind = Type.Union([
 ]);
 export type AiTaskKind = Static<typeof AiTaskKind>;
 
-export const AiJobPayload = Type.Object({
-  ...JobMeta,
-  kind: AiTaskKind,
-  meetingId: Id,
-  transcriptId: Id,
-  modelRouteId: ModelRouteId,
-  promptVersion: Type.String(),
-  fallback: Type.Optional(FallbackPolicy),
-}, { additionalProperties: false });
+export const AiJobPayload = Type.Object(
+  {
+    ...JobMeta,
+    kind: AiTaskKind,
+    meetingId: Id,
+    transcriptId: Id,
+    modelRouteId: ModelRouteId,
+    promptVersion: Type.String(),
+    fallback: Type.Optional(FallbackPolicy),
+  },
+  { additionalProperties: false },
+);
 export type AiJobPayload = Static<typeof AiJobPayload>;
 
 /** Email queue name (matches @meetops/notifications). */
@@ -171,7 +183,9 @@ const emailCommon = {
       additionalProperties: false,
     }),
   ),
-  locale: Type.Optional(Type.String({ maxLength: 35, pattern: '^[A-Za-z]{2,3}(-[A-Za-z0-9]{2,8})*$' })),
+  locale: Type.Optional(
+    Type.String({ maxLength: 35, pattern: '^[A-Za-z]{2,3}(-[A-Za-z0-9]{2,8})*$' }),
+  ),
 };
 
 /**
@@ -204,3 +218,30 @@ export const EmailJobPayload = Type.Union([
   ),
 ]);
 export type EmailJobPayload = Static<typeof EmailJobPayload>;
+
+/** ADR-013 notification delivery queue (one job per notification x channel). */
+export const NOTIFICATION_DELIVERY_QUEUE = 'notify-delivery' as const;
+export const NOTIFICATION_DELIVERY_JOB_RETENTION = {
+  removeOnComplete: { count: 200, age: 3600 },
+  removeOnFail: { count: 1000, age: 7 * 86400 },
+} as const;
+/**
+ * ids-only payload. `organizationId` is mandatory: the worker enters withOrganizationContext(organizationId) for
+ * every job (forced RLS; no BYPASSRLS role). `deliveryKey` is the BullMQ jobId (idempotent enqueue).
+ */
+export const NotificationDeliveryJobPayload = Type.Object(
+  {
+    jobVersion: Type.Literal(1),
+    kind: Type.Literal('deliver_notification'),
+    organizationId: Id,
+    userId: Id,
+    notificationId: Id,
+    channel: Type.Union(
+      (['in_app', 'email', 'web_push', 'mobile_push', 'desktop'] as const).map((c) => Type.Literal(c)),
+    ),
+    deliveryKey: Type.String({ minLength: 1, maxLength: 200, pattern: '^[A-Za-z0-9_:-]+$' }),
+    requestId: Type.Optional(OpaqueId),
+  },
+  { additionalProperties: false },
+);
+export type NotificationDeliveryJobPayload = Static<typeof NotificationDeliveryJobPayload>;

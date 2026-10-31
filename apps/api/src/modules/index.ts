@@ -1,7 +1,8 @@
+import { createGeoIpProvider, type GeoIpProvider } from '../shared/geoip/index.js';
 import type { FastifyInstance } from 'fastify';
 import cookie from '@fastify/cookie';
 import cors from '@fastify/cors';
-import { EXTENSION_AUTH_PATHS } from '@meetops/contracts';
+import { DESKTOP_AUTH_PATHS, EXTENSION_AUTH_PATHS } from '@meetops/contracts';
 import {
   extensionBearerCorsHook,
   isExtensionBearerPath,
@@ -59,6 +60,13 @@ import type { OneTimeTokenRepository } from './auth/domain/one-time-token.js';
 import type { AuthMailQueue, MailTransport } from './auth/domain/mail-jobs.js';
 import { InMemoryAuditLog, type AuditLog } from './auth/domain/audit.js';
 import { AuthMailJobHandler, InlineAuthMailQueue } from './auth/application/auth-mail.handler.js';
+import {
+  BullMqAuthMailQueue,
+  createAuthMailProducer,
+  startAuthMailWorker,
+  type AuthMailProducer,
+} from './auth/infrastructure/mail-queue/bullmq-mail-queue.js';
+import { loadAuthMailQueueEnv } from './auth/infrastructure/mail-queue/env.js';
 import { SessionVerifier } from './auth/application/session-verifier.js';
 import {
   noopRevocationPublisher,
@@ -108,6 +116,13 @@ import {
   InMemoryMediaJobQueue,
   InMemoryRecordingSessionRepository,
 } from './media/infrastructure/in-memory.js';
+import {
+  PrismaConsentRepository,
+  PrismaFileObjectRepository,
+  PrismaRecordingSessionRepository,
+} from './media/infrastructure/prisma.js';
+import { BullMqMediaJobQueue, createMediaQueueProducer } from './media/infrastructure/bullmq.js';
+import { loadStorageConfig, S3UploadSourceSigner } from '@meetops/storage';
 import { systemClock, type Clock, type IdGenerator } from '../shared/ports.js';
 
 export interface ModuleDeps {
@@ -121,10 +136,17 @@ export interface ModuleDeps {
   tokens: TokenService;
   rateLimiter: RateLimiter;
   lockout: LoginLockout;
-  /** Production: inject a real queue (TODO(notifications #11)); dev/test: inline + transport below. */
+  /**
+   * AUTH_MAIL_QUEUE=bullmq: BullMqAuthMailQueue on REDIS_URL (ADR-013, notifications #11), consumed by the
+   * auth-mail worker (authMailWorker). Otherwise (dev/test default) the inline queue + transport below.
+   */
   mailQueue: AuthMailQueue;
-  /** Only used by the dev/test inline queue. */
+  /** Used by the inline queue and by the auth-mail worker consumer (the EMAIL_PROVIDER-selected EmailService). */
   mailTransport: MailTransport;
+  /** When set with a BullMqAuthMailQueue, registerModules starts the auth-mail BullMQ consumer in-process. */
+  authMailWorker?: { redisUrl: string; prefix?: string | undefined; concurrency: number };
+  /** Set when defaultModuleDeps created the BullMQ mail queue itself (closed in onClose). */
+  ownedMailQueue?: { close(): Promise<void> };
   audit: AuditLog;
   webBaseUrl: string;
   clock: Clock;
@@ -157,6 +179,8 @@ export interface ModuleDeps {
    * the client supports PUBLISH, otherwise a no-op.
    */
   revocations?: RevocationPublisher;
+  /** ADR-014 local GeoIP provider (GEOIP_PROVIDER / GEOIP_DB_PATH; null provider when unset). */
+  geoIp?: GeoIpProvider;
   /** Meetings repository (Prisma when `db` is set; in-memory only in development/test). */
   meetings: MeetingRepository;
   /** ADR-005 extension pairing/token store (Redis when `redis` is set; in-memory only in development/test). */
@@ -173,10 +197,13 @@ export interface ModuleDeps {
   /** Desktop token store: its own Redis prefix (meetops:desktop:) when `redis` is set; in-memory otherwise. */
   desktopTokens?: ExtensionTokenRepository;
   /**
-   * Media (uploads / recording sessions) adapters. Defaults to in-memory ONLY in development/test; outside them it
-   * stays unset unless injected and the media routes are not registered (no production adapters yet).
+   * Media (uploads / recording sessions) adapters. With MEDIA_STORAGE_ENABLED=true and a database, uploads use
+   * S3/MinIO (@meetops/storage) plus the Prisma file_objects / consent_attestations tables. Otherwise in-memory ONLY
+   * in development/test; outside them it stays unset unless injected and the media routes are not registered.
    */
   media?: MediaAdapters;
+  /** Set when defaultModuleDeps built the storage-backed media adapters (BullMQ producer closed in onClose). */
+  ownedMedia?: { close(): Promise<void> };
 }
 
 /** Ports the media module needs. */
@@ -195,6 +222,46 @@ export function inMemoryMediaAdapters(clock: Clock = systemClock): MediaAdapters
     signer: new FakeMediaSigner(() => clock.now()),
     jobs: new InMemoryMediaJobQueue(),
     sessions: new InMemoryRecordingSessionRepository(),
+  };
+}
+
+/** MEDIA_STORAGE_ENABLED: real storage for the media routes (off by default). */
+export function mediaStorageEnabled(
+  env: Record<string, string | undefined> = process.env,
+): boolean {
+  const v = (env.MEDIA_STORAGE_ENABLED ?? '').trim().toLowerCase();
+  if (v === '' || ['false', '0', 'no', 'off'].includes(v)) return false;
+  if (['true', '1', 'yes', 'on'].includes(v)) return true;
+  throw new Error('MEDIA_STORAGE_ENABLED must be a boolean');
+}
+
+/**
+ * Storage-backed media adapters: S3/MinIO signer (STORAGE_* env), Prisma file / consent / recording-session tables
+ * and a BullMQ producer on the worker's MEDIA_QUEUE (REDIS_URL). `close` shuts the producer it created.
+ */
+export function storageMediaAdapters(
+  db: DatabaseClient,
+  env: Record<string, string | undefined> = {},
+  clock: Clock = systemClock,
+  opts: { signer?: MediaSigner; jobs?: MediaJobQueue } = {},
+): MediaAdapters & { close(): Promise<void> } {
+  const config = loadStorageConfig(env);
+  let owned: BullMqMediaJobQueue | undefined;
+  let jobs = opts.jobs;
+  if (!jobs) {
+    if (!env.REDIS_URL)
+      throw new Error('MEDIA_STORAGE_ENABLED=true requires REDIS_URL (media job queue)');
+    jobs = owned = new BullMqMediaJobQueue(createMediaQueueProducer(env.REDIS_URL));
+  }
+  return {
+    files: new PrismaFileObjectRepository(db, config.bucket, config.provider),
+    consents: new PrismaConsentRepository(db),
+    signer: opts.signer ?? new S3UploadSourceSigner({ config, now: () => clock.now() }),
+    jobs,
+    sessions: new PrismaRecordingSessionRepository(db, config.bucket, config.provider),
+    close: async () => {
+      await owned?.close();
+    },
   };
 }
 
@@ -220,13 +287,28 @@ export interface ModuleEnv {
    * unconfigured: dev/test fall back to the in-memory console sender, strict envs refuse to start.
    */
   emailEnv?: Record<string, string | undefined> | undefined;
+  /** MEDIA_STORAGE_ENABLED and STORAGE_* (#300 L-2). Omitted means unset: the flag is off. */
+  storageEnv?: Record<string, string | undefined> | undefined;
+  /** AUTH_MAIL_QUEUE, AUTH_MAIL_QUEUE_PREFIX, AUTH_MAIL_WORKER_ENABLED, AUTH_MAIL_WORKER_CONCURRENCY. */
+  mailQueueEnv?: Record<string, string | undefined> | undefined;
+  /** Test seam: BullMQ producer used instead of one on REDIS_URL when AUTH_MAIL_QUEUE=bullmq. */
+  mailQueueProducer?: AuthMailProducer | undefined;
+  /** Test seam: fake SMTP transport factory / fetch for the selected EmailService (no network in tests). */
+  emailServiceDeps?: EmailServiceDeps | undefined;
 }
+
+type EmailServiceDeps = Pick<
+  NonNullable<Parameters<typeof createEmailService>[1]>,
+  'fetch' | 'smtpTransportFactory'
+>;
 
 export const moduleEnvFromProcess = (): ModuleEnv => ({
   nodeEnv: process.env.NODE_ENV,
   redisUrl: process.env.REDIS_URL,
   databaseUrl: process.env.DATABASE_URL,
   emailEnv: process.env,
+  storageEnv: process.env,
+  mailQueueEnv: process.env,
 });
 
 const EMAIL_ENV_KEYS = ['EMAIL_PROVIDER', 'SMTP_HOST', 'RESEND_API_KEY'] as const;
@@ -241,7 +323,9 @@ export const emailConfigured = (emailEnv: ModuleEnv['emailEnv']) =>
  * NODE_ENV=test the env is ignored so tests never reach a real provider.
  */
 function resolveEmailConfig(env: ModuleEnv): EmailConfig | null {
-  if (env.nodeEnv === 'test' || !emailConfigured(env.emailEnv)) return null;
+  // emailServiceDeps (fakes only) lets tests exercise a configured provider without any network.
+  if ((env.nodeEnv === 'test' && !env.emailServiceDeps) || !emailConfigured(env.emailEnv))
+    return null;
   return loadEmailConfig(env.emailEnv);
 }
 
@@ -390,9 +474,18 @@ export function defaultModuleDeps(
   const emailConfig = injectedMail ? null : resolveEmailConfig(env);
   const hasDb = !!overrides.db || !!urlFor(env, env.databaseUrl);
   const hasRedis = !!overrides.redis || !!urlFor(env, env.redisUrl);
+  const mailQueueCfg = loadAuthMailQueueEnv(env.mailQueueEnv);
+  const useBullMail = !overrides.mailQueue && mailQueueCfg.mode === 'bullmq';
+  const mailRedisUrl = useBullMail ? urlFor(env, env.redisUrl) : undefined;
+  if (useBullMail) {
+    if (!mailRedisUrl && !env.mailQueueProducer)
+      throw new Error('AUTH_MAIL_QUEUE=bullmq requires REDIS_URL');
+    // The worker sends through the one EmailService EMAIL_PROVIDER selects (smtp or resend); never a fallback.
+  }
   const provided = (k: keyof ModuleDeps) =>
     ((DATABASE_BACKED_DEPS as readonly string[]).includes(k) && hasDb) ||
     ((REDIS_BACKED_DEPS as readonly string[]).includes(k) && hasRedis) ||
+    (k === 'mailQueue' && useBullMail) ||
     (k === 'mailTransport' &&
       ((overrides as { mailer?: unknown }).mailer !== undefined || emailConfig !== null));
   if (strict) {
@@ -428,6 +521,10 @@ export function defaultModuleDeps(
   if (strict) assertProductionCookies(security);
   const { redis, owned: ownedRedis } = resolveRedis(overrides, env);
   const { db, owned: ownedDb } = resolveDatabase(overrides, env);
+  const useStorageMedia = !overrides.media && mediaStorageEnabled(env.storageEnv ?? {});
+  if (useStorageMedia && !db) throw new Error('MEDIA_STORAGE_ENABLED=true requires DATABASE_URL');
+  const storageMedia =
+    useStorageMedia && db ? storageMediaAdapters(db, env.storageEnv ?? {}, clock) : undefined;
   // Dev/test fallback only below: strict envs reach here with a client or an injected dep for
   // every PRODUCTION_REQUIRED_DEPS entry (checked above).
   const memberships =
@@ -462,6 +559,28 @@ export function defaultModuleDeps(
     rateLimiter: redis ? new RedisRateLimiter(redis) : new InMemoryRateLimiter(clock),
     lockout: redis ? new RedisLoginLockout(redis) : new InMemoryLoginLockout(clock),
     mailQueue: new InlineAuthMailQueue(),
+    ...(useBullMail
+      ? (() => {
+          const q = new BullMqAuthMailQueue(
+            env.mailQueueProducer ??
+              createAuthMailProducer({ redisUrl: mailRedisUrl!, prefix: mailQueueCfg.prefix }),
+            clock,
+          );
+          return {
+            mailQueue: q,
+            ownedMailQueue: q,
+            ...(mailQueueCfg.workerEnabled && mailRedisUrl
+              ? {
+                  authMailWorker: {
+                    redisUrl: mailRedisUrl,
+                    prefix: mailQueueCfg.prefix,
+                    concurrency: mailQueueCfg.concurrency,
+                  },
+                }
+              : {}),
+          };
+        })()
+      : {}),
     // ADR-005 A1.2: Redis fast path, Postgres durable authority when both are configured.
     extensionTokens: redis
       ? db
@@ -484,7 +603,11 @@ export function defaultModuleDeps(
     invitationTtlMs: 7 * DAY,
     passwordResetTtlMs: 30 * MIN,
     emailVerificationTtlMs: DAY,
-    ...(strict ? {} : { media: inMemoryMediaAdapters(clock) }),
+    ...(storageMedia
+      ? { media: storageMedia, ownedMedia: storageMedia }
+      : strict
+        ? {}
+        : { media: inMemoryMediaAdapters(clock) }),
     ...overrides,
     ...(redis ? { redis } : {}),
     ...(ownedRedis ? { ownedRedis } : {}),
@@ -498,7 +621,7 @@ export function defaultModuleDeps(
   if (!injectedMail) {
     // Strict envs only get here with a valid emailConfig (PRODUCTION_REQUIRED_DEPS check above).
     const service = emailConfig
-      ? createEmailService(emailConfig, { nodeEnv: env.nodeEnv })
+      ? createEmailService(emailConfig, { ...env.emailServiceDeps, nodeEnv: env.nodeEnv })
       : devConsoleEmailService();
     deps.mailTransport = createAuthMailTransport(service, {
       verificationExpiresInHours: Math.max(1, Math.round(deps.emailVerificationTtlMs / HOUR)),
@@ -514,10 +637,16 @@ export async function registerModules(app: FastifyInstance, deps: ModuleDeps) {
   // No wildcard, no reflection of unknown origins. Extension lifecycle routes keep their own
   // credential-less CORS (ADR-005 A1.3.6), so they are skipped here.
   const webOrigins = new Set(deps.security.allowedOrigins);
+  // Desktop (ADR-012) app routes are called by the native app, never by a browser page: no CORS at all, not even for
+  // the web origins (security review B 2.2). Only `authorize` (a web-session route) keeps web CORS.
   const extensionPaths = new Set<string>([
     EXTENSION_AUTH_PATHS.token,
     EXTENSION_AUTH_PATHS.refresh,
     EXTENSION_AUTH_PATHS.revoke,
+    DESKTOP_AUTH_PATHS.token,
+    DESKTOP_AUTH_PATHS.refresh,
+    DESKTOP_AUTH_PATHS.revoke,
+    DESKTOP_AUTH_PATHS.switchOrg,
   ]);
   await app.register(cors, {
     hook: 'onRequest',
@@ -547,10 +676,12 @@ export async function registerModules(app: FastifyInstance, deps: ModuleDeps) {
     extensionBearerCorsHook(deps.extensionIds.map((id) => `chrome-extension://${id}`)),
   );
   // Close only the clients defaultModuleDeps created; injected ones belong to the caller.
-  const { ownedRedis, ownedDb } = deps;
-  if (ownedRedis || ownedDb) {
+  const { ownedRedis, ownedDb, ownedMedia, ownedMailQueue } = deps;
+  if (ownedRedis || ownedDb || ownedMedia || ownedMailQueue) {
     app.addHook('onClose', async () => {
       await Promise.allSettled([
+        ownedMailQueue ? ownedMailQueue.close() : undefined,
+        ownedMedia ? ownedMedia.close() : undefined,
         ownedRedis ? closeOwnedRedis(ownedRedis) : undefined,
         ownedDb ? ownedDb.$disconnect() : undefined,
       ]);
@@ -569,8 +700,23 @@ export async function registerModules(app: FastifyInstance, deps: ModuleDeps) {
       : undefined;
   // ADR-005 A1.6 (and ADR-012 when enabled): logout, password reset and member removal also revoke token families.
   const revoker = desktopAuth ? combineRevokers(extensionAuth, desktopAuth) : extensionAuth;
-  const auth = new AuthService({ ...deps, extensionRevoker: revoker });
-  const organizations = new OrganizationService({ ...deps, extensionRevoker: revoker });
+  const { selectNotificationsRepository } = await import('./notifications/index.js');
+  const notifications = selectNotificationsRepository(deps);
+  const pushDeviceRevoker = {
+    async revokeForUser(userId: string, organizationId?: string | null) {
+      const orgs = organizationId
+        ? [organizationId]
+        : (await deps.memberships.listByUser(userId)).map((m) => m.organizationId);
+      for (const o of orgs) await notifications.deleteDevicesForUser(o, userId);
+    },
+  };
+  const geoIp = deps.geoIp ?? createGeoIpProvider(process.env, app.log);
+  const auth = new AuthService({ ...deps, geoIp, extensionRevoker: revoker, pushDeviceRevoker });
+  const organizations = new OrganizationService({
+    ...deps,
+    extensionRevoker: revoker,
+    pushDeviceRevoker,
+  });
   if (deps.mailQueue instanceof InlineAuthMailQueue && !deps.mailQueue.handler) {
     deps.mailQueue.handler = new AuthMailJobHandler({
       ...deps,
@@ -578,6 +724,19 @@ export async function registerModules(app: FastifyInstance, deps: ModuleDeps) {
       log: app.log,
     });
     deps.mailQueue.log ??= app.log;
+  }
+  if (deps.mailQueue instanceof BullMqAuthMailQueue) {
+    deps.mailQueue.log ??= app.log;
+    if (deps.authMailWorker) {
+      const worker = startAuthMailWorker(
+        new AuthMailJobHandler({ ...deps, transport: deps.mailTransport, log: app.log }),
+        deps.authMailWorker,
+        app.log,
+      );
+      app.addHook('onClose', async () => {
+        await worker.close();
+      });
+    }
   }
   app.decorateRequest('auth', null);
   // ADR-012: when desktop auth is enabled the verifier also accepts desktop bearers; route guards still default to extension-only.
@@ -599,6 +758,12 @@ export async function registerModules(app: FastifyInstance, deps: ModuleDeps) {
   await app.register(import('./tasks/index.js'), { auth, organizations, deps });
   await app.register(import('./meeting-insights/index.js'), { auth, organizations, deps });
   await app.register(import('./integrations/index.js'), { auth, organizations, deps });
+  await app.register(import('./notifications/index.js'), {
+    auth,
+    organizations,
+    deps,
+    repo: notifications,
+  });
   await app.register(import('./meetings/index.js'), {
     auth,
     organizations,

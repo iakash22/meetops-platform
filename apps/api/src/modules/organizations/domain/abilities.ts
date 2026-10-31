@@ -20,6 +20,12 @@ export const MEDIA_SUBJECTS = ['FileObject', 'RecordingSession'] as const;
  * `create Task`, since accepting creates one. Viewers read only.
  */
 export const TASK_SUBJECTS = ['Task'] as const;
+/**
+ * Self-service notification subjects (ADR-013). Every role, viewers included, may manage only its OWN rows
+ * (`createdById` = the row's user); nobody, owners included, gets another user's feed, preferences or devices.
+ */
+export const SELF_NOTIFICATION_SUBJECTS = ['Notification', 'NotificationPreference', 'PushDevice'] as const;
+export type SelfNotificationSubject = (typeof SELF_NOTIFICATION_SUBJECTS)[number];
 export type TaskSubject = (typeof TASK_SUBJECTS)[number];
 export type DirectorySubject = (typeof DIRECTORY_SUBJECTS)[number];
 export type MediaSubject = (typeof MEDIA_SUBJECTS)[number];
@@ -32,6 +38,7 @@ export type SubjectName =
   | DirectorySubject
   | MediaSubject
   | TaskSubject
+  | SelfNotificationSubject
   | 'all';
 type OrgScoped = { organizationId: string; createdById?: string };
 // Conditions are Mongo queries over { organizationId, createdById }.
@@ -97,6 +104,14 @@ export function defineAbilityFor(ctx: {
         );
         break;
     }
+    // ADR-013: own notification rows only, for every role. Owners' `manage all` is narrowed back to their own rows.
+    can(['create', 'read', 'update', 'delete'], [...SELF_NOTIFICATION_SUBJECTS], {
+      organizationId,
+      createdById: ctx.userId,
+    });
+    cannot(['create', 'read', 'update', 'delete', 'manage'], [...SELF_NOTIFICATION_SUBJECTS], {
+      createdById: { $ne: ctx.userId },
+    });
   }
   return build();
 }

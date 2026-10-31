@@ -1,11 +1,12 @@
 import type { ApiErrorCode } from '@meetops/contracts';
+import type { InvokeArgs, InvokeOptions } from '@tauri-apps/api/core';
 
 import { AuthError } from '@/features/auth/auth-client';
 import { fillPath, RECORDING_SESSION_ROUTES as R } from '@/lib/api-paths';
 import type { RecordingUploadApi } from './upload-queue';
 
 /** Same shape as `@tauri-apps/api/core` `invoke`. */
-export type Invoke = <T>(cmd: string, args?: Record<string, unknown>) => Promise<T>;
+export type Invoke = <T>(cmd: string, args?: InvokeArgs, options?: InvokeOptions) => Promise<T>;
 
 /**
  * Recording-session routes through Rust (ADR-012 3.3: the webview CSP has no API or storage origin, and the bearer
@@ -35,7 +36,9 @@ export function createNativeUploadApi(invoke: Invoke): RecordingUploadApi {
     },
     put: async (upload, body) => {
       if (!upload.url.startsWith('https://')) throw new Error('Refusing a non-TLS upload URL.');
-      await invoke('upload_put', { upload, body: Array.from(body) }).catch((e: unknown) => {
+      await invoke('upload_put', body, {
+        headers: { 'x-meetops-upload': JSON.stringify(upload) },
+      }).catch((e: unknown) => {
         throw toError(e);
       });
     },

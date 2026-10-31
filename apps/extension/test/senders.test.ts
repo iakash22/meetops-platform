@@ -1,9 +1,14 @@
 import { describe, expect, it } from 'vitest';
-import { classifySender, isTrustedOffscreenSender } from '../src/lib/senders.js';
+import {
+  classifySender,
+  isTrustedOffscreenSender,
+  mayUseAuthAndTaskReads,
+} from '../src/lib/senders.js';
 
 const urls = {
   runtimeId: 'ext',
   popupUrl: 'chrome-extension://ext/popup.html',
+  sidePanelUrl: 'chrome-extension://ext/sidepanel.html',
   offscreenUrl: 'chrome-extension://ext/offscreen.html',
   backgroundUrl: 'chrome-extension://ext/background.js',
 };
@@ -41,5 +46,30 @@ describe('popup sender must not be a tab', () => {
       false,
     );
     expect(classifySender({ id: 'ext', url: urls.popupUrl }, urls).fromPopup).toBe(true);
+  });
+});
+
+describe('side panel sender', () => {
+  const side = { id: 'ext', url: urls.sidePanelUrl };
+
+  it('may sign in and read tasks, like the popup', () => {
+    expect(mayUseAuthAndTaskReads(classifySender(side, urls))).toBe(true);
+    expect(mayUseAuthAndTaskReads(classifySender({ id: 'ext', url: urls.popupUrl }, urls))).toBe(
+      true,
+    );
+  });
+
+  it('is never treated as the popup, so it cannot start a recording', () => {
+    expect(classifySender(side, urls)).toMatchObject({ fromSidePanel: true, fromPopup: false });
+  });
+
+  it('rejects sidepanel.html opened as a tab, other extensions and other pages', () => {
+    for (const s of [
+      { ...side, tab: { id: 1 } },
+      { id: 'other', url: urls.sidePanelUrl },
+      { id: 'ext', url: urls.offscreenUrl },
+      { id: 'ext', url: 'chrome-extension://ext/x.html' },
+    ])
+      expect(mayUseAuthAndTaskReads(classifySender(s, urls))).toBe(false);
   });
 });

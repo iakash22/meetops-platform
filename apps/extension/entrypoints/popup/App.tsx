@@ -1,5 +1,9 @@
 /// <reference types="chrome" />
-import { resolveMeetingId } from '../../src/lib/meeting.js';
+import {
+  resolveMeetingId,
+  type ResolveMeetingMessage,
+  type ResolveMeetingResult,
+} from '../../src/lib/meeting.js';
 import { useCallback, useEffect, useState } from 'react';
 import {
   canStartRecording,
@@ -90,7 +94,9 @@ function PopupApp() {
     try {
       const tabId = await activeTabId();
       const streamId = await getTabStreamId(tabId);
-      const meetingId = await resolveMeetingId();
+      const meetingId = await resolveMeetingId(tabId, (m: ResolveMeetingMessage) =>
+        chrome.runtime.sendMessage<ResolveMeetingMessage, ResolveMeetingResult>(m),
+      );
       const ack = await send({
         target: 'background',
         type: 'ACK_CONSENT',
@@ -127,6 +133,23 @@ function PopupApp() {
     );
   }, [apply]);
 
+  const [discardConfirm, setDiscardConfirm] = useState(false);
+  const onDiscardHeld = useCallback(() => setDiscardConfirm(true), []);
+  const onCancelDiscard = useCallback(() => setDiscardConfirm(false), []);
+  const onConfirmDiscard = useCallback(() => {
+    setDiscardConfirm(false);
+    send({ target: 'background', type: 'DISCARD_HELD_UPLOADS', confirmed: true }).then(
+      apply,
+      (e: unknown) => setRawError(errText(e)),
+    );
+  }, [apply]);
+
+  const onRetryHeld = useCallback(() => {
+    send({ target: 'background', type: 'RETRY_HELD_UPLOADS' }).then(apply, (e: unknown) =>
+      setRawError(errText(e)),
+    );
+  }, [apply]);
+
   return (
     <PopupView
       {...pairing}
@@ -141,6 +164,11 @@ function PopupApp() {
       onRecord={() => void onRecord()}
       onStop={onStop}
       onDismissWarning={onDismissWarning}
+      onRetryHeld={onRetryHeld}
+      onDiscardHeld={onDiscardHeld}
+      discardConfirm={discardConfirm}
+      onConfirmDiscard={onConfirmDiscard}
+      onCancelDiscard={onCancelDiscard}
     />
   );
 }

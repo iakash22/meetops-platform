@@ -31,6 +31,8 @@ export const envSchema = z.object({
   REDIS_URL: z.url().default('redis://localhost:6379'),
 
   // Storage
+  /** Back the API media routes with S3/MinIO + Prisma + BullMQ (off by default; needs DATABASE_URL, REDIS_URL). */
+  MEDIA_STORAGE_ENABLED: boolEnv(false),
   STORAGE_PROVIDER: z.enum(['minio', 'r2', 's3']).default('minio'),
   STORAGE_ENDPOINT: z.string().default('http://localhost:9000'),
   STORAGE_REGION: z.string().default('us-east-1'),
@@ -47,6 +49,20 @@ export const envSchema = z.object({
   SMTP_USER: z.string().default(''),
   SMTP_PASSWORD: z.string().default(''),
   EMAIL_FROM: z.string().default('noreply@example.com'),
+  /**
+   * Auth mail queue (ADR-013, notifications #11). `inline` (default) sends in-process (dev/test); `bullmq` enqueues
+   * ids-only jobs on the `auth-mail` queue (REDIS_URL) and delivers via the EMAIL_PROVIDER-selected service (smtp | resend), no fallback. Read by apps/api.
+   */
+  AUTH_MAIL_QUEUE: z.enum(['inline', 'bullmq']).default('inline'),
+  /** BullMQ key prefix for the auth-mail queue (empty = BullMQ default `bull`). */
+  AUTH_MAIL_QUEUE_PREFIX: z
+    .string()
+    .regex(/^[A-Za-z0-9:_-]{0,64}$/)
+    .default(''),
+  /** Run the auth-mail consumer inside the API process when AUTH_MAIL_QUEUE=bullmq (default true). */
+  AUTH_MAIL_WORKER_ENABLED: boolEnv(true),
+  /** Auth-mail consumer concurrency (1-50, default 5). */
+  AUTH_MAIL_WORKER_CONCURRENCY: numberFromString.default(5),
 
   // AI providers.
   // @deprecated: packages/ai-core owns the AI_* and provider-toggle keys and reads them via

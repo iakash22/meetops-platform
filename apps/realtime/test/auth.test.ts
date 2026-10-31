@@ -167,6 +167,8 @@ describe('rooms and meeting access (ADR-011 sections 1.3 and 4)', () => {
     const w = web(url, 'a1');
     await connected(w);
     expect(roomsOf(io, 'u1')[0]).toContain(`organizations:${ORG_A}`);
+    // ADR-013: server-derived user notification room.
+    expect(roomsOf(io, 'u1')[0]).toContain(`organizations:${ORG_A}:users:u1`);
     w.disconnect();
 
     const x = ext(url, 'xa1');

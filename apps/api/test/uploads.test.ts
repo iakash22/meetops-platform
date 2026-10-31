@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { Value } from '@sinclair/typebox/value';
 import { InitUploadResponse, MAX_UPLOAD_BYTES } from '@meetops/contracts';
 import { CompleteUploadResponse, DownloadUrlResponse } from '../src/modules/media/http/types.js';
@@ -27,6 +27,21 @@ describe('uploads (init, complete, download-url)', () => {
     return r.json<InitUploadResponse>();
   };
   const keyOf = (id: string) => `organizations/${w.org}/uploads/${id}/source`;
+
+  it('rejects invisible / format characters in the filename (#270 L-1)', async () => {
+    for (const filename of [
+      'a\u200Bb.webm',
+      'a\u200Fb.webm',
+      'a\u2060b.webm',
+      'a\u2064b.webm',
+      'a\uFEFFb.webm',
+      'a\u{E0041}b.webm', // astral tag character: caught by the service check
+    ]) {
+      const r = await w.member.post(url(), body({ filename }));
+      expect(r.statusCode, JSON.stringify(filename)).toBe(400);
+    }
+    expect(w.consents.rows).toHaveLength(0);
+  });
 
   it('init returns a contract-valid presigned PUT and stores the consent attestation', async () => {
     const out = await init();
@@ -107,6 +122,30 @@ describe('uploads (init, complete, download-url)', () => {
         consentAttestationId: w.consents.rows[0]!.id,
       }),
     ]);
+    // #302 M-1: a replay while processing/pending re-enqueues idempotently (same job id -> still one job).
+    expect((await w.member.post(done, {})).statusCode).toBe(200);
+    expect(w.jobs.jobs).toHaveLength(1);
+  });
+
+  it('#302 M-1: enqueue fails after the commit -> 500; a retried complete recovers with one job', async () => {
+    const { fileObjectId } = await init();
+    w.signer.put(keyOf(fileObjectId), 1000);
+    const done = `${url()}/${fileObjectId}/complete`;
+    const spy = vi.spyOn(w.jobs, 'enqueue').mockRejectedValueOnce(new Error('redis down'));
+    expect((await w.member.post(done, {})).statusCode).toBe(500);
+    expect((w.media.files as InMemoryFileObjectRepository).rows.get(fileObjectId)).toMatchObject({
+      status: 'processing',
+      scanStatus: 'pending',
+    });
+    expect(w.jobs.jobs).toHaveLength(0);
+    const r = await w.member.post(done, {});
+    expect(r.statusCode).toBe(200);
+    expect(w.jobs.jobs).toEqual([
+      expect.objectContaining({ kind: 'process_upload', subjectId: fileObjectId }),
+    ]);
+    spy.mockRestore();
+    // Once scanned, a replay is a conflict again (nothing to re-run).
+    (w.media.files as InMemoryFileObjectRepository).rows.get(fileObjectId)!.scanStatus = 'clean';
     expect((await w.member.post(done, {})).statusCode).toBe(409);
     expect(w.jobs.jobs).toHaveLength(1);
   });
@@ -189,6 +228,12 @@ describe('uploads (init, complete, download-url)', () => {
     const out = r.json<DownloadUrlResponse>();
     expect(Value.Check(DownloadUrlResponse, out)).toBe(true);
     expect(out.method).toBe('GET');
+    // Security review B 4.1: always an attachment with a fixed allowlisted type.
+    const q = new URL(out.url).searchParams;
+    expect(q.get('response-content-disposition')).toBe('attachment');
+    expect(q.get('response-content-type')).toMatch(
+      /^(audio|video)\/(webm|ogg|mpeg|mp4|wav|x-wav)$/,
+    );
     expect(out.expiresIn).toBeGreaterThanOrEqual(1);
     expect(out.expiresIn).toBeLessThanOrEqual(300);
     expect(Date.parse(out.expiresAt) - before).toBeLessThanOrEqual(out.expiresIn * 1000 + 1000);

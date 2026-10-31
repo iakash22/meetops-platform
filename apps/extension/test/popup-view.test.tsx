@@ -4,8 +4,10 @@ import { describe, expect, it } from 'vitest';
 import { CONSENT_CONFIRMATION, CONSENT_NOTICE, setConfirmed } from '../src/lib/consent.js';
 import { MAX_DURATION_MS } from '../src/lib/contract-limits.js';
 import {
+  MEETING_RESOLVE_MESSAGE,
   OFFLINE_MESSAGE,
   OPEN_FROM_TOOLBAR,
+  UNSUPPORTED_PAGE_MESSAGE,
   RELOADED_MESSAGE,
   POPUP_ONLY_ERROR,
   detectPopupContext,
@@ -151,6 +153,49 @@ describe('popup render states', () => {
     expect(html).toContain('aria-label="Incomplete recording"');
   });
 
+  it('held recordings: Discard asks for confirmation before anything is deleted', () => {
+    const idle = { status: 'idle' as const, heldRecordings: 1 };
+    const html = render({ status: idle, onRetryHeld: noop, onDiscardHeld: noop });
+    expect(html).toContain('>Discard<');
+    expect(html).not.toContain('aria-label="Confirm discard"');
+    const confirm = render({
+      status: idle,
+      onDiscardHeld: noop,
+      discardConfirm: true,
+      onConfirmDiscard: noop,
+      onCancelDiscard: noop,
+    });
+    expect(confirm).toContain('aria-label="Confirm discard"');
+    expect(confirm).toContain('Discard 1 held recording from this device? This cannot be undone.');
+    expect(confirm).toContain('Discard recordings');
+    expect(confirm).toContain('Cancel');
+    expect(confirm).not.toContain('>Retry upload<');
+  });
+
+  it('server-closed held recordings show a terminal notice with Discard and no Retry', () => {
+    const html = render({
+      status: { status: 'idle', heldRecordings: 1, heldClosed: 1 },
+      onRetryHeld: noop,
+      onDiscardHeld: noop,
+    });
+    expect(html).toContain('can no longer be submitted');
+    expect(html).toContain('consent was revoked');
+    expect(html).not.toContain('>Retry upload<');
+    expect(html).toContain('>Discard<');
+    expect(html).toContain('mo-callout--error');
+  });
+
+  it('storage full with held recordings does not claim they are safely kept', () => {
+    const html = render({
+      status: { status: 'idle', heldRecordings: 2, heldStorageFull: true },
+      onRetryHeld: noop,
+      onDiscardHeld: noop,
+    });
+    expect(html).toContain('Local storage is full');
+    expect(html).not.toContain('They are kept on this device');
+    expect(html).not.toContain('It is kept on this device');
+  });
+
   it('non-field errors render as a toast; none when empty', () => {
     expect(render()).not.toContain('mo-toast');
     expect(render({ error: 'No active tab' })).toContain(
@@ -214,6 +259,15 @@ describe('popup UI pass: status, re-auth, a11y', () => {
     expect(
       popupErrorMessage('Could not establish connection. Receiving end does not exist.', true),
     ).toBe(RELOADED_MESSAGE);
+  });
+
+  it('maps meeting-resolve failures without showing raw status text', () => {
+    expect(popupErrorMessage('Meeting resolve failed: HTTP 0 UNSUPPORTED_PAGE', true)).toBe(
+      UNSUPPORTED_PAGE_MESSAGE,
+    );
+    expect(popupErrorMessage('Meeting resolve failed: HTTP 403 FORBIDDEN', true)).toBe(
+      MEETING_RESOLVE_MESSAGE,
+    );
   });
 });
 

@@ -9,6 +9,16 @@ import { ApiError } from '@/lib/api/client';
 import { useApi } from '@/lib/api/context';
 import { notify, toastError } from '@/lib/errors/notify';
 import { describeUserAgent, formatDateTime } from './device-label';
+import {
+  countryFlag,
+  DBIP_ATTRIBUTION,
+  DBIP_URL,
+  formatLocation,
+  isNewLocation,
+  validCountryCode,
+} from './session-location';
+
+const APPROX_HINT = 'Approximate location based on IP address';
 import { useEndLocalSession } from './end-session';
 import { accountKeys, useMySessions } from './queries';
 
@@ -67,8 +77,13 @@ export function SessionsCard() {
           <EmptyState title="No active sessions" />
         ) : (
           <ul className="divide-y rounded-lg border" aria-label="Sessions">
-            {query.data.items.map((s) => {
+            {query.data.items.map((summary) => {
+              const s = summary;
+              const current = query.data.items.find((x) => x.current);
+              const flag = countryFlag(s.geoCountryCode);
+              const code = validCountryCode(s.geoCountryCode);
               const label = describeUserAgent(s.userAgent);
+              const location = formatLocation(s);
               const isConfirming = confirming === s.id;
               return (
                 <li
@@ -77,15 +92,50 @@ export function SessionsCard() {
                   className="flex flex-wrap items-center justify-between gap-3 p-3"
                 >
                   <div className="grid gap-0.5">
-                    <span className="flex items-center gap-2 font-medium">
-                      {label}
+                    <span
+                      className="flex flex-wrap items-center gap-2 font-medium"
+                      data-testid="session-location"
+                    >
+                      {location && flag && code ? (
+                        <span role="img" aria-label={code}>
+                          {flag}
+                        </span>
+                      ) : null}
+                      <span>{location ? `${label} · ${location}` : label}</span>
+                      {location ? (
+                        <abbr
+                          title={APPROX_HINT}
+                          aria-label={APPROX_HINT}
+                          className="cursor-help text-xs text-muted-foreground no-underline"
+                        >
+                          ≈ approximate
+                        </abbr>
+                      ) : null}
                       {s.current ? <Badge variant="secondary">This device</Badge> : null}
+                      {isNewLocation(s, current) ? (
+                        <Badge variant="destructive" data-testid="new-location">
+                          New location
+                        </Badge>
+                      ) : null}
                     </span>
                     <span className="text-xs text-muted-foreground">
                       Last active{' '}
                       <time dateTime={s.lastSeenAt}>{formatDateTime(s.lastSeenAt)}</time>
                       {s.ip ? ` · ${s.ip}` : ''}
                     </span>
+                    {location ? (
+                      <span className="text-xs text-muted-foreground">
+                        <a
+                          href={DBIP_URL}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="underline"
+                          data-testid="dbip-attribution"
+                        >
+                          {DBIP_ATTRIBUTION}
+                        </a>
+                      </span>
+                    ) : null}
                   </div>
                   {isConfirming ? (
                     <div className="flex gap-2">

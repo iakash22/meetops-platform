@@ -12,8 +12,47 @@ import { InMemoryMeetingRepository } from '../src/modules/meetings/infrastructur
 import {
   deriveExternalMeetingId,
   InvalidExternalMeetingError,
+  UnsupportedMeetingHostError,
 } from '../src/modules/meetings/domain/meeting.js';
+import { RESOLVE_LIMITS } from '../src/modules/meetings/application/meeting.service.js';
 import { buildApp, signupAndLogin, SID, type App, type Client } from './helpers.js';
+
+/**
+ * Shared vectors (keep identical in apps/api/test/meetings.test.ts and apps/extension/test/meeting.test.ts):
+ * raw tab URL -> what the extension sends (meetingUrlFromTab). The API must derive the same id from both.
+ */
+const EXT_VECTORS: ReadonlyArray<readonly [string, string]> = [
+  [
+    'https://teams.microsoft.com/_#/l/meetup-join/19%3ameeting_X%40thread.v2/0?ctx=1',
+    'https://teams.microsoft.com/l/meetup-join/19%3ameeting_X%40thread.v2/0',
+  ],
+  [
+    'https://teams.microsoft.com/_#/l/meetup-join/19:meeting_X@thread.v2/0',
+    'https://teams.microsoft.com/l/meetup-join/19:meeting_X@thread.v2/0',
+  ],
+  [
+    'https://teams.microsoft.com/v2/?meetingjoin=true#/l/meetup-join/19%3Ameeting_X%40thread.v2/0/',
+    'https://teams.microsoft.com/l/meetup-join/19%3Ameeting_X%40thread.v2/0/',
+  ],
+  [
+    'https://teams.microsoft.com/_#/l/meetup-join/a/../19%3ameeting_X%40thread.v2/0',
+    'https://teams.microsoft.com/l/meetup-join/19%3ameeting_X%40thread.v2/0',
+  ],
+  [
+    'https://teams.microsoft.com/_#/l\\meetup-join\\19%3ameeting_X%40thread.v2\\0',
+    'https://teams.microsoft.com/l/meetup-join/19%3ameeting_X%40thread.v2/0',
+  ],
+  ['https://zoom.us/j/r\u00e9union', 'https://zoom.us/j/r%C3%A9union'],
+  ['https://zoom.us/j/re\u0301union', 'https://zoom.us/j/re%CC%81union'],
+  ['https://zoom.us/j/r%C3%A9union', 'https://zoom.us/j/r%C3%A9union'],
+  ['https://zoom.us/j/re%CC%81union', 'https://zoom.us/j/re%CC%81union'],
+  [
+    'https://teams.microsoft.com/_#/l/meetup-join/r\u00e9union/0',
+    'https://teams.microsoft.com/l/meetup-join/r%C3%A9union/0',
+  ],
+];
+
+const ext = (u: string) => EXT_VECTORS.find(([raw]) => raw === u)![1];
 
 const MISSING = '00000000-0000-4000-8000-0000000000ff';
 type Role = 'admin' | 'member' | 'viewer';
@@ -217,9 +256,116 @@ describe('meetings module (list, detail, resolve, meeting access)', () => {
     expect(deriveExternalMeetingId('https://Zoom.US/j/123456789/?pwd=x#y')).toBe(
       'zoom.us/j/123456789',
     );
-    expect(() =>
-      deriveExternalMeetingId('https://teams.microsoft.com/l/meetup-join/19%3a'),
-    ).toThrow(InvalidExternalMeetingError);
+    expect(() => deriveExternalMeetingId('not a url')).toThrow(InvalidExternalMeetingError);
+  });
+
+  describe('deriveExternalMeetingId (M-2, L-1)', () => {
+    const thread = '19:meeting_NzQ1YmM@thread.v2';
+    const direct = `https://teams.microsoft.com/l/meetup-join/${encodeURIComponent(thread)}/0?context=x`;
+    const want = `teams.microsoft.com/l/meetup-join/${thread}/0`;
+
+    it('decodes older %-encoded Teams links (lower- and upper-case escapes)', () => {
+      expect(deriveExternalMeetingId(direct)).toBe(want);
+      expect(
+        deriveExternalMeetingId(
+          'https://teams.microsoft.com/l/meetup-join/19%3ameeting_NzQ1YmM%40thread.v2/0',
+        ),
+      ).toBe(want);
+    });
+
+    it('folds the classic /_# and the new /v2 fragment forms onto the same id without colliding', () => {
+      const classic = `https://teams.microsoft.com/_#/l/meetup-join/${encodeURIComponent(thread)}/0?ctx=1`;
+      const v2 = `https://teams.microsoft.com/v2/?meetingjoin=true#/l/meetup-join/${encodeURIComponent(thread)}/0`;
+      expect(deriveExternalMeetingId(classic)).toBe(want);
+      expect(deriveExternalMeetingId(v2)).toBe(want);
+      const other = `https://teams.microsoft.com/_#/l/meetup-join/${encodeURIComponent('19:meeting_OTHER@thread.v2')}/0`;
+      expect(deriveExternalMeetingId(other)).not.toBe(deriveExternalMeetingId(classic));
+      expect(deriveExternalMeetingId(classic)).not.toBe('teams.microsoft.com/_');
+      expect(deriveExternalMeetingId(v2)).not.toBe('teams.microsoft.com/v2');
+    });
+
+    it('maps IDN paths to a stable hashed id instead of 400', () => {
+      const a = deriveExternalMeetingId('https://zoom.us/j/r\u00e9union');
+      expect(a).toMatch(/^zoom\.us\/_h\/[0-9a-f]{64}$/);
+      expect(deriveExternalMeetingId('https://zoom.us/j/r%C3%A9union')).toBe(a);
+      expect(deriveExternalMeetingId('https://zoom.us/j/other\u00e9')).not.toBe(a);
+    });
+
+    it('bounds ids longer than 255 chars with a stable hash', () => {
+      const long = `https://zoom.us/j/${'a'.repeat(400)}`;
+      const id = deriveExternalMeetingId(long);
+      expect(id.length).toBeLessThanOrEqual(255);
+      expect(id).toMatch(/^zoom\.us\/_h\/[0-9a-f]{64}$/);
+      expect(deriveExternalMeetingId(long)).toBe(id);
+      expect(deriveExternalMeetingId(`${long}b`)).not.toBe(id);
+    });
+
+    it('normalizes Teams fragment paths exactly like the extension (raw link == extension output)', () => {
+      for (const [u, sent] of EXT_VECTORS.slice(0, 5)) {
+        expect(deriveExternalMeetingId(u)).toBe(deriveExternalMeetingId(sent));
+        expect(deriveExternalMeetingId(u)).toBe(
+          'teams.microsoft.com/l/meetup-join/19:meeting_X@thread.v2/0',
+        );
+      }
+    });
+
+    it('NFC-normalizes before hashing: composed, decomposed, raw and %-encoded Unicode give one id', () => {
+      const forms = [
+        'https://zoom.us/j/r\u00e9union', // raw composed
+        'https://zoom.us/j/re\u0301union', // raw decomposed
+        'https://zoom.us/j/r%C3%A9union', // encoded composed
+        'https://zoom.us/j/re%CC%81union', // encoded decomposed
+      ];
+      const ids = forms.map(deriveExternalMeetingId);
+      expect(new Set(ids).size).toBe(1);
+      expect(ids[0]).toMatch(/^zoom\.us\/_h\/[0-9a-f]{64}$/);
+      // Raw Unicode sent to the API matches what the extension sends for the same tab URL.
+      for (const u of forms) expect(deriveExternalMeetingId(ext(u))).toBe(ids[0]);
+      const teams = 'https://teams.microsoft.com/_#/l/meetup-join/r\u00e9union/0';
+      expect(deriveExternalMeetingId(teams)).toBe(deriveExternalMeetingId(ext(teams)));
+    });
+
+    it('rejects trailing, leading or double dots in hosts and explicit ports (like the extension)', () => {
+      for (const bad of [
+        'https://meet.google.com./a',
+        'https://us02web..zoom.us/j/1',
+        'https://.zoom.us/j/1',
+        'https://meet.google.com:8443/a',
+        'https://meet.google.com:443x/a',
+        'https://u:p@meet.google.com/a',
+      ]) {
+        expect(() => deriveExternalMeetingId(bad)).toThrow();
+      }
+      // :443 is the default port: WHATWG drops it, so both sides accept it.
+      expect(deriveExternalMeetingId('https://meet.google.com:443/a')).toBe('meet.google.com/a');
+    });
+
+    it('allows only meeting hosts (Meet, Zoom, Teams)', () => {
+      expect(deriveExternalMeetingId('https://us02web.zoom.us/j/1')).toBe('us02web.zoom.us/j/1');
+      expect(deriveExternalMeetingId('https://teams.live.com/meet/9')).toBe(
+        'teams.live.com/meet/9',
+      );
+      for (const bad of [
+        'https://evil.example/j/1',
+        'https://zoom.us.evil.example/j/1',
+        'https://notzoom.us/j/1',
+        'https://meet.google.com.evil.example/a',
+      ])
+        expect(() => deriveExternalMeetingId(bad)).toThrow(UnsupportedMeetingHostError);
+    });
+  });
+
+  it('rate limits POST /orgs/:org/meetings/resolve per caller (429 + retry-after) (L-3)', async () => {
+    const { member, org } = await world();
+    const url = `/orgs/${org}/meetings/resolve`;
+    for (let i = 0; i < RESOLVE_LIMITS.perUser.limit; i++)
+      expect(
+        (await member.post(url, { source: 'extension', externalMeetingId: `rl-${i}` })).statusCode,
+      ).toBe(201);
+    const r = await member.post(url, { source: 'extension', externalMeetingId: 'rl-x' });
+    expect(r.statusCode).toBe(429);
+    expect(r.headers['retry-after']).toBeDefined();
+    expect(errorOf(r).code).toBe('RATE_LIMITED');
   });
 
   it('refuses to start in strict environments without a meetings repository', () => {

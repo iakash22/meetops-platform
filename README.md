@@ -2,7 +2,7 @@
 
 Turn every meeting into actionable, assigned, measurable, and synchronized work.
 
-Status: Pre-alpha. Phase 0 is done and Phase 1 (auth, organizations, directory, RBAC) is nearly done. Later phases are started and unfinished. See [`docs/PHASE_STATUS.md`](docs/PHASE_STATUS.md) for what is on `main` and what is still open. `docs/17-agents/implementation-board.md` is the 2026-10-22 agent board, not the current phase report.
+Status: Pre-alpha, Phases 1–9 in progress in parallel (coordinator estimate ~60% overall on 27 Oct 2026). Phase 0 is done, Phase 1 (auth, organizations, directory, RBAC) is ~90%, Phases 2–6 and 8 are partly built, Phase 7 is barely started and Phase 9 is early. Agent work lands on `integration/phase-1` and reaches `main` through integration → `main` PRs (latest: #253, 27 Oct 2026). See [`docs/PHASE_STATUS.md`](docs/PHASE_STATUS.md) for per-phase numbers and what is still open, and [`docs/17-agents/implementation-board.md`](docs/17-agents/implementation-board.md) for open PRs.
 
 ## Core flow
 
@@ -58,8 +58,13 @@ meetops-ai/
 ├── apps/
 │   ├── web/          # Authenticated React dashboard
 │   ├── api/          # Fastify business API
-│   └── worker/       # BullMQ background processors
-├── packages/         # Shared code: contracts, config, database, ai-core, queue, storage, logger…
+│   ├── worker/       # BullMQ background processors
+│   ├── realtime/     # Socket.IO realtime gateway
+│   ├── extension/    # WXT (Manifest V3) browser extension
+│   ├── desktop/      # Tauri 2 desktop app
+│   └── mobile/       # Expo (React Native) mobile app
+├── packages/         # Shared code: contracts, config, database, ai-core, integrations, media-core,
+│                     # notifications, queue, session-verifier, storage, logger
 ├── infra/            # Docker & Compose
 ├── docs/             # Architecture, guides, ADRs, runbooks
 └── .github/          # CI/CD workflows and templates
@@ -144,14 +149,15 @@ Everything runs locally with no paid services: PostgreSQL, Redis, BullMQ, MinIO 
 
 ## Email
 
-All email goes through a provider-independent `EmailService` interface (`packages/notification` planned). Business modules only call that interface, so moving to another SMTP server or an API provider later is a configuration change plus a new adapter, not a module rewrite.
+All email goes through a provider-independent `EmailService` interface (`packages/notifications`). Business modules only call that interface, so moving to another SMTP server or an API provider later is a configuration change plus a new adapter, not a module rewrite.
 
 - Development provider: Gmail SMTP with Nodemailer: host `smtp.gmail.com`, port `465`, `secure: true`, Gmail address plus a Google App Password.
-- Selection: `EMAIL_PROVIDER=smtp` (default). Credentials come from backend env vars: `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`, `SMTP_USER`, `SMTP_PASSWORD`, `EMAIL_FROM`.
-- Delivery: sent asynchronously through a BullMQ `email` queue with retries and backoff (queue processor to be added).
+- Selection: `EMAIL_PROVIDER=smtp|resend|console` (default `smtp`; `console` is refused in production). Credentials come from backend env vars: `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`, `SMTP_USER`, `SMTP_PASSWORD`, `RESEND_API_KEY`, `EMAIL_FROM`. The API wires the real mailer since #251; see `docs/08-email/delivery.md`.
+- Delivery: the API currently sends through an inline queue (not allowed in production); the BullMQ mail queue and its worker consumer are still to be added.
 - Templates: versioned, managed email templates (later).
 - Emails covered: email verification, forgot/reset password, employee invitations, task notifications, meeting notifications (later).
-- Paid providers (Resend, SES, Postmark) are not integrated during development.
+- Resend is available as a fetch-based provider (#251). SES and Postmark are not integrated.
+- Wider notifications (in-app, push, digests, preferences) are planned in [ADR-013](docs/15-decisions/ADR-013-notifications-architecture.md) (Proposed) and [`docs/plans/notifications-architecture.md`](docs/plans/notifications-architecture.md).
 
 ## Security and privacy
 

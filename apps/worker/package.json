@@ -20,12 +20,15 @@
     "@meetops/integrations": "workspace:*",
     "@meetops/logger": "workspace:*",
     "@meetops/media-core": "workspace:*",
+    "@meetops/notifications": "workspace:*",
     "@meetops/queue": "workspace:*",
     "@meetops/storage": "workspace:*",
     "@sinclair/typebox": "^0.34.0",
     "@socket.io/redis-emitter": "^5.1.0",
     "bullmq": "^5.18.0",
-    "ioredis": "^5.4.1"
+    "ioredis": "^5.4.1",
+    "maxmind": "5.0.7",
+    "zod": "^4.6.6"
   },
   "devDependencies": {
     "tsx": "^4.19.1",

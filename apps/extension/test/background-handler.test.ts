@@ -562,3 +562,89 @@ describe('retryPendingDiscards (worker start)', () => {
     expect(client.sessions.get(sessionId)!.aborted).toBe('consent_revoked');
   });
 });
+
+describe('held recordings (409/413 refusals kept locally)', () => {
+  function heldDeps(initial: { count: number; closed: number }) {
+    const h = { ...initial };
+    const { deps } = makeDeps();
+    const retryHeld = vi.fn(async () => {
+      h.count = h.closed; // retryable ones complete; closed ones stay until discarded
+    });
+    const discardHeld = vi.fn(async () => {
+      h.count = 0;
+      h.closed = 0;
+    });
+    return { d: { ...deps, heldRecordings: async () => ({ ...h }), retryHeld, discardHeld }, h };
+  }
+
+  it('GET_STATUS reports held recordings and RETRY_HELD_UPLOADS retries them from the popup only', async () => {
+    const { d } = heldDeps({ count: 1, closed: 0 });
+    expect(await handleBackgroundMessage(d, bg({ type: 'GET_STATUS' }), popup)).toMatchObject({
+      ok: true,
+      heldRecordings: 1,
+    });
+    expect(d.setBadge).toHaveBeenLastCalledWith('!');
+    expect(
+      (await handleBackgroundMessage(d, bg({ type: 'RETRY_HELD_UPLOADS' }), offscreen)).ok,
+    ).toBe(false);
+    expect(d.retryHeld).not.toHaveBeenCalled();
+    const r = await handleBackgroundMessage(d, bg({ type: 'RETRY_HELD_UPLOADS' }), popup);
+    expect(d.retryHeld).toHaveBeenCalledTimes(1);
+    expect(r).toMatchObject({ ok: true });
+    expect(r).not.toHaveProperty('heldRecordings');
+    expect(d.setBadge).toHaveBeenLastCalledWith(''); // badge clears once nothing is held
+  });
+
+  it('server-closed sessions (consent_revoked) are reported as terminal and only discard removes them', async () => {
+    const { d } = heldDeps({ count: 1, closed: 1 });
+    expect(await handleBackgroundMessage(d, bg({ type: 'GET_STATUS' }), popup)).toMatchObject({
+      heldRecordings: 1,
+      heldClosed: 1,
+    });
+    await handleBackgroundMessage(d, bg({ type: 'RETRY_HELD_UPLOADS' }), popup);
+    expect(await handleBackgroundMessage(d, bg({ type: 'GET_STATUS' }), popup)).toMatchObject({
+      heldClosed: 1,
+    });
+    const r = await handleBackgroundMessage(
+      d,
+      bg({ type: 'DISCARD_HELD_UPLOADS', confirmed: true }),
+      popup,
+    );
+    expect(d.discardHeld).toHaveBeenCalledTimes(1);
+    expect(r).not.toHaveProperty('heldRecordings');
+    expect(d.setBadge).toHaveBeenLastCalledWith('');
+  });
+
+  it('DISCARD_HELD_UPLOADS requires the confirmation flag and the popup sender', async () => {
+    const { d } = heldDeps({ count: 2, closed: 0 });
+    for (const m of [
+      bg({ type: 'DISCARD_HELD_UPLOADS' }),
+      bg({ type: 'DISCARD_HELD_UPLOADS', confirmed: false }),
+      bg({ type: 'DISCARD_HELD_UPLOADS', confirmed: 'yes' }),
+    ])
+      expect((await handleBackgroundMessage(d, m, popup)).ok).toBe(false);
+    expect(
+      (
+        await handleBackgroundMessage(
+          d,
+          bg({ type: 'DISCARD_HELD_UPLOADS', confirmed: true }),
+          offscreen,
+        )
+      ).ok,
+    ).toBe(false);
+    expect(d.discardHeld).not.toHaveBeenCalled();
+  });
+
+  it('flags storage full while recordings are held; the badge stays for other alerts', async () => {
+    const { d } = heldDeps({ count: 1, closed: 0 });
+    await handleBackgroundMessage(
+      d,
+      bg({ type: 'REC_STORAGE', event: { kind: 'refused', seq: 3 } }),
+      offscreen,
+    );
+    expect(await handleBackgroundMessage(d, bg({ type: 'GET_STATUS' }), popup)).toMatchObject({
+      heldRecordings: 1,
+      heldStorageFull: true,
+    });
+  });
+});

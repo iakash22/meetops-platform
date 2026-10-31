@@ -152,3 +152,76 @@ export {
   type CreateAuthTokenFamilyInput,
   type AuthRefreshConsumeResult,
 } from './auth-tokens.js';
+export {
+  createNotificationRepository,
+  hashPushToken,
+  encodeNotificationCursor,
+  decodeNotificationCursor,
+  NOTIFICATIONS_DEFAULT_PAGE_LIMIT,
+  NOTIFICATIONS_MAX_PAGE_LIMIT,
+  NOTIFICATION_PREFERENCES_MAX,
+  type NotificationRepository,
+  type NotificationRepositoryOptions,
+  type NotificationRecord,
+  type NotificationPage,
+  type NotificationPreferenceRecord,
+  type NotificationChannelValue,
+  type NotificationDeliveryStatusValue,
+  type PushPlatformValue,
+  type PushDeviceRecord,
+  type PushTokenCipher,
+  type CreateNotificationInput,
+  type ListNotificationsInput,
+  type RegisterPushDeviceInput,
+  type RecordAttemptInput,
+} from './notifications.js';
+export {
+  listMeetingsPage,
+  encodeMeetingsCursor,
+  decodeMeetingsCursor,
+  clampMeetingsLimit,
+  MEETINGS_PAGE_DEFAULT_LIMIT,
+  MEETINGS_PAGE_MAX_LIMIT,
+  type MeetingsCursor,
+  type ListMeetingsPageOptions,
+  type MeetingsPage,
+} from './meetings-page.js';
+
+/** Error messages raised by add_recording_session_bytes(session_id uuid, delta bigint) RETURNS bigint. */
+export const RECORDING_SESSION_BYTES_ERRORS = {
+  invalidDelta: 'recording_session_bytes_invalid_delta', // SQLSTATE 22023
+  notFound: 'recording_session_not_found', // P0002
+  notUploading: 'recording_session_not_uploading', // 55000
+  exceeded: 'recording_session_bytes_exceeded', // 22003
+} as const;
+
+/**
+ * Atomically add `delta` (> 0) bytes to recording_sessions.bytes_received of a session in the current org;
+ * returns the new total. Call inside withOrgContext. Throws with one of RECORDING_SESSION_BYTES_ERRORS.
+ */
+export async function addRecordingSessionBytes(
+  tx: DatabaseTransaction,
+  sessionId: string,
+  delta: bigint,
+): Promise<bigint> {
+  const rows = await tx.$queryRaw<{ total: bigint }[]>`
+    SELECT public.add_recording_session_bytes(${sessionId}::uuid, ${delta}::bigint) AS total`;
+  const total = rows[0]?.total;
+  if (total === undefined) throw new Error('add_recording_session_bytes returned no row');
+  return total;
+}
+
+export {
+  IP_RETENTION_DAYS,
+  IP_RETENTION_BATCH,
+  IP_RETENTION_MAX_BATCHES,
+  redactExpiredIpAddresses,
+  type IpRetentionResult,
+} from './ip-retention.js';
+
+export {
+  SESSION_PURGE_DAYS,
+  SESSION_PURGE_BATCH,
+  SESSION_PURGE_MAX_BATCHES,
+  purgeExpiredSessions,
+} from './session-purge.js';

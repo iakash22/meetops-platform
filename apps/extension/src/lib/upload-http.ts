@@ -69,6 +69,8 @@ export class UploadApiError extends Error {
     readonly status: number,
     readonly code: string,
     readonly retryAfterMs?: number,
+    /** Contracts `error.reason` (e.g. RECORDING_SESSION_CLOSED), when the server sent one. */
+    readonly reason?: string,
   ) {
     super(`Upload API ${op} failed: HTTP ${status} ${code}`);
     this.name = 'UploadApiError';
@@ -215,9 +217,10 @@ export class HttpUploadClient implements UploadClient {
         });
         if (!res.ok) {
           const json: unknown = await res.json().catch(() => undefined);
-          const code = this.d.validators.apiError(json) ? json.error.code : 'INVALID_RESPONSE';
+          const env = this.d.validators.apiError(json) ? json : undefined;
+          const code = env ? env.error.code : 'INVALID_RESPONSE';
           const retryAfter = parseRetryAfter(res.headers.get('retry-after'), this.policy.now());
-          throw new UploadApiError(op, res.status, code, retryAfter);
+          throw new UploadApiError(op, res.status, code, retryAfter, env?.error.reason);
         }
         if (!check) return;
         const json: unknown = await res.json().catch(() => undefined);

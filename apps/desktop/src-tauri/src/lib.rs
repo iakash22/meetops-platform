@@ -1,11 +1,30 @@
 //! MeetOps AI desktop shell (Tauri 2).
 //!
-//! Commands: `app_info` (Settings screen) and `api_request` (see `api.rs`). Offline recording,
-//! secure token storage (OS keychain) and uploads are later Phase 8 milestones.
+//! Commands: `app_info`; the ADR-012 auth commands (`auth_sign_in`, `auth_session`, `auth_sign_out`); the scoped
+//! `api_request` (api.rs: configured https API origin, route allowlist, fresh bearer + one 401 retry, kept in Rust) and presigned `upload_put`; and the encrypted offline chunk store (`chunk_put`, `chunk_get`,
+//! `chunk_delete`, `chunk_exists`, `chunk_list`,
+//! `chunk_tombstone`; namespaced by an HMAC of the Rust-side session owner). No command ever returns a token.
 
 mod api;
+mod auth;
+mod chunk_store;
+mod config;
+mod error;
+mod keychain;
+mod loopback;
+mod pkce;
+mod upload;
+
+use std::sync::Arc;
 
 use serde::Serialize;
+use serde_json::Value;
+use tauri::{Manager, State};
+
+use api::ApiState;
+use auth::AuthState;
+use chunk_store::ChunkStore;
+use error::{CmdError, CmdResult};
 
 /// Static app/platform info for the UI. Mirrored by `AppInfo` in `src/lib/native.ts`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -35,11 +54,137 @@ fn app_info(app: tauri::AppHandle) -> AppInfo {
     build_app_info(&pkg.name, &pkg.version.to_string())
 }
 
+#[tauri::command]
+async fn auth_sign_in(auth: State<'_, AuthState>) -> CmdResult<Value> {
+    auth::sign_in(&auth).await
+}
+
+#[tauri::command]
+async fn auth_session(auth: State<'_, AuthState>) -> CmdResult<Option<Value>> {
+    match config::origins() {
+        Ok(o) => auth.session(&o).await,
+        Err(_) => Ok(None),
+    }
+}
+
+#[tauri::command]
+async fn auth_sign_out(auth: State<'_, AuthState>) -> CmdResult<()> {
+    auth.sign_out(config::origins().ok().as_ref()).await;
+    Ok(())
+}
+
+#[tauri::command]
+async fn upload_put(auth: State<'_, AuthState>, request: tauri::ipc::Request<'_>) -> CmdResult<()> {
+    // Raw IPC body: bytes arrive as-is (no JSON number array), and the size cap runs before any copy.
+    let body = upload::raw_body(request.body())?.to_vec();
+    let upload = upload::upload_header(
+        request
+            .headers()
+            .get(upload::UPLOAD_HEADER)
+            .and_then(|v| v.to_str().ok()),
+    )?;
+    let storage = config::storage_origin()?;
+    upload::upload_put(&auth.http, &storage, upload, body).await
+}
+
+/// The chunk-store account comes from Rust's authenticated session, never from the webview (N-1).
+fn chunk_owner(auth: &AuthState) -> CmdResult<String> {
+    auth.owner().ok_or_else(CmdError::unauthenticated)
+}
+
+#[tauri::command]
+fn chunk_put(
+    auth: State<'_, AuthState>,
+    chunks: State<'_, ChunkStore>,
+    session_id: String,
+    index: u32,
+    data: Vec<u8>,
+) -> CmdResult<()> {
+    chunks.put(&chunk_owner(&auth)?, &session_id, index, &data)
+}
+
+#[tauri::command]
+fn chunk_get(
+    auth: State<'_, AuthState>,
+    chunks: State<'_, ChunkStore>,
+    session_id: String,
+    index: u32,
+) -> CmdResult<Vec<u8>> {
+    chunks.get(&chunk_owner(&auth)?, &session_id, index)
+}
+
+#[tauri::command]
+fn chunk_delete(
+    auth: State<'_, AuthState>,
+    chunks: State<'_, ChunkStore>,
+    session_id: String,
+) -> CmdResult<()> {
+    chunks.delete_session(&chunk_owner(&auth)?, &session_id)
+}
+
+#[tauri::command]
+fn chunk_exists(
+    auth: State<'_, AuthState>,
+    chunks: State<'_, ChunkStore>,
+    session_id: String,
+) -> CmdResult<bool> {
+    chunks.exists(&chunk_owner(&auth)?, &session_id)
+}
+
+#[tauri::command]
+fn chunk_list(
+    auth: State<'_, AuthState>,
+    chunks: State<'_, ChunkStore>,
+) -> CmdResult<Vec<chunk_store::StoredSession>> {
+    chunks.list(&chunk_owner(&auth)?)
+}
+
+/// Device-wide discard marker; needs a signed-in session but not the recording's own account.
+#[tauri::command]
+fn chunk_tombstone(
+    auth: State<'_, AuthState>,
+    chunks: State<'_, ChunkStore>,
+    session_id: String,
+) -> CmdResult<()> {
+    chunk_owner(&auth)?;
+    chunks.tombstone(&session_id)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
-        .manage(api::ApiState::from_build_env())
-        .invoke_handler(tauri::generate_handler![app_info, api::api_request])
+        .manage(ApiState::new().expect("API http client"))
+        .setup(|app| {
+            let store: Arc<dyn keychain::SecretStore> =
+                Arc::new(keychain::KeychainStore::new(config::KEYCHAIN_SERVICE));
+            let dir = app
+                .path()
+                .app_local_data_dir()
+                .map_err(|_| CmdError::internal().message)?
+                .join("chunks");
+            // Fail closed: without a persisted chunk key, offline chunk commands are disabled for this launch.
+            let chunks = match chunk_store::device_key(store.as_ref(), config::CHUNK_KEY_ACCOUNT) {
+                Ok(key) => ChunkStore::new(dir, &key),
+                Err(_) => ChunkStore::unavailable(dir),
+            };
+            app.manage(chunks);
+            app.manage(AuthState::new(store));
+            Ok(())
+        })
+        .invoke_handler(tauri::generate_handler![
+            app_info,
+            auth_sign_in,
+            auth_session,
+            auth_sign_out,
+            api::api_request,
+            upload_put,
+            chunk_put,
+            chunk_get,
+            chunk_delete,
+            chunk_exists,
+            chunk_list,
+            chunk_tombstone
+        ])
         .run(tauri::generate_context!())
         .expect("error while running the MeetOps desktop app");
 }

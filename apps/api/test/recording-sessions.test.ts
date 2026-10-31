@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { Value } from '@sinclair/typebox/value';
 import {
   ChunkUploadUrlResponse,
@@ -109,15 +109,15 @@ describe('recording sessions', () => {
     expect((await w.chunk(w.member, id, 1, MAX_CHUNK_BYTES + 1)).statusCode).toBe(400);
   });
 
-  it('running total capped at 1.4 GB (409), re-signing a seq replaces its size', async () => {
+  it('running total capped at 1.4 GB (413 PAYLOAD_TOO_LARGE), re-signing a seq replaces its size', async () => {
     const w = await setup();
     const id = await w.start();
     // 20 x 64 MiB = 1_342_177_280 bytes; one more full chunk crosses 1.4e9.
     for (let s = 0; s < 20; s++)
       expect((await w.chunk(w.member, id, s, MAX_CHUNK_BYTES)).statusCode).toBe(200);
     const over = await w.chunk(w.member, id, 20, MAX_CHUNK_BYTES);
-    expect(over.statusCode).toBe(409);
-    expect(errorOf(over).code).toBe('CONFLICT');
+    expect(over.statusCode).toBe(413);
+    expect(errorOf(over).code).toBe('PAYLOAD_TOO_LARGE');
     expect((await w.chunk(w.member, id, 20, 1_400_000_000 - 20 * MAX_CHUNK_BYTES)).statusCode).toBe(
       200,
     );
@@ -165,11 +165,83 @@ describe('recording sessions', () => {
         meetingId: w.meetingId,
       }),
     ]);
+    // #302 M-1: a replay of an already-completed session re-enqueues idempotently (still one job).
     expect((await complete(w, w.member, id, { chunkCount: 3, durationMs: 1 })).statusCode).toBe(
-      409,
+      202,
     );
-    expect((await w.chunk(w.member, id, 3)).statusCode).toBe(409);
+    const late = await w.chunk(w.member, id, 3);
+    expect(late.statusCode).toBe(409);
+    // Completed (processing) is not "closed": the generic reason stays.
+    expect(late.json().error.reason).toBe('CONFLICT');
     expect(w.jobs.jobs).toHaveLength(1);
+  });
+
+  it('#302 M-1: enqueue fails after finish() -> 500; a retried complete recovers with one job', async () => {
+    const w = await setup();
+    const id = await w.start();
+    await w.chunk(w.member, id, 0);
+    w.upload(id, 0);
+    const spy = vi.spyOn(w.jobs, 'enqueue').mockRejectedValueOnce(new Error('redis down'));
+    expect((await complete(w, w.member, id, { chunkCount: 1, durationMs: 5 })).statusCode).toBe(
+      500,
+    );
+    expect(w.repo.rows.get(id)!.status).toBe('completed');
+    expect(w.jobs.jobs).toHaveLength(0);
+    expect((await complete(w, w.member, id, { chunkCount: 1, durationMs: 5 })).statusCode).toBe(
+      202,
+    );
+    expect(w.jobs.jobs).toEqual([
+      expect.objectContaining({ kind: 'process_recording_session', subjectId: id }),
+    ]);
+    spy.mockRestore();
+  });
+
+  it('#303 M-2: replaying complete on an assembled (finished) session never requeues', async () => {
+    const w = await setup();
+    const id = await w.start();
+    await w.chunk(w.member, id, 0);
+    w.upload(id, 0);
+    expect((await complete(w, w.member, id, { chunkCount: 1, durationMs: 5 })).statusCode).toBe(
+      202,
+    );
+    // The worker assembled + processed it: the job finished and the source is no longer pending_upload.
+    w.jobs.finished.add(`process_recording_session_${w.org}_${id}`);
+    w.repo.rows.get(id)!.sourcePending = false;
+    const requeue = vi.spyOn(w.jobs, 'requeue');
+    for (let i = 0; i < 3; i++) {
+      expect((await complete(w, w.member, id, { chunkCount: 1, durationMs: 5 })).statusCode).toBe(
+        202,
+      );
+    }
+    expect(requeue).not.toHaveBeenCalled();
+    expect(w.jobs.finished.size).toBe(1); // the finished job was not replaced
+    expect(w.jobs.jobs).toHaveLength(1);
+    // While the source is still pending (e.g. the old job finished without assembling), a replay does requeue.
+    w.repo.rows.get(id)!.sourcePending = true;
+    expect((await complete(w, w.member, id, { chunkCount: 1, durationMs: 5 })).statusCode).toBe(
+      202,
+    );
+    expect(requeue).toHaveBeenCalledOnce();
+    expect(w.jobs.finished.size).toBe(0);
+    requeue.mockRestore();
+  });
+
+  it('complete 409 when a stored chunk checksum is missing, multipart or different (review B 4.2)', async () => {
+    const w = await setup();
+    const id = await w.start();
+    await w.chunk(w.member, id, 0);
+    const key = w.repo.rows.get(id)!.chunks.get(0)!.key;
+    for (const stored of ['LCa0a2j/xo/5m0U8HTBBNBNCLXBkg7+g+YpeiGJm564=', null, 'x-3']) {
+      w.signer.put(key, 1000, stored);
+      expect((await complete(w, w.member, id, { chunkCount: 1, durationMs: 1 })).statusCode).toBe(
+        409,
+      );
+    }
+    expect(w.jobs.jobs).toHaveLength(0);
+    w.upload(id, 0);
+    expect((await complete(w, w.member, id, { chunkCount: 1, durationMs: 1 })).statusCode).toBe(
+      202,
+    );
   });
 
   it('complete without a valid stored consent: 422 CONSENT_* and no job', async () => {
@@ -211,7 +283,16 @@ describe('recording sessions', () => {
     expect(
       (await w.member.post(`/recording-sessions/${id}/abort`, { reason: 'error' })).statusCode,
     ).toBe(409);
-    expect((await w.chunk(w.member, id, 0)).statusCode).toBe(409);
+    const closed = await w.chunk(w.member, id, 0);
+    expect(closed.statusCode).toBe(409);
+    // An aborted session is terminal: clients get the RECORDING_SESSION_CLOSED reason, not the generic CONFLICT.
+    expect(closed.json().error).toMatchObject({
+      code: 'CONFLICT',
+      reason: 'RECORDING_SESSION_CLOSED',
+    });
+    const done = await complete(w, w.member, id, { chunkCount: 1, durationMs: 1 });
+    expect(done.statusCode).toBe(409);
+    expect(done.json().error.reason).toBe('RECORDING_SESSION_CLOSED');
     expect(w.jobs.jobs).toHaveLength(0);
   });
 });

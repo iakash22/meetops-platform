@@ -16,6 +16,8 @@ import type {
   SignedRequest,
   StoredObjectHead,
 } from '../domain/ports.js';
+import { downloadContentType } from '../domain/ports.js';
+import { assertTtl } from '@meetops/storage';
 
 export class InMemoryConsentRepository implements ConsentRepository {
   readonly rows: ConsentRecord[] = [];
@@ -81,6 +83,8 @@ export class FakeMediaSigner implements MediaSigner {
     checksumSha256Base64: string;
     ttlSeconds: number;
   }) {
+    // Same cap as the real S3UploadSourceSigner, so a TTL above it fails here too (#300 M-1).
+    assertTtl(s.ttlSeconds);
     this.signedChecksums.set(s.key, s.checksumSha256Base64);
     return this.sign('PUT', s.key, s.ttlSeconds, {
       'content-length': String(s.sizeBytes),
@@ -88,8 +92,13 @@ export class FakeMediaSigner implements MediaSigner {
       'x-amz-checksum-sha256': s.checksumSha256Base64,
     });
   }
-  async presignGet(s: { key: string; ttlSeconds: number }) {
-    return this.sign('GET', s.key, s.ttlSeconds, {});
+  async presignGet(s: { key: string; ttlSeconds: number; contentType: string }) {
+    const r = this.sign('GET', s.key, s.ttlSeconds, {});
+    const q = new URLSearchParams({
+      'response-content-disposition': 'attachment',
+      'response-content-type': downloadContentType(s.contentType),
+    });
+    return { ...r, url: `${r.url}&${q.toString()}` };
   }
   async head(key: string) {
     const h = this.stored.get(key);
@@ -103,10 +112,28 @@ export class FakeMediaSigner implements MediaSigner {
   }
 }
 
+/** Mirrors BullMQ's deterministic-id dedupe: one job per (kind, org, subject). */
 export class InMemoryMediaJobQueue implements MediaJobQueue {
   readonly jobs: MediaProcessingJob[] = [];
+  /** Ids treated as finished (tests): requeue replaces them. */
+  readonly finished = new Set<string>();
+  private static id(j: MediaProcessingJob) {
+    return `${j.kind}_${j.organizationId}_${j.subjectId}`;
+  }
   async enqueue(job: MediaProcessingJob) {
+    if (this.jobs.some((j) => InMemoryMediaJobQueue.id(j) === InMemoryMediaJobQueue.id(job)))
+      return;
     this.jobs.push(job);
+  }
+  async requeue(job: MediaProcessingJob) {
+    const id = InMemoryMediaJobQueue.id(job);
+    if (this.finished.delete(id)) {
+      const i = this.jobs.findIndex((j) => InMemoryMediaJobQueue.id(j) === id);
+      if (i >= 0) this.jobs.splice(i, 1);
+    }
+    if (this.jobs.some((j) => InMemoryMediaJobQueue.id(j) === id)) return false;
+    this.jobs.push(job);
+    return true;
   }
 }
 
@@ -115,13 +142,19 @@ export class InMemoryRecordingSessionRepository implements RecordingSessionRepos
   async create(r: RecordingSessionRecord) {
     this.rows.set(r.id, { ...r, chunks: new Map(r.chunks) });
   }
-  async findById(id: string) {
+  async findById(organizationId: string, id: string) {
     const r = this.rows.get(id);
-    return r ? { ...r, chunks: new Map(r.chunks) } : null;
+    return r && r.organizationId === organizationId ? { ...r, chunks: new Map(r.chunks) } : null;
   }
-  async reserveChunk(id: string, chunk: RecordingChunkRecord, maxTotalBytes: number) {
+  async reserveChunk(
+    organizationId: string,
+    id: string,
+    chunk: RecordingChunkRecord,
+    maxTotalBytes: number,
+  ) {
     const r = this.rows.get(id);
-    if (!r || r.status !== 'uploading') return 'not_uploading' as const;
+    if (!r || r.organizationId !== organizationId || r.status !== 'uploading')
+      return 'not_uploading' as const;
     const total = r.totalBytes - (r.chunks.get(chunk.seq)?.sizeBytes ?? 0) + chunk.sizeBytes;
     if (total > maxTotalBytes) return 'over_limit' as const;
     r.chunks.set(chunk.seq, { ...chunk });
@@ -129,14 +162,15 @@ export class InMemoryRecordingSessionRepository implements RecordingSessionRepos
     return 'ok' as const;
   }
   async finish(
+    organizationId: string,
     id: string,
     next:
       | { status: 'completed'; chunkCount: number; durationMs: number }
       | { status: 'aborted'; abortReason: AbortReason },
   ) {
     const r = this.rows.get(id);
-    if (!r || r.status !== 'uploading') return false;
-    Object.assign(r, next);
+    if (!r || r.organizationId !== organizationId || r.status !== 'uploading') return false;
+    Object.assign(r, next, next.status === 'completed' ? { sourcePending: true } : {});
     return true;
   }
 }

@@ -22,7 +22,11 @@ Where each variable is read:
 - `PORT` / `HOST`: the listen address (default `3000` / `0.0.0.0`). `API_PORT` is only the compose **host** port mapped to the container's `PORT=3000`.
 - `CSRF_SECRET`: HMAC key for CSRF tokens. **Required in production**, at least 32 bytes (`openssl rand -base64 48`). In dev it's random per process when empty.
 - `WEB_ORIGINS`: comma-separated allowlist for browser CORS (`Access-Control-Allow-Origin` + credentials) and for the API Origin/Referer check on mutations. **Required in production**; the dev default is `http://localhost:5173,http://localhost:3000`. This is not `WEB_ORIGIN` (below).
-- `TRUST_PROXY`: hop count (`1`) or a comma list of proxy IPs/CIDRs. Empty means no proxy; `true` is rejected.
+- `TRUST_PROXY`: comma list of proxy IPs/CIDRs (the allowlist form). Empty means no proxy; `true` and `/0` are rejected. A hop count (`1`) is accepted in dev/test only and **fails startup in production** (ADR-014: it trusts a forged X-Forwarded-For).
+- `BEHIND_CLOUDFLARE`: `true` to use `CF-Connecting-IP`, only when the peer is in the pinned Cloudflare ranges (`apps/api/src/shared/geoip/client-ip.ts`). Default off. Raw X-Forwarded-For is never read.
+- `GEOIP_PROVIDER`: `dbip` (default when `GEOIP_DB_PATH` is set), `geolite2` or `none`. Local mmdb lookups only; no external API, no paid provider, no fallback.
+- `GEOIP_DB_PATH`: path to the DB-IP City Lite (or GeoLite2-City) `.mmdb`. Missing/unreadable: location lookups are off and session geo fields stay empty. See [GeoIP](../12-security/geoip.md).
+- `GEOIP_UPDATE_URL` (worker): monthly mmdb updater source, e.g. `https://download.db-ip.com/free/dbip-city-lite-{YYYY}-{MM}.mmdb.gz`. Off unless this and `GEOIP_DB_PATH` are set. https only, exact host allowlist `GEOIP_UPDATE_ALLOWED_HOSTS` (default `download.db-ip.com`), redirects refused, size cap `GEOIP_UPDATE_MAX_BYTES` (default 256 MiB), optional `GEOIP_UPDATE_SHA256_URL`, `GEOIP_UPDATE_TEST_IPS`, `GEOIP_UPDATE_TIMEOUT_MS` (idle), `GEOIP_UPDATE_TOTAL_TIMEOUT_MS` (overall deadline, default 5 min). Default https port only. See [GeoIP](../12-security/geoip.md#getting-the-database-monthly-updater).
 
 ### Database
 
@@ -44,6 +48,7 @@ Where each variable is read:
 
 **Local dev only:** the compose stack runs the pinned MinIO fork `pgsty/silo`. Production uses R2/S3 via StorageService.
 
+- `MEDIA_STORAGE_ENABLED`: `true` backs the API upload routes with S3/MinIO (`STORAGE_*`) the Prisma `file_objects` / `consent_attestations` / `recording_sessions` tables, and enqueues media jobs on the BullMQ `media` queue the worker consumes; requires `DATABASE_URL` and `REDIS_URL`. Empty/`false` (default) keeps the in-memory adapters in development/test and leaves the media routes off elsewhere.
 - `STORAGE_PROVIDER`: `minio` | `r2` | `s3`.
 - `STORAGE_ENDPOINT`, `STORAGE_REGION`, `STORAGE_BUCKET`.
 - `STORAGE_ACCESS_KEY_ID`, `STORAGE_SECRET_ACCESS_KEY`: in dev these are also the MinIO root credentials (dev-only placeholders).
@@ -82,6 +87,10 @@ Where each variable is read:
 - `SMTP_USER`
 - `SMTP_PASSWORD`
 - `EMAIL_FROM`: e.g. "MeetOps AI <noreply@example.com>"
+- `AUTH_MAIL_QUEUE`: `inline` (default) or `bullmq`. `bullmq` (production, ADR-013 / notifications #11) enqueues ids-only auth mail jobs on the BullMQ `auth-mail` queue on `REDIS_URL` (deterministic, PII-free job ids `authmail_<kind>_<sha256>`; 5 attempts, exponential backoff from 2 s) and the worker sends through the provider-independent `EmailService` that `EMAIL_PROVIDER` explicitly selects (`smtp`: Mailpit in dev, Gmail opt-in; `resend`: production). There is never an automatic fallback: a failing provider retries or fails on that same provider. Resend 429/5xx/network errors and SMTP 4xx/connection errors retry; Resend other 4xx and SMTP 5xx fail fast. In strict environments it satisfies the `mailQueue` production dependency.
+- `AUTH_MAIL_QUEUE_PREFIX`: optional BullMQ key prefix for that queue (default `bull`; the live test uses `qa:it:`).
+- `AUTH_MAIL_WORKER_ENABLED`: `true` (default) runs the auth-mail consumer inside the API process when `AUTH_MAIL_QUEUE=bullmq`; set `false` on API replicas that should only enqueue.
+- `AUTH_MAIL_WORKER_CONCURRENCY`: consumer concurrency, 1-50 (default 5).
 
 ### AI providers
 

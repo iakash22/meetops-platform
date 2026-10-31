@@ -34,6 +34,17 @@ export interface StoredChunk {
   sha256?: string;
 }
 
+export interface HeldInfo {
+  /** HTTP status of the refusal (409 or 413). */
+  status: number;
+  /** Upload operation that was refused. */
+  op: string;
+  /** Epoch ms when it was held. */
+  at: number;
+  /** The server closed the session for good (409 RECORDING_SESSION_CLOSED, e.g. consent_revoked): discard only. */
+  closed?: true;
+}
+
 export interface StoredSession {
   sessionId: string;
   /**
@@ -50,6 +61,11 @@ export interface StoredSession {
   incomplete?: { lostChunks: number };
   /** Set when the session was aborted instead of completed. */
   abortedReason?: string;
+  /**
+   * Held locally after the server refused it (409 on a chunk URL / complete, or 413). Never aborted or deleted for
+   * that: the drain skips it until the user retries from the popup (see drain.ts releaseHeldSessions).
+   */
+  held?: HeldInfo;
   /** Digests of uploaded chunks, sent with complete(). */
   digests?: CompletedChunk[];
 }
@@ -195,6 +211,16 @@ export class ChunkStore {
         Number(b.uploaded) - Number(a.uploaded) || a.createdAt - b.createdAt || a.seq - b.seq,
     );
     let total = existing.reduce((n, x) => n + x.size, 0);
+    // Held recordings (server refused, waiting for the user's Retry or Discard) are never evicted: their pending
+    // chunks are the only copy. If the cap can't be met without them, the new chunk is refused instead.
+    const sessionStore = tx.objectStore(SESSIONS);
+    const heldIds = new Set(
+      ((await req(sessionStore.getAll())) as StoredSession[])
+        .filter((s) => s.held && !s.completed)
+        .map((s) => s.sessionId),
+    );
+    const evictable = existing.filter((x) => x.uploaded || !heldIds.has(x.sessionId));
+    const evictableBytes = evictable.reduce((n, x) => n + x.size, 0);
     let evictedCount = 0;
     let evictedBytes = 0;
     const lost = new Map<string, number>();
@@ -204,7 +230,12 @@ export class ChunkStore {
         await done(tx).catch(() => undefined);
         return { stored: false, reason: 'over-cap' };
       }
-      for (const old of existing) {
+      if (total - evictableBytes + size > this.config.maxBytes) {
+        tx.abort();
+        await done(tx).catch(() => undefined);
+        return { stored: false, reason: 'over-cap' };
+      }
+      for (const old of evictable) {
         if (total + size <= this.config.maxBytes) break;
         store.delete([old.sessionId, old.seq]);
         total -= old.size;

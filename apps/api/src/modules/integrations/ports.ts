@@ -55,6 +55,11 @@ export interface IntegrationsRepository {
     status: 'active' | 'error',
   ): Promise<void>;
   resolveOrganization(provider: ConnectedProvider, integrationId: string): Promise<string | null>;
+  /** App-wide webhook routing by provider account id (GitHub installation id). Identifiers of live rows only. */
+  resolveByExternalAccount(
+    provider: ConnectedProvider,
+    externalAccountId: string,
+  ): Promise<{ organizationId: string; id: string }[]>;
   getTask(organizationId: string, taskId: string): Promise<TaskRef | null>;
   getApproval(organizationId: string, approvalId: string): Promise<ApprovalRef | null>;
   hasIssueLink(organizationId: string, taskId: string, integrationId: string): Promise<boolean>;

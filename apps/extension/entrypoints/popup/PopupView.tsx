@@ -1,3 +1,4 @@
+import { discardConfirmMessage, heldMessage } from '../../src/lib/drain.js';
 import { memo, useId, type ReactNode } from 'react';
 import type { AuthStatus } from '../../src/lib/auth/messages.js';
 import {
@@ -199,6 +200,67 @@ export interface RecorderViewProps {
   onRecord: () => void;
   onStop: () => void;
   onDismissWarning: () => void;
+  /** Retry recordings held after a server refusal. */
+  onRetryHeld?: () => void;
+  /** Discard pressed: ask for confirmation (nothing is deleted yet). */
+  onDiscardHeld?: () => void;
+  /** The discard confirmation is showing. */
+  discardConfirm?: boolean;
+  onConfirmDiscard?: () => void;
+  onCancelDiscard?: () => void;
+}
+
+interface HeldCalloutProps {
+  count: number;
+  closed: number;
+  storageFull: boolean;
+  confirm: boolean;
+  onRetry?: () => void;
+  onDiscard?: () => void;
+  onConfirm?: () => void;
+  onCancel?: () => void;
+}
+
+/** Recordings the server refused: retry (unless closed by the server) or discard after confirmation. */
+function HeldCallout(h: HeldCalloutProps) {
+  const terminal = h.closed > 0;
+  return (
+    <div
+      className={`mo-callout ${terminal || h.storageFull ? 'mo-callout--error' : 'mo-callout--warning'}`}
+      role="alert"
+      aria-label="Upload held"
+    >
+      <p>{heldMessage({ count: h.count, closed: h.closed, storageFull: h.storageFull })}</p>
+      {h.confirm ? (
+        <div role="group" aria-label="Confirm discard">
+          <p>{discardConfirmMessage(h.count)}</p>
+          {h.onConfirm && (
+            <button type="button" className="mo-btn mo-btn--secondary" onClick={h.onConfirm}>
+              Discard recordings
+            </button>
+          )}
+          {h.onCancel && (
+            <button type="button" className="mo-btn mo-btn--ghost" onClick={h.onCancel}>
+              Cancel
+            </button>
+          )}
+        </div>
+      ) : (
+        <>
+          {h.onRetry && h.count > h.closed && (
+            <button type="button" className="mo-btn mo-btn--ghost" onClick={h.onRetry}>
+              Retry upload
+            </button>
+          )}
+          {h.onDiscard && (
+            <button type="button" className="mo-btn mo-btn--ghost" onClick={h.onDiscard}>
+              Discard
+            </button>
+          )}
+        </>
+      )}
+    </div>
+  );
 }
 
 export function RecorderView(p: RecorderViewProps) {
@@ -218,6 +280,18 @@ export function RecorderView(p: RecorderViewProps) {
             full, so this recording will be discarded instead of submitted.
           </p>
         </div>
+      )}
+      {(status.heldRecordings ?? 0) > 0 && (
+        <HeldCallout
+          count={status.heldRecordings ?? 0}
+          closed={status.heldClosed ?? 0}
+          storageFull={status.heldStorageFull === true}
+          confirm={p.discardConfirm === true}
+          {...(p.onRetryHeld ? { onRetry: p.onRetryHeld } : {})}
+          {...(p.onDiscardHeld ? { onDiscard: p.onDiscardHeld } : {})}
+          {...(p.onConfirmDiscard ? { onConfirm: p.onConfirmDiscard } : {})}
+          {...(p.onCancelDiscard ? { onCancel: p.onCancelDiscard } : {})}
+        />
       )}
       {status.storageWarning && (
         <div className="mo-callout mo-callout--warning" role="alert" aria-label="Storage warning">

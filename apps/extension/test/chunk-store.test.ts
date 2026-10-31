@@ -60,6 +60,30 @@ describe('ChunkStore (IndexedDB)', () => {
     expect(await s.totalBytes()).toBe(25);
   });
 
+  it('never evicts pending chunks of a held recording; refuses the new chunk instead', async () => {
+    const s = await open({ maxBytes: 30, policy: 'evict-oldest' });
+    await s.putChunk(chunk(0, 10));
+    await s.putChunk(chunk(1, 10));
+    await s.putSession({
+      ...(await s.getSession('s1'))!,
+      held: { status: 409, op: 'complete', at: 1 },
+    });
+    await s.putSession({ sessionId: 's2', meta, completed: false });
+    await s.putChunk({ ...chunk(0, 10, 5), sessionId: 's2' });
+    // Only s2's chunk can go: s2 seq 1 (10) fits after evicting s2 seq 0.
+    const ok = await s.putChunk({ ...chunk(1, 10, 6), sessionId: 's2' });
+    expect(ok).toMatchObject({ stored: true, damagedSessions: ['s2'] });
+    expect((await s.listChunks('s1')).map((c) => c.seq)).toEqual([0, 1]);
+    // Nothing evictable is left that would make room: refused, held chunks untouched.
+    await s.putChunk({ ...chunk(2, 10, 7), sessionId: 's2' }).catch(() => undefined);
+    expect(await s.putChunk({ ...chunk(3, 25, 8), sessionId: 's2' })).toEqual({
+      stored: false,
+      reason: 'over-cap',
+    });
+    expect((await s.listChunks('s1')).map((c) => c.seq)).toEqual([0, 1]);
+    expect((await s.getSession('s1'))!.incomplete).toBeUndefined();
+  });
+
   it('refuses new chunks over the cap with the refuse policy and keeps existing data', async () => {
     const s = await open({ maxBytes: 20, policy: 'refuse' });
     await s.putChunk(chunk(0, 15));
