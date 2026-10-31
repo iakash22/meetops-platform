@@ -53,6 +53,29 @@ export class PrismaCalendarConnections implements CalendarConnectionsRepository 
   private ctx(organizationId: string, id: string, field: 'access' | 'refresh') {
     return { organizationId, integrationId: `calendar:${id}:${field}` };
   }
+  /** Decrypts with the current per-field context, falling back to the pre-v2 (org + id) context. */
+  private async open(
+    organizationId: string,
+    id: string,
+    enc: string,
+    field: 'access' | 'refresh',
+  ): Promise<{ value: string; legacy: boolean } | null> {
+    try {
+      return {
+        value: await this.cipher.decrypt(enc, this.ctx(organizationId, id, field)),
+        legacy: false,
+      };
+    } catch {
+      try {
+        return {
+          value: await this.cipher.decrypt(enc, { organizationId, integrationId: id }),
+          legacy: true,
+        };
+      } catch {
+        return null;
+      }
+    }
+  }
   private enc(organizationId: string, id: string, v: string, field: 'access' | 'refresh') {
     return this.cipher.encrypt(v, this.ctx(organizationId, id, field));
   }
@@ -117,17 +140,34 @@ export class PrismaCalendarConnections implements CalendarConnectionsRepository 
       tx.calendarConnection.findFirst({ where: { id, organizationId, userId } }),
     )) as Row | null;
     if (!row || row.status === 'revoked' || !row.accessTokenEnc) return null;
+    const field = (enc: string, f: 'access' | 'refresh') =>
+      this.open(organizationId, row.id, enc, f);
+    const access = await field(row.accessTokenEnc, 'access');
+    const refresh = row.refreshTokenEnc ? await field(row.refreshTokenEnc, 'refresh') : null;
+    if (!access || (row.refreshTokenEnc && !refresh)) {
+      // Undecryptable under every known context: treat as disconnected (user must reconnect), never a 500.
+      await this.markError(organizationId, row.id);
+      return null;
+    }
+    if (access.legacy || refresh?.legacy) {
+      // Rows written before per-field AAD: re-encrypt under the current context.
+      await this.org(organizationId, async (tx) =>
+        tx.calendarConnection.updateMany({
+          where: { id: row.id, organizationId },
+          data: {
+            accessTokenEnc: await this.enc(organizationId, row.id, access.value, 'access'),
+            ...(refresh
+              ? {
+                  refreshTokenEnc: await this.enc(organizationId, row.id, refresh.value, 'refresh'),
+                }
+              : {}),
+          },
+        }),
+      );
+    }
     const out: CalendarSecrets = {
-      accessToken: await this.cipher.decrypt(
-        row.accessTokenEnc,
-        this.ctx(organizationId, row.id, 'access'),
-      ),
-      refreshToken: row.refreshTokenEnc
-        ? await this.cipher.decrypt(
-            row.refreshTokenEnc,
-            this.ctx(organizationId, row.id, 'refresh'),
-          )
-        : null,
+      accessToken: access.value,
+      refreshToken: refresh?.value ?? null,
       accessTokenExpiresAt: row.accessTokenExpiresAt,
     };
     return out;

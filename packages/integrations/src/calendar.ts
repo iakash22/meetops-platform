@@ -137,12 +137,25 @@ export function conferenceUrlOrUndefined(v: unknown): string | undefined {
 }
 
 /** Any granted Google Calendar scope outside the read-only set (e.g. calendar, calendar.events) is refused. */
+/** Identity scopes Google may add to a grant; harmless and tolerated. */
+export const GOOGLE_IDENTITY_SCOPES = Object.freeze([
+  'openid',
+  'email',
+  'profile',
+  'https://www.googleapis.com/auth/userinfo.email',
+  'https://www.googleapis.com/auth/userinfo.profile',
+] as const);
+
+/** Upper bound for a revoke call (best effort; never holds up a disconnect or a rejected callback). */
+export const CALENDAR_REVOKE_TIMEOUT_MS = 3000;
+
 export function assertReadOnlyCalendarScopes(scopes: readonly string[]): void {
   if (!GOOGLE_CALENDAR_SCOPES.every((s) => scopes.includes(s)))
     throw new CalendarProviderError('insufficient_scope');
-  const allowed: readonly string[] = GOOGLE_CALENDAR_SCOPES;
-  if (scopes.some((s) => /\/auth\/calendar(?:[./]|$)/.test(s) && !allowed.includes(s)))
-    throw new CalendarProviderError('excess_scope');
+  // Only the read-only calendar scopes plus basic identity are accepted; any other grant (calendar write, Gmail,
+  // Drive, ...) is excess and the whole grant is rejected.
+  const allowed: readonly string[] = [...GOOGLE_CALENDAR_SCOPES, ...GOOGLE_IDENTITY_SCOPES];
+  if (scopes.some((s) => !allowed.includes(s))) throw new CalendarProviderError('excess_scope');
 }
 
 /** Validates and normalizes a list window; throws CalendarProviderError('invalid_window'). */
@@ -299,11 +312,15 @@ export class GoogleCalendarProvider implements CalendarProvider {
 
   async revoke(token: string): Promise<void> {
     if (!token) return;
-    await this.call(GOOGLE_REVOKE_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({ token }).toString(),
-    });
+    await this.call(
+      GOOGLE_REVOKE_URL,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({ token }).toString(),
+      },
+      Math.min(this.opts.timeoutMs ?? CALENDAR_REVOKE_TIMEOUT_MS, CALENDAR_REVOKE_TIMEOUT_MS),
+    );
   }
 
   private async primaryCalendar(accessToken: string): Promise<CalendarAccount> {
@@ -344,7 +361,15 @@ export class GoogleCalendarProvider implements CalendarProvider {
     if (typeof b.token_type === 'string' && b.token_type.toLowerCase() !== 'bearer')
       throw new CalendarProviderError('invalid_token_type');
     const scopes = (typeof b.scope === 'string' ? b.scope.split(/\s+/) : []).filter(Boolean);
-    assertReadOnlyCalendarScopes(scopes);
+    try {
+      assertReadOnlyCalendarScopes(scopes);
+    } catch (err) {
+      // Never keep (or leave live at Google) a grant we refuse: revoke it, best effort, then reject.
+      const grant =
+        typeof b.refresh_token === 'string' && b.refresh_token ? b.refresh_token : b.access_token;
+      await this.revoke(grant).catch(() => undefined);
+      throw err;
+    }
     const expiresIn = typeof b.expires_in === 'number' && b.expires_in > 0 ? b.expires_in : 3600;
     return {
       accessToken: b.access_token,
@@ -361,9 +386,10 @@ export class GoogleCalendarProvider implements CalendarProvider {
   private async call(
     url: string,
     init: { method: string; headers: Record<string, string>; body?: string },
+    timeoutMs?: number,
   ): Promise<unknown> {
     const controller = new AbortController();
-    const ms = this.opts.timeoutMs ?? 10_000;
+    const ms = timeoutMs ?? this.opts.timeoutMs ?? 10_000;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const timeout = new Promise<never>((_, reject) => {
       timer = setTimeout(() => {

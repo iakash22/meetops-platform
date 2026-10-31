@@ -4,6 +4,7 @@ import {
   GOOGLE_AUTHORIZE_URL,
   GOOGLE_CALENDAR_SCOPES,
   GOOGLE_REVOKE_URL,
+  CALENDAR_REVOKE_TIMEOUT_MS,
   GOOGLE_TOKEN_URL,
   conferenceUrlOrUndefined,
   GoogleCalendarProvider,
@@ -316,6 +317,38 @@ describe('calendar review fixes (M-1, L-1..L-3)', () => {
     ]) {
       const { p } = provider([tokenRes({ scope: `${SCOPE} ${extra}` })]);
       await expect(p.refresh('r')).rejects.toThrow(/excess_scope/);
+    }
+  });
+
+  it('rejects non-calendar extra scopes, tolerates identity scopes, and revokes a refused grant', async () => {
+    const bad = provider([
+      tokenRes({ scope: `${SCOPE} https://www.googleapis.com/auth/gmail.send` }),
+      { status: 200, body: {} },
+    ]);
+    await expect(bad.p.refresh('r')).rejects.toThrow(/excess_scope/);
+    expect(bad.fetch.mock.calls[1]![0]).toBe(GOOGLE_REVOKE_URL);
+    const ok = provider([tokenRes({ scope: `${SCOPE} openid email` })]);
+    await expect(ok.p.refresh('r')).resolves.toMatchObject({ accessToken: expect.any(String) });
+  });
+
+  it('caps a stalled revoke at about 3 s', async () => {
+    vi.useFakeTimers();
+    try {
+      const fetch = vi.fn(() => new Promise<never>(() => undefined));
+      const p = new GoogleCalendarProvider({
+        clientId: 'cid',
+        clientSecret: async () => 'placeholder-secret',
+        redirectUriAllowlist: [REDIRECT],
+        stateStore: new InMemoryOAuthStateStore(),
+        fetch,
+        timeoutMs: 10_000,
+      });
+      const r = p.revoke('tok');
+      const settled = expect(r).rejects.toThrow(/timeout/);
+      await vi.advanceTimersByTimeAsync(CALENDAR_REVOKE_TIMEOUT_MS + 1);
+      await settled;
+    } finally {
+      vi.useRealTimers();
     }
   });
 
