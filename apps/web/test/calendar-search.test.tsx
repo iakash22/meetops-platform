@@ -121,6 +121,8 @@ describe('CalendarPage', () => {
   it('shows connect when not connected and redirects to the https authorize url', async () => {
     const nav = vi.spyOn(calendarRedirect, 'assign').mockImplementation(() => undefined);
     const mock = calendarMock(providers());
+    const eventsSpy = vi.fn();
+    mock.events = eventsSpy;
     setCalendarApiOverride(mock);
     renderApp('/calendar');
     const card = await screen.findByTestId('calendar-google');
@@ -129,7 +131,7 @@ describe('CalendarPage', () => {
     await waitFor(() =>
       expect(nav).toHaveBeenCalledWith('https://accounts.google.com/o/oauth2/v2/auth?state=s'),
     );
-    expect(mock.events).not.toHaveBeenCalled();
+    expect(eventsSpy).not.toHaveBeenCalled();
   });
 
   it('explains when the provider is not configured', async () => {
@@ -169,21 +171,23 @@ describe('SearchPage', () => {
         },
       ],
     };
-    const api: SearchApi = { search: vi.fn().mockResolvedValue(res) };
+    const search = vi.fn().mockResolvedValue(res);
+    const api: SearchApi = { search };
     setSearchApiOverride(api);
     renderApp('/search?q=billing');
     const list = await screen.findByRole('list', { name: 'Search results' });
     expect(within(list).getByText('billing').tagName).toBe('MARK');
     expect(list.querySelector('img')).toBeNull();
     expect(within(list).getByRole('link')).toHaveAttribute('href', `/meetings/${MEETING}`);
-    expect(api.search).toHaveBeenCalledWith(ORG, 'billing', undefined);
+    expect(search).toHaveBeenCalledWith(ORG, 'billing', undefined);
   });
 
   it('does not search for fewer than two characters', async () => {
-    const api: SearchApi = { search: vi.fn() };
+    const search = vi.fn();
+    const api: SearchApi = { search };
     setSearchApiOverride(api);
     renderApp('/search');
     expect(await screen.findByText('Start typing')).toBeInTheDocument();
-    expect(api.search).not.toHaveBeenCalled();
+    expect(search).not.toHaveBeenCalled();
   });
 });
