@@ -244,7 +244,16 @@ export function RecordScreen() {
         // Capture starts only now, from the user's confirmation; a failure here means nothing is recorded.
         if (recordings) {
           const id = `rec-${Date.now().toString(36)}`;
-          await recordings.capture.begin(id);
+          try {
+            await recordings.capture.begin(id);
+          } catch (e) {
+            // Surface why the mic didn't open (prepare/encryption/service failure); nothing was recorded.
+            setToast(
+              `Couldn't start recording: ${e instanceof Error ? e.message : 'the recorder failed'}. Recording hasn't started.`,
+            );
+            setConsentStep(null);
+            return;
+          }
           recordingIdRef.current = id;
         }
         setConsentStep(null);

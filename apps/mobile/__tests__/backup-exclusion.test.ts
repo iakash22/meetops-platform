@@ -2,7 +2,7 @@
 import { withBackupExclusion } from '../src/record/backupExclusion';
 import { createFileChunkStore } from '../src/record/fileChunkStore';
 import { createFileQueueStore } from '../src/upload/fileQueueStore';
-import { createMemoryFs } from './support/memoryFs';
+import { createMemoryFs, testCipher } from './support/memoryFs';
 
 describe('iOS backup exclusion (R4)', () => {
   it('excludes the folder before the first write, then every new folder and file', async () => {
@@ -19,7 +19,7 @@ describe('iOS backup exclusion (R4)', () => {
       return write(u, c, o);
     };
     base.put('file:///cache/a.m4a', Uint8Array.from([1, 2, 3]));
-    await createFileChunkStore(fs, 2).ingest('rec-1', 'file:///cache/a.m4a');
+    await createFileChunkStore(fs, testCipher, 2).ingest('rec-1', 'file:///cache/a.m4a');
     await createFileQueueStore(fs).save([]);
     expect(order[0]).toBe('exclude:file:///doc/recordings/');
     const excluded = exclude.mock.calls.map((c) => c[0]);
@@ -39,7 +39,7 @@ describe('iOS backup exclusion (R4)', () => {
     const fs = withBackupExclusion(base, () => Promise.resolve(false));
     base.put('file:///cache/a.m4a', Uint8Array.from([1, 2, 3]));
     await expect(
-      createFileChunkStore(fs, 2).ingest('rec-1', 'file:///cache/a.m4a'),
+      createFileChunkStore(fs, testCipher, 2).ingest('rec-1', 'file:///cache/a.m4a'),
     ).rejects.toThrow(/backup/);
     expect([...base.files.keys()].some((k) => k.endsWith('.chunk'))).toBe(false);
   });
@@ -55,7 +55,7 @@ describe('fail closed without the native module', () => {
     const base = createMemoryFs();
     base.put('file:///cache/a.m4a', Uint8Array.from([1, 2, 3]));
     await expect(
-      createFileChunkStore(withBackupExclusion(base, exclude!), 2).ingest(
+      createFileChunkStore(withBackupExclusion(base, exclude!), testCipher, 2).ingest(
         'rec-1',
         'file:///cache/a.m4a',
       ),
@@ -104,7 +104,10 @@ describe('per-file exclusion and Start-time failure', () => {
       isRecording: () => false,
       currentUri: () => uri,
     };
-    const store = createFileChunkStore(withBackupExclusion(base, () => Promise.resolve(false)));
+    const store = createFileChunkStore(
+      withBackupExclusion(base, () => Promise.resolve(false)),
+      testCipher,
+    );
     await expect(createNativeCapture(driver, store).begin('rec-1')).rejects.toThrow(/backup/);
     expect(calls).not.toContain('record');
     expect(base.files.has(uri)).toBe(false);

@@ -1,8 +1,9 @@
 import { Linking, PermissionsAndroid, Platform } from 'react-native';
 
 import type { MicPermission, MicPermissionStatus } from '../consent/micPermission';
-import type { AudioDriver, ForegroundIndicator } from './nativeCapture';
-import type { FileSystemLike } from './fileChunkStore';
+import type { AudioDriver, ForegroundIndicator, RecorderFileGuard } from './nativeCapture';
+import { createRecorderFileGuard } from './recorderFiles';
+import type { ChunkCipher, FileSystemLike } from './fileChunkStore';
 
 /**
  * expo-audio / expo-file-system bindings. Required lazily so Jest and demo mode never load the native modules.
@@ -89,6 +90,33 @@ export function expoFileSystem(): FileSystemLike {
   return require('expo-file-system') as FileSystemLike;
 }
 
+/**
+ * Native AES-256-GCM for chunk files (modules/chunk-crypto): Android Keystore, iOS Keychain + CryptoKit.
+ * FAIL CLOSED: without the native module this returns a cipher that rejects every call, so recording refuses to start
+ * and nothing is ever written in plaintext.
+ */
+export function createNativeChunkCipher(): ChunkCipher & { deleteKey(): Promise<void> } {
+  const { ChunkCryptoModule } =
+    require('../../modules/chunk-crypto') as typeof import('../../modules/chunk-crypto');
+  if (ChunkCryptoModule) {
+    const native = ChunkCryptoModule;
+    return {
+      ready: async () => {
+        // Round-trip once so a missing or broken key fails before the mic opens.
+        const probe = 'AA==';
+        if ((await native.open(await native.seal(probe))) !== probe)
+          throw new Error('Encryption self-test failed.');
+      },
+      seal: (b) => native.seal(b),
+      open: (b) => native.open(b),
+      deleteKey: () => native.deleteKey(),
+    };
+  }
+  const refuse = () =>
+    Promise.reject(new Error('Encryption at rest is unavailable on this build.'));
+  return { ready: refuse, seal: refuse, open: refuse, deleteKey: () => Promise.resolve() };
+}
+
 /** Android microphone foreground service (modules/recording-service). Null on iOS or without the native module. */
 export function createAndroidForegroundIndicator(): ForegroundIndicator | null {
   if (Platform.OS !== 'android') return null;
@@ -122,4 +150,10 @@ export function iosBackupExclusion(): ((uri: string) => Promise<boolean>) | null
     require('../../modules/backup-exclusion') as typeof import('../../modules/backup-exclusion');
   if (!BackupExclusionModule) return () => Promise.resolve(false);
   return (uri) => BackupExclusionModule.exclude(uri);
+}
+
+/** Recorder output guard for live mode: iOS protects the file after prepare (fail closed); both sweep the cache. */
+export function recorderFileGuard(): RecorderFileGuard {
+  const fs = require('expo-file-system') as FileSystemLike & { cacheDirectory: string | null };
+  return createRecorderFileGuard(fs, fs.cacheDirectory, iosBackupExclusion());
 }

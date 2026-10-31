@@ -29,7 +29,9 @@ import {
   createExpoAudioDriver,
   createNativeMicPermission,
   expoFileSystem,
+  createNativeChunkCipher,
   iosBackupExclusion,
+  recorderFileGuard,
 } from './record/expoAudio';
 import { withBackupExclusion } from './record/backupExclusion';
 import { createFileChunkStore } from './record/fileChunkStore';
@@ -98,9 +100,13 @@ const fileSystem = http
     ? withBackupExclusion(expoFileSystem(), excludeFromBackup)
     : expoFileSystem()
   : null;
-const chunkFiles = fileSystem ? createFileChunkStore(fileSystem) : null;
+// R5: chunk files are AES-256-GCM sealed (Android Keystore / iOS Keychain). Fails closed without the native module.
+const chunkCipher = fileSystem ? createNativeChunkCipher() : null;
+const chunkFiles = fileSystem && chunkCipher ? createFileChunkStore(fileSystem, chunkCipher) : null;
 const nativeCapture = chunkFiles
-  ? createNativeCapture(createExpoAudioDriver(), chunkFiles, createAndroidForegroundIndicator())
+  ? createNativeCapture(createExpoAudioDriver(), chunkFiles, createAndroidForegroundIndicator(), {
+      recorderFiles: recorderFileGuard(),
+    })
   : null;
 const capture: RecordingCapture = nativeCapture ?? createSimulatedCapture();
 // R7: after a crash or kill, partial recorder output is discarded and capture never resumes.
@@ -116,6 +122,9 @@ const engine = createUploadQueueEngine({
 if (chunkFiles) {
   void reconcileOrphans(engine, chunkFiles)
     .catch(() => undefined)
+    // Chunks saved in plaintext by an older build are re-sealed before any upload pass reads them.
+    .then(() => chunkFiles.migrateLegacy())
+    .catch(() => undefined)
     .then(() => startUploadScheduler(engine, AppState));
 }
 // R4 + R7: logout and organization switch stop any capture and wipe every local recording.
@@ -129,6 +138,8 @@ sessionManager.registerWipeHook(async () => {
   // entry, which `reconcileOrphans` deletes at the next launch, so a failed delete is retried rather than forgotten.
   if (chunkFiles)
     for (const id of await chunkFiles.list()) await chunkFiles.remove(id).catch(() => undefined);
+  // Before the re-throw: anything a failed delete left behind becomes unreadable (the next capture gets a new key).
+  await chunkCipher?.deleteKey().catch(() => undefined);
   if (incomplete)
     throw incomplete instanceof Error ? incomplete : new Error('Local wipe incomplete.');
 });
