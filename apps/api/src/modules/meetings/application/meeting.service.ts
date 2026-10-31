@@ -49,7 +49,7 @@ export class MeetingService {
 
   list(
     c: DirectoryCaller,
-    q: { cursor?: string | undefined; limit: number },
+    q: { cursor?: string | undefined; limit: number; source?: MeetingSource | undefined },
   ): Promise<MeetingPage> {
     this.orgs.authorize(c.ctx, 'read', 'Meeting');
     return this.meetings.list(c.ctx.organizationId, q);
