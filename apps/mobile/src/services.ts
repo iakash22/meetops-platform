@@ -1,5 +1,5 @@
 import { createApiClient, createApiRequester } from './api/client';
-import { Platform } from 'react-native';
+import { AppState, Platform } from 'react-native';
 import {
   createDemoPushDeviceApi,
   createDemoPushTokenProvider,
@@ -33,7 +33,9 @@ import { createNativeCapture } from './record/nativeCapture';
 import { createSimulatedCapture } from './record/simulatedRecorder';
 import { createHttpRecordingUploadApi } from './upload/httpRecordingUploadApi';
 import { createMemoryQueueStore, createSimulatedUploadApi } from './upload/simulatedUploadApi';
+import { createFileQueueStore } from './upload/fileQueueStore';
 import { createUploadQueueEngine } from './upload/uploadQueueEngine';
+import { reconcileOrphans, startUploadScheduler } from './upload/uploadScheduler';
 
 /**
  * App composition root.
@@ -85,22 +87,30 @@ const http = API_BASE_URL
   ? { baseUrl: API_BASE_URL, getAccessToken: () => sessionManager.getAccessToken() }
   : null;
 
-const nativeCapture = http
-  ? createNativeCapture(createExpoAudioDriver(), createFileChunkStore(expoFileSystem()))
-  : null;
+const fileSystem = http ? expoFileSystem() : null;
+const chunkFiles = fileSystem ? createFileChunkStore(fileSystem) : null;
+const nativeCapture = chunkFiles ? createNativeCapture(createExpoAudioDriver(), chunkFiles) : null;
 const capture: RecordingCapture = nativeCapture ?? createSimulatedCapture();
 // R7: after a crash or kill, partial recorder output is discarded and capture never resumes.
 void nativeCapture?.recoverOnLaunch().catch(() => undefined);
 const engine = createUploadQueueEngine({
-  store: createMemoryQueueStore(),
+  // Live: durable queue file in the sandbox (M5). Demo: in memory.
+  store: fileSystem ? createFileQueueStore(fileSystem) : createMemoryQueueStore(),
   chunks: capture,
   api: http ? createHttpRecordingUploadApi(http) : createSimulatedUploadApi(300),
+  // No NetInfo dependency: a failed request backs off (5 s to 15 min) and foreground passes retry.
   network: { isOnline: () => true },
 });
+if (chunkFiles) {
+  void reconcileOrphans(engine, chunkFiles)
+    .catch(() => undefined)
+    .then(() => startUploadScheduler(engine, AppState));
+}
 // R4 + R7: logout and organization switch stop any capture and wipe every local recording.
 sessionManager.registerWipeHook(async () => {
   await capture.abort();
   await engine.wipe();
+  if (chunkFiles) for (const id of await chunkFiles.list()) await chunkFiles.remove(id);
 });
 
 export const repositories: Repositories = {
