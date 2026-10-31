@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-require-imports */
 import { withBackupExclusion } from '../src/record/backupExclusion';
 import { createFileChunkStore } from '../src/record/fileChunkStore';
 import { createFileQueueStore } from '../src/upload/fileQueueStore';
@@ -30,6 +31,25 @@ describe('iOS backup exclusion (R4)', () => {
     base.put('file:///cache/a.m4a', Uint8Array.from([1, 2, 3]));
     await expect(
       createFileChunkStore(fs, 2).ingest('rec-1', 'file:///cache/a.m4a'),
+    ).rejects.toThrow(/backup/);
+    expect([...base.files.keys()].some((k) => k.endsWith('.chunk'))).toBe(false);
+  });
+});
+
+describe('fail closed without the native module', () => {
+  it('reports failure on iOS when the module is missing, so no audio is written', async () => {
+    const { iosBackupExclusion } =
+      require('../src/record/expoAudio') as typeof import('../src/record/expoAudio');
+    const exclude = iosBackupExclusion();
+    expect(exclude).not.toBeNull();
+    await expect(exclude!('file:///doc/recordings/')).resolves.toBe(false);
+    const base = createMemoryFs();
+    base.put('file:///cache/a.m4a', Uint8Array.from([1, 2, 3]));
+    await expect(
+      createFileChunkStore(withBackupExclusion(base, exclude!), 2).ingest(
+        'rec-1',
+        'file:///cache/a.m4a',
+      ),
     ).rejects.toThrow(/backup/);
     expect([...base.files.keys()].some((k) => k.endsWith('.chunk'))).toBe(false);
   });
