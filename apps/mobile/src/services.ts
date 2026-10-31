@@ -17,6 +17,7 @@ import { createSessionManager } from './auth/sessionManager';
 import { createSecureTokenStore } from './auth/secureTokenStore';
 import { createDeviceIdProvider } from './auth/deviceId';
 import { createDemoConsentApi } from './consent/consentApi';
+import { createDemoMeetingResolver, createHttpMeetingResolver } from './consent/meetingResolver';
 import { createHttpMeetingsRepository, createHttpTasksRepository } from './data/httpRepositories';
 import { createPlaceholderMeetingsRepository } from './data/meetingsRepository';
 import type { Repositories } from './data/RepositoriesProvider';
@@ -112,8 +113,16 @@ if (chunkFiles) {
 // R4 + R7: logout and organization switch stop any capture and wipe every local recording.
 sessionManager.registerWipeHook(async () => {
   await capture.abort();
-  await engine.wipe();
-  if (chunkFiles) for (const id of await chunkFiles.list()) await chunkFiles.remove(id);
+  let incomplete: unknown = null;
+  await engine.wipe().catch((e: unknown) => {
+    incomplete = e;
+  });
+  // Sweep every folder (including ones the engine couldn't delete). Anything still left is an orphan with no queue
+  // entry, which `reconcileOrphans` deletes at the next launch, so a failed delete is retried rather than forgotten.
+  if (chunkFiles)
+    for (const id of await chunkFiles.list()) await chunkFiles.remove(id).catch(() => undefined);
+  if (incomplete)
+    throw incomplete instanceof Error ? incomplete : new Error('Local wipe incomplete.');
 });
 
 export const repositories: Repositories = {
@@ -131,6 +140,9 @@ export const repositories: Repositories = {
     },
   },
   consent: createDemoConsentApi({ latencyMs: 300 }),
+  meetingResolver: http
+    ? createHttpMeetingResolver(createApiRequester(http))
+    : createDemoMeetingResolver(),
   micPermission: http ? createNativeMicPermission() : createDemoMicPermission(),
 };
 

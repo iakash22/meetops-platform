@@ -1,5 +1,6 @@
 import type { MeetingInsightsApi } from '../api/paths';
 import type { TaskReviewApi } from '../tasks/taskReviewCore';
+import type { MeetingResolver } from '../consent/meetingResolver';
 import type { RecordingCapture } from '../record/capture';
 import type { UploadQueueEngine } from '../upload/uploadQueueEngine';
 import type { MicPermission } from '../consent/micPermission';
@@ -20,6 +21,8 @@ export interface Repositories {
   uploadQueue: UploadQueue;
   /** Recording consent (R1 opt-in local; R3 attestation travels with the upload, contracts v0.4.1). */
   consent: ConsentApi;
+  /** Server meeting id for each recording (demo resolver when absent). */
+  meetingResolver?: MeetingResolver | undefined;
   /** Microphone permission (demo until the M4 native recorder). */
   micPermission: MicPermission;
   /**

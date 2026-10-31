@@ -331,6 +331,39 @@ describe('calendar review fixes (M-1, L-1..L-3)', () => {
     await expect(ok.p.refresh('r')).resolves.toMatchObject({ accessToken: expect.any(String) });
   });
 
+  it('#317 L-1: a refresh response without a scope field keeps the grant (no revoke)', async () => {
+    const { p, fetch } = provider([tokenRes({ scope: undefined })]);
+    const t = await p.refresh('r');
+    expect(t.scopes).toEqual([...GOOGLE_CALENDAR_SCOPES].sort());
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(fetch.mock.calls.some((c) => c[0] === GOOGLE_REVOKE_URL)).toBe(false);
+  });
+
+  it('#317 L-1: an insufficient scope on refresh rejects without revoking', async () => {
+    const { p, fetch } = provider([tokenRes({ scope: GOOGLE_CALENDAR_SCOPES[0] })]);
+    await expect(p.refresh('r')).rejects.toThrow(/insufficient_scope/);
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('#317 L-1: a connect response without a scope field is refused and revoked', async () => {
+    const { p, fetch } = provider([tokenRes({ scope: undefined }), { status: 200, body: {} }]);
+    const { state } = await p.beginAuthorization({
+      organizationId: ORG,
+      userId: USER,
+      redirectUri: REDIRECT,
+    });
+    await expect(
+      p.completeAuthorization({
+        state,
+        code: 'c',
+        organizationId: ORG,
+        userId: USER,
+        redirectUri: REDIRECT,
+      }),
+    ).rejects.toThrow(/insufficient_scope/);
+    expect(fetch.mock.calls[1]![0]).toBe(GOOGLE_REVOKE_URL);
+  });
+
   it('caps a stalled revoke at about 3 s', async () => {
     vi.useFakeTimers();
     try {
