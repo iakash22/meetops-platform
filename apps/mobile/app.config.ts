@@ -2,6 +2,10 @@ import type { ExpoConfig } from 'expo/config';
 
 // Placeholder identifiers only. Replace before any store submission.
 // No secrets, tokens or credentials belong in this file.
+/** Plain-language purpose string (plan.md "iOS background audio"). */
+export const MICROPHONE_PURPOSE =
+  'MeetOps records meeting audio you choose to capture so it can be transcribed for your organization.';
+
 const config: ExpoConfig = {
   name: 'MeetOps',
   slug: 'meetops-mobile',
@@ -21,7 +25,12 @@ const config: ExpoConfig = {
     // Keep Keystore-backed auth items (and everything else) out of Android Auto Backup / device transfer.
     allowBackup: false,
   },
-  plugins: ['expo-router', ['expo-secure-store', { configureAndroidBackup: true }]],
+  plugins: [
+    'expo-router',
+    ['expo-secure-store', { configureAndroidBackup: true }],
+    ['expo-audio', { microphonePermission: MICROPHONE_PURPOSE }],
+    './plugins/withRecordingCompliance',
+  ],
   experiments: { typedRoutes: false },
 };
 
