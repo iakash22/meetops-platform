@@ -51,7 +51,7 @@ describe('recording consent (R1, R3)', () => {
       'Recording',
     );
     expect(consent.notices).toHaveLength(1);
-    expect(consent.notices[0]?.meetingId).toMatch(/^local-/);
+    expect(consent.notices[0]?.meetingId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4/);
   });
 
   it('asks for the participant notice again for every recording, but opt-in only once', async () => {
