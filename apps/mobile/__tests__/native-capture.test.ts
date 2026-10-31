@@ -159,6 +159,10 @@ describe('android foreground service indicator (R2)', () => {
       press: () => stopListener(),
       start: () => void calls.push('fgs:start'),
       stop: () => void calls.push('fgs:stop'),
+      confirmed: true,
+      isConfirmed() {
+        return this.confirmed;
+      },
       onStopRequested: (l: () => void) => {
         stopListener = l;
         return () => undefined;
@@ -171,9 +175,13 @@ describe('android foreground service indicator (R2)', () => {
     const { driver, uri } = fakeDriver();
     const fgs = indicator();
     const cap = createNativeCapture(driver, createFileChunkStore(fs), fgs);
-    expect(cap.backgroundIndicator).toBe(true);
+    expect(cap.isBackgroundSafe?.()).toBe(false);
     await cap.begin('rec-1');
     expect(fgs.calls).toEqual(['fgs:start']);
+    expect(cap.isBackgroundSafe?.()).toBe(true);
+    fgs.confirmed = false;
+    expect(cap.isBackgroundSafe?.()).toBe(false);
+    fgs.confirmed = true;
     fs.put(uri, bytes(3));
     await cap.capture('rec-1', 1);
     expect(fgs.calls).toEqual(['fgs:start', 'fgs:stop']);

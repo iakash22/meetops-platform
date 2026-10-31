@@ -99,6 +99,7 @@ export function createAndroidForegroundIndicator(): ForegroundIndicator | null {
   return {
     start: () => native.start('MeetOps is recording', 'Tap Stop to end the recording now.'),
     stop: () => native.stop(),
+    isConfirmed: () => native.isConfirmed(),
     onStopRequested(listener) {
       const sub = native.addListener('onStopRequested', listener);
       return () => sub.remove();

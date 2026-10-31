@@ -9,6 +9,8 @@ interface RecordingServiceNative {
   start(title: string, body: string): void;
   stop(): void;
   isRunning(): boolean;
+  /** Service in the foreground and its notification is showing (notifications enabled, channel not blocked). */
+  isConfirmed(): boolean;
   addListener(event: 'onStopRequested', listener: () => void): EventSubscription;
 }
 

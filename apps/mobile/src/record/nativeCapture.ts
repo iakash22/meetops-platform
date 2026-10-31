@@ -29,6 +29,8 @@ export interface AudioDriver {
 export interface ForegroundIndicator {
   start(): void;
   stop(): void;
+  /** The service is running and its notification is confirmed showing. */
+  isConfirmed(): boolean;
   onStopRequested(listener: () => void): () => void;
 }
 
@@ -64,7 +66,14 @@ export function createNativeCapture(
 
   return {
     simulated: false,
-    backgroundIndicator: indicator !== null,
+    isBackgroundSafe() {
+      if (!active || !indicator) return false;
+      try {
+        return indicator.isConfirmed();
+      } catch {
+        return false;
+      }
+    },
     onStopRequested: (listener) => indicator?.onStopRequested(listener) ?? (() => undefined),
     async begin(recordingId) {
       if (active) throw new Error('Already recording.');

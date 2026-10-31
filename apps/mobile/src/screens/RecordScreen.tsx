@@ -86,15 +86,15 @@ export function RecordScreen() {
   }, [pauseForInterruption, recorder.phase, recordings, simulated]);
 
   // Without the microphone foreground service (and its notification), Android capture never continues out of sight.
-  const backgroundOk = recordings?.capture.backgroundIndicator ?? false;
   useEffect(() => {
-    if (Platform.OS !== 'android' || recorder.phase !== 'recording' || simulated || backgroundOk)
-      return;
+    if (Platform.OS !== 'android' || recorder.phase !== 'recording' || simulated) return;
     const sub = AppState.addEventListener('change', (next) => {
-      if (next !== 'active') pauseForInterruption();
+      // Keep recording only if the foreground service and its notification are confirmed right now.
+      if (next !== 'active' && !(recordings?.capture.isBackgroundSafe?.() ?? false))
+        pauseForInterruption();
     });
     return () => sub.remove();
-  }, [backgroundOk, pauseForInterruption, recorder.phase, simulated]);
+  }, [pauseForInterruption, recorder.phase, recordings, simulated]);
 
   // Stop from the Android notification ends capture immediately, same as the in-app Stop (R2, R7).
   const stopRef = useRef(recorder.stop);

@@ -1,6 +1,6 @@
 import '@testing-library/react-native/extend-expect';
 import { act, fireEvent, render, screen } from '@testing-library/react-native';
-import { AccessibilityInfo, Animated } from 'react-native';
+import { AccessibilityInfo, Animated, AppState, Platform } from 'react-native';
 
 import {
   elapsedMs,
@@ -414,5 +414,33 @@ describe('Record tab with a live capture (M4)', () => {
     expect(getRecordingPhase()).toBe('recording');
     act(() => press());
     expect(getRecordingPhase()).toBe('stopped');
+  });
+
+  describe('android background pause', () => {
+    let listener: (s: string) => void = () => undefined;
+    beforeEach(() => {
+      Object.defineProperty(Platform, 'OS', { configurable: true, get: () => 'android' });
+      jest.spyOn(AppState, 'addEventListener').mockImplementation((_t, l) => {
+        listener = l as (s: string) => void;
+        return { remove: () => undefined };
+      });
+    });
+    afterEach(() => {
+      Object.defineProperty(Platform, 'OS', { configurable: true, get: () => 'ios' });
+    });
+
+    it('pauses on background unless the service is confirmed', async () => {
+      setup({ isBackgroundSafe: () => false });
+      await start();
+      act(() => listener('background'));
+      expect(getRecordingPhase()).toBe('paused');
+    });
+
+    it('keeps recording only while the service and notification are confirmed', async () => {
+      setup({ isBackgroundSafe: () => true });
+      await start();
+      act(() => listener('background'));
+      expect(getRecordingPhase()).toBe('recording');
+    });
   });
 });
