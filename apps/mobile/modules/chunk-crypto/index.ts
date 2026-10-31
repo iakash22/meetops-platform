@@ -18,3 +18,25 @@ interface ChunkCryptoNative {
 }
 
 export const ChunkCryptoModule = requireOptionalNativeModule<ChunkCryptoNative>('ChunkCrypto');
+
+/**
+ * Android-only segment recorder (android/SegmentRecorderModule.kt, ADR-015): ADTS AAC in short segments, each sealed
+ * into `<dir><seq>.chunk` as it closes. Null on iOS, in Jest and in Expo Go (iOS stays on expo-audio + sealFile).
+ */
+export interface SegmentChunk {
+  seq: number;
+  sizeBytes: number;
+  sha256: string;
+}
+export interface SegmentRecorderNative {
+  start(dir: string, segmentMs: number): Promise<void>;
+  pause(): void;
+  resume(): void;
+  isRecording(): boolean;
+  stop(): Promise<SegmentChunk[]>;
+  abort(): Promise<void>;
+  recover(dir: string): Promise<SegmentChunk[]>;
+}
+
+export const SegmentRecorderModule =
+  requireOptionalNativeModule<SegmentRecorderNative>('SegmentRecorder');
