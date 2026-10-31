@@ -19,6 +19,7 @@ import {
   scheduleMmdbUpdate,
 } from './geoip/mmdb-updater.js';
 import { createNotificationEmailSender } from './notifications/email.js';
+import { loadCalendarSyncEnv, registerCalendarSyncScheduler } from './calendar/index.js';
 import { loadTokenRefreshEnv, registerTokenRefreshJob } from './integrations/bootstrap.js';
 import { closeAll, runningJobs, type ClosableJob } from './shutdown.js';
 
@@ -112,6 +113,10 @@ async function main() {
     { name: 'integrations-token-refresh', job: tokenRefresh },
   ];
   logger.info({ jobs: runningJobs(jobs) }, 'worker jobs registered');
+  // Phase 7 calendar background sync (off unless CALENDAR_SYNC_ENABLED=true). One idempotent BullMQ repeatable;
+  // an enabled sync with a missing/bad INTEGRATIONS_TOKEN_KEK throws here (fail closed at startup).
+  const calendarSync = registerCalendarSyncScheduler({ env: loadCalendarSyncEnv(), log: logger });
+  if (calendarSync.registered) logger.info('calendar sync scheduler started');
   const shutdown = async () => {
     logger.info('Shutting down worker...');
     await closeAll(jobs, logger);
