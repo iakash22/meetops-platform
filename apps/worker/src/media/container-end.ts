@@ -188,7 +188,7 @@ async function wavEnd(fh: FileHandle, fileSize: number): Promise<ContainerEnd> {
  */
 async function adtsEnd(fh: FileHandle, size: number): Promise<ContainerEnd> {
   const WINDOW = 64 * 1024;
-  let buf = Buffer.alloc(0);
+  let buf: Buffer = Buffer.alloc(0);
   let bufStart = 0;
   let pos = 0;
   while (pos < size) {
