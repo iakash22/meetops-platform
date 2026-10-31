@@ -1432,7 +1432,7 @@ model CalendarEvent {
 }
 
 /// Phase 7: a calendar event (by provider event id, per connection) linked to a meeting of the same organization by
-/// the owner of the calendar connection. Forced RLS (ADR-010); composite tenant FKs (migration 20261031030000).
+/// the owner of the calendar connection. Forced RLS (ADR-010); composite tenant FKs (migration 20261031040000).
 model CalendarEventLink {
   id              String   @id @default(uuid()) @db.Uuid
   organizationId  String   @map("org_id") @db.Uuid

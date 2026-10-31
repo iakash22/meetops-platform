@@ -107,8 +107,20 @@ const MEETING_SEARCH_MIGRATION = '20261031010000_meeting_search_fts';
 /** Phase 7 calendar background sync (calendar_events + sync cursor + due-for-sync definer function). */
 const CALENDAR_EVENTS_MIGRATION = '20261031020000_calendar_events';
 /** Phase 7 calendar event -> meeting links (forced RLS, composite tenant FKs). */
-const CALENDAR_EVENT_LINKS_MIGRATION = '20261031030000_calendar_event_links';
+const CALENDAR_EVENT_LINKS_MIGRATION = '20261031040000_calendar_event_links';
 const LATEST_MIGRATION = CALENDAR_EVENT_LINKS_MIGRATION;
+/** #334 (meeting consent events) sorts just before the calendar links migration once it merges. */
+const MEETING_CONSENT_EVENTS_MIGRATION = '20261031030000_meeting_consent_events';
+/** Sorted migration dirs without #334's migration, so these order checks hold before and after it merges. */
+const orderedDirs = () => {
+  const dirs = readdirSync(migrationsDir, { withFileTypes: true })
+    .filter((x) => x.isDirectory())
+    .map((x) => x.name)
+    .sort();
+  const i = dirs.indexOf(MEETING_CONSENT_EVENTS_MIGRATION);
+  if (i >= 0) expect(dirs[i + 1]).toBe(CALENDAR_EVENT_LINKS_MIGRATION);
+  return dirs.filter((d) => d !== MEETING_CONSENT_EVENTS_MIGRATION);
+};
 const reportDedupeSql = readFileSync(
   resolve(migrationsDir, REPORT_SUMMARY_DEDUPE_MIGRATION, 'migration.sql'),
   'utf8',
@@ -1527,10 +1539,7 @@ describe('integration routing definer functions', () => {
 
 describe('integration external-account routing (20261028020000)', () => {
   it('sorts right after the ADR-014 geoip migration, before the relay revoke one', () => {
-    const dirs = readdirSync(migrationsDir, { withFileTypes: true })
-      .filter((x) => x.isDirectory())
-      .map((x) => x.name)
-      .sort();
+    const dirs = orderedDirs();
     expect(dirs.at(-1)).toBe(LATEST_MIGRATION);
     expect(dirs.at(-2)).toBe(CALENDAR_EVENTS_MIGRATION);
     expect(dirs.at(-3)).toBe(MEETING_SEARCH_MIGRATION);
@@ -1567,10 +1576,7 @@ describe('ADR-013 notifications tables (static)', () => {
   const statements = notificationsSql.replace(/--.*$/gm, '');
 
   it('keeps its place in the migration order and is additive only', () => {
-    const dirs = readdirSync(migrationsDir, { withFileTypes: true })
-      .filter((x) => x.isDirectory())
-      .map((x) => x.name)
-      .sort();
+    const dirs = orderedDirs();
     expect(dirs.at(-9)).toBe(RELAY_BY_TYPE_MIGRATION);
     expect(dirs.at(-10)).toBe(NOTIFICATIONS_MIGRATION);
     expect(statements).not.toMatch(
@@ -1639,10 +1645,7 @@ describe('IP retention owner re-assert (20261028040000)', () => {
     'utf8',
   ).replace(/--.*$/gm, '');
   it('is the newest migration, after the ADR-014 geoip one', () => {
-    const dirs = readdirSync(migrationsDir, { withFileTypes: true })
-      .filter((x) => x.isDirectory())
-      .map((x) => x.name)
-      .sort();
+    const dirs = orderedDirs();
     expect(dirs.at(-1)).toBe(LATEST_MIGRATION);
     expect(dirs.at(-2)).toBe(CALENDAR_EVENTS_MIGRATION);
     expect(dirs.at(-3)).toBe(MEETING_SEARCH_MIGRATION);

@@ -45,7 +45,7 @@
 
 ## Calendar event ↔ meeting links (P7)
 
-- **Storage** (`20261031030000_calendar_event_links`): `calendar_event_links` keyed by (org, connection, provider event
+- **Storage** (`20261031040000_calendar_event_links`): `calendar_event_links` keyed by (org, connection, provider event
   id), so links work for live-read and worker-synced events alike. Forced RLS (ADR-010), composite tenant FKs to
   `calendar_connections` and `meetings` (a link can't cross organizations), cascade on hard delete. Unlink is a real
   DELETE; disconnecting the calendar drops the connection's links.
