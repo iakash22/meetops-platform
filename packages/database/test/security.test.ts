@@ -106,7 +106,9 @@ const CALENDAR_CONNECTIONS_MIGRATION = '20261031000000_calendar_connections';
 const MEETING_SEARCH_MIGRATION = '20261031010000_meeting_search_fts';
 /** Phase 7 calendar background sync (calendar_events + sync cursor + due-for-sync definer function). */
 const CALENDAR_EVENTS_MIGRATION = '20261031020000_calendar_events';
-const LATEST_MIGRATION = CALENDAR_EVENTS_MIGRATION;
+/** Phase 7 calendar event -> meeting links (forced RLS, composite tenant FKs). */
+const CALENDAR_EVENT_LINKS_MIGRATION = '20261031030000_calendar_event_links';
+const LATEST_MIGRATION = CALENDAR_EVENT_LINKS_MIGRATION;
 const reportDedupeSql = readFileSync(
   resolve(migrationsDir, REPORT_SUMMARY_DEDUPE_MIGRATION, 'migration.sql'),
   'utf8',
@@ -124,8 +126,18 @@ const calendarEventsSql = readFileSync(
   resolve(migrationsDir, CALENDAR_EVENTS_MIGRATION, 'migration.sql'),
   'utf8',
 );
+const calendarEventLinksSql = readFileSync(
+  resolve(migrationsDir, CALENDAR_EVENT_LINKS_MIGRATION, 'migration.sql'),
+  'utf8',
+);
 const adr010Sql =
-  teamsSql + authTokensSql + integrationsSql + notificationsSql + calendarSql + calendarEventsSql;
+  teamsSql +
+  authTokensSql +
+  integrationsSql +
+  notificationsSql +
+  calendarSql +
+  calendarEventsSql +
+  calendarEventLinksSql;
 /** Phase 3 per-recording transcript revision migration. */
 const TRANSCRIPT_REVISION_MIGRATION_DIR = '20261026200000_transcript_recording_revision';
 const consentSql = readFileSync(resolve(migrationsDir, CONSENT_MIGRATION, 'migration.sql'), 'utf8');
@@ -166,6 +178,7 @@ const ADR010_ONLY_TABLES: readonly string[] = [
   ...NOTIFICATION_TABLES,
   'calendar_connections',
   'calendar_events',
+  'calendar_event_links',
 ];
 /** DB-3: append-only tenant tables with their own SELECT/INSERT policies (ADR-010 setting) in consentSql. */
 const CONSENT_TABLES: readonly string[] = ['consent_attestations'];
@@ -691,7 +704,7 @@ describe('schema conventions', () => {
   });
 
   it('every model uses a uuid primary key', () => {
-    expect(models).toHaveLength(42);
+    expect(models).toHaveLength(43);
     for (const m of models.filter((x) => !ORGANIZATION_KEYED.includes(x.table)))
       expect(m.body, m.name).toMatch(/^\s+id\s+String\s+@id @default\(uuid\(\)\) @db\.Uuid$/m);
   });
@@ -1519,13 +1532,14 @@ describe('integration external-account routing (20261028020000)', () => {
       .map((x) => x.name)
       .sort();
     expect(dirs.at(-1)).toBe(LATEST_MIGRATION);
-    expect(dirs.at(-2)).toBe(MEETING_SEARCH_MIGRATION);
-    expect(dirs.at(-3)).toBe(CALENDAR_CONNECTIONS_MIGRATION);
-    expect(dirs.at(-4)).toBe(RETENTION_OWNER_MIGRATION);
-    expect(dirs.at(-5)).toBe(RELAY_REVOKE_ALL_KINDS_MIGRATION);
-    expect(dirs.at(-6)).toBe(EXTERNAL_ACCOUNT_ROUTING_MIGRATION);
-    expect(dirs.at(-7)).toBe(SESSION_AUDIT_GEOIP_MIGRATION);
-    expect(dirs.at(-8)).toBe(RELAY_BY_TYPE_MIGRATION);
+    expect(dirs.at(-2)).toBe(CALENDAR_EVENTS_MIGRATION);
+    expect(dirs.at(-3)).toBe(MEETING_SEARCH_MIGRATION);
+    expect(dirs.at(-4)).toBe(CALENDAR_CONNECTIONS_MIGRATION);
+    expect(dirs.at(-5)).toBe(RETENTION_OWNER_MIGRATION);
+    expect(dirs.at(-6)).toBe(RELAY_REVOKE_ALL_KINDS_MIGRATION);
+    expect(dirs.at(-7)).toBe(EXTERNAL_ACCOUNT_ROUTING_MIGRATION);
+    expect(dirs.at(-8)).toBe(SESSION_AUDIT_GEOIP_MIGRATION);
+    expect(dirs.at(-9)).toBe(RELAY_BY_TYPE_MIGRATION);
   });
   const sql = readFileSync(
     resolve(migrationsDir, EXTERNAL_ACCOUNT_ROUTING_MIGRATION, 'migration.sql'),
@@ -1557,8 +1571,8 @@ describe('ADR-013 notifications tables (static)', () => {
       .filter((x) => x.isDirectory())
       .map((x) => x.name)
       .sort();
-    expect(dirs.at(-8)).toBe(RELAY_BY_TYPE_MIGRATION);
-    expect(dirs.at(-9)).toBe(NOTIFICATIONS_MIGRATION);
+    expect(dirs.at(-9)).toBe(RELAY_BY_TYPE_MIGRATION);
+    expect(dirs.at(-10)).toBe(NOTIFICATIONS_MIGRATION);
     expect(statements).not.toMatch(
       /\bDROP\b|RENAME|ALTER COLUMN|NO FORCE|DISABLE ROW LEVEL SECURITY/i,
     );
@@ -1630,9 +1644,10 @@ describe('IP retention owner re-assert (20261028040000)', () => {
       .map((x) => x.name)
       .sort();
     expect(dirs.at(-1)).toBe(LATEST_MIGRATION);
-    expect(dirs.at(-2)).toBe(MEETING_SEARCH_MIGRATION);
-    expect(dirs.at(-3)).toBe(CALENDAR_CONNECTIONS_MIGRATION);
-    expect(dirs.at(-4)).toBe(RETENTION_OWNER_MIGRATION);
+    expect(dirs.at(-2)).toBe(CALENDAR_EVENTS_MIGRATION);
+    expect(dirs.at(-3)).toBe(MEETING_SEARCH_MIGRATION);
+    expect(dirs.at(-4)).toBe(CALENDAR_CONNECTIONS_MIGRATION);
+    expect(dirs.at(-5)).toBe(RETENTION_OWNER_MIGRATION);
     expect(dirs.indexOf(RETENTION_OWNER_MIGRATION)).toBeGreaterThan(
       dirs.indexOf(SESSION_AUDIT_GEOIP_MIGRATION),
     );
@@ -1766,6 +1781,45 @@ describe('Phase 7 calendar_events + sync cursor (static)', () => {
     );
     expect(statements).toContain(
       'GRANT EXECUTE ON FUNCTION calendar_events_purge_for_connection(uuid, uuid) TO meetops_app;',
+    );
+  });
+});
+
+describe('Phase 7 calendar_event_links (static)', () => {
+  const statements = calendarEventLinksSql.replace(/--.*$/gm, '');
+  const model = models.find((m) => m.name === 'CalendarEventLink')?.body ?? '';
+
+  it('is additive only, forces RLS with an ADR-010 tenant policy and is a registered tenant table', () => {
+    expect(statements).not.toMatch(
+      /\bDROP (TABLE|COLUMN|FUNCTION)\b|RENAME|ALTER COLUMN|NO FORCE|DISABLE ROW LEVEL SECURITY/i,
+    );
+    expect(TENANT_TABLES).toContain('calendar_event_links');
+    expect(statements).toContain('ALTER TABLE "calendar_event_links" FORCE ROW LEVEL SECURITY;');
+    expect(statements).toContain(`USING (org_id = ${ADR010_EXPR})`);
+    expect(statements).toContain(`WITH CHECK (org_id = ${ADR010_EXPR})`);
+    expect(statements).toContain(
+      'GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "calendar_event_links" TO meetops_app;',
+    );
+    expect(statements).toContain(
+      'REVOKE TRUNCATE ON TABLE "calendar_event_links" FROM meetops_app;',
+    );
+  });
+
+  it('can only point at a connection and a meeting of the same organization (composite FKs)', () => {
+    expect(statements).toContain(
+      'FOREIGN KEY ("org_id", "connection_id") REFERENCES "calendar_connections"("org_id", "id")',
+    );
+    expect(statements).toContain(
+      'FOREIGN KEY ("org_id", "meeting_id") REFERENCES "meetings"("org_id", "id")',
+    );
+    expect(model).toMatch(
+      /fields: \[organizationId, meetingId\], references: \[organizationId, id\]/,
+    );
+    expect(model).toMatch(
+      /fields: \[organizationId, connectionId\], references: \[organizationId, id\]/,
+    );
+    expect(statements).toContain(
+      'CREATE UNIQUE INDEX "calendar_event_links_org_id_connection_id_provider_event_id_key"',
     );
   });
 });

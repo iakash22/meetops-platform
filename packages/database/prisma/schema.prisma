@@ -255,6 +255,7 @@ model Organization {
   integrationConnections IntegrationConnection[]
   calendarConnections    CalendarConnection[]
   calendarEvents         CalendarEvent[]
+  calendarEventLinks     CalendarEventLink[]
   authDevices            AuthDevice[]
   authTokenFamilies      AuthTokenFamily[]
   authRefreshTokens      AuthRefreshToken[]
@@ -303,6 +304,7 @@ model User {
   pushDeviceTokens     PushDeviceToken[]      @relation("PushDeviceTokenOwner")
   calendarConnections  CalendarConnection[]   @relation("CalendarConnectionOwner")
   calendarEvents       CalendarEvent[]        @relation("CalendarEventOwner")
+  calendarEventLinks   CalendarEventLink[]    @relation("CalendarEventLinkOwner")
 
   @@map("users")
 }
@@ -511,6 +513,7 @@ model Meeting {
   recordingSessions RecordingSession[]
   fileObjects       FileObject[]
   tasks             Task[]
+  calendarLinks     CalendarEventLink[]
 
   @@unique([organizationId, id])
   @@unique([organizationId, source, externalMeetingId])
@@ -1386,6 +1389,7 @@ model CalendarConnection {
   organization Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   user         User            @relation("CalendarConnectionOwner", fields: [userId], references: [id], onDelete: Cascade)
   events       CalendarEvent[]
+  eventLinks   CalendarEventLink[]
 
   @@unique([organizationId, id])
   @@unique([organizationId, userId, provider, externalAccountId])
@@ -1425,4 +1429,27 @@ model CalendarEvent {
   @@index([organizationId, userId, startsAt])
   @@index([organizationId, connectionId, startsAt])
   @@map("calendar_events")
+}
+
+/// Phase 7: a calendar event (by provider event id, per connection) linked to a meeting of the same organization by
+/// the owner of the calendar connection. Forced RLS (ADR-010); composite tenant FKs (migration 20261031030000).
+model CalendarEventLink {
+  id              String   @id @default(uuid()) @db.Uuid
+  organizationId  String   @map("org_id") @db.Uuid
+  connectionId    String   @map("connection_id") @db.Uuid
+  userId          String   @map("user_id") @db.Uuid
+  providerEventId String   @map("provider_event_id")
+  meetingId       String   @map("meeting_id") @db.Uuid
+  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt       DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  organization Organization       @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  connection   CalendarConnection @relation(fields: [organizationId, connectionId], references: [organizationId, id], onDelete: Cascade)
+  meeting      Meeting            @relation(fields: [organizationId, meetingId], references: [organizationId, id], onDelete: Cascade)
+  user         User               @relation("CalendarEventLinkOwner", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, id])
+  @@unique([organizationId, connectionId, providerEventId])
+  @@index([organizationId, meetingId])
+  @@map("calendar_event_links")
 }
