@@ -279,3 +279,11 @@ const plain = await cipher.decrypt(enc, { organizationId, integrationId });
 - **AAD.** `["meetops.token.v1", organizationId, integrationId]`. A ciphertext moved to another row fails to decrypt.
 - **Rotation.** `currentKeyId()` encrypts new records, and old key ids still decrypt. `needsRotation()` and `rotate()` support re-encryption jobs. `TokenCipher.keyIdOf()` gives the value for a `key_id` column.
 - **Logging.** Never log plaintext tokens. Decryption errors are generic (`TokenDecryptionError`).
+
+## Real GitHub App e2e (opt-in)
+
+`test/github-app.e2e.test.ts` exercises App JWT -> installation lookup -> installation token -> `GitHubIssuesProvider`
+(health check, create, get, status update) against real api.github.com, then closes the issue and revokes the token.
+Skipped unless `MEETOPS_GITHUB_E2E=1`, `GITHUB_APP_ID` and `GITHUB_APP_PRIVATE_KEY_FILE` (or `GITHUB_APP_PRIVATE_KEY`)
+are set; the installation stage additionally needs `GITHUB_E2E_INSTALLATION_ID` and `GITHUB_E2E_REPO` (a throwaway
+repo with Issues enabled where the App is installed). Never commit or print the key or tokens.
