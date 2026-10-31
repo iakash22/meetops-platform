@@ -133,9 +133,10 @@ describe('integrations token-refresh env', () => {
   });
   it('rejects non-canonical base64 KEKs without echoing the value', () => {
     const bad = [
-      kek.replace(/=$/, ''),
-      randomBytes(32).toString('base64url') + '=',
-      randomBytes(32).toString('base64').replace(/.=$/, 'B='),
+      // Fixed, always-invalid inputs (random ones were valid keys in ~25% of runs).
+      '+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/s', // unpadded
+      '-_v7-_v7-_v7-_v7-_v7-_v7-_v7-_v7-_v7-_v7-_s=', // url-safe alphabet
+      '+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/t=', // non-canonical trailing bits
     ];
     for (const value of bad) {
       let msg = '';
