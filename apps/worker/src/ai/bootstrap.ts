@@ -1,8 +1,6 @@
 import {
   AIExecutor,
-  InMemoryIdempotencyStore,
   InMemoryOrgConfigStore,
-  InMemoryUsageTracker,
   ModelRouter,
   UsageQuotaManager,
   createCredentialResolver,
@@ -15,6 +13,7 @@ import { logger as baseLogger } from '../logger.js';
 import { createMediaPersistence, createPersistedChunkAudioResolver } from '../media/persistence.js';
 import { workerAuthorize } from '../media/worker.js';
 import { createPrismaTranscriptRepository } from './prisma-repository.js';
+import { createAiStores } from './durable-stores.js';
 import type { TranscriptionHostDeps } from './worker.js';
 
 export type TranscriptionBootstrapOptions = {
@@ -26,8 +25,9 @@ export type TranscriptionBootstrapOptions = {
  * Builds the transcription consumer's host deps from env (Phase 3).
  *
  * - repository: Postgres via `withOrganizationContext` (forced RLS).
- * - executor: providers from ai-core env config. Usage, idempotency and org model config are IN-MEMORY per process
- *   (durable stores are a follow-up); BullMQ jobs are still idempotent through the first-write-wins chunk rows.
+ * - executor: providers from ai-core env config. Usage counters and idempotency are durable in Postgres
+ *   (`ai_usage_counters`, `ai_idempotency`, forced RLS) unless AI_STORES=memory (tests only, refused in
+ *   production); store errors fail the job, never fall back. Org model config is still in-memory.
  * - credentials: platform env keys only when AI_WORKER_PLATFORM_KEYS=true; org secret refs have no secret manager
  *   yet and resolve to MISSING_CREDENTIALS.
  * - audio: the media worker's persisted chunk objects (same storage authorizer as the media worker).
@@ -55,13 +55,16 @@ export async function createTranscriptionHostDeps(
     system: { system: true, userId: 'system:transcription-worker' },
     production: source.NODE_ENV === 'production',
   });
-  const usage = new InMemoryUsageTracker();
+  const stores = createAiStores(source);
+  if (stores.mode === 'memory')
+    log.warn({ aiStores: 'memory' }, 'AI usage/idempotency stores are IN-MEMORY (tests only)');
+  const usage = stores.usage;
   const executor = new AIExecutor({
     registry,
     router: new ModelRouter(env, new InMemoryOrgConfigStore(), auditSink),
     usage,
     quota: new UsageQuotaManager(usage),
-    idempotency: new InMemoryIdempotencyStore(),
+    idempotency: stores.idempotency,
   });
 
   const storageConfig = loadStorageConfig(source);
