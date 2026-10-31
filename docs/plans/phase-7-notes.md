@@ -18,3 +18,23 @@
   `integrationsRuntimeFromEnv`; production injects `integrationsRuntime.googleCalendar` from the secret manager like
   Jira/GitHub. Without it, connect answers 503 and the providers list shows `configured: false`.
 - **Not in this PR**: background sync worker (BullMQ) and linking events to meetings; Outlook/Microsoft adapter.
+
+## Calendar background sync (P7, off by default)
+
+- **Storage** (`20261031020000_calendar_events`): `calendar_events` (per connection, unique provider event id, forced
+  RLS ADR-010, composite tenant FK to `calendar_connections`, https-only links, no DELETE for the app role: events
+  that vanish are soft-cancelled). `calendar_connections` gains a sync cursor (`synced_from/to`, `last_synced_at`,
+  `sync_failures`, `next_sync_at`). The cross-tenant sweep reads ids only through the SECURITY DEFINER
+  `calendar_connections_due_for_sync()` (SELECT-only `definer_calendar_sync_select` policy for meetops_migrator).
+- **Repository** (`@meetops/database` `createCalendarSyncRepository`): due list, token read/refresh with the same
+  per-field AAD as the API repository, atomic `applySync` (upsert + cancel-missing only when the provider list was
+  complete + cursor advance), `recordFailure`, `markError`, and the read side (`coverage`, `listEvents`).
+- **Worker** (`apps/worker/src/calendar/sync.ts`): `runCalendarSyncSweep` / `startCalendarSyncScheduler`, modelled
+  on the token-refresh sweep. Rolling window `[now - 1d, now + 30d)` (capped at 62 days), refresh-before-use,
+  permanent auth failures (401/403/invalid_grant) mark the connection `error`, transient ones back off
+  exponentially from the interval (cap 6h). Logs ids, counts and error codes only. `loadCalendarSyncEnv` reads
+  `CALENDAR_SYNC_*`. Not yet started from `apps/worker/src/index.ts`: like the token-refresh sweep, it needs the
+  production token cipher and Google client from the secret manager (ADR-008) injected into the worker.
+- **API** read-through: with `CALENDAR_SYNC_ENABLED=true` and a database, `GET .../calendar/events` serves stored
+  events for a connection when its last sync fully covers the requested window and is under 30 minutes old;
+  otherwise (or on any store error) it reads live from the provider as before.
