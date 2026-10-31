@@ -24,7 +24,8 @@ import { OAuthStateInvalidError } from '../integrations/errors.js';
 import { selectIntegrationsRuntime, type IntegrationsModuleDeps } from '../integrations/index.js';
 import { InMemoryCalendarConnections } from './in-memory.repository.js';
 import { PrismaCalendarConnections } from './prisma.repository.js';
-import type { CalendarConnectionsRepository } from './ports.js';
+import { createCalendarSyncRepository } from '@meetops/database';
+import type { CalendarConnectionsRepository, SyncedCalendarStore } from './ports.js';
 import { CalendarService, type CalendarAuditFn } from './service.js';
 
 export { CALENDAR_PATHS };
@@ -37,7 +38,23 @@ const upstreamErrors = { 409: ErrorBody, 502: ErrorBody, 503: ErrorBody } as con
 
 export type CalendarModuleDeps = IntegrationsModuleDeps & {
   calendarConnections?: CalendarConnectionsRepository;
+  /** Read-through store for worker-synced events (tests inject one; Prisma when CALENDAR_SYNC_ENABLED=true). */
+  calendarSyncStore?: SyncedCalendarStore;
 };
+
+/** Off by default: only CALENDAR_SYNC_ENABLED=true (with a database) serves synced events. */
+export function selectCalendarSyncStore(
+  deps: CalendarModuleDeps,
+  env: NodeJS.ProcessEnv = process.env,
+): SyncedCalendarStore | undefined {
+  if (deps.calendarSyncStore) return deps.calendarSyncStore;
+  if (env.CALENDAR_SYNC_ENABLED?.trim().toLowerCase() !== 'true' || !deps.db) return undefined;
+  const repo = createCalendarSyncRepository({ client: deps.db });
+  return {
+    coverage: (o, u, c) => repo.coverage(o, u, c),
+    listEvents: (o, u, c, f, t) => repo.listEvents(o, u, c, f, t),
+  };
+}
 
 export function selectCalendarRepository(
   deps: CalendarModuleDeps,
@@ -63,6 +80,7 @@ export default async function calendarModule(
   const service = new CalendarService(
     selectCalendarRepository(deps, process.env.NODE_ENV, runtime),
     runtime,
+    selectCalendarSyncStore(deps),
   );
   const g = makeGuards(auth, deps.security);
   const access = new DirectoryAccess(organizations, deps.audit);
