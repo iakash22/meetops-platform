@@ -6,6 +6,12 @@ While the version is `0.x`, a minor bump may contain breaking changes (ADR-003).
 
 ## [Unreleased]
 
+### Documentation
+
+- `SwitchOrganizationRequest` docs now name the real route, `POST /orgs/switch`, which returns `{ organization, role }`
+  and rotates the session and CSRF token. They previously said `POST /auth/switch-org` returning `AuthSession`. No schema
+  change and no new route.
+
 ### Added
 
 - Meeting consent ledger (Consent API): `MEETING_CONSENT_PATHS`, `RecordMeetingConsentRequest`,
@@ -445,7 +451,8 @@ organizationName }` (no tokens); `ExtensionTokenRequest { extensionId, deviceId,
   `EXTENSION_TOKEN_TTL_SECONDS` (900), `EXTENSION_REFRESH_FAMILY_MAX_LIFETIME_SECONDS` (30 days), and `REDACT_KEYS`
   (includes `accessToken`, `refreshToken`) for loggers. These two token responses are the **only** API bodies that carry tokens.
 - Auth: `SwitchOrganizationRequest` for `POST /auth/switch-org`. It returns `AuthSession` with a rotated csrfToken, and the
-  session id is rotated.
+  session id is rotated. (Corrected later: the route is `POST /orgs/switch` returning `{ organization, role }`; see
+  Unreleased.)
 - Errors: `CSRF_INVALID`.
 - Tasks: `ListTasksQuery` (strict; cursor pagination plus status (one or several), priority, assigneeId, projectId,
   meetingId, dueBefore, dueAfter, q ≤200, and `unassigned: true` (literal; a strict union makes it mutually exclusive with

@@ -92,25 +92,37 @@ fn chunk_owner(auth: &AuthState) -> CmdResult<String> {
     auth.owner().ok_or_else(CmdError::unauthenticated)
 }
 
+/// Raw IPC body (InvokeBody::Raw): the chunk bytes arrive as-is, never as a JSON number array, and the size cap
+/// runs before any copy. The slot (`sessionId`, `index`) travels in the `x-meetops-chunk` header.
 #[tauri::command]
 fn chunk_put(
     auth: State<'_, AuthState>,
     chunks: State<'_, ChunkStore>,
-    session_id: String,
-    index: u32,
-    data: Vec<u8>,
+    request: tauri::ipc::Request<'_>,
 ) -> CmdResult<()> {
-    chunks.put(&chunk_owner(&auth)?, &session_id, index, &data)
+    let data = upload::raw_body(request.body())?;
+    let slot = chunk_store::chunk_header(
+        request
+            .headers()
+            .get(chunk_store::CHUNK_HEADER)
+            .and_then(|v| v.to_str().ok()),
+    )?;
+    chunks.put(&chunk_owner(&auth)?, &slot.session_id, slot.index, data)
 }
 
+/// Returned as a raw IPC response (an ArrayBuffer in the webview), not a JSON number array.
 #[tauri::command]
 fn chunk_get(
     auth: State<'_, AuthState>,
     chunks: State<'_, ChunkStore>,
     session_id: String,
     index: u32,
-) -> CmdResult<Vec<u8>> {
-    chunks.get(&chunk_owner(&auth)?, &session_id, index)
+) -> CmdResult<tauri::ipc::Response> {
+    Ok(tauri::ipc::Response::new(chunks.get(
+        &chunk_owner(&auth)?,
+        &session_id,
+        index,
+    )?))
 }
 
 #[tauri::command]

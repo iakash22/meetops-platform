@@ -1,7 +1,11 @@
 import { IDBFactory } from 'fake-indexeddb';
 import 'fake-indexeddb/auto';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { handleBackgroundMessage, type BackgroundDeps } from '../src/lib/background-handler.js';
+import {
+  HELD_CHECK_FAILED_MESSAGE,
+  handleBackgroundMessage,
+  type BackgroundDeps,
+} from '../src/lib/background-handler.js';
 import { HELD_FULL_START_MESSAGE, heldStorageLevel } from '../src/lib/drain.js';
 import { loadState } from '../src/lib/recorder-state.js';
 import { memoryKV } from '../src/lib/storage.js';
@@ -373,6 +377,66 @@ describe('meetingId (contracts v0.2 @ a9d9d89)', () => {
 });
 
 describe('offscreen timeout', () => {
+  it('fails closed when the held-recordings check throws: nothing starts', async () => {
+    const ctx = makeDeps();
+    const d = { ...ctx.deps, heldRecordings: vi.fn(async () => Promise.reject(new Error('idb'))) };
+    await handleBackgroundMessage(d, bg({ type: 'ACK_CONSENT', tabId: 1, ...GRANT }), popup);
+    const r = await handleBackgroundMessage(
+      d,
+      bg({ type: 'START_RECORDING', meetingId: MID, tabId: 1, streamId: 'held-err' }),
+      popup,
+    );
+    expect(r).toEqual({ ok: false, error: HELD_CHECK_FAILED_MESSAGE });
+    expect(d.ensureOffscreen).not.toHaveBeenCalled();
+    expect((await loadState(d.kv)).status).toBe('idle');
+  });
+
+  it('fails closed when saving the starting state throws: no offscreen, state stays idle', async () => {
+    const ctx = makeDeps();
+    await handleBackgroundMessage(ctx.deps, bg({ type: 'ACK_CONSENT', tabId: 1, ...GRANT }), popup);
+    const realSet = ctx.deps.kv.set.bind(ctx.deps.kv);
+    const spy = vi.spyOn(ctx.deps.kv, 'set').mockRejectedValueOnce(new Error('quota'));
+    const r = await handleBackgroundMessage(
+      ctx.deps,
+      bg({ type: 'START_RECORDING', meetingId: MID, tabId: 1, streamId: 'save-err' }),
+      popup,
+    );
+    spy.mockImplementation(realSet);
+    expect(r).toEqual({ ok: false, error: 'quota' });
+    expect(ctx.deps.ensureOffscreen).not.toHaveBeenCalled();
+    expect((await loadState(ctx.deps.kv)).status).toBe('idle');
+  });
+
+  it('on a failed OFFSCREEN_START, discards anything the offscreen doc started and closes it', async () => {
+    const ctx = makeDeps();
+    ctx.deps.sendToOffscreen.mockRejectedValueOnce(new Error('boom'));
+    await handleBackgroundMessage(ctx.deps, bg({ type: 'ACK_CONSENT', tabId: 1, ...GRANT }), popup);
+    await handleBackgroundMessage(
+      ctx.deps,
+      bg({ type: 'START_RECORDING', meetingId: MID, tabId: 1, streamId: 'start-err' }),
+      popup,
+    );
+    const types = ctx.deps.sendToOffscreen.mock.calls.map(([m]) => m.type);
+    expect(types).toEqual(['OFFSCREEN_START', 'OFFSCREEN_DISCARD']);
+    expect(ctx.deps.closeOffscreen).toHaveBeenCalled();
+    expect(ctx.deps.stopWatchdog).toHaveBeenCalled();
+  });
+
+  it('discards a late REC_STARTED that arrives after Start already failed', async () => {
+    const ctx = makeDeps();
+    const r = await handleBackgroundMessage(
+      ctx.deps,
+      bg({ type: 'REC_STARTED', sessionId: '33333333-3333-4333-8333-333333333333' }),
+      offscreen,
+    );
+    expect(r).toMatchObject({ ok: true, status: 'idle' });
+    expect(ctx.deps.sendToOffscreen).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'OFFSCREEN_DISCARD' }),
+    );
+    expect(ctx.deps.closeOffscreen).toHaveBeenCalled();
+    expect(ctx.deps.setBadge).not.toHaveBeenCalledWith('REC');
+  });
+
   it('a hung OFFSCREEN_START times out, goes to error, closes offscreen and frees the lock', async () => {
     const { serialized } = await import('../src/lib/background-handler.js');
     const { deps } = makeDeps();
