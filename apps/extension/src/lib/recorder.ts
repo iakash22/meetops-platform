@@ -10,6 +10,17 @@ import {
 } from './contract-limits.js';
 import { sha256Hex, splitForUpload, toIsoTimestamp, type UploadClient } from './upload.js';
 
+/** Stop every track of a captured stream (best effort; a track that throws does not keep the others live). */
+export function stopStreamTracks(stream: { getTracks(): { stop(): void }[] }): void {
+  for (const t of stream.getTracks()) {
+    try {
+      t.stop();
+    } catch {
+      // keep stopping the rest
+    }
+  }
+}
+
 export const MIME_TYPE = 'audio/webm;codecs=opus';
 export const TIMESLICE_MS = 5000;
 
@@ -77,10 +88,18 @@ export async function startRecording(opts: {
     meetingId: opts.meetingId,
     consent: opts.consent,
   };
-  const { sessionId } = await opts.client.initSession(meta);
-  await opts.store.putSession({ sessionId, meta, completed: false });
-  const rec = opts.createRecorder(opts.stream, MIME_TYPE);
-  const stopTracks = () => opts.stream.getTracks().forEach((t) => t.stop());
+  const stopTracks = () => stopStreamTracks(opts.stream);
+  let sessionId: string;
+  let rec: RecorderLike;
+  try {
+    ({ sessionId } = await opts.client.initSession(meta));
+    await opts.store.putSession({ sessionId, meta, completed: false });
+    rec = opts.createRecorder(opts.stream, MIME_TYPE);
+  } catch (err) {
+    // Fail closed: a recorder that could not start must not leave the tab captured.
+    stopTracks();
+    throw err;
+  }
   let seq = 0;
   let tail: Promise<void> = Promise.resolve();
 
