@@ -1,4 +1,4 @@
-import type { HeldSummary } from './drain.js';
+import { HELD_FULL_START_MESSAGE, heldStorageLevel, type HeldSummary } from './drain.js';
 import {
   addPendingDiscard,
   clearPendingDiscard,
@@ -186,11 +186,14 @@ async function withHeld(
     await deps.setBadge(alert ? '!' : '').catch(() => undefined);
   }
   if (h.count === 0) return r;
+  const level = heldStorageLevel(h);
   return {
     ...r,
     heldRecordings: h.count,
     ...(h.closed ? { heldClosed: h.closed } : {}),
-    ...(state.storageWarning ? { heldStorageFull: true } : {}),
+    ...(state.storageWarning || level === 'full' ? { heldStorageFull: true } : {}),
+    ...(level === 'near-full' ? { heldNearFull: true } : {}),
+    ...(level === 'full' ? { heldBlocksStart: true } : {}),
   };
 }
 
@@ -253,6 +256,9 @@ export async function handleBackgroundMessage(
 
     case 'START_RECORDING': {
       if (state.status !== 'idle' && state.status !== 'error') return fail('Already recording');
+      // Held data alone fills the cap: a new recording could not keep any audio. Block until retry/discard.
+      const held = await deps.heldRecordings?.().catch(() => undefined);
+      if (held && heldStorageLevel(held) === 'full') return fail(HELD_FULL_START_MESSAGE);
       const used = (await kv.get<string[]>(USED_STREAMS_KEY)) ?? [];
       if (used.includes(msg.streamId)) return fail('Stream id already used');
       const consent = await consumeConsent(kv, msg.tabId, deps.now(), msg.meetingId);
