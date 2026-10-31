@@ -41,6 +41,8 @@ class SegmentRecorderModule : Module() {
     @Volatile var paused = false
     @Volatile var stopping = false
     @Volatile var failure: Throwable? = null
+    /** Set (under the session lock) by abort and by a stop that timed out: no frame or rotation is written after it. */
+    var closed = false
     var seq = 0
     var framesInSegment = 0
     var part: FileOutputStream? = null
@@ -67,9 +69,10 @@ class SegmentRecorderModule : Module() {
 
   private fun partFile(s: Session) = File(s.dir, "${s.seq}.part")
 
-  /** Closes the open segment, seals it and deletes its plaintext. */
-  private fun rotate(s: Session) {
-    val out = s.part ?: return
+  /** Closes the open segment, seals it and deletes its plaintext (only after the chunk is journalled). */
+  private fun rotate(s: Session) = synchronized(s) {
+    if (s.closed) return@synchronized
+    val out = s.part ?: return@synchronized
     out.fd.sync()
     out.close()
     s.part = null
@@ -84,12 +87,58 @@ class SegmentRecorderModule : Module() {
   }
 
   private fun writeFrame(s: Session, data: ByteArray) {
-    if (s.part == null) s.part = FileOutputStream(partFile(s))
-    s.part!!.write(adtsHeader(data.size))
-    s.part!!.write(data)
-    s.framesInSegment += 1
+    synchronized(s) {
+      if (s.closed) return
+      if (s.part == null) s.part = FileOutputStream(partFile(s))
+      s.part!!.write(adtsHeader(data.size))
+      s.part!!.write(data)
+      s.framesInSegment += 1
+    }
     if (s.framesInSegment >= s.framesPerSegment) rotate(s)
   }
+
+  /**
+   * Bounded shutdown of the recorder thread. Stops it writing first (closed flag under the session lock, so no
+   * frame or rotation can land after this returns), then releases the codec/mic and closes the open segment file.
+   */
+  private fun shutdown(s: Session, graceMs: Long) {
+    s.stopping = true
+    s.thread.join(graceMs)
+    if (s.thread.isAlive) {
+      s.thread.interrupt()
+      s.thread.join(2_000)
+    }
+    synchronized(s) {
+      s.closed = true
+      try { s.part?.close() } catch (_: Exception) {}
+      s.part = null
+    }
+    release(s)
+    // Releasing the codec makes a stuck thread fail fast; it can no longer write (closed).
+    s.thread.join(2_000)
+  }
+
+  /** Overwrites then deletes a plaintext file (best effort on flash; the app sandbox is FBE-encrypted too). */
+  private fun secureDelete(f: File) {
+    try {
+      RandomAccessFile(f, "rw").use { r ->
+        val zeros = ByteArray(8192)
+        var left = r.length()
+        r.seek(0)
+        while (left > 0) {
+          val n = minOf(left, zeros.size.toLong()).toInt()
+          r.write(zeros, 0, n)
+          left -= n
+        }
+        r.fd.sync()
+      }
+    } catch (_: Exception) {}
+    f.delete()
+  }
+
+  /** Plaintext left in [dir] (open segments or tmp files). */
+  private fun plaintextLeft(dir: File): List<File> =
+    dir.listFiles { f -> f.name.endsWith(".part") || f.name.endsWith(".tmp") }?.toList() ?: emptyList()
 
   private fun drain(s: Session, endOfStream: Boolean) {
     val info = MediaCodec.BufferInfo()
@@ -149,27 +198,58 @@ class SegmentRecorderModule : Module() {
   private fun chunks(dir: File): List<Map<String, Any>> =
     ChunkSealer.readJournal(dir, File(dir, JOURNAL)).map(ChunkSealer::toJs)
 
-  /** Trims a leftover plaintext segment to its last whole ADTS frame, seals it, then deletes it. */
+  /** Length of the whole ADTS frames at the start of [bytes]. */
+  private fun wholeFrames(bytes: ByteArray): Int {
+    var end = 0
+    while (end + 7 <= bytes.size) {
+      if (bytes[end] != 0xFF.toByte() || (bytes[end + 1].toInt() and 0xF6) != 0xF0) break
+      val len = ((bytes[end + 3].toInt() and 3) shl 11) or ((bytes[end + 4].toInt() and 0xFF) shl 3) or
+        ((bytes[end + 5].toInt() and 0xFF) shr 5)
+      if (len < 7 || end + len > bytes.size) break
+      end += len
+    }
+    return end
+  }
+
+  /**
+   * Crash recovery for [dir]; never leaves plaintext behind and never drops a sealed segment:
+   * 1. A sealed `<seq>.chunk` missing from the journal (kill between the chunk write and the journal append) is
+   *    opened, verified and re-journalled from its own plaintext size and sha256.
+   * 2. A leftover `<seq>.part` whose seq is journalled was already sealed: it is only deleted. Otherwise it is
+   *    (re-)sealed from its whole ADTS frames (overwriting any partial chunk) and journalled before it is deleted.
+   * 3. Anything still plaintext (a part that can't be sealed, stray `.tmp`) is securely deleted.
+   */
   private fun recoverParts(dir: File) {
     val journal = File(dir, JOURNAL)
-    val parts = dir.listFiles { f -> f.name.endsWith(".part") }?.sortedBy { it.name.removeSuffix(".part").toIntOrNull() ?: 0 } ?: return
-    for (p in parts) {
-      val seq = p.name.removeSuffix(".part").toIntOrNull()
-      if (seq != null && !File(dir, "$seq.chunk").exists()) {
-        val bytes = RandomAccessFile(p, "r").use { r -> ByteArray(r.length().toInt()).also { r.readFully(it) } }
-        var end = 0
-        while (end + 7 <= bytes.size) {
-          if (bytes[end] != 0xFF.toByte() || (bytes[end + 1].toInt() and 0xF6) != 0xF0) break
-          val len = ((bytes[end + 3].toInt() and 3) shl 11) or ((bytes[end + 4].toInt() and 0xFF) shl 3) or
-            ((bytes[end + 5].toInt() and 0xFF) shr 5)
-          if (len < 7 || end + len > bytes.size) break
-          end += len
-        }
-        if (end > 0) ChunkSealer.sealChunk(dir, journal, seq, bytes.copyOf(end))
+    val journalled = ChunkSealer.readJournal(dir, journal).map { it.seq }.toMutableSet()
+    val parts = dir.listFiles { f -> f.name.endsWith(".part") }?.mapNotNull { f ->
+      f.name.removeSuffix(".part").toIntOrNull()?.let { it to f }
+    }?.toMap() ?: emptyMap()
+    dir.listFiles { f -> f.name.endsWith(".chunk") }?.forEach { c ->
+      val seq = c.name.removeSuffix(".chunk").toIntOrNull() ?: return@forEach
+      if (seq in journalled || seq in parts) return@forEach // parts are re-sealed below from plaintext
+      val plain = try { ChunkSealer.openChunk(c) } catch (_: Exception) { null }
+      if (plain != null && plain.isNotEmpty()) {
+        ChunkSealer.journal(journal, seq, plain)
+        journalled.add(seq)
+      } else {
+        c.delete() // unreadable (torn write): no plaintext left to recover it from
       }
-      p.delete()
     }
-    dir.listFiles { f -> f.name.endsWith(".tmp") }?.forEach { it.delete() }
+    for ((seq, p) in parts.toSortedMap()) {
+      try {
+        if (seq !in journalled) {
+          val bytes = RandomAccessFile(p, "r").use { r -> ByteArray(r.length().toInt()).also { r.readFully(it) } }
+          val end = wholeFrames(bytes)
+          if (end > 0) ChunkSealer.sealChunk(dir, journal, seq, bytes.copyOf(end))
+          bytes.fill(0)
+        }
+      } catch (_: Exception) {
+        // Can't seal: fall through to the secure delete (plaintext never stays).
+      }
+      secureDelete(p)
+    }
+    plaintextLeft(dir).forEach { secureDelete(it) }
   }
 
   override fun definition() = ModuleDefinition {
@@ -212,25 +292,27 @@ class SegmentRecorderModule : Module() {
       s != null && !s.paused && s.failure == null && s.record.recordingState == AudioRecord.RECORDSTATE_RECORDING
     }
 
-    // Stop: drain the encoder, seal the last segment; resolves with every chunk in seq order.
+    // Stop: drain the encoder, seal the last segment; resolves with every chunk in seq order. Never returns while
+    // plaintext is left: a segment the thread didn't finish (join timeout, failure) is sealed here or securely
+    // deleted, and if plaintext still remains the stop fails.
     AsyncFunction("stop") {
       val s = session ?: throw IllegalStateException("Not recording")
       session = null
-      s.stopping = true
-      s.thread.join(15_000)
-      release(s)
+      shutdown(s, 15_000)
+      recoverParts(s.dir)
+      check(plaintextLeft(s.dir).isEmpty()) { "Plaintext segment could not be removed" }
       s.failure?.let { throw it }
       chunks(s.dir)
     }
 
-    // Logout / failed begin: stop without sealing and delete everything for this capture.
+    // Logout / failed begin: writes stop first (closed under the lock), the thread is joined (bounded), then the
+    // folder is deleted, so no late write can recreate a file in it.
     AsyncFunction("abort") {
       val s = session
       session = null
       if (s != null) {
-        s.stopping = true
-        s.thread.join(5_000)
-        release(s)
+        shutdown(s, 10_000)
+        plaintextLeft(s.dir).forEach { secureDelete(it) }
         s.dir.deleteRecursively()
       }
     }

@@ -60,15 +60,34 @@ internal object ChunkSealer {
     if (!tmp.renameTo(target)) throw IllegalStateException("rename failed")
   }
 
-  /** Seals [plain] into [dir]/<seq>.chunk durably, then journals it. Returns the chunk's plaintext sha256. */
+  /**
+   * Seals [plain] into [dir]/<seq>.chunk durably, then journals it. Returns the chunk's plaintext sha256. Callers
+   * delete their plaintext only after this returns; a kill in between is repaired by recovery (re-journal or
+   * re-seal), so neither the plaintext nor the segment is lost.
+   */
   fun sealChunk(dir: File, journal: File, seq: Int, plain: ByteArray): String {
-    val sha = sha256(plain)
     writeDurably(File(dir, "$seq.chunk"), MAGIC + sealRaw(plain))
+    return journal(journal, seq, plain)
+  }
+
+  /** Appends (and fsyncs) one journal line for [plain]. A duplicate line for a seq is harmless (last wins). */
+  fun journal(journal: File, seq: Int, plain: ByteArray): String {
+    val sha = sha256(plain)
     FileOutputStream(journal, true).use { j ->
       j.write("$seq,${plain.size},$sha\n".toByteArray(Charsets.US_ASCII))
       j.fd.sync()
     }
     return sha
+  }
+
+  /** Opens a sealed chunk file (envelope + IV + ciphertext+tag). Throws when it is torn or not ours. */
+  fun openChunk(f: File): ByteArray {
+    val all = f.readBytes()
+    require(all.size > MAGIC.size + 12 && all.copyOfRange(0, MAGIC.size).contentEquals(MAGIC)) { "Not a chunk" }
+    val body = all.copyOfRange(MAGIC.size, all.size)
+    val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+    cipher.init(Cipher.DECRYPT_MODE, key(), javax.crypto.spec.GCMParameterSpec(128, body.copyOfRange(0, 12)))
+    return cipher.doFinal(body.copyOfRange(12, body.size))
   }
 
   data class Entry(val seq: Int, val size: Long, val sha: String)

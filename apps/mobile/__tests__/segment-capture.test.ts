@@ -209,4 +209,46 @@ describe('Android segment capture (ADR-015, R5)', () => {
     await expect(store.exists('rec-1')).resolves.toBe(false);
     await expect(store.getMarker()).resolves.toBeNull();
   });
+
+  it('a stop that fails (native could not clear plaintext) keeps the sealing marker for launch recovery', async () => {
+    const { native, cap, store, indicator } = setup();
+    await cap.begin('rec-1');
+    native.closeSegment(frame(40, 1));
+    native.stop = () => Promise.reject(new Error('Plaintext segment could not be removed'));
+    await expect(cap.capture('rec-1', 1, draft)).rejects.toThrow(/Plaintext/);
+    expect(indicator.stop).toHaveBeenCalled();
+    await expect(store.getMarker()).resolves.toMatchObject({
+      phase: 'sealing',
+      recordingId: 'rec-1',
+    });
+    await expect(store.exists('rec-1')).resolves.toBe(true);
+  });
+
+  it('abort deletes the folder only after native abort (writes stopped, thread joined) has finished', async () => {
+    const { fs, native, cap, store } = setup();
+    await cap.begin('rec-1');
+    native.closeSegment(frame(40, 1));
+    const order: string[] = [];
+    let finish!: () => void;
+    native.abort = () =>
+      new Promise<void>((r) => {
+        finish = () => {
+          order.push('native-abort-done');
+          r();
+        };
+      });
+    const remove = store.remove.bind(store);
+    store.remove = (id) => {
+      order.push('remove');
+      return remove(id);
+    };
+    const done = cap.abort();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(order).toEqual([]);
+    expect(fs.files.has('file:///doc/recordings/rec-1/0.chunk')).toBe(true);
+    finish();
+    await done;
+    expect(order).toEqual(['native-abort-done', 'remove']);
+    await expect(store.exists('rec-1')).resolves.toBe(false);
+  });
 });
