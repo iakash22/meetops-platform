@@ -14,6 +14,7 @@
   },
   "dependencies": {
     "@meetops/contracts": "workspace:*",
+    "@react-native-community/netinfo": "11.4.1",
     "expo": "~52.0.49",
     "expo-audio": "~0.3.5",
     "expo-constants": "~17.0.8",

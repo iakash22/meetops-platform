@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { createNativeChunkStore } from '@/features/recording/native-chunk-store';
 import { createNativeUploadApi, type Invoke } from '@/features/recording/native-upload-api';
-import { META_INDEX } from '@/features/recording/native-chunk-store';
+import { CHUNK_HEADER, META_INDEX } from '@/features/recording/native-chunk-store';
 import {
   RETENTION_MS,
   createMemoryLedger,
@@ -20,7 +20,7 @@ const rustError = (code: string) => Object.assign(new Error(code), { code });
  * comes from the backend's own session (`rust.signedIn`), never from the webview; tombstones are device-wide.
  */
 function fakeRust(opts: { failPutsOnce?: number; metaDelayMs?: () => number } = {}) {
-  const disk = new Map<string, number[]>();
+  const disk = new Map<string, Uint8Array>();
   const tombs = new Set<string>();
   const pins = new Map<string, string>();
   const calls: { cmd: string; args: unknown; headers?: HeadersInit | undefined }[] = [];
@@ -36,7 +36,16 @@ function fakeRust(opts: { failPutsOnce?: number; metaDelayMs?: () => number } = 
   const discarded = (id: string) => tombs.has(id) || pinDiscarded.has(id);
   const invoke = (async (cmd: string, args?: unknown, o?: { headers: HeadersInit }) => {
     calls.push({ cmd, args, headers: o?.headers });
-    const a = (args ?? {}) as { sessionId: string; index: number; data: number[]; path: string };
+    let a = (args ?? {}) as { sessionId: string; index: number; data: Uint8Array; path: string };
+    if (cmd === 'chunk_put') {
+      // Like Rust: a raw body (never a JSON number array) plus the slot in the x-meetops-chunk header.
+      if (!ArrayBuffer.isView(args)) throw rustError('VALIDATION_FAILED');
+      const slot = JSON.parse((o?.headers as Record<string, string>)[CHUNK_HEADER] ?? 'null') as {
+        sessionId: string;
+        index: number;
+      };
+      a = { ...slot, data: args as Uint8Array, path: '' };
+    }
     const owner = () => {
       if (!state.signedIn) throw rustError('UNAUTHENTICATED');
       return state.signedIn;
@@ -56,13 +65,13 @@ function fakeRust(opts: { failPutsOnce?: number; metaDelayMs?: () => number } = 
         if (discarded(a.sessionId)) throw rustError('VALIDATION_FAILED');
         if (a.index === META_INDEX && opts.metaDelayMs)
           await new Promise((r) => setTimeout(r, opts.metaDelayMs?.()));
-        disk.set(`${dir()}${a.index}`, a.data);
+        disk.set(`${dir()}${a.index}`, a.data.slice());
         return null;
       case 'chunk_get': {
         if (discarded(a.sessionId)) throw rustError('VALIDATION_FAILED');
         const v = disk.get(`${dir()}${a.index}`);
         if (!v) throw rustError('NOT_FOUND');
-        return v;
+        return v.slice().buffer; // raw IPC response
       }
       case 'chunk_delete': {
         const d = dir();
@@ -418,5 +427,30 @@ describe('native recording upload', () => {
     await second.queue.process();
     expect(puts(rust)).toBe(0);
     expect(rust.disk.size).toBe(0);
+  });
+});
+
+describe('native chunk store IPC encoding', () => {
+  it('chunk_put sends raw bytes with the slot in a header, never a JSON number array', async () => {
+    const rust = fakeRust();
+    const store = createNativeChunkStore(rust.invoke);
+    await store.put('r1', 3, new Uint8Array([1, 2, 255]));
+    await store.saveMeta('r1', '{"m":1}');
+    const puts = rust.calls.filter((c) => c.cmd === 'chunk_put');
+    expect(puts).toHaveLength(2);
+    for (const p of puts) {
+      expect(ArrayBuffer.isView(p.args)).toBe(true);
+      expect(Array.isArray(p.args)).toBe(false);
+    }
+    expect(JSON.parse((puts[0]!.headers as Record<string, string>)[CHUNK_HEADER]!)).toEqual({
+      sessionId: 'r1',
+      index: 3,
+    });
+    expect(JSON.parse((puts[1]!.headers as Record<string, string>)[CHUNK_HEADER]!)).toEqual({
+      sessionId: 'r1',
+      index: META_INDEX,
+    });
+    expect([...(await store.read('r1', 3))]).toEqual([1, 2, 255]);
+    expect(await store.readMeta('r1')).toBe('{"m":1}');
   });
 });

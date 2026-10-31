@@ -249,13 +249,27 @@ export class ChunkStore {
         await done(tx).catch(() => undefined);
         return { stored: false, reason: 'over-cap' };
       }
-      for (const old of evictable) {
-        if (total + size <= this.config.maxBytes) break;
+      const gone = new Set<string>();
+      const evict = (old: StoredChunk) => {
+        const key = `${old.sessionId}\u0000${old.seq}`;
+        if (gone.has(key)) return;
+        gone.add(key);
         store.delete([old.sessionId, old.seq]);
         total -= old.size;
         evictedCount++;
         evictedBytes += old.size;
         if (!old.uploaded) lost.set(old.sessionId, (lost.get(old.sessionId) ?? 0) + 1);
+      };
+      for (const old of evictable) {
+        if (total + size <= this.config.maxBytes) break;
+        if (gone.has(`${old.sessionId}\u0000${old.seq}`)) continue;
+        evict(old);
+        // An unheld recording that lost a pending chunk can never be completed (the server needs seq 0..n-1 with
+        // no gaps; the drain aborts it). Evict the whole recording at once so its remaining chunks do not keep
+        // using the cap until the next drain, and later chunks of the new recording are not refused for them.
+        if (!old.uploaded) {
+          for (const sib of evictable) if (sib.sessionId === old.sessionId) evict(sib);
+        }
       }
     }
     const sessions = tx.objectStore(SESSIONS);
