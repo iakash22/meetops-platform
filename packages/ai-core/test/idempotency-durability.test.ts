@@ -4,6 +4,7 @@ import {
   InMemoryIdempotencyStore,
   InMemoryUsageTracker,
   UsageQuotaManager,
+  UsageRecordError,
   type IdempotencyStore,
   type LLMProvider,
   type UsageTracker,
@@ -160,8 +161,129 @@ describe('fail closed when a durable store is unreachable', () => {
       idempotency: new InMemoryIdempotencyStore(),
       sleep: async () => {},
     });
-    await expect(ex.run(req(), call)).rejects.toThrow('ECONNREFUSED');
+    await expect(ex.run(req(), call)).rejects.toBeInstanceOf(UsageRecordError);
     expect(primary.calls).toBe(1);
     expect(local.calls).toBe(0);
+  });
+});
+
+describe('billed but unrecorded: a retry never bills twice', () => {
+  const down = () => Promise.reject(new Error('ECONNREFUSED'));
+  async function build(store: IdempotencyStore) {
+    const provider = fakeLLM('gemini');
+    const base = await setup({ providers: { gemini: provider }, configs: [llmCfg('gemini')] });
+    const inner = new InMemoryUsageTracker();
+    let usageDown = true;
+    const usage: UsageTracker = {
+      record: (r) => (usageDown ? down() : inner.record(r)),
+      totals: (q) => inner.totals(q),
+      organizationCostSince: (o, s) => inner.organizationCostSince(o, s),
+    };
+    const mk = () =>
+      new AIExecutor({
+        registry: base.registry,
+        router: base.router,
+        usage,
+        quota: new UsageQuotaManager(usage),
+        idempotency: store,
+        sleep: async () => {},
+      });
+    return { provider, a: mk(), b: mk(), heal: () => (usageDown = false) };
+  }
+
+  it('usage write fails: the result is kept, a retry (other process) is served from the store', async () => {
+    const t = await build(new InMemoryIdempotencyStore());
+    await expect(t.a.run(req(), call)).rejects.toBeInstanceOf(UsageRecordError);
+    t.heal();
+    const retry = await t.b.run(req(), call);
+    expect(retry.status).toBe('succeeded');
+    if (retry.status === 'succeeded') expect(retry.meta.cached).toBe(true);
+    expect(t.provider.calls).toBe(1);
+  });
+
+  it('usage write and result store both fail: the claim is kept, so a retry does not call again', async () => {
+    const inner = new InMemoryIdempotencyStore();
+    let setDown = true;
+    const released: string[] = [];
+    const store: IdempotencyStore = {
+      get: (o, k) => inner.get(o, k),
+      set: (o, k, v, ttl) => (setDown ? down() : inner.set(o, k, v, ttl)),
+      claim: (o, k, ttl) => inner.claim(o, k, ttl),
+      release: async (o, k) => {
+        released.push(k);
+        await inner.release(o, k);
+      },
+    };
+    const t = await build(store);
+    await expect(t.a.run(req(), call)).rejects.toBeInstanceOf(UsageRecordError);
+    t.heal();
+    setDown = false;
+    const retry = await t.b.run(req(), call);
+    expect(retry.status).toBe('retryable');
+    if (retry.status !== 'succeeded') expect(retry.errors[0]?.code).toBe('DUPLICATE_IN_FLIGHT');
+    expect(t.provider.calls).toBe(1);
+    expect(released).toHaveLength(0);
+  });
+
+  it('result store fails after a recorded success: the claim is kept (no re-bill)', async () => {
+    const inner = new InMemoryIdempotencyStore();
+    const store: IdempotencyStore = {
+      get: (o, k) => inner.get(o, k),
+      set: down,
+      claim: (o, k, ttl) => inner.claim(o, k, ttl),
+      release: (o, k) => inner.release(o, k),
+    };
+    const t = await build(store);
+    t.heal();
+    await expect(t.a.run(req(), call)).rejects.toThrow('ECONNREFUSED');
+    expect((await t.b.run(req(), call)).status).toBe('retryable');
+    expect(t.provider.calls).toBe(1);
+  });
+});
+
+describe('claim TTL must outlive the job deadline', () => {
+  it('fails at construction when the claim TTL is not longer than the deadline', async () => {
+    const base = await setup({
+      providers: { gemini: fakeLLM('gemini') },
+      configs: [llmCfg('gemini')],
+    });
+    const usage = new InMemoryUsageTracker();
+    const deps = {
+      registry: base.registry,
+      router: base.router,
+      usage,
+      quota: new UsageQuotaManager(usage),
+      idempotency: new InMemoryIdempotencyStore(),
+    };
+    expect(
+      () => new AIExecutor({ ...deps, overallTimeoutMs: 600_000, idempotencyClaimTtlSec: 600 }),
+    ).toThrow(/claim/i);
+    expect(
+      () => new AIExecutor({ ...deps, overallTimeoutMs: 600_000, idempotencyClaimTtlSec: 601 }),
+    ).not.toThrow();
+    // Defaults are consistent (claim = deadline + margin).
+    expect(() => new AIExecutor(deps)).not.toThrow();
+    // A store without claim() has nothing to check.
+    const plain: IdempotencyStore = { get: async () => undefined, set: async () => undefined };
+    expect(
+      () => new AIExecutor({ ...deps, idempotency: plain, idempotencyClaimTtlSec: 1 }),
+    ).not.toThrow();
+  });
+
+  it('a request deadline at or beyond the claim TTL is refused before any provider call', async () => {
+    const provider = fakeLLM('gemini');
+    const base = await setup({ providers: { gemini: provider }, configs: [llmCfg('gemini')] });
+    const usage = new InMemoryUsageTracker();
+    const ex = new AIExecutor({
+      registry: base.registry,
+      router: base.router,
+      usage,
+      quota: new UsageQuotaManager(usage),
+      idempotency: new InMemoryIdempotencyStore(),
+      idempotencyClaimTtlSec: 60,
+      overallTimeoutMs: 30_000,
+    });
+    await expect(ex.run({ ...req(), overallTimeoutMs: 60_000 }, call)).rejects.toThrow(/claim TTL/);
+    expect(provider.calls).toBe(0);
   });
 });
