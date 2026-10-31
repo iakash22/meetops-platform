@@ -491,3 +491,33 @@ export const INTEGRATION_CONNECTION_STATES = ['not_connected', ...INTEGRATION_ST
 export const INTEGRATION_STATE_TTL_SECONDS = 600;
 /** v0.7.0: webhook body cap in bytes (ADR-007). */
 export const INTEGRATION_WEBHOOK_MAX_BYTES = 1_048_576;
+
+/**
+ * Phase 7: video-conference hosts whose join links clients may show. Exact hosts, plus subdomains only where listed
+ * in CONFERENCE_HOST_SUFFIXES (Zoom vanity domains such as acme.zoom.us). Anything else is dropped.
+ */
+export const CONFERENCE_HOSTS = [
+  'meet.google.com',
+  'zoom.us',
+  'zoomgov.com',
+  'teams.microsoft.com',
+  'teams.live.com',
+] as const;
+export const CONFERENCE_HOST_SUFFIXES = ['.zoom.us', '.zoomgov.com'] as const;
+
+/** True only for https URLs (no credentials, default port) on an allowlisted conference host. */
+export function isAllowedConferenceUrl(value: unknown): value is string {
+  if (typeof value !== 'string' || value.length > 2048) return false;
+  let u: URL;
+  try {
+    u = new URL(value);
+  } catch {
+    return false;
+  }
+  if (u.protocol !== 'https:' || u.username || u.password || u.port) return false;
+  const host = u.hostname.toLowerCase();
+  return (
+    (CONFERENCE_HOSTS as readonly string[]).includes(host) ||
+    CONFERENCE_HOST_SUFFIXES.some((s) => host.endsWith(s) && host.length > s.length)
+  );
+}

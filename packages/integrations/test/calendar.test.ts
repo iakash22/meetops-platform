@@ -3,7 +3,9 @@ import {
   CalendarProviderError,
   GOOGLE_AUTHORIZE_URL,
   GOOGLE_CALENDAR_SCOPES,
+  GOOGLE_REVOKE_URL,
   GOOGLE_TOKEN_URL,
+  conferenceUrlOrUndefined,
   GoogleCalendarProvider,
   InMemoryOAuthStateStore,
   assertCalendarWindow,
@@ -236,5 +238,137 @@ describe('assertCalendarWindow', () => {
     expect(assertCalendarWindow('2026-11-01', '2026-11-08').min.toISOString()).toBe(
       '2026-11-01T00:00:00.000Z',
     );
+  });
+});
+
+describe('calendar review fixes (M-1, L-1..L-3)', () => {
+  it('M-1: join links only on allowlisted conference hosts', () => {
+    for (const ok of [
+      'https://meet.google.com/abc-defg-hij',
+      'https://zoom.us/j/123',
+      'https://acme.zoom.us/j/123',
+      'https://us02web.zoom.us/j/1',
+      'https://zoomgov.com/j/1',
+      'https://agency.zoomgov.com/j/1',
+      'https://teams.microsoft.com/l/meetup-join/x',
+      'https://teams.live.com/meet/1',
+    ])
+      expect(conferenceUrlOrUndefined(ok)).toBe(new URL(ok).toString());
+    for (const bad of [
+      'https://meet.google.com.evil.test/abc',
+      'https://meet.goog1e.com/abc',
+      'https://evil.test/meet.google.com',
+      'https://evilzoom.us/j/1',
+      'https://zoom.us.evil.test/j/1',
+      'http://meet.google.com/abc',
+      'https://user:pw@meet.google.com/abc',
+      'https://meet.google.com:8443/abc',
+      'javascript:alert(1)',
+      42,
+    ])
+      expect(conferenceUrlOrUndefined(bad)).toBeUndefined();
+  });
+
+  it('M-1: listEvents drops non-allowlisted join links and falls back to hangoutLink', async () => {
+    const { p } = provider([
+      {
+        status: 200,
+        body: {
+          items: [
+            {
+              id: 'a',
+              start: { dateTime: '2026-11-02T04:30:00Z' },
+              end: { dateTime: '2026-11-02T05:00:00Z' },
+              conferenceData: {
+                entryPoints: [
+                  { entryPointType: 'video', uri: 'https://meet.google.com.evil.test/x' },
+                ],
+              },
+              hangoutLink: 'https://meet.google.com/abc-defg-hij',
+              htmlLink: 'https://evil.test/e',
+            },
+            {
+              id: 'b',
+              start: { dateTime: '2026-11-02T04:30:00Z' },
+              end: { dateTime: '2026-11-02T05:00:00Z' },
+              conferenceData: {
+                entryPoints: [{ entryPointType: 'video', uri: 'https://evil.test/j' }],
+              },
+            },
+          ],
+        },
+      },
+    ]);
+    const ev = await p.listEvents({
+      accessToken: 'a',
+      timeMin: '2026-11-01T00:00:00Z',
+      timeMax: '2026-11-08T00:00:00Z',
+    });
+    expect(ev[0]!.conferenceUrl).toBe('https://meet.google.com/abc-defg-hij');
+    expect(ev[0]!.htmlLink).toBeUndefined();
+    expect(ev[1]!.conferenceUrl).toBeUndefined();
+  });
+
+  it('L-2: refuses tokens that also grant calendar write scopes', async () => {
+    for (const extra of [
+      'https://www.googleapis.com/auth/calendar',
+      'https://www.googleapis.com/auth/calendar.events',
+    ]) {
+      const { p } = provider([tokenRes({ scope: `${SCOPE} ${extra}` })]);
+      await expect(p.refresh('r')).rejects.toThrow(/excess_scope/);
+    }
+  });
+
+  it('L-1: revoke posts the token to the fixed Google revoke endpoint', async () => {
+    const { p, fetch } = provider([{ status: 200, body: {} }]);
+    await p.revoke('tok');
+    expect(fetch.mock.calls[0]![0]).toBe(GOOGLE_REVOKE_URL);
+    expect(String((fetch.mock.calls[0]![1] as { body: string }).body)).toBe('token=tok');
+  });
+
+  it('L-3: enforces the 2 MiB cap while streaming and cancels the body', async () => {
+    let cancelled = false;
+    const chunk = new Uint8Array(512 * 1024);
+    let sent = 0;
+    const fetch = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      text: async () => '',
+      body: {
+        getReader: () => ({
+          read: async () => (sent++ < 100 ? { done: false, value: chunk } : { done: true }),
+          cancel: async () => {
+            cancelled = true;
+          },
+        }),
+      },
+    }));
+    const p = new GoogleCalendarProvider({
+      clientId: 'cid',
+      clientSecret: async () => 's',
+      redirectUriAllowlist: [REDIRECT],
+      stateStore: new InMemoryOAuthStateStore(),
+      fetch: fetch,
+    });
+    await expect(p.refresh('r')).rejects.toThrow(/response_too_large/);
+    expect(cancelled).toBe(true);
+    expect(sent).toBeLessThanOrEqual(6);
+  });
+
+  it('L-3: times out while reading a stalled body', async () => {
+    const fetch = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      text: () => new Promise<string>(() => undefined),
+    }));
+    const p = new GoogleCalendarProvider({
+      clientId: 'cid',
+      clientSecret: async () => 's',
+      redirectUriAllowlist: [REDIRECT],
+      stateStore: new InMemoryOAuthStateStore(),
+      fetch: fetch,
+      timeoutMs: 50,
+    });
+    await expect(p.refresh('r')).rejects.toThrow(/timeout/);
   });
 });

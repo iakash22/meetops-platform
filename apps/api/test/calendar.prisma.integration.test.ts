@@ -4,7 +4,11 @@
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { randomBytes, randomUUID } from 'node:crypto';
-import { createPrismaClient, type DatabaseClient } from '@meetops/database';
+import {
+  createPrismaClient,
+  withOrganizationContext,
+  type DatabaseClient,
+} from '@meetops/database';
 import { LocalKeyProvider, TokenCipher } from '@meetops/integrations';
 import { PrismaCalendarConnections } from '../src/modules/calendar/prisma.repository.js';
 
@@ -52,6 +56,31 @@ describe.skipIf(!url || !owner)(
       expect(await repo.readSecrets(orgB, user, row.id)).toBeNull();
       expect(await repo.readSecrets(orgA, randomUUID(), row.id)).toBeNull();
       expect((await repo.readSecrets(orgA, user, row.id))?.accessToken).toBe('plain-access');
+
+      // At rest: only v1 envelopes, never the plaintext; access/refresh use different AAD.
+      const stored = await withOrganizationContext(
+        orgA,
+        (tx) =>
+          tx.$queryRaw<{ a: string; r: string; k: string }[]>`
+          SELECT access_token_enc AS a, refresh_token_enc AS r, token_key_id AS k
+            FROM calendar_connections WHERE id = ${row.id}::uuid`,
+        { client: db },
+      );
+      const { a, r, k } = stored[0]!;
+      for (const env of [a, r]) {
+        expect(env).toMatch(/^v1\.k1\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/);
+        expect(env).not.toContain('plain-');
+        expect(Buffer.from(env.split('.')[3]!, 'base64url').toString('utf8')).not.toContain(
+          'plain-',
+        );
+      }
+      expect(k).toBe('k1');
+      await expect(
+        cipher.decrypt(a, { organizationId: orgA, integrationId: `calendar:${row.id}:refresh` }),
+      ).rejects.toThrow();
+      await expect(
+        cipher.decrypt(a, { organizationId: orgB, integrationId: `calendar:${row.id}:access` }),
+      ).rejects.toThrow();
 
       const again = await repo.upsert(orgA, {
         userId: user,

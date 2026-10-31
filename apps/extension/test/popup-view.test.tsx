@@ -196,6 +196,26 @@ describe('popup render states', () => {
     expect(html).not.toContain('It is kept on this device');
   });
 
+  it('warns before recording when held recordings use most of the storage (#307 L-1)', () => {
+    const html = render({ status: { status: 'idle', heldRecordings: 1, heldNearFull: true } });
+    expect(html).toContain('aria-label="Storage nearly full"');
+    expect(html).not.toContain('aria-label="Start blocked"');
+  });
+
+  it('blocks Record and shows the storage-full message when held data fills the cap', () => {
+    const html = render({
+      consent: setConfirmed(true),
+      status: { status: 'idle', heldRecordings: 1, heldStorageFull: true, heldBlocksStart: true },
+      onRetryHeld: noop,
+      onDiscardHeld: noop,
+    });
+    expect(html).toContain('aria-label="Start blocked"');
+    expect(html).toContain('Local storage is full');
+    expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Record this meeting<\/button>/);
+    expect(html).toContain('Retry upload');
+    expect(html).toContain('>Discard<');
+  });
+
   it('non-field errors render as a toast; none when empty', () => {
     expect(render()).not.toContain('mo-toast');
     expect(render({ error: 'No active tab' })).toContain(

@@ -2,6 +2,10 @@ import type { ExpoConfig } from 'expo/config';
 
 // Placeholder identifiers only. Replace before any store submission.
 // No secrets, tokens or credentials belong in this file.
+/** Plain-language purpose string (plan.md "iOS background audio"). */
+export const MICROPHONE_PURPOSE =
+  'MeetOps records meeting audio you choose to capture so it can be transcribed for your organization.';
+
 const config: ExpoConfig = {
   name: 'MeetOps',
   slug: 'meetops-mobile',
@@ -20,8 +24,19 @@ const config: ExpoConfig = {
     package: 'com.example.meetops',
     // Keep Keystore-backed auth items (and everything else) out of Android Auto Backup / device transfer.
     allowBackup: false,
+    // M6 hardening: drop permissions Expo adds by default that MeetOps never uses (no shared storage, no overlays).
+    blockedPermissions: [
+      'android.permission.READ_EXTERNAL_STORAGE',
+      'android.permission.WRITE_EXTERNAL_STORAGE',
+      'android.permission.SYSTEM_ALERT_WINDOW',
+    ],
   },
-  plugins: ['expo-router', ['expo-secure-store', { configureAndroidBackup: true }]],
+  plugins: [
+    'expo-router',
+    ['expo-secure-store', { configureAndroidBackup: true }],
+    ['expo-audio', { microphonePermission: MICROPHONE_PURPOSE }],
+    './plugins/withRecordingCompliance',
+  ],
   experiments: { typedRoutes: false },
 };
 

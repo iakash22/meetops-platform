@@ -229,10 +229,25 @@ export class CalendarService {
     return t.accessToken;
   }
 
+  /** Revokes the grant at the provider (best effort: failures never block the local wipe), then wipes locally. */
   async disconnect(organizationId: string, userId: string, id: string, audit: CalendarAuditFn) {
+    const secrets = await this.repo.readSecrets(organizationId, userId, id).catch(() => null);
+    const conn = secrets
+      ? (await this.repo.listForUser(organizationId, userId)).find((c) => c.id === id)
+      : undefined;
+    let providerRevoked = false;
+    if (secrets && conn && this.configured(conn.provider)) {
+      try {
+        // Revoking the refresh token revokes the whole grant at Google.
+        await this.provider(conn.provider).revoke(secrets.refreshToken ?? secrets.accessToken);
+        providerRevoked = true;
+      } catch {
+        providerRevoked = false;
+      }
+    }
     if (!(await this.repo.revoke(organizationId, userId, id)))
       throw new CalendarConnectionNotFoundError();
-    await audit('calendar.disconnect', id);
+    await audit('calendar.disconnect', id, { providerRevoked: String(providerRevoked) });
   }
 }
 

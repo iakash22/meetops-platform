@@ -2,6 +2,7 @@ import { IDBFactory } from 'fake-indexeddb';
 import 'fake-indexeddb/auto';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { handleBackgroundMessage, type BackgroundDeps } from '../src/lib/background-handler.js';
+import { HELD_FULL_START_MESSAGE, heldStorageLevel } from '../src/lib/drain.js';
 import { loadState } from '../src/lib/recorder-state.js';
 import { memoryKV } from '../src/lib/storage.js';
 import { CURRENT_CONSENT_VERSION } from '@meetops/contracts/types';
@@ -646,5 +647,60 @@ describe('held recordings (409/413 refusals kept locally)', () => {
       heldRecordings: 1,
       heldStorageFull: true,
     });
+  });
+});
+
+describe('held recordings vs new recordings (#307 L-1)', () => {
+  const MB = 1024 * 1024;
+  const cap = 100 * MB;
+  function depsWith(bytes: number) {
+    const { deps } = makeDeps();
+    return {
+      ...deps,
+      heldRecordings: async () => ({ count: 1, closed: 0, bytes, capBytes: cap }),
+      retryHeld: vi.fn(async () => undefined),
+      discardHeld: vi.fn(async () => undefined),
+    };
+  }
+
+  it('classifies held usage: ok below 80%, near-full at 80%, full when too little room is left', () => {
+    expect(heldStorageLevel({ bytes: 79 * MB, capBytes: cap })).toBe('ok');
+    expect(heldStorageLevel({ bytes: 80 * MB, capBytes: cap })).toBe('near-full');
+    expect(heldStorageLevel({ bytes: 96 * MB, capBytes: cap })).toBe('full');
+    expect(heldStorageLevel({ bytes: cap, capBytes: cap })).toBe('full');
+    expect(heldStorageLevel({ bytes: 0, capBytes: cap })).toBe('ok');
+  });
+
+  it('GET_STATUS warns before recording when held bytes reach the threshold', async () => {
+    const r = await handleBackgroundMessage(depsWith(85 * MB), bg({ type: 'GET_STATUS' }), popup);
+    expect(r).toMatchObject({ heldNearFull: true });
+    expect(r).not.toHaveProperty('heldBlocksStart');
+  });
+
+  it('held data alone fills the cap: Start is refused and the storage-full message is shown', async () => {
+    const d = depsWith(cap);
+    expect(await handleBackgroundMessage(d, bg({ type: 'GET_STATUS' }), popup)).toMatchObject({
+      heldBlocksStart: true,
+      heldStorageFull: true,
+    });
+    await handleBackgroundMessage(d, bg({ type: 'ACK_CONSENT', tabId: 3, ...GRANT }), popup);
+    const r = await handleBackgroundMessage(
+      d,
+      bg({ type: 'START_RECORDING', meetingId: MID, tabId: 3, streamId: 's-full' }),
+      popup,
+    );
+    expect(r).toEqual({ ok: false, error: HELD_FULL_START_MESSAGE });
+    expect(d.ensureOffscreen).not.toHaveBeenCalled();
+  });
+
+  it('near-full does not block Start', async () => {
+    const d = depsWith(85 * MB);
+    await handleBackgroundMessage(d, bg({ type: 'ACK_CONSENT', tabId: 3, ...GRANT }), popup);
+    const r = await handleBackgroundMessage(
+      d,
+      bg({ type: 'START_RECORDING', meetingId: MID, tabId: 3, streamId: 's-near' }),
+      popup,
+    );
+    expect(r.ok).toBe(true);
   });
 });

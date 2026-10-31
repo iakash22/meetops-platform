@@ -87,6 +87,10 @@ export interface StatusPayload {
   heldClosed?: number;
   /** Storage cap hit while recordings are held. */
   heldStorageFull?: boolean;
+  /** Held data uses most of the cap: warn before recording. */
+  heldNearFull?: boolean;
+  /** Held data alone fills the cap: Start is blocked until retry or discard. */
+  heldBlocksStart?: boolean;
 }
 
 export type BackgroundResponse = ({ ok: true } & StatusPayload) | { ok: false; error: string };
