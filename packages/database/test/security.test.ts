@@ -1744,4 +1744,28 @@ describe('Phase 7 calendar_events + sync cursor (static)', () => {
     );
     expect(statements).not.toMatch(/GRANT [^;]*"calendar_connections"[^;]*TO meetops_app/);
   });
+
+  it("#324 L-3: purges a revoked connection's events only through an org-context-checked definer function", () => {
+    const fn =
+      /CREATE FUNCTION calendar_events_purge_for_connection\(p_org uuid, p_connection uuid\)[\s\S]*?\$\$;/.exec(
+        statements,
+      )?.[0] ?? '';
+    expect(fn).toMatch(/SECURITY DEFINER\s+SET search_path = public, pg_temp/);
+    expect(fn).toContain(
+      "current_setting('app.current_organization_id', true) IS DISTINCT FROM p_org::text",
+    );
+    expect(fn).toContain("c.status = 'revoked'");
+    expect(fn).toContain(
+      'DELETE FROM public.calendar_events e WHERE e.org_id = p_org AND e.connection_id = p_connection',
+    );
+    expect(statements).toContain(
+      'ALTER FUNCTION calendar_events_purge_for_connection(uuid, uuid) OWNER TO meetops_migrator;',
+    );
+    expect(statements).toContain(
+      'REVOKE ALL ON FUNCTION calendar_events_purge_for_connection(uuid, uuid) FROM PUBLIC;',
+    );
+    expect(statements).toContain(
+      'GRANT EXECUTE ON FUNCTION calendar_events_purge_for_connection(uuid, uuid) TO meetops_app;',
+    );
+  });
 });

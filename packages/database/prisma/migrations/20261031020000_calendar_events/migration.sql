@@ -98,6 +98,38 @@ ALTER FUNCTION calendar_connections_due_for_sync(timestamptz, integer) OWNER TO 
 REVOKE ALL ON FUNCTION calendar_connections_due_for_sync(timestamptz, integer) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION calendar_connections_due_for_sync(timestamptz, integer) TO meetops_app;
 
+-- Disconnect purge: the app role has no DELETE on calendar_events, so the disconnect path calls this definer
+-- function (owned by meetops_migrator, the table owner) right after the soft revoke. It only runs inside the caller's
+-- own organization context (forced RLS still applies to the owner, so it can only see that org's rows), and only
+-- deletes events of a connection that is already revoked.
+CREATE FUNCTION calendar_events_purge_for_connection(p_org uuid, p_connection uuid)
+RETURNS integer
+LANGUAGE plpgsql
+VOLATILE
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE n integer;
+BEGIN
+  IF p_org IS NULL OR p_connection IS NULL
+     OR current_setting('app.current_organization_id', true) IS DISTINCT FROM p_org::text THEN
+    RAISE EXCEPTION 'calendar_events_purge_for_connection: organization context mismatch';
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM public.calendar_connections c
+    WHERE c.org_id = p_org AND c.id = p_connection AND c.status = 'revoked'
+  ) THEN
+    RETURN 0;
+  END IF;
+  DELETE FROM public.calendar_events e WHERE e.org_id = p_org AND e.connection_id = p_connection;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  RETURN n;
+END
+$$;
+ALTER FUNCTION calendar_events_purge_for_connection(uuid, uuid) OWNER TO meetops_migrator;
+REVOKE ALL ON FUNCTION calendar_events_purge_for_connection(uuid, uuid) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION calendar_events_purge_for_connection(uuid, uuid) TO meetops_app;
+
 DO $$
 DECLARE bad text;
 BEGIN

@@ -156,6 +156,65 @@ describe.skipIf(!url || !owner)('P7 calendar sync (live RLS)', { timeout: 60_000
     ).rejects.toThrow();
   });
 
+  it("#324 L-3: disconnect purges only that connection's cached events (definer, org-checked)", async () => {
+    const conns = new PrismaCalendarConnections(db, cipher);
+    const sync = createCalendarSyncRepository({ client: db, cipher });
+    const mk = (org: string, n: string) =>
+      conns.upsert(org, {
+        userId: user,
+        provider: 'google',
+        displayName: n,
+        externalAccountId: `${n}-${org.slice(0, 8)}@example.test`,
+        accessToken: 'plain-access',
+        refreshToken: 'plain-refresh',
+        accessTokenExpiresAt: new Date(NOW.getTime() + 3600e3),
+      });
+    const p1 = await mk(orgA, 'purge1');
+    const p2 = await mk(orgA, 'purge2');
+    const pb = await mk(orgB, 'purgeb');
+    for (const [org, c] of [
+      [orgA, p1],
+      [orgA, p2],
+      [orgB, pb],
+    ] as const)
+      await sync.applySync(org, {
+        connectionId: c.id,
+        from: FROM,
+        to: TO,
+        events: [ev('p-1', '2026-11-02T09:00:00.000Z'), ev('p-2', '2026-11-03T09:00:00.000Z')],
+        complete: true,
+        now: NOW,
+        nextSyncAt: NOW,
+      });
+    const countFor = (org: string, id: string) =>
+      withOrganizationContext(
+        org,
+        (tx) =>
+          tx.$queryRaw<{ n: bigint }[]>`
+            SELECT count(*)::bigint AS n FROM calendar_events WHERE connection_id = ${id}::uuid`,
+        { client: db },
+      ).then((r) => Number(r[0]!.n));
+
+    // The function refuses to touch an active connection and refuses a foreign org context.
+    const purge = (ctxOrg: string, org: string, id: string) =>
+      withOrganizationContext(
+        ctxOrg,
+        (tx) =>
+          tx.$queryRaw<{ n: number }[]>`
+            SELECT calendar_events_purge_for_connection(${org}::uuid, ${id}::uuid) AS n`,
+        { client: db },
+      ).then((r) => Number(r[0]!.n));
+    expect(await purge(orgA, orgA, p1.id)).toBe(0);
+    await expect(purge(orgA, orgB, pb.id)).rejects.toThrow();
+    expect(await countFor(orgA, p1.id)).toBe(2);
+
+    // Disconnect (soft revoke) purges p1's events in the same transaction; p2 and org B are untouched.
+    expect(await conns.revoke(orgA, user, p1.id)).toBe(true);
+    expect(await countFor(orgA, p1.id)).toBe(0);
+    expect(await countFor(orgA, p2.id)).toBe(2);
+    expect(await countFor(orgB, pb.id)).toBe(2);
+  });
+
   it('backs off on failure, drops errored and revoked connections from the due list', async () => {
     const conns = new PrismaCalendarConnections(db, cipher);
     const sync = createCalendarSyncRepository({ client: db, cipher });

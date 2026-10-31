@@ -208,8 +208,8 @@ export class PrismaCalendarConnections implements CalendarConnectionsRepository 
 
   async revoke(organizationId: string, userId: string, id: string) {
     if (!UUID_RE.test(id)) return false;
-    const r = await this.org(organizationId, (tx) =>
-      tx.calendarConnection.updateMany({
+    return this.org(organizationId, async (tx) => {
+      const r = await tx.calendarConnection.updateMany({
         where: { id, organizationId, userId, status: { not: 'revoked' } },
         data: {
           status: 'revoked',
@@ -218,8 +218,12 @@ export class PrismaCalendarConnections implements CalendarConnectionsRepository 
           refreshTokenEnc: null,
           accessTokenExpiresAt: null,
         },
-      }),
-    );
-    return r.count > 0;
+      });
+      if (r.count === 0) return false;
+      // Same transaction: purge the events cached by the background sync (the app role has no DELETE; the
+      // definer function only deletes events of an already-revoked connection in this org context).
+      await tx.$queryRaw`SELECT calendar_events_purge_for_connection(${organizationId}::uuid, ${id}::uuid)`;
+      return true;
+    });
   }
 }
