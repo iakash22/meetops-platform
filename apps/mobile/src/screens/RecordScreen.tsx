@@ -136,13 +136,31 @@ export function RecordScreen() {
     void (async () => {
       try {
         const chunks = await recordings.capture.capture(id, durationMs);
+        // Earlier segments first (native capture rotates files), then the final one.
+        const parts = recordings.capture.takeParts?.(id) ?? [];
+        const partsMs = parts.reduce((t, p) => t + p.durationMs, 0);
+        const base = Date.parse(startedAtRef.current ?? new Date().toISOString());
+        let offset = 0;
+        for (const part of parts) {
+          await recordings.engine.enqueue({
+            id: part.id,
+            organizationId,
+            meetingId,
+            mimeType: 'audio/mp4',
+            startedAt: new Date(base + offset).toISOString(),
+            durationMs: part.durationMs,
+            chunks: part.chunks,
+            consent: consentRecord,
+          });
+          offset += part.durationMs;
+        }
         await recordings.engine.enqueue({
           id,
           organizationId,
           meetingId,
           mimeType: 'audio/mp4',
-          startedAt: startedAtRef.current ?? new Date().toISOString(),
-          durationMs,
+          startedAt: new Date(base + offset).toISOString(),
+          durationMs: Math.max(0, durationMs - partsMs),
           chunks,
           consent: consentRecord,
         });

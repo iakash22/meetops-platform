@@ -93,7 +93,7 @@ const fileSystem = http ? expoFileSystem() : null;
 // R5: chunk files are AES-256-GCM sealed (Android Keystore / iOS Keychain). Fails closed without the native module.
 const chunkCipher = fileSystem ? createNativeChunkCipher() : null;
 const chunkFiles = fileSystem
-  ? createFileChunkStore(fileSystem, undefined, chunkCipher ?? undefined)
+  ? createFileChunkStore(fileSystem, chunkCipher ?? createNativeChunkCipher())
   : null;
 const nativeCapture = chunkFiles ? createNativeCapture(createExpoAudioDriver(), chunkFiles) : null;
 const capture: RecordingCapture = nativeCapture ?? createSimulatedCapture();

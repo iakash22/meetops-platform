@@ -58,3 +58,9 @@ export function createMemoryFs(): FileSystemLike & {
     },
   };
 }
+
+/** TEST ONLY: identity cipher so storage tests can read chunk bytes. The app has no plaintext cipher. */
+export const testCipher = {
+  seal: (b: string) => Promise.resolve(b),
+  open: (b: string) => Promise.resolve(b),
+};

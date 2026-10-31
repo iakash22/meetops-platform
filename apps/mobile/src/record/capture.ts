@@ -21,6 +21,11 @@ export interface RecordingCapture extends ChunkSource {
   isLive(): boolean;
   /** Stop: ends capture immediately, then splits the file into hashed chunks for the upload queue. */
   capture(recordingId: string, durationMs: number): Promise<LocalChunk[]>;
+  /**
+   * Finished earlier segments of the recording (native capture rotates files to bound plaintext at rest, R5).
+   * Each is queued as its own recording session. Call after `capture`.
+   */
+  takeParts?(recordingId: string): { id: string; chunks: LocalChunk[]; durationMs: number }[];
   /** Stops any capture and deletes the in-progress file. Never resumes (R7). */
   abort(): Promise<void>;
 }

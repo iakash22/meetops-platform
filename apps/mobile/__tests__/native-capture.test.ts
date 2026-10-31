@@ -2,7 +2,7 @@ import { base64ToBytes, bytesToBase64 } from '../src/record/base64';
 import { createFileChunkStore } from '../src/record/fileChunkStore';
 import { createNativeCapture, type AudioDriver } from '../src/record/nativeCapture';
 import { sha256Hex } from '../src/record/sha256';
-import { createMemoryFs } from './support/memoryFs';
+import { createMemoryFs, testCipher } from './support/memoryFs';
 
 const bytes = (n: number) => Uint8Array.from({ length: n }, (_, i) => (i * 7) % 256);
 
@@ -57,7 +57,7 @@ describe('file chunk store (R4, R6)', () => {
   it('splits a recording into hashed sandbox chunks and deletes the source', async () => {
     const fs = createMemoryFs();
     fs.put('file:///cache/a.m4a', bytes(10));
-    const store = createFileChunkStore(fs, 4);
+    const store = createFileChunkStore(fs, testCipher, 4);
     const chunks = await store.ingest('rec-1', 'file:///cache/a.m4a');
     expect(chunks.map((c) => c.sizeBytes)).toEqual([4, 4, 2]);
     expect(chunks[2]!.sha256).toBe(sha256Hex(bytes(10).subarray(8)));
@@ -70,7 +70,7 @@ describe('file chunk store (R4, R6)', () => {
 
   it('rejects path-like ids and leaves nothing behind on failure', async () => {
     const fs = createMemoryFs();
-    const store = createFileChunkStore(fs, 4);
+    const store = createFileChunkStore(fs, testCipher, 4);
     await expect(store.ingest('../x', 'file:///cache/a.m4a')).rejects.toThrow();
     fs.put('file:///cache/b.m4a', bytes(9));
     fs.readAsStringAsync = () => Promise.reject(new Error('io'));
@@ -83,7 +83,7 @@ describe('file chunk store (R4, R6)', () => {
 describe('native capture (M4)', () => {
   it('never starts without permission (R1)', async () => {
     const { driver } = fakeDriver({ canRecord: () => Promise.resolve(false) });
-    const cap = createNativeCapture(driver, createFileChunkStore(createMemoryFs()));
+    const cap = createNativeCapture(driver, createFileChunkStore(createMemoryFs(), testCipher));
     await expect(cap.begin('rec-1')).rejects.toThrow(/permission/);
     expect(driver.calls).toEqual([]);
     expect(cap.isLive()).toBe(false);
@@ -92,7 +92,7 @@ describe('native capture (M4)', () => {
   it('records, pauses, resumes, then stops before chunking', async () => {
     const fs = createMemoryFs();
     const { driver, uri } = fakeDriver();
-    const cap = createNativeCapture(driver, createFileChunkStore(fs, 4));
+    const cap = createNativeCapture(driver, createFileChunkStore(fs, testCipher, 4));
     await cap.begin('rec-1');
     expect(cap.isLive()).toBe(true);
     cap.pause();
@@ -116,7 +116,7 @@ describe('native capture (M4)', () => {
 
   it('reports an interruption instead of resuming by itself (R7)', async () => {
     const { driver } = fakeDriver();
-    const cap = createNativeCapture(driver, createFileChunkStore(createMemoryFs()));
+    const cap = createNativeCapture(driver, createFileChunkStore(createMemoryFs(), testCipher));
     await cap.begin('rec-1');
     driver.interrupt();
     expect(cap.isLive()).toBe(false);
@@ -126,7 +126,7 @@ describe('native capture (M4)', () => {
   it('abort stops and deletes the partial file (logout, org switch)', async () => {
     const fs = createMemoryFs();
     const { driver, uri } = fakeDriver();
-    const cap = createNativeCapture(driver, createFileChunkStore(fs));
+    const cap = createNativeCapture(driver, createFileChunkStore(fs, testCipher));
     await cap.begin('rec-1');
     fs.put(uri, bytes(3));
     await cap.abort();
@@ -138,11 +138,11 @@ describe('native capture (M4)', () => {
   it('discards partial output after a crash and never resumes (R7)', async () => {
     const fs = createMemoryFs();
     const { driver, uri } = fakeDriver();
-    await createNativeCapture(driver, createFileChunkStore(fs)).begin('rec-1');
+    await createNativeCapture(driver, createFileChunkStore(fs, testCipher)).begin('rec-1');
     fs.put(uri, bytes(3));
     // Relaunch: a new driver and capture over the same sandbox.
     const { driver: fresh } = fakeDriver({ currentUri: () => null });
-    const cap = createNativeCapture(fresh, createFileChunkStore(fs));
+    const cap = createNativeCapture(fresh, createFileChunkStore(fs, testCipher));
     await cap.recoverOnLaunch();
     expect(fs.files.has(uri)).toBe(false);
     expect(fresh.calls).not.toContain('record');
@@ -159,7 +159,7 @@ describe('chunk encryption at rest (R5)', () => {
       open: jest.fn((b: string) => Promise.resolve(xor(b))),
     };
     fs.put('file:///cache/a.m4a', bytes(6));
-    const store = createFileChunkStore(fs, 4, cipher);
+    const store = createFileChunkStore(fs, cipher, 4);
     const chunks = await store.ingest('rec-1', 'file:///cache/a.m4a');
     expect(chunks[0]!.sha256).toBe(sha256Hex(bytes(6).subarray(0, 4)));
     expect(fs.files.get('file:///doc/recordings/rec-1/0.chunk')).not.toEqual(bytes(4));
@@ -173,7 +173,7 @@ describe('encryption fail-closed and legacy migration (R5)', () => {
 
   it('never starts capture when encryption is unavailable', async () => {
     const { driver } = fakeDriver();
-    const store = createFileChunkStore(createMemoryFs(), 4, {
+    const store = createFileChunkStore(createMemoryFs(), {
       seal: refuse,
       open: refuse,
       ready: refuse,
@@ -186,7 +186,7 @@ describe('encryption fail-closed and legacy migration (R5)', () => {
   it('never writes plaintext when sealing fails', async () => {
     const fs = createMemoryFs();
     fs.put('file:///cache/a.m4a', bytes(6));
-    const store = createFileChunkStore(fs, 4, { seal: refuse, open: refuse });
+    const store = createFileChunkStore(fs, { seal: refuse, open: refuse }, 4);
     await expect(store.ingest('rec-1', 'file:///cache/a.m4a')).rejects.toThrow();
     expect([...fs.files.keys()].some((k) => k.endsWith('.chunk'))).toBe(false);
   });
@@ -201,7 +201,7 @@ describe('encryption fail-closed and legacy migration (R5)', () => {
     fs.put('file:///doc/recordings/rec-old/0.chunk', bytes(4));
     fs.put('file:///doc/recordings/rec-old/1.chunk', bytes(3));
     fs.dirs.add('file:///doc/recordings/rec-old/');
-    const store = createFileChunkStore(fs, 4, cipher);
+    const store = createFileChunkStore(fs, cipher, 4);
     await expect(store.migrateLegacy()).resolves.toBe(2);
     expect(fs.files.get('file:///doc/recordings/rec-old/0.chunk')).not.toEqual(bytes(4));
     await expect(store.migrateLegacy()).resolves.toBe(0);
@@ -209,5 +209,60 @@ describe('encryption fail-closed and legacy migration (R5)', () => {
     fs.put('file:///doc/recordings/rec-old/2.chunk', bytes(2));
     await expect(store.read('rec-old', 2)).resolves.toEqual(bytes(2));
     expect(fs.files.get('file:///doc/recordings/rec-old/2.chunk')).not.toEqual(bytes(2));
+  });
+});
+
+describe('segment rotation bounds plaintext at rest (R5)', () => {
+  afterEach(() => jest.useRealTimers());
+
+  it('seals and deletes each finished segment, then returns the parts', async () => {
+    jest.useFakeTimers();
+    let t = 0;
+    const fs = createMemoryFs();
+    const { driver, uri } = fakeDriver();
+    const cap = createNativeCapture(driver, createFileChunkStore(fs, testCipher, 4), {
+      segmentMs: 1000,
+      now: () => t,
+    });
+    await cap.begin('rec-1');
+    fs.put(uri, bytes(6));
+    t = 1200;
+    await jest.advanceTimersByTimeAsync(1000);
+    expect(driver.calls.filter((c) => c === 'stop')).toHaveLength(1);
+    expect(driver.calls.filter((c) => c === 'record')).toHaveLength(2);
+    // The plaintext segment is gone right after rotation; its sealed chunks are stored.
+    expect(fs.files.has(uri)).toBe(false);
+    await expect(cap.exists('rec-1-p1')).resolves.toBe(true);
+    fs.put(uri, bytes(3));
+    t = 1500;
+    const last = await cap.capture('rec-1', 1500);
+    expect(last).toHaveLength(1);
+    expect(cap.takeParts?.('rec-1')).toEqual([
+      { id: 'rec-1-p1', chunks: expect.any(Array), durationMs: 1200 },
+    ]);
+    expect(cap.takeParts?.('rec-1')).toEqual([]);
+  });
+
+  it('does not rotate while paused, and abort deletes finished parts', async () => {
+    jest.useFakeTimers();
+    let t = 0;
+    const fs = createMemoryFs();
+    const { driver, uri } = fakeDriver();
+    const cap = createNativeCapture(driver, createFileChunkStore(fs, testCipher, 4), {
+      segmentMs: 1000,
+      now: () => t,
+    });
+    await cap.begin('rec-1');
+    fs.put(uri, bytes(6));
+    t = 1100;
+    await jest.advanceTimersByTimeAsync(1000);
+    cap.pause();
+    t = 5000;
+    fs.put(uri, bytes(2));
+    await jest.advanceTimersByTimeAsync(3000);
+    expect(driver.calls.filter((c) => c === 'stop')).toHaveLength(1);
+    await cap.abort();
+    await expect(cap.exists('rec-1-p1')).resolves.toBe(false);
+    expect(fs.files.has(uri)).toBe(false);
   });
 });

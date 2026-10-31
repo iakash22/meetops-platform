@@ -4,7 +4,7 @@ import { createSimulatedUploadApi } from '../src/upload/simulatedUploadApi';
 import type { QueueItem } from '../src/upload/types';
 import { createUploadQueueEngine, type QueueLogEvent } from '../src/upload/uploadQueueEngine';
 import { reconcileOrphans, startUploadScheduler } from '../src/upload/uploadScheduler';
-import { createMemoryFs } from './support/memoryFs';
+import { createMemoryFs, testCipher } from './support/memoryFs';
 
 const consent = {
   version: '2026-10-01',
@@ -14,13 +14,13 @@ const consent = {
 
 async function seed(fs: ReturnType<typeof createMemoryFs>, id: string) {
   fs.put(`file:///cache/${id}.m4a`, Uint8Array.from([1, 2, 3, 4, 5]));
-  return createFileChunkStore(fs, 2).ingest(id, `file:///cache/${id}.m4a`);
+  return createFileChunkStore(fs, testCipher, 2).ingest(id, `file:///cache/${id}.m4a`);
 }
 
 function newEngine(fs: ReturnType<typeof createMemoryFs>, log?: (e: QueueLogEvent) => void) {
   return createUploadQueueEngine({
     store: createFileQueueStore(fs),
-    chunks: createFileChunkStore(fs, 2),
+    chunks: createFileChunkStore(fs, testCipher, 2),
     api: createSimulatedUploadApi(0),
     network: { isOnline: () => false },
     ...(log ? { log } : {}),
@@ -64,7 +64,7 @@ describe('relaunch reconciliation (R4, R6)', () => {
     const engine = newEngine(fs);
     await engine.enqueue(recording('rec-1', await seed(fs, 'rec-1')));
     await seed(fs, 'rec-orphan');
-    const store = createFileChunkStore(fs, 2);
+    const store = createFileChunkStore(fs, testCipher, 2);
     await store.setInProgress('file:///cache/x.m4a');
     await expect(reconcileOrphans(engine, store)).resolves.toEqual(['rec-orphan']);
     await expect(store.exists('rec-1')).resolves.toBe(true);
@@ -79,7 +79,7 @@ describe('verified deletion log (R6)', () => {
     const events: QueueLogEvent[] = [];
     const engine = createUploadQueueEngine({
       store: createFileQueueStore(fs),
-      chunks: createFileChunkStore(fs, 2),
+      chunks: createFileChunkStore(fs, testCipher, 2),
       api: createSimulatedUploadApi(0),
       network: { isOnline: () => true },
       log: (e) => events.push(e),
@@ -134,7 +134,7 @@ describe('upload scheduler', () => {
 describe('logout wipe surfaces failed deletes (Low)', () => {
   it('retries a failed delete once, then throws with the ids and keeps the queue empty', async () => {
     const fs = createMemoryFs();
-    const store = createFileChunkStore(fs, 2);
+    const store = createFileChunkStore(fs, testCipher, 2);
     let removes = 0;
     const chunks = {
       ...store,

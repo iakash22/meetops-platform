@@ -50,7 +50,7 @@ const SAFE_ID = /^[A-Za-z0-9_-]{1,64}$/;
 
 /**
  * Encryption at rest for chunk files (R5). Base64 in, base64 out. Android: AES-256-GCM with a Keystore key
- * (`modules/chunk-crypto`). Elsewhere `plainCipher` (iOS relies on Data Protection). Hashes and sizes are
+ * (`modules/chunk-crypto`). iOS: AES-256-GCM with a Keychain key (CryptoKit). There is no plaintext cipher in the app. Hashes and sizes are
  * always over the plaintext, which is what the server checks.
  */
 export interface ChunkCipher {
@@ -74,15 +74,11 @@ const wrap = (sealedB64: string) => {
   return bytesToBase64(out);
 };
 
-export const plainCipher: ChunkCipher = {
-  seal: (b) => Promise.resolve(b),
-  open: (b) => Promise.resolve(b),
-};
-
 export function createFileChunkStore(
   fs: FileSystemLike,
+  /** Required: there is no plaintext default (R5, fail closed). */
+  cipher: ChunkCipher,
   chunkBytes = CHUNK_BYTES,
-  cipher: ChunkCipher = plainCipher,
 ): FileChunkStore {
   const root = () => {
     if (!fs.documentDirectory) throw new Error('No app sandbox directory.');
