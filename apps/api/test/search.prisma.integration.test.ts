@@ -88,4 +88,22 @@ describe.skipIf(!url)('Phase 7 PrismaSearch (live RLS)', { timeout: 60_000 }, ()
       [],
     );
   });
+
+  it('strips raw markers from stored text and does not leak the statement timeout', async () => {
+    await withOrganizationContext(
+      orgA,
+      (tx) =>
+        tx.task.create({
+          data: { organizationId: orgA, title: `marker \u0002${word}fake\u0003 test ${word}` },
+        }),
+      { client: db },
+    );
+    const s = new PrismaSearch(db);
+    const hits = await s.search(orgA, { q: `marker ${word}`, kinds: ['task'], limit: 5 });
+    expect(hits).toHaveLength(1);
+    expect(hits[0]!.snippet).not.toContain(`\u0002${word}fake`);
+    expect(hits[0]!.title.includes('\u0002') || hits[0]!.title.includes('\u0003')).toBe(false);
+    const t = await db.$queryRaw<{ statement_timeout: string }[]>`SHOW statement_timeout`;
+    expect(t[0]!.statement_timeout).not.toBe('2s');
+  });
 });

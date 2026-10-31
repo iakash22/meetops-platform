@@ -511,3 +511,33 @@ export const SEARCH_RESULT_KINDS = ['meeting', 'transcript', 'summary', 'task'] 
 /** Highlight markers in `snippet`: text between them matched the query. Render as text, never as HTML. */
 export const SEARCH_HIGHLIGHT_START = '\u0002';
 export const SEARCH_HIGHLIGHT_STOP = '\u0003';
+
+/**
+ * Phase 7: video-conference hosts whose join links clients may show. Exact hosts, plus subdomains only where listed
+ * in CONFERENCE_HOST_SUFFIXES (Zoom vanity domains such as acme.zoom.us). Anything else is dropped.
+ */
+export const CONFERENCE_HOSTS = [
+  'meet.google.com',
+  'zoom.us',
+  'zoomgov.com',
+  'teams.microsoft.com',
+  'teams.live.com',
+] as const;
+export const CONFERENCE_HOST_SUFFIXES = ['.zoom.us', '.zoomgov.com'] as const;
+
+/** True only for https URLs (no credentials, default port) on an allowlisted conference host. */
+export function isAllowedConferenceUrl(value: unknown): value is string {
+  if (typeof value !== 'string' || value.length > 2048) return false;
+  let u: URL;
+  try {
+    u = new URL(value);
+  } catch {
+    return false;
+  }
+  if (u.protocol !== 'https:' || u.username || u.password || u.port) return false;
+  const host = u.hostname.toLowerCase();
+  return (
+    (CONFERENCE_HOSTS as readonly string[]).includes(host) ||
+    CONFERENCE_HOST_SUFFIXES.some((s) => host.endsWith(s) && host.length > s.length)
+  );
+}

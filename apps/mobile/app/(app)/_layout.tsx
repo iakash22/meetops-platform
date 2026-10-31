@@ -4,6 +4,7 @@ import { useEffect } from 'react';
 import { useAuth } from '../../src/auth/AuthProvider';
 import { takeReturn } from '../../src/auth/deepLink';
 import { guardRedirect } from '../../src/auth/guards';
+import { RecordingBanner } from '../../src/record/RecordingBanner';
 import { Splash } from '../../src/screens/Splash';
 import { stackScreenOptions } from '../../src/ui/navigation';
 
@@ -25,13 +26,16 @@ export default function AppLayout() {
   const to = guardRedirect(state.status, 'app');
   if (to) return <Redirect href={to} />;
   return (
-    <Stack screenOptions={stackScreenOptions}>
-      <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-      <Stack.Screen name="meeting/[id]" options={{ title: 'Meeting' }} />
-      <Stack.Screen
-        name="organizations"
-        options={{ title: 'Switch organization', presentation: 'modal' }}
-      />
-    </Stack>
+    <>
+      <RecordingBanner />
+      <Stack screenOptions={stackScreenOptions}>
+        <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+        <Stack.Screen name="meeting/[id]" options={{ title: 'Meeting' }} />
+        <Stack.Screen
+          name="organizations"
+          options={{ title: 'Switch organization', presentation: 'modal' }}
+        />
+      </Stack>
+    </>
   );
 }

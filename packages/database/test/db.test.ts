@@ -48,9 +48,9 @@ describe('generated client', () => {
     await db.disconnectPrismaClient();
   });
 
-  it('exposes exactly the 40 models', () => {
+  it('exposes exactly the 41 models', () => {
     const models = Object.values(Prisma.ModelName);
-    expect(models).toHaveLength(40);
+    expect(models).toHaveLength(41);
     for (const m of [
       'Organization',
       'User',

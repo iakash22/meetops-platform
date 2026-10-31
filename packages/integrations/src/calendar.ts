@@ -1,3 +1,4 @@
+import { isAllowedConferenceUrl } from '@meetops/contracts/types';
 import type { FetchLike } from './jira.js';
 import {
   assertAllowedRedirect,
@@ -69,6 +70,8 @@ export interface CalendarProvider {
   }): Promise<CalendarTokens & { account: CalendarAccount }>;
   refresh(refreshToken: string): Promise<CalendarTokens>;
   listEvents(input: ListEventsInput): Promise<CalendarEvent[]>;
+  /** Revoke a token at the provider (best effort for callers; throws CalendarProviderError on failure). */
+  revoke(token: string): Promise<void>;
 }
 
 export class CalendarProviderError extends Error {
@@ -88,6 +91,10 @@ export const CALENDAR_MAX_EVENTS = 250;
 export const GOOGLE_AUTHORIZE_URL = 'https://accounts.google.com/o/oauth2/v2/auth';
 export const GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token';
 export const GOOGLE_CALENDAR_API = 'https://www.googleapis.com/calendar/v3';
+export const GOOGLE_REVOKE_URL = 'https://oauth2.googleapis.com/revoke';
+export const CALENDAR_MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
+/** Hosts allowed for the event's link back to the provider UI. */
+const GOOGLE_HTML_HOSTS = ['calendar.google.com', 'www.google.com'];
 /** Read-only events + identity of the primary calendar. Do not widen without Security review. */
 export const GOOGLE_CALENDAR_SCOPES = Object.freeze([
   'https://www.googleapis.com/auth/calendar.events.readonly',
@@ -108,14 +115,34 @@ export interface GoogleCalendarOptions {
 
 const CODE_RE = /^[A-Za-z0-9._~/-]{1,2048}$/;
 
-function httpsOrUndefined(v: unknown): string | undefined {
+function googleHtmlLink(v: unknown): string | undefined {
   if (typeof v !== 'string') return undefined;
   try {
     const u = new URL(v);
-    return u.protocol === 'https:' && !u.username && !u.password ? u.toString() : undefined;
+    return u.protocol === 'https:' &&
+      !u.username &&
+      !u.password &&
+      !u.port &&
+      GOOGLE_HTML_HOSTS.includes(u.hostname.toLowerCase())
+      ? u.toString()
+      : undefined;
   } catch {
     return undefined;
   }
+}
+
+/** Join links only on allowlisted conference hosts (Meet, Zoom incl. subdomains and zoomgov, Teams); others dropped. */
+export function conferenceUrlOrUndefined(v: unknown): string | undefined {
+  return isAllowedConferenceUrl(v) ? new URL(v).toString() : undefined;
+}
+
+/** Any granted Google Calendar scope outside the read-only set (e.g. calendar, calendar.events) is refused. */
+export function assertReadOnlyCalendarScopes(scopes: readonly string[]): void {
+  if (!GOOGLE_CALENDAR_SCOPES.every((s) => scopes.includes(s)))
+    throw new CalendarProviderError('insufficient_scope');
+  const allowed: readonly string[] = GOOGLE_CALENDAR_SCOPES;
+  if (scopes.some((s) => /\/auth\/calendar(?:[./]|$)/.test(s) && !allowed.includes(s)))
+    throw new CalendarProviderError('excess_scope');
 }
 
 /** Validates and normalizes a list window; throws CalendarProviderError('invalid_window'). */
@@ -247,8 +274,9 @@ export class GoogleCalendarProvider implements CalendarProvider {
         e.conferenceData as
           { entryPoints?: { entryPointType?: unknown; uri?: unknown }[] } | undefined
       )?.entryPoints?.find((p) => p?.entryPointType === 'video');
-      const conferenceUrl = httpsOrUndefined(entry?.uri ?? e.hangoutLink);
-      const htmlLink = httpsOrUndefined(e.htmlLink);
+      const conferenceUrl =
+        conferenceUrlOrUndefined(entry?.uri) ?? conferenceUrlOrUndefined(e.hangoutLink);
+      const htmlLink = googleHtmlLink(e.htmlLink);
       const organizer = (e.organizer as { email?: unknown } | undefined)?.email;
       const ev: CalendarEvent = {
         id: e.id.slice(0, 1024),
@@ -266,6 +294,15 @@ export class GoogleCalendarProvider implements CalendarProvider {
       if (htmlLink) ev.htmlLink = htmlLink;
       if (typeof organizer === 'string') ev.organizerEmail = organizer.slice(0, 320);
       return [ev];
+    });
+  }
+
+  async revoke(token: string): Promise<void> {
+    if (!token) return;
+    await this.call(GOOGLE_REVOKE_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ token }).toString(),
     });
   }
 
@@ -307,8 +344,7 @@ export class GoogleCalendarProvider implements CalendarProvider {
     if (typeof b.token_type === 'string' && b.token_type.toLowerCase() !== 'bearer')
       throw new CalendarProviderError('invalid_token_type');
     const scopes = (typeof b.scope === 'string' ? b.scope.split(/\s+/) : []).filter(Boolean);
-    if (!GOOGLE_CALENDAR_SCOPES.every((s) => scopes.includes(s)))
-      throw new CalendarProviderError('insufficient_scope');
+    assertReadOnlyCalendarScopes(scopes);
     const expiresIn = typeof b.expires_in === 'number' && b.expires_in > 0 ? b.expires_in : 3600;
     return {
       accessToken: b.access_token,
@@ -318,39 +354,87 @@ export class GoogleCalendarProvider implements CalendarProvider {
     };
   }
 
-  /** No retries (codes are single-use), no redirects, timeout, sanitized errors. */
+  /**
+   * No retries (codes are single-use), no redirects, sanitized errors. One timeout covers the request AND reading the
+   * body; the 2 MiB cap is enforced while streaming (and checked again for non-streaming fetch stand-ins).
+   */
   private async call(
     url: string,
     init: { method: string; headers: Record<string, string>; body?: string },
   ): Promise<unknown> {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), this.opts.timeoutMs ?? 10_000);
-    let res: Awaited<ReturnType<FetchLike>>;
+    const ms = this.opts.timeoutMs ?? 10_000;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => {
+        controller.abort();
+        reject(new CalendarProviderError('timeout'));
+      }, ms);
+    });
     try {
-      res = await this.fetchFn(url, { ...init, redirect: 'error', signal: controller.signal });
-    } catch (err) {
-      throw new CalendarProviderError(
-        (err as { name?: string }).name === 'AbortError' ? 'timeout' : 'network_error',
-      );
+      let res: Awaited<ReturnType<FetchLike>>;
+      try {
+        res = await Promise.race([
+          this.fetchFn(url, { ...init, redirect: 'error', signal: controller.signal }),
+          timeout,
+        ]);
+      } catch (err) {
+        if (err instanceof CalendarProviderError) throw err;
+        throw new CalendarProviderError(
+          (err as { name?: string }).name === 'AbortError' ? 'timeout' : 'network_error',
+        );
+      }
+      const text = await Promise.race([readCapped(res, controller), timeout]);
+      let json: unknown;
+      try {
+        json = text ? JSON.parse(text) : undefined;
+      } catch {
+        throw new CalendarProviderError('invalid_json', res.status);
+      }
+      if (!res.ok) {
+        const e = (json as { error?: unknown } | undefined)?.error;
+        throw new CalendarProviderError(
+          typeof e === 'string' && /^[a-z_]{1,64}$/.test(e) ? e : 'http_error',
+          res.status,
+        );
+      }
+      return json;
     } finally {
       clearTimeout(timer);
     }
-    const text = await res.text().catch(() => '');
-    if (text.length > 2 * 1024 * 1024)
-      throw new CalendarProviderError('response_too_large', res.status);
-    let json: unknown;
-    try {
-      json = text ? JSON.parse(text) : undefined;
-    } catch {
-      throw new CalendarProviderError('invalid_json', res.status);
-    }
-    if (!res.ok) {
-      const e = (json as { error?: unknown } | undefined)?.error;
-      throw new CalendarProviderError(
-        typeof e === 'string' && /^[a-z_]{1,64}$/.test(e) ? e : 'http_error',
-        res.status,
-      );
-    }
-    return json;
   }
+}
+
+type StreamingBody = {
+  getReader(): { read(): Promise<{ done: boolean; value?: Uint8Array }>; cancel(): Promise<void> };
+};
+
+/** Reads the body, aborting as soon as it exceeds CALENDAR_MAX_RESPONSE_BYTES. */
+async function readCapped(
+  res: Awaited<ReturnType<FetchLike>>,
+  controller: AbortController,
+): Promise<string> {
+  const body = (res as { body?: unknown }).body as StreamingBody | null | undefined;
+  if (body && typeof body.getReader === 'function') {
+    const reader = body.getReader();
+    const chunks: Uint8Array[] = [];
+    let total = 0;
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (!value) continue;
+      total += value.byteLength;
+      if (total > CALENDAR_MAX_RESPONSE_BYTES) {
+        controller.abort();
+        await reader.cancel().catch(() => undefined);
+        throw new CalendarProviderError('response_too_large', res.status);
+      }
+      chunks.push(value);
+    }
+    return Buffer.concat(chunks).toString('utf8');
+  }
+  const text = await res.text().catch(() => '');
+  if (Buffer.byteLength(text, 'utf8') > CALENDAR_MAX_RESPONSE_BYTES)
+    throw new CalendarProviderError('response_too_large', res.status);
+  return text;
 }

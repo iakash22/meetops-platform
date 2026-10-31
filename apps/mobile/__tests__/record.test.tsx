@@ -15,6 +15,8 @@ import { RecordScreen } from '../src/screens/RecordScreen';
 import { makeRepositories } from './support/appRoutes';
 import { ApiError } from '../src/api/client';
 import { sha256Hex } from '../src/record/sha256';
+import type { RecordingCapture } from '../src/record/capture';
+import { getRecordingPhase } from '../src/record/indicator';
 import { createSimulatedCapture } from '../src/record/simulatedRecorder';
 import { createMemoryQueueStore, createSimulatedUploadApi } from '../src/upload/simulatedUploadApi';
 import type { RecordingUploadApi } from '../src/upload/types';
@@ -290,5 +292,113 @@ describe('sha256Hex', () => {
     expect(sha256Hex(new TextEncoder().encode('abc'))).toBe(
       'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad',
     );
+  });
+});
+
+describe('Record tab with a live capture (M4)', () => {
+  beforeEach(() => {
+    jest.useFakeTimers({ now: new Date('2026-10-31T10:00:00Z') });
+    jest
+      .spyOn(Animated, 'loop')
+      .mockReturnValue({ start: jest.fn(), stop: jest.fn(), reset: jest.fn() });
+    jest.spyOn(AccessibilityInfo, 'isReduceMotionEnabled').mockResolvedValue(false);
+  });
+  afterEach(() => {
+    jest.useRealTimers();
+    jest.restoreAllMocks();
+  });
+
+  function setup(over: Partial<RecordingCapture> = {}) {
+    let live = true;
+    const base = createSimulatedCapture();
+    const mocks = {
+      begin: jest.fn(() => Promise.resolve()),
+      pause: jest.fn(),
+      resume: jest.fn(() => {
+        live = true;
+      }),
+      abort: jest.fn(() => Promise.resolve()),
+    };
+    const capture: RecordingCapture = {
+      ...base,
+      simulated: false,
+      isLive: () => live,
+      ...mocks,
+      ...over,
+    };
+    const engine = createUploadQueueEngine({
+      store: createMemoryQueueStore(),
+      chunks: capture,
+      api: createSimulatedUploadApi(0),
+      network: { isOnline: () => true },
+    });
+    const repos = makeRepositories({
+      consent: createDemoConsentApi({ optedIn: true }),
+      uploadQueue: engine,
+      recordings: { engine, capture, organizationId: () => 'org-1' },
+    });
+    const view = render(
+      <RepositoriesProvider value={repos}>
+        <RecordScreen />
+      </RepositoriesProvider>,
+    );
+    return { capture: mocks, interrupt: () => (live = false), view };
+  }
+
+  async function start() {
+    await act(async () => {});
+    fireEvent.press(screen.getByTestId('record-button'));
+    await act(async () => {});
+    fireEvent.press(screen.getByTestId('consent-notice-accept'));
+    await act(async () => {});
+  }
+
+  it('starts capture only after the notice and publishes the app-wide indicator (R1, R2)', async () => {
+    const { capture } = setup();
+    await act(async () => {});
+    expect(screen.queryByTestId('record-simulated-notice')).toBeNull();
+    expect(capture.begin).not.toHaveBeenCalled();
+    await start();
+    expect(capture.begin).toHaveBeenCalledWith(expect.stringMatching(/^rec-/));
+    expect(getRecordingPhase()).toBe('recording');
+    fireEvent.press(screen.getByTestId('record-pause'));
+    expect(capture.pause).toHaveBeenCalled();
+    expect(getRecordingPhase()).toBe('paused');
+  });
+
+  it('fails closed when capture cannot begin', async () => {
+    setup({ begin: () => Promise.reject(new Error('no mic')) });
+    await start();
+    expect(screen.getByText(/Recording hasn't started/)).toBeTruthy();
+    expect(screen.getByTestId('record-timer', { includeHiddenElements: true })).toHaveTextContent(
+      '00:00',
+    );
+    expect(getRecordingPhase()).toBe('idle');
+  });
+
+  it('pauses on an interruption with a notice and waits for the user (R7)', async () => {
+    const { capture, interrupt } = setup();
+    await start();
+    interrupt();
+    act(() => {
+      jest.advanceTimersByTime(1_500);
+    });
+    expect(screen.getByTestId('record-status')).toHaveTextContent('Paused');
+    expect(screen.getByTestId('record-interrupted')).toHaveTextContent(/Tap Resume/);
+    act(() => {
+      jest.advanceTimersByTime(10_000);
+    });
+    expect(capture.resume).not.toHaveBeenCalled();
+    fireEvent.press(screen.getByTestId('record-pause'));
+    expect(capture.resume).toHaveBeenCalled();
+    expect(screen.queryByTestId('record-interrupted')).toBeNull();
+  });
+
+  it('discards an in-progress capture when the screen goes away (logout)', async () => {
+    const { capture, view } = setup();
+    await start();
+    view.unmount();
+    expect(capture.abort).toHaveBeenCalled();
+    expect(getRecordingPhase()).toBe('idle');
   });
 });
