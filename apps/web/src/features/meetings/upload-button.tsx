@@ -14,6 +14,8 @@ import { ScanStatusBadge } from '@/features/uploads/scan-status-badge';
 import { DownloadLink } from '@/features/uploads/download-link';
 import { consentSettingsQueryKey } from '@/features/uploads/consent-queries';
 import type { CompleteUploadResponse } from '@/features/uploads/types';
+import { meetingConsentQueryKey } from './consent-api';
+import { useCanWriteMeetingConsent, useMeetingConsent } from './consent-panel';
 import { UPLOAD_ACCEPT, validateUploadFile } from '@/features/uploads/validate';
 
 export { MAX_UPLOAD_BYTES, validateUploadFile } from '@/features/uploads/validate';
@@ -35,7 +37,8 @@ const PHASE_LABEL: Record<Phase, string> = {
 /** Fixed copy for upload-specific failures; everything else uses the error-code mapping. */
 export function describeUploadError(e: unknown): string {
   if (e instanceof ApiError) {
-    if (e.reason === 'CONSENT_REQUIRED') return 'Confirm consent before uploading.';
+    if (e.reason === 'CONSENT_REQUIRED')
+      return 'This meeting has no current recording consent. Tick the consent box and try again.';
     if (e.reason === 'CONSENT_VERSION_UNSUPPORTED')
       return 'The consent notice has changed. Review it and confirm again.';
     if (e.reason === 'CONSENT_INVALID')
@@ -64,6 +67,10 @@ export function UploadButton({ meetingId }: { meetingId?: Id }) {
   const [phase, setPhase] = useState<Phase | null>(null);
   const [progress, setProgress] = useState(0);
   const ids = useId();
+  const canWrite = useCanWriteMeetingConsent();
+  const meetingConsent = useMeetingConsent(meetingId);
+  const [consentError, setConsentError] = useState<string | null>(null);
+  const consentKey = meetingId ? meetingConsentQueryKey(organizationId, meetingId) : null;
 
   // Notice + version come from org settings (all roles may GET). Fetched only once a file is chosen.
   const settings = useQuery({
@@ -86,6 +93,16 @@ export function UploadButton({ meetingId }: { meetingId?: Id }) {
       abortRef.current = ac;
       setProgress(0);
       setPhase('hashing');
+      const consent = {
+        consentVersion: settings.data?.currentConsentVersion ?? CURRENT_CONSENT_VERSION,
+        attestedAt: new Date().toISOString(),
+        method: methods.includes(method) ? method : 'all_parties_consented',
+      };
+      // Consent API (#334): record the meeting's consent before any upload starts, unless a current grant exists.
+      if (meetingId && !meetingConsent.data?.valid) {
+        await api.meetingConsent.record(organizationId, meetingId, consent);
+        if (consentKey) void queryClient.invalidateQueries({ queryKey: consentKey });
+      }
       const checksumSha256 = await hashFile(f, ac.signal);
       const { fileObjectId, upload } = await api.storage.createUpload(organizationId, {
         filename: f.name,
@@ -93,11 +110,7 @@ export function UploadButton({ meetingId }: { meetingId?: Id }) {
         sizeBytes: f.size,
         checksumSha256,
         ...(meetingId ? { meetingId } : {}),
-        consent: {
-          consentVersion: settings.data?.currentConsentVersion ?? CURRENT_CONSENT_VERSION,
-          attestedAt: new Date().toISOString(),
-          method: methods.includes(method) ? method : 'all_parties_consented',
-        },
+        consent,
       });
       setPhase('uploading');
       await api.storage.putToPresignedUrl(upload, f, {
@@ -121,6 +134,11 @@ export function UploadButton({ meetingId }: { meetingId?: Id }) {
       // Non-field failures are toasts (docs/references.md); a cancel is informational.
       if (e instanceof DOMException && e.name === 'AbortError') notify.info('Upload cancelled');
       else notify.error('Upload failed', describeUploadError(e));
+      if (e instanceof ApiError && e.status === 422 && e.reason?.startsWith('CONSENT_')) {
+        setConsentError(describeUploadError(e));
+        setConfirmed(false);
+        if (consentKey) void queryClient.invalidateQueries({ queryKey: consentKey });
+      }
       if (e instanceof ApiError && e.reason === 'CONSENT_VERSION_UNSUPPORTED') {
         setConfirmed(false);
         void queryClient.invalidateQueries({ queryKey: consentSettingsQueryKey(organizationId) });
@@ -132,11 +150,14 @@ export function UploadButton({ meetingId }: { meetingId?: Id }) {
     abortRef.current?.abort();
     setFile(null);
     setConfirmed(false);
+    setConsentError(null);
     mutation.reset();
   }, [mutation]);
 
   const busy = mutation.isPending;
   const consentStep = !!file && !busy && !mutation.isSuccess;
+  // Viewers can't record meeting consent (API 403), so they can't start a meeting upload either.
+  const blocked = !!meetingId && !canWrite;
 
   return (
     <div className="flex w-full max-w-md flex-col items-end gap-3">
@@ -156,6 +177,7 @@ export function UploadButton({ meetingId }: { meetingId?: Id }) {
           setValidation(err);
           mutation.reset();
           setConfirmed(false);
+          setConsentError(null);
           setFile(err ? null : f);
         }}
       />
@@ -167,11 +189,17 @@ export function UploadButton({ meetingId }: { meetingId?: Id }) {
             if (mutation.isSuccess) reset();
             inputRef.current?.click();
           }}
-          disabled={!organizationId}
+          disabled={!organizationId || blocked}
+          aria-describedby={blocked ? `${ids}-blocked` : undefined}
         >
           <Upload aria-hidden />
           Upload recording
         </Button>
+      ) : null}
+      {blocked ? (
+        <p id={`${ids}-blocked`} className="text-xs text-muted-foreground">
+          Viewers can’t upload or record consent.
+        </p>
       ) : null}
       {validation ? (
         <p role="alert" className="text-sm text-destructive">
@@ -208,12 +236,25 @@ export function UploadButton({ meetingId }: { meetingId?: Id }) {
                   onChange={(e) => {
                     setMethod(m);
                     setConfirmed(methods.length > 1 ? true : e.target.checked);
+                    setConsentError(null);
                   }}
                 />
                 {METHOD_LABEL[m]}
               </label>
             ))}
           </fieldset>
+          {meetingId ? (
+            <p className="mt-2 text-xs text-muted-foreground" data-testid="meeting-consent-note">
+              {meetingConsent.data?.valid
+                ? 'Consent is already on record for this meeting.'
+                : 'Confirming records consent for this meeting before the upload starts. It appears in the meeting’s consent history and can be revoked later.'}
+            </p>
+          ) : null}
+          {consentError ? (
+            <p role="alert" className="mt-2 text-sm text-destructive" data-testid="consent-error">
+              {consentError}
+            </p>
+          ) : null}
           <div className="mt-4 flex justify-end gap-2">
             <Button type="button" variant="outline" className="min-h-11" onClick={reset}>
               Cancel

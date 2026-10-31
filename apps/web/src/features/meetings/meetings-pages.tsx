@@ -10,6 +10,7 @@ import { useMeeting, useMeetings } from '@/lib/api/queries';
 import { PageHeader } from '@/pages/resource-list';
 import { ReportPanel, TranscriptPanel } from './insights-panels';
 import { UploadButton } from './upload-button';
+import { MeetingConsentPanel } from './consent-panel';
 import { filterMeetings, type MeetingFilters } from './manage-api';
 import { MeetingFormDialog } from './meeting-form';
 import { Input } from '@/components/ui/input';
@@ -201,6 +202,11 @@ export function MeetingDetailPage({ meetingId }: { meetingId: string }) {
           <UploadButton meetingId={m.id} />
         </div>
       </div>
+      <Card>
+        <CardContent className="pt-6">
+          <MeetingConsentPanel meetingId={m.id} />
+        </CardContent>
+      </Card>
       <Card>
         <CardHeader>
           <CardTitle>

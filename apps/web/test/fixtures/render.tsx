@@ -20,6 +20,9 @@ import {
   completeResponse,
   downloadUrlResponse,
   consentSettings,
+  consentGranted,
+  consentRevoked,
+  consentStatusNone,
   pairResponse,
   sessionList,
   memberList,
@@ -106,6 +109,12 @@ export function createMockApi(
       transcript: vi.fn().mockRejectedValue(new ApiError(404, 'NOT_FOUND', 'Not found')),
       report: vi.fn().mockRejectedValue(new ApiError(404, 'NOT_FOUND', 'Not found')),
       ...overrides.meetingInsights,
+    },
+    meetingConsent: {
+      status: vi.fn().mockResolvedValue(consentStatusNone),
+      record: vi.fn().mockResolvedValue(consentGranted),
+      revoke: vi.fn().mockResolvedValue(consentRevoked),
+      ...overrides.meetingConsent,
     },
     // In-memory directory (empty); pass `directory: createMockDirectoryApi(seed)` to seed it.
     directory: { ...createMockDirectoryApi(), ...overrides.directory },
