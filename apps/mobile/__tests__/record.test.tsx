@@ -416,6 +416,39 @@ describe('Record tab with a live capture (M4)', () => {
     expect(getRecordingPhase()).toBe('stopped');
   });
 
+  it('passes the queue draft to capture on Stop so a kill mid-seal can be re-queued', async () => {
+    let press: () => void = () => undefined;
+    const captureFn = jest.fn(() =>
+      Promise.resolve([{ seq: 0, sizeBytes: 1, sha256: 'a'.repeat(64) }]),
+    );
+    setup({
+      capture: captureFn,
+      onStopRequested: (l) => {
+        press = l;
+        return () => undefined;
+      },
+    });
+    await start();
+    act(() => press());
+    await act(async () => {});
+    expect(captureFn).toHaveBeenCalledWith(
+      expect.stringMatching(/^rec-/),
+      expect.any(Number),
+      expect.objectContaining({
+        id: expect.stringMatching(/^rec-/),
+        organizationId: 'org-1',
+        meetingId: expect.any(String),
+        mimeType: 'audio/mp4',
+        startedAt: expect.any(String),
+        durationMs: expect.any(Number),
+        consent: expect.anything(),
+      }),
+    );
+    const [id, , draft] = captureFn.mock.calls[0] as unknown as [string, number, { id: string }];
+    expect(draft.id).toBe(id);
+    expect(draft).not.toHaveProperty('chunks');
+  });
+
   describe('android background pause', () => {
     let listener: (s: string) => void = () => undefined;
     beforeEach(() => {
