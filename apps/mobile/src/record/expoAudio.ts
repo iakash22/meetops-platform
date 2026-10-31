@@ -88,3 +88,11 @@ export function createExpoAudioDriver(): AudioDriver {
 export function expoFileSystem(): FileSystemLike {
   return require('expo-file-system') as FileSystemLike;
 }
+
+/** iOS NSURLIsExcludedFromBackupKey setter (modules/backup-exclusion). Null on Android or without the module. */
+export function iosBackupExclusion(): ((uri: string) => Promise<boolean>) | null {
+  if (Platform.OS !== 'ios') return null;
+  const { BackupExclusionModule } =
+    require('../../modules/backup-exclusion') as typeof import('../../modules/backup-exclusion');
+  return BackupExclusionModule ? (uri) => BackupExclusionModule.exclude(uri) : null;
+}
