@@ -18,6 +18,8 @@ export const AI_FEATURES = [
   'deadlines',
   'reports',
   'follow-ups',
+  /** Phase 7 semantic search. No default provider declares the capability, so it is unconfigured until routed. */
+  'embeddings',
 ] as const;
 export const aiFeatureSchema = z.enum(AI_FEATURES);
 export type AIFeature = (typeof AI_FEATURES)[number];
@@ -34,8 +36,10 @@ export const FEATURE_CAPABILITY: Record<AIFeature, Capability> = {
   deadlines: 'structured-output',
   reports: 'text-generation',
   'follow-ups': 'text-generation',
+  embeddings: 'embeddings',
 };
-export const featureKind = (f: AIFeature): 'llm' | 'stt' => (f === 'transcription' || f === 'live-transcription' ? 'stt' : 'llm');
+export const featureKind = (f: AIFeature): 'llm' | 'stt' =>
+  f === 'transcription' || f === 'live-transcription' ? 'stt' : 'llm';
 
 export const routeSelectionSchema = z.object({
   provider: z.string().min(1),
@@ -48,7 +52,9 @@ export type RouteSelection = z.infer<typeof routeSelectionSchema>;
 export const orgAIConfigSchema = z.object({
   organizationId: z.string().min(1),
   /** Default per kind for this org. */
-  defaults: z.object({ llm: routeSelectionSchema.optional(), stt: routeSelectionSchema.optional() }).default({}),
+  defaults: z
+    .object({ llm: routeSelectionSchema.optional(), stt: routeSelectionSchema.optional() })
+    .default({}),
   /** Per feature/workflow overrides. */
   features: z.partialRecord(aiFeatureSchema, routeSelectionSchema).default({}),
   /** Providers an org admin has approved (required when AI_REQUIRE_PROVIDER_APPROVAL=true). */
@@ -57,7 +63,12 @@ export const orgAIConfigSchema = z.object({
   /** Per-org monthly spend cap (USD) on paid or platform-billed providers, enforced before each call. */
   monthlyBudgetUsd: z.number().min(0).optional(),
   /** BYO credential refs per provider. Must be `secret:org/<organizationId>/...` (checked in setOrgConfig + at resolve time). */
-  credentialRefs: z.record(z.string(), z.string().refine(isOrgSecretRefShape, 'must be secret:org/<organizationId>/<name>')).default({}),
+  credentialRefs: z
+    .record(
+      z.string(),
+      z.string().refine(isOrgSecretRefShape, 'must be secret:org/<organizationId>/<name>'),
+    )
+    .default({}),
 });
 export type OrgAIConfig = z.infer<typeof orgAIConfigSchema>;
 export type OrgAIConfigInput = z.input<typeof orgAIConfigSchema>;
@@ -118,28 +129,48 @@ export class ModelRouter {
   envSelection(kind: 'llm' | 'stt'): RouteSelection {
     if (kind === 'llm') {
       const p = this.env.AI_LLM_PROVIDER;
-      const model = p === 'gemini' ? this.env.GEMINI_MODEL : p === 'ollama' ? this.env.OLLAMA_MODEL : this.env.OPENAI_MODEL;
+      const model =
+        p === 'gemini'
+          ? this.env.GEMINI_MODEL
+          : p === 'ollama'
+            ? this.env.OLLAMA_MODEL
+            : this.env.OPENAI_MODEL;
       return { provider: p, model };
     }
     const p = this.env.AI_STT_PROVIDER;
-    return p === 'faster-whisper' ? { provider: p, model: this.env.LOCAL_STT_MODEL } : { provider: p };
+    return p === 'faster-whisper'
+      ? { provider: p, model: this.env.LOCAL_STT_MODEL }
+      : { provider: p };
   }
 
   /** Org owner/admin only (CASL `manage ProviderConfig`), same organization only. Audit is awaited; failure aborts the change. */
   async setOrgConfig(input: OrgAIConfigInput, ctx: TenantContext) {
     assertCan(ctx, 'manage', 'ProviderConfig');
     const cfg = orgAIConfigSchema.parse(input);
-    if (cfg.organizationId !== ctx.organizationId) throw new AIError('FORBIDDEN', 'cannot change another organization\'s AI config', { retryable: false });
+    if (cfg.organizationId !== ctx.organizationId)
+      throw new AIError('FORBIDDEN', "cannot change another organization's AI config", {
+        retryable: false,
+      });
     for (const ref of Object.values(cfg.credentialRefs))
-      if (!parseOrgSecretRef(ref, cfg.organizationId)) throw new AIError('FORBIDDEN', 'credential ref must belong to this organization', { retryable: false });
+      if (!parseOrgSecretRef(ref, cfg.organizationId))
+        throw new AIError('FORBIDDEN', 'credential ref must belong to this organization', {
+          retryable: false,
+        });
     const before = await this.orgStore.get(cfg.organizationId);
     try {
       await this.audit.emit({
-        action: before ? 'update' : 'create', organizationId: cfg.organizationId, actorId: ctx.userId,
-        before: before ? redact(before) : undefined, after: redact(cfg), at: new Date().toISOString(),
+        action: before ? 'update' : 'create',
+        organizationId: cfg.organizationId,
+        actorId: ctx.userId,
+        before: before ? redact(before) : undefined,
+        after: redact(cfg),
+        at: new Date().toISOString(),
       });
     } catch (e) {
-      throw new AIError('AUDIT_FAILED', 'audit write failed; change aborted', { retryable: true, cause: e });
+      throw new AIError('AUDIT_FAILED', 'audit write failed; change aborted', {
+        retryable: true,
+        cause: e,
+      });
     }
     await this.orgStore.put(cfg);
   }
@@ -148,30 +179,67 @@ export class ModelRouter {
    * Precedence (lowest -> highest): system default < env < organization < feature/workflow < authorized request.
    * The highest layer that specifies a provider wins; its model is used, else the provider default (undefined).
    */
-  async resolve(organizationId: string, feature: AIFeature, override?: RequestOverride, actor?: TenantContext): Promise<ResolvedRoute> {
+  async resolve(
+    organizationId: string,
+    feature: AIFeature,
+    override?: RequestOverride,
+    actor?: TenantContext,
+  ): Promise<ResolvedRoute> {
     if (!organizationId) throw new AIError('CONFIG_INVALID', 'organizationId is required');
     const kind = featureKind(feature);
     const org = await this.orgStore.get(organizationId);
-    if (org && org.organizationId !== organizationId) throw new AIError('CONFIG_INVALID', 'organization mismatch in org config store');
-    if (override && !(actor && actor.organizationId === organizationId && actor.ability?.can('override', 'AIRoute')))
-      throw new AIError('UNAUTHORIZED_OVERRIDE', 'Per-request provider override is not authorized', { retryable: false });
+    if (org && org.organizationId !== organizationId)
+      throw new AIError('CONFIG_INVALID', 'organization mismatch in org config store');
+    if (
+      override &&
+      !(
+        actor &&
+        actor.organizationId === organizationId &&
+        actor.ability?.can('override', 'AIRoute')
+      )
+    )
+      throw new AIError(
+        'UNAUTHORIZED_OVERRIDE',
+        'Per-request provider override is not authorized',
+        { retryable: false },
+      );
 
     const layers: Array<[ResolutionSource, RouteSelection | undefined]> = [
       ['system', SYSTEM_DEFAULTS[kind]],
       ['env', this.envSelection(kind)],
       ['organization', org?.defaults[kind]],
       ['feature', org?.features[feature]],
-      ['request', override ? { provider: override.provider, model: override.model, fallbacks: override.fallbacks } : undefined],
+      [
+        'request',
+        override
+          ? { provider: override.provider, model: override.model, fallbacks: override.fallbacks }
+          : undefined,
+      ],
     ];
     let chosen: [ResolutionSource, RouteSelection] = ['system', SYSTEM_DEFAULTS[kind]];
     for (const [src, sel] of layers) if (sel) chosen = [src, sel];
     const [source, sel] = chosen;
-    const fallbacks = sel.fallbacks ?? (source === 'request' ? (org?.features[feature]?.fallbacks ?? org?.defaults[kind]?.fallbacks) : undefined) ?? [];
+    const fallbacks =
+      sel.fallbacks ??
+      (source === 'request'
+        ? (org?.features[feature]?.fallbacks ?? org?.defaults[kind]?.fallbacks)
+        : undefined) ??
+      [];
     if (override && actor) {
       try {
-        await this.audit.emit({ action: 'override', organizationId, actorId: actor.userId, feature, after: redact(override), at: new Date().toISOString() });
+        await this.audit.emit({
+          action: 'override',
+          organizationId,
+          actorId: actor.userId,
+          feature,
+          after: redact(override),
+          at: new Date().toISOString(),
+        });
       } catch (e) {
-        throw new AIError('AUDIT_FAILED', 'audit write failed; override rejected', { retryable: true, cause: e });
+        throw new AIError('AUDIT_FAILED', 'audit write failed; override rejected', {
+          retryable: true,
+          cause: e,
+        });
       }
     }
     return {
