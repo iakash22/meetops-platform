@@ -59,8 +59,10 @@ describe('integrations token-refresh env', () => {
   it('rejects non-canonical base64 KEKs without echoing the value', () => {
     const bad = [
       kek.replace(/=$/, ''),
-      randomBytes(32).toString('base64url') + '=',
-      randomBytes(32).toString('base64').replace(/.=$/, 'B='),
+      // Fixed bytes: random ones were flaky (a base64url string without -/_ is valid base64,
+      // and a final char that is already canonical-with-B is not rejected).
+      Buffer.alloc(32, 0xfb).toString('base64url') + '=',
+      Buffer.alloc(32, 1).toString('base64').replace(/.=$/, 'B='),
     ];
     for (const value of bad) {
       let msg = '';
