@@ -284,9 +284,12 @@ const plain = await cipher.decrypt(enc, { organizationId, integrationId });
 
 `test/github-app.e2e.test.ts` exercises App JWT -> installation lookup -> installation token -> `GitHubIssuesProvider`
 (health check, create, get, status update) against real api.github.com, then closes the issue and revokes the token.
-Skipped unless `MEETOPS_GITHUB_E2E=1`, `GITHUB_APP_ID` and `GITHUB_APP_PRIVATE_KEY_FILE` are set (preferred; the inline
-`GITHUB_APP_PRIVATE_KEY` is only a fallback when no key file is given). The installation stage additionally needs
-`GITHUB_E2E_INSTALLATION_ID` and `GITHUB_E2E_REPO`, which must be a throwaway repo with Issues enabled: its name must
-contain `e2e` or `throwaway`, or it must be listed in `GITHUB_E2E_REPO_ALLOWLIST` (comma-separated `owner/repo`);
-otherwise the run fails with a clear refusal. Cleanup closes the issue (falling back to a direct PATCH by the raw issue
-number) and revokes the installation token, which is stored right after minting. Never commit or print the key or tokens.
+Skipped unless `MEETOPS_GITHUB_E2E=1`, `GITHUB_APP_ID` and `GITHUB_APP_PRIVATE_KEY_FILE` are set. The key file is the
+only key source by default; the inline `GITHUB_APP_PRIVATE_KEY` is used instead only when
+`MEETOPS_GITHUB_E2E_USE_ENV_KEY=1`. The installation stage additionally needs `GITHUB_E2E_INSTALLATION_ID` and
+`GITHUB_E2E_REPO`, which must be a throwaway repo with Issues enabled: the repo name must start or end with a whole
+`e2e`/`throwaway` segment (split on `-`, `_`, `.`; e.g. `e2e-foo`, `foo-e2e`, `throwaway-bar`, but not `prod-e2e-svc`),
+or the repo must be listed in `GITHUB_E2E_REPO_ALLOWLIST` (comma-separated `owner/repo`); otherwise the run fails with a
+clear refusal. The test also checks that the installation's granted repositories (`GET /installation/repositories`)
+include `GITHUB_E2E_REPO`. Cleanup closes the issue (falling back to a direct PATCH by the raw issue number) and revokes
+the installation token, which is stored right after minting. Never commit or print the key or tokens.

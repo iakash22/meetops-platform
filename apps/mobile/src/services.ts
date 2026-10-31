@@ -25,11 +25,15 @@ import { createPlaceholderTasksRepository } from './data/tasksRepository';
 import { createDemoTaskReviewApi, createHttpTaskReviewApi } from './tasks/reviewApi';
 import type { RecordingCapture } from './record/capture';
 import {
+  createAndroidForegroundIndicator,
   createExpoAudioDriver,
   createNativeMicPermission,
   expoFileSystem,
   createNativeChunkCipher,
+  iosBackupExclusion,
+  recorderFileGuard,
 } from './record/expoAudio';
+import { withBackupExclusion } from './record/backupExclusion';
 import { createFileChunkStore } from './record/fileChunkStore';
 import { createNativeCapture } from './record/nativeCapture';
 import { createSimulatedCapture } from './record/simulatedRecorder';
@@ -89,13 +93,21 @@ const http = API_BASE_URL
   ? { baseUrl: API_BASE_URL, getAccessToken: () => sessionManager.getAccessToken() }
   : null;
 
-const fileSystem = http ? expoFileSystem() : null;
+// R4 (iOS): the recordings folder is excluded from iCloud/Finder backups before anything is written to it.
+const excludeFromBackup = http ? iosBackupExclusion() : null;
+const fileSystem = http
+  ? excludeFromBackup
+    ? withBackupExclusion(expoFileSystem(), excludeFromBackup)
+    : expoFileSystem()
+  : null;
 // R5: chunk files are AES-256-GCM sealed (Android Keystore / iOS Keychain). Fails closed without the native module.
 const chunkCipher = fileSystem ? createNativeChunkCipher() : null;
-const chunkFiles = fileSystem
-  ? createFileChunkStore(fileSystem, chunkCipher ?? createNativeChunkCipher())
+const chunkFiles = fileSystem && chunkCipher ? createFileChunkStore(fileSystem, chunkCipher) : null;
+const nativeCapture = chunkFiles
+  ? createNativeCapture(createExpoAudioDriver(), chunkFiles, createAndroidForegroundIndicator(), {
+      recorderFiles: recorderFileGuard(),
+    })
   : null;
-const nativeCapture = chunkFiles ? createNativeCapture(createExpoAudioDriver(), chunkFiles) : null;
 const capture: RecordingCapture = nativeCapture ?? createSimulatedCapture();
 // R7: after a crash or kill, partial recorder output is discarded and capture never resumes.
 void nativeCapture?.recoverOnLaunch().catch(() => undefined);

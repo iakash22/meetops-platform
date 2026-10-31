@@ -212,57 +212,155 @@ describe('encryption fail-closed and legacy migration (R5)', () => {
   });
 });
 
-describe('segment rotation bounds plaintext at rest (R5)', () => {
-  afterEach(() => jest.useRealTimers());
+describe('android foreground service indicator (R2)', () => {
+  const indicator = () => {
+    const calls: string[] = [];
+    let stopListener: () => void = () => undefined;
+    return {
+      calls,
+      press: () => stopListener(),
+      start: () => void calls.push('fgs:start'),
+      stop: () => void calls.push('fgs:stop'),
+      confirmed: true,
+      isConfirmed() {
+        return this.confirmed;
+      },
+      onStopRequested: (l: () => void) => {
+        stopListener = l;
+        return () => undefined;
+      },
+    };
+  };
 
-  it('seals and deletes each finished segment, then returns the parts', async () => {
-    jest.useFakeTimers();
-    let t = 0;
+  it('starts the service before the mic and stops it with capture', async () => {
     const fs = createMemoryFs();
     const { driver, uri } = fakeDriver();
-    const cap = createNativeCapture(driver, createFileChunkStore(fs, testCipher, 4), {
-      segmentMs: 1000,
-      now: () => t,
-    });
+    const fgs = indicator();
+    const cap = createNativeCapture(driver, createFileChunkStore(fs, testCipher), fgs);
+    expect(cap.isBackgroundSafe?.()).toBe(false);
     await cap.begin('rec-1');
-    fs.put(uri, bytes(6));
-    t = 1200;
-    await jest.advanceTimersByTimeAsync(1000);
-    expect(driver.calls.filter((c) => c === 'stop')).toHaveLength(1);
-    expect(driver.calls.filter((c) => c === 'record')).toHaveLength(2);
-    // The plaintext segment is gone right after rotation; its sealed chunks are stored.
-    expect(fs.files.has(uri)).toBe(false);
-    await expect(cap.exists('rec-1-p1')).resolves.toBe(true);
+    expect(fgs.calls).toEqual(['fgs:start']);
+    expect(cap.isBackgroundSafe?.()).toBe(true);
+    fgs.confirmed = false;
+    expect(cap.isBackgroundSafe?.()).toBe(false);
+    fgs.confirmed = true;
     fs.put(uri, bytes(3));
-    t = 1500;
-    const last = await cap.capture('rec-1', 1500);
-    expect(last).toHaveLength(1);
-    expect(cap.takeParts?.('rec-1')).toEqual([
-      { id: 'rec-1-p1', chunks: expect.any(Array), durationMs: 1200 },
-    ]);
-    expect(cap.takeParts?.('rec-1')).toEqual([]);
+    await cap.capture('rec-1', 1);
+    expect(fgs.calls).toEqual(['fgs:start', 'fgs:stop']);
+    const stop = jest.fn();
+    cap.onStopRequested?.(stop);
+    // Capture already ended: a late or repeated event is ignored.
+    fgs.press();
+    expect(stop).not.toHaveBeenCalled();
+    await cap.begin('rec-2');
+    fgs.press();
+    expect(stop).toHaveBeenCalledTimes(1);
   });
 
-  it('does not rotate while paused, and abort deletes finished parts', async () => {
-    jest.useFakeTimers();
-    let t = 0;
+  it('records nothing when the service cannot start', async () => {
+    const { driver } = fakeDriver();
+    const fgs = {
+      ...indicator(),
+      start: () => {
+        throw new Error('denied');
+      },
+    };
+    const cap = createNativeCapture(
+      driver,
+      createFileChunkStore(createMemoryFs(), testCipher),
+      fgs,
+    );
+    await expect(cap.begin('rec-1')).rejects.toThrow('denied');
+    expect(driver.calls).not.toContain('record');
+  });
+});
+
+it('keeps the original begin error when stopping the service also throws', async () => {
+  const { driver } = fakeDriver({ prepare: () => Promise.reject(new Error('prepare failed')) });
+  const fgs = {
+    start: () => undefined,
+    stop: () => {
+      throw new Error('stop failed');
+    },
+    isConfirmed: () => false,
+    onStopRequested: () => () => undefined,
+  };
+  const cap = createNativeCapture(driver, createFileChunkStore(createMemoryFs(), testCipher), fgs);
+  await expect(cap.begin('rec-1')).rejects.toThrow('prepare failed');
+});
+
+describe('r3: one file per recording, sealed before the marker clears', () => {
+  it('keeps consecutive recordings intact when the driver reuses the same output path (H-1)', async () => {
     const fs = createMemoryFs();
     const { driver, uri } = fakeDriver();
-    const cap = createNativeCapture(driver, createFileChunkStore(fs, testCipher, 4), {
-      segmentMs: 1000,
-      now: () => t,
-    });
+    const store = createFileChunkStore(fs, testCipher, 4);
+    const cap = createNativeCapture(driver, store);
     await cap.begin('rec-1');
     fs.put(uri, bytes(6));
-    t = 1100;
-    await jest.advanceTimersByTimeAsync(1000);
-    cap.pause();
-    t = 5000;
-    fs.put(uri, bytes(2));
-    await jest.advanceTimersByTimeAsync(3000);
-    expect(driver.calls.filter((c) => c === 'stop')).toHaveLength(1);
-    await cap.abort();
-    await expect(cap.exists('rec-1-p1')).resolves.toBe(false);
+    await cap.capture('rec-1', 1);
+    await cap.begin('rec-2');
+    fs.put(uri, Uint8Array.from([9, 9, 9]));
+    await cap.capture('rec-2', 1);
+    await expect(store.read('rec-1', 0)).resolves.toEqual(bytes(6).subarray(0, 4));
+    await expect(store.read('rec-1', 1)).resolves.toEqual(bytes(6).subarray(4, 6));
+    await expect(store.read('rec-2', 0)).resolves.toEqual(Uint8Array.from([9, 9, 9]));
     expect(fs.files.has(uri)).toBe(false);
+  });
+
+  it('clears the in-progress marker only after the file is sealed (M-1)', async () => {
+    const fs = createMemoryFs();
+    const { driver, uri } = fakeDriver();
+    const store = createFileChunkStore(fs, testCipher, 4);
+    const seen: (string | null)[] = [];
+    const ingest = store.ingest.bind(store);
+    store.ingest = async (id, src) => {
+      seen.push(await store.getInProgress());
+      return ingest(id, src);
+    };
+    const cap = createNativeCapture(driver, store);
+    await cap.begin('rec-1');
+    fs.put(uri, bytes(3));
+    await cap.capture('rec-1', 1);
+    expect(seen).toEqual([uri]);
+    await expect(store.getInProgress()).resolves.toBeNull();
+  });
+
+  it('protects the recorder file after prepare and fails closed when it cannot', async () => {
+    const fs = createMemoryFs();
+    const { driver, uri } = fakeDriver({
+      prepare: () => {
+        fs.put(uri, new Uint8Array(0));
+        return Promise.resolve();
+      },
+    });
+    const protect = jest.fn(() => Promise.resolve(false));
+    const cap = createNativeCapture(driver, createFileChunkStore(fs, testCipher), null, {
+      recorderFiles: { protect, sweep: () => Promise.resolve(0) },
+    });
+    await expect(cap.begin('rec-1')).rejects.toThrow(/protect/);
+    expect(protect).toHaveBeenCalledWith(uri);
+    expect(driver.calls).not.toContain('record');
+    expect(fs.files.has(uri)).toBe(false);
+  });
+
+  it('sweeps leftover recorder files from the cache at launch', async () => {
+    const { createRecorderFileGuard } = jest.requireActual<
+      typeof import('../src/record/recorderFiles')
+    >('../src/record/recorderFiles');
+    const fs = createMemoryFs();
+    fs.put('file:///cache/ExpoAudio/old.m4a', bytes(3));
+    fs.put('file:///cache/recording-1.m4a', bytes(3));
+    fs.put('file:///cache/other.json', bytes(1));
+    fs.put('file:///doc/recordings/rec-1/0.chunk', bytes(1));
+    const guard = createRecorderFileGuard(fs, 'file:///cache/', null);
+    const { driver } = fakeDriver();
+    await createNativeCapture(driver, createFileChunkStore(fs, testCipher), null, {
+      recorderFiles: guard,
+    }).recoverOnLaunch();
+    expect(fs.files.has('file:///cache/ExpoAudio/old.m4a')).toBe(false);
+    expect(fs.files.has('file:///cache/recording-1.m4a')).toBe(false);
+    expect(fs.files.has('file:///cache/other.json')).toBe(true);
+    expect(fs.files.has('file:///doc/recordings/rec-1/0.chunk')).toBe(true);
+    await expect(guard.protect('x')).resolves.toBe(true);
   });
 });

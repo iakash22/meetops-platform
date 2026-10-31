@@ -25,19 +25,27 @@ export interface AudioDriver {
   currentUri(): string | null;
 }
 
-/**
- * R5: the recorder writes a plaintext m4a to its cache file while it records, which can't be encrypted while it's
- * open. To bound that exposure, capture rotates segments: every `segmentMs` of recording the current file is
- * finalized, sealed into encrypted chunks and deleted, and a new file starts. Each finished segment is its own
- * valid m4a and is queued as its own recording session for the same meeting and consent attestation.
- * Rotation costs a short gap (stop + prepare, typically well under a second).
- */
-export const SEGMENT_MS = 60_000;
+/** Visible OS recording indicator (Android microphone foreground service with Stop/Open). */
+export interface ForegroundIndicator {
+  start(): void;
+  stop(): void;
+  /** The service is running and its notification is confirmed showing. */
+  isConfirmed(): boolean;
+  onStopRequested(listener: () => void): () => void;
+}
 
-export interface CapturedPart {
-  id: string;
-  chunks: LocalChunk[];
-  durationMs: number;
+/**
+ * The recorder's own output file (plaintext while recording; expo-audio 0.3 can't write elsewhere or encrypt).
+ * - `protect`: iOS sets backup exclusion + file protection on the file right after `prepare`; false = fail closed.
+ * - `sweep`: deletes any recorder output left in the cache (crash, kill, older build). Run at launch.
+ */
+export interface RecorderFileGuard {
+  protect(uri: string): Promise<boolean>;
+  sweep(): Promise<number>;
+}
+
+export interface NativeCaptureOptions {
+  recorderFiles?: RecorderFileGuard | null;
 }
 
 export interface NativeCapture extends RecordingCapture {
@@ -46,131 +54,125 @@ export interface NativeCapture extends RecordingCapture {
   recoverOnLaunch(): Promise<void>;
 }
 
+/**
+ * One recording = one recorder file = one upload (no segments; see docs/mobile/security-review.md R5 for why
+ * segment rotation needs a server change). The plaintext recorder file exists only between `begin` and Stop: it's
+ * marked in-progress, protected (iOS), sealed into encrypted chunks at Stop and deleted, and swept at launch.
+ */
 export function createNativeCapture(
   driver: AudioDriver,
   store: FileChunkStore,
-  options: { segmentMs?: number; now?: () => number } = {},
+  indicator: ForegroundIndicator | null = null,
+  options: NativeCaptureOptions = {},
 ): NativeCapture {
-  const segmentMs = options.segmentMs ?? SEGMENT_MS;
-  const now = options.now ?? Date.now;
-  let parts: CapturedPart[] = [];
-  let segmentRunMs = 0;
-  let runStartedAt: number | null = null;
-  let rotateTimer: ReturnType<typeof setInterval> | null = null;
-  let queue: Promise<unknown> = Promise.resolve();
-  /** Serializes rotation with stop/abort so the driver never sees overlapping calls. */
-  const serial = <T>(fn: () => Promise<T>): Promise<T> => {
-    const run = queue.then(fn, fn);
-    queue = run.catch(() => undefined);
-    return run;
-  };
-  const segmentElapsed = () => segmentRunMs + (runStartedAt === null ? 0 : now() - runStartedAt);
-  const stopTimer = () => {
-    if (rotateTimer) clearInterval(rotateTimer);
-    rotateTimer = null;
-  };
-  const rotate = (recordingId: string) =>
-    serial(async () => {
-      if (active !== recordingId || paused || segmentElapsed() < segmentMs) return;
-      const durationMs = segmentElapsed();
-      const uri = await driver.stop();
-      await driver.prepare();
-      await store.setInProgress(driver.currentUri());
-      driver.record();
-      segmentRunMs = 0;
-      runStartedAt = now();
-      if (!uri) return;
-      const id = `${recordingId}-p${parts.length + 1}`;
-      // Seal and delete the finished plaintext segment right away.
-      parts.push({ id, chunks: await store.ingest(id, uri), durationMs });
-    });
+  const guard = options.recorderFiles ?? null;
   let active: string | null = null;
   let paused = false;
 
+  const stopIndicator = () => {
+    try {
+      indicator?.stop();
+    } catch {
+      // The service may already be gone (Stop from the notification, or it never started).
+    }
+  };
+
+  /** Ends capture. The in-progress marker stays until the file is sealed or deleted (crash safety). */
   const end = async (): Promise<string | null> => {
-    stopTimer();
     active = null;
     paused = false;
-    runStartedAt = null;
     try {
       return await driver.stop();
     } finally {
+      stopIndicator();
       await driver.setRecordingMode(false).catch(() => undefined);
-      await store.setInProgress(null).catch(() => undefined);
     }
   };
 
   return {
     simulated: false,
+    isBackgroundSafe() {
+      if (!active || !indicator) return false;
+      try {
+        return indicator.isConfirmed();
+      } catch {
+        return false;
+      }
+    },
+    // Only an active capture reacts, so a late or repeated event never stops anything twice.
+    onStopRequested: (listener) =>
+      indicator?.onStopRequested(() => {
+        if (active) listener();
+      }) ?? (() => undefined),
     async begin(recordingId) {
       if (active) throw new Error('Already recording.');
       if (!(await driver.canRecord())) throw new Error('Microphone permission is required.');
-      // R5 fail closed: no working encryption at rest, no recording.
+      // R5 fail closed: the encryption self-test runs before the service starts and before the mic opens.
       await store.ready();
-      await driver.setRecordingMode(true);
+      // The foreground service (and its notification) starts before the mic opens; if it can't, nothing records.
+      indicator?.start();
       try {
+        await driver.setRecordingMode(true);
         await driver.prepare();
-        await store.setInProgress(driver.currentUri());
+        const uri = driver.currentUri();
+        if (!uri) throw new Error('The recorder did not create an output file.');
+        await store.setInProgress(uri);
+        if (guard && !(await guard.protect(uri)))
+          throw new Error('Could not protect the recording file.');
         driver.record();
       } catch (e) {
+        // prepare() may already have created an (empty) recorder file: release the recorder and delete it.
+        const leftover = driver.currentUri();
+        await driver.stop().catch(() => null);
+        if (leftover) await store.deleteFile(leftover).catch(() => undefined);
         await driver.setRecordingMode(false).catch(() => undefined);
         await store.setInProgress(null).catch(() => undefined);
+        stopIndicator();
         throw e;
       }
       active = recordingId;
       paused = false;
-      parts = [];
-      segmentRunMs = 0;
-      runStartedAt = now();
-      rotateTimer = setInterval(
-        () => {
-          void rotate(recordingId).catch(() => undefined);
-        },
-        Math.min(segmentMs, 5_000),
-      );
     },
     pause() {
       if (!active || paused) return;
       driver.pause();
       paused = true;
-      segmentRunMs = segmentElapsed();
-      runStartedAt = null;
     },
     resume() {
       if (!active || !paused) return;
       driver.record();
       paused = false;
-      runStartedAt = now();
-    },
-    takeParts(recordingId) {
-      const done = parts.filter((p) => p.id.startsWith(`${recordingId}-p`));
-      parts = parts.filter((p) => !done.includes(p));
-      return done;
     },
     isLive() {
       if (!active) return false;
       return paused || driver.isRecording();
     },
-    capture: (recordingId) =>
-      serial(async (): Promise<LocalChunk[]> => {
-        if (active !== recordingId) throw new Error('No active recording.');
-        const uri = await end();
-        if (!uri) throw new Error('Recording file missing.');
-        return store.ingest(recordingId, uri);
-      }),
-    abort: () =>
-      serial(async () => {
-        const uri = driver.currentUri();
-        if (active) await end().catch(() => null);
-        if (uri) await store.deleteFile(uri).catch(() => undefined);
-        for (const p of parts) await store.remove(p.id).catch(() => undefined);
-        parts = [];
-      }),
+    async capture(recordingId): Promise<LocalChunk[]> {
+      if (active !== recordingId) throw new Error('No active recording.');
+      const uri = await end();
+      if (!uri) {
+        await store.setInProgress(null).catch(() => undefined);
+        throw new Error('Recording file missing.');
+      }
+      try {
+        // Seal first; only then clear the marker (ingest deletes the plaintext file either way).
+        return await store.ingest(recordingId, uri);
+      } finally {
+        await store.setInProgress(null).catch(() => undefined);
+      }
+    },
+    async abort() {
+      const uri = driver.currentUri();
+      if (active) await end().catch(() => null);
+      if (uri) await store.deleteFile(uri).catch(() => undefined);
+      await store.setInProgress(null).catch(() => undefined);
+    },
     async recoverOnLaunch() {
       if (driver.isRecording()) await end().catch(() => null);
       const uri = await store.getInProgress().catch(() => null);
       if (uri) await store.deleteFile(uri).catch(() => undefined);
       await store.setInProgress(null).catch(() => undefined);
+      await guard?.sweep().catch(() => 0);
     },
     read: (id, seq) => store.read(id, seq),
     remove: (id) => store.remove(id),

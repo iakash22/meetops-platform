@@ -9,6 +9,8 @@ import Security
 public class ChunkCryptoModule: Module {
   private static let service = "com.meetops.chunk-crypto"
   private static let account = "meetops_chunk_key_v1"
+  /// Serializes first-use check-then-create (and delete) so concurrent seal/open calls never race two keys.
+  private static let keyLock = NSLock()
 
   private func baseQuery() -> [String: Any] {
     return [
@@ -19,6 +21,24 @@ public class ChunkCryptoModule: Module {
   }
 
   private func loadOrCreateKey() throws -> SymmetricKey {
+    ChunkCryptoModule.keyLock.lock()
+    defer { ChunkCryptoModule.keyLock.unlock() }
+    if let existing = try readKey() { return existing }
+    let key = SymmetricKey(size: .bits256)
+    var add = baseQuery()
+    add[kSecValueData as String] = key.withUnsafeBytes { Data($0) }
+    add[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+    let addStatus = SecItemAdd(add as CFDictionary, nil)
+    if addStatus == errSecDuplicateItem, let existing = try readKey() {
+      return existing  // another process/extension won: use its key, never ours
+    }
+    guard addStatus == errSecSuccess else {
+      throw Exception(name: "KeychainError", description: "Keychain write failed (\(addStatus))")
+    }
+    return key
+  }
+
+  private func readKey() throws -> SymmetricKey? {
     var query = baseQuery()
     query[kSecReturnData as String] = true
     query[kSecMatchLimit as String] = kSecMatchLimitOne
@@ -30,15 +50,7 @@ public class ChunkCryptoModule: Module {
     guard status == errSecItemNotFound else {
       throw Exception(name: "KeychainError", description: "Keychain read failed (\(status))")
     }
-    let key = SymmetricKey(size: .bits256)
-    var add = baseQuery()
-    add[kSecValueData as String] = key.withUnsafeBytes { Data($0) }
-    add[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
-    let addStatus = SecItemAdd(add as CFDictionary, nil)
-    guard addStatus == errSecSuccess else {
-      throw Exception(name: "KeychainError", description: "Keychain write failed (\(addStatus))")
-    }
-    return key
+    return nil
   }
 
   public func definition() -> ModuleDefinition {
@@ -64,6 +76,8 @@ public class ChunkCryptoModule: Module {
     }
 
     AsyncFunction("deleteKey") {
+      ChunkCryptoModule.keyLock.lock()
+      defer { ChunkCryptoModule.keyLock.unlock() }
       let status = SecItemDelete(self.baseQuery() as CFDictionary)
       guard status == errSecSuccess || status == errSecItemNotFound else {
         throw Exception(name: "KeychainError", description: "Keychain delete failed (\(status))")

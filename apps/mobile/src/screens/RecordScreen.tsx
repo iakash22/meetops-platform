@@ -31,6 +31,7 @@ const STATUS_TEXT = {
  * app-wide banner (R2), and pauses on interruptions until the user resumes (R7).
  */
 const INTERRUPTION_POLL_MS = 1000;
+const BACKGROUND_RECHECK_MS = 2000;
 
 export function RecordScreen() {
   const recorder = useRecorderShell();
@@ -85,14 +86,38 @@ export function RecordScreen() {
     return () => clearInterval(id);
   }, [pauseForInterruption, recorder.phase, recordings, simulated]);
 
-  // Android has no microphone foreground service yet (plan NATIVE GAP), so capture never continues out of sight.
+  // Without the microphone foreground service (and its notification), Android capture never continues out of sight.
   useEffect(() => {
     if (Platform.OS !== 'android' || recorder.phase !== 'recording' || simulated) return;
+    let watch: ReturnType<typeof setInterval> | null = null;
+    const check = () => {
+      if (!(recordings?.capture.isBackgroundSafe?.() ?? false)) {
+        if (watch) clearInterval(watch);
+        watch = null;
+        pauseForInterruption();
+      }
+    };
     const sub = AppState.addEventListener('change', (next) => {
-      if (next !== 'active') pauseForInterruption();
+      if (next === 'active') {
+        if (watch) clearInterval(watch);
+        watch = null;
+        return;
+      }
+      // Keep recording only while the foreground service and its notification stay confirmed; re-check
+      // every BACKGROUND_RECHECK_MS in case the service is lost without an event.
+      check();
+      watch ??= setInterval(check, BACKGROUND_RECHECK_MS);
     });
-    return () => sub.remove();
-  }, [pauseForInterruption, recorder.phase, simulated]);
+    return () => {
+      sub.remove();
+      if (watch) clearInterval(watch);
+    };
+  }, [pauseForInterruption, recorder.phase, recordings, simulated]);
+
+  // Stop from the Android notification ends capture immediately, same as the in-app Stop (R2, R7).
+  const stopRef = useRef(recorder.stop);
+  stopRef.current = recorder.stop;
+  useEffect(() => recordings?.capture.onStopRequested?.(() => stopRef.current()), [recordings]);
 
   useEffect(() => {
     let mounted = true;
@@ -136,31 +161,13 @@ export function RecordScreen() {
     void (async () => {
       try {
         const chunks = await recordings.capture.capture(id, durationMs);
-        // Earlier segments first (native capture rotates files), then the final one.
-        const parts = recordings.capture.takeParts?.(id) ?? [];
-        const partsMs = parts.reduce((t, p) => t + p.durationMs, 0);
-        const base = Date.parse(startedAtRef.current ?? new Date().toISOString());
-        let offset = 0;
-        for (const part of parts) {
-          await recordings.engine.enqueue({
-            id: part.id,
-            organizationId,
-            meetingId,
-            mimeType: 'audio/mp4',
-            startedAt: new Date(base + offset).toISOString(),
-            durationMs: part.durationMs,
-            chunks: part.chunks,
-            consent: consentRecord,
-          });
-          offset += part.durationMs;
-        }
         await recordings.engine.enqueue({
           id,
           organizationId,
           meetingId,
           mimeType: 'audio/mp4',
-          startedAt: new Date(base + offset).toISOString(),
-          durationMs: Math.max(0, durationMs - partsMs),
+          startedAt: startedAtRef.current ?? new Date().toISOString(),
+          durationMs,
           chunks,
           consent: consentRecord,
         });
@@ -237,7 +244,16 @@ export function RecordScreen() {
         // Capture starts only now, from the user's confirmation; a failure here means nothing is recorded.
         if (recordings) {
           const id = `rec-${Date.now().toString(36)}`;
-          await recordings.capture.begin(id);
+          try {
+            await recordings.capture.begin(id);
+          } catch (e) {
+            // Surface why the mic didn't open (prepare/encryption/service failure); nothing was recorded.
+            setToast(
+              `Couldn't start recording: ${e instanceof Error ? e.message : 'the recorder failed'}. Recording hasn't started.`,
+            );
+            setConsentStep(null);
+            return;
+          }
           recordingIdRef.current = id;
         }
         setConsentStep(null);

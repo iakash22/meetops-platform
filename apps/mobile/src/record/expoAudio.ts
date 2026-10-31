@@ -1,7 +1,8 @@
 import { Linking, PermissionsAndroid, Platform } from 'react-native';
 
 import type { MicPermission, MicPermissionStatus } from '../consent/micPermission';
-import type { AudioDriver } from './nativeCapture';
+import type { AudioDriver, ForegroundIndicator, RecorderFileGuard } from './nativeCapture';
+import { createRecorderFileGuard } from './recorderFiles';
 import type { ChunkCipher, FileSystemLike } from './fileChunkStore';
 
 /**
@@ -114,4 +115,45 @@ export function createNativeChunkCipher(): ChunkCipher & { deleteKey(): Promise<
   const refuse = () =>
     Promise.reject(new Error('Encryption at rest is unavailable on this build.'));
   return { ready: refuse, seal: refuse, open: refuse, deleteKey: () => Promise.resolve() };
+}
+
+/** Android microphone foreground service (modules/recording-service). Null on iOS or without the native module. */
+export function createAndroidForegroundIndicator(): ForegroundIndicator | null {
+  if (Platform.OS !== 'android') return null;
+  const { RecordingServiceModule } =
+    require('../../modules/recording-service') as typeof import('../../modules/recording-service');
+  if (!RecordingServiceModule) return null;
+  const native = RecordingServiceModule;
+  return {
+    start: () => native.start('MeetOps is recording', 'Tap Stop to end the recording now.'),
+    stop: () => native.stop(),
+    isConfirmed: () => native.isConfirmed(),
+    onStopRequested(listener) {
+      // Notification Stop, and the service dying on its own: both end capture immediately.
+      // Native fires exactly one of these per capture (latched in the service).
+      const subs = [
+        native.addListener('onStopRequested', listener),
+        native.addListener('onServiceLost', listener),
+      ];
+      return () => subs.forEach((s) => s.remove());
+    },
+  };
+}
+
+/**
+ * iOS backup exclusion + file protection for the recordings folder (modules/backup-exclusion). Null on Android.
+ * FAIL CLOSED: on iOS without the native module it reports failure, so `withBackupExclusion` blocks every write.
+ */
+export function iosBackupExclusion(): ((uri: string) => Promise<boolean>) | null {
+  if (Platform.OS !== 'ios') return null;
+  const { BackupExclusionModule } =
+    require('../../modules/backup-exclusion') as typeof import('../../modules/backup-exclusion');
+  if (!BackupExclusionModule) return () => Promise.resolve(false);
+  return (uri) => BackupExclusionModule.exclude(uri);
+}
+
+/** Recorder output guard for live mode: iOS protects the file after prepare (fail closed); both sweep the cache. */
+export function recorderFileGuard(): RecorderFileGuard {
+  const fs = require('expo-file-system') as FileSystemLike & { cacheDirectory: string | null };
+  return createRecorderFileGuard(fs, fs.cacheDirectory, iosBackupExclusion());
 }

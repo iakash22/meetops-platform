@@ -20,12 +20,14 @@ class ChunkCryptoModule : Module() {
     private const val ALIAS = "meetops_chunk_key_v1"
     private const val IV_BYTES = 12
     private const val TAG_BITS = 128
+    /** Serializes first-use check-then-create (and delete) so concurrent seal/open calls never race two keys. */
+    private val KEY_LOCK = Any()
   }
 
   private fun keyStore(): KeyStore = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
 
-  private fun key(): SecretKey {
-    (keyStore().getEntry(ALIAS, null) as? KeyStore.SecretKeyEntry)?.let { return it.secretKey }
+  private fun key(): SecretKey = synchronized(KEY_LOCK) {
+    (keyStore().getEntry(ALIAS, null) as? KeyStore.SecretKeyEntry)?.let { return@synchronized it.secretKey }
     val gen = KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, "AndroidKeyStore")
     gen.init(
       KeyGenParameterSpec.Builder(ALIAS, KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT)
@@ -35,7 +37,7 @@ class ChunkCryptoModule : Module() {
         .setRandomizedEncryptionRequired(true)
         .build()
     )
-    return gen.generateKey()
+    gen.generateKey()
   }
 
   override fun definition() = ModuleDefinition {
@@ -58,8 +60,10 @@ class ChunkCryptoModule : Module() {
     }
 
     AsyncFunction("deleteKey") {
-      val ks = keyStore()
-      if (ks.containsAlias(ALIAS)) ks.deleteEntry(ALIAS)
+      synchronized(KEY_LOCK) {
+        val ks = keyStore()
+        if (ks.containsAlias(ALIAS)) ks.deleteEntry(ALIAS)
+      }
     }
   }
 }

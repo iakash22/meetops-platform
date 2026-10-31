@@ -21,11 +21,13 @@ export interface RecordingCapture extends ChunkSource {
   isLive(): boolean;
   /** Stop: ends capture immediately, then splits the file into hashed chunks for the upload queue. */
   capture(recordingId: string, durationMs: number): Promise<LocalChunk[]>;
-  /**
-   * Finished earlier segments of the recording (native capture rotates files to bound plaintext at rest, R5).
-   * Each is queued as its own recording session. Call after `capture`.
-   */
-  takeParts?(recordingId: string): { id: string; chunks: LocalChunk[]; durationMs: number }[];
   /** Stops any capture and deletes the in-progress file. Never resumes (R7). */
   abort(): Promise<void>;
+  /**
+   * True only while the Android microphone foreground service is confirmed running with its notification showing.
+   * Checked at the moment the app leaves the foreground; otherwise the background pause applies.
+   */
+  isBackgroundSafe?(): boolean;
+  /** Stop pressed outside the app (the Android notification's Stop action). Returns an unsubscribe. */
+  onStopRequested?(listener: () => void): () => void;
 }
