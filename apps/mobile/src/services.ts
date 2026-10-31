@@ -111,8 +111,6 @@ const nativeCapture = chunkFiles
     })
   : null;
 const capture: RecordingCapture = nativeCapture ?? createSimulatedCapture();
-// R7: after a crash or kill, partial recorder output is discarded and capture never resumes.
-void nativeCapture?.recoverOnLaunch().catch(() => undefined);
 const engine = createUploadQueueEngine({
   // Live: durable queue file in the sandbox (M5). Demo: in memory.
   store: fileSystem ? createFileQueueStore(fileSystem) : createMemoryQueueStore(),
@@ -122,7 +120,17 @@ const engine = createUploadQueueEngine({
   network: { isOnline: () => true },
 });
 if (chunkFiles) {
-  void reconcileOrphans(engine, chunkFiles)
+  // R7: after a crash or kill, unfinalized recorder output is discarded and capture never resumes; a recording whose
+  // sealing was interrupted is sealed and enqueued. Runs before the orphan pass (which would delete its chunks), and
+  // `begin` awaits it so the cache sweep can never race a live recorder file.
+  void (
+    nativeCapture?.recoverOnLaunch(async (r) => {
+      // Idempotent: a kill after enqueue but before the marker cleared must not queue it twice.
+      if (!(await engine.items()).some((i) => i.id === r.id)) await engine.enqueue(r);
+    }) ?? Promise.resolve()
+  )
+    .catch(() => undefined)
+    .then(() => reconcileOrphans(engine, chunkFiles))
     .catch(() => undefined)
     // Chunks saved in plaintext by an older build are re-sealed before any upload pass reads them.
     .then(() => chunkFiles.migrateLegacy())
@@ -140,6 +148,7 @@ sessionManager.registerWipeHook(async () => {
   // entry, which `reconcileOrphans` deletes at the next launch, so a failed delete is retried rather than forgotten.
   if (chunkFiles)
     for (const id of await chunkFiles.list()) await chunkFiles.remove(id).catch(() => undefined);
+  await chunkFiles?.setHeld([]).catch(() => undefined);
   // Before the re-throw: anything a failed delete left behind becomes unreadable (the next capture gets a new key).
   await chunkCipher?.deleteKey().catch(() => undefined);
   if (incomplete)
