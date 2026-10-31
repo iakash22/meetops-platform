@@ -36,6 +36,8 @@ const config: ExpoConfig = {
     ['expo-secure-store', { configureAndroidBackup: true }],
     ['expo-audio', { microphonePermission: MICROPHONE_PURPOSE }],
     './plugins/withRecordingCompliance',
+    // iOS Live Activity / Dynamic Island while recording (widget extension + NSSupportsLiveActivities).
+    './plugins/withLiveActivity',
   ],
   experiments: { typedRoutes: false },
 };

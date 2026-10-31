@@ -1,6 +1,7 @@
 import type { LocalChunk } from '../upload/types';
 import type { RecordingCapture } from './capture';
 import type { FileChunkStore } from './fileChunkStore';
+import type { RecordingLiveActivity } from './liveActivity';
 
 /**
  * Native recorder (M4) over expo-audio, behind the `RecordingCapture` port. The OS-facing calls sit behind
@@ -46,6 +47,8 @@ export interface RecorderFileGuard {
 
 export interface NativeCaptureOptions {
   recorderFiles?: RecorderFileGuard | null;
+  /** iOS Live Activity / Dynamic Island (best effort; see liveActivity.ts). */
+  liveActivity?: RecordingLiveActivity | null;
 }
 
 export interface NativeCapture extends RecordingCapture {
@@ -66,6 +69,7 @@ export function createNativeCapture(
   options: NativeCaptureOptions = {},
 ): NativeCapture {
   const guard = options.recorderFiles ?? null;
+  const live = options.liveActivity ?? null;
   let active: string | null = null;
   let paused = false;
 
@@ -85,6 +89,7 @@ export function createNativeCapture(
       return await driver.stop();
     } finally {
       stopIndicator();
+      live?.end();
       await driver.setRecordingMode(false).catch(() => undefined);
     }
   };
@@ -100,10 +105,14 @@ export function createNativeCapture(
       }
     },
     // Only an active capture reacts, so a late or repeated event never stops anything twice.
-    onStopRequested: (listener) =>
-      indicator?.onStopRequested(() => {
+    // Live Activity Stop (iOS 17+) is the same as the notification Stop.
+    onStopRequested: (listener) => {
+      const guarded = () => {
         if (active) listener();
-      }) ?? (() => undefined),
+      };
+      const offs = [indicator?.onStopRequested(guarded), live?.onStopRequested(guarded)];
+      return () => offs.forEach((off) => off?.());
+    },
     async begin(recordingId) {
       if (active) throw new Error('Already recording.');
       if (!(await driver.canRecord())) throw new Error('Microphone permission is required.');
@@ -132,16 +141,19 @@ export function createNativeCapture(
       }
       active = recordingId;
       paused = false;
+      live?.start();
     },
     pause() {
       if (!active || paused) return;
       driver.pause();
       paused = true;
+      live?.pause();
     },
     resume() {
       if (!active || !paused) return;
       driver.record();
       paused = false;
+      live?.resume();
     },
     isLive() {
       if (!active) return false;
@@ -173,6 +185,8 @@ export function createNativeCapture(
       if (uri) await store.deleteFile(uri).catch(() => undefined);
       await store.setInProgress(null).catch(() => undefined);
       await guard?.sweep().catch(() => 0);
+      // A crash or kill can leave a "Recording" Live Activity on the lock screen: end it, never resume.
+      await live?.endAll();
     },
     read: (id, seq) => store.read(id, seq),
     remove: (id) => store.remove(id),
