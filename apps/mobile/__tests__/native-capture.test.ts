@@ -149,3 +149,21 @@ describe('native capture (M4)', () => {
     expect(cap.isLive()).toBe(false);
   });
 });
+
+describe('chunk encryption at rest (R5)', () => {
+  it('stores sealed chunks and returns plaintext, hashing the plaintext', async () => {
+    const fs = createMemoryFs();
+    const xor = (b64: string) => bytesToBase64(base64ToBytes(b64).map((v) => v ^ 0x5a));
+    const cipher = {
+      seal: jest.fn((b: string) => Promise.resolve(xor(b))),
+      open: jest.fn((b: string) => Promise.resolve(xor(b))),
+    };
+    fs.put('file:///cache/a.m4a', bytes(6));
+    const store = createFileChunkStore(fs, 4, cipher);
+    const chunks = await store.ingest('rec-1', 'file:///cache/a.m4a');
+    expect(chunks[0]!.sha256).toBe(sha256Hex(bytes(6).subarray(0, 4)));
+    expect(fs.files.get('file:///doc/recordings/rec-1/0.chunk')).not.toEqual(bytes(4));
+    await expect(store.read('rec-1', 0)).resolves.toEqual(bytes(6).subarray(0, 4));
+    expect(cipher.seal).toHaveBeenCalledTimes(2);
+  });
+});

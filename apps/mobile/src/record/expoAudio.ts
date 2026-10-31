@@ -2,7 +2,7 @@ import { Linking, PermissionsAndroid, Platform } from 'react-native';
 
 import type { MicPermission, MicPermissionStatus } from '../consent/micPermission';
 import type { AudioDriver } from './nativeCapture';
-import type { FileSystemLike } from './fileChunkStore';
+import type { ChunkCipher, FileSystemLike } from './fileChunkStore';
 
 /**
  * expo-audio / expo-file-system bindings. Required lazily so Jest and demo mode never load the native modules.
@@ -87,4 +87,12 @@ export function createExpoAudioDriver(): AudioDriver {
 
 export function expoFileSystem(): FileSystemLike {
   return require('expo-file-system') as FileSystemLike;
+}
+
+/** Android Keystore AES-GCM for chunk files (modules/chunk-crypto). Null on iOS or without the native module. */
+export function createAndroidChunkCipher(): (ChunkCipher & { deleteKey(): Promise<void> }) | null {
+  if (Platform.OS !== 'android') return null;
+  const { ChunkCryptoModule } =
+    require('../../modules/chunk-crypto') as typeof import('../../modules/chunk-crypto');
+  return ChunkCryptoModule;
 }

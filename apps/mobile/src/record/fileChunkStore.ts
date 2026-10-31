@@ -1,5 +1,5 @@
 import type { ChunkSource, LocalChunk } from '../upload/types';
-import { base64ToBytes, bytesToBase64 } from './base64';
+import { base64ToBytes } from './base64';
 import { sha256Hex } from './sha256';
 
 /**
@@ -44,7 +44,26 @@ export interface FileChunkStore extends ChunkSource {
 
 const SAFE_ID = /^[A-Za-z0-9_-]{1,64}$/;
 
-export function createFileChunkStore(fs: FileSystemLike, chunkBytes = CHUNK_BYTES): FileChunkStore {
+/**
+ * Encryption at rest for chunk files (R5). Base64 in, base64 out. Android: AES-256-GCM with a Keystore key
+ * (`modules/chunk-crypto`). Elsewhere `plainCipher` (iOS relies on Data Protection). Hashes and sizes are
+ * always over the plaintext, which is what the server checks.
+ */
+export interface ChunkCipher {
+  seal(plainBase64: string): Promise<string>;
+  open(sealedBase64: string): Promise<string>;
+}
+
+export const plainCipher: ChunkCipher = {
+  seal: (b) => Promise.resolve(b),
+  open: (b) => Promise.resolve(b),
+};
+
+export function createFileChunkStore(
+  fs: FileSystemLike,
+  chunkBytes = CHUNK_BYTES,
+  cipher: ChunkCipher = plainCipher,
+): FileChunkStore {
   const root = () => {
     if (!fs.documentDirectory) throw new Error('No app sandbox directory.');
     return `${fs.documentDirectory}recordings/`;
@@ -70,7 +89,7 @@ export function createFileChunkStore(fs: FileSystemLike, chunkBytes = CHUNK_BYTE
             length,
           });
           const bytes = base64ToBytes(b64);
-          await fs.writeAsStringAsync(file(recordingId, seq), bytesToBase64(bytes), {
+          await fs.writeAsStringAsync(file(recordingId, seq), await cipher.seal(b64), {
             encoding: 'base64',
           });
           chunks.push({ seq, sizeBytes: bytes.byteLength, sha256: sha256Hex(bytes) });
@@ -84,9 +103,8 @@ export function createFileChunkStore(fs: FileSystemLike, chunkBytes = CHUNK_BYTE
       return chunks;
     },
     async read(recordingId, seq) {
-      return base64ToBytes(
-        await fs.readAsStringAsync(file(recordingId, seq), { encoding: 'base64' }),
-      );
+      const sealed = await fs.readAsStringAsync(file(recordingId, seq), { encoding: 'base64' });
+      return base64ToBytes(await cipher.open(sealed));
     },
     async remove(recordingId) {
       await fs.deleteAsync(dir(recordingId), { idempotent: true });

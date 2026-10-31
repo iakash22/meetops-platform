@@ -27,6 +27,7 @@ import {
   createExpoAudioDriver,
   createNativeMicPermission,
   expoFileSystem,
+  createAndroidChunkCipher,
 } from './record/expoAudio';
 import { createFileChunkStore } from './record/fileChunkStore';
 import { createNativeCapture } from './record/nativeCapture';
@@ -88,7 +89,11 @@ const http = API_BASE_URL
   : null;
 
 const fileSystem = http ? expoFileSystem() : null;
-const chunkFiles = fileSystem ? createFileChunkStore(fileSystem) : null;
+// R5: Android chunk files are AES-256-GCM sealed with a Keystore key; iOS relies on Data Protection.
+const chunkCipher = fileSystem ? createAndroidChunkCipher() : null;
+const chunkFiles = fileSystem
+  ? createFileChunkStore(fileSystem, undefined, chunkCipher ?? undefined)
+  : null;
 const nativeCapture = chunkFiles ? createNativeCapture(createExpoAudioDriver(), chunkFiles) : null;
 const capture: RecordingCapture = nativeCapture ?? createSimulatedCapture();
 // R7: after a crash or kill, partial recorder output is discarded and capture never resumes.
@@ -111,6 +116,8 @@ sessionManager.registerWipeHook(async () => {
   await capture.abort();
   await engine.wipe();
   if (chunkFiles) for (const id of await chunkFiles.list()) await chunkFiles.remove(id);
+  // Anything a failed delete left behind becomes unreadable: the next capture gets a new key.
+  await chunkCipher?.deleteKey().catch(() => undefined);
 });
 
 export const repositories: Repositories = {
