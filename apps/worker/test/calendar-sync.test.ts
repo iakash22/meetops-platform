@@ -387,7 +387,8 @@ describe('calendar sync claim (multi-replica)', () => {
       { id: C1, s: secrets() },
       { id: C2, s: secrets() },
     ]);
-    repo.claimForSync = vi.fn(async (_o: string, id: string) => id === C2);
+    const claim = vi.fn(async (_o: string, id: string) => id === C2);
+    repo.claimForSync = claim;
     const p = provider();
     const r = await runCalendarSyncSweep({
       repo,
@@ -398,7 +399,7 @@ describe('calendar sync claim (multi-replica)', () => {
     expect(r).toMatchObject({ synced: 1, skipped: 1 });
     expect(p.listEvents).toHaveBeenCalledTimes(1);
     expect(calls.applied.map((a) => a.connectionId)).toEqual([C2]);
-    expect(repo.claimForSync).toHaveBeenCalledWith(
+    expect(claim).toHaveBeenCalledWith(
       ORG,
       C1,
       new Date(NOW),
