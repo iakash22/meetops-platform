@@ -24,6 +24,12 @@ const config: ExpoConfig = {
     package: 'com.example.meetops',
     // Keep Keystore-backed auth items (and everything else) out of Android Auto Backup / device transfer.
     allowBackup: false,
+    // M6 hardening: drop permissions Expo adds by default that MeetOps never uses (no shared storage, no overlays).
+    blockedPermissions: [
+      'android.permission.READ_EXTERNAL_STORAGE',
+      'android.permission.WRITE_EXTERNAL_STORAGE',
+      'android.permission.SYSTEM_ALERT_WINDOW',
+    ],
   },
   plugins: [
     'expo-router',
