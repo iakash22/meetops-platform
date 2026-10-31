@@ -311,16 +311,19 @@ describe('Record tab with a live capture (M4)', () => {
   function setup(over: Partial<RecordingCapture> = {}) {
     let live = true;
     const base = createSimulatedCapture();
-    const capture: RecordingCapture = {
-      ...base,
-      simulated: false,
-      isLive: () => live,
+    const mocks = {
       begin: jest.fn(() => Promise.resolve()),
       pause: jest.fn(),
       resume: jest.fn(() => {
         live = true;
       }),
       abort: jest.fn(() => Promise.resolve()),
+    };
+    const capture: RecordingCapture = {
+      ...base,
+      simulated: false,
+      isLive: () => live,
+      ...mocks,
       ...over,
     };
     const engine = createUploadQueueEngine({
@@ -339,7 +342,7 @@ describe('Record tab with a live capture (M4)', () => {
         <RecordScreen />
       </RepositoriesProvider>,
     );
-    return { capture, interrupt: () => (live = false), view };
+    return { capture: mocks, interrupt: () => (live = false), view };
   }
 
   async function start() {
