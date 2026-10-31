@@ -24,6 +24,7 @@ export async function containerEnd(file: string, demuxer: AllowedDemuxer): Promi
     if (demuxer === 'matroska') return await matroskaEnd(fh, size);
     if (demuxer === 'mov') return await movEnd(fh, size);
     if (demuxer === 'wav') return await wavEnd(fh, size);
+    if (demuxer === 'aac') return await adtsEnd(fh, size);
     return 'ok';
   } finally {
     await fh.close();
@@ -178,4 +179,31 @@ async function wavEnd(fh: FileHandle, fileSize: number): Promise<ContainerEnd> {
   const end = 8 + h.readUInt32LE(4);
   if (fileSize > end + (end % 2)) return 'trailing'; // RIFF pads odd sizes by one byte
   return fileSize < end ? 'truncated' : 'ok';
+}
+
+/**
+ * ADTS AAC has no container: it is a run of self-delimiting frames (7- or 9-byte header, 13-bit frame_length). Walk
+ * every frame header (buffered, payloads skipped); anything that isn't an ADTS frame after the first one is trailing
+ * data (polyglot), and a frame that runs past EOF is a truncated upload.
+ */
+async function adtsEnd(fh: FileHandle, size: number): Promise<ContainerEnd> {
+  const WINDOW = 64 * 1024;
+  let buf = Buffer.alloc(0);
+  let bufStart = 0;
+  let pos = 0;
+  while (pos < size) {
+    if (pos < bufStart || pos + Math.min(7, size - pos) > bufStart + buf.length) {
+      buf = await readAt(fh, pos, Math.min(WINDOW, size - pos));
+      bufStart = pos;
+    }
+    const o = pos - bufStart;
+    if (buf[o] !== 0xff || (size - pos >= 2 && (buf[o + 1]! & 0xf6) !== 0xf0)) return 'trailing';
+    if (pos + 7 > size) return 'truncated';
+    const len = ((buf[o + 3]! & 0x03) << 11) | (buf[o + 4]! << 3) | (buf[o + 5]! >> 5);
+    const header = buf[o + 1]! & 0x01 ? 7 : 9;
+    if (len < header) return 'trailing';
+    if (pos + len > size) return 'truncated';
+    pos += len;
+  }
+  return 'ok';
 }

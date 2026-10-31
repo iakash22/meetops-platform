@@ -8,6 +8,8 @@ While the version is `0.x`, a minor bump may contain breaking changes (ADR-003).
 
 ### Added
 
+- `ALLOWED_MEDIA_MIME_TYPES` / `MediaMimeType`: `audio/aac` (raw ADTS AAC), and `MEDIA_SOURCE_EXTS`: `aac`. Lets Android
+  mobile record in short byte-concatenable segments that are encrypted as each one closes (ADR-015). Additive.
 - `CONFLICT_REASONS` / `ConflictReason`: `RECORDING_SESSION_CLOSED`. Sent with a recording-session 409 when the
   session is aborted (e.g. `consent_revoked`) or failed on the server, so clients can treat it as terminal instead of
   retrying. Additive: other 409s keep their reason (generic `CONFLICT`).

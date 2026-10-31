@@ -53,6 +53,10 @@ export interface FileChunkStore extends ChunkSource {
   getMarker(): Promise<CaptureMarker | null>;
   /** Recording ids sealed by crash recovery that have no queue entry yet (kept, encrypted, until enqueued or wiped). */
   held(): Promise<string[]>;
+  /** Folder (uri, trailing slash) a native writer puts `<seq>.chunk` files in for this recording. */
+  chunkDir(recordingId: string): string;
+  /** Records the chunk list of a recording written natively (same file `ingest` writes). */
+  writeManifest(recordingId: string, chunks: LocalChunk[]): Promise<void>;
   /** Chunks written by a completed `ingest` (null when it never finished). */
   manifest(recordingId: string): Promise<LocalChunk[] | null>;
   setHeld(ids: string[]): Promise<void>;
@@ -222,6 +226,13 @@ export function createFileChunkStore(
         // Older builds wrote the bare uri: that was always a still-recording file.
         return { uri: raw, phase: 'recording' };
       }
+    },
+    chunkDir: (recordingId) => dir(recordingId),
+    async writeManifest(recordingId, chunks) {
+      await fs.makeDirectoryAsync(dir(recordingId), { intermediates: true });
+      await fs.writeAsStringAsync(`${dir(recordingId)}manifest.json`, JSON.stringify(chunks), {
+        encoding: 'utf8',
+      });
     },
     async manifest(recordingId) {
       const path = `${dir(recordingId)}manifest.json`;

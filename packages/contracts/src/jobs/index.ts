@@ -84,7 +84,7 @@ export type TranscriptionJobPayload = Static<typeof TranscriptionJobPayload>;
 export const MEDIA_QUEUE = 'media' as const;
 export const MEDIA_JOB_NAME = 'process_recording' as const;
 
-export const MEDIA_SOURCE_EXTS = ['webm', 'ogg', 'mp3', 'm4a', 'mp4', 'wav'] as const;
+export const MEDIA_SOURCE_EXTS = ['webm', 'ogg', 'mp3', 'm4a', 'aac', 'mp4', 'wav'] as const;
 export const MediaSourceExt = Type.Union(MEDIA_SOURCE_EXTS.map((e) => Type.Literal(e)));
 export type MediaSourceExt = (typeof MEDIA_SOURCE_EXTS)[number];
 
@@ -237,7 +237,9 @@ export const NotificationDeliveryJobPayload = Type.Object(
     userId: Id,
     notificationId: Id,
     channel: Type.Union(
-      (['in_app', 'email', 'web_push', 'mobile_push', 'desktop'] as const).map((c) => Type.Literal(c)),
+      (['in_app', 'email', 'web_push', 'mobile_push', 'desktop'] as const).map((c) =>
+        Type.Literal(c),
+      ),
     ),
     deliveryKey: Type.String({ minLength: 1, maxLength: 200, pattern: '^[A-Za-z0-9_:-]+$' }),
     requestId: Type.Optional(OpaqueId),
