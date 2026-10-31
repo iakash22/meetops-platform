@@ -17,7 +17,8 @@ import { PageHeader } from '@/components/ui/typography';
 import { useApi } from '@/lib/api/context';
 import { useOrganizationId } from '@/lib/api/queries';
 import { notify, toastError } from '@/lib/errors/notify';
-import { safeAuthorizeUrl } from '@/features/integrations/api';
+import { isAllowedConferenceUrl } from '@meetops/contracts/types';
+import { AUTHORIZE_HOSTS, safeAuthorizeUrl } from '@/features/integrations/api';
 import { getCalendarApi, groupByDay, weekWindow } from './api';
 
 /** Full-page redirect to the provider's OAuth screen; an object so tests can stub it. */
@@ -146,10 +147,10 @@ export function CalendarPage({ now = () => new Date() }: { now?: () => Date }) {
                         {e.status === 'tentative' ? (
                           <Badge variant="secondary">Tentative</Badge>
                         ) : null}
-                        {e.conferenceUrl && safeAuthorizeUrl(e.conferenceUrl) ? (
+                        {isAllowedConferenceUrl(e.conferenceUrl) ? (
                           <a
                             className="inline-flex items-center gap-1 text-primary underline-offset-4 hover:underline"
-                            href={safeAuthorizeUrl(e.conferenceUrl)!}
+                            href={e.conferenceUrl}
                             target="_blank"
                             rel="noopener noreferrer"
                           >
@@ -181,7 +182,7 @@ function ProviderCard({ status }: { status: CalendarProviderStatus }) {
   const connect = useMutation({
     mutationFn: () => calendar.connect(organizationId, status.provider),
     onSuccess: ({ authorizeUrl }) => {
-      const url = safeAuthorizeUrl(authorizeUrl);
+      const url = safeAuthorizeUrl(authorizeUrl, AUTHORIZE_HOSTS[status.provider]);
       if (!url) notify.error(`Couldn't connect ${name}`, 'The sign-in link was not secure.');
       else calendarRedirect.assign(url);
     },

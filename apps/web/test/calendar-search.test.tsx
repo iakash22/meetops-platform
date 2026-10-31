@@ -151,6 +151,59 @@ describe('CalendarPage', () => {
     expect(join).toHaveAttribute('href', 'https://meet.google.com/abc-defg-hij');
     expect(join).toHaveAttribute('rel', 'noopener noreferrer');
   });
+
+  it('hides Join for look-alike or non-allowlisted conference links', async () => {
+    const mock = calendarMock(connected);
+    const base = {
+      connectionId: CONN,
+      provider: 'google' as const,
+      startsAt: new Date().toISOString(),
+      endsAt: new Date(Date.now() + 3_600_000).toISOString(),
+      allDay: false,
+      status: 'confirmed' as const,
+      attendeeCount: 1,
+    };
+    const bad = [
+      'https://meet.google.com.evil.example/x',
+      'https://evil-zoom.us/j/1',
+      'http://meet.google.com/abc',
+      'https://u:p@zoom.us/j/1',
+      'https://example.com/join',
+    ];
+    mock.events = vi.fn().mockResolvedValue({
+      items: [
+        ...bad.map((conferenceUrl, i) => ({
+          ...base,
+          id: `b${i}`,
+          title: `Bad ${i}`,
+          conferenceUrl,
+        })),
+        { ...base, id: 'ok', title: 'Zoom ok', conferenceUrl: 'https://acme.zoom.us/j/1' },
+      ],
+    });
+    setCalendarApiOverride(mock);
+    renderApp('/calendar');
+    expect(await screen.findByText('Zoom ok')).toBeInTheDocument();
+    const links = screen.getAllByRole('link', { name: 'Join' });
+    expect(links).toHaveLength(1);
+    expect(links[0]).toHaveAttribute('href', 'https://acme.zoom.us/j/1');
+  });
+
+  it('refuses an authorize url that is not on accounts.google.com', async () => {
+    const nav = vi.spyOn(calendarRedirect, 'assign').mockImplementation(() => undefined);
+    const mock = calendarMock(providers());
+    const connect = vi
+      .fn()
+      .mockResolvedValue({ authorizeUrl: 'https://accounts.google.com.evil.example/o/oauth2' });
+    mock.connect = connect;
+    setCalendarApiOverride(mock);
+    renderApp('/calendar');
+    const card = await screen.findByTestId('calendar-google');
+    await userEvent.click(within(card).getByRole('button', { name: 'Connect Google Calendar' }));
+    await waitFor(() => expect(connect).toHaveBeenCalled());
+    await new Promise((r) => setTimeout(r, 50));
+    expect(nav).not.toHaveBeenCalled();
+  });
 });
 
 describe('SearchPage', () => {

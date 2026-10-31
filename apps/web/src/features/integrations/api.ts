@@ -62,15 +62,26 @@ export function currentByProvider(
   return out;
 }
 
-/** Only follow an https authorize URL the server returned (no javascript:, no plain http). */
-export function safeAuthorizeUrl(url: string): string | null {
+/**
+ * Only follow an https authorize URL the server returned (no javascript:, no plain http, no credentials or port),
+ * and only on one of the provider's expected authorization hosts.
+ */
+export function safeAuthorizeUrl(url: string, allowedHosts: readonly string[]): string | null {
   try {
     const u = new URL(url);
-    return u.protocol === 'https:' ? u.toString() : null;
+    if (u.protocol !== 'https:' || u.username || u.password || u.port) return null;
+    return allowedHosts.includes(u.hostname.toLowerCase()) ? u.toString() : null;
   } catch {
     return null;
   }
 }
+
+/** Authorization hosts per provider. GitHub and Atlassian Cloud authorize on these hosts only. */
+export const AUTHORIZE_HOSTS = {
+  github: ['github.com'],
+  jira: ['auth.atlassian.com'],
+  google: ['accounts.google.com'],
+} as const;
 
 /** In-memory mock for dev (VITE_INTEGRATION_MOCKS=true) and tests. */
 export function createMockIntegrationsApi(seed: Integration[] = []): IntegrationsApi {
@@ -79,7 +90,7 @@ export function createMockIntegrationsApi(seed: Integration[] = []): Integration
     list: () => Promise.resolve({ items: state.map((i) => ({ ...i })) }),
     connect: (_o, p) =>
       Promise.resolve({
-        authorizeUrl: `https://example.com/oauth/${p}/authorize?state=mock`,
+        authorizeUrl: `https://${AUTHORIZE_HOSTS[p][0]}/mock/${p}/authorize?state=mock`,
         expiresAt: new Date(Date.now() + 600_000).toISOString(),
       }),
     disconnect: (_o, id) => {
