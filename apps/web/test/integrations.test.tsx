@@ -7,6 +7,7 @@ import {
   createHttpIntegrationsApi,
   createMockIntegrationsApi,
   currentByProvider,
+  AUTHORIZE_HOSTS,
   safeAuthorizeUrl,
   setIntegrationsApiOverride,
 } from '@/features/integrations/api';
@@ -32,9 +33,13 @@ const gh = (over: Partial<Integration> = {}): Integration => ({
 
 describe('integrations api helpers', () => {
   it('only follows https authorize urls', () => {
-    expect(safeAuthorizeUrl('https://github.com/login/oauth/authorize?x=1')).toMatch(/^https:/);
-    expect(safeAuthorizeUrl('javascript:alert(1)')).toBeNull();
-    expect(safeAuthorizeUrl('http://github.com')).toBeNull();
+    const gh = AUTHORIZE_HOSTS.github;
+    expect(safeAuthorizeUrl('https://github.com/login/oauth/authorize?x=1', gh)).toMatch(/^https:/);
+    expect(safeAuthorizeUrl('javascript:alert(1)', gh)).toBeNull();
+    expect(safeAuthorizeUrl('http://github.com', gh)).toBeNull();
+    expect(safeAuthorizeUrl('https://github.com.evil.example/authorize', gh)).toBeNull();
+    expect(safeAuthorizeUrl('https://evil.example/authorize', gh)).toBeNull();
+    expect(safeAuthorizeUrl('https://u:p@github.com/authorize', gh)).toBeNull();
   });
   it('http client hits the contracts routes', async () => {
     const request = vi.fn().mockResolvedValue({ items: [] });
@@ -106,7 +111,9 @@ describe('IntegrationsPanel', () => {
     const jira = await screen.findByTestId('integration-jira');
     await userEvent.click(within(jira).getByRole('button', { name: 'Connect Jira' }));
     await waitFor(() =>
-      expect(navigate).toHaveBeenCalledWith('https://example.com/oauth/jira/authorize?state=mock'),
+      expect(navigate).toHaveBeenCalledWith(
+        'https://auth.atlassian.com/mock/jira/authorize?state=mock',
+      ),
     );
   });
 

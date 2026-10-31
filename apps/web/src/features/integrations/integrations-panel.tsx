@@ -23,6 +23,7 @@ import {
   currentByProvider,
   getIntegrationsApi,
   isConnectEnabled,
+  AUTHORIZE_HOSTS,
   safeAuthorizeUrl,
   type Integration,
 } from './api';
@@ -88,7 +89,7 @@ function IntegrationCard({
   const connect = useMutation({
     mutationFn: () => integrations.connect(organizationId, provider),
     onSuccess: ({ authorizeUrl }) => {
-      const url = safeAuthorizeUrl(authorizeUrl);
+      const url = safeAuthorizeUrl(authorizeUrl, AUTHORIZE_HOSTS[provider]);
       if (!url) notify.error(`Couldn't connect ${meta.name}`, 'The sign-in link was not secure.');
       else oauthRedirect.assign(url);
     },

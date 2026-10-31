@@ -492,6 +492,26 @@ export const INTEGRATION_STATE_TTL_SECONDS = 600;
 /** v0.7.0: webhook body cap in bytes (ADR-007). */
 export const INTEGRATION_WEBHOOK_MAX_BYTES = 1_048_576;
 
+/** Phase 7: calendar routes. Connections are per user within an organization. */
+export const CALENDAR_PATHS = {
+  providers: '/orgs/:organizationId/calendar/providers',
+  connect: '/orgs/:organizationId/calendar/connect',
+  callback: '/calendar/:provider/callback',
+  connection: '/orgs/:organizationId/calendar/connections/:connectionId',
+  events: '/orgs/:organizationId/calendar/events',
+} as const;
+
+/** Server-known providers only; clients never supply an endpoint or base URL. */
+export const CALENDAR_PROVIDERS = ['google'] as const;
+
+/** Phase 7: org-scoped full-text search (Postgres FTS, forced RLS). */
+export const SEARCH_PATHS = { search: '/orgs/:organizationId/search' } as const;
+
+export const SEARCH_RESULT_KINDS = ['meeting', 'transcript', 'summary', 'task'] as const;
+/** Highlight markers in `snippet`: text between them matched the query. Render as text, never as HTML. */
+export const SEARCH_HIGHLIGHT_START = '\u0002';
+export const SEARCH_HIGHLIGHT_STOP = '\u0003';
+
 /**
  * Phase 7: video-conference hosts whose join links clients may show. Exact hosts, plus subdomains only where listed
  * in CONFERENCE_HOST_SUFFIXES (Zoom vanity domains such as acme.zoom.us). Anything else is dropped.
