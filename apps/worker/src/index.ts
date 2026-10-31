@@ -103,6 +103,11 @@ async function main() {
   // Integrations token refresh (Jira rotation, GitHub installation tokens). Off unless
   // INTEGRATIONS_TOKEN_REFRESH_ENABLED=true; then INTEGRATIONS_TOKEN_KEK is required (fail closed at startup).
   const tokenRefresh = registerTokenRefreshJob({ env: loadTokenRefreshEnv(), log: logger });
+  // Phase 7 calendar background sync (off unless CALENDAR_SYNC_ENABLED=true). One idempotent BullMQ repeatable;
+  // an enabled sync with a missing/bad INTEGRATIONS_TOKEN_KEK throws here, as does a bad
+  // CALENDAR_SYNC_TICK_MS (fail closed at startup).
+  const calendarSync = registerCalendarSyncScheduler({ env: loadCalendarSyncEnv(), log: logger });
+  if (calendarSync.registered) logger.info('calendar sync scheduler started');
   const jobs: ClosableJob[] = [
     { name: 'media', close },
     { name: 'transcription', job: transcription },
@@ -111,12 +116,9 @@ async function main() {
     { name: 'ip-retention', close: retention?.close },
     { name: 'geoip-update', close: geoipUpdate?.close },
     { name: 'integrations-token-refresh', job: tokenRefresh },
+    { name: 'calendar-sync', job: calendarSync },
   ];
   logger.info({ jobs: runningJobs(jobs) }, 'worker jobs registered');
-  // Phase 7 calendar background sync (off unless CALENDAR_SYNC_ENABLED=true). One idempotent BullMQ repeatable;
-  // an enabled sync with a missing/bad INTEGRATIONS_TOKEN_KEK throws here (fail closed at startup).
-  const calendarSync = registerCalendarSyncScheduler({ env: loadCalendarSyncEnv(), log: logger });
-  if (calendarSync.registered) logger.info('calendar sync scheduler started');
   const shutdown = async () => {
     logger.info('Shutting down worker...');
     await closeAll(jobs, logger);

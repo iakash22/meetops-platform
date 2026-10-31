@@ -138,3 +138,21 @@ describe('calendar sync scheduler', () => {
     expect(Object.keys(p)).toEqual(['google']);
   });
 });
+
+describe('CALENDAR_SYNC_TICK_MS validation', () => {
+  it('defaults to 60 s when unset or blank', () => {
+    expect(loadCalendarSyncEnv({}).tickMs).toBe(60_000);
+    expect(loadCalendarSyncEnv({ CALENDAR_SYNC_TICK_MS: ' ' }).tickMs).toBe(60_000);
+  });
+  it.each(['abc', '0', '-5', '1.5', '1000', '3600001', 'NaN', '1e9'])(
+    'throws at startup on %s instead of falling back',
+    (v) => {
+      expect(() =>
+        loadCalendarSyncEnv({ CALENDAR_SYNC_ENABLED: 'true', CALENDAR_SYNC_TICK_MS: v }),
+      ).toThrow(CalendarSyncEnvError);
+      expect(() => loadCalendarSyncEnv({ CALENDAR_SYNC_TICK_MS: v })).toThrow(
+        /CALENDAR_SYNC_TICK_MS/,
+      );
+    },
+  );
+});

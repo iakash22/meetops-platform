@@ -15,6 +15,8 @@ export interface CalendarSyncSweepRepository {
     now: Date,
     limit?: number,
   ): Promise<{ organizationId: string; id: string; userId: string; provider: string }[]>;
+  /** Atomic claim (one replica wins); false = another sweep owns it or it is no longer due. */
+  claimForSync(organizationId: string, id: string, now: Date, leaseUntil: Date): Promise<boolean>;
   readSecrets(organizationId: string, id: string): Promise<CalendarSyncSecrets | null>;
   updateTokens(
     organizationId: string,
@@ -102,6 +104,8 @@ export const CALENDAR_SYNC_DEFAULTS: CalendarSyncConfig = {
   limit: 50,
   maxEvents: 250,
 };
+/** How long a claim holds a connection before another sweep may take it (crash recovery). */
+export const CALENDAR_SYNC_LEASE_MS = 10 * 60_000;
 /** Refresh access tokens expiring within this window before using them (same skew as the API). */
 const REFRESH_SKEW_MS = 120_000;
 
@@ -175,6 +179,17 @@ export async function runCalendarSyncSweep(deps: CalendarSyncDeps): Promise<Cale
     }
     let failures = 0;
     try {
+      if (
+        !(await deps.repo.claimForSync(
+          d.organizationId,
+          d.id,
+          now,
+          new Date(nowMs + CALENDAR_SYNC_LEASE_MS),
+        ))
+      ) {
+        result.skipped++;
+        continue;
+      }
       const s = await deps.repo.readSecrets(d.organizationId, d.id);
       if (!s) {
         result.skipped++;
@@ -265,6 +280,21 @@ export function startCalendarSyncScheduler(
   };
 }
 
+export class CalendarSyncEnvError extends Error {}
+
+const TICK_MIN = 5_000;
+const TICK_MAX = 3_600_000;
+/** CALENDAR_SYNC_TICK_MS: unset = 60 s; anything else must be an integer in range or startup fails (names key only). */
+function tickEnv(v: string | undefined): number {
+  if (v === undefined || v.trim() === '') return 60_000;
+  const n = Number(v.trim());
+  if (!Number.isInteger(n) || n < TICK_MIN || n > TICK_MAX)
+    throw new CalendarSyncEnvError(
+      `CALENDAR_SYNC_TICK_MS must be an integer in ${TICK_MIN}..${TICK_MAX}`,
+    );
+  return n;
+}
+
 export interface CalendarSyncWorkerEnv {
   enabled: boolean;
   tickMs: number;
@@ -276,11 +306,11 @@ const intEnv = (v: string | undefined, def: number, min: number, max: number) =>
   return Number.isInteger(n) && n >= min && n <= max ? n : def;
 };
 
-/** Off unless CALENDAR_SYNC_ENABLED=true. Bad numbers fall back to defaults; the window is capped at 62 days. */
+/** Off unless CALENDAR_SYNC_ENABLED=true. A bad tick throws; other bad numbers fall back to defaults; the window is capped at 62 days. */
 export function loadCalendarSyncEnv(env: NodeJS.ProcessEnv = process.env): CalendarSyncWorkerEnv {
   return {
     enabled: env.CALENDAR_SYNC_ENABLED?.trim().toLowerCase() === 'true',
-    tickMs: intEnv(env.CALENDAR_SYNC_TICK_MS, 60_000, 5_000, 3_600_000),
+    tickMs: tickEnv(env.CALENDAR_SYNC_TICK_MS),
     config: {
       intervalMs: intEnv(
         env.CALENDAR_SYNC_INTERVAL_MS,

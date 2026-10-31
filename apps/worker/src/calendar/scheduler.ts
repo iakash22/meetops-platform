@@ -8,6 +8,7 @@ import { createCalendarSyncRepository } from '@meetops/database';
 import { createQueue, createWorker } from '@meetops/queue';
 import { parseKek } from '../integrations/bootstrap.js';
 import {
+  CalendarSyncEnvError,
   runCalendarSyncSweep,
   type CalendarSyncDeps,
   type CalendarSyncLog,
@@ -24,8 +25,6 @@ import {
  */
 export const CALENDAR_SYNC_QUEUE = 'calendar.sync';
 export const CALENDAR_SYNC_SCHEDULER_ID = 'calendar.sync.sweep';
-
-export class CalendarSyncEnvError extends Error {}
 
 export interface CalendarSyncSchedulerQueue {
   upsertJobScheduler(

@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { CalendarSyncEventInput, CalendarSyncSecrets } from '@meetops/database';
 import {
   CALENDAR_SYNC_DEFAULTS,
+  CALENDAR_SYNC_LEASE_MS,
   calendarSyncBackoffMs,
   calendarSyncNextMs,
   loadCalendarSyncEnv,
@@ -47,6 +48,7 @@ function makeRepo(conns: { id: string; provider?: string; s: CalendarSyncSecrets
     failures: [] as [string, { syncFailures: number; nextSyncAt: Date }][],
   };
   const repo: CalendarSyncSweepRepository = {
+    claimForSync: vi.fn(async () => true),
     listDueForSync: vi.fn(async () =>
       conns.map((c) => ({
         organizationId: ORG,
@@ -376,5 +378,31 @@ describe('helpers', () => {
     release();
     await s.close();
     expect(listDue).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('calendar sync claim (multi-replica)', () => {
+  it('skips a connection another replica already claimed, without touching tokens or the provider', async () => {
+    const { repo, calls } = makeRepo([
+      { id: C1, s: secrets() },
+      { id: C2, s: secrets() },
+    ]);
+    repo.claimForSync = vi.fn(async (_o: string, id: string) => id === C2);
+    const p = provider();
+    const r = await runCalendarSyncSweep({
+      repo,
+      providers: { google: p },
+      log: { info: vi.fn(), warn: vi.fn() },
+      now: () => NOW,
+    });
+    expect(r).toMatchObject({ synced: 1, skipped: 1 });
+    expect(p.listEvents).toHaveBeenCalledTimes(1);
+    expect(calls.applied.map((a) => a.connectionId)).toEqual([C2]);
+    expect(repo.claimForSync).toHaveBeenCalledWith(
+      ORG,
+      C1,
+      new Date(NOW),
+      new Date(NOW + CALENDAR_SYNC_LEASE_MS),
+    );
   });
 });

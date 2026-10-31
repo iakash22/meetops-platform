@@ -166,6 +166,34 @@ export function createCalendarSyncRepository(options: CalendarSyncRepositoryOpti
       );
     },
 
+    /**
+     * Atomic per-connection claim for a sweep: moves next_sync_at to `leaseUntil` only if the connection is still
+     * active and due. Under READ COMMITTED a concurrent UPDATE of the same row waits for the row lock, then re-checks
+     * the predicate and matches nothing, so exactly one replica wins (same effect as FOR UPDATE SKIP LOCKED, no
+     * migration). The lease also covers a crash mid-sync: the connection is due again once it expires. applySync /
+     * recordFailure overwrite next_sync_at with the real next due time.
+     */
+    async claimForSync(
+      organizationId: string,
+      id: string,
+      now: Date,
+      leaseUntil: Date,
+    ): Promise<boolean> {
+      if (!UUID_RE.test(id) || !(leaseUntil > now)) return false;
+      const r = await run(organizationId, (tx) =>
+        tx.calendarConnection.updateMany({
+          where: {
+            id,
+            organizationId,
+            status: 'active',
+            OR: [{ nextSyncAt: null }, { nextSyncAt: { lte: now } }],
+          },
+          data: { nextSyncAt: leaseUntil },
+        }),
+      );
+      return r.count === 1;
+    },
+
     /** Permanent failure (grant gone): the UI asks the user to reconnect. */
     async markError(organizationId: string, id: string): Promise<void> {
       if (!UUID_RE.test(id)) return;
