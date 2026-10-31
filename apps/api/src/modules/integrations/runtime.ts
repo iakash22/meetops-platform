@@ -109,6 +109,14 @@ export function integrationsRuntimeFromEnv(
   const over: Partial<IntegrationsRuntime> = {};
   if (env.INTEGRATIONS_API_ORIGIN) over.apiOrigin = env.INTEGRATIONS_API_ORIGIN;
   if (env.INTEGRATIONS_WEB_ORIGIN) over.webOrigin = env.INTEGRATIONS_WEB_ORIGIN;
+  // Shared dev KEK so apps/worker (token refresh) can decrypt what the API sealed. Same key id as the worker.
+  // Ignored unless it decodes to exactly 32 bytes; the random per-process key stays the default.
+  const kek = env.INTEGRATIONS_TOKEN_KEK?.trim();
+  if (kek) {
+    const buf = Buffer.from(kek, 'base64');
+    if (buf.length === 32)
+      over.cipher = new TokenCipher(new LocalKeyProvider({ shared: buf }, 'shared'));
+  }
   const g = {
     appId: env.GITHUB_APP_ID,
     appSlug: env.GITHUB_APP_SLUG,
