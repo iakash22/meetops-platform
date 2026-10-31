@@ -1,4 +1,9 @@
-import { discardConfirmMessage, heldMessage } from '../../src/lib/drain.js';
+import {
+  discardConfirmMessage,
+  HELD_FULL_START_MESSAGE,
+  HELD_NEAR_FULL_MESSAGE,
+  heldMessage,
+} from '../../src/lib/drain.js';
 import { memo, useId, type ReactNode } from 'react';
 import type { AuthStatus } from '../../src/lib/auth/messages.js';
 import {
@@ -293,6 +298,16 @@ export function RecorderView(p: RecorderViewProps) {
           {...(p.onCancelDiscard ? { onCancel: p.onCancelDiscard } : {})}
         />
       )}
+      {!active && status.heldBlocksStart && (
+        <p className="mo-hint" role="status" aria-label="Start blocked">
+          {HELD_FULL_START_MESSAGE}
+        </p>
+      )}
+      {!active && !status.heldBlocksStart && status.heldNearFull && (
+        <p className="mo-hint" role="status" aria-label="Storage nearly full">
+          {HELD_NEAR_FULL_MESSAGE}
+        </p>
+      )}
       {status.storageWarning && (
         <div className="mo-callout mo-callout--warning" role="alert" aria-label="Storage warning">
           <p>{status.storageWarning}</p>
@@ -315,6 +330,7 @@ export function RecorderView(p: RecorderViewProps) {
           consent={consent}
           emphasis={p.emphasis}
           starting={p.starting ?? false}
+          blocked={status.heldBlocksStart === true}
           onConsentChange={p.onConsentChange}
           onRecord={p.onRecord}
         />
@@ -336,6 +352,8 @@ export const ConsentGate = memo(function ConsentGate(p: {
   consent: ConsentState;
   emphasis: 'primary' | 'secondary';
   starting: boolean;
+  /** Held recordings fill local storage: Start is disabled. */
+  blocked?: boolean;
   onConsentChange: (checked: boolean) => void;
   onRecord: () => void;
 }) {
@@ -362,7 +380,7 @@ export const ConsentGate = memo(function ConsentGate(p: {
       <button
         type="button"
         className={`mo-btn mo-btn--${p.emphasis}`}
-        disabled={!confirmed || p.starting}
+        disabled={!confirmed || p.starting || p.blocked === true}
         aria-describedby={confirmed ? undefined : `${id}-hint`}
         onClick={p.onRecord}
       >

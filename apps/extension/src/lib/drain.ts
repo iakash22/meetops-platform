@@ -83,6 +83,9 @@ export interface HeldSummary {
   closed: number;
   /** The local storage cap was hit while recordings were held. */
   storageFull?: boolean;
+  /** Pending bytes of held recordings, and the local storage cap they count against. */
+  bytes?: number;
+  capBytes?: number;
 }
 
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
@@ -106,8 +109,32 @@ export function heldMessage(h: HeldSummary): string {
             `upload). ${retryable === 1 ? 'It is' : 'They are'} kept on this device; press Retry upload to try ` +
             'again, or Discard.',
     );
+  if (h.storageFull && retryable === 0)
+    parts.push('Local storage is full: discard to free space for new recordings.');
   return parts.join(' ');
 }
+
+/** Warn before recording once held data uses this share of the local cap. */
+export const HELD_WARN_RATIO = 0.8;
+/** Room a new recording needs at minimum (a few chunks); less than this left after held data blocks Start. */
+export const MIN_FREE_FOR_RECORDING_BYTES = 8 * 1024 * 1024;
+
+export type HeldStorage = 'ok' | 'near-full' | 'full';
+
+/** How held data limits a new recording: 'full' blocks Start, 'near-full' warns. */
+export function heldStorageLevel(h: Pick<HeldSummary, 'bytes' | 'capBytes'>): HeldStorage {
+  const bytes = h.bytes ?? 0;
+  const cap = h.capBytes ?? 0;
+  if (!cap || !bytes) return 'ok';
+  if (cap - bytes < Math.min(MIN_FREE_FOR_RECORDING_BYTES, cap * 0.05)) return 'full';
+  return bytes >= cap * HELD_WARN_RATIO ? 'near-full' : 'ok';
+}
+
+export const HELD_NEAR_FULL_MESSAGE =
+  'Held recordings are using most of the local storage. A new recording may run out of space: retry or discard ' +
+  'them first.';
+export const HELD_FULL_START_MESSAGE =
+  'Local storage is full of held recordings. Retry upload or discard them before starting a new recording.';
 
 /** Confirmation shown before held recordings are deleted. */
 export const discardConfirmMessage = (n: number) =>
@@ -115,7 +142,12 @@ export const discardConfirmMessage = (n: number) =>
 
 export async function summarizeHeld(store: ChunkStore): Promise<HeldSummary> {
   const held = await listHeldSessions(store);
-  return { count: held.length, closed: held.filter((s) => s.held?.closed).length };
+  return {
+    count: held.length,
+    closed: held.filter((s) => s.held?.closed).length,
+    bytes: held.length ? await store.heldBytes() : 0,
+    capBytes: store.config.maxBytes,
+  };
 }
 
 /**

@@ -189,6 +189,17 @@ export class ChunkStore {
     return all.sort((a, b) => a.createdAt - b.createdAt || a.seq - b.seq);
   }
 
+  /** Bytes of not-yet-uploaded chunks belonging to held (server-refused, not completed) sessions. */
+  async heldBytes(): Promise<number> {
+    const held = new Set(
+      (await this.listSessions()).filter((s) => s.held && !s.completed).map((s) => s.sessionId),
+    );
+    if (!held.size) return 0;
+    return (await this.listChunks())
+      .filter((c) => !c.uploaded && held.has(c.sessionId))
+      .reduce((n, c) => n + c.size, 0);
+  }
+
   async totalBytes(): Promise<number> {
     return (await this.listChunks()).reduce((n, c) => n + c.size, 0);
   }
@@ -219,7 +230,10 @@ export class ChunkStore {
         .filter((s) => s.held && !s.completed)
         .map((s) => s.sessionId),
     );
-    const evictable = existing.filter((x) => x.uploaded || !heldIds.has(x.sessionId));
+    // A recording never evicts its own earlier pending chunks either: that would silently cut its own audio.
+    const evictable = existing.filter(
+      (x) => x.uploaded || (!heldIds.has(x.sessionId) && x.sessionId !== c.sessionId),
+    );
     const evictableBytes = evictable.reduce((n, x) => n + x.size, 0);
     let evictedCount = 0;
     let evictedBytes = 0;
