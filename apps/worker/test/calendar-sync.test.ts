@@ -3,6 +3,7 @@ import type { CalendarSyncEventInput, CalendarSyncSecrets } from '@meetops/datab
 import {
   CALENDAR_SYNC_DEFAULTS,
   calendarSyncBackoffMs,
+  calendarSyncNextMs,
   loadCalendarSyncEnv,
   runCalendarSyncSweep,
   startCalendarSyncScheduler,
@@ -90,6 +91,7 @@ describe('runCalendarSyncSweep', () => {
       providers: { google: p },
       log: l,
       now: () => NOW,
+      random: () => 0.5,
     });
     expect(r).toEqual({ synced: 1, failed: 0, skipped: 0, upserted: 2, cancelled: 1 });
     expect(p.refresh).not.toHaveBeenCalled();
@@ -105,7 +107,7 @@ describe('runCalendarSyncSweep', () => {
       from: new Date(NOW - DAY),
       to: new Date(NOW + 30 * DAY),
       now: new Date(NOW),
-      nextSyncAt: new Date(NOW + CALENDAR_SYNC_DEFAULTS.intervalMs),
+      nextSyncAt: new Date(NOW + 1.05 * CALENDAR_SYNC_DEFAULTS.intervalMs),
     });
   });
 
@@ -114,7 +116,13 @@ describe('runCalendarSyncSweep', () => {
       { id: C1, s: secrets({ accessTokenExpiresAt: new Date(NOW + 60_000) }) },
     ]);
     const p = provider();
-    await runCalendarSyncSweep({ repo, providers: { google: p }, log: log(), now: () => NOW });
+    await runCalendarSyncSweep({
+      repo,
+      providers: { google: p },
+      log: log(),
+      now: () => NOW,
+      random: () => 0.5,
+    });
     expect(p.refresh).toHaveBeenCalledWith('refresh-placeholder');
     expect(calls.tokens).toEqual([
       [
@@ -137,6 +145,7 @@ describe('runCalendarSyncSweep', () => {
       providers: { google: p },
       log: log(),
       now: () => NOW,
+      random: () => 0.5,
       config: { maxEvents: 3 },
     });
     expect(calls.applied[0]!.complete).toBe(false);
@@ -158,6 +167,7 @@ describe('runCalendarSyncSweep', () => {
       providers: { google: p },
       log: l,
       now: () => NOW,
+      random: () => 0.5,
     });
     expect(r.failed).toBe(1);
     expect(calls.errors).toEqual([C1]);
@@ -175,11 +185,58 @@ describe('runCalendarSyncSweep', () => {
         throw Object.assign(new Error('rate limited'), { status: 429 });
       }),
     });
-    await runCalendarSyncSweep({ repo, providers: { google: p }, log: log(), now: () => NOW });
+    await runCalendarSyncSweep({
+      repo,
+      providers: { google: p },
+      log: log(),
+      now: () => NOW,
+      random: () => 0.5,
+    });
     expect(calls.errors).toEqual([]);
     expect(calls.failures).toEqual([
       [C1, { syncFailures: 3, nextSyncAt: new Date(NOW + 4 * CALENDAR_SYNC_DEFAULTS.intervalMs) }],
     ]);
+  });
+
+  it('L-2: Google 403 rateLimitExceeded / userRateLimitExceeded back off instead of marking error', async () => {
+    for (const code of ['rate_limited']) {
+      const { repo, calls } = makeRepo([{ id: C1, s: secrets() }]);
+      const p = provider({
+        listEvents: vi.fn(async () => {
+          throw Object.assign(new Error('Calendar provider failed: rate_limited (403)'), {
+            name: 'CalendarProviderError',
+            code,
+            status: 403,
+          });
+        }),
+      });
+      await runCalendarSyncSweep({
+        repo,
+        providers: { google: p },
+        log: log(),
+        now: () => NOW,
+        random: () => 0.5,
+      });
+      expect(calls.errors).toEqual([]);
+      expect(calls.failures).toEqual([
+        [C1, { syncFailures: 1, nextSyncAt: new Date(NOW + CALENDAR_SYNC_DEFAULTS.intervalMs) }],
+      ]);
+    }
+    // A plain 403 (no rate-limit reason) is still a permanent auth failure.
+    const { repo, calls } = makeRepo([{ id: C1, s: secrets() }]);
+    const p = provider({
+      listEvents: vi.fn(async () => {
+        throw Object.assign(new Error('x'), { code: 'http_error', status: 403 });
+      }),
+    });
+    await runCalendarSyncSweep({
+      repo,
+      providers: { google: p },
+      log: log(),
+      now: () => NOW,
+      random: () => 0.5,
+    });
+    expect(calls.errors).toEqual([C1]);
   });
 
   it('a refresh invalid_grant is permanent', async () => {
@@ -189,7 +246,13 @@ describe('runCalendarSyncSweep', () => {
         throw Object.assign(new Error('x'), { code: 'invalid_grant' });
       }),
     });
-    await runCalendarSyncSweep({ repo, providers: { google: p }, log: log(), now: () => NOW });
+    await runCalendarSyncSweep({
+      repo,
+      providers: { google: p },
+      log: log(),
+      now: () => NOW,
+      random: () => 0.5,
+    });
     expect(calls.errors).toEqual([C1]);
     expect(p.listEvents).not.toHaveBeenCalled();
   });
@@ -211,6 +274,7 @@ describe('runCalendarSyncSweep', () => {
       providers: { google: p },
       log: log(),
       now: () => NOW,
+      random: () => 0.5,
     });
     expect(r).toMatchObject({ synced: 0, failed: 1, skipped: 2 });
     expect(calls.failures[0]![0]).toBe(C1);
@@ -224,7 +288,13 @@ describe('runCalendarSyncSweep', () => {
       }),
     });
     const l = log();
-    await runCalendarSyncSweep({ repo, providers: { google: p }, log: l, now: () => NOW });
+    await runCalendarSyncSweep({
+      repo,
+      providers: { google: p },
+      log: l,
+      now: () => NOW,
+      random: () => 0.5,
+    });
     const logged = JSON.stringify([...l.warn.mock.calls, ...l.info.mock.calls]);
     expect(logged).not.toContain('placeholder');
   });
@@ -236,6 +306,7 @@ describe('runCalendarSyncSweep', () => {
       providers: { google: provider() },
       log: log(),
       now: () => NOW,
+      random: () => 0.5,
       config: { pastMs: 30 * DAY, futureMs: 60 * DAY },
     });
     const a = calls.applied[0]!;
@@ -246,9 +317,31 @@ describe('runCalendarSyncSweep', () => {
 describe('helpers', () => {
   it('backoff doubles from the interval and is capped', () => {
     const cfg = CALENDAR_SYNC_DEFAULTS;
-    expect(calendarSyncBackoffMs(1, cfg)).toBe(cfg.intervalMs);
-    expect(calendarSyncBackoffMs(3, cfg)).toBe(4 * cfg.intervalMs);
-    expect(calendarSyncBackoffMs(50, cfg)).toBe(cfg.maxBackoffMs);
+    const mid = () => 0.5;
+    expect(calendarSyncBackoffMs(1, cfg, mid)).toBe(cfg.intervalMs);
+    expect(calendarSyncBackoffMs(3, cfg, mid)).toBe(4 * cfg.intervalMs);
+    expect(calendarSyncBackoffMs(50, cfg, mid)).toBe(cfg.maxBackoffMs);
+  });
+
+  it('L-1: jitters backoff to 80-120% and the healthy cadence to 100-110%', () => {
+    const cfg = CALENDAR_SYNC_DEFAULTS;
+    expect(calendarSyncBackoffMs(3, cfg, () => 0)).toBe(Math.round(0.8 * 4 * cfg.intervalMs));
+    expect(calendarSyncBackoffMs(3, cfg, () => 0.999999)).toBeLessThanOrEqual(
+      1.2 * 4 * cfg.intervalMs,
+    );
+    expect(calendarSyncBackoffMs(3, cfg, () => 0.999999)).toBeGreaterThan(
+      1.19 * 4 * cfg.intervalMs,
+    );
+    expect(calendarSyncNextMs(cfg, () => 0)).toBe(cfg.intervalMs);
+    expect(calendarSyncNextMs(cfg, () => 0.999999)).toBeGreaterThan(1.09 * cfg.intervalMs);
+    // Bad random values never produce NaN dates.
+    expect(Number.isFinite(calendarSyncBackoffMs(2, cfg, () => NaN))).toBe(true);
+    // Real Math.random stays inside the band.
+    for (let i = 0; i < 50; i++) {
+      const v = calendarSyncBackoffMs(2, cfg);
+      expect(v).toBeGreaterThanOrEqual(0.8 * 2 * cfg.intervalMs);
+      expect(v).toBeLessThanOrEqual(1.2 * 2 * cfg.intervalMs);
+    }
   });
 
   it('is off by default and parses/clamps env', () => {

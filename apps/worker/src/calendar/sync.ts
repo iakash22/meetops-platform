@@ -79,6 +79,8 @@ export interface CalendarSyncDeps {
   log: CalendarSyncLog;
   config?: Partial<CalendarSyncConfig>;
   now?: () => number;
+  /** Jitter source in [0, 1) (default Math.random); injected in tests. */
+  random?: () => number;
 }
 
 export interface CalendarSyncResult {
@@ -107,6 +109,8 @@ const REFRESH_SKEW_MS = 120_000;
 export function isPermanentCalendarError(err: unknown): boolean {
   const code = (err as { code?: unknown } | null)?.code;
   const status = (err as { status?: unknown } | null)?.status;
+  // Google answers quota exhaustion (rateLimitExceeded / userRateLimitExceeded) with 403: back off, keep the grant.
+  if (code === 'rate_limited' || code === 'rate_limit_exceeded') return false;
   return (
     code === 'invalid_grant' ||
     code === 'missing_refresh_token' ||
@@ -116,11 +120,26 @@ export function isPermanentCalendarError(err: unknown): boolean {
   );
 }
 
-/** Exponential backoff from the interval: interval * 2^(failures-1), capped. */
-export function calendarSyncBackoffMs(failures: number, cfg: CalendarSyncConfig): number {
+/**
+ * Exponential backoff from the interval: interval * 2^(failures-1), capped, then jittered to 80-120% (`random` in
+ * [0, 1)) so connections that failed together (e.g. a provider outage) do not retry in lockstep.
+ */
+export function calendarSyncBackoffMs(
+  failures: number,
+  cfg: CalendarSyncConfig,
+  random: () => number = Math.random,
+): number {
   const n = Math.min(Math.max(failures, 1), 20);
-  return Math.min(cfg.intervalMs * 2 ** (n - 1), cfg.maxBackoffMs);
+  const base = Math.min(cfg.intervalMs * 2 ** (n - 1), cfg.maxBackoffMs);
+  return Math.round(base * (0.8 + 0.4 * clamp01(random())));
 }
+
+/** Healthy cadence with up to +10% jitter, so syncs spread out instead of bunching on the same tick. */
+export function calendarSyncNextMs(cfg: CalendarSyncConfig, random: () => number = Math.random) {
+  return Math.round(cfg.intervalMs * (1 + 0.1 * clamp01(random())));
+}
+
+const clamp01 = (x: number) => (Number.isFinite(x) ? Math.min(Math.max(x, 0), 0.999999) : 0.5);
 
 function errInfo(err: unknown) {
   const e = err as { name?: unknown; code?: unknown; status?: unknown } | null;
@@ -187,7 +206,7 @@ export async function runCalendarSyncSweep(deps: CalendarSyncDeps): Promise<Cale
         events,
         complete: events.length < cfg.maxEvents,
         now,
-        nextSyncAt: new Date(nowMs + cfg.intervalMs),
+        nextSyncAt: new Date(nowMs + calendarSyncNextMs(cfg, deps.random)),
       });
       if (!r.applied) {
         result.skipped++;
@@ -206,7 +225,7 @@ export async function runCalendarSyncSweep(deps: CalendarSyncDeps): Promise<Cale
         else
           await deps.repo.recordFailure(d.organizationId, d.id, {
             syncFailures: next,
-            nextSyncAt: new Date(nowMs + calendarSyncBackoffMs(next, cfg)),
+            nextSyncAt: new Date(nowMs + calendarSyncBackoffMs(next, cfg, deps.random)),
           });
       } catch {
         // the next sweep retries

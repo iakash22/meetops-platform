@@ -10,6 +10,7 @@ import {
   GoogleCalendarProvider,
   InMemoryOAuthStateStore,
   assertCalendarWindow,
+  googleApiErrorCode,
 } from '../src/index.js';
 import { ORG, OTHER_ORG } from './helpers.js';
 
@@ -228,6 +229,47 @@ describe('GoogleCalendarProvider', () => {
     expect(err).toBeInstanceOf(CalendarProviderError);
     expect(err.message).not.toContain('secret detail');
     expect(err.code).toBe('invalid_grant');
+  });
+
+  it('#324 L-2: Google 403 quota reasons map to rate_limited; other 403s stay http_error', async () => {
+    for (const reason of ['rateLimitExceeded', 'userRateLimitExceeded']) {
+      const { p } = provider([
+        {
+          status: 403,
+          body: {
+            error: {
+              code: 403,
+              message: 'quota detail',
+              errors: [{ reason, domain: 'usageLimits' }],
+            },
+          },
+        },
+      ]);
+      const err = await p
+        .listEvents({
+          accessToken: 'a',
+          timeMin: '2026-11-01T00:00:00Z',
+          timeMax: '2026-11-02T00:00:00Z',
+        })
+        .catch((e: unknown) => e as CalendarProviderError);
+      expect(err).toMatchObject({ code: 'rate_limited', status: 403 });
+      expect(err.message).not.toContain('quota detail');
+    }
+    const { p } = provider([
+      { status: 403, body: { error: { code: 403, errors: [{ reason: 'forbidden' }] } } },
+    ]);
+    const err = await p
+      .listEvents({
+        accessToken: 'a',
+        timeMin: '2026-11-01T00:00:00Z',
+        timeMax: '2026-11-02T00:00:00Z',
+      })
+      .catch((e: unknown) => e as CalendarProviderError);
+    expect(err).toMatchObject({ code: 'http_error', status: 403 });
+    expect(googleApiErrorCode({ details: [{ reason: 'userRateLimitExceeded' }] })).toBe(
+      'rate_limited',
+    );
+    expect(googleApiErrorCode(null)).toBe('http_error');
   });
 });
 
