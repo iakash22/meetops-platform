@@ -1,4 +1,5 @@
 import {
+  BarChart3,
   Bell,
   CalendarDays,
   Search,
@@ -19,6 +20,7 @@ export type NavItem = {
     | '/tasks'
     | '/calendar'
     | '/search'
+    | '/analytics'
     | '/notifications'
     | '/projects'
     | '/organization/members'
@@ -34,6 +36,7 @@ export const navItems: NavItem[] = [
   { to: '/tasks', label: 'Tasks', icon: CheckSquare },
   { to: '/calendar', label: 'Calendar', icon: CalendarDays },
   { to: '/search', label: 'Search', icon: Search },
+  { to: '/analytics', label: 'Analytics', icon: BarChart3 },
   { to: '/notifications', label: 'Notifications', icon: Bell },
   { to: '/projects', label: 'Projects', icon: FolderKanban },
   { to: '/organization/members', label: 'Members', icon: Users },
