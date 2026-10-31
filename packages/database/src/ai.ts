@@ -110,6 +110,45 @@ export function createAiUsageCounterRepository(options: RepositoryOptions = {}) 
         return rows[0]?.total ?? '0';
       });
     },
+
+    /**
+     * Totals for one provider over `day` buckets starting on or after `since` (UTC date).
+     * Used by the AI quota manager (daily and month-to-date limits).
+     */
+    providerTotalsSince(
+      organizationId: string,
+      provider: string,
+      since: Date | string,
+      periodKind: AiUsagePeriodKind = 'day',
+    ): Promise<AiUsageCounterTotals> {
+      return run(organizationId, async (tx) => {
+        const rows = await tx.$queryRaw<
+          {
+            requests: bigint;
+            input_tokens: string;
+            output_tokens: string;
+            audio_seconds: string;
+            cost_usd: string;
+          }[]
+        >`
+          SELECT COALESCE(SUM("requests"), 0)::bigint AS "requests",
+                 COALESCE(SUM("input_tokens"), 0)::text AS "input_tokens",
+                 COALESCE(SUM("output_tokens"), 0)::text AS "output_tokens",
+                 COALESCE(SUM("audio_seconds"), 0)::text AS "audio_seconds",
+                 COALESCE(SUM("cost_usd"), 0)::text AS "cost_usd"
+          FROM "ai_usage_counters"
+          WHERE "org_id" = ${organizationId}::uuid AND "provider" = ${provider}
+            AND "period_kind" = ${periodKind}::"AiUsagePeriodKind" AND "period_start" >= ${isoDate(since)}::date`;
+        const r = rows[0];
+        return {
+          requests: Number(r?.requests ?? 0),
+          inputTokens: BigInt(r?.input_tokens ?? '0'),
+          outputTokens: BigInt(r?.output_tokens ?? '0'),
+          audioSeconds: r?.audio_seconds ?? '0',
+          costUsd: r?.cost_usd ?? '0',
+        };
+      });
+    },
   };
 }
 
@@ -154,6 +193,55 @@ export function createAiIdempotencyRepository(options: RepositoryOptions = {}) {
         const n = await tx.$executeRaw`
           UPDATE "ai_idempotency" SET "status" = ${status}::"AiIdempotencyStatus", "result_ref" = ${resultRef ?? null}
           WHERE "org_id" = ${organizationId}::uuid AND "key" = ${key} AND "status" = 'pending'`;
+        return n === 1;
+      });
+    },
+
+    /**
+     * Store a succeeded result for `key` (upsert), valid for `ttlMs`. `result` is opaque text (the
+     * worker stores serialized JSON). Overwrites a pending claim or an earlier result.
+     */
+    storeResult(organizationId: string, key: string, result: string, ttlMs: number): Promise<void> {
+      if (!Number.isFinite(ttlMs) || ttlMs <= 0) throw new RangeError('ttlMs must be > 0');
+      return run(organizationId, async (tx) => {
+        const secs = ttlMs / 1000;
+        await tx.$executeRaw`
+          INSERT INTO "ai_idempotency" ("org_id", "key", "status", "result_ref", "created_at", "expires_at")
+          VALUES (${organizationId}::uuid, ${key}, 'succeeded', ${result}, now(), now() + make_interval(secs => ${secs}::float8))
+          ON CONFLICT ("org_id", "key") DO UPDATE SET
+            "status" = 'succeeded', "result_ref" = EXCLUDED."result_ref",
+            "created_at" = EXCLUDED."created_at", "expires_at" = EXCLUDED."expires_at"`;
+      });
+    },
+
+    /** The stored result for a succeeded, unexpired key; undefined otherwise. */
+    getResult(organizationId: string, key: string): Promise<string | undefined> {
+      return run(organizationId, async (tx) => {
+        const rows = await tx.$queryRaw<{ result_ref: string | null }[]>`
+          SELECT "result_ref" FROM "ai_idempotency"
+          WHERE "org_id" = ${organizationId}::uuid AND "key" = ${key}
+            AND "status" = 'succeeded' AND "expires_at" > now()`;
+        return rows[0]?.result_ref ?? undefined;
+      });
+    },
+
+    /** Delete a pending claim (the job did not succeed) so a retry can claim it. */
+    release(organizationId: string, key: string): Promise<boolean> {
+      return run(organizationId, async (tx) => {
+        const n = await tx.$executeRaw`
+          DELETE FROM "ai_idempotency"
+          WHERE "org_id" = ${organizationId}::uuid AND "key" = ${key} AND "status" = 'pending'`;
+        return n === 1;
+      });
+    },
+
+    /** Delete an expired, finished (succeeded/failed) row so the key can be claimed again. */
+    purgeExpired(organizationId: string, key: string): Promise<boolean> {
+      return run(organizationId, async (tx) => {
+        const n = await tx.$executeRaw`
+          DELETE FROM "ai_idempotency"
+          WHERE "org_id" = ${organizationId}::uuid AND "key" = ${key}
+            AND "status" <> 'pending' AND "expires_at" < now()`;
         return n === 1;
       });
     },

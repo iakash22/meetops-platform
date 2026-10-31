@@ -115,6 +115,7 @@ These keys are owned and parsed by `@meetops/ai-core` (`loadAIEnv` in `packages/
 - `DEEPGRAM_ENABLED`: false
 - `DEEPGRAM_API_KEY`
 - `AI_ALLOW_PAID_FALLBACK`: false
+- `AI_STORES` (worker): `durable` (default; Postgres `ai_usage_counters` + `ai_idempotency`, forced RLS). `memory` is for unit tests only and is refused when `NODE_ENV=production`; store errors fail the job, never fall back to memory.
 - `AI_REQUIRE_PROVIDER_APPROVAL`: true
 
 ### Integrations

@@ -1,6 +1,11 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { Value } from '@sinclair/typebox/value';
-import { ApiErrorEnvelope, Meeting, ResolveMeetingResponse } from '@meetops/contracts';
+import {
+  ApiErrorEnvelope,
+  ListMeetingsResponse,
+  Meeting,
+  ResolveMeetingResponse,
+} from '@meetops/contracts';
 import { InMemoryAuditLog } from '../src/modules/auth/domain/audit.js';
 import { SessionVerifier } from '../src/modules/auth/application/session-verifier.js';
 import {
@@ -197,6 +202,68 @@ describe('meetings module (list, detail, resolve, meeting access)', () => {
     expect(one.statusCode).toBe(200);
     expect(Value.Check(Meeting, one.json())).toBe(true);
     expect(one.json()).toMatchObject({ id, organizationId: org, title: 'M4', createdById: null });
+  });
+
+  it('list honours ?source within the org only, pages per filter, rejects bad or unsupported filters', async () => {
+    const { viewer, other, org, otherOrg } = await world();
+    const t0 = Date.parse('2026-10-01T00:00:00Z');
+    for (let i = 0; i < 3; i++)
+      meetings.seed({
+        organizationId: org,
+        title: `D${i}`,
+        source: 'desktop',
+        createdAt: new Date(t0 + i * 1000),
+      });
+    meetings.seed({
+      organizationId: org,
+      title: 'U0',
+      source: 'upload',
+      createdAt: new Date(t0 + 5000),
+    });
+    meetings.seed({
+      organizationId: org,
+      title: 'Dgone',
+      source: 'desktop',
+      deletedAt: new Date(),
+    });
+    meetings.seed({ organizationId: otherOrg, title: 'theirs', source: 'desktop' });
+
+    const titles = (r: { json(): { items: { title: string }[] } }) =>
+      r.json().items.map((m) => m.title);
+    const all = await viewer.get(`/orgs/${org}/meetings`);
+    expect(Value.Check(ListMeetingsResponse, all.json())).toBe(true);
+    expect(titles(all)).toEqual(['U0', 'D2', 'D1', 'D0']);
+
+    const p1 = await viewer.get(`/orgs/${org}/meetings?source=desktop&limit=2`);
+    expect(p1.statusCode).toBe(200);
+    expect(Value.Check(ListMeetingsResponse, p1.json())).toBe(true);
+    expect(titles(p1)).toEqual(['D2', 'D1']);
+    const p2 = await viewer.get(
+      `/orgs/${org}/meetings?source=desktop&limit=2&cursor=${p1.json().nextCursor}`,
+    );
+    expect(titles(p2)).toEqual(['D0']);
+    expect(p2.json().nextCursor).toBeNull();
+    expect(titles(await viewer.get(`/orgs/${org}/meetings?source=bot`))).toEqual([]);
+
+    // Cross-org: never another org's rows, and a non-member gets the same 404 as an unknown org.
+    expect(titles(await viewer.get(`/orgs/${org}/meetings?source=desktop`))).not.toContain(
+      'theirs',
+    );
+    expect((await other.get(`/orgs/${org}/meetings?source=desktop`)).statusCode).toBe(404);
+    expect(titles(await other.get(`/orgs/${otherOrg}/meetings?source=desktop`))).toEqual([
+      'theirs',
+    ]);
+
+    for (const qs of [
+      'source=phone',
+      'source=',
+      'source=Desktop',
+      'status=completed',
+      'organizationId=x',
+    ])
+      expect(errorOf(await viewer.get(`/orgs/${org}/meetings?${qs}`)).code).toBe(
+        'VALIDATION_FAILED',
+      );
   });
 
   it('tenant isolation: other-org, deleted and missing meetings return an identical 404', async () => {
