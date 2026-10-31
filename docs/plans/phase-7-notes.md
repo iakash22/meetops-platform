@@ -42,3 +42,20 @@
   `rateLimitExceeded` / `userRateLimitExceeded` surface as `rate_limited` and back off instead of marking the
   connection `error`; disconnect purges the connection's cached `calendar_events` in the same transaction through the
   SECURITY DEFINER `calendar_events_purge_for_connection()` (org-context checked, revoked connections only).
+
+## Calendar event ↔ meeting links (P7)
+
+- **Storage** (`20261031030000_calendar_event_links`): `calendar_event_links` keyed by (org, connection, provider event
+  id), so links work for live-read and worker-synced events alike. Forced RLS (ADR-010), composite tenant FKs to
+  `calendar_connections` and `meetings` (a link can't cross organizations), cascade on hard delete. Unlink is a real
+  DELETE; disconnecting the calendar drops the connection's links.
+- **API**: `PUT|DELETE /orgs/:org/calendar/connections/:connectionId/events/:eventId/link` (body `{ meetingId }`).
+  Only the owner of the connection, and only roles that may create meetings (viewers get 403). Unknown, other-org and
+  soft-deleted meetings give the same 404; another user's or a revoked connection gives 404. Audited as
+  `calendar.link` / `calendar.unlink` (ids only).
+- **Auto-match** (read-only, never stored): `GET .../calendar/events` adds `meetingId` for linked events and, for
+  unlinked events with a conference URL, `suggestedMeetingId` when exactly one live meeting of the org has the external
+  call id that meetings/resolve derives from that URL. No time-window guessing and no automatic writes: a human
+  confirms the link. Links to soft-deleted meetings are hidden.
+- **Not in this PR**: web UI for link/suggest, linking from the meeting side (list events of a meeting), worker-side
+  auto-linking on sync.

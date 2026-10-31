@@ -5,10 +5,13 @@ import {
   CalendarCallbackParams,
   CalendarCallbackQuery,
   CalendarConnectionParams,
+  CalendarEventLink,
+  CalendarEventLinkParams,
   CalendarEventList,
   CalendarProviderList,
   ConnectCalendarRequest,
   ConnectCalendarResponse,
+  LinkCalendarEventRequest,
   ListCalendarEventsQuery,
   type CalendarProviderId,
 } from '@meetops/contracts';
@@ -25,7 +28,13 @@ import { selectIntegrationsRuntime, type IntegrationsModuleDeps } from '../integ
 import { InMemoryCalendarConnections } from './in-memory.repository.js';
 import { PrismaCalendarConnections } from './prisma.repository.js';
 import { createCalendarSyncRepository } from '@meetops/database';
-import type { CalendarConnectionsRepository, SyncedCalendarStore } from './ports.js';
+import type {
+  CalendarConnectionsRepository,
+  CalendarEventLinksRepository,
+  SyncedCalendarStore,
+} from './ports.js';
+import { InMemoryCalendarEventLinks, PrismaCalendarEventLinks } from './links.repository.js';
+import { InMemoryMeetingRepository } from '../meetings/infrastructure/in-memory.repository.js';
 import { CalendarService, type CalendarAuditFn } from './service.js';
 
 export { CALENDAR_PATHS };
@@ -40,7 +49,21 @@ export type CalendarModuleDeps = IntegrationsModuleDeps & {
   calendarConnections?: CalendarConnectionsRepository;
   /** Read-through store for worker-synced events (tests inject one; Prisma when CALENDAR_SYNC_ENABLED=true). */
   calendarSyncStore?: SyncedCalendarStore;
+  /** Calendar event -> meeting links (tests may inject one). */
+  calendarEventLinks?: CalendarEventLinksRepository;
 };
+
+/** Prisma with a database; in dev/test, an in-memory store over the in-memory meetings; otherwise links are off. */
+export function selectCalendarEventLinks(
+  deps: CalendarModuleDeps,
+): CalendarEventLinksRepository | undefined {
+  if (deps.calendarEventLinks) return deps.calendarEventLinks;
+  if (deps.db) return new PrismaCalendarEventLinks(deps.db);
+  const m = deps.meetings;
+  if (m instanceof InMemoryMeetingRepository)
+    return new InMemoryCalendarEventLinks(() => m.rows.values());
+  return undefined;
+}
 
 /** Off by default: only CALENDAR_SYNC_ENABLED=true (with a database) serves synced events. */
 export function selectCalendarSyncStore(
@@ -81,6 +104,8 @@ export default async function calendarModule(
     selectCalendarRepository(deps, process.env.NODE_ENV, runtime),
     runtime,
     selectCalendarSyncStore(deps),
+    undefined,
+    selectCalendarEventLinks(deps),
   );
   const g = makeGuards(auth, deps.security);
   const access = new DirectoryAccess(organizations, deps.audit);
@@ -213,6 +238,65 @@ export default async function calendarModule(
         c.ctx.organizationId,
         c.ctx.userId,
         request.params.connectionId,
+        auditFor(c),
+      );
+      return reply.code(204).send();
+    },
+  );
+
+  /** Links one of MY events to a meeting of the org. Viewers (no Meeting create) get 403. */
+  app.put<{ Params: CalendarEventLinkParams; Body: LinkCalendarEventRequest }>(
+    CALENDAR_PATHS.eventLink,
+    {
+      schema: {
+        tags: ['calendar'],
+        summary: 'Link one of my calendar events to a meeting',
+        params: CalendarEventLinkParams,
+        body: LinkCalendarEventRequest,
+        response: { 200: CalendarEventLink, ...directoryWriteErrors },
+      },
+    },
+    async (request) => {
+      const c = await callerFor(request, request.params.organizationId);
+      organizations.authorize(c.ctx, 'create', 'Meeting');
+      const row = await service.link(
+        {
+          organizationId: c.ctx.organizationId,
+          userId: c.ctx.userId,
+          connectionId: request.params.connectionId,
+          eventId: request.params.eventId,
+          meetingId: request.body.meetingId,
+        },
+        auditFor(c),
+      );
+      return {
+        ...row,
+        createdAt: row.createdAt.toISOString(),
+        updatedAt: row.updatedAt.toISOString(),
+      };
+    },
+  );
+
+  app.delete<{ Params: CalendarEventLinkParams }>(
+    CALENDAR_PATHS.eventLink,
+    {
+      schema: {
+        tags: ['calendar'],
+        summary: 'Unlink one of my calendar events from its meeting',
+        params: CalendarEventLinkParams,
+        response: { 204: Type.Null(), ...directoryWriteErrors },
+      },
+    },
+    async (request, reply) => {
+      const c = await callerFor(request, request.params.organizationId);
+      organizations.authorize(c.ctx, 'create', 'Meeting');
+      await service.unlink(
+        {
+          organizationId: c.ctx.organizationId,
+          userId: c.ctx.userId,
+          connectionId: request.params.connectionId,
+          eventId: request.params.eventId,
+        },
         auditFor(c),
       );
       return reply.code(204).send();
