@@ -7,7 +7,6 @@ import { InMemoryCalendarConnections } from '../src/modules/calendar/in-memory.r
 import {
   devIntegrationsRuntime,
   integrationsRuntimeFromEnv,
-  type IntegrationsRuntime,
 } from '../src/modules/integrations/runtime.js';
 import type { ModuleDeps } from '../src/modules/index.js';
 import { buildApp, signupAndLogin, type App, type Client } from './helpers.js';
@@ -67,7 +66,7 @@ describe('Phase 7 calendar', () => {
     }
   };
 
-  async function build(rtOver: Partial<IntegrationsRuntime> = {}) {
+  async function build(withGoogle = true) {
     app = await buildApp({
       calendarConnections: repo,
       audit,
@@ -75,8 +74,9 @@ describe('Phase 7 calendar', () => {
         apiOrigin: API,
         fetch: fetchFn,
         now: () => now,
-        googleCalendar: { clientId: 'gcal-client', clientSecret: async () => 'gcal-secret' },
-        ...rtOver,
+        ...(withGoogle
+          ? { googleCalendar: { clientId: 'gcal-client', clientSecret: async () => 'gcal-secret' } }
+          : {}),
       }),
     } as Partial<ModuleDeps>);
   }
@@ -199,7 +199,7 @@ describe('Phase 7 calendar', () => {
 
   it('answers 503 when the Google OAuth client is not configured, and never accepts an endpoint', async () => {
     await app.close();
-    await build({ googleCalendar: undefined });
+    await build(false);
     const c = await signupAndLogin(app, 'owner@example.com');
     const org = await createOrg(c, 'Acme');
     expect((await c.post(`/orgs/${org}/calendar/connect`, { provider: 'google' })).statusCode).toBe(
