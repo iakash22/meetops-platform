@@ -237,7 +237,9 @@ export const NotificationDeliveryJobPayload = Type.Object(
     userId: Id,
     notificationId: Id,
     channel: Type.Union(
-      (['in_app', 'email', 'web_push', 'mobile_push', 'desktop'] as const).map((c) => Type.Literal(c)),
+      (['in_app', 'email', 'web_push', 'mobile_push', 'desktop'] as const).map((c) =>
+        Type.Literal(c),
+      ),
     ),
     deliveryKey: Type.String({ minLength: 1, maxLength: 200, pattern: '^[A-Za-z0-9_:-]+$' }),
     requestId: Type.Optional(OpaqueId),
