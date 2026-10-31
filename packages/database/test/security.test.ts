@@ -106,7 +106,8 @@ const CALENDAR_CONNECTIONS_MIGRATION = '20261031000000_calendar_connections';
 const MEETING_SEARCH_MIGRATION = '20261031010000_meeting_search_fts';
 /** Phase 7 calendar background sync (calendar_events + sync cursor + due-for-sync definer function). */
 const CALENDAR_EVENTS_MIGRATION = '20261031020000_calendar_events';
-const LATEST_MIGRATION = CALENDAR_EVENTS_MIGRATION;
+const TASK_SYNC_MIGRATION = '20261031100000_task_sync_jobs';
+const LATEST_MIGRATION = TASK_SYNC_MIGRATION;
 const reportDedupeSql = readFileSync(
   resolve(migrationsDir, REPORT_SUMMARY_DEDUPE_MIGRATION, 'migration.sql'),
   'utf8',
@@ -124,8 +125,19 @@ const calendarEventsSql = readFileSync(
   resolve(migrationsDir, CALENDAR_EVENTS_MIGRATION, 'migration.sql'),
   'utf8',
 );
+/** Async task -> GitHub/Jira sync (task_sync_jobs, TASK_SYNC_ENABLED). */
+const taskSyncSql = readFileSync(
+  resolve(migrationsDir, '20261031100000_task_sync_jobs', 'migration.sql'),
+  'utf8',
+);
 const adr010Sql =
-  teamsSql + authTokensSql + integrationsSql + notificationsSql + calendarSql + calendarEventsSql;
+  teamsSql +
+  authTokensSql +
+  integrationsSql +
+  notificationsSql +
+  calendarSql +
+  calendarEventsSql +
+  taskSyncSql;
 /** Phase 3 per-recording transcript revision migration. */
 const TRANSCRIPT_REVISION_MIGRATION_DIR = '20261026200000_transcript_recording_revision';
 const consentSql = readFileSync(resolve(migrationsDir, CONSENT_MIGRATION, 'migration.sql'), 'utf8');
@@ -166,6 +178,7 @@ const ADR010_ONLY_TABLES: readonly string[] = [
   ...NOTIFICATION_TABLES,
   'calendar_connections',
   'calendar_events',
+  'task_sync_jobs',
 ];
 /** DB-3: append-only tenant tables with their own SELECT/INSERT policies (ADR-010 setting) in consentSql. */
 const CONSENT_TABLES: readonly string[] = ['consent_attestations'];
@@ -691,7 +704,7 @@ describe('schema conventions', () => {
   });
 
   it('every model uses a uuid primary key', () => {
-    expect(models).toHaveLength(42);
+    expect(models).toHaveLength(43);
     for (const m of models.filter((x) => !ORGANIZATION_KEYED.includes(x.table)))
       expect(m.body, m.name).toMatch(/^\s+id\s+String\s+@id @default\(uuid\(\)\) @db\.Uuid$/m);
   });
@@ -1557,8 +1570,8 @@ describe('ADR-013 notifications tables (static)', () => {
       .filter((x) => x.isDirectory())
       .map((x) => x.name)
       .sort();
-    expect(dirs.at(-8)).toBe(RELAY_BY_TYPE_MIGRATION);
-    expect(dirs.at(-9)).toBe(NOTIFICATIONS_MIGRATION);
+    expect(dirs.at(-9)).toBe(RELAY_BY_TYPE_MIGRATION);
+    expect(dirs.at(-10)).toBe(NOTIFICATIONS_MIGRATION);
     expect(statements).not.toMatch(
       /\bDROP\b|RENAME|ALTER COLUMN|NO FORCE|DISABLE ROW LEVEL SECURITY/i,
     );
