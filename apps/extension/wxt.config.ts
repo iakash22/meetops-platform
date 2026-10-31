@@ -13,9 +13,23 @@ export default defineConfig({
   outDir: 'dist',
   manifestVersion: 3,
   manifest: ({ mode }) => buildManifest(origins(mode).webOrigin),
-  vite: ({ mode }) => {
+  vite: ({ mode, command }) => {
     const { webOrigin, apiOrigin } = origins(mode);
     return {
+      // WXT hard-codes server.watch on the internal vite server it uses to import entrypoints, so `wxt prepare`
+      // (run by lint/typecheck/postinstall) opens a chokidar watcher and fails with ENOSPC when inotify watches
+      // are exhausted. Outside `wxt dev`, nothing needs watching: null tells vite to skip the watcher.
+      plugins:
+        command === 'serve'
+          ? []
+          : [
+              {
+                name: 'meetops:no-watch-outside-dev',
+                config(config) {
+                  config.server = { ...config.server, watch: null };
+                },
+              },
+            ],
       define: {
         'import.meta.env.WXT_WEB_ORIGIN': JSON.stringify(webOrigin),
         'import.meta.env.WXT_API_ORIGIN': JSON.stringify(apiOrigin),
