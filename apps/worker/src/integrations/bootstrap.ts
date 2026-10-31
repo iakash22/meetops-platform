@@ -117,7 +117,7 @@ export interface TokenRefreshQueueFactories {
 }
 
 const bullmqFactories: TokenRefreshQueueFactories = {
-  queue: () => createQueue(TOKEN_REFRESH_QUEUE) as unknown as TokenRefreshQueuePort,
+  queue: () => createQueue(TOKEN_REFRESH_QUEUE),
   // concurrency 1: a replica never runs two sweeps at once.
   worker: (process) => createWorker(TOKEN_REFRESH_QUEUE, () => process(), { concurrency: 1 }),
 };

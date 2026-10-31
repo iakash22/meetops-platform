@@ -15,15 +15,18 @@ describe('integrations runtime shared KEK (worker token refresh)', () => {
     expect(integrationsRuntimeFromEnv({ INTEGRATIONS_TOKEN_KEK: '  ' }).cipher).toBeUndefined();
   });
 
+  // Fixed inputs: random keys made these cases flaky. base64url of random bytes has no '-'/'_' about 1 time
+  // in 4, so the "url-safe" value was then valid standard base64 and did not throw (empty message).
+  const valid = Buffer.alloc(32, 0xfb).toString('base64'); // '+/v7…/s=': has '+' and '/'
   it.each([
     ['too short', Buffer.from('short').toString('base64')],
-    ['too long', randomBytes(33).toString('base64')],
-    ['unpadded', randomBytes(32).toString('base64').replace(/=$/, '')],
-    ['url-safe alphabet', randomBytes(32).toString('base64url') + '='],
-    ['non-canonical trailing bits', randomBytes(32).toString('base64').replace(/.=$/, 'B=')],
+    ['too long', Buffer.alloc(33, 7).toString('base64')],
+    ['unpadded', valid.replace(/=$/, '')],
+    ['url-safe alphabet', valid.replace(/\+/g, '-').replace(/\//g, '_')],
+    ['non-canonical trailing bits', valid.replace(/.=$/, (m) => (m[0] === 't' ? 'u=' : 't='))],
     ['not base64', '!'.repeat(43) + '='],
   ])('throws at startup when set but invalid (%s), naming only the variable', (_n, value) => {
-    // Guard: the non-canonical case must really be non-canonical.
+    expect(value).not.toBe(valid);
     if (_n === 'non-canonical trailing bits')
       expect(Buffer.from(value, 'base64').toString('base64')).not.toBe(value);
     let msg = '';
