@@ -2,7 +2,13 @@
 // Always resolve contracts from source so tests never run against a stale dist/ build.
 const contractsDir =
   process.env.QA_CONTRACTS_DIR ?? new URL('../packages/contracts', import.meta.url).pathname;
-const alias = { '@meetops/contracts': `${contractsDir}/src/index.ts` };
+// Regex aliases: a plain '@meetops/contracts' key is a prefix match, so the subpath
+// '@meetops/contracts/types' became 'src/index.ts/types' (ENOTDIR). Map the root and each
+// subpath export (./types, ./legacy) to its source file instead.
+const alias = [
+  { find: /^@meetops\/contracts$/, replacement: `${contractsDir}/src/index.ts` },
+  { find: /^@meetops\/contracts\/(.*)$/, replacement: `${contractsDir}/src/$1` },
+];
 // 15s default: API suites boot an in-process server per test and hit vitest's 5s default under load.
 const base = { environment: 'node' as const, alias, testTimeout: 15_000 };
 
