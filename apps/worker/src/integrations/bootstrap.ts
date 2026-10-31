@@ -3,6 +3,8 @@ import {
   InMemoryOAuthStateStore,
   JiraOAuthClient,
   LocalKeyProvider,
+  parseSharedKek,
+  SharedKekError,
   TokenCipher,
 } from '@meetops/integrations';
 import { createIntegrationConnectionRepository } from '@meetops/database';
@@ -36,8 +38,9 @@ export function loadTokenRefreshEnv(env: NodeJS.ProcessEnv = process.env): Token
     throw new TokenRefreshEnvError(
       'INTEGRATIONS_TOKEN_REFRESH_INTERVAL_MS must be in 30000..3600000',
     );
+  // Validated even when refresh is off: a set-but-bad or production KEK is always a startup error.
+  const kek = parseKek(env);
   if (!enabled) return { enabled, intervalMs };
-  const kek = parseKek(env.INTEGRATIONS_TOKEN_KEK);
   if (!kek)
     throw new TokenRefreshEnvError(
       'INTEGRATIONS_TOKEN_KEK must be 32 bytes (base64) when refresh is enabled',
@@ -45,11 +48,14 @@ export function loadTokenRefreshEnv(env: NodeJS.ProcessEnv = process.env): Token
   return { enabled, intervalMs, kek };
 }
 
-export function parseKek(raw: string | undefined): Buffer | undefined {
-  const v = raw?.trim();
-  if (!v) return undefined;
-  const buf = Buffer.from(v, 'base64');
-  return buf.length === 32 ? buf : undefined;
+/** Strict: canonical base64 of 32 bytes, refused under NODE_ENV=production (ADR-008). Names the key only. */
+export function parseKek(env: NodeJS.ProcessEnv): Buffer | undefined {
+  try {
+    return parseSharedKek(env);
+  } catch (err) {
+    if (err instanceof SharedKekError) throw new TokenRefreshEnvError(err.message);
+    throw err;
+  }
 }
 
 /** Providers from the same env the API uses (integrationsRuntimeFromEnv); an unconfigured provider is skipped. */

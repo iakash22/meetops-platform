@@ -46,6 +46,34 @@ describe('integrations token-refresh env', () => {
       expect(String(e)).not.toContain(short);
     }
   });
+  it('refuses the dev KEK when NODE_ENV=production, even with refresh off (ADR-008)', () => {
+    for (const enabled of ['true', 'false'])
+      expect(() =>
+        loadTokenRefreshEnv({
+          NODE_ENV: 'production',
+          INTEGRATIONS_TOKEN_REFRESH_ENABLED: enabled,
+          INTEGRATIONS_TOKEN_KEK: kek,
+        }),
+      ).toThrow(/INTEGRATIONS_TOKEN_KEK.*production/);
+  });
+  it('rejects non-canonical base64 KEKs without echoing the value', () => {
+    const bad = [
+      kek.replace(/=$/, ''),
+      randomBytes(32).toString('base64url') + '=',
+      randomBytes(32).toString('base64').replace(/.=$/, 'B='),
+    ];
+    for (const value of bad) {
+      let msg = '';
+      try {
+        loadTokenRefreshEnv({ INTEGRATIONS_TOKEN_KEK: value });
+      } catch (e) {
+        expect(e).toBeInstanceOf(TokenRefreshEnvError);
+        msg = (e as Error).message;
+      }
+      expect(msg).toMatch(/INTEGRATIONS_TOKEN_KEK/);
+      expect(msg).not.toContain(value);
+    }
+  });
   it('rejects out-of-range intervals', () => {
     expect(() => loadTokenRefreshEnv({ INTEGRATIONS_TOKEN_REFRESH_INTERVAL_MS: '5' })).toThrow();
   });
