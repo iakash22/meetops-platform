@@ -74,7 +74,11 @@ export function createNativeCapture(
         return false;
       }
     },
-    onStopRequested: (listener) => indicator?.onStopRequested(listener) ?? (() => undefined),
+    // Only an active capture reacts, so a late or repeated event never stops anything twice.
+    onStopRequested: (listener) =>
+      indicator?.onStopRequested(() => {
+        if (active) listener();
+      }) ?? (() => undefined),
     async begin(recordingId) {
       if (active) throw new Error('Already recording.');
       if (!(await driver.canRecord())) throw new Error('Microphone permission is required.');
@@ -86,6 +90,10 @@ export function createNativeCapture(
         await store.setInProgress(driver.currentUri());
         driver.record();
       } catch (e) {
+        // prepare() may already have created an (empty) recorder file: release the recorder and delete it.
+        const leftover = driver.currentUri();
+        await driver.stop().catch(() => null);
+        if (leftover) await store.deleteFile(leftover).catch(() => undefined);
         await driver.setRecordingMode(false).catch(() => undefined);
         await store.setInProgress(null).catch(() => undefined);
         try {

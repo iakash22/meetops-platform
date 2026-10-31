@@ -40,13 +40,26 @@ class RecordingForegroundService : Service() {
     @Volatile var onLost: (() -> Unit)? = null
     /** Set by the module right before an app-requested stop, so onDestroy can tell the two apart. */
     @Volatile var stopRequestedByApp = false
+    /** One stop notification per capture: notification Stop, task removal and onDestroy never double-fire. */
+    @Volatile private var stopNotified = false
+
+    @Synchronized fun notifyStopOnce(lost: Boolean) {
+      if (stopNotified) return
+      stopNotified = true
+      if (lost) onLost?.invoke() else onStop?.invoke()
+    }
+
+    @Synchronized fun resetStopLatch() {
+      stopNotified = false
+    }
   }
 
   override fun onBind(intent: Intent?): IBinder? = null
 
   override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
     if (intent?.action == ACTION_STOP) {
-      onStop?.invoke()
+      notifyStopOnce(lost = false)
+      stopRequestedByApp = true
       stopSelf()
       return START_NOT_STICKY
     }
@@ -54,7 +67,18 @@ class RecordingForegroundService : Service() {
     val body = intent?.getStringExtra("body") ?: ""
     val type = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE else 0
     stopRequestedByApp = false
-    ServiceCompat.startForeground(this, NOTIFICATION_ID, buildNotification(title, body), type)
+    resetStopLatch()
+    try {
+      ServiceCompat.startForeground(this, NOTIFICATION_ID, buildNotification(title, body), type)
+    } catch (e: Exception) {
+      // e.g. ForegroundServiceStartNotAllowedException, missing permission, SecurityException on Android 14:
+      // no visible indicator means no capture (R2). Tell JS, then go away.
+      running = false
+      notifyStopOnce(lost = true)
+      stopRequestedByApp = true
+      stopSelf()
+      return START_NOT_STICKY
+    }
     running = true
     // Never restarted by the OS after a kill: capture must not resume on its own (R7).
     return START_NOT_STICKY
@@ -68,17 +92,15 @@ class RecordingForegroundService : Service() {
     running = false
     // The service died without the app stopping it (system kill, notification permission revoked, crash):
     // capture must end too (R2, R7). JS stops the recorder on onLost and never resumes.
-    if (wasRunning && !stopRequestedByApp) {
-      onLost?.invoke()
-      onStop?.invoke()
-    }
+    if (wasRunning && !stopRequestedByApp) notifyStopOnce(lost = true)
     stopRequestedByApp = false
     super.onDestroy()
   }
 
   override fun onTaskRemoved(rootIntent: Intent?) {
     // App swiped away: stop capture rather than keep recording without UI (R7).
-    onStop?.invoke()
+    notifyStopOnce(lost = false)
+    stopRequestedByApp = true
     stopSelf()
   }
 

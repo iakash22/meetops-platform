@@ -35,6 +35,8 @@ class RecordingServiceModule : Module() {
 
     Function("stop") {
       val ctx = appContext.reactContext ?: return@Function
+      // Idempotent: a second stop (or a stop after the service is gone) does nothing.
+      if (!RecordingForegroundService.running) return@Function
       RecordingForegroundService.stopRequestedByApp = true
       ctx.stopService(Intent(ctx, RecordingForegroundService::class.java))
     }

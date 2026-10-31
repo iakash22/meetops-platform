@@ -4,10 +4,11 @@
  * Enable with:
  *   MEETOPS_GITHUB_E2E=1
  *   GITHUB_APP_ID=<numeric app id>
- *   GITHUB_APP_PRIVATE_KEY_FILE=<path to PEM>   (preferred; inline GITHUB_APP_PRIVATE_KEY=<PEM> is a fallback)
+ *   GITHUB_APP_PRIVATE_KEY_FILE=<path to PEM>
+ *   (inline GITHUB_APP_PRIVATE_KEY=<PEM> is used instead only with MEETOPS_GITHUB_E2E_USE_ENV_KEY=1)
  * Installation stage (also needs the App installed on a throwaway repo with Issues enabled):
  *   GITHUB_E2E_INSTALLATION_ID=<installation id>
- *   GITHUB_E2E_REPO=<owner/repo>   (name must contain e2e/throwaway, or be in GITHUB_E2E_REPO_ALLOWLIST)
+ *   GITHUB_E2E_REPO=<owner/repo>   (name must start or end with an e2e/throwaway segment, or be in GITHUB_E2E_REPO_ALLOWLIST)
  *
  * Never logs or asserts on token/key values (assertion diffs would print them). Cleanup closes the created issue
  * as not_planned (GitHub REST cannot delete issues) and revokes the installation token.
@@ -20,31 +21,25 @@ import {
   GitHubAppClient,
   GitHubIssuesProvider,
 } from '../src';
+import { isThrowawayRepo, selectKeySource } from './e2e-guard';
 import { approvalFor, governance, INTEGRATION, ORG } from './helpers';
 
 const env = process.env;
 const appId = env.GITHUB_APP_ID ?? '';
-/** Prefers GITHUB_APP_PRIVATE_KEY_FILE; the inline GITHUB_APP_PRIVATE_KEY is only a fallback. */
+const keySource: { kind: 'file'; path: string } | { kind: 'env' } | null = selectKeySource(env);
+/** Key file only, unless MEETOPS_GITHUB_E2E_USE_ENV_KEY=1 opts into the inline GITHUB_APP_PRIVATE_KEY. */
 function loadKey(): string {
-  const file = env.GITHUB_APP_PRIVATE_KEY_FILE;
-  if (file) return String(readFileSync(file, 'utf8'));
-  return env.GITHUB_APP_PRIVATE_KEY ?? '';
+  if (keySource?.kind === 'file') return String(readFileSync(keySource.path, 'utf8'));
+  if (keySource?.kind === 'env') return env.GITHUB_APP_PRIVATE_KEY ?? '';
+  return '';
 }
-const appEnabled =
-  env.MEETOPS_GITHUB_E2E === '1' &&
-  /^\d+$/.test(appId) &&
-  Boolean(env.GITHUB_APP_PRIVATE_KEY_FILE || env.GITHUB_APP_PRIVATE_KEY);
+const appEnabled = env.MEETOPS_GITHUB_E2E === '1' && /^\d+$/.test(appId) && keySource !== null;
 const installationId = env.GITHUB_E2E_INSTALLATION_ID ?? '';
 const repo = env.GITHUB_E2E_REPO ?? '';
 const installConfigured =
   appEnabled && /^\d+$/.test(installationId) && /^[\w.-]+\/[\w.-]+$/.test(repo);
-/** Writes only go to a throwaway repo: name contains e2e/throwaway, or listed in GITHUB_E2E_REPO_ALLOWLIST. */
-const repoAllowlist = (env.GITHUB_E2E_REPO_ALLOWLIST ?? '')
-  .split(',')
-  .map((r) => r.trim().toLowerCase())
-  .filter(Boolean);
-const repoIsThrowaway =
-  /e2e|throwaway/i.test(repo.split('/')[1] ?? '') || repoAllowlist.includes(repo.toLowerCase());
+/** Writes only go to a throwaway repo (see isThrowawayRepo) or one listed in GITHUB_E2E_REPO_ALLOWLIST. */
+const repoIsThrowaway = isThrowawayRepo(repo, env.GITHUB_E2E_REPO_ALLOWLIST ?? '');
 const installEnabled = installConfigured && repoIsThrowaway;
 
 const API = 'https://api.github.com';
@@ -65,12 +60,15 @@ describe.skipIf(!appEnabled)('GitHub App e2e (real api.github.com)', () => {
     expect(app.permissions?.issues).toBe('write');
   });
 
-  it.skipIf(!installConfigured || repoIsThrowaway)('refuses a non-throwaway GITHUB_E2E_REPO', () => {
-    throw new Error(
-      `Refusing to create issues in "${repo}": GITHUB_E2E_REPO must be a throwaway repo (name contains ` +
-        '"e2e" or "throwaway") or be listed in GITHUB_E2E_REPO_ALLOWLIST (comma-separated owner/repo).',
-    );
-  });
+  it.skipIf(!installConfigured || repoIsThrowaway)(
+    'refuses a non-throwaway GITHUB_E2E_REPO',
+    () => {
+      throw new Error(
+        `Refusing to create issues in "${repo}": GITHUB_E2E_REPO must be a throwaway repo (name starts or ` +
+          'ends with an "e2e"/"throwaway" segment, e.g. e2e-foo, foo-e2e) or be listed in GITHUB_E2E_REPO_ALLOWLIST (comma-separated owner/repo).',
+      );
+    },
+  );
 
   describe.skipIf(!installEnabled)(
     'installation -> token -> issues via GitHubIssuesProvider',
@@ -124,6 +122,19 @@ describe.skipIf(!appEnabled)('GitHub App e2e (real api.github.com)', () => {
         token = minted.token; // stored before any assertion so cleanup always revokes it
         expect(typeof minted.token === 'string' && minted.token.length > 0).toBe(true);
         expect(minted.expiresAt.getTime()).toBeGreaterThan(Date.now());
+        // The installation must actually be granted GITHUB_E2E_REPO, not just belong to its owner.
+        const names: string[] = [];
+        for (let page = 1; page <= 10; page++) {
+          const res = await fetch(`${API}/installation/repositories?per_page=100&page=${page}`, {
+            headers: ghHeaders(token ?? ''),
+          });
+          expect(res.status).toBe(200);
+          const body = (await res.json()) as { repositories?: { full_name?: string }[] };
+          const list = body.repositories ?? [];
+          names.push(...list.map((x) => String(x.full_name).toLowerCase()));
+          if (list.length < 100) break;
+        }
+        expect(names).toContain(repo.toLowerCase());
       });
 
       it('health-checks, creates, reads and transitions a real issue through the integration path', async () => {

@@ -187,8 +187,12 @@ describe('android foreground service indicator (R2)', () => {
     expect(fgs.calls).toEqual(['fgs:start', 'fgs:stop']);
     const stop = jest.fn();
     cap.onStopRequested?.(stop);
+    // Capture already ended: a late or repeated event is ignored.
     fgs.press();
-    expect(stop).toHaveBeenCalled();
+    expect(stop).not.toHaveBeenCalled();
+    await cap.begin('rec-2');
+    fgs.press();
+    expect(stop).toHaveBeenCalledTimes(1);
   });
 
   it('records nothing when the service cannot start', async () => {

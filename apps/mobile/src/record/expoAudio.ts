@@ -102,6 +102,7 @@ export function createAndroidForegroundIndicator(): ForegroundIndicator | null {
     isConfirmed: () => native.isConfirmed(),
     onStopRequested(listener) {
       // Notification Stop, and the service dying on its own: both end capture immediately.
+      // Native fires exactly one of these per capture (latched in the service).
       const subs = [
         native.addListener('onStopRequested', listener),
         native.addListener('onServiceLost', listener),
@@ -109,4 +110,16 @@ export function createAndroidForegroundIndicator(): ForegroundIndicator | null {
       return () => subs.forEach((s) => s.remove());
     },
   };
+}
+
+/**
+ * iOS backup exclusion + file protection for the recordings folder (modules/backup-exclusion). Null on Android.
+ * FAIL CLOSED: on iOS without the native module it reports failure, so `withBackupExclusion` blocks every write.
+ */
+export function iosBackupExclusion(): ((uri: string) => Promise<boolean>) | null {
+  if (Platform.OS !== 'ios') return null;
+  const { BackupExclusionModule } =
+    require('../../modules/backup-exclusion') as typeof import('../../modules/backup-exclusion');
+  if (!BackupExclusionModule) return () => Promise.resolve(false);
+  return (uri) => BackupExclusionModule.exclude(uri);
 }
