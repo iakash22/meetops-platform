@@ -38,3 +38,7 @@
 - **API** read-through: with `CALENDAR_SYNC_ENABLED=true` and a database, `GET .../calendar/events` serves stored
   events for a connection when its last sync fully covers the requested window and is under 30 minutes old;
   otherwise (or on any store error) it reads live from the provider as before.
+- **Review fixes (#324)**: backoff is jittered to 80-120% and the healthy cadence to 100-110%; Google 403
+  `rateLimitExceeded` / `userRateLimitExceeded` surface as `rate_limited` and back off instead of marking the
+  connection `error`; disconnect purges the connection's cached `calendar_events` in the same transaction through the
+  SECURITY DEFINER `calendar_events_purge_for_connection()` (org-context checked, revoked connections only).
