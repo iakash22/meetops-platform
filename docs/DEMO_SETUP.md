@@ -43,4 +43,7 @@ Infrastructure: `DATABASE_URL`, `DATABASE_RELAY_URL`, `REDIS_URL`, `STORAGE_*` (
 
 - Calendar sync worker: the scheduler lives on the open P7 branch (`feat/p7-calendar-sync`, PR #324) and is not
   wired into `apps/worker` yet.
-- AI usage/idempotency stores are still in memory; a worker restart loses them.
+- AI usage ledger and idempotency claims are durable in Postgres (`AI_STORES=durable`, the default) and survive worker
+  restarts. `AI_STORES=memory` is for tests only and is refused in production. The claim TTL must exceed the AI job
+  deadline or the worker refuses to start; a billed call whose usage write fails keeps its claim, so a retry cannot
+  bill twice.
