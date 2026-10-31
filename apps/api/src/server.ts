@@ -11,6 +11,7 @@ import {
 } from './modules/index.js';
 import { registerDomainErrorHandler, registerNotFoundHandler } from './shared/http-errors.js';
 import { parseTrustProxy } from './shared/trust-proxy.js';
+import { registerSecurityHeaders } from './shared/security-headers.js';
 import { clientIpOptionsFromEnv, resolveClientIp } from './shared/geoip/client-ip.js';
 import { truncateIp } from './shared/geoip/ip.js';
 import { metricsTokenFromEnv, registerMetrics, type HttpMetrics } from './shared/metrics.js';
@@ -130,6 +131,9 @@ export function createServer(options: CreateServerOptions = {}) {
       clientIpOptions,
     );
   });
+
+  // P9: baseline security headers on every response (errors and 404s included); HSTS only in production.
+  registerSecurityHeaders(app, { hsts: nodeEnv === 'production' });
 
   registerDomainErrorHandler(app);
   registerNotFoundHandler(app);

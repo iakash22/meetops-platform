@@ -1,10 +1,20 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { Value } from '@sinclair/typebox/value';
 import { Type } from '@sinclair/typebox';
-import { Id, ListMembersResponse, ListOrganizationsResponse, ListSessionsResponse, OrganizationWithRole } from '@meetops/contracts';
+import {
+  Id,
+  ListMembersResponse,
+  ListOrganizationsResponse,
+  ListSessionsResponse,
+  OrganizationWithRole,
+} from '@meetops/contracts';
 import { buildApp, signupAndLogin, Client, PASSWORD, type App } from './helpers.js';
 import { createServer, AJV_CUSTOM_OPTIONS } from '../src/server.js';
-import { CreateOrganizationBody, MemberList, OrganizationList } from '../src/modules/organizations/http/schemas.js';
+import {
+  CreateOrganizationBody,
+  MemberList,
+  OrganizationList,
+} from '../src/modules/organizations/http/schemas.js';
 import { SessionList } from '../src/modules/auth/http/schemas.js';
 import { capIp, capUserAgent } from '../src/modules/auth/http/security.js';
 
@@ -24,10 +34,18 @@ describe('contracts v0.3.1 alignment', () => {
     const join = async (email: string, role: 'admin' | 'member' | 'viewer') => {
       expect((await owner.post(`/orgs/${id}/invitations`, { email, role })).statusCode).toBe(201);
       const c = await signupAndLogin(app, email);
-      expect((await c.post('/invitations/accept', { token: tokenFor(email) })).statusCode).toBe(200);
+      expect((await c.post('/invitations/accept', { token: tokenFor(email) })).statusCode).toBe(
+        200,
+      );
       return c;
     };
-    return { owner, id, admin: await join('admin@example.com', 'admin'), member: await join('member@example.com', 'member'), viewer: await join('viewer@example.com', 'viewer') };
+    return {
+      owner,
+      id,
+      admin: await join('admin@example.com', 'admin'),
+      member: await join('member@example.com', 'member'),
+      viewer: await join('viewer@example.com', 'viewer'),
+    };
   };
 
   it('(a) uses the @meetops/contracts schemas for create/list orgs and members', () => {
@@ -50,7 +68,15 @@ describe('contracts v0.3.1 alignment', () => {
 
   it('(b) session, org and member lists return nextCursor and page with it', async () => {
     const c = await signupAndLogin(app, 'pager@example.com');
-    for (let i = 0; i < 2; i++) expect((await new Client(app).post('/auth/login', { email: 'pager@example.com', password: PASSWORD })).statusCode).toBe(200);
+    for (let i = 0; i < 2; i++)
+      expect(
+        (
+          await new Client(app).post('/auth/login', {
+            email: 'pager@example.com',
+            password: PASSWORD,
+          })
+        ).statusCode,
+      ).toBe(200);
     const p1 = await c.get('/auth/sessions?limit=2');
     expect(p1.statusCode).toBe(200);
     expect(Value.Check(ListSessionsResponse, p1.json())).toBe(true);
@@ -59,7 +85,9 @@ describe('contracts v0.3.1 alignment', () => {
     const p2 = (await c.get(`/auth/sessions?limit=2&cursor=${p1.json().nextCursor}`)).json();
     expect(p2.items).toHaveLength(1);
     expect(p2.nextCursor).toBeNull();
-    expect(new Set([...p1.json().items, ...p2.items].map((s: { id: string }) => s.id)).size).toBe(3);
+    expect(new Set([...p1.json().items, ...p2.items].map((s: { id: string }) => s.id)).size).toBe(
+      3,
+    );
     expect((await c.get('/auth/sessions?cursor=bogus')).statusCode).toBe(400);
 
     const { owner, id } = await setup();
@@ -102,7 +130,11 @@ describe('contracts v0.3.1 alignment', () => {
 
     const c = await signupAndLogin(app, 'ua@example.com');
     const long = new Client(app);
-    const login = await long.post('/auth/login', { email: 'ua@example.com', password: PASSWORD }, { 'user-agent': 'X'.repeat(3000) });
+    const login = await long.post(
+      '/auth/login',
+      { email: 'ua@example.com', password: PASSWORD },
+      { 'user-agent': 'X'.repeat(3000) },
+    );
     expect(login.statusCode).toBe(200);
     const sessions = (await c.get('/auth/sessions')).json();
     expect(Value.Check(ListSessionsResponse, sessions)).toBe(true);
@@ -118,15 +150,23 @@ describe('contracts v0.3.1 alignment', () => {
     // rejects inside anyOf (reported to the contracts owner; the real tasks route does not exist in apps/api yet).
     const TasksQueryShape = Type.Union([
       Type.Object({ assigneeId: Type.Optional(Id) }, { additionalProperties: false }),
-      Type.Object({ unassigned: Type.Optional(Type.Literal(true)) }, { additionalProperties: false })
+      Type.Object(
+        { unassigned: Type.Optional(Type.Literal(true)) },
+        { additionalProperties: false },
+      ),
     ]);
-    server.get('/coercion-probe', { schema: { querystring: TasksQueryShape } }, async (req) => ({ query: req.query }));
+    server.get('/coercion-probe', { schema: { querystring: TasksQueryShape } }, async (req) => ({
+      query: req.query,
+    }));
     await server.ready();
     try {
       const ok = await server.inject({ method: 'GET', url: '/coercion-probe?unassigned=true' });
       expect(ok.statusCode).toBe(200);
       expect(ok.json().query.unassigned).toBe(true);
-      expect((await server.inject({ method: 'GET', url: '/coercion-probe?unassigned=false' })).statusCode).toBe(400);
+      expect(
+        (await server.inject({ method: 'GET', url: '/coercion-probe?unassigned=false' }))
+          .statusCode,
+      ).toBe(400);
       const both = `/coercion-probe?unassigned=true&assigneeId=${'0'.repeat(8)}-0000-4000-8000-${'0'.repeat(12)}`;
       expect((await server.inject({ method: 'GET', url: both })).statusCode).toBe(400);
     } finally {

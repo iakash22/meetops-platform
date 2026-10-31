@@ -2,7 +2,12 @@ import { IDBFactory } from 'fake-indexeddb';
 import 'fake-indexeddb/auto';
 import { describe, expect, it, vi } from 'vitest';
 import { ChunkStore } from '../src/lib/chunk-store.js';
-import { MIME_TYPE, startRecording, type RecorderLike } from '../src/lib/recorder.js';
+import {
+  MIME_TYPE,
+  startRecording,
+  stopStreamTracks,
+  type RecorderLike,
+} from '../src/lib/recorder.js';
 import { StubUploadClient, UUID_RE } from '../src/lib/upload.js';
 import { CONSENT } from './helpers/consent.js';
 import { MAX_DURATION_MS } from '../src/lib/contract-limits.js';
@@ -343,5 +348,36 @@ describe('MAX_DURATION_MS auto-stop (contracts v0.4.1, 4 h)', () => {
     const req = complete.mock.calls[0]![1];
     expect(req.durationMs).toBe(MAX_DURATION_MS);
     expect(uploadValidators.completeRequest(req)).toBe(true);
+  });
+
+  it('fails closed: stops the captured tracks when the session cannot be initialised', async () => {
+    const store = await newStore();
+    const client = new StubUploadClient();
+    vi.spyOn(client, 'initSession').mockRejectedValueOnce(new Error('offline'));
+    const { stream, track } = fakeStream();
+    await expect(
+      startRecording({
+        meetingId: MID,
+        consent: CONSENT,
+        stream,
+        client,
+        store,
+        events: events(),
+        startedAt: Date.now(),
+        createRecorder: () => new FakeRecorder(),
+      }),
+    ).rejects.toThrow('offline');
+    expect(track.stop).toHaveBeenCalled();
+  });
+
+  it('stopStreamTracks stops every track even if one throws', () => {
+    const a = {
+      stop: vi.fn(() => {
+        throw new Error('x');
+      }),
+    };
+    const b = { stop: vi.fn() };
+    stopStreamTracks({ getTracks: () => [a, b] });
+    expect(b.stop).toHaveBeenCalled();
   });
 });

@@ -42,3 +42,16 @@
   `rateLimitExceeded` / `userRateLimitExceeded` surface as `rate_limited` and back off instead of marking the
   connection `error`; disconnect purges the connection's cached `calendar_events` in the same transaction through the
   SECURITY DEFINER `calendar_events_purge_for_connection()` (org-context checked, revoked connections only).
+
+## Meeting analytics (P7, read-only)
+
+- **API**: `GET /orgs/:org/analytics/meetings?from&to&bucket` (`ANALYTICS_PATHS.meetings`, contracts
+  `MeetingAnalyticsQuery` / `MeetingAnalytics`). Window `[from, to)` on `createdAt`, `to > from`, at most
+  `MAX_ANALYTICS_RANGE_DAYS` (366) → else 400 `VALIDATION_FAILED`; `bucket` = `day|week|month` (UTC, ISO weeks),
+  default `day`. `private, no-store`.
+- **Access**: same tenancy gate as meetings (session 401 → other org 404 → CASL `read Meeting`), so viewers and up.
+  No feature flag (the docs do not ask for one).
+- **Data**: aggregates only (counts by source, status and period; duration measured/total/average over meetings with
+  `durationSec`); no ids, titles or people. Soft-deleted meetings are excluded. One `withOrganizationContext`
+  transaction (forced RLS) plus an explicit `org_id` filter; typed Prisma `groupBy`/`aggregate`, and one tagged
+  `$queryRaw` (bound parameters) for `date_trunc` periods. No writes, no new tables or views.

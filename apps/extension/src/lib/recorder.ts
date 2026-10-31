@@ -2,8 +2,24 @@ import type { ChunkStore } from './chunk-store.js';
 import { drainQueue } from './drain.js';
 import type { StorageEvent } from './messages.js';
 import type { AbortReason, ConsentAttestationInput } from '@meetops/contracts/types';
-import { MAX_CHUNK_BYTES, MAX_DURATION_MS, MAX_RECORDING_CHUNKS } from './contract-limits.js';
+import {
+  LOCAL_CHUNK_BYTES,
+  MAX_CHUNK_BYTES,
+  MAX_DURATION_MS,
+  MAX_RECORDING_CHUNKS,
+} from './contract-limits.js';
 import { sha256Hex, splitForUpload, toIsoTimestamp, type UploadClient } from './upload.js';
+
+/** Stop every track of a captured stream (best effort; a track that throws does not keep the others live). */
+export function stopStreamTracks(stream: { getTracks(): { stop(): void }[] }): void {
+  for (const t of stream.getTracks()) {
+    try {
+      t.stop();
+    } catch {
+      // keep stopping the rest
+    }
+  }
+}
 
 export const MIME_TYPE = 'audio/webm;codecs=opus';
 export const TIMESLICE_MS = 5000;
@@ -56,7 +72,7 @@ export async function startRecording(opts: {
   consent: ConsentAttestationInput;
   now?: () => number;
   timeslice?: number;
-  /** Defaults to contracts MAX_CHUNK_BYTES (64 MiB). */
+  /** Defaults to LOCAL_CHUNK_BYTES (8 MiB); never above contracts MAX_CHUNK_BYTES (64 MiB). */
   maxChunkBytes?: number;
   /** Defaults to contracts MAX_DURATION_MS (4 h). The recorder stops itself once this much time has elapsed. */
   maxDurationMs?: number;
@@ -72,10 +88,18 @@ export async function startRecording(opts: {
     meetingId: opts.meetingId,
     consent: opts.consent,
   };
-  const { sessionId } = await opts.client.initSession(meta);
-  await opts.store.putSession({ sessionId, meta, completed: false });
-  const rec = opts.createRecorder(opts.stream, MIME_TYPE);
-  const stopTracks = () => opts.stream.getTracks().forEach((t) => t.stop());
+  const stopTracks = () => stopStreamTracks(opts.stream);
+  let sessionId: string;
+  let rec: RecorderLike;
+  try {
+    ({ sessionId } = await opts.client.initSession(meta));
+    await opts.store.putSession({ sessionId, meta, completed: false });
+    rec = opts.createRecorder(opts.stream, MIME_TYPE);
+  } catch (err) {
+    // Fail closed: a recorder that could not start must not leave the tab captured.
+    stopTracks();
+    throw err;
+  }
   let seq = 0;
   let tail: Promise<void> = Promise.resolve();
 
@@ -102,7 +126,7 @@ export async function startRecording(opts: {
       // Enforce the per-chunk upload limit by splitting oversized timeslices into several seqs.
       for (const part of splitForUpload(
         await data.arrayBuffer(),
-        opts.maxChunkBytes ?? MAX_CHUNK_BYTES,
+        Math.min(opts.maxChunkBytes ?? LOCAL_CHUNK_BYTES, MAX_CHUNK_BYTES),
       )) {
         if (discarded) return;
         if (seq >= MAX_RECORDING_CHUNKS)
