@@ -204,3 +204,17 @@ describe('android foreground service indicator (R2)', () => {
     expect(driver.calls).not.toContain('record');
   });
 });
+
+it('keeps the original begin error when stopping the service also throws', async () => {
+  const { driver } = fakeDriver({ prepare: () => Promise.reject(new Error('prepare failed')) });
+  const fgs = {
+    start: () => undefined,
+    stop: () => {
+      throw new Error('stop failed');
+    },
+    isConfirmed: () => false,
+    onStopRequested: () => () => undefined,
+  };
+  const cap = createNativeCapture(driver, createFileChunkStore(createMemoryFs()), fgs);
+  await expect(cap.begin('rec-1')).rejects.toThrow('prepare failed');
+});

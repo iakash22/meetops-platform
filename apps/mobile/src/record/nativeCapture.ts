@@ -88,7 +88,11 @@ export function createNativeCapture(
       } catch (e) {
         await driver.setRecordingMode(false).catch(() => undefined);
         await store.setInProgress(null).catch(() => undefined);
-        indicator?.stop();
+        try {
+          indicator?.stop();
+        } catch {
+          // Keep the original error; the service may never have started.
+        }
         throw e;
       }
       active = recordingId;

@@ -101,8 +101,12 @@ export function createAndroidForegroundIndicator(): ForegroundIndicator | null {
     stop: () => native.stop(),
     isConfirmed: () => native.isConfirmed(),
     onStopRequested(listener) {
-      const sub = native.addListener('onStopRequested', listener);
-      return () => sub.remove();
+      // Notification Stop, and the service dying on its own: both end capture immediately.
+      const subs = [
+        native.addListener('onStopRequested', listener),
+        native.addListener('onServiceLost', listener),
+      ];
+      return () => subs.forEach((s) => s.remove());
     },
   };
 }

@@ -436,6 +436,19 @@ describe('Record tab with a live capture (M4)', () => {
       expect(getRecordingPhase()).toBe('paused');
     });
 
+    it('re-checks while backgrounded and pauses when the service is lost', async () => {
+      let safe = true;
+      setup({ isBackgroundSafe: () => safe });
+      await start();
+      act(() => listener('background'));
+      expect(getRecordingPhase()).toBe('recording');
+      safe = false;
+      act(() => {
+        jest.advanceTimersByTime(2_100);
+      });
+      expect(getRecordingPhase()).toBe('paused');
+    });
+
     it('keeps recording only while the service and notification are confirmed', async () => {
       setup({ isBackgroundSafe: () => true });
       await start();
