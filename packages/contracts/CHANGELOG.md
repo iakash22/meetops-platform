@@ -8,6 +8,9 @@ While the version is `0.x`, a minor bump may contain breaking changes (ADR-003).
 
 ### Added
 
+- Phase 7 semantic search (behind `SEMANTIC_SEARCH_ENABLED`, off by default): `SEARCH_PATHS.semantic`
+  (`GET /orgs/:organizationId/search/semantic`), `SEMANTIC_SEARCH_KINDS`, `SemanticSearchKind`, `SemanticSearchQuery`,
+  `SemanticSearchResult`, `SemanticSearchResponse`. Additive.
 - `CONFLICT_REASONS` / `ConflictReason`: `RECORDING_SESSION_CLOSED`. Sent with a recording-session 409 when the
   session is aborted (e.g. `consent_revoked`) or failed on the server, so clients can treat it as terminal instead of
   retrying. Additive: other 409s keep their reason (generic `CONFLICT`).
