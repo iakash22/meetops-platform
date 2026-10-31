@@ -41,6 +41,8 @@ export interface IntegrationsRuntime {
     webhookSecret: () => Promise<string>;
   };
   jira?: { clientId: string; clientSecret: () => Promise<string> };
+  /** Phase 7: Google Calendar OAuth client (read-only scopes). Absent = calendar connect answers 503. */
+  googleCalendar?: { clientId: string; clientSecret: () => Promise<string> };
 }
 
 export function devIntegrationsRuntime(
@@ -131,6 +133,13 @@ export function integrationsRuntimeFromEnv(
   if (env.JIRA_CLIENT_ID && env.JIRA_CLIENT_SECRET) {
     const secret = env.JIRA_CLIENT_SECRET;
     over.jira = { clientId: env.JIRA_CLIENT_ID, clientSecret: async () => secret };
+  }
+  if (env.GOOGLE_CALENDAR_CLIENT_ID && env.GOOGLE_CALENDAR_CLIENT_SECRET) {
+    const secret = env.GOOGLE_CALENDAR_CLIENT_SECRET;
+    over.googleCalendar = {
+      clientId: env.GOOGLE_CALENDAR_CLIENT_ID,
+      clientSecret: async () => secret,
+    };
   }
   return over;
 }

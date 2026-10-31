@@ -16,4 +16,5 @@ export * from './employees.js';
 export * from './teams.js';
 export * from './projects.js';
 export * from './integrations.js';
+export * from './calendar.js';
 export * from './notifications.js';

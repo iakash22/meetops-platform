@@ -253,6 +253,7 @@ model Organization {
   teamMembers            TeamMember[]
   consentAttestations    ConsentAttestation[]
   integrationConnections IntegrationConnection[]
+  calendarConnections    CalendarConnection[]
   authDevices            AuthDevice[]
   authTokenFamilies      AuthTokenFamily[]
   authRefreshTokens      AuthRefreshToken[]
@@ -299,6 +300,7 @@ model User {
   notifications        Notification[]         @relation("NotificationRecipient")
   notificationPreferences NotificationPreference[] @relation("NotificationPreferenceOwner")
   pushDeviceTokens     PushDeviceToken[]      @relation("PushDeviceTokenOwner")
+  calendarConnections  CalendarConnection[]   @relation("CalendarConnectionOwner")
 
   @@map("users")
 }
@@ -1348,4 +1350,38 @@ model PushDeviceToken {
   @@unique([organizationId, tokenHash])
   @@index([organizationId, userId])
   @@map("push_device_tokens")
+}
+
+enum CalendarConnectionStatus {
+  active
+  error
+  revoked
+}
+
+/// Phase 7: one user's connected calendar account in one organization. Tokens are TokenCipher envelopes only
+/// (AAD = org + connection id); disconnect wipes them (CHECK). Tenant table: forced RLS, ADR-010 setting only.
+model CalendarConnection {
+  id                   String                   @id @default(uuid()) @db.Uuid
+  organizationId       String                   @map("org_id") @db.Uuid
+  userId               String                   @map("user_id") @db.Uuid
+  provider             String
+  status               CalendarConnectionStatus @default(active)
+  displayName          String                   @map("display_name")
+  externalAccountId    String                   @map("external_account_id")
+  accessTokenEnc       String?                  @map("access_token_enc")
+  refreshTokenEnc      String?                  @map("refresh_token_enc")
+  tokenKeyId           String                   @map("token_key_id")
+  accessTokenExpiresAt DateTime?                @map("access_token_expires_at") @db.Timestamptz(3)
+  revokedAt            DateTime?                @map("revoked_at") @db.Timestamptz(3)
+  createdAt            DateTime                 @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt            DateTime                 @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user         User         @relation("CalendarConnectionOwner", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, id])
+  @@unique([organizationId, userId, provider, externalAccountId])
+  @@index([organizationId, userId])
+  @@index([tokenKeyId])
+  @@map("calendar_connections")
 }
