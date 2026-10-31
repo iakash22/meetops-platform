@@ -1,10 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import {
-  EMBEDDING_DIMS,
-  EMBEDDING_MAX_BATCH,
-  embedWithExecutor,
-  type AnyProvider,
-} from '../src/index.js';
+import { EMBEDDING_DIMS, EMBEDDING_MAX_BATCH, embedWithExecutor } from '../src/index.js';
 import { fakeLLM, llmCfg, setup } from './helpers.js';
 
 const ORG = '11111111-1111-4111-8111-111111111111';
@@ -31,7 +26,7 @@ describe('embedWithExecutor (ai-core embeddings feature)', () => {
   it('is unavailable by default: no default provider declares the embeddings capability', async () => {
     const llm = fakeLLM('gemini');
     const { executor } = await setup({
-      providers: { gemini: llm as AnyProvider },
+      providers: { gemini: llm },
       configs: [llmCfg('gemini')],
     });
     const r = await embedWithExecutor(executor, { organizationId: ORG, inputs: ['hello'] });
@@ -42,7 +37,7 @@ describe('embedWithExecutor (ai-core embeddings feature)', () => {
   it('embeds through the executor, records usage and reuses the idempotent result', async () => {
     const p = fakeEmbedder();
     const { executor, usage } = await setup({
-      providers: { gemini: p as AnyProvider },
+      providers: { gemini: p },
       configs: [llmCfg('gemini', { capabilities: ['text-generation', 'embeddings'] })],
     });
     const long = 'x'.repeat(10_000);
@@ -71,7 +66,7 @@ describe('embedWithExecutor (ai-core embeddings feature)', () => {
   it('refuses wrong-size vectors and oversized batches', async () => {
     const p = fakeEmbedder(8);
     const { executor } = await setup({
-      providers: { gemini: p as AnyProvider },
+      providers: { gemini: p },
       configs: [llmCfg('gemini', { capabilities: ['text-generation', 'embeddings'] })],
     });
     const r = await embedWithExecutor(executor, { organizationId: ORG, inputs: ['a'] });
