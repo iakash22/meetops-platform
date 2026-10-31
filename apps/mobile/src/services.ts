@@ -22,7 +22,16 @@ import { createPlaceholderMeetingsRepository } from './data/meetingsRepository';
 import type { Repositories } from './data/RepositoriesProvider';
 import { createPlaceholderTasksRepository } from './data/tasksRepository';
 import { createDemoTaskReviewApi, createHttpTaskReviewApi } from './tasks/reviewApi';
+import type { RecordingCapture } from './record/capture';
+import {
+  createExpoAudioDriver,
+  createNativeMicPermission,
+  expoFileSystem,
+} from './record/expoAudio';
+import { createFileChunkStore } from './record/fileChunkStore';
+import { createNativeCapture } from './record/nativeCapture';
 import { createSimulatedCapture } from './record/simulatedRecorder';
+import { createHttpRecordingUploadApi } from './upload/httpRecordingUploadApi';
 import { createMemoryQueueStore, createSimulatedUploadApi } from './upload/simulatedUploadApi';
 import { createUploadQueueEngine } from './upload/uploadQueueEngine';
 
@@ -32,8 +41,10 @@ import { createUploadQueueEngine } from './upload/uploadQueueEngine';
  * Live mode: set `EXPO_PUBLIC_API_URL` (https origin, public, not a secret). Auth, signup, meetings and tasks then go
  * to the API with bearer tokens (see `src/api/httpAuthClient.ts` for the mobile token routes Backend must ship).
  * Demo mode (no URL, or a non-https URL outside dev): typed mocks, nothing leaves the device.
- * Still mocked in both modes: consent (no Backend consent route), recorder (SIMULATED: no audio, placeholder chunks into the
- * real upload queue engine with a simulated upload API, in-memory queue, always online),
+ * Recording: demo mode uses the SIMULATED capture (no audio, placeholder chunks) and a simulated upload API. Live mode
+ * uses the native expo-audio capture (M4) with real mic permission, chunk files in the app sandbox, and the HTTP
+ * recording-session upload API. Consent opt-in stays device-local (no Backend consent route; the attestation travels
+ * with the upload, contracts G11).
  * Tokens: Keychain / Keystore via expo-secure-store (`AFTER_FIRST_UNLOCK_THIS_DEVICE_ONLY`: device-only, Android
  * backup disabled). Only the refresh token is persisted; the access token is memory-only. A failed write keeps the
  * rotated pair in memory and retries. A stable per-install `deviceId` (ADR-005) is sent on login, refresh and logout.
@@ -74,12 +85,22 @@ const http = API_BASE_URL
   ? { baseUrl: API_BASE_URL, getAccessToken: () => sessionManager.getAccessToken() }
   : null;
 
-const capture = createSimulatedCapture();
+const nativeCapture = http
+  ? createNativeCapture(createExpoAudioDriver(), createFileChunkStore(expoFileSystem()))
+  : null;
+const capture: RecordingCapture = nativeCapture ?? createSimulatedCapture();
+// R7: after a crash or kill, partial recorder output is discarded and capture never resumes.
+void nativeCapture?.recoverOnLaunch().catch(() => undefined);
 const engine = createUploadQueueEngine({
   store: createMemoryQueueStore(),
   chunks: capture,
-  api: createSimulatedUploadApi(300),
+  api: http ? createHttpRecordingUploadApi(http) : createSimulatedUploadApi(300),
   network: { isOnline: () => true },
+});
+// R4 + R7: logout and organization switch stop any capture and wipe every local recording.
+sessionManager.registerWipeHook(async () => {
+  await capture.abort();
+  await engine.wipe();
 });
 
 export const repositories: Repositories = {
@@ -97,7 +118,7 @@ export const repositories: Repositories = {
     },
   },
   consent: createDemoConsentApi({ latencyMs: 300 }),
-  micPermission: createDemoMicPermission(),
+  micPermission: http ? createNativeMicPermission() : createDemoMicPermission(),
 };
 
 /**

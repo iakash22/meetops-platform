@@ -1,13 +1,13 @@
 import type { ConsentAttestationInput } from '@meetops/contracts';
 import type { QueueItem } from '../upload/types';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Animated, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Animated, AppState, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 
-import { RECORDING_ENABLED } from '../config/session';
 import { newLocalMeetingId } from '../consent/consentApi';
 import { ConsentSheet, type ConsentStep } from '../consent/ConsentSheet';
 import { useRepositories } from '../data/RepositoriesProvider';
 import type { UploadQueueStatus } from '../data/uploadQueue';
+import { setRecordingPhase } from '../record/indicator';
 import { formatElapsed, spokenElapsed } from '../record/recorderShell';
 import { useRecorderShell } from '../record/useRecorderShell';
 import { colors, glow, radius, spacing } from '../theme/colors';
@@ -26,9 +26,12 @@ const STATUS_TEXT = {
 } as const;
 
 /**
- * Record tab UI shell. Preview only while RECORDING_ENABLED is false: the timer and controls work,
- * but no audio is captured, stored or uploaded, and the screen says so.
+ * Record tab. Without a recording pipeline it is a preview (nothing captured). Demo mode uses the simulated capture
+ * (no audio) and says so; live mode captures audio with the native recorder, only after consent (R1, R3), with the
+ * app-wide banner (R2), and pauses on interruptions until the user resumes (R7).
  */
+const INTERRUPTION_POLL_MS = 1000;
+
 export function RecordScreen() {
   const recorder = useRecorderShell();
   const reducedMotion = useReducedMotion();
@@ -47,7 +50,47 @@ export function RecordScreen() {
   const [queue, setQueue] = useState<UploadQueueStatus | null>(null);
   const halo = useRef(new Animated.Value(0)).current;
   const active = recorder.phase === 'recording' || recorder.phase === 'paused';
-  const preview = !RECORDING_ENABLED;
+  const preview = !recordings;
+  const simulated = recordings?.capture.simulated ?? false;
+  const recordingIdRef = useRef<string | null>(null);
+  const [interrupted, setInterrupted] = useState(false);
+
+  useEffect(() => {
+    setRecordingPhase(recorder.phase);
+  }, [recorder.phase]);
+  // Leaving the screen tree (sign-out) ends any capture and discards it: nothing records without the UI (R7).
+  useEffect(
+    () => () => {
+      setRecordingPhase('idle');
+      if (recordingIdRef.current) void recordings?.capture.abort();
+    },
+    [recordings],
+  );
+
+  const { pause: pauseShell } = recorder;
+  const pauseForInterruption = useCallback(() => {
+    recordings?.capture.pause();
+    pauseShell();
+    setInterrupted(true);
+  }, [pauseShell, recordings]);
+
+  // R7: a call or another app taking the mic pauses with a notice; the user resumes explicitly.
+  useEffect(() => {
+    if (recorder.phase !== 'recording' || !recordings || simulated) return;
+    const id = setInterval(() => {
+      if (!recordings.capture.isLive()) pauseForInterruption();
+    }, INTERRUPTION_POLL_MS);
+    return () => clearInterval(id);
+  }, [pauseForInterruption, recorder.phase, recordings, simulated]);
+
+  // Android has no microphone foreground service yet (plan NATIVE GAP), so capture never continues out of sight.
+  useEffect(() => {
+    if (Platform.OS !== 'android' || recorder.phase !== 'recording' || simulated) return;
+    const sub = AppState.addEventListener('change', (next) => {
+      if (next !== 'active') pauseForInterruption();
+    });
+    return () => sub.remove();
+  }, [pauseForInterruption, recorder.phase, simulated]);
 
   useEffect(() => {
     let mounted = true;
@@ -80,8 +123,13 @@ export function RecordScreen() {
     const consentRecord = attestationRef.current;
     const meetingId = meetingIdRef.current;
     const organizationId = recordings?.organizationId();
-    if (!recordings || !consentRecord || !meetingId || !organizationId) return;
-    const id = `rec-${Date.now().toString(36)}`;
+    const id = recordingIdRef.current;
+    recordingIdRef.current = null;
+    if (!recordings || !id) return;
+    if (!consentRecord || !meetingId || !organizationId) {
+      void recordings.capture.abort();
+      return;
+    }
     const durationMs = recorder.elapsedMs;
     void (async () => {
       try {
@@ -164,7 +212,14 @@ export function RecordScreen() {
           confirmedAt: new Date().toISOString(),
           method: allAgreed ? 'all_parties_consented' : 'all_parties_notified',
         });
+        // Capture starts only now, from the user's confirmation; a failure here means nothing is recorded.
+        if (recordings) {
+          const id = `rec-${Date.now().toString(36)}`;
+          await recordings.capture.begin(id);
+          recordingIdRef.current = id;
+        }
         setConsentStep(null);
+        setInterrupted(false);
         stoppedRef.current = false;
         setSaved(false);
         startedAtRef.current = new Date().toISOString();
@@ -180,7 +235,7 @@ export function RecordScreen() {
     } finally {
       setConsentBusy(false);
     }
-  }, [allAgreed, consent, consentStep, micPermission, start, toNoticeOrMic]);
+  }, [allAgreed, consent, consentStep, micPermission, recordings, start, toNoticeOrMic]);
 
   const cancelConsent = useCallback(() => {
     setConsentStep(null);
@@ -194,12 +249,32 @@ export function RecordScreen() {
     else if (active) recorder.stop();
   };
 
+  const onPauseResume = () => {
+    if (recorder.phase === 'paused') {
+      recordings?.capture.resume();
+      setInterrupted(false);
+      recorder.resume();
+    } else {
+      recordings?.capture.pause();
+      recorder.pause();
+    }
+  };
+
   const mainLabel = recorder.phase === 'idle' ? 'Start recording' : 'Stop recording';
   const timeText = formatElapsed(recorder.elapsedMs);
 
   return (
     <View style={styles.container}>
-      {preview && recordings ? (
+      {interrupted && recorder.phase === 'paused' ? (
+        <View testID="record-interrupted" style={styles.notice} accessibilityRole="alert">
+          <Text style={styles.noticeTitle}>Recording paused</Text>
+          <Text style={styles.noticeBody}>
+            Something interrupted the recording, like a call or another app using the microphone.
+            Tap Resume to continue.
+          </Text>
+        </View>
+      ) : null}
+      {simulated ? (
         <View testID="record-simulated-notice" style={styles.notice} accessible>
           <Text style={styles.noticeTitle}>Simulated recorder</Text>
           <Text style={styles.noticeBody}>
@@ -222,7 +297,7 @@ export function RecordScreen() {
           style={styles.statusRow}
           accessibilityLiveRegion="polite"
           accessible
-          accessibilityLabel={`Status: ${STATUS_TEXT[recorder.phase]}${preview ? ', preview' : ''}`}
+          accessibilityLabel={`Status: ${STATUS_TEXT[recorder.phase]}${preview || simulated ? ', preview' : ''}`}
         >
           {recorder.phase === 'recording' ? <LiveDot testID="record-live-dot" /> : null}
           <Text style={recorder.phase === 'recording' ? styles.statusLive : styles.status}>
@@ -251,11 +326,13 @@ export function RecordScreen() {
         ) : recorder.phase === 'stopped' ? (
           <View style={styles.summary}>
             <Text testID="record-summary" style={styles.summaryText} accessibilityRole="alert">
-              {saved
-                ? `Simulated recording saved at ${timeText}. It's in the upload queue.`
-                : preview && !recordings
-                  ? `Preview ended at ${timeText}. Nothing was saved.`
-                  : `Recording stopped at ${timeText}.`}
+              {saved && !simulated
+                ? `Recording saved at ${timeText}. It's in the upload queue.`
+                : saved
+                  ? `Simulated recording saved at ${timeText}. It's in the upload queue.`
+                  : preview && !recordings
+                    ? `Preview ended at ${timeText}. Nothing was saved.`
+                    : `Recording stopped at ${timeText}.`}
             </Text>
             <Button
               testID="record-done"
@@ -277,7 +354,9 @@ export function RecordScreen() {
               testID="record-button"
               accessibilityRole="button"
               accessibilityLabel={mainLabel}
-              accessibilityHint={preview ? 'Preview only, no audio is captured' : undefined}
+              accessibilityHint={
+                preview || simulated ? 'Preview only, no audio is captured' : undefined
+              }
               onPress={onMainPress}
               style={({ pressed }) => [styles.recordButton, pressed && styles.recordPressed]}
             >
@@ -295,7 +374,7 @@ export function RecordScreen() {
               accessibilityHint={
                 recorder.phase === 'paused' ? 'Continues the timer' : 'Pauses the timer'
               }
-              onPress={recorder.phase === 'paused' ? recorder.resume : recorder.pause}
+              onPress={onPauseResume}
             />
           </View>
         ) : null}
