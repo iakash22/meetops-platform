@@ -19,7 +19,7 @@ function api(): RecordingUploadApi {
         upload: {
           method: 'PUT' as const,
           url: 'https://u.test/x',
-          headers: {},
+          headers: { 'content-length': '1' },
           expiresAt: '2030-01-01T00:00:00.000Z',
         },
         seq: body.seq,
