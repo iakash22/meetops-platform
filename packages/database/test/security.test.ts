@@ -102,7 +102,9 @@ const EXTERNAL_ACCOUNT_ROUTING_MIGRATION = '20261028020000_integration_external_
 const RETENTION_OWNER_MIGRATION = '20261028040000_geoip_retention_owner_assert';
 /** Phase 7 calendar_connections (forced RLS, envelope-only tokens). */
 const CALENDAR_CONNECTIONS_MIGRATION = '20261031000000_calendar_connections';
-const LATEST_MIGRATION = CALENDAR_CONNECTIONS_MIGRATION;
+/** Phase 7 meeting search: FTS expression GIN indexes only. */
+const MEETING_SEARCH_MIGRATION = '20261031010000_meeting_search_fts';
+const LATEST_MIGRATION = MEETING_SEARCH_MIGRATION;
 const reportDedupeSql = readFileSync(
   resolve(migrationsDir, REPORT_SUMMARY_DEDUPE_MIGRATION, 'migration.sql'),
   'utf8',
@@ -1509,11 +1511,12 @@ describe('integration external-account routing (20261028020000)', () => {
       .map((x) => x.name)
       .sort();
     expect(dirs.at(-1)).toBe(LATEST_MIGRATION);
-    expect(dirs.at(-2)).toBe(RETENTION_OWNER_MIGRATION);
-    expect(dirs.at(-3)).toBe(RELAY_REVOKE_ALL_KINDS_MIGRATION);
-    expect(dirs.at(-4)).toBe(EXTERNAL_ACCOUNT_ROUTING_MIGRATION);
-    expect(dirs.at(-5)).toBe(SESSION_AUDIT_GEOIP_MIGRATION);
-    expect(dirs.at(-6)).toBe(RELAY_BY_TYPE_MIGRATION);
+    expect(dirs.at(-2)).toBe(CALENDAR_CONNECTIONS_MIGRATION);
+    expect(dirs.at(-3)).toBe(RETENTION_OWNER_MIGRATION);
+    expect(dirs.at(-4)).toBe(RELAY_REVOKE_ALL_KINDS_MIGRATION);
+    expect(dirs.at(-5)).toBe(EXTERNAL_ACCOUNT_ROUTING_MIGRATION);
+    expect(dirs.at(-6)).toBe(SESSION_AUDIT_GEOIP_MIGRATION);
+    expect(dirs.at(-7)).toBe(RELAY_BY_TYPE_MIGRATION);
   });
   const sql = readFileSync(
     resolve(migrationsDir, EXTERNAL_ACCOUNT_ROUTING_MIGRATION, 'migration.sql'),
@@ -1545,8 +1548,8 @@ describe('ADR-013 notifications tables (static)', () => {
       .filter((x) => x.isDirectory())
       .map((x) => x.name)
       .sort();
-    expect(dirs.at(-6)).toBe(RELAY_BY_TYPE_MIGRATION);
-    expect(dirs.at(-7)).toBe(NOTIFICATIONS_MIGRATION);
+    expect(dirs.at(-7)).toBe(RELAY_BY_TYPE_MIGRATION);
+    expect(dirs.at(-8)).toBe(NOTIFICATIONS_MIGRATION);
     expect(statements).not.toMatch(
       /\bDROP\b|RENAME|ALTER COLUMN|NO FORCE|DISABLE ROW LEVEL SECURITY/i,
     );
@@ -1618,7 +1621,8 @@ describe('IP retention owner re-assert (20261028040000)', () => {
       .map((x) => x.name)
       .sort();
     expect(dirs.at(-1)).toBe(LATEST_MIGRATION);
-    expect(dirs.at(-2)).toBe(RETENTION_OWNER_MIGRATION);
+    expect(dirs.at(-2)).toBe(CALENDAR_CONNECTIONS_MIGRATION);
+    expect(dirs.at(-3)).toBe(RETENTION_OWNER_MIGRATION);
     expect(dirs.indexOf(RETENTION_OWNER_MIGRATION)).toBeGreaterThan(
       dirs.indexOf(SESSION_AUDIT_GEOIP_MIGRATION),
     );
@@ -1654,5 +1658,25 @@ describe('Phase 7 calendar_connections (static)', () => {
     expect(statements).toMatch(/"calendar_connections_revoked_wipe_check" CHECK \(/);
     expect(model).not.toMatch(/^\s+(accessToken|refreshToken)\s/m);
     expect(model).toContain('@@unique([organizationId, userId, provider, externalAccountId])');
+  });
+});
+
+describe('Phase 7 meeting search FTS indexes (static)', () => {
+  const sql = readFileSync(
+    resolve(migrationsDir, MEETING_SEARCH_MIGRATION, 'migration.sql'),
+    'utf8',
+  );
+  const statements = sql.replace(/--.*$/gm, '');
+  it('only adds GIN expression indexes (no policy, grant, column or RLS changes)', () => {
+    const stmts = statements
+      .split(';')
+      .map((x) => x.trim())
+      .filter(Boolean);
+    expect(stmts).toHaveLength(4);
+    for (const st of stmts)
+      expect(st).toMatch(
+        /^CREATE INDEX "\w+_search_fts_idx" ON "\w+"\s+USING GIN \(to_tsvector\('english'::regconfig, /,
+      );
+    expect(statements).not.toMatch(/POLICY|GRANT|REVOKE|ROW LEVEL SECURITY|ALTER TABLE|DROP/i);
   });
 });
