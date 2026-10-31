@@ -72,3 +72,29 @@ Merged 31 Oct (#305–#317): extension real meeting API + held recordings (#305,
 - [ ] Run gates locally (`pnpm local-gates`, or scoped build/lint/typecheck/test + `gitleaks detect --redact`); paste results in the PR.
 - [ ] Open the PR against `integration/phase-1`; get Tester & Security PASS on the exact head; merge with `--match-head-commit`.
 - [ ] Update PHASE_STATUS.md when phases move.
+
+## Update — 2026-10-31 14:30 IST (final stop at 99% usage)
+
+Correction: #305–#307 merged on 2026-10-29, not Oct 31.
+
+Merged into integration/phase-1 after the earlier handoff (head a6c20cf):
+- #322 mobile Lows (a8029b7)
+- #323 GitHub App e2e follow-ups (7bf0b88)
+- #321 iOS backup exclusion + file protection, Swift module (edb6593)
+- #318 Android foreground service, Kotlin (1f6a2b7)
+- #320 encryption at rest: Android Keystore / iOS CryptoKit+Keychain, fail-closed, migration of old chunks (a6c20cf)
+
+Native Kotlin/Swift was reviewed statically only. It has never been compiled or run on a device; use the device-build checklists in the #318/#320/#321 PR bodies.
+
+Open, pushed, NOT yet reviewed by Tester (start here):
+- #324 P7 calendar background sync, head 3268a955 (r1 Medium and Lows fixed; needs re-review)
+- #325 #323 Lows follow-up, head 93a59023
+
+Open mobile follow-ups (Tester r4 Mediums/Lows, not fixed):
+1. Start-failure race: stop() is a no-op until the service is up, so a quick Start failure leaves the "recording" notification showing (RecordingServiceModule.kt:36-40).
+2. The launch cache sweep isn't awaited (services.ts:113) and could delete a live .m4a; make Start await it, and scope it to Audio/ and ExpoAudio/ only.
+3. R5: the whole recording sits in plaintext in the app cache until Stop. The real fix needs the server to allow audio/aac or join segments server-side.
+4. Encryption runs on the JS thread and is slow for large files; killing the app mid-encrypt deletes the recording.
+5. Stopping after the app is swiped away depends on JS; the Open action falls back to an empty Intent.
+
+Remaining Akash inputs are unchanged (see above). Agents' local WIP was asked to be pushed to its own branches at stop time.
