@@ -499,6 +499,8 @@ export const CALENDAR_PATHS = {
   callback: '/calendar/:provider/callback',
   connection: '/orgs/:organizationId/calendar/connections/:connectionId',
   events: '/orgs/:organizationId/calendar/events',
+  /** PUT links one of my events to a meeting of the organization (replacing any link), DELETE unlinks it. */
+  eventLink: '/orgs/:organizationId/calendar/connections/:connectionId/events/:eventId/link',
 } as const;
 
 /** Server-known providers only; clients never supply an endpoint or base URL. */
