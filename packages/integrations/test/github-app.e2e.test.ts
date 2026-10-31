@@ -13,6 +13,7 @@
  * Never logs or asserts on token/key values (assertion diffs would print them). Cleanup closes the created issue
  * as not_planned (GitHub REST cannot delete issues) and revokes the installation token.
  */
+import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { afterAll, describe, expect, it } from 'vitest';
 import {
@@ -85,7 +86,55 @@ describe.skipIf(!appEnabled)('GitHub App e2e (real api.github.com)', () => {
       /** Issue number from the raw create response, so cleanup works even if parsing/read-back fails. */
       let rawIssueNumber: number | undefined;
       let provider: GitHubIssuesProvider | undefined;
+      /** Set only after GET /installation/repositories confirmed GITHUB_E2E_REPO is granted (L-1). */
+      let repoGranted = false;
+      /** Unique title marker of the issue we tried to create, to find it if create threw after GitHub created it. */
+      let titleMarker: string | undefined;
+      let orphanHandled = false;
       const g = governance(true);
+
+      const closeByNumber = async (n: number) => {
+        if (!token) return;
+        await fetch(`${API}/repos/${repo}/issues/${n}`, {
+          method: 'PATCH',
+          headers: { ...ghHeaders(token), 'Content-Type': 'application/json' },
+          body: JSON.stringify({ state: 'closed', state_reason: 'not_planned' }),
+        }).catch(() => undefined);
+      };
+      /** Open issues (not PRs) in the repo whose title carries the marker, newest first, first 3 pages. */
+      const findByMarker = async (marker: string): Promise<number[]> => {
+        if (!token) return [];
+        const found: number[] = [];
+        for (let page = 1; page <= 3; page++) {
+          const res = await fetch(
+            `${API}/repos/${repo}/issues?state=open&sort=created&direction=desc&per_page=100&page=${page}`,
+            { headers: ghHeaders(token) },
+          ).catch(() => undefined);
+          if (!res?.ok) break;
+          const list = (await res.json().catch(() => [])) as {
+            number?: unknown;
+            title?: unknown;
+            pull_request?: unknown;
+          }[];
+          for (const i of list)
+            if (
+              !i.pull_request &&
+              typeof i.number === 'number' &&
+              typeof i.title === 'string' &&
+              i.title.includes(marker)
+            )
+              found.push(i.number);
+          if (list.length < 100) break;
+        }
+        return found;
+      };
+      /** Closes an issue left behind by a create that threw: raw response number first, else the title marker. */
+      const closeOrphan = async () => {
+        if (orphanHandled || issueKey) return;
+        orphanHandled = true;
+        if (rawIssueNumber) return closeByNumber(rawIssueNumber);
+        if (titleMarker) for (const n of await findByMarker(titleMarker)) await closeByNumber(n);
+      };
 
       afterAll(async () => {
         // Cleanup: close the issue (not_planned) then revoke the installation token. Best effort, no secret output.
@@ -99,11 +148,9 @@ describe.skipIf(!appEnabled)('GitHub App e2e (real api.github.com)', () => {
         }
         if (!closed && token && rawIssueNumber) {
           // Fallback: direct PATCH using the number from the raw create response.
-          await fetch(`${API}/repos/${repo}/issues/${rawIssueNumber}`, {
-            method: 'PATCH',
-            headers: { ...ghHeaders(token), 'Content-Type': 'application/json' },
-            body: JSON.stringify({ state: 'closed', state_reason: 'not_planned' }),
-          }).catch(() => undefined);
+          await closeByNumber(rawIssueNumber);
+        } else if (!closed && token && !issueKey) {
+          await closeOrphan().catch(() => undefined);
         }
         if (token) {
           await fetch(`${API}/installation/token`, {
@@ -123,8 +170,11 @@ describe.skipIf(!appEnabled)('GitHub App e2e (real api.github.com)', () => {
         expect(typeof minted.token === 'string' && minted.token.length > 0).toBe(true);
         expect(minted.expiresAt.getTime()).toBeGreaterThan(Date.now());
         // The installation must actually be granted GITHUB_E2E_REPO, not just belong to its owner.
+        // Paginate to the end (I-1); hitting the safety cap fails explicitly instead of silently stopping.
+        const MAX_PAGES = 100;
         const names: string[] = [];
-        for (let page = 1; page <= 10; page++) {
+        let done = false;
+        for (let page = 1; page <= MAX_PAGES && !done; page++) {
           const res = await fetch(`${API}/installation/repositories?per_page=100&page=${page}`, {
             headers: ghHeaders(token ?? ''),
           });
@@ -132,13 +182,22 @@ describe.skipIf(!appEnabled)('GitHub App e2e (real api.github.com)', () => {
           const body = (await res.json()) as { repositories?: { full_name?: string }[] };
           const list = body.repositories ?? [];
           names.push(...list.map((x) => String(x.full_name).toLowerCase()));
-          if (list.length < 100) break;
+          done = list.length < 100;
         }
+        if (!done)
+          throw new Error(
+            `Installation grants more than ${MAX_PAGES * 100} repositories; refusing to guess whether GITHUB_E2E_REPO is granted.`,
+          );
         expect(names).toContain(repo.toLowerCase());
+        repoGranted = true;
       });
 
       it('health-checks, creates, reads and transitions a real issue through the integration path', async () => {
-        expect(token).toBeDefined();
+        // L-1: never write unless the previous test proved the installation is granted this exact repo.
+        if (!repoGranted || !token)
+          throw new Error(
+            'Refusing to create an issue: GITHUB_E2E_REPO was not confirmed in the installation repositories.',
+          );
         provider = new GitHubIssuesProvider({
           organizationId: ORG,
           integrationId: INTEGRATION,
@@ -163,15 +222,20 @@ describe.skipIf(!appEnabled)('GitHub App e2e (real api.github.com)', () => {
         });
         expect(await provider.healthCheck()).toMatchObject({ ok: true, provider: 'github' });
 
+        titleMarker = `[meetops-e2e:${randomUUID()}]`;
         const input = {
-          title: `meetops e2e ${new Date().toISOString()}`,
+          title: `meetops e2e ${new Date().toISOString()} ${titleMarker}`,
           description: 'Automated MeetOps GitHub App e2e test issue; closed automatically.',
           externalRef: `e2e_${Date.now()}`,
         };
-        const created = await provider.createIssue(
-          input,
-          approvalFor('github', 'createIssue', input),
-        );
+        let created: Awaited<ReturnType<GitHubIssuesProvider['createIssue']>>;
+        try {
+          created = await provider.createIssue(input, approvalFor('github', 'createIssue', input));
+        } catch (err) {
+          // GitHub may have created the issue before the throw (e.g. response parsing): close it now.
+          await closeOrphan().catch(() => undefined);
+          throw err;
+        }
         issueKey = created.key;
         expect(created).toMatchObject({ provider: 'github', status: 'open' });
         expect(created.key.toLowerCase().startsWith(`${repo.toLowerCase()}#`)).toBe(true);
