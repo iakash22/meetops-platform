@@ -3,8 +3,6 @@ import {
   bucketStart,
   type MeetingAnalyticsQuery,
   type MeetingAnalyticsResult,
-  type MeetingSource,
-  type MeetingStatus,
 } from '../domain/meeting.js';
 import type {
   MeetingCreate,
@@ -94,11 +92,11 @@ export class InMemoryMeetingRepository implements MeetingRepository {
     return Promise.resolve({
       total: rows.length,
       bySource: count((r) => r.source).map(([source, n]) => ({
-        source: source as MeetingSource,
+        source: source,
         count: n,
       })),
       byStatus: count((r) => r.status).map(([status, n]) => ({
-        status: status as MeetingStatus,
+        status: status,
         count: n,
       })),
       duration: {

@@ -76,13 +76,11 @@ export class PrismaMeetingRepository implements MeetingRepository {
         by: ['source'],
         where,
         _count: { _all: true },
-        orderBy: { source: 'asc' },
       });
       const byStatus = await tx.meeting.groupBy({
         by: ['status'],
         where,
         _count: { _all: true },
-        orderBy: { status: 'asc' },
       });
       const agg = await tx.meeting.aggregate({
         where: { ...where, durationSec: { not: null } },
@@ -103,14 +101,19 @@ export class PrismaMeetingRepository implements MeetingRepository {
       const totalSec = agg._sum.durationSec ?? 0;
       return {
         total: bySource.reduce((n, r) => n + r._count._all, 0),
-        bySource: bySource.map((r) => ({
-          source: r.source as MeetingAnalyticsResult['bySource'][number]['source'],
-          count: r._count._all,
-        })),
-        byStatus: byStatus.map((r) => ({
-          status: r.status as MeetingAnalyticsResult['byStatus'][number]['status'],
-          count: r._count._all,
-        })),
+        // Alphabetical, like the in-memory adapter (Postgres would order enums by declaration).
+        bySource: bySource
+          .map((r) => ({
+            source: r.source,
+            count: r._count._all,
+          }))
+          .sort((x, y) => x.source.localeCompare(y.source)),
+        byStatus: byStatus
+          .map((r) => ({
+            status: r.status,
+            count: r._count._all,
+          }))
+          .sort((x, y) => x.status.localeCompare(y.status)),
         duration: { measured, totalSec, averageSec: measured ? totalSec / measured : null },
         periods: periods.map((p) => ({ start: new Date(p.start), count: Number(p.count) })),
       };
