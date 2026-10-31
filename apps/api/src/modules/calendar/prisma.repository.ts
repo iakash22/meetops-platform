@@ -103,7 +103,7 @@ export class PrismaCalendarConnections implements CalendarConnectionsRepository 
               ...data,
             },
           });
-      return toView(row as Row);
+      return toView(row);
     });
   }
 
