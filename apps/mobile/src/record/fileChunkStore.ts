@@ -101,13 +101,13 @@ export function createFileChunkStore(fs: FileSystemLike, chunkBytes = CHUNK_BYTE
     },
     deleteFile: (uri) => fs.deleteAsync(uri, { idempotent: true }),
     async setInProgress(uri) {
-      const marker = `${root()}in-progress`;
+      const marker = `${root()}in-progress.uri`;
       if (uri === null) return fs.deleteAsync(marker, { idempotent: true });
       await fs.makeDirectoryAsync(root(), { intermediates: true });
       await fs.writeAsStringAsync(marker, uri, { encoding: 'utf8' });
     },
     async getInProgress() {
-      const marker = `${root()}in-progress`;
+      const marker = `${root()}in-progress.uri`;
       if (!(await fs.getInfoAsync(marker)).exists) return null;
       return (await fs.readAsStringAsync(marker, { encoding: 'utf8' })) || null;
     },
