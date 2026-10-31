@@ -1,7 +1,7 @@
 import { Linking, PermissionsAndroid, Platform } from 'react-native';
 
 import type { MicPermission, MicPermissionStatus } from '../consent/micPermission';
-import type { AudioDriver } from './nativeCapture';
+import type { AudioDriver, ForegroundIndicator } from './nativeCapture';
 import type { FileSystemLike } from './fileChunkStore';
 
 /**
@@ -87,6 +87,29 @@ export function createExpoAudioDriver(): AudioDriver {
 
 export function expoFileSystem(): FileSystemLike {
   return require('expo-file-system') as FileSystemLike;
+}
+
+/** Android microphone foreground service (modules/recording-service). Null on iOS or without the native module. */
+export function createAndroidForegroundIndicator(): ForegroundIndicator | null {
+  if (Platform.OS !== 'android') return null;
+  const { RecordingServiceModule } =
+    require('../../modules/recording-service') as typeof import('../../modules/recording-service');
+  if (!RecordingServiceModule) return null;
+  const native = RecordingServiceModule;
+  return {
+    start: () => native.start('MeetOps is recording', 'Tap Stop to end the recording now.'),
+    stop: () => native.stop(),
+    isConfirmed: () => native.isConfirmed(),
+    onStopRequested(listener) {
+      // Notification Stop, and the service dying on its own: both end capture immediately.
+      // Native fires exactly one of these per capture (latched in the service).
+      const subs = [
+        native.addListener('onStopRequested', listener),
+        native.addListener('onServiceLost', listener),
+      ];
+      return () => subs.forEach((s) => s.remove());
+    },
+  };
 }
 
 /**

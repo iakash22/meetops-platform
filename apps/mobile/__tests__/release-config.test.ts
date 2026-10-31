@@ -28,20 +28,40 @@ describe('release config (M6)', () => {
     expect(names).toContain('./plugins/withRecordingCompliance');
   });
 
-  it('adds iOS background audio and never declares a foreground service it does not have (R2)', () => {
-    const plugin = require('../plugins/withRecordingCompliance') as (c: object) => {
-      mods?: { ios?: { infoPlist?: unknown } };
+  it('adds iOS background audio and the Android microphone foreground service (R2)', () => {
+    const plugin = require('../plugins/withRecordingCompliance') as ((c: object) => {
+      mods?: { ios?: { infoPlist?: unknown }; android?: { manifest?: unknown } };
       android?: { permissions?: string[] };
+    }) & {
+      addRecordingService: (m: object) => {
+        manifest: { application: { service: { $: Record<string, string> }[] }[] };
+      };
+      SERVICE: string;
     };
     const out = plugin({ name: 'x', slug: 'x', android: {} });
     expect(out.mods?.ios?.infoPlist).toBeDefined();
+    expect(out.mods?.android?.manifest).toBeDefined();
     expect(out.android?.permissions).toEqual(
       expect.arrayContaining([
         'android.permission.RECORD_AUDIO',
         'android.permission.POST_NOTIFICATIONS',
+        'android.permission.FOREGROUND_SERVICE',
+        'android.permission.FOREGROUND_SERVICE_MICROPHONE',
       ]),
     );
-    expect(out.android?.permissions?.some((p) => p.includes('FOREGROUND_SERVICE'))).toBe(false);
+    const manifest = {
+      manifest: { $: {}, application: [{ $: { 'android:name': '.MainApplication' } }] },
+    };
+    const twice = plugin.addRecordingService(plugin.addRecordingService(manifest));
+    expect(twice.manifest.application[0]!.service).toEqual([
+      {
+        $: {
+          'android:name': plugin.SERVICE,
+          'android:exported': 'false',
+          'android:foregroundServiceType': 'microphone',
+        },
+      },
+    ]);
   });
 
   it('defines dev-client, preview and production EAS profiles without secrets', () => {
