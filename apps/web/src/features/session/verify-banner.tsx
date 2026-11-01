@@ -44,7 +44,7 @@ export function VerifyEmailBanner() {
       notify.success('Verification email sent', `Check ${email} for the link.`);
       setCooldown(RESEND_COOLDOWN_SECONDS);
     } catch (err) {
-      toastError(err, { title: "Couldn't send the email" });
+      toastError(err, { title: "Couldn't send the email", onRetry: () => void resend() });
     } finally {
       setSending(false);
     }

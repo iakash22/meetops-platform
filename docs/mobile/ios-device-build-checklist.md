@@ -7,7 +7,7 @@ step's result (pass, fail or notes, device, iOS version) in the tracking PR or i
 ## 1. Prerequisites
 
 - [ ] A Mac with **Xcode 16** (or newer) and its command line tools, CocoaPods (`pod --version`), Node
-      `>=20.19 <25`, and pnpm 9.12.3 (`corepack enable`).
+      `^20.19 || >=22.12 <25`, and pnpm 9.12.3 (`corepack enable`).
 - [ ] Devices: one iPhone with **Dynamic Island on iOS 17+**, plus ideally one on iOS 16.2–16.x (Live Activity
       Stop falls back to a link there) and one on iOS 15.x (no Live Activity; recording must still work).
 - [ ] An Apple Developer account (team) that can register the app id and its extension id.
