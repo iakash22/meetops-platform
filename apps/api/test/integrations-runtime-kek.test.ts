@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { randomBytes } from 'node:crypto';
 import { LocalKeyProvider, TokenCipher } from '@meetops/integrations';
 import { integrationsRuntimeFromEnv } from '../src/modules/integrations/runtime.js';
+import { selectIntegrationsRuntime } from '../src/modules/integrations/index.js';
 
 const ctx = {
   organizationId: '00000000-0000-4000-8000-00000000000a',
@@ -14,15 +15,18 @@ describe('integrations runtime shared KEK (worker token refresh)', () => {
     expect(integrationsRuntimeFromEnv({ INTEGRATIONS_TOKEN_KEK: '  ' }).cipher).toBeUndefined();
   });
 
+  // Fixed inputs: random keys made these cases flaky. base64url of random bytes has no '-'/'_' about 1 time
+  // in 4, so the "url-safe" value was then valid standard base64 and did not throw (empty message).
+  const valid = Buffer.alloc(32, 0xfb).toString('base64'); // '+/v7…/s=': has '+' and '/'
   it.each([
     ['too short', Buffer.from('short').toString('base64')],
-    ['too long', randomBytes(33).toString('base64')],
-    ['unpadded', randomBytes(32).toString('base64').replace(/=$/, '')],
-    ['url-safe alphabet', '-_' + 'A'.repeat(41) + '='],
-    ['non-canonical trailing bits', 'A'.repeat(42) + 'B='],
+    ['too long', Buffer.alloc(33, 7).toString('base64')],
+    ['unpadded', valid.replace(/=$/, '')],
+    ['url-safe alphabet', valid.replace(/\+/g, '-').replace(/\//g, '_')],
+    ['non-canonical trailing bits', valid.replace(/.=$/, (m) => (m[0] === 't' ? 'u=' : 't='))],
     ['not base64', '!'.repeat(43) + '='],
   ])('throws at startup when set but invalid (%s), naming only the variable', (_n, value) => {
-    // Guard: the non-canonical case must really be non-canonical.
+    expect(value).not.toBe(valid);
     if (_n === 'non-canonical trailing bits')
       expect(Buffer.from(value, 'base64').toString('base64')).not.toBe(value);
     let msg = '';
@@ -50,5 +54,39 @@ describe('integrations runtime shared KEK (worker token refresh)', () => {
     const sealed = await cipher.encrypt('tok', ctx);
     const worker = new TokenCipher(new LocalKeyProvider({ shared: kek }, 'shared'));
     await expect(worker.decrypt(sealed, ctx)).resolves.toBe('tok');
+  });
+});
+
+describe('API startup refuses INTEGRATIONS_TOKEN_KEK under NODE_ENV=production', () => {
+  const value = randomBytes(32).toString('base64');
+  const env = { NODE_ENV: 'production', INTEGRATIONS_TOKEN_KEK: value };
+
+  it('throws instead of silently ignoring the KEK, naming only the variable', () => {
+    let msg = '';
+    try {
+      selectIntegrationsRuntime({} as never, 'production', env);
+    } catch (e) {
+      msg = (e as Error).message;
+    }
+    expect(msg).toMatch(/INTEGRATIONS_TOKEN_KEK.*production/);
+    expect(msg).not.toContain(value);
+  });
+
+  it('throws even when a runtime is injected', () => {
+    expect(() =>
+      selectIntegrationsRuntime({ integrationsRuntime: {} } as never, 'production', env),
+    ).toThrow(/INTEGRATIONS_TOKEN_KEK/);
+  });
+
+  it('starts normally in production when the KEK is unset or blank', () => {
+    expect(
+      selectIntegrationsRuntime({} as never, 'production', { NODE_ENV: 'production' }),
+    ).toBeUndefined();
+    expect(
+      selectIntegrationsRuntime({} as never, 'production', {
+        NODE_ENV: 'production',
+        INTEGRATIONS_TOKEN_KEK: ' ',
+      }),
+    ).toBeUndefined();
   });
 });

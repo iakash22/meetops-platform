@@ -8,8 +8,11 @@ import {
   TokenCipher,
 } from '@meetops/integrations';
 import { createIntegrationConnectionRepository } from '@meetops/database';
+import { randomUUID } from 'node:crypto';
+import { createQueue, createRedisClient, createWorker } from '@meetops/queue';
 import {
-  startTokenRefreshScheduler,
+  runTokenRefreshSweep,
+  type ConnectionLease,
   type TokenRefreshDeps,
   type TokenRefreshLog,
   type TokenRefreshProviders,
@@ -91,24 +94,125 @@ export function tokenRefreshProvidersFromEnv(
   return providers;
 }
 
+/** Compare-and-delete: release the lease only while it still holds this owner's token (atomic in Redis). */
+export const RELEASE_LEASE_LUA = `if redis.call('GET', KEYS[1]) == ARGV[1] then
+  return redis.call('DEL', KEYS[1])
+end
+return 0`;
+
+/** Minimal ioredis surface the lease needs. */
+export interface LeaseRedis {
+  set(key: string, value: string, px: 'PX', ttlMs: number, nx: 'NX'): Promise<'OK' | null>;
+  eval(script: string, numKeys: number, ...args: string[]): Promise<unknown>;
+}
+
+/**
+ * Per-connection lease on Redis: `SET key <random token> PX ttl NX` takes it (atomic, auto-expiring), and release
+ * runs RELEASE_LEASE_LUA so a holder whose lease expired can never delete the next holder's lease.
+ */
+export function createRedisConnectionLease(
+  redis: LeaseRedis,
+  newToken: () => string = randomUUID,
+): ConnectionLease {
+  return {
+    async acquire(key, ttlMs) {
+      if (!Number.isInteger(ttlMs) || ttlMs <= 0)
+        throw new RangeError('ttlMs must be a positive integer');
+      const token = newToken();
+      return (await redis.set(key, token, 'PX', ttlMs, 'NX')) === 'OK' ? token : null;
+    },
+    async release(key, token) {
+      return Number(await redis.eval(RELEASE_LEASE_LUA, 1, key, token)) === 1;
+    },
+  };
+}
+
 export type TokenRefreshRegistration =
   | { registered: false; reason: 'disabled' }
   | { registered: true; close: () => Promise<void>; tick: () => Promise<void> };
+
+export const TOKEN_REFRESH_QUEUE = 'integrations-token-refresh';
+export const TOKEN_REFRESH_SCHEDULER_ID = 'integrations-token-refresh-sweep';
+
+/** Minimal BullMQ Queue surface; upsertJobScheduler is idempotent across replicas (one scheduler per id). */
+export interface TokenRefreshQueuePort {
+  upsertJobScheduler(
+    id: string,
+    repeat: { every: number },
+    template: { name: string; data?: unknown; opts?: Record<string, unknown> },
+  ): Promise<unknown>;
+  close(): Promise<void>;
+}
+export interface TokenRefreshWorkerPort {
+  close(): Promise<void>;
+}
+export interface TokenRefreshQueueFactories {
+  queue: () => TokenRefreshQueuePort;
+  worker: (process: () => Promise<unknown>) => TokenRefreshWorkerPort;
+}
+
+const bullmqFactories: TokenRefreshQueueFactories = {
+  queue: () => createQueue(TOKEN_REFRESH_QUEUE),
+  // concurrency 1: a replica never runs two sweeps at once.
+  worker: (process) => createWorker(TOKEN_REFRESH_QUEUE, () => process(), { concurrency: 1 }),
+};
+
+/**
+ * Single-replica token refresh (Jira rotates refresh tokens, so concurrent sweeps can invalidate each other's
+ * grant). Every replica upserts the SAME BullMQ job scheduler id, so Redis holds exactly one repeatable job and
+ * each tick is delivered to exactly one worker, instead of one setInterval per replica.
+ */
+export function startTokenRefreshQueueScheduler(
+  deps: TokenRefreshDeps,
+  opts: { intervalMs: number; factories?: TokenRefreshQueueFactories },
+): { close: () => Promise<void>; tick: () => Promise<void> } {
+  const f = opts.factories ?? bullmqFactories;
+  const sweep = () =>
+    runTokenRefreshSweep(deps).catch((err: unknown) => {
+      deps.log.warn(
+        { errName: err instanceof Error ? err.name : 'unknown' },
+        'integration token refresh sweep failed',
+      );
+      throw err;
+    });
+  const queue = f.queue();
+  const worker = f.worker(sweep);
+  void queue
+    .upsertJobScheduler(
+      TOKEN_REFRESH_SCHEDULER_ID,
+      { every: opts.intervalMs },
+      { name: 'sweep', data: {}, opts: { attempts: 1, removeOnComplete: 12, removeOnFail: 24 } },
+    )
+    .catch((err: unknown) =>
+      deps.log.warn(
+        { errName: err instanceof Error ? err.name : 'unknown' },
+        'integration token refresh schedule failed',
+      ),
+    );
+  return {
+    tick: () => sweep().then(() => undefined),
+    close: async () => {
+      await worker.close();
+      await queue.close();
+    },
+  };
+}
 
 export interface RegisterTokenRefreshOptions {
   env: TokenRefreshEnv;
   log: TokenRefreshLog;
   /** Test seam; defaults to the Prisma repository + env providers. */
   buildDeps?: (env: TokenRefreshEnv & { kek: Buffer }) => Omit<TokenRefreshDeps, 'log'>;
-  start?: typeof startTokenRefreshScheduler;
+  start?: typeof startTokenRefreshQueueScheduler;
 }
 
-/** Integrations token-refresh job for apps/worker main(). Run on ONE replica (Jira rotates refresh tokens). */
+/** Integrations token-refresh job for apps/worker main(); single-replica via a BullMQ job scheduler. */
 export function registerTokenRefreshJob(
   opts: RegisterTokenRefreshOptions,
 ): TokenRefreshRegistration {
   if (!opts.env.enabled || !opts.env.kek) return { registered: false, reason: 'disabled' };
   const env = { ...opts.env, kek: opts.env.kek };
+  let leaseRedis: ReturnType<typeof createRedisClient> | undefined;
   const deps =
     opts.buildDeps?.(env) ??
     ({
@@ -116,10 +220,18 @@ export function registerTokenRefreshJob(
         cipher: new TokenCipher(new LocalKeyProvider({ shared: env.kek }, 'shared')),
       }),
       providers: tokenRefreshProvidersFromEnv(),
+      lease: createRedisConnectionLease((leaseRedis = createRedisClient())),
     } satisfies Omit<TokenRefreshDeps, 'log'>);
-  const scheduler = (opts.start ?? startTokenRefreshScheduler)(
+  const scheduler = (opts.start ?? startTokenRefreshQueueScheduler)(
     { ...deps, log: opts.log },
     { intervalMs: env.intervalMs },
   );
-  return { registered: true, close: scheduler.close, tick: scheduler.tick };
+  return {
+    registered: true,
+    tick: scheduler.tick,
+    close: async () => {
+      await scheduler.close();
+      await leaseRedis?.quit().catch(() => undefined);
+    },
+  };
 }
