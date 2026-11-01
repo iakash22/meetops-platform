@@ -106,11 +106,11 @@ const CALENDAR_CONNECTIONS_MIGRATION = '20261031000000_calendar_connections';
 const MEETING_SEARCH_MIGRATION = '20261031010000_meeting_search_fts';
 /** Phase 7 calendar background sync (calendar_events + sync cursor + due-for-sync definer function). */
 const CALENDAR_EVENTS_MIGRATION = '20261031020000_calendar_events';
-/** Consent API: append-only meeting consent ledger (forced RLS, SELECT/INSERT only). */
-const MEETING_CONSENT_MIGRATION = '20261031030000_meeting_consent_events';
 /** MeetingSource gains 'mobile' (additive ADD VALUE). */
 const MEETING_SOURCE_MOBILE_MIGRATION = '20261031120000_meeting_source_mobile';
-const LATEST_MIGRATION = MEETING_SOURCE_MOBILE_MIGRATION;
+/** Consent API: append-only meeting consent ledger (forced RLS, SELECT/INSERT only). */
+const MEETING_CONSENT_MIGRATION = '20261101030000_meeting_consent_events';
+const LATEST_MIGRATION = MEETING_CONSENT_MIGRATION;
 const reportDedupeSql = readFileSync(
   resolve(migrationsDir, REPORT_SUMMARY_DEDUPE_MIGRATION, 'migration.sql'),
   'utf8',
@@ -1534,14 +1534,15 @@ describe('integration external-account routing (20261028020000)', () => {
       .map((x) => x.name)
       .sort();
     expect(dirs.at(-1)).toBe(LATEST_MIGRATION);
-    expect(dirs.at(-2)).toBe(CALENDAR_EVENTS_MIGRATION);
-    expect(dirs.at(-3)).toBe(MEETING_SEARCH_MIGRATION);
-    expect(dirs.at(-4)).toBe(CALENDAR_CONNECTIONS_MIGRATION);
-    expect(dirs.at(-5)).toBe(RETENTION_OWNER_MIGRATION);
-    expect(dirs.at(-6)).toBe(RELAY_REVOKE_ALL_KINDS_MIGRATION);
-    expect(dirs.at(-7)).toBe(EXTERNAL_ACCOUNT_ROUTING_MIGRATION);
-    expect(dirs.at(-8)).toBe(SESSION_AUDIT_GEOIP_MIGRATION);
-    expect(dirs.at(-9)).toBe(RELAY_BY_TYPE_MIGRATION);
+    expect(dirs.at(-2)).toBe(MEETING_SOURCE_MOBILE_MIGRATION);
+    expect(dirs.at(-3)).toBe(CALENDAR_EVENTS_MIGRATION);
+    expect(dirs.at(-4)).toBe(MEETING_SEARCH_MIGRATION);
+    expect(dirs.at(-5)).toBe(CALENDAR_CONNECTIONS_MIGRATION);
+    expect(dirs.at(-6)).toBe(RETENTION_OWNER_MIGRATION);
+    expect(dirs.at(-7)).toBe(RELAY_REVOKE_ALL_KINDS_MIGRATION);
+    expect(dirs.at(-8)).toBe(EXTERNAL_ACCOUNT_ROUTING_MIGRATION);
+    expect(dirs.at(-9)).toBe(SESSION_AUDIT_GEOIP_MIGRATION);
+    expect(dirs.at(-10)).toBe(RELAY_BY_TYPE_MIGRATION);
   });
   const sql = readFileSync(
     resolve(migrationsDir, EXTERNAL_ACCOUNT_ROUTING_MIGRATION, 'migration.sql'),
@@ -1573,8 +1574,8 @@ describe('ADR-013 notifications tables (static)', () => {
       .filter((x) => x.isDirectory())
       .map((x) => x.name)
       .sort();
-    expect(dirs.at(-9)).toBe(RELAY_BY_TYPE_MIGRATION);
-    expect(dirs.at(-10)).toBe(NOTIFICATIONS_MIGRATION);
+    expect(dirs.at(-10)).toBe(RELAY_BY_TYPE_MIGRATION);
+    expect(dirs.at(-11)).toBe(NOTIFICATIONS_MIGRATION);
     expect(statements).not.toMatch(
       /\bDROP\b|RENAME|ALTER COLUMN|NO FORCE|DISABLE ROW LEVEL SECURITY/i,
     );
@@ -1646,10 +1647,11 @@ describe('IP retention owner re-assert (20261028040000)', () => {
       .map((x) => x.name)
       .sort();
     expect(dirs.at(-1)).toBe(LATEST_MIGRATION);
-    expect(dirs.at(-2)).toBe(CALENDAR_EVENTS_MIGRATION);
-    expect(dirs.at(-3)).toBe(MEETING_SEARCH_MIGRATION);
-    expect(dirs.at(-4)).toBe(CALENDAR_CONNECTIONS_MIGRATION);
-    expect(dirs.at(-5)).toBe(RETENTION_OWNER_MIGRATION);
+    expect(dirs.at(-2)).toBe(MEETING_SOURCE_MOBILE_MIGRATION);
+    expect(dirs.at(-3)).toBe(CALENDAR_EVENTS_MIGRATION);
+    expect(dirs.at(-4)).toBe(MEETING_SEARCH_MIGRATION);
+    expect(dirs.at(-5)).toBe(CALENDAR_CONNECTIONS_MIGRATION);
+    expect(dirs.at(-6)).toBe(RETENTION_OWNER_MIGRATION);
     expect(dirs.indexOf(RETENTION_OWNER_MIGRATION)).toBeGreaterThan(
       dirs.indexOf(SESSION_AUDIT_GEOIP_MIGRATION),
     );
