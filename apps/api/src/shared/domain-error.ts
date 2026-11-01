@@ -7,7 +7,7 @@ export class DomainError extends Error {
     message: string,
     public readonly statusCode: number = 400,
     /** Sub-reason sent as `error.reason`. 409s without one get the generic 'CONFLICT'. */
-    public readonly reason?: ApiErrorReason
+    public readonly reason?: ApiErrorReason,
   ) {
     super(message);
     this.name = new.target.name;

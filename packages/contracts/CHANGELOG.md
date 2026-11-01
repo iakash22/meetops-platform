@@ -14,6 +14,13 @@ While the version is `0.x`, a minor bump may contain breaking changes (ADR-003).
 
 ### Added
 
+- `ALLOWED_MEDIA_MIME_TYPES` / `MediaMimeType`: `audio/aac` (raw ADTS AAC), and `MEDIA_SOURCE_EXTS`: `aac`. Lets Android
+  mobile record in short byte-concatenable segments that are encrypted as each one closes (ADR-015). Additive.
+- `MeetingSource`: `mobile` for meetings recorded by the native mobile app (HANDOFF §6 follow-up for Arch). Additive;
+  the database enum gains the same value (migration `20261031120000_meeting_source_mobile`).
+- Meeting analytics (P7): `ANALYTICS_PATHS.meetings`, `MAX_ANALYTICS_RANGE_DAYS` (366), `AnalyticsBucket`,
+  `MeetingAnalyticsParams`, `MeetingAnalyticsQuery` (`from`/`to`/`bucket`) and `MeetingAnalytics` (aggregate counts by
+  source, status and period plus duration totals; no ids or titles). Additive.
 - `ListMeetingsResponse` (`CursorPage<Meeting>`) for `GET /orgs/:organizationId/meetings`. The API now validates the
   query against `ListMeetingsQuery` (`cursor`, `limit`, `source`) and honours `source`. Additive.
 - `CONFLICT_REASONS` / `ConflictReason`: `RECORDING_SESSION_CLOSED`. Sent with a recording-session 409 when the

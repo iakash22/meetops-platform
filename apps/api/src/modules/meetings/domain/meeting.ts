@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { DomainError } from '../../../shared/domain-error.js';
 
-export type MeetingSource = 'upload' | 'extension' | 'desktop' | 'bot';
+export type MeetingSource = 'upload' | 'extension' | 'desktop' | 'bot' | 'mobile';
 export type MeetingStatus = 'scheduled' | 'recording' | 'processing' | 'completed' | 'failed';
 
 export interface MeetingRecord {
@@ -38,6 +38,41 @@ export interface MeetingPage {
  * - a missing, soft-deleted or other-organization meeting is `null` (identical 404 upstream);
  * - Prisma runs every call inside withOrganizationContext, so forced RLS applies too.
  */
+export type AnalyticsBucket = 'day' | 'week' | 'month';
+
+export interface MeetingAnalyticsQuery {
+  /** Inclusive. */
+  from: Date;
+  /** Exclusive. */
+  to: Date;
+  bucket: AnalyticsBucket;
+}
+
+/** Aggregates over live (not soft-deleted) meetings with createdAt in [from, to). No ids or titles. */
+export interface MeetingAnalyticsResult {
+  total: number;
+  bySource: { source: MeetingSource; count: number }[];
+  byStatus: { status: MeetingStatus; count: number }[];
+  duration: { measured: number; totalSec: number; averageSec: number | null };
+  /** Non-empty UTC buckets, ascending. */
+  periods: { start: Date; count: number }[];
+}
+
+/** Start of the UTC bucket containing `d` (weeks start on Monday, like Postgres date_trunc). */
+export function bucketStart(d: Date, bucket: AnalyticsBucket): Date {
+  const day = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
+  if (bucket === 'day') return new Date(day);
+  if (bucket === 'month') return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1));
+  const dow = (new Date(day).getUTCDay() + 6) % 7; // Monday = 0
+  return new Date(day - dow * 86_400_000);
+}
+
+export class InvalidAnalyticsRangeError extends DomainError {
+  constructor(message: string) {
+    super('VALIDATION_FAILED', message, 400);
+  }
+}
+
 export interface MeetingRepository {
   /** Newest first, keyset on (createdAt, id) descending. Throws InvalidMeetingCursorError. */
   list(
@@ -45,6 +80,8 @@ export interface MeetingRepository {
     q: { cursor?: string | undefined; limit: number; source?: MeetingSource | undefined },
   ): Promise<MeetingPage>;
   findById(organizationId: string, id: string): Promise<MeetingRecord | null>;
+  /** Read-only aggregates for one organization (never another org's rows). */
+  analytics(organizationId: string, q: MeetingAnalyticsQuery): Promise<MeetingAnalyticsResult>;
   /**
    * Find-or-create on (organizationId, source, externalMeetingId). Concurrent calls converge on one row;
    * `created` is true only for the call that inserted it.

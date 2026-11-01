@@ -47,7 +47,9 @@ export interface OrganizationServiceDeps {
   /** ADR-005 A1.6: removal from an org revokes the user's extension families for that org. */
   extensionRevoker?: ExtensionRevoker;
   /** ADR-013 / security review C (3): removal from an org deletes the user's push devices in that org. */
-  pushDeviceRevoker?: { revokeForUser(userId: string, organizationId?: string | null): Promise<void> };
+  pushDeviceRevoker?: {
+    revokeForUser(userId: string, organizationId?: string | null): Promise<void>;
+  };
   organizations: OrganizationRepository;
   memberships: MembershipRepository;
   invitations: InvitationRepository;

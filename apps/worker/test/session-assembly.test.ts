@@ -146,6 +146,39 @@ describe('processSessionAssembly', () => {
     );
   });
 
+  it('ADTS AAC segments (mobile, ADR-015): per-chunk and whole-file sha256 verify unchanged', async () => {
+    // Dummy ADTS frames (header + zero payload): each segment is self-delimiting, so byte concatenation is valid.
+    const frame = (len: number, fill: number) => {
+      const f = Buffer.alloc(len, fill);
+      f.set([
+        0xff,
+        0xf1,
+        0x50,
+        0x80 | ((len >> 11) & 3),
+        (len >> 3) & 0xff,
+        ((len & 7) << 5) | 0x1f,
+        0xfc,
+      ]);
+      return f;
+    };
+    const seg0 = Buffer.concat([frame(40, 1), frame(41, 2)]);
+    const seg1 = Buffer.concat([frame(39, 3)]);
+    const w = world([seg0, seg1], (s) => {
+      s.mimeType = 'audio/aac';
+    });
+    w.deps.sourceExt = () => 'aac';
+    const out = await processSessionAssembly(job, w.deps);
+    const all = Buffer.concat([seg0, seg1]);
+    // Same chain as every other type: chunk hashes checked while streaming, the final hash over the joined bytes.
+    expect(w.chunks.map((c) => c.sha256Hex)).toEqual([hex(seg0), hex(seg1)]);
+    expect(out).toEqual({ status: 'processed', sizeBytes: all.length, sha256Hex: hex(all) });
+    expect(w.objects.get(w.sourceKey)).toEqual(all);
+    expect(w.deps.process).toHaveBeenCalledWith(
+      expect.objectContaining({ sourceExt: 'aac' }),
+      expect.anything(),
+    );
+  });
+
   it('quarantined scan: never processes', async () => {
     const w = world([A]);
     vi.mocked(w.deps.scan).mockResolvedValueOnce('quarantined');

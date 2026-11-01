@@ -4,7 +4,7 @@ import { fakeRedis } from './fake-redis.js';
 import {
   INCR_WITH_EXPIRY_LUA,
   RedisLoginLockout,
-  RedisRateLimiter
+  RedisRateLimiter,
 } from '../src/modules/auth/infrastructure/rate-limit/redis.js';
 import { InMemoryLoginLockout } from '../src/modules/auth/infrastructure/rate-limit/in-memory.js';
 import { defaultModuleDeps, MissingProductionDependencyError } from '../src/modules/index.js';
@@ -21,7 +21,7 @@ function spyRedis() {
         calls.push(String(prop));
         return (v as (...a: unknown[]) => unknown).apply(target, args);
       };
-    }
+    },
   });
   return { r, calls };
 }
@@ -60,7 +60,9 @@ describe('lockout wiring (modules/index.ts)', () => {
 
   it('falls back to in-memory in test/development without Redis', () => {
     expect(defaultModuleDeps({}, { nodeEnv: 'test' }).lockout).toBeInstanceOf(InMemoryLoginLockout);
-    expect(defaultModuleDeps({}, { nodeEnv: 'development' }).lockout).toBeInstanceOf(InMemoryLoginLockout);
+    expect(defaultModuleDeps({}, { nodeEnv: 'development' }).lockout).toBeInstanceOf(
+      InMemoryLoginLockout,
+    );
   });
 
   it('ignores REDIS_URL under NODE_ENV=test (hermetic tests)', () => {
@@ -92,7 +94,9 @@ describe('lockout wiring (modules/index.ts)', () => {
 
   it('an explicitly injected lockout wins over Redis', () => {
     const lockout = new InMemoryLoginLockout({ now: () => new Date() });
-    expect(defaultModuleDeps({ lockout, redis: fakeRedis() }, { nodeEnv: 'test' }).lockout).toBe(lockout);
+    expect(defaultModuleDeps({ lockout, redis: fakeRedis() }, { nodeEnv: 'test' }).lockout).toBe(
+      lockout,
+    );
   });
 });
 
@@ -106,7 +110,8 @@ describe('lockout notice email (spec §5)', () => {
   async function failTimes(app: App, email: string, n: number) {
     const c = new Client(app);
     const res = [];
-    for (let i = 0; i < n; i++) res.push(await c.post('/auth/login', { email, password: 'wrong-password-x' }));
+    for (let i = 0; i < n; i++)
+      res.push(await c.post('/auth/login', { email, password: 'wrong-password-x' }));
     return res;
   }
 
@@ -121,7 +126,10 @@ describe('lockout notice email (spec §5)', () => {
     expect(notices).toHaveLength(1);
     expect(notices[0]?.to).toBe('owner@example.test');
     expect(notices[0]?.data.url).toMatch(/\/forgot-password$/);
-    const locked = await new Client(app).post('/auth/login', { email: 'owner@example.test', password: PASSWORD });
+    const locked = await new Client(app).post('/auth/login', {
+      email: 'owner@example.test',
+      password: PASSWORD,
+    });
     expect(locked.statusCode).toBe(429);
   });
 
@@ -133,7 +141,10 @@ describe('lockout notice email (spec §5)', () => {
     const before = known.mail.sent.length;
     const a = await failTimes(known, 'real@example.test', 10);
     const b = await failTimes(ghost, 'nobody@example.test', 10);
-    const shape = (r: (typeof a)[number]) => [r.statusCode, JSON.stringify(r.json().error?.code ?? r.json().code)];
+    const shape = (r: (typeof a)[number]) => [
+      r.statusCode,
+      JSON.stringify(r.json().error?.code ?? r.json().code),
+    ];
     expect(a.map(shape)).toEqual(b.map(shape));
     expect(known.mail.sent.length - before).toBe(1);
     expect(ghost.mail.sent).toHaveLength(0);

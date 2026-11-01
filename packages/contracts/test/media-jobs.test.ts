@@ -161,7 +161,7 @@ describe('media and transcription jobs', () => {
   it('MediaJobPayload', () => {
     expect(MEDIA_QUEUE).toBe('media');
     expect(QUEUE_NAMES.media).toBe(MEDIA_QUEUE);
-    expect(MEDIA_SOURCE_EXTS).toEqual(['webm', 'ogg', 'mp3', 'm4a', 'mp4', 'wav']);
+    expect(MEDIA_SOURCE_EXTS).toEqual(['webm', 'ogg', 'mp3', 'm4a', 'aac', 'mp4', 'wav']);
     expect(Value.Check(MediaJobPayload, media)).toBe(true);
     expect(
       Value.Check(MediaJobPayload, {
