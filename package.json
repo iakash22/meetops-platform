@@ -17,6 +17,7 @@
     "typecheck": "turbo run typecheck",
     "lint": "turbo run lint",
     "test": "turbo run test",
+    "size": "turbo run size",
     "dev": "turbo run dev",
     "dev:api": "turbo run dev --filter=@meetops/api",
     "dev:web": "turbo run dev --filter=@meetops/web",
