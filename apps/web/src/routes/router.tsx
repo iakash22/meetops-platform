@@ -61,6 +61,10 @@ const CalendarPage = lazyRouteComponent(
 );
 const SearchPage = lazyRouteComponent(() => import('@/features/search/search-page'), 'SearchPage');
 const DashboardPage = lazyRouteComponent(() => import('@/pages/app-pages'), 'DashboardPage');
+const AnalyticsPage = lazyRouteComponent(
+  () => import('@/features/analytics/analytics-page'),
+  'AnalyticsPage',
+);
 const NotificationsPage = lazyRouteComponent(
   () => import('@/features/notifications/notifications-page'),
   'NotificationsPage',
@@ -270,6 +274,11 @@ const searchRoute = createRoute({
     );
   },
 });
+const analyticsRoute = createRoute({
+  getParentRoute: () => appLayout,
+  path: '/analytics',
+  component: AnalyticsPage,
+});
 const notificationsRoute = createRoute({
   getParentRoute: () => appLayout,
   path: '/notifications',
@@ -337,6 +346,7 @@ export const routeTree = rootRoute.addChildren([
     calendarRoute,
     searchRoute,
     projectsRoute,
+    analyticsRoute,
     notificationsRoute,
     settingsRoute,
     teamMembersRoute,
