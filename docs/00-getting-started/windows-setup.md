@@ -5,7 +5,7 @@ Target: Windows with WSL 2 (Ubuntu), Docker Desktop on the WSL 2 backend, Node 2
 Steps marked **(requires PR #N, unmerged)** depend on an open PR and won't work on `main` until it merges. Values come from `main` and the open PRs as of 2026-10-21. PR heads read: #6 `62c7b89`, #7 `9e1d407`, #16 `9d18f47`, #25 `30f542a`.
 
 > [!NOTE]
-> **Node 24 is supported.** `engines.node` is `">=20.19 <25"` and CI builds on a Node `[22, 24]` matrix (PR #32). Node 22 LTS also works ([nvm-windows](https://github.com/coreybutler/nvm-windows) or [fnm](https://github.com/Schniz/fnm)).
+> **Node 24 is supported.** `engines.node` is `"^20.19 || >=22.12 <25"` and CI builds on a Node `[22, 24]` matrix (PR #32). Node 22 LTS also works ([nvm-windows](https://github.com/coreybutler/nvm-windows) or [fnm](https://github.com/Schniz/fnm)).
 
 > **Known gaps, routed to owners:**
 >
@@ -154,5 +154,5 @@ See [troubleshooting](troubleshooting.md) for OneDrive, WSL 2, Docker Desktop an
 
 - **`sh\r` errors in hooks or containers:** a CRLF checkout. Set `core.autocrlf input`, then re-checkout with `git rm --cached -r . && git reset --hard`. That reset discards uncommitted changes, so commit or stash first.
 - **`EPERM` or long-path errors on `pnpm install`:** move the repo out of OneDrive and enable `core.longpaths`, plus Windows long paths (`LongPathsEnabled` registry setting; needs admin).
-- **pnpm "Unsupported engine" warning:** your Node is outside `engines.node` (`>=20.19 <25`); switch to Node 22 or 24.
+- **pnpm "Unsupported engine" warning:** your Node is outside `engines.node` (`^20.19 || >=22.12 <25`); switch to Node 22 or 24.
 - **Prisma "role does not exist" or "permission denied":** the migrations from #25 haven't run, or the LOGIN step was skipped (section 6).

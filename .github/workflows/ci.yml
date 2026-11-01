@@ -144,6 +144,10 @@ jobs:
       - name: Build
         run: pnpm build
 
+      - name: Bundle budget (web)
+        # Reuses the build above (turbo cache); fails on a gzip budget breach. See docs/05-web/performance.md.
+        run: pnpm size
+
       - name: MinIO logs on failure
         if: failure()
         run: docker logs minio || true
