@@ -43,21 +43,58 @@ describe('ChunkStore (IndexedDB)', () => {
     expect((await b.listSessions()).map((s) => s.sessionId)).toEqual(['s1']);
   });
 
-  it('evicts oldest chunks first to stay under the cap', async () => {
+  it('evicts oldest chunks of other recordings first to stay under the cap', async () => {
     const s = await open({ maxBytes: 30, policy: 'evict-oldest' });
     await s.putChunk(chunk(0, 10));
     await s.putChunk(chunk(1, 10));
     await s.putChunk(chunk(2, 10));
-    const r = await s.putChunk(chunk(3, 15));
+    await s.putSession({ sessionId: 's2', meta, completed: false });
+    const r = await s.putChunk({ ...chunk(0, 15, 9), sessionId: 's2' });
+    // s1 lost a pending chunk, so it can never complete: the whole unheld recording is evicted together.
     expect(r).toEqual({
       stored: true,
-      evictedCount: 2,
-      evictedBytes: 20,
+      evictedCount: 3,
+      evictedBytes: 30,
       damagedSessions: ['s1'],
-      lostPending: 2,
+      lostPending: 3,
     });
-    expect((await s.listChunks()).map((c) => c.seq)).toEqual([2, 3]);
-    expect(await s.totalBytes()).toBe(25);
+    expect((await s.listChunks()).map((c) => `${c.sessionId}:${c.seq}`)).toEqual(['s2:0']);
+    expect(await s.totalBytes()).toBe(15);
+    expect((await s.getSession('s1'))!.incomplete).toEqual({ lostChunks: 3 });
+  });
+
+  it('evicts uploaded chunks before any unheld pending recording', async () => {
+    const s = await open({ maxBytes: 30, policy: 'evict-oldest' });
+    await s.putChunk(chunk(0, 10));
+    await s.putChunk(chunk(1, 10));
+    await s.markUploaded('s1', 1);
+    await s.putSession({ sessionId: 's2', meta, completed: false });
+    await s.putChunk({ ...chunk(0, 10, 5), sessionId: 's2' });
+    await s.putSession({ sessionId: 's3', meta, completed: false });
+    expect(await s.putChunk({ ...chunk(0, 10, 9), sessionId: 's3' })).toMatchObject({
+      stored: true,
+      evictedCount: 1,
+      lostPending: 0,
+      damagedSessions: [],
+    });
+    expect((await s.listChunks()).map((c) => `${c.sessionId}:${c.seq}`)).toEqual([
+      's1:0',
+      's2:0',
+      's3:0',
+    ]);
+  });
+
+  it('a recording never evicts its own earlier pending chunks (refused instead)', async () => {
+    const s = await open({ maxBytes: 30, policy: 'evict-oldest' });
+    await s.putChunk(chunk(0, 10));
+    await s.putChunk(chunk(1, 10));
+    await s.putChunk(chunk(2, 10));
+    expect(await s.putChunk(chunk(3, 10))).toEqual({ stored: false, reason: 'over-cap' });
+    expect((await s.listChunks('s1')).map((c) => c.seq)).toEqual([0, 1, 2]);
+    expect((await s.getSession('s1'))!.incomplete).toBeUndefined();
+    // Its own already-uploaded chunks can still go (no data loss).
+    await s.markUploaded('s1', 0);
+    expect(await s.putChunk(chunk(3, 10))).toMatchObject({ stored: true, lostPending: 0 });
   });
 
   it('never evicts pending chunks of a held recording; refuses the new chunk instead', async () => {
@@ -68,15 +105,17 @@ describe('ChunkStore (IndexedDB)', () => {
       ...(await s.getSession('s1'))!,
       held: { status: 409, op: 'complete', at: 1 },
     });
+    expect(await s.heldBytes()).toBe(20);
     await s.putSession({ sessionId: 's2', meta, completed: false });
     await s.putChunk({ ...chunk(0, 10, 5), sessionId: 's2' });
-    // Only s2's chunk can go: s2 seq 1 (10) fits after evicting s2 seq 0.
-    const ok = await s.putChunk({ ...chunk(1, 10, 6), sessionId: 's2' });
-    expect(ok).toMatchObject({ stored: true, damagedSessions: ['s2'] });
-    expect((await s.listChunks('s1')).map((c) => c.seq)).toEqual([0, 1]);
-    // Nothing evictable is left that would make room: refused, held chunks untouched.
-    await s.putChunk({ ...chunk(2, 10, 7), sessionId: 's2' }).catch(() => undefined);
-    expect(await s.putChunk({ ...chunk(3, 25, 8), sessionId: 's2' })).toEqual({
+    await s.putSession({ sessionId: 's3', meta, completed: false });
+    // s3 may evict s2's chunk, never s1's held ones.
+    expect(await s.putChunk({ ...chunk(0, 10, 6), sessionId: 's3' })).toMatchObject({
+      stored: true,
+      damagedSessions: ['s2'],
+    });
+    // Held data alone (20 of 30) leaves no room for a 15-byte chunk: refused, held chunks untouched.
+    expect(await s.putChunk({ ...chunk(1, 15, 7), sessionId: 's3' })).toEqual({
       stored: false,
       reason: 'over-cap',
     });

@@ -52,7 +52,10 @@ export type AuditAction =
   // Phase 5 (ADR-008) integrations
   | 'integration.disconnect'
   | 'integration.connect'
-  | 'integration.issue_push';
+  | 'integration.issue_push'
+  // Phase 7 calendar (self-service, per user)
+  | 'calendar.connect'
+  | 'calendar.disconnect';
 
 /** Never put passwords, tokens, cookies or hashes in metadata. */
 export interface AuditEvent {
@@ -75,7 +78,8 @@ export interface AuditEvent {
     | 'meeting'
     | 'extension_device'
     | 'desktop_device'
-    | 'integration';
+    | 'integration'
+    | 'calendar_connection';
   targetId: string | null;
   metadata: Record<string, string | number | boolean | null>;
   ip: string | null;

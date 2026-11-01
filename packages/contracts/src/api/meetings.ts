@@ -1,7 +1,7 @@
 import { Type, type Static } from '@sinclair/typebox';
 import { Id, IsoDateTime } from '../common.js';
-import { MeetingSource, MeetingStatus } from '../domain/meeting.js';
-import { CursorPageQuery } from './pagination.js';
+import { Meeting, MeetingSource, MeetingStatus } from '../domain/meeting.js';
+import { CursorPage, CursorPageQuery } from './pagination.js';
 
 export { MEETING_PATHS } from '../constants.js';
 import { HttpsUrl } from '../domain/media.js';
@@ -77,6 +77,10 @@ export const ListMeetingsQuery = Type.Object(
   strict,
 );
 export type ListMeetingsQuery = Static<typeof ListMeetingsQuery>;
+
+/** 200 body of GET /orgs/:organizationId/meetings: one page of the caller's organization only, newest first. */
+export const ListMeetingsResponse = CursorPage(Meeting);
+export type ListMeetingsResponse = Static<typeof ListMeetingsResponse>;
 
 /** Path params for GET /orgs/:organizationId/meetings. */
 export const ListMeetingsParams = Type.Object({ organizationId: Id }, strict);

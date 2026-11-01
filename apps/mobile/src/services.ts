@@ -1,5 +1,5 @@
 import { createApiClient, createApiRequester } from './api/client';
-import { Platform } from 'react-native';
+import { AppState, Platform } from 'react-native';
 import {
   createDemoPushDeviceApi,
   createDemoPushTokenProvider,
@@ -17,14 +17,35 @@ import { createSessionManager } from './auth/sessionManager';
 import { createSecureTokenStore } from './auth/secureTokenStore';
 import { createDeviceIdProvider } from './auth/deviceId';
 import { createDemoConsentApi } from './consent/consentApi';
+import { createDemoMeetingResolver, createHttpMeetingResolver } from './consent/meetingResolver';
 import { createHttpMeetingsRepository, createHttpTasksRepository } from './data/httpRepositories';
 import { createPlaceholderMeetingsRepository } from './data/meetingsRepository';
 import type { Repositories } from './data/RepositoriesProvider';
 import { createPlaceholderTasksRepository } from './data/tasksRepository';
 import { createDemoTaskReviewApi, createHttpTaskReviewApi } from './tasks/reviewApi';
+import type { RecordingCapture } from './record/capture';
+import {
+  createAndroidForegroundIndicator,
+  createExpoAudioDriver,
+  createNativeMicPermission,
+  expoFileSystem,
+  createNativeChunkCipher,
+  iosBackupExclusion,
+  recorderFileGuard,
+  androidSegmentRecorder,
+} from './record/expoAudio';
+import { createSegmentCapture } from './record/segmentCapture';
+import { withBackupExclusion } from './record/backupExclusion';
+import { createFileChunkStore } from './record/fileChunkStore';
+import { createNativeCapture } from './record/nativeCapture';
+import { createIosLiveActivity } from './record/liveActivity';
 import { createSimulatedCapture } from './record/simulatedRecorder';
+import { createHttpRecordingUploadApi } from './upload/httpRecordingUploadApi';
 import { createMemoryQueueStore, createSimulatedUploadApi } from './upload/simulatedUploadApi';
+import { createFileQueueStore } from './upload/fileQueueStore';
 import { createUploadQueueEngine } from './upload/uploadQueueEngine';
+import { reconcileOrphans, startUploadScheduler } from './upload/uploadScheduler';
+import { createNetInfoStatus, loadNetInfo } from './upload/netInfoStatus';
 
 /**
  * App composition root.
@@ -32,8 +53,10 @@ import { createUploadQueueEngine } from './upload/uploadQueueEngine';
  * Live mode: set `EXPO_PUBLIC_API_URL` (https origin, public, not a secret). Auth, signup, meetings and tasks then go
  * to the API with bearer tokens (see `src/api/httpAuthClient.ts` for the mobile token routes Backend must ship).
  * Demo mode (no URL, or a non-https URL outside dev): typed mocks, nothing leaves the device.
- * Still mocked in both modes: consent (no Backend consent route), recorder (SIMULATED: no audio, placeholder chunks into the
- * real upload queue engine with a simulated upload API, in-memory queue, always online),
+ * Recording: demo mode uses the SIMULATED capture (no audio, placeholder chunks) and a simulated upload API. Live mode
+ * uses the native expo-audio capture (M4) with real mic permission, chunk files in the app sandbox, and the HTTP
+ * recording-session upload API. Consent opt-in stays device-local (no Backend consent route; the attestation travels
+ * with the upload, contracts G11).
  * Tokens: Keychain / Keystore via expo-secure-store (`AFTER_FIRST_UNLOCK_THIS_DEVICE_ONLY`: device-only, Android
  * backup disabled). Only the refresh token is persisted; the access token is memory-only. A failed write keeps the
  * rotated pair in memory and retries. A stable per-install `deviceId` (ADR-005) is sent on login, refresh and logout.
@@ -74,12 +97,81 @@ const http = API_BASE_URL
   ? { baseUrl: API_BASE_URL, getAccessToken: () => sessionManager.getAccessToken() }
   : null;
 
-const capture = createSimulatedCapture();
-const engine = createUploadQueueEngine({
-  store: createMemoryQueueStore(),
+// R4 (iOS): the recordings folder is excluded from iCloud/Finder backups before anything is written to it.
+const excludeFromBackup = http ? iosBackupExclusion() : null;
+const fileSystem = http
+  ? excludeFromBackup
+    ? withBackupExclusion(expoFileSystem(), excludeFromBackup)
+    : expoFileSystem()
+  : null;
+// R5: chunk files are AES-256-GCM sealed (Android Keystore / iOS Keychain). Fails closed without the native module.
+const chunkCipher = fileSystem ? createNativeChunkCipher() : null;
+const chunkFiles = fileSystem && chunkCipher ? createFileChunkStore(fileSystem, chunkCipher) : null;
+// R5 (ADR-015): Android records ADTS AAC segments sealed as each closes (only the open segment is plaintext).
+// iOS (and an Android build without the module) stays on expo-audio + native sealing at Stop (documented exception).
+const segmentRecorder = chunkFiles ? androidSegmentRecorder() : null;
+const nativeCapture = chunkFiles
+  ? segmentRecorder
+    ? createSegmentCapture(segmentRecorder, chunkFiles, {
+        canRecord: () => createExpoAudioDriver().canRecord(),
+        indicator: createAndroidForegroundIndicator(),
+        recorderFiles: recorderFileGuard(),
+      })
+    : createNativeCapture(createExpoAudioDriver(), chunkFiles, createAndroidForegroundIndicator(), {
+        recorderFiles: recorderFileGuard(),
+        liveActivity: createIosLiveActivity(),
+      })
+  : null;
+const capture: RecordingCapture = nativeCapture ?? createSimulatedCapture();
+const networkStatus = http ? createNetInfoStatus(loadNetInfo()) : null;
+const baseEngine = createUploadQueueEngine({
+  // Live: durable queue file in the sandbox (M5). Demo: in memory.
+  store: fileSystem ? createFileQueueStore(fileSystem) : createMemoryQueueStore(),
   chunks: capture,
-  api: createSimulatedUploadApi(300),
-  network: { isOnline: () => true },
+  api: http ? createHttpRecordingUploadApi(http) : createSimulatedUploadApi(300),
+  // Live: NetInfo pauses passes while offline (no attempt is used up); a failed request still backs off
+  // (5 s to 15 min). Demo: always online.
+  network: networkStatus ?? { isOnline: () => true },
+});
+// The Record tab always declares audio/mp4; the capture knows what it really wrote (audio/aac on Android segments).
+const engine: typeof baseEngine = {
+  ...baseEngine,
+  enqueue: (r) => baseEngine.enqueue({ ...r, mimeType: capture.outputMimeType ?? r.mimeType }),
+};
+if (chunkFiles) {
+  // R7: after a crash or kill, unfinalized recorder output is discarded and capture never resumes; a recording whose
+  // sealing was interrupted is sealed and enqueued. Runs before the orphan pass (which would delete its chunks), and
+  // `begin` awaits it so the cache sweep can never race a live recorder file.
+  void (
+    nativeCapture?.recoverOnLaunch(async (r) => {
+      // Idempotent: a kill after enqueue but before the marker cleared must not queue it twice.
+      if (!(await engine.items()).some((i) => i.id === r.id)) await engine.enqueue(r);
+    }) ?? Promise.resolve()
+  )
+    .catch(() => undefined)
+    .then(() => reconcileOrphans(engine, chunkFiles))
+    .catch(() => undefined)
+    // Chunks saved in plaintext by an older build are re-sealed before any upload pass reads them.
+    .then(() => chunkFiles.migrateLegacy())
+    .catch(() => undefined)
+    .then(() => startUploadScheduler(engine, AppState, undefined, networkStatus ?? undefined));
+}
+// R4 + R7: logout and organization switch stop any capture and wipe every local recording.
+sessionManager.registerWipeHook(async () => {
+  await capture.abort();
+  let incomplete: unknown = null;
+  await engine.wipe().catch((e: unknown) => {
+    incomplete = e;
+  });
+  // Sweep every folder (including ones the engine couldn't delete). Anything still left is an orphan with no queue
+  // entry, which `reconcileOrphans` deletes at the next launch, so a failed delete is retried rather than forgotten.
+  if (chunkFiles)
+    for (const id of await chunkFiles.list()) await chunkFiles.remove(id).catch(() => undefined);
+  await chunkFiles?.setHeld([]).catch(() => undefined);
+  // Before the re-throw: anything a failed delete left behind becomes unreadable (the next capture gets a new key).
+  await chunkCipher?.deleteKey().catch(() => undefined);
+  if (incomplete)
+    throw incomplete instanceof Error ? incomplete : new Error('Local wipe incomplete.');
 });
 
 export const repositories: Repositories = {
@@ -97,7 +189,10 @@ export const repositories: Repositories = {
     },
   },
   consent: createDemoConsentApi({ latencyMs: 300 }),
-  micPermission: createDemoMicPermission(),
+  meetingResolver: http
+    ? createHttpMeetingResolver(createApiRequester(http))
+    : createDemoMeetingResolver(),
+  micPermission: http ? createNativeMicPermission() : createDemoMicPermission(),
 };
 
 /**

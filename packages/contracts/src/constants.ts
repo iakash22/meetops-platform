@@ -491,3 +491,67 @@ export const INTEGRATION_CONNECTION_STATES = ['not_connected', ...INTEGRATION_ST
 export const INTEGRATION_STATE_TTL_SECONDS = 600;
 /** v0.7.0: webhook body cap in bytes (ADR-007). */
 export const INTEGRATION_WEBHOOK_MAX_BYTES = 1_048_576;
+
+/** Phase 7: calendar routes. Connections are per user within an organization. */
+/** Read-only, org-scoped analytics (P7). */
+export const ANALYTICS_PATHS = {
+  meetings: '/orgs/:organizationId/analytics/meetings',
+} as const;
+
+/** Longest analytics window (`to - from`). */
+export const MAX_ANALYTICS_RANGE_DAYS = 366;
+
+export const CALENDAR_PATHS = {
+  providers: '/orgs/:organizationId/calendar/providers',
+  connect: '/orgs/:organizationId/calendar/connect',
+  callback: '/calendar/:provider/callback',
+  connection: '/orgs/:organizationId/calendar/connections/:connectionId',
+  events: '/orgs/:organizationId/calendar/events',
+} as const;
+
+/** Server-known providers only; clients never supply an endpoint or base URL. */
+export const CALENDAR_PROVIDERS = ['google'] as const;
+
+/** Phase 7: org-scoped full-text search (Postgres FTS, forced RLS). */
+export const SEARCH_PATHS = {
+  search: '/orgs/:organizationId/search',
+  /** Phase 7 semantic (pgvector) search. Not registered unless SEMANTIC_SEARCH_ENABLED=true (404 otherwise). */
+  semantic: '/orgs/:organizationId/search/semantic',
+} as const;
+/** Content kinds indexed for semantic search. */
+export const SEMANTIC_SEARCH_KINDS = ['transcript', 'summary'] as const;
+
+export const SEARCH_RESULT_KINDS = ['meeting', 'transcript', 'summary', 'task'] as const;
+/** Highlight markers in `snippet`: text between them matched the query. Render as text, never as HTML. */
+export const SEARCH_HIGHLIGHT_START = '\u0002';
+export const SEARCH_HIGHLIGHT_STOP = '\u0003';
+
+/**
+ * Phase 7: video-conference hosts whose join links clients may show. Exact hosts, plus subdomains only where listed
+ * in CONFERENCE_HOST_SUFFIXES (Zoom vanity domains such as acme.zoom.us). Anything else is dropped.
+ */
+export const CONFERENCE_HOSTS = [
+  'meet.google.com',
+  'zoom.us',
+  'zoomgov.com',
+  'teams.microsoft.com',
+  'teams.live.com',
+] as const;
+export const CONFERENCE_HOST_SUFFIXES = ['.zoom.us', '.zoomgov.com'] as const;
+
+/** True only for https URLs (no credentials, default port) on an allowlisted conference host. */
+export function isAllowedConferenceUrl(value: unknown): value is string {
+  if (typeof value !== 'string' || value.length > 2048) return false;
+  let u: URL;
+  try {
+    u = new URL(value);
+  } catch {
+    return false;
+  }
+  if (u.protocol !== 'https:' || u.username || u.password || u.port) return false;
+  const host = u.hostname.toLowerCase();
+  return (
+    (CONFERENCE_HOSTS as readonly string[]).includes(host) ||
+    CONFERENCE_HOST_SUFFIXES.some((s) => host.endsWith(s) && host.length > s.length)
+  );
+}

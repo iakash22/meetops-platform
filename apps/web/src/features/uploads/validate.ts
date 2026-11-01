@@ -11,6 +11,7 @@ export const ALLOWED_UPLOAD_TYPES = [
   'audio/ogg',
   'audio/mpeg',
   'audio/mp4',
+  'audio/aac',
   'audio/wav',
   'audio/x-wav',
   'video/webm',
@@ -23,7 +24,7 @@ export const UPLOAD_ACCEPT = ALLOWED_UPLOAD_TYPES.join(',');
 export function validateUploadFile(file: File): string | null {
   const base = file.type.split(';')[0]?.trim().toLowerCase() ?? '';
   if (!ALLOWED.has(base))
-    return 'Only audio or video files (WebM, Ogg, MP3, MP4, WAV) can be uploaded.';
+    return 'Only audio or video files (WebM, Ogg, MP3, MP4, AAC, WAV) can be uploaded.';
   if (file.name.length > 255 || /[/\\\p{Cc}]/u.test(file.name))
     return 'Rename the file and try again.';
   if (file.size < 1) return 'The file is empty.';

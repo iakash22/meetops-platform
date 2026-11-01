@@ -36,6 +36,7 @@ const SOURCE_LABEL: Record<Meeting['source'], string> = {
   extension: 'Browser extension',
   desktop: 'Desktop app',
   bot: 'Meeting bot',
+  mobile: 'Mobile app',
 };
 
 export function MeetingStatusBadge({ status }: { status: Meeting['status'] }) {

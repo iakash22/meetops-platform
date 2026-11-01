@@ -1,6 +1,7 @@
 import type { MeetingInsightsApi } from '../api/paths';
 import type { TaskReviewApi } from '../tasks/taskReviewCore';
-import type { SimulatedCapture } from '../record/simulatedRecorder';
+import type { MeetingResolver } from '../consent/meetingResolver';
+import type { RecordingCapture } from '../record/capture';
 import type { UploadQueueEngine } from '../upload/uploadQueueEngine';
 import type { MicPermission } from '../consent/micPermission';
 import { createContext, useContext, type ReactNode } from 'react';
@@ -20,18 +21,20 @@ export interface Repositories {
   uploadQueue: UploadQueue;
   /** Recording consent (R1 opt-in local; R3 attestation travels with the upload, contracts v0.4.1). */
   consent: ConsentApi;
+  /** Server meeting id for each recording (demo resolver when absent). */
+  meetingResolver?: MeetingResolver | undefined;
   /** Microphone permission (demo until the M4 native recorder). */
   micPermission: MicPermission;
   /**
    * Recording pipeline for the Record tab. Absent = UI preview only (nothing queued).
-   * Today it is a SIMULATED capture (no audio) feeding the real upload queue engine.
+   * Demo mode: SIMULATED capture (no audio). Live mode: the native expo-audio capture (M4).
    */
   recordings?: RecordingPipeline | undefined;
 }
 
 export interface RecordingPipeline {
   engine: UploadQueueEngine;
-  capture: SimulatedCapture;
+  capture: RecordingCapture;
   /** Active org of the signed-in user; queue items are bound to it. */
   organizationId: () => string | null;
 }

@@ -92,7 +92,10 @@ Conventions follow [shadcn/ui](https://ui.shadcn.com): HSL channel CSS variables
 | `BrandBackground`                                                                 | `brand/brand-background.tsx` | Auth/hero backdrop: black base, cerulean + rose radial glows, masked grid. Pure CSS, `aria-hidden`, reserved `data-slot="brand-background-shader"` for the shader follow-up.                                                                                                 |
 | Utilities `.bg-grid` `.shimmer` `.gradient-border` `.surface-glass` `.brand-glow` | `index.css`                  | Building blocks for the above.                                                                                                                                                                                                                                               |
 
-Layout: collapsible-ready sticky sidebar (`bg-card/60`, rose active item), glass sticky top bar
+Layout: sticky sidebar (`bg-card/60`, rose active item) at `lg`+ that collapses to a 64px icon rail
+(preference persisted in `localStorage` under `meetops.ui.sidebar`; width-only transition, off under
+reduced motion). Below `lg` the same nav opens in a left shadcn `Sheet` from the top-bar menu button
+(focus-trapped; closes on Esc, overlay click and navigation). Glass sticky top bar
 (`z-40`) with room on the right for a command-palette trigger (`⌘K`), cards in a responsive grid
 (`grid gap-4 sm:grid-cols-2 lg:grid-cols-3`), auth pages as a centred card over `BrandBackground`.
 
@@ -128,12 +131,12 @@ The `shaders` npm package (MIT, v4.x, WebGPU, React entry `shaders/react`) is **
 
 - Motion components that need `motion`/`framer-motion`: animated beams, spring number ticker,
   layout-animated tabs, magnetic buttons, Aceternity/Animate UI/Watermelon text effects.
-- **Lockfile queue:** Dialog, Sheet (mobile sidebar) and Tabs primitives need `@radix-ui/react-dialog` and `@radix-ui/react-tabs` (versions matching the existing `@radix-ui/*` majors). Not added here; build the shadcn `Dialog`/`Sheet`/`Tabs` wrappers once the lockfile owner lands them.
+- ~~Dialog, Sheet (mobile sidebar) and Tabs primitives~~: landed; the Sheet drives the mobile nav.
 - Command palette in the top bar: `cmdk` (shadcn `Command`).
 - Swap `ui/toast.tsx` for `sonner` if desired (API-compatible).
 - WebGPU shader background (above).
 - Wire `BrandBackground` into the auth layout (router lane).
-- Collapsible sidebar state (persisted) once Sheet exists.
+- ~~Collapsible sidebar state (persisted) once Sheet exists~~: done (`app-shell.tsx`, `useUiStore`).
 
 ## Inspiration sources and licences
 

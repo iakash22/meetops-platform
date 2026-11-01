@@ -1,6 +1,6 @@
 import '@testing-library/react-native/extend-expect';
 import { act, fireEvent, render, screen } from '@testing-library/react-native';
-import { AccessibilityInfo, Animated } from 'react-native';
+import { AccessibilityInfo, Animated, AppState, Platform } from 'react-native';
 
 import {
   elapsedMs,
@@ -15,6 +15,8 @@ import { RecordScreen } from '../src/screens/RecordScreen';
 import { makeRepositories } from './support/appRoutes';
 import { ApiError } from '../src/api/client';
 import { sha256Hex } from '../src/record/sha256';
+import type { RecordingCapture } from '../src/record/capture';
+import { getRecordingPhase } from '../src/record/indicator';
 import { createSimulatedCapture } from '../src/record/simulatedRecorder';
 import { createMemoryQueueStore, createSimulatedUploadApi } from '../src/upload/simulatedUploadApi';
 import type { RecordingUploadApi } from '../src/upload/types';
@@ -290,5 +292,201 @@ describe('sha256Hex', () => {
     expect(sha256Hex(new TextEncoder().encode('abc'))).toBe(
       'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad',
     );
+  });
+});
+
+describe('Record tab with a live capture (M4)', () => {
+  beforeEach(() => {
+    jest.useFakeTimers({ now: new Date('2026-10-31T10:00:00Z') });
+    jest
+      .spyOn(Animated, 'loop')
+      .mockReturnValue({ start: jest.fn(), stop: jest.fn(), reset: jest.fn() });
+    jest.spyOn(AccessibilityInfo, 'isReduceMotionEnabled').mockResolvedValue(false);
+  });
+  afterEach(() => {
+    jest.useRealTimers();
+    jest.restoreAllMocks();
+  });
+
+  function setup(over: Partial<RecordingCapture> = {}) {
+    let live = true;
+    const base = createSimulatedCapture();
+    const mocks = {
+      begin: jest.fn(() => Promise.resolve()),
+      pause: jest.fn(),
+      resume: jest.fn(() => {
+        live = true;
+      }),
+      abort: jest.fn(() => Promise.resolve()),
+    };
+    const capture: RecordingCapture = {
+      ...base,
+      simulated: false,
+      isLive: () => live,
+      ...mocks,
+      ...over,
+    };
+    const engine = createUploadQueueEngine({
+      store: createMemoryQueueStore(),
+      chunks: capture,
+      api: createSimulatedUploadApi(0),
+      network: { isOnline: () => true },
+    });
+    const repos = makeRepositories({
+      consent: createDemoConsentApi({ optedIn: true }),
+      uploadQueue: engine,
+      recordings: { engine, capture, organizationId: () => 'org-1' },
+    });
+    const view = render(
+      <RepositoriesProvider value={repos}>
+        <RecordScreen />
+      </RepositoriesProvider>,
+    );
+    return { capture: mocks, interrupt: () => (live = false), view };
+  }
+
+  async function start() {
+    await act(async () => {});
+    fireEvent.press(screen.getByTestId('record-button'));
+    await act(async () => {});
+    fireEvent.press(screen.getByTestId('consent-notice-accept'));
+    await act(async () => {});
+  }
+
+  it('starts capture only after the notice and publishes the app-wide indicator (R1, R2)', async () => {
+    const { capture } = setup();
+    await act(async () => {});
+    expect(screen.queryByTestId('record-simulated-notice')).toBeNull();
+    expect(capture.begin).not.toHaveBeenCalled();
+    await start();
+    expect(capture.begin).toHaveBeenCalledWith(expect.stringMatching(/^rec-/));
+    expect(getRecordingPhase()).toBe('recording');
+    fireEvent.press(screen.getByTestId('record-pause'));
+    expect(capture.pause).toHaveBeenCalled();
+    expect(getRecordingPhase()).toBe('paused');
+  });
+
+  it('fails closed when capture cannot begin', async () => {
+    setup({ begin: () => Promise.reject(new Error('no mic')) });
+    await start();
+    expect(screen.getByText(/Recording hasn't started/)).toBeTruthy();
+    expect(screen.getByTestId('record-timer', { includeHiddenElements: true })).toHaveTextContent(
+      '00:00',
+    );
+    expect(getRecordingPhase()).toBe('idle');
+  });
+
+  it('pauses on an interruption with a notice and waits for the user (R7)', async () => {
+    const { capture, interrupt } = setup();
+    await start();
+    interrupt();
+    act(() => {
+      jest.advanceTimersByTime(1_500);
+    });
+    expect(screen.getByTestId('record-status')).toHaveTextContent('Paused');
+    expect(screen.getByTestId('record-interrupted')).toHaveTextContent(/Tap Resume/);
+    act(() => {
+      jest.advanceTimersByTime(10_000);
+    });
+    expect(capture.resume).not.toHaveBeenCalled();
+    fireEvent.press(screen.getByTestId('record-pause'));
+    expect(capture.resume).toHaveBeenCalled();
+    expect(screen.queryByTestId('record-interrupted')).toBeNull();
+  });
+
+  it('discards an in-progress capture when the screen goes away (logout)', async () => {
+    const { capture, view } = setup();
+    await start();
+    view.unmount();
+    expect(capture.abort).toHaveBeenCalled();
+    expect(getRecordingPhase()).toBe('idle');
+  });
+
+  it('stops when Stop is pressed in the Android notification', async () => {
+    let press: () => void = () => undefined;
+    setup({
+      onStopRequested: (l) => {
+        press = l;
+        return () => undefined;
+      },
+    });
+    await start();
+    expect(getRecordingPhase()).toBe('recording');
+    act(() => press());
+    expect(getRecordingPhase()).toBe('stopped');
+  });
+
+  it('passes the queue draft to capture on Stop so a kill mid-seal can be re-queued', async () => {
+    let press: () => void = () => undefined;
+    const captureFn = jest.fn(() =>
+      Promise.resolve([{ seq: 0, sizeBytes: 1, sha256: 'a'.repeat(64) }]),
+    );
+    setup({
+      capture: captureFn,
+      onStopRequested: (l) => {
+        press = l;
+        return () => undefined;
+      },
+    });
+    await start();
+    act(() => press());
+    await act(async () => {});
+    expect(captureFn).toHaveBeenCalledWith(
+      expect.stringMatching(/^rec-/),
+      expect.any(Number),
+      expect.objectContaining({
+        id: expect.stringMatching(/^rec-/),
+        organizationId: 'org-1',
+        meetingId: expect.any(String),
+        mimeType: 'audio/mp4',
+        startedAt: expect.any(String),
+        durationMs: expect.any(Number),
+        consent: expect.anything(),
+      }),
+    );
+    const [id, , draft] = captureFn.mock.calls[0] as unknown as [string, number, { id: string }];
+    expect(draft.id).toBe(id);
+    expect(draft).not.toHaveProperty('chunks');
+  });
+
+  describe('android background pause', () => {
+    let listener: (s: string) => void = () => undefined;
+    beforeEach(() => {
+      Object.defineProperty(Platform, 'OS', { configurable: true, get: () => 'android' });
+      jest.spyOn(AppState, 'addEventListener').mockImplementation((_t, l) => {
+        listener = l as (s: string) => void;
+        return { remove: () => undefined };
+      });
+    });
+    afterEach(() => {
+      Object.defineProperty(Platform, 'OS', { configurable: true, get: () => 'ios' });
+    });
+
+    it('pauses on background unless the service is confirmed', async () => {
+      setup({ isBackgroundSafe: () => false });
+      await start();
+      act(() => listener('background'));
+      expect(getRecordingPhase()).toBe('paused');
+    });
+
+    it('re-checks while backgrounded and pauses when the service is lost', async () => {
+      let safe = true;
+      setup({ isBackgroundSafe: () => safe });
+      await start();
+      act(() => listener('background'));
+      expect(getRecordingPhase()).toBe('recording');
+      safe = false;
+      act(() => {
+        jest.advanceTimersByTime(2_100);
+      });
+      expect(getRecordingPhase()).toBe('paused');
+    });
+
+    it('keeps recording only while the service and notification are confirmed', async () => {
+      setup({ isBackgroundSafe: () => true });
+      await start();
+      act(() => listener('background'));
+      expect(getRecordingPhase()).toBe('recording');
+    });
   });
 });

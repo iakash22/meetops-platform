@@ -1,6 +1,11 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { Value } from '@sinclair/typebox/value';
-import { ApiErrorEnvelope, Meeting, ResolveMeetingResponse } from '@meetops/contracts';
+import {
+  ApiErrorEnvelope,
+  ListMeetingsResponse,
+  Meeting,
+  ResolveMeetingResponse,
+} from '@meetops/contracts';
 import { InMemoryAuditLog } from '../src/modules/auth/domain/audit.js';
 import { SessionVerifier } from '../src/modules/auth/application/session-verifier.js';
 import {
@@ -134,6 +139,32 @@ describe('meetings module (list, detail, resolve, meeting access)', () => {
     expect(audit.events.filter((e) => e.action === 'meeting.create')).toHaveLength(3);
   });
 
+  it('resolve accepts the mobile source: separate from upload, idempotent, listed with source mobile', async () => {
+    const { member, viewer, org } = await world();
+    const url = `/orgs/${org}/meetings/resolve`;
+    const body = {
+      source: 'mobile',
+      externalMeetingId: 'mobile:lq1x2y3-0123456789abcdef',
+      title: 'Mobile recording',
+      startedAt: '2026-10-31T10:00:00.000Z',
+    };
+    const a = await member.post(url, body);
+    expect(a.statusCode).toBe(201);
+    expect(Value.Check(ResolveMeetingResponse, a.json())).toBe(true);
+    const again = await member.post(url, body);
+    expect(again.statusCode).toBe(200);
+    expect(again.json()).toEqual({ meetingId: a.json().meetingId, created: false });
+    const asUpload = await member.post(url, { ...body, source: 'upload' });
+    expect(asUpload.statusCode).toBe(201);
+    expect(asUpload.json().meetingId).not.toBe(a.json().meetingId);
+    const one = await viewer.get(`/orgs/${org}/meetings/${a.json().meetingId}`);
+    expect(one.statusCode).toBe(200);
+    expect(Value.Check(Meeting, one.json())).toBe(true);
+    expect(one.json().source).toBe('mobile');
+    const bad = await member.post(url, { ...body, source: 'phone' });
+    expect(errorOf(bad).code).toBe('VALIDATION_FAILED');
+  });
+
   it('resolve validates input (400 VALIDATION_FAILED), enforces CSRF and CASL (viewer 403)', async () => {
     const { member, viewer, org, owner } = await world();
     const url = `/orgs/${org}/meetings/resolve`;
@@ -197,6 +228,68 @@ describe('meetings module (list, detail, resolve, meeting access)', () => {
     expect(one.statusCode).toBe(200);
     expect(Value.Check(Meeting, one.json())).toBe(true);
     expect(one.json()).toMatchObject({ id, organizationId: org, title: 'M4', createdById: null });
+  });
+
+  it('list honours ?source within the org only, pages per filter, rejects bad or unsupported filters', async () => {
+    const { viewer, other, org, otherOrg } = await world();
+    const t0 = Date.parse('2026-10-01T00:00:00Z');
+    for (let i = 0; i < 3; i++)
+      meetings.seed({
+        organizationId: org,
+        title: `D${i}`,
+        source: 'desktop',
+        createdAt: new Date(t0 + i * 1000),
+      });
+    meetings.seed({
+      organizationId: org,
+      title: 'U0',
+      source: 'upload',
+      createdAt: new Date(t0 + 5000),
+    });
+    meetings.seed({
+      organizationId: org,
+      title: 'Dgone',
+      source: 'desktop',
+      deletedAt: new Date(),
+    });
+    meetings.seed({ organizationId: otherOrg, title: 'theirs', source: 'desktop' });
+
+    const titles = (r: { json(): { items: { title: string }[] } }) =>
+      r.json().items.map((m) => m.title);
+    const all = await viewer.get(`/orgs/${org}/meetings`);
+    expect(Value.Check(ListMeetingsResponse, all.json())).toBe(true);
+    expect(titles(all)).toEqual(['U0', 'D2', 'D1', 'D0']);
+
+    const p1 = await viewer.get(`/orgs/${org}/meetings?source=desktop&limit=2`);
+    expect(p1.statusCode).toBe(200);
+    expect(Value.Check(ListMeetingsResponse, p1.json())).toBe(true);
+    expect(titles(p1)).toEqual(['D2', 'D1']);
+    const p2 = await viewer.get(
+      `/orgs/${org}/meetings?source=desktop&limit=2&cursor=${p1.json().nextCursor}`,
+    );
+    expect(titles(p2)).toEqual(['D0']);
+    expect(p2.json().nextCursor).toBeNull();
+    expect(titles(await viewer.get(`/orgs/${org}/meetings?source=bot`))).toEqual([]);
+
+    // Cross-org: never another org's rows, and a non-member gets the same 404 as an unknown org.
+    expect(titles(await viewer.get(`/orgs/${org}/meetings?source=desktop`))).not.toContain(
+      'theirs',
+    );
+    expect((await other.get(`/orgs/${org}/meetings?source=desktop`)).statusCode).toBe(404);
+    expect(titles(await other.get(`/orgs/${otherOrg}/meetings?source=desktop`))).toEqual([
+      'theirs',
+    ]);
+
+    for (const qs of [
+      'source=phone',
+      'source=',
+      'source=Desktop',
+      'status=completed',
+      'organizationId=x',
+    ])
+      expect(errorOf(await viewer.get(`/orgs/${org}/meetings?${qs}`)).code).toBe(
+        'VALIDATION_FAILED',
+      );
   });
 
   it('tenant isolation: other-org, deleted and missing meetings return an identical 404', async () => {

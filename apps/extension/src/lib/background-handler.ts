@@ -1,4 +1,4 @@
-import type { HeldSummary } from './drain.js';
+import { HELD_FULL_START_MESSAGE, heldStorageLevel, type HeldSummary } from './drain.js';
 import {
   addPendingDiscard,
   clearPendingDiscard,
@@ -114,6 +114,9 @@ const status = (s: RecorderState): BackgroundResponse =>
 
 const fail = (error: string): BackgroundResponse => ({ ok: false, error });
 
+export const HELD_CHECK_FAILED_MESSAGE =
+  'Could not check local storage for held recordings, so recording was not started. Try again.';
+
 const mb = (bytes: number) => `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 
 export function describeStorageEvent(e: StorageEvent): string {
@@ -186,11 +189,14 @@ async function withHeld(
     await deps.setBadge(alert ? '!' : '').catch(() => undefined);
   }
   if (h.count === 0) return r;
+  const level = heldStorageLevel(h);
   return {
     ...r,
     heldRecordings: h.count,
     ...(h.closed ? { heldClosed: h.closed } : {}),
-    ...(state.storageWarning ? { heldStorageFull: true } : {}),
+    ...(state.storageWarning || level === 'full' ? { heldStorageFull: true } : {}),
+    ...(level === 'near-full' ? { heldNearFull: true } : {}),
+    ...(level === 'full' ? { heldBlocksStart: true } : {}),
   };
 }
 
@@ -253,11 +259,20 @@ export async function handleBackgroundMessage(
 
     case 'START_RECORDING': {
       if (state.status !== 'idle' && state.status !== 'error') return fail('Already recording');
+      // Fail closed: if the held-recordings check itself fails, we cannot know there is room, so do not start.
+      if (deps.heldRecordings) {
+        let held: HeldSummary;
+        try {
+          held = await deps.heldRecordings();
+        } catch {
+          return fail(HELD_CHECK_FAILED_MESSAGE);
+        }
+        if (heldStorageLevel(held) === 'full') return fail(HELD_FULL_START_MESSAGE);
+      }
       const used = (await kv.get<string[]>(USED_STREAMS_KEY)) ?? [];
       if (used.includes(msg.streamId)) return fail('Stream id already used');
       const consent = await consumeConsent(kv, msg.tabId, deps.now(), msg.meetingId);
       if (!consent.ok) return fail(consent.reason);
-      await kv.set(USED_STREAMS_KEY, [...used, msg.streamId].slice(-50));
       const startedAt = deps.now();
       const next: RecorderState = {
         status: 'starting',
@@ -269,11 +284,14 @@ export async function handleBackgroundMessage(
         chunks: 0,
         lastHeartbeatAt: startedAt,
       };
-      await saveState(kv, next);
-      await deps.setBadge('').catch(() => undefined);
+      let offscreenStarted = false;
       try {
+        await kv.set(USED_STREAMS_KEY, [...used, msg.streamId].slice(-50));
+        await saveState(kv, next);
+        await deps.setBadge('').catch(() => undefined);
         await deps.ensureOffscreen();
         await deps.startWatchdog();
+        offscreenStarted = true;
         await sendOffscreen(deps, {
           target: 'offscreen',
           type: 'OFFSCREEN_START',
@@ -284,7 +302,17 @@ export async function handleBackgroundMessage(
         });
       } catch (err) {
         const e = err instanceof Error ? err.message : String(err);
-        await toIdle(deps, next, e);
+        // The offscreen doc may have created a session (e.g. it answered after our timeout): discard it so no
+        // recording survives a failed Start. Closing the document (toIdle) also stops its capture tracks.
+        if (offscreenStarted) {
+          await sendOffscreen(deps, { target: 'offscreen', type: 'OFFSCREEN_DISCARD' }).catch(
+            () => undefined,
+          );
+        }
+        await toIdle(deps, next, e).catch(async () => {
+          await deps.stopWatchdog().catch(() => undefined);
+          await deps.closeOffscreen().catch(() => undefined);
+        });
         return fail(e);
       }
       return status(next);
@@ -313,7 +341,22 @@ export async function handleBackgroundMessage(
     }
 
     case 'REC_STARTED': {
-      if (state.status !== 'starting') return status(state);
+      if (state.status !== 'starting') {
+        // A late start (after Start failed or was stopped): nothing may keep recording or be uploaded.
+        if (state.status === 'recording' && state.sessionId === msg.sessionId) return status(state);
+        await addPendingDiscard(deps.durableKV, msg.sessionId);
+        const ok = await sendOffscreen(deps, {
+          target: 'offscreen',
+          type: 'OFFSCREEN_DISCARD',
+        }).then(
+          () => true,
+          () => false,
+        );
+        if (ok) await clearPendingDiscard(deps.durableKV, msg.sessionId);
+        else await retryPendingDiscards(deps.durableKV, deps.discardLocal, deps.deleteLocal);
+        if (state.status === 'idle') await deps.closeOffscreen().catch(() => undefined);
+        return status(state);
+      }
       // Bind the stream to the consented tab: Chrome must report that exact tab as captured.
       const captured = await deps.capturedTabIds().catch(() => [] as number[]);
       if (!captured.includes(state.tabId)) {

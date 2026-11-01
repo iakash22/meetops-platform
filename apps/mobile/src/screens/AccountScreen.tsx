@@ -66,6 +66,30 @@ export function AccountScreen() {
         ) : null}
       </View>
 
+      <Text style={styles.section}>Recordings</Text>
+      <View style={[styles.card, styles.row]}>
+        <View style={styles.flex}>
+          <Text style={styles.primary}>Upload queue</Text>
+          <Text style={styles.secondary}>Offline, pending and failed uploads</Text>
+        </View>
+        <Link
+          href="/uploads"
+          testID="account-uploads"
+          style={styles.link}
+          accessibilityRole="link"
+          accessibilityLabel="View upload queue"
+        >
+          View
+        </Link>
+      </View>
+      <View testID="account-recording-privacy" style={styles.card}>
+        <Text style={styles.primary}>Recording privacy</Text>
+        <Text style={styles.secondary}>
+          MeetOps records only after you opt in and confirm participants were told, every time. A
+          banner stays on screen for as long as a recording runs.
+        </Text>
+      </View>
+
       <Text style={styles.section}>Notifications</Text>
       {user ? <PushNotificationsCard key={user.id} service={pushServiceFor(user.id)} /> : null}
 

@@ -613,7 +613,7 @@ describe('HttpUploadClient + drain: real-API edge cases (dummy media)', () => {
     });
     expect(await drainQueue(store, client)).toMatchObject({ held: 1, aborted: 0 });
     expect((await store.getSession(SID))!.held).toMatchObject({ status: 409, closed: true });
-    expect(await summarizeHeld(store)).toEqual({ count: 1, closed: 1 });
+    expect(await summarizeHeld(store)).toMatchObject({ count: 1, closed: 1, bytes: 10 });
     // A user Retry skips it: no new request is made for a closed session.
     const before = fake.of('chunks').length;
     expect(
@@ -632,7 +632,7 @@ describe('HttpUploadClient + drain: real-API edge cases (dummy media)', () => {
     const store = await seededStore();
     fake.reply('complete', { status: 409, body: errorBody('CONFLICT') });
     await drainQueue(store, client);
-    expect(await summarizeHeld(store)).toEqual({ count: 1, closed: 0 });
+    expect(await summarizeHeld(store)).toMatchObject({ count: 1, closed: 0 });
     expect(await discardHeldSessions(store, client)).toBe(1);
     expect(fake.of('abort')).toHaveLength(1);
     expect(jsonBody(fake.of('abort')[0]!)).toEqual({ reason: 'user_stopped' });

@@ -142,6 +142,15 @@ export {
   type UpsertIntegrationConnectionInput,
 } from './integration-connections.js';
 export {
+  createCalendarSyncRepository,
+  type CalendarSyncRepository,
+  type CalendarSyncRepositoryOptions,
+  type CalendarSyncEventInput,
+  type CalendarSyncedEvent,
+  type CalendarSyncSecrets,
+  type CalendarSyncCoverage,
+} from './calendar-sync.js';
+export {
   createAuthTokenRepository,
   AuthTokenHashError,
   AUTH_TOKEN_AUDIENCES,
