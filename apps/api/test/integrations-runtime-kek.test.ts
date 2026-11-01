@@ -18,9 +18,8 @@ describe('integrations runtime shared KEK (worker token refresh)', () => {
     ['too short', Buffer.from('short').toString('base64')],
     ['too long', randomBytes(33).toString('base64')],
     ['unpadded', randomBytes(32).toString('base64').replace(/=$/, '')],
-    // Fixed: random base64url without '-'/'_' is a valid KEK, which made this case flaky.
-    ['url-safe alphabet', Buffer.alloc(32, 0xfb).toString('base64url').slice(0, 41) + '-_='],
-    ['non-canonical trailing bits', Buffer.alloc(32, 1).toString('base64').replace(/.=$/, 'B=')],
+    ['url-safe alphabet', '-_' + 'A'.repeat(41) + '='],
+    ['non-canonical trailing bits', 'A'.repeat(42) + 'B='],
     ['not base64', '!'.repeat(43) + '='],
   ])('throws at startup when set but invalid (%s), naming only the variable', (_n, value) => {
     // Guard: the non-canonical case must really be non-canonical.

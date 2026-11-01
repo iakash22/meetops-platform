@@ -152,6 +152,7 @@ describe('S3SessionChunkStore / sourceExtForMime', () => {
     expect(sourceExtForMime('video/webm;codecs=vp9')).toBe('webm');
     expect(sourceExtForMime('audio/mpeg')).toBe('mp3');
     expect(sourceExtForMime('audio/x-wav')).toBe('wav');
+    expect(sourceExtForMime('audio/aac')).toBe('aac');
     expect(sourceExtForMime('text/html')).toBeNull();
   });
 });

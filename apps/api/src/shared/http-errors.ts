@@ -9,7 +9,7 @@ const GENERIC: Record<number, [ApiErrorCode, string]> = {
   403: ['FORBIDDEN', 'Forbidden'],
   404: ['NOT_FOUND', 'Not found'],
   409: ['CONFLICT', 'Conflict'],
-  429: ['RATE_LIMITED', 'Too many requests, try again later']
+  429: ['RATE_LIMITED', 'Too many requests, try again later'],
 };
 
 /** Generic code/message for any 4xx status (e.g. 413, 415 fall back to BAD_REQUEST). */
@@ -26,18 +26,26 @@ export function registerDomainErrorHandler(app: FastifyInstance) {
   app.setErrorHandler((err: FastifyError | DomainError, request, reply) => {
     // contracts v0.3.3: every 409 carries `reason` (generic 'CONFLICT' when nothing more specific applies).
     const send = (status: number, error: Omit<ApiErrorEnvelope['error'], 'requestId'>) => {
-      const reason: ApiErrorReason | undefined = error.reason ?? (status === 409 ? 'CONFLICT' : undefined);
-      return reply.status(status).send({ error: { ...error, ...(reason ? { reason } : {}), requestId: request.id } });
+      const reason: ApiErrorReason | undefined =
+        error.reason ?? (status === 409 ? 'CONFLICT' : undefined);
+      return reply
+        .status(status)
+        .send({ error: { ...error, ...(reason ? { reason } : {}), requestId: request.id } });
     };
     if (err instanceof DomainError) {
-      if (err instanceof RateLimitedError) void reply.header('retry-after', Math.ceil(err.retryAfterMs / 1000));
-      return send(err.statusCode, { code: err.code, message: err.message, ...(err.reason ? { reason: err.reason } : {}) });
+      if (err instanceof RateLimitedError)
+        void reply.header('retry-after', Math.ceil(err.retryAfterMs / 1000));
+      return send(err.statusCode, {
+        code: err.code,
+        message: err.message,
+        ...(err.reason ? { reason: err.reason } : {}),
+      });
     }
     if ('validation' in err && err.validation) {
       return send(400, {
         code: 'VALIDATION_FAILED',
         message: 'Request validation failed',
-        details: err.validation.map((v) => ({ path: v.instancePath || '/', message: 'invalid' }))
+        details: err.validation.map((v) => ({ path: v.instancePath || '/', message: 'invalid' })),
       });
     }
     const status = typeof err.statusCode === 'number' ? err.statusCode : 500;
@@ -52,6 +60,8 @@ export function registerDomainErrorHandler(app: FastifyInstance) {
 
 export function registerNotFoundHandler(app: FastifyInstance) {
   app.setNotFoundHandler((request, reply) =>
-    reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Not found', requestId: request.id } })
+    reply
+      .status(404)
+      .send({ error: { code: 'NOT_FOUND', message: 'Not found', requestId: request.id } }),
   );
 }

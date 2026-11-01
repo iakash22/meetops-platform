@@ -113,7 +113,7 @@ export function createAiStores(env: Record<string, string | undefined>): {
 } {
   const raw = (env.AI_STORES ?? 'durable').trim();
   if (raw !== 'durable' && raw !== 'memory')
-    throw new Error(`AI_STORES must be "durable" or "memory", got "${raw}"`);
+    throw new Error('AI_STORES must be "durable" or "memory"');
   if (raw === 'memory') {
     if (env.NODE_ENV === 'production')
       throw new Error('AI_STORES=memory is not allowed when NODE_ENV=production');

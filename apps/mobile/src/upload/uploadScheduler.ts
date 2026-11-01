@@ -22,19 +22,29 @@ export interface AppStateLike {
   addEventListener(type: 'change', l: (s: string) => void): { remove(): void };
 }
 
+/** Connectivity changes (NetInfo). The engine itself skips passes while `isOnline()` is false. */
+export interface NetworkChanges {
+  onChange(listener: (online: boolean) => void): () => void;
+}
+
 /**
  * Runs queue passes at launch, whenever the app comes to the foreground and every `intervalMs` while it is in the
  * foreground (the engine's own backoff decides what is due). Uploads never run from a background trigger.
+ * With `network`: offline passes do nothing (the engine checks `isOnline`), and coming back online while in the
+ * foreground runs a pass right away instead of waiting for the next tick. Backoff still decides what is due.
  */
 export function startUploadScheduler(
   engine: Pick<UploadQueueEngine, 'process'>,
   appState: AppStateLike,
   intervalMs = 60_000,
+  network?: NetworkChanges,
 ): () => void {
   let timer: ReturnType<typeof setInterval> | null = null;
+  let state = appState.currentState;
   const run = () => void engine.process().catch(() => undefined);
-  const arm = (state: string) => {
-    if (state === 'active') {
+  const arm = (next: string) => {
+    state = next;
+    if (next === 'active') {
       run();
       timer ??= setInterval(run, intervalMs);
     } else if (timer) {
@@ -44,8 +54,12 @@ export function startUploadScheduler(
   };
   arm(appState.currentState);
   const sub = appState.addEventListener('change', arm);
+  const offNetwork = network?.onChange((online) => {
+    if (online && state === 'active') run();
+  });
   return () => {
     sub.remove();
+    offNetwork?.();
     if (timer) clearInterval(timer);
   };
 }

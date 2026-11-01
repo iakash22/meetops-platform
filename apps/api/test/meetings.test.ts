@@ -139,6 +139,32 @@ describe('meetings module (list, detail, resolve, meeting access)', () => {
     expect(audit.events.filter((e) => e.action === 'meeting.create')).toHaveLength(3);
   });
 
+  it('resolve accepts the mobile source: separate from upload, idempotent, listed with source mobile', async () => {
+    const { member, viewer, org } = await world();
+    const url = `/orgs/${org}/meetings/resolve`;
+    const body = {
+      source: 'mobile',
+      externalMeetingId: 'mobile:lq1x2y3-0123456789abcdef',
+      title: 'Mobile recording',
+      startedAt: '2026-10-31T10:00:00.000Z',
+    };
+    const a = await member.post(url, body);
+    expect(a.statusCode).toBe(201);
+    expect(Value.Check(ResolveMeetingResponse, a.json())).toBe(true);
+    const again = await member.post(url, body);
+    expect(again.statusCode).toBe(200);
+    expect(again.json()).toEqual({ meetingId: a.json().meetingId, created: false });
+    const asUpload = await member.post(url, { ...body, source: 'upload' });
+    expect(asUpload.statusCode).toBe(201);
+    expect(asUpload.json().meetingId).not.toBe(a.json().meetingId);
+    const one = await viewer.get(`/orgs/${org}/meetings/${a.json().meetingId}`);
+    expect(one.statusCode).toBe(200);
+    expect(Value.Check(Meeting, one.json())).toBe(true);
+    expect(one.json().source).toBe('mobile');
+    const bad = await member.post(url, { ...body, source: 'phone' });
+    expect(errorOf(bad).code).toBe('VALIDATION_FAILED');
+  });
+
   it('resolve validates input (400 VALIDATION_FAILED), enforces CSRF and CASL (viewer 403)', async () => {
     const { member, viewer, org, owner } = await world();
     const url = `/orgs/${org}/meetings/resolve`;

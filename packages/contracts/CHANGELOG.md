@@ -6,8 +6,21 @@ While the version is `0.x`, a minor bump may contain breaking changes (ADR-003).
 
 ## [Unreleased]
 
+### Documentation
+
+- `SwitchOrganizationRequest` docs now name the real route, `POST /orgs/switch`, which returns `{ organization, role }`
+  and rotates the session and CSRF token. They previously said `POST /auth/switch-org` returning `AuthSession`. No schema
+  change and no new route.
+
 ### Added
 
+- `ALLOWED_MEDIA_MIME_TYPES` / `MediaMimeType`: `audio/aac` (raw ADTS AAC), and `MEDIA_SOURCE_EXTS`: `aac`. Lets Android
+  mobile record in short byte-concatenable segments that are encrypted as each one closes (ADR-015). Additive.
+- `MeetingSource`: `mobile` for meetings recorded by the native mobile app (HANDOFF §6 follow-up for Arch). Additive;
+  the database enum gains the same value (migration `20261031120000_meeting_source_mobile`).
+- Meeting analytics (P7): `ANALYTICS_PATHS.meetings`, `MAX_ANALYTICS_RANGE_DAYS` (366), `AnalyticsBucket`,
+  `MeetingAnalyticsParams`, `MeetingAnalyticsQuery` (`from`/`to`/`bucket`) and `MeetingAnalytics` (aggregate counts by
+  source, status and period plus duration totals; no ids or titles). Additive.
 - `ListMeetingsResponse` (`CursorPage<Meeting>`) for `GET /orgs/:organizationId/meetings`. The API now validates the
   query against `ListMeetingsQuery` (`cursor`, `limit`, `source`) and honours `source`. Additive.
 - `CONFLICT_REASONS` / `ConflictReason`: `RECORDING_SESSION_CLOSED`. Sent with a recording-session 409 when the
@@ -441,7 +454,8 @@ organizationName }` (no tokens); `ExtensionTokenRequest { extensionId, deviceId,
   `EXTENSION_TOKEN_TTL_SECONDS` (900), `EXTENSION_REFRESH_FAMILY_MAX_LIFETIME_SECONDS` (30 days), and `REDACT_KEYS`
   (includes `accessToken`, `refreshToken`) for loggers. These two token responses are the **only** API bodies that carry tokens.
 - Auth: `SwitchOrganizationRequest` for `POST /auth/switch-org`. It returns `AuthSession` with a rotated csrfToken, and the
-  session id is rotated.
+  session id is rotated. (Corrected later: the route is `POST /orgs/switch` returning `{ organization, role }`; see
+  Unreleased.)
 - Errors: `CSRF_INVALID`.
 - Tasks: `ListTasksQuery` (strict; cursor pagination plus status (one or several), priority, assigneeId, projectId,
   meetingId, dueBefore, dueAfter, q ≤200, and `unassigned: true` (literal; a strict union makes it mutually exclusive with

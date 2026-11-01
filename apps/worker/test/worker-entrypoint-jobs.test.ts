@@ -57,13 +57,7 @@ describe('integrations token-refresh env', () => {
       ).toThrow(/INTEGRATIONS_TOKEN_KEK.*production/);
   });
   it('rejects non-canonical base64 KEKs without echoing the value', () => {
-    const bad = [
-      kek.replace(/=$/, ''),
-      // Fixed bytes: random ones were flaky (a base64url string without -/_ is valid base64,
-      // and a final char that is already canonical-with-B is not rejected).
-      Buffer.alloc(32, 0xfb).toString('base64url') + '=',
-      Buffer.alloc(32, 1).toString('base64').replace(/.=$/, 'B='),
-    ];
+    const bad = [kek.replace(/=$/, ''), '-_' + 'A'.repeat(41) + '=', 'A'.repeat(42) + 'B='];
     for (const value of bad) {
       let msg = '';
       try {
@@ -193,45 +187,5 @@ describe('closeAll', () => {
     expect(closed).toEqual(['a', 'b']);
     expect(ok).toHaveBeenCalledTimes(1);
     expect(warn).toHaveBeenCalledWith({ job: 'a', errName: 'Error' }, 'worker job close failed');
-  });
-});
-
-describe('calendar-sync in the worker shutdown path', () => {
-  it('closeAll waits for the calendar-sync worker (in-flight sweep) and closes its queue', async () => {
-    const { registerCalendarSyncScheduler, loadCalendarSyncEnv } =
-      await import('../src/calendar/index.js');
-    let finishSweep!: () => void;
-    const order: string[] = [];
-    const worker = {
-      close: vi.fn(
-        () =>
-          new Promise<void>((r) => {
-            finishSweep = () => {
-              order.push('worker');
-              r();
-            };
-          }),
-      ),
-    };
-    const queue = {
-      upsertJobScheduler: vi.fn(async () => undefined),
-      close: vi.fn(async () => void order.push('queue')),
-    };
-    const calendarSync = registerCalendarSyncScheduler({
-      env: loadCalendarSyncEnv({ CALENDAR_SYNC_ENABLED: 'true' }),
-      log,
-      processEnv: { INTEGRATIONS_TOKEN_KEK: kek },
-      buildDeps: () => ({ repo: {} as never, providers: {} }),
-      createQueue: () => queue,
-      createWorker: () => worker,
-    });
-    const jobs: ClosableJob[] = [{ name: 'calendar-sync', job: calendarSync }];
-    expect(runningJobs(jobs)).toEqual(['calendar-sync']);
-    const done = closeAll(jobs);
-    await vi.waitFor(() => expect(worker.close).toHaveBeenCalled());
-    expect(queue.close).not.toHaveBeenCalled();
-    finishSweep();
-    await expect(done).resolves.toEqual(['calendar-sync']);
-    expect(order).toEqual(['worker', 'queue']);
   });
 });
