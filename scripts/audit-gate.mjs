@@ -20,32 +20,6 @@ import { spawnSync } from 'node:child_process';
 
 const EXCEPTIONS = [
   {
-    // braces@3.0.3 has no patched release; reached only via tailwindcss@3 >
-    // chokidar/micromatch/fast-glob in apps/web (build-time). Exit plan:
-    // tailwind 4 migration or a patched braces via pnpm.overrides.
-    id: 'RE-01',
-    owner: 'DevOps Agent',
-    issue: 'https://github.com/iakash22/meetops-platform/issues/54',
-    ghsa: 'GHSA-vfj7-8cjw-p6xm',
-    module: 'braces',
-    versions: ['3.0.3'],
-    expires: '2026-11-20T23:59:59Z',
-  },
-  {
-    // node-forge@1.4.0 has no patched release. Dev/build tooling only:
-    // apps/extension > wxt > web-ext-run > @devicefarmer/adbkit, and
-    // apps/mobile > expo > @expo/cli (+ selfsigned). Owner-approved 2026-10-25.
-    // Exit plan: upgrade wxt/expo or drop the dependency when a fix lands.
-    // See docs/12-security/risk-exceptions.md.
-    id: 'RE-03',
-    owner: 'DevOps Agent',
-    issue: 'https://github.com/iakash22/meetops-platform/pull/7',
-    ghsa: 'GHSA-86w9-cpqp-85rv',
-    module: 'node-forge',
-    versions: ['1.4.0'],
-    expires: '2026-11-24T23:59:59Z',
-  },
-  {
     // image-size@1.2.1 via apps/mobile > react-native > metro 0.81.x (mobile
     // dev/bundler tooling; metro pins image-size ^1). Owner-approved 2026-10-25.
     // Exit plan: upgrade expo/metro. See docs/12-security/risk-exceptions.md.
