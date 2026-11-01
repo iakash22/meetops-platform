@@ -82,6 +82,12 @@ try {
   initialFiles = [
     ...html.matchAll(/<(?:script|link)\b[^>]*?(?:src|href)="[^"]*\/assets\/([^"/]+\.js)"/g),
   ].map((m) => m[1]);
+  // Without an entry script the initial-JS total would be 0 kB and the budget would pass silently.
+  const hasEntry = /<script\b[^>]*?\bsrc="[^"]*\/assets\/[^"/]+\.js"/.test(html);
+  if (!hasEntry)
+    failures.push(
+      'index.html has no entry <script src=".../assets/*.js">; cannot measure initial JS',
+    );
 } catch {
   failures.push('index.html missing from the build output');
 }
