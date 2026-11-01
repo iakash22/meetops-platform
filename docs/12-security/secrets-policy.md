@@ -4,7 +4,7 @@
 
 - **Dev**: `.env` (git-ignored), from `.env.example` with placeholders only. Never real values in `.env.example`.
 - **CI**: GitHub Actions encrypted secrets / environments; least-privilege `GITHUB_TOKEN` permissions per workflow.
-- **Staging/Prod**: a secret manager (AWS Secrets Manager / GCP Secret Manager / Vault — TBD), injected at runtime; validated by `packages/config` (Zod) at boot, fail fast if missing.
+- **Staging/Prod**: AWS Secrets Manager in ap-south-1, with the KEK in AWS KMS ([ADR-016](../15-decisions/ADR-016-secret-manager-kms.md), approved 2026-11-01), injected at runtime; validated by `packages/config` (Zod) at boot, fail fast if missing.
 - Platform secrets: DB URL, Redis URL, S3 keys, SMTP app password, session/CSRF HMAC keys, KEK reference, platform AI keys.
 
 ## 2. Tenant secrets: envelope encryption
