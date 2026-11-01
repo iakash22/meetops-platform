@@ -189,3 +189,43 @@ describe('closeAll', () => {
     expect(warn).toHaveBeenCalledWith({ job: 'a', errName: 'Error' }, 'worker job close failed');
   });
 });
+
+describe('calendar-sync in the worker shutdown path', () => {
+  it('closeAll waits for the calendar-sync worker (in-flight sweep) and closes its queue', async () => {
+    const { registerCalendarSyncScheduler, loadCalendarSyncEnv } =
+      await import('../src/calendar/index.js');
+    let finishSweep!: () => void;
+    const order: string[] = [];
+    const worker = {
+      close: vi.fn(
+        () =>
+          new Promise<void>((r) => {
+            finishSweep = () => {
+              order.push('worker');
+              r();
+            };
+          }),
+      ),
+    };
+    const queue = {
+      upsertJobScheduler: vi.fn(async () => undefined),
+      close: vi.fn(async () => void order.push('queue')),
+    };
+    const calendarSync = registerCalendarSyncScheduler({
+      env: loadCalendarSyncEnv({ CALENDAR_SYNC_ENABLED: 'true' }),
+      log,
+      processEnv: { INTEGRATIONS_TOKEN_KEK: kek },
+      buildDeps: () => ({ repo: {} as never, providers: {} }),
+      createQueue: () => queue,
+      createWorker: () => worker,
+    });
+    const jobs: ClosableJob[] = [{ name: 'calendar-sync', job: calendarSync }];
+    expect(runningJobs(jobs)).toEqual(['calendar-sync']);
+    const done = closeAll(jobs);
+    await vi.waitFor(() => expect(worker.close).toHaveBeenCalled());
+    expect(queue.close).not.toHaveBeenCalled();
+    finishSweep();
+    await expect(done).resolves.toEqual(['calendar-sync']);
+    expect(order).toEqual(['worker', 'queue']);
+  });
+});
