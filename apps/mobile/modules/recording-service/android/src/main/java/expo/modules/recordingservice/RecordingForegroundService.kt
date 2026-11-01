@@ -50,7 +50,7 @@ class RecordingForegroundService : Service() {
      * Set by the module's stop(). When it arrives before the service reached onStartCommand (a fast Start failure),
      * the pending start posts its mandatory foreground notification and immediately removes it again.
      */
-    @Volatile var cancelRequested = false
+    @Volatile private var cancelRequested = false
     /** How long JS gets to end capture after a native Stop (notification, swipe-away) before native ends it. */
     const val JS_STOP_GRACE_MS = 3000L
     private val main = Handler(Looper.getMainLooper())
@@ -85,6 +85,33 @@ class RecordingForegroundService : Service() {
     @Synchronized fun resetStopLatch() {
       stopNotified = false
     }
+
+    /*
+     * Start/stop handshake. stop() runs on the module thread and onStartCommand on the main thread, so
+     * "is a start pending?" and "is the service up?" must be decided under one lock. Otherwise stop() can read
+     * running == false just after onStartCommand checked cancelRequested and just before it set running = true:
+     * nobody stops the service and the "recording" notification stays up (Tester r4 item 1). Under the lock
+     * exactly one side wins: either stop() sees running and stops the service, or the start sees the cancel.
+     */
+
+    /** Module start(): a fresh start clears any earlier cancel. */
+    @Synchronized fun beginStart() {
+      cancelRequested = false
+    }
+
+    /** Module stop(): records the cancel and returns whether the service was already up (caller then stops it). */
+    @Synchronized fun requestStop(): Boolean {
+      cancelRequested = true
+      stopRequestedByApp = true
+      return running
+    }
+
+    /** onStartCommand after startForeground: true = keep running; false = a stop arrived first, tear down. */
+    @Synchronized fun markRunningUnlessCancelled(): Boolean {
+      if (cancelRequested) return false
+      running = true
+      return true
+    }
   }
 
   override fun onBind(intent: Intent?): IBinder? = null
@@ -110,7 +137,7 @@ class RecordingForegroundService : Service() {
       stopSelf()
       return START_NOT_STICKY
     }
-    if (cancelRequested) {
+    if (!markRunningUnlessCancelled()) {
       // stop() arrived while this start was still pending: never leave a "recording" notification behind.
       removeNotification()
       running = false
@@ -118,7 +145,6 @@ class RecordingForegroundService : Service() {
       stopSelf()
       return START_NOT_STICKY
     }
-    running = true
     // Never restarted by the OS after a kill: capture must not resume on its own (R7).
     return START_NOT_STICKY
   }
