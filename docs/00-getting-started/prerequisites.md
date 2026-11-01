@@ -2,13 +2,13 @@
 
 Versions come from the root `package.json`.
 
-| Tool                       | Version                        | Notes                                                                              |
-| -------------------------- | ------------------------------ | ---------------------------------------------------------------------------------- |
-| Node.js                    | `>=20.19 <25` (`engines.node`) | Node 22 or 24 (CI matrix); 20.19+ still allowed                                    |
-| pnpm                       | `9.12.3` (`packageManager`)    | Enable with Corepack: `corepack enable`                                            |
-| Git                        | Any recent version             |                                                                                    |
-| Docker + Docker Compose v2 | Recent                         | Docker Desktop on Windows (WSL 2 backend); Docker Engine + compose plugin on Linux |
-| FFmpeg                     | Recent                         | Needed by the media pipeline                                                       |
+| Tool                       | Version                                    | Notes                                                                              |
+| -------------------------- | ------------------------------------------ | ---------------------------------------------------------------------------------- |
+| Node.js                    | `^20.19 \|\| >=22.12 <25` (`engines.node`) | Node 22 or 24 (CI matrix); 20.19+ or 22.12+ (no Node 21)                           |
+| pnpm                       | `9.12.3` (`packageManager`)                | Enable with Corepack: `corepack enable`                                            |
+| Git                        | Any recent version                         |                                                                                    |
+| Docker + Docker Compose v2 | Recent                                     | Docker Desktop on Windows (WSL 2 backend); Docker Engine + compose plugin on Linux |
+| FFmpeg                     | Recent                                     | Needed by the media pipeline                                                       |
 
 ## Ports used locally
 

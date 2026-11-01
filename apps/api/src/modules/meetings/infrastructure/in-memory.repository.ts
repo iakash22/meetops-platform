@@ -1,13 +1,19 @@
 import { randomUUID } from 'node:crypto';
+import {
+  bucketStart,
+  type MeetingAnalyticsQuery,
+  type MeetingAnalyticsResult,
+} from '../domain/meeting.js';
 import type {
   MeetingCreate,
   MeetingPage,
   MeetingRecord,
   MeetingRepository,
+  MeetingSource,
 } from '../domain/meeting.js';
 import { compareDesc, decodeMeetingCursor, encodeMeetingCursor } from './cursor.js';
 
-type Row = MeetingRecord & { deletedAt: Date | null };
+type Row = MeetingRecord & { deletedAt: Date | null; durationSec?: number | null };
 
 /** Development/test only (selectMeetingRepository refuses it in strict environments). */
 export class InMemoryMeetingRepository implements MeetingRepository {
@@ -44,11 +50,13 @@ export class InMemoryMeetingRepository implements MeetingRepository {
 
   list(
     organizationId: string,
-    q: { cursor?: string | undefined; limit: number },
+    q: { cursor?: string | undefined; limit: number; source?: MeetingSource | undefined },
   ): Promise<MeetingPage> {
     try {
       const after = q.cursor === undefined ? null : decodeMeetingCursor(q.cursor);
-      const sorted = this.live(organizationId).sort(compareDesc);
+      const sorted = this.live(organizationId)
+        .filter((r) => q.source === undefined || r.source === q.source)
+        .sort(compareDesc);
       const rest = after ? sorted.filter((r) => compareDesc(r, after) > 0) : sorted;
       const items = rest.slice(0, q.limit).map(strip);
       const last = items[items.length - 1];
@@ -68,6 +76,43 @@ export class InMemoryMeetingRepository implements MeetingRepository {
     );
   }
 
+  analytics(organizationId: string, q: MeetingAnalyticsQuery): Promise<MeetingAnalyticsResult> {
+    const rows = this.live(organizationId).filter(
+      (r) => r.createdAt >= q.from && r.createdAt < q.to,
+    );
+    const count = <K extends string>(key: (r: Row) => K) => {
+      const m = new Map<K, number>();
+      for (const r of rows) m.set(key(r), (m.get(key(r)) ?? 0) + 1);
+      return [...m].sort(([a], [b]) => a.localeCompare(b));
+    };
+    const measured = rows.filter((r) => typeof r.durationSec === 'number');
+    const totalSec = measured.reduce((n, r) => n + (r.durationSec ?? 0), 0);
+    const periods = new Map<number, number>();
+    for (const r of rows) {
+      const k = bucketStart(r.createdAt, q.bucket).getTime();
+      periods.set(k, (periods.get(k) ?? 0) + 1);
+    }
+    return Promise.resolve({
+      total: rows.length,
+      bySource: count((r) => r.source).map(([source, n]) => ({
+        source: source,
+        count: n,
+      })),
+      byStatus: count((r) => r.status).map(([status, n]) => ({
+        status: status,
+        count: n,
+      })),
+      duration: {
+        measured: measured.length,
+        totalSec,
+        averageSec: measured.length ? totalSec / measured.length : null,
+      },
+      periods: [...periods]
+        .sort(([a], [b]) => a - b)
+        .map(([t, n]) => ({ start: new Date(t), count: n })),
+    });
+  }
+
   resolve(organizationId: string, input: MeetingCreate) {
     // Soft-deleted rows still hold the unique key (like the DB index), so a deleted meeting is not resurrected
     // under a new id; it resolves to a 404-able id the caller cannot read.
@@ -84,7 +129,8 @@ export class InMemoryMeetingRepository implements MeetingRepository {
 }
 
 function strip(r: Row): MeetingRecord {
-  const { deletedAt, ...rest } = r;
+  const { deletedAt, durationSec, ...rest } = r;
   void deletedAt;
+  void durationSec;
   return { ...rest };
 }

@@ -27,9 +27,43 @@ export const useOrgStore = create<OrgState>((set) => ({
   reset: () => set({ organizations: [], currentOrganizationId: null }),
 }));
 
-type UiState = { sidebarOpen: boolean; toggleSidebar: () => void };
+/** localStorage key for the desktop sidebar preference (`'collapsed'` | `'expanded'`). */
+export const SIDEBAR_STORAGE_KEY = 'meetops.ui.sidebar';
+
+/** Stored preference; anything missing, unknown or unreadable means expanded. */
+export function readSidebarCollapsed(): boolean {
+  try {
+    return globalThis.localStorage?.getItem(SIDEBAR_STORAGE_KEY) === 'collapsed';
+  } catch {
+    return false; // storage disabled (privacy mode, sandboxed iframe)
+  }
+}
+
+function writeSidebarCollapsed(collapsed: boolean): void {
+  try {
+    globalThis.localStorage?.setItem(SIDEBAR_STORAGE_KEY, collapsed ? 'collapsed' : 'expanded');
+  } catch {
+    // Best effort: the preference just won't survive a reload.
+  }
+}
+
+type UiState = {
+  /** Desktop (lg+) only: icon rail instead of the full sidebar. Persisted. */
+  sidebarCollapsed: boolean;
+  toggleSidebar: () => void;
+  /** Below lg: the navigation Sheet. Never persisted. */
+  mobileNavOpen: boolean;
+  setMobileNavOpen: (open: boolean) => void;
+};
 
 export const useUiStore = create<UiState>((set) => ({
-  sidebarOpen: true,
-  toggleSidebar: () => set((s) => ({ sidebarOpen: !s.sidebarOpen })),
+  sidebarCollapsed: readSidebarCollapsed(),
+  toggleSidebar: () =>
+    set((s) => {
+      const sidebarCollapsed = !s.sidebarCollapsed;
+      writeSidebarCollapsed(sidebarCollapsed);
+      return { sidebarCollapsed };
+    }),
+  mobileNavOpen: false,
+  setMobileNavOpen: (mobileNavOpen) => set({ mobileNavOpen }),
 }));

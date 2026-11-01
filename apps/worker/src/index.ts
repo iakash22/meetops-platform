@@ -19,6 +19,8 @@ import {
   scheduleMmdbUpdate,
 } from './geoip/mmdb-updater.js';
 import { createNotificationEmailSender } from './notifications/email.js';
+import { loadTokenRefreshEnv, registerTokenRefreshJob } from './integrations/bootstrap.js';
+import { closeAll, runningJobs, type ClosableJob } from './shutdown.js';
 
 export * from './media/index.js';
 export * from './ai/index.js';
@@ -26,6 +28,7 @@ export * from './integrations/index.js';
 export * from './notifications/index.js';
 export * from './privacy/index.js';
 export * from './geoip/mmdb-updater.js';
+export * from './shutdown.js';
 
 async function main() {
   const { close } = startMediaWorker();
@@ -96,16 +99,22 @@ async function main() {
         return { close: () => Promise.all([worker.close(), queue.close()]) };
       })()
     : undefined;
+  // Integrations token refresh (Jira rotation, GitHub installation tokens). Off unless
+  // INTEGRATIONS_TOKEN_REFRESH_ENABLED=true; then INTEGRATIONS_TOKEN_KEK is required (fail closed at startup).
+  const tokenRefresh = registerTokenRefreshJob({ env: loadTokenRefreshEnv(), log: logger });
+  const jobs: ClosableJob[] = [
+    { name: 'media', close },
+    { name: 'transcription', job: transcription },
+    { name: 'notifications', job: notifications },
+    { name: 'summary', job: summary },
+    { name: 'ip-retention', close: retention?.close },
+    { name: 'geoip-update', close: geoipUpdate?.close },
+    { name: 'integrations-token-refresh', job: tokenRefresh },
+  ];
+  logger.info({ jobs: runningJobs(jobs) }, 'worker jobs registered');
   const shutdown = async () => {
     logger.info('Shutting down worker...');
-    await Promise.allSettled([
-      close(),
-      transcription.registered ? transcription.close() : Promise.resolve(),
-      notifications.registered ? notifications.close() : Promise.resolve(),
-      summary.registered ? summary.close() : Promise.resolve(),
-      retention ? retention.close() : Promise.resolve(),
-      geoipUpdate ? geoipUpdate.close() : Promise.resolve(),
-    ]);
+    await closeAll(jobs, logger);
     notifRedis?.disconnect();
     process.exit(0);
   };

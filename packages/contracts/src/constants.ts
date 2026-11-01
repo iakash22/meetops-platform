@@ -493,6 +493,14 @@ export const INTEGRATION_STATE_TTL_SECONDS = 600;
 export const INTEGRATION_WEBHOOK_MAX_BYTES = 1_048_576;
 
 /** Phase 7: calendar routes. Connections are per user within an organization. */
+/** Read-only, org-scoped analytics (P7). */
+export const ANALYTICS_PATHS = {
+  meetings: '/orgs/:organizationId/analytics/meetings',
+} as const;
+
+/** Longest analytics window (`to - from`). */
+export const MAX_ANALYTICS_RANGE_DAYS = 366;
+
 export const CALENDAR_PATHS = {
   providers: '/orgs/:organizationId/calendar/providers',
   connect: '/orgs/:organizationId/calendar/connect',

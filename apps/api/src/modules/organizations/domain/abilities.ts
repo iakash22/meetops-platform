@@ -24,7 +24,11 @@ export const TASK_SUBJECTS = ['Task'] as const;
  * Self-service notification subjects (ADR-013). Every role, viewers included, may manage only its OWN rows
  * (`createdById` = the row's user); nobody, owners included, gets another user's feed, preferences or devices.
  */
-export const SELF_NOTIFICATION_SUBJECTS = ['Notification', 'NotificationPreference', 'PushDevice'] as const;
+export const SELF_NOTIFICATION_SUBJECTS = [
+  'Notification',
+  'NotificationPreference',
+  'PushDevice',
+] as const;
 export type SelfNotificationSubject = (typeof SELF_NOTIFICATION_SUBJECTS)[number];
 export type TaskSubject = (typeof TASK_SUBJECTS)[number];
 export type DirectorySubject = (typeof DIRECTORY_SUBJECTS)[number];

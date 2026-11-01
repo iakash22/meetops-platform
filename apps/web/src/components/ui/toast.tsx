@@ -1,3 +1,4 @@
+import { useRef } from 'react';
 import { CheckCircle2, Info, X, XCircle } from 'lucide-react';
 import { Toaster as SonnerToaster, toast as sonner } from 'sonner';
 import { create } from 'zustand';
@@ -9,17 +10,26 @@ import { cn } from '@/lib/utils';
  * root. A small store mirrors what is on screen so callers (and tests) can read or update a
  * toast by id; Sonner owns stacking, swipe-to-dismiss, hover-pause and the live region.
  * Each toast body is our own card (`sonner.custom`) so it follows the brand theme exactly.
+ * An optional `action` renders one button (e.g. "Retry"); clicking it dismisses the toast
+ * and runs the callback once.
  */
 export type ToastVariant = 'default' | 'success' | 'error';
+
+export type ToastAction = { label: string; onClick: () => void };
 
 export type ToastItem = {
   id: number;
   title: string;
   description?: string | undefined;
   variant: ToastVariant;
+  action?: ToastAction | undefined;
 };
 
-type ToastOptions = { description?: string | undefined; duration?: number | undefined };
+type ToastOptions = {
+  description?: string | undefined;
+  duration?: number | undefined;
+  action?: ToastAction | undefined;
+};
 
 type ToastState = {
   toasts: ToastItem[];
@@ -77,7 +87,9 @@ useToastStore.subscribe((state, prev) => {
 
 function make(variant: ToastVariant) {
   return (title: string, opts: ToastOptions = {}) =>
-    useToastStore.getState().push({ title, description: opts.description, variant }, opts.duration);
+    useToastStore
+      .getState()
+      .push({ title, description: opts.description, variant, action: opts.action }, opts.duration);
 }
 
 export const toast = Object.assign(make('default'), {
@@ -94,6 +106,24 @@ const iconTone = {
   success: 'text-emerald-400',
   error: 'text-destructive',
 } as const;
+
+function ToastActionButton({ action, onDismiss }: { action: ToastAction; onDismiss: () => void }) {
+  const used = useRef(false);
+  return (
+    <button
+      type="button"
+      onClick={() => {
+        if (used.current) return; // a double click must not fire the request twice
+        used.current = true;
+        onDismiss();
+        action.onClick();
+      }}
+      className="mt-2 inline-flex h-8 items-center rounded-md border border-primary/60 px-3 text-xs font-medium text-foreground transition-colors duration-150 hover:bg-primary/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+    >
+      {action.label}
+    </button>
+  );
+}
 
 function ToastCard({ item, onDismiss }: { item: ToastItem; onDismiss: () => void }) {
   const Icon = icons[item.variant];
@@ -112,6 +142,7 @@ function ToastCard({ item, onDismiss }: { item: ToastItem; onDismiss: () => void
         {item.description ? (
           <p className="mt-0.5 text-muted-foreground">{item.description}</p>
         ) : null}
+        {item.action ? <ToastActionButton action={item.action} onDismiss={onDismiss} /> : null}
       </div>
       <button
         type="button"

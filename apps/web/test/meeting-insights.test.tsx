@@ -115,4 +115,15 @@ describe('meeting insights', () => {
     );
     expect(screen.getByText('Transcript not available yet')).toBeInTheDocument();
   });
+
+  it('shows a processing-failed message instead of "not available yet"', async () => {
+    const api = createMockApi({
+      meetings: { get: vi.fn().mockResolvedValue({ ...meeting1, status: 'failed' }) },
+    });
+    renderApp(`/meetings/${meeting1.id}`, api);
+    await waitForRouteData(api.meetings.get);
+    expect(await screen.findByText('Processing failed')).toBeInTheDocument();
+    expect(screen.queryByText('Summary not available yet')).not.toBeInTheDocument();
+    expect(api.meetingInsights.report).not.toHaveBeenCalled();
+  });
 });

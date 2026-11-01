@@ -108,7 +108,9 @@ const MEETING_SEARCH_MIGRATION = '20261031010000_meeting_search_fts';
 const CALENDAR_EVENTS_MIGRATION = '20261031020000_calendar_events';
 /** Phase 7 semantic search: meeting_embeddings (pgvector, forced RLS, no ANN index). */
 const MEETING_EMBEDDINGS_MIGRATION = '20261031050000_meeting_embeddings';
-const LATEST_MIGRATION = MEETING_EMBEDDINGS_MIGRATION;
+/** MeetingSource gains 'mobile' (additive ADD VALUE). Sorts after meeting_embeddings. */
+const MEETING_SOURCE_MOBILE_MIGRATION = '20261031120000_meeting_source_mobile';
+const LATEST_MIGRATION = MEETING_SOURCE_MOBILE_MIGRATION;
 /**
  * Parallel PRs that sort between calendar_events and meeting_embeddings (#334 consent events, #341 calendar links).
  * The order checks below ignore them so they hold whichever merges first; when present they must sort before ours.
@@ -1547,14 +1549,15 @@ describe('integration external-account routing (20261028020000)', () => {
   it('sorts right after the ADR-014 geoip migration, before the relay revoke one', () => {
     const dirs = orderedDirs();
     expect(dirs.at(-1)).toBe(LATEST_MIGRATION);
-    expect(dirs.at(-2)).toBe(CALENDAR_EVENTS_MIGRATION);
-    expect(dirs.at(-3)).toBe(MEETING_SEARCH_MIGRATION);
-    expect(dirs.at(-4)).toBe(CALENDAR_CONNECTIONS_MIGRATION);
-    expect(dirs.at(-5)).toBe(RETENTION_OWNER_MIGRATION);
-    expect(dirs.at(-6)).toBe(RELAY_REVOKE_ALL_KINDS_MIGRATION);
-    expect(dirs.at(-7)).toBe(EXTERNAL_ACCOUNT_ROUTING_MIGRATION);
-    expect(dirs.at(-8)).toBe(SESSION_AUDIT_GEOIP_MIGRATION);
-    expect(dirs.at(-9)).toBe(RELAY_BY_TYPE_MIGRATION);
+    expect(dirs.at(-2)).toBe(MEETING_EMBEDDINGS_MIGRATION);
+    expect(dirs.at(-3)).toBe(CALENDAR_EVENTS_MIGRATION);
+    expect(dirs.at(-4)).toBe(MEETING_SEARCH_MIGRATION);
+    expect(dirs.at(-5)).toBe(CALENDAR_CONNECTIONS_MIGRATION);
+    expect(dirs.at(-6)).toBe(RETENTION_OWNER_MIGRATION);
+    expect(dirs.at(-7)).toBe(RELAY_REVOKE_ALL_KINDS_MIGRATION);
+    expect(dirs.at(-8)).toBe(EXTERNAL_ACCOUNT_ROUTING_MIGRATION);
+    expect(dirs.at(-9)).toBe(SESSION_AUDIT_GEOIP_MIGRATION);
+    expect(dirs.at(-10)).toBe(RELAY_BY_TYPE_MIGRATION);
   });
   const sql = readFileSync(
     resolve(migrationsDir, EXTERNAL_ACCOUNT_ROUTING_MIGRATION, 'migration.sql'),
@@ -1583,8 +1586,8 @@ describe('ADR-013 notifications tables (static)', () => {
 
   it('keeps its place in the migration order and is additive only', () => {
     const dirs = orderedDirs();
-    expect(dirs.at(-9)).toBe(RELAY_BY_TYPE_MIGRATION);
-    expect(dirs.at(-10)).toBe(NOTIFICATIONS_MIGRATION);
+    expect(dirs.at(-10)).toBe(RELAY_BY_TYPE_MIGRATION);
+    expect(dirs.at(-11)).toBe(NOTIFICATIONS_MIGRATION);
     expect(statements).not.toMatch(
       /\bDROP\b|RENAME|ALTER COLUMN|NO FORCE|DISABLE ROW LEVEL SECURITY/i,
     );
@@ -1653,10 +1656,11 @@ describe('IP retention owner re-assert (20261028040000)', () => {
   it('is the newest migration, after the ADR-014 geoip one', () => {
     const dirs = orderedDirs();
     expect(dirs.at(-1)).toBe(LATEST_MIGRATION);
-    expect(dirs.at(-2)).toBe(CALENDAR_EVENTS_MIGRATION);
-    expect(dirs.at(-3)).toBe(MEETING_SEARCH_MIGRATION);
-    expect(dirs.at(-4)).toBe(CALENDAR_CONNECTIONS_MIGRATION);
-    expect(dirs.at(-5)).toBe(RETENTION_OWNER_MIGRATION);
+    expect(dirs.at(-2)).toBe(MEETING_EMBEDDINGS_MIGRATION);
+    expect(dirs.at(-3)).toBe(CALENDAR_EVENTS_MIGRATION);
+    expect(dirs.at(-4)).toBe(MEETING_SEARCH_MIGRATION);
+    expect(dirs.at(-5)).toBe(CALENDAR_CONNECTIONS_MIGRATION);
+    expect(dirs.at(-6)).toBe(RETENTION_OWNER_MIGRATION);
     expect(dirs.indexOf(RETENTION_OWNER_MIGRATION)).toBeGreaterThan(
       dirs.indexOf(SESSION_AUDIT_GEOIP_MIGRATION),
     );
@@ -1691,7 +1695,14 @@ describe('Phase 7 calendar_connections (static)', () => {
     }
     expect(statements).toMatch(/"calendar_connections_revoked_wipe_check" CHECK \(/);
     expect(model).not.toMatch(/^\s+(accessToken|refreshToken)\s/m);
-    expect(model).toContain('@@unique([organizationId, userId, provider, externalAccountId])');
+    expect(model).toContain(
+      '@@unique([organizationId, userId, provider, externalAccountId], map: "calendar_connections_org_id_user_id_provider_external_account_i")',
+    );
+    // The default name is 68 chars; Postgres truncates it to 63, which is what the migration created.
+    expect(sql).toContain(
+      'CREATE UNIQUE INDEX "calendar_connections_org_id_user_id_provider_external_account_id_key"',
+    );
+    expect('calendar_connections_org_id_user_id_provider_external_account_i').toHaveLength(63);
   });
 });
 

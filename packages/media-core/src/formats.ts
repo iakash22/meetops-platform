@@ -12,8 +12,9 @@ export const DEMUXER_BY_EXT = {
   ogg: 'ogg',
   mp3: 'mp3',
   m4a: 'mov',
+  aac: 'aac',
   mp4: 'mov',
-  wav: 'wav'
+  wav: 'wav',
 } as const;
 export type MediaExt = keyof typeof DEMUXER_BY_EXT;
 export type AllowedDemuxer = (typeof DEMUXER_BY_EXT)[MediaExt];
@@ -24,11 +25,29 @@ const FORMAT_NAMES: Record<AllowedDemuxer, readonly string[]> = {
   ogg: ['ogg'],
   mp3: ['mp3'],
   mov: ['mov', 'mp4', 'm4a', '3gp', '3g2', 'mj2'],
-  wav: ['wav']
+  aac: ['aac'],
+  wav: ['wav'],
 };
 
 /** Containers that must never be accepted, even if a probe reports them alongside an allowed name. */
-export const FORBIDDEN_FORMATS = ['hls', 'applehttp', 'concat', 'ffconcat', 'playlist', 'm3u8', 'm3u', 'dash', 'image2', 'lavfi', 'sdp', 'rtp', 'rtsp', 'tee', 'data', 'subfile'];
+export const FORBIDDEN_FORMATS = [
+  'hls',
+  'applehttp',
+  'concat',
+  'ffconcat',
+  'playlist',
+  'm3u8',
+  'm3u',
+  'dash',
+  'image2',
+  'lavfi',
+  'sdp',
+  'rtp',
+  'rtsp',
+  'tee',
+  'data',
+  'subfile',
+];
 
 export function demuxerForExt(ext: string): AllowedDemuxer {
   const d = (DEMUXER_BY_EXT as Record<string, AllowedDemuxer | undefined>)[ext.toLowerCase()];
@@ -38,9 +57,14 @@ export function demuxerForExt(ext: string): AllowedDemuxer {
 
 /** After probing (with the forced demuxer), reject anything that is not exactly the expected container. */
 export function assertProbedFormat(probe: ProbeResult, demuxer: AllowedDemuxer): void {
-  const names = probe.formatName.toLowerCase().split(',').map((s) => s.trim()).filter(Boolean);
+  const names = probe.formatName
+    .toLowerCase()
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
   if (names.length === 0 || names.some((n) => FORBIDDEN_FORMATS.includes(n))) {
     throw new FfmpegError('Forbidden container format', null, '');
   }
-  if (!names.some((n) => FORMAT_NAMES[demuxer].includes(n))) throw new FfmpegError('Unexpected container format', null, '');
+  if (!names.some((n) => FORMAT_NAMES[demuxer].includes(n)))
+    throw new FfmpegError('Unexpected container format', null, '');
 }

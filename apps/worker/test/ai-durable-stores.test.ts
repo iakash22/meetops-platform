@@ -29,6 +29,17 @@ describe('createAiStores (config/DI)', () => {
 
   it('an unknown value is an error, not a fallback', () => {
     expect(() => createAiStores({ AI_STORES: 'redis' })).toThrow(/AI_STORES/);
+    // The message names the variable only, never the raw value.
+    const secretish = 'postgres://user:pw@host/db';
+    let msg = '';
+    try {
+      createAiStores({ AI_STORES: secretish });
+    } catch (e) {
+      msg = (e as Error).message;
+    }
+    expect(msg).toMatch(/AI_STORES/);
+    expect(msg).not.toContain(secretish);
+    expect(msg).not.toContain('pw@');
   });
 });
 

@@ -116,6 +116,8 @@ export const ALLOWED_MEDIA_MIME_TYPES = [
   'audio/ogg',
   'audio/mpeg',
   'audio/mp4',
+  /** ADTS AAC (byte-concatenable; Android mobile segment recording, ADR-015). */
+  'audio/aac',
   'audio/wav',
   'audio/x-wav',
   'video/webm',
