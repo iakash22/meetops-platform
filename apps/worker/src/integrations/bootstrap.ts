@@ -8,9 +8,11 @@ import {
   TokenCipher,
 } from '@meetops/integrations';
 import { createIntegrationConnectionRepository } from '@meetops/database';
-import { createQueue, createWorker } from '@meetops/queue';
+import { randomUUID } from 'node:crypto';
+import { createQueue, createRedisClient, createWorker } from '@meetops/queue';
 import {
   runTokenRefreshSweep,
+  type ConnectionLease,
   type TokenRefreshDeps,
   type TokenRefreshLog,
   type TokenRefreshProviders,
@@ -90,6 +92,39 @@ export function tokenRefreshProvidersFromEnv(
     });
   }
   return providers;
+}
+
+/** Compare-and-delete: release the lease only while it still holds this owner's token (atomic in Redis). */
+export const RELEASE_LEASE_LUA = `if redis.call('GET', KEYS[1]) == ARGV[1] then
+  return redis.call('DEL', KEYS[1])
+end
+return 0`;
+
+/** Minimal ioredis surface the lease needs. */
+export interface LeaseRedis {
+  set(key: string, value: string, px: 'PX', ttlMs: number, nx: 'NX'): Promise<'OK' | null>;
+  eval(script: string, numKeys: number, ...args: string[]): Promise<unknown>;
+}
+
+/**
+ * Per-connection lease on Redis: `SET key <random token> PX ttl NX` takes it (atomic, auto-expiring), and release
+ * runs RELEASE_LEASE_LUA so a holder whose lease expired can never delete the next holder's lease.
+ */
+export function createRedisConnectionLease(
+  redis: LeaseRedis,
+  newToken: () => string = randomUUID,
+): ConnectionLease {
+  return {
+    async acquire(key, ttlMs) {
+      if (!Number.isInteger(ttlMs) || ttlMs <= 0)
+        throw new RangeError('ttlMs must be a positive integer');
+      const token = newToken();
+      return (await redis.set(key, token, 'PX', ttlMs, 'NX')) === 'OK' ? token : null;
+    },
+    async release(key, token) {
+      return Number(await redis.eval(RELEASE_LEASE_LUA, 1, key, token)) === 1;
+    },
+  };
 }
 
 export type TokenRefreshRegistration =
@@ -177,6 +212,7 @@ export function registerTokenRefreshJob(
 ): TokenRefreshRegistration {
   if (!opts.env.enabled || !opts.env.kek) return { registered: false, reason: 'disabled' };
   const env = { ...opts.env, kek: opts.env.kek };
+  let leaseRedis: ReturnType<typeof createRedisClient> | undefined;
   const deps =
     opts.buildDeps?.(env) ??
     ({
@@ -184,10 +220,18 @@ export function registerTokenRefreshJob(
         cipher: new TokenCipher(new LocalKeyProvider({ shared: env.kek }, 'shared')),
       }),
       providers: tokenRefreshProvidersFromEnv(),
+      lease: createRedisConnectionLease((leaseRedis = createRedisClient())),
     } satisfies Omit<TokenRefreshDeps, 'log'>);
   const scheduler = (opts.start ?? startTokenRefreshQueueScheduler)(
     { ...deps, log: opts.log },
     { intervalMs: env.intervalMs },
   );
-  return { registered: true, close: scheduler.close, tick: scheduler.tick };
+  return {
+    registered: true,
+    tick: scheduler.tick,
+    close: async () => {
+      await scheduler.close();
+      await leaseRedis?.quit().catch(() => undefined);
+    },
+  };
 }
