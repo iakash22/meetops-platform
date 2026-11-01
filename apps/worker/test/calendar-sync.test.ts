@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { CalendarSyncEventInput, CalendarSyncSecrets } from '@meetops/database';
 import {
   CALENDAR_SYNC_DEFAULTS,
+  CALENDAR_SYNC_LEASE_MS,
   calendarSyncBackoffMs,
   calendarSyncNextMs,
   loadCalendarSyncEnv,
@@ -16,6 +17,7 @@ const C1 = '00000000-0000-4000-8000-0000000000c1';
 const C2 = '00000000-0000-4000-8000-0000000000c2';
 const USER = '00000000-0000-4000-8000-0000000000b1';
 const NOW = Date.parse('2026-10-31T10:00:00Z');
+const LEASE = new Date(NOW + 600_000);
 const DAY = 86_400_000;
 
 const ev = (id: string, over: Partial<CalendarSyncEventInput> = {}): CalendarSyncEventInput => ({
@@ -44,9 +46,10 @@ function makeRepo(conns: { id: string; provider?: string; s: CalendarSyncSecrets
     applied: [] as Parameters<CalendarSyncSweepRepository['applySync']>[1][],
     tokens: [] as [string, Parameters<CalendarSyncSweepRepository['updateTokens']>[2]][],
     errors: [] as string[],
-    failures: [] as [string, { syncFailures: number; nextSyncAt: Date }][],
+    failures: [] as [string, { syncFailures: number; retryInMs: number; lease: Date }][],
   };
   const repo: CalendarSyncSweepRepository = {
+    claimForSync: vi.fn(async () => ({ lease: LEASE })),
     listDueForSync: vi.fn(async () =>
       conns.map((c) => ({
         organizationId: ORG,
@@ -58,7 +61,10 @@ function makeRepo(conns: { id: string; provider?: string; s: CalendarSyncSecrets
     readSecrets: async (_o, id) => conns.find((c) => c.id === id)?.s ?? null,
     updateTokens: async (_o, id, t) => void calls.tokens.push([id, t]),
     markError: async (_o, id) => void calls.errors.push(id),
-    recordFailure: async (_o, id, s) => void calls.failures.push([id, s]),
+    recordFailure: async (_o, id, s) => {
+      calls.failures.push([id, s]);
+      return true;
+    },
     applySync: async (_o, input) => {
       calls.applied.push(input);
       return { upserted: input.events.length, cancelled: input.complete ? 1 : 0, applied: true };
@@ -107,7 +113,8 @@ describe('runCalendarSyncSweep', () => {
       from: new Date(NOW - DAY),
       to: new Date(NOW + 30 * DAY),
       now: new Date(NOW),
-      nextSyncAt: new Date(NOW + 1.05 * CALENDAR_SYNC_DEFAULTS.intervalMs),
+      nextSyncInMs: 1.05 * CALENDAR_SYNC_DEFAULTS.intervalMs,
+      lease: LEASE,
     });
   });
 
@@ -194,7 +201,7 @@ describe('runCalendarSyncSweep', () => {
     });
     expect(calls.errors).toEqual([]);
     expect(calls.failures).toEqual([
-      [C1, { syncFailures: 3, nextSyncAt: new Date(NOW + 4 * CALENDAR_SYNC_DEFAULTS.intervalMs) }],
+      [C1, { syncFailures: 3, retryInMs: 4 * CALENDAR_SYNC_DEFAULTS.intervalMs, lease: LEASE }],
     ]);
   });
 
@@ -219,7 +226,7 @@ describe('runCalendarSyncSweep', () => {
       });
       expect(calls.errors).toEqual([]);
       expect(calls.failures).toEqual([
-        [C1, { syncFailures: 1, nextSyncAt: new Date(NOW + CALENDAR_SYNC_DEFAULTS.intervalMs) }],
+        [C1, { syncFailures: 1, retryInMs: CALENDAR_SYNC_DEFAULTS.intervalMs, lease: LEASE }],
       ]);
     }
     // A plain 403 (no rate-limit reason) is still a permanent auth failure.
@@ -376,5 +383,67 @@ describe('helpers', () => {
     release();
     await s.close();
     expect(listDue).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('calendar sync claim (multi-replica)', () => {
+  it('skips a connection another replica already claimed, without touching tokens or the provider', async () => {
+    const { repo, calls } = makeRepo([
+      { id: C1, s: secrets() },
+      { id: C2, s: secrets() },
+    ]);
+    const claim = vi.fn(async (_o: string, id: string) => (id === C2 ? { lease: LEASE } : null));
+    repo.claimForSync = claim;
+    const p = provider();
+    const r = await runCalendarSyncSweep({
+      repo,
+      providers: { google: p },
+      log: { info: vi.fn(), warn: vi.fn() },
+      now: () => NOW,
+    });
+    expect(r).toMatchObject({ synced: 1, skipped: 1 });
+    expect(p.listEvents).toHaveBeenCalledTimes(1);
+    expect(calls.applied.map((a) => a.connectionId)).toEqual([C2]);
+    expect(claim).toHaveBeenCalledWith(ORG, C1, CALENDAR_SYNC_LEASE_MS);
+  });
+
+  it('times each connection from its own claim, not the sweep start (long sweep)', async () => {
+    const { repo, calls } = makeRepo([
+      { id: C1, s: secrets({ accessTokenExpiresAt: new Date(NOW + 3 * 3_600_000) }) },
+      { id: C2, s: secrets({ accessTokenExpiresAt: new Date(NOW + 3 * 3_600_000) }) },
+    ]);
+    let t = NOW;
+    const p = provider({
+      listEvents: vi.fn(async () => {
+        t += 30 * 60_000; // each provider call takes 30 min
+        return [];
+      }),
+    });
+    await runCalendarSyncSweep({
+      repo,
+      providers: { google: p },
+      log: { info: vi.fn(), warn: vi.fn() },
+      now: () => t,
+    });
+    expect(calls.applied.map((a) => a.now)).toEqual([new Date(NOW), new Date(NOW + 30 * 60_000)]);
+    expect(calls.applied.map((a) => a.from)).toEqual([
+      new Date(NOW - DAY),
+      new Date(NOW + 30 * 60_000 - DAY),
+    ]);
+    // relative delays only: the database adds them to its own clock at write time
+    for (const a of calls.applied) expect(a).not.toHaveProperty('nextSyncAt');
+  });
+
+  it('does not record a failure when the claim was never won', async () => {
+    const { repo, calls } = makeRepo([{ id: C1, s: secrets() }]);
+    repo.claimForSync = vi.fn(async () => null);
+    await runCalendarSyncSweep({
+      repo,
+      providers: { google: provider() },
+      log: { info: vi.fn(), warn: vi.fn() },
+      now: () => NOW,
+    });
+    expect(calls.failures).toEqual([]);
+    expect(calls.applied).toEqual([]);
   });
 });
