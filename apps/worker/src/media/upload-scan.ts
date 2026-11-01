@@ -113,6 +113,7 @@ const DEMUXER_BY_MIME: Record<(typeof ALLOWED_MEDIA_MIME_TYPES)[number], Allowed
   'audio/ogg': 'ogg',
   'audio/mpeg': 'mp3',
   'audio/mp4': 'mov',
+  'audio/aac': 'aac',
   'video/mp4': 'mov',
   'audio/wav': 'wav',
   'audio/x-wav': 'wav',
@@ -134,6 +135,8 @@ export function sniffContainer(head: Buffer): AllowedDemuxer | null {
   )
     return 'wav';
   if (head.length >= 8 && head.subarray(4, 8).toString('latin1') === 'ftyp') return 'mov';
+  // ADTS AAC: 12-bit sync 0xFFF with layer bits 00 (MPEG audio layers 1-3 are never 00, so this is checked first).
+  if (head.length >= 7 && head[0] === 0xff && (head[1]! & 0xf6) === 0xf0) return 'aac';
   if (head.subarray(0, 3).toString('latin1') === 'ID3') return 'mp3';
   if (head.length >= 2 && head[0] === 0xff && (head[1]! & 0xe0) === 0xe0) return 'mp3'; // MPEG frame sync
   return null;

@@ -108,7 +108,9 @@ const MEETING_SEARCH_MIGRATION = '20261031010000_meeting_search_fts';
 const CALENDAR_EVENTS_MIGRATION = '20261031020000_calendar_events';
 /** Consent API: append-only meeting consent ledger (forced RLS, SELECT/INSERT only). */
 const MEETING_CONSENT_MIGRATION = '20261031030000_meeting_consent_events';
-const LATEST_MIGRATION = MEETING_CONSENT_MIGRATION;
+/** MeetingSource gains 'mobile' (additive ADD VALUE). */
+const MEETING_SOURCE_MOBILE_MIGRATION = '20261031120000_meeting_source_mobile';
+const LATEST_MIGRATION = MEETING_SOURCE_MOBILE_MIGRATION;
 const reportDedupeSql = readFileSync(
   resolve(migrationsDir, REPORT_SUMMARY_DEDUPE_MIGRATION, 'migration.sql'),
   'utf8',

@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { DomainError } from '../../../shared/domain-error.js';
 
-export type MeetingSource = 'upload' | 'extension' | 'desktop' | 'bot';
+export type MeetingSource = 'upload' | 'extension' | 'desktop' | 'bot' | 'mobile';
 export type MeetingStatus = 'scheduled' | 'recording' | 'processing' | 'completed' | 'failed';
 
 export interface MeetingRecord {
