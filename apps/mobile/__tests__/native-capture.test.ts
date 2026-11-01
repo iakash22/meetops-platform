@@ -273,6 +273,69 @@ describe('android foreground service indicator (R2)', () => {
     await expect(cap.begin('rec-1')).rejects.toThrow('denied');
     expect(driver.calls).not.toContain('record');
   });
+
+  // Tester r4 item 1: a Start that fails right after the service was asked to start must take the
+  // "recording" notification down again (native side: RecordingForegroundService.requestStop/markRunningUnlessCancelled).
+  it.each([
+    [
+      'prepare rejects',
+      { prepare: () => Promise.reject(new Error('prepare failed')) },
+      'prepare failed',
+    ],
+    ['no output file', { currentUri: () => null }, 'did not create an output file'],
+    [
+      'audio mode rejects',
+      {
+        setRecordingMode: (a: boolean) =>
+          a ? Promise.reject(new Error('mode')) : Promise.resolve(),
+      },
+      'mode',
+    ],
+  ])('a fast Start failure (%s) stops the service it started, once', async (_name, over, msg) => {
+    const { driver } = fakeDriver(over);
+    const fgs = indicator();
+    const cap = createNativeCapture(
+      driver,
+      createFileChunkStore(createMemoryFs(), testCipher),
+      fgs,
+    );
+    await expect(cap.begin('rec-1')).rejects.toThrow(msg);
+    expect(fgs.calls).toEqual(['fgs:start', 'fgs:stop']);
+    expect(driver.calls).not.toContain('record');
+    expect(cap.isBackgroundSafe?.()).toBe(false);
+    // A later notification Stop for the failed start is ignored, and a retry starts cleanly.
+    const stop = jest.fn();
+    cap.onStopRequested?.(stop);
+    fgs.press();
+    expect(stop).not.toHaveBeenCalled();
+  });
+
+  it('a protect failure after the service started also stops it', async () => {
+    const { driver } = fakeDriver();
+    const fgs = indicator();
+    const cap = createNativeCapture(
+      driver,
+      createFileChunkStore(createMemoryFs(), testCipher),
+      fgs,
+      {
+        recorderFiles: { protect: () => Promise.resolve(false), sweep: () => Promise.resolve(0) },
+      },
+    );
+    await expect(cap.begin('rec-1')).rejects.toThrow('Could not protect');
+    expect(fgs.calls).toEqual(['fgs:start', 'fgs:stop']);
+  });
+
+  it('a failure before the service starts never touches it', async () => {
+    const { driver } = fakeDriver({ canRecord: () => Promise.resolve(false) });
+    const fgs = indicator();
+    const cap = createNativeCapture(
+      driver,
+      createFileChunkStore(createMemoryFs(), testCipher),
+      fgs,
+    );
+    await expect(cap.begin('rec-1')).rejects.toThrow('Microphone permission');
+    expect(fgs.calls).toEqual([]);
+  });
 });
 
 it('keeps the original begin error when stopping the service also throws', async () => {
