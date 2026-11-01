@@ -17,7 +17,7 @@ release notes on 1 Nov 2026 (IST). Re-check them before the lockfile PR.
 - **New blocker, not fixed by any SDK we can take on Node 20:** GHSA-qr28-fpjm-wq7f (CVE-2026-118664, **high**,
   published 29 Oct 2026), `decode-uri-component <=0.5.0`, fixed in 0.5.1. It comes in through `apps/mobile` →
   `query-string@7.1.3`. `scripts/audit-gate.mjs` **fails on the baseline today** because of it. See §3.4.
-- Target: `expo ~55.0.32`, `react-native 0.83.10`, `react 19.2.0`. One lockfile PR, about 5–7 engineer-days including
+- Target: `expo ~55.0.32`, `react-native 0.83.10`, `react 19.2.0`. One lockfile PR, about 4.5–7 engineer-days including
   device checks. It needs Node `>=20.19.4` (the box has 20.19.2).
 
 ## 1. Inventory (baseline)
