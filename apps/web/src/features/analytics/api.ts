@@ -69,6 +69,7 @@ export const SOURCE_LABELS: Record<MeetingAnalytics['bySource'][number]['source'
   extension: 'Browser extension',
   desktop: 'Desktop app',
   bot: 'Meeting bot',
+  mobile: 'Mobile app',
 };
 export const STATUS_LABELS: Record<MeetingAnalytics['byStatus'][number]['status'], string> = {
   scheduled: 'Scheduled',
