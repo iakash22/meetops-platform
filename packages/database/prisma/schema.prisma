@@ -127,6 +127,7 @@ enum MeetingSource {
   extension
   desktop
   bot
+  mobile
 }
 
 enum RecordingStatus {

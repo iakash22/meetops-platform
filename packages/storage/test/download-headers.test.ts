@@ -26,6 +26,7 @@ describe('security review B 4.1: presigned downloads are attachments with a fixe
   it('maps content types to an allowlisted base type or octet-stream', () => {
     expect(downloadContentType('audio/webm;codecs=opus')).toBe('audio/webm');
     expect(downloadContentType('VIDEO/MP4')).toBe('video/mp4');
+    expect(downloadContentType('audio/aac')).toBe('audio/aac');
     for (const bad of [undefined, '', 'text/html', 'image/svg+xml', 'application/javascript'])
       expect(downloadContentType(bad)).toBe('application/octet-stream');
   });
