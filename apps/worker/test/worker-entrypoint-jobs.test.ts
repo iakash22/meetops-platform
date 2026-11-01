@@ -57,11 +57,7 @@ describe('integrations token-refresh env', () => {
       ).toThrow(/INTEGRATIONS_TOKEN_KEK.*production/);
   });
   it('rejects non-canonical base64 KEKs without echoing the value', () => {
-    const bad = [
-      kek.replace(/=$/, ''),
-      randomBytes(32).toString('base64url') + '=',
-      randomBytes(32).toString('base64').replace(/.=$/, 'B='),
-    ];
+    const bad = [kek.replace(/=$/, ''), '-_' + 'A'.repeat(41) + '=', 'A'.repeat(42) + 'B='];
     for (const value of bad) {
       let msg = '';
       try {

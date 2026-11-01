@@ -6,25 +6,31 @@
 //   node scripts/check-bundle-size.mjs --json        (from apps/web; machine-readable)
 //   node scripts/check-bundle-size.mjs --dist <dir>  (another build output)
 //
-// Budgets are gzip bytes per chunk *name* (the part before the content hash), plus a total for
-// the initial JS and CSS. Exits 1 if any budget is exceeded or a JS chunk passes Vite's 500 kB warning.
+// Budgets are gzip bytes per chunk *name* (the part before the content hash), plus totals for the
+// initial JS (what index.html loads: its entry script and modulepreloads) and for all JS. Exits 1 if any budget is exceeded or a JS chunk passes Vite's 500 kB warning.
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { gzipSync } from 'node:zlib';
 
 const KB = 1024;
-/** gzip budgets in kB. Roughly 15-20% headroom over the measured perf/web-bundle build. */
+/**
+ * gzip budgets in kB. Roughly 15-20% headroom over the measured build. Vendor budgets are from the
+ * perf/web-bundle build; index, css, initialJs and totalJs were re-baselined when the check was wired
+ * into the gates (integration/phase-1 @e4aceac4: index 38.34, css 9.02, initial JS 156.42, all JS 249.31).
+ * Raise a budget only in the PR that needs it, with the reason.
+ */
 const BUDGETS = {
   react: 55,
   tanstack: 45,
   radix: 38,
   icons: 6,
   validation: 45, // zod + react-hook-form
-  index: 35, // app code
-  '*': 25, // any other JS chunk (e.g. future lazy route chunks)
-  css: 8,
-  totalJs: 220,
+  index: 45, // app code in the entry chunk
+  '*': 25, // any other JS chunk (lazy route chunks)
+  css: 11,
+  initialJs: 185, // entry + modulepreloads in index.html
+  totalJs: 290, // every JS chunk, lazy ones included
 };
 const RAW_CHUNK_LIMIT = 500 * KB; // Vite's chunkSizeWarningLimit default
 
@@ -69,12 +75,29 @@ for (const r of rows) {
     failures.push(`${r.file}: ${(r.raw / KB).toFixed(2)} kB raw > 500 kB`);
 }
 const sum = (type, key) => rows.filter((r) => r.type === type).reduce((n, r) => n + r[key], 0);
+// Initial JS = the chunks index.html itself loads (entry <script> + <link rel="modulepreload">).
+let initialFiles = [];
+try {
+  const html = readFileSync(join(dist, 'index.html'), 'utf8');
+  initialFiles = [
+    ...html.matchAll(/<(?:script|link)\b[^>]*?(?:src|href)="[^"]*\/assets\/([^"/]+\.js)"/g),
+  ].map((m) => m[1]);
+} catch {
+  failures.push('index.html missing from the build output');
+}
+for (const r of rows) r.initial = initialFiles.includes(r.file);
+const initialJsGzip = rows.filter((r) => r.initial).reduce((n, r) => n + r.gzip, 0);
 const totals = {
+  initialJsGzip,
   jsRaw: sum('js', 'raw'),
   jsGzip: sum('js', 'gzip'),
   cssRaw: sum('css', 'raw'),
   cssGzip: sum('css', 'gzip'),
 };
+if (initialJsGzip > BUDGETS.initialJs * KB)
+  failures.push(
+    `initial JS ${(initialJsGzip / KB).toFixed(2)} kB gzip > ${BUDGETS.initialJs} kB budget`,
+  );
 if (totals.jsGzip > BUDGETS.totalJs * KB)
   failures.push(
     `total JS ${(totals.jsGzip / KB).toFixed(2)} kB gzip > ${BUDGETS.totalJs} kB budget`,
@@ -88,7 +111,12 @@ if (json) {
     `${'chunk'.padEnd(34)}${'raw kB'.padStart(9)}${'gzip kB'.padStart(9)}${'budget'.padStart(8)}`,
   );
   for (const r of rows)
-    console.log(`${r.file.padEnd(34)}${fmt(r.raw)}${fmt(r.gzip)}${String(r.budgetKb).padStart(8)}`);
+    console.log(
+      `${(r.file + (r.initial ? ' *' : '')).padEnd(34)}${fmt(r.raw)}${fmt(r.gzip)}${String(r.budgetKb).padStart(8)}`,
+    );
+  console.log(
+    `${'initial JS (*)'.padEnd(34)}${' '.repeat(9)}${fmt(initialJsGzip)}${String(BUDGETS.initialJs).padStart(8)}`,
+  );
   console.log(
     `${'total JS'.padEnd(34)}${fmt(totals.jsRaw)}${fmt(totals.jsGzip)}${String(BUDGETS.totalJs).padStart(8)}`,
   );

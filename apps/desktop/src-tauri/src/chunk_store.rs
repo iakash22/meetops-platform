@@ -55,8 +55,23 @@ fn legacy_owner_name(owner: &str) -> String {
     digest.iter().take(16).map(|b| format!("{b:02x}")).collect()
 }
 
-fn is_real_dir(e: &fs::DirEntry) -> bool {
-    e.file_type().map(|t| t.is_dir()).unwrap_or(false)
+/// Moves `src` to `dest` without ever replacing an existing `dest`, with no check-then-act window: `hard_link`
+/// fails atomically with AlreadyExists when `dest` is taken (unlike `rename`, which overwrites on Unix). Returns
+/// false when `dest` exists (the conflicting copy stays) or `src` vanished (another run moved it).
+fn move_no_clobber(src: &Path, dest: &Path) -> CmdResult<bool> {
+    use std::io::ErrorKind;
+    match fs::hard_link(src, dest) {
+        Ok(()) => {}
+        Err(e) if matches!(e.kind(), ErrorKind::AlreadyExists | ErrorKind::NotFound) => {
+            return Ok(false)
+        }
+        Err(_) => return Err(CmdError::internal()),
+    }
+    match fs::remove_file(src) {
+        Ok(()) => Ok(true),
+        Err(e) if e.kind() == ErrorKind::NotFound => Ok(true),
+        Err(_) => Err(CmdError::internal()),
+    }
 }
 
 /// A session id on disk, and whether it was discarded (tombstoned) and must only ever be deleted.
@@ -341,12 +356,31 @@ impl ChunkStore {
         if legacy_root == new_root {
             return Ok(0);
         }
+        // symlink_metadata never follows links: a symlinked legacy root is skipped and logged, never traversed.
+        match fs::symlink_metadata(&legacy_root) {
+            Ok(m) if m.file_type().is_symlink() => {
+                eprintln!("meetops: skipping symlinked legacy chunk root");
+                return Ok(0);
+            }
+            Ok(m) if m.is_dir() => {}
+            _ => return Ok(0),
+        }
         let Ok(entries) = fs::read_dir(&legacy_root) else {
             return Ok(0);
         };
         let name = self.owner_name(owner)?;
         let mut moved = 0;
-        for e in entries.filter_map(Result::ok).filter(is_real_dir) {
+        for e in entries.filter_map(Result::ok) {
+            let Ok(meta) = fs::symlink_metadata(e.path()) else {
+                continue;
+            };
+            if meta.file_type().is_symlink() {
+                eprintln!("meetops: skipping symlinked legacy recording folder");
+                continue;
+            }
+            if !meta.is_dir() {
+                continue;
+            }
             let Some(session) = e.file_name().into_string().ok() else {
                 continue;
             };
@@ -364,7 +398,14 @@ impl ChunkStore {
                 continue;
             };
             for f in files.filter_map(Result::ok) {
-                if !f.file_type().map(|t| t.is_file()).unwrap_or(false) {
+                let Ok(fmeta) = fs::symlink_metadata(f.path()) else {
+                    continue;
+                };
+                if fmeta.file_type().is_symlink() {
+                    eprintln!("meetops: skipping symlinked legacy chunk file");
+                    continue;
+                }
+                if !fmeta.is_file() {
                     continue;
                 }
                 let Some(fname) = f.file_name().into_string().ok() else {
@@ -373,12 +414,9 @@ impl ChunkStore {
                 let valid = fname
                     .strip_suffix(".chunk")
                     .is_some_and(|i| i.parse::<u32>().is_ok());
-                let dest = target.join(&fname);
-                if !valid || dest.exists() {
-                    continue;
+                if valid && move_no_clobber(&f.path(), &target.join(&fname))? {
+                    moved += 1;
                 }
-                fs::rename(f.path(), &dest).map_err(|_| CmdError::internal())?;
-                moved += 1;
             }
             // Only removes the folder once every chunk has moved (remove_dir fails while anything is left).
             let _ = fs::remove_dir(e.path());
@@ -717,5 +755,53 @@ mod tests {
         assert_eq!(s.migrate_legacy("u2:o9").unwrap(), 1);
         assert_eq!(s.get("u2:o9", "theirs", 0).unwrap(), b"x");
         let _ = fs::remove_dir_all(dir);
+    }
+    #[test]
+    fn move_no_clobber_handles_existing_and_missing_paths() {
+        let (_s, dir) = store();
+        fs::create_dir_all(&dir).unwrap();
+        let (a, b) = (dir.join("a"), dir.join("b"));
+        fs::write(&a, b"src").unwrap();
+        fs::write(&b, b"dest").unwrap();
+        assert!(!move_no_clobber(&a, &b).unwrap(), "AlreadyExists: no overwrite");
+        assert_eq!(fs::read(&b).unwrap(), b"dest");
+        assert!(a.exists(), "source kept on conflict");
+        fs::remove_file(&b).unwrap();
+        assert!(move_no_clobber(&a, &b).unwrap());
+        assert!(!a.exists());
+        assert_eq!(fs::read(&b).unwrap(), b"src");
+        assert!(!move_no_clobber(&a, &dir.join("c")).unwrap(), "NotFound: already moved");
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn migration_never_follows_symlinked_legacy_roots_or_entries() {
+        use std::os::unix::fs::symlink;
+        let (s, dir) = store();
+        // Symlinked legacy root -> real folder elsewhere: skipped, target untouched.
+        let outside = std::env::temp_dir().join(format!("mo-out-{}", crate::pkce::random_b64(6)));
+        put_legacy(&s, &outside, O, "ext", 0, b"x");
+        fs::create_dir_all(&dir).unwrap();
+        symlink(outside.join(legacy_owner_name(O)), dir.join(legacy_owner_name(O))).unwrap();
+        assert_eq!(s.migrate_legacy(O).unwrap(), 0);
+        assert!(outside.join(legacy_owner_name(O)).join("ext").join("0.chunk").exists());
+        fs::remove_file(dir.join(legacy_owner_name(O))).unwrap();
+        // Real root with a symlinked session folder and a symlinked chunk file: both skipped.
+        put_legacy(&s, &dir, O, "real", 0, b"r");
+        let root = dir.join(legacy_owner_name(O));
+        symlink(outside.join(legacy_owner_name(O)).join("ext"), root.join("linked")).unwrap();
+        symlink(
+            outside.join(legacy_owner_name(O)).join("ext").join("0.chunk"),
+            root.join("real").join("1.chunk"),
+        )
+        .unwrap();
+        assert_eq!(s.migrate_legacy(O).unwrap(), 1);
+        assert_eq!(s.get(O, "real", 0).unwrap(), b"r");
+        assert!(s.get(O, "real", 1).is_err());
+        assert!(s.pinned("linked").unwrap().is_none());
+        assert!(outside.join(legacy_owner_name(O)).join("ext").join("0.chunk").exists());
+        let _ = fs::remove_dir_all(dir);
+        let _ = fs::remove_dir_all(outside);
     }
 }

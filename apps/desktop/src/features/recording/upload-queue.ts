@@ -205,6 +205,19 @@ export function createUploadQueue(
     );
     saving.set(item.id, next);
   };
+  /** Like `persist`, but in order with queued writes and the save error is returned, not swallowed. */
+  const persistNow = (item: QueueItem | undefined): Promise<void> => {
+    if (!item || item.pendingDelete || closed.has(item.id)) return Promise.resolve();
+    const json = JSON.stringify(item);
+    const next = (saving.get(item.id) ?? Promise.resolve()).then(() =>
+      chunks.saveMeta(item.id, json),
+    );
+    saving.set(
+      item.id,
+      next.catch(() => undefined),
+    );
+    return next;
+  };
   async function finalize(id: string, final?: QueueItem) {
     if (closed.has(id)) return;
     closed.add(id);
@@ -354,7 +367,17 @@ export function createUploadQueue(
         meetingId: item.meetingId,
         consent: item.consent,
       }));
-      patch(item.id, { sessionId });
+      set(items.map((i) => (i.id === item.id ? { ...i, sessionId } : i)));
+      // The new server session must be saved locally before any chunk goes up; otherwise a restart would init a
+      // second session and orphan this one. If the save fails, abort it (best effort) and retry the whole init on
+      // the next pass.
+      try {
+        await persistNow(get(item.id));
+      } catch (e) {
+        set(items.map((i) => (i.id === item.id ? { ...i, sessionId: null } : i)));
+        await api.abort(sessionId, 'error').catch(() => undefined);
+        throw e;
+      }
     }
     const done = new Set(item.uploadedSeqs);
     for (const c of item.chunks) {
