@@ -105,7 +105,7 @@ const CALENDAR_CONNECTIONS_MIGRATION = '20261031000000_calendar_connections';
 /** Phase 7 meeting search: FTS expression GIN indexes only. */
 const MEETING_SEARCH_MIGRATION = '20261031010000_meeting_search_fts';
 /** Consent API: append-only meeting consent ledger (forced RLS, SELECT/INSERT only). */
-const MEETING_CONSENT_MIGRATION = '20261031020000_meeting_consent_events';
+const MEETING_CONSENT_MIGRATION = '20261101030000_meeting_consent_events';
 const LATEST_MIGRATION = MEETING_CONSENT_MIGRATION;
 const reportDedupeSql = readFileSync(
   resolve(migrationsDir, REPORT_SUMMARY_DEDUPE_MIGRATION, 'migration.sql'),
