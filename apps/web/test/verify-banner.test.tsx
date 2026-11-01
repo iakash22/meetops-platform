@@ -56,4 +56,23 @@ describe('verify email banner', () => {
     await userEvent.click(await screen.findByRole('button', { name: 'Resend link' }));
     expect(await screen.findByText("Couldn't send the email")).toBeInTheDocument();
   });
+
+  it('a stale toast Retry respects the resend cooldown', async () => {
+    const api = unverifiedApi();
+    const resendVerification = api.auth.resendVerification as ReturnType<typeof vi.fn>;
+    resendVerification
+      .mockRejectedValueOnce(new ApiError(503, 'UNKNOWN', 'down'))
+      .mockResolvedValue(undefined);
+    renderApp('/', api);
+    await userEvent.click(await screen.findByRole('button', { name: 'Resend link' }));
+    const retry = await screen.findByRole('button', { name: 'Retry' });
+    // The user resends from the banner instead, which starts the cooldown.
+    await userEvent.click(screen.getByRole('button', { name: 'Resend link' }));
+    expect(await screen.findByText('Verification email sent')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Resend in \d+s/ })).toBeDisabled();
+    // The old toast's Retry must not bypass the cooldown.
+    await userEvent.click(retry);
+    expect(await screen.findByText('Verification email already sent')).toBeInTheDocument();
+    expect(resendVerification).toHaveBeenCalledTimes(2);
+  });
 });
