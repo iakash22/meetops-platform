@@ -14,6 +14,9 @@ While the version is `0.x`, a minor bump may contain breaking changes (ADR-003).
 
 ### Added
 
+- Phase 7 semantic search (behind `SEMANTIC_SEARCH_ENABLED`, off by default): `SEARCH_PATHS.semantic`
+  (`GET /orgs/:organizationId/search/semantic`), `SEMANTIC_SEARCH_KINDS`, `SemanticSearchKind`, `SemanticSearchQuery`,
+  `SemanticSearchResult`, `SemanticSearchResponse`. Additive.
 - `ALLOWED_MEDIA_MIME_TYPES` / `MediaMimeType`: `audio/aac` (raw ADTS AAC), and `MEDIA_SOURCE_EXTS`: `aac`. Lets Android
   mobile record in short byte-concatenable segments that are encrypted as each one closes (ADR-015). Additive.
 - `MeetingSource`: `mobile` for meetings recorded by the native mobile app (HANDOFF §6 follow-up for Arch). Additive;

@@ -68,12 +68,21 @@ function keyColumns(t: TenantTable, id: string, organizationId: string) {
 
 /** Column values that must satisfy table CHECK constraints. */
 /** integration_connections secrets are nullable (wiped on revoke) but required while active. */
+/** Placeholder for the org id in EXTRA_COLUMNS values; replaced per insert. */
+const ORG = '__ORG__';
+const REPORT_OF = `(SELECT id FROM reports WHERE org_id = '${ORG}'::uuid LIMIT 1)`;
 const EXTRA_COLUMNS: Record<string, [string, string][]> = {
   integration_connections: [
     ['access_token_enc', `'v1.isolation.wrapped.ciphertext'`],
     ['webhook_secret_enc', `'v1.isolation.wrapped.ciphertext'`],
   ],
   calendar_connections: [['access_token_enc', `'v1.isolation.wrapped.ciphertext'`]],
+  // meeting_embeddings_source_check: a 'summary' row needs report_id (nullable, so the NOT NULL column loop below
+  // never visits it) and segment_id NULL. Point it at the same org's reports fixture (inserted earlier).
+  meeting_embeddings: [
+    ['report_id', REPORT_OF],
+    ['segment_id', 'NULL'],
+  ],
 };
 
 function override(table: string, column: string, organizationId: string): string | undefined {
@@ -100,6 +109,14 @@ function override(table: string, column: string, organizationId: string): string
   if (table === 'calendar_events' && column === 'status') return `'confirmed'`;
   if (table === 'calendar_events' && column === 'connection_id')
     return `(SELECT id FROM calendar_connections WHERE org_id = '${organizationId}'::uuid LIMIT 1)`;
+  // meeting_embeddings: a summary row pointing at the same org's meeting and report fixtures; a zero vector.
+  if (table === 'meeting_embeddings' && column === 'source_kind') return `'summary'`;
+  if (table === 'meeting_embeddings' && column === 'meeting_id')
+    return `(SELECT meeting_id FROM reports WHERE org_id = '${organizationId}'::uuid LIMIT 1)`;
+  if (table === 'meeting_embeddings' && column === 'content_sha256')
+    return `encode(sha256(gen_random_uuid()::text::bytea), 'hex')`;
+  if (table === 'meeting_embeddings' && column === 'embedding')
+    return `array_fill(0, ARRAY[1536])::real[]::vector`;
   if (table === 'auth_token_families' && column === 'max_expires_at')
     return `now() + interval '30 days'`;
   if (table === 'auth_refresh_tokens' && column === 'token_hash')
@@ -178,7 +195,7 @@ describe.skipIf(missingEnv.length > 0)('tenant isolation per table (live, ADR-01
         for (const [col, val] of EXTRA_COLUMNS[t] ?? []) {
           if (names.includes(col)) continue;
           names.push(col);
-          values.push(val);
+          values.push(val.replaceAll(ORG, orgB));
         }
         await tx.$executeRawUnsafe(
           `INSERT INTO "${t}" (${names.map((n) => `"${n}"`).join(', ')}) VALUES (${values.join(', ')})`,

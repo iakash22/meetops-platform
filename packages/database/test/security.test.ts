@@ -106,9 +106,29 @@ const CALENDAR_CONNECTIONS_MIGRATION = '20261031000000_calendar_connections';
 const MEETING_SEARCH_MIGRATION = '20261031010000_meeting_search_fts';
 /** Phase 7 calendar background sync (calendar_events + sync cursor + due-for-sync definer function). */
 const CALENDAR_EVENTS_MIGRATION = '20261031020000_calendar_events';
-/** MeetingSource gains 'mobile' (additive ADD VALUE). */
+/** Phase 7 semantic search: meeting_embeddings (pgvector, forced RLS, no ANN index). */
+const MEETING_EMBEDDINGS_MIGRATION = '20261031050000_meeting_embeddings';
+/** MeetingSource gains 'mobile' (additive ADD VALUE). Sorts after meeting_embeddings. */
 const MEETING_SOURCE_MOBILE_MIGRATION = '20261031120000_meeting_source_mobile';
 const LATEST_MIGRATION = MEETING_SOURCE_MOBILE_MIGRATION;
+/**
+ * Parallel PRs that sort between calendar_events and meeting_embeddings (#334 consent events, #341 calendar links).
+ * The order checks below ignore them so they hold whichever merges first; when present they must sort before ours.
+ */
+const PARALLEL_MIGRATIONS = [
+  '20261031030000_meeting_consent_events',
+  '20261031040000_calendar_event_links',
+] as const;
+const orderedDirs = () => {
+  const dirs = readdirSync(migrationsDir, { withFileTypes: true })
+    .filter((x) => x.isDirectory())
+    .map((x) => x.name)
+    .sort();
+  for (const p of PARALLEL_MIGRATIONS)
+    if (dirs.includes(p))
+      expect(dirs.indexOf(p)).toBeLessThan(dirs.indexOf(MEETING_EMBEDDINGS_MIGRATION));
+  return dirs.filter((d) => !(PARALLEL_MIGRATIONS as readonly string[]).includes(d));
+};
 const reportDedupeSql = readFileSync(
   resolve(migrationsDir, REPORT_SUMMARY_DEDUPE_MIGRATION, 'migration.sql'),
   'utf8',
@@ -126,8 +146,18 @@ const calendarEventsSql = readFileSync(
   resolve(migrationsDir, CALENDAR_EVENTS_MIGRATION, 'migration.sql'),
   'utf8',
 );
+const meetingEmbeddingsSql = readFileSync(
+  resolve(migrationsDir, MEETING_EMBEDDINGS_MIGRATION, 'migration.sql'),
+  'utf8',
+);
 const adr010Sql =
-  teamsSql + authTokensSql + integrationsSql + notificationsSql + calendarSql + calendarEventsSql;
+  teamsSql +
+  authTokensSql +
+  integrationsSql +
+  notificationsSql +
+  calendarSql +
+  calendarEventsSql +
+  meetingEmbeddingsSql;
 /** Phase 3 per-recording transcript revision migration. */
 const TRANSCRIPT_REVISION_MIGRATION_DIR = '20261026200000_transcript_recording_revision';
 const consentSql = readFileSync(resolve(migrationsDir, CONSENT_MIGRATION, 'migration.sql'), 'utf8');
@@ -168,6 +198,7 @@ const ADR010_ONLY_TABLES: readonly string[] = [
   ...NOTIFICATION_TABLES,
   'calendar_connections',
   'calendar_events',
+  'meeting_embeddings',
 ];
 /** DB-3: append-only tenant tables with their own SELECT/INSERT policies (ADR-010 setting) in consentSql. */
 const CONSENT_TABLES: readonly string[] = ['consent_attestations'];
@@ -693,7 +724,7 @@ describe('schema conventions', () => {
   });
 
   it('every model uses a uuid primary key', () => {
-    expect(models).toHaveLength(42);
+    expect(models).toHaveLength(43);
     for (const m of models.filter((x) => !ORGANIZATION_KEYED.includes(x.table)))
       expect(m.body, m.name).toMatch(/^\s+id\s+String\s+@id @default\(uuid\(\)\) @db\.Uuid$/m);
   });
@@ -1516,19 +1547,17 @@ describe('integration routing definer functions', () => {
 
 describe('integration external-account routing (20261028020000)', () => {
   it('sorts right after the ADR-014 geoip migration, before the relay revoke one', () => {
-    const dirs = readdirSync(migrationsDir, { withFileTypes: true })
-      .filter((x) => x.isDirectory())
-      .map((x) => x.name)
-      .sort();
+    const dirs = orderedDirs();
     expect(dirs.at(-1)).toBe(LATEST_MIGRATION);
-    expect(dirs.at(-2)).toBe(CALENDAR_EVENTS_MIGRATION);
-    expect(dirs.at(-3)).toBe(MEETING_SEARCH_MIGRATION);
-    expect(dirs.at(-4)).toBe(CALENDAR_CONNECTIONS_MIGRATION);
-    expect(dirs.at(-5)).toBe(RETENTION_OWNER_MIGRATION);
-    expect(dirs.at(-6)).toBe(RELAY_REVOKE_ALL_KINDS_MIGRATION);
-    expect(dirs.at(-7)).toBe(EXTERNAL_ACCOUNT_ROUTING_MIGRATION);
-    expect(dirs.at(-8)).toBe(SESSION_AUDIT_GEOIP_MIGRATION);
-    expect(dirs.at(-9)).toBe(RELAY_BY_TYPE_MIGRATION);
+    expect(dirs.at(-2)).toBe(MEETING_EMBEDDINGS_MIGRATION);
+    expect(dirs.at(-3)).toBe(CALENDAR_EVENTS_MIGRATION);
+    expect(dirs.at(-4)).toBe(MEETING_SEARCH_MIGRATION);
+    expect(dirs.at(-5)).toBe(CALENDAR_CONNECTIONS_MIGRATION);
+    expect(dirs.at(-6)).toBe(RETENTION_OWNER_MIGRATION);
+    expect(dirs.at(-7)).toBe(RELAY_REVOKE_ALL_KINDS_MIGRATION);
+    expect(dirs.at(-8)).toBe(EXTERNAL_ACCOUNT_ROUTING_MIGRATION);
+    expect(dirs.at(-9)).toBe(SESSION_AUDIT_GEOIP_MIGRATION);
+    expect(dirs.at(-10)).toBe(RELAY_BY_TYPE_MIGRATION);
   });
   const sql = readFileSync(
     resolve(migrationsDir, EXTERNAL_ACCOUNT_ROUTING_MIGRATION, 'migration.sql'),
@@ -1556,12 +1585,9 @@ describe('ADR-013 notifications tables (static)', () => {
   const statements = notificationsSql.replace(/--.*$/gm, '');
 
   it('keeps its place in the migration order and is additive only', () => {
-    const dirs = readdirSync(migrationsDir, { withFileTypes: true })
-      .filter((x) => x.isDirectory())
-      .map((x) => x.name)
-      .sort();
-    expect(dirs.at(-9)).toBe(RELAY_BY_TYPE_MIGRATION);
-    expect(dirs.at(-10)).toBe(NOTIFICATIONS_MIGRATION);
+    const dirs = orderedDirs();
+    expect(dirs.at(-10)).toBe(RELAY_BY_TYPE_MIGRATION);
+    expect(dirs.at(-11)).toBe(NOTIFICATIONS_MIGRATION);
     expect(statements).not.toMatch(
       /\bDROP\b|RENAME|ALTER COLUMN|NO FORCE|DISABLE ROW LEVEL SECURITY/i,
     );
@@ -1628,15 +1654,13 @@ describe('IP retention owner re-assert (20261028040000)', () => {
     'utf8',
   ).replace(/--.*$/gm, '');
   it('is the newest migration, after the ADR-014 geoip one', () => {
-    const dirs = readdirSync(migrationsDir, { withFileTypes: true })
-      .filter((x) => x.isDirectory())
-      .map((x) => x.name)
-      .sort();
+    const dirs = orderedDirs();
     expect(dirs.at(-1)).toBe(LATEST_MIGRATION);
-    expect(dirs.at(-2)).toBe(CALENDAR_EVENTS_MIGRATION);
-    expect(dirs.at(-3)).toBe(MEETING_SEARCH_MIGRATION);
-    expect(dirs.at(-4)).toBe(CALENDAR_CONNECTIONS_MIGRATION);
-    expect(dirs.at(-5)).toBe(RETENTION_OWNER_MIGRATION);
+    expect(dirs.at(-2)).toBe(MEETING_EMBEDDINGS_MIGRATION);
+    expect(dirs.at(-3)).toBe(CALENDAR_EVENTS_MIGRATION);
+    expect(dirs.at(-4)).toBe(MEETING_SEARCH_MIGRATION);
+    expect(dirs.at(-5)).toBe(CALENDAR_CONNECTIONS_MIGRATION);
+    expect(dirs.at(-6)).toBe(RETENTION_OWNER_MIGRATION);
     expect(dirs.indexOf(RETENTION_OWNER_MIGRATION)).toBeGreaterThan(
       dirs.indexOf(SESSION_AUDIT_GEOIP_MIGRATION),
     );
@@ -1778,5 +1802,40 @@ describe('Phase 7 calendar_events + sync cursor (static)', () => {
     expect(statements).toContain(
       'GRANT EXECUTE ON FUNCTION calendar_events_purge_for_connection(uuid, uuid) TO meetops_app;',
     );
+  });
+});
+
+describe('Phase 7 meeting_embeddings (static)', () => {
+  const statements = meetingEmbeddingsSql.replace(/--.*$/gm, '');
+  const model = models.find((m) => m.name === 'MeetingEmbedding')?.body ?? '';
+
+  it('is additive only, forces RLS with an ADR-010 tenant policy and is a registered tenant table', () => {
+    expect(statements).not.toMatch(
+      /\bDROP (TABLE|COLUMN|FUNCTION|EXTENSION)\b|RENAME|ALTER COLUMN|NO FORCE|DISABLE ROW LEVEL SECURITY/i,
+    );
+    expect(statements).toContain('CREATE EXTENSION IF NOT EXISTS "vector";');
+    expect(TENANT_TABLES).toContain('meeting_embeddings');
+    expect(statements).toContain('ALTER TABLE "meeting_embeddings" FORCE ROW LEVEL SECURITY;');
+    expect(statements).toContain(`USING (org_id = ${ADR010_EXPR})`);
+    expect(statements).toContain(`WITH CHECK (org_id = ${ADR010_EXPR})`);
+    expect(statements).toContain(
+      'GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "meeting_embeddings" TO meetops_app;',
+    );
+  });
+
+  it('only points at same-org sources, stores no content and has no cross-tenant ANN index', () => {
+    for (const fk of [
+      'FOREIGN KEY ("org_id", "meeting_id") REFERENCES "meetings"("org_id", "id")',
+      'FOREIGN KEY ("org_id", "segment_id") REFERENCES "transcript_segments"("org_id", "id")',
+      'FOREIGN KEY ("org_id", "report_id") REFERENCES "reports"("org_id", "id")',
+    ])
+      expect(statements).toContain(fk);
+    expect(statements).toContain('"embedding" vector(1536) NOT NULL');
+    expect(statements).not.toMatch(/"(content|text|summary)" TEXT/);
+    expect(statements).not.toMatch(/USING\s+(hnsw|ivfflat)/i);
+    expect(statements).toContain(
+      'CREATE INDEX "meeting_embeddings_org_id_model_idx" ON "meeting_embeddings"("org_id", "model");',
+    );
+    expect(model).toContain('Unsupported("vector(1536)")');
   });
 });
