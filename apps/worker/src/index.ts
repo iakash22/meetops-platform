@@ -27,9 +27,12 @@ export * from './notifications/index.js';
 export * from './privacy/index.js';
 export * from './geoip/mmdb-updater.js';
 
-async function main() {
+/** Process bootstrap (also used by `src/run.ts`). */
+export async function boot() {
+  console.log('[worker] loading…');
   const { close } = startMediaWorker();
   logger.info('media worker started');
+  console.log('[worker] media worker started');
   // Flag-gated: deps (Prisma repository, ai-core executor, chunk audio) are only built when the worker is enabled.
   const env = loadTranscriptionWorkerEnv();
   const hostDeps = env.enabled ? await createTranscriptionHostDeps() : undefined;
@@ -113,8 +116,18 @@ async function main() {
   process.on('SIGTERM', () => void shutdown());
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  main().catch((err: unknown) => {
+function isDirectRun(): boolean {
+  const entry = process.argv[1];
+  if (!entry) return false;
+  try {
+    return import.meta.url === pathToFileURL(entry).href;
+  } catch {
+    return false;
+  }
+}
+
+if (isDirectRun()) {
+  boot().catch((err: unknown) => {
     logger.error({ err }, 'Worker failed to start');
     process.exit(1);
   });

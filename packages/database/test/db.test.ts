@@ -7,6 +7,8 @@ import { Prisma, PrismaClient, MembershipRole, AiRunStatus, TaskStatus } from '@
 import * as db from '../src/index.js';
 
 const pkgDir = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+/** Call the local Prisma CLI via node (Windows: `execFileSync('pnpm')` is ENOENT for pnpm.cmd). */
+const prismaCli = resolve(pkgDir, 'node_modules/prisma/build/index.js');
 const env = {
   ...process.env,
   DATABASE_URL:
@@ -17,7 +19,7 @@ const env = {
     'postgresql://meetops_migrator:change-me-migrator-local@localhost:5432/meetops',
 };
 const prisma = (...args: string[]) =>
-  execFileSync('pnpm', ['exec', 'prisma', ...args], {
+  execFileSync(process.execPath, [prismaCli, ...args], {
     cwd: pkgDir,
     env,
     encoding: 'utf8',

@@ -4,6 +4,10 @@ import { defineConfig } from 'vitest/config';
 export default defineConfig({
   test: {
     // Relaxed (in-memory) deps are only allowed for NODE_ENV=development|test.
-    env: { NODE_ENV: 'test' }
-  }
+    env: { NODE_ENV: 'test' },
+    // Directory/auth suites boot Fastify + signup/login; under a full turbo `pnpm test`
+    // argon2 + cold imports routinely exceed 30s when the machine is busy.
+    testTimeout: 60_000,
+    hookTimeout: 60_000,
+  },
 });

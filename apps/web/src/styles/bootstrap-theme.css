@@ -1,0 +1,90 @@
+/*
+ * Bootstrap 5 dark theme aligned to MeetOps brand tokens (docs/05-web/brand-theme.md).
+ * Imported before Tailwind so utilities can still override component classes where needed.
+ */
+@import 'bootstrap/dist/css/bootstrap.min.css';
+
+:root,
+[data-bs-theme='dark'] {
+  color-scheme: dark;
+  --bs-body-bg: #0a0a0a;
+  --bs-body-color: #f5f5f7;
+  --bs-secondary-bg: #141416;
+  --bs-tertiary-bg: #1c1c1f;
+  --bs-border-color: #2a2a2e;
+  --bs-primary: #007ba7;
+  --bs-primary-rgb: 0, 123, 167;
+  --bs-link-color: #3ab0e0;
+  --bs-link-hover-color: #6dc4e8;
+  --bs-danger: #ef4444;
+  --bs-danger-rgb: 239, 68, 68;
+  --bs-warning: #f59e0b;
+  --bs-focus-ring-color: rgba(58, 176, 224, 0.45);
+  --bs-btn-focus-box-shadow: 0 0 0 0.25rem rgba(58, 176, 224, 0.35);
+}
+
+/* Keep MeetOps dark surfaces even if Bootstrap reboot races ahead of Tailwind. */
+html,
+body {
+  background-color: #0a0a0a !important;
+  color: #f5f5f7;
+}
+
+/* Action buttons: brand primary + highlight (rose) for sparse CTAs. */
+.btn-primary {
+  --bs-btn-bg: #007ba7;
+  --bs-btn-border-color: #007ba7;
+  --bs-btn-hover-bg: #00698f;
+  --bs-btn-hover-border-color: #00698f;
+  --bs-btn-active-bg: #00698f;
+  --bs-btn-active-border-color: #00698f;
+  --bs-btn-disabled-bg: #007ba7;
+  --bs-btn-disabled-border-color: #007ba7;
+  --bs-btn-color: #ffffff;
+  --bs-btn-hover-color: #ffffff;
+  --bs-btn-active-color: #ffffff;
+}
+
+.btn-highlight,
+.btn-danger.btn-highlight {
+  --bs-btn-color: #0a0a0a;
+  --bs-btn-bg: #ff2d95;
+  --bs-btn-border-color: #ff2d95;
+  --bs-btn-hover-color: #0a0a0a;
+  --bs-btn-hover-bg: #e62686;
+  --bs-btn-hover-border-color: #e62686;
+  --bs-btn-active-color: #0a0a0a;
+  --bs-btn-active-bg: #e62686;
+  --bs-btn-active-border-color: #e62686;
+  --bs-btn-disabled-color: #0a0a0a;
+  --bs-btn-disabled-bg: #ff2d95;
+  --bs-btn-disabled-border-color: #ff2d95;
+}
+
+.btn-outline-secondary {
+  --bs-btn-color: #f5f5f7;
+  --bs-btn-border-color: #2a2a2e;
+  --bs-btn-hover-bg: #1c1c1f;
+  --bs-btn-hover-border-color: #6b6b73;
+  --bs-btn-hover-color: #f5f5f7;
+  --bs-btn-active-bg: #1c1c1f;
+  --bs-btn-active-border-color: #6b6b73;
+  --bs-btn-active-color: #f5f5f7;
+}
+
+.btn-secondary {
+  --bs-btn-color: #f5f5f7;
+  --bs-btn-bg: #1c1c1f;
+  --bs-btn-border-color: #2a2a2e;
+  --bs-btn-hover-bg: #141416;
+  --bs-btn-hover-border-color: #2a2a2e;
+  --bs-btn-hover-color: #f5f5f7;
+  --bs-btn-active-bg: #141416;
+  --bs-btn-active-border-color: #2a2a2e;
+  --bs-btn-active-color: #f5f5f7;
+}
+
+.btn-link {
+  --bs-btn-color: #3ab0e0;
+  --bs-btn-hover-color: #6dc4e8;
+}

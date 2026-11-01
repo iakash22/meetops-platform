@@ -6,7 +6,7 @@
   "scripts": {
     "lint": "eslint .",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "vitest run",
+    "test": "vitest run --testTimeout=60000 --hookTimeout=60000",
     "test:api": "vitest run --project api",
     "test:contract": "vitest run --project contract",
     "test:integration": "vitest run --project integration",

@@ -98,10 +98,10 @@ describe('desktop recording', () => {
     await toRecord(user);
     expect(screen.getByLabelText('Meeting')).toHaveDisplayValue('Sprint planning');
     await user.click(screen.getByRole('button', { name: 'Start recording' }));
-    expect(screen.getByRole('dialog', { name: 'Turn on recording?' })).toBeInTheDocument();
+    expect(await screen.findByRole('dialog', { name: 'Turn on recording?' })).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Turn on recording' }));
     await user.click(screen.getByRole('button', { name: 'Start recording' }));
-    expect(screen.getByText(/confirm that everyone/i)).toBeInTheDocument();
+    expect(await screen.findByText(/confirm that everyone/i)).toBeInTheDocument();
     expect(screen.queryByTestId('recording-indicator')).not.toBeInTheDocument();
   });
 
