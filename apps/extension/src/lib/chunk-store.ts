@@ -189,6 +189,17 @@ export class ChunkStore {
     return all.sort((a, b) => a.createdAt - b.createdAt || a.seq - b.seq);
   }
 
+  /** Bytes of not-yet-uploaded chunks belonging to held (server-refused, not completed) sessions. */
+  async heldBytes(): Promise<number> {
+    const held = new Set(
+      (await this.listSessions()).filter((s) => s.held && !s.completed).map((s) => s.sessionId),
+    );
+    if (!held.size) return 0;
+    return (await this.listChunks())
+      .filter((c) => !c.uploaded && held.has(c.sessionId))
+      .reduce((n, c) => n + c.size, 0);
+  }
+
   async totalBytes(): Promise<number> {
     return (await this.listChunks()).reduce((n, c) => n + c.size, 0);
   }
@@ -219,7 +230,10 @@ export class ChunkStore {
         .filter((s) => s.held && !s.completed)
         .map((s) => s.sessionId),
     );
-    const evictable = existing.filter((x) => x.uploaded || !heldIds.has(x.sessionId));
+    // A recording never evicts its own earlier pending chunks either: that would silently cut its own audio.
+    const evictable = existing.filter(
+      (x) => x.uploaded || (!heldIds.has(x.sessionId) && x.sessionId !== c.sessionId),
+    );
     const evictableBytes = evictable.reduce((n, x) => n + x.size, 0);
     let evictedCount = 0;
     let evictedBytes = 0;
@@ -235,13 +249,27 @@ export class ChunkStore {
         await done(tx).catch(() => undefined);
         return { stored: false, reason: 'over-cap' };
       }
-      for (const old of evictable) {
-        if (total + size <= this.config.maxBytes) break;
+      const gone = new Set<string>();
+      const evict = (old: StoredChunk) => {
+        const key = `${old.sessionId}\u0000${old.seq}`;
+        if (gone.has(key)) return;
+        gone.add(key);
         store.delete([old.sessionId, old.seq]);
         total -= old.size;
         evictedCount++;
         evictedBytes += old.size;
         if (!old.uploaded) lost.set(old.sessionId, (lost.get(old.sessionId) ?? 0) + 1);
+      };
+      for (const old of evictable) {
+        if (total + size <= this.config.maxBytes) break;
+        if (gone.has(`${old.sessionId}\u0000${old.seq}`)) continue;
+        evict(old);
+        // An unheld recording that lost a pending chunk can never be completed (the server needs seq 0..n-1 with
+        // no gaps; the drain aborts it). Evict the whole recording at once so its remaining chunks do not keep
+        // using the cap until the next drain, and later chunks of the new recording are not refused for them.
+        if (!old.uploaded) {
+          for (const sib of evictable) if (sib.sessionId === old.sessionId) evict(sib);
+        }
       }
     }
     const sessions = tx.objectStore(SESSIONS);

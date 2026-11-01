@@ -1,8 +1,12 @@
+import { MAX_ANALYTICS_RANGE_DAYS } from '@meetops/contracts';
 import type { OrganizationService } from '../../organizations/application/organization.service.js';
 import type { RateLimiter } from '../../auth/domain/ports.js';
 import { RateLimitedError } from '../../auth/domain/errors.js';
 import type { DirectoryAccess, DirectoryCaller } from '../../directory/access.js';
 import {
+  InvalidAnalyticsRangeError,
+  type AnalyticsBucket,
+  type MeetingAnalyticsResult,
   deriveExternalMeetingId,
   isUuid,
   MeetingNotFoundError,
@@ -45,10 +49,33 @@ export class MeetingService {
 
   list(
     c: DirectoryCaller,
-    q: { cursor?: string | undefined; limit: number },
+    q: { cursor?: string | undefined; limit: number; source?: MeetingSource | undefined },
   ): Promise<MeetingPage> {
     this.orgs.authorize(c.ctx, 'read', 'Meeting');
     return this.meetings.list(c.ctx.organizationId, q);
+  }
+
+  /**
+   * Read-only org analytics (viewer and up: CASL read Meeting). Range is half-open [from, to), to > from, at most
+   * MAX_ANALYTICS_RANGE_DAYS; checked after the tenant and CASL gates so an outsider learns nothing.
+   */
+  async analytics(
+    c: DirectoryCaller,
+    q: { from: string; to: string; bucket?: AnalyticsBucket | undefined },
+  ): Promise<{ from: Date; to: Date; bucket: AnalyticsBucket } & MeetingAnalyticsResult> {
+    this.orgs.authorize(c.ctx, 'read', 'Meeting');
+    const from = new Date(q.from);
+    const to = new Date(q.to);
+    if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime()))
+      throw new InvalidAnalyticsRangeError('from and to must be ISO 8601 date-times');
+    if (to <= from) throw new InvalidAnalyticsRangeError('to must be after from');
+    if (to.getTime() - from.getTime() > MAX_ANALYTICS_RANGE_DAYS * 86_400_000)
+      throw new InvalidAnalyticsRangeError(
+        `The range may span at most ${MAX_ANALYTICS_RANGE_DAYS} days`,
+      );
+    const bucket = q.bucket ?? 'day';
+    const r = await this.meetings.analytics(c.ctx.organizationId, { from, to, bucket });
+    return { from, to, bucket, ...r };
   }
 
   async get(c: DirectoryCaller, id: string): Promise<MeetingRecord> {

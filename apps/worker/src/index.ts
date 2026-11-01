@@ -19,6 +19,9 @@ import {
   scheduleMmdbUpdate,
 } from './geoip/mmdb-updater.js';
 import { createNotificationEmailSender } from './notifications/email.js';
+import { loadCalendarSyncEnv, registerCalendarSyncScheduler } from './calendar/index.js';
+import { loadTokenRefreshEnv, registerTokenRefreshJob } from './integrations/bootstrap.js';
+import { closeAll, runningJobs, type ClosableJob } from './shutdown.js';
 
 export * from './media/index.js';
 export * from './ai/index.js';
@@ -26,9 +29,10 @@ export * from './integrations/index.js';
 export * from './notifications/index.js';
 export * from './privacy/index.js';
 export * from './geoip/mmdb-updater.js';
+export * from './shutdown.js';
 
-/** Process bootstrap (also used by `src/run.ts`). */
-export async function boot() {
+/** Process entry. Tests call `main()`; the dev CLI (`src/run.ts`) calls the `boot` alias. */
+export async function main() {
   console.log('[worker] loading…');
   const { close } = startMediaWorker();
   logger.info('media worker started');
@@ -99,22 +103,40 @@ export async function boot() {
         return { close: () => Promise.all([worker.close(), queue.close()]) };
       })()
     : undefined;
+  // Integrations token refresh (Jira rotation, GitHub installation tokens). Off unless
+  // INTEGRATIONS_TOKEN_REFRESH_ENABLED=true; then INTEGRATIONS_TOKEN_KEK is required (fail closed at startup).
+  const tokenRefresh = registerTokenRefreshJob({ env: loadTokenRefreshEnv(), log: logger });
+  // Phase 7 calendar background sync (off unless CALENDAR_SYNC_ENABLED=true). One idempotent BullMQ repeatable;
+  // an enabled sync with a missing/bad INTEGRATIONS_TOKEN_KEK throws here, as does a bad
+  // CALENDAR_SYNC_TICK_MS (fail closed at startup).
+  const calendarSync = registerCalendarSyncScheduler({ env: loadCalendarSyncEnv(), log: logger });
+  if (calendarSync.registered) {
+    await calendarSync.ready;
+    logger.info('calendar sync scheduler started');
+  }
+  const jobs: ClosableJob[] = [
+    { name: 'media', close },
+    { name: 'transcription', job: transcription },
+    { name: 'notifications', job: notifications },
+    { name: 'summary', job: summary },
+    { name: 'ip-retention', close: retention?.close },
+    { name: 'geoip-update', close: geoipUpdate?.close },
+    { name: 'integrations-token-refresh', job: tokenRefresh },
+    { name: 'calendar-sync', job: calendarSync },
+  ];
+  logger.info({ jobs: runningJobs(jobs) }, 'worker jobs registered');
   const shutdown = async () => {
     logger.info('Shutting down worker...');
-    await Promise.allSettled([
-      close(),
-      transcription.registered ? transcription.close() : Promise.resolve(),
-      notifications.registered ? notifications.close() : Promise.resolve(),
-      summary.registered ? summary.close() : Promise.resolve(),
-      retention ? retention.close() : Promise.resolve(),
-      geoipUpdate ? geoipUpdate.close() : Promise.resolve(),
-    ]);
+    await closeAll(jobs, logger);
     notifRedis?.disconnect();
     process.exit(0);
   };
   process.on('SIGINT', () => void shutdown());
   process.on('SIGTERM', () => void shutdown());
 }
+
+/** Alias for `src/run.ts`, which starts the worker without executing `index.ts` as the main module. */
+export const boot = main;
 
 function isDirectRun(): boolean {
   const entry = process.argv[1];

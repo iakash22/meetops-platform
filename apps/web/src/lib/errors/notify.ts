@@ -1,5 +1,5 @@
 import type { FieldValues, Path, UseFormSetError } from 'react-hook-form';
-import { toast, useToastStore } from '@/components/ui/toast';
+import { toast, useToastStore, type ToastAction } from '@/components/ui/toast';
 import { ApiError } from '@/lib/api/client';
 import { describeError } from '@/lib/api/error-messages';
 
@@ -15,9 +15,10 @@ import { describeError } from '@/lib/api/error-messages';
 export const notify = {
   success: (title: string, description?: string) => toast.success(title, { description }),
   info: (title: string, description?: string) => toast(title, { description }),
-  error: (title: string, description?: string) =>
-    // Errors stay up longer (≥5s); the user can dismiss them.
-    toast.error(title, { description, duration: 8000 }),
+  error: (title: string, description?: string, action?: ToastAction) =>
+    // Errors stay up longer (≥5s); the user can dismiss them. With an action (Retry) they stay
+    // until dismissed so the button can't vanish while someone is reaching for it.
+    toast.error(title, { description, duration: action ? Infinity : 8000, action }),
 };
 
 /** Status 0 or a fetch TypeError: the API could not be reached at all. */
@@ -26,6 +27,17 @@ export function isNetworkError(err: unknown): boolean {
     (err instanceof ApiError && err.status === 0 && err.code !== 'BAD_REQUEST') ||
     err instanceof TypeError
   );
+}
+
+/**
+ * Worth offering "Retry": the request may succeed unchanged on a second try (network down,
+ * 5xx, or a CSRF token that the client refreshes). Never for 4xx the user must fix, 401
+ * (session over), 404, or 429 (that toast has its own countdown).
+ */
+export function isRetryableError(err: unknown): boolean {
+  if (isNetworkError(err)) return true;
+  if (!(err instanceof ApiError)) return false;
+  return err.isCsrfFailure || err.status >= 500;
 }
 
 /** Fixed, user-facing title for an error that isn't tied to a field. */
@@ -66,15 +78,28 @@ function toastRateLimited(title: string, seconds: number): void {
   }, 1000);
 }
 
-/** Toast an error that isn't tied to a form field. Server messages are never shown. */
-export function toastError(err: unknown, opts: { title?: string } = {}): void {
+/**
+ * Toast an error that isn't tied to a form field. Server messages are never shown.
+ * Pass `onRetry` to offer a Retry button; it only appears for retryable errors
+ * (`isRetryableError`), so callers can pass it unconditionally.
+ */
+export function toastError(
+  err: unknown,
+  opts: { title?: string; onRetry?: (() => void) | undefined } = {},
+): void {
   const title = opts.title ?? errorTitle(err);
   if (err instanceof ApiError && err.status === 429 && err.retryAfterSeconds) {
     toastRateLimited(title, err.retryAfterSeconds);
     return;
   }
   const { message } = describeError(err);
-  notify.error(title, isNetworkError(err) ? 'Check your connection and try again.' : message);
+  const action =
+    opts.onRetry && isRetryableError(err) ? { label: 'Retry', onClick: opts.onRetry } : undefined;
+  notify.error(
+    title,
+    isNetworkError(err) ? 'Check your connection and try again.' : message,
+    action,
+  );
 }
 
 /**

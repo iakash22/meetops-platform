@@ -1,0 +1,131 @@
+import {
+  DEFAULT_IDEMPOTENCY_TTL_SEC,
+  InMemoryIdempotencyStore,
+  InMemoryUsageTracker,
+  type IdempotencyStore,
+  type UsageRecord,
+  type UsageTracker,
+} from '@meetops/ai-core';
+import {
+  createAiIdempotencyRepository,
+  createAiUsageCounterRepository,
+  type AiIdempotencyRepository,
+  type AiUsageCounterRepository,
+} from '@meetops/database';
+
+/**
+ * Durable AI stores for the worker (Postgres, forced RLS, every call inside withOrganizationContext).
+ *
+ * Why Postgres for idempotency rather than Redis: `ai_idempotency` already exists (migration
+ * 20261024010000) with ENABLE + FORCE RLS and a fail-closed tenant_isolation policy, so org scoping is
+ * enforced by the database, not only by key prefixes. It survives restarts regardless of Redis
+ * persistence / maxmemory eviction settings (Redis here is the BullMQ broker), and the worker already
+ * holds a Postgres connection for the same job. Errors propagate: there is no fallback to memory.
+ */
+
+const dayStartUtc = (d: Date) =>
+  new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
+/** numeric(12,6) column: fixed six decimals, never exponent notation. */
+const usd = (n: number) => (Number.isFinite(n) && n > 0 ? n.toFixed(6) : '0');
+const nonNeg = (n: number | undefined) => (n !== undefined && Number.isFinite(n) && n > 0 ? n : 0);
+
+export class PostgresUsageTracker implements UsageTracker {
+  constructor(private readonly repo: AiUsageCounterRepository = createAiUsageCounterRepository()) {}
+
+  async record(rec: UsageRecord): Promise<void> {
+    const u = rec.usage;
+    let input = nonNeg(u.inputTokens);
+    const output = nonNeg(u.outputTokens);
+    // Providers that only report a total: count it as input so token quotas still apply.
+    if (u.inputTokens === undefined && u.outputTokens === undefined) input = nonNeg(u.totalTokens);
+    await this.repo.increment(rec.organizationId, {
+      provider: rec.provider,
+      periodKind: 'day',
+      periodStart: dayStartUtc(new Date(rec.at)),
+      requests: 1,
+      inputTokens: Math.round(input),
+      outputTokens: Math.round(output),
+      audioSeconds: nonNeg(u.audioSeconds).toFixed(3),
+      costUsd: usd(u.estimatedCostUsd),
+    });
+  }
+
+  async totals(q: { organizationId: string; provider: string; since: Date }) {
+    const t = await this.repo.providerTotalsSince(
+      q.organizationId,
+      q.provider,
+      dayStartUtc(q.since),
+    );
+    return {
+      requests: t.requests,
+      tokens: Number(t.inputTokens + t.outputTokens),
+      audioSeconds: Number(t.audioSeconds),
+      costUsd: Number(t.costUsd),
+    };
+  }
+
+  async organizationCostSince(organizationId: string, since: Date): Promise<number> {
+    return Number(await this.repo.organizationCostSince(organizationId, dayStartUtc(since)));
+  }
+}
+
+export class PostgresIdempotencyStore implements IdempotencyStore {
+  constructor(private readonly repo: AiIdempotencyRepository = createAiIdempotencyRepository()) {}
+
+  async get<T>(organizationId: string, key: string): Promise<T | undefined> {
+    const raw = await this.repo.getResult(organizationId, key);
+    return raw === undefined ? undefined : (JSON.parse(raw) as T);
+  }
+
+  async set<T>(
+    organizationId: string,
+    key: string,
+    value: T,
+    ttlSec = DEFAULT_IDEMPOTENCY_TTL_SEC,
+  ): Promise<void> {
+    await this.repo.storeResult(organizationId, key, JSON.stringify(value), ttlSec * 1000);
+  }
+
+  async claim(organizationId: string, key: string, ttlSec: number): Promise<boolean> {
+    if (await this.repo.claim(organizationId, key, ttlSec * 1000)) return true;
+    // An expired finished row would otherwise block the key forever.
+    if (await this.repo.purgeExpired(organizationId, key))
+      return this.repo.claim(organizationId, key, ttlSec * 1000);
+    return false;
+  }
+
+  async release(organizationId: string, key: string): Promise<void> {
+    await this.repo.release(organizationId, key);
+  }
+}
+
+export type AiStoreMode = 'durable' | 'memory';
+
+/**
+ * Select the AI usage + idempotency stores. `AI_STORES=durable` (default) uses Postgres.
+ * `AI_STORES=memory` is for unit tests only: it is refused when NODE_ENV=production, and it is
+ * never chosen implicitly (an unknown value is an error, not a fallback).
+ */
+export function createAiStores(env: Record<string, string | undefined>): {
+  mode: AiStoreMode;
+  usage: UsageTracker;
+  idempotency: IdempotencyStore;
+} {
+  const raw = (env.AI_STORES ?? 'durable').trim();
+  if (raw !== 'durable' && raw !== 'memory')
+    throw new Error('AI_STORES must be "durable" or "memory"');
+  if (raw === 'memory') {
+    if (env.NODE_ENV === 'production')
+      throw new Error('AI_STORES=memory is not allowed when NODE_ENV=production');
+    return {
+      mode: 'memory',
+      usage: new InMemoryUsageTracker(),
+      idempotency: new InMemoryIdempotencyStore(),
+    };
+  }
+  return {
+    mode: 'durable',
+    usage: new PostgresUsageTracker(),
+    idempotency: new PostgresIdempotencyStore(),
+  };
+}

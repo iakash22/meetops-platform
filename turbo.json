@@ -22,6 +22,11 @@
       "outputs": ["coverage/**", "test-results/**"],
       "cache": true
     },
+    "size": {
+      "dependsOn": ["build"],
+      "outputs": [],
+      "cache": true
+    },
     "dev": {
       "dependsOn": ["^build"],
       "cache": false,

@@ -26,6 +26,54 @@ pub struct ChunkStore {
 
 const DISCARDED_SUFFIX: &str = ":discarded";
 
+/// IPC header carrying the slot of a raw `chunk_put` body.
+pub const CHUNK_HEADER: &str = "x-meetops-chunk";
+
+#[derive(Debug, serde::Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ChunkSlot {
+    pub session_id: String,
+    pub index: u32,
+}
+
+/// Parses the `x-meetops-chunk` header (`{"sessionId":"…","index":N}`); ids are validated again by the store.
+pub fn chunk_header(v: Option<&str>) -> CmdResult<ChunkSlot> {
+    let v = v.ok_or_else(|| CmdError::validation("Missing chunk descriptor."))?;
+    if v.len() > 1024 {
+        return Err(CmdError::validation("Chunk descriptor too large."));
+    }
+    let slot: ChunkSlot =
+        serde_json::from_str(v).map_err(|_| CmdError::validation("Bad chunk descriptor."))?;
+    safe_id(&slot.session_id)?;
+    Ok(slot)
+}
+
+/// Pre-HMAC owner dir name (commit ab3f33fe layout): first 32 hex chars of SHA-256("meetops.chunk-owner.v1:<owner>").
+/// Chunks in it already use the v2 AAD (owner, session, index), so migrating is a rename, never a re-encrypt.
+fn legacy_owner_name(owner: &str) -> String {
+    let digest = Sha256::digest(format!("meetops.chunk-owner.v1:{owner}").as_bytes());
+    digest.iter().take(16).map(|b| format!("{b:02x}")).collect()
+}
+
+/// Moves `src` to `dest` without ever replacing an existing `dest`, with no check-then-act window: `hard_link`
+/// fails atomically with AlreadyExists when `dest` is taken (unlike `rename`, which overwrites on Unix). Returns
+/// false when `dest` exists (the conflicting copy stays) or `src` vanished (another run moved it).
+fn move_no_clobber(src: &Path, dest: &Path) -> CmdResult<bool> {
+    use std::io::ErrorKind;
+    match fs::hard_link(src, dest) {
+        Ok(()) => {}
+        Err(e) if matches!(e.kind(), ErrorKind::AlreadyExists | ErrorKind::NotFound) => {
+            return Ok(false)
+        }
+        Err(_) => return Err(CmdError::internal()),
+    }
+    match fs::remove_file(src) {
+        Ok(()) => Ok(true),
+        Err(e) if e.kind() == ErrorKind::NotFound => Ok(true),
+        Err(_) => Err(CmdError::internal()),
+    }
+}
+
 /// A session id on disk, and whether it was discarded (tombstoned) and must only ever be deleted.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -295,9 +343,93 @@ impl ChunkStore {
         Ok(self.session_dir(owner, session)?.exists())
     }
 
+    /// Moves this owner's recordings from the old SHA-256-named folder into the current HMAC-named one.
+    ///
+    /// Safe and idempotent: only the signed-in owner's own legacy folder is touched (its name is derived from the
+    /// owner, so another account's data is never adopted); a recording pinned to a different owner is left alone;
+    /// each `.chunk` file moves with an atomic rename and an existing file in the new folder always wins (never
+    /// overwritten); emptied legacy folders are removed. Re-running after a crash finishes the remaining moves.
+    /// Files that aren't `<index>.chunk` (e.g. a stale `.tmp`) and symlinks are never moved.
+    pub fn migrate_legacy(&self, owner: &str) -> CmdResult<usize> {
+        let new_root = self.owner_root(owner)?;
+        let legacy_root = self.dir.join(legacy_owner_name(owner));
+        if legacy_root == new_root {
+            return Ok(0);
+        }
+        // symlink_metadata never follows links: a symlinked legacy root is skipped and logged, never traversed.
+        match fs::symlink_metadata(&legacy_root) {
+            Ok(m) if m.file_type().is_symlink() => {
+                eprintln!("meetops: skipping symlinked legacy chunk root");
+                return Ok(0);
+            }
+            Ok(m) if m.is_dir() => {}
+            _ => return Ok(0),
+        }
+        let Ok(entries) = fs::read_dir(&legacy_root) else {
+            return Ok(0);
+        };
+        let name = self.owner_name(owner)?;
+        let mut moved = 0;
+        for e in entries.filter_map(Result::ok) {
+            let Ok(meta) = fs::symlink_metadata(e.path()) else {
+                continue;
+            };
+            if meta.file_type().is_symlink() {
+                eprintln!("meetops: skipping symlinked legacy recording folder");
+                continue;
+            }
+            if !meta.is_dir() {
+                continue;
+            }
+            let Some(session) = e.file_name().into_string().ok() else {
+                continue;
+            };
+            if safe_id(&session).is_err() {
+                continue;
+            }
+            match self.pinned(&session)? {
+                Some(p) if p != name => continue,
+                Some(_) => {}
+                None => self.check_owner(owner, &session, true)?,
+            }
+            let target = self.session_dir(owner, &session)?;
+            fs::create_dir_all(&target).map_err(|_| CmdError::internal())?;
+            let Ok(files) = fs::read_dir(e.path()) else {
+                continue;
+            };
+            for f in files.filter_map(Result::ok) {
+                let Ok(fmeta) = fs::symlink_metadata(f.path()) else {
+                    continue;
+                };
+                if fmeta.file_type().is_symlink() {
+                    eprintln!("meetops: skipping symlinked legacy chunk file");
+                    continue;
+                }
+                if !fmeta.is_file() {
+                    continue;
+                }
+                let Some(fname) = f.file_name().into_string().ok() else {
+                    continue;
+                };
+                let valid = fname
+                    .strip_suffix(".chunk")
+                    .is_some_and(|i| i.parse::<u32>().is_ok());
+                if valid && move_no_clobber(&f.path(), &target.join(&fname))? {
+                    moved += 1;
+                }
+            }
+            // Only removes the folder once every chunk has moved (remove_dir fails while anything is left).
+            let _ = fs::remove_dir(e.path());
+        }
+        let _ = fs::remove_dir(&legacy_root);
+        Ok(moved)
+    }
+
     /// Session ids with data on disk for this owner (sorted), so leftovers from earlier launches can be re-queued
-    /// or expired. Entries that aren't valid ids are ignored.
+    /// or expired. Entries that aren't valid ids are ignored. Legacy folders are migrated first (best effort: a
+    /// failed migration is retried on the next list and never hides the current recordings).
     pub fn list(&self, owner: &str) -> CmdResult<Vec<StoredSession>> {
+        let _ = self.migrate_legacy(owner);
         let root = self.owner_root(owner)?;
         let Ok(entries) = fs::read_dir(&root) else {
             return Ok(Vec::new());
@@ -525,5 +657,151 @@ mod tests {
             "SERVICE_UNAVAILABLE"
         );
         assert!(!dir.exists(), "nothing written");
+    }
+
+    #[test]
+    fn chunk_header_parses_the_slot() {
+        assert!(chunk_header(None).is_err());
+        assert!(chunk_header(Some("[1,2]")).is_err());
+        assert!(chunk_header(Some(r#"{"sessionId":"../x","index":0}"#)).is_err());
+        assert!(chunk_header(Some(r#"{"sessionId":"a","index":-1}"#)).is_err());
+        assert!(chunk_header(Some(r#"{"sessionId":"a","index":0,"data":[1]}"#)).is_err());
+        assert!(chunk_header(Some(&"x".repeat(2000))).is_err());
+        assert_eq!(
+            chunk_header(Some(r#"{"sessionId":"s-1","index":4294967295}"#)).unwrap(),
+            ChunkSlot {
+                session_id: "s-1".into(),
+                index: u32::MAX
+            }
+        );
+    }
+
+    /// Writes a chunk the way the pre-HMAC build did: SHA-256 owner dir, same v2 AAD and sealing.
+    fn put_legacy(
+        s: &ChunkStore,
+        dir: &Path,
+        owner: &str,
+        session: &str,
+        index: u32,
+        data: &[u8],
+    ) {
+        let p = dir
+            .join(legacy_owner_name(owner))
+            .join(session)
+            .join(format!("{index}.chunk"));
+        fs::create_dir_all(p.parent().unwrap()).unwrap();
+        let nonce = [9u8; 12];
+        let aad = ChunkStore::aad(owner, session, index);
+        let sealed = s
+            .cipher()
+            .unwrap()
+            .encrypt(
+                Nonce::from_slice(&nonce),
+                Payload {
+                    msg: data,
+                    aad: &aad,
+                },
+            )
+            .unwrap();
+        fs::write(p, [nonce.as_slice(), sealed.as_slice()].concat()).unwrap();
+    }
+
+    #[test]
+    fn migrates_legacy_owner_folders_idempotently() {
+        let (s, dir) = store();
+        put_legacy(&s, &dir, O, "old-1", 0, b"zero");
+        put_legacy(&s, &dir, O, "old-1", 1, b"one");
+        fs::write(dir.join(legacy_owner_name(O)).join("old-1").join("2.tmp"), b"junk").unwrap();
+        // Listing migrates; the recording is readable in the new layout and pinned to its owner.
+        let ids: Vec<_> = s.list(O).unwrap().into_iter().map(|r| r.id).collect();
+        assert_eq!(ids, vec!["old-1".to_owned()]);
+        assert_eq!(s.get(O, "old-1", 0).unwrap(), b"zero");
+        assert_eq!(s.get(O, "old-1", 1).unwrap(), b"one");
+        assert_eq!(s.pinned("old-1").unwrap(), Some(s.owner_name(O).unwrap()));
+        // The stale .tmp stays behind, so the legacy folder is kept (nothing is deleted that wasn't moved).
+        assert!(dir.join(legacy_owner_name(O)).join("old-1").join("2.tmp").exists());
+        // Second run: nothing to move, nothing changes.
+        assert_eq!(s.migrate_legacy(O).unwrap(), 0);
+        assert_eq!(s.get(O, "old-1", 1).unwrap(), b"one");
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn migration_never_overwrites_and_finishes_after_a_partial_run() {
+        let (s, dir) = store();
+        s.put(O, "r", 0, b"new").unwrap();
+        put_legacy(&s, &dir, O, "r", 0, b"old");
+        put_legacy(&s, &dir, O, "r", 1, b"rest");
+        assert_eq!(s.migrate_legacy(O).unwrap(), 1);
+        assert_eq!(s.get(O, "r", 0).unwrap(), b"new", "existing chunk wins");
+        assert_eq!(s.get(O, "r", 1).unwrap(), b"rest");
+        // Conflicting legacy copy is left in place, not deleted.
+        assert!(dir.join(legacy_owner_name(O)).join("r").join("0.chunk").exists());
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn migration_only_touches_the_signed_in_owner_and_respects_pins() {
+        let (s, dir) = store();
+        put_legacy(&s, &dir, "u2:o9", "theirs", 0, b"x");
+        assert_eq!(s.migrate_legacy(O).unwrap(), 0);
+        assert!(s.list(O).unwrap().is_empty());
+        // A recording pinned to another owner is never adopted from a legacy folder.
+        s.put("u2:o9", "pinned", 0, b"p").unwrap();
+        put_legacy(&s, &dir, O, "pinned", 1, b"q");
+        assert_eq!(s.migrate_legacy(O).unwrap(), 0);
+        assert!(dir.join(legacy_owner_name(O)).join("pinned").join("1.chunk").exists());
+        // The other owner migrates its own folder.
+        assert_eq!(s.migrate_legacy("u2:o9").unwrap(), 1);
+        assert_eq!(s.get("u2:o9", "theirs", 0).unwrap(), b"x");
+        let _ = fs::remove_dir_all(dir);
+    }
+    #[test]
+    fn move_no_clobber_handles_existing_and_missing_paths() {
+        let (_s, dir) = store();
+        fs::create_dir_all(&dir).unwrap();
+        let (a, b) = (dir.join("a"), dir.join("b"));
+        fs::write(&a, b"src").unwrap();
+        fs::write(&b, b"dest").unwrap();
+        assert!(!move_no_clobber(&a, &b).unwrap(), "AlreadyExists: no overwrite");
+        assert_eq!(fs::read(&b).unwrap(), b"dest");
+        assert!(a.exists(), "source kept on conflict");
+        fs::remove_file(&b).unwrap();
+        assert!(move_no_clobber(&a, &b).unwrap());
+        assert!(!a.exists());
+        assert_eq!(fs::read(&b).unwrap(), b"src");
+        assert!(!move_no_clobber(&a, &dir.join("c")).unwrap(), "NotFound: already moved");
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn migration_never_follows_symlinked_legacy_roots_or_entries() {
+        use std::os::unix::fs::symlink;
+        let (s, dir) = store();
+        // Symlinked legacy root -> real folder elsewhere: skipped, target untouched.
+        let outside = std::env::temp_dir().join(format!("mo-out-{}", crate::pkce::random_b64(6)));
+        put_legacy(&s, &outside, O, "ext", 0, b"x");
+        fs::create_dir_all(&dir).unwrap();
+        symlink(outside.join(legacy_owner_name(O)), dir.join(legacy_owner_name(O))).unwrap();
+        assert_eq!(s.migrate_legacy(O).unwrap(), 0);
+        assert!(outside.join(legacy_owner_name(O)).join("ext").join("0.chunk").exists());
+        fs::remove_file(dir.join(legacy_owner_name(O))).unwrap();
+        // Real root with a symlinked session folder and a symlinked chunk file: both skipped.
+        put_legacy(&s, &dir, O, "real", 0, b"r");
+        let root = dir.join(legacy_owner_name(O));
+        symlink(outside.join(legacy_owner_name(O)).join("ext"), root.join("linked")).unwrap();
+        symlink(
+            outside.join(legacy_owner_name(O)).join("ext").join("0.chunk"),
+            root.join("real").join("1.chunk"),
+        )
+        .unwrap();
+        assert_eq!(s.migrate_legacy(O).unwrap(), 1);
+        assert_eq!(s.get(O, "real", 0).unwrap(), b"r");
+        assert!(s.get(O, "real", 1).is_err());
+        assert!(s.pinned("linked").unwrap().is_none());
+        assert!(outside.join(legacy_owner_name(O)).join("ext").join("0.chunk").exists());
+        let _ = fs::remove_dir_all(dir);
+        let _ = fs::remove_dir_all(outside);
     }
 }

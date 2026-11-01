@@ -1,0 +1,41 @@
+# Device E2E (Maestro) for R1, R2, R3, R7. Run on a dev-client build signed in to a live test org:
+#   maestro test apps/mobile/e2e/record-consent.yaml
+# Not run in CI (needs a device or simulator).
+appId: com.example.meetops
+---
+- launchApp:
+    clearState: true
+- tapOn: 'Record'
+- tapOn:
+    id: 'record-button'
+# R1: opt-in, then the mic pre-prompt before the OS dialog.
+- assertVisible:
+    id: 'consent-optIn-accept'
+- tapOn:
+    id: 'consent-optIn-accept'
+- tapOn:
+    id: 'consent-mic-accept'
+- runFlow:
+    when:
+      visible: 'Allow'
+    commands:
+      - tapOn: 'Allow'
+# R3: participant notice for this recording.
+- tapOn:
+    id: 'consent-notice-accept'
+# R2: banner and live status.
+- assertVisible:
+    id: 'recording-banner'
+- assertVisible: 'Recording'
+- tapOn: 'Tasks'
+- assertVisible:
+    id: 'recording-banner'
+- tapOn:
+    id: 'recording-banner'
+# Stop ends capture immediately and queues the recording.
+- tapOn:
+    id: 'record-button'
+- assertVisible:
+    id: 'record-summary'
+- assertNotVisible:
+    id: 'recording-banner'

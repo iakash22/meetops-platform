@@ -1,52 +1,26 @@
-# Phase status — 31 Oct 2026 (~15:50 IST)
+# Phase status — 31 Oct 2026 (~13:30 IST)
 
-## Update — 31 Oct 2026 (~15:50 IST)
+## Update — 31 Oct 2026 (~13:30 IST)
 
-Checked against local `main` at `403bd00f` (merge of [#257](https://github.com/iakash22/meetops-platform/pull/257) from `integration/phase-1`, 11:58 IST). Percentages are estimates from the tree, not measured. Open PRs on GitHub were not re-listed.
+Tree: `integration/phase-1` at `a868a4c` (merge of #317). [#257](https://github.com/iakash22/meetops-platform/pull/257) was merged to `main` by Akash on 31 Oct. Percentages are coordinator estimates, not measured. Full handoff for a new agent: [HANDOFF.md](HANDOFF.md).
 
-The first end-to-end milestone (org → directory → upload → transcribe → report → approve tasks → GitHub/Jira) is **mostly wired on `main`**. What remains is mostly flags, env, durable AI stores, live STT, calendar/search, billing, and production release.
+Merged into `integration/phase-1` today (#305–#317): extension real meeting API (#305) and held-recording cleanup/starvation fixes (#307, #308); auth mail queue (#306); GitHub App E2E harness (#309) and its Lows (#313, incl. wxt watcher ENOSPC fix); mobile M3–M4 recorder (#310), M5 storage/upload (#311), M6 hardening (#312); P7 calendar (#314), search (#315), web (#316), follow-ups (#317).
 
-| Phase                           | 27 Oct PM | 31 Oct   | Status      | On `main` now                                                                                                                                                                      | Still open                                                                                                                                   |
-| ------------------------------- | --------- | -------- | ----------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| P0 Foundation                   | 100%      | 100%     | Done        | Monorepo, apps, packages, Compose, CI                                                                                                                                              | —                                                                                                                                            |
-| P1 Auth, orgs, roles            | ~90%      | ~95%     | Nearly done | Auth mail BullMQ (`AUTH_MAIL_QUEUE=bullmq`, #306), real mailer (smtp/resend/console), GeoIP new-location (#292/#290), default active org                                           | MFA/SSO; ADR-006/010 still Proposed                                                                                                          |
-| P2 Meetings, uploads, recording | ~75%      | ~85%     | Nearly done | Meetings + resolve API, uploads, recording sessions, session assembly (#303), storage wiring (#300), stale reconciler, media e2e, realtime uses `@meetops/session-verifier`        | Extension HTTP upload still flag-gated; consent API still missing as a dedicated product route                                               |
-| P3 Transcripts, reports         | ~65%      | ~75%     | In progress | Transcript/report API (`meeting-insights`), transcription bootstrap + Prisma repo, summary worker, AI action items (#272)                                                          | Workers flag-gated (`TRANSCRIPTION_WORKER_ENABLED`, `AI_SUMMARY_WORKER_ENABLED`); usage/idempotency stores still in-memory                   |
-| P4 Tasks, approval              | ~70%      | ~80%     | Nearly done | Tasks API list/create/patch + accept/dismiss extracted tasks (#261), notifications fanout (#279/#263), web notifications (#260)                                                    | Push cipher / Expo delivery still partial; task email product polish                                                                         |
-| P5 GitHub, Jira                 | ~65%      | ~75%     | Nearly done | Integrations API: list, providers, connect, callback, disconnect, webhook, push task (#282); DB routing RLS (#281)                                                                 | Sync/token-refresh code exists under `apps/worker/src/integrations` but is **not started** from `apps/worker` `main()`; ADR-007/008 Proposed |
-| P6 Extension                    | ~70%      | ~80%     | Nearly done | Extension auth routes, side panel (#259), real meeting resolve (#305), held-recording cleanup (#307)                                                                               | `WXT_FEATURE_HTTP_UPLOAD` still defaults **off**; live speech-to-text deferred                                                               |
-| P7 Calendar, search, analytics  | 5%        | 5%       | Pending     | Zoom/Meet URL helpers in extension; `pgvector` column                                                                                                                              | No calendar sync, Meet/Zoom/Teams import product, semantic search, or analytics                                                              |
-| P8 Desktop, mobile              | ~55%      | ~70%     | In progress | Desktop native upload/recording (#299/#276/#304); mobile secure store (#275), HTTP auth when `EXPO_PUBLIC_API_URL` is set, push registration (#262)                                | `DESKTOP_AUTH_ENABLED` default **off**; ADR-012 Proposed; mobile recorder/upload still simulated; placeholder bundle ids                     |
-| P9 Hardening, release           | ~25%      | ~35%     | Early       | `/metrics`, GeoIP + IP retention (ADR-014 Proposed), dep audits (#295), security follow-ups                                                                                        | No billing, production monitoring product, or release                                                                                        |
-| **Overall**                     | **~60%**  | **~72%** | —           | Latest integration → `main`: #257 (31 Oct). Notable merges since 27 Oct PM: #256–#307 range (tasks, notifications, integrations, media assembly, desktop/mobile, geoip, extension) | Flags, durable AI stores, calendar/search, billing                                                                                           |
-
-### What changed since 27 Oct PM
-
-- **API surface on `main`:** `registerModules` mounts auth, orgs, extension auth, optional desktop auth, directory, **tasks**, **meeting-insights**, **integrations**, **notifications**, **meetings**, and **media** (uploads + recording sessions). Contracts are at **0.14.0**.
-- **Workers:** media always starts; transcription registers when enabled and bootstraps Prisma + ai-core; summary worker is flag-gated; notifications outbox relay registers when enabled; auth-mail BullMQ consumer can run in-process in the API; IP retention and GeoIP mmdb updater are present. Integrations token-refresh is **exported but not started** in the worker entrypoint.
-- **Realtime:** production entry imports `verifySession` from `@meetops/session-verifier` (no longer fail-closed `denyAllVerifier` in `index.ts`). ADR-011 is still marked Proposed.
-- **Extension:** can resolve meetings through the API; HTTP upload client is built but still off unless `WXT_FEATURE_HTTP_UPLOAD=true`.
-- **Desktop / mobile:** native desktop recording/upload path exists; mobile can leave demo mode with `EXPO_PUBLIC_API_URL` and uses secure token storage. Recording on mobile remains simulated.
-
-### Still blocking a full live demo
-
-1. Turn on and configure: transcription + summary workers (provider keys), auth mail BullMQ if not inline, desktop auth if testing Tauri against the API, extension HTTP upload flag.
-2. Wire or start the integrations sync/token-refresh worker from `apps/worker`.
-3. Replace in-memory AI usage/idempotency/org-config stores with durable ones for production.
-4. Consent API (mobile/extension still note no dedicated Backend consent route).
-5. Phase 7 (calendar/search/analytics) and Phase 9 (billing/release) are not product-ready.
-6. Owner sign-off on Proposed ADRs (006–012, 014; 013 Accepted).
-
-### Owner decisions (still open)
-
-- ADR sign-off: 006, 007, 008, 009, 010, 011, 012, 014 (and ADR-005 Amendment 3 mobile header tokens).
-- MFA / SSO scope; billing; KMS; malware scanning; media retention; consent law.
-- Real mobile/desktop bundle ids and verified domains.
-- Whether extension HTTP upload should default on in staging builds.
+| Phase                           | 27 Oct PM | 31 Oct   | Still missing                                                                                          |
+| ------------------------------- | --------- | -------- | ------------------------------------------------------------------------------------------------------ |
+| P0 Foundation                   | 100%      | 100%     | —                                                                                                      |
+| P1 Auth, orgs, roles            | ~90%      | ~95%     | Google OAuth client (Akash); MFA/SSO decision; ADR-006/010 sign-off                                    |
+| P2 Meetings, uploads, recording | ~75%      | ~85%     | Desktop old chunk-folder migration; chunk_put JSON-array body                                          |
+| P3 Transcripts, reports         | ~65%      | ~70%     | Gemini key (Akash) for the worker AI consumer                                                          |
+| P4 Tasks, approval              | ~70%      | ~75%     | —                                                                                                      |
+| P5 GitHub, Jira                 | ~65%      | ~80%     | E2E on a throwaway repo with meetops-dev installed; Jira credentials; #313 follow-ups                  |
+| P6 Extension                    | ~70%      | ~85%     | Info items: Start fails open, unheld pending eviction, 8 MB vs 64 MB chunk                             |
+| P7 Calendar, search, analytics  | 5%        | ~45%     | Background sync job, Outlook adapter, event↔meeting linking, pgvector semantic search, analytics       |
+| P8 Desktop, mobile              | ~55%      | ~75%     | Android foreground service, iOS Live Activity, Android Keystore, iOS backup exclusion; real bundle ids |
+| P9 Hardening, release           | ~25%      | ~35%     | Dependabot, billing, store submission, Windows test/cargo check                                        |
+| **Overall**                     | **~60%**  | **~72%** |                                                                                                        |
 
 ---
-
-## Previous — 27 Oct 2026 (~23:20 IST)
 
 ## Update — 27 Oct 2026 (~23:20 IST)
 

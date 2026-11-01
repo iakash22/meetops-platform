@@ -50,9 +50,9 @@ describe('generated client', () => {
     await db.disconnectPrismaClient();
   });
 
-  it('exposes exactly the 40 models', () => {
+  it('exposes exactly the 43 models', () => {
     const models = Object.values(Prisma.ModelName);
-    expect(models).toHaveLength(40);
+    expect(models).toHaveLength(43);
     for (const m of [
       'Organization',
       'User',
@@ -93,6 +93,8 @@ describe('generated client', () => {
       'NotificationDeliveryAttempt',
       'NotificationPreference',
       'PushDeviceToken',
+      'CalendarEvent',
+      'MeetingEmbedding',
     ]) {
       expect(models).toContain(m);
     }
@@ -137,6 +139,7 @@ describe('generated client', () => {
         'createTeamRepository',
         'createTeamMemberRepository',
         'createProjectRepository',
+        'createCalendarSyncRepository',
         'createIntegrationConnectionRepository',
         'DirectoryError',
         'createAuthTokenRepository',

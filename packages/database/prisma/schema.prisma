@@ -127,6 +127,7 @@ enum MeetingSource {
   extension
   desktop
   bot
+  mobile
 }
 
 enum RecordingStatus {
@@ -234,6 +235,7 @@ model Organization {
   transcripts            Transcript[]
   transcriptSegments     TranscriptSegment[]
   reports                Report[]
+  meetingEmbeddings      MeetingEmbedding[]
   extractedTasks         ExtractedTask[]
   taskApprovals          TaskApproval[]
   tasks                  Task[]
@@ -253,6 +255,8 @@ model Organization {
   teamMembers            TeamMember[]
   consentAttestations    ConsentAttestation[]
   integrationConnections IntegrationConnection[]
+  calendarConnections    CalendarConnection[]
+  calendarEvents         CalendarEvent[]
   authDevices            AuthDevice[]
   authTokenFamilies      AuthTokenFamily[]
   authRefreshTokens      AuthRefreshToken[]
@@ -299,6 +303,8 @@ model User {
   notifications        Notification[]         @relation("NotificationRecipient")
   notificationPreferences NotificationPreference[] @relation("NotificationPreferenceOwner")
   pushDeviceTokens     PushDeviceToken[]      @relation("PushDeviceTokenOwner")
+  calendarConnections  CalendarConnection[]   @relation("CalendarConnectionOwner")
+  calendarEvents       CalendarEvent[]        @relation("CalendarEventOwner")
 
   @@map("users")
 }
@@ -501,6 +507,7 @@ model Meeting {
   participants      MeetingParticipant[]
   transcripts       Transcript[]
   reports           Report[]
+  embeddings        MeetingEmbedding[]
   extractedTasks    ExtractedTask[]
   aiRuns            AiRun[]
   recordings        Recording[]
@@ -703,6 +710,7 @@ model TranscriptSegment {
   organization Organization        @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   transcript   Transcript          @relation(fields: [organizationId, transcriptId], references: [organizationId, id], onDelete: Cascade)
   participant  MeetingParticipant? @relation(fields: [organizationId, participantId], references: [organizationId, id], onDelete: Restrict)
+  embeddings   MeetingEmbedding[]
 
   @@unique([transcriptId, revision, sequence])
   @@unique([organizationId, id])
@@ -733,6 +741,7 @@ model Report {
   transcript     Transcript?     @relation(fields: [organizationId, transcriptId], references: [organizationId, id], onDelete: Restrict)
   aiRun          AiRun?          @relation(fields: [organizationId, aiRunId], references: [organizationId, id], onDelete: Restrict)
   extractedTasks ExtractedTask[]
+  embeddings     MeetingEmbedding[]
 
   @@unique([meetingId, version])
   @@unique([organizationId, id])
@@ -1348,4 +1357,107 @@ model PushDeviceToken {
   @@unique([organizationId, tokenHash])
   @@index([organizationId, userId])
   @@map("push_device_tokens")
+}
+
+enum CalendarConnectionStatus {
+  active
+  error
+  revoked
+}
+
+/// Phase 7: one user's connected calendar account in one organization. Tokens are TokenCipher envelopes only
+/// (AAD = org + connection id); disconnect wipes them (CHECK). Tenant table: forced RLS, ADR-010 setting only.
+model CalendarConnection {
+  id                   String                   @id @default(uuid()) @db.Uuid
+  organizationId       String                   @map("org_id") @db.Uuid
+  userId               String                   @map("user_id") @db.Uuid
+  provider             String
+  status               CalendarConnectionStatus @default(active)
+  displayName          String                   @map("display_name")
+  externalAccountId    String                   @map("external_account_id")
+  accessTokenEnc       String?                  @map("access_token_enc")
+  refreshTokenEnc      String?                  @map("refresh_token_enc")
+  tokenKeyId           String                   @map("token_key_id")
+  accessTokenExpiresAt DateTime?                @map("access_token_expires_at") @db.Timestamptz(3)
+  revokedAt            DateTime?                @map("revoked_at") @db.Timestamptz(3)
+  lastSyncedAt         DateTime?                @map("last_synced_at") @db.Timestamptz(3)
+  syncedFrom           DateTime?                @map("synced_from") @db.Timestamptz(3)
+  syncedTo             DateTime?                @map("synced_to") @db.Timestamptz(3)
+  syncFailures         Int                      @default(0) @map("sync_failures")
+  nextSyncAt           DateTime?                @map("next_sync_at") @db.Timestamptz(3)
+  createdAt            DateTime                 @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt            DateTime                 @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  organization Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user         User            @relation("CalendarConnectionOwner", fields: [userId], references: [id], onDelete: Cascade)
+  events       CalendarEvent[]
+
+  @@unique([organizationId, id])
+  // Postgres truncates the 68-char default name to 63; map the name the migration actually created.
+  @@unique([organizationId, userId, provider, externalAccountId], map: "calendar_connections_org_id_user_id_provider_external_account_i")
+  @@index([organizationId, userId])
+  @@index([tokenKeyId])
+  @@index([status, nextSyncAt])
+  @@map("calendar_connections")
+}
+
+/// Phase 7: provider events cached by the calendar sync sweep (forced RLS; soft-cancelled, never deleted by the app).
+model CalendarEvent {
+  id              String   @id @default(uuid()) @db.Uuid
+  organizationId  String   @map("org_id") @db.Uuid
+  connectionId    String   @map("connection_id") @db.Uuid
+  userId          String   @map("user_id") @db.Uuid
+  provider        String
+  providerEventId String   @map("provider_event_id")
+  title           String
+  startsAt        DateTime @map("starts_at") @db.Timestamptz(3)
+  endsAt          DateTime @map("ends_at") @db.Timestamptz(3)
+  allDay          Boolean  @default(false) @map("all_day")
+  conferenceUrl   String?  @map("conference_url")
+  htmlLink        String?  @map("html_link")
+  organizerEmail  String?  @map("organizer_email")
+  attendeeCount   Int      @default(0) @map("attendee_count")
+  status          String
+  syncedAt        DateTime @map("synced_at") @db.Timestamptz(3)
+  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt       DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  organization Organization       @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  connection   CalendarConnection @relation(fields: [organizationId, connectionId], references: [organizationId, id], onDelete: Cascade)
+  user         User               @relation("CalendarEventOwner", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, id])
+  @@unique([organizationId, connectionId, providerEventId])
+  @@index([organizationId, userId, startsAt])
+  @@index([organizationId, connectionId, startsAt])
+  @@map("calendar_events")
+}
+
+/// Phase 7 semantic search: one pgvector embedding per transcript segment or summary report and model. The text is
+/// not copied (search joins back to the source). Forced RLS (ADR-010); composite tenant FKs; no ANN index so queries
+/// rank only the caller's organization's rows (migration 20261031050000).
+model MeetingEmbedding {
+  id             String                      @id @default(uuid()) @db.Uuid
+  organizationId String                      @map("org_id") @db.Uuid
+  meetingId      String                      @map("meeting_id") @db.Uuid
+  sourceKind     String                      @map("source_kind")
+  segmentId      String?                     @map("segment_id") @db.Uuid
+  reportId       String?                     @map("report_id") @db.Uuid
+  model          String
+  contentSha256  String                      @map("content_sha256")
+  embedding      Unsupported("vector(1536)")
+  createdAt      DateTime                    @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime                    @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  organization Organization       @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  meeting      Meeting            @relation(fields: [organizationId, meetingId], references: [organizationId, id], onDelete: Cascade)
+  segment      TranscriptSegment? @relation(fields: [organizationId, segmentId], references: [organizationId, id], onDelete: Cascade)
+  report       Report?            @relation(fields: [organizationId, reportId], references: [organizationId, id], onDelete: Cascade)
+
+  @@unique([organizationId, id])
+  @@unique([organizationId, segmentId, model])
+  @@unique([organizationId, reportId, model])
+  @@index([organizationId, model])
+  @@index([organizationId, meetingId])
+  @@map("meeting_embeddings")
 }

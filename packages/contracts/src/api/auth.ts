@@ -64,9 +64,11 @@ export const VerifyEmailRequest = Type.Object({ token: OpaqueToken }, strict);
 export type VerifyEmailRequest = Static<typeof VerifyEmailRequest>;
 
 /**
- * POST /auth/switch-org returns an `AuthSession` for the new active organization. The caller must be a member
- * (otherwise NOT_FOUND). The server **rotates the session id** (it issues a new `__Host-` cookie and invalidates the old
- * one) and returns a **rotated `csrfToken`**. `role` and `activeOrganizationId` are re-derived from the membership.
+ * Body of `POST /orgs/switch` (the API route is the source of truth; there is no `/auth/switch-org`). The caller must
+ * be a member (otherwise NOT_FOUND). The response is `{ organization, role }` for the new active organization, with
+ * `role` re-derived from the membership. The server **rotates the session id** (new `__Host-` cookie, old one
+ * invalidated) and issues a **fresh CSRF token** for the new session; read the session again with `GET /auth/session`
+ * if you need the full `AuthSession`. (Desktop tokens use `POST /auth/desktop/switch-org`, ADR-012.)
  */
 export const SwitchOrganizationRequest = Type.Object({ organizationId: Id }, strict);
 export type SwitchOrganizationRequest = Static<typeof SwitchOrganizationRequest>;

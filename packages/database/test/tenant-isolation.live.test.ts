@@ -68,10 +68,20 @@ function keyColumns(t: TenantTable, id: string, organizationId: string) {
 
 /** Column values that must satisfy table CHECK constraints. */
 /** integration_connections secrets are nullable (wiped on revoke) but required while active. */
+/** Placeholder for the org id in EXTRA_COLUMNS values; replaced per insert. */
+const ORG = '__ORG__';
+const REPORT_OF = `(SELECT id FROM reports WHERE org_id = '${ORG}'::uuid LIMIT 1)`;
 const EXTRA_COLUMNS: Record<string, [string, string][]> = {
   integration_connections: [
     ['access_token_enc', `'v1.isolation.wrapped.ciphertext'`],
     ['webhook_secret_enc', `'v1.isolation.wrapped.ciphertext'`],
+  ],
+  calendar_connections: [['access_token_enc', `'v1.isolation.wrapped.ciphertext'`]],
+  // meeting_embeddings_source_check: a 'summary' row needs report_id (nullable, so the NOT NULL column loop below
+  // never visits it) and segment_id NULL. Point it at the same org's reports fixture (inserted earlier).
+  meeting_embeddings: [
+    ['report_id', REPORT_OF],
+    ['segment_id', 'NULL'],
   ],
 };
 
@@ -88,6 +98,25 @@ function override(table: string, column: string, organizationId: string): string
     return `'v1.isolation.wrapped.ciphertext'`;
   if (table === 'integration_connections' && column === 'revoked_at') return 'NULL';
   if (table === 'integration_connections' && column === 'status') return `'active'`;
+  if (table === 'calendar_connections' && column.endsWith('_enc'))
+    return `'v1.isolation.wrapped.ciphertext'`;
+  if (table === 'calendar_connections' && column === 'revoked_at') return 'NULL';
+  if (table === 'calendar_connections' && column === 'status') return `'active'`;
+  if (table === 'calendar_connections' && column === 'provider') return `'google'`;
+  // calendar_events: CHECKs on provider/status; links are nullable (https-only) and left NULL. connection_id points
+  // at the same org's calendar_connections fixture (inserted first: TENANT_TABLES order).
+  if (table === 'calendar_events' && column === 'provider') return `'google'`;
+  if (table === 'calendar_events' && column === 'status') return `'confirmed'`;
+  if (table === 'calendar_events' && column === 'connection_id')
+    return `(SELECT id FROM calendar_connections WHERE org_id = '${organizationId}'::uuid LIMIT 1)`;
+  // meeting_embeddings: a summary row pointing at the same org's meeting and report fixtures; a zero vector.
+  if (table === 'meeting_embeddings' && column === 'source_kind') return `'summary'`;
+  if (table === 'meeting_embeddings' && column === 'meeting_id')
+    return `(SELECT meeting_id FROM reports WHERE org_id = '${organizationId}'::uuid LIMIT 1)`;
+  if (table === 'meeting_embeddings' && column === 'content_sha256')
+    return `encode(sha256(gen_random_uuid()::text::bytea), 'hex')`;
+  if (table === 'meeting_embeddings' && column === 'embedding')
+    return `array_fill(0, ARRAY[1536])::real[]::vector`;
   if (table === 'auth_token_families' && column === 'max_expires_at')
     return `now() + interval '30 days'`;
   if (table === 'auth_refresh_tokens' && column === 'token_hash')
@@ -166,7 +195,7 @@ describe.skipIf(missingEnv.length > 0)('tenant isolation per table (live, ADR-01
         for (const [col, val] of EXTRA_COLUMNS[t] ?? []) {
           if (names.includes(col)) continue;
           names.push(col);
-          values.push(val);
+          values.push(val.replaceAll(ORG, orgB));
         }
         await tx.$executeRawUnsafe(
           `INSERT INTO "${t}" (${names.map((n) => `"${n}"`).join(', ')}) VALUES (${values.join(', ')})`,
@@ -205,7 +234,11 @@ describe.skipIf(missingEnv.length > 0)('tenant isolation per table (live, ADR-01
     const appendOnly = t === 'audit_events' || t === 'consent_attestations';
     const blockedWrite = appendOnly ? /permission denied|append-only/ : /row-level security/;
     /** DELETE is revoked: ADR-005 A1.2 token tables (revocation is an UPDATE) and integration_connections (soft disconnect wipes secrets). */
-    const noDelete = t.startsWith('auth_') || t === 'integration_connections';
+    const noDelete =
+      t.startsWith('auth_') ||
+      t === 'integration_connections' ||
+      t === 'calendar_connections' ||
+      t === 'calendar_events';
     const count = (tx: Prisma.TransactionClient, id: string) =>
       tx.$queryRawUnsafe<{ n: bigint }[]>(
         `SELECT count(*) AS n FROM "${t}" WHERE ${whereKey(t)}`,

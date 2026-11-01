@@ -279,3 +279,19 @@ const plain = await cipher.decrypt(enc, { organizationId, integrationId });
 - **AAD.** `["meetops.token.v1", organizationId, integrationId]`. A ciphertext moved to another row fails to decrypt.
 - **Rotation.** `currentKeyId()` encrypts new records, and old key ids still decrypt. `needsRotation()` and `rotate()` support re-encryption jobs. `TokenCipher.keyIdOf()` gives the value for a `key_id` column.
 - **Logging.** Never log plaintext tokens. Decryption errors are generic (`TokenDecryptionError`).
+
+## Real GitHub App e2e (opt-in)
+
+`test/github-app.e2e.test.ts` exercises App JWT -> installation lookup -> installation token -> `GitHubIssuesProvider`
+(health check, create, get, status update) against real api.github.com, then closes the issue and revokes the token.
+Skipped unless `MEETOPS_GITHUB_E2E=1`, `GITHUB_APP_ID` and `GITHUB_APP_PRIVATE_KEY_FILE` are set. The key file is the
+only key source by default; the inline `GITHUB_APP_PRIVATE_KEY` is used instead only when
+`MEETOPS_GITHUB_E2E_USE_ENV_KEY=1`. The installation stage additionally needs `GITHUB_E2E_INSTALLATION_ID` and
+`GITHUB_E2E_REPO`, which must be a throwaway repo with Issues enabled: the repo name must start or end with a whole
+`e2e`/`throwaway` segment (split on `-`, `_`, `.`; e.g. `e2e-foo`, `foo-e2e`, `throwaway-bar`, but not `prod-e2e-svc`),
+or the repo must be listed in `GITHUB_E2E_REPO_ALLOWLIST` (comma-separated `owner/repo`); otherwise the run fails with a
+clear refusal. The test also checks that the installation's granted repositories (`GET /installation/repositories`)
+include `GITHUB_E2E_REPO` (paginated to the end; it fails explicitly past 10,000 repos), and the issue-writing test refuses
+to run unless that check passed. If creating the issue throws, the test closes any issue GitHub already created, using
+the raw response number or a unique title marker. Cleanup closes the issue (falling back to a direct PATCH by the raw issue number) and revokes
+the installation token, which is stored right after minting. Never commit or print the key or tokens.

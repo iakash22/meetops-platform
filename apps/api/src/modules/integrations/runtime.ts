@@ -3,6 +3,7 @@ import {
   InMemoryDeliveryStore,
   InMemoryOAuthStateStore,
   LocalKeyProvider,
+  parseSharedKek,
   TokenCipher,
   constantTimeEqual,
   type DeliveryStore,
@@ -41,6 +42,8 @@ export interface IntegrationsRuntime {
     webhookSecret: () => Promise<string>;
   };
   jira?: { clientId: string; clientSecret: () => Promise<string> };
+  /** Phase 7: Google Calendar OAuth client (read-only scopes). Absent = calendar connect answers 503. */
+  googleCalendar?: { clientId: string; clientSecret: () => Promise<string> };
 }
 
 export function devIntegrationsRuntime(
@@ -107,6 +110,10 @@ export function integrationsRuntimeFromEnv(
   const over: Partial<IntegrationsRuntime> = {};
   if (env.INTEGRATIONS_API_ORIGIN) over.apiOrigin = env.INTEGRATIONS_API_ORIGIN;
   if (env.INTEGRATIONS_WEB_ORIGIN) over.webOrigin = env.INTEGRATIONS_WEB_ORIGIN;
+  // Shared dev KEK so apps/worker (token refresh) can decrypt what the API sealed. Same key id as the worker.
+  // Unset keeps the random per-process key. Set but invalid, or set with NODE_ENV=production, throws at startup.
+  const kek = parseSharedKek(env);
+  if (kek) over.cipher = new TokenCipher(new LocalKeyProvider({ shared: kek }, 'shared'));
   const g = {
     appId: env.GITHUB_APP_ID,
     appSlug: env.GITHUB_APP_SLUG,
@@ -131,6 +138,13 @@ export function integrationsRuntimeFromEnv(
   if (env.JIRA_CLIENT_ID && env.JIRA_CLIENT_SECRET) {
     const secret = env.JIRA_CLIENT_SECRET;
     over.jira = { clientId: env.JIRA_CLIENT_ID, clientSecret: async () => secret };
+  }
+  if (env.GOOGLE_CALENDAR_CLIENT_ID && env.GOOGLE_CALENDAR_CLIENT_SECRET) {
+    const secret = env.GOOGLE_CALENDAR_CLIENT_SECRET;
+    over.googleCalendar = {
+      clientId: env.GOOGLE_CALENDAR_CLIENT_ID,
+      clientSecret: async () => secret,
+    };
   }
   return over;
 }

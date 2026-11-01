@@ -1,10 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import type { IntegrationConnectionRecord, IntegrationSecrets } from '@meetops/database';
-import {
-  runTokenRefreshSweep,
-  startTokenRefreshScheduler,
-  type TokenRefreshRepository,
-} from '../src/integrations/index.js';
+import { runTokenRefreshSweep, type TokenRefreshRepository } from '../src/integrations/index.js';
 
 const ORG = '00000000-0000-4000-8000-00000000000a';
 const NOW = Date.parse('2026-10-27T10:00:00Z');
@@ -122,27 +118,5 @@ describe('integration token refresh sweep', () => {
     const r = await runTokenRefreshSweep({ repo, providers: {}, log: log(), now: () => NOW });
     expect(r).toEqual({ refreshed: 0, failed: 0, skipped: 3 });
     expect(upserts).toHaveLength(0);
-  });
-
-  it('scheduler does not overlap sweeps and closes cleanly', async () => {
-    const { repo, list } = makeRepo([]);
-    let release!: () => void;
-    list.mockImplementationOnce(
-      () =>
-        new Promise((res) => {
-          release = () => res([]);
-        }),
-    );
-    const s = startTokenRefreshScheduler(
-      { repo, providers: {}, log: log() },
-      { intervalMs: 60_000 },
-    );
-    const a = s.tick();
-    const b = s.tick();
-    expect(a).toBe(b);
-    release();
-    await a;
-    expect(list).toHaveBeenCalledTimes(1);
-    await s.close();
   });
 });

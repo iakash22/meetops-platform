@@ -183,8 +183,9 @@ describe('sessions with eviction/refusal gaps', () => {
         createdAt: seq,
       });
     await put(0, 3);
-    const r = await put(1, 3); // evicts pending seq 0 -> gap
-    expect(r).toMatchObject({ stored: true, lostPending: 1, damagedSessions: [SID] });
+    // A recording never evicts its own pending chunks: seq 1 is refused and the recorder marks the gap.
+    expect(await put(1, 3)).toEqual({ stored: false, reason: 'over-cap' });
+    await store.markIncomplete(SID);
     expect((await store.getSession(SID))!.incomplete).toEqual({ lostChunks: 1 });
     await store.finalizeSession(SID, { chunkCount: 2, durationMs: 10 });
     const client = new StubUploadClient();

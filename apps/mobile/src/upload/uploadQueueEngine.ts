@@ -21,7 +21,18 @@ export interface UploadQueueEngineOptions {
   api: RecordingUploadApi;
   network: NetworkStatus;
   now?: () => number;
+  /** Content-free audit events (R6): ids only, never audio, URLs or tokens. */
+  log?: (event: QueueLogEvent) => void;
 }
+
+export type QueueLogEvent =
+  | { type: 'uploaded'; recordingId: string; chunkCount: number }
+  | {
+      type: 'deleted';
+      recordingId: string;
+      reason: 'uploaded' | 'retention' | 'discarded' | 'wipe';
+    }
+  | { type: 'delete_failed'; recordingId: string };
 
 export type NewRecording = Omit<
   QueueItem,
@@ -40,6 +51,14 @@ export interface UploadQueueEngine extends UploadQueue {
   /** R4 logout / org-switch wipe: aborts open sessions and deletes every local recording. */
   wipe(): Promise<void>;
   subscribe(listener: () => void): () => void;
+}
+
+/** Thrown by `wipe()` when a local copy survived two verified deletes. Ids only, no content. */
+export class WipeIncompleteError extends Error {
+  constructor(readonly recordingIds: string[]) {
+    super(`Local wipe incomplete for ${recordingIds.length} recording(s).`);
+    this.name = 'WipeIncompleteError';
+  }
 }
 
 /** Non-retryable: the server rejected the recording itself (consent, validation, gone). */
@@ -66,6 +85,7 @@ export function createUploadQueueEngine({
   api,
   network,
   now = Date.now,
+  log = () => undefined,
 }: UploadQueueEngineOptions): UploadQueueEngine {
   let cache: QueueItem[] | null = null;
   let running: Promise<void> | null = null;
@@ -82,10 +102,17 @@ export function createUploadQueueEngine({
     await persist(items.map((i) => (i.id === id ? { ...i, ...patch } : i)));
   };
 
-  async function deleteVerified(id: string) {
+  async function deleteVerified(
+    id: string,
+    reason: 'uploaded' | 'retention' | 'discarded' | 'wipe',
+  ) {
     await chunks.remove(id);
     // R6: verified deletion. A leftover file is retried on the next pass instead of being forgotten.
-    if (await chunks.exists(id)) throw new Error('Local copy still present after delete.');
+    if (await chunks.exists(id)) {
+      log({ type: 'delete_failed', recordingId: id });
+      throw new Error('Local copy still present after delete.');
+    }
+    log({ type: 'deleted', recordingId: id, reason });
   }
 
   async function uploadOne(item: QueueItem) {
@@ -117,7 +144,8 @@ export function createUploadQueueEngine({
       durationMs: item.durationMs,
     });
     await update(item.id, { state: 'done' });
-    await deleteVerified(item.id);
+    log({ type: 'uploaded', recordingId: item.id, chunkCount: item.chunks.length });
+    await deleteVerified(item.id, 'uploaded');
     const items = await load();
     await persist(items.filter((i) => i.id !== item.id));
   }
@@ -129,7 +157,7 @@ export function createUploadQueueEngine({
       if (t - item.queuedAt >= RETENTION_MS) {
         if (item.sessionId)
           await api.abort(item.sessionId, 'local_storage_exhausted').catch(() => undefined);
-        await chunks.remove(item.id).catch(() => undefined);
+        await deleteVerified(item.id, 'retention').catch(() => undefined);
         await persist((await load()).filter((i) => i.id !== item.id));
       }
     }
@@ -138,7 +166,7 @@ export function createUploadQueueEngine({
       if (item.state === 'failed' || item.nextAttemptAt > t) continue;
       try {
         if (item.state === 'done') {
-          await deleteVerified(item.id);
+          await deleteVerified(item.id, 'uploaded');
           await persist((await load()).filter((i) => i.id !== item.id));
           continue;
         }
@@ -204,17 +232,28 @@ export function createUploadQueueEngine({
       if (!item) return;
       if (item.sessionId && item.state !== 'done')
         await api.abort(item.sessionId, 'user_stopped').catch(() => undefined);
-      await chunks.remove(id);
+      await deleteVerified(id, 'discarded');
       await persist((await load()).filter((i) => i.id !== id));
     },
     async wipe() {
       await running?.catch(() => undefined);
+      const failed: string[] = [];
       for (const item of await load()) {
         if (item.sessionId && item.state !== 'done')
           await api.abort(item.sessionId, 'user_stopped').catch(() => undefined);
-        await chunks.remove(item.id).catch(() => undefined);
+        // Retry once, then surface it: the caller learns the wipe was incomplete instead of a silent success.
+        try {
+          await deleteVerified(item.id, 'wipe');
+        } catch {
+          try {
+            await deleteVerified(item.id, 'wipe');
+          } catch {
+            failed.push(item.id);
+          }
+        }
       }
       await persist([]);
+      if (failed.length > 0) throw new WipeIncompleteError(failed);
     },
     subscribe(listener) {
       listeners.add(listener);

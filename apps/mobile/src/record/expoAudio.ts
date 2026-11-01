@@ -1,0 +1,175 @@
+import { Linking, PermissionsAndroid, Platform } from 'react-native';
+
+import type { MicPermission, MicPermissionStatus } from '../consent/micPermission';
+import type { AudioDriver, ForegroundIndicator, RecorderFileGuard } from './nativeCapture';
+import { createRecorderFileGuard } from './recorderFiles';
+import type { SegmentRecorder } from './segmentCapture';
+import type { ChunkCipher, FileSystemLike } from './fileChunkStore';
+
+/**
+ * expo-audio / expo-file-system bindings. Required lazily so Jest and demo mode never load the native modules.
+ * Only `src/services.ts` calls these, and only in live mode.
+ */
+/* eslint-disable @typescript-eslint/no-require-imports */
+type ExpoAudio = typeof import('expo-audio');
+const audio = (): ExpoAudio => require('expo-audio') as ExpoAudio;
+
+const POST_NOTIFICATIONS = 'android.permission.POST_NOTIFICATIONS' as const;
+const ANDROID_NEEDS_NOTIFICATIONS = Platform.OS === 'android' && Number(Platform.Version) >= 33;
+
+const toStatus = (p: { granted: boolean; canAskAgain: boolean }): MicPermissionStatus =>
+  p.granted ? 'granted' : p.canAskAgain ? 'undetermined' : 'denied';
+
+/**
+ * Plan "Permission prompts": the OS prompt only follows the in-app pre-prompt; Android 13+ also needs the
+ * notification permission for the microphone foreground service notification, and without it recording doesn't
+ * start. A denial is final until the user changes it in Settings.
+ */
+export function createNativeMicPermission(): MicPermission {
+  const notifications = async (ask: boolean): Promise<MicPermissionStatus> => {
+    if (!ANDROID_NEEDS_NOTIFICATIONS) return 'granted';
+    const perm = POST_NOTIFICATIONS;
+    if (await PermissionsAndroid.check(perm)) return 'granted';
+    if (!ask) return 'undetermined';
+    const r = await PermissionsAndroid.request(perm);
+    return r === PermissionsAndroid.RESULTS.GRANTED ? 'granted' : 'denied';
+  };
+  return {
+    async status() {
+      const mic = toStatus(await audio().getRecordingPermissionsAsync());
+      if (mic !== 'granted') return mic;
+      return notifications(false);
+    },
+    async request() {
+      const mic = toStatus(await audio().requestRecordingPermissionsAsync());
+      if (mic !== 'granted') return 'denied';
+      return notifications(true);
+    },
+    openSettings: () => Linking.openSettings(),
+  };
+}
+
+export function createExpoAudioDriver(): AudioDriver {
+  const a = audio();
+  let recorder: InstanceType<ExpoAudio['AudioModule']['AudioRecorder']> | null = null;
+  const make = () =>
+    (recorder ??= new a.AudioModule.AudioRecorder({
+      ...a.RecordingPresets.HIGH_QUALITY,
+      isMeteringEnabled: false,
+    }));
+  return {
+    async canRecord() {
+      const mic = await a.getRecordingPermissionsAsync();
+      if (!mic.granted) return false;
+      if (!ANDROID_NEEDS_NOTIFICATIONS) return true;
+      return PermissionsAndroid.check(POST_NOTIFICATIONS);
+    },
+    setRecordingMode: (active) =>
+      a.setAudioModeAsync({
+        allowsRecording: active,
+        playsInSilentMode: active,
+        // iOS: UIBackgroundModes audio keeps a user-started capture alive with the system mic indicator.
+        shouldPlayInBackground: active,
+        interruptionMode: 'doNotMix',
+      }),
+    prepare: () => make().prepareToRecordAsync(),
+    record: () => make().record(),
+    pause: () => recorder?.pause(),
+    async stop() {
+      if (!recorder) return null;
+      await recorder.stop();
+      const uri = recorder.uri;
+      recorder = null;
+      return uri;
+    },
+    isRecording: () => recorder?.getStatus().isRecording ?? false,
+    currentUri: () => recorder?.uri ?? null,
+  };
+}
+
+export function expoFileSystem(): FileSystemLike {
+  return require('expo-file-system') as FileSystemLike;
+}
+
+/**
+ * Native AES-256-GCM for chunk files (modules/chunk-crypto): Android Keystore, iOS Keychain + CryptoKit.
+ * FAIL CLOSED: without the native module this returns a cipher that rejects every call, so recording refuses to start
+ * and nothing is ever written in plaintext.
+ */
+export function createNativeChunkCipher(): ChunkCipher & { deleteKey(): Promise<void> } {
+  const { ChunkCryptoModule } =
+    require('../../modules/chunk-crypto') as typeof import('../../modules/chunk-crypto');
+  if (ChunkCryptoModule) {
+    const native = ChunkCryptoModule;
+    return {
+      ready: async () => {
+        // Round-trip once so a missing or broken key fails before the mic opens.
+        const probe = 'AA==';
+        if ((await native.open(await native.seal(probe))) !== probe)
+          throw new Error('Encryption self-test failed.');
+      },
+      seal: (b) => native.seal(b),
+      open: (b) => native.open(b),
+      // Off the JS thread and crash-safe (see modules/chunk-crypto). Older native builds: per-chunk JS path.
+      ...(native.sealFile
+        ? { sealFile: (src: string, dest: string, n: number) => native.sealFile!(src, dest, n) }
+        : {}),
+      deleteKey: () => native.deleteKey(),
+    };
+  }
+  const refuse = () =>
+    Promise.reject(new Error('Encryption at rest is unavailable on this build.'));
+  return { ready: refuse, seal: refuse, open: refuse, deleteKey: () => Promise.resolve() };
+}
+
+/** Android microphone foreground service (modules/recording-service). Null on iOS or without the native module. */
+export function createAndroidForegroundIndicator(): ForegroundIndicator | null {
+  if (Platform.OS !== 'android') return null;
+  const { RecordingServiceModule } =
+    require('../../modules/recording-service') as typeof import('../../modules/recording-service');
+  if (!RecordingServiceModule) return null;
+  const native = RecordingServiceModule;
+  return {
+    start: () => native.start('MeetOps is recording', 'Tap Stop to end the recording now.'),
+    stop: () => native.stop(),
+    isConfirmed: () => native.isConfirmed(),
+    onStopRequested(listener) {
+      // Notification Stop, and the service dying on its own: both end capture immediately.
+      // Native fires exactly one of these per capture (latched in the service).
+      const subs = [
+        native.addListener('onStopRequested', listener),
+        native.addListener('onServiceLost', listener),
+      ];
+      return () => subs.forEach((s) => s.remove());
+    },
+  };
+}
+
+/**
+ * iOS backup exclusion + file protection for the recordings folder (modules/backup-exclusion). Null on Android.
+ * FAIL CLOSED: on iOS without the native module it reports failure, so `withBackupExclusion` blocks every write.
+ */
+export function iosBackupExclusion(): ((uri: string) => Promise<boolean>) | null {
+  if (Platform.OS !== 'ios') return null;
+  const { BackupExclusionModule } =
+    require('../../modules/backup-exclusion') as typeof import('../../modules/backup-exclusion');
+  if (!BackupExclusionModule) return () => Promise.resolve(false);
+  return (uri) => BackupExclusionModule.exclude(uri);
+}
+
+/** Recorder output guard for live mode: iOS protects the file after prepare (fail closed); both sweep the cache. */
+export function recorderFileGuard(): RecorderFileGuard {
+  const fs = require('expo-file-system') as FileSystemLike & { cacheDirectory: string | null };
+  return createRecorderFileGuard(fs, fs.cacheDirectory, iosBackupExclusion());
+}
+
+/**
+ * Android segment recorder (ADR-015, modules/chunk-crypto SegmentRecorderModule.kt). Null on iOS or on a build
+ * without it, in which case capture stays on expo-audio + native sealFile.
+ */
+export function androidSegmentRecorder(): SegmentRecorder | null {
+  if (Platform.OS !== 'android') return null;
+  const { SegmentRecorderModule } =
+    require('../../modules/chunk-crypto') as typeof import('../../modules/chunk-crypto');
+  return SegmentRecorderModule ?? null;
+}
