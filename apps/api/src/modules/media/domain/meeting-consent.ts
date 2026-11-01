@@ -25,7 +25,7 @@ export type NewMeetingConsentEvent = Omit<MeetingConsentEventRecord, 'id'>;
 /** Append-only (the DB grants SELECT, INSERT only). Every call is scoped to one organization. */
 export interface MeetingConsentRepository {
   append(e: NewMeetingConsentEvent): Promise<MeetingConsentEventRecord>;
-  /** Newest first (recordedAt desc, then insertion order), at most `limit`. */
+  /** Newest first (recordedAt desc; ties: revoked before granted, then id desc), at most `limit`. */
   list(
     organizationId: string,
     meetingId: string,

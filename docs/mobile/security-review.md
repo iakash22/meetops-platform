@@ -40,3 +40,29 @@ remux of multi-part uploads. Tracked as a follow-up; not shipped here.
 2. Device E2E (`apps/mobile/e2e/`, Maestro) on a physical iPhone and an Android 14 device.
 3. Security sign-off on this document.
 4. The owner picks the real bundle id / package (still `com.example.meetops`) and the Expo/RN upgrade decision.
+
+## Tester r4 follow-ups (fix/mobile-recorder-hardening)
+
+1. Start-failure race: `stop()` now also cancels a still-pending start; the service removes its notification on
+   arrival and in `onDestroy`.
+2. Launch recovery is memoized and `begin` awaits it; the sweep covers only `cache/Audio` and `cache/ExpoAudio`
+   and never touches a file whose sealing is pending.
+3. R5 plaintext while recording: **still residual.** Needs the contract/server decision above (allow `audio/aac`
+   - ADTS segments, or server-side remux). This branch only shortens the post-Stop window (native sealing).
+4. Sealing runs natively (`ChunkCrypto.sealFile`, off the JS thread), atomic per chunk with a resume journal. The
+   marker moves to phase `sealing` at Stop; a kill or failure resumes at the next launch (max 3 attempts) and
+   enqueues via the draft, or holds the sealed recording (encrypted) when no draft was supplied.
+5. Notification Stop / swipe-away are native-driven: the notification goes at once and, if JS doesn't end
+   capture within 3 s (or has no listener), the process is ended so the mic closes; the unfinalized file is
+   discarded at launch. Open is omitted instead of falling back to an empty Intent.
+
+## R5 segment encryption (ADR-015) and the iOS exception
+
+- **Android:** recording is ADTS AAC (`audio/aac`) in 10 s segments from a native `SegmentRecorder`. Each segment is
+  sealed into a `MOCHUNK1` chunk (Keystore AES-256-GCM) as it closes and its plaintext deleted, so at most the open
+  segment (~10 s) is ever plaintext. Chunks concatenate byte by byte; upload hashes are unchanged.
+- **iOS exception (accepted risk, explicit):** AVAudioRecorder cannot write ADTS, so iOS keeps the #328 path: one
+  plaintext m4a in Caches while recording (backup-excluded, file protection set after `prepare`, fail closed),
+  sealed natively at Stop. Exposure: the whole in-progress recording, readable only by the app sandbox on an
+  unlocked device. Owner: Mobile. Revisit with option (b) (server-side remux) or a native ADTS/AAC writer on iOS.
+  Akash may override before `main`.

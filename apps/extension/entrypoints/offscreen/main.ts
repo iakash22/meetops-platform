@@ -3,7 +3,12 @@ import type { ConsentAttestationInput } from '@meetops/contracts/types';
 import { HEARTBEAT_INTERVAL_MS } from '../../src/lib/background-handler.js';
 import { ChunkStore } from '../../src/lib/chunk-store.js';
 import { isOffscreenMessage, type OffscreenToBackground } from '../../src/lib/messages.js';
-import { startRecording, type RecorderLike, type RecordingHandle } from '../../src/lib/recorder.js';
+import {
+  startRecording,
+  stopStreamTracks,
+  type RecorderLike,
+  type RecordingHandle,
+} from '../../src/lib/recorder.js';
 import { extensionUrls, isTrustedOffscreenSender } from '../../src/lib/senders.js';
 import { httpUploadEnabled } from '../../src/lib/features.js';
 import { RpcUploadClient, type UploadRpcResponse } from '../../src/lib/upload-rpc.js';
@@ -44,6 +49,22 @@ async function start(
     video: false,
   } as unknown as MediaStreamConstraints;
   const stream = await navigator.mediaDevices.getUserMedia(constraints);
+  try {
+    await beginRecording(stream, store, startedAt, meetingId, consent);
+  } catch (err) {
+    // Fail closed: never leave the tab captured when the recorder could not start.
+    stopStreamTracks(stream);
+    throw err;
+  }
+}
+
+async function beginRecording(
+  stream: MediaStream,
+  store: ChunkStore,
+  startedAt: number,
+  meetingId: string,
+  consent: ConsentAttestationInput,
+) {
   // Tab capture mutes the tab by default; route audio back so the user still hears the meeting.
   audioCtx = new AudioContext();
   audioCtx.createMediaStreamSource(stream).connect(audioCtx.destination);

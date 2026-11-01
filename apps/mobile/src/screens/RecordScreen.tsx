@@ -160,17 +160,18 @@ export function RecordScreen() {
     const durationMs = recorder.elapsedMs;
     void (async () => {
       try {
-        const chunks = await recordings.capture.capture(id, durationMs);
-        await recordings.engine.enqueue({
+        // The draft travels with the seal, so a kill mid-seal can still be queued at the next launch.
+        const draft = {
           id,
           organizationId,
           meetingId,
-          mimeType: 'audio/mp4',
+          mimeType: 'audio/mp4' as const,
           startedAt: startedAtRef.current ?? new Date().toISOString(),
           durationMs,
-          chunks,
           consent: consentRecord,
-        });
+        };
+        const chunks = await recordings.capture.capture(id, durationMs, draft);
+        await recordings.engine.enqueue({ ...draft, chunks });
         setSaved(true);
         await recordings.engine.process();
       } catch {

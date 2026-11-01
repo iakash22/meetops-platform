@@ -95,6 +95,12 @@ function override(table: string, column: string, organizationId: string): string
   if (table === 'calendar_connections' && column === 'revoked_at') return 'NULL';
   if (table === 'calendar_connections' && column === 'status') return `'active'`;
   if (table === 'calendar_connections' && column === 'provider') return `'google'`;
+  // calendar_events: CHECKs on provider/status; links are nullable (https-only) and left NULL. connection_id points
+  // at the same org's calendar_connections fixture (inserted first: TENANT_TABLES order).
+  if (table === 'calendar_events' && column === 'provider') return `'google'`;
+  if (table === 'calendar_events' && column === 'status') return `'confirmed'`;
+  if (table === 'calendar_events' && column === 'connection_id')
+    return `(SELECT id FROM calendar_connections WHERE org_id = '${organizationId}'::uuid LIMIT 1)`;
   if (table === 'auth_token_families' && column === 'max_expires_at')
     return `now() + interval '30 days'`;
   if (table === 'auth_refresh_tokens' && column === 'token_hash')
@@ -214,7 +220,10 @@ describe.skipIf(missingEnv.length > 0)('tenant isolation per table (live, ADR-01
     const blockedWrite = appendOnly ? /permission denied|append-only/ : /row-level security/;
     /** DELETE is revoked: ADR-005 A1.2 token tables (revocation is an UPDATE) and integration_connections (soft disconnect wipes secrets). */
     const noDelete =
-      t.startsWith('auth_') || t === 'integration_connections' || t === 'calendar_connections';
+      t.startsWith('auth_') ||
+      t === 'integration_connections' ||
+      t === 'calendar_connections' ||
+      t === 'calendar_events';
     const count = (tx: Prisma.TransactionClient, id: string) =>
       tx.$queryRawUnsafe<{ n: bigint }[]>(
         `SELECT count(*) AS n FROM "${t}" WHERE ${whereKey(t)}`,

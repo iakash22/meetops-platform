@@ -1,4 +1,4 @@
-import type { CalendarConnection, CalendarProviderId } from '@meetops/contracts';
+import type { CalendarConnection, CalendarEvent, CalendarProviderId } from '@meetops/contracts';
 
 export type CalendarSecrets = {
   accessToken: string;
@@ -15,6 +15,25 @@ export type CalendarConnectionUpsert = {
   refreshToken: string;
   accessTokenExpiresAt: Date;
 };
+
+/**
+ * Events cached by the worker's calendar background sync (P7). Both calls are scoped by org (forced RLS) AND user;
+ * other users' connections look unsynced. `coverage` is the window last fully synced and when.
+ */
+export interface SyncedCalendarStore {
+  coverage(
+    organizationId: string,
+    userId: string,
+    connectionId: string,
+  ): Promise<{ from: Date; to: Date; lastSyncedAt: Date } | null>;
+  listEvents(
+    organizationId: string,
+    userId: string,
+    connectionId: string,
+    from: Date,
+    to: Date,
+  ): Promise<Omit<CalendarEvent, 'provider'>[]>;
+}
 
 /**
  * Per-user calendar connections. Every method is scoped by organizationId (forced RLS in Prisma) AND userId: a

@@ -3,6 +3,7 @@ import { Linking, PermissionsAndroid, Platform } from 'react-native';
 import type { MicPermission, MicPermissionStatus } from '../consent/micPermission';
 import type { AudioDriver, ForegroundIndicator, RecorderFileGuard } from './nativeCapture';
 import { createRecorderFileGuard } from './recorderFiles';
+import type { SegmentRecorder } from './segmentCapture';
 import type { ChunkCipher, FileSystemLike } from './fileChunkStore';
 
 /**
@@ -109,6 +110,10 @@ export function createNativeChunkCipher(): ChunkCipher & { deleteKey(): Promise<
       },
       seal: (b) => native.seal(b),
       open: (b) => native.open(b),
+      // Off the JS thread and crash-safe (see modules/chunk-crypto). Older native builds: per-chunk JS path.
+      ...(native.sealFile
+        ? { sealFile: (src: string, dest: string, n: number) => native.sealFile!(src, dest, n) }
+        : {}),
       deleteKey: () => native.deleteKey(),
     };
   }
@@ -156,4 +161,15 @@ export function iosBackupExclusion(): ((uri: string) => Promise<boolean>) | null
 export function recorderFileGuard(): RecorderFileGuard {
   const fs = require('expo-file-system') as FileSystemLike & { cacheDirectory: string | null };
   return createRecorderFileGuard(fs, fs.cacheDirectory, iosBackupExclusion());
+}
+
+/**
+ * Android segment recorder (ADR-015, modules/chunk-crypto SegmentRecorderModule.kt). Null on iOS or on a build
+ * without it, in which case capture stays on expo-audio + native sealFile.
+ */
+export function androidSegmentRecorder(): SegmentRecorder | null {
+  if (Platform.OS !== 'android') return null;
+  const { SegmentRecorderModule } =
+    require('../../modules/chunk-crypto') as typeof import('../../modules/chunk-crypto');
+  return SegmentRecorderModule ?? null;
 }

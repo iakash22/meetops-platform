@@ -1,0 +1,181 @@
+import type { LocalChunk } from '../upload/types';
+import type { RecordingDraft } from './capture';
+import type { FileChunkStore } from './fileChunkStore';
+import type { ForegroundIndicator, NativeCapture, RecorderFileGuard } from './nativeCapture';
+
+/** Native side (modules/chunk-crypto SegmentRecorderModule.kt). Injectable for tests. */
+export interface SegmentRecorder {
+  start(dir: string, segmentMs: number): Promise<void>;
+  pause(): void;
+  resume(): void;
+  isRecording(): boolean;
+  /** Drains the encoder, seals the last segment, returns every chunk in seq order. */
+  stop(): Promise<LocalChunk[]>;
+  /** Stops without sealing and deletes the capture's folder. */
+  abort(): Promise<void>;
+  /** Seals a leftover plaintext segment (trimmed to whole ADTS frames) and lists every chunk. */
+  recover(dir: string): Promise<LocalChunk[]>;
+}
+
+/** 10 s segments: at most ~10 s of audio is ever plaintext; 4 h is ~1,440 chunks (MAX_CHUNKS is 10,000). */
+export const SEGMENT_MS = 10_000;
+export const SEGMENT_MIME = 'audio/aac' as const;
+const MAX_SEAL_ATTEMPTS = 3;
+
+export interface SegmentCaptureOptions {
+  /** Mic (and Android 13+ notification) permission already granted. */
+  canRecord(): Promise<boolean>;
+  indicator?: ForegroundIndicator | null;
+  /** Sweeps expo-audio leftovers from older builds at launch. */
+  recorderFiles?: RecorderFileGuard | null;
+  segmentMs?: number;
+}
+
+/**
+ * Android capture (ADR-015): records ADTS AAC in short segments, each sealed natively as it closes, so only the
+ * open segment is ever plaintext (R5). Same lifecycle and markers as the expo-audio capture (#328):
+ * - marker `recording` while capturing: a kill discards the capture (R7, never resumed, never kept);
+ * - marker `sealing` (with the draft) from Stop on: a kill resumes at launch (`recover`), then enqueues or holds.
+ * Chunks concatenate byte by byte into one `audio/aac` file, so upload hashes and the worker's checks are unchanged.
+ */
+export function createSegmentCapture(
+  native: SegmentRecorder,
+  store: FileChunkStore,
+  options: SegmentCaptureOptions,
+): NativeCapture {
+  const indicator = options.indicator ?? null;
+  const segmentMs = options.segmentMs ?? SEGMENT_MS;
+  let active: string | null = null;
+  let paused = false;
+  let recovery: Promise<void> | null = null;
+
+  const stopIndicator = () => {
+    try {
+      indicator?.stop();
+    } catch {
+      // Already gone.
+    }
+  };
+
+  return {
+    simulated: false,
+    outputMimeType: SEGMENT_MIME,
+    isBackgroundSafe() {
+      if (!active || !indicator) return false;
+      try {
+        return indicator.isConfirmed();
+      } catch {
+        return false;
+      }
+    },
+    onStopRequested: (listener) =>
+      indicator?.onStopRequested(() => {
+        if (active) listener();
+      }) ?? (() => undefined),
+    async begin(recordingId) {
+      if (active) throw new Error('Already recording.');
+      if (recovery) await recovery.catch(() => undefined);
+      if (!(await options.canRecord())) throw new Error('Microphone permission is required.');
+      await store.ready();
+      const dir = store.chunkDir(recordingId);
+      indicator?.start();
+      try {
+        await store.setMarker({ uri: dir, phase: 'recording', recordingId });
+        await native.start(dir, segmentMs);
+      } catch (e) {
+        await native.abort().catch(() => undefined);
+        await store.remove(recordingId).catch(() => undefined);
+        await store.setMarker(null).catch(() => undefined);
+        stopIndicator();
+        throw e;
+      }
+      active = recordingId;
+      paused = false;
+    },
+    pause() {
+      if (!active || paused) return;
+      native.pause();
+      paused = true;
+    },
+    resume() {
+      if (!active || !paused) return;
+      native.resume();
+      paused = false;
+    },
+    isLive() {
+      if (!active) return false;
+      return paused || native.isRecording();
+    },
+    async capture(recordingId, _durationMs, draft?: RecordingDraft): Promise<LocalChunk[]> {
+      if (active !== recordingId) throw new Error('No active recording.');
+      active = null;
+      paused = false;
+      const dir = store.chunkDir(recordingId);
+      // From here a kill resumes sealing at the next launch (#328 journal semantics).
+      await store
+        .setMarker({ uri: dir, phase: 'sealing', recordingId, attempts: 0, draft })
+        .catch(() => undefined);
+      let chunks: LocalChunk[];
+      try {
+        chunks = await native.stop();
+      } finally {
+        stopIndicator();
+      }
+      if (chunks.length === 0) {
+        await store.remove(recordingId).catch(() => undefined);
+        await store.setMarker(null).catch(() => undefined);
+        throw new Error('Recording file missing.');
+      }
+      await store.writeManifest(recordingId, chunks);
+      await store.setMarker(null).catch(() => undefined);
+      return chunks;
+    },
+    async abort() {
+      const was = active;
+      active = null;
+      paused = false;
+      await native.abort().catch(() => undefined);
+      stopIndicator();
+      const marker = await store.getMarker().catch(() => null);
+      const id = marker?.recordingId ?? was;
+      if (id) await store.remove(id).catch(() => undefined);
+      await store.setMarker(null).catch(() => undefined);
+    },
+    recoverOnLaunch(enqueue) {
+      recovery ??= (async () => {
+        const marker = await store.getMarker().catch(() => null);
+        const id = marker?.recordingId;
+        if (marker?.phase === 'sealing' && id) {
+          const attempts = (marker.attempts ?? 0) + 1;
+          try {
+            if (attempts > MAX_SEAL_ATTEMPTS) throw new Error('Gave up sealing.');
+            await store.setMarker({ ...marker, attempts });
+            const chunks =
+              (await store.manifest(id).catch(() => null)) ??
+              (await native.recover(store.chunkDir(id)));
+            if (chunks.length === 0) throw new Error('Nothing recorded.');
+            await store.writeManifest(id, chunks);
+            const d = marker.draft as RecordingDraft | undefined;
+            if (d && enqueue) await enqueue({ ...d, mimeType: SEGMENT_MIME, chunks });
+            else await store.setHeld([...new Set([...(await store.held()), id])]);
+            await store.setMarker(null);
+          } catch {
+            if (attempts > MAX_SEAL_ATTEMPTS) {
+              await store.remove(id).catch(() => undefined);
+              await store.setMarker(null).catch(() => undefined);
+            }
+          }
+        } else if (marker) {
+          // Killed while still recording: discard every segment (R7), sealed or not.
+          if (id) await store.remove(id).catch(() => undefined);
+          await store.setMarker(null).catch(() => undefined);
+        }
+        await options.recorderFiles?.sweep([]).catch(() => 0);
+      })();
+      return recovery;
+    },
+    read: (id, seq) => store.read(id, seq),
+    remove: (id) => store.remove(id),
+    exists: (id) => store.exists(id),
+  };
+}

@@ -1,4 +1,9 @@
-import type { Notification, NotificationPreference, PushDevice, PushPlatform } from '@meetops/contracts';
+import type {
+  Notification,
+  NotificationPreference,
+  PushDevice,
+  PushPlatform,
+} from '@meetops/contracts';
 import {
   createNotificationRepository,
   type NotificationRecord,
@@ -34,7 +39,11 @@ export class PrismaNotifications implements NotificationsRepository {
   constructor(db: DatabaseClient, cipher: PushTokenCipher = refusingPushCipher) {
     this.repo = createNotificationRepository({ client: db, cipher });
   }
-  async list(organizationId: string, userId: string, q: { limit?: number; cursor?: string; unreadOnly?: boolean }): Promise<NotificationPage> {
+  async list(
+    organizationId: string,
+    userId: string,
+    q: { limit?: number; cursor?: string; unreadOnly?: boolean },
+  ): Promise<NotificationPage> {
     try {
       const p = await this.repo.list(organizationId, userId, q);
       return { items: p.items.map(toDto), nextCursor: p.nextCursor };
@@ -52,7 +61,11 @@ export class PrismaNotifications implements NotificationsRepository {
   setPreferences(organizationId: string, userId: string, items: readonly NotificationPreference[]) {
     return this.repo.setPreferences(organizationId, userId, items);
   }
-  async registerDevice(organizationId: string, userId: string, input: { platform: PushPlatform; token: string; label: string | null }) {
+  async registerDevice(
+    organizationId: string,
+    userId: string,
+    input: { platform: PushPlatform; token: string; label: string | null },
+  ) {
     return toDevice(await this.repo.registerDevice(organizationId, userId, input));
   }
   unregisterDevice(organizationId: string, userId: string, deviceId: string) {

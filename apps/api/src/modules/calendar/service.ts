@@ -28,9 +28,11 @@ import {
   type IntegrationsRuntime,
 } from '../integrations/runtime.js';
 import { safeReturnUrl } from '../integrations/service.js';
-import type { CalendarConnectionsRepository } from './ports.js';
+import type { CalendarConnectionsRepository, SyncedCalendarStore } from './ports.js';
 
 export const CALENDAR_DEFAULT_RETURN_TO = '/calendar';
+/** Synced events older than this are not served; the request falls back to a live provider read. */
+export const CALENDAR_SYNC_FRESHNESS_MS = 30 * 60_000;
 /** Refresh access tokens that expire within this window before using them. */
 const REFRESH_SKEW_MS = 120_000;
 
@@ -59,7 +61,36 @@ export class CalendarService {
   constructor(
     private readonly repo: CalendarConnectionsRepository,
     private readonly rt: IntegrationsRuntime | undefined,
+    /** Read-through cache filled by the worker sync (off unless CALENDAR_SYNC_ENABLED=true). */
+    private readonly synced?: SyncedCalendarStore,
+    private readonly freshnessMs: number = CALENDAR_SYNC_FRESHNESS_MS,
   ) {}
+
+  /** Stored events when the last sync fully covers [from, to) and is fresh; null means "read live". */
+  private async fromSync(
+    organizationId: string,
+    userId: string,
+    c: CalendarConnection,
+    from: Date,
+    to: Date,
+  ): Promise<CalendarEvent[] | null> {
+    if (!this.synced) return null;
+    try {
+      const cov = await this.synced.coverage(organizationId, userId, c.id);
+      const now = (this.rt?.now ?? Date.now)();
+      if (
+        !cov ||
+        from < cov.from ||
+        to > cov.to ||
+        now - cov.lastSyncedAt.getTime() > this.freshnessMs
+      )
+        return null;
+      const list = await this.synced.listEvents(organizationId, userId, c.id, from, to);
+      return list.map((e) => ({ ...e, connectionId: c.id, provider: c.provider }));
+    } catch {
+      return null; // cache trouble never fails the request: fall back to the live read
+    }
+  }
 
   private runtime(): IntegrationsRuntime {
     if (!this.rt) throw new IntegrationsUnavailableError();
@@ -191,6 +222,14 @@ export class CalendarService {
     const items: CalendarEvent[] = [];
     for (const c of connections) {
       if (!this.configured(c.provider)) continue;
+      const cached =
+        c.status === 'active'
+          ? await this.fromSync(input.organizationId, input.userId, c, from, to)
+          : null;
+      if (cached) {
+        items.push(...cached);
+        continue;
+      }
       try {
         const token = await this.accessToken(input.organizationId, input.userId, c);
         if (!token) continue;
