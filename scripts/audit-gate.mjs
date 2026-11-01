@@ -16,6 +16,10 @@
 //   "firefox-profile@4.7.0": "4.7.1"  pulls adm-zip ~0.6.x (0.6.1) for GHSA-xcpc-8h2w-3j85,
 //                                      -7q85-xj36-vmfc, -rcw4-f5rp-g42v, -j5f4-cc29-5x44, -8238-w5pm-2374
 //                                      (web-ext-run pins firefox-profile 4.7.0). Remove once web-ext-run bumps it.
+//   "query-string@7>decode-uri-component": "^0.5.1"  GHSA-qr28-fpjm-wq7f (high) and GHSA-vcc3-ghjq-m6fr
+//                                      (apps/mobile > query-string@7.1.3, required by expo-router 4). 0.5.x is
+//                                      ESM-only, so patches/query-string@7.1.3.patch unwraps its default export
+//                                      for query-string's require(). Remove both once expo-router drops query-string 7.
 import { spawnSync } from 'node:child_process';
 
 const EXCEPTIONS = [

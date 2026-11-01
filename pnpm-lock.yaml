@@ -13,11 +13,15 @@ overrides:
   '@expo/plist>@xmldom/xmldom': ^0.8.15
   '@expo/metro-config>postcss': ^8.5.18
   node-forge@<1.4.2: 1.4.2
+  query-string@7>decode-uri-component: ^0.5.1
 
 patchedDependencies:
   '@expo/cli@0.22.28':
     hash: nkxr4ruxwar6zbc5z2hr3wtm7m
     path: patches/@expo__cli@0.22.28.patch
+  query-string@7.1.3:
+    hash: tcmgmpw6u326gvfvp22d2an3tm
+    path: patches/query-string@7.1.3.patch
 
 importers:
 
@@ -307,7 +311,7 @@ importers:
         version: 2.0.1(react-native@0.76.9(@babel/core@7.29.7)(@babel/preset-env@7.29.7(@babel/core@7.29.7))(@types/react@18.3.31)(react@18.3.1))(react@18.3.1)
       query-string:
         specifier: ^7.1.3
-        version: 7.1.3
+        version: 7.1.3(patch_hash=tcmgmpw6u326gvfvp22d2an3tm)
       react:
         specifier: 18.3.1
         version: 18.3.1
@@ -5059,9 +5063,9 @@ packages:
   decimal.js@10.6.0:
     resolution: {integrity: sha512-YpgQiITW3JXGntzdUmyUR1V812Hn8T1YVXhCu+wO3OpS4eU9l4YdD3qjyiKdV6mvV29zapkMeD390UVEf2lkUg==}
 
-  decode-uri-component@0.2.2:
-    resolution: {integrity: sha512-FqUYQ+8o158GyGTrMFJms9qh3CqTKvAqgqsTnkLI8sKu0028orqBhxNMFkFen0zGyg6epACD32pjVk58ngIErQ==}
-    engines: {node: '>=0.10'}
+  decode-uri-component@0.5.1:
+    resolution: {integrity: sha512-vWHQkXgg2cE3BB4rR0c+PYw9BCQzLoNIRMI7AunIkZst74tw/vpPp7VLoYtsR/cy1f55g3XDWUslfeCZjiZJyA==}
+    engines: {node: '>=14.16'}
 
   dedent@1.7.2:
     resolution: {integrity: sha512-WzMx3mW98SN+zn3hgemf4OzdmyNhhhKz5Ay0pUfQiMQ3e1g+xmTJWp/pKdwKVXhdSkAEGIIzqeuWrL3mV/AXbA==}
@@ -14385,7 +14389,7 @@ snapshots:
 
   decimal.js@10.6.0: {}
 
-  decode-uri-component@0.2.2: {}
+  decode-uri-component@0.5.1: {}
 
   dedent@1.7.2: {}
 
@@ -17584,9 +17588,9 @@ snapshots:
 
   quansync@0.2.11: {}
 
-  query-string@7.1.3:
+  query-string@7.1.3(patch_hash=tcmgmpw6u326gvfvp22d2an3tm):
     dependencies:
-      decode-uri-component: 0.2.2
+      decode-uri-component: 0.5.1
       filter-obj: 1.1.0
       split-on-first: 1.1.0
       strict-uri-encode: 2.0.0

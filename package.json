@@ -75,10 +75,12 @@
       "cacache>tar": "^7.5.21",
       "@expo/plist>@xmldom/xmldom": "^0.8.15",
       "@expo/metro-config>postcss": "^8.5.18",
-      "node-forge@<1.4.2": "1.4.2"
+      "node-forge@<1.4.2": "1.4.2",
+      "query-string@7>decode-uri-component": "^0.5.1"
     },
     "patchedDependencies": {
-      "@expo/cli@0.22.28": "patches/@expo__cli@0.22.28.patch"
+      "@expo/cli@0.22.28": "patches/@expo__cli@0.22.28.patch",
+      "query-string@7.1.3": "patches/query-string@7.1.3.patch"
     }
   }
 }
