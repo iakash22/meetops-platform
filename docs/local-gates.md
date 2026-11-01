@@ -5,7 +5,7 @@ Remote GitHub Actions minutes are limited, so run gates locally before opening a
 ## `pnpm local-gates`
 
 `scripts/local-gates` runs, sequentially, stopping on the first failure:
-`pnpm install --frozen-lockfile` → `pnpm build` → `pnpm lint` → `pnpm typecheck` → `pnpm test` → `gitleaks detect --redact`.
+`pnpm install --frozen-lockfile` → `pnpm build` → `pnpm size` (web bundle budget) → `pnpm lint` → `pnpm typecheck` → `pnpm test` → `gitleaks detect --redact`.
 It prints a PASS/FAIL summary with timings. Paste the summary tail into the PR.
 On shared boxes, check `pgrep -af 'pnpm|tsc|turbo'` first and run one heavy job at a time.
 
