@@ -93,8 +93,12 @@ function IntegrationCard({
       if (!url) notify.error(`Couldn't connect ${meta.name}`, 'The sign-in link was not secure.');
       else oauthRedirect.assign(url);
     },
-    onError: (err) => toastError(err, { title: `Couldn't connect ${meta.name}` }),
+    onError: (err) =>
+      toastError(err, { title: `Couldn't connect ${meta.name}`, onRetry: retryConnect }),
   });
+  function retryConnect(): void {
+    connect.mutate();
+  }
   const disconnect = useMutation({
     mutationFn: (id: string) => integrations.disconnect(organizationId, id),
     onSuccess: async () => {

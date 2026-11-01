@@ -6,7 +6,7 @@ fail or notes, device model, Android version) in the PR or issue that tracks the
 
 ## 1. Prerequisites
 
-- [ ] macOS, Linux or Windows with Node `>=20.19 <25`, pnpm 9.12.3 (`corepack enable`), and `git`.
+- [ ] macOS, Linux or Windows with Node `^20.19 || >=22.12 <25`, pnpm 9.12.3 (`corepack enable`), and `git`.
 - [ ] JDK 17 (`java -version`), Android Studio (Ladybug or newer) with SDK Platform 35, Build-Tools 35,
       platform-tools (`adb`), and `ANDROID_HOME` set.
 - [ ] One physical device on **Android 14 (API 34)**, plus ideally one on Android 13 and one on 10–12. Turn on USB
