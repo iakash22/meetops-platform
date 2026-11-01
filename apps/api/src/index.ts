@@ -22,10 +22,10 @@ export async function start() {
     let checks: Record<string, string> = {};
     try {
       const res = await app.inject({ method: 'GET', url: '/ready' });
-      const body = res.json() as {
+      const body = res.json<{
         status?: string;
         checks?: Record<string, string>;
-      };
+      }>();
       checks = body.checks ?? {};
       ready = res.statusCode === 200 && body.status !== 'not_ready';
     } catch (err) {
