@@ -11,6 +11,7 @@ import android.media.MediaCodec
 import android.media.MediaCodecInfo
 import android.media.MediaFormat
 import android.media.MediaRecorder
+import android.util.Log
 import androidx.core.content.ContextCompat
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
@@ -46,6 +47,10 @@ class SegmentRecorderModule : Module() {
     const val STOPPED_SENTINEL = "stopped"
     /** Must match RecordingForegroundService.ACTION_CAPTURE_STOP (modules/recording-service). */
     const val ACTION_CAPTURE_STOP = "expo.modules.recordingservice.CAPTURE_STOP"
+    /** Must match RecordingForegroundService.ACTION_CAPTURE_SEALING / ACTION_CAPTURE_SEALED. */
+    const val ACTION_CAPTURE_SEALING = "expo.modules.recordingservice.CAPTURE_SEALING"
+    const val ACTION_CAPTURE_SEALED = "expo.modules.recordingservice.CAPTURE_SEALED"
+    private const val TAG = "SegmentRecorder"
     /** ADTS sampling_frequency_index for 44.1 kHz. */
     private const val FREQ_INDEX = 4
     private const val CHANNELS = 1
@@ -98,6 +103,15 @@ class SegmentRecorderModule : Module() {
    * Native Stop: no JS needed. Takes the session (so a later JS stop() waits for this one instead of failing),
    * writes the sentinel, then closes the mic and seals off the main thread.
    */
+  private fun signal(action: String) {
+    val ctx = appContext.reactContext?.applicationContext ?: return
+    try {
+      ctx.sendBroadcast(Intent(action).setPackage(ctx.packageName))
+    } catch (e: Exception) {
+      Log.w(TAG, "native stop: $action broadcast failed; the service falls back to its fixed grace", e)
+    }
+  }
+
   private fun stopNatively() {
     val s = synchronized(this) {
       val cur = session ?: return
@@ -106,17 +120,29 @@ class SegmentRecorderModule : Module() {
     }
     unregisterStopReceiver()
     val (ns, cur) = s
-    try { ChunkSealer.writeDurably(File(cur.dir, STOPPED_SENTINEL), ByteArray(0)) } catch (_: Exception) {}
+    // Tell the service a seal is in flight, so its kill fallback waits for SEALED instead of a fixed grace.
+    signal(ACTION_CAPTURE_SEALING)
+    // Without the sentinel a kill during the seal discards the recording at launch: never swallow this.
+    val markerFailure = try {
+      ChunkSealer.writeDurably(File(cur.dir, STOPPED_SENTINEL), ByteArray(0))
+      null
+    } catch (e: Exception) {
+      Log.e(TAG, "native stop: stop marker write failed; a kill during the seal would lose the recording", e)
+      IllegalStateException("Stop marker write failed", e)
+    }
     Thread({
       try {
         shutdown(cur, 5_000)
         recoverParts(cur.dir)
         check(plaintextLeft(cur.dir).isEmpty()) { "Plaintext segment could not be removed" }
         cur.failure?.let { throw it }
+        markerFailure?.let { throw it }
       } catch (t: Throwable) {
+        Log.e(TAG, "native stop failed", t)
         ns.failure = t
       } finally {
         ns.done.countDown()
+        signal(ACTION_CAPTURE_SEALED)
       }
     }, "meetops-segment-native-stop").start()
   }
