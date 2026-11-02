@@ -630,6 +630,7 @@ export class IntegrationsService {
   /** Bounded provider refresh: aborts the token request and fails with a 502 well inside the lease TTL. */
   private async refreshWithDeadline(refreshToken: string) {
     const ac = new AbortController();
+    // JiraOAuthClient's own 10 s request timeout is the effective limit; this 30 s abort is a backstop for future clients without one.
     const timer = setTimeout(() => ac.abort(), JIRA_REFRESH_TIMEOUT_MS);
     try {
       return await this.jiraClient().refresh(refreshToken, { signal: ac.signal });
