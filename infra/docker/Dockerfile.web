@@ -23,8 +23,12 @@ FROM nginxinc/nginx-unprivileged:1.31.7-alpine AS runtime
 ENV CSP_API_ORIGIN=http://localhost:3000 \
     CSP_REALTIME_ORIGIN="ws://localhost:4001 http://localhost:4001" \
     CSP_STORAGE_ORIGIN=http://localhost:9000 \
+    CSP_REPORT_URL="" \
+    CSP_UPGRADE_INSECURE=on \
     NGINX_ENVSUBST_FILTER=^CSP_
 COPY infra/docker/nginx/web.conf.template /etc/nginx/templates/default.conf.template
+# Runs before the image's 20-envsubst-on-templates.sh: refuses to start on empty or wildcard CSP origins.
+COPY --chmod=0755 infra/docker/nginx/10-validate-csp-env.sh /docker-entrypoint.d/10-validate-csp-env.sh
 COPY --from=build /repo/apps/web/dist /usr/share/nginx/html
 USER 101
 EXPOSE 8080

@@ -5,7 +5,24 @@ import { connect, type Socket } from 'node:net';
  * Optional ClamAV step (PR #274 L-2) via a local clamd (`INSTREAM`). Off by default; when enabled it is fail-closed:
  * an unreachable/erroring clamd throws, so the job retries and the final attempt quarantines the upload.
  */
-export type AntivirusVerdict = { infected: false } | { infected: true; signature: string };
+export type AntivirusVerdict =
+  | { infected: false }
+  /**
+   * `limitExceeded`: clamd hit a scan limit (`Heuristics.Limits.Exceeded.*`, from AlertExceedsMax) instead of finding
+   * malware. Still never clean (fail-closed); the upload scan quarantines it as `scan_limit_exceeded`, not
+   * `malware_detected` (MAL-2).
+   */
+  | { infected: true; signature: string; limitExceeded?: true };
+
+/** Signature prefix clamd uses for a limit hit (MaxFileSize, MaxScanSize, MaxScanTime, MaxRecursion, MaxFiles, ...). */
+export const CLAMD_LIMIT_SIGNATURE_PREFIX = 'Heuristics.Limits.Exceeded';
+/** clamd MaxScanTime in infra/clamav/clamd.conf (ms). apps/worker/test/clamd-config.test.ts keeps them in sync. */
+export const CLAMD_MAX_SCAN_TIME_MS = 600_000;
+/**
+ * Default worker-side total deadline: clamd MaxScanTime plus 30 s for streaming and the reply, so clamd always
+ * answers (OK, FOUND or Limits.Exceeded.MaxScanTime) before the worker gives up on a scan clamd is still running.
+ */
+export const CLAMD_SCAN_TIMEOUT_MS = CLAMD_MAX_SCAN_TIME_MS + 30_000;
 export type Antivirus = { scanFile(file: string): Promise<AntivirusVerdict> };
 
 export type ClamdConfig =
@@ -35,7 +52,7 @@ export class ClamdError extends Error {
  * text, whitespace or a second line around it, is not clean (fail-closed).
  */
 export const CLAMD_CLEAN_REPLY = 'stream: OK\0';
-/** `stream: <signature> FOUND\0`, one line, nothing before or after. Includes Heuristics.Limits.Exceeded.*. */
+/** `stream: <signature> FOUND\0`, one line, nothing before or after. Includes Heuristics.Limits.Exceeded.* (flagged limitExceeded). */
 const FOUND_REPLY = /^stream: ([^\0\r\n]{1,200}) FOUND\0$/;
 
 /** Test seam: how the upload file is opened (defaults to node:fs createReadStream). */
@@ -45,11 +62,12 @@ export type ClamdIo = { openFile?: (file: string) => ReadStream };
  * clamd `zINSTREAM` client. Fail-closed: only the exact {@link CLAMD_CLEAN_REPLY} is clean; an ERROR reply (for
  * example `INSTREAM size limit exceeded. ERROR`), an empty, malformed or oversized reply, a timeout, a socket error
  * or a file read error all reject with {@link ClamdError}. The file stream and the socket are destroyed on every
- * path. Today `timeoutMs` is one fixed total deadline (default 120 s, below clamd's MaxScanTime of 600 s); MAL-2
- * makes it size-aware.
+ * path. `timeoutMs` is one total deadline, by default {@link CLAMD_SCAN_TIMEOUT_MS} (above clamd's
+ * MaxScanTime), so a slow scan ends with clamd's own verdict, not a worker timeout. A limit-hit FOUND reply resolves
+ * with `limitExceeded: true`.
  */
 export function createClamdScanner(cfg: ClamdConfig, io: ClamdIo = {}): Antivirus {
-  const timeoutMs = cfg.timeoutMs ?? 120_000;
+  const timeoutMs = cfg.timeoutMs ?? CLAMD_SCAN_TIMEOUT_MS;
   const openFile =
     io.openFile ?? ((file: string) => createReadStream(file, { highWaterMark: 64 * 1024 }));
   return {
@@ -78,7 +96,17 @@ export function createClamdScanner(cfg: ClamdConfig, io: ClamdIo = {}): Antiviru
         sock.on('end', () => {
           if (reply === CLAMD_CLEAN_REPLY) return finish(null, { infected: false });
           const m = FOUND_REPLY.exec(reply);
-          if (m) return finish(null, { infected: true, signature: m[1]! });
+          if (m) {
+            const signature = m[1]!;
+            const limit =
+              signature === CLAMD_LIMIT_SIGNATURE_PREFIX ||
+              signature.startsWith(`${CLAMD_LIMIT_SIGNATURE_PREFIX}.`);
+            return finish(null, {
+              infected: true,
+              signature,
+              ...(limit ? { limitExceeded: true as const } : {}),
+            });
+          }
           finish(new ClamdError('clamd error reply'));
         });
         sock.on('close', () => finish(new ClamdError('clamd closed without a reply')));

@@ -1,4 +1,14 @@
 import type { LocalChunk } from '../upload/types';
+
+export interface SegmentStopResult {
+  chunks: LocalChunk[];
+  markerFailed: boolean;
+}
+
+/** Older native builds resolve stop() with the bare chunk array. */
+export function normalizeStop(r: SegmentStopResult | LocalChunk[]): SegmentStopResult {
+  return Array.isArray(r) ? { chunks: r, markerFailed: false } : r;
+}
 import type { RecordingDraft } from './capture';
 import type { FileChunkStore } from './fileChunkStore';
 import type { ForegroundIndicator, NativeCapture, RecorderFileGuard } from './nativeCapture';
@@ -9,18 +19,34 @@ export interface SegmentRecorder {
   pause(): void;
   resume(): void;
   isRecording(): boolean;
-  /** Drains the encoder, seals the last segment, returns every chunk in seq order. */
-  stop(): Promise<LocalChunk[]>;
+  /**
+   * Drains the encoder, seals the last segment, returns every chunk in seq order. Current native builds resolve
+   * `{ chunks, markerFailed }` (older ones a bare array): `markerFailed` is a sealed recording whose native-stop
+   * sentinel write failed; it is still a successful stop.
+   */
+  stop(): Promise<SegmentStopResult | LocalChunk[]>;
   /** Stops without sealing and deletes the capture's folder. */
   abort(): Promise<void>;
   /** Seals a leftover plaintext segment (trimmed to whole ADTS frames) and lists every chunk. */
   recover(dir: string): Promise<LocalChunk[]>;
+  /**
+   * True when a native Stop (notification Stop or swipe-away, handled without JS) began for this folder before the
+   * process died. Absent on older native builds.
+   */
+  stoppedNatively?(dir: string): boolean;
 }
 
 /** 10 s segments: at most ~10 s of audio is ever plaintext; 4 h is ~1,440 chunks (MAX_CHUNKS is 10,000). */
 export const SEGMENT_MS = 10_000;
 export const SEGMENT_MIME = 'audio/aac' as const;
 const MAX_SEAL_ATTEMPTS = 3;
+const safe = (f: () => boolean) => {
+  try {
+    return f();
+  } catch {
+    return false;
+  }
+};
 
 export interface SegmentCaptureOptions {
   /** Mic (and Android 13+ notification) permission already granted. */
@@ -117,7 +143,15 @@ export function createSegmentCapture(
         .catch(() => undefined);
       let chunks: LocalChunk[];
       try {
-        chunks = await native.stop();
+        const result = normalizeStop(await native.stop());
+        chunks = result.chunks;
+        if (result.markerFailed) {
+          // Sealed fine, but the native-stop sentinel is missing: the manifest below is what keeps this recording
+          // across a kill, so it is written exactly as for a normal stop (never treated as a failure).
+          console.warn(
+            '[segment-capture] native stop marker write failed; keeping the sealed recording',
+          );
+        }
       } finally {
         stopIndicator();
       }
@@ -165,6 +199,18 @@ export function createSegmentCapture(
               await store.setMarker(null).catch(() => undefined);
             }
           }
+        } else if (marker && id && safe(() => native.stoppedNatively?.(marker.uri) === true)) {
+          // The user stopped natively (notification Stop / swipe-away) and the app died before JS finished Stop:
+          // a stop, not an interruption. Keep it, sealed and held (no draft was saved yet), never resumed.
+          try {
+            const chunks = await native.recover(marker.uri);
+            if (chunks.length === 0) throw new Error('Nothing recorded.');
+            await store.writeManifest(id, chunks);
+            await store.setHeld([...new Set([...(await store.held()), id])]);
+          } catch {
+            await store.remove(id).catch(() => undefined);
+          }
+          await store.setMarker(null).catch(() => undefined);
         } else if (marker) {
           // Killed while still recording: discard every segment (R7), sealed or not.
           if (id) await store.remove(id).catch(() => undefined);

@@ -1,7 +1,11 @@
 import type { SemanticSearchKind, SemanticSearchResult } from '@meetops/contracts';
 import { withOrganizationContext, type DatabaseClient } from '../../shared/prisma/context.js';
 import { DomainError } from '../../shared/domain-error.js';
-import { SEARCH_STATEMENT_TIMEOUT_MS, SearchTimeoutError } from './prisma.repository.js';
+import {
+  SEARCH_STATEMENT_TIMEOUT_MS,
+  SearchTimeoutError,
+  isStatementTimeout,
+} from './prisma.repository.js';
 
 /** Dimension of meeting_embeddings.embedding (migration 20261031050000). */
 export const SEMANTIC_EMBEDDING_DIMS = 1536;
@@ -122,6 +126,10 @@ type Row = {
   occurred_at: Date;
 };
 
+/** LIMIT is a bigint: an integer 1-20; a non-finite value falls back to the maximum. */
+const clampLimit = (n: number) =>
+  Number.isFinite(n) ? Math.min(Math.max(Math.trunc(n), 1), 20) : 20;
+
 const clampScore = (x: number) => (Number.isFinite(x) ? Math.max(-1, Math.min(1, x)) : -1);
 
 export class PrismaSemanticSearch implements SemanticSearchRepository {
@@ -140,13 +148,12 @@ export class PrismaSemanticSearch implements SemanticSearchRepository {
           input.model,
           vec,
           [...input.kinds],
-          Math.min(Math.max(input.limit, 1), 20),
+          clampLimit(input.limit),
         );
       },
       { client: this.db },
     ).catch((e: unknown) => {
-      if (/57014|statement timeout|canceling statement/i.test(String((e as Error)?.message ?? e)))
-        throw new SearchTimeoutError();
+      if (isStatementTimeout(e)) throw new SearchTimeoutError();
       throw e;
     });
     return rows.map((r) => ({

@@ -1,8 +1,11 @@
 /// <reference types="vitest" />
+import { randomBytes } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import { fileURLToPath, URL } from 'node:url';
 import { loadEnv, type Plugin } from 'vite';
 import { defineConfig } from 'vitest/config';
 import react from '@vitejs/plugin-react';
+import { localCsp } from './csp.config';
 
 /**
  * Long-lived vendor groups. Each group changes on its own release cadence, so splitting them
@@ -85,6 +88,9 @@ function apiPreconnect(apiUrl: string | undefined): Plugin {
 
 const monorepoRoot = fileURLToPath(new URL('../..', import.meta.url));
 
+const nginxTemplate = () =>
+  readFileSync(new URL('../../infra/docker/nginx/web.conf.template', import.meta.url), 'utf8');
+
 function envPort(raw: string | undefined, fallback: number): number {
   const n = Number(raw);
   return Number.isInteger(n) && n > 0 && n < 65536 ? n : fallback;
@@ -107,14 +113,18 @@ function resolveViteApiUrl(raw: string | undefined): string {
   return value.replace(/\/$/, '') || '/api';
 }
 
-export default defineConfig(({ mode }) => {
+export default defineConfig(({ mode, command }) => {
   // Root `.env` (not apps/web/.env): VITE_API_URL, WEB_PORT, PORT, etc.
   // Empty prefix so WEB_PORT/PORT are available for the dev server; Vite still only
   // exposes VITE_* to the client via import.meta.env.
   const env = loadEnv(mode, monorepoRoot, '');
   const viteApiUrl = resolveViteApiUrl(env.VITE_API_URL);
   const proxyTarget = apiProxyTarget(env);
+  const template = nginxTemplate();
+  const devNonce = randomBytes(18).toString('base64url');
   return {
+    ...(command === 'serve' ? { html: { cspNonce: devNonce } } : {}),
+    preview: { headers: { 'Content-Security-Policy': localCsp(template) } },
     plugins: [react(), apiPreconnect(viteApiUrl)],
     envDir: monorepoRoot,
     // Ensure the client always sees a concrete base (empty .env → `/api` → proxy).
@@ -126,6 +136,7 @@ export default defineConfig(({ mode }) => {
     },
     server: {
       port: envPort(env.WEB_PORT, 5173),
+      headers: { 'Content-Security-Policy': localCsp(template, devNonce) },
       proxy: {
         // Browser → http://localhost:WEB_PORT/api/… → API (strips `/api` prefix).
         // Cookie + CSRF stay same-origin when VITE_API_URL=/api.

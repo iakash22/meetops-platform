@@ -165,12 +165,12 @@ describe('clamd client is fail-closed on every non-clean outcome (#377 R1)', () 
     expect(opened[0]!.destroyed).toBe(true);
   });
 
-  it('a Heuristics.Limits.Exceeded.* reply is never clean (today: infected, quarantined as malware_detected)', async () => {
-    for (const sig of ['MaxFileSize', 'MaxScanSize', 'MaxScanTime']) {
+  it('a Heuristics.Limits.Exceeded.* reply is never clean and is flagged limitExceeded (MAL-2)', async () => {
+    for (const sig of ['MaxFileSize', 'MaxScanSize', 'MaxScanTime', 'MaxRecursion', 'MaxFiles']) {
       const { res, opened } = await scan(`stream: Heuristics.Limits.Exceeded.${sig} FOUND\0`);
       expect(res).toEqual({
         ok: true,
-        v: { infected: true, signature: `Heuristics.Limits.Exceeded.${sig}` },
+        v: { infected: true, signature: `Heuristics.Limits.Exceeded.${sig}`, limitExceeded: true },
       });
       expect(opened[0]!.destroyed).toBe(true);
     }

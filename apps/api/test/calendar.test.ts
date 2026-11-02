@@ -357,11 +357,28 @@ describe('Phase 7 calendar', () => {
     ).toBe(400);
     expect(
       (await c.post(`/orgs/${org}/calendar/connect`, { provider: 'outlook' })).statusCode,
-    ).toBe(400);
+    ).toBe(503);
+    expect((await c.post(`/orgs/${org}/calendar/connect`, { provider: 'yahoo' })).statusCode).toBe(
+      400,
+    );
     expect(
       (await c.get(`/orgs/${org}/calendar/providers`)).json<CalendarProviderList>().items[0]!
         .configured,
     ).toBe(false);
+  });
+
+  it('reads the Outlook OAuth client and tenant from env only when both values are set', async () => {
+    expect(integrationsRuntimeFromEnv({ OUTLOOK_CALENDAR_CLIENT_ID: 'x' }).outlookCalendar).toBe(
+      undefined,
+    );
+    const rt = integrationsRuntimeFromEnv({
+      OUTLOOK_CALENDAR_CLIENT_ID: 'id',
+      OUTLOOK_CALENDAR_CLIENT_SECRET: 'placeholder',
+      OUTLOOK_CALENDAR_TENANT: 'organizations',
+    }).outlookCalendar;
+    expect(rt?.clientId).toBe('id');
+    expect(rt?.tenant).toBe('organizations');
+    expect(await rt?.clientSecret()).toBe('placeholder');
   });
 
   it('reads the Google OAuth client from env only when both values are set', () => {
@@ -374,5 +391,39 @@ describe('Phase 7 calendar', () => {
         GOOGLE_CALENDAR_CLIENT_SECRET: 'y',
       }).googleCalendar?.clientId,
     ).toBe('x');
+  });
+});
+
+describe('OUTLOOK_CALENDAR_TENANT startup validation', () => {
+  const base = { OUTLOOK_CALENDAR_CLIENT_ID: 'id', OUTLOOK_CALENDAR_CLIENT_SECRET: 'placeholder' };
+
+  it.each([
+    'common',
+    'organizations',
+    'consumers',
+    '72f988bf-86f1-41af-91ab-2d7cd011db47',
+    'contoso.onmicrosoft.com',
+  ])('accepts %s', (t) => {
+    expect(
+      integrationsRuntimeFromEnv({ ...base, OUTLOOK_CALENDAR_TENANT: ` ${t} ` }).outlookCalendar
+        ?.tenant,
+    ).toBe(t);
+  });
+
+  it('unset or blank keeps the provider default', () => {
+    expect(integrationsRuntimeFromEnv(base).outlookCalendar?.tenant).toBeUndefined();
+    expect(
+      integrationsRuntimeFromEnv({ ...base, OUTLOOK_CALENDAR_TENANT: ' ' }).outlookCalendar?.tenant,
+    ).toBeUndefined();
+  });
+
+  it('fails fast on a malformed tenant, even with no Outlook client configured', () => {
+    for (const env of [
+      { ...base, OUTLOOK_CALENDAR_TENANT: 'contoso' },
+      { OUTLOOK_CALENDAR_TENANT: 'common/../x' },
+    ])
+      expect(() => integrationsRuntimeFromEnv(env)).toThrow(
+        /OUTLOOK_CALENDAR_TENANT must be common, organizations, consumers, a tenant GUID/,
+      );
   });
 });

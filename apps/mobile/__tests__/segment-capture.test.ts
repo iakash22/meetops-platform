@@ -154,6 +154,47 @@ describe('Android segment capture (ADR-015, R5)', () => {
     await expect(store.manifest('rec-1')).resolves.toEqual(chunks);
   });
 
+  it('a sealed stop whose native marker write failed resolves, writes the manifest and survives the next launch', async () => {
+    const { fs, native, cap, store } = setup();
+    await cap.begin('rec-1');
+    native.closeSegment(frame(40, 1));
+    const sealed = [{ seq: 0, sizeBytes: 40, sha256: sha256Hex(frame(40, 1)) }];
+    native.stop = () => Promise.resolve({ chunks: sealed, markerFailed: true });
+    const warn = jest.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      await expect(cap.capture('rec-1', 1000, draft)).resolves.toEqual(sealed);
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('marker write failed'));
+    } finally {
+      warn.mockRestore();
+    }
+    await expect(store.manifest('rec-1')).resolves.toEqual(sealed);
+    await expect(store.getMarker()).resolves.toBeNull();
+    // Next launch (no sentinel on disk): nothing to recover, nothing discarded.
+    const fresh = fakeNative(fs);
+    fresh.stoppedNatively = () => false;
+    await createSegmentCapture(fresh, store, {
+      canRecord: () => Promise.resolve(true),
+    }).recoverOnLaunch(jest.fn());
+    await expect(store.exists('rec-1')).resolves.toBe(true);
+    await expect(store.manifest('rec-1')).resolves.toEqual(sealed);
+  });
+
+  it('accepts the { chunks, markerFailed: false } stop result without warning', async () => {
+    const { native, cap, store } = setup();
+    await cap.begin('rec-1');
+    native.closeSegment(frame(40, 1));
+    const sealed = [{ seq: 0, sizeBytes: 40, sha256: sha256Hex(frame(40, 1)) }];
+    native.stop = () => Promise.resolve({ chunks: sealed, markerFailed: false });
+    const warn = jest.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      await expect(cap.capture('rec-1', 1000, draft)).resolves.toEqual(sealed);
+      expect(warn).not.toHaveBeenCalled();
+    } finally {
+      warn.mockRestore();
+    }
+    await expect(store.manifest('rec-1')).resolves.toEqual(sealed);
+  });
+
   it('a kill during Stop resumes at launch and enqueues as audio/aac', async () => {
     const { fs, native, cap, store } = setup();
     await cap.begin('rec-1');
@@ -190,6 +231,60 @@ describe('Android segment capture (ADR-015, R5)', () => {
     }).recoverOnLaunch(enqueue);
     expect(enqueue).not.toHaveBeenCalled();
     expect(fresh.calls).not.toContain('start');
+    await expect(store.exists('rec-1')).resolves.toBe(false);
+  });
+
+  it('a native Stop (swipe-away, no JS) then a kill keeps the recording sealed and held, never resumed', async () => {
+    const { fs, native, cap, store } = setup();
+    await cap.begin('rec-1');
+    native.closeSegment(frame(40, 1));
+    // Process died after the service told the recorder to stop: marker is still `recording`.
+    await expect(store.getMarker()).resolves.toMatchObject({ phase: 'recording' });
+    const fresh = fakeNative(fs);
+    const dirs: string[] = [];
+    fresh.stoppedNatively = (d) => {
+      dirs.push(d);
+      return true;
+    };
+    fresh.recover = () =>
+      Promise.resolve([{ seq: 0, sizeBytes: 40, sha256: sha256Hex(frame(40, 1)) }]);
+    const enqueue = jest.fn(() => Promise.resolve());
+    await createSegmentCapture(fresh, store, {
+      canRecord: () => Promise.resolve(true),
+    }).recoverOnLaunch(enqueue);
+    expect(dirs).toEqual([store.chunkDir('rec-1')]);
+    expect(enqueue).not.toHaveBeenCalled(); // no draft yet: held, not uploaded
+    expect(fresh.calls).not.toContain('start');
+    await expect(store.held()).resolves.toContain('rec-1');
+    await expect(store.manifest('rec-1')).resolves.toHaveLength(1);
+    await expect(store.getMarker()).resolves.toBeNull();
+  });
+
+  it('a native Stop that sealed nothing is discarded at launch', async () => {
+    const { fs, cap, store } = setup();
+    await cap.begin('rec-1');
+    const fresh = fakeNative(fs);
+    fresh.stoppedNatively = () => true;
+    fresh.recover = () => Promise.resolve([]);
+    await createSegmentCapture(fresh, store, {
+      canRecord: () => Promise.resolve(true),
+    }).recoverOnLaunch(jest.fn());
+    await expect(store.exists('rec-1')).resolves.toBe(false);
+    await expect(store.held()).resolves.not.toContain('rec-1');
+    await expect(store.getMarker()).resolves.toBeNull();
+  });
+
+  it('a throwing stoppedNatively falls back to the R7 discard', async () => {
+    const { fs, native, cap, store } = setup();
+    await cap.begin('rec-1');
+    native.closeSegment(frame(40, 1));
+    const fresh = fakeNative(fs);
+    fresh.stoppedNatively = () => {
+      throw new Error('native gone');
+    };
+    await createSegmentCapture(fresh, store, {
+      canRecord: () => Promise.resolve(true),
+    }).recoverOnLaunch(jest.fn());
     await expect(store.exists('rec-1')).resolves.toBe(false);
   });
 

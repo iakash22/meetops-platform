@@ -1,5 +1,8 @@
 import {
   GoogleCalendarProvider,
+  OutlookCalendarProvider,
+  OutlookTenantError,
+  parseOutlookTenant,
   InMemoryOAuthStateStore,
   LocalKeyProvider,
   TokenCipher,
@@ -69,22 +72,42 @@ function calendarApiOrigin(env: NodeJS.ProcessEnv): string {
   }
 }
 
-/** Google only for now; the provider is skipped (connections left untouched) when its OAuth client is unset. */
+/** Google and Outlook; each provider is skipped (connections left untouched) when its OAuth client is unset. */
 export function calendarSyncProvidersFromEnv(
   env: NodeJS.ProcessEnv = process.env,
 ): Partial<Record<string, CalendarSyncProvider>> {
+  const out: Partial<Record<string, CalendarSyncProvider>> = {};
   const clientId = env.GOOGLE_CALENDAR_CLIENT_ID?.trim();
   const secret = env.GOOGLE_CALENDAR_CLIENT_SECRET;
-  if (!clientId || !secret) return {};
-  const apiOrigin = calendarApiOrigin(env);
-  return {
-    google: new GoogleCalendarProvider({
+  if (clientId && secret) {
+    const apiOrigin = calendarApiOrigin(env);
+    out.google = new GoogleCalendarProvider({
       clientId,
       clientSecret: async () => secret,
       redirectUriAllowlist: [`${apiOrigin}/calendar/google/callback`],
       stateStore: new InMemoryOAuthStateStore(),
-    }),
-  };
+    });
+  }
+  const msId = env.OUTLOOK_CALENDAR_CLIENT_ID?.trim();
+  const msSecret = env.OUTLOOK_CALENDAR_CLIENT_SECRET;
+  if (msId && msSecret) {
+    const apiOrigin = calendarApiOrigin(env);
+    let tenant: string | undefined;
+    try {
+      tenant = parseOutlookTenant(env.OUTLOOK_CALENDAR_TENANT);
+    } catch (err) {
+      if (err instanceof OutlookTenantError) throw new CalendarSyncEnvError(err.message);
+      throw err;
+    }
+    out.outlook = new OutlookCalendarProvider({
+      clientId: msId,
+      clientSecret: async () => msSecret,
+      ...(tenant ? { tenant } : {}),
+      redirectUriAllowlist: [`${apiOrigin}/calendar/outlook/callback`],
+      stateStore: new InMemoryOAuthStateStore(),
+    });
+  }
+  return out;
 }
 
 export type CalendarSyncSchedulerRegistration =
@@ -120,7 +143,8 @@ export function registerCalendarSyncScheduler(
       'INTEGRATIONS_TOKEN_KEK must be 32 bytes (base64) when CALENDAR_SYNC_ENABLED=true',
     );
   // Validated up front (not only when the default providers are built) so a bad origin fails startup.
-  if (processEnv.GOOGLE_CALENDAR_CLIENT_ID?.trim()) calendarApiOrigin(processEnv);
+  if (processEnv.GOOGLE_CALENDAR_CLIENT_ID?.trim() || processEnv.OUTLOOK_CALENDAR_CLIENT_ID?.trim())
+    calendarApiOrigin(processEnv);
   const base =
     opts.buildDeps?.(kek) ??
     ({

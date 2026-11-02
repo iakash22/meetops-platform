@@ -3,6 +3,7 @@ import type { FastifyInstance } from 'fastify';
 import cookie from '@fastify/cookie';
 import cors from '@fastify/cors';
 import { DESKTOP_AUTH_PATHS, EXTENSION_AUTH_PATHS } from '@meetops/contracts';
+import { parseWebOrigins } from '../shared/web-origins.js';
 import {
   extensionBearerCorsHook,
   isExtensionBearerPath,
@@ -525,10 +526,11 @@ export function defaultModuleDeps(
     idleTimeoutMs: 30 * MIN,
     absoluteTimeoutMs: 12 * HOUR,
   };
-  const allowedOrigins = (process.env.WEB_ORIGINS ?? (strict ? '' : DEV_WEB_ORIGINS.join(',')))
-    .split(',')
-    .map((s) => s.trim())
-    .filter(Boolean);
+  // R7: validated once at boot; production (strict) requires https:// exact origins.
+  const allowedOrigins = parseWebOrigins(
+    process.env.WEB_ORIGINS ?? (strict ? '' : DEV_WEB_ORIGINS.join(',')),
+    { requireHttps: env.nodeEnv === 'production' },
+  );
   const security: HttpSecurityConfig = overrides.security ?? {
     ...cookieConfig(env.nodeEnv),
     allowedOrigins,
@@ -688,6 +690,8 @@ export async function registerModules(app: FastifyInstance, deps: ModuleDeps) {
         credentials: true,
         methods: ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE'],
         allowedHeaders: ['content-type', 'x-csrf-token'],
+        // R11: let the web app read rate-limit backoff and the request id for support.
+        exposedHeaders: ['retry-after', 'x-request-id'],
         maxAge: 600,
         strictPreflight: true,
       });

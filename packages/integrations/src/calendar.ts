@@ -11,7 +11,7 @@ import {
  * Phase 7: provider-agnostic calendar adapter. Every provider talks to fixed, compiled-in endpoints only; no
  * caller-supplied base URL exists anywhere in this interface (users can never point the server at an arbitrary host).
  */
-export type CalendarProviderId = 'google';
+export type CalendarProviderId = 'google' | 'outlook';
 
 export interface CalendarTokens {
   accessToken: string;
@@ -454,7 +454,7 @@ type StreamingBody = {
 };
 
 /** Reads the body, aborting as soon as it exceeds CALENDAR_MAX_RESPONSE_BYTES. */
-async function readCapped(
+export async function readCapped(
   res: Awaited<ReturnType<FetchLike>>,
   controller: AbortController,
 ): Promise<string> {
