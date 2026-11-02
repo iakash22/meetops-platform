@@ -167,7 +167,7 @@ describe('#382 follow-up: the 30 s refresh abort with a client that has no timeo
     );
     await inFlight;
     expect(refresh).toHaveBeenCalledWith('old-refresh', { signal: expect.any(AbortSignal) });
-    await vi.advanceTimersByTimeAsync(JIRA_REFRESH_TIMEOUT_MS - 1);
+    await vi.advanceTimersByTimeAsync(29_999);
     expect(signal?.aborted).toBe(false); // nothing else cut it off before 30 s
     expect(m.held.size).toBe(1);
     await vi.advanceTimersByTimeAsync(1);
