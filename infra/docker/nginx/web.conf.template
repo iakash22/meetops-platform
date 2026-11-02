@@ -32,7 +32,7 @@ server {
 
     # Security headers. Only set at server level: an add_header inside a location
     # would drop all of these, so caching is a server-level map on $uri.
-    add_header Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: blob:; font-src 'self'; connect-src 'self' ${CSP_API_ORIGIN} ${CSP_REALTIME_ORIGIN} ${CSP_STORAGE_ORIGIN}; media-src 'self' blob: ${CSP_STORAGE_ORIGIN}; worker-src 'self' blob:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none';$csp_upgrade_insecure report-to csp" always;
+    add_header Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'sha256-fwWCgm+4FJQM5Um+NEFPPThRM/ATS1CrMQ0Jv1SN3fs='; img-src 'self' data: blob:; font-src 'self'; connect-src 'self' ${CSP_API_ORIGIN} ${CSP_REALTIME_ORIGIN} ${CSP_STORAGE_ORIGIN}; media-src 'self' blob: ${CSP_STORAGE_ORIGIN}; worker-src 'self' blob:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none';$csp_upgrade_insecure report-to csp" always;
     add_header Reporting-Endpoints $csp_reporting_endpoints always;
     add_header X-Content-Type-Options "nosniff" always;
     add_header Referrer-Policy "strict-origin-when-cross-origin" always;

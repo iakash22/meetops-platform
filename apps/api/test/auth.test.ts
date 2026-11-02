@@ -278,16 +278,18 @@ describe('auth', () => {
   });
 
   describe('CSRF and Origin', () => {
-    it('GET /auth/csrf returns a token and sets __Host-meetops_csrf (Secure, Path=/, SameSite=Lax)', async () => {
+    it('GET /auth/csrf returns a token and sets __Host-meetops_csrf (Secure, Path=/, SameSite=Strict, Max-Age, P9 R13)', async () => {
       const res = await app.inject({ method: 'GET', url: '/auth/csrf' });
       expect(res.statusCode).toBe(200);
       const cookie = res.cookies.find((x) => x.name === CSRF)!;
       expect(cookie).toMatchObject({
         secure: true,
         path: '/',
-        sameSite: 'Lax',
+        sameSite: 'Strict',
         value: res.json().csrfToken,
       });
+      expect(cookie.maxAge).toBeGreaterThan(0);
+      expect(cookie.httpOnly).toBeFalsy();
       expect(cookie.domain).toBeUndefined();
     });
 

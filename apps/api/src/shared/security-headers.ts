@@ -1,4 +1,4 @@
-import type { FastifyInstance } from 'fastify';
+import type { FastifyInstance, FastifyReply } from 'fastify';
 
 /**
  * Baseline response headers for every API response (P9 hardening, docs/p9/remaining-work.md #1). The API serves JSON
@@ -16,6 +16,20 @@ import type { FastifyInstance } from 'fastify';
 export interface SecurityHeaderOptions {
   /** Send HSTS (production, behind TLS). */
   hsts: boolean;
+  /** R4: Swagger UI is mounted (NODE_ENV development|test only); only then does `/docs` skip the CSP. */
+  docs?: boolean;
+}
+
+/** R4: the only sanctioned way for a route to replace the baseline CSP/CORP (grep for `securityOverride(`). */
+export interface SecurityOverride {
+  csp?: string;
+  corp?: 'same-origin' | 'same-site' | 'cross-origin';
+}
+
+declare module 'fastify' {
+  interface FastifyReply {
+    securityOverride(override: SecurityOverride): FastifyReply;
+  }
 }
 
 export const API_CSP =
@@ -52,9 +66,14 @@ export function registerSecurityHeaders(
   app: FastifyInstance,
   options: SecurityHeaderOptions,
 ): void {
+  app.decorateReply('securityOverride', function (this: FastifyReply, o: SecurityOverride) {
+    if (o.csp !== undefined) this.header('content-security-policy', o.csp);
+    if (o.corp !== undefined) this.header('cross-origin-resource-policy', o.corp);
+    return this;
+  });
   app.addHook('onSend', async (request, reply, payload) => {
     const path = request.url.split('?')[0] ?? '';
-    const isDocs = path === '/docs' || path.startsWith('/docs/');
+    const isDocs = options.docs === true && (path === '/docs' || path.startsWith('/docs/'));
     for (const [name, value] of Object.entries(API_BASELINE_HEADERS))
       setIfAbsent(reply, name, value);
     if (!isDocs) setIfAbsent(reply, 'content-security-policy', API_CSP);

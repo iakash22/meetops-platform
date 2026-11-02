@@ -99,3 +99,45 @@ describe('P9 R20-R23: nginx security headers', () => {
     expect(html).not.toMatch(/<meta[^>]+http-equiv/i);
   });
 });
+
+describe('P9 R20: inline content is hash-allowed, production origins are https', () => {
+  it('index.html passes scripts/check-csp.mjs against the nginx template', async () => {
+    const { checkCsp } = (await import('../scripts/check-csp.mjs')) as {
+      checkCsp: (html: string, template: string) => string[];
+    };
+    const html = readFileSync(resolve(root, 'apps', 'web', 'index.html'), 'utf8');
+    expect(checkCsp(html, template)).toEqual([]);
+    expect(checkCsp(html.replace('</style>', ' </style>'), template)[0]).toMatch(/needs 'sha256-/);
+    expect(checkCsp('<div style="x"></div>', template)).toContain(
+      'style= attribute found (blocked by style-src)',
+    );
+  });
+
+  it('rejects http:// and ws:// origins unless CSP_UPGRADE_INSECURE=off', () => {
+    const local = {
+      CSP_API_ORIGIN: 'http://localhost:3000',
+      CSP_REALTIME_ORIGIN: 'ws://localhost:4001',
+      CSP_STORAGE_ORIGIN: 'https://files.example.com',
+    };
+    const prod = validate(local);
+    expect(prod.status).not.toBe(0);
+    expect(prod.stderr).toMatch(/https:\/\/ or wss:\/\/ in production/);
+    expect(validate({ ...local, CSP_UPGRADE_INSECURE: 'off' }).status).toBe(0);
+  });
+});
+
+describe('P9 R24: Vite dev and preview CSP', () => {
+  it('derives both from the nginx CSP, adding only a dev nonce and local origins', async () => {
+    const { localCsp } = await import('../csp.config');
+    const preview = localCsp(template);
+    const dev = localCsp(template, 'n0nce');
+    for (const csp of [preview, dev]) {
+      expect(csp).not.toMatch(/unsafe-inline|unsafe-eval|\$\{|\$csp|report-to|upgrade-insecure/);
+      expect(csp).toContain("frame-ancestors 'none'");
+      expect(csp).toMatch(/connect-src 'self' http:\/\/localhost:\* ws:\/\/localhost:\*/);
+    }
+    expect(preview).not.toContain('nonce-');
+    expect(dev).toMatch(/script-src 'self' 'nonce-n0nce'/);
+    expect(dev).toMatch(/style-src 'self' 'sha256-[^']+' 'nonce-n0nce'/);
+  });
+});

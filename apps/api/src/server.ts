@@ -133,7 +133,7 @@ export function createServer(options: CreateServerOptions = {}) {
   });
 
   // P9: baseline security headers on every response (errors and 404s included); HSTS only in production.
-  registerSecurityHeaders(app, { hsts: nodeEnv === 'production' });
+  registerSecurityHeaders(app, { hsts: nodeEnv === 'production', docs: isRelaxedEnv(nodeEnv) });
 
   registerDomainErrorHandler(app);
   registerNotFoundHandler(app);

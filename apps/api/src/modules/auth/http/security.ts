@@ -156,11 +156,25 @@ export function makeGuards(auth: AuthService, cfg: HttpSecurityConfig) {
       maxAge: Math.floor(cfg.sessionPolicy.absoluteTimeoutMs / 1000),
     });
 
-  const clearSessionCookie = (reply: FastifyReply) =>
+  // R13: the CSRF cookie is only read by same-site JS, so it is Strict and lives as long as a session can.
+  const csrfCookie = {
+    ...baseCookie,
+    sameSite: 'strict' as const,
+    httpOnly: false,
+    maxAge: Math.floor(cfg.sessionPolicy.absoluteTimeoutMs / 1000),
+  };
+  const preSessionCookie = { ...baseCookie, sameSite: 'strict' as const, httpOnly: true };
+
+  /** R14: logout clears the session, CSRF and pre-session cookies with matching name/path/attributes. */
+  const clearSessionCookie = (reply: FastifyReply) => {
     reply.clearCookie(cfg.cookieName, { ...baseCookie, httpOnly: true });
+    reply.clearCookie(cfg.csrfCookieName, { ...baseCookie, sameSite: 'strict', httpOnly: false });
+    reply.clearCookie(cfg.preSessionCookieName, preSessionCookie);
+    return reply;
+  };
 
   const setCsrfCookie = (reply: FastifyReply, token: string) => {
-    reply.setCookie(cfg.csrfCookieName, token, { ...baseCookie, httpOnly: false });
+    reply.setCookie(cfg.csrfCookieName, token, csrfCookie);
     return token;
   };
 
@@ -175,9 +189,7 @@ export function makeGuards(auth: AuthService, cfg: HttpSecurityConfig) {
     const pre = randomBytes(32).toString('base64url');
     // R13: the pre-session nonce only has to survive the login form, so it expires after an hour and is Strict.
     reply.setCookie(cfg.preSessionCookieName, pre, {
-      ...baseCookie,
-      sameSite: 'strict',
-      httpOnly: true,
+      ...preSessionCookie,
       maxAge: PRE_SESSION_MAX_AGE_S,
     });
     return setCsrfCookie(reply, signCsrf(cfg.csrfSecret, `p:${pre}`));

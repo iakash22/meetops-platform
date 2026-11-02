@@ -50,7 +50,7 @@ describe('P9: API baseline security headers', () => {
 
   it('keeps headers a route set itself, skips CSP for the dev Swagger UI, and sends HSTS when enabled', async () => {
     const app = Fastify();
-    registerSecurityHeaders(app, { hsts: true });
+    registerSecurityHeaders(app, { hsts: true, docs: true });
     app.get('/preview', async (_req, reply) =>
       reply
         .header('content-security-policy', "default-src 'none'; style-src 'unsafe-inline'")

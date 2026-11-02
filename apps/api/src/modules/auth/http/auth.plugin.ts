@@ -147,7 +147,7 @@ export async function authRoutes(app: FastifyInstance, opts: AuthPluginOptions) 
         tags,
         summary: 'Get CSRF token',
         description:
-          'Public. Returns { csrfToken } and sets the CSRF cookie (__Host-meetops_csrf in production; Secure, Path=/, SameSite=Lax). The token is an HMAC bound to the current session id, or to an HttpOnly pre-session nonce cookie before login. Send it as X-CSRF-Token on every POST/PUT/PATCH/DELETE. Login returns a fresh token; org create/switch refresh the cookie; re-fetch after logout.',
+          'Public. Returns { csrfToken } and sets the CSRF cookie (__Host-meetops_csrf in production; Secure, Path=/, SameSite=Strict, Max-Age = session absolute timeout). The token is an HMAC bound to the current session id, or to an HttpOnly pre-session nonce cookie before login. Send it as X-CSRF-Token on every POST/PUT/PATCH/DELETE. Login returns a fresh token; org create/switch refresh the cookie; re-fetch after logout.',
         response: { 200: CsrfBody },
       },
     },
