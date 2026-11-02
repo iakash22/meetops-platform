@@ -1,14 +1,39 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { MeetingAnalytics } from '@meetops/contracts';
+import { MAX_ANALYTICS_RANGE_DAYS } from '@meetops/contracts/types';
 import { ApiError } from '@/lib/api/client';
-import { createAnalyticsApi, formatDuration, rangeFor } from '@/features/analytics/api';
+import {
+  RANGE_PRESETS,
+  createAnalyticsApi,
+  formatDuration,
+  rangeFor,
+  windowFor,
+} from '@/features/analytics/api';
 import { AnalyticsDashboard } from '@/features/analytics/analytics-page';
 import { createMockApi, renderApp, resetStores } from './fixtures/render';
 
 const ORG = '00000000-0000-4000-8000-000000000001';
 const PREFIX = `/orgs/${ORG}/analytics/meetings?`;
+const DAY_MS = 86_400_000;
+const spanDays = (q: { from: string; to: string }) =>
+  (Date.parse(q.to) - Date.parse(q.from)) / DAY_MS;
+
+/** 13 UTC month buckets, Nov 2025 .. Nov 2026, as the API returns for the 12-month preset. */
+const monthPeriods = Array.from({ length: 13 }, (_, i) => ({
+  start: new Date(Date.UTC(2025, 10 + i, 1)).toISOString(),
+  count: i + 1,
+}));
+const twelveMonths = (over: Partial<MeetingAnalytics> = {}): MeetingAnalytics =>
+  data({
+    from: '2025-11-01T00:00:00.000Z',
+    to: '2026-11-01T00:00:00.000Z',
+    bucket: 'month',
+    total: 91,
+    periods: monthPeriods,
+    ...over,
+  });
 
 const data = (over: Partial<MeetingAnalytics> = {}): MeetingAnalytics => ({
   organizationId: ORG,
@@ -74,7 +99,56 @@ describe('analytics api helpers', () => {
   });
 });
 
+describe('range cap (MAX_ANALYTICS_RANGE_DAYS)', () => {
+  const now = new Date('2026-10-31T13:00:00.000Z');
+
+  it('is 366 days, the same cap the API enforces (366 → 200, 367 → 400 in apps/api/test/analytics.test.ts)', () => {
+    expect(MAX_ANALYTICS_RANGE_DAYS).toBe(366);
+  });
+  it('the 12-month preset is a 365-day, month-bucketed window inside the cap', () => {
+    const r = rangeFor('365d', now);
+    expect(r).toEqual({
+      from: '2025-11-01T00:00:00.000Z',
+      to: '2026-11-01T00:00:00.000Z',
+      bucket: 'month',
+    });
+    expect(spanDays(r)).toBe(365);
+  });
+  it('allows exactly 366 days unchanged', () => {
+    const r = windowFor(366, 'month', now);
+    expect(spanDays(r)).toBe(366);
+    expect(r).toEqual({
+      from: '2025-10-31T00:00:00.000Z',
+      to: '2026-11-01T00:00:00.000Z',
+      bucket: 'month',
+    });
+  });
+  it('clamps 367 days (or more) to 366, so the client never sends a range the API rejects', () => {
+    expect(windowFor(367, 'month', now)).toEqual(windowFor(366, 'month', now));
+    expect(spanDays(windowFor(367, 'day', now))).toBe(366);
+    expect(spanDays(windowFor(10_000, 'week', now))).toBe(366);
+  });
+  it('no preset exceeds the cap', () => {
+    for (const p of RANGE_PRESETS) {
+      expect(spanDays(rangeFor(p.id, now))).toBe(Math.min(p.days, MAX_ANALYTICS_RANGE_DAYS));
+      expect(spanDays(rangeFor(p.id, now))).toBeLessThanOrEqual(MAX_ANALYTICS_RANGE_DAYS);
+    }
+  });
+});
+
 describe('AnalyticsDashboard', () => {
+  it('renders a 12-month view: one UTC month bar per bucket, labelled by month and year', () => {
+    render(<AnalyticsDashboard data={twelveMonths()} />);
+    const list = screen.getByRole('list', { name: 'Meetings per month' });
+    const rows = within(list).getAllByRole('listitem');
+    expect(rows).toHaveLength(13);
+    expect(rows[0]).toHaveTextContent('Nov 2025');
+    expect(rows[0]).toHaveTextContent('1');
+    expect(rows[12]).toHaveTextContent('Nov 2026');
+    expect(rows[12]).toHaveTextContent('13');
+    expect(screen.getByTestId('stat-Meetings')).toHaveTextContent('91');
+  });
+
   it('renders totals, durations, breakdowns and periods, skipping zero rows', () => {
     render(<AnalyticsDashboard data={data()} />);
     expect(screen.getByTestId('stat-Meetings')).toHaveTextContent('5');
@@ -121,6 +195,31 @@ describe('/analytics page', () => {
         expect.stringMatching(/analytics\/meetings\?.*bucket=week$/),
       ),
     );
+  });
+
+  it('the Last 12 months preset requests a 365-day month window and renders the month view', async () => {
+    const api = apiWith((p) => {
+      if (!p.startsWith(PREFIX)) return undefined;
+      return new URLSearchParams(p.slice(PREFIX.length)).get('bucket') === 'month'
+        ? twelveMonths()
+        : data();
+    });
+    renderApp('/analytics', api);
+    expect(await screen.findByTestId('analytics-dashboard')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Last 12 months' }));
+    expect(screen.getByRole('button', { name: 'Last 12 months' })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    );
+    const list = await screen.findByRole('list', { name: 'Meetings per month' });
+    expect(within(list).getAllByRole('listitem')).toHaveLength(13);
+    const monthCall = vi
+      .mocked(api.request)
+      .mock.calls.map(([, p]) => p)
+      .find((p) => p.startsWith(PREFIX) && p.endsWith('bucket=month'));
+    expect(monthCall).toBeDefined();
+    const params = new URLSearchParams(monthCall!.slice(PREFIX.length));
+    expect(spanDays({ from: params.get('from')!, to: params.get('to')! })).toBe(365);
   });
 
   it('shows the empty state when the range has no meetings', async () => {

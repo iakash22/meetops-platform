@@ -40,18 +40,28 @@ export type RangePresetId = (typeof RANGE_PRESETS)[number]['id'];
 const DAY_MS = 86_400_000;
 
 /**
- * Half-open `[from, to)` window ending at the start of tomorrow (UTC), so today is included and
- * the query key stays stable within a day. Clamped to the API's MAX_ANALYTICS_RANGE_DAYS.
+ * Half-open `[from, to)` window of `days` days ending at the start of tomorrow (UTC), so today is
+ * included and the query key stays stable within a day. `days` is clamped to the API's
+ * MAX_ANALYTICS_RANGE_DAYS (inclusive), so the client never sends a range the API would reject.
  */
-export function rangeFor(id: RangePresetId, now: Date = new Date()): AnalyticsQuery {
-  const preset = RANGE_PRESETS.find((p) => p.id === id) ?? RANGE_PRESETS[1];
-  const days = Math.min(preset.days, MAX_ANALYTICS_RANGE_DAYS);
+export function windowFor(
+  days: number,
+  bucket: AnalyticsBucket,
+  now: Date = new Date(),
+): AnalyticsQuery {
+  const span = Math.min(days, MAX_ANALYTICS_RANGE_DAYS);
   const to = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1);
   return {
-    from: new Date(to - days * DAY_MS).toISOString(),
+    from: new Date(to - span * DAY_MS).toISOString(),
     to: new Date(to).toISOString(),
-    bucket: preset.bucket,
+    bucket,
   };
+}
+
+/** The window for a range preset (see `windowFor`). */
+export function rangeFor(id: RangePresetId, now: Date = new Date()): AnalyticsQuery {
+  const preset = RANGE_PRESETS.find((p) => p.id === id) ?? RANGE_PRESETS[1];
+  return windowFor(preset.days, preset.bucket, now);
 }
 
 export function formatDuration(sec: number | null): string {

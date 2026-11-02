@@ -13,13 +13,13 @@ export const analyticsKeys = {
 export const isNotAvailable = (err: unknown) => err instanceof ApiError && err.status === 404;
 const retry = (count: number, err: unknown) => !isNotAvailable(err) && count < 1;
 
-export function useMeetingAnalytics(query: AnalyticsQuery) {
+export function useMeetingAnalytics(query: AnalyticsQuery, { enabled = true } = {}) {
   const api = createAnalyticsApi(useApi().request);
   const organizationId = useOrganizationId();
   return useQuery({
     queryKey: analyticsKeys.meetings(organizationId, query),
     queryFn: () => api.meetings(organizationId, query),
-    enabled: !!organizationId,
+    enabled: enabled && !!organizationId,
     retry,
   });
 }
