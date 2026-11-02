@@ -3,15 +3,10 @@ import swagger from '@fastify/swagger';
 import swaggerUi from '@fastify/swagger-ui';
 import { REDACT_KEYS } from '@meetops/contracts';
 import { createLogger } from '@meetops/logger';
-import {
-  isRelaxedEnv,
-  defaultModuleDeps,
-  registerModules,
-  type ModuleDeps,
-} from './modules/index.js';
+import { defaultModuleDeps, registerModules, type ModuleDeps } from './modules/index.js';
 import { registerDomainErrorHandler, registerNotFoundHandler } from './shared/http-errors.js';
 import { parseTrustProxy } from './shared/trust-proxy.js';
-import { registerSecurityHeaders } from './shared/security-headers.js';
+import { docsEnabledFromEnv, registerSecurityHeaders } from './shared/security-headers.js';
 import { registerJsonOnly } from './shared/json-only.js';
 import { clientIpOptionsFromEnv, resolveClientIp } from './shared/geoip/client-ip.js';
 import { truncateIp } from './shared/geoip/ip.js';
@@ -79,6 +74,8 @@ export interface CreateServerOptions {
   logStream?: { write(line: string): void };
   /** Overrides READINESS_TIMEOUT_MS (per-probe timeout for /ready). */
   readinessTimeoutMs?: number;
+  /** Overrides API_DOCS_ENABLED (Swagger UI outside development|test; 'true' enables). */
+  docsEnabled?: string;
   /** Overrides AUTH_MAIL_QUEUE* / AUTH_MAIL_WORKER_* (auth mail queue selection). */
   mailQueueEnv?: Record<string, string | undefined>;
 }
@@ -134,7 +131,8 @@ export function createServer(options: CreateServerOptions = {}) {
   });
 
   // P9: baseline security headers on every response (errors and 404s included); HSTS only in production.
-  registerSecurityHeaders(app, { hsts: nodeEnv === 'production', docs: isRelaxedEnv(nodeEnv) });
+  const docs = docsEnabledFromEnv(nodeEnv, options.docsEnabled ?? process.env.API_DOCS_ENABLED);
+  registerSecurityHeaders(app, { hsts: nodeEnv === 'production', docs });
 
   // P9 R16: unsafe requests with a body must be JSON (415 otherwise) unless the route allowlists the type.
   registerJsonOnly(app);
@@ -151,9 +149,9 @@ export function createServer(options: CreateServerOptions = {}) {
     },
   });
 
-  // Swagger UI and its /docs/json spec only for NODE_ENV exactly development|test (fail closed).
-  // The spec is still generated in-process (app.swagger()) for tests and tooling.
-  if (isRelaxedEnv(nodeEnv)) {
+  // Swagger UI and its /docs/json spec: NODE_ENV exactly development|test, or API_DOCS_ENABLED=true (fail closed).
+  // Served under DOCS_CSP. The spec is still generated in-process (app.swagger()) for tests and tooling.
+  if (docs) {
     void app.register(swaggerUi, {
       routePrefix: '/docs',
     });

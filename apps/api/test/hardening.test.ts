@@ -8,6 +8,12 @@ import { InMemoryRateLimiter } from '../src/modules/auth/infrastructure/rate-lim
 import { systemClock } from '../src/shared/ports.js';
 import { parseTrustProxy } from '../src/shared/trust-proxy.js';
 import { Client, fakeHasher, ORIGIN } from './helpers.js';
+import {
+  API_CSP,
+  DOCS_CSP,
+  HSTS_VALUE,
+  docsEnabledFromEnv,
+} from '../src/shared/security-headers.js';
 
 // '' disables the DATABASE_URL / REDIS_URL defaults, so these hold even where CI exports them.
 const NO_INFRA = { databaseUrl: '', redisUrl: '' };
@@ -370,14 +376,54 @@ describe('log redaction', () => {
 });
 
 describe('Swagger UI gate', () => {
-  const serverFor = async (nodeEnv: string) => {
+  it('docsEnabledFromEnv: dev/test on; elsewhere only an explicit API_DOCS_ENABLED=true', () => {
+    expect(docsEnabledFromEnv('development', undefined)).toBe(true);
+    expect(docsEnabledFromEnv('test', 'false')).toBe(true);
+    for (const env of ['production', 'staging', '', undefined]) {
+      expect(docsEnabledFromEnv(env, undefined)).toBe(false);
+      for (const v of ['', 'false', '0', '1', 'yes', 'on', 'enabled'])
+        expect(docsEnabledFromEnv(env, v)).toBe(false);
+      expect(docsEnabledFromEnv(env, 'true')).toBe(true);
+      expect(docsEnabledFromEnv(env, ' TRUE ')).toBe(true);
+    }
+  });
+  const serverFor = async (nodeEnv: string, docsEnabled = '') => {
     const { defaultModuleDeps } = await import('../src/modules/index.js');
     // Fully injected deps so strict envs can start; only the docs gate is under test.
     const deps = defaultModuleDeps({}, { nodeEnv: 'test' });
-    const app = createServer({ nodeEnv, deps });
+    const app = createServer({ nodeEnv, deps, docsEnabled });
     await app.ready();
     return app;
   };
+  it.each(['false', '1', 'yes', ''])(
+    'production keeps /docs off for API_DOCS_ENABLED=%j',
+    async (flag) => {
+      const app = await serverFor('production', flag);
+      for (const url of ['/docs', '/docs/json'])
+        expect((await app.inject({ method: 'GET', url })).statusCode, url).toBe(404);
+      await app.close();
+    },
+  );
+  it('production serves /docs with the strict DOCS_CSP only when API_DOCS_ENABLED=true', async () => {
+    const app = await serverFor('production', 'true');
+    for (const url of ['/docs/json', '/docs/', '/docs/static/swagger-initializer.js']) {
+      const r = await app.inject({ method: 'GET', url });
+      expect(r.statusCode, url).toBe(200);
+      const csp = r.headers['content-security-policy'];
+      expect(csp, url).toBe(DOCS_CSP);
+      expect(csp).not.toMatch(/unsafe-inline|unsafe-eval|https:|\*/);
+      expect(r.headers['x-frame-options']).toBe('DENY');
+      expect(r.headers['strict-transport-security']).toBe(HSTS_VALUE);
+    }
+    // The UI page loads only external same-origin scripts, so script-src 'self' (no inline) is enough.
+    const html = (await app.inject({ method: 'GET', url: '/docs/' })).body;
+    expect(html).not.toMatch(/<script(?![^>]*\ssrc=)[^>]*>/i);
+    // Non-docs routes keep the JSON API CSP.
+    expect(
+      (await app.inject({ method: 'GET', url: '/health' })).headers['content-security-policy'],
+    ).toBe(API_CSP);
+    await app.close();
+  });
   it.each(['production', 'staging', ''])(
     '/docs and /docs/json are 404 when NODE_ENV=%s',
     async (env) => {
@@ -393,7 +439,9 @@ describe('Swagger UI gate', () => {
   it.each(['development', 'test'])('/docs is served when NODE_ENV=%s', async (env) => {
     const app = await serverFor(env);
     expect((await app.inject({ method: 'GET', url: '/docs/json' })).statusCode).toBe(200);
-    expect([200, 302]).toContain((await app.inject({ method: 'GET', url: '/docs' })).statusCode);
+    const ui = await app.inject({ method: 'GET', url: '/docs' });
+    expect([200, 302]).toContain(ui.statusCode);
+    expect(ui.headers['content-security-policy']).toBe(DOCS_CSP);
     await app.close();
   });
 });
