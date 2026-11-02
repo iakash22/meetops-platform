@@ -81,6 +81,13 @@ describe('clamd sidecar config (MAL-1, ADR-018)', () => {
     expect(clamavService).toContain('../clamav/freshclam.conf:/etc/clamav/freshclam.conf:ro');
   });
 
+  it('publishes no host port: clamd (unauthenticated) is reachable only on the compose networks (#377 M7)', () => {
+    expect(clamavService).not.toBe('');
+    expect(clamavService).not.toMatch(/^ {4}(ports|expose):/m);
+    expect(clamavService).not.toMatch(/^ {4}network_mode:/m);
+    expect(clamavService).toMatch(/\n {4}networks: \[default, media-internal\]\n/);
+  });
+
   it('wires the worker to the sidecar', () => {
     expect(compose).toMatch(/\n {6}CLAMD_HOST: clamav\n/);
     expect(compose).toMatch(/\n {6}UPLOAD_SCAN_CLAMAV: \$\{UPLOAD_SCAN_CLAMAV:-false\}\n/);

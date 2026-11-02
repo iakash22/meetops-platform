@@ -49,7 +49,15 @@ fail-closed: if clamd is unreachable, the job retries and the final attempt quar
   scanned in full. If `MAX_MEDIA_BYTES` is raised, raise these limits first (the worker config test fails otherwise).
 - **Over the limit.** `AlertExceedsMax yes`: a file over a scan limit (size, or `MaxScanTime` = 10 min) is reported as
   `Heuristics.Limits.Exceeded.*` instead of a partly-scanned "OK". A stream over `StreamMaxLength` is refused
-  (`INSTREAM size limit exceeded`). Both are fail-closed, and neither counts as "infected".
+  (`INSTREAM size limit exceeded. ERROR`). Both are fail-closed. **Today** a `Heuristics.Limits.Exceeded.*` reply is
+  handled like any other `FOUND`: the upload is quarantined as `malware_detected`. An ERROR reply is a `ClamdError`:
+  the job retries, and the last attempt quarantines it (`scan_unavailable`). MAL-2 gives limit hits their own error
+  code and metric, so they are no longer labelled `malware_detected`.
+- **Client.** Only the exact reply `stream: OK\0` is clean. Every other reply (ERROR, malformed, empty, extra text),
+  a timeout, a socket error or a file read error rejects (`apps/worker/test/clamd.test.ts`). **Today** the worker
+  client has one fixed 120 s total timeout, below clamd's `MaxScanTime` (600 s): a scan slower than 120 s is
+  abandoned by the worker and ends quarantined (`scan_unavailable`) after retries, while clamd keeps scanning.
+  MAL-2 makes the timeout size-aware, above `MaxScanTime`.
 - **Signatures.** The image is pinned by version and digest (ClamAV 1.4 LTS). freshclam runs daily (`FRESHCLAM_CHECKS=1`)
   and clamd reloads without blocking scans.
 - **Verified.** A clean 1_400_000_000-byte WAV scanned `OK` in about 35 s through INSTREAM with this config; EICAR was
