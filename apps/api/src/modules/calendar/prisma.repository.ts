@@ -210,6 +210,9 @@ export class PrismaCalendarConnections implements CalendarConnectionsRepository 
     );
   }
 
+  /** revoke() also deletes the connection's event links in its transaction. */
+  readonly revokesLinks = true;
+
   async revoke(organizationId: string, userId: string, id: string) {
     if (!UUID_RE.test(id)) return false;
     return this.org(organizationId, async (tx) => {
@@ -227,6 +230,8 @@ export class PrismaCalendarConnections implements CalendarConnectionsRepository 
       // Same transaction: purge the events cached by the background sync (the app role has no DELETE; the
       // definer function only deletes events of an already-revoked connection in this org context).
       await tx.$queryRaw`SELECT calendar_events_purge_for_connection(${organizationId}::uuid, ${id}::uuid)`;
+      // Same transaction: event -> meeting links of the connection (a failure rolls the revoke back).
+      await tx.calendarEventLink.deleteMany({ where: { organizationId, connectionId: id } });
       return true;
     });
   }

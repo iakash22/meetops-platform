@@ -11,7 +11,8 @@ export class SearchTimeoutError extends DomainError {
     super('PROVIDER_UNAVAILABLE', 'Search took too long; refine the query', 503);
   }
 }
-const isStatementTimeout = (e: unknown): boolean => {
+/** Postgres 57014 (statement timeout) in a pg or Prisma error's code, message or meta. */
+export const isStatementTimeout = (e: unknown): boolean => {
   const o = (e ?? {}) as { code?: unknown; message?: unknown; meta?: unknown };
   const parts = [o.code, o.message].map((v) => (typeof v === 'string' ? v : ''));
   parts.push(JSON.stringify(o.meta ?? ''));

@@ -501,6 +501,8 @@ export const INTEGRATION_WEBHOOK_MAX_BYTES = 1_048_576;
 /** Read-only, org-scoped analytics (P7). */
 export const ANALYTICS_PATHS = {
   meetings: '/orgs/:organizationId/analytics/meetings',
+  /** Task and AI-extracted-task review counts (P7). */
+  tasks: '/orgs/:organizationId/analytics/tasks',
 } as const;
 
 /** Longest analytics window (`to - from`). */

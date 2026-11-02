@@ -13,6 +13,8 @@ export type RealtimeConfig = {
   /** Session cookie read on web handshakes: `__Host-meetops_sid`, or `meetops_sid` only when NODE_ENV=development. */
   sessionCookieName: string;
   path: string;
+  /** Send HSTS on HTTP responses (NODE_ENV=production). */
+  hsts?: boolean;
   /** Re-verify every live socket's credential this often (REALTIME_REVALIDATE_INTERVAL_MS, default 60 s, min 1 s). */
   revalidateIntervalMs: number;
   /** Connection attempts allowed per client IP per window (REALTIME_CONN_LIMIT_PER_IP, default 30). */
@@ -67,6 +69,7 @@ export function loadRealtimeConfig(env: NodeJS.ProcessEnv = process.env): Realti
     extensionOrigins: extensionIds.map((id) => `chrome-extension://${id}`),
     sessionCookieName: env.NODE_ENV === 'development' ? 'meetops_sid' : '__Host-meetops_sid',
     path: env.REALTIME_SOCKET_PATH || '/socket.io',
+    hsts: env.NODE_ENV === 'production',
     revalidateIntervalMs: positiveInt(env, 'REALTIME_REVALIDATE_INTERVAL_MS', 60_000, 1_000),
     connLimitPerIp: positiveInt(env, 'REALTIME_CONN_LIMIT_PER_IP', 30),
     connLimitPerUser: positiveInt(env, 'REALTIME_CONN_LIMIT_PER_USER', 20),

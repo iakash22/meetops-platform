@@ -1,6 +1,8 @@
 import {
   GoogleCalendarProvider,
   OutlookCalendarProvider,
+  OutlookTenantError,
+  parseOutlookTenant,
   InMemoryOAuthStateStore,
   LocalKeyProvider,
   TokenCipher,
@@ -90,7 +92,13 @@ export function calendarSyncProvidersFromEnv(
   const msSecret = env.OUTLOOK_CALENDAR_CLIENT_SECRET;
   if (msId && msSecret) {
     const apiOrigin = calendarApiOrigin(env);
-    const tenant = env.OUTLOOK_CALENDAR_TENANT?.trim();
+    let tenant: string | undefined;
+    try {
+      tenant = parseOutlookTenant(env.OUTLOOK_CALENDAR_TENANT);
+    } catch (err) {
+      if (err instanceof OutlookTenantError) throw new CalendarSyncEnvError(err.message);
+      throw err;
+    }
     out.outlook = outlookSyncProvider(
       new OutlookCalendarProvider({
         clientId: msId,

@@ -4,7 +4,7 @@ import type { RateLimiter } from '../../auth/domain/ports.js';
 import { RateLimitedError } from '../../auth/domain/errors.js';
 import type { DirectoryAccess, DirectoryCaller } from '../../directory/access.js';
 import {
-  InvalidAnalyticsRangeError,
+  parseAnalyticsRange,
   type AnalyticsBucket,
   type MeetingAnalyticsResult,
   deriveExternalMeetingId,
@@ -64,15 +64,7 @@ export class MeetingService {
     q: { from: string; to: string; bucket?: AnalyticsBucket | undefined },
   ): Promise<{ from: Date; to: Date; bucket: AnalyticsBucket } & MeetingAnalyticsResult> {
     this.orgs.authorize(c.ctx, 'read', 'Meeting');
-    const from = new Date(q.from);
-    const to = new Date(q.to);
-    if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime()))
-      throw new InvalidAnalyticsRangeError('from and to must be ISO 8601 date-times');
-    if (to <= from) throw new InvalidAnalyticsRangeError('to must be after from');
-    if (to.getTime() - from.getTime() > MAX_ANALYTICS_RANGE_DAYS * 86_400_000)
-      throw new InvalidAnalyticsRangeError(
-        `The range may span at most ${MAX_ANALYTICS_RANGE_DAYS} days`,
-      );
+    const { from, to } = parseAnalyticsRange(q, MAX_ANALYTICS_RANGE_DAYS);
     const bucket = q.bucket ?? 'day';
     const r = await this.meetings.analytics(c.ctx.organizationId, { from, to, bucket });
     return { from, to, bucket, ...r };

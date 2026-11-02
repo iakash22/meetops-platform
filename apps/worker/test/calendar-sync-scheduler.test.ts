@@ -160,3 +160,25 @@ describe('CALENDAR_SYNC_TICK_MS validation', () => {
     },
   );
 });
+
+describe('OUTLOOK_CALENDAR_TENANT validation (worker)', () => {
+  const env = {
+    NODE_ENV: 'test',
+    OUTLOOK_CALENDAR_CLIENT_ID: 'id',
+    OUTLOOK_CALENDAR_CLIENT_SECRET: 'placeholder',
+  };
+  it('builds the Outlook provider for a domain or GUID tenant', () => {
+    for (const t of ['contoso.onmicrosoft.com', '72f988bf-86f1-41af-91ab-2d7cd011db47', 'common'])
+      expect(
+        calendarSyncProvidersFromEnv({ ...env, OUTLOOK_CALENDAR_TENANT: t }).outlook,
+      ).toBeDefined();
+  });
+  it('fails startup with CalendarSyncEnvError on a malformed tenant', () => {
+    expect(() =>
+      calendarSyncProvidersFromEnv({ ...env, OUTLOOK_CALENDAR_TENANT: 'not a tenant' }),
+    ).toThrow(CalendarSyncEnvError);
+    expect(() =>
+      calendarSyncProvidersFromEnv({ ...env, OUTLOOK_CALENDAR_TENANT: 'contoso' }),
+    ).toThrow(/OUTLOOK_CALENDAR_TENANT must be/);
+  });
+});

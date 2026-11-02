@@ -38,9 +38,38 @@ export const OUTLOOK_IDENTITY_SCOPES = Object.freeze([
   'email',
   'offline_access',
 ] as const);
-/** Tenant segment: `common` (work + personal), `organizations`, `consumers`, or a tenant GUID. */
+/**
+ * Tenant segment of the Microsoft identity platform authority: `common` (work + personal), `organizations`,
+ * `consumers`, a tenant GUID, or a verified domain of the tenant (e.g. `contoso.onmicrosoft.com`, `contoso.com`).
+ * Domains: 2+ DNS labels (1-63 chars, alphanumeric with inner hyphens), alphabetic TLD, at most 253 chars.
+ */
 const TENANT_RE =
-  /^(common|organizations|consumers|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i;
+  /^(common|organizations|consumers|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|(?=.{4,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63})$/i;
+
+export class OutlookTenantError extends Error {
+  override name = 'OutlookTenantError';
+}
+
+/** True for a tenant segment the provider accepts (see TENANT_RE). */
+export function isValidOutlookTenant(tenant: string): boolean {
+  return TENANT_RE.test(tenant);
+}
+
+/**
+ * OUTLOOK_CALENDAR_TENANT at startup: unset/blank = undefined (provider default `common`); a valid tenant is
+ * returned trimmed; anything else throws OutlookTenantError naming the key and the accepted forms (never the
+ * value, which could be a mis-pasted secret).
+ */
+export function parseOutlookTenant(raw: string | undefined): string | undefined {
+  const t = raw?.trim();
+  if (!t) return undefined;
+  if (!TENANT_RE.test(t))
+    throw new OutlookTenantError(
+      'OUTLOOK_CALENDAR_TENANT must be common, organizations, consumers, a tenant GUID, or a verified ' +
+        'tenant domain (e.g. contoso.onmicrosoft.com)',
+    );
+  return t;
+}
 const CODE_RE = /^[A-Za-z0-9._~/*!$-]{1,4096}$/;
 /** Graph pages are followed at most this many times per listEvents (CALENDAR_MAX_EVENTS caps items anyway). */
 const MAX_PAGES = 10;

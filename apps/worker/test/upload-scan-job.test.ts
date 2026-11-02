@@ -129,6 +129,23 @@ describe('processUploadScan (sets scanStatus from the #269 content check)', () =
     expect(await processUploadScan(job(), c.d)).toMatchObject({ status: 'clean' });
   });
 
+  it('MAL-2: a clamd limit hit quarantines as scan_limit_exceeded (fail-closed), not malware_detected', async () => {
+    const a = deps(WEBM);
+    a.d.antivirus = {
+      scanFile: async () => ({
+        infected: true,
+        signature: 'Heuristics.Limits.Exceeded.MaxScanTime',
+        limitExceeded: true,
+      }),
+    };
+    expect(await processUploadScan(job(), a.d)).toMatchObject({
+      status: 'quarantined',
+      result: { verdict: 'rejected', code: 'scan_limit_exceeded' },
+    });
+    expect(a.setScanStatus).toHaveBeenCalledWith(ORG, ID, 'quarantined');
+    expect(a.setScanStatus).not.toHaveBeenCalledWith(ORG, ID, 'clean');
+  });
+
   it('skips invalid jobs, other-org or unknown uploads, and already-decided rows', async () => {
     const a = deps(WEBM);
     expect(await processUploadScan(job({ subjectType: 'recording_session' }), a.d)).toEqual({
