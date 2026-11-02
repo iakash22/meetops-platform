@@ -22,7 +22,12 @@ describe('meeting analytics (P7, read-only, org-scoped)', () => {
   const createOrg = async (c: Client, name: string) =>
     (await c.post('/orgs', { name })).json<{ organization: { id: string } }>().organization.id;
 
-  async function join(owner: Client, orgId: string, email: string, role: 'viewer' | 'member') {
+  async function join(
+    owner: Client,
+    orgId: string,
+    email: string,
+    role: 'admin' | 'viewer' | 'member',
+  ) {
     const c = await signupAndLogin(app, email);
     expect((await owner.post(`/orgs/${orgId}/invitations`, { email, role })).statusCode).toBe(201);
     const sent = [...app.mail.sent].reverse().find((m) => m.template === 'invitation');
@@ -122,6 +127,17 @@ describe('meeting analytics (P7, read-only, org-scoped)', () => {
       duration: { measured: 0, totalSec: 0, averageSec: null },
       periods: [],
     });
+  });
+
+  it('every membership role (owner, admin, member, viewer) can read analytics, matching the web nav', async () => {
+    const { owner, org, viewer } = await world();
+    const admin = await join(owner, org, 'admin@example.com', 'admin');
+    const member = await join(owner, org, 'member@example.com', 'member');
+    for (const c of [owner, admin, member, viewer]) {
+      const r = await c.get(url(org));
+      expect(r.statusCode).toBe(200);
+      expect(Value.Check(MeetingAnalytics, r.json())).toBe(true);
+    }
   });
 
   it('another org (or a non-member) gets 404, an unauthenticated caller 401', async () => {

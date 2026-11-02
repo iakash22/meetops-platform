@@ -13,7 +13,9 @@ import {
   rangeFor,
   type RangePresetId,
 } from './api';
+import { canViewAnalytics } from './permissions';
 import { isNotAvailable, useMeetingAnalytics } from './queries';
+import { useSession } from '@/features/session/use-session';
 
 function Stat({ label, value }: { label: string; value: string }) {
   return (
@@ -104,7 +106,21 @@ export function AnalyticsDashboard({ data }: { data: MeetingAnalytics }) {
 export function AnalyticsPage() {
   const [range, setRange] = useState<RangePresetId>('30d');
   const query = useMemo(() => rangeFor(range), [range]);
-  const q = useMeetingAnalytics(query);
+  const { data: session } = useSession();
+  // Same check as the nav entry (nav-items.ts), so a role without the entry gets no request either.
+  const allowed = canViewAnalytics(session?.role ?? null);
+  const q = useMeetingAnalytics(query, { enabled: allowed });
+  if (session && !allowed) {
+    return (
+      <>
+        <PageHeader title="Analytics" description="Meeting activity for this organization (UTC)" />
+        <EmptyState
+          title="Analytics aren't available"
+          description="Join or create an organization to see its meeting analytics."
+        />
+      </>
+    );
+  }
   return (
     <>
       <PageHeader

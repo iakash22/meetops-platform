@@ -9,9 +9,16 @@ const LEASE = new Date('2026-10-31T10:10:00Z');
 function fakeClient(rows: { next_sync_at: Date }[], executed = 1) {
   const queryRaw = vi.fn<(...a: unknown[]) => Promise<typeof rows>>(async () => rows);
   const executeRaw = vi.fn<(...a: unknown[]) => Promise<number>>(async () => executed);
-  const tx = { $executeRaw: executeRaw, $queryRaw: queryRaw };
+  const updateMany = vi.fn<(a: { where: Record<string, unknown> }) => Promise<{ count: number }>>(
+    async () => ({ count: executed }),
+  );
+  const tx = {
+    $executeRaw: executeRaw,
+    $queryRaw: queryRaw,
+    calendarConnection: { updateMany },
+  };
   const client = { $transaction: vi.fn(async (fn: (t: typeof tx) => unknown) => fn(tx)) };
-  return { client: client as never, queryRaw, executeRaw };
+  return { client: client as never, queryRaw, executeRaw, updateMany };
 }
 const sqlOf = (call: unknown[]) => (call[0] as string[]).join('?');
 
@@ -49,5 +56,21 @@ describe('calendar sync repository claimForSync', () => {
     const call = f.executeRaw.mock.calls.at(-1)!;
     expect(sqlOf(call)).toMatch(/next_sync_at = \?::timestamptz/);
     expect(sqlOf(call)).toMatch(/clock_timestamp\(\)/);
+  });
+  it('markError with a lease only marks while next_sync_at still equals it (#353 L1)', async () => {
+    const f = fakeClient([], 0);
+    const repo = createCalendarSyncRepository({ client: f.client });
+    await expect(repo.markError(ORG, ID, { lease: LEASE })).resolves.toBe(false);
+    expect(f.updateMany.mock.calls.at(-1)![0].where).toEqual({
+      id: ID,
+      organizationId: ORG,
+      status: 'active',
+      nextSyncAt: LEASE,
+    });
+    const g = fakeClient([], 1);
+    await expect(
+      createCalendarSyncRepository({ client: g.client }).markError(ORG, ID),
+    ).resolves.toBe(true);
+    expect(g.updateMany.mock.calls.at(-1)![0].where).not.toHaveProperty('nextSyncAt');
   });
 });

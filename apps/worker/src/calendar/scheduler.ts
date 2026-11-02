@@ -7,6 +7,7 @@ import {
 import { createCalendarSyncRepository } from '@meetops/database';
 import { createQueue, createWorker } from '@meetops/queue';
 import { parseKek } from '../integrations/bootstrap.js';
+import { IntegrationsApiOriginError, integrationsApiOrigin } from '../integrations/api-origin.js';
 import {
   CalendarSyncEnvError,
   runCalendarSyncSweep,
@@ -20,8 +21,11 @@ import {
  * BullMQ wiring for the Phase 7 calendar sweep (runCalendarSyncSweep). One repeatable job, keyed by a fixed
  * scheduler id, fires every CALENDAR_SYNC_TICK_MS (default 60 s). upsertJobScheduler is idempotent per id, so a
  * restart (or a changed interval) updates the one scheduler instead of adding a second repeatable. The worker runs
- * with concurrency 1 and BullMQ hands each job to one consumer, so sweeps never overlap across replicas. The
- * per-connection cadence (CALENDAR_SYNC_INTERVAL_MS) is enforced by nextSyncAt inside the sweep.
+ * with concurrency 1 and BullMQ hands each job to one consumer, but sweeps CAN still overlap across replicas: the
+ * next run is queued as a sweep starts, and a stalled job whose lock expires can run alongside it. Overlap is safe
+ * because each connection is claimed with a DB lease (claimForSync moves next_sync_at forward atomically), and
+ * the writes after the provider call only land while that lease is still held. The per-connection cadence
+ * (CALENDAR_SYNC_INTERVAL_MS) is enforced by nextSyncAt inside the sweep.
  */
 export const CALENDAR_SYNC_QUEUE = 'calendar.sync';
 export const CALENDAR_SYNC_SCHEDULER_ID = 'calendar.sync.sweep';
@@ -55,6 +59,16 @@ export async function scheduleCalendarSync(
   );
 }
 
+/** INTEGRATIONS_API_ORIGIN for the Google redirect URI: required (https, no default) under NODE_ENV=production. */
+function calendarApiOrigin(env: NodeJS.ProcessEnv): string {
+  try {
+    return integrationsApiOrigin(env);
+  } catch (err) {
+    if (err instanceof IntegrationsApiOriginError) throw new CalendarSyncEnvError(err.message);
+    throw err;
+  }
+}
+
 /** Google only for now; the provider is skipped (connections left untouched) when its OAuth client is unset. */
 export function calendarSyncProvidersFromEnv(
   env: NodeJS.ProcessEnv = process.env,
@@ -62,7 +76,7 @@ export function calendarSyncProvidersFromEnv(
   const clientId = env.GOOGLE_CALENDAR_CLIENT_ID?.trim();
   const secret = env.GOOGLE_CALENDAR_CLIENT_SECRET;
   if (!clientId || !secret) return {};
-  const apiOrigin = env.INTEGRATIONS_API_ORIGIN?.trim() || 'http://localhost:4000';
+  const apiOrigin = calendarApiOrigin(env);
   return {
     google: new GoogleCalendarProvider({
       clientId,
@@ -105,6 +119,8 @@ export function registerCalendarSyncScheduler(
     throw new CalendarSyncEnvError(
       'INTEGRATIONS_TOKEN_KEK must be 32 bytes (base64) when CALENDAR_SYNC_ENABLED=true',
     );
+  // Validated up front (not only when the default providers are built) so a bad origin fails startup.
+  if (processEnv.GOOGLE_CALENDAR_CLIENT_ID?.trim()) calendarApiOrigin(processEnv);
   const base =
     opts.buildDeps?.(kek) ??
     ({

@@ -46,6 +46,7 @@ function makeRepo(conns: { id: string; provider?: string; s: CalendarSyncSecrets
     applied: [] as Parameters<CalendarSyncSweepRepository['applySync']>[1][],
     tokens: [] as [string, Parameters<CalendarSyncSweepRepository['updateTokens']>[2]][],
     errors: [] as string[],
+    errorLeases: [] as (Date | undefined)[],
     failures: [] as [string, { syncFailures: number; retryInMs: number; lease: Date }][],
   };
   const repo: CalendarSyncSweepRepository = {
@@ -60,7 +61,10 @@ function makeRepo(conns: { id: string; provider?: string; s: CalendarSyncSecrets
     ),
     readSecrets: async (_o, id) => conns.find((c) => c.id === id)?.s ?? null,
     updateTokens: async (_o, id, t) => void calls.tokens.push([id, t]),
-    markError: async (_o, id) => void calls.errors.push(id),
+    markError: async (_o, id, opts) => {
+      calls.errors.push(id);
+      calls.errorLeases.push(opts?.lease);
+    },
     recordFailure: async (_o, id, s) => {
       calls.failures.push([id, s]);
       return true;
@@ -432,6 +436,21 @@ describe('calendar sync claim (multi-replica)', () => {
     ]);
     // relative delays only: the database adds them to its own clock at write time
     for (const a of calls.applied) expect(a).not.toHaveProperty('nextSyncAt');
+  });
+
+  it('#353 L1: the permanent-error mark is lease-guarded (passes the claim, like recordFailure/applySync)', async () => {
+    const { repo, calls } = makeRepo([{ id: C1, s: secrets() }]);
+    const p = provider({
+      listEvents: vi.fn(async () => {
+        throw Object.assign(new Error('Calendar provider failed: http_error (401)'), {
+          name: 'CalendarProviderError',
+          status: 401,
+        });
+      }),
+    });
+    await runCalendarSyncSweep({ repo, providers: { google: p }, log: log(), now: () => NOW });
+    expect(calls.errors).toEqual([C1]);
+    expect(calls.errorLeases).toEqual([LEASE]);
   });
 
   it('does not record a failure when the claim was never won', async () => {
