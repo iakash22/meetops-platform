@@ -14,6 +14,7 @@ import {
  * append-only), and the media pipeline MUST NOT process a recording or upload that has no stored attestation.
  */
 export {
+  CONSENT_ATTESTATION_MAX_BACKDATE_SECONDS,
   CONSENT_ATTESTATION_MAX_SKEW_SECONDS,
   CONSENT_ERROR_REASONS,
   CONSENT_HTTP_STATUS,
@@ -51,7 +52,8 @@ export type ConsentErrorReason = (typeof CONSENT_ERROR_REASONS)[number];
 export const ConsentAttestationInput = Type.Object(
   {
     consentVersion: ConsentVersion,
-    /** When the user attested, by the client's clock. Rejected if more than CONSENT_ATTESTATION_MAX_SKEW_SECONDS ahead. */
+    /** When the user attested, by the client's clock. Rejected if more than CONSENT_ATTESTATION_MAX_SKEW_SECONDS ahead
+     * or CONSENT_ATTESTATION_MAX_BACKDATE_SECONDS behind. */
     attestedAt: IsoDateTime,
     method: ConsentMethod,
   },

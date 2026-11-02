@@ -280,8 +280,8 @@ export class PrismaMeetingConsentRepository implements MeetingConsentRepository 
       (tx) =>
         tx.meetingConsentEvent.findMany({
           where: { organizationId, meetingId },
-          // Fail closed on a same-millisecond tie: enum order is granted < revoked, so a revocation sorts first.
-          orderBy: [{ recordedAt: 'desc' }, { eventType: 'desc' }, { id: 'desc' }],
+          // DB insertion order (sequence), never the app clock: a skewed API node cannot reorder grant/revoke.
+          orderBy: [{ seq: 'desc' }],
           take: limit,
           select: meetingConsentSelect,
         }),
