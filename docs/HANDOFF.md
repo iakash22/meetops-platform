@@ -78,6 +78,7 @@ Merged 31 Oct (#305–#317): extension real meeting API + held recordings (#305,
 Correction: #305–#307 merged on 2026-10-29, not Oct 31.
 
 Merged into integration/phase-1 after the earlier handoff (head a6c20cf):
+
 - #322 mobile Lows (a8029b7)
 - #323 GitHub App e2e follow-ups (7bf0b88)
 - #321 iOS backup exclusion + file protection, Swift module (edb6593)
@@ -87,12 +88,14 @@ Merged into integration/phase-1 after the earlier handoff (head a6c20cf):
 Native Kotlin/Swift was reviewed statically only. It has never been compiled or run on a device; use the device-build checklists in the #318/#320/#321 PR bodies.
 
 Open, pushed, NOT yet reviewed by Tester (start here):
+
 - #324 P7 calendar background sync, head 3268a955 (r1 Medium and Lows fixed; needs re-review)
 - #325 #323 Lows follow-up, head 93a59023
 
 Open mobile follow-ups (Tester r4 Mediums/Lows, not fixed):
-1. Start-failure race: stop() is a no-op until the service is up, so a quick Start failure leaves the "recording" notification showing (RecordingServiceModule.kt:36-40).
-2. The launch cache sweep isn't awaited (services.ts:113) and could delete a live .m4a; make Start await it, and scope it to Audio/ and ExpoAudio/ only.
+
+1. Start-failure race: stop() is a no-op until the service is up, so a quick Start failure leaves the "recording" notification showing (RecordingServiceModule.kt:36-40). Status: pending-start cancel added in #328; the remaining stop()/onStartCommand check-then-act window is closed by an atomic handshake (`requestStop` / `markRunningUnlessCancelled`) in fix/mobile-start-failure-notification. Kotlin still static-review only: device-check a Start that fails within ~100 ms.
+2. The launch cache sweep isn't awaited (services.ts:113) and could delete a live .m4a; make Start await it, and scope it to Audio/ and ExpoAudio/ only. Status: fixed in #328 (begin awaits the memoized recoverOnLaunch; sweep scoped by RECORDER_DIRS in src/record/recorderFiles.ts; tests "begin waits for the launch sweep…" and "sweeps leftover recorder files…" in **tests**/native-capture.test.ts).
 3. R5: the whole recording sits in plaintext in the app cache until Stop. The real fix needs the server to allow audio/aac or join segments server-side.
 4. Encryption runs on the JS thread and is slow for large files; killing the app mid-encrypt deletes the recording.
 5. Stopping after the app is swiped away depends on JS; the Open action falls back to an empty Intent.

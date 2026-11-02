@@ -34,5 +34,10 @@ export default defineConfig({
     setupFiles: ['./test/setup.ts'],
     css: false,
     include: ['test/**/*.test.{ts,tsx}'],
+    // Full turbo `pnpm test` runs many packages at once; default 5s flakes under load
+    // (desktop suite alone is ~37s wall time with jsdom setup).
+    testTimeout: 30_000,
+    hookTimeout: 30_000,
+    fileParallelism: false,
   },
 });

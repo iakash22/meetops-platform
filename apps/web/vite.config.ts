@@ -27,6 +27,18 @@ const VENDOR_GROUPS: ReadonlyArray<readonly [chunk: string, packages: readonly s
       'tslib',
     ],
   ],
+  [
+    'bootstrap',
+    [
+      'react-bootstrap',
+      'bootstrap',
+      '@restart/',
+      'uncontrollable',
+      'invariant',
+      'warning',
+      'prop-types',
+    ],
+  ],
   ['icons', ['lucide-react']],
   // Not 'forms': that name is taken by the src/features/auth/forms route chunk once routes are lazy.
   ['validation', ['zod', 'react-hook-form', '@hookform/']],
@@ -138,6 +150,11 @@ export default defineConfig(({ mode }) => {
       environment: 'jsdom',
       setupFiles: ['./test/setup.ts'],
       css: false,
+      // Full turbo `pnpm test` runs many packages at once; default 5s flakes under load.
+      testTimeout: 30_000,
+      hookTimeout: 30_000,
+      // Serial files: parallel jsdom suites race auth redirects / query caches under turbo load.
+      fileParallelism: false,
     },
   };
 });

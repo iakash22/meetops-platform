@@ -186,8 +186,11 @@ function ProviderCard({ status }: { status: CalendarProviderStatus }) {
       if (!url) notify.error(`Couldn't connect ${name}`, 'The sign-in link was not secure.');
       else calendarRedirect.assign(url);
     },
-    onError: (err) => toastError(err, { title: `Couldn't connect ${name}` }),
+    onError: (err) => toastError(err, { title: `Couldn't connect ${name}`, onRetry: retryConnect }),
   });
+  function retryConnect(): void {
+    connect.mutate();
+  }
   const disconnect = useMutation({
     mutationFn: (id: string) => calendar.disconnect(organizationId, id),
     onSuccess: async () => {

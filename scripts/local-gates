@@ -6,6 +6,7 @@ cd "$(dirname "$0")/.."
 GATES=(
   "install|pnpm install --frozen-lockfile"
   "build|pnpm build"
+  "size|pnpm size"
   "lint|pnpm lint"
   "typecheck|pnpm typecheck"
   "test|pnpm test"

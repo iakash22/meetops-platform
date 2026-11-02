@@ -3,7 +3,7 @@ import type { ResolveMeetingRequest, ResolveMeetingResponse } from '@meetops/con
 /**
  * Server meeting id for a mobile recording (Low from review: no more local ids in the consent attestation).
  * Live mode calls `POST /orgs/:organizationId/meetings/resolve` (contracts `ResolveMeetingRequest`) with
- * source `upload` (contracts have no `mobile` meeting source) and a fresh per-recording `externalMeetingId`, so every
+ * source `mobile` and a fresh per-recording `externalMeetingId`, so every
  * recording gets its own server meeting. Failure means no recording starts.
  */
 export interface MeetingResolver {
@@ -23,7 +23,7 @@ export function createHttpMeetingResolver(request: Request): MeetingResolver {
   return {
     async resolve(organizationId, startedAt) {
       const body: ResolveMeetingRequest = {
-        source: 'upload',
+        source: 'mobile',
         externalMeetingId: newExternalMeetingId(),
         title: 'Mobile recording',
         startedAt,

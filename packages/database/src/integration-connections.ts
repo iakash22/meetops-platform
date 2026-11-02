@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { Prisma, type IntegrationConnectionStatus } from '@prisma/client';
 import { getPrismaClient } from './client.js';
 import { runWithOrganizationContext } from './tenant.js';
@@ -59,12 +59,35 @@ export interface UpsertIntegrationConnectionInput {
   accessTokenExpiresAt?: Date | null;
 }
 
+/** Tokens a refresh produced. The webhook secret is re-sealed alongside so every envelope uses the current key. */
+export interface RefreshedIntegrationTokens {
+  accessToken: string;
+  refreshToken: string | null;
+  webhookSecret: string;
+  accessTokenExpiresAt: Date | null;
+}
+
+/**
+ * What the token-refresh sweep reads in ONE query: the record, its decrypted secrets and a fence. The fence is an
+ * opaque digest of the stored access-token envelope (every token write re-encrypts it, a disconnect wipes it), so a
+ * write fenced on it lands only if nobody saved, reconnected or revoked since the read. Never log it.
+ */
+export interface IntegrationRefreshSnapshot {
+  connection: IntegrationConnectionRecord;
+  secrets: IntegrationSecrets;
+  fence: string;
+}
+
+export type SaveRefreshedTokensResult = 'saved' | 'superseded';
+
 export interface IntegrationConnectionRepositoryOptions extends RepositoryOptions {
   cipher: IntegrationSecretCipher;
 }
 
 const ENVELOPE_RE = /^v1\.([A-Za-z0-9_-]+)\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+const fenceOf = (envelope: string) => createHash('sha256').update(envelope).digest('base64url');
 
 function keyIdOf(envelope: string): string {
   const m = ENVELOPE_RE.exec(envelope);
@@ -99,7 +122,7 @@ export function createIntegrationConnectionRepository(
   const seal = async (
     organizationId: string,
     integrationId: string,
-    input: UpsertIntegrationConnectionInput,
+    input: Pick<UpsertIntegrationConnectionInput, 'accessToken' | 'refreshToken' | 'webhookSecret'>,
   ) => {
     const ctx = { organizationId, integrationId };
     const accessTokenEnc = await cipher.encrypt(input.accessToken, ctx);
@@ -193,6 +216,66 @@ export function createIntegrationConnectionRepository(
       };
     },
 
+    /** Token-refresh read: record + decrypted secrets + fence from one row read (null when absent or revoked). */
+    async readForRefresh(
+      organizationId: string,
+      id: string,
+    ): Promise<IntegrationRefreshSnapshot | null> {
+      if (!UUID_RE.test(id)) return null;
+      const row = await run(organizationId, (tx) =>
+        tx.integrationConnection.findFirst({
+          where: { id, organizationId },
+          select: {
+            ...SELECT,
+            accessTokenEnc: true,
+            refreshTokenEnc: true,
+            webhookSecretEnc: true,
+          },
+        }),
+      );
+      if (!row || row.accessTokenEnc === null || row.webhookSecretEnc === null) return null;
+      const { accessTokenEnc, refreshTokenEnc, webhookSecretEnc, ...connection } = row;
+      const ctx = { organizationId, integrationId: id };
+      return {
+        connection,
+        secrets: {
+          accessToken: await cipher.decrypt(accessTokenEnc, ctx),
+          refreshToken:
+            refreshTokenEnc === null ? null : await cipher.decrypt(refreshTokenEnc, ctx),
+          webhookSecret: await cipher.decrypt(webhookSecretEnc, ctx),
+        },
+        fence: fenceOf(accessTokenEnc),
+      };
+    },
+
+    /**
+     * Persist refreshed tokens, fenced: compare-and-swap on the access-token envelope the refresh started from
+     * (`fence` from readForRefresh), and only while the row is still active. 'superseded' means another write
+     * (a newer refresh, a reconnect, a revoke or an error mark) landed first and nothing was written. Unlike
+     * `upsert` it never changes status or revokedAt, so it cannot resurrect a revoked or errored connection.
+     */
+    async saveRefreshedTokens(
+      organizationId: string,
+      id: string,
+      tokens: RefreshedIntegrationTokens,
+      fence: string,
+    ): Promise<SaveRefreshedTokensResult> {
+      if (!UUID_RE.test(id)) return 'superseded';
+      const sealed = await seal(organizationId, id, tokens);
+      return run(organizationId, async (tx) => {
+        const row = await tx.integrationConnection.findFirst({
+          where: { id, organizationId, status: 'active' },
+          select: { accessTokenEnc: true },
+        });
+        if (!row?.accessTokenEnc || fenceOf(row.accessTokenEnc) !== fence) return 'superseded';
+        const n = await tx.integrationConnection.updateMany({
+          where: { id, organizationId, status: 'active', accessTokenEnc: row.accessTokenEnc },
+          data: { ...sealed, accessTokenExpiresAt: tokens.accessTokenExpiresAt },
+        });
+        return n.count === 1 ? 'saved' : 'superseded';
+      });
+    },
+
     /**
      * Webhook routing: the org owning a live connection, via the integration_connection_org SECURITY DEFINER
      * function (identifiers only). Callers must then re-enter RLS with that org before reading anything else.
@@ -238,20 +321,35 @@ export function createIntegrationConnectionRepository(
       return rows.map((r) => ({ organizationId: r.org_id, id: r.id, provider: r.provider }));
     },
 
-    /** active <-> error only; use `disconnect` to revoke (it must wipe the secrets in the same write). */
+    /**
+     * active <-> error only; use `disconnect` to revoke (it must wipe the secrets in the same write). With `fence`
+     * (from readForRefresh) it writes only if the tokens are unchanged since that read, so a stale sweep cannot
+     * mark a connection that a newer refresh or a reconnect has already fixed (returns null then).
+     */
     async setStatus(
       organizationId: string,
       id: string,
       status: Exclude<IntegrationConnectionStatus, 'revoked'>,
+      opts: { fence?: string } = {},
     ): Promise<IntegrationConnectionRecord | null> {
       if ((status as string) === 'revoked')
         throw new Error('Use disconnect() to revoke a connection');
       if (!UUID_RE.test(id)) return null;
       return run(organizationId, async (tx) => {
-        const n = await tx.integrationConnection.updateMany({
-          where: { id, organizationId, status: { not: 'revoked' } },
-          data: { status },
-        });
+        const where: Prisma.IntegrationConnectionWhereInput = {
+          id,
+          organizationId,
+          status: { not: 'revoked' },
+        };
+        if (opts.fence !== undefined) {
+          const row = await tx.integrationConnection.findFirst({
+            where: { id, organizationId },
+            select: { accessTokenEnc: true },
+          });
+          if (!row?.accessTokenEnc || fenceOf(row.accessTokenEnc) !== opts.fence) return null;
+          where.accessTokenEnc = row.accessTokenEnc;
+        }
+        const n = await tx.integrationConnection.updateMany({ where, data: { status } });
         if (n.count === 0) return null;
         return tx.integrationConnection.findFirst({
           where: { id, organizationId },
