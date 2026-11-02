@@ -14,4 +14,5 @@ export * from './github-app-install.js';
 export * from './github-app.js';
 export * from './jira-webhook.js';
 export * from './calendar.js';
+export * from './calendar-outlook.js';
 export * from './token-refresh-lease.js';

@@ -24,7 +24,10 @@ import { getCalendarApi, groupByDay, weekWindow } from './api';
 /** Full-page redirect to the provider's OAuth screen; an object so tests can stub it. */
 export const calendarRedirect = { assign: (url: string) => window.location.assign(url) };
 
-const NAMES: Record<CalendarProviderStatus['provider'], string> = { google: 'Google Calendar' };
+const NAMES: Record<CalendarProviderStatus['provider'], string> = {
+  google: 'Google Calendar',
+  outlook: 'Outlook Calendar',
+};
 
 const dayLabel = (key: string) =>
   new Date(`${key}T00:00:00`).toLocaleDateString(undefined, {

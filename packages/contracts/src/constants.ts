@@ -517,7 +517,7 @@ export const CALENDAR_PATHS = {
 } as const;
 
 /** Server-known providers only; clients never supply an endpoint or base URL. */
-export const CALENDAR_PROVIDERS = ['google'] as const;
+export const CALENDAR_PROVIDERS = ['google', 'outlook'] as const;
 
 /** Phase 7: org-scoped full-text search (Postgres FTS, forced RLS). */
 export const SEARCH_PATHS = {
