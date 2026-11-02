@@ -481,6 +481,11 @@ export const INTEGRATION_PATHS = {
   /** v0.12.0: App-wide GitHub webhook (a GitHub App has one webhook URL); routed by payload.installation.id. */
   githubAppWebhook: '/webhooks/github',
   issuePush: '/orgs/:organizationId/tasks/:taskId/integration-issues',
+  /**
+   * Async issue push (TASK_SYNC_ENABLED, off by default): POST `PushTaskIssueRequest` -> 202 `TaskSyncJob`. Idempotent
+   * per (task, integration): a repeat returns the same job. The worker creates the issue (queue `TASK_SYNC_QUEUE`).
+   */
+  taskSync: '/orgs/:organizationId/tasks/:taskId/sync',
 } as const;
 
 /** v0.7.0: integration connection lifecycle (Prisma `IntegrationStatus`). */

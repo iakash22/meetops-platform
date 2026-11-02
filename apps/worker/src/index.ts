@@ -21,6 +21,7 @@ import {
 import { createNotificationEmailSender } from './notifications/email.js';
 import { loadCalendarSyncEnv, registerCalendarSyncScheduler } from './calendar/index.js';
 import { loadTokenRefreshEnv, registerTokenRefreshJob } from './integrations/bootstrap.js';
+import { loadTaskSyncEnv, registerTaskSyncWorker } from './integrations/task-sync-bootstrap.js';
 import { closeAll, runningJobs, type ClosableJob } from './shutdown.js';
 
 export * from './media/index.js';
@@ -114,6 +115,8 @@ export async function main() {
     await calendarSync.ready;
     logger.info('calendar sync scheduler started');
   }
+  // Async task -> GitHub/Jira sync. Off unless TASK_SYNC_ENABLED=true; then INTEGRATIONS_TOKEN_KEK is required.
+  const taskSync = await registerTaskSyncWorker({ env: loadTaskSyncEnv(), log: logger });
   const jobs: ClosableJob[] = [
     { name: 'media', close },
     { name: 'transcription', job: transcription },
@@ -123,6 +126,7 @@ export async function main() {
     { name: 'geoip-update', close: geoipUpdate?.close },
     { name: 'integrations-token-refresh', job: tokenRefresh },
     { name: 'calendar-sync', job: calendarSync },
+    { name: 'task-sync', job: taskSync },
   ];
   logger.info({ jobs: runningJobs(jobs) }, 'worker jobs registered');
   const shutdown = async () => {

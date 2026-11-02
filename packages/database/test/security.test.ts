@@ -109,6 +109,8 @@ const MEETING_SEARCH_MIGRATION = '20261031010000_meeting_search_fts';
 const CALENDAR_EVENTS_MIGRATION = '20261031020000_calendar_events';
 /** Phase 7 semantic search: meeting_embeddings (pgvector, forced RLS, no ANN index). */
 const MEETING_EMBEDDINGS_MIGRATION = '20261031050000_meeting_embeddings';
+/** Async task -> GitHub/Jira sync (task_sync_jobs); sorts between meeting_embeddings and meeting_source_mobile. */
+const TASK_SYNC_MIGRATION = '20261031100000_task_sync_jobs';
 /** MeetingSource gains 'mobile' (additive ADD VALUE). Sorts after meeting_embeddings. */
 const MEETING_SOURCE_MOBILE_MIGRATION = '20261031120000_meeting_source_mobile';
 /** Consent API: append-only meeting consent ledger (forced RLS, SELECT/INSERT only). */
@@ -132,7 +134,14 @@ const orderedDirs = () => {
   for (const p of PARALLEL_MIGRATIONS)
     if (dirs.includes(p))
       expect(dirs.indexOf(p)).toBeLessThan(dirs.indexOf(MEETING_EMBEDDINGS_MIGRATION));
-  return dirs.filter((d) => !(PARALLEL_MIGRATIONS as readonly string[]).includes(d));
+  // #349 task_sync_jobs sorts between meeting_embeddings and meeting_source_mobile; the order checks ignore it too.
+  if (dirs.includes(TASK_SYNC_MIGRATION)) {
+    expect(dirs.indexOf(TASK_SYNC_MIGRATION)).toBeGreaterThan(dirs.indexOf(MEETING_EMBEDDINGS_MIGRATION));
+    expect(dirs.indexOf(TASK_SYNC_MIGRATION)).toBeLessThan(dirs.indexOf(MEETING_SOURCE_MOBILE_MIGRATION));
+  }
+  return dirs.filter(
+    (d) => d !== TASK_SYNC_MIGRATION && !(PARALLEL_MIGRATIONS as readonly string[]).includes(d),
+  );
 };
 const reportDedupeSql = readFileSync(
   resolve(migrationsDir, REPORT_SUMMARY_DEDUPE_MIGRATION, 'migration.sql'),
@@ -163,6 +172,11 @@ const meetingConsentSql = readFileSync(
   resolve(migrationsDir, MEETING_CONSENT_MIGRATION, 'migration.sql'),
   'utf8',
 );
+/** Async task -> GitHub/Jira sync (task_sync_jobs, TASK_SYNC_ENABLED). */
+const taskSyncSql = readFileSync(
+  resolve(migrationsDir, TASK_SYNC_MIGRATION, 'migration.sql'),
+  'utf8',
+);
 const adr010Sql =
   teamsSql +
   authTokensSql +
@@ -172,7 +186,8 @@ const adr010Sql =
   calendarEventsSql +
   calendarEventLinksSql +
   meetingEmbeddingsSql +
-  meetingConsentSql;
+  meetingConsentSql +
+  taskSyncSql;
 /** Phase 3 per-recording transcript revision migration. */
 const TRANSCRIPT_REVISION_MIGRATION_DIR = '20261026200000_transcript_recording_revision';
 const consentSql = readFileSync(resolve(migrationsDir, CONSENT_MIGRATION, 'migration.sql'), 'utf8');
@@ -216,6 +231,7 @@ const ADR010_ONLY_TABLES: readonly string[] = [
   'meeting_embeddings',
   'meeting_consent_events',
   'calendar_event_links',
+  'task_sync_jobs',
 ];
 /** DB-3: append-only tenant tables with their own SELECT/INSERT policies (ADR-010 setting) in consentSql. */
 const CONSENT_TABLES: readonly string[] = ['consent_attestations'];
@@ -741,7 +757,7 @@ describe('schema conventions', () => {
   });
 
   it('every model uses a uuid primary key', () => {
-    expect(models).toHaveLength(45);
+    expect(models).toHaveLength(46);
     for (const m of models.filter((x) => !ORGANIZATION_KEYED.includes(x.table)))
       expect(m.body, m.name).toMatch(/^\s+id\s+String\s+@id @default\(uuid\(\)\) @db\.Uuid$/m);
   });

@@ -50,9 +50,9 @@ describe('generated client', () => {
     await db.disconnectPrismaClient();
   });
 
-  it('exposes exactly the 45 models', () => {
+  it('exposes exactly the 46 models', () => {
     const models = Object.values(Prisma.ModelName);
-    expect(models).toHaveLength(45);
+    expect(models).toHaveLength(46);
     for (const m of [
       'Organization',
       'User',
@@ -165,6 +165,8 @@ describe('generated client', () => {
         'SESSION_PURGE_BATCH',
         'SESSION_PURGE_MAX_BATCHES',
         'purgeExpiredSessions',
+        'createTaskSyncRepository',
+        'TASK_SYNC_STATUSES',
       ].sort(),
     );
   });

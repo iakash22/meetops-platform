@@ -264,6 +264,7 @@ model Organization {
   integrationConnections       IntegrationConnection[]
   calendarConnections          CalendarConnection[]
   calendarEvents               CalendarEvent[]
+  taskSyncJobs                 TaskSyncJob[]
   authDevices                  AuthDevice[]
   authTokenFamilies            AuthTokenFamily[]
   authRefreshTokens            AuthRefreshToken[]
@@ -315,6 +316,8 @@ model User {
   calendarConnections     CalendarConnection[]     @relation("CalendarConnectionOwner")
   calendarEvents          CalendarEvent[]          @relation("CalendarEventOwner")
   calendarEventLinks      CalendarEventLink[]      @relation("CalendarEventLinkOwner")
+
+  taskSyncRequests TaskSyncJob[] @relation("TaskSyncRequester")
 
   @@map("users")
 }
@@ -838,6 +841,7 @@ model TaskApproval {
   organization  Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   extractedTask ExtractedTask @relation(fields: [organizationId, extractedTaskId], references: [organizationId, id], onDelete: Cascade)
   reviewer      User?         @relation(fields: [reviewerId], references: [id], onDelete: SetNull)
+  syncJobs      TaskSyncJob[]
 
   @@unique([organizationId, id])
   @@index([organizationId, extractedTaskId])
@@ -869,6 +873,7 @@ model Task {
   assignee          Employee?          @relation(fields: [organizationId, assigneeId], references: [organizationId, id], onDelete: Restrict)
   createdBy         User?              @relation("TaskCreator", fields: [createdById], references: [id], onDelete: SetNull)
   integrationIssues IntegrationIssue[]
+  syncJobs          TaskSyncJob[]
 
   @@unique([organizationId, id])
   @@unique([organizationId, extractedTaskId])
@@ -1201,6 +1206,8 @@ model IntegrationConnection {
 
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
 
+  taskSyncJobs TaskSyncJob[]
+
   @@unique([organizationId, id])
   @@unique([organizationId, provider, externalAccountId])
   @@index([tokenKeyId])
@@ -1472,6 +1479,38 @@ model CalendarEvent {
   @@index([organizationId, userId, startsAt])
   @@index([organizationId, connectionId, startsAt])
   @@map("calendar_events")
+}
+
+/// Async push of an approved task to GitHub/Jira (TASK_SYNC_ENABLED). One row per (task, integration): the API
+/// request is idempotent on it and the worker moves it queued -> creating -> succeeded | failed | needs_reconcile.
+/// A crash or ambiguous provider error after the create was sent becomes needs_reconcile, never a second create.
+model TaskSyncJob {
+  id             String   @id @default(uuid()) @db.Uuid
+  organizationId String   @map("org_id") @db.Uuid
+  taskId         String   @map("task_id") @db.Uuid
+  integrationId  String   @map("integration_id") @db.Uuid
+  approvalId     String   @map("approval_id") @db.Uuid
+  provider       String
+  target         String
+  status         String   @default("queued")
+  attempts       Int      @default(0)
+  externalId     String?  @map("external_id")
+  externalUrl    String?  @map("external_url")
+  errorCode      String?  @map("error_code")
+  requestedById  String?  @map("requested_by_id") @db.Uuid
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  organization Organization          @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  task         Task                  @relation(fields: [organizationId, taskId], references: [organizationId, id], onDelete: Cascade)
+  integration  IntegrationConnection @relation(fields: [organizationId, integrationId], references: [organizationId, id], onDelete: Cascade)
+  approval     TaskApproval          @relation(fields: [organizationId, approvalId], references: [organizationId, id], onDelete: Cascade)
+  requestedBy  User?                 @relation("TaskSyncRequester", fields: [requestedById], references: [id], onDelete: SetNull)
+
+  @@unique([organizationId, id])
+  @@unique([organizationId, taskId, integrationId])
+  @@index([organizationId, status])
+  @@map("task_sync_jobs")
 }
 
 /// Phase 7: a calendar event (by provider event id, per connection) linked to a meeting of the same organization by
