@@ -2,7 +2,7 @@ import { readFileSync } from 'fs';
 import { join } from 'path';
 
 import type { ChunkCryptoNative } from '../modules/chunk-crypto';
-import { createNativeChunkCipher } from '../src/record/expoAudio';
+import { createNativeChunkCipher, SOFTWARE_KEY_WARNING } from '../src/record/expoAudio';
 
 const deleteKey = jest.fn(async () => undefined);
 
@@ -95,5 +95,106 @@ describe('ChunkSealer.kt key spec (source guard)', () => {
   it('does not bind the key to user auth or an unlocked screen (locked-screen capture)', () => {
     expect(src).not.toMatch(/setUserAuthenticationRequired\(true\)/);
     expect(src).not.toMatch(/setUnlockedDeviceRequired\(true\)/);
+  });
+});
+
+describe('software-only Keystore key in release builds', () => {
+  const info = (securityLevel: 'strongbox' | 'tee' | 'software' | 'unknown') => ({
+    alias: 'meetops_chunk_key',
+    algorithm: 'AES-256-GCM',
+    securityLevel,
+    keySize: 256,
+  });
+
+  it('warns and still records (ready resolves) when the key is software-only', async () => {
+    const warn = jest.fn();
+    const c = createNativeChunkCipher(fakeNative({ keyInfo: async () => info('software') }), {
+      release: true,
+      warn,
+    });
+    await expect(c.ready!()).resolves.toBeUndefined();
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn).toHaveBeenCalledWith(
+      SOFTWARE_KEY_WARNING,
+      expect.objectContaining({ securityLevel: 'software' }),
+    );
+  });
+
+  it('warns once per cipher, not on every ready()', async () => {
+    const warn = jest.fn();
+    const c = createNativeChunkCipher(fakeNative({ keyInfo: async () => info('software') }), {
+      release: true,
+      warn,
+    });
+    await c.ready!();
+    await c.ready!();
+    expect(warn).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(['tee', 'strongbox', 'unknown'] as const)('does not warn for %s', async (level) => {
+    const warn = jest.fn();
+    const c = createNativeChunkCipher(fakeNative({ keyInfo: async () => info(level) }), {
+      release: true,
+      warn,
+    });
+    await c.ready!();
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it('does not check in dev builds', async () => {
+    const warn = jest.fn();
+    const keyInfo = jest.fn(async () => info('software'));
+    const c = createNativeChunkCipher(fakeNative({ keyInfo }), { release: false, warn });
+    await c.ready!();
+    expect(keyInfo).not.toHaveBeenCalled();
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it('a failing or missing keyInfo never blocks recording', async () => {
+    const warn = jest.fn();
+    const failing = createNativeChunkCipher(
+      fakeNative({ keyInfo: () => Promise.reject(new Error('boom')) }),
+      { release: true, warn },
+    );
+    await expect(failing.ready!()).resolves.toBeUndefined();
+    await expect(
+      createNativeChunkCipher(fakeNative(), { release: true, warn }).ready!(),
+    ).resolves.toBeUndefined();
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it('the default logger goes to console.warn without key material', async () => {
+    const spy = jest.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      await createNativeChunkCipher(fakeNative({ keyInfo: async () => info('software') }), {
+        release: true,
+      }).ready!();
+      expect(spy).toHaveBeenCalledWith(`[chunk-crypto] ${SOFTWARE_KEY_WARNING}`, {
+        alias: 'meetops_chunk_key',
+        securityLevel: 'software',
+      });
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('a self-test failure still fails closed before any key check', async () => {
+    const keyInfo = jest.fn(async () => info('software'));
+    const c = createNativeChunkCipher(fakeNative({ open: async () => 'BB==', keyInfo }), {
+      release: true,
+      warn: jest.fn(),
+    });
+    await expect(c.ready!()).rejects.toThrow('Encryption self-test failed.');
+    expect(keyInfo).not.toHaveBeenCalled();
+  });
+});
+
+describe('ADR-015 key-binding note', () => {
+  it('records that the key is not bound to user authentication', () => {
+    const adr = readFileSync(
+      join(__dirname, '..', '..', '..', 'docs/15-decisions/ADR-015-mobile-segment-encryption.md'),
+      'utf8',
+    );
+    expect(adr).toMatch(/not bound to user authentication/);
   });
 });

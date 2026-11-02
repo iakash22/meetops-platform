@@ -33,4 +33,9 @@ Two options were compared: (a) allow `audio/aac` (raw ADTS) in the contract and 
 - New accepted media type on every upload path, so it is covered by the same magic-byte, container-end, ffprobe,
   duration and size checks as the others.
 - Native code (Kotlin) is not compiled or device-tested on the box; device checks are listed in the PR.
+- **Key binding.** The Keystore key is **not bound to user authentication** (no
+  `setUserAuthenticationRequired`): background capture and post-kill recovery must seal and open without a prompt.
+  Anyone who can run code as the app on an unlocked device can use it; it is never exportable. On devices where the
+  key is software-only (no TEE/StrongBox: emulators, old devices), release builds **warn and log** at the first
+  recording rather than refusing, so those devices can still record. No recovery UI is planned.
 - Reversible: removing `audio/aac` from the allowlist and the Android module returns to the #328 behaviour.
