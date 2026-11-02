@@ -54,5 +54,7 @@ describe('worker main() shutdown', () => {
     expect(closed.indexOf('worker:calendar.sync')).toBeLessThan(
       closed.indexOf('queue:calendar.sync'),
     );
-  });
+    // Explicit, generous timeout: the first dynamic import of src/index.js (whole worker graph) took close to
+    // the 5 s vitest default on a loaded runner and flaked.
+  }, 30_000);
 });

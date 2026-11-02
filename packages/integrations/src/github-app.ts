@@ -1,6 +1,7 @@
 import { createSign } from 'node:crypto';
 import type { FetchLike } from './jira.js';
 import type { GitHubIssueData, GitHubIssuesClient } from './github.js';
+import { withRequestDeadline } from './request-deadline.js';
 
 /**
  * GitHub App server-side auth over plain fetch (no SDK): App JWT (RS256), installation lookup, installation
@@ -100,12 +101,15 @@ export class GitHubAppClient {
   /** Short-lived (1h) installation access token. */
   async createInstallationToken(
     installationId: string,
+    opts: { signal?: AbortSignal } = {},
   ): Promise<{ token: string; expiresAt: Date }> {
     if (!ID_RE.test(installationId)) throw new GitHubAppError('invalid_installation_id');
     const b = (await this.call(
       `${API}/app/installations/${installationId}/access_tokens`,
       'POST',
       `Bearer ${await this.appJwt()}`,
+      undefined,
+      opts.signal,
     )) as {
       token?: unknown;
       expires_at?: unknown;
@@ -152,6 +156,7 @@ export class GitHubAppClient {
     method: string,
     authorization?: string,
     json?: Record<string, string>,
+    signal?: AbortSignal,
   ): Promise<unknown> {
     const headers: Record<string, string> = {
       Accept: 'application/json',
@@ -166,37 +171,43 @@ export class GitHubAppClient {
       { method, headers, ...(json ? { body: JSON.stringify(json) } : {}) },
       this.opts.timeoutMs,
       (code, status) => new GitHubAppError(code, status),
+      signal,
     );
   }
 }
 
+/** One timeout (and the caller's `signal`) covers the request AND reading the body. */
 async function fetchJson(
   fetchFn: FetchLike,
   url: string,
   init: { method: string; headers: Record<string, string>; body?: string },
   timeoutMs: number | undefined,
   err: (code: string, status?: number) => Error,
+  signal?: AbortSignal,
 ): Promise<unknown> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs ?? 10_000);
-  let res: Awaited<ReturnType<FetchLike>>;
-  try {
-    res = await fetchFn(url, { ...init, redirect: 'error', signal: controller.signal });
-  } catch (e) {
-    throw err((e as { name?: string }).name === 'AbortError' ? 'timeout' : 'network_error');
-  } finally {
-    clearTimeout(timer);
-  }
-  const text = await res.text().catch(() => '');
-  if (text.length > 1024 * 1024) throw err('response_too_large', res.status);
-  let body: unknown;
-  try {
-    body = text ? JSON.parse(text) : undefined;
-  } catch {
-    throw err('invalid_json', res.status);
-  }
-  if (!res.ok) throw err('http_error', res.status);
-  return body;
+  return withRequestDeadline(
+    timeoutMs ?? 10_000,
+    signal,
+    () => err('timeout'),
+    async (abort) => {
+      let res: Awaited<ReturnType<FetchLike>>;
+      try {
+        res = await fetchFn(url, { ...init, redirect: 'error', signal: abort });
+      } catch (e) {
+        throw err((e as { name?: string }).name === 'AbortError' ? 'timeout' : 'network_error');
+      }
+      const text = await res.text().catch(() => '');
+      if (text.length > 1024 * 1024) throw err('response_too_large', res.status);
+      let body: unknown;
+      try {
+        body = text ? JSON.parse(text) : undefined;
+      } catch {
+        throw err('invalid_json', res.status);
+      }
+      if (!res.ok) throw err('http_error', res.status);
+      return body;
+    },
+  );
 }
 
 /** HTTP error shaped like Octokit's RequestError (status + response.headers) so classifyOctokitError applies. */

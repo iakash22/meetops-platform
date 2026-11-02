@@ -20,7 +20,9 @@ served by `apps/api/src/modules/integrations/index.ts`.
 | Webhook receiver             | `POST /webhooks/:provider/:integrationId`                                   | no session; HMAC-SHA256 over raw body, 1 MiB cap, replay-protected   |
 
 The callback is built as `${INTEGRATIONS_API_ORIGIN}/integrations/<provider>/callback`. The provider app must use
-exactly that URL; the server never accepts a user-supplied redirect host.
+exactly that URL; the server never accepts a user-supplied redirect host. The worker (token refresh, calendar
+sync) builds the same URIs; under `NODE_ENV=production` it requires `INTEGRATIONS_API_ORIGIN` (bare `https://`
+origin, no localhost default) and fails startup with a clear error when it is missing or not https.
 
 ## 2. Public URL with a free tunnel (cloudflared quick tunnel)
 
