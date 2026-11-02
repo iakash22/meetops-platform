@@ -148,12 +148,15 @@ export function createCalendarSyncRepository(options: CalendarSyncRepositoryOpti
     id: string,
     enc: string,
     field: 'access' | 'refresh',
-  ) => {
+  ): Promise<{ value: string; legacy: boolean } | null> => {
     try {
-      return await cipher().decrypt(enc, ctx(organizationId, id, field));
+      return { value: await cipher().decrypt(enc, ctx(organizationId, id, field)), legacy: false };
     } catch {
       try {
-        return await cipher().decrypt(enc, { organizationId, integrationId: id });
+        return {
+          value: await cipher().decrypt(enc, { organizationId, integrationId: id }),
+          legacy: true,
+        };
       } catch {
         return null;
       }
@@ -198,11 +201,15 @@ export function createCalendarSyncRepository(options: CalendarSyncRepositoryOpti
         }),
       );
       if (!row?.accessTokenEnc) return null;
-      const accessToken = await open(organizationId, id, row.accessTokenEnc, 'access');
-      if (accessToken === null) return null;
-      const refreshToken = row.refreshTokenEnc
+      const access = await open(organizationId, id, row.accessTokenEnc, 'access');
+      if (access === null) return null;
+      const refresh = row.refreshTokenEnc
         ? await open(organizationId, id, row.refreshTokenEnc, 'refresh')
         : null;
+      // The shared pre-v2 context is only accepted for a fully legacy row: a v2 access token next to a
+      // legacy-only refresh token means an envelope was moved between columns.
+      const accessToken = access.value;
+      const refreshToken = refresh && (!refresh.legacy || access.legacy) ? refresh.value : null;
       let syncCursor: CalendarSyncCursor | null = null;
       if (row.syncCursorEnc && row.syncCursorFrom && row.syncCursorTo) {
         // Cursor AAD only (no pre-v2 fallback: cursors postdate per-field AAD). Undecryptable = start a new round.
@@ -222,13 +229,18 @@ export function createCalendarSyncRepository(options: CalendarSyncRepositoryOpti
       };
     },
 
-    /** Stores refreshed tokens (per-field AAD). An empty refresh token keeps the stored one (Google omits it). */
+    /**
+     * Stores refreshed tokens (per-field AAD). An empty refresh token keeps the stored one (Google omits it).
+     * Writes only while the connection is active and, with `lease`, while the sweep claim is still held
+     * (next_sync_at unchanged): a reconnect clears the lease, so a stale sweep never overwrites the new grant.
+     */
     async updateTokens(
       organizationId: string,
       id: string,
       t: { accessToken: string; refreshToken: string; accessTokenExpiresAt: Date },
-    ): Promise<void> {
-      if (!UUID_RE.test(id)) return;
+      opts: { lease?: Date } = {},
+    ): Promise<boolean> {
+      if (!UUID_RE.test(id)) return false;
       const accessTokenEnc = await cipher().encrypt(
         t.accessToken,
         ctx(organizationId, id, 'access'),
@@ -238,9 +250,14 @@ export function createCalendarSyncRepository(options: CalendarSyncRepositoryOpti
       const refreshTokenEnc = t.refreshToken
         ? await cipher().encrypt(t.refreshToken, ctx(organizationId, id, 'refresh'))
         : undefined;
-      await run(organizationId, (tx) =>
+      const r = await run(organizationId, (tx) =>
         tx.calendarConnection.updateMany({
-          where: { id, organizationId, status: 'active' },
+          where: {
+            id,
+            organizationId,
+            status: 'active',
+            ...(opts.lease ? { nextSyncAt: opts.lease } : {}),
+          },
           data: {
             accessTokenEnc,
             ...(refreshTokenEnc ? { refreshTokenEnc } : {}),
@@ -249,6 +266,7 @@ export function createCalendarSyncRepository(options: CalendarSyncRepositoryOpti
           },
         }),
       );
+      return r.count === 1;
     },
 
     /**

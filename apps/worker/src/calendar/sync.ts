@@ -31,7 +31,9 @@ export interface CalendarSyncSweepRepository {
     organizationId: string,
     id: string,
     t: { accessToken: string; refreshToken: string; accessTokenExpiresAt: Date },
-  ): Promise<void>;
+    /** With `lease`, writes only while the claim is still held (and the connection is active). */
+    opts?: { lease?: Date },
+  ): Promise<unknown>;
   /** With `lease`, writes only while the claim is still held. */
   markError(organizationId: string, id: string, opts?: { lease?: Date }): Promise<unknown>;
   recordFailure(
@@ -303,11 +305,16 @@ export async function runCalendarSyncSweep(deps: CalendarSyncDeps): Promise<Cale
         !s.accessTokenExpiresAt || s.accessTokenExpiresAt.getTime() - nowMs <= REFRESH_SKEW_MS;
       if (expiring && s.refreshToken) {
         const t = await provider.refresh(s.refreshToken);
-        await deps.repo.updateTokens(d.organizationId, d.id, {
-          accessToken: t.accessToken,
-          refreshToken: t.refreshToken,
-          accessTokenExpiresAt: new Date(t.expiresAt),
-        });
+        await deps.repo.updateTokens(
+          d.organizationId,
+          d.id,
+          {
+            accessToken: t.accessToken,
+            refreshToken: t.refreshToken,
+            accessTokenExpiresAt: new Date(t.expiresAt),
+          },
+          { lease },
+        );
         accessToken = t.accessToken;
       }
       const listDelta = cfg.deltaEnabled ? provider.listEventsDelta?.bind(provider) : undefined;

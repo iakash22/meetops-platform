@@ -393,3 +393,37 @@ describe('Phase 7 calendar', () => {
     ).toBe('x');
   });
 });
+
+describe('OUTLOOK_CALENDAR_TENANT startup validation', () => {
+  const base = { OUTLOOK_CALENDAR_CLIENT_ID: 'id', OUTLOOK_CALENDAR_CLIENT_SECRET: 'placeholder' };
+
+  it.each([
+    'common',
+    'organizations',
+    'consumers',
+    '72f988bf-86f1-41af-91ab-2d7cd011db47',
+    'contoso.onmicrosoft.com',
+  ])('accepts %s', (t) => {
+    expect(
+      integrationsRuntimeFromEnv({ ...base, OUTLOOK_CALENDAR_TENANT: ` ${t} ` }).outlookCalendar
+        ?.tenant,
+    ).toBe(t);
+  });
+
+  it('unset or blank keeps the provider default', () => {
+    expect(integrationsRuntimeFromEnv(base).outlookCalendar?.tenant).toBeUndefined();
+    expect(
+      integrationsRuntimeFromEnv({ ...base, OUTLOOK_CALENDAR_TENANT: ' ' }).outlookCalendar?.tenant,
+    ).toBeUndefined();
+  });
+
+  it('fails fast on a malformed tenant, even with no Outlook client configured', () => {
+    for (const env of [
+      { ...base, OUTLOOK_CALENDAR_TENANT: 'contoso' },
+      { OUTLOOK_CALENDAR_TENANT: 'common/../x' },
+    ])
+      expect(() => integrationsRuntimeFromEnv(env)).toThrow(
+        /OUTLOOK_CALENDAR_TENANT must be common, organizations, consumers, a tenant GUID/,
+      );
+  });
+});

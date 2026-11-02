@@ -64,9 +64,9 @@ export class InMemoryCalendarConnections implements CalendarConnectionsRepositor
     t: { accessToken: string; refreshToken: string; accessTokenExpiresAt: Date },
   ) {
     const r = this.rows.get(id);
-    if (!r || r.organizationId !== organizationId || r.status === 'revoked') return;
+    if (!r || r.organizationId !== organizationId || r.status !== 'active') return;
     this.secrets.set(id, { ...t });
-    this.rows.set(id, { ...r, status: 'active', updatedAt: this.now().toISOString() });
+    this.rows.set(id, { ...r, updatedAt: this.now().toISOString() });
   }
   async markError(organizationId: string, id: string) {
     const r = this.rows.get(id);

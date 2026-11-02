@@ -117,6 +117,9 @@ export class PrismaCalendarConnections implements CalendarConnectionsRepository 
         tokenKeyId: keyIdOf(accessTokenEnc),
         accessTokenExpiresAt: i.accessTokenExpiresAt,
         revokedAt: null,
+        // A (re)connect drops any sweep lease of the old grant: an in-flight sweep can no longer write
+        // (its lease no longer matches) and the new grant is due immediately.
+        nextSyncAt: null,
         // A (re)connect starts a fresh incremental round: a cursor from the old grant must not be replayed.
         syncCursorEnc: null,
         syncCursorFrom: null,
@@ -147,7 +150,10 @@ export class PrismaCalendarConnections implements CalendarConnectionsRepository 
     const field = (enc: string, f: 'access' | 'refresh') =>
       this.open(organizationId, row.id, enc, f);
     const access = await field(row.accessTokenEnc, 'access');
-    const refresh = row.refreshTokenEnc ? await field(row.refreshTokenEnc, 'refresh') : null;
+    let refresh = row.refreshTokenEnc ? await field(row.refreshTokenEnc, 'refresh') : null;
+    // Pre-v2 rows were written in one go under the shared legacy context. A v2 access token next to a legacy-only
+    // refresh token means an envelope was moved between columns: reject it (per-field contexts stay separate).
+    if (access && refresh && refresh.legacy && !access.legacy) refresh = null;
     if (!access || (row.refreshTokenEnc && !refresh)) {
       // Undecryptable under every known context: treat as disconnected (user must reconnect), never a 500.
       await this.markError(organizationId, row.id);
@@ -189,9 +195,9 @@ export class PrismaCalendarConnections implements CalendarConnectionsRepository 
     const refreshTokenEnc = await this.enc(organizationId, id, t.refreshToken, 'refresh');
     await this.org(organizationId, (tx) =>
       tx.calendarConnection.updateMany({
-        where: { id, organizationId, status: { not: 'revoked' } },
+        // Only an ACTIVE row: a refresh racing a revoke / error mark must neither resurrect it nor rewrite it.
+        where: { id, organizationId, status: 'active' },
         data: {
-          status: 'active',
           accessTokenEnc,
           refreshTokenEnc,
           tokenKeyId: keyIdOf(accessTokenEnc),
@@ -210,6 +216,9 @@ export class PrismaCalendarConnections implements CalendarConnectionsRepository 
     );
   }
 
+  /** revoke() also deletes the connection's event links in its transaction. */
+  readonly revokesLinks = true;
+
   async revoke(organizationId: string, userId: string, id: string) {
     if (!UUID_RE.test(id)) return false;
     return this.org(organizationId, async (tx) => {
@@ -221,12 +230,18 @@ export class PrismaCalendarConnections implements CalendarConnectionsRepository 
           accessTokenEnc: null,
           refreshTokenEnc: null,
           accessTokenExpiresAt: null,
+          // Like upsert: the encrypted sync cursor and its window belong to the revoked grant.
+          syncCursorEnc: null,
+          syncCursorFrom: null,
+          syncCursorTo: null,
         },
       });
       if (r.count === 0) return false;
       // Same transaction: purge the events cached by the background sync (the app role has no DELETE; the
       // definer function only deletes events of an already-revoked connection in this org context).
       await tx.$queryRaw`SELECT calendar_events_purge_for_connection(${organizationId}::uuid, ${id}::uuid)`;
+      // Same transaction: event -> meeting links of the connection (a failure rolls the revoke back).
+      await tx.calendarEventLink.deleteMany({ where: { organizationId, connectionId: id } });
       return true;
     });
   }
