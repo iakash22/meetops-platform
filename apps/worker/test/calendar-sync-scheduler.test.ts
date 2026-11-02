@@ -135,6 +135,7 @@ describe('calendar sync scheduler', () => {
   it('only builds the Google provider when its client is configured', () => {
     expect(calendarSyncProvidersFromEnv({})).toEqual({});
     const p = calendarSyncProvidersFromEnv({
+      NODE_ENV: 'test',
       GOOGLE_CALENDAR_CLIENT_ID: 'fixture-client-id',
       GOOGLE_CALENDAR_CLIENT_SECRET: 'fixture-placeholder',
     });

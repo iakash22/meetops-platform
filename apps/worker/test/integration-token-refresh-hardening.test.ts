@@ -517,10 +517,11 @@ describe('INTEGRATIONS_API_ORIGIN (item 6)', () => {
       integrationsApiOrigin({ ...prod, INTEGRATIONS_API_ORIGIN: ' https://api.example.com/ ' }),
     ).toBe('https://api.example.com');
   });
-  it('defaults to the local API outside production', () => {
+  it('defaults to the local API only in development and test', () => {
     expect(integrationsApiOrigin({ NODE_ENV: 'development' })).toBe('http://localhost:4000');
     expect(
       integrationsApiOrigin({
+        NODE_ENV: 'test',
         INTEGRATIONS_API_ORIGIN: 'http://localhost:4100',
       }),
     ).toBe('http://localhost:4100');
@@ -543,5 +544,154 @@ describe('INTEGRATIONS_API_ORIGIN (item 6)', () => {
       calendarSyncProvidersFromEnv({ ...gEnv, INTEGRATIONS_API_ORIGIN: 'https://api.example.com' })
         .google,
     ).toBeDefined();
+  });
+});
+
+describe('token refresh hardening: #375 Arch Lows', () => {
+  const rotated = () => ({
+    refresh: vi.fn(async () => ({
+      accessToken: 'new-a',
+      refreshToken: 'new-r',
+      expiresAt: NOW + 3600e3,
+    })),
+  });
+  /** Redis goes away right after the lease was taken: confirm and release fail. */
+  const redisDownAfterAcquire = (): ConnectionLease => ({
+    acquire: async () => 'lease-1',
+    confirm: async () => {
+      throw Object.assign(new Error('connect ECONNREFUSED'), { name: 'RedisDown' });
+    },
+    release: async () => {
+      throw Object.assign(new Error('connect ECONNREFUSED'), { name: 'RedisDown' });
+    },
+  });
+
+  it('L1: a save that committed but answered with an error is reported as stored, not superseded', async () => {
+    const c = connRepo();
+    const real = c.save.getMockImplementation()!;
+    c.save.mockImplementationOnce(async (...args) => {
+      await real(...args); // the commit lands...
+      throw Object.assign(new Error('connection reset after commit'), { name: 'CommitUnknown' });
+    });
+    const l = log();
+    const r = await runTokenRefreshSweep({
+      repo: c.repo,
+      providers: { jira: rotated() },
+      log: l,
+      sleep: async () => undefined,
+      now: () => NOW,
+    });
+    expect(r).toEqual({ refreshed: 1, failed: 0, skipped: 0 });
+    expect(c.save).toHaveBeenCalledTimes(2); // the retry saw the moved fence
+    expect(c.row.secrets).toMatchObject({ accessToken: 'new-a', refreshToken: 'new-r' });
+    expect(l.info).toHaveBeenCalledWith(
+      expect.objectContaining({ integrationId: 'j1', errName: 'CommitUnknown', committed: true }),
+      'integration token refresh save committed despite an error reply; tokens are stored',
+    );
+    expect(logged(l)).not.toMatch(/superseded by a newer write/);
+    expect(c.statusCalls).toEqual([]);
+    expect(logged(l)).not.toMatch(SECRETS);
+  });
+
+  it('L1: after an unclear save, a genuinely different write is reported as such', async () => {
+    const c = connRepo();
+    c.save.mockImplementationOnce(async () => {
+      c.landNewerRefresh('other-a'); // a different writer lands while our attempt fails
+      throw Object.assign(new Error('timeout'), { name: 'CommitUnknown' });
+    });
+    const l = log();
+    const r = await runTokenRefreshSweep({
+      repo: c.repo,
+      providers: { jira: rotated() },
+      log: l,
+      sleep: async () => undefined,
+      now: () => NOW,
+    });
+    expect(r).toEqual({ refreshed: 0, failed: 0, skipped: 1 });
+    expect(c.row.secrets.accessToken).toBe('other-a');
+    expect(l.info).toHaveBeenCalledWith(
+      expect.objectContaining({ integrationId: 'j1', committed: false }),
+      'integration token refresh save outcome was unclear; a different write is stored, ours is not',
+    );
+    expect(logged(l)).not.toMatch(/superseded by a newer write/);
+  });
+
+  it('L2: with Redis down, a transient DB failure still ends with the rotated tokens stored', async () => {
+    const c = connRepo();
+    c.saveFailures.left = 2;
+    const l = log();
+    const r = await runTokenRefreshSweep({
+      repo: c.repo,
+      providers: { jira: rotated() },
+      log: l,
+      lease: redisDownAfterAcquire(),
+      sleep: async () => undefined,
+      now: () => NOW,
+    });
+    expect(r).toEqual({ refreshed: 1, failed: 0, skipped: 0 });
+    expect(c.row.secrets).toMatchObject({ accessToken: 'new-a', refreshToken: 'new-r' });
+    expect(c.row.status).toBe('active');
+  });
+
+  it('L2: with Redis down and the save failing, the spent grant is marked needs-reauth under the fence alone', async () => {
+    const c = connRepo();
+    c.saveFailures.left = 99;
+    const l = log();
+    const r = await runTokenRefreshSweep({
+      repo: c.repo,
+      providers: { jira: rotated() },
+      log: l,
+      lease: redisDownAfterAcquire(),
+      sleep: async () => undefined,
+      now: () => NOW,
+    });
+    expect(r).toEqual({ refreshed: 0, failed: 1, skipped: 0 });
+    expect(c.statusCalls).toEqual([{ status: 'error', fence: 'v0' }]);
+    expect(c.row.status).toBe('error'); // not left 'active' with a dead refresh token
+    expect(l.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ integrationId: 'j1', rotated: true, markedNeedsReauth: true }),
+      'integration token refresh could not store the rotated tokens; connection needs reauth',
+    );
+    expect(logged(l)).not.toMatch(SECRETS);
+  });
+
+  it('L2: the persist-failure mark still loses to a newer write (fence)', async () => {
+    const c = connRepo();
+    c.saveFailures.left = 99;
+    let n = 0;
+    c.save.mockImplementation(async () => {
+      if (++n === 3) c.landNewerRefresh('other-a'); // a newer holder saved while we were failing
+      throw Object.assign(new Error('db down'), { name: 'PrismaClientKnownRequestError' });
+    });
+    const r = await runTokenRefreshSweep({
+      repo: c.repo,
+      providers: { jira: rotated() },
+      log: log(),
+      lease: redisDownAfterAcquire(),
+      sleep: async () => undefined,
+      now: () => NOW,
+    });
+    expect(r.failed).toBe(1);
+    expect(c.statusCalls).toEqual([{ status: 'error', fence: 'v0' }]);
+    expect(c.row.status).toBe('active');
+    expect(c.row.secrets.accessToken).toBe('other-a');
+  });
+
+  it('a permanent provider error is still not marked once the lease is lost', async () => {
+    const c = connRepo();
+    const jira = {
+      refresh: vi.fn(async () => {
+        throw Object.assign(new Error('grant gone'), { code: 'invalid_grant' });
+      }),
+    };
+    await runTokenRefreshSweep({
+      repo: c.repo,
+      providers: { jira },
+      log: log(),
+      lease: redisDownAfterAcquire(),
+      now: () => NOW,
+    });
+    expect(c.statusCalls).toEqual([]);
+    expect(c.row.status).toBe('active');
   });
 });
