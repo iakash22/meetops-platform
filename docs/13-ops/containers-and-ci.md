@@ -48,10 +48,11 @@ ECS, ...) must copy these settings:
 
 Current limits on this head (tracked, not yet fixed):
 
-- **Client timeout.** The worker client has one fixed 120 s total timeout, below `MaxScanTime` (600 s). A scan slower
-  than 120 s is abandoned and ends quarantined (`scan_unavailable`) after retries. MAL-2 makes it size-aware.
-- **Limit hits.** A `Heuristics.Limits.Exceeded.*` reply is quarantined as `malware_detected` today. MAL-2 gives it a
-  separate error code and metric.
+- **Client timeout.** Fixed (fix/clamav-hardening): the worker's total timeout is `MaxScanTime` + 30 s. A size-aware
+  timeout is still MAL-2.
+- **Limit hits.** Fixed: quarantined as `scan_limit_exceeded`, separate from `malware_detected`. A metric is still MAL-2.
+- **clamd temp disk.** Production must copy: read-only root, `/tmp` tmpfs of 3g, `mem_limit 7g`, `MaxThreads` equal to
+  the worker's `MEDIA_WORKER_CONCURRENCY` (scale the tmpfs and memory with it).
   Dev: `UPLOAD_SCAN_CLAMAV=true scripts/compose-up.sh --profile clamav`. The worker then waits for clamd to report
   healthy. Without the profile, the worker starts as usual with the scan off.
 

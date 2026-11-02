@@ -161,6 +161,8 @@ services:
       UPLOAD_SCAN_CLAMAV: ${UPLOAD_SCAN_CLAMAV:-false}
       CLAMD_HOST: clamav
       CLAMD_PORT: 3310
+      # Must equal MaxThreads in infra/clamav/clamd.conf (clamd-config.test.ts).
+      MEDIA_WORKER_CONCURRENCY: 1
     secrets: [redis_password, minio_app_password]
     volumes: [*secrets-shim]
     entrypoint: ['/usr/bin/tini', '--', '/bin/sh', '/opt/with-secrets.sh']
@@ -234,6 +236,14 @@ services:
     volumes:
       - ../clamav/clamd.conf:/etc/clamav/clamd.conf:ro
       - clamav-db:/var/lib/clamav
+    # Disk-fill guard (#377/#379 follow-up): read-only root, and clamd's
+    # TemporaryDirectory (/tmp, also the LocalSocket) is a size-capped tmpfs.
+    # 3g = one scan thread (MaxThreads 1): a 1400M spooled stream + up to 1400M
+    # extracted (MaxScanSize). tmpfs pages count toward mem_limit, hence 7g
+    # (about 4g engines during a reload + 3g tmpfs).
+    read_only: true
+    tmpfs:
+      - /tmp:size=3g,mode=1777
     networks: [clamav-internal]
     healthcheck:
       # The image's own check: PING on TCP 3310 must answer PONG.
@@ -247,7 +257,7 @@ services:
     security_opt:
       - no-new-privileges:true
     pids_limit: 256
-    mem_limit: 4g
+    mem_limit: 7g
     cpus: 2
 
   # Signature updates for the clamav sidecar (ADR-018, MAL-1b): freshclam only,
