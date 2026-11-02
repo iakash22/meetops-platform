@@ -52,7 +52,11 @@ export interface CalendarConnectionsRepository {
     t: { accessToken: string; refreshToken: string; accessTokenExpiresAt: Date },
   ): Promise<void>;
   markError(organizationId: string, id: string): Promise<void>;
-  /** Soft revoke that wipes tokens. false when unknown / other-user / already revoked. */
+  /**
+   * Soft revoke that wipes tokens. false when unknown / other-user / already revoked. When `revokesLinks` is true
+   * the connection's event -> meeting links are deleted in the same transaction (all or nothing).
+   */
+  readonly revokesLinks?: boolean;
   revoke(organizationId: string, userId: string, id: string): Promise<boolean>;
 }
 

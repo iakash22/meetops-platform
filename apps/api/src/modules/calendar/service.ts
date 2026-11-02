@@ -400,7 +400,9 @@ export class CalendarService {
     }
     if (!(await this.repo.revoke(organizationId, userId, id)))
       throw new CalendarConnectionNotFoundError();
-    await this.links?.removeForConnection(organizationId, id).catch(() => undefined);
+    // Prisma deletes the links inside the revoke transaction. Other stores: delete here and let a failure surface
+    // (never swallowed: a silent failure left links pointing at a revoked connection).
+    if (!this.repo.revokesLinks) await this.links?.removeForConnection(organizationId, id);
     await audit('calendar.disconnect', id, { providerRevoked: String(providerRevoked) });
   }
 }
