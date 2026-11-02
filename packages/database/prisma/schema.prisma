@@ -1432,6 +1432,10 @@ model CalendarConnection {
   syncedTo             DateTime?                @map("synced_to") @db.Timestamptz(3)
   syncFailures         Int                      @default(0) @map("sync_failures")
   nextSyncAt           DateTime?                @map("next_sync_at") @db.Timestamptz(3)
+  /// Incremental sync cursor (Outlook deltaLink) as a TokenCipher v1 envelope; window it was opened for.
+  syncCursorEnc        String?                  @map("sync_cursor_enc")
+  syncCursorFrom       DateTime?                @map("sync_cursor_from") @db.Timestamptz(3)
+  syncCursorTo         DateTime?                @map("sync_cursor_to") @db.Timestamptz(3)
   createdAt            DateTime                 @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt            DateTime                 @updatedAt @map("updated_at") @db.Timestamptz(3)
 

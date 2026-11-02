@@ -117,6 +117,10 @@ export class PrismaCalendarConnections implements CalendarConnectionsRepository 
         tokenKeyId: keyIdOf(accessTokenEnc),
         accessTokenExpiresAt: i.accessTokenExpiresAt,
         revokedAt: null,
+        // A (re)connect starts a fresh incremental round: a cursor from the old grant must not be replayed.
+        syncCursorEnc: null,
+        syncCursorFrom: null,
+        syncCursorTo: null,
       };
       const row = existing
         ? await tx.calendarConnection.update({ where: { id }, data })

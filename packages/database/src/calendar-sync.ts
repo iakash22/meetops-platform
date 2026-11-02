@@ -38,6 +38,14 @@ export interface CalendarSyncSecrets {
   refreshToken: string | null;
   accessTokenExpiresAt: Date | null;
   syncFailures: number;
+  /** Incremental cursor (decrypted) and the window its round was opened for; null = none / undecryptable. */
+  syncCursor: CalendarSyncCursor | null;
+}
+
+export interface CalendarSyncCursor {
+  value: string;
+  from: Date;
+  to: Date;
 }
 
 export interface CalendarSyncCoverage {
@@ -66,7 +74,7 @@ export function createCalendarSyncRepository(options: CalendarSyncRepositoryOpti
     if (!options.cipher) throw new Error('calendar sync repository has no cipher');
     return options.cipher;
   };
-  const ctx = (organizationId: string, id: string, field: 'access' | 'refresh') => ({
+  const ctx = (organizationId: string, id: string, field: 'access' | 'refresh' | 'cursor') => ({
     organizationId,
     integrationId: `calendar:${id}:${field}`,
   });
@@ -118,6 +126,9 @@ export function createCalendarSyncRepository(options: CalendarSyncRepositoryOpti
             refreshTokenEnc: true,
             accessTokenExpiresAt: true,
             syncFailures: true,
+            syncCursorEnc: true,
+            syncCursorFrom: true,
+            syncCursorTo: true,
           },
         }),
       );
@@ -127,7 +138,16 @@ export function createCalendarSyncRepository(options: CalendarSyncRepositoryOpti
       const refreshToken = row.refreshTokenEnc
         ? await open(organizationId, id, row.refreshTokenEnc, 'refresh')
         : null;
+      let syncCursor: CalendarSyncCursor | null = null;
+      if (row.syncCursorEnc && row.syncCursorFrom && row.syncCursorTo) {
+        // Cursor AAD only (no pre-v2 fallback: cursors postdate per-field AAD). Undecryptable = start a new round.
+        const value = await cipher()
+          .decrypt(row.syncCursorEnc, ctx(organizationId, id, 'cursor'))
+          .catch(() => null);
+        if (value) syncCursor = { value, from: row.syncCursorFrom, to: row.syncCursorTo };
+      }
       return {
+        syncCursor,
         userId: row.userId,
         provider: row.provider,
         accessToken,
@@ -281,12 +301,22 @@ export function createCalendarSyncRepository(options: CalendarSyncRepositoryOpti
         nextSyncAt?: Date;
         nextSyncInMs?: number;
         lease?: Date;
+        /** Delta round: provider ids deleted since the cursor; soft-cancelled (any start time). */
+        removedIds?: string[];
+        /** undefined = leave the stored cursor; null = clear it; a value = store it (encrypted) for [from, to). */
+        cursor?: string | null;
       },
     ): Promise<{ upserted: number; cancelled: number; applied: boolean }> {
       const { connectionId, from, to, now } = input;
       if (!UUID_RE.test(connectionId) || !(to > from)) throw new Error('invalid sync input');
       if (input.nextSyncAt === undefined && input.nextSyncInMs === undefined)
         throw new Error('invalid sync input');
+      if (typeof input.cursor === 'string' && (!input.cursor || input.cursor.length > 8192))
+        throw new Error('invalid sync input');
+      const cursorEnc =
+        typeof input.cursor === 'string'
+          ? await cipher().encrypt(input.cursor, ctx(organizationId, connectionId, 'cursor'))
+          : input.cursor;
       return run(organizationId, async (tx) => {
         if (input.lease) {
           const held = await tx.$queryRaw<{ id: string }[]>`
@@ -364,6 +394,21 @@ export function createCalendarSyncRepository(options: CalendarSyncRepositoryOpti
           });
           cancelled = r.count;
         }
+        const removed = [...new Set(input.removedIds ?? [])].filter(
+          (x) => x && x.length <= 1024 && !seen.has(x),
+        );
+        if (removed.length) {
+          const r = await tx.calendarEvent.updateMany({
+            where: {
+              organizationId,
+              connectionId,
+              status: { not: 'cancelled' },
+              providerEventId: { in: removed },
+            },
+            data: { status: 'cancelled', syncedAt: now },
+          });
+          cancelled += r.count;
+        }
         await tx.calendarConnection.updateMany({
           where: { id: connectionId, organizationId, status: 'active' },
           data: {
@@ -372,6 +417,11 @@ export function createCalendarSyncRepository(options: CalendarSyncRepositoryOpti
             syncedTo: to,
             syncFailures: 0,
             ...(input.nextSyncAt ? { nextSyncAt: input.nextSyncAt } : {}),
+            ...(cursorEnc === undefined
+              ? {}
+              : cursorEnc === null
+                ? { syncCursorEnc: null, syncCursorFrom: null, syncCursorTo: null }
+                : { syncCursorEnc: cursorEnc, syncCursorFrom: from, syncCursorTo: to }),
           },
         });
         if (input.nextSyncInMs !== undefined) {
