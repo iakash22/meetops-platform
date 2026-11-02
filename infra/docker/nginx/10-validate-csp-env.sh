@@ -28,7 +28,7 @@ for name in CSP_API_ORIGIN CSP_REALTIME_ORIGIN CSP_STORAGE_ORIGIN; do
       *\;* | *\"* | *\'*) fail "$name contains a forbidden character" ;;
       https://?* | wss://?*) ;;
       http://?* | ws://?*)
-        [ "$production" = off ] || fail "$name must use https:// or wss:// in production (CSP_UPGRADE_INSECURE=on)"
+        [ "$production" = off ] || fail "$name contains '$src', but CSP_UPGRADE_INSECURE=on (the production default) requires https:// or wss:// origins: upgrade-insecure-requests would rewrite it and the browser would block it. Fix: set $name to https:// / wss:// origins, or for a local plain-http stack set CSP_UPGRADE_INSECURE=off."
         ;;
       *) fail "$name entries must be scheme://host[:port] origins" ;;
     esac

@@ -23,8 +23,15 @@ Each value below is asserted by a test. If you change a value, update its test a
 - **CORS (R7):** `WEB_ORIGINS` holds exact origins and is parsed at boot. A strict environment refuses to start on `*`, `null`, a path, a query, a trailing slash, credentials, a non-http(s) scheme, or `http://` in production.
 - **Cookies (R13/R14):** the CSRF cookie is `__Host-`, `Secure`, `SameSite=Strict` and readable by JS, and its Max-Age equals the session's absolute timeout. The pre-session cookie is `HttpOnly` and `SameSite=Strict`, with a Max-Age of 1 hour. Logout, logout-all, revoking the current session and password reset clear the sid, CSRF and pre-session cookies.
 - **Realtime (R19):** the baseline headers are added to every HTTP response, including the raw `HTTP/1.1 4xx` reply to a rejected WebSocket upgrade.
-- **Web CSP (R20):** there is no `'unsafe-inline'`. Every inline `<script>` or `<style>` needs its hash in the template, and `pnpm --filter web csp` checks this. When `CSP_UPGRADE_INSECURE=on` (the image default, used in production), the container refuses to start unless every `CSP_*_ORIGIN` is `https://` or `wss://`. The local compose stack sets it to `off`.
+- **Web CSP (R20):** there is no `'unsafe-inline'`. Every inline `<script>` or `<style>` needs its hash in the template, and `pnpm --filter @meetops/web csp` checks this. When `CSP_UPGRADE_INSECURE=on` (the image default, used in production), the container refuses to start unless every `CSP_*_ORIGIN` is `https://` or `wss://`. The local compose stack sets it to `off`.
 - **Vite (R24):** `vite dev` and `vite preview` send the template CSP with local origins. Dev also adds a per-process nonce, which `html.cspNonce` stamps on Vite's injected scripts and styles (`apps/web/csp.config.ts`).
+
+## Dockerfile.web defaults
+
+The image's default `CSP_API_ORIGIN`, `CSP_REALTIME_ORIGIN` and `CSP_STORAGE_ORIGIN` values are `http://localhost` and `ws://localhost` placeholders, and `CSP_UPGRADE_INSECURE` defaults to `on`. If you run the bare image without overriding them, it **refuses to start**. The startup error names the variable and the offending origin. To fix it, either:
+
+- **Production / staging:** set every `CSP_*_ORIGIN` to the real `https://` / `wss://` origins.
+- **Local plain-http stack:** set `CSP_UPGRADE_INSECURE=off`, as `infra/compose/compose.app.yml` already does.
 
 ## Deferred (decision or credentials needed)
 

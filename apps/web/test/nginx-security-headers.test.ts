@@ -122,7 +122,9 @@ describe('P9 R20: inline content is hash-allowed, production origins are https',
     };
     const prod = validate(local);
     expect(prod.status).not.toBe(0);
-    expect(prod.stderr).toMatch(/https:\/\/ or wss:\/\/ in production/);
+    expect(prod.stderr).toContain("CSP_API_ORIGIN contains 'http://localhost:3000'");
+    expect(prod.stderr).toMatch(/requires https:\/\/ or wss:\/\/ origins/);
+    expect(prod.stderr).toContain('set CSP_UPGRADE_INSECURE=off');
     expect(validate({ ...local, CSP_UPGRADE_INSECURE: 'off' }).status).toBe(0);
   });
 });
