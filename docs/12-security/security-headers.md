@@ -33,9 +33,22 @@ The image's default `CSP_API_ORIGIN`, `CSP_REALTIME_ORIGIN` and `CSP_STORAGE_ORI
 - **Production / staging:** set every `CSP_*_ORIGIN` to the real `https://` / `wss://` origins.
 - **Local plain-http stack:** set `CSP_UPGRADE_INSECURE=off`, as `infra/compose/compose.app.yml` already does.
 
+## API content types (R16)
+
+`apps/api/src/shared/json-only.ts` rejects POST/PUT/PATCH/DELETE requests that carry a body (content-length > 0 or transfer-encoding) unless the media type is `application/json`, with 415. Empty-body mutations are allowed. A route may opt in to other types with `config.allowedContentTypes`.
+
+| Route                                                         | Type                                | Decision                                                          |
+| ------------------------------------------------------------- | ----------------------------------- | ----------------------------------------------------------------- |
+| `POST /notifications/unsubscribe`                             | `application/x-www-form-urlencoded` | Allowlisted: RFC 8058 one-click unsubscribe from mail clients     |
+| `POST /webhooks/:provider/:integrationId`, GitHub App webhook | JSON                                | JSON-only (providers send JSON; raw-buffer JSON parser)           |
+| Uploads                                                       | n/a                                 | No multipart routes: uploads are presigned PUTs direct to storage |
+| Beacons / CSP reports                                         | n/a                                 | None exist                                                        |
+
+## CSRF rotation (R17)
+
+Login, org switch and org create issue a new session and a new CSRF token bound to it; the pre-session cookie is cleared, so pre-login, pre-switch and pre-logout tokens get 403. The web client uses the `csrfToken` from login and drops its cached token after a switch, create or logout, so it reads the new one.
+
 ## Deferred (decision or credentials needed)
 
-- R16: returning 415 for non-JSON unsafe requests needs an inventory of beacon, multipart and empty-body routes first.
-- R17: rotating the CSRF token on org switch needs a decision on the client flow.
 - R21: the curl check against staging needs staging access.
 - HSTS `preload`: the owner has to register the domain first.

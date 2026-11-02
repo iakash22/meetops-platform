@@ -73,6 +73,24 @@ export class InvalidAnalyticsRangeError extends DomainError {
   }
 }
 
+/**
+ * Shared analytics window check: ISO date-times, `to > from`, at most `maxDays`. Throws InvalidAnalyticsRangeError
+ * (400 VALIDATION_FAILED). Call it after the tenant and CASL gates so an outsider learns nothing.
+ */
+export function parseAnalyticsRange(
+  q: { from: string; to: string },
+  maxDays: number,
+): { from: Date; to: Date } {
+  const from = new Date(q.from);
+  const to = new Date(q.to);
+  if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime()))
+    throw new InvalidAnalyticsRangeError('from and to must be ISO 8601 date-times');
+  if (to <= from) throw new InvalidAnalyticsRangeError('to must be after from');
+  if (to.getTime() - from.getTime() > maxDays * 86_400_000)
+    throw new InvalidAnalyticsRangeError(`The range may span at most ${maxDays} days`);
+  return { from, to };
+}
+
 export interface MeetingRepository {
   /** Newest first, keyset on (createdAt, id) descending. Throws InvalidMeetingCursorError. */
   list(

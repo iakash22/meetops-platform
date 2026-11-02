@@ -79,7 +79,8 @@ export const NOT_FOUND_HTTP_STATUS = 404;
  * `code: 'VALIDATION_FAILED'` with HTTP CONSENT_HTTP_STATUS (422) by upload init and recording-session init.
  * - `CONSENT_REQUIRED`: the request has no `consent` object (or it fails the ConsentAttestationInput schema).
  * - `CONSENT_VERSION_UNSUPPORTED`: `consent.consentVersion` is not a version the server accepts (CURRENT_CONSENT_VERSION).
- * - `CONSENT_INVALID`: `consent.attestedAt` is outside the accepted window (see CONSENT_ATTESTATION_MAX_SKEW_SECONDS).
+ * - `CONSENT_INVALID`: `consent.attestedAt` is outside the accepted window (CONSENT_ATTESTATION_MAX_SKEW_SECONDS ahead,
+ *   CONSENT_ATTESTATION_MAX_BACKDATE_SECONDS behind).
  * Nothing is created (no FileObject, no session, no presigned URL) when one of these is returned.
  */
 export const CONSENT_ERROR_REASONS = [
@@ -324,6 +325,11 @@ export const CONSENT_VERSION_PATTERN = '^[A-Za-z0-9][A-Za-z0-9._-]{0,31}$';
  * attestation also keeps the server's receive time (`recordedAt`), so a back-dated `attestedAt` stays visible in audit.
  */
 export const CONSENT_ATTESTATION_MAX_SKEW_SECONDS = 300;
+/**
+ * The API rejects an `attestedAt` more than this many seconds before its own clock (CONSENT_INVALID), so an attestation
+ * cannot be back-dated arbitrarily. DB CHECK: `attested_at >= recorded_at - interval '86400 seconds'`.
+ */
+export const CONSENT_ATTESTATION_MAX_BACKDATE_SECONDS = 86_400;
 /** v0.4.1: what a stored consent attestation (DB-3 `consent_attestations.subject`) is attached to. */
 export const CONSENT_SUBJECT_TYPES = ['upload', 'recording_session'] as const;
 
@@ -501,6 +507,8 @@ export const INTEGRATION_WEBHOOK_MAX_BYTES = 1_048_576;
 /** Read-only, org-scoped analytics (P7). */
 export const ANALYTICS_PATHS = {
   meetings: '/orgs/:organizationId/analytics/meetings',
+  /** Task and AI-extracted-task review counts (P7). */
+  tasks: '/orgs/:organizationId/analytics/tasks',
 } as const;
 
 /** Longest analytics window (`to - from`). */

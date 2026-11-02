@@ -334,6 +334,8 @@ export default async function notificationsModule(
     s.post<{ Querystring: UnsubscribeQuery }>(
       NOTIFICATION_PATHS.unsubscribe,
       {
+        // P9 R16: RFC 8058 one-click unsubscribe is POSTed by mail providers as a form (body ignored; token in URL).
+        config: { allowedContentTypes: ['application/x-www-form-urlencoded'] },
         schema: {
           tags: ['notifications'],
           summary: 'Apply an unsubscribe link (email channel, link category)',
