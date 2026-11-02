@@ -10,7 +10,9 @@ export default defineConfig({
     // file (cold transform). Tests that build 2+ instances plus signup/org setup fit in Vitest's 5 s
     // default on an idle box but time out when local gates share the box with other pnpm runs. The cost is
     // CPU-bound and per instance, so the limit is raised for this project only. Assertions are unchanged.
-    testTimeout: 20_000,
-    hookTimeout: 20_000,
+    // Directory/auth suites also boot Fastify + signup/login; under a full turbo `pnpm test`,
+    // argon2 + cold imports routinely exceed 30s when the machine is busy.
+    testTimeout: 60_000,
+    hookTimeout: 60_000,
   },
 });

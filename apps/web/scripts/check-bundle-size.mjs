@@ -30,7 +30,9 @@ const BUDGETS = {
   validation: 45, // zod + react-hook-form
   index: 45, // app code in the entry chunk
   '*': 25, // any other JS chunk (lazy route chunks)
-  css: 11,
+  // Bootstrap 5 CSS (bootstrap + react-bootstrap, main 336baccc) adds ~28 kB gzip; was 11.
+  // TODO: trim Bootstrap (import only the used SCSS partials) and lower this back toward 11.
+  css: 45,
   initialJs: 185, // entry + modulepreloads in index.html
   totalJs: 290, // every JS chunk, lazy ones included
 };

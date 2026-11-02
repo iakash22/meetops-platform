@@ -65,7 +65,7 @@ fail-closed: if clamd is unreachable, the job retries and the final attempt quar
 
 Deployment settings: docs/13-ops/containers-and-ci.md.
 
-- [ ] New objects land in `quarantine` state; ClamAV (or provider scanner) runs before processing; infected → delete + audit + notify.
+- [ ] New objects land in `quarantine` state; ClamAV (self-hosted clamd sidecar, fail-closed, limits ≥ 1400M per [ADR-018](../15-decisions/ADR-018-upload-malware-scanning.md)) runs before processing; infected → delete + audit + notify.
 - [ ] Downloads/playback only from `clean` objects.
 
 ## 5. FFmpeg sandboxing and limits
@@ -84,8 +84,8 @@ Deployment settings: docs/13-ops/containers-and-ci.md.
 ## 7. Recording consent
 
 - [ ] Notice: recorder bot uses visible name ("MeetOps Recorder") and posts a chat notice on join; uploads require uploader attestation of consent.
-- [ ] Per-org consent settings: required notice text, all-party vs one-party mode, auto-skip meetings with external participants, retention period.
+- [ ] Per-org consent settings: required notice text, "require explicit consent from everyone" (`all_parties_consented`; on by default for EU/UK orgs), auto-skip meetings with external participants, retention period. Consent is all-party everywhere; there is no one-party mode ([ADR-020](../15-decisions/ADR-020-recording-consent.md)).
 - [ ] Server-side attestation (G11): upload init and recording-session init require a consent attestation in the request (shape per ARC-2); without it the API returns 422 and creates nothing (UP-16, UP-17). The server persists it in `consent_attestations` (DB-3: `org_id`, subject id, `consent_version`, method, `attested_by_user_id`, `attested_at`; RLS-forced, append-only). `attested_by_user_id` and `org_id` come from the session, never the body (UP-18).
 - [ ] Processing blocked if required consent attestation missing: complete fails with 422 and no media job is enqueued; the worker re-checks before processing (UP-16).
 - [ ] Audit: consent attestation, who started recording, notices posted, deletion requests.
-- [ ] Retention and deletion: org-configurable retention; hard delete of media + derived transcripts/embeddings on request.
+- [ ] Retention and deletion: raw media 90 days by default, org-configurable 7–365 days; transcripts, reports, tasks and embeddings kept until the meeting or account is deleted; hard delete of media + derived transcripts/embeddings on request ([ADR-019](../15-decisions/ADR-019-media-retention.md)).

@@ -450,5 +450,5 @@ describe('SessionVerifier', () => {
     await c.post('/auth/logout');
     expect(await v.verify(token)).toBeNull();
     await app.close();
-  }, 30_000); // cold dynamic import of the server + real argon2id hashing; >5s on loaded CI runners
+  }, 60_000); // cold dynamic import of the server + real argon2id hashing; >30s under turbo load
 });

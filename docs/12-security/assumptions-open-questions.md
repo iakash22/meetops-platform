@@ -12,15 +12,17 @@
 
 ## Open questions
 
+Items 2, 3, 7, 8, 9 and 11 were decided by the owner (Maddy) on 2026-11-01 in ADR-016 to ADR-021.
+
 1. ~~**Doc location**~~: resolved — docs live in `docs/12-security/`.
-2. Secret manager / KMS choice (AWS, GCP, Vault) and hosting cloud.
-3. Use a password pepper? Where stored and how rotated?
+2. ~~Secret manager / KMS choice (AWS, GCP, Vault) and hosting cloud.~~ resolved — AWS KMS + AWS Secrets Manager, ap-south-1 ([ADR-016](../15-decisions/ADR-016-secret-manager-kms.md)).
+3. ~~Use a password pepper? Where stored and how rotated?~~ resolved — no pepper at launch; argon2id is sufficient ([ADR-016](../15-decisions/ADR-016-secret-manager-kms.md)).
 4. ~~Guest role~~: resolved for now — roles are `owner`, `admin`, `member`, `viewer` per contracts `Role` enum (PR #17). Guest is a possible future role; open: is it needed post-launch, and what can it see?
 5. Can members push to integrations, or admins only (org setting default)?
 6. Session timeouts (30 min idle / 12 h absolute) acceptable for UX? "Remember me"?
-7. Malware scanning: self-hosted ClamAV vs cloud provider scanner.
-8. Consent model per jurisdiction (one-party vs all-party) — legal review needed.
-9. Retention defaults for media, transcripts, embeddings.
+7. ~~Malware scanning: self-hosted ClamAV vs cloud provider scanner.~~ resolved — self-hosted clamd sidecar, fail-closed ([ADR-018](../15-decisions/ADR-018-upload-malware-scanning.md)).
+8. ~~Consent model per jurisdiction (one-party vs all-party) — legal review needed.~~ resolved — all-party everywhere, no one-party mode; legal review before GA ([ADR-020](../15-decisions/ADR-020-recording-consent.md)).
+9. ~~Retention defaults for media, transcripts, embeddings.~~ resolved — raw media 90 days default (7–365 per org); transcripts until deleted ([ADR-019](../15-decisions/ADR-019-media-retention.md)).
 10. Are per-org custom/self-hosted AI endpoints ever allowed?
-11. MFA/SSO timeline (required for owners/admins?).
+11. ~~MFA/SSO timeline (required for owners/admins?).~~ resolved — TOTP + passkeys required for owners/admins now; SSO deferred ([ADR-021](../15-decisions/ADR-021-mfa-sso.md)).
 12. Session store: Postgres vs Redis.
