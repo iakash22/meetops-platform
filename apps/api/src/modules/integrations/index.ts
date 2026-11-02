@@ -111,7 +111,7 @@ export default async function integrationsModule(
   const { auth, organizations, deps } = opts;
   const runtime = selectIntegrationsRuntime(deps);
   const repo = selectIntegrationsRepository(deps, process.env.NODE_ENV, runtime);
-  const service = new IntegrationsService(repo, runtime);
+  const service = new IntegrationsService(repo, runtime, app.log);
   const g = makeGuards(auth, deps.security);
   const access = new DirectoryAccess(organizations, deps.audit);
   const auditFor =

@@ -71,9 +71,9 @@ const DEFAULT_RETURN_TO = '/settings/integrations';
 /** Refresh Jira access tokens that expire within this window before using them. */
 const REFRESH_SKEW_MS = 120_000;
 /** Deadline on the on-demand provider refresh (half the lease TTL at most, like the worker's). */
-const JIRA_REFRESH_TIMEOUT_MS = Math.min(30_000, Math.floor(TOKEN_REFRESH_LEASE_TTL_MS / 2));
+export const JIRA_REFRESH_TIMEOUT_MS = Math.min(30_000, Math.floor(TOKEN_REFRESH_LEASE_TTL_MS / 2));
 /** How long a request waits for another holder's refresh of an already-expired token, and the poll step. */
-const LEASE_WAIT_MS = 5_000;
+export const LEASE_WAIT_MS = 5_000;
 const LEASE_WAIT_STEP_MS = 250;
 
 export const ISSUE_TO_TASK_STATUS: Record<IssueStatus, TaskStatus> = {
@@ -94,6 +94,8 @@ export class IntegrationsService {
   constructor(
     private readonly repo: IntegrationsRepository,
     private readonly rt: IntegrationsRuntime | undefined,
+    /** Operational warnings (the app's redacting logger). Never given tokens or secrets. */
+    private readonly log?: { warn(obj: object, msg: string): void },
   ) {}
 
   private runtime(): IntegrationsRuntime {
@@ -579,11 +581,21 @@ export class IntegrationsService {
       if (!this.needsRefresh(cur)) return cur.secrets.accessToken;
       const t = await this.refreshWithDeadline(cur.secrets.refreshToken as string);
       if (lease && leaseToken !== null) {
-        // Renew right before the write; a lost lease is not fatal because the save below is fenced anyway.
-        await boundedLeaseOp(
+        // Renew right before the write; a lost lease is not fatal because the save below is fenced anyway,
+        // but it means the refresh outlived the lease (or Redis is failing), so say so (#378 L3).
+        const confirmed = await boundedLeaseOp(
           lease.confirm(key, leaseToken, TOKEN_REFRESH_LEASE_TTL_MS),
           TOKEN_REFRESH_LEASE_OP_TIMEOUT_MS,
-        ).catch(() => false);
+        ).catch((err: unknown) => (err instanceof Error ? err.name : 'error'));
+        if (confirmed !== true)
+          this.log?.warn(
+            {
+              integrationId: conn.id,
+              provider: 'jira',
+              reason: confirmed === false ? 'lease_lost' : `confirm_failed:${confirmed}`,
+            },
+            'jira token refresh lease could not be confirmed before save; relying on the fenced save',
+          );
       }
       const saved = await this.repo.saveRefreshedTokens(
         conn.organizationId,
@@ -631,14 +643,14 @@ export class IntegrationsService {
    * not actually expired (the skew window is only a head start); otherwise wait briefly for their save to land.
    */
   private async awaitOtherRefresh(conn: ConnectionView): Promise<string> {
-    const deadline = Date.now() + LEASE_WAIT_MS;
+    const deadline = this.now() + LEASE_WAIT_MS;
     for (;;) {
       const s = await this.repo.readForRefresh(conn.organizationId, conn.id);
       if (!s || s.status !== 'active') throw new IntegrationNotConnectedError();
       const exp = s.accessTokenExpiresAt?.getTime();
       if (!this.needsRefresh(s) || exp === undefined || exp > this.now())
         return s.secrets.accessToken;
-      if (Date.now() >= deadline) throw new ProviderUpstreamError();
+      if (this.now() >= deadline) throw new ProviderUpstreamError();
       await (this.rt?.sleep ?? defaultSleep)(LEASE_WAIT_STEP_MS);
     }
   }
