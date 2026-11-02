@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import type { IntegrationConnectionRecord, IntegrationSecrets } from '@meetops/database';
 import {
+  CONFIRM_LEASE_LUA,
   createRedisConnectionLease,
   RELEASE_LEASE_LUA,
   runTokenRefreshSweep,
@@ -14,7 +15,7 @@ const ORG = '00000000-0000-4000-8000-00000000000a';
 const NOW = Date.parse('2026-11-01T10:00:00Z');
 const KEY = tokenRefreshLeaseKey(ORG, 'j1');
 
-/** In-memory Redis with SET NX PX semantics on a manual clock, and EVAL of the release script only. */
+/** In-memory Redis with SET NX PX semantics on a manual clock, and EVAL of the release/confirm scripts only. */
 function fakeRedis() {
   let clock = 0;
   const store = new Map<string, { value: string; expiresAt: number }>();
@@ -35,7 +36,13 @@ function fakeRedis() {
   } = {
     set,
     setSpy: set,
-    eval: vi.fn(async (script: string, _n: number, k: string, token: string) => {
+    eval: vi.fn(async (script: string, _n: number, k: string, token: string, ttl?: string) => {
+      if (script === CONFIRM_LEASE_LUA) {
+        const e = live(k);
+        if (e?.value !== token) return 0;
+        e.expiresAt = clock + Number(ttl);
+        return 1;
+      }
       if (script !== RELEASE_LEASE_LUA) throw new Error('unexpected script');
       if (live(k)?.value !== token) return 0;
       store.delete(k);
@@ -47,7 +54,7 @@ function fakeRedis() {
   return redis;
 }
 
-/** One Jira connection whose upsert really rotates the stored tokens and expiry. */
+/** One Jira connection whose fenced save really rotates the stored tokens and expiry (fence = write version). */
 function jiraRepo() {
   const r: IntegrationConnectionRecord & { secrets: IntegrationSecrets } = {
     id: 'j1',
@@ -64,19 +71,27 @@ function jiraRepo() {
     updatedAt: new Date(NOW),
     secrets: { accessToken: 'a0', refreshToken: 'r0', webhookSecret: 'whs' },
   };
+  let version = 0;
+  const { secrets: _s, ...record } = r;
+  void _s;
   const setStatus = vi.fn<TokenRefreshRepository['setStatus']>(async () => null);
   const repo: TokenRefreshRepository = {
     listDueForRefresh: async () => [{ organizationId: ORG, id: 'j1', provider: 'jira' }],
-    get: async () => ({ ...r }),
-    readSecrets: async () => ({ ...r.secrets }),
-    upsert: async (_o, input) => {
+    readForRefresh: async () => ({
+      connection: { ...record, accessTokenExpiresAt: r.accessTokenExpiresAt, status: r.status },
+      secrets: { ...r.secrets },
+      fence: `v${version}`,
+    }),
+    saveRefreshedTokens: async (_o, _id, t, fence) => {
+      if (r.status !== 'active' || fence !== `v${version}`) return 'superseded';
+      version++;
       r.secrets = {
-        accessToken: input.accessToken,
-        refreshToken: input.refreshToken ?? null,
-        webhookSecret: r.secrets.webhookSecret,
+        accessToken: t.accessToken,
+        refreshToken: t.refreshToken,
+        webhookSecret: t.webhookSecret,
       };
-      r.accessTokenExpiresAt = input.accessTokenExpiresAt ?? null;
-      return { ...r };
+      r.accessTokenExpiresAt = t.accessTokenExpiresAt;
+      return 'saved';
     },
     setStatus,
   };
@@ -108,7 +123,7 @@ describe('token refresh per-connection lease', () => {
     finish();
     expect(await a).toEqual({ refreshed: 1, failed: 0, skipped: 0 });
     expect(jira.refresh).toHaveBeenCalledTimes(1);
-    expect(jira.refresh).toHaveBeenCalledWith('r0');
+    expect(jira.refresh).toHaveBeenCalledWith('r0', { signal: expect.any(AbortSignal) });
     expect(row.secrets.refreshToken).toMatch(/^r\d+$/);
     expect(redis.peek(KEY)).toBeUndefined(); // released
 
@@ -181,7 +196,7 @@ describe('token refresh per-connection lease', () => {
       lease,
       now: () => NOW,
     });
-    expect(p.setStatus).toHaveBeenCalledWith(ORG, 'j1', 'error');
+    expect(p.setStatus).toHaveBeenCalledWith(ORG, 'j1', 'error', { fence: 'v0' });
     expect(redis.peek(KEY)).toBeUndefined();
   });
 
@@ -209,6 +224,7 @@ describe('token refresh per-connection lease', () => {
     const l = log();
     const lease = {
       acquire: vi.fn(async () => Promise.reject(new Error('ECONNREFUSED'))),
+      confirm: vi.fn(),
       release: vi.fn(),
     };
     expect(

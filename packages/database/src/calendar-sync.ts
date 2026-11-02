@@ -195,15 +195,29 @@ export function createCalendarSyncRepository(options: CalendarSyncRepositoryOpti
       return lease ? { lease } : null;
     },
 
-    /** Permanent failure (grant gone): the UI asks the user to reconnect. */
-    async markError(organizationId: string, id: string): Promise<void> {
-      if (!UUID_RE.test(id)) return;
-      await run(organizationId, (tx) =>
+    /**
+     * Permanent failure (grant gone): the UI asks the user to reconnect. With `lease`, it only writes while the
+     * sweep's claim is still held (returns false otherwise), so a sweep whose claim expired and was re-taken cannot
+     * mark a connection that a newer sweep just synced.
+     */
+    async markError(
+      organizationId: string,
+      id: string,
+      opts: { lease?: Date } = {},
+    ): Promise<boolean> {
+      if (!UUID_RE.test(id)) return false;
+      const r = await run(organizationId, (tx) =>
         tx.calendarConnection.updateMany({
-          where: { id, organizationId, status: 'active' },
+          where: {
+            id,
+            organizationId,
+            status: 'active',
+            ...(opts.lease ? { nextSyncAt: opts.lease } : {}),
+          },
           data: { status: 'error' },
         }),
       );
+      return r.count === 1;
     },
 
     /**

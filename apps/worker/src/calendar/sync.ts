@@ -30,7 +30,8 @@ export interface CalendarSyncSweepRepository {
     id: string,
     t: { accessToken: string; refreshToken: string; accessTokenExpiresAt: Date },
   ): Promise<void>;
-  markError(organizationId: string, id: string): Promise<void>;
+  /** With `lease`, writes only while the claim is still held. */
+  markError(organizationId: string, id: string, opts?: { lease?: Date }): Promise<unknown>;
   recordFailure(
     organizationId: string,
     id: string,
@@ -243,7 +244,8 @@ export async function runCalendarSyncSweep(deps: CalendarSyncDeps): Promise<Cale
       const next = failures + 1;
       deps.log.warn({ ...ids, ...errInfo(err), permanent, failures: next }, 'calendar sync failed');
       try {
-        if (permanent) await deps.repo.markError(d.organizationId, d.id);
+        // Lease-guarded like recordFailure: a lost claim never marks a connection another sweep just synced.
+        if (permanent && lease) await deps.repo.markError(d.organizationId, d.id, { lease });
         else if (lease)
           await deps.repo.recordFailure(d.organizationId, d.id, {
             syncFailures: next,
