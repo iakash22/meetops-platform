@@ -1,6 +1,7 @@
 import { Type, type Static } from '@sinclair/typebox';
 import { Id, IsoDateTime } from '../common.js';
 import { MeetingSource, MeetingStatus } from '../domain/meeting.js';
+import { TaskStatus } from '../domain/task.js';
 
 const strict = { additionalProperties: false } as const;
 
@@ -60,3 +61,73 @@ export const MeetingAnalytics = Type.Object(
   strict,
 );
 export type MeetingAnalytics = Static<typeof MeetingAnalytics>;
+
+/** Review state of an AI-extracted task (mirrors the database enum). */
+export const ExtractedTaskReviewStatus = Type.Union([
+  Type.Literal('pending_review'),
+  Type.Literal('approved'),
+  Type.Literal('rejected'),
+  Type.Literal('converted'),
+]);
+export type ExtractedTaskReviewStatus = Static<typeof ExtractedTaskReviewStatus>;
+
+/** Decision recorded on a task approval (mirrors the database enum). */
+export const ApprovalDecisionValue = Type.Union([
+  Type.Literal('approved'),
+  Type.Literal('rejected'),
+  Type.Literal('changes_requested'),
+]);
+export type ApprovalDecisionValue = Static<typeof ApprovalDecisionValue>;
+
+export const TaskAnalyticsParams = MeetingAnalyticsParams;
+export type TaskAnalyticsParams = Static<typeof TaskAnalyticsParams>;
+
+/**
+ * Half-open window `[from, to)` on each row's `createdAt` (tasks, extracted tasks, approvals). Same bounds as
+ * MeetingAnalyticsQuery: `to > from`, at most MAX_ANALYTICS_RANGE_DAYS, else 400 VALIDATION_FAILED.
+ */
+export const TaskAnalyticsQuery = Type.Object({ from: IsoDateTime, to: IsoDateTime }, strict);
+export type TaskAnalyticsQuery = Static<typeof TaskAnalyticsQuery>;
+
+/**
+ * Aggregates only: no ids, titles or people. Soft-deleted tasks and extracted tasks are excluded. Every list is
+ * sorted alphabetically and only has non-zero entries.
+ */
+export const TaskAnalytics = Type.Object(
+  {
+    organizationId: Id,
+    from: IsoDateTime,
+    to: IsoDateTime,
+    tasks: Type.Object(
+      {
+        total: Count,
+        byStatus: Type.Array(Type.Object({ status: TaskStatus, count: Count }, strict), {
+          maxItems: 16,
+        }),
+      },
+      strict,
+    ),
+    extractedTasks: Type.Object(
+      {
+        total: Count,
+        byStatus: Type.Array(
+          Type.Object({ status: ExtractedTaskReviewStatus, count: Count }, strict),
+          { maxItems: 16 },
+        ),
+      },
+      strict,
+    ),
+    approvals: Type.Object(
+      {
+        total: Count,
+        byDecision: Type.Array(
+          Type.Object({ decision: ApprovalDecisionValue, count: Count }, strict),
+          { maxItems: 16 },
+        ),
+      },
+      strict,
+    ),
+  },
+  strict,
+);
+export type TaskAnalytics = Static<typeof TaskAnalytics>;
