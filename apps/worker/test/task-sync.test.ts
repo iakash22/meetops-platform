@@ -298,6 +298,24 @@ describe('processTaskSyncJob (GitHub adapter, mocked client)', () => {
     expect(okReads).toBe(2);
   });
 
+  it('write-time recheck aborts when the approval id or reviewer differs from the gate read', async () => {
+    for (const change of [{ reviewerId: 'other-reviewer' }, { id: 'other-approval-id' }]) {
+      const t = setup();
+      let reads = 0;
+      const base = t.deps.lookups.approval.bind(t.deps.lookups);
+      // Gate read sees the original approval; the write-time read sees a swapped one (still approved).
+      t.deps.lookups.approval = async (org, id) => {
+        reads += 1;
+        const a = await base(org, id);
+        return a && reads > 1 ? { ...a, ...change } : a;
+      };
+      expect(await processTaskSyncJob(t.deps, t.payload)).toBe('failed');
+      expect(t.jobs.rows.get(t.syncId)).toMatchObject({ errorCode: 'APPROVAL_REQUIRED' });
+      expect(reads).toBe(2);
+      expect(t.creates).toHaveLength(0);
+    }
+  });
+
   it('cross-org: a job naming another org cannot touch this org row', async () => {
     expect(await processTaskSyncJob(s.deps, { ...s.payload, organizationId: OTHER })).toBe(
       'skipped',

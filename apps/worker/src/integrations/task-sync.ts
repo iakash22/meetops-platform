@@ -173,15 +173,25 @@ export async function processTaskSyncJob(
       task.extractedTaskId &&
       a.extractedTaskId === task.extractedTaskId,
     );
-  // Fresh read for the write-time verifier (the approval may be revoked while the job runs).
-  const approvalOk = async () =>
-    isValidApproval(await deps.lookups.approval(organizationId, row.approvalId));
   // Gate on a single read: the approval that is checked is the one whose id/reviewer goes into the write.
   const approval = await deps.lookups.approval(organizationId, row.approvalId);
   if (!approval?.reviewerId || !isValidApproval(approval)) {
     await deps.jobs.reject(organizationId, syncId, 'APPROVAL_REQUIRED');
     return 'failed';
   }
+  // Fresh read for the write-time verifier (the approval may be revoked or re-decided while the job
+  // runs). It must still be the exact approval the gate saw: same id and same reviewer, or we abort.
+  const gateApprovalId = approval.id;
+  const gateReviewerId = approval.reviewerId;
+  const approvalOk = async () => {
+    const fresh = await deps.lookups.approval(organizationId, row.approvalId);
+    return Boolean(
+      fresh &&
+      isValidApproval(fresh) &&
+      fresh.id === gateApprovalId &&
+      fresh.reviewerId === gateReviewerId,
+    );
+  };
   if (await deps.lookups.hasIssueLink(organizationId, row.taskId, row.integrationId)) {
     await deps.jobs.reject(organizationId, syncId, 'ALREADY_LINKED');
     return 'failed';
