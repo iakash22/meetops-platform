@@ -320,10 +320,9 @@ export default async function notificationsModule(
           .header('content-type', 'text/html; charset=utf-8')
           .header('cache-control', 'no-store')
           .header('referrer-policy', 'no-referrer')
-          .header(
-            'content-security-policy',
-            "default-src 'none'; form-action 'self'; frame-ancestors 'none'",
-          )
+          .securityOverride({
+            csp: "default-src 'none'; form-action 'self'; frame-ancestors 'none'",
+          })
           .send(
             ok
               ? unsubscribeConfirmPage(request.query.token)
