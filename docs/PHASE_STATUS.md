@@ -12,9 +12,10 @@ Merged since the 02:45 snapshot:
 - #401 415 for non-JSON unsafe request bodies and CSRF token rotation (R16, R17).
 - #385 calendar links deleted inside the revoke transaction; #386 task sync gated on one approval read; #392 analytics counts; #395 ajv/esbuild overrides; #396 Outlook tenant validated at startup; #397 the previous status refresh.
 
-Still open: #350 (embeddings pipeline), #387 (consent hardening), #394 (background sync) and #398 (auto-link, stacked on #394), all
-merged up to `190b9d5`; #347 (iOS Live Activity, draft); #391 (P9 docs); #384 (integration → `main`). Tester Lows from
-#394–#401 are batched in `fix/tester-lows-batch`; the production `/docs` CSP gate is a separate fix PR.
+Still open: #387 (consent hardening), #394 (background sync) and #398 (auto-link, stacked on #394), all merged up to
+`190b9d5`; #350 (embeddings pipeline, based on `085078f4`, does not contain `190b9d5`); #347 (iOS Live Activity, draft);
+#391 (P9 docs); #384 (integration → `main`). Tester Lows are batched in #403 (#396, #398–#401) and #404 (production
+`/docs` CSP and admin gate); #394's own findings are fixed on #394.
 
 ## Update — 3 Nov 2026 (~02:45 IST)
 
