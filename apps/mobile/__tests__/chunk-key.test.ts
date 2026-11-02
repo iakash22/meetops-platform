@@ -196,5 +196,6 @@ describe('ADR-015 key-binding note', () => {
       'utf8',
     );
     expect(adr).toMatch(/not bound to user authentication/);
+    expect(adr).toMatch(/does not set\s+`setUnlockedDeviceRequired`/);
   });
 });
