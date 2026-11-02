@@ -144,7 +144,7 @@ export default async function integrationsModule(
   const { auth, organizations, deps } = opts;
   const runtime = selectIntegrationsRuntime(deps);
   const repo = selectIntegrationsRepository(deps, process.env.NODE_ENV, runtime);
-  const service = new IntegrationsService(repo, runtime);
+  const service = new IntegrationsService(repo, runtime, app.log);
   const taskSync = selectTaskSync(deps);
   const syncService = taskSync
     ? new TaskSyncService(repo, taskSync.store, taskSync.queue)
