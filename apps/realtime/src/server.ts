@@ -5,6 +5,7 @@ import { createClient } from 'redis';
 import { REDACT_KEYS } from '@meetops/contracts';
 import { createLogger, type Logger } from '@meetops/logger';
 import type { RealtimeConfig } from './config.js';
+import { installSecurityHeaders } from './security-headers.js';
 import { REALTIME_CONTROL_EVENTS, type ReauthReason } from './control-events.js';
 import {
   classifyOrigin,
@@ -153,6 +154,9 @@ export async function createRealtimeServer(
     // Enforce Origin at the HTTP handshake (CORS alone does not stop non-browser or websocket-only clients).
     allowRequest: (req, cb) => cb(null, classifyOrigin(req.headers.origin, policy) !== null),
   });
+
+  // R19: after Engine.IO wraps the request listeners, so this runs first for Fastify and Socket.IO alike.
+  installSecurityHeaders(app.server, { hsts: opts.config.hsts === true });
 
   const redisClients: Array<ReturnType<typeof createClient>> = [];
   if (opts.config.redisUrl) {

@@ -5,6 +5,9 @@ import type { PublicUser } from '../../users/domain/user.js';
 import type { Session, SessionPolicy } from '../domain/session.js';
 import { CsrfError, OriginForbiddenError } from '../domain/errors.js';
 
+/** R13: lifetime of the `__Host-meetops_presession` cookie. */
+export const PRE_SESSION_MAX_AGE_S = 3600;
+
 export interface AuthContext {
   user: PublicUser;
   session: Session;
@@ -170,7 +173,13 @@ export function makeGuards(auth: AuthService, cfg: HttpSecurityConfig) {
     const binding = await bindingFor(request);
     if (binding) return setCsrfCookie(reply, signCsrf(cfg.csrfSecret, binding));
     const pre = randomBytes(32).toString('base64url');
-    reply.setCookie(cfg.preSessionCookieName, pre, { ...baseCookie, httpOnly: true });
+    // R13: the pre-session nonce only has to survive the login form, so it expires after an hour and is Strict.
+    reply.setCookie(cfg.preSessionCookieName, pre, {
+      ...baseCookie,
+      sameSite: 'strict',
+      httpOnly: true,
+      maxAge: PRE_SESSION_MAX_AGE_S,
+    });
     return setCsrfCookie(reply, signCsrf(cfg.csrfSecret, `p:${pre}`));
   };
 

@@ -688,6 +688,8 @@ export async function registerModules(app: FastifyInstance, deps: ModuleDeps) {
         credentials: true,
         methods: ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE'],
         allowedHeaders: ['content-type', 'x-csrf-token'],
+        // R11: let the web app read rate-limit backoff and the request id for support.
+        exposedHeaders: ['retry-after', 'x-request-id'],
         maxAge: 600,
         strictPreflight: true,
       });
