@@ -25,7 +25,7 @@ const cipher: IntegrationSecretCipher = {
     if (aad !== b64(c.integrationId)) throw new Error('aad mismatch');
     return Buffer.from(body!, 'base64url').toString();
   },
-} as IntegrationSecretCipher;
+};
 
 describe.skipIf(!live)('calendar sync cursor (live)', () => {
   const app = new PrismaClient({ datasources: { db: { url: APP_URL ?? '' } } });
