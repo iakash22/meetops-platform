@@ -12,6 +12,7 @@ import { ApiError } from '@/lib/api/client';
 import { memberList } from './fixtures/data';
 import { createMockApi, renderApp, resetStores } from './fixtures/render';
 import { waitForRouteData } from './fixtures/route-ready';
+import { chooseSelect } from './fixtures/select';
 
 const ORG = '00000000-0000-4000-8000-000000000001';
 const conflict = (reason: 'ALREADY_MEMBER' | 'LAST_OWNER') =>
@@ -58,8 +59,8 @@ describe('/organization/members as owner', () => {
     expect(api.members.list).toHaveBeenCalledWith(ORG, expect.objectContaining({ limit: 100 }));
     expect(screen.getAllByTestId('member-row')).toHaveLength(4);
     expect(within(row('Ada')).getByText('(you)', { exact: false })).toBeInTheDocument();
-    expect(screen.getByLabelText('Role for Grace')).toHaveValue('admin');
-    expect(screen.getByLabelText('Role for Barbara')).toHaveValue('viewer');
+    expect(screen.getByLabelText('Role for Grace')).toHaveTextContent('Admin');
+    expect(screen.getByLabelText('Role for Barbara')).toHaveTextContent('Viewer');
     expect(within(row('Linus')).getByText('linus@example.com')).toBeInTheDocument();
     // No self-remove from this screen.
     expect(screen.queryByRole('button', { name: 'Remove Ada' })).toBeNull();
@@ -69,7 +70,7 @@ describe('/organization/members as owner', () => {
     const { api } = await openMembers();
     const form = screen.getByRole('form', { name: 'Invite a member' });
     await userEvent.type(within(form).getByLabelText('Email'), 'new.person@example.com');
-    await userEvent.selectOptions(within(form).getByLabelText('Role'), 'admin');
+    await chooseSelect('Role', 'Admin', form);
     await userEvent.click(within(form).getByRole('button', { name: 'Send invite' }));
 
     expect(
@@ -127,7 +128,7 @@ describe('/organization/members as owner', () => {
 
   it('changes a role and refreshes the list', async () => {
     const { api } = await openMembers();
-    await userEvent.selectOptions(screen.getByLabelText('Role for Linus'), 'viewer');
+    await chooseSelect('Role for Linus', 'Viewer');
     await waitFor(() =>
       expect(api.members.changeRole).toHaveBeenCalledWith(ORG, userId(3), 'viewer'),
     );
@@ -141,7 +142,7 @@ describe('/organization/members as owner', () => {
       },
     });
     await openMembers(api);
-    await userEvent.selectOptions(screen.getByLabelText('Role for Ada'), 'admin');
+    await chooseSelect('Role for Ada', 'Admin');
     expect(await within(row('Ada')).findByRole('alert')).toHaveTextContent(
       'An organization must keep at least one owner.',
     );
@@ -194,21 +195,13 @@ describe('/organization/members gating', () => {
     expect(screen.queryByLabelText('Role for Ada')).toBeNull();
     expect(screen.queryByLabelText('Role for Grace')).toBeNull();
     expect(screen.queryByRole('button', { name: 'Remove Grace' })).toBeNull();
-    const linus = screen.getByLabelText('Role for Linus');
-    expect(
-      within(linus)
-        .getAllByRole('option')
-        .map((o) => o.textContent),
-    ).toEqual(['Member', 'Viewer']);
+    await userEvent.click(screen.getByLabelText('Role for Linus'));
+    expect(screen.getAllByRole('option').map((o) => o.textContent)).toEqual(['Member', 'Viewer']);
+    await userEvent.keyboard('{Escape}');
     expect(screen.getByRole('button', { name: 'Remove Barbara' })).toBeInTheDocument();
-    const roleSelect = within(screen.getByRole('form', { name: 'Invite a member' })).getByLabelText(
-      'Role',
-    );
-    expect(
-      within(roleSelect)
-        .getAllByRole('option')
-        .map((o) => o.textContent),
-    ).toEqual(['Member', 'Viewer']);
+    const inviteForm = screen.getByRole('form', { name: 'Invite a member' });
+    await userEvent.click(within(inviteForm).getByLabelText('Role'));
+    expect(screen.getAllByRole('option').map((o) => o.textContent)).toEqual(['Member', 'Viewer']);
   });
 });
 
