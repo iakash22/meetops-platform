@@ -1,4 +1,4 @@
-import { createReadStream } from 'node:fs';
+import { createReadStream, type ReadStream } from 'node:fs';
 import { connect, type Socket } from 'node:net';
 
 /**
@@ -30,19 +30,41 @@ export class ClamdError extends Error {
   }
 }
 
-export function createClamdScanner(cfg: ClamdConfig): Antivirus {
+/**
+ * The exact clean reply to `zINSTREAM`: clamd NUL-terminates every reply in z mode. Anything else, including extra
+ * text, whitespace or a second line around it, is not clean (fail-closed).
+ */
+export const CLAMD_CLEAN_REPLY = 'stream: OK\0';
+/** `stream: <signature> FOUND\0`, one line, nothing before or after. Includes Heuristics.Limits.Exceeded.*. */
+const FOUND_REPLY = /^stream: ([^\0\r\n]{1,200}) FOUND\0$/;
+
+/** Test seam: how the upload file is opened (defaults to node:fs createReadStream). */
+export type ClamdIo = { openFile?: (file: string) => ReadStream };
+
+/**
+ * clamd `zINSTREAM` client. Fail-closed: only the exact {@link CLAMD_CLEAN_REPLY} is clean; an ERROR reply (for
+ * example `INSTREAM size limit exceeded. ERROR`), an empty, malformed or oversized reply, a timeout, a socket error
+ * or a file read error all reject with {@link ClamdError}. The file stream and the socket are destroyed on every
+ * path. Today `timeoutMs` is one fixed total deadline (default 120 s, below clamd's MaxScanTime of 600 s); MAL-2
+ * makes it size-aware.
+ */
+export function createClamdScanner(cfg: ClamdConfig, io: ClamdIo = {}): Antivirus {
   const timeoutMs = cfg.timeoutMs ?? 120_000;
+  const openFile =
+    io.openFile ?? ((file: string) => createReadStream(file, { highWaterMark: 64 * 1024 }));
   return {
     scanFile: (file) =>
       new Promise<AntivirusVerdict>((resolve, reject) => {
         const sock: Socket =
           'socketPath' in cfg ? connect(cfg.socketPath) : connect(cfg.port, cfg.host);
+        let src: ReadStream | undefined;
         let reply = '';
         let done = false;
         const finish = (err: Error | null, v?: AntivirusVerdict) => {
           if (done) return;
           done = true;
           clearTimeout(timer);
+          src?.destroy();
           sock.destroy();
           if (err) reject(err);
           else resolve(v!);
@@ -54,26 +76,36 @@ export function createClamdScanner(cfg: ClamdConfig): Antivirus {
           if (reply.length > 4096) finish(new ClamdError('clamd reply too long'));
         });
         sock.on('end', () => {
-          const r = reply.replace(/\0/g, '').trim();
-          if (/^stream: OK$/.test(r)) return finish(null, { infected: false });
-          const m = /^stream: (.{1,200}) FOUND$/.exec(r);
+          if (reply === CLAMD_CLEAN_REPLY) return finish(null, { infected: false });
+          const m = FOUND_REPLY.exec(reply);
           if (m) return finish(null, { infected: true, signature: m[1]! });
           finish(new ClamdError('clamd error reply'));
         });
+        sock.on('close', () => finish(new ClamdError('clamd closed without a reply')));
         sock.on('connect', () => {
+          if (done) return;
           sock.write('zINSTREAM\0');
-          const src = createReadStream(file, { highWaterMark: 64 * 1024 });
+          try {
+            src = openFile(file);
+          } catch {
+            return finish(new ClamdError('read failed'));
+          }
           src.on('data', (chunk) => {
+            if (done) return;
             const b = chunk as Buffer;
             const len = Buffer.alloc(4);
             len.writeUInt32BE(b.length, 0);
             if (!sock.write(Buffer.concat([len, b]))) {
-              src.pause();
-              sock.once('drain', () => src.resume());
+              src!.pause();
+              sock.once('drain', () => {
+                if (!done) src!.resume();
+              });
             }
           });
           src.on('error', () => finish(new ClamdError('read failed')));
-          src.on('end', () => sock.write(Buffer.alloc(4)));
+          src.on('end', () => {
+            if (!done) sock.write(Buffer.alloc(4));
+          });
         });
       }),
   };

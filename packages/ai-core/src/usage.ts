@@ -14,7 +14,11 @@ export type UsageRecord = {
 /** Persistence interface for usage; Backend/DB implements a durable version. */
 export interface UsageTracker {
   record(rec: UsageRecord): Promise<void>;
-  totals(q: { organizationId: string; provider: string; since: Date }): Promise<{ requests: number; tokens: number; audioSeconds: number; costUsd: number }>;
+  totals(q: {
+    organizationId: string;
+    provider: string;
+    since: Date;
+  }): Promise<{ requests: number; tokens: number; audioSeconds: number; costUsd: number }>;
   /** Total estimated spend for an organization across all providers since a date (for per-org budgets). */
   organizationCostSince(organizationId: string, since: Date): Promise<number>;
 }
@@ -22,19 +26,31 @@ export interface UsageTracker {
 export type QuotaDecision = { allowed: true } | { allowed: false; reason: string };
 
 export interface QuotaManager {
-  check(q: { organizationId: string; provider: ProviderConfig; monthlyBudgetUsd?: number | undefined }): Promise<QuotaDecision>;
+  check(q: {
+    organizationId: string;
+    provider: ProviderConfig;
+    monthlyBudgetUsd?: number | undefined;
+  }): Promise<QuotaDecision>;
 }
 
+/** Unit tests only. Hosts must select it explicitly (see the worker's AI_STORES); never in production. */
 export class InMemoryUsageTracker implements UsageTracker {
   readonly records: UsageRecord[] = [];
   async record(rec: UsageRecord) {
     this.records.push(rec);
   }
   async organizationCostSince(organizationId: string, since: Date) {
-    return this.records.filter((r) => r.organizationId === organizationId && new Date(r.at) >= since).reduce((s, r) => s + r.usage.estimatedCostUsd, 0);
+    return this.records
+      .filter((r) => r.organizationId === organizationId && new Date(r.at) >= since)
+      .reduce((s, r) => s + r.usage.estimatedCostUsd, 0);
   }
   async totals(q: { organizationId: string; provider: string; since: Date }) {
-    const rs = this.records.filter((r) => r.organizationId === q.organizationId && r.provider === q.provider && new Date(r.at) >= q.since);
+    const rs = this.records.filter(
+      (r) =>
+        r.organizationId === q.organizationId &&
+        r.provider === q.provider &&
+        new Date(r.at) >= q.since,
+    );
     return {
       requests: rs.length,
       tokens: rs.reduce((s, r) => s + (r.usage.totalTokens ?? 0), 0),
@@ -46,14 +62,29 @@ export class InMemoryUsageTracker implements UsageTracker {
 
 /** Enforces ProviderConfig.usage limits from a UsageTracker. */
 export class UsageQuotaManager implements QuotaManager {
-  constructor(private readonly tracker: UsageTracker, private readonly now: () => Date = () => new Date()) {}
-  async check({ organizationId, provider, monthlyBudgetUsd }: { organizationId: string; provider: ProviderConfig; monthlyBudgetUsd?: number | undefined }): Promise<QuotaDecision> {
+  constructor(
+    private readonly tracker: UsageTracker,
+    private readonly now: () => Date = () => new Date(),
+  ) {}
+  async check({
+    organizationId,
+    provider,
+    monthlyBudgetUsd,
+  }: {
+    organizationId: string;
+    provider: ProviderConfig;
+    monthlyBudgetUsd?: number | undefined;
+  }): Promise<QuotaDecision> {
     const now = this.now();
     const day = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
     const month = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
-    if (monthlyBudgetUsd !== undefined && (provider.cost.tier === 'paid' || provider.platformBilled)) {
+    if (
+      monthlyBudgetUsd !== undefined &&
+      (provider.cost.tier === 'paid' || provider.platformBilled)
+    ) {
       const spent = await this.tracker.organizationCostSince(organizationId, month);
-      if (spent >= monthlyBudgetUsd) return { allowed: false, reason: `org monthly budget $${monthlyBudgetUsd} reached` };
+      if (spent >= monthlyBudgetUsd)
+        return { allowed: false, reason: `org monthly budget $${monthlyBudgetUsd} reached` };
     }
     const d = await this.tracker.totals({ organizationId, provider: provider.name, since: day });
     const u = provider.usage;
@@ -62,9 +93,16 @@ export class UsageQuotaManager implements QuotaManager {
     if (u.dailyTokenLimit !== undefined && d.tokens >= u.dailyTokenLimit)
       return { allowed: false, reason: `daily token limit ${u.dailyTokenLimit} reached` };
     if (u.monthlyAudioSecondsLimit !== undefined) {
-      const m = await this.tracker.totals({ organizationId, provider: provider.name, since: month });
+      const m = await this.tracker.totals({
+        organizationId,
+        provider: provider.name,
+        since: month,
+      });
       if (m.audioSeconds >= u.monthlyAudioSecondsLimit)
-        return { allowed: false, reason: `monthly audio limit ${u.monthlyAudioSecondsLimit}s reached` };
+        return {
+          allowed: false,
+          reason: `monthly audio limit ${u.monthlyAudioSecondsLimit}s reached`,
+        };
     }
     return { allowed: true };
   }
@@ -80,18 +118,60 @@ export function estimateCost(cfg: ProviderConfig, u: Omit<AIUsage, 'estimatedCos
   );
 }
 
-/** Idempotency store: a repeated request with the same key returns the stored result, no new AI call. */
+/**
+ * Idempotency store: a repeated request with the same key returns the stored result, no new AI call.
+ * Keys are always scoped by organization: implementations must never let one organization read or
+ * claim another organization's key. Durable implementations live with the host (the worker uses
+ * Postgres `ai_idempotency` under forced RLS); errors must propagate (fail closed), never fall back.
+ */
 export interface IdempotencyStore {
-  get<T>(key: string): Promise<T | undefined>;
-  set<T>(key: string, value: T, ttlSec?: number): Promise<void>;
+  get<T>(organizationId: string, key: string): Promise<T | undefined>;
+  set<T>(organizationId: string, key: string, value: T, ttlSec?: number): Promise<void>;
+  /**
+   * Single-winner claim across processes. Returns true for exactly one caller until the key is
+   * released or the claim expires. Optional: stores without it only dedupe within one process.
+   */
+  claim?(organizationId: string, key: string, ttlSec: number): Promise<boolean>;
+  /** Drop a pending claim (the job did not succeed) so a retry can claim it again. */
+  release?(organizationId: string, key: string): Promise<void>;
 }
 
+/** Default idempotency TTL (24h) for stored results; claims use the executor's claim TTL. */
+export const DEFAULT_IDEMPOTENCY_TTL_SEC = 24 * 60 * 60;
+
+/** Unit tests only. Hosts must select it explicitly (see the worker's AI_STORES); never in production. */
 export class InMemoryIdempotencyStore implements IdempotencyStore {
-  private readonly m = new Map<string, unknown>();
-  async get<T>(key: string) {
-    return this.m.get(key) as T | undefined;
+  private readonly m = new Map<string, { value?: unknown; pending: boolean; expiresAt: number }>();
+  constructor(private readonly now: () => number = () => Date.now()) {}
+  private k(organizationId: string, key: string) {
+    return `${organizationId}\u0000${key}`;
   }
-  async set<T>(key: string, value: T) {
-    this.m.set(key, value);
+  async get<T>(organizationId: string, key: string) {
+    const e = this.m.get(this.k(organizationId, key));
+    if (!e || e.pending || e.expiresAt <= this.now()) return undefined;
+    return e.value as T;
+  }
+  async set<T>(
+    organizationId: string,
+    key: string,
+    value: T,
+    ttlSec = DEFAULT_IDEMPOTENCY_TTL_SEC,
+  ) {
+    this.m.set(this.k(organizationId, key), {
+      value,
+      pending: false,
+      expiresAt: this.now() + ttlSec * 1000,
+    });
+  }
+  async claim(organizationId: string, key: string, ttlSec: number) {
+    const k = this.k(organizationId, key);
+    const e = this.m.get(k);
+    if (e && e.expiresAt > this.now()) return false;
+    this.m.set(k, { pending: true, expiresAt: this.now() + ttlSec * 1000 });
+    return true;
+  }
+  async release(organizationId: string, key: string) {
+    const k = this.k(organizationId, key);
+    if (this.m.get(k)?.pending) this.m.delete(k);
   }
 }

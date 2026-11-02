@@ -49,6 +49,7 @@ Where each variable is read:
 **Local dev only:** the compose stack runs the pinned MinIO fork `pgsty/silo`. Production uses R2/S3 via StorageService.
 
 - `MEDIA_STORAGE_ENABLED`: `true` backs the API upload routes with S3/MinIO (`STORAGE_*`) the Prisma `file_objects` / `consent_attestations` / `recording_sessions` tables, and enqueues media jobs on the BullMQ `media` queue the worker consumes; requires `DATABASE_URL` and `REDIS_URL`. Empty/`false` (default) keeps the in-memory adapters in development/test and leaves the media routes off elsewhere.
+- `CONSENT_ENFORCEMENT_ENABLED`: `true` makes upload and recording-session init, chunk URLs and complete require the meeting's latest Consent API event (`meeting_consent_events`) to be a grant for the current consent version; anything else fails closed with 422 `VALIDATION_FAILED` + `CONSENT_*`, and uploads without a `meetingId` are refused. Empty/`false` (default) leaves enforcement off so existing clients keep working. Invalid values fail startup.
 - `STORAGE_PROVIDER`: `minio` | `r2` | `s3`.
 - `STORAGE_ENDPOINT`, `STORAGE_REGION`, `STORAGE_BUCKET`.
 - `STORAGE_ACCESS_KEY_ID`, `STORAGE_SECRET_ACCESS_KEY`: in dev these are also the MinIO root credentials (dev-only placeholders).
@@ -114,6 +115,7 @@ These keys are owned and parsed by `@meetops/ai-core` (`loadAIEnv` in `packages/
 - `DEEPGRAM_ENABLED`: false
 - `DEEPGRAM_API_KEY`
 - `AI_ALLOW_PAID_FALLBACK`: false
+- `AI_STORES` (worker): `durable` (default; Postgres `ai_usage_counters` + `ai_idempotency`, forced RLS). `memory` is for unit tests only and is refused when `NODE_ENV=production`; store errors fail the job, never fall back to memory.
 - `AI_REQUIRE_PROVIDER_APPROVAL`: true
 
 ### Integrations

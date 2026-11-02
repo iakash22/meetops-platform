@@ -161,7 +161,12 @@ Use them on every screen, not only auth. Never put a raw `err.message` in the UI
 - **No logo asset in the repo.** The inline SVG mark in `logo.tsx` is a placeholder until design
   ships the final asset.
 - **Rate limiting.** There is no `Retry-After` countdown on the CTA; a 429 shows a toast.
-- **Toasts.** The toast "Retry" action and swipe-to-dismiss arrive with the sonner swap
-  (`feat/web-sonner-toast`, waiting for the lockfile slot).
+- **Toast "Retry" action (done).** `toastError(err, { onRetry })` adds a Retry button only when
+  `isRetryableError(err)` is true: network failure, 5xx, or `CSRF_INVALID` after the client's own
+  retry. Never for 4xx the user must fix, 401, 404 or 429 (which keeps its countdown). Clicking
+  dismisses the toast and calls `onRetry` once (double clicks ignored). Toasts with an action stay
+  until dismissed. Wired into the verify-email resend and the integration and calendar Connect
+  buttons. Any toast can carry one action: `toast(title, { action: { label, onClick } })`.
+  Swipe-to-dismiss comes from Sonner.
 - **CSRF.** There is no separate CSRF prefetch call; the client fetches the token lazily and
   retries once.

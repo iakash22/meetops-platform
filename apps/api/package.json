@@ -6,7 +6,8 @@
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "scripts": {
-    "dev": "tsx watch --import ../../scripts/load-env-if-exists.mjs src/index.ts",
+    "dev": "tsx --import ../../scripts/load-env-if-exists.mjs src/run.ts",
+    "dev:watch": "tsx watch --import ../../scripts/load-env-if-exists.mjs src/run.ts",
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc -p tsconfig.test.json --noEmit",
     "lint": "eslint .",

@@ -7,6 +7,9 @@ import type {
   ConnectionUpsert,
   ConnectionView,
   IntegrationsRepository,
+  RefreshedTokens,
+  RefreshSnapshot,
+  SaveRefreshedTokensResult,
   TaskRef,
 } from './ports.js';
 
@@ -24,6 +27,14 @@ export class InMemoryIntegrations implements IntegrationsRepository {
   readonly tasks = new Map<string, TaskRow>();
   readonly approvals = new Map<string, ApprovalRef & { organizationId: string }>();
   readonly issues: IntegrationIssue[] = [];
+  /**
+   * Token generation per connection, the in-memory stand-in for the DB fence (a digest of the access-token
+   * envelope). Bumped by every token write (add, upsert, fenced save) and by disconnect.
+   */
+  private readonly generation = new Map<string, number>();
+  private bump(id: string): void {
+    this.generation.set(id, (this.generation.get(id) ?? 0) + 1);
+  }
 
   add(
     row: Integration,
@@ -31,6 +42,7 @@ export class InMemoryIntegrations implements IntegrationsRepository {
     accessTokenExpiresAt: Date | null = null,
   ): void {
     this.rows.set(row.id, { ...row, accessTokenExpiresAt });
+    this.bump(row.id);
     this.secrets.set(
       row.id,
       row.status === 'revoked'
@@ -62,6 +74,7 @@ export class InMemoryIntegrations implements IntegrationsRepository {
       const next = { ...r, status: 'revoked' as const, updatedAt: new Date().toISOString() };
       this.rows.set(id, next);
       this.secrets.set(id, false);
+      this.bump(id);
       return this.dto(next);
     }
     return this.dto(r);
@@ -93,6 +106,7 @@ export class InMemoryIntegrations implements IntegrationsRepository {
       refreshToken: i.refreshToken,
       webhookSecret: i.webhookSecret,
     });
+    this.bump(row.id);
     return this.dto(row);
   }
 
@@ -102,6 +116,39 @@ export class InMemoryIntegrations implements IntegrationsRepository {
   async readSecrets(organizationId: string, id: string): Promise<ConnectionSecrets | null> {
     if (!this.view(this.rows.get(id), organizationId)) return null;
     return this.secrets.get(id) || null;
+  }
+  async readForRefresh(organizationId: string, id: string): Promise<RefreshSnapshot | null> {
+    const r = this.view(this.rows.get(id), organizationId);
+    const secrets = this.secrets.get(id);
+    if (!r || !secrets) return null;
+    return {
+      status: r.status,
+      accessTokenExpiresAt: r.accessTokenExpiresAt,
+      secrets: { ...secrets },
+      fence: String(this.generation.get(id) ?? 0),
+    };
+  }
+  async saveRefreshedTokens(
+    organizationId: string,
+    id: string,
+    tokens: RefreshedTokens,
+    fence: string,
+  ): Promise<SaveRefreshedTokensResult> {
+    const r = this.view(this.rows.get(id), organizationId);
+    if (!r || r.status !== 'active' || !this.secrets.get(id)) return 'superseded';
+    if (String(this.generation.get(id) ?? 0) !== fence) return 'superseded';
+    this.rows.set(id, {
+      ...r,
+      accessTokenExpiresAt: tokens.accessTokenExpiresAt,
+      updatedAt: new Date().toISOString(),
+    });
+    this.secrets.set(id, {
+      accessToken: tokens.accessToken,
+      refreshToken: tokens.refreshToken,
+      webhookSecret: tokens.webhookSecret,
+    });
+    this.bump(id);
+    return 'saved';
   }
   async setStatus(organizationId: string, id: string, status: 'active' | 'error') {
     const r = this.view(this.rows.get(id), organizationId);

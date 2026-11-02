@@ -9,6 +9,7 @@ export const DOWNLOAD_CONTENT_TYPES = [
   'audio/ogg',
   'audio/mpeg',
   'audio/mp4',
+  'audio/aac',
   'audio/wav',
   'audio/x-wav',
   'video/webm',

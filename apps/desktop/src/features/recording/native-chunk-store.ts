@@ -4,6 +4,18 @@ import type { ChunkStore, StoredRecording } from './upload-queue';
 /** Reserved chunk index holding the (encrypted) queue metadata for a recording. */
 export const META_INDEX = 0xffffffff;
 
+/** IPC header with the chunk slot; the bytes themselves go as the raw invoke body (never a JSON number array). */
+export const CHUNK_HEADER = 'x-meetops-chunk';
+
+const putRaw = (invoke: Invoke, sessionId: string, index: number, bytes: Uint8Array) =>
+  invoke('chunk_put', bytes, {
+    headers: { [CHUNK_HEADER]: JSON.stringify({ sessionId, index }) },
+  });
+
+/** Rust answers `chunk_get` with a raw IPC response (ArrayBuffer); accept a byte array too for older builds. */
+const toBytes = (raw: ArrayBuffer | Uint8Array | number[]) =>
+  raw instanceof Uint8Array ? raw : new Uint8Array(raw);
+
 function isNotFound(e: unknown): boolean {
   return !!e && typeof e === 'object' && 'code' in e && e.code === 'NOT_FOUND';
 }
@@ -21,14 +33,10 @@ export function createNativeChunkStore(invoke: Invoke): ChunkStore {
   return {
     put: async (id, seq, bytes) => {
       writing.add(id);
-      await invoke('chunk_put', {
-        sessionId: id,
-        index: seq,
-        data: Array.from(bytes),
-      });
+      await putRaw(invoke, id, seq, bytes);
     },
     read: async (id, seq) =>
-      new Uint8Array(await invoke<number[]>('chunk_get', { sessionId: id, index: seq })),
+      toBytes(await invoke<ArrayBuffer | number[]>('chunk_get', { sessionId: id, index: seq })),
     remove: async (id) => {
       await invoke('chunk_delete', { sessionId: id });
       writing.delete(id);
@@ -40,20 +48,16 @@ export function createNativeChunkStore(invoke: Invoke): ChunkStore {
       await invoke('chunk_tombstone', { sessionId: id });
     },
     saveMeta: async (id, meta) => {
-      await invoke('chunk_put', {
-        sessionId: id,
-        index: META_INDEX,
-        data: Array.from(new TextEncoder().encode(meta)),
-      });
+      await putRaw(invoke, id, META_INDEX, new TextEncoder().encode(meta));
       writing.delete(id);
     },
     readMeta: async (id) => {
       try {
-        const raw = await invoke<number[]>('chunk_get', {
+        const raw = await invoke<ArrayBuffer | number[]>('chunk_get', {
           sessionId: id,
           index: META_INDEX,
         });
-        return new TextDecoder().decode(new Uint8Array(raw));
+        return new TextDecoder().decode(toBytes(raw));
       } catch (e) {
         if (isNotFound(e)) return null;
         throw e;

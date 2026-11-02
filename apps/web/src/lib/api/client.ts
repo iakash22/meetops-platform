@@ -41,6 +41,10 @@ import {
   type MeetingInsightsApi,
 } from '@/features/meetings/insights-api';
 import {
+  createHttpMeetingConsentApi,
+  type MeetingConsentApi,
+} from '@/features/meetings/consent-api';
+import {
   DESKTOP_AUTHORIZE_PATH,
   type DesktopAuthorizeRequest,
   type DesktopAuthorizeResponse,
@@ -308,6 +312,8 @@ export type ApiClient = {
   };
   /** Transcript + report per meeting (Phase 3; routes pending on the backend). */
   meetingInsights: MeetingInsightsApi;
+  /** Meeting recording-consent ledger (Consent API, #334). */
+  meetingConsent: MeetingConsentApi;
   /** Employees, teams, team members and projects (contracts v0.4 directory, BE-3). */
   directory: DirectoryApi;
   /** Low-level request (cookie session + CSRF on non-GET). */
@@ -556,6 +562,7 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
     tasks: { list: (id, filters) => request('GET', `${org(id)}/tasks${taskQuery(filters)}`) },
     directory: createHttpDirectoryApi(request),
     meetingInsights: createHttpMeetingInsightsApi(request),
+    meetingConsent: createHttpMeetingConsentApi(request),
     storage: {
       createUpload: (id, body) => request('POST', uploadPaths.uploads(id), body),
       putToPresignedUrl: async (upload, file, opts = {}) => {

@@ -53,6 +53,11 @@ describe('sniffContainer', () => {
     expect(sniffContainer(Buffer.from('ID3\x04'))).toBe('mp3');
     expect(sniffContainer(Buffer.from([0xff, 0xfb, 0x90, 0x00]))).toBe('mp3');
   });
+  it('detects ADTS AAC (layer bits 00) and keeps MPEG layer 3 as mp3', () => {
+    expect(sniffContainer(Buffer.from([0xff, 0xf1, 0x50, 0x80, 0x02, 0x1f, 0xfc]))).toBe('aac');
+    expect(sniffContainer(Buffer.from([0xff, 0xf9, 0x50, 0x80, 0x02, 0x1f, 0xfc]))).toBe('aac');
+    expect(sniffContainer(Buffer.from([0xff, 0xfb, 0x90, 0x00, 0, 0, 0]))).toBe('mp3');
+  });
   it('returns null for anything else (html, svg, zip, pdf, exe)', () => {
     for (const s of ['<!doctype html>', '<svg xmlns=', 'PK\x03\x04', '%PDF-1.7', 'MZ\x90\0'])
       expect(sniffContainer(Buffer.from(s))).toBeNull();
@@ -521,5 +526,68 @@ describe.skipIf(!has('ffmpeg') || !has('ffprobe'))('verifyUploadContent with rea
     );
     const r = await verifyUploadContent(fake, 'audio/webm', probe);
     expect(r.verdict).toBe('rejected');
+  });
+});
+
+/** One synthetic ADTS frame of `len` bytes (7-byte header, no CRC). Dummy payload, not real audio. */
+const adtsFrame = (len: number) => {
+  const f = Buffer.alloc(len);
+  f[0] = 0xff;
+  f[1] = 0xf1;
+  f[2] = 0x50;
+  f[3] = 0x80 | ((len >> 11) & 0x03);
+  f[4] = (len >> 3) & 0xff;
+  f[5] = ((len & 0x07) << 5) | 0x1f;
+  f[6] = 0xfc;
+  return f;
+};
+
+describe('containerEnd for ADTS AAC', () => {
+  it('ok for whole frames, trailing for appended bytes, truncated for a cut frame', async () => {
+    const frames = Buffer.concat([adtsFrame(20), adtsFrame(31), adtsFrame(9)]);
+    expect(await containerEnd(file('ok.aac', frames), 'aac')).toBe('ok');
+    expect(
+      await containerEnd(file('tail.aac', Buffer.concat([frames, Buffer.from('<html>')])), 'aac'),
+    ).toBe('trailing');
+    expect(await containerEnd(file('cut.aac', frames.subarray(0, frames.length - 3)), 'aac')).toBe(
+      'truncated',
+    );
+  });
+  it('walks frames across its read window', async () => {
+    const many = Buffer.concat(Array.from({ length: 40_000 }, () => adtsFrame(13)));
+    expect(await containerEnd(file('many.aac', many), 'aac')).toBe('ok');
+  });
+});
+
+describe.skipIf(!has('ffmpeg') || !has('ffprobe'))('ADTS AAC segments with real ffprobe', () => {
+  const probe = createUploadProbe();
+  const segment = (name: string, freq: number) => {
+    const out = path.join(root, name);
+    execFileSync('ffmpeg', [
+      '-hide_banner',
+      '-loglevel',
+      'error',
+      '-y',
+      '-f',
+      'lavfi',
+      '-i',
+      `sine=frequency=${freq}:sample_rate=44100:duration=2`,
+      '-c:a',
+      'aac',
+      '-f',
+      'adts',
+      out,
+    ]);
+    return readFileSync(out);
+  };
+  it('independently encoded segments concatenated byte by byte are one clean audio/aac upload', async () => {
+    const joined = file(
+      'joined.aac',
+      Buffer.concat([segment('s0.aac', 440), segment('s1.aac', 660)]),
+    );
+    expect(await verifyUploadContent(joined, 'audio/aac', probe)).toEqual({ verdict: 'clean' });
+    expect(await verifyUploadContent(joined, 'audio/mp4', probe)).toMatchObject({
+      code: 'content_type_mismatch',
+    });
   });
 });

@@ -10,13 +10,22 @@
   },
   "packageManager": "pnpm@9.12.3",
   "engines": {
-    "node": ">=20.19 <25"
+    "node": "^20.19 || >=22.12 <25"
   },
   "scripts": {
     "build": "turbo run build",
+    "clean": "node scripts/clean.mjs all",
+    "clean:turbo": "node scripts/clean.mjs turbo",
+    "clean:build": "node scripts/clean.mjs build",
+    "clean:cache": "node scripts/clean.mjs cache",
+    "clean:modules": "node scripts/clean.mjs modules",
+    "clean:data": "node scripts/clean.mjs data",
+    "clean:all": "node scripts/clean.mjs full",
+    "clean:deep": "node scripts/clean.mjs deep",
     "typecheck": "turbo run typecheck",
     "lint": "turbo run lint",
-    "test": "turbo run test",
+    "test": "turbo run test --concurrency=2",
+    "size": "turbo run size",
     "dev": "turbo run dev",
     "dev:api": "turbo run dev --filter=@meetops/api",
     "dev:web": "turbo run dev --filter=@meetops/web",
@@ -24,7 +33,8 @@
     "dev:realtime": "turbo run dev --filter=@meetops/realtime",
     "dev:desktop": "turbo run dev --filter=@meetops/desktop",
     "dev:extension": "turbo run dev --filter=@meetops/extension",
-    "dev:stack": "turbo run dev --filter=@meetops/api --filter=@meetops/web --filter=@meetops/worker",
+    "dev:stack": "node scripts/dev-stack.mjs",
+    "dev:stack:turbo": "turbo run dev --filter=@meetops/api --filter=@meetops/web --filter=@meetops/worker --log-order=stream",
     "prepare": "husky",
     "postinstall": "turbo run postinstall --cache-dir .turbo",
     "docker:ensure": "node scripts/ensure-docker.mjs",
@@ -75,10 +85,12 @@
       "cacache>tar": "^7.5.21",
       "@expo/plist>@xmldom/xmldom": "^0.8.15",
       "@expo/metro-config>postcss": "^8.5.18",
-      "node-forge@<1.4.2": "1.4.2"
+      "node-forge@<1.4.2": "1.4.2",
+      "query-string@7>decode-uri-component": "^0.5.1"
     },
     "patchedDependencies": {
-      "@expo/cli@0.22.28": "patches/@expo__cli@0.22.28.patch"
+      "@expo/cli@0.22.28": "patches/@expo__cli@0.22.28.patch",
+      "query-string@7.1.3": "patches/query-string@7.1.3.patch"
     }
   }
 }

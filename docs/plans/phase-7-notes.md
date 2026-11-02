@@ -59,3 +59,32 @@
   confirms the link. Links to soft-deleted meetings are hidden.
 - **Not in this PR**: web UI for link/suggest, linking from the meeting side (list events of a meeting), worker-side
   auto-linking on sync.
+
+## Semantic search (P7, PR 1 of 2, off by default)
+
+- **Flag**: `SEMANTIC_SEARCH_ENABLED=true` registers `GET /orgs/:org/search/semantic`; otherwise the route does not
+  exist (404). With the flag on but no query embedder injected, it answers 503. No provider is called in tests.
+- **Storage** (`20261031050000_meeting_embeddings`): one `vector(1536)` per transcript segment or summary report and
+  model, plus a content hash. No text is copied: search joins back to the source, so deleting the source or meeting
+  cascades. Forced RLS (ADR-010), composite tenant FKs.
+- **Query** (`apps/api/src/modules/search/semantic.ts`, `SEMANTIC_SEARCH_SQL`): org filter first, inside a
+  `MATERIALIZED` CTE (`WHERE e.org_id = $1 AND e.model = $2`, joined to live same-org sources), then ordering by
+  cosine distance over those rows only. No HNSW/IVFFlat index on purpose (an ANN index scan ranks across tenants and
+  post-filters); exact scan per org is fine at current sizes. All values are bound parameters.
+- **PR 2 (follow-up)**: worker embedding pipeline (segments + summaries -> ai-core `Embeddings` capability, hash-based
+  skip, batch caps, usage/idempotency through the AI executor) and the API's production `QueryEmbedder` from ai-core.
+  Embedding customer text needs an approved, non-free-tier provider (the free Gemini tier must not process customer
+  data).
+
+## Meeting analytics (P7, read-only)
+
+- **API**: `GET /orgs/:org/analytics/meetings?from&to&bucket` (`ANALYTICS_PATHS.meetings`, contracts
+  `MeetingAnalyticsQuery` / `MeetingAnalytics`). Window `[from, to)` on `createdAt`, `to > from`, at most
+  `MAX_ANALYTICS_RANGE_DAYS` (366) → else 400 `VALIDATION_FAILED`; `bucket` = `day|week|month` (UTC, ISO weeks),
+  default `day`. `private, no-store`.
+- **Access**: same tenancy gate as meetings (session 401 → other org 404 → CASL `read Meeting`), so viewers and up.
+  No feature flag (the docs do not ask for one).
+- **Data**: aggregates only (counts by source, status and period; duration measured/total/average over meetings with
+  `durationSec`); no ids, titles or people. Soft-deleted meetings are excluded. One `withOrganizationContext`
+  transaction (forced RLS) plus an explicit `org_id` filter; typed Prisma `groupBy`/`aggregate`, and one tagged
+  `$queryRaw` (bound parameters) for `date_trunc` periods. No writes, no new tables or views.

@@ -1,5 +1,6 @@
 import { memo, useDeferredValue, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
+import { Link } from '@tanstack/react-router';
 import type { Id, Report, Transcript } from '@meetops/contracts';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -7,7 +8,7 @@ import { Label } from '@/components/ui/label';
 import { EmptyState, ErrorState, LoadingState } from '@/components/states/states';
 import { ApiError } from '@/lib/api/client';
 import { useApi } from '@/lib/api/context';
-import { useOrganizationId } from '@/lib/api/queries';
+import { useMeeting, useOrganizationId } from '@/lib/api/queries';
 import { formatOffset } from './insights-api';
 
 const notReady = (err: unknown) => err instanceof ApiError && err.status === 404;
@@ -61,8 +62,17 @@ function List({ label, items }: { label: string; items: string[] }) {
 
 export function ReportPanel({ meetingId, ready }: { meetingId: Id; ready: boolean }) {
   const q = useInsight<Report>('report', meetingId, ready);
+  // Shares the detail page's cached meeting query, so this adds no request.
+  const failed = useMeeting(meetingId).data?.status === 'failed';
   let body: React.ReactNode;
-  if (!ready || q.data === null)
+  if (failed)
+    body = (
+      <EmptyState
+        title="Processing failed"
+        description="We couldn't produce a transcript or summary for this recording. Upload it again to retry."
+      />
+    );
+  else if (!ready || q.data === null)
     body = (
       <EmptyState
         title="Summary not available yet"
@@ -96,6 +106,12 @@ export function ReportPanel({ meetingId, ready }: { meetingId: Id; ready: boolea
             </ul>
           </section>
         ) : null}
+        <Link
+          to="/tasks/review"
+          className="inline-flex min-h-11 items-center font-medium text-link hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        >
+          Review draft tasks
+        </Link>
       </div>
     );
   }

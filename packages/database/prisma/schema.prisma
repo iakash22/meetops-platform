@@ -127,6 +127,7 @@ enum MeetingSource {
   extension
   desktop
   bot
+  mobile
 }
 
 enum RecordingStatus {
@@ -215,6 +216,12 @@ enum ConsentMethod {
   all_parties_consented
 }
 
+/// Consent API: kind of a meeting consent event (contracts MEETING_CONSENT_EVENT_TYPES).
+enum MeetingConsentEventType {
+  granted
+  revoked
+}
+
 model Organization {
   id          String    @id @default(uuid()) @db.Uuid
   name        String
@@ -224,45 +231,47 @@ model Organization {
   updatedAt   DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
   deletedAt   DateTime? @map("deleted_at") @db.Timestamptz(3)
 
-  memberships            Membership[]
-  invitations            Invitation[]
-  employees              Employee[]
-  projects               Project[]
-  meetings               Meeting[]
-  meetingParticipants    MeetingParticipant[]
-  fileObjects            FileObject[]
-  transcripts            Transcript[]
-  transcriptSegments     TranscriptSegment[]
-  reports                Report[]
-  extractedTasks         ExtractedTask[]
-  taskApprovals          TaskApproval[]
-  tasks                  Task[]
-  integrationIssues      IntegrationIssue[]
-  aiRuns                 AiRun[]
-  outboxEvents           OutboxEvent[]
-  auditEvents            AuditEvent[]
-  recordings             Recording[]
-  recordingSessions      RecordingSession[]
-  recordingSessionChunks RecordingSessionChunk[]
-  activeSessions         Session[]
-  aiUsageCounters        AiUsageCounter[]
-  aiConfig               AiOrganizationConfig?
-  aiIdempotencyKeys      AiIdempotency[]
-  transcriptChunks       TranscriptChunk[]
-  teams                  Team[]
-  teamMembers            TeamMember[]
-  consentAttestations    ConsentAttestation[]
-  integrationConnections IntegrationConnection[]
-  calendarConnections    CalendarConnection[]
-  calendarEvents         CalendarEvent[]
-  calendarEventLinks     CalendarEventLink[]
-  authDevices            AuthDevice[]
-  authTokenFamilies      AuthTokenFamily[]
-  authRefreshTokens      AuthRefreshToken[]
-  notifications          Notification[]
+  memberships                  Membership[]
+  invitations                  Invitation[]
+  employees                    Employee[]
+  projects                     Project[]
+  meetings                     Meeting[]
+  meetingParticipants          MeetingParticipant[]
+  fileObjects                  FileObject[]
+  transcripts                  Transcript[]
+  transcriptSegments           TranscriptSegment[]
+  reports                      Report[]
+  meetingEmbeddings            MeetingEmbedding[]
+  extractedTasks               ExtractedTask[]
+  taskApprovals                TaskApproval[]
+  tasks                        Task[]
+  integrationIssues            IntegrationIssue[]
+  aiRuns                       AiRun[]
+  outboxEvents                 OutboxEvent[]
+  auditEvents                  AuditEvent[]
+  recordings                   Recording[]
+  recordingSessions            RecordingSession[]
+  recordingSessionChunks       RecordingSessionChunk[]
+  activeSessions               Session[]
+  aiUsageCounters              AiUsageCounter[]
+  aiConfig                     AiOrganizationConfig?
+  aiIdempotencyKeys            AiIdempotency[]
+  transcriptChunks             TranscriptChunk[]
+  teams                        Team[]
+  teamMembers                  TeamMember[]
+  consentAttestations          ConsentAttestation[]
+  meetingConsentEvents         MeetingConsentEvent[]
+  integrationConnections       IntegrationConnection[]
+  calendarConnections          CalendarConnection[]
+  calendarEvents               CalendarEvent[]
+  authDevices                  AuthDevice[]
+  authTokenFamilies            AuthTokenFamily[]
+  authRefreshTokens            AuthRefreshToken[]
+  notifications                Notification[]
+  calendarEventLinks           CalendarEventLink[]
   notificationDeliveryAttempts NotificationDeliveryAttempt[]
-  notificationPreferences NotificationPreference[]
-  pushDeviceTokens       PushDeviceToken[]
+  notificationPreferences      NotificationPreference[]
+  pushDeviceTokens             PushDeviceToken[]
 
   createdBy User? @relation("OrgCreator", fields: [createdById], references: [id], onDelete: SetNull)
 
@@ -290,21 +299,22 @@ model User {
   meetingParticipations MeetingParticipant[] @relation("ParticipantUser")
   auditEvents           AuditEvent[]
 
-  organizationsCreated Organization[]         @relation("OrgCreator")
-  invitationsAccepted  Invitation[]           @relation("InvitationAcceptor")
-  emailVerifications   EmailVerification[]
-  passwordResets       PasswordReset[]
-  recordingSessions    RecordingSession[]     @relation("RecordingSessionCreator")
-  aiConfigsUpdated     AiOrganizationConfig[] @relation("AiOrganizationConfigUpdater")
-  consentAttestations  ConsentAttestation[]   @relation("ConsentAttester")
-  authDevices          AuthDevice[]           @relation("AuthDeviceOwner")
-  authTokenFamilies    AuthTokenFamily[]      @relation("AuthTokenFamilyOwner")
-  notifications        Notification[]         @relation("NotificationRecipient")
+  organizationsCreated    Organization[]           @relation("OrgCreator")
+  invitationsAccepted     Invitation[]             @relation("InvitationAcceptor")
+  emailVerifications      EmailVerification[]
+  passwordResets          PasswordReset[]
+  recordingSessions       RecordingSession[]       @relation("RecordingSessionCreator")
+  aiConfigsUpdated        AiOrganizationConfig[]   @relation("AiOrganizationConfigUpdater")
+  consentAttestations     ConsentAttestation[]     @relation("ConsentAttester")
+  meetingConsentEvents    MeetingConsentEvent[]    @relation("MeetingConsentActor")
+  authDevices             AuthDevice[]             @relation("AuthDeviceOwner")
+  authTokenFamilies       AuthTokenFamily[]        @relation("AuthTokenFamilyOwner")
+  notifications           Notification[]           @relation("NotificationRecipient")
   notificationPreferences NotificationPreference[] @relation("NotificationPreferenceOwner")
-  pushDeviceTokens     PushDeviceToken[]      @relation("PushDeviceTokenOwner")
-  calendarConnections  CalendarConnection[]   @relation("CalendarConnectionOwner")
-  calendarEvents       CalendarEvent[]        @relation("CalendarEventOwner")
-  calendarEventLinks   CalendarEventLink[]    @relation("CalendarEventLinkOwner")
+  pushDeviceTokens        PushDeviceToken[]        @relation("PushDeviceTokenOwner")
+  calendarConnections     CalendarConnection[]     @relation("CalendarConnectionOwner")
+  calendarEvents          CalendarEvent[]          @relation("CalendarEventOwner")
+  calendarEventLinks      CalendarEventLink[]      @relation("CalendarEventLinkOwner")
 
   @@map("users")
 }
@@ -501,16 +511,18 @@ model Meeting {
   updatedAt         DateTime      @updatedAt @map("updated_at") @db.Timestamptz(3)
   deletedAt         DateTime?     @map("deleted_at") @db.Timestamptz(3)
 
-  organization      Organization         @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  project           Project?             @relation(fields: [organizationId, projectId], references: [organizationId, id], onDelete: Restrict)
-  createdBy         User?                @relation("MeetingCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  organization      Organization          @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  project           Project?              @relation(fields: [organizationId, projectId], references: [organizationId, id], onDelete: Restrict)
+  createdBy         User?                 @relation("MeetingCreator", fields: [createdById], references: [id], onDelete: SetNull)
   participants      MeetingParticipant[]
   transcripts       Transcript[]
   reports           Report[]
+  embeddings        MeetingEmbedding[]
   extractedTasks    ExtractedTask[]
   aiRuns            AiRun[]
   recordings        Recording[]
   recordingSessions RecordingSession[]
+  consentEvents     MeetingConsentEvent[]
   fileObjects       FileObject[]
   tasks             Task[]
   calendarLinks     CalendarEventLink[]
@@ -628,6 +640,34 @@ model ConsentAttestation {
   @@map("consent_attestations")
 }
 
+/// Consent API: meeting-level recording consent ledger. Append-only (UPDATE/DELETE/TRUNCATE raise; the app has
+/// SELECT, INSERT only) under forced RLS. A revocation is a new `revoked` event, never a delete. organizationId and
+/// actorUserId come from the authenticated session. The meeting FK is RESTRICT (meetings are soft-deleted).
+model MeetingConsentEvent {
+  id             String                  @id @default(uuid()) @db.Uuid
+  organizationId String                  @map("org_id") @db.Uuid
+  meetingId      String                  @map("meeting_id") @db.Uuid
+  eventType      MeetingConsentEventType @map("event_type")
+  /// Set on `granted` only (CHECK); contracts CONSENT_VERSION_PATTERN.
+  consentVersion String?                 @map("consent_version")
+  /// Set on `granted` only (CHECK).
+  method         ConsentMethod?
+  /// Optional revocation reason (`revoked` only, <= 500 chars).
+  reason         String?
+  actorUserId    String                  @map("actor_user_id") @db.Uuid
+  /// Client attestation time for a grant (<= recordedAt + 300 s), server time for a revocation.
+  occurredAt     DateTime                @map("occurred_at") @db.Timestamptz(3)
+  recordedAt     DateTime                @default(now()) @map("recorded_at") @db.Timestamptz(3)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  meeting      Meeting      @relation(fields: [organizationId, meetingId], references: [organizationId, id], onDelete: Restrict)
+  actor        User         @relation("MeetingConsentActor", fields: [actorUserId], references: [id], onDelete: Restrict)
+
+  @@unique([organizationId, id])
+  @@index([organizationId, meetingId, recordedAt])
+  @@map("meeting_consent_events")
+}
+
 model Recording {
   id             String          @id @default(uuid()) @db.Uuid
   organizationId String          @map("org_id") @db.Uuid
@@ -710,6 +750,7 @@ model TranscriptSegment {
   organization Organization        @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   transcript   Transcript          @relation(fields: [organizationId, transcriptId], references: [organizationId, id], onDelete: Cascade)
   participant  MeetingParticipant? @relation(fields: [organizationId, participantId], references: [organizationId, id], onDelete: Restrict)
+  embeddings   MeetingEmbedding[]
 
   @@unique([transcriptId, revision, sequence])
   @@unique([organizationId, id])
@@ -718,28 +759,29 @@ model TranscriptSegment {
 }
 
 model Report {
-  id             String       @id @default(uuid()) @db.Uuid
-  organizationId String       @map("org_id") @db.Uuid
-  meetingId      String       @map("meeting_id") @db.Uuid
-  transcriptId   String?      @map("transcript_id") @db.Uuid
-  aiRunId        String?      @map("ai_run_id") @db.Uuid
+  id                 String       @id @default(uuid()) @db.Uuid
+  organizationId     String       @map("org_id") @db.Uuid
+  meetingId          String       @map("meeting_id") @db.Uuid
+  transcriptId       String?      @map("transcript_id") @db.Uuid
+  aiRunId            String?      @map("ai_run_id") @db.Uuid
   /// AI summary dedupe key parts (NULL for manual/legacy reports). See reports_summary_dedupe_key.
-  transcriptRevision Int?     @map("transcript_revision")
-  promptVersion  String?      @map("prompt_version")
-  version        Int          @default(1)
-  status         ReportStatus @default(draft)
-  title          String?
-  summary        String?
-  content        Json?
-  createdAt      DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt      DateTime     @updatedAt @map("updated_at") @db.Timestamptz(3)
-  deletedAt      DateTime?    @map("deleted_at") @db.Timestamptz(3)
+  transcriptRevision Int?         @map("transcript_revision")
+  promptVersion      String?      @map("prompt_version")
+  version            Int          @default(1)
+  status             ReportStatus @default(draft)
+  title              String?
+  summary            String?
+  content            Json?
+  createdAt          DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt          DateTime     @updatedAt @map("updated_at") @db.Timestamptz(3)
+  deletedAt          DateTime?    @map("deleted_at") @db.Timestamptz(3)
 
-  organization   Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  meeting        Meeting         @relation(fields: [organizationId, meetingId], references: [organizationId, id], onDelete: Cascade)
-  transcript     Transcript?     @relation(fields: [organizationId, transcriptId], references: [organizationId, id], onDelete: Restrict)
-  aiRun          AiRun?          @relation(fields: [organizationId, aiRunId], references: [organizationId, id], onDelete: Restrict)
+  organization   Organization       @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  meeting        Meeting            @relation(fields: [organizationId, meetingId], references: [organizationId, id], onDelete: Cascade)
+  transcript     Transcript?        @relation(fields: [organizationId, transcriptId], references: [organizationId, id], onDelete: Restrict)
+  aiRun          AiRun?             @relation(fields: [organizationId, aiRunId], references: [organizationId, id], onDelete: Restrict)
   extractedTasks ExtractedTask[]
+  embeddings     MeetingEmbedding[]
 
   @@unique([meetingId, version])
   @@unique([organizationId, id])
@@ -1386,13 +1428,14 @@ model CalendarConnection {
   createdAt            DateTime                 @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt            DateTime                 @updatedAt @map("updated_at") @db.Timestamptz(3)
 
-  organization Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  user         User            @relation("CalendarConnectionOwner", fields: [userId], references: [id], onDelete: Cascade)
+  organization Organization        @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user         User                @relation("CalendarConnectionOwner", fields: [userId], references: [id], onDelete: Cascade)
   events       CalendarEvent[]
   eventLinks   CalendarEventLink[]
 
   @@unique([organizationId, id])
-  @@unique([organizationId, userId, provider, externalAccountId])
+  // Postgres truncates the 68-char default name to 63; map the name the migration actually created.
+  @@unique([organizationId, userId, provider, externalAccountId], map: "calendar_connections_org_id_user_id_provider_external_account_i")
   @@index([organizationId, userId])
   @@index([tokenKeyId])
   @@index([status, nextSyncAt])
@@ -1452,4 +1495,33 @@ model CalendarEventLink {
   @@unique([organizationId, connectionId, providerEventId])
   @@index([organizationId, meetingId])
   @@map("calendar_event_links")
+}
+
+/// Phase 7 semantic search: one pgvector embedding per transcript segment or summary report and model. The text is
+/// not copied (search joins back to the source). Forced RLS (ADR-010); composite tenant FKs; no ANN index so queries
+/// rank only the caller's organization's rows (migration 20261031050000).
+model MeetingEmbedding {
+  id             String                      @id @default(uuid()) @db.Uuid
+  organizationId String                      @map("org_id") @db.Uuid
+  meetingId      String                      @map("meeting_id") @db.Uuid
+  sourceKind     String                      @map("source_kind")
+  segmentId      String?                     @map("segment_id") @db.Uuid
+  reportId       String?                     @map("report_id") @db.Uuid
+  model          String
+  contentSha256  String                      @map("content_sha256")
+  embedding      Unsupported("vector(1536)")
+  createdAt      DateTime                    @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime                    @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  organization Organization       @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  meeting      Meeting            @relation(fields: [organizationId, meetingId], references: [organizationId, id], onDelete: Cascade)
+  segment      TranscriptSegment? @relation(fields: [organizationId, segmentId], references: [organizationId, id], onDelete: Cascade)
+  report       Report?            @relation(fields: [organizationId, reportId], references: [organizationId, id], onDelete: Cascade)
+
+  @@unique([organizationId, id])
+  @@unique([organizationId, segmentId, model])
+  @@unique([organizationId, reportId, model])
+  @@index([organizationId, model])
+  @@index([organizationId, meetingId])
+  @@map("meeting_embeddings")
 }
