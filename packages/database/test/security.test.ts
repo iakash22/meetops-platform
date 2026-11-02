@@ -111,6 +111,8 @@ const CALENDAR_EVENTS_MIGRATION = '20261031020000_calendar_events';
 const MEETING_EMBEDDINGS_MIGRATION = '20261031050000_meeting_embeddings';
 /** MeetingSource gains 'mobile' (additive ADD VALUE). Sorts after meeting_embeddings. */
 const MEETING_SOURCE_MOBILE_MIGRATION = '20261031120000_meeting_source_mobile';
+/** Consent API: append-only meeting consent ledger (forced RLS, SELECT/INSERT only). */
+const MEETING_CONSENT_MIGRATION = '20261031030000_meeting_consent_events';
 const LATEST_MIGRATION = MEETING_SOURCE_MOBILE_MIGRATION;
 /**
  * Parallel PRs that sort between calendar_events and meeting_embeddings (#334 consent events, #341 calendar links).
@@ -151,6 +153,10 @@ const meetingEmbeddingsSql = readFileSync(
   resolve(migrationsDir, MEETING_EMBEDDINGS_MIGRATION, 'migration.sql'),
   'utf8',
 );
+const meetingConsentSql = readFileSync(
+  resolve(migrationsDir, MEETING_CONSENT_MIGRATION, 'migration.sql'),
+  'utf8',
+);
 const adr010Sql =
   teamsSql +
   authTokensSql +
@@ -158,7 +164,8 @@ const adr010Sql =
   notificationsSql +
   calendarSql +
   calendarEventsSql +
-  meetingEmbeddingsSql;
+  meetingEmbeddingsSql +
+  meetingConsentSql;
 /** Phase 3 per-recording transcript revision migration. */
 const TRANSCRIPT_REVISION_MIGRATION_DIR = '20261026200000_transcript_recording_revision';
 const consentSql = readFileSync(resolve(migrationsDir, CONSENT_MIGRATION, 'migration.sql'), 'utf8');
@@ -200,6 +207,7 @@ const ADR010_ONLY_TABLES: readonly string[] = [
   'calendar_connections',
   'calendar_events',
   'meeting_embeddings',
+  'meeting_consent_events',
 ];
 /** DB-3: append-only tenant tables with their own SELECT/INSERT policies (ADR-010 setting) in consentSql. */
 const CONSENT_TABLES: readonly string[] = ['consent_attestations'];
@@ -725,7 +733,7 @@ describe('schema conventions', () => {
   });
 
   it('every model uses a uuid primary key', () => {
-    expect(models).toHaveLength(43);
+    expect(models).toHaveLength(44);
     for (const m of models.filter((x) => !ORGANIZATION_KEYED.includes(x.table)))
       expect(m.body, m.name).toMatch(/^\s+id\s+String\s+@id @default\(uuid\(\)\) @db\.Uuid$/m);
   });
@@ -1704,6 +1712,27 @@ describe('Phase 7 calendar_connections (static)', () => {
       'CREATE UNIQUE INDEX "calendar_connections_org_id_user_id_provider_external_account_id_key"',
     );
     expect('calendar_connections_org_id_user_id_provider_external_account_i').toHaveLength(63);
+  });
+});
+
+describe('Consent API meeting_consent_events (static)', () => {
+  const sql = meetingConsentSql;
+  const statements = sql.replace(/--.*$/gm, '');
+  it('is additive, forced-RLS, fail-closed and append-only', () => {
+    expect(statements).not.toMatch(
+      /\bDROP\b|RENAME|ALTER COLUMN|NO FORCE|DISABLE ROW LEVEL SECURITY/i,
+    );
+    expect(TENANT_TABLES).toContain('meeting_consent_events');
+    expect(sql).toContain('ALTER TABLE "meeting_consent_events" ENABLE ROW LEVEL SECURITY;');
+    expect(sql).toContain('ALTER TABLE "meeting_consent_events" FORCE ROW LEVEL SECURITY;');
+    expect(sql).toContain('REVOKE ALL ON TABLE "meeting_consent_events" FROM meetops_app;');
+    expect(sql).toContain('GRANT SELECT, INSERT ON TABLE "meeting_consent_events" TO meetops_app;');
+    expect(sql).toMatch(/BEFORE UPDATE OR DELETE ON "meeting_consent_events"/);
+    expect(sql).toMatch(/BEFORE TRUNCATE ON "meeting_consent_events"/);
+    expect(statements).toMatch(/"meeting_consent_events_shape_check" CHECK \(/);
+    expect(statements).toContain(
+      'FOREIGN KEY ("org_id", "meeting_id") REFERENCES "meetings"("org_id", "id") ON DELETE RESTRICT',
+    );
   });
 });
 

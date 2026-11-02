@@ -13,6 +13,7 @@ import {
   checkStoredConsent,
   type ConsentRepository,
 } from '../domain/consent.js';
+import { enforceMeetingConsent, type MeetingConsentGate } from '../domain/meeting-consent.js';
 import {
   UploadNotFoundError,
   UploadStateConflictError,
@@ -33,7 +34,7 @@ export const UPLOAD_URL_TTL_SECONDS = 300;
 /** Download URLs: never above contracts MAX_PRESIGNED_GET_TTL_SECONDS (300 s). */
 export const DOWNLOAD_URL_TTL_SECONDS = Math.min(300, MAX_PRESIGNED_GET_TTL_SECONDS);
 
-export interface MediaDeps {
+export interface MediaDeps extends MeetingConsentGate {
   files: FileObjectRepository;
   consents: ConsentRepository;
   signer: MediaSigner;
@@ -66,6 +67,8 @@ export class UploadService {
       const m = isUuid(body.meetingId) ? await this.d.meetings.findById(org, body.meetingId) : null;
       if (!m) throw new MeetingNotFoundError();
     }
+    // CONSENT_ENFORCEMENT_ENABLED: an upload with no meeting, or a meeting without a current grant, fails closed.
+    await enforceMeetingConsent(this.d, org, body.meetingId);
     const id = randomUUID();
     const file: FileObjectRecord = {
       id,
@@ -125,6 +128,7 @@ export class UploadService {
       const consent = checkStoredConsent(
         await this.d.consents.findLatest(f.organizationId, 'upload', f.id),
       );
+      await enforceMeetingConsent(this.d, f.organizationId, f.meetingId);
       await this.enqueue(f, consent.id, true);
       return { ...f };
     }
@@ -144,6 +148,7 @@ export class UploadService {
     const consent = checkStoredConsent(
       await this.d.consents.findLatest(f.organizationId, 'upload', f.id),
     );
+    await enforceMeetingConsent(this.d, f.organizationId, f.meetingId);
     await this.d.files.setStatus(f.organizationId, f.id, 'processing', 'pending');
     await this.enqueue(f, consent.id);
     return { ...f, status: 'processing', scanStatus: 'pending' };

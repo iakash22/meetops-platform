@@ -27,6 +27,7 @@ Legend: C create, R read, U update, D delete, A approve, P push to integration, 
 | Push to integration          | ✓      | P                    | P (if org setting allows) | —        |
 | AI provider config & keys    | ✓      | ✓ (write-only keys)  | —                         | —        |
 | Consent / retention settings | ✓      | ✓                    | R                         | R        |
+| Meeting recording consent    | C R    | C R                  | C R                       | R        |
 | Audit log                    | R      | R                    | —                         | —        |
 | Data export                  | ✓      | ✓                    | —                         | —        |
 | Sessions (others)            | revoke | revoke (non-owners)  | own only                  | own only |
