@@ -50,6 +50,7 @@ describe('task and approval analytics (P7, read-only, org-scoped)', () => {
       meetingId: uuid(),
       reportId: uuid(),
       title: 'x',
+      confidence: 0.5,
       sourceSegmentIds: [],
       createdAt,
     };
