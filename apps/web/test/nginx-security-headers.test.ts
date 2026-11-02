@@ -102,9 +102,7 @@ describe('P9 R20-R23: nginx security headers', () => {
 
 describe('P9 R20: inline content is hash-allowed, production origins are https', () => {
   it('index.html passes scripts/check-csp.mjs against the nginx template', async () => {
-    const { checkCsp } = (await import('../scripts/check-csp.mjs')) as {
-      checkCsp: (html: string, template: string) => string[];
-    };
+    const { checkCsp } = await import('../scripts/check-csp.mjs');
     const html = readFileSync(resolve(root, 'apps', 'web', 'index.html'), 'utf8');
     expect(checkCsp(html, template)).toEqual([]);
     expect(checkCsp(html.replace('</style>', ' </style>'), template)[0]).toMatch(/needs 'sha256-/);

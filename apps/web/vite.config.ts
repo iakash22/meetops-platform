@@ -123,7 +123,7 @@ export default defineConfig(({ mode, command }) => {
   const template = nginxTemplate();
   const devNonce = randomBytes(18).toString('base64url');
   return {
-    html: command === 'serve' ? { cspNonce: devNonce } : undefined,
+    ...(command === 'serve' ? { html: { cspNonce: devNonce } } : {}),
     preview: { headers: { 'Content-Security-Policy': localCsp(template) } },
     plugins: [react(), apiPreconnect(viteApiUrl)],
     envDir: monorepoRoot,
