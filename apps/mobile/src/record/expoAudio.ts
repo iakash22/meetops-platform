@@ -5,6 +5,7 @@ import type { AudioDriver, ForegroundIndicator, RecorderFileGuard } from './nati
 import { createRecorderFileGuard } from './recorderFiles';
 import type { SegmentRecorder } from './segmentCapture';
 import type { ChunkCipher, FileSystemLike } from './fileChunkStore';
+import type { ChunkCryptoNative, ChunkKeyInfo } from '../../modules/chunk-crypto';
 
 /**
  * expo-audio / expo-file-system bindings. Required lazily so Jest and demo mode never load the native modules.
@@ -96,11 +97,18 @@ export function expoFileSystem(): FileSystemLike {
  * FAIL CLOSED: without the native module this returns a cipher that rejects every call, so recording refuses to start
  * and nothing is ever written in plaintext.
  */
-export function createNativeChunkCipher(): ChunkCipher & { deleteKey(): Promise<void> } {
-  const { ChunkCryptoModule } =
-    require('../../modules/chunk-crypto') as typeof import('../../modules/chunk-crypto');
-  if (ChunkCryptoModule) {
-    const native = ChunkCryptoModule;
+export type NativeChunkCipher = ChunkCipher & {
+  deleteKey(): Promise<void>;
+  /** Where the key lives (Android Keystore level); null when the build can't tell (iOS, older native builds). */
+  keyInfo(): Promise<ChunkKeyInfo | null>;
+};
+
+export function createNativeChunkCipher(
+  native: ChunkCryptoNative | null = (
+    require('../../modules/chunk-crypto') as typeof import('../../modules/chunk-crypto')
+  ).ChunkCryptoModule,
+): NativeChunkCipher {
+  if (native) {
     return {
       ready: async () => {
         // Round-trip once so a missing or broken key fails before the mic opens.
@@ -115,11 +123,18 @@ export function createNativeChunkCipher(): ChunkCipher & { deleteKey(): Promise<
         ? { sealFile: (src: string, dest: string, n: number) => native.sealFile!(src, dest, n) }
         : {}),
       deleteKey: () => native.deleteKey(),
+      keyInfo: () => (native.keyInfo ? native.keyInfo() : Promise.resolve(null)),
     };
   }
   const refuse = () =>
     Promise.reject(new Error('Encryption at rest is unavailable on this build.'));
-  return { ready: refuse, seal: refuse, open: refuse, deleteKey: () => Promise.resolve() };
+  return {
+    ready: refuse,
+    seal: refuse,
+    open: refuse,
+    deleteKey: () => Promise.resolve(),
+    keyInfo: () => Promise.resolve(null),
+  };
 }
 
 /** Android microphone foreground service (modules/recording-service). Null on iOS or without the native module. */
