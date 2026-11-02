@@ -165,18 +165,20 @@ export async function processTaskSyncJob(
     await deps.jobs.reject(organizationId, syncId, 'TASK_NOT_FOUND');
     return 'failed';
   }
-  const approvalOk = async () => {
-    const a = await deps.lookups.approval(organizationId, row.approvalId);
-    return Boolean(
+  const isValidApproval = (a: Awaited<ReturnType<typeof deps.lookups.approval>>) =>
+    Boolean(
       a &&
       a.decision === 'approved' &&
       a.reviewerId &&
       task.extractedTaskId &&
       a.extractedTaskId === task.extractedTaskId,
     );
-  };
+  // Fresh read for the write-time verifier (the approval may be revoked while the job runs).
+  const approvalOk = async () =>
+    isValidApproval(await deps.lookups.approval(organizationId, row.approvalId));
+  // Gate on a single read: the approval that is checked is the one whose id/reviewer goes into the write.
   const approval = await deps.lookups.approval(organizationId, row.approvalId);
-  if (!(await approvalOk()) || !approval?.reviewerId) {
+  if (!approval?.reviewerId || !isValidApproval(approval)) {
     await deps.jobs.reject(organizationId, syncId, 'APPROVAL_REQUIRED');
     return 'failed';
   }

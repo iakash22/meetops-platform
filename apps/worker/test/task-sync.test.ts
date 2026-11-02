@@ -272,6 +272,32 @@ describe('processTaskSyncJob (GitHub adapter, mocked client)', () => {
     expect(t.creates).toHaveLength(0);
   });
 
+  it('gates on a single approval read: the checked approval is the one written', async () => {
+    let reads = 0;
+    const base = s.deps.lookups.approval.bind(s.deps.lookups);
+    // First read sees a rejected approval, later reads an approved one: the gate must use the first.
+    s.deps.lookups.approval = async (org, id) => {
+      reads += 1;
+      const a = await base(org, id);
+      return a && reads === 1 ? { ...a, decision: 'rejected' } : a;
+    };
+    expect(await processTaskSyncJob(s.deps, s.payload)).toBe('failed');
+    expect(s.jobs.rows.get(s.syncId)).toMatchObject({ errorCode: 'APPROVAL_REQUIRED' });
+    expect(reads).toBe(1);
+    expect(s.creates).toHaveLength(0);
+
+    const t = setup();
+    let okReads = 0;
+    const tBase = t.deps.lookups.approval.bind(t.deps.lookups);
+    t.deps.lookups.approval = async (org, id) => {
+      okReads += 1;
+      return tBase(org, id);
+    };
+    expect(await processTaskSyncJob(t.deps, t.payload)).toBe('succeeded');
+    // One read at the gate plus one fresh read by the write-time verifier.
+    expect(okReads).toBe(2);
+  });
+
   it('cross-org: a job naming another org cannot touch this org row', async () => {
     expect(await processTaskSyncJob(s.deps, { ...s.payload, organizationId: OTHER })).toBe(
       'skipped',
