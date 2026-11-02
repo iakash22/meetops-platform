@@ -99,8 +99,15 @@ export function UploadButton({ meetingId }: { meetingId?: Id }) {
         method: methods.includes(method) ? method : 'all_parties_consented',
       };
       // Consent API (#334): record the meeting's consent before any upload starts, unless a current grant exists.
-      if (meetingId && !meetingConsent.data?.valid) {
-        await api.meetingConsent.record(organizationId, meetingId, consent);
+      // Only on a known status: if the status call failed we don't know the ledger, so nothing is appended and the
+      // upload init (which carries the attestation) lets the server decide (422 CONSENT_* when enforcement is on).
+      if (meetingId && meetingConsent.isSuccess && !meetingConsent.data.valid) {
+        try {
+          await api.meetingConsent.record(organizationId, meetingId, consent);
+        } catch (e) {
+          // 404: an API without the consent routes. Don't block the upload; enforcement, if on, rejects the init.
+          if (!(e instanceof ApiError && e.status === 404)) throw e;
+        }
         if (consentKey) void queryClient.invalidateQueries({ queryKey: consentKey });
       }
       const checksumSha256 = await hashFile(f, ac.signal);

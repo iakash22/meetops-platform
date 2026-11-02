@@ -277,9 +277,17 @@ describe.skipIf(!APP_URL || !OWNER_URL)('consent attestations and file scan stat
         /consent_attestations_attested_at_skew_check|23514|check constraint/,
       );
       const slightlyAhead = new Date(Date.now() + 60_000);
-      const past = new Date(Date.now() - 86_400_000);
+      // 23h back stays inside the 24h back-date bound (20261031130000_consent_hardening).
+      const past = new Date(Date.now() - 23 * 3_600_000);
       expect((await attest(orgA, { attestedAt: slightlyAhead })).id).toBeTruthy();
       expect((await attest(orgA, { attestedAt: past })).id).toBeTruthy();
+    });
+
+    it('rejects attestedAt just over 24h before the server clock (back-date CHECK)', async () => {
+      const tooOld = new Date(Date.now() - (86_400 + 60) * 1000);
+      await expect(attest(orgA, { attestedAt: tooOld })).rejects.toThrow(
+        /consent_attestations_attested_at_backdate_check|23514|check constraint/,
+      );
     });
 
     it('the app role holds only SELECT and INSERT', async () => {

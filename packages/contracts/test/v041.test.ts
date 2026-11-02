@@ -3,6 +3,7 @@ import { Value } from '@sinclair/typebox/value';
 import {
   API_ERROR_REASONS,
   ApiErrorReason,
+  CONSENT_ATTESTATION_MAX_BACKDATE_SECONDS,
   CONSENT_ATTESTATION_MAX_SKEW_SECONDS,
   CONSENT_ERROR_REASONS,
   CONSENT_HTTP_STATUS,
@@ -105,6 +106,8 @@ describe('v0.4.1 consent attestation (G11)', () => {
     expect(Value.Check(ConsentAttestation, { ...row, subjectType: 'meeting' })).toBe(false);
   });
   it('skew bound is five minutes', () => expect(CONSENT_ATTESTATION_MAX_SKEW_SECONDS).toBe(300));
+  it('back-date bound is 24 hours', () =>
+    expect(CONSENT_ATTESTATION_MAX_BACKDATE_SECONDS).toBe(86_400));
 });
 
 describe('v0.4.1 init requires consent', () => {

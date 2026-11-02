@@ -104,6 +104,11 @@ describe('Consent API', { timeout: 30_000 }, () => {
       [consent({ actorUserId: '00000000-0000-4000-8000-000000000001' }), 'CONSENT_REQUIRED'],
       [consent({ consentVersion: '1999-01' }), 'CONSENT_VERSION_UNSUPPORTED'],
       [consent({ attestedAt: new Date(Date.now() + 3_600_000).toISOString() }), 'CONSENT_INVALID'],
+      // Back-dated more than CONSENT_ATTESTATION_MAX_BACKDATE_SECONDS (24 h).
+      [
+        consent({ attestedAt: new Date(Date.now() - 25 * 3_600_000).toISOString() }),
+        'CONSENT_INVALID',
+      ],
     ];
     for (const [body, reason] of cases) {
       const res = await w.grant(w.member, body);
@@ -202,28 +207,51 @@ describe('Consent API', { timeout: 30_000 }, () => {
   });
 });
 
-describe('in-memory consent ledger ordering', () => {
-  it('breaks a recordedAt tie deterministically: revoked first, then id desc', async () => {
+describe('consent ledger ordering (DB sequence, not the app clock)', () => {
+  const base = {
+    organizationId: 'o',
+    meetingId: 'm',
+    consentVersion: null,
+    method: null,
+    reason: null,
+    actorUserId: 'u',
+  };
+
+  it('in-memory: the latest appended event wins even when its recordedAt is earlier', async () => {
     const { InMemoryMeetingConsentRepository: Repo } =
       await import('../src/modules/media/infrastructure/in-memory.js');
     const repo = new Repo();
-    const at = new Date('2026-10-31T10:00:00.000Z');
-    const base = {
-      organizationId: 'o',
-      meetingId: 'm',
-      consentVersion: null,
-      method: null,
-      reason: null,
-      actorUserId: 'u',
-      occurredAt: at,
-      recordedAt: at,
+    const t = new Date('2026-10-31T10:00:00.000Z');
+    const skewed = new Date(t.getTime() - 60_000); // an API node whose clock is a minute behind
+    await repo.append({ ...base, eventType: 'granted', occurredAt: t, recordedAt: t });
+    const rev = await repo.append({
+      ...base,
+      eventType: 'revoked',
+      occurredAt: skewed,
+      recordedAt: skewed,
+    });
+    const list = await repo.list('o', 'm', 10);
+    expect(list.map((r) => r.eventType)).toEqual(['revoked', 'granted']);
+    expect(list[0]!.id).toBe(rev.id);
+  });
+
+  it('Prisma: lists by seq desc only (no recordedAt in the order)', async () => {
+    const { PrismaMeetingConsentRepository } =
+      await import('../src/modules/media/infrastructure/prisma.js');
+    let args: { orderBy?: unknown; take?: number } = {};
+    const tx = {
+      $executeRaw: async () => 1,
+      meetingConsentEvent: {
+        findMany: async (a: typeof args) => {
+          args = a;
+          return [];
+        },
+      },
     };
-    repo.rows.push(
-      { ...base, id: 'a', eventType: 'granted' },
-      { ...base, id: 'c', eventType: 'granted' },
-      { ...base, id: 'b', eventType: 'revoked' },
-      { ...base, id: 'z', eventType: 'granted', recordedAt: new Date(at.getTime() - 1) },
-    );
-    expect((await repo.list('o', 'm', 10)).map((r) => r.id)).toEqual(['b', 'c', 'a', 'z']);
+    const client = { $transaction: async (fn: (t: typeof tx) => unknown) => fn(tx) };
+    const repo = new PrismaMeetingConsentRepository(client as never);
+    await repo.list('00000000-0000-4000-8000-000000000001', 'm', 5);
+    expect(args.orderBy).toEqual([{ seq: 'desc' }]);
+    expect(args.take).toBe(5);
   });
 });
