@@ -179,6 +179,9 @@ networks:
   default: {}
   media-internal:
     internal: true
+  # clamd (unauthenticated TCP) and the worker only; no egress (MAL-1b).
+  clamav-internal:
+    internal: true
 
 secrets:
   postgres_password:

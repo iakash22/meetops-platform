@@ -29,21 +29,22 @@ docker compose --env-file .env -f infra/compose/compose.dev.yml -f infra/compose
 
 ## ClamAV sidecar (`clamav`, ADR-018)
 
-There are no production deployment manifests in this repo yet. The `clamav` service in `compose.app.yml`
-(profile `clamav`) and `infra/clamav/*.conf` are the reference spec, and every deployment (compose, Kubernetes,
+There are no production deployment manifests in this repo yet. The `clamav` and `clamav-freshclam` services in
+`compose.app.yml` (profile `clamav`) and `infra/clamav/*.conf` are the reference spec, and every deployment (compose, Kubernetes,
 ECS, ...) must copy these settings:
 
-| Setting    | Value                                                                                                                          | Why                                                                                                                                                                       |
-| ---------- | ------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Image      | `clamav/clamav:1.4.6@sha256:8ad6197396974726c35d017e50aaaaf4b91745726a04faec8480c203edd98052`                                  | Version and digest pinned. 1.4 is the ClamAV LTS line. Bump tag and digest together                                                                                       |
-| Config     | `infra/clamav/clamd.conf` → `/etc/clamav/clamd.conf`, `infra/clamav/freshclam.conf` → `/etc/clamav/freshclam.conf` (read-only) | `StreamMaxLength`/`MaxFileSize`/`MaxScanSize` 1400M, `AlertExceedsMax yes`, `MaxScanTime 600000`                                                                          |
-| Updates    | `FRESHCLAM_CHECKS=1` (freshclam daemon started by the image's `/init`)                                                         | Signatures update daily. freshclam needs egress to `database.clamav.net`; the worker does not                                                                             |
-| Database   | Persistent volume at `/var/lib/clamav`                                                                                         | No re-download on restart (ClamAV rate-limits mirrors)                                                                                                                    |
-| Memory     | `mem_limit: 4g`, `ConcurrentDatabaseReload yes`                                                                                | One engine measured at about 1.1–1.3 GB RSS during a 1.4 GB scan. A reload holds two engines for a short time. Blocking reload would stall scans and the planned `/ready` |
-| Health     | `clamdcheck.sh` (PING → PONG on TCP 3310), `start_period: 360s`                                                                | Loading signatures takes 10–60 s                                                                                                                                          |
-| Network    | Reachable from the worker on TCP 3310 (`media-internal`). No public port                                                       | The worker stays egress-free                                                                                                                                              |
-| Worker env | `UPLOAD_SCAN_CLAMAV=true`, `CLAMD_HOST`, `CLAMD_PORT`                                                                          | Fail-closed scan of every upload and recording                                                                                                                            |
-| Disk       | About 1.5 GB free in the container's `/tmp` per concurrent scan                                                                | clamd spools each INSTREAM body to `TemporaryDirectory` before it scans                                                                                                   |
+| Setting    | Value                                                                                                                                              | Why                                                                                                                                                                       |
+| ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Image      | `clamav/clamav:1.4.6@sha256:8ad6197396974726c35d017e50aaaaf4b91745726a04faec8480c203edd98052`                                                      | Version and digest pinned. 1.4 is the ClamAV LTS line. Bump tag and digest together                                                                                       |
+| Config     | `infra/clamav/clamd.conf` → `/etc/clamav/clamd.conf` (clamd), `infra/clamav/freshclam.conf` → `/etc/clamav/freshclam.conf` (freshclam), read-only  | `StreamMaxLength`/`MaxFileSize`/`MaxScanSize` 1400M, `AlertExceedsMax yes`, `MaxScanTime 600000`. No log files: both log to stdout                                        |
+| Updates    | Separate `clamav-freshclam` container, same image: `freshclam --daemon --checks=1`. clamd reloads via `SelfCheck 3600`                             | Signatures update daily. Only freshclam has egress (to `database.clamav.net`); it has no route to clamd, so no `NotifyClamd`                                              |
+| Database   | Persistent volume at `/var/lib/clamav`, shared by both containers, owned by `clamav` (uid 100)                                                     | No re-download on restart (ClamAV rate-limits mirrors). freshclam writes it, clamd reads it                                                                               |
+| Memory     | `mem_limit: 4g`, `ConcurrentDatabaseReload yes`                                                                                                    | One engine measured at about 1.1–1.3 GB RSS during a 1.4 GB scan. A reload holds two engines for a short time. Blocking reload would stall scans and the planned `/ready` |
+| Health     | `clamdcheck.sh` (PING → PONG on TCP 3310), `start_period: 360s`                                                                                    | Loading signatures takes 10–60 s                                                                                                                                          |
+| Network    | clamd: ONLY on `clamav-internal` (`internal: true`, no egress), shared with the worker alone; TCP 3310. freshclam: `default` only. No host port    | clamd's protocol is unauthenticated (`SHUTDOWN`, `RELOAD`), so only the worker may reach it. The worker stays egress-free                                                 |
+| Privileges | Both: `user: clamav`, `cap_drop: [ALL]`, no `cap_add`, `no-new-privileges`, `init: true`; entrypoint is the daemon itself, not the image's `/init` | `/init` needs root (chown, install) and starts freshclam next to clamd. Neither daemon needs a capability                                                                 |
+| Worker env | `UPLOAD_SCAN_CLAMAV=true`, `CLAMD_HOST`, `CLAMD_PORT`                                                                                              | Fail-closed scan of every upload and recording                                                                                                                            |
+| Disk       | About 1.5 GB free in the container's `/tmp` per concurrent scan                                                                                    | clamd spools each INSTREAM body to `TemporaryDirectory` before it scans                                                                                                   |
 
 Current limits on this head (tracked, not yet fixed):
 
@@ -51,13 +52,8 @@ Current limits on this head (tracked, not yet fixed):
   than 120 s is abandoned and ends quarantined (`scan_unavailable`) after retries. MAL-2 makes it size-aware.
 - **Limit hits.** A `Heuristics.Limits.Exceeded.*` reply is quarantined as `malware_detected` today. MAL-2 gives it a
   separate error code and metric.
-- **Network exposure.** clamd's TCP protocol is unauthenticated (`SHUTDOWN`, `RELOAD`). The container is also on
-  `default` (freshclam needs egress there), so any service on `default` can reach it. A stopped clamd fails closed,
-  but it is a denial of service. MAL-1b moves freshclam to its own container and leaves clamd only on
-  `media-internal`, with no internet access, plus `cap_drop: [ALL]`.
-
-Dev: `UPLOAD_SCAN_CLAMAV=true scripts/compose-up.sh --profile clamav`. The worker then waits for clamd to report
-healthy. Without the profile, the worker starts as usual with the scan off.
+  Dev: `UPLOAD_SCAN_CLAMAV=true scripts/compose-up.sh --profile clamav`. The worker then waits for clamd to report
+  healthy. Without the profile, the worker starts as usual with the scan off.
 
 ## CI
 

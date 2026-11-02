@@ -58,8 +58,12 @@ fail-closed: if clamd is unreachable, the job retries and the final attempt quar
   client has one fixed 120 s total timeout, below clamd's `MaxScanTime` (600 s): a scan slower than 120 s is
   abandoned by the worker and ends quarantined (`scan_unavailable`) after retries, while clamd keeps scanning.
   MAL-2 makes the timeout size-aware, above `MaxScanTime`.
-- **Signatures.** The image is pinned by version and digest (ClamAV 1.4 LTS). freshclam runs daily (`FRESHCLAM_CHECKS=1`)
-  and clamd reloads without blocking scans.
+- **Signatures.** The image is pinned by version and digest (ClamAV 1.4 LTS). freshclam runs daily (`--checks=1`) in
+  its own `clamav-freshclam` container, and clamd reloads the shared database through `SelfCheck` without blocking scans.
+- **Isolation (MAL-1b).** clamd's TCP protocol is unauthenticated (`SHUTDOWN`, `RELOAD`), so clamd sits only on the
+  internal `clamav-internal` network, which only the worker joins: no egress and no other neighbour. Only freshclam
+  has egress, and it cannot reach clamd. Both run as the `clamav` user with `cap_drop: [ALL]` and no added
+  capabilities.
 - **Verified.** A clean 1_400_000_000-byte WAV scanned `OK` in about 35 s through INSTREAM with this config; EICAR was
   `FOUND`; a 1_468_006_401-byte stream was refused at the limit.
 
