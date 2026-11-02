@@ -31,7 +31,8 @@ export interface CalendarSyncSweepRepository {
     id: string,
     t: { accessToken: string; refreshToken: string; accessTokenExpiresAt: Date },
     /** With `lease`, writes only while the claim is still held (and the connection is active). */
-    opts?: { lease?: Date },
+    /** `generation`: compare-and-set on the token generation readSecrets returned. */
+    opts?: { lease?: Date; generation?: number; refreshEncVersion?: 1 | 2 | null },
   ): Promise<unknown>;
   /** With `lease`, writes only while the claim is still held. */
   markError(organizationId: string, id: string, opts?: { lease?: Date }): Promise<unknown>;
@@ -285,7 +286,7 @@ export async function runCalendarSyncSweep(deps: CalendarSyncDeps): Promise<Cale
             refreshToken: t.refreshToken,
             accessTokenExpiresAt: new Date(t.expiresAt),
           },
-          { lease },
+          { lease, generation: s.tokenGeneration, refreshEncVersion: s.refreshEncVersion },
         );
         accessToken = t.accessToken;
       }

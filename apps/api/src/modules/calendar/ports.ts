@@ -4,6 +4,16 @@ export type CalendarSecrets = {
   accessToken: string;
   refreshToken: string | null;
   accessTokenExpiresAt: Date | null;
+  /** Token-write generation read with these secrets (compare-and-set for updateTokens). */
+  tokenGeneration?: number;
+  /** AAD context version of the stored refresh token (1 = pre-v2, 2 = per-field). */
+  refreshEncVersion?: 1 | 2 | null;
+};
+
+/** updateTokens fencing: `generation` = compare-and-set on the value readSecrets returned. */
+export type CalendarTokenWriteOptions = {
+  generation?: number | undefined;
+  refreshEncVersion?: 1 | 2 | null | undefined;
 };
 
 export type CalendarConnectionUpsert = {
@@ -50,7 +60,9 @@ export interface CalendarConnectionsRepository {
     organizationId: string,
     id: string,
     t: { accessToken: string; refreshToken: string; accessTokenExpiresAt: Date },
-  ): Promise<void>;
+    /** With `generation`, writes only while the token generation is unchanged (an empty refresh keeps the stored one). */
+    opts?: CalendarTokenWriteOptions,
+  ): Promise<boolean | void>;
   markError(organizationId: string, id: string): Promise<void>;
   /**
    * True when `revoke` also deletes the connection's event -> meeting links in the same transaction (all or

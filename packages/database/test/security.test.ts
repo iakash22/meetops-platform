@@ -118,7 +118,9 @@ const MEETING_CONSENT_MIGRATION = '20261031030000_meeting_consent_events';
 const CALENDAR_OUTLOOK_PROVIDER_MIGRATION = '20261102000000_calendar_outlook_provider';
 /** Background sync: per-connection incremental cursor columns (additive). */
 const CALENDAR_SYNC_CURSOR_MIGRATION = '20261103000000_calendar_sync_cursor';
-const LATEST_MIGRATION = CALENDAR_SYNC_CURSOR_MIGRATION;
+/** #394 N1/N2: token_generation (compare-and-set) + refresh_enc_version (additive). */
+const CALENDAR_TOKEN_GENERATION_MIGRATION = '20261103060000_calendar_token_generation';
+const LATEST_MIGRATION = CALENDAR_TOKEN_GENERATION_MIGRATION;
 /**
  * Parallel PRs that sort between calendar_events and meeting_embeddings (#334 consent events, #341 calendar links).
  * The order checks below ignore them so they hold whichever merges first; when present they must sort before ours.
@@ -151,9 +153,16 @@ const orderedDirs = () => {
     expect(dirs.indexOf(CALENDAR_OUTLOOK_PROVIDER_MIGRATION)).toBe(
       dirs.indexOf(CALENDAR_SYNC_CURSOR_MIGRATION) - 1,
     );
+  // The token generation migration sorts right after the sync cursor and is the newest; the positional checks
+  // below (which end at the sync cursor) ignore it.
+  expect(dirs.indexOf(CALENDAR_TOKEN_GENERATION_MIGRATION)).toBe(
+    dirs.indexOf(CALENDAR_SYNC_CURSOR_MIGRATION) + 1,
+  );
+  expect(dirs.at(-1)).toBe(LATEST_MIGRATION);
   return dirs.filter(
     (d) =>
       d !== TASK_SYNC_MIGRATION &&
+      d !== CALENDAR_TOKEN_GENERATION_MIGRATION &&
       d !== CALENDAR_OUTLOOK_PROVIDER_MIGRATION &&
       !(PARALLEL_MIGRATIONS as readonly string[]).includes(d),
   );
@@ -1596,7 +1605,7 @@ describe('integration routing definer functions', () => {
 describe('integration external-account routing (20261028020000)', () => {
   it('sorts right after the ADR-014 geoip migration, before the relay revoke one', () => {
     const dirs = orderedDirs();
-    expect(dirs.at(-1)).toBe(LATEST_MIGRATION);
+    expect(dirs.at(-1)).toBe(CALENDAR_SYNC_CURSOR_MIGRATION);
     expect(dirs.at(-2)).toBe(MEETING_SOURCE_MOBILE_MIGRATION);
     expect(dirs.at(-3)).toBe(MEETING_EMBEDDINGS_MIGRATION);
     expect(dirs.at(-4)).toBe(CALENDAR_EVENTS_MIGRATION);
@@ -1704,7 +1713,7 @@ describe('IP retention owner re-assert (20261028040000)', () => {
   ).replace(/--.*$/gm, '');
   it('is the newest migration, after the ADR-014 geoip one', () => {
     const dirs = orderedDirs();
-    expect(dirs.at(-1)).toBe(LATEST_MIGRATION);
+    expect(dirs.at(-1)).toBe(CALENDAR_SYNC_CURSOR_MIGRATION);
     expect(dirs.at(-2)).toBe(MEETING_SOURCE_MOBILE_MIGRATION);
     expect(dirs.at(-3)).toBe(MEETING_EMBEDDINGS_MIGRATION);
     expect(dirs.at(-4)).toBe(CALENDAR_EVENTS_MIGRATION);
@@ -1947,5 +1956,21 @@ describe('Phase 7 meeting_embeddings (static)', () => {
       'CREATE INDEX "meeting_embeddings_org_id_model_idx" ON "meeting_embeddings"("org_id", "model");',
     );
     expect(model).toContain('Unsupported("vector(1536)")');
+  });
+});
+
+describe('calendar token generation (20261103060000)', () => {
+  const sql = readFileSync(
+    resolve(migrationsDir, CALENDAR_TOKEN_GENERATION_MIGRATION, 'migration.sql'),
+    'utf8',
+  ).replace(/--.*$/gm, '');
+  it('is the newest migration, right after the sync cursor', () => {
+    orderedDirs();
+  });
+  it('is additive only (two columns with constant defaults, checks)', () => {
+    expect(sql).toMatch(/ADD COLUMN "token_generation" INTEGER NOT NULL DEFAULT 0/);
+    expect(sql).toMatch(/ADD COLUMN "refresh_enc_version" SMALLINT/);
+    expect(sql).toMatch(/"refresh_enc_version" IN \(1, 2\)/);
+    expect(sql).not.toMatch(/\b(DROP|DELETE|TRUNCATE|GRANT|UPDATE)\b/i);
   });
 });
