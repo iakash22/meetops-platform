@@ -75,6 +75,9 @@ class ChunkCryptoModule : Module() {
     // AsyncFunction bodies run on the module's background queue, off the JS thread.
     AsyncFunction("sealFile") { src: String, dir: String, chunkBytes: Int -> sealFileImpl(src, dir, chunkBytes) }
 
+    // Diagnostics only: where the Keystore key lives (strongbox / tee / software). Creates the key if missing.
+    AsyncFunction("keyInfo") { ChunkSealer.keyInfo() }
+
     AsyncFunction("deleteKey") {
       synchronized(ChunkSealer.KEY_LOCK) {
         val ks = ChunkSealer.keyStore()

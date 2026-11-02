@@ -1,10 +1,20 @@
 import { requireOptionalNativeModule } from 'expo';
 
+export interface ChunkKeyInfo {
+  alias: string;
+  algorithm: string;
+  /** `strongbox` and `tee` are hardware-backed; `software` (emulators, old devices) is not. */
+  securityLevel: 'strongbox' | 'tee' | 'software' | 'unknown';
+  keySize: number;
+}
+
 /** AES-256-GCM: Android Keystore (android/), iOS Keychain + CryptoKit (ios/). Null in Jest and Expo Go. */
-interface ChunkCryptoNative {
+export interface ChunkCryptoNative {
   seal(plainBase64: string): Promise<string>;
   open(sealedBase64: string): Promise<string>;
   deleteKey(): Promise<void>;
+  /** Android only (absent on iOS and older builds): where the Keystore key lives. Never key material. */
+  keyInfo?(): Promise<ChunkKeyInfo>;
   /**
    * Seals a whole file off the JS thread into `<destDir><seq>.chunk` ("MOCHUNK1" || iv || ciphertext+tag), atomically
    * per chunk (tmp + rename) with a progress journal so a re-run after a kill resumes. Never deletes the source.
