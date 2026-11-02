@@ -73,7 +73,7 @@ describe('calendar disconnect: event -> meeting link cleanup', () => {
     const f = fakeDb();
     const id = randomUUID();
     const cipher = { encrypt: async (v: string) => `v1.k1.n.${v.length}`, decrypt: async () => '' };
-    await new PrismaCalendarConnections(f.db, cipher as never).updateTokens(org, id, {
+    await new PrismaCalendarConnections(f.db, cipher).updateTokens(org, id, {
       accessToken: 'a',
       refreshToken: 'r',
       accessTokenExpiresAt: new Date(),
