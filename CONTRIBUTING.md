@@ -23,7 +23,7 @@ Commitlint enforces this through the Husky `commit-msg` hook (`commitlint.config
 
 ## Tooling
 
-- Node `>=20.19 <25` (`engines.node`); CI builds on Node 22 and 24.
+- Node `^20.19 || >=22.12 <25` (`engines.node`); CI builds on Node 22 and 24. Node 21 and 22.0-22.11 are excluded: they cannot `require()` ESM, which the patched query-string 7 needs for decode-uri-component 0.5.1 (`ERR_REQUIRE_ESM`).
 - pnpm **9.12.3**, pinned in `packageManager` and installed through Corepack:
 
   ```bash

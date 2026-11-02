@@ -56,7 +56,9 @@ export type AuditAction =
   | 'integration.task_sync_requested'
   // Phase 7 calendar (self-service, per user)
   | 'calendar.connect'
-  | 'calendar.disconnect';
+  | 'calendar.disconnect'
+  | 'calendar.link'
+  | 'calendar.unlink';
 
 /** Never put passwords, tokens, cookies or hashes in metadata. */
 export interface AuditEvent {

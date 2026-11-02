@@ -19,6 +19,7 @@ import {
   scheduleMmdbUpdate,
 } from './geoip/mmdb-updater.js';
 import { createNotificationEmailSender } from './notifications/email.js';
+import { loadCalendarSyncEnv, registerCalendarSyncScheduler } from './calendar/index.js';
 import { loadTokenRefreshEnv, registerTokenRefreshJob } from './integrations/bootstrap.js';
 import { loadTaskSyncEnv, registerTaskSyncWorker } from './integrations/task-sync-bootstrap.js';
 import { closeAll, runningJobs, type ClosableJob } from './shutdown.js';
@@ -31,9 +32,12 @@ export * from './privacy/index.js';
 export * from './geoip/mmdb-updater.js';
 export * from './shutdown.js';
 
-async function main() {
+/** Process entry. Tests call `main()`; the dev CLI (`src/run.ts`) calls the `boot` alias. */
+export async function main() {
+  console.log('[worker] loading…');
   const { close } = startMediaWorker();
   logger.info('media worker started');
+  console.log('[worker] media worker started');
   // Flag-gated: deps (Prisma repository, ai-core executor, chunk audio) are only built when the worker is enabled.
   const env = loadTranscriptionWorkerEnv();
   const hostDeps = env.enabled ? await createTranscriptionHostDeps() : undefined;
@@ -103,6 +107,14 @@ async function main() {
   // Integrations token refresh (Jira rotation, GitHub installation tokens). Off unless
   // INTEGRATIONS_TOKEN_REFRESH_ENABLED=true; then INTEGRATIONS_TOKEN_KEK is required (fail closed at startup).
   const tokenRefresh = registerTokenRefreshJob({ env: loadTokenRefreshEnv(), log: logger });
+  // Phase 7 calendar background sync (off unless CALENDAR_SYNC_ENABLED=true). One idempotent BullMQ repeatable;
+  // an enabled sync with a missing/bad INTEGRATIONS_TOKEN_KEK throws here, as does a bad
+  // CALENDAR_SYNC_TICK_MS (fail closed at startup).
+  const calendarSync = registerCalendarSyncScheduler({ env: loadCalendarSyncEnv(), log: logger });
+  if (calendarSync.registered) {
+    await calendarSync.ready;
+    logger.info('calendar sync scheduler started');
+  }
   // Async task -> GitHub/Jira sync. Off unless TASK_SYNC_ENABLED=true; then INTEGRATIONS_TOKEN_KEK is required.
   const taskSync = await registerTaskSyncWorker({ env: loadTaskSyncEnv(), log: logger });
   const jobs: ClosableJob[] = [
@@ -113,6 +125,7 @@ async function main() {
     { name: 'ip-retention', close: retention?.close },
     { name: 'geoip-update', close: geoipUpdate?.close },
     { name: 'integrations-token-refresh', job: tokenRefresh },
+    { name: 'calendar-sync', job: calendarSync },
     { name: 'task-sync', job: taskSync },
   ];
   logger.info({ jobs: runningJobs(jobs) }, 'worker jobs registered');
@@ -126,8 +139,21 @@ async function main() {
   process.on('SIGTERM', () => void shutdown());
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  main().catch((err: unknown) => {
+/** Alias for `src/run.ts`, which starts the worker without executing `index.ts` as the main module. */
+export const boot = main;
+
+function isDirectRun(): boolean {
+  const entry = process.argv[1];
+  if (!entry) return false;
+  try {
+    return import.meta.url === pathToFileURL(entry).href;
+  } catch {
+    return false;
+  }
+}
+
+if (isDirectRun()) {
+  boot().catch((err: unknown) => {
     logger.error({ err }, 'Worker failed to start');
     process.exit(1);
   });

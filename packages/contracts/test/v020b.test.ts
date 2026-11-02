@@ -40,6 +40,12 @@ describe('N3 media limits', () => {
     expect(Value.Check(CreateUploadRequest, ok)).toBe(true);
     expect(Value.Check(CreateUploadRequest, { ...ok, sizeBytes: 1_400_000_001 })).toBe(false);
   });
+  it('allows raw ADTS AAC for mobile segment recording (ADR-015)', () => {
+    expect(ALLOWED_MEDIA_MIME_TYPES).toContain('audio/aac');
+    expect(Value.Check(MediaMimeType, 'audio/aac')).toBe(true);
+    expect(Value.Check(MediaMimeType, 'audio/aac;codecs=mp4a.40.2')).toBe(true);
+    expect(Value.Check(MediaMimeType, 'audio/aacp')).toBe(false);
+  });
   it.each([...ALLOWED_MEDIA_MIME_TYPES])('allows %s', (m) => {
     expect(Value.Check(MediaMimeType, m)).toBe(true);
   });

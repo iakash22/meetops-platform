@@ -93,7 +93,7 @@ export type TaskSyncJobPayload = Static<typeof TaskSyncJobPayload>;
 export const MEDIA_QUEUE = 'media' as const;
 export const MEDIA_JOB_NAME = 'process_recording' as const;
 
-export const MEDIA_SOURCE_EXTS = ['webm', 'ogg', 'mp3', 'm4a', 'mp4', 'wav'] as const;
+export const MEDIA_SOURCE_EXTS = ['webm', 'ogg', 'mp3', 'm4a', 'aac', 'mp4', 'wav'] as const;
 export const MediaSourceExt = Type.Union(MEDIA_SOURCE_EXTS.map((e) => Type.Literal(e)));
 export type MediaSourceExt = (typeof MEDIA_SOURCE_EXTS)[number];
 

@@ -139,6 +139,9 @@ export {
   type IntegrationConnectionStatusValue,
   type IntegrationSecretCipher,
   type IntegrationSecrets,
+  type IntegrationRefreshSnapshot,
+  type RefreshedIntegrationTokens,
+  type SaveRefreshedTokensResult,
   type UpsertIntegrationConnectionInput,
 } from './integration-connections.js';
 export {

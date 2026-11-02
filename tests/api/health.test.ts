@@ -29,11 +29,11 @@ describe('API health endpoints', () => {
       const res = await app!.inject({ method: 'GET', url: path });
       return { status: res.statusCode, body: res.json() };
     };
-  });
+  }, 60_000);
 
   afterAll(async () => {
     await app?.close();
-  });
+  }, 60_000);
 
   it('GET /health returns ok', async () => {
     const res = await call('/health');

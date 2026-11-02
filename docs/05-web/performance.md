@@ -20,14 +20,21 @@ If `VITE_API_URL` is an absolute URL on another origin, the build adds `preconne
 ## Budget check
 
 ```sh
-pnpm --filter @meetops/web build
-node apps/web/scripts/check-bundle-size.mjs          # table; exit 1 on a breach
-node apps/web/scripts/check-bundle-size.mjs --json   # machine-readable
+pnpm size                                            # turbo: web build (cached) then the budget table; exit 1 on a breach
+pnpm --filter @meetops/web size --json              # machine-readable (needs a web build)
+node apps/web/scripts/check-bundle-size.mjs --dist <dir>   # another build output
 ```
 
 There are no dependencies (node:fs and node:zlib). Budgets are gzip kB per chunk name, set in
-`BUDGETS` at the top of the script. Any JS chunk over 500 kB raw also fails. It is not wired
-into `package.json` yet.
+`BUDGETS` at the top of the script. Rows marked `*` are the initial JS (the entry script and modulepreloads
+in `dist/index.html`), budgeted together as `initialJs` (185 kB gz); `totalJs` (290 kB gz) covers every
+chunk, lazy ones included. Baseline when wired in (integration/phase-1 @e4aceac4): initial JS
+156.43 kB, all JS 249.31 kB, `index` 38.34 kB, CSS 9.02 kB gz. The `index` (35 → 45) and CSS
+(8 → 11) budgets and the all-JS total (220 → 290) were raised to that baseline plus ~15-20%
+headroom, because the app had outgrown the original perf/web-bundle numbers. Any JS chunk over 500 kB raw also fails. It is wired in as
+the `size` script of `@meetops/web` and a turbo `size` task (`dependsOn: build`), which runs in
+`pnpm local-gates` right after the build and in CI after `pnpm build`. Exit 2 (no `dist/`) also
+fails the gate. When a chunk legitimately grows, raise its budget in the same PR and say why.
 
 ## Route-level code splitting
 

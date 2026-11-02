@@ -43,6 +43,39 @@
   connection `error`; disconnect purges the connection's cached `calendar_events` in the same transaction through the
   SECURITY DEFINER `calendar_events_purge_for_connection()` (org-context checked, revoked connections only).
 
+## Calendar event ↔ meeting links (P7)
+
+- **Storage** (`20261031040000_calendar_event_links`): `calendar_event_links` keyed by (org, connection, provider event
+  id), so links work for live-read and worker-synced events alike. Forced RLS (ADR-010), composite tenant FKs to
+  `calendar_connections` and `meetings` (a link can't cross organizations), cascade on hard delete. Unlink is a real
+  DELETE; disconnecting the calendar drops the connection's links.
+- **API**: `PUT|DELETE /orgs/:org/calendar/connections/:connectionId/events/:eventId/link` (body `{ meetingId }`).
+  Only the owner of the connection, and only roles that may create meetings (viewers get 403). Unknown, other-org and
+  soft-deleted meetings give the same 404; another user's or a revoked connection gives 404. Audited as
+  `calendar.link` / `calendar.unlink` (ids only).
+- **Auto-match** (read-only, never stored): `GET .../calendar/events` adds `meetingId` for linked events and, for
+  unlinked events with a conference URL, `suggestedMeetingId` when exactly one live meeting of the org has the external
+  call id that meetings/resolve derives from that URL. No time-window guessing and no automatic writes: a human
+  confirms the link. Links to soft-deleted meetings are hidden.
+- **Not in this PR**: web UI for link/suggest, linking from the meeting side (list events of a meeting), worker-side
+  auto-linking on sync.
+
+## Semantic search (P7, PR 1 of 2, off by default)
+
+- **Flag**: `SEMANTIC_SEARCH_ENABLED=true` registers `GET /orgs/:org/search/semantic`; otherwise the route does not
+  exist (404). With the flag on but no query embedder injected, it answers 503. No provider is called in tests.
+- **Storage** (`20261031050000_meeting_embeddings`): one `vector(1536)` per transcript segment or summary report and
+  model, plus a content hash. No text is copied: search joins back to the source, so deleting the source or meeting
+  cascades. Forced RLS (ADR-010), composite tenant FKs.
+- **Query** (`apps/api/src/modules/search/semantic.ts`, `SEMANTIC_SEARCH_SQL`): org filter first, inside a
+  `MATERIALIZED` CTE (`WHERE e.org_id = $1 AND e.model = $2`, joined to live same-org sources), then ordering by
+  cosine distance over those rows only. No HNSW/IVFFlat index on purpose (an ANN index scan ranks across tenants and
+  post-filters); exact scan per org is fine at current sizes. All values are bound parameters.
+- **PR 2 (follow-up)**: worker embedding pipeline (segments + summaries -> ai-core `Embeddings` capability, hash-based
+  skip, batch caps, usage/idempotency through the AI executor) and the API's production `QueryEmbedder` from ai-core.
+  Embedding customer text needs an approved, non-free-tier provider (the free Gemini tier must not process customer
+  data).
+
 ## Meeting analytics (P7, read-only)
 
 - **API**: `GET /orgs/:org/analytics/meetings?from&to&bucket` (`ANALYTICS_PATHS.meetings`, contracts

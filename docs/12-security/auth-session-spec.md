@@ -57,4 +57,4 @@ Log (without secrets) login success/failure, lockout, reset, session revoke, rol
 
 ## 8. Future
 
-MFA (TOTP/WebAuthn) for owners/admins; SSO (OIDC/SAML) per org.
+Decided in [ADR-021](../15-decisions/ADR-021-mfa-sso.md) (approved 2026-11-01): MFA (TOTP and WebAuthn passkeys, recovery codes) required for owners/admins, Google sign-in (OIDC), step-up via `auth_level`. SAML/OIDC SSO per org is deferred to the first enterprise deal (Enterprise plan only).

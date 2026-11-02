@@ -14,6 +14,8 @@ export type RecordingDraft = Omit<NewRecording, 'chunks'>;
 export interface RecordingCapture extends ChunkSource {
   /** True for the demo capture that records no audio. */
   readonly simulated: boolean;
+  /** MIME type of the chunks this capture writes, when it differs from the default `audio/mp4` (Android: ADTS). */
+  readonly outputMimeType?: 'audio/mp4' | 'audio/aac';
   /** Starts capture. Rejects (and records nothing) without mic permission or, on Android 13+, notifications. */
   begin(recordingId: string): Promise<void>;
   pause(): void;

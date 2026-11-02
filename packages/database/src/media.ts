@@ -8,8 +8,7 @@
  * Every method runs inside withOrganizationContext(organizationId), so forced RLS scopes it.
  */
 import type { Prisma, PrismaClient } from '@prisma/client';
-// Circular import is safe: getPrismaClient is only called at request time, after both modules load.
-import { getPrismaClient } from './index.js';
+import { getPrismaClient } from './client.js';
 import { runWithOrganizationContext, type TransactionCapableClient } from './tenant.js';
 
 /** One chunk FileObject row (file_objects, kind = chunk). Mirrors #92 ChunkFileObjectRow. */

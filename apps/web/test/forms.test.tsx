@@ -38,9 +38,10 @@ describe('auth forms', () => {
 
   it('shows validation errors on empty login submit', async () => {
     const { api } = renderApp('/login');
+    await screen.findByLabelText('Email');
     await userEvent.click(await screen.findByRole('button', { name: 'Log in' }));
     expect(await screen.findByText('Email is required')).toBeInTheDocument();
-    expect(screen.getByText('Password is required')).toBeInTheDocument();
+    expect(await screen.findByText('Password is required')).toBeInTheDocument();
     expect(screen.getByLabelText('Email')).toHaveAttribute('aria-invalid', 'true');
     expect(api.auth.login).not.toHaveBeenCalled();
   });

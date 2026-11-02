@@ -175,18 +175,18 @@ All spacing is on the Tailwind **4px** grid. Preferred steps:
 
 Avoid off-grid values (`5`, `7`, `[13px]`) unless you are aligning to a border.
 
-| Layout token      | Value                                                                      | Where                      |
-| ----------------- | -------------------------------------------------------------------------- | -------------------------- |
-| Page padding      | `p-4 sm:p-6 lg:p-8` (16/24/32px)                                           | `<main>` in `AppShell`     |
-| Content max width | `max-w-content` = 80rem (1280px), centred                                  | `<main>`                   |
-| Section gap       | `gap-12` / `space-y-12` (48px)                                             | between page sections      |
-| Card padding      | `p-6` (24px), `p-4` on dense cards                                         | `Card*` components         |
-| Card grid gutter  | `gap-4 sm:gap-6`                                                           | dashboards, lists of cards |
-| Form fields       | field↔field `gap-4`, label↔control `gap-1.5`, helper `mt-1.5`              | forms                      |
-| Form sections     | `gap-8` + `text-h6` heading                                                | long settings forms        |
-| Header height     | `h-header` = 3.5rem (56px)                                                 | top bar, sidebar brand row |
-| Sidebar width     | `w-sidebar` = 15rem (240px); collapsed `w-sidebar-collapsed` = 4rem (64px) | `AppShell`                 |
-| Breakpoints       | Tailwind defaults `sm 640 · md 768 · lg 1024 · xl 1280 · 2xl 1536`         | sidebar shows at `lg`      |
+| Layout token      | Value                                                                      | Where                                              |
+| ----------------- | -------------------------------------------------------------------------- | -------------------------------------------------- |
+| Page padding      | `p-4 sm:p-6 lg:p-8` (16/24/32px)                                           | `<main>` in `AppShell`                             |
+| Content max width | `max-w-content` = 80rem (1280px), centred                                  | `<main>`                                           |
+| Section gap       | `gap-12` / `space-y-12` (48px)                                             | between page sections                              |
+| Card padding      | `p-6` (24px), `p-4` on dense cards                                         | `Card*` components                                 |
+| Card grid gutter  | `gap-4 sm:gap-6`                                                           | dashboards, lists of cards                         |
+| Form fields       | field↔field `gap-4`, label↔control `gap-1.5`, helper `mt-1.5`              | forms                                              |
+| Form sections     | `gap-8` + `text-h6` heading                                                | long settings forms                                |
+| Header height     | `h-header` = 3.5rem (56px)                                                 | top bar, sidebar brand row                         |
+| Sidebar width     | `w-sidebar` = 15rem (240px); collapsed `w-sidebar-collapsed` = 4rem (64px) | `AppShell`                                         |
+| Breakpoints       | Tailwind defaults `sm 640 · md 768 · lg 1024 · xl 1280 · 2xl 1536`         | sidebar shows at `lg`; below it the nav is a Sheet |
 
 ### Density
 

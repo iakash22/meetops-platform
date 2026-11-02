@@ -83,6 +83,7 @@ describe('pure helpers', () => {
   it('demuxer allowlist and probed-format checks', () => {
     expect(demuxerForExt('webm')).toBe('matroska');
     expect(demuxerForExt('M4A')).toBe('mov');
+    expect(demuxerForExt('aac')).toBe('aac');
     expect(() => demuxerForExt('m3u8')).toThrow(FfmpegError);
     const p = (formatName: string) => ({
       durationSeconds: 1,

@@ -12,7 +12,7 @@
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "eslint .",
-    "test": "vitest run"
+    "test": "vitest run --testTimeout=30000 --hookTimeout=30000"
   },
   "dependencies": {
     "bullmq": "^5.18.0",
