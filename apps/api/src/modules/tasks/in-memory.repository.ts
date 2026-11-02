@@ -11,6 +11,7 @@ import {
   type CreateTaskInput,
   type TaskPatch,
   type TaskFilter,
+  type TaskAnalyticsResult,
   type TaskRepositories,
 } from './ports.js';
 
@@ -21,6 +22,7 @@ export type ApprovalRow = {
   extractedTaskId: string;
   reviewerId: string;
   decision: 'approved' | 'rejected';
+  createdAt: string;
 };
 
 const key = (r: { createdAt: string; id: string }) => ({
@@ -165,6 +167,7 @@ export class InMemoryTasks implements TaskRepositories {
       extractedTaskId: e.id,
       reviewerId: input.reviewerId,
       decision: 'approved',
+      createdAt: at,
     });
     return Promise.resolve(task);
   }
@@ -177,7 +180,37 @@ export class InMemoryTasks implements TaskRepositories {
       extractedTaskId: e.id,
       reviewerId: input.reviewerId,
       decision: 'rejected',
+      createdAt: this.now().toISOString(),
     });
     return Promise.resolve();
+  }
+
+  analytics(organizationId: string, q: { from: Date; to: Date }): Promise<TaskAnalyticsResult> {
+    const inRange = (r: { organizationId: string; createdAt: string }) => {
+      const t = new Date(r.createdAt);
+      return r.organizationId === organizationId && t >= q.from && t < q.to;
+    };
+    const tally = <K extends string>(keys: K[]) => {
+      const m = new Map<K, number>();
+      for (const k of keys) m.set(k, (m.get(k) ?? 0) + 1);
+      return [...m].sort(([a], [b]) => a.localeCompare(b));
+    };
+    const tasks = this.tasks.filter(inRange).map((t) => t.status);
+    const extracted = this.extracted.filter(inRange).map((e) => e.status);
+    const approvals = this.approvals.filter(inRange).map((a) => a.decision);
+    return Promise.resolve({
+      tasks: {
+        total: tasks.length,
+        byStatus: tally(tasks).map(([status, count]) => ({ status, count })),
+      },
+      extractedTasks: {
+        total: extracted.length,
+        byStatus: tally(extracted).map(([status, count]) => ({ status, count })),
+      },
+      approvals: {
+        total: approvals.length,
+        byDecision: tally(approvals).map(([decision, count]) => ({ decision, count })),
+      },
+    });
   }
 }

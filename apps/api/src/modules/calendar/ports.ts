@@ -52,6 +52,11 @@ export interface CalendarConnectionsRepository {
     t: { accessToken: string; refreshToken: string; accessTokenExpiresAt: Date },
   ): Promise<void>;
   markError(organizationId: string, id: string): Promise<void>;
+  /**
+   * True when `revoke` also deletes the connection's event -> meeting links in the same transaction (all or
+   * nothing), so the service need not clean them up separately.
+   */
+  readonly revokesLinks?: boolean;
   /** Soft revoke that wipes tokens. false when unknown / other-user / already revoked. */
   revoke(organizationId: string, userId: string, id: string): Promise<boolean>;
 }

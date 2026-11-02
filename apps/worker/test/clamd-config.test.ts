@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { MAX_MEDIA_BYTES } from '@meetops/contracts';
 import { describe, expect, it } from 'vitest';
+import { CLAMD_MAX_SCAN_TIME_MS, CLAMD_SCAN_TIMEOUT_MS } from '../src/media/clamd.js';
 
 /**
  * MAL-1 / ADR-018: the clamd sidecar config is part of the upload contract. A full-size upload
@@ -65,9 +66,9 @@ describe('clamd sidecar config (MAL-1, ADR-018)', () => {
     expect(Number(clamd.get('MaxScanTime'))).toBeGreaterThanOrEqual(600_000);
   });
 
-  it('keeps serving scans during a signature reload (paired with mem_limit 4g)', () => {
+  it('keeps serving scans during a signature reload (paired with mem_limit 7g: 4g engines + 3g tmpfs)', () => {
     expect(clamd.get('ConcurrentDatabaseReload')).toBe('yes');
-    expect(clamavService).toMatch(/\n {4}mem_limit: 4g\n/);
+    expect(clamavService).toMatch(/\n {4}mem_limit: 7g\n/);
   });
 
   it('listens where the worker and the image healthcheck expect it', () => {
@@ -146,5 +147,40 @@ describe('clamd sidecar config (MAL-1, ADR-018)', () => {
   it('wires the worker to the sidecar', () => {
     expect(compose).toMatch(/\n {6}CLAMD_HOST: clamav\n/);
     expect(compose).toMatch(/\n {6}UPLOAD_SCAN_CLAMAV: \$\{UPLOAD_SCAN_CLAMAV:-false\}\n/);
+  });
+
+  // #377/#379 follow-ups (disk fill, pinned limits, MAL-2 timeout alignment).
+  it('caps temp disk: TemporaryDirectory on a size-capped tmpfs, read-only root for clamd', () => {
+    expect(clamd.get('TemporaryDirectory')).toBe('/tmp');
+    expect(clamavService).toMatch(/\n {4}read_only: true\n/);
+    expect(clamavService).toMatch(
+      /\n {6}- \/tmp:size=3g,uid=100,gid=101,mode=0700,noexec,nosuid,nodev\n/,
+    );
+  });
+
+  it('tmpfs fits one scan per thread (stream + extracted data) and MaxThreads matches worker concurrency', () => {
+    const threads = Number(clamd.get('MaxThreads'));
+    const concurrency = /\n {6}MEDIA_WORKER_CONCURRENCY: (\d+)\n/.exec(workerService)?.[1];
+    expect(threads).toBe(1);
+    expect(Number(concurrency)).toBe(threads);
+    const perScan =
+      clamdBytes(clamd.get('StreamMaxLength')!) + clamdBytes(clamd.get('MaxScanSize')!);
+    expect(threads * perScan).toBeLessThanOrEqual(3 * 1024 ** 3);
+  });
+
+  it.each([
+    ['MaxRecursion', '17'],
+    ['MaxFiles', '10000'],
+    ['MaxEmbeddedPE', '40M'],
+    ['PCREMaxFileSize', '100M'],
+    ['MaxConnectionQueueLength', '4'],
+  ])('pins %s = %s', (key, value) => {
+    expect(clamd.get(key)).toBe(value);
+  });
+
+  it('worker scan timeout is above clamd MaxScanTime, so clamd answers first (MAL-2)', () => {
+    expect(Number(clamd.get('MaxScanTime'))).toBe(CLAMD_MAX_SCAN_TIME_MS);
+    expect(CLAMD_SCAN_TIMEOUT_MS).toBeGreaterThan(CLAMD_MAX_SCAN_TIME_MS);
+    expect(CLAMD_SCAN_TIMEOUT_MS - CLAMD_MAX_SCAN_TIME_MS).toBeLessThanOrEqual(60_000);
   });
 });

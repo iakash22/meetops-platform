@@ -12,6 +12,7 @@ import {
 import { registerDomainErrorHandler, registerNotFoundHandler } from './shared/http-errors.js';
 import { parseTrustProxy } from './shared/trust-proxy.js';
 import { registerSecurityHeaders } from './shared/security-headers.js';
+import { registerJsonOnly } from './shared/json-only.js';
 import { clientIpOptionsFromEnv, resolveClientIp } from './shared/geoip/client-ip.js';
 import { truncateIp } from './shared/geoip/ip.js';
 import { metricsTokenFromEnv, registerMetrics, type HttpMetrics } from './shared/metrics.js';
@@ -133,7 +134,10 @@ export function createServer(options: CreateServerOptions = {}) {
   });
 
   // P9: baseline security headers on every response (errors and 404s included); HSTS only in production.
-  registerSecurityHeaders(app, { hsts: nodeEnv === 'production' });
+  registerSecurityHeaders(app, { hsts: nodeEnv === 'production', docs: isRelaxedEnv(nodeEnv) });
+
+  // P9 R16: unsafe requests with a body must be JSON (415 otherwise) unless the route allowlists the type.
+  registerJsonOnly(app);
 
   registerDomainErrorHandler(app);
   registerNotFoundHandler(app);

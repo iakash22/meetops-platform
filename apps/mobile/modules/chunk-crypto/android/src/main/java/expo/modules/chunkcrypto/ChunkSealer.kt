@@ -1,7 +1,9 @@
 package expo.modules.chunkcrypto
 
 import android.net.Uri
+import android.os.Build
 import android.security.keystore.KeyGenParameterSpec
+import android.security.keystore.KeyInfo
 import android.security.keystore.KeyProperties
 import java.io.File
 import java.io.FileOutputStream
@@ -10,6 +12,7 @@ import java.security.MessageDigest
 import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
+import javax.crypto.SecretKeyFactory
 
 /**
  * Shared AES-256-GCM sealing (R5) for ChunkCryptoModule and SegmentRecorderModule: one non-exportable Keystore key,
@@ -24,18 +27,53 @@ internal object ChunkSealer {
 
   fun keyStore(): KeyStore = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
 
+  /**
+   * The recording key: AES-256-GCM, non-exportable, created on first use in the TEE-backed AndroidKeyStore. Not
+   * StrongBox: its secure element is far too slow for bulk audio sealing (a chunk every few seconds).
+   * An alias that exists but can't be loaded (corrupted or wiped Keystore) is an error, never a silent re-key: a new key would make every sealed chunk unreadable while looking healthy (fail closed, R5).
+   */
   fun key(): SecretKey = synchronized(KEY_LOCK) {
-    (keyStore().getEntry(ALIAS, null) as? KeyStore.SecretKeyEntry)?.let { return@synchronized it.secretKey }
+    val ks = keyStore()
+    if (ks.containsAlias(ALIAS)) {
+      val entry = try {
+        ks.getEntry(ALIAS, null)
+      } catch (e: Exception) {
+        throw IllegalStateException("Recording key unusable", e)
+      }
+      return@synchronized (entry as? KeyStore.SecretKeyEntry)?.secretKey
+        ?: throw IllegalStateException("Recording key has the wrong type")
+    }
+    generate()
+  }
+
+  private fun generate(): SecretKey {
+    val spec = KeyGenParameterSpec.Builder(ALIAS, KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT)
+      .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
+      .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
+      .setKeySize(256)
+      .setRandomizedEncryptionRequired(true)
+    // No user-auth or unlocked-device binding: a user-started capture must keep sealing with the screen locked.
     val gen = KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, "AndroidKeyStore")
-    gen.init(
-      KeyGenParameterSpec.Builder(ALIAS, KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT)
-        .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
-        .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
-        .setKeySize(256)
-        .setRandomizedEncryptionRequired(true)
-        .build()
-    )
-    gen.generateKey()
+    gen.init(spec.build())
+    return gen.generateKey()
+  }
+
+  /** Where the key lives, for diagnostics and the security review. Never exposes key material. */
+  fun keyInfo(): Map<String, Any> {
+    val k = key()
+    val info = SecretKeyFactory.getInstance(k.algorithm, "AndroidKeyStore").getKeySpec(k, KeyInfo::class.java) as KeyInfo
+    val level = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+      when (info.securityLevel) {
+        KeyProperties.SECURITY_LEVEL_STRONGBOX -> "strongbox"
+        KeyProperties.SECURITY_LEVEL_TRUSTED_ENVIRONMENT -> "tee"
+        KeyProperties.SECURITY_LEVEL_SOFTWARE -> "software"
+        else -> "unknown"
+      }
+    } else {
+      @Suppress("DEPRECATION")
+      if (info.isInsideSecureHardware) "tee" else "software"
+    }
+    return mapOf("alias" to ALIAS, "algorithm" to "AES-256-GCM", "securityLevel" to level, "keySize" to info.keySize)
   }
 
   fun pathOf(uri: String): String = if (uri.startsWith("file:")) Uri.parse(uri).path!! else uri

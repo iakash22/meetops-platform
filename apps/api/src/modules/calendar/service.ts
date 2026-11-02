@@ -8,6 +8,7 @@ import {
 import {
   CalendarProviderError,
   GoogleCalendarProvider,
+  OutlookCalendarProvider,
   OAuthStateError,
   OAuthStateManager,
   type CalendarProvider,
@@ -110,13 +111,31 @@ export class CalendarService {
     return this.rt;
   }
   configured(provider: CalendarProviderId): boolean {
-    return provider === 'google' && Boolean(this.rt?.googleCalendar);
+    if (provider === 'google') return Boolean(this.rt?.googleCalendar);
+    if (provider === 'outlook') return Boolean(this.rt?.outlookCalendar);
+    return false;
   }
   redirectUri(provider: CalendarProviderId) {
     return `${this.runtime().apiOrigin}/calendar/${provider}/callback`;
   }
   private provider(id: CalendarProviderId): CalendarProvider {
     const rt = this.runtime();
+    if (id === 'outlook') {
+      if (!rt.outlookCalendar)
+        throw new IntegrationNotConfiguredError(
+          'Outlook Calendar is not configured on this deployment',
+        );
+      return new OutlookCalendarProvider({
+        clientId: rt.outlookCalendar.clientId,
+        clientSecret: rt.outlookCalendar.clientSecret,
+        ...(rt.outlookCalendar.tenant ? { tenant: rt.outlookCalendar.tenant } : {}),
+        redirectUriAllowlist: [this.redirectUri('outlook')],
+        stateStore: rt.stateStore,
+        stateTtlSeconds: INTEGRATION_STATE_TTL_SECONDS,
+        ...(rt.fetch ? { fetch: rt.fetch } : {}),
+        ...(rt.now ? { now: rt.now } : {}),
+      });
+    }
     if (id !== 'google' || !rt.googleCalendar)
       throw new IntegrationNotConfiguredError(
         'Google Calendar is not configured on this deployment',
@@ -191,7 +210,7 @@ export class CalendarService {
       if (query.error) {
         await new OAuthStateManager(rt.stateStore, rt.now ? { now: rt.now } : {}).consume(
           innerState,
-          { provider: 'google-calendar', organizationId, userId, redirectUri },
+          { provider: `${provider}-calendar`, organizationId, userId, redirectUri },
         );
         return back('denied');
       }
@@ -400,7 +419,9 @@ export class CalendarService {
     }
     if (!(await this.repo.revoke(organizationId, userId, id)))
       throw new CalendarConnectionNotFoundError();
-    await this.links?.removeForConnection(organizationId, id).catch(() => undefined);
+    // Prisma deletes the links inside the revoke transaction. Other stores: delete here and let a failure surface
+    // (never swallowed: a silent failure left links pointing at a revoked connection).
+    if (!this.repo.revokesLinks) await this.links?.removeForConnection(organizationId, id);
     await audit('calendar.disconnect', id, { providerRevoked: String(providerRevoked) });
   }
 }

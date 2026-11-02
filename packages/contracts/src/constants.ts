@@ -507,6 +507,8 @@ export const INTEGRATION_WEBHOOK_MAX_BYTES = 1_048_576;
 /** Read-only, org-scoped analytics (P7). */
 export const ANALYTICS_PATHS = {
   meetings: '/orgs/:organizationId/analytics/meetings',
+  /** Task and AI-extracted-task review counts (P7). */
+  tasks: '/orgs/:organizationId/analytics/tasks',
 } as const;
 
 /** Longest analytics window (`to - from`). */
@@ -523,7 +525,7 @@ export const CALENDAR_PATHS = {
 } as const;
 
 /** Server-known providers only; clients never supply an endpoint or base URL. */
-export const CALENDAR_PROVIDERS = ['google'] as const;
+export const CALENDAR_PROVIDERS = ['google', 'outlook'] as const;
 
 /** Phase 7: org-scoped full-text search (Postgres FTS, forced RLS). */
 export const SEARCH_PATHS = {

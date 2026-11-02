@@ -2,6 +2,11 @@ import type { FastifyInstance } from 'fastify';
 import { Type } from '@sinclair/typebox';
 import {
   AcceptExtractedTaskRequest,
+  ANALYTICS_PATHS,
+  MAX_ANALYTICS_RANGE_DAYS,
+  TaskAnalytics,
+  TaskAnalyticsParams,
+  TaskAnalyticsQuery,
   CreateTaskRequest,
   CursorPage,
   DEFAULT_PAGE_LIMIT,
@@ -19,6 +24,7 @@ import { registerDomainErrorHandler } from '../../shared/http-errors.js';
 import type { OrganizationService } from '../organizations/application/organization.service.js';
 import { isRelaxedEnv, MissingProductionDependencyError, type ModuleDeps } from '../index.js';
 import { DirectoryAccess } from '../directory/access.js';
+import { parseAnalyticsRange } from '../meetings/domain/meeting.js';
 import { toDirectoryError } from '../directory/errors.js';
 import { directoryErrors, directoryWriteErrors } from '../directory/http/route-kit.js';
 import {
@@ -330,6 +336,33 @@ export default async function tasksModule(
         metadata: { fields: Object.keys(b).sort().join(',') },
       });
       return task;
+    },
+  );
+
+  app.get<{ Params: TaskAnalyticsParams; Querystring: TaskAnalyticsQuery }>(
+    ANALYTICS_PATHS.tasks,
+    {
+      schema: {
+        tags: ['analytics'],
+        summary: 'Task and review analytics',
+        description: `Read-only counts for the organization: tasks by status, AI-extracted tasks by review status, approvals by decision. createdAt in [from, to), at most ${MAX_ANALYTICS_RANGE_DAYS} days. Viewer and up (read Task); other orgs 404.`,
+        params: TaskAnalyticsParams,
+        querystring: TaskAnalyticsQuery,
+        response: { 200: TaskAnalytics, ...directoryErrors },
+      },
+    },
+    async (request, reply) => {
+      const c = await caller(request, request.params.organizationId);
+      organizations.authorize(c.ctx, 'read', 'Task');
+      const { from, to } = parseAnalyticsRange(request.query, MAX_ANALYTICS_RANGE_DAYS);
+      const r = await call(() => repo.analytics(c.ctx.organizationId, { from, to }));
+      void reply.header('cache-control', 'private, no-store');
+      return {
+        organizationId: c.ctx.organizationId,
+        from: from.toISOString(),
+        to: to.toISOString(),
+        ...r,
+      };
     },
   );
 }
