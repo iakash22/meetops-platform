@@ -54,6 +54,8 @@ export interface IntegrationsRuntime {
   jira?: { clientId: string; clientSecret: () => Promise<string> };
   /** Phase 7: Google Calendar OAuth client (read-only scopes). Absent = calendar connect answers 503. */
   googleCalendar?: { clientId: string; clientSecret: () => Promise<string> };
+  /** Phase 7: Microsoft Outlook (Graph) OAuth client, read-only scopes. Absent = connect answers 503. */
+  outlookCalendar?: { clientId: string; clientSecret: () => Promise<string>; tenant?: string };
 }
 
 export function devIntegrationsRuntime(
@@ -154,6 +156,15 @@ export function integrationsRuntimeFromEnv(
     over.googleCalendar = {
       clientId: env.GOOGLE_CALENDAR_CLIENT_ID,
       clientSecret: async () => secret,
+    };
+  }
+  if (env.OUTLOOK_CALENDAR_CLIENT_ID && env.OUTLOOK_CALENDAR_CLIENT_SECRET) {
+    const secret = env.OUTLOOK_CALENDAR_CLIENT_SECRET;
+    const tenant = env.OUTLOOK_CALENDAR_TENANT?.trim();
+    over.outlookCalendar = {
+      clientId: env.OUTLOOK_CALENDAR_CLIENT_ID,
+      clientSecret: async () => secret,
+      ...(tenant ? { tenant } : {}),
     };
   }
   return over;

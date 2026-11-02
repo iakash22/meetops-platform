@@ -357,11 +357,28 @@ describe('Phase 7 calendar', () => {
     ).toBe(400);
     expect(
       (await c.post(`/orgs/${org}/calendar/connect`, { provider: 'outlook' })).statusCode,
-    ).toBe(400);
+    ).toBe(503);
+    expect((await c.post(`/orgs/${org}/calendar/connect`, { provider: 'yahoo' })).statusCode).toBe(
+      400,
+    );
     expect(
       (await c.get(`/orgs/${org}/calendar/providers`)).json<CalendarProviderList>().items[0]!
         .configured,
     ).toBe(false);
+  });
+
+  it('reads the Outlook OAuth client and tenant from env only when both values are set', async () => {
+    expect(integrationsRuntimeFromEnv({ OUTLOOK_CALENDAR_CLIENT_ID: 'x' }).outlookCalendar).toBe(
+      undefined,
+    );
+    const rt = integrationsRuntimeFromEnv({
+      OUTLOOK_CALENDAR_CLIENT_ID: 'id',
+      OUTLOOK_CALENDAR_CLIENT_SECRET: 'placeholder',
+      OUTLOOK_CALENDAR_TENANT: 'organizations',
+    }).outlookCalendar;
+    expect(rt?.clientId).toBe('id');
+    expect(rt?.tenant).toBe('organizations');
+    expect(await rt?.clientSecret()).toBe('placeholder');
   });
 
   it('reads the Google OAuth client from env only when both values are set', () => {
