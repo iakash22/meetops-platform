@@ -19,7 +19,9 @@ describe('native Stop without JS (swipe-away / notification Stop)', () => {
 
   it('the service tells the recorder directly, package-local, before arming the watchdog', () => {
     const body = service.slice(service.indexOf('private fun nativeStop()'));
-    const send = body.indexOf('sendBroadcast(Intent(ACTION_CAPTURE_STOP).setPackage(packageName))');
+    const send = body.indexOf(
+      'sendBroadcast(Intent(ACTION_CAPTURE_STOP).setPackage(packageName).putExtra(EXTRA_CAPTURE_ID, id))',
+    );
     expect(send).toBeGreaterThan(-1);
     expect(send).toBeLessThan(body.indexOf('armWatchdog('));
   });
@@ -51,15 +53,15 @@ describe('native Stop without JS (swipe-away / notification Stop)', () => {
     expect(t).not.toBeNull();
     expect(Number((t?.[1] ?? '').replace(/_/g, ''))).toBeGreaterThanOrEqual(10_000);
     const sealing = service.slice(
-      service.indexOf('fun onSealing()'),
-      service.indexOf('fun onSealed()'),
+      service.indexOf('fun onSealing('),
+      service.indexOf('fun onSealed('),
     );
     expect(sealing).toContain('schedule(NATIVE_SEAL_TIMEOUT_MS)');
     // A seal already reported before the watchdog is armed keeps the long bound.
     expect(service).toContain('schedule(if (sealing) NATIVE_SEAL_TIMEOUT_MS');
     // Only SEALED may end the process at once.
     const sealed = service.slice(
-      service.indexOf('fun onSealed()'),
+      service.indexOf('fun onSealed('),
       service.indexOf('fun listenForSeal('),
     );
     expect(sealed).toContain('else 0L');
@@ -75,26 +77,50 @@ describe('native Stop without JS (swipe-away / notification Stop)', () => {
   });
 
   it('the recorder signals SEALING before sealing and SEALED after it, even on failure', () => {
-    const body = recorder.slice(recorder.indexOf('private fun stopNatively()'));
-    expect(body.indexOf('signal(ACTION_CAPTURE_SEALING)')).toBeLessThan(
+    const body = recorder.slice(recorder.indexOf('private fun stopNatively('));
+    expect(body.indexOf('signal(ACTION_CAPTURE_SEALING, captureId)')).toBeLessThan(
       body.indexOf('shutdown(cur'),
     );
     const fin = body.slice(body.indexOf('} finally {'));
     expect(fin.slice(0, 200)).toContain('ns.done.countDown()');
-    expect(fin.slice(0, 200)).toContain('signal(ACTION_CAPTURE_SEALED)');
+    expect(fin.slice(0, 200)).toContain('signal(ACTION_CAPTURE_SEALED, captureId)');
     expect(recorder).toContain('Intent(action).setPackage(ctx.packageName)');
   });
 
-  it('a failed stop-marker write is logged and propagated, not swallowed', () => {
-    const body = recorder.slice(recorder.indexOf('private fun stopNatively()'));
+  it('a failed stop-marker write is logged and reported as markerFailed, never as a stop failure', () => {
+    const body = recorder.slice(recorder.indexOf('private fun stopNatively('));
     const write = body.slice(
       body.indexOf('ChunkSealer.writeDurably(File(cur.dir, STOPPED_SENTINEL)') - 200,
       body.indexOf('Thread({'),
     );
     expect(write).not.toMatch(/catch \(_: Exception\) \{\}/);
     expect(write).toContain('Log.e(TAG');
-    expect(body).toContain('markerFailure?.let { throw it }');
-    expect(body).toContain('ns.failure = t');
+    expect(write).toContain('ns.markerFailed = true');
+    expect(body.slice(0, body.indexOf('AsyncFunction'))).not.toMatch(
+      /markerFail\w*\?\.let \{ throw/,
+    );
+    const stop = recorder.slice(recorder.indexOf('AsyncFunction("stop")'));
+    expect(stop.slice(0, 1200)).toContain('"markerFailed" to ns.markerFailed');
+    expect(stop.slice(0, 1200)).toContain('"markerFailed" to false');
+  });
+
+  it('seal signals carry the capture id and the service ignores other captures', () => {
+    expect(service).toContain('const val EXTRA_CAPTURE_ID = "captureId"');
+    expect(recorder).toContain('const val EXTRA_CAPTURE_ID = "captureId"');
+    const nativeStop = service.slice(service.indexOf('private fun nativeStop()'));
+    expect(nativeStop).toContain('putExtra(EXTRA_CAPTURE_ID, id)');
+    expect(recorder).toContain('stopNatively(i.getLongExtra(EXTRA_CAPTURE_ID, -1L))');
+    expect(recorder).toContain('signal(ACTION_CAPTURE_SEALING, captureId)');
+    expect(recorder).toContain('signal(ACTION_CAPTURE_SEALED, captureId)');
+    expect(recorder).toContain('.putExtra(EXTRA_CAPTURE_ID, captureId)');
+    for (const fn of ['fun onSealing(id: Long)', 'fun onSealed(id: Long)']) {
+      const b = service.slice(service.indexOf(fn));
+      expect(b.slice(0, 200)).toContain('if (id < 0 || id != stopCaptureId) return');
+    }
+    // Each start gets a fresh id and drops the previous stop's id.
+    const start = service.slice(service.indexOf('fun beginStart()'));
+    expect(start.slice(0, 250)).toContain('captureId = ++nextCaptureId');
+    expect(start.slice(0, 250)).toContain('stopCaptureId = -1L');
   });
 
   it('the recorder receiver is not exported', () => {
@@ -102,7 +128,7 @@ describe('native Stop without JS (swipe-away / notification Stop)', () => {
   });
 
   it('the sentinel is written before sealing, so a kill mid-seal still keeps the recording', () => {
-    const body = recorder.slice(recorder.indexOf('private fun stopNatively()'));
+    const body = recorder.slice(recorder.indexOf('private fun stopNatively('));
     const sentinel = body.indexOf('STOPPED_SENTINEL');
     expect(sentinel).toBeGreaterThan(-1);
     expect(sentinel).toBeLessThan(body.indexOf('shutdown(cur'));

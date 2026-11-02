@@ -1,4 +1,14 @@
 import type { LocalChunk } from '../upload/types';
+
+export interface SegmentStopResult {
+  chunks: LocalChunk[];
+  markerFailed: boolean;
+}
+
+/** Older native builds resolve stop() with the bare chunk array. */
+export function normalizeStop(r: SegmentStopResult | LocalChunk[]): SegmentStopResult {
+  return Array.isArray(r) ? { chunks: r, markerFailed: false } : r;
+}
 import type { RecordingDraft } from './capture';
 import type { FileChunkStore } from './fileChunkStore';
 import type { ForegroundIndicator, NativeCapture, RecorderFileGuard } from './nativeCapture';
@@ -9,8 +19,12 @@ export interface SegmentRecorder {
   pause(): void;
   resume(): void;
   isRecording(): boolean;
-  /** Drains the encoder, seals the last segment, returns every chunk in seq order. */
-  stop(): Promise<LocalChunk[]>;
+  /**
+   * Drains the encoder, seals the last segment, returns every chunk in seq order. Current native builds resolve
+   * `{ chunks, markerFailed }` (older ones a bare array): `markerFailed` is a sealed recording whose native-stop
+   * sentinel write failed; it is still a successful stop.
+   */
+  stop(): Promise<SegmentStopResult | LocalChunk[]>;
   /** Stops without sealing and deletes the capture's folder. */
   abort(): Promise<void>;
   /** Seals a leftover plaintext segment (trimmed to whole ADTS frames) and lists every chunk. */
@@ -129,7 +143,15 @@ export function createSegmentCapture(
         .catch(() => undefined);
       let chunks: LocalChunk[];
       try {
-        chunks = await native.stop();
+        const result = normalizeStop(await native.stop());
+        chunks = result.chunks;
+        if (result.markerFailed) {
+          // Sealed fine, but the native-stop sentinel is missing: the manifest below is what keeps this recording
+          // across a kill, so it is written exactly as for a normal stop (never treated as a failure).
+          console.warn(
+            '[segment-capture] native stop marker write failed; keeping the sealed recording',
+          );
+        }
       } finally {
         stopIndicator();
       }

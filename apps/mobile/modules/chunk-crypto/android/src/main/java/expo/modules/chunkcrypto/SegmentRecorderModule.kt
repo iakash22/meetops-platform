@@ -50,6 +50,8 @@ class SegmentRecorderModule : Module() {
     /** Must match RecordingForegroundService.ACTION_CAPTURE_SEALING / ACTION_CAPTURE_SEALED. */
     const val ACTION_CAPTURE_SEALING = "expo.modules.recordingservice.CAPTURE_SEALING"
     const val ACTION_CAPTURE_SEALED = "expo.modules.recordingservice.CAPTURE_SEALED"
+    /** Must match RecordingForegroundService.EXTRA_CAPTURE_ID: echoed so the service ignores other captures' seals. */
+    const val EXTRA_CAPTURE_ID = "captureId"
     private const val TAG = "SegmentRecorder"
     /** ADTS sampling_frequency_index for 44.1 kHz. */
     private const val FREQ_INDEX = 4
@@ -77,6 +79,8 @@ class SegmentRecorderModule : Module() {
   private class NativeStop(val dir: File) {
     val done = CountDownLatch(1)
     @Volatile var failure: Throwable? = null
+    /** The "stopped" sentinel couldn't be written. Not a stop failure: the seal's chunks are still returned. */
+    @Volatile var markerFailed = false
   }
   @Volatile private var nativeStop: NativeStop? = null
   private var receiver: BroadcastReceiver? = null
@@ -86,7 +90,7 @@ class SegmentRecorderModule : Module() {
     unregisterStopReceiver()
     val r = object : BroadcastReceiver() {
       override fun onReceive(c: Context?, i: Intent?) {
-        if (i?.action == ACTION_CAPTURE_STOP) stopNatively()
+        if (i?.action == ACTION_CAPTURE_STOP) stopNatively(i.getLongExtra(EXTRA_CAPTURE_ID, -1L))
       }
     }
     ContextCompat.registerReceiver(ctx, r, IntentFilter(ACTION_CAPTURE_STOP), ContextCompat.RECEIVER_NOT_EXPORTED)
@@ -103,16 +107,16 @@ class SegmentRecorderModule : Module() {
    * Native Stop: no JS needed. Takes the session (so a later JS stop() waits for this one instead of failing),
    * writes the sentinel, then closes the mic and seals off the main thread.
    */
-  private fun signal(action: String) {
+  private fun signal(action: String, captureId: Long) {
     val ctx = appContext.reactContext?.applicationContext ?: return
     try {
-      ctx.sendBroadcast(Intent(action).setPackage(ctx.packageName))
+      ctx.sendBroadcast(Intent(action).setPackage(ctx.packageName).putExtra(EXTRA_CAPTURE_ID, captureId))
     } catch (e: Exception) {
       Log.w(TAG, "native stop: $action broadcast failed; the service falls back to its fixed grace", e)
     }
   }
 
-  private fun stopNatively() {
+  private fun stopNatively(captureId: Long) {
     val s = synchronized(this) {
       val cur = session ?: return
       session = null
@@ -121,14 +125,14 @@ class SegmentRecorderModule : Module() {
     unregisterStopReceiver()
     val (ns, cur) = s
     // Tell the service a seal is in flight, so its kill fallback waits for SEALED instead of a fixed grace.
-    signal(ACTION_CAPTURE_SEALING)
+    signal(ACTION_CAPTURE_SEALING, captureId)
     // Without the sentinel a kill during the seal discards the recording at launch: never swallow this.
-    val markerFailure = try {
+    // It is reported to JS stop() as markerFailed (chunks still returned, JS writes the manifest), not as a failure.
+    try {
       ChunkSealer.writeDurably(File(cur.dir, STOPPED_SENTINEL), ByteArray(0))
-      null
     } catch (e: Exception) {
       Log.e(TAG, "native stop: stop marker write failed; a kill during the seal would lose the recording", e)
-      IllegalStateException("Stop marker write failed", e)
+      ns.markerFailed = true
     }
     Thread({
       try {
@@ -136,13 +140,12 @@ class SegmentRecorderModule : Module() {
         recoverParts(cur.dir)
         check(plaintextLeft(cur.dir).isEmpty()) { "Plaintext segment could not be removed" }
         cur.failure?.let { throw it }
-        markerFailure?.let { throw it }
       } catch (t: Throwable) {
         Log.e(TAG, "native stop failed", t)
         ns.failure = t
       } finally {
         ns.done.countDown()
-        signal(ACTION_CAPTURE_SEALED)
+        signal(ACTION_CAPTURE_SEALED, captureId)
       }
     }, "meetops-segment-native-stop").start()
   }
@@ -401,13 +404,14 @@ class SegmentRecorderModule : Module() {
         check(ns.done.await(30, TimeUnit.SECONDS)) { "Native stop timed out" }
         nativeStop = null
         ns.failure?.let { throw it }
-        return@AsyncFunction chunks(ns.dir)
+        if (ns.markerFailed) Log.e(TAG, "stop: sealed, but the stop marker write had failed (markerFailed)")
+        return@AsyncFunction mapOf("chunks" to chunks(ns.dir), "markerFailed" to ns.markerFailed)
       }
       shutdown(s, 15_000)
       recoverParts(s.dir)
       check(plaintextLeft(s.dir).isEmpty()) { "Plaintext segment could not be removed" }
       s.failure?.let { throw it }
-      chunks(s.dir)
+      mapOf("chunks" to chunks(s.dir), "markerFailed" to false)
     }
 
     // Logout / failed begin: writes stop first (closed under the lock), the thread is joined (bounded), then the

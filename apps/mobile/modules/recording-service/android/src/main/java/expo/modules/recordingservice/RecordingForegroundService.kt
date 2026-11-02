@@ -51,6 +51,16 @@ class RecordingForegroundService : Service() {
     /** Sent by the segment recorder when the seal finished (success or failure): killing is now safe. */
     const val ACTION_CAPTURE_SEALED = "expo.modules.recordingservice.CAPTURE_SEALED"
     private const val TAG = "RecordingService"
+    /**
+     * Long extra on CAPTURE_STOP, echoed by the recorder on SEALING/SEALED. Seal progress for any other capture (a
+     * late SEALED from an earlier one) is ignored, so it can never cut a newer capture's grace short.
+     */
+    const val EXTRA_CAPTURE_ID = "captureId"
+    private var nextCaptureId = 0L
+    /** The capture the current native stop belongs to; -1 = none (seal signals are ignored). */
+    @Volatile private var stopCaptureId = -1L
+    /** Assigned per start, sent with the native stop. */
+    @Volatile private var captureId = -1L
     private const val CHANNEL = "meetops_recording"
     const val NOTIFICATION_ID = 4711
     @Volatile var running = false
@@ -105,14 +115,16 @@ class RecordingForegroundService : Service() {
     }
 
     /** The recorder began sealing: hold the kill until SEALED (bounded by NATIVE_SEAL_TIMEOUT_MS). */
-    @Synchronized fun onSealing() {
+    @Synchronized fun onSealing(id: Long) {
+      if (id < 0 || id != stopCaptureId) return // another (earlier) capture, or untagged
       if (watchdog == null) return // JS already acknowledged
       sealing = true
       schedule(NATIVE_SEAL_TIMEOUT_MS)
     }
 
     /** Seal done: without JS end now; with JS, give it its normal grace from here. */
-    @Synchronized fun onSealed() {
+    @Synchronized fun onSealed(id: Long) {
+      if (id < 0 || id != stopCaptureId) return // a late SEALED for an earlier capture must not kill this one
       sealing = false
       if (watchdog == null) return
       schedule(if (jsListeningAtStop) JS_STOP_GRACE_MS else 0L)
@@ -124,8 +136,8 @@ class RecordingForegroundService : Service() {
       val r = object : BroadcastReceiver() {
         override fun onReceive(c: Context?, i: Intent?) {
           when (i?.action) {
-            ACTION_CAPTURE_SEALING -> onSealing()
-            ACTION_CAPTURE_SEALED -> onSealed()
+            ACTION_CAPTURE_SEALING -> onSealing(i.getLongExtra(EXTRA_CAPTURE_ID, -1L))
+            ACTION_CAPTURE_SEALED -> onSealed(i.getLongExtra(EXTRA_CAPTURE_ID, -1L))
           }
         }
       }
@@ -154,6 +166,13 @@ class RecordingForegroundService : Service() {
       schedule(if (sealing) NATIVE_SEAL_TIMEOUT_MS else if (jsListening) JS_STOP_GRACE_MS else NATIVE_STOP_GRACE_MS)
     }
 
+    /** Seal signals from now on count only when tagged with this capture's id. */
+    @Synchronized fun beginNativeStop(): Long {
+      sealing = false
+      stopCaptureId = captureId
+      return captureId
+    }
+
     @Synchronized fun resetStopLatch() {
       stopNotified = false
     }
@@ -169,6 +188,9 @@ class RecordingForegroundService : Service() {
     /** Module start(): a fresh start clears any earlier cancel. */
     @Synchronized fun beginStart() {
       cancelRequested = false
+      captureId = ++nextCaptureId
+      stopCaptureId = -1L
+      sealing = false
     }
 
     /** Module stop(): records the cancel and returns whether the service was already up (caller then stops it). */
@@ -243,11 +265,11 @@ class RecordingForegroundService : Service() {
   /** Notification Stop or swipe-away: indicator goes now; JS ends capture, or the watchdog does. */
   private fun nativeStop() {
     val jsListening = onStop != null
-    sealing = false
+    val id = beginNativeStop()
     listenForSeal(this)
     // Close the mic natively first: no JS round trip (swipe-away with a dead JS runtime included).
     try {
-      sendBroadcast(Intent(ACTION_CAPTURE_STOP).setPackage(packageName))
+      sendBroadcast(Intent(ACTION_CAPTURE_STOP).setPackage(packageName).putExtra(EXTRA_CAPTURE_ID, id))
     } catch (_: Exception) {
       // Broadcast failed: the watchdog below still ends capture.
     }

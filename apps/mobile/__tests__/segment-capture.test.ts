@@ -154,6 +154,47 @@ describe('Android segment capture (ADR-015, R5)', () => {
     await expect(store.manifest('rec-1')).resolves.toEqual(chunks);
   });
 
+  it('a sealed stop whose native marker write failed resolves, writes the manifest and survives the next launch', async () => {
+    const { fs, native, cap, store } = setup();
+    await cap.begin('rec-1');
+    native.closeSegment(frame(40, 1));
+    const sealed = [{ seq: 0, sizeBytes: 40, sha256: sha256Hex(frame(40, 1)) }];
+    native.stop = () => Promise.resolve({ chunks: sealed, markerFailed: true });
+    const warn = jest.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      await expect(cap.capture('rec-1', 1000, draft)).resolves.toEqual(sealed);
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('marker write failed'));
+    } finally {
+      warn.mockRestore();
+    }
+    await expect(store.manifest('rec-1')).resolves.toEqual(sealed);
+    await expect(store.getMarker()).resolves.toBeNull();
+    // Next launch (no sentinel on disk): nothing to recover, nothing discarded.
+    const fresh = fakeNative(fs);
+    fresh.stoppedNatively = () => false;
+    await createSegmentCapture(fresh, store, {
+      canRecord: () => Promise.resolve(true),
+    }).recoverOnLaunch(jest.fn());
+    await expect(store.exists('rec-1')).resolves.toBe(true);
+    await expect(store.manifest('rec-1')).resolves.toEqual(sealed);
+  });
+
+  it('accepts the { chunks, markerFailed: false } stop result without warning', async () => {
+    const { native, cap, store } = setup();
+    await cap.begin('rec-1');
+    native.closeSegment(frame(40, 1));
+    const sealed = [{ seq: 0, sizeBytes: 40, sha256: sha256Hex(frame(40, 1)) }];
+    native.stop = () => Promise.resolve({ chunks: sealed, markerFailed: false });
+    const warn = jest.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      await expect(cap.capture('rec-1', 1000, draft)).resolves.toEqual(sealed);
+      expect(warn).not.toHaveBeenCalled();
+    } finally {
+      warn.mockRestore();
+    }
+    await expect(store.manifest('rec-1')).resolves.toEqual(sealed);
+  });
+
   it('a kill during Stop resumes at launch and enqueues as audio/aac', async () => {
     const { fs, native, cap, store } = setup();
     await cap.begin('rec-1');
