@@ -11,6 +11,7 @@ import {
 } from '@meetops/database';
 import { LocalKeyProvider, TokenCipher } from '@meetops/integrations';
 import { PrismaCalendarConnections } from '../src/modules/calendar/prisma.repository.js';
+import { PrismaCalendarEventLinks } from '../src/modules/calendar/links.repository.js';
 
 const url = process.env.TEST_DATABASE_URL;
 const owner = process.env.TEST_OWNER_DATABASE_URL;
@@ -151,6 +152,57 @@ describe.skipIf(!url || !owner)(
       );
       await expect(repo.readSecrets(orgB, user, legacy.id)).resolves.toBeNull();
       expect((await repo.listForUser(orgB, user))[0]!.status).toBe('error');
+    });
+    it('revoke deletes the connection event links in the same transaction; other links survive', async () => {
+      const repo = new PrismaCalendarConnections(db, cipher);
+      const links = new PrismaCalendarEventLinks(db);
+      expect(repo.revokesLinks).toBe(true);
+      const conn = (n: string) =>
+        repo.upsert(orgA, {
+          userId: user,
+          provider: 'google',
+          displayName: n,
+          externalAccountId: `${n}@example.test`,
+          accessToken: 'a',
+          refreshToken: 'r',
+          accessTokenExpiresAt: new Date(Date.now() + 3600e3),
+        });
+      const gone = await conn('links-gone');
+      const kept = await conn('links-kept');
+      const meeting = await withOrganizationContext(
+        orgA,
+        (tx) => tx.meeting.create({ data: { organizationId: orgA, title: 'linked' } }),
+        { client: db },
+      );
+      expect(
+        await links.upsert(orgA, user, {
+          connectionId: gone.id,
+          eventId: 'e1',
+          meetingId: meeting.id,
+        }),
+      ).not.toBeNull();
+      expect(
+        await links.upsert(orgA, user, {
+          connectionId: kept.id,
+          eventId: 'e2',
+          meetingId: meeting.id,
+        }),
+      ).not.toBeNull();
+
+      expect(await repo.revoke(orgA, user, gone.id)).toBe(true);
+      const rows = await withOrganizationContext(
+        orgA,
+        (tx) =>
+          tx.calendarEventLink.findMany({
+            where: { connectionId: { in: [gone.id, kept.id] } },
+            select: { connectionId: true },
+          }),
+        { client: db },
+      );
+      expect(rows).toEqual([{ connectionId: kept.id }]);
+      // Second revoke is a no-op (already revoked) and touches nothing.
+      expect(await repo.revoke(orgA, user, gone.id)).toBe(false);
+      expect(await links.listForUser(orgA, user, [kept.id])).toHaveLength(1);
     });
   },
 );
