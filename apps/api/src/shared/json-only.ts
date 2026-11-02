@@ -16,6 +16,11 @@ const UNSAFE = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 export const baseMediaType = (raw: string | undefined) =>
   (raw ?? '').split(';')[0]!.trim().toLowerCase();
 
+/**
+ * #401 L1: any Transfer-Encoding counts as a body, even a chunked request that turns out to be empty. Such a request
+ * without an allowed Content-Type gets 415. That is deliberate (fails closed): the length of a chunked body is
+ * unknown when this hook runs, and a client sending an empty body can omit Transfer-Encoding.
+ */
 const hasBody = (headers: Record<string, string | string[] | undefined>) => {
   const len = headers['content-length'];
   if (typeof len === 'string' && len.trim() !== '' && Number(len) > 0) return true;

@@ -63,11 +63,16 @@ describe('P9 R20: web container refuses weak CSP origins', () => {
 });
 
 describe('P9 R20-R23: nginx security headers', () => {
-  it('CSP keeps the strict policy and adds upgrade-insecure-requests and report-to', () => {
+  it('CSP keeps the strict policy and adds upgrade-insecure-requests and report-to (only with a report URL)', () => {
     const csp = header('Content-Security-Policy')!;
     expect(csp).not.toMatch(/unsafe-inline|unsafe-eval/);
     expect(csp).toContain("frame-ancestors 'none'");
-    expect(csp).toContain("object-src 'none';$csp_upgrade_insecure report-to csp");
+    expect(csp).toContain("object-src 'none';$csp_upgrade_insecure$csp_report_to");
+    expect(csp).not.toMatch(/ report-to csp/);
+    // #399 L2: no report-to directive without CSP_REPORT_URL.
+    expect(template).toMatch(
+      /map "\$\{CSP_REPORT_URL\}" \$csp_report_to \{\s*""\s+"";\s*default " report-to csp";/,
+    );
     expect(template).toMatch(/default " upgrade-insecure-requests;";/);
     expect(header('Reporting-Endpoints')).toBe('$csp_reporting_endpoints');
     expect(template).toContain('default "csp=\\"${CSP_REPORT_URL}\\"";');
@@ -109,6 +114,10 @@ describe('P9 R20: inline content is hash-allowed, production origins are https',
     const html = readFileSync(resolve(root, 'apps', 'web', 'index.html'), 'utf8');
     expect(checkCsp(html, template)).toEqual([]);
     expect(checkCsp(html.replace('</style>', ' </style>'), template)[0]).toMatch(/needs 'sha256-/);
+    // #399 L1: a hash with no matching inline block is reported as stale.
+    expect(checkCsp(html.replace(/<style>[\s\S]*?<\/style>/, ''), template)[0]).toMatch(
+      /style-src hash 'sha256-[^']+' matches no inline <style> \(stale\)/,
+    );
     expect(checkCsp('<div style="x"></div>', template)).toContain(
       'style= attribute found (blocked by style-src)',
     );

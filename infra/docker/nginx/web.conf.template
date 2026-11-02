@@ -10,6 +10,12 @@ map "${CSP_REPORT_URL}" $csp_reporting_endpoints {
     default "csp=\"${CSP_REPORT_URL}\"";
 }
 
+# #399 L2: the report-to directive only when CSP_REPORT_URL is set (no dangling `report-to csp` without an endpoint).
+map "${CSP_REPORT_URL}" $csp_report_to {
+    ""      "";
+    default " report-to csp";
+}
+
 # R20: upgrade-insecure-requests unless CSP_UPGRADE_INSECURE=off (only the plain-http localhost compose stack sets
 # that, because its API/realtime/MinIO origins are http://localhost and would be upgraded to https).
 map "${CSP_UPGRADE_INSECURE}" $csp_upgrade_insecure {
@@ -30,9 +36,12 @@ server {
     index index.html;
     server_tokens off;
 
+    # style-src hash: the inline <style> in apps/web/index.html (`:root { color-scheme: dark; }`, avoids a white
+    # flash before the CSS bundle loads). scripts/check-csp.mjs recomputes every inline hash and fails the web
+    # build test on a missing or stale (unused) hash, so update both together.
     # Security headers. Only set at server level: an add_header inside a location
     # would drop all of these, so caching is a server-level map on $uri.
-    add_header Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'sha256-fwWCgm+4FJQM5Um+NEFPPThRM/ATS1CrMQ0Jv1SN3fs='; img-src 'self' data: blob:; font-src 'self'; connect-src 'self' ${CSP_API_ORIGIN} ${CSP_REALTIME_ORIGIN} ${CSP_STORAGE_ORIGIN}; media-src 'self' blob: ${CSP_STORAGE_ORIGIN}; worker-src 'self' blob:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none';$csp_upgrade_insecure report-to csp" always;
+    add_header Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'sha256-fwWCgm+4FJQM5Um+NEFPPThRM/ATS1CrMQ0Jv1SN3fs='; img-src 'self' data: blob:; font-src 'self'; connect-src 'self' ${CSP_API_ORIGIN} ${CSP_REALTIME_ORIGIN} ${CSP_STORAGE_ORIGIN}; media-src 'self' blob: ${CSP_STORAGE_ORIGIN}; worker-src 'self' blob:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none';$csp_upgrade_insecure$csp_report_to" always;
     add_header Reporting-Endpoints $csp_reporting_endpoints always;
     add_header X-Content-Type-Options "nosniff" always;
     add_header Referrer-Policy "strict-origin-when-cross-origin" always;

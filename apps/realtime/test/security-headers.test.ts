@@ -1,8 +1,11 @@
+import { EventEmitter } from 'node:events';
+import type { Server as HttpServer } from 'node:http';
 import { connect as netConnect } from 'node:net';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
   REALTIME_BASELINE_HEADERS,
   REALTIME_HSTS,
+  installSecurityHeaders,
   withRejectionHeaders,
 } from '../src/security-headers.js';
 import { ORIGIN, runCleanups, start } from './fixtures.js';
@@ -78,5 +81,30 @@ describe('P9 R19: realtime HTTP security headers', () => {
     );
     expect(bad).toContain(`strict-transport-security: ${REALTIME_HSTS}\r\n`);
     expect(bad.endsWith('Connection: close\r\n\r\nx')).toBe(true);
+  });
+
+  it('#399 L3: splices rejections written with end(string) and as a Buffer', () => {
+    const server = new EventEmitter();
+    installSecurityHeaders(server as unknown as HttpServer, { hsts: false });
+    const fakeSocket = () => {
+      const out: unknown[] = [];
+      const socket = {
+        write: (c: unknown) => (out.push(c), true),
+        end: (c?: unknown) => (out.push(c), socket),
+      };
+      server.emit('upgrade', {}, socket, Buffer.alloc(0));
+      return { socket, out };
+    };
+    const rejection = 'HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n';
+    const a = fakeSocket();
+    a.socket.end(rejection);
+    expect(String(a.out[0])).toContain('x-frame-options: DENY\r\n');
+    const b = fakeSocket();
+    b.socket.write(Buffer.from(rejection));
+    expect(Buffer.isBuffer(b.out[0])).toBe(true);
+    expect((b.out[0] as Buffer).toString()).toContain('x-content-type-options: nosniff\r\n');
+    // Only the first chunk is inspected; later writes pass through untouched.
+    b.socket.write(rejection);
+    expect(b.out[1]).toBe(rejection);
   });
 });
