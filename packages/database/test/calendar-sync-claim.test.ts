@@ -80,7 +80,7 @@ describe('calendar sync repository claimForSync', () => {
     };
     const t = { accessToken: 'a', refreshToken: 'r', accessTokenExpiresAt: LEASE };
     const f = fakeClient([], 0);
-    const repo = createCalendarSyncRepository({ client: f.client, cipher: cipher as never });
+    const repo = createCalendarSyncRepository({ client: f.client, cipher });
     await expect(repo.updateTokens(ORG, ID, t, { lease: LEASE })).resolves.toBe(false);
     expect(f.updateMany.mock.calls.at(-1)![0].where).toEqual({
       id: ID,
@@ -89,7 +89,7 @@ describe('calendar sync repository claimForSync', () => {
       nextSyncAt: LEASE,
     });
     const g = fakeClient([], 1);
-    const r2 = createCalendarSyncRepository({ client: g.client, cipher: cipher as never });
+    const r2 = createCalendarSyncRepository({ client: g.client, cipher });
     await expect(r2.updateTokens(ORG, ID, t)).resolves.toBe(true);
     expect(g.updateMany.mock.calls.at(-1)![0].where).toEqual({
       id: ID,
@@ -129,12 +129,12 @@ describe('calendar sync repository claimForSync', () => {
     };
     const mixed = await createCalendarSyncRepository({
       client: withRow(row('acc')),
-      cipher: cipher as never,
+      cipher,
     }).readSecrets(ORG, ID);
     expect(mixed).toMatchObject({ accessToken: 'access-v2', refreshToken: null });
     const legacy = await createCalendarSyncRepository({
       client: withRow(row('accL')),
-      cipher: cipher as never,
+      cipher,
     }).readSecrets(ORG, ID);
     expect(legacy).toMatchObject({ accessToken: 'access-legacy', refreshToken: 'refresh-legacy' });
   });
