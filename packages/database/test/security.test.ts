@@ -118,9 +118,9 @@ const MEETING_CONSENT_MIGRATION = '20261031030000_meeting_consent_events';
 const CALENDAR_OUTLOOK_PROVIDER_MIGRATION = '20261102000000_calendar_outlook_provider';
 /** Background sync: per-connection incremental cursor columns (additive). */
 const CALENDAR_SYNC_CURSOR_MIGRATION = '20261103000000_calendar_sync_cursor';
-const LATEST_MIGRATION = CALENDAR_SYNC_CURSOR_MIGRATION;
 /** Auto-link: calendar_event_links.source + unlinked_at tombstone (additive, stacked on the sync cursor). */
 const CALENDAR_AUTO_LINK_MIGRATION = '20261103120000_calendar_event_links_auto';
+const LATEST_MIGRATION = CALENDAR_AUTO_LINK_MIGRATION;
 /**
  * Parallel PRs that sort between calendar_events and meeting_embeddings (#334 consent events, #341 calendar links).
  * The order checks below ignore them so they hold whichever merges first; when present they must sort before ours.
@@ -153,7 +153,7 @@ const orderedDirs = () => {
     expect(dirs.indexOf(CALENDAR_OUTLOOK_PROVIDER_MIGRATION)).toBe(
       dirs.indexOf(CALENDAR_SYNC_CURSOR_MIGRATION) - 1,
     );
-  // The auto-link columns sort right after the sync cursor; the positional checks ignore them.
+  // The auto-link columns sort right after the sync cursor and take its positional slot as LATEST.
   if (dirs.includes(CALENDAR_AUTO_LINK_MIGRATION))
     expect(dirs.indexOf(CALENDAR_AUTO_LINK_MIGRATION)).toBe(
       dirs.indexOf(CALENDAR_SYNC_CURSOR_MIGRATION) + 1,
@@ -161,7 +161,7 @@ const orderedDirs = () => {
   return dirs.filter(
     (d) =>
       d !== TASK_SYNC_MIGRATION &&
-      d !== CALENDAR_AUTO_LINK_MIGRATION &&
+      d !== CALENDAR_SYNC_CURSOR_MIGRATION &&
       d !== CALENDAR_OUTLOOK_PROVIDER_MIGRATION &&
       !(PARALLEL_MIGRATIONS as readonly string[]).includes(d),
   );
