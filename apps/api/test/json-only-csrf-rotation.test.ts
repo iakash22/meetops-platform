@@ -102,7 +102,7 @@ describe('P9 R17: the CSRF token rotates on login, org switch and logout', () =>
     expect(login.json().csrfToken).not.toBe(pre);
     expect(c.jar.has('__Host-meetops_presession')).toBe(false);
     expect((await write(c, pre)).statusCode).toBe(403);
-    expect((await write(c, login.json().csrfToken)).statusCode).toBe(201);
+    expect((await write(c, login.json<{ csrfToken: string }>().csrfToken)).statusCode).toBe(201);
   });
 
   it('the old token is rejected after an org switch', async () => {
