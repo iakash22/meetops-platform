@@ -49,15 +49,16 @@ fail-closed: if clamd is unreachable, the job retries and the final attempt quar
   scanned in full. If `MAX_MEDIA_BYTES` is raised, raise these limits first (the worker config test fails otherwise).
 - **Over the limit.** `AlertExceedsMax yes`: a file over a scan limit (size, or `MaxScanTime` = 10 min) is reported as
   `Heuristics.Limits.Exceeded.*` instead of a partly-scanned "OK". A stream over `StreamMaxLength` is refused
-  (`INSTREAM size limit exceeded. ERROR`). Both are fail-closed. **Today** a `Heuristics.Limits.Exceeded.*` reply is
-  handled like any other `FOUND`: the upload is quarantined as `malware_detected`. An ERROR reply is a `ClamdError`:
-  the job retries, and the last attempt quarantines it (`scan_unavailable`). MAL-2 gives limit hits their own error
-  code and metric, so they are no longer labelled `malware_detected`.
+  (`INSTREAM size limit exceeded. ERROR`). Both are fail-closed. A `Heuristics.Limits.Exceeded.*` reply is
+  quarantined with its own code, `scan_limit_exceeded` (MAL-2), never `malware_detected` and never clean. An ERROR
+  reply is a `ClamdError`: the job retries, and the last attempt quarantines it (`scan_unavailable`).
 - **Client.** Only the exact reply `stream: OK\0` is clean. Every other reply (ERROR, malformed, empty, extra text),
-  a timeout, a socket error or a file read error rejects (`apps/worker/test/clamd.test.ts`). **Today** the worker
-  client has one fixed 120 s total timeout, below clamd's `MaxScanTime` (600 s): a scan slower than 120 s is
-  abandoned by the worker and ends quarantined (`scan_unavailable`) after retries, while clamd keeps scanning.
-  MAL-2 makes the timeout size-aware, above `MaxScanTime`.
+  a timeout, a socket error or a file read error rejects (`apps/worker/test/clamd.test.ts`). The worker
+  client's total timeout is clamd's `MaxScanTime` (600 s) + 30 s, so clamd always answers first
+  (`clamd-config.test.ts` keeps the two in sync).
+- **Disk.** clamd runs with a read-only root; its `TemporaryDirectory` (/tmp) is a 3 GB tmpfs, sized for
+  `MaxThreads 1` (= worker `MEDIA_WORKER_CONCURRENCY`) x (1400M stream + 1400M extracted). Recursion, file-count,
+  embedded-PE, PCRE and queue limits are pinned in `clamd.conf`.
 - **Signatures.** The image is pinned by version and digest (ClamAV 1.4 LTS). freshclam runs daily (`--checks=1`) in
   its own `clamav-freshclam` container, and clamd reloads the shared database through `SelfCheck` without blocking scans.
 - **Isolation (MAL-1b).** clamd's TCP protocol is unauthenticated (`SHUTDOWN`, `RELOAD`), so clamd sits only on the
