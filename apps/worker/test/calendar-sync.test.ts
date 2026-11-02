@@ -48,6 +48,7 @@ function makeRepo(conns: { id: string; provider?: string; s: CalendarSyncSecrets
     tokens: [] as [string, Parameters<CalendarSyncSweepRepository['updateTokens']>[2]][],
     errors: [] as string[],
     errorLeases: [] as (Date | undefined)[],
+    tokenLeases: [] as (Date | undefined)[],
     failures: [] as [string, { syncFailures: number; retryInMs: number; lease: Date }][],
   };
   const repo: CalendarSyncSweepRepository = {
@@ -61,7 +62,10 @@ function makeRepo(conns: { id: string; provider?: string; s: CalendarSyncSecrets
       })),
     ),
     readSecrets: async (_o, id) => conns.find((c) => c.id === id)?.s ?? null,
-    updateTokens: async (_o, id, t) => void calls.tokens.push([id, t]),
+    updateTokens: async (_o, id, t, opts) => {
+      calls.tokens.push([id, t]);
+      calls.tokenLeases.push(opts?.lease);
+    },
     markError: async (_o, id, opts) => {
       calls.errors.push(id);
       calls.errorLeases.push(opts?.lease);
@@ -136,6 +140,8 @@ describe('runCalendarSyncSweep', () => {
       random: () => 0.5,
     });
     expect(p.refresh).toHaveBeenCalledWith('refresh-placeholder');
+    // Token writes are fenced by the sweep's claim, like applySync / recordFailure.
+    expect(calls.tokenLeases).toEqual([LEASE]);
     expect(calls.tokens).toEqual([
       [
         C1,
