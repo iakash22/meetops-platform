@@ -153,7 +153,9 @@ describe('clamd sidecar config (MAL-1, ADR-018)', () => {
   it('caps temp disk: TemporaryDirectory on a size-capped tmpfs, read-only root for clamd', () => {
     expect(clamd.get('TemporaryDirectory')).toBe('/tmp');
     expect(clamavService).toMatch(/\n {4}read_only: true\n/);
-    expect(clamavService).toMatch(/\n {6}- \/tmp:size=3g,mode=1777\n/);
+    expect(clamavService).toMatch(
+      /\n {6}- \/tmp:size=3g,uid=100,gid=101,mode=0700,noexec,nosuid,nodev\n/,
+    );
   });
 
   it('tmpfs fits one scan per thread (stream + extracted data) and MaxThreads matches worker concurrency', () => {

@@ -241,9 +241,10 @@ services:
     # 3g = one scan thread (MaxThreads 1): a 1400M spooled stream + up to 1400M
     # extracted (MaxScanSize). tmpfs pages count toward mem_limit, hence 7g
     # (about 4g engines during a reload + 3g tmpfs).
+    # Owned by the image's clamav user (uid 100 / gid 101 in the pinned 1.4.6 digest; `id clamav`).
     read_only: true
     tmpfs:
-      - /tmp:size=3g,mode=1777
+      - /tmp:size=3g,uid=100,gid=101,mode=0700,noexec,nosuid,nodev
     networks: [clamav-internal]
     healthcheck:
       # The image's own check: PING on TCP 3310 must answer PONG.
