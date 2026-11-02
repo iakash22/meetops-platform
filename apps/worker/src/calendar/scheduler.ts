@@ -91,15 +91,36 @@ export function calendarSyncProvidersFromEnv(
   if (msId && msSecret) {
     const apiOrigin = calendarApiOrigin(env);
     const tenant = env.OUTLOOK_CALENDAR_TENANT?.trim();
-    out.outlook = new OutlookCalendarProvider({
-      clientId: msId,
-      clientSecret: async () => msSecret,
-      ...(tenant ? { tenant } : {}),
-      redirectUriAllowlist: [`${apiOrigin}/calendar/outlook/callback`],
-      stateStore: new InMemoryOAuthStateStore(),
-    });
+    out.outlook = outlookSyncProvider(
+      new OutlookCalendarProvider({
+        clientId: msId,
+        clientSecret: async () => msSecret,
+        ...(tenant ? { tenant } : {}),
+        redirectUriAllowlist: [`${apiOrigin}/calendar/outlook/callback`],
+        stateStore: new InMemoryOAuthStateStore(),
+      }),
+    );
   }
   return out;
+}
+
+/** Adapts Outlook's listEventsDelta (deltaLink) to the sweep's provider-neutral cursor interface. */
+export function outlookSyncProvider(
+  p: Pick<OutlookCalendarProvider, 'refresh' | 'listEvents' | 'listEventsDelta'>,
+): CalendarSyncProvider {
+  return {
+    refresh: (t) => p.refresh(t),
+    listEvents: (i) => p.listEvents(i),
+    listEventsDelta: async ({ accessToken, timeMin, timeMax, cursor }) => {
+      const r = await p.listEventsDelta({
+        accessToken,
+        timeMin,
+        timeMax,
+        ...(cursor ? { deltaLink: cursor } : {}),
+      });
+      return { events: r.events, removedIds: r.removedIds, cursor: r.deltaLink };
+    },
+  };
 }
 
 export type CalendarSyncSchedulerRegistration =

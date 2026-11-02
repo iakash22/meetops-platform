@@ -38,6 +38,7 @@ const secrets = (over: Partial<CalendarSyncSecrets> = {}): CalendarSyncSecrets =
   refreshToken: 'refresh-placeholder',
   accessTokenExpiresAt: new Date(NOW + 3_600_000),
   syncFailures: 0,
+  syncCursor: null,
   ...over,
 });
 
