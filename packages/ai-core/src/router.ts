@@ -38,8 +38,17 @@ export const FEATURE_CAPABILITY: Record<AIFeature, Capability> = {
   'follow-ups': 'text-generation',
   embeddings: 'embeddings',
 };
-export const featureKind = (f: AIFeature): 'llm' | 'stt' =>
-  f === 'transcription' || f === 'live-transcription' ? 'stt' : 'llm';
+export type RouteKind = 'llm' | 'stt' | 'embeddings';
+/**
+ * Embeddings are their own kind: they never inherit the org/env/system chat-model (`llm`) route, so text is only
+ * embedded by an explicitly routed embeddings provider/model (org `defaults.embeddings` or `features.embeddings`).
+ */
+export const featureKind = (f: AIFeature): RouteKind =>
+  f === 'embeddings'
+    ? 'embeddings'
+    : f === 'transcription' || f === 'live-transcription'
+      ? 'stt'
+      : 'llm';
 
 export const routeSelectionSchema = z.object({
   provider: z.string().min(1),
@@ -53,7 +62,11 @@ export const orgAIConfigSchema = z.object({
   organizationId: z.string().min(1),
   /** Default per kind for this org. */
   defaults: z
-    .object({ llm: routeSelectionSchema.optional(), stt: routeSelectionSchema.optional() })
+    .object({
+      llm: routeSelectionSchema.optional(),
+      stt: routeSelectionSchema.optional(),
+      embeddings: routeSelectionSchema.optional(),
+    })
     .default({}),
   /** Per feature/workflow overrides. */
   features: z.partialRecord(aiFeatureSchema, routeSelectionSchema).default({}),
@@ -98,7 +111,10 @@ export type ResolutionSource = 'system' | 'env' | 'organization' | 'feature' | '
 export type ResolvedRoute = {
   organizationId: string;
   feature: AIFeature;
+  /** Provider type the feature runs on (embeddings run on `llm` providers, but are routed separately). */
   kind: 'llm' | 'stt';
+  /** Which route defaults apply (`embeddings` never falls back to the llm defaults). */
+  routeKind: RouteKind;
   capability: Capability;
   provider: string;
   model: string | undefined;
@@ -126,7 +142,10 @@ export class ModelRouter {
     if (!audit) throw new AIError('CONFIG_INVALID', 'AuditSink is required');
   }
 
-  envSelection(kind: 'llm' | 'stt'): RouteSelection {
+  envSelection(kind: 'llm' | 'stt'): RouteSelection;
+  envSelection(kind: RouteKind): RouteSelection | undefined;
+  envSelection(kind: RouteKind): RouteSelection | undefined {
+    if (kind === 'embeddings') return undefined;
     if (kind === 'llm') {
       const p = this.env.AI_LLM_PROVIDER;
       const model =
@@ -205,7 +224,7 @@ export class ModelRouter {
       );
 
     const layers: Array<[ResolutionSource, RouteSelection | undefined]> = [
-      ['system', SYSTEM_DEFAULTS[kind]],
+      ['system', kind === 'embeddings' ? undefined : SYSTEM_DEFAULTS[kind]],
       ['env', this.envSelection(kind)],
       ['organization', org?.defaults[kind]],
       ['feature', org?.features[feature]],
@@ -216,8 +235,13 @@ export class ModelRouter {
           : undefined,
       ],
     ];
-    let chosen: [ResolutionSource, RouteSelection] = ['system', SYSTEM_DEFAULTS[kind]];
+    let chosen: [ResolutionSource, RouteSelection] | undefined =
+      kind === 'embeddings' ? undefined : ['system', SYSTEM_DEFAULTS[kind]];
     for (const [src, sel] of layers) if (sel) chosen = [src, sel];
+    if (!chosen)
+      throw new AIError('CONFIG_INVALID', `no ${kind} route configured for this organization`, {
+        retryable: false,
+      });
     const [source, sel] = chosen;
     const fallbacks =
       sel.fallbacks ??
@@ -245,7 +269,8 @@ export class ModelRouter {
     return {
       organizationId,
       feature,
-      kind,
+      kind: kind === 'stt' ? 'stt' : 'llm',
+      routeKind: kind,
       capability: FEATURE_CAPABILITY[feature],
       provider: sel.provider,
       model: sel.model,

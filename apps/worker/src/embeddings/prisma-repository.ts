@@ -42,13 +42,13 @@ export function createPrismaEmbeddingRepository(
       const rows = await run(
         org,
         (tx) =>
-          tx.$queryRaw<{ id: string; sha: string }[]>`
-          SELECT coalesce(segment_id, report_id) AS id, content_sha256 AS sha
+          tx.$queryRaw<{ id: string; model: string; sha: string }[]>`
+          SELECT coalesce(segment_id, report_id) AS id, model, content_sha256 AS sha
             FROM meeting_embeddings
            WHERE org_id = ${org}::uuid AND meeting_id = ${meetingId}::uuid`,
       );
-      const m = new Map<string, Set<string>>();
-      for (const r of rows) (m.get(r.id) ?? m.set(r.id, new Set()).get(r.id)!).add(r.sha);
+      const m = new Map<string, Map<string, string>>();
+      for (const r of rows) (m.get(r.id) ?? m.set(r.id, new Map()).get(r.id)!).set(r.model, r.sha);
       return m;
     },
     upsert: (org, meetingId, model, rows: EmbeddingRow[]) =>

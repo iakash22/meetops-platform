@@ -5,7 +5,9 @@ import { EMBEDDING_MAX_BATCH, type EmbedBatchResult } from '@meetops/ai-core';
  * Phase 7 semantic search, PR 2: embeds a meeting's current transcript segments and summaries into
  * meeting_embeddings. Off by default (SEMANTIC_EMBEDDINGS_ENABLED) and, even when on, nothing is embedded until an
  * approved provider is routed for the ai-core `embeddings` feature (no default provider has the capability).
- * Content is hashed: a source whose text did not change since it was embedded is skipped. Only ids, counts and
+ * Content is hashed: a source is skipped only when it already has a vector for the same text AND the model that is
+ * routed now, so a provider/model change re-embeds everything (the search side only matches the current model).
+ * Only ids, counts and
  * error codes are logged, never meeting text.
  */
 
@@ -25,8 +27,11 @@ export type EmbeddingRow = {
 export interface EmbeddingRepository {
   /** The meeting's current-revision segments and live summary reports, in a stable order, at most `limit`. */
   listSources(organizationId: string, meetingId: string, limit: number): Promise<EmbeddingSource[]>;
-  /** Content hashes already stored for the meeting's sources (any model). */
-  storedHashes(organizationId: string, meetingId: string): Promise<Map<string, Set<string>>>;
+  /** Stored content hashes per source id, then per model (`provider/model`). */
+  storedHashes(
+    organizationId: string,
+    meetingId: string,
+  ): Promise<Map<string, Map<string, string>>>;
   upsert(
     organizationId: string,
     meetingId: string,
@@ -38,7 +43,7 @@ export interface EmbeddingRepository {
 export type EmbedFn = (req: {
   organizationId: string;
   inputs: string[];
-  idempotencyKey: string;
+  idempotencyKey?: string;
   jobId?: string;
 }) => Promise<EmbedBatchResult>;
 
@@ -89,24 +94,40 @@ export async function runMeetingEmbeddings(
 
   const sources = await deps.repo.listSources(organizationId, meetingId, limits.maxSources);
   const stored = await deps.repo.storedHashes(organizationId, meetingId);
-  const pending = sources
-    .map((s) => ({ ...s, sha256: sha256(`${s.kind}\n${s.text}`) }))
-    .filter((s) => s.text.trim() !== '' && !stored.get(s.id)?.has(s.sha256));
+  const hashed = sources
+    .filter((s) => s.text.trim() !== '')
+    .map((s) => ({ ...s, sha256: sha256(`${s.kind}\n${s.text}`) }));
+  const fresh = (s: (typeof hashed)[number], model: string) =>
+    stored.get(s.id)?.get(model) === s.sha256;
   const result: EmbeddingJobResult = {
     status: 'done',
     considered: sources.length,
-    skipped: sources.length - pending.length,
+    skipped: sources.length - hashed.length,
     embedded: 0,
     calls: 0,
   };
 
-  for (let i = 0; i < pending.length; i += batchSize) {
-    const batch = pending.slice(i, i + batchSize);
+  // The routed model is only known from a provider answer. Until one arrives, a source counts as up to date when it
+  // has a vector for its current text under ANY model; the first call then tells us the model, and from there on
+  // only vectors of that model count (so a model/provider change re-embeds sources whose text did not change).
+  let model: string | undefined;
+  let queue = hashed.filter((s) => ![...(stored.get(s.id)?.values() ?? [])].includes(s.sha256));
+  if (queue.length === 0 && hashed.length > 0) queue = hashed.slice(0, 1); // probe: learn the current model
+  const done = new Set<string>();
+
+  while (queue.length > 0) {
+    const batch = queue.slice(0, batchSize);
+    queue = queue.slice(batchSize);
+    // The first call of a run goes to the provider live (no idempotency key), so a cached answer can never report a
+    // stale model. Later calls are keyed by meeting + model + content: a retried job reuses the stored result.
     const r = await deps.embed({
       organizationId,
       inputs: batch.map((s) => s.text),
-      // Same meeting + same content => same key: a retried job reuses the stored result (no second provider call).
-      idempotencyKey: `${meetingId}:${sha256(batch.map((s) => `${s.id}:${s.sha256}`).join(','))}`,
+      ...(model
+        ? {
+            idempotencyKey: `${meetingId}:${sha256(`${model}|${batch.map((s) => `${s.id}:${s.sha256}`).join(',')}`)}`,
+          }
+        : {}),
       ...(job.jobId ? { jobId: job.jobId } : {}),
     });
     result.calls++;
@@ -119,15 +140,32 @@ export async function runMeetingEmbeddings(
           ? 'embeddings not configured; meeting not indexed'
           : 'meeting embedding failed',
       );
+      result.skipped = sources.length - result.embedded;
       return result;
     }
-    result.embedded += await deps.repo.upsert(
-      organizationId,
-      meetingId,
-      r.model,
-      batch.map((s, k) => ({ kind: s.kind, id: s.id, sha256: s.sha256, vector: r.vectors[k]! })),
-    );
+    const toWrite = batch.filter((s) => !fresh(s, r.model));
+    if (toWrite.length > 0)
+      result.embedded += await deps.repo.upsert(
+        organizationId,
+        meetingId,
+        r.model,
+        toWrite.map((s) => ({
+          kind: s.kind,
+          id: s.id,
+          sha256: s.sha256,
+          vector: r.vectors[batch.indexOf(s)]!,
+        })),
+      );
+    for (const s of batch) done.add(s.id);
+    if (model !== r.model) {
+      model = r.model;
+      // Now that the model is known, queue every source that has no vector of this model for its current text.
+      const queued = new Set(queue.map((s) => s.id));
+      for (const s of hashed)
+        if (!done.has(s.id) && !queued.has(s.id) && !fresh(s, model)) queue.push(s);
+    }
   }
+  result.skipped = sources.length - result.embedded;
   deps.log.info({ ...ids, ...result }, 'meeting embeddings');
   return result;
 }

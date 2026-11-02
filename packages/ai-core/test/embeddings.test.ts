@@ -1,6 +1,28 @@
 import { describe, it, expect } from 'vitest';
-import { EMBEDDING_DIMS, EMBEDDING_MAX_BATCH, embedWithExecutor } from '../src/index.js';
-import { fakeLLM, llmCfg, setup } from './helpers.js';
+import {
+  EMBEDDING_DIMS,
+  EMBEDDING_MAX_BATCH,
+  embedWithExecutor,
+  orgAIConfigSchema,
+} from '../src/index.js';
+import { fakeLLM, llmCfg, setup as baseSetup } from './helpers.js';
+
+/** Routes the embeddings feature explicitly (embeddings never inherit the llm route). */
+async function setup(opts: Parameters<typeof baseSetup>[0], route = true) {
+  const s = await baseSetup(opts);
+  if (route)
+    await s.orgStore.put(
+      orgAIConfigSchema.parse({
+        organizationId: ORG,
+        defaults: { embeddings: { provider: 'gemini', model: 'text-embedding-004' } },
+        features: {},
+        approvedProviders: ['gemini'],
+        allowPaidFallback: true,
+        credentialRefs: {},
+      }),
+    );
+  return s;
+}
 
 const ORG = '11111111-1111-4111-8111-111111111111';
 const vec = (x: number) => new Array<number>(EMBEDDING_DIMS).fill(x);
@@ -78,5 +100,39 @@ describe('embedWithExecutor (ai-core embeddings feature)', () => {
       }),
     ).rejects.toThrow(RangeError);
     expect(vec(0)).toHaveLength(EMBEDDING_DIMS);
+  });
+
+  it('L2: embeddings never inherit the llm route; unrouted is unavailable (no provider call)', async () => {
+    const p = fakeEmbedder();
+    const { executor, router } = await setup(
+      {
+        providers: { gemini: p },
+        configs: [llmCfg('gemini', { capabilities: ['text-generation', 'embeddings'] })],
+      },
+      false,
+    );
+    const r = await embedWithExecutor(executor, { organizationId: ORG, inputs: ['a'] });
+    expect(r.status).toBe('unavailable');
+    expect(p.embedCalls).toBe(0);
+    await expect(router.resolve(ORG, 'embeddings')).rejects.toMatchObject({
+      code: 'CONFIG_INVALID',
+    });
+    expect((await router.resolve(ORG, 'reports')).kind).toBe('llm');
+  });
+
+  it('L2: an explicit embeddings route is used with its own model', async () => {
+    const p = fakeEmbedder();
+    const { executor, router } = await setup({
+      providers: { gemini: p },
+      configs: [llmCfg('gemini', { capabilities: ['text-generation', 'embeddings'] })],
+    });
+    const route = await router.resolve(ORG, 'embeddings');
+    expect(route).toMatchObject({
+      kind: 'llm',
+      routeKind: 'embeddings',
+      model: 'text-embedding-004',
+    });
+    const r = await embedWithExecutor(executor, { organizationId: ORG, inputs: ['a'] });
+    expect(r.status === 'succeeded' && r.model).toBe('gemini/text-embedding-004');
   });
 });

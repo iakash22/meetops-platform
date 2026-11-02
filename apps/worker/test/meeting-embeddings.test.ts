@@ -24,10 +24,10 @@ function fakeRepo(sources: Record<string, EmbeddingSource[]>) {
   const repo: EmbeddingRepository = {
     listSources: async (org, _m, limit) => (sources[org] ?? []).slice(0, limit),
     storedHashes: async (org) => {
-      const m = new Map<string, Set<string>>();
+      const m = new Map<string, Map<string, string>>();
       for (const s of stored.values())
         if (s.org === org)
-          (m.get(s.row.id) ?? m.set(s.row.id, new Set()).get(s.row.id)!).add(s.row.sha256);
+          (m.get(s.row.id) ?? m.set(s.row.id, new Map()).get(s.row.id)!).set(s.model, s.row.sha256);
       return m;
     },
     upsert: async (org, _m, model, rows) => {
@@ -38,7 +38,7 @@ function fakeRepo(sources: Record<string, EmbeddingSource[]>) {
   return { repo, stored };
 }
 
-function fakeEmbed(result?: (inputs: string[]) => EmbedBatchResult) {
+function fakeEmbed(result?: (inputs: string[]) => EmbedBatchResult, model = 'fake/embed-1') {
   const calls: Parameters<EmbedFn>[0][] = [];
   const embed: EmbedFn = async (req) => {
     calls.push(req);
@@ -46,7 +46,7 @@ function fakeEmbed(result?: (inputs: string[]) => EmbedBatchResult) {
       result?.(req.inputs) ?? {
         status: 'succeeded',
         vectors: req.inputs.map(() => new Array<number>(EMBEDDING_DIMS).fill(0.1)),
-        model: 'fake/embed-1',
+        model,
         usage: { estimatedCostUsd: 0 },
         cached: false,
       }
@@ -74,9 +74,10 @@ describe('runMeetingEmbeddings', () => {
     );
     expect(r).toMatchObject({ status: 'done', considered: 50, embedded: 50, calls: 2 });
     expect(calls.map((c) => c.inputs.length)).toEqual([32, 18]);
-    expect(
-      calls.every((c) => c.organizationId === ORG && c.idempotencyKey.startsWith(MEETING)),
-    ).toBe(true);
+    expect(calls.every((c) => c.organizationId === ORG)).toBe(true);
+    // First call is live (learns the model); later calls carry a meeting + model + content key.
+    expect(calls[0]!.idempotencyKey).toBeUndefined();
+    expect(calls[1]!.idempotencyKey?.startsWith(MEETING)).toBe(true);
     expect(stored.size).toBe(50);
 
     const again = fakeEmbed();
@@ -84,8 +85,11 @@ describe('runMeetingEmbeddings', () => {
       { repo, embed: again.embed, log, limits: { batchSize: 32, maxSources: 50 } },
       { organizationId: ORG, meetingId: MEETING },
     );
-    expect(r2).toMatchObject({ skipped: 50, embedded: 0, calls: 0 });
-    expect(again.calls).toHaveLength(0);
+    // One live probe call (no idempotency key) confirms the routed model; nothing is rewritten.
+    expect(r2).toMatchObject({ skipped: 50, embedded: 0, calls: 1 });
+    expect(again.calls).toHaveLength(1);
+    expect(again.calls[0]!.inputs).toHaveLength(1);
+    expect(again.calls[0]!.idempotencyKey).toBeUndefined();
   });
 
   it('re-embeds only changed sources; the idempotency key is stable for the same content', async () => {
@@ -109,14 +113,45 @@ describe('runMeetingEmbeddings', () => {
     const { repo: fresh1 } = fakeRepo({ [ORG]: segs(ORG, 2) });
     const { repo: fresh2 } = fakeRepo({ [ORG]: segs(ORG, 2) });
     await runMeetingEmbeddings(
-      { repo: fresh1, embed: k1.embed, log },
+      { repo: fresh1, embed: k1.embed, log, limits: { batchSize: 1 } },
       { organizationId: ORG, meetingId: MEETING },
     );
     await runMeetingEmbeddings(
-      { repo: fresh2, embed: k2.embed, log },
+      { repo: fresh2, embed: k2.embed, log, limits: { batchSize: 1 } },
       { organizationId: ORG, meetingId: MEETING },
     );
-    expect(k1.calls[0]!.idempotencyKey).toBe(k2.calls[0]!.idempotencyKey);
+    expect(k1.calls[1]!.idempotencyKey).toBeDefined();
+    expect(k1.calls[1]!.idempotencyKey).toBe(k2.calls[1]!.idempotencyKey);
+  });
+
+  it('M1: a model/provider change re-embeds unchanged sources under the new model', async () => {
+    const sources = {
+      [ORG]: [...segs(ORG, 3), { kind: 'summary' as const, id: id(999), text: 'S' }],
+    };
+    const { repo, stored } = fakeRepo(sources);
+    await runMeetingEmbeddings(
+      { repo, embed: fakeEmbed(undefined, 'p/m1').embed, log, limits: { batchSize: 2 } },
+      { organizationId: ORG, meetingId: MEETING },
+    );
+    expect([...stored.values()].filter((s) => s.model === 'p/m1')).toHaveLength(4);
+
+    const m2 = fakeEmbed(undefined, 'p/m2');
+    const r = await runMeetingEmbeddings(
+      { repo, embed: m2.embed, log, limits: { batchSize: 2 } },
+      { organizationId: ORG, meetingId: MEETING },
+    );
+    expect(r).toMatchObject({ status: 'done', considered: 4, embedded: 4, skipped: 0 });
+    expect([...stored.values()].filter((s) => s.model === 'p/m2')).toHaveLength(4);
+    expect(m2.calls[0]!.idempotencyKey).toBeUndefined();
+    // Keys after the first call carry the model, so they never collide with the m1 run's cached results.
+    expect(m2.calls.slice(1).every((c) => c.idempotencyKey?.startsWith(MEETING))).toBe(true);
+
+    const again = fakeEmbed(undefined, 'p/m2');
+    const r3 = await runMeetingEmbeddings(
+      { repo, embed: again.embed, log, limits: { batchSize: 2 } },
+      { organizationId: ORG, meetingId: MEETING },
+    );
+    expect(r3).toMatchObject({ embedded: 0, skipped: 4, calls: 1 });
   });
 
   it('org isolation: a job only reads and writes its own organization', async () => {
