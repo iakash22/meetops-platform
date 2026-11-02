@@ -10,14 +10,29 @@ const alias = [
   { find: /^@meetops\/contracts\/(.*)$/, replacement: `${contractsDir}/src/$1` },
 ];
 // 15s default: API suites boot an in-process server per test and hit vitest's 5s default under load.
-const base = { environment: 'node' as const, alias, testTimeout: 15_000 };
+// hookTimeout must match: project configs override CLI --hookTimeout, and createServer() in
+// beforeAll regularly exceeds vitest's 10s hook default under turbo contention.
+const base = {
+  environment: 'node' as const,
+  alias,
+  testTimeout: 15_000,
+  hookTimeout: 60_000,
+};
 
 // One vitest project per suite. E2E is run by Playwright, not vitest.
 // Plain array (no defineWorkspace, which vitest 4 removes). Used by vitest.config.ts as
 // `test.projects` (vitest >= 3.2) or as the workspace file (vitest 2.x / 3.0-3.1).
 export const projects = [
-  // API suites drive real password hashing (AU-01 does 10+ logins); 5s default flakes on CI runners.
-  { test: { ...base, name: 'api', include: ['api/**/*.test.ts'], testTimeout: 30_000 } },
+  // API suites drive real password hashing (AU-01 does 10+ logins); under turbo load 30s flakes.
+  {
+    test: {
+      ...base,
+      name: 'api',
+      include: ['api/**/*.test.ts'],
+      testTimeout: 60_000,
+      hookTimeout: 60_000,
+    },
+  },
   { test: { ...base, name: 'contract', include: ['contract/**/*.test.ts'] } },
   {
     test: {

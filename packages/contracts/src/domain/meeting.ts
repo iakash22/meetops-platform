@@ -7,6 +7,8 @@ export const MeetingSource = Type.Union([
   Type.Literal('extension'),
   Type.Literal('desktop'),
   Type.Literal('bot'),
+  /** Native mobile app recording (apps/mobile). */
+  Type.Literal('mobile'),
 ]);
 export type MeetingSource = Static<typeof MeetingSource>;
 

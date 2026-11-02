@@ -109,16 +109,19 @@ import { PrismaMeetingRepository } from './meetings/infrastructure/prisma.reposi
 import type { ConsentRepository } from './media/domain/consent.js';
 import type { FileObjectRepository, MediaJobQueue, MediaSigner } from './media/domain/ports.js';
 import type { RecordingSessionRepository } from './media/domain/recording-session.js';
+import type { MeetingConsentRepository } from './media/domain/meeting-consent.js';
 import {
   FakeMediaSigner,
   InMemoryConsentRepository,
   InMemoryFileObjectRepository,
   InMemoryMediaJobQueue,
+  InMemoryMeetingConsentRepository,
   InMemoryRecordingSessionRepository,
 } from './media/infrastructure/in-memory.js';
 import {
   PrismaConsentRepository,
   PrismaFileObjectRepository,
+  PrismaMeetingConsentRepository,
   PrismaRecordingSessionRepository,
 } from './media/infrastructure/prisma.js';
 import { BullMqMediaJobQueue, createMediaQueueProducer } from './media/infrastructure/bullmq.js';
@@ -202,6 +205,8 @@ export interface ModuleDeps {
    * in development/test; outside them it stays unset unless injected and the media routes are not registered.
    */
   media?: MediaAdapters;
+  /** CONSENT_ENFORCEMENT_ENABLED (default off): media capture requires a current meeting consent grant. */
+  consentEnforcementEnabled?: boolean;
   /** Set when defaultModuleDeps built the storage-backed media adapters (BullMQ producer closed in onClose). */
   ownedMedia?: { close(): Promise<void> };
 }
@@ -213,6 +218,8 @@ export interface MediaAdapters {
   signer: MediaSigner;
   jobs: MediaJobQueue;
   sessions: RecordingSessionRepository;
+  /** Consent API ledger (meeting_consent_events). Unset: the consent routes are absent and enforcement fails closed. */
+  meetingConsents?: MeetingConsentRepository;
 }
 
 export function inMemoryMediaAdapters(clock: Clock = systemClock): MediaAdapters {
@@ -222,7 +229,21 @@ export function inMemoryMediaAdapters(clock: Clock = systemClock): MediaAdapters
     signer: new FakeMediaSigner(() => clock.now()),
     jobs: new InMemoryMediaJobQueue(),
     sessions: new InMemoryRecordingSessionRepository(),
+    meetingConsents: new InMemoryMeetingConsentRepository(),
   };
+}
+
+/**
+ * CONSENT_ENFORCEMENT_ENABLED (default off): when on, upload and recording-session init/chunk/complete require the
+ * meeting's latest consent event to be a current grant (Consent API), failing closed with 422 CONSENT_*.
+ */
+export function consentEnforcementEnabled(
+  env: Record<string, string | undefined> = process.env,
+): boolean {
+  const v = (env.CONSENT_ENFORCEMENT_ENABLED ?? '').trim().toLowerCase();
+  if (v === '' || ['false', '0', 'no', 'off'].includes(v)) return false;
+  if (['true', '1', 'yes', 'on'].includes(v)) return true;
+  throw new Error('CONSENT_ENFORCEMENT_ENABLED must be a boolean');
 }
 
 /** MEDIA_STORAGE_ENABLED: real storage for the media routes (off by default). */
@@ -259,6 +280,7 @@ export function storageMediaAdapters(
     signer: opts.signer ?? new S3UploadSourceSigner({ config, now: () => clock.now() }),
     jobs,
     sessions: new PrismaRecordingSessionRepository(db, config.bucket, config.provider),
+    meetingConsents: new PrismaMeetingConsentRepository(db),
     close: async () => {
       await owned?.close();
     },
@@ -588,6 +610,7 @@ export function defaultModuleDeps(
         : new RedisExtensionTokenRepository(redis)
       : new InMemoryExtensionTokenRepository(),
     desktopAuthEnabled: process.env.DESKTOP_AUTH_ENABLED === 'true',
+    consentEnforcementEnabled: consentEnforcementEnabled(process.env),
     desktopTokens: redis
       ? new RedisExtensionTokenRepository(redis, 'meetops:desktop:')
       : new InMemoryExtensionTokenRepository(),

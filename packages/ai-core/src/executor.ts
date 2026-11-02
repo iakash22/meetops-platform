@@ -149,9 +149,39 @@ export function planCandidates(
   return { candidates, skipped, reasons };
 }
 
+/** Default overall job deadline (ms). */
+export const DEFAULT_OVERALL_TIMEOUT_MS = 15 * 60_000;
+/** Claim TTL margin over the job deadline, so a live job's claim never expires under it. */
+export const CLAIM_TTL_MARGIN_SEC = 5 * 60;
+
+/**
+ * The provider call succeeded (and may have been billed) but the usage write failed. Carries the outcome so the
+ * executor can store it: a retry is served from the idempotency store instead of calling (billing) again.
+ */
+export class UsageRecordError<T = unknown> extends Error {
+  constructor(
+    readonly outcome: JobOutcome<T>,
+    options?: { cause?: unknown },
+  ) {
+    super('usage record failed after a successful provider call', options);
+    this.name = 'UsageRecordError';
+  }
+}
+
 export class AIExecutor {
   private readonly inflight = new Map<string, Promise<JobOutcome<unknown>>>();
-  constructor(private readonly deps: ExecutorDeps) {}
+  private readonly claimTtlSec: number;
+  private readonly deadlineMs: number;
+  constructor(private readonly deps: ExecutorDeps) {
+    this.deadlineMs = deps.overallTimeoutMs ?? DEFAULT_OVERALL_TIMEOUT_MS;
+    this.claimTtlSec =
+      deps.idempotencyClaimTtlSec ?? Math.ceil(this.deadlineMs / 1000) + CLAIM_TTL_MARGIN_SEC;
+    // Fail at startup: a claim that can expire while its job still runs lets a duplicate call (and bill) again.
+    if (deps.idempotency.claim && this.claimTtlSec * 1000 <= this.deadlineMs)
+      throw new Error(
+        'idempotencyClaimTtlSec must be longer than the overall job deadline (overallTimeoutMs)',
+      );
+  }
 
   async run<T>(req: AIJobRequest, call: ProviderCall<T>): Promise<JobOutcome<T>> {
     // The store scopes keys by organization; the key itself is namespaced by feature.
@@ -178,14 +208,12 @@ export class AIExecutor {
     call: ProviderCall<T>,
   ): Promise<JobOutcome<T>> {
     const store = this.deps.idempotency;
+    if (store.claim && (req.overallTimeoutMs ?? this.deadlineMs) >= this.claimTtlSec * 1000)
+      throw new Error('request overallTimeoutMs must be shorter than the idempotency claim TTL');
     let claimed = false;
     if (store.claim) {
       // Cross-process single winner. Store errors propagate (fail closed): no AI call without a claim.
-      claimed = await store.claim(
-        req.organizationId,
-        key,
-        this.deps.idempotencyClaimTtlSec ?? 15 * 60,
-      );
+      claimed = await store.claim(req.organizationId, key, this.claimTtlSec);
       if (!claimed) {
         const cached = await this.cached<T>(req.organizationId, key);
         if (cached) return cached;
@@ -198,16 +226,28 @@ export class AIExecutor {
         };
       }
     }
-    let stored = false;
+    // Once a provider call succeeded it may be billed: the claim is never released after that point, so a
+    // BullMQ retry cannot call (and bill) again. It either finds the stored result or waits out the claim TTL.
+    let billed = false;
     try {
       const out = await this.execute(req, call);
       if (out.status === 'succeeded') {
+        billed = true;
         await store.set(req.organizationId, key, out, this.deps.idempotencyTtlSec);
-        stored = true;
       }
       return out;
+    } catch (err) {
+      if (err instanceof UsageRecordError) {
+        billed = true;
+        // Billed but unrecorded: keep the result so a retry is served from the store. The error still
+        // propagates (the usage write failed); if this set fails too, the kept claim blocks re-billing.
+        await store
+          .set(req.organizationId, key, err.outcome, this.deps.idempotencyTtlSec)
+          .catch(() => undefined);
+      }
+      throw err;
     } finally {
-      if (claimed && !stored) await store.release?.(req.organizationId, key);
+      if (claimed && !billed) await store.release?.(req.organizationId, key);
     }
   }
 
@@ -238,7 +278,7 @@ export class AIExecutor {
     errors.push(...plan.skipped);
 
     const deadline = new AbortController();
-    const overall = req.overallTimeoutMs ?? this.deps.overallTimeoutMs ?? 15 * 60_000;
+    const overall = req.overallTimeoutMs ?? this.deadlineMs;
     const deadlineTimer = setTimeout(() => deadline.abort(), overall);
     try {
       for (const cfg of plan.candidates) {
@@ -290,15 +330,6 @@ export class AIExecutor {
         // Outside the provider try: a usage-store failure must not be treated as a provider error
         // (that would call the next provider after a billed success). It propagates: fail closed.
         const usage: AIUsage = { ...res.usage, estimatedCostUsd: estimateCost(cfg, res.usage) };
-        await this.deps.usage.record({
-          organizationId: req.organizationId,
-          provider: cfg.name,
-          model,
-          feature: req.feature,
-          usage,
-          at: (this.deps.now?.() ?? new Date()).toISOString(),
-          jobId: req.jobId,
-        });
         const meta: AIResultMeta = {
           provider: cfg.name,
           model,
@@ -307,7 +338,26 @@ export class AIExecutor {
           transcriptRevision: req.transcriptRevision,
           idempotencyKey: req.idempotencyKey,
         };
-        return { status: 'succeeded', value: res.value, meta, attempts: errors };
+        const outcome: JobOutcome<T> = {
+          status: 'succeeded',
+          value: res.value,
+          meta,
+          attempts: errors,
+        };
+        try {
+          await this.deps.usage.record({
+            organizationId: req.organizationId,
+            provider: cfg.name,
+            model,
+            feature: req.feature,
+            usage,
+            at: (this.deps.now?.() ?? new Date()).toISOString(),
+            jobId: req.jobId,
+          });
+        } catch (e) {
+          throw new UsageRecordError(outcome, { cause: e });
+        }
+        return outcome;
       }
     } finally {
       clearTimeout(deadlineTimer);

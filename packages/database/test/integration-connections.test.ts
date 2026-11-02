@@ -27,6 +27,13 @@ interface Args {
   data: Row;
 }
 
+/** Prisma-like where: id/org plus any extra equality fields; status may be a value or { not }. */
+const matches = (x: Row, where: Row) =>
+  Object.entries(where).every(([k, v]) => {
+    if (k === 'status' && v && typeof v === 'object') return x.status !== (v as Row).not;
+    return x[k] === v;
+  });
+
 function fakeClient() {
   const rows: Row[] = [];
   const settings: string[] = [];
@@ -49,7 +56,7 @@ function fakeClient() {
         return r ? pick(r, select) : null;
       },
       findFirst: async ({ where, select }: Pick<Args, 'where' | 'select'>) => {
-        const r = rows.find((x) => x.id === where.id && x.organizationId === where.organizationId);
+        const r = rows.find((x) => matches(x, where));
         return r ? pick(r, select) : null;
       },
       create: async ({ data, select }: Pick<Args, 'data' | 'select'>) => {
@@ -58,12 +65,7 @@ function fakeClient() {
         return pick(r, select);
       },
       updateMany: async ({ where, data }: Pick<Args, 'where' | 'data'>) => {
-        const hit = rows.filter(
-          (x) =>
-            x.id === where.id &&
-            x.organizationId === where.organizationId &&
-            !(where.status && x.status === 'revoked'),
-        );
+        const hit = rows.filter((x) => matches(x, where));
         for (const r of hit) Object.assign(r, data);
         return { count: hit.length };
       },
@@ -156,6 +158,84 @@ describe('integration connection repository', () => {
     const b = await repo.upsert(ORG, { ...input, accessToken: 'a2' });
     expect(b).toMatchObject({ id: a.id, status: 'active', revokedAt: null });
     expect((await repo.readSecrets(ORG, a.id))?.accessToken).toBe('a2');
+  });
+
+  it('saveRefreshedTokens is fenced on the token envelope read under the lease (a stale refresh cannot overwrite)', async () => {
+    const f = fakeClient();
+    const repo = createIntegrationConnectionRepository({ client: f.client, cipher });
+    const a = await repo.upsert(ORG, {
+      provider: 'jira',
+      displayName: 'J',
+      externalAccountId: 'cloud',
+      accessToken: 'a1',
+      refreshToken: 'r1',
+      webhookSecret: 'w1',
+    });
+    const snap = await repo.readForRefresh(ORG, a.id);
+    expect(snap?.secrets).toEqual({ accessToken: 'a1', refreshToken: 'r1', webhookSecret: 'w1' });
+    expect(snap?.connection).toMatchObject({ id: a.id, provider: 'jira', status: 'active' });
+    expect(JSON.stringify(snap?.connection)).not.toMatch(/Enc|v1\./);
+    expect(snap?.fence).not.toMatch(/a1|r1|v1\./);
+    const stale = (await repo.readForRefresh(ORG, a.id))!.fence;
+    const exp = new Date('2030-01-01T00:00:00Z');
+    // A newer refresh lands first...
+    expect(
+      await repo.saveRefreshedTokens(
+        ORG,
+        a.id,
+        { accessToken: 'a2', refreshToken: 'r2', webhookSecret: 'w1', accessTokenExpiresAt: exp },
+        snap!.fence,
+      ),
+    ).toBe('saved');
+    // ...so the slow one, fenced on the same old envelope, writes nothing.
+    expect(
+      await repo.saveRefreshedTokens(
+        ORG,
+        a.id,
+        { accessToken: 'a3', refreshToken: 'r3', webhookSecret: 'w1', accessTokenExpiresAt: exp },
+        stale,
+      ),
+    ).toBe('superseded');
+    expect(await repo.readSecrets(ORG, a.id)).toMatchObject({
+      accessToken: 'a2',
+      refreshToken: 'r2',
+    });
+    expect(f.rows[0]).toMatchObject({ status: 'active', accessTokenExpiresAt: exp });
+    // Never resurrects: a revoked row is not written even with its current fence.
+    const cur = (await repo.readForRefresh(ORG, a.id))!.fence;
+    await repo.disconnect(ORG, a.id);
+    expect(await repo.readForRefresh(ORG, a.id)).toBeNull();
+    expect(
+      await repo.saveRefreshedTokens(
+        ORG,
+        a.id,
+        { accessToken: 'a4', refreshToken: 'r4', webhookSecret: 'w1', accessTokenExpiresAt: exp },
+        cur,
+      ),
+    ).toBe('superseded');
+    expect(f.rows[0]).toMatchObject({ status: 'revoked', accessTokenEnc: null });
+  });
+
+  it('setStatus with a fence marks error only if the tokens are unchanged since the read', async () => {
+    const f = fakeClient();
+    const repo = createIntegrationConnectionRepository({ client: f.client, cipher });
+    const input = {
+      provider: 'jira',
+      displayName: 'J',
+      externalAccountId: 'cloud',
+      accessToken: 'a1',
+      refreshToken: 'r1',
+      webhookSecret: 'w1',
+    };
+    const a = await repo.upsert(ORG, input);
+    const stale = (await repo.readForRefresh(ORG, a.id))!.fence;
+    await repo.upsert(ORG, { ...input, accessToken: 'a2', refreshToken: 'r2' }); // reconnect / newer refresh
+    expect(await repo.setStatus(ORG, a.id, 'error', { fence: stale })).toBeNull();
+    expect(f.rows[0]?.status).toBe('active');
+    const fresh = (await repo.readForRefresh(ORG, a.id))!.fence;
+    expect((await repo.setStatus(ORG, a.id, 'error', { fence: fresh }))?.status).toBe('error');
+    // Unfenced callers (API) keep the old behaviour.
+    expect((await repo.setStatus(ORG, a.id, 'active'))?.status).toBe('active');
   });
 
   it('rejects a cipher that does not return a v1 envelope', async () => {

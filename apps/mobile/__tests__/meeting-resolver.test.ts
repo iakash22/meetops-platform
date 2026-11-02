@@ -15,7 +15,7 @@ describe('meeting resolver (Low: server meeting id)', () => {
       'POST',
       '/orgs/org%201/meetings/resolve',
       expect.objectContaining({
-        source: 'upload',
+        source: 'mobile',
         startedAt: '2026-10-31T10:00:00.000Z',
         externalMeetingId: expect.stringMatching(/^mobile:[A-Za-z0-9_.:@/-]+$/),
       }),

@@ -1,3 +1,4 @@
+import type { MeetingConsentEvent, MeetingConsentStatus } from '@/features/meetings/consent-api';
 import type {
   CompleteUploadResponse,
   ConsentSettings,
@@ -227,4 +228,43 @@ export const consentSettings: ConsentSettings = {
   retentionDays: 365,
   currentConsentVersion: '2026-10',
   updatedAt: '2026-10-20T10:00:00.000Z',
+};
+
+export const consentGranted: MeetingConsentEvent = {
+  id: '30000000-0000-4000-8000-000000000001',
+  meetingId: '20000000-0000-4000-8000-000000000001',
+  eventType: 'granted',
+  consentVersion: '2026-10',
+  method: 'all_parties_consented',
+  reason: null,
+  actorUserId: '10000000-0000-4000-8000-000000000001',
+  occurredAt: '2026-10-30T10:00:00.000Z',
+  recordedAt: '2026-10-30T10:00:01.000Z',
+};
+
+export const consentRevoked: MeetingConsentEvent = {
+  ...consentGranted,
+  id: '30000000-0000-4000-8000-000000000002',
+  eventType: 'revoked',
+  consentVersion: null,
+  method: null,
+  reason: 'Participant asked',
+  occurredAt: '2026-10-31T09:00:00.000Z',
+  recordedAt: '2026-10-31T09:00:00.000Z',
+};
+
+export const consentStatusNone: MeetingConsentStatus = {
+  meetingId: '20000000-0000-4000-8000-000000000001',
+  state: 'none',
+  valid: false,
+  latest: null,
+  events: [],
+};
+
+export const consentStatusGranted: MeetingConsentStatus = {
+  meetingId: '20000000-0000-4000-8000-000000000001',
+  state: 'granted',
+  valid: true,
+  latest: consentGranted,
+  events: [consentGranted],
 };

@@ -3,10 +3,13 @@ import {
   InMemoryDeliveryStore,
   InMemoryOAuthStateStore,
   LocalKeyProvider,
+  parseSharedKek,
   TokenCipher,
   constantTimeEqual,
+  type ConnectionLease,
   type DeliveryStore,
   type FetchLike,
+  type LeaseRedis,
   type OAuthStateStore,
 } from '@meetops/integrations';
 import type { IntegrationSecretCipher } from '@meetops/database';
@@ -31,6 +34,14 @@ export interface IntegrationsRuntime {
   apiOrigin: string;
   fetch?: FetchLike;
   now?: () => number;
+  /**
+   * Per-connection token-refresh lease shared with the worker sweep (Redis in production, wired from deps.redis by
+   * the module; outside development/test without Redis it is a refusing lease, so Jira refresh fails closed).
+   * Absent only in development/test without Redis, where the fenced save alone guards the write.
+   */
+  tokenRefreshLease?: ConnectionLease;
+  /** Test hook for the wait while another holder refreshes. */
+  sleep?: (ms: number) => Promise<void>;
   github?: {
     appSlug: string;
     appId: string;
@@ -109,6 +120,10 @@ export function integrationsRuntimeFromEnv(
   const over: Partial<IntegrationsRuntime> = {};
   if (env.INTEGRATIONS_API_ORIGIN) over.apiOrigin = env.INTEGRATIONS_API_ORIGIN;
   if (env.INTEGRATIONS_WEB_ORIGIN) over.webOrigin = env.INTEGRATIONS_WEB_ORIGIN;
+  // Shared dev KEK so apps/worker (token refresh) can decrypt what the API sealed. Same key id as the worker.
+  // Unset keeps the random per-process key. Set but invalid, or set with NODE_ENV=production, throws at startup.
+  const kek = parseSharedKek(env);
+  if (kek) over.cipher = new TokenCipher(new LocalKeyProvider({ shared: kek }, 'shared'));
   const g = {
     appId: env.GITHUB_APP_ID,
     appSlug: env.GITHUB_APP_SLUG,
@@ -143,3 +158,26 @@ export function integrationsRuntimeFromEnv(
   }
   return over;
 }
+
+/** SET NX PX in one atomic script: the API's RedisLike has no NX `set` overload. Returns 'OK' or nil. */
+export const ACQUIRE_LEASE_LUA = `return redis.call('SET', KEYS[1], ARGV[1], 'PX', ARGV[2], 'NX')`;
+
+/** Adapts the API's eval-capable Redis client to the shared lease (createRedisConnectionLease). */
+export function leaseRedisFromEval(redis: {
+  eval(script: string, numKeys: number, ...keysAndArgs: (string | number)[]): Promise<unknown>;
+}): LeaseRedis {
+  return {
+    async set(key, value, _px, ttlMs) {
+      const r = await redis.eval(ACQUIRE_LEASE_LUA, 1, key, value, String(ttlMs));
+      return r === 'OK' ? 'OK' : null;
+    },
+    eval: (script, numKeys, ...args) => redis.eval(script, numKeys, ...args),
+  };
+}
+
+/** Outside development/test without Redis: every acquire fails, so no refresh runs without the shared lease. */
+export const refusingTokenRefreshLease: ConnectionLease = {
+  acquire: () => Promise.reject(new Error('token refresh lease requires Redis')),
+  confirm: () => Promise.resolve(false),
+  release: () => Promise.resolve(false),
+};

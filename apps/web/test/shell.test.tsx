@@ -2,7 +2,12 @@ import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ApiError } from '@/lib/api/client';
-import { useOrgStore } from '@/stores/org-store';
+import {
+  readSidebarCollapsed,
+  SIDEBAR_STORAGE_KEY,
+  useOrgStore,
+  useUiStore,
+} from '@/stores/org-store';
 import { createMockApi, renderApp, resetStores } from './fixtures/render';
 import { waitForRouteData } from './fixtures/route-ready';
 import { orgs, sessionResponse } from './fixtures/data';
@@ -82,12 +87,71 @@ describe('app shell', () => {
     expect(await screen.findByLabelText('Signed in user')).toHaveTextContent('ada');
   });
 
-  it('toggles the sidebar', async () => {
+  it('collapses the desktop sidebar to an icon rail and persists the choice', async () => {
     renderApp('/');
     const sidebar = await screen.findByRole('complementary', { name: 'Sidebar' });
     expect(sidebar).toHaveAttribute('data-state', 'open');
-    await userEvent.click(screen.getByRole('button', { name: 'Toggle sidebar' }));
-    expect(sidebar).toHaveAttribute('data-state', 'closed');
+    const collapse = screen.getByRole('button', { name: 'Collapse sidebar' });
+    expect(collapse).toHaveAttribute('aria-expanded', 'true');
+    await userEvent.click(collapse);
+    expect(sidebar).toHaveAttribute('data-state', 'collapsed');
+    expect(window.localStorage.getItem(SIDEBAR_STORAGE_KEY)).toBe('collapsed');
+    // Icon rail keeps every link reachable by name.
+    const nav = within(sidebar).getByRole('navigation', { name: 'Main' });
+    expect(within(nav).getByRole('link', { name: 'Settings' })).toHaveAttribute(
+      'title',
+      'Settings',
+    );
+    const expand = screen.getByRole('button', { name: 'Expand sidebar' });
+    expect(expand).toHaveAttribute('aria-expanded', 'false');
+    await userEvent.click(expand);
+    expect(sidebar).toHaveAttribute('data-state', 'open');
+    expect(window.localStorage.getItem(SIDEBAR_STORAGE_KEY)).toBe('expanded');
+  });
+
+  it('reads the persisted preference and ignores unknown values', () => {
+    window.localStorage.setItem(SIDEBAR_STORAGE_KEY, 'collapsed');
+    expect(readSidebarCollapsed()).toBe(true);
+    window.localStorage.setItem(SIDEBAR_STORAGE_KEY, 'garbage');
+    expect(readSidebarCollapsed()).toBe(false);
+    window.localStorage.removeItem(SIDEBAR_STORAGE_KEY);
+    expect(readSidebarCollapsed()).toBe(false);
+  });
+
+  it('falls back to expanded when storage throws', () => {
+    const spy = vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
+      throw new Error('denied');
+    });
+    expect(readSidebarCollapsed()).toBe(false);
+    spy.mockRestore();
+  });
+
+  it('opens the mobile navigation sheet and closes it on navigation', async () => {
+    const { history } = renderApp('/');
+    await screen.findByTestId('app-shell');
+    const trigger = screen.getByRole('button', { name: 'Open navigation' });
+    expect(trigger).toHaveAttribute('aria-expanded', 'false');
+    await userEvent.click(trigger);
+    const sheet = await screen.findByRole('dialog', { name: 'MeetOps AI' });
+    expect(useUiStore.getState().mobileNavOpen).toBe(true);
+    await userEvent.click(within(sheet).getByRole('link', { name: 'Tasks' }));
+    await waitFor(() => expect(history.location.pathname).toBe('/tasks'));
+    await waitFor(() =>
+      expect(screen.queryByRole('dialog', { name: 'MeetOps AI' })).not.toBeInTheDocument(),
+    );
+    expect(useUiStore.getState().mobileNavOpen).toBe(false);
+    expect(trigger).toHaveFocus();
+  });
+
+  it('closes the mobile navigation sheet on Escape', async () => {
+    renderApp('/');
+    await screen.findByTestId('app-shell');
+    await userEvent.click(screen.getByRole('button', { name: 'Open navigation' }));
+    expect(await screen.findByRole('dialog', { name: 'MeetOps AI' })).toBeInTheDocument();
+    await userEvent.keyboard('{Escape}');
+    await waitFor(() =>
+      expect(screen.queryByRole('dialog', { name: 'MeetOps AI' })).not.toBeInTheDocument(),
+    );
   });
 
   it('navigates between pages from the sidebar', async () => {

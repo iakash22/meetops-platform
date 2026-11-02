@@ -481,6 +481,11 @@ export const INTEGRATION_PATHS = {
   /** v0.12.0: App-wide GitHub webhook (a GitHub App has one webhook URL); routed by payload.installation.id. */
   githubAppWebhook: '/webhooks/github',
   issuePush: '/orgs/:organizationId/tasks/:taskId/integration-issues',
+  /**
+   * Async issue push (TASK_SYNC_ENABLED, off by default): POST `PushTaskIssueRequest` -> 202 `TaskSyncJob`. Idempotent
+   * per (task, integration): a repeat returns the same job. The worker creates the issue (queue `TASK_SYNC_QUEUE`).
+   */
+  taskSync: '/orgs/:organizationId/tasks/:taskId/sync',
 } as const;
 
 /** v0.7.0: integration connection lifecycle (Prisma `IntegrationStatus`). */
@@ -493,12 +498,22 @@ export const INTEGRATION_STATE_TTL_SECONDS = 600;
 export const INTEGRATION_WEBHOOK_MAX_BYTES = 1_048_576;
 
 /** Phase 7: calendar routes. Connections are per user within an organization. */
+/** Read-only, org-scoped analytics (P7). */
+export const ANALYTICS_PATHS = {
+  meetings: '/orgs/:organizationId/analytics/meetings',
+} as const;
+
+/** Longest analytics window (`to - from`). */
+export const MAX_ANALYTICS_RANGE_DAYS = 366;
+
 export const CALENDAR_PATHS = {
   providers: '/orgs/:organizationId/calendar/providers',
   connect: '/orgs/:organizationId/calendar/connect',
   callback: '/calendar/:provider/callback',
   connection: '/orgs/:organizationId/calendar/connections/:connectionId',
   events: '/orgs/:organizationId/calendar/events',
+  /** PUT links one of my events to a meeting of the organization (replacing any link), DELETE unlinks it. */
+  eventLink: '/orgs/:organizationId/calendar/connections/:connectionId/events/:eventId/link',
 } as const;
 
 /** Server-known providers only; clients never supply an endpoint or base URL. */

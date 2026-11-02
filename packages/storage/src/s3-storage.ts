@@ -1356,12 +1356,13 @@ const SOURCE_EXT_BY_MIME: Record<string, MediaSourceExtLike> = {
   'audio/mpeg': 'mp3',
   'audio/mp4': 'm4a',
   'audio/x-m4a': 'm4a',
+  'audio/aac': 'aac',
   'video/mp4': 'mp4',
   'audio/wav': 'wav',
   'audio/x-wav': 'wav',
   'audio/wave': 'wav',
 };
-type MediaSourceExtLike = 'webm' | 'ogg' | 'mp3' | 'm4a' | 'mp4' | 'wav';
+type MediaSourceExtLike = 'webm' | 'ogg' | 'mp3' | 'm4a' | 'aac' | 'mp4' | 'wav';
 
 /** Recording source extension for a (parameterised) media mime type, or null when it is not a source type. */
 export function sourceExtForMime(mimeType: string): MediaSourceExtLike | null {

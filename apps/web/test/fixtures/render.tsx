@@ -7,7 +7,7 @@ import { useToastStore } from '@/components/ui/toast';
 import type { Role } from '@meetops/contracts';
 import { ApiError, type ApiClient, type CreateInvitationRequest } from '@/lib/api/client';
 import { createMockDirectoryApi } from '@/features/directory/mock-api';
-import { useOrgStore, useUiStore } from '@/stores/org-store';
+import { SIDEBAR_STORAGE_KEY, useOrgStore, useUiStore } from '@/stores/org-store';
 import {
   meeting1,
   meetings,
@@ -20,6 +20,9 @@ import {
   completeResponse,
   downloadUrlResponse,
   consentSettings,
+  consentGranted,
+  consentRevoked,
+  consentStatusNone,
   pairResponse,
   sessionList,
   memberList,
@@ -107,6 +110,12 @@ export function createMockApi(
       report: vi.fn().mockRejectedValue(new ApiError(404, 'NOT_FOUND', 'Not found')),
       ...overrides.meetingInsights,
     },
+    meetingConsent: {
+      status: vi.fn().mockResolvedValue(consentStatusNone),
+      record: vi.fn().mockResolvedValue(consentGranted),
+      revoke: vi.fn().mockResolvedValue(consentRevoked),
+      ...overrides.meetingConsent,
+    },
     // In-memory directory (empty); pass `directory: createMockDirectoryApi(seed)` to seed it.
     directory: { ...createMockDirectoryApi(), ...overrides.directory },
     storage: {
@@ -133,7 +142,8 @@ export function resetStores(withOrgs = true) {
     organizations: withOrgs ? orgs : [],
     currentOrganizationId: withOrgs ? '00000000-0000-4000-8000-000000000001' : null,
   });
-  useUiStore.setState({ sidebarOpen: true });
+  useUiStore.setState({ sidebarCollapsed: false, mobileNavOpen: false });
+  window.localStorage.removeItem(SIDEBAR_STORAGE_KEY);
   useToastStore.setState({ toasts: [] });
 }
 

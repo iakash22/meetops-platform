@@ -93,6 +93,7 @@ function override(table: string, column: string, organizationId: string): string
   if (table === 'file_objects' && column === 'storage_key')
     return `'organizations/${organizationId}/isolation-test-${randomUUID()}'`;
   if (table === 'consent_attestations' && column === 'consent_version') return `'2026-10'`;
+  if (table === 'meeting_consent_events' && column === 'event_type') return `'revoked'`;
   // CHECK constraints require v1 cipher envelopes (no real secrets in tests).
   if (table === 'integration_connections' && column.endsWith('_enc'))
     return `'v1.isolation.wrapped.ciphertext'`;
@@ -109,6 +110,11 @@ function override(table: string, column: string, organizationId: string): string
   if (table === 'calendar_events' && column === 'status') return `'confirmed'`;
   if (table === 'calendar_events' && column === 'connection_id')
     return `(SELECT id FROM calendar_connections WHERE org_id = '${organizationId}'::uuid LIMIT 1)`;
+  // calendar_event_links: composite FKs to the same org's calendar_connections and meetings fixtures.
+  if (table === 'calendar_event_links' && column === 'connection_id')
+    return `(SELECT id FROM calendar_connections WHERE org_id = '${organizationId}'::uuid LIMIT 1)`;
+  if (table === 'calendar_event_links' && column === 'meeting_id')
+    return `(SELECT id FROM meetings WHERE org_id = '${organizationId}'::uuid LIMIT 1)`;
   // meeting_embeddings: a summary row pointing at the same org's meeting and report fixtures; a zero vector.
   if (table === 'meeting_embeddings' && column === 'source_kind') return `'summary'`;
   if (table === 'meeting_embeddings' && column === 'meeting_id')
@@ -117,6 +123,9 @@ function override(table: string, column: string, organizationId: string): string
     return `encode(sha256(gen_random_uuid()::text::bytea), 'hex')`;
   if (table === 'meeting_embeddings' && column === 'embedding')
     return `array_fill(0, ARRAY[1536])::real[]::vector`;
+  // task_sync_jobs: CHECKs on provider/target (FKs are off for fixtures: session_replication_role = replica).
+  if (table === 'task_sync_jobs' && column === 'provider') return `'github'`;
+  if (table === 'task_sync_jobs' && column === 'target') return `'acme/app'`;
   if (table === 'auth_token_families' && column === 'max_expires_at')
     return `now() + interval '30 days'`;
   if (table === 'auth_refresh_tokens' && column === 'token_hash')
@@ -231,14 +240,16 @@ describe.skipIf(missingEnv.length > 0)('tenant isolation per table (live, ADR-01
 
   describe.each([...TENANT_TABLES])('%s', (t) => {
     /** Append-only tables: UPDATE/DELETE are revoked from the app, so they fail on privilege instead. */
-    const appendOnly = t === 'audit_events' || t === 'consent_attestations';
+    const appendOnly =
+      t === 'audit_events' || t === 'consent_attestations' || t === 'meeting_consent_events';
     const blockedWrite = appendOnly ? /permission denied|append-only/ : /row-level security/;
-    /** DELETE is revoked: ADR-005 A1.2 token tables (revocation is an UPDATE) and integration_connections (soft disconnect wipes secrets). */
+    /** DELETE is revoked: ADR-005 A1.2 token tables (revocation is an UPDATE), integration_connections (soft disconnect wipes secrets), calendar tables and task_sync_jobs (state machine; rows are never deleted by the app). */
     const noDelete =
       t.startsWith('auth_') ||
       t === 'integration_connections' ||
       t === 'calendar_connections' ||
-      t === 'calendar_events';
+      t === 'calendar_events' ||
+      t === 'task_sync_jobs';
     const count = (tx: Prisma.TransactionClient, id: string) =>
       tx.$queryRawUnsafe<{ n: bigint }[]>(
         `SELECT count(*) AS n FROM "${t}" WHERE ${whereKey(t)}`,

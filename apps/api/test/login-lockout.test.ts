@@ -30,7 +30,10 @@ describe('login lockout (auth-session-spec §5)', () => {
     expect(res.map((r) => r.statusCode)).toEqual(Array(10).fill(401));
     expect(new Set(res.map((r) => r.json().error?.code ?? r.json().code)).size).toBe(1);
     expect(delays).toEqual([100, 200, 400, 800, 1000]);
-    const locked = await new Client(app).post('/auth/login', { email: 'lock@example.test', password: PASSWORD });
+    const locked = await new Client(app).post('/auth/login', {
+      email: 'lock@example.test',
+      password: PASSWORD,
+    });
     expect(locked.statusCode).toBe(429);
   });
 
@@ -39,7 +42,10 @@ describe('login lockout (auth-session-spec §5)', () => {
     const res = await failTen(app, 'ghost@example.test');
     expect(res.map((r) => r.statusCode)).toEqual(Array(10).fill(401));
     expect(delays).toEqual([100, 200, 400, 800, 1000]);
-    const locked = await new Client(app).post('/auth/login', { email: 'ghost@example.test', password: PASSWORD });
+    const locked = await new Client(app).post('/auth/login', {
+      email: 'ghost@example.test',
+      password: PASSWORD,
+    });
     expect(locked.statusCode).toBe(429);
   });
 });

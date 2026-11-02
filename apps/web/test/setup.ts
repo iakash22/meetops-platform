@@ -1,7 +1,10 @@
 import '@testing-library/jest-dom/vitest';
-import { cleanup } from '@testing-library/react';
+import { cleanup, configure } from '@testing-library/react';
 import { afterEach, beforeAll } from 'vitest';
 import { preloadLazyRoutes } from './fixtures/preload-routes';
+
+// Under turbo `pnpm test` contention, jsdom updates often exceed the 1s findBy default.
+configure({ asyncUtilTimeout: 5_000 });
 
 // Load lazy route chunks before any test so cold module loads never land inside a findBy.
 beforeAll(preloadLazyRoutes, 30_000);

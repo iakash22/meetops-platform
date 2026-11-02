@@ -3,6 +3,8 @@ import { CONSENT_UPLOAD_PATHS } from '@meetops/contracts/types';
 import { fillPath, uploadPaths } from '@/features/uploads/types';
 import { MEETING_INSIGHTS_PATHS, insightsPath } from '@/features/meetings/insights-api';
 import { RECORDING_PATHS } from '@/features/recording/session';
+import { MEETING_CONSENT_PATHS as CONTRACT_MEETING_CONSENT_PATHS } from '@meetops/contracts';
+import { MEETING_CONSENT_PATHS, meetingConsentPath } from '@/features/meetings/consent-api';
 
 const ORG = '00000000-0000-4000-8000-000000000001';
 
@@ -13,6 +15,13 @@ describe('API route parity', () => {
     expect(uploadPaths.complete(ORG, 'a/b')).toBe(`/orgs/${ORG}/uploads/a%2Fb/complete`);
     expect(uploadPaths.downloadUrl(ORG, 'f')).toBe(
       fillPath(CONSENT_UPLOAD_PATHS.uploadDownloadUrl, { organizationId: ORG, fileObjectId: 'f' }),
+    );
+  });
+
+  it('meeting consent paths match contracts MEETING_CONSENT_PATHS (#334)', () => {
+    expect(MEETING_CONSENT_PATHS).toEqual(CONTRACT_MEETING_CONSENT_PATHS);
+    expect(meetingConsentPath(MEETING_CONSENT_PATHS.revoke, ORG, 'm 1')).toBe(
+      `/orgs/${ORG}/meetings/m%201/consent/revoke`,
     );
   });
 

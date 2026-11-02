@@ -82,6 +82,9 @@ export async function start(
       REALTIME_PORT: '0',
       REALTIME_CORS_ORIGINS: ORIGIN,
       REALTIME_EXTENSION_IDS: EXT_ID,
+      // Force the in-memory adapter: never inherit REDIS_URL from the shell/.env
+      // (a live Redis connect hangs createRealtimeServer when Redis is down).
+      REDIS_URL: '',
       ...env,
     }),
     verifySession: fakeVerifier,

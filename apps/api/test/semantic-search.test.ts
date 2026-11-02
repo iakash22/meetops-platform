@@ -62,6 +62,24 @@ describe('P7 semantic search API', () => {
     expect((await c.get(url(org, 'budget review'))).statusCode).toBe(503);
   });
 
+  it('an embedder that throws answers 503: no search runs and the provider error never leaks', async () => {
+    vi.stubEnv('SEMANTIC_SEARCH_ENABLED', 'true');
+    const repo = new InMemorySemanticSearch();
+    const search = vi.spyOn(repo, 'search');
+    const embed = vi.fn(async (): Promise<number[]> => {
+      throw new Error('provider exploded: sk-test-secret upstream 500');
+    });
+    const embedder: QueryEmbedder = { model: MODEL, embed };
+    app = await buildApp({ semanticSearch: repo, queryEmbedder: embedder } as Partial<ModuleDeps>);
+    const c = await signupAndLogin(app, 'owner@example.com');
+    const org = await createOrg(c, 'Acme');
+    const res = await c.get(url(org, 'budget review'));
+    expect(res.statusCode).toBe(503);
+    expect(embed).toHaveBeenCalledTimes(1);
+    expect(search).not.toHaveBeenCalled();
+    expect(res.body).not.toMatch(/provider exploded|sk-test-secret|upstream 500/);
+  });
+
   it('org isolation: ranks only the caller org rows, never another org with an identical vector', async () => {
     vi.stubEnv('SEMANTIC_SEARCH_ENABLED', 'true');
     const repo = new InMemorySemanticSearch();

@@ -6,6 +6,7 @@
 - Implementing PR: #67 (`feat(integrations): Jira OAuth 3LO + PKCE, GitHub App install state, token encryption at
 rest`), **open and unmerged**, verified at head `d9f8e3a716437f12c3d928203ce54a1866878f98`
 - Related: [ADR-007](./ADR-007-integrations-retry-webhook-replay.md)
+- Amended by: [ADR-016](./ADR-016-secret-manager-kms.md) (Accepted 2026-11-01): the production `KeyEncryptionProvider` is a `KmsKeyProvider` on AWS KMS; KEK env/secret path, `token_key_id` and rotation job follow from it
 
 ## Context
 
