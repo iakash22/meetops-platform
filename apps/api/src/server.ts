@@ -7,6 +7,7 @@ import { defaultModuleDeps, registerModules, type ModuleDeps } from './modules/i
 import { registerDomainErrorHandler, registerNotFoundHandler } from './shared/http-errors.js';
 import { parseTrustProxy } from './shared/trust-proxy.js';
 import { docsEnabledFromEnv, registerSecurityHeaders } from './shared/security-headers.js';
+import { docsAdminEmailsFromEnv, registerDocsAccessGuard } from './shared/docs-access.js';
 import { registerJsonOnly } from './shared/json-only.js';
 import { clientIpOptionsFromEnv, resolveClientIp } from './shared/geoip/client-ip.js';
 import { truncateIp } from './shared/geoip/ip.js';
@@ -76,6 +77,8 @@ export interface CreateServerOptions {
   readinessTimeoutMs?: number;
   /** Overrides API_DOCS_ENABLED (Swagger UI outside development|test; 'true' enables). */
   docsEnabled?: string;
+  /** Overrides API_DOCS_ADMIN_EMAILS (who may open /docs outside development|test). */
+  docsAdminEmails?: string;
   /** Overrides AUTH_MAIL_QUEUE* / AUTH_MAIL_WORKER_* (auth mail queue selection). */
   mailQueueEnv?: Record<string, string | undefined>;
 }
@@ -151,6 +154,16 @@ export function createServer(options: CreateServerOptions = {}) {
 
   // Swagger UI and its /docs/json spec: NODE_ENV exactly development|test, or API_DOCS_ENABLED=true (fail closed).
   // Served under DOCS_CSP. The spec is still generated in-process (app.swagger()) for tests and tooling.
+  // Outside development|test it also needs an authenticated session of an API_DOCS_ADMIN_EMAILS user (401/403).
+  if (docs && nodeEnv !== 'development' && nodeEnv !== 'test') {
+    registerDocsAccessGuard(app, {
+      deps,
+      cookieName: deps.security.cookieName,
+      adminEmails: docsAdminEmailsFromEnv(
+        options.docsAdminEmails ?? process.env.API_DOCS_ADMIN_EMAILS,
+      ),
+    });
+  }
   if (docs) {
     void app.register(swaggerUi, {
       routePrefix: '/docs',

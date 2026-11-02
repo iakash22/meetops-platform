@@ -7,7 +7,9 @@ import {
 import { InMemoryRateLimiter } from '../src/modules/auth/infrastructure/rate-limit/in-memory.js';
 import { systemClock } from '../src/shared/ports.js';
 import { parseTrustProxy } from '../src/shared/trust-proxy.js';
-import { Client, fakeHasher, ORIGIN } from './helpers.js';
+import { Client, fakeHasher, ORIGIN, SID, signupAndLogin, type App } from './helpers.js';
+import { RecordingMailTransport } from '../src/modules/auth/domain/mail-jobs.js';
+import { docsAdminEmailsFromEnv } from '../src/shared/docs-access.js';
 import {
   API_CSP,
   DOCS_CSP,
@@ -404,10 +406,87 @@ describe('Swagger UI gate', () => {
       await app.close();
     },
   );
-  it('production serves /docs with the strict DOCS_CSP only when API_DOCS_ENABLED=true', async () => {
-    const app = await serverFor('production', 'true');
-    for (const url of ['/docs/json', '/docs/', '/docs/static/swagger-initializer.js']) {
+  /** #404 D2: a production app (docs on) sharing deps with a test app that mints real browser sessions. */
+  const prodDocs = async (docsAdminEmails: string) => {
+    const { defaultModuleDeps } = await import('../src/modules/index.js');
+    const mail = new RecordingMailTransport();
+    const deps = defaultModuleDeps(
+      { hasher: fakeHasher, mailTransport: mail },
+      { nodeEnv: 'test' },
+    );
+    const testApp = createServer({ nodeEnv: 'test', deps });
+    await testApp.ready();
+    const helper = Object.assign(testApp, {
+      mail,
+      token: (to: string, t: Parameters<RecordingMailTransport['lastToken']>[1]) =>
+        mail.lastToken(to, t),
+    }) as unknown as App;
+    const sid = async (email: string, withOrg = true) => {
+      const c = await signupAndLogin(helper, email);
+      if (withOrg) expect((await c.post('/orgs', { name: 'Acme' })).statusCode).toBe(201);
+      return `${SID}=${c.jar.get(SID) ?? ''}`;
+    };
+    const app = createServer({ nodeEnv: 'production', deps, docsEnabled: 'true', docsAdminEmails });
+    await app.ready();
+    const close = async () => {
+      await app.close();
+      await testApp.close();
+    };
+    return { app, sid, close };
+  };
+  it('docsAdminEmailsFromEnv: trimmed, lowercased, empty/unset is nobody', () => {
+    expect([...docsAdminEmailsFromEnv(' Ops@Example.com , ,x@y.io')]).toEqual([
+      'ops@example.com',
+      'x@y.io',
+    ]);
+    expect(docsAdminEmailsFromEnv(undefined).size).toBe(0);
+    expect(docsAdminEmailsFromEnv('').size).toBe(0);
+  });
+  it('production /docs needs a session (401) of an API_DOCS_ADMIN_EMAILS user (403)', async () => {
+    const { app, sid, close } = await prodDocs('ops@example.com');
+    const urls = ['/docs', '/docs/', '/docs/json', '/docs/static/swagger-initializer.js'];
+    for (const url of urls) {
       const r = await app.inject({ method: 'GET', url });
+      expect(r.statusCode, url).toBe(401);
+      expect(r.json().error.code).toBe('UNAUTHENTICATED');
+      const bad = await app.inject({ method: 'GET', url, headers: { cookie: `${SID}=nope` } });
+      expect(bad.statusCode, url).toBe(401);
+    }
+    const member = await sid('member@example.com');
+    for (const url of urls) {
+      const r = await app.inject({ method: 'GET', url, headers: { cookie: member } });
+      expect(r.statusCode, url).toBe(403);
+      expect(r.json().error.code).toBe('FORBIDDEN');
+    }
+    const admin = await sid('Ops@Example.com');
+    const ok = await app.inject({ method: 'GET', url: '/docs/json', headers: { cookie: admin } });
+    expect(ok.statusCode).toBe(200);
+    // Bearer-style headers are not a docs credential; other routes are untouched.
+    expect(
+      (
+        await app.inject({
+          method: 'GET',
+          url: '/docs/json',
+          headers: { authorization: 'Bearer x' },
+        })
+      ).statusCode,
+    ).toBe(401);
+    expect((await app.inject({ method: 'GET', url: '/health' })).statusCode).toBe(200);
+    await close();
+  });
+  it('production /docs fails closed (403) when API_DOCS_ADMIN_EMAILS is empty', async () => {
+    const { app, sid, close } = await prodDocs('');
+    const cookie = await sid('ops@example.com');
+    expect(
+      (await app.inject({ method: 'GET', url: '/docs/json', headers: { cookie } })).statusCode,
+    ).toBe(403);
+    await close();
+  });
+  it('production serves /docs with the strict DOCS_CSP only when API_DOCS_ENABLED=true', async () => {
+    const { app, sid, close } = await prodDocs('ops@example.com');
+    const cookie = await sid('ops@example.com');
+    for (const url of ['/docs/json', '/docs/', '/docs/static/swagger-initializer.js']) {
+      const r = await app.inject({ method: 'GET', url, headers: { cookie } });
       expect(r.statusCode, url).toBe(200);
       const csp = r.headers['content-security-policy'];
       expect(csp, url).toBe(DOCS_CSP);
@@ -416,13 +495,13 @@ describe('Swagger UI gate', () => {
       expect(r.headers['strict-transport-security']).toBe(HSTS_VALUE);
     }
     // The UI page loads only external same-origin scripts, so script-src 'self' (no inline) is enough.
-    const html = (await app.inject({ method: 'GET', url: '/docs/' })).body;
+    const html = (await app.inject({ method: 'GET', url: '/docs/', headers: { cookie } })).body;
     expect(html).not.toMatch(/<script(?![^>]*\ssrc=)[^>]*>/i);
     // Non-docs routes keep the JSON API CSP.
     expect(
       (await app.inject({ method: 'GET', url: '/health' })).headers['content-security-policy'],
     ).toBe(API_CSP);
-    await app.close();
+    await close();
   });
   it.each(['production', 'staging', ''])(
     '/docs and /docs/json are 404 when NODE_ENV=%s',
