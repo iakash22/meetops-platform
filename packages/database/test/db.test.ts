@@ -50,9 +50,9 @@ describe('generated client', () => {
     await db.disconnectPrismaClient();
   });
 
-  it('exposes exactly the 44 models', () => {
+  it('exposes exactly the 45 models', () => {
     const models = Object.values(Prisma.ModelName);
-    expect(models).toHaveLength(44);
+    expect(models).toHaveLength(45);
     for (const m of [
       'Organization',
       'User',
@@ -96,6 +96,7 @@ describe('generated client', () => {
       'CalendarEvent',
       'MeetingEmbedding',
       'MeetingConsentEvent',
+      'CalendarEventLink',
     ]) {
       expect(models).toContain(m);
     }

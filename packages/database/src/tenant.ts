@@ -54,6 +54,7 @@ export const TENANT_TABLES = [
   'calendar_events',
   'meeting_embeddings',
   'meeting_consent_events',
+  'calendar_event_links',
 ] as const;
 export type TenantTable = (typeof TENANT_TABLES)[number];
 

@@ -122,6 +122,8 @@ const PARALLEL_MIGRATIONS = [
   '20261031030000_meeting_consent_events',
   '20261031040000_calendar_event_links',
 ] as const;
+/** Phase 7 calendar event -> meeting links (forced RLS, composite tenant FKs). */
+const CALENDAR_EVENT_LINKS_MIGRATION = '20261031040000_calendar_event_links';
 const orderedDirs = () => {
   const dirs = readdirSync(migrationsDir, { withFileTypes: true })
     .filter((x) => x.isDirectory())
@@ -149,6 +151,10 @@ const calendarEventsSql = readFileSync(
   resolve(migrationsDir, CALENDAR_EVENTS_MIGRATION, 'migration.sql'),
   'utf8',
 );
+const calendarEventLinksSql = readFileSync(
+  resolve(migrationsDir, CALENDAR_EVENT_LINKS_MIGRATION, 'migration.sql'),
+  'utf8',
+);
 const meetingEmbeddingsSql = readFileSync(
   resolve(migrationsDir, MEETING_EMBEDDINGS_MIGRATION, 'migration.sql'),
   'utf8',
@@ -164,6 +170,7 @@ const adr010Sql =
   notificationsSql +
   calendarSql +
   calendarEventsSql +
+  calendarEventLinksSql +
   meetingEmbeddingsSql +
   meetingConsentSql;
 /** Phase 3 per-recording transcript revision migration. */
@@ -208,6 +215,7 @@ const ADR010_ONLY_TABLES: readonly string[] = [
   'calendar_events',
   'meeting_embeddings',
   'meeting_consent_events',
+  'calendar_event_links',
 ];
 /** DB-3: append-only tenant tables with their own SELECT/INSERT policies (ADR-010 setting) in consentSql. */
 const CONSENT_TABLES: readonly string[] = ['consent_attestations'];
@@ -733,7 +741,7 @@ describe('schema conventions', () => {
   });
 
   it('every model uses a uuid primary key', () => {
-    expect(models).toHaveLength(44);
+    expect(models).toHaveLength(45);
     for (const m of models.filter((x) => !ORGANIZATION_KEYED.includes(x.table)))
       expect(m.body, m.name).toMatch(/^\s+id\s+String\s+@id @default\(uuid\(\)\) @db\.Uuid$/m);
   });
@@ -1831,6 +1839,45 @@ describe('Phase 7 calendar_events + sync cursor (static)', () => {
     );
     expect(statements).toContain(
       'GRANT EXECUTE ON FUNCTION calendar_events_purge_for_connection(uuid, uuid) TO meetops_app;',
+    );
+  });
+});
+
+describe('Phase 7 calendar_event_links (static)', () => {
+  const statements = calendarEventLinksSql.replace(/--.*$/gm, '');
+  const model = models.find((m) => m.name === 'CalendarEventLink')?.body ?? '';
+
+  it('is additive only, forces RLS with an ADR-010 tenant policy and is a registered tenant table', () => {
+    expect(statements).not.toMatch(
+      /\bDROP (TABLE|COLUMN|FUNCTION)\b|RENAME|ALTER COLUMN|NO FORCE|DISABLE ROW LEVEL SECURITY/i,
+    );
+    expect(TENANT_TABLES).toContain('calendar_event_links');
+    expect(statements).toContain('ALTER TABLE "calendar_event_links" FORCE ROW LEVEL SECURITY;');
+    expect(statements).toContain(`USING (org_id = ${ADR010_EXPR})`);
+    expect(statements).toContain(`WITH CHECK (org_id = ${ADR010_EXPR})`);
+    expect(statements).toContain(
+      'GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "calendar_event_links" TO meetops_app;',
+    );
+    expect(statements).toContain(
+      'REVOKE TRUNCATE ON TABLE "calendar_event_links" FROM meetops_app;',
+    );
+  });
+
+  it('can only point at a connection and a meeting of the same organization (composite FKs)', () => {
+    expect(statements).toContain(
+      'FOREIGN KEY ("org_id", "connection_id") REFERENCES "calendar_connections"("org_id", "id")',
+    );
+    expect(statements).toContain(
+      'FOREIGN KEY ("org_id", "meeting_id") REFERENCES "meetings"("org_id", "id")',
+    );
+    expect(model).toMatch(
+      /fields: \[organizationId, meetingId\], references: \[organizationId, id\]/,
+    );
+    expect(model).toMatch(
+      /fields: \[organizationId, connectionId\], references: \[organizationId, id\]/,
+    );
+    expect(statements).toContain(
+      'CREATE UNIQUE INDEX "calendar_event_links_org_id_connection_id_provider_event_id_key"',
     );
   });
 });
