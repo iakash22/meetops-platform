@@ -21,8 +21,10 @@ served by `apps/api/src/modules/integrations/index.ts`.
 
 The callback is built as `${INTEGRATIONS_API_ORIGIN}/integrations/<provider>/callback`. The provider app must use
 exactly that URL; the server never accepts a user-supplied redirect host. The worker (token refresh, calendar
-sync) builds the same URIs; under `NODE_ENV=production` it requires `INTEGRATIONS_API_ORIGIN` (bare `https://`
-origin, no localhost default) and fails startup with a clear error when it is missing or not https.
+sync) builds the same URIs. Unless `NODE_ENV` is exactly `development` or `test` (production, staging, an unset
+`NODE_ENV` or any other value) it requires `INTEGRATIONS_API_ORIGIN` (bare `https://` origin, no localhost default)
+and fails startup with a clear error when it is missing or not https. In development/test an unset value defaults
+to `http://localhost:4000`, which is not the API's default port (3000), so set it explicitly for local OAuth.
 
 ## 2. Public URL with a free tunnel (cloudflared quick tunnel)
 

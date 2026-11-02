@@ -8,18 +8,30 @@ import {
   TokenCipher,
 } from '@meetops/integrations';
 import { createIntegrationConnectionRepository } from '@meetops/database';
-import { randomUUID } from 'node:crypto';
 import { createQueue, createRedisClient, createWorker } from '@meetops/queue';
 import { IntegrationsApiOriginError, integrationsApiOrigin } from './api-origin.js';
 import {
-  LeaseTimeoutError,
-  TOKEN_REFRESH_LEASE_OP_TIMEOUT_MS,
+  CONFIRM_LEASE_LUA,
+  createRedisConnectionLease,
+  LEASE_REDIS_OPTIONS,
+  RELEASE_LEASE_LUA,
+  type LeaseRedis,
+} from '@meetops/integrations';
+import {
   runTokenRefreshSweep,
-  type ConnectionLease,
   type TokenRefreshDeps,
   type TokenRefreshLog,
   type TokenRefreshProviders,
 } from './token-refresh.js';
+
+// Lease primitives live in @meetops/integrations (shared with the API); re-exported for existing imports.
+export {
+  CONFIRM_LEASE_LUA,
+  createRedisConnectionLease,
+  LEASE_REDIS_OPTIONS,
+  RELEASE_LEASE_LUA,
+  type LeaseRedis,
+};
 
 export class TokenRefreshEnvError extends Error {}
 
@@ -107,81 +119,6 @@ export function tokenRefreshProvidersFromEnv(
   }
   return providers;
 }
-
-/** Compare-and-delete: release the lease only while it still holds this owner's token (atomic in Redis). */
-export const RELEASE_LEASE_LUA = `if redis.call('GET', KEYS[1]) == ARGV[1] then
-  return redis.call('DEL', KEYS[1])
-end
-return 0`;
-
-/**
- * Compare-and-renew: while the lease still holds this owner's token, reset its TTL to ARGV[2] ms and return 1;
- * otherwise return 0 (it expired, and maybe someone else holds it now). Atomic in Redis.
- */
-export const CONFIRM_LEASE_LUA = `if redis.call('GET', KEYS[1]) == ARGV[1] then
-  return redis.call('PEXPIRE', KEYS[1], ARGV[2])
-end
-return 0`;
-
-/** Minimal ioredis surface the lease needs. */
-export interface LeaseRedis {
-  set(key: string, value: string, px: 'PX', ttlMs: number, nx: 'NX'): Promise<'OK' | null>;
-  eval(script: string, numKeys: number, ...args: string[]): Promise<unknown>;
-}
-
-/**
- * Per-connection lease on Redis: `SET key <random token> PX ttl NX` takes it (atomic, auto-expiring), and release
- * runs RELEASE_LEASE_LUA so a holder whose lease expired can never delete the next holder's lease, and confirm
- * runs CONFIRM_LEASE_LUA (ownership check + renewal) right before the holder writes. Every call is bounded by
- * `opTimeoutMs` (LeaseTimeoutError), so an unreachable Redis fails fast instead of hanging the sweep.
- */
-export function createRedisConnectionLease(
-  redis: LeaseRedis,
-  newToken: () => string = randomUUID,
-  opTimeoutMs: number = TOKEN_REFRESH_LEASE_OP_TIMEOUT_MS,
-): ConnectionLease {
-  const bounded = async <T>(p: Promise<T>): Promise<T> => {
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const timeout = new Promise<never>((_, reject) => {
-      timer = setTimeout(() => reject(new LeaseTimeoutError()), opTimeoutMs);
-    });
-    try {
-      return await Promise.race([p, timeout]);
-    } finally {
-      clearTimeout(timer);
-    }
-  };
-  const checkTtl = (ttlMs: number) => {
-    if (!Number.isInteger(ttlMs) || ttlMs <= 0)
-      throw new RangeError('ttlMs must be a positive integer');
-  };
-  return {
-    async acquire(key, ttlMs) {
-      checkTtl(ttlMs);
-      const token = newToken();
-      return (await bounded(redis.set(key, token, 'PX', ttlMs, 'NX'))) === 'OK' ? token : null;
-    },
-    async confirm(key, token, ttlMs) {
-      checkTtl(ttlMs);
-      return (
-        Number(await bounded(redis.eval(CONFIRM_LEASE_LUA, 1, key, token, String(ttlMs)))) === 1
-      );
-    },
-    async release(key, token) {
-      return Number(await bounded(redis.eval(RELEASE_LEASE_LUA, 1, key, token))) === 1;
-    },
-  };
-}
-
-/**
- * ioredis options for the lease connection: fail fast instead of queueing commands forever while Redis is down
- * (the queue default, maxRetriesPerRequest: null, is right for BullMQ but would hang every lease call).
- */
-export const LEASE_REDIS_OPTIONS = {
-  maxRetriesPerRequest: 1,
-  commandTimeout: TOKEN_REFRESH_LEASE_OP_TIMEOUT_MS,
-  connectTimeout: 5_000,
-} as const;
 
 /** Logs a Redis outage once (error name only) until the connection is ready again; ioredis keeps reconnecting. */
 export function watchLeaseRedis(
