@@ -179,8 +179,11 @@ export function makeGuards(auth: AuthService, cfg: HttpSecurityConfig) {
   };
 
   /** Issue a CSRF token bound to a known session (after login / rotation). */
-  const issueCsrfForSession = (reply: FastifyReply, sessionId: string) =>
-    setCsrfCookie(reply, signCsrf(cfg.csrfSecret, `s:${sessionId}`));
+  /** R17: a new session (login, org switch/create) gets a fresh token; the pre-session nonce is retired with it. */
+  const issueCsrfForSession = (reply: FastifyReply, sessionId: string) => {
+    reply.clearCookie(cfg.preSessionCookieName, preSessionCookie);
+    return setCsrfCookie(reply, signCsrf(cfg.csrfSecret, `s:${sessionId}`));
+  };
 
   /** GET /auth/csrf: bind to the current session, or to a (new) pre-session nonce cookie. */
   const issueCsrf = async (request: FastifyRequest, reply: FastifyReply) => {

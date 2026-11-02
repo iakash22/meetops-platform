@@ -48,7 +48,7 @@ describe('P9 R5: error responses never leak internals', () => {
 
   it.each([
     ['malformed JSON', '{"name":', 'application/json', 400],
-    ['non-JSON body', 'name=a', 'text/plain', 400],
+    ['non-JSON body (R16)', 'name=a', 'text/plain', 415],
     ['schema violation', JSON.stringify({ email: 1 }), 'application/json', 400],
     ['oversized body', JSON.stringify({ name: 'x'.repeat(2_000_000) }), 'application/json', 413],
   ])('%s → %i with the error envelope', async (_n, payload, type, status) => {
