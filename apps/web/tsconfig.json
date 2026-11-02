@@ -16,6 +16,7 @@
     "src",
     "test",
     "vite.config.ts",
+    "csp.config.ts",
     "tailwind.config.ts",
     "postcss.config.js",
     "index.html"
