@@ -3,6 +3,7 @@ import {
   InMemoryDeliveryStore,
   InMemoryOAuthStateStore,
   LocalKeyProvider,
+  parseOutlookTenant,
   parseSharedKek,
   TokenCipher,
   constantTimeEqual,
@@ -158,9 +159,10 @@ export function integrationsRuntimeFromEnv(
       clientSecret: async () => secret,
     };
   }
+  // Validated even without a client: a malformed tenant fails startup (OutlookTenantError), not the first connect.
+  const tenant = parseOutlookTenant(env.OUTLOOK_CALENDAR_TENANT);
   if (env.OUTLOOK_CALENDAR_CLIENT_ID && env.OUTLOOK_CALENDAR_CLIENT_SECRET) {
     const secret = env.OUTLOOK_CALENDAR_CLIENT_SECRET;
-    const tenant = env.OUTLOOK_CALENDAR_TENANT?.trim();
     over.outlookCalendar = {
       clientId: env.OUTLOOK_CALENDAR_CLIENT_ID,
       clientSecret: async () => secret,
