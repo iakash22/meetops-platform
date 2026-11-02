@@ -1,17 +1,24 @@
 package expo.modules.chunkcrypto
 
 import android.annotation.SuppressLint
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.MediaCodec
 import android.media.MediaCodecInfo
 import android.media.MediaFormat
 import android.media.MediaRecorder
+import androidx.core.content.ContextCompat
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
 import java.io.File
 import java.io.FileOutputStream
 import java.io.RandomAccessFile
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 
 /**
  * Android segment recorder (R5, ADR-015). One continuous AudioRecord -> MediaCodec AAC-LC stream, written as ADTS
@@ -31,6 +38,14 @@ class SegmentRecorderModule : Module() {
     private const val BIT_RATE = 64_000
     private const val SAMPLES_PER_FRAME = 1024
     private const val JOURNAL = "segments.txt"
+    /**
+     * Written durably the moment a native Stop (notification Stop, swipe-away) is handled, before sealing. A launch
+     * that finds it keeps the recording (sealed via recover(), held) instead of discarding it as an interrupted
+     * capture: the user asked to stop, so a kill during the seal must not lose the recording.
+     */
+    const val STOPPED_SENTINEL = "stopped"
+    /** Must match RecordingForegroundService.ACTION_CAPTURE_STOP (modules/recording-service). */
+    const val ACTION_CAPTURE_STOP = "expo.modules.recordingservice.CAPTURE_STOP"
     /** ADTS sampling_frequency_index for 44.1 kHz. */
     private const val FREQ_INDEX = 4
     private const val CHANNELS = 1
@@ -52,6 +67,59 @@ class SegmentRecorderModule : Module() {
   }
 
   @Volatile private var session: Session? = null
+
+  /** A native Stop in progress or done, for the JS stop() that follows it. */
+  private class NativeStop(val dir: File) {
+    val done = CountDownLatch(1)
+    @Volatile var failure: Throwable? = null
+  }
+  @Volatile private var nativeStop: NativeStop? = null
+  private var receiver: BroadcastReceiver? = null
+
+  private fun registerStopReceiver() {
+    val ctx = appContext.reactContext?.applicationContext ?: return
+    unregisterStopReceiver()
+    val r = object : BroadcastReceiver() {
+      override fun onReceive(c: Context?, i: Intent?) {
+        if (i?.action == ACTION_CAPTURE_STOP) stopNatively()
+      }
+    }
+    ContextCompat.registerReceiver(ctx, r, IntentFilter(ACTION_CAPTURE_STOP), ContextCompat.RECEIVER_NOT_EXPORTED)
+    receiver = r
+  }
+
+  private fun unregisterStopReceiver() {
+    val r = receiver ?: return
+    receiver = null
+    try { appContext.reactContext?.applicationContext?.unregisterReceiver(r) } catch (_: Exception) {}
+  }
+
+  /**
+   * Native Stop: no JS needed. Takes the session (so a later JS stop() waits for this one instead of failing),
+   * writes the sentinel, then closes the mic and seals off the main thread.
+   */
+  private fun stopNatively() {
+    val s = synchronized(this) {
+      val cur = session ?: return
+      session = null
+      NativeStop(cur.dir).also { nativeStop = it } to cur
+    }
+    unregisterStopReceiver()
+    val (ns, cur) = s
+    try { ChunkSealer.writeDurably(File(cur.dir, STOPPED_SENTINEL), ByteArray(0)) } catch (_: Exception) {}
+    Thread({
+      try {
+        shutdown(cur, 5_000)
+        recoverParts(cur.dir)
+        check(plaintextLeft(cur.dir).isEmpty()) { "Plaintext segment could not be removed" }
+        cur.failure?.let { throw it }
+      } catch (t: Throwable) {
+        ns.failure = t
+      } finally {
+        ns.done.countDown()
+      }
+    }, "meetops-segment-native-stop").start()
+  }
 
   private fun adtsHeader(frameLen: Int): ByteArray {
     val len = frameLen + 7
@@ -258,6 +326,7 @@ class SegmentRecorderModule : Module() {
     @SuppressLint("MissingPermission") // JS checks RECORD_AUDIO (canRecord) before begin; AudioRecord fails closed.
     AsyncFunction("start") { dir: String, segmentMs: Int ->
       check(session == null) { "Already recording" }
+      nativeStop?.let { check(it.done.count == 0L) { "Previous capture still stopping" } }
       require(segmentMs in 1_000..60_000) { "segmentMs out of range" }
       ChunkSealer.key() // fail closed before the mic opens
       val d = File(ChunkSealer.pathOf(dir)).apply { mkdirs() }
@@ -282,7 +351,9 @@ class SegmentRecorderModule : Module() {
         throw e
       }
       s.thread = Thread({ loop(s) }, "meetops-segment-recorder").apply { start() }
+      nativeStop = null
       session = s
+      registerStopReceiver()
     }
 
     Function("pause") { session?.let { it.paused = true; try { it.record.stop() } catch (_: Exception) {} } }
@@ -296,8 +367,16 @@ class SegmentRecorderModule : Module() {
     // plaintext is left: a segment the thread didn't finish (join timeout, failure) is sealed here or securely
     // deleted, and if plaintext still remains the stop fails.
     AsyncFunction("stop") {
-      val s = session ?: throw IllegalStateException("Not recording")
-      session = null
+      unregisterStopReceiver()
+      val s = synchronized(this@SegmentRecorderModule) { session.also { session = null } }
+      if (s == null) {
+        // A native Stop already took the session: wait for its seal, then report the same chunks.
+        val ns = nativeStop ?: throw IllegalStateException("Not recording")
+        check(ns.done.await(30, TimeUnit.SECONDS)) { "Native stop timed out" }
+        nativeStop = null
+        ns.failure?.let { throw it }
+        return@AsyncFunction chunks(ns.dir)
+      }
       shutdown(s, 15_000)
       recoverParts(s.dir)
       check(plaintextLeft(s.dir).isEmpty()) { "Plaintext segment could not be removed" }
@@ -308,14 +387,25 @@ class SegmentRecorderModule : Module() {
     // Logout / failed begin: writes stop first (closed under the lock), the thread is joined (bounded), then the
     // folder is deleted, so no late write can recreate a file in it.
     AsyncFunction("abort") {
-      val s = session
-      session = null
+      unregisterStopReceiver()
+      val s = synchronized(this@SegmentRecorderModule) { session.also { session = null } }
+      nativeStop?.let { ns ->
+        // Logout during a native Stop: let its writes finish, then the folder goes.
+        ns.done.await(30, TimeUnit.SECONDS)
+        nativeStop = null
+        ns.dir.deleteRecursively()
+      }
       if (s != null) {
         shutdown(s, 10_000)
         plaintextLeft(s.dir).forEach { secureDelete(it) }
         s.dir.deleteRecursively()
       }
     }
+
+    // Launch: did a native Stop (notification Stop, swipe-away) begin for this capture before it was killed?
+    Function("stoppedNatively") { dir: String -> File(ChunkSealer.pathOf(dir), STOPPED_SENTINEL).exists() }
+
+    OnDestroy { unregisterStopReceiver() }
 
     // After a kill during Stop: seal what the leftover segment holds and list every chunk.
     AsyncFunction("recover") { dir: String ->

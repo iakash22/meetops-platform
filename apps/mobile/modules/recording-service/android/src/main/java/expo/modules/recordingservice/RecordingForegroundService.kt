@@ -35,6 +35,12 @@ class RecordingForegroundService : Service() {
 
     const val ACTION_START = "expo.modules.recordingservice.START"
     const val ACTION_STOP = "expo.modules.recordingservice.STOP"
+    /**
+     * Package-local broadcast to the native recorder (chunk-crypto SegmentRecorderModule) on a native Stop: it closes
+     * the mic and seals the open segment itself, so ending capture never waits on JS. Same string on both sides
+     * (the modules don't depend on each other).
+     */
+    const val ACTION_CAPTURE_STOP = "expo.modules.recordingservice.CAPTURE_STOP"
     private const val CHANNEL = "meetops_recording"
     const val NOTIFICATION_ID = 4711
     @Volatile var running = false
@@ -53,6 +59,8 @@ class RecordingForegroundService : Service() {
     @Volatile private var cancelRequested = false
     /** How long JS gets to end capture after a native Stop (notification, swipe-away) before native ends it. */
     const val JS_STOP_GRACE_MS = 3000L
+    /** Without JS: time for the native recorder to seal before the process-kill fallback (recovery covers the rest). */
+    const val NATIVE_STOP_GRACE_MS = 5000L
     private val main = Handler(Looper.getMainLooper())
     private var watchdog: Runnable? = null
 
@@ -71,15 +79,16 @@ class RecordingForegroundService : Service() {
 
     /**
      * Native-driven Stop (R7): capture must end even when JS is gone (app swiped away, JS runtime torn down) or
-     * never answers. If JS has no listener, or doesn't call stop() within the grace period, the process is ended:
-     * expo-audio's recorder lives in this process, so that is the only native way to close the mic. The unfinalized
-     * file is then discarded by the next launch's recovery (marker phase "recording"). Never resumes.
+     * never answers. The native segment recorder is told directly (ACTION_CAPTURE_STOP) and stops and seals on its
+     * own. As a last resort, if JS doesn't call stop() within the grace period, the process is ended (the only way
+     * to close an expo-audio mic); the segment recorder's "stopped" sentinel then lets the next launch keep the
+     * sealed recording (held) instead of discarding it. Never resumes.
      */
     @Synchronized fun armWatchdog(jsListening: Boolean) {
       cancelWatchdog()
       val kill = Runnable { Process.killProcess(Process.myPid()) }
       watchdog = kill
-      main.postDelayed(kill, if (jsListening) JS_STOP_GRACE_MS else 0L)
+      main.postDelayed(kill, if (jsListening) JS_STOP_GRACE_MS else NATIVE_STOP_GRACE_MS)
     }
 
     @Synchronized fun resetStopLatch() {
@@ -171,6 +180,12 @@ class RecordingForegroundService : Service() {
   /** Notification Stop or swipe-away: indicator goes now; JS ends capture, or the watchdog does. */
   private fun nativeStop() {
     val jsListening = onStop != null
+    // Close the mic natively first: no JS round trip (swipe-away with a dead JS runtime included).
+    try {
+      sendBroadcast(Intent(ACTION_CAPTURE_STOP).setPackage(packageName))
+    } catch (_: Exception) {
+      // Broadcast failed: the watchdog below still ends capture.
+    }
     notifyStopOnce(lost = false)
     stopRequestedByApp = true
     running = false

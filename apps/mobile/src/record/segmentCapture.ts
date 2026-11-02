@@ -15,12 +15,24 @@ export interface SegmentRecorder {
   abort(): Promise<void>;
   /** Seals a leftover plaintext segment (trimmed to whole ADTS frames) and lists every chunk. */
   recover(dir: string): Promise<LocalChunk[]>;
+  /**
+   * True when a native Stop (notification Stop or swipe-away, handled without JS) began for this folder before the
+   * process died. Absent on older native builds.
+   */
+  stoppedNatively?(dir: string): boolean;
 }
 
 /** 10 s segments: at most ~10 s of audio is ever plaintext; 4 h is ~1,440 chunks (MAX_CHUNKS is 10,000). */
 export const SEGMENT_MS = 10_000;
 export const SEGMENT_MIME = 'audio/aac' as const;
 const MAX_SEAL_ATTEMPTS = 3;
+const safe = (f: () => boolean) => {
+  try {
+    return f();
+  } catch {
+    return false;
+  }
+};
 
 export interface SegmentCaptureOptions {
   /** Mic (and Android 13+ notification) permission already granted. */
@@ -165,6 +177,18 @@ export function createSegmentCapture(
               await store.setMarker(null).catch(() => undefined);
             }
           }
+        } else if (marker && id && safe(() => native.stoppedNatively?.(marker.uri) === true)) {
+          // The user stopped natively (notification Stop / swipe-away) and the app died before JS finished Stop:
+          // a stop, not an interruption. Keep it, sealed and held (no draft was saved yet), never resumed.
+          try {
+            const chunks = await native.recover(marker.uri);
+            if (chunks.length === 0) throw new Error('Nothing recorded.');
+            await store.writeManifest(id, chunks);
+            await store.setHeld([...new Set([...(await store.held()), id])]);
+          } catch {
+            await store.remove(id).catch(() => undefined);
+          }
+          await store.setMarker(null).catch(() => undefined);
         } else if (marker) {
           // Killed while still recording: discard every segment (R7), sealed or not.
           if (id) await store.remove(id).catch(() => undefined);

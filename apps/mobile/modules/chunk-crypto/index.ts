@@ -36,6 +36,8 @@ export interface SegmentRecorderNative {
   stop(): Promise<SegmentChunk[]>;
   abort(): Promise<void>;
   recover(dir: string): Promise<SegmentChunk[]>;
+  /** A native Stop (notification Stop, swipe-away) began for this capture folder. Absent on older builds. */
+  stoppedNatively?(dir: string): boolean;
 }
 
 export const SegmentRecorderModule =
