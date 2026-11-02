@@ -104,7 +104,14 @@ describe('runCalendarSyncSweep', () => {
       now: () => NOW,
       random: () => 0.5,
     });
-    expect(r).toEqual({ synced: 1, failed: 0, skipped: 0, upserted: 2, cancelled: 1 });
+    expect(r).toEqual({
+      synced: 1,
+      failed: 0,
+      skipped: 0,
+      upserted: 2,
+      cancelled: 1,
+      autoLinked: 0,
+    });
     expect(p.refresh).not.toHaveBeenCalled();
     expect(p.listEvents).toHaveBeenCalledWith({
       accessToken: 'access-placeholder',

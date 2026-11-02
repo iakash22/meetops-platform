@@ -119,6 +119,8 @@ const CALENDAR_OUTLOOK_PROVIDER_MIGRATION = '20261102000000_calendar_outlook_pro
 /** Background sync: per-connection incremental cursor columns (additive). */
 const CALENDAR_SYNC_CURSOR_MIGRATION = '20261103000000_calendar_sync_cursor';
 const LATEST_MIGRATION = CALENDAR_SYNC_CURSOR_MIGRATION;
+/** Auto-link: calendar_event_links.source + unlinked_at tombstone (additive, stacked on the sync cursor). */
+const CALENDAR_AUTO_LINK_MIGRATION = '20261103120000_calendar_event_links_auto';
 /**
  * Parallel PRs that sort between calendar_events and meeting_embeddings (#334 consent events, #341 calendar links).
  * The order checks below ignore them so they hold whichever merges first; when present they must sort before ours.
@@ -151,9 +153,15 @@ const orderedDirs = () => {
     expect(dirs.indexOf(CALENDAR_OUTLOOK_PROVIDER_MIGRATION)).toBe(
       dirs.indexOf(CALENDAR_SYNC_CURSOR_MIGRATION) - 1,
     );
+  // The auto-link columns sort right after the sync cursor; the positional checks ignore them.
+  if (dirs.includes(CALENDAR_AUTO_LINK_MIGRATION))
+    expect(dirs.indexOf(CALENDAR_AUTO_LINK_MIGRATION)).toBe(
+      dirs.indexOf(CALENDAR_SYNC_CURSOR_MIGRATION) + 1,
+    );
   return dirs.filter(
     (d) =>
       d !== TASK_SYNC_MIGRATION &&
+      d !== CALENDAR_AUTO_LINK_MIGRATION &&
       d !== CALENDAR_OUTLOOK_PROVIDER_MIGRATION &&
       !(PARALLEL_MIGRATIONS as readonly string[]).includes(d),
   );
@@ -1947,5 +1955,18 @@ describe('Phase 7 meeting_embeddings (static)', () => {
       'CREATE INDEX "meeting_embeddings_org_id_model_idx" ON "meeting_embeddings"("org_id", "model");',
     );
     expect(model).toContain('Unsupported("vector(1536)")');
+  });
+});
+
+describe('calendar auto-link columns (20261103120000, static)', () => {
+  const sql = readFileSync(
+    resolve(migrationsDir, CALENDAR_AUTO_LINK_MIGRATION, 'migration.sql'),
+    'utf8',
+  ).replace(/--.*$/gm, '');
+  it('is additive: only ADD COLUMN / ADD CONSTRAINT on calendar_event_links', () => {
+    expect(sql).not.toMatch(/\b(DROP|TRUNCATE|DELETE|DISABLE|NO FORCE)\b/i);
+    expect(sql).toMatch(/ADD COLUMN "?source"? TEXT NOT NULL DEFAULT 'manual'/i);
+    expect(sql).toMatch(/CHECK \("?source"? IN \('manual', ?'auto'\)\)/i);
+    expect(sql).toMatch(/ADD COLUMN "?unlinked_at"? TIMESTAMPTZ\(3\)/i);
   });
 });

@@ -64,6 +64,71 @@ const ENVELOPE_RE = /^v1\.([A-Za-z0-9_-]+)\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/;
 const HTTPS = (v: string | undefined) => (v && /^https:\/\//.test(v) ? v.slice(0, 2048) : null);
 const STATUSES = new Set(['confirmed', 'tentative', 'cancelled']);
 
+const MAX_EXTERNAL_ID_LEN = 255;
+
+/**
+ * Calendar auto-link, inside applySync's org-scoped (forced RLS) transaction. For each candidate event that is live in
+ * this sync (not cancelled) and whose externalMeetingId matches exactly ONE live meeting of the organization (the
+ * same rule as the API's suggestedMeetingId), insert a link with source='auto' unless ANY row already exists for
+ * (connection, event): a manual link, an earlier auto link, or a link a user removed (unlinked_at set). ON CONFLICT
+ * DO NOTHING makes it idempotent and race-safe against a concurrent manual link. Each inserted link writes one
+ * audit_events row (action calendar.link, actor_type system, target the connection), like the API's manual link.
+ */
+async function autoLinkInTx(
+  tx: Prisma.TransactionClient,
+  organizationId: string,
+  connectionId: string,
+  userId: string,
+  candidates: { eventId: string; externalMeetingId: string }[],
+  live: Set<string>,
+): Promise<number> {
+  const byEvent = new Map<string, string>();
+  for (const c of candidates)
+    if (
+      live.has(c.eventId) &&
+      c.externalMeetingId &&
+      c.externalMeetingId.length <= MAX_EXTERNAL_ID_LEN &&
+      !byEvent.has(c.eventId)
+    )
+      byEvent.set(c.eventId, c.externalMeetingId);
+  if (byEvent.size === 0) return 0;
+  const ext = [...new Set(byEvent.values())];
+  const rows = await tx.meeting.findMany({
+    where: { organizationId, deletedAt: null, externalMeetingId: { in: ext } },
+    select: { id: true, externalMeetingId: true },
+    take: ext.length * 4,
+  });
+  const seen = new Map<string, string | null>();
+  for (const r of rows)
+    if (r.externalMeetingId)
+      seen.set(r.externalMeetingId, seen.has(r.externalMeetingId) ? null : r.id);
+  const audits: Prisma.AuditEventCreateManyInput[] = [];
+  for (const [eventId, x] of byEvent) {
+    const meetingId = seen.get(x);
+    if (!meetingId) continue; // no match, or ambiguous (two or more live meetings share the id)
+    const inserted = await tx.$queryRaw<{ id: string }[]>`
+      INSERT INTO calendar_event_links
+        (id, org_id, connection_id, user_id, provider_event_id, meeting_id, source, created_at, updated_at)
+      VALUES (${randomUUID()}::uuid, ${organizationId}::uuid, ${connectionId}::uuid, ${userId}::uuid, ${eventId},
+              ${meetingId}::uuid, 'auto', now(), now())
+      ON CONFLICT (org_id, connection_id, provider_event_id) DO NOTHING
+      RETURNING id`;
+    if (inserted.length === 0) continue;
+    audits.push({
+      organizationId,
+      actorId: null,
+      actorType: 'system',
+      action: 'calendar.link',
+      targetType: 'calendar_connection',
+      targetId: connectionId,
+      metadata: { meetingId, source: 'auto' },
+    });
+  }
+  // createMany (no RETURNING): audit_events is insert-only for the app role.
+  if (audits.length) await tx.auditEvent.createMany({ data: audits });
+  return audits.length;
+}
+
 export function createCalendarSyncRepository(options: CalendarSyncRepositoryOptions = {}) {
   const client = () => options.client ?? getPrismaClient();
   const run = <T>(organizationId: string, fn: (tx: Prisma.TransactionClient) => Promise<T>) =>
@@ -305,8 +370,13 @@ export function createCalendarSyncRepository(options: CalendarSyncRepositoryOpti
         removedIds?: string[];
         /** undefined = leave the stored cursor; null = clear it; a value = store it (encrypted) for [from, to). */
         cursor?: string | null;
+        /**
+         * Auto-link candidates (CALENDAR_AUTO_LINK_ENABLED): provider event id -> externalMeetingId derived from its
+         * conference URL. Applied in the same lease-guarded transaction; see autoLinkInTx.
+         */
+        autoLink?: { eventId: string; externalMeetingId: string }[];
       },
-    ): Promise<{ upserted: number; cancelled: number; applied: boolean }> {
+    ): Promise<{ upserted: number; cancelled: number; applied: boolean; autoLinked: number }> {
       const { connectionId, from, to, now } = input;
       if (!UUID_RE.test(connectionId) || !(to > from)) throw new Error('invalid sync input');
       if (input.nextSyncAt === undefined && input.nextSyncInMs === undefined)
@@ -324,14 +394,16 @@ export function createCalendarSyncRepository(options: CalendarSyncRepositoryOpti
              WHERE id = ${connectionId}::uuid AND org_id = ${organizationId}::uuid AND status = 'active'
                AND next_sync_at = ${input.lease}::timestamptz
              FOR UPDATE`;
-          if (held.length === 0) return { upserted: 0, cancelled: 0, applied: false };
+          if (held.length === 0)
+            return { upserted: 0, cancelled: 0, applied: false, autoLinked: 0 };
         }
         const conn = await tx.calendarConnection.findFirst({
           where: { id: connectionId, organizationId, status: 'active' },
           select: { userId: true, provider: true },
         });
-        if (!conn) return { upserted: 0, cancelled: 0, applied: false };
+        if (!conn) return { upserted: 0, cancelled: 0, applied: false, autoLinked: 0 };
         const seen = new Set<string>();
+        const live = new Set<string>();
         let upserted = 0;
         for (const e of input.events) {
           const startsAt = new Date(e.startsAt);
@@ -379,6 +451,7 @@ export function createCalendarSyncRepository(options: CalendarSyncRepositoryOpti
             update: data,
           });
           upserted++;
+          if (e.status !== 'cancelled') live.add(e.id);
         }
         let cancelled = 0;
         if (input.complete) {
@@ -431,7 +504,10 @@ export function createCalendarSyncRepository(options: CalendarSyncRepositoryOpti
                SET next_sync_at = clock_timestamp() + (${ms}::int * interval '1 millisecond')
              WHERE id = ${connectionId}::uuid AND org_id = ${organizationId}::uuid AND status = 'active'`;
         }
-        return { upserted, cancelled, applied: true };
+        const autoLinked = input.autoLink?.length
+          ? await autoLinkInTx(tx, organizationId, connectionId, conn.userId, input.autoLink, live)
+          : 0;
+        return { upserted, cancelled, applied: true, autoLinked };
       });
     },
 

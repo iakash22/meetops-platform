@@ -1520,14 +1520,18 @@ model TaskSyncJob {
 /// Phase 7: a calendar event (by provider event id, per connection) linked to a meeting of the same organization by
 /// the owner of the calendar connection. Forced RLS (ADR-010); composite tenant FKs (migration 20261031040000).
 model CalendarEventLink {
-  id              String   @id @default(uuid()) @db.Uuid
-  organizationId  String   @map("org_id") @db.Uuid
-  connectionId    String   @map("connection_id") @db.Uuid
-  userId          String   @map("user_id") @db.Uuid
-  providerEventId String   @map("provider_event_id")
-  meetingId       String   @map("meeting_id") @db.Uuid
-  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt       DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+  id              String    @id @default(uuid()) @db.Uuid
+  organizationId  String    @map("org_id") @db.Uuid
+  connectionId    String    @map("connection_id") @db.Uuid
+  userId          String    @map("user_id") @db.Uuid
+  providerEventId String    @map("provider_event_id")
+  meetingId       String    @map("meeting_id") @db.Uuid
+  /// 'manual' (API) | 'auto' (worker auto-link). CHECK in migration 20261103120000.
+  source          String    @default("manual")
+  /// Set when a user unlinks (soft delete): readers treat the row as absent and auto-link never recreates it.
+  unlinkedAt      DateTime? @map("unlinked_at") @db.Timestamptz(3)
+  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt       DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   organization Organization       @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   connection   CalendarConnection @relation(fields: [organizationId, connectionId], references: [organizationId, id], onDelete: Cascade)
