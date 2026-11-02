@@ -93,7 +93,7 @@ export function InviteForm({
               label="Role"
               name="role"
               value={field.value}
-              onValueChange={(v) => field.onChange(v as InvitableRole)}
+              onValueChange={field.onChange}
               options={roles.map((r) => ({ value: r, label: ROLE_LABEL[r] }))}
             />
           )}
