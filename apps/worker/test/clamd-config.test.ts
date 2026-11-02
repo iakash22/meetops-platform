@@ -34,9 +34,15 @@ function clamdBytes(v: string): number {
 const clamd = parseConf(read('infra/clamav/clamd.conf'));
 const freshclam = parseConf(read('infra/clamav/freshclam.conf'));
 const compose = read('infra/compose/compose.app.yml');
-/** The `clamav:` service block of compose.app.yml (up to the next top-level service). */
-const clamavService =
-  /\n {2}clamav:\n([\s\S]*?)\n {2}(?:#.*\n {2})*[a-z-]+:\n/.exec(compose)?.[1] ?? '';
+const composeDev = read('infra/compose/compose.dev.yml');
+/** A service block of compose.app.yml (up to the next top-level service or key). */
+const serviceBlock = (name: string) =>
+  new RegExp(`\\n {2}${name}:\\n([\\s\\S]*?)\\n(?: {2}(?:#.*\\n {2})*[a-z-]+:|[a-z]+:)\\n`).exec(
+    compose,
+  )?.[1] ?? '';
+const clamavService = serviceBlock('clamav');
+const freshclamService = serviceBlock('clamav-freshclam');
+const workerService = serviceBlock('worker');
 
 describe('clamd sidecar config (MAL-1, ADR-018)', () => {
   it('parses 1400M as 1_468_006_400 bytes (clamd M = MiB)', () => {
@@ -73,19 +79,68 @@ describe('clamd sidecar config (MAL-1, ADR-018)', () => {
     expect(clamavService).toMatch(/\n {4}image: clamav\/clamav:1\.4\.\d+@sha256:[0-9a-f]{64}\n/);
   });
 
-  it('updates signatures daily and mounts both config files read-only', () => {
+  it('updates signatures daily in clamav-freshclam and mounts each config read-only where used', () => {
     expect(freshclam.get('Checks')).toBe('1');
-    expect(freshclam.get('NotifyClamd')).toBe('/etc/clamav/clamd.conf');
-    expect(clamavService).toMatch(/\n {6}FRESHCLAM_CHECKS: 1\n/);
+    expect(freshclamService).toContain("'--checks=1'");
+    expect(freshclamService).toContain('../clamav/freshclam.conf:/etc/clamav/freshclam.conf:ro');
     expect(clamavService).toContain('../clamav/clamd.conf:/etc/clamav/clamd.conf:ro');
-    expect(clamavService).toContain('../clamav/freshclam.conf:/etc/clamav/freshclam.conf:ro');
+    // Both share the signature volume; clamd picks updates up itself (MAL-1b).
+    expect(freshclamService).toContain('- clamav-db:/var/lib/clamav');
+    expect(clamavService).toContain('- clamav-db:/var/lib/clamav');
+    expect(Number(clamd.get('SelfCheck'))).toBeGreaterThan(0);
+    expect(Number(clamd.get('SelfCheck'))).toBeLessThanOrEqual(3600);
+  });
+
+  it('splits freshclam from clamd: each container runs one daemon, same pinned image (MAL-1b)', () => {
+    expect(clamavService).toMatch(/\n {4}entrypoint: \['clamd', '--foreground'\]\n/);
+    expect(freshclamService).toMatch(/\n {4}entrypoint: \['freshclam', '--daemon', /);
+    const image = (b: string) => /\n {4}image: (\S+)\n/.exec(b)?.[1];
+    expect(image(freshclamService)).toBeDefined();
+    expect(image(freshclamService)).toBe(image(clamavService));
+    // freshclam cannot reach clamd, so it must not try to notify it.
+    expect(freshclam.has('NotifyClamd')).toBe(false);
   });
 
   it('publishes no host port: clamd (unauthenticated) is reachable only on the compose networks (#377 M7)', () => {
     expect(clamavService).not.toBe('');
     expect(clamavService).not.toMatch(/^ {4}(ports|expose):/m);
     expect(clamavService).not.toMatch(/^ {4}network_mode:/m);
-    expect(clamavService).toMatch(/\n {4}networks: \[default, media-internal\]\n/);
+  });
+
+  it('puts clamd only on the internal clamav-internal network, shared with the worker alone (MAL-1b)', () => {
+    // No `default`: clamd has no egress and no other service can send it SHUTDOWN.
+    expect(clamavService).toMatch(/\n {4}networks: \[clamav-internal\]\n/);
+    expect(composeDev).toMatch(/\n {2}clamav-internal:\n {4}internal: true\n/);
+    expect(workerService).toMatch(/\n {4}networks: \[[^\]\n]*\bclamav-internal\b[^\]\n]*\]\n/);
+    // Only the worker and clamav join it, in either compose file.
+    const members = [
+      ...`${compose}\n${composeDev}`.matchAll(/^ {4}networks: \[([^\]\n]*)\]$/gm),
+    ].filter((m) => m[1]!.split(',').some((n) => n.trim() === 'clamav-internal'));
+    expect(members).toHaveLength(2);
+    expect(`${compose}\n${composeDev}`).not.toMatch(/^ {6}- clamav-internal$/m);
+    // freshclam keeps egress for database.clamav.net but has no route to clamd.
+    expect(freshclamService).toMatch(/\n {4}networks: \[default\]\n/);
+    expect(freshclamService).not.toMatch(/^ {4}(ports|expose|network_mode):/m);
+  });
+
+  it.each([
+    ['clamav', () => clamavService],
+    ['clamav-freshclam', () => freshclamService],
+  ])('%s runs as the clamav user with no capabilities (MAL-1b)', (_name, block) => {
+    const b = block();
+    expect(b).not.toBe('');
+    expect(b).toMatch(/\n {4}user: clamav\n/);
+    expect(b).toMatch(/\n {4}cap_drop: \[ALL\]\n/);
+    expect(b).not.toMatch(/^ {4}(cap_add|privileged):/m);
+    expect(b).toMatch(/\n {6}- no-new-privileges:true\n/);
+    // The image's /init needs root (chown, install) and would also start freshclam in clamd.
+    expect(b).toMatch(/\n {4}entrypoint: \[/);
+    expect(b).not.toContain('/init');
+  });
+
+  it('logs to stdout: no log file paths that the non-root daemons could not create (MAL-1b)', () => {
+    expect(clamd.has('LogFile')).toBe(false);
+    expect(freshclam.has('UpdateLogFile')).toBe(false);
   });
 
   it('wires the worker to the sidecar', () => {

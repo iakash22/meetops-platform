@@ -22,7 +22,9 @@ apps never run against an unmigrated schema.
 
 ## Malware scan (clamd, optional profile)
 
-`--profile clamav` starts the pinned ClamAV 1.4 LTS sidecar (`infra/clamav/clamd.conf`, daily freshclam, 4 GiB).
+`--profile clamav` starts the pinned ClamAV 1.4 LTS sidecar (`clamav`: clamd, `infra/clamav/clamd.conf`, 4 GiB, on the
+internal `clamav-internal` network with the worker only) and `clamav-freshclam` (daily signature updates, the only one
+with egress).
 Set `UPLOAD_SCAN_CLAMAV=true` in `.env` so the worker uses it. With the profile active, the worker waits for clamd
 to report healthy (first start: up to a few minutes while signatures load). See docs/13-ops/containers-and-ci.md.
 
