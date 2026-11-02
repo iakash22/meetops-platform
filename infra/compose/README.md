@@ -20,6 +20,12 @@ checks for both scripts first. While they are missing it exits 1 with:
 so **the stack visibly fails to start until PR #35 merges**. That is intended:
 apps never run against an unmigrated schema.
 
+## Malware scan (clamd, optional profile)
+
+`--profile clamav` starts the pinned ClamAV 1.4 LTS sidecar (`infra/clamav/clamd.conf`, daily freshclam, 4 GiB).
+Set `UPLOAD_SCAN_CLAMAV=true` in `.env` so the worker uses it. With the profile active, the worker waits for clamd
+to report healthy (first start: up to a few minutes while signatures load). See docs/13-ops/containers-and-ci.md.
+
 ## Secrets
 
 See `secrets/README.md`. App services do not load `.env`; they get explicit
