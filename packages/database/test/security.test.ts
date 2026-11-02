@@ -16,14 +16,15 @@ import {
 } from '../src/tenant.js';
 
 const pkgDir = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+/** Call the local Prisma CLI via node (Windows: `execFileSync('pnpm')` is ENOENT for pnpm.cmd). */
+const prismaCli = resolve(pkgDir, 'node_modules/prisma/build/index.js');
 const schema = readFileSync(resolve(pkgDir, 'prisma/schema.prisma'), 'utf8');
 const migrationsDir = resolve(pkgDir, 'prisma/migrations');
 /** DDL of the final schema (what the migration chain must converge to; the live drift check proves it). */
 const finalSql = execFileSync(
-  'pnpm',
+  process.execPath,
   [
-    'exec',
-    'prisma',
+    prismaCli,
     'migrate',
     'diff',
     '--from-empty',

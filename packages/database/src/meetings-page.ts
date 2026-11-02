@@ -1,5 +1,6 @@
 import { Prisma, type Meeting } from '@prisma/client';
-import type { DatabaseTransaction } from './index.js';
+
+type DatabaseTransaction = Prisma.TransactionClient;
 
 /** Default and maximum page size for listMeetingsPage(). */
 export const MEETINGS_PAGE_DEFAULT_LIMIT = 20;

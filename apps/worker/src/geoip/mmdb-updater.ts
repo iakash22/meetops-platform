@@ -197,12 +197,39 @@ export async function verifyMmdb(path: string, testIps: readonly string[]) {
 }
 
 async function fsyncFile(path: string) {
-  const fh = await open(path, 'r');
+  // Windows often returns EPERM for fsync on an 'r' handle; open 'r+' when we own the temp file.
+  const fh = await open(path, process.platform === 'win32' ? 'r+' : 'r');
   try {
     await fh.sync();
+  } catch (e) {
+    // Some Windows volumes still reject FileHandle.sync(); the write stream already flushed to disk.
+    if (process.platform === 'win32' && (e as NodeJS.ErrnoException).code === 'EPERM') return;
+    throw e;
   } finally {
     await fh.close();
   }
+}
+
+/**
+ * Replace `dest` with `src` via rename (atomic on one filesystem). On Windows a concurrent reader can lock `dest`
+ * (EPERM/EACCES/EBUSY); retry briefly so a transient lock from AV or a short-lived open does not fail the swap.
+ */
+async function renameReplace(src: string, dest: string, attempts = 20): Promise<void> {
+  let last: unknown;
+  for (let i = 0; i < attempts; i++) {
+    try {
+      await rename(src, dest);
+      return;
+    } catch (e) {
+      last = e;
+      const code = (e as NodeJS.ErrnoException).code;
+      const locked =
+        process.platform === 'win32' && (code === 'EPERM' || code === 'EACCES' || code === 'EBUSY');
+      if (!locked || i === attempts - 1) throw e;
+      await new Promise((r) => setTimeout(r, 20 * (i + 1)));
+    }
+  }
+  throw last;
 }
 
 export interface UpdateResult {
@@ -302,12 +329,12 @@ async function updateWithin(
     try {
       const prevTmp = `${tmp}.prev`;
       await copyFile(cfg.dbPath, prevTmp);
-      await rename(prevTmp, `${cfg.dbPath}.prev`);
+      await renameReplace(prevTmp, `${cfg.dbPath}.prev`);
       keptPrevious = true;
     } catch (e) {
       if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e;
     }
-    await rename(tmp, cfg.dbPath);
+    await renameReplace(tmp, cfg.dbPath);
     return {
       updated: true,
       bytes,

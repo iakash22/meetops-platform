@@ -73,10 +73,10 @@ describe('/desktop/authorize page', () => {
     const assign = vi.spyOn(desktopRedirect, 'assign').mockImplementation(() => {});
     const { api } = renderApp(path);
     expect(await screen.findByTestId('desktop-org')).toHaveTextContent('Acme Inc');
-    expect(screen.getByTestId('desktop-device')).toHaveTextContent('Studio Mac');
-    expect(screen.getByTestId('desktop-user')).not.toHaveTextContent('Unknown user');
+    expect(await screen.findByTestId('desktop-device')).toHaveTextContent('Studio Mac');
+    expect(await screen.findByTestId('desktop-user')).not.toHaveTextContent('Unknown user');
     expect(api.desktop.authorize).not.toHaveBeenCalled();
-    await userEvent.click(screen.getByRole('button', { name: 'Allow desktop sign-in' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Allow desktop sign-in' }));
     expect(await screen.findByTestId('desktop-redirecting')).toBeInTheDocument();
     expect(api.desktop.authorize).toHaveBeenCalledWith({
       state,

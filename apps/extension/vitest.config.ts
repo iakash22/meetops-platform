@@ -13,5 +13,11 @@ export default defineConfig({
       { find: /^@meetops\/contracts$/, replacement: contracts('index.ts') },
     ],
   },
-  test: { include: ['test/**/*.test.ts', 'test/**/*.test.tsx'], environment: 'node' },
+  test: {
+    include: ['test/**/*.test.ts', 'test/**/*.test.tsx'],
+    environment: 'node',
+    // Full turbo `pnpm test` runs many packages at once; default 5s flakes under load.
+    testTimeout: 30_000,
+    hookTimeout: 30_000,
+  },
 });

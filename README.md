@@ -2,7 +2,7 @@
 
 Turn every meeting into actionable, assigned, measurable, and synchronized work.
 
-Status: Pre-alpha, Phases 1–9 in progress in parallel (coordinator estimate ~60% overall on 27 Oct 2026). Phase 0 is done, Phase 1 (auth, organizations, directory, RBAC) is ~90%, Phases 2–6 and 8 are partly built, Phase 7 is barely started and Phase 9 is early. Agent work lands on `integration/phase-1` and reaches `main` through integration → `main` PRs (latest: #253, 27 Oct 2026). See [`docs/PHASE_STATUS.md`](docs/PHASE_STATUS.md) for per-phase numbers and what is still open, and [`docs/17-agents/implementation-board.md`](docs/17-agents/implementation-board.md) for open PRs.
+Status: Pre-alpha, Phases 1–9 in progress in parallel (estimate **~72%** overall on 31 Oct 2026). Phase 0 is done; Phase 1 is ~95%; Phases 2–6 and 8 are mostly wired on `main`; Phase 7 is barely started; Phase 9 is early. Latest integration → `main`: [#257](https://github.com/iakash22/meetops-platform/pull/257) (`403bd00f`). See [`docs/PHASE_STATUS.md`](docs/PHASE_STATUS.md) for per-phase numbers and what is still open.
 
 ## Core flow
 
@@ -130,7 +130,7 @@ Email in development needs `SMTP_PASSWORD` (a Google App Password) in your local
 | 8     | Desktop and mobile apps with offline recording                   |
 | 9     | Production hardening, billing, monitoring, release               |
 
-Current status of each phase, including unfinished work, is in [`docs/PHASE_STATUS.md`](docs/PHASE_STATUS.md).
+Current status of each phase (31 Oct 2026 snapshot), including unfinished work, is in [`docs/PHASE_STATUS.md`](docs/PHASE_STATUS.md).
 
 The first milestone is a working end-to-end slice: create organization → add employee → create project → upload audio → transcribe → generate report → extract and approve tasks → create GitHub/Jira issue → sync status.
 

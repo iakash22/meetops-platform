@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { Slot } from '@radix-ui/react-slot';
+import { Button as BootstrapButton } from 'react-bootstrap';
 import { cva, type VariantProps } from 'class-variance-authority';
 
 import { cn } from '@/lib/utils';
@@ -35,16 +36,66 @@ const buttonVariants = cva(
   },
 );
 
+type BsVariant = NonNullable<React.ComponentProps<typeof BootstrapButton>['variant']>;
+
+/** Map MeetOps variants onto Bootstrap action variants (RB handles disabled/focus semantics). */
+function bootstrapVariant(
+  variant: NonNullable<VariantProps<typeof buttonVariants>['variant']> | null | undefined,
+): BsVariant {
+  switch (variant) {
+    case 'destructive':
+      return 'danger';
+    case 'outline':
+      return 'outline-secondary';
+    case 'secondary':
+      return 'secondary';
+    case 'highlight':
+      // Custom brand rose — CSS in bootstrap-theme.css defines `.btn-highlight`.
+      return 'danger';
+    case 'link':
+    case 'ghost':
+      return 'link';
+    case 'shimmer':
+    case 'default':
+    default:
+      return 'primary';
+  }
+}
+
+function bootstrapSize(
+  size: NonNullable<VariantProps<typeof buttonVariants>['size']> | null | undefined,
+): 'sm' | 'lg' | undefined {
+  if (size === 'sm') return 'sm';
+  if (size === 'lg') return 'lg';
+  return undefined;
+}
+
 export interface ButtonProps
-  extends React.ButtonHTMLAttributes<HTMLButtonElement>, VariantProps<typeof buttonVariants> {
+  extends
+    Omit<React.ButtonHTMLAttributes<HTMLButtonElement>, 'size'>,
+    VariantProps<typeof buttonVariants> {
   asChild?: boolean;
 }
 
 const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
-  ({ className, variant, size, asChild = false, ...props }, ref) => {
-    const Comp = asChild ? Slot : 'button';
+  ({ className, variant, size, asChild = false, type = 'button', ...props }, ref) => {
+    const classes = cn(buttonVariants({ variant, size, className }));
+
+    if (asChild) {
+      return <Slot className={classes} ref={ref} {...props} />;
+    }
+
+    const bsSize = bootstrapSize(size);
+
     return (
-      <Comp className={cn(buttonVariants({ variant, size, className }))} ref={ref} {...props} />
+      <BootstrapButton
+        ref={ref}
+        type={type}
+        variant={bootstrapVariant(variant)}
+        {...(bsSize ? { size: bsSize } : {})}
+        className={cn(classes, variant === 'highlight' && 'btn-highlight')}
+        {...props}
+      />
     );
   },
 );

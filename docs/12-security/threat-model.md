@@ -109,13 +109,13 @@ Status: Draft (Phase 0, design-time). Stack per repo: React/Vite web, Fastify AP
 
 ## 4. Residual risk
 
-| Risk                                      | Level  | Rationale / acceptance                                                    |
-| ----------------------------------------- | ------ | ------------------------------------------------------------------------- |
-| Prompt injection yields misleading drafts | Medium | Cannot be fully prevented; contained by human approval and evidence links |
-| Zero-day in FFmpeg                        | Medium | Sandbox limits blast radius; patch cadence required                       |
-| Third-party provider breach/retention     | Medium | Contractual; customers choose providers per org                           |
-| Insider with DB superuser bypasses RLS    | Medium | Mitigate via least-privilege roles, audit, break-glass process            |
-| Consent law variance across jurisdictions | Medium | Product provides controls; legal review required                          |
-| Supply-chain (npm) compromise             | Medium | Lockfile, pnpm, Dependabot/audit, minimal deps                            |
+| Risk                                      | Level  | Rationale / acceptance                                                                                        |
+| ----------------------------------------- | ------ | ------------------------------------------------------------------------------------------------------------- |
+| Prompt injection yields misleading drafts | Medium | Cannot be fully prevented; contained by human approval and evidence links                                     |
+| Zero-day in FFmpeg                        | Medium | Sandbox limits blast radius; patch cadence required                                                           |
+| Third-party provider breach/retention     | Medium | Contractual; customers choose providers per org; provider copies deleted after processing (ADR-019)           |
+| Insider with DB superuser bypasses RLS    | Medium | Mitigate via least-privilege roles, audit, break-glass process                                                |
+| Consent law variance across jurisdictions | Medium | All-party consent everywhere, no one-party mode (ADR-020, 2026-11-01); Low once shipped and legal review done |
+| Supply-chain (npm) compromise             | Medium | Lockfile, pnpm, Dependabot/audit, minimal deps                                                                |
 
 Review this model whenever a new pipeline stage, provider, or integration is added.
