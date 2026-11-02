@@ -1,4 +1,20 @@
-# Phase status — 3 Nov 2026 (~02:45 IST)
+# Phase status — 3 Nov 2026 (~04:20 IST)
+
+## Update — 3 Nov 2026 (~04:20 IST)
+
+Tree: `integration/phase-1` at `190b9d5` (merge of #397, 03:47 IST). PR states read from the GitHub API at ~04:15 IST.
+Percentages are unchanged from the 02:45 snapshot below.
+
+Merged since the 02:45 snapshot:
+
+- #393 P9 security headers, CORP, CSP reporting, env validation; #399 its follow-ups (R4, R5, R7, R13, R14, R19, R20, R24).
+- #400 credential-free test coverage for the analytics SQL and semantic search.
+- #401 415 for non-JSON unsafe request bodies and CSRF token rotation (R16, R17).
+- #385 calendar links deleted inside the revoke transaction; #386 task sync gated on one approval read; #392 analytics counts; #395 ajv/esbuild overrides; #396 Outlook tenant validated at startup; #397 the previous status refresh.
+
+Still open: #350 (embeddings pipeline), #387 (consent hardening), #394 (background sync) and #398 (auto-link, stacked on #394), all
+merged up to `190b9d5`; #347 (iOS Live Activity, draft); #391 (P9 docs); #384 (integration → `main`). Tester Lows from
+#394–#401 are batched in `fix/tester-lows-batch`; the production `/docs` CSP gate is a separate fix PR.
 
 ## Update — 3 Nov 2026 (~02:45 IST)
 
