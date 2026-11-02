@@ -88,3 +88,13 @@
   `durationSec`); no ids, titles or people. Soft-deleted meetings are excluded. One `withOrganizationContext`
   transaction (forced RLS) plus an explicit `org_id` filter; typed Prisma `groupBy`/`aggregate`, and one tagged
   `$queryRaw` (bound parameters) for `date_trunc` periods. No writes, no new tables or views.
+
+## Task and approval analytics (P7, read-only)
+
+- **API**: `GET /orgs/:org/analytics/tasks?from&to` (`ANALYTICS_PATHS.tasks`, contracts `TaskAnalyticsQuery` /
+  `TaskAnalytics`). Same window rules as meeting analytics (shared `parseAnalyticsRange`): `[from, to)` on each row's
+  `createdAt`, at most 366 days, else 400 `VALIDATION_FAILED`. `private, no-store`.
+- **Access**: session 401 -> other org 404 -> CASL `read Task` (viewers and up).
+- **Data**: counts only: tasks by status, AI-extracted tasks by review status, task approvals by decision. Soft-deleted
+  tasks and extracted tasks excluded. One `withOrganizationContext` transaction (forced RLS) plus explicit `org_id`
+  filters; typed Prisma `groupBy`, no raw SQL, no writes, no schema change.
