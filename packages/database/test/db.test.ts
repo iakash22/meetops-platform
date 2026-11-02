@@ -50,9 +50,9 @@ describe('generated client', () => {
     await db.disconnectPrismaClient();
   });
 
-  it('exposes exactly the 43 models', () => {
+  it('exposes exactly the 46 models', () => {
     const models = Object.values(Prisma.ModelName);
-    expect(models).toHaveLength(43);
+    expect(models).toHaveLength(46);
     for (const m of [
       'Organization',
       'User',
@@ -95,6 +95,8 @@ describe('generated client', () => {
       'PushDeviceToken',
       'CalendarEvent',
       'MeetingEmbedding',
+      'MeetingConsentEvent',
+      'CalendarEventLink',
     ]) {
       expect(models).toContain(m);
     }
@@ -163,6 +165,8 @@ describe('generated client', () => {
         'SESSION_PURGE_BATCH',
         'SESSION_PURGE_MAX_BATCHES',
         'purgeExpiredSessions',
+        'createTaskSyncRepository',
+        'TASK_SYNC_STATUSES',
       ].sort(),
     );
   });

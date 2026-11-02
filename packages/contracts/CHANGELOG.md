@@ -14,6 +14,14 @@ While the version is `0.x`, a minor bump may contain breaking changes (ADR-003).
 
 ### Added
 
+- Phase 7 calendar event links: `CALENDAR_PATHS.eventLink`
+  (`PUT|DELETE /orgs/:organizationId/calendar/connections/:connectionId/events/:eventId/link`),
+  `CalendarEventId`, `CalendarEventLinkParams`, `LinkCalendarEventRequest`, `CalendarEventLink`. `CalendarEvent` gains
+  optional `meetingId` (linked meeting) and `suggestedMeetingId` (auto-match by conference URL, never stored).
+  Additive.
+- Meeting consent ledger (Consent API): `MEETING_CONSENT_PATHS`, `RecordMeetingConsentRequest`,
+  `RevokeMeetingConsentRequest`, `MeetingConsentEvent`, `MeetingConsentStatus`, `MEETING_CONSENT_EVENT_TYPES`,
+  `MEETING_CONSENT_STATES`. Append-only: a revocation is a new event. Additive; no existing schema changes.
 - Phase 7 semantic search (behind `SEMANTIC_SEARCH_ENABLED`, off by default): `SEARCH_PATHS.semantic`
   (`GET /orgs/:organizationId/search/semantic`), `SEMANTIC_SEARCH_KINDS`, `SemanticSearchKind`, `SemanticSearchQuery`,
   `SemanticSearchResult`, `SemanticSearchResponse`. Additive.

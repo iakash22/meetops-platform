@@ -107,6 +107,14 @@ export const CalendarEvent = Type.Object(
     htmlLink: Type.Optional(HttpsUrl),
     organizerEmail: Type.Optional(Type.String({ maxLength: 320 })),
     attendeeCount: Type.Integer({ minimum: 0 }),
+    /** The meeting this event is linked to (PUT .../events/:eventId/link). Absent when unlinked. */
+    meetingId: Type.Optional(Id),
+    /**
+     * Auto-match, never stored: the organization's meeting whose external call id equals the one derived from
+     * `conferenceUrl` (same rule as meetings/resolve). Only set when the event is not linked and exactly one meeting
+     * matches; clients offer it as a one-click link.
+     */
+    suggestedMeetingId: Type.Optional(Id),
   },
   strict,
 );
@@ -116,3 +124,29 @@ export const CalendarEventList = Type.Object(
   strict,
 );
 export type CalendarEventList = Static<typeof CalendarEventList>;
+
+/** Provider event ids (Google: base32hex, recurring instances add `_<timestamp>`). Path-safe charset only. */
+export const CalendarEventId = Type.String({
+  minLength: 1,
+  maxLength: 1024,
+  pattern: '^[A-Za-z0-9_.:@-]+$',
+});
+export const CalendarEventLinkParams = Type.Object(
+  { organizationId: Id, connectionId: Id, eventId: CalendarEventId },
+  strict,
+);
+export type CalendarEventLinkParams = Static<typeof CalendarEventLinkParams>;
+export const LinkCalendarEventRequest = Type.Object({ meetingId: Id }, strict);
+export type LinkCalendarEventRequest = Static<typeof LinkCalendarEventRequest>;
+/** A link between one of the caller's calendar events and a meeting of the same organization. */
+export const CalendarEventLink = Type.Object(
+  {
+    connectionId: Id,
+    eventId: CalendarEventId,
+    meetingId: Id,
+    createdAt: IsoDateTime,
+    updatedAt: IsoDateTime,
+  },
+  strict,
+);
+export type CalendarEventLink = Static<typeof CalendarEventLink>;

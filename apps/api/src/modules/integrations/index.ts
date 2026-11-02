@@ -14,6 +14,7 @@ import {
   type IntegrationProviderStatus,
   PushTaskIssueParams,
   PushTaskIssueRequest,
+  TaskSyncJob,
   WebhookAcceptedResponse,
   WebhookParams,
 } from '@meetops/contracts';
@@ -38,6 +39,16 @@ import {
   type IntegrationsRuntime,
 } from './runtime.js';
 import { IntegrationsService, type AuditFn } from './service.js';
+import {
+  InMemoryTaskSyncStore,
+  PrismaTaskSyncStore,
+  TaskSyncService,
+  createBullMqTaskSyncQueue,
+  taskSyncEnabled,
+  toTaskSyncJob,
+  type TaskSyncQueue,
+  type TaskSyncStore,
+} from './task-sync.js';
 
 const OrgParams = Type.Object(
   { organizationId: Type.String({ format: 'uuid' }) },
@@ -56,7 +67,29 @@ export type IntegrationsModuleDeps = ModuleDeps & {
   integrations?: IntegrationsRepository;
   /** Secrets, stores and provider apps for connect/callback/webhook/push (see runtime.ts). */
   integrationsRuntime?: IntegrationsRuntime;
+  /** Overrides TASK_SYNC_ENABLED (tests). Off by default: the sync route is not registered. */
+  taskSyncEnabled?: boolean;
+  taskSyncStore?: TaskSyncStore;
+  taskSyncQueue?: TaskSyncQueue;
 };
+
+/** Store + queue for the async sync route, or undefined when TASK_SYNC_ENABLED is off. Never silently in-memory. */
+export function selectTaskSync(
+  deps: IntegrationsModuleDeps,
+  env: Record<string, string | undefined> = process.env,
+): { store: TaskSyncStore; queue: TaskSyncQueue; owned: boolean } | undefined {
+  if (!(deps.taskSyncEnabled ?? taskSyncEnabled(env))) return undefined;
+  let store = deps.taskSyncStore;
+  if (!store && deps.db) store = new PrismaTaskSyncStore(deps.db);
+  if (!store) {
+    if (!isRelaxedEnv(env.NODE_ENV)) throw new MissingProductionDependencyError(['taskSyncStore']);
+    store = new InMemoryTaskSyncStore();
+  }
+  if (deps.taskSyncQueue) return { store, queue: deps.taskSyncQueue, owned: false };
+  if (!env.REDIS_URL)
+    throw new Error('TASK_SYNC_ENABLED=true requires REDIS_URL (task sync queue)');
+  return { store, queue: createBullMqTaskSyncQueue(env.REDIS_URL), owned: true };
+}
 
 export function selectIntegrationsRuntime(
   deps: IntegrationsModuleDeps,
@@ -112,6 +145,11 @@ export default async function integrationsModule(
   const runtime = selectIntegrationsRuntime(deps);
   const repo = selectIntegrationsRepository(deps, process.env.NODE_ENV, runtime);
   const service = new IntegrationsService(repo, runtime, app.log);
+  const taskSync = selectTaskSync(deps);
+  const syncService = taskSync
+    ? new TaskSyncService(repo, taskSync.store, taskSync.queue)
+    : undefined;
+  if (taskSync?.owned) app.addHook('onClose', async () => taskSync.queue.close?.());
   const g = makeGuards(auth, deps.security);
   const access = new DirectoryAccess(organizations, deps.audit);
   const auditFor =
@@ -276,6 +314,38 @@ export default async function integrationsModule(
         return reply.status(201).send(link);
       },
     );
+
+    if (syncService)
+      s.post<{ Params: PushTaskIssueParams; Body: PushTaskIssueRequest }>(
+        INTEGRATION_PATHS.taskSync,
+        {
+          schema: {
+            tags: ['integrations'],
+            summary:
+              'Queue the external issue for an approved task (async, idempotent per task + integration)',
+            params: PushTaskIssueParams,
+            body: PushTaskIssueRequest,
+            response: { 202: TaskSyncJob, ...directoryWriteErrors, ...upstreamErrors },
+          },
+        },
+        async (request, reply) => {
+          const c = await callerFor(request, request.params.organizationId);
+          organizations.authorize(c.ctx, 'update', 'Organization');
+          const job = await syncService.request({
+            organizationId: c.ctx.organizationId,
+            userId: c.ctx.userId,
+            taskId: request.params.taskId,
+            ...request.body,
+          });
+          await access.record(c, {
+            action: 'integration.task_sync_requested',
+            targetType: 'integration',
+            targetId: job.integrationId,
+            metadata: { taskId: job.taskId, syncId: job.id, status: job.status },
+          });
+          return reply.status(202).send(toTaskSyncJob(job));
+        },
+      );
   });
 
   await app.register(async (s) => {

@@ -237,3 +237,12 @@ export {
   SESSION_PURGE_MAX_BATCHES,
   purgeExpiredSessions,
 } from './session-purge.js';
+export {
+  createTaskSyncRepository,
+  TASK_SYNC_STATUSES,
+  type TaskSyncRepository,
+  type TaskSyncJobRecord,
+  type TaskSyncRequestInput,
+  type TaskSyncStatus,
+  type TaskSyncProvider,
+} from './task-sync.js';
