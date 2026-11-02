@@ -81,6 +81,7 @@ export const AUTHORIZE_HOSTS = {
   github: ['github.com'],
   jira: ['auth.atlassian.com'],
   google: ['accounts.google.com'],
+  outlook: ['login.microsoftonline.com'],
 } as const;
 
 /** In-memory mock for dev (VITE_INTEGRATION_MOCKS=true) and tests. */
