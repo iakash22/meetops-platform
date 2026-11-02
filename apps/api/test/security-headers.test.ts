@@ -17,7 +17,8 @@ describe('P9: API baseline security headers', () => {
         expect(res.headers['referrer-policy']).toBe('no-referrer');
         expect(res.headers['cross-origin-opener-policy']).toBe('same-origin');
         expect(res.headers['strict-transport-security']).toBeUndefined();
-        expect(res.headers['cache-control']).toBeUndefined();
+        // R3: non-2xx responses are never cached; a plain 2xx keeps no caching rule.
+        expect(res.headers['cache-control']).toBe(url === '/health' ? undefined : 'no-store');
       }
     } finally {
       await app.close();

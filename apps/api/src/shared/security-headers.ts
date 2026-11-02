@@ -20,7 +20,25 @@ export interface SecurityHeaderOptions {
 
 export const API_CSP =
   "default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'";
-export const HSTS_VALUE = 'max-age=31536000; includeSubDomains';
+/** R2: two years; `preload` only once the owner registers the domain. */
+export const HSTS_VALUE = 'max-age=63072000; includeSubDomains';
+/** R1: the JSON API never needs a powerful feature. */
+export const API_PERMISSIONS_POLICY =
+  'accelerometer=(), camera=(), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), payment=(), usb=(), interest-cohort=()';
+
+/**
+ * R1 baseline, exact values. `apps/api/test/security-headers.matrix.test.ts` asserts these on every response class.
+ * CORP is `same-site` (not `same-origin`) because the web app on a sibling subdomain reads the API with credentials.
+ */
+export const API_BASELINE_HEADERS: Readonly<Record<string, string>> = Object.freeze({
+  'x-content-type-options': 'nosniff',
+  'referrer-policy': 'no-referrer',
+  'x-frame-options': 'DENY',
+  'cross-origin-opener-policy': 'same-origin',
+  'cross-origin-resource-policy': 'same-site',
+  'permissions-policy': API_PERMISSIONS_POLICY,
+  'x-permitted-cross-domain-policies': 'none',
+});
 
 const setIfAbsent = (
   reply: { hasHeader(n: string): boolean; header(n: string, v: string): unknown },
@@ -37,14 +55,14 @@ export function registerSecurityHeaders(
   app.addHook('onSend', async (request, reply, payload) => {
     const path = request.url.split('?')[0] ?? '';
     const isDocs = path === '/docs' || path.startsWith('/docs/');
-    setIfAbsent(reply, 'x-content-type-options', 'nosniff');
-    setIfAbsent(reply, 'referrer-policy', 'no-referrer');
-    setIfAbsent(reply, 'x-frame-options', 'DENY');
-    setIfAbsent(reply, 'cross-origin-opener-policy', 'same-origin');
+    for (const [name, value] of Object.entries(API_BASELINE_HEADERS))
+      setIfAbsent(reply, name, value);
     if (!isDocs) setIfAbsent(reply, 'content-security-policy', API_CSP);
     const credentialed =
       request.headers.authorization !== undefined || request.headers.cookie !== undefined;
-    if (credentialed || path === '/auth' || path.startsWith('/auth/'))
+    // R3: credentialed, every /auth path and every non-2xx response.
+    const non2xx = reply.statusCode < 200 || reply.statusCode >= 300;
+    if (credentialed || non2xx || path === '/auth' || path.startsWith('/auth/'))
       setIfAbsent(reply, 'cache-control', 'no-store');
     if (options.hsts) setIfAbsent(reply, 'strict-transport-security', HSTS_VALUE);
     return payload;
