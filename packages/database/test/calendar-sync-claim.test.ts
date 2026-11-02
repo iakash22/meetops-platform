@@ -109,7 +109,9 @@ describe('calendar sync repository claimForSync', () => {
         throw new Error('bad aad');
       }),
     };
-    const row = (accessTokenEnc: string) => ({
+    const row = (accessTokenEnc: string, refreshEncVersion: number | null = null) => ({
+      refreshEncVersion,
+      tokenGeneration: 3,
       userId: 'u',
       provider: 'google',
       accessTokenEnc,
@@ -136,6 +138,27 @@ describe('calendar sync repository claimForSync', () => {
       client: withRow(row('accL')),
       cipher,
     }).readSecrets(ORG, ID);
-    expect(legacy).toMatchObject({ accessToken: 'access-legacy', refreshToken: 'refresh-legacy' });
+    expect(legacy).toMatchObject({
+      accessToken: 'access-legacy',
+      refreshToken: 'refresh-legacy',
+      refreshEncVersion: 1,
+      tokenGeneration: 3,
+    });
+    // #394 N2: a legacy Google row after a worker refresh (v2 access, kept legacy refresh declared as 1) stays valid.
+    const declaredLegacy = await createCalendarSyncRepository({
+      client: withRow(row('acc', 1)),
+      cipher,
+    }).readSecrets(ORG, ID);
+    expect(declaredLegacy).toMatchObject({
+      accessToken: 'access-v2',
+      refreshToken: 'refresh-legacy',
+      refreshEncVersion: 1,
+    });
+    // ...but a declared version that doesn't match the envelope is rejected.
+    const declaredV2 = await createCalendarSyncRepository({
+      client: withRow(row('acc', 2)),
+      cipher,
+    }).readSecrets(ORG, ID);
+    expect(declaredV2).toMatchObject({ accessToken: 'access-v2', refreshToken: null });
   });
 });

@@ -40,6 +40,10 @@ export interface CalendarSyncSecrets {
   syncFailures: number;
   /** Incremental cursor (decrypted) and the window its round was opened for; null = none / undecryptable. */
   syncCursor: CalendarSyncCursor | null;
+  /** Token-write generation read with these secrets; pass it to updateTokens for its compare-and-set. */
+  tokenGeneration: number;
+  /** AAD context version the stored refresh token was sealed under (1 = pre-v2, 2 = per-field); null = none. */
+  refreshEncVersion: 1 | 2 | null;
 }
 
 export interface CalendarSyncCursor {
@@ -148,7 +152,13 @@ export function createCalendarSyncRepository(options: CalendarSyncRepositoryOpti
     id: string,
     enc: string,
     field: 'access' | 'refresh',
+    only?: 1 | 2,
   ): Promise<{ value: string; legacy: boolean } | null> => {
+    if (only === 1)
+      return cipher()
+        .decrypt(enc, { organizationId, integrationId: id })
+        .then((value) => ({ value, legacy: true }))
+        .catch(() => null);
     try {
       return { value: await cipher().decrypt(enc, ctx(organizationId, id, field)), legacy: false };
     } catch {
@@ -161,6 +171,11 @@ export function createCalendarSyncRepository(options: CalendarSyncRepositoryOpti
         return null;
       }
     }
+  };
+  // A declared version 2 never falls back to the pre-v2 context (open() tries v2 first, so check the result).
+  const openRefresh = async (organizationId: string, id: string, enc: string, v: number | null) => {
+    const r = await open(organizationId, id, enc, 'refresh', v === 1 ? 1 : undefined);
+    return r && v === 2 && r.legacy ? null : r;
   };
 
   return {
@@ -197,19 +212,24 @@ export function createCalendarSyncRepository(options: CalendarSyncRepositoryOpti
             syncCursorEnc: true,
             syncCursorFrom: true,
             syncCursorTo: true,
+            tokenGeneration: true,
+            refreshEncVersion: true,
           },
         }),
       );
       if (!row?.accessTokenEnc) return null;
       const access = await open(organizationId, id, row.accessTokenEnc, 'access');
       if (access === null) return null;
+      const declared = row.refreshEncVersion ?? null;
       const refresh = row.refreshTokenEnc
-        ? await open(organizationId, id, row.refreshTokenEnc, 'refresh')
+        ? await openRefresh(organizationId, id, row.refreshTokenEnc, declared)
         : null;
-      // The shared pre-v2 context is only accepted for a fully legacy row: a v2 access token next to a
-      // legacy-only refresh token means an envelope was moved between columns.
+      // The refresh token must open under its declared context (refresh_enc_version). Rows written before that
+      // column (NULL) only accept the shared pre-v2 context when the whole row is legacy: a v2 access token next
+      // to an undeclared legacy-only refresh token means an envelope was moved between columns.
       const accessToken = access.value;
-      const refreshToken = refresh && (!refresh.legacy || access.legacy) ? refresh.value : null;
+      const refreshToken =
+        refresh && (declared !== null || !refresh.legacy || access.legacy) ? refresh.value : null;
       let syncCursor: CalendarSyncCursor | null = null;
       if (row.syncCursorEnc && row.syncCursorFrom && row.syncCursorTo) {
         // Cursor AAD only (no pre-v2 fallback: cursors postdate per-field AAD). Undecryptable = start a new round.
@@ -226,19 +246,24 @@ export function createCalendarSyncRepository(options: CalendarSyncRepositoryOpti
         refreshToken,
         accessTokenExpiresAt: row.accessTokenExpiresAt,
         syncFailures: row.syncFailures,
+        tokenGeneration: row.tokenGeneration,
+        refreshEncVersion: refreshToken === null ? null : refresh?.legacy ? 1 : 2,
       };
     },
 
     /**
-     * Stores refreshed tokens (per-field AAD). An empty refresh token keeps the stored one (Google omits it).
-     * Writes only while the connection is active and, with `lease`, while the sweep claim is still held
-     * (next_sync_at unchanged): a reconnect clears the lease, so a stale sweep never overwrites the new grant.
+     * Stores refreshed tokens (per-field AAD). An empty refresh token keeps the stored ciphertext (Google omits
+     * it) and records the context it was read under (`refreshEncVersion` from readSecrets), so a legacy refresh
+     * token stays valid next to a v2 access token. Writes only while the connection is active, with `lease` while
+     * the sweep claim is still held, and with `generation` only while token_generation still equals the value
+     * readSecrets returned (compare-and-set; the write bumps it). A reconnect bumps the generation and clears the
+     * lease, so a stale refresh never overwrites the new grant or a concurrent refresh's rotated token.
      */
     async updateTokens(
       organizationId: string,
       id: string,
       t: { accessToken: string; refreshToken: string; accessTokenExpiresAt: Date },
-      opts: { lease?: Date } = {},
+      opts: { lease?: Date; generation?: number; refreshEncVersion?: 1 | 2 | null } = {},
     ): Promise<boolean> {
       if (!UUID_RE.test(id)) return false;
       const accessTokenEnc = await cipher().encrypt(
@@ -257,12 +282,18 @@ export function createCalendarSyncRepository(options: CalendarSyncRepositoryOpti
             organizationId,
             status: 'active',
             ...(opts.lease ? { nextSyncAt: opts.lease } : {}),
+            ...(opts.generation !== undefined ? { tokenGeneration: opts.generation } : {}),
           },
           data: {
             accessTokenEnc,
-            ...(refreshTokenEnc ? { refreshTokenEnc } : {}),
+            ...(refreshTokenEnc
+              ? { refreshTokenEnc, refreshEncVersion: 2 }
+              : opts.refreshEncVersion
+                ? { refreshEncVersion: opts.refreshEncVersion }
+                : {}),
             tokenKeyId: keyId,
             accessTokenExpiresAt: t.accessTokenExpiresAt,
+            tokenGeneration: { increment: 1 },
           },
         }),
       );

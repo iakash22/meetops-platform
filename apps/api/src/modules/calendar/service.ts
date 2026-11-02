@@ -393,11 +393,16 @@ export class CalendarService {
       return s.accessToken;
     if (!s.refreshToken) return s.accessToken;
     const t = await this.provider(c.provider).refresh(s.refreshToken);
-    await this.repo.updateTokens(organizationId, c.id, {
-      accessToken: t.accessToken,
-      refreshToken: t.refreshToken,
-      accessTokenExpiresAt: new Date(t.expiresAt),
-    });
+    await this.repo.updateTokens(
+      organizationId,
+      c.id,
+      {
+        accessToken: t.accessToken,
+        refreshToken: t.refreshToken,
+        accessTokenExpiresAt: new Date(t.expiresAt),
+      },
+      { generation: s.tokenGeneration, refreshEncVersion: s.refreshEncVersion },
+    );
     return t.accessToken;
   }
 
