@@ -38,14 +38,24 @@ export interface SegmentChunk {
   sizeBytes: number;
   sha256: string;
 }
+/**
+ * stop() result. `markerFailed`: the seal succeeded but the native-stop "stopped" sentinel couldn't be written, so a
+ * kill before JS writes the manifest would discard the recording at launch. Older builds resolve a bare array.
+ */
+export interface SegmentStopResult {
+  chunks: SegmentChunk[];
+  markerFailed: boolean;
+}
 export interface SegmentRecorderNative {
   start(dir: string, segmentMs: number): Promise<void>;
   pause(): void;
   resume(): void;
   isRecording(): boolean;
-  stop(): Promise<SegmentChunk[]>;
+  stop(): Promise<SegmentStopResult | SegmentChunk[]>;
   abort(): Promise<void>;
   recover(dir: string): Promise<SegmentChunk[]>;
+  /** A native Stop (notification Stop, swipe-away) began for this capture folder. Absent on older builds. */
+  stoppedNatively?(dir: string): boolean;
 }
 
 export const SegmentRecorderModule =
