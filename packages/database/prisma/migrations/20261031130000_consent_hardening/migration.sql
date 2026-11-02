@@ -16,7 +16,7 @@ ALTER TABLE "meeting_consent_events"
 ALTER TABLE "meeting_consent_events" ADD COLUMN "seq" BIGSERIAL NOT NULL;
 
 -- CreateIndex
-CREATE INDEX "meeting_consent_events_org_id_meeting_id_seq_idx" ON "meeting_consent_events"("org_id", "meeting_id", "seq");
+CREATE INDEX IF NOT EXISTS "meeting_consent_events_org_id_meeting_id_seq_idx" ON "meeting_consent_events"("org_id", "meeting_id", "seq");
 
 -- Explicit too, in case the migration does not run as meetops_migrator (default privileges would not apply).
 GRANT USAGE, SELECT ON SEQUENCE "meeting_consent_events_seq_seq" TO meetops_app;
