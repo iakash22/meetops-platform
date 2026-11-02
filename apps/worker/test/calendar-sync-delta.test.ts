@@ -48,9 +48,11 @@ function makeRepo(
   const applied: Parameters<CalendarSyncSweepRepository['applySync']>[1][] = [];
   const failures: { syncFailures: number; retryInMs: number }[] = [];
   const errors: string[] = [];
+  const listDue = vi.fn(async () => due);
+  const claim = vi.fn<CalendarSyncSweepRepository['claimForSync']>(async () => ({ lease: LEASE }));
   const repo: CalendarSyncSweepRepository = {
-    listDueForSync: vi.fn(async () => due),
-    claimForSync: vi.fn(async () => ({ lease: LEASE })),
+    listDueForSync: listDue,
+    claimForSync: claim,
     readSecrets: async () => s,
     updateTokens: async () => undefined,
     markError: async (_o, id) => void errors.push(id),
@@ -63,7 +65,7 @@ function makeRepo(
       return { upserted: input.events.length, cancelled: 0, applied: true };
     },
   };
-  return { repo, applied, failures, errors };
+  return { repo, applied, failures, errors, listDue, claim };
 }
 
 function deltaProvider(impl: NonNullable<CalendarSyncProvider['listEventsDelta']>) {
@@ -188,7 +190,7 @@ describe('calendar delta sync', () => {
       { organizationId: ORG, id: C1, userId: USER, provider: 'google' },
     ]);
     const p = { refresh: vi.fn(), listEvents: vi.fn(async () => [ev('g')]) };
-    await run(repo, p as unknown as CalendarSyncProvider);
+    await run(repo, p);
     expect(p.listEvents).toHaveBeenCalled();
     expect(applied[0]).not.toHaveProperty('cursor');
   });
@@ -203,7 +205,7 @@ describe('calendar delta sync', () => {
         deltaLink: 'dl-2',
       })),
     };
-    const p = outlookSyncProvider(o as never);
+    const p = outlookSyncProvider(o);
     const r = await p.listEventsDelta!({
       accessToken: 'a',
       timeMin: 'x',
@@ -247,7 +249,7 @@ describe('per-org scheduling', () => {
       ...d('o1', 4).map((x) => ({ ...x, userId: USER, provider: 'outlook' })),
       { organizationId: 'o2', id: 'o2-0', userId: USER, provider: 'outlook' },
     ];
-    const { repo } = makeRepo(secrets(), due);
+    const { repo, listDue, claim } = makeRepo(secrets(), due);
     const p = deltaProvider(async () => ({ events: [], removedIds: [], cursor: 'c' }));
     await runCalendarSyncSweep({
       repo,
@@ -256,12 +258,8 @@ describe('per-org scheduling', () => {
       now: () => NOW,
       config: { limit: 3, perOrgLimit: 2, deltaEnabled: true },
     });
-    expect(repo.listDueForSync).toHaveBeenCalledWith(expect.any(Date), 12);
-    expect(vi.mocked(repo.claimForSync).mock.calls.map((c) => c[1])).toEqual([
-      'o1-0',
-      'o2-0',
-      'o1-1',
-    ]);
+    expect(listDue).toHaveBeenCalledWith(expect.any(Date), 12);
+    expect(claim.mock.calls.map((c) => c[1])).toEqual(['o1-0', 'o2-0', 'o1-1']);
   });
 
   it('env: delta flag off by default; per-org limit parsed', () => {
