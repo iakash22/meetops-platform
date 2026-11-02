@@ -5,7 +5,15 @@ import { createApiClient } from './lib/api/client';
 import { createMockDirectoryApi, demoDirectorySeed } from './features/directory/mock-api';
 import { createMockIntegrationsApi, setIntegrationsApiOverride } from './features/integrations/api';
 import { createQueryClient } from './lib/query-client';
+import './styles/bootstrap-theme.css';
 import './index.css';
+
+/** Remove the index.html boot splash once React owns #root (avoids a white/blank first paint). */
+function clearBootSplash(): void {
+  document.getElementById('boot-splash')?.remove();
+  document.documentElement.style.backgroundColor = '#0A0A0A';
+  document.body.style.backgroundColor = '#0A0A0A';
+}
 
 const httpApi = createApiClient({ baseUrl: import.meta.env.VITE_API_URL ?? '/api' });
 // Mocks first: until BE-3 ships the directory routes, a dev build can opt in to an in-memory
@@ -40,3 +48,4 @@ createRoot(root).render(
     <App queryClient={queryClient} api={api} />
   </StrictMode>,
 );
+clearBootSplash();

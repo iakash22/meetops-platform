@@ -12,6 +12,7 @@ import {
   devIntegrationsRuntime,
   type IntegrationsRuntime,
   integrationsRuntimeFromEnv,
+  refusingTokenRefreshLease,
 } from '../src/modules/integrations/runtime.js';
 import type { ModuleDeps } from '../src/modules/index.js';
 import { selectIntegrationsRuntime } from '../src/modules/integrations/index.js';
@@ -329,8 +330,13 @@ describe('Phase 5 integration flows', () => {
 
     it('runtime selection: production without a runtime is 503; dev fallback has no providers (503 INTEGRATION_NOT_CONFIGURED)', async () => {
       expect(selectIntegrationsRuntime({} as ModuleDeps, 'production')).toBeUndefined();
-      expect(selectIntegrationsRuntime({ integrationsRuntime: rt } as never, 'production')).toBe(
-        rt,
+      // The injected runtime is kept as is; with no Redis in production it gains the refusing token-refresh lease
+      // (fail closed, #375 F1) and nothing else.
+      expect(selectIntegrationsRuntime({ integrationsRuntime: rt } as never, 'production')).toEqual(
+        {
+          ...rt,
+          tokenRefreshLease: refusingTokenRefreshLease,
+        },
       );
       await expect(
         new IntegrationsService(repo, undefined).connect({

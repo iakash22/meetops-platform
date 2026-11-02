@@ -75,4 +75,28 @@ describe('verify email banner', () => {
     expect(await screen.findByText('Verification email already sent')).toBeInTheDocument();
     expect(resendVerification).toHaveBeenCalledTimes(2);
   });
+
+  it('a stale toast Retry does nothing while a resend is in flight', async () => {
+    const api = unverifiedApi();
+    const resendVerification = api.auth.resendVerification as ReturnType<typeof vi.fn>;
+    let finish!: () => void;
+    const pending = new Promise<void>((r) => {
+      finish = r;
+    });
+    resendVerification
+      .mockRejectedValueOnce(new ApiError(503, 'UNKNOWN', 'down'))
+      .mockReturnValueOnce(pending);
+    renderApp('/', api);
+    await userEvent.click(await screen.findByRole('button', { name: 'Resend link' }));
+    const retry = await screen.findByRole('button', { name: 'Retry' });
+    // Resend from the banner; the request stays pending.
+    await userEvent.click(screen.getByRole('button', { name: 'Resend link' }));
+    await waitFor(() => expect(resendVerification).toHaveBeenCalledTimes(2));
+    // The old toast's Retry must not start a second, parallel request.
+    await userEvent.click(retry);
+    expect(resendVerification).toHaveBeenCalledTimes(2);
+    finish();
+    expect(await screen.findByText('Verification email sent')).toBeInTheDocument();
+    expect(resendVerification).toHaveBeenCalledTimes(2);
+  });
 });

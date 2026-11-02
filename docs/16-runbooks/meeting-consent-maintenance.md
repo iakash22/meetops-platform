@@ -1,6 +1,6 @@
 # Meeting consent ledger: maintenance opt-out
 
-`meeting_consent_events` (migration `20261101030000_meeting_consent_events`) is append-only. The
+`meeting_consent_events` (migration `20261031030000_meeting_consent_events`) is append-only. The
 `meeting_consent_events_append_only` trigger refuses every UPDATE, DELETE and TRUNCATE, including for the
 table owner, and `meetops_app` holds only SELECT and INSERT. A revocation is a new event, never an edit.
 

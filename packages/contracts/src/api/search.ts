@@ -8,8 +8,9 @@ export {
   SEARCH_HIGHLIGHT_STOP,
   SEARCH_PATHS,
   SEARCH_RESULT_KINDS,
+  SEMANTIC_SEARCH_KINDS,
 } from '../constants.js';
-import { SEARCH_RESULT_KINDS } from '../constants.js';
+import { SEARCH_RESULT_KINDS, SEMANTIC_SEARCH_KINDS } from '../constants.js';
 
 export const SearchResultKind = Type.Union(SEARCH_RESULT_KINDS.map((k) => Type.Literal(k)));
 export type SearchResultKind = (typeof SEARCH_RESULT_KINDS)[number];
@@ -59,3 +60,48 @@ export const SearchResponse = Type.Object(
   strict,
 );
 export type SearchResponse = Static<typeof SearchResponse>;
+
+export const SemanticSearchKind = Type.Union(SEMANTIC_SEARCH_KINDS.map((k) => Type.Literal(k)));
+export type SemanticSearchKind = (typeof SEMANTIC_SEARCH_KINDS)[number];
+
+/** GET /orgs/:organizationId/search/semantic. Natural-language query; results are ranked by vector similarity. */
+export const SemanticSearchQuery = Type.Object(
+  {
+    q: Type.String({
+      minLength: 2,
+      maxLength: 500,
+      pattern: '^[^\\u0000-\\u0008\\u000B\\u000C\\u000E-\\u001F\\u007F]*$',
+    }),
+    /** Comma-separated subset of SEMANTIC_SEARCH_KINDS; default both. */
+    kinds: Type.Optional(
+      Type.String({ pattern: '^(transcript|summary)(,(transcript|summary))*$', maxLength: 32 }),
+    ),
+    limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 20 })),
+  },
+  strict,
+);
+export type SemanticSearchQuery = Static<typeof SemanticSearchQuery>;
+
+export const SemanticSearchResult = Type.Object(
+  {
+    kind: SemanticSearchKind,
+    /** Transcript segment id or report id. */
+    id: Id,
+    meetingId: Id,
+    title: Type.String({ maxLength: 500 }),
+    /** Plain text excerpt of the matched content (no highlight markers). */
+    snippet: Type.String({ maxLength: 2000 }),
+    /** Cosine similarity, -1..1 (higher is closer). */
+    score: Type.Number({ minimum: -1, maximum: 1 }),
+    startMs: Type.Optional(Type.Integer({ minimum: 0 })),
+    occurredAt: IsoDateTime,
+  },
+  strict,
+);
+export type SemanticSearchResult = Static<typeof SemanticSearchResult>;
+
+export const SemanticSearchResponse = Type.Object(
+  { items: Type.Array(SemanticSearchResult, { maxItems: 20 }) },
+  strict,
+);
+export type SemanticSearchResponse = Static<typeof SemanticSearchResponse>;

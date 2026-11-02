@@ -29,9 +29,12 @@ import { IntegrationNotFoundError, OAuthStateInvalidError } from './errors.js';
 import { InMemoryIntegrations } from './in-memory.repository.js';
 import { PrismaIntegrations } from './prisma.repository.js';
 import type { ConnectedProvider, IntegrationsRepository } from './ports.js';
+import { createRedisConnectionLease, parseSharedKek } from '@meetops/integrations';
 import {
   devIntegrationsRuntime,
   integrationsRuntimeFromEnv,
+  leaseRedisFromEval,
+  refusingTokenRefreshLease,
   type IntegrationsRuntime,
 } from './runtime.js';
 import { IntegrationsService, type AuditFn } from './service.js';
@@ -58,9 +61,31 @@ export type IntegrationsModuleDeps = ModuleDeps & {
 export function selectIntegrationsRuntime(
   deps: IntegrationsModuleDeps,
   nodeEnv: string | undefined = process.env.NODE_ENV,
+  env: NodeJS.ProcessEnv = process.env,
 ): IntegrationsRuntime | undefined {
-  if (deps.integrationsRuntime) return deps.integrationsRuntime;
-  return isRelaxedEnv(nodeEnv) ? devIntegrationsRuntime(integrationsRuntimeFromEnv()) : undefined;
+  // Fail closed at startup: the dev-only shared KEK must never be set in production (ADR-008), even when the
+  // runtime is injected or the dev runtime is skipped. parseSharedKek names the variable only, never the value.
+  if (nodeEnv === 'production') parseSharedKek({ ...env, NODE_ENV: 'production' });
+  const rt =
+    deps.integrationsRuntime ??
+    (isRelaxedEnv(nodeEnv) ? devIntegrationsRuntime(integrationsRuntimeFromEnv()) : undefined);
+  return rt && withTokenRefreshLease(rt, deps, nodeEnv);
+}
+
+/**
+ * The API's on-demand Jira refresh takes the same per-connection lease as the worker sweep (#375 F1). Built from
+ * deps.redis unless the runtime already carries one; outside development/test without Redis it refuses (fail
+ * closed) rather than refreshing a rotating grant unguarded.
+ */
+export function withTokenRefreshLease(
+  rt: IntegrationsRuntime,
+  deps: Pick<ModuleDeps, 'redis'>,
+  nodeEnv: string | undefined,
+): IntegrationsRuntime {
+  if (rt.tokenRefreshLease) return rt;
+  if (deps.redis)
+    return { ...rt, tokenRefreshLease: createRedisConnectionLease(leaseRedisFromEval(deps.redis)) };
+  return isRelaxedEnv(nodeEnv) ? rt : { ...rt, tokenRefreshLease: refusingTokenRefreshLease };
 }
 
 export function selectIntegrationsRepository(

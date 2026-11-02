@@ -513,7 +513,13 @@ export const CALENDAR_PATHS = {
 export const CALENDAR_PROVIDERS = ['google'] as const;
 
 /** Phase 7: org-scoped full-text search (Postgres FTS, forced RLS). */
-export const SEARCH_PATHS = { search: '/orgs/:organizationId/search' } as const;
+export const SEARCH_PATHS = {
+  search: '/orgs/:organizationId/search',
+  /** Phase 7 semantic (pgvector) search. Not registered unless SEMANTIC_SEARCH_ENABLED=true (404 otherwise). */
+  semantic: '/orgs/:organizationId/search/semantic',
+} as const;
+/** Content kinds indexed for semantic search. */
+export const SEMANTIC_SEARCH_KINDS = ['transcript', 'summary'] as const;
 
 export const SEARCH_RESULT_KINDS = ['meeting', 'transcript', 'summary', 'task'] as const;
 /** Highlight markers in `snippet`: text between them matched the query. Render as text, never as HTML. */

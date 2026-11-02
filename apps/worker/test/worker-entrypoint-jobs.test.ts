@@ -5,6 +5,9 @@ import {
   loadTokenRefreshEnv,
   registerSummaryWorker,
   registerTokenRefreshJob,
+  startTokenRefreshQueueScheduler,
+  TOKEN_REFRESH_SCHEDULER_ID,
+  type TokenRefreshQueueFactories,
   registerTranscriptionWorker,
   runningJobs,
   TokenRefreshEnvError,
@@ -21,6 +24,78 @@ const fakeRepo = {
   upsert: vi.fn(),
   setStatus: vi.fn(),
 };
+
+function fakeFactories() {
+  const upserts: Array<{ id: string; every: number }> = [];
+  const processors: Array<() => Promise<unknown>> = [];
+  const closed: string[] = [];
+  const factories: TokenRefreshQueueFactories = {
+    queue: () => ({
+      upsertJobScheduler: vi.fn(async (id: string, repeat: { every: number }) => {
+        upserts.push({ id, every: repeat.every });
+      }),
+      close: vi.fn(async () => void closed.push('queue')),
+    }),
+    worker: (p) => {
+      processors.push(p);
+      return { close: vi.fn(async () => void closed.push('worker')) };
+    },
+  };
+  return { factories, upserts, processors, closed };
+}
+
+describe('integrations token refresh runs on a single replica (BullMQ job scheduler)', () => {
+  it('every replica upserts the same scheduler id, so Redis holds one repeatable job', async () => {
+    const f = fakeFactories();
+    const deps = { repo: fakeRepo, providers: {}, log };
+    const a = startTokenRefreshQueueScheduler(deps, { intervalMs: 60_000, factories: f.factories });
+    const b = startTokenRefreshQueueScheduler(deps, { intervalMs: 60_000, factories: f.factories });
+    await Promise.resolve();
+    expect(f.upserts).toEqual([
+      { id: TOKEN_REFRESH_SCHEDULER_ID, every: 60_000 },
+      { id: TOKEN_REFRESH_SCHEDULER_ID, every: 60_000 },
+    ]);
+    expect(new Set(f.upserts.map((u) => u.id)).size).toBe(1);
+    // No per-process timer: a sweep only runs when BullMQ hands this replica the job.
+    fakeRepo.listDueForRefresh.mockClear();
+    await f.processors[0]!();
+    expect(fakeRepo.listDueForRefresh).toHaveBeenCalledTimes(1);
+    await a.close();
+    await b.close();
+    expect(f.closed).toEqual(['worker', 'queue', 'worker', 'queue']);
+  });
+
+  it('does not start an in-process interval', () => {
+    vi.useFakeTimers();
+    try {
+      const f = fakeFactories();
+      fakeRepo.listDueForRefresh.mockClear();
+      startTokenRefreshQueueScheduler(
+        { repo: fakeRepo, providers: {}, log },
+        { intervalMs: 30_000, factories: f.factories },
+      );
+      vi.advanceTimersByTime(120_000);
+      expect(fakeRepo.listDueForRefresh).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('logs only the error name when a sweep fails, and rethrows so BullMQ records it', async () => {
+    const f = fakeFactories();
+    const warn = vi.fn();
+    const repo = {
+      ...fakeRepo,
+      listDueForRefresh: vi.fn(async () => Promise.reject(new TypeError('x'))),
+    };
+    startTokenRefreshQueueScheduler(
+      { repo, providers: {}, log: { info: vi.fn(), warn } },
+      { intervalMs: 60_000, factories: f.factories },
+    );
+    await expect(f.processors[0]!()).rejects.toThrow();
+    expect(warn).toHaveBeenCalledWith({ errName: 'TypeError' }, expect.any(String));
+  });
+});
 
 describe('integrations token-refresh env', () => {
   it('is off by default and needs no key', () => {
@@ -57,7 +132,12 @@ describe('integrations token-refresh env', () => {
       ).toThrow(/INTEGRATIONS_TOKEN_KEK.*production/);
   });
   it('rejects non-canonical base64 KEKs without echoing the value', () => {
-    const bad = [kek.replace(/=$/, ''), '-_' + 'A'.repeat(41) + '=', 'A'.repeat(42) + 'B='];
+    const bad = [
+      // Fixed, always-invalid inputs (random ones were valid keys in ~25% of runs).
+      '+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/s', // unpadded
+      '-_v7-_v7-_v7-_v7-_v7-_v7-_v7-_v7-_v7-_v7-_s=', // url-safe alphabet
+      '+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/t=', // non-canonical trailing bits
+    ];
     for (const value of bad) {
       let msg = '';
       try {
@@ -75,7 +155,11 @@ describe('integrations token-refresh env', () => {
   });
   it('builds only configured providers (no fallback)', () => {
     expect(tokenRefreshProvidersFromEnv({})).toEqual({});
-    const p = tokenRefreshProvidersFromEnv({ JIRA_CLIENT_ID: 'id', JIRA_CLIENT_SECRET: 's' });
+    const p = tokenRefreshProvidersFromEnv({
+      NODE_ENV: 'test',
+      JIRA_CLIENT_ID: 'id',
+      JIRA_CLIENT_SECRET: 's',
+    });
     expect(p.jira).toBeDefined();
     expect(p.github).toBeUndefined();
   });
@@ -99,6 +183,8 @@ describe('integrations token-refresh job registration', () => {
       env,
       log,
       buildDeps: () => ({ repo: fakeRepo, providers: {} }),
+      start: (deps, o) =>
+        startTokenRefreshQueueScheduler(deps, { ...o, factories: fakeFactories().factories }),
     });
     expect(r.registered).toBe(true);
     if (!r.registered) return;
@@ -187,5 +273,45 @@ describe('closeAll', () => {
     expect(closed).toEqual(['a', 'b']);
     expect(ok).toHaveBeenCalledTimes(1);
     expect(warn).toHaveBeenCalledWith({ job: 'a', errName: 'Error' }, 'worker job close failed');
+  });
+});
+
+describe('calendar-sync in the worker shutdown path', () => {
+  it('closeAll waits for the calendar-sync worker (in-flight sweep) and closes its queue', async () => {
+    const { registerCalendarSyncScheduler, loadCalendarSyncEnv } =
+      await import('../src/calendar/index.js');
+    let finishSweep!: () => void;
+    const order: string[] = [];
+    const worker = {
+      close: vi.fn(
+        () =>
+          new Promise<void>((r) => {
+            finishSweep = () => {
+              order.push('worker');
+              r();
+            };
+          }),
+      ),
+    };
+    const queue = {
+      upsertJobScheduler: vi.fn(async () => undefined),
+      close: vi.fn(async () => void order.push('queue')),
+    };
+    const calendarSync = registerCalendarSyncScheduler({
+      env: loadCalendarSyncEnv({ CALENDAR_SYNC_ENABLED: 'true' }),
+      log,
+      processEnv: { INTEGRATIONS_TOKEN_KEK: kek },
+      buildDeps: () => ({ repo: {} as never, providers: {} }),
+      createQueue: () => queue,
+      createWorker: () => worker,
+    });
+    const jobs: ClosableJob[] = [{ name: 'calendar-sync', job: calendarSync }];
+    expect(runningJobs(jobs)).toEqual(['calendar-sync']);
+    const done = closeAll(jobs);
+    await vi.waitFor(() => expect(worker.close).toHaveBeenCalled());
+    expect(queue.close).not.toHaveBeenCalled();
+    finishSweep();
+    await expect(done).resolves.toEqual(['calendar-sync']);
+    expect(order).toEqual(['worker', 'queue']);
   });
 });

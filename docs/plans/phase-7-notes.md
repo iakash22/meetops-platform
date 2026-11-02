@@ -43,6 +43,22 @@
   connection `error`; disconnect purges the connection's cached `calendar_events` in the same transaction through the
   SECURITY DEFINER `calendar_events_purge_for_connection()` (org-context checked, revoked connections only).
 
+## Semantic search (P7, PR 1 of 2, off by default)
+
+- **Flag**: `SEMANTIC_SEARCH_ENABLED=true` registers `GET /orgs/:org/search/semantic`; otherwise the route does not
+  exist (404). With the flag on but no query embedder injected, it answers 503. No provider is called in tests.
+- **Storage** (`20261031050000_meeting_embeddings`): one `vector(1536)` per transcript segment or summary report and
+  model, plus a content hash. No text is copied: search joins back to the source, so deleting the source or meeting
+  cascades. Forced RLS (ADR-010), composite tenant FKs.
+- **Query** (`apps/api/src/modules/search/semantic.ts`, `SEMANTIC_SEARCH_SQL`): org filter first, inside a
+  `MATERIALIZED` CTE (`WHERE e.org_id = $1 AND e.model = $2`, joined to live same-org sources), then ordering by
+  cosine distance over those rows only. No HNSW/IVFFlat index on purpose (an ANN index scan ranks across tenants and
+  post-filters); exact scan per org is fine at current sizes. All values are bound parameters.
+- **PR 2 (follow-up)**: worker embedding pipeline (segments + summaries -> ai-core `Embeddings` capability, hash-based
+  skip, batch caps, usage/idempotency through the AI executor) and the API's production `QueryEmbedder` from ai-core.
+  Embedding customer text needs an approved, non-free-tier provider (the free Gemini tier must not process customer
+  data).
+
 ## Meeting analytics (P7, read-only)
 
 - **API**: `GET /orgs/:org/analytics/meetings?from&to&bucket` (`ANALYTICS_PATHS.meetings`, contracts

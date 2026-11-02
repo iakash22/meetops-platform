@@ -91,6 +91,35 @@ describe('GitHubAppClient', () => {
     expect(calls[0]!.init!.headers!.Authorization).toMatch(/^Bearer [\w-]+\.[\w-]+\.[\w-]+$/);
     expect(calls.every((x) => x.init?.redirect === 'error')).toBe(true);
   });
+  it('installation-token mint: one timeout covers the body read, and the caller signal aborts it', async () => {
+    const mk = (fetch: unknown, timeoutMs?: number) =>
+      new GitHubAppClient({
+        appId: '123',
+        privateKey: async () => pem,
+        clientId: 'Iv1.abc',
+        clientSecret: async () => 'shh-secret',
+        fetch: fetch as never,
+        now: () => NOW,
+        ...(timeoutMs ? { timeoutMs } : {}),
+      });
+    const stalled = vi.fn(async () => ({
+      ok: true,
+      status: 201,
+      headers: { get: () => null },
+      text: () => new Promise<string>(() => {}),
+    }));
+    await expect(mk(stalled, 20).createInstallationToken('77')).rejects.toMatchObject({
+      code: 'timeout',
+    });
+    const hang = vi.fn(() => new Promise<never>(() => {}));
+    const outer = new AbortController();
+    const p = mk(hang, 60_000)
+      .createInstallationToken('77', { signal: outer.signal })
+      .catch((e: Error) => e);
+    await vi.waitFor(() => expect(hang).toHaveBeenCalledTimes(1));
+    outer.abort();
+    expect(await p).toMatchObject({ code: 'timeout' });
+  });
   it('rejects an installation that does not match and invalid ids before any request', async () => {
     const { c, fn } = client({
       'GET https://api.github.com/app/installations/77': {
