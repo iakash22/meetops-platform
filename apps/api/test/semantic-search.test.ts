@@ -66,10 +66,10 @@ describe('P7 semantic search API', () => {
     vi.stubEnv('SEMANTIC_SEARCH_ENABLED', 'true');
     const repo = new InMemorySemanticSearch();
     const search = vi.spyOn(repo, 'search');
-    const embed = vi.fn(async (): Promise<number[]> => {
+    const embed = vi.fn(async (): Promise<{ vector: number[]; model: string }> => {
       throw new Error('provider exploded: sk-test-secret upstream 500');
     });
-    const embedder: QueryEmbedder = { model: MODEL, embed };
+    const embedder: QueryEmbedder = { embed };
     app = await buildApp({ semanticSearch: repo, queryEmbedder: embedder } as Partial<ModuleDeps>);
     const c = await signupAndLogin(app, 'owner@example.com');
     const org = await createOrg(c, 'Acme');
