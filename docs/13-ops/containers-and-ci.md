@@ -27,6 +27,27 @@ docker compose --env-file .env -f infra/compose/compose.dev.yml -f infra/compose
 - Ports: api `${API_PORT:-3000}`, web `${WEB_PORT:-8080}`. The worker has none.
 - api and worker wait for healthy postgres and redis and for `minio-init` to complete. web waits for api to start.
 
+## ClamAV sidecar (`clamav`, ADR-018)
+
+There are no production deployment manifests in this repo yet. The `clamav` service in `compose.app.yml`
+(profile `clamav`) and `infra/clamav/*.conf` are the reference spec, and every deployment (compose, Kubernetes,
+ECS, ...) must copy these settings:
+
+| Setting    | Value                                                                                                                          | Why                                                                                                                                                           |
+| ---------- | ------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Image      | `clamav/clamav:1.4.6@sha256:8ad6197396974726c35d017e50aaaaf4b91745726a04faec8480c203edd98052`                                  | Version and digest pinned. 1.4 is the ClamAV LTS line. Bump tag and digest together                                                                           |
+| Config     | `infra/clamav/clamd.conf` → `/etc/clamav/clamd.conf`, `infra/clamav/freshclam.conf` → `/etc/clamav/freshclam.conf` (read-only) | `StreamMaxLength`/`MaxFileSize`/`MaxScanSize` 1400M, `AlertExceedsMax yes`, `MaxScanTime 600000`                                                              |
+| Updates    | `FRESHCLAM_CHECKS=1` (freshclam daemon started by the image's `/init`)                                                         | Signatures update daily. freshclam needs egress to `database.clamav.net`; the worker does not                                                                 |
+| Database   | Persistent volume at `/var/lib/clamav`                                                                                         | No re-download on restart (ClamAV rate-limits mirrors)                                                                                                        |
+| Memory     | `mem_limit: 4g`, `ConcurrentDatabaseReload yes`                                                                                | One engine measured at about 1.1–1.3 GB RSS during a 1.4 GB scan. A reload holds two engines for a short time. Blocking reload would stall scans and `/ready` |
+| Health     | `clamdcheck.sh` (PING → PONG on TCP 3310), `start_period: 360s`                                                                | Loading signatures takes 10–60 s                                                                                                                              |
+| Network    | Reachable from the worker on TCP 3310 (`media-internal`). No public port                                                       | The worker stays egress-free                                                                                                                                  |
+| Worker env | `UPLOAD_SCAN_CLAMAV=true`, `CLAMD_HOST`, `CLAMD_PORT`                                                                          | Fail-closed scan of every upload and recording                                                                                                                |
+| Disk       | About 1.5 GB free in the container's `/tmp` per concurrent scan                                                                | clamd spools each INSTREAM body to `TemporaryDirectory` before it scans                                                                                       |
+
+Dev: `UPLOAD_SCAN_CLAMAV=true scripts/compose-up.sh --profile clamav`. The worker then waits for clamd to report
+healthy. Without the profile, the worker starts as usual with the scan off.
+
 ## CI
 
 | Workflow            | Job                             | What it does                                                                                                               |

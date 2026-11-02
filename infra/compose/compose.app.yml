@@ -155,6 +155,12 @@ services:
       FFMPEG_PATH: /usr/bin/ffmpeg
       FFPROBE_PATH: /usr/bin/ffprobe
       MEDIA_TMP_DIR: /tmp/work
+      # Upload malware scan (ADR-018). Off by default in the dev harness; set
+      # UPLOAD_SCAN_CLAMAV=true and start with `--profile clamav`. When on, the
+      # scan is fail-closed: clamd down = retries, then quarantine.
+      UPLOAD_SCAN_CLAMAV: ${UPLOAD_SCAN_CLAMAV:-false}
+      CLAMD_HOST: clamav
+      CLAMD_PORT: 3310
     secrets: [redis_password, minio_app_password]
     volumes: [*secrets-shim]
     entrypoint: ['/usr/bin/tini', '--', '/bin/sh', '/opt/with-secrets.sh']
@@ -167,6 +173,10 @@ services:
         condition: service_healthy
       minio-init:
         condition: service_completed_successfully
+      # Only when the `clamav` profile is active; waits for the signatures to load.
+      clamav:
+        condition: service_healthy
+        required: false
     # FFmpeg sandbox (docs/12-security, upload-media-security §5): ONLY on the
     # internal `media-internal` network (redis + minio, no egress / no default
     # route), non-root, read-only root FS, tmpfs temp disk, no capabilities, no
@@ -182,6 +192,50 @@ services:
       # so mem_limit = 3g tmpfs + ~1g for node/ffmpeg. See docs/13-ops/containers-and-ci.md.
       - /tmp/work:size=3g,uid=1000,gid=1000,mode=0700
     cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 256
+    mem_limit: 4g
+    cpus: 2
+
+  # clamd sidecar for the upload malware scan (ADR-018, MAL-1). This service is
+  # the reference spec for production: docs/13-ops/containers-and-ci.md lists the
+  # settings every deployment must copy.
+  #   ... -f infra/compose/compose.app.yml --profile clamav up -d   (with UPLOAD_SCAN_CLAMAV=true)
+  # - Image pinned by version AND digest: 1.4.x is the ClamAV LTS line. The
+  #   digest is the multi-arch index digest of clamav/clamav:1.4.6 (amd64 only),
+  #   which ships a signature snapshot so first start does not block on a
+  #   download. Bump the tag and digest together.
+  # - The image's /init runs freshclam as a daemon: FRESHCLAM_CHECKS=1 = one
+  #   signature update per day; freshclam then asks clamd to reload.
+  # - infra/clamav/clamd.conf sets StreamMaxLength/MaxFileSize/MaxScanSize to
+  #   1400M (1_468_006_400 bytes, above MAX_MEDIA_BYTES, below 2 GB).
+  # - mem_limit 4g: one engine is about 1.1-1.3 GB RSS (measured with the
+  #   1.4 GB INSTREAM scan). With ConcurrentDatabaseReload yes, a reload holds
+  #   the old and new engines for a short time (about 2.5 GB), plus scan
+  #   buffers. See the comment in clamd.conf for why reload is not blocking.
+  # - Network: on media-internal so the worker (no egress) can reach it, and on
+  #   default because freshclam needs egress to database.clamav.net. No host port.
+  clamav:
+    profiles: ['clamav']
+    image: clamav/clamav:1.4.6@sha256:8ad6197396974726c35d017e50aaaaf4b91745726a04faec8480c203edd98052
+    restart: unless-stopped
+    environment:
+      FRESHCLAM_CHECKS: 1
+      CLAMD_STARTUP_TIMEOUT: 1800
+    volumes:
+      - ../clamav/clamd.conf:/etc/clamav/clamd.conf:ro
+      - ../clamav/freshclam.conf:/etc/clamav/freshclam.conf:ro
+      - clamav-db:/var/lib/clamav
+    networks: [default, media-internal]
+    healthcheck:
+      # The image's own check: PING on TCP 3310 must answer PONG.
+      test: ['CMD-SHELL', 'clamdcheck.sh']
+      interval: 30s
+      timeout: 10s
+      # Loading signatures takes about 10-60 s; the first freshclam run can take longer.
+      start_period: 360s
+      retries: 3
     security_opt:
       - no-new-privileges:true
     pids_limit: 256
@@ -257,3 +311,7 @@ services:
     depends_on:
       api:
         condition: service_started
+
+volumes:
+  # freshclam's signature database survives restarts (no re-download).
+  clamav-db:

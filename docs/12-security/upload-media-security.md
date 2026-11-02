@@ -5,13 +5,14 @@
 **G9 decision (ARC-2, `@meetops/contracts` 0.4.1).** The contracts constants are the source of truth; tests (UP-05,
 UP-10) use them, not literals.
 
-| Limit                                | Decision                                 | Constant                                                             | Rejected alternative                                                                                                      |
-| ------------------------------------ | ---------------------------------------- | -------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
-| Max media object / recording session | 1.4 GB (1_400_000_000 bytes)             | `MAX_MEDIA_BYTES`, `MAX_RECORDING_SESSION_BYTES`, `MAX_UPLOAD_BYTES` | 2 GB: does not fit the worker tmpfs budget (source + normalised WAV + chunks on one job)                                  |
-| Max duration                         | 4 h (14_400_000 ms), checked after probe | `MAX_DURATION_MS`                                                    | 24 h: a 24 h 16 kHz mono WAV is about 2.76 GB, over the tmpfs budget; 4 h matches the worker default `maxDurationSeconds` |
-| Presigned GET TTL                    | ≤ 300 s                                  | `MAX_PRESIGNED_GET_TTL_SECONDS`                                      | —                                                                                                                         |
-| Presigned chunk PUT TTL              | 300 s                                    | `CHUNK_UPLOAD_URL_TTL_SECONDS`                                       | —                                                                                                                         |
-| Max chunks / chunk size              | 10_000 chunks, 64 MiB each               | `MAX_RECORDING_CHUNKS`, `MAX_CHUNK_BYTES`                            | —                                                                                                                         |
+| Limit                                | Decision                                 | Constant                                                                     | Rejected alternative                                                                                                      |
+| ------------------------------------ | ---------------------------------------- | ---------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| Max media object / recording session | 1.4 GB (1_400_000_000 bytes)             | `MAX_MEDIA_BYTES`, `MAX_RECORDING_SESSION_BYTES`, `MAX_UPLOAD_BYTES`         | 2 GB: does not fit the worker tmpfs budget (source + normalised WAV + chunks on one job)                                  |
+| ClamAV scan limits (clamd)           | 1400M = 1_468_006_400 bytes              | `StreamMaxLength`, `MaxFileSize`, `MaxScanSize` in `infra/clamav/clamd.conf` | Must stay ≥ `MAX_MEDIA_BYTES` and < 2 GB (ClamAV ceiling). The ClamAV default (100M) would block every large upload       |
+| Max duration                         | 4 h (14_400_000 ms), checked after probe | `MAX_DURATION_MS`                                                            | 24 h: a 24 h 16 kHz mono WAV is about 2.76 GB, over the tmpfs budget; 4 h matches the worker default `maxDurationSeconds` |
+| Presigned GET TTL                    | ≤ 300 s                                  | `MAX_PRESIGNED_GET_TTL_SECONDS`                                              | —                                                                                                                         |
+| Presigned chunk PUT TTL              | 300 s                                    | `CHUNK_UPLOAD_URL_TTL_SECONDS`                                               | —                                                                                                                         |
+| Max chunks / chunk size              | 10_000 chunks, 64 MiB each               | `MAX_RECORDING_CHUNKS`, `MAX_CHUNK_BYTES`                                    | —                                                                                                                         |
 
 A plan may lower these limits, never raise them. Follow-up for the storage owner: `@meetops/storage` still allows a
 GET TTL up to 600 s (`MAX_PRESIGN_TTL_SECONDS`); its default (300 s) already meets the bound, and GET presigns must be
@@ -39,6 +40,22 @@ capped at `MAX_PRESIGNED_GET_TTL_SECONDS`.
 - [ ] Bucket private, public access blocked, SSE enabled, CORS limited to web origin.
 
 ## 4. Malware scanning
+
+Decision: ADR-018. The worker streams each upload to a clamd sidecar (`UPLOAD_SCAN_CLAMAV=true`). The scan is
+fail-closed: if clamd is unreachable, the job retries and the final attempt quarantines the upload.
+
+- **Limits.** `StreamMaxLength`, `MaxFileSize` and `MaxScanSize` are 1400M (1_468_006_400 bytes). That is about
+  68 MB above `MAX_MEDIA_BYTES` (1_400_000_000) and below ClamAV's 2 GB ceiling, so any upload the API accepts is
+  scanned in full. If `MAX_MEDIA_BYTES` is raised, raise these limits first (the worker config test fails otherwise).
+- **Over the limit.** `AlertExceedsMax yes`: a file over a scan limit (size, or `MaxScanTime` = 10 min) is reported as
+  `Heuristics.Limits.Exceeded.*` instead of a partly-scanned "OK". A stream over `StreamMaxLength` is refused
+  (`INSTREAM size limit exceeded`). Both are fail-closed, and neither counts as "infected".
+- **Signatures.** The image is pinned by version and digest (ClamAV 1.4 LTS). freshclam runs daily (`FRESHCLAM_CHECKS=1`)
+  and clamd reloads without blocking scans.
+- **Verified.** A clean 1_400_000_000-byte WAV scanned `OK` in about 35 s through INSTREAM with this config; EICAR was
+  `FOUND`; a 1_468_006_401-byte stream was refused at the limit.
+
+Deployment settings: docs/13-ops/containers-and-ci.md.
 
 - [ ] New objects land in `quarantine` state; ClamAV (or provider scanner) runs before processing; infected → delete + audit + notify.
 - [ ] Downloads/playback only from `clean` objects.
