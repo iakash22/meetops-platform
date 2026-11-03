@@ -33,7 +33,7 @@ export function quotaLevel(
   reserveBytes: number = LOCAL_RECORDING_CHUNK_BYTES,
 ): QuotaLevel {
   const { usage, quota } = e;
-  if (!isKnownQuota(usage, quota)) throw new Error('storage quota is unknown');
+  if (!isKnownQuota({ usage, quota })) throw new Error('storage quota is unknown');
   if (quota - usage < reserveBytes) return 'full';
   return usage >= quota * QUOTA_LOW_RATIO ? 'low' : 'ok';
 }
@@ -44,9 +44,7 @@ export interface StorageManagerLike {
 }
 
 const defaultManager = (): StorageManagerLike | undefined =>
-  typeof navigator !== 'undefined'
-    ? (navigator.storage)
-    : undefined;
+  typeof navigator !== 'undefined' ? navigator.storage : undefined;
 
 /** Current usage/quota. Throws when the browser cannot report it (callers fail closed). */
 export async function estimateQuota(
@@ -55,11 +53,13 @@ export async function estimateQuota(
   if (!sm) throw new Error('navigator.storage is unavailable');
   const r = await sm.estimate();
   // Fail closed: a missing or nonsensical estimate is "unknown", never "0 used of 0" (which reads as ok).
-  if (!isKnownQuota(r.usage, r.quota)) throw new Error('navigator.storage.estimate() did not report a quota');
-  return { usage: r.usage, quota: r.quota };
+  const e = { usage: r.usage, quota: r.quota };
+  if (!isKnownQuota(e)) throw new Error('navigator.storage.estimate() did not report a quota');
+  return e;
 }
 
-function isKnownQuota(usage: unknown, quota: unknown): boolean {
+function isKnownQuota(e: { usage?: unknown; quota?: unknown }): e is QuotaEstimate {
+  const { usage, quota } = e;
   return (
     typeof usage === 'number' &&
     typeof quota === 'number' &&

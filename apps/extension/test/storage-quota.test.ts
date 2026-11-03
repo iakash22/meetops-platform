@@ -26,7 +26,9 @@ describe('estimateQuota / requestPersistentStorage', () => {
   it('fails closed when the browser does not report a quota', async () => {
     await expect(estimateQuota({ estimate: async () => ({}) })).rejects.toThrow();
     await expect(estimateQuota({ estimate: async () => ({ usage: 1 }) })).rejects.toThrow();
-    await expect(estimateQuota({ estimate: async () => ({ usage: 0, quota: 0 }) })).rejects.toThrow();
+    await expect(
+      estimateQuota({ estimate: async () => ({ usage: 0, quota: 0 }) }),
+    ).rejects.toThrow();
   });
   it('reads usage and quota', async () => {
     expect(await estimateQuota({ estimate: async () => ({ usage: 1, quota: 2 }) })).toEqual({
