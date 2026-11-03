@@ -22,6 +22,10 @@ function fakeEvalRedis() {
     kv,
     async eval(script: string, _n: number, ...args: (string | number)[]): Promise<unknown> {
       const [key, a1, a2] = args.map(String) as [string, string?, string?];
+      if (script.includes('string.sub')) {
+        const v = kv.get(key);
+        return v === undefined ? 'absent' : v.startsWith('pending:') ? 'pending' : 'recorded';
+      }
       if (script.includes("'EXISTS'")) return kv.has(key) ? 1 : 0;
       if (script.includes("'DEL'")) {
         if (kv.get(key) === a1) return kv.delete(key) ? 1 : 0;
@@ -87,15 +91,23 @@ describe('webhook delivery store wiring (release blocker)', () => {
     },
   );
 
-  it('a store that is already shared is kept; development/test keep the in-memory store', () => {
-    const shared: DeliveryStore = { markIfNew: async () => true, shared: true };
+  it('a RedisDeliveryStore is kept; a look-alike with shared: true is not; dev/test keep in-memory', () => {
+    const redisStore = new RedisDeliveryStore(deliveryRedisFromEval(fakeEvalRedis()));
     expect(
       selectIntegrationsRuntime(
-        { integrationsRuntime: { ...devRt(), deliveryStore: shared } } as never,
+        { integrationsRuntime: { ...devRt(), deliveryStore: redisStore } } as never,
         'staging',
         {},
       )?.deliveryStore,
-    ).toBe(shared);
+    ).toBe(redisStore);
+    const lookAlike: DeliveryStore = { markIfNew: async () => true, shared: true };
+    expect(() =>
+      selectIntegrationsRuntime(
+        { integrationsRuntime: { ...devRt(), deliveryStore: lookAlike } } as never,
+        'staging',
+        {},
+      ),
+    ).toThrow(/shared webhook delivery store/);
     for (const env of ['development', 'test'])
       expect(
         selectIntegrationsRuntime({ integrationsRuntime: devRt() } as never, env, {})
@@ -121,62 +133,79 @@ describe('delivery in progress', () => {
   let app: App | undefined;
   afterEach(async () => app?.close());
 
-  it('a duplicate during a pending claim is 409 DELIVERY_IN_PROGRESS with Retry-After', async () => {
-    const SECRET = 'gh-app-webhook-secret';
-    const pem = generateKeyPairSync('rsa', { modulusLength: 2048 })
-      .privateKey.export({ type: 'pkcs8', format: 'pem' })
-      .toString();
-    const store = new InMemoryDeliveryStore({ nodeEnv: 'test' });
-    const repo = new InMemoryIntegrations();
-    repo.add(
-      {
-        id: randomUUID(),
-        organizationId: randomUUID(),
-        provider: 'github',
-        status: 'active',
-        displayName: 'acme',
-        externalAccountId: '99',
-        connectedById: randomUUID(),
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-      },
-      { accessToken: 'a', refreshToken: null, webhookSecret: 'unused' },
-    );
-    app = await buildApp({
-      integrations: repo,
-      integrationsRuntime: devIntegrationsRuntime({
-        apiOrigin: 'http://api.test',
-        deliveryStore: store,
-        github: {
-          appSlug: 'meetops-test',
-          appId: '123',
-          clientId: 'Iv1.abc',
-          privateKey: async () => pem,
-          clientSecret: async () => 'x',
-          webhookSecret: async () => SECRET,
+  it.each(['in-memory', 'redis'] as const)(
+    '%s store: a pending duplicate is 409 DELIVERY_IN_PROGRESS with Retry-After; a recorded one REPLAYED_DELIVERY',
+    async (kind) => {
+      const SECRET = 'gh-app-webhook-secret';
+      const pem = generateKeyPairSync('rsa', { modulusLength: 2048 })
+        .privateKey.export({ type: 'pkcs8', format: 'pem' })
+        .toString();
+      const store: DeliveryStore & { claim(id: string, ttl: number): Promise<string | null> } =
+        kind === 'redis'
+          ? new RedisDeliveryStore(deliveryRedisFromEval(fakeEvalRedis()))
+          : new InMemoryDeliveryStore({ nodeEnv: 'test' });
+      const repo = new InMemoryIntegrations();
+      repo.add(
+        {
+          id: randomUUID(),
+          organizationId: randomUUID(),
+          provider: 'github',
+          status: 'active',
+          displayName: 'acme',
+          externalAccountId: '99',
+          connectedById: randomUUID(),
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
         },
-      }),
-    } as Partial<ModuleDeps>);
-    const body = JSON.stringify({
-      action: 'opened',
-      issue: { number: 1 },
-      installation: { id: 99 },
-    });
-    const delivery = randomUUID();
-    expect(await store.claim(delivery, 30)).toBeTruthy(); // another request holds the claim
-    const r = await app.inject({
-      method: 'POST',
-      url: '/webhooks/github',
-      payload: body,
-      headers: {
-        'content-type': 'application/json',
-        'x-github-event': 'issues',
-        'x-github-delivery': delivery,
-        'x-hub-signature-256': `sha256=${createHmac('sha256', SECRET).update(body).digest('hex')}`,
-      },
-    });
-    expect(r.statusCode).toBe(409);
-    expect(r.json()).toMatchObject({ error: { code: 'CONFLICT', reason: 'DELIVERY_IN_PROGRESS' } });
-    expect(Number(r.headers['retry-after'])).toBeGreaterThan(0);
-  });
+        { accessToken: 'a', refreshToken: null, webhookSecret: 'unused' },
+      );
+      app = await buildApp({
+        integrations: repo,
+        integrationsRuntime: devIntegrationsRuntime({
+          apiOrigin: 'http://api.test',
+          deliveryStore: store,
+          github: {
+            appSlug: 'meetops-test',
+            appId: '123',
+            clientId: 'Iv1.abc',
+            privateKey: async () => pem,
+            clientSecret: async () => 'x',
+            webhookSecret: async () => SECRET,
+          },
+        }),
+      } as Partial<ModuleDeps>);
+      const body = JSON.stringify({
+        action: 'opened',
+        issue: { number: 1 },
+        installation: { id: 99 },
+      });
+      const delivery = randomUUID();
+      const send = () =>
+        app!.inject({
+          method: 'POST',
+          url: '/webhooks/github',
+          payload: body,
+          headers: {
+            'content-type': 'application/json',
+            'x-github-event': 'issues',
+            'x-github-delivery': delivery,
+            'x-hub-signature-256': `sha256=${createHmac('sha256', SECRET).update(body).digest('hex')}`,
+          },
+        });
+      const token = await store.claim(delivery, 30); // another request holds the claim
+      expect(token).toBeTruthy();
+      const r = await send();
+      expect(r.statusCode).toBe(409);
+      expect(r.json()).toMatchObject({
+        error: { code: 'CONFLICT', reason: 'DELIVERY_IN_PROGRESS' },
+      });
+      expect(Number(r.headers['retry-after'])).toBeGreaterThan(0);
+      await store.commit!(delivery, token as string, 60);
+      const replay = await send();
+      expect(replay.statusCode).toBe(409);
+      expect(replay.json()).toMatchObject({
+        error: { code: 'CONFLICT', reason: 'REPLAYED_DELIVERY' },
+      });
+    },
+  );
 });

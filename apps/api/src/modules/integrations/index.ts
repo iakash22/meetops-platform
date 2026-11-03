@@ -151,7 +151,12 @@ export function withDeliveryStore(
   deps: Pick<ModuleDeps, 'redis'>,
   nodeEnv: string | undefined,
 ): IntegrationsRuntime {
-  if (isRelaxedEnv(nodeEnv) || rt.deliveryStore.shared === true) return rt;
+  // Positive marker AND the concrete class: a look-alike object claiming shared: true is not enough.
+  if (
+    isRelaxedEnv(nodeEnv) ||
+    (rt.deliveryStore instanceof RedisDeliveryStore && rt.deliveryStore.shared === true)
+  )
+    return rt;
   if (deps.redis)
     return { ...rt, deliveryStore: new RedisDeliveryStore(deliveryRedisFromEval(deps.redis)) };
   throw new Error(

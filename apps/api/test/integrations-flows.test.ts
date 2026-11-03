@@ -15,6 +15,7 @@ import {
   refusingTokenRefreshLease,
 } from '../src/modules/integrations/runtime.js';
 import type { ModuleDeps } from '../src/modules/index.js';
+import { RedisDeliveryStore } from '@meetops/integrations';
 import { selectIntegrationsRuntime } from '../src/modules/integrations/index.js';
 import { IntegrationsService } from '../src/modules/integrations/service.js';
 import { buildApp, signupAndLogin, type App, type Client } from './helpers.js';
@@ -336,7 +337,14 @@ describe('Phase 5 integration flows', () => {
       expect(() =>
         selectIntegrationsRuntime({ integrationsRuntime: rt } as never, 'production'),
       ).toThrow(/shared webhook delivery store/);
-      const prodRt = { ...rt, deliveryStore: { markIfNew: async () => true, shared: true } };
+      const prodRt = {
+        ...rt,
+        deliveryStore: new RedisDeliveryStore({
+          set: async () => 'OK',
+          exists: async () => 0,
+          eval: async () => null,
+        }),
+      };
       expect(
         selectIntegrationsRuntime({ integrationsRuntime: prodRt } as never, 'production'),
       ).toEqual({
