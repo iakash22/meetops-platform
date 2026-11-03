@@ -24,6 +24,7 @@ describe.skipIf(!url || !owner)('P7 calendar auto-link (live RLS)', { timeout: 6
   const orgA = randomUUID();
   const orgB = randomUUID();
   const user = randomUUID();
+  const viewer = randomUUID();
   const cipher = new TokenCipher(new LocalKeyProvider({ k1: randomBytes(32) }, 'k1'));
   const NOW = new Date('2026-11-01T00:00:00.000Z');
   const FROM = new Date('2026-10-31T00:00:00.000Z');
@@ -51,6 +52,10 @@ describe.skipIf(!url || !owner)('P7 calendar auto-link (live RLS)', { timeout: 6
     for (const id of [orgA, orgB])
       await o.organization.create({ data: { id, name: 'AL', slug: `al-${id.slice(0, 8)}` } });
     await o.user.create({ data: { id: user, email: `al-${user.slice(0, 8)}@example.com` } });
+    await o.user.create({ data: { id: viewer, email: `al-${viewer.slice(0, 8)}@example.com` } });
+    // #398: auto-link needs meeting-level access (live, non-viewer membership) for the acting user.
+    await o.membership.create({ data: { organizationId: orgA, userId: user, role: 'member' } });
+    await o.membership.create({ data: { organizationId: orgA, userId: viewer, role: 'viewer' } });
     await o.$disconnect();
     db = createPrismaClient({ databaseUrl: url! });
   });
@@ -182,5 +187,88 @@ describe.skipIf(!url || !owner)('P7 calendar auto-link (live RLS)', { timeout: 6
       { client: db },
     );
     expect(leaked).toBe(0);
+  });
+  it('#398: links every unique match with no row cap, even next to a heavily duplicated id', async () => {
+    const conns = new PrismaCalendarConnections(db, cipher);
+    const sync = createCalendarSyncRepository({ client: db, cipher });
+    const c = await conns.upsert(orgA, {
+      userId: user,
+      provider: 'google',
+      displayName: 'Me',
+      externalAccountId: `cap-${orgA.slice(0, 8)}@example.test`,
+      accessToken: 'plain-access',
+      refreshToken: 'plain-refresh',
+      accessTokenExpiresAt: new Date(NOW.getTime() + 3600e3),
+    });
+    // Four ids each shared by one live meeting per source (5 rows each, ambiguous): 21 candidate rows for 5 ids
+    // exceeds the old `take: ext.length * 4` page (20), which could drop the one unique match.
+    const busy = ['bua', 'bub', 'buc', 'bud'].map((p) => `meet.google.com/${p}-yyyy-bus`);
+    for (const x of busy)
+      for (const source of ['upload', 'extension', 'desktop', 'bot', 'mobile'] as const)
+        await withOrganizationContext(
+          orgA,
+          (tx) =>
+            tx.meeting.create({
+              data: { organizationId: orgA, title: 'm', source, externalMeetingId: x },
+            }),
+          { client: db },
+        );
+    const solo = await meeting(orgA, 'meet.google.com/sol-oooo-sol', 'extension');
+    const r = await sync.applySync(orgA, {
+      connectionId: c.id,
+      from: FROM,
+      to: TO,
+      events: [...busy.map((_, i) => ev(`c-busy-${i}`)), ev('c-solo')],
+      complete: true,
+      now: NOW,
+      nextSyncInMs: 60_000,
+      autoLink: [
+        ...busy.map((x, i) => ({ eventId: `c-busy-${i}`, externalMeetingId: x })),
+        { eventId: 'c-solo', externalMeetingId: 'meet.google.com/sol-oooo-sol' },
+      ],
+    });
+    expect(r).toMatchObject({ applied: true, autoLinked: 1 });
+    const rows = await withOrganizationContext(
+      orgA,
+      (tx) =>
+        tx.calendarEventLink.findMany({
+          where: { organizationId: orgA, connectionId: c.id },
+          select: { providerEventId: true, meetingId: true },
+        }),
+      { client: db },
+    );
+    expect(rows).toEqual([{ providerEventId: 'c-solo', meetingId: solo.id }]);
+  });
+
+  it('#398: denied: no auto links for a user without meeting-level access (viewer)', async () => {
+    const conns = new PrismaCalendarConnections(db, cipher);
+    const sync = createCalendarSyncRepository({ client: db, cipher });
+    const c = await conns.upsert(orgA, {
+      userId: viewer,
+      provider: 'google',
+      displayName: 'Viewer',
+      externalAccountId: `v-${orgA.slice(0, 8)}@example.test`,
+      accessToken: 'plain-access',
+      refreshToken: 'plain-refresh',
+      accessTokenExpiresAt: new Date(NOW.getTime() + 3600e3),
+    });
+    await meeting(orgA, 'meet.google.com/vvv-wwww-xxx', 'extension');
+    const r = await sync.applySync(orgA, {
+      connectionId: c.id,
+      from: FROM,
+      to: TO,
+      events: [ev('v-one')],
+      complete: true,
+      now: NOW,
+      nextSyncInMs: 60_000,
+      autoLink: [{ eventId: 'v-one', externalMeetingId: 'meet.google.com/vvv-wwww-xxx' }],
+    });
+    expect(r).toMatchObject({ applied: true, autoLinked: 0 });
+    const n = await withOrganizationContext(
+      orgA,
+      (tx) => tx.calendarEventLink.count({ where: { connectionId: c.id } }),
+      { client: db },
+    );
+    expect(n).toBe(0);
   });
 });

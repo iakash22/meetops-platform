@@ -51,13 +51,24 @@ export class PrismaCalendarEventLinks implements CalendarEventLinksRepository {
   async matchExternalIds(organizationId: string, externalIds: string[]) {
     const ids = [...new Set(externalIds)].slice(0, MAX_MATCH_IDS);
     if (ids.length === 0) return new Map<string, string>();
-    const rows = await this.org(organizationId, (tx) =>
-      tx.meeting.findMany({
-        where: { organizationId, deletedAt: null, externalMeetingId: { in: ids } },
+    // Count per id first (no row cap: a busy ambiguous id can never push another id's only match out of a
+    // truncated page), then read just the ids that match exactly one live meeting.
+    const rows = await this.org(organizationId, async (tx) => {
+      const where = { organizationId, deletedAt: null, externalMeetingId: { in: ids } };
+      const groups = await tx.meeting.groupBy({
+        by: ['externalMeetingId'],
+        where,
+        _count: { _all: true },
+      });
+      const unique = groups
+        .filter((g) => g._count._all === 1 && g.externalMeetingId)
+        .map((g) => g.externalMeetingId as string);
+      if (unique.length === 0) return [];
+      return tx.meeting.findMany({
+        where: { ...where, externalMeetingId: { in: unique } },
         select: { id: true, externalMeetingId: true },
-        take: MAX_MATCH_IDS * 4,
-      }),
-    );
+      });
+    });
     return uniqueMatches(rows);
   }
 

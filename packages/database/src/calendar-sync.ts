@@ -70,6 +70,58 @@ const STATUSES = new Set(['confirmed', 'tentative', 'cancelled']);
 
 const MAX_EXTERNAL_ID_LEN = 255;
 
+/** Roles allowed to link a calendar event to a meeting (CASL `create` Meeting; viewers cannot). */
+const LINKING_ROLES = ['owner', 'admin', 'member'] as const;
+
+/** True when `userId` is a live, non-viewer member of `organizationId` (meeting-level access for auto-link). */
+export async function canLinkMeetings(
+  tx: Prisma.TransactionClient,
+  organizationId: string,
+  userId: string,
+): Promise<boolean> {
+  const m = await tx.membership.findFirst({
+    where: {
+      organizationId,
+      userId,
+      deletedAt: null,
+      role: { in: [...LINKING_ROLES] },
+      user: { deletedAt: null },
+    },
+    select: { id: true },
+  });
+  return m !== null;
+}
+
+/**
+ * externalMeetingId -> meeting id for ids that match exactly ONE live meeting of the org. Counts per id with a
+ * GROUP BY first (no row cap, so a busy id can never push another id's only match out of a truncated page), then
+ * reads the ids of the unique ones; ambiguous ids (2+ live meetings) are left out.
+ */
+export async function uniqueLiveMeetings(
+  tx: Prisma.TransactionClient,
+  organizationId: string,
+  externalIds: string[],
+): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  if (externalIds.length === 0) return out;
+  const where = { organizationId, deletedAt: null, externalMeetingId: { in: externalIds } };
+  const groups = await tx.meeting.groupBy({
+    by: ['externalMeetingId'],
+    where,
+    _count: { _all: true },
+  });
+  const unique = groups
+    .filter((g) => g._count._all === 1 && g.externalMeetingId)
+    .map((g) => g.externalMeetingId as string);
+  if (unique.length === 0) return out;
+  const rows = await tx.meeting.findMany({
+    where: { ...where, externalMeetingId: { in: unique } },
+    select: { id: true, externalMeetingId: true },
+  });
+  for (const r of rows) if (r.externalMeetingId) out.set(r.externalMeetingId, r.id);
+  return out;
+}
+
 /**
  * Calendar auto-link, inside applySync's org-scoped (forced RLS) transaction. For each candidate event that is live in
  * this sync (not cancelled) and whose externalMeetingId matches exactly ONE live meeting of the organization (the
@@ -78,7 +130,7 @@ const MAX_EXTERNAL_ID_LEN = 255;
  * DO NOTHING makes it idempotent and race-safe against a concurrent manual link. Each inserted link writes one
  * audit_events row (action calendar.link, actor_type system, target the connection), like the API's manual link.
  */
-async function autoLinkInTx(
+export async function autoLinkInTx(
   tx: Prisma.TransactionClient,
   organizationId: string,
   connectionId: string,
@@ -96,25 +148,23 @@ async function autoLinkInTx(
     )
       byEvent.set(c.eventId, c.externalMeetingId);
   if (byEvent.size === 0) return 0;
-  const ext = [...new Set(byEvent.values())];
-  const rows = await tx.meeting.findMany({
-    where: { organizationId, deletedAt: null, externalMeetingId: { in: ext } },
-    select: { id: true, externalMeetingId: true },
-    take: ext.length * 4,
-  });
-  const seen = new Map<string, string | null>();
-  for (const r of rows)
-    if (r.externalMeetingId)
-      seen.set(r.externalMeetingId, seen.has(r.externalMeetingId) ? null : r.id);
+  // Meeting-level access for the acting user (the connection owner) in this org: the same gate as the manual link
+  // route (CASL `create` Meeting: owner, admin or member with a live membership, and a live user). Viewers,
+  // removed members and deleted users never get links created on their behalf.
+  if (!(await canLinkMeetings(tx, organizationId, userId))) return 0;
+  const seen = await uniqueLiveMeetings(tx, organizationId, [...new Set(byEvent.values())]);
   const audits: Prisma.AuditEventCreateManyInput[] = [];
   for (const [eventId, x] of byEvent) {
     const meetingId = seen.get(x);
     if (!meetingId) continue; // no match, or ambiguous (two or more live meetings share the id)
+    // INSERT ... SELECT re-checks the meeting (same org, not deleted) at write time.
     const inserted = await tx.$queryRaw<{ id: string }[]>`
       INSERT INTO calendar_event_links
         (id, org_id, connection_id, user_id, provider_event_id, meeting_id, source, created_at, updated_at)
-      VALUES (${randomUUID()}::uuid, ${organizationId}::uuid, ${connectionId}::uuid, ${userId}::uuid, ${eventId},
-              ${meetingId}::uuid, 'auto', now(), now())
+      SELECT ${randomUUID()}::uuid, ${organizationId}::uuid, ${connectionId}::uuid, ${userId}::uuid, ${eventId},
+             m.id, 'auto', now(), now()
+        FROM meetings m
+       WHERE m.id = ${meetingId}::uuid AND m.org_id = ${organizationId}::uuid AND m.deleted_at IS NULL
       ON CONFLICT (org_id, connection_id, provider_event_id) DO NOTHING
       RETURNING id`;
     if (inserted.length === 0) continue;
