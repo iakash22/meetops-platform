@@ -11,6 +11,10 @@ import {
   createRedisDeadLetterIndex,
   deadLetterIndexKey,
   DEAD_LETTER_INDEX_TTL_MS,
+  INDEX_ADD_SCRIPT,
+  INDEX_PRUNE_SCRIPT,
+  INDEX_TIME_SCRIPT,
+  type DeadLetterIndex,
   meetingHasDeadLetters,
   isRetryExhausted,
   transcriptionBackoffMs,
@@ -95,8 +99,8 @@ describe('dead-lettering', () => {
     const dlq = { add: vi.fn<DeadLetterQueueLike['add']>(async () => undefined) };
     const status = {
       markDelayed: vi.fn(async () => undefined),
-      isDelayed: vi.fn(async () => true),
-      clearDelayed: vi.fn(async () => undefined),
+      readDelayed: vi.fn(async (): Promise<{ version: string } | null> => ({ version: 'v1' })),
+      clearDelayed: vi.fn(async () => true),
     };
     const alert = vi.fn();
     const logger = { warn: vi.fn(), error: vi.fn() };
@@ -219,7 +223,8 @@ describe('dead-lettering', () => {
       dead('job-1'),
     ];
     await handleTranscriptionSuccess(job(1), { status, deadLetters, logger });
-    expect(status.clearDelayed).toHaveBeenCalledWith(ORG, MEET, 'processing');
+    expect(status.clearDelayed).toHaveBeenCalledWith(ORG, MEET, 'processing', 'v1');
+    expect(status.markDelayed).not.toHaveBeenCalled();
   });
 
   it('a success does NOT clear transcription_delayed while another chunk of the meeting is dead-lettered', async () => {
@@ -272,44 +277,85 @@ describe('dead-lettering', () => {
     );
   });
 
-  /** In-memory Redis ZSET + EVAL(prune-if-old) with call counters. */
+  /** In-memory Redis ZSET + the index's Lua scripts, with a server clock in µs and call counters. */
   function fakeRedis() {
     const z = new Map<string, Map<string, number>>();
+    const clock = { us: 1_000_000_000 };
+    const ttl = new Map<string, number>();
+    const zset = (k: string) => z.get(k) ?? z.set(k, new Map()).get(k)!;
+    const bound = (v: number | string) => {
+      const x = String(v);
+      if (x === '-inf') return { v: -Infinity, ex: false };
+      if (x === '+inf') return { v: Infinity, ex: false };
+      return x.startsWith('(') ? { v: Number(x.slice(1)), ex: true } : { v: Number(x), ex: false };
+    };
+    const inRange = (sc: number, min: number | string, max: number | string) => {
+      const a = bound(min);
+      const b = bound(max);
+      return (a.ex ? sc > a.v : sc >= a.v) && (b.ex ? sc < b.v : sc <= b.v);
+    };
     const redis = {
-      zadd: vi.fn(async (k: string, score: number, m: string) => {
-        (z.get(k) ?? z.set(k, new Map()).get(k)!).set(m, score);
-      }),
-      pexpire: vi.fn(async () => 1),
       zrange: vi.fn(async (k: string) =>
         [...(z.get(k) ?? new Map<string, number>())].flatMap(([m, sc]) => [m, String(sc)]),
       ),
-      eval: vi.fn(async (_script: string, _n: number, ...args: (string | number)[]) => {
-        const [k, m, cutoff] = args as [string, string, number];
-        const sc = z.get(k)?.get(m);
-        if (sc !== undefined && sc <= Number(cutoff)) return z.get(k)!.delete(m) ? 1 : 0;
-        return 0;
+      zrangebyscore: vi.fn(async (k: string, min: number | string, max: number | string) =>
+        [...(z.get(k) ?? new Map<string, number>())]
+          .filter(([, sc]) => inRange(sc, min, max))
+          .map(([m]) => m),
+      ),
+      zremrangebyscore: vi.fn(async (k: string, min: number | string, max: number | string) => {
+        let n = 0;
+        for (const [m, sc] of z.get(k) ?? []) if (inRange(sc, min, max) && z.get(k)!.delete(m)) n++;
+        return n;
       }),
-      del: vi.fn(async (k: string) => z.delete(k)),
+      eval: vi.fn(async (script: string, _n: number, ...args: (string | number)[]) => {
+        if (script === INDEX_TIME_SCRIPT) return clock.us;
+        if (script === INDEX_ADD_SCRIPT) {
+          const [k, m, ttlMs] = args as [string, string, number];
+          zset(k).set(m, clock.us);
+          ttl.set(k, Number(ttlMs));
+          return clock.us;
+        }
+        if (script === INDEX_PRUNE_SCRIPT) {
+          const [k, m, cutoff] = args as [string, string, number];
+          const sc = z.get(k)?.get(m);
+          if (sc !== undefined && sc <= Number(cutoff)) return z.get(k)!.delete(m) ? 1 : 0;
+          return 0;
+        }
+        throw new Error('unknown script');
+      }),
     };
-    return { redis, z };
+    /** Direct seed with an explicit score (simulates an old entry). */
+    const seed = (k: string, m: string, score: number) => void zset(k).set(m, score);
+    return { redis, z, clock, ttl, seed };
   }
+
+  const mockIndex = (over: Partial<Record<keyof DeadLetterIndex, unknown>> = {}) => ({
+    time: vi.fn(async () => 5_000),
+    add: vi.fn(async () => undefined),
+    hasLive: vi.fn(async () => false),
+    hasSince: vi.fn(async () => false),
+    clearBefore: vi.fn(async () => undefined),
+    ...over,
+  });
 
   it('success path: a meeting that is not delayed returns before any DLQ or index read (call count)', async () => {
     const { status, logger } = setup();
-    status.isDelayed.mockResolvedValue(false);
+    status.readDelayed.mockResolvedValue(null);
     const deadLetters = vi.fn(async () => [dead('job-2')]);
-    const index = { add: vi.fn(), clear: vi.fn(), hasLive: vi.fn(async () => true) };
+    const index = mockIndex({ hasLive: vi.fn(async () => true) });
     for (let i = 0; i < 100; i++)
       await handleTranscriptionSuccess(job(1), { status, index, deadLetters, logger });
-    expect(status.isDelayed).toHaveBeenCalledTimes(100);
+    expect(status.readDelayed).toHaveBeenCalledTimes(100);
     expect(deadLetters).not.toHaveBeenCalled();
+    expect(index.time).not.toHaveBeenCalled();
     expect(index.hasLive).not.toHaveBeenCalled();
     expect(status.clearDelayed).not.toHaveBeenCalled();
   });
 
   it('success path: a status read error leaves the meeting delayed', async () => {
     const { status, logger } = setup();
-    status.isDelayed.mockRejectedValueOnce(new Error('db down'));
+    status.readDelayed.mockRejectedValueOnce(new Error('db down'));
     await handleTranscriptionSuccess(job(1), { status, deadLetters: async () => [], logger });
     expect(status.clearDelayed).not.toHaveBeenCalled();
     expect(logger.error).toHaveBeenCalledWith(
@@ -321,7 +367,7 @@ describe('dead-lettering', () => {
   it('success path: a live index entry blocks without any DLQ scan; read errors keep it delayed', async () => {
     const { status, logger } = setup();
     const deadLetters = vi.fn(async () => []);
-    const index = { add: vi.fn(), clear: vi.fn(), hasLive: vi.fn(async () => true) };
+    const index = mockIndex({ hasLive: vi.fn(async () => true) });
     for (let i = 0; i < 50; i++)
       await handleTranscriptionSuccess(job(1), { status, index, deadLetters, logger });
     expect(index.hasLive).toHaveBeenCalledWith(ORG, MEET, ['dlq_job-1']);
@@ -329,45 +375,164 @@ describe('dead-lettering', () => {
     expect(status.clearDelayed).not.toHaveBeenCalled();
     index.hasLive.mockRejectedValueOnce(new Error('redis down'));
     await handleTranscriptionSuccess(job(1), { status, index, deadLetters, logger });
+    index.time.mockRejectedValueOnce(new Error('redis down'));
+    await handleTranscriptionSuccess(job(1), { status, index, deadLetters, logger });
     expect(status.clearDelayed).not.toHaveBeenCalled();
   });
 
-  it('success path: an empty index is not trusted; a full scan confirms before clearing, then the index is cleared', async () => {
+  it('success path: an empty index is not trusted; a full scan confirms, then a CAS clear and clearBefore(t0)', async () => {
     const { status, logger } = setup();
-    const index = {
-      add: vi.fn(),
-      clear: vi.fn(async () => undefined),
-      hasLive: vi.fn(async () => false),
-    };
+    const index = mockIndex();
     // Index lost the sibling (failed write / expired key) but the DLQ still has it: stays delayed.
     const withSibling = vi.fn(async () => [dead('job-2')]);
     await handleTranscriptionSuccess(job(1), { status, index, deadLetters: withSibling, logger });
     expect(withSibling).toHaveBeenCalledTimes(1);
     expect(status.clearDelayed).not.toHaveBeenCalled();
-    // Nothing left: clears, then deletes the index key.
+    // Nothing left: CAS clear with the observed version, re-check, then only entries older than t0 go.
     await handleTranscriptionSuccess(job(1), {
       status,
       index,
       deadLetters: async () => [],
       logger,
     });
-    expect(status.clearDelayed).toHaveBeenCalledWith(ORG, MEET, 'processing');
-    expect(index.clear).toHaveBeenCalledWith(ORG, MEET);
+    expect(status.clearDelayed).toHaveBeenCalledWith(ORG, MEET, 'processing', 'v1');
+    expect(index.hasSince).toHaveBeenCalledWith(ORG, MEET, 5_000, ['dlq_job-1']);
+    expect(index.clearBefore).toHaveBeenCalledWith(ORG, MEET, 5_000);
+    expect(status.markDelayed).not.toHaveBeenCalled();
     // No DLQ lister wired: cannot confirm, stays delayed.
     status.clearDelayed.mockClear();
     await handleTranscriptionSuccess(job(1), { status, index, logger });
     expect(status.clearDelayed).not.toHaveBeenCalled();
   });
 
+  it('Low: a blocking DLQ entry missing from the index is re-indexed by the scan', async () => {
+    const { status, logger } = setup();
+    const { redis, z } = fakeRedis();
+    const index = createRedisDeadLetterIndex(redis, { getJobState: async () => 'waiting' });
+    const deadLetters = vi.fn(async () => [dead('job-2')]);
+    await handleTranscriptionSuccess(job(1), { status, index, deadLetters, logger });
+    expect(z.get(deadLetterIndexKey(ORG, MEET))!.has('dlq_job-2')).toBe(true);
+    // The next success is blocked by the index alone: no scan.
+    await handleTranscriptionSuccess(job(1), { status, index, deadLetters, logger });
+    expect(deadLetters).toHaveBeenCalledTimes(1);
+    expect(status.clearDelayed).not.toHaveBeenCalled();
+  });
+
+  it('Medium (deterministic race): a failure landing between the scan and the clear re-delays the meeting', async () => {
+    // Shared state: Postgres status (with version), DLQ entries and the real index over fake Redis.
+    const { redis, z, clock } = fakeRedis();
+    const dlqEntries: ReturnType<typeof dead>[] = [];
+    const states = new Map<string, string>();
+    const index = createRedisDeadLetterIndex(redis, {
+      getJobState: async (id) => states.get(id) ?? 'unknown',
+    });
+    const db = { status: 'transcription_delayed', version: 1 };
+    const status = {
+      readDelayed: vi.fn(async () =>
+        db.status === 'transcription_delayed' ? { version: String(db.version) } : null,
+      ),
+      markDelayed: vi.fn(async () => {
+        if (db.status === 'processing') {
+          db.status = 'transcription_delayed';
+          db.version++;
+        }
+      }),
+      clearDelayed: vi.fn(async (_o: string, _m: string, to: string, v?: string) => {
+        if (db.status !== 'transcription_delayed' || (v && v !== String(db.version))) return false;
+        db.status = to;
+        db.version++;
+        return true;
+      }),
+    };
+    const logger = { warn: vi.fn(), error: vi.fn() };
+    const dlq = {
+      add: vi.fn<DeadLetterQueueLike['add']>(async (_n, data, o) => {
+        dlqEntries.push({ id: o.jobId, data } as ReturnType<typeof dead>);
+        states.set(o.jobId, 'waiting');
+      }),
+    };
+    const sibling = { ...job(4), id: 'job-2', data: { ...job(4).data, chunkIndex: 3 } };
+    // Exact interleaving from the review: snapshot (empty) -> concurrent failure does ZADD, DLQ add and a
+    // markDelayed that is a no-op (meeting still delayed) -> our clearDelayed -> our index clear.
+    let first = true;
+    const deadLetters = vi.fn(async () => {
+      const snap = [...dlqEntries];
+      if (first) {
+        first = false;
+        clock.us += 1;
+        await handleTranscriptionFailure(sibling, outage, {
+          dlq,
+          status,
+          index,
+          alert: vi.fn(),
+          logger,
+          now: () => new Date(),
+        });
+      }
+      return snap;
+    });
+    // markDelayed in the failure was a no-op here (still delayed) -> this mock does not bump the version,
+    // which is the worst case for the CAS: the post-clear re-check must catch it.
+    await handleTranscriptionSuccess(job(1), { status, index, deadLetters, logger });
+    expect(status.clearDelayed).toHaveBeenCalledWith(ORG, MEET, 'processing', '1');
+    expect(db.status).toBe('transcription_delayed');
+    expect(dlqEntries).toHaveLength(1);
+    expect(z.get(deadLetterIndexKey(ORG, MEET))!.has('dlq_job-2')).toBe(true);
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ meetingId: MEET }),
+      'transcription dead-letter raced the clear; meeting delayed again',
+    );
+    // A later success is blocked by the index without a scan.
+    const calls = deadLetters.mock.calls.length;
+    await handleTranscriptionSuccess(job(1), { status, index, deadLetters, logger });
+    expect(deadLetters).toHaveBeenCalledTimes(calls);
+    expect(db.status).toBe('transcription_delayed');
+  });
+
+  it('Medium: the CAS clear does nothing when the version moved; the re-check catches a lost index write via the DLQ', async () => {
+    const { status, logger } = setup();
+    status.clearDelayed.mockResolvedValueOnce(false);
+    const index = mockIndex();
+    await handleTranscriptionSuccess(job(1), {
+      status,
+      index,
+      deadLetters: async () => [],
+      logger,
+    });
+    expect(index.hasSince).not.toHaveBeenCalled();
+    expect(index.clearBefore).not.toHaveBeenCalled();
+    expect(status.markDelayed).not.toHaveBeenCalled();
+    // Cleared, index has nothing new, but the second DLQ read sees a new entry -> re-delay, keep index.
+    const lister = vi
+      .fn()
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([dead('job-3')]);
+    await handleTranscriptionSuccess(job(1), { status, index, deadLetters: lister, logger });
+    expect(status.markDelayed).toHaveBeenCalledWith(ORG, MEET);
+    expect(index.clearBefore).not.toHaveBeenCalled();
+    // A failing re-check is treated as "maybe": re-delay.
+    status.markDelayed.mockClear();
+    index.hasSince.mockRejectedValueOnce(new Error('redis down'));
+    await handleTranscriptionSuccess(job(1), {
+      status,
+      index,
+      deadLetters: async () => [],
+      logger,
+    });
+    expect(status.markDelayed).toHaveBeenCalledTimes(1);
+    expect(logger.error).toHaveBeenCalledWith(
+      expect.objectContaining({ meetingId: MEET }),
+      'transcription post-clear re-check failed; meeting delayed again',
+    );
+  });
+
   it('Medium 1: a failed index write still dead-letters, and the next success cannot clear the meeting', async () => {
     const { deps, dlq, status, logger } = setup();
-    const index = {
+    const index = mockIndex({
       add: vi.fn(async () => {
-        throw new Error('redis SADD failed');
+        throw new Error('redis ZADD failed');
       }),
-      clear: vi.fn(),
-      hasLive: vi.fn(async () => false), // the lost member is missing from the index
-    };
+    });
     expect(await handleTranscriptionFailure(job(4), outage, { ...deps, index })).toBe(true);
     expect(dlq.add).toHaveBeenCalledTimes(1);
     expect(status.markDelayed).toHaveBeenCalledWith(ORG, MEET);
@@ -375,7 +540,6 @@ describe('dead-lettering', () => {
       expect.objectContaining({ meetingId: MEET }),
       'transcription dead-letter index write failed',
     );
-    // A sibling chunk succeeds: the DLQ (scan) still holds job-1's entry, so the meeting stays delayed.
     const sibling = { ...job(1), id: 'job-2', data: { ...job(1).data, chunkIndex: 3 } };
     await handleTranscriptionSuccess(sibling, {
       status,
@@ -386,101 +550,91 @@ describe('dead-lettering', () => {
     expect(status.clearDelayed).not.toHaveBeenCalled();
   });
 
-  it('dead-lettering writes the index before the DLQ add; a permanent failure clears the index', async () => {
+  it('dead-lettering writes the index before the DLQ add', async () => {
     const { deps, dlq } = setup();
     const order: string[] = [];
-    const index = {
-      add: vi.fn(async () => void order.push('index')),
-      clear: vi.fn(),
-      hasLive: vi.fn(),
-    };
+    const index = mockIndex({ add: vi.fn(async () => void order.push('index')) });
     dlq.add.mockImplementationOnce(async () => void order.push('dlq'));
     await handleTranscriptionFailure(job(4), outage, { ...deps, index });
     expect(index.add).toHaveBeenCalledWith(ORG, MEET, 'dlq_job-1');
     expect(order).toEqual(['index', 'dlq']);
-    await handleTranscriptionFailure(job(1), new UnrecoverableError('provider_failed'), {
-      ...deps,
-      index,
-    });
-    expect(index.clear).toHaveBeenCalledWith(ORG, MEET);
   });
 
-  it('Redis index: writes ZADD with the add time and refreshes the TTL on every write', async () => {
-    const { redis } = fakeRedis();
+  it('Low: Redis index add is one Lua script (server TIME score + ZADD + PEXPIRE); clearBefore keeps newer entries', async () => {
+    const { redis, z, clock, ttl, seed } = fakeRedis();
     const index = createRedisDeadLetterIndex(
       redis,
       { getJobState: async () => 'waiting' },
-      {
-        now: () => 1_000,
-        ttlMs: 5_000,
-      },
+      { ttlMs: 5_000 },
     );
+    const key = deadLetterIndexKey(ORG, MEET);
     await index.add(ORG, MEET, 'dlq_a');
-    await index.add(ORG, MEET, 'dlq_b');
-    expect(redis.zadd).toHaveBeenCalledWith(deadLetterIndexKey(ORG, MEET), 1_000, 'dlq_a');
-    expect(redis.pexpire).toHaveBeenCalledTimes(2);
-    expect(redis.pexpire).toHaveBeenCalledWith(deadLetterIndexKey(ORG, MEET), 5_000);
+    expect(redis.eval).toHaveBeenCalledTimes(1);
+    expect(redis.eval).toHaveBeenCalledWith(INDEX_ADD_SCRIPT, 1, key, 'dlq_a', 5_000);
+    expect(INDEX_ADD_SCRIPT).toMatch(/redis\.call\('TIME'\)[\s\S]*ZADD[\s\S]*PEXPIRE/);
+    expect(z.get(key)!.get('dlq_a')).toBe(clock.us);
+    expect(ttl.get(key)).toBe(5_000);
     expect(DEAD_LETTER_INDEX_TTL_MS).toBeGreaterThan(7 * 24 * 3600_000);
-    await index.clear(ORG, MEET);
-    expect(redis.del).toHaveBeenCalledWith(deadLetterIndexKey(ORG, MEET));
+    const t0 = await index.time();
+    expect(t0).toBe(clock.us);
+    seed(key, 'dlq_old', t0 - 1);
+    clock.us += 1;
+    await index.add(ORG, MEET, 'dlq_new');
+    expect(await index.hasSince(ORG, MEET, t0, [])).toBe(true);
+    expect(await index.hasSince(ORG, MEET, t0, ['dlq_a', 'dlq_new'])).toBe(false);
+    await index.clearBefore(ORG, MEET, t0);
+    expect([...z.get(key)!.keys()].sort()).toEqual(['dlq_a', 'dlq_new']);
   });
 
   it('Medium 2 (deterministic race): a reader between the index add and the DLQ add neither clears nor prunes it', async () => {
-    const { redis, z } = fakeRedis();
-    let t = 1_000_000;
+    const { redis, z, clock } = fakeRedis();
     const states = new Map<string, string>();
     const queue = { getJobState: vi.fn(async (id: string) => states.get(id) ?? 'unknown') };
-    const index = createRedisDeadLetterIndex(redis, queue, { now: () => t, graceMs: 60_000 });
+    const index = createRedisDeadLetterIndex(redis, queue, { graceMs: 60_000 });
     const key = deadLetterIndexKey(ORG, MEET);
-    // Failure handler of chunk B: index written, DLQ add NOT yet landed (getJobState -> 'unknown').
     await index.add(ORG, MEET, 'dlq_b');
-    t += 10_000; // a success of chunk A reads 10 s later
+    clock.us += 10_000_000; // a success reads 10 s later
     expect(await index.hasLive(ORG, MEET, ['dlq_a'])).toBe(true);
     expect(queue.getJobState).not.toHaveBeenCalled();
     expect(z.get(key)!.has('dlq_b')).toBe(true);
-    // The DLQ add lands; past the grace period the entry is still live.
     states.set('dlq_b', 'waiting');
-    t += 120_000;
+    clock.us += 120_000_000;
     expect(await index.hasLive(ORG, MEET, ['dlq_a'])).toBe(true);
     expect(z.get(key)!.has('dlq_b')).toBe(true);
-    // Redriven (no longer waiting) and past grace: pruned.
     states.set('dlq_b', 'completed');
     expect(await index.hasLive(ORG, MEET, ['dlq_a'])).toBe(false);
     expect(z.get(key)!.has('dlq_b')).toBe(false);
   });
 
   it('Redis index: prune is conditional on the old score (a concurrent re-add survives)', async () => {
-    const { redis, z } = fakeRedis();
-    let t = 0;
-    const index = createRedisDeadLetterIndex(
+    const { redis, z, clock } = fakeRedis();
+    const index: DeadLetterIndex = createRedisDeadLetterIndex(
       redis,
       {
         getJobState: async () => {
-          // Re-added with a fresh score between the state read and the prune.
-          await redis.zadd(deadLetterIndexKey(ORG, MEET), t, 'dlq_b');
+          await index.add(ORG, MEET, 'dlq_b'); // re-added with a fresh server-time score
           return 'unknown';
         },
       },
-      { now: () => t, graceMs: 60_000 },
+      { graceMs: 60_000 },
     );
     await index.add(ORG, MEET, 'dlq_b');
-    t = 200_000;
+    clock.us += 200_000_000;
     await index.hasLive(ORG, MEET, []);
     expect(z.get(deadLetterIndexKey(ORG, MEET))!.has('dlq_b')).toBe(true);
   });
 
   it('Redis index reads only this meeting, not the whole DLQ (5,000 other entries)', async () => {
-    const { redis } = fakeRedis();
-    const t = 10_000_000;
+    const { redis, seed } = fakeRedis();
     const states = new Map<string, string>();
     const queue = { getJobState: vi.fn(async (id: string) => states.get(id) ?? 'unknown') };
-    const index = createRedisDeadLetterIndex(redis, queue, { now: () => t, graceMs: 60_000 });
+    const index = createRedisDeadLetterIndex(redis, queue, { graceMs: 60_000 });
     for (let i = 0; i < 5000; i++) {
       states.set(`dlq_other_${i}`, 'waiting');
-      await redis.zadd(deadLetterIndexKey(ORG, `m-${i}`), 0, `dlq_other_${i}`);
+      seed(deadLetterIndexKey(ORG, `m-${i}`), `dlq_other_${i}`, 0);
     }
-    await redis.zadd(deadLetterIndexKey(ORG, MEET), 0, 'dlq_self');
-    await redis.zadd(deadLetterIndexKey(ORG, MEET), 0, 'dlq_sibling');
+    seed(deadLetterIndexKey(ORG, MEET), 'dlq_self', 0);
+    seed(deadLetterIndexKey(ORG, MEET), 'dlq_sibling', 0);
     states.set('dlq_sibling', 'waiting');
     expect(await index.hasLive(ORG, MEET, ['dlq_self'])).toBe(true);
     expect(queue.getJobState).toHaveBeenCalledTimes(1);

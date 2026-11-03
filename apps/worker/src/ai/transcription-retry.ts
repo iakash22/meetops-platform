@@ -87,18 +87,27 @@ export type DeadLetterQueueLike = {
 
 /** Moves a meeting into and out of `transcription_delayed`. Must be idempotent and org-scoped. */
 export interface TranscriptionDelayedStatus {
+  /**
+   * Moves `processing` -> `transcription_delayed`, and re-touches an already delayed meeting (bumps its version) so a
+   * concurrent success's compare-and-set clear fails. Never touches completed/failed meetings.
+   */
   markDelayed(organizationId: string, meetingId: string): Promise<void>;
-  /** True when the meeting is currently `transcription_delayed` (cheap primary-key read; success-path pre-check). */
-  isDelayed(organizationId: string, meetingId: string): Promise<boolean>;
+  /**
+   * When the meeting is `transcription_delayed`, an opaque version of that state (its updated_at); otherwise null.
+   * Used as a compare-and-set token by `clearDelayed`.
+   */
+  readDelayed(organizationId: string, meetingId: string): Promise<{ version: string } | null>;
   /**
    * Leaves `transcription_delayed`: back to `processing` after a later attempt succeeds, or to `failed` on a final
-   * (permanent) failure. Only moves a meeting that is still `transcription_delayed`.
+   * (permanent) failure. Only moves a meeting that is still `transcription_delayed` and, when `expectedVersion` is
+   * given, still at that version. Returns whether it changed the meeting.
    */
   clearDelayed(
     organizationId: string,
     meetingId: string,
     to: 'processing' | 'failed',
-  ): Promise<void>;
+    expectedVersion?: string,
+  ): Promise<boolean>;
 }
 
 /** Alert / notification hook. Receives ids and codes only, never transcript text or URLs. */
@@ -175,7 +184,6 @@ export async function handleTranscriptionFailure(
     if (organizationId && meetingId) {
       try {
         await deps.status?.clearDelayed(organizationId, meetingId, 'failed');
-        await deps.index?.clear(organizationId, meetingId);
       } catch {
         deps.logger.error(
           { organizationId, meetingId, recordingId, jobId: job.id },
@@ -272,18 +280,21 @@ export function queueDeadLetterLister(queue: {
 }
 
 /**
- * Per-meeting index of DLQ job ids: a Redis ZSET per org + meeting, scored by the time each entry was added.
+ * Per-meeting index of DLQ job ids: a Redis ZSET per org + meeting, scored by Redis server TIME in microseconds when
+ * each entry was added (one Lua script does ZADD + PEXPIRE atomically, so every worker uses the same clock).
  * It answers only "is something of this meeting still dead-lettered?" (true = definitely blocked). A false answer is
- * NOT trusted: the caller confirms with a full DLQ scan before clearing (so a failed index write, an expired key or
- * a pruned member can only cost a scan, never clear the meeting early).
+ * NOT trusted: the caller confirms with a full DLQ scan before clearing.
  * - Entries younger than the grace period always count as dead-lettered (the DLQ add may not have landed yet).
  * - Older entries whose DLQ job is gone or no longer waiting (redriven, removed) are pruned atomically, only if
  *   their score is still old (a concurrent re-add refreshes the score and survives).
- * - The key's TTL is refreshed on every write; `clear` deletes it once the meeting leaves transcription_delayed.
- *   DLQ entries are kept until redriven (no retention limit), so the TTL cannot outlive them; an expired key only
- *   forces the confirming scan.
+ * - The key TTL is refreshed on every write. DLQ entries are kept until redriven (no retention limit), so the TTL
+ *   cannot outlive them; an expired key only forces the confirming scan.
+ * - After a meeting clears, only entries older than the success's read time are removed (`clearBefore`), never a
+ *   concurrent newer entry.
  */
 export interface DeadLetterIndex {
+  /** Redis server time (µs); the read point for `clearBefore` / `hasSince`. */
+  time(): Promise<number>;
   add(organizationId: string, meetingId: string, dlqJobId: string): Promise<void>;
   /** True when a DLQ job other than `excludeDlqJobIds` is (or may still be, within the grace period) dead-lettered. */
   hasLive(
@@ -291,7 +302,15 @@ export interface DeadLetterIndex {
     meetingId: string,
     excludeDlqJobIds: readonly string[],
   ): Promise<boolean>;
-  clear(organizationId: string, meetingId: string): Promise<void>;
+  /** True when an entry other than `excludeDlqJobIds` was added at or after `sinceUs`. */
+  hasSince(
+    organizationId: string,
+    meetingId: string,
+    sinceUs: number,
+    excludeDlqJobIds: readonly string[],
+  ): Promise<boolean>;
+  /** Removes entries added strictly before `beforeUs` (ZREMRANGEBYSCORE -inf (beforeUs). */
+  clearBefore(organizationId: string, meetingId: string, beforeUs: number): Promise<void>;
 }
 
 export const deadLetterIndexKey = (organizationId: string, meetingId: string) =>
@@ -302,61 +321,78 @@ export const DEAD_LETTER_INDEX_GRACE_MS = 120_000;
 /** Key TTL, refreshed on every write. */
 export const DEAD_LETTER_INDEX_TTL_MS = 30 * 24 * 3600_000;
 
+/** Redis server TIME in microseconds. */
+export const INDEX_TIME_SCRIPT = `local t = redis.call('TIME')
+return tonumber(t[1]) * 1000000 + tonumber(t[2])`;
+/** ZADD scored by server TIME (µs) + PEXPIRE, atomically. ARGV: member, ttlMs. Returns the score. */
+export const INDEX_ADD_SCRIPT = `local t = redis.call('TIME')
+local s = tonumber(t[1]) * 1000000 + tonumber(t[2])
+redis.call('ZADD', KEYS[1], s, ARGV[1])
+redis.call('PEXPIRE', KEYS[1], ARGV[2])
+return s`;
 /** ZREM only if the member's score is still <= cutoff (atomic; a concurrent re-add with a new score survives). */
-const PRUNE_IF_OLD = `local s = redis.call('ZSCORE', KEYS[1], ARGV[1])
+export const INDEX_PRUNE_SCRIPT = `local s = redis.call('ZSCORE', KEYS[1], ARGV[1])
 if s and tonumber(s) <= tonumber(ARGV[2]) then return redis.call('ZREM', KEYS[1], ARGV[1]) end
 return 0`;
 
 export type DeadLetterIndexRedis = {
-  zadd(key: string, score: number, member: string): Promise<unknown>;
-  pexpire(key: string, ms: number): Promise<unknown>;
-  zrange(key: string, start: number, stop: number, withScores: 'WITHSCORES'): Promise<string[]>;
   eval(script: string, numKeys: number, ...args: (string | number)[]): Promise<unknown>;
-  del(key: string): Promise<unknown>;
+  zrange(key: string, start: number, stop: number, withScores: 'WITHSCORES'): Promise<string[]>;
+  zrangebyscore(key: string, min: number | string, max: number | string): Promise<string[]>;
+  zremrangebyscore(key: string, min: number | string, max: number | string): Promise<unknown>;
 };
 
 /** Redis ZSET index. A read costs one ZRANGE plus at most one state lookup per entry of THIS meeting. */
 export function createRedisDeadLetterIndex(
   redis: DeadLetterIndexRedis,
   dlq: { getJobState(jobId: string): Promise<string> },
-  opts: { now?: () => number; graceMs?: number; ttlMs?: number } = {},
+  opts: { graceMs?: number; ttlMs?: number } = {},
 ): DeadLetterIndex {
-  const now = opts.now ?? Date.now;
-  const graceMs = opts.graceMs ?? DEAD_LETTER_INDEX_GRACE_MS;
+  const graceUs = (opts.graceMs ?? DEAD_LETTER_INDEX_GRACE_MS) * 1000;
   const ttlMs = opts.ttlMs ?? DEAD_LETTER_INDEX_TTL_MS;
   const live = new Set<string>(DEAD_LETTER_STATES);
+  const time = async () => Number(await redis.eval(INDEX_TIME_SCRIPT, 0));
   return {
-    async add(o, m, id) {
-      const key = deadLetterIndexKey(o, m);
-      await redis.zadd(key, now(), id);
-      await redis.pexpire(key, ttlMs);
-    },
+    time,
+    add: async (o, m, id) =>
+      void (await redis.eval(INDEX_ADD_SCRIPT, 1, deadLetterIndexKey(o, m), id, ttlMs)),
     async hasLive(o, m, exclude) {
       const key = deadLetterIndexKey(o, m);
       const flat = await redis.zrange(key, 0, -1, 'WITHSCORES');
-      const cutoff = now() - graceMs;
+      if (flat.length === 0) return false;
+      const cutoff = (await time()) - graceUs;
       for (let i = 0; i + 1 < flat.length; i += 2) {
         const id = flat[i]!;
         const addedAt = Number(flat[i + 1]);
         if (exclude.includes(id)) continue;
         if (addedAt > cutoff) return true; // in its grace period: the DLQ add may still be in flight
         if (live.has(await dlq.getJobState(id))) return true;
-        await redis.eval(PRUNE_IF_OLD, 1, key, id, cutoff);
+        await redis.eval(INDEX_PRUNE_SCRIPT, 1, key, id, cutoff);
       }
       return false;
     },
-    clear: async (o, m) => void (await redis.del(deadLetterIndexKey(o, m))),
+    async hasSince(o, m, sinceUs, exclude) {
+      const ids = await redis.zrangebyscore(deadLetterIndexKey(o, m), sinceUs, '+inf');
+      return ids.some((id) => !exclude.includes(id));
+    },
+    clearBefore: async (o, m, beforeUs) =>
+      void (await redis.zremrangebyscore(deadLetterIndexKey(o, m), '-inf', `(${beforeUs}`)),
   };
 }
 
 /**
  * A transcription attempt succeeded: a meeting parked in `transcription_delayed` goes back to `processing`, but only
  * when no OTHER chunk of that meeting is still dead-lettered.
- * 1. Status first: a meeting that is not `transcription_delayed` (the normal case) returns without touching the DLQ.
- * 2. The per-meeting index: a live (or in-grace) sibling keeps the meeting delayed without any scan.
- * 3. Otherwise a full DLQ scan confirms before clearing. This runs at most about once per delayed meeting (it clears
- *    it), and it makes a failed or expired index safe.
- * Any read error, or no way to confirm (no DLQ lister), leaves the meeting delayed. Never fails the job.
+ * 1. Status first: a meeting that is not `transcription_delayed` (the normal case) returns without touching the DLQ;
+ *    the observed state version is the compare-and-set token for step 4.
+ * 2. Read Redis TIME (t0), then the per-meeting index: a live (or in-grace) sibling blocks without any scan.
+ * 3. Full DLQ scan confirms. A blocking entry missing from the index is re-indexed, so later successes hit the index.
+ * 4. Compare-and-set clear (still delayed AND same version). A concurrent failure's markDelayed bumps the version,
+ *    so the clear does nothing.
+ * 5. Re-check after the clear: an index entry added since t0, or any DLQ entry for the meeting (covers a failed index
+ *    write) -> mark delayed again. Otherwise remove index entries older than t0 only.
+ * Any read error before the clear leaves the meeting delayed; after the clear it re-marks it delayed. Never fails
+ * the job.
  */
 export async function handleTranscriptionSuccess(
   job: Pick<FailedJobLike, 'id' | 'data'> | undefined,
@@ -369,27 +405,63 @@ export async function handleTranscriptionSuccess(
 ): Promise<void> {
   const { organizationId, meetingId, recordingId, chunkIndex } = job?.data ?? {};
   if (!organizationId || !meetingId || !deps.status || !deps.deadLetters) return;
+  const { status, index, deadLetters } = deps;
   const log = { organizationId, meetingId, jobId: job?.id };
+  const own = recordingId ? [deadLetterJobId(job?.id, recordingId, chunkIndex)] : [];
+  const blockingIn = (entries: readonly DeadLetterRef[]) =>
+    entries.filter(
+      (e) =>
+        e.data.organizationId === organizationId &&
+        e.data.meetingId === meetingId &&
+        !(job?.id !== undefined && e.data.jobId === job.id),
+    );
+  let version: string;
+  let t0: number | undefined;
   try {
-    if (!(await deps.status.isDelayed(organizationId, meetingId))) return;
-    const own = recordingId ? [deadLetterJobId(job?.id, recordingId, chunkIndex)] : [];
-    if (deps.index && (await deps.index.hasLive(organizationId, meetingId, own))) return;
-    if (meetingHasDeadLetters(await deps.deadLetters(), organizationId, meetingId, [job?.id]))
+    const observed = await status.readDelayed(organizationId, meetingId);
+    if (!observed) return;
+    version = observed.version;
+    t0 = index ? await index.time() : undefined;
+    if (index && (await index.hasLive(organizationId, meetingId, own))) return;
+    const blocking = blockingIn(await deadLetters());
+    if (blocking.length > 0) {
+      if (index)
+        for (const e of blocking) {
+          const id = e.id ?? deadLetterJobId(e.data.jobId, e.data.recordingId, e.data.chunkIndex);
+          await index.add(organizationId, meetingId, id).catch(() => {
+            deps.logger.warn(log, 'transcription dead-letter re-index failed');
+          });
+        }
       return;
+    }
   } catch {
     deps.logger.error(log, 'transcription dead-letter lookup failed; meeting left delayed');
     return;
   }
+  let cleared: boolean;
   try {
-    await deps.status.clearDelayed(organizationId, meetingId, 'processing');
+    cleared = await status.clearDelayed(organizationId, meetingId, 'processing', version);
   } catch {
     deps.logger.error(log, 'transcription delayed-status clear failed');
     return;
   }
+  if (!cleared) return; // changed concurrently (e.g. a new dead-letter re-marked it): leave it
   try {
-    await deps.index?.clear(organizationId, meetingId);
+    const late =
+      (index && t0 !== undefined && (await index.hasSince(organizationId, meetingId, t0, own))) ||
+      blockingIn(await deadLetters()).length > 0;
+    if (!late) {
+      if (index && t0 !== undefined) await index.clearBefore(organizationId, meetingId, t0);
+      return;
+    }
+    deps.logger.warn(log, 'transcription dead-letter raced the clear; meeting delayed again');
   } catch {
-    deps.logger.warn(log, 'transcription dead-letter index clear failed');
+    deps.logger.error(log, 'transcription post-clear re-check failed; meeting delayed again');
+  }
+  try {
+    await status.markDelayed(organizationId, meetingId);
+  } catch {
+    deps.logger.error(log, 'transcription delayed-status write failed');
   }
 }
 
@@ -399,53 +471,66 @@ export async function handleTranscriptionSuccess(
  * code and `prisma migrate deploy` runs before the worker starts. If the value is missing anyway (migration not
  * applied), Postgres rejects the update (invalid enum input); `handleTranscriptionFailure` catches it, logs
  * `transcription delayed-status write failed`, and the DLQ entry and alert still happen.
- * Only moves a meeting that is still `processing` (never overwrites `completed`/`failed`),
+ * markDelayed only moves `processing` or re-touches `transcription_delayed` (never `completed`/`failed`); clears are
+ * compare-and-set on updated_at (Timestamptz(3)),
  * inside `withOrganizationContext` (forced RLS) and filtered on organizationId.
  */
 export function createPrismaTranscriptionDelayedStatus(
   opts: { client?: DatabaseClient } = {},
 ): TranscriptionDelayedStatus {
+  const ctx = opts.client ? { client: opts.client } : {};
   return {
     markDelayed: (organizationId, meetingId) =>
       withOrganizationContext(
         organizationId,
         async (tx) => {
+          // Also re-touches an already delayed meeting: @updatedAt moves, so a concurrent CAS clear fails.
           await tx.meeting.updateMany({
-            where: { id: meetingId, organizationId, status: 'processing', deletedAt: null },
+            where: {
+              id: meetingId,
+              organizationId,
+              status: { in: ['processing', 'transcription_delayed'] },
+              deletedAt: null,
+            },
             data: { status: 'transcription_delayed' },
           });
         },
-        opts.client ? { client: opts.client } : {},
+        ctx,
       ),
-    isDelayed: (organizationId, meetingId) =>
-      withOrganizationContext(
-        organizationId,
-        async (tx) =>
-          (await tx.meeting.count({
-            where: {
-              id: meetingId,
-              organizationId,
-              status: 'transcription_delayed',
-              deletedAt: null,
-            },
-          })) > 0,
-        opts.client ? { client: opts.client } : {},
-      ),
-    clearDelayed: (organizationId, meetingId, to) =>
+    readDelayed: (organizationId, meetingId) =>
       withOrganizationContext(
         organizationId,
         async (tx) => {
-          await tx.meeting.updateMany({
+          const m = await tx.meeting.findFirst({
             where: {
               id: meetingId,
               organizationId,
               status: 'transcription_delayed',
               deletedAt: null,
             },
+            select: { updatedAt: true },
+          });
+          return m ? { version: m.updatedAt.toISOString() } : null;
+        },
+        ctx,
+      ),
+    clearDelayed: (organizationId, meetingId, to, expectedVersion) =>
+      withOrganizationContext(
+        organizationId,
+        async (tx) => {
+          const r = await tx.meeting.updateMany({
+            where: {
+              id: meetingId,
+              organizationId,
+              status: 'transcription_delayed',
+              deletedAt: null,
+              ...(expectedVersion ? { updatedAt: new Date(expectedVersion) } : {}),
+            },
             data: { status: to },
           });
+          return r.count > 0;
         },
-        opts.client ? { client: opts.client } : {},
+        ctx,
       ),
   };
 }
