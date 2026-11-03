@@ -16,6 +16,8 @@ import {
   TRANSCRIPTION_DLQ,
   handleTranscriptionFailure,
   handleTranscriptionSuccess,
+  queueDeadLetterLister,
+  type DeadLetterLister,
   transcriptionBackoffStrategy,
   type DeadLetterQueueLike,
   type TranscriptionDelayedAlert,
@@ -34,6 +36,8 @@ export type TranscriptionDeadLetterDeps = {
   delayedStatus?: TranscriptionDelayedStatus | undefined;
   onTranscriptionDelayed?: TranscriptionDelayedAlert | undefined;
   deadLetterQueue?: DeadLetterQueueLike | undefined;
+  /** DLQ lister for the success-path guard (tests). Defaults to the worker's own DLQ queue. */
+  deadLetterLister?: DeadLetterLister | undefined;
 };
 
 /** BullMQ processor: permanent errors become UnrecoverableError so BullMQ stops retrying. */
@@ -91,6 +95,8 @@ export function startTranscriptionWorker(
     : new Queue(TRANSCRIPTION_DLQ, { connection: conn() });
   const dlq: DeadLetterQueueLike =
     deps.deadLetterQueue ?? (ownDlq as unknown as DeadLetterQueueLike);
+  const deadLetterLister =
+    deps.deadLetterLister ?? (ownDlq ? queueDeadLetterLister(ownDlq) : undefined);
   worker.on('failed', (job, err) => {
     logger.warn(
       { jobId: job?.id, errorCode: err instanceof TranscriptionJobError ? err.code : err?.name },
@@ -104,7 +110,11 @@ export function startTranscriptionWorker(
     });
   });
   worker.on('completed', (job) => {
-    void handleTranscriptionSuccess(job, { status: deps.delayedStatus, logger });
+    void handleTranscriptionSuccess(job, {
+      status: deps.delayedStatus,
+      deadLetters: deadLetterLister,
+      logger,
+    });
   });
   const close = async () => {
     await worker.close();
