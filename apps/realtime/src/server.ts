@@ -77,32 +77,128 @@ export type RealtimeServerOptions = {
    * ADR-011 section 3 revocation feed: register a listener for raw `meetops:auth:revocations` messages and return
    * an unsubscribe. Defaults to a Redis subscription when REDIS_URL is set; tests pass a fake.
    */
+  /** Concurrent-socket counter; defaults to Redis when REDIS_URL is set, else in-memory. */
+  concurrency?: ConcurrencyTracker;
   subscribeRevocations?: (
     listener: (raw: string) => void,
   ) => (() => Promise<void> | void) | Promise<() => Promise<void> | void>;
 };
 
-/** Fixed-window counter keyed by IP or user. In-process: each realtime replica enforces its own limit. */
+/**
+ * Fixed-window counter keyed by IP, user or socket. In-process: each realtime replica enforces its own limit. The map
+ * is a hard-capped LRU: expired entries are swept first, then the least recently used key is evicted, so a key flood
+ * cannot grow memory without bound.
+ */
 export class ConnectionRateLimiter {
   private readonly hits = new Map<string, { n: number; resetAt: number }>();
   constructor(
     private readonly windowMs: number,
     private readonly now: () => number,
+    private readonly maxKeys = 10_000,
   ) {}
+  get size(): number {
+    return this.hits.size;
+  }
   /** Counts one attempt; false once `limit` is exceeded within the window. */
   take(key: string, limit: number): boolean {
     const t = this.now();
-    if (this.hits.size > 10_000)
-      for (const [k, v] of this.hits) if (v.resetAt <= t) this.hits.delete(k);
     const e = this.hits.get(key);
-    if (!e || e.resetAt <= t) {
-      this.hits.set(key, { n: 1, resetAt: t + this.windowMs });
-      return true;
+    if (e && e.resetAt > t) {
+      // Re-insert to mark as most recently used.
+      this.hits.delete(key);
+      this.hits.set(key, e);
+      e.n += 1;
+      return e.n <= limit;
     }
-    e.n += 1;
-    return e.n <= limit;
+    if (e) this.hits.delete(key);
+    if (this.hits.size >= this.maxKeys) {
+      for (const [k, v] of this.hits) if (v.resetAt <= t) this.hits.delete(k);
+      while (this.hits.size >= this.maxKeys) {
+        const oldest = this.hits.keys().next().value as string;
+        this.hits.delete(oldest);
+      }
+    }
+    this.hits.set(key, { n: 1, resetAt: t + this.windowMs });
+    return true;
   }
 }
+
+/** Counts live sockets per key (user, IP). acquire() is false once `limit` sockets are already held. */
+export type ConcurrencyTracker = {
+  acquire(key: string, limit: number): Promise<boolean>;
+  release(key: string): Promise<void>;
+};
+
+export function createMemoryConcurrencyTracker(): ConcurrencyTracker {
+  const counts = new Map<string, number>();
+  return {
+    async acquire(key, limit) {
+      const n = counts.get(key) ?? 0;
+      if (n >= limit) return false;
+      counts.set(key, n + 1);
+      return true;
+    },
+    async release(key) {
+      const n = (counts.get(key) ?? 0) - 1;
+      if (n > 0) counts.set(key, n);
+      else counts.delete(key);
+    },
+  };
+}
+
+type RedisCounter = {
+  incr(key: string): Promise<number>;
+  decr(key: string): Promise<number>;
+  expire(key: string, seconds: number): Promise<unknown>;
+};
+
+/**
+ * Cluster-wide socket counts in Redis (INCR/DECR). Keys expire after `ttlSeconds` without activity so a crashed
+ * replica cannot leak slots forever.
+ */
+export function createRedisConcurrencyTracker(
+  redis: RedisCounter,
+  ttlSeconds = 3_600,
+): ConcurrencyTracker {
+  const k = (key: string) => `meetops:realtime:conns:${key}`;
+  return {
+    async acquire(key, limit) {
+      const n = await redis.incr(k(key));
+      await redis.expire(k(key), ttlSeconds);
+      if (n > limit) {
+        await redis.decr(k(key));
+        return false;
+      }
+      return true;
+    },
+    async release(key) {
+      const n = await redis.decr(k(key));
+      if (n < 0) await redis.incr(k(key));
+    },
+  };
+}
+
+/**
+ * Client IP for the per-IP limits. With `trustProxyHops` = N > 0, take the Nth X-Forwarded-For entry from the right
+ * (the address the outermost trusted proxy saw); otherwise, or when the header is short, the socket address.
+ */
+export function clientIp(
+  handshake: { address: string; headers: Record<string, string | string[] | undefined> },
+  trustProxyHops: number,
+): string {
+  if (trustProxyHops <= 0) return handshake.address;
+  const raw = handshake.headers['x-forwarded-for'];
+  const list = (Array.isArray(raw) ? raw.join(',') : (raw ?? ''))
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+  return list[list.length - trustProxyHops] ?? handshake.address;
+}
+
+/** Socket.IO message size cap (bytes); realtime only carries small control messages. */
+export const MAX_HTTP_BUFFER_SIZE = 16_384;
+/** Window for the per-socket meeting:join limit. */
+const JOIN_WINDOW_MS = 60_000;
 
 /** Extension bearer sockets need this scope (ADR-011 section 1.3). */
 export const EXTENSION_REQUIRED_SCOPE = 'recordings:write';
@@ -147,6 +243,7 @@ export async function createRealtimeServer(
   };
   const io: RealtimeIo = new Server(app.server, {
     path: opts.config.path,
+    maxHttpBufferSize: MAX_HTTP_BUFFER_SIZE,
     cors: {
       origin: [...opts.config.corsOrigins, ...opts.config.extensionOrigins],
       credentials: true,
@@ -170,6 +267,12 @@ export async function createRealtimeServer(
   }
 
   const limiter = new ConnectionRateLimiter(opts.config.connLimitWindowMs, now);
+  const joinLimiter = new ConnectionRateLimiter(JOIN_WINDOW_MS, now);
+  const concurrency: ConcurrencyTracker =
+    opts.concurrency ??
+    (redisClients[0]
+      ? createRedisConcurrencyTracker(redisClients[0])
+      : createMemoryConcurrencyTracker());
   /** The handshake credential, kept server-side only (never in socket.data, never logged) for re-verification. */
   const credentials = new WeakMap<
     RealtimeSocket,
@@ -187,20 +290,36 @@ export async function createRealtimeServer(
       },
       policy,
     );
+    const ip = clientIp(socket.handshake, opts.config.trustProxyHops);
     // Per-IP limit before any verifier work, so a flood cannot turn into database load.
-    if (!limiter.take(`ip:${socket.handshake.address}`, opts.config.connLimitPerIp)) {
+    if (!limiter.take(`ip:${ip}`, opts.config.connLimitPerIp)) {
       log.warn('realtime connection rate limited (ip)');
       return unauthorized();
     }
     if (!read.ok) return unauthorized();
     Promise.resolve()
       .then(() => opts.verifySession(read.credential))
-      .then((ctx) => {
+      .then(async (ctx) => {
         if (!acceptable(ctx, read.kind, now())) return unauthorized();
         if (!limiter.take(`user:${ctx.userId}`, opts.config.connLimitPerUser)) {
           log.warn('realtime connection rate limited (user)');
           return unauthorized();
         }
+        const ipKey = `ip:${ip}`;
+        const userKey = `user:${ctx.userId}`;
+        if (!(await concurrency.acquire(ipKey, opts.config.maxSocketsPerIp))) {
+          log.warn('realtime concurrent socket cap reached (ip)');
+          return unauthorized();
+        }
+        if (!(await concurrency.acquire(userKey, opts.config.maxSocketsPerUser))) {
+          await concurrency.release(ipKey);
+          log.warn('realtime concurrent socket cap reached (user)');
+          return unauthorized();
+        }
+        socket.once('disconnect', () => {
+          void concurrency.release(ipKey).catch(() => undefined);
+          void concurrency.release(userKey).catch(() => undefined);
+        });
         credentials.set(socket, { credential: read.credential, kind: read.kind });
         socket.data.userId = ctx.userId;
         socket.data.organizationId = ctx.organizationId;
@@ -219,6 +338,8 @@ export async function createRealtimeServer(
   });
 
   io.on('connection', (socket: RealtimeSocket) => {
+    /** Meeting ids this socket has joined (dedupes joins and enforces the per-socket room cap). */
+    const joined = new Set<string>();
     // Only cookie (web) sockets get the org fan-out room; bearer sockets only receive meetings they join (1.3).
     // ADR-013: cookie sockets also get the user's notification room, derived only from the verified identity (never
     // from client input; there is no client join event for it). Bearer sockets keep joining no fan-out room.
@@ -236,6 +357,10 @@ export async function createRealtimeServer(
       const meetingId = payload?.meetingId;
       if (typeof meetingId !== 'string' || !MEETING_ID_PATTERN.test(meetingId))
         return reply({ ok: false, error: 'invalid' });
+      if (joined.has(meetingId)) return reply({ ok: true });
+      if (!joinLimiter.take(`join:${socket.id}`, opts.config.joinLimitPerSocket))
+        return reply({ ok: false, error: 'limit' });
+      if (joined.size >= opts.config.maxRoomsPerSocket) return reply({ ok: false, error: 'limit' });
       Promise.resolve()
         .then(() =>
           opts.canAccessMeeting({
@@ -247,6 +372,9 @@ export async function createRealtimeServer(
         .then(async (allowed) => {
           if (allowed !== true) return reply({ ok: false, error: 'forbidden' });
           if (!socket.connected) return reply({ ok: false, error: 'forbidden' });
+          if (!joined.has(meetingId) && joined.size >= opts.config.maxRoomsPerSocket)
+            return reply({ ok: false, error: 'limit' });
+          joined.add(meetingId);
           await socket.join(meetingRoom(socket.data.organizationId, meetingId));
           reply({ ok: true });
         })
@@ -261,10 +389,13 @@ export async function createRealtimeServer(
 
     socket.on('meeting:leave', (payload, ack) => {
       const reply = typeof ack === 'function' ? ack : () => undefined;
-      if (typeof payload?.meetingId !== 'string') return reply({ ok: false, error: 'invalid' });
-      void Promise.resolve(
-        socket.leave(meetingRoom(socket.data.organizationId, payload.meetingId)),
-      ).then(() => reply({ ok: true }));
+      const meetingId = payload?.meetingId;
+      if (typeof meetingId !== 'string' || !MEETING_ID_PATTERN.test(meetingId))
+        return reply({ ok: false, error: 'invalid' });
+      joined.delete(meetingId);
+      void Promise.resolve(socket.leave(meetingRoom(socket.data.organizationId, meetingId))).then(
+        () => reply({ ok: true }),
+      );
     });
   });
 

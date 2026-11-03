@@ -67,6 +67,10 @@ Where each variable is read:
 - `REALTIME_HOST` (default `0.0.0.0`), `REALTIME_PORT` (default 4001; compose binds 127.0.0.1:4001).
 - `REALTIME_CORS_ORIGINS`: comma-separated allowed origins (dev: `http://localhost:5173`). Empty or `*` allows any, so set it explicitly.
 - `REALTIME_SOCKET_PATH` (default `/socket.io`).
+- `REALTIME_TRUST_PROXY_HOPS` (default 0): reverse proxies in front of realtime. With N > 0 the per-IP limits use the Nth `X-Forwarded-For` entry from the right.
+- `REALTIME_MAX_SOCKETS_PER_USER` (default 20) and `REALTIME_MAX_SOCKETS_PER_IP` (default 50): concurrent socket caps, shared through Redis when `REDIS_URL` is set.
+- `REALTIME_JOIN_LIMIT_PER_SOCKET` (default 30 per minute) and `REALTIME_MAX_ROOMS_PER_SOCKET` (default 50): `meeting:join` limits.
+- `REALTIME_CORS_ORIGINS` must be `https://` unless `NODE_ENV=development`. In production `REDIS_URL` is required and must be `rediss://`.
 - `REDIS_URL`: when set, enables the Socket.IO Redis adapter.
 
 ### Media (worker)
