@@ -33,6 +33,7 @@ import type {
   TokenFamily,
 } from '../../extension-auth/domain/extension-token.js';
 import type { ExtensionRevoker } from '../../extension-auth/application/extension-auth.service.js';
+import { RefreshGraceCache } from '../../auth/application/refresh-grace.js';
 
 /**
  * Client id stored in the shared token-family shape (`TokenFamily.extensionId`). Every desktop family carries it, and
@@ -99,6 +100,8 @@ export function pkceS256Matches(verifier: string, challenge: string): boolean {
  * consumed on every attempt, including a mismatch. Every credential failure is the same 401.
  */
 export class DesktopAuthService implements ExtensionRevoker {
+  /** ~10 s grace for re-presenting the immediately previous refresh token from the same device. */
+  private readonly grace = new RefreshGraceCache<DesktopRefreshResponse>();
   constructor(private readonly d: DesktopAuthDeps) {}
 
   private async limit(key: string, l: Limit, cost = 1) {
@@ -251,11 +254,35 @@ export class DesktopAuthService implements ExtensionRevoker {
     refreshToken: string,
     deviceId: string,
     meta: RequestMeta,
-  ): Promise<TokenFamily> {
-    const r = await this.d.desktopTokens.consumeRefresh(this.d.tokens.hash(refreshToken));
+  ): Promise<TokenFamily>;
+  private async consume(
+    refreshToken: string,
+    deviceId: string,
+    meta: RequestMeta,
+    allowGrace: true,
+  ): Promise<TokenFamily | { replay: DesktopRefreshResponse }>;
+  private async consume(
+    refreshToken: string,
+    deviceId: string,
+    meta: RequestMeta,
+    allowGrace = false,
+  ): Promise<TokenFamily | { replay: DesktopRefreshResponse }> {
+    const tokenHash = this.d.tokens.hash(refreshToken);
+    const r = await this.d.desktopTokens.consumeRefresh(tokenHash);
     if (r.status === 'unknown') throw new UnauthenticatedError();
     const f = await this.d.desktopTokens.findFamily(r.familyId);
     if (!f || f.extensionId !== DESKTOP_CLIENT_ID) throw new UnauthenticatedError();
+    if (allowGrace && r.status === 'reused' && !f.revokedAt && f.deviceId === deviceId) {
+      // Grace window: the same device re-sent the token it just rotated; hand back the same new pair.
+      const again = this.grace.replay(f.id, tokenHash, deviceId, this.d.clock.now().getTime());
+      if (again) {
+        try {
+          return { replay: await again };
+        } catch {
+          throw new UnauthenticatedError();
+        }
+      }
+    }
     if (r.status === 'reused' || f.deviceId !== deviceId) {
       if (!f.revokedAt) {
         await this.revokeFamily(f, 'desktop_revoked');
@@ -279,7 +306,26 @@ export class DesktopAuthService implements ExtensionRevoker {
   /** POST /auth/desktop/refresh. */
   async refresh(body: DesktopRefreshRequest, meta: RequestMeta): Promise<DesktopRefreshResponse> {
     await this.limit(`refresh:ip:${meta.ip ?? 'unknown'}`, DESKTOP_LIMITS.refreshPerIp);
-    const f = await this.consume(body.refreshToken, body.deviceId, meta);
+    const consumed = await this.consume(body.refreshToken, body.deviceId, meta, true);
+    if ('replay' in consumed) return consumed.replay;
+    const f = consumed;
+    const pending = this.grace.begin(
+      f.id,
+      this.d.tokens.hash(body.refreshToken),
+      f.deviceId,
+      this.d.clock.now().getTime(),
+    );
+    try {
+      const pair = await this.rotate(f, meta);
+      pending.resolve(pair);
+      return pair;
+    } catch (err) {
+      pending.reject();
+      throw err;
+    }
+  }
+
+  private async rotate(f: TokenFamily, meta: RequestMeta): Promise<DesktopRefreshResponse> {
     await this.limit(`refresh:fam:${f.id}`, DESKTOP_LIMITS.refreshPerFamily);
     if (!(await this.liveMember(f.organizationId, f.userId))) {
       await this.revokeFamily(f, 'member_removed');
@@ -397,6 +443,7 @@ export class DesktopAuthService implements ExtensionRevoker {
   }
 
   private async revokeFamily(f: TokenFamily, reason: RevokeReason) {
+    this.grace.forget(f.id);
     await this.d.desktopTokens.revokeFamily(f.id, this.d.clock.now());
     await publishRevocation(this.d.revocations, {
       kind: 'session',
