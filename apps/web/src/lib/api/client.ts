@@ -406,6 +406,39 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
     return doFetch(`${base}${path}`, init);
   }
 
+  /**
+   * Single-flight session refresh. The API has no refresh-token endpoint (HttpOnly cookie session), so
+   * "refresh" re-checks GET /auth/session, which picks up a cookie rotated by another tab or an org switch.
+   * Concurrent 401s share one in-flight check; on success each request retries once, otherwise the
+   * unauthorized handlers fire exactly once for the whole burst.
+   */
+  let refreshInFlight: Promise<boolean> | null = null;
+  function refreshSession(): Promise<boolean> {
+    if (!refreshInFlight) {
+      refreshInFlight = (async () => {
+        try {
+          const res = await doFetch(`${base}/auth/session`, {
+            method: 'GET',
+            credentials: 'include',
+            headers: { Accept: 'application/json' },
+          });
+          if (res.ok) {
+            cachedCsrf = null;
+            return true;
+          }
+        } catch {
+          /* network error: treat as signed out */
+        }
+        cachedCsrf = null;
+        unauthorizedHandlers.forEach((h) => h());
+        return false;
+      })().finally(() => {
+        refreshInFlight = null;
+      });
+    }
+    return refreshInFlight;
+  }
+
   async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
     let res = await send(method, path, body, false);
     let data = safeJson(await res.text());
@@ -419,11 +452,15 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
       res = await send(method, path, body, true);
       data = safeJson(await res.text());
     }
-    if (!res.ok) {
-      if (res.status === 401 && !AUTH_PATHS.has(path)) {
+    if (res.status === 401 && !AUTH_PATHS.has(path) && (await refreshSession())) {
+      res = await send(method, path, body, false);
+      data = safeJson(await res.text());
+      if (res.status === 401) {
         cachedCsrf = null;
         unauthorizedHandlers.forEach((h) => h());
       }
+    }
+    if (!res.ok) {
       const error = ApiError.fromResponse(res.status, data);
       if (res.status === 429 || res.status === 503)
         error.retryAfterSeconds = parseRetryAfter(res.headers?.get?.('retry-after') ?? null);

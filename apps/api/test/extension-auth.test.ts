@@ -261,3 +261,41 @@ describe('extension refresh grace window', () => {
     expect(old.statusCode).toBe(401);
   });
 });
+
+describe('extension refresh grace window vs allowlist revoke (#418)', () => {
+  it('rejects a delisted extension replaying its previous token within the grace window', async () => {
+    // Mutable allowlist shared with the running service, so it can be delisted mid-window.
+    const extensionIds: string[] = [EXT];
+    const extensionTokens = new InMemoryExtensionTokenRepository();
+    const app = await buildApp({ extensionTokens, extensionIds });
+    const c = await signupAndLogin(app, `ext-${randomUUID()}@example.com`);
+    expect((await c.post('/orgs', { name: 'Ext Org' })).statusCode).toBe(201);
+    const { deviceId, n, pairingCode } = await paired(app, c);
+    const tok = await ext(app, EXTENSION_AUTH_PATHS.token, {
+      extensionId: EXT,
+      deviceId,
+      pairingCode,
+      nonce: n,
+    });
+    const t1 = tok.json<{ accessToken: string; refreshToken: string }>();
+    const r1 = await ext(app, EXTENSION_AUTH_PATHS.refresh, {
+      extensionId: EXT,
+      deviceId,
+      refreshToken: t1.refreshToken,
+    });
+    expect(r1.statusCode).toBe(200);
+    const t2 = r1.json<{ accessToken: string; refreshToken: string }>();
+
+    // The extension id is removed from the allowlist; the same device replays t1 inside ~10 s.
+    extensionIds.length = 0;
+    const replay = await ext(app, EXTENSION_AUTH_PATHS.refresh, {
+      extensionId: EXT,
+      deviceId,
+      refreshToken: t1.refreshToken,
+    });
+    expect(replay.statusCode).not.toBe(200);
+    expect(replay.body).not.toContain(t2.refreshToken);
+    const a2 = await extensionTokens.findAccess(sha(t2.accessToken));
+    expect(a2 && (await extensionTokens.findFamily(a2.familyId))?.revokedAt).toBeTruthy();
+  });
+});

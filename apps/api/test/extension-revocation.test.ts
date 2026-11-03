@@ -21,9 +21,14 @@ const ext = (app: App, url: string, payload: object) =>
   app.inject({ method: 'POST', url, payload, headers: { origin: EXT_ORIGIN } });
 
 /** The shared ADR-011 verifier over the service's store; membership is always live here. */
-function bearerVerifier(extensionTokens: ExtensionTokenRepository, now = () => new Date()) {
+function bearerVerifier(
+  extensionTokens: ExtensionTokenRepository,
+  now = () => new Date(),
+  extensionIds: readonly string[] = [EXT],
+) {
   const svc = new ExtensionAuthService({
     extensionTokens,
+    extensionIds,
     clock: { now },
   } as unknown as ExtensionAuthDeps);
   return createSessionVerifier({
@@ -127,5 +132,30 @@ describe('Redis revocation marker', () => {
     await repo.createFamily(f);
     expect((await repo.findFamily(f.id))?.revokedAt).toEqual(at);
     expect(await repo.listFamilies(f.userId, new Date())).toEqual([]);
+  });
+});
+
+describe('extension allowlist is enforced after pairing', () => {
+  it('rejects access tokens of an extension id removed from the allowlist', async () => {
+    const { extensionTokens, accessToken } = await pairedToken();
+    expect(
+      await bearerVerifier(extensionTokens).verifySession({ bearer: accessToken }),
+    ).not.toBeNull();
+    const delisted = bearerVerifier(extensionTokens, () => new Date(), ['p'.repeat(32)]);
+    expect(await delisted.verifySession({ bearer: accessToken })).toBeNull();
+  });
+
+  it('refuses refresh and revokes the family once the extension id is delisted', async () => {
+    const { extensionTokens, deviceId, accessToken, refreshToken } = await pairedToken();
+    const app = await buildApp({ extensionTokens, extensionIds: ['p'.repeat(32)] });
+    const r = await app.inject({
+      method: 'POST',
+      url: EXTENSION_AUTH_PATHS.refresh,
+      payload: { extensionId: EXT, deviceId, refreshToken },
+      headers: { origin: EXT_ORIGIN },
+    });
+    expect(r.statusCode).not.toBe(200);
+    // The family is revoked, so even with EXT allowlisted again the access token is dead.
+    expect(await bearerVerifier(extensionTokens).verifySession({ bearer: accessToken })).toBeNull();
   });
 });
