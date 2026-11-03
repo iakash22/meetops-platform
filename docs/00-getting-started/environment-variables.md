@@ -64,10 +64,20 @@ Where each variable is read:
 
 ### Realtime gateway (apps/realtime)
 
-- `REALTIME_HOST` (default `0.0.0.0`), `REALTIME_PORT` (default 4001; compose binds 127.0.0.1:4001).
+- `REALTIME_HOST` (default `0.0.0.0`), `REALTIME_PORT` (default 4001). The compose `127.0.0.1:4001` port mapping is for **local development only**.
 - `REALTIME_CORS_ORIGINS`: comma-separated allowed origins (dev: `http://localhost:5173`). Empty or `*` allows any, so set it explicitly.
 - `REALTIME_SOCKET_PATH` (default `/socket.io`).
+- `REALTIME_TRUST_PROXY_HOPS` (default 0): reverse proxies in front of realtime. With N > 0 the per-IP limits use the Nth `X-Forwarded-For` entry from the right; entries to its left are client-controlled and ignored. If that entry is not a valid IP address, the socket address is used instead. **Behind the single nginx proxy, set `REALTIME_TRUST_PROXY_HOPS=1`** (nginx must append the peer with `proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;`).
+- `REALTIME_MAX_SOCKETS_PER_USER` (default 20) and `REALTIME_MAX_SOCKETS_PER_IP` (default 50): concurrent socket caps, shared through Redis when `REDIS_URL` is set.
+- `REALTIME_JOIN_LIMIT_PER_SOCKET` (default 30 per minute) and `REALTIME_MAX_ROOMS_PER_SOCKET` (default 50): `meeting:join` limits.
+- `REALTIME_CORS_ORIGINS` must be `https://` unless `NODE_ENV=development`. In production `REDIS_URL` is required and must be `rediss://`.
 - `REDIS_URL`: when set, enables the Socket.IO Redis adapter.
+
+#### Realtime network exposure (production and self-host)
+
+- Realtime must be reachable **only through nginx**. Production and self-host compose must **not** publish the realtime port (no `ports:` entry for the realtime service); nginx reaches it over the internal compose network.
+- The `127.0.0.1:4001` mapping in `infra/compose/compose.app.yml` exists for local development only. Remove it (or use an override without it) for any production or self-host deployment.
+- Why: with `REALTIME_TRUST_PROXY_HOPS=1` the gateway trusts the last `X-Forwarded-For` entry. A client that can reach realtime directly, bypassing nginx, can set that entry itself and evade the per-IP limits.
 
 ### Media (worker)
 

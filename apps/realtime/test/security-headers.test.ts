@@ -8,6 +8,7 @@ import {
   installSecurityHeaders,
   withRejectionHeaders,
 } from '../src/security-headers.js';
+import { loadRealtimeConfig } from '../src/config.js';
 import { ORIGIN, runCleanups, start } from './fixtures.js';
 
 afterEach(runCleanups);
@@ -43,7 +44,9 @@ describe('P9 R19: realtime HTTP security headers', () => {
   });
 
   it('adds HSTS in production', async () => {
-    const { url } = await start({}, { NODE_ENV: 'production' });
+    // Production config (HSTS on) on the in-memory adapter: loadRealtimeConfig would require rediss:// here.
+    const config = loadRealtimeConfig({ REALTIME_PORT: '0', REALTIME_CORS_ORIGINS: ORIGIN });
+    const { url } = await start({ config: { ...config, hsts: true } });
     const res = await fetch(`${url}/health`);
     expect(res.headers.get('strict-transport-security')).toBe(REALTIME_HSTS);
   });
