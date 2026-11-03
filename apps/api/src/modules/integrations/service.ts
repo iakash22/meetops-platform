@@ -303,8 +303,8 @@ export class IntegrationsService {
   async githubAppWebhook(input: {
     rawBody: Buffer;
     headers: HeaderBag;
-    /** Called once the App HMAC has been verified and before any lookup (rate-limit charging). */
-    onSignatureVerified?: () => Promise<void>;
+    /** Called once the delivery passed the signature and replay checks, before it is applied (rate limiting). */
+    onDeliveryAccepted?: () => Promise<void>;
   }): Promise<number> {
     const rt = this.runtime();
     const gh = rt.github;
@@ -322,7 +322,6 @@ export class IntegrationsService {
     );
     // missing/malformed/invalid signature are all 401, and the check runs before any database lookup.
     if (pre) throw webhookFailure(401);
-    await input.onSignatureVerified?.();
     let targets: { organizationId: string; id: string }[] = [];
     const r = await verifyGitHubWebhook({
       rawBody: input.rawBody,
@@ -341,6 +340,7 @@ export class IntegrationsService {
       },
     });
     if (!r.ok) throw webhookFailure(r.status);
+    await input.onDeliveryAccepted?.();
     let applied = 0;
     for (const t of targets) {
       const change = mapGitHubIssueEvent(r.event, r.payload, {
@@ -364,6 +364,8 @@ export class IntegrationsService {
     integrationId: string;
     rawBody: Buffer;
     headers: HeaderBag;
+    /** Called once the delivery passed the signature and replay checks, before it is applied (rate limiting). */
+    onDeliveryAccepted?: () => Promise<void>;
   }): Promise<number> {
     const rt = this.runtime();
     const { provider, integrationId } = input;
@@ -390,6 +392,7 @@ export class IntegrationsService {
         },
       });
       if (!r.ok) throw webhookFailure(r.status);
+      await input.onDeliveryAccepted?.();
       change = mapGitHubIssueEvent(r.event, r.payload, ctx);
     } else {
       const secrets = await this.repo.readSecrets(organizationId, integrationId);
@@ -404,6 +407,7 @@ export class IntegrationsService {
         ...(rt.now ? { now: rt.now } : {}),
       });
       if (!r.ok) throw webhookFailure(r.status);
+      await input.onDeliveryAccepted?.();
       change = mapJiraIssueEvent(r.payload, ctx);
     }
     if (!change) return 0;

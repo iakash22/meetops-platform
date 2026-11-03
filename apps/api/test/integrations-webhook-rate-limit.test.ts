@@ -6,6 +6,7 @@ import {
   type IntegrationsModuleDeps,
 } from '../src/modules/integrations/index.js';
 import { devIntegrationsRuntime } from '../src/modules/integrations/runtime.js';
+import { InMemoryIntegrations } from '../src/modules/integrations/in-memory.repository.js';
 import { buildApp, type App } from './helpers.js';
 
 const GH_SECRET = 'gh-app-webhook-secret';
@@ -35,9 +36,11 @@ describe('integration webhook rate limits (P9 coverage)', () => {
     expect(WEBHOOK_RATE_LIMITS.perTarget.limit).toBeGreaterThanOrEqual(100);
   });
 
+  let repo: InMemoryIntegrations;
   const startWithGitHub = (limits: IntegrationsModuleDeps['webhookRateLimits']) =>
     buildApp({
       webhookRateLimits: limits,
+      integrations: (repo = new InMemoryIntegrations()),
       integrationsRuntime: devIntegrationsRuntime({
         apiOrigin: 'http://api.test',
         github: {
@@ -51,7 +54,13 @@ describe('integration webhook rate limits (P9 coverage)', () => {
       }),
     } as Partial<ModuleDeps>);
   const postSigned = (a: App, headers: Record<string, string>, ip = '203.0.113.7') =>
-    a.inject({ method: 'POST', url: '/webhooks/github', payload: '{}', headers, remoteAddress: ip });
+    a.inject({
+      method: 'POST',
+      url: '/webhooks/github',
+      payload: '{}',
+      headers,
+      remoteAddress: ip,
+    });
 
   it('per-target: the App-wide route charges the github-app bucket only for signed deliveries', async () => {
     app = await startWithGitHub({
@@ -64,10 +73,10 @@ describe('integration webhook rate limits (P9 coverage)', () => {
       expect((await post(app, '/webhooks/github')).statusCode).toBe(401);
       expect((await postSigned(app, signed('{}', 'wrong'))).statusCode).toBe(401);
     }
-    const codes: number[] = [];
-    for (let i = 0; i < 2; i++) codes.push((await postSigned(app, signed('{}'))).statusCode);
-    expect(codes.every((c) => c !== 429)).toBe(true);
-    const r = await postSigned(app, signed('{}'));
+    seedGitHub();
+    for (let i = 0; i < 2; i++)
+      expect((await send(app, '/webhooks/github', delivery())).statusCode).toBe(202);
+    const r = await send(app, '/webhooks/github', delivery());
     expect(r.statusCode).toBe(429);
     expect(Number(r.headers['retry-after'])).toBeGreaterThan(0);
     expect(r.json()).toMatchObject({ error: { code: 'RATE_LIMITED' } });
@@ -87,19 +96,96 @@ describe('integration webhook rate limits (P9 coverage)', () => {
     // Per client: another IP still gets a plain 401 ...
     expect((await post(app, '/webhooks/github', '198.51.100.9')).statusCode).toBe(401);
     // ... and genuinely signed deliveries from the throttled IP are unaffected.
-    expect((await postSigned(app, signed('{}'))).statusCode).not.toBe(429);
+    seedGitHub();
+    expect((await send(app, '/webhooks/github', delivery())).statusCode).toBe(202);
+  });
+
+  const seedGitHub = () => {
+    const id = randomUUID();
+    repo.add(
+      {
+        id,
+        organizationId: randomUUID(),
+        provider: 'github',
+        status: 'active',
+        displayName: 'acme',
+        externalAccountId: '99',
+        connectedById: randomUUID(),
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      },
+      { accessToken: 'a', refreshToken: null, webhookSecret: 'unused' },
+    );
+    return id;
+  };
+  const issueBody = JSON.stringify({
+    action: 'opened',
+    issue: { number: 1, state: 'open' },
+    repository: { full_name: 'acme/app' },
+    installation: { id: 99 },
+  });
+  const delivery = () => ({ ...signed(issueBody), 'x-github-event': 'issues' });
+  const send = (a: App, url: string, headers: Record<string, string>) =>
+    a.inject({ method: 'POST', url, payload: issueBody, headers, remoteAddress: '203.0.113.7' });
+
+  it('replaying one valid delivery does not use up the github-app bucket', async () => {
+    app = await startWithGitHub({
+      perIp: { limit: 100, windowMs: 60_000 },
+      perTarget: { limit: 2, windowMs: 60_000 },
+      unsignedPerIp: { limit: 50, windowMs: 60_000 },
+    });
+    seedGitHub();
+    const h = delivery();
+    expect((await send(app, '/webhooks/github', h)).statusCode).toBe(202);
+    for (let i = 0; i < 5; i++)
+      expect((await send(app, '/webhooks/github', h)).statusCode).toBe(409);
+    expect((await send(app, '/webhooks/github', delivery())).statusCode).toBe(202);
+    expect((await send(app, '/webhooks/github', delivery())).statusCode).toBe(429);
+  });
+
+  it('per-integration bucket is charged only after signature and replay checks', async () => {
+    app = await startWithGitHub({
+      perIp: { limit: 100, windowMs: 60_000 },
+      perTarget: { limit: 2, windowMs: 60_000 },
+      unsignedPerIp: { limit: 50, windowMs: 60_000 },
+    });
+    const id = seedGitHub();
+    const url = `/webhooks/github/${id}`;
+    for (let i = 0; i < 5; i++) {
+      expect((await post(app, url)).statusCode).toBe(401);
+      expect(
+        (await send(app, url, { ...delivery(), ...signed(issueBody, 'wrong') })).statusCode,
+      ).toBe(401);
+    }
+    const h = delivery();
+    expect((await send(app, url, h)).statusCode).toBe(202);
+    for (let i = 0; i < 5; i++) expect((await send(app, url, h)).statusCode).toBe(409);
+    expect((await send(app, url, delivery())).statusCode).toBe(202);
+    const r = await send(app, url, delivery());
+    expect(r.statusCode).toBe(429);
+    expect(Number(r.headers['retry-after'])).toBeGreaterThan(0);
   });
 
   it('per-target limits are independent per integration', async () => {
-    app = await start({
+    app = await startWithGitHub({
       perIp: { limit: 100, windowMs: 60_000 },
       perTarget: { limit: 1, windowMs: 60_000 },
     });
-    const a = `/webhooks/github/${randomUUID()}`;
-    const b = `/webhooks/github/${randomUUID()}`;
-    expect((await post(app, a)).statusCode).not.toBe(429);
-    expect((await post(app, a)).statusCode).toBe(429);
-    expect((await post(app, b)).statusCode).not.toBe(429);
+    const a = `/webhooks/github/${seedGitHub()}`;
+    const b = `/webhooks/github/${seedGitHub()}`;
+    expect((await send(app, a, delivery())).statusCode).toBe(202);
+    expect((await send(app, a, delivery())).statusCode).toBe(429);
+    expect((await send(app, b, delivery())).statusCode).toBe(202);
+  });
+
+  it('unknown integration ids are treated as unsigned (small per-IP bucket)', async () => {
+    app = await startWithGitHub({
+      perIp: { limit: 100, windowMs: 60_000 },
+      perTarget: { limit: 100, windowMs: 60_000 },
+      unsignedPerIp: { limit: 1, windowMs: 60_000 },
+    });
+    expect((await post(app, `/webhooks/github/${randomUUID()}`)).statusCode).toBe(401);
+    expect((await post(app, `/webhooks/jira/${randomUUID()}`)).statusCode).toBe(429);
   });
 
   it('per-IP limit spans all webhook routes and is per client', async () => {

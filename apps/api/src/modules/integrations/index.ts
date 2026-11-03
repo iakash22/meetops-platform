@@ -387,16 +387,35 @@ export default async function integrationsModule(
     };
     s.addHook('onRequest', async (request) => {
       const ip = requestMeta(request).ip ?? 'unknown';
-      const params = (request.params ?? {}) as Partial<WebhookParams>;
       await consumeOrThrow(`webhook:ip:${ip}`, limits.perIp);
-      // The App-wide route charges its shared 'github-app' bucket only after the signature check (see handler),
-      // so unsigned floods cannot starve genuine GitHub deliveries.
-      if (params.provider)
-        await consumeOrThrow(
-          `webhook:target:${params.provider}:${params.integrationId ?? ''}`,
-          limits.perTarget,
-        );
     });
+    /**
+     * Per-target buckets ('github-app' and provider:integration) are charged only once a delivery passed the
+     * signature AND replay checks, so unsigned floods or replays of one valid delivery cannot use them up.
+     * Missing/invalid signatures (and unknown integration ids, which look the same) go to a small per-IP bucket.
+     */
+    const chargeWebhook = async (
+      request: FastifyRequest,
+      target: string,
+      run: (onDeliveryAccepted: () => Promise<void>) => Promise<unknown>,
+    ) => {
+      let accepted = false;
+      try {
+        await run(async () => {
+          accepted = true;
+          await consumeOrThrow(`webhook:target:${target}`, limits.perTarget);
+        });
+      } catch (err) {
+        if (!accepted && err instanceof WebhookSignatureError) {
+          const ip = requestMeta(request).ip ?? 'unknown';
+          await consumeOrThrow(
+            `webhook:unsigned:ip:${ip}`,
+            limits.unsignedPerIp ?? WEBHOOK_RATE_LIMITS.unsignedPerIp!,
+          );
+        }
+        throw err;
+      }
+    };
     s.removeContentTypeParser('application/json');
     s.addContentTypeParser(
       'application/json',
@@ -423,26 +442,9 @@ export default async function integrationsModule(
       },
       async (request, reply) => {
         const body = Buffer.isBuffer(request.body) ? request.body : Buffer.alloc(0);
-        let verified = false;
-        try {
-          await service.githubAppWebhook({
-            rawBody: body,
-            headers: request.headers,
-            onSignatureVerified: async () => {
-              verified = true;
-              await consumeOrThrow('webhook:target:github-app', limits.perTarget);
-            },
-          });
-        } catch (err) {
-          if (!verified && err instanceof WebhookSignatureError) {
-            const ip = requestMeta(request).ip ?? 'unknown';
-            await consumeOrThrow(
-              `webhook:unsigned:ip:${ip}`,
-              limits.unsignedPerIp ?? WEBHOOK_RATE_LIMITS.unsignedPerIp!,
-            );
-          }
-          throw err;
-        }
+        await chargeWebhook(request, 'github-app', (onDeliveryAccepted) =>
+          service.githubAppWebhook({ rawBody: body, headers: request.headers, onDeliveryAccepted }),
+        );
         return reply.status(202).send({ received: true });
       },
     );
@@ -467,12 +469,16 @@ export default async function integrationsModule(
       },
       async (request, reply) => {
         const body = Buffer.isBuffer(request.body) ? request.body : Buffer.alloc(0);
-        await service.webhook({
-          provider: request.params.provider,
-          integrationId: request.params.integrationId,
-          rawBody: body,
-          headers: request.headers,
-        });
+        const { provider, integrationId } = request.params;
+        await chargeWebhook(request, `${provider}:${integrationId}`, (onDeliveryAccepted) =>
+          service.webhook({
+            provider,
+            integrationId,
+            rawBody: body,
+            headers: request.headers,
+            onDeliveryAccepted,
+          }),
+        );
         return reply.status(202).send({ received: true });
       },
     );
