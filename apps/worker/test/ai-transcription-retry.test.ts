@@ -4,7 +4,10 @@ import {
   DEFAULT_TRANSCRIPTION_RETRY,
   TRANSCRIPTION_BACKOFF_TYPE,
   TRANSCRIPTION_DLQ,
+  DLQ_JOB_ID_PREFIX,
+  deadLetterJobId,
   handleTranscriptionFailure,
+  handleTranscriptionSuccess,
   isRetryExhausted,
   transcriptionBackoffMs,
   transcriptionBackoffStrategy,
@@ -86,7 +89,10 @@ describe('dead-lettering', () => {
   });
   const setup = () => {
     const dlq = { add: vi.fn<DeadLetterQueueLike['add']>(async () => undefined) };
-    const status = { markDelayed: vi.fn(async () => undefined) };
+    const status = {
+      markDelayed: vi.fn(async () => undefined),
+      clearDelayed: vi.fn(async () => undefined),
+    };
     const alert = vi.fn();
     const logger = { warn: vi.fn(), error: vi.fn() };
     const deps = { dlq, status, alert, logger, now: () => new Date('2026-11-03T12:00:00Z') };
@@ -124,7 +130,7 @@ describe('dead-lettering', () => {
       failedAt: '2026-11-03T12:00:00.000Z',
     };
     expect(dlq.add).toHaveBeenCalledWith('transcription_dead_letter', entry, {
-      jobId: 'dlq:job-1',
+      jobId: 'dlq_job-1',
       removeOnComplete: false,
       removeOnFail: false,
     });
@@ -156,6 +162,47 @@ describe('dead-lettering', () => {
       await handleTranscriptionFailure({ attemptsMade: 9, opts: { attempts: 1 } }, outage, deps),
     ).toBe(false);
     expect(await handleTranscriptionFailure(undefined, outage, deps)).toBe(false);
+  });
+
+  it('DLQ job ids never contain ":" (BullMQ 5.81 rejects them) and use the dlq_ prefix', () => {
+    expect(deadLetterJobId('job-1', REC, 2)).toBe('dlq_job-1');
+    expect(deadLetterJobId('a:b:c', REC, 2)).toBe('dlq_a_b_c');
+    expect(deadLetterJobId(undefined, REC, 3)).toBe(`dlq_${REC}_3`);
+    expect(deadLetterJobId(undefined, REC, undefined)).toBe(`dlq_${REC}_0`);
+    for (const id of [deadLetterJobId('x:y', REC, 1), deadLetterJobId(undefined, REC, 1)]) {
+      expect(id.startsWith(DLQ_JOB_ID_PREFIX)).toBe(true);
+      expect(id).not.toContain(':');
+    }
+  });
+
+  it('a final permanent failure moves a delayed meeting to failed (and is not dead-lettered)', async () => {
+    const { deps, dlq, status } = setup();
+    const err = new UnrecoverableError('transcription job failed: provider_failed');
+    expect(await handleTranscriptionFailure(job(1), err, deps)).toBe(false);
+    expect(status.clearDelayed).toHaveBeenCalledWith(ORG, MEET, 'failed');
+    expect(status.markDelayed).not.toHaveBeenCalled();
+    expect(dlq.add).not.toHaveBeenCalled();
+  });
+
+  it('a retry-exhausted failure parks the meeting in transcription_delayed and does not clear it', async () => {
+    const { deps, status } = setup();
+    await handleTranscriptionFailure(job(4), outage, deps);
+    expect(status.markDelayed).toHaveBeenCalledWith(ORG, MEET);
+    expect(status.clearDelayed).not.toHaveBeenCalled();
+  });
+
+  it('a successful attempt moves a delayed meeting back to processing; write errors are logged only', async () => {
+    const { status, logger } = setup();
+    await handleTranscriptionSuccess(job(1), { status, logger });
+    expect(status.clearDelayed).toHaveBeenCalledWith(ORG, MEET, 'processing');
+    status.clearDelayed.mockRejectedValueOnce(new Error('db down'));
+    await expect(handleTranscriptionSuccess(job(1), { status, logger })).resolves.toBeUndefined();
+    expect(logger.error).toHaveBeenCalledWith(
+      expect.objectContaining({ organizationId: ORG, meetingId: MEET }),
+      'transcription delayed-status clear failed',
+    );
+    await handleTranscriptionSuccess(undefined, { status, logger });
+    expect(status.clearDelayed).toHaveBeenCalledTimes(2);
   });
 
   it('uses a dedicated DLQ name', () => {

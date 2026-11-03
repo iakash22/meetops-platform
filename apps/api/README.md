@@ -82,3 +82,10 @@ Mail jobs carry ids only; `AuthMailJobHandler` (worker side) resolves recipients
 
 Live adapter tests: `TEST_DATABASE_URL=… TEST_REDIS_URL=… pnpm --filter @meetops/api exec vitest run test/prisma.integration.test.ts`
 (skipped when unset).
+
+The live geoip and new-location suites (`test/geoip.prisma.integration.test.ts`,
+`test/new-location.prisma.integration.test.ts`) also need `TEST_ADMIN_DATABASE_URL`: an owner/admin
+connection used only to seed an organization and read back rows (e.g. global audit rows) that the
+RLS-bound `meetops_app` role in `TEST_DATABASE_URL` cannot SELECT. Both suites skip when either variable is unset:
+`TEST_DATABASE_URL=postgresql://<meetops_app>@…/db TEST_ADMIN_DATABASE_URL=postgresql://<owner>@…/db
+pnpm --filter @meetops/api exec vitest run test/geoip.prisma.integration.test.ts test/new-location.prisma.integration.test.ts`

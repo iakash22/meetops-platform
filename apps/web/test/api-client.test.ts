@@ -361,6 +361,41 @@ describe('session, 401 and uploads', () => {
     expect(handler).toHaveBeenCalledTimes(1);
   });
 
+  it('M2: fires onUnauthorized once per burst when the refreshed session still gets 401s', async () => {
+    const unauth = () =>
+      jsonResponse({ error: { code: 'UNAUTHENTICATED', message: 'x', requestId: 'r' } }, 401);
+    const fetchMock = vi
+      .fn()
+      .mockImplementation((url: string) =>
+        Promise.resolve(url.endsWith('/auth/session') ? jsonResponse({}, 200) : unauth()),
+      );
+    const api = createApiClient({ baseUrl: 'http://api', fetch: fetchMock });
+    const handler = vi.fn();
+    api.onUnauthorized(handler);
+    const org = '00000000-0000-4000-8000-000000000001';
+    await Promise.all([1, 2, 3, 4].map(() => api.meetings.list(org).catch(() => undefined)));
+    expect(handler).toHaveBeenCalledTimes(1);
+    // A later, separate burst notifies again.
+    await api.meetings.list(org).catch(() => undefined);
+    expect(handler).toHaveBeenCalledTimes(2);
+  });
+
+  it('M2: fires onUnauthorized once when a concurrent burst fails the session refresh', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockImplementation(() =>
+        Promise.resolve(
+          jsonResponse({ error: { code: 'UNAUTHENTICATED', message: 'x', requestId: 'r' } }, 401),
+        ),
+      );
+    const api = createApiClient({ baseUrl: 'http://api', fetch: fetchMock });
+    const handler = vi.fn();
+    api.onUnauthorized(handler);
+    const org = '00000000-0000-4000-8000-000000000001';
+    await Promise.all([1, 2, 3].map(() => api.meetings.list(org).catch(() => undefined)));
+    expect(handler).toHaveBeenCalledTimes(1);
+  });
+
   it('builds task filter query params', async () => {
     const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ items: [], nextCursor: null }));
     const api = createApiClient({ baseUrl: 'http://api', fetch: fetchMock });
