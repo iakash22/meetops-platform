@@ -155,8 +155,9 @@ export function createServer(options: CreateServerOptions = {}) {
   // Swagger UI and its /docs/json spec: NODE_ENV exactly development|test, or API_DOCS_ENABLED=true (fail closed).
   // Served under DOCS_CSP. The spec is still generated in-process (app.swagger()) for tests and tooling.
   // Outside development|test it also needs an authenticated session of an API_DOCS_ADMIN_EMAILS user (401/403).
+  let docsGuard: ReturnType<typeof registerDocsAccessGuard> | undefined;
   if (docs && nodeEnv !== 'development' && nodeEnv !== 'test') {
-    registerDocsAccessGuard(app, {
+    docsGuard = registerDocsAccessGuard(app, {
       deps,
       cookieName: deps.security.cookieName,
       adminEmails: docsAdminEmailsFromEnv(
@@ -167,6 +168,16 @@ export function createServer(options: CreateServerOptions = {}) {
   if (docs) {
     void app.register(swaggerUi, {
       routePrefix: '/docs',
+      // Route-level guard on every Swagger UI route (matched after URL decoding), alongside the root hook.
+      ...(docsGuard
+        ? {
+            uiHooks: {
+              onRequest: (request, _reply, done) => {
+                docsGuard(request).then(() => done(), done);
+              },
+            },
+          }
+        : {}),
     });
   }
 

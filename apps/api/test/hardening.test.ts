@@ -474,6 +474,46 @@ describe('Swagger UI gate', () => {
     expect((await app.inject({ method: 'GET', url: '/health' })).statusCode).toBe(200);
     await close();
   });
+  it('production /docs guard cannot be bypassed with encoded, case or slash variants (401)', async () => {
+    const { app, sid, close } = await prodDocs('ops@example.com');
+    const variants = [
+      '/%64ocs/json',
+      '/%64ocs',
+      '/%64ocs/',
+      '/%64%6f%63%73/json',
+      '/%64%6F%63%73/yaml',
+      '/d%6fcs/json',
+      '/docs%2Fjson',
+      '/%2564ocs/json',
+      '/docs/%6Ason',
+      '/docs/yaml',
+      '/%64ocs/static/swagger-initializer.js',
+      '/docs/static/%73wagger-initializer.js',
+      '/DOCS/json',
+      '/Docs/json',
+      '/dOcS',
+      '//docs/json',
+      '/docs/json?x=1',
+      '/%64ocs/json?format=json',
+    ];
+    for (const url of variants) {
+      const r = await app.inject({ method: 'GET', url });
+      expect(r.statusCode, url).toBe(401);
+    }
+    // Non-admin sessions are still 403 on the encoded route; admins still get the spec.
+    const member = await sid('member@example.com');
+    expect(
+      (await app.inject({ method: 'GET', url: '/%64ocs/json', headers: { cookie: member } }))
+        .statusCode,
+    ).toBe(403);
+    const admin = await sid('ops@example.com');
+    expect(
+      (await app.inject({ method: 'GET', url: '/%64ocs/json', headers: { cookie: admin } }))
+        .statusCode,
+    ).toBe(200);
+    expect((await app.inject({ method: 'GET', url: '/health' })).statusCode).toBe(200);
+    await close();
+  });
   it('production /docs fails closed (403) when API_DOCS_ADMIN_EMAILS is empty', async () => {
     const { app, sid, close } = await prodDocs('');
     const cookie = await sid('ops@example.com');
