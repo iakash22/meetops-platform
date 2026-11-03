@@ -165,38 +165,72 @@ describe('RealtimeClient', () => {
     expect(statuses.at(-1)).toBe('stopped');
   });
 
-  it('M1: upgrades closed or refused before open count toward the cap and stop as transport_rejected', () => {
-    const reasons: Array<string | undefined> = [];
-    const { client } = make({ onStatus: (_s, r) => reasons.push(r) });
+  it('M1: rejected upgrades never stop the client; past the cap it retries about every 5 minutes', () => {
+    const statuses: Array<[string, string | undefined]> = [];
+    const { client } = make({ onStatus: (st, r) => statuses.push([st, r]) });
     client.start();
-    last().onclose?.({}); // e.g. Origin rejected / 403 on the upgrade: closes without ever opening
+    last().onclose?.({}); // e.g. 502 / Origin rejected: closes without ever opening
     vi.advanceTimersByTime(1000);
     last().onerror?.({});
     vi.advanceTimersByTime(2000);
+    last().onclose?.({}); // 3rd: cap hit, slow mode
+    expect(client.getStatus()).toBe('reconnecting');
+    vi.advanceTimersByTime(299_999);
     expect(FakeSocket.all).toHaveLength(3);
+    vi.advanceTimersByTime(1);
+    expect(FakeSocket.all).toHaveLength(4);
     last().onclose?.({});
-    expect(client.getStatus()).toBe('stopped');
-    expect(reasons.at(-1)).toBe('transport_rejected');
-    vi.advanceTimersByTime(120_000);
-    expect(FakeSocket.all).toHaveLength(3);
+    vi.advanceTimersByTime(300_000);
+    expect(FakeSocket.all).toHaveLength(5);
+    last().handshake();
+    expect(client.getStatus()).toBe('connected');
+    expect(statuses.some(([st]) => st === 'stopped')).toBe(false);
+    // A connect resets to fast backoff.
+    last().onclose?.({});
+    vi.advanceTimersByTime(1000);
+    expect(FakeSocket.all).toHaveLength(6);
   });
 
-  it('M1: drops after a successful open do not count, and a connect resets the count', () => {
+  it('M1: drops after a successful open do not count toward the cap', () => {
     const { client } = make({ maxTransportFailures: 2 });
     client.start();
     last().onclose?.({}); // 1 rejected
     vi.advanceTimersByTime(1000);
-    last().handshake(); // connected: reset
-    last().onclose?.({}); // drop after open: not a rejection
-    vi.advanceTimersByTime(1000);
     last().recv('0{"sid":"s","pingInterval":25000,"pingTimeout":20000}');
-    last().onclose?.({}); // opened (EIO open) then dropped: not a rejection
+    last().onclose?.({}); // opened, then dropped: not a rejection
     vi.advanceTimersByTime(2000);
-    last().onclose?.({}); // 1 rejected
-    expect(client.getStatus()).toBe('reconnecting');
-    vi.advanceTimersByTime(4000);
-    last().onerror?.({}); // 2 rejected
-    expect(client.getStatus()).toBe('stopped');
+    expect(FakeSocket.all).toHaveLength(3);
+    last().onclose?.({}); // 2 rejected: slow mode
+    vi.advanceTimersByTime(8000);
+    expect(FakeSocket.all).toHaveLength(3);
+  });
+
+  it('M1: online and visibilitychange to visible reset the backoff and retry now', () => {
+    const win = new EventTarget();
+    const doc = Object.assign(new EventTarget(), { visibilityState: 'hidden' });
+    const { client } = make({ windowTarget: win, documentTarget: doc });
+    client.start();
+    for (let i = 0; i < 3; i++) {
+      last().onclose?.({});
+      vi.advanceTimersByTime(4000);
+    }
+    expect(FakeSocket.all).toHaveLength(3); // slow mode
+    win.dispatchEvent(new Event('online'));
+    // hidden tab: no retry on online either
+    expect(FakeSocket.all).toHaveLength(3);
+    doc.visibilityState = 'visible';
+    doc.dispatchEvent(new Event('visibilitychange'));
+    expect(FakeSocket.all).toHaveLength(4);
+    last().onclose?.({}); // backoff was reset: back to the fast 1s retry
+    vi.advanceTimersByTime(1000);
+    expect(FakeSocket.all).toHaveLength(5);
+    last().handshake();
+    win.dispatchEvent(new Event('online')); // connected: ignored
+    expect(FakeSocket.all).toHaveLength(5);
+    client.stop();
+    win.dispatchEvent(new Event('online')); // listeners removed
+    doc.dispatchEvent(new Event('visibilitychange'));
+    expect(FakeSocket.all).toHaveLength(5);
   });
 
   it('L2: at the unauthorized cap a still-valid session restarts instead of stopping', async () => {
