@@ -300,7 +300,12 @@ export class IntegrationsService {
    * org and applies the status change. The install is single-account ("Only on this account"), but nothing
    * here assumes it: every live connection of that installation (max 10) gets the update.
    */
-  async githubAppWebhook(input: { rawBody: Buffer; headers: HeaderBag }): Promise<number> {
+  async githubAppWebhook(input: {
+    rawBody: Buffer;
+    headers: HeaderBag;
+    /** Called once the App HMAC has been verified and before any lookup (rate-limit charging). */
+    onSignatureVerified?: () => Promise<void>;
+  }): Promise<number> {
     const rt = this.runtime();
     const gh = rt.github;
     if (!gh) throw new WebhookSignatureError();
@@ -317,6 +322,7 @@ export class IntegrationsService {
     );
     // missing/malformed/invalid signature are all 401, and the check runs before any database lookup.
     if (pre) throw webhookFailure(401);
+    await input.onSignatureVerified?.();
     let targets: { organizationId: string; id: string }[] = [];
     const r = await verifyGitHubWebhook({
       rawBody: input.rawBody,

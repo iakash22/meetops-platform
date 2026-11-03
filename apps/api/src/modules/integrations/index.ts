@@ -27,7 +27,11 @@ import { DirectoryAccess, type DirectoryCaller } from '../directory/access.js';
 import { directoryErrors, directoryWriteErrors } from '../directory/http/route-kit.js';
 import { ErrorBody } from '../auth/http/schemas.js';
 import { RateLimitedError } from '../auth/domain/errors.js';
-import { IntegrationNotFoundError, OAuthStateInvalidError } from './errors.js';
+import {
+  IntegrationNotFoundError,
+  OAuthStateInvalidError,
+  WebhookSignatureError,
+} from './errors.js';
 import { InMemoryIntegrations } from './in-memory.repository.js';
 import { PrismaIntegrations } from './prisma.repository.js';
 import type { ConnectedProvider, IntegrationsRepository } from './ports.js';
@@ -81,6 +85,12 @@ export type WebhookRateLimits = {
   perIp: { limit: number; windowMs: number };
   /** Per webhook target (provider + integration, or the App-wide GitHub route). */
   perTarget: { limit: number; windowMs: number };
+  /**
+   * Small per-IP bucket charged only by App-wide GitHub deliveries whose signature is missing or invalid, so
+   * unauthenticated junk can neither drain the shared 'github-app' target bucket nor be retried cheaply.
+   * Defaults to WEBHOOK_RATE_LIMITS.unsignedPerIp.
+   */
+  unsignedPerIp?: { limit: number; windowMs: number };
 };
 
 /**
@@ -90,6 +100,7 @@ export type WebhookRateLimits = {
 export const WEBHOOK_RATE_LIMITS: WebhookRateLimits = {
   perIp: { limit: 600, windowMs: 60_000 },
   perTarget: { limit: 300, windowMs: 60_000 },
+  unsignedPerIp: { limit: 20, windowMs: 60_000 },
 };
 
 /** Store + queue for the async sync route, or undefined when TASK_SYNC_ENABLED is off. Never silently in-memory. */
@@ -370,19 +381,21 @@ export default async function integrationsModule(
   await app.register(async (s) => {
     registerDomainErrorHandler(s);
     const limits = deps.webhookRateLimits ?? WEBHOOK_RATE_LIMITS;
+    const consumeOrThrow = async (key: string, l: { limit: number; windowMs: number }) => {
+      const r = await deps.rateLimiter.consume(key, l.limit, l.windowMs);
+      if (!r.allowed) throw new RateLimitedError(r.retryAfterMs);
+    };
     s.addHook('onRequest', async (request) => {
       const ip = requestMeta(request).ip ?? 'unknown';
       const params = (request.params ?? {}) as Partial<WebhookParams>;
-      const target = params.provider
-        ? `${params.provider}:${params.integrationId ?? ''}`
-        : 'github-app';
-      for (const [key, l] of [
-        [`webhook:ip:${ip}`, limits.perIp],
-        [`webhook:target:${target}`, limits.perTarget],
-      ] as const) {
-        const r = await deps.rateLimiter.consume(key, l.limit, l.windowMs);
-        if (!r.allowed) throw new RateLimitedError(r.retryAfterMs);
-      }
+      await consumeOrThrow(`webhook:ip:${ip}`, limits.perIp);
+      // The App-wide route charges its shared 'github-app' bucket only after the signature check (see handler),
+      // so unsigned floods cannot starve genuine GitHub deliveries.
+      if (params.provider)
+        await consumeOrThrow(
+          `webhook:target:${params.provider}:${params.integrationId ?? ''}`,
+          limits.perTarget,
+        );
     });
     s.removeContentTypeParser('application/json');
     s.addContentTypeParser(
@@ -410,7 +423,26 @@ export default async function integrationsModule(
       },
       async (request, reply) => {
         const body = Buffer.isBuffer(request.body) ? request.body : Buffer.alloc(0);
-        await service.githubAppWebhook({ rawBody: body, headers: request.headers });
+        let verified = false;
+        try {
+          await service.githubAppWebhook({
+            rawBody: body,
+            headers: request.headers,
+            onSignatureVerified: async () => {
+              verified = true;
+              await consumeOrThrow('webhook:target:github-app', limits.perTarget);
+            },
+          });
+        } catch (err) {
+          if (!verified && err instanceof WebhookSignatureError) {
+            const ip = requestMeta(request).ip ?? 'unknown';
+            await consumeOrThrow(
+              `webhook:unsigned:ip:${ip}`,
+              limits.unsignedPerIp ?? WEBHOOK_RATE_LIMITS.unsignedPerIp!,
+            );
+          }
+          throw err;
+        }
         return reply.status(202).send({ received: true });
       },
     );
