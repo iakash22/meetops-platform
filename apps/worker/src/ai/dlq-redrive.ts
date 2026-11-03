@@ -1,5 +1,9 @@
 import { withOrganizationContext, type DatabaseClient } from '@meetops/database';
-import { deadLetterJobId, type TranscriptionDeadLetter } from './transcription-retry.js';
+import {
+  deadLetterJobId,
+  meetingHasDeadLetters,
+  type TranscriptionDeadLetter,
+} from './transcription-retry.js';
 
 /** Which DLQ entries to re-drive. Exactly one selector. */
 export type RedriveFilter = { jobId: string } | { organizationId: string } | { all: true };
@@ -165,9 +169,11 @@ export async function redriveTranscriptionDlq(
   // other chunk of that meeting is still dead-lettered (re-read after removals, so it also sees concurrent entries
   // and entries this run kept, e.g. missing_original or outside the filter).
   if (opts.status && requeuedMeetings.size > 0) {
-    const stillDead = new Set((await queues.listDeadLetters()).map((j) => meetingKey(j.data)));
-    for (const [key, m] of requeuedMeetings)
-      if (!stillDead.has(key)) await opts.status.reset(m.organizationId, m.meetingId);
+    // Same guard as the worker's success path (#414): meetingHasDeadLetters.
+    const remaining = await queues.listDeadLetters();
+    for (const m of requeuedMeetings.values())
+      if (!meetingHasDeadLetters(remaining, m.organizationId, m.meetingId))
+        await opts.status.reset(m.organizationId, m.meetingId);
   }
   return { aborted: false, items };
 }
