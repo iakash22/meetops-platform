@@ -124,9 +124,11 @@ const CALENDAR_SYNC_CURSOR_MIGRATION = '20261103000000_calendar_sync_cursor';
 /** #394 N1/N2: token_generation (compare-and-set) + refresh_enc_version (additive). */
 const CALENDAR_TOKEN_GENERATION_MIGRATION = '20261103060000_calendar_token_generation';
 /** MeetingStatus gains 'transcription_delayed' (additive ADD VALUE; transcription DLQ, #414). Sorts right after the
- * token generation migration and is the newest. */
+ * token generation migration. */
 const MEETING_STATUS_DELAYED_MIGRATION = '20261103180000_meeting_status_transcription_delayed';
-const LATEST_MIGRATION = MEETING_STATUS_DELAYED_MIGRATION;
+/** #423: outbox_events.dedupe_key + unique (org_id, dedupe_key) for atomic insert-once alerts (additive). */
+const OUTBOX_DEDUPE_KEY_MIGRATION = '20261103200000_outbox_dedupe_key';
+const LATEST_MIGRATION = OUTBOX_DEDUPE_KEY_MIGRATION;
 /**
  * Parallel PRs that sort between calendar_events and meeting_embeddings (#334 consent events, #341 calendar links).
  * The order checks below ignore them so they hold whichever merges first; when present they must sort before ours.
@@ -165,13 +167,16 @@ const orderedDirs = () => {
       dirs.indexOf(CALENDAR_SYNC_CURSOR_MIGRATION) - 1,
     );
   // The token generation migration sorts right after the sync cursor; the transcription_delayed enum value (#414)
-  // sorts right after it and is the newest. The positional checks below (which end at the sync cursor) ignore both.
+  // sorts right after it, and the outbox dedupe key (#423) is the newest. The positional checks below (which end at the sync cursor) ignore them.
   expect(dirs.indexOf(CALENDAR_TOKEN_GENERATION_MIGRATION)).toBe(
     dirs.indexOf(CALENDAR_SYNC_CURSOR_MIGRATION) + 1,
   );
   expect(dirs.at(-1)).toBe(LATEST_MIGRATION);
   expect(dirs.indexOf(MEETING_STATUS_DELAYED_MIGRATION)).toBe(
     dirs.indexOf(CALENDAR_TOKEN_GENERATION_MIGRATION) + 1,
+  );
+  expect(dirs.indexOf(OUTBOX_DEDUPE_KEY_MIGRATION)).toBe(
+    dirs.indexOf(MEETING_STATUS_DELAYED_MIGRATION) + 1,
   );
   return dirs.filter(
     (d) =>
@@ -180,6 +185,7 @@ const orderedDirs = () => {
       d !== CALENDAR_OUTLOOK_PROVIDER_MIGRATION &&
       d !== CONSENT_HARDENING_MIGRATION &&
       d !== MEETING_STATUS_DELAYED_MIGRATION &&
+      d !== OUTBOX_DEDUPE_KEY_MIGRATION &&
       !(PARALLEL_MIGRATIONS as readonly string[]).includes(d),
   );
 };
@@ -2015,7 +2021,7 @@ describe('Phase 7 meeting_embeddings (static)', () => {
 });
 
 describe('MeetingStatus transcription_delayed (20261103180000)', () => {
-  it('is the newest migration, right after token generation and only adds the enum value', () => {
+  it('sorts right after token generation and only adds the enum value', () => {
     orderedDirs(); // asserts it sorts right after token generation
     const sql = readFileSync(
       resolve(migrationsDir, MEETING_STATUS_DELAYED_MIGRATION, 'migration.sql'),
@@ -2042,5 +2048,23 @@ describe('calendar token generation (20261103060000)', () => {
     expect(sql).toMatch(/ADD COLUMN "refresh_enc_version" SMALLINT/);
     expect(sql).toMatch(/"refresh_enc_version" IN \(1, 2\)/);
     expect(sql).not.toMatch(/\b(DROP|DELETE|TRUNCATE|GRANT|UPDATE)\b/i);
+  });
+});
+
+describe('outbox dedupe key (20261103200000, #423)', () => {
+  const sql = readFileSync(
+    resolve(migrationsDir, OUTBOX_DEDUPE_KEY_MIGRATION, 'migration.sql'),
+    'utf8',
+  )
+    .split('\n')
+    .filter((l) => l.trim() && !l.trim().startsWith('--'));
+  it('is the newest migration, right after transcription_delayed', () => {
+    orderedDirs();
+  });
+  it('is minimal and additive: one nullable column and one unique index', () => {
+    expect(sql).toEqual([
+      'ALTER TABLE "outbox_events" ADD COLUMN "dedupe_key" TEXT;',
+      'CREATE UNIQUE INDEX "outbox_events_org_id_dedupe_key_key" ON "outbox_events"("org_id", "dedupe_key");',
+    ]);
   });
 });

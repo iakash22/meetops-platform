@@ -960,6 +960,8 @@ model OutboxEvent {
   status         OutboxStatus @default(pending)
   attempts       Int          @default(0)
   lastError      String?      @map("last_error")
+  /// Optional insert-once key (#423); unique per org, NULL for events without dedupe.
+  dedupeKey      String?      @map("dedupe_key")
   availableAt    DateTime     @default(now()) @map("available_at") @db.Timestamptz(3)
   publishedAt    DateTime?    @map("published_at") @db.Timestamptz(3)
   createdAt      DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
@@ -968,6 +970,7 @@ model OutboxEvent {
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
 
   @@unique([organizationId, id])
+  @@unique([organizationId, dedupeKey])
   @@index([organizationId, aggregateType, aggregateId])
   @@index([status, availableAt])
   @@map("outbox_events")

@@ -12,28 +12,34 @@ import type { TranscriptionDeadLetter, TranscriptionDelayedAlert } from './trans
 /** Outbox writes used by the alert (Prisma in production, a fake in tests). */
 export type DelayedAlertStore = {
   meetingCreator(meetingId: string): Promise<string | null | undefined>;
-  /** True when this event for the recording was already written on the same UTC day. */
-  alreadyAlerted(
-    eventType: string,
-    aggregateId: string,
-    recordingId: string,
-    day: string,
-  ): Promise<boolean>;
-  writeEvent(e: {
+  /**
+   * Atomic insert-once: writes the event unless one with the same `dedupeKey` exists for the org (unique
+   * (org_id, dedupe_key), INSERT ... ON CONFLICT DO NOTHING). Returns true when this call wrote it.
+   */
+  writeEventOnce(e: {
     aggregateType: 'meeting' | 'user';
     aggregateId: string;
     eventType: string;
     payload: Record<string, string>;
-  }): Promise<void>;
+    dedupeKey: string;
+  }): Promise<boolean>;
 };
+
+/** One alert per event type, recipient aggregate, recording and UTC day. */
+export const delayedAlertDedupeKey = (
+  eventType: string,
+  aggregateId: string,
+  recordingId: string,
+  day: string,
+) => `${eventType}/${aggregateId}/${recordingId}/${day}`;
 
 const ERROR_CODE_RE = /^[a-z][a-z0-9_]{0,63}$/;
 
 /**
  * ADR-013 path: write `meeting.transcription_delayed` (org owners/admins) and, when the meeting has a creator,
  * `meeting.transcription_delayed.owner` (that user) to the outbox; the relay fans them out as one
- * `meeting.transcription_delayed` notification per user. Duplicates are stopped twice: an insert-time check per
- * recording and UTC day, and the shared notification dedupe key at fan-out. Ids and codes only.
+ * `meeting.transcription_delayed` notification per user. Duplicates are stopped twice: an atomic insert-once per
+ * recording and UTC day (unique (org_id, dedupe_key), no check-then-write race), and the shared notification dedupe key at fan-out. Ids and codes only.
  */
 export async function writeTranscriptionDelayedEvents(
   store: DelayedAlertStore,
@@ -47,28 +53,28 @@ export async function writeTranscriptionDelayedEvents(
     failedAt: d.failedAt,
   };
   const written: string[] = [];
-  if (!(await store.alreadyAlerted(TRANSCRIPTION_DELAYED_EVENT, d.meetingId, d.recordingId, day))) {
-    await store.writeEvent({
+  if (
+    await store.writeEventOnce({
       aggregateType: 'meeting',
       aggregateId: d.meetingId,
       eventType: TRANSCRIPTION_DELAYED_EVENT,
       payload,
-    });
+      dedupeKey: delayedAlertDedupeKey(TRANSCRIPTION_DELAYED_EVENT, d.meetingId, d.recordingId, day),
+    })
+  )
     written.push(TRANSCRIPTION_DELAYED_EVENT);
-  }
   const creator = await store.meetingCreator(d.meetingId);
   if (
     creator &&
-    !(await store.alreadyAlerted(TRANSCRIPTION_DELAYED_OWNER_EVENT, creator, d.recordingId, day))
-  ) {
-    await store.writeEvent({
+    (await store.writeEventOnce({
       aggregateType: 'user',
       aggregateId: creator,
       eventType: TRANSCRIPTION_DELAYED_OWNER_EVENT,
       payload,
-    });
+      dedupeKey: delayedAlertDedupeKey(TRANSCRIPTION_DELAYED_OWNER_EVENT, creator, d.recordingId, day),
+    }))
+  )
     written.push(TRANSCRIPTION_DELAYED_OWNER_EVENT);
-  }
   return { written };
 }
 
@@ -84,21 +90,14 @@ export function createPrismaDelayedAlertStore(
       });
       return m?.createdById;
     },
-    async alreadyAlerted(eventType, aggregateId, recordingId, day) {
-      const hit = await tx.outboxEvent.findFirst({
-        where: {
-          organizationId,
-          eventType,
-          aggregateId,
-          createdAt: { gte: new Date(`${day}T00:00:00.000Z`) },
-          payload: { path: ['recordingId'], equals: recordingId },
-        },
-        select: { id: true },
+    async writeEventOnce(e) {
+      // INSERT ... ON CONFLICT DO NOTHING on the (org_id, dedupe_key) unique index: atomic under concurrency, and
+      // no JSON payload lookup (the old check-then-write scanned payload->recordingId without an index).
+      const r = await tx.outboxEvent.createMany({
+        data: [{ organizationId, ...e }],
+        skipDuplicates: true,
       });
-      return hit !== null;
-    },
-    async writeEvent(e) {
-      await tx.outboxEvent.create({ data: { organizationId, ...e } });
+      return r.count === 1;
     },
   };
 }
