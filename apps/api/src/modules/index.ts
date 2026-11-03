@@ -29,6 +29,7 @@ import {
 import { Argon2PasswordHasher } from './auth/infrastructure/argon2-password-hasher.js';
 import { CryptoTokenService, uuidGenerator } from './auth/infrastructure/crypto-token.service.js';
 import { InMemorySessionRepository } from './auth/infrastructure/in-memory-session.repository.js';
+import type { MediaRateLimits } from './media/http/rate-limit.js';
 import { InMemoryOneTimeTokenRepository } from './auth/infrastructure/in-memory-one-time-token.repository.js';
 import {
   InMemoryLoginLockout,
@@ -139,6 +140,8 @@ export interface ModuleDeps {
   hasher: PasswordHasher;
   tokens: TokenService;
   rateLimiter: RateLimiter;
+  /** Overrides MEDIA_RATE_LIMITS (tests). */
+  mediaRateLimits?: MediaRateLimits;
   lockout: LoginLockout;
   /**
    * AUTH_MAIL_QUEUE=bullmq: BullMqAuthMailQueue on REDIS_URL (ADR-013, notifications #11), consumed by the
