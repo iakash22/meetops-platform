@@ -5,6 +5,8 @@ import { PrismaMeetingRepository } from '../src/modules/meetings/infrastructure/
 /**
  * Credential-free coverage of the analytics Prisma path (the live test needs TEST_DATABASE_URL). The mocked
  * transaction captures the real $queryRaw template, so the shape checks run against the SQL that ships.
+ * #400 L2: mock-only. Row-level security and tenant isolation are NOT proven here; the live suites
+ * (analytics.prisma.integration.test.ts, task-analytics.prisma.integration.test.ts) remain the source of truth.
  */
 type Raw = { sql: string; values: unknown[] };
 

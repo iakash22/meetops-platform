@@ -43,16 +43,30 @@ export function installSecurityHeaders(server: HttpServer, opts: { hsts: boolean
     if (opts.hsts) res.setHeader('strict-transport-security', REALTIME_HSTS);
   });
   server.prependListener('upgrade', (_req, socket: Duplex) => {
+    // #399 L3: the rejection can arrive through write() or end() (ws abortHandshake), as a string or a Buffer.
+    // Only the first chunk written to the socket can be a status block; both hooks are removed after it.
     const write = socket.write.bind(socket) as (...args: unknown[]) => boolean;
+    const end = socket.end.bind(socket) as (...args: unknown[]) => Duplex;
     let first = true;
-    socket.write = ((chunk: unknown, ...rest: unknown[]) => {
-      if (first) {
-        first = false;
-        socket.write = write as Duplex['write'];
-        if (typeof chunk === 'string')
-          return write(withRejectionHeaders(chunk, opts.hsts), ...rest);
+    const splice = (chunk: unknown): unknown => {
+      if (!first) return chunk;
+      first = false;
+      socket.write = write as Duplex['write'];
+      socket.end = end as Duplex['end'];
+      if (typeof chunk === 'string') return withRejectionHeaders(chunk, opts.hsts);
+      if (Buffer.isBuffer(chunk)) {
+        // HTTP status blocks are ASCII; latin1 round-trips any other bytes unchanged.
+        const text = chunk.toString('latin1');
+        const out = withRejectionHeaders(text, opts.hsts);
+        return out === text ? chunk : Buffer.from(out, 'latin1');
       }
-      return write(chunk, ...rest);
-    }) as Duplex['write'];
+      return chunk;
+    };
+    socket.write = ((chunk: unknown, ...rest: unknown[]) =>
+      write(splice(chunk), ...rest)) as Duplex['write'];
+    socket.end = ((chunk?: unknown, ...rest: unknown[]) =>
+      typeof chunk === 'function' || chunk === undefined
+        ? end(chunk, ...rest)
+        : end(splice(chunk), ...rest)) as Duplex['end'];
   });
 }

@@ -2,7 +2,8 @@
 /* global process, console */
 /**
  * P9 R20: the web CSP has no 'unsafe-inline', so every inline <script>/<style> in the served index.html must have
- * its sha256 hash in the nginx CSP, and no element may carry a style= or on*= attribute.
+ * its sha256 hash in the nginx CSP, every sha256 hash in the CSP must match an inline block (no stale hashes),
+ * and no element may carry a style= or on*= attribute.
  * Usage: node scripts/check-csp.mjs [index.html (default dist/index.html)] [nginx template]
  */
 import { createHash } from 'node:crypto';
@@ -36,12 +37,18 @@ export function checkCsp(html, template) {
   ]) {
     const allowed = new Set(directive(dir));
     if (allowed.has("'unsafe-inline'")) errors.push(`${dir} must not allow 'unsafe-inline'`);
+    const used = new Set();
     const re = new RegExp(`<${tag}(\\s[^>]*)?>([\\s\\S]*?)</${tag}>`, 'gi');
     for (const m of html.matchAll(re)) {
       if (/\bsrc\s*=/i.test(m[1] ?? '')) continue;
       const h = inlineHash(m[2]);
+      used.add(h);
       if (!allowed.has(h)) errors.push(`inline <${tag}> needs ${h} in ${dir}`);
     }
+    // #399 L1: a hash no inline block produces is stale (the allowed content changed or was removed).
+    for (const a of allowed)
+      if (a.startsWith("'sha256-") && !used.has(a))
+        errors.push(`${dir} hash ${a} matches no inline <${tag}> (stale)`);
   }
   if (/<[^>]+\sstyle\s*=/i.test(html)) errors.push('style= attribute found (blocked by style-src)');
   if (/<[^>]+\son[a-z]+\s*=/i.test(html))

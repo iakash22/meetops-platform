@@ -93,6 +93,28 @@ describe('P9 R10: Vary: Origin', () => {
   });
 });
 
+describe('P9 R8/R9: exact credentialed preflight values (#399 L4)', () => {
+  it('allows only the web origin, the listed methods and headers, with credentials and a 600 s cache', async () => {
+    const a = await build();
+    const r = await a.inject({
+      method: 'OPTIONS',
+      url: '/auth/login',
+      headers: {
+        origin: ORIGIN,
+        'access-control-request-method': 'POST',
+        'access-control-request-headers': 'content-type,x-csrf-token',
+      },
+    });
+    expect(r.statusCode).toBe(204);
+    expect(r.headers['access-control-allow-origin']).toBe(ORIGIN);
+    expect(r.headers['access-control-allow-credentials']).toBe('true');
+    expect(r.headers['access-control-allow-methods']).toBe('GET, HEAD, POST, PUT, PATCH, DELETE');
+    expect(r.headers['access-control-allow-headers']).toBe('content-type, x-csrf-token');
+    expect(r.headers['access-control-max-age']).toBe('600');
+    expect(r.headers['access-control-allow-origin']).not.toBe('*');
+  });
+});
+
 describe('P9 R13: pre-session cookie', () => {
   it('is Strict, HttpOnly, Secure, host-only and expires', async () => {
     const a = await build();

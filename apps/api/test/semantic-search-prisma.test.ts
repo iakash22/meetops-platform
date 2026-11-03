@@ -54,6 +54,15 @@ describe('PrismaSemanticSearch (mocked transaction)', () => {
     expect(unsafe).toEqual([`SET LOCAL statement_timeout = '2000ms'`]);
   });
 
+  it('#400 L1: "57014" elsewhere in the meta is not a timeout', async () => {
+    const other = Object.assign(new Error('Raw query failed'), {
+      code: 'P2010',
+      meta: { code: '23505', target: 'row-57014' },
+    });
+    const { s } = mockDb(() => Promise.reject(other));
+    await expect(s.search(randomUUID(), input(5))).rejects.toBe(other);
+  });
+
   it('rethrows other errors unchanged', async () => {
     const boom = new Error('connection reset');
     const { s } = mockDb(() => Promise.reject(boom));

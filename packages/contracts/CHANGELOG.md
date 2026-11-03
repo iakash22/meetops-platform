@@ -14,6 +14,11 @@ While the version is `0.x`, a minor bump may contain breaking changes (ADR-003).
 
 ### Added
 
+- `CONSENT_ATTESTATION_MAX_BACKDATE_SECONDS` (86400): `attestedAt` more than 24 h before the server clock is now
+  rejected with 422 `CONSENT_INVALID` (consent and upload/recording init), backed by a DB CHECK.
+  **Release note:** in-flight uploads/recordings whose attestation is older than 24 h fail closed
+  (422 / CHECK violation) after deploy; clients must re-attest. Migration runbook:
+  `docs/16-runbooks/meeting-consent-maintenance.md`.
 - Phase 7 calendar event links: `CALENDAR_PATHS.eventLink`
   (`PUT|DELETE /orgs/:organizationId/calendar/connections/:connectionId/events/:eventId/link`),
   `CalendarEventId`, `CalendarEventLinkParams`, `LinkCalendarEventRequest`, `CalendarEventLink`. `CalendarEvent` gains

@@ -29,6 +29,8 @@ import {
   PrismaSemanticSearch,
   semanticSearchEnabled,
   SemanticSearchUnavailableError,
+  createExecutorQueryEmbedder,
+  type ExecutorEmbedFn,
   type QueryEmbedder,
   type SemanticSearchRepository,
 } from './semantic.js';
@@ -58,6 +60,8 @@ export type SearchModuleDeps = ModuleDeps & {
   semanticSearch?: SemanticSearchRepository;
   /** Query embedder (ai-core Embeddings). Without one the semantic route answers 503. */
   queryEmbedder?: QueryEmbedder;
+  /** ai-core `embedWithExecutor` bound to the host's executor; used when no queryEmbedder is injected. */
+  embeddingsExecutor?: ExecutorEmbedFn;
 };
 
 export function selectSemanticSearchRepository(
@@ -138,6 +142,9 @@ export default async function searchModule(
 
   if (!semanticSearchEnabled()) return;
   const semantic = selectSemanticSearchRepository(deps);
+  const embedder =
+    deps.queryEmbedder ??
+    (deps.embeddingsExecutor ? createExecutorQueryEmbedder(deps.embeddingsExecutor) : undefined);
   app.get<{ Params: { organizationId: string }; Querystring: SemanticSearchQuery }>(
     SEARCH_PATHS.semantic,
     {
@@ -171,11 +178,10 @@ export default async function searchModule(
       if (CONTROL_CHARS.test(q)) throw new SearchQueryInvalidError();
       reply.header('cache-control', 'private, no-store');
       if (q.length < 2) return { items: [] };
-      const embedder = deps.queryEmbedder;
       if (!embedder) throw new SemanticSearchUnavailableError();
-      let vector: number[];
+      let embedded: { vector: number[]; model: string };
       try {
-        vector = await embedder.embed(q);
+        embedded = await embedder.embed(c.ctx.organizationId, q);
       } catch {
         throw new SemanticSearchUnavailableError();
       }
@@ -183,8 +189,8 @@ export default async function searchModule(
         ? ([...new Set(request.query.kinds.split(','))] as SemanticSearchKind[])
         : [...SEMANTIC_SEARCH_KINDS];
       const items = await semantic.search(c.ctx.organizationId, {
-        vector,
-        model: embedder.model,
+        vector: embedded.vector,
+        model: embedded.model,
         kinds,
         limit: request.query.limit ?? 10,
       });

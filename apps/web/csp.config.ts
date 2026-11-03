@@ -12,7 +12,7 @@ export function localCsp(template: string, nonce?: string): string {
   if (!csp) throw new Error('web.conf.template has no Content-Security-Policy');
   return csp
     .replace('$csp_upgrade_insecure', '')
-    .replace(/;?\s*report-to csp/, '')
+    .replace('$csp_report_to', '')
     .replace('${CSP_API_ORIGIN} ${CSP_REALTIME_ORIGIN} ${CSP_STORAGE_ORIGIN}', LOCAL_ORIGINS)
     .replace('${CSP_STORAGE_ORIGIN}', 'http://localhost:* http://127.0.0.1:*')
     .split(';')
