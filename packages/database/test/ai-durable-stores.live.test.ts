@@ -164,13 +164,14 @@ describe.skipIf(!APP_URL || !OWNER_URL)('durable AI stores (live)', () => {
     await before.upsert(orgA, {
       config: { approvedProviders: ['gemini'], defaults: { llm: { provider: 'gemini' } } },
       monthlyBudgetUsd: '25.00',
+      updatedById: null,
     });
     const after = createAiOrgConfigRepository({ client: app() });
     expect(await after.get(orgA)).toEqual({
       config: { approvedProviders: ['gemini'], defaults: { llm: { provider: 'gemini' } } },
       monthlyBudgetUsd: '25.00',
     });
-    await after.upsert(orgA, { config: { approvedProviders: [] } });
+    await after.upsert(orgA, { config: { approvedProviders: [] }, updatedById: null });
     expect(await after.get(orgA)).toEqual({
       config: { approvedProviders: [] },
       monthlyBudgetUsd: undefined,
