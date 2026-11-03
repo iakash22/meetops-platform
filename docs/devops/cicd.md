@@ -45,10 +45,18 @@ The script is manual only. It aborts unless all of the following pass on a clean
 3. `env -u AUDIT_GATE_NOW node scripts/audit-gate.mjs`
 
 The script requires an interactive terminal (`[ -t 0 ]`) unless `--non-interactive` is passed
-explicitly; non-interactive runs must also set `DEPLOY_CONFIRM="deploy <env>"`.
-**Staging gate:** production aborts unless the same sha was deployed to staging first (a marker
-written to `DEPLOY_STATE_DIR`, default `~/.local/state/meetops-deploy`). Every environment, staging and
-production alike, needs a typed `deploy <env>` confirmation read from `/dev/tty`. The `sha` must
+explicitly. Interactive runs (staging and production alike) need a typed `deploy <env>`
+confirmation read from `/dev/tty`. `--non-interactive` skips the `/dev/tty` prompt and instead
+requires `DEPLOY_CONFIRM="deploy <env>"` in the environment.
+**Staging gate:** production aborts unless the same sha was deployed to staging first. The proof
+is a marker file `staging-<sha>` in a fixed dir, `<passwd home>/.local/state/meetops-deploy`; it
+is not configurable through env (`DEPLOY_STATE_DIR`, `XDG_STATE_HOME` and `HOME` are ignored).
+The marker must be a regular file, not a symlink, owned by the current user, and the dir must be
+owned by the user, not a symlink, and not group- or world-writable. The marker is written only
+after a real staging deploy succeeds; the current placeholder deploys nothing and writes none.
+_Threat model:_ this stops a caller's env or another local user from forging the staging proof;
+it does not stop someone already running as the deploying user. Once a real target exists, the
+gate should move to a successful GitHub deployment status for `environment=staging`. The `sha` must
 be the full 40-hex-character commit and must equal `git rev-parse HEAD` (the default). The audit
 gate runs as `env -u AUDIT_GATE_NOW node scripts/audit-gate.mjs`, so its clock cannot be
 overridden. The deploy step is a **placeholder**:

@@ -9,7 +9,12 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 APPS=(api worker web realtime)
-PUSH=0; [ "${1:-}" = "--push" ] && PUSH=1
+PUSH=0
+case "$#:${1:-}" in
+  0:) ;;
+  1:--push) PUSH=1 ;;
+  *) echo "Usage: scripts/build-images.sh [--push]" >&2; exit 2 ;;
+esac
 REGISTRY="${REGISTRY:-ghcr.io}"
 REPO="${IMAGE_REPO:-iakash22/meetops-platform}"
 SHA="$(git rev-parse HEAD)"
