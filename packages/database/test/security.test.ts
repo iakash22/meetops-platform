@@ -120,6 +120,9 @@ const MEETING_CONSENT_MIGRATION = '20261031030000_meeting_consent_events';
 const CONSENT_HARDENING_MIGRATION = '20261031130000_consent_hardening';
 const CALENDAR_OUTLOOK_PROVIDER_MIGRATION = '20261102000000_calendar_outlook_provider';
 const LATEST_MIGRATION = CALENDAR_OUTLOOK_PROVIDER_MIGRATION;
+/** MeetingStatus gains 'transcription_delayed' (additive ADD VALUE; transcription DLQ). Parallel slot after the
+ * Outlook migration, like consent hardening: the positional order checks ignore it. */
+const MEETING_STATUS_DELAYED_MIGRATION = '20261103180000_meeting_status_transcription_delayed';
 /**
  * Parallel PRs that sort between calendar_events and meeting_embeddings (#334 consent events, #341 calendar links).
  * The order checks below ignore them so they hold whichever merges first; when present they must sort before ours.
@@ -152,10 +155,15 @@ const orderedDirs = () => {
     expect(dirs.indexOf(CONSENT_HARDENING_MIGRATION)).toBeGreaterThan(
       dirs.indexOf(MEETING_SOURCE_MOBILE_MIGRATION),
     );
+  if (dirs.includes(MEETING_STATUS_DELAYED_MIGRATION))
+    expect(dirs.indexOf(MEETING_STATUS_DELAYED_MIGRATION)).toBeGreaterThan(
+      dirs.indexOf(CALENDAR_OUTLOOK_PROVIDER_MIGRATION),
+    );
   return dirs.filter(
     (d) =>
       d !== TASK_SYNC_MIGRATION &&
       d !== CONSENT_HARDENING_MIGRATION &&
+      d !== MEETING_STATUS_DELAYED_MIGRATION &&
       !(PARALLEL_MIGRATIONS as readonly string[]).includes(d),
   );
 };
@@ -1987,5 +1995,20 @@ describe('Phase 7 meeting_embeddings (static)', () => {
       'CREATE INDEX "meeting_embeddings_org_id_model_idx" ON "meeting_embeddings"("org_id", "model");',
     );
     expect(model).toContain('Unsupported("vector(1536)")');
+  });
+});
+
+describe('MeetingStatus transcription_delayed (20261103180000)', () => {
+  it('sorts after the Outlook provider migration and only adds the enum value', () => {
+    orderedDirs(); // asserts it sorts after the Outlook migration
+    const sql = readFileSync(
+      resolve(migrationsDir, MEETING_STATUS_DELAYED_MIGRATION, 'migration.sql'),
+      'utf8',
+    )
+      .split('\n')
+      .filter((l) => l.trim() && !l.trim().startsWith('--'));
+    expect(sql).toEqual([
+      `ALTER TYPE "MeetingStatus" ADD VALUE IF NOT EXISTS 'transcription_delayed';`,
+    ]);
   });
 });

@@ -46,7 +46,6 @@ enum MeetingStatus {
   processing
   completed
   failed
-  /// Transcription retries are used up (provider outage); the job is in the transcription DLQ.
   transcription_delayed
 }
 
