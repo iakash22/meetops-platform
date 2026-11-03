@@ -16,6 +16,7 @@ import {
 } from '../src/lib/meeting.js';
 import { routeAlarm, WATCHDOG_ALARM } from '../src/lib/alarms.js';
 import { ChunkStore } from '../src/lib/chunk-store.js';
+import { estimateQuota, requestPersistentStorage } from '../src/lib/storage-quota.js';
 import {
   fetchPendingTasks,
   isPendingTasksRequest,
@@ -125,6 +126,8 @@ async function handleResolveMeeting(tabId: number): Promise<ResolveMeetingResult
 }
 
 let storePromise: Promise<ChunkStore> | undefined;
+// Ask Chrome to keep the recording queue persistent (not evicted under storage pressure). Best effort.
+void requestPersistentStorage();
 const store = () => (storePromise ??= ChunkStore.open());
 
 async function hasOffscreen(): Promise<boolean> {
@@ -252,6 +255,16 @@ const deps: BackgroundDeps = {
   },
   durableKV,
   discardLocal,
+  // Fail closed (Start): any server-backed upload mode requires a verified pairing; errors refuse to record.
+  ...(HTTP_UPLOAD || DIRECT_UPLOAD
+    ? {
+        checkPairing: async () => {
+          const st = await auth.status();
+          return st.state === 'paired' && Boolean(st.organizationId);
+        },
+      }
+    : {}),
+  storageQuota: () => estimateQuota(),
   deleteLocal,
   async setBadge(text) {
     // An undeletable discarded session keeps the error badge until it is resolved.

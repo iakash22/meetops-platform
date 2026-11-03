@@ -19,7 +19,7 @@
     },
     "test": {
       "dependsOn": ["^build"],
-      "outputs": ["coverage/**", "test-results/**"],
+      "outputs": [],
       "cache": true
     },
     "size": {

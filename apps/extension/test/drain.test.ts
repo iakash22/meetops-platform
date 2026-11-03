@@ -172,7 +172,10 @@ describe('pre-v0.2 IndexedDB records', () => {
 
 describe('sessions with eviction/refusal gaps', () => {
   it('aborts with reason local_storage_exhausted instead of completing, and uploads nothing more', async () => {
-    const store = await ChunkStore.open({ maxBytes: 5, policy: 'evict-oldest' }, new IDBFactory());
+    const store = await ChunkStore.open(
+      { maxBytes: 5, policy: 'evict-uploaded' },
+      new IDBFactory(),
+    );
     await store.putSession({ sessionId: SID, meta, completed: false });
     const put = (seq: number, n: number) =>
       store.putChunk({
@@ -207,7 +210,10 @@ describe('sessions with eviction/refusal gaps', () => {
   });
 
   it('evicting already-uploaded chunks is not a gap', async () => {
-    const store = await ChunkStore.open({ maxBytes: 5, policy: 'evict-oldest' }, new IDBFactory());
+    const store = await ChunkStore.open(
+      { maxBytes: 5, policy: 'evict-uploaded' },
+      new IDBFactory(),
+    );
     await store.putSession({ sessionId: SID, meta, completed: false });
     await store.putChunk({
       sessionId: SID,
