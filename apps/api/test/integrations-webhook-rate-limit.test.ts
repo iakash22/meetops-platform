@@ -10,6 +10,7 @@ import { InMemoryIntegrations } from '../src/modules/integrations/in-memory.repo
 import { buildApp, type App } from './helpers.js';
 
 const GH_SECRET = 'gh-app-webhook-secret';
+const JIRA_SECRET = 'jira-hook-secret';
 const pem = generateKeyPairSync('rsa', { modulusLength: 2048 })
   .privateKey.export({ type: 'pkcs8', format: 'pem' })
   .toString();
@@ -186,6 +187,70 @@ describe('integration webhook rate limits (P9 coverage)', () => {
     });
     expect((await post(app, `/webhooks/github/${randomUUID()}`)).statusCode).toBe(401);
     expect((await post(app, `/webhooks/jira/${randomUUID()}`)).statusCode).toBe(429);
+  });
+
+  const seedJira = () => {
+    const id = randomUUID();
+    repo.add(
+      {
+        id,
+        organizationId: randomUUID(),
+        provider: 'jira',
+        status: 'active',
+        displayName: 'acme',
+        externalAccountId: '11111111-2222-4333-8444-555555555555',
+        connectedById: randomUUID(),
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      },
+      { accessToken: 'a', refreshToken: null, webhookSecret: JIRA_SECRET },
+    );
+    return id;
+  };
+  const jiraBody = JSON.stringify({ webhookEvent: 'jira:issue_updated' });
+  const jiraDelivery = (id = randomUUID()) => ({
+    'content-type': 'application/json',
+    'x-atlassian-webhook-identifier': id,
+    'x-hub-signature': `sha256=${createHmac('sha256', JIRA_SECRET).update(jiraBody).digest('hex')}`,
+  });
+  const sendJira = (a: App, url: string, headers: Record<string, string>) =>
+    a.inject({ method: 'POST', url, payload: jiraBody, headers, remoteAddress: '203.0.113.7' });
+  const WINDOW = 150;
+  const afterWindow = () => new Promise((r) => setTimeout(r, WINDOW + 50));
+  const tight = {
+    perIp: { limit: 100, windowMs: 60_000 },
+    perTarget: { limit: 1, windowMs: WINDOW },
+    unsignedPerIp: { limit: 50, windowMs: 60_000 },
+  };
+
+  it('GitHub: a delivery refused with 429 is processed once when retried after the window', async () => {
+    for (const route of ['app', 'integration'] as const) {
+      app = await startWithGitHub(tight);
+      const url = route === 'app' ? '/webhooks/github' : `/webhooks/github/${seedGitHub()}`;
+      if (route === 'app') seedGitHub();
+      expect((await send(app, url, delivery())).statusCode).toBe(202); // uses the bucket
+      const retried = delivery();
+      const limited = await send(app, url, retried);
+      expect(limited.statusCode).toBe(429);
+      await afterWindow();
+      expect((await send(app, url, retried)).statusCode).toBe(202); // not a 409 replay
+      await afterWindow();
+      expect((await send(app, url, retried)).statusCode).toBe(409); // recorded exactly once
+      await app.close();
+      app = undefined;
+    }
+  });
+
+  it('Jira: a delivery refused with 429 is processed once when retried after the window', async () => {
+    app = await startWithGitHub(tight);
+    const url = `/webhooks/jira/${seedJira()}`;
+    expect((await sendJira(app, url, jiraDelivery())).statusCode).toBe(202);
+    const retried = jiraDelivery();
+    expect((await sendJira(app, url, retried)).statusCode).toBe(429);
+    await afterWindow();
+    expect((await sendJira(app, url, retried)).statusCode).toBe(202);
+    await afterWindow();
+    expect((await sendJira(app, url, retried)).statusCode).toBe(409);
   });
 
   it('per-IP limit spans all webhook routes and is per client', async () => {

@@ -303,7 +303,7 @@ export class IntegrationsService {
   async githubAppWebhook(input: {
     rawBody: Buffer;
     headers: HeaderBag;
-    /** Called once the delivery passed the signature and replay checks, before it is applied (rate limiting). */
+    /** Called after the signature and a read-only replay check, before the delivery id is recorded (rate limiting); throwing records nothing. */
     onDeliveryAccepted?: () => Promise<void>;
   }): Promise<number> {
     const rt = this.runtime();
@@ -327,6 +327,7 @@ export class IntegrationsService {
       rawBody: input.rawBody,
       headers: input.headers,
       deliveryStore: rt.deliveryStore,
+      ...(input.onDeliveryAccepted ? { beforeRecord: input.onDeliveryAccepted } : {}),
       maxBodyBytes: INTEGRATION_WEBHOOK_MAX_BYTES,
       secretResolver: {
         resolve: async (ref) => {
@@ -340,7 +341,6 @@ export class IntegrationsService {
       },
     });
     if (!r.ok) throw webhookFailure(r.status);
-    await input.onDeliveryAccepted?.();
     let applied = 0;
     for (const t of targets) {
       const change = mapGitHubIssueEvent(r.event, r.payload, {
@@ -364,7 +364,7 @@ export class IntegrationsService {
     integrationId: string;
     rawBody: Buffer;
     headers: HeaderBag;
-    /** Called once the delivery passed the signature and replay checks, before it is applied (rate limiting). */
+    /** Called after the signature and a read-only replay check, before the delivery id is recorded (rate limiting); throwing records nothing. */
     onDeliveryAccepted?: () => Promise<void>;
   }): Promise<number> {
     const rt = this.runtime();
@@ -383,6 +383,7 @@ export class IntegrationsService {
         rawBody: input.rawBody,
         headers: input.headers,
         deliveryStore: rt.deliveryStore,
+        ...(input.onDeliveryAccepted ? { beforeRecord: input.onDeliveryAccepted } : {}),
         maxBodyBytes: INTEGRATION_WEBHOOK_MAX_BYTES,
         secretResolver: {
           resolve: async (ref) =>
@@ -392,7 +393,6 @@ export class IntegrationsService {
         },
       });
       if (!r.ok) throw webhookFailure(r.status);
-      await input.onDeliveryAccepted?.();
       change = mapGitHubIssueEvent(r.event, r.payload, ctx);
     } else {
       const secrets = await this.repo.readSecrets(organizationId, integrationId);
@@ -403,11 +403,11 @@ export class IntegrationsService {
         rawBody: input.rawBody,
         headers: input.headers,
         deliveryStore: rt.deliveryStore,
+        ...(input.onDeliveryAccepted ? { beforeRecord: input.onDeliveryAccepted } : {}),
         maxBodyBytes: INTEGRATION_WEBHOOK_MAX_BYTES,
         ...(rt.now ? { now: rt.now } : {}),
       });
       if (!r.ok) throw webhookFailure(r.status);
-      await input.onDeliveryAccepted?.();
       change = mapJiraIssueEvent(r.payload, ctx);
     }
     if (!change) return 0;
