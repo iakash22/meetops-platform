@@ -17,6 +17,7 @@ import {
   OrgParams,
   UploadParams,
 } from './types.js';
+import type { MediaRateLimit } from './rate-limit.js';
 
 const tags = ['uploads'];
 const errors = { ...directoryErrors, 409: ErrorBody, 422: ErrorBody } as const;
@@ -28,9 +29,11 @@ export async function uploadRoutes(
     caller: ResolveCaller;
     /** Caller for init/complete (cookie or ADR-005 extension bearer); defaults to `caller`. */
     writeCaller?: ResolveCaller;
+    /** Per user + IP limits on init/complete (429 + Retry-After). */
+    rateLimit?: MediaRateLimit;
   },
 ) {
-  const { uploads, caller } = opts;
+  const { uploads, caller, rateLimit } = opts;
   const writeCaller = opts.writeCaller ?? caller;
 
   app.post<{ Params: OrgParams; Body: InitUploadInput }>(
@@ -48,6 +51,7 @@ export async function uploadRoutes(
     },
     async (request, reply) => {
       const c = await writeCaller(request, request.params.organizationId);
+      await rateLimit?.control(c);
       const { file, upload } = await uploads.init(c, request.body);
       return reply.code(201).send({
         fileObjectId: file.id,
@@ -76,6 +80,7 @@ export async function uploadRoutes(
     },
     async (request, reply) => {
       const c = await writeCaller(request, request.params.organizationId);
+      await rateLimit?.control(c);
       const f = await uploads.complete(c, request.params.fileObjectId);
       return reply.code(200).send({ fileObject: toPublicFileObject(f), scanStatus: 'pending' });
     },

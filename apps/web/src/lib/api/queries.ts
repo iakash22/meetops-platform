@@ -1,10 +1,19 @@
 import { TASK_STATUSES } from '@meetops/contracts/types';
 import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
-import type { Id, Meeting, Paginated, Task, TaskUpdateEvent } from '@meetops/contracts';
+import type {
+  Id,
+  Meeting,
+  MeetingStatusEvent,
+  Paginated,
+  Task,
+  TaskUpdateEvent,
+} from '@meetops/contracts';
+import type { InfiniteData } from '@tanstack/react-query';
 import type { QueryClient } from '@tanstack/react-query';
 import { useApi } from './context';
 import { ApiError, type TaskListFilters } from './client';
 import { useOrgStore } from '@/stores/org-store';
+import { useRealtimeStore } from '@/lib/realtime/store';
 
 export const queryKeys = {
   session: ['session'] as const,
@@ -28,13 +37,22 @@ export function useOrganizationId(): Id {
 const IN_FLIGHT = new Set<Meeting['status']>(['recording', 'processing']);
 /** Poll every 5s while a meeting is recording or processing; stop once it settles. */
 export const MEETING_POLL_MS = 5_000;
-export function meetingPollInterval(status: Meeting['status'] | undefined): number | false {
-  return status && IN_FLIGHT.has(status) ? MEETING_POLL_MS : false;
+/** While realtime is connected, polling drops to a slow safety net (missed events, server restarts). */
+export const MEETING_POLL_REALTIME_MS = 30_000;
+export function meetingPollInterval(
+  status: Meeting['status'] | undefined,
+  realtimeConnected = false,
+): number | false {
+  if (!status || !IN_FLIGHT.has(status)) return false;
+  return realtimeConnected ? MEETING_POLL_REALTIME_MS : MEETING_POLL_MS;
 }
+
+const useRealtimeConnected = () => useRealtimeStore((s) => s.status === 'connected');
 
 export function useMeetings() {
   const api = useApi();
   const organizationId = useOrganizationId();
+  const live = useRealtimeConnected();
   return useInfiniteQuery({
     queryKey: queryKeys.meetingsList(organizationId),
     queryFn: ({ pageParam }) =>
@@ -49,6 +67,7 @@ export function useMeetings() {
         q.state.data?.pages.some((p) => p.items.some((m) => IN_FLIGHT.has(m.status)))
           ? 'processing'
           : undefined,
+        live,
       ),
   });
 }
@@ -60,13 +79,15 @@ const isFinalClientError = (err: unknown) =>
 export function useMeeting(meetingId: Id) {
   const api = useApi();
   const organizationId = useOrganizationId();
+  const live = useRealtimeConnected();
   return useQuery<Meeting>({
     queryKey: queryKeys.meeting(organizationId, meetingId),
     queryFn: () => api.meetings.get(organizationId, meetingId),
     enabled: !!organizationId && !!meetingId,
     retry: (count, err) => !isFinalClientError(err) && count < 1,
     // Poll while the pipeline is running so status, transcript and summary appear without a reload.
-    refetchInterval: (q) => meetingPollInterval(q.state.data?.status),
+    // realtime `meeting:status` patches the cache; polling stays as the fallback.
+    refetchInterval: (q) => meetingPollInterval(q.state.data?.status, live),
   });
 }
 
@@ -151,5 +172,55 @@ export function applyTaskUpdate(queryClient: QueryClient, event: unknown): boole
         ),
       },
   );
+  return true;
+}
+
+const MEETING_STATUSES = new Set<Meeting['status']>([
+  'scheduled',
+  'recording',
+  'processing',
+  'completed',
+  'failed',
+]);
+const MEETING_EVENT_KEYS = new Set(['organizationId', 'meetingId', 'status', 'at', 'errorCode']);
+
+/** Minimal runtime guard for contracts MeetingStatusEvent (strict keys, uuids, known status). */
+export function isMeetingStatusEvent(value: unknown): value is MeetingStatusEvent {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const e = value as Record<string, unknown>;
+  if (Object.keys(e).some((k) => !MEETING_EVENT_KEYS.has(k))) return false;
+  const isId = (v: unknown) => typeof v === 'string' && UUID.test(v);
+  return (
+    isId(e.organizationId) &&
+    isId(e.meetingId) &&
+    typeof e.status === 'string' &&
+    MEETING_STATUSES.has(e.status as Meeting['status']) &&
+    (e.errorCode === undefined || (typeof e.errorCode === 'string' && e.errorCode.length <= 64)) &&
+    isIsoDateTime(e.at)
+  );
+}
+
+/**
+ * Apply a realtime `meeting:status` event to the cached meeting and meeting-list pages.
+ * On a terminal status the meeting is invalidated so transcript and summary are refetched.
+ * Returns false (and changes nothing) for events that fail validation.
+ */
+export function applyMeetingStatus(queryClient: QueryClient, event: unknown): boolean {
+  if (!isMeetingStatusEvent(event)) return false;
+  const { organizationId, meetingId, status } = event;
+  const detailKey = queryKeys.meeting(organizationId, meetingId);
+  queryClient.setQueryData<Meeting>(detailKey, (m) => (m ? { ...m, status } : m));
+  queryClient.setQueryData<InfiniteData<Paginated<Meeting>>>(
+    queryKeys.meetingsList(organizationId),
+    (data) =>
+      data && {
+        ...data,
+        pages: data.pages.map((p) => ({
+          ...p,
+          items: p.items.map((m) => (m.id === meetingId ? { ...m, status } : m)),
+        })),
+      },
+  );
+  if (!IN_FLIGHT.has(status)) void queryClient.invalidateQueries({ queryKey: detailKey });
   return true;
 }
