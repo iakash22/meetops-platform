@@ -49,14 +49,16 @@ PostgreSQL 16 + pgvector (roles `meetops_app`, `meetops_migrator`, optional `mee
 ### Known gaps
 
 - `TranscriptSegment.embedding` (`vector(1536)`) is redundant: `MeetingEmbedding` (`meeting_embeddings`) already stores one row per transcript segment (and per summary report) and model, which is what search reads. No migration now; it is a candidate for removal later.
-- Search quality: `meeting_embeddings` has no ANN index, so similarity queries scan within the org. This is deliberate: [`20261031050000_meeting_embeddings/migration.sql`](../../packages/database/prisma/migrations/20261031050000_meeting_embeddings/migration.sql) avoids a global HNSW/IVFFlat index because an index-ordered scan would rank across all tenants and only then filter by `org_id`. The next step is a tenant-scoped ANN approach, such as per-org partial indexes (`WHERE org_id = …`, per model) for large orgs, not a global index.
+- Search quality: `meeting_embeddings` has no ANN index, so similarity queries scan within the org. This is deliberate: [`20261031050000_meeting_embeddings/migration.sql`](../../packages/database/prisma/migrations/20261031050000_meeting_embeddings/migration.sql) avoids a global HNSW/IVFFlat index because an index-ordered scan would rank across all tenants and only then filter by `org_id`. The next step is a tenant-scoped ANN approach, such as per-org partial ANN indexes (`WHERE org_id = …`, per model) for large orgs, not a global index.
 - No automatic STT fallback: a failed transcription is retried through the BullMQ queue (retry/backoff), not switched to another provider, and never to a paid one. `packages/ai-core/src/contracts.ts` keeps a `TODO(contracts)` for a dedicated STT fallback type (`FallbackPolicy.sttProviderIds`); job-level LLM fallbacks are ignored for transcription.
 - Outbound auth mail still runs through the API's inline queue in places; the production BullMQ mail path is incomplete (see [PHASE_STATUS](../PHASE_STATUS.md)).
 - Native Kotlin/Swift/Tauri code has not been compiled or run on devices; bundle ids are placeholders.
 - KMS (ADR-016), billing (ADR-017), MFA/SSO (ADR-021) undecided; ADR-006–013 still Proposed.
 - Remote CI unavailable; `pnpm local-gates` is the gate ([local gates](../local-gates.md)).
 
-### Browser extension auth ([ADR-005](../15-decisions/ADR-005-extension-auth.md), Amendment 1)
+### Browser extension auth
+
+See [ADR-005](../15-decisions/ADR-005-extension-auth.md), Amendment 1.
 
 - The extension never uses the web session cookie. A user gesture starts pairing with a single-use nonce. The web app
   (cookie + CSRF) confirms the org and calls `/auth/extension/pair`, and hands a short-lived pairing code to the
