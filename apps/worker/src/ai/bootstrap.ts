@@ -13,6 +13,7 @@ import { logger as baseLogger } from '../logger.js';
 import { createMediaPersistence, createPersistedChunkAudioResolver } from '../media/persistence.js';
 import { workerAuthorize } from '../media/worker.js';
 import { createPrismaTranscriptRepository } from './prisma-repository.js';
+import { createPrismaTranscriptionDelayedStatus } from './transcription-retry.js';
 import { createAiStores } from './durable-stores.js';
 import type { TranscriptionHostDeps } from './worker.js';
 
@@ -78,6 +79,7 @@ export async function createTranscriptionHostDeps(
   return {
     executor,
     repository: createPrismaTranscriptRepository(),
+    delayedStatus: createPrismaTranscriptionDelayedStatus(),
     resolveAudio: (ref) => audio.bytes(ref),
     audit: { record: (entry) => void log.info({ audit: entry }, 'transcription audit') },
   };
