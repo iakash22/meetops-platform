@@ -2,6 +2,12 @@
 
 Rules for every agent working on this repo. See also [`CONTRIBUTING.md`](../../CONTRIBUTING.md) and [execution rules](../17-agents/execution-rules.md) (no Cursor).
 
+## 0. Where PRs go (Phase 1)
+
+- Branch from `origin/integration/phase-1` and open every PR against `integration/phase-1` (or the branch below it when stacked), never `main`.
+- Merging into `integration/phase-1` needs a Tester & Security PASS on the exact head SHA; only the Coordinator merges, with `gh pr merge --match-head-commit <sha>`.
+- `integration/phase-1` reaches `main` through one integration PR, and **only Akash merges into `main`**. See [CONTRIBUTING](../../CONTRIBUTING.md#phase-1-integration-branch).
+
 ## 1. One clone per agent
 
 Each agent works in its own clone under an area-named folder, `/workspace/agents/<area>`. Existing folders: `ai`, `architecture`, `backend` and `database`; new areas follow the same pattern. Never work in, reset or delete another agent's clone. The box is shared, and a shared checkout gets clobbered.
@@ -35,7 +41,7 @@ Using the pinned version keeps lockfile diffs minimal.
 
   ```bash
   git fetch origin
-  git merge origin/main          # or the base branch of a stacked PR
+  git merge origin/integration/phase-1   # or the base branch of a stacked PR
   git push
   ```
 
@@ -62,16 +68,18 @@ git push -u origin docs/next
 gh pr create --base docs/lower --head docs/next --title "..." --body "Stacked on #<lower>."
 ```
 
-After the lower PR merges into `main`, retarget the upper PR and merge `main` in (no rebase or force-push):
+After the lower PR merges into `integration/phase-1`, retarget the upper PR and merge `integration/phase-1` in (no rebase or force-push):
 
 ```bash
-gh pr edit <upper> --base main
-git fetch origin && git merge origin/main && git push
+gh pr edit <upper> --base integration/phase-1
+git fetch origin && git merge origin/integration/phase-1 && git push
 ```
 
-**Stacks are merged with merge commits, not squash.** That keeps the upper PRs' history intact, so retargeting and merging `main` stay clean.
+**Stacks are merged with merge commits, not squash.** That keeps the upper PRs' history intact, so retargeting and merging the base stay clean.
 
-## 6. Merge order
+## 6. Merge order (historical, pre-Phase 1)
+
+> Historical record from 21 Oct 2026, before the Phase 1 integration-branch workflow. Do not follow the `main` bases below; use §0.
 
 Open PRs as of 2026-10-21 22:56 IST, from `gh pr list --state open`. Stacks merge with **merge commits, not squash**.
 
