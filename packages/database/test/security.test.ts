@@ -126,9 +126,11 @@ const CALENDAR_TOKEN_GENERATION_MIGRATION = '20261103060000_calendar_token_gener
 /** MeetingStatus gains 'transcription_delayed' (additive ADD VALUE; transcription DLQ, #414). Sorts right after the
  * token generation migration. */
 const MEETING_STATUS_DELAYED_MIGRATION = '20261103180000_meeting_status_transcription_delayed';
-/** #423: outbox_events.dedupe_key + unique (org_id, dedupe_key) for atomic insert-once alerts (additive). */
+/** #423: nullable outbox_events.dedupe_key for atomic insert-once alerts (additive). */
 const OUTBOX_DEDUPE_KEY_MIGRATION = '20261103200000_outbox_dedupe_key';
-const LATEST_MIGRATION = OUTBOX_DEDUPE_KEY_MIGRATION;
+/** #423: unique (org_id, dedupe_key), built CONCURRENTLY in its own single-statement migration. */
+const OUTBOX_DEDUPE_KEY_INDEX_MIGRATION = '20261103200100_outbox_dedupe_key_index';
+const LATEST_MIGRATION = OUTBOX_DEDUPE_KEY_INDEX_MIGRATION;
 /**
  * Parallel PRs that sort between calendar_events and meeting_embeddings (#334 consent events, #341 calendar links).
  * The order checks below ignore them so they hold whichever merges first; when present they must sort before ours.
@@ -167,7 +169,8 @@ const orderedDirs = () => {
       dirs.indexOf(CALENDAR_SYNC_CURSOR_MIGRATION) - 1,
     );
   // The token generation migration sorts right after the sync cursor; the transcription_delayed enum value (#414)
-  // sorts right after it, and the outbox dedupe key (#423) is the newest. The positional checks below (which end at the sync cursor) ignore them.
+  // sorts right after it, then the outbox dedupe key column and its CONCURRENTLY index (#423) come last. The positional
+  // checks below (which end at the sync cursor) ignore them.
   expect(dirs.indexOf(CALENDAR_TOKEN_GENERATION_MIGRATION)).toBe(
     dirs.indexOf(CALENDAR_SYNC_CURSOR_MIGRATION) + 1,
   );
@@ -178,6 +181,9 @@ const orderedDirs = () => {
   expect(dirs.indexOf(OUTBOX_DEDUPE_KEY_MIGRATION)).toBe(
     dirs.indexOf(MEETING_STATUS_DELAYED_MIGRATION) + 1,
   );
+  expect(dirs.indexOf(OUTBOX_DEDUPE_KEY_INDEX_MIGRATION)).toBe(
+    dirs.indexOf(OUTBOX_DEDUPE_KEY_MIGRATION) + 1,
+  );
   return dirs.filter(
     (d) =>
       d !== TASK_SYNC_MIGRATION &&
@@ -186,6 +192,7 @@ const orderedDirs = () => {
       d !== CONSENT_HARDENING_MIGRATION &&
       d !== MEETING_STATUS_DELAYED_MIGRATION &&
       d !== OUTBOX_DEDUPE_KEY_MIGRATION &&
+      d !== OUTBOX_DEDUPE_KEY_INDEX_MIGRATION &&
       !(PARALLEL_MIGRATIONS as readonly string[]).includes(d),
   );
 };
@@ -2051,20 +2058,24 @@ describe('calendar token generation (20261103060000)', () => {
   });
 });
 
-describe('outbox dedupe key (20261103200000, #423)', () => {
-  const sql = readFileSync(
-    resolve(migrationsDir, OUTBOX_DEDUPE_KEY_MIGRATION, 'migration.sql'),
-    'utf8',
-  )
-    .split('\n')
-    .filter((l) => l.trim() && !l.trim().startsWith('--'));
-  it('is the newest migration, right after transcription_delayed', () => {
+describe('outbox dedupe key (20261103200000 + 20261103200100, #423)', () => {
+  const statements = (dir: string) =>
+    readFileSync(resolve(migrationsDir, dir, 'migration.sql'), 'utf8')
+      .split('\n')
+      .filter((l) => l.trim() && !l.trim().startsWith('--'));
+  it('the index migration is the newest, right after the column migration', () => {
     orderedDirs();
   });
-  it('is minimal and additive: one nullable column and one unique index', () => {
-    expect(sql).toEqual([
+  it('the first migration only adds the nullable column', () => {
+    expect(statements(OUTBOX_DEDUPE_KEY_MIGRATION)).toEqual([
       'ALTER TABLE "outbox_events" ADD COLUMN "dedupe_key" TEXT;',
-      'CREATE UNIQUE INDEX "outbox_events_org_id_dedupe_key_key" ON "outbox_events"("org_id", "dedupe_key");',
     ]);
+  });
+  it('the second is a single CREATE UNIQUE INDEX CONCURRENTLY statement (no transaction)', () => {
+    const sql = statements(OUTBOX_DEDUPE_KEY_INDEX_MIGRATION);
+    expect(sql).toEqual([
+      'CREATE UNIQUE INDEX CONCURRENTLY "outbox_events_org_id_dedupe_key_key" ON "outbox_events"("org_id", "dedupe_key");',
+    ]);
+    expect(sql.join('\n')).not.toMatch(/\b(BEGIN|COMMIT)\b/i);
   });
 });
