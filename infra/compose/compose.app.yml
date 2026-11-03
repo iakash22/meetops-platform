@@ -308,6 +308,8 @@ services:
     volumes: [*secrets-shim]
     entrypoint: ['/bin/sh', '/opt/with-secrets.sh']
     command: ['node', 'dist/index.js']
+    # LOCAL DEV ONLY. Production and self-host must not publish the realtime port: it must be reachable only
+    # through nginx (REALTIME_TRUST_PROXY_HOPS=1). See docs/00-getting-started/environment-variables.md.
     ports:
       - '127.0.0.1:${REALTIME_PORT:-4001}:4001'
     healthcheck:

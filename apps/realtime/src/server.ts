@@ -1,3 +1,4 @@
+import { isIP } from 'node:net';
 import Fastify, { type FastifyBaseLogger, type FastifyInstance } from 'fastify';
 import { Server, type Socket } from 'socket.io';
 import { createAdapter } from '@socket.io/redis-adapter';
@@ -129,58 +130,109 @@ export type ConcurrencyTracker = {
   release(key: string): Promise<void>;
 };
 
-export function createMemoryConcurrencyTracker(): ConcurrencyTracker {
-  const counts = new Map<string, number>();
+/** Fixed window after which a concurrency counter expires, so a lost release cannot hold a slot forever. */
+export const CONCURRENCY_WINDOW_SECONDS = 3_600;
+
+/**
+ * In-process socket counts. Each key carries a fixed expiry set when it is created (never refreshed), and expired keys
+ * are swept at most once per window, so a leaked slot frees itself and the map cannot grow without bound.
+ */
+export function createMemoryConcurrencyTracker(
+  ttlMs = CONCURRENCY_WINDOW_SECONDS * 1000,
+  now: () => number = Date.now,
+): ConcurrencyTracker & { readonly size: number } {
+  const counts = new Map<string, { n: number; expiresAt: number }>();
+  let lastSweep = now();
+  const sweep = (t: number) => {
+    if (t - lastSweep < ttlMs) return;
+    lastSweep = t;
+    for (const [k, v] of counts) if (v.expiresAt <= t) counts.delete(k);
+  };
+  const live = (key: string, t: number) => {
+    const e = counts.get(key);
+    if (e && e.expiresAt <= t) {
+      counts.delete(key);
+      return undefined;
+    }
+    return e;
+  };
   return {
+    get size() {
+      return counts.size;
+    },
     async acquire(key, limit) {
-      const n = counts.get(key) ?? 0;
-      if (n >= limit) return false;
-      counts.set(key, n + 1);
+      const t = now();
+      sweep(t);
+      const e = live(key, t);
+      if ((e?.n ?? 0) >= limit) return false;
+      if (e) e.n += 1;
+      else counts.set(key, { n: 1, expiresAt: t + ttlMs });
       return true;
     },
     async release(key) {
-      const n = (counts.get(key) ?? 0) - 1;
-      if (n > 0) counts.set(key, n);
-      else counts.delete(key);
+      const t = now();
+      sweep(t);
+      const e = live(key, t);
+      if (!e) return;
+      e.n -= 1;
+      if (e.n <= 0) counts.delete(key);
     },
   };
 }
 
-type RedisCounter = {
-  incr(key: string): Promise<number>;
-  decr(key: string): Promise<number>;
-  expire(key: string, seconds: number): Promise<unknown>;
+/** The node-redis EVAL shape (v4: `client.eval(script, { keys, arguments })`). */
+export type RedisEval = {
+  eval(script: string, options: { keys: string[]; arguments: string[] }): Promise<unknown>;
 };
 
 /**
- * Cluster-wide socket counts in Redis (INCR/DECR). Keys expire after `ttlSeconds` without activity so a crashed
- * replica cannot leak slots forever.
+ * Atomic acquire: INCR, set the TTL only when the key is new (fixed window; EXPIRE ... NX semantics, never refreshed by
+ * later attempts), and roll back over the cap. Returns 1 when acquired, 0 when over the cap.
+ */
+export const REDIS_ACQUIRE_SCRIPT = `
+local n = redis.call('INCR', KEYS[1])
+if n == 1 then redis.call('EXPIRE', KEYS[1], tonumber(ARGV[2])) end
+if n > tonumber(ARGV[1]) then
+  if redis.call('DECR', KEYS[1]) <= 0 then redis.call('DEL', KEYS[1]) end
+  return 0
+end
+return 1
+`;
+/** Atomic release: never lets a counter go negative (e.g. after its window expired) and drops it at zero. */
+export const REDIS_RELEASE_SCRIPT = `
+if redis.call('EXISTS', KEYS[1]) == 0 then return 0 end
+local n = redis.call('DECR', KEYS[1])
+if n <= 0 then redis.call('DEL', KEYS[1]) end
+return n
+`;
+
+/**
+ * Cluster-wide socket counts in Redis via Lua scripts (atomic). Each key expires a fixed `ttlSeconds` after it was
+ * created, so slots leaked by a crashed replica are freed at the end of the window.
  */
 export function createRedisConcurrencyTracker(
-  redis: RedisCounter,
-  ttlSeconds = 3_600,
+  redis: RedisEval,
+  ttlSeconds = CONCURRENCY_WINDOW_SECONDS,
 ): ConcurrencyTracker {
   const k = (key: string) => `meetops:realtime:conns:${key}`;
   return {
     async acquire(key, limit) {
-      const n = await redis.incr(k(key));
-      await redis.expire(k(key), ttlSeconds);
-      if (n > limit) {
-        await redis.decr(k(key));
-        return false;
-      }
-      return true;
+      const r = await redis.eval(REDIS_ACQUIRE_SCRIPT, {
+        keys: [k(key)],
+        arguments: [String(limit), String(ttlSeconds)],
+      });
+      return Number(r) === 1;
     },
     async release(key) {
-      const n = await redis.decr(k(key));
-      if (n < 0) await redis.incr(k(key));
+      await redis.eval(REDIS_RELEASE_SCRIPT, { keys: [k(key)], arguments: [] });
     },
   };
 }
 
 /**
  * Client IP for the per-IP limits. With `trustProxyHops` = N > 0, take the Nth X-Forwarded-For entry from the right
- * (the address the outermost trusted proxy saw); otherwise, or when the header is short, the socket address.
+ * (the address the outermost trusted proxy saw). Entries left of it are client-controlled and ignored. Falls back to
+ * the socket address with 0 hops, when the header is short, or when the chosen entry is not a valid IP (net.isIP).
  */
 export function clientIp(
   handshake: { address: string; headers: Record<string, string | string[] | undefined> },
@@ -192,7 +244,9 @@ export function clientIp(
     .split(',')
     .map((s) => s.trim())
     .filter(Boolean);
-  return list[list.length - trustProxyHops] ?? handshake.address;
+  const candidate = list[list.length - trustProxyHops];
+  // Only a syntactically valid IP is used as a limit key; anything else falls back to the socket address.
+  return candidate !== undefined && isIP(candidate) !== 0 ? candidate : handshake.address;
 }
 
 /** Socket.IO message size cap (bytes); realtime only carries small control messages. */
@@ -282,6 +336,25 @@ export async function createRealtimeServer(
   // ADR-011 section 1.5: every rejection is the same generic error; the handshake (cookie, token, query) is never logged.
   io.use((socket, next) => {
     const unauthorized = () => next(new Error(REALTIME_CONNECT_ERROR));
+    /**
+     * Concurrency slots held by this handshake. They are released exactly once on every exit: rejection, verifier
+     * error, the transport closing mid-handshake (where 'disconnect' never fires), or a normal disconnect.
+     */
+    const held: string[] = [];
+    let closed = false;
+    const releaseAll = () => {
+      for (const key of held.splice(0)) void concurrency.release(key).catch(() => undefined);
+    };
+    const onClose = () => {
+      closed = true;
+      releaseAll();
+    };
+    socket.conn.once('close', onClose);
+    const fail = () => {
+      releaseAll();
+      socket.conn.off('close', onClose);
+      unauthorized();
+    };
     const read = readHandshakeCredential(
       {
         headers: socket.handshake.headers,
@@ -294,32 +367,38 @@ export async function createRealtimeServer(
     // Per-IP limit before any verifier work, so a flood cannot turn into database load.
     if (!limiter.take(`ip:${ip}`, opts.config.connLimitPerIp)) {
       log.warn('realtime connection rate limited (ip)');
-      return unauthorized();
+      return fail();
     }
-    if (!read.ok) return unauthorized();
+    if (!read.ok) return fail();
+    const acquire = async (key: string, limit: number): Promise<boolean> => {
+      if (closed) return false;
+      if (!(await concurrency.acquire(key, limit))) return false;
+      held.push(key);
+      // The transport dropped while we were waiting: give the slot straight back.
+      if (closed) {
+        releaseAll();
+        return false;
+      }
+      return true;
+    };
     Promise.resolve()
       .then(() => opts.verifySession(read.credential))
       .then(async (ctx) => {
-        if (!acceptable(ctx, read.kind, now())) return unauthorized();
+        if (closed) return fail();
+        if (!acceptable(ctx, read.kind, now())) return fail();
         if (!limiter.take(`user:${ctx.userId}`, opts.config.connLimitPerUser)) {
           log.warn('realtime connection rate limited (user)');
-          return unauthorized();
+          return fail();
         }
-        const ipKey = `ip:${ip}`;
-        const userKey = `user:${ctx.userId}`;
-        if (!(await concurrency.acquire(ipKey, opts.config.maxSocketsPerIp))) {
-          log.warn('realtime concurrent socket cap reached (ip)');
-          return unauthorized();
+        if (!(await acquire(`ip:${ip}`, opts.config.maxSocketsPerIp))) {
+          if (!closed) log.warn('realtime concurrent socket cap reached (ip)');
+          return fail();
         }
-        if (!(await concurrency.acquire(userKey, opts.config.maxSocketsPerUser))) {
-          await concurrency.release(ipKey);
-          log.warn('realtime concurrent socket cap reached (user)');
-          return unauthorized();
+        if (!(await acquire(`user:${ctx.userId}`, opts.config.maxSocketsPerUser))) {
+          if (!closed) log.warn('realtime concurrent socket cap reached (user)');
+          return fail();
         }
-        socket.once('disconnect', () => {
-          void concurrency.release(ipKey).catch(() => undefined);
-          void concurrency.release(userKey).catch(() => undefined);
-        });
+        socket.once('disconnect', releaseAll);
         credentials.set(socket, { credential: read.credential, kind: read.kind });
         socket.data.userId = ctx.userId;
         socket.data.organizationId = ctx.organizationId;
@@ -333,7 +412,7 @@ export async function createRealtimeServer(
           { errName: err instanceof Error ? err.name : typeof err },
           'session verification failed',
         );
-        unauthorized();
+        fail();
       });
   });
 

@@ -5,9 +5,20 @@ import {
   clientIp,
   createMemoryConcurrencyTracker,
   createRedisConcurrencyTracker,
+  REDIS_ACQUIRE_SCRIPT,
+  REDIS_RELEASE_SCRIPT,
   loadRealtimeConfig,
 } from '../src/index.js';
-import { MEETING_A, ORIGIN, connect, connected, runCleanups, start, web } from './fixtures.js';
+import {
+  MEETING_A,
+  ORIGIN,
+  connect,
+  connected,
+  fakeVerifier,
+  runCleanups,
+  start,
+  web,
+} from './fixtures.js';
 
 afterEach(runCleanups);
 
@@ -73,12 +84,28 @@ describe('clientIp (trusted proxy hops)', () => {
     expect(clientIp(hs('1.1.1.1'), 2)).toBe('10.0.0.9');
     expect(clientIp(hs(), 1)).toBe('10.0.0.9');
   });
+  it('ignores a spoofed leading X-Forwarded-For entry with hops=1 (uses the rightmost entry)', () => {
+    // The client sent "X-Forwarded-For: 9.9.9.9"; nginx appended the real peer 203.0.113.7.
+    expect(clientIp(hs('9.9.9.9, 203.0.113.7'), 1)).toBe('203.0.113.7');
+    expect(clientIp(hs('9.9.9.9, 8.8.8.8, 203.0.113.7'), 1)).toBe('203.0.113.7');
+  });
+  it('falls back to the socket address when the chosen entry is not a valid IP', () => {
+    expect(clientIp(hs('1.1.1.1, not-an-ip'), 1)).toBe('10.0.0.9');
+    expect(clientIp(hs('1.1.1.1, 999.1.1.1'), 1)).toBe('10.0.0.9');
+    expect(clientIp(hs('1.1.1.1, unknown'), 1)).toBe('10.0.0.9');
+    expect(clientIp(hs('1.1.1.1, 2001:db8::1'), 1)).toBe('2001:db8::1');
+  });
   it('drives the per-IP connection limit', async () => {
     const { url } = await start(
       {},
       { REALTIME_TRUST_PROXY_HOPS: '1', REALTIME_CONN_LIMIT_PER_IP: '1' },
     );
     const xff = (ip: string) => ({ 'x-forwarded-for': ip });
+    // A spoofed leading entry does not buy a fresh budget: only the rightmost (proxy-appended) entry counts.
+    await connected(connect(url, { cookie: 'a1', headers: xff('3.3.3.3, 4.4.4.4') }));
+    await expect(
+      connected(connect(url, { cookie: 'a2', headers: xff('9.9.9.9, 4.4.4.4') })),
+    ).rejects.toThrow();
     await connected(connect(url, { cookie: 'a1', headers: xff('5.5.5.5') }));
     // Same proxy hop, different client IP: its own budget.
     await connected(connect(url, { cookie: 'a2', headers: xff('7.7.7.7') }));
@@ -116,25 +143,156 @@ describe('concurrent socket caps', () => {
     expect(await c.acquire('k', 1)).toBe(true);
   });
 
-  it('redis tracker uses INCR/DECR and rolls back over the cap', async () => {
-    const store = new Map<string, number>();
-    const redis = {
-      incr: async (k: string) => {
-        store.set(k, (store.get(k) ?? 0) + 1);
-        return store.get(k)!;
-      },
-      decr: async (k: string) => {
-        store.set(k, (store.get(k) ?? 0) - 1);
-        return store.get(k)!;
-      },
-      expire: async () => true,
+  /** Emulates the two Lua scripts against an in-memory store with a controllable clock (seconds). */
+  function fakeRedis() {
+    let t = 0;
+    const store = new Map<string, { n: number; expiresAt?: number }>();
+    const expireCalls: string[] = [];
+    const get = (k: string) => {
+      const e = store.get(k);
+      if (e?.expiresAt !== undefined && e.expiresAt <= t) store.delete(k);
+      return store.get(k);
     };
-    const c = createRedisConcurrencyTracker(redis);
+    return {
+      store,
+      expireCalls,
+      tick: (s: number) => (t += s),
+      get: (k: string) => get(k)?.n,
+      ttl: (k: string) => {
+        const e = get(k);
+        return e?.expiresAt === undefined ? undefined : e.expiresAt - t;
+      },
+      async eval(script: string, o: { keys: string[]; arguments: string[] }) {
+        const key = o.keys[0]!;
+        if (script === REDIS_ACQUIRE_SCRIPT) {
+          const e = get(key) ?? { n: 0 };
+          e.n += 1;
+          store.set(key, e);
+          if (e.n === 1) {
+            e.expiresAt = t + Number(o.arguments[1]);
+            expireCalls.push(key);
+          }
+          if (e.n > Number(o.arguments[0])) {
+            e.n -= 1;
+            if (e.n <= 0) store.delete(key);
+            return 0;
+          }
+          return 1;
+        }
+        if (script === REDIS_RELEASE_SCRIPT) {
+          const e = get(key);
+          if (!e) return 0;
+          e.n -= 1;
+          if (e.n <= 0) store.delete(key);
+          return e.n;
+        }
+        throw new Error('unexpected script');
+      },
+    };
+  }
+
+  it('redis tracker acquires atomically and rolls back over the cap', async () => {
+    const r = fakeRedis();
+    const c = createRedisConcurrencyTracker(r);
+    const key = 'meetops:realtime:conns:user:u1';
     expect(await c.acquire('user:u1', 1)).toBe(true);
     expect(await c.acquire('user:u1', 1)).toBe(false);
-    expect(store.get('meetops:realtime:conns:user:u1')).toBe(1);
+    expect(r.get(key)).toBe(1);
     await c.release('user:u1');
-    expect(store.get('meetops:realtime:conns:user:u1')).toBe(0);
+    expect(r.get(key)).toBeUndefined();
+    // Releasing an absent/expired key never drives the counter negative.
+    await c.release('user:u1');
+    expect(r.get(key)).toBeUndefined();
+  });
+
+  it('redis acquire script uses INCR + EXPIRE only on first increment (fixed window, not refreshed)', () => {
+    expect(REDIS_ACQUIRE_SCRIPT).toMatch(/INCR/);
+    expect(REDIS_ACQUIRE_SCRIPT).toMatch(/if n == 1 then redis\.call\('EXPIRE'/);
+  });
+
+  it('redis counter expires at the end of a fixed window that later attempts do not extend', async () => {
+    const r = fakeRedis();
+    const c = createRedisConcurrencyTracker(r, 100);
+    const key = 'meetops:realtime:conns:ip:1.1.1.1';
+    expect(await c.acquire('ip:1.1.1.1', 1)).toBe(true); // leaked: never released
+    r.tick(60);
+    expect(await c.acquire('ip:1.1.1.1', 1)).toBe(false);
+    expect(r.ttl(key)).toBe(40); // not refreshed by the rejected attempt
+    expect(r.expireCalls).toEqual([key]);
+    r.tick(40);
+    expect(r.get(key)).toBeUndefined();
+    expect(await c.acquire('ip:1.1.1.1', 1)).toBe(true);
+  });
+
+  it('memory tracker expires a leaked slot after its fixed window and sweeps stale keys', async () => {
+    let t = 0;
+    const c = createMemoryConcurrencyTracker(1_000, () => t);
+    expect(await c.acquire('k', 1)).toBe(true); // leaked
+    t = 600;
+    expect(await c.acquire('k', 1)).toBe(false); // does not refresh the window
+    t = 1_000;
+    expect(await c.acquire('k', 1)).toBe(true);
+    for (let i = 0; i < 50; i++) await c.acquire(`stale:${i}`, 1);
+    expect(c.size).toBe(51);
+    t = 3_000;
+    await c.acquire('fresh', 1);
+    expect(c.size).toBe(1);
+  });
+
+  it('releases slots when the transport drops mid-handshake (disconnect never fires)', async () => {
+    const base = createMemoryConcurrencyTracker();
+    let acquired = 0;
+    let released = 0;
+    const concurrency = {
+      acquire: async (k: string, l: number) => {
+        const ok = await base.acquire(k, l);
+        if (ok) acquired += 1;
+        return ok;
+      },
+      release: async (k: string) => {
+        released += 1;
+        await base.release(k);
+      },
+    };
+    let gate!: () => void;
+    const verifierHeld = new Promise<void>((r) => (gate = r));
+    let entered!: () => void;
+    const inVerifier = new Promise<void>((r) => (entered = r));
+    const { url } = await start(
+      {
+        concurrency,
+        verifySession: async (c) => {
+          entered();
+          await verifierHeld;
+          return fakeVerifier(c);
+        },
+      },
+      { REALTIME_MAX_SOCKETS_PER_USER: '1', REALTIME_MAX_SOCKETS_PER_IP: '1' },
+    );
+    const s = web(url, 'a1');
+    await inVerifier;
+    s.disconnect(); // client goes away while the handshake is still being verified
+    await new Promise((r) => setTimeout(r, 50));
+    gate();
+    await new Promise((r) => setTimeout(r, 50));
+    expect(released).toBe(acquired);
+    expect(base.size).toBe(0);
+    // The slot is free: the same user/IP can connect again under a cap of 1.
+    await connected(web(url, 'a1'));
+  });
+
+  it('releases slots acquired at handshake when a later cap rejects or the verifier throws', async () => {
+    const base = createMemoryConcurrencyTracker();
+    const { url } = await start({ concurrency: base }, { REALTIME_MAX_SOCKETS_PER_USER: '1' });
+    const s1 = web(url, 'a1');
+    await connected(s1);
+    // Second socket: IP slot acquired, user cap rejects -> IP slot must be returned.
+    await expect(connected(web(url, 'a1'))).rejects.toThrow();
+    await new Promise((r) => setTimeout(r, 20));
+    expect(base.size).toBe(2); // only s1's ip + user keys
+    s1.disconnect();
+    await new Promise((r) => setTimeout(r, 50));
+    expect(base.size).toBe(0);
   });
 
   it('rejects a second socket for the same user and frees the slot on disconnect', async () => {
