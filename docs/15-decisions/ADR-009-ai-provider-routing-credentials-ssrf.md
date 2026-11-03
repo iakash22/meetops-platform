@@ -3,8 +3,9 @@
 - Status: Proposed
 - Date: 2026-10-24
 - Owner: Architecture Agent (ARCH), with the AI and Security (SEC) Agents
-- Implementing PR: #21 (`feat(ai-core): provider registry, model router, fallback policy, SSRF guard and adapters
-(P1-AI)`), **open and unmerged**, verified at head `57f6b8723d729d371e5912d34f0b61bb59fee836`
+- Revised: 2026-11-03 (no automatic STT fallback, Deepgram disabled, pre-GA gaps, local origins). Acceptance is
+  Akash's decision.
+- Implementation: `packages/ai-core` on `integration/phase-1`
 - Related: [ADR-002](./ADR-002-provider-interfaces.md), [ADR-003](./ADR-003-contracts-ownership.md),
   [AI docs](../06-ai/README.md) (`docs/09-ai` is only a redirect to `docs/06-ai`)
 
@@ -29,6 +30,11 @@ and call only safe outbound endpoints.
    `AI_REQUIRE_PROVIDER_APPROVAL=true` (default), or if it would go free → paid, unless `AI_ALLOW_PAID_FALLBACK=true`,
    the organization allows it, and it is an explicit fallback. Quota and `monthlyBudgetUsd` are checked before each
    call. The outcome is `succeeded`, `waiting` (all quota/rate-limited), `retryable` or `failed`.
+   **Speech-to-text has no automatic fallback.** A transcription job runs on exactly one STT provider: the resolved
+   primary. A provider failure is retried on the same provider (queue backoff), then the job is dead-lettered and the
+   meeting is marked delayed; it never moves to another STT provider. `faster-whisper` (self-hosted) is used only when an
+   organization (or a self-hosted deployment) explicitly chooses it as its primary STT provider. The implicit
+   local-provider fallback above applies to LLM routes only.
 4. **Credential refs** (`src/credential-ref.ts`, `src/credentials.ts`):
    - `env:NAME` (`^[A-Z0-9_]+$`) is a platform key, resolved only if the organization's server-side plan grants
      `platformKeys`.
@@ -41,12 +47,30 @@ and call only safe outbound endpoints.
    private, loopback, link-local, CGNAT, multicast, reserved, documentation, NAT64, 6to4, Teredo, IPv4-mapped and AWS
    IMDS ranges. `guardedFetch` pins the TCP connection to the validated IP (DNS-rebinding defence) and never follows
    redirects. The only exception is exact `allowedLocalOrigins` for enabled self-hosted providers (`OLLAMA_BASE_URL`,
-   `LOCAL_STT_URL`), which may use http and private addresses.
+   `LOCAL_STT_URL`), which may use http and private addresses. `allowedLocalOrigins` is for **development and
+   self-hosted deployments only**: in the multi-tenant production deployment (`NODE_ENV=production`) it must be empty,
+   so no tenant traffic can reach a private address. This is enforced today: `endpointPolicyFromEnv`
+   (`src/bootstrap.ts`) refuses to start when `OLLAMA_ENABLED` or `LOCAL_STT_ENABLED` is set in production. A
+   self-hosted production install therefore needs an explicit, documented opt-in before local providers can run there;
+   until that exists, faster-whisper is a dev and self-host option only.
+6. **Deepgram** is removed from routing. `DeepgramProvider` stays a disabled stub that always fails with
+   `PROVIDER_DISABLED` (non-retryable) and reports unhealthy; it must not be selected as a primary, and there is no
+   fallback that could reach it.
 
 ## Consequences
 
 - Key env vars, named only: `GEMINI_API_KEY`, `ASSEMBLYAI_API_KEY`, `OPENAI_API_KEY`, `DEEPGRAM_API_KEY`, plus the
   `*_ENABLED`, `*_MODEL` and `*_URL` toggles.
-- Open: `InMemoryOrgConfigStore` is the only `OrgConfigStore`; the backend must supply a durable, organization-scoped
-  store. The secret-manager backing `SecretSource.secret` is supplied by the host app and not defined here. The
-  Deepgram adapter is a stub, reported unavailable.
+- `DEEPGRAM_API_KEY` / `DEEPGRAM_ENABLED` are inert while Deepgram is disabled.
+- An STT provider outage delays transcription (retry, then dead-letter and a "transcription delayed" status) instead
+  of silently switching providers or spending on a second provider.
+- The secret-manager backing `SecretSource.secret` is supplied by the host app and not defined here (ADR-016).
+
+### Required before GA
+
+1. **Durable org AI config.** `InMemoryOrgConfigStore` is the only `OrgConfigStore`, and the transcription worker uses
+   it (`apps/worker/src/ai/bootstrap.ts`, `new ModelRouter(env, new InMemoryOrgConfigStore(), auditSink)`), so org
+   routes, approvals, budgets and credential refs are lost on restart and not shared between processes. Replace it with
+   a durable Postgres store scoped by `organizationId` under forced RLS (ADR-010), used by both API and worker.
+2. **Self-host opt-in.** Keep the production refusal for the hosted service. If self-hosted production installs are
+   supported, add an explicit opt-in (not `NODE_ENV` alone) with its own tests and docs.
