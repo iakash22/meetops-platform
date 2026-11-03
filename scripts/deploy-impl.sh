@@ -1,4 +1,15 @@
 #!/bin/bash -p
+# GUARD (must stay first): refuse unless started by scripts/deploy.sh, which sets
+# MEETOPS_DEPLOY_WRAPPED=1 through env -i and runs bash -p. Without -p, bash may have imported
+# exported functions (e.g. BASH_FUNC_exit%%), so this guard uses only keywords (case, [[) and
+# path-qualified commands (/usr/bin/printf, /bin/kill), which never resolve to functions. It
+# catches accidental direct runs; the sentinel is not a secret.
+case "$-" in *p*) ;; *)
+  /usr/bin/printf 'ABORT: run scripts/deploy.sh, not deploy-impl.sh (bash -p required)\n' >&2
+  /bin/kill -KILL $$ ;; esac
+[[ "${MEETOPS_DEPLOY_WRAPPED:-}" == 1 ]] || {
+  /usr/bin/printf 'ABORT: run scripts/deploy.sh, not deploy-impl.sh (wrapper sentinel missing)\n' >&2
+  /bin/kill -KILL $$; }
 # Deploy implementation. Do NOT run directly: use scripts/deploy.sh, which scrubs the env and
 # execs this file with /bin/bash --norc --noprofile -p (PLACEHOLDER: no deploy target yet).
 # Usage: scripts/deploy.sh [--non-interactive] <staging|production> [image-sha]
