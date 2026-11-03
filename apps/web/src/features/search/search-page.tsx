@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link } from '@tanstack/react-router';
-import { Search } from 'lucide-react';
-import type { SearchResult } from '@meetops/contracts';
+import { Search, Sparkles } from 'lucide-react';
+import type { SearchResult, SemanticSearchResult } from '@meetops/contracts';
+import { ApiError } from '@/lib/api/client';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -13,6 +14,7 @@ import { useOrganizationId } from '@/lib/api/queries';
 import {
   SEARCH_RESULT_KINDS,
   getSearchApi,
+  semanticKindFor,
   snippetParts,
   type SearchPageSearch,
   type SearchResultKind,
@@ -67,6 +69,26 @@ function ResultLink({ r }: { r: SearchResult }) {
   return <div className={cls}>{body}</div>;
 }
 
+function SemanticResultLink({ r }: { r: SemanticSearchResult }) {
+  return (
+    <Link
+      to="/meetings/$meetingId"
+      params={{ meetingId: r.meetingId }}
+      className="block space-y-1 rounded-md p-3 hover:bg-muted focus-visible:bg-muted"
+    >
+      <div className="flex items-center gap-2">
+        <Badge variant="secondary">{KIND_LABEL[r.kind]}</Badge>
+        <span className="truncate font-medium">{r.title || 'Untitled'}</span>
+      </div>
+      {/* Plain text excerpt, rendered as a text node (never HTML). */}
+      <p className="text-sm text-muted-foreground">{r.snippet}</p>
+    </Link>
+  );
+}
+
+/** 404 means the API build has semantic search switched off (SEMANTIC_SEARCH_ENABLED=false). */
+const isSemanticOff = (err: unknown) => err instanceof ApiError && err.status === 404;
+
 export function SearchPage({
   search,
   onSearchChange,
@@ -79,11 +101,23 @@ export function SearchPage({
   const searchApi = getSearchApi(api.request);
   const [draft, setDraft] = useState(search.q ?? '');
   useEffect(() => setDraft(search.q ?? ''), [search.q]);
+  const [semanticOn, setSemanticOn] = useState(false);
   const q = (search.q ?? '').trim();
+  const semKind = semanticKindFor(search.kind);
+  const semanticActive = semanticOn && semKind !== null;
+  const semantic = useQuery({
+    queryKey: ['orgs', organizationId, 'search', 'semantic', q, semKind ?? 'all'],
+    queryFn: () =>
+      searchApi.semantic(organizationId, q, semKind && semKind !== 'all' ? [semKind] : undefined),
+    enabled: !!organizationId && q.length >= 2 && semanticActive,
+    retry: (count, err) => !isSemanticOff(err) && count < 1,
+  });
+  const semanticOff = semanticActive && semantic.isError && isSemanticOff(semantic.error);
+  const useKeyword = !semanticActive || semanticOff;
   const result = useQuery({
     queryKey: ['orgs', organizationId, 'search', q, search.kind ?? 'all'],
     queryFn: () => searchApi.search(organizationId, q, search.kind ? [search.kind] : undefined),
-    enabled: !!organizationId && q.length >= 2,
+    enabled: !!organizationId && q.length >= 2 && useKeyword,
   });
 
   return (
@@ -140,8 +174,43 @@ export function SearchPage({
             {KIND_LABEL[k]}
           </Button>
         ))}
+        <Button
+          type="button"
+          size="sm"
+          variant={semanticOn ? 'default' : 'outline'}
+          aria-pressed={semanticOn}
+          onClick={() => setSemanticOn((v) => !v)}
+        >
+          <Sparkles aria-hidden />
+          Semantic
+        </Button>
       </div>
-      {q.length < 2 ? (
+      {semanticOff ? (
+        <p role="status" className="text-sm text-muted-foreground">
+          Semantic search isn&apos;t enabled on this workspace. Showing keyword results.
+        </p>
+      ) : semanticOn && semKind === null ? (
+        <p role="status" className="text-sm text-muted-foreground">
+          Semantic search covers transcripts and summaries. Showing keyword results.
+        </p>
+      ) : null}
+      {q.length >= 2 && !useKeyword ? (
+        semantic.isError ? (
+          <ErrorState error={semantic.error} onRetry={() => void semantic.refetch()} />
+        ) : !semantic.data ? (
+          <LoadingState />
+        ) : semantic.data.items.length === 0 ? (
+          <EmptyState title="No results" description={`Nothing matched “${q}”.`} />
+        ) : (
+          <ul aria-label="Semantic results" className="divide-y rounded-md border">
+            {semantic.data.items.map((r) => (
+              <li key={`${r.kind}:${r.id}`}>
+                <SemanticResultLink r={r} />
+              </li>
+            ))}
+          </ul>
+        )
+      ) : q.length < 2 ? (
         <EmptyState title="Start typing" description="Enter at least two characters." />
       ) : result.isError ? (
         <ErrorState error={result.error} onRetry={() => void result.refetch()} />
