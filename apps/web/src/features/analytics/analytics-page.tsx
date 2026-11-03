@@ -78,7 +78,11 @@ export function AnalyticsDashboard({ data }: { data: MeetingAnalytics }) {
     .map((r) => ({ key: r.source, label: SOURCE_LABELS[r.source] ?? r.source, count: r.count }));
   const byStatus = data.byStatus
     .filter((r) => r.count > 0)
-    .map((r) => ({ key: r.status, label: STATUS_LABELS[r.status] ?? r.status, count: r.count }));
+    .map((r) => ({
+      key: r.status,
+      label: STATUS_LABELS[r.status] ?? 'Unknown status',
+      count: r.count,
+    }));
   const periods = data.periods.map((p) => ({
     key: p.start,
     label: periodLabel(p.start, data.bucket),

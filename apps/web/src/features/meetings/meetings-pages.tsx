@@ -25,6 +25,11 @@ const STATUS_LABEL: Record<Meeting['status'], string> = {
   transcription_delayed: 'Transcription delayed',
 };
 
+/** Unknown statuses (a newer API than this client) render as a neutral "Unknown status". */
+const UNKNOWN_STATUS_LABEL = 'Unknown status';
+const statusLabel = (s: string) => STATUS_LABEL[s as Meeting['status']] ?? UNKNOWN_STATUS_LABEL;
+const statusVariant = (s: string) => STATUS_VARIANT[s as Meeting['status']] ?? 'outline';
+
 const STATUS_VARIANT: Record<Meeting['status'], NonNullable<BadgeProps['variant']>> = {
   scheduled: 'outline',
   recording: 'live',
@@ -44,8 +49,8 @@ const SOURCE_LABEL: Record<Meeting['source'], string> = {
 
 export function MeetingStatusBadge({ status }: { status: Meeting['status'] }) {
   return (
-    <Badge variant={STATUS_VARIANT[status]} data-testid="meeting-status">
-      {STATUS_LABEL[status]}
+    <Badge variant={statusVariant(status)} data-testid="meeting-status">
+      {statusLabel(status)}
     </Badge>
   );
 }
