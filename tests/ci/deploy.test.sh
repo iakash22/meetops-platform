@@ -71,6 +71,17 @@ expect "sentinel without -p refused" "bash -p required" env MEETOPS_DEPLOY_WRAPP
   DEPLOY_CONFIRM="deploy staging" bash scripts/deploy-impl.sh --non-interactive staging
 expect "impl -p without sentinel" "wrapper sentinel" env DEPLOY_PREFLIGHT_ONLY=1 DEPLOY_CONFIRM="deploy staging" \
   scripts/deploy-impl.sh --non-interactive staging
+expect_stop() { # name, expected-substring, cmd... ; must refuse and never reach any gate
+  local name="$1" want="$2"; shift 2
+  local out; out="$("$@" </dev/null 2>&1)"; local rc=$?
+  if [ $rc -ne 0 ] && [[ "$out" == *"$want"* ]] && [[ "$out" != *"==> gate"* ]]; then echo "ok   $name"
+  else echo "FAIL $name (rc=$rc): $out"; fail=1; fi
+}
+FN=('BASH_FUNC_exit%%=() { :; }' 'BASH_FUNC_abort%%=() { :; }' 'BASH_FUNC_echo%%=() { :; }' 'BASH_FUNC_[%%=() { return 0; }')
+expect_stop "exit fn, impl, no sentinel" "bash -p required" env "${FN[@]}" DEPLOY_CONFIRM="deploy production" \
+  bash scripts/deploy-impl.sh --non-interactive production
+expect_stop "exit fn, impl, sentinel"    "bash -p required" env "${FN[@]}" MEETOPS_DEPLOY_WRAPPED=1 DEPLOY_CONFIRM="deploy production" \
+  bash scripts/deploy-impl.sh --non-interactive production
 expect_ok "wrapper passes"       "PREFLIGHT OK" env DEPLOY_PREFLIGHT_ONLY=1 DEPLOY_CONFIRM="deploy staging" \
   scripts/deploy.sh --non-interactive staging
 expect_ok "valid marker passes"  "PREFLIGHT OK"         "${PF[@]}" DEPLOY_TEST_STATE_DIR="$STATE" scripts/deploy.sh --non-interactive production

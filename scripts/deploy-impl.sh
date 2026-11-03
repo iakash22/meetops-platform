@@ -1,4 +1,15 @@
 #!/bin/bash -p
+# GUARD (must stay first): refuse unless started by scripts/deploy.sh, which sets
+# MEETOPS_DEPLOY_WRAPPED=1 through env -i and runs bash -p. Without -p, bash may have imported
+# exported functions (e.g. BASH_FUNC_exit%%), so this guard uses only keywords (case, [[) and
+# path-qualified commands (/usr/bin/printf, /bin/kill), which never resolve to functions. It
+# catches accidental direct runs; the sentinel is not a secret.
+case "$-" in *p*) ;; *)
+  /usr/bin/printf 'ABORT: run scripts/deploy.sh, not deploy-impl.sh (bash -p required)\n' >&2
+  /bin/kill -KILL $$ ;; esac
+[[ "${MEETOPS_DEPLOY_WRAPPED:-}" == 1 ]] || {
+  /usr/bin/printf 'ABORT: run scripts/deploy.sh, not deploy-impl.sh (wrapper sentinel missing)\n' >&2
+  /bin/kill -KILL $$; }
 # Deploy implementation. Do NOT run directly: use scripts/deploy.sh, which scrubs the env and
 # execs this file with /bin/bash --norc --noprofile -p (PLACEHOLDER: no deploy target yet).
 # Usage: scripts/deploy.sh [--non-interactive] <staging|production> [image-sha]
@@ -26,10 +37,6 @@
 # within the documented threat model (same-user attackers are out of scope).
 PATH=/usr/bin:/bin; export PATH
 set -euo pipefail
-# Refuse unless started by scripts/deploy.sh: it sets MEETOPS_DEPLOY_WRAPPED=1 through env -i and
-# runs bash -p. This catches accidental `bash scripts/deploy-impl.sh`; the sentinel is not a secret.
-case "$-" in *p*) ;; *) echo "ABORT: run scripts/deploy.sh, not deploy-impl.sh (bash -p required)" >&2; exit 1 ;; esac
-[ "${MEETOPS_DEPLOY_WRAPPED:-}" = 1 ] || { echo "ABORT: run scripts/deploy.sh, not deploy-impl.sh (wrapper sentinel missing)" >&2; exit 1; }
 for _b in getent id stat git cut date mkdir chmod dirname; do
   [ -x "/usr/bin/$_b" ] || { echo "ABORT: /usr/bin/$_b missing" >&2; exit 1; }
 done
