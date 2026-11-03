@@ -396,6 +396,14 @@ const urlFor = (env: ModuleEnv, url: string | undefined) =>
 const allInjected = (overrides: Partial<ModuleDeps>, keys: readonly (keyof ModuleDeps)[]) =>
   keys.every((k) => overrides[k] !== undefined);
 
+/** Fail a command after ~1 s when Redis accepts the connection but never answers, instead of hanging the request. */
+export const REDIS_COMMAND_TIMEOUT_MS = 1_000;
+export const REDIS_CLIENT_OPTIONS = {
+  lazyConnect: true,
+  maxRetriesPerRequest: 3,
+  commandTimeout: REDIS_COMMAND_TIMEOUT_MS,
+} as const;
+
 /**
  * Picks the Redis client: an injected `redis` dep wins, otherwise REDIS_URL. No client is created
  * when every Redis-backed dep is injected.
@@ -407,7 +415,7 @@ function resolveRedis(
   if (overrides.redis) return { redis: overrides.redis };
   const url = urlFor(env, env.redisUrl);
   if (!url || allInjected(overrides, REDIS_BACKED_DEPS)) return {};
-  const client = new Redis(url, { lazyConnect: true, maxRetriesPerRequest: 3 });
+  const client = new Redis(url, REDIS_CLIENT_OPTIONS);
   return { redis: client, owned: client };
 }
 

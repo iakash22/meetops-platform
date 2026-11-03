@@ -7,7 +7,10 @@ all three clients.
 
 Implementation: `apps/api/src/modules/media/http/rate-limit.ts`, on the existing `RateLimiter` port (Redis fixed
 windows in production, in-memory in tests). Checks run after authentication, so every key is an authenticated user
-(or one of their recording sessions) plus the client IP. Over the limit: `429 RATE_LIMITED` with `Retry-After`
+(or one of their recording sessions). The per-user keys (`chunkPerUser`, `controlPerUser`) do **not** include the IP, so
+rotating IPs cannot get around them; the `*PerUserIp` and `chunkPerSessionIp` keys add the client IP. If Redis does not
+answer within ~1 s (ioredis `commandTimeout`, plus a 1.5 s backstop around each `consume`), the request fails closed
+with `503 PROVIDER_UNAVAILABLE` and `Retry-After: 5`. Over the limit: `429 RATE_LIMITED` with `Retry-After`
 (seconds), via the shared domain error handler.
 
 | Bucket              | Routes                                                      | Key                       | Limit      | Charged                   |

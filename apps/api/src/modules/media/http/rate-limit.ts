@@ -51,6 +51,20 @@ export class RateLimiterUnavailableError extends DomainError {
   }
 }
 
+/**
+ * Backstop for a limiter call that never settles (e.g. a Redis that accepts the connection but never answers).
+ * Slightly above the ioredis commandTimeout (REDIS_COMMAND_TIMEOUT_MS) so the client's own timeout normally fires first.
+ */
+export const RATE_LIMITER_TIMEOUT_MS = 1_500;
+
+function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const t = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error('rate limiter timeout')), ms);
+  });
+  return Promise.race([p, t]).finally(() => clearTimeout(timer));
+}
+
 export type MediaRateLimit = {
   /** Per-user buckets; charged before the ownership check (keys are the caller's own user, so only self-draining). */
   chunkUser(c: DirectoryCaller): Promise<void>;
@@ -63,12 +77,13 @@ export type MediaRateLimit = {
 export function mediaRateLimit(
   rateLimiter: RateLimiter,
   limits: MediaRateLimits = MEDIA_RATE_LIMITS,
+  timeoutMs: number = RATE_LIMITER_TIMEOUT_MS,
 ): MediaRateLimit {
   const consume = async (checks: (readonly [string, MediaLimit])[]) => {
     for (const [key, l] of checks) {
       let r;
       try {
-        r = await rateLimiter.consume(key, l.limit, l.windowMs);
+        r = await withTimeout(rateLimiter.consume(key, l.limit, l.windowMs), timeoutMs);
       } catch {
         throw new RateLimiterUnavailableError();
       }

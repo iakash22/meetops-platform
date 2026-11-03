@@ -269,4 +269,66 @@ describe('media upload / recording-chunk rate limits', () => {
     expect((await chunk(9, '10.0.2.1')).statusCode).toBe(429);
     expect(s.keys.some((k) => /^media:chunk:user:[^:]+$/.test(k))).toBe(true);
   });
+  it('real limits: rotating the IP on every chunk request still gets 429 at chunk #451 (chunkPerUser 450 / 30 s)', async () => {
+    const s = await setup();
+    w = s;
+    const ext = await s.extension();
+    const ids: string[] = [];
+    for (let k = 0; k < 4; k++) {
+      const r = await ext(
+        `/orgs/${s.org}/recording-sessions`,
+        {
+          mimeType: 'video/webm',
+          startedAt: new Date().toISOString(),
+          source: 'tab',
+          meetingId: s.meetingId,
+          consent: consent(),
+        },
+        `10.9.${k}.1`,
+      );
+      expect(r.statusCode).toBe(201);
+      ids.push(r.json<{ sessionId: string }>().sessionId);
+    }
+    expect(MEDIA_RATE_LIMITS.chunkPerUser.limit).toBe(450);
+    for (let i = 0; i < 450; i++) {
+      const r = await ext(
+        `/recording-sessions/${ids[i % 4]}/chunks`,
+        { seq: i, sizeBytes: 1000, sha256: SHA },
+        `10.${(i >> 8) & 255}.${i & 255}.7`,
+      );
+      expect(r.statusCode, `chunk #${i + 1}`).toBe(200);
+    }
+    const r = await ext(
+      `/recording-sessions/${ids[0]}/chunks`,
+      { seq: 999, sizeBytes: 1000, sha256: SHA },
+      '172.16.0.1',
+    );
+    expect(r.statusCode).toBe(429);
+    const ra = Number(r.headers['retry-after']);
+    expect(ra).toBeGreaterThan(0);
+    expect(ra).toBeLessThanOrEqual(30);
+  });
+
+  it('real limits: rotating the IP on every control call still gets 429 at call #91 (controlPerUser 90 / 30 s)', async () => {
+    const s = await setup();
+    w = s;
+    const ext = await s.extension();
+    expect(MEDIA_RATE_LIMITS.controlPerUser.limit).toBe(90);
+    const init = (i: number) =>
+      ext(
+        `/orgs/${s.org}/recording-sessions`,
+        {
+          mimeType: 'video/webm',
+          startedAt: new Date().toISOString(),
+          source: 'tab',
+          meetingId: s.meetingId,
+          consent: consent(),
+        },
+        `10.1.${i}.2`,
+      );
+    for (let i = 0; i < 90; i++) expect((await init(i)).statusCode, `call #${i + 1}`).not.toBe(429);
+    const r = await init(90);
+    expect(r.statusCode).toBe(429);
+    expect(Number(r.headers['retry-after'])).toBeGreaterThan(0);
+  });
 });
