@@ -1,19 +1,24 @@
 import type { RateLimiter } from '../../auth/domain/ports.js';
 import { RateLimitedError } from '../../auth/domain/errors.js';
 import type { DirectoryCaller } from '../../directory/access.js';
+import { DomainError } from '../../../shared/domain-error.js';
 
 export type MediaLimit = { limit: number; windowMs: number };
 
 export type MediaRateLimits = {
+  /** Chunk upload-URL presigns, per org + user + recording session + IP. Charged only after the ownership check. */
+  chunkPerSessionIp: MediaLimit;
   /** Chunk upload-URL presigns, per authenticated user + client IP (all of that user's sessions). */
   chunkPerUserIp: MediaLimit;
-  /** Chunk upload-URL presigns, per recording session + client IP. */
-  chunkPerSessionIp: MediaLimit;
+  /** Chunk upload-URL presigns, per authenticated user across all IPs (rotating IPs cannot get around it). */
+  chunkPerUser: MediaLimit;
   /**
    * Upload init/complete and recording-session init/complete/abort, per user + IP. Shared by cookie (web) and
    * ADR-005 bearer (extension, desktop) callers, which reach the same routes.
    */
   controlPerUserIp: MediaLimit;
+  /** Same routes as controlPerUserIp, per user across all IPs. */
+  controlPerUser: MediaLimit;
 };
 
 /**
@@ -21,42 +26,86 @@ export type MediaRateLimits = {
  * - Live cadence: the extension records 5 s timeslices (TIMESLICE_MS), splitting a slice into <= 8 MiB seqs only when
  *   it is oversized; desktop records 10 s timeslices. So one session presigns ~6 chunks per 30 s, ~12 in the worst
  *   split case. 150 / 30 s per session is >= 12x that, and leaves room to drain an offline backlog at 5 presigns/s.
- * - Per user: 300 / 30 s (10/s) covers several concurrent sessions (extension + desktop, re-tries) at full backlog
- *   drain speed.
+ * - Per user + IP: 300 / 30 s (10/s) covers two sessions on one network draining at full speed.
+ * - Per user, any IP: 450 / 30 s (15/s) covers three sessions draining at full speed from different networks
+ *   (extension + desktop + a retry from a new IP); IP rotation cannot raise a user above it.
  * - 30 s windows keep Retry-After <= 30 s, the extension's maxRetryAfterMs, so a throttled client waits and
  *   retries instead of failing the drain.
- * - Control routes run a handful of times per recording/upload; 60 / 30 s per user is far above any real use.
+ * - Control routes run a handful of times per recording/upload; 60 / 30 s per user + IP and 90 / 30 s per user.
  */
 export const MEDIA_RATE_LIMITS: MediaRateLimits = {
-  chunkPerUserIp: { limit: 300, windowMs: 30_000 },
   chunkPerSessionIp: { limit: 150, windowMs: 30_000 },
+  chunkPerUserIp: { limit: 300, windowMs: 30_000 },
+  chunkPerUser: { limit: 450, windowMs: 30_000 },
   controlPerUserIp: { limit: 60, windowMs: 30_000 },
+  controlPerUser: { limit: 90, windowMs: 30_000 },
 };
 
+/** Retry-After sent when the limiter backend (Redis) is unreachable. */
+export const RATE_LIMITER_UNAVAILABLE_RETRY_AFTER_MS = 5_000;
+
+/** The limiter could not be consulted: fail closed (503 + Retry-After), never let the request through unmetered. */
+export class RateLimiterUnavailableError extends DomainError {
+  constructor(public readonly retryAfterMs: number = RATE_LIMITER_UNAVAILABLE_RETRY_AFTER_MS) {
+    super('PROVIDER_UNAVAILABLE', 'Service temporarily unavailable, try again later', 503);
+  }
+}
+
+/**
+ * Backstop for a limiter call that never settles (e.g. a Redis that accepts the connection but never answers).
+ * Slightly above the ioredis commandTimeout (REDIS_COMMAND_TIMEOUT_MS) so the client's own timeout normally fires first.
+ */
+export const RATE_LIMITER_TIMEOUT_MS = 1_500;
+
+function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const t = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error('rate limiter timeout')), ms);
+  });
+  return Promise.race([p, t]).finally(() => clearTimeout(timer));
+}
+
 export type MediaRateLimit = {
-  chunk(c: DirectoryCaller, sessionId: string): Promise<void>;
+  /** Per-user buckets; charged before the ownership check (keys are the caller's own user, so only self-draining). */
+  chunkUser(c: DirectoryCaller): Promise<void>;
+  /** Per-session bucket; call only after the ownership check passed. */
+  chunkSession(c: DirectoryCaller, sessionId: string): Promise<void>;
   control(c: DirectoryCaller): Promise<void>;
 };
 
-/** Checks run after auth, so keys are always an authenticated user (or its session) plus the client IP. */
+/** Checks run after auth, so keys are always an authenticated user (or its own session), with or without the IP. */
 export function mediaRateLimit(
   rateLimiter: RateLimiter,
   limits: MediaRateLimits = MEDIA_RATE_LIMITS,
+  timeoutMs: number = RATE_LIMITER_TIMEOUT_MS,
 ): MediaRateLimit {
   const consume = async (checks: (readonly [string, MediaLimit])[]) => {
     for (const [key, l] of checks) {
-      const r = await rateLimiter.consume(key, l.limit, l.windowMs);
+      let r;
+      try {
+        r = await withTimeout(rateLimiter.consume(key, l.limit, l.windowMs), timeoutMs);
+      } catch {
+        throw new RateLimiterUnavailableError();
+      }
       if (!r.allowed) throw new RateLimitedError(r.retryAfterMs);
     }
   };
   const ip = (c: DirectoryCaller) => c.meta.ip ?? 'unknown';
+  const user = (c: DirectoryCaller) => `org:${c.ctx.organizationId}:user:${c.ctx.userId}`;
   return {
-    chunk: (c, sessionId) =>
+    chunkUser: (c) =>
       consume([
-        [`media:chunk:session:${sessionId}:ip:${ip(c)}`, limits.chunkPerSessionIp],
+        [`media:chunk:user:${c.ctx.userId}`, limits.chunkPerUser],
         [`media:chunk:user:${c.ctx.userId}:ip:${ip(c)}`, limits.chunkPerUserIp],
       ]),
+    chunkSession: (c, sessionId) =>
+      consume([
+        [`media:chunk:${user(c)}:session:${sessionId}:ip:${ip(c)}`, limits.chunkPerSessionIp],
+      ]),
     control: (c) =>
-      consume([[`media:ctl:user:${c.ctx.userId}:ip:${ip(c)}`, limits.controlPerUserIp]]),
+      consume([
+        [`media:ctl:user:${c.ctx.userId}`, limits.controlPerUser],
+        [`media:ctl:user:${c.ctx.userId}:ip:${ip(c)}`, limits.controlPerUserIp],
+      ]),
   };
 }

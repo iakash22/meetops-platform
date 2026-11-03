@@ -23,7 +23,13 @@ import {
 import type { MediaRateLimit } from './rate-limit.js';
 
 const tags = ['recording-sessions'];
-const errors = { ...directoryErrors, 409: ErrorBody, 413: ErrorBody, 422: ErrorBody } as const;
+const errors = {
+  ...directoryErrors,
+  409: ErrorBody,
+  413: ErrorBody,
+  422: ErrorBody,
+  503: ErrorBody,
+} as const;
 
 export async function recordingSessionRoutes(
   app: FastifyInstance,
@@ -73,8 +79,14 @@ export async function recordingSessionRoutes(
     },
     async (request, reply) => {
       const c = await activeCaller(request);
-      await rateLimit?.chunk(c, request.params.sessionId);
-      const u = await sessions.chunkUrl(c, request.params.sessionId, request.body);
+      await rateLimit?.chunkUser(c);
+      const id = request.params.sessionId;
+      const u = await sessions.chunkUrl(
+        c,
+        id,
+        request.body,
+        rateLimit ? () => rateLimit.chunkSession(c, id) : undefined,
+      );
       return reply.header('cache-control', 'no-store').send({
         seq: request.body.seq,
         upload: { url: u.url, method: 'PUT', headers: u.headers, expiresAt: iso(u.expiresAt) },
