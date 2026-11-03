@@ -8,6 +8,8 @@ import {
   deadLetterJobId,
   handleTranscriptionFailure,
   handleTranscriptionSuccess,
+  createRedisDeadLetterIndex,
+  deadLetterIndexKey,
   meetingHasDeadLetters,
   isRetryExhausted,
   transcriptionBackoffMs,
@@ -92,6 +94,7 @@ describe('dead-lettering', () => {
     const dlq = { add: vi.fn<DeadLetterQueueLike['add']>(async () => undefined) };
     const status = {
       markDelayed: vi.fn(async () => undefined),
+      isDelayed: vi.fn(async () => true),
       clearDelayed: vi.fn(async () => undefined),
     };
     const alert = vi.fn();
@@ -266,6 +269,99 @@ describe('dead-lettering', () => {
     expect(meetingHasDeadLetters(entries, '88888888-8888-4888-8888-888888888888', MEET)).toBe(
       false,
     );
+  });
+
+  it('success path: a meeting that is not delayed returns before any DLQ read (call count)', async () => {
+    const { status, logger } = setup();
+    status.isDelayed.mockResolvedValue(false);
+    const deadLetters = vi.fn(async () => [dead('job-2')]);
+    const index = { add: vi.fn(), remove: vi.fn(), hasOther: vi.fn(async () => true) };
+    for (let i = 0; i < 100; i++)
+      await handleTranscriptionSuccess(job(1), { status, index, deadLetters, logger });
+    expect(status.isDelayed).toHaveBeenCalledTimes(100);
+    expect(deadLetters).not.toHaveBeenCalled();
+    expect(index.hasOther).not.toHaveBeenCalled();
+    expect(status.clearDelayed).not.toHaveBeenCalled();
+  });
+
+  it('success path: a status read error leaves the meeting delayed', async () => {
+    const { status, logger } = setup();
+    status.isDelayed.mockRejectedValueOnce(new Error('db down'));
+    await handleTranscriptionSuccess(job(1), { status, deadLetters: async () => [], logger });
+    expect(status.clearDelayed).not.toHaveBeenCalled();
+    expect(logger.error).toHaveBeenCalledWith(
+      expect.objectContaining({ meetingId: MEET }),
+      'transcription dead-letter lookup failed; meeting left delayed',
+    );
+  });
+
+  it('success path: uses the per-meeting index (own dlq_ id excluded) instead of scanning the DLQ', async () => {
+    const { status, logger } = setup();
+    const deadLetters = vi.fn(async () => []);
+    const index = { add: vi.fn(), remove: vi.fn(), hasOther: vi.fn(async () => false) };
+    await handleTranscriptionSuccess(job(1), { status, index, deadLetters, logger });
+    expect(index.hasOther).toHaveBeenCalledWith(ORG, MEET, ['dlq_job-1']);
+    expect(deadLetters).not.toHaveBeenCalled();
+    expect(status.clearDelayed).toHaveBeenCalledWith(ORG, MEET, 'processing');
+    index.hasOther.mockResolvedValueOnce(true);
+    await handleTranscriptionSuccess(job(1), { status, index, logger });
+    expect(status.clearDelayed).toHaveBeenCalledTimes(1);
+    index.hasOther.mockRejectedValueOnce(new Error('redis down'));
+    await handleTranscriptionSuccess(job(1), { status, index, logger });
+    expect(status.clearDelayed).toHaveBeenCalledTimes(1);
+  });
+
+  it('dead-lettering writes the index before the DLQ add; an index error does not stop the rest', async () => {
+    const { deps, dlq, status } = setup();
+    const order: string[] = [];
+    const index = {
+      add: vi.fn(async () => void order.push('index')),
+      remove: vi.fn(),
+      hasOther: vi.fn(),
+    };
+    dlq.add.mockImplementationOnce(async () => void order.push('dlq'));
+    await handleTranscriptionFailure(job(4), outage, { ...deps, index });
+    expect(index.add).toHaveBeenCalledWith(ORG, MEET, 'dlq_job-1');
+    expect(order).toEqual(['index', 'dlq']);
+    index.add.mockRejectedValueOnce(new Error('redis down'));
+    await handleTranscriptionFailure(job(4), outage, { ...deps, index });
+    expect(dlq.add).toHaveBeenCalledTimes(2);
+    expect(status.markDelayed).toHaveBeenCalledTimes(2);
+  });
+
+  it("Redis index reads only this meeting's members, not the whole DLQ, and prunes stale ones", async () => {
+    const sets = new Map<string, Set<string>>();
+    const redis = {
+      sadd: vi.fn(
+        async (k: string, m: string) => void (sets.get(k) ?? sets.set(k, new Set()).get(k)!).add(m),
+      ),
+      srem: vi.fn(async (k: string, m: string) => void sets.get(k)?.delete(m)),
+      smembers: vi.fn(async (k: string) => [...(sets.get(k) ?? [])]),
+    };
+    // A large DLQ elsewhere: 5,000 entries for other meetings.
+    const states = new Map<string, string>();
+    for (let i = 0; i < 5000; i++) {
+      states.set(`dlq_other_${i}`, 'waiting');
+      await redis.sadd(deadLetterIndexKey(ORG, `m-${i}`), `dlq_other_${i}`);
+    }
+    const queue = { getJobState: vi.fn(async (id: string) => states.get(id) ?? 'unknown') };
+    const index = createRedisDeadLetterIndex(redis, queue);
+    await index.add(ORG, MEET, 'dlq_self');
+    await index.add(ORG, MEET, 'dlq_sibling');
+    await index.add(ORG, MEET, 'dlq_stale');
+    states.set('dlq_self', 'waiting');
+    states.set('dlq_sibling', 'waiting');
+    expect(await index.hasOther(ORG, MEET, ['dlq_self'])).toBe(true);
+    expect(queue.getJobState.mock.calls.length).toBeLessThanOrEqual(2);
+    // Sibling redriven (no longer waiting) and stale never added: both pruned, meeting free.
+    states.set('dlq_sibling', 'completed');
+    queue.getJobState.mockClear();
+    expect(await index.hasOther(ORG, MEET, ['dlq_self'])).toBe(false);
+    expect(queue.getJobState).toHaveBeenCalledTimes(2);
+    expect(redis.smembers).toHaveBeenLastCalledWith(deadLetterIndexKey(ORG, MEET));
+    expect([...sets.get(deadLetterIndexKey(ORG, MEET))!]).toEqual(['dlq_self']);
+    await index.remove(ORG, MEET, 'dlq_self');
+    expect(sets.get(deadLetterIndexKey(ORG, MEET))!.size).toBe(0);
   });
 
   it('uses a dedicated DLQ name', () => {

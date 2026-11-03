@@ -2,7 +2,17 @@
 -- Single statement on purpose: CREATE INDEX CONCURRENTLY cannot run inside a transaction block. Prisma Migrate does
 -- not wrap a PostgreSQL migration in an explicit transaction, and a file with one statement is not an implicit
 -- multi-statement block, so it does not block writes to outbox_events while it builds.
--- If a build is interrupted it leaves an INVALID index: DROP INDEX CONCURRENTLY "outbox_events_org_id_dedupe_key_key";
--- then `prisma migrate resolve --rolled-back 20261103200100_outbox_dedupe_key_index` and deploy again.
+-- Recovery if the build fails or is interrupted (it leaves an INVALID index), e.g. because duplicate keys exist:
+--   1. Find duplicate (org_id, dedupe_key) rows (NULL keys never conflict):
+--        SELECT org_id, dedupe_key, count(*) FROM "outbox_events"
+--        WHERE dedupe_key IS NOT NULL GROUP BY org_id, dedupe_key HAVING count(*) > 1;
+--   2. Remove the duplicates, keeping the oldest row per key:
+--        DELETE FROM "outbox_events" o USING (
+--          SELECT id, row_number() OVER (PARTITION BY org_id, dedupe_key ORDER BY created_at, id) AS rn
+--          FROM "outbox_events" WHERE dedupe_key IS NOT NULL
+--        ) d WHERE o.id = d.id AND d.rn > 1;
+--   3. DROP INDEX CONCURRENTLY IF EXISTS "outbox_events_org_id_dedupe_key_key";
+--   4. `prisma migrate resolve --rolled-back 20261103200100_outbox_dedupe_key_index`, then deploy again.
+-- Run these as the migrator role (forced RLS hides other orgs' rows from the app role).
 -- Rollback: DROP INDEX CONCURRENTLY "outbox_events_org_id_dedupe_key_key";
 CREATE UNIQUE INDEX CONCURRENTLY "outbox_events_org_id_dedupe_key_key" ON "outbox_events"("org_id", "dedupe_key");

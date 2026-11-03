@@ -88,6 +88,8 @@ export type DeadLetterQueueLike = {
 /** Moves a meeting into and out of `transcription_delayed`. Must be idempotent and org-scoped. */
 export interface TranscriptionDelayedStatus {
   markDelayed(organizationId: string, meetingId: string): Promise<void>;
+  /** True when the meeting is currently `transcription_delayed` (cheap primary-key read; success-path pre-check). */
+  isDelayed(organizationId: string, meetingId: string): Promise<boolean>;
   /**
    * Leaves `transcription_delayed`: back to `processing` after a later attempt succeeds, or to `failed` on a final
    * (permanent) failure. Only moves a meeting that is still `transcription_delayed`.
@@ -144,6 +146,8 @@ export function deadLetterJobId(
 
 export type DeadLetterDeps = {
   dlq: DeadLetterQueueLike;
+  /** Per-meeting DLQ index; updated before the DLQ add so a partial failure only leaves a stale (safe) member. */
+  index?: DeadLetterIndex | undefined;
   status?: TranscriptionDelayedStatus | undefined;
   alert?: TranscriptionDelayedAlert | undefined;
   logger: DeadLetterLogger;
@@ -193,9 +197,15 @@ export async function handleTranscriptionFailure(
     failedAt: (deps.now ?? (() => new Date()))().toISOString(),
   };
   const log = { organizationId, meetingId, recordingId, jobId: job.id, errorCode: code };
+  const dlqJobId = deadLetterJobId(job.id, recordingId, entry.chunkIndex);
+  try {
+    await deps.index?.add(organizationId, meetingId, dlqJobId);
+  } catch {
+    deps.logger.error(log, 'transcription dead-letter index write failed');
+  }
   try {
     await deps.dlq.add('transcription_dead_letter', entry, {
-      jobId: deadLetterJobId(job.id, recordingId, entry.chunkIndex),
+      jobId: dlqJobId,
       removeOnComplete: false,
       removeOnFail: false,
     });
@@ -255,25 +265,79 @@ export function queueDeadLetterLister(queue: {
 }
 
 /**
+ * Per-meeting index of DLQ job ids (a Redis set per org + meeting), so the success path never scans the whole DLQ.
+ * Members are added before the DLQ add; members whose DLQ job is gone or no longer waiting (redriven, removed) are
+ * pruned on read, so redrive does not have to maintain it (it may also call `remove`).
+ */
+export interface DeadLetterIndex {
+  add(organizationId: string, meetingId: string, dlqJobId: string): Promise<void>;
+  remove(organizationId: string, meetingId: string, dlqJobId: string): Promise<void>;
+  /** True when a dead-lettered DLQ job other than `excludeDlqJobIds` exists for the meeting. */
+  hasOther(
+    organizationId: string,
+    meetingId: string,
+    excludeDlqJobIds: readonly string[],
+  ): Promise<boolean>;
+}
+
+export const deadLetterIndexKey = (organizationId: string, meetingId: string) =>
+  `meetops:transcription-dlq:meeting:${organizationId}:${meetingId}`;
+
+/** Redis-set index. Reads cost O(entries for this meeting): one SMEMBERS plus one state lookup per member. */
+export function createRedisDeadLetterIndex(
+  redis: {
+    sadd(key: string, member: string): Promise<unknown>;
+    srem(key: string, member: string): Promise<unknown>;
+    smembers(key: string): Promise<string[]>;
+  },
+  dlq: { getJobState(jobId: string): Promise<string> },
+): DeadLetterIndex {
+  const live = new Set<string>(DEAD_LETTER_STATES);
+  return {
+    add: async (o, m, id) => void (await redis.sadd(deadLetterIndexKey(o, m), id)),
+    remove: async (o, m, id) => void (await redis.srem(deadLetterIndexKey(o, m), id)),
+    async hasOther(o, m, exclude) {
+      const key = deadLetterIndexKey(o, m);
+      for (const id of await redis.smembers(key)) {
+        if (exclude.includes(id)) continue;
+        if (live.has(await dlq.getJobState(id))) return true;
+        await redis.srem(key, id); // stale: redriven, removed or never added
+      }
+      return false;
+    },
+  };
+}
+
+/**
  * A transcription attempt succeeded: a meeting parked in `transcription_delayed` goes back to `processing`, but only
- * when no OTHER chunk of that meeting is still dead-lettered. If the DLQ cannot be read (or no lister is wired), the
- * meeting is left as is: staying delayed is the safe side; redrive or a later success clears it.
- * Best-effort; a failed read or write is logged and never fails the job.
+ * when no OTHER chunk of that meeting is still dead-lettered.
+ * 1. Status first: a meeting that is not `transcription_delayed` (the normal case) returns without touching the DLQ.
+ * 2. Then the per-meeting index (or, if none is wired, a full DLQ scan as a fallback).
+ * Any read error, or no way to check, leaves the meeting delayed (the safe side). Never fails the job.
  */
 export async function handleTranscriptionSuccess(
   job: Pick<FailedJobLike, 'id' | 'data'> | undefined,
   deps: {
     status?: TranscriptionDelayedStatus | undefined;
+    index?: DeadLetterIndex | undefined;
     deadLetters?: DeadLetterLister | undefined;
     logger: DeadLetterLogger;
   },
 ): Promise<void> {
-  const { organizationId, meetingId } = job?.data ?? {};
-  if (!organizationId || !meetingId || !deps.status || !deps.deadLetters) return;
+  const { organizationId, meetingId, recordingId, chunkIndex } = job?.data ?? {};
+  if (!organizationId || !meetingId || !deps.status) return;
+  if (!deps.index && !deps.deadLetters) return;
   const log = { organizationId, meetingId, jobId: job?.id };
   try {
-    if (meetingHasDeadLetters(await deps.deadLetters(), organizationId, meetingId, [job?.id]))
-      return;
+    if (!(await deps.status.isDelayed(organizationId, meetingId))) return;
+    const blocked = deps.index
+      ? await deps.index.hasOther(
+          organizationId,
+          meetingId,
+          recordingId ? [deadLetterJobId(job?.id, recordingId, chunkIndex)] : [],
+        )
+      : meetingHasDeadLetters(await deps.deadLetters!(), organizationId, meetingId, [job?.id]);
+    if (blocked) return;
   } catch {
     deps.logger.error(log, 'transcription dead-letter lookup failed; meeting left delayed');
     return;
@@ -307,6 +371,20 @@ export function createPrismaTranscriptionDelayedStatus(
             data: { status: 'transcription_delayed' },
           });
         },
+        opts.client ? { client: opts.client } : {},
+      ),
+    isDelayed: (organizationId, meetingId) =>
+      withOrganizationContext(
+        organizationId,
+        async (tx) =>
+          (await tx.meeting.count({
+            where: {
+              id: meetingId,
+              organizationId,
+              status: 'transcription_delayed',
+              deletedAt: null,
+            },
+          })) > 0,
         opts.client ? { client: opts.client } : {},
       ),
     clearDelayed: (organizationId, meetingId, to) =>

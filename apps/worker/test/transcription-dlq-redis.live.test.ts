@@ -11,7 +11,9 @@ import {
   deadLetterJobId,
   handleTranscriptionFailure,
   handleTranscriptionSuccess,
-  queueDeadLetterLister,
+  createRedisDeadLetterIndex,
+  deadLetterIndexKey,
+  type DeadLetterIndex,
   type TranscriptionDeadLetter,
   type TranscriptionDelayedStatus,
 } from '../src/ai/transcription-retry.js';
@@ -39,6 +41,7 @@ function statusStore(initial: Status = 'processing') {
     markDelayed: async () => {
       if (s === 'processing') s = 'transcription_delayed';
     },
+    isDelayed: async () => s === 'transcription_delayed',
     clearDelayed: async (_o, _m, to) => {
       if (s === 'transcription_delayed') s = to;
     },
@@ -73,12 +76,19 @@ describe.skipIf(!available)('transcription DLQ with real Redis + BullMQ (live)',
     /** Worker events to wait for: one per attempt that ends ('failed' per failed attempt, or 'completed'). */
     expectedEvents: number,
     /** Pre-existing DLQ entries (other chunks of the same meeting). */
-    seed?: (dlq: Queue<TranscriptionDeadLetter>, data: Payload) => Promise<unknown>,
+    seed?: (
+      dlq: Queue<TranscriptionDeadLetter>,
+      data: Payload,
+      index: DeadLetterIndex,
+    ) => Promise<unknown>,
   ) {
     const name = `it-transcription-${randomUUID()}`;
     const q = new Queue<Payload>(name, { connection: connection() });
     const dlq = new Queue<TranscriptionDeadLetter>(`${name}-dlq`, { connection: connection() });
     queues.push(q, dlq);
+    const indexRedis = connection();
+    opened.push({ close: async () => indexRedis.disconnect() });
+    const index = createRedisDeadLetterIndex(indexRedis, dlq);
     const events = new QueueEvents(name, { connection: connection() });
     opened.push(events);
     await events.waitUntilReady();
@@ -92,6 +102,7 @@ describe.skipIf(!available)('transcription DLQ with real Redis + BullMQ (live)',
       handled.push(
         handleTranscriptionFailure(job, err, {
           dlq,
+          index,
           status,
           logger: silent,
         }),
@@ -101,7 +112,7 @@ describe.skipIf(!available)('transcription DLQ with real Redis + BullMQ (live)',
       handled.push(
         handleTranscriptionSuccess(job, {
           status,
-          deadLetters: queueDeadLetterLister(dlq),
+          index,
           logger: silent,
         }),
       ),
@@ -112,7 +123,7 @@ describe.skipIf(!available)('transcription DLQ with real Redis + BullMQ (live)',
       recordingId: randomUUID(),
       chunkIndex: 1,
     };
-    await seed?.(dlq, data);
+    await seed?.(dlq, data, index);
     const job = await q.add('transcribe', data, {
       jobId: `tx_${data.recordingId}_1`,
       attempts,
@@ -123,7 +134,7 @@ describe.skipIf(!available)('transcription DLQ with real Redis + BullMQ (live)',
     for (let i = 0; i < 250 && handled.length < expectedEvents; i++)
       await new Promise((r) => setTimeout(r, 20));
     await Promise.all(handled);
-    return { q, dlq, job, data };
+    return { q, dlq, job, data, indexRedis };
   }
 
   it('BullMQ rejects the old "dlq:<id>" job id; the dlq_ id is accepted', async () => {
@@ -137,7 +148,7 @@ describe.skipIf(!available)('transcription DLQ with real Redis + BullMQ (live)',
 
   it('retries exhausted: DLQ entry exists under the dlq_ id, meeting is transcription_delayed', async () => {
     const st = statusStore();
-    const { dlq, job } = await run(
+    const { dlq, job, indexRedis } = await run(
       async () => {
         throw new Error('provider down');
       },
@@ -150,6 +161,12 @@ describe.skipIf(!available)('transcription DLQ with real Redis + BullMQ (live)',
     expect(entry!.data.attemptsMade).toBe(2);
     expect(entry!.data.jobId).toBe(job.id);
     expect(st.get()).toBe('transcription_delayed');
+    // The per-meeting index holds the dlq_ id.
+    expect(
+      await indexRedis.smembers(
+        deadLetterIndexKey(entry!.data.organizationId, entry!.data.meetingId),
+      ),
+    ).toEqual([deadLetterJobId(job.id, 'unused', 0)]);
   });
 
   it('a later success leaves transcription_delayed (back to processing)', async () => {
@@ -179,8 +196,10 @@ describe.skipIf(!available)('transcription DLQ with real Redis + BullMQ (live)',
       1,
       st.store,
       1,
-      (dlq, d) =>
-        dlq.add(
+      async (dlq, d, index) => {
+        const id = deadLetterJobId(`tx_${d.recordingId}_0`, d.recordingId, 0);
+        await index.add(d.organizationId, d.meetingId, id);
+        await dlq.add(
           'transcription_dead_letter',
           {
             organizationId: d.organizationId,
@@ -192,9 +211,27 @@ describe.skipIf(!available)('transcription DLQ with real Redis + BullMQ (live)',
             attemptsMade: 2,
             failedAt: new Date().toISOString(),
           },
-          { jobId: deadLetterJobId(`tx_${d.recordingId}_0`, d.recordingId, 0) },
-        ),
+          { jobId: id },
+        );
+      },
     );
     expect(st.get()).toBe('transcription_delayed');
+  });
+
+  it('a stale index member (DLQ job already redriven/removed) is pruned and the meeting clears', async () => {
+    const st = statusStore('transcription_delayed');
+    let key = '';
+    const { indexRedis } = await run(
+      async () => ({ ok: true }),
+      1,
+      st.store,
+      1,
+      async (_dlq, d, index) => {
+        key = deadLetterIndexKey(d.organizationId, d.meetingId);
+        await index.add(d.organizationId, d.meetingId, 'dlq_gone');
+      },
+    );
+    expect(st.get()).toBe('processing');
+    expect(await indexRedis.smembers(key)).toEqual([]);
   });
 });
