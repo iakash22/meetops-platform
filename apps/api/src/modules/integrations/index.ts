@@ -35,7 +35,11 @@ import {
 import { InMemoryIntegrations } from './in-memory.repository.js';
 import { PrismaIntegrations } from './prisma.repository.js';
 import type { ConnectedProvider, IntegrationsRepository } from './ports.js';
-import { createRedisConnectionLease, parseSharedKek } from '@meetops/integrations';
+import {
+  createRedisConnectionLease,
+  InMemoryDeliveryStore,
+  parseSharedKek,
+} from '@meetops/integrations';
 import {
   devIntegrationsRuntime,
   integrationsRuntimeFromEnv,
@@ -132,6 +136,12 @@ export function selectIntegrationsRuntime(
   const rt =
     deps.integrationsRuntime ??
     (isRelaxedEnv(nodeEnv) ? devIntegrationsRuntime(integrationsRuntimeFromEnv()) : undefined);
+  // Production must wire RedisDeliveryStore: the in-memory store is per-process, so replay protection and the
+  // pending delivery claim would not be shared between replicas (or survive a restart).
+  if (rt && nodeEnv === 'production' && rt.deliveryStore instanceof InMemoryDeliveryStore)
+    throw new Error(
+      'Integrations runtime: InMemoryDeliveryStore is not allowed in production; wire RedisDeliveryStore',
+    );
   return rt && withTokenRefreshLease(rt, deps, nodeEnv);
 }
 

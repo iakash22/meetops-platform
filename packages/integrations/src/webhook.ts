@@ -1,4 +1,4 @@
-import { createHmac, timingSafeEqual } from 'node:crypto';
+import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
 
 /**
  * Replay window. GitHub deliveries carry NO signed timestamp, so the delivery-id TTL is the only replay control:
@@ -85,7 +85,19 @@ export interface DeliveryStore {
    * be charged to it (e.g. rate limiting), and only then record atomically with markIfNew.
    */
   isRecorded?(deliveryId: string): Promise<boolean>;
+  /**
+   * Two-phase record (preferred when implemented): atomically claim the id with a short-lived pending marker
+   * (SET NX). Returns an owner token, or null when the id is already recorded or claimed (replay/concurrent dup).
+   */
+  claim?(deliveryId: string, pendingTtlSeconds: number): Promise<string | null>;
+  /** Turn the holder's pending marker into the full replay TTL. False if the claim was lost (e.g. expired). */
+  commit?(deliveryId: string, token: string, ttlSeconds: number): Promise<boolean>;
+  /** Delete the pending marker, only if `token` still holds it (e.g. after a 429). */
+  release?(deliveryId: string, token: string): Promise<void>;
 }
+
+/** Pending-claim lifetime: long enough for the rate-limit charge, short enough that a crashed holder self-heals. */
+export const DELIVERY_PENDING_TTL_SECONDS = 30;
 
 /** In-memory TTL store. Single-process only; use a shared store (Redis) with multiple replicas. */
 export interface InMemoryDeliveryStoreOptions {
@@ -113,9 +125,32 @@ export class InMemoryDeliveryStore implements DeliveryStore {
     this.maxEntries = options.maxEntries ?? 10_000;
   }
 
+  private readonly pending = new Map<string, { token: string; exp: number }>();
+
   async isRecorded(deliveryId: string): Promise<boolean> {
     const exp = this.seen.get(deliveryId);
     return exp !== undefined && exp > this.now();
+  }
+
+  async claim(deliveryId: string, pendingTtlSeconds: number): Promise<string | null> {
+    const t = this.now();
+    if (await this.isRecorded(deliveryId)) return null;
+    const p = this.pending.get(deliveryId);
+    if (p && p.exp > t) return null;
+    const token = randomUUID();
+    this.pending.set(deliveryId, { token, exp: t + Math.max(1, pendingTtlSeconds) * 1000 });
+    return token;
+  }
+
+  async commit(deliveryId: string, token: string, ttlSeconds: number): Promise<boolean> {
+    const p = this.pending.get(deliveryId);
+    if (!p || p.token !== token || p.exp <= this.now()) return false;
+    this.pending.delete(deliveryId);
+    return this.markIfNew(deliveryId, ttlSeconds);
+  }
+
+  async release(deliveryId: string, token: string): Promise<void> {
+    if (this.pending.get(deliveryId)?.token === token) this.pending.delete(deliveryId);
   }
 
   async markIfNew(deliveryId: string, ttlSeconds: number): Promise<boolean> {
@@ -250,6 +285,18 @@ export async function recordDelivery(
   ttlSeconds: number,
   beforeRecord?: () => Promise<void>,
 ): Promise<boolean> {
+  if (store.claim && store.commit && store.release) {
+    // Claim first so simultaneous duplicates cannot both pass the check and both charge the caller's bucket.
+    const token = await store.claim(deliveryId, DELIVERY_PENDING_TTL_SECONDS);
+    if (!token) return false;
+    try {
+      await beforeRecord?.();
+    } catch (err) {
+      await store.release(deliveryId, token); // 429 etc.: nothing recorded, the provider's retry is not a replay
+      throw err;
+    }
+    return store.commit(deliveryId, token, ttlSeconds);
+  }
   if (store.isRecorded && (await store.isRecorded(deliveryId))) return false;
   await beforeRecord?.();
   return store.markIfNew(deliveryId, ttlSeconds);

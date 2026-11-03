@@ -338,5 +338,6 @@ describe('recordDelivery (check -> beforeRecord -> SET NX)', () => {
       recordDelivery(s, 'd3', 60, async () => void charged++),
     ]);
     expect(results.filter(Boolean)).toHaveLength(1);
+    expect(charged).toBe(1); // the pending claim stops the losing duplicate before it charges
   });
 });

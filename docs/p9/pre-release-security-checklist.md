@@ -70,6 +70,10 @@ Sign-off roles: **Owner** = Shubham (Akash, `iakash22`); **Sec** = security revi
 - [ ] Every unauthenticated or expensive route has a limiter (auth, uploads, recording chunk URLs, search, webhooks, public endpoints).
 - [ ] Body size limits per route; upload size/type limits enforced server-side.
 - [ ] Redis limiter fails closed for auth (or documented degrade).
+- [ ] Webhook replay protection uses `RedisDeliveryStore` (shared across replicas). `InMemoryDeliveryStore` is
+      per-process and refuses `NODE_ENV=production`; `selectIntegrationsRuntime` also refuses it at startup. Deliveries
+      are claimed with a short-lived `SET NX` pending marker, the target rate-limit bucket is charged, then the marker
+      is promoted to the full replay TTL (or deleted by its holder on 429, so the provider's retry is not a replay).
 
 ## 9. Logging and PII
 
