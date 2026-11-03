@@ -103,6 +103,13 @@ function apiProxyTarget(env: Record<string, string>): string {
   return `http://127.0.0.1:${envPort(env.PORT ?? env.API_PORT, 3000)}`;
 }
 
+/** Upstream apps/realtime for the Vite `/socket.io` proxy (dev only). VITE_REALTIME_PROXY_TARGET, else REALTIME_PORT. */
+function realtimeProxyTarget(env: Record<string, string>): string {
+  const explicit = env.VITE_REALTIME_PROXY_TARGET?.trim();
+  if (explicit) return explicit.replace(/\/$/, '');
+  return `http://127.0.0.1:${envPort(env.REALTIME_PORT, 4001)}`;
+}
+
 /**
  * Client base URL for the browser. Same-origin `/api` uses the Vite proxy in `server.proxy`.
  * An absolute `http(s)://…` URL skips the proxy (needs API CORS).
@@ -120,6 +127,8 @@ export default defineConfig(({ mode, command }) => {
   const env = loadEnv(mode, monorepoRoot, '');
   const viteApiUrl = resolveViteApiUrl(env.VITE_API_URL);
   const proxyTarget = apiProxyTarget(env);
+  const rtProxyTarget = realtimeProxyTarget(env);
+  const rtPath = (env.VITE_REALTIME_PATH || '/socket.io').replace(/\/$/, '');
   const template = nginxTemplate();
   const devNonce = randomBytes(18).toString('base64url');
   return {
@@ -144,6 +153,13 @@ export default defineConfig(({ mode, command }) => {
           target: proxyTarget,
           changeOrigin: true,
           rewrite: (path) => path.replace(/^\/api(?=\/|$)/, '') || '/',
+        },
+        // Browser → ws://localhost:WEB_PORT/socket.io/… → apps/realtime (WebSocket upgrade, path kept).
+        // Same origin, so the host-only session cookie rides on the upgrade (leave VITE_REALTIME_URL empty).
+        [rtPath]: {
+          target: rtProxyTarget,
+          ws: true,
+          changeOrigin: false,
         },
       },
     },

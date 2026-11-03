@@ -1,8 +1,17 @@
 import { createGeoIpProvider, type GeoIpProvider } from '../shared/geoip/index.js';
+import {
+  RedisRefreshGraceStore,
+  type RefreshGraceStore,
+} from './auth/application/refresh-grace.js';
 import type { FastifyInstance } from 'fastify';
 import cookie from '@fastify/cookie';
 import cors from '@fastify/cors';
-import { DESKTOP_AUTH_PATHS, EXTENSION_AUTH_PATHS } from '@meetops/contracts';
+import {
+  DESKTOP_AUTH_PATHS,
+  EXTENSION_AUTH_PATHS,
+  type DesktopRefreshResponse,
+  type ExtensionRefreshResponse,
+} from '@meetops/contracts';
 import { parseWebOrigins } from '../shared/web-origins.js';
 import {
   extensionBearerCorsHook,
@@ -29,6 +38,7 @@ import {
 import { Argon2PasswordHasher } from './auth/infrastructure/argon2-password-hasher.js';
 import { CryptoTokenService, uuidGenerator } from './auth/infrastructure/crypto-token.service.js';
 import { InMemorySessionRepository } from './auth/infrastructure/in-memory-session.repository.js';
+import type { MediaRateLimits } from './media/http/rate-limit.js';
 import { InMemoryOneTimeTokenRepository } from './auth/infrastructure/in-memory-one-time-token.repository.js';
 import {
   InMemoryLoginLockout,
@@ -139,6 +149,8 @@ export interface ModuleDeps {
   hasher: PasswordHasher;
   tokens: TokenService;
   rateLimiter: RateLimiter;
+  /** Overrides MEDIA_RATE_LIMITS (tests). */
+  mediaRateLimits?: MediaRateLimits;
   lockout: LoginLockout;
   /**
    * AUTH_MAIL_QUEUE=bullmq: BullMqAuthMailQueue on REDIS_URL (ADR-013, notifications #11), consumed by the
@@ -193,6 +205,9 @@ export interface ModuleDeps {
   extensionIds: readonly string[];
   /** ADR-005 A1.4 security-signal logger for extension auth; defaults to the app's (redacting) logger. */
   extensionAuthLog?: ExtensionAuthLog;
+  /** Refresh grace window stores (Redis when `redis` is set, so a retry on any instance matches). */
+  extensionRefreshGrace?: RefreshGraceStore<ExtensionRefreshResponse>;
+  desktopRefreshGrace?: RefreshGraceStore<DesktopRefreshResponse>;
   /**
    * ADR-012 desktop sign-in. Off unless DESKTOP_AUTH_ENABLED=true (the ADR-012 amendment, PR #192, awaits sign-off).
    * When off, the /auth/desktop/* routes are not registered and desktop bearers never verify.
@@ -393,6 +408,14 @@ const urlFor = (env: ModuleEnv, url: string | undefined) =>
 const allInjected = (overrides: Partial<ModuleDeps>, keys: readonly (keyof ModuleDeps)[]) =>
   keys.every((k) => overrides[k] !== undefined);
 
+/** Fail a command after ~1 s when Redis accepts the connection but never answers, instead of hanging the request. */
+export const REDIS_COMMAND_TIMEOUT_MS = 1_000;
+export const REDIS_CLIENT_OPTIONS = {
+  lazyConnect: true,
+  maxRetriesPerRequest: 3,
+  commandTimeout: REDIS_COMMAND_TIMEOUT_MS,
+} as const;
+
 /**
  * Picks the Redis client: an injected `redis` dep wins, otherwise REDIS_URL. No client is created
  * when every Redis-backed dep is injected.
@@ -404,7 +427,7 @@ function resolveRedis(
   if (overrides.redis) return { redis: overrides.redis };
   const url = urlFor(env, env.redisUrl);
   if (!url || allInjected(overrides, REDIS_BACKED_DEPS)) return {};
-  const client = new Redis(url, { lazyConnect: true, maxRetriesPerRequest: 3 });
+  const client = new Redis(url, REDIS_CLIENT_OPTIONS);
   return { redis: client, owned: client };
 }
 
@@ -616,6 +639,18 @@ export function defaultModuleDeps(
     desktopTokens: redis
       ? new RedisExtensionTokenRepository(redis, 'meetops:desktop:')
       : new InMemoryExtensionTokenRepository(),
+    ...(redis
+      ? {
+          extensionRefreshGrace: new RedisRefreshGraceStore<ExtensionRefreshResponse>(
+            redis,
+            'meetops:ext:grace:',
+          ),
+          desktopRefreshGrace: new RedisRefreshGraceStore<DesktopRefreshResponse>(
+            redis,
+            'meetops:desktop:grace:',
+          ),
+        }
+      : {}),
     extensionIds: [
       ...csv(process.env.EXTENSION_IDS),
       ...(strict ? [] : csv(process.env.EXTENSION_DEV_IDS)),
@@ -717,12 +752,14 @@ export async function registerModules(app: FastifyInstance, deps: ModuleDeps) {
   const extensionAuth = new ExtensionAuthService({
     ...deps,
     log: deps.extensionAuthLog ?? app.log,
+    ...(deps.extensionRefreshGrace ? { refreshGrace: deps.extensionRefreshGrace } : {}),
   });
   const desktopAuth =
     deps.desktopAuthEnabled === true
       ? new DesktopAuthService({
           ...deps,
           desktopTokens: deps.desktopTokens ?? new InMemoryExtensionTokenRepository(),
+          ...(deps.desktopRefreshGrace ? { refreshGrace: deps.desktopRefreshGrace } : {}),
         })
       : undefined;
   // ADR-005 A1.6 (and ADR-012 when enabled): logout, password reset and member removal also revoke token families.

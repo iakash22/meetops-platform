@@ -15,6 +15,7 @@ import {
   DEFAULT_TRANSCRIPTION_RETRY,
   TRANSCRIPTION_DLQ,
   handleTranscriptionFailure,
+  handleTranscriptionSuccess,
   transcriptionBackoffStrategy,
   type DeadLetterQueueLike,
   type TranscriptionDelayedAlert,
@@ -101,6 +102,9 @@ export function startTranscriptionWorker(
       alert: deps.onTranscriptionDelayed,
       logger,
     });
+  });
+  worker.on('completed', (job) => {
+    void handleTranscriptionSuccess(job, { status: deps.delayedStatus, logger });
   });
   const close = async () => {
     await worker.close();

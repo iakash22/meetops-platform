@@ -12,6 +12,8 @@ export interface RedisLike {
   pexpire(key: string, ms: number): Promise<number>;
   pttl(key: string): Promise<number>;
   set(key: string, value: string, mode: 'PX', ms: number): Promise<unknown>;
+  /** SET ... PX ms NX: resolves 'OK' when set, null when the key already exists. */
+  set(key: string, value: string, mode: 'PX', ms: number, nx: 'NX'): Promise<unknown>;
   del(...keys: string[]): Promise<number>;
   get(key: string): Promise<string | null>;
   getdel(key: string): Promise<string | null>;

@@ -47,3 +47,15 @@ if [ -n "$report" ]; then
     *) fail "CSP_REPORT_URL must be an https:// URL" ;;
   esac
 fi
+
+# /socket.io proxy: both values are pasted into nginx directives, so allow only the exact shapes nginx needs
+# (no spaces, ';', quotes, braces or paths that could add directives).
+single_line() { [ "$(printf '%s' "$1" | wc -l)" -eq 0 ] || fail "$2 must be a single line"; }
+upstream=${REALTIME_UPSTREAM-http://realtime:4001}
+single_line "$upstream" REALTIME_UPSTREAM
+printf '%s' "$upstream" | grep -Eq '^https?://[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?(:[0-9]{1,5})?$' ||
+  fail "REALTIME_UPSTREAM must be http(s)://host[:port] (no path, query or other characters)"
+resolver=${NGINX_RESOLVER-127.0.0.11}
+single_line "$resolver" NGINX_RESOLVER
+printf '%s' "$resolver" | grep -Eq '^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?$' ||
+  fail "NGINX_RESOLVER must be a single IPv4 address or hostname (127.0.0.11 is Docker's DNS: Docker only)"
