@@ -1,8 +1,18 @@
 import { describe, expect, it, vi } from 'vitest';
-import { InMemoryIdempotencyStore, InMemoryUsageTracker } from '@meetops/ai-core';
-import type { AiIdempotencyRepository, AiUsageCounterRepository } from '@meetops/database';
+import {
+  InMemoryIdempotencyStore,
+  InMemoryOrgConfigStore,
+  InMemoryUsageTracker,
+} from '@meetops/ai-core';
+import type {
+  AiIdempotencyRepository,
+  AiOrgConfigRecord,
+  AiOrgConfigRepository,
+  AiUsageCounterRepository,
+} from '@meetops/database';
 import {
   PostgresIdempotencyStore,
+  PostgresOrgConfigStore,
   PostgresUsageTracker,
   createAiStores,
 } from '../src/ai/durable-stores.js';
@@ -15,12 +25,14 @@ describe('createAiStores (config/DI)', () => {
     expect(s.mode).toBe('durable');
     expect(s.usage).toBeInstanceOf(PostgresUsageTracker);
     expect(s.idempotency).toBeInstanceOf(PostgresIdempotencyStore);
+    expect(s.orgConfig).toBeInstanceOf(PostgresOrgConfigStore);
   });
 
   it('memory only when asked explicitly, and never in production', () => {
     const s = createAiStores({ AI_STORES: 'memory', NODE_ENV: 'test' });
     expect(s.usage).toBeInstanceOf(InMemoryUsageTracker);
     expect(s.idempotency).toBeInstanceOf(InMemoryIdempotencyStore);
+    expect(s.orgConfig).toBeInstanceOf(InMemoryOrgConfigStore);
     expect(() => createAiStores({ AI_STORES: 'memory', NODE_ENV: 'production' })).toThrow(
       /not allowed/,
     );
@@ -139,5 +151,78 @@ describe('PostgresIdempotencyStore', () => {
     expect(purgeExpired).toHaveBeenCalledWith(ORG, 'k');
     await s.release(ORG, 'k');
     expect(release).toHaveBeenCalledWith(ORG, 'k');
+  });
+});
+
+describe('PostgresOrgConfigStore', () => {
+  const fakeRepo = (initial?: AiOrgConfigRecord) => {
+    let row = initial;
+    const upsert = vi.fn(
+      async (_org: string, input: { config: object; monthlyBudgetUsd?: string | number }) => {
+        row = {
+          config: JSON.parse(JSON.stringify(input.config)),
+          monthlyBudgetUsd:
+            input.monthlyBudgetUsd === undefined ? undefined : String(input.monthlyBudgetUsd),
+        };
+      },
+    );
+    const get = vi.fn(async () => row);
+    return { repo: { get, upsert } as unknown as AiOrgConfigRepository, get, upsert };
+  };
+
+  it('returns undefined when no row exists', async () => {
+    const { repo, get } = fakeRepo();
+    expect(await new PostgresOrgConfigStore(repo).get(ORG)).toBeUndefined();
+    expect(get).toHaveBeenCalledWith(ORG);
+  });
+
+  it('round-trips a config; budget goes to its own column, org id is the row key', async () => {
+    const { repo, upsert } = fakeRepo();
+    const store = new PostgresOrgConfigStore(repo);
+    const cfg = {
+      organizationId: ORG,
+      defaults: { llm: { provider: 'gemini', model: 'gemini-2.5-flash' } },
+      features: {},
+      approvedProviders: ['gemini'],
+      allowPaidFallback: false,
+      monthlyBudgetUsd: 25,
+      credentialRefs: { gemini: `secret:org/${ORG}/gemini` },
+    };
+    await store.put(cfg);
+    const [org, input] = upsert.mock.calls[0]!;
+    expect(org).toBe(ORG);
+    expect(input.monthlyBudgetUsd).toBe('25.00');
+    expect(input.config).not.toHaveProperty('organizationId');
+    expect(input.config).not.toHaveProperty('monthlyBudgetUsd');
+    expect(await store.get(ORG)).toEqual(cfg);
+  });
+
+  it('uses the queried organization id, never one stored in the JSON', async () => {
+    const other = '00000000-0000-4000-8000-0000000000b2';
+    const { repo } = fakeRepo({ config: { organizationId: other }, monthlyBudgetUsd: undefined });
+    const got = await new PostgresOrgConfigStore(repo).get(ORG);
+    expect(got?.organizationId).toBe(ORG);
+    expect(got?.monthlyBudgetUsd).toBeUndefined();
+  });
+
+  it('a malformed stored row fails closed without echoing values', async () => {
+    const { repo } = fakeRepo({
+      config: { credentialRefs: { gemini: 'sk-live-should-not-leak' } },
+      monthlyBudgetUsd: undefined,
+    });
+    const err = await new PostgresOrgConfigStore(repo).get(ORG).catch((e: Error) => e);
+    expect(err).toBeInstanceOf(Error);
+    expect((err as Error).message).toMatch(/invalid/);
+    expect((err as Error).message).not.toContain('sk-live');
+  });
+
+  it('repository errors propagate (no fallback)', async () => {
+    const repo = {
+      get: vi.fn(async () => {
+        throw new Error('db down');
+      }),
+      upsert: vi.fn(),
+    } as unknown as AiOrgConfigRepository;
+    await expect(new PostgresOrgConfigStore(repo).get(ORG)).rejects.toThrow('db down');
   });
 });
