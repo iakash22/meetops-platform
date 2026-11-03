@@ -39,7 +39,8 @@ export const fakeRedis = (): RedisLike & {
       const e = alive(k);
       return e ? (e.exp === Infinity ? -1 : e.exp - t) : -2;
     },
-    set: async (k, v, _m, ms) => {
+    set: async (k: string, v: string, _m: 'PX', ms: number, nx?: 'NX') => {
+      if (nx === 'NX' && alive(k)) return null;
       store.set(k, { v, exp: t + ms });
       return 'OK';
     },

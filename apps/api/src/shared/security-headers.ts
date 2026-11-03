@@ -11,12 +11,13 @@ import type { FastifyInstance, FastifyReply } from 'fastify';
  * - `Cache-Control: no-store` on credentialed requests (cookie or Authorization) and every `/auth` response, so
  *   tokens, sessions and tenant data never land in shared or browser caches. An explicit route value is kept.
  * - `Strict-Transport-Security` only when enabled (production): plain-http dev and tests are unaffected.
- * - Swagger UI (`/docs`, dev/test only) needs scripts and styles, so it gets no CSP.
+ * - Swagger UI (`/docs`; dev/test, or production only with API_DOCS_ENABLED=true) gets DOCS_CSP: same-origin scripts,
+ *   styles, images and fetches only. No inline script, no eval, no framing, no third-party origin.
  */
 export interface SecurityHeaderOptions {
   /** Send HSTS (production, behind TLS). */
   hsts: boolean;
-  /** R4: Swagger UI is mounted (NODE_ENV development|test only); only then does `/docs` skip the CSP. */
+  /** R4: Swagger UI is mounted (see docsEnabledFromEnv); only then does `/docs` get DOCS_CSP instead of API_CSP. */
   docs?: boolean;
 }
 
@@ -34,6 +35,25 @@ declare module 'fastify' {
 
 export const API_CSP =
   "default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'";
+/**
+ * Strict CSP for the Swagger UI pages. @fastify/swagger-ui 6 serves only external same-origin scripts and styles
+ * (no inline <script>), so 'self' is enough. `data:` images are its inline SVG icons; `connect-src 'self'` is
+ * "Try it out" plus the /docs/json spec.
+ */
+export const DOCS_CSP =
+  "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; " +
+  "connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'; object-src 'none'";
+
+/**
+ * Whether Swagger UI (/docs, /docs/json) is mounted. On by default only for NODE_ENV exactly development|test.
+ * Any other NODE_ENV (production, staging, unset) needs an explicit API_DOCS_ENABLED=true; any other value is off
+ * (fails closed).
+ */
+export function docsEnabledFromEnv(nodeEnv: string | undefined, raw: string | undefined): boolean {
+  if (nodeEnv === 'development' || nodeEnv === 'test') return true;
+  return raw?.trim().toLowerCase() === 'true';
+}
+
 /** R2: two years; `preload` only once the owner registers the domain. */
 export const HSTS_VALUE = 'max-age=63072000; includeSubDomains';
 /** R1: the JSON API never needs a powerful feature. */
@@ -76,7 +96,7 @@ export function registerSecurityHeaders(
     const isDocs = options.docs === true && (path === '/docs' || path.startsWith('/docs/'));
     for (const [name, value] of Object.entries(API_BASELINE_HEADERS))
       setIfAbsent(reply, name, value);
-    if (!isDocs) setIfAbsent(reply, 'content-security-policy', API_CSP);
+    setIfAbsent(reply, 'content-security-policy', isDocs ? DOCS_CSP : API_CSP);
     const credentialed =
       request.headers.authorization !== undefined || request.headers.cookie !== undefined;
     // R3: credentialed, every /auth path and every non-2xx response.

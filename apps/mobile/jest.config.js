@@ -1,4 +1,10 @@
-/* global module */
+/* global module, require */
+// uuid 11 (root override, GHSA fix) exposes a browser ESM build that jest-expo's resolver picks; pin Jest to its CJS
+// entry, resolved from the copy xcode (expo/config-plugins) uses.
+const uuidCjs = require.resolve('uuid', {
+  paths: [require.resolve('xcode', { paths: [require.resolve('expo/config-plugins')] })],
+});
+
 /** @type {import('jest').Config} */
 module.exports = {
   preset: 'jest-expo',
@@ -11,6 +17,7 @@ module.exports = {
   // Point tests at its built entry (turbo runs `^build` before `test`) so they can read the runtime reason lists.
   moduleNameMapper: {
     '^@meetops/contracts$': '<rootDir>/../../packages/contracts/dist/index.js',
+    '^uuid$': uuidCjs,
   },
   transformIgnorePatterns: [
     'node_modules/(?!(?:.pnpm/)?((jest-)?react-native|@react-native(-community)?|expo(nent)?|@expo(nent)?/.*|@expo-google-fonts/.*|react-navigation|@react-navigation(/.*|\\+.*)|@sentry/react-native|native-base|react-native-svg|decode-uri-component))',

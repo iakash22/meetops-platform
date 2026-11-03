@@ -4,12 +4,20 @@ import type {
   CalendarConnectionsRepository,
   CalendarConnectionUpsert,
   CalendarSecrets,
+  CalendarTokenWriteOptions,
 } from './ports.js';
 
 /** Dev/test only. Holds secrets in process memory (never persisted, never returned by list). */
 export class InMemoryCalendarConnections implements CalendarConnectionsRepository {
   readonly rows = new Map<string, CalendarConnection>();
   readonly secrets = new Map<string, CalendarSecrets>();
+  /** Token-write generation per connection (survives revoke, like the column). */
+  private readonly gens = new Map<string, number>();
+  private bump(id: string) {
+    const g = (this.gens.get(id) ?? 0) + 1;
+    this.gens.set(id, g);
+    return g;
+  }
   constructor(private readonly now: () => Date = () => new Date()) {}
 
   private mine(organizationId: string, userId: string, id: string) {
@@ -50,6 +58,7 @@ export class InMemoryCalendarConnections implements CalendarConnectionsRepositor
       accessToken: i.accessToken,
       refreshToken: i.refreshToken,
       accessTokenExpiresAt: i.accessTokenExpiresAt,
+      tokenGeneration: existing ? this.bump(row.id) : (this.gens.get(row.id) ?? 0),
     });
     return row;
   }
@@ -62,11 +71,22 @@ export class InMemoryCalendarConnections implements CalendarConnectionsRepositor
     organizationId: string,
     id: string,
     t: { accessToken: string; refreshToken: string; accessTokenExpiresAt: Date },
+    opts: CalendarTokenWriteOptions = {},
   ) {
     const r = this.rows.get(id);
-    if (!r || r.organizationId !== organizationId || r.status === 'revoked') return;
-    this.secrets.set(id, { ...t });
+    if (!r || r.organizationId !== organizationId || r.status === 'revoked') return false;
+    const prev = this.secrets.get(id);
+    const gen = this.gens.get(id) ?? 0;
+    if (opts.generation !== undefined && opts.generation !== gen) return false;
+    this.secrets.set(id, {
+      ...t,
+      // Google omits refresh_token on refresh: keep the stored one.
+      refreshToken: t.refreshToken || (prev?.refreshToken ?? null),
+      tokenGeneration: this.bump(id),
+    });
+    // A successful refresh reactivates an error connection (that is how it recovers).
     this.rows.set(id, { ...r, status: 'active', updatedAt: this.now().toISOString() });
+    return true;
   }
   async markError(organizationId: string, id: string) {
     const r = this.rows.get(id);
@@ -77,6 +97,7 @@ export class InMemoryCalendarConnections implements CalendarConnectionsRepositor
     const r = this.mine(organizationId, userId, id);
     if (!r || r.status === 'revoked') return false;
     this.secrets.delete(id);
+    this.bump(id);
     this.rows.set(id, { ...r, status: 'revoked', updatedAt: this.now().toISOString() });
     return true;
   }

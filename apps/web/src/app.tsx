@@ -1,13 +1,19 @@
 import { QueryClientProvider, type QueryClient } from '@tanstack/react-query';
 import { RouterProvider, type RouterHistory } from '@tanstack/react-router';
-import { useEffect, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useState } from 'react';
 import { Toaster } from '@/components/ui/toast';
 import { ApiProvider } from '@/lib/api/context';
 import type { ApiClient } from '@/lib/api/client';
 import { queryKeys } from '@/lib/api/queries';
+import { isRealtimeEnabled } from '@/lib/realtime/flag';
 import { safeRedirect } from '@/lib/safe-redirect';
 import { createAppRouter } from '@/routes/router';
 import { useOrgStore } from '@/stores/org-store';
+
+// Loaded on demand so the realtime client is not in the initial bundle (and never fetched with the flag off).
+const RealtimeBridge = lazy(() =>
+  import('@/lib/realtime/bridge').then((m) => ({ default: m.RealtimeBridge })),
+);
 
 export function App({
   queryClient,
@@ -34,9 +40,24 @@ export function App({
     [api, queryClient, router],
   );
 
+  const checkSession = useCallback(
+    () =>
+      api.auth.session().then(
+        () => true,
+        () => false,
+      ),
+    [api],
+  );
+  const realtimeOn = isRealtimeEnabled();
+
   return (
     <QueryClientProvider client={queryClient}>
       <ApiProvider client={api}>
+        {realtimeOn && (
+          <Suspense fallback={null}>
+            <RealtimeBridge checkSession={checkSession} />
+          </Suspense>
+        )}
         <RouterProvider router={router} />
         <Toaster />
       </ApiProvider>

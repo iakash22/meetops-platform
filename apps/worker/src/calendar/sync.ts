@@ -2,7 +2,8 @@ import type { CalendarSyncEventInput, CalendarSyncSecrets } from '@meetops/datab
 
 /**
  * Phase 7 calendar background sync (modelled on integrations/token-refresh.ts). Off by default
- * (CALENDAR_SYNC_ENABLED=true opts in). Each sweep pulls a rolling window of events for every due, active calendar
+ * (CALENDAR_SYNC_ENABLED=true opts in;
+ * CALENDAR_SYNC_DELTA_ENABLED=true additionally uses provider delta sync, Outlook today). Each sweep pulls a rolling window of events for every due, active calendar
  * connection, upserts them, soft-cancels events that vanished from a complete provider list, and advances the
  * per-connection cursor. Permanent auth failures mark the connection `error` (the UI asks for a reconnect);
  * transient failures (429, 5xx, network) back off exponentially per connection. Only identifiers, counts and error
@@ -29,7 +30,10 @@ export interface CalendarSyncSweepRepository {
     organizationId: string,
     id: string,
     t: { accessToken: string; refreshToken: string; accessTokenExpiresAt: Date },
-  ): Promise<void>;
+    /** With `lease`, writes only while the claim is still held (and the connection is active). */
+    /** `generation`: compare-and-set on the token generation readSecrets returned. */
+    opts?: { lease?: Date; generation?: number; refreshEncVersion?: 1 | 2 | null },
+  ): Promise<boolean | void>;
   /** With `lease`, writes only while the claim is still held. */
   markError(organizationId: string, id: string, opts?: { lease?: Date }): Promise<unknown>;
   recordFailure(
@@ -48,6 +52,9 @@ export interface CalendarSyncSweepRepository {
       now: Date;
       nextSyncInMs: number;
       lease: Date;
+      removedIds?: string[];
+      /** undefined = keep the stored cursor, null = clear it, string = store it for [from, to). */
+      cursor?: string | null;
     },
   ): Promise<{ upserted: number; cancelled: number; applied: boolean }>;
 }
@@ -63,6 +70,18 @@ export interface CalendarSyncProvider {
     timeMax: string;
     maxResults?: number;
   }): Promise<CalendarSyncEventInput[]>;
+  /**
+   * Optional incremental sync (Outlook calendarView delta). Without `cursor` it opens a new round for
+   * [timeMin, timeMax) and returns the complete window plus a cursor; with one it returns only the changes since
+   * (upserts + removed ids). An expired cursor throws code `sync_state_expired` (the sweep then starts a new round).
+   * Providers without it (Google today) use the windowed listEvents.
+   */
+  listEventsDelta?(input: {
+    accessToken: string;
+    timeMin: string;
+    timeMax: string;
+    cursor?: string;
+  }): Promise<{ events: CalendarSyncEventInput[]; removedIds: string[]; cursor: string }>;
 }
 
 export interface CalendarSyncLog {
@@ -82,6 +101,12 @@ export interface CalendarSyncConfig {
   limit: number;
   /** Provider page cap; a list this long is treated as truncated (no cancellations). */
   maxEvents: number;
+  /** Max connections of one organization per sweep (per-org fairness: one big tenant cannot starve the rest). */
+  perOrgLimit: number;
+  /** Use provider delta sync when available (CALENDAR_SYNC_DELTA_ENABLED, default off). */
+  deltaEnabled: boolean;
+  /** A delta round is restarted once its window's end lags the rolling window's end by more than this. */
+  cursorMaxLagMs: number;
 }
 
 export interface CalendarSyncDeps {
@@ -112,6 +137,47 @@ export const CALENDAR_SYNC_DEFAULTS: CalendarSyncConfig = {
   maxBackoffMs: 6 * 3_600_000,
   limit: 50,
   maxEvents: 250,
+  perOrgLimit: 10,
+  deltaEnabled: false,
+  cursorMaxLagMs: 1 * DAY,
+};
+
+/** Fetch headroom so round-robin selection can reach orgs queued behind one large tenant. */
+const DUE_FETCH_FACTOR = 4;
+
+/**
+ * Per-org fair pick: round-robin across organizations in due order (first-seen org first), at most `perOrg` each,
+ * `limit` total. Connections left out stay due (they were never claimed) and are picked on a later tick.
+ */
+export function selectFairly<T extends { organizationId: string }>(
+  due: T[],
+  limit: number,
+  perOrg: number,
+): T[] {
+  const groups = new Map<string, T[]>();
+  for (const d of due) {
+    const g = groups.get(d.organizationId);
+    if (g) g.push(d);
+    else groups.set(d.organizationId, [d]);
+  }
+  const out: T[] = [];
+  for (let round = 0; round < perOrg && out.length < limit; round++) {
+    let any = false;
+    for (const g of groups.values()) {
+      const d = g[round];
+      if (!d) continue;
+      any = true;
+      out.push(d);
+      if (out.length >= limit) break;
+    }
+    if (!any) break;
+  }
+  return out;
+}
+
+const isCursorExpired = (err: unknown) => {
+  const code = (err as { code?: unknown } | null)?.code;
+  return code === 'sync_state_expired' || code === 'invalid_delta_link';
 };
 /** How long a claim holds a connection before another sweep may take it (crash recovery). */
 export const CALENDAR_SYNC_LEASE_MS = 10 * 60_000;
@@ -163,11 +229,27 @@ function errInfo(err: unknown) {
   };
 }
 
+/**
+ * maxEvents applies to the delta path too. A delta page longer than the cap is truncated to it, never treated as
+ * complete (no cancellations), and its cursor is dropped (null) so the skipped changes are not lost behind an
+ * advanced cursor: the next sweep opens a new round.
+ */
+function capDelta<
+  P extends { events: CalendarSyncEventInput[]; complete: boolean; cursor?: string | null },
+>(plan: P, maxEvents: number): P {
+  if (plan.events.length <= maxEvents) return plan;
+  return { ...plan, events: plan.events.slice(0, maxEvents), complete: false, cursor: null };
+}
+
 export async function runCalendarSyncSweep(deps: CalendarSyncDeps): Promise<CalendarSyncResult> {
   const cfg: CalendarSyncConfig = { ...CALENDAR_SYNC_DEFAULTS, ...deps.config };
   const clock = deps.now ?? Date.now;
   const span = Math.min(cfg.pastMs + cfg.futureMs, CALENDAR_SYNC_MAX_WINDOW_MS);
-  const due = await deps.repo.listDueForSync(new Date(clock()), cfg.limit);
+  const fetched = await deps.repo.listDueForSync(
+    new Date(clock()),
+    Math.min(cfg.limit * DUE_FETCH_FACTOR, 2000),
+  );
+  const due = selectFairly(fetched, cfg.limit, Math.max(1, cfg.perOrgLimit));
   const result: CalendarSyncResult = {
     synced: 0,
     failed: 0,
@@ -208,25 +290,120 @@ export async function runCalendarSyncSweep(deps: CalendarSyncDeps): Promise<Cale
         !s.accessTokenExpiresAt || s.accessTokenExpiresAt.getTime() - nowMs <= REFRESH_SKEW_MS;
       if (expiring && s.refreshToken) {
         const t = await provider.refresh(s.refreshToken);
-        await deps.repo.updateTokens(d.organizationId, d.id, {
+        const tokens = {
           accessToken: t.accessToken,
           refreshToken: t.refreshToken,
           accessTokenExpiresAt: new Date(t.expiresAt),
+        };
+        const stored = await deps.repo.updateTokens(d.organizationId, d.id, tokens, {
+          lease,
+          generation: s.tokenGeneration,
+          refreshEncVersion: s.refreshEncVersion,
         });
-        accessToken = t.accessToken;
+        if (stored === false) {
+          // #394: compare-and-set miss. Outlook rotates refresh tokens, so never drop ours silently: re-read,
+          // keep a newer grant another writer stored, otherwise retry once against the current generation.
+          const again = await deps.repo.readSecrets(d.organizationId, d.id);
+          if (!again) {
+            deps.log.warn(
+              { ...ids },
+              'calendar token CAS miss: connection no longer active; skipping',
+            );
+            result.skipped++;
+            continue;
+          }
+          if (again.refreshToken !== s.refreshToken) {
+            deps.log.info(
+              { ...ids, generation: again.tokenGeneration },
+              'calendar token CAS miss: a newer grant is already stored; using it',
+            );
+            accessToken = again.accessToken;
+          } else {
+            const retried = await deps.repo.updateTokens(d.organizationId, d.id, tokens, {
+              lease,
+              generation: again.tokenGeneration,
+              refreshEncVersion: again.refreshEncVersion,
+            });
+            if (retried === false) {
+              deps.log.warn(
+                { ...ids, generation: again.tokenGeneration },
+                'calendar token CAS miss persisted after retry; skipping this sync',
+              );
+              result.skipped++;
+              continue;
+            }
+            deps.log.info({ ...ids }, 'calendar token CAS miss reconciled on retry');
+            accessToken = t.accessToken;
+          }
+        } else accessToken = t.accessToken;
       }
-      const events = await provider.listEvents({
-        accessToken,
-        timeMin: from.toISOString(),
-        timeMax: to.toISOString(),
-        maxResults: cfg.maxEvents,
-      });
+      const listDelta = cfg.deltaEnabled ? provider.listEventsDelta?.bind(provider) : undefined;
+      let plan: {
+        from: Date;
+        to: Date;
+        events: CalendarSyncEventInput[];
+        complete: boolean;
+        removedIds?: string[];
+        cursor?: string | null;
+      };
+      if (listDelta) {
+        const c = s.syncCursor;
+        const fresh = async () => {
+          const r = await listDelta({
+            accessToken,
+            timeMin: from.toISOString(),
+            timeMax: to.toISOString(),
+          });
+          // A new round returns the whole window, so vanished events are cancelled like a complete list.
+          return capDelta(
+            { from, to, events: r.events, complete: true, cursor: r.cursor },
+            cfg.maxEvents,
+          );
+        };
+        if (c && to.getTime() - c.to.getTime() <= cfg.cursorMaxLagMs) {
+          try {
+            const r = await listDelta({
+              accessToken,
+              timeMin: c.from.toISOString(),
+              timeMax: c.to.toISOString(),
+              cursor: c.value,
+            });
+            plan = capDelta(
+              {
+                from: c.from,
+                to: c.to,
+                events: r.events,
+                complete: false,
+                removedIds: r.removedIds,
+                cursor: r.cursor,
+              },
+              cfg.maxEvents,
+            );
+          } catch (err) {
+            if (!isCursorExpired(err)) throw err;
+            deps.log.info({ ...ids }, 'calendar sync cursor expired; starting a new round');
+            plan = await fresh();
+          }
+        } else plan = await fresh();
+      } else {
+        const events = await provider.listEvents({
+          accessToken,
+          timeMin: from.toISOString(),
+          timeMax: to.toISOString(),
+          maxResults: cfg.maxEvents,
+        });
+        // Windowed providers never keep a cursor (clears one left from a delta-enabled run).
+        plan = {
+          from,
+          to,
+          events,
+          complete: events.length < cfg.maxEvents,
+          ...(s.syncCursor ? { cursor: null } : {}),
+        };
+      }
       const r = await deps.repo.applySync(d.organizationId, {
         connectionId: d.id,
-        from,
-        to,
-        events,
-        complete: events.length < cfg.maxEvents,
+        ...plan,
         now,
         nextSyncInMs: calendarSyncNextMs(cfg, deps.random),
         lease,
@@ -333,6 +510,14 @@ export function loadCalendarSyncEnv(env: NodeJS.ProcessEnv = process.env): Calen
       maxBackoffMs: CALENDAR_SYNC_DEFAULTS.maxBackoffMs,
       limit: intEnv(env.CALENDAR_SYNC_BATCH, CALENDAR_SYNC_DEFAULTS.limit, 1, 500),
       maxEvents: CALENDAR_SYNC_DEFAULTS.maxEvents,
+      perOrgLimit: intEnv(
+        env.CALENDAR_SYNC_PER_ORG_LIMIT,
+        CALENDAR_SYNC_DEFAULTS.perOrgLimit,
+        1,
+        500,
+      ),
+      deltaEnabled: env.CALENDAR_SYNC_DELTA_ENABLED?.trim().toLowerCase() === 'true',
+      cursorMaxLagMs: CALENDAR_SYNC_DEFAULTS.cursorMaxLagMs,
     },
   };
 }

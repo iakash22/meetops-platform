@@ -12,6 +12,7 @@ const user = randomUUID();
 /** Fake interactive transaction: records the calls made inside it and rolls back (throws) like Prisma would. */
 function fakeDb(opts: { failLinkDelete?: boolean } = {}) {
   const calls: string[] = [];
+  const updates: { where?: unknown; data: Record<string, unknown> }[] = [];
   let committed = false;
   const tx = {
     $executeRaw: async () => 1,
@@ -20,7 +21,8 @@ function fakeDb(opts: { failLinkDelete?: boolean } = {}) {
       return [];
     },
     calendarConnection: {
-      updateMany: async () => {
+      updateMany: async (args: { where?: unknown; data: Record<string, unknown> }) => {
+        updates.push(args);
         calls.push('revokeConnection');
         return { count: 1 };
       },
@@ -40,7 +42,7 @@ function fakeDb(opts: { failLinkDelete?: boolean } = {}) {
       return r;
     },
   } as unknown as DatabaseClient;
-  return { db, calls, committed: () => committed };
+  return { db, calls, updates, committed: () => committed };
 }
 
 function links(over: Partial<CalendarEventLinksRepository> = {}): CalendarEventLinksRepository {
@@ -65,6 +67,36 @@ describe('calendar disconnect: event -> meeting link cleanup', () => {
       `deleteLinks:${JSON.stringify({ where: { organizationId: org, connectionId: id } })}`,
     ]);
     expect(f.committed()).toBe(true);
+  });
+
+  it('#394: API token refresh writes active or error rows (recovering error to active), never revoked', async () => {
+    const f = fakeDb();
+    const id = randomUUID();
+    const cipher = { encrypt: async (v: string) => `v1.k1.n.${v.length}`, decrypt: async () => '' };
+    await new PrismaCalendarConnections(f.db, cipher).updateTokens(org, id, {
+      accessToken: 'a',
+      refreshToken: 'r',
+      accessTokenExpiresAt: new Date(),
+    });
+    expect(f.updates[0]!.where).toEqual({
+      id,
+      organizationId: org,
+      status: { in: ['active', 'error'] },
+    });
+    expect(f.updates[0]!.data).toMatchObject({ status: 'active' });
+  });
+
+  it('Prisma revoke wipes the sync cursor and its window like a reconnect does', async () => {
+    const f = fakeDb();
+    expect(await new PrismaCalendarConnections(f.db).revoke(org, user, randomUUID())).toBe(true);
+    expect(f.updates[0]!.data).toMatchObject({
+      status: 'revoked',
+      accessTokenEnc: null,
+      refreshTokenEnc: null,
+      syncCursorEnc: null,
+      syncCursorFrom: null,
+      syncCursorTo: null,
+    });
   });
 
   it('a failed link delete rolls the revoke back instead of being swallowed', async () => {

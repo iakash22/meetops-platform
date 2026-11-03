@@ -45,6 +45,7 @@ describe('config', () => {
     expect(
       loadRealtimeConfig({
         REDIS_URL: 'redis://x',
+        NODE_ENV: 'development',
         REALTIME_CORS_ORIGINS: 'http://localhost:3000, https://b.example',
       }),
     ).toMatchObject({
@@ -76,8 +77,11 @@ describe('config', () => {
         .sessionCookieName,
     ).toBe('meetops_sid');
     expect(
-      loadRealtimeConfig({ REALTIME_CORS_ORIGINS: ORIGIN, NODE_ENV: 'production' })
-        .sessionCookieName,
+      loadRealtimeConfig({
+        REALTIME_CORS_ORIGINS: ORIGIN,
+        NODE_ENV: 'production',
+        REDIS_URL: 'rediss://x',
+      }).sessionCookieName,
     ).toBe('__Host-meetops_sid');
   });
 });

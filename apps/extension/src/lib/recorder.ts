@@ -3,8 +3,8 @@ import { drainQueue } from './drain.js';
 import type { StorageEvent } from './messages.js';
 import type { AbortReason, ConsentAttestationInput } from '@meetops/contracts/types';
 import {
-  LOCAL_CHUNK_BYTES,
-  MAX_CHUNK_BYTES,
+  LOCAL_RECORDING_CHUNK_BYTES,
+  UPLOAD_CHUNK_MAX_BYTES,
   MAX_DURATION_MS,
   MAX_RECORDING_CHUNKS,
 } from './contract-limits.js';
@@ -72,7 +72,7 @@ export async function startRecording(opts: {
   consent: ConsentAttestationInput;
   now?: () => number;
   timeslice?: number;
-  /** Defaults to LOCAL_CHUNK_BYTES (8 MiB); never above contracts MAX_CHUNK_BYTES (64 MiB). */
+  /** Defaults to LOCAL_RECORDING_CHUNK_BYTES (8 MiB); never above contracts UPLOAD_CHUNK_MAX_BYTES (64 MiB). */
   maxChunkBytes?: number;
   /** Defaults to contracts MAX_DURATION_MS (4 h). The recorder stops itself once this much time has elapsed. */
   maxDurationMs?: number;
@@ -126,7 +126,7 @@ export async function startRecording(opts: {
       // Enforce the per-chunk upload limit by splitting oversized timeslices into several seqs.
       for (const part of splitForUpload(
         await data.arrayBuffer(),
-        Math.min(opts.maxChunkBytes ?? LOCAL_CHUNK_BYTES, MAX_CHUNK_BYTES),
+        Math.min(opts.maxChunkBytes ?? LOCAL_RECORDING_CHUNK_BYTES, UPLOAD_CHUNK_MAX_BYTES),
       )) {
         if (discarded) return;
         if (seq >= MAX_RECORDING_CHUNKS)
