@@ -25,16 +25,18 @@ and call only safe outbound endpoints.
    model vars) < organization default < feature override < per-request override. The highest layer naming a provider
    wins. A request override needs an actor in the same organization with the `override AIRoute` ability, and it is
    audited. `setOrgConfig` needs `manage ProviderConfig` in the same organization and is audited.
-3. **Fallback** (`src/executor.ts`): candidates are the primary, then the route's explicit `fallbacks` (max 5), then
-   enabled local providers with the capability, by `fallbackPriority`. A candidate is skipped if it is unapproved while
+3. **Fallback** (`src/executor.ts`): candidates are the primary, then the route's explicit `fallbacks` (max 5).
+   **There is no implicit fallback**: an enabled local provider (Ollama, faster-whisper) is never appended
+   automatically; it runs only when it is the resolved primary or an explicitly configured fallback. A candidate is skipped if it is unapproved while
    `AI_REQUIRE_PROVIDER_APPROVAL=true` (default), or if it would go free → paid, unless `AI_ALLOW_PAID_FALLBACK=true`,
    the organization allows it, and it is an explicit fallback. Quota and `monthlyBudgetUsd` are checked before each
    call. The outcome is `succeeded`, `waiting` (all quota/rate-limited), `retryable` or `failed`.
    **Speech-to-text has no automatic fallback.** A transcription job runs on exactly one STT provider: the resolved
    primary. A provider failure is retried on the same provider (queue backoff), then the job is dead-lettered and the
    meeting is marked delayed; it never moves to another STT provider. `faster-whisper` (self-hosted) is used only when an
-   organization (or a self-hosted deployment) explicitly chooses it as its primary STT provider. The implicit
-   local-provider fallback above applies to LLM routes only.
+   organization (or a self-hosted deployment) explicitly chooses it as its primary STT provider. The dead-letter queue
+   (DLQ) and the "transcription delayed" status land with #414; until then a failed job ends `failed`/`retryable`
+   without switching providers.
 4. **Credential refs** (`src/credential-ref.ts`, `src/credentials.ts`):
    - `env:NAME` (`^[A-Z0-9_]+$`) is a platform key, resolved only if the organization's server-side plan grants
      `platformKeys`.
