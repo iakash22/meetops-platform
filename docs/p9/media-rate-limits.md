@@ -57,10 +57,12 @@ nothing else (no session, upload row or presigned URL is created).
 
 - **Why closed, not open.** These routes mint presigned PUT URLs and create storage-backed rows; failing open would
   turn a Redis outage (or an attacker who can cause one) into unmetered URL minting and storage writes, which is the
-  exact abuse this limit exists to stop. Auth routes already depend on Redis the same way.
-- **Why this does not lose recordings.** The extension and desktop clients keep chunks locally and retry 5xx with
-  backoff (the extension honours `Retry-After`), so a short Redis blip delays the upload drain; it does not drop data.
-  A long outage leaves chunks queued on the device until Redis is back (the extension's IndexedDB cap is 500 MiB).
+  exact abuse this limit exists to stop.
+- **Why this does not lose recordings.** Both clients keep chunks locally until the server accepts them. The
+  extension retries 5xx with backoff and honours `Retry-After`; the desktop upload queue keeps a failed upload
+  queued and retries it on the next drain (or a manual retry). A short Redis blip delays the drain; it does not
+  drop data. A long outage leaves chunks queued on the device until Redis is back (the extension's IndexedDB cap
+  is 500 MiB).
 - **Operator impact.** While Redis is down, new uploads and recording sessions cannot start and in-progress
   recordings stop uploading (they keep recording locally). Expect a spike of 503s on `/recording-sessions/*` and
   `/orgs/:org/uploads*`; alert on Redis availability, not on the 503s themselves. No manual cleanup is needed after
