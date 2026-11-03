@@ -9,7 +9,13 @@ import { toIsoTimestamp } from './upload.js';
  * Persistent IndexedDB queue of recorded chunks, shared by the offscreen document (writer)
  * and the background service worker (drain on restart). Chunks are stored as ArrayBuffers.
  */
-export type EvictionPolicy = 'evict-oldest' | 'refuse';
+/**
+ * 'evict-uploaded': when over the cap, delete chunks the server already confirmed (uploaded) to make room;
+ * pending (not yet uploaded) chunks are NEVER evicted, the new chunk is refused instead.
+ * 'refuse': never delete anything to make room.
+ * A pending chunk leaves the store only after the server confirms its upload, or when the user discards it.
+ */
+export type EvictionPolicy = 'evict-uploaded' | 'refuse';
 
 export interface ChunkStoreConfig {
   /** Max total bytes of stored chunk data. */
@@ -19,7 +25,7 @@ export interface ChunkStoreConfig {
 
 export const DEFAULT_STORE_CONFIG: ChunkStoreConfig = {
   maxBytes: 500 * 1024 * 1024,
-  policy: 'evict-oldest',
+  policy: 'evict-uploaded',
 };
 
 export interface StoredChunk {
@@ -205,8 +211,8 @@ export class ChunkStore {
   }
 
   /**
-   * Store a chunk, enforcing the size cap. With 'evict-oldest' the oldest chunks (across all
-   * sessions) are deleted until the new one fits; with 'refuse' the new chunk is rejected.
+   * Store a chunk, enforcing the size cap. With 'evict-uploaded' the oldest already-uploaded chunks are deleted
+   * until the new one fits (pending chunks never are); otherwise, or with 'refuse', the new chunk is rejected.
    * Single transaction, so concurrent writers cannot overshoot the cap.
    */
   async putChunk(
@@ -222,18 +228,10 @@ export class ChunkStore {
         Number(b.uploaded) - Number(a.uploaded) || a.createdAt - b.createdAt || a.seq - b.seq,
     );
     let total = existing.reduce((n, x) => n + x.size, 0);
-    // Held recordings (server refused, waiting for the user's Retry or Discard) are never evicted: their pending
-    // chunks are the only copy. If the cap can't be met without them, the new chunk is refused instead.
-    const sessionStore = tx.objectStore(SESSIONS);
-    const heldIds = new Set(
-      ((await req(sessionStore.getAll())) as StoredSession[])
-        .filter((s) => s.held && !s.completed)
-        .map((s) => s.sessionId),
-    );
-    // A recording never evicts its own earlier pending chunks either: that would silently cut its own audio.
-    const evictable = existing.filter(
-      (x) => x.uploaded || (!heldIds.has(x.sessionId) && x.sessionId !== c.sessionId),
-    );
+    // Only chunks the server already confirmed may be deleted to make room: a pending chunk is the only copy of
+    // that audio (held or not, this recording or another), so it is never evicted. If confirmed chunks cannot
+    // free enough space the new chunk is refused and the recorder surfaces a storage warning.
+    const evictable = existing.filter((x) => x.uploaded);
     const evictableBytes = evictable.reduce((n, x) => n + x.size, 0);
     let evictedCount = 0;
     let evictedBytes = 0;
@@ -264,12 +262,6 @@ export class ChunkStore {
         if (total + size <= this.config.maxBytes) break;
         if (gone.has(`${old.sessionId}\u0000${old.seq}`)) continue;
         evict(old);
-        // An unheld recording that lost a pending chunk can never be completed (the server needs seq 0..n-1 with
-        // no gaps; the drain aborts it). Evict the whole recording at once so its remaining chunks do not keep
-        // using the cap until the next drain, and later chunks of the new recording are not refused for them.
-        if (!old.uploaded) {
-          for (const sib of evictable) if (sib.sessionId === old.sessionId) evict(sib);
-        }
       }
     }
     const sessions = tx.objectStore(SESSIONS);
