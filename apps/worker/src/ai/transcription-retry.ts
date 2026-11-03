@@ -183,7 +183,12 @@ export async function handleTranscriptionFailure(
 }
 
 /**
- * Postgres status writer. Only moves a meeting that is still `processing` (never overwrites `completed`/`failed`),
+ * Postgres status writer. This is the ONLY code path that writes `transcription_delayed`.
+ * Deploy order: migration `20261103180000_meeting_status_transcription_delayed` ships in the same release as this
+ * code and `prisma migrate deploy` runs before the worker starts. If the value is missing anyway (migration not
+ * applied), Postgres rejects the update (invalid enum input); `handleTranscriptionFailure` catches it, logs
+ * `transcription delayed-status write failed`, and the DLQ entry and alert still happen.
+ * Only moves a meeting that is still `processing` (never overwrites `completed`/`failed`),
  * inside `withOrganizationContext` (forced RLS) and filtered on organizationId.
  */
 export function createPrismaTranscriptionDelayedStatus(
