@@ -8,6 +8,7 @@ import {
   deadLetterJobId,
   handleTranscriptionFailure,
   handleTranscriptionSuccess,
+  meetingHasDeadLetters,
   isRetryExhausted,
   transcriptionBackoffMs,
   transcriptionBackoffStrategy,
@@ -191,18 +192,80 @@ describe('dead-lettering', () => {
     expect(status.clearDelayed).not.toHaveBeenCalled();
   });
 
-  it('a successful attempt moves a delayed meeting back to processing; write errors are logged only', async () => {
+  const dead = (jobId: string, meetingId = MEET, organizationId = ORG) => ({
+    id: `dlq_${jobId}`,
+    data: {
+      organizationId,
+      meetingId,
+      recordingId: REC,
+      chunkIndex: 0,
+      jobId,
+      errorCode: 'provider_retryable',
+      attemptsMade: 4,
+      failedAt: '2026-11-03T12:00:00.000Z',
+    },
+  });
+
+  it('a success moves a delayed meeting back to processing when none of its chunks is dead-lettered', async () => {
     const { status, logger } = setup();
-    await handleTranscriptionSuccess(job(1), { status, logger });
+    // Other meetings' / orgs' entries and the succeeding job's own entry do not count.
+    const deadLetters = async () => [
+      dead('other', '99999999-9999-4999-8999-999999999999'),
+      dead('x', MEET, '88888888-8888-4888-8888-888888888888'),
+      dead('job-1'),
+    ];
+    await handleTranscriptionSuccess(job(1), { status, deadLetters, logger });
     expect(status.clearDelayed).toHaveBeenCalledWith(ORG, MEET, 'processing');
+  });
+
+  it('a success does NOT clear transcription_delayed while another chunk of the meeting is dead-lettered', async () => {
+    const { status, logger } = setup();
+    await handleTranscriptionSuccess(job(1), {
+      status,
+      deadLetters: async () => [dead('job-2')],
+      logger,
+    });
+    expect(status.clearDelayed).not.toHaveBeenCalled();
+  });
+
+  it('a success leaves the meeting delayed when the DLQ cannot be read or no lister is wired', async () => {
+    const { status, logger } = setup();
+    await handleTranscriptionSuccess(job(1), {
+      status,
+      deadLetters: async () => {
+        throw new Error('redis down');
+      },
+      logger,
+    });
+    await handleTranscriptionSuccess(job(1), { status, logger });
+    expect(status.clearDelayed).not.toHaveBeenCalled();
+    expect(logger.error).toHaveBeenCalledWith(
+      expect.objectContaining({ organizationId: ORG, meetingId: MEET }),
+      'transcription dead-letter lookup failed; meeting left delayed',
+    );
+  });
+
+  it('a clear-status write error is logged only', async () => {
+    const { status, logger } = setup();
     status.clearDelayed.mockRejectedValueOnce(new Error('db down'));
-    await expect(handleTranscriptionSuccess(job(1), { status, logger })).resolves.toBeUndefined();
+    await expect(
+      handleTranscriptionSuccess(job(1), { status, deadLetters: async () => [], logger }),
+    ).resolves.toBeUndefined();
     expect(logger.error).toHaveBeenCalledWith(
       expect.objectContaining({ organizationId: ORG, meetingId: MEET }),
       'transcription delayed-status clear failed',
     );
-    await handleTranscriptionSuccess(undefined, { status, logger });
-    expect(status.clearDelayed).toHaveBeenCalledTimes(2);
+    await handleTranscriptionSuccess(undefined, { status, deadLetters: async () => [], logger });
+    expect(status.clearDelayed).toHaveBeenCalledTimes(1);
+  });
+
+  it('meetingHasDeadLetters matches org + meeting and honours exclusions', () => {
+    const entries = [dead('a'), dead('b', '99999999-9999-4999-8999-999999999999')];
+    expect(meetingHasDeadLetters(entries, ORG, MEET)).toBe(true);
+    expect(meetingHasDeadLetters(entries, ORG, MEET, ['a'])).toBe(false);
+    expect(meetingHasDeadLetters(entries, '88888888-8888-4888-8888-888888888888', MEET)).toBe(
+      false,
+    );
   });
 
   it('uses a dedicated DLQ name', () => {
