@@ -3,7 +3,7 @@
 - Status: Proposed
 - Date: 2026-10-24
 - Owner: Architecture Agent (ARCH), with the AI and Security (SEC) Agents
-- Revised: 2026-11-03 (no automatic STT fallback, Deepgram disabled, pre-GA gaps, local origins). Acceptance is
+- Revised: 2026-11-04 (no STT fallback, implicit or explicit, Deepgram disabled, pre-GA gaps, local origins). Acceptance is
   Akash's decision.
 - Implementation: `packages/ai-core` on `integration/phase-1`
 - Related: [ADR-002](./ADR-002-provider-interfaces.md), [ADR-003](./ADR-003-contracts-ownership.md),
@@ -27,12 +27,15 @@ and call only safe outbound endpoints.
    audited. `setOrgConfig` needs `manage ProviderConfig` in the same organization and is audited.
 3. **Fallback** (`src/executor.ts`): candidates are the primary, then the route's explicit `fallbacks` (max 5).
    **There is no implicit fallback**: an enabled local provider (Ollama, faster-whisper) is never appended
-   automatically; it runs only when it is the resolved primary or an explicitly configured fallback. A candidate is skipped if it is unapproved while
+   automatically; it runs only when it is the resolved primary or an explicitly configured LLM fallback. A candidate is skipped if it is unapproved while
    `AI_REQUIRE_PROVIDER_APPROVAL=true` (default), or if it would go free → paid, unless `AI_ALLOW_PAID_FALLBACK=true`,
    the organization allows it, and it is an explicit fallback. Quota and `monthlyBudgetUsd` are checked before each
    call. The outcome is `succeeded`, `waiting` (all quota/rate-limited), `retryable` or `failed`.
-   **Speech-to-text has no automatic fallback.** A transcription job runs on exactly one STT provider: the resolved
-   primary. A provider failure is retried on the same provider (queue backoff), then the job is dead-lettered and the
+   **Speech-to-text has no fallback, implicit or explicit.** Each organization has a single STT provider, and a
+   transcription job runs only on the resolved primary. `setOrgConfig` rejects any STT fallback list (`defaults.stt` or
+   an STT feature) with `CONFIG_INVALID`. An STT fallback already present on a stored row is ignored at resolve time
+   and logged as a warning (organization, feature and count only; no secrets or credential refs); there is no
+   migration. A provider failure is retried on the same provider (queue backoff), then the job is dead-lettered and the
    meeting is marked delayed; it never moves to another STT provider. `faster-whisper` (self-hosted) is used only when an
    organization (or a self-hosted deployment) explicitly chooses it as its primary STT provider. The dead-letter queue
    (DLQ) and the "transcription delayed" status land with #414; until then a failed job ends `failed`/`retryable`
