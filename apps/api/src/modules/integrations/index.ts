@@ -26,6 +26,7 @@ import { isRelaxedEnv, MissingProductionDependencyError, type ModuleDeps } from 
 import { DirectoryAccess, type DirectoryCaller } from '../directory/access.js';
 import { directoryErrors, directoryWriteErrors } from '../directory/http/route-kit.js';
 import { ErrorBody } from '../auth/http/schemas.js';
+import { RateLimitedError } from '../auth/domain/errors.js';
 import { IntegrationNotFoundError, OAuthStateInvalidError } from './errors.js';
 import { InMemoryIntegrations } from './in-memory.repository.js';
 import { PrismaIntegrations } from './prisma.repository.js';
@@ -71,6 +72,24 @@ export type IntegrationsModuleDeps = ModuleDeps & {
   taskSyncEnabled?: boolean;
   taskSyncStore?: TaskSyncStore;
   taskSyncQueue?: TaskSyncQueue;
+  /** Overrides WEBHOOK_RATE_LIMITS (tests). */
+  webhookRateLimits?: WebhookRateLimits;
+};
+
+export type WebhookRateLimits = {
+  /** Per client IP, across all webhook routes. */
+  perIp: { limit: number; windowMs: number };
+  /** Per webhook target (provider + integration, or the App-wide GitHub route). */
+  perTarget: { limit: number; windowMs: number };
+};
+
+/**
+ * Unauthenticated webhook routes are checked before the HMAC is computed, so a flood is rejected cheaply (429 +
+ * Retry-After). Limits are generous: providers retry on 429, and GitHub/Jira deliver from shared egress IPs.
+ */
+export const WEBHOOK_RATE_LIMITS: WebhookRateLimits = {
+  perIp: { limit: 600, windowMs: 60_000 },
+  perTarget: { limit: 300, windowMs: 60_000 },
 };
 
 /** Store + queue for the async sync route, or undefined when TASK_SYNC_ENABLED is off. Never silently in-memory. */
@@ -350,6 +369,21 @@ export default async function integrationsModule(
 
   await app.register(async (s) => {
     registerDomainErrorHandler(s);
+    const limits = deps.webhookRateLimits ?? WEBHOOK_RATE_LIMITS;
+    s.addHook('onRequest', async (request) => {
+      const ip = requestMeta(request).ip ?? 'unknown';
+      const params = (request.params ?? {}) as Partial<WebhookParams>;
+      const target = params.provider
+        ? `${params.provider}:${params.integrationId ?? ''}`
+        : 'github-app';
+      for (const [key, l] of [
+        [`webhook:ip:${ip}`, limits.perIp],
+        [`webhook:target:${target}`, limits.perTarget],
+      ] as const) {
+        const r = await deps.rateLimiter.consume(key, l.limit, l.windowMs);
+        if (!r.allowed) throw new RateLimitedError(r.retryAfterMs);
+      }
+    });
     s.removeContentTypeParser('application/json');
     s.addContentTypeParser(
       'application/json',
@@ -369,6 +403,7 @@ export default async function integrationsModule(
             401: ErrorBody,
             409: ErrorBody,
             413: ErrorBody,
+            429: ErrorBody,
             503: ErrorBody,
           },
         },
@@ -393,6 +428,7 @@ export default async function integrationsModule(
             401: ErrorBody,
             409: ErrorBody,
             413: ErrorBody,
+            429: ErrorBody,
             503: ErrorBody,
           },
         },
