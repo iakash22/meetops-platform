@@ -8,7 +8,11 @@
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { PrismaClient } from '@prisma/client';
-import { createAiIdempotencyRepository, createAiUsageCounterRepository } from '../src/index.js';
+import {
+  createAiIdempotencyRepository,
+  createAiOrgConfigRepository,
+  createAiUsageCounterRepository,
+} from '../src/index.js';
 
 const APP_URL = process.env.RLS_TEST_APP_URL;
 const OWNER_URL = process.env.RLS_TEST_OWNER_URL;
@@ -152,5 +156,26 @@ describe.skipIf(!APP_URL || !OWNER_URL)('durable AI stores (live)', () => {
     // Without org context nothing is visible at all.
     const raw = app();
     expect(await raw.$queryRaw<unknown[]>`SELECT 1 FROM "ai_idempotency"`).toHaveLength(0);
+  });
+
+  it('org AI config persists across a restart, upserts in place and is isolated per org', async () => {
+    const before = createAiOrgConfigRepository({ client: app() });
+    expect(await before.get(orgA)).toBeUndefined();
+    await before.upsert(orgA, {
+      config: { approvedProviders: ['gemini'], defaults: { llm: { provider: 'gemini' } } },
+      monthlyBudgetUsd: '25.00',
+    });
+    const after = createAiOrgConfigRepository({ client: app() });
+    expect(await after.get(orgA)).toEqual({
+      config: { approvedProviders: ['gemini'], defaults: { llm: { provider: 'gemini' } } },
+      monthlyBudgetUsd: '25.00',
+    });
+    await after.upsert(orgA, { config: { approvedProviders: [] } });
+    expect(await after.get(orgA)).toEqual({
+      config: { approvedProviders: [] },
+      monthlyBudgetUsd: undefined,
+    });
+    // Forced RLS: org B never sees org A's row.
+    expect(await after.get(orgB)).toBeUndefined();
   });
 });

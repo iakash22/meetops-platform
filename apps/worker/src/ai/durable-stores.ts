@@ -1,6 +1,10 @@
 import {
   DEFAULT_IDEMPOTENCY_TTL_SEC,
   InMemoryIdempotencyStore,
+  InMemoryOrgConfigStore,
+  orgAIConfigSchema,
+  type OrgAIConfig,
+  type OrgConfigStore,
   InMemoryUsageTracker,
   type IdempotencyStore,
   type UsageRecord,
@@ -8,6 +12,8 @@ import {
 } from '@meetops/ai-core';
 import {
   createAiIdempotencyRepository,
+  createAiOrgConfigRepository,
+  type AiOrgConfigRepository,
   createAiUsageCounterRepository,
   type AiIdempotencyRepository,
   type AiUsageCounterRepository,
@@ -99,10 +105,49 @@ export class PostgresIdempotencyStore implements IdempotencyStore {
   }
 }
 
+/**
+ * Durable OrgConfigStore (ADR-009 open item) on `ai_org_config` (migration 20261024010000, forced RLS,
+ * one row per organization). `monthlyBudgetUsd` lives in its own numeric column; the rest of the
+ * OrgAIConfig (minus organizationId, which is the row key) is the `config` JSON object. Stored rows are
+ * re-validated with orgAIConfigSchema on read, so a malformed row fails the job instead of silently
+ * routing somewhere else. Errors propagate: there is no fallback to memory.
+ */
+export class PostgresOrgConfigStore implements OrgConfigStore {
+  constructor(private readonly repo: AiOrgConfigRepository = createAiOrgConfigRepository()) {}
+
+  async get(organizationId: string): Promise<OrgAIConfig | undefined> {
+    const row = await this.repo.get(organizationId);
+    if (!row) return undefined;
+    const parsed = orgAIConfigSchema.safeParse({
+      ...row.config,
+      organizationId,
+      ...(row.monthlyBudgetUsd !== undefined
+        ? { monthlyBudgetUsd: Number(row.monthlyBudgetUsd) }
+        : {}),
+    });
+    // Issue paths only: never echo stored values.
+    if (!parsed.success)
+      throw new Error(
+        `stored AI org config is invalid: ${parsed.error.issues.map((i) => i.path.join('.')).join(', ')}`,
+      );
+    return parsed.data;
+  }
+
+  async put(cfg: OrgAIConfig): Promise<void> {
+    const { organizationId, monthlyBudgetUsd, ...rest } = orgAIConfigSchema.parse(cfg);
+    await this.repo.upsert(organizationId, {
+      config: JSON.parse(JSON.stringify(rest)) as Parameters<
+        AiOrgConfigRepository['upsert']
+      >[1]['config'],
+      monthlyBudgetUsd: monthlyBudgetUsd === undefined ? undefined : monthlyBudgetUsd.toFixed(2),
+    });
+  }
+}
+
 export type AiStoreMode = 'durable' | 'memory';
 
 /**
- * Select the AI usage + idempotency stores. `AI_STORES=durable` (default) uses Postgres.
+ * Select the AI usage, idempotency and org config stores. `AI_STORES=durable` (default) uses Postgres.
  * `AI_STORES=memory` is for unit tests only: it is refused when NODE_ENV=production, and it is
  * never chosen implicitly (an unknown value is an error, not a fallback).
  */
@@ -110,6 +155,7 @@ export function createAiStores(env: Record<string, string | undefined>): {
   mode: AiStoreMode;
   usage: UsageTracker;
   idempotency: IdempotencyStore;
+  orgConfig: OrgConfigStore;
 } {
   const raw = (env.AI_STORES ?? 'durable').trim();
   if (raw !== 'durable' && raw !== 'memory')
@@ -121,11 +167,13 @@ export function createAiStores(env: Record<string, string | undefined>): {
       mode: 'memory',
       usage: new InMemoryUsageTracker(),
       idempotency: new InMemoryIdempotencyStore(),
+      orgConfig: new InMemoryOrgConfigStore(),
     };
   }
   return {
     mode: 'durable',
     usage: new PostgresUsageTracker(),
     idempotency: new PostgresIdempotencyStore(),
+    orgConfig: new PostgresOrgConfigStore(),
   };
 }

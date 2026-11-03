@@ -72,6 +72,9 @@ export {
 export {
   createAiUsageCounterRepository,
   createAiIdempotencyRepository,
+  createAiOrgConfigRepository,
+  type AiOrgConfigRepository,
+  type AiOrgConfigRecord,
   type AiUsageCounterRepository,
   type AiIdempotencyRepository,
   type AiUsageDelta,
