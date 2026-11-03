@@ -138,6 +138,31 @@ describe('P9 R20: inline content is hash-allowed, production origins are https',
   });
 });
 
+describe('L1: same-origin /socket.io proxy', () => {
+  it('forwards /socket.io/ to apps/realtime with WebSocket upgrade headers', () => {
+    const loc = /location \/socket\.io\/ \{([\s\S]*?)\n {4}\}/.exec(template)?.[1] ?? '';
+    expect(loc).toContain('proxy_pass $realtime_upstream;');
+    expect(loc).toContain('set $realtime_upstream "${REALTIME_UPSTREAM}";');
+    expect(loc).toContain('resolver ${NGINX_RESOLVER}');
+    expect(loc).toContain('proxy_http_version 1.1;');
+    expect(loc).toContain('proxy_set_header Upgrade $http_upgrade;');
+    expect(loc).toContain('proxy_set_header Connection $connection_upgrade;');
+    // An add_header in the location would drop every server-level security header.
+    expect(loc).not.toContain('add_header');
+    expect(template).toMatch(
+      /map \$http_upgrade \$connection_upgrade \{\s+default upgrade;\s+""\s+close;/,
+    );
+  });
+
+  it('the image substitutes the proxy variables', () => {
+    const dockerfile = readFileSync(resolve(root, 'infra', 'docker', 'Dockerfile.web'), 'utf8');
+    expect(dockerfile).toMatch(/REALTIME_UPSTREAM=http:\/\/realtime:4001/);
+    const filter = new RegExp(/NGINX_ENVSUBST_FILTER="([^"]+)"/.exec(dockerfile)![1]!);
+    for (const name of ['CSP_API_ORIGIN', 'REALTIME_UPSTREAM', 'NGINX_RESOLVER'])
+      expect(filter.test(name)).toBe(true);
+  });
+});
+
 describe('P9 R24: Vite dev and preview CSP', () => {
   it('derives both from the nginx CSP, adding only a dev nonce and local origins', async () => {
     const { localCsp } = await import('../csp.config');

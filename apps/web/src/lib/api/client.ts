@@ -411,10 +411,23 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
    * "refresh" re-checks GET /auth/session, which picks up a cookie rotated by another tab or an org switch.
    * Concurrent 401s share one in-flight check; on success each request retries once, otherwise the
    * unauthorized handlers fire exactly once for the whole burst.
+   *
+   * "Burst" is tracked with a generation counter: a request captures the generation before its refresh, and
+   * firing bumps it, so every other request of the same burst (refresh failed, or its retry still got a 401)
+   * sees a stale generation and stays quiet.
    */
+  let unauthorizedGeneration = 0;
+  function fireUnauthorized(generation: number) {
+    cachedCsrf = null;
+    if (generation !== unauthorizedGeneration) return;
+    unauthorizedGeneration += 1;
+    unauthorizedHandlers.forEach((h) => h());
+  }
+
   let refreshInFlight: Promise<boolean> | null = null;
   function refreshSession(): Promise<boolean> {
     if (!refreshInFlight) {
+      const generation = unauthorizedGeneration;
       refreshInFlight = (async () => {
         try {
           const res = await doFetch(`${base}/auth/session`, {
@@ -429,8 +442,7 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
         } catch {
           /* network error: treat as signed out */
         }
-        cachedCsrf = null;
-        unauthorizedHandlers.forEach((h) => h());
+        fireUnauthorized(generation);
         return false;
       })().finally(() => {
         refreshInFlight = null;
@@ -452,12 +464,12 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
       res = await send(method, path, body, true);
       data = safeJson(await res.text());
     }
-    if (res.status === 401 && !AUTH_PATHS.has(path) && (await refreshSession())) {
-      res = await send(method, path, body, false);
-      data = safeJson(await res.text());
-      if (res.status === 401) {
-        cachedCsrf = null;
-        unauthorizedHandlers.forEach((h) => h());
+    if (res.status === 401 && !AUTH_PATHS.has(path)) {
+      const generation = unauthorizedGeneration;
+      if (await refreshSession()) {
+        res = await send(method, path, body, false);
+        data = safeJson(await res.text());
+        if (res.status === 401) fireUnauthorized(generation);
       }
     }
     if (!res.ok) {

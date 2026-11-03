@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { RealtimeClient, type RealtimeStatus } from '@/lib/realtime/client';
 import { backoffDelay } from '@/lib/realtime/backoff';
 import { buildSocketUrl, decodePacket } from '@/lib/realtime/protocol';
-import { isRealtimeEnabled } from '@/lib/realtime/flag';
+import { isRealtimeEnabled, warnIfCrossHost } from '@/lib/realtime/flag';
 
 export class FakeSocket {
   static all: FakeSocket[] = [];
@@ -163,6 +163,104 @@ describe('RealtimeClient', () => {
     vi.advanceTimersByTime(60_000);
     expect(FakeSocket.all).toHaveLength(2);
     expect(statuses.at(-1)).toBe('stopped');
+  });
+
+  it('M1: upgrades closed or refused before open count toward the cap and stop as transport_rejected', () => {
+    const reasons: Array<string | undefined> = [];
+    const { client } = make({ onStatus: (_s, r) => reasons.push(r) });
+    client.start();
+    last().onclose?.({}); // e.g. Origin rejected / 403 on the upgrade: closes without ever opening
+    vi.advanceTimersByTime(1000);
+    last().onerror?.({});
+    vi.advanceTimersByTime(2000);
+    expect(FakeSocket.all).toHaveLength(3);
+    last().onclose?.({});
+    expect(client.getStatus()).toBe('stopped');
+    expect(reasons.at(-1)).toBe('transport_rejected');
+    vi.advanceTimersByTime(120_000);
+    expect(FakeSocket.all).toHaveLength(3);
+  });
+
+  it('M1: drops after a successful open do not count, and a connect resets the count', () => {
+    const { client } = make({ maxTransportFailures: 2 });
+    client.start();
+    last().onclose?.({}); // 1 rejected
+    vi.advanceTimersByTime(1000);
+    last().handshake(); // connected: reset
+    last().onclose?.({}); // drop after open: not a rejection
+    vi.advanceTimersByTime(1000);
+    last().recv('0{"sid":"s","pingInterval":25000,"pingTimeout":20000}');
+    last().onclose?.({}); // opened (EIO open) then dropped: not a rejection
+    vi.advanceTimersByTime(2000);
+    last().onclose?.({}); // 1 rejected
+    expect(client.getStatus()).toBe('reconnecting');
+    vi.advanceTimersByTime(4000);
+    last().onerror?.({}); // 2 rejected
+    expect(client.getStatus()).toBe('stopped');
+  });
+
+  it('L2: at the unauthorized cap a still-valid session restarts instead of stopping', async () => {
+    const checkSession = vi.fn().mockResolvedValue(true);
+    const { client } = make({ maxAuthFailures: 2, checkSession, connectTimeoutMs: 1e9 });
+    client.start();
+    last().recv('44{"message":"unauthorized"}');
+    vi.advanceTimersByTime(1000);
+    last().recv('44{"message":"unauthorized"}');
+    expect(checkSession).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(client.getStatus()).toBe('reconnecting');
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(FakeSocket.all).toHaveLength(3);
+    last().handshake();
+    expect(client.getStatus()).toBe('connected');
+  });
+
+  it('L2: stops when the session is gone, or after too many re-checks', async () => {
+    const gone = make({ maxAuthFailures: 1, checkSession: () => Promise.resolve(false) });
+    gone.client.start();
+    last().recv('44{"message":"unauthorized"}');
+    await vi.advanceTimersByTimeAsync(0);
+    expect(gone.client.getStatus()).toBe('stopped');
+
+    FakeSocket.all = [];
+    const checkSession = vi.fn().mockResolvedValue(true);
+    const loop = make({
+      maxAuthFailures: 1,
+      maxSessionRechecks: 2,
+      checkSession,
+      connectTimeoutMs: 1e9,
+    });
+    loop.client.start();
+    for (let i = 0; i < 3; i++) {
+      last().recv('44{"message":"unauthorized"}');
+      await vi.advanceTimersByTimeAsync(30_000);
+    }
+    expect(checkSession).toHaveBeenCalledTimes(2);
+    expect(loop.client.getStatus()).toBe('stopped');
+  });
+
+  it('L2: a session check that resolves after stop() does not restart', async () => {
+    let resolve!: (v: boolean) => void;
+    const { client } = make({
+      maxAuthFailures: 1,
+      checkSession: () => new Promise<boolean>((r) => (resolve = r)),
+    });
+    client.start();
+    last().recv('44{"message":"unauthorized"}');
+    client.stop();
+    resolve(true);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(FakeSocket.all).toHaveLength(1);
+    expect(client.getStatus()).toBe('stopped');
+  });
+
+  it('L1: warns when VITE_REALTIME_URL is on another host than the page', () => {
+    const warn = vi.fn();
+    expect(warnIfCrossHost('https://rt.example.com', 'app.example.com', warn)).toBe(true);
+    expect(warn.mock.calls[0]![0]).toMatch(/rt\.example\.com.*app\.example\.com/);
+    expect(warnIfCrossHost('https://app.example.com/x', 'app.example.com', warn)).toBe(false);
+    expect(warnIfCrossHost(undefined, 'app.example.com', warn)).toBe(false);
+    expect(warn).toHaveBeenCalledTimes(1);
   });
 
   it('never reconnects after session:revoked or member_removed', () => {

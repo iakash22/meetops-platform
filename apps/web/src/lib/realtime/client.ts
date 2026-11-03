@@ -4,7 +4,13 @@ import { buildSocketUrl, decodePacket, encode } from './protocol';
 export type RealtimeStatus = 'idle' | 'connecting' | 'connected' | 'reconnecting' | 'stopped';
 
 /** Why the client stopped for good (it will not reconnect on its own). */
-export type StopReason = 'closed' | 'session_revoked' | 'member_removed' | 'unauthorized';
+export type StopReason =
+  | 'closed'
+  | 'session_revoked'
+  | 'member_removed'
+  | 'unauthorized'
+  /** The upgrade kept closing before it opened (Origin check, 401/403 on the upgrade, a proxy without WebSocket support). */
+  | 'transport_rejected';
 
 export type RealtimeEventHandler = (name: string, payload: unknown) => void;
 
@@ -33,6 +39,15 @@ export type RealtimeClientOptions = {
   random?: () => number;
   /** Give up after this many consecutive `unauthorized` connect errors (avoid hammering the rate limiter). */
   maxAuthFailures?: number;
+  /** Give up after this many consecutive upgrades that close or error before the socket opens. */
+  maxTransportFailures?: number;
+  /**
+   * Called when the `unauthorized` cap is hit. Resolves true when the HTTP session is still valid, in which case
+   * the client restarts (fresh counters) instead of stopping. Without it the client stops with 'unauthorized'.
+   */
+  checkSession?: (() => Promise<boolean>) | undefined;
+  /** Session re-checks that may restart the client in a row (no successful connect in between). */
+  maxSessionRechecks?: number;
   /** Fail the attempt if the Socket.IO connect does not complete in time. */
   connectTimeoutMs?: number;
 };
@@ -56,6 +71,12 @@ export class RealtimeClient {
   private status: RealtimeStatus = 'idle';
   private attempt = 0;
   private authFailures = 0;
+  private transportFailures = 0;
+  private sessionRechecks = 0;
+  /** Bumped on every start/stop so a late checkSession() result for an old run is ignored. */
+  private run = 0;
+  /** True once the current socket delivered its Engine.IO open packet (the upgrade succeeded). */
+  private opened = false;
   private reconnectTimer: ReturnType<typeof setTimeout> | undefined;
   private heartbeatTimer: ReturnType<typeof setTimeout> | undefined;
   private connectTimer: ReturnType<typeof setTimeout> | undefined;
@@ -72,12 +93,16 @@ export class RealtimeClient {
 
   start(): void {
     if (this.status === 'connecting' || this.status === 'connected') return;
+    this.run += 1;
     this.attempt = 0;
     this.authFailures = 0;
+    this.transportFailures = 0;
+    this.sessionRechecks = 0;
     this.open();
   }
 
   stop(reason: StopReason = 'closed'): void {
+    this.run += 1;
     this.clearTimers();
     this.teardownSocket(true);
     this.setStatus('stopped', reason);
@@ -122,10 +147,46 @@ export class RealtimeClient {
       return;
     }
     this.ws = ws;
+    this.opened = false;
     this.connectTimer = setTimeout(() => this.drop(), this.opts.connectTimeoutMs ?? 20_000);
     ws.onmessage = (ev) => this.onFrame(ev.data);
-    ws.onclose = () => this.drop();
-    ws.onerror = () => this.drop();
+    ws.onopen = () => {
+      this.opened = true;
+    };
+    ws.onclose = () => this.transportLost();
+    ws.onerror = () => this.transportLost();
+  }
+
+  /** close/error from the socket: before open it is a rejected upgrade and counts toward the cap. */
+  private transportLost() {
+    if (this.status === 'stopped') return;
+    if (!this.opened) {
+      this.transportFailures += 1;
+      if (this.transportFailures >= (this.opts.maxTransportFailures ?? 3))
+        return this.stop('transport_rejected');
+    }
+    this.drop();
+  }
+
+  /** The `unauthorized` cap was hit: re-check the HTTP session before giving up for good. */
+  private onAuthCap() {
+    const check = this.opts.checkSession;
+    if (!check || this.sessionRechecks >= (this.opts.maxSessionRechecks ?? 3))
+      return this.stop('unauthorized');
+    this.sessionRechecks += 1;
+    this.teardownSocket(false);
+    this.clearTimers();
+    this.setStatus('reconnecting');
+    const run = this.run;
+    void check()
+      .catch(() => false)
+      .then((valid) => {
+        if (run !== this.run || this.status === 'stopped') return;
+        if (!valid) return this.stop('unauthorized');
+        this.authFailures = 0;
+        this.transportFailures = 0;
+        this.scheduleReconnect();
+      });
   }
 
   /** The transport went away (or is unhealthy): close it and retry with backoff. */
@@ -157,6 +218,7 @@ export class RealtimeClient {
     const p = decodePacket(data);
     switch (p.type) {
       case 'open':
+        this.opened = true;
         this.heartbeatMs = p.data.pingInterval + p.data.pingTimeout;
         this.armHeartbeat();
         this.ws?.send(encode.connect());
@@ -169,12 +231,14 @@ export class RealtimeClient {
         clearTimeout(this.connectTimer);
         this.attempt = 0;
         this.authFailures = 0;
+        this.transportFailures = 0;
+        this.sessionRechecks = 0;
         this.armHeartbeat();
         this.setStatus('connected');
         return;
       case 'connect_error':
         this.authFailures += 1;
-        if (this.authFailures >= (this.opts.maxAuthFailures ?? 3)) return this.stop('unauthorized');
+        if (this.authFailures >= (this.opts.maxAuthFailures ?? 3)) return this.onAuthCap();
         return this.drop();
       case 'disconnect':
       case 'close':
