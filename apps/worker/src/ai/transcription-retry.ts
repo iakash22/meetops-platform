@@ -85,9 +85,14 @@ export type DeadLetterQueueLike = {
   ): Promise<unknown>;
 };
 
-/** Sets the meeting to `transcription_delayed`. Must be idempotent and org-scoped. */
+/** Moves a meeting into and out of `transcription_delayed`. Must be idempotent and org-scoped. */
 export interface TranscriptionDelayedStatus {
   markDelayed(organizationId: string, meetingId: string): Promise<void>;
+  /**
+   * Leaves `transcription_delayed`: back to `processing` after a later attempt succeeds, or to `failed` on a final
+   * (permanent) failure. Only moves a meeting that is still `transcription_delayed`.
+   */
+  clearDelayed(organizationId: string, meetingId: string, to: 'processing' | 'failed'): Promise<void>;
 }
 
 /** Alert / notification hook. Receives ids and codes only, never transcript text or URLs. */
@@ -119,6 +124,20 @@ export function isRetryExhausted(job: FailedJobLike, err: unknown): boolean {
   return job.attemptsMade >= (job.opts?.attempts ?? 1);
 }
 
+/**
+ * BullMQ (5.x) rejects a custom job id that contains ':', so the DLQ id uses a `dlq_` prefix and `_` separators.
+ * Redrive lookups must use this same function.
+ */
+export const DLQ_JOB_ID_PREFIX = 'dlq_';
+export function deadLetterJobId(
+  jobId: string | undefined,
+  recordingId: string,
+  chunkIndex: number | undefined,
+): string {
+  const base = jobId ?? `${recordingId}_${chunkIndex ?? 0}`;
+  return `${DLQ_JOB_ID_PREFIX}${base.replaceAll(':', '_')}`;
+}
+
 export type DeadLetterDeps = {
   dlq: DeadLetterQueueLike;
   status?: TranscriptionDelayedStatus | undefined;
@@ -137,8 +156,23 @@ export async function handleTranscriptionFailure(
   err: unknown,
   deps: DeadLetterDeps,
 ): Promise<boolean> {
-  if (!job || !isRetryExhausted(job, err)) return false;
+  if (!job) return false;
   const { organizationId, meetingId, recordingId } = job.data ?? {};
+  if (err instanceof UnrecoverableError) {
+    // Final, permanent failure: a meeting parked in transcription_delayed (e.g. a redriven chunk) moves to failed.
+    if (organizationId && meetingId) {
+      try {
+        await deps.status?.clearDelayed(organizationId, meetingId, 'failed');
+      } catch {
+        deps.logger.error(
+          { organizationId, meetingId, recordingId, jobId: job.id },
+          'transcription delayed-status clear failed',
+        );
+      }
+    }
+    return false;
+  }
+  if (!isRetryExhausted(job, err)) return false;
   if (!organizationId || !meetingId || !recordingId) return false;
   const code =
     typeof (err as { code?: unknown })?.code === 'string'
@@ -157,7 +191,7 @@ export async function handleTranscriptionFailure(
   const log = { organizationId, meetingId, recordingId, jobId: job.id, errorCode: code };
   try {
     await deps.dlq.add('transcription_dead_letter', entry, {
-      jobId: `dlq:${job.id ?? `${recordingId}:${entry.chunkIndex ?? 0}`}`,
+      jobId: deadLetterJobId(job.id, recordingId, entry.chunkIndex),
       removeOnComplete: false,
       removeOnFail: false,
     });
@@ -183,7 +217,27 @@ export async function handleTranscriptionFailure(
 }
 
 /**
- * Postgres status writer. This is the ONLY code path that writes `transcription_delayed`.
+ * A transcription attempt succeeded: a meeting parked in `transcription_delayed` goes back to `processing`.
+ * Best-effort; a failed write is logged and never fails the job.
+ */
+export async function handleTranscriptionSuccess(
+  job: Pick<FailedJobLike, 'id' | 'data'> | undefined,
+  deps: { status?: TranscriptionDelayedStatus | undefined; logger: DeadLetterLogger },
+): Promise<void> {
+  const { organizationId, meetingId } = job?.data ?? {};
+  if (!organizationId || !meetingId || !deps.status) return;
+  try {
+    await deps.status.clearDelayed(organizationId, meetingId, 'processing');
+  } catch {
+    deps.logger.error(
+      { organizationId, meetingId, jobId: job?.id },
+      'transcription delayed-status clear failed',
+    );
+  }
+}
+
+/**
+ * Postgres status writer. This is the ONLY code path that writes or clears `transcription_delayed`.
  * Deploy order: migration `20261103180000_meeting_status_transcription_delayed` ships in the same release as this
  * code and `prisma migrate deploy` runs before the worker starts. If the value is missing anyway (migration not
  * applied), Postgres rejects the update (invalid enum input); `handleTranscriptionFailure` catches it, logs
@@ -202,6 +256,17 @@ export function createPrismaTranscriptionDelayedStatus(
           await tx.meeting.updateMany({
             where: { id: meetingId, organizationId, status: 'processing', deletedAt: null },
             data: { status: 'transcription_delayed' },
+          });
+        },
+        opts.client ? { client: opts.client } : {},
+      ),
+    clearDelayed: (organizationId, meetingId, to) =>
+      withOrganizationContext(
+        organizationId,
+        async (tx) => {
+          await tx.meeting.updateMany({
+            where: { id: meetingId, organizationId, status: 'transcription_delayed', deletedAt: null },
+            data: { status: to },
           });
         },
         opts.client ? { client: opts.client } : {},
