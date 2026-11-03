@@ -115,6 +115,9 @@ const TASK_SYNC_MIGRATION = '20261031100000_task_sync_jobs';
 const MEETING_SOURCE_MOBILE_MIGRATION = '20261031120000_meeting_source_mobile';
 /** Consent API: append-only meeting consent ledger (forced RLS, SELECT/INSERT only). */
 const MEETING_CONSENT_MIGRATION = '20261031030000_meeting_consent_events';
+/** Consent hardening: attestedAt back-date CHECKs + meeting_consent_events.seq. Parallel slot (sorts after
+ * meeting_source_mobile, before the Outlook migration); the positional order checks ignore it. */
+const CONSENT_HARDENING_MIGRATION = '20261031130000_consent_hardening';
 const CALENDAR_OUTLOOK_PROVIDER_MIGRATION = '20261102000000_calendar_outlook_provider';
 /** Background sync: per-connection incremental cursor columns (additive). */
 const CALENDAR_SYNC_CURSOR_MIGRATION = '20261103000000_calendar_sync_cursor';
@@ -148,6 +151,11 @@ const orderedDirs = () => {
       dirs.indexOf(MEETING_SOURCE_MOBILE_MIGRATION),
     );
   }
+  // Consent hardening is a parallel slot after meeting_source_mobile; the positional order checks ignore it.
+  if (dirs.includes(CONSENT_HARDENING_MIGRATION))
+    expect(dirs.indexOf(CONSENT_HARDENING_MIGRATION)).toBeGreaterThan(
+      dirs.indexOf(MEETING_SOURCE_MOBILE_MIGRATION),
+    );
   // #390's Outlook provider widening sorts right before the sync cursor; the positional checks ignore it.
   if (dirs.includes(CALENDAR_OUTLOOK_PROVIDER_MIGRATION))
     expect(dirs.indexOf(CALENDAR_OUTLOOK_PROVIDER_MIGRATION)).toBe(
@@ -164,6 +172,7 @@ const orderedDirs = () => {
       d !== TASK_SYNC_MIGRATION &&
       d !== CALENDAR_TOKEN_GENERATION_MIGRATION &&
       d !== CALENDAR_OUTLOOK_PROVIDER_MIGRATION &&
+      d !== CONSENT_HARDENING_MIGRATION &&
       !(PARALLEL_MIGRATIONS as readonly string[]).includes(d),
   );
 };
@@ -1783,6 +1792,45 @@ describe('Consent API meeting_consent_events (static)', () => {
     expect(statements).toContain(
       'FOREIGN KEY ("org_id", "meeting_id") REFERENCES "meetings"("org_id", "id") ON DELETE RESTRICT',
     );
+  });
+});
+
+describe('consent hardening migration (static)', () => {
+  const sql = readFileSync(
+    resolve(migrationsDir, CONSENT_HARDENING_MIGRATION, 'migration.sql'),
+    'utf8',
+  );
+  const statements = sql.replace(/--.*$/gm, '');
+  it('sorts after meeting_source_mobile and is additive only', () => {
+    const dirs = readdirSync(migrationsDir, { withFileTypes: true })
+      .filter((x) => x.isDirectory())
+      .map((x) => x.name)
+      .sort();
+    expect(dirs.indexOf(CONSENT_HARDENING_MIGRATION)).toBeGreaterThan(
+      dirs.indexOf(MEETING_SOURCE_MOBILE_MIGRATION),
+    );
+    expect(statements).not.toMatch(
+      /\bDROP\b|RENAME|ALTER COLUMN|NO FORCE|DISABLE ROW LEVEL SECURITY|POLICY|REVOKE/i,
+    );
+  });
+  it('bounds attestedAt back-dating to 24 h on both consent tables', () => {
+    expect(statements).toContain(
+      `CHECK ("attested_at" >= "recorded_at" - interval '86400 seconds')`,
+    );
+    expect(statements).toContain(
+      `CHECK ("occurred_at" >= "recorded_at" - interval '86400 seconds')`,
+    );
+  });
+  it('adds a DB sequence for the meeting consent ledger order, usable by the app role', () => {
+    expect(statements).toContain(
+      'ALTER TABLE "meeting_consent_events" ADD COLUMN "seq" BIGSERIAL NOT NULL;',
+    );
+    expect(statements).toContain('("org_id", "meeting_id", "seq")');
+    expect(statements).toContain(
+      'GRANT USAGE, SELECT ON SEQUENCE "meeting_consent_events_seq_seq" TO meetops_app;',
+    );
+    const model = models.find((m) => m.name === 'MeetingConsentEvent')?.body ?? '';
+    expect(model).toMatch(/seq\s+BigInt\s+@default\(autoincrement\(\)\)/);
   });
 });
 

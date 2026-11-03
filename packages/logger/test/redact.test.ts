@@ -173,6 +173,14 @@ describe('#282 M-2 URL redaction', () => {
     expect(redactUrl('/plain/path')).toBe('/plain/path');
     expect(redactUrl('/p?%63ode=x&bad=%E0%A4%A')).toBe(`/p?%63ode=${CENSOR}&bad=%E0%A4%A`);
   });
+  it('#350 L1: search text (?q=) never reaches request logs', () => {
+    expect(redactUrl('/v1/orgs/o/search/semantic?q=salary%20of%20alice&k=5')).toBe(
+      `/v1/orgs/o/search/semantic?q=${CENSOR}&k=5`,
+    );
+    expect(reqSerializer({ method: 'GET', url: '/v1/orgs/o/search?Q=ssn+123' }).url).toBe(
+      `/v1/orgs/o/search?Q=${CENSOR}`,
+    );
+  });
   it('reqSerializer and url-like keys are redacted', () => {
     expect(reqSerializer({ method: 'GET', url: '/cb?code=zz' }).url).toBe(`/cb?code=${CENSOR}`);
     expect(JSON.stringify(redactDeep({ res: { location: '/x?state=s1' } }, []))).not.toContain(

@@ -14,8 +14,20 @@ export * from './prompts.js';
 export * from './bootstrap.js';
 export * from './contracts.js';
 export * from './security/ssrf.js';
-export { guardedFetch, pinnedAgent, readCapped, type HttpOpts, type FetchLike, type FetchInit } from './adapters/http.js';
-export { GeminiProvider, GEMINI_DEFAULT_MODEL, GEMINI_BASE_URL, parseStructured } from './adapters/gemini.js';
+export {
+  guardedFetch,
+  pinnedAgent,
+  readCapped,
+  type HttpOpts,
+  type FetchLike,
+  type FetchInit,
+} from './adapters/http.js';
+export {
+  GeminiProvider,
+  GEMINI_DEFAULT_MODEL,
+  GEMINI_BASE_URL,
+  parseStructured,
+} from './adapters/gemini.js';
 export { AssemblyAIProvider, ASSEMBLYAI_BASE_URL } from './adapters/assemblyai.js';
 export { OllamaProvider } from './adapters/ollama.js';
 export { OpenAICompatibleProvider } from './adapters/openai-compatible.js';
@@ -30,3 +42,4 @@ export * from './extraction/job.js';
 export * from './transcription/queue.js';
 export * from './credential-ref.js';
 export * from './output-limits.js';
+export * from './embeddings.js';

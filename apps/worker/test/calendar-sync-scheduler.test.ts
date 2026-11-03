@@ -181,4 +181,10 @@ describe('OUTLOOK_CALENDAR_TENANT validation (worker)', () => {
       calendarSyncProvidersFromEnv({ ...env, OUTLOOK_CALENDAR_TENANT: 'contoso' }),
     ).toThrow(/OUTLOOK_CALENDAR_TENANT must be/);
   });
+  it('#396 L1: a malformed tenant fails startup even without an Outlook client (matches the API)', () => {
+    expect(() =>
+      calendarSyncProvidersFromEnv({ NODE_ENV: 'test', OUTLOOK_CALENDAR_TENANT: 'not a tenant' }),
+    ).toThrow(CalendarSyncEnvError);
+    expect(calendarSyncProvidersFromEnv({ NODE_ENV: 'test' }).outlook).toBeUndefined();
+  });
 });

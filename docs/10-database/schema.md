@@ -89,3 +89,17 @@ Merged into `integration/phase-1` by PR #35 (merge commit `f7c2d77`), migration 
 - The function stays `SECURITY DEFINER` with `SET search_path = public, pg_temp`, owned by `meetops_migrator`; `EXECUTE` is revoked from PUBLIC and granted to `meetops_app` only.
 
 PR #35 also adds the RLS, roles, outbox relay and live-test migrations; see `packages/database/README.md`.
+
+## Calendar event link tombstones: retention (#398 L2)
+
+PR #398 (`feat/calendar-auto-link`) turns user unlinks of `calendar_event_links` into soft deletes: it sets
+`unlinked_at` and keeps the row. The tombstone is what stops the worker's auto-link from recreating a link the user
+removed, so it must outlive the calendar event's sync window.
+
+- **Kept until:** the calendar connection is deleted. The FK on `(org_id, connection_id)` cascades, which removes every
+  link and tombstone of that connection. Org deletion cascades the same way.
+- **Growth bound:** at most one row per (connection, provider event id), because of the unique key. Re-linking reuses the
+  row and clears `unlinked_at`. Growth is linear in the events a user unlinks. No sweep runs today.
+- **Future sweep (deferred):** delete rows with `unlinked_at` older than the sync window's past horizon (an event that
+  far back is never re-synced, so auto-link can't recreate it). Run it as an org-scoped worker job under RLS. Track
+  it with the Phase 7 calendar follow-ups; it is not needed for correctness.

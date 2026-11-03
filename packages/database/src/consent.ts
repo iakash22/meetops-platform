@@ -12,6 +12,7 @@ export const CONSENT_METHODS = ['all_parties_notified', 'all_parties_consented']
 export const CURRENT_CONSENT_VERSION = '2026-10';
 export const CONSENT_VERSION_PATTERN = '^[A-Za-z0-9][A-Za-z0-9._-]{0,31}$';
 export const CONSENT_ATTESTATION_MAX_SKEW_SECONDS = 300;
+export const CONSENT_ATTESTATION_MAX_BACKDATE_SECONDS = 86_400;
 export const FILE_OBJECT_SCAN_STATUSES = ['pending', 'clean', 'quarantined', 'rejected'] as const;
 
 type Same<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false;

@@ -105,6 +105,26 @@ describe('P9 R17: the CSRF token rotates on login, org switch and logout', () =>
     expect((await write(c, login.json<{ csrfToken: string }>().csrfToken)).statusCode).toBe(201);
   });
 
+  it('#401 L2: a pre-session token never passes alongside a valid session cookie', async () => {
+    app = await buildApp();
+    const session = await signupAndLogin(app, 'r17d@example.com');
+    const anon = new Client(app);
+    const pre = await anon.csrf();
+    const presession = anon.jar.get('__Host-meetops_presession');
+    expect(presession).toBeDefined();
+    // Valid session cookie + an intact pre-session binding (cookie + matching token): still 403.
+    const cookie = session.cookie
+      .replace(/(__Host-meetops_csrf=)[^;]*/, `$1${pre}`)
+      .concat(`; __Host-meetops_presession=${presession}`);
+    const res = await app.inject({
+      method: 'POST',
+      url: '/orgs',
+      payload: { name: 'probe' },
+      headers: { cookie, origin: ORIGIN, 'x-csrf-token': pre },
+    });
+    expect(res.statusCode).toBe(403);
+  });
+
   it('the old token is rejected after an org switch', async () => {
     app = await buildApp();
     const c = await signupAndLogin(app, 'r17b@example.com');

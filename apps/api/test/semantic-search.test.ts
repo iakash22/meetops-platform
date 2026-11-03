@@ -9,6 +9,7 @@ import {
   SEMANTIC_SEARCH_SQL,
   semanticSearchEnabled,
   toVectorLiteral,
+  type ExecutorEmbedFn,
   type QueryEmbedder,
 } from '../src/modules/search/semantic.js';
 import type { ModuleDeps } from '../src/modules/index.js';
@@ -22,10 +23,9 @@ const oneHot = (slot: number) => {
   return v;
 };
 const fakeEmbedder = (calls: string[]): QueryEmbedder => ({
-  model: MODEL,
-  embed: async (text) => {
+  embed: async (_org, text) => {
     calls.push(text);
-    return oneHot(text.includes('budget') ? 1 : 2);
+    return { vector: oneHot(text.includes('budget') ? 1 : 2), model: MODEL };
   },
 });
 
@@ -66,10 +66,10 @@ describe('P7 semantic search API', () => {
     vi.stubEnv('SEMANTIC_SEARCH_ENABLED', 'true');
     const repo = new InMemorySemanticSearch();
     const search = vi.spyOn(repo, 'search');
-    const embed = vi.fn(async (): Promise<number[]> => {
+    const embed = vi.fn(async (): Promise<{ vector: number[]; model: string }> => {
       throw new Error('provider exploded: sk-test-secret upstream 500');
     });
-    const embedder: QueryEmbedder = { model: MODEL, embed };
+    const embedder: QueryEmbedder = { embed };
     app = await buildApp({ semanticSearch: repo, queryEmbedder: embedder } as Partial<ModuleDeps>);
     const c = await signupAndLogin(app, 'owner@example.com');
     const org = await createOrg(c, 'Acme');
@@ -128,6 +128,39 @@ describe('P7 semantic search API', () => {
     expect(rb.json<SemanticSearchResponse>().items.map((i) => i.id)).toEqual([B1]);
     // kinds filter
     expect((await a.get(url(orgA, 'budget', '&kinds=summary'))).json()).toEqual({ items: [] });
+  });
+
+  it('production embedder goes through the executor; unconfigured provider -> 503', async () => {
+    vi.stubEnv('SEMANTIC_SEARCH_ENABLED', 'true');
+    const repo = new InMemorySemanticSearch();
+    const seen: { organizationId: string; inputs: string[] }[] = [];
+    let configured = false;
+    const embeddingsExecutor: ExecutorEmbedFn = async (req) => {
+      seen.push(req);
+      return configured
+        ? { status: 'succeeded', vectors: [oneHot(1)], model: 'p/m' }
+        : { status: 'unavailable', errors: [{ code: 'CAPABILITY_UNSUPPORTED' }] };
+    };
+    app = await buildApp({ semanticSearch: repo, embeddingsExecutor } as Partial<ModuleDeps>);
+    const c = await signupAndLogin(app, 'owner@example.com');
+    const org = await createOrg(c, 'Acme');
+    expect((await c.get(url(org, 'budget review'))).statusCode).toBe(503);
+    configured = true;
+    repo.docs.push({
+      organizationId: org,
+      model: 'p/m',
+      vector: oneHot(1),
+      kind: 'summary',
+      id: '00000000-0000-4000-8000-000000000c01',
+      meetingId: '00000000-0000-4000-8000-0000000000aa',
+      title: 'S',
+      snippet: 's',
+      occurredAt: '2026-10-31T10:00:00.000Z',
+    });
+    const r = await c.get(url(org, 'budget review'));
+    expect(r.statusCode).toBe(200);
+    expect(r.json<SemanticSearchResponse>().items).toHaveLength(1);
+    expect(seen.every((s) => s.organizationId === org && s.inputs.length === 1)).toBe(true);
   });
 
   it('refuses vectors of the wrong size or with non-finite values', () => {
