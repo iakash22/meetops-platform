@@ -1,5 +1,5 @@
 import { withOrganizationContext, type DatabaseClient } from '@meetops/database';
-import { UnrecoverableError } from 'bullmq';
+import { UnrecoverableError, type JobType } from 'bullmq';
 import { QUEUE_NAMES } from '@meetops/contracts';
 
 /** Dead-letter queue for transcription jobs that used up their retries. Payload: ids and codes only. */
@@ -92,7 +92,11 @@ export interface TranscriptionDelayedStatus {
    * Leaves `transcription_delayed`: back to `processing` after a later attempt succeeds, or to `failed` on a final
    * (permanent) failure. Only moves a meeting that is still `transcription_delayed`.
    */
-  clearDelayed(organizationId: string, meetingId: string, to: 'processing' | 'failed'): Promise<void>;
+  clearDelayed(
+    organizationId: string,
+    meetingId: string,
+    to: 'processing' | 'failed',
+  ): Promise<void>;
 }
 
 /** Alert / notification hook. Receives ids and codes only, never transcript text or URLs. */
@@ -216,23 +220,68 @@ export async function handleTranscriptionFailure(
   return true;
 }
 
+/** States a DLQ entry can be in while it still counts as dead-lettered (BullMQ). */
+export const DEAD_LETTER_STATES: JobType[] = ['waiting', 'delayed', 'paused', 'prioritized'];
+
+type DeadLetterRef = { id?: string | undefined; data: TranscriptionDeadLetter };
+
 /**
- * A transcription attempt succeeded: a meeting parked in `transcription_delayed` goes back to `processing`.
- * Best-effort; a failed write is logged and never fails the job.
+ * Shared guard (worker success path and the #420 redrive): true when any DLQ entry for this org + meeting remains,
+ * ignoring entries for `excludeJobIds` (the job that just succeeded / was just re-queued).
+ */
+export function meetingHasDeadLetters(
+  entries: readonly DeadLetterRef[],
+  organizationId: string,
+  meetingId: string,
+  excludeJobIds: readonly (string | undefined)[] = [],
+): boolean {
+  return entries.some(
+    (e) =>
+      e.data.organizationId === organizationId &&
+      e.data.meetingId === meetingId &&
+      !(e.data.jobId !== undefined && excludeJobIds.includes(e.data.jobId)),
+  );
+}
+
+/** Lists the current DLQ entries (all orgs). */
+export type DeadLetterLister = () => Promise<readonly DeadLetterRef[]>;
+
+/** Lister backed by the real BullMQ DLQ queue. */
+export function queueDeadLetterLister(queue: {
+  getJobs(types: JobType[]): Promise<Array<DeadLetterRef | undefined>>;
+}): DeadLetterLister {
+  return async () =>
+    (await queue.getJobs(DEAD_LETTER_STATES)).filter((j): j is DeadLetterRef => !!j);
+}
+
+/**
+ * A transcription attempt succeeded: a meeting parked in `transcription_delayed` goes back to `processing`, but only
+ * when no OTHER chunk of that meeting is still dead-lettered. If the DLQ cannot be read (or no lister is wired), the
+ * meeting is left as is: staying delayed is the safe side; redrive or a later success clears it.
+ * Best-effort; a failed read or write is logged and never fails the job.
  */
 export async function handleTranscriptionSuccess(
   job: Pick<FailedJobLike, 'id' | 'data'> | undefined,
-  deps: { status?: TranscriptionDelayedStatus | undefined; logger: DeadLetterLogger },
+  deps: {
+    status?: TranscriptionDelayedStatus | undefined;
+    deadLetters?: DeadLetterLister | undefined;
+    logger: DeadLetterLogger;
+  },
 ): Promise<void> {
   const { organizationId, meetingId } = job?.data ?? {};
-  if (!organizationId || !meetingId || !deps.status) return;
+  if (!organizationId || !meetingId || !deps.status || !deps.deadLetters) return;
+  const log = { organizationId, meetingId, jobId: job?.id };
+  try {
+    if (meetingHasDeadLetters(await deps.deadLetters(), organizationId, meetingId, [job?.id]))
+      return;
+  } catch {
+    deps.logger.error(log, 'transcription dead-letter lookup failed; meeting left delayed');
+    return;
+  }
   try {
     await deps.status.clearDelayed(organizationId, meetingId, 'processing');
   } catch {
-    deps.logger.error(
-      { organizationId, meetingId, jobId: job?.id },
-      'transcription delayed-status clear failed',
-    );
+    deps.logger.error(log, 'transcription delayed-status clear failed');
   }
 }
 
@@ -265,7 +314,12 @@ export function createPrismaTranscriptionDelayedStatus(
         organizationId,
         async (tx) => {
           await tx.meeting.updateMany({
-            where: { id: meetingId, organizationId, status: 'transcription_delayed', deletedAt: null },
+            where: {
+              id: meetingId,
+              organizationId,
+              status: 'transcription_delayed',
+              deletedAt: null,
+            },
             data: { status: to },
           });
         },

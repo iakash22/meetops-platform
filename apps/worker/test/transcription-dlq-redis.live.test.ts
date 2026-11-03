@@ -11,6 +11,7 @@ import {
   deadLetterJobId,
   handleTranscriptionFailure,
   handleTranscriptionSuccess,
+  queueDeadLetterLister,
   type TranscriptionDeadLetter,
   type TranscriptionDelayedStatus,
 } from '../src/ai/transcription-retry.js';
@@ -71,6 +72,8 @@ describe.skipIf(!available)('transcription DLQ with real Redis + BullMQ (live)',
     status: TranscriptionDelayedStatus,
     /** Worker events to wait for: one per attempt that ends ('failed' per failed attempt, or 'completed'). */
     expectedEvents: number,
+    /** Pre-existing DLQ entries (other chunks of the same meeting). */
+    seed?: (dlq: Queue<TranscriptionDeadLetter>, data: Payload) => Promise<unknown>,
   ) {
     const name = `it-transcription-${randomUUID()}`;
     const q = new Queue<Payload>(name, { connection: connection() });
@@ -95,7 +98,13 @@ describe.skipIf(!available)('transcription DLQ with real Redis + BullMQ (live)',
       ),
     );
     worker.on('completed', (job) =>
-      handled.push(handleTranscriptionSuccess(job, { status, logger: silent })),
+      handled.push(
+        handleTranscriptionSuccess(job, {
+          status,
+          deadLetters: queueDeadLetterLister(dlq),
+          logger: silent,
+        }),
+      ),
     );
     const data: Payload = {
       organizationId: randomUUID(),
@@ -103,6 +112,7 @@ describe.skipIf(!available)('transcription DLQ with real Redis + BullMQ (live)',
       recordingId: randomUUID(),
       chunkIndex: 1,
     };
+    await seed?.(dlq, data);
     const job = await q.add('transcribe', data, {
       jobId: `tx_${data.recordingId}_1`,
       attempts,
@@ -160,5 +170,31 @@ describe.skipIf(!available)('transcription DLQ with real Redis + BullMQ (live)',
     );
     expect(st.get()).toBe('failed');
     expect(await dlq.getJob(deadLetterJobId(job.id, 'unused', 0))).toBeUndefined();
+  });
+
+  it('a success does not clear transcription_delayed while another chunk of the meeting is in the DLQ', async () => {
+    const st = statusStore('transcription_delayed');
+    await run(
+      async () => ({ ok: true }),
+      1,
+      st.store,
+      1,
+      (dlq, d) =>
+        dlq.add(
+          'transcription_dead_letter',
+          {
+            organizationId: d.organizationId,
+            meetingId: d.meetingId,
+            recordingId: d.recordingId,
+            chunkIndex: 0,
+            jobId: `tx_${d.recordingId}_0`,
+            errorCode: 'provider_retryable',
+            attemptsMade: 2,
+            failedAt: new Date().toISOString(),
+          },
+          { jobId: deadLetterJobId(`tx_${d.recordingId}_0`, d.recordingId, 0) },
+        ),
+    );
+    expect(st.get()).toBe('transcription_delayed');
   });
 });
