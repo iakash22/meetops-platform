@@ -74,7 +74,7 @@ export class InMemoryCalendarConnections implements CalendarConnectionsRepositor
     opts: CalendarTokenWriteOptions = {},
   ) {
     const r = this.rows.get(id);
-    if (!r || r.organizationId !== organizationId || r.status !== 'active') return false;
+    if (!r || r.organizationId !== organizationId || r.status === 'revoked') return false;
     const prev = this.secrets.get(id);
     const gen = this.gens.get(id) ?? 0;
     if (opts.generation !== undefined && opts.generation !== gen) return false;
@@ -84,7 +84,8 @@ export class InMemoryCalendarConnections implements CalendarConnectionsRepositor
       refreshToken: t.refreshToken || (prev?.refreshToken ?? null),
       tokenGeneration: this.bump(id),
     });
-    this.rows.set(id, { ...r, updatedAt: this.now().toISOString() });
+    // A successful refresh reactivates an error connection (that is how it recovers).
+    this.rows.set(id, { ...r, status: 'active', updatedAt: this.now().toISOString() });
     return true;
   }
   async markError(organizationId: string, id: string) {

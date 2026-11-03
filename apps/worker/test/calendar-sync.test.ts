@@ -473,3 +473,154 @@ describe('calendar sync claim (multi-replica)', () => {
     expect(calls.applied).toEqual([]);
   });
 });
+
+describe('#394 token compare-and-set miss and delta maxEvents', () => {
+  const expiring = (over: Partial<CalendarSyncSecrets> = {}) =>
+    secrets({
+      provider: 'outlook',
+      accessTokenExpiresAt: new Date(NOW + 60_000),
+      tokenGeneration: 4,
+      refreshEncVersion: 2,
+      ...over,
+    });
+  const rotating = () =>
+    provider({
+      refresh: vi.fn<CalendarSyncProvider['refresh']>(async () => ({
+        accessToken: 'rotated-access',
+        refreshToken: 'rotated-refresh',
+        expiresAt: NOW + 3_600_000,
+      })),
+    });
+
+  it('retries once against the current generation when the stored refresh token is unchanged', async () => {
+    const reads = [expiring(), expiring({ tokenGeneration: 5 })];
+    const writes: (number | undefined)[] = [];
+    const { repo } = makeRepo([{ id: C1, provider: 'outlook', s: null }]);
+    repo.readSecrets = async () => reads.shift() ?? null;
+    repo.updateTokens = async (_o, _id, _t, opts) => {
+      writes.push(opts?.generation);
+      return writes.length > 1; // first write misses, retry lands
+    };
+    const l = log();
+    const p = rotating();
+    const r = await runCalendarSyncSweep({
+      repo,
+      providers: { outlook: p },
+      log: l,
+      now: () => NOW,
+      random: () => 0.5,
+    });
+    expect(writes).toEqual([4, 5]);
+    expect(r.synced).toBe(1);
+    expect(p.listEvents.mock.calls[0]![0].accessToken).toBe('rotated-access');
+    expect(l.info).toHaveBeenCalledWith(
+      expect.objectContaining({ connectionId: C1 }),
+      'calendar token CAS miss reconciled on retry',
+    );
+    expect(JSON.stringify([l.info.mock.calls, l.warn.mock.calls])).not.toMatch(/rotated/);
+  });
+
+  it('keeps a newer grant another writer stored instead of overwriting it', async () => {
+    const reads = [
+      expiring(),
+      expiring({ tokenGeneration: 5, accessToken: 'other-access', refreshToken: 'other-refresh' }),
+    ];
+    let writes = 0;
+    const { repo } = makeRepo([{ id: C1, provider: 'outlook', s: null }]);
+    repo.readSecrets = async () => reads.shift() ?? null;
+    repo.updateTokens = async () => {
+      writes++;
+      return false;
+    };
+    const l = log();
+    const p = rotating();
+    await runCalendarSyncSweep({
+      repo,
+      providers: { outlook: p },
+      log: l,
+      now: () => NOW,
+      random: () => 0.5,
+    });
+    expect(writes).toBe(1);
+    expect(p.listEvents.mock.calls[0]![0].accessToken).toBe('other-access');
+    expect(l.info).toHaveBeenCalledWith(
+      expect.objectContaining({ connectionId: C1, generation: 5 }),
+      'calendar token CAS miss: a newer grant is already stored; using it',
+    );
+  });
+
+  it('logs and skips when the retry also misses or the connection is gone', async () => {
+    for (const second of [expiring({ tokenGeneration: 6 }), null]) {
+      const reads = [expiring(), second];
+      const { repo, calls } = makeRepo([{ id: C1, provider: 'outlook', s: null }]);
+      repo.readSecrets = async () => reads.shift() ?? null;
+      repo.updateTokens = async () => false;
+      const l = log();
+      const p = rotating();
+      const r = await runCalendarSyncSweep({
+        repo,
+        providers: { outlook: p },
+        log: l,
+        now: () => NOW,
+        random: () => 0.5,
+      });
+      expect(r.skipped).toBe(1);
+      expect(calls.applied).toHaveLength(0);
+      expect(p.listEvents).not.toHaveBeenCalled();
+      expect(l.warn).toHaveBeenCalledTimes(1);
+    }
+  });
+
+  it('respects maxEvents on the delta path: truncates, never cancels, drops the cursor', async () => {
+    const cursor = { value: 'cur-1', from: new Date(NOW - DAY), to: new Date(NOW + 30 * DAY) };
+    const { repo, calls } = makeRepo([
+      { id: C1, provider: 'outlook', s: secrets({ syncCursor: cursor }) },
+    ]);
+    const listEventsDelta = vi.fn<NonNullable<CalendarSyncProvider['listEventsDelta']>>(
+      async () => ({
+        events: [ev('a'), ev('b'), ev('c'), ev('d'), ev('e')],
+        removedIds: ['x'],
+        cursor: 'cur-2',
+      }),
+    );
+    await runCalendarSyncSweep({
+      repo,
+      providers: { outlook: provider({ listEventsDelta }) },
+      log: log(),
+      now: () => NOW,
+      random: () => 0.5,
+      config: { maxEvents: 3, deltaEnabled: true, cursorMaxLagMs: 365 * DAY },
+    });
+    expect(listEventsDelta).toHaveBeenCalledTimes(1);
+    expect(calls.applied[0]!.events.map((e) => e.id)).toEqual(['a', 'b', 'c']);
+    expect(calls.applied[0]!.complete).toBe(false);
+    expect(calls.applied[0]!.cursor).toBeNull();
+
+    // A new delta round over the cap is not complete either (no cancellations from a truncated list).
+    const fresh = makeRepo([{ id: C1, provider: 'outlook', s: secrets() }]);
+    await runCalendarSyncSweep({
+      repo: fresh.repo,
+      providers: { outlook: provider({ listEventsDelta }) },
+      log: log(),
+      now: () => NOW,
+      random: () => 0.5,
+      config: { maxEvents: 3, deltaEnabled: true },
+    });
+    expect(fresh.calls.applied[0]!.events).toHaveLength(3);
+    expect(fresh.calls.applied[0]!.complete).toBe(false);
+    expect(fresh.calls.applied[0]!.cursor).toBeNull();
+
+    // Under the cap the delta page is untouched.
+    const small = makeRepo([{ id: C1, provider: 'outlook', s: secrets({ syncCursor: cursor }) }]);
+    await runCalendarSyncSweep({
+      repo: small.repo,
+      providers: { outlook: provider({ listEventsDelta }) },
+      log: log(),
+      now: () => NOW,
+      random: () => 0.5,
+      config: { maxEvents: 10, deltaEnabled: true, cursorMaxLagMs: 365 * DAY },
+    });
+    expect(small.calls.applied[0]!.events).toHaveLength(5);
+    expect(small.calls.applied[0]!.cursor).toBe('cur-2');
+  });
+});

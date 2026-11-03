@@ -156,6 +156,79 @@ describe('Phase 7 calendar', () => {
     expect(res.headers['cache-control']).toBe('private, no-store');
   });
 
+  it('#394: an error-state connection refreshes, stores the rotated token and recovers to active', async () => {
+    const c = await signupAndLogin(app, 'owner@example.com');
+    const org = await createOrg(c, 'Acme');
+    const state = (await connect(c, org)).searchParams.get('state')!;
+    await c.get(`/calendar/google/callback?state=${state}&code=abc`);
+    const id = [...repo.rows.keys()][0]!;
+    await repo.markError(org, id);
+    expect(repo.rows.get(id)!.status).toBe('error');
+    over['POST https://oauth2.googleapis.com/token'] = () =>
+      json({
+        access_token: 'g-access-rotated',
+        refresh_token: 'g-refresh-rotated',
+        expires_in: 3600,
+        token_type: 'Bearer',
+        scope: SCOPE,
+      });
+    now += 3600_000;
+    calls = [];
+    const res = await c.get(
+      `/orgs/${org}/calendar/events?from=2026-11-01T00:00:00.000Z&to=2026-11-08T00:00:00.000Z`,
+    );
+    expect(res.statusCode).toBe(200);
+    expect(calls[0]!.url).toBe('https://oauth2.googleapis.com/token');
+    expect(calls[1]!.auth).toBe('Bearer g-access-rotated');
+    expect(repo.rows.get(id)!.status).toBe('active');
+    const userId = repo.rows.get(id)!.userId;
+    expect((await repo.readSecrets(org, userId, id))!.refreshToken).toBe('g-refresh-rotated');
+  });
+
+  it('#394: a token CAS miss re-reads and retries, so a rotated refresh token is not lost', async () => {
+    const c = await signupAndLogin(app, 'owner@example.com');
+    const org = await createOrg(c, 'Acme');
+    const state = (await connect(c, org)).searchParams.get('state')!;
+    await c.get(`/calendar/google/callback?state=${state}&code=abc`);
+    const id = [...repo.rows.keys()][0]!;
+    const userId = repo.rows.get(id)!.userId;
+    over['POST https://oauth2.googleapis.com/token'] = () =>
+      json({
+        access_token: 'g-access-rotated',
+        refresh_token: 'g-refresh-rotated',
+        expires_in: 3600,
+        token_type: 'Bearer',
+        scope: SCOPE,
+      });
+    const real = repo.updateTokens.bind(repo);
+    const gens: (number | undefined)[] = [];
+    repo.updateTokens = async (o, i, t, opts) => {
+      gens.push(opts?.generation);
+      if (gens.length === 1) {
+        // Simulate a concurrent writer bumping the generation without changing the refresh token.
+        const s = (await repo.readSecrets(o, userId, i))!;
+        await real(
+          o,
+          i,
+          { ...t, accessToken: 'interim', refreshToken: '' },
+          {
+            generation: s.tokenGeneration,
+          },
+        );
+        return false;
+      }
+      return real(o, i, t, opts);
+    };
+    now += 3600_000;
+    const res = await c.get(
+      `/orgs/${org}/calendar/events?from=2026-11-01T00:00:00.000Z&to=2026-11-08T00:00:00.000Z`,
+    );
+    expect(res.statusCode).toBe(200);
+    expect(gens).toHaveLength(2);
+    expect(gens[1]).toBe((gens[0] ?? 0) + 1);
+    expect((await repo.readSecrets(org, userId, id))!.refreshToken).toBe('g-refresh-rotated');
+  });
+
   describe('P7 read-through of worker-synced events', () => {
     const FROM = '2026-11-01T00:00:00.000Z';
     const TO = '2026-11-08T00:00:00.000Z';
