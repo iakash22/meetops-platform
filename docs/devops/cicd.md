@@ -24,6 +24,9 @@ GHCR_TOKEN_FILE=~/.ghcr-token scripts/build-images.sh --push  # build + SBOM + l
   from stdin or `GHCR_TOKEN_FILE`. The token never appears in argv and is never echoed. The
   script logs out of GHCR on exit (`trap`). `GHCR_USER` defaults to `iakash22`.
 
+- **Token scope:** the GHCR token **must have the `packages:write` scope** (for a classic
+  token, `write:packages`). No other scope is needed.
+
 - Builds `infra/docker/Dockerfile.{api,worker,web,realtime}` from a **clean** tree.
 - Tags each image `ghcr.io/iakash22/meetops-platform/<app>:sha-<full commit sha>`. Images use
   immutable SHA tags only, with no moving branch tags.
@@ -41,7 +44,10 @@ The script is manual only. It aborts unless all of the following pass on a clean
 2. `gitleaks detect --source . --redact`
 3. `env -u AUDIT_GATE_NOW node scripts/audit-gate.mjs`
 
-The script requires an interactive terminal (`[ -t 0 ]`). Every environment, staging and
+The script requires an interactive terminal (`[ -t 0 ]`) unless `--non-interactive` is passed
+explicitly; non-interactive runs must also set `DEPLOY_CONFIRM="deploy <env>"`.
+**Staging gate:** production aborts unless the same sha was deployed to staging first (a marker
+written to `DEPLOY_STATE_DIR`, default `~/.local/state/meetops-deploy`). Every environment, staging and
 production alike, needs a typed `deploy <env>` confirmation read from `/dev/tty`. The `sha` must
 be the full 40-hex-character commit and must equal `git rev-parse HEAD` (the default). The audit
 gate runs as `env -u AUDIT_GATE_NOW node scripts/audit-gate.mjs`, so its clock cannot be
@@ -58,4 +64,6 @@ in the repo:
 
 commit → `pnpm local-gates` → PR (Tester & Security PASS on head SHA) → merge →
 `scripts/build-images.sh --push` on the merged SHA → `scripts/deploy.sh staging <sha>` →
-`scripts/deploy.sh production <sha>`.
+`scripts/deploy.sh production <sha>` (refused until staging has run for that sha).
+
+Script tests: `bash tests/ci/deploy.test.sh` (argument, sha, TTY and staging-gate checks; no gates run).
