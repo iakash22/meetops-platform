@@ -5,6 +5,7 @@ import { Toaster } from '@/components/ui/toast';
 import { ApiProvider } from '@/lib/api/context';
 import type { ApiClient } from '@/lib/api/client';
 import { queryKeys } from '@/lib/api/queries';
+import { RealtimeBridge } from '@/lib/realtime/bridge';
 import { safeRedirect } from '@/lib/safe-redirect';
 import { createAppRouter } from '@/routes/router';
 import { useOrgStore } from '@/stores/org-store';
@@ -37,6 +38,7 @@ export function App({
   return (
     <QueryClientProvider client={queryClient}>
       <ApiProvider client={api}>
+        <RealtimeBridge />
         <RouterProvider router={router} />
         <Toaster />
       </ApiProvider>
