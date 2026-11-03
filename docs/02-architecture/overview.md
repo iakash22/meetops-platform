@@ -1,30 +1,61 @@
 ## Architecture overview
 
-MeetOps AI is a modular monolith with clear boundaries between domain logic and infrastructure. Domain code never imports Fastify, Prisma, or Redis. Infrastructure adapters live in app- or infra-scoped layers.
+Audience: the Architect role and reviewers. This page is a map; details live in the linked docs and ADRs ([index](../15-decisions/README.md)). Phase numbers and open work: [PHASE_STATUS](../PHASE_STATUS.md), [P9 remaining work](../p9/remaining-work.md).
 
-High-level architecture:
+MeetOps AI is a modular monolith ([ADR-001](../15-decisions/ADR-001-modular-monolith.md)) with every external service behind an adapter ([ADR-002](../15-decisions/ADR-002-provider-interfaces.md)). Domain code never imports Fastify, Prisma, or Redis.
 
 ```text
-React Web
-    │
-Fastify API ── PostgreSQL (pgvector) ── Outbox
-    │                               │
-    └────────────── Redis / BullMQ ─┘
-                     │
-  Media Worker · AI Worker · Integration Worker
-                     │
-             Realtime Event Gateway
+Web (React) · Extension (WXT) · Desktop (Tauri) · Mobile (Expo)
+    │  HTTPS (cookie+CSRF; bearer for extension/desktop)      ▲ Socket.IO
+Fastify API (apps/api) ── PostgreSQL (forced RLS, pgvector) ── outbox_events
+    │  BullMQ (Redis)                                          │
+apps/worker: media · AI · embeddings · integrations · calendar · notifications
+    │                                                          │
+S3-compatible storage (MinIO dev / R2|S3 prod)     apps/realtime → clients
 ```
 
-Foundations:
+### Apps
 
-- TypeScript strict everywhere, pnpm workspaces, Turborepo
-- PostgreSQL + Prisma (types only in Phase 0), Redis + BullMQ
-- Storage via S3-compatible interface (MinIO in dev)
-- Email via provider-independent interface (Gmail SMTP in dev)
-- Pluggable AI contracts for LLM and transcription
+| App              | Role                                                                                                                                                                                 | Docs                                                                                 |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------ |
+| `apps/api`       | Fastify business API, Prisma, CASL                                                                                                                                                   | [04-api](../04-api/README.md)                                                        |
+| `apps/web`       | React/Vite/TanStack/Tailwind/shadcn                                                                                                                                                  | [05-web](../05-web)                                                                  |
+| `apps/worker`    | BullMQ consumers: media (FFmpeg, clamd scan), AI (STT, summary, action items), embeddings, integrations (task sync, token refresh), calendar sync, notifications, GeoIP/IP retention | [06-worker](../06-worker/README.md)                                                  |
+| `apps/realtime`  | Socket.IO gateway with Redis adapter                                                                                                                                                 | [ADR-011](../15-decisions/ADR-011-realtime-auth.md)                                  |
+| `apps/extension` | WXT MV3 capture                                                                                                                                                                      | [ADR-005](../15-decisions/ADR-005-extension-auth.md), [extension](../extension)      |
+| `apps/desktop`   | Tauri 2 recorder                                                                                                                                                                     | [ADR-012](../15-decisions/ADR-012-desktop-auth.md)                                   |
+| `apps/mobile`    | Expo/RN with native Kotlin/Swift modules                                                                                                                                             | [mobile](../mobile), [ADR-015](../15-decisions/ADR-015-mobile-segment-encryption.md) |
 
-Browser extension auth ([ADR-005](../15-decisions/ADR-005-extension-auth.md), Amendment 1):
+### Packages
+
+`contracts` (TypeBox, [ADR-003](../15-decisions/ADR-003-contracts-ownership.md)/[ADR-004](../15-decisions/ADR-004-db-contract-mapping.md)) · `database` (Prisma schema, roles, RLS; [schema](../10-database/schema.md)) · `ai-core` (provider registry, SSRF guard; [ADR-009](../15-decisions/ADR-009-ai-provider-routing-credentials-ssrf.md)) · `storage` · `queue` ([11-queue](../11-queue/README.md)) · `integrations` (GitHub/Jira/calendar adapters; [ADR-007](../15-decisions/ADR-007-integrations-retry-webhook-replay.md), [ADR-008](../15-decisions/ADR-008-oauth-pkce-token-encryption.md)) · `notifications` ([ADR-013](../15-decisions/ADR-013-notifications-architecture.md)) · `session-verifier` · `media-core` · `logger` · `config`.
+
+### Request path
+
+Client → API route (TypeBox-validated contract) → auth (session cookie + CSRF for web; opaque bearer tokens for extension/desktop) → CASL ability check ([RBAC matrix](../12-security/rbac-matrix.md)) → application service → Prisma as `meetops_app` with the transaction scoped to `organizationId`, so forced RLS applies ([ADR-010](../15-decisions/ADR-010-organization-id-tenant-key.md), [tenant isolation](../12-security/multi-tenant-isolation.md)). Side effects are enqueued on BullMQ or written as outbox rows in the same transaction.
+
+### Media and AI pipeline
+
+Upload or recording segments → object storage → media worker (clamd scan per [ADR-018](../15-decisions/ADR-018-upload-malware-scanning.md), FFmpeg assembly/normalisation) → transcription (AssemblyAI default, local Whisper optional; no paid auto-fallback) → summary and action items (Gemini primary) → task drafts for approval → task sync to Jira/GitHub (`TASK_SYNC_ENABLED`) → embeddings into `meeting_embeddings` for semantic search. Consent gates capture ([ADR-020](../15-decisions/ADR-020-recording-consent.md)); retention per [ADR-019](../15-decisions/ADR-019-media-retention.md). Details: [09-ai](../09-ai/README.md), [transcription](../09-ai/transcription.md), [model routing](../09-ai/model-routing.md), [storage and media](../07-storage/storage-and-media.md).
+
+### Outbox
+
+Domain writes that must notify (summary ready, tasks created, new-location login) insert an `OutboxEvent` in the same transaction. The notifications worker claims rows through the `meetops_relay` `SECURITY DEFINER` functions and fans out over BullMQ / Socket.IO ([ADR-013](../15-decisions/ADR-013-notifications-architecture.md), [schema](../10-database/schema.md)).
+
+### Storage
+
+PostgreSQL 16 + pgvector (roles `meetops_app`, `meetops_migrator`, optional `meetops_relay`); Redis for BullMQ and the Socket.IO adapter; S3-compatible objects (MinIO in dev, R2/S3 in prod) via `packages/storage`. Keys and secrets: [secrets policy](../12-security/secrets-policy.md), KMS still open ([ADR-016](../15-decisions/ADR-016-secret-manager-kms.md)).
+
+### Known gaps
+
+- `TranscriptSegment.embedding` (`vector(1536)`, `transcript_segments.embedding`) is unused: the embeddings pipeline writes `MeetingEmbedding` rows instead. Drop it or document it before GA.
+- STT fallback: `packages/ai-core/src/contracts.ts` has `TODO(contracts)` for a dedicated STT fallback type (`FallbackPolicy.sttProviderIds`); job-level fallbacks are ignored for transcription.
+- Outbound auth mail still runs through the API's inline queue in places; the production BullMQ mail path is incomplete (see [PHASE_STATUS](../PHASE_STATUS.md)).
+- Native Kotlin/Swift/Tauri code has not been compiled or run on devices; bundle ids are placeholders.
+- KMS (ADR-016), billing (ADR-017), MFA/SSO (ADR-021) undecided; ADR-006–013 still Proposed.
+- Remote CI unavailable; `pnpm local-gates` is the gate ([local gates](../local-gates.md)).
+
+### Browser extension auth ([ADR-005](../15-decisions/ADR-005-extension-auth.md), Amendment 1):
 
 - The extension never uses the web session cookie. A user gesture starts pairing with a single-use nonce. The web app
   (cookie + CSRF) confirms the org and calls `/auth/extension/pair`, and hands a short-lived pairing code to the
