@@ -219,6 +219,8 @@ describe('relayOutboxOnce', () => {
       'auth.new_location_signin',
       'extracted_tasks.pending_review',
       'meeting.summary_ready',
+      'meeting.transcription_delayed',
+      'meeting.transcription_delayed.owner',
     ]);
     expect(s.done[0]![1]).toEqual({ published: true });
     expect(s.done[1]![1]).toMatchObject({ published: false, error: 'unhandled_event_type' });
