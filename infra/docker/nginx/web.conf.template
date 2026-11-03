@@ -3,7 +3,8 @@
 # Configurable: CSP_API_ORIGIN, CSP_REALTIME_ORIGIN, CSP_STORAGE_ORIGIN (required, validated by
 # 10-validate-csp-env.sh before this is rendered), CSP_REPORT_URL (optional CSP report endpoint) and
 # CSP_UPGRADE_INSECURE (default on). REALTIME_UPSTREAM (apps/realtime base URL, default http://realtime:4001) and
-# NGINX_RESOLVER (default 127.0.0.11, Docker's embedded DNS) back the same-origin /socket.io proxy.
+# NGINX_RESOLVER (default 127.0.0.11: Docker's embedded DNS, which only exists inside a Docker network; set a
+# real resolver IP/hostname elsewhere, e.g. Kubernetes kube-dns) back the same-origin /socket.io proxy.
 
 # R20: Reporting-Endpoints only when CSP_REPORT_URL is set (nginx skips an add_header whose value is empty).
 map "${CSP_REPORT_URL}" $csp_reporting_endpoints {
@@ -82,7 +83,9 @@ server {
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection $connection_upgrade;
         proxy_set_header Host $host;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        # Overwrite, never append: a client-sent X-Forwarded-For must not reach realtime's per-IP limits. Needs
+        # realtime with REALTIME_TRUST_PROXY_HOPS=1 (#417) so it reads this address instead of nginx's.
+        proxy_set_header X-Forwarded-For $remote_addr;
         proxy_set_header X-Forwarded-Proto $scheme;
         proxy_read_timeout 75s;
         proxy_send_timeout 75s;

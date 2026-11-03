@@ -26,6 +26,7 @@ ENV CSP_API_ORIGIN=http://localhost:3000 \
     CSP_REPORT_URL="" \
     CSP_UPGRADE_INSECURE=on \
     REALTIME_UPSTREAM=http://realtime:4001 \
+    # 127.0.0.11 is Docker's embedded DNS (Docker networks only); override outside Docker.
     NGINX_RESOLVER=127.0.0.11 \
     NGINX_ENVSUBST_FILTER="^(CSP_|REALTIME_UPSTREAM|NGINX_RESOLVER)"
 COPY infra/docker/nginx/web.conf.template /etc/nginx/templates/default.conf.template

@@ -302,6 +302,9 @@ services:
       DB_ROLE: none
       REALTIME_HOST: 0.0.0.0
       REALTIME_PORT: 4001
+      # One trusted proxy hop: the web nginx /socket.io proxy overwrites X-Forwarded-For with the client IP.
+      # Read by realtime once #417 (fix/realtime-hardening) is merged; ignored before that.
+      REALTIME_TRUST_PROXY_HOPS: 1
       # Explicit allowlist, required; never '*'.
       REALTIME_CORS_ORIGINS: ${REALTIME_CORS_ORIGINS:?set REALTIME_CORS_ORIGINS in .env}
     secrets: [redis_password]
