@@ -22,6 +22,7 @@ const STATUS_LABEL: Record<Meeting['status'], string> = {
   processing: 'Processing',
   completed: 'Completed',
   failed: 'Failed',
+  transcription_delayed: 'Transcription delayed',
 };
 
 const STATUS_VARIANT: Record<Meeting['status'], NonNullable<BadgeProps['variant']>> = {
@@ -30,6 +31,7 @@ const STATUS_VARIANT: Record<Meeting['status'], NonNullable<BadgeProps['variant'
   processing: 'secondary',
   completed: 'default',
   failed: 'destructive',
+  transcription_delayed: 'secondary',
 };
 
 const SOURCE_LABEL: Record<Meeting['source'], string> = {

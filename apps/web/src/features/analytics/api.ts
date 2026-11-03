@@ -87,6 +87,7 @@ export const STATUS_LABELS: Record<MeetingAnalytics['byStatus'][number]['status'
   processing: 'Processing',
   completed: 'Completed',
   failed: 'Failed',
+  transcription_delayed: 'Transcription delayed',
 };
 
 /** Bucket start label, in UTC to match the API's buckets. */
