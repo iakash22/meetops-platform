@@ -36,7 +36,7 @@ Client → API route (TypeBox-validated contract) → auth (session cookie + CSR
 
 ### Media and AI pipeline
 
-Upload or recording segments → object storage → media worker (clamd scan per [ADR-018](../15-decisions/ADR-018-upload-malware-scanning.md), FFmpeg assembly/normalisation) → transcription (AssemblyAI default, local Whisper optional; no paid auto-fallback) → summary and action items (Gemini primary) → task drafts for approval → task sync to Jira/GitHub (`TASK_SYNC_ENABLED`) → embeddings into `meeting_embeddings` for semantic search. Consent gates capture ([ADR-020](../15-decisions/ADR-020-recording-consent.md)); retention per [ADR-019](../15-decisions/ADR-019-media-retention.md). Details: [09-ai](../09-ai/README.md), [transcription](../09-ai/transcription.md), [model routing](../09-ai/model-routing.md), [storage and media](../07-storage/storage-and-media.md).
+Upload or recording segments → object storage → media worker (clamd scan per [ADR-018](../15-decisions/ADR-018-upload-malware-scanning.md), FFmpeg assembly/normalisation) → transcription (AssemblyAI default, local Whisper optional; no automatic STT fallback, failures retry via the queue) → summary and action items (Gemini primary) → task drafts for approval → task sync to Jira/GitHub (`TASK_SYNC_ENABLED`) → embeddings into `meeting_embeddings` for semantic search. Consent gates capture ([ADR-020](../15-decisions/ADR-020-recording-consent.md)); retention per [ADR-019](../15-decisions/ADR-019-media-retention.md). Details: [09-ai](../09-ai/README.md), [transcription](../09-ai/transcription.md), [model routing](../09-ai/model-routing.md), [storage and media](../07-storage/storage-and-media.md).
 
 ### Outbox
 
@@ -48,8 +48,9 @@ PostgreSQL 16 + pgvector (roles `meetops_app`, `meetops_migrator`, optional `mee
 
 ### Known gaps
 
-- `TranscriptSegment.embedding` (`vector(1536)`, `transcript_segments.embedding`) is unused: the embeddings pipeline writes `MeetingEmbedding` rows instead. Drop it or document it before GA.
-- STT fallback: `packages/ai-core/src/contracts.ts` has `TODO(contracts)` for a dedicated STT fallback type (`FallbackPolicy.sttProviderIds`); job-level fallbacks are ignored for transcription.
+- `TranscriptSegment.embedding` (`vector(1536)`) is redundant: `MeetingEmbedding` (`meeting_embeddings`) already stores one row per transcript segment (and per summary report) and model, which is what search reads. No migration now; it is a candidate for removal later.
+- Search quality: `meeting_embeddings` has no ANN index yet, so similarity queries scan. The next step is an ANN index (pgvector HNSW or IVFFlat) on `meeting_embeddings.embedding`.
+- No automatic STT fallback: a failed transcription is retried through the BullMQ queue (retry/backoff), not switched to another provider, and never to a paid one. `packages/ai-core/src/contracts.ts` keeps a `TODO(contracts)` for a dedicated STT fallback type (`FallbackPolicy.sttProviderIds`); job-level LLM fallbacks are ignored for transcription.
 - Outbound auth mail still runs through the API's inline queue in places; the production BullMQ mail path is incomplete (see [PHASE_STATUS](../PHASE_STATUS.md)).
 - Native Kotlin/Swift/Tauri code has not been compiled or run on devices; bundle ids are placeholders.
 - KMS (ADR-016), billing (ADR-017), MFA/SSO (ADR-021) undecided; ADR-006–013 still Proposed.
