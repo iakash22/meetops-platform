@@ -69,7 +69,7 @@ describe('calendar disconnect: event -> meeting link cleanup', () => {
     expect(f.committed()).toBe(true);
   });
 
-  it('API token refresh only writes an ACTIVE row and never resurrects its status', async () => {
+  it('#394: API token refresh writes active or error rows (recovering error to active), never revoked', async () => {
     const f = fakeDb();
     const id = randomUUID();
     const cipher = { encrypt: async (v: string) => `v1.k1.n.${v.length}`, decrypt: async () => '' };
@@ -78,8 +78,12 @@ describe('calendar disconnect: event -> meeting link cleanup', () => {
       refreshToken: 'r',
       accessTokenExpiresAt: new Date(),
     });
-    expect(f.updates[0]!.where).toEqual({ id, organizationId: org, status: 'active' });
-    expect(f.updates[0]!.data).not.toHaveProperty('status');
+    expect(f.updates[0]!.where).toEqual({
+      id,
+      organizationId: org,
+      status: { in: ['active', 'error'] },
+    });
+    expect(f.updates[0]!.data).toMatchObject({ status: 'active' });
   });
 
   it('Prisma revoke wipes the sync cursor and its window like a reconnect does', async () => {

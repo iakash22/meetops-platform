@@ -233,12 +233,13 @@ export class PrismaCalendarConnections implements CalendarConnectionsRepository 
       : undefined;
     const r = await this.org(organizationId, (tx) =>
       tx.calendarConnection.updateMany({
-        // Only an ACTIVE row: a refresh racing a revoke / error mark must neither resurrect it nor rewrite it.
-        // With `generation`: compare-and-set, so a slower refresh never overwrites a newer grant or rotated token.
+        // Active or error rows (a successful refresh is how an error connection recovers, so it is reactivated);
+        // never a revoked one. With `generation`: compare-and-set, so a slower refresh never overwrites a newer
+        // grant or rotated token.
         where: {
           id,
           organizationId,
-          status: 'active',
+          status: { in: ['active', 'error'] },
           ...(opts.generation !== undefined ? { tokenGeneration: opts.generation } : {}),
         },
         data: {
@@ -251,6 +252,7 @@ export class PrismaCalendarConnections implements CalendarConnectionsRepository 
           tokenKeyId: keyIdOf(accessTokenEnc),
           accessTokenExpiresAt: t.accessTokenExpiresAt,
           tokenGeneration: { increment: 1 },
+          status: 'active',
         },
       }),
     );

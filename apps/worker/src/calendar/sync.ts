@@ -34,7 +34,7 @@ export interface CalendarSyncSweepRepository {
     /** With `lease`, writes only while the claim is still held (and the connection is active). */
     /** `generation`: compare-and-set on the token generation readSecrets returned. */
     opts?: { lease?: Date; generation?: number; refreshEncVersion?: 1 | 2 | null },
-  ): Promise<unknown>;
+  ): Promise<boolean | void>;
   /** With `lease`, writes only while the claim is still held. */
   markError(organizationId: string, id: string, opts?: { lease?: Date }): Promise<unknown>;
   recordFailure(
@@ -256,6 +256,18 @@ function errInfo(err: unknown) {
   };
 }
 
+/**
+ * maxEvents applies to the delta path too. A delta page longer than the cap is truncated to it, never treated as
+ * complete (no cancellations), and its cursor is dropped (null) so the skipped changes are not lost behind an
+ * advanced cursor: the next sweep opens a new round.
+ */
+function capDelta<
+  P extends { events: CalendarSyncEventInput[]; complete: boolean; cursor?: string | null },
+>(plan: P, maxEvents: number): P {
+  if (plan.events.length <= maxEvents) return plan;
+  return { ...plan, events: plan.events.slice(0, maxEvents), complete: false, cursor: null };
+}
+
 export async function runCalendarSyncSweep(deps: CalendarSyncDeps): Promise<CalendarSyncResult> {
   const cfg: CalendarSyncConfig = { ...CALENDAR_SYNC_DEFAULTS, ...deps.config };
   const clock = deps.now ?? Date.now;
@@ -306,17 +318,52 @@ export async function runCalendarSyncSweep(deps: CalendarSyncDeps): Promise<Cale
         !s.accessTokenExpiresAt || s.accessTokenExpiresAt.getTime() - nowMs <= REFRESH_SKEW_MS;
       if (expiring && s.refreshToken) {
         const t = await provider.refresh(s.refreshToken);
-        await deps.repo.updateTokens(
-          d.organizationId,
-          d.id,
-          {
-            accessToken: t.accessToken,
-            refreshToken: t.refreshToken,
-            accessTokenExpiresAt: new Date(t.expiresAt),
-          },
-          { lease, generation: s.tokenGeneration, refreshEncVersion: s.refreshEncVersion },
-        );
-        accessToken = t.accessToken;
+        const tokens = {
+          accessToken: t.accessToken,
+          refreshToken: t.refreshToken,
+          accessTokenExpiresAt: new Date(t.expiresAt),
+        };
+        const stored = await deps.repo.updateTokens(d.organizationId, d.id, tokens, {
+          lease,
+          generation: s.tokenGeneration,
+          refreshEncVersion: s.refreshEncVersion,
+        });
+        if (stored === false) {
+          // #394: compare-and-set miss. Outlook rotates refresh tokens, so never drop ours silently: re-read,
+          // keep a newer grant another writer stored, otherwise retry once against the current generation.
+          const again = await deps.repo.readSecrets(d.organizationId, d.id);
+          if (!again) {
+            deps.log.warn(
+              { ...ids },
+              'calendar token CAS miss: connection no longer active; skipping',
+            );
+            result.skipped++;
+            continue;
+          }
+          if (again.refreshToken !== s.refreshToken) {
+            deps.log.info(
+              { ...ids, generation: again.tokenGeneration },
+              'calendar token CAS miss: a newer grant is already stored; using it',
+            );
+            accessToken = again.accessToken;
+          } else {
+            const retried = await deps.repo.updateTokens(d.organizationId, d.id, tokens, {
+              lease,
+              generation: again.tokenGeneration,
+              refreshEncVersion: again.refreshEncVersion,
+            });
+            if (retried === false) {
+              deps.log.warn(
+                { ...ids, generation: again.tokenGeneration },
+                'calendar token CAS miss persisted after retry; skipping this sync',
+              );
+              result.skipped++;
+              continue;
+            }
+            deps.log.info({ ...ids }, 'calendar token CAS miss reconciled on retry');
+            accessToken = t.accessToken;
+          }
+        } else accessToken = t.accessToken;
       }
       const listDelta = cfg.deltaEnabled ? provider.listEventsDelta?.bind(provider) : undefined;
       let plan: {
@@ -336,7 +383,10 @@ export async function runCalendarSyncSweep(deps: CalendarSyncDeps): Promise<Cale
             timeMax: to.toISOString(),
           });
           // A new round returns the whole window, so vanished events are cancelled like a complete list.
-          return { from, to, events: r.events, complete: true, cursor: r.cursor };
+          return capDelta(
+            { from, to, events: r.events, complete: true, cursor: r.cursor },
+            cfg.maxEvents,
+          );
         };
         if (c && to.getTime() - c.to.getTime() <= cfg.cursorMaxLagMs) {
           try {
@@ -346,14 +396,17 @@ export async function runCalendarSyncSweep(deps: CalendarSyncDeps): Promise<Cale
               timeMax: c.to.toISOString(),
               cursor: c.value,
             });
-            plan = {
-              from: c.from,
-              to: c.to,
-              events: r.events,
-              complete: false,
-              removedIds: r.removedIds,
-              cursor: r.cursor,
-            };
+            plan = capDelta(
+              {
+                from: c.from,
+                to: c.to,
+                events: r.events,
+                complete: false,
+                removedIds: r.removedIds,
+                cursor: r.cursor,
+              },
+              cfg.maxEvents,
+            );
           } catch (err) {
             if (!isCursorExpired(err)) throw err;
             deps.log.info({ ...ids }, 'calendar sync cursor expired; starting a new round');

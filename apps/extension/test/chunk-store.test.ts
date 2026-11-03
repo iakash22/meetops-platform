@@ -43,28 +43,49 @@ describe('ChunkStore (IndexedDB)', () => {
     expect((await b.listSessions()).map((s) => s.sessionId)).toEqual(['s1']);
   });
 
-  it('evicts oldest chunks of other recordings first to stay under the cap', async () => {
-    const s = await open({ maxBytes: 30, policy: 'evict-oldest' });
+  it('never evicts pending chunks of another (unheld) recording; refuses the new chunk instead', async () => {
+    const s = await open({ maxBytes: 30, policy: 'evict-uploaded' });
     await s.putChunk(chunk(0, 10));
     await s.putChunk(chunk(1, 10));
     await s.putChunk(chunk(2, 10));
     await s.putSession({ sessionId: 's2', meta, completed: false });
-    const r = await s.putChunk({ ...chunk(0, 15, 9), sessionId: 's2' });
-    // s1 lost a pending chunk, so it can never complete: the whole unheld recording is evicted together.
-    expect(r).toEqual({
-      stored: true,
-      evictedCount: 3,
-      evictedBytes: 30,
-      damagedSessions: ['s1'],
-      lostPending: 3,
+    expect(await s.putChunk({ ...chunk(0, 15, 9), sessionId: 's2' })).toEqual({
+      stored: false,
+      reason: 'over-cap',
     });
-    expect((await s.listChunks()).map((c) => `${c.sessionId}:${c.seq}`)).toEqual(['s2:0']);
-    expect(await s.totalBytes()).toBe(15);
-    expect((await s.getSession('s1'))!.incomplete).toEqual({ lostChunks: 3 });
+    expect((await s.listChunks('s1')).map((c) => c.seq)).toEqual([0, 1, 2]);
+    expect((await s.getSession('s1'))!.incomplete).toBeUndefined();
+  });
+
+  it('deletes a pending chunk only once the server confirmed it (uploaded)', async () => {
+    const s = await open({ maxBytes: 20, policy: 'evict-uploaded' });
+    await s.putChunk(chunk(0, 10));
+    await s.putChunk(chunk(1, 10));
+    await s.putSession({ sessionId: 's2', meta, completed: false });
+    expect(await s.putChunk({ ...chunk(0, 10, 9), sessionId: 's2' })).toMatchObject({
+      stored: false,
+    });
+    await s.markUploaded('s1', 0);
+    expect(await s.putChunk({ ...chunk(0, 10, 9), sessionId: 's2' })).toMatchObject({
+      stored: true,
+      evictedCount: 1,
+      lostPending: 0,
+    });
+    expect((await s.listChunks()).map((c) => `${c.sessionId}:${c.seq}`)).toEqual(['s1:1', 's2:0']);
+  });
+
+  it('pending chunks survive a service-worker restart (reopened IndexedDB)', async () => {
+    const factory = new IDBFactory();
+    const a = await ChunkStore.open({ maxBytes: 100, policy: 'evict-uploaded' }, factory);
+    await a.putSession({ sessionId: 's1', meta, completed: false });
+    await a.putChunk(chunk(0, 10));
+    a.close();
+    const b = await ChunkStore.open({ maxBytes: 100, policy: 'evict-uploaded' }, factory);
+    expect((await b.listChunks('s1')).map((c) => [c.seq, c.uploaded])).toEqual([[0, false]]);
   });
 
   it('evicts uploaded chunks before any unheld pending recording', async () => {
-    const s = await open({ maxBytes: 30, policy: 'evict-oldest' });
+    const s = await open({ maxBytes: 30, policy: 'evict-uploaded' });
     await s.putChunk(chunk(0, 10));
     await s.putChunk(chunk(1, 10));
     await s.markUploaded('s1', 1);
@@ -85,7 +106,7 @@ describe('ChunkStore (IndexedDB)', () => {
   });
 
   it('a recording never evicts its own earlier pending chunks (refused instead)', async () => {
-    const s = await open({ maxBytes: 30, policy: 'evict-oldest' });
+    const s = await open({ maxBytes: 30, policy: 'evict-uploaded' });
     await s.putChunk(chunk(0, 10));
     await s.putChunk(chunk(1, 10));
     await s.putChunk(chunk(2, 10));
@@ -98,7 +119,7 @@ describe('ChunkStore (IndexedDB)', () => {
   });
 
   it('never evicts pending chunks of a held recording; refuses the new chunk instead', async () => {
-    const s = await open({ maxBytes: 30, policy: 'evict-oldest' });
+    const s = await open({ maxBytes: 30, policy: 'evict-uploaded' });
     await s.putChunk(chunk(0, 10));
     await s.putChunk(chunk(1, 10));
     await s.putSession({
@@ -109,10 +130,10 @@ describe('ChunkStore (IndexedDB)', () => {
     await s.putSession({ sessionId: 's2', meta, completed: false });
     await s.putChunk({ ...chunk(0, 10, 5), sessionId: 's2' });
     await s.putSession({ sessionId: 's3', meta, completed: false });
-    // s3 may evict s2's chunk, never s1's held ones.
-    expect(await s.putChunk({ ...chunk(0, 10, 6), sessionId: 's3' })).toMatchObject({
-      stored: true,
-      damagedSessions: ['s2'],
+    // s3 may not evict s2's pending chunk, nor s1's held ones.
+    expect(await s.putChunk({ ...chunk(0, 10, 6), sessionId: 's3' })).toEqual({
+      stored: false,
+      reason: 'over-cap',
     });
     // Held data alone (20 of 30) leaves no room for a 15-byte chunk: refused, held chunks untouched.
     expect(await s.putChunk({ ...chunk(1, 15, 7), sessionId: 's3' })).toEqual({
@@ -131,7 +152,7 @@ describe('ChunkStore (IndexedDB)', () => {
   });
 
   it('refuses a single chunk larger than the cap under either policy', async () => {
-    const s = await open({ maxBytes: 5, policy: 'evict-oldest' });
+    const s = await open({ maxBytes: 5, policy: 'evict-uploaded' });
     expect((await s.putChunk(chunk(0, 6))).stored).toBe(false);
   });
 

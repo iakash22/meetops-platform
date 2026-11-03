@@ -106,6 +106,7 @@ export default async function calendarModule(
     selectCalendarSyncStore(deps),
     undefined,
     selectCalendarEventLinks(deps),
+    app.log,
   );
   const g = makeGuards(auth, deps.security);
   const access = new DirectoryAccess(organizations, deps.audit);

@@ -2,7 +2,7 @@
 
 Turn every meeting into actionable, assigned, measurable, and synchronized work.
 
-Status: Pre-alpha, Phases 1–9 in progress in parallel (estimate **~72%** overall on 31 Oct 2026). Phase 0 is done; Phase 1 is ~95%; Phases 2–6 and 8 are mostly wired on `main`; Phase 7 is barely started; Phase 9 is early. Latest integration → `main`: [#257](https://github.com/iakash22/meetops-platform/pull/257) (`403bd00f`). See [`docs/PHASE_STATUS.md`](docs/PHASE_STATUS.md) for per-phase numbers and what is still open.
+Status: Pre-alpha, Phase 1 integration-branch workflow (`integration/phase-1`); Phases 1–9 in progress in parallel (coordinator estimate **~79%** overall on 3 Nov 2026). Active work: P7 (calendar/search/analytics), P8 (native desktop/mobile) and P9 (hardening/release). Integration → `main` is open as [#384](https://github.com/iakash22/meetops-platform/pull/384); only Akash merges into `main`. See [`docs/PHASE_STATUS.md`](docs/PHASE_STATUS.md) for per-phase numbers and what is still open.
 
 ## Core flow
 
@@ -40,15 +40,15 @@ No Next.js, no MongoDB, and no Kubernetes at the start. The backend is a modular
 ## Architecture
 
 ```text
-React Web
+Web (React) · Extension (WXT) · Desktop (Tauri) · Mobile (Expo)
     │
-Fastify Business API ── PostgreSQL ── Outbox
+Fastify Business API (apps/api) ── PostgreSQL ── Outbox
     │                                │
     └──────────── Redis / BullMQ ────┘
                      │
-   Media Worker (FFmpeg) · AI Worker (STT + LLM) · Integration Worker
+   apps/worker: media (FFmpeg, clamd) · AI (STT + LLM, embeddings) · integrations · calendar · notifications
                      │
-             Realtime Event Gateway → UI
+   Realtime gateway (apps/realtime, Socket.IO) → clients
 ```
 
 ## Repository structure
@@ -83,8 +83,14 @@ cp .env.example .env            # fill in local values
 pnpm install
 ./scripts/gen-dev-secrets.sh --from-env   # compose secrets in infra/compose/secrets (gitignored)
 docker compose -f infra/compose/compose.dev.yml up -d   # Postgres, Redis, MinIO (+ optional profiles)
+pnpm db:generate                # Prisma client (also runs on install)
+pnpm db:roles                   # meetops_app / meetops_migrator roles; needs ADMIN_DATABASE_URL (uncomment it in .env)
+pnpm db:migrate                 # prisma migrate deploy (use `pnpm db:migrate:dev` when changing the schema)
+pnpm db:seed                    # prisma/seed.ts (idempotent)
 pnpm dev
 ```
+
+The database steps follow the same order as CI (`.github/workflows/ci.yml`): generate, roles, migrate deploy, seed. `db:migrate` and `db:seed` use `MIGRATION_DATABASE_URL` (`meetops_migrator`); the apps use `DATABASE_URL` (`meetops_app`, RLS enforced). See [local setup](docs/00-getting-started/local-setup.md).
 
 Common scripts:
 
@@ -107,6 +113,10 @@ Copy-Item .env.example .env     # fill in local values; never commit .env
 pnpm install
 sh scripts/gen-dev-secrets.sh --from-env  # compose secrets from .env (sh from Git for Windows)
 pnpm dev:infra:up               # docker compose --env-file .env -f infra/compose/compose.dev.yml up -d
+pnpm db:generate
+pnpm db:roles                   # needs ADMIN_DATABASE_URL (uncomment it in .env)
+pnpm db:migrate
+pnpm db:seed
 pnpm dev
 pnpm dev:infra:down             # stop the infra stack
 ```

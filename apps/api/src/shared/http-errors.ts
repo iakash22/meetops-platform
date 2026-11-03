@@ -12,6 +12,10 @@ const GENERIC: Record<number, [ApiErrorCode, string]> = {
   429: ['RATE_LIMITED', 'Too many requests, try again later'],
 };
 
+/** A DomainError that carries a Retry-After (e.g. 503 when the rate limiter is unavailable). */
+const hasRetryAfter = (err: DomainError): err is DomainError & { retryAfterMs: number } =>
+  typeof (err as { retryAfterMs?: unknown }).retryAfterMs === 'number';
+
 /** Generic code/message for any 4xx status (e.g. 413, 415 fall back to BAD_REQUEST). */
 export function genericClientError(status: number): [ApiErrorCode, string] {
   return GENERIC[status] ?? ['BAD_REQUEST', 'Bad request'];
@@ -33,7 +37,7 @@ export function registerDomainErrorHandler(app: FastifyInstance) {
         .send({ error: { ...error, ...(reason ? { reason } : {}), requestId: request.id } });
     };
     if (err instanceof DomainError) {
-      if (err instanceof RateLimitedError)
+      if (err instanceof RateLimitedError || hasRetryAfter(err))
         void reply.header('retry-after', Math.ceil(err.retryAfterMs / 1000));
       return send(err.statusCode, {
         code: err.code,
