@@ -20,7 +20,7 @@ import {
 import type { MediaRateLimit } from './rate-limit.js';
 
 const tags = ['uploads'];
-const errors = { ...directoryErrors, 409: ErrorBody, 422: ErrorBody } as const;
+const errors = { ...directoryErrors, 409: ErrorBody, 422: ErrorBody, 503: ErrorBody } as const;
 
 export async function uploadRoutes(
   app: FastifyInstance,
