@@ -16,6 +16,7 @@ const STATUS_LABEL: Record<Meeting['status'], string> = {
   processing: 'Processing',
   completed: 'Completed',
   failed: 'Failed',
+  transcription_delayed: 'Transcription delayed',
 };
 
 /** Placeholder list: real data needs a list-meetings API route (Backend, not in the API yet). */

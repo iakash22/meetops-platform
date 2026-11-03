@@ -14,6 +14,7 @@ const STATUS_LABEL: Record<MeetingStatus, string> = {
   processing: 'Processing',
   completed: 'Completed',
   failed: 'Failed',
+  transcription_delayed: 'Transcription delayed',
 };
 
 const STATUS_VARIANT: Record<MeetingStatus, NonNullable<BadgeProps['variant']>> = {
@@ -22,6 +23,7 @@ const STATUS_VARIANT: Record<MeetingStatus, NonNullable<BadgeProps['variant']>> 
   processing: 'default',
   completed: 'secondary',
   failed: 'destructive',
+  transcription_delayed: 'secondary',
 };
 
 function formatDate(iso: string | undefined): string {
