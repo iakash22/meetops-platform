@@ -12,14 +12,21 @@ describe('quotaLevel', () => {
       quotaLevel({ usage: 1000 * MB - LOCAL_RECORDING_CHUNK_BYTES + 1, quota: 1000 * MB }),
     ).toBe('full');
   });
-  it('unknown quota is not reported as full', () => {
-    expect(quotaLevel({ usage: 0, quota: 0 })).toBe('ok');
+  it('unknown quota fails closed (throws) instead of reporting ok', () => {
+    expect(() => quotaLevel({ usage: 0, quota: 0 })).toThrow();
+    expect(() => quotaLevel({ usage: Number.NaN, quota: 1000 * MB })).toThrow();
+    expect(() => quotaLevel({ usage: 0, quota: Number.POSITIVE_INFINITY })).toThrow();
   });
 });
 
 describe('estimateQuota / requestPersistentStorage', () => {
   it('throws without a storage manager (callers fail closed)', async () => {
     await expect(estimateQuota(undefined)).rejects.toThrow();
+  });
+  it('fails closed when the browser does not report a quota', async () => {
+    await expect(estimateQuota({ estimate: async () => ({}) })).rejects.toThrow();
+    await expect(estimateQuota({ estimate: async () => ({ usage: 1 }) })).rejects.toThrow();
+    await expect(estimateQuota({ estimate: async () => ({ usage: 0, quota: 0 }) })).rejects.toThrow();
   });
   it('reads usage and quota', async () => {
     expect(await estimateQuota({ estimate: async () => ({ usage: 1, quota: 2 }) })).toEqual({

@@ -24,13 +24,16 @@ export const QUOTA_FULL_START_MESSAGE =
 export const QUOTA_CHECK_FAILED_MESSAGE =
   'Could not check browser storage space, so recording was not started. Try again.';
 
-/** 'full' when less than one local recording chunk is free; 'low' above QUOTA_LOW_RATIO. */
+/**
+ * 'full' when less than one local recording chunk is free; 'low' above QUOTA_LOW_RATIO.
+ * Throws on an unknown quota (non-finite or non-positive) so callers fail closed instead of reporting 'ok'.
+ */
 export function quotaLevel(
   e: QuotaEstimate,
   reserveBytes: number = LOCAL_RECORDING_CHUNK_BYTES,
 ): QuotaLevel {
   const { usage, quota } = e;
-  if (!Number.isFinite(usage) || !Number.isFinite(quota) || quota <= 0) return 'ok';
+  if (!isKnownQuota(usage, quota)) throw new Error('storage quota is unknown');
   if (quota - usage < reserveBytes) return 'full';
   return usage >= quota * QUOTA_LOW_RATIO ? 'low' : 'ok';
 }
@@ -51,7 +54,20 @@ export async function estimateQuota(
 ): Promise<QuotaEstimate> {
   if (!sm) throw new Error('navigator.storage is unavailable');
   const r = await sm.estimate();
-  return { usage: r.usage ?? 0, quota: r.quota ?? 0 };
+  // Fail closed: a missing or nonsensical estimate is "unknown", never "0 used of 0" (which reads as ok).
+  if (!isKnownQuota(r.usage, r.quota)) throw new Error('navigator.storage.estimate() did not report a quota');
+  return { usage: r.usage, quota: r.quota };
+}
+
+function isKnownQuota(usage: unknown, quota: unknown): boolean {
+  return (
+    typeof usage === 'number' &&
+    typeof quota === 'number' &&
+    Number.isFinite(usage) &&
+    Number.isFinite(quota) &&
+    usage >= 0 &&
+    quota > 0
+  );
 }
 
 /**
