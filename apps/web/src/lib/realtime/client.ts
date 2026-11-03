@@ -33,6 +33,27 @@ export type RealtimeClientOptions = {
   random?: () => number;
   /** Give up after this many consecutive `unauthorized` connect errors (avoid hammering the rate limiter). */
   maxAuthFailures?: number;
+  /**
+   * After this many consecutive upgrades that close or error before the socket opens (Origin check, 401/403 on
+   * the upgrade, 502, offline), stop the fast backoff and retry only every `slowRetryMs`. Never stops for good.
+   */
+  maxTransportFailures?: number;
+  /** Retry interval once the transport cap is hit (default 5 minutes, with the same equal jitter). */
+  slowRetryMs?: number;
+  /** Event targets for `online` and `visibilitychange` (reset the backoff). Injected for tests. */
+  windowTarget?: Pick<EventTarget, 'addEventListener' | 'removeEventListener'> | undefined;
+  documentTarget?:
+    | (Pick<EventTarget, 'addEventListener' | 'removeEventListener'> & {
+        readonly visibilityState?: string;
+      })
+    | undefined;
+  /**
+   * Called when the `unauthorized` cap is hit. Resolves true when the HTTP session is still valid, in which case
+   * the client restarts (fresh counters) instead of stopping. Without it the client stops with 'unauthorized'.
+   */
+  checkSession?: (() => Promise<boolean>) | undefined;
+  /** Session re-checks that may restart the client in a row (no successful connect in between). */
+  maxSessionRechecks?: number;
   /** Fail the attempt if the Socket.IO connect does not complete in time. */
   connectTimeoutMs?: number;
 };
@@ -47,8 +68,9 @@ const CONTROL_EVENTS = new Set(['session:revoked', 'org:access-changed', 'auth:r
  * (no token in `auth`, no extra query keys), matching ADR-011 section 1.1. Cookie sockets are joined to
  * their organization room by the server, so no client join is needed for org fan-out.
  *
- * Lifecycle: exponential backoff with jitter on any drop; a heartbeat watchdog reconnects when the
- * server's pings stop; `session:revoked` and `org:access-changed{member_removed}` stop it for good;
+ * Lifecycle: exponential backoff with jitter on any drop, slowing to one try every ~5 minutes after repeated
+ * rejected upgrades (outage, 502, offline), reset by `online` and the tab becoming visible; a heartbeat watchdog reconnects when the
+ * server's pings stop; `session:revoked`, `org:access-changed{member_removed}` and a confirmed `unauthorized` stop it for good;
  * `auth:reauth-required` and `role_changed` reconnect. `stop()` clears every timer and handler.
  */
 export class RealtimeClient {
@@ -56,6 +78,24 @@ export class RealtimeClient {
   private status: RealtimeStatus = 'idle';
   private attempt = 0;
   private authFailures = 0;
+  private transportFailures = 0;
+  private sessionRechecks = 0;
+  /** Bumped on every start/stop so a late checkSession() result for an old run is ignored. */
+  private run = 0;
+  /** True once the current socket delivered its Engine.IO open packet (the upgrade succeeded). */
+  private opened = false;
+  /** Transport cap hit: retry every slowRetryMs until a connect, `online` or the tab becoming visible. */
+  private slow = false;
+  private listening = false;
+  private readonly onWake = () => {
+    if (this.status !== 'reconnecting' || this.checking) return;
+    const doc = this.opts.documentTarget ?? globalThis.document;
+    if (doc?.visibilityState && doc.visibilityState !== 'visible') return;
+    this.resetBackoff();
+    this.teardownSocket(false);
+    this.open();
+  };
+  private checking = false;
   private reconnectTimer: ReturnType<typeof setTimeout> | undefined;
   private heartbeatTimer: ReturnType<typeof setTimeout> | undefined;
   private connectTimer: ReturnType<typeof setTimeout> | undefined;
@@ -72,12 +112,36 @@ export class RealtimeClient {
 
   start(): void {
     if (this.status === 'connecting' || this.status === 'connected') return;
+    this.run += 1;
     this.attempt = 0;
     this.authFailures = 0;
+    this.transportFailures = 0;
+    this.sessionRechecks = 0;
+    this.slow = false;
+    this.listen(true);
     this.open();
   }
 
+  private resetBackoff() {
+    this.attempt = 0;
+    this.transportFailures = 0;
+    this.slow = false;
+  }
+
+  private listen(on: boolean) {
+    if (on === this.listening) return;
+    this.listening = on;
+    const win = this.opts.windowTarget ?? globalThis.window;
+    const doc = this.opts.documentTarget ?? globalThis.document;
+    const method = on ? 'addEventListener' : 'removeEventListener';
+    win?.[method]('online', this.onWake);
+    doc?.[method]('visibilitychange', this.onWake);
+  }
+
   stop(reason: StopReason = 'closed'): void {
+    this.run += 1;
+    this.checking = false;
+    this.listen(false);
     this.clearTimers();
     this.teardownSocket(true);
     this.setStatus('stopped', reason);
@@ -122,10 +186,47 @@ export class RealtimeClient {
       return;
     }
     this.ws = ws;
+    this.opened = false;
     this.connectTimer = setTimeout(() => this.drop(), this.opts.connectTimeoutMs ?? 20_000);
     ws.onmessage = (ev) => this.onFrame(ev.data);
-    ws.onclose = () => this.drop();
-    ws.onerror = () => this.drop();
+    ws.onopen = () => {
+      this.opened = true;
+    };
+    ws.onclose = () => this.transportLost();
+    ws.onerror = () => this.transportLost();
+  }
+
+  /** close/error from the socket: before open it is a rejected upgrade and counts toward the cap. */
+  private transportLost() {
+    if (this.status === 'stopped') return;
+    if (!this.opened) {
+      this.transportFailures += 1;
+      if (this.transportFailures >= (this.opts.maxTransportFailures ?? 3)) this.slow = true;
+    }
+    this.drop();
+  }
+
+  /** The `unauthorized` cap was hit: re-check the HTTP session before giving up for good. */
+  private onAuthCap() {
+    const check = this.opts.checkSession;
+    if (!check || this.sessionRechecks >= (this.opts.maxSessionRechecks ?? 3))
+      return this.stop('unauthorized');
+    this.sessionRechecks += 1;
+    this.teardownSocket(false);
+    this.clearTimers();
+    this.setStatus('reconnecting');
+    const run = this.run;
+    this.checking = true;
+    void check()
+      .catch(() => false)
+      .then((valid) => {
+        if (run === this.run) this.checking = false;
+        if (run !== this.run || this.status === 'stopped') return;
+        if (!valid) return this.stop('unauthorized');
+        this.authFailures = 0;
+        this.transportFailures = 0;
+        this.scheduleReconnect();
+      });
   }
 
   /** The transport went away (or is unhealthy): close it and retry with backoff. */
@@ -139,11 +240,10 @@ export class RealtimeClient {
     this.clearTimers();
     if (this.status === 'stopped') return;
     this.setStatus('reconnecting');
-    const delay = backoffDelay(
-      this.attempt,
-      this.opts.backoff ?? DEFAULT_BACKOFF,
-      this.opts.random,
-    );
+    const slowMs = this.opts.slowRetryMs ?? 300_000;
+    const delay = this.slow
+      ? backoffDelay(0, { baseMs: slowMs, maxMs: slowMs, factor: 1 }, this.opts.random)
+      : backoffDelay(this.attempt, this.opts.backoff ?? DEFAULT_BACKOFF, this.opts.random);
     this.attempt += 1;
     this.reconnectTimer = setTimeout(() => this.open(), delay);
   }
@@ -157,6 +257,7 @@ export class RealtimeClient {
     const p = decodePacket(data);
     switch (p.type) {
       case 'open':
+        this.opened = true;
         this.heartbeatMs = p.data.pingInterval + p.data.pingTimeout;
         this.armHeartbeat();
         this.ws?.send(encode.connect());
@@ -169,12 +270,15 @@ export class RealtimeClient {
         clearTimeout(this.connectTimer);
         this.attempt = 0;
         this.authFailures = 0;
+        this.transportFailures = 0;
+        this.sessionRechecks = 0;
+        this.slow = false;
         this.armHeartbeat();
         this.setStatus('connected');
         return;
       case 'connect_error':
         this.authFailures += 1;
-        if (this.authFailures >= (this.opts.maxAuthFailures ?? 3)) return this.stop('unauthorized');
+        if (this.authFailures >= (this.opts.maxAuthFailures ?? 3)) return this.onAuthCap();
         return this.drop();
       case 'disconnect':
       case 'close':

@@ -134,3 +134,14 @@ describe('polling fallback', () => {
     expect(applyMeetingStatus(qc, null)).toBe(false);
   });
 });
+
+describe('L4: realtime is code-split', () => {
+  it('app.tsx loads the bridge with a dynamic import only', async () => {
+    const fs = await import('node:fs');
+    const path = await import('node:path');
+    const src = fs.readFileSync(path.resolve(process.cwd(), 'src/app.tsx'), 'utf8');
+    expect(src).not.toMatch(/^import[^;]*['"]@\/lib\/realtime\/(bridge|client|index)['"]/m);
+    expect(src).not.toMatch(/^import[^;]*['"]@\/lib\/realtime['"]/m);
+    expect(src).toContain("import('@/lib/realtime/bridge')");
+  });
+});
