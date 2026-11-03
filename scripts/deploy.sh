@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Manual deploy entrypoint (PLACEHOLDER: no deploy target exists yet).
 # Usage: scripts/deploy.sh <staging|production> [image-sha]
+# Requires an interactive TTY confirmation for every environment.
+# [image-sha] must be the full 40-char HEAD sha (default: HEAD).
 # Aborts unless `pnpm local-gates`, gitleaks and scripts/audit-gate.mjs all pass on a clean tree.
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -8,9 +10,12 @@ cd "$(dirname "$0")/.."
 ENV_NAME="${1:-}"
 case "$ENV_NAME" in staging|production) ;; *)
   echo "Usage: scripts/deploy.sh <staging|production> [image-sha]" >&2; exit 2;; esac
-SHA="${2:-$(git rev-parse HEAD)}"
-
 abort() { echo "ABORT: $*" >&2; exit 1; }
+HEAD_SHA="$(git rev-parse HEAD)"
+SHA="${2:-$HEAD_SHA}"
+[[ "$SHA" =~ ^[0-9a-f]{40}$ ]] || abort "sha must be exactly 40 lowercase hex characters"
+[ "$SHA" = "$HEAD_SHA" ] || abort "sha $SHA does not match HEAD $HEAD_SHA; check out that commit first"
+[ -t 0 ] || abort "interactive terminal required (stdin is not a TTY)"
 [ -z "$(git status --porcelain)" ] || abort "working tree is dirty"
 
 echo "==> gate: pnpm local-gates"
@@ -18,12 +23,12 @@ pnpm local-gates || abort "pnpm local-gates failed"
 echo "==> gate: gitleaks"
 gitleaks detect --source . --redact --no-banner || abort "gitleaks found leaks"
 echo "==> gate: audit-gate"
-node scripts/audit-gate.mjs || abort "audit-gate failed"
+env -u AUDIT_GATE_NOW node scripts/audit-gate.mjs || abort "audit-gate failed"
 
-if [ "$ENV_NAME" = production ]; then
-  read -r -p "Deploy sha-$SHA to PRODUCTION? Type 'deploy production': " ans
-  [ "$ans" = "deploy production" ] || abort "not confirmed"
-fi
+[ -t 0 ] || abort "interactive terminal required"
+printf "Deploy sha-%s to %s? Type 'deploy %s': " "$SHA" "$ENV_NAME" "$ENV_NAME" > /dev/tty
+IFS= read -r ans < /dev/tty || abort "no confirmation read"
+[ "$ans" = "deploy $ENV_NAME" ] || abort "not confirmed"
 
 echo "All gates passed."
 echo "PLACEHOLDER: would deploy ghcr.io/iakash22/meetops-platform/{api,worker,web,realtime}:sha-$SHA to $ENV_NAME."

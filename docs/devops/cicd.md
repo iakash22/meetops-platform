@@ -14,10 +14,15 @@ are exhausted. `ci.yml` already runs on PRs to every branch, including `integrat
 ## Build and publish images: `scripts/build-images.sh`
 
 ```bash
-scripts/build-images.sh          # build + SBOM only
-docker login ghcr.io             # interactive; token needs write:packages (never commit or echo it)
-scripts/build-images.sh --push   # build + SBOM + push
+scripts/build-images.sh                                    # build + SBOM only
+GHCR_TOKEN_FILE=~/.ghcr-token scripts/build-images.sh --push  # build + SBOM + login + push
+# or pipe it: <token source> | scripts/build-images.sh --push
 ```
+
+- **Login is done by Akash himself** with a fine-grained or classic token scoped to **only
+  `packages:write`**. The script passes the token to `docker login ghcr.io --password-stdin`
+  from stdin or `GHCR_TOKEN_FILE`. The token never appears in argv and is never echoed. The
+  script logs out of GHCR on exit (`trap`). `GHCR_USER` defaults to `iakash22`.
 
 - Builds `infra/docker/Dockerfile.{api,worker,web,realtime}` from a **clean** tree.
 - Tags each image `ghcr.io/iakash22/meetops-platform/<app>:sha-<full commit sha>`. Images use
@@ -34,9 +39,13 @@ The script is manual only. It aborts unless all of the following pass on a clean
 
 1. `pnpm local-gates`
 2. `gitleaks detect --source . --redact`
-3. `node scripts/audit-gate.mjs`
+3. `env -u AUDIT_GATE_NOW node scripts/audit-gate.mjs`
 
-`production` also requires typing a confirmation phrase. The deploy step is a **placeholder**:
+The script requires an interactive terminal (`[ -t 0 ]`). Every environment, staging and
+production alike, needs a typed `deploy <env>` confirmation read from `/dev/tty`. The `sha` must
+be the full 40-hex-character commit and must equal `git rev-parse HEAD` (the default). The audit
+gate runs as `env -u AUDIT_GATE_NOW node scripts/audit-gate.mjs`, so its clock cannot be
+overridden. The deploy step is a **placeholder**:
 no infrastructure exists yet, so the script only prints the deploy plan. Once a target exists,
 it will need these values, supplied through env or a secret manager (ADR-016) and never kept
 in the repo:
