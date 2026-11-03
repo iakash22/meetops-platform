@@ -1,35 +1,52 @@
 # CI/CD pipeline
 
-> **Status: proposal, not running.** GitHub Actions minutes are exhausted, and the local gate is CI
-> (`pnpm local-gates` + `gitleaks`, see [local-gates.md](../local-gates.md)). `cd.yml` is inert
-> until the repository variable `CD_ENABLED` is set to `true`. Until then, its jobs are skipped
-> and use no runner minutes. Set the variable only after minutes are back and Akash approves.
+> **Status: proposal.** GitHub Actions minutes are exhausted, so **the local gate is CI**
+> (see [local-gates.md](../local-gates.md)). Delivery runs on the box from manual scripts. No
+> Actions workflow builds, publishes or deploys, and no self-hosted runner is used.
 
-| Workflow      | Trigger                                               | Purpose                                                           |
-| ------------- | ----------------------------------------------------- | ----------------------------------------------------------------- |
-| `ci.yml`      | push to `main`/`integration/**`, all PRs              | lint, typecheck, test, build, audit, Prisma live tests            |
-| `docker.yml`  | same as CI                                            | build per-app images (api, worker, web, realtime) without pushing |
-| `qa.yml`      | see file                                              | QA checks                                                         |
-| `secrets.yml` | see file                                              | gitleaks secret scan                                              |
-| `cd.yml`      | push to `main`/`integration/phase-1`; manual dispatch | publish images to GHCR; gated deploy (placeholder)                |
+## CI (local)
 
-## Publish (automatic)
+Before every PR, run `pnpm local-gates` (install, build, size, lint, typecheck, test, gitleaks).
+Paste the real results into the PR. The existing workflows (`ci.yml`, `docker.yml`, `qa.yml`,
+`secrets.yml`) stay as the definition of the remote checks, but they do not run while minutes
+are exhausted. `ci.yml` already runs on PRs to every branch, including `integration/phase-1`.
 
-With `CD_ENABLED=true`, on push to `main` or `integration/phase-1` (non-docs changes), `cd.yml` builds each
-`infra/docker/Dockerfile.<app>` and pushes to `ghcr.io/<owner>/<repo>/<app>` with tags:
+## Build and publish images: `scripts/build-images.sh`
 
-- `sha-<full commit sha>` (immutable, use for deploys)
-- branch name, sanitized (`main`, `integration-phase-1`) (moving)
+```bash
+scripts/build-images.sh          # build + SBOM only
+docker login ghcr.io             # interactive; token needs write:packages (never commit or echo it)
+scripts/build-images.sh --push   # build + SBOM + push
+```
 
-Auth uses the built-in `GITHUB_TOKEN` with `packages: write`; no extra secrets.
+- Builds `infra/docker/Dockerfile.{api,worker,web,realtime}` from a **clean** tree.
+- Tags each image `ghcr.io/iakash22/meetops-platform/<app>:sha-<full commit sha>`. Images use
+  immutable SHA tags only, with no moving branch tags.
+- Writes an SPDX SBOM per image with [syft](https://github.com/anchore/syft) to
+  `dist/images/<sha>/<app>.spdx.json` (gitignored). Keep these SBOMs with the release.
+- Box notes: start dockerd with `--iptables=false`; the builds use `--network host`. Run one
+  heavy job at a time.
+- Overrides: `REGISTRY`, `IMAGE_REPO`.
 
-## Deploy (manual, placeholder)
+## Deploy: `scripts/deploy.sh <staging|production> [sha]`
 
-Requires `CD_ENABLED=true`. Actions → CD → Run workflow → choose `staging` or `production` and optionally an image tag
-(defaults to `sha-<selected ref sha>`). Tick `publish` to build that ref first. The job runs in the matching GitHub environment, so
-configure required reviewers there (at least on `production`). The deploy step currently only
-prints what it would do — no infrastructure exists yet.
+The script is manual only. It aborts unless all of the following pass on a clean tree:
 
-Secrets to add as **environment secrets** once a target exists: `DEPLOY_HOST`/`DEPLOY_TARGET`,
-`DEPLOY_CREDENTIALS` (prefer OIDC), `DATABASE_URL` (for `prisma migrate deploy`). App runtime
-config belongs in the hosting platform, not CI.
+1. `pnpm local-gates`
+2. `gitleaks detect --source . --redact`
+3. `node scripts/audit-gate.mjs`
+
+`production` also requires typing a confirmation phrase. The deploy step is a **placeholder**:
+no infrastructure exists yet, so the script only prints the deploy plan. Once a target exists,
+it will need these values, supplied through env or a secret manager (ADR-016) and never kept
+in the repo:
+
+- `DEPLOY_TARGET`
+- `DEPLOY_CREDENTIALS` (short-lived credentials preferred)
+- `DATABASE_URL` (for `prisma migrate deploy`)
+
+## Flow
+
+commit → `pnpm local-gates` → PR (Tester & Security PASS on head SHA) → merge →
+`scripts/build-images.sh --push` on the merged SHA → `scripts/deploy.sh staging <sha>` →
+`scripts/deploy.sh production <sha>`.
