@@ -19,7 +19,10 @@ import { safeAudit, type AuditAction, type AuditLog } from '../../auth/domain/au
 import { RateLimitedError, UnauthenticatedError } from '../../auth/domain/errors.js';
 import type { RateLimiter, TokenService } from '../../auth/domain/ports.js';
 import type { RequestMeta } from '../../auth/application/auth.service.js';
-import { RefreshGraceCache } from '../../auth/application/refresh-grace.js';
+import {
+  MemoryRefreshGraceStore,
+  type RefreshGraceStore,
+} from '../../auth/application/refresh-grace.js';
 import { publishRevocation, type RevocationPublisher } from '../../auth/application/revocations.js';
 import type {
   MembershipRepository,
@@ -85,6 +88,8 @@ export interface ExtensionAuthDeps {
   revocations?: RevocationPublisher;
   /** Security-signal logger (the API's redacting request logger in production). */
   log?: ExtensionAuthLog;
+  /** Refresh grace window store (Redis when configured, so retries on any instance match). */
+  refreshGrace?: RefreshGraceStore<ExtensionRefreshResponse>;
 }
 
 type Limit = { limit: number; windowMs: number };
@@ -96,8 +101,12 @@ type Limit = { limit: number; windowMs: number };
  */
 export class ExtensionAuthService implements ExtensionRevoker {
   /** ~10 s grace for re-presenting the immediately previous refresh token from the same device. */
-  private readonly grace = new RefreshGraceCache<ExtensionRefreshResponse>();
-  constructor(private readonly d: ExtensionAuthDeps) {}
+  private readonly grace: RefreshGraceStore<ExtensionRefreshResponse>;
+  constructor(private readonly d: ExtensionAuthDeps) {
+    this.grace =
+      d.refreshGrace ??
+      new MemoryRefreshGraceStore<ExtensionRefreshResponse>(() => d.clock.now().getTime());
+  }
 
   isAllowedExtension(extensionId: string): boolean {
     return this.d.extensionIds.includes(extensionId);
@@ -287,8 +296,9 @@ export class ExtensionAuthService implements ExtensionRevoker {
       f.deviceId === body.deviceId
     ) {
       // Grace window: the same device re-sent the token it just rotated; hand back the same new pair.
-      const again = this.grace.replay(f.id, tokenHash, body.deviceId, this.d.clock.now().getTime());
-      if (again) return again.catch(() => Promise.reject(new UnauthenticatedError()));
+      const again = await this.grace.replay(f.id, tokenHash, body.deviceId, body.refreshToken);
+      if (again) return again;
+      if (again === null) throw new UnauthenticatedError();
     }
     if (
       r.status === 'reused' ||
@@ -311,13 +321,13 @@ export class ExtensionAuthService implements ExtensionRevoker {
       }
       throw new UnauthenticatedError();
     }
-    const pending = this.grace.begin(f.id, tokenHash, f.deviceId, this.d.clock.now().getTime());
+    const pending = await this.grace.begin(f.id, tokenHash, f.deviceId, body.refreshToken);
     try {
       const pair = await this.rotate(f, meta);
-      pending.resolve(pair);
+      await pending.resolve(pair);
       return pair;
     } catch (err) {
-      pending.reject();
+      await pending.reject();
       throw err;
     }
   }
@@ -399,7 +409,7 @@ export class ExtensionAuthService implements ExtensionRevoker {
       | 'member_removed'
       | 'org_switch',
   ) {
-    this.grace.forget(f.id);
+    await this.grace.forget(f.id);
     await this.d.extensionTokens.revokeFamily(f.id, this.d.clock.now());
     await publishRevocation(this.d.revocations, {
       kind: 'session',

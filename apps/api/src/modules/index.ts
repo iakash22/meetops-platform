@@ -1,8 +1,17 @@
 import { createGeoIpProvider, type GeoIpProvider } from '../shared/geoip/index.js';
+import {
+  RedisRefreshGraceStore,
+  type RefreshGraceStore,
+} from './auth/application/refresh-grace.js';
 import type { FastifyInstance } from 'fastify';
 import cookie from '@fastify/cookie';
 import cors from '@fastify/cors';
-import { DESKTOP_AUTH_PATHS, EXTENSION_AUTH_PATHS } from '@meetops/contracts';
+import {
+  DESKTOP_AUTH_PATHS,
+  EXTENSION_AUTH_PATHS,
+  type DesktopRefreshResponse,
+  type ExtensionRefreshResponse,
+} from '@meetops/contracts';
 import { parseWebOrigins } from '../shared/web-origins.js';
 import {
   extensionBearerCorsHook,
@@ -196,6 +205,9 @@ export interface ModuleDeps {
   extensionIds: readonly string[];
   /** ADR-005 A1.4 security-signal logger for extension auth; defaults to the app's (redacting) logger. */
   extensionAuthLog?: ExtensionAuthLog;
+  /** Refresh grace window stores (Redis when `redis` is set, so a retry on any instance matches). */
+  extensionRefreshGrace?: RefreshGraceStore<ExtensionRefreshResponse>;
+  desktopRefreshGrace?: RefreshGraceStore<DesktopRefreshResponse>;
   /**
    * ADR-012 desktop sign-in. Off unless DESKTOP_AUTH_ENABLED=true (the ADR-012 amendment, PR #192, awaits sign-off).
    * When off, the /auth/desktop/* routes are not registered and desktop bearers never verify.
@@ -627,6 +639,18 @@ export function defaultModuleDeps(
     desktopTokens: redis
       ? new RedisExtensionTokenRepository(redis, 'meetops:desktop:')
       : new InMemoryExtensionTokenRepository(),
+    ...(redis
+      ? {
+          extensionRefreshGrace: new RedisRefreshGraceStore<ExtensionRefreshResponse>(
+            redis,
+            'meetops:ext:grace:',
+          ),
+          desktopRefreshGrace: new RedisRefreshGraceStore<DesktopRefreshResponse>(
+            redis,
+            'meetops:desktop:grace:',
+          ),
+        }
+      : {}),
     extensionIds: [
       ...csv(process.env.EXTENSION_IDS),
       ...(strict ? [] : csv(process.env.EXTENSION_DEV_IDS)),
@@ -728,12 +752,14 @@ export async function registerModules(app: FastifyInstance, deps: ModuleDeps) {
   const extensionAuth = new ExtensionAuthService({
     ...deps,
     log: deps.extensionAuthLog ?? app.log,
+    ...(deps.extensionRefreshGrace ? { refreshGrace: deps.extensionRefreshGrace } : {}),
   });
   const desktopAuth =
     deps.desktopAuthEnabled === true
       ? new DesktopAuthService({
           ...deps,
           desktopTokens: deps.desktopTokens ?? new InMemoryExtensionTokenRepository(),
+          ...(deps.desktopRefreshGrace ? { refreshGrace: deps.desktopRefreshGrace } : {}),
         })
       : undefined;
   // ADR-005 A1.6 (and ADR-012 when enabled): logout, password reset and member removal also revoke token families.
