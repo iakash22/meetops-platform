@@ -5,8 +5,11 @@
 #   GHCR_TOKEN_FILE=<path to a file holding the token>, or the token piped on stdin.
 #   GHCR_USER defaults to iakash22. Token needs only packages:write. Logs out on exit.
 # Requires docker (buildx) and syft.
+# PATH is fixed (docker lives in /usr/local/bin); git is invoked by absolute path.
+PATH=/usr/local/bin:/usr/bin:/bin; export PATH
 set -euo pipefail
-cd "$(dirname "$0")/.."
+GIT=/usr/bin/git; [ -x "$GIT" ] || { echo "ERROR: $GIT missing" >&2; exit 1; }
+cd "$(/usr/bin/dirname "$0")/.."
 
 APPS=(api worker web realtime)
 PUSH=0
@@ -17,10 +20,10 @@ case "$#:${1:-}" in
 esac
 REGISTRY="${REGISTRY:-ghcr.io}"
 REPO="${IMAGE_REPO:-iakash22/meetops-platform}"
-SHA="$(git rev-parse HEAD)"
+SHA="$("$GIT" rev-parse HEAD)"
 OUT="dist/images/$SHA"
 
-if [ -n "$(git status --porcelain)" ]; then
+if [ -n "$("$GIT" status --porcelain)" ]; then
   echo "ERROR: working tree is dirty; images must map to a committed SHA." >&2; exit 1
 fi
 command -v docker >/dev/null || { echo "ERROR: docker not found" >&2; exit 1; }

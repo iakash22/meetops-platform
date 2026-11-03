@@ -34,7 +34,7 @@ expect "forged marker (env dir) ignored" "staging gate" env DEPLOY_STATE_DIR="$F
   DEPLOY_PREFLIGHT_ONLY=1 DEPLOY_CONFIRM="deploy production" bash scripts/deploy.sh --non-interactive production
 expect "missing state dir"       "missing or a symlink" "${PF[@]}" DEPLOY_TEST_STATE_DIR="$TMP/nope" bash scripts/deploy.sh --non-interactive production
 ln -s "$STATE" "$TMP/linkdir"
-expect "symlinked state dir"     "missing or a symlink" "${PF[@]}" DEPLOY_TEST_STATE_DIR="$TMP/linkdir" bash scripts/deploy.sh --non-interactive production
+expect "symlinked state dir"     "symlink in state dir path" "${PF[@]}" DEPLOY_TEST_STATE_DIR="$TMP/linkdir" bash scripts/deploy.sh --non-interactive production
 expect "no marker"               "has not been deployed" "${PF[@]}" DEPLOY_TEST_STATE_DIR="$STATE" bash scripts/deploy.sh --non-interactive production
 ln -s "$FORGED/staging-$HEAD" "$STATE/staging-$HEAD"
 expect "symlink marker rejected" "has not been deployed" "${PF[@]}" DEPLOY_TEST_STATE_DIR="$STATE" bash scripts/deploy.sh --non-interactive production
@@ -44,6 +44,16 @@ expect "world-writable dir"      "group/world-writable" "${PF[@]}" DEPLOY_TEST_S
 chmod 720 "$STATE"
 expect "group-writable dir"      "group/world-writable" "${PF[@]}" DEPLOY_TEST_STATE_DIR="$STATE" bash scripts/deploy.sh --non-interactive production
 chmod 700 "$STATE"
+# Fake getent first on PATH pointing at a temp home with a 700 state dir and a pre-made marker.
+FAKE="$TMP/fakehome"; mkdir -p "$FAKE/.local/state/meetops-deploy" "$TMP/bin"
+chmod 700 "$FAKE/.local/state/meetops-deploy"; touch "$FAKE/.local/state/meetops-deploy/staging-$HEAD"
+printf '#!/bin/sh\necho "x:x:%s:%s::%s:/bin/sh"\n' "$(id -u)" "$(id -g)" "$FAKE" > "$TMP/bin/getent"
+for b in id stat git; do printf '#!/bin/sh\nexec /usr/bin/%s "$@"\n' "$b" > "$TMP/bin/$b"; done
+chmod +x "$TMP/bin/"*
+expect "fake getent on PATH"     "staging gate"         env PATH="$TMP/bin:$PATH" DEPLOY_PREFLIGHT_ONLY=1 DEPLOY_CONFIRM="deploy production" \
+  bash scripts/deploy.sh --non-interactive production
+mkdir "$TMP/real"; chmod 700 "$TMP/real"; ln -s "$TMP/real" "$TMP/alias"; mkdir -m 700 "$TMP/real/sd"; touch "$TMP/real/sd/staging-$HEAD"
+expect "symlink in path"         "symlink in state dir path" "${PF[@]}" DEPLOY_TEST_STATE_DIR="$TMP/alias/sd" bash scripts/deploy.sh --non-interactive production
 expect_ok "valid marker passes"  "PREFLIGHT OK"         "${PF[@]}" DEPLOY_TEST_STATE_DIR="$STATE" bash scripts/deploy.sh --non-interactive production
 expect_ok "staging preflight"    "PREFLIGHT OK"         env DEPLOY_PREFLIGHT_ONLY=1 DEPLOY_CONFIRM="deploy staging" bash scripts/deploy.sh --non-interactive staging
 expect "build-images extra args" "Usage:"               bash scripts/build-images.sh --push extra
