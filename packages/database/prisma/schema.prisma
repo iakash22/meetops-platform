@@ -1435,6 +1435,14 @@ model CalendarConnection {
   syncedTo             DateTime?                @map("synced_to") @db.Timestamptz(3)
   syncFailures         Int                      @default(0) @map("sync_failures")
   nextSyncAt           DateTime?                @map("next_sync_at") @db.Timestamptz(3)
+  /// Incremental sync cursor (Outlook deltaLink) as a TokenCipher v1 envelope; window it was opened for.
+  syncCursorEnc        String?                  @map("sync_cursor_enc")
+  syncCursorFrom       DateTime?                @map("sync_cursor_from") @db.Timestamptz(3)
+  syncCursorTo         DateTime?                @map("sync_cursor_to") @db.Timestamptz(3)
+  /// Compare-and-set fence for token writes (bumped by every token write, reconnect and revoke).
+  tokenGeneration      Int                      @default(0) @map("token_generation")
+  /// AAD context of refresh_token_enc: 1 = pre-v2 (org + id), 2 = per-field. NULL = pre-migration row.
+  refreshEncVersion    Int?                     @map("refresh_enc_version") @db.SmallInt
   createdAt            DateTime                 @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt            DateTime                 @updatedAt @map("updated_at") @db.Timestamptz(3)
 

@@ -117,7 +117,8 @@ describe.skipIf(!url || !owner)(
         (tx) =>
           tx.calendarConnection.update({
             where: { id: legacy.id },
-            data: { accessTokenEnc: oa, refreshTokenEnc: or },
+            // A pre-#394-N2 row: no declared refresh context (refresh_enc_version NULL).
+            data: { accessTokenEnc: oa, refreshTokenEnc: or, refreshEncVersion: null },
           }),
         { client: db },
       );
