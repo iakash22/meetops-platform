@@ -1,5 +1,5 @@
 import { withOrganizationContext, type DatabaseClient } from '@meetops/database';
-import type { TranscriptionDeadLetter } from './transcription-retry.js';
+import { deadLetterJobId, type TranscriptionDeadLetter } from './transcription-retry.js';
 
 /** Which DLQ entries to re-drive. Exactly one selector. */
 export type RedriveFilter = { jobId: string } | { organizationId: string } | { all: true };
@@ -91,8 +91,19 @@ export function parseRedriveArgs(argv: string[]): {
   return { filter, dryRun, yes };
 }
 
-const matches = (f: RedriveFilter, d: TranscriptionDeadLetter) =>
-  'all' in f ? true : 'jobId' in f ? d.jobId === f.jobId : d.organizationId === f.organizationId;
+/** `--job` accepts the original transcription job id or the DLQ id (`dlq_…`, see deadLetterJobId). */
+const matches = (f: RedriveFilter, j: DlqJobLike) => {
+  const d = j.data;
+  if ('all' in f) return true;
+  if ('organizationId' in f) return d.organizationId === f.organizationId;
+  return (
+    d.jobId === f.jobId ||
+    j.id === f.jobId ||
+    deadLetterJobId(d.jobId, d.recordingId, d.chunkIndex) === f.jobId
+  );
+};
+const meetingKey = (d: { organizationId: string; meetingId: string }) =>
+  `${d.organizationId}/${d.meetingId}`;
 
 /**
  * Re-drive dead-lettered transcription jobs. Safe to run twice: a DLQ entry is removed only after its original job
@@ -103,7 +114,7 @@ export async function redriveTranscriptionDlq(
   queues: RedriveQueues,
   opts: RedriveOptions,
 ): Promise<RedriveReport> {
-  const entries = (await queues.listDeadLetters()).filter((j) => matches(opts.filter, j.data));
+  const entries = (await queues.listDeadLetters()).filter((j) => matches(opts.filter, j));
   const planned: Array<{
     dlq: DlqJobLike;
     original: OriginalJobLike | undefined;
@@ -138,16 +149,25 @@ export async function redriveTranscriptionDlq(
   if (opts.dryRun || items.length === 0) return { aborted: false, items };
   if (!(await opts.confirm(items))) return { aborted: true, items };
 
+  const requeuedMeetings = new Map<string, { organizationId: string; meetingId: string }>();
   for (const p of planned) {
     if (p.item.action === 'missing_original' || !p.original) continue;
     if (p.item.action === 'requeued') {
       // Re-check: another operator may have re-driven it since the plan was made.
-      if ((await p.original.getState()) === 'failed')
+      if ((await p.original.getState()) === 'failed') {
         await p.original.retry('failed', { resetAttemptsMade: true, resetAttemptsStarted: true });
-      else p.item.action = 'already_requeued';
+        requeuedMeetings.set(meetingKey(p.item), p.item);
+      } else p.item.action = 'already_requeued';
     }
-    await opts.status?.reset(p.item.organizationId, p.item.meetingId);
     await p.dlq.remove();
+  }
+  // Reset a meeting to `processing` only when THIS run re-queued one of its jobs (never for already_requeued) AND no
+  // other chunk of that meeting is still dead-lettered (re-read after removals, so it also sees concurrent entries
+  // and entries this run kept, e.g. missing_original or outside the filter).
+  if (opts.status && requeuedMeetings.size > 0) {
+    const stillDead = new Set((await queues.listDeadLetters()).map((j) => meetingKey(j.data)));
+    for (const [key, m] of requeuedMeetings)
+      if (!stillDead.has(key)) await opts.status.reset(m.organizationId, m.meetingId);
   }
   return { aborted: false, items };
 }
