@@ -26,6 +26,10 @@
 # within the documented threat model (same-user attackers are out of scope).
 PATH=/usr/bin:/bin; export PATH
 set -euo pipefail
+# Refuse unless started by scripts/deploy.sh: it sets MEETOPS_DEPLOY_WRAPPED=1 through env -i and
+# runs bash -p. This catches accidental `bash scripts/deploy-impl.sh`; the sentinel is not a secret.
+case "$-" in *p*) ;; *) echo "ABORT: run scripts/deploy.sh, not deploy-impl.sh (bash -p required)" >&2; exit 1 ;; esac
+[ "${MEETOPS_DEPLOY_WRAPPED:-}" = 1 ] || { echo "ABORT: run scripts/deploy.sh, not deploy-impl.sh (wrapper sentinel missing)" >&2; exit 1; }
 for _b in getent id stat git cut date mkdir chmod dirname; do
   [ -x "/usr/bin/$_b" ] || { echo "ABORT: /usr/bin/$_b missing" >&2; exit 1; }
 done

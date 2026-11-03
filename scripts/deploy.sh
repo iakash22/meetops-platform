@@ -15,4 +15,5 @@ exec /usr/bin/env -i PATH=/usr/bin:/bin HOME="$home" TERM="${TERM:-dumb}" \
   DEPLOY_CONFIRM="${DEPLOY_CONFIRM:-}" \
   DEPLOY_PREFLIGHT_ONLY="${DEPLOY_PREFLIGHT_ONLY:-}" \
   DEPLOY_TEST_STATE_DIR="${DEPLOY_TEST_STATE_DIR:-}" \
+  MEETOPS_DEPLOY_WRAPPED=1 \
   /bin/bash --norc --noprofile -p "$dir/deploy-impl.sh" "$@"
