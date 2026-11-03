@@ -291,6 +291,11 @@ export class ExtensionAuthService implements ExtensionRevoker {
       }
       throw new UnauthenticatedError();
     }
+    // An extension id removed from the allowlist (EXTENSION_IDS) can no longer refresh: revoke its family.
+    if (!this.isAllowedExtension(f.extensionId)) {
+      if (!f.revokedAt) await this.revokeFamily(f, 'extension_revoked');
+      throw new UnauthenticatedError();
+    }
     await this.limit(`refresh:fam:${f.id}`, EXTENSION_LIMITS.refreshPerFamily);
     await this.noteFrequentRefresh(f, meta);
     const now = this.d.clock.now();
@@ -415,7 +420,8 @@ export class ExtensionAuthService implements ExtensionRevoker {
    * @meetops/session-verifier ExtensionTokenStore, consulted on every bearer verify. The family's revocation
    * (Redis marker, then Postgres as the authority via DurableExtensionTokenRepository) applies to every access
    * token in it at once, so a revoked token stops working immediately rather than at its expiry. The family
-   * must also still belong to the token's user and org and be inside its absolute lifetime. Lookup errors
+   * must also still belong to the token's user and org, be for an allowlisted extension id, and be inside its
+   * absolute lifetime. Lookup errors
    * fail closed (null), never open.
    */
   verifierStore(): ExtensionTokenStore {
@@ -426,6 +432,8 @@ export class ExtensionAuthService implements ExtensionRevoker {
           if (!a) return null;
           const f = await this.d.extensionTokens.findFamily(a.familyId);
           if (!f || f.userId !== a.userId || f.organizationId !== a.organizationId) return null;
+          // Access tokens of an extension id no longer on the allowlist stop working immediately.
+          if (!this.isAllowedExtension(f.extensionId)) return null;
           const now = this.d.clock.now();
           return {
             familyId: a.familyId,
