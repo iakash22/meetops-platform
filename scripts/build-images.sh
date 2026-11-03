@@ -1,4 +1,5 @@
-#!/usr/bin/env bash
+#!/bin/bash -p
+# Run directly (scripts/build-images.sh); -p ignores BASH_ENV and exported functions.
 # Build per-app images on the box, generate an SBOM for each, and (optionally) push to GHCR.
 # Usage: scripts/build-images.sh [--push]
 # With --push, logs in to GHCR via --password-stdin. Token source (never argv, never echoed):
