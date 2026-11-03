@@ -28,6 +28,8 @@ export interface RedisDeliveryStoreOptions {
  * Production must wire this store: InMemoryDeliveryStore is per-process and refuses NODE_ENV=production.
  */
 export class RedisDeliveryStore implements DeliveryStore {
+  /** Positive marker checked by production wiring: replay marks are shared across replicas. */
+  readonly shared = true;
   private readonly prefix: string;
   private readonly defaultTtl: number;
 

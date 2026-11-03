@@ -116,6 +116,8 @@ export const INTEGRATION_ERROR_REASONS = [
   'WEBHOOK_SIGNATURE_INVALID',
   /** v0.12.0: the provider app is not configured on this deployment (503; see providers `configured`). */
   'INTEGRATION_NOT_CONFIGURED',
+  /** Additive: the same delivery is being processed by another request (409 + Retry-After; retryable, not a replay). */
+  'DELIVERY_IN_PROGRESS',
 ] as const;
 
 export const API_ERROR_REASONS = [

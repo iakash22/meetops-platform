@@ -335,8 +335,8 @@ describe('Phase 5 integration flows', () => {
       // Production must wire a shared (Redis) delivery store; the in-memory one is refused at startup.
       expect(() =>
         selectIntegrationsRuntime({ integrationsRuntime: rt } as never, 'production'),
-      ).toThrow(/InMemoryDeliveryStore is not allowed in production/);
-      const prodRt = { ...rt, deliveryStore: { markIfNew: async () => true } };
+      ).toThrow(/shared webhook delivery store/);
+      const prodRt = { ...rt, deliveryStore: { markIfNew: async () => true, shared: true } };
       expect(
         selectIntegrationsRuntime({ integrationsRuntime: prodRt } as never, 'production'),
       ).toEqual({

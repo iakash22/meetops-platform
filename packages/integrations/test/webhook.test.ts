@@ -195,7 +195,7 @@ describe('InMemoryDeliveryStore', () => {
   });
   it('refuses production unless explicitly allowed', () => {
     expect(() => new InMemoryDeliveryStore({ nodeEnv: 'production' })).toThrow(
-      /not allowed in production/,
+      /not allowed outside development\/test/,
     );
     expect(
       () => new InMemoryDeliveryStore({ nodeEnv: 'production', unsafeAllowInProduction: true }),
@@ -339,5 +339,59 @@ describe('recordDelivery (check -> beforeRecord -> SET NX)', () => {
     ]);
     expect(results.filter(Boolean)).toHaveLength(1);
     expect(charged).toBe(1); // the pending claim stops the losing duplicate before it charges
+  });
+});
+
+describe('follow-ups: fail-closed env, in-progress, release errors, claim loss, pending prune', () => {
+  it.each([undefined, 'production', 'Production', 'prod', 'staging'])(
+    'InMemoryDeliveryStore refuses NODE_ENV=%s',
+    async (nodeEnv) => {
+      const { InMemoryDeliveryStore } = await import('../src/webhook.js');
+      expect(() => new InMemoryDeliveryStore({ nodeEnv })).toThrow(
+        /not allowed outside development\/test/,
+      );
+    },
+  );
+  it('a duplicate during a pending claim is in_progress, not replayed', async () => {
+    const { InMemoryDeliveryStore, recordDeliveryOutcome } = await import('../src/webhook.js');
+    const s = new InMemoryDeliveryStore({ nodeEnv: 'test' });
+    await s.claim('p', 30);
+    expect(await recordDeliveryOutcome(s, 'p', 60)).toBe('in_progress');
+    await s.markIfNew('r', 60);
+    expect(await recordDeliveryOutcome(s, 'r', 60)).toBe('replayed');
+  });
+  it('a failing release rethrows the original error', async () => {
+    const { InMemoryDeliveryStore, recordDelivery } = await import('../src/webhook.js');
+    const s = new InMemoryDeliveryStore({ nodeEnv: 'test' });
+    s.release = async () => {
+      throw new Error('redis down');
+    };
+    const limited = async () => {
+      throw new Error('429');
+    };
+    await expect(recordDelivery(s, 'x', 60, limited)).rejects.toThrow('429');
+  });
+  it('a claim that expires before commit warns and reports in_progress', async () => {
+    const { InMemoryDeliveryStore, recordDeliveryOutcome } = await import('../src/webhook.js');
+    let now = 1_000_000;
+    const s = new InMemoryDeliveryStore({ nodeEnv: 'test', now: () => now });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const outcome = await recordDeliveryOutcome(s, 'slow', 60, async () => {
+      now += 31_000; // longer than the 30 s pending TTL
+    });
+    expect(outcome).toBe('in_progress');
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('claim expired'), {
+      event: 'webhook_delivery_claim_lost',
+    });
+    warn.mockRestore();
+  });
+  it('expired pending claims are pruned', async () => {
+    const { InMemoryDeliveryStore } = await import('../src/webhook.js');
+    let now = 1_000_000;
+    const s = new InMemoryDeliveryStore({ nodeEnv: 'test', now: () => now });
+    for (const id of ['a', 'b', 'c']) await s.claim(id, 30);
+    now += 31_000;
+    await s.claim('d', 30);
+    expect((s as unknown as { pending: Map<string, unknown> }).pending.size).toBe(1);
   });
 });

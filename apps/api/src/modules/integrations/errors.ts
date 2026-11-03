@@ -1,3 +1,4 @@
+import { DELIVERY_IN_PROGRESS_RETRY_AFTER_SECONDS } from '@meetops/integrations';
 import { DomainError } from '../../shared/domain-error.js';
 
 /** Unknown, malformed and other-org integration ids give the same 404 body. */
@@ -54,6 +55,13 @@ export class WebhookSignatureError extends DomainError {
 export class ReplayedDeliveryError extends DomainError {
   constructor() {
     super('CONFLICT', 'Delivery already processed', 409, 'REPLAYED_DELIVERY');
+  }
+}
+/** Another request holds this delivery's pending claim: retryable 409 with Retry-After (not a replay). */
+export class DeliveryInProgressError extends DomainError {
+  readonly retryAfterMs = DELIVERY_IN_PROGRESS_RETRY_AFTER_SECONDS * 1000;
+  constructor() {
+    super('CONFLICT', 'Delivery is being processed; retry later', 409, 'DELIVERY_IN_PROGRESS');
   }
 }
 export class WebhookRejectedError extends DomainError {

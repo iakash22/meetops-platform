@@ -1,7 +1,7 @@
 import {
   checkJiraWebhookFreshness,
   effectiveReplayTtlSeconds,
-  recordDelivery,
+  recordDeliveryOutcome,
   verifyGitHubSignature,
   type DeliveryStore,
   type HeaderBag,
@@ -20,6 +20,7 @@ export type JiraWebhookFailure =
   | 'invalid_payload'
   | 'stale_event'
   | 'replayed_delivery'
+  | 'delivery_in_progress'
   | 'payload_too_large';
 
 export type JiraWebhookResult =
@@ -34,6 +35,7 @@ const STATUS: Record<JiraWebhookFailure, 400 | 401 | 409 | 413> = {
   invalid_payload: 400,
   stale_event: 409,
   replayed_delivery: 409,
+  delivery_in_progress: 409,
   payload_too_large: 413,
 };
 
@@ -92,14 +94,13 @@ export async function verifyJiraWebhook(opts: {
   const fresh = checkJiraWebhookFreshness(payload, freshOpts);
   if (fresh !== 'fresh' && fresh !== 'absent') return fail('stale_event');
   const deliveryId = `jira:${opts.integrationId}:${id}`;
-  if (
-    !(await recordDelivery(
-      opts.deliveryStore,
-      deliveryId,
-      effectiveReplayTtlSeconds(opts.replayTtlSeconds),
-      opts.beforeRecord,
-    ))
-  )
-    return fail('replayed_delivery');
+  const outcome = await recordDeliveryOutcome(
+    opts.deliveryStore,
+    deliveryId,
+    effectiveReplayTtlSeconds(opts.replayTtlSeconds),
+    opts.beforeRecord,
+  );
+  if (outcome === 'replayed') return fail('replayed_delivery');
+  if (outcome === 'in_progress') return fail('delivery_in_progress');
   return { ok: true, deliveryId, payload };
 }

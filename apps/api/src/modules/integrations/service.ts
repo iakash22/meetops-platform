@@ -48,6 +48,7 @@ import {
   IssueAlreadyLinkedError,
   OAuthStateInvalidError,
   ProviderUpstreamError,
+  DeliveryInProgressError,
   ReplayedDeliveryError,
   TaskNotFoundError,
   WebhookRejectedError,
@@ -340,7 +341,7 @@ export class IntegrationsService {
         },
       },
     });
-    if (!r.ok) throw webhookFailure(r.status);
+    if (!r.ok) throw webhookFailure(r.status, r.reason);
     let applied = 0;
     for (const t of targets) {
       const change = mapGitHubIssueEvent(r.event, r.payload, {
@@ -392,7 +393,7 @@ export class IntegrationsService {
               : null,
         },
       });
-      if (!r.ok) throw webhookFailure(r.status);
+      if (!r.ok) throw webhookFailure(r.status, r.reason);
       change = mapGitHubIssueEvent(r.event, r.payload, ctx);
     } else {
       const secrets = await this.repo.readSecrets(organizationId, integrationId);
@@ -407,7 +408,7 @@ export class IntegrationsService {
         maxBodyBytes: INTEGRATION_WEBHOOK_MAX_BYTES,
         ...(rt.now ? { now: rt.now } : {}),
       });
-      if (!r.ok) throw webhookFailure(r.status);
+      if (!r.ok) throw webhookFailure(r.status, r.reason);
       change = mapJiraIssueEvent(r.payload, ctx);
     }
     if (!change) return 0;
@@ -669,7 +670,8 @@ export class IntegrationsService {
 
 const defaultSleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
-function webhookFailure(status: number) {
+function webhookFailure(status: number, reason?: string) {
+  if (reason === 'delivery_in_progress') return new DeliveryInProgressError();
   if (status === 409) return new ReplayedDeliveryError();
   if (status === 400 || status === 413) return new WebhookRejectedError(status);
   return new WebhookSignatureError();
