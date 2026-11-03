@@ -12,6 +12,7 @@ import {
   handleTranscriptionFailure,
   handleTranscriptionSuccess,
   createRedisDeadLetterIndex,
+  queueDeadLetterLister,
   deadLetterIndexKey,
   type DeadLetterIndex,
   type TranscriptionDeadLetter,
@@ -80,6 +81,8 @@ describe.skipIf(!available)('transcription DLQ with real Redis + BullMQ (live)',
       dlq: Queue<TranscriptionDeadLetter>,
       data: Payload,
       index: DeadLetterIndex,
+      /** Same index, but writes entries as if added long ago (past the grace period). */
+      oldIndex: DeadLetterIndex,
     ) => Promise<unknown>,
   ) {
     const name = `it-transcription-${randomUUID()}`;
@@ -89,6 +92,7 @@ describe.skipIf(!available)('transcription DLQ with real Redis + BullMQ (live)',
     const indexRedis = connection();
     opened.push({ close: async () => indexRedis.disconnect() });
     const index = createRedisDeadLetterIndex(indexRedis, dlq);
+    const oldIndex = createRedisDeadLetterIndex(indexRedis, dlq, { now: () => 0 });
     const events = new QueueEvents(name, { connection: connection() });
     opened.push(events);
     await events.waitUntilReady();
@@ -113,6 +117,7 @@ describe.skipIf(!available)('transcription DLQ with real Redis + BullMQ (live)',
         handleTranscriptionSuccess(job, {
           status,
           index,
+          deadLetters: queueDeadLetterLister(dlq),
           logger: silent,
         }),
       ),
@@ -123,7 +128,7 @@ describe.skipIf(!available)('transcription DLQ with real Redis + BullMQ (live)',
       recordingId: randomUUID(),
       chunkIndex: 1,
     };
-    await seed?.(dlq, data, index);
+    await seed?.(dlq, data, index, oldIndex);
     const job = await q.add('transcribe', data, {
       jobId: `tx_${data.recordingId}_1`,
       attempts,
@@ -163,8 +168,10 @@ describe.skipIf(!available)('transcription DLQ with real Redis + BullMQ (live)',
     expect(st.get()).toBe('transcription_delayed');
     // The per-meeting index holds the dlq_ id.
     expect(
-      await indexRedis.smembers(
+      await indexRedis.zrange(
         deadLetterIndexKey(entry!.data.organizationId, entry!.data.meetingId),
+        0,
+        -1,
       ),
     ).toEqual([deadLetterJobId(job.id, 'unused', 0)]);
   });
@@ -226,12 +233,31 @@ describe.skipIf(!available)('transcription DLQ with real Redis + BullMQ (live)',
       1,
       st.store,
       1,
-      async (_dlq, d, index) => {
+      async (_dlq, d, _index, oldIndex) => {
         key = deadLetterIndexKey(d.organizationId, d.meetingId);
-        await index.add(d.organizationId, d.meetingId, 'dlq_gone');
+        await oldIndex.add(d.organizationId, d.meetingId, 'dlq_gone');
       },
     );
     expect(st.get()).toBe('processing');
-    expect(await indexRedis.smembers(key)).toEqual([]);
+    // Pruned, then the whole key deleted once the meeting left transcription_delayed.
+    expect(await indexRedis.exists(key)).toBe(0);
+  });
+
+  it('race: a sibling indexed but whose DLQ add has not landed yet (in grace) keeps the meeting delayed', async () => {
+    const st = statusStore('transcription_delayed');
+    let key = '';
+    const { indexRedis } = await run(
+      async () => ({ ok: true }),
+      1,
+      st.store,
+      1,
+      async (_dlq, d, index) => {
+        key = deadLetterIndexKey(d.organizationId, d.meetingId);
+        await index.add(d.organizationId, d.meetingId, 'dlq_in_flight');
+      },
+    );
+    expect(st.get()).toBe('transcription_delayed');
+    expect(await indexRedis.zrange(key, 0, -1)).toEqual(['dlq_in_flight']);
+    expect(await indexRedis.pttl(key)).toBeGreaterThan(0);
   });
 });
