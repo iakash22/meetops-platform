@@ -1,15 +1,15 @@
-# Phase status — 4 Nov 2026 (~20:30 IST)
+# Phase status — 4 Nov 2026 (~21:00 IST)
 
-## Update — 4 Nov 2026 (~20:30 IST)
+## Update — 4 Nov 2026 (~21:00 IST)
 
-Tree: `integration/phase-1` at `b5ea0a86` (merge of #433, 14:31 IST, 4 Nov). PR states read from the GitHub API at
-~20:25 IST. Percentages are coordinator-style estimates, not measured.
+Tree: `integration/phase-1` at `6df95197` (merge of #438, 20:55 IST, 4 Nov). PR states read from the GitHub API at
+~21:00 IST. Percentages below are re-estimated for this snapshot (coordinator-style estimates, not measured).
 
-**#384 (`integration/phase-1` → `main`)**: open, head `b5ea0a86`, 285 commits, 360 files, +28,368/−1,796.
+**#384 (`integration/phase-1` → `main`)**: open, head `6df95197`, 287 commits, 361 files, +28,378/−1,801.
 GitHub reports `mergeable_state: unstable` (no passing remote checks: Actions minutes are exhausted, so the local
 gate is the gate). `main` has 3 commits not on integration (SelectField / invite-form UI). Only Akash merges #384.
 
-Merged since the 04:20 snapshot (38 PRs):
+Merged since the 04:20 snapshot (39 PRs):
 
 - P3/AI: transcription retry + DLQ (#414), DLQ redrive (#420), `transcription_delayed` alert (#423), DLQ follow-ups
   (#433), STT no-fallback comment fix (#435), ADR-009 revision (#409).
@@ -22,11 +22,13 @@ Merged since the 04:20 snapshot (38 PRs):
 - P9: docs CSP in prod (#404), security checklist (#391), dependency overrides (#412), P9 hardening (#416), CD
   pipeline scaffold (#408) and deploy sentinel (#427), turbo test outputs (#413), coverage tooling (#431), pnpm
   overrides guard (#405), Tester Lows batch (#403).
-- Docs/tests: architecture overview (#407), README DB setup (#406), email verification concurrency (#410).
+- Docs/tests: architecture overview (#407), README DB setup (#406), email verification concurrency (#410), flaky
+  auth-UI KEK test fix (#438).
 
-Still open: #402 (this file; also adds P9 #13 alert rules and the ops/observability docs), #347 (iOS Live Activity,
-draft), #384 (→ `main`). Follow-up Lows on #416, #418, #429, #433, #434 and the deploy scripts are in progress on
-another stream.
+**Open PRs:** of the PRs tracked in earlier snapshots, only **#347** (iOS Live Activity, **draft**) and **#384**
+(→ `main`) are still open; every other one is merged. Besides this PR (#402), new PRs opened today and still in
+review at ~21:00 IST are #436 (worker delayed-status read retry), #437 (extension Info items), #439 (extension
+delisting audit) and #440 (web E2E smoke); they are not part of the `6df95197` tree.
 
 | Phase                          | 3 Nov | 4 Nov | Remaining                                                                                            |
 | ------------------------------ | ----- | ----- | ---------------------------------------------------------------------------------------------------- |
@@ -44,7 +46,6 @@ another stream.
 ## Update — 3 Nov 2026 (~04:20 IST)
 
 Tree: `integration/phase-1` at `190b9d5` (merge of #397, 03:47 IST). PR states read from the GitHub API at ~04:15 IST.
-Percentages are unchanged from the 02:45 snapshot below.
 
 Merged since the 02:45 snapshot:
 
@@ -130,7 +131,7 @@ Merged into `integration/phase-1` today (#305–#317): extension real meeting AP
 
 ## Update — 27 Oct 2026 (~23:20 IST)
 
-Checked against `gh pr list` / `gh pr view` and the tree at `integration/phase-1` `99a6f4f` and `main` `02646a1`. Phase percentages below are unchanged (coordinator estimates, not measured).
+Checked against `gh pr list` / `gh pr view` and the tree at `integration/phase-1` `99a6f4f` and `main` `02646a1`. Phase percentages are coordinator estimates, not measured.
 
 - Merged after the ~21:30 IST snapshot:
   - [#249](https://github.com/iakash22/meetops-platform/pull/249) (into `integration/phase-1`, 22:40 IST) and [#250](https://github.com/iakash22/meetops-platform/pull/250) (into `main`, 22:41 IST): notifications architecture plan and [ADR-013](15-decisions/ADR-013-notifications-architecture.md) (Proposed).
