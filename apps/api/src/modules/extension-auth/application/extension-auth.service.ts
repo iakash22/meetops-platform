@@ -285,8 +285,32 @@ export class ExtensionAuthService implements ExtensionRevoker {
     if (!f) throw new UnauthenticatedError();
     // An extension id removed from the allowlist (EXTENSION_IDS) can no longer refresh: revoke its family.
     // Checked BEFORE the grace-window replay so a revoked extension cannot replay a just-rotated pair.
+    // An EMPTY allowlist is treated as a misconfiguration (e.g. EXTENSION_IDS unset or typo'd in a deploy): refuse
+    // the refresh but do NOT revoke, so fixing the config restores every session instead of logging all users out.
     if (!this.isAllowedExtension(f.extensionId)) {
-      if (!f.revokedAt) await this.revokeFamily(f, 'extension_revoked');
+      if (this.d.extensionIds.length === 0) {
+        console.warn(
+          'extension refresh refused: extension allowlist is empty; families left intact',
+          {
+            event: 'extension_allowlist_empty',
+          },
+        );
+        throw new UnauthenticatedError();
+      }
+      if (!f.revokedAt) {
+        await this.revokeFamily(f, 'extension_revoked');
+        await this.audit(
+          {
+            organizationId: f.organizationId,
+            actorId: f.userId,
+            action: 'extension.token.delisted',
+            deviceId: f.deviceId,
+            extensionId: f.extensionId,
+            familyId: f.id,
+          },
+          meta,
+        );
+      }
       throw new UnauthenticatedError();
     }
     if (
