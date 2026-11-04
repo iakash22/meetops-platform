@@ -19,7 +19,7 @@ import { isRelaxedEnv, MissingProductionDependencyError, type ModuleDeps } from 
 import { DirectoryAccess } from '../directory/access.js';
 import { directoryErrors } from '../directory/http/route-kit.js';
 import { ErrorBody } from '../auth/http/schemas.js';
-import { RateLimitedError } from '../auth/domain/errors.js';
+import { consumeGuarded } from '../../shared/guarded-limit.js';
 import { InMemorySearch } from './in-memory.repository.js';
 import { PrismaSearch, SearchTimeoutError } from './prisma.repository.js';
 import { DomainError } from '../../shared/domain-error.js';
@@ -127,10 +127,12 @@ export default async function searchModule(
   app.addHook('onRequest', g.mutationGuard);
   const access = new DirectoryAccess(organizations, deps.audit);
   const timeoutMs = deps.searchTimeoutMs ?? SEARCH_REQUEST_TIMEOUT_MS;
-  const consumeOrThrow = async (key: string, l: { limit: number; windowMs: number }) => {
-    const r = await deps.rateLimiter.consume(key, l.limit, l.windowMs);
-    if (!r.allowed) throw new RateLimitedError(r.retryAfterMs);
-  };
+  /**
+   * Every limiter call (per user and per org, both routes) goes through the shared guard: 1.5 s timeout, and a
+   * limiter error or timeout fails closed with 503 + Retry-After; over the limit is 429 + Retry-After.
+   */
+  const consumeOrThrow = (key: string, l: { limit: number; windowMs: number }) =>
+    consumeGuarded(deps.rateLimiter, key, l);
 
   app.get<{ Params: { organizationId: string }; Querystring: SearchQuery }>(
     SEARCH_PATHS.search,
@@ -210,13 +212,21 @@ export default async function searchModule(
       );
       const deadline = Date.now() + timeoutMs;
       let embedded: { vector: number[]; model: string };
+      // Abort the embedding call when the budget runs out, so an embedder that honours the signal stops work (and
+      // billing) instead of running on after the 503. The ai-core executor path cannot take an external signal yet
+      // (see createExecutorQueryEmbedder); its own overall deadline bounds it there.
+      const embedAbort = new AbortController();
       try {
         embedded = await withSearchTimeout(
-          embedder.embed(c.ctx.organizationId, q),
+          embedder.embed(c.ctx.organizationId, q, { signal: embedAbort.signal }),
           timeoutMs,
-          () => new SemanticSearchUnavailableError(),
+          () => {
+            embedAbort.abort(new SemanticSearchUnavailableError());
+            return new SemanticSearchUnavailableError();
+          },
         );
       } catch {
+        embedAbort.abort();
         throw new SemanticSearchUnavailableError();
       }
       const kinds = request.query.kinds
