@@ -17,6 +17,8 @@ import {
   handleTranscriptionFailure,
   handleTranscriptionSuccess,
   queueDeadLetterLister,
+  createRedisDeadLetterIndex,
+  type DeadLetterIndex,
   type DeadLetterLister,
   transcriptionBackoffStrategy,
   type DeadLetterQueueLike,
@@ -38,6 +40,8 @@ export type TranscriptionDeadLetterDeps = {
   deadLetterQueue?: DeadLetterQueueLike | undefined;
   /** DLQ lister for the success-path guard (tests). Defaults to the worker's own DLQ queue. */
   deadLetterLister?: DeadLetterLister | undefined;
+  /** Per-meeting DLQ index (tests). Defaults to a Redis set index over the worker's own DLQ queue. */
+  deadLetterIndex?: DeadLetterIndex | undefined;
 };
 
 /** BullMQ processor: permanent errors become UnrecoverableError so BullMQ stops retrying. */
@@ -97,6 +101,10 @@ export function startTranscriptionWorker(
     deps.deadLetterQueue ?? (ownDlq as unknown as DeadLetterQueueLike);
   const deadLetterLister =
     deps.deadLetterLister ?? (ownDlq ? queueDeadLetterLister(ownDlq) : undefined);
+  const indexRedis = deps.deadLetterIndex || !ownDlq ? undefined : conn();
+  const deadLetterIndex =
+    deps.deadLetterIndex ??
+    (ownDlq && indexRedis ? createRedisDeadLetterIndex(indexRedis, ownDlq) : undefined);
   worker.on('failed', (job, err) => {
     logger.warn(
       { jobId: job?.id, errorCode: err instanceof TranscriptionJobError ? err.code : err?.name },
@@ -104,6 +112,7 @@ export function startTranscriptionWorker(
     );
     void handleTranscriptionFailure(job, err, {
       dlq,
+      index: deadLetterIndex,
       status: deps.delayedStatus,
       alert: deps.onTranscriptionDelayed,
       logger,
@@ -112,6 +121,7 @@ export function startTranscriptionWorker(
   worker.on('completed', (job) => {
     void handleTranscriptionSuccess(job, {
       status: deps.delayedStatus,
+      index: deadLetterIndex,
       deadLetters: deadLetterLister,
       logger,
     });
@@ -119,6 +129,7 @@ export function startTranscriptionWorker(
   const close = async () => {
     await worker.close();
     await ownDlq?.close();
+    indexRedis?.disconnect();
     await summaryQueue?.close();
     emitterRedis?.disconnect();
   };
