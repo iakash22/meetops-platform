@@ -59,13 +59,31 @@ printf 'exit(){ :; }\nabort(){ :; }\n' > "$TMP/bashenv"
 mkdir "$TMP/fb"; printf '#!/bin/sh\necho FAKEBASH; exit 0\n' > "$TMP/fb/bash"; chmod +x "$TMP/fb/bash"
 expect "exported BASH_FUNC_exit" "staging gate" env 'BASH_FUNC_exit%%=() { :; }' 'BASH_FUNC_abort%%=() { :; }' \
   DEPLOY_PREFLIGHT_ONLY=1 DEPLOY_CONFIRM="deploy production" scripts/deploy.sh --non-interactive production
-expect "BASH_FUNC_exit on impl"  "staging gate" env 'BASH_FUNC_exit%%=() { :; }' 'BASH_FUNC_abort%%=() { :; }' \
+expect "BASH_FUNC_exit on impl"  "wrapper sentinel" env 'BASH_FUNC_exit%%=() { :; }' 'BASH_FUNC_abort%%=() { :; }' \
   DEPLOY_PREFLIGHT_ONLY=1 DEPLOY_CONFIRM="deploy production" scripts/deploy-impl.sh --non-interactive production
 expect "BASH_ENV exit override"  "staging gate" env BASH_ENV="$TMP/bashenv" ENV="$TMP/bashenv" \
   DEPLOY_PREFLIGHT_ONLY=1 DEPLOY_CONFIRM="deploy production" scripts/deploy.sh --non-interactive production
 expect "fake bash on PATH"       "staging gate" env PATH="$TMP/fb:$PATH" \
   DEPLOY_PREFLIGHT_ONLY=1 DEPLOY_CONFIRM="deploy production" scripts/deploy.sh --non-interactive production
 expect "fake bash: build-images" "Usage:" env PATH="$TMP/fb:$PATH" scripts/build-images.sh --bogus
+expect "impl run via bash refused" "bash -p required" bash scripts/deploy-impl.sh --non-interactive staging
+expect "sentinel without -p refused" "bash -p required" env MEETOPS_DEPLOY_WRAPPED=1 DEPLOY_PREFLIGHT_ONLY=1 \
+  DEPLOY_CONFIRM="deploy staging" bash scripts/deploy-impl.sh --non-interactive staging
+expect "impl -p without sentinel" "wrapper sentinel" env DEPLOY_PREFLIGHT_ONLY=1 DEPLOY_CONFIRM="deploy staging" \
+  scripts/deploy-impl.sh --non-interactive staging
+expect_stop() { # name, expected-substring, cmd... ; must refuse and never reach any gate
+  local name="$1" want="$2"; shift 2
+  local out; out="$("$@" </dev/null 2>&1)"; local rc=$?
+  if [ $rc -ne 0 ] && [[ "$out" == *"$want"* ]] && [[ "$out" != *"==> gate"* ]]; then echo "ok   $name"
+  else echo "FAIL $name (rc=$rc): $out"; fail=1; fi
+}
+FN=('BASH_FUNC_exit%%=() { :; }' 'BASH_FUNC_abort%%=() { :; }' 'BASH_FUNC_echo%%=() { :; }' 'BASH_FUNC_[%%=() { return 0; }')
+expect_stop "exit fn, impl, no sentinel" "bash -p required" env "${FN[@]}" DEPLOY_CONFIRM="deploy production" \
+  bash scripts/deploy-impl.sh --non-interactive production
+expect_stop "exit fn, impl, sentinel"    "bash -p required" env "${FN[@]}" MEETOPS_DEPLOY_WRAPPED=1 DEPLOY_CONFIRM="deploy production" \
+  bash scripts/deploy-impl.sh --non-interactive production
+expect_ok "wrapper passes"       "PREFLIGHT OK" env DEPLOY_PREFLIGHT_ONLY=1 DEPLOY_CONFIRM="deploy staging" \
+  scripts/deploy.sh --non-interactive staging
 expect_ok "valid marker passes"  "PREFLIGHT OK"         "${PF[@]}" DEPLOY_TEST_STATE_DIR="$STATE" scripts/deploy.sh --non-interactive production
 expect_ok "staging preflight"    "PREFLIGHT OK"         env DEPLOY_PREFLIGHT_ONLY=1 DEPLOY_CONFIRM="deploy staging" scripts/deploy.sh --non-interactive staging
 expect "build-images extra args" "Usage:"               scripts/build-images.sh --push extra

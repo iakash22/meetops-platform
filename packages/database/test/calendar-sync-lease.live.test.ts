@@ -131,7 +131,7 @@ describe.skipIf(!live)('calendar sync lease (live)', () => {
       nextSyncInMs: 60_000,
       lease: a!.lease,
     });
-    expect(stale).toEqual({ upserted: 0, cancelled: 0, applied: false });
+    expect(stale).toEqual({ upserted: 0, cancelled: 0, applied: false, autoLinked: 0 });
     await expect(
       repo.recordFailure(ORG, id, { syncFailures: 1, retryInMs: 60_000, lease: a!.lease }),
     ).resolves.toBe(false);

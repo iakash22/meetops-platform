@@ -1,6 +1,5 @@
 import {
   AIExecutor,
-  InMemoryOrgConfigStore,
   ModelRouter,
   UsageQuotaManager,
   createCredentialResolver,
@@ -28,7 +27,8 @@ export type TranscriptionBootstrapOptions = {
  * - repository: Postgres via `withOrganizationContext` (forced RLS).
  * - executor: providers from ai-core env config. Usage counters and idempotency are durable in Postgres
  *   (`ai_usage_counters`, `ai_idempotency`, forced RLS) unless AI_STORES=memory (tests only, refused in
- *   production); store errors fail the job, never fall back. Org model config is still in-memory.
+ *   production); store errors fail the job, never fall back. Org model config is durable in `ai_org_config`
+ *   (ADR-009) via the same AI_STORES switch.
  * - credentials: platform env keys only when AI_WORKER_PLATFORM_KEYS=true; org secret refs have no secret manager
  *   yet and resolve to MISSING_CREDENTIALS.
  * - audio: the media worker's persisted chunk objects (same storage authorizer as the media worker).
@@ -58,11 +58,14 @@ export async function createTranscriptionHostDeps(
   });
   const stores = createAiStores(source);
   if (stores.mode === 'memory')
-    log.warn({ aiStores: 'memory' }, 'AI usage/idempotency stores are IN-MEMORY (tests only)');
+    log.warn(
+      { aiStores: 'memory' },
+      'AI usage/idempotency/org-config stores are IN-MEMORY (tests only)',
+    );
   const usage = stores.usage;
   const executor = new AIExecutor({
     registry,
-    router: new ModelRouter(env, new InMemoryOrgConfigStore(), auditSink),
+    router: new ModelRouter(env, stores.orgConfig, auditSink),
     usage,
     quota: new UsageQuotaManager(usage),
     idempotency: stores.idempotency,
