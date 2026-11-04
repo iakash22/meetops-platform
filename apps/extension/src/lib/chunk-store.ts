@@ -206,6 +206,11 @@ export class ChunkStore {
       .reduce((n, c) => n + c.size, 0);
   }
 
+  /** Bytes of every not-yet-uploaded chunk (held or queued). These are never evicted to make room. */
+  async pendingBytes(): Promise<number> {
+    return (await this.listChunks()).filter((c) => !c.uploaded).reduce((n, c) => n + c.size, 0);
+  }
+
   async totalBytes(): Promise<number> {
     return (await this.listChunks()).reduce((n, c) => n + c.size, 0);
   }
@@ -222,7 +227,7 @@ export class ChunkStore {
     if (size > this.config.maxBytes) return { stored: false, reason: 'over-cap' };
     const tx = this.db.transaction([CHUNKS, SESSIONS], 'readwrite');
     const store = tx.objectStore(CHUNKS);
-    // Evict already-uploaded chunks first (no data loss), then the oldest pending ones.
+    // Oldest already-uploaded chunks first; pending chunks are never evicted (see below).
     const existing = ((await req(store.getAll())) as StoredChunk[]).sort(
       (a, b) =>
         Number(b.uploaded) - Number(a.uploaded) || a.createdAt - b.createdAt || a.seq - b.seq,

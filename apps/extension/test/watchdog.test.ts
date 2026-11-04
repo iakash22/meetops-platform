@@ -31,6 +31,9 @@ function setup() {
     durableKV: memoryKV(),
     discardLocal: vi.fn<(id: string) => Promise<void>>(async () => undefined),
     capturedTabIds: vi.fn(async (): Promise<number[]> => [1, 2, 3, 7, 9]),
+    checkPairing: vi.fn(async () => true),
+    storageQuota: vi.fn(async () => ({ usage: 0, quota: 10 * 1024 * 1024 * 1024 })),
+    pendingStorage: vi.fn(async () => ({ pendingBytes: 0, capBytes: 500 * 1024 * 1024 })),
   } satisfies BackgroundDeps;
   const advance = (ms: number) => (t += ms);
   const startRecording = async () => {

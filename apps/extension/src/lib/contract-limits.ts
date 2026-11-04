@@ -4,28 +4,22 @@
  * equal the contracts values. TODO(arch): move these to packages/contracts/src/constants.ts and import from /types.
  */
 export const CHUNK_UPLOAD_URL_TTL_SECONDS = 300;
+import { MAX_CHUNK_BYTES } from '@meetops/contracts/types';
+
 /**
- * Contract upload ceiling for ONE chunk PUT (contracts MAX_CHUNK_BYTES, 64 MiB). This is the largest body the server
- * accepts per chunk; it is a validation limit, not the size the extension records at.
+ * Server limit for ONE chunk PUT, read straight from @meetops/contracts (MAX_CHUNK_BYTES, 64 MiB; the light
+ * `/types` entry re-exports constants.ts without TypeBox). storage's chunk-URL check enforces exactly this value.
  */
-export const UPLOAD_CHUNK_MAX_BYTES = 64 * 1024 * 1024;
+export const UPLOAD_CHUNK_MAX_BYTES = MAX_CHUNK_BYTES;
 
 export const MAX_RECORDING_CHUNKS = 10_000;
 /**
- * Local recording chunk size: the largest chunk the extension writes to IndexedDB (and later uploads): 8 MiB, one shared value for the recorder's
- * split size and the free-space reserve Start requires (drain.ts MIN_FREE_FOR_RECORDING_BYTES).
- *
- * Why 8 MiB and not the server ceiling UPLOAD_CHUNK_MAX_BYTES (64 MiB): the local IndexedDB cap is 500 MiB and held
- * recordings are never evicted, so the Start reserve has to stay small; a reserve smaller than one chunk (the old
- * 8 MiB reserve vs 64 MiB chunks) let Start pass and then refuse the very first chunk. 10 s opus slices are tens of
- * KiB, so 8 MiB only matters for throttled/oversized timeslices, and it stays well under the 64 MiB server limit.
+ * Local recording chunk size: the largest chunk the extension writes to IndexedDB and later uploads. Aligned to the
+ * server limit (one value, no 8 MiB vs 64 MiB mismatch): the recorder splits oversized timeslices at it, and Start
+ * requires one full chunk of free room (drain.ts MIN_FREE_FOR_RECORDING_BYTES, storage-quota.ts) so the first chunk
+ * of a new recording is never refused. Normal 10 s opus slices are tens of KiB, far below it.
  */
-export const LOCAL_RECORDING_CHUNK_BYTES = 8 * 1024 * 1024;
-/*
- * Why two limits: LOCAL_RECORDING_CHUNK_BYTES is a device-side choice (storage reserve, memory per slice), while
- * UPLOAD_CHUNK_MAX_BYTES is the server contract. The local size must always be <= the upload ceiling, otherwise a
- * recorded chunk could never be uploaded (test/contract-limits.test.ts asserts this).
- */
+export const LOCAL_RECORDING_CHUNK_BYTES = UPLOAD_CHUNK_MAX_BYTES;
 export const MAX_CHUNKS = MAX_RECORDING_CHUNKS;
 /**
  * Longest recording `durationMs` accepted by CompleteRecordingSessionRequest (4 h, contracts v0.4.1 G9). Re-exported

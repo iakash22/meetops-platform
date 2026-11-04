@@ -72,7 +72,7 @@ export async function startRecording(opts: {
   consent: ConsentAttestationInput;
   now?: () => number;
   timeslice?: number;
-  /** Defaults to LOCAL_RECORDING_CHUNK_BYTES (8 MiB); never above contracts UPLOAD_CHUNK_MAX_BYTES (64 MiB). */
+  /** Defaults to LOCAL_RECORDING_CHUNK_BYTES (the server's 64 MiB MAX_CHUNK_BYTES); never above it. */
   maxChunkBytes?: number;
   /** Defaults to contracts MAX_DURATION_MS (4 h). The recorder stops itself once this much time has elapsed. */
   maxDurationMs?: number;
