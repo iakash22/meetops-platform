@@ -38,6 +38,11 @@ export interface StoredChunk {
   uploaded: boolean;
   /** Lowercase hex SHA-256 of data (absent on pre-v0.2 records; computed at upload). */
   sha256?: string;
+  /**
+   * Equal to `size` while the chunk is not uploaded, absent once it is. Backs the sparse PENDING_SIZE index, so
+   * pending byte totals are summed from index keys without ever loading `data`.
+   */
+  pendingSize?: number;
 }
 
 export interface HeldInfo {
@@ -111,6 +116,9 @@ export function normalizeSession(raw: StoredSession): StoredSession {
 const DB_NAME = 'meetops-ai-recorder';
 const CHUNKS = 'chunks';
 const SESSIONS = 'sessions';
+/** Sparse index on StoredChunk.pendingSize: only not-yet-uploaded chunks are in it. Added in DB version 2. */
+const PENDING_SIZE = 'pendingSize';
+const DB_VERSION = 2;
 
 function req<T>(r: IDBRequest<T>): Promise<T> {
   return new Promise((resolve, reject) => {
@@ -137,11 +145,30 @@ export class ChunkStore {
     factory: IDBFactory = indexedDB,
     name: string = DB_NAME,
   ): Promise<ChunkStore> {
-    const open = factory.open(name, 1);
-    open.onupgradeneeded = () => {
+    const open = factory.open(name, DB_VERSION);
+    open.onupgradeneeded = (ev) => {
       const db = open.result;
-      db.createObjectStore(CHUNKS, { keyPath: ['sessionId', 'seq'] });
-      db.createObjectStore(SESSIONS, { keyPath: 'sessionId' });
+      const tx = open.transaction!;
+      if (ev.oldVersion < 1) {
+        db.createObjectStore(CHUNKS, { keyPath: ['sessionId', 'seq'] });
+        db.createObjectStore(SESSIONS, { keyPath: 'sessionId' });
+      }
+      if (ev.oldVersion < 2) {
+        // v1 -> v2: add the pending-size index and backfill pendingSize on chunks not uploaded yet. This one-time
+        // migration reads each existing record; afterwards byte totals never touch chunk data.
+        const chunks = tx.objectStore(CHUNKS);
+        chunks.createIndex(PENDING_SIZE, PENDING_SIZE, { unique: false });
+        if (ev.oldVersion >= 1) {
+          const cur = chunks.openCursor();
+          cur.onsuccess = () => {
+            const c = cur.result;
+            if (!c) return;
+            const v = c.value as StoredChunk;
+            if (!v.uploaded && v.pendingSize !== v.size) c.update({ ...v, pendingSize: v.size });
+            c.continue();
+          };
+        }
+      }
     };
     return new ChunkStore(await req(open), config);
   }
@@ -196,12 +223,13 @@ export class ChunkStore {
   }
 
   /**
-   * Sum `size` over chunks matching `keep`, walking a cursor one record at a time. Never getAll(): that would load
-   * every chunk's audio data into the service worker at once just to read the size fields.
+   * Sum the sizes of not-yet-uploaded chunks (optionally only those whose session is in `sessions`) from the
+   * PENDING_SIZE index with a key cursor: the key is the size and the primary key is [sessionId, seq], so the
+   * stored records (and their audio data) are never loaded.
    */
-  private sumChunkBytes(keep: (c: Pick<StoredChunk, 'sessionId' | 'size' | 'uploaded'>) => boolean): Promise<number> {
+  private sumPendingBytes(sessions?: ReadonlySet<string>): Promise<number> {
     const tx = this.db.transaction(CHUNKS, 'readonly');
-    const cursorReq = tx.objectStore(CHUNKS).openCursor();
+    const cursorReq = tx.objectStore(CHUNKS).index(PENDING_SIZE).openKeyCursor();
     return new Promise((resolve, reject) => {
       let total = 0;
       cursorReq.onsuccess = () => {
@@ -210,8 +238,8 @@ export class ChunkStore {
           resolve(total);
           return;
         }
-        const { sessionId, size, uploaded } = cursor.value as StoredChunk;
-        if (keep({ sessionId, size, uploaded })) total += size;
+        const [sessionId] = cursor.primaryKey as [string, number];
+        if (!sessions || sessions.has(sessionId)) total += cursor.key as number;
         cursor.continue();
       };
       cursorReq.onerror = () => reject(cursorReq.error ?? new Error('IndexedDB cursor failed'));
@@ -224,12 +252,12 @@ export class ChunkStore {
       (await this.listSessions()).filter((s) => s.held && !s.completed).map((s) => s.sessionId),
     );
     if (!held.size) return 0;
-    return this.sumChunkBytes((c) => !c.uploaded && held.has(c.sessionId));
+    return this.sumPendingBytes(held);
   }
 
   /** Bytes of every not-yet-uploaded chunk (held or queued). These are never evicted to make room. */
   async pendingBytes(): Promise<number> {
-    return this.sumChunkBytes((c) => !c.uploaded);
+    return this.sumPendingBytes();
   }
 
   async totalBytes(): Promise<number> {
@@ -297,7 +325,13 @@ export class ChunkStore {
         sessions.put({ ...s, incomplete: { lostChunks: (s.incomplete?.lostChunks ?? 0) + n } });
       }
     }
-    store.put({ ...c, size, uploaded: c.uploaded ?? false } satisfies StoredChunk);
+    const uploaded = c.uploaded ?? false;
+    store.put({
+      ...c,
+      size,
+      uploaded,
+      ...(uploaded ? {} : { pendingSize: size }),
+    } satisfies StoredChunk);
     await done(tx);
     const lostPending = [...lost.values()].reduce((a, b) => a + b, 0);
     return {
@@ -332,7 +366,12 @@ export class ChunkStore {
     const tx = this.db.transaction(CHUNKS, 'readwrite');
     const store = tx.objectStore(CHUNKS);
     const c = (await req(store.get([sessionId, seq]))) as StoredChunk | undefined;
-    if (c) store.put({ ...c, uploaded: true });
+    if (c) {
+      // Leaving the PENDING_SIZE index: drop pendingSize so the uploaded chunk no longer counts as pending.
+      const next: StoredChunk = { ...c, uploaded: true };
+      delete next.pendingSize;
+      store.put(next);
+    }
     await done(tx);
   }
 

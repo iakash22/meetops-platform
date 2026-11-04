@@ -168,7 +168,7 @@ describe('ChunkStore (IndexedDB)', () => {
     expect(await s.listSessions()).toEqual([]);
   });
 
-  it('sums pending and held bytes with a cursor, without loading every chunk through getAll()', async () => {
+  it('sums pending and held bytes from index keys without reading any chunk record or data', async () => {
     const s = await open({ maxBytes: 1000, policy: 'evict-uploaded' });
     await s.putChunk(chunk(0, 10));
     await s.putChunk(chunk(1, 20));
@@ -176,20 +176,81 @@ describe('ChunkStore (IndexedDB)', () => {
     await s.markUploaded('s1', 2);
     await s.putSession({ sessionId: 's2', meta, completed: false });
     await s.putChunk({ ...chunk(0, 5, 9), sessionId: 's2' });
-    await s.putSession({ ...(await s.getSession('s1'))!, held: { status: 409, op: 'complete', at: 1 } });
-    const getAll = vi.spyOn(IDBObjectStore.prototype, 'getAll');
-    const getAllIndex = vi.spyOn(IDBIndex.prototype, 'getAll');
+    await s.putSession({
+      ...(await s.getSession('s1'))!,
+      held: { status: 409, op: 'complete', at: 1 },
+    });
+    // Every way to load a record (and so its ArrayBuffer) from the chunks store or an index of it.
+    const loaders = [
+      vi.spyOn(IDBObjectStore.prototype, 'get'),
+      vi.spyOn(IDBObjectStore.prototype, 'getAll'),
+      vi.spyOn(IDBObjectStore.prototype, 'openCursor'),
+      vi.spyOn(IDBIndex.prototype, 'get'),
+      vi.spyOn(IDBIndex.prototype, 'getAll'),
+      vi.spyOn(IDBIndex.prototype, 'openCursor'),
+    ];
+    const keyCursor = vi.spyOn(IDBIndex.prototype, 'openKeyCursor');
+    const chunkStoreCalls = (spy: (typeof loaders)[number]) =>
+      spy.mock.contexts.filter((ctx) => {
+        const st = ctx instanceof IDBIndex ? ctx.objectStore : (ctx as IDBObjectStore);
+        return st.name === 'chunks';
+      });
     try {
       expect(await s.pendingBytes()).toBe(35);
       expect(await s.heldBytes()).toBe(30);
-      // Session metadata may still be read with getAll(); the chunks store (audio data) must not be.
-      const chunkReads = getAll.mock.contexts.filter((st) => (st as IDBObjectStore).name === 'chunks');
-      expect(getAll).toHaveBeenCalled(); // the spy is live: heldBytes() reads sessions through it
-      expect(chunkReads).toHaveLength(0);
-      expect(getAllIndex).not.toHaveBeenCalled();
+      expect(keyCursor).toHaveBeenCalledTimes(2);
+      // The spies are live (heldBytes() reads sessions with getAll()), and none touched the chunks store.
+      expect(loaders[1]!).toHaveBeenCalled();
+      for (const spy of loaders) expect(chunkStoreCalls(spy)).toHaveLength(0);
     } finally {
-      getAll.mockRestore();
-      getAllIndex.mockRestore();
+      for (const spy of loaders) spy.mockRestore();
+      keyCursor.mockRestore();
     }
+  });
+
+  it('upgrades a v1 database: backfills the pending-size index for chunks not uploaded yet', async () => {
+    const factory = new IDBFactory();
+    const v1 = await new Promise<IDBDatabase>((resolve, reject) => {
+      const r = factory.open('meetops-ai-recorder', 1);
+      r.onupgradeneeded = () => {
+        r.result.createObjectStore('chunks', { keyPath: ['sessionId', 'seq'] });
+        r.result.createObjectStore('sessions', { keyPath: 'sessionId' });
+      };
+      r.onsuccess = () => resolve(r.result);
+      r.onerror = () => reject(r.error ?? new Error('open failed'));
+    });
+    const tx = v1.transaction('chunks', 'readwrite');
+    const base = { sessionId: 's1', mimeType: meta.mimeType };
+    tx.objectStore('chunks').put({
+      ...base,
+      seq: 0,
+      data: buf(10),
+      size: 10,
+      createdAt: 0,
+      uploaded: false,
+    });
+    tx.objectStore('chunks').put({
+      ...base,
+      seq: 1,
+      data: buf(20),
+      size: 20,
+      createdAt: 1,
+      uploaded: true,
+    });
+    tx.objectStore('chunks').put({
+      ...base,
+      seq: 2,
+      data: buf(30),
+      size: 30,
+      createdAt: 2,
+      uploaded: false,
+    });
+    await new Promise((r) => (tx.oncomplete = r));
+    v1.close();
+    const s = await ChunkStore.open({ maxBytes: 1000, policy: 'refuse' }, factory);
+    expect(await s.pendingBytes()).toBe(40);
+    await s.markUploaded('s1', 0);
+    expect(await s.pendingBytes()).toBe(30);
+    expect((await s.listChunks('s1')).map((c) => c.size)).toEqual([10, 20, 30]);
   });
 });
