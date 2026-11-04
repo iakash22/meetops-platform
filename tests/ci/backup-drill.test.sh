@@ -12,7 +12,7 @@ if [ -n "${DRILL_TEST_CONTAINER:-}" ]; then
   WB="$(mktemp -d)"; C="$DRILL_TEST_CONTAINER"; X="docker exec -i -u postgres -e PGPORT=${PGPORT:-5432} $C"
   for t in psql createdb dropdb; do printf '#!/bin/bash\nexec %s %s "$@"\n' "$X" $t > "$WB/$t"; done
   printf '#!/bin/bash\na=(); f=; for x; do case "$x" in --file=*) f="${x#--file=}";; *) a+=("$x");; esac; done\n%s pg_dump "${a[@]}" > "$f"\n' "$X" > "$WB/pg_dump"
-  printf '#!/bin/bash\n[ "$1" = --version ] && exec %s pg_restore --version\nf="${@: -1}"; exec %s pg_restore "${@:1:$#-1}" < "$f"\n' "$X" "$X" > "$WB/pg_restore"
+  printf '#!/bin/bash\nexec %s pg_restore "$@"\n' "$X" > "$WB/pg_restore"
   chmod +x "$WB"/*; export PG_BIN="$WB"
 fi
 psql -X -q -At -d postgres -c 'select 1' >/dev/null 2>&1 || { echo "SKIP backup drill tests: no local Postgres via PG* env"; exit 0; }
