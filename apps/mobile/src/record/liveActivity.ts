@@ -23,8 +23,15 @@ export interface RecordingLiveActivity {
   end(): void;
   endAll(): Promise<void>;
   onStopRequested(listener: () => void): () => void;
+  /** Resolves once every queued native call has finished (tests, and anything that must wait for Stop). */
+  settled(): Promise<void>;
 }
 
+/**
+ * Native calls run strictly one after another (a promise queue): `start` is awaited before any `update` or `end`,
+ * so a fast Start then Stop can't end "nothing" while the request is still in flight and leave an orphaned
+ * activity on the lock screen. Failures are swallowed per call and never break the queue.
+ */
 export function createRecordingLiveActivity(
   port: LiveActivityPort,
   now: () => number = Date.now,
@@ -34,13 +41,14 @@ export function createRecordingLiveActivity(
   /** Effective start: wall clock minus elapsed, shifted on every resume so paused time doesn't count. */
   let startedAt = 0;
   let elapsedAtPause = 0;
-  const swallow = (p: Promise<unknown>) => void p.catch(() => undefined);
-  const safe = (f: () => Promise<unknown>) => {
-    try {
-      swallow(f());
-    } catch {
-      // Native threw synchronously: still best effort.
-    }
+  let queue: Promise<void> = Promise.resolve();
+  const enqueue = (f: () => Promise<unknown>) => {
+    // `then` also catches a synchronous native throw; each step's failure is swallowed (best effort).
+    queue = queue.then(f).then(
+      () => undefined,
+      () => undefined,
+    );
+    return queue;
   };
 
   return {
@@ -49,35 +57,36 @@ export function createRecordingLiveActivity(
       paused = false;
       startedAt = now();
       elapsedAtPause = 0;
-      safe(() => port.start(startedAt));
+      const t = startedAt;
+      void enqueue(() => port.start(t));
     },
     pause() {
       if (!running || paused) return;
       paused = true;
       elapsedAtPause = now() - startedAt;
-      safe(() => port.update(true, startedAt, elapsedAtPause));
+      const [t, e] = [startedAt, elapsedAtPause];
+      void enqueue(() => port.update(true, t, e));
     },
     resume() {
       if (!running || !paused) return;
       paused = false;
       startedAt = now() - elapsedAtPause;
-      safe(() => port.update(false, startedAt, elapsedAtPause));
+      const [t, e] = [startedAt, elapsedAtPause];
+      void enqueue(() => port.update(false, t, e));
     },
     end() {
       if (!running) return;
       running = false;
       paused = false;
-      safe(() => port.end());
+      void enqueue(() => port.end());
     },
     async endAll() {
       running = false;
       paused = false;
-      try {
-        await port.endAll();
-      } catch {
-        // Nothing to clean up, or the module is missing.
-      }
+      // Queued too, so a launch cleanup never races a start that is still in flight.
+      await enqueue(() => port.endAll());
     },
+    settled: () => queue,
     onStopRequested(listener) {
       try {
         return port.onStopRequested(() => {
