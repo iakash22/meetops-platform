@@ -35,10 +35,15 @@ import {
 import { InMemoryIntegrations } from './in-memory.repository.js';
 import { PrismaIntegrations } from './prisma.repository.js';
 import type { ConnectedProvider, IntegrationsRepository } from './ports.js';
-import { createRedisConnectionLease, parseSharedKek } from '@meetops/integrations';
+import {
+  createRedisConnectionLease,
+  parseSharedKek,
+  RedisDeliveryStore,
+} from '@meetops/integrations';
 import {
   devIntegrationsRuntime,
   integrationsRuntimeFromEnv,
+  deliveryRedisFromEval,
   leaseRedisFromEval,
   refusingTokenRefreshLease,
   type IntegrationsRuntime,
@@ -132,7 +137,26 @@ export function selectIntegrationsRuntime(
   const rt =
     deps.integrationsRuntime ??
     (isRelaxedEnv(nodeEnv) ? devIntegrationsRuntime(integrationsRuntimeFromEnv()) : undefined);
-  return rt && withTokenRefreshLease(rt, deps, nodeEnv);
+  return rt && withTokenRefreshLease(withDeliveryStore(rt, deps, nodeEnv), deps, nodeEnv);
+}
+
+/**
+ * Webhook replay marks must be shared across replicas. Outside development/test the runtime's delivery store is
+ * replaced by RedisDeliveryStore on the API's shared Redis client (deps.redis, REDIS_CLIENT_OPTIONS with
+ * commandTimeout), unless it is already a shared store. Without Redis there it fails closed at startup. Only
+ * development/test (isRelaxedEnv; unset, 'Production', 'prod', 'staging' are not relaxed) may keep the in-memory store.
+ */
+export function withDeliveryStore(
+  rt: IntegrationsRuntime,
+  deps: Pick<ModuleDeps, 'redis'>,
+  nodeEnv: string | undefined,
+): IntegrationsRuntime {
+  if (isRelaxedEnv(nodeEnv) || rt.deliveryStore.shared === true) return rt;
+  if (deps.redis)
+    return { ...rt, deliveryStore: new RedisDeliveryStore(deliveryRedisFromEval(deps.redis)) };
+  throw new Error(
+    'Integrations runtime: a shared webhook delivery store (RedisDeliveryStore) is required outside development/test; set REDIS_URL',
+  );
 }
 
 /**

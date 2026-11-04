@@ -1,4 +1,4 @@
-import { createHmac, timingSafeEqual } from 'node:crypto';
+import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
 
 /**
  * Replay window. GitHub deliveries carry NO signed timestamp, so the delivery-id TTL is the only replay control:
@@ -85,7 +85,26 @@ export interface DeliveryStore {
    * be charged to it (e.g. rate limiting), and only then record atomically with markIfNew.
    */
   isRecorded?(deliveryId: string): Promise<boolean>;
+  /**
+   * Two-phase record (preferred when implemented): atomically claim the id with a short-lived pending marker
+   * (SET NX). Returns an owner token, or null when the id is already recorded or claimed (replay/concurrent dup).
+   */
+  claim?(deliveryId: string, pendingTtlSeconds: number): Promise<string | null>;
+  /** Turn the holder's pending marker into the full replay TTL. False if the claim was lost (e.g. expired). */
+  commit?(deliveryId: string, token: string, ttlSeconds: number): Promise<boolean>;
+  /** Delete the pending marker, only if `token` still holds it (e.g. after a 429). */
+  release?(deliveryId: string, token: string): Promise<void>;
+  /** True only for stores shared across replicas (RedisDeliveryStore). Production requires it. */
+  readonly shared?: boolean;
 }
+
+/** Only development and test may use a per-process (non-shared) delivery store. */
+export function isRelaxedNodeEnv(nodeEnv: string | undefined): boolean {
+  return nodeEnv === 'development' || nodeEnv === 'test';
+}
+
+/** Pending-claim lifetime: long enough for the rate-limit charge, short enough that a crashed holder self-heals. */
+export const DELIVERY_PENDING_TTL_SECONDS = 30;
 
 /** In-memory TTL store. Single-process only; use a shared store (Redis) with multiple replicas. */
 export interface InMemoryDeliveryStoreOptions {
@@ -104,18 +123,44 @@ export class InMemoryDeliveryStore implements DeliveryStore {
 
   constructor(options: InMemoryDeliveryStoreOptions = {}) {
     const env = 'nodeEnv' in options ? options.nodeEnv : process.env.NODE_ENV;
-    if (env === 'production' && options.unsafeAllowInProduction !== true) {
+    // Fail closed: anything but development/test (unset, 'Production', 'prod', 'staging', ...) is production-like.
+    if (!isRelaxedNodeEnv(env) && options.unsafeAllowInProduction !== true) {
       throw new Error(
-        'InMemoryDeliveryStore is not allowed in production; use a Redis-backed DeliveryStore',
+        'InMemoryDeliveryStore is not allowed outside development/test; use a Redis-backed DeliveryStore',
       );
     }
     this.now = options.now ?? Date.now;
     this.maxEntries = options.maxEntries ?? 10_000;
   }
 
+  private readonly pending = new Map<string, { token: string; exp: number }>();
+  readonly shared = false;
+
   async isRecorded(deliveryId: string): Promise<boolean> {
     const exp = this.seen.get(deliveryId);
     return exp !== undefined && exp > this.now();
+  }
+
+  async claim(deliveryId: string, pendingTtlSeconds: number): Promise<string | null> {
+    const t = this.now();
+    this.prune(t);
+    if (await this.isRecorded(deliveryId)) return null;
+    const p = this.pending.get(deliveryId);
+    if (p && p.exp > t) return null;
+    const token = randomUUID();
+    this.pending.set(deliveryId, { token, exp: t + Math.max(1, pendingTtlSeconds) * 1000 });
+    return token;
+  }
+
+  async commit(deliveryId: string, token: string, ttlSeconds: number): Promise<boolean> {
+    const p = this.pending.get(deliveryId);
+    if (!p || p.token !== token || p.exp <= this.now()) return false;
+    this.pending.delete(deliveryId);
+    return this.markIfNew(deliveryId, ttlSeconds);
+  }
+
+  async release(deliveryId: string, token: string): Promise<void> {
+    if (this.pending.get(deliveryId)?.token === token) this.pending.delete(deliveryId);
   }
 
   async markIfNew(deliveryId: string, ttlSeconds: number): Promise<boolean> {
@@ -138,6 +183,7 @@ export class InMemoryDeliveryStore implements DeliveryStore {
 
   private prune(t: number) {
     for (const [k, exp] of this.seen) if (exp <= t) this.seen.delete(k);
+    for (const [k, p] of this.pending) if (p.exp <= t) this.pending.delete(k);
   }
 }
 
@@ -149,6 +195,7 @@ export type WebhookFailureReason =
   | 'missing_delivery_id'
   | 'malformed_delivery_id'
   | 'replayed_delivery'
+  | 'delivery_in_progress'
   | 'invalid_payload'
   | 'payload_too_large';
 
@@ -244,15 +291,57 @@ export interface VerifyWebhookOptions {
  * Replay-safe ordering shared by the GitHub and Jira verifiers: read-only check (409 if already recorded) ->
  * beforeRecord (may throw, records nothing) -> atomic record (SET NX); a concurrent duplicate that loses is 409.
  */
+export type RecordOutcome = 'recorded' | 'replayed' | 'in_progress';
+
+/** Seconds a provider should wait before retrying a delivery that is in progress elsewhere. */
+export const DELIVERY_IN_PROGRESS_RETRY_AFTER_SECONDS = DELIVERY_PENDING_TTL_SECONDS;
+
+/**
+ * Replay-safe ordering shared by the GitHub and Jira verifiers: claim (pending SET NX) -> beforeRecord (may throw,
+ * the claim is released) -> commit to the full TTL. 'replayed' = already recorded (409); 'in_progress' = another
+ * request holds the claim, or ours expired before commit (409 delivery_in_progress, retryable).
+ */
+export async function recordDeliveryOutcome(
+  store: DeliveryStore,
+  deliveryId: string,
+  ttlSeconds: number,
+  beforeRecord?: () => Promise<void>,
+): Promise<RecordOutcome> {
+  if (store.claim && store.commit && store.release) {
+    // Claim first so simultaneous duplicates cannot both pass the check and both charge the caller's bucket.
+    const token = await store.claim(deliveryId, DELIVERY_PENDING_TTL_SECONDS);
+    if (!token)
+      return store.isRecorded && !(await store.isRecorded(deliveryId)) ? 'in_progress' : 'replayed';
+    try {
+      await beforeRecord?.();
+    } catch (err) {
+      // 429 etc.: nothing recorded, so the provider's retry is not a replay. A failed release must not mask err.
+      try {
+        await store.release(deliveryId, token);
+      } catch {
+        /* the pending marker expires on its own */
+      }
+      throw err;
+    }
+    if (await store.commit(deliveryId, token, ttlSeconds)) return 'recorded';
+    console.warn('webhook delivery claim expired before commit; asking the provider to retry', {
+      event: 'webhook_delivery_claim_lost',
+    });
+    return 'in_progress';
+  }
+  if (store.isRecorded && (await store.isRecorded(deliveryId))) return 'replayed';
+  await beforeRecord?.();
+  return (await store.markIfNew(deliveryId, ttlSeconds)) ? 'recorded' : 'replayed';
+}
+
+/** Boolean form of recordDeliveryOutcome: true only when this call recorded the delivery. */
 export async function recordDelivery(
   store: DeliveryStore,
   deliveryId: string,
   ttlSeconds: number,
   beforeRecord?: () => Promise<void>,
 ): Promise<boolean> {
-  if (store.isRecorded && (await store.isRecorded(deliveryId))) return false;
-  await beforeRecord?.();
-  return store.markIfNew(deliveryId, ttlSeconds);
+  return (await recordDeliveryOutcome(store, deliveryId, ttlSeconds, beforeRecord)) === 'recorded';
 }
 
 const STATUS: Record<WebhookFailureReason, 400 | 401 | 409 | 413> = {
@@ -263,6 +352,7 @@ const STATUS: Record<WebhookFailureReason, 400 | 401 | 409 | 413> = {
   missing_delivery_id: 400,
   malformed_delivery_id: 400,
   replayed_delivery: 409,
+  delivery_in_progress: 409,
   invalid_payload: 400,
   payload_too_large: 413,
 };
@@ -318,13 +408,14 @@ export async function verifyGitHubWebhook(
   if (!rawDelivery) return fail('missing_delivery_id');
   const deliveryId = rawDelivery.trim().toLowerCase();
   if (!isValidGitHubDeliveryId(deliveryId)) return fail('malformed_delivery_id');
-  const fresh = await recordDelivery(
+  const outcome = await recordDeliveryOutcome(
     opts.deliveryStore,
     deliveryId,
     effectiveReplayTtlSeconds(opts.replayTtlSeconds),
     opts.beforeRecord,
   );
-  if (!fresh) return fail('replayed_delivery');
+  if (outcome === 'replayed') return fail('replayed_delivery');
+  if (outcome === 'in_progress') return fail('delivery_in_progress');
   return {
     ok: true,
     deliveryId,
