@@ -1,15 +1,15 @@
-# Phase status — 4 Nov 2026 (~21:00 IST)
+# Phase status — 4 Nov 2026 (~21:50 IST)
 
-## Update — 4 Nov 2026 (~21:00 IST)
+## Update — 4 Nov 2026 (~21:50 IST)
 
-Tree: `integration/phase-1` at `6df95197` (merge of #438, 20:55 IST, 4 Nov). PR states read from the GitHub API at
-~21:00 IST. Percentages below are re-estimated for this snapshot (coordinator-style estimates, not measured).
+Tree: `integration/phase-1` at `1d46e8c6` (merge of #441, 21:42 IST, 4 Nov). PR states queried live from the GitHub
+API at ~21:50 IST. Percentages below are re-estimated for this snapshot (coordinator-style estimates, not measured).
 
-**#384 (`integration/phase-1` → `main`)**: open, head `6df95197`, 287 commits, 361 files, +28,378/−1,801.
+**#384 (`integration/phase-1` → `main`)**: open, head `1d46e8c6`, 296 commits, 379 files, +29,107/−1,884.
 GitHub reports `mergeable_state: unstable` (no passing remote checks: Actions minutes are exhausted, so the local
 gate is the gate). `main` has 3 commits not on integration (SelectField / invite-form UI). Only Akash merges #384.
 
-Merged since the 04:20 snapshot (39 PRs):
+Merged since the 04:20 snapshot (42 PRs):
 
 - P3/AI: transcription retry + DLQ (#414), DLQ redrive (#420), `transcription_delayed` alert (#423), DLQ follow-ups
   (#433), STT no-fallback comment fix (#435), ADR-009 revision (#409).
@@ -18,17 +18,34 @@ Merged since the 04:20 snapshot (39 PRs):
 - P7: semantic embeddings pipeline (#350), calendar background sync (#394) and auto-link (#398).
 - P2/P4 media and consent: consent hardening (#387), upload chunk rate limits (#419), media rate-limit hardening
   (#424), storage quota fail-closed (#430).
-- Realtime/web: realtime hardening (#417), web realtime client (#415, #422).
+- P8: iOS Live Activity hardening (#347, merged 21:24 IST).
+- Realtime/web: realtime hardening (#417), web realtime client (#415, #422), web CSS budget (#441).
 - P9: docs CSP in prod (#404), security checklist (#391), dependency overrides (#412), P9 hardening (#416), CD
   pipeline scaffold (#408) and deploy sentinel (#427), turbo test outputs (#413), coverage tooling (#431), pnpm
   overrides guard (#405), Tester Lows batch (#403).
-- Docs/tests: architecture overview (#407), README DB setup (#406), email verification concurrency (#410), flaky
-  auth-UI KEK test fix (#438).
+- Docs/tests: architecture overview (#407), README DB setup (#406), email verification concurrency (#410), auth-UI
+  test deflake (#438), web E2E smoke suite (#440).
 
-**Open PRs:** of the PRs tracked in earlier snapshots, only **#347** (iOS Live Activity, **draft**) and **#384**
-(→ `main`) are still open; every other one is merged. Besides this PR (#402), new PRs opened today and still in
-review at ~21:00 IST are #436 (worker delayed-status read retry), #437 (extension Info items), #439 (extension
-delisting audit) and #440 (web E2E smoke); they are not part of the `6df95197` tree.
+**Open PRs** (base `integration/phase-1` unless noted), live at ~21:50 IST:
+
+| PR   | What                                                                       |
+| ---- | -------------------------------------------------------------------------- |
+| #384 | `integration/phase-1` → `main` (base `main`; Akash merges)                 |
+| #402 | This status snapshot, ops/observability docs, P9 #13 alert rules           |
+| #436 | Worker: retry transcription delayed-status reads                           |
+| #437 | Extension: fail-closed Start, unheld pending chunks, server chunk size     |
+| #439 | API: audit extension delisting, keep families on an empty allowlist        |
+| #442 | Database: `ai_org_config.updated_by_id` must be an org member              |
+| #443 | Handoff docs: desktop `chunk_put` and extension Info items done            |
+| #444 | Integrations: delivery-store doc nits, `REDIS_IT_URL` passthrough          |
+| #445 | API: per-org search caps and a 503 timeout on search routes                |
+| #446 | API: `POST /orgs/:organizationId/meetings` (New meeting 404 found by #440) |
+| #447 | Mobile: Live Activity follow-ups                                           |
+| #448 | Release: CycloneDX SBOM script, versioning and changelog (P9 #11/#12)      |
+| #449 | Deploy: validated target-agnostic interface with `prisma migrate deploy`   |
+| #450 | Ops: Postgres backup and local restore drill (P9 #10)                      |
+
+#441 merged at 21:42 IST; #347 and #440 are merged and no longer open.
 
 | Phase                          | 3 Nov | 4 Nov | Remaining                                                                                            |
 | ------------------------------ | ----- | ----- | ---------------------------------------------------------------------------------------------------- |

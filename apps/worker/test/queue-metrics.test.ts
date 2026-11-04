@@ -7,7 +7,9 @@ import {
   renderQueueMetrics,
   startWorkerMetricsServer,
   workerMetricsTokenFromEnv,
+  isLoopbackHost,
 } from '../src/metrics.js';
+import { createServer as createNetServer } from 'node:net';
 
 const TOKEN = 'w'.repeat(MIN_WORKER_METRICS_TOKEN_LENGTH);
 const read = async (q: string) => {
@@ -117,5 +119,63 @@ describe('worker Prometheus alert rules', () => {
     const emitted = new Set(['up', ...[...body.matchAll(/^([a-z_]+)\{/gm)].map((m) => m[1]!)]);
     for (const e of exprs)
       for (const name of e.match(/\b(bullmq_[a-z_]+|up)\b/g) ?? []) expect(emitted).toContain(name);
+  });
+});
+
+describe('worker metrics exporter hardening', () => {
+  const mkLog = () => {
+    const warns: Array<{ obj: object; msg: string }> = [];
+    return { warns, log: { warn: (obj: object, msg: string) => warns.push({ obj, msg }) } };
+  };
+
+  it('warns (without the token) when WORKER_METRICS_TOKEN is too short, and stays off', () => {
+    const { warns, log } = mkLog();
+    expect(
+      startWorkerMetricsServer({ WORKER_METRICS_TOKEN: 'short-secret' }, read, log),
+    ).toBeUndefined();
+    expect(warns).toHaveLength(1);
+    expect(warns[0]!.msg).toMatch(/shorter than the minimum/);
+    expect(JSON.stringify(warns)).not.toContain('short-secret');
+  });
+
+  it('does not warn when the token is unset', () => {
+    const { warns, log } = mkLog();
+    expect(workerMetricsTokenFromEnv(undefined, log)).toBeUndefined();
+    expect(warns).toHaveLength(0);
+  });
+
+  it('classifies loopback hosts and warns for a non-loopback bind', async () => {
+    expect(isLoopbackHost('127.0.0.1')).toBe(true);
+    expect(isLoopbackHost('127.1.2.3')).toBe(true);
+    expect(isLoopbackHost('::1')).toBe(true);
+    expect(isLoopbackHost('0.0.0.0')).toBe(false);
+    expect(isLoopbackHost('10.0.0.5')).toBe(false);
+    const { warns, log } = mkLog();
+    const s = startWorkerMetricsServer(
+      { WORKER_METRICS_TOKEN: TOKEN, WORKER_METRICS_PORT: '0', WORKER_METRICS_HOST: '0.0.0.0' },
+      read,
+      log,
+    );
+    await new Promise((r) => s!.server.once('listening', r));
+    await s!.close();
+    expect(warns.some((w) => /not loopback/.test(w.msg))).toBe(true);
+  });
+
+  it('EADDRINUSE is logged and does not throw; close() still resolves', async () => {
+    const blocker = createNetServer();
+    await new Promise<void>((r) => blocker.listen(0, '127.0.0.1', () => r()));
+    const port = (blocker.address() as { port: number }).port;
+    const { warns, log } = mkLog();
+    const s = startWorkerMetricsServer(
+      { WORKER_METRICS_TOKEN: TOKEN, WORKER_METRICS_PORT: String(port) },
+      read,
+      log,
+    );
+    await new Promise((r) => s!.server.once('error', r));
+    await new Promise((r) => setImmediate(r));
+    expect(warns.some((w) => (w.obj as { code?: string }).code === 'EADDRINUSE')).toBe(true);
+    expect(s!.server.listening).toBe(false);
+    await s!.close();
+    await new Promise<void>((r) => blocker.close(() => r()));
   });
 });

@@ -9,6 +9,11 @@ import {
 import { createQueue } from '@meetops/queue';
 import { TRANSCRIPTION_DLQ } from './ai/transcription-retry.js';
 import { EMBEDDINGS_QUEUE } from './embeddings/pipeline.js';
+import { logger } from './logger.js';
+
+export type MetricsLog = { warn(obj: object, msg: string): void };
+const LOOPBACK = new Set(['127.0.0.1', '::1', 'localhost']);
+export const isLoopbackHost = (h: string) => LOOPBACK.has(h) || /^127\.\d+\.\d+\.\d+$/.test(h);
 
 /**
  * Worker queue-depth metrics (P9 item #13), Prometheus text format 0.0.4, no client library.
@@ -78,9 +83,20 @@ export async function renderQueueMetrics(
   return out.join('\n') + '\n';
 }
 
-export function workerMetricsTokenFromEnv(v: string | undefined): string | undefined {
+export function workerMetricsTokenFromEnv(
+  v: string | undefined,
+  log?: MetricsLog,
+): string | undefined {
   const t = v?.trim();
-  return t && t.length >= MIN_WORKER_METRICS_TOKEN_LENGTH ? t : undefined;
+  if (t && t.length < MIN_WORKER_METRICS_TOKEN_LENGTH) {
+    // Never log the token or its length beyond the threshold.
+    log?.warn(
+      { minLength: MIN_WORKER_METRICS_TOKEN_LENGTH },
+      'WORKER_METRICS_TOKEN is shorter than the minimum; worker metrics endpoint stays off',
+    );
+    return undefined;
+  }
+  return t || undefined;
 }
 
 const digest = (s: string) => createHash('sha256').update(s, 'utf8').digest();
@@ -112,13 +128,19 @@ export async function handleMetricsRequest(
 export function startWorkerMetricsServer(
   env: NodeJS.ProcessEnv = process.env,
   read?: CountsReader,
+  log: MetricsLog = logger,
 ): { server: Server; close: () => Promise<void> } | undefined {
-  const token = workerMetricsTokenFromEnv(env.WORKER_METRICS_TOKEN);
+  const token = workerMetricsTokenFromEnv(env.WORKER_METRICS_TOKEN, log);
   if (!token) return undefined;
   const port = Number.parseInt(env.WORKER_METRICS_PORT ?? '9464', 10);
   if (!Number.isInteger(port) || port < 0 || port > 65535)
     throw new Error('WORKER_METRICS_PORT is invalid');
   const host = env.WORKER_METRICS_HOST?.trim() || '127.0.0.1';
+  if (!isLoopbackHost(host))
+    log.warn(
+      { host },
+      'WORKER_METRICS_HOST is not loopback; expose the worker metrics endpoint on a private network only',
+    );
   const owned = new Map<string, ReturnType<typeof createQueue>>();
   const reader: CountsReader =
     read ??
@@ -139,11 +161,21 @@ export function startWorkerMetricsServer(
       () => res.writeHead(500).end(),
     );
   });
+  // A bind failure (EADDRINUSE, EACCES, bad host) must not crash the worker: log and run without metrics.
+  server.on('error', (err: NodeJS.ErrnoException) => {
+    log.warn(
+      { code: err.code ?? 'unknown', port, host },
+      'worker metrics endpoint failed to start; continuing without metrics',
+    );
+  });
   server.listen(port, host);
   return {
     server,
     close: async () => {
-      await new Promise<void>((resolve) => server.close(() => resolve()));
+      await new Promise<void>((resolve) => {
+        if (!server.listening) return resolve();
+        server.close(() => resolve());
+      });
       await Promise.all([...owned.values()].map((q) => q.close()));
     },
   };
