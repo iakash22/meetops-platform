@@ -48,6 +48,7 @@ import {
   IssueAlreadyLinkedError,
   OAuthStateInvalidError,
   ProviderUpstreamError,
+  DeliveryInProgressError,
   ReplayedDeliveryError,
   TaskNotFoundError,
   WebhookRejectedError,
@@ -300,7 +301,12 @@ export class IntegrationsService {
    * org and applies the status change. The install is single-account ("Only on this account"), but nothing
    * here assumes it: every live connection of that installation (max 10) gets the update.
    */
-  async githubAppWebhook(input: { rawBody: Buffer; headers: HeaderBag }): Promise<number> {
+  async githubAppWebhook(input: {
+    rawBody: Buffer;
+    headers: HeaderBag;
+    /** Called after the signature and a read-only replay check, before the delivery id is recorded (rate limiting); throwing records nothing. */
+    onDeliveryAccepted?: () => Promise<void>;
+  }): Promise<number> {
     const rt = this.runtime();
     const gh = rt.github;
     if (!gh) throw new WebhookSignatureError();
@@ -322,6 +328,7 @@ export class IntegrationsService {
       rawBody: input.rawBody,
       headers: input.headers,
       deliveryStore: rt.deliveryStore,
+      ...(input.onDeliveryAccepted ? { beforeRecord: input.onDeliveryAccepted } : {}),
       maxBodyBytes: INTEGRATION_WEBHOOK_MAX_BYTES,
       secretResolver: {
         resolve: async (ref) => {
@@ -334,7 +341,7 @@ export class IntegrationsService {
         },
       },
     });
-    if (!r.ok) throw webhookFailure(r.status);
+    if (!r.ok) throw webhookFailure(r.status, r.reason);
     let applied = 0;
     for (const t of targets) {
       const change = mapGitHubIssueEvent(r.event, r.payload, {
@@ -358,6 +365,8 @@ export class IntegrationsService {
     integrationId: string;
     rawBody: Buffer;
     headers: HeaderBag;
+    /** Called after the signature and a read-only replay check, before the delivery id is recorded (rate limiting); throwing records nothing. */
+    onDeliveryAccepted?: () => Promise<void>;
   }): Promise<number> {
     const rt = this.runtime();
     const { provider, integrationId } = input;
@@ -375,6 +384,7 @@ export class IntegrationsService {
         rawBody: input.rawBody,
         headers: input.headers,
         deliveryStore: rt.deliveryStore,
+        ...(input.onDeliveryAccepted ? { beforeRecord: input.onDeliveryAccepted } : {}),
         maxBodyBytes: INTEGRATION_WEBHOOK_MAX_BYTES,
         secretResolver: {
           resolve: async (ref) =>
@@ -383,7 +393,7 @@ export class IntegrationsService {
               : null,
         },
       });
-      if (!r.ok) throw webhookFailure(r.status);
+      if (!r.ok) throw webhookFailure(r.status, r.reason);
       change = mapGitHubIssueEvent(r.event, r.payload, ctx);
     } else {
       const secrets = await this.repo.readSecrets(organizationId, integrationId);
@@ -394,10 +404,11 @@ export class IntegrationsService {
         rawBody: input.rawBody,
         headers: input.headers,
         deliveryStore: rt.deliveryStore,
+        ...(input.onDeliveryAccepted ? { beforeRecord: input.onDeliveryAccepted } : {}),
         maxBodyBytes: INTEGRATION_WEBHOOK_MAX_BYTES,
         ...(rt.now ? { now: rt.now } : {}),
       });
-      if (!r.ok) throw webhookFailure(r.status);
+      if (!r.ok) throw webhookFailure(r.status, r.reason);
       change = mapJiraIssueEvent(r.payload, ctx);
     }
     if (!change) return 0;
@@ -659,7 +670,8 @@ export class IntegrationsService {
 
 const defaultSleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
-function webhookFailure(status: number) {
+function webhookFailure(status: number, reason?: string) {
+  if (reason === 'delivery_in_progress') return new DeliveryInProgressError();
   if (status === 409) return new ReplayedDeliveryError();
   if (status === 400 || status === 413) return new WebhookRejectedError(status);
   return new WebhookSignatureError();

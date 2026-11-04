@@ -248,5 +248,61 @@ export function createAiIdempotencyRepository(options: RepositoryOptions = {}) {
   };
 }
 
+export interface AiOrgConfigRecord {
+  /** JSON object (CHECK in SQL). Never contains secrets: credential refs only. */
+  config: Prisma.JsonObject;
+  /** Decimal as string, e.g. "25.00"; undefined when no budget is set. */
+  monthlyBudgetUsd: string | undefined;
+}
+
+/** AiOrganizationConfig (`ai_org_config`, PK = org_id): one row per organization, forced RLS. */
+export function createAiOrgConfigRepository(options: RepositoryOptions = {}) {
+  const run = runner(options);
+  return {
+    /** The organization's AI config row, or undefined when none is stored. */
+    get(organizationId: string): Promise<AiOrgConfigRecord | undefined> {
+      return run(organizationId, async (tx) => {
+        const row = await tx.aiOrganizationConfig.findUnique({ where: { organizationId } });
+        if (!row) return undefined;
+        const config = row.config;
+        if (config === null || typeof config !== 'object' || Array.isArray(config))
+          throw new Error('ai_org_config.config is not a JSON object');
+        return {
+          config,
+          monthlyBudgetUsd:
+            row.monthlyBudgetUsd === null ? undefined : row.monthlyBudgetUsd.toFixed(2),
+        };
+      });
+    },
+
+    /** Insert or replace the organization's AI config (one row per organization). */
+    upsert(
+      organizationId: string,
+      input: {
+        config: Prisma.InputJsonObject;
+        monthlyBudgetUsd?: string | number | undefined;
+        /** Acting user (users.id) or null for system writes. Required so every write sets it explicitly. */
+        updatedById: string | null;
+      },
+    ): Promise<void> {
+      return run(organizationId, async (tx) => {
+        const data = {
+          config: input.config,
+          // numeric(12,2): Postgres rounds extra decimals half away from zero (pass a 2-dp string to be exact).
+          monthlyBudgetUsd:
+            input.monthlyBudgetUsd === undefined ? null : String(input.monthlyBudgetUsd),
+          updatedById: input.updatedById,
+        };
+        await tx.aiOrganizationConfig.upsert({
+          where: { organizationId },
+          create: { organizationId, ...data },
+          update: data,
+        });
+      });
+    },
+  };
+}
+
+export type AiOrgConfigRepository = ReturnType<typeof createAiOrgConfigRepository>;
 export type AiUsageCounterRepository = ReturnType<typeof createAiUsageCounterRepository>;
 export type AiIdempotencyRepository = ReturnType<typeof createAiIdempotencyRepository>;

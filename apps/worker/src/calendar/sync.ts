@@ -1,4 +1,5 @@
 import type { CalendarSyncEventInput, CalendarSyncSecrets } from '@meetops/database';
+import { deriveExternalMeetingIdResult } from '@meetops/integrations';
 
 /**
  * Phase 7 calendar background sync (modelled on integrations/token-refresh.ts). Off by default
@@ -55,8 +56,10 @@ export interface CalendarSyncSweepRepository {
       removedIds?: string[];
       /** undefined = keep the stored cursor, null = clear it, string = store it for [from, to). */
       cursor?: string | null;
+      /** Auto-link candidates (event id -> derived externalMeetingId); only sent when auto-link is enabled. */
+      autoLink?: { eventId: string; externalMeetingId: string }[];
     },
-  ): Promise<{ upserted: number; cancelled: number; applied: boolean }>;
+  ): Promise<{ upserted: number; cancelled: number; applied: boolean; autoLinked?: number }>;
 }
 
 /** Provider calls (GoogleCalendarProvider in prod), injected so the sweep stays fetch/SDK agnostic. */
@@ -107,6 +110,11 @@ export interface CalendarSyncConfig {
   deltaEnabled: boolean;
   /** A delta round is restarted once its window's end lags the rolling window's end by more than this. */
   cursorMaxLagMs: number;
+  /**
+   * CALENDAR_AUTO_LINK_ENABLED (default off): store a link for each synced event whose conference URL matches
+   * exactly one live meeting of the org. Never overwrites or recreates an existing or user-removed link.
+   */
+  autoLinkEnabled: boolean;
 }
 
 export interface CalendarSyncDeps {
@@ -125,6 +133,7 @@ export interface CalendarSyncResult {
   skipped: number;
   upserted: number;
   cancelled: number;
+  autoLinked: number;
 }
 
 const DAY = 86_400_000;
@@ -140,6 +149,7 @@ export const CALENDAR_SYNC_DEFAULTS: CalendarSyncConfig = {
   perOrgLimit: 10,
   deltaEnabled: false,
   cursorMaxLagMs: 1 * DAY,
+  autoLinkEnabled: false,
 };
 
 /** Fetch headroom so round-robin selection can reach orgs queued behind one large tenant. */
@@ -171,6 +181,23 @@ export function selectFairly<T extends { organizationId: string }>(
       if (out.length >= limit) break;
     }
     if (!any) break;
+  }
+  return out;
+}
+
+/**
+ * Events that can be auto-linked: not cancelled, with a conference URL on a supported meeting host. The id is derived
+ * exactly as meetings/resolve and the API's suggestedMeetingId do (shared @meetops/integrations helper); the
+ * one-live-meeting match itself happens in the repository transaction.
+ */
+export function autoLinkCandidates(
+  events: CalendarSyncEventInput[],
+): { eventId: string; externalMeetingId: string }[] {
+  const out: { eventId: string; externalMeetingId: string }[] = [];
+  for (const e of events) {
+    if (e.status === 'cancelled' || !e.conferenceUrl) continue;
+    const r = deriveExternalMeetingIdResult(e.conferenceUrl);
+    if (r.ok) out.push({ eventId: e.id, externalMeetingId: r.id });
   }
   return out;
 }
@@ -256,6 +283,7 @@ export async function runCalendarSyncSweep(deps: CalendarSyncDeps): Promise<Cale
     skipped: 0,
     upserted: 0,
     cancelled: 0,
+    autoLinked: 0,
   };
 
   for (const d of due) {
@@ -407,6 +435,7 @@ export async function runCalendarSyncSweep(deps: CalendarSyncDeps): Promise<Cale
         now,
         nextSyncInMs: calendarSyncNextMs(cfg, deps.random),
         lease,
+        ...(cfg.autoLinkEnabled ? { autoLink: autoLinkCandidates(plan.events) } : {}),
       });
       if (!r.applied) {
         result.skipped++;
@@ -415,6 +444,7 @@ export async function runCalendarSyncSweep(deps: CalendarSyncDeps): Promise<Cale
       result.synced++;
       result.upserted += r.upserted;
       result.cancelled += r.cancelled;
+      result.autoLinked += r.autoLinked ?? 0;
     } catch (err) {
       result.failed++;
       const permanent = isPermanentCalendarError(err);
@@ -518,6 +548,7 @@ export function loadCalendarSyncEnv(env: NodeJS.ProcessEnv = process.env): Calen
       ),
       deltaEnabled: env.CALENDAR_SYNC_DELTA_ENABLED?.trim().toLowerCase() === 'true',
       cursorMaxLagMs: CALENDAR_SYNC_DEFAULTS.cursorMaxLagMs,
+      autoLinkEnabled: env.CALENDAR_AUTO_LINK_ENABLED?.trim().toLowerCase() === 'true',
     },
   };
 }

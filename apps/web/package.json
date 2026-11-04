@@ -11,6 +11,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "eslint .",
     "test": "vitest run",
+    "coverage": "vitest run --coverage",
     "size": "node scripts/check-bundle-size.mjs",
     "csp": "node scripts/check-csp.mjs"
   },
@@ -54,6 +55,7 @@
     "tailwindcss": "^3.4.14",
     "typescript": "^5.6.3",
     "vite": "^7.3.7",
+    "@vitest/coverage-v8": "4.1.12",
     "vitest": "^4.1.12"
   }
 }

@@ -129,6 +129,7 @@ describe('generated client', () => {
         'TRANSCRIPT_CHUNK_ERROR_MAX',
         'createAiUsageCounterRepository',
         'createAiIdempotencyRepository',
+        'createAiOrgConfigRepository',
         'createRecordingChunkCountRepository',
         'createChunkFileObjectRepository',
         'createChunkFileObjectLookup',

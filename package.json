@@ -26,6 +26,7 @@
     "lint": "turbo run lint",
     "test": "turbo run test --concurrency=2",
     "size": "turbo run size",
+    "coverage": "turbo run coverage --concurrency=1",
     "dev": "turbo run dev",
     "dev:api": "turbo run dev --filter=@meetops/api",
     "dev:web": "turbo run dev --filter=@meetops/web",
