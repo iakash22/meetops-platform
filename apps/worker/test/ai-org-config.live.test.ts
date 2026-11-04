@@ -6,6 +6,7 @@
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
+  AiOrgConfigActorError,
   createAiOrgConfigRepository,
   createPrismaClient,
   withOrganizationContext,
@@ -40,6 +41,13 @@ describe.skipIf(!APP_URL || !OWNER_URL)('PostgresOrgConfigStore (live, forced RL
     await owner.user.create({
       data: { id: userA, email: `orgcfg-${userA}@example.test`, name: 'OrgCfg' },
     });
+    // userA is a member of orgA only.
+    await withOrganizationContext(
+      orgA,
+      (tx) =>
+        tx.membership.create({ data: { organizationId: orgA, userId: userA, role: 'admin' } }),
+      { client: owner },
+    );
   });
 
   afterAll(async () => {
@@ -81,6 +89,49 @@ describe.skipIf(!APP_URL || !OWNER_URL)('PostgresOrgConfigStore (live, forced RL
     row = await ownerRow(orgA);
     expect(row?.updatedById).toBeNull();
     expect(row?.monthlyBudgetUsd).toBeNull();
+  });
+
+  it('#429: refuses an updated_by_id that is not an active member of the organization', async () => {
+    const cfg = (org: string) => ({
+      organizationId: org,
+      defaults: {},
+      features: {},
+      approvedProviders: ['gemini' as const],
+      credentialRefs: {},
+    });
+    // userA exists but belongs to orgA, not orgB.
+    await expect(store.put(cfg(orgB), { updatedById: userA })).rejects.toBeInstanceOf(
+      AiOrgConfigActorError,
+    );
+    // A uuid that is no user at all.
+    await expect(store.put(cfg(orgB), { updatedById: randomUUID() })).rejects.toBeInstanceOf(
+      AiOrgConfigActorError,
+    );
+    expect(await ownerRow(orgB)).toBeNull();
+    // A soft-deleted membership no longer counts.
+    await withOrganizationContext(
+      orgA,
+      (tx) =>
+        tx.membership.updateMany({
+          where: { organizationId: orgA, userId: userA },
+          data: { deletedAt: new Date() },
+        }),
+      { client: owner },
+    );
+    await expect(store.put(cfg(orgA), { updatedById: userA })).rejects.toBeInstanceOf(
+      AiOrgConfigActorError,
+    );
+    await withOrganizationContext(
+      orgA,
+      (tx) =>
+        tx.membership.updateMany({
+          where: { organizationId: orgA, userId: userA },
+          data: { deletedAt: null },
+        }),
+      { client: owner },
+    );
+    await store.put(cfg(orgA), { updatedById: userA });
+    expect((await ownerRow(orgA))?.updatedById).toBe(userA);
   });
 
   it('a malformed stored row fails closed without leaking stored values', async () => {
