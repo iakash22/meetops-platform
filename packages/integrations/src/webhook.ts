@@ -85,6 +85,8 @@ export interface DeliveryStore {
    * be charged to it (e.g. rate limiting), and only then record atomically with markIfNew.
    */
   isRecorded?(deliveryId: string): Promise<boolean>;
+  /** Three-state read (records nothing): no mark, a pending claim, or a committed (recorded) delivery. */
+  state?(deliveryId: string): Promise<DeliveryState>;
   /**
    * Two-phase record (preferred when implemented): atomically claim the id with a short-lived pending marker
    * (SET NX). Returns an owner token, or null when the id is already recorded or claimed (replay/concurrent dup).
@@ -97,6 +99,8 @@ export interface DeliveryStore {
   /** True only for stores shared across replicas (RedisDeliveryStore). Production requires it. */
   readonly shared?: boolean;
 }
+
+export type DeliveryState = 'absent' | 'pending' | 'recorded';
 
 /** Only development and test may use a per-process (non-shared) delivery store. */
 export function isRelaxedNodeEnv(nodeEnv: string | undefined): boolean {
@@ -112,8 +116,6 @@ export interface InMemoryDeliveryStoreOptions {
   maxEntries?: number;
   /** Defaults to process.env.NODE_ENV. */
   nodeEnv?: string | undefined;
-  /** Explicit escape hatch for tests only; production must use a shared (Redis) store. */
-  unsafeAllowInProduction?: boolean;
 }
 
 export class InMemoryDeliveryStore implements DeliveryStore {
@@ -124,7 +126,7 @@ export class InMemoryDeliveryStore implements DeliveryStore {
   constructor(options: InMemoryDeliveryStoreOptions = {}) {
     const env = 'nodeEnv' in options ? options.nodeEnv : process.env.NODE_ENV;
     // Fail closed: anything but development/test (unset, 'Production', 'prod', 'staging', ...) is production-like.
-    if (!isRelaxedNodeEnv(env) && options.unsafeAllowInProduction !== true) {
+    if (!isRelaxedNodeEnv(env)) {
       throw new Error(
         'InMemoryDeliveryStore is not allowed outside development/test; use a Redis-backed DeliveryStore',
       );
@@ -139,6 +141,12 @@ export class InMemoryDeliveryStore implements DeliveryStore {
   async isRecorded(deliveryId: string): Promise<boolean> {
     const exp = this.seen.get(deliveryId);
     return exp !== undefined && exp > this.now();
+  }
+
+  async state(deliveryId: string): Promise<DeliveryState> {
+    if (await this.isRecorded(deliveryId)) return 'recorded';
+    const p = this.pending.get(deliveryId);
+    return p && p.exp > this.now() ? 'pending' : 'absent';
   }
 
   async claim(deliveryId: string, pendingTtlSeconds: number): Promise<string | null> {
@@ -310,8 +318,12 @@ export async function recordDeliveryOutcome(
   if (store.claim && store.commit && store.release) {
     // Claim first so simultaneous duplicates cannot both pass the check and both charge the caller's bucket.
     const token = await store.claim(deliveryId, DELIVERY_PENDING_TTL_SECONDS);
-    if (!token)
+    if (!token) {
+      // Only a committed mark is a replay. A pending claim (or one released/expired since) is retryable.
+      if (store.state)
+        return (await store.state(deliveryId)) === 'recorded' ? 'replayed' : 'in_progress';
       return store.isRecorded && !(await store.isRecorded(deliveryId)) ? 'in_progress' : 'replayed';
+    }
     try {
       await beforeRecord?.();
     } catch (err) {

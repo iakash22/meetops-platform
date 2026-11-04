@@ -193,13 +193,19 @@ describe('InMemoryDeliveryStore', () => {
     for (const id of ['a', 'b', 'c']) await capped.markIfNew(id, 60);
     expect(capped.size).toBe(2);
   });
-  it('refuses production unless explicitly allowed', () => {
+  it('refuses production (no escape hatch)', () => {
     expect(() => new InMemoryDeliveryStore({ nodeEnv: 'production' })).toThrow(
       /not allowed outside development\/test/,
     );
-    expect(
-      () => new InMemoryDeliveryStore({ nodeEnv: 'production', unsafeAllowInProduction: true }),
-    ).not.toThrow();
+  });
+  it('state: absent -> pending -> recorded', async () => {
+    const s = new InMemoryDeliveryStore({ nodeEnv: 'test' });
+    expect(await s.state('z')).toBe('absent');
+    const t = await s.claim('z', 30);
+    expect(await s.state('z')).toBe('pending');
+    expect(await s.isRecorded('z')).toBe(false);
+    await s.commit('z', t as string, 60);
+    expect(await s.state('z')).toBe('recorded');
   });
 });
 

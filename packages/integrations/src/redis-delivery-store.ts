@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { effectiveReplayTtlSeconds, type DeliveryStore } from './webhook.js';
+import { effectiveReplayTtlSeconds, type DeliveryState, type DeliveryStore } from './webhook.js';
 
 /** Minimal ioredis surface: `SET key value EX ttl NX`, `EXISTS`, and `EVAL` for holder-checked commit/release. */
 export interface RedisSetNxClient {
@@ -13,6 +13,9 @@ const PENDING = 'pending:';
 // Only the claim holder may promote or delete its marker.
 const COMMIT_LUA =
   "if redis.call('GET', KEYS[1]) == ARGV[1] then redis.call('SET', KEYS[1], '1', 'EX', ARGV[2]) return 1 end return 0";
+// One round trip: absent / pending claim / committed mark (the same key holds both).
+const STATE_LUA =
+  "local v = redis.call('GET', KEYS[1]) if not v then return 'absent' end if string.sub(v, 1, 8) == 'pending:' then return 'pending' end return 'recorded'";
 const RELEASE_LUA =
   "if redis.call('GET', KEYS[1]) == ARGV[1] then return redis.call('DEL', KEYS[1]) end return 0";
 
@@ -41,9 +44,15 @@ export class RedisDeliveryStore implements DeliveryStore {
     this.defaultTtl = effectiveReplayTtlSeconds(options.defaultTtlSeconds);
   }
 
-  async isRecorded(deliveryId: string): Promise<boolean> {
+  async state(deliveryId: string): Promise<DeliveryState> {
     if (!deliveryId) throw new Error('deliveryId is required');
-    return (await this.redis.exists(this.prefix + deliveryId)) > 0;
+    const r = await this.redis.eval(STATE_LUA, 1, this.prefix + deliveryId);
+    return r === 'pending' || r === 'recorded' ? r : 'absent';
+  }
+
+  /** True only for a committed mark; a pending claim is not a replay. */
+  async isRecorded(deliveryId: string): Promise<boolean> {
+    return (await this.state(deliveryId)) === 'recorded';
   }
 
   async claim(deliveryId: string, pendingTtlSeconds: number): Promise<string | null> {

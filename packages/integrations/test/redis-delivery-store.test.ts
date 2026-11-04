@@ -94,4 +94,14 @@ describe('RedisDeliveryStore', () => {
     expect(await recordDelivery(store, 'e', 60, async () => {})).toBe(true);
     expect(await recordDelivery(store, 'e', 60, async () => {})).toBe(false);
   });
+  it('state distinguishes absent, pending and recorded on the shared key (ioredis-mock)', async () => {
+    const store = new RedisDeliveryStore(new RedisMock(), { keyPrefix: 's:' });
+    expect(await store.state('k')).toBe('absent');
+    const t = await store.claim('k', 30);
+    expect(await store.state('k')).toBe('pending');
+    expect(await store.isRecorded('k')).toBe(false);
+    await store.commit('k', t as string, 60);
+    expect(await store.state('k')).toBe('recorded');
+    expect(await store.isRecorded('k')).toBe(true);
+  });
 });
