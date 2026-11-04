@@ -52,7 +52,7 @@ out="$(scripts/db-restore-drill.sh --dump "$DUMP" --target drill_t1 2>&1)"; rc=$
 [ $rc -eq 1 ] && [[ "$out" == *"FAIL rows meetings"* ]] && ok "row-count drift fails the drill" || bad "rows drift" "rc=$rc $out"
 cp "$TMP/m.bak" "$META"; sed -i 's/^sha256=.*/sha256=deadbeef/' "$META"
 out="$(scripts/db-restore-drill.sh --dump "$DUMP" --target drill_t1 2>&1)"; rc=$?
-[ $rc -eq 1 ] && [[ "$out" == *"checksum mismatch"* ]] && ok "checksum mismatch fails before restore" || bad "checksum" "rc=$rc $out"
+[ $rc -eq 1 ] && [[ "$out" == *"checksum/encryption mismatch"* ]] && ok "checksum mismatch fails before restore" || bad "checksum" "rc=$rc $out"
 out="$(scripts/db-backup.sh --db 'x;drop' 2>&1)"; rc=$?
 [ $rc -eq 2 ] && ok "backup rejects a non-identifier db name" || bad "db name" "rc=$rc"
 [ $fail -eq 0 ] && echo "ALL BACKUP DRILL TESTS PASSED" || echo "BACKUP DRILL TESTS FAILED"
