@@ -14,6 +14,8 @@ import {
   INDEX_ADD_SCRIPT,
   INDEX_PRUNE_SCRIPT,
   INDEX_TIME_SCRIPT,
+  TRANSCRIPTION_SUCCESS_READ_ATTEMPTS,
+  withReadRetries,
   type DeadLetterIndex,
   meetingHasDeadLetters,
   isRetryExhausted,
@@ -355,8 +357,16 @@ describe('dead-lettering', () => {
 
   it('success path: a status read error leaves the meeting delayed', async () => {
     const { status, logger } = setup();
-    status.readDelayed.mockRejectedValueOnce(new Error('db down'));
-    await handleTranscriptionSuccess(job(1), { status, deadLetters: async () => [], logger });
+    status.readDelayed.mockRejectedValue(new Error('db down'));
+    const sleep = vi.fn(async () => undefined);
+    await handleTranscriptionSuccess(job(1), {
+      status,
+      deadLetters: async () => [],
+      logger,
+      sleep,
+    });
+    expect(status.readDelayed).toHaveBeenCalledTimes(TRANSCRIPTION_SUCCESS_READ_ATTEMPTS);
+    expect(sleep.mock.calls).toEqual([[100], [500]]);
     expect(status.clearDelayed).not.toHaveBeenCalled();
     expect(logger.error).toHaveBeenCalledWith(
       expect.objectContaining({ meetingId: MEET }),
@@ -512,18 +522,78 @@ describe('dead-lettering', () => {
     expect(index.clearBefore).not.toHaveBeenCalled();
     // A failing re-check is treated as "maybe": re-delay.
     status.markDelayed.mockClear();
-    index.hasSince.mockRejectedValueOnce(new Error('redis down'));
+    index.hasSince.mockRejectedValue(new Error('redis down'));
     await handleTranscriptionSuccess(job(1), {
       status,
       index,
       deadLetters: async () => [],
       logger,
+      sleep: async () => undefined,
     });
+    expect(index.hasSince).toHaveBeenCalledTimes(1 + TRANSCRIPTION_SUCCESS_READ_ATTEMPTS);
     expect(status.markDelayed).toHaveBeenCalledTimes(1);
     expect(logger.error).toHaveBeenCalledWith(
       expect.objectContaining({ meetingId: MEET }),
       'transcription post-clear re-check failed; meeting delayed again',
     );
+  });
+
+  it('#433 Low: a one-off error in the post-clear re-check is retried, so the meeting clears (not stuck delayed)', async () => {
+    const { status, logger } = setup();
+    const index = mockIndex();
+    index.hasSince.mockRejectedValueOnce(new Error('redis blip'));
+    const sleep = vi.fn(async () => undefined);
+    await handleTranscriptionSuccess(job(1), {
+      status,
+      index,
+      deadLetters: async () => [],
+      logger,
+      sleep,
+    });
+    expect(status.clearDelayed).toHaveBeenCalledWith(ORG, MEET, 'processing', 'v1');
+    expect(index.hasSince).toHaveBeenCalledTimes(2);
+    expect(sleep).toHaveBeenCalledWith(100);
+    expect(status.markDelayed).not.toHaveBeenCalled();
+    expect(index.clearBefore).toHaveBeenCalledWith(ORG, MEET, 5_000);
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ meetingId: MEET }),
+      'transcription delayed-status read failed; retrying',
+    );
+  });
+
+  it('#433 Low: a one-off error in the lookup is retried and the meeting clears', async () => {
+    const { status, logger } = setup();
+    const lister = vi.fn().mockRejectedValueOnce(new Error('redis blip')).mockResolvedValue([]);
+    await handleTranscriptionSuccess(job(1), {
+      status,
+      deadLetters: lister,
+      logger,
+      sleep: async () => undefined,
+    });
+    expect(status.clearDelayed).toHaveBeenCalledWith(ORG, MEET, 'processing', 'v1');
+    expect(status.markDelayed).not.toHaveBeenCalled();
+  });
+
+  it('withReadRetries is bounded and rethrows the last error', async () => {
+    const fn = vi.fn(async () => {
+      throw new Error('down');
+    });
+    const sleep = vi.fn(async () => undefined);
+    await expect(withReadRetries(fn, sleep)).rejects.toThrow('down');
+    expect(fn).toHaveBeenCalledTimes(TRANSCRIPTION_SUCCESS_READ_ATTEMPTS);
+    expect(sleep).toHaveBeenCalledTimes(TRANSCRIPTION_SUCCESS_READ_ATTEMPTS - 1);
+  });
+
+  it('#433 Low (documented): a permanent failure moves the meeting to failed and leaves the index alone', async () => {
+    const { deps, status } = setup();
+    const index = mockIndex();
+    await handleTranscriptionFailure(job(1), new UnrecoverableError('provider_failed'), {
+      ...deps,
+      index,
+    });
+    expect(status.clearDelayed).toHaveBeenCalledWith(ORG, MEET, 'failed');
+    expect(index.clearBefore).not.toHaveBeenCalled();
+    expect(index.add).not.toHaveBeenCalled();
   });
 
   it('Medium 1: a failed index write still dead-letters, and the next success cannot clear the meeting', async () => {
