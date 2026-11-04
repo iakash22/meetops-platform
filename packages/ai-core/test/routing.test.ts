@@ -90,16 +90,23 @@ describe('capabilities & fallback policy', () => {
     expect(paid.calls).toBe(1);
   });
 
-  it('local fallback only when enabled + capable', async () => {
+  it('no implicit local fallback: an enabled local provider is never tried unless chosen', async () => {
     const local = fakeLLM('ollama');
     const failing = () => { throw Object.assign(new Error('down'), { status: 503 }); };
-    const mk = async (enabled: boolean) =>
-      await setup({ providers: { gemini: fakeLLM('gemini', failing), ollama: local }, configs: [llmCfg('gemini'), llmCfg('ollama', { local: true, enabled })] });
-    const off = await (await mk(false)).executor.run({ organizationId: '00000000-0000-4000-8000-000000000001', feature: 'summary', promptVersion: 'v1' }, call);
-    expect(off.status).toBe('retryable');
-    const on = await (await mk(true)).executor.run({ organizationId: '00000000-0000-4000-8000-000000000001', feature: 'summary', promptVersion: 'v1' }, call);
-    expect(on.status).toBe('succeeded');
-    if (on.status === 'succeeded') expect(on.meta.provider).toBe('ollama');
+    const { executor } = await setup({ providers: { gemini: fakeLLM('gemini', failing), ollama: local }, configs: [llmCfg('gemini'), llmCfg('ollama', { local: true, enabled: true })] });
+    const out = await executor.run({ organizationId: '00000000-0000-4000-8000-000000000001', feature: 'summary', promptVersion: 'v1' }, call);
+    expect(out.status).toBe('retryable');
+    expect(local.calls).toBe(0);
+  });
+
+  it('local provider runs when the organization chooses it as primary', async () => {
+    const local = fakeLLM('ollama');
+    const { router, executor } = await setup({ providers: { gemini: fakeLLM('gemini'), ollama: local }, configs: [llmCfg('gemini'), llmCfg('ollama', { local: true, enabled: true })] });
+    await router.setOrgConfig({ organizationId: '00000000-0000-4000-8000-000000000001', defaults: { llm: { provider: 'ollama' } }, approvedProviders: ['gemini', 'ollama'] }, admin('00000000-0000-4000-8000-000000000001'));
+    const out = await executor.run({ organizationId: '00000000-0000-4000-8000-000000000001', feature: 'summary', promptVersion: 'v1' }, call);
+    expect(out.status).toBe('succeeded');
+    if (out.status === 'succeeded') expect(out.meta.provider).toBe('ollama');
+    expect(local.calls).toBe(1);
   });
 
   it('unapproved provider is skipped when approval required', async () => {
