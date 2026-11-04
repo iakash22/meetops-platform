@@ -91,7 +91,11 @@ export function bearerMatches(header: string | undefined, token: string): boolea
 
 /** Request handler, split out for tests. Returns status, content type and body. */
 export async function handleMetricsRequest(
-  req: { method?: string; url?: string; authorization?: string },
+  req: {
+    method?: string | undefined;
+    url?: string | undefined;
+    authorization?: string | undefined;
+  },
   opts: { token: string; queues: readonly string[]; read: CountsReader },
 ): Promise<{ status: number; type: string; body: string }> {
   const path = (req.url ?? '').split('?')[0];

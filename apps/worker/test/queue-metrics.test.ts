@@ -66,7 +66,7 @@ describe('worker queue metrics', () => {
       startWorkerMetricsServer({ WORKER_METRICS_TOKEN: TOKEN, WORKER_METRICS_PORT: '70000' }, read),
     ).toThrow(/WORKER_METRICS_PORT/);
     const s = startWorkerMetricsServer(
-      { WORKER_METRICS_TOKEN: TOKEN, WORKER_METRICS_PORT: '0' } as NodeJS.ProcessEnv,
+      { WORKER_METRICS_TOKEN: TOKEN, WORKER_METRICS_PORT: '0' },
       read,
     );
     expect(s).toBeDefined();
