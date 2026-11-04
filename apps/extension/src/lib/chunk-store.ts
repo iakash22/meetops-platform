@@ -195,20 +195,41 @@ export class ChunkStore {
     return all.sort((a, b) => a.createdAt - b.createdAt || a.seq - b.seq);
   }
 
+  /**
+   * Sum `size` over chunks matching `keep`, walking a cursor one record at a time. Never getAll(): that would load
+   * every chunk's audio data into the service worker at once just to read the size fields.
+   */
+  private sumChunkBytes(keep: (c: Pick<StoredChunk, 'sessionId' | 'size' | 'uploaded'>) => boolean): Promise<number> {
+    const tx = this.db.transaction(CHUNKS, 'readonly');
+    const cursorReq = tx.objectStore(CHUNKS).openCursor();
+    return new Promise((resolve, reject) => {
+      let total = 0;
+      cursorReq.onsuccess = () => {
+        const cursor = cursorReq.result;
+        if (!cursor) {
+          resolve(total);
+          return;
+        }
+        const { sessionId, size, uploaded } = cursor.value as StoredChunk;
+        if (keep({ sessionId, size, uploaded })) total += size;
+        cursor.continue();
+      };
+      cursorReq.onerror = () => reject(cursorReq.error ?? new Error('IndexedDB cursor failed'));
+    });
+  }
+
   /** Bytes of not-yet-uploaded chunks belonging to held (server-refused, not completed) sessions. */
   async heldBytes(): Promise<number> {
     const held = new Set(
       (await this.listSessions()).filter((s) => s.held && !s.completed).map((s) => s.sessionId),
     );
     if (!held.size) return 0;
-    return (await this.listChunks())
-      .filter((c) => !c.uploaded && held.has(c.sessionId))
-      .reduce((n, c) => n + c.size, 0);
+    return this.sumChunkBytes((c) => !c.uploaded && held.has(c.sessionId));
   }
 
   /** Bytes of every not-yet-uploaded chunk (held or queued). These are never evicted to make room. */
   async pendingBytes(): Promise<number> {
-    return (await this.listChunks()).filter((c) => !c.uploaded).reduce((n, c) => n + c.size, 0);
+    return this.sumChunkBytes((c) => !c.uploaded);
   }
 
   async totalBytes(): Promise<number> {

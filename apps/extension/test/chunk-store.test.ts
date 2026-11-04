@@ -1,6 +1,6 @@
 import { IDBFactory } from 'fake-indexeddb';
 import 'fake-indexeddb/auto';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { ChunkStore, type ChunkStoreConfig } from '../src/lib/chunk-store.js';
 import { CONSENT } from './helpers/consent.js';
 
@@ -166,5 +166,30 @@ describe('ChunkStore (IndexedDB)', () => {
     await s.deleteSession('s1');
     expect(await s.listChunks()).toEqual([]);
     expect(await s.listSessions()).toEqual([]);
+  });
+
+  it('sums pending and held bytes with a cursor, without loading every chunk through getAll()', async () => {
+    const s = await open({ maxBytes: 1000, policy: 'evict-uploaded' });
+    await s.putChunk(chunk(0, 10));
+    await s.putChunk(chunk(1, 20));
+    await s.putChunk(chunk(2, 40));
+    await s.markUploaded('s1', 2);
+    await s.putSession({ sessionId: 's2', meta, completed: false });
+    await s.putChunk({ ...chunk(0, 5, 9), sessionId: 's2' });
+    await s.putSession({ ...(await s.getSession('s1'))!, held: { status: 409, op: 'complete', at: 1 } });
+    const getAll = vi.spyOn(IDBObjectStore.prototype, 'getAll');
+    const getAllIndex = vi.spyOn(IDBIndex.prototype, 'getAll');
+    try {
+      expect(await s.pendingBytes()).toBe(35);
+      expect(await s.heldBytes()).toBe(30);
+      // Session metadata may still be read with getAll(); the chunks store (audio data) must not be.
+      const chunkReads = getAll.mock.contexts.filter((st) => (st as IDBObjectStore).name === 'chunks');
+      expect(getAll).toHaveBeenCalled(); // the spy is live: heldBytes() reads sessions through it
+      expect(chunkReads).toHaveLength(0);
+      expect(getAllIndex).not.toHaveBeenCalled();
+    } finally {
+      getAll.mockRestore();
+      getAllIndex.mockRestore();
+    }
   });
 });

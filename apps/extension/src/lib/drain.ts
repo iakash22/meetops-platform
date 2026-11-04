@@ -122,6 +122,14 @@ export const HELD_WARN_RATIO = 0.8;
  */
 export const MIN_FREE_FOR_RECORDING_BYTES = LOCAL_RECORDING_CHUNK_BYTES;
 
+/**
+ * Free room Start requires below the cap: one full local chunk, or the whole cap when it is smaller than that. The
+ * held check (heldStorageLevel) and the pending check (pendingStorageFull) both use this, so they agree.
+ */
+export function startReserveBytes(capBytes: number): number {
+  return Math.min(MIN_FREE_FOR_RECORDING_BYTES, capBytes);
+}
+
 export type HeldStorage = 'ok' | 'near-full' | 'full';
 
 /** How held data limits a new recording: 'full' blocks Start, 'near-full' warns. */
@@ -129,7 +137,7 @@ export function heldStorageLevel(h: Pick<HeldSummary, 'bytes' | 'capBytes'>): He
   const bytes = h.bytes ?? 0;
   const cap = h.capBytes ?? 0;
   if (!cap || !bytes) return 'ok';
-  if (cap - bytes < Math.min(MIN_FREE_FOR_RECORDING_BYTES, cap * 0.05)) return 'full';
+  if (cap - bytes < startReserveBytes(cap)) return 'full';
   return bytes >= cap * HELD_WARN_RATIO ? 'near-full' : 'ok';
 }
 
@@ -156,7 +164,7 @@ export function pendingStorageFull(p: PendingStorage): boolean {
   ) {
     throw new Error('pending storage is unknown');
   }
-  return capBytes - pendingBytes < Math.min(MIN_FREE_FOR_RECORDING_BYTES, capBytes);
+  return capBytes - pendingBytes < startReserveBytes(capBytes);
 }
 
 export const PENDING_FULL_START_MESSAGE =

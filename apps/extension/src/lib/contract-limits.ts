@@ -14,12 +14,16 @@ export const UPLOAD_CHUNK_MAX_BYTES = MAX_CHUNK_BYTES;
 
 export const MAX_RECORDING_CHUNKS = 10_000;
 /**
- * Local recording chunk size: the largest chunk the extension writes to IndexedDB and later uploads. Aligned to the
- * server limit (one value, no 8 MiB vs 64 MiB mismatch): the recorder splits oversized timeslices at it, and Start
- * requires one full chunk of free room (drain.ts MIN_FREE_FOR_RECORDING_BYTES, storage-quota.ts) so the first chunk
- * of a new recording is never refused. Normal 10 s opus slices are tens of KiB, far below it.
+ * Local recording chunk size: the largest chunk the extension writes to IndexedDB (and later uploads): 8 MiB, one
+ * shared value for the recorder's split size and the free-space reserve Start requires (drain.ts
+ * MIN_FREE_FOR_RECORDING_BYTES, storage-quota.ts).
+ *
+ * Why 8 MiB and not the server limit UPLOAD_CHUNK_MAX_BYTES (64 MiB): the local IndexedDB cap is 500 MiB and held
+ * recordings are never evicted, so the Start reserve has to stay small. 10 s opus slices are tens of KiB, so 8 MiB
+ * only matters for throttled/oversized timeslices. It must always be <= UPLOAD_CHUNK_MAX_BYTES, otherwise a recorded
+ * chunk could never be uploaded (test/contract-limits.test.ts asserts this).
  */
-export const LOCAL_RECORDING_CHUNK_BYTES = UPLOAD_CHUNK_MAX_BYTES;
+export const LOCAL_RECORDING_CHUNK_BYTES = 8 * 1024 * 1024;
 export const MAX_CHUNKS = MAX_RECORDING_CHUNKS;
 /**
  * Longest recording `durationMs` accepted by CompleteRecordingSessionRequest (4 h, contracts v0.4.1 G9). Re-exported

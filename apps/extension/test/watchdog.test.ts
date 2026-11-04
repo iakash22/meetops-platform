@@ -34,6 +34,7 @@ function setup() {
     checkPairing: vi.fn(async () => true),
     storageQuota: vi.fn(async () => ({ usage: 0, quota: 10 * 1024 * 1024 * 1024 })),
     pendingStorage: vi.fn(async () => ({ pendingBytes: 0, capBytes: 500 * 1024 * 1024 })),
+    heldRecordings: vi.fn(async () => ({ count: 0, closed: 0 })),
   } satisfies BackgroundDeps;
   const advance = (ms: number) => (t += ms);
   const startRecording = async () => {

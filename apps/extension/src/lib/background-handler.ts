@@ -61,8 +61,11 @@ export interface BackgroundDeps {
   discardLocal: (sessionId: string) => Promise<void>;
   /** Fallback after repeated discard failures: delete the session from IndexedDB only. */
   deleteLocal?: (sessionId: string) => Promise<void>;
-  /** Number of recordings held after a server refusal (409/413); surfaced in the popup. */
-  heldRecordings?: () => Promise<HeldSummary>;
+  /**
+   * Number of recordings held after a server refusal (409/413); surfaced in the popup. Required: Start fails closed
+   * on it, so a missing implementation must be a type error, not a silently skipped check.
+   */
+  heldRecordings: () => Promise<HeldSummary>;
   /** Retry the held recordings (popup Retry upload). */
   retryHeld?: () => Promise<void>;
   /** Delete the held recordings locally (popup Discard, after confirmation). */
@@ -216,7 +219,7 @@ async function withHeld(
   r: BackgroundResponse,
   otherAlert: boolean,
 ): Promise<BackgroundResponse> {
-  if (!deps.heldRecordings || !r.ok) return r;
+  if (!r.ok) return r;
   const h = await deps.heldRecordings().catch(() => undefined);
   if (!h) return r;
   if (state.status === 'idle') {
@@ -303,15 +306,13 @@ export async function handleBackgroundMessage(
       }
       if (!paired) return fail(PAIRING_REQUIRED_MESSAGE);
       // Held recordings (server-refused) block Start with their own message so the popup can offer Retry/Discard.
-      if (deps.heldRecordings) {
-        let held: HeldSummary;
-        try {
-          held = await deps.heldRecordings();
-        } catch {
-          return fail(HELD_CHECK_FAILED_MESSAGE);
-        }
-        if (heldStorageLevel(held) === 'full') return fail(HELD_FULL_START_MESSAGE);
+      let held: HeldSummary;
+      try {
+        held = await deps.heldRecordings();
+      } catch {
+        return fail(HELD_CHECK_FAILED_MESSAGE);
       }
+      if (heldStorageLevel(held) === 'full') return fail(HELD_FULL_START_MESSAGE);
       // Pending chunks (held or still queued) are never evicted: without room for one more chunk the very first
       // chunk of the new recording would be refused, so do not start.
       try {
