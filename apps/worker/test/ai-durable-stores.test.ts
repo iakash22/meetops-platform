@@ -33,9 +33,10 @@ describe('createAiStores (config/DI)', () => {
     expect(s.usage).toBeInstanceOf(InMemoryUsageTracker);
     expect(s.idempotency).toBeInstanceOf(InMemoryIdempotencyStore);
     expect(s.orgConfig).toBeInstanceOf(InMemoryOrgConfigStore);
-    expect(() => createAiStores({ AI_STORES: 'memory', NODE_ENV: 'production' })).toThrow(
-      /not allowed/,
-    );
+    for (const NODE_ENV of ['production', 'staging', 'development', '', ' test', 'TEST', undefined])
+      expect(() => createAiStores({ AI_STORES: 'memory', NODE_ENV })).toThrow(
+        /only allowed when NODE_ENV=test/,
+      );
     expect(createAiStores({ NODE_ENV: 'production' }).mode).toBe('durable');
   });
 
@@ -158,7 +159,10 @@ describe('PostgresOrgConfigStore', () => {
   const fakeRepo = (initial?: AiOrgConfigRecord) => {
     let row = initial;
     const upsert = vi.fn(
-      async (_org: string, input: { config: object; monthlyBudgetUsd?: string | number }) => {
+      async (
+        _org: string,
+        input: { config: object; monthlyBudgetUsd?: string | number; updatedById: string | null },
+      ) => {
         row = {
           config: JSON.parse(JSON.stringify(input.config)),
           monthlyBudgetUsd:
@@ -192,6 +196,7 @@ describe('PostgresOrgConfigStore', () => {
     const [org, input] = upsert.mock.calls[0]!;
     expect(org).toBe(ORG);
     expect(input.monthlyBudgetUsd).toBe('25.00');
+    expect(input.updatedById).toBeNull();
     expect(input.config).not.toHaveProperty('organizationId');
     expect(input.config).not.toHaveProperty('monthlyBudgetUsd');
     expect(await store.get(ORG)).toEqual(cfg);
@@ -224,5 +229,45 @@ describe('PostgresOrgConfigStore', () => {
       upsert: vi.fn(),
     } as unknown as AiOrgConfigRepository;
     await expect(new PostgresOrgConfigStore(repo).get(ORG)).rejects.toThrow('db down');
+  });
+
+  it('passes a user uuid actor as updatedById; non-uuid (system) actors become null', async () => {
+    const { repo, upsert } = fakeRepo();
+    const store = new PostgresOrgConfigStore(repo);
+    const user = '00000000-0000-4000-8000-0000000000c3';
+    await store.put(
+      {
+        organizationId: ORG,
+        defaults: {},
+        features: {},
+        approvedProviders: [],
+        credentialRefs: {},
+      },
+      { updatedById: user },
+    );
+    await store.put(
+      {
+        organizationId: ORG,
+        defaults: {},
+        features: {},
+        approvedProviders: [],
+        credentialRefs: {},
+      },
+      { updatedById: 'system:x' },
+    );
+    expect(upsert.mock.calls.map((c) => c[1].updatedById)).toEqual([user, null]);
+  });
+
+  it('rounds the monthly budget to cents with toFixed(2)', async () => {
+    const { repo, upsert } = fakeRepo();
+    await new PostgresOrgConfigStore(repo).put({
+      organizationId: ORG,
+      defaults: {},
+      features: {},
+      approvedProviders: [],
+      credentialRefs: {},
+      monthlyBudgetUsd: 10.129,
+    });
+    expect(upsert.mock.calls[0]![1].monthlyBudgetUsd).toBe('10.13');
   });
 });

@@ -281,15 +281,17 @@ export function createAiOrgConfigRepository(options: RepositoryOptions = {}) {
       input: {
         config: Prisma.InputJsonObject;
         monthlyBudgetUsd?: string | number | undefined;
-        updatedById?: string | undefined;
+        /** Acting user (users.id) or null for system writes. Required so every write sets it explicitly. */
+        updatedById: string | null;
       },
     ): Promise<void> {
       return run(organizationId, async (tx) => {
         const data = {
           config: input.config,
+          // numeric(12,2): Postgres rounds extra decimals half away from zero (pass a 2-dp string to be exact).
           monthlyBudgetUsd:
             input.monthlyBudgetUsd === undefined ? null : String(input.monthlyBudgetUsd),
-          updatedById: input.updatedById ?? null,
+          updatedById: input.updatedById,
         };
         await tx.aiOrganizationConfig.upsert({
           where: { organizationId },

@@ -47,6 +47,10 @@ and call only safe outbound endpoints.
 
 - Key env vars, named only: `GEMINI_API_KEY`, `ASSEMBLYAI_API_KEY`, `OPENAI_API_KEY`, `DEEPGRAM_API_KEY`, plus the
   `*_ENABLED`, `*_MODEL` and `*_URL` toggles.
-- Open: `InMemoryOrgConfigStore` is the only `OrgConfigStore`; the backend must supply a durable, organization-scoped
-  store. The secret-manager backing `SecretSource.secret` is supplied by the host app and not defined here. The
+- The worker's `OrgConfigStore` is `PostgresOrgConfigStore` on `ai_org_config` (one row per organization, forced RLS,
+  every call in `withOrganizationContext`). Rows are re-validated on read and a malformed row fails closed without
+  echoing stored values; store errors never fall back to memory. `monthlyBudgetUsd` is a numeric(12,2) column rounded
+  to cents with `toFixed(2)`; `updated_by_id` records the acting user (null for system writes).
+  `InMemoryOrgConfigStore` is only used with `AI_STORES=memory`, which is refused unless `NODE_ENV=test`.
+- Open: the secret-manager backing `SecretSource.secret` is supplied by the host app and not defined here. The
   Deepgram adapter is a stub, reported unavailable.

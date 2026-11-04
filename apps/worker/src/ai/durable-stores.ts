@@ -5,6 +5,7 @@ import {
   orgAIConfigSchema,
   type OrgAIConfig,
   type OrgConfigStore,
+  type OrgConfigWriteMeta,
   InMemoryUsageTracker,
   type IdempotencyStore,
   type UsageRecord,
@@ -112,6 +113,8 @@ export class PostgresIdempotencyStore implements IdempotencyStore {
  * re-validated with orgAIConfigSchema on read, so a malformed row fails the job instead of silently
  * routing somewhere else. Errors propagate: there is no fallback to memory.
  */
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 export class PostgresOrgConfigStore implements OrgConfigStore {
   constructor(private readonly repo: AiOrgConfigRepository = createAiOrgConfigRepository()) {}
 
@@ -133,13 +136,21 @@ export class PostgresOrgConfigStore implements OrgConfigStore {
     return parsed.data;
   }
 
-  async put(cfg: OrgAIConfig): Promise<void> {
+  /**
+   * `monthlyBudgetUsd` goes to a numeric(12,2) column: it is rounded to whole cents with
+   * `Number.prototype.toFixed(2)` (round half away from zero on the binary double, so e.g. 1.005 can
+   * become "1.00"). Values of 10^10 USD or more overflow the column and the write fails.
+   * `updatedById` is the acting user when it is a user uuid; system actors are stored as null.
+   */
+  async put(cfg: OrgAIConfig, meta: OrgConfigWriteMeta = {}): Promise<void> {
     const { organizationId, monthlyBudgetUsd, ...rest } = orgAIConfigSchema.parse(cfg);
+    const actor = meta.updatedById;
     await this.repo.upsert(organizationId, {
       config: JSON.parse(JSON.stringify(rest)) as Parameters<
         AiOrgConfigRepository['upsert']
       >[1]['config'],
       monthlyBudgetUsd: monthlyBudgetUsd === undefined ? undefined : monthlyBudgetUsd.toFixed(2),
+      updatedById: actor !== undefined && UUID_RE.test(actor) ? actor : null,
     });
   }
 }
@@ -148,7 +159,7 @@ export type AiStoreMode = 'durable' | 'memory';
 
 /**
  * Select the AI usage, idempotency and org config stores. `AI_STORES=durable` (default) uses Postgres.
- * `AI_STORES=memory` is for unit tests only: it is refused when NODE_ENV=production, and it is
+ * `AI_STORES=memory` is for unit tests only: it is refused unless NODE_ENV=test, and it is
  * never chosen implicitly (an unknown value is an error, not a fallback).
  */
 export function createAiStores(env: Record<string, string | undefined>): {
@@ -161,8 +172,9 @@ export function createAiStores(env: Record<string, string | undefined>): {
   if (raw !== 'durable' && raw !== 'memory')
     throw new Error('AI_STORES must be "durable" or "memory"');
   if (raw === 'memory') {
-    if (env.NODE_ENV === 'production')
-      throw new Error('AI_STORES=memory is not allowed when NODE_ENV=production');
+    // Allow-list, not deny-list: staging, production, any other value and an unset NODE_ENV all refuse.
+    if (env.NODE_ENV !== 'test')
+      throw new Error('AI_STORES=memory is only allowed when NODE_ENV=test');
     return {
       mode: 'memory',
       usage: new InMemoryUsageTracker(),
