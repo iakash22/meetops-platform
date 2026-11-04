@@ -1,8 +1,18 @@
 import { createGeoIpProvider, type GeoIpProvider } from '../shared/geoip/index.js';
+import {
+  RedisRefreshGraceStore,
+  type RefreshGraceStore,
+} from './auth/application/refresh-grace.js';
 import type { FastifyInstance } from 'fastify';
 import cookie from '@fastify/cookie';
 import cors from '@fastify/cors';
-import { DESKTOP_AUTH_PATHS, EXTENSION_AUTH_PATHS } from '@meetops/contracts';
+import {
+  DESKTOP_AUTH_PATHS,
+  EXTENSION_AUTH_PATHS,
+  type DesktopRefreshResponse,
+  type ExtensionRefreshResponse,
+} from '@meetops/contracts';
+import { parseWebOrigins } from '../shared/web-origins.js';
 import {
   extensionBearerCorsHook,
   isExtensionBearerPath,
@@ -28,6 +38,7 @@ import {
 import { Argon2PasswordHasher } from './auth/infrastructure/argon2-password-hasher.js';
 import { CryptoTokenService, uuidGenerator } from './auth/infrastructure/crypto-token.service.js';
 import { InMemorySessionRepository } from './auth/infrastructure/in-memory-session.repository.js';
+import type { MediaRateLimits } from './media/http/rate-limit.js';
 import { InMemoryOneTimeTokenRepository } from './auth/infrastructure/in-memory-one-time-token.repository.js';
 import {
   InMemoryLoginLockout,
@@ -109,16 +120,19 @@ import { PrismaMeetingRepository } from './meetings/infrastructure/prisma.reposi
 import type { ConsentRepository } from './media/domain/consent.js';
 import type { FileObjectRepository, MediaJobQueue, MediaSigner } from './media/domain/ports.js';
 import type { RecordingSessionRepository } from './media/domain/recording-session.js';
+import type { MeetingConsentRepository } from './media/domain/meeting-consent.js';
 import {
   FakeMediaSigner,
   InMemoryConsentRepository,
   InMemoryFileObjectRepository,
   InMemoryMediaJobQueue,
+  InMemoryMeetingConsentRepository,
   InMemoryRecordingSessionRepository,
 } from './media/infrastructure/in-memory.js';
 import {
   PrismaConsentRepository,
   PrismaFileObjectRepository,
+  PrismaMeetingConsentRepository,
   PrismaRecordingSessionRepository,
 } from './media/infrastructure/prisma.js';
 import { BullMqMediaJobQueue, createMediaQueueProducer } from './media/infrastructure/bullmq.js';
@@ -135,6 +149,8 @@ export interface ModuleDeps {
   hasher: PasswordHasher;
   tokens: TokenService;
   rateLimiter: RateLimiter;
+  /** Overrides MEDIA_RATE_LIMITS (tests). */
+  mediaRateLimits?: MediaRateLimits;
   lockout: LoginLockout;
   /**
    * AUTH_MAIL_QUEUE=bullmq: BullMqAuthMailQueue on REDIS_URL (ADR-013, notifications #11), consumed by the
@@ -189,6 +205,9 @@ export interface ModuleDeps {
   extensionIds: readonly string[];
   /** ADR-005 A1.4 security-signal logger for extension auth; defaults to the app's (redacting) logger. */
   extensionAuthLog?: ExtensionAuthLog;
+  /** Refresh grace window stores (Redis when `redis` is set, so a retry on any instance matches). */
+  extensionRefreshGrace?: RefreshGraceStore<ExtensionRefreshResponse>;
+  desktopRefreshGrace?: RefreshGraceStore<DesktopRefreshResponse>;
   /**
    * ADR-012 desktop sign-in. Off unless DESKTOP_AUTH_ENABLED=true (the ADR-012 amendment, PR #192, awaits sign-off).
    * When off, the /auth/desktop/* routes are not registered and desktop bearers never verify.
@@ -202,6 +221,8 @@ export interface ModuleDeps {
    * in development/test; outside them it stays unset unless injected and the media routes are not registered.
    */
   media?: MediaAdapters;
+  /** CONSENT_ENFORCEMENT_ENABLED (default off): media capture requires a current meeting consent grant. */
+  consentEnforcementEnabled?: boolean;
   /** Set when defaultModuleDeps built the storage-backed media adapters (BullMQ producer closed in onClose). */
   ownedMedia?: { close(): Promise<void> };
 }
@@ -213,6 +234,8 @@ export interface MediaAdapters {
   signer: MediaSigner;
   jobs: MediaJobQueue;
   sessions: RecordingSessionRepository;
+  /** Consent API ledger (meeting_consent_events). Unset: the consent routes are absent and enforcement fails closed. */
+  meetingConsents?: MeetingConsentRepository;
 }
 
 export function inMemoryMediaAdapters(clock: Clock = systemClock): MediaAdapters {
@@ -222,7 +245,21 @@ export function inMemoryMediaAdapters(clock: Clock = systemClock): MediaAdapters
     signer: new FakeMediaSigner(() => clock.now()),
     jobs: new InMemoryMediaJobQueue(),
     sessions: new InMemoryRecordingSessionRepository(),
+    meetingConsents: new InMemoryMeetingConsentRepository(),
   };
+}
+
+/**
+ * CONSENT_ENFORCEMENT_ENABLED (default off): when on, upload and recording-session init/chunk/complete require the
+ * meeting's latest consent event to be a current grant (Consent API), failing closed with 422 CONSENT_*.
+ */
+export function consentEnforcementEnabled(
+  env: Record<string, string | undefined> = process.env,
+): boolean {
+  const v = (env.CONSENT_ENFORCEMENT_ENABLED ?? '').trim().toLowerCase();
+  if (v === '' || ['false', '0', 'no', 'off'].includes(v)) return false;
+  if (['true', '1', 'yes', 'on'].includes(v)) return true;
+  throw new Error('CONSENT_ENFORCEMENT_ENABLED must be a boolean');
 }
 
 /** MEDIA_STORAGE_ENABLED: real storage for the media routes (off by default). */
@@ -259,6 +296,7 @@ export function storageMediaAdapters(
     signer: opts.signer ?? new S3UploadSourceSigner({ config, now: () => clock.now() }),
     jobs,
     sessions: new PrismaRecordingSessionRepository(db, config.bucket, config.provider),
+    meetingConsents: new PrismaMeetingConsentRepository(db),
     close: async () => {
       await owned?.close();
     },
@@ -370,6 +408,14 @@ const urlFor = (env: ModuleEnv, url: string | undefined) =>
 const allInjected = (overrides: Partial<ModuleDeps>, keys: readonly (keyof ModuleDeps)[]) =>
   keys.every((k) => overrides[k] !== undefined);
 
+/** Fail a command after ~1 s when Redis accepts the connection but never answers, instead of hanging the request. */
+export const REDIS_COMMAND_TIMEOUT_MS = 1_000;
+export const REDIS_CLIENT_OPTIONS = {
+  lazyConnect: true,
+  maxRetriesPerRequest: 3,
+  commandTimeout: REDIS_COMMAND_TIMEOUT_MS,
+} as const;
+
 /**
  * Picks the Redis client: an injected `redis` dep wins, otherwise REDIS_URL. No client is created
  * when every Redis-backed dep is injected.
@@ -381,7 +427,7 @@ function resolveRedis(
   if (overrides.redis) return { redis: overrides.redis };
   const url = urlFor(env, env.redisUrl);
   if (!url || allInjected(overrides, REDIS_BACKED_DEPS)) return {};
-  const client = new Redis(url, { lazyConnect: true, maxRetriesPerRequest: 3 });
+  const client = new Redis(url, REDIS_CLIENT_OPTIONS);
   return { redis: client, owned: client };
 }
 
@@ -503,10 +549,11 @@ export function defaultModuleDeps(
     idleTimeoutMs: 30 * MIN,
     absoluteTimeoutMs: 12 * HOUR,
   };
-  const allowedOrigins = (process.env.WEB_ORIGINS ?? (strict ? '' : DEV_WEB_ORIGINS.join(',')))
-    .split(',')
-    .map((s) => s.trim())
-    .filter(Boolean);
+  // R7: validated once at boot; production (strict) requires https:// exact origins.
+  const allowedOrigins = parseWebOrigins(
+    process.env.WEB_ORIGINS ?? (strict ? '' : DEV_WEB_ORIGINS.join(',')),
+    { requireHttps: env.nodeEnv === 'production' },
+  );
   const security: HttpSecurityConfig = overrides.security ?? {
     ...cookieConfig(env.nodeEnv),
     allowedOrigins,
@@ -588,9 +635,22 @@ export function defaultModuleDeps(
         : new RedisExtensionTokenRepository(redis)
       : new InMemoryExtensionTokenRepository(),
     desktopAuthEnabled: process.env.DESKTOP_AUTH_ENABLED === 'true',
+    consentEnforcementEnabled: consentEnforcementEnabled(process.env),
     desktopTokens: redis
       ? new RedisExtensionTokenRepository(redis, 'meetops:desktop:')
       : new InMemoryExtensionTokenRepository(),
+    ...(redis
+      ? {
+          extensionRefreshGrace: new RedisRefreshGraceStore<ExtensionRefreshResponse>(
+            redis,
+            'meetops:ext:grace:',
+          ),
+          desktopRefreshGrace: new RedisRefreshGraceStore<DesktopRefreshResponse>(
+            redis,
+            'meetops:desktop:grace:',
+          ),
+        }
+      : {}),
     extensionIds: [
       ...csv(process.env.EXTENSION_IDS),
       ...(strict ? [] : csv(process.env.EXTENSION_DEV_IDS)),
@@ -665,6 +725,8 @@ export async function registerModules(app: FastifyInstance, deps: ModuleDeps) {
         credentials: true,
         methods: ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE'],
         allowedHeaders: ['content-type', 'x-csrf-token'],
+        // R11: let the web app read rate-limit backoff and the request id for support.
+        exposedHeaders: ['retry-after', 'x-request-id'],
         maxAge: 600,
         strictPreflight: true,
       });
@@ -690,12 +752,14 @@ export async function registerModules(app: FastifyInstance, deps: ModuleDeps) {
   const extensionAuth = new ExtensionAuthService({
     ...deps,
     log: deps.extensionAuthLog ?? app.log,
+    ...(deps.extensionRefreshGrace ? { refreshGrace: deps.extensionRefreshGrace } : {}),
   });
   const desktopAuth =
     deps.desktopAuthEnabled === true
       ? new DesktopAuthService({
           ...deps,
           desktopTokens: deps.desktopTokens ?? new InMemoryExtensionTokenRepository(),
+          ...(deps.desktopRefreshGrace ? { refreshGrace: deps.desktopRefreshGrace } : {}),
         })
       : undefined;
   // ADR-005 A1.6 (and ADR-012 when enabled): logout, password reset and member removal also revoke token families.

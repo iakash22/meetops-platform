@@ -155,7 +155,11 @@ describe('integrations token-refresh env', () => {
   });
   it('builds only configured providers (no fallback)', () => {
     expect(tokenRefreshProvidersFromEnv({})).toEqual({});
-    const p = tokenRefreshProvidersFromEnv({ JIRA_CLIENT_ID: 'id', JIRA_CLIENT_SECRET: 's' });
+    const p = tokenRefreshProvidersFromEnv({
+      NODE_ENV: 'test',
+      JIRA_CLIENT_ID: 'id',
+      JIRA_CLIENT_SECRET: 's',
+    });
     expect(p.jira).toBeDefined();
     expect(p.github).toBeUndefined();
   });

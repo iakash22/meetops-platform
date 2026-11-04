@@ -156,6 +156,79 @@ describe('Phase 7 calendar', () => {
     expect(res.headers['cache-control']).toBe('private, no-store');
   });
 
+  it('#394: an error-state connection refreshes, stores the rotated token and recovers to active', async () => {
+    const c = await signupAndLogin(app, 'owner@example.com');
+    const org = await createOrg(c, 'Acme');
+    const state = (await connect(c, org)).searchParams.get('state')!;
+    await c.get(`/calendar/google/callback?state=${state}&code=abc`);
+    const id = [...repo.rows.keys()][0]!;
+    await repo.markError(org, id);
+    expect(repo.rows.get(id)!.status).toBe('error');
+    over['POST https://oauth2.googleapis.com/token'] = () =>
+      json({
+        access_token: 'g-access-rotated',
+        refresh_token: 'g-refresh-rotated',
+        expires_in: 3600,
+        token_type: 'Bearer',
+        scope: SCOPE,
+      });
+    now += 3600_000;
+    calls = [];
+    const res = await c.get(
+      `/orgs/${org}/calendar/events?from=2026-11-01T00:00:00.000Z&to=2026-11-08T00:00:00.000Z`,
+    );
+    expect(res.statusCode).toBe(200);
+    expect(calls[0]!.url).toBe('https://oauth2.googleapis.com/token');
+    expect(calls[1]!.auth).toBe('Bearer g-access-rotated');
+    expect(repo.rows.get(id)!.status).toBe('active');
+    const userId = repo.rows.get(id)!.userId;
+    expect((await repo.readSecrets(org, userId, id))!.refreshToken).toBe('g-refresh-rotated');
+  });
+
+  it('#394: a token CAS miss re-reads and retries, so a rotated refresh token is not lost', async () => {
+    const c = await signupAndLogin(app, 'owner@example.com');
+    const org = await createOrg(c, 'Acme');
+    const state = (await connect(c, org)).searchParams.get('state')!;
+    await c.get(`/calendar/google/callback?state=${state}&code=abc`);
+    const id = [...repo.rows.keys()][0]!;
+    const userId = repo.rows.get(id)!.userId;
+    over['POST https://oauth2.googleapis.com/token'] = () =>
+      json({
+        access_token: 'g-access-rotated',
+        refresh_token: 'g-refresh-rotated',
+        expires_in: 3600,
+        token_type: 'Bearer',
+        scope: SCOPE,
+      });
+    const real = repo.updateTokens.bind(repo);
+    const gens: (number | undefined)[] = [];
+    repo.updateTokens = async (o, i, t, opts) => {
+      gens.push(opts?.generation);
+      if (gens.length === 1) {
+        // Simulate a concurrent writer bumping the generation without changing the refresh token.
+        const s = (await repo.readSecrets(o, userId, i))!;
+        await real(
+          o,
+          i,
+          { ...t, accessToken: 'interim', refreshToken: '' },
+          {
+            generation: s.tokenGeneration,
+          },
+        );
+        return false;
+      }
+      return real(o, i, t, opts);
+    };
+    now += 3600_000;
+    const res = await c.get(
+      `/orgs/${org}/calendar/events?from=2026-11-01T00:00:00.000Z&to=2026-11-08T00:00:00.000Z`,
+    );
+    expect(res.statusCode).toBe(200);
+    expect(gens).toHaveLength(2);
+    expect(gens[1]).toBe((gens[0] ?? 0) + 1);
+    expect((await repo.readSecrets(org, userId, id))!.refreshToken).toBe('g-refresh-rotated');
+  });
+
   describe('P7 read-through of worker-synced events', () => {
     const FROM = '2026-11-01T00:00:00.000Z';
     const TO = '2026-11-08T00:00:00.000Z';
@@ -357,11 +430,28 @@ describe('Phase 7 calendar', () => {
     ).toBe(400);
     expect(
       (await c.post(`/orgs/${org}/calendar/connect`, { provider: 'outlook' })).statusCode,
-    ).toBe(400);
+    ).toBe(503);
+    expect((await c.post(`/orgs/${org}/calendar/connect`, { provider: 'yahoo' })).statusCode).toBe(
+      400,
+    );
     expect(
       (await c.get(`/orgs/${org}/calendar/providers`)).json<CalendarProviderList>().items[0]!
         .configured,
     ).toBe(false);
+  });
+
+  it('reads the Outlook OAuth client and tenant from env only when both values are set', async () => {
+    expect(integrationsRuntimeFromEnv({ OUTLOOK_CALENDAR_CLIENT_ID: 'x' }).outlookCalendar).toBe(
+      undefined,
+    );
+    const rt = integrationsRuntimeFromEnv({
+      OUTLOOK_CALENDAR_CLIENT_ID: 'id',
+      OUTLOOK_CALENDAR_CLIENT_SECRET: 'placeholder',
+      OUTLOOK_CALENDAR_TENANT: 'organizations',
+    }).outlookCalendar;
+    expect(rt?.clientId).toBe('id');
+    expect(rt?.tenant).toBe('organizations');
+    expect(await rt?.clientSecret()).toBe('placeholder');
   });
 
   it('reads the Google OAuth client from env only when both values are set', () => {
@@ -374,5 +464,39 @@ describe('Phase 7 calendar', () => {
         GOOGLE_CALENDAR_CLIENT_SECRET: 'y',
       }).googleCalendar?.clientId,
     ).toBe('x');
+  });
+});
+
+describe('OUTLOOK_CALENDAR_TENANT startup validation', () => {
+  const base = { OUTLOOK_CALENDAR_CLIENT_ID: 'id', OUTLOOK_CALENDAR_CLIENT_SECRET: 'placeholder' };
+
+  it.each([
+    'common',
+    'organizations',
+    'consumers',
+    '72f988bf-86f1-41af-91ab-2d7cd011db47',
+    'contoso.onmicrosoft.com',
+  ])('accepts %s', (t) => {
+    expect(
+      integrationsRuntimeFromEnv({ ...base, OUTLOOK_CALENDAR_TENANT: ` ${t} ` }).outlookCalendar
+        ?.tenant,
+    ).toBe(t);
+  });
+
+  it('unset or blank keeps the provider default', () => {
+    expect(integrationsRuntimeFromEnv(base).outlookCalendar?.tenant).toBeUndefined();
+    expect(
+      integrationsRuntimeFromEnv({ ...base, OUTLOOK_CALENDAR_TENANT: ' ' }).outlookCalendar?.tenant,
+    ).toBeUndefined();
+  });
+
+  it('fails fast on a malformed tenant, even with no Outlook client configured', () => {
+    for (const env of [
+      { ...base, OUTLOOK_CALENDAR_TENANT: 'contoso' },
+      { OUTLOOK_CALENDAR_TENANT: 'common/../x' },
+    ])
+      expect(() => integrationsRuntimeFromEnv(env)).toThrow(
+        /OUTLOOK_CALENDAR_TENANT must be common, organizations, consumers, a tenant GUID/,
+      );
   });
 });

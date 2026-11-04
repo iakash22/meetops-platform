@@ -1,0 +1,113 @@
+import { EventEmitter } from 'node:events';
+import type { Server as HttpServer } from 'node:http';
+import { connect as netConnect } from 'node:net';
+import { afterEach, describe, expect, it } from 'vitest';
+import {
+  REALTIME_BASELINE_HEADERS,
+  REALTIME_HSTS,
+  installSecurityHeaders,
+  withRejectionHeaders,
+} from '../src/security-headers.js';
+import { loadRealtimeConfig } from '../src/config.js';
+import { ORIGIN, runCleanups, start } from './fixtures.js';
+
+afterEach(runCleanups);
+
+const expectBaseline = (headers: Headers) => {
+  for (const [name, value] of Object.entries(REALTIME_BASELINE_HEADERS))
+    expect(headers.get(name), name).toBe(value);
+};
+
+describe('P9 R19: realtime HTTP security headers', () => {
+  it('sends the baseline on /health and a 404, without HSTS outside production', async () => {
+    const { url } = await start();
+    for (const path of ['/health', '/nope']) {
+      const res = await fetch(`${url}${path}`);
+      expectBaseline(res.headers);
+      expect(res.headers.get('strict-transport-security')).toBeNull();
+    }
+  });
+
+  it('sends the baseline on an accepted and a rejected Engine.IO polling handshake', async () => {
+    const { url } = await start();
+    const ok = await fetch(`${url}/socket.io/?EIO=4&transport=polling`, {
+      headers: { origin: ORIGIN },
+    });
+    expect(ok.status).toBe(200);
+    expectBaseline(ok.headers);
+    const denied = await fetch(`${url}/socket.io/?EIO=4&transport=polling`, {
+      headers: { origin: 'https://evil.example' },
+    });
+    expect(denied.status).toBe(403);
+    expectBaseline(denied.headers);
+    expect(denied.headers.get('access-control-allow-origin')).toBeNull();
+  });
+
+  it('adds HSTS in production', async () => {
+    // Production config (HSTS on) on the in-memory adapter: loadRealtimeConfig would require rediss:// here.
+    const config = loadRealtimeConfig({ REALTIME_PORT: '0', REALTIME_CORS_ORIGINS: ORIGIN });
+    const { url } = await start({ config: { ...config, hsts: true } });
+    const res = await fetch(`${url}/health`);
+    expect(res.headers.get('strict-transport-security')).toBe(REALTIME_HSTS);
+  });
+
+  it('splices the baseline into a raw WebSocket upgrade rejection', async () => {
+    const { url } = await start();
+    const { hostname, port } = new URL(url);
+    const raw = await new Promise<string>((resolve, reject) => {
+      const sock = netConnect(Number(port), hostname, () => {
+        sock.write(
+          'GET /socket.io/?EIO=4&transport=websocket HTTP/1.1\r\n' +
+            `Host: ${hostname}:${port}\r\n` +
+            'Origin: https://evil.example\r\n' +
+            'Upgrade: websocket\r\nConnection: Upgrade\r\n' +
+            'Sec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n',
+        );
+      });
+      let buf = '';
+      sock.on('data', (d) => (buf += d.toString()));
+      sock.on('close', () => resolve(buf));
+      sock.on('error', reject);
+    });
+    expect(raw).toMatch(/^HTTP\/1\.1 4\d\d /);
+    const head = raw.split('\r\n\r\n')[0]!.toLowerCase();
+    for (const [name, value] of Object.entries(REALTIME_BASELINE_HEADERS))
+      expect(head, name).toContain(`${name}: ${value.toLowerCase()}`);
+  });
+
+  it('only rewrites 4xx/5xx status blocks', () => {
+    const ok = 'HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\n\r\n';
+    expect(withRejectionHeaders(ok, true)).toBe(ok);
+    const bad = withRejectionHeaders(
+      'HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\nx',
+      true,
+    );
+    expect(bad).toContain(`strict-transport-security: ${REALTIME_HSTS}\r\n`);
+    expect(bad.endsWith('Connection: close\r\n\r\nx')).toBe(true);
+  });
+
+  it('#399 L3: splices rejections written with end(string) and as a Buffer', () => {
+    const server = new EventEmitter();
+    installSecurityHeaders(server as unknown as HttpServer, { hsts: false });
+    const fakeSocket = () => {
+      const out: unknown[] = [];
+      const socket = {
+        write: (c: unknown) => (out.push(c), true),
+        end: (c?: unknown) => (out.push(c), socket),
+      };
+      server.emit('upgrade', {}, socket, Buffer.alloc(0));
+      return { socket, out };
+    };
+    const rejection = 'HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n';
+    const a = fakeSocket();
+    a.socket.end(rejection);
+    expect(String(a.out[0])).toContain('x-frame-options: DENY\r\n');
+    const b = fakeSocket();
+    b.socket.write(Buffer.from(rejection));
+    expect(Buffer.isBuffer(b.out[0])).toBe(true);
+    expect((b.out[0] as Buffer).toString()).toContain('x-content-type-options: nosniff\r\n');
+    // Only the first chunk is inspected; later writes pass through untouched.
+    b.socket.write(rejection);
+    expect(b.out[1]).toBe(rejection);
+  });
+});

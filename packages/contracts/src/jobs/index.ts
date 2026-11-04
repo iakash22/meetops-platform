@@ -80,6 +80,15 @@ export const TranscriptionJobPayload = Type.Object(
 );
 export type TranscriptionJobPayload = Static<typeof TranscriptionJobPayload>;
 
+/** Async task -> GitHub/Jira issue sync (TASK_SYNC_ENABLED). Payload carries ids only. */
+export const TASK_SYNC_QUEUE = 'task-sync' as const;
+export const TASK_SYNC_JOB_NAME = 'sync_task' as const;
+export const TaskSyncJobPayload = Type.Object(
+  { jobVersion: Type.Literal(1), organizationId: Id, syncId: Id },
+  { additionalProperties: false },
+);
+export type TaskSyncJobPayload = Static<typeof TaskSyncJobPayload>;
+
 /** Media processing queue (normalize, chunk, then fan out transcription jobs). */
 export const MEDIA_QUEUE = 'media' as const;
 export const MEDIA_JOB_NAME = 'process_recording' as const;

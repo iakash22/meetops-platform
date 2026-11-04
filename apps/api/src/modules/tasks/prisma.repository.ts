@@ -12,6 +12,7 @@ import {
   type CreateTaskInput,
   type TaskFilter,
   type TaskPatch,
+  type TaskAnalyticsResult,
   type TaskRepositories,
 } from './ports.js';
 
@@ -301,6 +302,57 @@ export class PrismaTasks implements TaskRepositories {
           decision: 'rejected',
         },
       });
+    });
+  }
+
+  /**
+   * Aggregate-only reads in ONE org-context transaction (forced RLS) plus an explicit org_id filter, like
+   * PrismaMeetingRepository.analytics. No writes.
+   */
+  async analytics(
+    organizationId: string,
+    q: { from: Date; to: Date },
+  ): Promise<TaskAnalyticsResult> {
+    const createdAt = { gte: q.from, lt: q.to };
+    return this.run(organizationId, async (tx) => {
+      const tasks = await tx.task.groupBy({
+        by: ['status'],
+        where: { organizationId, deletedAt: null, createdAt },
+        _count: { _all: true },
+      });
+      const extracted = await tx.extractedTask.groupBy({
+        by: ['status'],
+        where: { organizationId, deletedAt: null, createdAt },
+        _count: { _all: true },
+      });
+      const approvals = await tx.taskApproval.groupBy({
+        by: ['decision'],
+        where: { organizationId, createdAt },
+        _count: { _all: true },
+      });
+      const sum = (rows: { _count: { _all: number } }[]) =>
+        rows.reduce((n, r) => n + r._count._all, 0);
+      // Alphabetical (Postgres would order enums by declaration), like the in-memory adapter.
+      return {
+        tasks: {
+          total: sum(tasks),
+          byStatus: tasks
+            .map((r) => ({ status: r.status, count: r._count._all }))
+            .sort((a, b) => a.status.localeCompare(b.status)),
+        },
+        extractedTasks: {
+          total: sum(extracted),
+          byStatus: extracted
+            .map((r) => ({ status: r.status, count: r._count._all }))
+            .sort((a, b) => a.status.localeCompare(b.status)),
+        },
+        approvals: {
+          total: sum(approvals),
+          byDecision: approvals
+            .map((r) => ({ decision: r.decision, count: r._count._all }))
+            .sort((a, b) => a.decision.localeCompare(b.decision)),
+        },
+      };
     });
   }
 }

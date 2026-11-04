@@ -3,12 +3,16 @@ import {
   InMemoryDeliveryStore,
   InMemoryOAuthStateStore,
   LocalKeyProvider,
+  parseOutlookTenant,
   parseSharedKek,
   TokenCipher,
   constantTimeEqual,
+  type ConnectionLease,
   type DeliveryStore,
   type FetchLike,
+  type LeaseRedis,
   type OAuthStateStore,
+  type RedisSetNxClient,
 } from '@meetops/integrations';
 import type { IntegrationSecretCipher } from '@meetops/database';
 
@@ -32,6 +36,14 @@ export interface IntegrationsRuntime {
   apiOrigin: string;
   fetch?: FetchLike;
   now?: () => number;
+  /**
+   * Per-connection token-refresh lease shared with the worker sweep (Redis in production, wired from deps.redis by
+   * the module; outside development/test without Redis it is a refusing lease, so Jira refresh fails closed).
+   * Absent only in development/test without Redis, where the fenced save alone guards the write.
+   */
+  tokenRefreshLease?: ConnectionLease;
+  /** Test hook for the wait while another holder refreshes. */
+  sleep?: (ms: number) => Promise<void>;
   github?: {
     appSlug: string;
     appId: string;
@@ -44,6 +56,8 @@ export interface IntegrationsRuntime {
   jira?: { clientId: string; clientSecret: () => Promise<string> };
   /** Phase 7: Google Calendar OAuth client (read-only scopes). Absent = calendar connect answers 503. */
   googleCalendar?: { clientId: string; clientSecret: () => Promise<string> };
+  /** Phase 7: Microsoft Outlook (Graph) OAuth client, read-only scopes. Absent = connect answers 503. */
+  outlookCalendar?: { clientId: string; clientSecret: () => Promise<string>; tenant?: string };
 }
 
 export function devIntegrationsRuntime(
@@ -146,5 +160,63 @@ export function integrationsRuntimeFromEnv(
       clientSecret: async () => secret,
     };
   }
+  // Validated even without a client: a malformed tenant fails startup (OutlookTenantError), not the first connect.
+  const tenant = parseOutlookTenant(env.OUTLOOK_CALENDAR_TENANT);
+  if (env.OUTLOOK_CALENDAR_CLIENT_ID && env.OUTLOOK_CALENDAR_CLIENT_SECRET) {
+    const secret = env.OUTLOOK_CALENDAR_CLIENT_SECRET;
+    over.outlookCalendar = {
+      clientId: env.OUTLOOK_CALENDAR_CLIENT_ID,
+      clientSecret: async () => secret,
+      ...(tenant ? { tenant } : {}),
+    };
+  }
   return over;
 }
+
+/** SET NX PX in one atomic script: the API's RedisLike has no NX `set` overload. Returns 'OK' or nil. */
+export const ACQUIRE_LEASE_LUA = `return redis.call('SET', KEYS[1], ARGV[1], 'PX', ARGV[2], 'NX')`;
+
+/** Adapts the API's eval-capable Redis client to the shared lease (createRedisConnectionLease). */
+/**
+ * Adapts the API's shared ioredis client (REDIS_CLIENT_OPTIONS, commandTimeout set) to RedisDeliveryStore using
+ * EVAL only, so RedisLike does not need EXISTS or an EX/NX SET overload.
+ */
+export function deliveryRedisFromEval(redis: {
+  eval(script: string, numKeys: number, ...keysAndArgs: (string | number)[]): Promise<unknown>;
+}): RedisSetNxClient {
+  return {
+    async set(key, value, _ex, ttl) {
+      const r = await redis.eval(
+        "return redis.call('SET', KEYS[1], ARGV[1], 'EX', ARGV[2], 'NX')",
+        1,
+        key,
+        value,
+        String(ttl),
+      );
+      return r === 'OK' ? 'OK' : null;
+    },
+    async exists(key) {
+      return Number(await redis.eval("return redis.call('EXISTS', KEYS[1])", 1, key));
+    },
+    eval: (script, numKeys, ...args) => redis.eval(script, numKeys, ...args),
+  };
+}
+
+export function leaseRedisFromEval(redis: {
+  eval(script: string, numKeys: number, ...keysAndArgs: (string | number)[]): Promise<unknown>;
+}): LeaseRedis {
+  return {
+    async set(key, value, _px, ttlMs) {
+      const r = await redis.eval(ACQUIRE_LEASE_LUA, 1, key, value, String(ttlMs));
+      return r === 'OK' ? 'OK' : null;
+    },
+    eval: (script, numKeys, ...args) => redis.eval(script, numKeys, ...args),
+  };
+}
+
+/** Outside development/test without Redis: every acquire fails, so no refresh runs without the shared lease. */
+export const refusingTokenRefreshLease: ConnectionLease = {
+  acquire: () => Promise.reject(new Error('token refresh lease requires Redis')),
+  confirm: () => Promise.resolve(false),
+  release: () => Promise.resolve(false),
+};

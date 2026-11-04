@@ -11,7 +11,8 @@
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "eslint .",
-    "test": "vitest run"
+    "test": "vitest run",
+    "dlq:redrive": "tsx --import ../../scripts/load-env-if-exists.mjs src/scripts/dlq-redrive.ts"
   },
   "dependencies": {
     "@meetops/ai-core": "workspace:*",

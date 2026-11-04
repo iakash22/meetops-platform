@@ -320,10 +320,9 @@ export default async function notificationsModule(
           .header('content-type', 'text/html; charset=utf-8')
           .header('cache-control', 'no-store')
           .header('referrer-policy', 'no-referrer')
-          .header(
-            'content-security-policy',
-            "default-src 'none'; form-action 'self'; frame-ancestors 'none'",
-          )
+          .securityOverride({
+            csp: "default-src 'none'; form-action 'self'; frame-ancestors 'none'",
+          })
           .send(
             ok
               ? unsubscribeConfirmPage(request.query.token)
@@ -335,6 +334,8 @@ export default async function notificationsModule(
     s.post<{ Querystring: UnsubscribeQuery }>(
       NOTIFICATION_PATHS.unsubscribe,
       {
+        // P9 R16: RFC 8058 one-click unsubscribe is POSTed by mail providers as a form (body ignored; token in URL).
+        config: { allowedContentTypes: ['application/x-www-form-urlencoded'] },
         schema: {
           tags: ['notifications'],
           summary: 'Apply an unsubscribe link (email channel, link category)',

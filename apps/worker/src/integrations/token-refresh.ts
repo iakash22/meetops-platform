@@ -1,8 +1,26 @@
+import {
+  boundedLeaseOp,
+  LeaseTimeoutError,
+  TOKEN_REFRESH_LEASE_OP_TIMEOUT_MS,
+  TOKEN_REFRESH_LEASE_TTL_MS,
+  tokenRefreshLeaseKey,
+  type ConnectionLease,
+} from '@meetops/integrations';
 import type {
   IntegrationRefreshSnapshot,
   RefreshedIntegrationTokens,
   SaveRefreshedTokensResult,
 } from '@meetops/database';
+
+// The lease primitives moved to @meetops/integrations (shared with the API's on-demand refresh); re-exported so
+// existing worker imports keep working.
+export {
+  LeaseTimeoutError,
+  TOKEN_REFRESH_LEASE_OP_TIMEOUT_MS,
+  TOKEN_REFRESH_LEASE_TTL_MS,
+  tokenRefreshLeaseKey,
+  type ConnectionLease,
+};
 
 /** Repository surface the sweep needs (createIntegrationConnectionRepository with the encrypting cipher). */
 export interface TokenRefreshRepository {
@@ -53,57 +71,16 @@ export interface TokenRefreshLog {
   warn(obj: object, msg: string): void;
 }
 
-/**
- * Per-connection lease (Redis SET NX PX + token-checked release in prod, see createRedisConnectionLease). The
- * single BullMQ scheduler is not exclusive on its own: the next run is queued when a sweep starts, so a stalled
- * job whose lock is lost can overlap the next one. Jira rotates refresh tokens, so two concurrent refreshes of one
- * connection can burn the grant; the lease makes the refresh itself exclusive per connection.
- */
-export interface ConnectionLease {
-  /** Take the lease for `key` for `ttlMs`; resolves to an owner token, or null when someone else holds it. */
-  acquire(key: string, ttlMs: number): Promise<string | null>;
-  /**
-   * True only if `token` still owns the lease; then its TTL is reset to `ttlMs` (atomic compare-and-PEXPIRE), so
-   * the write that follows runs inside a fresh lease window. False when it expired (and maybe was re-taken).
-   */
-  confirm(key: string, token: string, ttlMs: number): Promise<boolean>;
-  /** Release only if `token` still owns the lease (never deletes a lease that expired and was re-taken). */
-  release(key: string, token: string): Promise<boolean>;
-}
-
-/**
- * Lease TTL. Everything held under it is bounded well below it: the provider refresh by
- * TOKEN_REFRESH_TIMEOUT_MS (request and body read), each lease Redis call by TOKEN_REFRESH_LEASE_OP_TIMEOUT_MS,
- * and the saves by the repository's transaction timeout. Before any write the lease is re-confirmed (which renews
- * it) and the write itself is fenced in the database, so even a holder that outlives the TTL cannot overwrite a
- * newer refresh. If a holder crashes, the lease expires on its own.
- */
-export const TOKEN_REFRESH_LEASE_TTL_MS = 120_000;
 /** Deadline over the whole provider refresh call (request + body). Capped at half the lease TTL. */
 export const TOKEN_REFRESH_TIMEOUT_MS = 30_000;
-/** Each lease Redis call (acquire / confirm / release) fails after this instead of hanging on a dead Redis. */
-export const TOKEN_REFRESH_LEASE_OP_TIMEOUT_MS = 2_000;
 /** Attempts to persist tokens the provider already rotated, before the connection is marked needs-reauth. */
 export const TOKEN_REFRESH_SAVE_ATTEMPTS = 3;
-
-/** Lease key for one connection (org-scoped so ids never collide across tenants). */
-export function tokenRefreshLeaseKey(organizationId: string, integrationId: string): string {
-  return `integrations:token-refresh:lease:${organizationId}:${integrationId}`;
-}
 
 /** The provider refresh passed its deadline (transient: the next sweep retries). */
 export class TokenRefreshTimeoutError extends Error {
   constructor() {
     super('integration token refresh timed out');
     this.name = 'TokenRefreshTimeoutError';
-  }
-}
-
-/** A lease Redis call did not answer in time (Redis unreachable or stalled). */
-export class LeaseTimeoutError extends Error {
-  constructor() {
-    super('integration token refresh lease call timed out');
-    this.name = 'LeaseTimeoutError';
   }
 }
 
@@ -150,19 +127,6 @@ function isPermanent(err: unknown): boolean {
 
 const errName = (err: unknown) => (err instanceof Error ? err.name : 'unknown');
 
-/** Rejects with LeaseTimeoutError when `p` has not settled within `ms`. */
-async function bounded<T>(p: Promise<T>, ms: number): Promise<T> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const timeout = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => reject(new LeaseTimeoutError()), ms);
-  });
-  try {
-    return await Promise.race([p, timeout]);
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
 /** Runs `call` with an AbortSignal that fires after `ms`, and stops waiting then even if `call` ignores it. */
 async function withDeadline<T>(ms: number, call: (signal: AbortSignal) => Promise<T>): Promise<T> {
   const controller = new AbortController();
@@ -186,8 +150,10 @@ async function withDeadline<T>(ms: number, call: (signal: AbortSignal) => Promis
  *  - read record + secrets + fence in one query; the provider call runs under one deadline (refreshTimeoutMs);
  *  - before writing, re-confirm the lease (renewing it); the write is fenced in the database either way, so a slow
  *    refresh that outlived its lease cannot overwrite a newer success (it is reported as superseded);
- *  - a failed save is retried (saveAttempts); if a rotated Jira token still cannot be stored, the connection is
- *    marked `error` (needs reauth: the UI asks for a reconnect) and that is logged, never dropped silently;
+ *  - a failed save is retried (saveAttempts) whether or not the lease is still held (Redis down never drops the
+ *    tokens); if a rotated Jira token still cannot be stored, the connection is marked `error` under the fence
+ *    alone (needs reauth: the UI asks for a reconnect) and that is logged, never dropped silently;
+ *  - a 'superseded' after a save that errored is re-checked: if our tokens are what is stored, it counts as saved;
  *  - a permanent provider failure marks the connection `error`, but only while the lease is held and the fence
  *    still matches; transient failures are retried on the next sweep.
  * Only identifiers and error names are logged, never token material.
@@ -218,7 +184,7 @@ export async function runTokenRefreshSweep(deps: TokenRefreshDeps): Promise<Toke
     let leaseDeadline = clock() + ttlMs;
     if (deps.lease) {
       try {
-        leaseToken = await bounded(deps.lease.acquire(leaseKey, ttlMs), leaseOpMs);
+        leaseToken = await boundedLeaseOp(deps.lease.acquire(leaseKey, ttlMs), leaseOpMs);
       } catch (err) {
         // Fail closed: never refresh without the lease. Transient, so the next sweep retries.
         result.failed++;
@@ -241,7 +207,7 @@ export async function runTokenRefreshSweep(deps: TokenRefreshDeps): Promise<Toke
       if (clock() >= leaseDeadline) return false;
       const startedAt = clock();
       try {
-        const ok = await bounded(deps.lease.confirm(leaseKey, leaseToken, ttlMs), leaseOpMs);
+        const ok = await boundedLeaseOp(deps.lease.confirm(leaseKey, leaseToken, ttlMs), leaseOpMs);
         if (ok) leaseDeadline = startedAt + ttlMs;
         return ok;
       } catch (err) {
@@ -253,9 +219,17 @@ export async function runTokenRefreshSweep(deps: TokenRefreshDeps): Promise<Toke
       }
     };
 
-    /** Marks needs-reauth (status error) only while the lease is held and the fence still matches. */
-    const markError = async (fence: string, reason: string): Promise<boolean> => {
-      if (!(await leaseHeld())) {
+    /**
+     * Marks needs-reauth (status error) under the fence. A permanent provider error is marked only while the lease
+     * is also held (a holder that outlived its lease must not mark over a newer holder). After a failed persist of
+     * rotated tokens the fence alone is enough (#375 Arch L2): the grant we spent is ours, any newer write moves the
+     * fence, and requiring the lease would leave the connection `active` with a dead grant whenever Redis is down.
+     */
+    const markError = async (
+      fence: string,
+      reason: 'permanent' | 'persist_failed',
+    ): Promise<boolean> => {
+      if (reason === 'permanent' && !(await leaseHeld())) {
         deps.log.warn(
           { ...ids, reason },
           'integration token refresh lease lost; not marking error',
@@ -349,12 +323,31 @@ export async function runTokenRefreshSweep(deps: TokenRefreshDeps): Promise<Toke
           if (attempt < saveAttempts) await sleep(saveRetryDelayMs * attempt);
         }
       }
-      if (saved === 'saved') {
+      let outcome: SaveRefreshedTokensResult | 'other_write' | undefined = saved;
+      if (saved === 'superseded' && lastErr !== undefined) {
+        // #375 Arch L1: an earlier attempt failed with an unclear outcome, so 'superseded' may just be our own
+        // commit having moved the fence. Re-read and compare instead of reporting a newer write that never was.
+        const after = await deps.repo.readForRefresh(d.organizationId, d.id).catch(() => null);
+        const ours =
+          after?.connection.status === 'active' &&
+          after.secrets.accessToken === tokens.accessToken &&
+          after.secrets.refreshToken === tokens.refreshToken;
+        outcome = ours ? 'saved' : 'other_write';
+        deps.log.info(
+          { ...ids, errName: errName(lastErr), committed: ours },
+          ours
+            ? 'integration token refresh save committed despite an error reply; tokens are stored'
+            : 'integration token refresh save outcome was unclear; a different write is stored, ours is not',
+        );
+      }
+      if (outcome === 'saved') {
         result.refreshed++;
-      } else if (saved === 'superseded') {
+      } else if (outcome === 'superseded') {
         // A newer refresh, reconnect or revoke landed first; its state wins and ours is discarded on purpose.
         result.skipped++;
         deps.log.info(ids, 'integration token refresh superseded by a newer write; not saved');
+      } else if (outcome === 'other_write') {
+        result.skipped++; // logged above
       } else {
         result.failed++;
         const markedNeedsReauth = rotates ? await markError(fence, 'persist_failed') : false;
@@ -382,7 +375,7 @@ export async function runTokenRefreshSweep(deps: TokenRefreshDeps): Promise<Toke
     } finally {
       if (deps.lease && leaseToken) {
         try {
-          await bounded(deps.lease.release(leaseKey, leaseToken), leaseOpMs);
+          await boundedLeaseOp(deps.lease.release(leaseKey, leaseToken), leaseOpMs);
         } catch (err) {
           // The lease expires after its TTL.
           deps.log.warn(

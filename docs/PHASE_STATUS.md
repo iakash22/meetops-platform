@@ -1,4 +1,52 @@
-# Phase status — 31 Oct 2026 (~13:30 IST)
+# Phase status — 3 Nov 2026 (~02:45 IST)
+
+## Update — 3 Nov 2026 (~02:45 IST)
+
+Tree: `integration/phase-1` at `0909a2b` (1:41 IST, 3 Nov). PR states read from the GitHub API at ~02:40 IST.
+Percentages are coordinator estimates, not measured. Integration → `main` is open as [#384](https://github.com/iakash22/meetops-platform/pull/384).
+
+Merged into `integration/phase-1` since 31 Oct (selected):
+
+- P2/P3/P4: consent API (#334) and web consent UI (#345); durable AI stores (#335); AI store hardening (#357); task sync route + worker job behind `TASK_SYNC_ENABLED` (#349).
+- P5: token refresh hardening (#354, #375), Jira refresh lease (#378, #382), lease follow-ups (#389).
+- P7: calendar event↔meeting linking (#341), semantic search API behind a flag (#346), analytics endpoint (#348) and dashboard (#356, #376), calendar sync scheduler (#353), Outlook adapter (#390).
+- P8: Android encrypted segments (#342), desktop legacy-root hardening (#355), Android Keystore key (#380), foreground-service resilience (#381, needs a device check), Rust 1.88 (#371).
+- P9: clamd sidecar, network isolation and hardening (#377, #379, #388); dependency fixes (#364, #367); web bundle budget (#366, #370, #372, #383); responsive shell and toast retry (#361, #362).
+
+Open PRs (base `integration/phase-1` unless noted):
+
+| PR   | What                                                                       | Notes                                      |
+| ---- | -------------------------------------------------------------------------- | ------------------------------------------ |
+| #350 | P7 semantic search embedding pipeline (2/2)                                | Depends on #346 (merged)                   |
+| #347 | iOS Live Activity hardening                                                | Draft                                      |
+| #385 | Delete calendar event links inside the revoke transaction                  |                                            |
+| #386 | Task sync gated on a single approval read                                  |                                            |
+| #387 | Consent hardening (backdate bound, seq ordering, upload consent)           |                                            |
+| #391 | P9 dependency audit, security headers/CORS requirements, release checklist | Docs                                       |
+| #392 | Per-org task, review and approval counts (P7 analytics)                    |                                            |
+| #393 | P9 security headers, CORP, CSP reporting, env validation                   |                                            |
+| #394 | Incremental calendar background sync                                       | Was stacked on #390 (now merged)           |
+| #395 | Overrides for ajv >= 8.18.0 and esbuild >= 0.28.1                          | Lockfile change; other lockfile work waits |
+| #396 | Validate `OUTLOOK_CALENDAR_TENANT` at startup                              |                                            |
+| #398 | Calendar auto-link during background sync (flag, default off)              | Stacked on #394                            |
+| #397 | Phase status refresh (this file)                                           | Docs                                       |
+| #384 | `integration/phase-1` → `main`                                             | Base `main`                                |
+
+| Phase                           | 31 Oct   | 3 Nov    | Still missing                                                                                                            |
+| ------------------------------- | -------- | -------- | ------------------------------------------------------------------------------------------------------------------------ |
+| P0 Foundation                   | 100%     | 100%     | —                                                                                                                        |
+| P1 Auth, orgs, roles            | ~95%     | ~95%     | Google OAuth client (Akash); MFA/SSO decision; ADR-006/010 sign-off                                                      |
+| P2 Meetings, uploads, recording | ~85%     | ~90%     | Consent hardening (#387); consent-by-jurisdiction decision                                                               |
+| P3 Transcripts, reports         | ~70%     | ~75%     | Gemini key (Akash) for the worker AI consumer                                                                            |
+| P4 Tasks, approval              | ~75%     | ~85%     | #386; task sync is behind `TASK_SYNC_ENABLED`                                                                            |
+| P5 GitHub, Jira                 | ~80%     | ~85%     | E2E on a throwaway repo with meetops-dev installed; real Jira credentials                                                |
+| P6 Extension                    | ~85%     | ~85%     | Info items: Start fails open, unheld pending eviction, 8 MB vs 64 MB chunk                                               |
+| P7 Calendar, search, analytics  | ~45%     | ~70%     | Background sync (#394), auto-link (#398, stacked on #394), embeddings indexer (#350), analytics counts (#392), #385/#396 |
+| P8 Desktop, mobile              | ~75%     | ~85%     | iOS Live Activity (#347); device check for #381; iOS backup exclusion; real bundle ids                                   |
+| P9 Hardening, release           | ~35%     | ~50%     | #391, #393, #395; billing; store submission; Windows test/cargo check; GitHub Actions failures                           |
+| **Overall**                     | **~72%** | **~79%** |                                                                                                                          |
+
+---
 
 ## Update — 31 Oct 2026 (~13:30 IST)
 
@@ -36,7 +84,7 @@ Checked against `gh pr list` / `gh pr view` and the tree at `integration/phase-1
 
 ## Status at ~21:30 IST
 
-> `integration/phase-1` (head `4f197bb`) was merged into `main` by Shubham via [#247](https://github.com/iakash22/meetops-platform/pull/247) (merge commit `47dbf97`, 21:19 IST). Everything below is **on `main`**. Percentages are coordinator estimates, not measured.
+> `integration/phase-1` (head `4f197bb`) was merged into `main` by Akash via [#247](https://github.com/iakash22/meetops-platform/pull/247) (merge commit `47dbf97`, 21:19 IST). Everything below is **on `main`**. Percentages are coordinator estimates, not measured.
 
 | Phase                           | 27 Oct AM | 27 Oct PM | Merged today (27 Oct)                                                                                                                                                                                                |
 | ------------------------------- | --------- | --------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

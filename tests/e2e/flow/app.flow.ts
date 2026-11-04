@@ -409,4 +409,118 @@ test.describe('web flow (PR #48 web + createServer API)', () => {
       expect(offsite).toEqual([]);
     });
   }
+  test('[E2E-16] meeting consent: record via upload dialog, show in history, revoke (meeting + consent API stubbed in tests/)', async ({
+    page,
+    api,
+  }) => {
+    const { email, orgs } = await seedUser(api, ['Consent QA']);
+    const org = orgs[0]!;
+    const meetingId = crypto.randomUUID();
+    const userId = crypto.randomUUID();
+    const T = new Date().toISOString();
+    type Ev = Record<string, unknown> & { eventType: 'granted' | 'revoked' };
+    const events: Ev[] = [];
+    const base = `**/api/orgs/${org.id}/meetings/${meetingId}`;
+    await page.route(base, (route) =>
+      route.fulfill({
+        json: {
+          id: meetingId,
+          organizationId: org.id,
+          title: 'Consent sync QA',
+          source: 'upload',
+          status: 'scheduled',
+          startedAt: T,
+          createdById: userId,
+          createdAt: T,
+          updatedAt: T,
+        },
+      }),
+    );
+    const status = () => {
+      const latest = events[0] ?? null;
+      return {
+        meetingId,
+        state: latest ? latest.eventType : 'none',
+        valid: latest?.eventType === 'granted',
+        latest,
+        events,
+      };
+    };
+    await page.route(`${base}/consent`, async (route) => {
+      const req = route.request();
+      if (req.method() === 'GET') return route.fulfill({ json: status() });
+      const body = req.postDataJSON() as {
+        consentVersion: string;
+        attestedAt: string;
+        method: string;
+      };
+      expect(req.headers()['x-csrf-token'], 'record sends CSRF').toBeTruthy();
+      expect(Object.keys(body).sort()).toEqual(['attestedAt', 'consentVersion', 'method']);
+      const ev: Ev = {
+        id: crypto.randomUUID(),
+        meetingId,
+        eventType: 'granted',
+        consentVersion: body.consentVersion,
+        method: body.method,
+        reason: null,
+        actorUserId: userId,
+        occurredAt: body.attestedAt,
+        recordedAt: new Date().toISOString(),
+      };
+      events.unshift(ev);
+      return route.fulfill({ status: 201, json: ev });
+    });
+    await page.route(`${base}/consent/revoke`, async (route) => {
+      const body = (route.request().postDataJSON() ?? {}) as { reason?: string };
+      const now = new Date().toISOString();
+      const ev: Ev = {
+        id: crypto.randomUUID(),
+        meetingId,
+        eventType: 'revoked',
+        consentVersion: null,
+        method: null,
+        reason: body.reason ?? null,
+        actorUserId: userId,
+        occurredAt: now,
+        recordedAt: now,
+      };
+      events.unshift(ev);
+      return route.fulfill({ status: 201, json: ev });
+    });
+    // The upload itself is out of scope here: refuse it after consent is recorded.
+    await page.route(`**/api/orgs/${org.id}/uploads`, (route) =>
+      route.fulfill({ status: 503, json: { error: { code: 'UNAVAILABLE', message: 'stub' } } }),
+    );
+
+    await uiLogin(page, email, PASSWORD);
+    await expect(page.getByTestId('app-shell')).toBeVisible();
+    await page.goto(`/meetings/${meetingId}`);
+    await expect(page.getByTestId('consent-status')).toHaveText('No consent');
+
+    // Record: the consent box is never pre-ticked; confirming records consent before the upload.
+    await page.getByTestId('upload-input').setInputFiles({
+      name: 'call.mp3',
+      mimeType: 'audio/mpeg',
+      buffer: Buffer.from('ID3 qa'),
+    });
+    const box = page.getByRole('checkbox', { name: /agreed to be recorded/ });
+    await expect(box).not.toBeChecked();
+    await expect(page.getByRole('button', { name: 'Confirm and upload' })).toBeDisabled();
+    await box.check();
+    await page.getByRole('button', { name: 'Confirm and upload' }).click();
+
+    // Show
+    await expect(page.getByTestId('consent-status')).toHaveText('Consent recorded');
+    const history = page.getByRole('list', { name: 'Consent history' });
+    await expect(history.getByRole('listitem')).toHaveCount(1);
+
+    // Revoke with confirm
+    await page.getByRole('button', { name: 'Revoke consent' }).click();
+    const dialog = page.getByRole('dialog', { name: 'Revoke recording consent?' });
+    await dialog.getByLabel('Reason (optional)').fill('Participant asked');
+    await dialog.getByRole('button', { name: 'Revoke consent' }).click();
+    await expect(page.getByTestId('consent-status')).toHaveText('Consent revoked');
+    await expect(history.getByRole('listitem')).toHaveCount(2);
+    await expect(history.getByRole('listitem').first()).toContainText('Reason: Participant asked');
+  });
 });

@@ -8,11 +8,13 @@ import {
 import {
   CalendarProviderError,
   GoogleCalendarProvider,
+  OutlookCalendarProvider,
   OAuthStateError,
   OAuthStateManager,
   type CalendarProvider,
 } from '@meetops/integrations';
 import { DomainError } from '../../shared/domain-error.js';
+import { deriveExternalMeetingId, MeetingNotFoundError } from '../meetings/domain/meeting.js';
 import {
   CallbackRejectedError,
   IntegrationNotConfiguredError,
@@ -28,7 +30,13 @@ import {
   type IntegrationsRuntime,
 } from '../integrations/runtime.js';
 import { safeReturnUrl } from '../integrations/service.js';
-import type { CalendarConnectionsRepository, SyncedCalendarStore } from './ports.js';
+import type {
+  CalendarConnectionsRepository,
+  CalendarEventLinkRow,
+  CalendarEventLinksRepository,
+  CalendarSecrets,
+  SyncedCalendarStore,
+} from './ports.js';
 
 export const CALENDAR_DEFAULT_RETURN_TO = '/calendar';
 /** Synced events older than this are not served; the request falls back to a live provider read. */
@@ -41,14 +49,24 @@ export class CalendarConnectionNotFoundError extends DomainError {
     super('NOT_FOUND', 'Calendar connection not found', 404);
   }
 }
+export class CalendarEventLinkNotFoundError extends DomainError {
+  constructor() {
+    super('NOT_FOUND', 'Calendar event link not found', 404);
+  }
+}
 export class CalendarWindowError extends DomainError {
   constructor() {
     super('VALIDATION_FAILED', 'Invalid or too large calendar window (max 62 days)', 400);
   }
 }
 
+export interface CalendarServiceLog {
+  info(obj: object, msg: string): void;
+  warn(obj: object, msg: string): void;
+}
+
 export type CalendarAuditFn = (
-  action: 'calendar.connect' | 'calendar.disconnect',
+  action: 'calendar.connect' | 'calendar.disconnect' | 'calendar.link' | 'calendar.unlink',
   targetId: string,
   metadata?: Record<string, string>,
 ) => Promise<void>;
@@ -64,6 +82,10 @@ export class CalendarService {
     /** Read-through cache filled by the worker sync (off unless CALENDAR_SYNC_ENABLED=true). */
     private readonly synced?: SyncedCalendarStore,
     private readonly freshnessMs: number = CALENDAR_SYNC_FRESHNESS_MS,
+    /** Event -> meeting links (P7). Without it events are never decorated and link routes answer 404. */
+    private readonly links?: CalendarEventLinksRepository,
+    /** Token-write reconciliation log (ids and generations only, never token material). */
+    private readonly log?: CalendarServiceLog,
   ) {}
 
   /** Stored events when the last sync fully covers [from, to) and is fresh; null means "read live". */
@@ -97,13 +119,31 @@ export class CalendarService {
     return this.rt;
   }
   configured(provider: CalendarProviderId): boolean {
-    return provider === 'google' && Boolean(this.rt?.googleCalendar);
+    if (provider === 'google') return Boolean(this.rt?.googleCalendar);
+    if (provider === 'outlook') return Boolean(this.rt?.outlookCalendar);
+    return false;
   }
   redirectUri(provider: CalendarProviderId) {
     return `${this.runtime().apiOrigin}/calendar/${provider}/callback`;
   }
   private provider(id: CalendarProviderId): CalendarProvider {
     const rt = this.runtime();
+    if (id === 'outlook') {
+      if (!rt.outlookCalendar)
+        throw new IntegrationNotConfiguredError(
+          'Outlook Calendar is not configured on this deployment',
+        );
+      return new OutlookCalendarProvider({
+        clientId: rt.outlookCalendar.clientId,
+        clientSecret: rt.outlookCalendar.clientSecret,
+        ...(rt.outlookCalendar.tenant ? { tenant: rt.outlookCalendar.tenant } : {}),
+        redirectUriAllowlist: [this.redirectUri('outlook')],
+        stateStore: rt.stateStore,
+        stateTtlSeconds: INTEGRATION_STATE_TTL_SECONDS,
+        ...(rt.fetch ? { fetch: rt.fetch } : {}),
+        ...(rt.now ? { now: rt.now } : {}),
+      });
+    }
     if (id !== 'google' || !rt.googleCalendar)
       throw new IntegrationNotConfiguredError(
         'Google Calendar is not configured on this deployment',
@@ -178,7 +218,7 @@ export class CalendarService {
       if (query.error) {
         await new OAuthStateManager(rt.stateStore, rt.now ? { now: rt.now } : {}).consume(
           innerState,
-          { provider: 'google-calendar', organizationId, userId, redirectUri },
+          { provider: `${provider}-calendar`, organizationId, userId, redirectUri },
         );
         return back('denied');
       }
@@ -249,7 +289,108 @@ export class CalendarService {
       }
     }
     items.sort((a, b) => a.startsAt.localeCompare(b.startsAt) || a.id.localeCompare(b.id));
-    return { items: items.slice(0, 500), connections };
+    const page = items.slice(0, 500);
+    return {
+      items: await this.decorate(input.organizationId, input.userId, page, connections),
+      connections,
+    };
+  }
+
+  /**
+   * Adds `meetingId` (stored link) and, for unlinked events with a conference URL, `suggestedMeetingId`: the one live
+   * meeting of the org whose external call id equals the id meetings/resolve would derive from that URL. Read-only and
+   * best effort: a link-store error returns the events undecorated.
+   */
+  private async decorate(
+    organizationId: string,
+    userId: string,
+    items: CalendarEvent[],
+    connections: CalendarConnection[],
+  ): Promise<CalendarEvent[]> {
+    if (!this.links || items.length === 0) return items;
+    try {
+      const linked = new Map(
+        (
+          await this.links.listForUser(
+            organizationId,
+            userId,
+            connections.map((c) => c.id),
+          )
+        ).map((l) => [`${l.connectionId}\u0000${l.eventId}`, l.meetingId]),
+      );
+      const derived = new Map<CalendarEvent, string>();
+      for (const e of items) {
+        if (linked.has(`${e.connectionId}\u0000${e.id}`) || !e.conferenceUrl) continue;
+        try {
+          derived.set(e, deriveExternalMeetingId(e.conferenceUrl));
+        } catch {
+          // not a meeting host we resolve: no suggestion
+        }
+      }
+      const matches = derived.size
+        ? await this.links.matchExternalIds(organizationId, [...derived.values()])
+        : new Map<string, string>();
+      return items.map((e) => {
+        const meetingId = linked.get(`${e.connectionId}\u0000${e.id}`);
+        if (meetingId) return { ...e, meetingId };
+        const ext = derived.get(e);
+        const suggested = ext ? matches.get(ext) : undefined;
+        return suggested ? { ...e, suggestedMeetingId: suggested } : e;
+      });
+    } catch {
+      return items;
+    }
+  }
+
+  /** The caller's own non-revoked connection, or 404 (unknown, other user's and revoked look the same). */
+  private async ownConnection(organizationId: string, userId: string, connectionId: string) {
+    const c = (await this.repo.listForUser(organizationId, userId)).find(
+      (x) => x.id === connectionId && x.status !== 'revoked',
+    );
+    if (!c || !this.links) throw new CalendarConnectionNotFoundError();
+    return { c, links: this.links };
+  }
+
+  /** Link one of my events to a meeting of this organization (re-linking replaces the meeting). */
+  async link(
+    input: {
+      organizationId: string;
+      userId: string;
+      connectionId: string;
+      eventId: string;
+      meetingId: string;
+    },
+    audit: CalendarAuditFn,
+  ): Promise<CalendarEventLinkRow> {
+    const { links } = await this.ownConnection(
+      input.organizationId,
+      input.userId,
+      input.connectionId,
+    );
+    const row = await links.upsert(input.organizationId, input.userId, {
+      connectionId: input.connectionId,
+      eventId: input.eventId,
+      meetingId: input.meetingId,
+    });
+    if (!row) throw new MeetingNotFoundError();
+    await audit('calendar.link', input.connectionId, { meetingId: input.meetingId });
+    return row;
+  }
+
+  async unlink(
+    input: { organizationId: string; userId: string; connectionId: string; eventId: string },
+    audit: CalendarAuditFn,
+  ): Promise<void> {
+    const { links } = await this.ownConnection(
+      input.organizationId,
+      input.userId,
+      input.connectionId,
+    );
+    if (
+      !(await links.remove(input.organizationId, input.userId, input.connectionId, input.eventId))
+    )
+      throw new CalendarEventLinkNotFoundError();
+    await audit('calendar.unlink', input.connectionId);
   }
 
   private async accessToken(organizationId: string, userId: string, c: CalendarConnection) {
@@ -259,13 +400,65 @@ export class CalendarService {
     if (s.accessTokenExpiresAt && s.accessTokenExpiresAt.getTime() - now > REFRESH_SKEW_MS)
       return s.accessToken;
     if (!s.refreshToken) return s.accessToken;
+    // Error-state connections refresh too: a successful refresh is how they recover (updateTokens reactivates).
     const t = await this.provider(c.provider).refresh(s.refreshToken);
-    await this.repo.updateTokens(organizationId, c.id, {
+    const tokens = {
       accessToken: t.accessToken,
       refreshToken: t.refreshToken,
       accessTokenExpiresAt: new Date(t.expiresAt),
+    };
+    const ids = { organizationId, connectionId: c.id, provider: c.provider };
+    const stored = await this.repo.updateTokens(organizationId, c.id, tokens, {
+      generation: s.tokenGeneration,
+      refreshEncVersion: s.refreshEncVersion,
     });
+    if (stored === false)
+      await this.reconcileTokenWrite(organizationId, userId, c.id, s, tokens, ids);
     return t.accessToken;
+  }
+
+  /**
+   * #394: the compare-and-set token write missed (token_generation moved, or the row left active/error). Outlook
+   * rotates refresh tokens, so silently dropping ours could strand the connection. Re-read the stored row:
+   * - gone / revoked: nothing to keep (a disconnect wiped it on purpose);
+   * - another writer stored a different refresh token (concurrent refresh or reconnect): the stored grant is newer,
+   *   keep it;
+   * - same refresh token but a newer generation (e.g. a legacy re-encryption bumped it): retry once against it.
+   */
+  private async reconcileTokenWrite(
+    organizationId: string,
+    userId: string,
+    id: string,
+    before: CalendarSecrets,
+    tokens: { accessToken: string; refreshToken: string; accessTokenExpiresAt: Date },
+    ids: Record<string, string>,
+  ) {
+    const log = this.log;
+    const now = await this.repo.readSecrets(organizationId, userId, id).catch(() => null);
+    if (!now) {
+      log?.warn(
+        { ...ids },
+        'calendar token CAS miss: connection gone or revoked; refreshed token dropped',
+      );
+      return;
+    }
+    if (now.refreshToken !== before.refreshToken) {
+      log?.info(
+        { ...ids, generation: now.tokenGeneration },
+        'calendar token CAS miss: a newer grant is already stored; keeping it',
+      );
+      return;
+    }
+    const retried = await this.repo.updateTokens(organizationId, id, tokens, {
+      generation: now.tokenGeneration,
+      refreshEncVersion: now.refreshEncVersion,
+    });
+    if (retried === false)
+      log?.warn(
+        { ...ids, generation: now.tokenGeneration },
+        'calendar token CAS miss persisted after retry; refreshed token not stored',
+      );
+    else log?.info({ ...ids }, 'calendar token CAS miss reconciled on retry');
   }
 
   /** Revokes the grant at the provider (best effort: failures never block the local wipe), then wipes locally. */
@@ -286,6 +479,9 @@ export class CalendarService {
     }
     if (!(await this.repo.revoke(organizationId, userId, id)))
       throw new CalendarConnectionNotFoundError();
+    // Prisma deletes the links inside the revoke transaction. Other stores: delete here and let a failure surface
+    // (never swallowed: a silent failure left links pointing at a revoked connection).
+    if (!this.repo.revokesLinks) await this.links?.removeForConnection(organizationId, id);
     await audit('calendar.disconnect', id, { providerRevoked: String(providerRevoked) });
   }
 }

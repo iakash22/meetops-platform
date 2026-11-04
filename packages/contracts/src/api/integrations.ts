@@ -161,3 +161,30 @@ export const PushTaskIssueRequest = Type.Object(
 export type PushTaskIssueRequest = Static<typeof PushTaskIssueRequest>;
 export const PushTaskIssueParams = Type.Object({ organizationId: Id, taskId: Id }, strict);
 export type PushTaskIssueParams = Static<typeof PushTaskIssueParams>;
+
+/** Async task sync state (see INTEGRATION_PATHS.taskSync). `needs_reconcile`: may exist upstream; never re-sent. */
+export const TASK_SYNC_JOB_STATUSES = [
+  'queued',
+  'creating',
+  'succeeded',
+  'failed',
+  'needs_reconcile',
+] as const;
+export const TaskSyncJob = Type.Object(
+  {
+    id: Id,
+    taskId: Id,
+    integrationId: Id,
+    provider: Type.Union([Type.Literal('github'), Type.Literal('jira')]),
+    target: Type.String({ maxLength: 200 }),
+    status: Type.Union(TASK_SYNC_JOB_STATUSES.map((s) => Type.Literal(s))),
+    attempts: Type.Integer({ minimum: 0 }),
+    externalId: Type.Optional(Type.String({ maxLength: 255 })),
+    externalUrl: Type.Optional(HttpsUrl),
+    errorCode: Type.Optional(Type.String({ maxLength: 64 })),
+    createdAt: IsoDateTime,
+    updatedAt: IsoDateTime,
+  },
+  strict,
+);
+export type TaskSyncJob = Static<typeof TaskSyncJob>;

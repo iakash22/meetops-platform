@@ -13,6 +13,9 @@ import type {
   ConnectionUpsert,
   ConnectionView,
   IntegrationsRepository,
+  RefreshedTokens,
+  RefreshSnapshot,
+  SaveRefreshedTokensResult,
   TaskRef,
 } from './ports.js';
 
@@ -79,6 +82,25 @@ export class PrismaIntegrations implements IntegrationsRepository {
   }
   async setStatus(organizationId: string, id: string, status: 'active' | 'error') {
     await this.repo.setStatus(organizationId, id, status);
+  }
+  /** Same fence as the worker sweep (#354/#375): a digest of the stored access-token envelope. */
+  async readForRefresh(organizationId: string, id: string): Promise<RefreshSnapshot | null> {
+    const snap = await this.repo.readForRefresh(organizationId, id);
+    if (!snap) return null;
+    return {
+      status: snap.connection.status,
+      accessTokenExpiresAt: snap.connection.accessTokenExpiresAt,
+      secrets: snap.secrets,
+      fence: snap.fence,
+    };
+  }
+  saveRefreshedTokens(
+    organizationId: string,
+    id: string,
+    tokens: RefreshedTokens,
+    fence: string,
+  ): Promise<SaveRefreshedTokensResult> {
+    return this.repo.saveRefreshedTokens(organizationId, id, tokens, fence);
   }
   resolveOrganization(provider: ConnectedProvider, id: string) {
     return this.repo.resolveOrganization(provider, id);

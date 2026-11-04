@@ -1,0 +1,16 @@
+diff --git a/src/Assets.js b/src/Assets.js
+index a94d722574aab457395814e858fcf36741714feb..55fd73a80740be9f67a843ee6b21a9c868df0fdb 100644
+--- a/src/Assets.js
++++ b/src/Assets.js
+@@ -3,7 +3,10 @@
+ const AssetPaths = require("./node-haste/lib/AssetPaths");
+ const crypto = require("crypto");
+ const fs = require("fs");
+-const getImageSize = require("image-size");
++// image-size >=2.0.3 (security override): named export, Buffer/Uint8Array input only.
++const { imageSize } = require("image-size");
++const getImageSize = (input) =>
++  imageSize(typeof input === "string" ? fs.readFileSync(input) : input);
+ const path = require("path");
+ function isAssetTypeAnImage(type) {
+   return (

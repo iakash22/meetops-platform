@@ -41,6 +41,10 @@ import {
   type MeetingInsightsApi,
 } from '@/features/meetings/insights-api';
 import {
+  createHttpMeetingConsentApi,
+  type MeetingConsentApi,
+} from '@/features/meetings/consent-api';
+import {
   DESKTOP_AUTHORIZE_PATH,
   type DesktopAuthorizeRequest,
   type DesktopAuthorizeResponse,
@@ -308,6 +312,8 @@ export type ApiClient = {
   };
   /** Transcript + report per meeting (Phase 3; routes pending on the backend). */
   meetingInsights: MeetingInsightsApi;
+  /** Meeting recording-consent ledger (Consent API, #334). */
+  meetingConsent: MeetingConsentApi;
   /** Employees, teams, team members and projects (contracts v0.4 directory, BE-3). */
   directory: DirectoryApi;
   /** Low-level request (cookie session + CSRF on non-GET). */
@@ -400,6 +406,51 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
     return doFetch(`${base}${path}`, init);
   }
 
+  /**
+   * Single-flight session refresh. The API has no refresh-token endpoint (HttpOnly cookie session), so
+   * "refresh" re-checks GET /auth/session, which picks up a cookie rotated by another tab or an org switch.
+   * Concurrent 401s share one in-flight check; on success each request retries once, otherwise the
+   * unauthorized handlers fire exactly once for the whole burst.
+   *
+   * "Burst" is tracked with a generation counter: a request captures the generation before its refresh, and
+   * firing bumps it, so every other request of the same burst (refresh failed, or its retry still got a 401)
+   * sees a stale generation and stays quiet.
+   */
+  let unauthorizedGeneration = 0;
+  function fireUnauthorized(generation: number) {
+    cachedCsrf = null;
+    if (generation !== unauthorizedGeneration) return;
+    unauthorizedGeneration += 1;
+    unauthorizedHandlers.forEach((h) => h());
+  }
+
+  let refreshInFlight: Promise<boolean> | null = null;
+  function refreshSession(): Promise<boolean> {
+    if (!refreshInFlight) {
+      const generation = unauthorizedGeneration;
+      refreshInFlight = (async () => {
+        try {
+          const res = await doFetch(`${base}/auth/session`, {
+            method: 'GET',
+            credentials: 'include',
+            headers: { Accept: 'application/json' },
+          });
+          if (res.ok) {
+            cachedCsrf = null;
+            return true;
+          }
+        } catch {
+          /* network error: treat as signed out */
+        }
+        fireUnauthorized(generation);
+        return false;
+      })().finally(() => {
+        refreshInFlight = null;
+      });
+    }
+    return refreshInFlight;
+  }
+
   async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
     let res = await send(method, path, body, false);
     let data = safeJson(await res.text());
@@ -413,11 +464,15 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
       res = await send(method, path, body, true);
       data = safeJson(await res.text());
     }
-    if (!res.ok) {
-      if (res.status === 401 && !AUTH_PATHS.has(path)) {
-        cachedCsrf = null;
-        unauthorizedHandlers.forEach((h) => h());
+    if (res.status === 401 && !AUTH_PATHS.has(path)) {
+      const generation = unauthorizedGeneration;
+      if (await refreshSession()) {
+        res = await send(method, path, body, false);
+        data = safeJson(await res.text());
+        if (res.status === 401) fireUnauthorized(generation);
       }
+    }
+    if (!res.ok) {
       const error = ApiError.fromResponse(res.status, data);
       if (res.status === 429 || res.status === 503)
         error.retryAfterSeconds = parseRetryAfter(res.headers?.get?.('retry-after') ?? null);
@@ -556,6 +611,7 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
     tasks: { list: (id, filters) => request('GET', `${org(id)}/tasks${taskQuery(filters)}`) },
     directory: createHttpDirectoryApi(request),
     meetingInsights: createHttpMeetingInsightsApi(request),
+    meetingConsent: createHttpMeetingConsentApi(request),
     storage: {
       createUpload: (id, body) => request('POST', uploadPaths.uploads(id), body),
       putToPresignedUrl: async (upload, file, opts = {}) => {

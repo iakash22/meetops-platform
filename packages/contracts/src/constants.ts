@@ -79,7 +79,8 @@ export const NOT_FOUND_HTTP_STATUS = 404;
  * `code: 'VALIDATION_FAILED'` with HTTP CONSENT_HTTP_STATUS (422) by upload init and recording-session init.
  * - `CONSENT_REQUIRED`: the request has no `consent` object (or it fails the ConsentAttestationInput schema).
  * - `CONSENT_VERSION_UNSUPPORTED`: `consent.consentVersion` is not a version the server accepts (CURRENT_CONSENT_VERSION).
- * - `CONSENT_INVALID`: `consent.attestedAt` is outside the accepted window (see CONSENT_ATTESTATION_MAX_SKEW_SECONDS).
+ * - `CONSENT_INVALID`: `consent.attestedAt` is outside the accepted window (CONSENT_ATTESTATION_MAX_SKEW_SECONDS ahead,
+ *   CONSENT_ATTESTATION_MAX_BACKDATE_SECONDS behind).
  * Nothing is created (no FileObject, no session, no presigned URL) when one of these is returned.
  */
 export const CONSENT_ERROR_REASONS = [
@@ -115,6 +116,8 @@ export const INTEGRATION_ERROR_REASONS = [
   'WEBHOOK_SIGNATURE_INVALID',
   /** v0.12.0: the provider app is not configured on this deployment (503; see providers `configured`). */
   'INTEGRATION_NOT_CONFIGURED',
+  /** Additive: the same delivery is being processed by another request (409 + Retry-After; retryable, not a replay). */
+  'DELIVERY_IN_PROGRESS',
 ] as const;
 
 export const API_ERROR_REASONS = [
@@ -324,6 +327,11 @@ export const CONSENT_VERSION_PATTERN = '^[A-Za-z0-9][A-Za-z0-9._-]{0,31}$';
  * attestation also keeps the server's receive time (`recordedAt`), so a back-dated `attestedAt` stays visible in audit.
  */
 export const CONSENT_ATTESTATION_MAX_SKEW_SECONDS = 300;
+/**
+ * The API rejects an `attestedAt` more than this many seconds before its own clock (CONSENT_INVALID), so an attestation
+ * cannot be back-dated arbitrarily. DB CHECK: `attested_at >= recorded_at - interval '86400 seconds'`.
+ */
+export const CONSENT_ATTESTATION_MAX_BACKDATE_SECONDS = 86_400;
 /** v0.4.1: what a stored consent attestation (DB-3 `consent_attestations.subject`) is attached to. */
 export const CONSENT_SUBJECT_TYPES = ['upload', 'recording_session'] as const;
 
@@ -481,6 +489,11 @@ export const INTEGRATION_PATHS = {
   /** v0.12.0: App-wide GitHub webhook (a GitHub App has one webhook URL); routed by payload.installation.id. */
   githubAppWebhook: '/webhooks/github',
   issuePush: '/orgs/:organizationId/tasks/:taskId/integration-issues',
+  /**
+   * Async issue push (TASK_SYNC_ENABLED, off by default): POST `PushTaskIssueRequest` -> 202 `TaskSyncJob`. Idempotent
+   * per (task, integration): a repeat returns the same job. The worker creates the issue (queue `TASK_SYNC_QUEUE`).
+   */
+  taskSync: '/orgs/:organizationId/tasks/:taskId/sync',
 } as const;
 
 /** v0.7.0: integration connection lifecycle (Prisma `IntegrationStatus`). */
@@ -496,6 +509,8 @@ export const INTEGRATION_WEBHOOK_MAX_BYTES = 1_048_576;
 /** Read-only, org-scoped analytics (P7). */
 export const ANALYTICS_PATHS = {
   meetings: '/orgs/:organizationId/analytics/meetings',
+  /** Task and AI-extracted-task review counts (P7). */
+  tasks: '/orgs/:organizationId/analytics/tasks',
 } as const;
 
 /** Longest analytics window (`to - from`). */
@@ -507,10 +522,12 @@ export const CALENDAR_PATHS = {
   callback: '/calendar/:provider/callback',
   connection: '/orgs/:organizationId/calendar/connections/:connectionId',
   events: '/orgs/:organizationId/calendar/events',
+  /** PUT links one of my events to a meeting of the organization (replacing any link), DELETE unlinks it. */
+  eventLink: '/orgs/:organizationId/calendar/connections/:connectionId/events/:eventId/link',
 } as const;
 
 /** Server-known providers only; clients never supply an endpoint or base URL. */
-export const CALENDAR_PROVIDERS = ['google'] as const;
+export const CALENDAR_PROVIDERS = ['google', 'outlook'] as const;
 
 /** Phase 7: org-scoped full-text search (Postgres FTS, forced RLS). */
 export const SEARCH_PATHS = {

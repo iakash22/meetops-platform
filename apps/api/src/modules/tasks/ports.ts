@@ -1,4 +1,11 @@
-import type { ExtractedTask, Task, TaskPriority, TaskStatus } from '@meetops/contracts';
+import type {
+  ApprovalDecisionValue,
+  ExtractedTask,
+  ExtractedTaskReviewStatus,
+  Task,
+  TaskPriority,
+  TaskStatus,
+} from '@meetops/contracts';
 import type { Page } from '../directory/ports.js';
 
 export type TaskFilter = {
@@ -47,6 +54,16 @@ export type TaskPatch = {
   dueAt?: Date | null | undefined;
 };
 
+/** Aggregates over rows with createdAt in [from, to); soft-deleted rows excluded; lists alphabetical, non-zero. */
+export type TaskAnalyticsResult = {
+  tasks: { total: number; byStatus: { status: TaskStatus; count: number }[] };
+  extractedTasks: {
+    total: number;
+    byStatus: { status: ExtractedTaskReviewStatus; count: number }[];
+  };
+  approvals: { total: number; byDecision: { decision: ApprovalDecisionValue; count: number }[] };
+};
+
 /** Thrown by repositories; mapped to 404 / 409 by the service. */
 export class TaskMissing extends Error {}
 /** assigneeId is not an employee of this org (other-org ids look the same as unknown ones). */
@@ -83,4 +100,6 @@ export interface TaskRepositories {
     organizationId: string,
     input: { extractedTaskId: string; reviewerId: string },
   ): Promise<void>;
+  /** Read-only, aggregate-only counts for the org (P7 analytics). */
+  analytics(organizationId: string, q: { from: Date; to: Date }): Promise<TaskAnalyticsResult>;
 }
