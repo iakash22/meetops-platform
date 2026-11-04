@@ -5,6 +5,8 @@ import { join } from 'path';
 import { createFileChunkStore } from '../src/record/fileChunkStore';
 import {
   createRecordingLiveActivity,
+  isValidTimeMs,
+  LIVE_ACTIVITY_CALL_TIMEOUT_MS,
   type LiveActivityPort,
   type RecordingLiveActivity,
 } from '../src/record/liveActivity';
@@ -306,16 +308,26 @@ describe('Live Activity native config', () => {
     );
     const project = xcode.project(base).parseSync() as {
       getFirstTarget(): { uuid: string };
+      addTarget(name: string, type: string, subfolder: string): { uuid: string };
+      addBuildPhase(files: string[], type: string, comment: string, target: string): unknown;
       pbxSourcesBuildPhaseObj(t: string): { files: { comment?: string }[] };
     };
     const p = plugin as unknown as {
       addIntentToAppTarget(project: unknown, appName: string): boolean;
+      findAppTarget(project: unknown, appName: string): { uuid: string };
       INTENT_FILE: string;
     };
-    expect(p.addIntentToAppTarget(project, 'RNScreens')).toBe(true);
-    expect(p.addIntentToAppTarget(project, 'RNScreens')).toBe(false);
-    const files = project.pbxSourcesBuildPhaseObj(project.getFirstTarget().uuid).files;
+    // RNScreens' first target is a static library: the intent must go to the app target, found by type + name.
+    const app = project.addTarget('MeetOps', 'application', 'MeetOps');
+    project.addBuildPhase([], 'PBXSourcesBuildPhase', 'Sources', app.uuid);
+    expect(p.findAppTarget(project, 'MeetOps').uuid).toBe(app.uuid);
+    expect(() => p.findAppTarget(project, 'RNScreens')).toThrow(/no application target/);
+    expect(p.addIntentToAppTarget(project, 'MeetOps')).toBe(true);
+    expect(p.addIntentToAppTarget(project, 'MeetOps')).toBe(false);
+    const files = project.pbxSourcesBuildPhaseObj(app.uuid).files;
     expect(files.filter((f) => String(f.comment).includes(p.INTENT_FILE))).toHaveLength(1);
+    const first = project.pbxSourcesBuildPhaseObj(project.getFirstTarget().uuid).files;
+    expect(first.filter((f) => String(f.comment).includes(p.INTENT_FILE))).toHaveLength(0);
     expect(plugin.SWIFT_FILES).toContain(p.INTENT_FILE);
   });
 
@@ -330,9 +342,31 @@ describe('Live Activity native config', () => {
       'utf8',
     );
     expect(intent).toContain('LiveActivityIntent');
-    // Same notification name the module observes.
-    expect(pod).toContain('"MeetOpsLiveActivityStopRecording"');
-    expect(intent).toContain('"MeetOpsLiveActivityStopRecording"');
+    // One shared constant: defined once per copy of the attributes file, used (never re-spelled) by the intent.
+    expect(pod).toContain(
+      'meetOpsStopRecordingNotification = Notification.Name("MeetOpsLiveActivityStopRecording")',
+    );
+    const widgetAttrs = readFileSync(
+      join(root, 'targets/RecordingLiveActivity/RecordingActivityAttributes.swift'),
+      'utf8',
+    );
+    expect(widgetAttrs).toContain(
+      'meetOpsStopRecordingNotification = Notification.Name("MeetOpsLiveActivityStopRecording")',
+    );
+    expect(intent).toContain('name: meetOpsStopRecordingNotification');
+    expect(intent).not.toContain('"MeetOpsLiveActivityStopRecording"');
+    expect(intent).toContain('import LiveActivity');
+    const mod = readFileSync(
+      join(root, 'modules/live-activity/ios/LiveActivityModule.swift'),
+      'utf8',
+    );
+    expect(mod).not.toContain('staleDate: nil');
+    expect(mod.match(/staleDate: Self\.staleDate\(\)/g)).toHaveLength(2);
+    const podspec = readFileSync(
+      join(root, 'modules/live-activity/ios/LiveActivity.podspec'),
+      'utf8',
+    );
+    expect(podspec).toMatch(/s\.license\s*=\s*'UNLICENSED'/);
     const w = readFileSync(
       join(root, 'targets/RecordingLiveActivity/RecordingLiveActivityWidget.swift'),
       'utf8',
@@ -355,5 +389,107 @@ describe('Live Activity native config', () => {
     );
     expect(w).toContain('StopRecordingIntent()');
     expect(w).not.toMatch(/meetingTitle|meetingId|organizationId|context\.attributes\./);
+  });
+});
+
+describe('Live Activity call timeout', () => {
+  beforeEach(() => jest.useFakeTimers());
+  afterEach(() => jest.useRealTimers());
+
+  const never = <T>() => new Promise<T>(() => undefined);
+
+  it('a hung native start does not block end(): end runs after the per-call timeout', async () => {
+    const { port, calls } = fakePort({
+      start: (t) => (calls.push(['start', t]), never<boolean>()),
+    });
+    const live = createRecordingLiveActivity(port, () => 1_000);
+    live.start();
+    live.end();
+    await jest.advanceTimersByTimeAsync(LIVE_ACTIVITY_CALL_TIMEOUT_MS - 1);
+    expect(calls).toEqual([['start', 1_000]]);
+    await jest.advanceTimersByTimeAsync(1);
+    await live.settled();
+    expect(calls).toEqual([['start', 1_000], ['end']]);
+  });
+
+  it('a hung update does not block endAll(), which still resolves', async () => {
+    let t = 1_000;
+    const { port, calls } = fakePort({
+      update: (p, st, e) => (calls.push(['update', p, st, e]), never<void>()),
+    });
+    const live = createRecordingLiveActivity(port, () => t);
+    live.start();
+    t = 2_000;
+    live.pause();
+    const done = live.endAll();
+    await jest.advanceTimersByTimeAsync(LIVE_ACTIVITY_CALL_TIMEOUT_MS);
+    await done;
+    expect(calls.at(-1)).toEqual(['endAll']);
+  });
+
+  it('a hung end() itself times out, so later calls still run', async () => {
+    const { port, calls } = fakePort({ end: () => (calls.push(['end']), never<void>()) });
+    const live = createRecordingLiveActivity(port, () => 1_000);
+    live.start();
+    live.end();
+    const done = live.endAll();
+    await jest.advanceTimersByTimeAsync(LIVE_ACTIVITY_CALL_TIMEOUT_MS);
+    await done;
+    expect(calls).toEqual([['start', 1_000], ['end'], ['endAll']]);
+  });
+
+  it('honours a custom timeout and does not wait when calls settle quickly', async () => {
+    const { port, calls } = fakePort({
+      start: (t) => (calls.push(['start', t]), never<boolean>()),
+    });
+    const live = createRecordingLiveActivity(port, () => 1_000, { callTimeoutMs: 100 });
+    live.start();
+    live.end();
+    await jest.advanceTimersByTimeAsync(100);
+    await live.settled();
+    expect(calls).toEqual([['start', 1_000], ['end']]);
+    expect(jest.getTimerCount()).toBe(0);
+  });
+});
+
+describe('Live Activity time validation', () => {
+  it('accepts only finite, non-negative numbers', () => {
+    for (const ok of [0, 1, 1_700_000_000_000]) expect(isValidTimeMs(ok)).toBe(true);
+    for (const bad of [-1, NaN, Infinity, -Infinity, '5', undefined, null])
+      expect(isValidTimeMs(bad)).toBe(false);
+  });
+
+  it('never starts an activity with a bad start time', async () => {
+    for (const bad of [NaN, -5, Infinity]) {
+      const { port, calls } = fakePort();
+      const live = createRecordingLiveActivity(port, () => bad);
+      live.start();
+      live.pause();
+      live.end();
+      await live.settled();
+      expect(calls).toEqual([]);
+    }
+  });
+
+  it('drops an update whose elapsed time is not finite and non-negative', async () => {
+    const clock = [1_000, NaN];
+    const { port, calls } = fakePort();
+    const live = createRecordingLiveActivity(port, () => clock.shift() ?? 0);
+    live.start(); // 1_000
+    live.pause(); // elapsed NaN - 1_000 = NaN: dropped
+    live.end();
+    await live.settled();
+    expect(calls).toEqual([['start', 1_000], ['end']]);
+  });
+
+  it('drops an update with a negative elapsed time (clock went backwards)', async () => {
+    const clock = [5_000, 4_000];
+    const { port, calls } = fakePort();
+    const live = createRecordingLiveActivity(port, () => clock.shift() ?? 0);
+    live.start();
+    live.pause();
+    live.end();
+    await live.settled();
+    expect(calls).toEqual([['start', 5_000], ['end']]);
   });
 });

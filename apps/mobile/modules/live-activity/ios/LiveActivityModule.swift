@@ -7,6 +7,13 @@ import ActivityKit
 /// ActivityKit bridge for the recording indicator (plan.md R2: "Live Activity / Dynamic Island showing Recording
 /// with elapsed time and a Stop action"). Local updates only: no push token is requested, so no APNs entitlement.
 public class LiveActivityModule: Module {
+  /// The activity is refreshed on every pause/resume; with no update for this long iOS shows it as stale (e.g. the
+  /// app was killed without ending it) instead of a timer that looks live forever. Slightly over the 4 h contract
+  /// recording cap (MAX_DURATION_MS), so a normal recording never goes stale.
+  static let staleAfter: TimeInterval = 4 * 60 * 60 + 15 * 60
+
+  static func staleDate() -> Date { Date().addingTimeInterval(staleAfter) }
+
   private var stopObserver: NSObjectProtocol?
 
   public func definition() -> ModuleDefinition {
@@ -43,7 +50,7 @@ public class LiveActivityModule: Module {
       do {
         _ = try Activity.request(
           attributes: RecordingActivityAttributes(),
-          content: ActivityContent(state: state, staleDate: nil),
+          content: ActivityContent(state: state, staleDate: Self.staleDate()),
           pushType: nil)
         return true
       } catch {
@@ -57,7 +64,7 @@ public class LiveActivityModule: Module {
         isPaused: paused, startedAt: Date(timeIntervalSince1970: startedAtMs / 1000),
         elapsedSeconds: elapsedMs / 1000)
       for activity in Activity<RecordingActivityAttributes>.activities {
-        await activity.update(ActivityContent(state: state, staleDate: nil))
+        await activity.update(ActivityContent(state: state, staleDate: Self.staleDate()))
       }
     }
 

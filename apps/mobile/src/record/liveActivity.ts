@@ -27,14 +27,31 @@ export interface RecordingLiveActivity {
   settled(): Promise<void>;
 }
 
+/** Longest a single queued native call may take before the queue moves on (a hung ActivityKit call). */
+export const LIVE_ACTIVITY_CALL_TIMEOUT_MS = 5_000;
+
+/** True for a time value the native side can turn into a Date / interval: finite and not negative. */
+export function isValidTimeMs(v: unknown): v is number {
+  return typeof v === 'number' && Number.isFinite(v) && v >= 0;
+}
+
+export interface RecordingLiveActivityOptions {
+  /** Per-call timeout (default LIVE_ACTIVITY_CALL_TIMEOUT_MS). */
+  callTimeoutMs?: number;
+  setTimer?: (fn: () => void, ms: number) => unknown;
+  clearTimer?: (handle: unknown) => void;
+}
+
 /**
  * Native calls run strictly one after another (a promise queue): `start` is awaited before any `update` or `end`,
  * so a fast Start then Stop can't end "nothing" while the request is still in flight and leave an orphaned
- * activity on the lock screen. Failures are swallowed per call and never break the queue.
+ * activity on the lock screen. Failures are swallowed per call and never break the queue. Each call is also capped
+ * at `callTimeoutMs`: a hung native start/update is abandoned so a later `end`/`endAll` still runs.
  */
 export function createRecordingLiveActivity(
   port: LiveActivityPort,
   now: () => number = Date.now,
+  opts: RecordingLiveActivityOptions = {},
 ): RecordingLiveActivity {
   let running = false;
   let paused = false;
@@ -42,13 +59,36 @@ export function createRecordingLiveActivity(
   let startedAt = 0;
   let elapsedAtPause = 0;
   let queue: Promise<void> = Promise.resolve();
+  const timeoutMs = opts.callTimeoutMs ?? LIVE_ACTIVITY_CALL_TIMEOUT_MS;
+  const setTimer = opts.setTimer ?? ((fn: () => void, ms: number) => setTimeout(fn, ms));
+  const clearTimer =
+    opts.clearTimer ?? ((h: unknown) => clearTimeout(h as ReturnType<typeof setTimeout>));
+  /** Resolves when `f` settles or after the timeout, whichever comes first; never rejects. */
+  const bounded = (f: () => Promise<unknown>) =>
+    new Promise<void>((resolve) => {
+      let done = false;
+      const finish = () => {
+        if (done) return;
+        done = true;
+        clearTimer(handle);
+        resolve();
+      };
+      const handle = setTimer(finish, timeoutMs);
+      try {
+        Promise.resolve(f()).then(finish, finish);
+      } catch {
+        // A synchronous native throw: best effort, move on.
+        finish();
+      }
+    });
   const enqueue = (f: () => Promise<unknown>) => {
-    // `then` also catches a synchronous native throw; each step's failure is swallowed (best effort).
-    queue = queue.then(f).then(
-      () => undefined,
-      () => undefined,
-    );
+    queue = queue.then(() => bounded(f));
     return queue;
+  };
+  /** Sends an update only with sane times; a bad clock must never reach the native Date conversion. */
+  const update = (p: boolean, t: number, e: number) => {
+    if (!isValidTimeMs(t) || !isValidTimeMs(e)) return;
+    void enqueue(() => port.update(p, t, e));
   };
 
   return {
@@ -58,21 +98,24 @@ export function createRecordingLiveActivity(
       startedAt = now();
       elapsedAtPause = 0;
       const t = startedAt;
+      if (!isValidTimeMs(t)) {
+        // No activity without a sane start time; capture itself is unaffected.
+        running = false;
+        return;
+      }
       void enqueue(() => port.start(t));
     },
     pause() {
       if (!running || paused) return;
       paused = true;
       elapsedAtPause = now() - startedAt;
-      const [t, e] = [startedAt, elapsedAtPause];
-      void enqueue(() => port.update(true, t, e));
+      update(true, startedAt, elapsedAtPause);
     },
     resume() {
       if (!running || !paused) return;
       paused = false;
       startedAt = now() - elapsedAtPause;
-      const [t, e] = [startedAt, elapsedAtPause];
-      void enqueue(() => port.update(false, t, e));
+      update(false, startedAt, elapsedAtPause);
     },
     end() {
       if (!running) return;
