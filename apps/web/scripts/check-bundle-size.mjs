@@ -30,9 +30,10 @@ const BUDGETS = {
   validation: 45, // zod + react-hook-form
   index: 45, // app code in the entry chunk
   '*': 25, // any other JS chunk (lazy route chunks)
-  // Bootstrap 5 CSS (bootstrap + react-bootstrap, main 336baccc) adds ~28 kB gzip; was 11.
-  // TODO: trim Bootstrap (import only the used SCSS partials) and lower this back toward 11.
-  css: 45,
+  // Bootstrap 5 CSS took this from 11 to 45 (measured 39.13). scripts/postcss-prune-bootstrap.mjs now drops
+  // Bootstrap rules the app never uses: measured 18.13 kB gzip, so the budget is the measured size rounded up.
+  // The rest is Tailwind (~9.4) plus the Bootstrap reboot, variables and button/spinner/overlay rules still used.
+  css: 19,
   initialJs: 185, // entry + modulepreloads in index.html
   totalJs: 290, // every JS chunk, lazy ones included
 };
