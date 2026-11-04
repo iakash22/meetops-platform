@@ -3,3 +3,4 @@
 - [Meeting consent ledger maintenance opt-out](meeting-consent-maintenance.md)
 - [Re-drive dead-lettered transcription jobs](transcription-dlq-redrive.md)
 - [Backup and restore (Postgres, object storage, Redis)](backup-restore.md)
+- [Outbox dedupe key index: recovery after a failed build](outbox-dedupe-key-index-recovery.md)
