@@ -35,6 +35,7 @@
     "dev:desktop": "turbo run dev --filter=@meetops/desktop",
     "dev:extension": "turbo run dev --filter=@meetops/extension",
     "dev:stack": "node scripts/dev-stack.mjs",
+    "test:e2e:smoke": "pnpm --filter @meetops/tests test:e2e:smoke",
     "dev:stack:turbo": "turbo run dev --filter=@meetops/api --filter=@meetops/web --filter=@meetops/worker --log-order=stream",
     "prepare": "husky",
     "postinstall": "turbo run postinstall --cache-dir .turbo",
