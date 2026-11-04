@@ -16,7 +16,12 @@ const STATUS_LABEL: Record<Meeting['status'], string> = {
   processing: 'Processing',
   completed: 'Completed',
   failed: 'Failed',
+  transcription_delayed: 'Transcription delayed',
 };
+
+/** Unknown statuses (a newer API than this client) render as a neutral "Unknown status". */
+const UNKNOWN_STATUS_LABEL = 'Unknown status';
+const statusLabel = (s: string) => STATUS_LABEL[s as Meeting['status']] ?? UNKNOWN_STATUS_LABEL;
 
 /** Placeholder list: real data needs a list-meetings API route (Backend, not in the API yet). */
 export function MeetingsScreen() {
@@ -91,7 +96,7 @@ export function MeetingsScreen() {
                 ]}
                 testID="meeting-row"
                 accessibilityRole="button"
-                accessibilityLabel={`${item.title}, ${STATUS_LABEL[item.status]}`}
+                accessibilityLabel={`${item.title}, ${statusLabel(item.status)}`}
                 accessibilityHint="Opens the transcript and report"
                 onPress={() =>
                   router.push({
@@ -103,7 +108,7 @@ export function MeetingsScreen() {
                 <Text style={styles.title}>{item.title}</Text>
                 <View style={styles.statusRow}>
                   {live ? <LiveDot testID="live-dot" /> : null}
-                  <Text style={live ? styles.live : styles.muted}>{STATUS_LABEL[item.status]}</Text>
+                  <Text style={live ? styles.live : styles.muted}>{statusLabel(item.status)}</Text>
                 </View>
               </Pressable>
             );

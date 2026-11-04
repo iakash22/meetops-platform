@@ -125,7 +125,10 @@ const CALENDAR_SYNC_CURSOR_MIGRATION = '20261103000000_calendar_sync_cursor';
 const CALENDAR_TOKEN_GENERATION_MIGRATION = '20261103060000_calendar_token_generation';
 /** Auto-link: calendar_event_links.source + unlinked_at tombstone (additive, stacked on the token generation). */
 const CALENDAR_AUTO_LINK_MIGRATION = '20261103120000_calendar_event_links_auto';
-const LATEST_MIGRATION = CALENDAR_AUTO_LINK_MIGRATION;
+/** MeetingStatus gains 'transcription_delayed' (additive ADD VALUE; transcription DLQ, #414). Sorts right after the
+ * auto-link columns and is the newest. */
+const MEETING_STATUS_DELAYED_MIGRATION = '20261103180000_meeting_status_transcription_delayed';
+const LATEST_MIGRATION = MEETING_STATUS_DELAYED_MIGRATION;
 /**
  * Parallel PRs that sort between calendar_events and meeting_embeddings (#334 consent events, #341 calendar links).
  * The order checks below ignore them so they hold whichever merges first; when present they must sort before ours.
@@ -163,8 +166,9 @@ const orderedDirs = () => {
     expect(dirs.indexOf(CALENDAR_OUTLOOK_PROVIDER_MIGRATION)).toBe(
       dirs.indexOf(CALENDAR_SYNC_CURSOR_MIGRATION) - 1,
     );
-  // Stacked after the sync cursor: #394's token generation, then the auto-link columns (the newest). The
-  // positional checks below (which end at the sync cursor) ignore both.
+  // Stacked after the sync cursor: #394's token generation, then the auto-link columns, then the
+  // transcription_delayed enum value (#414, the newest). The positional checks below (which end at the sync
+  // cursor) ignore all three.
   expect(dirs.indexOf(CALENDAR_TOKEN_GENERATION_MIGRATION)).toBe(
     dirs.indexOf(CALENDAR_SYNC_CURSOR_MIGRATION) + 1,
   );
@@ -172,6 +176,9 @@ const orderedDirs = () => {
     dirs.indexOf(CALENDAR_TOKEN_GENERATION_MIGRATION) + 1,
   );
   expect(dirs.at(-1)).toBe(LATEST_MIGRATION);
+  expect(dirs.indexOf(MEETING_STATUS_DELAYED_MIGRATION)).toBe(
+    dirs.indexOf(CALENDAR_AUTO_LINK_MIGRATION) + 1,
+  );
   return dirs.filter(
     (d) =>
       d !== TASK_SYNC_MIGRATION &&
@@ -179,6 +186,7 @@ const orderedDirs = () => {
       d !== CALENDAR_AUTO_LINK_MIGRATION &&
       d !== CALENDAR_OUTLOOK_PROVIDER_MIGRATION &&
       d !== CONSENT_HARDENING_MIGRATION &&
+      d !== MEETING_STATUS_DELAYED_MIGRATION &&
       !(PARALLEL_MIGRATIONS as readonly string[]).includes(d),
   );
 };
@@ -2010,6 +2018,21 @@ describe('Phase 7 meeting_embeddings (static)', () => {
       'CREATE INDEX "meeting_embeddings_org_id_model_idx" ON "meeting_embeddings"("org_id", "model");',
     );
     expect(model).toContain('Unsupported("vector(1536)")');
+  });
+});
+
+describe('MeetingStatus transcription_delayed (20261103180000)', () => {
+  it('is the newest migration, right after the auto-link columns and only adds the enum value', () => {
+    orderedDirs(); // asserts it sorts right after the auto-link columns
+    const sql = readFileSync(
+      resolve(migrationsDir, MEETING_STATUS_DELAYED_MIGRATION, 'migration.sql'),
+      'utf8',
+    )
+      .split('\n')
+      .filter((l) => l.trim() && !l.trim().startsWith('--'));
+    expect(sql).toEqual([
+      `ALTER TYPE "MeetingStatus" ADD VALUE IF NOT EXISTS 'transcription_delayed';`,
+    ]);
   });
 });
 

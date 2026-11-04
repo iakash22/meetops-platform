@@ -1,4 +1,8 @@
 import { createHash } from 'node:crypto';
+import {
+  transcriptionJobOptions,
+  type TranscriptionRetryPolicy,
+} from '../ai/transcription-retry.js';
 import { createReadStream, createWriteStream } from 'node:fs';
 import { mkdtemp, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -133,7 +137,11 @@ export type WaveformOps = {
 
 export type TranscriptionEnqueuer = {
   /** Must be idempotent on opts.jobId (BullMQ ignores adds with an existing jobId). */
-  add(name: string, data: TranscriptionJobPayload, opts: { jobId: string }): Promise<unknown>;
+  add(
+    name: string,
+    data: TranscriptionJobPayload,
+    opts: { jobId: string } & Partial<ReturnType<typeof transcriptionJobOptions>>,
+  ): Promise<unknown>;
 };
 
 export type RealtimePublisher = {
@@ -176,6 +184,8 @@ export type MediaProcessorDeps = {
   storage: Pick<StorageService, 'getObjectByKey' | 'headObjectByKey' | 'putObject'>;
   media: MediaOps;
   transcriptionQueue: TranscriptionEnqueuer;
+  /** Attempts and backoff for enqueued transcription jobs (default DEFAULT_TRANSCRIPTION_RETRY). */
+  transcriptionRetry?: TranscriptionRetryPolicy | undefined;
   realtime: RealtimePublisher;
   logger: MinimalLogger;
   recordings?: RecordingChunkCountRepository;
@@ -500,6 +510,7 @@ export async function processRecording(
           'Transcription payload failed contract check',
         );
       await deps.transcriptionQueue.add(QUEUE_NAMES.transcription, data, {
+        ...transcriptionJobOptions(deps.transcriptionRetry),
         jobId: m.transcriptionJobId,
       });
     }
