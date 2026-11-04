@@ -1,6 +1,7 @@
 import {
   checkJiraWebhookFreshness,
   effectiveReplayTtlSeconds,
+  recordDelivery,
   verifyGitHubSignature,
   type DeliveryStore,
   type HeaderBag,
@@ -57,6 +58,8 @@ export async function verifyJiraWebhook(opts: {
   /** Max event age by body timestamp. Default 1 day. */
   maxAgeSeconds?: number;
   now?: () => number;
+  /** See VerifyWebhookOptions.beforeRecord: throwing here records nothing. */
+  beforeRecord?: () => Promise<void>;
 }): Promise<JiraWebhookResult> {
   const fail = (reason: JiraWebhookFailure) => ({
     ok: false as const,
@@ -90,9 +93,11 @@ export async function verifyJiraWebhook(opts: {
   if (fresh !== 'fresh' && fresh !== 'absent') return fail('stale_event');
   const deliveryId = `jira:${opts.integrationId}:${id}`;
   if (
-    !(await opts.deliveryStore.markIfNew(
+    !(await recordDelivery(
+      opts.deliveryStore,
       deliveryId,
       effectiveReplayTtlSeconds(opts.replayTtlSeconds),
+      opts.beforeRecord,
     ))
   )
     return fail('replayed_delivery');

@@ -26,7 +26,12 @@ import { isRelaxedEnv, MissingProductionDependencyError, type ModuleDeps } from 
 import { DirectoryAccess, type DirectoryCaller } from '../directory/access.js';
 import { directoryErrors, directoryWriteErrors } from '../directory/http/route-kit.js';
 import { ErrorBody } from '../auth/http/schemas.js';
-import { IntegrationNotFoundError, OAuthStateInvalidError } from './errors.js';
+import { RateLimitedError } from '../auth/domain/errors.js';
+import {
+  IntegrationNotFoundError,
+  OAuthStateInvalidError,
+  WebhookSignatureError,
+} from './errors.js';
 import { InMemoryIntegrations } from './in-memory.repository.js';
 import { PrismaIntegrations } from './prisma.repository.js';
 import type { ConnectedProvider, IntegrationsRepository } from './ports.js';
@@ -71,6 +76,31 @@ export type IntegrationsModuleDeps = ModuleDeps & {
   taskSyncEnabled?: boolean;
   taskSyncStore?: TaskSyncStore;
   taskSyncQueue?: TaskSyncQueue;
+  /** Overrides WEBHOOK_RATE_LIMITS (tests). */
+  webhookRateLimits?: WebhookRateLimits;
+};
+
+export type WebhookRateLimits = {
+  /** Per client IP, across all webhook routes. */
+  perIp: { limit: number; windowMs: number };
+  /** Per webhook target (provider + integration, or the App-wide GitHub route). */
+  perTarget: { limit: number; windowMs: number };
+  /**
+   * Small per-IP bucket charged only by App-wide GitHub deliveries whose signature is missing or invalid, so
+   * unauthenticated junk can neither drain the shared 'github-app' target bucket nor be retried cheaply.
+   * Defaults to WEBHOOK_RATE_LIMITS.unsignedPerIp.
+   */
+  unsignedPerIp?: { limit: number; windowMs: number };
+};
+
+/**
+ * Unauthenticated webhook routes are checked before the HMAC is computed, so a flood is rejected cheaply (429 +
+ * Retry-After). Limits are generous: providers retry on 429, and GitHub/Jira deliver from shared egress IPs.
+ */
+export const WEBHOOK_RATE_LIMITS: WebhookRateLimits = {
+  perIp: { limit: 600, windowMs: 60_000 },
+  perTarget: { limit: 300, windowMs: 60_000 },
+  unsignedPerIp: { limit: 20, windowMs: 60_000 },
 };
 
 /** Store + queue for the async sync route, or undefined when TASK_SYNC_ENABLED is off. Never silently in-memory. */
@@ -350,6 +380,42 @@ export default async function integrationsModule(
 
   await app.register(async (s) => {
     registerDomainErrorHandler(s);
+    const limits = deps.webhookRateLimits ?? WEBHOOK_RATE_LIMITS;
+    const consumeOrThrow = async (key: string, l: { limit: number; windowMs: number }) => {
+      const r = await deps.rateLimiter.consume(key, l.limit, l.windowMs);
+      if (!r.allowed) throw new RateLimitedError(r.retryAfterMs);
+    };
+    s.addHook('onRequest', async (request) => {
+      const ip = requestMeta(request).ip ?? 'unknown';
+      await consumeOrThrow(`webhook:ip:${ip}`, limits.perIp);
+    });
+    /**
+     * Per-target buckets ('github-app' and provider:integration) are charged only once a delivery passed the
+     * signature AND replay checks, so unsigned floods or replays of one valid delivery cannot use them up.
+     * Missing/invalid signatures (and unknown integration ids, which look the same) go to a small per-IP bucket.
+     */
+    const chargeWebhook = async (
+      request: FastifyRequest,
+      target: string,
+      run: (onDeliveryAccepted: () => Promise<void>) => Promise<unknown>,
+    ) => {
+      let accepted = false;
+      try {
+        await run(async () => {
+          accepted = true;
+          await consumeOrThrow(`webhook:target:${target}`, limits.perTarget);
+        });
+      } catch (err) {
+        if (!accepted && err instanceof WebhookSignatureError) {
+          const ip = requestMeta(request).ip ?? 'unknown';
+          await consumeOrThrow(
+            `webhook:unsigned:ip:${ip}`,
+            limits.unsignedPerIp ?? WEBHOOK_RATE_LIMITS.unsignedPerIp!,
+          );
+        }
+        throw err;
+      }
+    };
     s.removeContentTypeParser('application/json');
     s.addContentTypeParser(
       'application/json',
@@ -369,13 +435,16 @@ export default async function integrationsModule(
             401: ErrorBody,
             409: ErrorBody,
             413: ErrorBody,
+            429: ErrorBody,
             503: ErrorBody,
           },
         },
       },
       async (request, reply) => {
         const body = Buffer.isBuffer(request.body) ? request.body : Buffer.alloc(0);
-        await service.githubAppWebhook({ rawBody: body, headers: request.headers });
+        await chargeWebhook(request, 'github-app', (onDeliveryAccepted) =>
+          service.githubAppWebhook({ rawBody: body, headers: request.headers, onDeliveryAccepted }),
+        );
         return reply.status(202).send({ received: true });
       },
     );
@@ -393,18 +462,23 @@ export default async function integrationsModule(
             401: ErrorBody,
             409: ErrorBody,
             413: ErrorBody,
+            429: ErrorBody,
             503: ErrorBody,
           },
         },
       },
       async (request, reply) => {
         const body = Buffer.isBuffer(request.body) ? request.body : Buffer.alloc(0);
-        await service.webhook({
-          provider: request.params.provider,
-          integrationId: request.params.integrationId,
-          rawBody: body,
-          headers: request.headers,
-        });
+        const { provider, integrationId } = request.params;
+        await chargeWebhook(request, `${provider}:${integrationId}`, (onDeliveryAccepted) =>
+          service.webhook({
+            provider,
+            integrationId,
+            rawBody: body,
+            headers: request.headers,
+            onDeliveryAccepted,
+          }),
+        );
         return reply.status(202).send({ received: true });
       },
     );

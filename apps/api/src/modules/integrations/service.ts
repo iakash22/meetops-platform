@@ -300,7 +300,12 @@ export class IntegrationsService {
    * org and applies the status change. The install is single-account ("Only on this account"), but nothing
    * here assumes it: every live connection of that installation (max 10) gets the update.
    */
-  async githubAppWebhook(input: { rawBody: Buffer; headers: HeaderBag }): Promise<number> {
+  async githubAppWebhook(input: {
+    rawBody: Buffer;
+    headers: HeaderBag;
+    /** Called after the signature and a read-only replay check, before the delivery id is recorded (rate limiting); throwing records nothing. */
+    onDeliveryAccepted?: () => Promise<void>;
+  }): Promise<number> {
     const rt = this.runtime();
     const gh = rt.github;
     if (!gh) throw new WebhookSignatureError();
@@ -322,6 +327,7 @@ export class IntegrationsService {
       rawBody: input.rawBody,
       headers: input.headers,
       deliveryStore: rt.deliveryStore,
+      ...(input.onDeliveryAccepted ? { beforeRecord: input.onDeliveryAccepted } : {}),
       maxBodyBytes: INTEGRATION_WEBHOOK_MAX_BYTES,
       secretResolver: {
         resolve: async (ref) => {
@@ -358,6 +364,8 @@ export class IntegrationsService {
     integrationId: string;
     rawBody: Buffer;
     headers: HeaderBag;
+    /** Called after the signature and a read-only replay check, before the delivery id is recorded (rate limiting); throwing records nothing. */
+    onDeliveryAccepted?: () => Promise<void>;
   }): Promise<number> {
     const rt = this.runtime();
     const { provider, integrationId } = input;
@@ -375,6 +383,7 @@ export class IntegrationsService {
         rawBody: input.rawBody,
         headers: input.headers,
         deliveryStore: rt.deliveryStore,
+        ...(input.onDeliveryAccepted ? { beforeRecord: input.onDeliveryAccepted } : {}),
         maxBodyBytes: INTEGRATION_WEBHOOK_MAX_BYTES,
         secretResolver: {
           resolve: async (ref) =>
@@ -394,6 +403,7 @@ export class IntegrationsService {
         rawBody: input.rawBody,
         headers: input.headers,
         deliveryStore: rt.deliveryStore,
+        ...(input.onDeliveryAccepted ? { beforeRecord: input.onDeliveryAccepted } : {}),
         maxBodyBytes: INTEGRATION_WEBHOOK_MAX_BYTES,
         ...(rt.now ? { now: rt.now } : {}),
       });
