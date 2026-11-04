@@ -30,6 +30,18 @@ export const RESOLVE_LIMITS = {
   perOrg: { limit: 300, windowMs: 60_000 },
 } as const;
 
+/** Per caller and per organization fixed windows on POST /orgs/:org/meetings (same budget as resolve). */
+export const CREATE_LIMITS = {
+  perUser: { limit: 30, windowMs: 60_000 },
+  perOrg: { limit: 300, windowMs: 60_000 },
+} as const;
+
+export interface CreateMeetingInput {
+  title: string;
+  startedAt?: string | undefined;
+  projectId?: string | undefined;
+}
+
 export const DEFAULT_MEETING_TITLE = 'Untitled meeting';
 
 /** Meetings use cases. Order on every call: tenant (404) -> CASL (403) -> repository. */
@@ -104,5 +116,27 @@ export class MeetingService {
       });
     }
     return out;
+  }
+
+  /** Manual create from the web "New meeting" dialog: source `upload`, status `scheduled`, audited. */
+  async create(c: DirectoryCaller, input: CreateMeetingInput): Promise<MeetingRecord> {
+    this.orgs.authorize(c.ctx, 'create', 'Meeting');
+    const org = c.ctx.organizationId;
+    await this.limit(`meetings:create:user:${org}:${c.ctx.userId}`, CREATE_LIMITS.perUser);
+    await this.limit(`meetings:create:org:${org}`, CREATE_LIMITS.perOrg);
+    const meeting = await this.meetings.create(org, {
+      title: input.title.trim(),
+      source: 'upload',
+      startedAt: input.startedAt ? new Date(input.startedAt) : null,
+      projectId: input.projectId ?? null,
+      createdById: c.ctx.userId,
+    });
+    await this.access.record(c, {
+      action: 'meeting.create',
+      targetType: 'meeting',
+      targetId: meeting.id,
+      metadata: { source: meeting.source },
+    });
+    return meeting;
   }
 }
