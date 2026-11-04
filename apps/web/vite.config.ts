@@ -174,6 +174,15 @@ export default defineConfig(({ mode, command }) => {
     },
     test: {
       globals: true,
+      // `pnpm coverage` (vitest run --coverage). Thresholds sit just below measured coverage: raise them, never lower.
+      coverage: {
+        provider: 'v8',
+        reporter: ['text-summary', 'lcov', 'json-summary'],
+        reportsDirectory: 'coverage',
+        include: ['src/**/*.{ts,tsx}'],
+        exclude: ['src/**/*.d.ts', 'src/main.tsx'],
+        thresholds: { statements: 88, branches: 83, functions: 86, lines: 90 },
+      },
       environment: 'jsdom',
       setupFiles: ['./test/setup.ts'],
       css: false,

@@ -123,8 +123,10 @@ const CALENDAR_OUTLOOK_PROVIDER_MIGRATION = '20261102000000_calendar_outlook_pro
 const CALENDAR_SYNC_CURSOR_MIGRATION = '20261103000000_calendar_sync_cursor';
 /** #394 N1/N2: token_generation (compare-and-set) + refresh_enc_version (additive). */
 const CALENDAR_TOKEN_GENERATION_MIGRATION = '20261103060000_calendar_token_generation';
+/** Auto-link: calendar_event_links.source + unlinked_at tombstone (additive, stacked on the token generation). */
+const CALENDAR_AUTO_LINK_MIGRATION = '20261103120000_calendar_event_links_auto';
 /** MeetingStatus gains 'transcription_delayed' (additive ADD VALUE; transcription DLQ, #414). Sorts right after the
- * token generation migration. */
+ * auto-link columns. */
 const MEETING_STATUS_DELAYED_MIGRATION = '20261103180000_meeting_status_transcription_delayed';
 /** #423: nullable outbox_events.dedupe_key for atomic insert-once alerts (additive). */
 const OUTBOX_DEDUPE_KEY_MIGRATION = '20261103200000_outbox_dedupe_key';
@@ -168,15 +170,18 @@ const orderedDirs = () => {
     expect(dirs.indexOf(CALENDAR_OUTLOOK_PROVIDER_MIGRATION)).toBe(
       dirs.indexOf(CALENDAR_SYNC_CURSOR_MIGRATION) - 1,
     );
-  // The token generation migration sorts right after the sync cursor; the transcription_delayed enum value (#414)
-  // sorts right after it, then the outbox dedupe key column and its CONCURRENTLY index (#423) come last. The positional
-  // checks below (which end at the sync cursor) ignore them.
+  // Stacked after the sync cursor: #394's token generation, then the auto-link columns, then the
+  // transcription_delayed enum value (#414), then the outbox dedupe key column and its CONCURRENTLY index (#423,
+  // the newest). The positional checks below (which end at the sync cursor) ignore them.
   expect(dirs.indexOf(CALENDAR_TOKEN_GENERATION_MIGRATION)).toBe(
     dirs.indexOf(CALENDAR_SYNC_CURSOR_MIGRATION) + 1,
   );
+  expect(dirs.indexOf(CALENDAR_AUTO_LINK_MIGRATION)).toBe(
+    dirs.indexOf(CALENDAR_TOKEN_GENERATION_MIGRATION) + 1,
+  );
   expect(dirs.at(-1)).toBe(LATEST_MIGRATION);
   expect(dirs.indexOf(MEETING_STATUS_DELAYED_MIGRATION)).toBe(
-    dirs.indexOf(CALENDAR_TOKEN_GENERATION_MIGRATION) + 1,
+    dirs.indexOf(CALENDAR_AUTO_LINK_MIGRATION) + 1,
   );
   expect(dirs.indexOf(OUTBOX_DEDUPE_KEY_MIGRATION)).toBe(
     dirs.indexOf(MEETING_STATUS_DELAYED_MIGRATION) + 1,
@@ -188,6 +193,7 @@ const orderedDirs = () => {
     (d) =>
       d !== TASK_SYNC_MIGRATION &&
       d !== CALENDAR_TOKEN_GENERATION_MIGRATION &&
+      d !== CALENDAR_AUTO_LINK_MIGRATION &&
       d !== CALENDAR_OUTLOOK_PROVIDER_MIGRATION &&
       d !== CONSENT_HARDENING_MIGRATION &&
       d !== MEETING_STATUS_DELAYED_MIGRATION &&
@@ -2028,8 +2034,8 @@ describe('Phase 7 meeting_embeddings (static)', () => {
 });
 
 describe('MeetingStatus transcription_delayed (20261103180000)', () => {
-  it('sorts right after token generation and only adds the enum value', () => {
-    orderedDirs(); // asserts it sorts right after token generation
+  it('sorts right after the auto-link columns and only adds the enum value', () => {
+    orderedDirs(); // asserts it sorts right after the auto-link columns
     const sql = readFileSync(
       resolve(migrationsDir, MEETING_STATUS_DELAYED_MIGRATION, 'migration.sql'),
       'utf8',
@@ -2047,7 +2053,7 @@ describe('calendar token generation (20261103060000)', () => {
     resolve(migrationsDir, CALENDAR_TOKEN_GENERATION_MIGRATION, 'migration.sql'),
     'utf8',
   ).replace(/--.*$/gm, '');
-  it('sorts right after the sync cursor', () => {
+  it('sorts right after the sync cursor, before the auto-link columns', () => {
     orderedDirs();
   });
   it('is additive only (two columns with constant defaults, checks)', () => {
@@ -2077,5 +2083,18 @@ describe('outbox dedupe key (20261103200000 + 20261103200100, #423)', () => {
       'CREATE UNIQUE INDEX CONCURRENTLY "outbox_events_org_id_dedupe_key_key" ON "outbox_events"("org_id", "dedupe_key");',
     ]);
     expect(sql.join('\n')).not.toMatch(/\b(BEGIN|COMMIT)\b/i);
+  });
+});
+
+describe('calendar auto-link columns (20261103120000, static)', () => {
+  const sql = readFileSync(
+    resolve(migrationsDir, CALENDAR_AUTO_LINK_MIGRATION, 'migration.sql'),
+    'utf8',
+  ).replace(/--.*$/gm, '');
+  it('is additive: only ADD COLUMN / ADD CONSTRAINT on calendar_event_links', () => {
+    expect(sql).not.toMatch(/\b(DROP|TRUNCATE|DELETE|DISABLE|NO FORCE)\b/i);
+    expect(sql).toMatch(/ADD COLUMN "?source"? TEXT NOT NULL DEFAULT 'manual'/i);
+    expect(sql).toMatch(/CHECK \("?source"? IN \('manual', ?'auto'\)\)/i);
+    expect(sql).toMatch(/ADD COLUMN "?unlinked_at"? TIMESTAMPTZ\(3\)/i);
   });
 });

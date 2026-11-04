@@ -35,6 +35,13 @@ describe('grace pair sealing', () => {
     expect(openGracePair(sealed, 'other-token', 'fam:h')).toBeUndefined();
     expect(openGracePair(sealed, 'old-refresh', 'fam:other')).toBeUndefined();
   });
+
+  it('rejects a truncated auth tag', () => {
+    const sealed = sealGracePair({ a: 1 }, 's', 'fam:h');
+    const raw = Buffer.from(sealed, 'base64url');
+    expect(openGracePair(raw.subarray(0, 20).toString('base64url'), 's', 'fam:h')).toBeUndefined();
+    expect(openGracePair(raw.subarray(0, 12).toString('base64url'), 's', 'fam:h')).toBeUndefined();
+  });
 });
 
 describe('RedisRefreshGraceStore', () => {
@@ -101,7 +108,14 @@ describe('RedisRefreshGraceStore', () => {
   });
 });
 
-describe('extension refresh grace across two API instances (shared Redis)', () => {
+/**
+ * Two ExtensionAuthService instances in ONE process sharing an in-memory fake Redis: this models two API instances
+ * whose requests are sequential (A finishes, then B sees the retry). It does not exercise real network concurrency.
+ * On a real Redis, two truly simultaneous refreshes with the same token race on the token store's consume: the loser
+ * sees the token as already consumed before the winner has claimed the grace record, is treated as reuse, and the
+ * family is revoked. That is the safe outcome (the client signs in again); it is not a token leak.
+ */
+describe('extension refresh grace: two service instances, one process, shared fake Redis', () => {
   function instance(redis: ReturnType<typeof fakeRedis>) {
     const deps = {
       extensionTokens: new RedisExtensionTokenRepository(redis),
