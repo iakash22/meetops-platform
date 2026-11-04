@@ -126,9 +126,13 @@ const CALENDAR_TOKEN_GENERATION_MIGRATION = '20261103060000_calendar_token_gener
 /** Auto-link: calendar_event_links.source + unlinked_at tombstone (additive, stacked on the token generation). */
 const CALENDAR_AUTO_LINK_MIGRATION = '20261103120000_calendar_event_links_auto';
 /** MeetingStatus gains 'transcription_delayed' (additive ADD VALUE; transcription DLQ, #414). Sorts right after the
- * auto-link columns and is the newest. */
+ * auto-link columns. */
 const MEETING_STATUS_DELAYED_MIGRATION = '20261103180000_meeting_status_transcription_delayed';
-const LATEST_MIGRATION = MEETING_STATUS_DELAYED_MIGRATION;
+/** #423: nullable outbox_events.dedupe_key for atomic insert-once alerts (additive). */
+const OUTBOX_DEDUPE_KEY_MIGRATION = '20261103200000_outbox_dedupe_key';
+/** #423: unique (org_id, dedupe_key), built CONCURRENTLY in its own single-statement migration. */
+const OUTBOX_DEDUPE_KEY_INDEX_MIGRATION = '20261103200100_outbox_dedupe_key_index';
+const LATEST_MIGRATION = OUTBOX_DEDUPE_KEY_INDEX_MIGRATION;
 /**
  * Parallel PRs that sort between calendar_events and meeting_embeddings (#334 consent events, #341 calendar links).
  * The order checks below ignore them so they hold whichever merges first; when present they must sort before ours.
@@ -167,8 +171,8 @@ const orderedDirs = () => {
       dirs.indexOf(CALENDAR_SYNC_CURSOR_MIGRATION) - 1,
     );
   // Stacked after the sync cursor: #394's token generation, then the auto-link columns, then the
-  // transcription_delayed enum value (#414, the newest). The positional checks below (which end at the sync
-  // cursor) ignore all three.
+  // transcription_delayed enum value (#414), then the outbox dedupe key column and its CONCURRENTLY index (#423,
+  // the newest). The positional checks below (which end at the sync cursor) ignore them.
   expect(dirs.indexOf(CALENDAR_TOKEN_GENERATION_MIGRATION)).toBe(
     dirs.indexOf(CALENDAR_SYNC_CURSOR_MIGRATION) + 1,
   );
@@ -179,6 +183,12 @@ const orderedDirs = () => {
   expect(dirs.indexOf(MEETING_STATUS_DELAYED_MIGRATION)).toBe(
     dirs.indexOf(CALENDAR_AUTO_LINK_MIGRATION) + 1,
   );
+  expect(dirs.indexOf(OUTBOX_DEDUPE_KEY_MIGRATION)).toBe(
+    dirs.indexOf(MEETING_STATUS_DELAYED_MIGRATION) + 1,
+  );
+  expect(dirs.indexOf(OUTBOX_DEDUPE_KEY_INDEX_MIGRATION)).toBe(
+    dirs.indexOf(OUTBOX_DEDUPE_KEY_MIGRATION) + 1,
+  );
   return dirs.filter(
     (d) =>
       d !== TASK_SYNC_MIGRATION &&
@@ -187,6 +197,8 @@ const orderedDirs = () => {
       d !== CALENDAR_OUTLOOK_PROVIDER_MIGRATION &&
       d !== CONSENT_HARDENING_MIGRATION &&
       d !== MEETING_STATUS_DELAYED_MIGRATION &&
+      d !== OUTBOX_DEDUPE_KEY_MIGRATION &&
+      d !== OUTBOX_DEDUPE_KEY_INDEX_MIGRATION &&
       !(PARALLEL_MIGRATIONS as readonly string[]).includes(d),
   );
 };
@@ -2022,7 +2034,7 @@ describe('Phase 7 meeting_embeddings (static)', () => {
 });
 
 describe('MeetingStatus transcription_delayed (20261103180000)', () => {
-  it('is the newest migration, right after the auto-link columns and only adds the enum value', () => {
+  it('sorts right after the auto-link columns and only adds the enum value', () => {
     orderedDirs(); // asserts it sorts right after the auto-link columns
     const sql = readFileSync(
       resolve(migrationsDir, MEETING_STATUS_DELAYED_MIGRATION, 'migration.sql'),
@@ -2049,6 +2061,28 @@ describe('calendar token generation (20261103060000)', () => {
     expect(sql).toMatch(/ADD COLUMN "refresh_enc_version" SMALLINT/);
     expect(sql).toMatch(/"refresh_enc_version" IN \(1, 2\)/);
     expect(sql).not.toMatch(/\b(DROP|DELETE|TRUNCATE|GRANT|UPDATE)\b/i);
+  });
+});
+
+describe('outbox dedupe key (20261103200000 + 20261103200100, #423)', () => {
+  const statements = (dir: string) =>
+    readFileSync(resolve(migrationsDir, dir, 'migration.sql'), 'utf8')
+      .split('\n')
+      .filter((l) => l.trim() && !l.trim().startsWith('--'));
+  it('the index migration is the newest, right after the column migration', () => {
+    orderedDirs();
+  });
+  it('the first migration only adds the nullable column', () => {
+    expect(statements(OUTBOX_DEDUPE_KEY_MIGRATION)).toEqual([
+      'ALTER TABLE "outbox_events" ADD COLUMN "dedupe_key" TEXT;',
+    ]);
+  });
+  it('the second is a single CREATE UNIQUE INDEX CONCURRENTLY statement (no transaction)', () => {
+    const sql = statements(OUTBOX_DEDUPE_KEY_INDEX_MIGRATION);
+    expect(sql).toEqual([
+      'CREATE UNIQUE INDEX CONCURRENTLY "outbox_events_org_id_dedupe_key_key" ON "outbox_events"("org_id", "dedupe_key");',
+    ]);
+    expect(sql.join('\n')).not.toMatch(/\b(BEGIN|COMMIT)\b/i);
   });
 });
 
