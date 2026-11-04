@@ -14,7 +14,8 @@
     "test:e2e": "playwright test -c e2e/playwright.config.ts && playwright test -c e2e/flow/playwright.config.ts",
     "e2e:install": "playwright install chromium",
     "test:security": "vitest run --project security",
-    "test:e2e:flow": "playwright test -c e2e/flow/playwright.config.ts"
+    "test:e2e:flow": "playwright test -c e2e/flow/playwright.config.ts",
+    "test:e2e:smoke": "playwright test -c e2e/web-smoke/playwright.config.ts"
   },
   "devDependencies": {
     "@meetops/api": "workspace:*",

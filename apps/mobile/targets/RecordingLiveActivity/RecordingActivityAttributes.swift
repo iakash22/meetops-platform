@@ -28,24 +28,6 @@ public struct RecordingActivityAttributes: ActivityAttributes {
 }
 #endif
 
-/// Posted in the app process when the Live Activity Stop button runs `StopRecordingIntent`.
+/// Posted in the app process when the Live Activity Stop button runs `StopRecordingIntent`
+/// (targets/RecordingLiveActivity/StopRecordingIntent.swift, compiled into the app and the widget extension).
 public let meetOpsStopRecordingNotification = Notification.Name("MeetOpsLiveActivityStopRecording")
-
-#if canImport(AppIntents) && canImport(ActivityKit)
-import AppIntents
-
-/// Stop button. As a `LiveActivityIntent` it runs in the app's process (iOS 17+), which is woken if needed; the
-/// module turns the notification into the JS `onStopRequested` event, which ends capture like the in-app Stop.
-@available(iOS 17.0, *)
-public struct StopRecordingIntent: LiveActivityIntent {
-  public static var title: LocalizedStringResource = "Stop recording"
-  public static var openAppWhenRun: Bool = false
-
-  public init() {}
-
-  public func perform() async throws -> some IntentResult {
-    NotificationCenter.default.post(name: meetOpsStopRecordingNotification, object: nil)
-    return .result()
-  }
-}
-#endif
