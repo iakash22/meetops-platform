@@ -19,8 +19,11 @@ import {
   InvalidExternalMeetingError,
   UnsupportedMeetingHostError,
 } from '../src/modules/meetings/domain/meeting.js';
-import { RESOLVE_LIMITS } from '../src/modules/meetings/application/meeting.service.js';
-import { buildApp, signupAndLogin, SID, type App, type Client } from './helpers.js';
+import {
+  CREATE_LIMITS,
+  RESOLVE_LIMITS,
+} from '../src/modules/meetings/application/meeting.service.js';
+import { buildApp, Client, signupAndLogin, SID, type App } from './helpers.js';
 
 /**
  * Shared vectors (keep identical in apps/api/test/meetings.test.ts and apps/extension/test/meeting.test.ts):
@@ -445,6 +448,130 @@ describe('meetings module (list, detail, resolve, meeting access)', () => {
         'https://meet.google.com.evil.example/a',
       ])
         expect(() => deriveExternalMeetingId(bad)).toThrow(UnsupportedMeetingHostError);
+    });
+  });
+
+  describe('POST /orgs/:org/meetings (create, #440 E2E)', () => {
+    it('creates a contract Meeting from the web payload, lists it, and audits meeting.create', async () => {
+      const { member, owner, org } = await world();
+      const min = await member.post(`/orgs/${org}/meetings`, { title: '  Weekly sync  ' });
+      expect(min.statusCode).toBe(201);
+      const m1 = min.json<Meeting>();
+      expect(Value.Check(Meeting, m1)).toBe(true);
+      expect(m1).toMatchObject({
+        organizationId: org,
+        title: 'Weekly sync',
+        source: 'upload',
+        status: 'scheduled',
+      });
+      expect(m1.projectId).toBeUndefined();
+      expect(m1.startedAt).toBeUndefined();
+
+      const PROJ = '00000000-0000-4000-8000-0000000004c1';
+      meetings.projects = new Set([`${org}:${PROJ}`]);
+      const full = await owner.post(`/orgs/${org}/meetings`, {
+        title: 'Kickoff',
+        startedAt: '2026-11-05T10:00:00.000Z',
+        projectId: PROJ,
+      });
+      expect(full.statusCode).toBe(201);
+      expect(full.json<Meeting>()).toMatchObject({
+        projectId: PROJ,
+        startedAt: '2026-11-05T10:00:00.000Z',
+      });
+      const list = (await member.get(`/orgs/${org}/meetings`)).json<ListMeetingsResponse>();
+      expect(list.items.map((i) => i.id)).toContain(m1.id);
+      expect((await member.get(`/orgs/${org}/meetings/${m1.id}`)).statusCode).toBe(200);
+      const events = audit.events.filter((e) => e.action === 'meeting.create');
+      expect(events).toHaveLength(2);
+      expect(events[0]).toMatchObject({ organizationId: org, targetId: m1.id });
+    });
+
+    it('rejects invalid bodies with 400 VALIDATION_FAILED and writes nothing', async () => {
+      const { member, org } = await world();
+      const url = `/orgs/${org}/meetings`;
+      meetings.projects = new Set();
+      for (const body of [
+        {},
+        { title: '' },
+        { title: '   ' },
+        { title: 'x'.repeat(301) },
+        { title: 'a', startedAt: 'yesterday' },
+        { title: 'a', projectId: 'not-a-uuid' },
+        { title: 'a', organizationId: org },
+        { title: 'a', source: 'bot' },
+        { title: 'a', projectId: '00000000-0000-4000-8000-0000000004ff' },
+      ]) {
+        const r = await member.post(url, body);
+        expect([r.statusCode, errorOf(r).code], JSON.stringify(body)).toEqual([
+          400,
+          'VALIDATION_FAILED',
+        ]);
+      }
+      expect(meetings.rows.size).toBe(0);
+      expect(audit.events.filter((e) => e.action === 'meeting.create')).toHaveLength(0);
+    });
+
+    it('enforces RBAC (viewer 403), CSRF, cross-org (404) and session (401)', async () => {
+      const { owner, viewer, org, other, otherOrg } = await world();
+      expect((await viewer.post(`/orgs/${org}/meetings`, { title: 'v' })).statusCode).toBe(403);
+      // A member of another org cannot create in Acme, and Acme's owner cannot create in Globex.
+      const cross = await other.post(`/orgs/${org}/meetings`, { title: 'x' });
+      expect(cross.statusCode).toBe(404);
+      expect(errorOf(cross).code).toBe('NOT_FOUND');
+      expect((await owner.post(`/orgs/${otherOrg}/meetings`, { title: 'x' })).statusCode).toBe(404);
+      // A project of another org is the same 400 as a missing one (no cross-tenant probing).
+      const FOREIGN = '00000000-0000-4000-8000-0000000004d1';
+      meetings.projects = new Set([`${otherOrg}:${FOREIGN}`]);
+      expect(
+        errorOf(await owner.post(`/orgs/${org}/meetings`, { title: 'p', projectId: FOREIGN })).code,
+      ).toBe('VALIDATION_FAILED');
+      // Valid Origin + CSRF but no session: 401. Without CSRF the mutation guard answers first (403).
+      const anon = await new Client(app).post(`/orgs/${org}/meetings`, { title: 'anon' });
+      expect(anon.statusCode).toBe(401);
+      expect(
+        (
+          await app.inject({
+            method: 'POST',
+            url: `/orgs/${org}/meetings`,
+            payload: { title: 'a' },
+          })
+        ).statusCode,
+      ).toBe(403);
+      const noCsrf = await app.inject({
+        method: 'POST',
+        url: `/orgs/${org}/meetings`,
+        payload: { title: 'c' },
+        headers: { cookie: owner.cookie, origin: 'http://localhost:5173' },
+      });
+      expect(noCsrf.statusCode).toBe(403);
+      expect(errorOf(noCsrf).code).toBe('CSRF_INVALID');
+      expect(meetings.rows.size).toBe(0);
+    });
+
+    it('is in the OpenAPI document with its body schema and 201 Meeting', () => {
+      const spec = app.swagger() as unknown as {
+        paths: Record<
+          string,
+          Record<string, { requestBody?: unknown; responses?: Record<string, unknown> }>
+        >;
+      };
+      const op = spec.paths['/orgs/{organizationId}/meetings']?.post;
+      expect(op?.requestBody).toBeDefined();
+      expect(Object.keys(op?.responses ?? {})).toEqual(
+        expect.arrayContaining(['201', '400', '401', '403', '404', '429']),
+      );
+    });
+
+    it('rate limits per caller (429 + retry-after)', async () => {
+      const { member, org } = await world();
+      const url = `/orgs/${org}/meetings`;
+      for (let i = 0; i < CREATE_LIMITS.perUser.limit; i++)
+        expect((await member.post(url, { title: `rl-${i}` })).statusCode).toBe(201);
+      const r = await member.post(url, { title: 'rl-x' });
+      expect(r.statusCode).toBe(429);
+      expect(r.headers['retry-after']).toBeDefined();
+      expect(errorOf(r).code).toBe('RATE_LIMITED');
     });
   });
 
