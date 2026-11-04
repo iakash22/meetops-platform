@@ -16,14 +16,11 @@ describe('RedisDeliveryStore', () => {
   });
   it('sends SET NX EX with prefix and default TTL', async () => {
     const set = vi.fn().mockResolvedValue('OK');
-    const store = new RedisDeliveryStore(
-      { set, exists: vi.fn(), eval: vi.fn() },
-      { defaultTtlSeconds: 123 },
-    );
+    const store = new RedisDeliveryStore({ set, eval: vi.fn() }, { defaultTtlSeconds: 123 });
     await store.markIfNew('x', 0);
     expect(set).toHaveBeenCalledWith('meetops:webhook:delivery:x', '1', 'EX', 604_800, 'NX');
     await new RedisDeliveryStore(
-      { set, exists: vi.fn(), eval: vi.fn() },
+      { set, eval: vi.fn() },
       { defaultTtlSeconds: 1_209_600 },
     ).markIfNew('y', -1);
     expect(set).toHaveBeenLastCalledWith('meetops:webhook:delivery:y', '1', 'EX', 1_209_600, 'NX');
