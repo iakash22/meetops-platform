@@ -241,3 +241,21 @@ describe('P7 calendar event <-> meeting links', () => {
     expect((await owner.put(linkUrl(org, conn, 'ev2'), { meetingId: m.id })).statusCode).toBe(404);
   });
 });
+
+describe('InMemoryCalendarEventLinks soft unlink', () => {
+  it('hides a removed link, refuses a second removal and revives it on a manual re-link', async () => {
+    const ORG = '00000000-0000-4000-8000-00000000000a';
+    const M = '00000000-0000-4000-8000-0000000000d1';
+    const links = new InMemoryCalendarEventLinks(() => [
+      { id: M, organizationId: ORG, externalMeetingId: null, deletedAt: null } as never,
+    ]);
+    const l = { connectionId: 'c1', eventId: 'e1', meetingId: M };
+    await links.upsert(ORG, 'u1', l);
+    expect(await links.remove(ORG, 'u1', 'c1', 'e1')).toBe(true);
+    expect(await links.remove(ORG, 'u1', 'c1', 'e1')).toBe(false);
+    expect(await links.listForUser(ORG, 'u1', ['c1'])).toEqual([]);
+    expect(links.rows.size).toBe(1); // tombstone kept for the worker's auto-link
+    await links.upsert(ORG, 'u1', l);
+    expect((await links.listForUser(ORG, 'u1', ['c1'])).map((x) => x.eventId)).toEqual(['e1']);
+  });
+});

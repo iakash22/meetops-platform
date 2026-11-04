@@ -84,7 +84,7 @@ Checked against `gh pr list` / `gh pr view` and the tree at `integration/phase-1
 
 ## Status at ~21:30 IST
 
-> `integration/phase-1` (head `4f197bb`) was merged into `main` by Shubham via [#247](https://github.com/iakash22/meetops-platform/pull/247) (merge commit `47dbf97`, 21:19 IST). Everything below is **on `main`**. Percentages are coordinator estimates, not measured.
+> `integration/phase-1` (head `4f197bb`) was merged into `main` by Akash via [#247](https://github.com/iakash22/meetops-platform/pull/247) (merge commit `47dbf97`, 21:19 IST). Everything below is **on `main`**. Percentages are coordinator estimates, not measured.
 
 | Phase                           | 27 Oct AM | 27 Oct PM | Merged today (27 Oct)                                                                                                                                                                                                |
 | ------------------------------- | --------- | --------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

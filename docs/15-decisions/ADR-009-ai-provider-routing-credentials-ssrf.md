@@ -69,13 +69,14 @@ and call only safe outbound endpoints.
 - `DEEPGRAM_API_KEY` / `DEEPGRAM_ENABLED` are inert while Deepgram is disabled.
 - An STT provider outage delays transcription (retry, then dead-letter and a "transcription delayed" status) instead
   of silently switching providers or spending on a second provider.
-- The secret-manager backing `SecretSource.secret` is supplied by the host app and not defined here (ADR-016).
+- The worker's `OrgConfigStore` is `PostgresOrgConfigStore` on `ai_org_config` (one row per organization, forced RLS,
+  every call in `withOrganizationContext`). Rows are re-validated on read and a malformed row fails closed without
+  echoing stored values; store errors never fall back to memory. `monthlyBudgetUsd` is a numeric(12,2) column rounded
+  to cents with `toFixed(2)`; `updated_by_id` records the acting user (null for system writes).
+  `InMemoryOrgConfigStore` is only used with `AI_STORES=memory`, which is refused unless `NODE_ENV=test`.
+- Open: the secret-manager backing `SecretSource.secret` is supplied by the host app and not defined here (ADR-016).
 
 ### Required before GA
 
-1. **Durable org AI config.** `InMemoryOrgConfigStore` is the only `OrgConfigStore`, and the transcription worker uses
-   it (`apps/worker/src/ai/bootstrap.ts`, `new ModelRouter(env, new InMemoryOrgConfigStore(), auditSink)`), so org
-   routes, approvals, budgets and credential refs are lost on restart and not shared between processes. Replace it with
-   a durable Postgres store scoped by `organizationId` under forced RLS (ADR-010), used by both API and worker.
-2. **Self-host opt-in.** Keep the production refusal for the hosted service. If self-hosted production installs are
+1. **Self-host opt-in.** Keep the production refusal for the hosted service. If self-hosted production installs are
    supported, add an explicit opt-in (not `NODE_ENV` alone) with its own tests and docs.

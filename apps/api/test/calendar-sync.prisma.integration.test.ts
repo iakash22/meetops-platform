@@ -98,7 +98,7 @@ describe.skipIf(!url || !owner)('P7 calendar sync (live RLS)', { timeout: 60_000
       now: NOW,
       nextSyncAt: new Date(NOW.getTime() + 900e3),
     });
-    expect(first).toEqual({ upserted: 3, cancelled: 0, applied: true });
+    expect(first).toEqual({ upserted: 3, cancelled: 0, applied: true, autoLinked: 0 });
     // Not due again until next_sync_at.
     expect((await sync.listDueForSync(NOW, 500)).map((d) => d.id)).not.toContain(a.id);
 
@@ -115,7 +115,7 @@ describe.skipIf(!url || !owner)('P7 calendar sync (live RLS)', { timeout: 60_000
       now: NOW,
       nextSyncAt: new Date(NOW.getTime() + 900e3),
     });
-    expect(second).toEqual({ upserted: 2, cancelled: 1, applied: true });
+    expect(second).toEqual({ upserted: 2, cancelled: 1, applied: true, autoLinked: 0 });
     // A truncated list never cancels.
     const third = await sync.applySync(orgA, {
       connectionId: a.id,
@@ -253,6 +253,6 @@ describe.skipIf(!url || !owner)('P7 calendar sync (live RLS)', { timeout: 60_000
         now: NOW,
         nextSyncAt: NOW,
       }),
-    ).toEqual({ upserted: 0, cancelled: 0, applied: false });
+    ).toEqual({ upserted: 0, cancelled: 0, applied: false, autoLinked: 0 });
   });
 });

@@ -89,8 +89,11 @@ export type OrgAIConfigInput = z.input<typeof orgAIConfigSchema>;
 /** Persistence for organization AI config. Backend/DB supplies a durable, organization-scoped implementation. */
 export interface OrgConfigStore {
   get(organizationId: string): Promise<OrgAIConfig | undefined>;
-  put(cfg: OrgAIConfig): Promise<void>;
+  put(cfg: OrgAIConfig, meta?: OrgConfigWriteMeta): Promise<void>;
 }
+
+/** Who wrote the config (the acting user id from the TenantContext); stores may persist it. */
+export type OrgConfigWriteMeta = { updatedById?: string | undefined };
 
 export class InMemoryOrgConfigStore implements OrgConfigStore {
   private readonly m = new Map<string, OrgAIConfig>();
@@ -206,7 +209,7 @@ export class ModelRouter {
         cause: e,
       });
     }
-    await this.orgStore.put(cfg);
+    await this.orgStore.put(cfg, { updatedById: ctx.userId });
   }
 
   /**

@@ -138,6 +138,63 @@ describe('P9 R20: inline content is hash-allowed, production origins are https',
   });
 });
 
+describe('L1: same-origin /socket.io proxy', () => {
+  it('forwards /socket.io/ to apps/realtime with WebSocket upgrade headers', () => {
+    const loc = /location \/socket\.io\/ \{([\s\S]*?)\n {4}\}/.exec(template)?.[1] ?? '';
+    expect(loc).toContain('proxy_pass $realtime_upstream;');
+    expect(loc).toContain('set $realtime_upstream "${REALTIME_UPSTREAM}";');
+    expect(loc).toContain('resolver ${NGINX_RESOLVER}');
+    expect(loc).toContain('proxy_http_version 1.1;');
+    expect(loc).toContain('proxy_set_header Upgrade $http_upgrade;');
+    expect(loc).toContain('proxy_set_header Connection $connection_upgrade;');
+    // HIGH: overwrite with the peer address; appending would pass a spoofed client XFF to realtime.
+    expect(loc).toContain('proxy_set_header X-Forwarded-For $remote_addr;');
+    expect(loc).not.toContain('$proxy_add_x_forwarded_for');
+    // An add_header in the location would drop every server-level security header.
+    expect(loc).not.toContain('add_header');
+    expect(template).toMatch(
+      /map \$http_upgrade \$connection_upgrade \{\s+default upgrade;\s+""\s+close;/,
+    );
+  });
+
+  it('compose trusts exactly one proxy hop in realtime (#417)', () => {
+    const compose = readFileSync(resolve(root, 'infra', 'compose', 'compose.app.yml'), 'utf8');
+    expect(compose).toMatch(/^ {6}REALTIME_TRUST_PROXY_HOPS: 1$/m);
+  });
+
+  it.each([
+    ['http://realtime:4001', undefined],
+    ['https://rt.internal', '10.0.0.10'],
+    [undefined, 'kube-dns.kube-system.svc.cluster.local'],
+  ])('accepts REALTIME_UPSTREAM=%s NGINX_RESOLVER=%s', (up, res) => {
+    expect(validate({ ...GOOD, REALTIME_UPSTREAM: up, NGINX_RESOLVER: res }).status).toBe(0);
+  });
+
+  it.each([
+    ['upstream directive injection', { REALTIME_UPSTREAM: 'http://rt:4001; return 200 x' }],
+    ['upstream quote', { REALTIME_UPSTREAM: 'http://rt"' }],
+    ['upstream path', { REALTIME_UPSTREAM: 'http://rt:4001/x' }],
+    ['upstream scheme', { REALTIME_UPSTREAM: 'ftp://rt' }],
+    ['upstream empty', { REALTIME_UPSTREAM: '' }],
+    ['upstream newline', { REALTIME_UPSTREAM: 'http://rt\nlocation' }],
+    ['resolver injection', { NGINX_RESOLVER: '1.1.1.1; include /etc/passwd' }],
+    ['resolver space', { NGINX_RESOLVER: '1.1.1.1 valid=1s' }],
+    ['resolver empty', { NGINX_RESOLVER: '' }],
+  ])('rejects %s', (_l, over) => {
+    const res = validate({ ...GOOD, ...over });
+    expect(res.status).not.toBe(0);
+    expect(res.stderr).toMatch(/REALTIME_UPSTREAM|NGINX_RESOLVER/);
+  });
+
+  it('the image substitutes the proxy variables', () => {
+    const dockerfile = readFileSync(resolve(root, 'infra', 'docker', 'Dockerfile.web'), 'utf8');
+    expect(dockerfile).toMatch(/REALTIME_UPSTREAM=http:\/\/realtime:4001/);
+    const filter = new RegExp(/NGINX_ENVSUBST_FILTER="([^"]+)"/.exec(dockerfile)![1]!);
+    for (const name of ['CSP_API_ORIGIN', 'REALTIME_UPSTREAM', 'NGINX_RESOLVER'])
+      expect(filter.test(name)).toBe(true);
+  });
+});
+
 describe('P9 R24: Vite dev and preview CSP', () => {
   it('derives both from the nginx CSP, adding only a dev nonce and local origins', async () => {
     const { localCsp } = await import('../csp.config');

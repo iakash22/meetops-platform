@@ -1,3 +1,4 @@
 - [Storage key dev wipe and reseed](storage-key-dev-wipe-reseed.md)
 - [Storage key staging copy](storage-key-staging-copy.md)
 - [Meeting consent ledger maintenance opt-out](meeting-consent-maintenance.md)
+- [Backup and restore (Postgres, object storage, Redis)](backup-restore.md)
