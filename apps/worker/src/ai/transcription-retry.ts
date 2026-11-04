@@ -181,6 +181,9 @@ export async function handleTranscriptionFailure(
   const { organizationId, meetingId, recordingId } = job.data ?? {};
   if (err instanceof UnrecoverableError) {
     // Final, permanent failure: a meeting parked in transcription_delayed (e.g. a redriven chunk) moves to failed.
+    // The per-meeting dead-letter index is deliberately NOT cleared here (harmless): the index only ever answers
+    // "blocked" for a meeting that is transcription_delayed, a failed meeting never reads it, and its entries are
+    // pruned on a later read (DLQ job gone / not waiting) or expire with the key TTL (DEAD_LETTER_INDEX_TTL_MS).
     if (organizationId && meetingId) {
       try {
         await deps.status?.clearDelayed(organizationId, meetingId, 'failed');
@@ -289,6 +292,8 @@ export function queueDeadLetterLister(queue: {
  *   their score is still old (a concurrent re-add refreshes the score and survives).
  * - The key TTL is refreshed on every write. DLQ entries are kept until redriven (no retention limit), so the TTL
  *   cannot outlive them; an expired key only forces the confirming scan.
+ * - A permanent failure (meeting -> failed) does not clear the key; see handleTranscriptionFailure. Harmless: stale
+ *   entries are pruned on the next read or expire with the TTL.
  * - After a meeting clears, only entries older than the success's read time are removed (`clearBefore`), never a
  *   concurrent newer entry.
  */
@@ -380,6 +385,29 @@ export function createRedisDeadLetterIndex(
   };
 }
 
+/** Attempts per read phase of `handleTranscriptionSuccess` (lookup, post-clear re-check). */
+export const TRANSCRIPTION_SUCCESS_READ_ATTEMPTS = 3;
+/** Backoff before attempt 2 and 3. Bounded: at most ~0.6 s added to a `completed` listener. */
+export const TRANSCRIPTION_SUCCESS_READ_BACKOFF_MS = [100, 500] as const;
+const defaultSleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
+/** Runs `fn` up to TRANSCRIPTION_SUCCESS_READ_ATTEMPTS times; rethrows the last error. */
+export async function withReadRetries<T>(
+  fn: () => Promise<T>,
+  sleep: (ms: number) => Promise<void> = defaultSleep,
+  onRetry?: () => void,
+): Promise<T> {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await fn();
+    } catch (err) {
+      if (attempt >= TRANSCRIPTION_SUCCESS_READ_ATTEMPTS) throw err;
+      onRetry?.();
+      await sleep(TRANSCRIPTION_SUCCESS_READ_BACKOFF_MS[attempt - 1] ?? 500);
+    }
+  }
+}
+
 /**
  * A transcription attempt succeeded: a meeting parked in `transcription_delayed` goes back to `processing`, but only
  * when no OTHER chunk of that meeting is still dead-lettered.
@@ -391,8 +419,10 @@ export function createRedisDeadLetterIndex(
  *    so the clear does nothing.
  * 5. Re-check after the clear: an index entry added since t0, or any DLQ entry for the meeting (covers a failed index
  *    write) -> mark delayed again. Otherwise remove index entries older than t0 only.
- * Any read error before the clear leaves the meeting delayed; after the clear it re-marks it delayed. Never fails
- * the job.
+ * The lookup (1-3) and the re-check (5) are each retried up to `TRANSCRIPTION_SUCCESS_READ_ATTEMPTS` times with a
+ * short backoff, so a one-off Redis/DB blip does not strand the meeting. If every attempt fails, the lookup leaves
+ * the meeting delayed and the re-check re-marks it delayed (the safe side); the next success of any chunk of the
+ * meeting, or a DLQ re-drive, tries again. Never fails the job.
  */
 export async function handleTranscriptionSuccess(
   job: Pick<FailedJobLike, 'id' | 'data'> | undefined,
@@ -401,6 +431,8 @@ export async function handleTranscriptionSuccess(
     index?: DeadLetterIndex | undefined;
     deadLetters?: DeadLetterLister | undefined;
     logger: DeadLetterLogger;
+    /** Backoff sleep between read attempts (tests inject a no-op). */
+    sleep?: ((ms: number) => Promise<void>) | undefined;
   },
 ): Promise<void> {
   const { organizationId, meetingId, recordingId, chunkIndex } = job?.data ?? {};
@@ -415,27 +447,34 @@ export async function handleTranscriptionSuccess(
         e.data.meetingId === meetingId &&
         !(job?.id !== undefined && e.data.jobId === job.id),
     );
-  let version: string;
-  let t0: number | undefined;
+  const retry = <T>(fn: () => Promise<T>) =>
+    withReadRetries(fn, deps.sleep ?? defaultSleep, () =>
+      deps.logger.warn(log, 'transcription delayed-status read failed; retrying'),
+    );
+  type Lookup = { version: string; t0: number | undefined; blocking: DeadLetterRef[] } | null;
+  let lookup: Lookup;
   try {
-    const observed = await status.readDelayed(organizationId, meetingId);
-    if (!observed) return;
-    version = observed.version;
-    t0 = index ? await index.time() : undefined;
-    if (index && (await index.hasLive(organizationId, meetingId, own))) return;
-    const blocking = blockingIn(await deadLetters());
-    if (blocking.length > 0) {
-      if (index)
-        for (const e of blocking) {
-          const id = e.id ?? deadLetterJobId(e.data.jobId, e.data.recordingId, e.data.chunkIndex);
-          await index.add(organizationId, meetingId, id).catch(() => {
-            deps.logger.warn(log, 'transcription dead-letter re-index failed');
-          });
-        }
-      return;
-    }
+    lookup = await retry(async (): Promise<Lookup> => {
+      const observed = await status.readDelayed(organizationId, meetingId);
+      if (!observed) return null;
+      const t0 = index ? await index.time() : undefined;
+      if (index && (await index.hasLive(organizationId, meetingId, own))) return null;
+      return { version: observed.version, t0, blocking: blockingIn(await deadLetters()) };
+    });
   } catch {
     deps.logger.error(log, 'transcription dead-letter lookup failed; meeting left delayed');
+    return;
+  }
+  if (!lookup) return;
+  const { version, t0, blocking } = lookup;
+  if (blocking.length > 0) {
+    if (index)
+      for (const e of blocking) {
+        const id = e.id ?? deadLetterJobId(e.data.jobId, e.data.recordingId, e.data.chunkIndex);
+        await index.add(organizationId, meetingId, id).catch(() => {
+          deps.logger.warn(log, 'transcription dead-letter re-index failed');
+        });
+      }
     return;
   }
   let cleared: boolean;
@@ -447,9 +486,11 @@ export async function handleTranscriptionSuccess(
   }
   if (!cleared) return; // changed concurrently (e.g. a new dead-letter re-marked it): leave it
   try {
-    const late =
-      (index && t0 !== undefined && (await index.hasSince(organizationId, meetingId, t0, own))) ||
-      blockingIn(await deadLetters()).length > 0;
+    const late = await retry(
+      async () =>
+        (index && t0 !== undefined && (await index.hasSince(organizationId, meetingId, t0, own))) ||
+        blockingIn(await deadLetters()).length > 0,
+    );
     if (!late) {
       if (index && t0 !== undefined) await index.clearBefore(organizationId, meetingId, t0);
       return;
