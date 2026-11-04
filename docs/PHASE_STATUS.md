@@ -1,4 +1,45 @@
-# Phase status — 3 Nov 2026 (~04:20 IST)
+# Phase status — 4 Nov 2026 (~20:30 IST)
+
+## Update — 4 Nov 2026 (~20:30 IST)
+
+Tree: `integration/phase-1` at `b5ea0a86` (merge of #433, 14:31 IST, 4 Nov). PR states read from the GitHub API at
+~20:25 IST. Percentages are coordinator-style estimates, not measured.
+
+**#384 (`integration/phase-1` → `main`)**: open, head `b5ea0a86`, 285 commits, 360 files, +28,368/−1,796.
+GitHub reports `mergeable_state: unstable` (no passing remote checks: Actions minutes are exhausted, so the local
+gate is the gate). `main` has 3 commits not on integration (SelectField / invite-form UI). Only Akash merges #384.
+
+Merged since the 04:20 snapshot (38 PRs):
+
+- P3/AI: transcription retry + DLQ (#414), DLQ redrive (#420), `transcription_delayed` alert (#423), DLQ follow-ups
+  (#433), STT no-fallback comment fix (#435), ADR-009 revision (#409).
+- P5/integrations: refresh grace window (#421, #426, #428), webhook delivery store (#432, #434), DB org config store
+  (#425, #429), extension fail-closed pending (#411), extension auth allowlist/revoke (#418).
+- P7: semantic embeddings pipeline (#350), calendar background sync (#394) and auto-link (#398).
+- P2/P4 media and consent: consent hardening (#387), upload chunk rate limits (#419), media rate-limit hardening
+  (#424), storage quota fail-closed (#430).
+- Realtime/web: realtime hardening (#417), web realtime client (#415, #422).
+- P9: docs CSP in prod (#404), security checklist (#391), dependency overrides (#412), P9 hardening (#416), CD
+  pipeline scaffold (#408) and deploy sentinel (#427), turbo test outputs (#413), coverage tooling (#431), pnpm
+  overrides guard (#405), Tester Lows batch (#403).
+- Docs/tests: architecture overview (#407), README DB setup (#406), email verification concurrency (#410).
+
+Still open: #402 (this file; also adds P9 #13 alert rules and the ops/observability docs), #347 (iOS Live Activity,
+draft), #384 (→ `main`). Follow-up Lows on #416, #418, #429, #433, #434 and the deploy scripts are in progress on
+another stream.
+
+| Phase                          | 3 Nov | 4 Nov | Remaining                                                                                            |
+| ------------------------------ | ----- | ----- | ---------------------------------------------------------------------------------------------------- |
+| P0 Foundation                  | 100%  | 100%  | —                                                                                                    |
+| P1 Auth, orgs, RBAC            | ~95%  | ~95%  | MFA/SSO policy (ADR-021)                                                                             |
+| P2 Capture, uploads, consent   | ~90%  | ~92%  | Extension Info items                                                                                 |
+| P3 Transcription, AI           | ~75%  | ~85%  | Gemini key (owner), real-provider E2E                                                                |
+| P4 Tasks, approval             | ~85%  | ~87%  | —                                                                                                    |
+| P5 Integrations                | ~85%  | ~88%  | Jira creds, GitHub App install (owner)                                                               |
+| P6 Notifications               | ~85%  | ~87%  | Production email domain (owner)                                                                      |
+| P7 Calendar, search, analytics | ~70%  | ~85%  | Google OAuth client (owner), follow-ups                                                              |
+| P8 Native desktop/mobile       | ~85%  | ~85%  | Never compiled; device checklists; bundle ids (owner)                                                |
+| P9 Hardening, release          | ~50%  | ~60%  | Alert routing (owner), SBOM, versioning, deploy target, backup drill, billing, KMS, store submission |
 
 ## Update — 3 Nov 2026 (~04:20 IST)
 

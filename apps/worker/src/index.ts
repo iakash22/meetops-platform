@@ -23,6 +23,7 @@ import { loadCalendarSyncEnv, registerCalendarSyncScheduler } from './calendar/i
 import { loadTokenRefreshEnv, registerTokenRefreshJob } from './integrations/bootstrap.js';
 import { loadTaskSyncEnv, registerTaskSyncWorker } from './integrations/task-sync-bootstrap.js';
 import { closeAll, runningJobs, type ClosableJob } from './shutdown.js';
+import { startWorkerMetricsServer } from './metrics.js';
 
 export * from './media/index.js';
 export * from './ai/index.js';
@@ -117,7 +118,10 @@ export async function main() {
   }
   // Async task -> GitHub/Jira sync. Off unless TASK_SYNC_ENABLED=true; then INTEGRATIONS_TOKEN_KEK is required.
   const taskSync = await registerTaskSyncWorker({ env: loadTaskSyncEnv(), log: logger });
+  // P9 #13: token-gated queue-depth exporter (off unless WORKER_METRICS_TOKEN is set).
+  const metrics = startWorkerMetricsServer();
   const jobs: ClosableJob[] = [
+    { name: 'metrics', close: metrics?.close },
     { name: 'media', close },
     { name: 'transcription', job: transcription },
     { name: 'notifications', job: notifications },
