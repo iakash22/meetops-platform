@@ -353,15 +353,37 @@ describe('Live Activity native config', () => {
     expect(widgetAttrs).toContain(
       'meetOpsStopRecordingNotification = Notification.Name("MeetOpsLiveActivityStopRecording")',
     );
-    expect(intent).toContain('name: meetOpsStopRecordingNotification');
-    expect(intent).not.toContain('"MeetOpsLiveActivityStopRecording"');
-    expect(intent).toContain('import LiveActivity');
+    // The intent keeps a file-private copy (no `import LiveActivity`); its spelling must match the shared constant.
+    expect(intent).not.toContain('import LiveActivity');
+    expect(intent).not.toContain('canImport(LiveActivity)');
+    const spelling = (src: string, decl: RegExp) => src.match(decl)?.[1];
+    const shared = spelling(
+      pod,
+      /meetOpsStopRecordingNotification = Notification\.Name\("([^"]+)"\)/,
+    );
+    const copy = spelling(
+      intent,
+      /fileprivate let stopRecordingIntentNotification = Notification\.Name\("([^"]+)"\)/,
+    );
+    expect(shared).toBe('MeetOpsLiveActivityStopRecording');
+    expect(copy).toBe(shared);
+    expect(
+      spelling(widgetAttrs, /meetOpsStopRecordingNotification = Notification\.Name\("([^"]+)"\)/),
+    ).toBe(shared);
+    expect(intent).toContain('post(name: stopRecordingIntentNotification');
+    expect(intent.match(/Notification\.Name\(/g)).toHaveLength(1);
     const mod = readFileSync(
       join(root, 'modules/live-activity/ios/LiveActivityModule.swift'),
       'utf8',
     );
     expect(mod).not.toContain('staleDate: nil');
     expect(mod.match(/staleDate: Self\.staleDate\(\)/g)).toHaveLength(2);
+    // Native time validation mirrors isValidTimeMs: finite and >= 0, for start and for both update values.
+    expect(mod).toContain('v.isFinite && v >= 0');
+    expect(mod).toContain('guard Self.isValidTimeMs(startedAtMs) else { return false }');
+    expect(mod).toContain(
+      'guard Self.isValidTimeMs(startedAtMs), Self.isValidTimeMs(elapsedMs) else { return }',
+    );
     const podspec = readFileSync(
       join(root, 'modules/live-activity/ios/LiveActivity.podspec'),
       'utf8',
@@ -436,6 +458,54 @@ describe('Live Activity call timeout', () => {
     await jest.advanceTimersByTimeAsync(LIVE_ACTIVITY_CALL_TIMEOUT_MS);
     await done;
     expect(calls).toEqual([['start', 1_000], ['end'], ['endAll']]);
+  });
+
+  it('a start that resolves after its timeout and after end() is ended by a queued endAll (no orphan)', async () => {
+    let lateStart: (ok: boolean) => void = () => undefined;
+    const { port, calls } = fakePort({
+      start: (t) => (calls.push(['start', t]), new Promise<boolean>((r) => (lateStart = r))),
+    });
+    const live = createRecordingLiveActivity(port, () => 1_000);
+    live.start();
+    live.end();
+    await jest.advanceTimersByTimeAsync(LIVE_ACTIVITY_CALL_TIMEOUT_MS);
+    await live.settled();
+    // end() ran while the start was still in flight, so it ended nothing.
+    expect(calls).toEqual([['start', 1_000], ['end']]);
+    lateStart(true);
+    await jest.advanceTimersByTimeAsync(0);
+    await live.settled();
+    expect(calls).toEqual([['start', 1_000], ['end'], ['endAll']]);
+  });
+
+  it('a late start that reports no activity (false) queues nothing', async () => {
+    let lateStart: (ok: boolean) => void = () => undefined;
+    const { port, calls } = fakePort({
+      start: (t) => (calls.push(['start', t]), new Promise<boolean>((r) => (lateStart = r))),
+    });
+    const live = createRecordingLiveActivity(port, () => 1_000);
+    live.start();
+    live.end();
+    await jest.advanceTimersByTimeAsync(LIVE_ACTIVITY_CALL_TIMEOUT_MS);
+    lateStart(false);
+    await jest.advanceTimersByTimeAsync(0);
+    await live.settled();
+    expect(calls).toEqual([['start', 1_000], ['end']]);
+  });
+
+  it('a late start while the same recording is still live is left alone; a later end() ends it', async () => {
+    let lateStart: (ok: boolean) => void = () => undefined;
+    const { port, calls } = fakePort({
+      start: (t) => (calls.push(['start', t]), new Promise<boolean>((r) => (lateStart = r))),
+    });
+    const live = createRecordingLiveActivity(port, () => 1_000);
+    live.start();
+    await jest.advanceTimersByTimeAsync(LIVE_ACTIVITY_CALL_TIMEOUT_MS);
+    lateStart(true);
+    await jest.advanceTimersByTimeAsync(0);
+    live.end();
+    await live.settled();
+    expect(calls).toEqual([['start', 1_000], ['end']]);
   });
 
   it('honours a custom timeout and does not wait when calls settle quickly', async () => {

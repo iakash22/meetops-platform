@@ -14,6 +14,10 @@ public class LiveActivityModule: Module {
 
   static func staleDate() -> Date { Date().addingTimeInterval(staleAfter) }
 
+  /// Same rule as the JS side (src/record/liveActivity.ts isValidTimeMs): finite and not negative. A NaN, infinite
+  /// or negative value must never reach the Date / interval conversion below.
+  static func isValidTimeMs(_ v: Double) -> Bool { v.isFinite && v >= 0 }
+
   private var stopObserver: NSObjectProtocol?
 
   public func definition() -> ModuleDefinition {
@@ -42,6 +46,7 @@ public class LiveActivityModule: Module {
 
     AsyncFunction("start") { (startedAtMs: Double) async -> Bool in
       guard #available(iOS 16.2, *) else { return false }
+      guard Self.isValidTimeMs(startedAtMs) else { return false }
       guard ActivityAuthorizationInfo().areActivitiesEnabled else { return false }
       // One recording at a time: end anything left over first.
       await Self.endAll()
@@ -60,6 +65,7 @@ public class LiveActivityModule: Module {
 
     AsyncFunction("update") { (paused: Bool, startedAtMs: Double, elapsedMs: Double) async in
       guard #available(iOS 16.2, *) else { return }
+      guard Self.isValidTimeMs(startedAtMs), Self.isValidTimeMs(elapsedMs) else { return }
       let state = RecordingActivityAttributes.ContentState(
         isPaused: paused, startedAt: Date(timeIntervalSince1970: startedAtMs / 1000),
         elapsedSeconds: elapsedMs / 1000)
