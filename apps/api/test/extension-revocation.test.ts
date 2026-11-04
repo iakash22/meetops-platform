@@ -194,4 +194,55 @@ describe('extension allowlist is enforced after pairing', () => {
       await bearerVerifier(extensionTokens).verifySession({ bearer: accessToken }),
     ).not.toBeNull();
   });
+  it('misconfigured refresh does not burn the token: after the config is fixed the SAME token rotates (no reuse, no revoke)', async () => {
+    // One app whose allowlist array is flipped in place: empty (misconfigured deploy), then restored.
+    const extensionTokens = new InMemoryExtensionTokenRepository();
+    const audit = new InMemoryAuditLog();
+    const extensionIds: string[] = [EXT];
+    const app = await buildApp({ extensionTokens, extensionIds, audit });
+    const c = await signupAndLogin(app, `mis-${randomUUID()}@example.com`);
+    expect((await c.post('/orgs', { name: 'Mis Org' })).statusCode).toBe(201);
+    const deviceId = randomUUID();
+    const n = nonce();
+    const { pairingCode } = (
+      await c.post(EXTENSION_AUTH_PATHS.pair, { extensionId: EXT, deviceId, nonce: n })
+    ).json<{ pairingCode: string }>();
+    const tok = await ext(app, EXTENSION_AUTH_PATHS.token, {
+      extensionId: EXT,
+      deviceId,
+      pairingCode,
+      nonce: n,
+    });
+    expect(tok.statusCode).toBe(200);
+    const { accessToken, refreshToken } = tok.json<{ accessToken: string; refreshToken: string }>();
+    const payload = { extensionId: EXT, deviceId, refreshToken };
+
+    extensionIds.length = 0;
+    const bad = await ext(app, EXTENSION_AUTH_PATHS.refresh, payload);
+    expect(bad.statusCode).toBe(401);
+    expect(
+      await bearerVerifier(extensionTokens).verifySession({ bearer: accessToken }),
+    ).not.toBeNull();
+
+    extensionIds.push(EXT);
+    const ok = await ext(app, EXTENSION_AUTH_PATHS.refresh, payload);
+    expect(ok.statusCode).toBe(200);
+    const pair = ok.json<{ accessToken: string; refreshToken: string }>();
+    expect(pair.refreshToken).not.toBe(refreshToken);
+    expect(
+      audit.events.filter((e) =>
+        [
+          'extension.token.reuse_detected',
+          'extension.token.delisted',
+          'extension.token.revoke',
+        ].includes(e.action),
+      ),
+    ).toEqual([]);
+    expect(audit.events.filter((e) => e.action === 'extension.token.refresh')).toHaveLength(1);
+    // Family intact: the rotated access token verifies.
+    expect(
+      await bearerVerifier(extensionTokens).verifySession({ bearer: pair.accessToken }),
+    ).not.toBeNull();
+    await app.close();
+  });
 });
