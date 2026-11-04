@@ -191,13 +191,8 @@ export class InMemoryMeetingConsentRepository implements MeetingConsentRepositor
     return (
       this.rows
         .filter((r) => r.organizationId === organizationId && r.meetingId === meetingId)
-        // Same order as Prisma: recordedAt desc, then revoked before granted, then id desc (deterministic tie-break).
-        .sort(
-          (x, y) =>
-            y.recordedAt.getTime() - x.recordedAt.getTime() ||
-            (x.eventType === y.eventType ? 0 : x.eventType === 'revoked' ? -1 : 1) ||
-            (y.id < x.id ? -1 : y.id > x.id ? 1 : 0),
-        )
+        // Same order as Prisma: insertion order (the DB sequence), newest first; recordedAt is not consulted.
+        .reverse()
         .slice(0, limit)
         .map((r) => ({ ...r }))
     );

@@ -90,6 +90,8 @@ export const SENSITIVE_QUERY_PARAMS: readonly string[] = [
   'code_verifier',
   'signature',
   'sig',
+  // #350 L1: free-text search queries (keyword and semantic search `?q=`) can carry PII; never logged.
+  'q',
 ];
 /** Query parameter names that carry bearer-like values in URLs (signed links, OAuth callbacks, presigned URLs; #263 M-1). */
 export const SENSITIVE_QUERY_KEYS: readonly string[] = [

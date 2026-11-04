@@ -26,10 +26,10 @@ export { REALTIME_EVENTS } from '@meetops/contracts';
  * Reason codes. Contracts (ARC-2 0.4.1) defines no connect or join error codes, so they are local; candidates for
  * @meetops/contracts. Every handshake rejection uses the one generic connect error (ADR-011 section 1.5). On join,
  * 'invalid' = not a UUID, 'forbidden' = missing, deleted or other-org meeting (identical, ADR-011 section 4.2),
- * 'error' = the access check failed (fail closed).
+ * 'error' = the access check failed (fail closed), 'limit' = join rate or per-socket room cap exceeded.
  */
 export const REALTIME_CONNECT_ERROR = 'unauthorized' as const;
-export const MEETING_JOIN_ERRORS = ['invalid', 'forbidden', 'error'] as const;
+export const MEETING_JOIN_ERRORS = ['invalid', 'forbidden', 'error', 'limit'] as const;
 export type MeetingJoinError = (typeof MEETING_JOIN_ERRORS)[number];
 
 /** Meeting ids are UUIDs (ADR-011 section 4.2). */

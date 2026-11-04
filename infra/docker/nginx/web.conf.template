@@ -2,12 +2,20 @@
 # (/etc/nginx/templates/*.template -> /etc/nginx/conf.d/*.conf).
 # Configurable: CSP_API_ORIGIN, CSP_REALTIME_ORIGIN, CSP_STORAGE_ORIGIN (required, validated by
 # 10-validate-csp-env.sh before this is rendered), CSP_REPORT_URL (optional CSP report endpoint) and
-# CSP_UPGRADE_INSECURE (default on).
+# CSP_UPGRADE_INSECURE (default on). REALTIME_UPSTREAM (apps/realtime base URL, default http://realtime:4001) and
+# NGINX_RESOLVER (default 127.0.0.11: Docker's embedded DNS, which only exists inside a Docker network; set a
+# real resolver IP/hostname elsewhere, e.g. Kubernetes kube-dns) back the same-origin /socket.io proxy.
 
 # R20: Reporting-Endpoints only when CSP_REPORT_URL is set (nginx skips an add_header whose value is empty).
 map "${CSP_REPORT_URL}" $csp_reporting_endpoints {
     ""      "";
     default "csp=\"${CSP_REPORT_URL}\"";
+}
+
+# #399 L2: the report-to directive only when CSP_REPORT_URL is set (no dangling `report-to csp` without an endpoint).
+map "${CSP_REPORT_URL}" $csp_report_to {
+    ""      "";
+    default " report-to csp";
 }
 
 # R20: upgrade-insecure-requests unless CSP_UPGRADE_INSECURE=off (only the plain-http localhost compose stack sets
@@ -23,6 +31,12 @@ map $uri $web_cache_control {
     default    "no-store";
 }
 
+# WebSocket upgrade for the /socket.io proxy: forward Upgrade, and `Connection: upgrade` only when asked.
+map $http_upgrade $connection_upgrade {
+    default upgrade;
+    ""      close;
+}
+
 server {
     listen 8080;
     server_name _;
@@ -30,9 +44,12 @@ server {
     index index.html;
     server_tokens off;
 
+    # style-src hash: the inline <style> in apps/web/index.html (`:root { color-scheme: dark; }`, avoids a white
+    # flash before the CSS bundle loads). scripts/check-csp.mjs recomputes every inline hash and fails the web
+    # build test on a missing or stale (unused) hash, so update both together.
     # Security headers. Only set at server level: an add_header inside a location
     # would drop all of these, so caching is a server-level map on $uri.
-    add_header Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'sha256-fwWCgm+4FJQM5Um+NEFPPThRM/ATS1CrMQ0Jv1SN3fs='; img-src 'self' data: blob:; font-src 'self'; connect-src 'self' ${CSP_API_ORIGIN} ${CSP_REALTIME_ORIGIN} ${CSP_STORAGE_ORIGIN}; media-src 'self' blob: ${CSP_STORAGE_ORIGIN}; worker-src 'self' blob:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none';$csp_upgrade_insecure report-to csp" always;
+    add_header Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'sha256-fwWCgm+4FJQM5Um+NEFPPThRM/ATS1CrMQ0Jv1SN3fs='; img-src 'self' data: blob:; font-src 'self'; connect-src 'self' ${CSP_API_ORIGIN} ${CSP_REALTIME_ORIGIN} ${CSP_STORAGE_ORIGIN}; media-src 'self' blob: ${CSP_STORAGE_ORIGIN}; worker-src 'self' blob:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none';$csp_upgrade_insecure$csp_report_to" always;
     add_header Reporting-Endpoints $csp_reporting_endpoints always;
     add_header X-Content-Type-Options "nosniff" always;
     add_header Referrer-Policy "strict-origin-when-cross-origin" always;
@@ -53,6 +70,26 @@ server {
     # Vite hashed assets (Cache-Control from $web_cache_control above).
     location /assets/ {
         try_files $uri =404;
+    }
+
+    # Same-origin realtime (apps/realtime, Socket.IO): the host-only session cookie rides on the upgrade.
+    # The upstream is resolved per request (variable + resolver), so nginx still starts when realtime is down
+    # or not deployed (the client then falls back to polling).
+    location /socket.io/ {
+        resolver ${NGINX_RESOLVER} valid=30s ipv6=off;
+        set $realtime_upstream "${REALTIME_UPSTREAM}";
+        proxy_pass $realtime_upstream;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection $connection_upgrade;
+        proxy_set_header Host $host;
+        # Overwrite, never append: a client-sent X-Forwarded-For must not reach realtime's per-IP limits. Needs
+        # realtime with REALTIME_TRUST_PROXY_HOPS=1 (#417) so it reads this address instead of nginx's.
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 75s;
+        proxy_send_timeout 75s;
+        proxy_buffering off;
     }
 
     # SPA fallback for TanStack Router client-side routes ($uri becomes /index.html: no-store).

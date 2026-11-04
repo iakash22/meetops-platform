@@ -103,11 +103,13 @@ export type ConnectOpts = {
   token?: unknown;
   origin?: string | null;
   query?: Record<string, string>;
+  /** Extra request headers (for example X-Forwarded-For). */
+  headers?: Record<string, string>;
 };
 
 /** Web client by default (Origin = ORIGIN). Pass origin: EXT_ORIGIN for an extension client. */
 export function connect(url: string, o: ConnectOpts = {}): C {
-  const headers: Record<string, string> = {};
+  const headers: Record<string, string> = { ...o.headers };
   const origin = o.origin === undefined ? ORIGIN : o.origin;
   if (origin) headers.origin = origin;
   const cookie = o.cookieHeader ?? (o.cookie !== undefined ? `${COOKIE}=${o.cookie}` : undefined);

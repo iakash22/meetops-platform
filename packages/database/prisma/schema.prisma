@@ -46,6 +46,7 @@ enum MeetingStatus {
   processing
   completed
   failed
+  transcription_delayed
 }
 
 enum MeetingParticipantRole {
@@ -629,7 +630,7 @@ model ConsentAttestation {
   consentVersion   String             @map("consent_version")
   method           ConsentMethod
   attestedByUserId String             @map("attested_by_user_id") @db.Uuid
-  /// Client clock; CHECK: at most 300 s after recordedAt (contracts CONSENT_ATTESTATION_MAX_SKEW_SECONDS).
+  /// Client clock; CHECK: at most 300 s after and 24 h before recordedAt (contracts CONSENT_ATTESTATION_MAX_*).
   attestedAt       DateTime           @map("attested_at") @db.Timestamptz(3)
   /// Server receive time.
   recordedAt       DateTime           @default(now()) @map("recorded_at") @db.Timestamptz(3)
@@ -658,9 +659,11 @@ model MeetingConsentEvent {
   /// Optional revocation reason (`revoked` only, <= 500 chars).
   reason         String?
   actorUserId    String                  @map("actor_user_id") @db.Uuid
-  /// Client attestation time for a grant (<= recordedAt + 300 s), server time for a revocation.
+  /// Client attestation time for a grant (recordedAt - 24 h ..= recordedAt + 300 s), server time for a revocation.
   occurredAt     DateTime                @map("occurred_at") @db.Timestamptz(3)
   recordedAt     DateTime                @default(now()) @map("recorded_at") @db.Timestamptz(3)
+  /// DB-assigned insertion order (sequence). The ledger is ordered by this, never by an app clock.
+  seq            BigInt                  @default(autoincrement())
 
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
   meeting      Meeting      @relation(fields: [organizationId, meetingId], references: [organizationId, id], onDelete: Restrict)
@@ -668,6 +671,7 @@ model MeetingConsentEvent {
 
   @@unique([organizationId, id])
   @@index([organizationId, meetingId, recordedAt])
+  @@index([organizationId, meetingId, seq])
   @@map("meeting_consent_events")
 }
 
@@ -956,6 +960,8 @@ model OutboxEvent {
   status         OutboxStatus @default(pending)
   attempts       Int          @default(0)
   lastError      String?      @map("last_error")
+  /// Optional insert-once key (#423); unique per org, NULL for events without dedupe.
+  dedupeKey      String?      @map("dedupe_key")
   availableAt    DateTime     @default(now()) @map("available_at") @db.Timestamptz(3)
   publishedAt    DateTime?    @map("published_at") @db.Timestamptz(3)
   createdAt      DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
@@ -964,6 +970,7 @@ model OutboxEvent {
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
 
   @@unique([organizationId, id])
+  @@unique([organizationId, dedupeKey])
   @@index([organizationId, aggregateType, aggregateId])
   @@index([status, availableAt])
   @@map("outbox_events")
@@ -1432,6 +1439,14 @@ model CalendarConnection {
   syncedTo             DateTime?                @map("synced_to") @db.Timestamptz(3)
   syncFailures         Int                      @default(0) @map("sync_failures")
   nextSyncAt           DateTime?                @map("next_sync_at") @db.Timestamptz(3)
+  /// Incremental sync cursor (Outlook deltaLink) as a TokenCipher v1 envelope; window it was opened for.
+  syncCursorEnc        String?                  @map("sync_cursor_enc")
+  syncCursorFrom       DateTime?                @map("sync_cursor_from") @db.Timestamptz(3)
+  syncCursorTo         DateTime?                @map("sync_cursor_to") @db.Timestamptz(3)
+  /// Compare-and-set fence for token writes (bumped by every token write, reconnect and revoke).
+  tokenGeneration      Int                      @default(0) @map("token_generation")
+  /// AAD context of refresh_token_enc: 1 = pre-v2 (org + id), 2 = per-field. NULL = pre-migration row.
+  refreshEncVersion    Int?                     @map("refresh_enc_version") @db.SmallInt
   createdAt            DateTime                 @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt            DateTime                 @updatedAt @map("updated_at") @db.Timestamptz(3)
 
@@ -1516,14 +1531,18 @@ model TaskSyncJob {
 /// Phase 7: a calendar event (by provider event id, per connection) linked to a meeting of the same organization by
 /// the owner of the calendar connection. Forced RLS (ADR-010); composite tenant FKs (migration 20261031040000).
 model CalendarEventLink {
-  id              String   @id @default(uuid()) @db.Uuid
-  organizationId  String   @map("org_id") @db.Uuid
-  connectionId    String   @map("connection_id") @db.Uuid
-  userId          String   @map("user_id") @db.Uuid
-  providerEventId String   @map("provider_event_id")
-  meetingId       String   @map("meeting_id") @db.Uuid
-  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt       DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+  id              String    @id @default(uuid()) @db.Uuid
+  organizationId  String    @map("org_id") @db.Uuid
+  connectionId    String    @map("connection_id") @db.Uuid
+  userId          String    @map("user_id") @db.Uuid
+  providerEventId String    @map("provider_event_id")
+  meetingId       String    @map("meeting_id") @db.Uuid
+  /// 'manual' (API) | 'auto' (worker auto-link). CHECK in migration 20261103120000.
+  source          String    @default("manual")
+  /// Set when a user unlinks (soft delete): readers treat the row as absent and auto-link never recreates it.
+  unlinkedAt      DateTime? @map("unlinked_at") @db.Timestamptz(3)
+  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt       DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   organization Organization       @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   connection   CalendarConnection @relation(fields: [organizationId, connectionId], references: [organizationId, id], onDelete: Cascade)

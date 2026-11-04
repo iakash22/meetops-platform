@@ -160,6 +160,52 @@ describe('upload dialog consent step', () => {
     expect(api.storage.putToPresignedUrl).not.toHaveBeenCalled();
   });
 
+  it('does not record consent when the status call failed; the upload init still carries it', async () => {
+    const { api, user } = setup('owner', {
+      meetingConsent: {
+        status: vi.fn().mockRejectedValue(new ApiError(500, 'INTERNAL', 'boom')),
+      },
+    });
+    await waitFor(() => expect(api.meetingConsent.status).toHaveBeenCalled());
+    await user.upload(screen.getByTestId('upload-input'), mp3());
+    await screen.findByTestId('consent-notice');
+    await user.click(screen.getByRole('checkbox', { name: /agreed to be recorded/ }));
+    await user.click(screen.getByRole('button', { name: 'Confirm and upload' }));
+    await waitFor(() => expect(api.storage.createUpload).toHaveBeenCalled());
+    expect(api.meetingConsent.record).not.toHaveBeenCalled();
+    expect(vi.mocked(api.storage.createUpload).mock.calls[0]![1]).toMatchObject({
+      consent: { consentVersion: CURRENT_CONSENT_VERSION },
+    });
+  });
+
+  it('a 404 from missing consent routes does not block the upload (enforcement off)', async () => {
+    const notFound = () => new ApiError(404, 'NOT_FOUND', 'no route');
+    const { api, user } = setup('owner', {
+      meetingConsent: {
+        status: vi.fn().mockRejectedValue(notFound()),
+        record: vi.fn().mockRejectedValue(notFound()),
+      },
+    });
+    await waitFor(() => expect(api.meetingConsent.status).toHaveBeenCalled());
+    await user.upload(screen.getByTestId('upload-input'), mp3());
+    await screen.findByTestId('consent-notice');
+    await user.click(screen.getByRole('checkbox', { name: /agreed to be recorded/ }));
+    await user.click(screen.getByRole('button', { name: 'Confirm and upload' }));
+    await waitFor(() => expect(api.storage.completeUpload).toHaveBeenCalled());
+    expect(screen.queryByTestId('consent-error')).toBeNull();
+  });
+
+  it('a 404 from the record route alone does not block the upload either', async () => {
+    const { api, user } = setup('owner', {
+      meetingConsent: { record: vi.fn().mockRejectedValue(new ApiError(404, 'NOT_FOUND', 'x')) },
+    });
+    await pick(user);
+    await user.click(screen.getByRole('checkbox', { name: /agreed to be recorded/ }));
+    await user.click(screen.getByRole('button', { name: 'Confirm and upload' }));
+    await waitFor(() => expect(api.storage.completeUpload).toHaveBeenCalled());
+    expect(api.meetingConsent.record).toHaveBeenCalled();
+  });
+
   it('stops before uploading when recording consent fails', async () => {
     const err = new ApiError(422, 'VALIDATION_FAILED', 'consent');
     err.reason = 'CONSENT_INVALID';

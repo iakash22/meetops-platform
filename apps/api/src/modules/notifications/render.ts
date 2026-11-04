@@ -18,6 +18,7 @@ export const NOTIFICATION_TITLES: Readonly<Record<string, string>> = {
   'tasks.ready_for_review': 'Tasks are ready for review',
   'meeting.summary_ready': 'Meeting summary is ready',
   'meeting.transcript_ready': 'Meeting transcript is ready',
+  'meeting.transcription_delayed': 'Transcription is delayed',
   'integration.error': 'An integration needs attention',
   'member.added': 'You were added to the organization',
   'auth.new_location_signin': 'New sign-in from a new location',

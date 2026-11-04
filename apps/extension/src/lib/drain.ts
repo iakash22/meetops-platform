@@ -1,6 +1,6 @@
 import type { ChunkStore, StoredSession } from './chunk-store.js';
 import type { CompletedChunk } from '@meetops/contracts/types';
-import { LOCAL_CHUNK_BYTES, MAX_DURATION_MS } from './contract-limits.js';
+import { LOCAL_RECORDING_CHUNK_BYTES, MAX_DURATION_MS } from './contract-limits.js';
 import { uploadChunk, type UploadClient } from './upload.js';
 
 export interface DrainResult {
@@ -117,10 +117,10 @@ export function heldMessage(h: HeldSummary): string {
 /** Warn before recording once held data uses this share of the local cap. */
 export const HELD_WARN_RATIO = 0.8;
 /**
- * Room a new recording needs at minimum: one full local chunk (LOCAL_CHUNK_BYTES, the same constant the recorder
+ * Room a new recording needs at minimum: one full local chunk (LOCAL_RECORDING_CHUNK_BYTES, the same constant the recorder
  * splits at). Less than this left after held data blocks Start.
  */
-export const MIN_FREE_FOR_RECORDING_BYTES = LOCAL_CHUNK_BYTES;
+export const MIN_FREE_FOR_RECORDING_BYTES = LOCAL_RECORDING_CHUNK_BYTES;
 
 export type HeldStorage = 'ok' | 'near-full' | 'full';
 

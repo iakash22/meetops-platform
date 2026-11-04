@@ -88,26 +88,49 @@ export function calendarSyncProvidersFromEnv(
       stateStore: new InMemoryOAuthStateStore(),
     });
   }
+  // #396 L1: validated even without a client, same as the API (integrations/runtime.ts). A malformed tenant
+  // fails startup in both processes, not only the one that happens to have the Outlook client configured.
+  let tenant: string | undefined;
+  try {
+    tenant = parseOutlookTenant(env.OUTLOOK_CALENDAR_TENANT);
+  } catch (err) {
+    if (err instanceof OutlookTenantError) throw new CalendarSyncEnvError(err.message);
+    throw err;
+  }
   const msId = env.OUTLOOK_CALENDAR_CLIENT_ID?.trim();
   const msSecret = env.OUTLOOK_CALENDAR_CLIENT_SECRET;
   if (msId && msSecret) {
     const apiOrigin = calendarApiOrigin(env);
-    let tenant: string | undefined;
-    try {
-      tenant = parseOutlookTenant(env.OUTLOOK_CALENDAR_TENANT);
-    } catch (err) {
-      if (err instanceof OutlookTenantError) throw new CalendarSyncEnvError(err.message);
-      throw err;
-    }
-    out.outlook = new OutlookCalendarProvider({
-      clientId: msId,
-      clientSecret: async () => msSecret,
-      ...(tenant ? { tenant } : {}),
-      redirectUriAllowlist: [`${apiOrigin}/calendar/outlook/callback`],
-      stateStore: new InMemoryOAuthStateStore(),
-    });
+    out.outlook = outlookSyncProvider(
+      new OutlookCalendarProvider({
+        clientId: msId,
+        clientSecret: async () => msSecret,
+        ...(tenant ? { tenant } : {}),
+        redirectUriAllowlist: [`${apiOrigin}/calendar/outlook/callback`],
+        stateStore: new InMemoryOAuthStateStore(),
+      }),
+    );
   }
   return out;
+}
+
+/** Adapts Outlook's listEventsDelta (deltaLink) to the sweep's provider-neutral cursor interface. */
+export function outlookSyncProvider(
+  p: Pick<OutlookCalendarProvider, 'refresh' | 'listEvents' | 'listEventsDelta'>,
+): CalendarSyncProvider {
+  return {
+    refresh: (t) => p.refresh(t),
+    listEvents: (i) => p.listEvents(i),
+    listEventsDelta: async ({ accessToken, timeMin, timeMax, cursor }) => {
+      const r = await p.listEventsDelta({
+        accessToken,
+        timeMin,
+        timeMax,
+        ...(cursor ? { deltaLink: cursor } : {}),
+      });
+      return { events: r.events, removedIds: r.removedIds, cursor: r.deltaLink };
+    },
+  };
 }
 
 export type CalendarSyncSchedulerRegistration =

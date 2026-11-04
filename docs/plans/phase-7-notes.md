@@ -76,6 +76,21 @@
   Embedding customer text needs an approved, non-free-tier provider (the free Gemini tier must not process customer
   data).
 
+## Semantic search PR 2: embedding pipeline (off by default)
+
+- **ai-core**: new `embeddings` feature (capability `embeddings`). No default provider declares it, so embedding is
+  unconfigured until an approved provider is routed for the feature. `embedWithExecutor` caps batches (32 inputs,
+  8000 chars each), validates 1536-dim finite vectors and runs through the AIExecutor (policy, quotas, usage,
+  idempotency). Results carry `provider/model`, stored with each vector.
+- **Worker** (`apps/worker/src/embeddings`): `runMeetingEmbeddings` embeds a meeting's current-revision transcript
+  segments and live summaries, skipping sources whose content hash is already stored; idempotency key =
+  meeting + batch content hashes. Unconfigured provider: logged once, job completes, nothing stored. Transient errors
+  retry through BullMQ. `registerEmbeddingsWorker` (SEMANTIC_EMBEDDINGS_ENABLED, default false) returns the same
+  `{ registered, close }` handle as the other workers; it is **not** called from main() yet (#333 rewrites main()).
+  `enqueueMeetingEmbeddings` uses a deterministic job id per meeting.
+- **API**: `createExecutorQueryEmbedder` (production query embedder over the same executor feature); the search
+  module uses it when the host injects `embeddingsExecutor`. Without a configured provider the route stays 503.
+
 ## Meeting analytics (P7, read-only)
 
 - **API**: `GET /orgs/:org/analytics/meetings?from&to&bucket` (`ANALYTICS_PATHS.meetings`, contracts

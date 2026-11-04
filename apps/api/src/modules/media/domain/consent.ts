@@ -1,4 +1,5 @@
 import {
+  CONSENT_ATTESTATION_MAX_BACKDATE_SECONDS,
   CONSENT_ATTESTATION_MAX_SKEW_SECONDS,
   CONSENT_HTTP_STATUS,
   ConsentAttestationInput,
@@ -50,10 +51,12 @@ export interface ConsentRepository {
 }
 
 const skewMs = CONSENT_ATTESTATION_MAX_SKEW_SECONDS * 1000;
+const backdateMs = CONSENT_ATTESTATION_MAX_BACKDATE_SECONDS * 1000;
 
 /**
  * Validates the `consent` part of an init body. Order: shape (CONSENT_REQUIRED) -> version
- * (CONSENT_VERSION_UNSUPPORTED) -> attestedAt not more than the max skew ahead of the server clock (CONSENT_INVALID).
+ * (CONSENT_VERSION_UNSUPPORTED) -> attestedAt not more than the max skew ahead of, nor the max back-date behind, the
+ * server clock (CONSENT_INVALID).
  */
 export function checkConsentInput(raw: unknown, now: Date): ConsentAttestationInput {
   if (raw === undefined || raw === null || !Value.Check(ConsentAttestationInput, raw)) {
@@ -63,7 +66,7 @@ export function checkConsentInput(raw: unknown, now: Date): ConsentAttestationIn
     throw new ConsentRejectedError('CONSENT_VERSION_UNSUPPORTED');
   }
   const at = Date.parse(raw.attestedAt);
-  if (!Number.isFinite(at) || at > now.getTime() + skewMs) {
+  if (!Number.isFinite(at) || at > now.getTime() + skewMs || at < now.getTime() - backdateMs) {
     throw new ConsentRejectedError('CONSENT_INVALID');
   }
   return raw;
@@ -75,7 +78,10 @@ export function checkStoredConsent(r: ConsentRecord | null): ConsentRecord {
   if (r.consentVersion !== CURRENT_CONSENT_VERSION) {
     throw new ConsentRejectedError('CONSENT_VERSION_UNSUPPORTED');
   }
-  if (r.attestedAt.getTime() > r.recordedAt.getTime() + skewMs) {
+  if (
+    r.attestedAt.getTime() > r.recordedAt.getTime() + skewMs ||
+    r.attestedAt.getTime() < r.recordedAt.getTime() - backdateMs
+  ) {
     throw new ConsentRejectedError('CONSENT_INVALID');
   }
   return r;

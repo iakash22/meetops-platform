@@ -104,7 +104,7 @@ describe('calendar sync scheduler', () => {
   it('the job runs one sweep through the repository', async () => {
     const { run, repo } = setup();
     await expect(run()).resolves.toMatchObject({ synced: 0, failed: 0 });
-    expect(repo.listDueForSync).toHaveBeenCalledWith(expect.any(Date), 50);
+    expect(repo.listDueForSync).toHaveBeenCalledWith(expect.any(Date), 200); // limit 50 x4 headroom for per-org round-robin;
   });
 
   it('closes the worker before the queue', async () => {
@@ -180,5 +180,11 @@ describe('OUTLOOK_CALENDAR_TENANT validation (worker)', () => {
     expect(() =>
       calendarSyncProvidersFromEnv({ ...env, OUTLOOK_CALENDAR_TENANT: 'contoso' }),
     ).toThrow(/OUTLOOK_CALENDAR_TENANT must be/);
+  });
+  it('#396 L1: a malformed tenant fails startup even without an Outlook client (matches the API)', () => {
+    expect(() =>
+      calendarSyncProvidersFromEnv({ NODE_ENV: 'test', OUTLOOK_CALENDAR_TENANT: 'not a tenant' }),
+    ).toThrow(CalendarSyncEnvError);
+    expect(calendarSyncProvidersFromEnv({ NODE_ENV: 'test' }).outlook).toBeUndefined();
   });
 });

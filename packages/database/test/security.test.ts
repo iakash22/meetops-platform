@@ -115,8 +115,24 @@ const TASK_SYNC_MIGRATION = '20261031100000_task_sync_jobs';
 const MEETING_SOURCE_MOBILE_MIGRATION = '20261031120000_meeting_source_mobile';
 /** Consent API: append-only meeting consent ledger (forced RLS, SELECT/INSERT only). */
 const MEETING_CONSENT_MIGRATION = '20261031030000_meeting_consent_events';
+/** Consent hardening: attestedAt back-date CHECKs + meeting_consent_events.seq. Parallel slot (sorts after
+ * meeting_source_mobile, before the Outlook migration); the positional order checks ignore it. */
+const CONSENT_HARDENING_MIGRATION = '20261031130000_consent_hardening';
 const CALENDAR_OUTLOOK_PROVIDER_MIGRATION = '20261102000000_calendar_outlook_provider';
-const LATEST_MIGRATION = CALENDAR_OUTLOOK_PROVIDER_MIGRATION;
+/** Background sync: per-connection incremental cursor columns (additive). */
+const CALENDAR_SYNC_CURSOR_MIGRATION = '20261103000000_calendar_sync_cursor';
+/** #394 N1/N2: token_generation (compare-and-set) + refresh_enc_version (additive). */
+const CALENDAR_TOKEN_GENERATION_MIGRATION = '20261103060000_calendar_token_generation';
+/** Auto-link: calendar_event_links.source + unlinked_at tombstone (additive, stacked on the token generation). */
+const CALENDAR_AUTO_LINK_MIGRATION = '20261103120000_calendar_event_links_auto';
+/** MeetingStatus gains 'transcription_delayed' (additive ADD VALUE; transcription DLQ, #414). Sorts right after the
+ * auto-link columns. */
+const MEETING_STATUS_DELAYED_MIGRATION = '20261103180000_meeting_status_transcription_delayed';
+/** #423: nullable outbox_events.dedupe_key for atomic insert-once alerts (additive). */
+const OUTBOX_DEDUPE_KEY_MIGRATION = '20261103200000_outbox_dedupe_key';
+/** #423: unique (org_id, dedupe_key), built CONCURRENTLY in its own single-statement migration. */
+const OUTBOX_DEDUPE_KEY_INDEX_MIGRATION = '20261103200100_outbox_dedupe_key_index';
+const LATEST_MIGRATION = OUTBOX_DEDUPE_KEY_INDEX_MIGRATION;
 /**
  * Parallel PRs that sort between calendar_events and meeting_embeddings (#334 consent events, #341 calendar links).
  * The order checks below ignore them so they hold whichever merges first; when present they must sort before ours.
@@ -144,8 +160,46 @@ const orderedDirs = () => {
       dirs.indexOf(MEETING_SOURCE_MOBILE_MIGRATION),
     );
   }
+  // Consent hardening is a parallel slot after meeting_source_mobile; the positional order checks ignore it.
+  if (dirs.includes(CONSENT_HARDENING_MIGRATION))
+    expect(dirs.indexOf(CONSENT_HARDENING_MIGRATION)).toBeGreaterThan(
+      dirs.indexOf(MEETING_SOURCE_MOBILE_MIGRATION),
+    );
+  // #390's Outlook provider widening sorts right before the sync cursor; the positional checks ignore it.
+  if (dirs.includes(CALENDAR_OUTLOOK_PROVIDER_MIGRATION))
+    expect(dirs.indexOf(CALENDAR_OUTLOOK_PROVIDER_MIGRATION)).toBe(
+      dirs.indexOf(CALENDAR_SYNC_CURSOR_MIGRATION) - 1,
+    );
+  // Stacked after the sync cursor: #394's token generation, then the auto-link columns, then the
+  // transcription_delayed enum value (#414), then the outbox dedupe key column and its CONCURRENTLY index (#423,
+  // the newest). The positional checks below (which end at the sync cursor) ignore them.
+  expect(dirs.indexOf(CALENDAR_TOKEN_GENERATION_MIGRATION)).toBe(
+    dirs.indexOf(CALENDAR_SYNC_CURSOR_MIGRATION) + 1,
+  );
+  expect(dirs.indexOf(CALENDAR_AUTO_LINK_MIGRATION)).toBe(
+    dirs.indexOf(CALENDAR_TOKEN_GENERATION_MIGRATION) + 1,
+  );
+  expect(dirs.at(-1)).toBe(LATEST_MIGRATION);
+  expect(dirs.indexOf(MEETING_STATUS_DELAYED_MIGRATION)).toBe(
+    dirs.indexOf(CALENDAR_AUTO_LINK_MIGRATION) + 1,
+  );
+  expect(dirs.indexOf(OUTBOX_DEDUPE_KEY_MIGRATION)).toBe(
+    dirs.indexOf(MEETING_STATUS_DELAYED_MIGRATION) + 1,
+  );
+  expect(dirs.indexOf(OUTBOX_DEDUPE_KEY_INDEX_MIGRATION)).toBe(
+    dirs.indexOf(OUTBOX_DEDUPE_KEY_MIGRATION) + 1,
+  );
   return dirs.filter(
-    (d) => d !== TASK_SYNC_MIGRATION && !(PARALLEL_MIGRATIONS as readonly string[]).includes(d),
+    (d) =>
+      d !== TASK_SYNC_MIGRATION &&
+      d !== CALENDAR_TOKEN_GENERATION_MIGRATION &&
+      d !== CALENDAR_AUTO_LINK_MIGRATION &&
+      d !== CALENDAR_OUTLOOK_PROVIDER_MIGRATION &&
+      d !== CONSENT_HARDENING_MIGRATION &&
+      d !== MEETING_STATUS_DELAYED_MIGRATION &&
+      d !== OUTBOX_DEDUPE_KEY_MIGRATION &&
+      d !== OUTBOX_DEDUPE_KEY_INDEX_MIGRATION &&
+      !(PARALLEL_MIGRATIONS as readonly string[]).includes(d),
   );
 };
 const reportDedupeSql = readFileSync(
@@ -1586,7 +1640,7 @@ describe('integration routing definer functions', () => {
 describe('integration external-account routing (20261028020000)', () => {
   it('sorts right after the ADR-014 geoip migration, before the relay revoke one', () => {
     const dirs = orderedDirs();
-    expect(dirs.at(-1)).toBe(LATEST_MIGRATION);
+    expect(dirs.at(-1)).toBe(CALENDAR_SYNC_CURSOR_MIGRATION);
     expect(dirs.at(-2)).toBe(MEETING_SOURCE_MOBILE_MIGRATION);
     expect(dirs.at(-3)).toBe(MEETING_EMBEDDINGS_MIGRATION);
     expect(dirs.at(-4)).toBe(CALENDAR_EVENTS_MIGRATION);
@@ -1694,7 +1748,7 @@ describe('IP retention owner re-assert (20261028040000)', () => {
   ).replace(/--.*$/gm, '');
   it('is the newest migration, after the ADR-014 geoip one', () => {
     const dirs = orderedDirs();
-    expect(dirs.at(-1)).toBe(LATEST_MIGRATION);
+    expect(dirs.at(-1)).toBe(CALENDAR_SYNC_CURSOR_MIGRATION);
     expect(dirs.at(-2)).toBe(MEETING_SOURCE_MOBILE_MIGRATION);
     expect(dirs.at(-3)).toBe(MEETING_EMBEDDINGS_MIGRATION);
     expect(dirs.at(-4)).toBe(CALENDAR_EVENTS_MIGRATION);
@@ -1764,6 +1818,45 @@ describe('Consent API meeting_consent_events (static)', () => {
     expect(statements).toContain(
       'FOREIGN KEY ("org_id", "meeting_id") REFERENCES "meetings"("org_id", "id") ON DELETE RESTRICT',
     );
+  });
+});
+
+describe('consent hardening migration (static)', () => {
+  const sql = readFileSync(
+    resolve(migrationsDir, CONSENT_HARDENING_MIGRATION, 'migration.sql'),
+    'utf8',
+  );
+  const statements = sql.replace(/--.*$/gm, '');
+  it('sorts after meeting_source_mobile and is additive only', () => {
+    const dirs = readdirSync(migrationsDir, { withFileTypes: true })
+      .filter((x) => x.isDirectory())
+      .map((x) => x.name)
+      .sort();
+    expect(dirs.indexOf(CONSENT_HARDENING_MIGRATION)).toBeGreaterThan(
+      dirs.indexOf(MEETING_SOURCE_MOBILE_MIGRATION),
+    );
+    expect(statements).not.toMatch(
+      /\bDROP\b|RENAME|ALTER COLUMN|NO FORCE|DISABLE ROW LEVEL SECURITY|POLICY|REVOKE/i,
+    );
+  });
+  it('bounds attestedAt back-dating to 24 h on both consent tables', () => {
+    expect(statements).toContain(
+      `CHECK ("attested_at" >= "recorded_at" - interval '86400 seconds')`,
+    );
+    expect(statements).toContain(
+      `CHECK ("occurred_at" >= "recorded_at" - interval '86400 seconds')`,
+    );
+  });
+  it('adds a DB sequence for the meeting consent ledger order, usable by the app role', () => {
+    expect(statements).toContain(
+      'ALTER TABLE "meeting_consent_events" ADD COLUMN "seq" BIGSERIAL NOT NULL;',
+    );
+    expect(statements).toContain('("org_id", "meeting_id", "seq")');
+    expect(statements).toContain(
+      'GRANT USAGE, SELECT ON SEQUENCE "meeting_consent_events_seq_seq" TO meetops_app;',
+    );
+    const model = models.find((m) => m.name === 'MeetingConsentEvent')?.body ?? '';
+    expect(model).toMatch(/seq\s+BigInt\s+@default\(autoincrement\(\)\)/);
   });
 });
 
@@ -1937,5 +2030,71 @@ describe('Phase 7 meeting_embeddings (static)', () => {
       'CREATE INDEX "meeting_embeddings_org_id_model_idx" ON "meeting_embeddings"("org_id", "model");',
     );
     expect(model).toContain('Unsupported("vector(1536)")');
+  });
+});
+
+describe('MeetingStatus transcription_delayed (20261103180000)', () => {
+  it('sorts right after the auto-link columns and only adds the enum value', () => {
+    orderedDirs(); // asserts it sorts right after the auto-link columns
+    const sql = readFileSync(
+      resolve(migrationsDir, MEETING_STATUS_DELAYED_MIGRATION, 'migration.sql'),
+      'utf8',
+    )
+      .split('\n')
+      .filter((l) => l.trim() && !l.trim().startsWith('--'));
+    expect(sql).toEqual([
+      `ALTER TYPE "MeetingStatus" ADD VALUE IF NOT EXISTS 'transcription_delayed';`,
+    ]);
+  });
+});
+
+describe('calendar token generation (20261103060000)', () => {
+  const sql = readFileSync(
+    resolve(migrationsDir, CALENDAR_TOKEN_GENERATION_MIGRATION, 'migration.sql'),
+    'utf8',
+  ).replace(/--.*$/gm, '');
+  it('sorts right after the sync cursor, before the auto-link columns', () => {
+    orderedDirs();
+  });
+  it('is additive only (two columns with constant defaults, checks)', () => {
+    expect(sql).toMatch(/ADD COLUMN "token_generation" INTEGER NOT NULL DEFAULT 0/);
+    expect(sql).toMatch(/ADD COLUMN "refresh_enc_version" SMALLINT/);
+    expect(sql).toMatch(/"refresh_enc_version" IN \(1, 2\)/);
+    expect(sql).not.toMatch(/\b(DROP|DELETE|TRUNCATE|GRANT|UPDATE)\b/i);
+  });
+});
+
+describe('outbox dedupe key (20261103200000 + 20261103200100, #423)', () => {
+  const statements = (dir: string) =>
+    readFileSync(resolve(migrationsDir, dir, 'migration.sql'), 'utf8')
+      .split('\n')
+      .filter((l) => l.trim() && !l.trim().startsWith('--'));
+  it('the index migration is the newest, right after the column migration', () => {
+    orderedDirs();
+  });
+  it('the first migration only adds the nullable column', () => {
+    expect(statements(OUTBOX_DEDUPE_KEY_MIGRATION)).toEqual([
+      'ALTER TABLE "outbox_events" ADD COLUMN "dedupe_key" TEXT;',
+    ]);
+  });
+  it('the second is a single CREATE UNIQUE INDEX CONCURRENTLY statement (no transaction)', () => {
+    const sql = statements(OUTBOX_DEDUPE_KEY_INDEX_MIGRATION);
+    expect(sql).toEqual([
+      'CREATE UNIQUE INDEX CONCURRENTLY "outbox_events_org_id_dedupe_key_key" ON "outbox_events"("org_id", "dedupe_key");',
+    ]);
+    expect(sql.join('\n')).not.toMatch(/\b(BEGIN|COMMIT)\b/i);
+  });
+});
+
+describe('calendar auto-link columns (20261103120000, static)', () => {
+  const sql = readFileSync(
+    resolve(migrationsDir, CALENDAR_AUTO_LINK_MIGRATION, 'migration.sql'),
+    'utf8',
+  ).replace(/--.*$/gm, '');
+  it('is additive: only ADD COLUMN / ADD CONSTRAINT on calendar_event_links', () => {
+    expect(sql).not.toMatch(/\b(DROP|TRUNCATE|DELETE|DISABLE|NO FORCE)\b/i);
+    expect(sql).toMatch(/ADD COLUMN "?source"? TEXT NOT NULL DEFAULT 'manual'/i);
+    expect(sql).toMatch(/CHECK \("?source"? IN \('manual', ?'auto'\)\)/i);
+    expect(sql).toMatch(/ADD COLUMN "?unlinked_at"? TIMESTAMPTZ\(3\)/i);
   });
 });

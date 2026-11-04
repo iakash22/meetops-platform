@@ -36,3 +36,18 @@ multi-region calls fall back to the strictest rule anyway.
   "require explicit consent" setting. Orgs need a country to apply the EU/UK default.
 - Slightly more friction where one-party consent would be legal; no per-jurisdiction rules engine to maintain.
 - The threat-model residual risk "Consent law variance across jurisdictions" drops to Low once these controls ship.
+
+## Implementation notes (consent hardening)
+
+- **Back-dating bound.** `attestedAt` may be at most `CONSENT_ATTESTATION_MAX_BACKDATE_SECONDS` (24 h) before the
+  server receive time, as well as at most 300 s ahead. The API rejects it with 422 `CONSENT_INVALID`. Migration
+  `20261031130000_consent_hardening` adds matching CHECKs on `consent_attestations.attested_at` and
+  `meeting_consent_events.occurred_at` (`NOT VALID`: enforced for every new row, legacy rows aren't re-checked).
+- **Ledger order.** The meeting consent ledger is ordered by the DB sequence `meeting_consent_events.seq`, never by the
+  app-clock `recorded_at`, so a clock-skewed API node can't put a grant ahead of a later revocation.
+- **Open: GDPR erasure (decision for Shubham).** `consent_attestations.attested_by_user_id` and
+  `meeting_consent_events.actor_user_id` reference `users` with `ON DELETE RESTRICT`, and both tables are append-only.
+  Deleting a user who has attested consent therefore fails. Before GA we need a GDPR Art. 17 erasure plan, for example
+  pseudonymise the `users` row and keep the consent evidence (Art. 17(3)(e) legal-claims retention), or use a reviewed
+  maintenance migration (`docs/16-runbooks/meeting-consent-maintenance.md`). Until then, user hard-delete is blocked
+  for attesters by design.
