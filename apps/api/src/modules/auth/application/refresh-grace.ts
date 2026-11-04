@@ -122,9 +122,12 @@ export class MemoryRefreshGraceStore<T> implements RefreshGraceStore<T> {
 const graceKey = (secret: string) =>
   createHash('sha256').update('meetops:refresh-grace:v1\0').update(secret).digest();
 
+const GCM_IV_BYTES = 12;
+const GCM_TAG_BYTES = 16;
+
 export function sealGracePair(value: unknown, secret: string, aad: string): string {
-  const iv = randomBytes(12);
-  const c = createCipheriv('aes-256-gcm', graceKey(secret), iv);
+  const iv = randomBytes(GCM_IV_BYTES);
+  const c = createCipheriv('aes-256-gcm', graceKey(secret), iv, { authTagLength: GCM_TAG_BYTES });
   c.setAAD(Buffer.from(aad));
   const ct = Buffer.concat([c.update(JSON.stringify(value), 'utf8'), c.final()]);
   return Buffer.concat([iv, c.getAuthTag(), ct]).toString('base64url');
@@ -133,10 +136,17 @@ export function sealGracePair(value: unknown, secret: string, aad: string): stri
 export function openGracePair<T>(sealed: string, secret: string, aad: string): T | undefined {
   try {
     const b = Buffer.from(sealed, 'base64url');
-    const d = createDecipheriv('aes-256-gcm', graceKey(secret), b.subarray(0, 12));
+    const iv = b.subarray(0, GCM_IV_BYTES);
+    const tag = b.subarray(GCM_IV_BYTES, GCM_IV_BYTES + GCM_TAG_BYTES);
+    // Reject truncated input: a short tag would weaken GCM authentication.
+    if (iv.length !== GCM_IV_BYTES || tag.length !== GCM_TAG_BYTES) return undefined;
+    const d = createDecipheriv('aes-256-gcm', graceKey(secret), iv, {
+      authTagLength: GCM_TAG_BYTES,
+    });
     d.setAAD(Buffer.from(aad));
-    d.setAuthTag(b.subarray(12, 28));
-    return JSON.parse(Buffer.concat([d.update(b.subarray(28)), d.final()]).toString('utf8')) as T;
+    d.setAuthTag(tag);
+    const ct = b.subarray(GCM_IV_BYTES + GCM_TAG_BYTES);
+    return JSON.parse(Buffer.concat([d.update(ct), d.final()]).toString('utf8')) as T;
   } catch {
     return undefined;
   }
