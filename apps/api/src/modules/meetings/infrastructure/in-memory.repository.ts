@@ -21,10 +21,10 @@ type Row = MeetingRecord & { deletedAt: Date | null; durationSec?: number | null
 export class InMemoryMeetingRepository implements MeetingRepository {
   readonly rows = new Map<string, Row>();
   /**
-   * Live projects as `${organizationId}:${projectId}`. Undefined: projectId is not checked (no in-memory projects
-   * store is shared with this repository); tests set it to exercise the same 400 as Prisma.
+   * Live projects as `${organizationId}:${projectId}`. Always checked, like Prisma: a projectId not in this set
+   * (unknown, soft-deleted - remove it here - or another org's) is the same 400. Empty by default.
    */
-  projects: Set<string> | undefined;
+  projects: Set<string> = new Set();
   constructor(private readonly now: () => Date = () => new Date()) {}
 
   /** Test seam: insert a row directly (e.g. an upload meeting or a soft-deleted one). */
@@ -135,11 +135,7 @@ export class InMemoryMeetingRepository implements MeetingRepository {
   }
 
   create(organizationId: string, input: ManualMeetingCreate): Promise<MeetingRecord> {
-    if (
-      input.projectId &&
-      this.projects &&
-      !this.projects.has(`${organizationId}:${input.projectId}`)
-    )
+    if (input.projectId && !this.projects.has(`${organizationId}:${input.projectId}`))
       return Promise.reject(new MeetingProjectInvalidError());
     const row = this.seed({ organizationId, ...input, status: 'scheduled' });
     return Promise.resolve(strip(row));

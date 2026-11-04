@@ -197,17 +197,20 @@ export class PrismaMeetingRepository implements MeetingRepository {
     }
   }
 
-  /** One org-context transaction (forced RLS): the project check and the insert see the same tenant. */
+  /**
+   * One org-context transaction (forced RLS): the project check and the insert see the same tenant. The project row
+   * is read with SELECT ... FOR SHARE (deleted_at IS NULL in the same statement), so a concurrent soft delete (an
+   * UPDATE of deleted_at) blocks until this insert commits, and a project deleted before the lock is never linked.
+   */
   async create(organizationId: string, input: ManualMeetingCreate) {
     const row = await this.ctx(organizationId, async (tx) => {
-      if (
-        input.projectId &&
-        !(await tx.project.findFirst({
-          where: { organizationId, id: input.projectId, deletedAt: null },
-          select: { id: true },
-        }))
-      )
-        throw new MeetingProjectInvalidError();
+      if (input.projectId) {
+        const live = await tx.$queryRaw<{ id: string }[]>`
+          SELECT id FROM projects
+          WHERE org_id = ${organizationId}::uuid AND id = ${input.projectId}::uuid AND deleted_at IS NULL
+          FOR SHARE`;
+        if (live.length === 0) throw new MeetingProjectInvalidError();
+      }
       return tx.meeting.create({
         data: {
           organizationId,
