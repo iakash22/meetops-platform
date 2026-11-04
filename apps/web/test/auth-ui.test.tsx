@@ -1,4 +1,4 @@
-import { act, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { CheckEmail, RESEND_COOLDOWN_SECONDS } from '@/features/auth/check-email';
@@ -49,7 +49,9 @@ describe('PasswordField', () => {
 });
 
 describe('CheckEmail', () => {
-  beforeEach(() => vi.useFakeTimers({ shouldAdvanceTime: true }));
+  // Pure fake timers: with shouldAdvanceTime the 1 s cooldown tick also follows the wall clock, so on a busy box
+  // (full `pnpm test`) a second of real time between the click and the assertion turned "60s" into "59s".
+  beforeEach(() => vi.useFakeTimers());
   afterEach(() => vi.useRealTimers());
 
   it('focuses the heading and enforces a 60s resend cooldown', async () => {
@@ -63,10 +65,13 @@ describe('CheckEmail', () => {
     }
     const resend = screen.getByRole('button', { name: "Didn't get it? Resend" });
     expect(resend).toBeEnabled();
-    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
-    await user.click(resend);
+    // fireEvent inside act, not userEvent: RTL's async wrapper drains with a real setTimeout(0), which never fires
+    // under pure fake timers. act flushes onResend's promise and the state update; no timer runs, so it is 60s.
+    await act(async () => {
+      fireEvent.click(resend);
+    });
     expect(onResend).toHaveBeenCalledTimes(1);
-    expect(await screen.findByRole('button', { name: /Resend in 60s/ })).toBeDisabled();
+    expect(screen.getByRole('button', { name: /Resend in 60s/ })).toBeDisabled();
   });
 });
 
