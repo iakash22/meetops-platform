@@ -59,14 +59,22 @@ it does not stop someone already running as the deploying user. Once a real targ
 gate should move to a successful GitHub deployment status for `environment=staging`. The `sha` must
 be the full 40-hex-character commit and must equal `git rev-parse HEAD` (the default). The audit
 gate runs as `env -u AUDIT_GATE_NOW node scripts/audit-gate.mjs`, so its clock cannot be
-overridden. The deploy step is a **placeholder**:
-no infrastructure exists yet, so the script only prints the deploy plan. Once a target exists,
-it will need these values, supplied through env or a secret manager (ADR-016) and never kept
-in the repo:
+overridden.
 
-- `DEPLOY_TARGET`
-- `DEPLOY_CREDENTIALS` (short-lived credentials preferred)
-- `DATABASE_URL` (for `prisma migrate deploy`)
+**Target interface** (`scripts/deploy-lib.sh`, target-agnostic; no real target is wired in):
+
+| Env (passed through the `env -i` allowlist) | Rule                                                                                                                                                                                                                         |
+| ------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `DEPLOY_TARGET`                             | unset/`none` = gates only, deploys nothing, writes no marker. Any other value must be in `DEPLOY_KNOWN_TARGETS` (only `none` today) **and** have a `deploy_target_<name>` function, else the run is refused before any gate. |
+| `DEPLOY_CREDENTIALS_FILE`                   | required for a real target: absolute path to a regular, non-symlink file owned by you, mode `0600`/`0400`. Never read or logged by the script; passed to the target function as a path.                                      |
+| `DEPLOY_DATABASE_URL_FILE`                  | required for a real target, same file rules, must hold a `postgres://` URL. Only `prisma migrate deploy` sees it, as `DATABASE_URL`.                                                                                         |
+| `DEPLOY_CREDENTIALS`                        | refused if set (secrets as files, not env values).                                                                                                                                                                           |
+
+Order for a real target: gates → confirmation → `prisma migrate deploy` → `deploy_target_<name> <env> <sha>
+<credentials-file>` → (staging only) staging marker. A failed migration stops before rollout; a failed rollout
+writes no marker, so production can never be unlocked by a placeholder or failed run. Adding a real target is one
+reviewed PR that appends to `DEPLOY_KNOWN_TARGETS` and defines its function (needs-owner: hosting choice, ADR-016
+secret manager).
 
 ## Flow
 
@@ -74,4 +82,5 @@ commit → `pnpm local-gates` → PR (Tester & Security PASS on head SHA) → me
 `scripts/build-images.sh --push` on the merged SHA → `scripts/deploy.sh staging <sha>` →
 `scripts/deploy.sh production <sha>` (refused until staging has run for that sha).
 
-Script tests: `bash tests/ci/deploy.test.sh` (argument, sha, TTY and staging-gate checks; no gates run).
+Script tests: `bash tests/ci/deploy.test.sh` (argument, sha, TTY and staging-gate checks; no gates run) and
+`bash tests/ci/deploy-lib.test.sh` (target interface, migrate → rollout → marker order, stub target only).
