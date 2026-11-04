@@ -179,7 +179,7 @@ export const ACQUIRE_LEASE_LUA = `return redis.call('SET', KEYS[1], ARGV[1], 'PX
 /** Adapts the API's eval-capable Redis client to the shared lease (createRedisConnectionLease). */
 /**
  * Adapts the API's shared ioredis client (REDIS_CLIENT_OPTIONS, commandTimeout set) to RedisDeliveryStore using
- * EVAL only, so RedisLike does not need EXISTS or an EX/NX SET overload.
+ * EVAL only, so RedisLike does not need an EX/NX SET overload.
  */
 export function deliveryRedisFromEval(redis: {
   eval(script: string, numKeys: number, ...keysAndArgs: (string | number)[]): Promise<unknown>;
@@ -194,9 +194,6 @@ export function deliveryRedisFromEval(redis: {
         String(ttl),
       );
       return r === 'OK' ? 'OK' : null;
-    },
-    async exists(key) {
-      return Number(await redis.eval("return redis.call('EXISTS', KEYS[1])", 1, key));
     },
     eval: (script, numKeys, ...args) => redis.eval(script, numKeys, ...args),
   };

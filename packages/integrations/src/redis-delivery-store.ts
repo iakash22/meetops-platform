@@ -1,11 +1,12 @@
 import { randomUUID } from 'node:crypto';
 import { effectiveReplayTtlSeconds, type DeliveryState, type DeliveryStore } from './webhook.js';
 
-/** Minimal ioredis surface: `SET key value EX ttl NX`, `EXISTS`, and `EVAL` for holder-checked commit/release. */
+/**
+ * Minimal ioredis surface: `SET key value EX ttl NX` (claim / markIfNew) and `EVAL` (three-state read and
+ * holder-checked commit/release). Replay reads go through `state()` (one EVAL), so EXISTS is not needed.
+ */
 export interface RedisSetNxClient {
   set(key: string, value: string, ex: 'EX', ttl: number, nx: 'NX'): Promise<'OK' | null>;
-  /** Read-only replay check. */
-  exists(key: string): Promise<number>;
   eval(script: string, numKeys: number, ...args: Array<string | number>): Promise<unknown>;
 }
 
