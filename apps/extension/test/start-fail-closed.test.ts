@@ -99,6 +99,12 @@ describe('Start storage quota', () => {
     expect(r).toEqual({ ok: false, error: QUOTA_CHECK_FAILED_MESSAGE });
   });
 
+  it('refuses when the quota is unknown (0 of 0), failing closed', async () => {
+    const { deps } = makeDeps();
+    const r = await start({ ...deps, storageQuota: async () => ({ usage: 0, quota: 0 }) });
+    expect(r).toEqual({ ok: false, error: QUOTA_CHECK_FAILED_MESSAGE });
+  });
+
   it('starts but warns the user when quota is low', async () => {
     const { deps } = makeDeps();
     const d = { ...deps, storageQuota: async () => ({ usage: 950 * MB, quota: 1000 * MB }) };
