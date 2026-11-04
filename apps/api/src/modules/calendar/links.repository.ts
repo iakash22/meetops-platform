@@ -32,6 +32,7 @@ export class PrismaCalendarEventLinks implements CalendarEventLinksRepository {
           organizationId,
           userId,
           connectionId: { in: ids },
+          unlinkedAt: null,
           meeting: { deletedAt: null },
         },
         select: {
@@ -50,13 +51,24 @@ export class PrismaCalendarEventLinks implements CalendarEventLinksRepository {
   async matchExternalIds(organizationId: string, externalIds: string[]) {
     const ids = [...new Set(externalIds)].slice(0, MAX_MATCH_IDS);
     if (ids.length === 0) return new Map<string, string>();
-    const rows = await this.org(organizationId, (tx) =>
-      tx.meeting.findMany({
-        where: { organizationId, deletedAt: null, externalMeetingId: { in: ids } },
+    // Count per id first (no row cap: a busy ambiguous id can never push another id's only match out of a
+    // truncated page), then read just the ids that match exactly one live meeting.
+    const rows = await this.org(organizationId, async (tx) => {
+      const where = { organizationId, deletedAt: null, externalMeetingId: { in: ids } };
+      const groups = await tx.meeting.groupBy({
+        by: ['externalMeetingId'],
+        where,
+        _count: { _all: true },
+      });
+      const unique = groups
+        .filter((g) => g._count._all === 1 && g.externalMeetingId)
+        .map((g) => g.externalMeetingId as string);
+      if (unique.length === 0) return [];
+      return tx.meeting.findMany({
+        where: { ...where, externalMeetingId: { in: unique } },
         select: { id: true, externalMeetingId: true },
-        take: MAX_MATCH_IDS * 4,
-      }),
-    );
+      });
+    });
     return uniqueMatches(rows);
   }
 
@@ -86,8 +98,10 @@ export class PrismaCalendarEventLinks implements CalendarEventLinksRepository {
           connectionId: l.connectionId,
           providerEventId: l.eventId,
           meetingId: l.meetingId,
+          source: 'manual',
         },
-        update: { meetingId: l.meetingId, userId },
+        // A manual (re)link always wins: it replaces an auto link and revives one the user removed.
+        update: { meetingId: l.meetingId, userId, source: 'manual', unlinkedAt: null },
       });
       return {
         connectionId: r.connectionId,
@@ -102,8 +116,10 @@ export class PrismaCalendarEventLinks implements CalendarEventLinksRepository {
   async remove(organizationId: string, userId: string, connectionId: string, eventId: string) {
     if (!UUID_RE.test(connectionId)) return false;
     const r = await this.org(organizationId, (tx) =>
-      tx.calendarEventLink.deleteMany({
-        where: { organizationId, userId, connectionId, providerEventId: eventId },
+      // Soft delete: the row stays as a tombstone so the worker's auto-link never recreates a link a user removed.
+      tx.calendarEventLink.updateMany({
+        where: { organizationId, userId, connectionId, providerEventId: eventId, unlinkedAt: null },
+        data: { unlinkedAt: new Date() },
       }),
     );
     return r.count > 0;
@@ -123,7 +139,12 @@ type MeetingRow = MeetingRecord & { deletedAt?: Date | null };
 export class InMemoryCalendarEventLinks implements CalendarEventLinksRepository {
   readonly rows = new Map<
     string,
-    CalendarEventLinkRow & { organizationId: string; userId: string }
+    CalendarEventLinkRow & {
+      organizationId: string;
+      userId: string;
+      source?: 'manual' | 'auto';
+      unlinkedAt?: Date | null;
+    }
   >();
   constructor(
     private readonly meetings: () => Iterable<MeetingRow>,
@@ -142,6 +163,7 @@ export class InMemoryCalendarEventLinks implements CalendarEventLinksRepository 
           r.organizationId === organizationId &&
           r.userId === userId &&
           connectionIds.includes(r.connectionId) &&
+          !r.unlinkedAt &&
           this.liveMeeting(organizationId, r.meetingId),
       )
       .map((r) => ({
@@ -173,15 +195,24 @@ export class InMemoryCalendarEventLinks implements CalendarEventLinksRepository 
     const k = this.key(organizationId, l.connectionId, l.eventId);
     const t = this.now();
     const prev = this.rows.get(k);
-    const row = { organizationId, userId, ...l, createdAt: prev?.createdAt ?? t, updatedAt: t };
+    const row = {
+      organizationId,
+      userId,
+      ...l,
+      source: 'manual' as const,
+      unlinkedAt: null,
+      createdAt: prev?.createdAt ?? t,
+      updatedAt: t,
+    };
     this.rows.set(k, row);
     return { ...l, createdAt: row.createdAt, updatedAt: row.updatedAt };
   }
   async remove(organizationId: string, userId: string, connectionId: string, eventId: string) {
     const k = this.key(organizationId, connectionId, eventId);
     const r = this.rows.get(k);
-    if (!r || r.userId !== userId) return false;
-    return this.rows.delete(k);
+    if (!r || r.userId !== userId || r.unlinkedAt) return false;
+    r.unlinkedAt = this.now();
+    return true;
   }
   async removeForConnection(organizationId: string, connectionId: string) {
     for (const [k, r] of this.rows)

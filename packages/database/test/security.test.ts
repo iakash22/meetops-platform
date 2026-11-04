@@ -123,7 +123,9 @@ const CALENDAR_OUTLOOK_PROVIDER_MIGRATION = '20261102000000_calendar_outlook_pro
 const CALENDAR_SYNC_CURSOR_MIGRATION = '20261103000000_calendar_sync_cursor';
 /** #394 N1/N2: token_generation (compare-and-set) + refresh_enc_version (additive). */
 const CALENDAR_TOKEN_GENERATION_MIGRATION = '20261103060000_calendar_token_generation';
-const LATEST_MIGRATION = CALENDAR_TOKEN_GENERATION_MIGRATION;
+/** Auto-link: calendar_event_links.source + unlinked_at tombstone (additive, stacked on the token generation). */
+const CALENDAR_AUTO_LINK_MIGRATION = '20261103120000_calendar_event_links_auto';
+const LATEST_MIGRATION = CALENDAR_AUTO_LINK_MIGRATION;
 /**
  * Parallel PRs that sort between calendar_events and meeting_embeddings (#334 consent events, #341 calendar links).
  * The order checks below ignore them so they hold whichever merges first; when present they must sort before ours.
@@ -161,16 +163,20 @@ const orderedDirs = () => {
     expect(dirs.indexOf(CALENDAR_OUTLOOK_PROVIDER_MIGRATION)).toBe(
       dirs.indexOf(CALENDAR_SYNC_CURSOR_MIGRATION) - 1,
     );
-  // The token generation migration sorts right after the sync cursor and is the newest; the positional checks
-  // below (which end at the sync cursor) ignore it.
+  // Stacked after the sync cursor: #394's token generation, then the auto-link columns (the newest). The
+  // positional checks below (which end at the sync cursor) ignore both.
   expect(dirs.indexOf(CALENDAR_TOKEN_GENERATION_MIGRATION)).toBe(
     dirs.indexOf(CALENDAR_SYNC_CURSOR_MIGRATION) + 1,
+  );
+  expect(dirs.indexOf(CALENDAR_AUTO_LINK_MIGRATION)).toBe(
+    dirs.indexOf(CALENDAR_TOKEN_GENERATION_MIGRATION) + 1,
   );
   expect(dirs.at(-1)).toBe(LATEST_MIGRATION);
   return dirs.filter(
     (d) =>
       d !== TASK_SYNC_MIGRATION &&
       d !== CALENDAR_TOKEN_GENERATION_MIGRATION &&
+      d !== CALENDAR_AUTO_LINK_MIGRATION &&
       d !== CALENDAR_OUTLOOK_PROVIDER_MIGRATION &&
       d !== CONSENT_HARDENING_MIGRATION &&
       !(PARALLEL_MIGRATIONS as readonly string[]).includes(d),
@@ -2012,7 +2018,7 @@ describe('calendar token generation (20261103060000)', () => {
     resolve(migrationsDir, CALENDAR_TOKEN_GENERATION_MIGRATION, 'migration.sql'),
     'utf8',
   ).replace(/--.*$/gm, '');
-  it('is the newest migration, right after the sync cursor', () => {
+  it('sorts right after the sync cursor, before the auto-link columns', () => {
     orderedDirs();
   });
   it('is additive only (two columns with constant defaults, checks)', () => {
@@ -2020,5 +2026,18 @@ describe('calendar token generation (20261103060000)', () => {
     expect(sql).toMatch(/ADD COLUMN "refresh_enc_version" SMALLINT/);
     expect(sql).toMatch(/"refresh_enc_version" IN \(1, 2\)/);
     expect(sql).not.toMatch(/\b(DROP|DELETE|TRUNCATE|GRANT|UPDATE)\b/i);
+  });
+});
+
+describe('calendar auto-link columns (20261103120000, static)', () => {
+  const sql = readFileSync(
+    resolve(migrationsDir, CALENDAR_AUTO_LINK_MIGRATION, 'migration.sql'),
+    'utf8',
+  ).replace(/--.*$/gm, '');
+  it('is additive: only ADD COLUMN / ADD CONSTRAINT on calendar_event_links', () => {
+    expect(sql).not.toMatch(/\b(DROP|TRUNCATE|DELETE|DISABLE|NO FORCE)\b/i);
+    expect(sql).toMatch(/ADD COLUMN "?source"? TEXT NOT NULL DEFAULT 'manual'/i);
+    expect(sql).toMatch(/CHECK \("?source"? IN \('manual', ?'auto'\)\)/i);
+    expect(sql).toMatch(/ADD COLUMN "?unlinked_at"? TIMESTAMPTZ\(3\)/i);
   });
 });
