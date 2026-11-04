@@ -11,8 +11,10 @@ this list links to it instead of repeating it. Items marked **needs-owner** are 
       output into the release notes. Remote CI is not usable, so the local gate is the gate.
 - [ ] `node scripts/audit-gate.mjs` reviewed; no new high advisories without a written exception.
 - [ ] Tester & Security PASS on the exact SHA, and the pre-release security checklist (#391) is complete.
-- [ ] Version bump and changelog entry from the Conventional Commits since the last tag.
-- [ ] SBOM generated for the release (P9 item #11).
+- [ ] Version bump and changelog entry from the Conventional Commits since the last tag:
+      `node scripts/release-version.mjs --write` (`docs/13-ops/release.md`).
+- [ ] SBOM generated for the release (P9 item #11): `scripts/sbom.sh` (needs `syft`, or `cdxgen` +
+      `cargo-cyclonedx`, on the release machine; `docs/13-ops/release.md`).
 - [ ] Migrations reviewed: forward-only, compatible with the previous app version for one release, and tested on a
       restored copy of production data (`docs/16-runbooks/backup-restore.md`).
 - [ ] Fresh backup / PITR point confirmed **before** deploy.

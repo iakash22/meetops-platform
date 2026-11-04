@@ -36,3 +36,4 @@ packages/**/node_modules/
 *.tsbuildinfo
 # Local integration secrets (GitHub App private key etc.)
 .secrets/
+/sbom/
