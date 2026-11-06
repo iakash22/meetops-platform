@@ -56,6 +56,8 @@ export class Stack {
   private apiPort = 0;
   private proxy?: Server;
   origin = '';
+  /** Extra API deps (merged over the recording mailer), e.g. shared in-memory repositories for a suite. */
+  constructor(private readonly extraDeps: Record<string, unknown> = {}) {}
 
   async start(): Promise<void> {
     this.proxy = createHttpServer((req, res) => {
@@ -111,7 +113,10 @@ export class Stack {
       )) as { RecordingAuthMailer: new () => RecordedMailer };
       this.mailer = new RecordingAuthMailer();
     }
-    this.api = mod.createServer({ nodeEnv: 'test', deps: { mailer: this.mailer } });
+    this.api = mod.createServer({
+      nodeEnv: 'test',
+      deps: { ...this.extraDeps, mailer: this.mailer },
+    });
     const address = await this.api.listen({ port: this.apiPort, host: '127.0.0.1' });
     this.apiPort = Number(new URL(address).port);
   }

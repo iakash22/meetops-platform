@@ -37,6 +37,10 @@ export function makeDeps(kv = memoryKV()) {
     setBadge: vi.fn(async () => undefined),
     durableKV: memoryKV(),
     discardLocal: vi.fn<(id: string) => Promise<void>>(async () => undefined),
+    checkPairing: vi.fn(async () => true),
+    storageQuota: vi.fn(async () => ({ usage: 0, quota: 10 * 1024 * 1024 * 1024 })),
+    pendingStorage: vi.fn(async () => ({ pendingBytes: 0, capBytes: 500 * 1024 * 1024 })),
+    heldRecordings: vi.fn(async () => ({ count: 0, closed: 0 })),
   } satisfies BackgroundDeps;
   return { deps, advance: (ms: number) => (t += ms) };
 }

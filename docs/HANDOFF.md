@@ -57,8 +57,8 @@ Merged 31 Oct (#305–#317): extension real meeting API + held recordings (#305,
    - Still open on Akash: the real bundle id (still `com.example.meetops`), the Expo/RN upgrade decision, and EAS credentials.
 2. **P7**: calendar background sync job, Outlook adapter, linking calendar events to meetings, pgvector semantic search.
 3. **#313 follow-ups**: prettier on `github-app.e2e.test.ts`, segment-only E2E name matching, env PEM opt-in, check the selected repos.
-4. ~~**Extension Info items**~~: addressed by #411 (fail-closed Start, durable pending, separate limits) and #437 (required Start checks, Start counts unheld pending chunks, local chunk size = contracts `MAX_CHUNK_BYTES` 64 MiB).
-5. ~~**Desktop**~~: done in 02561e2e (`chunk_put` takes a raw IPC body with the slot in an `x-meetops-chunk` header, JSON refused; `chunk_get` returns raw bytes; legacy chunk folders migrated).
+4. ~~**Extension Info items**~~: addressed by merged #411 (fail-closed Start, durable pending, separate limits) and merged #437 (required Start checks, Start counts unheld pending chunks, server ceiling is contracts `MAX_CHUNK_BYTES` 64 MiB, local chunk/reserve stays 8 MiB).
+5. ~~**Desktop**~~: done in 02561e2efdf4a202d702dc7a87f5eda320c28911 (`chunk_put` takes a raw IPC body with the slot in an `x-meetops-chunk` header, JSON refused; `chunk_get` returns raw bytes; legacy chunk folders migrated).
 6. ~~**Mobile Lows**~~: done in #322 (server meeting id via `meetings/resolve` with `source: 'upload'`; wipe retries and surfaces failed deletes). Follow-up for Arch: a `mobile` `MeetingSource`.
 
 ## 7. How to resume (checklist)

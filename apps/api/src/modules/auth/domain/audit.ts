@@ -41,6 +41,7 @@ export type AuditAction =
   | 'extension.token.issue'
   | 'extension.token.refresh'
   | 'extension.token.reuse_detected'
+  | 'extension.token.delisted'
   | 'extension.revoke'
   // ADR-012 desktop sign-in (behind DESKTOP_AUTH_ENABLED)
   | 'desktop.authorize'

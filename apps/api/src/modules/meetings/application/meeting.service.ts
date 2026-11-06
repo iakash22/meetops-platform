@@ -1,7 +1,7 @@
 import { MAX_ANALYTICS_RANGE_DAYS } from '@meetops/contracts';
 import type { OrganizationService } from '../../organizations/application/organization.service.js';
 import type { RateLimiter } from '../../auth/domain/ports.js';
-import { RateLimitedError } from '../../auth/domain/errors.js';
+import { consumeGuarded } from '../../../shared/guarded-limit.js';
 import type { DirectoryAccess, DirectoryCaller } from '../../directory/access.js';
 import {
   parseAnalyticsRange,
@@ -30,6 +30,18 @@ export const RESOLVE_LIMITS = {
   perOrg: { limit: 300, windowMs: 60_000 },
 } as const;
 
+/** Per caller and per organization fixed windows on POST /orgs/:org/meetings (same budget as resolve). */
+export const CREATE_LIMITS = {
+  perUser: { limit: 30, windowMs: 60_000 },
+  perOrg: { limit: 300, windowMs: 60_000 },
+} as const;
+
+export interface CreateMeetingInput {
+  title: string;
+  startedAt?: string | undefined;
+  projectId?: string | undefined;
+}
+
 export const DEFAULT_MEETING_TITLE = 'Untitled meeting';
 
 /** Meetings use cases. Order on every call: tenant (404) -> CASL (403) -> repository. */
@@ -43,8 +55,8 @@ export class MeetingService {
 
   private async limit(key: string, l: { limit: number; windowMs: number }) {
     if (!this.rateLimiter) return;
-    const r = await this.rateLimiter.consume(key, l.limit, l.windowMs);
-    if (!r.allowed) throw new RateLimitedError(r.retryAfterMs);
+    // 1.5 s timeout; limiter error or timeout -> 503 + Retry-After (fail closed), over limit -> 429.
+    await consumeGuarded(this.rateLimiter, key, l);
   }
 
   list(
@@ -104,5 +116,30 @@ export class MeetingService {
       });
     }
     return out;
+  }
+
+  /** Manual create from the web "New meeting" dialog: source `upload`, status `scheduled`, audited. */
+  async create(c: DirectoryCaller, input: CreateMeetingInput): Promise<MeetingRecord> {
+    this.orgs.authorize(c.ctx, 'create', 'Meeting');
+    const org = c.ctx.organizationId;
+    await this.limit(`meetings:create:user:${org}:${c.ctx.userId}`, CREATE_LIMITS.perUser);
+    await this.limit(`meetings:create:org:${org}`, CREATE_LIMITS.perOrg);
+    const meeting = await this.meetings.create(org, {
+      title: input.title.trim(),
+      source: 'upload',
+      startedAt: input.startedAt ? new Date(input.startedAt) : null,
+      projectId: input.projectId ?? null,
+      createdById: c.ctx.userId,
+    });
+    // Audit after commit via access.record (safeAudit: adapter reports its own failure, never fails the request), the repository-wide
+    // pattern for directory mutations (projects, teams, employees, resolve above). The meeting row is the source of
+    // truth; a lost audit entry is reported by the audit adapter rather than turning a committed create into a 5xx.
+    await this.access.record(c, {
+      action: 'meeting.create',
+      targetType: 'meeting',
+      targetId: meeting.id,
+      metadata: { source: meeting.source },
+    });
+    return meeting;
   }
 }

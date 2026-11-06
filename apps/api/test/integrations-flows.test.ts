@@ -341,7 +341,6 @@ describe('Phase 5 integration flows', () => {
         ...rt,
         deliveryStore: new RedisDeliveryStore({
           set: async () => 'OK',
-          exists: async () => 0,
           eval: async () => null,
         }),
       };

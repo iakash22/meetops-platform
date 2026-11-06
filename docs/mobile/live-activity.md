@@ -47,9 +47,11 @@ ActivityKit content state.
 1. **Swift compile** of the module and the widget (`xcodebuild` / EAS build). Watch for: `AsyncFunction` with
    `async` closures and `#available` guards in ExpoModulesCore 2.x, `ActivityContent` (16.2) vs the deployment
    target 15.1 of the app, and `Duration.formatted(.time(pattern:))`.
-2. **App Intent discovery**: `StopRecordingIntent` is compiled into the `LiveActivity` pod (a static framework).
-   If Xcode's App Intents metadata extraction doesn't pick it up from a pod, tapping Stop may do nothing in the app
-   process. In that case, add `RecordingActivityAttributes.swift` to the main app target from the plugin as well.
+2. **App Intent discovery**: `StopRecordingIntent.swift` is now compiled into the **app target** (and the widget) by
+   the config plugin, and not into the pod, so Xcode extracts its App Intents metadata from the app. Prebuild output
+   confirms that the app and widget Sources phases both list it. Whether iOS 17 then runs `perform()` in the app is
+   still unverified on a device. Fallback: tapping anywhere on the activity (or Stop on iOS 16) opens
+   `meetops://record` (`widgetURL`), where the in-app Stop always works.
 3. Signing of the extension (automatic signing, same team, provisioning profile for
    `com.example.meetops.RecordingLiveActivity`) and EAS credentials for a second bundle id. The real bundle id is
    still pending with the owner.

@@ -286,8 +286,9 @@ describe('extension refresh grace window vs allowlist revoke (#418)', () => {
     expect(r1.statusCode).toBe(200);
     const t2 = r1.json<{ accessToken: string; refreshToken: string }>();
 
-    // The extension id is removed from the allowlist; the same device replays t1 inside ~10 s.
-    extensionIds.length = 0;
+    // The extension id is removed from the allowlist (another id stays, so this is a real delisting, not the
+    // empty-allowlist misconfiguration); the same device replays t1 inside ~10 s.
+    extensionIds.splice(0, extensionIds.length, 'q'.repeat(32));
     const replay = await ext(app, EXTENSION_AUTH_PATHS.refresh, {
       extensionId: EXT,
       deviceId,
