@@ -19,9 +19,9 @@ import { isRelaxedEnv, MissingProductionDependencyError, type ModuleDeps } from 
 import { DirectoryAccess } from '../directory/access.js';
 import { directoryErrors } from '../directory/http/route-kit.js';
 import { ErrorBody } from '../auth/http/schemas.js';
-import { RateLimitedError } from '../auth/domain/errors.js';
+import { consumeGuarded } from '../../shared/guarded-limit.js';
 import { InMemorySearch } from './in-memory.repository.js';
-import { PrismaSearch } from './prisma.repository.js';
+import { PrismaSearch, SearchTimeoutError } from './prisma.repository.js';
 import { DomainError } from '../../shared/domain-error.js';
 import type { SearchRepository } from './ports.js';
 import {
@@ -39,6 +39,32 @@ export { SEARCH_PATHS };
 
 /** Per user per org: 30 searches per minute. */
 export const SEARCH_RATE_LIMIT = { limit: 30, windowMs: 60_000 } as const;
+/**
+ * Per-org caps, checked after the per-user limit, so many members (or many compromised sessions) of one org cannot
+ * together saturate the database or the embedding provider. Semantic search is lower: every query is an embedding
+ * call billed to the org.
+ */
+export const SEARCH_ORG_RATE_LIMIT = { limit: 300, windowMs: 60_000 } as const;
+export const SEMANTIC_SEARCH_ORG_RATE_LIMIT = { limit: 60, windowMs: 60_000 } as const;
+/**
+ * Wall-clock budget per search request (embedding call + query). Defense in depth on top of the 2 s Postgres
+ * statement_timeout: it also bounds pool waits and a slow embedding provider. Over budget -> 503.
+ */
+export const SEARCH_REQUEST_TIMEOUT_MS = 5_000;
+
+/** Resolves like `p`, or rejects with `onTimeout()` after `ms`. The timer never keeps the process alive. */
+export function withSearchTimeout<T>(
+  p: Promise<T>,
+  ms: number,
+  onTimeout: () => Error,
+): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(onTimeout()), ms);
+    timer.unref?.();
+  });
+  return Promise.race([p, timeout]).finally(() => clearTimeout(timer));
+}
 /** Matches the pattern in SearchQuery; the handler re-checks in case validation is bypassed. */
 // eslint-disable-next-line no-control-regex
 const CONTROL_CHARS = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/;
@@ -62,6 +88,8 @@ export type SearchModuleDeps = ModuleDeps & {
   queryEmbedder?: QueryEmbedder;
   /** ai-core `embedWithExecutor` bound to the host's executor; used when no queryEmbedder is injected. */
   embeddingsExecutor?: ExecutorEmbedFn;
+  /** Override SEARCH_REQUEST_TIMEOUT_MS (tests). */
+  searchTimeoutMs?: number;
 };
 
 export function selectSemanticSearchRepository(
@@ -98,6 +126,13 @@ export default async function searchModule(
   const g = makeGuards(auth, deps.security);
   app.addHook('onRequest', g.mutationGuard);
   const access = new DirectoryAccess(organizations, deps.audit);
+  const timeoutMs = deps.searchTimeoutMs ?? SEARCH_REQUEST_TIMEOUT_MS;
+  /**
+   * Every limiter call (per user and per org, both routes) goes through the shared guard: 1.5 s timeout, and a
+   * limiter error or timeout fails closed with 503 + Retry-After; over the limit is 429 + Retry-After.
+   */
+  const consumeOrThrow = (key: string, l: { limit: number; windowMs: number }) =>
+    consumeGuarded(deps.rateLimiter, key, l);
 
   app.get<{ Params: { organizationId: string }; Querystring: SearchQuery }>(
     SEARCH_PATHS.search,
@@ -118,12 +153,8 @@ export default async function searchModule(
       );
       organizations.authorize(c.ctx, 'read', 'Meeting');
       organizations.authorize(c.ctx, 'read', 'Task');
-      const rl = await deps.rateLimiter.consume(
-        `search:${c.ctx.organizationId}:${c.ctx.userId}`,
-        SEARCH_RATE_LIMIT.limit,
-        SEARCH_RATE_LIMIT.windowMs,
-      );
-      if (!rl.allowed) throw new RateLimitedError(rl.retryAfterMs);
+      await consumeOrThrow(`search:${c.ctx.organizationId}:${c.ctx.userId}`, SEARCH_RATE_LIMIT);
+      await consumeOrThrow(`search-org:${c.ctx.organizationId}`, SEARCH_ORG_RATE_LIMIT);
       const q = request.query.q.trim();
       if (CONTROL_CHARS.test(q)) throw new SearchQueryInvalidError();
       const kinds = request.query.kinds
@@ -131,11 +162,11 @@ export default async function searchModule(
         : [...SEARCH_RESULT_KINDS];
       reply.header('cache-control', 'private, no-store');
       if (q.length < 2) return { items: [] };
-      const items = await repo.search(c.ctx.organizationId, {
-        q,
-        kinds,
-        limit: request.query.limit ?? 20,
-      });
+      const items = await withSearchTimeout(
+        repo.search(c.ctx.organizationId, { q, kinds, limit: request.query.limit ?? 20 }),
+        timeoutMs,
+        () => new SearchTimeoutError(),
+      );
       return { items };
     },
   );
@@ -168,32 +199,49 @@ export default async function searchModule(
         requestMeta(request),
       );
       organizations.authorize(c.ctx, 'read', 'Meeting');
-      const rl = await deps.rateLimiter.consume(
-        `search:${c.ctx.organizationId}:${c.ctx.userId}`,
-        SEARCH_RATE_LIMIT.limit,
-        SEARCH_RATE_LIMIT.windowMs,
-      );
-      if (!rl.allowed) throw new RateLimitedError(rl.retryAfterMs);
+      await consumeOrThrow(`search:${c.ctx.organizationId}:${c.ctx.userId}`, SEARCH_RATE_LIMIT);
       const q = request.query.q.trim();
       if (CONTROL_CHARS.test(q)) throw new SearchQueryInvalidError();
       reply.header('cache-control', 'private, no-store');
       if (q.length < 2) return { items: [] };
       if (!embedder) throw new SemanticSearchUnavailableError();
+      // Org cap only for queries that will actually call the embedding provider.
+      await consumeOrThrow(
+        `search-org:semantic:${c.ctx.organizationId}`,
+        SEMANTIC_SEARCH_ORG_RATE_LIMIT,
+      );
+      const deadline = Date.now() + timeoutMs;
       let embedded: { vector: number[]; model: string };
+      // Abort the embedding call when the budget runs out, so an embedder that honours the signal stops work (and
+      // billing) instead of running on after the 503. The ai-core executor path cannot take an external signal yet
+      // (see createExecutorQueryEmbedder); its own overall deadline bounds it there.
+      const embedAbort = new AbortController();
       try {
-        embedded = await embedder.embed(c.ctx.organizationId, q);
+        embedded = await withSearchTimeout(
+          embedder.embed(c.ctx.organizationId, q, { signal: embedAbort.signal }),
+          timeoutMs,
+          () => {
+            embedAbort.abort(new SemanticSearchUnavailableError());
+            return new SemanticSearchUnavailableError();
+          },
+        );
       } catch {
+        embedAbort.abort();
         throw new SemanticSearchUnavailableError();
       }
       const kinds = request.query.kinds
         ? ([...new Set(request.query.kinds.split(','))] as SemanticSearchKind[])
         : [...SEMANTIC_SEARCH_KINDS];
-      const items = await semantic.search(c.ctx.organizationId, {
-        vector: embedded.vector,
-        model: embedded.model,
-        kinds,
-        limit: request.query.limit ?? 10,
-      });
+      const items = await withSearchTimeout(
+        semantic.search(c.ctx.organizationId, {
+          vector: embedded.vector,
+          model: embedded.model,
+          kinds,
+          limit: request.query.limit ?? 10,
+        }),
+        Math.max(1, deadline - Date.now()),
+        () => new SemanticSearchUnavailableError(),
+      );
       return { items };
     },
   );
