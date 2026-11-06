@@ -1,2 +1,7 @@
 #!/usr/bin/env sh
+# Urgent local bypass uses the same switch as pre-commit and pre-push.
+if [ "$MEETOPS_SKIP_HOOKS" = "1" ]; then
+  echo "MEETOPS_SKIP_HOOKS=1: skipping commit-msg." >&2
+  exit 0
+fi
 pnpm exec commitlint --edit "$1"

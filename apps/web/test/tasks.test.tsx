@@ -1,11 +1,11 @@
 import { act, screen, waitFor, within } from '@testing-library/react';
-import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { TaskUpdateEvent } from '@meetops/contracts';
 import { applyTaskUpdate, isIsoDateTime } from '@/lib/api/queries';
 import { dueRange, parseTaskSearch, toApiFilters } from '@/features/tasks/tasks-page';
 import { task1 } from './fixtures/data';
 import { createMockApi, renderApp, resetStores } from './fixtures/render';
+import { chooseSelect } from './fixtures/select';
 
 const XSS = '<img src=x onerror="window.__xss=1"><script>window.__xss=2</script>';
 
@@ -39,17 +39,17 @@ describe('tasks', () => {
         assigneeId: '10000000-0000-4000-8000-000000000001',
       }),
     );
-    expect(screen.getByLabelText('Status')).toHaveValue('done');
-    expect(screen.getByLabelText('Assignee')).toHaveValue('me');
-    expect(screen.getByLabelText('Due')).toHaveValue('overdue');
+    expect(screen.getByLabelText('Status')).toHaveTextContent('Done');
+    expect(screen.getByLabelText('Assignee')).toHaveTextContent('Me');
+    expect(screen.getByLabelText('Due')).toHaveTextContent('Overdue');
   });
 
   it('writes filter changes to URL search params', async () => {
     const { history, api } = renderApp('/tasks');
     await screen.findByText('Send recap');
-    await userEvent.selectOptions(screen.getByLabelText('Status'), 'cancelled');
+    await chooseSelect('Status', 'Cancelled');
     await waitFor(() => expect(history.location.search).toContain('status=cancelled'));
-    await userEvent.selectOptions(screen.getByLabelText('Due'), 'week');
+    await chooseSelect('Due', 'Due this week');
     await waitFor(() => expect(history.location.search).toContain('due=week'));
     await waitFor(() =>
       expect(api.tasks.list).toHaveBeenLastCalledWith('00000000-0000-4000-8000-000000000001', {
@@ -58,14 +58,14 @@ describe('tasks', () => {
         dueBefore: expect.any(String),
       }),
     );
-    await userEvent.selectOptions(screen.getByLabelText('Status'), '');
+    await chooseSelect('Status', 'All');
     await waitFor(() => expect(history.location.search).not.toContain('status='));
   });
 
   it('Unassigned sends unassigned=true and never assigneeId', async () => {
     const { api } = renderApp('/tasks');
     await screen.findByText('Send recap');
-    await userEvent.selectOptions(screen.getByLabelText('Assignee'), 'unassigned');
+    await chooseSelect('Assignee', 'Unassigned');
     await waitFor(() =>
       expect(api.tasks.list).toHaveBeenLastCalledWith('00000000-0000-4000-8000-000000000001', {
         unassigned: true,

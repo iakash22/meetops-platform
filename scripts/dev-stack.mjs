@@ -112,7 +112,9 @@ const apiPort = process.env.PORT || '3000';
 const healthUrl = `http://127.0.0.1:${apiPort}/health`;
 
 try {
-  log('ensuring Docker infra (postgres / redis / minio)…');
+  log(
+    'ensuring Docker infra (local Postgres, Redis, and MinIO only when that service is still local)…',
+  );
   runCapture(['dev:infra:up']);
 
   log('starting API first (wait for /health before web)…');

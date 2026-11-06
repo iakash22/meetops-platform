@@ -1,5 +1,5 @@
 import { UnrecoverableError, Worker } from 'bullmq';
-import { Redis } from 'ioredis';
+import { createAppRedis } from '../redis.js';
 import { embedWithExecutor, type AIExecutor } from '@meetops/ai-core';
 import { logger as baseLogger } from '../logger.js';
 import { createPrismaEmbeddingRepository } from './prisma-repository.js';
@@ -51,7 +51,7 @@ export function startEmbeddingsWorker(
   cfg: { redisUrl: string; concurrency: number },
   deps: Parameters<typeof runMeetingEmbeddings>[0],
 ) {
-  const connection = new Redis(cfg.redisUrl, { maxRetriesPerRequest: null });
+  const connection = createAppRedis(cfg.redisUrl, { maxRetriesPerRequest: null });
   const worker = new Worker<EmbeddingJobPayload>(
     EMBEDDINGS_QUEUE,
     async (job) => {
