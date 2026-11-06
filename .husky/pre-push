@@ -1,3 +1,9 @@
 #!/usr/bin/env sh
 # Full type-aware lint + typecheck before pushing (turbo-cached).
+# Urgent local bypass (CI still runs these checks):
+#   PowerShell: $env:MEETOPS_SKIP_HOOKS='1'; git push
+if [ "$MEETOPS_SKIP_HOOKS" = "1" ]; then
+  echo "MEETOPS_SKIP_HOOKS=1: skipping pre-push. CI still runs lint and typecheck." >&2
+  exit 0
+fi
 corepack pnpm lint && corepack pnpm typecheck

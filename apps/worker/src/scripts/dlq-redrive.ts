@@ -5,7 +5,7 @@
  */
 import { createInterface } from 'node:readline/promises';
 import { Queue } from 'bullmq';
-import { Redis } from 'ioredis';
+import { createAppRedis } from '../redis.js';
 import { QUEUE_NAMES } from '@meetops/contracts';
 import { disconnectPrismaClient } from '@meetops/database';
 import {
@@ -28,7 +28,7 @@ const print = (items: RedrivePlanItem[]) => {
 async function main() {
   const args = parseRedriveArgs(process.argv.slice(2).filter((a) => a !== '--'));
   const redisUrl = process.env.REDIS_URL ?? 'redis://localhost:6379';
-  const conn = new Redis(redisUrl, { maxRetriesPerRequest: null });
+  const conn = createAppRedis(redisUrl, { maxRetriesPerRequest: null });
   const dlq = new Queue(TRANSCRIPTION_DLQ, { connection: conn });
   const transcription = new Queue(QUEUE_NAMES.transcription, { connection: conn });
   try {

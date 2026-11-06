@@ -5,7 +5,7 @@ Pod::Spec.new do |s|
   s.description    = 'Local Expo module of apps/mobile: starts, updates and ends the in-progress recording Live Activity and forwards its Stop action to JS. The widget UI lives in apps/mobile/targets/RecordingLiveActivity.'
   s.author         = 'MeetOps (iakash22)'
   s.homepage       = 'https://github.com/iakash22/meetops-platform'
-  s.license        = { :type => 'MIT' } # root package.json; the repo has no LICENSE file yet
+  s.license        = 'UNLICENSED' # private repo (root package.json "private": true) with no LICENSE file
   s.platforms      = { :ios => '15.1' }
   s.source         = { :git => 'https://github.com/iakash22/meetops-platform.git' }
   s.static_framework = true

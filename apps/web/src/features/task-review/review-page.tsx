@@ -7,6 +7,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { SelectField } from '@/features/directory/directory-ui';
 import {
   Dialog,
   DialogContent,
@@ -120,20 +121,17 @@ const ReviewCard = memo(function ReviewCard({
           <p className="text-sm text-muted-foreground">{item.description}</p>
         ) : null}
         <div className="flex flex-wrap items-end justify-between gap-3">
-          <div className="space-y-1">
-            <Label htmlFor={`${fid}-priority`}>Priority</Label>
-            <select
-              id={`${fid}-priority`}
+          <div className="w-40">
+            <SelectField
+              label="Priority"
+              name={`${fid}-priority`}
               value={priority}
-              onChange={(e) => setPriority(e.target.value as TaskPriority)}
-              className="h-11 rounded-md border bg-background px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            >
-              {PRIORITIES.map((p) => (
-                <option key={p} value={p}>
-                  {p[0]!.toUpperCase() + p.slice(1)}
-                </option>
-              ))}
-            </select>
+              onValueChange={(p) => setPriority(p as TaskPriority)}
+              options={PRIORITIES.map((p) => ({
+                value: p,
+                label: p[0]!.toUpperCase() + p.slice(1),
+              }))}
+            />
           </div>
           <div className="flex gap-2">
             <Button

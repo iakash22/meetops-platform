@@ -15,7 +15,15 @@ export const SEMANTIC_EMBEDDING_DIMS = 1536;
  * same model are ranked. Never logged.
  */
 export interface QueryEmbedder {
-  embed(organizationId: string, text: string): Promise<{ vector: number[]; model: string }>;
+  /**
+   * `opts.signal` aborts when the search request's wall-clock budget runs out (the route has already answered 503).
+   * Implementations that can cancel (an HTTP fetch, a provider SDK call) should pass it through.
+   */
+  embed(
+    organizationId: string,
+    text: string,
+    opts?: { signal?: AbortSignal },
+  ): Promise<{ vector: number[]; model: string }>;
 }
 
 /**
@@ -37,7 +45,12 @@ export type ExecutorEmbedFn = (req: {
  */
 export function createExecutorQueryEmbedder(embed: ExecutorEmbedFn): QueryEmbedder {
   return {
-    async embed(organizationId, text) {
+    async embed(organizationId, text, opts) {
+      // ai-core's embedWithExecutor / AIExecutor.run take no caller AbortSignal (the executor owns its deadline
+      // controller and provider.embed has no signal), so the call cannot be cancelled from here: once the route's
+      // budget aborts, the executor run finishes in the background bounded by its own overallTimeoutMs and its
+      // result is dropped. Do not start a call for an already-aborted request.
+      if (opts?.signal?.aborted) throw new SemanticSearchUnavailableError();
       const r = await embed({ organizationId, inputs: [text] });
       if (r.status !== 'succeeded' || r.vectors.length !== 1)
         throw new SemanticSearchUnavailableError();

@@ -1,7 +1,7 @@
 import { MAX_ANALYTICS_RANGE_DAYS } from '@meetops/contracts';
 import type { OrganizationService } from '../../organizations/application/organization.service.js';
 import type { RateLimiter } from '../../auth/domain/ports.js';
-import { RateLimitedError } from '../../auth/domain/errors.js';
+import { consumeGuarded } from '../../../shared/guarded-limit.js';
 import type { DirectoryAccess, DirectoryCaller } from '../../directory/access.js';
 import {
   parseAnalyticsRange,
@@ -55,8 +55,8 @@ export class MeetingService {
 
   private async limit(key: string, l: { limit: number; windowMs: number }) {
     if (!this.rateLimiter) return;
-    const r = await this.rateLimiter.consume(key, l.limit, l.windowMs);
-    if (!r.allowed) throw new RateLimitedError(r.retryAfterMs);
+    // 1.5 s timeout; limiter error or timeout -> 503 + Retry-After (fail closed), over limit -> 429.
+    await consumeGuarded(this.rateLimiter, key, l);
   }
 
   list(
@@ -131,6 +131,9 @@ export class MeetingService {
       projectId: input.projectId ?? null,
       createdById: c.ctx.userId,
     });
+    // Audit after commit via access.record (safeAudit: adapter reports its own failure, never fails the request), the repository-wide
+    // pattern for directory mutations (projects, teams, employees, resolve above). The meeting row is the source of
+    // truth; a lost audit entry is reported by the audit adapter rather than turning a committed create into a 5xx.
     await this.access.record(c, {
       action: 'meeting.create',
       targetType: 'meeting',

@@ -13,6 +13,7 @@ import type { Task } from '@meetops/contracts';
 import { confidenceLabel, validateTitle } from '@/features/task-review/review-page';
 import { createMockApi, renderApp, resetStores } from './fixtures/render';
 import { waitForRouteData } from './fixtures/route-ready';
+import { chooseSelect } from './fixtures/select';
 
 const ORG = '00000000-0000-4000-8000-000000000001';
 const T = '2026-10-20T11:00:00.000Z';
@@ -95,7 +96,7 @@ describe('task review', () => {
     expect(title).toHaveAttribute('aria-invalid', 'true');
     expect(accepted).not.toHaveBeenCalled();
     await userEvent.type(title, 'Ship notes');
-    await userEvent.selectOptions(within(form).getByLabelText('Priority'), 'high');
+    await chooseSelect('Priority', 'High', form);
     await userEvent.click(within(form).getByRole('button', { name: 'Accept' }));
     await waitFor(() =>
       expect(accepted).toHaveBeenCalledWith({ title: 'Ship notes', priority: 'high' }),
@@ -227,7 +228,7 @@ describe('task review', () => {
     expect(title).toHaveAttribute('aria-invalid', 'true');
     await userEvent.clear(title);
     await userEvent.type(title, 'Ship it');
-    await userEvent.selectOptions(within(form).getByLabelText('Priority'), 'urgent');
+    await chooseSelect('Priority', 'Urgent', form);
     await userEvent.click(within(form).getByRole('button', { name: 'Save changes' }));
     await waitFor(() =>
       expect(patch).toHaveBeenLastCalledWith({ title: 'Ship it', priority: 'urgent' }),
@@ -261,7 +262,7 @@ describe('task review', () => {
     await userEvent.click(await screen.findByRole('button', { name: 'Accept' }));
     await userEvent.click(await screen.findByRole('button', { name: 'Edit Suggested 1' }));
     const form = await screen.findByRole('form', { name: 'Edit task' });
-    await userEvent.selectOptions(within(form).getByLabelText('Status'), 'done');
+    await chooseSelect('Status', 'Done', form);
     await userEvent.click(within(form).getByRole('button', { name: 'Save changes' }));
     expect(await screen.findByText("Couldn't update the task")).toBeInTheDocument();
   });

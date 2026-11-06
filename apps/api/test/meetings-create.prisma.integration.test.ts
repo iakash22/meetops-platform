@@ -95,4 +95,36 @@ describe.skipIf(!url)('PrismaMeetingRepository.create (live RLS)', { timeout: 60
       MeetingProjectInvalidError,
     );
   });
+
+  it('rejects a soft-deleted project (FOR SHARE + deleted_at check in the insert transaction)', async () => {
+    const repo = new PrismaMeetingRepository(db);
+    const gone = randomUUID();
+    await withOrganizationContext(
+      orgA,
+      (tx) =>
+        tx.project.create({
+          data: {
+            id: gone,
+            organizationId: orgA,
+            name: 'Gone',
+            key: `G${gone.slice(0, 4).toUpperCase()}`,
+          },
+        }),
+      { client: db },
+    );
+    await withOrganizationContext(
+      orgA,
+      (tx) => tx.project.update({ where: { id: gone }, data: { deletedAt: new Date() } }),
+      { client: db },
+    );
+    await expect(
+      repo.create(orgA, {
+        title: 'x',
+        source: 'upload',
+        startedAt: null,
+        projectId: gone,
+        createdById: null,
+      }),
+    ).rejects.toBeInstanceOf(MeetingProjectInvalidError);
+  });
 });

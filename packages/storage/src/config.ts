@@ -1,4 +1,9 @@
-import { ALLOWED_MEDIA_MIME_TYPES, CHUNK_UPLOAD_URL_TTL_SECONDS, MAX_CHUNK_BYTES, MAX_MEDIA_BYTES } from '@meetops/contracts';
+import {
+  ALLOWED_MEDIA_MIME_TYPES,
+  CHUNK_UPLOAD_URL_TTL_SECONDS,
+  MAX_CHUNK_BYTES,
+  MAX_MEDIA_BYTES,
+} from '@meetops/contracts';
 import type { StorageProviderId } from './types.js';
 
 /** Hard ceiling for any presigned URL/POST TTL (seconds). */
@@ -40,7 +45,7 @@ export const DEFAULT_ALLOWED_MIME_TYPES: readonly string[] = ALLOWED_MEDIA_MIME_
 /** Recording-session chunk PUT TTL from contracts (300 s). */
 export const SESSION_CHUNK_TTL_SECONDS = CHUNK_UPLOAD_URL_TTL_SECONDS;
 
-const PROVIDERS: readonly StorageProviderId[] = ['minio', 'r2', 's3'];
+const PROVIDERS: readonly StorageProviderId[] = ['minio', 'neon', 'r2', 's3'];
 
 function parseBool(name: string, v: string | undefined): boolean | undefined {
   if (v === undefined || v.trim() === '') return undefined;
@@ -50,10 +55,17 @@ function parseBool(name: string, v: string | undefined): boolean | undefined {
   throw new Error(`Invalid boolean for ${name}`);
 }
 
-function parseInt(name: string, v: string | undefined, def: number, min: number, max: number): number {
+function parseInt(
+  name: string,
+  v: string | undefined,
+  def: number,
+  min: number,
+  max: number,
+): number {
   if (v === undefined || v.trim() === '') return def;
   const n = Number(v);
-  if (!Number.isInteger(n) || n < min || n > max) throw new Error(`${name} must be an integer in ${min}..${max}`);
+  if (!Number.isInteger(n) || n < min || n > max)
+    throw new Error(`${name} must be an integer in ${min}..${max}`);
   return n;
 }
 
@@ -73,28 +85,60 @@ export function assertTtl(ttl: number): number {
  */
 export function loadStorageConfig(env: NodeJS.ProcessEnv = process.env): StorageConfig {
   const provider = (env.STORAGE_PROVIDER ?? 'minio').trim().toLowerCase() as StorageProviderId;
-  if (!PROVIDERS.includes(provider)) throw new Error('Invalid STORAGE_PROVIDER (expected minio|r2|s3)');
+  if (!PROVIDERS.includes(provider))
+    throw new Error('Invalid STORAGE_PROVIDER (expected minio|neon|r2|s3)');
   const bucket = env.STORAGE_BUCKET;
   if (!bucket) throw new Error('STORAGE_BUCKET is required');
   const endpoint = env.STORAGE_ENDPOINT || undefined;
-  if ((provider === 'minio' || provider === 'r2') && !endpoint) {
+  if ((provider === 'minio' || provider === 'neon' || provider === 'r2') && !endpoint) {
     throw new Error(`STORAGE_ENDPOINT is required for provider ${provider}`);
   }
-  const maxPartBytes = parseInt('STORAGE_MAX_PART_BYTES', env.STORAGE_MAX_PART_BYTES, MAX_CHUNK_BYTES, S3_MIN_PART_BYTES, MAX_CHUNK_BYTES);
-  const mimes = (env.STORAGE_ALLOWED_MIME_TYPES ?? '').split(',').map((s) => s.trim().toLowerCase()).filter(Boolean);
+  const maxPartBytes = parseInt(
+    'STORAGE_MAX_PART_BYTES',
+    env.STORAGE_MAX_PART_BYTES,
+    MAX_CHUNK_BYTES,
+    S3_MIN_PART_BYTES,
+    MAX_CHUNK_BYTES,
+  );
+  const mimes = (env.STORAGE_ALLOWED_MIME_TYPES ?? '')
+    .split(',')
+    .map((s) => s.trim().toLowerCase())
+    .filter(Boolean);
   const cfg: StorageConfig = {
     provider,
-    region: env.STORAGE_REGION || (provider === 'r2' ? 'auto' : 'us-east-1'),
+    region:
+      env.STORAGE_REGION ||
+      (provider === 'r2' ? 'auto' : provider === 'neon' ? 'us-east-2' : 'us-east-1'),
     bucket,
-    forcePathStyle: parseBool('STORAGE_FORCE_PATH_STYLE', env.STORAGE_FORCE_PATH_STYLE) ?? provider === 'minio',
-    uploadTtlSeconds: parseInt('STORAGE_UPLOAD_TTL_SECONDS', env.STORAGE_UPLOAD_TTL_SECONDS, DEFAULT_UPLOAD_TTL_SECONDS, 1, MAX_PRESIGN_TTL_SECONDS),
-    downloadTtlSeconds: parseInt('STORAGE_DOWNLOAD_TTL_SECONDS', env.STORAGE_DOWNLOAD_TTL_SECONDS, DEFAULT_DOWNLOAD_TTL_SECONDS, 1, MAX_PRESIGN_TTL_SECONDS),
+    forcePathStyle:
+      parseBool('STORAGE_FORCE_PATH_STYLE', env.STORAGE_FORCE_PATH_STYLE) ??
+      (provider === 'minio' || provider === 'neon'),
+    uploadTtlSeconds: parseInt(
+      'STORAGE_UPLOAD_TTL_SECONDS',
+      env.STORAGE_UPLOAD_TTL_SECONDS,
+      DEFAULT_UPLOAD_TTL_SECONDS,
+      1,
+      MAX_PRESIGN_TTL_SECONDS,
+    ),
+    downloadTtlSeconds: parseInt(
+      'STORAGE_DOWNLOAD_TTL_SECONDS',
+      env.STORAGE_DOWNLOAD_TTL_SECONDS,
+      DEFAULT_DOWNLOAD_TTL_SECONDS,
+      1,
+      MAX_PRESIGN_TTL_SECONDS,
+    ),
     limits: {
-      maxObjectBytes: parseInt('STORAGE_MAX_OBJECT_BYTES', env.STORAGE_MAX_OBJECT_BYTES, MAX_MEDIA_BYTES, 1, MAX_MEDIA_BYTES),
+      maxObjectBytes: parseInt(
+        'STORAGE_MAX_OBJECT_BYTES',
+        env.STORAGE_MAX_OBJECT_BYTES,
+        MAX_MEDIA_BYTES,
+        1,
+        MAX_MEDIA_BYTES,
+      ),
       maxPartBytes,
       maxParts: parseInt('STORAGE_MAX_PARTS', env.STORAGE_MAX_PARTS, 1000, 1, 10000),
-      allowedMimeTypes: mimes.length ? mimes : DEFAULT_ALLOWED_MIME_TYPES
-    }
+      allowedMimeTypes: mimes.length ? mimes : DEFAULT_ALLOWED_MIME_TYPES,
+    },
   };
   if (endpoint) cfg.endpoint = endpoint;
   if (env.STORAGE_ACCESS_KEY_ID) cfg.accessKeyId = env.STORAGE_ACCESS_KEY_ID;
