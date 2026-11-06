@@ -122,6 +122,14 @@ export const HELD_WARN_RATIO = 0.8;
  */
 export const MIN_FREE_FOR_RECORDING_BYTES = LOCAL_RECORDING_CHUNK_BYTES;
 
+/**
+ * Free room Start requires below the cap: one full local chunk, or the whole cap when it is smaller than that. The
+ * held check (heldStorageLevel) and the pending check (pendingStorageFull) both use this, so they agree.
+ */
+export function startReserveBytes(capBytes: number): number {
+  return Math.min(MIN_FREE_FOR_RECORDING_BYTES, capBytes);
+}
+
 export type HeldStorage = 'ok' | 'near-full' | 'full';
 
 /** How held data limits a new recording: 'full' blocks Start, 'near-full' warns. */
@@ -129,13 +137,46 @@ export function heldStorageLevel(h: Pick<HeldSummary, 'bytes' | 'capBytes'>): He
   const bytes = h.bytes ?? 0;
   const cap = h.capBytes ?? 0;
   if (!cap || !bytes) return 'ok';
-  if (cap - bytes < Math.min(MIN_FREE_FOR_RECORDING_BYTES, cap * 0.05)) return 'full';
+  if (cap - bytes < startReserveBytes(cap)) return 'full';
   return bytes >= cap * HELD_WARN_RATIO ? 'near-full' : 'ok';
 }
 
 export const HELD_NEAR_FULL_MESSAGE =
   'Held recordings are using most of the local storage. A new recording may run out of space: retry or discard ' +
   'them first.';
+/** Local bytes Start must account for: every chunk not uploaded yet (held or queued), and the cap. */
+export interface PendingStorage {
+  pendingBytes: number;
+  capBytes: number;
+}
+
+/**
+ * True when the cap cannot take one more full local chunk on top of the pending (never-evicted) bytes.
+ * Throws on a nonsensical answer so Start fails closed.
+ */
+export function pendingStorageFull(p: PendingStorage): boolean {
+  const { pendingBytes, capBytes } = p;
+  if (
+    !Number.isFinite(pendingBytes) ||
+    !Number.isFinite(capBytes) ||
+    pendingBytes < 0 ||
+    capBytes <= 0
+  ) {
+    throw new Error('pending storage is unknown');
+  }
+  return capBytes - pendingBytes < startReserveBytes(capBytes);
+}
+
+export const PENDING_FULL_START_MESSAGE =
+  'Local storage is full of recordings that have not uploaded yet, so recording was not started. Reconnect so ' +
+  'they can upload, or discard them, then try again.';
+export const PENDING_CHECK_FAILED_MESSAGE =
+  'Could not check local recording storage, so recording was not started. Try again.';
+
+export async function pendingStorage(store: ChunkStore): Promise<PendingStorage> {
+  return { pendingBytes: await store.pendingBytes(), capBytes: store.config.maxBytes };
+}
+
 export const HELD_FULL_START_MESSAGE =
   'Local storage is full of held recordings. Retry upload or discard them before starting a new recording.';
 

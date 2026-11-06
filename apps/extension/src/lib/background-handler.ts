@@ -1,4 +1,12 @@
-import { HELD_FULL_START_MESSAGE, heldStorageLevel, type HeldSummary } from './drain.js';
+import {
+  HELD_FULL_START_MESSAGE,
+  PENDING_CHECK_FAILED_MESSAGE,
+  PENDING_FULL_START_MESSAGE,
+  heldStorageLevel,
+  pendingStorageFull,
+  type HeldSummary,
+  type PendingStorage,
+} from './drain.js';
 import {
   addPendingDiscard,
   clearPendingDiscard,
@@ -53,8 +61,11 @@ export interface BackgroundDeps {
   discardLocal: (sessionId: string) => Promise<void>;
   /** Fallback after repeated discard failures: delete the session from IndexedDB only. */
   deleteLocal?: (sessionId: string) => Promise<void>;
-  /** Number of recordings held after a server refusal (409/413); surfaced in the popup. */
-  heldRecordings?: () => Promise<HeldSummary>;
+  /**
+   * Number of recordings held after a server refusal (409/413); surfaced in the popup. Required: Start fails closed
+   * on it, so a missing implementation must be a type error, not a silently skipped check.
+   */
+  heldRecordings: () => Promise<HeldSummary>;
   /** Retry the held recordings (popup Retry upload). */
   retryHeld?: () => Promise<void>;
   /** Delete the held recordings locally (popup Discard, after confirmation). */
@@ -63,9 +74,14 @@ export interface BackgroundDeps {
    * Pairing check for Start (ADR-005). Resolves true only when the extension is paired. A false result or a
    * throw blocks Start (fail closed).
    */
-  checkPairing?: () => Promise<boolean>;
+  checkPairing: () => Promise<boolean>;
   /** Browser storage usage/quota (navigator.storage.estimate). A throw blocks Start (fail closed). */
-  storageQuota?: () => Promise<QuotaEstimate>;
+  storageQuota: () => Promise<QuotaEstimate>;
+  /**
+   * Bytes of ALL not-yet-uploaded chunks (held or merely queued) and the local cap. Pending chunks are never
+   * evicted, so Start needs one full chunk of room on top of them. A throw blocks Start (fail closed).
+   */
+  pendingStorage: () => Promise<PendingStorage>;
   /** Override OFFSCREEN_TIMEOUT_MS (tests). */
   offscreenTimeoutMs?: number;
 }
@@ -203,7 +219,7 @@ async function withHeld(
   r: BackgroundResponse,
   otherAlert: boolean,
 ): Promise<BackgroundResponse> {
-  if (!deps.heldRecordings || !r.ok) return r;
+  if (!r.ok) return r;
   const h = await deps.heldRecordings().catch(() => undefined);
   if (!h) return r;
   if (state.status === 'idle') {
@@ -281,37 +297,39 @@ export async function handleBackgroundMessage(
 
     case 'START_RECORDING': {
       if (state.status !== 'idle' && state.status !== 'error') return fail('Already recording');
-      // Fail closed: recording requires a verified pairing; an error during the check is a refusal.
-      if (deps.checkPairing) {
-        let paired: boolean;
-        try {
-          paired = (await deps.checkPairing()) === true;
-        } catch {
-          return fail(PAIRING_CHECK_FAILED_MESSAGE);
-        }
-        if (!paired) return fail(PAIRING_REQUIRED_MESSAGE);
+      // Fail closed: every check below is mandatory; a missing answer, a throw or a non-true value refuses Start.
+      let paired: boolean;
+      try {
+        paired = (await deps.checkPairing()) === true;
+      } catch {
+        return fail(PAIRING_CHECK_FAILED_MESSAGE);
       }
-      // Fail closed: if the held-recordings check itself fails, we cannot know there is room, so do not start.
-      if (deps.heldRecordings) {
-        let held: HeldSummary;
-        try {
-          held = await deps.heldRecordings();
-        } catch {
-          return fail(HELD_CHECK_FAILED_MESSAGE);
-        }
-        if (heldStorageLevel(held) === 'full') return fail(HELD_FULL_START_MESSAGE);
+      if (!paired) return fail(PAIRING_REQUIRED_MESSAGE);
+      // Held recordings (server-refused) block Start with their own message so the popup can offer Retry/Discard.
+      let held: HeldSummary;
+      try {
+        held = await deps.heldRecordings();
+      } catch {
+        return fail(HELD_CHECK_FAILED_MESSAGE);
+      }
+      if (heldStorageLevel(held) === 'full') return fail(HELD_FULL_START_MESSAGE);
+      // Pending chunks (held or still queued) are never evicted: without room for one more chunk the very first
+      // chunk of the new recording would be refused, so do not start.
+      try {
+        if (pendingStorageFull(await deps.pendingStorage()))
+          return fail(PENDING_FULL_START_MESSAGE);
+      } catch {
+        return fail(PENDING_CHECK_FAILED_MESSAGE);
       }
       let quotaWarning: string | undefined;
-      if (deps.storageQuota) {
-        let level: QuotaLevel;
-        try {
-          level = quotaLevel(await deps.storageQuota());
-        } catch {
-          return fail(QUOTA_CHECK_FAILED_MESSAGE);
-        }
-        if (level === 'full') return fail(QUOTA_FULL_START_MESSAGE);
-        if (level === 'low') quotaWarning = QUOTA_LOW_MESSAGE;
+      let level: QuotaLevel;
+      try {
+        level = quotaLevel(await deps.storageQuota());
+      } catch {
+        return fail(QUOTA_CHECK_FAILED_MESSAGE);
       }
+      if (level === 'full') return fail(QUOTA_FULL_START_MESSAGE);
+      if (level === 'low') quotaWarning = QUOTA_LOW_MESSAGE;
       let used: string[];
       let consent: Awaited<ReturnType<typeof consumeConsent>>;
       try {

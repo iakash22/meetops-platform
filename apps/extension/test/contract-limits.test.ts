@@ -19,9 +19,10 @@ describe('MAX_DURATION_MS', () => {
 });
 
 describe('chunk size limits', () => {
-  it('keeps the local recording chunk (8 MiB) separate from the upload ceiling (64 MiB)', () => {
+  it('keeps the local recording chunk (8 MiB) separate from the server chunk limit (64 MiB)', () => {
     expect(limits.LOCAL_RECORDING_CHUNK_BYTES).toBe(8 * 1024 * 1024);
     expect(limits.UPLOAD_CHUNK_MAX_BYTES).toBe(64 * 1024 * 1024);
+    expect(limits.UPLOAD_CHUNK_MAX_BYTES).toBe(contracts.MAX_CHUNK_BYTES);
   });
 
   it('local recording chunk never exceeds the contract upload ceiling', () => {
