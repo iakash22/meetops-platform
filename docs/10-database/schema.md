@@ -25,6 +25,8 @@ Package: `packages/database` (`@meetops/database`). PostgreSQL with Prisma and p
 
 Enums (21): MembershipRole (`owner`, `admin`, `member`, `viewer`), InvitationStatus, ProjectStatus, MeetingStatus, MeetingParticipantRole, TranscriptStatus, ReportStatus, ExtractedTaskStatus, TaskPriority, ApprovalDecision, TaskStatus, AiRunStatus, AiRunKind, StorageObjectKind, StorageObjectStatus, OutboxStatus, MeetingSource, RecordingStatus, RecordingSource, RecordingSessionStatus, RecordingAbortReason.
 
+`users.google_sub` (migration `20261106120000_user_google_sub`) is a nullable unique Google OIDC subject. Password-only accounts leave it null. A Google-only account stores no usable password hash.
+
 ## Tenancy and RLS
 
 - Every tenant-scoped table has `org_id`, and its indexes lead with `org_id`.

@@ -142,7 +142,7 @@ Decisions:
 
 ## 6. Phase status
 
-Current phase report: [`docs/PHASE_STATUS.md`](PHASE_STATUS.md) (overall ~60%, coordinator estimate, 27 Oct 2026).
+Current phase report: [`docs/PHASE_STATUS.md`](PHASE_STATUS.md) (7 Nov 2026 snapshot on `main`). The 27 Oct figures below are historical.
 
 Roadmap (`README.md`): 0 foundation · 1 auth/orgs/employees/teams/projects/RBAC · 2 meetings, uploads, recording, FFmpeg · 3 transcription, reports, task drafts · 4 task review/notifications · 5 GitHub/Jira two-way sync · 6 live transcription + extension · 7 calendar/imports/search/analytics · 8 desktop + mobile offline recording · 9 production hardening, billing, release.
 

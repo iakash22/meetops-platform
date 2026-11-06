@@ -102,8 +102,11 @@ Also useful: [Page Flows signing-up](https://pageflows.com/web/flows/signing-up/
 
 Key spec points:
 
-- **The API is email + password only.** There are no SSO/Google/GitHub/magic-link/passkey
-  endpoints, so **render no SSO buttons and no "or" divider** until the API adds OAuth.
+- **Email and password, plus Google on the web when the API is configured.** There is no
+  magic-link, passkey, GitHub login, or enterprise SSO. "Continue with Google" is a full-page
+  navigation to `GET /auth/google/start` and renders only when `GET /auth/providers` returns
+  `{ google: true }`. Until then, render no Google button and no "or" divider. Mobile and desktop
+  do not offer Google sign-in.
 - Signup = full name → work email → password (8–128 chars with a letter, number, and symbol, mirrors `packages/contracts`) with a
   strength meter → one shimmer CTA. No confirm-password field.
 - Signup, forgot-password and resend are enumeration-safe: signup always ends on a "Check your

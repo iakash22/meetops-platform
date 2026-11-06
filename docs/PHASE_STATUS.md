@@ -1,4 +1,29 @@
-# Phase status — 4 Nov 2026 (~21:50 IST)
+# Phase status — 7 Nov 2026 (~00:45 IST)
+
+## Update — 7 Nov 2026 (~00:45 IST)
+
+Tree: `main` at `34c0d247` (merge of `dev`, 00:43 IST, 7 Nov). This snapshot is the local `main` tip. Open pull requests were not re-queried.
+
+Landed in that merge (`f6c77fd8` on `dev`):
+
+- **Web Google sign-in** (ADR-021 item 3, web only). Authorization code + PKCE. The API exchanges the code and checks the ID token (audience, nonce, `email_verified`). No Google refresh token is stored. Routes: `GET /auth/providers`, `GET /auth/google/start`, `GET /auth/google/callback`. The button stays hidden until `GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET`, and `GOOGLE_OAUTH_REDIRECT_URI` are set together. That client is separate from `GOOGLE_CALENDAR_*`. Mobile and desktop do not offer Google sign-in.
+- **Linking.** Match `users.google_sub` first (`20261106120000_user_google_sub`). A verified local account with no Google subject is linked. An unverified local email is refused. A new Google user is created with the email already verified and no usable password.
+- **Password policy.** Signup and reset require 8–128 characters with a letter, a number, and a symbol. The rule lives in `@meetops/contracts` and is enforced by the API and by web, mobile, and desktop signup. Login still accepts any non-empty password up to 128 characters.
+
+| Phase                          | 4 Nov | 7 Nov | Remaining                                                                                                       |
+| ------------------------------ | ----- | ----- | --------------------------------------------------------------------------------------------------------------- |
+| P0 Foundation                  | 100%  | 100%  | —                                                                                                               |
+| P1 Auth, orgs, RBAC            | ~95%  | ~97%  | MFA (TOTP/WebAuthn) and enterprise SSO. Google web sign-in is in; turn it on with `GOOGLE_OAUTH_*`              |
+| P2 Capture, uploads, consent   | ~92%  | ~92%  | Extension Info items                                                                                            |
+| P3 Transcription, AI           | ~85%  | ~85%  | Gemini key (owner), real-provider E2E                                                                           |
+| P4 Tasks, approval             | ~87%  | ~87%  | —                                                                                                               |
+| P5 Integrations                | ~88%  | ~88%  | Jira creds, GitHub App install (owner)                                                                          |
+| P6 Notifications               | ~87%  | ~87%  | Production email domain (owner)                                                                                 |
+| P7 Calendar, search, analytics | ~85%  | ~85%  | Google Calendar OAuth client (`GOOGLE_CALENDAR_*`, owner). Login OAuth is a different client and is implemented |
+| P8 Native desktop/mobile       | ~85%  | ~85%  | Never compiled; device checklists; bundle ids (owner)                                                           |
+| P9 Hardening, release          | ~60%  | ~60%  | Alert routing (owner), SBOM, versioning, deploy target, backup drill, billing, KMS, store submission            |
+
+Percentages are coordinator-style estimates, not measured. P2–P9 did not move in this snapshot; only P1 changed, for Google web sign-in and the shared password policy.
 
 ## Update — 4 Nov 2026 (~21:50 IST)
 

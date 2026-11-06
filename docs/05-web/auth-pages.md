@@ -116,17 +116,18 @@ invitation.
 
 **Errors tied to a field are shown under that field. Every other error is a toast.**
 
-| Error                                                                      | Where              | How                                                                                                                           |
-| -------------------------------------------------------------------------- | ------------------ | ----------------------------------------------------------------------------------------------------------------------------- |
-| `VALIDATION_FAILED` / `BAD_REQUEST` with `details` mapped to a field       | Under the field    | `applyFieldErrors(setError, err, { email: 'email', … })`: sets `aria-invalid` and `aria-describedby`, focuses the first field |
-| `AUTH_FAILED` (login)                                                      | Under **password** | Keep the email, clear the password, focus it: "Email or password is incorrect."                                               |
-| Network / 5xx                                                              | Toast              | "Can't reach MeetOps right now" · "Check your connection and try again."                                                      |
-| `CSRF_INVALID` after the client's single retry                             | Toast              | "Session expired, please try again"                                                                                           |
-| `RATE_LIMITED` (429)                                                       | Toast              | "Too many attempts" plus the server message                                                                                   |
-| `UNAUTHENTICATED`                                                          | Toast              | "Your session has ended"                                                                                                      |
-| Anything else                                                              | Toast              | "Something went wrong" plus `describeError(err)`                                                                              |
-| Link problems (expired or invalid token on verify, reset or invite)        | Inline panel       | Shows the problem and the next step (resend or request a new link)                                                            |
-| Success (email verified, password changed, email re-sent, member invited…) | Toast              | `notify.success(...)`                                                                                                         |
+| Error                                                                      | Where              | How                                                                                                                                       |
+| -------------------------------------------------------------------------- | ------------------ | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| `VALIDATION_FAILED` / `BAD_REQUEST` with `details` mapped to a field       | Under the field    | `applyFieldErrors(setError, err, { email: 'email', … })`: sets `aria-invalid` and `aria-describedby`, focuses the first field             |
+| `AUTH_FAILED` (login)                                                      | Under **password** | Keep the email, clear the password, focus it: "Email or password is incorrect."                                                           |
+| Google sign-in (`/login?error=google` or `error=google_unverified`)        | Toast              | Fixed copy, then the `error` query is removed. `next` is kept when it is a same-origin path. No Google error text and no email in the URL |
+| Network / 5xx                                                              | Toast              | "Can't reach MeetOps right now" · "Check your connection and try again."                                                                  |
+| `CSRF_INVALID` after the client's single retry                             | Toast              | "Session expired, please try again"                                                                                                       |
+| `RATE_LIMITED` (429)                                                       | Toast              | "Too many attempts" plus the server message                                                                                               |
+| `UNAUTHENTICATED`                                                          | Toast              | "Your session has ended"                                                                                                                  |
+| Anything else                                                              | Toast              | "Something went wrong" plus `describeError(err)`                                                                                          |
+| Link problems (expired or invalid token on verify, reset or invite)        | Inline panel       | Shows the problem and the next step (resend or request a new link)                                                                        |
+| Success (email verified, password changed, email re-sent, member invited…) | Toast              | `notify.success(...)`                                                                                                                     |
 
 Helpers live in `apps/web/src/lib/errors/notify.ts`:
 

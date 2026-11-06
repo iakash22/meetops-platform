@@ -35,14 +35,15 @@ Set-Cookie: __Host-meetops_sid=<token>; Path=/; Secure; HttpOnly; SameSite=Lax
 
 Using `@fastify/rate-limit` with Redis store; keys by IP and by normalized account identifier.
 
-| Endpoint               | Per IP         | Per account/email                                                                  | Other                                                    |
-| ---------------------- | -------------- | ---------------------------------------------------------------------------------- | -------------------------------------------------------- |
-| Login                  | 20/min         | 5 failures / 15 min → progressive delay; 10 → temporary lock 15 min + email notice | No permanent lockout (DoS); CAPTCHA after threshold      |
-| Signup                 | 5/hour         | 3/hour per email                                                                   | Email verification required before org data access       |
-| Password reset request | 5/hour         | 3/hour                                                                             | Token: 256-bit, single use, hashed at rest, 30 min TTL   |
-| Reset submit           | 10/hour        | —                                                                                  | Revoke all sessions on success                           |
-| Invite send            | 50/day per org | 5/day per address                                                                  | Invite token single-use, 7-day TTL, bound to email + org |
-| Invite accept          | 10/hour        | —                                                                                  | Must match invited email                                 |
+| Endpoint               | Per IP         | Per account/email                                                                  | Other                                                                  |
+| ---------------------- | -------------- | ---------------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
+| Login                  | 20/min         | 5 failures / 15 min → progressive delay; 10 → temporary lock 15 min + email notice | No permanent lockout (DoS); CAPTCHA after threshold                    |
+| Signup                 | 5/hour         | 3/hour per email                                                                   | Email verification required before org data access                     |
+| Password reset request | 5/hour         | 3/hour                                                                             | Token: 256-bit, single use, hashed at rest, 30 min TTL                 |
+| Reset submit           | 10/hour        | —                                                                                  | Revoke all sessions on success                                         |
+| Invite send            | 50/day per org | 5/day per address                                                                  | Invite token single-use, 7-day TTL, bound to email + org               |
+| Invite accept          | 10/hour        | —                                                                                  | Must match invited email                                               |
+| Google sign-in (web)   | 20/min         | —                                                                                  | Start and callback share one budget. Off until `GOOGLE_OAUTH_*` is set |
 
 ## 6. Enumeration-safe responses
 
@@ -55,6 +56,10 @@ Using `@fastify/rate-limit` with Redis store; keys by IP and by normalized accou
 
 Log (without secrets) login success/failure, lockout, reset, session revoke, role change, MFA changes to `audit_events`.
 
-## 8. Future
+## 8. Google sign-in (web)
 
-Decided in [ADR-021](../15-decisions/ADR-021-mfa-sso.md) (approved 2026-11-01): MFA (TOTP and WebAuthn passkeys, recovery codes) required for owners/admins, Google sign-in (OIDC), step-up via `auth_level`. SAML/OIDC SSO per org is deferred to the first enterprise deal (Enterprise plan only).
+Shipped 2026-11-07 for the web app. Authorization code + PKCE, server-side code exchange, ID token checks (audience, nonce, verified email). No Google refresh token is stored. Account linking is by `users.google_sub`, not by email alone: a verified local account can be linked; an unverified local email is refused. Mobile, desktop, and the extension do not start this flow. Calendar OAuth is a different client (`GOOGLE_CALENDAR_*`).
+
+## 9. Future
+
+Decided in [ADR-021](../15-decisions/ADR-021-mfa-sso.md) (approved 2026-11-01) and not built yet: MFA (TOTP and WebAuthn passkeys, recovery codes) required for owners/admins, and step-up via `auth_level`. SAML/OIDC SSO per org is deferred to the first enterprise deal (Enterprise plan only).

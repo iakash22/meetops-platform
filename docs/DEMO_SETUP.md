@@ -30,6 +30,7 @@ The auth-mail BullMQ consumer is started by the **API** process (`apps/api`), no
 | --------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
 | LLM summaries (Gemini)      | `GEMINI_API_KEY` (`GEMINI_MODEL=gemini-2.5-flash-lite`)                                                                                                     | The free Gemini tier must not process customer data; demo with test meetings only                                            |
 | Speech-to-text (AssemblyAI) | `ASSEMBLYAI_API_KEY` (`AI_STT_PROVIDER=assemblyai`)                                                                                                         | Optional webhook mode: `ASSEMBLYAI_WEBHOOK_URL`, `ASSEMBLYAI_WEBHOOK_SECRET`                                                 |
+| Google sign-in (web login)  | `GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET`, `GOOGLE_OAUTH_REDIRECT_URI`                                                                         | Set all three or none. Dev redirect `http://localhost:5173/api/auth/google/callback`. Separate client from calendar          |
 | Google Calendar OAuth       | `GOOGLE_CALENDAR_CLIENT_ID`, `GOOGLE_CALENDAR_CLIENT_SECRET`                                                                                                | Redirect `${INTEGRATIONS_API_ORIGIN}/calendar/google/callback`                                                               |
 | Jira OAuth                  | `JIRA_CLIENT_ID`, `JIRA_CLIENT_SECRET`                                                                                                                      | Redirect `${INTEGRATIONS_API_ORIGIN}/integrations/jira/callback`                                                             |
 | GitHub App                  | `GITHUB_APP_ID`, `GITHUB_APP_SLUG`, `GITHUB_APP_CLIENT_ID`, `GITHUB_APP_CLIENT_SECRET`, `GITHUB_APP_PRIVATE_KEY_FILE`, `GITHUB_APP_WEBHOOK_SECRET`          | See `docs/runbooks/integrations-real-setup.md`                                                                               |
@@ -41,8 +42,8 @@ Infrastructure: `DATABASE_URL`, `DATABASE_RELAY_URL`, `REDIS_URL`, `STORAGE_*` (
 
 ## 3. Not covered here
 
-- Calendar sync worker: the scheduler lives on the open P7 branch (`feat/p7-calendar-sync`, PR #324) and is not
-  wired into `apps/worker` yet.
+- Calendar background sync is in `apps/worker` and stays off unless `CALENDAR_SYNC_ENABLED=true`.
+  It uses the calendar OAuth client, not `GOOGLE_OAUTH_*`.
 - AI usage ledger and idempotency claims are durable in Postgres (`AI_STORES=durable`, the default) and survive worker
   restarts. `AI_STORES=memory` is for tests only and is refused unless `NODE_ENV=test`. The claim TTL must exceed the AI job
   deadline or the worker refuses to start; a billed call whose usage write fails keeps its claim, so a retry cannot
