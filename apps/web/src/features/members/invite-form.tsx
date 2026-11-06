@@ -1,9 +1,9 @@
-import { useForm } from 'react-hook-form';
+import { Controller, useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import type { Id } from '@meetops/contracts';
 import { Button } from '@/components/ui/button';
-import { Label } from '@/components/ui/label';
+import { SelectField } from '@/features/directory/directory-ui';
 import { Field } from '@/features/auth/field';
 import type { Invitation, InvitableRole } from '@/lib/api/client';
 import { ApiError } from '@/lib/api/client';
@@ -37,6 +37,7 @@ export function InviteForm({
   const defaultRole: InvitableRole = roles.includes('member') ? 'member' : (roles[0] ?? 'viewer');
   const {
     register,
+    control,
     handleSubmit,
     reset,
     setError,
@@ -83,19 +84,20 @@ export function InviteForm({
           {...register('email')}
         />
       </div>
-      <div className="grid gap-1.5">
-        <Label htmlFor="invite-role">Role</Label>
-        <select
-          id="invite-role"
-          className="h-9 rounded-md border border-input bg-background px-2 text-sm"
-          {...register('role')}
-        >
-          {roles.map((r) => (
-            <option key={r} value={r}>
-              {ROLE_LABEL[r]}
-            </option>
-          ))}
-        </select>
+      <div className="w-40">
+        <Controller
+          name="role"
+          control={control}
+          render={({ field }) => (
+            <SelectField
+              label="Role"
+              name="role"
+              value={field.value}
+              onValueChange={field.onChange}
+              options={roles.map((r) => ({ value: r, label: ROLE_LABEL[r] }))}
+            />
+          )}
+        />
       </div>
       <Button type="submit" disabled={isSubmitting}>
         {isSubmitting ? 'Sending…' : 'Send invite'}

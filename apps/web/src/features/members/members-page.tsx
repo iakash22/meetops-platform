@@ -5,6 +5,13 @@ import { EmptyState, ErrorState, LoadingState } from '@/components/states/states
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { useSession } from '@/features/session/use-session';
 import { ApiError, type Invitation } from '@/lib/api/client';
 import { useApi } from '@/lib/api/context';
@@ -208,24 +215,22 @@ function MemberRow({
         </div>
         <div className="flex items-center gap-2">
           {roles.length > 0 ? (
-            <>
-              <label htmlFor={selectId} className="sr-only">
-                Role for {name}
-              </label>
-              <select
-                id={selectId}
-                className="h-9 rounded-md border border-input bg-background px-2 text-sm"
-                value={member.role}
-                disabled={pending}
-                onChange={(e) => void changeRole(e.target.value as Role)}
-              >
+            <Select
+              value={member.role}
+              disabled={pending}
+              onValueChange={(role) => void changeRole(role as Role)}
+            >
+              <SelectTrigger id={selectId} className="h-9 w-36" aria-label={`Role for ${name}`}>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
                 {roles.map((r) => (
-                  <option key={r} value={r}>
+                  <SelectItem key={r} value={r}>
                     {ROLE_LABEL[r]}
-                  </option>
+                  </SelectItem>
                 ))}
-              </select>
-            </>
+              </SelectContent>
+            </Select>
           ) : (
             <Badge variant={member.role === 'owner' ? 'default' : 'secondary'}>
               {ROLE_LABEL[member.role]}
