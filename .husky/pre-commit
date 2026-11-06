@@ -1,4 +1,10 @@
 #!/usr/bin/env sh
+# Urgent local bypass (CI still runs these checks):
+#   PowerShell: $env:MEETOPS_SKIP_HOOKS='1'; git commit -m "message"
+if [ "$MEETOPS_SKIP_HOOKS" = "1" ]; then
+  echo "MEETOPS_SKIP_HOOKS=1: skipping pre-commit. CI still scans and lints." >&2
+  exit 0
+fi
 # Fast pre-commit: gitleaks on staged changes, then prettier + NON-type-aware
 # eslint on staged files only. Type-aware lint and typecheck run in
 # .husky/pre-push (and in CI; CI's gitleaks job is the blocking backstop).
