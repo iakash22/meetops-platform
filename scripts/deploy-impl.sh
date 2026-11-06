@@ -11,7 +11,8 @@ case "$-" in *p*) ;; *)
   /usr/bin/printf 'ABORT: run scripts/deploy.sh, not deploy-impl.sh (wrapper sentinel missing)\n' >&2
   /bin/kill -KILL $$; }
 # Deploy implementation. Do NOT run directly: use scripts/deploy.sh, which scrubs the env and
-# execs this file with /bin/bash --norc --noprofile -p (PLACEHOLDER: no deploy target yet).
+# execs this file with /bin/bash --norc --noprofile -p. Target-agnostic: no real target is wired in
+# (DEPLOY_TARGET unset/none = gates only); the interface lives in scripts/deploy-lib.sh.
 # Usage: scripts/deploy.sh [--non-interactive] <staging|production> [image-sha]
 # Requires an interactive TTY confirmation (read from /dev/tty) for every environment.
 # Non-interactive runs must pass --non-interactive AND set DEPLOY_CONFIRM="deploy <env>".
@@ -42,6 +43,9 @@ for _b in getent id stat git cut date mkdir chmod dirname; do
 done
 GETENT=/usr/bin/getent; ID=/usr/bin/id; STAT=/usr/bin/stat; GIT=/usr/bin/git
 cd "$(/usr/bin/dirname "$0")/.."
+# Target interface (DEPLOY_TARGET / DEPLOY_CREDENTIALS_FILE / DEPLOY_DATABASE_URL_FILE); see deploy-lib.sh.
+# shellcheck source=deploy-lib.sh
+. ./scripts/deploy-lib.sh
 
 NON_INTERACTIVE=0
 if [ "${1:-}" = "--non-interactive" ]; then NON_INTERACTIVE=1; shift; fi
@@ -93,7 +97,8 @@ if [ "$ENV_NAME" = production ]; then
     abort "staging gate: sha $SHA has not been deployed to staging (no regular marker file)";; esac
   [ "${MINFO#*|}" = "$MY_UID" ] || abort "staging gate: marker not owned by current user"
 fi
-if [ "$PREFLIGHT_ONLY" = 1 ]; then echo "PREFLIGHT OK"; exit 0; fi
+deploy_validate_target
+if [ "$PREFLIGHT_ONLY" = 1 ]; then echo "PREFLIGHT OK (target: $DEPLOY_TARGET_NAME)"; exit 0; fi
 [ -z "$("$GIT" status --porcelain)" ] || abort "working tree is dirty"
 
 echo "==> gate: pnpm local-gates"
@@ -111,14 +116,6 @@ if [ "$NON_INTERACTIVE" = 0 ]; then
 fi
 
 echo "All gates passed."
-echo "PLACEHOLDER: would deploy ghcr.io/iakash22/meetops-platform/{api,worker,web,realtime}:sha-$SHA to $ENV_NAME."
-echo "Needed when a real target exists (provide via env/secret manager, never in the repo):"
-echo "  DEPLOY_TARGET       deploy endpoint (cluster API, host, or platform app id)"
-echo "  DEPLOY_CREDENTIALS  deploy credential (short-lived/OIDC preferred)"
-echo "  DATABASE_URL        to run 'prisma migrate deploy' before rollout"
-echo "Nothing was deployed, so no staging marker is recorded."
-# When a real target exists, call record_staging ONLY after the deploy command succeeds:
-#   real_deploy_command && { [ "$ENV_NAME" = staging ] && record_staging; }
 record_staging() {
   umask 077
   local d="$PASSWD_HOME" sub
@@ -130,3 +127,5 @@ record_staging() {
   /usr/bin/date -u +%FT%TZ > "$STATE_DIR/staging-$SHA"
   echo "Recorded staging gate for $SHA in $STATE_DIR."
 }
+# migrate -> rollout -> staging marker (only after a real rollout succeeds); placeholder when DEPLOY_TARGET=none.
+deploy_run "$ENV_NAME" "$SHA" "$GATE_PATH" record_staging

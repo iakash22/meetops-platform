@@ -101,10 +101,66 @@ Postgres is the source of truth for work that matters (notification outbox, tran
 
 ## Restore drill (quarterly and before each major release)
 
-1. Restore the latest Postgres backup and object-storage copy into staging.
-2. Run `pnpm db:migrate`, start the stack, sign in as a seeded test user and play a recording.
-3. Record start and finish times (measured RTO), backup age (measured RPO), problems and the git SHA.
-4. File follow-ups for anything that missed the targets.
+Scripts: `scripts/db-backup.sh` and `scripts/db-restore-drill.sh` (tests: `tests/ci/backup-drill.test.sh`).
+Both take the connection **only from libpq env** (`PGHOST`, `PGPORT`, `PGUSER`, `PGPASSFILE`), never from argv, so
+no password reaches `ps`, history or logs.
+
+1. **Back up** with the owner/migrator role (never the RLS-bound app role):
+
+   ```bash
+   PGHOST=... PGUSER=... PGPASSFILE=~/.pgpass scripts/db-backup.sh --db meetops --out backups/
+   ```
+
+   Writes `meetops-<db>-<UTC>.dump` (`pg_dump -Fc`) and `.meta` (sha256, git SHA, latest applied Prisma migration,
+   forced-RLS table count, exact row count per public table), both `0600`. `backups/` is gitignored.
+
+   **Encryption (recommended for anything leaving the host):** add `--encrypt age --recipient <age1...>` or
+   `--encrypt gpg --recipient <key-id>`. `pg_dump` is piped straight into the encryptor, so no plaintext dump touches
+   disk; the file is `.dump.age` / `.dump.gpg` and `.meta` records `encryption=` and the sha256 of the encrypted
+   file. If the requested tool is not installed the script exits 3 and writes nothing (it never falls back to
+   plaintext). `--out` is forced to `0700` (an existing dir owned by another user is refused); the dump is written
+   to a temp file and renamed only on success.
+
+   **Off-box storage:** copy the encrypted dump and its `.meta` to storage in a different account/region from the
+   primary (e.g. a versioned, object-locked bucket with lifecycle expiry aligned with ADR-019), using credentials
+   from the secret manager, never a plaintext dump. Keep the age identity / gpg private key **separately** from the
+   backups (secret manager or offline), and test decryption in every drill. Where backups live and for how long is
+   needs-owner (see below).
+
+2. **Copy the dump to a local drill server** (a scratch Postgres 16 + pgvector, e.g. `pgvector/pgvector:pg16`
+   with `--network host -c port=55439`). The drill refuses a non-local `PGHOST`, any
+   `PGHOSTADDR`/`PGSERVICE`/`PGSERVICEFILE`, and a server whose `inet_server_addr()` is not loopback or a unix
+   socket. Table names from `.meta` must be plain lowercase identifiers and are quoted.
+
+3. **Run the drill:**
+
+   ```bash
+   PGHOST=127.0.0.1 PGPORT=55439 PGUSER=postgres PGPASSFILE=... \
+     scripts/db-restore-drill.sh --dump backups/meetops-meetops-<UTC>.dump [--target drill_q4] [--keep]
+   ```
+
+   Encrypted dumps: pass the `.dump.age` file with `--identity <age key file>`, or a `.dump.gpg` with the key in your
+   gpg keyring; decryption streams into `pg_restore`. It verifies the checksum (before restoring), restores into a
+   **new** `drill_*` database (unique default name; it refuses an existing one or any other name), and checks pgvector, the forced-RLS table count, the latest migration and every table's
+   row count against `.meta`. It prints the restore time (RTO input) and backup age (RPO input), then drops the
+   scratch database unless `--keep`. Exit: 0 PASS, 1 FAIL, 2 usage, 3 missing/mismatched tools, 4 refused.
+
+   **Client version:** `pg_restore` must not be newer than the server (v17 tools emit `SET transaction_timeout`,
+   which v16 rejects; the drill exits 3). Set `PG_BIN` to v16 client tools, or run inside the server image. Use the
+   same tools for the backup.
+
+4. For a full-stack drill, keep the database (`--keep`), point a staging stack at it, run `pnpm db:migrate`, sign
+   in as a seeded test user and play a recording (object-storage copy restored as above).
+5. Record start/finish (measured RTO), backup age (measured RPO), problems and the git SHA in the drill log; file
+   follow-ups for anything that missed the targets.
+
+Server-free tests (stub client tools, gpg round trip): `bash tests/ci/backup-drill-stub.test.sh`.
+Run the real-server tests against a throwaway server:
+
+```bash
+PGHOST=127.0.0.1 PGPORT=55439 PGUSER=postgres PGPASSFILE=... DRILL_TEST_CONTAINER=<container> \
+  bash tests/ci/backup-drill.test.sh
+```
 
 ## Open owner decisions
 

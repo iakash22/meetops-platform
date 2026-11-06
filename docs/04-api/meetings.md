@@ -22,9 +22,14 @@ Body (strict, mirrors `MeetingInput` in `apps/web/src/features/meetings/manage-a
 
 - `title`: 1..300 chars, not blank (trimmed before storing). `startedAt`: optional ISO 8601 date-time.
   `projectId`: optional; must be a live project of the same organization (unknown, deleted or other-org: the same
-  `400 VALIDATION_FAILED`).
+  `400 VALIDATION_FAILED`). The project row is read `FOR SHARE` (with `deleted_at IS NULL`) in the insert's
+  transaction, so a concurrent soft delete waits for the insert and a project deleted first is never linked.
 - Unknown fields (`organizationId`, `source`, `status`, ...) are `400 VALIDATION_FAILED`.
 - Response `201` with the contracts `Meeting` DTO: `source: "upload"`, `status: "scheduled"`, `createdById` = caller.
-- Rate limited per caller (30/min) and per organization (300/min): `429 RATE_LIMITED` + `retry-after`.
-- Audit-logged as `meeting.create` (`targetType: meeting`, metadata `{ source }`), like `resolve`.
+- Rate limited per caller (30/min) and per organization (300/min): `429 RATE_LIMITED` + `retry-after`. The limiter
+  call (also on `resolve`) goes through `apps/api/src/shared/guarded-limit.ts`: 1.5 s timeout, and a limiter error or
+  timeout fails closed with `503 PROVIDER_UNAVAILABLE` + `retry-after: 5`.
+- Audit-logged as `meeting.create` (`targetType: meeting`, metadata `{ source }`), like `resolve`. The entry is
+  written after the transaction commits through `DirectoryAccess.record` (`safeAudit`: an audit failure does not fail
+  the committed create), the same pattern as projects, teams and employees.
 - The OpenAPI document (`/docs/json`) is generated from the route schema.
