@@ -1,4 +1,80 @@
-# Phase status — 3 Nov 2026 (~02:45 IST)
+# Phase status — 4 Nov 2026 (~21:50 IST)
+
+## Update — 4 Nov 2026 (~21:50 IST)
+
+Tree: `integration/phase-1` at `1d46e8c6` (merge of #441, 21:42 IST, 4 Nov). PR states queried live from the GitHub
+API at ~21:50 IST. Percentages below are re-estimated for this snapshot (coordinator-style estimates, not measured).
+
+**#384 (`integration/phase-1` → `main`)**: open, head `1d46e8c6`, 296 commits, 379 files, +29,107/−1,884.
+GitHub reports `mergeable_state: unstable` (no passing remote checks: Actions minutes are exhausted, so the local
+gate is the gate). `main` has 3 commits not on integration (SelectField / invite-form UI). Only Akash merges #384.
+
+Merged since the 04:20 snapshot (42 PRs):
+
+- P3/AI: transcription retry + DLQ (#414), DLQ redrive (#420), `transcription_delayed` alert (#423), DLQ follow-ups
+  (#433), STT no-fallback comment fix (#435), ADR-009 revision (#409).
+- P5/integrations: refresh grace window (#421, #426, #428), webhook delivery store (#432, #434), DB org config store
+  (#425, #429), extension fail-closed pending (#411), extension auth allowlist/revoke (#418).
+- P7: semantic embeddings pipeline (#350), calendar background sync (#394) and auto-link (#398).
+- P2/P4 media and consent: consent hardening (#387), upload chunk rate limits (#419), media rate-limit hardening
+  (#424), storage quota fail-closed (#430).
+- P8: iOS Live Activity hardening (#347, merged 21:24 IST).
+- Realtime/web: realtime hardening (#417), web realtime client (#415, #422), web CSS budget (#441).
+- P9: docs CSP in prod (#404), security checklist (#391), dependency overrides (#412), P9 hardening (#416), CD
+  pipeline scaffold (#408) and deploy sentinel (#427), turbo test outputs (#413), coverage tooling (#431), pnpm
+  overrides guard (#405), Tester Lows batch (#403).
+- Docs/tests: architecture overview (#407), README DB setup (#406), email verification concurrency (#410), auth-UI
+  test deflake (#438), web E2E smoke suite (#440).
+
+**Open PRs** (base `integration/phase-1` unless noted), live at ~21:50 IST:
+
+| PR   | What                                                                       |
+| ---- | -------------------------------------------------------------------------- |
+| #384 | `integration/phase-1` → `main` (base `main`; Akash merges)                 |
+| #402 | This status snapshot, ops/observability docs, P9 #13 alert rules           |
+| #436 | Worker: retry transcription delayed-status reads                           |
+| #437 | Extension: fail-closed Start, unheld pending chunks, server chunk size     |
+| #439 | API: audit extension delisting, keep families on an empty allowlist        |
+| #442 | Database: `ai_org_config.updated_by_id` must be an org member              |
+| #443 | Handoff docs: desktop `chunk_put` and extension Info items done            |
+| #444 | Integrations: delivery-store doc nits, `REDIS_IT_URL` passthrough          |
+| #445 | API: per-org search caps and a 503 timeout on search routes                |
+| #446 | API: `POST /orgs/:organizationId/meetings` (New meeting 404 found by #440) |
+| #447 | Mobile: Live Activity follow-ups                                           |
+| #448 | Release: CycloneDX SBOM script, versioning and changelog (P9 #11/#12)      |
+| #449 | Deploy: validated target-agnostic interface with `prisma migrate deploy`   |
+| #450 | Ops: Postgres backup and local restore drill (P9 #10)                      |
+
+#441 merged at 21:42 IST; #347 and #440 are merged and no longer open.
+
+| Phase                          | 3 Nov | 4 Nov | Remaining                                                                                            |
+| ------------------------------ | ----- | ----- | ---------------------------------------------------------------------------------------------------- |
+| P0 Foundation                  | 100%  | 100%  | —                                                                                                    |
+| P1 Auth, orgs, RBAC            | ~95%  | ~95%  | MFA/SSO policy (ADR-021)                                                                             |
+| P2 Capture, uploads, consent   | ~90%  | ~92%  | Extension Info items                                                                                 |
+| P3 Transcription, AI           | ~75%  | ~85%  | Gemini key (owner), real-provider E2E                                                                |
+| P4 Tasks, approval             | ~85%  | ~87%  | —                                                                                                    |
+| P5 Integrations                | ~85%  | ~88%  | Jira creds, GitHub App install (owner)                                                               |
+| P6 Notifications               | ~85%  | ~87%  | Production email domain (owner)                                                                      |
+| P7 Calendar, search, analytics | ~70%  | ~85%  | Google OAuth client (owner), follow-ups                                                              |
+| P8 Native desktop/mobile       | ~85%  | ~85%  | Never compiled; device checklists; bundle ids (owner)                                                |
+| P9 Hardening, release          | ~50%  | ~60%  | Alert routing (owner), SBOM, versioning, deploy target, backup drill, billing, KMS, store submission |
+
+## Update — 3 Nov 2026 (~04:20 IST)
+
+Tree: `integration/phase-1` at `190b9d5` (merge of #397, 03:47 IST). PR states read from the GitHub API at ~04:15 IST.
+
+Merged since the 02:45 snapshot:
+
+- #393 P9 security headers, CORP, CSP reporting, env validation; #399 its follow-ups (R4, R5, R7, R13, R14, R19, R20, R24).
+- #400 credential-free test coverage for the analytics SQL and semantic search.
+- #401 415 for non-JSON unsafe request bodies and CSRF token rotation (R16, R17).
+- #385 calendar links deleted inside the revoke transaction; #386 task sync gated on one approval read; #392 analytics counts; #395 ajv/esbuild overrides; #396 Outlook tenant validated at startup; #397 the previous status refresh.
+
+Still open: #387 (consent hardening), #394 (background sync) and #398 (auto-link, stacked on #394), all merged up to
+`190b9d5`; #350 (embeddings pipeline, based on `085078f4`, does not contain `190b9d5`); #347 (iOS Live Activity, draft);
+#391 (P9 docs); #384 (integration → `main`). Tester Lows are batched in #403 (#396, #398–#401) and #404 (production
+`/docs` CSP and admin gate); #394's own findings are fixed on #394.
 
 ## Update — 3 Nov 2026 (~02:45 IST)
 
@@ -72,7 +148,7 @@ Merged into `integration/phase-1` today (#305–#317): extension real meeting AP
 
 ## Update — 27 Oct 2026 (~23:20 IST)
 
-Checked against `gh pr list` / `gh pr view` and the tree at `integration/phase-1` `99a6f4f` and `main` `02646a1`. Phase percentages below are unchanged (coordinator estimates, not measured).
+Checked against `gh pr list` / `gh pr view` and the tree at `integration/phase-1` `99a6f4f` and `main` `02646a1`. Phase percentages are coordinator estimates, not measured.
 
 - Merged after the ~21:30 IST snapshot:
   - [#249](https://github.com/iakash22/meetops-platform/pull/249) (into `integration/phase-1`, 22:40 IST) and [#250](https://github.com/iakash22/meetops-platform/pull/250) (into `main`, 22:41 IST): notifications architecture plan and [ADR-013](15-decisions/ADR-013-notifications-architecture.md) (Proposed).

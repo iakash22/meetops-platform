@@ -37,3 +37,4 @@ packages/**/node_modules/
 # Local integration secrets (GitHub App private key etc.)
 .secrets/
 /backups/
+/sbom/

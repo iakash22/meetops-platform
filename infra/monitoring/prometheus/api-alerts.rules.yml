@@ -1,0 +1,55 @@
+# MeetOps API alert rules (P9 item #13, docs/p9/remaining-work.md). Prometheus rule-file format.
+# Metrics come from apps/api/src/shared/metrics.ts (token-gated /metrics, job label `meetops-api`).
+# Alert routing (email/pager) is owner-blocked; see docs/14-observability/alerts.md.
+# Keep every `expr` on ONE line: apps/api/test/alert-rules.test.ts parses this file without a YAML library.
+groups:
+  - name: meetops-api
+    rules:
+      - alert: MeetOpsApiDown
+        expr: up{job="meetops-api"} == 0
+        for: 2m
+        labels:
+          severity: page
+        annotations:
+          summary: 'MeetOps API target {{ $labels.instance }} is not being scraped'
+          runbook: docs/14-observability/alerts.md#meetopsapidown
+      - alert: MeetOpsApiHigh5xxRate
+        expr: (sum by (instance) (rate(http_requests_total{job="meetops-api",status=~"5.."}[5m])) / clamp_min(sum by (instance) (rate(http_requests_total{job="meetops-api"}[5m])), 1e-9)) > 0.05 and sum by (instance) (rate(http_requests_total{job="meetops-api"}[5m])) > 0.1
+        for: 5m
+        labels:
+          severity: page
+        annotations:
+          summary: 'More than 5% of API requests on {{ $labels.instance }} return 5xx'
+          runbook: docs/14-observability/alerts.md#meetopsapihigh5xxrate
+      - alert: MeetOpsApiHighLatencyP95
+        expr: histogram_quantile(0.95, sum by (le, instance) (rate(http_request_duration_seconds_bucket{job="meetops-api",route!~"/metrics|/health|/ready"}[5m]))) > 1
+        for: 10m
+        labels:
+          severity: ticket
+        annotations:
+          summary: 'API p95 latency on {{ $labels.instance }} is above 1s'
+          runbook: docs/14-observability/alerts.md#meetopsapihighlatencyp95
+      - alert: MeetOpsApiNotReady
+        expr: sum by (instance) (increase(http_requests_total{job="meetops-api",route="/ready",status="503"}[5m])) > 0 and sum by (instance) (increase(http_requests_total{job="meetops-api",route="/ready",status="200"}[5m])) == 0
+        for: 3m
+        labels:
+          severity: page
+        annotations:
+          summary: '/ready on {{ $labels.instance }} has returned only 503 for 3+ minutes (DB or Redis unreachable)'
+          runbook: docs/14-observability/alerts.md#meetopsapinotready
+      - alert: MeetOpsApiMemoryHigh
+        expr: process_resident_memory_bytes{job="meetops-api"} > 1.5e9
+        for: 15m
+        labels:
+          severity: ticket
+        annotations:
+          summary: 'API resident memory on {{ $labels.instance }} is above 1.5 GB'
+          runbook: docs/14-observability/alerts.md#meetopsapimemoryhigh
+      - alert: MeetOpsApiRestarting
+        expr: resets(process_uptime_seconds{job="meetops-api"}[30m]) >= 3
+        for: 0m
+        labels:
+          severity: ticket
+        annotations:
+          summary: 'API on {{ $labels.instance }} restarted 3+ times in 30 minutes'
+          runbook: docs/14-observability/alerts.md#meetopsapirestarting

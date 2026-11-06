@@ -1,0 +1,14 @@
+# Alertmanager routing for MeetOps (P9 item #13).
+# PLACEHOLDER: the alert destination is NOT decided (needs-owner: Akash, docs/p9/remaining-work.md decision 5).
+# Every receiver below is a placeholder and delivers nowhere. Replace `placeholder-*` only after Akash decides.
+route:
+  receiver: placeholder-ticket
+  group_by: [alertname, instance, queue]
+  routes:
+    - matchers: ['severity="page"']
+      receiver: placeholder-page
+receivers:
+  # TODO(akash): choose the page destination (pager / phone / chat). No config = no delivery.
+  - name: placeholder-page
+  # TODO(akash): choose the ticket destination (email to an ops address). No config = no delivery.
+  - name: placeholder-ticket

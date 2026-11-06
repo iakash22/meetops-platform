@@ -3,7 +3,9 @@ import {
   withOrganizationContext,
   type DatabaseClient,
 } from '../../../shared/prisma/context.js';
+import { MeetingProjectInvalidError } from '../domain/meeting.js';
 import type {
+  ManualMeetingCreate,
   MeetingAnalyticsQuery,
   MeetingAnalyticsResult,
   MeetingCreate,
@@ -193,5 +195,31 @@ export class PrismaMeetingRepository implements MeetingRepository {
       if (!winner) throw e;
       return { meeting: toRecord(winner), created: false };
     }
+  }
+
+  /** One org-context transaction (forced RLS): the project check and the insert see the same tenant. */
+  async create(organizationId: string, input: ManualMeetingCreate) {
+    const row = await this.ctx(organizationId, async (tx) => {
+      if (
+        input.projectId &&
+        !(await tx.project.findFirst({
+          where: { organizationId, id: input.projectId, deletedAt: null },
+          select: { id: true },
+        }))
+      )
+        throw new MeetingProjectInvalidError();
+      return tx.meeting.create({
+        data: {
+          organizationId,
+          title: input.title,
+          source: input.source,
+          startedAt: input.startedAt,
+          projectId: input.projectId,
+          createdById: input.createdById,
+        },
+        select,
+      });
+    });
+    return toRecord(row);
   }
 }

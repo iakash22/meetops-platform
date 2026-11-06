@@ -33,6 +33,16 @@ export interface MeetingCreate {
   createdById: string;
 }
 
+/** Manual create (web "New meeting"): no external id; projectId must be a live project of the same org. */
+export interface ManualMeetingCreate {
+  title: string;
+  source: MeetingSource;
+  startedAt: Date | null;
+  projectId: string | null;
+  /** The creating user; null only in repository tests without a users row. */
+  createdById: string | null;
+}
+
 export interface MeetingPage {
   items: MeetingRecord[];
   nextCursor: string | null;
@@ -114,6 +124,15 @@ export interface MeetingRepository {
     organizationId: string,
     input: MeetingCreate,
   ): Promise<{ meeting: MeetingRecord; created: boolean }>;
+  /** Insert one manual meeting. Throws MeetingProjectInvalidError when projectId is not a live project of the org. */
+  create(organizationId: string, input: ManualMeetingCreate): Promise<MeetingRecord>;
+}
+
+/** projectId is unknown, deleted or belongs to another organization (same body for all three). */
+export class MeetingProjectInvalidError extends DomainError {
+  constructor() {
+    super('VALIDATION_FAILED', 'projectId does not exist in this organization', 400);
+  }
 }
 
 /** Missing, soft-deleted and other-org ids all produce exactly this body. */
