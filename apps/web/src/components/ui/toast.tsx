@@ -1,6 +1,8 @@
 import { useRef } from 'react';
 import { CheckCircle2, Info, X, XCircle } from 'lucide-react';
 import { Toaster as SonnerToaster, toast as sonner } from 'sonner';
+// Bundled, not injected: the dev CSP blocks Sonner's runtime <style> tag, which left toasts in the page flow.
+import 'sonner/dist/styles.css';
 import { create } from 'zustand';
 import { cn } from '@/lib/utils';
 

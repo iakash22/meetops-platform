@@ -212,11 +212,11 @@ describe.skipIf(!url)(
       const anon = (await import('./helpers.js')).Client;
       const x = new anon(app);
       expect(
-        (await x.post('/auth/reset-password', { token: t, password: 'another-long-password' }))
+        (await x.post('/auth/reset-password', { token: t, password: 'another-long-password-1' }))
           .statusCode,
       ).toBe(204);
       expect(
-        (await x.post('/auth/reset-password', { token: t, password: 'another-long-password' }))
+        (await x.post('/auth/reset-password', { token: t, password: 'another-long-password-1' }))
           .statusCode,
       ).toBe(400);
       expect((await c.get('/auth/session')).statusCode).toBe(401);
@@ -232,7 +232,7 @@ describe.skipIf(!url)(
         [1, 2, 3].map(() =>
           new Client(app).post('/auth/reset-password', {
             token: t,
-            password: 'race-password-long',
+            password: 'race-password-long-1',
           }),
         ),
       );

@@ -6,6 +6,8 @@ export interface User {
   name: string | null;
   passwordHash: string;
   emailVerifiedAt: Date | null;
+  /** Google OIDC subject. Absent or null for password-only accounts. */
+  googleSub?: string | null;
   createdAt: Date;
   updatedAt: Date;
   deletedAt: Date | null;

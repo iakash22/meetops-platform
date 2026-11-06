@@ -4,7 +4,7 @@
 
 - Hash: **argon2id**, minimum OWASP params `m=19456 KiB (19 MiB), t=2, p=1`; target higher if latency budget allows (benchmark ~ 50–250 ms). Store full PHC string (params + salt) so params can be upgraded; rehash on login when params are outdated.
 - 16-byte random salt; optional pepper from secret manager (HMAC before hashing) — see open questions.
-- Policy: min 12 chars, max 128, no composition rules, check against breached-password list (k-anonymity HIBP or local list).
+- Policy: min 8 chars, max 128, must include a letter, a number, and a symbol. Login accepts any non-empty password up to 128 so existing passwords still sign in. Check against a breached-password list (k-anonymity HIBP or a local list) is not implemented yet.
 - Library: `argon2` (node) in Fastify auth module.
 
 ## 2. Sessions

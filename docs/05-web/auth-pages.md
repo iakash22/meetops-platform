@@ -32,10 +32,12 @@ Dropped or not used:
 
 ## 2. What the API supports
 
-- **Email and password only.** There is no OAuth, SSO, magic-link or passkey, so the UI shows no
-  SSO buttons and no "or" divider. `forms.tsx` keeps a commented `<SocialAuth/>` slot.
-- **Password rules.** Signup and reset require 12–128 characters. Login only checks that the
-  password is non-empty, so the policy isn't revealed.
+- **Email and password, plus Google when the API is configured.** There is no magic-link, passkey,
+  or enterprise SSO. "Continue with Google" is a full-page navigation to `GET /auth/google/start`
+  and only renders when `GET /auth/providers` returns `{ google: true }`. Sign-up and log-in share
+  that flow: a new verified Google email creates the account; an existing one signs in.
+- **Password rules.** Signup and reset require 8–128 characters, including a letter, a number,
+  and a symbol. Login only checks that the password is non-empty, so the policy isn't revealed.
 - **Enumeration-safe endpoints.** Signup, forgot-password and resend-verification are
   enumeration-safe (202), so each one ends on a "Check your inbox" state.
 - **CSRF.** The API client fetches `/auth/csrf`. On `CSRF_INVALID` it refetches and retries once.
@@ -64,7 +66,7 @@ invitation.
     "Example summary" and contains no live data.
   - Value props: Record & transcribe · AI summaries · Draft tasks from action items.
   - A testimonial slot that renders nothing until a real quote exists (TODO).
-  - Login uses the same shell with a quieter panel: headline and value props only.
+  - Login uses the same headline and value props, without the example summary.
 - **Mobile (< lg).** A subtle glow, a one-line value prop under the logo, full-width form.
 
 ### Forms
@@ -83,10 +85,10 @@ invitation.
     `aria-pressed` and `aria-controls`.
   - Clicking it doesn't take focus from the input (mousedown is prevented).
 - **Strength meter** (signup and reset).
-  - 4 segments and an "At least 12 characters" checklist row.
+  - 4 segments and an "8+ characters, with a letter, number, and symbol" checklist row.
   - The label is announced with `aria-live="polite"` ("Strength: Weak" and so on).
   - Never uses rose.
-- **Validation.** react-hook-form + zod with `mode: "onTouched"`. Contract-matching schemas.
+- **Validation.** react-hook-form + zod with `mode: "onSubmit"`. An empty field does not show an error on blur; errors appear when the form is submitted. Contract-matching schemas.
   On submit, focus moves to the first invalid field.
 - **Form markup.**
   - Forms use `<form method="post" noValidate>`.
@@ -143,8 +145,9 @@ Use them on every screen, not only auth. Never put a raw `err.message` in the UI
 
 ## 4. Deviations from the spec and follow-ups
 
-- **No SSO, testimonials, logos, ratings, security claims or "14-day trial".** None of these
-  exist yet, so nothing is invented. The testimonial slot renders nothing (TODO).
+- **No testimonials, logos, ratings, security claims or "14-day trial".** None of these exist yet,
+  so nothing is invented. The testimonial slot renders nothing (TODO). Google is the only external
+  sign-in, and only when the server has a client configured.
 - **Terms/Privacy line is env-gated.** `LegalLine` in `auth-layout.tsx` renders "By continuing, you
   agree to the Terms of Service and Privacy Policy" only when both `VITE_TERMS_URL` and
   `VITE_PRIVACY_URL` are set (https or same-origin path). Until the legal pages exist nothing renders.

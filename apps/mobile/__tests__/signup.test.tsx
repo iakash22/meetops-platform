@@ -28,21 +28,21 @@ function renderSignup(api: SignupApi = createDemoSignupApi()) {
 async function fillValid(email = 'grace@example.com') {
   fireEvent.changeText(await screen.findByTestId('signup-name'), 'Grace Hopper');
   fireEvent.changeText(screen.getByTestId('signup-email'), email);
-  fireEvent.changeText(screen.getByTestId('signup-password'), 'correct horse battery');
+  fireEvent.changeText(screen.getByTestId('signup-password'), 'Correct-horse-1');
 }
 
 describe('validateSignup', () => {
   const ok = {
     name: ' Ada ',
     email: ' ada@example.com ',
-    password: 'x'.repeat(12),
+    password: 'Correct-1!',
   };
 
   it('trims and returns a contracts SignupRequest', () => {
     expect(validateSignup(ok)).toEqual({
       ok: true,
       errors: {},
-      request: { name: 'Ada', email: 'ada@example.com', password: 'x'.repeat(12) },
+      request: { name: 'Ada', email: 'ada@example.com', password: 'Correct-1!' },
     });
   });
 
@@ -55,7 +55,7 @@ describe('validateSignup', () => {
     expect(errors).toEqual({
       name: 'Use at most 200 characters.',
       email: 'Enter a valid email address.',
-      password: 'Use at least 12 characters.',
+      password: 'Use 8 or more characters with a letter, a number, and a symbol.',
     });
     const long = 'x'.repeat(129);
     expect(validateSignup({ ...ok, password: long }).errors.password).toBe('Password is too long.');
@@ -108,13 +108,14 @@ describe('signup screen', () => {
     expect(screen.getByTestId('signup-email-error')).toBeTruthy();
   });
 
-  it('shows the 12+ strength hint and toggles password visibility', async () => {
+  it('shows the password policy hint and toggles password visibility', async () => {
     renderSignup();
     const hint = await screen.findByTestId('signup-password-hint');
-    expect(hint).toHaveTextContent('12+ characters (0/12)');
-    fireEvent.changeText(screen.getByTestId('signup-password'), 'twelve-chars');
+    expect(hint).toHaveTextContent('8+ with a letter, number, and symbol');
+    expect(hint).not.toHaveTextContent('✓');
+    fireEvent.changeText(screen.getByTestId('signup-password'), 'Abcdef1!');
     expect(screen.getByTestId('signup-password-hint')).toHaveTextContent(
-      '✓ 12+ characters (12/12)',
+      '✓ 8+ with a letter, number, and symbol',
     );
     expect(screen.getByTestId('signup-password').props.secureTextEntry).toBe(true);
     fireEvent.press(screen.getByTestId('signup-toggle-password'));
@@ -134,7 +135,7 @@ describe('signup screen', () => {
     expect(JSON.parse(init?.body as string)).toEqual({
       name: 'Grace Hopper',
       email: 'grace@example.com',
-      password: 'correct horse battery',
+      password: 'Correct-horse-1',
     });
     expect(manager.getState().status).toBe('signedOut');
     fireEvent.press(screen.getByTestId('signup-back-to-login'));

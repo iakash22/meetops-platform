@@ -14,8 +14,21 @@ export class InMemoryUserRepository implements UserRepository {
     for (const u of this.byId.values()) if (u.email === email && !u.deletedAt) return u;
     return null;
   }
+  async findByGoogleSub(sub: string) {
+    for (const u of this.byId.values()) if (u.googleSub === sub && !u.deletedAt) return u;
+    return null;
+  }
+  async linkGoogleSub(id: UserId, sub: string) {
+    const u = this.byId.get(id);
+    if (!u || u.deletedAt || u.googleSub) return false;
+    if (await this.findByGoogleSub(sub)) return false;
+    u.googleSub = sub;
+    return true;
+  }
   async create(user: User) {
     if (await this.findByEmail(user.email)) throw new DuplicateEmailError();
+    if (user.googleSub && (await this.findByGoogleSub(user.googleSub)))
+      throw new DuplicateEmailError();
     this.byId.set(user.id, { ...user });
     return user;
   }
