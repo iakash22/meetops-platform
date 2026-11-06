@@ -278,6 +278,18 @@ export class ExtensionAuthService implements ExtensionRevoker {
     meta: RequestMeta,
   ): Promise<ExtensionRefreshResponse> {
     await this.limit(`refresh:ip:${meta.ip ?? 'unknown'}`, EXTENSION_LIMITS.refreshPerIp);
+    // An EMPTY allowlist is a misconfiguration (e.g. EXTENSION_IDS unset or typo'd in a deploy): refuse the refresh
+    // BEFORE consumeRefresh, so the token is not burned and the family is not touched. Fixing the config then lets
+    // the same refresh token rotate normally, with no false reuse_detected and no revoke.
+    if (this.d.extensionIds.length === 0) {
+      console.warn(
+        'extension refresh refused: extension allowlist is empty; token and families left intact',
+        {
+          event: 'extension_allowlist_empty',
+        },
+      );
+      throw new UnauthenticatedError();
+    }
     const tokenHash = this.d.tokens.hash(body.refreshToken);
     const r = await this.d.extensionTokens.consumeRefresh(tokenHash);
     if (r.status === 'unknown') throw new UnauthenticatedError();
@@ -285,8 +297,22 @@ export class ExtensionAuthService implements ExtensionRevoker {
     if (!f) throw new UnauthenticatedError();
     // An extension id removed from the allowlist (EXTENSION_IDS) can no longer refresh: revoke its family.
     // Checked BEFORE the grace-window replay so a revoked extension cannot replay a just-rotated pair.
+    // (The empty-allowlist misconfiguration is refused above, before the token is consumed.)
     if (!this.isAllowedExtension(f.extensionId)) {
-      if (!f.revokedAt) await this.revokeFamily(f, 'extension_revoked');
+      if (!f.revokedAt) {
+        await this.revokeFamily(f, 'extension_revoked');
+        await this.audit(
+          {
+            organizationId: f.organizationId,
+            actorId: f.userId,
+            action: 'extension.token.delisted',
+            deviceId: f.deviceId,
+            extensionId: f.extensionId,
+            familyId: f.id,
+          },
+          meta,
+        );
+      }
       throw new UnauthenticatedError();
     }
     if (
