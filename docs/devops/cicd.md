@@ -82,5 +82,5 @@ commit → `pnpm local-gates` → PR (Tester & Security PASS on head SHA) → me
 `scripts/build-images.sh --push` on the merged SHA → `scripts/deploy.sh staging <sha>` →
 `scripts/deploy.sh production <sha>` (refused until staging has run for that sha).
 
-Script tests: `bash tests/ci/deploy.test.sh` (argument, sha, TTY and staging-gate checks; no gates run) and
-`bash tests/ci/deploy-lib.test.sh` (target interface, migrate → rollout → marker order, stub target only).
+Script tests: `bash tests/ci/release.test.sh` (SBOM + versioning). `bash tests/ci/deploy.test.sh` (argument, sha, TTY and staging-gate checks; no gates run) and
+`bash tests/ci/deploy-lib.test.sh` (target interface, migrate → rollout → marker order, secret-fd inheritance, stub target only).

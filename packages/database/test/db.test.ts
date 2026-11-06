@@ -130,6 +130,7 @@ describe('generated client', () => {
         'createAiUsageCounterRepository',
         'createAiIdempotencyRepository',
         'createAiOrgConfigRepository',
+        'AiOrgConfigActorError',
         'createRecordingChunkCountRepository',
         'createChunkFileObjectRepository',
         'createChunkFileObjectLookup',

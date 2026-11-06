@@ -23,7 +23,12 @@ import {
   type PendingTasksResponse,
 } from '../src/lib/pending-tasks.js';
 import { safeErrorMessage } from '../src/lib/redact.js';
-import { discardHeldSessions, drainQueue, summarizeHeld } from '../src/lib/drain.js';
+import {
+  discardHeldSessions,
+  drainQueue,
+  pendingStorage,
+  summarizeHeld,
+} from '../src/lib/drain.js';
 import {
   isPendingDiscard,
   listFailedDiscards,
@@ -256,14 +261,15 @@ const deps: BackgroundDeps = {
   durableKV,
   discardLocal,
   // Fail closed (Start): any server-backed upload mode requires a verified pairing; errors refuse to record.
-  ...(HTTP_UPLOAD || DIRECT_UPLOAD
-    ? {
-        checkPairing: async () => {
+  // The local-only stub (no upload mode) has nothing to pair with, so it answers true explicitly.
+  checkPairing:
+    HTTP_UPLOAD || DIRECT_UPLOAD
+      ? async () => {
           const st = await auth.status();
           return st.state === 'paired' && Boolean(st.organizationId);
-        },
-      }
-    : {}),
+        }
+      : async () => true,
+  pendingStorage: async () => pendingStorage(await store()),
   storageQuota: () => estimateQuota(),
   deleteLocal,
   async setBadge(text) {

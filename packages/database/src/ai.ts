@@ -255,6 +255,11 @@ export interface AiOrgConfigRecord {
   monthlyBudgetUsd: string | undefined;
 }
 
+/** Rejected write: `updatedById` is not an active member of the organization being configured. */
+export class AiOrgConfigActorError extends Error {
+  override readonly name = 'AiOrgConfigActorError';
+}
+
 /** AiOrganizationConfig (`ai_org_config`, PK = org_id): one row per organization, forced RLS. */
 export function createAiOrgConfigRepository(options: RepositoryOptions = {}) {
   const run = runner(options);
@@ -281,11 +286,26 @@ export function createAiOrgConfigRepository(options: RepositoryOptions = {}) {
       input: {
         config: Prisma.InputJsonObject;
         monthlyBudgetUsd?: string | number | undefined;
-        /** Acting user (users.id) or null for system writes. Required so every write sets it explicitly. */
+        /**
+         * Acting user (users.id) or null for system writes. Required so every write sets it explicitly. A non-null
+         * id must be an active member of `organizationId`, otherwise the write is refused (AiOrgConfigActorError).
+         */
         updatedById: string | null;
       },
     ): Promise<void> {
       return run(organizationId, async (tx) => {
+        // updated_by_id must name an active member of THIS organization (the FK alone accepts any user id).
+        // Checked in the same org-context transaction, so RLS scopes the memberships read to this org.
+        if (input.updatedById !== null) {
+          const member = await tx.membership.findFirst({
+            where: { organizationId, userId: input.updatedById, deletedAt: null },
+            select: { id: true },
+          });
+          if (!member)
+            throw new AiOrgConfigActorError(
+              'ai_org_config.updated_by_id is not an active member of the organization',
+            );
+        }
         const data = {
           config: input.config,
           // numeric(12,2): Postgres rounds extra decimals half away from zero (pass a 2-dp string to be exact).

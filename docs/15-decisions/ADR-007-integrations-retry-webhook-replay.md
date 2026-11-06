@@ -37,7 +37,8 @@ timestamp, so a captured signed request can be replayed.
    `effectiveReplayTtlSeconds` raises any configured value to at least 7 days, and a missing or non-finite value
    becomes the default. Both delivery stores apply it.
 6. **Stores.** `RedisDeliveryStore` uses atomic `SET key 1 EX ttl NX` (prefix `meetops:webhook:delivery:`).
-   `InMemoryDeliveryStore` throws under `NODE_ENV=production` unless `unsafeAllowInProduction` is set (tests only).
+   `InMemoryDeliveryStore` always throws under `NODE_ENV=production` (there is no override), and production wiring
+   accepts only a shared `RedisDeliveryStore`.
 7. Jira webhooks: `checkJiraWebhookFreshness` checks the body `timestamp` after authenticity is verified; a missing
    timestamp gives `absent` unless `requireTimestamp` is set.
 
