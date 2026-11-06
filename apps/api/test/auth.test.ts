@@ -66,8 +66,11 @@ describe('auth', () => {
     });
 
     it.each([
-      ['11 chars', 'a'.repeat(11)],
-      ['129 chars', 'a'.repeat(129)],
+      ['7 chars', 'Abcde1!'],
+      ['letters only', 'a'.repeat(12)],
+      ['no symbol', 'Abcdefg1'],
+      ['no number', 'Abcdefg!'],
+      ['129 chars', `Ab1!${'a'.repeat(125)}`],
     ])('rejects a %s password with 400 in the error envelope', async (_l, password) => {
       const res = await new Client(app).post('/auth/signup', {
         name: 'A',
@@ -79,8 +82,8 @@ describe('auth', () => {
     });
 
     it.each([
-      ['12 chars', 'a'.repeat(12)],
-      ['128 chars', 'a'.repeat(128)],
+      ['8 chars', 'Abcdef1!'],
+      ['128 chars', `Ab1!${'a'.repeat(124)}`],
     ])('accepts a %s password', async (_l, password) => {
       const res = await new Client(app).post('/auth/signup', {
         name: 'A',
@@ -425,7 +428,7 @@ describe('auth', () => {
       const mail = app.mail.sent.filter((m) => m.template === 'password_reset');
       expect(mail).toHaveLength(1);
 
-      const newPassword = 'a-brand-new-password';
+      const newPassword = 'a-brand-new-password-1';
       expect(
         (
           await anon.post('/auth/reset-password', {
@@ -465,7 +468,7 @@ describe('auth', () => {
       ).searchParams.get('token')!;
       now = new Date(now.getTime() + 31 * MIN);
       expect(
-        (await anon.post('/auth/reset-password', { token, password: 'a-brand-new-password' }))
+        (await anon.post('/auth/reset-password', { token, password: 'a-brand-new-password-1' }))
           .statusCode,
       ).toBe(400);
     });

@@ -35,6 +35,7 @@ import { CursorPageQuery } from '@meetops/contracts';
 import { paginate } from '../../../shared/pagination.js';
 import type { OrganizationService } from '../../organizations/application/organization.service.js';
 import { toSessionResponse } from './mappers.js';
+import { googleAuthRoutes, type GoogleAuthOptions } from './google-auth.routes.js';
 
 /** ADR-014 SessionSummary geo: optional, not nullable (unknown fields are omitted). */
 function sessionGeo(g: GeoFields | undefined) {
@@ -52,6 +53,8 @@ export interface AuthPluginOptions {
   auth: AuthService;
   security: HttpSecurityConfig;
   organizations: OrganizationService;
+  webBaseUrl: string;
+  google: GoogleAuthOptions['google'];
 }
 
 const tags = ['auth'];
@@ -290,4 +293,12 @@ export async function authRoutes(app: FastifyInstance, opts: AuthPluginOptions) 
     },
     async (request) => toSessionResponse(await g.requireSession(request), opts.organizations),
   );
+
+  googleAuthRoutes(app, {
+    auth,
+    security,
+    guards: g,
+    webBaseUrl: opts.webBaseUrl,
+    google: opts.google,
+  });
 }

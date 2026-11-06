@@ -1,11 +1,12 @@
+import { PASSWORD_MAX_LENGTH, PASSWORD_MIN_LENGTH, isAcceptablePassword } from '@meetops/contracts';
 import { forwardRef, useState, type ComponentProps } from 'react';
 import { Check, Eye, EyeOff } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Field } from './field';
 
-/** API policy (contracts): new passwords are 12–128 characters. */
-export const MIN_PASSWORD = 12;
-export const MAX_PASSWORD = 128;
+/** API policy (contracts): 8–128, with a letter, a number, and a symbol. */
+export const MIN_PASSWORD = PASSWORD_MIN_LENGTH;
+export const MAX_PASSWORD = PASSWORD_MAX_LENGTH;
 
 type PasswordFieldProps = Omit<ComponentProps<typeof Field>, 'type' | 'trailing'> & {
   /** Show the strength meter (sign-up / reset only). */
@@ -65,16 +66,12 @@ export type Strength = {
  * "Too short"; the score never claims more than the policy enforces.
  */
 export function scorePassword(password: string): Strength {
-  if (password.length < MIN_PASSWORD) return { score: password ? 1 : 0, label: 'Too short' };
-  const classes = [/[a-z]/, /[A-Z]/, /\d/, /[^A-Za-z0-9]/].filter((r) => r.test(password)).length;
-  const unique = new Set(password).size;
-  let points = 0;
-  if (password.length >= 16) points++;
-  if (classes >= 3) points++;
-  if (unique >= 8) points++;
-  if (points >= 3) return { score: 4, label: 'Strong' };
-  if (points >= 1) return { score: 3, label: 'Good' };
-  return { score: 2, label: 'Weak' };
+  if (!password) return { score: 0, label: 'Too short' };
+  if (password.length < MIN_PASSWORD) return { score: 1, label: 'Too short' };
+  if (!isAcceptablePassword(password)) return { score: 2, label: 'Weak' };
+  const mixedCase = /[a-z]/.test(password) && /[A-Z]/.test(password);
+  if (mixedCase && password.length >= 12) return { score: 4, label: 'Strong' };
+  return { score: 3, label: 'Good' };
 }
 
 // Segment fills by score: tokens only, never the rose highlight.
@@ -88,7 +85,7 @@ const FILL: Record<Strength['score'], string> = {
 
 export function PasswordStrength({ password }: { password: string }) {
   const s = scorePassword(password);
-  const longEnough = password.length >= MIN_PASSWORD && password.length <= MAX_PASSWORD;
+  const meetsPolicy = isAcceptablePassword(password);
   return (
     <div className="grid gap-1.5" data-testid="password-strength">
       <div className="grid grid-cols-4 gap-1" aria-hidden="true">
@@ -106,14 +103,14 @@ export function PasswordStrength({ password }: { password: string }) {
         <span
           className={cn(
             'flex items-center gap-1',
-            longEnough ? 'text-link' : 'text-muted-foreground',
+            meetsPolicy ? 'text-link' : 'text-muted-foreground',
           )}
         >
           <Check
-            className={cn('h-3.5 w-3.5', longEnough ? 'opacity-100' : 'opacity-40')}
+            className={cn('h-3.5 w-3.5', meetsPolicy ? 'opacity-100' : 'opacity-40')}
             aria-hidden
           />
-          At least {MIN_PASSWORD} characters
+          8+ characters, with a letter, number, and symbol
         </span>
         <span aria-live="polite" className="text-muted-foreground">
           {password ? `Strength: ${s.label}` : ''}

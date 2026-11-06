@@ -104,7 +104,7 @@ Key spec points:
 
 - **The API is email + password only.** There are no SSO/Google/GitHub/magic-link/passkey
   endpoints, so **render no SSO buttons and no "or" divider** until the API adds OAuth.
-- Signup = full name → work email → password (12–128 chars, mirrors `packages/contracts`) with a
+- Signup = full name → work email → password (8–128 chars with a letter, number, and symbol, mirrors `packages/contracts`) with a
   strength meter → one shimmer CTA. No confirm-password field.
 - Signup, forgot-password and resend are enumeration-safe: signup always ends on a "Check your
   email" state, never "email already taken".
@@ -190,12 +190,12 @@ VS Code uses `.vscode/mcp.json` with a top-level `"servers"` key instead of `"mc
 
 From `docs/PROJECT_CONTEXT.md` (status refreshed 27 Oct 2026; see `docs/PHASE_STATUS.md`):
 
-| Client                               | Stack                                       | Status           |
-| ------------------------------------ | ------------------------------------------- | ---------------- |
-| Web (`apps/web`)                     | React + Vite, TanStack, Tailwind, shadcn/ui | Active           |
-| Mobile (`apps/mobile`)               | React Native + Expo                         | Built (Phase 8)  |
-| Browser extension (`apps/extension`) | WXT, Manifest V3                            | Built            |
-| Desktop (`apps/desktop`)             | Tauri                                       | Built (Phase 8)  |
+| Client                               | Stack                                       | Status          |
+| ------------------------------------ | ------------------------------------------- | --------------- |
+| Web (`apps/web`)                     | React + Vite, TanStack, Tailwind, shadcn/ui | Active          |
+| Mobile (`apps/mobile`)               | React Native + Expo                         | Built (Phase 8) |
+| Browser extension (`apps/extension`) | WXT, Manifest V3                            | Built           |
+| Desktop (`apps/desktop`)             | Tauri                                       | Built (Phase 8) |
 
 The same brand tokens (section 1) apply on every client. Only web uses the shadcn-based
 libraries directly; mobile, extension and desktop take the look and patterns, not the code.

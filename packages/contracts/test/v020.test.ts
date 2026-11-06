@@ -36,17 +36,17 @@ describe('ids', () => {
 describe('reset password / verify email', () => {
   const token = 't'.repeat(43);
   it('validates token and password lengths and rejects extras', () => {
-    expect(Value.Check(ResetPasswordRequest, { token, password: 'correct-horse-battery' })).toBe(
+    expect(Value.Check(ResetPasswordRequest, { token, password: 'correct-horse-battery-1' })).toBe(
       true,
     );
     expect(
-      Value.Check(ResetPasswordRequest, { token: 'short', password: 'correct-horse-battery' }),
+      Value.Check(ResetPasswordRequest, { token: 'short', password: 'correct-horse-battery-1' }),
     ).toBe(false);
     expect(Value.Check(ResetPasswordRequest, { token, password: 'short' })).toBe(false);
     expect(
       Value.Check(ResetPasswordRequest, {
         token,
-        password: 'correct-horse-battery',
+        password: 'correct-horse-battery-1',
         email: 'a@b.co',
       }),
     ).toBe(false);

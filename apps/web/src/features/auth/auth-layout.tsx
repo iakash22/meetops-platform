@@ -12,8 +12,17 @@ import { authLinkClass } from './styles';
  * panel on the right; below `lg` the panel is hidden and a slim glow sits behind the form.
  * Spec: docs/05-web/auth-pages.md.
  */
+/** Keep `?next=` when switching between log in and sign up. Drop anything that is not a same-app path. */
+function accountSearch(search: unknown): { next: string } | undefined {
+  if (!search || typeof search !== 'object' || !('next' in search)) return undefined;
+  const next = (search as { next?: unknown }).next;
+  if (typeof next !== 'string' || !next.startsWith('/') || next.startsWith('//')) return undefined;
+  return { next };
+}
+
 export function AuthLayout({ children }: { children: ReactNode }) {
   const pathname = useRouterState({ select: (s) => s.location.pathname });
+  const nextSearch = useRouterState({ select: (s) => accountSearch(s.location.search) });
   const onSignup = pathname === '/signup';
   return (
     <div
@@ -36,18 +45,18 @@ export function AuthLayout({ children }: { children: ReactNode }) {
             <MeetOpsLogo />
           </Link>
           {onSignup ? (
-            <Link to="/login" className={authLinkClass}>
+            <Link to="/login" search={nextSearch ?? {}} className={authLinkClass}>
               Sign in
             </Link>
           ) : pathname === '/login' ? (
-            <Link to="/signup" className={authLinkClass}>
+            <Link to="/signup" search={nextSearch ?? {}} className={authLinkClass}>
               Sign up
             </Link>
           ) : null}
         </header>
         <p className="text-sm text-muted-foreground lg:hidden">{HEADLINE}</p>
-        <main className="flex flex-1 items-center justify-center py-10">
-          <div className="w-full max-w-[26rem] motion-safe:duration-200 motion-safe:animate-in motion-safe:fade-in-0 motion-safe:slide-in-from-bottom-2">
+        <main className="flex flex-1 flex-col items-center py-6">
+          <div className="my-auto w-full max-w-[26rem] motion-safe:duration-200 motion-safe:animate-in motion-safe:fade-in-0 motion-safe:slide-in-from-bottom-2">
             {children}
           </div>
         </main>
@@ -107,7 +116,7 @@ function BrandPanel({ rich }: { rich: boolean }) {
               </span>
               <span className="grid gap-0.5">
                 <span className="font-medium">{title}</span>
-                {rich ? <span className="text-sm text-muted-foreground">{body}</span> : null}
+                <span className="text-sm text-muted-foreground">{body}</span>
               </span>
             </li>
           ))}

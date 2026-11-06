@@ -13,6 +13,7 @@ type Row = {
   name: string | null;
   passwordHash: string | null;
   emailVerified: Date | null;
+  googleSub: string | null;
   createdAt: Date;
   updatedAt: Date;
   deletedAt: Date | null;
@@ -21,9 +22,10 @@ const toUser = (r: Row): User => ({
   id: r.id,
   email: r.email,
   name: r.name,
-  // Accounts without a password (future SSO) can never pass argon2 verify.
+  // Accounts without a password (Google-only) can never pass argon2 verify.
   passwordHash: r.passwordHash ?? '',
   emailVerifiedAt: r.emailVerified,
+  googleSub: r.googleSub,
   createdAt: r.createdAt,
   updatedAt: r.updatedAt,
   deletedAt: r.deletedAt,
@@ -40,6 +42,22 @@ export class PrismaUserRepository implements UserRepository {
     const r = await this.db.user.findFirst({ where: { email, deletedAt: null } });
     return r ? toUser(r) : null;
   }
+  async findByGoogleSub(sub: string) {
+    const r = await this.db.user.findFirst({ where: { googleSub: sub, deletedAt: null } });
+    return r ? toUser(r) : null;
+  }
+  async linkGoogleSub(id: UserId, sub: string) {
+    try {
+      const r = await this.db.user.updateMany({
+        where: { id, deletedAt: null, googleSub: null },
+        data: { googleSub: sub },
+      });
+      return r.count === 1;
+    } catch (e) {
+      if (isUniqueViolation(e)) return false;
+      throw e;
+    }
+  }
   async create(u: User) {
     try {
       const r = await this.db.user.create({
@@ -47,8 +65,9 @@ export class PrismaUserRepository implements UserRepository {
           id: u.id,
           email: u.email,
           name: u.name,
-          passwordHash: u.passwordHash,
+          passwordHash: u.passwordHash || null,
           emailVerified: u.emailVerifiedAt,
+          googleSub: u.googleSub ?? null,
           createdAt: u.createdAt,
         },
       });
