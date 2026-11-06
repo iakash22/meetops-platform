@@ -45,7 +45,10 @@ deploy_open_secret_file() {
   (( 8#${dinfo#*|} & 8#022 )) && deploy_abort "$label parent dir is group/world-writable"
   # No -L: GNU stat lstats the path. Symlinks were already refused above; comparing this
   # lstat to the fd's fstat still detects a swap between the two checks.
-  linfo="$(/usr/bin/stat -c '%d:%i' -- "$f" 2>/dev/null)" || deploy_abort "$label not found"
+  # Reject fifo/socket/device/dir here, before exec, so a named pipe cannot block the open.
+  pre="$(/usr/bin/stat -c '%F|%d:%i' -- "$f" 2>/dev/null)" || deploy_abort "$label not found"
+  case "${pre%%|*}" in "regular file"|"regular empty file") ;; *) deploy_abort "$label is not a regular file";; esac
+  linfo="${pre#*|}"
   eval "exec $fd<\"\$f\"" 2>/dev/null || deploy_abort "$label cannot be opened"
   finfo="$(/usr/bin/stat -L -c '%F|%u|%a|%s|%d:%i' "/proc/self/fd/$fd" 2>/dev/null)" || deploy_abort "$label: fstat failed"
   IFS='|' read -r ftype fowner fmode fsize fid <<< "$finfo"

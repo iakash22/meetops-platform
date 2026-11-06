@@ -91,7 +91,16 @@ check "target reads the validated fd, not the swapped path" 0 "target read: orig
 grep -q 'url=postgresql://orig@h/db' "$TMP/swapcalls" && echo "ok   migrate uses the URL read once from the fd" || { echo "FAIL db url: $(cat "$TMP/swapcalls")"; fail=1; }
 ln -sf "$TMP/cred" "$TMP/cred2link"
 check "symlinked file refused (lstat)" 1 "must not be a symlink" "$STUB_TARGET export DEPLOY_TARGET=stub-k8s DEPLOY_CREDENTIALS_FILE=$TMP/cred2link DEPLOY_DATABASE_URL_FILE=$TMP/db; deploy_validate_target; deploy_prepare_secrets"
-check "fifo refused" 1 "" "mkfifo $TMP/fifo; chmod 600 $TMP/fifo; $STUB_TARGET export DEPLOY_TARGET=stub-k8s DEPLOY_CREDENTIALS_FILE=$TMP/fifo DEPLOY_DATABASE_URL_FILE=$TMP/db; timeout 5 bash -c 'deploy_validate_target; deploy_prepare_secrets' || exit 1"
+# FIFO must be rejected by the real validation (library sourced), not by timeout or command-not-found.
+mkfifo "$TMP/fifo"; chmod 600 "$TMP/fifo"
+out="$(timeout 2 bash -c ". '$ROOT/scripts/deploy-lib.sh'; $STUB_TARGET export DEPLOY_TARGET=stub-k8s DEPLOY_CREDENTIALS_FILE=$TMP/fifo DEPLOY_DATABASE_URL_FILE=$TMP/db; deploy_validate_target; deploy_prepare_secrets" 2>&1)"
+rc=$?
+if [ "$rc" -eq 124 ]; then echo "FAIL fifo blocked (timeout 124): $out"; fail=1
+elif [ "$rc" -eq 0 ]; then echo "FAIL fifo was accepted: $out"; fail=1
+elif [[ "$out" == *"command not found"* ]]; then echo "FAIL fifo test did not run validation: $out"; fail=1
+elif [[ "$out" == *"not a regular file"* ]]; then echo "ok   fifo refused without blocking"
+else echo "FAIL fifo unexpected (rc=$rc): $out"; fail=1
+fi
 
 # ---- DEPLOY_CREDENTIALS value never crosses env -i (argv) -----------------------------------------------------------
 FAKE="$TMP/fake"; mkdir -p "$FAKE/scripts"; cp scripts/deploy.sh "$FAKE/scripts/"
