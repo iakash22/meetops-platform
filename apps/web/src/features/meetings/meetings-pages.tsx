@@ -10,6 +10,7 @@ import { useMeeting, useMeetings } from '@/lib/api/queries';
 import { PageHeader } from '@/pages/resource-list';
 import { ReportPanel, TranscriptPanel } from './insights-panels';
 import { UploadButton } from './upload-button';
+import { MeetingConsentPanel } from './consent-panel';
 import { filterMeetings, type MeetingFilters } from './manage-api';
 import { MeetingFormDialog } from './meeting-form';
 import { Input } from '@/components/ui/input';
@@ -28,7 +29,13 @@ const STATUS_LABEL: Record<Meeting['status'], string> = {
   processing: 'Processing',
   completed: 'Completed',
   failed: 'Failed',
+  transcription_delayed: 'Transcription delayed',
 };
+
+/** Unknown statuses (a newer API than this client) render as a neutral "Unknown status". */
+const UNKNOWN_STATUS_LABEL = 'Unknown status';
+const statusLabel = (s: string) => STATUS_LABEL[s as Meeting['status']] ?? UNKNOWN_STATUS_LABEL;
+const statusVariant = (s: string) => STATUS_VARIANT[s as Meeting['status']] ?? 'outline';
 
 const STATUS_VARIANT: Record<Meeting['status'], NonNullable<BadgeProps['variant']>> = {
   scheduled: 'outline',
@@ -36,6 +43,7 @@ const STATUS_VARIANT: Record<Meeting['status'], NonNullable<BadgeProps['variant'
   processing: 'secondary',
   completed: 'default',
   failed: 'destructive',
+  transcription_delayed: 'secondary',
 };
 
 const SOURCE_LABEL: Record<Meeting['source'], string> = {
@@ -48,8 +56,8 @@ const SOURCE_LABEL: Record<Meeting['source'], string> = {
 
 export function MeetingStatusBadge({ status }: { status: Meeting['status'] }) {
   return (
-    <Badge variant={STATUS_VARIANT[status]} data-testid="meeting-status">
-      {STATUS_LABEL[status]}
+    <Badge variant={statusVariant(status)} data-testid="meeting-status">
+      {statusLabel(status)}
     </Badge>
   );
 }
@@ -215,6 +223,11 @@ export function MeetingDetailPage({ meetingId }: { meetingId: string }) {
           <UploadButton meetingId={m.id} />
         </div>
       </div>
+      <Card>
+        <CardContent className="pt-6">
+          <MeetingConsentPanel meetingId={m.id} />
+        </CardContent>
+      </Card>
       <Card>
         <CardHeader>
           <CardTitle>

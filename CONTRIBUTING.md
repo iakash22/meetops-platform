@@ -53,6 +53,21 @@ pnpm build
 
 All four scripts exist in the root `package.json` (via Turborepo). The repo has no separate format-check script. For docs, run `npx prettier --check <files>`. In the PR description, report the real results, including anything you didn't run.
 
+## Test coverage
+
+`pnpm coverage` runs `vitest run --coverage` (V8 provider, `@vitest/coverage-v8` 4.1.12, matching vitest 4.1.12) in `apps/api`, `apps/realtime` and `apps/web` through Turborepo (`coverage` task, outputs `coverage/**`). To run one package: `pnpm --filter @meetops/api coverage`.
+
+- Reporters: `text-summary` (console), `lcov` (`coverage/lcov.info`, `coverage/lcov-report/`) and `json-summary` (`coverage/coverage-summary.json`). `coverage/` is git-ignored.
+- Coverage counts `src/**` only. Thresholds live in each package's `vitest.config.mjs` (web: `vite.config.ts`) and fail the run if coverage drops below them. They start ~2 points under the coverage measured on 2026-11-04 (API without the DB-backed integration suites):
+
+  | Package  | Statements | Branches | Functions | Lines |
+  | -------- | ---------- | -------- | --------- | ----- |
+  | api      | 82         | 73       | 77        | 84    |
+  | realtime | 85         | 85       | 84        | 89    |
+  | web      | 88         | 83       | 86        | 90    |
+
+- When coverage rises, raise the thresholds in the same PR. Don't lower them to make a PR pass; add tests instead.
+
 ## Local development
 
 See [local setup](docs/00-getting-started/local-setup.md): copy `.env.example` to `.env`, run `pnpm install`, `pnpm dev:infra:up`, then `pnpm dev`.

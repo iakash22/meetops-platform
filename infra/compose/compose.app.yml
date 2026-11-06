@@ -155,6 +155,14 @@ services:
       FFMPEG_PATH: /usr/bin/ffmpeg
       FFPROBE_PATH: /usr/bin/ffprobe
       MEDIA_TMP_DIR: /tmp/work
+      # Upload malware scan (ADR-018). Off by default in the dev harness; set
+      # UPLOAD_SCAN_CLAMAV=true and start with `--profile clamav`. When on, the
+      # scan is fail-closed: clamd down = retries, then quarantine.
+      UPLOAD_SCAN_CLAMAV: ${UPLOAD_SCAN_CLAMAV:-false}
+      CLAMD_HOST: clamav
+      CLAMD_PORT: 3310
+      # Must equal MaxThreads in infra/clamav/clamd.conf (clamd-config.test.ts).
+      MEDIA_WORKER_CONCURRENCY: 1
     secrets: [redis_password, minio_app_password]
     volumes: [*secrets-shim]
     entrypoint: ['/usr/bin/tini', '--', '/bin/sh', '/opt/with-secrets.sh']
@@ -167,11 +175,16 @@ services:
         condition: service_healthy
       minio-init:
         condition: service_completed_successfully
+      # Only when the `clamav` profile is active; waits for the signatures to load.
+      clamav:
+        condition: service_healthy
+        required: false
     # FFmpeg sandbox (docs/12-security, upload-media-security §5): ONLY on the
     # internal `media-internal` network (redis + minio, no egress / no default
     # route), non-root, read-only root FS, tmpfs temp disk, no capabilities, no
-    # privilege escalation, CPU/memory/PID caps.
-    networks: [media-internal]
+    # privilege escalation, CPU/memory/PID caps. Also on `clamav-internal`
+    # (internal, worker + clamd only) for the upload scan (MAL-1b).
+    networks: [media-internal, clamav-internal]
     user: node
     read_only: true
     tmpfs:
@@ -187,6 +200,91 @@ services:
     pids_limit: 256
     mem_limit: 4g
     cpus: 2
+
+  # clamd sidecar for the upload malware scan (ADR-018, MAL-1, MAL-1b). This
+  # service is the reference spec for production: docs/13-ops/containers-and-ci.md
+  # lists the settings every deployment must copy.
+  #   ... -f infra/compose/compose.app.yml --profile clamav up -d   (with UPLOAD_SCAN_CLAMAV=true)
+  # - Image pinned by version AND digest: 1.4.x is the ClamAV LTS line. The
+  #   digest is the multi-arch index digest of clamav/clamav:1.4.6 (amd64 only),
+  #   which ships a signature snapshot so first start does not block on a
+  #   download. Bump the tag and digest together (also in clamav-freshclam).
+  # - clamd only. Signature updates run in the separate clamav-freshclam
+  #   service, which writes the shared clamav-db volume; clamd picks them up
+  #   with SelfCheck (clamd.conf). Do not use the image's /init here: it would
+  #   start freshclam, and it needs root for chown/install.
+  # - infra/clamav/clamd.conf sets StreamMaxLength/MaxFileSize/MaxScanSize to
+  #   1400M (1_468_006_400 bytes, above MAX_MEDIA_BYTES, below 2 GB).
+  # - mem_limit 4g: one engine is about 1.1-1.3 GB RSS (measured with the
+  #   1.4 GB INSTREAM scan). With ConcurrentDatabaseReload yes, a reload holds
+  #   the old and new engines for a short time (about 2.5 GB), plus scan
+  #   buffers. See the comment in clamd.conf for why reload is not blocking.
+  # - Network (MAL-1b): ONLY on `clamav-internal` (internal: true, no egress),
+  #   shared with the worker alone. clamd's TCP protocol is unauthenticated
+  #   (SHUTDOWN, RELOAD), so nothing else may reach it. No host port.
+  # - Privileges (MAL-1b): clamd runs directly as the image's clamav user
+  #   (uid 100) with cap_drop ALL and NO capabilities added; it needs none
+  #   (TCP 3310 is unprivileged, the DB volume and /tmp are clamav-writable).
+  #   `init: true` reaps children. Logs go to stdout (no LogFile).
+  clamav:
+    profiles: ['clamav']
+    image: clamav/clamav:1.4.6@sha256:8ad6197396974726c35d017e50aaaaf4b91745726a04faec8480c203edd98052
+    restart: unless-stopped
+    user: clamav
+    init: true
+    entrypoint: ['clamd', '--foreground']
+    volumes:
+      - ../clamav/clamd.conf:/etc/clamav/clamd.conf:ro
+      - clamav-db:/var/lib/clamav
+    # Disk-fill guard (#377/#379 follow-up): read-only root, and clamd's
+    # TemporaryDirectory (/tmp, also the LocalSocket) is a size-capped tmpfs.
+    # 3g = one scan thread (MaxThreads 1): a 1400M spooled stream + up to 1400M
+    # extracted (MaxScanSize). tmpfs pages count toward mem_limit, hence 7g
+    # (about 4g engines during a reload + 3g tmpfs).
+    # Owned by the image's clamav user (uid 100 / gid 101 in the pinned 1.4.6 digest; `id clamav`).
+    read_only: true
+    tmpfs:
+      - /tmp:size=3g,uid=100,gid=101,mode=0700,noexec,nosuid,nodev
+    networks: [clamav-internal]
+    healthcheck:
+      # The image's own check: PING on TCP 3310 must answer PONG.
+      test: ['CMD-SHELL', 'clamdcheck.sh']
+      interval: 30s
+      timeout: 10s
+      # Loading signatures takes about 10-60 s.
+      start_period: 360s
+      retries: 3
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 256
+    mem_limit: 7g
+    cpus: 2
+
+  # Signature updates for the clamav sidecar (ADR-018, MAL-1b): freshclam only,
+  # same pinned image. It is the only ClamAV container with egress (`default`,
+  # to database.clamav.net) and is NOT on clamav-internal, so it cannot reach
+  # clamd; clamd reloads through SelfCheck. --checks=1 = one update check per
+  # day (Checks 1 in freshclam.conf too). Runs as clamav with no capabilities,
+  # like clamd. TestDatabases loads the new database once before using it,
+  # hence mem_limit 2g.
+  clamav-freshclam:
+    profiles: ['clamav']
+    image: clamav/clamav:1.4.6@sha256:8ad6197396974726c35d017e50aaaaf4b91745726a04faec8480c203edd98052
+    restart: unless-stopped
+    user: clamav
+    init: true
+    entrypoint: ['freshclam', '--daemon', '--foreground', '--stdout', '--checks=1']
+    volumes:
+      - ../clamav/freshclam.conf:/etc/clamav/freshclam.conf:ro
+      - clamav-db:/var/lib/clamav
+    networks: [default]
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 64
+    mem_limit: 2g
+    cpus: 1
 
   # Socket.IO gateway (apps/realtime, PR #16). Behind the `realtime` profile until
   # PR #16 merges (the build fails without apps/realtime); then drop `profiles`.
@@ -204,12 +302,17 @@ services:
       DB_ROLE: none
       REALTIME_HOST: 0.0.0.0
       REALTIME_PORT: 4001
+      # One trusted proxy hop: the web nginx /socket.io proxy overwrites X-Forwarded-For with the client IP.
+      # Realtime takes the client IP from X-Forwarded-For across this many hops (config default 0 = ignore XFF).
+      REALTIME_TRUST_PROXY_HOPS: 1
       # Explicit allowlist, required; never '*'.
       REALTIME_CORS_ORIGINS: ${REALTIME_CORS_ORIGINS:?set REALTIME_CORS_ORIGINS in .env}
     secrets: [redis_password]
     volumes: [*secrets-shim]
     entrypoint: ['/bin/sh', '/opt/with-secrets.sh']
     command: ['node', 'dist/index.js']
+    # LOCAL DEV ONLY. Production and self-host must not publish the realtime port: it must be reachable only
+    # through nginx (REALTIME_TRUST_PROXY_HOPS=1). See docs/00-getting-started/environment-variables.md.
     ports:
       - '127.0.0.1:${REALTIME_PORT:-4001}:4001'
     healthcheck:
@@ -251,9 +354,18 @@ services:
       CSP_API_ORIGIN: ${VITE_API_URL:-http://localhost:3000}
       CSP_REALTIME_ORIGIN: ws://localhost:${REALTIME_PORT:-4001} http://localhost:${REALTIME_PORT:-4001}
       CSP_STORAGE_ORIGIN: http://localhost:${MINIO_API_PORT:-9000}
+      # Local stack is plain http on localhost: do not upgrade its subresource requests to https.
+      CSP_UPGRADE_INSECURE: 'off'
+      CSP_REPORT_URL: ${CSP_REPORT_URL:-}
+      # Same-origin /socket.io proxy target (apps/realtime service).
+      REALTIME_UPSTREAM: http://realtime:4001
     # WEB_APP_PORT is the containerised nginx; WEB_PORT (5173) stays for `vite dev`.
     ports:
       - '127.0.0.1:${WEB_APP_PORT:-8080}:8080'
     depends_on:
       api:
         condition: service_started
+
+volumes:
+  # freshclam's signature database survives restarts (no re-download).
+  clamav-db:

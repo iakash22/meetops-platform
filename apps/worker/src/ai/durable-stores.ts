@@ -1,6 +1,11 @@
 import {
   DEFAULT_IDEMPOTENCY_TTL_SEC,
   InMemoryIdempotencyStore,
+  InMemoryOrgConfigStore,
+  orgAIConfigSchema,
+  type OrgAIConfig,
+  type OrgConfigStore,
+  type OrgConfigWriteMeta,
   InMemoryUsageTracker,
   type IdempotencyStore,
   type UsageRecord,
@@ -8,6 +13,8 @@ import {
 } from '@meetops/ai-core';
 import {
   createAiIdempotencyRepository,
+  createAiOrgConfigRepository,
+  type AiOrgConfigRepository,
   createAiUsageCounterRepository,
   type AiIdempotencyRepository,
   type AiUsageCounterRepository,
@@ -99,33 +106,86 @@ export class PostgresIdempotencyStore implements IdempotencyStore {
   }
 }
 
+/**
+ * Durable OrgConfigStore (ADR-009 open item) on `ai_org_config` (migration 20261024010000, forced RLS,
+ * one row per organization). `monthlyBudgetUsd` lives in its own numeric column; the rest of the
+ * OrgAIConfig (minus organizationId, which is the row key) is the `config` JSON object. Stored rows are
+ * re-validated with orgAIConfigSchema on read, so a malformed row fails the job instead of silently
+ * routing somewhere else. Errors propagate: there is no fallback to memory.
+ */
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+export class PostgresOrgConfigStore implements OrgConfigStore {
+  constructor(private readonly repo: AiOrgConfigRepository = createAiOrgConfigRepository()) {}
+
+  async get(organizationId: string): Promise<OrgAIConfig | undefined> {
+    const row = await this.repo.get(organizationId);
+    if (!row) return undefined;
+    const parsed = orgAIConfigSchema.safeParse({
+      ...row.config,
+      organizationId,
+      ...(row.monthlyBudgetUsd !== undefined
+        ? { monthlyBudgetUsd: Number(row.monthlyBudgetUsd) }
+        : {}),
+    });
+    // Issue paths only: never echo stored values.
+    if (!parsed.success)
+      throw new Error(
+        `stored AI org config is invalid: ${parsed.error.issues.map((i) => i.path.join('.')).join(', ')}`,
+      );
+    return parsed.data;
+  }
+
+  /**
+   * `monthlyBudgetUsd` goes to a numeric(12,2) column: it is rounded to whole cents with
+   * `Number.prototype.toFixed(2)` (round half away from zero on the binary double, so e.g. 1.005 can
+   * become "1.00"). Values of 10^10 USD or more overflow the column and the write fails.
+   * `updatedById` is the acting user when it is a user uuid; system actors are stored as null.
+   */
+  async put(cfg: OrgAIConfig, meta: OrgConfigWriteMeta = {}): Promise<void> {
+    const { organizationId, monthlyBudgetUsd, ...rest } = orgAIConfigSchema.parse(cfg);
+    const actor = meta.updatedById;
+    await this.repo.upsert(organizationId, {
+      config: JSON.parse(JSON.stringify(rest)) as Parameters<
+        AiOrgConfigRepository['upsert']
+      >[1]['config'],
+      monthlyBudgetUsd: monthlyBudgetUsd === undefined ? undefined : monthlyBudgetUsd.toFixed(2),
+      updatedById: actor !== undefined && UUID_RE.test(actor) ? actor : null,
+    });
+  }
+}
+
 export type AiStoreMode = 'durable' | 'memory';
 
 /**
- * Select the AI usage + idempotency stores. `AI_STORES=durable` (default) uses Postgres.
- * `AI_STORES=memory` is for unit tests only: it is refused when NODE_ENV=production, and it is
+ * Select the AI usage, idempotency and org config stores. `AI_STORES=durable` (default) uses Postgres.
+ * `AI_STORES=memory` is for unit tests only: it is refused unless NODE_ENV=test, and it is
  * never chosen implicitly (an unknown value is an error, not a fallback).
  */
 export function createAiStores(env: Record<string, string | undefined>): {
   mode: AiStoreMode;
   usage: UsageTracker;
   idempotency: IdempotencyStore;
+  orgConfig: OrgConfigStore;
 } {
   const raw = (env.AI_STORES ?? 'durable').trim();
   if (raw !== 'durable' && raw !== 'memory')
     throw new Error('AI_STORES must be "durable" or "memory"');
   if (raw === 'memory') {
-    if (env.NODE_ENV === 'production')
-      throw new Error('AI_STORES=memory is not allowed when NODE_ENV=production');
+    // Allow-list, not deny-list: staging, production, any other value and an unset NODE_ENV all refuse.
+    if (env.NODE_ENV !== 'test')
+      throw new Error('AI_STORES=memory is only allowed when NODE_ENV=test');
     return {
       mode: 'memory',
       usage: new InMemoryUsageTracker(),
       idempotency: new InMemoryIdempotencyStore(),
+      orgConfig: new InMemoryOrgConfigStore(),
     };
   }
   return {
     mode: 'durable',
     usage: new PostgresUsageTracker(),
     idempotency: new PostgresIdempotencyStore(),
+    orgConfig: new PostgresOrgConfigStore(),
   };
 }

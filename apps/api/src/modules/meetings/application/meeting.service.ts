@@ -4,7 +4,7 @@ import type { RateLimiter } from '../../auth/domain/ports.js';
 import { RateLimitedError } from '../../auth/domain/errors.js';
 import type { DirectoryAccess, DirectoryCaller } from '../../directory/access.js';
 import {
-  InvalidAnalyticsRangeError,
+  parseAnalyticsRange,
   type AnalyticsBucket,
   type MeetingAnalyticsResult,
   deriveExternalMeetingId,
@@ -29,6 +29,18 @@ export const RESOLVE_LIMITS = {
   perUser: { limit: 30, windowMs: 60_000 },
   perOrg: { limit: 300, windowMs: 60_000 },
 } as const;
+
+/** Per caller and per organization fixed windows on POST /orgs/:org/meetings (same budget as resolve). */
+export const CREATE_LIMITS = {
+  perUser: { limit: 30, windowMs: 60_000 },
+  perOrg: { limit: 300, windowMs: 60_000 },
+} as const;
+
+export interface CreateMeetingInput {
+  title: string;
+  startedAt?: string | undefined;
+  projectId?: string | undefined;
+}
 
 export const DEFAULT_MEETING_TITLE = 'Untitled meeting';
 
@@ -64,15 +76,7 @@ export class MeetingService {
     q: { from: string; to: string; bucket?: AnalyticsBucket | undefined },
   ): Promise<{ from: Date; to: Date; bucket: AnalyticsBucket } & MeetingAnalyticsResult> {
     this.orgs.authorize(c.ctx, 'read', 'Meeting');
-    const from = new Date(q.from);
-    const to = new Date(q.to);
-    if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime()))
-      throw new InvalidAnalyticsRangeError('from and to must be ISO 8601 date-times');
-    if (to <= from) throw new InvalidAnalyticsRangeError('to must be after from');
-    if (to.getTime() - from.getTime() > MAX_ANALYTICS_RANGE_DAYS * 86_400_000)
-      throw new InvalidAnalyticsRangeError(
-        `The range may span at most ${MAX_ANALYTICS_RANGE_DAYS} days`,
-      );
+    const { from, to } = parseAnalyticsRange(q, MAX_ANALYTICS_RANGE_DAYS);
     const bucket = q.bucket ?? 'day';
     const r = await this.meetings.analytics(c.ctx.organizationId, { from, to, bucket });
     return { from, to, bucket, ...r };
@@ -112,5 +116,27 @@ export class MeetingService {
       });
     }
     return out;
+  }
+
+  /** Manual create from the web "New meeting" dialog: source `upload`, status `scheduled`, audited. */
+  async create(c: DirectoryCaller, input: CreateMeetingInput): Promise<MeetingRecord> {
+    this.orgs.authorize(c.ctx, 'create', 'Meeting');
+    const org = c.ctx.organizationId;
+    await this.limit(`meetings:create:user:${org}:${c.ctx.userId}`, CREATE_LIMITS.perUser);
+    await this.limit(`meetings:create:org:${org}`, CREATE_LIMITS.perOrg);
+    const meeting = await this.meetings.create(org, {
+      title: input.title.trim(),
+      source: 'upload',
+      startedAt: input.startedAt ? new Date(input.startedAt) : null,
+      projectId: input.projectId ?? null,
+      createdById: c.ctx.userId,
+    });
+    await this.access.record(c, {
+      action: 'meeting.create',
+      targetType: 'meeting',
+      targetId: meeting.id,
+      metadata: { source: meeting.source },
+    });
+    return meeting;
   }
 }

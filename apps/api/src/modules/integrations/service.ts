@@ -10,11 +10,15 @@ import {
   JiraOAuthError,
   OAuthStateError,
   OAuthStateManager,
+  TOKEN_REFRESH_LEASE_OP_TIMEOUT_MS,
+  TOKEN_REFRESH_LEASE_TTL_MS,
+  boundedLeaseOp,
   computeWritePayloadHash,
   createFetchGitHubIssuesClient,
   mapGitHubIssueEvent,
   mapJiraIssueEvent,
   randomUrlToken,
+  tokenRefreshLeaseKey,
   verifyGitHubSignature,
   verifyGitHubWebhook,
   verifyJiraWebhook,
@@ -44,12 +48,18 @@ import {
   IssueAlreadyLinkedError,
   OAuthStateInvalidError,
   ProviderUpstreamError,
+  DeliveryInProgressError,
   ReplayedDeliveryError,
   TaskNotFoundError,
   WebhookRejectedError,
   WebhookSignatureError,
 } from './errors.js';
-import type { ConnectedProvider, ConnectionView, IntegrationsRepository } from './ports.js';
+import type {
+  ConnectedProvider,
+  ConnectionView,
+  IntegrationsRepository,
+  RefreshSnapshot,
+} from './ports.js';
 import {
   putReturnTo,
   signState,
@@ -61,6 +71,11 @@ import {
 const DEFAULT_RETURN_TO = '/settings/integrations';
 /** Refresh Jira access tokens that expire within this window before using them. */
 const REFRESH_SKEW_MS = 120_000;
+/** Deadline on the on-demand provider refresh (half the lease TTL at most, like the worker's). */
+export const JIRA_REFRESH_TIMEOUT_MS = Math.min(30_000, Math.floor(TOKEN_REFRESH_LEASE_TTL_MS / 2));
+/** How long a request waits for another holder's refresh of an already-expired token, and the poll step. */
+export const LEASE_WAIT_MS = 5_000;
+const LEASE_WAIT_STEP_MS = 250;
 
 export const ISSUE_TO_TASK_STATUS: Record<IssueStatus, TaskStatus> = {
   open: 'todo',
@@ -80,6 +95,8 @@ export class IntegrationsService {
   constructor(
     private readonly repo: IntegrationsRepository,
     private readonly rt: IntegrationsRuntime | undefined,
+    /** Operational warnings (the app's redacting logger). Never given tokens or secrets. */
+    private readonly log?: { warn(obj: object, msg: string): void },
   ) {}
 
   private runtime(): IntegrationsRuntime {
@@ -284,7 +301,12 @@ export class IntegrationsService {
    * org and applies the status change. The install is single-account ("Only on this account"), but nothing
    * here assumes it: every live connection of that installation (max 10) gets the update.
    */
-  async githubAppWebhook(input: { rawBody: Buffer; headers: HeaderBag }): Promise<number> {
+  async githubAppWebhook(input: {
+    rawBody: Buffer;
+    headers: HeaderBag;
+    /** Called after the signature and a read-only replay check, before the delivery id is recorded (rate limiting); throwing records nothing. */
+    onDeliveryAccepted?: () => Promise<void>;
+  }): Promise<number> {
     const rt = this.runtime();
     const gh = rt.github;
     if (!gh) throw new WebhookSignatureError();
@@ -306,6 +328,7 @@ export class IntegrationsService {
       rawBody: input.rawBody,
       headers: input.headers,
       deliveryStore: rt.deliveryStore,
+      ...(input.onDeliveryAccepted ? { beforeRecord: input.onDeliveryAccepted } : {}),
       maxBodyBytes: INTEGRATION_WEBHOOK_MAX_BYTES,
       secretResolver: {
         resolve: async (ref) => {
@@ -318,7 +341,7 @@ export class IntegrationsService {
         },
       },
     });
-    if (!r.ok) throw webhookFailure(r.status);
+    if (!r.ok) throw webhookFailure(r.status, r.reason);
     let applied = 0;
     for (const t of targets) {
       const change = mapGitHubIssueEvent(r.event, r.payload, {
@@ -342,6 +365,8 @@ export class IntegrationsService {
     integrationId: string;
     rawBody: Buffer;
     headers: HeaderBag;
+    /** Called after the signature and a read-only replay check, before the delivery id is recorded (rate limiting); throwing records nothing. */
+    onDeliveryAccepted?: () => Promise<void>;
   }): Promise<number> {
     const rt = this.runtime();
     const { provider, integrationId } = input;
@@ -359,6 +384,7 @@ export class IntegrationsService {
         rawBody: input.rawBody,
         headers: input.headers,
         deliveryStore: rt.deliveryStore,
+        ...(input.onDeliveryAccepted ? { beforeRecord: input.onDeliveryAccepted } : {}),
         maxBodyBytes: INTEGRATION_WEBHOOK_MAX_BYTES,
         secretResolver: {
           resolve: async (ref) =>
@@ -367,7 +393,7 @@ export class IntegrationsService {
               : null,
         },
       });
-      if (!r.ok) throw webhookFailure(r.status);
+      if (!r.ok) throw webhookFailure(r.status, r.reason);
       change = mapGitHubIssueEvent(r.event, r.payload, ctx);
     } else {
       const secrets = await this.repo.readSecrets(organizationId, integrationId);
@@ -378,10 +404,11 @@ export class IntegrationsService {
         rawBody: input.rawBody,
         headers: input.headers,
         deliveryStore: rt.deliveryStore,
+        ...(input.onDeliveryAccepted ? { beforeRecord: input.onDeliveryAccepted } : {}),
         maxBodyBytes: INTEGRATION_WEBHOOK_MAX_BYTES,
         ...(rt.now ? { now: rt.now } : {}),
       });
-      if (!r.ok) throw webhookFailure(r.status);
+      if (!r.ok) throw webhookFailure(r.status, r.reason);
       change = mapJiraIssueEvent(r.payload, ctx);
     }
     if (!change) return 0;
@@ -531,29 +558,120 @@ export class IntegrationsService {
     return p.createIssue(input, approval);
   }
 
-  /** Decrypts the stored token; refreshes (rotating) and re-stores it when it is about to expire. */
+  /**
+   * The stored Jira access token, refreshed (rotating) first when it is about to expire. Same guard as the worker
+   * sweep (#354/#375): the refresh runs under the per-connection Redis lease (tokenRefreshLeaseKey, shared with the
+   * worker so the rotating grant is never refreshed twice at once) and the result is saved with a compare-and-swap
+   * on the fence from readForRefresh, never via `upsert`. A newer save (worker or another request) or a disconnect
+   * moves the fence, so a stale refresh loses: it cannot overwrite newer tokens or reactivate a revoked connection.
+   */
   async jiraAccessToken(conn: ConnectionView): Promise<string> {
-    const secrets = await this.repo.readSecrets(conn.organizationId, conn.id);
-    if (!secrets) throw new IntegrationNotConnectedError();
-    const exp = conn.accessTokenExpiresAt?.getTime();
-    if (exp === undefined || exp - REFRESH_SKEW_MS > this.now() || !secrets.refreshToken)
-      return secrets.accessToken;
-    const t = await this.jiraClient().refresh(secrets.refreshToken);
-    await this.repo.upsert(conn.organizationId, {
-      provider: 'jira',
-      displayName: conn.displayName,
-      externalAccountId: conn.externalAccountId,
-      connectedById: conn.connectedById,
-      accessToken: t.accessToken,
-      refreshToken: t.refreshToken,
-      webhookSecret: secrets.webhookSecret,
-      accessTokenExpiresAt: new Date(t.expiresAt),
-    });
-    return t.accessToken;
+    const snap = await this.repo.readForRefresh(conn.organizationId, conn.id);
+    if (!snap || snap.status !== 'active') throw new IntegrationNotConnectedError();
+    if (!this.needsRefresh(snap)) return snap.secrets.accessToken;
+    const rt = this.runtime();
+    const lease = rt.tokenRefreshLease;
+    const key = tokenRefreshLeaseKey(conn.organizationId, conn.id);
+    let leaseToken: string | null = null;
+    if (lease) {
+      try {
+        leaseToken = await boundedLeaseOp(
+          lease.acquire(key, TOKEN_REFRESH_LEASE_TTL_MS),
+          TOKEN_REFRESH_LEASE_OP_TIMEOUT_MS,
+        );
+      } catch {
+        // Fail closed: never refresh a rotating grant without the lease (transient 502; nothing was called).
+        throw new ProviderUpstreamError();
+      }
+      if (leaseToken === null) return this.awaitOtherRefresh(conn);
+    }
+    try {
+      // Re-read under the lease: another holder may have refreshed (or a disconnect landed) since the first read.
+      const cur = await this.repo.readForRefresh(conn.organizationId, conn.id);
+      if (!cur || cur.status !== 'active') throw new IntegrationNotConnectedError();
+      if (!this.needsRefresh(cur)) return cur.secrets.accessToken;
+      const t = await this.refreshWithDeadline(cur.secrets.refreshToken as string);
+      if (lease && leaseToken !== null) {
+        // Renew right before the write; a lost lease is not fatal because the save below is fenced anyway,
+        // but it means the refresh outlived the lease (or Redis is failing), so say so (#378 L3).
+        const confirmed = await boundedLeaseOp(
+          lease.confirm(key, leaseToken, TOKEN_REFRESH_LEASE_TTL_MS),
+          TOKEN_REFRESH_LEASE_OP_TIMEOUT_MS,
+        ).catch((err: unknown) => (err instanceof Error ? err.name : 'error'));
+        if (confirmed !== true)
+          this.log?.warn(
+            {
+              integrationId: conn.id,
+              provider: 'jira',
+              reason: confirmed === false ? 'lease_lost' : `confirm_failed:${confirmed}`,
+            },
+            'jira token refresh lease could not be confirmed before save; relying on the fenced save',
+          );
+      }
+      const saved = await this.repo.saveRefreshedTokens(
+        conn.organizationId,
+        conn.id,
+        {
+          accessToken: t.accessToken,
+          refreshToken: t.refreshToken,
+          webhookSecret: cur.secrets.webhookSecret,
+          accessTokenExpiresAt: new Date(t.expiresAt),
+        },
+        cur.fence,
+      );
+      if (saved === 'saved') return t.accessToken;
+      // Superseded: a newer write won (keep it) or the connection was disconnected (stay revoked).
+      const after = await this.repo.readForRefresh(conn.organizationId, conn.id);
+      if (!after || after.status !== 'active') throw new IntegrationNotConnectedError();
+      return after.secrets.accessToken;
+    } finally {
+      if (lease && leaseToken !== null)
+        await boundedLeaseOp(
+          lease.release(key, leaseToken),
+          TOKEN_REFRESH_LEASE_OP_TIMEOUT_MS,
+        ).catch(() => false);
+    }
+  }
+
+  private needsRefresh(s: RefreshSnapshot): boolean {
+    const exp = s.accessTokenExpiresAt?.getTime();
+    return exp !== undefined && exp - REFRESH_SKEW_MS <= this.now() && !!s.secrets.refreshToken;
+  }
+
+  /** Bounded provider refresh: aborts the token request and fails with a 502 well inside the lease TTL. */
+  private async refreshWithDeadline(refreshToken: string) {
+    const ac = new AbortController();
+    // JiraOAuthClient's own 10 s request timeout is the effective limit; this 30 s abort is a backstop for future clients without one.
+    const timer = setTimeout(() => ac.abort(), JIRA_REFRESH_TIMEOUT_MS);
+    try {
+      return await this.jiraClient().refresh(refreshToken, { signal: ac.signal });
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  /**
+   * Someone else (the worker sweep or another request) holds the refresh lease. Use the stored token while it has
+   * not actually expired (the skew window is only a head start); otherwise wait briefly for their save to land.
+   */
+  private async awaitOtherRefresh(conn: ConnectionView): Promise<string> {
+    const deadline = this.now() + LEASE_WAIT_MS;
+    for (;;) {
+      const s = await this.repo.readForRefresh(conn.organizationId, conn.id);
+      if (!s || s.status !== 'active') throw new IntegrationNotConnectedError();
+      const exp = s.accessTokenExpiresAt?.getTime();
+      if (!this.needsRefresh(s) || exp === undefined || exp > this.now())
+        return s.secrets.accessToken;
+      if (this.now() >= deadline) throw new ProviderUpstreamError();
+      await (this.rt?.sleep ?? defaultSleep)(LEASE_WAIT_STEP_MS);
+    }
   }
 }
 
-function webhookFailure(status: number) {
+const defaultSleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
+function webhookFailure(status: number, reason?: string) {
+  if (reason === 'delivery_in_progress') return new DeliveryInProgressError();
   if (status === 409) return new ReplayedDeliveryError();
   if (status === 400 || status === 413) return new WebhookRejectedError(status);
   return new WebhookSignatureError();

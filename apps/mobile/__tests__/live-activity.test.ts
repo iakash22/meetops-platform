@@ -52,7 +52,7 @@ function driver(): AudioDriver {
 }
 
 describe('recording Live Activity state (R2)', () => {
-  it('keeps elapsed time right across pause and resume', () => {
+  it('keeps elapsed time right across pause and resume', async () => {
     let t = 1_000;
     const { port, calls } = fakePort();
     const live = createRecordingLiveActivity(port, () => t);
@@ -64,6 +64,7 @@ describe('recording Live Activity state (R2)', () => {
     live.resume();
     live.end();
     live.end();
+    await live.settled();
     expect(calls).toEqual([
       ['start', 1_000],
       ['update', true, 1_000, 10_000],
@@ -109,6 +110,67 @@ describe('recording Live Activity state (R2)', () => {
   });
 });
 
+describe('Live Activity call serialization (hardening)', () => {
+  function deferredPort() {
+    const log: string[] = [];
+    let releaseStart: (ok: boolean) => void = () => undefined;
+    const port: LiveActivityPort = {
+      start: () => {
+        log.push('start:begin');
+        return new Promise<boolean>((r) => {
+          releaseStart = (ok) => {
+            log.push('start:done');
+            r(ok);
+          };
+        });
+      },
+      update: async (p) => void log.push(`update:${p}`),
+      end: async () => void log.push('end'),
+      endAll: async () => (log.push('endAll'), 0),
+      onStopRequested: () => () => undefined,
+    };
+    return { port, log, release: (ok = true) => releaseStart(ok) };
+  }
+
+  it('a fast Start then Stop ends only after the start request has finished (no orphan)', async () => {
+    const d = deferredPort();
+    const live = createRecordingLiveActivity(d.port);
+    live.start();
+    live.end();
+    await Promise.resolve();
+    expect(d.log).toEqual(['start:begin']); // end is waiting for start
+    d.release();
+    await live.settled();
+    expect(d.log).toEqual(['start:begin', 'start:done', 'end']);
+  });
+
+  it('pause, resume and stop queue behind a slow start in call order', async () => {
+    const d = deferredPort();
+    const live = createRecordingLiveActivity(d.port);
+    live.start();
+    live.pause();
+    live.resume();
+    live.end();
+    await Promise.resolve();
+    d.release();
+    await live.settled();
+    expect(d.log).toEqual(['start:begin', 'start:done', 'update:true', 'update:false', 'end']);
+  });
+
+  it('launch endAll waits for an in-flight start, and a failing call never blocks the queue', async () => {
+    const d = deferredPort();
+    const failing = { ...d.port, update: () => Promise.reject(new Error('gone')) };
+    const live = createRecordingLiveActivity(failing);
+    live.start();
+    live.pause();
+    const all = live.endAll();
+    await Promise.resolve();
+    d.release(false);
+    await all;
+    expect(d.log).toEqual(['start:begin', 'start:done', 'endAll']);
+  });
+});
+
 describe('native capture drives the Live Activity', () => {
   function setup() {
     const fake = fakePort();
@@ -118,15 +180,16 @@ describe('native capture drives the Live Activity', () => {
     const capture = createNativeCapture(driver(), createFileChunkStore(fs, testCipher), null, {
       liveActivity: live,
     });
-    return { ...fake, capture };
+    return { ...fake, capture, live };
   }
 
   it('starts after capture begins, updates on pause/resume, ends on Stop', async () => {
-    const { calls, capture } = setup();
+    const { calls, capture, live } = setup();
     await capture.begin('rec-1');
     capture.pause();
     capture.resume();
     await capture.capture('rec-1', 1000);
+    await live.settled();
     expect(calls.map((c) => c[0])).toEqual(['start', 'update', 'update', 'end']);
   });
 
@@ -230,6 +293,52 @@ describe('Live Activity native config', () => {
     expect(
       Object.keys(project.hash.project.objects.PBXTargetDependency ?? {}).length,
     ).toBeGreaterThan(0);
+  });
+
+  it('compiles the Stop intent into the app target too (App Intents metadata), idempotently', () => {
+    const xcode = require(
+      require.resolve('xcode', { paths: [require.resolve('expo/config-plugins')] }),
+    ) as { project(p: string): { parseSync(): unknown } };
+    const base = join(
+      require.resolve('react-native-screens/package.json'),
+      '..',
+      'ios/RNScreens.xcodeproj/project.pbxproj',
+    );
+    const project = xcode.project(base).parseSync() as {
+      getFirstTarget(): { uuid: string };
+      pbxSourcesBuildPhaseObj(t: string): { files: { comment?: string }[] };
+    };
+    const p = plugin as unknown as {
+      addIntentToAppTarget(project: unknown, appName: string): boolean;
+      INTENT_FILE: string;
+    };
+    expect(p.addIntentToAppTarget(project, 'RNScreens')).toBe(true);
+    expect(p.addIntentToAppTarget(project, 'RNScreens')).toBe(false);
+    const files = project.pbxSourcesBuildPhaseObj(project.getFirstTarget().uuid).files;
+    expect(files.filter((f) => String(f.comment).includes(p.INTENT_FILE))).toHaveLength(1);
+    expect(plugin.SWIFT_FILES).toContain(p.INTENT_FILE);
+  });
+
+  it('the intent is not in the pod, and the widget has a meetops://record deep-link fallback', () => {
+    const pod = readFileSync(
+      join(root, 'modules/live-activity/ios/RecordingActivityAttributes.swift'),
+      'utf8',
+    );
+    expect(pod).not.toContain('LiveActivityIntent');
+    const intent = readFileSync(
+      join(root, 'targets/RecordingLiveActivity/StopRecordingIntent.swift'),
+      'utf8',
+    );
+    expect(intent).toContain('LiveActivityIntent');
+    // Same notification name the module observes.
+    expect(pod).toContain('"MeetOpsLiveActivityStopRecording"');
+    expect(intent).toContain('"MeetOpsLiveActivityStopRecording"');
+    const w = readFileSync(
+      join(root, 'targets/RecordingLiveActivity/RecordingLiveActivityWidget.swift'),
+      'utf8',
+    );
+    expect(w.match(/\.widgetURL\(recordURL\)/g)?.length).toBeGreaterThanOrEqual(2);
+    expect(w).toContain('meetops://record');
   });
 
   it('lists the widget sources that exist on disk', () => {

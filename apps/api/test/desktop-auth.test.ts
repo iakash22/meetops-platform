@@ -1,5 +1,5 @@
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { DESKTOP_AUTH_PATHS, DESKTOP_SCOPES } from '@meetops/contracts';
 import { createSessionVerifier } from '@meetops/session-verifier';
 import { InMemoryExtensionTokenRepository } from '../src/modules/extension-auth/index.js';
@@ -61,6 +61,10 @@ async function signIn(s: Awaited<ReturnType<typeof setup>>) {
   expect(t.statusCode).toBe(200);
   return { ...a, tokens: t.json<Tokens>() };
 }
+
+afterEach(() => {
+  vi.useRealTimers();
+});
 
 describe('desktop auth (ADR-012, behind DESKTOP_AUTH_ENABLED)', () => {
   it('routes are not registered by default', async () => {
@@ -155,6 +159,8 @@ describe('desktop auth (ADR-012, behind DESKTOP_AUTH_ENABLED)', () => {
     expect(r1.statusCode).toBe(200);
     const t2 = r1.json<Tokens>();
     expect(t2.refreshToken).not.toBe(t1.refreshToken);
+    // Past the ~10 s grace window, so re-presenting the old token is reuse.
+    vi.useFakeTimers({ toFake: ['Date'], now: Date.now() + 11_000 });
     const reuse = await post(s.app, DESKTOP_AUTH_PATHS.refresh, {
       deviceId,
       refreshToken: t1.refreshToken,
@@ -283,5 +289,38 @@ describe('desktop auth (ADR-012, behind DESKTOP_AUTH_ENABLED)', () => {
     expect(pkceS256Matches('x'.repeat(43), 'E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM')).toBe(
       false,
     );
+  });
+});
+
+describe('desktop refresh grace window', () => {
+  it('returns the same pair within ~10 s for the same device, and revokes otherwise', async () => {
+    const s = await setup();
+    const { tokens: t1, deviceId } = await signIn(s);
+    const r1 = await post(s.app, DESKTOP_AUTH_PATHS.refresh, {
+      deviceId,
+      refreshToken: t1.refreshToken,
+    });
+    expect(r1.statusCode).toBe(200);
+    const t2 = r1.json<Tokens>();
+    const again = await post(s.app, DESKTOP_AUTH_PATHS.refresh, {
+      deviceId,
+      refreshToken: t1.refreshToken,
+    });
+    expect(again.statusCode).toBe(200);
+    expect(again.json()).toMatchObject({
+      accessToken: t2.accessToken,
+      refreshToken: t2.refreshToken,
+    });
+
+    const other = await post(s.app, DESKTOP_AUTH_PATHS.refresh, {
+      deviceId: randomUUID(),
+      refreshToken: t1.refreshToken,
+    });
+    expect(other.statusCode).toBe(401);
+    const after = await post(s.app, DESKTOP_AUTH_PATHS.refresh, {
+      deviceId,
+      refreshToken: t2.refreshToken,
+    });
+    expect(after.statusCode).toBe(401);
   });
 });

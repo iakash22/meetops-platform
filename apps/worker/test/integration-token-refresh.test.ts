@@ -6,18 +6,27 @@ const ORG = '00000000-0000-4000-8000-00000000000a';
 const NOW = Date.parse('2026-10-27T10:00:00Z');
 
 function makeRepo(rows: (IntegrationConnectionRecord & { secrets: IntegrationSecrets })[]) {
-  const upserts: { org: string; input: Parameters<TokenRefreshRepository['upsert']>[1] }[] = [];
+  const upserts: {
+    org: string;
+    id: string;
+    input: Parameters<TokenRefreshRepository['saveRefreshedTokens']>[2];
+    fence: string;
+  }[] = [];
   const statuses: [string, string][] = [];
   const list = vi.fn<TokenRefreshRepository['listDueForRefresh']>(async () =>
     rows.map((r) => ({ organizationId: r.organizationId, id: r.id, provider: r.provider })),
   );
   const repo: TokenRefreshRepository = {
     listDueForRefresh: list,
-    get: async (_o, id) => rows.find((r) => r.id === id) ?? null,
-    readSecrets: async (_o, id) => rows.find((r) => r.id === id)?.secrets ?? null,
-    upsert: async (org, input) => {
-      upserts.push({ org, input });
-      return rows[0]!;
+    readForRefresh: async (_o, id) => {
+      const r = rows.find((x) => x.id === id);
+      if (!r) return null;
+      const { secrets, ...connection } = r;
+      return { connection, secrets, fence: `fence-${id}` };
+    },
+    saveRefreshedTokens: async (org, id, input, fence) => {
+      upserts.push({ org, id, input, fence });
+      return 'saved';
     },
     setStatus: async (_o, id, s) => {
       statuses.push([id, s]);
@@ -73,19 +82,22 @@ describe('integration token refresh sweep', () => {
     });
     expect(r).toEqual({ refreshed: 2, failed: 0, skipped: 0 });
     expect(list).toHaveBeenCalledWith(new Date(NOW + 600_000), 100);
-    expect(jira.refresh).toHaveBeenCalledWith('old-refresh');
-    expect(github.createInstallationToken).toHaveBeenCalledWith('99');
-    expect(upserts[0]!.input).toMatchObject({
-      provider: 'jira',
+    expect(jira.refresh).toHaveBeenCalledWith('old-refresh', { signal: expect.any(AbortSignal) });
+    expect(github.createInstallationToken).toHaveBeenCalledWith('99', {
+      signal: expect.any(AbortSignal),
+    });
+    expect(upserts[0]).toMatchObject({ org: ORG, id: 'j1', fence: 'fence-j1' });
+    expect(upserts[0]!.input).toEqual({
       accessToken: 'new-a',
       refreshToken: 'new-r',
       webhookSecret: 'whs',
-      externalAccountId: 'cloud-1',
+      accessTokenExpiresAt: new Date(NOW + 3600e3),
     });
+    expect(upserts[1]).toMatchObject({ id: 'g1', fence: 'fence-g1' });
     expect(upserts[1]!.input).toMatchObject({
-      provider: 'github',
       accessToken: 'ghs_new',
       refreshToken: null,
+      webhookSecret: 'whs',
     });
     expect(JSON.stringify([l.info.mock.calls, l.warn.mock.calls])).not.toMatch(
       /new-a|new-r|ghs_new|old-/,

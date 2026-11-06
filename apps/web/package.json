@@ -11,7 +11,9 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "eslint .",
     "test": "vitest run",
-    "size": "node scripts/check-bundle-size.mjs"
+    "coverage": "vitest run --coverage",
+    "size": "node scripts/check-bundle-size.mjs",
+    "csp": "node scripts/check-csp.mjs"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.2.2",
@@ -53,6 +55,7 @@
     "tailwindcss": "^3.4.14",
     "typescript": "^5.6.3",
     "vite": "^7.3.7",
+    "@vitest/coverage-v8": "4.1.12",
     "vitest": "^4.1.12"
   }
 }

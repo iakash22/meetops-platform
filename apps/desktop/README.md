@@ -39,7 +39,7 @@ lanes never need the Rust toolchain**. `src-tauri/` is excluded from ESLint and 
 
 ### Native prerequisites (only for `tauri:*`)
 
-Rust (stable, 1.85+ was used to verify) and the platform deps from the
+Rust (stable, **1.88+**: `rust-version` in `src-tauri/Cargo.toml`; the locked `time` 0.3.55 needs 1.88) and the platform deps from the
 [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/) (Linux: `libwebkit2gtk-4.1-dev`,
 `libgtk-3-dev`, `librsvg2-dev`, `libayatana-appindicator3-dev`; macOS: Xcode CLT; Windows: WebView2 +
 MSVC). Rust unit tests: `cd apps/desktop/src-tauri && cargo test`.

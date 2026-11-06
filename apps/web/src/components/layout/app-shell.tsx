@@ -12,7 +12,7 @@ import {
 } from '@/components/ui/sheet';
 import { cn } from '@/lib/utils';
 import { useUiStore } from '@/stores/org-store';
-import { navItems } from './nav-items';
+import { visibleNavItems } from './nav-items';
 import { OrgSwitcher } from './org-switcher';
 import { SignOutControls } from './sign-out';
 import { displayName, useSession } from '@/features/session/use-session';
@@ -44,9 +44,11 @@ function NavLinks({
   collapsed?: boolean;
   onNavigate?: () => void;
 }) {
+  const { data: session } = useSession();
+  const items = visibleNavItems(session?.role ?? null);
   return (
     <nav aria-label="Main" className="flex flex-col gap-1 p-2">
-      {navItems.map(({ to, label, icon: Icon }) => (
+      {items.map(({ to, label, icon: Icon }) => (
         <Link
           key={to}
           to={to}

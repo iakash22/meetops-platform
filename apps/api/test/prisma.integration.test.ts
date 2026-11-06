@@ -239,6 +239,19 @@ describe.skipIf(!url)(
       expect(rs.map((r) => r.statusCode).sort()).toEqual([204, 400, 400]);
     });
 
+    it('D4: concurrent consumption of one email-verification token → exactly one wins', async () => {
+      await signupAndLogin(app, email('vrace'), undefined, { verify: false });
+      const { Client } = await import('./helpers.js');
+      const t = app.token(email('vrace'), 'email_verification')!;
+      const n = 5;
+      const rs = await Promise.all(
+        Array.from({ length: n }, () => new Client(app).post('/auth/verify-email', { token: t })),
+      );
+      const codes = rs.map((r) => r.statusCode);
+      expect(codes.filter((c) => c === 204)).toHaveLength(1);
+      expect(codes.filter((c) => c === 400)).toHaveLength(n - 1);
+    });
+
     it('pre-tenant audit events are written as global rows (createMany, not readable by the app)', async () => {
       await signupAndLogin(app, email('glob'));
       // the app role cannot SELECT null-org rows; the insert succeeding is the assertion

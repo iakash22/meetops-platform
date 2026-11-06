@@ -9,9 +9,16 @@ const LEASE = new Date('2026-10-31T10:10:00Z');
 function fakeClient(rows: { next_sync_at: Date }[], executed = 1) {
   const queryRaw = vi.fn<(...a: unknown[]) => Promise<typeof rows>>(async () => rows);
   const executeRaw = vi.fn<(...a: unknown[]) => Promise<number>>(async () => executed);
-  const tx = { $executeRaw: executeRaw, $queryRaw: queryRaw };
+  const updateMany = vi.fn<(a: { where: Record<string, unknown> }) => Promise<{ count: number }>>(
+    async () => ({ count: executed }),
+  );
+  const tx = {
+    $executeRaw: executeRaw,
+    $queryRaw: queryRaw,
+    calendarConnection: { updateMany },
+  };
   const client = { $transaction: vi.fn(async (fn: (t: typeof tx) => unknown) => fn(tx)) };
-  return { client: client as never, queryRaw, executeRaw };
+  return { client: client as never, queryRaw, executeRaw, updateMany };
 }
 const sqlOf = (call: unknown[]) => (call[0] as string[]).join('?');
 
@@ -49,5 +56,109 @@ describe('calendar sync repository claimForSync', () => {
     const call = f.executeRaw.mock.calls.at(-1)!;
     expect(sqlOf(call)).toMatch(/next_sync_at = \?::timestamptz/);
     expect(sqlOf(call)).toMatch(/clock_timestamp\(\)/);
+  });
+  it('markError with a lease only marks while next_sync_at still equals it (#353 L1)', async () => {
+    const f = fakeClient([], 0);
+    const repo = createCalendarSyncRepository({ client: f.client });
+    await expect(repo.markError(ORG, ID, { lease: LEASE })).resolves.toBe(false);
+    expect(f.updateMany.mock.calls.at(-1)![0].where).toEqual({
+      id: ID,
+      organizationId: ORG,
+      status: 'active',
+      nextSyncAt: LEASE,
+    });
+    const g = fakeClient([], 1);
+    await expect(
+      createCalendarSyncRepository({ client: g.client }).markError(ORG, ID),
+    ).resolves.toBe(true);
+    expect(g.updateMany.mock.calls.at(-1)![0].where).not.toHaveProperty('nextSyncAt');
+  });
+  it('updateTokens with a lease only writes while active and the claim is still held', async () => {
+    const cipher = {
+      encrypt: vi.fn(async (v: string) => `v1.k1.n${v.length}.ct`),
+      decrypt: vi.fn(async () => 'x'),
+    };
+    const t = { accessToken: 'a', refreshToken: 'r', accessTokenExpiresAt: LEASE };
+    const f = fakeClient([], 0);
+    const repo = createCalendarSyncRepository({ client: f.client, cipher });
+    await expect(repo.updateTokens(ORG, ID, t, { lease: LEASE })).resolves.toBe(false);
+    expect(f.updateMany.mock.calls.at(-1)![0].where).toEqual({
+      id: ID,
+      organizationId: ORG,
+      status: 'active',
+      nextSyncAt: LEASE,
+    });
+    const g = fakeClient([], 1);
+    const r2 = createCalendarSyncRepository({ client: g.client, cipher });
+    await expect(r2.updateTokens(ORG, ID, t)).resolves.toBe(true);
+    expect(g.updateMany.mock.calls.at(-1)![0].where).toEqual({
+      id: ID,
+      organizationId: ORG,
+      status: 'active',
+    });
+  });
+  it('readSecrets accepts the shared legacy context only for a fully legacy row', async () => {
+    const legacyCtx = { organizationId: ORG, integrationId: ID };
+    // access decrypts under its v2 field context, refresh only under the legacy shared one.
+    const cipher = {
+      encrypt: vi.fn(),
+      decrypt: vi.fn(async (enc: string, c: { integrationId: string }) => {
+        if (enc === 'acc' && c.integrationId === `calendar:${ID}:access`) return 'access-v2';
+        if (enc === 'ref' && c.integrationId === legacyCtx.integrationId) return 'refresh-legacy';
+        if (enc === 'accL' && c.integrationId === legacyCtx.integrationId) return 'access-legacy';
+        throw new Error('bad aad');
+      }),
+    };
+    const row = (accessTokenEnc: string, refreshEncVersion: number | null = null) => ({
+      refreshEncVersion,
+      tokenGeneration: 3,
+      userId: 'u',
+      provider: 'google',
+      accessTokenEnc,
+      refreshTokenEnc: 'ref',
+      accessTokenExpiresAt: null,
+      syncFailures: 0,
+      syncCursorEnc: null,
+      syncCursorFrom: null,
+      syncCursorTo: null,
+    });
+    const withRow = (r: unknown) => {
+      const tx = {
+        $executeRaw: vi.fn(async () => 1),
+        calendarConnection: { findFirst: vi.fn(async () => r) },
+      };
+      return { $transaction: vi.fn(async (fn: (t: typeof tx) => unknown) => fn(tx)) } as never;
+    };
+    const mixed = await createCalendarSyncRepository({
+      client: withRow(row('acc')),
+      cipher,
+    }).readSecrets(ORG, ID);
+    expect(mixed).toMatchObject({ accessToken: 'access-v2', refreshToken: null });
+    const legacy = await createCalendarSyncRepository({
+      client: withRow(row('accL')),
+      cipher,
+    }).readSecrets(ORG, ID);
+    expect(legacy).toMatchObject({
+      accessToken: 'access-legacy',
+      refreshToken: 'refresh-legacy',
+      refreshEncVersion: 1,
+      tokenGeneration: 3,
+    });
+    // #394 N2: a legacy Google row after a worker refresh (v2 access, kept legacy refresh declared as 1) stays valid.
+    const declaredLegacy = await createCalendarSyncRepository({
+      client: withRow(row('acc', 1)),
+      cipher,
+    }).readSecrets(ORG, ID);
+    expect(declaredLegacy).toMatchObject({
+      accessToken: 'access-v2',
+      refreshToken: 'refresh-legacy',
+      refreshEncVersion: 1,
+    });
+    // ...but a declared version that doesn't match the envelope is rejected.
+    const declaredV2 = await createCalendarSyncRepository({
+      client: withRow(row('acc', 2)),
+      cipher,
+    }).readSecrets(ORG, ID);
+    expect(declaredV2).toMatchObject({ accessToken: 'access-v2', refreshToken: null });
   });
 });

@@ -8,15 +8,30 @@ import {
   TokenCipher,
 } from '@meetops/integrations';
 import { createIntegrationConnectionRepository } from '@meetops/database';
-import { randomUUID } from 'node:crypto';
 import { createQueue, createRedisClient, createWorker } from '@meetops/queue';
+import { IntegrationsApiOriginError, integrationsApiOrigin } from './api-origin.js';
+import {
+  CONFIRM_LEASE_LUA,
+  createRedisConnectionLease,
+  LEASE_REDIS_OPTIONS,
+  RELEASE_LEASE_LUA,
+  type LeaseRedis,
+} from '@meetops/integrations';
 import {
   runTokenRefreshSweep,
-  type ConnectionLease,
   type TokenRefreshDeps,
   type TokenRefreshLog,
   type TokenRefreshProviders,
 } from './token-refresh.js';
+
+// Lease primitives live in @meetops/integrations (shared with the API); re-exported for existing imports.
+export {
+  CONFIRM_LEASE_LUA,
+  createRedisConnectionLease,
+  LEASE_REDIS_OPTIONS,
+  RELEASE_LEASE_LUA,
+  type LeaseRedis,
+};
 
 export class TokenRefreshEnvError extends Error {}
 
@@ -44,11 +59,22 @@ export function loadTokenRefreshEnv(env: NodeJS.ProcessEnv = process.env): Token
   // Validated even when refresh is off: a set-but-bad or production KEK is always a startup error.
   const kek = parseKek(env);
   if (!enabled) return { enabled, intervalMs };
+  // Jira refresh builds its redirect URI from the API origin: required (https, no default) in production.
+  if (env.JIRA_CLIENT_ID?.trim()) apiOriginOrThrow(env);
   if (!kek)
     throw new TokenRefreshEnvError(
       'INTEGRATIONS_TOKEN_KEK must be 32 bytes (base64) when refresh is enabled',
     );
   return { enabled, intervalMs, kek };
+}
+
+function apiOriginOrThrow(env: NodeJS.ProcessEnv): string {
+  try {
+    return integrationsApiOrigin(env);
+  } catch (err) {
+    if (err instanceof IntegrationsApiOriginError) throw new TokenRefreshEnvError(err.message);
+    throw err;
+  }
 }
 
 /** Strict: canonical base64 of 32 bytes, refused under NODE_ENV=production (ADR-008). Names the key only. */
@@ -71,7 +97,7 @@ export function tokenRefreshProvidersFromEnv(
   const jiraId = env.JIRA_CLIENT_ID?.trim();
   const jiraSecret = env.JIRA_CLIENT_SECRET;
   if (jiraId && jiraSecret) {
-    const apiOrigin = env.INTEGRATIONS_API_ORIGIN?.trim() || 'http://localhost:4000';
+    const apiOrigin = apiOriginOrThrow(env);
     providers.jira = new JiraOAuthClient({
       clientId: jiraId,
       clientSecret: async () => jiraSecret,
@@ -94,37 +120,24 @@ export function tokenRefreshProvidersFromEnv(
   return providers;
 }
 
-/** Compare-and-delete: release the lease only while it still holds this owner's token (atomic in Redis). */
-export const RELEASE_LEASE_LUA = `if redis.call('GET', KEYS[1]) == ARGV[1] then
-  return redis.call('DEL', KEYS[1])
-end
-return 0`;
-
-/** Minimal ioredis surface the lease needs. */
-export interface LeaseRedis {
-  set(key: string, value: string, px: 'PX', ttlMs: number, nx: 'NX'): Promise<'OK' | null>;
-  eval(script: string, numKeys: number, ...args: string[]): Promise<unknown>;
-}
-
-/**
- * Per-connection lease on Redis: `SET key <random token> PX ttl NX` takes it (atomic, auto-expiring), and release
- * runs RELEASE_LEASE_LUA so a holder whose lease expired can never delete the next holder's lease.
- */
-export function createRedisConnectionLease(
-  redis: LeaseRedis,
-  newToken: () => string = randomUUID,
-): ConnectionLease {
-  return {
-    async acquire(key, ttlMs) {
-      if (!Number.isInteger(ttlMs) || ttlMs <= 0)
-        throw new RangeError('ttlMs must be a positive integer');
-      const token = newToken();
-      return (await redis.set(key, token, 'PX', ttlMs, 'NX')) === 'OK' ? token : null;
-    },
-    async release(key, token) {
-      return Number(await redis.eval(RELEASE_LEASE_LUA, 1, key, token)) === 1;
-    },
-  };
+/** Logs a Redis outage once (error name only) until the connection is ready again; ioredis keeps reconnecting. */
+export function watchLeaseRedis(
+  redis: { on(event: string, fn: (err?: unknown) => void): unknown },
+  log: TokenRefreshLog,
+): void {
+  let down = false;
+  redis.on('error', (err: unknown) => {
+    if (down) return;
+    down = true;
+    log.warn(
+      { errName: err instanceof Error ? err.name : 'unknown' },
+      'integration token refresh lease redis unavailable',
+    );
+  });
+  redis.on('ready', () => {
+    if (down) log.info({}, 'integration token refresh lease redis reconnected');
+    down = false;
+  });
 }
 
 export type TokenRefreshRegistration =
@@ -158,9 +171,12 @@ const bullmqFactories: TokenRefreshQueueFactories = {
 };
 
 /**
- * Single-replica token refresh (Jira rotates refresh tokens, so concurrent sweeps can invalidate each other's
- * grant). Every replica upserts the SAME BullMQ job scheduler id, so Redis holds exactly one repeatable job and
- * each tick is delivered to exactly one worker, instead of one setInterval per replica.
+ * Token refresh on one BullMQ job scheduler: every replica upserts the SAME scheduler id, so Redis holds one
+ * repeatable job and each tick is delivered to one worker, instead of one setInterval per replica. That alone does
+ * not stop sweeps overlapping across replicas (the next run is queued as a sweep starts, and a stalled job whose
+ * lock expires can run alongside it). What makes overlap safe is the per-connection lease in runTokenRefreshSweep
+ * (Jira rotates refresh tokens, so two concurrent refreshes of one connection could burn the grant), backed by the
+ * database fence on every write.
  */
 export function startTokenRefreshQueueScheduler(
   deps: TokenRefreshDeps,
@@ -206,7 +222,13 @@ export interface RegisterTokenRefreshOptions {
   start?: typeof startTokenRefreshQueueScheduler;
 }
 
-/** Integrations token-refresh job for apps/worker main(); single-replica via a BullMQ job scheduler. */
+function createLeaseRedis(log: TokenRefreshLog): ReturnType<typeof createRedisClient> {
+  const redis = createRedisClient(LEASE_REDIS_OPTIONS);
+  watchLeaseRedis(redis, log);
+  return redis;
+}
+
+/** Integrations token-refresh job for apps/worker main(): one BullMQ job scheduler + a per-connection lease. */
 export function registerTokenRefreshJob(
   opts: RegisterTokenRefreshOptions,
 ): TokenRefreshRegistration {
@@ -220,7 +242,7 @@ export function registerTokenRefreshJob(
         cipher: new TokenCipher(new LocalKeyProvider({ shared: env.kek }, 'shared')),
       }),
       providers: tokenRefreshProvidersFromEnv(),
-      lease: createRedisConnectionLease((leaseRedis = createRedisClient())),
+      lease: createRedisConnectionLease((leaseRedis = createLeaseRedis(opts.log))),
     } satisfies Omit<TokenRefreshDeps, 'log'>);
   const scheduler = (opts.start ?? startTokenRefreshQueueScheduler)(
     { ...deps, log: opts.log },

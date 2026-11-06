@@ -4,7 +4,9 @@ import {
   type MeetingAnalyticsQuery,
   type MeetingAnalyticsResult,
 } from '../domain/meeting.js';
+import { MeetingProjectInvalidError } from '../domain/meeting.js';
 import type {
+  ManualMeetingCreate,
   MeetingCreate,
   MeetingPage,
   MeetingRecord,
@@ -18,6 +20,11 @@ type Row = MeetingRecord & { deletedAt: Date | null; durationSec?: number | null
 /** Development/test only (selectMeetingRepository refuses it in strict environments). */
 export class InMemoryMeetingRepository implements MeetingRepository {
   readonly rows = new Map<string, Row>();
+  /**
+   * Live projects as `${organizationId}:${projectId}`. Undefined: projectId is not checked (no in-memory projects
+   * store is shared with this repository); tests set it to exercise the same 400 as Prisma.
+   */
+  projects: Set<string> | undefined;
   constructor(private readonly now: () => Date = () => new Date()) {}
 
   /** Test seam: insert a row directly (e.g. an upload meeting or a soft-deleted one). */
@@ -125,6 +132,17 @@ export class InMemoryMeetingRepository implements MeetingRepository {
     if (existing) return Promise.resolve({ meeting: strip(existing), created: false });
     const row = this.seed({ organizationId, ...input, status: 'scheduled' });
     return Promise.resolve({ meeting: strip(row), created: true });
+  }
+
+  create(organizationId: string, input: ManualMeetingCreate): Promise<MeetingRecord> {
+    if (
+      input.projectId &&
+      this.projects &&
+      !this.projects.has(`${organizationId}:${input.projectId}`)
+    )
+      return Promise.reject(new MeetingProjectInvalidError());
+    const row = this.seed({ organizationId, ...input, status: 'scheduled' });
+    return Promise.resolve(strip(row));
   }
 }
 

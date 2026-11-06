@@ -18,6 +18,8 @@ export const MeetingStatus = Type.Union([
   Type.Literal('processing'),
   Type.Literal('completed'),
   Type.Literal('failed'),
+  /** Transcription retries are used up (provider outage); it can be re-driven from the DLQ. */
+  Type.Literal('transcription_delayed'),
 ]);
 export type MeetingStatus = Static<typeof MeetingStatus>;
 

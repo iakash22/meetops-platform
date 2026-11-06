@@ -62,6 +62,8 @@ export type UploadScanCode =
   | 'duration_mismatch'
   | 'trailing_data'
   | 'malware_detected'
+  /** clamd hit a scan limit (Heuristics.Limits.Exceeded.*): not scanned in full, fail-closed (MAL-2). */
+  | 'scan_limit_exceeded'
   | 'truncated_container'
   | 'timestamps_invalid';
 
@@ -260,8 +262,10 @@ export async function scanUploadObject(
     }
     const r = await verifyUploadContent(file, declaredMime, probe, l);
     // Optional ClamAV (fail-closed: a clamd error throws and the job retries).
-    if (r.verdict === 'clean' && opts.antivirus && (await opts.antivirus.scanFile(file)).infected)
-      return reject('malware_detected');
+    if (r.verdict === 'clean' && opts.antivirus) {
+      const av = await opts.antivirus.scanFile(file);
+      if (av.infected) return reject(av.limitExceeded ? 'scan_limit_exceeded' : 'malware_detected');
+    }
     return r;
   } finally {
     await rm(dir, { recursive: true, force: true });

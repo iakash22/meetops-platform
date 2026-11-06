@@ -49,6 +49,8 @@ Where each variable is read:
 **Local dev only:** the compose stack runs the pinned MinIO fork `pgsty/silo`. Production uses R2/S3 via StorageService.
 
 - `MEDIA_STORAGE_ENABLED`: `true` backs the API upload routes with S3/MinIO (`STORAGE_*`) the Prisma `file_objects` / `consent_attestations` / `recording_sessions` tables, and enqueues media jobs on the BullMQ `media` queue the worker consumes; requires `DATABASE_URL` and `REDIS_URL`. Empty/`false` (default) keeps the in-memory adapters in development/test and leaves the media routes off elsewhere.
+- `CONSENT_ENFORCEMENT_ENABLED`: `true` makes upload and recording-session init, chunk URLs and complete require the meeting's latest Consent API event (`meeting_consent_events`) to be a grant for the current consent version; anything else fails closed with 422 `VALIDATION_FAILED` + `CONSENT_*`, and uploads without a `meetingId` are refused. Empty/`false` (default) leaves enforcement off so existing clients keep working. Invalid values fail startup.
+- `TASK_SYNC_ENABLED`: `true` registers `POST /orgs/:organizationId/tasks/:taskId/sync` (owner/admin, approved tasks only), which records a `task_sync_jobs` row (idempotent per task + integration) and enqueues it on the BullMQ `task-sync` queue; requires `REDIS_URL` and, outside development/test, `DATABASE_URL`. Empty/`false` (default): the route is not registered. The worker consumer (`processTaskSyncJob`) is not started yet: it needs a shared integration token key (ADR-008).
 - `STORAGE_PROVIDER`: `minio` | `r2` | `s3`.
 - `STORAGE_ENDPOINT`, `STORAGE_REGION`, `STORAGE_BUCKET`.
 - `STORAGE_ACCESS_KEY_ID`, `STORAGE_SECRET_ACCESS_KEY`: in dev these are also the MinIO root credentials (dev-only placeholders).
@@ -62,10 +64,20 @@ Where each variable is read:
 
 ### Realtime gateway (apps/realtime)
 
-- `REALTIME_HOST` (default `0.0.0.0`), `REALTIME_PORT` (default 4001; compose binds 127.0.0.1:4001).
+- `REALTIME_HOST` (default `0.0.0.0`), `REALTIME_PORT` (default 4001). The compose `127.0.0.1:4001` port mapping is for **local development only**.
 - `REALTIME_CORS_ORIGINS`: comma-separated allowed origins (dev: `http://localhost:5173`). Empty or `*` allows any, so set it explicitly.
 - `REALTIME_SOCKET_PATH` (default `/socket.io`).
+- `REALTIME_TRUST_PROXY_HOPS` (default 0): reverse proxies in front of realtime. With N > 0 the per-IP limits use the Nth `X-Forwarded-For` entry from the right; entries to its left are client-controlled and ignored. If that entry is not a valid IP address, the socket address is used instead. **Behind the single nginx proxy, set `REALTIME_TRUST_PROXY_HOPS=1`** (nginx must append the peer with `proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;`).
+- `REALTIME_MAX_SOCKETS_PER_USER` (default 20) and `REALTIME_MAX_SOCKETS_PER_IP` (default 50): concurrent socket caps, shared through Redis when `REDIS_URL` is set.
+- `REALTIME_JOIN_LIMIT_PER_SOCKET` (default 30 per minute) and `REALTIME_MAX_ROOMS_PER_SOCKET` (default 50): `meeting:join` limits.
+- `REALTIME_CORS_ORIGINS` must be `https://` unless `NODE_ENV=development`. In production `REDIS_URL` is required and must be `rediss://`.
 - `REDIS_URL`: when set, enables the Socket.IO Redis adapter.
+
+#### Realtime network exposure (production and self-host)
+
+- Realtime must be reachable **only through nginx**. Production and self-host compose must **not** publish the realtime port (no `ports:` entry for the realtime service); nginx reaches it over the internal compose network.
+- The `127.0.0.1:4001` mapping in `infra/compose/compose.app.yml` exists for local development only. Remove it (or use an override without it) for any production or self-host deployment.
+- Why: with `REALTIME_TRUST_PROXY_HOPS=1` the gateway trusts the last `X-Forwarded-For` entry. A client that can reach realtime directly, bypassing nginx, can set that entry itself and evade the per-IP limits.
 
 ### Media (worker)
 
@@ -114,7 +126,7 @@ These keys are owned and parsed by `@meetops/ai-core` (`loadAIEnv` in `packages/
 - `DEEPGRAM_ENABLED`: false
 - `DEEPGRAM_API_KEY`
 - `AI_ALLOW_PAID_FALLBACK`: false
-- `AI_STORES` (worker): `durable` (default; Postgres `ai_usage_counters` + `ai_idempotency`, forced RLS). `memory` is for unit tests only and is refused when `NODE_ENV=production`; store errors fail the job, never fall back to memory.
+- `AI_STORES` (worker): `durable` (default; Postgres `ai_usage_counters`, `ai_idempotency` and `ai_org_config`, forced RLS). `memory` is for unit tests only and is refused unless `NODE_ENV=test` (staging, production and an unset `NODE_ENV` all refuse it); store errors fail the job, never fall back to memory.
 - `AI_REQUIRE_PROVIDER_APPROVAL`: true
 
 ### Integrations

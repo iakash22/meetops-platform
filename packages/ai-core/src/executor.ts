@@ -97,17 +97,9 @@ export function planCandidates(
   const platformDefault =
     route.source === 'system' || route.source === 'env' || platformProviders.has(route.provider);
 
+  // No implicit fallback (ADR-009): only the resolved primary and the route's explicit fallbacks are candidates.
+  // Enabled local providers (Ollama, faster-whisper) run only when chosen as the primary or listed explicitly.
   const ordered = [route.provider, ...route.fallbacks];
-  // Implicit fallbacks: enabled *local* providers with the capability (free, self-hosted), by priority.
-  const locals = registry
-    .list()
-    .filter(
-      (c) =>
-        c.local && c.enabled && c.type === route.kind && c.capabilities.includes(route.capability),
-    )
-    .sort((a, b) => a.fallbackPriority - b.fallbackPriority)
-    .map((c) => c.name);
-  for (const n of locals) if (!ordered.includes(n)) ordered.push(n);
 
   const candidates: ProviderConfig[] = [];
   ordered.forEach((name, i) => {

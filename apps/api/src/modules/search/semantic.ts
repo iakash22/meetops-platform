@@ -1,18 +1,49 @@
 import type { SemanticSearchKind, SemanticSearchResult } from '@meetops/contracts';
 import { withOrganizationContext, type DatabaseClient } from '../../shared/prisma/context.js';
 import { DomainError } from '../../shared/domain-error.js';
-import { SEARCH_STATEMENT_TIMEOUT_MS, SearchTimeoutError } from './prisma.repository.js';
+import {
+  SEARCH_STATEMENT_TIMEOUT_MS,
+  SearchTimeoutError,
+  isStatementTimeout,
+} from './prisma.repository.js';
 
 /** Dimension of meeting_embeddings.embedding (migration 20261031050000). */
 export const SEMANTIC_EMBEDDING_DIMS = 1536;
 
 /**
- * Turns the query text into a vector with the same model the worker used for meeting_embeddings. Implemented over the
- * @meetops/ai-core Embeddings capability (follow-up); tests inject a deterministic fake. Never logged.
+ * Turns the query text into a vector, reporting the `provider/model` that produced it so only rows embedded with the
+ * same model are ranked. Never logged.
  */
 export interface QueryEmbedder {
-  readonly model: string;
-  embed(text: string): Promise<number[]>;
+  embed(organizationId: string, text: string): Promise<{ vector: number[]; model: string }>;
+}
+
+/**
+ * Structural twin of `embedWithExecutor` from @meetops/ai-core (kept local so the API needs no new dependency): the
+ * host passes `(req) => embedWithExecutor(executor, req)`.
+ */
+export type ExecutorEmbedFn = (req: {
+  organizationId: string;
+  inputs: string[];
+}) => Promise<
+  | { status: 'succeeded'; vectors: number[][]; model: string }
+  | { status: 'unavailable' | 'retryable' | 'failed'; errors: { code: string }[] }
+>;
+
+/**
+ * Production query embedder over the ai-core executor (`embeddings` feature: routing, approval, quotas and usage).
+ * Unconfigured by default: until an approved provider is routed for embeddings the executor answers `unavailable`
+ * and the route returns 503. Queries are not idempotency-keyed (ad hoc text).
+ */
+export function createExecutorQueryEmbedder(embed: ExecutorEmbedFn): QueryEmbedder {
+  return {
+    async embed(organizationId, text) {
+      const r = await embed({ organizationId, inputs: [text] });
+      if (r.status !== 'succeeded' || r.vectors.length !== 1)
+        throw new SemanticSearchUnavailableError();
+      return { vector: r.vectors[0]!, model: r.model };
+    },
+  };
 }
 
 export type SemanticSearchInput = {
@@ -95,6 +126,10 @@ type Row = {
   occurred_at: Date;
 };
 
+/** LIMIT is a bigint: an integer 1-20; a non-finite value falls back to the maximum. */
+const clampLimit = (n: number) =>
+  Number.isFinite(n) ? Math.min(Math.max(Math.trunc(n), 1), 20) : 20;
+
 const clampScore = (x: number) => (Number.isFinite(x) ? Math.max(-1, Math.min(1, x)) : -1);
 
 export class PrismaSemanticSearch implements SemanticSearchRepository {
@@ -113,13 +148,12 @@ export class PrismaSemanticSearch implements SemanticSearchRepository {
           input.model,
           vec,
           [...input.kinds],
-          Math.min(Math.max(input.limit, 1), 20),
+          clampLimit(input.limit),
         );
       },
       { client: this.db },
     ).catch((e: unknown) => {
-      if (/57014|statement timeout|canceling statement/i.test(String((e as Error)?.message ?? e)))
-        throw new SearchTimeoutError();
+      if (isStatementTimeout(e)) throw new SearchTimeoutError();
       throw e;
     });
     return rows.map((r) => ({

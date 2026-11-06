@@ -1,11 +1,28 @@
-import { createReadStream } from 'node:fs';
+import { createReadStream, type ReadStream } from 'node:fs';
 import { connect, type Socket } from 'node:net';
 
 /**
  * Optional ClamAV step (PR #274 L-2) via a local clamd (`INSTREAM`). Off by default; when enabled it is fail-closed:
  * an unreachable/erroring clamd throws, so the job retries and the final attempt quarantines the upload.
  */
-export type AntivirusVerdict = { infected: false } | { infected: true; signature: string };
+export type AntivirusVerdict =
+  | { infected: false }
+  /**
+   * `limitExceeded`: clamd hit a scan limit (`Heuristics.Limits.Exceeded.*`, from AlertExceedsMax) instead of finding
+   * malware. Still never clean (fail-closed); the upload scan quarantines it as `scan_limit_exceeded`, not
+   * `malware_detected` (MAL-2).
+   */
+  | { infected: true; signature: string; limitExceeded?: true };
+
+/** Signature prefix clamd uses for a limit hit (MaxFileSize, MaxScanSize, MaxScanTime, MaxRecursion, MaxFiles, ...). */
+export const CLAMD_LIMIT_SIGNATURE_PREFIX = 'Heuristics.Limits.Exceeded';
+/** clamd MaxScanTime in infra/clamav/clamd.conf (ms). apps/worker/test/clamd-config.test.ts keeps them in sync. */
+export const CLAMD_MAX_SCAN_TIME_MS = 600_000;
+/**
+ * Default worker-side total deadline: clamd MaxScanTime plus 30 s for streaming and the reply, so clamd always
+ * answers (OK, FOUND or Limits.Exceeded.MaxScanTime) before the worker gives up on a scan clamd is still running.
+ */
+export const CLAMD_SCAN_TIMEOUT_MS = CLAMD_MAX_SCAN_TIME_MS + 30_000;
 export type Antivirus = { scanFile(file: string): Promise<AntivirusVerdict> };
 
 export type ClamdConfig =
@@ -30,19 +47,42 @@ export class ClamdError extends Error {
   }
 }
 
-export function createClamdScanner(cfg: ClamdConfig): Antivirus {
-  const timeoutMs = cfg.timeoutMs ?? 120_000;
+/**
+ * The exact clean reply to `zINSTREAM`: clamd NUL-terminates every reply in z mode. Anything else, including extra
+ * text, whitespace or a second line around it, is not clean (fail-closed).
+ */
+export const CLAMD_CLEAN_REPLY = 'stream: OK\0';
+/** `stream: <signature> FOUND\0`, one line, nothing before or after. Includes Heuristics.Limits.Exceeded.* (flagged limitExceeded). */
+const FOUND_REPLY = /^stream: ([^\0\r\n]{1,200}) FOUND\0$/;
+
+/** Test seam: how the upload file is opened (defaults to node:fs createReadStream). */
+export type ClamdIo = { openFile?: (file: string) => ReadStream };
+
+/**
+ * clamd `zINSTREAM` client. Fail-closed: only the exact {@link CLAMD_CLEAN_REPLY} is clean; an ERROR reply (for
+ * example `INSTREAM size limit exceeded. ERROR`), an empty, malformed or oversized reply, a timeout, a socket error
+ * or a file read error all reject with {@link ClamdError}. The file stream and the socket are destroyed on every
+ * path. `timeoutMs` is one total deadline, by default {@link CLAMD_SCAN_TIMEOUT_MS} (above clamd's
+ * MaxScanTime), so a slow scan ends with clamd's own verdict, not a worker timeout. A limit-hit FOUND reply resolves
+ * with `limitExceeded: true`.
+ */
+export function createClamdScanner(cfg: ClamdConfig, io: ClamdIo = {}): Antivirus {
+  const timeoutMs = cfg.timeoutMs ?? CLAMD_SCAN_TIMEOUT_MS;
+  const openFile =
+    io.openFile ?? ((file: string) => createReadStream(file, { highWaterMark: 64 * 1024 }));
   return {
     scanFile: (file) =>
       new Promise<AntivirusVerdict>((resolve, reject) => {
         const sock: Socket =
           'socketPath' in cfg ? connect(cfg.socketPath) : connect(cfg.port, cfg.host);
+        let src: ReadStream | undefined;
         let reply = '';
         let done = false;
         const finish = (err: Error | null, v?: AntivirusVerdict) => {
           if (done) return;
           done = true;
           clearTimeout(timer);
+          src?.destroy();
           sock.destroy();
           if (err) reject(err);
           else resolve(v!);
@@ -54,26 +94,46 @@ export function createClamdScanner(cfg: ClamdConfig): Antivirus {
           if (reply.length > 4096) finish(new ClamdError('clamd reply too long'));
         });
         sock.on('end', () => {
-          const r = reply.replace(/\0/g, '').trim();
-          if (/^stream: OK$/.test(r)) return finish(null, { infected: false });
-          const m = /^stream: (.{1,200}) FOUND$/.exec(r);
-          if (m) return finish(null, { infected: true, signature: m[1]! });
+          if (reply === CLAMD_CLEAN_REPLY) return finish(null, { infected: false });
+          const m = FOUND_REPLY.exec(reply);
+          if (m) {
+            const signature = m[1]!;
+            const limit =
+              signature === CLAMD_LIMIT_SIGNATURE_PREFIX ||
+              signature.startsWith(`${CLAMD_LIMIT_SIGNATURE_PREFIX}.`);
+            return finish(null, {
+              infected: true,
+              signature,
+              ...(limit ? { limitExceeded: true as const } : {}),
+            });
+          }
           finish(new ClamdError('clamd error reply'));
         });
+        sock.on('close', () => finish(new ClamdError('clamd closed without a reply')));
         sock.on('connect', () => {
+          if (done) return;
           sock.write('zINSTREAM\0');
-          const src = createReadStream(file, { highWaterMark: 64 * 1024 });
+          try {
+            src = openFile(file);
+          } catch {
+            return finish(new ClamdError('read failed'));
+          }
           src.on('data', (chunk) => {
+            if (done) return;
             const b = chunk as Buffer;
             const len = Buffer.alloc(4);
             len.writeUInt32BE(b.length, 0);
             if (!sock.write(Buffer.concat([len, b]))) {
-              src.pause();
-              sock.once('drain', () => src.resume());
+              src!.pause();
+              sock.once('drain', () => {
+                if (!done) src!.resume();
+              });
             }
           });
           src.on('error', () => finish(new ClamdError('read failed')));
-          src.on('end', () => sock.write(Buffer.alloc(4)));
+          src.on('end', () => {
+            if (!done) sock.write(Buffer.alloc(4));
+          });
         });
       }),
   };

@@ -1,7 +1,12 @@
 import Fastify from 'fastify';
 import { describe, expect, it } from 'vitest';
 import { createServer } from '../src/server.js';
-import { API_CSP, HSTS_VALUE, registerSecurityHeaders } from '../src/shared/security-headers.js';
+import {
+  API_CSP,
+  DOCS_CSP,
+  HSTS_VALUE,
+  registerSecurityHeaders,
+} from '../src/shared/security-headers.js';
 
 const NO_INFRA = { databaseUrl: '', redisUrl: '' };
 
@@ -17,7 +22,8 @@ describe('P9: API baseline security headers', () => {
         expect(res.headers['referrer-policy']).toBe('no-referrer');
         expect(res.headers['cross-origin-opener-policy']).toBe('same-origin');
         expect(res.headers['strict-transport-security']).toBeUndefined();
-        expect(res.headers['cache-control']).toBeUndefined();
+        // R3: non-2xx responses are never cached; a plain 2xx keeps no caching rule.
+        expect(res.headers['cache-control']).toBe(url === '/health' ? undefined : 'no-store');
       }
     } finally {
       await app.close();
@@ -47,9 +53,9 @@ describe('P9: API baseline security headers', () => {
     }
   });
 
-  it('keeps headers a route set itself, skips CSP for the dev Swagger UI, and sends HSTS when enabled', async () => {
+  it('keeps headers a route set itself, sends DOCS_CSP for Swagger UI, and sends HSTS when enabled', async () => {
     const app = Fastify();
-    registerSecurityHeaders(app, { hsts: true });
+    registerSecurityHeaders(app, { hsts: true, docs: true });
     app.get('/preview', async (_req, reply) =>
       reply
         .header('content-security-policy', "default-src 'none'; style-src 'unsafe-inline'")
@@ -69,7 +75,7 @@ describe('P9: API baseline security headers', () => {
       expect(own.headers['cache-control']).toBe('private, max-age=60');
       expect(own.headers['strict-transport-security']).toBe(HSTS_VALUE);
       const docs = await app.inject({ method: 'GET', url: '/docs/static/index.html' });
-      expect(docs.headers['content-security-policy']).toBeUndefined();
+      expect(docs.headers['content-security-policy']).toBe(DOCS_CSP);
       expect(docs.headers['x-content-type-options']).toBe('nosniff');
     } finally {
       await app.close();

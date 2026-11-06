@@ -43,6 +43,23 @@
   connection `error`; disconnect purges the connection's cached `calendar_events` in the same transaction through the
   SECURITY DEFINER `calendar_events_purge_for_connection()` (org-context checked, revoked connections only).
 
+## Calendar event ↔ meeting links (P7)
+
+- **Storage** (`20261031040000_calendar_event_links`): `calendar_event_links` keyed by (org, connection, provider event
+  id), so links work for live-read and worker-synced events alike. Forced RLS (ADR-010), composite tenant FKs to
+  `calendar_connections` and `meetings` (a link can't cross organizations), cascade on hard delete. Unlink is a real
+  DELETE; disconnecting the calendar drops the connection's links.
+- **API**: `PUT|DELETE /orgs/:org/calendar/connections/:connectionId/events/:eventId/link` (body `{ meetingId }`).
+  Only the owner of the connection, and only roles that may create meetings (viewers get 403). Unknown, other-org and
+  soft-deleted meetings give the same 404; another user's or a revoked connection gives 404. Audited as
+  `calendar.link` / `calendar.unlink` (ids only).
+- **Auto-match** (read-only, never stored): `GET .../calendar/events` adds `meetingId` for linked events and, for
+  unlinked events with a conference URL, `suggestedMeetingId` when exactly one live meeting of the org has the external
+  call id that meetings/resolve derives from that URL. No time-window guessing and no automatic writes: a human
+  confirms the link. Links to soft-deleted meetings are hidden.
+- **Not in this PR**: web UI for link/suggest, linking from the meeting side (list events of a meeting), worker-side
+  auto-linking on sync.
+
 ## Semantic search (P7, PR 1 of 2, off by default)
 
 - **Flag**: `SEMANTIC_SEARCH_ENABLED=true` registers `GET /orgs/:org/search/semantic`; otherwise the route does not
@@ -59,6 +76,21 @@
   Embedding customer text needs an approved, non-free-tier provider (the free Gemini tier must not process customer
   data).
 
+## Semantic search PR 2: embedding pipeline (off by default)
+
+- **ai-core**: new `embeddings` feature (capability `embeddings`). No default provider declares it, so embedding is
+  unconfigured until an approved provider is routed for the feature. `embedWithExecutor` caps batches (32 inputs,
+  8000 chars each), validates 1536-dim finite vectors and runs through the AIExecutor (policy, quotas, usage,
+  idempotency). Results carry `provider/model`, stored with each vector.
+- **Worker** (`apps/worker/src/embeddings`): `runMeetingEmbeddings` embeds a meeting's current-revision transcript
+  segments and live summaries, skipping sources whose content hash is already stored; idempotency key =
+  meeting + batch content hashes. Unconfigured provider: logged once, job completes, nothing stored. Transient errors
+  retry through BullMQ. `registerEmbeddingsWorker` (SEMANTIC_EMBEDDINGS_ENABLED, default false) returns the same
+  `{ registered, close }` handle as the other workers; it is **not** called from main() yet (#333 rewrites main()).
+  `enqueueMeetingEmbeddings` uses a deterministic job id per meeting.
+- **API**: `createExecutorQueryEmbedder` (production query embedder over the same executor feature); the search
+  module uses it when the host injects `embeddingsExecutor`. Without a configured provider the route stays 503.
+
 ## Meeting analytics (P7, read-only)
 
 - **API**: `GET /orgs/:org/analytics/meetings?from&to&bucket` (`ANALYTICS_PATHS.meetings`, contracts
@@ -71,3 +103,13 @@
   `durationSec`); no ids, titles or people. Soft-deleted meetings are excluded. One `withOrganizationContext`
   transaction (forced RLS) plus an explicit `org_id` filter; typed Prisma `groupBy`/`aggregate`, and one tagged
   `$queryRaw` (bound parameters) for `date_trunc` periods. No writes, no new tables or views.
+
+## Task and approval analytics (P7, read-only)
+
+- **API**: `GET /orgs/:org/analytics/tasks?from&to` (`ANALYTICS_PATHS.tasks`, contracts `TaskAnalyticsQuery` /
+  `TaskAnalytics`). Same window rules as meeting analytics (shared `parseAnalyticsRange`): `[from, to)` on each row's
+  `createdAt`, at most 366 days, else 400 `VALIDATION_FAILED`. `private, no-store`.
+- **Access**: session 401 -> other org 404 -> CASL `read Task` (viewers and up).
+- **Data**: counts only: tasks by status, AI-extracted tasks by review status, task approvals by decision. Soft-deleted
+  tasks and extracted tasks excluded. One `withOrganizationContext` transaction (forced RLS) plus explicit `org_id`
+  filters; typed Prisma `groupBy`, no raw SQL, no writes, no schema change.

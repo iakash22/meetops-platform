@@ -19,7 +19,13 @@
     },
     "test": {
       "dependsOn": ["^build"],
-      "outputs": ["coverage/**", "test-results/**"],
+      "outputs": [],
+      "cache": true,
+      "passThroughEnv": ["REDIS_IT_URL"]
+    },
+    "coverage": {
+      "dependsOn": ["^build"],
+      "outputs": ["coverage/**"],
       "cache": true
     },
     "size": {

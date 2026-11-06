@@ -104,7 +104,7 @@ describe('calendar sync scheduler', () => {
   it('the job runs one sweep through the repository', async () => {
     const { run, repo } = setup();
     await expect(run()).resolves.toMatchObject({ synced: 0, failed: 0 });
-    expect(repo.listDueForSync).toHaveBeenCalledWith(expect.any(Date), 50);
+    expect(repo.listDueForSync).toHaveBeenCalledWith(expect.any(Date), 200); // limit 50 x4 headroom for per-org round-robin;
   });
 
   it('closes the worker before the queue', async () => {
@@ -135,6 +135,7 @@ describe('calendar sync scheduler', () => {
   it('only builds the Google provider when its client is configured', () => {
     expect(calendarSyncProvidersFromEnv({})).toEqual({});
     const p = calendarSyncProvidersFromEnv({
+      NODE_ENV: 'test',
       GOOGLE_CALENDAR_CLIENT_ID: 'fixture-client-id',
       GOOGLE_CALENDAR_CLIENT_SECRET: 'fixture-placeholder',
     });
@@ -158,4 +159,32 @@ describe('CALENDAR_SYNC_TICK_MS validation', () => {
       );
     },
   );
+});
+
+describe('OUTLOOK_CALENDAR_TENANT validation (worker)', () => {
+  const env = {
+    NODE_ENV: 'test',
+    OUTLOOK_CALENDAR_CLIENT_ID: 'id',
+    OUTLOOK_CALENDAR_CLIENT_SECRET: 'placeholder',
+  };
+  it('builds the Outlook provider for a domain or GUID tenant', () => {
+    for (const t of ['contoso.onmicrosoft.com', '72f988bf-86f1-41af-91ab-2d7cd011db47', 'common'])
+      expect(
+        calendarSyncProvidersFromEnv({ ...env, OUTLOOK_CALENDAR_TENANT: t }).outlook,
+      ).toBeDefined();
+  });
+  it('fails startup with CalendarSyncEnvError on a malformed tenant', () => {
+    expect(() =>
+      calendarSyncProvidersFromEnv({ ...env, OUTLOOK_CALENDAR_TENANT: 'not a tenant' }),
+    ).toThrow(CalendarSyncEnvError);
+    expect(() =>
+      calendarSyncProvidersFromEnv({ ...env, OUTLOOK_CALENDAR_TENANT: 'contoso' }),
+    ).toThrow(/OUTLOOK_CALENDAR_TENANT must be/);
+  });
+  it('#396 L1: a malformed tenant fails startup even without an Outlook client (matches the API)', () => {
+    expect(() =>
+      calendarSyncProvidersFromEnv({ NODE_ENV: 'test', OUTLOOK_CALENDAR_TENANT: 'not a tenant' }),
+    ).toThrow(CalendarSyncEnvError);
+    expect(calendarSyncProvidersFromEnv({ NODE_ENV: 'test' }).outlook).toBeUndefined();
+  });
 });

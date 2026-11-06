@@ -1,5 +1,8 @@
 import {
   GoogleCalendarProvider,
+  OutlookCalendarProvider,
+  OutlookTenantError,
+  parseOutlookTenant,
   InMemoryOAuthStateStore,
   LocalKeyProvider,
   TokenCipher,
@@ -7,6 +10,7 @@ import {
 import { createCalendarSyncRepository } from '@meetops/database';
 import { createQueue, createWorker } from '@meetops/queue';
 import { parseKek } from '../integrations/bootstrap.js';
+import { IntegrationsApiOriginError, integrationsApiOrigin } from '../integrations/api-origin.js';
 import {
   CalendarSyncEnvError,
   runCalendarSyncSweep,
@@ -20,8 +24,11 @@ import {
  * BullMQ wiring for the Phase 7 calendar sweep (runCalendarSyncSweep). One repeatable job, keyed by a fixed
  * scheduler id, fires every CALENDAR_SYNC_TICK_MS (default 60 s). upsertJobScheduler is idempotent per id, so a
  * restart (or a changed interval) updates the one scheduler instead of adding a second repeatable. The worker runs
- * with concurrency 1 and BullMQ hands each job to one consumer, so sweeps never overlap across replicas. The
- * per-connection cadence (CALENDAR_SYNC_INTERVAL_MS) is enforced by nextSyncAt inside the sweep.
+ * with concurrency 1 and BullMQ hands each job to one consumer, but sweeps CAN still overlap across replicas: the
+ * next run is queued as a sweep starts, and a stalled job whose lock expires can run alongside it. Overlap is safe
+ * because each connection is claimed with a DB lease (claimForSync moves next_sync_at forward atomically), and
+ * the writes after the provider call only land while that lease is still held. The per-connection cadence
+ * (CALENDAR_SYNC_INTERVAL_MS) is enforced by nextSyncAt inside the sweep.
  */
 export const CALENDAR_SYNC_QUEUE = 'calendar.sync';
 export const CALENDAR_SYNC_SCHEDULER_ID = 'calendar.sync.sweep';
@@ -55,21 +62,74 @@ export async function scheduleCalendarSync(
   );
 }
 
-/** Google only for now; the provider is skipped (connections left untouched) when its OAuth client is unset. */
+/** INTEGRATIONS_API_ORIGIN for the Google redirect URI: required (https, no default) under NODE_ENV=production. */
+function calendarApiOrigin(env: NodeJS.ProcessEnv): string {
+  try {
+    return integrationsApiOrigin(env);
+  } catch (err) {
+    if (err instanceof IntegrationsApiOriginError) throw new CalendarSyncEnvError(err.message);
+    throw err;
+  }
+}
+
+/** Google and Outlook; each provider is skipped (connections left untouched) when its OAuth client is unset. */
 export function calendarSyncProvidersFromEnv(
   env: NodeJS.ProcessEnv = process.env,
 ): Partial<Record<string, CalendarSyncProvider>> {
+  const out: Partial<Record<string, CalendarSyncProvider>> = {};
   const clientId = env.GOOGLE_CALENDAR_CLIENT_ID?.trim();
   const secret = env.GOOGLE_CALENDAR_CLIENT_SECRET;
-  if (!clientId || !secret) return {};
-  const apiOrigin = env.INTEGRATIONS_API_ORIGIN?.trim() || 'http://localhost:4000';
-  return {
-    google: new GoogleCalendarProvider({
+  if (clientId && secret) {
+    const apiOrigin = calendarApiOrigin(env);
+    out.google = new GoogleCalendarProvider({
       clientId,
       clientSecret: async () => secret,
       redirectUriAllowlist: [`${apiOrigin}/calendar/google/callback`],
       stateStore: new InMemoryOAuthStateStore(),
-    }),
+    });
+  }
+  // #396 L1: validated even without a client, same as the API (integrations/runtime.ts). A malformed tenant
+  // fails startup in both processes, not only the one that happens to have the Outlook client configured.
+  let tenant: string | undefined;
+  try {
+    tenant = parseOutlookTenant(env.OUTLOOK_CALENDAR_TENANT);
+  } catch (err) {
+    if (err instanceof OutlookTenantError) throw new CalendarSyncEnvError(err.message);
+    throw err;
+  }
+  const msId = env.OUTLOOK_CALENDAR_CLIENT_ID?.trim();
+  const msSecret = env.OUTLOOK_CALENDAR_CLIENT_SECRET;
+  if (msId && msSecret) {
+    const apiOrigin = calendarApiOrigin(env);
+    out.outlook = outlookSyncProvider(
+      new OutlookCalendarProvider({
+        clientId: msId,
+        clientSecret: async () => msSecret,
+        ...(tenant ? { tenant } : {}),
+        redirectUriAllowlist: [`${apiOrigin}/calendar/outlook/callback`],
+        stateStore: new InMemoryOAuthStateStore(),
+      }),
+    );
+  }
+  return out;
+}
+
+/** Adapts Outlook's listEventsDelta (deltaLink) to the sweep's provider-neutral cursor interface. */
+export function outlookSyncProvider(
+  p: Pick<OutlookCalendarProvider, 'refresh' | 'listEvents' | 'listEventsDelta'>,
+): CalendarSyncProvider {
+  return {
+    refresh: (t) => p.refresh(t),
+    listEvents: (i) => p.listEvents(i),
+    listEventsDelta: async ({ accessToken, timeMin, timeMax, cursor }) => {
+      const r = await p.listEventsDelta({
+        accessToken,
+        timeMin,
+        timeMax,
+        ...(cursor ? { deltaLink: cursor } : {}),
+      });
+      return { events: r.events, removedIds: r.removedIds, cursor: r.deltaLink };
+    },
   };
 }
 
@@ -105,6 +165,9 @@ export function registerCalendarSyncScheduler(
     throw new CalendarSyncEnvError(
       'INTEGRATIONS_TOKEN_KEK must be 32 bytes (base64) when CALENDAR_SYNC_ENABLED=true',
     );
+  // Validated up front (not only when the default providers are built) so a bad origin fails startup.
+  if (processEnv.GOOGLE_CALENDAR_CLIENT_ID?.trim() || processEnv.OUTLOOK_CALENDAR_CLIENT_ID?.trim())
+    calendarApiOrigin(processEnv);
   const base =
     opts.buildDeps?.(kek) ??
     ({
