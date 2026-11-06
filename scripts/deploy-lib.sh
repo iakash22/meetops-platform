@@ -10,10 +10,12 @@
 #                               records no staging marker). Anything not in DEPLOY_KNOWN_TARGETS is refused.
 #   DEPLOY_CREDENTIALS_FILE     absolute path to the target credential (required for a real target). Must be a
 #                               regular, non-symlink file owned by the current user with no group/other bits
-#                               (0600/0400), parent dir not group/world-writable. Opened once; contents never
-#                               read by this script or logged.
+#                               (0600/0400), parent dir not group/world-writable. Name/path are checked before
+#                               gates; the file is opened onto fd 7 only after gates and confirmation. Contents
+#                               are never read by this script or logged. Gates and prisma do not inherit fd 7.
 #   DEPLOY_DATABASE_URL_FILE    absolute path to a file holding the production/staging DATABASE_URL (same file
-#                               rules). Read only into the env of `prisma migrate deploy`; never echoed.
+#                               rules). Opened onto fd 8 only after gates and confirmation, read once, then
+#                               closed. Only `prisma migrate deploy` sees the URL (env, not argv); never echoed.
 #   DEPLOY_CREDENTIALS          refused if set: pass secrets as files, not env values. deploy.sh forwards only
 #                               DEPLOY_CREDENTIALS_SET=1, never the value, through env -i.
 DEPLOY_KNOWN_TARGETS=(none)
@@ -41,6 +43,8 @@ deploy_open_secret_file() {
   dinfo="${dinfo#*|}"
   case "${dinfo%%|*}" in "$uid"|0) ;; *) deploy_abort "$label parent dir not owned by current user or root";; esac
   (( 8#${dinfo#*|} & 8#022 )) && deploy_abort "$label parent dir is group/world-writable"
+  # No -L: GNU stat lstats the path. Symlinks were already refused above; comparing this
+  # lstat to the fd's fstat still detects a swap between the two checks.
   linfo="$(/usr/bin/stat -c '%d:%i' -- "$f" 2>/dev/null)" || deploy_abort "$label not found"
   eval "exec $fd<\"\$f\"" 2>/dev/null || deploy_abort "$label cannot be opened"
   finfo="$(/usr/bin/stat -L -c '%F|%u|%a|%s|%d:%i' "/proc/self/fd/$fd" 2>/dev/null)" || deploy_abort "$label: fstat failed"
@@ -53,7 +57,9 @@ deploy_open_secret_file() {
   return 0
 }
 
-# Validates the interface and sets DEPLOY_TARGET_NAME. Call before any gate so mistakes fail fast.
+# Name/flag validation only. Call before any gate so mistakes fail fast. Secret files are NOT
+# opened here: bash fds are inherited by children, so opening before pnpm/gitleaks/audit-gate
+# would leak readable handles into those processes.
 deploy_validate_target() {
   # deploy.sh forwards only DEPLOY_CREDENTIALS_SET=1 (never the value) when the caller set DEPLOY_CREDENTIALS.
   [ -z "${DEPLOY_CREDENTIALS_SET:-}" ] && [ -z "${DEPLOY_CREDENTIALS:-}" ] \
@@ -66,21 +72,32 @@ deploy_validate_target() {
   [ "$t" = none ] && return 0
   declare -F "deploy_target_${t//-/_}" >/dev/null || deploy_abort "DEPLOY_TARGET '$t' has no deploy_target_${t//-/_} function"
   [ -n "${DEPLOY_CREDENTIALS_FILE:-}" ] || deploy_abort "DEPLOY_CREDENTIALS_FILE is required for DEPLOY_TARGET '$t'"
-  deploy_open_secret_file DEPLOY_CREDENTIALS_FILE "$DEPLOY_CREDENTIALS_FILE" "$DEPLOY_CRED_FD"
+  [[ "$DEPLOY_CREDENTIALS_FILE" == /* ]] || deploy_abort "DEPLOY_CREDENTIALS_FILE must be an absolute path"
   [ -n "${DEPLOY_DATABASE_URL_FILE:-}" ] || deploy_abort "DEPLOY_DATABASE_URL_FILE is required for DEPLOY_TARGET '$t'"
+  [[ "$DEPLOY_DATABASE_URL_FILE" == /* ]] || deploy_abort "DEPLOY_DATABASE_URL_FILE must be an absolute path"
+  return 0
+}
+
+# Open secret files only after gates and confirmation. Close the DB URL fd immediately after the
+# single read so later children (prisma, the target) cannot inherit it.
+deploy_prepare_secrets() {
+  [ "$DEPLOY_TARGET_NAME" = none ] && return 0
+  deploy_open_secret_file DEPLOY_CREDENTIALS_FILE "$DEPLOY_CREDENTIALS_FILE" "$DEPLOY_CRED_FD"
   deploy_open_secret_file DEPLOY_DATABASE_URL_FILE "$DEPLOY_DATABASE_URL_FILE" "$DEPLOY_DBURL_FD"
-  # Read once, from the validated fd only; kept in a non-exported shell variable.
   DEPLOY_DB_URL_VALUE=""
   IFS= read -r DEPLOY_DB_URL_VALUE <&"$DEPLOY_DBURL_FD" || true
+  exec 8<&-
   [[ "$DEPLOY_DB_URL_VALUE" =~ ^postgres(ql)?://[^[:space:]]+$ ]] || deploy_abort "DEPLOY_DATABASE_URL_FILE does not hold a postgres:// URL"
   return 0
 }
 
 # prisma migrate deploy, once, before rollout. $1 = PATH for pnpm. The URL only reaches prisma's env (not argv).
+# Close credential fd 7 in the child so prisma never sees the deploy credential.
 deploy_migrate() {
   echo "==> prisma migrate deploy"
-  DATABASE_URL="$DEPLOY_DB_URL_VALUE" PATH="$1" pnpm --filter @meetops/database exec prisma migrate deploy \
+  DATABASE_URL="$DEPLOY_DB_URL_VALUE" PATH="$1" pnpm --filter @meetops/database exec prisma migrate deploy 7<&- \
     || deploy_abort "prisma migrate deploy failed; nothing was rolled out"
+  unset DEPLOY_DB_URL_VALUE
 }
 
 # Order matters: migrate -> rollout -> (staging only) marker. A marker is written ONLY after a real rollout
@@ -94,6 +111,7 @@ deploy_run() {
     echo "Nothing was deployed, so no staging marker is recorded."
     return 0
   fi
+  deploy_prepare_secrets
   deploy_migrate "$path"
   echo "==> rollout via target '$DEPLOY_TARGET_NAME'"
   PATH="$path" "deploy_target_${DEPLOY_TARGET_NAME//-/_}" "$env" "$sha" "/dev/fd/$DEPLOY_CRED_FD" \
