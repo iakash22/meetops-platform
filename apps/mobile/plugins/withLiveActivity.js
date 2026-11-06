@@ -115,11 +115,32 @@ function addWidgetTarget(project, appBundleId) {
 }
 
 /**
+ * The app's own PBXNativeTarget: product type application AND named like the Xcode project. Never "the first
+ * target", which can be a pod, a test bundle or the widget extension depending on the project's order. Throws when
+ * there is no such target, so prebuild fails loudly instead of compiling the intent into the wrong target.
+ */
+function findAppTarget(project, appName) {
+  const targets = project.pbxNativeTargetSection();
+  for (const [uuid, t] of Object.entries(targets)) {
+    if (typeof t !== 'object' || uuid.endsWith('_comment')) continue;
+    if (
+      unquote(t.productType) === 'com.apple.product-type.application' &&
+      unquote(t.name) === appName
+    ) {
+      return { uuid, target: t };
+    }
+  }
+  throw new Error(
+    `withLiveActivity: no application target named "${appName}" in the Xcode project`,
+  );
+}
+
+/**
  * Adds StopRecordingIntent.swift to the app target too (copied into `<app>/`), so Xcode extracts its App Intents
  * metadata from the app and the iOS 17 Stop button's `perform()` runs in the app process. Idempotent.
  */
 function addIntentToAppTarget(project, appName) {
-  const target = project.getFirstTarget();
+  const target = findAppTarget(project, appName);
   const filepath = `${appName}/${INTENT_FILE}`;
   const refs = project.pbxFileReferenceSection();
   const exists = Object.keys(refs).some(
@@ -174,5 +195,6 @@ module.exports.setInfoPlist = setInfoPlist;
 module.exports.addWidgetTarget = addWidgetTarget;
 module.exports.findWidgetTarget = findWidgetTarget;
 module.exports.addIntentToAppTarget = addIntentToAppTarget;
+module.exports.findAppTarget = findAppTarget;
 module.exports.INTENT_FILE = INTENT_FILE;
 module.exports.copyTargetFiles = copyTargetFiles;
