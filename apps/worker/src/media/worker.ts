@@ -1,6 +1,6 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { Queue, Worker, type Job } from 'bullmq';
-import { Redis } from 'ioredis';
+import { createAppRedis } from '../redis.js';
 import { chunkAudio, computeWaveform, normalizeToWav, probeMedia } from '@meetops/media-core';
 import { disconnectPrismaClient } from '@meetops/database';
 import {
@@ -301,7 +301,7 @@ export function startMediaWorker(
 ) {
   assertMediaWorkerDatabaseEnv(env);
   const logger = baseLogger.child({ worker: MEDIA_QUEUE });
-  const conn = () => new Redis(cfg.redisUrl, { maxRetriesPerRequest: null });
+  const conn = () => createAppRedis(cfg.redisUrl, { maxRetriesPerRequest: null });
   const emitterRedis = conn();
   const emitter = createRedisEmitter(emitterRedis);
   const transcriptionQueue = new Queue<TranscriptionJobPayload>(QUEUE_NAMES.transcription, {

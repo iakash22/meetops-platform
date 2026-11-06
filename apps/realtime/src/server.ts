@@ -33,6 +33,25 @@ import {
   type UploadStatusEvent,
 } from './events.js';
 
+/**
+ * Layerbase routes every database through TLS port 6379 and reads the database from the SNI hostname.
+ * node-redis does not send that hostname for a bare rediss:// URL.
+ */
+function createRealtimeRedis(url: string) {
+  const parsed = new URL(url);
+  if (parsed.protocol !== 'rediss:') return createClient({ url });
+  return createClient({
+    username: decodeURIComponent(parsed.username),
+    password: decodeURIComponent(parsed.password),
+    socket: {
+      host: parsed.hostname,
+      port: parsed.port ? Number(parsed.port) : 6379,
+      tls: true,
+      servername: parsed.hostname,
+    },
+  });
+}
+
 /** What the verifier returns (a structural subset of @meetops/session-verifier's VerifiedSession). */
 export type AuthContext = {
   userId: string;
@@ -311,7 +330,7 @@ export async function createRealtimeServer(
 
   const redisClients: Array<ReturnType<typeof createClient>> = [];
   if (opts.config.redisUrl) {
-    const pub = createClient({ url: opts.config.redisUrl });
+    const pub = createRealtimeRedis(opts.config.redisUrl);
     const sub = pub.duplicate();
     for (const c of [pub, sub]) c.on('error', (err: unknown) => log.error({ err }, 'redis error'));
     await Promise.all([pub.connect(), sub.connect()]);

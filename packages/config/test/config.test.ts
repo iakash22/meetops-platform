@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { loadConfig } from '../src';
+import { loadConfig, redisTlsOptions } from '../src';
 
 // Boolean env defaults. These guard the zod 3 -> 4 migration (docs/plans/zod4-migration.md):
 // zod 4's `.default()` short-circuits with the output-typed value and skips the string->boolean
@@ -65,6 +65,14 @@ describe('config', () => {
   it('defaults SMTP_PORT to 465 and coerces numeric strings', () => {
     expect(loadConfig({}).SMTP_PORT).toBe(465);
     expect(loadConfig({ SMTP_PORT: '587' }).SMTP_PORT).toBe(587);
+  });
+
+  it('sets the TLS server name only for rediss URLs', () => {
+    expect(redisTlsOptions('redis://localhost:6379')).toEqual({});
+    expect(redisTlsOptions('rediss://default:secret@cache.example.test:6379')).toEqual({
+      tls: { servername: 'cache.example.test' },
+    });
+    expect(redisTlsOptions('not a url')).toEqual({});
   });
 
   it('keeps postgresql:// and redis:// URL defaults and accepts overrides', () => {

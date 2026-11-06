@@ -1,5 +1,5 @@
 import { Queue, UnrecoverableError, Worker, type Job } from 'bullmq';
-import { Redis } from 'ioredis';
+import { createAppRedis } from '../redis.js';
 import { QUEUE_NAMES, type TranscriptionJobPayload } from '@meetops/contracts';
 import { logger as baseLogger } from '../logger.js';
 import { createRealtimePublisher, createRedisEmitter } from '../media/realtime.js';
@@ -74,7 +74,7 @@ export function startTranscriptionWorker(
   deps: TranscriptionHostDeps & { geometry: TranscriptionConsumerDeps['geometry'] },
 ) {
   const logger = deps.logger ?? baseLogger.child({ worker: QUEUE_NAMES.transcription });
-  const conn = () => new Redis(cfg.redisUrl, { maxRetriesPerRequest: null });
+  const conn = () => createAppRedis(cfg.redisUrl, { maxRetriesPerRequest: null });
   const emitterRedis = deps.realtime ? undefined : conn();
   const realtime = deps.realtime ?? createRealtimePublisher(createRedisEmitter(emitterRedis!));
   // Default trigger: enqueue the meeting summary on QUEUE_NAMES.ai when a transcript becomes ready.

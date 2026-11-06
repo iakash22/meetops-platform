@@ -3,7 +3,8 @@ import type { PresignedUrl } from '@meetops/contracts/legacy';
 import type { MeetingObjectRef } from './keys.js';
 
 /** Provider registry ids. contracts' FileObject.provider is a plain string; keep the union here until contracts owns it. */
-export type StorageProviderId = 'minio' | 'r2' | 's3';
+/** minio = local Docker. neon = Neon Object Storage (S3 API, path-style). r2 and s3 stay available. */
+export type StorageProviderId = 'minio' | 'neon' | 'r2' | 's3';
 
 /** Object info, field names aligned with contracts FileObject. No bucket/provider exposed. */
 export type StoredObjectInfo = {
