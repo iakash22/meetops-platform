@@ -33,7 +33,7 @@ export const envSchema = z.object({
   // Storage
   /** Back the API media routes with S3/MinIO + Prisma + BullMQ (off by default; needs DATABASE_URL, REDIS_URL). */
   MEDIA_STORAGE_ENABLED: boolEnv(false),
-  STORAGE_PROVIDER: z.enum(['minio', 'r2', 's3']).default('minio'),
+  STORAGE_PROVIDER: z.enum(['minio', 'neon', 'r2', 's3']).default('minio'),
   STORAGE_ENDPOINT: z.string().default('http://localhost:9000'),
   STORAGE_REGION: z.string().default('us-east-1'),
   STORAGE_BUCKET: z.string().default('meetops-dev'),
@@ -102,6 +102,21 @@ export const envSchema = z.object({
 });
 
 export type AppConfig = z.infer<typeof envSchema>;
+
+/**
+ * Layerbase (and other shared TLS Redis routers) select the database from the TLS SNI hostname.
+ * ioredis does not send that hostname for a bare rediss:// URL unless `tls.servername` is set.
+ * Plain redis:// URLs return no extra options.
+ */
+export function redisTlsOptions(url: string): { tls?: { servername: string } } {
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol !== 'rediss:' || !parsed.hostname) return {};
+    return { tls: { servername: parsed.hostname } };
+  } catch {
+    return {};
+  }
+}
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   const result = envSchema.safeParse(env);

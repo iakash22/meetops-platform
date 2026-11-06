@@ -60,6 +60,7 @@ import {
 } from './organizations/infrastructure/prisma/prisma.repositories.js';
 import { createPrismaClient, type DatabaseClient } from '../shared/prisma/context.js';
 import { Redis } from 'ioredis';
+import { redisTlsOptions } from '@meetops/config';
 import type { SessionPolicy, SessionRepository } from './auth/domain/session.js';
 import type {
   LoginLockout,
@@ -427,7 +428,7 @@ function resolveRedis(
   if (overrides.redis) return { redis: overrides.redis };
   const url = urlFor(env, env.redisUrl);
   if (!url || allInjected(overrides, REDIS_BACKED_DEPS)) return {};
-  const client = new Redis(url, REDIS_CLIENT_OPTIONS);
+  const client = new Redis(url, { ...REDIS_CLIENT_OPTIONS, ...redisTlsOptions(url) });
   return { redis: client, owned: client };
 }
 

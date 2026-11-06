@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
+import { SelectField } from '@/features/directory/directory-ui';
 import { ApiError } from '@/lib/api/client';
 import type { UpdateTaskRequest } from './api';
 
@@ -80,9 +81,6 @@ export function serverFieldErrors(err: unknown): FieldErrors | null {
   return Object.keys(out).length ? out : null;
 }
 
-const selectClass =
-  'h-11 w-full rounded-md border bg-background px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring';
-
 export function EditTaskForm({
   task,
   busy,
@@ -144,36 +142,20 @@ export function EditTaskForm({
         {err('description')}
       </div>
       <div className="grid gap-4 sm:grid-cols-3">
-        <div className="grid gap-1.5">
-          <Label htmlFor={`${uid}-priority`}>Priority</Label>
-          <select
-            id={`${uid}-priority`}
-            className={selectClass}
-            value={v.priority}
-            onChange={(e) => set('priority', e.target.value as TaskPriority)}
-          >
-            {PRIORITIES.map((p) => (
-              <option key={p} value={p}>
-                {cap(p)}
-              </option>
-            ))}
-          </select>
-        </div>
-        <div className="grid gap-1.5">
-          <Label htmlFor={`${uid}-status`}>Status</Label>
-          <select
-            id={`${uid}-status`}
-            className={selectClass}
-            value={v.status}
-            onChange={(e) => set('status', e.target.value as TaskStatus)}
-          >
-            {STATUSES.map((s) => (
-              <option key={s} value={s}>
-                {STATUS_LABEL[s]}
-              </option>
-            ))}
-          </select>
-        </div>
+        <SelectField
+          label="Priority"
+          name={`${uid}-priority`}
+          value={v.priority}
+          onValueChange={(p) => set('priority', p as TaskPriority)}
+          options={PRIORITIES.map((p) => ({ value: p, label: cap(p) }))}
+        />
+        <SelectField
+          label="Status"
+          name={`${uid}-status`}
+          value={v.status}
+          onValueChange={(s) => set('status', s as TaskStatus)}
+          options={STATUSES.map((s) => ({ value: s, label: STATUS_LABEL[s] }))}
+        />
         <div className="grid gap-1.5">
           <Label htmlFor={`${uid}-due`}>Due date</Label>
           <Input

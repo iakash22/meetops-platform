@@ -1,6 +1,6 @@
 import { Queue, Worker, QueueOptions, WorkerOptions, type Processor } from 'bullmq';
 import { Redis, type RedisOptions } from 'ioredis';
-import { loadConfig } from '@meetops/config';
+import { loadConfig, redisTlsOptions } from '@meetops/config';
 import { logger as baseLogger } from '@meetops/logger';
 
 export type { Queue, Worker, QueueOptions, WorkerOptions };
@@ -11,11 +11,17 @@ export type { Queue, Worker, QueueOptions, WorkerOptions };
  */
 export function createRedisClient(overrides: RedisOptions = {}) {
   const config = loadConfig();
-  const client = new Redis(config.REDIS_URL, {
+  const url = config.REDIS_URL;
+  const { tls } = redisTlsOptions(url);
+  const overrideTls = overrides.tls && typeof overrides.tls === 'object' ? overrides.tls : {};
+  const client = new Redis(url, {
     maxRetriesPerRequest: null,
     enableReadyCheck: true,
     lazyConnect: true,
     ...overrides,
+    ...(tls
+      ? { tls: { ...overrideTls, servername: overrideTls.servername ?? tls.servername } }
+      : {}),
   });
   return client;
 }

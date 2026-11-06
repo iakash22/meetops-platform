@@ -4,7 +4,7 @@ import { startMediaWorker } from './media/index.js';
 import { registerSummaryWorker, registerTranscriptionWorker } from './ai/index.js';
 import { createTranscriptionHostDeps } from './ai/bootstrap.js';
 import { loadTranscriptionWorkerEnv } from './ai/env.js';
-import { Redis } from 'ioredis';
+import { createAppRedis } from './redis.js';
 import { createPrismaClient } from '@meetops/database';
 import { createNotificationDeliveryProducer } from '@meetops/notifications';
 import { createRedisEmitter } from './media/realtime.js';
@@ -48,7 +48,9 @@ export async function main() {
   const notifEnv = loadNotificationsWorkerEnv();
   const relayUrl = process.env.DATABASE_RELAY_URL?.trim();
   const notifRedis = notifEnv.enabled
-    ? new Redis(process.env.REDIS_URL ?? 'redis://localhost:6379', { maxRetriesPerRequest: null })
+    ? createAppRedis(process.env.REDIS_URL ?? 'redis://localhost:6379', {
+        maxRetriesPerRequest: null,
+      })
     : undefined;
   const notifications = registerNotificationsWorker({
     env: notifEnv,
