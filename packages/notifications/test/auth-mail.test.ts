@@ -62,6 +62,20 @@ describe('createAuthMailTransport', () => {
     ).toThrow(/organizationName/);
   });
 
+  it('renders the account-linked notice with the provider and time, and requires both', () => {
+    const r = renderAuthMail({
+      to: 'a@example.com',
+      template: 'account_linked',
+      data: { url, provider: 'Google', linkedAt: '2026-11-09T15:00:00.000Z', timeZone: 'UTC' },
+    });
+    expect(r.subject).toBe('Google sign-in was added to your MeetOps account');
+    expect(r.text).toContain('Nov 9, 2026');
+    expect(r.text).toContain(url);
+    expect(() =>
+      renderAuthMail({ to: 'a@example.com', template: 'account_linked', data: { url } }),
+    ).toThrow(/provider/);
+  });
+
   it('rejects unknown templates', () => {
     expect(() =>
       renderAuthMail({

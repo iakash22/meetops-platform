@@ -12,7 +12,8 @@ export type AuthMailTemplateId =
   | 'account_exists'
   | 'invitation'
   | 'login_lockout'
-  | 'password_changed';
+  | 'password_changed'
+  | 'account_linked';
 
 /**
  * `data` keys per template (all strings; `url` always required):
@@ -20,6 +21,8 @@ export type AuthMailTemplateId =
  * - invitation: `organizationName`, optional `inviterName`, `role`, `expiresInDays`
  * - login_lockout: optional `lockedForMinutes`
  * - password_changed: `changedAt` (ISO 8601), optional `timeZone` (IANA, default UTC); `url` = reset link
+ * - account_linked: `provider` (display name, e.g. Google), `linkedAt` (ISO 8601), optional `timeZone`; `url` = reset
+ *   link
  */
 
 export interface AuthOutboundMail {
@@ -133,6 +136,13 @@ export function renderAuthMail(
           required(mail.data, 'changedAt'),
           optional(mail.data, 'timeZone'),
         ),
+      });
+    case 'account_linked':
+      return renderEmail('account-linked', {
+        ...named,
+        provider: required(mail.data, 'provider'),
+        resetUrl: url,
+        linkedAt: formatChangedAt(required(mail.data, 'linkedAt'), optional(mail.data, 'timeZone')),
       });
     default:
       throw new UnknownAuthMailTemplateError(String((mail as { template: unknown }).template));

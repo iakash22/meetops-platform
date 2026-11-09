@@ -35,6 +35,12 @@ export const sampleVariables: { [K in EmailName]: EmailVariables[K] } = {
     changedAt: '26 Oct 2026, 11:40 PM IST',
     resetUrl: 'https://app.meetops.test/forgot-password',
   },
+  'account-linked': {
+    name: 'Ana',
+    provider: 'Google',
+    linkedAt: '9 Nov 2026, 8:30 PM IST',
+    resetUrl: 'https://app.meetops.test/forgot-password',
+  },
   'member-added': {
     name: 'Ana',
     workspaceName: 'Acme Inc',

@@ -69,6 +69,7 @@ export interface EmailVariables {
   'account-exists': Base & { name?: string; resetUrl: string };
   'login-lockout': Base & { name?: string; resetUrl: string; lockedForMinutes?: number };
   'password-changed': Base & { name?: string; changedAt: string; resetUrl: string };
+  'account-linked': Base & { name?: string; provider: string; linkedAt: string; resetUrl: string };
   'member-added': Product & {
     name?: string;
     workspaceName: string;
@@ -124,6 +125,7 @@ export const AUTH_EMAILS = [
   'account-exists',
   'login-lockout',
   'password-changed',
+  'account-linked',
 ] as const satisfies readonly EmailName[];
 
 const MAX_LIST = 5;
@@ -147,6 +149,7 @@ const CATEGORY: Record<EmailName, BannerCategory> = {
   'account-exists': 'security',
   'login-lockout': 'security',
   'password-changed': 'security',
+  'account-linked': 'security',
   invitation: 'workspace',
   'member-added': 'workspace',
   'member-removed': 'workspace',
@@ -311,6 +314,24 @@ const renderers: { [K in EmailName]: Renderer<K> } = {
         linkFallback(url, m),
       ],
       text: [greet(m, v.name), c.body(v.changedAt), c.notYou, `${c.cta}: ${url}`],
+    };
+  },
+  'account-linked': (v, m) => {
+    const url = safeUrl(v.resetUrl);
+    const c = m.accountLinked;
+    return {
+      subject: c.subject(v.provider),
+      preheader: c.preheader(v.provider),
+      eyebrow: m.eyebrow.security,
+      title: c.subject(v.provider),
+      body: [
+        paragraph(greet(m, v.name)),
+        paragraph(c.body(v.provider, v.linkedAt)),
+        panel([c.notYou], 'destructive'),
+        button(url, c.cta),
+        linkFallback(url, m),
+      ],
+      text: [greet(m, v.name), c.body(v.provider, v.linkedAt), c.notYou, `${c.cta}: ${url}`],
     };
   },
   'member-added': (v, m) => {
