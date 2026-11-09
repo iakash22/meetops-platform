@@ -132,7 +132,11 @@ const MEETING_STATUS_DELAYED_MIGRATION = '20261103180000_meeting_status_transcri
 const OUTBOX_DEDUPE_KEY_MIGRATION = '20261103200000_outbox_dedupe_key';
 /** #423: unique (org_id, dedupe_key), built CONCURRENTLY in its own single-statement migration. */
 const OUTBOX_DEDUPE_KEY_INDEX_MIGRATION = '20261103200100_outbox_dedupe_key_index';
-const LATEST_MIGRATION = OUTBOX_DEDUPE_KEY_INDEX_MIGRATION;
+/** Google OIDC (main f6c77fd8): nullable users.google_sub + a global unique index. Global table, no RLS. */
+const USER_GOOGLE_SUB_MIGRATION = '20261106120000_user_google_sub';
+/** OIDC hardening: users.google_sub unique only over live rows (L-1) + auth.google_linked in the global audit allowlist. */
+const GOOGLE_OIDC_HARDENING_MIGRATION = '20261109120000_google_oidc_hardening';
+const LATEST_MIGRATION = GOOGLE_OIDC_HARDENING_MIGRATION;
 /**
  * Parallel PRs that sort between calendar_events and meeting_embeddings (#334 consent events, #341 calendar links).
  * The order checks below ignore them so they hold whichever merges first; when present they must sort before ours.
@@ -189,6 +193,12 @@ const orderedDirs = () => {
   expect(dirs.indexOf(OUTBOX_DEDUPE_KEY_INDEX_MIGRATION)).toBe(
     dirs.indexOf(OUTBOX_DEDUPE_KEY_MIGRATION) + 1,
   );
+  expect(dirs.indexOf(USER_GOOGLE_SUB_MIGRATION)).toBe(
+    dirs.indexOf(OUTBOX_DEDUPE_KEY_INDEX_MIGRATION) + 1,
+  );
+  expect(dirs.indexOf(GOOGLE_OIDC_HARDENING_MIGRATION)).toBe(
+    dirs.indexOf(USER_GOOGLE_SUB_MIGRATION) + 1,
+  );
   return dirs.filter(
     (d) =>
       d !== TASK_SYNC_MIGRATION &&
@@ -199,6 +209,8 @@ const orderedDirs = () => {
       d !== MEETING_STATUS_DELAYED_MIGRATION &&
       d !== OUTBOX_DEDUPE_KEY_MIGRATION &&
       d !== OUTBOX_DEDUPE_KEY_INDEX_MIGRATION &&
+      d !== USER_GOOGLE_SUB_MIGRATION &&
+      d !== GOOGLE_OIDC_HARDENING_MIGRATION &&
       !(PARALLEL_MIGRATIONS as readonly string[]).includes(d),
   );
 };
@@ -597,6 +609,9 @@ describe('per-org uniqueness (M2)', () => {
         'tokenHash',
         // auth_refresh_tokens.token_hash (ADR-005 A1.2.1): SHA-256 hashes are globally unique.
         'tokenHash',
+        // users.google_sub (Google OIDC): one Google subject maps to at most one live user. The index is partial
+        // (WHERE deleted_at IS NULL, OIDC review L-1), which Prisma 5 cannot express, so the schema keeps @unique.
+        'googleSub',
       ].sort(),
     );
   });
@@ -1186,6 +1201,24 @@ describe('security review fixes (static)', () => {
     expect(sql).toContain('SECURITY DEFINER');
     expect(sql).toContain("RAISE EXCEPTION 'audit_action_not_allowed'");
     expect(sql).toContain('REVOKE ALL ON FUNCTION public.record_global_auth_event');
+  });
+
+  it('(2b) OIDC hardening: google_sub unique over live rows only; auth.google_linked allowlisted, grants kept', () => {
+    const sql = secDir(GOOGLE_OIDC_HARDENING_MIGRATION);
+    expect(sql).toContain(
+      'CREATE UNIQUE INDEX "users_google_sub_key" ON "users"("google_sub") WHERE "deleted_at" IS NULL;',
+    );
+    expect(sql).toContain("'auth.google_linked'");
+    expect(sql).toContain("RAISE EXCEPTION 'audit_action_not_allowed'");
+    expect(sql).toContain('SECURITY DEFINER');
+    expect(sql).toContain('SET search_path = public, pg_temp');
+    expect(sql).toMatch(
+      /REVOKE ALL ON FUNCTION public\.record_global_auth_event\([^)]*\)\s+FROM PUBLIC;/,
+    );
+    expect(sql).toMatch(
+      /GRANT EXECUTE ON FUNCTION public\.record_global_auth_event\([^)]*\)\s+TO meetops_app;/,
+    );
+    expect(sql).toContain('OWNER TO meetops_migrator;');
   });
 
   it('(3) relay reads only through definer functions; no table grants, no BYPASSRLS in scripts', () => {
