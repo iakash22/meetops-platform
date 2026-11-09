@@ -11,7 +11,9 @@ export type AuthMailJob =
   | { kind: 'login_lockout'; userId: string | null }
   | { kind: 'invitation'; organizationId: string; invitationId: string }
   /** Security notice after a password change; changedAt is ISO 8601. */
-  | { kind: 'password_changed'; userId: string; changedAt: string };
+  | { kind: 'password_changed'; userId: string; changedAt: string }
+  /** Security notice after a sign-in provider was linked (OIDC review M-2); linkedAt is ISO 8601. */
+  | { kind: 'account_linked'; userId: string; provider: 'google'; linkedAt: string };
 
 export interface AuthMailQueue {
   enqueue(job: AuthMailJob): Promise<void>;
@@ -23,7 +25,8 @@ export type AuthMailTemplate =
   | 'account_exists'
   | 'invitation'
   | 'login_lockout'
-  | 'password_changed';
+  | 'password_changed'
+  | 'account_linked';
 
 export interface OutboundMail {
   to: string;
