@@ -513,12 +513,7 @@ export class MissingProductionDependencyError extends Error {
   }
 }
 
-/**
- * Default deps. With a Prisma client (injected `db`, or DATABASE_URL outside NODE_ENV=test) the
- * repositories and audit log are the Prisma ones; with Redis (injected `redis`, or REDIS_URL outside
- * NODE_ENV=test) the rate limiter and lockout are Redis-backed. Anything else falls back to
- * in-memory, which only development/test accept. Injected overrides always win.
- */
+/** GOOGLE_OAUTH_* (all three or none) and WEB_BASE_URL must be an allowed origin when Google sign-in is on. */
 function googleOAuthDep(
   env: NodeJS.ProcessEnv,
   nodeEnv: string | undefined,
@@ -530,6 +525,12 @@ function googleOAuthDep(
   return { googleOAuth: { config } };
 }
 
+/**
+ * Default deps. With a Prisma client (injected `db`, or DATABASE_URL outside NODE_ENV=test) the
+ * repositories and audit log are the Prisma ones; with Redis (injected `redis`, or REDIS_URL outside
+ * NODE_ENV=test) the rate limiter and lockout are Redis-backed. Anything else falls back to
+ * in-memory, which only development/test accept. Injected overrides always win.
+ */
 export function defaultModuleDeps(
   overrides: Partial<ModuleDeps> = {},
   env: ModuleEnv = moduleEnvFromProcess(),
