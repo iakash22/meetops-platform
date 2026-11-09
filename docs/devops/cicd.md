@@ -78,7 +78,7 @@ secret manager).
 
 ## Deploy env: realtime `TRUST_PROXY` (after #455)
 
-Realtime and the API share `TRUST_PROXY` / `BEHIND_CLOUDFLARE` (`packages/config/src/client-ip.ts`).
+Realtime and the API share `TRUST_PROXY` / `BEHIND_CLOUDFLARE` in **code** (`packages/config/src/client-ip.ts`).
 Before rolling a production image that includes #455:
 
 1. Set `TRUST_PROXY` to a comma list of proxy IPs/CIDRs that **includes the nginx address**
@@ -88,6 +88,20 @@ Before rolling a production image that includes #455:
    realtime startup; use `TRUST_PROXY` instead).
 3. Remember one compose/`TRUST_PROXY` value feeds **both** API and realtime: trusting a whole
    docker network range makes the API honour X-Forwarded-For from that range too.
+4. **`BEHIND_CLOUDFLARE` compose gap:** `infra/compose/compose.app.yml` passes
+   `BEHIND_CLOUDFLARE` only to the **realtime** service. The API reads the same env var in
+   process (`clientIpOptionsFromEnv`) but does not receive it from that compose file. For a
+   Cloudflare edge in front of both, set the variable on the API process too (compose override,
+   orchestrator, or D-5). Non-compose deploys that export it for both are fine. If the API is
+   behind Cloudflare without `BEHIND_CLOUDFLARE`, the resolved client IP is the Cloudflare edge
+   (peer after `TRUST_PROXY`), so per-IP rate limits share one bucket per edge and one busy edge
+   (or attacker) can 429 / lock out many users. Setting the flag is still fail-closed for spoofed
+   headers: `CF-Connecting-IP` is ignored unless that peer is in the pinned Cloudflare ranges.
+   Locking the origin firewall to those ranges remains recommended defence-in-depth.
+5. **IPv4-mapped IPv6:** `normalizeIp` treats `::ffff:a.b.c.d` as `a.b.c.d`. IPv4
+   `TRUST_PROXY` entries match mapped peers; rate-limit keys and Cloudflare edge checks use the
+   normalised form so one client does not split across two keys. Details in
+   [environment-variables.md](../00-getting-started/environment-variables.md).
 
 Details: [environment-variables.md](../00-getting-started/environment-variables.md) (API + Realtime).
 
