@@ -58,6 +58,7 @@ import {
 } from './auth/infrastructure/rate-limit/redis.js';
 import { PrismaAuditLog } from './auth/infrastructure/prisma/prisma-audit.log.js';
 import { PrismaOneTimeTokenRepository } from './auth/infrastructure/prisma/prisma-one-time-token.repository.js';
+import { sequentialAccountClaims } from './auth/application/account-claims.js';
 import { PrismaAccountClaimStore } from './auth/infrastructure/prisma/prisma-account-claim.store.js';
 import type { AccountClaimStore } from './auth/domain/ports.js';
 import { PrismaSessionRepository } from './auth/infrastructure/prisma/prisma-session.repository.js';
@@ -729,6 +730,17 @@ export function defaultModuleDeps(
     deps.sessions instanceof PrismaSessionRepository
   )
     deps.accountClaims = new PrismaAccountClaimStore(db);
+  // Architecture NB-R2-2: outside development/test the takeover claim must be the transactional one; never a silent
+  // fallback to the sequential (non-atomic) claim. Inject `accountClaims` when wiring non-Prisma credential stores.
+  // Development/test name the sequential claim explicitly, so it is visible in the deps rather than an implicit default.
+  if (!deps.accountClaims) {
+    if (strict) {
+      void ownedDb?.$disconnect().catch(() => undefined);
+      ownedRedis?.disconnect();
+      throw new MissingProductionDependencyError(['accountClaims']);
+    }
+    deps.accountClaims = sequentialAccountClaims(deps.users, deps.sessions);
+  }
   return deps;
 }
 
@@ -767,7 +779,7 @@ export async function registerModules(app: FastifyInstance, deps: ModuleDeps) {
         methods: ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE'],
         allowedHeaders: ['content-type', 'x-csrf-token'],
         // R11: let the web app read rate-limit backoff and the request id for support.
-        exposedHeaders: ['retry-after', 'x-request-id'],
+        exposedHeaders: ['retry-after', 'x-request-id', 'x-meetops-verify-outcome'],
         maxAge: 600,
         strictPreflight: true,
       });

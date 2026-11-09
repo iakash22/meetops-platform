@@ -53,7 +53,7 @@ describe('P9 R1/R3/R11: API header matrix', { timeout: 30_000 }, () => {
     expectBaseline(pre.headers);
   });
 
-  it('a 429 keeps the baseline, no-store, CORS and exposes retry-after/x-request-id', async () => {
+  it('a 429 keeps the baseline, no-store, CORS and exposes retry-after/x-request-id (and the UX-1 verify outcome)', async () => {
     const a = await build();
     const c = new Client(a as never);
     let last = await c.get('/health');
@@ -67,7 +67,9 @@ describe('P9 R1/R3/R11: API header matrix', { timeout: 30_000 }, () => {
     expectBaseline(last.headers);
     expect(last.headers['cache-control']).toBe('no-store');
     expect(last.headers['access-control-allow-origin']).toBe(ORIGIN);
-    expect(last.headers['access-control-expose-headers']).toBe('retry-after, x-request-id');
+    expect(last.headers['access-control-expose-headers']).toBe(
+      'retry-after, x-request-id, x-meetops-verify-outcome',
+    );
   });
 
   it('R2: HSTS value', () => {
