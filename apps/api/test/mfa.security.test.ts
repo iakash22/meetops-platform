@@ -27,7 +27,11 @@ import type { GoogleOAuthClient } from '../src/modules/auth/application/google-o
 import type { GoogleIdentity } from '../src/modules/auth/application/google-oidc.js';
 import { InMemorySessionRepository } from '../src/modules/auth/infrastructure/in-memory-session.repository.js';
 import { PrismaSessionRepository } from '../src/modules/auth/infrastructure/prisma/prisma-session.repository.js';
-import type { Session } from '../src/modules/auth/domain/session.js';
+import {
+  SESSION_AUTH_LEVELS,
+  toSessionAuthLevel,
+  type Session,
+} from '../src/modules/auth/domain/session.js';
 import { InMemoryAuditLog } from '../src/modules/auth/domain/audit.js';
 import { InMemoryUserRepository } from '../src/modules/users/infrastructure/in-memory-user.repository.js';
 import { buildApp, Client, ORIGIN, PASSWORD, SID, signupAndLogin, type App } from './helpers.js';
@@ -210,7 +214,7 @@ describe('ADR-021 baseline: session auth_level (active)', () => {
     expect(sql).toMatch(/"auth_level" TEXT NOT NULL DEFAULT 'password'/);
   });
 
-  it('MFA-SES-02: the Prisma session repository never writes authLevel, so every new row gets the DB default', async () => {
+  it('MFA-SES-02: the Prisma session repository never writes authLevel "mfa": a session without a level is stored as "password"', async () => {
     const writes: Record<string, unknown>[] = [];
     const fakeDb = {
       session: {
@@ -243,7 +247,12 @@ describe('ADR-021 baseline: session auth_level (active)', () => {
       userAgent: null,
     });
     expect(writes).toHaveLength(1);
-    expect(Object.keys(writes[0]!)).not.toContain('authLevel');
+    // N-4 (OIDC hardening) made the level explicit ("password" | "google"); what must never be written is "mfa".
+    expect(writes[0]!.authLevel).toBe(PLANNED.levels.password);
+    expect(writes[0]!.authLevel).not.toBe(PLANNED.levels.mfa);
+    // Reading back an unknown level (e.g. "mfa" before MFA ships) is not trusted: it maps to "password".
+    expect(toSessionAuthLevel(PLANNED.levels.mfa)).toBe(PLANNED.levels.password);
+    expect(SESSION_AUTH_LEVELS).not.toContain(PLANNED.levels.mfa);
   });
 
   it('MFA-SES-03: a password login does not create an elevated session', async () => {
@@ -256,7 +265,7 @@ describe('ADR-021 baseline: session auth_level (active)', () => {
     await app.close();
   });
 
-  it('MFA-OIDC-01: a Google sign-in does not create an elevated session (it falls back to the "password" default, N-4)', async () => {
+  it('MFA-OIDC-01/02: a Google sign-in is not elevated and records its own auth_level "google" (N-4)', async () => {
     const sessions = new InMemorySessionRepository();
     const app = await buildApp({
       sessions,
@@ -275,8 +284,9 @@ describe('ADR-021 baseline: session auth_level (active)', () => {
     expect((await c.get('/auth/session')).statusCode).toBe(200);
     const created = [...sessions.items.values()];
     expect(created).toHaveLength(1);
-    // Not elevated today. N-4: it is also indistinguishable from a password session (see MFA-OIDC-02, pending).
+    // Not elevated today, and N-4: distinguishable from a password session.
     expect(authLevelOf(created[0]!)).not.toBe(PLANNED.levels.mfa);
+    expect(authLevelOf(created[0]!)).toBe('google');
     await app.close();
   });
 });
@@ -355,10 +365,14 @@ describe('ADR-021 not built yet (active pins: when one fails, un-skip the TODO(A
     await app.close();
   });
 
-  it('no API source sets a session authLevel (nothing can elevate a session today)', () => {
-    const offenders = walk(API_SRC).filter((f) =>
-      /authLevel|auth_level/.test(readFileSync(f, 'utf8')),
-    );
+  it('no API source sets a session authLevel to "mfa" (nothing can elevate a session today)', () => {
+    // N-4 legitimately writes "password" / "google"; the pin is on the elevated value only.
+    const setsMfa =
+      /(?:authLevel|auth_level)['"]?\s*(?:[:=]|===?|!==?)\s*['"`]mfa['"`]|['"`]mfa['"`]\s*(?:===?|!==?)\s*\w*[aA]uth_?[lL]evel|SESSION_AUTH_LEVELS\s*=\s*\[[^\]]*['"`]mfa['"`]/;
+    for (const sample of ["authLevel: 'mfa'", 'session.authLevel = "mfa"', "auth_level === 'mfa'"])
+      expect(setsMfa.test(sample), sample).toBe(true);
+    expect(setsMfa.test("authLevel: 'google'")).toBe(false);
+    const offenders = walk(API_SRC).filter((f) => setsMfa.test(readFileSync(f, 'utf8')));
     expect(offenders).toEqual([]);
   });
 });
@@ -797,9 +811,7 @@ describe('TODO(ADR-021) cases not automatable yet (it.todo)', () => {
     'MFA-WA-05: a credential id registered by user A cannot be used to authenticate as user B',
   );
   // OIDC
-  it.todo(
-    'MFA-OIDC-02 (N-4): Google sessions record a distinct auth_level (google/oidc), not "password"',
-  );
+  // MFA-OIDC-02 (N-4) is active now: see MFA-OIDC-01/02 in the baseline block.
   it.todo(
     'MFA-OIDC-03: an owner/admin who signs in with Google still has to pass the MFA challenge',
   );
