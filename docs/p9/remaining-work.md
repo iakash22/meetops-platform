@@ -50,7 +50,7 @@ needed; fixtures and mocks only. Items are ordered by risk (likelihood × impact
 
 1. API baseline security headers (#1), **in progress**.
 2. ~~Rate-limit coverage review (#9).~~ Done: `docs/p9/rate-limit-coverage.md`.
-   2b. Google OIDC hardening on `feat/security/google-oidc-hardening` (findings M-2, N-1…N-6, L-1…L-5; L-2/L-3 Info).
+   2b. ~~Google OIDC hardening (`feat/security/google-oidc-hardening`, findings M-2, N-1…N-6, L-1…L-5).~~ Done in [#459](https://github.com/iakash22/meetops-platform/pull/459) (`fd4ede49`). Small follow-ups (X4-mem, NB-R3, info UX) remain outside this row.
 3. Release checklist (#12) and SBOM (#11).
 4. Alert rules (#13) and the backup/restore runbook (#10).
 5. Billing implementation after ADR-017 (#5 wiring, then #6 webhooks and #7 entitlements).
