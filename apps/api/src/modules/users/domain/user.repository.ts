@@ -30,6 +30,23 @@ export interface UserRepository {
     at: Date,
     opts: { clearPassword: boolean },
   ): Promise<boolean>;
+  /**
+   * OIDC review X4: the account's current credentials, read so that a concurrent credential change cannot be missed.
+   * Prisma: `SELECT … FOR SHARE`, which waits for an in-flight takeover transaction (it holds the row lock) and then
+   * returns the committed values. Null when the row is gone. `passwordHash` is '' when there is none.
+   */
+  readCredentials(
+    id: UserId,
+  ): Promise<{
+    passwordHash: string;
+    googleSub: string | null;
+    emailVerifiedAt: Date | null;
+  } | null>;
+  /**
+   * Compare-and-set for a rehash after login: replaces the hash only while it still equals `expected`, so a rehash can
+   * never resurrect a password that a takeover just removed. Returns false when it no longer matches.
+   */
+  replacePasswordHash(id: UserId, expected: string, passwordHash: string): Promise<boolean>;
   /** Must reject (DuplicateEmailError) when the email is taken. */
   create(user: User): Promise<User>;
   updatePasswordHash(id: UserId, passwordHash: string): Promise<void>;

@@ -156,7 +156,11 @@ export class PrismaSessionRepository implements SessionRepository {
     });
   }
   async revoke(id: string, at: Date) {
-    await this.db.session.updateMany({ where: { id, revokedAt: null }, data: { revokedAt: at } });
+    const r = await this.db.session.updateMany({
+      where: { id, revokedAt: null },
+      data: { revokedAt: at },
+    });
+    return r.count === 1;
   }
   async revokeAllForUser(userId: string, at: Date) {
     await this.db.session.updateMany({

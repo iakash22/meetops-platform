@@ -45,6 +45,21 @@ export class InMemoryUserRepository implements UserRepository {
     if (opts.clearPassword) u.passwordHash = '';
     return true;
   }
+  async readCredentials(id: UserId) {
+    const u = this.byId.get(id);
+    if (!u || u.deletedAt) return null;
+    return {
+      passwordHash: u.passwordHash ?? '',
+      googleSub: u.googleSub ?? null,
+      emailVerifiedAt: u.emailVerifiedAt ?? null,
+    };
+  }
+  async replacePasswordHash(id: UserId, expected: string, passwordHash: string) {
+    const u = this.byId.get(id);
+    if (!u || u.deletedAt || u.passwordHash !== expected) return false;
+    u.passwordHash = passwordHash;
+    return true;
+  }
   async create(user: User) {
     if (await this.findByEmail(user.email)) throw new DuplicateEmailError();
     if (user.googleSub && (await this.findByGoogleSub(user.googleSub)))

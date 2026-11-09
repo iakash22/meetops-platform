@@ -42,6 +42,7 @@ import {
   InvalidCredentialsError,
   RateLimitedError,
   UnauthenticatedError,
+  CredentialStoreUnavailableError,
 } from '../domain/errors.js';
 import type { AuthMailQueue } from '../domain/mail-jobs.js';
 import type { OneTimeTokenPurpose, OneTimeTokenRepository } from '../domain/one-time-token.js';
@@ -124,6 +125,8 @@ export type GoogleSignInOutcome =
   | { kind: 'rejected' };
 
 /** A Google subject waiting to be linked once the account's own password is entered (login()). */
+type AccountCredentials = NonNullable<Awaited<ReturnType<UserRepository['readCredentials']>>>;
+
 export interface PendingGoogleLink {
   userId: string;
   sub: string;
@@ -167,6 +170,19 @@ export const AUTH_LIMITS = {
 
 export const invalidResetError = () =>
   new DomainError('BAD_REQUEST', 'Reset link is invalid or has expired', 400);
+/** Retries an idempotent follow-up step; false when every attempt failed. */
+async function retryIdempotent(step: () => Promise<unknown>, attempts = 3): Promise<boolean> {
+  for (let i = 0; i < attempts; i++) {
+    try {
+      await step();
+      return true;
+    } catch {
+      /* try again */
+    }
+  }
+  return false;
+}
+
 export const invalidVerificationError = () =>
   new DomainError('BAD_REQUEST', 'Verification link is invalid or has expired', 400);
 
@@ -329,8 +345,12 @@ export class AuthService {
       throw new InvalidCredentialsError();
     }
     await this.d.lockout.reset(email);
+    let verifiedHash = user.passwordHash;
     if (this.d.hasher.needsRehash(user.passwordHash)) {
-      await this.d.users.updatePasswordHash(user.id, await this.d.hasher.hash(input.password));
+      const rehashed = await this.d.hasher.hash(input.password);
+      // Compare-and-set: never write a hash back over a password a takeover just removed (X4).
+      if (await this.d.users.replacePasswordHash(user.id, user.passwordHash, rehashed))
+        verifiedHash = rehashed;
     }
     if (currentToken) {
       const old = await this.revokeByToken(currentToken);
@@ -343,6 +363,11 @@ export class AuthService {
       meta,
       { newLocationAlert: true },
     );
+    // X4: a takeover (mailbox owner or Google) may have removed this password while it was being checked. The session
+    // now exists, so either the takeover already committed (seen here) or it commits later and its transaction
+    // revokes this row. Generic 401 either way.
+    if (!(await this.stillHolds(r.session, meta, (c) => c.passwordHash === verifiedHash)))
+      throw new InvalidCredentialsError();
     await this.audit(
       {
         actorId: user.id,
@@ -425,7 +450,7 @@ export class AuthService {
       if (proven && !bySub.emailVerifiedAt && bySub.email === email) {
         await this.d.users.markEmailVerified(bySub.id, this.d.clock.now());
       }
-      return this.finishGoogleLogin(bySub, meta, currentToken);
+      return this.finishGoogleLogin(bySub, meta, currentToken, (c) => c.googleSub === sub);
     }
 
     const byEmail = await this.d.users.findByEmail(email);
@@ -464,12 +489,19 @@ export class AuthService {
           this.d.emailVerificationTtlMs,
         );
         await this.d.mailQueue.enqueue({ kind: 'email_verification', tokenId: t.id });
-        const outcome = await this.finishGoogleLogin(user, meta, currentToken);
+        // Unproven and unlinked: the session is valid only while the address is still unproven (X4: the mailbox
+        // owner may verify from elsewhere in the meantime and take the account over).
+        const outcome = await this.finishGoogleLogin(
+          user,
+          meta,
+          currentToken,
+          (c) => !c.googleSub && !c.emailVerifiedAt,
+        );
         return outcome.kind === 'session'
           ? { ...outcome, verifyLink: { userId: user.id, sub } }
           : outcome;
       }
-      return this.finishGoogleLogin(user, meta, currentToken);
+      return this.finishGoogleLogin(user, meta, currentToken, (c) => c.googleSub === sub);
     } catch (e) {
       if (!(e instanceof DuplicateEmailError)) throw e;
       const winner =
@@ -478,7 +510,8 @@ export class AuthService {
         await this.auditGoogleFailure(null, meta, 'rejected');
         return { kind: 'rejected' };
       }
-      if (winner.googleSub === sub) return this.finishGoogleLogin(winner, meta, currentToken);
+      if (winner.googleSub === sub)
+        return this.finishGoogleLogin(winner, meta, currentToken, (c) => c.googleSub === sub);
       return this.linkOrRefuse(winner, sub, proven, meta, currentToken);
     }
   }
@@ -525,7 +558,12 @@ export class AuthService {
       await this.revokeOtherSessions(user.id, null);
     }
     const fresh = (await this.d.users.findById(user.id)) ?? user;
-    const outcome = await this.finishGoogleLogin(fresh, meta, currentToken);
+    const outcome = await this.finishGoogleLogin(
+      fresh,
+      meta,
+      currentToken,
+      (c) => c.googleSub === sub,
+    );
     if (linked) {
       await this.afterGoogleLinked(
         user.id,
@@ -584,17 +622,28 @@ export class AuthService {
    */
   private async afterCredentialTakeover(userId: string) {
     const now = this.d.clock.now();
-    await this.publish({ kind: 'user', userId, reason: 'password_changed' });
-    await this.d.extensionRevoker?.revokeForUser(userId, 'password_changed');
-    await this.d.pushDeviceRevoker?.revokeForUser(userId);
-    await this.d.oneTimeTokens.invalidateForUser(userId, 'password_reset', now);
-    await this.d.oneTimeTokens.invalidateForUser(userId, 'email_verification', now);
+    // Round 3: these run after the claim committed, and a retry of the request cannot redo them (the account is now
+    // verified), so each idempotent step is retried in place and every step runs even when an earlier one failed.
+    // Anything still failing surfaces as 503 to the caller.
+    const steps: (() => Promise<unknown>)[] = [
+      () => this.publish({ kind: 'user', userId, reason: 'password_changed' }),
+      async () => this.d.extensionRevoker?.revokeForUser(userId, 'password_changed'),
+      async () => this.d.pushDeviceRevoker?.revokeForUser(userId),
+      () => this.d.oneTimeTokens.invalidateForUser(userId, 'password_reset', now),
+      () => this.d.oneTimeTokens.invalidateForUser(userId, 'email_verification', now),
+    ];
+    let failed = false;
+    for (const step of steps) {
+      if (!(await retryIdempotent(step))) failed = true;
+    }
+    if (failed) throw new CredentialStoreUnavailableError();
   }
 
   private async finishGoogleLogin(
     user: User,
     meta: RequestMeta,
     currentToken: string | undefined,
+    holds: (c: AccountCredentials) => boolean,
   ): Promise<GoogleSignInOutcome> {
     if (currentToken) {
       const old = await this.revokeByToken(currentToken);
@@ -607,6 +656,8 @@ export class AuthService {
       meta,
       { newLocationAlert: true, authLevel: 'google' },
     );
+    // X4: same rule as password login, for the subject this sign-in relied on.
+    if (!(await this.stillHolds(result.session, meta, holds))) return { kind: 'rejected' };
     await this.audit(
       {
         actorId: user.id,
@@ -618,6 +669,34 @@ export class AuthService {
       meta,
     );
     return { kind: 'session', result };
+  }
+
+  /**
+   * OIDC review X4: re-read the account's credentials AFTER the new session row exists (Prisma: FOR SHARE, so an
+   * in-flight takeover transaction is waited for). If the credential this sign-in relied on is gone, revoke the new
+   * session. Together with the takeover transaction revoking every session row it can see, no interleaving leaves a
+   * session from the old credential alive.
+   */
+  private async stillHolds(
+    session: Session,
+    meta: RequestMeta,
+    holds: (c: AccountCredentials) => boolean,
+  ): Promise<boolean> {
+    const c = await this.d.users.readCredentials(session.userId);
+    if (c && holds(c)) return true;
+    await this.d.sessions.revoke(session.id, this.d.clock.now());
+    await this.publishSessionRevoked(session, 'logout');
+    await this.audit(
+      {
+        actorId: session.userId,
+        action: 'auth.login.failure',
+        targetType: 'user',
+        targetId: session.userId,
+        metadata: { reason: 'credentials_changed' },
+      },
+      meta,
+    );
+    return false;
   }
 
   private auditGoogleFailure(userId: string | null, meta: RequestMeta, reason: string) {
@@ -768,21 +847,45 @@ export class AuthService {
     } else {
       proof = 'mailbox';
       const before = { passwordRemoved: !!user.passwordHash, googleUnlinked: !!user.googleSub };
-      if (!(await this.claims.claimForMailbox(user.id, now))) {
+      let claimed: boolean;
+      try {
+        claimed = await this.claims.claimForMailbox(user.id, now);
+      } catch {
+        // Nothing committed (one transaction): 503, the user can retry with a new link.
+        throw new CredentialStoreUnavailableError();
+      }
+      if (!claimed) {
         // A concurrent verify or reset got there first; it did the takeover.
         if ((await this.d.users.findById(user.id))?.emailVerifiedAt)
           return { proof: 'already_verified' };
         throw invalidVerificationError();
       }
-      await this.afterCredentialTakeover(user.id);
+      const followUpFailed = await this.afterCredentialTakeover(user.id).then(
+        () => false,
+        () => true,
+      );
       metadata = before;
-      // Set-password link: the regular reset flow (single-use token, reset mail).
+      // Set-password link: the regular reset flow (single-use token, reset mail). Sent even when a follow-up step
+      // failed, since the password is already gone.
       const reset = await this.createOneTimeToken(
         user.id,
         'password_reset',
         this.d.passwordResetTtlMs,
       );
       await this.d.mailQueue.enqueue({ kind: 'password_reset', tokenId: reset.id });
+      if (followUpFailed) {
+        await this.audit(
+          {
+            actorId: user.id,
+            action: 'auth.email.verify',
+            targetType: 'user',
+            targetId: user.id,
+            metadata: { proof, ...metadata, followUpFailed: true },
+          },
+          meta,
+        );
+        throw new CredentialStoreUnavailableError();
+      }
     }
     await this.audit(
       {
@@ -926,11 +1029,21 @@ export class AuthService {
     meta: RequestMeta,
     reason: 'org_switch' | 'role_changed' | 'member_removed' = 'org_switch',
   ) {
-    await this.d.sessions.revoke(session.id, this.d.clock.now());
+    // X4: snapshot the credentials first, and refuse when someone else (a takeover) already revoked the old session;
+    // the new session is then re-checked against the snapshot like a fresh sign-in.
+    const before = await this.d.users.readCredentials(session.userId);
+    if (!before || (await this.d.sessions.revoke(session.id, this.d.clock.now())) === false)
+      throw new UnauthenticatedError();
     await this.publishSessionRevoked(session, reason);
-    return this.issueSession(session.userId, user, activeOrganizationId, meta, {
+    const r = await this.issueSession(session.userId, user, activeOrganizationId, meta, {
       authLevel: session.authLevel ?? 'password',
     });
+    const same = (c: AccountCredentials) =>
+      c.passwordHash === before.passwordHash &&
+      c.googleSub === before.googleSub &&
+      c.emailVerifiedAt?.getTime() === before.emailVerifiedAt?.getTime();
+    if (!(await this.stillHolds(r.session, meta, same))) throw new UnauthenticatedError();
+    return r;
   }
 
   private async revokeByToken(token: string) {

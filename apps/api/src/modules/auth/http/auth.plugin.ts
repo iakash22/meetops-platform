@@ -61,6 +61,9 @@ function sessionGeo(g: GeoFields | undefined) {
   };
 }
 
+/** UX-1: response header on POST /auth/verify-email (`password_reset` | `verified`). Exposed to CORS callers. */
+export const VERIFY_OUTCOME_HEADER = 'x-meetops-verify-outcome';
+
 export interface AuthPluginOptions {
   auth: AuthService;
   security: HttpSecurityConfig;
@@ -283,9 +286,15 @@ export async function authRoutes(app: FastifyInstance, opts: AuthPluginOptions) 
         tags,
         summary: 'Verify email address',
         description:
-          "Consumes a single-use verification token (24 h TTL). From a live session of the account or the browser that signed up: marks the email verified and signs out the account's other sessions (in the account's own Google session, a pending Google sign-in is linked). From anywhere else, the mailbox owner takes the account over: the password and any Google link are removed, every session is revoked and a set-password (reset) link is emailed. Public; does not need a session.",
+          "Consumes a single-use verification token (24 h TTL). Response header `x-meetops-verify-outcome`: `password_reset` after a mailbox-owner takeover, else `verified`. From a live session of the account or the browser that signed up: marks the email verified and signs out the account's other sessions (in the account's own Google session, a pending Google sign-in is linked). From anywhere else, the mailbox owner takes the account over: the password and any Google link are removed, every session is revoked and a set-password (reset) link is emailed. Public; does not need a session.",
         body: VerifyEmailBody,
-        response: { 204: Type.Null(), 400: ErrorBody, 403: ErrorBody, 429: ErrorBody },
+        response: {
+          204: Type.Null(),
+          400: ErrorBody,
+          403: ErrorBody,
+          429: ErrorBody,
+          503: ErrorBody,
+        },
       },
     },
     async (request, reply) => {
@@ -302,7 +311,7 @@ export async function authRoutes(app: FastifyInstance, opts: AuthPluginOptions) 
         now,
         GOOGLE_VERIFY_LINK_TTL_MS,
       );
-      await auth.verifyEmail(request.body.token, requestMeta(request), {
+      const { proof } = await auth.verifyEmail(request.body.token, requestMeta(request), {
         currentToken: g.readToken(request),
         signupBinding: bound?.userId ?? null,
         googleVerifyLink: pendingGoogle,
@@ -311,6 +320,9 @@ export async function authRoutes(app: FastifyInstance, opts: AuthPluginOptions) 
         reply.clearCookie(signupBinding.name, signupBinding.attributes);
       if (request.cookies[verifyLink.name] !== undefined)
         reply.clearCookie(verifyLink.name, verifyLink.attributes);
+      // UX-1: tell the token holder (only) whether the mailbox-owner takeover ran, so the page can say the password was
+      // removed and a set-password link was emailed. Additive header; the status stays 204 in every case.
+      reply.header(VERIFY_OUTCOME_HEADER, proof === 'mailbox' ? 'password_reset' : 'verified');
       return reply.status(204).send();
     },
   );

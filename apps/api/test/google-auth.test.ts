@@ -5,6 +5,7 @@ import type { GoogleIdentity } from '../src/modules/auth/application/google-oidc
 import { InMemoryUserRepository } from '../src/modules/users/infrastructure/in-memory-user.repository.js';
 import { InMemorySessionRepository } from '../src/modules/auth/infrastructure/in-memory-session.repository.js';
 import { InMemoryAuditLog } from '../src/modules/auth/domain/audit.js';
+import { InMemoryMembershipRepository } from '../src/modules/organizations/infrastructure/in-memory.repositories.js';
 import {
   AuthService,
   AUTH_LIMITS,
@@ -630,6 +631,8 @@ describe('round 2: the mailbox owner wins over whoever registered the address', 
       token: app.token('vic1@gmail.com', 'email_verification')!,
     });
     expect(v.statusCode).toBe(204);
+    // UX-1: only the token holder learns that the takeover ran.
+    expect(v.headers['x-meetops-verify-outcome']).toBe('password_reset');
     expect(await sessionOk(attacker)).toBe(401);
     expect(await passwordLogin(app, 'vic1@gmail.com')).toBe(401);
     const u = await users.findByEmail('vic1@gmail.com');
@@ -899,7 +902,9 @@ describe('round 2: the mailbox owner wins over whoever registered the address', 
     const failed = await new Client(app).post('/auth/verify-email', {
       token: app.token('half2@gmail.com', 'email_verification')!,
     });
-    expect(failed.statusCode).toBe(500);
+    // Round 3: a failed takeover transaction is a 503 (retryable), not a generic 500.
+    expect(failed.statusCode).toBe(503);
+    expect(failed.headers['retry-after']).toBeDefined();
     expect((await users.findByEmail('half2@gmail.com'))?.emailVerifiedAt).toBeNull();
     expect(await sessionOk(attacker)).toBe(200);
     // Google proving the address later still performs the full takeover.
@@ -918,6 +923,192 @@ describe('round 2: the mailbox owner wins over whoever registered the address', 
     const notices = app.mail.sent.filter((m) => m.template === 'account_linked');
     expect(notices).toHaveLength(1);
     expect(notices[0]!.data).toMatchObject({ passwordRemoved: 'true' });
+    await app.close();
+  });
+});
+
+/* Round 3 (Tester re-review of #459): X4, a sign-in already in flight when the takeover commits. */
+describe('round 3: a sign-in in flight during a takeover never keeps a session', () => {
+  /** Holds the next session insert (the point between the credential check and the session) until released. */
+  class GatedSessions extends InMemorySessionRepository {
+    private pending: { entered: () => void; gate: Promise<void> } | null = null;
+    holdNext() {
+      let entered!: () => void;
+      let release!: () => void;
+      const reached = new Promise<void>((r) => (entered = r));
+      const gate = new Promise<void>((r) => (release = r));
+      this.pending = { entered, gate };
+      return { reached, release };
+    }
+    override async create(s: Parameters<InMemorySessionRepository['create']>[0]) {
+      const p = this.pending;
+      this.pending = null;
+      if (p) {
+        p.entered();
+        await p.gate;
+      }
+      return super.create(s);
+    }
+  }
+  const gmail = (n: string, email: string): GoogleIdentity => ({
+    sub: `66600000000${n}`,
+    email,
+    emailVerified: true,
+    name: 'Owner',
+    hd: null,
+  });
+  async function squatter(app: App, email: string) {
+    const c = new Client(app);
+    expect(
+      (await c.post('/auth/signup', { name: 'Mallory', email, password: PASSWORD })).statusCode,
+    ).toBe(202);
+    return c;
+  }
+  const live = async (
+    sessions: InMemorySessionRepository,
+    users: InMemoryUserRepository,
+    e: string,
+  ) => sessions.listActiveForUser((await users.findByEmail(e))!.id, new Date());
+
+  it('X4: password login held past its check while the owner verifies elsewhere ends 401 with no session', async () => {
+    const sessions = new GatedSessions();
+    const { app, users, audit } = await appFor(gmail('1', 'inflight1@gmail.com'), { sessions });
+    const attacker = await squatter(app, 'inflight1@gmail.com');
+    const hold = sessions.holdNext();
+    const login = attacker.post('/auth/login', {
+      email: 'inflight1@gmail.com',
+      password: PASSWORD,
+    });
+    await hold.reached; // the password was accepted; the session row is not written yet
+    const v = await new Client(app).post('/auth/verify-email', {
+      token: app.token('inflight1@gmail.com', 'email_verification')!,
+    });
+    expect(v.statusCode).toBe(204);
+    expect(v.headers['x-meetops-verify-outcome']).toBe('password_reset');
+    hold.release();
+    const res = await login;
+    expect(res.statusCode).toBe(401);
+    expect(res.json()).toMatchObject({ error: { code: 'AUTH_FAILED' } });
+    attacker.absorb(res);
+    expect(await sessionOk(attacker)).toBe(401);
+    expect(await live(sessions, users, 'inflight1@gmail.com')).toHaveLength(0);
+    expect(audit.events.some((e) => e.metadata?.reason === 'credentials_changed')).toBe(true);
+    await app.close();
+  });
+
+  it('X4: the same window during the Google takeover', async () => {
+    const sessions = new GatedSessions();
+    const { app, users } = await appFor(gmail('2', 'inflight2@gmail.com'), { sessions });
+    const attacker = await squatter(app, 'inflight2@gmail.com');
+    const hold = sessions.holdNext();
+    const login = attacker.post('/auth/login', {
+      email: 'inflight2@gmail.com',
+      password: PASSWORD,
+    });
+    await hold.reached;
+    const { browser } = await googleSignIn(app);
+    expect(await sessionOk(browser)).toBe(200);
+    hold.release();
+    const res = await login;
+    expect(res.statusCode).toBe(401);
+    attacker.absorb(res);
+    expect(await sessionOk(attacker)).toBe(401);
+    // Only the owner's Google session is live.
+    expect(await live(sessions, users, 'inflight2@gmail.com')).toHaveLength(1);
+    await app.close();
+  });
+
+  it('X4: the other order (session written first, takeover after) is revoked by the takeover itself', async () => {
+    const { app, users, sessions } = await appFor(gmail('3', 'inflight3@gmail.com'));
+    const attacker = await squatter(app, 'inflight3@gmail.com');
+    expect(
+      (await attacker.post('/auth/login', { email: 'inflight3@gmail.com', password: PASSWORD }))
+        .statusCode,
+    ).toBe(200);
+    await new Client(app).post('/auth/verify-email', {
+      token: app.token('inflight3@gmail.com', 'email_verification')!,
+    });
+    expect(await sessionOk(attacker)).toBe(401);
+    expect(await live(sessions, users, 'inflight3@gmail.com')).toHaveLength(0);
+    await app.close();
+  });
+
+  it('X4: an unproven Google sign-in held past its check loses to the mailbox owner verifying meanwhile', async () => {
+    const sessions = new GatedSessions();
+    const stale: GoogleIdentity = {
+      sub: '666000000004',
+      email: 'inflight4@corp.example',
+      emailVerified: true,
+      name: 'Stale',
+      hd: null,
+    };
+    const { app, users } = await appFor(stale, { sessions });
+    const hold = sessions.holdNext();
+    const pending = googleSignIn(app);
+    await hold.reached;
+    const token = app.token('inflight4@corp.example', 'email_verification');
+    expect(token).toBeTruthy();
+    const v = await new Client(app).post('/auth/verify-email', { token: token! });
+    expect(v.statusCode).toBe(204);
+    hold.release();
+    const { browser, done } = await pending;
+    expect(String(done.headers.location)).toContain('error=google');
+    expect(await sessionOk(browser)).toBe(401);
+    expect(await live(sessions, users, 'inflight4@corp.example')).toHaveLength(0);
+    await app.close();
+  });
+
+  it('post-commit revocations are retried; a step that keeps failing gives 503 and the set-password mail still goes out', async () => {
+    // The push-device revoker lists the user's memberships; make that fail once (retried) or for good.
+    class Flaky extends InMemoryMembershipRepository {
+      failures = 0;
+      calls = 0;
+      override async listByUser(userId: string) {
+        if (this.failures > 0) {
+          this.calls++;
+          this.failures--;
+          throw new Error('store down');
+        }
+        return super.listByUser(userId);
+      }
+    }
+    const memberships = new Flaky();
+    const { app, users } = await appFor(gmail('6', 'follow6@gmail.com'), { memberships });
+    const attacker = await squatter(app, 'follow6@gmail.com');
+    memberships.failures = 1;
+    const ok = await new Client(app).post('/auth/verify-email', {
+      token: app.token('follow6@gmail.com', 'email_verification')!,
+    });
+    expect(ok.statusCode).toBe(204); // one blip, retried
+    expect(memberships.calls).toBe(1);
+
+    const other = await squatter(app, 'follow7@gmail.com');
+    memberships.failures = 99;
+    memberships.calls = 0;
+    const v = await new Client(app).post('/auth/verify-email', {
+      token: app.token('follow7@gmail.com', 'email_verification')!,
+    });
+    expect(v.statusCode).toBe(503);
+    expect(memberships.calls).toBe(3);
+    memberships.failures = 0;
+    // The claim itself committed: verified, password gone, set-password link sent.
+    const u = await users.findByEmail('follow7@gmail.com');
+    expect(u?.emailVerifiedAt).toBeTruthy();
+    expect(u?.passwordHash).toBe('');
+    expect(app.token('follow7@gmail.com', 'password_reset')).toBeTruthy();
+    expect(await sessionOk(attacker)).toBe(401);
+    expect(await sessionOk(other)).toBe(401);
+    await app.close();
+  });
+
+  it('verify in the registering browser reports the plain outcome', async () => {
+    const { app } = await appFor(gmail('5', 'plain5@gmail.com'));
+    const c = await squatter(app, 'plain5@gmail.com');
+    const v = await c.post('/auth/verify-email', {
+      token: app.token('plain5@gmail.com', 'email_verification')!,
+    });
+    expect(v.statusCode).toBe(204);
+    expect(v.headers['x-meetops-verify-outcome']).toBe('verified');
     await app.close();
   });
 });

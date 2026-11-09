@@ -62,7 +62,8 @@ export interface SessionRepository {
   createWithOutbox?(session: Session, event: NewLocationOutboxEvent): Promise<Session>;
   /** ADR-014: the session's client IP changed; store the new IP and its coarse geo. */
   updateIp?(id: string, ip: string | null, geo: GeoFields): Promise<void>;
-  revoke(id: string, at: Date): Promise<void>;
+  /** Resolves true when this call revoked a live row (false: already revoked or gone). */
+  revoke(id: string, at: Date): Promise<boolean | void>;
   revokeAllForUser(userId: string, at: Date): Promise<void>;
   /**
    * Active org of the user's most recently used session (any state, revoked or expired included), or null. Used only to
