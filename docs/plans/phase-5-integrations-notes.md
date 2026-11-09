@@ -24,7 +24,10 @@ No new dependencies and no lockfile changes. All provider calls go through `fetc
   server.
 - **Callback session.** The callback requires a session. The org comes from `session.activeOrganizationId`, and
   the state must be bound to that org and user. Denied consent (`error=`) consumes the state.
-- **Webhooks.** HMAC-SHA256 over the exact raw bytes, compared in constant time. Replays are rejected through the
+- **Webhooks.** HMAC-SHA256 over the exact raw bytes, compared in constant time, **before** org resolution or any
+  heavier connection/status work (per-IP rate limit and the 1 MiB body cap run in the route layer first). GitHub
+  uses the App-wide secret with no DB before HMAC; Jira does one minimal secret lookup and, for unknown ids,
+  compares against a fixed dummy key so the response matches a bad signature. Replays are rejected through the
   delivery store: the GitHub `X-GitHub-Delivery` header, or the Jira `X-Atlassian-Webhook-Identifier` scoped to
   the integration id. Stale Jira events are also rejected.
 - **Token storage.** Tokens are stored only through the encrypting `IntegrationSecretCipher`. In production,

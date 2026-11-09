@@ -58,6 +58,13 @@ RATE_LIMITED` + `Retry-After`; limiter error or no answer within 1.5 s -> `503 P
 | realtime `GET /health`                                                                                                                                                                                                                                                                                                                                     | public                                                | none                                                                                                                       | -                                                         | none                                 | unchanged: static                              |
 | worker metrics exporter                                                                                                                                                                                                                                                                                                                                    | bearer `WORKER_METRICS_TOKEN`, loopback by default    | none                                                                                                                       | -                                                         | none                                 | unchanged: not internet-facing                 |
 
+## Webhook verify order (per-integration)
+
+`POST /webhooks/:provider/:integrationId` checks the per-IP rate limit and body cap in the route layer, then
+verifies the HMAC **before** `resolveOrganization` / `get` / status apply. Unknown integration ids and bad
+signatures both return 401 with the same body (Jira uses a dummy HMAC key when the id is unknown). The App-wide
+`POST /webhooks/github` path already verified first.
+
 ## Gaps fixed in this PR
 
 1. Presigned GET minting (`download-url`), analytics aggregates, calendar event reads (provider calls), OAuth

@@ -90,6 +90,14 @@ export interface IntegrationsRepository {
     status: 'active' | 'error',
   ): Promise<void>;
   resolveOrganization(provider: ConnectedProvider, integrationId: string): Promise<string | null>;
+  /**
+   * Minimal webhook auth lookup: org id + webhook secret for a live connection, or null when unknown/revoked.
+   * Used so HMAC can run before any heavier get / status work. One logical read (may be one or two SQL round trips).
+   */
+  resolveWebhookSecret(
+    provider: ConnectedProvider,
+    integrationId: string,
+  ): Promise<{ organizationId: string; webhookSecret: string } | null>;
   /** App-wide webhook routing by provider account id (GitHub installation id). Identifiers of live rows only. */
   resolveByExternalAccount(
     provider: ConnectedProvider,

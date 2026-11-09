@@ -105,6 +105,13 @@ export class PrismaIntegrations implements IntegrationsRepository {
   resolveOrganization(provider: ConnectedProvider, id: string) {
     return this.repo.resolveOrganization(provider, id);
   }
+  async resolveWebhookSecret(provider: ConnectedProvider, id: string) {
+    const organizationId = await this.repo.resolveOrganization(provider, id);
+    if (!organizationId) return null;
+    const secrets = await this.repo.readSecrets(organizationId, id);
+    if (!secrets) return null;
+    return { organizationId, webhookSecret: secrets.webhookSecret };
+  }
   resolveByExternalAccount(provider: ConnectedProvider, externalAccountId: string) {
     return this.repo.resolveByExternalAccount(provider, externalAccountId);
   }
