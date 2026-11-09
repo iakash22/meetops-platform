@@ -2,16 +2,20 @@ import type { User, UserId } from '../domain/user.js';
 import type { UserRepository } from '../domain/user.repository.js';
 import { DuplicateEmailError } from '../domain/errors.js';
 
-/** Test/dev only. The Prisma implementation will replace this. */
+/**
+ * Test/dev only. The Prisma implementation will replace this. Reads return copies (structuredClone), like rows read from
+ * Postgres: a caller holding a user must never see a later write through it (#459 X4-mem).
+ */
 export class InMemoryUserRepository implements UserRepository {
   private readonly byId = new Map<UserId, User>();
 
   async findById(id: UserId) {
     const u = this.byId.get(id);
-    return u && !u.deletedAt ? u : null;
+    return u && !u.deletedAt ? structuredClone(u) : null;
   }
   async findByEmail(email: string) {
-    for (const u of this.byId.values()) if (u.email === email && !u.deletedAt) return u;
+    for (const u of this.byId.values())
+      if (u.email === email && !u.deletedAt) return structuredClone(u);
     return null;
   }
   private subTaken(sub: string) {
@@ -19,7 +23,8 @@ export class InMemoryUserRepository implements UserRepository {
     return false;
   }
   async findByGoogleSub(sub: string) {
-    for (const u of this.byId.values()) if (u.googleSub === sub && !u.deletedAt) return u;
+    for (const u of this.byId.values())
+      if (u.googleSub === sub && !u.deletedAt) return structuredClone(u);
     return null;
   }
   async linkGoogleSub(id: UserId, sub: string) {
@@ -64,7 +69,7 @@ export class InMemoryUserRepository implements UserRepository {
     if (await this.findByEmail(user.email)) throw new DuplicateEmailError();
     if (user.googleSub && (await this.findByGoogleSub(user.googleSub)))
       throw new DuplicateEmailError();
-    this.byId.set(user.id, { ...user });
+    this.byId.set(user.id, structuredClone(user));
     return user;
   }
   async markEmailVerified(id: UserId, at: Date) {
