@@ -33,6 +33,25 @@ describe('/verify-email', () => {
     );
   });
 
+  it('UX-1: after a mailbox-owner takeover it says the password was removed, never "log in now"', async () => {
+    const api = createMockApi({
+      auth: { verifyEmail: vi.fn().mockResolvedValue({ passwordReset: true }) },
+    });
+    renderApp(`/verify-email?token=${TOKEN}`, api);
+    await userEvent.click(await screen.findByRole('button', { name: 'Verify email' }));
+    expect(await screen.findByText(/the password on this account was removed/)).toBeInTheDocument();
+    expect(screen.getByText(/Set a new one with the link we just emailed you/)).toBeInTheDocument();
+    expect(
+      screen.getByText('Set a password with the link we just emailed you.'),
+    ).toBeInTheDocument();
+    expect(screen.queryByText('You can log in now.')).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'Continue to log in' })).not.toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Send a new set-password link' })).toHaveAttribute(
+      'href',
+      '/forgot-password',
+    );
+  });
+
   it('explains an invalid or expired link (400) and offers a new one', async () => {
     const api = createMockApi({ auth: { verifyEmail: vi.fn().mockRejectedValue(badToken()) } });
     const { history } = renderApp(`/verify-email?token=${TOKEN}`, api);
