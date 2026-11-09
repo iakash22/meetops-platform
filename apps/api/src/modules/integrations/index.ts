@@ -21,12 +21,13 @@ import {
 import type { AuthService } from '../auth/application/auth.service.js';
 import { makeGuards, requestMeta } from '../auth/http/security.js';
 import { registerDomainErrorHandler } from '../../shared/http-errors.js';
+import { routeLimiter } from '../../shared/rate-limits.js';
+import { consumeGuarded } from '../../shared/guarded-limit.js';
 import type { OrganizationService } from '../organizations/application/organization.service.js';
 import { isRelaxedEnv, MissingProductionDependencyError, type ModuleDeps } from '../index.js';
 import { DirectoryAccess, type DirectoryCaller } from '../directory/access.js';
 import { directoryErrors, directoryWriteErrors } from '../directory/http/route-kit.js';
 import { ErrorBody } from '../auth/http/schemas.js';
-import { RateLimitedError } from '../auth/domain/errors.js';
 import {
   IntegrationNotFoundError,
   OAuthStateInvalidError,
@@ -211,6 +212,7 @@ export default async function integrationsModule(
   if (taskSync?.owned) app.addHook('onClose', async () => taskSync.queue.close?.());
   const g = makeGuards(auth, deps.security);
   const access = new DirectoryAccess(organizations, deps.audit);
+  const routeLimits = routeLimiter(deps.rateLimiter, deps.routeRateLimits);
   const auditFor =
     (c: DirectoryCaller): AuditFn =>
     (action, targetId, metadata) =>
@@ -284,6 +286,7 @@ export default async function integrationsModule(
       async (request) => {
         const c = await callerFor(request, request.params.organizationId);
         organizations.authorize(c.ctx, 'update', 'Organization');
+        await routeLimits.charge('oauthConnect', c.ctx);
         return service.connect({
           organizationId: c.ctx.organizationId,
           userId: c.ctx.userId,
@@ -305,6 +308,7 @@ export default async function integrationsModule(
         },
       },
       async (request, reply) => {
+        await routeLimits.charge('oauthCallback', requestMeta(request));
         const inner = service.verifyState(request.query.state);
         const session = await g.requireSession(request);
         const orgId = session.session.activeOrganizationId;
@@ -364,6 +368,7 @@ export default async function integrationsModule(
       async (request, reply) => {
         const c = await callerFor(request, request.params.organizationId);
         organizations.authorize(c.ctx, 'update', 'Organization');
+        await routeLimits.charge('issuePush', c.ctx);
         const link = await service.pushIssue({
           organizationId: c.ctx.organizationId,
           taskId: request.params.taskId,
@@ -390,6 +395,7 @@ export default async function integrationsModule(
         async (request, reply) => {
           const c = await callerFor(request, request.params.organizationId);
           organizations.authorize(c.ctx, 'update', 'Organization');
+          await routeLimits.charge('issuePush', c.ctx);
           const job = await syncService.request({
             organizationId: c.ctx.organizationId,
             userId: c.ctx.userId,
@@ -410,10 +416,9 @@ export default async function integrationsModule(
   await app.register(async (s) => {
     registerDomainErrorHandler(s);
     const limits = deps.webhookRateLimits ?? WEBHOOK_RATE_LIMITS;
-    const consumeOrThrow = async (key: string, l: { limit: number; windowMs: number }) => {
-      const r = await deps.rateLimiter.consume(key, l.limit, l.windowMs);
-      if (!r.allowed) throw new RateLimitedError(r.retryAfterMs);
-    };
+    // Fail closed: limiter error or timeout -> 503 + Retry-After (providers retry), over the limit -> 429.
+    const consumeOrThrow = (key: string, l: { limit: number; windowMs: number }) =>
+      consumeGuarded(deps.rateLimiter, key, l);
     s.addHook('onRequest', async (request) => {
       const ip = requestMeta(request).ip ?? 'unknown';
       await consumeOrThrow(`webhook:ip:${ip}`, limits.perIp);
