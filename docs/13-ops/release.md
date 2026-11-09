@@ -43,3 +43,16 @@ Outputs CycloneDX JSON: `meetops-npm.cdx.json` (pnpm workspace, from `pnpm-lock.
 
 `syft` alone covers both. Installing it on the release machine is an owner decision (it is a binary download, not
 an npm package). Attach the SBOM files and `SHA256SUMS` to the release; licence review can read the same files.
+
+## Upgrade note: realtime proxy trust (#455)
+
+When deploying a build that includes the realtime TRUST_PROXY change (#455):
+
+- **Set `TRUST_PROXY`** to an IP/CIDR allowlist that includes nginx (required in production;
+  hop counts fail startup). The same variable is read by the API.
+- **Delete `REALTIME_TRUST_PROXY_HOPS`** from staging/production env (removed; a non-zero value
+  fails realtime startup). Replace it with `TRUST_PROXY`.
+- Compose caution: one `TRUST_PROXY` value is passed to both API and realtime containers.
+
+See [environment-variables.md](../00-getting-started/environment-variables.md) and
+[cicd.md](../devops/cicd.md#deploy-env-realtime-trust_proxy-after-455).
