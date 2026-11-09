@@ -55,7 +55,12 @@ When deploying a build that includes the realtime TRUST_PROXY change (#455):
 - Compose caution: one `TRUST_PROXY` value is passed to both API and realtime containers.
 - **`BEHIND_CLOUDFLARE`:** both API and realtime honour it in code, but
   `infra/compose/compose.app.yml` injects it into **realtime only**. Ensure the API process
-  also has it when Cloudflare sits in front of the API.
+  also has it when Cloudflare sits in front of the API (override / orchestrator / D-5). If the
+  API is behind Cloudflare without `BEHIND_CLOUDFLARE`, the resolved client IP is the Cloudflare
+  edge (peer after `TRUST_PROXY`), so per-IP rate limits share one bucket per edge and one busy
+  edge (or attacker) can 429 / lock out many users. Setting the flag is still fail-closed for
+  spoofed headers: `CF-Connecting-IP` is ignored unless that peer is in the pinned Cloudflare
+  ranges. Locking the origin firewall to those ranges remains recommended defence-in-depth.
 - IPv4-mapped addresses (`::ffff:a.b.c.d`) are normalised to IPv4 for allowlist matching and
   rate-limit keys; list nginx as IPv4/CIDR as usual.
 
