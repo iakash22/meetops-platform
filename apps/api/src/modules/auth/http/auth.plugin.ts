@@ -35,7 +35,19 @@ import { CursorPageQuery } from '@meetops/contracts';
 import { paginate } from '../../../shared/pagination.js';
 import type { OrganizationService } from '../../organizations/application/organization.service.js';
 import { toSessionResponse } from './mappers.js';
-import { googleAuthRoutes, type GoogleAuthOptions } from './google-auth.routes.js';
+import {
+  googleAuthRoutes,
+  pendingLinkCookie,
+  signupBindingCookie,
+  verifyLinkCookie,
+  type GoogleAuthOptions,
+} from './google-auth.routes.js';
+import {
+  GOOGLE_VERIFY_LINK_TTL_MS,
+  SIGNUP_BINDING_TTL_MS,
+  openPendingLink,
+  sealPendingLink,
+} from '../application/google-oidc.js';
 
 /** ADR-014 SessionSummary geo: optional, not nullable (unknown fields are omitted). */
 function sessionGeo(g: GeoFields | undefined) {
@@ -48,6 +60,9 @@ function sessionGeo(g: GeoFields | undefined) {
     geoApproximate: true as const,
   };
 }
+
+/** UX-1: response header on POST /auth/verify-email (`password_reset` | `verified`). Exposed to CORS callers. */
+export const VERIFY_OUTCOME_HEADER = 'x-meetops-verify-outcome';
 
 export interface AuthPluginOptions {
   auth: AuthService;
@@ -65,6 +80,9 @@ export async function authRoutes(app: FastifyInstance, opts: AuthPluginOptions) 
   registerDomainErrorHandler(app);
   const { auth, security } = opts;
   const g = makeGuards(auth, security);
+  const pendingLink = pendingLinkCookie(security);
+  const verifyLink = verifyLinkCookie(security);
+  const signupBinding = signupBindingCookie(security);
   app.addHook('onRequest', g.mutationGuard);
 
   app.post<{ Body: SignupBodyT }>(
@@ -74,13 +92,21 @@ export async function authRoutes(app: FastifyInstance, opts: AuthPluginOptions) 
         tags,
         summary: 'Create an account',
         description:
-          'Enumeration-safe: always 202 with the same message whether or not the email exists. Does not start a session; log in afterwards.',
+          'Enumeration-safe: always 202 with the same message whether or not the email exists. Does not start a session; log in afterwards. Sets an HttpOnly signup-binding cookie (same shape either way): verifying the email from this browser keeps the chosen password.',
         body: SignupBody,
         response: { 202: AcceptedBody, 400: ErrorBody, 403: ErrorBody, 429: ErrorBody },
       },
     },
     async (request, reply) => {
-      await auth.signup(request.body, requestMeta(request));
+      const r = await auth.signup(request.body, requestMeta(request));
+      reply.setCookie(
+        signupBinding.name,
+        sealPendingLink(
+          { uid: r.binding, sub: '', exp: Date.now() + SIGNUP_BINDING_TTL_MS },
+          signupBinding.key,
+        ),
+        { ...signupBinding.attributes, maxAge: signupBinding.maxAgeS },
+      );
       return reply.status(202).send({ message: SIGNUP_MSG });
     },
   );
@@ -92,13 +118,21 @@ export async function authRoutes(app: FastifyInstance, opts: AuthPluginOptions) 
         tags,
         summary: 'Log in',
         description:
-          'Verifies credentials, revokes any presented session, sets a new httpOnly session cookie and a fresh CSRF cookie (also returned as csrfToken). Generic 401 AUTH_FAILED on failure; 429 when rate-limited or locked.',
+          'Verifies credentials, revokes any presented session, sets a new httpOnly session cookie and a fresh CSRF cookie (also returned as csrfToken). With a pending Google link cookie from /auth/google/callback for this same verified account, links Google and signs out the other sessions. Generic 401 AUTH_FAILED on failure; 429 when rate-limited or locked.',
         body: LoginBody,
         response: { 200: SessionResponse, 401: ErrorBody, 403: ErrorBody, 429: ErrorBody },
       },
     },
     async (request, reply) => {
-      const r = await auth.login(request.body, requestMeta(request), g.readToken(request));
+      // M-2: a Google subject parked by the callback is linked only after this password proves the account.
+      const pending = openPendingLink(
+        request.cookies[pendingLink.name],
+        pendingLink.key,
+        Date.now(),
+      );
+      const r = await auth.login(request.body, requestMeta(request), g.readToken(request), pending);
+      if (request.cookies[pendingLink.name] !== undefined)
+        reply.clearCookie(pendingLink.name, pendingLink.attributes);
       g.setSessionCookie(reply, r);
       return {
         ...(await toSessionResponse(r, opts.organizations)),
@@ -252,13 +286,43 @@ export async function authRoutes(app: FastifyInstance, opts: AuthPluginOptions) 
         tags,
         summary: 'Verify email address',
         description:
-          'Consumes a single-use verification token (24 h TTL). Public; does not need a session.',
+          "Consumes a single-use verification token (24 h TTL). Response header `x-meetops-verify-outcome`: `password_reset` after a mailbox-owner takeover, else `verified`. From a live session of the account or the browser that signed up: marks the email verified and signs out the account's other sessions (in the account's own Google session, a pending Google sign-in is linked). From anywhere else, the mailbox owner takes the account over: the password and any Google link are removed, every session is revoked and a set-password (reset) link is emailed. Public; does not need a session.",
         body: VerifyEmailBody,
-        response: { 204: Type.Null(), 400: ErrorBody, 403: ErrorBody, 429: ErrorBody },
+        response: {
+          204: Type.Null(),
+          400: ErrorBody,
+          403: ErrorBody,
+          429: ErrorBody,
+          503: ErrorBody,
+        },
       },
     },
     async (request, reply) => {
-      await auth.verifyEmail(request.body.token, requestMeta(request));
+      const now = Date.now();
+      const bound = openPendingLink(
+        request.cookies[signupBinding.name],
+        signupBinding.key,
+        now,
+        SIGNUP_BINDING_TTL_MS,
+      );
+      const pendingGoogle = openPendingLink(
+        request.cookies[verifyLink.name],
+        verifyLink.key,
+        now,
+        GOOGLE_VERIFY_LINK_TTL_MS,
+      );
+      const { proof } = await auth.verifyEmail(request.body.token, requestMeta(request), {
+        currentToken: g.readToken(request),
+        signupBinding: bound?.userId ?? null,
+        googleVerifyLink: pendingGoogle,
+      });
+      if (request.cookies[signupBinding.name] !== undefined)
+        reply.clearCookie(signupBinding.name, signupBinding.attributes);
+      if (request.cookies[verifyLink.name] !== undefined)
+        reply.clearCookie(verifyLink.name, verifyLink.attributes);
+      // UX-1: tell the token holder (only) whether the mailbox-owner takeover ran, so the page can say the password was
+      // removed and a set-password link was emailed. Additive header; the status stays 204 in every case.
+      reply.header(VERIFY_OUTCOME_HEADER, proof === 'mailbox' ? 'password_reset' : 'verified');
       return reply.status(204).send();
     },
   );

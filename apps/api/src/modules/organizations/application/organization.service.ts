@@ -1,3 +1,4 @@
+import { clientIpKey } from '../../../shared/rate-limit-core.js';
 import type { Clock, IdGenerator } from '../../../shared/ports.js';
 import type { TenantContext } from '../../../shared/tenant.js';
 import type { RateLimiter, TokenService } from '../../auth/domain/ports.js';
@@ -255,7 +256,7 @@ export class OrganizationService {
     email: string;
     ip: string | null;
   }) {
-    await this.limit(`invite:accept:ip:${input.ip ?? 'unknown'}`, INVITE_LIMITS.acceptPerIp);
+    await this.limit(`invite:accept:ip:${clientIpKey(input.ip)}`, INVITE_LIMITS.acceptPerIp);
     await this.limit(`invite:accept:user:${input.userId}`, INVITE_LIMITS.acceptPerUser);
     await this.requireVerifiedEmail(input.userId);
     const r = await this.d.invitations.accept(

@@ -236,7 +236,8 @@ export type ApiClient = {
     /** POST /auth/reset-password (204). The API revokes every session of the user. */
     resetPassword: (body: ResetPasswordRequest) => Promise<void>;
     /** POST /auth/verify-email (204). Public; 400 BAD_REQUEST for an invalid/expired token. */
-    verifyEmail: (body: VerifyEmailRequest) => Promise<void>;
+    /** `passwordReset`: the account's password was removed and a set-password link was emailed (UX-1). */
+    verifyEmail: (body: VerifyEmailRequest) => Promise<{ passwordReset: boolean }>;
     /** POST /auth/resend-verification: always 202 (enumeration-safe). */
     resendVerification: (body: ForgotPasswordRequest) => Promise<void>;
     /** GET /auth/providers. `{ google: true }` only when the API has Google sign-in configured. */
@@ -454,6 +455,14 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
   }
 
   async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
+    return (await requestWithHeaders<T>(method, path, body)).data;
+  }
+
+  async function requestWithHeaders<T>(
+    method: string,
+    path: string,
+    body?: unknown,
+  ): Promise<{ data: T; header: (name: string) => string | null }> {
     let res = await send(method, path, body, false);
     let data = safeJson(await res.text());
     // Retry once, with a fresh token, only for CSRF-specific rejections.
@@ -480,7 +489,7 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
         error.retryAfterSeconds = parseRetryAfter(res.headers?.get?.('retry-after') ?? null);
       throw error;
     }
-    return data as T;
+    return { data: data as T, header: (name) => res.headers?.get?.(name) ?? null };
   }
 
   async function authRequest(path: string, body: unknown): Promise<AuthSession> {
@@ -534,7 +543,9 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
         cachedCsrf = null;
       },
       verifyEmail: async (body) => {
-        await request('POST', '/auth/verify-email', body);
+        const r = await requestWithHeaders('POST', '/auth/verify-email', body);
+        // UX-1: the API reports a mailbox-owner takeover (password removed, set-password link emailed) in a header.
+        return { passwordReset: r.header('x-meetops-verify-outcome') === 'password_reset' };
       },
       resendVerification: async (body) => {
         await request('POST', '/auth/resend-verification', body);

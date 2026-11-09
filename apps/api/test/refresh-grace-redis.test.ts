@@ -17,7 +17,7 @@ import { fakeRedis } from './fake-redis.js';
 
 const EXT = 'abcdefghijklmnopabcdefghijklmnop';
 const NONCE = 'n'.repeat(43);
-const META = { ip: null, userAgent: null };
+const META = { ip: '203.0.113.20', userAgent: null };
 
 /** Every string value currently stored in the fake (via GET on the keys the store wrote). */
 async function storedValues(redis: RedisLike, keys: string[]) {

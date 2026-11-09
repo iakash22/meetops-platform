@@ -634,7 +634,33 @@ describe('auth lifecycle endpoints', () => {
   });
 
   it.each([
-    ['verifyEmail', '/auth/verify-email', { token: 't'.repeat(40) }, 204],
+    [null, false],
+    ['verified', false],
+    ['password_reset', true],
+  ] as const)(
+    'verifyEmail posts with CSRF and reads the outcome header (%s)',
+    async (outcome, passwordReset) => {
+      const fetchMock = vi
+        .fn()
+        .mockResolvedValueOnce(jsonResponse({ csrfToken: 'tok' }))
+        .mockResolvedValueOnce(
+          new Response(null, {
+            status: 204,
+            headers: outcome ? { 'x-meetops-verify-outcome': outcome } : {},
+          }),
+        );
+      const api = createApiClient({ baseUrl: 'http://api', fetch: fetchMock });
+      await expect(api.auth.verifyEmail({ token: 't'.repeat(40) })).resolves.toEqual({
+        passwordReset,
+      });
+      const calls = fetchMock.mock.calls as Call[];
+      expect(calls[1]![0]).toBe('http://api/auth/verify-email');
+      expect(calls[1]![1].method).toBe('POST');
+      expect(headersOf(calls[1]![1])[CSRF_HEADER]).toBe('tok');
+    },
+  );
+
+  it.each([
     [
       'resetPassword',
       '/auth/reset-password',

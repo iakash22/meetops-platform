@@ -211,7 +211,7 @@ Planned. MFA is not built yet. The full steps, expected results, sources and thr
 | MFA-DIS-02  | Required roles can't drop below one factor  | High     | Pending (`it.todo`)    |
 | MFA-DIS-03  | Notification                                | High     | Pending (skipped test) |
 | MFA-OIDC-01 | Google session not elevated                 | High     | Active                 |
-| MFA-OIDC-02 | Distinct auth_level for Google (**N-4**)    | Low      | Pending (`it.todo`)    |
+| MFA-OIDC-02 | Distinct auth_level for Google (**N-4**)    | Low      | Active                 |
 | MFA-OIDC-03 | Owners/admins via Google still do MFA       | Critical | Pending (`it.todo`)    |
 | MFA-OIDC-04 | `amr`/`acr` not trusted                     | High     | Pending (`it.todo`)    |
 | MFA-OIDC-05 | Pre-hijack (**N-1**) x MFA                  | High     | Pending (`it.todo`)    |

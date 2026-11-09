@@ -286,8 +286,11 @@ model User {
   name          String?
   passwordHash  String?   @map("password_hash")
   emailVerified DateTime? @map("email_verified_at") @db.Timestamptz(3)
-  /// Google OIDC `sub`. Null for password-only accounts. Unique so one Google account maps to one user.
-  googleSub     String?   @unique @map("google_sub")
+  /// Google OIDC `sub`. Null for password-only accounts. Unique over live rows only: the partial unique index
+  /// "users_google_sub_key" ... WHERE deleted_at IS NULL lives in migration 20261109120000 (review L-1). Prisma 5 can
+  /// neither express nor introspect a partial index, so there is deliberately no @unique here (it would make the CI
+  /// drift check want a full index back). Lookups use findFirst with deletedAt null; the index still enforces it.
+  googleSub     String?   @map("google_sub")
   createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt     DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
   deletedAt     DateTime? @map("deleted_at") @db.Timestamptz(3)

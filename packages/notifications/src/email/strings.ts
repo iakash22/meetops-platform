@@ -67,6 +67,14 @@ export interface EmailMessages {
     cta: string;
     notYou: string;
   };
+  accountLinked: {
+    subject: (provider: string) => string;
+    preheader: (provider: string) => string;
+    body: (provider: string, when: string) => string;
+    passwordRemoved: string;
+    cta: string;
+    notYou: string;
+  };
   memberAdded: {
     subject: (org: string) => string;
     preheader: (org: string) => string;
@@ -203,6 +211,17 @@ export const en: EmailMessages = {
       `The password for your MeetOps account was changed on ${when}. Other sessions have been signed out.`,
     cta: 'Reset password',
     notYou: "If you didn't change it, reset your password now and contact your workspace admin.",
+  },
+  accountLinked: {
+    subject: (provider) => `${provider} sign-in was added to your MeetOps account`,
+    preheader: (provider) => `You can now sign in with ${provider}.`,
+    body: (provider, when) =>
+      `${provider} sign-in was linked to your MeetOps account on ${when}. Other sessions have been signed out.`,
+    passwordRemoved:
+      'This address had not been verified, so the password previously set on this account was removed. To sign in with a password as well, set a new one from "Forgot password".',
+    cta: 'Sign in to MeetOps',
+    notYou:
+      "If this wasn't you, contact your workspace admin right away. Resetting your password does not remove a linked sign-in.",
   },
   memberAdded: {
     subject: (org) => `You've been added to ${org}`,

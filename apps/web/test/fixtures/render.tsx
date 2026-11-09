@@ -45,7 +45,7 @@ export function createMockApi(
       signup: vi.fn().mockResolvedValue({ message: 'Check your email to continue.' }),
       forgotPassword: vi.fn().mockResolvedValue(undefined),
       resetPassword: vi.fn().mockResolvedValue(undefined),
-      verifyEmail: vi.fn().mockResolvedValue(undefined),
+      verifyEmail: vi.fn().mockResolvedValue({ passwordReset: false }),
       resendVerification: vi.fn().mockResolvedValue(undefined),
       providers: vi.fn().mockResolvedValue({ google: false }),
       logout: vi.fn().mockResolvedValue(undefined),

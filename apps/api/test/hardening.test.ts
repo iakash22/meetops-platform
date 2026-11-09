@@ -247,6 +247,7 @@ describe('cookie policy', () => {
     const { defaultModuleDeps, PRODUCTION_REQUIRED_DEPS } = await import('../src/modules/index.js');
     const all: Record<string, object> = {};
     for (const k of PRODUCTION_REQUIRED_DEPS as readonly string[]) all[k] = {};
+    all.accountClaims = {};
     const saved = { o: process.env.WEB_ORIGINS, s: process.env.CSRF_SECRET };
     delete process.env.WEB_ORIGINS;
     delete process.env.CSRF_SECRET;
@@ -265,6 +266,55 @@ describe('cookie policy', () => {
     else process.env.WEB_ORIGINS = saved.o;
     if (saved.s === undefined) delete process.env.CSRF_SECRET;
     else process.env.CSRF_SECRET = saved.s;
+  });
+  it('NB-R2-2: production refuses to start without the transactional account-claim store', async () => {
+    const { defaultModuleDeps, PRODUCTION_REQUIRED_DEPS, MissingProductionDependencyError } =
+      await import('../src/modules/index.js');
+    const { PrismaAccountClaimStore } =
+      await import('../src/modules/auth/infrastructure/prisma/prisma-account-claim.store.js');
+    const all: Record<string, object> = {};
+    for (const k of PRODUCTION_REQUIRED_DEPS as readonly string[]) all[k] = {};
+    const saved = { o: process.env.WEB_ORIGINS, s: process.env.CSRF_SECRET };
+    process.env.WEB_ORIGINS = 'https://app.example';
+    process.env.CSRF_SECRET = 'x'.repeat(40);
+    try {
+      // Non-Prisma credential stores and no injected claim store: no silent sequential fallback.
+      let err: unknown;
+      try {
+        defaultModuleDeps(all, { nodeEnv: 'production' });
+      } catch (e) {
+        err = e;
+      }
+      expect(err).toBeInstanceOf(MissingProductionDependencyError);
+      expect((err as InstanceType<typeof MissingProductionDependencyError>).missing).toEqual([
+        'accountClaims',
+      ]);
+      // An injected store is accepted as is.
+      const claims = { claimForGoogle: async () => false, claimForMailbox: async () => false };
+      expect(
+        defaultModuleDeps({ ...all, accountClaims: claims }, { nodeEnv: 'production' })
+          .accountClaims,
+      ).toBe(claims);
+      // Prisma users + sessions (from a Prisma client) wire the transactional store.
+      const rest = { ...all };
+      delete rest.users;
+      delete rest.sessions;
+      const prismaDeps = defaultModuleDeps({ ...rest, db: {} as never }, { nodeEnv: 'production' });
+      expect(prismaDeps.accountClaims).toBeInstanceOf(PrismaAccountClaimStore);
+    } finally {
+      if (saved.o === undefined) delete process.env.WEB_ORIGINS;
+      else process.env.WEB_ORIGINS = saved.o;
+      if (saved.s === undefined) delete process.env.CSRF_SECRET;
+      else process.env.CSRF_SECRET = saved.s;
+    }
+  });
+  it('NB-R2-2: development/test name the sequential claim explicitly', async () => {
+    const { defaultModuleDeps } = await import('../src/modules/index.js');
+    const { PrismaAccountClaimStore } =
+      await import('../src/modules/auth/infrastructure/prisma/prisma-account-claim.store.js');
+    const deps = defaultModuleDeps({}, { nodeEnv: 'test' });
+    expect(deps.accountClaims).toBeDefined();
+    expect(deps.accountClaims).not.toBeInstanceOf(PrismaAccountClaimStore);
   });
   it('dev default origins include the Vite app', async () => {
     const { DEV_WEB_ORIGINS } = await import('../src/modules/auth/http/security.js');

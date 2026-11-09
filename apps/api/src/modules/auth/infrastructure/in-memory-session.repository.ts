@@ -68,7 +68,9 @@ export class InMemorySessionRepository implements SessionRepository {
   }
   async revoke(id: string, at: Date) {
     const s = this.items.get(id);
-    if (s) s.revokedAt = at;
+    if (!s || s.revokedAt) return false;
+    s.revokedAt = at;
+    return true;
   }
   async revokeAllForUser(userId: string, at: Date) {
     for (const s of this.items.values()) if (s.userId === userId && !s.revokedAt) s.revokedAt = at;

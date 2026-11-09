@@ -11,6 +11,8 @@ export type AuditAction =
   | 'auth.password_reset.complete'
   | 'auth.email.verify'
   | 'auth.email.verification_resend'
+  /** OIDC review M-2 / N-4: a Google subject was linked to an existing account (distinct from a sign-in). */
+  | 'auth.google.linked'
   | 'org.create'
   | 'org.switch'
   | 'invitation.create'

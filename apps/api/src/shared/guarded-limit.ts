@@ -1,9 +1,9 @@
-import type { RateLimiter } from '../modules/auth/domain/ports.js';
-import { RateLimitedError } from '../modules/auth/domain/errors.js';
 import {
   RATE_LIMITER_TIMEOUT_MS,
+  RateLimitedError,
   RateLimiterUnavailableError,
-} from '../modules/media/http/rate-limit.js';
+  type RateLimiter,
+} from './rate-limit-core.js';
 
 export { RATE_LIMITER_TIMEOUT_MS, RateLimiterUnavailableError };
 
