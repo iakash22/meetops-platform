@@ -4,6 +4,7 @@ import {
   RATE_LIMITER_UNAVAILABLE_RETRY_AFTER_MS,
   RateLimitedError,
   RateLimiterUnavailableError,
+  clientIpKey,
   type RateLimiter,
 } from '../../../shared/rate-limit-core.js';
 
@@ -85,7 +86,8 @@ export function mediaRateLimit(
       if (!r.allowed) throw new RateLimitedError(r.retryAfterMs);
     }
   };
-  const ip = (c: DirectoryCaller) => c.meta.ip ?? 'unknown';
+  /** Per-IP key part: same clientIpKey rule as the rest of the platform (null/invalid -> 503, never `unknown`). */
+  const ip = (c: DirectoryCaller) => clientIpKey(c.meta.ip);
   const user = (c: DirectoryCaller) => `org:${c.ctx.organizationId}:user:${c.ctx.userId}`;
   return {
     chunkUser: (c) =>
