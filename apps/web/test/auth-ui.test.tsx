@@ -135,6 +135,16 @@ describe('AuthLayout', () => {
     expect(screen.getByRole('heading', { level: 1, name: 'Welcome back' })).toBeInTheDocument();
   });
 
+  it('B-1: an unverified account behind a Google email points to a password reset, not to verifying', async () => {
+    renderApp('/login?error=google_unverified');
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent('This email already has an unverified account');
+    expect(alert).toHaveTextContent(
+      "Reset its password from 'Forgot password', then try Google again.",
+    );
+    expect(alert.textContent ?? '').not.toMatch(/verify/i);
+  });
+
   it('email-link pages use the same shell', async () => {
     renderApp('/verify-email');
     expect(await screen.findByTestId('link-problem')).toBeInTheDocument();
