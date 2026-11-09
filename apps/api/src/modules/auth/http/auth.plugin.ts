@@ -35,7 +35,12 @@ import { CursorPageQuery } from '@meetops/contracts';
 import { paginate } from '../../../shared/pagination.js';
 import type { OrganizationService } from '../../organizations/application/organization.service.js';
 import { toSessionResponse } from './mappers.js';
-import { googleAuthRoutes, type GoogleAuthOptions } from './google-auth.routes.js';
+import {
+  googleAuthRoutes,
+  pendingLinkCookie,
+  type GoogleAuthOptions,
+} from './google-auth.routes.js';
+import { openPendingLink } from '../application/google-oidc.js';
 
 /** ADR-014 SessionSummary geo: optional, not nullable (unknown fields are omitted). */
 function sessionGeo(g: GeoFields | undefined) {
@@ -65,6 +70,7 @@ export async function authRoutes(app: FastifyInstance, opts: AuthPluginOptions) 
   registerDomainErrorHandler(app);
   const { auth, security } = opts;
   const g = makeGuards(auth, security);
+  const pendingLink = pendingLinkCookie(security);
   app.addHook('onRequest', g.mutationGuard);
 
   app.post<{ Body: SignupBodyT }>(
@@ -92,13 +98,21 @@ export async function authRoutes(app: FastifyInstance, opts: AuthPluginOptions) 
         tags,
         summary: 'Log in',
         description:
-          'Verifies credentials, revokes any presented session, sets a new httpOnly session cookie and a fresh CSRF cookie (also returned as csrfToken). Generic 401 AUTH_FAILED on failure; 429 when rate-limited or locked.',
+          'Verifies credentials, revokes any presented session, sets a new httpOnly session cookie and a fresh CSRF cookie (also returned as csrfToken). With a pending Google link cookie from /auth/google/callback for this same verified account, links Google and signs out the other sessions. Generic 401 AUTH_FAILED on failure; 429 when rate-limited or locked.',
         body: LoginBody,
         response: { 200: SessionResponse, 401: ErrorBody, 403: ErrorBody, 429: ErrorBody },
       },
     },
     async (request, reply) => {
-      const r = await auth.login(request.body, requestMeta(request), g.readToken(request));
+      // M-2: a Google subject parked by the callback is linked only after this password proves the account.
+      const pending = openPendingLink(
+        request.cookies[pendingLink.name],
+        pendingLink.key,
+        Date.now(),
+      );
+      const r = await auth.login(request.body, requestMeta(request), g.readToken(request), pending);
+      if (request.cookies[pendingLink.name] !== undefined)
+        reply.clearCookie(pendingLink.name, pendingLink.attributes);
       g.setSessionCookie(reply, r);
       return {
         ...(await toSessionResponse(r, opts.organizations)),
@@ -252,13 +266,13 @@ export async function authRoutes(app: FastifyInstance, opts: AuthPluginOptions) 
         tags,
         summary: 'Verify email address',
         description:
-          'Consumes a single-use verification token (24 h TTL). Public; does not need a session.',
+          "Consumes a single-use verification token (24 h TTL) and signs out the account's other sessions (the presented one survives when it is the same account). Public; does not need a session.",
         body: VerifyEmailBody,
         response: { 204: Type.Null(), 400: ErrorBody, 403: ErrorBody, 429: ErrorBody },
       },
     },
     async (request, reply) => {
-      await auth.verifyEmail(request.body.token, requestMeta(request));
+      await auth.verifyEmail(request.body.token, requestMeta(request), g.readToken(request));
       return reply.status(204).send();
     },
   );

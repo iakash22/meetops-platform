@@ -25,6 +25,15 @@ export class InMemoryUserRepository implements UserRepository {
     u.googleSub = sub;
     return true;
   }
+  async claimUnverifiedForGoogle(id: UserId, sub: string, at: Date) {
+    const u = this.byId.get(id);
+    if (!u || u.deletedAt || u.googleSub || u.emailVerifiedAt) return false;
+    if (await this.findByGoogleSub(sub)) return false;
+    u.googleSub = sub;
+    u.emailVerifiedAt = at;
+    u.passwordHash = '';
+    return true;
+  }
   async create(user: User) {
     if (await this.findByEmail(user.email)) throw new DuplicateEmailError();
     if (user.googleSub && (await this.findByGoogleSub(user.googleSub)))

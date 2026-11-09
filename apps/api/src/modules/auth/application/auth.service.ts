@@ -19,13 +19,14 @@ import {
   type PublicUser,
   type User,
 } from '../../users/domain/user.js';
-import type { GoogleIdentity } from './google-oidc.js';
+import { googleEmailProven, type GoogleIdentity } from './google-oidc.js';
 import type { Clock, IdGenerator } from '../../../shared/ports.js';
 import { DomainError } from '../../../shared/domain-error.js';
 import type { LoginLockout, PasswordHasher, RateLimiter, TokenService } from '../domain/ports.js';
 import {
   isSessionActive,
   type Session,
+  type SessionAuthLevel,
   type SessionPolicy,
   type SessionRepository,
 } from '../domain/session.js';
@@ -95,7 +96,20 @@ export interface SessionResult {
 }
 
 export type GoogleSignInOutcome =
-  { kind: 'session'; result: SessionResult } | { kind: 'unverified_local' } | { kind: 'rejected' };
+  | { kind: 'session'; result: SessionResult }
+  | { kind: 'unverified_local' }
+  /**
+   * OIDC review M-2: Google did not prove the address, but a verified local account owns it. Linking needs proof of
+   * that account (its password): the caller remembers `{ userId, sub }` for a short while and passes it to login().
+   */
+  | { kind: 'link_required'; pending: PendingGoogleLink }
+  | { kind: 'rejected' };
+
+/** A Google subject waiting to be linked once the account's own password is entered (login()). */
+export interface PendingGoogleLink {
+  userId: string;
+  sub: string;
+}
 
 function googleEmail(email: string): string | null {
   const normalized = normalizeEmail(email);
@@ -255,6 +269,7 @@ export class AuthService {
     input: { email: string; password: string },
     meta: RequestMeta,
     currentToken?: string,
+    pendingGoogleLink?: PendingGoogleLink | null,
   ): Promise<SessionResult> {
     const email = normalizeEmail(input.email);
     await this.limit(`login:ip:${meta.ip ?? 'unknown'}`, AUTH_LIMITS.loginPerIp);
@@ -313,25 +328,61 @@ export class AuthService {
       },
       meta,
     );
+    // M-2: the password just proved this account, so a Google subject parked by the callback may be linked now.
+    if (pendingGoogleLink && pendingGoogleLink.userId === user.id && user.emailVerifiedAt) {
+      await this.linkAfterPassword(user, pendingGoogleLink.sub, r.session, meta);
+    }
     return r;
   }
 
-  /** Shared by the authorize redirect and the callback so a client cannot double the budget. */
+  private async linkAfterPassword(user: User, rawSub: string, keep: Session, meta: RequestMeta) {
+    const sub = googleSub(rawSub);
+    if (!sub || user.googleSub) return;
+    if (!(await this.d.users.linkGoogleSub(user.id, sub))) {
+      await this.auditGoogleFailure(user.id, meta, 'conflict');
+      return;
+    }
+    await this.revokeOtherSessions(user.id, keep.id);
+    await this.afterGoogleLinked(user.id, meta, 'password', keep.id);
+  }
+
+  /**
+   * OIDC review N-3: charged once per flow, when /auth/google/start mints the state cookie. A request without a client
+   * IP is refused rather than pooled into one shared `unknown` bucket (which would let one client lock everybody else
+   * out); behind the configured proxy every real request has an IP.
+   */
   async enforceGoogleRateLimit(ip: string | null) {
-    await this.limit(`google:ip:${ip ?? 'unknown'}`, AUTH_LIMITS.googlePerIp);
+    if (!ip) throw new RateLimitedError(AUTH_LIMITS.googlePerIp.windowMs);
+    await this.limit(`google:ip:${ip}`, AUTH_LIMITS.googlePerIp);
+  }
+
+  /**
+   * N-3 / N-6: a sealed state may complete one callback. Keyed by a hash of the (unguessable) state, so replaying a
+   * captured callback inside the cookie's 10 minutes is refused without any server-side session store.
+   */
+  async consumeGoogleFlow(stateHash: string, ttlMs: number) {
+    const r = await this.d.rateLimiter.consume(`google:flow:${stateHash}`, 1, ttlMs);
+    if (!r.allowed) throw new RateLimitedError(r.retryAfterMs);
   }
 
   /**
    * Sign-in or sign-up from a verified Google ID token.
    *
+   * "Proven" (googleEmailProven, OIDC review M-2 / N-2) means Google is the mail host: gmail.com / googlemail.com, or
+   * a Workspace `hd` equal to the email's domain. `email_verified` alone is not enough.
+   *
    * Linking rules:
    * - Match `sub` first. Email is not the identity.
-   * - If the email already belongs to a verified MeetOps account with no Google subject, link it.
-   * - If that account's email is not verified, refuse. Linking would hand the victim's Google
-   *   login to whoever registered the address first.
-   * - If nothing matches, create the account with the email already verified (Google verified it)
-   *   and no password. Password login cannot succeed until a password is set.
-   * - A Google email that is not verified never reaches this method.
+   * - An account already bound to another Google subject is never relinked.
+   * - Proven email, verified local account: link, sign out every other session, send an "account linked" notice.
+   * - Proven email, unverified local account (N-1 pre-registration takeover): whoever set that password never proved
+   *   the mailbox, so the password is dropped and every session, extension token, push token and one-time token of
+   *   the account is revoked before linking.
+   * - Unproven email, verified local account: no auto-link; `link_required` (prove the account with its password).
+   * - Unproven email, unverified local account: refuse (`unverified_local`).
+   * - No match: create the account with no password; verified only when the email is proven, otherwise unverified
+   *   with a verification mail (so invitations and org creation stay gated, D2).
+   * - A Google email that is not `email_verified` never reaches this method.
    */
   async completeGoogleSignIn(
     identity: GoogleIdentity,
@@ -344,12 +395,18 @@ export class AuthService {
       await this.auditGoogleFailure(null, meta, 'rejected');
       return { kind: 'rejected' };
     }
+    const proven = googleEmailProven({ ...identity, email });
 
     const bySub = await this.d.users.findByGoogleSub(sub);
-    if (bySub) return this.finishGoogleLogin(bySub, meta, currentToken);
+    if (bySub) {
+      if (proven && !bySub.emailVerifiedAt && bySub.email === email) {
+        await this.d.users.markEmailVerified(bySub.id, this.d.clock.now());
+      }
+      return this.finishGoogleLogin(bySub, meta, currentToken);
+    }
 
     const byEmail = await this.d.users.findByEmail(email);
-    if (byEmail) return this.linkOrRefuse(byEmail, sub, meta, currentToken);
+    if (byEmail) return this.linkOrRefuse(byEmail, sub, proven, meta, currentToken);
 
     const now = this.d.clock.now();
     try {
@@ -358,7 +415,7 @@ export class AuthService {
         email,
         name: googleName(identity.name),
         passwordHash: '',
-        emailVerifiedAt: now,
+        emailVerifiedAt: proven ? now : null,
         googleSub: sub,
         createdAt: now,
         updatedAt: now,
@@ -370,10 +427,18 @@ export class AuthService {
           action: 'auth.signup',
           targetType: 'user',
           targetId: user.id,
-          metadata: { provider: 'google' },
+          metadata: { provider: 'google', emailProven: proven },
         },
         meta,
       );
+      if (!proven) {
+        const t = await this.createOneTimeToken(
+          user.id,
+          'email_verification',
+          this.d.emailVerificationTtlMs,
+        );
+        await this.d.mailQueue.enqueue({ kind: 'email_verification', tokenId: t.id });
+      }
       return this.finishGoogleLogin(user, meta, currentToken);
     } catch (e) {
       if (!(e instanceof DuplicateEmailError)) throw e;
@@ -384,41 +449,103 @@ export class AuthService {
         return { kind: 'rejected' };
       }
       if (winner.googleSub === sub) return this.finishGoogleLogin(winner, meta, currentToken);
-      if (!winner.emailVerifiedAt) {
-        await this.auditGoogleFailure(winner.id, meta, 'unverified_local');
-        return { kind: 'unverified_local' };
-      }
-      await this.auditGoogleFailure(winner.id, meta, 'conflict');
-      return { kind: 'rejected' };
+      return this.linkOrRefuse(winner, sub, proven, meta, currentToken);
     }
   }
 
   private async linkOrRefuse(
     user: User,
     sub: string,
+    proven: boolean,
     meta: RequestMeta,
     currentToken?: string,
   ): Promise<GoogleSignInOutcome> {
-    if (!user.emailVerifiedAt) {
-      await this.auditGoogleFailure(user.id, meta, 'unverified_local');
-      return { kind: 'unverified_local' };
-    }
-    if (user.googleSub && user.googleSub !== sub) {
+    if (user.googleSub) {
+      // bySub already missed, so this account belongs to a different Google subject.
       await this.auditGoogleFailure(user.id, meta, 'conflict');
       return { kind: 'rejected' };
     }
-    if (!user.googleSub) {
-      const linked = await this.d.users.linkGoogleSub(user.id, sub);
-      if (!linked) {
-        const again = await this.d.users.findByGoogleSub(sub);
-        if (!again || again.id !== user.id) {
-          await this.auditGoogleFailure(user.id, meta, 'conflict');
-          return { kind: 'rejected' };
-        }
+    if (!proven) {
+      if (!user.emailVerifiedAt) {
+        await this.auditGoogleFailure(user.id, meta, 'unverified_local');
+        return { kind: 'unverified_local' };
+      }
+      await this.auditGoogleFailure(user.id, meta, 'link_required');
+      return { kind: 'link_required', pending: { userId: user.id, sub } };
+    }
+
+    const takeover = !user.emailVerifiedAt;
+    const linked = takeover
+      ? await this.d.users.claimUnverifiedForGoogle(user.id, sub, this.d.clock.now())
+      : await this.d.users.linkGoogleSub(user.id, sub);
+    if (!linked) {
+      const again = await this.d.users.findByGoogleSub(sub);
+      if (!again || again.id !== user.id) {
+        await this.auditGoogleFailure(user.id, meta, 'conflict');
+        return { kind: 'rejected' };
       }
     }
+    if (takeover) await this.revokeEverything(user.id);
+    else await this.revokeOtherSessions(user.id, null);
     const fresh = (await this.d.users.findById(user.id)) ?? user;
-    return this.finishGoogleLogin(fresh, meta, currentToken);
+    const outcome = await this.finishGoogleLogin(fresh, meta, currentToken);
+    await this.afterGoogleLinked(
+      user.id,
+      meta,
+      takeover ? 'google_proven_unverified_local' : 'google_proven',
+      outcome.kind === 'session' ? outcome.result.session.id : null,
+    );
+    return outcome;
+  }
+
+  /** M-2 / N-4: a distinct audit event and a security notice for every new link. */
+  private async afterGoogleLinked(
+    userId: string,
+    meta: RequestMeta,
+    method: 'password' | 'google_proven' | 'google_proven_unverified_local',
+    sessionId: string | null,
+  ) {
+    const now = this.d.clock.now();
+    await this.audit(
+      {
+        actorId: userId,
+        action: 'auth.google.linked',
+        targetType: 'user',
+        targetId: userId,
+        metadata: { provider: 'google', method, sessionId },
+      },
+      meta,
+    );
+    await this.d.mailQueue.enqueue({
+      kind: 'account_linked',
+      userId,
+      provider: 'google',
+      linkedAt: now.toISOString(),
+    });
+  }
+
+  /** N-1: revoke every session except `keepId` (null: all of them) and tell realtime about each. */
+  private async revokeOtherSessions(userId: string, keepId: string | null) {
+    const now = this.d.clock.now();
+    for (const s of await this.d.sessions.listActiveForUser(userId, now)) {
+      if (s.id === keepId) continue;
+      await this.d.sessions.revoke(s.id, now);
+      await this.publishSessionRevoked(s, 'logout');
+    }
+  }
+
+  /**
+   * N-1: the account's previous credentials may belong to someone who never owned the mailbox. Revoke all sessions,
+   * extension token families, push devices and outstanding one-time tokens (reset and verification links).
+   */
+  private async revokeEverything(userId: string) {
+    const now = this.d.clock.now();
+    await this.d.sessions.revokeAllForUser(userId, now);
+    await this.publish({ kind: 'user', userId, reason: 'password_changed' });
+    await this.d.extensionRevoker?.revokeForUser(userId, 'password_changed');
+    await this.d.pushDeviceRevoker?.revokeForUser(userId);
+    await this.d.oneTimeTokens.invalidateForUser(userId, 'password_reset', now);
+    await this.d.oneTimeTokens.invalidateForUser(userId, 'email_verification', now);
   }
 
   private async finishGoogleLogin(
@@ -435,7 +562,7 @@ export class AuthService {
       toPublicUser(user),
       await this.defaultOrganizationId(user.id),
       meta,
-      { newLocationAlert: true },
+      { newLocationAlert: true, authLevel: 'google' },
     );
     await this.audit(
       {
@@ -527,7 +654,11 @@ export class AuthService {
     );
   }
 
-  async verifyEmail(token: string, meta: RequestMeta) {
+  /**
+   * N-1: verifying proves the mailbox, so every other session of the account (possibly opened by whoever registered
+   * the address first) is revoked. The presented session survives only when it belongs to the same account.
+   */
+  async verifyEmail(token: string, meta: RequestMeta, currentToken?: string) {
     await this.limit(`verify:ip:${meta.ip ?? 'unknown'}`, AUTH_LIMITS.verifySubmitPerIp);
     const now = this.d.clock.now();
     const t = await this.d.oneTimeTokens.consume(
@@ -538,6 +669,14 @@ export class AuthService {
     if (!t) throw invalidVerificationError();
     await this.d.users.markEmailVerified(t.userId, now);
     await this.d.oneTimeTokens.invalidateForUser(t.userId, 'email_verification', now);
+    const current = currentToken
+      ? await this.d.sessions.findByTokenHash(this.d.tokens.hash(currentToken))
+      : null;
+    const keep =
+      current && current.userId === t.userId && isSessionActive(current, now, this.d.sessionPolicy)
+        ? current.id
+        : null;
+    await this.revokeOtherSessions(t.userId, keep);
     await this.audit(
       {
         actorId: t.userId,
@@ -681,7 +820,9 @@ export class AuthService {
   ) {
     await this.d.sessions.revoke(session.id, this.d.clock.now());
     await this.publishSessionRevoked(session, reason);
-    return this.issueSession(session.userId, user, activeOrganizationId, meta);
+    return this.issueSession(session.userId, user, activeOrganizationId, meta, {
+      authLevel: session.authLevel ?? 'password',
+    });
   }
 
   private async revokeByToken(token: string) {
@@ -721,7 +862,7 @@ export class AuthService {
     user: PublicUser,
     activeOrganizationId: string | null,
     meta: RequestMeta,
-    opts: { newLocationAlert?: boolean } = {},
+    opts: { newLocationAlert?: boolean; authLevel?: SessionAuthLevel } = {},
   ): Promise<SessionResult> {
     const token = this.d.tokens.generate();
     const now = this.d.clock.now();
@@ -738,6 +879,7 @@ export class AuthService {
       ip: meta.ip,
       userAgent: meta.userAgent,
       geo,
+      authLevel: opts.authLevel ?? 'password',
     };
     const event = opts.newLocationAlert
       ? await this.newLocationEvent(userId, draft, activeOrganizationId)

@@ -12,6 +12,11 @@ export const GOOGLE_LOGIN_ERRORS = {
     title: 'This email already has an account',
     description: 'Sign in with your password and verify your email, then try Google again.',
   },
+  google_link_password: {
+    title: 'Confirm it is your account',
+    description:
+      'This email already has a MeetOps account. Sign in with your password once to link Google.',
+  },
 } as const;
 
 export type GoogleLoginError = keyof typeof GOOGLE_LOGIN_ERRORS;

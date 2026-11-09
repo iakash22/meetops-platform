@@ -12,6 +12,13 @@ export interface UserRepository {
    * or the subject belongs to someone else. Must not clear or replace an existing subject.
    */
   linkGoogleSub(id: UserId, sub: string): Promise<boolean>;
+  /**
+   * OIDC review N-1: Google proved the address of an account whose email was never verified, so whoever set its
+   * password may not own the mailbox. In ONE update, only while the row is live, unverified and unlinked: drop the
+   * password, mark the email verified at `at`, and set googleSub. Returns false when any condition no longer holds or
+   * the subject belongs to someone else.
+   */
+  claimUnverifiedForGoogle(id: UserId, sub: string, at: Date): Promise<boolean>;
   /** Must reject (DuplicateEmailError) when the email is taken. */
   create(user: User): Promise<User>;
   updatePasswordHash(id: UserId, passwordHash: string): Promise<void>;

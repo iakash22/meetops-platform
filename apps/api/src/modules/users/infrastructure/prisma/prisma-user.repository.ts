@@ -58,6 +58,18 @@ export class PrismaUserRepository implements UserRepository {
       throw e;
     }
   }
+  async claimUnverifiedForGoogle(id: UserId, sub: string, at: Date) {
+    try {
+      const r = await this.db.user.updateMany({
+        where: { id, deletedAt: null, googleSub: null, emailVerified: null },
+        data: { googleSub: sub, emailVerified: at, passwordHash: null },
+      });
+      return r.count === 1;
+    } catch (e) {
+      if (isUniqueViolation(e)) return false;
+      throw e;
+    }
+  }
   async create(u: User) {
     try {
       const r = await this.db.user.create({
