@@ -1,3 +1,4 @@
+import { clientIpKey } from '../../shared/rate-limit-core.js';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { Type } from '@sinclair/typebox';
 import {
@@ -420,7 +421,7 @@ export default async function integrationsModule(
     const consumeOrThrow = (key: string, l: { limit: number; windowMs: number }) =>
       consumeGuarded(deps.rateLimiter, key, l);
     s.addHook('onRequest', async (request) => {
-      const ip = requestMeta(request).ip ?? 'unknown';
+      const ip = clientIpKey(requestMeta(request).ip);
       await consumeOrThrow(`webhook:ip:${ip}`, limits.perIp);
     });
     /**
@@ -441,7 +442,7 @@ export default async function integrationsModule(
         });
       } catch (err) {
         if (!accepted && err instanceof WebhookSignatureError) {
-          const ip = requestMeta(request).ip ?? 'unknown';
+          const ip = clientIpKey(requestMeta(request).ip);
           await consumeOrThrow(
             `webhook:unsigned:ip:${ip}`,
             limits.unsignedPerIp ?? WEBHOOK_RATE_LIMITS.unsignedPerIp!,

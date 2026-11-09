@@ -1,4 +1,4 @@
-import type { RateLimiter } from '../modules/auth/domain/ports.js';
+import { clientIpKey, type RateLimiter } from './rate-limit-core.js';
 import { consumeGuarded, type LimitWindow } from './guarded-limit.js';
 
 /**
@@ -16,7 +16,8 @@ import { consumeGuarded, type LimitWindow } from './guarded-limit.js';
  * - perOrg:  `rl:<scope>:org:<org>` (org-wide ceiling, charged only once the caller's own bucket allowed the request,
  *   so one user cannot spend more than their own cap of the org budget and no org can touch another org's keys);
  * - perIp:   `rl:<scope>:ip:<ip>` (public routes; `ip` is requestMeta().ip, i.e. ADR-014 clientIp after the
- *   TRUST_PROXY allowlist / pinned Cloudflare edge, never raw X-Forwarded-For).
+ *   TRUST_PROXY allowlist / pinned Cloudflare edge, never raw X-Forwarded-For). No IP -> 503 (clientIpKey), never a
+ *   shared `unknown` bucket.
  */
 export type RouteLimit = {
   readonly perIp?: LimitWindow;
@@ -80,7 +81,7 @@ export function routeLimiter(
     async charge(scope, who) {
       const l = limits[scope];
       if (l.perIp)
-        await consumeGuarded(rateLimiter, `rl:${scope}:ip:${who.ip ?? 'unknown'}`, l.perIp);
+        await consumeGuarded(rateLimiter, `rl:${scope}:ip:${clientIpKey(who.ip)}`, l.perIp);
       if (l.perUser) {
         if (!who.userId) throw new Error(`rate limit ${scope}: no caller`);
         // A caller without an organization (POST /orgs) keys on the user alone.

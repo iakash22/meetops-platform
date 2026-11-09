@@ -17,6 +17,7 @@ import {
 } from '../application/google-oidc.js';
 import { createGoogleOAuthClient, type GoogleOAuthClient } from '../application/google-oauth.js';
 import { RateLimitedError } from '../domain/errors.js';
+import { RateLimiterUnavailableError } from '../../../shared/rate-limit-core.js';
 import { makeGuards, requestMeta, type HttpSecurityConfig } from './security.js';
 
 export interface GoogleAuthOptions {
@@ -144,7 +145,8 @@ export function googleAuthRoutes(app: FastifyInstance, opts: GoogleAuthOptions) 
       try {
         await auth.enforceGoogleRateLimit(requestMeta(request).ip);
       } catch (e) {
-        if (e instanceof RateLimitedError) return fail(reply, 'google', next);
+        if (e instanceof RateLimitedError || e instanceof RateLimiterUnavailableError)
+          return fail(reply, 'google', next);
         throw e;
       }
       const flow = newOAuthState(next, Date.now());

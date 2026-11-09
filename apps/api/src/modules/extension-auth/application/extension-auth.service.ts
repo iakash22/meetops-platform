@@ -1,3 +1,4 @@
+import { clientIpKey } from '../../../shared/rate-limit-core.js';
 import {
   EXTENSION_REFRESH_FAMILY_MAX_LIFETIME_SECONDS,
   EXTENSION_SCOPES,
@@ -189,7 +190,7 @@ export class ExtensionAuthService implements ExtensionRevoker {
   ): Promise<ExtensionPairResponse> {
     await this.limit(`pair:user:${caller.userId}`, EXTENSION_LIMITS.pairPerUserMin);
     await this.limit(`pair:user:h:${caller.userId}`, EXTENSION_LIMITS.pairPerUserHour);
-    await this.limit(`pair:ip:${meta.ip ?? 'unknown'}`, EXTENSION_LIMITS.pairPerIp);
+    await this.limit(`pair:ip:${clientIpKey(meta.ip)}`, EXTENSION_LIMITS.pairPerIp);
     if (!this.isAllowedExtension(body.extensionId)) throw new ExtensionNotAllowedError();
     const organizationId = caller.activeOrganizationId;
     if (!organizationId) throw new NoActiveOrganizationError();
@@ -228,7 +229,7 @@ export class ExtensionAuthService implements ExtensionRevoker {
 
   /** POST /auth/extension-token: atomically consumes the pairing code and starts a refresh family. */
   async exchange(body: ExtensionTokenRequest, meta: RequestMeta): Promise<ExtensionTokenResponse> {
-    const ipKey = `token:ip:${meta.ip ?? 'unknown'}`;
+    const ipKey = `token:ip:${clientIpKey(meta.ip)}`;
     await this.limit(ipKey, EXTENSION_LIMITS.tokenPerIp);
     const now = this.d.clock.now();
     const p = await this.d.extensionTokens.consumePairing(this.d.tokens.hash(body.pairingCode));
@@ -277,7 +278,7 @@ export class ExtensionAuthService implements ExtensionRevoker {
     body: ExtensionRefreshRequest,
     meta: RequestMeta,
   ): Promise<ExtensionRefreshResponse> {
-    await this.limit(`refresh:ip:${meta.ip ?? 'unknown'}`, EXTENSION_LIMITS.refreshPerIp);
+    await this.limit(`refresh:ip:${clientIpKey(meta.ip)}`, EXTENSION_LIMITS.refreshPerIp);
     // An EMPTY allowlist is a misconfiguration (e.g. EXTENSION_IDS unset or typo'd in a deploy): refuse the refresh
     // BEFORE consumeRefresh, so the token is not burned and the family is not touched. Fixing the config then lets
     // the same refresh token rotate normally, with no false reuse_detected and no revoke.
@@ -384,7 +385,7 @@ export class ExtensionAuthService implements ExtensionRevoker {
 
   /** POST /auth/extension/revoke: revokes the device's family. Idempotent for a known token of this device. */
   async revoke(body: ExtensionRevokeRequest, meta: RequestMeta): Promise<{ revoked: true }> {
-    await this.limit(`revoke:ip:${meta.ip ?? 'unknown'}`, EXTENSION_LIMITS.revokePerIp);
+    await this.limit(`revoke:ip:${clientIpKey(meta.ip)}`, EXTENSION_LIMITS.revokePerIp);
     const r = await this.d.extensionTokens.peekRefresh(this.d.tokens.hash(body.refreshToken));
     if (r.status === 'unknown') throw new UnauthenticatedError();
     const f = await this.d.extensionTokens.findFamily(r.familyId);

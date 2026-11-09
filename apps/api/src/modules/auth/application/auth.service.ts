@@ -1,3 +1,4 @@
+import { clientIpKey } from '../../../shared/rate-limit-core.js';
 import {
   NEW_LOCATION_LIMITS,
   buildNewLocationEvent,
@@ -222,7 +223,7 @@ export class AuthService {
     meta: RequestMeta,
   ) {
     const email = normalizeEmail(input.email);
-    await this.limit(`signup:ip:${meta.ip ?? 'unknown'}`, AUTH_LIMITS.signupPerIp);
+    await this.limit(`signup:ip:${clientIpKey(meta.ip)}`, AUTH_LIMITS.signupPerIp);
     await this.limit(`signup:email:${email}`, AUTH_LIMITS.signupPerEmail);
     const passwordHash = await this.d.hasher.hash(input.password);
     const existing = await this.d.users.findByEmail(email);
@@ -272,7 +273,7 @@ export class AuthService {
     pendingGoogleLink?: PendingGoogleLink | null,
   ): Promise<SessionResult> {
     const email = normalizeEmail(input.email);
-    await this.limit(`login:ip:${meta.ip ?? 'unknown'}`, AUTH_LIMITS.loginPerIp);
+    await this.limit(`login:ip:${clientIpKey(meta.ip)}`, AUTH_LIMITS.loginPerIp);
     const lock = await this.d.lockout.isLocked(email);
     if (lock.locked) throw new RateLimitedError(lock.retryAfterMs);
 
@@ -348,12 +349,10 @@ export class AuthService {
 
   /**
    * OIDC review N-3: charged once per flow, when /auth/google/start mints the state cookie. A request without a client
-   * IP is refused rather than pooled into one shared `unknown` bucket (which would let one client lock everybody else
-   * out); behind the configured proxy every real request has an IP.
+   * IP is refused (clientIpKey: 503) rather than pooled into one shared `unknown` bucket.
    */
   async enforceGoogleRateLimit(ip: string | null) {
-    if (!ip) throw new RateLimitedError(AUTH_LIMITS.googlePerIp.windowMs);
-    await this.limit(`google:ip:${ip}`, AUTH_LIMITS.googlePerIp);
+    await this.limit(`google:ip:${clientIpKey(ip)}`, AUTH_LIMITS.googlePerIp);
   }
 
   /**
@@ -596,7 +595,7 @@ export class AuthService {
    */
   async requestPasswordReset(rawEmail: string, meta: RequestMeta) {
     const email = normalizeEmail(rawEmail);
-    await this.limit(`reset:ip:${meta.ip ?? 'unknown'}`, AUTH_LIMITS.resetRequestPerIp);
+    await this.limit(`reset:ip:${clientIpKey(meta.ip)}`, AUTH_LIMITS.resetRequestPerIp);
     await this.limit(`reset:email:${email}`, AUTH_LIMITS.resetRequestPerEmail);
     const user = await this.d.users.findByEmail(email);
     if (!user) {
@@ -621,7 +620,7 @@ export class AuthService {
 
   /** Atomic single use; on success revokes all sessions and any other outstanding reset tokens. */
   async resetPassword(input: { token: string; password: string }, meta: RequestMeta) {
-    await this.limit(`reset:submit:ip:${meta.ip ?? 'unknown'}`, AUTH_LIMITS.resetSubmitPerIp);
+    await this.limit(`reset:submit:ip:${clientIpKey(meta.ip)}`, AUTH_LIMITS.resetSubmitPerIp);
     const now = this.d.clock.now();
     const t = await this.d.oneTimeTokens.consume(
       'password_reset',
@@ -659,7 +658,7 @@ export class AuthService {
    * the address first) is revoked. The presented session survives only when it belongs to the same account.
    */
   async verifyEmail(token: string, meta: RequestMeta, currentToken?: string) {
-    await this.limit(`verify:ip:${meta.ip ?? 'unknown'}`, AUTH_LIMITS.verifySubmitPerIp);
+    await this.limit(`verify:ip:${clientIpKey(meta.ip)}`, AUTH_LIMITS.verifySubmitPerIp);
     const now = this.d.clock.now();
     const t = await this.d.oneTimeTokens.consume(
       'email_verification',
@@ -692,7 +691,7 @@ export class AuthService {
   /** Enumeration-safe: always resolves the same; only unverified accounts get a new link. */
   async resendVerification(rawEmail: string, meta: RequestMeta) {
     const email = normalizeEmail(rawEmail);
-    await this.limit(`resend:ip:${meta.ip ?? 'unknown'}`, AUTH_LIMITS.resendPerIp);
+    await this.limit(`resend:ip:${clientIpKey(meta.ip)}`, AUTH_LIMITS.resendPerIp);
     await this.limit(`resend:email:${email}`, AUTH_LIMITS.resendPerEmail);
     const user = await this.d.users.findByEmail(email);
     if (!user || user.emailVerifiedAt) return { accepted: true as const };
