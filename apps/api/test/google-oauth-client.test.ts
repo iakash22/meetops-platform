@@ -127,7 +127,7 @@ describe('Google JWKS client', () => {
 
 describe('Google token exchange errors', () => {
   const exchange = (res: () => Response | Promise<Response>) =>
-    createGoogleOAuthClient((async () => res()) as unknown as typeof fetch).exchangeCode({
+    createGoogleOAuthClient(async () => res()).exchangeCode({
       code: 'c',
       codeVerifier: 'v'.repeat(43),
       config: CONFIG,
@@ -148,7 +148,7 @@ describe('Google token exchange errors', () => {
       },
     ],
   ])('maps %s to GoogleTokenError without its text', async (_label, res) => {
-    const err = await exchange(res as () => Response).catch((e: unknown) => e);
+    const err = await exchange(res).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(GoogleTokenError);
     expect(String((err as Error).message)).not.toMatch(/invalid_grant|html|fetch failed/);
   });

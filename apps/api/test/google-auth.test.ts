@@ -10,7 +10,7 @@ import {
   AUTH_LIMITS,
   type AuthServiceDeps,
 } from '../src/modules/auth/application/auth.service.js';
-import { RateLimitedError } from '../src/modules/auth/domain/errors.js';
+import { RateLimiterUnavailableError } from '../src/shared/rate-limit-core.js';
 import type { ModuleDeps } from '../src/modules/index.js';
 import { buildApp, Client, PASSWORD, SID, signupAndLogin, type App } from './helpers.js';
 
@@ -541,7 +541,10 @@ describe('N-3: Google rate limit without a client IP', () => {
         },
       },
     } as unknown as AuthServiceDeps);
-    await expect(auth.enforceGoogleRateLimit(null)).rejects.toBeInstanceOf(RateLimitedError);
+    await expect(auth.enforceGoogleRateLimit(null)).rejects.toBeInstanceOf(
+      RateLimiterUnavailableError,
+    );
+    expect(consumed).toEqual([]);
     await auth.enforceGoogleRateLimit('203.0.113.9');
     expect(consumed).toEqual(['google:ip:203.0.113.9']);
   });
