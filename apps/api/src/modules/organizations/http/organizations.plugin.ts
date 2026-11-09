@@ -72,6 +72,8 @@ export async function organizationRoutes(app: FastifyInstance, opts: Organizatio
       requestMeta(request),
       reason,
     );
+    // Null: a concurrent rotation of the same session by this client won; its response carries the new cookie.
+    if (!r) return;
     g.setSessionCookie(reply, r);
     g.issueCsrfForSession(reply, r.session.id);
   };
