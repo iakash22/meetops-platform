@@ -4,7 +4,7 @@ import {
   type DatabaseClient,
 } from '../../../../shared/prisma/context.js';
 import type { NewLocationOutboxEvent } from '../../application/new-location.js';
-import type { Session, SessionRepository } from '../../domain/session.js';
+import { toSessionAuthLevel, type Session, type SessionRepository } from '../../domain/session.js';
 import type { GeoFields } from '../../../../shared/geoip/provider.js';
 
 type Row = {
@@ -23,6 +23,7 @@ type Row = {
   geoCountry: string | null;
   geoCountryCode: string | null;
   geoApproximate: boolean | null;
+  authLevel: string;
 };
 const toSession = (r: Row): Session => ({
   id: r.id,
@@ -42,6 +43,7 @@ const toSession = (r: Row): Session => ({
     geoCountryCode: r.geoCountryCode,
     geoApproximate: r.geoApproximate ? true : null,
   },
+  authLevel: toSessionAuthLevel(r.authLevel),
 });
 const geoData = (g: GeoFields | undefined) => ({
   geoCity: g?.geoCity ?? null,
@@ -76,6 +78,7 @@ export class PrismaSessionRepository implements SessionRepository {
       absoluteExpiresAt: s.expiresAt,
       lastSeenAt: s.lastSeenAt,
       createdAt: s.createdAt,
+      authLevel: s.authLevel ?? 'password',
     };
   }
   async knownLocations(userId: string) {
@@ -109,21 +112,7 @@ export class PrismaSessionRepository implements SessionRepository {
     return toSession(r);
   }
   async create(s: Session) {
-    const r = await this.db.session.create({
-      data: {
-        id: s.id,
-        userId: s.userId,
-        tokenHash: s.tokenHash,
-        activeOrgId: s.activeOrganizationId,
-        ipAddress: s.ip,
-        userAgent: s.userAgent,
-        ...geoData(s.geo),
-        expiresAt: this.idle(s.lastSeenAt, s.expiresAt),
-        absoluteExpiresAt: s.expiresAt,
-        lastSeenAt: s.lastSeenAt,
-        createdAt: s.createdAt,
-      },
-    });
+    const r = await this.db.session.create({ data: this.sessionData(s) });
     return toSession(r);
   }
   async findByTokenHash(tokenHash: string) {

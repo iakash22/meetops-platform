@@ -17,7 +17,20 @@ export interface Session {
   userAgent: string | null;
   /** ADR-014 coarse GeoIP of `ip` (all null for private/unknown IPs). Optional for older fakes. */
   geo?: GeoFields;
+  /**
+   * How the user proved who they are (`sessions.auth_level`). Absent means `password` (the column default) so older
+   * fakes keep working. ADR-021 adds `mfa` for step-up later.
+   */
+  authLevel?: SessionAuthLevel;
 }
+
+/** OIDC review N-4: Google sessions are `google`, not the `password` column default. */
+export const SESSION_AUTH_LEVELS = ['password', 'google'] as const;
+export type SessionAuthLevel = (typeof SESSION_AUTH_LEVELS)[number];
+export const toSessionAuthLevel = (v: string | null | undefined): SessionAuthLevel =>
+  (SESSION_AUTH_LEVELS as readonly string[]).includes(v ?? '')
+    ? (v as SessionAuthLevel)
+    : 'password';
 
 export interface SessionPolicy {
   idleTimeoutMs: number;
