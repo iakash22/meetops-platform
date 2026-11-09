@@ -54,16 +54,39 @@ export const DEFAULT_REDACT_KEYS: readonly string[] = [
   'GITHUB_APP_CLIENT_SECRET',
   'JIRA_CLIENT_SECRET',
   'GITHUB_APP_WEBHOOK_SECRET',
+  // OIDC hardening P-4: one-time codes and MFA material (ADR-021 TOTP / recovery codes, email OTPs).
+  'otp',
+  'totp',
+  'otpCode',
+  'mfaCode',
+  'oneTimeCode',
+  'verificationCode',
+  'mfaSecret',
+  'mfa_secret',
+  'totpSecret',
+  'totp_secret',
+  'recoveryCode',
+  'recovery_code',
+  'recoveryCodes',
+  'backupCode',
+  'backup_code',
+  'backupCodes',
 ];
 
 /**
  * Keys redacted only when the value is not shaped like an error code. `code` carries OAuth authorization codes
- * (callback query, token requests) but also error codes (`VALIDATION_FAILED`, `ECONNREFUSED`, 404) that logs need.
+ * (callback query, token requests) and one-time codes (TOTP, email OTP) but also error codes (`VALIDATION_FAILED`,
+ * `ECONNREFUSED`, 404, SQLSTATE `23505`) that logs need.
+ *
+ * OIDC hardening P-1: digit-only values used to pass up to 6 digits, which logged a 6-digit TOTP in clear. Now only
+ * HTTP-status-sized numbers (|n| < 1000, or 1-3 digit strings) and the 5-character SQLSTATE shape pass; anything that
+ * looks like a 6+ digit one-time code is redacted.
  */
 export const CONDITIONAL_REDACT_KEYS: readonly string[] = ['code'];
-const ERROR_CODE_SHAPE = /^(?:[A-Z][A-Z0-9_]{0,63}|\d{1,6}|ERR_[A-Z0-9_]+)$/;
+const ERROR_CODE_SHAPE = /^(?:[A-Z][A-Z0-9_]{0,63}|\d{1,3}|\d{2}[0-9A-Z]{3}|ERR_[A-Z0-9_]+)$/;
 const isErrorCode = (v: unknown) =>
-  typeof v === 'number' || (typeof v === 'string' && ERROR_CODE_SHAPE.test(v));
+  (typeof v === 'number' && Number.isInteger(v) && Math.abs(v) < 1000) ||
+  (typeof v === 'string' && ERROR_CODE_SHAPE.test(v));
 
 /** Free-text scrub (#282 M-1): PEM private-key blocks and GitHub token prefixes inside any logged string. */
 const PEM_BLOCK =

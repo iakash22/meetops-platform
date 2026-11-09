@@ -147,6 +147,48 @@ describe('#282 M-1 integration secrets and free-text scrub', () => {
     expect(out).toContain('VALIDATION_FAILED');
     expect(out).toContain('404');
   });
+  it('P-1: a one-time `code` (TOTP / OTP) is redacted; short error codes and SQLSTATE stay', () => {
+    lines.length = 0;
+    log.info({
+      mfa: { code: '492817' },
+      otpNum: { code: 492817 },
+      email: { code: '12345678' },
+      pg: { code: '23505' },
+      prisma: { code: 'P2002' },
+      status: { code: '404' },
+      errno: { code: -111 },
+    });
+    const out = lines.join('');
+    expect(out).not.toMatch(/492817|12345678/);
+    for (const kept of ['23505', 'P2002', '"404"', '-111']) expect(out).toContain(kept);
+  });
+  it('P-4: MFA and one-time-code fields are redacted at any depth', () => {
+    lines.length = 0;
+    const keys = [
+      'otp',
+      'totp',
+      'otpCode',
+      'mfaCode',
+      'oneTimeCode',
+      'verificationCode',
+      'mfaSecret',
+      'mfa_secret',
+      'totpSecret',
+      'totp_secret',
+      'recoveryCode',
+      'recovery_code',
+      'recoveryCodes',
+      'backupCode',
+      'backup_code',
+      'backupCodes',
+    ];
+    log.info({ a: { b: Object.fromEntries(keys.map((k) => [k, `MFASEKRET_${k}`])) } });
+    log.info({
+      recoveryCodes: ['MFASEKRET_r1', 'MFASEKRET_r2'],
+      user: { TOTP: 'MFASEKRET_upper' },
+    });
+    expect(lines.join('')).not.toMatch(/MFASEKRET_/);
+  });
   it('scrubs PEM blocks and ghs_/ghu_/gho_ tokens in messages, error messages and string values', () => {
     lines.length = 0;
     log.info(`key was ${pem} and ${tok('ghs')}`);
