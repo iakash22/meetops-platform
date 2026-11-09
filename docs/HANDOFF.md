@@ -2,17 +2,18 @@
 
 Written 31 Oct 2026 (IST). Read this first; it assumes no prior context. Owner: **Akash** (GitHub `iakash22`).
 
-## Update — 7 Nov 2026
+## Update — 9 Nov 2026 (~20:30 IST)
 
-`main` (`34c0d247`) includes web Google sign-in and the signup/reset password policy (8–128 characters, with a letter, a number, and a symbol). Current phase percentages are in [PHASE_STATUS.md](PHASE_STATUS.md). The percentages in §2 below are the 31 Oct snapshot.
+`main` is at `ca3c0e2b` (docs for Google sign-in; unchanged). Google OIDC sign-in landed as `f6c77fd855` on `dev`, merged via `34c0d247`, with docs `ca3c0e2b`. `integration/phase-1` is at `20aef486` (merge of [#453](https://github.com/iakash22/meetops-platform/pull/453); 6 ahead / 0 behind `main`). Current phase percentages are in [PHASE_STATUS.md](PHASE_STATUS.md). The percentages in §2 below are the 31 Oct snapshot.
 
-Google **login** code is in. It stays hidden until `GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET`, and `GOOGLE_OAUTH_REDIRECT_URI` are set together. Google **Calendar** still needs its own client (`GOOGLE_CALENDAR_*`). MFA and enterprise SSO are not built.
+Google **login** code is in. It stays hidden until `GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET`, and `GOOGLE_OAUTH_REDIRECT_URI` are set together. Google **Calendar** still needs its own client (`GOOGLE_CALENDAR_*`). MFA and enterprise SSO are not built. Hardening follow-up is assigned on `feat/security/google-oidc-hardening` (not open as a PR yet): findings **M-2**, **N-1…N-6**, **L-1…L-5** (L-2/L-3 Info).
 
 ## 1. Repo and branches
 
 - Repo: `iakash22/meetops-platform` (pnpm + turbo monorepo: `apps/api`, `apps/web`, `apps/worker`, `apps/extension` (wxt), desktop (Tauri/Rust), mobile (Expo/React Native), `packages/*` incl. `contracts`, `integrations`, `notifications`, `storage`).
-- Work branch: **`integration/phase-1`** (at `a868a4c` before this handoff PR). All feature PRs target it.
-- `main`: only Akash merges into `main` (latest: #257, 31 Oct).
+- Work branch: **`integration/phase-1`** at `20aef486e62e` (merge of [#453](https://github.com/iakash22/meetops-platform/pull/453) rate-limit coverage + OIDC lint/build fixes; 6 ahead / 0 behind `main`). All feature PRs target it.
+- `main` at `ca3c0e2b2b74` (unchanged): only Akash merges into `main`. Recent merges (6 Nov IST): #437, #439, #443, #445, #447, #449, #450, #451, then #452 (`integration/phase-1` → `main`). After #452 Akash pushed Google OIDC sign-in (`f6c77fd855` on `dev`, merge `34c0d247`, docs `ca3c0e2b`).
+- [#453](https://github.com/iakash22/meetops-platform/pull/453) is **merged** into `integration/phase-1` at `20aef486`. Open into integration: this docs refresh (#454), [#455](https://github.com/iakash22/meetops-platform/pull/455) (realtime TRUST_PROXY), and Google OIDC hardening (`feat/security/google-oidc-hardening`; findings M-2, N-1…N-6, L-1…L-5, L-2/L-3 Info).
 - Other docs: [PHASE_STATUS.md](PHASE_STATUS.md), [PROJECT_CONTEXT.md](PROJECT_CONTEXT.md), [AGENT_STATUS.md](AGENT_STATUS.md), [local-gates.md](local-gates.md), ADRs in [15-decisions/](15-decisions/).
 
 ## 2. Project state (estimates, see PHASE_STATUS.md)
