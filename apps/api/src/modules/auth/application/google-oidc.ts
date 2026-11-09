@@ -3,6 +3,7 @@ import {
   createHmac,
   createPublicKey,
   createVerify,
+  hkdfSync,
   randomBytes,
   timingSafeEqual,
 } from 'node:crypto';
@@ -18,6 +19,13 @@ export const GOOGLE_ISSUERS = ['https://accounts.google.com', 'accounts.google.c
 export const OAUTH_STATE_TTL_MS = 10 * 60 * 1000;
 const MAX_NEXT_LENGTH = 512;
 const CLOCK_SKEW_MS = 60_000;
+/**
+ * OIDC review N-6: an ID token is minted right before the code exchange, so one issued long ago is a replay. Matches
+ * the state cookie lifetime (the whole round-trip) plus skew.
+ */
+export const ID_TOKEN_MAX_AGE_MS = OAUTH_STATE_TTL_MS;
+/** Consumer Google accounts: Google itself owns these mailboxes, so `email_verified` proves the address. */
+const GOOGLE_CONSUMER_DOMAINS = new Set(['gmail.com', 'googlemail.com']);
 
 export interface GoogleOAuthConfig {
   clientId: string;
@@ -31,6 +39,26 @@ export interface GoogleIdentity {
   email: string;
   emailVerified: boolean;
   name: string | null;
+  /** Google Workspace hosted domain (`hd` claim). Null for consumer accounts. */
+  hd?: string | null;
+}
+
+/**
+ * OIDC review M-2 / N-2: whether Google's `email_verified` actually proves control of the address. Google sets
+ * `email_verified` for any address it once checked, including a non-Google mailbox added to a Google account, which a
+ * former owner (or anyone who controlled it once) may still hold. It is authoritative only when Google is the mail
+ * host: a consumer gmail.com / googlemail.com address, or a Workspace account whose `hd` equals the email's domain.
+ * Anything else is treated as unverified: the account is created unverified and never auto-linked.
+ */
+export function googleEmailProven(identity: GoogleIdentity): boolean {
+  if (identity.emailVerified !== true) return false;
+  const email = identity.email.trim().toLowerCase();
+  const at = email.lastIndexOf('@');
+  if (at <= 0 || at === email.length - 1) return false;
+  const domain = email.slice(at + 1);
+  if (GOOGLE_CONSUMER_DOMAINS.has(domain)) return true;
+  const hd = typeof identity.hd === 'string' ? identity.hd.trim().toLowerCase() : '';
+  return hd.length > 0 && hd === domain;
 }
 
 export interface OAuthStatePayload {
@@ -103,7 +131,15 @@ export function newOAuthState(next: unknown, now: number): OAuthStatePayload {
   };
 }
 
-/** Cookie value is `payload.hmac`. The HMAC key is CSRF_SECRET. The verifier never leaves this cookie. */
+/**
+ * OIDC review L-4: the state cookie gets its own HMAC key, derived from CSRF_SECRET with HKDF-SHA256
+ * (info "oauth-state"), so a MAC made for one purpose is never valid for the other.
+ */
+export function deriveOAuthStateKey(csrfSecret: Buffer, info = 'oauth-state'): Buffer {
+  return Buffer.from(hkdfSync('sha256', csrfSecret, Buffer.alloc(0), info, 32));
+}
+
+/** Cookie value is `payload.hmac`. The HMAC key comes from deriveOAuthStateKey. The verifier never leaves this cookie. */
 export function sealOAuthState(payload: OAuthStatePayload, secret: Buffer): string {
   const body = Buffer.from(JSON.stringify(payload), 'utf8').toString('base64url');
   const mac = createHmac('sha256', secret).update(body).digest('base64url');
@@ -142,6 +178,45 @@ export function openOAuthState(
   if (payload.verifier.length < 43 || payload.verifier.length > 128) return null;
   if (payload.nonce.length < 32) return null;
   return { ...payload, next: safeNext(payload.next) };
+}
+
+/**
+ * OIDC review M-2: a Google subject waiting for the account's password before it is linked. Sealed like the state
+ * cookie but with its own HKDF key (info "oauth-link"); lives as long as one authorize round-trip.
+ */
+export interface PendingLinkPayload {
+  uid: string;
+  sub: string;
+  exp: number;
+}
+export const PENDING_LINK_TTL_MS = OAUTH_STATE_TTL_MS;
+
+export function sealPendingLink(payload: PendingLinkPayload, key: Buffer): string {
+  const body = Buffer.from(JSON.stringify(payload), 'utf8').toString('base64url');
+  return `${body}.${createHmac('sha256', key).update(body).digest('base64url')}`;
+}
+
+export function openPendingLink(
+  cookie: string | undefined,
+  key: Buffer,
+  now: number,
+): { userId: string; sub: string } | null {
+  if (!cookie || cookie.length > 1024) return null;
+  const dot = cookie.lastIndexOf('.');
+  if (dot <= 0) return null;
+  const body = cookie.slice(0, dot);
+  if (!safeEqual(cookie.slice(dot + 1), createHmac('sha256', key).update(body).digest('base64url')))
+    return null;
+  let p: Partial<PendingLinkPayload>;
+  try {
+    p = JSON.parse(Buffer.from(body, 'base64url').toString('utf8')) as Partial<PendingLinkPayload>;
+  } catch {
+    return null;
+  }
+  if (typeof p.uid !== 'string' || typeof p.sub !== 'string' || typeof p.exp !== 'number')
+    return null;
+  if (p.exp <= now || p.exp - now > PENDING_LINK_TTL_MS + CLOCK_SKEW_MS) return null;
+  return { userId: p.uid, sub: p.sub };
 }
 
 export function googleAuthorizeUrl(config: GoogleOAuthConfig, flow: OAuthStatePayload): string {
@@ -296,6 +371,9 @@ export function verifyGoogleIdToken(
       c.aud.every((a) => typeof a === 'string') &&
       c.aud.includes(expected.audience));
   if (!audOk) throw new GoogleTokenError();
+  // OIDC Core 3.1.3.7 (review L-2): with several audiences the authorized party must be us.
+  if (Array.isArray(c.aud) && c.aud.length > 1 && c.azp !== expected.audience)
+    throw new GoogleTokenError();
   if (c.azp !== undefined && c.azp !== expected.audience) throw new GoogleTokenError();
   if (typeof c.nonce !== 'string' || !safeEqual(c.nonce, expected.nonce))
     throw new GoogleTokenError();
@@ -304,11 +382,13 @@ export function verifyGoogleIdToken(
   if (typeof c.exp !== 'number' || c.exp * 1000 + CLOCK_SKEW_MS <= now)
     throw new GoogleTokenError();
   if (typeof c.iat !== 'number' || c.iat * 1000 - CLOCK_SKEW_MS > now) throw new GoogleTokenError();
+  if (c.iat * 1000 + ID_TOKEN_MAX_AGE_MS + CLOCK_SKEW_MS < now) throw new GoogleTokenError();
   if (typeof c.nbf === 'number' && c.nbf * 1000 - CLOCK_SKEW_MS > now) throw new GoogleTokenError();
   if (typeof c.sub !== 'string' || !/^[A-Za-z0-9_-]{1,255}$/.test(c.sub))
     throw new GoogleTokenError();
   if (c.email_verified !== true) throw new GoogleTokenError();
   if (typeof c.email !== 'string') throw new GoogleTokenError();
   const name = typeof c.name === 'string' ? c.name : null;
-  return { sub: c.sub, email: c.email, emailVerified: true, name };
+  const hd = typeof c.hd === 'string' && c.hd.length > 0 && c.hd.length <= 253 ? c.hd : null;
+  return { sub: c.sub, email: c.email, emailVerified: true, name, hd };
 }
