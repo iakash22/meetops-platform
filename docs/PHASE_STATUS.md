@@ -1,4 +1,14 @@
-# Phase status — 7 Nov 2026 (~00:45 IST)
+# Phase status — 9 Nov 2026 (~20:15 IST)
+
+## Update — 9 Nov 2026 (~20:15 IST)
+
+Tree: `main` at `ca3c0e2b` (Google sign-in docs). `integration/phase-1` at `c60fadcf` (merge of `main` into integration; 1 ahead / 0 behind `main`). Open PRs queried live: [#453](https://github.com/iakash22/meetops-platform/pull/453) into `integration/phase-1` (Tester rate-limit coverage + build fix), head `42a7dfc337`.
+
+**Google OIDC sign-in — shipped to `main`.** Feature commit `f6c77fd855` (via `dev` merge `34c0d247`, docs `ca3c0e2b`). Web-only authorization-code + PKCE; button stays hidden until `GOOGLE_OAUTH_*` are set together. Separate from `GOOGLE_CALENDAR_*`. Mobile and desktop do not offer Google sign-in. MFA and enterprise SSO remain future work (ADR-021).
+
+**Hardening follow-up in progress** on `feat/security/google-oidc-hardening` (assigned to All Rounder Techy; not an open PR yet). Scope includes pre-registration takeover (N-1), verified-email / `hd` rules (N-2 / M-2), Google rate-limit ordering (N-3), audit/`auth_level` (N-4), JWKS single-flight (N-5), and related tests. Password policy values stay 8–128 with composition rules (Akash, 9 Nov).
+
+P1 estimate stays ~97% (Google web sign-in in; MFA/SSO and OIDC hardening still open). Other phase percentages unchanged from the 7 Nov snapshot below.
 
 ## Update — 7 Nov 2026 (~00:45 IST)
 

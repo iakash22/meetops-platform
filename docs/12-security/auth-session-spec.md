@@ -4,7 +4,8 @@
 
 - Hash: **argon2id**, minimum OWASP params `m=19456 KiB (19 MiB), t=2, p=1`; target higher if latency budget allows (benchmark ~ 50–250 ms). Store full PHC string (params + salt) so params can be upgraded; rehash on login when params are outdated.
 - 16-byte random salt; optional pepper from secret manager (HMAC before hashing) — see open questions.
-- Policy: min 8 chars, max 128, must include a letter, a number, and a symbol. Login accepts any non-empty password up to 128 so existing passwords still sign in. Check against a breached-password list (k-anonymity HIBP or a local list) is not implemented yet.
+- Policy: min 8 chars, max 128, must include a letter, a number, and a symbol (enforced in `@meetops/contracts` as `PASSWORD_MIN_LENGTH` / `PASSWORD_MAX_LENGTH` / `PASSWORD_PATTERN`: at least one letter `[A-Za-z]`, one digit, and one symbol that is not a letter, digit, or space; no newlines). Login accepts any non-empty password up to 128 so existing passwords still sign in. Check against a breached-password list (k-anonymity HIBP or a local list) is not implemented yet.
+- **Owner decision (Akash, 9 Nov 2026):** keep the 8-character minimum with the composition rules above. Do not raise the minimum. This supersedes the 12-character rule from the PR #17 review. Policy values in code stay unchanged.
 - Library: `argon2` (node) in Fastify auth module.
 
 ## 2. Sessions

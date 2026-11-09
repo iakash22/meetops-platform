@@ -1,5 +1,17 @@
 # MeetOps AI — Agent Work Status and Pending Work
 
+## Update — 9 Nov 2026 (~20:15 IST)
+
+- **Pause lifted.** Akash resumed parallel work (exact words via Coordinator, 9 Nov ~20:11 IST: keep password minimum 8 with composition rules; continue).
+- **Roles (current):**
+  - **All Rounder Techy** — Architect / DevOps / AI / Docs / Backend. Owns Architecture reviews, Google OIDC hardening (`feat/security/google-oidc-hardening`), status docs, and Dependabot/lockfile follow-ups after.
+  - **Tester & Security** — Security / QA. Reviews each PR on its exact head SHA; authored [#453](https://github.com/iakash22/meetops-platform/pull/453) (rate-limit coverage + build fix for `main` after Google sign-in).
+  - **Project Plan & Coordinator** — coordination and merges into `integration/phase-1` after Architecture + Tester PASS.
+  - **Akash** — only merges into `main` (latest: #452 on 6 Nov; then Google OIDC push).
+- **Trees:** `main` `ca3c0e2b` · `integration/phase-1` `c60fadcf` (1 ahead / 0 behind `main`).
+- **Open PRs into `integration/phase-1`:** #453 only (`42a7dfc337`). Google OIDC hardening and this docs refresh are next.
+- **CI:** GitHub Actions minutes still exhausted; local gates remain the gate. Flow unchanged: feature branch → PR into `integration/phase-1` → Architecture + Tester PASS on exact head → Coordinator merges → Akash merges integration → `main`.
+
 ## Update — 27 Oct 2026 (~23:20 IST)
 
 - Merged since ~21:30 IST: #249 and #250 (ADR-013 notifications plan, Proposed), #251 (API wires the real mailer; Resend provider), #252 and #253 (integration → `main`).
