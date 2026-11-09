@@ -23,7 +23,14 @@ import {
 import { googleEmailProven, type GoogleIdentity } from './google-oidc.js';
 import type { Clock, IdGenerator } from '../../../shared/ports.js';
 import { DomainError } from '../../../shared/domain-error.js';
-import type { LoginLockout, PasswordHasher, RateLimiter, TokenService } from '../domain/ports.js';
+import type {
+  AccountClaimStore,
+  LoginLockout,
+  PasswordHasher,
+  RateLimiter,
+  TokenService,
+} from '../domain/ports.js';
+import { sequentialAccountClaims } from './account-claims.js';
 import {
   isSessionActive,
   type Session,
@@ -49,6 +56,11 @@ import type { ExtensionRevoker } from '../../extension-auth/application/extensio
 
 export interface AuthServiceDeps {
   users: UserRepository;
+  /**
+   * OIDC review X1: credential takeover + session revocation in one unit. Wiring passes the Prisma store (one
+   * transaction); without one, the port-based sequential fallback is used (dev/test).
+   */
+  accountClaims?: AccountClaimStore;
   sessions: SessionRepository;
   oneTimeTokens: OneTimeTokenRepository;
   hasher: PasswordHasher;
@@ -97,7 +109,12 @@ export interface SessionResult {
 }
 
 export type GoogleSignInOutcome =
-  | { kind: 'session'; result: SessionResult }
+  /**
+   * `verifyLink` (OIDC review N-7): Google did not prove the address of the account it just created, so `sub` is NOT
+   * linked yet. The caller keeps it in this browser and passes it to verifyEmail(), which links it only when the
+   * verification link is opened in this browser's live Google session.
+   */
+  | { kind: 'session'; result: SessionResult; verifyLink?: PendingGoogleLink }
   | { kind: 'unverified_local' }
   /**
    * OIDC review M-2: Google did not prove the address, but a verified local account owns it. Linking needs proof of
@@ -159,7 +176,10 @@ export interface PushDeviceRevoker {
 
 export class AuthService {
   private dummyHash: Promise<string> | null = null;
-  constructor(private readonly d: AuthServiceDeps) {}
+  private readonly claims: AccountClaimStore;
+  constructor(private readonly d: AuthServiceDeps) {
+    this.claims = d.accountClaims ?? sequentialAccountClaims(d.users, d.sessions);
+  }
 
   private async limit(key: string, l: { limit: number; windowMs: number }) {
     const r = await this.d.rateLimiter.consume(key, l.limit, l.windowMs);
@@ -227,14 +247,17 @@ export class AuthService {
     await this.limit(`signup:email:${email}`, AUTH_LIMITS.signupPerEmail);
     const passwordHash = await this.d.hasher.hash(input.password);
     const existing = await this.d.users.findByEmail(email);
+    // N-1 residual: `binding` marks this browser as the one that chose the password (see verifyEmail). A taken email
+    // gets a random value of the same shape, so the response stays enumeration-safe.
     if (existing) {
       await this.d.mailQueue.enqueue({ kind: 'account_exists', userId: existing.id });
-      return { accepted: true as const };
+      return { accepted: true as const, binding: this.d.ids.next() };
     }
     const now = this.d.clock.now();
+    let binding = this.d.ids.next();
     try {
       const user = await this.d.users.create({
-        id: this.d.ids.next(),
+        id: binding,
         email,
         name: input.name ?? null,
         passwordHash,
@@ -260,9 +283,10 @@ export class AuthService {
         meta,
       );
     } catch {
-      // Race on unique email: still respond identically.
+      // Race on unique email: still respond identically (and bind to nothing real).
+      binding = this.d.ids.next();
     }
-    return { accepted: true as const };
+    return { accepted: true as const, binding };
   }
 
   /** Rotates: any presented session is revoked and a new one is issued. */
@@ -415,7 +439,10 @@ export class AuthService {
         name: googleName(identity.name),
         passwordHash: '',
         emailVerifiedAt: proven ? now : null,
-        googleSub: sub,
+        // N-7: only a proven address is linked at creation. An unproven subject waits for the verification link to be
+        // opened in this browser's Google session (verifyLink), so a stale holder of a consumer Google account on a
+        // company address never gets a link that survives the real mailbox owner's verification or reset.
+        googleSub: proven ? sub : null,
         createdAt: now,
         updatedAt: now,
         deletedAt: null,
@@ -437,6 +464,10 @@ export class AuthService {
           this.d.emailVerificationTtlMs,
         );
         await this.d.mailQueue.enqueue({ kind: 'email_verification', tokenId: t.id });
+        const outcome = await this.finishGoogleLogin(user, meta, currentToken);
+        return outcome.kind === 'session'
+          ? { ...outcome, verifyLink: { userId: user.id, sub } }
+          : outcome;
       }
       return this.finishGoogleLogin(user, meta, currentToken);
     } catch (e) {
@@ -474,26 +505,36 @@ export class AuthService {
     }
 
     const takeover = !user.emailVerifiedAt;
+    const hadPassword = !!user.passwordHash;
+    const now = this.d.clock.now();
+    // X1: for a takeover, the claim and the revocation of every session commit together (AccountClaimStore), so a
+    // failure leaves the account unverified and unlinked and the next sign-in redoes the whole takeover.
     const linked = takeover
-      ? await this.d.users.claimUnverifiedForGoogle(user.id, sub, this.d.clock.now())
+      ? await this.claims.claimForGoogle(user.id, sub, now)
       : await this.d.users.linkGoogleSub(user.id, sub);
     if (!linked) {
+      // A concurrent callback for the same subject may have won; it did the revocation and sends the notice.
       const again = await this.d.users.findByGoogleSub(sub);
       if (!again || again.id !== user.id) {
         await this.auditGoogleFailure(user.id, meta, 'conflict');
         return { kind: 'rejected' };
       }
+    } else if (takeover) {
+      await this.afterCredentialTakeover(user.id);
+    } else {
+      await this.revokeOtherSessions(user.id, null);
     }
-    if (takeover) await this.revokeEverything(user.id);
-    else await this.revokeOtherSessions(user.id, null);
     const fresh = (await this.d.users.findById(user.id)) ?? user;
     const outcome = await this.finishGoogleLogin(fresh, meta, currentToken);
-    await this.afterGoogleLinked(
-      user.id,
-      meta,
-      takeover ? 'google_proven_unverified_local' : 'google_proven',
-      outcome.kind === 'session' ? outcome.result.session.id : null,
-    );
+    if (linked) {
+      await this.afterGoogleLinked(
+        user.id,
+        meta,
+        takeover ? 'google_proven_unverified_local' : 'google_proven',
+        outcome.kind === 'session' ? outcome.result.session.id : null,
+        takeover && hadPassword,
+      );
+    }
     return outcome;
   }
 
@@ -501,8 +542,9 @@ export class AuthService {
   private async afterGoogleLinked(
     userId: string,
     meta: RequestMeta,
-    method: 'password' | 'google_proven' | 'google_proven_unverified_local',
+    method: 'password' | 'google_proven' | 'google_proven_unverified_local' | 'google_verify_link',
     sessionId: string | null,
+    passwordRemoved = false,
   ) {
     const now = this.d.clock.now();
     await this.audit(
@@ -511,7 +553,7 @@ export class AuthService {
         action: 'auth.google.linked',
         targetType: 'user',
         targetId: userId,
-        metadata: { provider: 'google', method, sessionId },
+        metadata: { provider: 'google', method, sessionId, passwordRemoved },
       },
       meta,
     );
@@ -520,6 +562,7 @@ export class AuthService {
       userId,
       provider: 'google',
       linkedAt: now.toISOString(),
+      ...(passwordRemoved ? { passwordRemoved: true } : {}),
     });
   }
 
@@ -534,12 +577,13 @@ export class AuthService {
   }
 
   /**
-   * N-1: the account's previous credentials may belong to someone who never owned the mailbox. Revoke all sessions,
-   * extension token families, push devices and outstanding one-time tokens (reset and verification links).
+   * N-1: the rest of a takeover, after AccountClaimStore already changed the credentials and revoked every session in
+   * one unit: tell realtime, revoke extension/desktop token families and push devices, and void outstanding reset and
+   * verification links. (A never-verified account cannot have joined an organisation (D2), so it has no families or
+   * push devices of its own; these calls are defence in depth and idempotent.)
    */
-  private async revokeEverything(userId: string) {
+  private async afterCredentialTakeover(userId: string) {
     const now = this.d.clock.now();
-    await this.d.sessions.revokeAllForUser(userId, now);
     await this.publish({ kind: 'user', userId, reason: 'password_changed' });
     await this.d.extensionRevoker?.revokeForUser(userId, 'password_changed');
     await this.d.pushDeviceRevoker?.revokeForUser(userId);
@@ -639,6 +683,13 @@ export class AuthService {
       changedAt: now.toISOString(),
     });
     await this.d.oneTimeTokens.invalidateForUser(t.userId, 'password_reset', now);
+    // N-7 / B-1: the reset link reached the mailbox, which proves the address. A still-unverified account becomes
+    // verified here and loses any Google subject linked before the address was proven (the new password stays).
+    const verifiedByReset = await this.d.users.claimUnverifiedForMailbox(t.userId, now, {
+      clearPassword: false,
+    });
+    if (verifiedByReset)
+      await this.d.oneTimeTokens.invalidateForUser(t.userId, 'email_verification', now);
     const user = await this.d.users.findById(t.userId);
     if (user) await this.d.lockout.reset(user.email);
     await this.audit(
@@ -647,17 +698,32 @@ export class AuthService {
         action: 'auth.password_reset.complete',
         targetType: 'user',
         targetId: t.userId,
-        metadata: {},
+        metadata: verifiedByReset ? { emailVerified: true } : {},
       },
       meta,
     );
   }
 
   /**
-   * N-1: verifying proves the mailbox, so every other session of the account (possibly opened by whoever registered
-   * the address first) is revoked. The presented session survives only when it belongs to the same account.
+   * Verifying proves the mailbox. Who chose the account's password (or Google identity) is a separate question:
+   * - From a live session of the account, or from the browser that registered it (`signupBinding`, set at signup):
+   *   the verifier is that same person. Mark verified, sign out every other session, keep the password. In the
+   *   account's own Google session, a pending unproven Google subject (`googleVerifyLink`, N-7) is linked now.
+   * - From anywhere else (OIDC review N-1 residual, Architecture B-1): the mailbox owner is not known to be whoever
+   *   registered the address, so the mailbox owner wins. In one unit (AccountClaimStore, X1): mark verified, remove the
+   *   password and any Google subject, revoke every session; then revoke the rest and email a set-password link
+   *   through the reset flow.
+   * Already-verified accounts only get the other sessions signed out (the presented one survives when it is theirs).
    */
-  async verifyEmail(token: string, meta: RequestMeta, currentToken?: string) {
+  async verifyEmail(
+    token: string,
+    meta: RequestMeta,
+    opts: {
+      currentToken?: string | undefined;
+      signupBinding?: string | null | undefined;
+      googleVerifyLink?: PendingGoogleLink | null | undefined;
+    } = {},
+  ): Promise<{ proof: 'session' | 'signup_browser' | 'mailbox' | 'already_verified' }> {
     await this.limit(`verify:ip:${clientIpKey(meta.ip)}`, AUTH_LIMITS.verifySubmitPerIp);
     const now = this.d.clock.now();
     const t = await this.d.oneTimeTokens.consume(
@@ -666,26 +732,69 @@ export class AuthService {
       now,
     );
     if (!t) throw invalidVerificationError();
-    await this.d.users.markEmailVerified(t.userId, now);
-    await this.d.oneTimeTokens.invalidateForUser(t.userId, 'email_verification', now);
-    const current = currentToken
-      ? await this.d.sessions.findByTokenHash(this.d.tokens.hash(currentToken))
+    const user = await this.d.users.findById(t.userId);
+    if (!user) throw invalidVerificationError();
+    const current = opts.currentToken
+      ? await this.d.sessions.findByTokenHash(this.d.tokens.hash(opts.currentToken))
       : null;
-    const keep =
-      current && current.userId === t.userId && isSessionActive(current, now, this.d.sessionPolicy)
-        ? current.id
+    const own =
+      current && current.userId === user.id && isSessionActive(current, now, this.d.sessionPolicy)
+        ? current
         : null;
-    await this.revokeOtherSessions(t.userId, keep);
+
+    let proof: 'session' | 'signup_browser' | 'mailbox' | 'already_verified';
+    let metadata: Record<string, unknown> = {};
+    if (user.emailVerifiedAt) {
+      proof = 'already_verified';
+      await this.d.oneTimeTokens.invalidateForUser(user.id, 'email_verification', now);
+      await this.revokeOtherSessions(user.id, own?.id ?? null);
+    } else if (own || opts.signupBinding === user.id) {
+      proof = own ? 'session' : 'signup_browser';
+      await this.d.users.markEmailVerified(user.id, now);
+      await this.d.oneTimeTokens.invalidateForUser(user.id, 'email_verification', now);
+      await this.revokeOtherSessions(user.id, own?.id ?? null);
+      const link = opts.googleVerifyLink;
+      if (
+        own &&
+        own.authLevel === 'google' &&
+        link?.userId === user.id &&
+        !user.googleSub &&
+        googleSub(link.sub) &&
+        (await this.d.users.linkGoogleSub(user.id, link.sub))
+      ) {
+        metadata = { googleLinked: true };
+        await this.afterGoogleLinked(user.id, meta, 'google_verify_link', own.id);
+      }
+    } else {
+      proof = 'mailbox';
+      const before = { passwordRemoved: !!user.passwordHash, googleUnlinked: !!user.googleSub };
+      if (!(await this.claims.claimForMailbox(user.id, now))) {
+        // A concurrent verify or reset got there first; it did the takeover.
+        if ((await this.d.users.findById(user.id))?.emailVerifiedAt)
+          return { proof: 'already_verified' };
+        throw invalidVerificationError();
+      }
+      await this.afterCredentialTakeover(user.id);
+      metadata = before;
+      // Set-password link: the regular reset flow (single-use token, reset mail).
+      const reset = await this.createOneTimeToken(
+        user.id,
+        'password_reset',
+        this.d.passwordResetTtlMs,
+      );
+      await this.d.mailQueue.enqueue({ kind: 'password_reset', tokenId: reset.id });
+    }
     await this.audit(
       {
-        actorId: t.userId,
+        actorId: user.id,
         action: 'auth.email.verify',
         targetType: 'user',
-        targetId: t.userId,
-        metadata: {},
+        targetId: user.id,
+        metadata: { proof, ...metadata },
       },
       meta,
     );
+    return { proof };
   }
 
   /** Enumeration-safe: always resolves the same; only unverified accounts get a new link. */

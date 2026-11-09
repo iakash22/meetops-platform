@@ -58,6 +58,8 @@ import {
 } from './auth/infrastructure/rate-limit/redis.js';
 import { PrismaAuditLog } from './auth/infrastructure/prisma/prisma-audit.log.js';
 import { PrismaOneTimeTokenRepository } from './auth/infrastructure/prisma/prisma-one-time-token.repository.js';
+import { PrismaAccountClaimStore } from './auth/infrastructure/prisma/prisma-account-claim.store.js';
+import type { AccountClaimStore } from './auth/domain/ports.js';
 import { PrismaSessionRepository } from './auth/infrastructure/prisma/prisma-session.repository.js';
 import { PrismaUserRepository } from './users/infrastructure/prisma/prisma-user.repository.js';
 import {
@@ -150,6 +152,8 @@ import { systemClock, type Clock, type IdGenerator } from '../shared/ports.js';
 export interface ModuleDeps {
   users: UserRepository;
   sessions: SessionRepository;
+  /** OIDC review X1: takeover claim + session revocation in one transaction (defaults below). */
+  accountClaims?: AccountClaimStore;
   oneTimeTokens: OneTimeTokenRepository;
   organizations: OrganizationRepository;
   memberships: MembershipRepository;
@@ -716,6 +720,15 @@ export function defaultModuleDeps(
       passwordResetExpiresInMinutes: Math.max(1, Math.round(deps.passwordResetTtlMs / MIN)),
     });
   }
+  // X1: one Postgres transaction when both credential tables are the Prisma ones; otherwise AuthService falls back to
+  // the port-based sequential claim (in-memory dev/test).
+  if (
+    !deps.accountClaims &&
+    db &&
+    deps.users instanceof PrismaUserRepository &&
+    deps.sessions instanceof PrismaSessionRepository
+  )
+    deps.accountClaims = new PrismaAccountClaimStore(db);
   return deps;
 }
 

@@ -70,6 +70,17 @@ export class PrismaUserRepository implements UserRepository {
       throw e;
     }
   }
+  async claimUnverifiedForMailbox(id: UserId, at: Date, opts: { clearPassword: boolean }) {
+    const r = await this.db.user.updateMany({
+      where: { id, deletedAt: null, emailVerified: null },
+      data: {
+        emailVerified: at,
+        googleSub: null,
+        ...(opts.clearPassword ? { passwordHash: null } : {}),
+      },
+    });
+    return r.count === 1;
+  }
   async create(u: User) {
     try {
       const r = await this.db.user.create({

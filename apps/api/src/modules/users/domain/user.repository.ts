@@ -19,6 +19,17 @@ export interface UserRepository {
    * the subject belongs to someone else.
    */
   claimUnverifiedForGoogle(id: UserId, sub: string, at: Date): Promise<boolean>;
+  /**
+   * OIDC review N-1 residual / N-7: the mailbox owner proved the address (verification or reset link) from outside the
+   * account. In ONE update, only while the row is live and still unverified: mark the email verified at `at`, drop any
+   * Google subject (it never proved this address) and, with `clearPassword`, the password whoever registered set.
+   * Returns false when the row is gone or already verified (nothing changed).
+   */
+  claimUnverifiedForMailbox(
+    id: UserId,
+    at: Date,
+    opts: { clearPassword: boolean },
+  ): Promise<boolean>;
   /** Must reject (DuplicateEmailError) when the email is taken. */
   create(user: User): Promise<User>;
   updatePasswordHash(id: UserId, passwordHash: string): Promise<void>;

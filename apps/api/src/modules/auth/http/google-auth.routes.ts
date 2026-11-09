@@ -5,7 +5,9 @@ import type { AuthService } from '../application/auth.service.js';
 import {
   GoogleTokenError,
   OAUTH_STATE_TTL_MS,
+  GOOGLE_VERIFY_LINK_TTL_MS,
   PENDING_LINK_TTL_MS,
+  SIGNUP_BINDING_TTL_MS,
   deriveOAuthStateKey,
   googleAuthorizeUrl,
   newOAuthState,
@@ -62,6 +64,42 @@ export function pendingLinkCookie(security: HttpSecurityConfig) {
   };
 }
 
+/**
+ * OIDC review N-7: an unproven Google subject waiting, in the browser that signed in, for the verification link to be
+ * opened in that browser's session. HttpOnly, Lax, own HKDF key.
+ */
+export function verifyLinkCookie(security: HttpSecurityConfig) {
+  return {
+    name: `${security.oauthStateCookieName}_vlink`,
+    key: deriveOAuthStateKey(security.csrfSecret, 'oauth-verify-link'),
+    maxAgeS: Math.floor(GOOGLE_VERIFY_LINK_TTL_MS / 1000),
+    attributes: {
+      secure: security.cookieSecure,
+      sameSite: 'lax' as const,
+      path: '/',
+      httpOnly: true,
+    },
+  };
+}
+
+/**
+ * OIDC review N-1 residual: marks the browser that registered a password account (see AuthService.verifyEmail).
+ * HttpOnly, Strict (only the app's own fetches need it), own HKDF key; carries no secret, only the account id.
+ */
+export function signupBindingCookie(security: HttpSecurityConfig) {
+  return {
+    name: `${security.cookieName}_signup`,
+    key: deriveOAuthStateKey(security.csrfSecret, 'signup-binding'),
+    maxAgeS: Math.floor(SIGNUP_BINDING_TTL_MS / 1000),
+    attributes: {
+      secure: security.cookieSecure,
+      sameSite: 'strict' as const,
+      path: '/',
+      httpOnly: true,
+    },
+  };
+}
+
 function appOrigin(webBaseUrl: string, allowed: string[]): URL | null {
   try {
     const url = new URL(webBaseUrl);
@@ -91,6 +129,7 @@ export function googleAuthRoutes(app: FastifyInstance, opts: GoogleAuthOptions) 
   // L-4: the state cookie's MAC key is derived from CSRF_SECRET, never CSRF_SECRET itself.
   const stateKey = deriveOAuthStateKey(security.csrfSecret);
   const pendingLink = pendingLinkCookie(security);
+  const verifyLink = verifyLinkCookie(security);
 
   const home = () => appOrigin(opts.webBaseUrl, security.allowedOrigins);
 
@@ -219,6 +258,20 @@ export function googleAuthRoutes(app: FastifyInstance, opts: GoogleAuthOptions) 
           return fail(reply, 'google_link_password', next);
         }
         if (outcome.kind !== 'session') return fail(reply, 'google', next);
+        if (outcome.verifyLink) {
+          reply.setCookie(
+            verifyLink.name,
+            sealPendingLink(
+              {
+                uid: outcome.verifyLink.userId,
+                sub: outcome.verifyLink.sub,
+                exp: Date.now() + GOOGLE_VERIFY_LINK_TTL_MS,
+              },
+              verifyLink.key,
+            ),
+            { ...verifyLink.attributes, maxAge: verifyLink.maxAgeS },
+          );
+        }
         g.setSessionCookie(reply, outcome.result);
         g.issueCsrfForSession(reply, outcome.result.session.id);
         return sendApp(reply, next);

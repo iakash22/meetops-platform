@@ -201,6 +201,7 @@ export function openPendingLink(
   cookie: string | undefined,
   key: Buffer,
   now: number,
+  maxTtlMs: number = PENDING_LINK_TTL_MS,
 ): { userId: string; sub: string } | null {
   if (!cookie || cookie.length > 1024) return null;
   const dot = cookie.lastIndexOf('.');
@@ -216,9 +217,24 @@ export function openPendingLink(
   }
   if (typeof p.uid !== 'string' || typeof p.sub !== 'string' || typeof p.exp !== 'number')
     return null;
-  if (p.exp <= now || p.exp - now > PENDING_LINK_TTL_MS + CLOCK_SKEW_MS) return null;
+  if (p.exp <= now || p.exp - now > maxTtlMs + CLOCK_SKEW_MS) return null;
   return { userId: p.uid, sub: p.sub };
 }
+
+/**
+ * OIDC review N-7: a Google subject that did not prove its address is NOT linked at sign-up. It waits in this cookie
+ * (own HKDF key, info "oauth-verify-link") in the browser that signed in, and is linked only when the verification
+ * link is opened in that same browser while its session is live. Lives as long as a verification link.
+ */
+export const GOOGLE_VERIFY_LINK_TTL_MS = 24 * 60 * 60_000;
+
+/**
+ * OIDC review N-1 residual: marks the browser that registered a password account (own HKDF key, info
+ * "signup-binding"). Verifying from that browser, or from a live session of the account, keeps the password; any
+ * other verifier is the mailbox owner, who takes the account over (password removed, set-password link sent).
+ * `sub` is unused (empty). Lives as long as a verification link.
+ */
+export const SIGNUP_BINDING_TTL_MS = 24 * 60 * 60_000;
 
 export function googleAuthorizeUrl(config: GoogleOAuthConfig, flow: OAuthStatePayload): string {
   const url = new URL(GOOGLE_AUTHORIZE_URL);

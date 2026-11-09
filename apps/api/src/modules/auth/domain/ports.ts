@@ -25,3 +25,17 @@ export interface LoginLockout {
   recordFailure(accountKey: string): Promise<{ lockedForMs: number; delayMs: number }>;
   reset(accountKey: string): Promise<void>;
 }
+
+/**
+ * OIDC review X1: a takeover of a never-verified account (the mailbox owner wins) changes the account's credentials and
+ * revokes every web session of it. Both must commit together: if the revocation could fail after the credential
+ * change, the squatter's session would survive while later sign-ins take the "already linked" path and never revoke.
+ * Implementations make each method all-or-nothing (Postgres: one transaction) and return false, changing nothing,
+ * when the precondition (live, still unverified, and for Google still unlinked) no longer holds.
+ */
+export interface AccountClaimStore {
+  /** Link `sub`, mark verified at `at`, drop the password; revoke every session of the account. */
+  claimForGoogle(userId: string, sub: string, at: Date): Promise<boolean>;
+  /** Mark verified at `at`, drop the password and any Google subject; revoke every session of the account. */
+  claimForMailbox(userId: string, at: Date): Promise<boolean>;
+}
