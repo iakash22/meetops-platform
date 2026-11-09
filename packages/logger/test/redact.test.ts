@@ -153,14 +153,36 @@ describe('#282 M-1 integration secrets and free-text scrub', () => {
       mfa: { code: '492817' },
       otpNum: { code: 492817 },
       email: { code: '12345678' },
-      pg: { code: '23505' },
+      pg: { code: '42P01' },
       prisma: { code: 'P2002' },
       status: { code: '404' },
       errno: { code: -111 },
+      node: { code: 'ECONNREFUSED' },
+      api: { code: 'VALIDATION_FAILED' },
+      http2: { code: 'ERR_HTTP2_STREAM_ERROR' },
     });
     const out = lines.join('');
     expect(out).not.toMatch(/492817|12345678/);
-    for (const kept of ['23505', 'P2002', '"404"', '-111']) expect(out).toContain(kept);
+    for (const kept of [
+      '42P01',
+      'P2002',
+      '"404"',
+      '-111',
+      'ECONNREFUSED',
+      'VALIDATION_FAILED',
+      'ERR_HTTP2_STREAM_ERROR',
+    ])
+      expect(out).toContain(kept);
+  });
+  it('NB-2: 5-digit and upper-case alphanumeric `code` values are redacted', () => {
+    lines.length = 0;
+    log.info({
+      five: { code: '48213' },
+      fiveNum: { code: 48213 },
+      recovery: { code: 'ABCD2345' },
+      mixed: { code: 'X7K2M9QP' },
+    });
+    expect(lines.join('')).not.toMatch(/48213|ABCD2345|X7K2M9QP/);
   });
   it('P-4: MFA and one-time-code fields are redacted at any depth', () => {
     lines.length = 0;
@@ -181,8 +203,32 @@ describe('#282 M-1 integration secrets and free-text scrub', () => {
       'backupCode',
       'backup_code',
       'backupCodes',
+      // PR #459 review: Tester P-4 + Architecture NB-1.
+      'state',
+      'idToken',
+      'oauthState',
+      'totpCode',
+      'mfa_code',
+      'otp_code',
+      'email_otp',
+      'recovery_codes',
+      'backup_codes',
+      'otpauthUri',
+      'credential',
+      'assertion',
+      'attestation',
+      'clientDataJSON',
+      'authenticatorData',
+      'userHandle',
     ];
     log.info({ a: { b: Object.fromEntries(keys.map((k) => [k, `MFASEKRET_${k}`])) } });
+    // A WebAuthn ceremony body and an otpauth URI as they would be logged.
+    log.info({
+      body: {
+        credential: { id: 'MFASEKRET_cred', response: { clientDataJSON: 'MFASEKRET_cdj' } },
+        otpauthUri: 'otpauth://totp/MeetOps:a@example.com?secret=MFASEKRET_uri',
+      },
+    });
     log.info({
       recoveryCodes: ['MFASEKRET_r1', 'MFASEKRET_r2'],
       user: { TOTP: 'MFASEKRET_upper' },

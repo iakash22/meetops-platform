@@ -71,6 +71,28 @@ export const DEFAULT_REDACT_KEYS: readonly string[] = [
   'backupCode',
   'backup_code',
   'backupCodes',
+  // PR #459 review (Tester P-4, Architecture NB-1): the remaining spellings, the #456 planned MFA body fields, OAuth
+  // `state` / ID tokens as object keys, and WebAuthn ceremony bodies.
+  'state',
+  'idToken',
+  'oauthState',
+  'totpCode',
+  'mfa_code',
+  'otp_code',
+  'email_otp',
+  'emailOtp',
+  'recovery_codes',
+  'backup_codes',
+  'otpauthUri',
+  'otpauth_uri',
+  'otpauthUrl',
+  'credential',
+  'assertion',
+  'attestation',
+  'attestationObject',
+  'clientDataJSON',
+  'authenticatorData',
+  'userHandle',
 ];
 
 /**
@@ -79,11 +101,15 @@ export const DEFAULT_REDACT_KEYS: readonly string[] = [
  * `ECONNREFUSED`, 404, SQLSTATE `23505`) that logs need.
  *
  * OIDC hardening P-1: digit-only values used to pass up to 6 digits, which logged a 6-digit TOTP in clear. Now only
- * HTTP-status-sized numbers (|n| < 1000, or 1-3 digit strings) and the 5-character SQLSTATE shape pass; anything that
- * looks like a 6+ digit one-time code is redacted.
+ * HTTP-status-sized numbers (|n| < 1000, or 1-3 digit strings) pass among digit-only values.
+ * Architecture NB-2: a 5-digit numeric value and an upper-case alphanumeric one (`ABCD2345`, recovery-code style) are
+ * redacted too. What passes: UPPER_SNAKE names whose first word has no digits (`VALIDATION_FAILED`, `ECONNREFUSED`),
+ * `ERR_*`, Prisma `P1234`, and SQLSTATEs that contain a letter (`42P01`). Purely numeric SQLSTATEs such as `23505`
+ * are therefore redacted; the error class and message still identify them.
  */
 export const CONDITIONAL_REDACT_KEYS: readonly string[] = ['code'];
-const ERROR_CODE_SHAPE = /^(?:[A-Z][A-Z0-9_]{0,63}|\d{1,3}|\d{2}[0-9A-Z]{3}|ERR_[A-Z0-9_]+)$/;
+const ERROR_CODE_SHAPE =
+  /^(?=.{1,64}$)(?:[A-Z]+(?:_[A-Z0-9]+)*|\d{1,3}|P\d{4}|(?=[0-9A-Z]*[A-Z])\d{2}[0-9A-Z]{3}|ERR_[A-Z0-9_]+)$/;
 const isErrorCode = (v: unknown) =>
   (typeof v === 'number' && Number.isInteger(v) && Math.abs(v) < 1000) ||
   (typeof v === 'string' && ERROR_CODE_SHAPE.test(v));
