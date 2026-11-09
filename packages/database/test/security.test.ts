@@ -609,9 +609,8 @@ describe('per-org uniqueness (M2)', () => {
         'tokenHash',
         // auth_refresh_tokens.token_hash (ADR-005 A1.2.1): SHA-256 hashes are globally unique.
         'tokenHash',
-        // users.google_sub (Google OIDC): one Google subject maps to at most one live user. The index is partial
-        // (WHERE deleted_at IS NULL, OIDC review L-1), which Prisma 5 cannot express, so the schema keeps @unique.
-        'googleSub',
+        // users.google_sub is NOT listed: its uniqueness is a partial index over live rows (OIDC review L-1,
+        // migration 20261109120000, asserted in "(2b)"), which Prisma 5 cannot express, so the schema has no @unique.
       ].sort(),
     );
   });
@@ -1208,6 +1207,8 @@ describe('security review fixes (static)', () => {
     expect(sql).toContain(
       'CREATE UNIQUE INDEX "users_google_sub_key" ON "users"("google_sub") WHERE "deleted_at" IS NULL;',
     );
+    // The schema must not declare @unique on googleSub: Prisma would then want a full index and the drift check fails.
+    expect(schema).toMatch(/^\s*googleSub\s+String\?\s+@map\("google_sub"\)\s*$/m);
     expect(sql).toContain("'auth.google_linked'");
     expect(sql).toContain("RAISE EXCEPTION 'audit_action_not_allowed'");
     expect(sql).toContain('SECURITY DEFINER');
