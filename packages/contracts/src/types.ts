@@ -4,4 +4,5 @@
  * so bundles such as `apps/extension` stay small. Import schemas for validation from the main entry instead.
  */
 export * from './constants.js';
+export * from './password-policy.js';
 export type * from './index.js';

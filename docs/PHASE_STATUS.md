@@ -1,12 +1,12 @@
-# Phase status — 9 Nov 2026 (~20:15 IST)
+# Phase status — 9 Nov 2026 (~20:30 IST)
 
-## Update — 9 Nov 2026 (~20:15 IST)
+## Update — 9 Nov 2026 (~20:30 IST)
 
-Tree: `main` at `ca3c0e2b` (Google sign-in docs). `integration/phase-1` at `c60fadcf` (merge of `main` into integration; 1 ahead / 0 behind `main`). Open PRs queried live: [#453](https://github.com/iakash22/meetops-platform/pull/453) into `integration/phase-1` (Tester rate-limit coverage + build fix), head `42a7dfc337`.
+Tree: `main` at `ca3c0e2b` (unchanged). `integration/phase-1` at `20aef486` (merge of [#453](https://github.com/iakash22/meetops-platform/pull/453); 6 ahead / 0 behind `main`). #453 brought rate-limit coverage (P9 #9 done) plus the OIDC-era lint/build/DB-test fixes.
 
 **Google OIDC sign-in — shipped to `main`.** Feature commit `f6c77fd855` (via `dev` merge `34c0d247`, docs `ca3c0e2b`). Web-only authorization-code + PKCE; button stays hidden until `GOOGLE_OAUTH_*` are set together. Separate from `GOOGLE_CALENDAR_*`. Mobile and desktop do not offer Google sign-in. MFA and enterprise SSO remain future work (ADR-021).
 
-**Hardening follow-up in progress** on `feat/security/google-oidc-hardening` (assigned to All Rounder Techy; not an open PR yet). Scope includes pre-registration takeover (N-1), verified-email / `hd` rules (N-2 / M-2), Google rate-limit ordering (N-3), audit/`auth_level` (N-4), JWKS single-flight (N-5), and related tests. Password policy values stay 8–128 with composition rules (Akash, 9 Nov).
+**Hardening follow-up in progress** on `feat/security/google-oidc-hardening` (assigned to All Rounder Techy; not an open PR yet). Finding IDs: **M-2**; **N-1**, **N-2**, **N-3**, **N-4**, **N-5**, **N-6**; **L-1**, **L-2**, **L-3**, **L-4**, **L-5** (L-2 and L-3 are Info). Scope includes pre-registration takeover (N-1), verified-email / `hd` / auto-link rules (N-2, M-2), Google rate-limit ordering (N-3), audit/`auth_level` (N-4), JWKS single-flight + refresh fallback (N-5), optional iat/state/body caps (N-6), soft-delete `google_sub` uniqueness (L-1), `azp` when `aud` is multi-valued (L-2 Info), JWKS refresh throttle (L-3 Info), separate HMAC key for the state cookie via HKDF (L-4), and the missing failure-path tests (L-5). Password policy values stay 8–128 with composition rules (Akash, 9 Nov).
 
 P1 estimate stays ~97% (Google web sign-in in; MFA/SSO and OIDC hardening still open). Other phase percentages unchanged from the 7 Nov snapshot below.
 

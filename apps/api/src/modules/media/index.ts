@@ -11,6 +11,7 @@ import { uploadRoutes } from './http/uploads.routes.js';
 import { RecordingSessionService } from './application/recording-session.service.js';
 import { recordingSessionRoutes } from './http/recording-sessions.routes.js';
 import { mediaRateLimit } from './http/rate-limit.js';
+import { routeLimiter } from '../../shared/rate-limits.js';
 import { MeetingConsentService } from './application/meeting-consent.service.js';
 import { meetingConsentRoutes } from './http/meeting-consent.routes.js';
 import { RecordingSessionNotFoundError } from './domain/recording-session.js';
@@ -80,6 +81,7 @@ export default async function mediaModule(app: FastifyInstance, opts: MediaPlugi
     caller,
     writeCaller,
     rateLimit,
+    routeLimits: routeLimiter(deps.rateLimiter, deps.routeRateLimits),
   });
   // Session routes have no org in the path: resolve it from the session's active organization.
   const activeCaller = async (request: FastifyRequest) => {
