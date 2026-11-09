@@ -286,6 +286,8 @@ model User {
   name          String?
   passwordHash  String?   @map("password_hash")
   emailVerified DateTime? @map("email_verified_at") @db.Timestamptz(3)
+  /// Google OIDC `sub`. Null for password-only accounts. Unique so one Google account maps to one user.
+  googleSub     String?   @unique @map("google_sub")
   createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt     DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
   deletedAt     DateTime? @map("deleted_at") @db.Timestamptz(3)

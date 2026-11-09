@@ -8,12 +8,13 @@ import {
   useRouter,
   type RouterHistory,
 } from '@tanstack/react-router';
-import { useQueryClient, type QueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
 import type { AuthSession, GetAuthSessionResponse } from '@meetops/contracts';
 import { AppShell } from '@/components/layout/app-shell';
 import { EmptyState, ErrorState } from '@/components/states/states';
 import { lazy, Suspense, useEffect } from 'react';
 import { AuthLayout } from '@/features/auth/auth-layout';
+import { GOOGLE_LOGIN_ERRORS, googleStartUrl, isGoogleLoginError } from '@/features/auth/google';
 import {
   applySessionToStore,
   ensureSession,
@@ -25,6 +26,7 @@ import { parseSearchPageSearch } from '@/features/search/api';
 import { useApi } from '@/lib/api/context';
 import type { ApiClient } from '@/lib/api/client';
 import { queryKeys } from '@/lib/api/queries';
+import { notify } from '@/lib/errors/notify';
 import { safeRedirect } from '@/lib/safe-redirect';
 import { parseSettingsSearch } from '@/features/settings/settings-search';
 import { parsePairSearch } from '@/features/extension/pairing';
@@ -127,6 +129,27 @@ type NextSearch = { next?: string };
 const validateNext = (search: Record<string, unknown>): NextSearch =>
   typeof search.next === 'string' ? { next: search.next } : {};
 
+type LoginSearch = NextSearch & { error?: keyof typeof GOOGLE_LOGIN_ERRORS };
+const validateLoginSearch = (search: Record<string, unknown>): LoginSearch => {
+  const next = validateNext(search);
+  const error =
+    typeof search.error === 'string' && isGoogleLoginError(search.error) ? search.error : undefined;
+  return error ? { ...next, error } : next;
+};
+
+const API_BASE = import.meta.env.VITE_API_URL ?? '/api';
+
+function useGoogleHref(next: string | undefined) {
+  const api = useApi();
+  const providers = useQuery({
+    queryKey: ['auth', 'providers'],
+    queryFn: () => api.auth.providers(),
+    staleTime: 60_000,
+    retry: false,
+  });
+  return providers.data?.google ? googleStartUrl(API_BASE, next) : undefined;
+}
+
 // ---- Auth (public) ----
 const authLayout = createRoute({
   getParentRoute: () => rootRoute,
@@ -157,12 +180,35 @@ function useCompleteSignIn() {
 const loginRoute = createRoute({
   getParentRoute: () => authLayout,
   path: '/login',
-  validateSearch: validateNext,
+  validateSearch: validateLoginSearch,
   component: function LoginPage() {
     const api = useApi();
-    const { next } = loginRoute.useSearch();
+    const router = useRouter();
+    const { next, error } = loginRoute.useSearch();
+    const googleHref = useGoogleHref(next);
     const complete = useCompleteSignIn();
-    return <LoginForm onSubmit={async (v) => complete(await api.auth.login(v), next)} />;
+    // Google failures come back as ?error=. Show that as a toast, then drop the param so a
+    // refresh does not repeat it. The timeout is cleared on cleanup so Strict Mode toasts once.
+    useEffect(() => {
+      if (!error) return;
+      const copy = GOOGLE_LOGIN_ERRORS[error];
+      const timer = window.setTimeout(() => {
+        notify.error(copy.title, copy.description);
+        void router.navigate({
+          to: '/login',
+          search: next ? { next } : {},
+          replace: true,
+        });
+      }, 0);
+      return () => window.clearTimeout(timer);
+    }, [error, next, router]);
+    return (
+      <LoginForm
+        next={next}
+        googleHref={googleHref}
+        onSubmit={async (v) => complete(await api.auth.login(v), next)}
+      />
+    );
   },
 });
 
@@ -173,9 +219,11 @@ const signupRoute = createRoute({
   component: function SignupPage() {
     const api = useApi();
     const { next } = signupRoute.useSearch();
+    const googleHref = useGoogleHref(next);
     return (
       <SignupForm
         next={next}
+        googleHref={googleHref}
         onSubmit={async ({ name, email, password }) => {
           await api.auth.signup({ name, email, password });
         }}

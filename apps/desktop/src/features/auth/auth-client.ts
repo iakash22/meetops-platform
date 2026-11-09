@@ -1,9 +1,11 @@
-import type {
-  ApiErrorCode,
-  ConflictReason,
-  GetAuthSessionResponse,
-  LoginRequest,
-  SignupRequest,
+import {
+  PASSWORD_MAX_LENGTH,
+  PASSWORD_MIN_LENGTH,
+  type ApiErrorCode,
+  type ConflictReason,
+  type GetAuthSessionResponse,
+  type LoginRequest,
+  type SignupRequest,
 } from '@meetops/contracts';
 
 /**
@@ -24,10 +26,10 @@ export class AuthError extends Error {
   }
 }
 
-/** Minimum password length for new accounts (contracts SignupRequest: minLength 12). */
-export const MIN_PASSWORD_LENGTH = 12;
+/** Minimum length for a new password (contracts SignupRequest). */
+export const MIN_PASSWORD_LENGTH = PASSWORD_MIN_LENGTH;
 /** Max password length (contracts SignupRequest / LoginRequest). */
-export const MAX_PASSWORD_LENGTH = 128;
+export const MAX_PASSWORD_LENGTH = PASSWORD_MAX_LENGTH;
 /** Max display name length (contracts SignupRequest.name). */
 export const MAX_NAME_LENGTH = 200;
 

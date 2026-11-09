@@ -1,16 +1,17 @@
-import { act, fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { CheckEmail, RESEND_COOLDOWN_SECONDS } from '@/features/auth/check-email';
 import { PasswordField, PasswordStrength, scorePassword } from '@/features/auth/password';
-import { renderApp, resetStores } from './fixtures/render';
+import { createMockApi, renderApp, resetStores } from './fixtures/render';
 
 describe('scorePassword', () => {
   it.each([
     ['', 0, 'Too short'],
-    ['a'.repeat(11), 1, 'Too short'],
-    ['aaaaaaaaaaaa', 2, 'Weak'],
-    ['correct-horse-battery', 3, 'Good'],
+    ['abcdefg', 1, 'Too short'],
+    ['abcdefgh', 2, 'Weak'],
+    ['correct-horse-battery', 2, 'Weak'],
+    ['abcdefg1!', 3, 'Good'],
     ['Correct-Horse-Battery-9', 4, 'Strong'],
   ])('%j → %i %s', (pw, score, label) => {
     expect(scorePassword(pw)).toEqual({ score, label });
@@ -79,8 +80,9 @@ describe('AuthLayout', () => {
   beforeEach(() => resetStores(false));
 
   it('signup: split screen with the rich brand panel, one h1 and one shimmer CTA', async () => {
-    renderApp('/signup');
+    const view = renderApp('/signup');
     await screen.findByRole('heading', { level: 1, name: 'Create your workspace' });
+    await waitFor(() => expect(view.api.auth.providers).toHaveBeenCalled());
     expect(screen.getAllByRole('heading', { level: 1 })).toHaveLength(1);
     const layout = screen.getByTestId('auth-layout');
     expect(layout.className).toContain('min-h-svh');
@@ -89,17 +91,48 @@ describe('AuthLayout', () => {
     expect(screen.getByTestId('mock-summary')).toBeInTheDocument();
     expect(layout.querySelectorAll('.shimmer, [class*="shimmer"]').length).toBeLessThanOrEqual(1);
     expect(screen.getByRole('button', { name: 'Create account' }).className).toMatch(/shimmer/);
-    // No SSO, testimonials, ratings, trials or security claims.
-    expect(layout).not.toHaveTextContent(/google|sso|trial|soc ?2|rating|★/i);
+    // Google stays hidden until the API says it is configured. No testimonials, ratings or trials.
+    expect(screen.queryByRole('link', { name: 'Continue with Google' })).not.toBeInTheDocument();
+    expect(layout).not.toHaveTextContent(/sso|trial|soc ?2|rating|★/i);
     expect(panel.querySelector('blockquote')).toBeNull();
   });
 
-  it('login: same shell, quieter panel (no mock summary)', async () => {
-    renderApp('/login');
+  it('login and signup show Continue with Google only when the API enables it', async () => {
+    const api = createMockApi({
+      auth: { providers: vi.fn().mockResolvedValue({ google: true }) },
+    });
+    const view = renderApp('/login?next=%2Fmeetings', api);
+    const link = await screen.findByRole('link', { name: 'Continue with Google' });
+    expect(link.getAttribute('href')).toContain('/auth/google/start');
+    expect(link.getAttribute('href')).toContain('next=%2Fmeetings');
+    expect(link.getAttribute('href')).not.toMatch(/secret|code_verifier|client_secret/i);
+    view.unmount();
+
+    renderApp('/signup', api);
+    expect(await screen.findByRole('link', { name: 'Continue with Google' })).toHaveAttribute(
+      'href',
+      expect.stringContaining('/auth/google/start'),
+    );
+  });
+
+  it('login: same shell, no mock summary, and sign-up keeps ?next=', async () => {
+    renderApp('/login?next=%2Fmeetings');
     await screen.findByRole('heading', { level: 1, name: 'Welcome back' });
-    expect(screen.getByRole('complementary', { name: 'About MeetOps AI' })).toBeInTheDocument();
+    const panel = screen.getByRole('complementary', { name: 'About MeetOps AI' });
+    expect(panel).toHaveTextContent('Capture meetings and get a searchable transcript.');
     expect(screen.queryByTestId('mock-summary')).not.toBeInTheDocument();
+    for (const name of ['Sign up', 'Create an account']) {
+      expect(screen.getByRole('link', { name }).getAttribute('href')).toContain('next=%2Fmeetings');
+    }
     expect(screen.getByRole('link', { name: 'Create an account' }).className).toMatch(/text-link/);
+  });
+
+  it('login shows a Google failure as a toast, not in the form', async () => {
+    renderApp('/login?error=google');
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent("Google sign-in didn't complete");
+    expect(alert).toHaveTextContent('Try again, or use your password.');
+    expect(screen.getByRole('heading', { level: 1, name: 'Welcome back' })).toBeInTheDocument();
   });
 
   it('email-link pages use the same shell', async () => {

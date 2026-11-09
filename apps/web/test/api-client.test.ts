@@ -621,7 +621,7 @@ describe('auth lifecycle endpoints', () => {
       .mockResolvedValue(jsonResponse({}));
     const api = createApiClient({ baseUrl: 'http://api', fetch: fetchMock });
     await expect(
-      api.auth.signup({ name: 'Ada', email: 'ada@example.com', password: 'long-enough-pass' }),
+      api.auth.signup({ name: 'Ada', email: 'ada@example.com', password: 'Long-enough-1' }),
     ).resolves.toEqual({ message: 'Check your email to continue.' });
     await api.request('POST', '/x', {});
     const calls = fetchMock.mock.calls as Call[];

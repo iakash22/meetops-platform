@@ -3,10 +3,32 @@ import { Id, IsoDateTime } from '../common.js';
 import { Membership, Organization, Role, User } from '../domain/org.js';
 
 const Email = Type.String({ format: 'email', maxLength: 320 });
-/** Minimum 12 characters (security review of PR #17). */
-const Password = Type.String({ minLength: 12, maxLength: 128 });
+
+/** New passwords (signup and reset). Login stays looser so an existing password still signs in. */
+export const PASSWORD_MIN_LENGTH = 8;
+export const PASSWORD_MAX_LENGTH = 128;
+export const PASSWORD_POLICY_MESSAGE =
+  'Use 8 or more characters with a letter, a number, and a symbol.';
+/**
+ * 8–128 characters, no newlines, with at least one letter, one digit, and one symbol
+ * (anything that is not a letter, digit, or space).
+ */
+export const PASSWORD_PATTERN = '^(?=.*[A-Za-z])(?=.*\\d)(?=.*[^A-Za-z0-9\\s]).{8,128}$';
+
+const passwordPattern = new RegExp(PASSWORD_PATTERN);
+
+/** True when a new password meets {@link PASSWORD_PATTERN}. */
+export function isAcceptablePassword(password: string): boolean {
+  return passwordPattern.test(password);
+}
+
+const Password = Type.String({
+  minLength: PASSWORD_MIN_LENGTH,
+  maxLength: PASSWORD_MAX_LENGTH,
+  pattern: PASSWORD_PATTERN,
+});
 /** Login accepts any non-empty password (max 128) so the policy is not revealed and legacy users are not locked out. */
-const LoginPassword = Type.String({ minLength: 1, maxLength: 128 });
+const LoginPassword = Type.String({ minLength: 1, maxLength: PASSWORD_MAX_LENGTH });
 const strict = { additionalProperties: false } as const;
 
 export const LoginRequest = Type.Object({ email: Email, password: LoginPassword }, strict);

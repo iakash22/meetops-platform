@@ -1,3 +1,4 @@
+import { PASSWORD_POLICY_MESSAGE } from '@meetops/contracts';
 import { useState, type ReactNode } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
@@ -158,7 +159,7 @@ export function ResetPasswordForm({
     formState: { errors, isSubmitting },
   } = useForm<ResetPasswordValues>({
     resolver: zodResolver(resetPasswordSchema),
-    mode: 'onTouched',
+    mode: 'onSubmit',
     shouldFocusError: true,
     defaultValues: { password: '', confirmPassword: '' },
   });
@@ -207,7 +208,7 @@ export function ResetPasswordForm({
               notify.success('Password changed', 'Log in with your new password.');
             } catch (err) {
               // A 400 with field details is the password policy; a bare 400 is the token.
-              if (applyFieldErrors(setFieldError, err, { password: 'Use 12 to 128 characters.' }))
+              if (applyFieldErrors(setFieldError, err, { password: PASSWORD_POLICY_MESSAGE }))
                 return;
               setError(err);
               if (!isStatus(err, 400)) toastError(err);
@@ -270,7 +271,7 @@ export function ResendVerificationForm({
     formState: { errors, isSubmitting },
   } = useForm<ResendVerificationValues>({
     resolver: zodResolver(resendVerificationSchema),
-    mode: 'onTouched',
+    mode: 'onSubmit',
     shouldFocusError: true,
     defaultValues: { email: defaultEmail ?? '' },
   });

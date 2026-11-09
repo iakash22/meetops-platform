@@ -1,11 +1,6 @@
-import {
-  AuthError,
-  MAX_NAME_LENGTH,
-  MAX_PASSWORD_LENGTH,
-  MIN_PASSWORD_LENGTH,
-  type AuthClient,
-  type DesktopSession,
-} from './auth-client';
+import { isAcceptablePassword } from '@meetops/contracts';
+
+import { AuthError, MAX_NAME_LENGTH, type AuthClient, type DesktopSession } from './auth-client';
 
 /** Emails ending with this domain are rejected by the mock, to exercise the error path. */
 export const MOCK_REJECT_DOMAIN = '@invalid.test';
@@ -71,8 +66,7 @@ export function createMockAuthClient({ delayMs = 300 }: { delayMs?: number } = {
         !name.trim() ||
         name.length > MAX_NAME_LENGTH ||
         !EMAIL_RE.test(normalized) ||
-        password.length < MIN_PASSWORD_LENGTH ||
-        password.length > MAX_PASSWORD_LENGTH
+        !isAcceptablePassword(password)
       ) {
         throw new AuthError('VALIDATION_FAILED', 'Check the highlighted fields.');
       }

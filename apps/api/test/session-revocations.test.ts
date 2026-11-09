@@ -226,7 +226,7 @@ describe('meetops:auth:revocations (published after the change is written)', () 
     drain();
     const token = app.token('reset@example.com', 'password_reset')!;
     expect(
-      (await anon.post('/auth/reset-password', { token, password: 'a-brand-new-password' }))
+      (await anon.post('/auth/reset-password', { token, password: 'a-brand-new-password-1' }))
         .statusCode,
     ).toBe(204);
     expect(drain()).toEqual([

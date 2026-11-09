@@ -14,32 +14,35 @@ Contracts come from `@meetops/contracts` (0.3.3 on `integration/phase-1`). See a
 
 "Session" means a valid session cookie. Every POST, PATCH and DELETE also passes the Origin and CSRF guard (below). Path params use `organizationId`, the canonical tenant key from ADR-010.
 
-| Method | Path                                                     | Auth           | Request                                      | Response                                                                                                                 |
-| ------ | -------------------------------------------------------- | -------------- | -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
-| GET    | `/health`                                                | Public         | None                                         | 200 `{ status: 'ok' }`                                                                                                   |
-| GET    | `/ready`                                                 | Public         | None                                         | 200 `{ status: 'ready' }`                                                                                                |
-| GET    | `/auth/csrf`                                             | Public         | None                                         | 200 `{ csrfToken }`; sets the CSRF cookie (and a pre-session cookie if there's no session)                               |
-| POST   | `/auth/signup`                                           | Public         | `{ name, email, password }` (12–128)         | 202 `{ message }`, same body whether or not the email exists; emails a verification link; no session                     |
-| POST   | `/auth/verify-email`                                     | Public         | `{ token }`                                  | 204; single-use token, 24-hour TTL                                                                                       |
-| POST   | `/auth/resend-verification`                              | Public         | `{ email }`                                  | 202 `{ message }` (enumeration-safe)                                                                                     |
-| POST   | `/auth/login`                                            | Public         | `{ email, password }`                        | 200 session response plus `csrfToken`; sets the session and CSRF cookies; 401 `AUTH_FAILED`; 429                         |
-| POST   | `/auth/forgot-password`                                  | Public         | `{ email }`                                  | 202 `{ message }` (enumeration-safe)                                                                                     |
-| POST   | `/auth/reset-password`                                   | Public         | `{ token, password }`                        | 204; single-use token, 30-minute TTL; revokes all of the user's sessions                                                 |
-| POST   | `/auth/logout`                                           | Session        | None                                         | 204; revokes the session and clears the cookie                                                                           |
-| POST   | `/auth/logout-all`                                       | Session        | None                                         | 204; revokes every session of the caller and clears the cookie                                                           |
-| GET    | `/auth/sessions`                                         | Session        | Cursor page query                            | 200 cursor page of `{ id, current, createdAt, lastSeenAt, expiresAt, ip, userAgent }`                                    |
-| DELETE | `/auth/sessions/:sessionId`                              | Session        | None                                         | 204; 404 for unknown sessions and other users' sessions; clears the cookie when it's the current session                 |
-| GET    | `/auth/session`                                          | Session        | None                                         | 200 session response; slides the idle timeout; 401                                                                       |
-| GET    | `/orgs`                                                  | Session        | Cursor page query                            | 200 cursor page of `{ organization, role }`                                                                              |
-| POST   | `/orgs`                                                  | Session        | `{ name }`                                   | 201 `{ organization, role }`; creator becomes owner; session rotates                                                     |
-| GET    | `/orgs/:organizationId`                                  | Session        | None                                         | 200 `{ organization, role }`; 404 for non-members                                                                        |
-| POST   | `/orgs/switch`                                           | Session        | `{ organizationId }`                         | 200 `{ organization, role }`; 404 for non-members; session rotates                                                       |
-| POST   | `/orgs/:organizationId/invitations`                      | Session + CASL | `{ email, role: admin \| member \| viewer }` | 201 `Invitation` (same response for any address); 409 if the address is already an active member                         |
-| POST   | `/orgs/:organizationId/invitations/:invitationId/revoke` | Session + CASL | None                                         | 200 `Invitation`; only pending invitations; cross-org 404                                                                |
-| POST   | `/invitations/accept`                                    | Session        | `{ token }`                                  | 200 `{ organization, role }`; needs a verified email (403); every invalid token is the same 404; 409 if already a member |
-| GET    | `/orgs/:organizationId/members`                          | Session        | Cursor page query                            | 200 cursor page of members; `user.email` only for owners and admins                                                      |
-| PATCH  | `/orgs/:organizationId/members/:userId`                  | Session + CASL | `{ role }`                                   | 200 `Membership`; 409 `LAST_OWNER`; revokes the target's sessions (your own role change rotates your session)            |
-| DELETE | `/orgs/:organizationId/members/:userId`                  | Session + CASL | None                                         | 204; anyone may leave; 409 `LAST_OWNER`; revokes the removed user's sessions                                             |
+| Method | Path                                                     | Auth           | Request                                                         | Response                                                                                                                 |
+| ------ | -------------------------------------------------------- | -------------- | --------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| GET    | `/health`                                                | Public         | None                                                            | 200 `{ status: 'ok' }`                                                                                                   |
+| GET    | `/ready`                                                 | Public         | None                                                            | 200 `{ status: 'ready' }`                                                                                                |
+| GET    | `/auth/csrf`                                             | Public         | None                                                            | 200 `{ csrfToken }`; sets the CSRF cookie (and a pre-session cookie if there's no session)                               |
+| POST   | `/auth/signup`                                           | Public         | `{ name, email, password }` (8–128, letter, number, and symbol) | 202 `{ message }`, same body whether or not the email exists; emails a verification link; no session                     |
+| POST   | `/auth/verify-email`                                     | Public         | `{ token }`                                                     | 204; single-use token, 24-hour TTL                                                                                       |
+| POST   | `/auth/resend-verification`                              | Public         | `{ email }`                                                     | 202 `{ message }` (enumeration-safe)                                                                                     |
+| POST   | `/auth/login`                                            | Public         | `{ email, password }` (password 1–128, no composition rules)    | 200 session response plus `csrfToken`; sets the session and CSRF cookies; 401 `AUTH_FAILED`; 429                         |
+| GET    | `/auth/providers`                                        | Public         | None                                                            | 200 `{ google: boolean }`. Booleans only; no client id or secret. `false` until all three `GOOGLE_OAUTH_*` vars are set  |
+| GET    | `/auth/google/start`                                     | Public         | `?next=` optional same-origin path                              | 302 to Google. Sets a 10-minute HttpOnly state cookie (PKCE verifier, nonce, state). 404 when Google sign-in is off      |
+| GET    | `/auth/google/callback`                                  | Public         | `code`, `state` from Google                                     | 302 to the web app with the session cookie, or to `/login?error=google` or `error=google_unverified`. 404 when off       |
+| POST   | `/auth/forgot-password`                                  | Public         | `{ email }`                                                     | 202 `{ message }` (enumeration-safe)                                                                                     |
+| POST   | `/auth/reset-password`                                   | Public         | `{ token, password }` (same 8–128 policy as signup)             | 204; single-use token, 30-minute TTL; revokes all of the user's sessions                                                 |
+| POST   | `/auth/logout`                                           | Session        | None                                                            | 204; revokes the session and clears the cookie                                                                           |
+| POST   | `/auth/logout-all`                                       | Session        | None                                                            | 204; revokes every session of the caller and clears the cookie                                                           |
+| GET    | `/auth/sessions`                                         | Session        | Cursor page query                                               | 200 cursor page of `{ id, current, createdAt, lastSeenAt, expiresAt, ip, userAgent }`                                    |
+| DELETE | `/auth/sessions/:sessionId`                              | Session        | None                                                            | 204; 404 for unknown sessions and other users' sessions; clears the cookie when it's the current session                 |
+| GET    | `/auth/session`                                          | Session        | None                                                            | 200 session response; slides the idle timeout; 401                                                                       |
+| GET    | `/orgs`                                                  | Session        | Cursor page query                                               | 200 cursor page of `{ organization, role }`                                                                              |
+| POST   | `/orgs`                                                  | Session        | `{ name }`                                                      | 201 `{ organization, role }`; creator becomes owner; session rotates                                                     |
+| GET    | `/orgs/:organizationId`                                  | Session        | None                                                            | 200 `{ organization, role }`; 404 for non-members                                                                        |
+| POST   | `/orgs/switch`                                           | Session        | `{ organizationId }`                                            | 200 `{ organization, role }`; 404 for non-members; session rotates                                                       |
+| POST   | `/orgs/:organizationId/invitations`                      | Session + CASL | `{ email, role: admin \| member \| viewer }`                    | 201 `Invitation` (same response for any address); 409 if the address is already an active member                         |
+| POST   | `/orgs/:organizationId/invitations/:invitationId/revoke` | Session + CASL | None                                                            | 200 `Invitation`; only pending invitations; cross-org 404                                                                |
+| POST   | `/invitations/accept`                                    | Session        | `{ token }`                                                     | 200 `{ organization, role }`; needs a verified email (403); every invalid token is the same 404; 409 if already a member |
+| GET    | `/orgs/:organizationId/members`                          | Session        | Cursor page query                                               | 200 cursor page of members; `user.email` only for owners and admins                                                      |
+| PATCH  | `/orgs/:organizationId/members/:userId`                  | Session + CASL | `{ role }`                                                      | 200 `Membership`; 409 `LAST_OWNER`; revokes the target's sessions (your own role change rotates your session)            |
+| DELETE | `/orgs/:organizationId/members/:userId`                  | Session + CASL | None                                                            | 204; anyone may leave; 409 `LAST_OWNER`; revokes the removed user's sessions                                             |
 
 CASL rules: owners can do anything. Admins can invite, revoke, and change or remove members and viewers (only to member or viewer). Everyone else gets 403.
 
@@ -47,15 +50,34 @@ Lists use cursor pages: query `{ cursor?, limit? }` (default 25, max 100) and re
 
 The session response (`GetAuthSessionResponse`) is `{ user, organizations, memberships?, activeOrganizationId | null, role | null, expiresAt? }`. `activeOrganizationId` and `role` are both null or both set, and the server derives them from the membership. DTOs never include hashes or tokens. Request schemas reject unknown properties. Swagger UI is served at `/docs` only when `NODE_ENV` is exactly `development` or `test`.
 
+Signup and reset passwords are 8–128 characters and must include a letter, a number, and a symbol (`Password` in `@meetops/contracts`). A space does not count as the symbol. Login uses a separate schema (1–128, no composition rules) so an existing password still signs in and the policy is not revealed on the login form.
+
+### Google sign-in (web)
+
+Full-page navigations, not JSON. Sign-up and log-in share one flow. The web app shows "Continue with Google" only when `GET /auth/providers` returns `{ google: true }`.
+
+The start route seals the PKCE verifier, nonce, and state into `meetops_oauth` (`__Host-meetops_oauth` outside development). The callback clears that cookie, exchanges the code, and checks the ID token. The authorization code, ID token, verifier, and client secret never appear in the redirect back to the app. Failures use a fixed code (`google` or `google_unverified`) and may keep a same-origin `next` path. Google's own error text is not forwarded.
+
+Linking (`users.google_sub`, unique, nullable):
+
+- Match the Google `sub` first. Email is not the identity.
+- If the email belongs to a verified MeetOps account with no Google subject, link it.
+- If that account's email is not verified, refuse. The browser lands on `/login?error=google_unverified`.
+- If nothing matches, create the account with the email already verified and no usable password. Password login cannot succeed until a password is set.
+- A Google account whose email is not verified never creates or links a user.
+
+Rate limit: 20 requests per minute per IP, shared by start and callback. A limit failure redirects to `/login?error=google`.
+
 The extension pairing endpoints (`/auth/extension/pair`, `/auth/extension-token`, `/auth/extension/refresh`, `/auth/extension/revoke`) are defined in contracts (`EXTENSION_AUTH_PATHS`, ADR-005) but `apps/api` doesn't implement them yet.
 
 ## Cookies
 
-| Cookie            | Production                  | `NODE_ENV=development` | Flags                                                   |
-| ----------------- | --------------------------- | ---------------------- | ------------------------------------------------------- |
-| Session           | `__Host-meetops_sid`        | `meetops_sid`          | HttpOnly, SameSite=Lax, Path=/, Max-Age 12 h, no Domain |
-| CSRF              | `__Host-meetops_csrf`       | `meetops_csrf`         | Readable by JS, SameSite=Lax, Path=/                    |
-| Pre-session nonce | `__Host-meetops_presession` | `meetops_presession`   | HttpOnly, SameSite=Lax, Path=/                          |
+| Cookie             | Production                  | `NODE_ENV=development` | Flags                                                                   |
+| ------------------ | --------------------------- | ---------------------- | ----------------------------------------------------------------------- |
+| Session            | `__Host-meetops_sid`        | `meetops_sid`          | HttpOnly, SameSite=Lax, Path=/, Max-Age 12 h, no Domain                 |
+| CSRF               | `__Host-meetops_csrf`       | `meetops_csrf`         | Readable by JS, SameSite=Lax, Path=/                                    |
+| Pre-session nonce  | `__Host-meetops_presession` | `meetops_presession`   | HttpOnly, SameSite=Lax, Path=/                                          |
+| Google OAuth state | `__Host-meetops_oauth`      | `meetops_oauth`        | HttpOnly, SameSite=Lax, Path=/, Max-Age 10 min; cleared on the callback |
 
 - Every environment except `development` uses the `__Host-` prefix plus `Secure`, and that's asserted at startup. Development over plain http drops both, because browsers refuse them on `http://localhost`.
 - Session tokens are opaque 256-bit values stored as SHA-256 hashes.
@@ -70,19 +92,22 @@ The extension pairing endpoints (`/auth/extension/pair`, `/auth/extension-token`
 
 ## Configuration
 
-| Variable        | Notes                                                                                                                   |
-| --------------- | ----------------------------------------------------------------------------------------------------------------------- |
-| `NODE_ENV`      | Only exactly `development` or `test` relax the checks                                                                   |
-| `WEB_ORIGINS`   | Comma-separated allowlist; required in production; dev default `http://localhost:5173,http://localhost:3000`            |
-| `CSRF_SECRET`   | HMAC key, at least 32 bytes; required in production; random per process in dev and test                                 |
-| `TRUST_PROXY`   | Comma list of proxy IPs/CIDRs (hop count dev/test only, fails in production); `true` and `/0` are rejected; default off |
-| `PORT` / `HOST` | Default `3000` / `0.0.0.0`                                                                                              |
+| Variable                                                                            | Notes                                                                                                                                                                                                                                                                                                                                    |
+| ----------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `NODE_ENV`                                                                          | Only exactly `development` or `test` relax the checks                                                                                                                                                                                                                                                                                    |
+| `WEB_ORIGINS`                                                                       | Comma-separated allowlist; required in production; dev default `http://localhost:5173,http://localhost:3000`                                                                                                                                                                                                                             |
+| `CSRF_SECRET`                                                                       | HMAC key, at least 32 bytes; required in production; random per process in dev and test                                                                                                                                                                                                                                                  |
+| `TRUST_PROXY`                                                                       | Comma list of proxy IPs/CIDRs (hop count dev/test only, fails in production); `true` and `/0` are rejected; default off                                                                                                                                                                                                                  |
+| `PORT` / `HOST`                                                                     | Default `3000` / `0.0.0.0`                                                                                                                                                                                                                                                                                                               |
+| `WEB_BASE_URL`                                                                      | Browser origin for email links and the redirect after Google sign-in. Its origin must be in `WEB_ORIGINS`                                                                                                                                                                                                                                |
+| `GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET`, `GOOGLE_OAUTH_REDIRECT_URI` | Set all three or none. The redirect URI is absolute, has no query or fragment, and its path ends with `/auth/google/callback`. Production requires `https`. Development may use `http://localhost`. With the Vite `/api` proxy the browser hits `http://localhost:5173/api/auth/google/callback`. This client is not `GOOGLE_CALENDAR_*` |
 
 ## Rate limits and lockout
 
 | Action              | Limit                                                         |
 | ------------------- | ------------------------------------------------------------- |
 | Login               | 20/min per IP; 15-minute lock after 10 failures in 15 minutes |
+| Google sign-in      | 20/min per IP (start and callback share the budget)           |
 | Signup              | 5/h per IP, 3/h per email                                     |
 | Reset request       | 5/h per IP, 3/h per email                                     |
 | Reset submit        | 10/h per IP                                                   |

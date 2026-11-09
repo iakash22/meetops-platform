@@ -29,7 +29,7 @@ export const Field = forwardRef<HTMLInputElement, FieldProps>(function Field(
   const hintId = `${inputId}-hint`;
   const describedBy = [hint ? hintId : null, error ? errorId : null].filter(Boolean).join(' ');
   return (
-    <div className="grid gap-1.5">
+    <div className="grid gap-2.5">
       <div className="flex items-center justify-between gap-2">
         <Label htmlFor={inputId}>{label}</Label>
         {labelAside}

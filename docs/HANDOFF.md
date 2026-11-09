@@ -2,6 +2,12 @@
 
 Written 31 Oct 2026 (IST). Read this first; it assumes no prior context. Owner: **Akash** (GitHub `iakash22`).
 
+## Update — 7 Nov 2026
+
+`main` (`34c0d247`) includes web Google sign-in and the signup/reset password policy (8–128 characters, with a letter, a number, and a symbol). Current phase percentages are in [PHASE_STATUS.md](PHASE_STATUS.md). The percentages in §2 below are the 31 Oct snapshot.
+
+Google **login** code is in. It stays hidden until `GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET`, and `GOOGLE_OAUTH_REDIRECT_URI` are set together. Google **Calendar** still needs its own client (`GOOGLE_CALENDAR_*`). MFA and enterprise SSO are not built.
+
 ## 1. Repo and branches
 
 - Repo: `iakash22/meetops-platform` (pnpm + turbo monorepo: `apps/api`, `apps/web`, `apps/worker`, `apps/extension` (wxt), desktop (Tauri/Rust), mobile (Expo/React Native), `packages/*` incl. `contracts`, `integrations`, `notifications`, `storage`).
@@ -36,7 +42,7 @@ Merged 31 Oct (#305–#317): extension real meeting API + held recordings (#305,
 
 ## 5. Blocked on Akash
 
-1. Google OAuth client (calendar + login).
+1. Google Calendar OAuth client (`GOOGLE_CALENDAR_*`). Web login OAuth is implemented and uses `GOOGLE_OAUTH_*`, a different client.
 2. Install the `meetops-dev` GitHub App on a throwaway repo for E2E.
 3. Gemini API key for P3.
 4. Real bundle ids (replace `ai.meetops.desktop.todo-owner`, `com.example.meetops`).

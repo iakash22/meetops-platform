@@ -80,21 +80,23 @@ describe('/reset-password', () => {
     await userEvent.type(await screen.findByLabelText('New password'), 'short');
     await userEvent.type(screen.getByLabelText('Confirm new password'), 'other');
     await userEvent.click(screen.getByRole('button', { name: 'Set new password' }));
-    expect(await screen.findByText('Password must be at least 12 characters')).toBeInTheDocument();
+    expect(
+      await screen.findByText('Use 8 or more characters with a letter, a number, and a symbol.'),
+    ).toBeInTheDocument();
     expect(screen.getByText('Passwords do not match')).toBeInTheDocument();
     expect(api.auth.resetPassword).not.toHaveBeenCalled();
 
     await userEvent.clear(screen.getByLabelText('New password'));
-    await userEvent.type(screen.getByLabelText('New password'), 'long-enough-pass');
+    await userEvent.type(screen.getByLabelText('New password'), 'Long-enough-1');
     await userEvent.clear(screen.getByLabelText('Confirm new password'));
-    await userEvent.type(screen.getByLabelText('Confirm new password'), 'long-enough-pass');
+    await userEvent.type(screen.getByLabelText('Confirm new password'), 'Long-enough-1');
     await userEvent.click(screen.getByRole('button', { name: 'Set new password' }));
 
     expect(await screen.findByText(/signed out on every device/)).toBeInTheDocument();
     expect(screen.getByText('Password changed')).toBeInTheDocument();
     expect(api.auth.resetPassword).toHaveBeenCalledWith({
       token: TOKEN,
-      password: 'long-enough-pass',
+      password: 'Long-enough-1',
     });
     expect(queryClient.getQueryData(['session'])).toBeNull();
     expect(useOrgStore.getState().currentOrganizationId).toBeNull();
@@ -107,8 +109,8 @@ describe('/reset-password', () => {
   it('explains an invalid or expired link (400) and links to forgot-password', async () => {
     const api = createMockApi({ auth: { resetPassword: vi.fn().mockRejectedValue(badToken()) } });
     renderApp(`/reset-password?token=${TOKEN}`, api);
-    await userEvent.type(await screen.findByLabelText('New password'), 'long-enough-pass');
-    await userEvent.type(screen.getByLabelText('Confirm new password'), 'long-enough-pass');
+    await userEvent.type(await screen.findByLabelText('New password'), 'Long-enough-1');
+    await userEvent.type(screen.getByLabelText('Confirm new password'), 'Long-enough-1');
     await userEvent.click(screen.getByRole('button', { name: 'Set new password' }));
     expect(await screen.findByTestId('link-problem')).toHaveTextContent(/invalid or has expired/);
     expect(screen.getByRole('link', { name: 'Request a new reset link' })).toHaveAttribute(

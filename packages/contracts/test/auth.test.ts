@@ -13,7 +13,7 @@ import {
 } from '../src/index.js';
 
 const now = '2026-10-21T17:00:00.000Z';
-const pw = 'correct-horse-battery';
+const pw = 'correct-horse-battery-1';
 const session = {
   user: {
     id: 'e4774cdd-a079-4f86-814e-8b9140bb6db4',
@@ -37,13 +37,25 @@ const session = {
 };
 
 describe('auth requests', () => {
-  it('login accepts any non-empty password up to 128; signup enforces 12..128', () => {
+  it('login accepts any non-empty password up to 128; signup requires 8+ with a letter, number, and symbol', () => {
     expect(Value.Check(LoginRequest, { email: 'a@b.co', password: pw })).toBe(true);
     expect(Value.Check(LoginRequest, { email: 'a@b.co', password: 'elevenchars' })).toBe(true);
     expect(Value.Check(LoginRequest, { email: 'a@b.co', password: '' })).toBe(false);
-    expect(
-      Value.Check(SignupRequest, { name: 'A', email: 'a@b.co', password: 'elevenchars' }),
-    ).toBe(false);
+    expect(Value.Check(SignupRequest, { name: 'A', email: 'a@b.co', password: 'Abcdef1!' })).toBe(
+      true,
+    );
+    expect(Value.Check(SignupRequest, { name: 'A', email: 'a@b.co', password: 'Abcde1!' })).toBe(
+      false,
+    );
+    expect(Value.Check(SignupRequest, { name: 'A', email: 'a@b.co', password: 'abcdefgh' })).toBe(
+      false,
+    );
+    expect(Value.Check(SignupRequest, { name: 'A', email: 'a@b.co', password: 'Abcdefg1' })).toBe(
+      false,
+    );
+    expect(Value.Check(SignupRequest, { name: 'A', email: 'a@b.co', password: 'Abcdefg!' })).toBe(
+      false,
+    );
     expect(Value.Check(LoginRequest, { email: 'a@b.co', password: 'x'.repeat(129) })).toBe(false);
     expect(Value.Check(LoginRequest, { email: 'nope', password: pw })).toBe(false);
   });

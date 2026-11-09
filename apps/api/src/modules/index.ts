@@ -27,6 +27,12 @@ import {
   type EmailService,
 } from '@meetops/notifications';
 import { AuthService } from './auth/application/auth.service.js';
+import {
+  assertGoogleWebOrigin,
+  readGoogleOAuthConfig,
+  type GoogleOAuthConfig,
+} from './auth/application/google-oidc.js';
+import type { GoogleOAuthClient } from './auth/application/google-oauth.js';
 import { authRoutes } from './auth/http/auth.plugin.js';
 import { randomBytes } from 'node:crypto';
 import {
@@ -166,6 +172,11 @@ export interface ModuleDeps {
   ownedMailQueue?: { close(): Promise<void> };
   audit: AuditLog;
   webBaseUrl: string;
+  /**
+   * Google OIDC sign-in. Null/omitted when the three GOOGLE_OAUTH_* variables are unset.
+   * Tests inject a fake client so the token endpoint is never called.
+   */
+  googleOAuth?: { config: GoogleOAuthConfig; client?: GoogleOAuthClient } | null;
   clock: Clock;
   ids: IdGenerator;
   sessionPolicy: SessionPolicy;
@@ -508,6 +519,17 @@ export class MissingProductionDependencyError extends Error {
  * NODE_ENV=test) the rate limiter and lockout are Redis-backed. Anything else falls back to
  * in-memory, which only development/test accept. Injected overrides always win.
  */
+function googleOAuthDep(
+  env: NodeJS.ProcessEnv,
+  nodeEnv: string | undefined,
+  allowedOrigins: string[],
+): { googleOAuth: { config: GoogleOAuthConfig } } | { googleOAuth?: undefined } {
+  const config = readGoogleOAuthConfig(env, nodeEnv);
+  if (!config) return {};
+  assertGoogleWebOrigin(env.WEB_BASE_URL ?? 'http://localhost:5173', allowedOrigins);
+  return { googleOAuth: { config } };
+}
+
 export function defaultModuleDeps(
   overrides: Partial<ModuleDeps> = {},
   env: ModuleEnv = moduleEnvFromProcess(),
@@ -660,6 +682,7 @@ export function defaultModuleDeps(
     // Placeholder replaced below once the TTLs (which the templates display) are final.
     mailTransport: injectedMail ?? { send: async () => {} },
     webBaseUrl: process.env.WEB_BASE_URL ?? 'http://localhost:5173',
+    ...googleOAuthDep(process.env, env.nodeEnv, allowedOrigins),
     ids: uuidGenerator,
     invitationTtlMs: 7 * DAY,
     passwordResetTtlMs: 30 * MIN,
@@ -814,7 +837,13 @@ export async function registerModules(app: FastifyInstance, deps: ModuleDeps) {
   });
   // ADR-005 A1.3.1: meetings/resolve and recording/upload routes also accept the extension bearer token.
   const extensionBearer = makeExtensionBearerGuard(sessionVerifier, deps.security.cookieName);
-  await app.register(authRoutes, { auth, organizations, security: deps.security });
+  await app.register(authRoutes, {
+    auth,
+    organizations,
+    security: deps.security,
+    webBaseUrl: deps.webBaseUrl,
+    google: deps.googleOAuth ?? null,
+  });
   await app.register(organizationRoutes, { auth, organizations, security: deps.security });
   await app.register(extensionAuthRoutes, { auth, extensionAuth, security: deps.security });
   if (desktopAuth)

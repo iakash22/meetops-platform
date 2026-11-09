@@ -28,6 +28,8 @@ export interface HttpSecurityConfig {
   csrfCookieName: string;
   /** HttpOnly random nonce that binds CSRF tokens issued before a session exists. */
   preSessionCookieName: string;
+  /** HttpOnly, SameSite=Lax PKCE/state cookie for the Google redirect (10 minutes). */
+  oauthStateCookieName: string;
   cookieSecure: boolean;
   allowedOrigins: string[];
   sessionPolicy: SessionPolicy;
@@ -47,13 +49,19 @@ export function cookieConfig(nodeEnv: string | undefined) {
     cookieName: `${p}meetops_sid`,
     csrfCookieName: `${p}meetops_csrf`,
     preSessionCookieName: `${p}meetops_presession`,
+    oauthStateCookieName: `${p}meetops_oauth`,
     cookieSecure: !dev,
   };
 }
 
 /** Production must use __Host- cookies with Secure; throws otherwise. */
 export function assertProductionCookies(cfg: HttpSecurityConfig) {
-  const names = [cfg.cookieName, cfg.csrfCookieName, cfg.preSessionCookieName];
+  const names = [
+    cfg.cookieName,
+    cfg.csrfCookieName,
+    cfg.preSessionCookieName,
+    cfg.oauthStateCookieName,
+  ];
   if (!cfg.cookieSecure || names.some((n) => !n.startsWith('__Host-'))) {
     throw new Error('Production cookies must use the __Host- prefix and Secure');
   }

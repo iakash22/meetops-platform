@@ -239,6 +239,8 @@ export type ApiClient = {
     verifyEmail: (body: VerifyEmailRequest) => Promise<void>;
     /** POST /auth/resend-verification: always 202 (enumeration-safe). */
     resendVerification: (body: ForgotPasswordRequest) => Promise<void>;
+    /** GET /auth/providers. `{ google: true }` only when the API has Google sign-in configured. */
+    providers: () => Promise<{ google: boolean }>;
     /** POST /auth/logout (204): revokes this session and clears the cookie. */
     logout: () => Promise<void>;
     /** POST /auth/logout-all (204): revokes every session of the caller, this one included. */
@@ -537,6 +539,7 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
       resendVerification: async (body) => {
         await request('POST', '/auth/resend-verification', body);
       },
+      providers: () => request<{ google: boolean }>('GET', '/auth/providers'),
       logout: async () => {
         try {
           await request('POST', '/auth/logout');

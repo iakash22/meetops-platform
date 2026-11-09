@@ -1,13 +1,18 @@
+import {
+  isAcceptablePassword,
+  PASSWORD_MIN_LENGTH,
+  PASSWORD_POLICY_MESSAGE,
+} from '@meetops/contracts';
 import { useState, type FormEvent } from 'react';
 
 export type PasswordStrength = 'too-short' | 'weak' | 'fair' | 'strong';
 
-/** Advisory meter (docs/references.md section 5); only length 12..128 is enforced. */
-export function passwordStrength(password: string, min = 12): PasswordStrength {
-  if (password.length < min) return 'too-short';
-  const classes = [/[a-z]/, /[A-Z]/, /\d/, /[^A-Za-z0-9]/].filter((r) => r.test(password)).length;
-  const score = classes + (password.length >= 16 ? 1 : 0) + (password.length >= 20 ? 1 : 0);
-  return score >= 4 ? 'strong' : score >= 2 ? 'fair' : 'weak';
+/** Advisory meter. The enforced rule is the contracts password policy. */
+export function passwordStrength(password: string): PasswordStrength {
+  if (password.length < PASSWORD_MIN_LENGTH) return 'too-short';
+  if (!isAcceptablePassword(password)) return 'weak';
+  const mixedCase = /[a-z]/.test(password) && /[A-Z]/.test(password);
+  return mixedCase && password.length >= 12 ? 'strong' : 'fair';
 }
 
 const STRENGTH: Record<PasswordStrength, { label: string; bars: number; bar: string }> = {
@@ -24,12 +29,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Toast } from '@/components/ui/toast';
 import { cn } from '@/lib/utils';
-import {
-  AuthError,
-  MAX_NAME_LENGTH,
-  MAX_PASSWORD_LENGTH,
-  MIN_PASSWORD_LENGTH,
-} from './auth-client';
+import { AuthError, MAX_NAME_LENGTH, MAX_PASSWORD_LENGTH } from './auth-client';
 import { AuthLayout, AuthSwitch, FieldError } from './auth-layout';
 import { useSession } from './session';
 
@@ -41,7 +41,7 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 export const SIGN_UP_FOOTER = 'Preview build: sign-up is mocked and no server is contacted.';
 
-/** Client-side checks that mirror contracts SignupRequest (name 1-200, email, password 12-128). */
+/** Client-side checks that mirror contracts SignupRequest. */
 export function validateSignUp(values: Record<Field, string>): FieldErrors {
   const errors: FieldErrors = {};
   if (!values.name.trim()) errors.name = 'Enter your name.';
@@ -50,10 +50,9 @@ export function validateSignUp(values: Record<Field, string>): FieldErrors {
   if (!values.email.trim()) errors.email = 'Enter your email.';
   else if (!EMAIL_RE.test(values.email.trim())) errors.email = 'Enter a valid email address.';
   if (!values.password) errors.password = 'Create a password.';
-  else if (values.password.length < MIN_PASSWORD_LENGTH)
-    errors.password = `Use at least ${MIN_PASSWORD_LENGTH} characters.`;
   else if (values.password.length > MAX_PASSWORD_LENGTH)
     errors.password = `Use at most ${MAX_PASSWORD_LENGTH} characters.`;
+  else if (!isAcceptablePassword(values.password)) errors.password = PASSWORD_POLICY_MESSAGE;
   return errors;
 }
 
@@ -134,9 +133,9 @@ export function SignUpScreen({ onSignIn }: { onSignIn: () => void }) {
 
   const describedBy = (field: Field, extra?: string) =>
     [errors[field] ? `${field}-error` : null, extra].filter(Boolean).join(' ') || undefined;
-  const longEnough = values.password.length >= MIN_PASSWORD_LENGTH;
+  const longEnough = isAcceptablePassword(values.password);
   const passwordType = showPassword ? 'text' : 'password';
-  const strength = passwordStrength(values.password, MIN_PASSWORD_LENGTH);
+  const strength = passwordStrength(values.password);
 
   return (
     <AuthLayout footer={SIGN_UP_FOOTER}>
@@ -219,11 +218,8 @@ export function SignUpScreen({ onSignIn }: { onSignIn: () => void }) {
                   className={cn('size-3.5', longEnough ? 'opacity-100' : 'opacity-40')}
                   aria-hidden
                 />
-                {MIN_PASSWORD_LENGTH}+ characters
+                8+ characters, with a letter, number, and symbol
                 <span className="sr-only">{longEnough ? '(met)' : '(not met yet)'}</span>
-                <span className="ml-auto tabular-nums" aria-hidden>
-                  {Math.min(values.password.length, MIN_PASSWORD_LENGTH)}/{MIN_PASSWORD_LENGTH}
-                </span>
               </p>
               <div
                 className="flex items-center gap-1.5"

@@ -13,7 +13,7 @@ describe('auth schemas', () => {
     expect(loginSchema.safeParse({ email: 'a@b.co', password: 'x' }).success).toBe(true);
   });
   it('signup has no confirm-password field', () => {
-    const r = signupSchema.safeParse({ name: 'A', email: 'a@b.co', password: '123456789012' });
+    const r = signupSchema.safeParse({ name: 'A', email: 'a@b.co', password: 'Abcdef1!' });
     expect(r.success).toBe(true);
   });
   it('validates forgot password email', () => {
@@ -125,16 +125,18 @@ describe('auth forms', () => {
     await userEvent.type(screen.getByLabelText('Work email'), 'ada@example.com');
     await userEvent.type(screen.getByLabelText('Password'), 'short');
     await userEvent.click(screen.getByRole('button', { name: 'Create account' }));
-    expect(await screen.findByText('Password must be at least 12 characters')).toBeInTheDocument();
+    expect(
+      await screen.findByText('Use 8 or more characters with a letter, a number, and a symbol.'),
+    ).toBeInTheDocument();
 
     await userEvent.clear(screen.getByLabelText('Password'));
-    await userEvent.type(screen.getByLabelText('Password'), 'long-enough-pass');
+    await userEvent.type(screen.getByLabelText('Password'), 'Long-enough-1');
     await userEvent.click(screen.getByRole('button', { name: 'Create account' }));
     await waitFor(() =>
       expect(api.auth.signup).toHaveBeenCalledWith({
         name: 'Ada',
         email: 'ada@example.com',
-        password: 'long-enough-pass',
+        password: 'Long-enough-1',
       }),
     );
     // 202 { message }: no session — show "check your inbox", do not sign in.
@@ -158,7 +160,7 @@ describe('auth forms', () => {
     renderApp('/signup');
     await userEvent.type(await screen.findByLabelText('Full name'), 'Ada');
     await userEvent.type(screen.getByLabelText('Work email'), 'ada@example.com');
-    await userEvent.type(screen.getByLabelText('Password'), 'long-enough-pass');
+    await userEvent.type(screen.getByLabelText('Password'), 'Long-enough-1');
     await userEvent.click(screen.getByRole('button', { name: 'Create account' }));
     await userEvent.click(await screen.findByRole('button', { name: 'Use a different email' }));
     expect(screen.getByLabelText('Full name')).toHaveValue('Ada');
@@ -169,7 +171,7 @@ describe('auth forms', () => {
     renderApp('/signup?next=%2Fmeetings');
     await userEvent.type(await screen.findByLabelText('Full name'), 'Ada');
     await userEvent.type(screen.getByLabelText('Work email'), 'ada@example.com');
-    await userEvent.type(screen.getByLabelText('Password'), 'long-enough-pass');
+    await userEvent.type(screen.getByLabelText('Password'), 'Long-enough-1');
     await userEvent.click(screen.getByRole('button', { name: 'Create account' }));
     await screen.findByRole('heading', { name: 'Check your inbox' });
     expect(screen.getByRole('link', { name: 'Log in' })).toHaveAttribute(
@@ -195,7 +197,7 @@ describe('auth forms', () => {
     renderApp('/signup', api);
     await userEvent.type(await screen.findByLabelText('Full name'), 'Ada');
     await userEvent.type(screen.getByLabelText('Work email'), 'ada@example.com');
-    await userEvent.type(screen.getByLabelText('Password'), 'long-enough-pass');
+    await userEvent.type(screen.getByLabelText('Password'), 'Long-enough-1');
     await userEvent.click(screen.getByRole('button', { name: 'Create account' }));
     const email = screen.getByLabelText('Work email');
     await waitFor(() => expect(email).toHaveAttribute('aria-invalid', 'true'));
@@ -212,7 +214,7 @@ describe('auth forms', () => {
     renderApp('/signup', api);
     await userEvent.type(await screen.findByLabelText('Full name'), 'Ada');
     await userEvent.type(screen.getByLabelText('Work email'), 'ada@example.com');
-    await userEvent.type(screen.getByLabelText('Password'), 'long-enough-pass');
+    await userEvent.type(screen.getByLabelText('Password'), 'Long-enough-1');
     await userEvent.click(screen.getByRole('button', { name: 'Create account' }));
     const alert = await screen.findByRole('alert');
     expect(alert).toHaveTextContent('Too many attempts');
@@ -229,7 +231,7 @@ describe('auth forms', () => {
     renderApp('/signup', api);
     await userEvent.type(await screen.findByLabelText('Full name'), 'Ada');
     await userEvent.type(screen.getByLabelText('Work email'), 'ada@example.com');
-    await userEvent.type(screen.getByLabelText('Password'), 'long-enough-pass');
+    await userEvent.type(screen.getByLabelText('Password'), 'Long-enough-1');
     await userEvent.click(screen.getByRole('button', { name: 'Create account' }));
     expect(await screen.findByRole('alert')).toHaveTextContent('Session expired, please try again');
   });
@@ -265,13 +267,16 @@ describe('password rules', () => {
     expect(loginSchema.safeParse({ email: 'a@b.co', password: 'x' }).success).toBe(true);
     expect(loginSchema.safeParse({ email: 'a@b.co', password: '' }).success).toBe(false);
   });
-  it('signup requires 12 to 128 characters', () => {
+  it('signup requires 8 or more characters with a letter, number, and symbol', () => {
     const base = { name: 'A', email: 'a@b.co' };
     const pw = (p: string) => signupSchema.safeParse({ ...base, password: p }).success;
-    expect(pw('a'.repeat(11))).toBe(false);
-    expect(pw('a'.repeat(12))).toBe(true);
-    expect(pw('a'.repeat(128))).toBe(true);
-    expect(pw('a'.repeat(129))).toBe(false);
+    expect(pw('Abcde1!')).toBe(false);
+    expect(pw('abcdefgh')).toBe(false);
+    expect(pw('Abcdefg1')).toBe(false);
+    expect(pw('Abcdefg!')).toBe(false);
+    expect(pw('Abcdef1!')).toBe(true);
+    expect(pw(`Ab1!${'a'.repeat(124)}`)).toBe(true);
+    expect(pw(`Ab1!${'a'.repeat(125)}`)).toBe(false);
   });
 });
 

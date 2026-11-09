@@ -12,7 +12,14 @@ import {
   type GeoIpProvider,
 } from '../../../shared/geoip/provider.js';
 import type { UserRepository } from '../../users/domain/user.repository.js';
-import { normalizeEmail, toPublicUser, type PublicUser } from '../../users/domain/user.js';
+import { DuplicateEmailError } from '../../users/domain/errors.js';
+import {
+  normalizeEmail,
+  toPublicUser,
+  type PublicUser,
+  type User,
+} from '../../users/domain/user.js';
+import type { GoogleIdentity } from './google-oidc.js';
 import type { Clock, IdGenerator } from '../../../shared/ports.js';
 import { DomainError } from '../../../shared/domain-error.js';
 import type { LoginLockout, PasswordHasher, RateLimiter, TokenService } from '../domain/ports.js';
@@ -87,10 +94,35 @@ export interface SessionResult {
   token: string;
 }
 
+export type GoogleSignInOutcome =
+  { kind: 'session'; result: SessionResult } | { kind: 'unverified_local' } | { kind: 'rejected' };
+
+function googleEmail(email: string): string | null {
+  const normalized = normalizeEmail(email);
+  if (normalized.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalized)) return null;
+  return normalized;
+}
+
+function googleSub(sub: string): string | null {
+  return /^[A-Za-z0-9_-]{1,255}$/.test(sub) ? sub : null;
+}
+
+function googleName(name: string | null): string | null {
+  if (!name) return null;
+  let cleaned = '';
+  for (let i = 0; i < name.length; i++) {
+    const code = name.charCodeAt(i);
+    if (code > 0x1f && code !== 0x7f) cleaned += name[i];
+  }
+  cleaned = cleaned.trim().slice(0, 200);
+  return cleaned.length > 0 ? cleaned : null;
+}
+
 const HOUR = 60 * 60 * 1000;
 const MIN = 60 * 1000;
 export const AUTH_LIMITS = {
   loginPerIp: { limit: 20, windowMs: MIN },
+  googlePerIp: { limit: 20, windowMs: MIN },
   signupPerIp: { limit: 5, windowMs: HOUR },
   signupPerEmail: { limit: 3, windowMs: HOUR },
   resetRequestPerIp: { limit: 5, windowMs: HOUR },
@@ -230,7 +262,9 @@ export class AuthService {
     if (lock.locked) throw new RateLimitedError(lock.retryAfterMs);
 
     const user = await this.d.users.findByEmail(email);
-    const ok = user
+    // Google-only accounts store no password. Verify a dummy hash so that case is not faster than
+    // an unknown email.
+    const ok = user?.passwordHash
       ? await this.d.hasher.verify(user.passwordHash, input.password)
       : (await this.d.hasher.verify(await this.getDummyHash(), input.password), false);
     if (!user || !ok) {
@@ -280,6 +314,153 @@ export class AuthService {
       meta,
     );
     return r;
+  }
+
+  /** Shared by the authorize redirect and the callback so a client cannot double the budget. */
+  async enforceGoogleRateLimit(ip: string | null) {
+    await this.limit(`google:ip:${ip ?? 'unknown'}`, AUTH_LIMITS.googlePerIp);
+  }
+
+  /**
+   * Sign-in or sign-up from a verified Google ID token.
+   *
+   * Linking rules:
+   * - Match `sub` first. Email is not the identity.
+   * - If the email already belongs to a verified MeetOps account with no Google subject, link it.
+   * - If that account's email is not verified, refuse. Linking would hand the victim's Google
+   *   login to whoever registered the address first.
+   * - If nothing matches, create the account with the email already verified (Google verified it)
+   *   and no password. Password login cannot succeed until a password is set.
+   * - A Google email that is not verified never reaches this method.
+   */
+  async completeGoogleSignIn(
+    identity: GoogleIdentity,
+    meta: RequestMeta,
+    currentToken?: string,
+  ): Promise<GoogleSignInOutcome> {
+    const email = googleEmail(identity.email);
+    const sub = googleSub(identity.sub);
+    if (!identity.emailVerified || !email || !sub) {
+      await this.auditGoogleFailure(null, meta, 'rejected');
+      return { kind: 'rejected' };
+    }
+
+    const bySub = await this.d.users.findByGoogleSub(sub);
+    if (bySub) return this.finishGoogleLogin(bySub, meta, currentToken);
+
+    const byEmail = await this.d.users.findByEmail(email);
+    if (byEmail) return this.linkOrRefuse(byEmail, sub, meta, currentToken);
+
+    const now = this.d.clock.now();
+    try {
+      const user = await this.d.users.create({
+        id: this.d.ids.next(),
+        email,
+        name: googleName(identity.name),
+        passwordHash: '',
+        emailVerifiedAt: now,
+        googleSub: sub,
+        createdAt: now,
+        updatedAt: now,
+        deletedAt: null,
+      });
+      await this.audit(
+        {
+          actorId: user.id,
+          action: 'auth.signup',
+          targetType: 'user',
+          targetId: user.id,
+          metadata: { provider: 'google' },
+        },
+        meta,
+      );
+      return this.finishGoogleLogin(user, meta, currentToken);
+    } catch (e) {
+      if (!(e instanceof DuplicateEmailError)) throw e;
+      const winner =
+        (await this.d.users.findByGoogleSub(sub)) ?? (await this.d.users.findByEmail(email));
+      if (!winner) {
+        await this.auditGoogleFailure(null, meta, 'rejected');
+        return { kind: 'rejected' };
+      }
+      if (winner.googleSub === sub) return this.finishGoogleLogin(winner, meta, currentToken);
+      if (!winner.emailVerifiedAt) {
+        await this.auditGoogleFailure(winner.id, meta, 'unverified_local');
+        return { kind: 'unverified_local' };
+      }
+      await this.auditGoogleFailure(winner.id, meta, 'conflict');
+      return { kind: 'rejected' };
+    }
+  }
+
+  private async linkOrRefuse(
+    user: User,
+    sub: string,
+    meta: RequestMeta,
+    currentToken?: string,
+  ): Promise<GoogleSignInOutcome> {
+    if (!user.emailVerifiedAt) {
+      await this.auditGoogleFailure(user.id, meta, 'unverified_local');
+      return { kind: 'unverified_local' };
+    }
+    if (user.googleSub && user.googleSub !== sub) {
+      await this.auditGoogleFailure(user.id, meta, 'conflict');
+      return { kind: 'rejected' };
+    }
+    if (!user.googleSub) {
+      const linked = await this.d.users.linkGoogleSub(user.id, sub);
+      if (!linked) {
+        const again = await this.d.users.findByGoogleSub(sub);
+        if (!again || again.id !== user.id) {
+          await this.auditGoogleFailure(user.id, meta, 'conflict');
+          return { kind: 'rejected' };
+        }
+      }
+    }
+    const fresh = (await this.d.users.findById(user.id)) ?? user;
+    return this.finishGoogleLogin(fresh, meta, currentToken);
+  }
+
+  private async finishGoogleLogin(
+    user: User,
+    meta: RequestMeta,
+    currentToken: string | undefined,
+  ): Promise<GoogleSignInOutcome> {
+    if (currentToken) {
+      const old = await this.revokeByToken(currentToken);
+      if (old) await this.publishSessionRevoked(old, 'logout');
+    }
+    const result = await this.issueSession(
+      user.id,
+      toPublicUser(user),
+      await this.defaultOrganizationId(user.id),
+      meta,
+      { newLocationAlert: true },
+    );
+    await this.audit(
+      {
+        actorId: user.id,
+        action: 'auth.login.success',
+        targetType: 'session',
+        targetId: result.session.id,
+        metadata: { provider: 'google' },
+      },
+      meta,
+    );
+    return { kind: 'session', result };
+  }
+
+  private auditGoogleFailure(userId: string | null, meta: RequestMeta, reason: string) {
+    return this.audit(
+      {
+        actorId: userId,
+        action: 'auth.login.failure',
+        targetType: 'user',
+        targetId: userId,
+        metadata: { provider: 'google', reason },
+      },
+      meta,
+    );
   }
 
   /**

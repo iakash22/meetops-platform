@@ -47,6 +47,7 @@ export function createMockApi(
       resetPassword: vi.fn().mockResolvedValue(undefined),
       verifyEmail: vi.fn().mockResolvedValue(undefined),
       resendVerification: vi.fn().mockResolvedValue(undefined),
+      providers: vi.fn().mockResolvedValue({ google: false }),
       logout: vi.fn().mockResolvedValue(undefined),
       logoutAll: vi.fn().mockResolvedValue(undefined),
       session: vi.fn().mockResolvedValue(sessionResponse),
