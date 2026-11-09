@@ -69,7 +69,13 @@ export interface EmailVariables {
   'account-exists': Base & { name?: string; resetUrl: string };
   'login-lockout': Base & { name?: string; resetUrl: string; lockedForMinutes?: number };
   'password-changed': Base & { name?: string; changedAt: string; resetUrl: string };
-  'account-linked': Base & { name?: string; provider: string; linkedAt: string; resetUrl: string };
+  'account-linked': Base & {
+    name?: string;
+    provider: string;
+    linkedAt: string;
+    signInUrl: string;
+    passwordRemoved?: boolean;
+  };
   'member-added': Product & {
     name?: string;
     workspaceName: string;
@@ -317,8 +323,9 @@ const renderers: { [K in EmailName]: Renderer<K> } = {
     };
   },
   'account-linked': (v, m) => {
-    const url = safeUrl(v.resetUrl);
+    const url = safeUrl(v.signInUrl);
     const c = m.accountLinked;
+    const removed = v.passwordRemoved ? [c.passwordRemoved] : [];
     return {
       subject: c.subject(v.provider),
       preheader: c.preheader(v.provider),
@@ -327,11 +334,18 @@ const renderers: { [K in EmailName]: Renderer<K> } = {
       body: [
         paragraph(greet(m, v.name)),
         paragraph(c.body(v.provider, v.linkedAt)),
+        ...removed.map((r) => paragraph(r)),
         panel([c.notYou], 'destructive'),
         button(url, c.cta),
         linkFallback(url, m),
       ],
-      text: [greet(m, v.name), c.body(v.provider, v.linkedAt), c.notYou, `${c.cta}: ${url}`],
+      text: [
+        greet(m, v.name),
+        c.body(v.provider, v.linkedAt),
+        ...removed,
+        c.notYou,
+        `${c.cta}: ${url}`,
+      ],
     };
   },
   'member-added': (v, m) => {

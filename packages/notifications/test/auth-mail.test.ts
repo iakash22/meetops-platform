@@ -71,9 +71,28 @@ describe('createAuthMailTransport', () => {
     expect(r.subject).toBe('Google sign-in was added to your MeetOps account');
     expect(r.text).toContain('Nov 9, 2026');
     expect(r.text).toContain(url);
+    // OIDC review N-7: a password reset does not remove a linked sign-in, so the notice must not offer it as the fix.
+    expect(r.text).toContain('Resetting your password does not remove a linked sign-in');
+    expect(r.text).not.toMatch(/reset your password now/i);
+    expect(r.text).not.toContain('password previously set');
     expect(() =>
       renderAuthMail({ to: 'a@example.com', template: 'account_linked', data: { url } }),
     ).toThrow(/provider/);
+  });
+
+  it('N-1 takeover: the account-linked notice says the previous password was removed', () => {
+    const r = renderAuthMail({
+      to: 'a@example.com',
+      template: 'account_linked',
+      data: {
+        url,
+        provider: 'Google',
+        linkedAt: '2026-11-09T15:00:00.000Z',
+        passwordRemoved: 'true',
+      },
+    });
+    expect(r.text).toContain('the password previously set on this account was removed');
+    expect(r.html).toContain('the password previously set on this account was removed');
   });
 
   it('rejects unknown templates', () => {

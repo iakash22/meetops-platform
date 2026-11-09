@@ -13,7 +13,14 @@ export type AuthMailJob =
   /** Security notice after a password change; changedAt is ISO 8601. */
   | { kind: 'password_changed'; userId: string; changedAt: string }
   /** Security notice after a sign-in provider was linked (OIDC review M-2); linkedAt is ISO 8601. */
-  | { kind: 'account_linked'; userId: string; provider: 'google'; linkedAt: string };
+  | {
+      kind: 'account_linked';
+      userId: string;
+      provider: 'google';
+      linkedAt: string;
+      /** N-1 takeover: the unverified account's password was removed when Google proved the address. */
+      passwordRemoved?: boolean;
+    };
 
 export interface AuthMailQueue {
   enqueue(job: AuthMailJob): Promise<void>;

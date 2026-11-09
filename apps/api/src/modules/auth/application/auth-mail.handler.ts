@@ -151,9 +151,11 @@ export class AuthMailJobHandler {
           template: 'account_linked',
           data: withName(
             {
-              url: new URL('/forgot-password', this.d.webBaseUrl).toString(),
+              // Not "reset your password": a reset does not remove a linked Google sign-in (OIDC review N-7).
+              url: new URL('/login', this.d.webBaseUrl).toString(),
               provider: 'Google',
               linkedAt: job.linkedAt,
+              ...(job.passwordRemoved ? { passwordRemoved: 'true' } : {}),
               timeZone: this.d.defaultTimeZone ?? 'UTC',
             },
             user.name,

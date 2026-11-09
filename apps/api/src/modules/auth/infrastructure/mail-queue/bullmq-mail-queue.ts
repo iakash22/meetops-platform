@@ -92,7 +92,13 @@ export function minimalAuthMailPayload(job: AuthMailJob): AuthMailJob {
     case 'password_changed':
       return { kind: job.kind, userId: job.userId, changedAt: job.changedAt };
     case 'account_linked':
-      return { kind: job.kind, userId: job.userId, provider: job.provider, linkedAt: job.linkedAt };
+      return {
+        kind: job.kind,
+        userId: job.userId,
+        provider: job.provider,
+        linkedAt: job.linkedAt,
+        ...(job.passwordRemoved ? { passwordRemoved: true } : {}),
+      };
   }
 }
 

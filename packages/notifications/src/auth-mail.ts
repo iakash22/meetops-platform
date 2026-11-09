@@ -21,8 +21,8 @@ export type AuthMailTemplateId =
  * - invitation: `organizationName`, optional `inviterName`, `role`, `expiresInDays`
  * - login_lockout: optional `lockedForMinutes`
  * - password_changed: `changedAt` (ISO 8601), optional `timeZone` (IANA, default UTC); `url` = reset link
- * - account_linked: `provider` (display name, e.g. Google), `linkedAt` (ISO 8601), optional `timeZone`; `url` = reset
- *   link
+ * - account_linked: `provider` (display name, e.g. Google), `linkedAt` (ISO 8601), optional `timeZone`, optional
+ *   `passwordRemoved` ("true" after an N-1 takeover); `url` = sign-in link (a reset does not remove the link)
  */
 
 export interface AuthOutboundMail {
@@ -141,7 +141,8 @@ export function renderAuthMail(
       return renderEmail('account-linked', {
         ...named,
         provider: required(mail.data, 'provider'),
-        resetUrl: url,
+        signInUrl: url,
+        ...(optional(mail.data, 'passwordRemoved') === 'true' ? { passwordRemoved: true } : {}),
         linkedAt: formatChangedAt(required(mail.data, 'linkedAt'), optional(mail.data, 'timeZone')),
       });
     default:
