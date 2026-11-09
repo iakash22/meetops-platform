@@ -63,18 +63,33 @@ overridden.
 
 **Target interface** (`scripts/deploy-lib.sh`, target-agnostic; no real target is wired in):
 
-| Env (passed through the `env -i` allowlist) | Rule                                                                                                                                                                                                                                                                                                         |
-| ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `DEPLOY_TARGET`                             | unset/`none` = gates only, deploys nothing, writes no marker. Any other value must be in `DEPLOY_KNOWN_TARGETS` (only `none` today) **and** have a `deploy_target_<name>` function, else the run is refused before any gate.                                                                                 |
+| Env (passed through the `env -i` allowlist) | Rule                                                                                                                                                                                                                                                                                                                                                                                                 |
+| ------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `DEPLOY_TARGET`                             | unset/`none` = gates only, deploys nothing, writes no marker. Any other value must be in `DEPLOY_KNOWN_TARGETS` (only `none` today) **and** have a `deploy_target_<name>` function, else the run is refused before any gate.                                                                                                                                                                         |
 | `DEPLOY_CREDENTIALS_FILE`                   | required for a real target: absolute path to a regular, non-symlink file owned by you, mode `0600`/`0400`. Name/path are checked before gates; the file is opened onto fd 7 only after gates and confirmation (fstat via `/proc/self/fd`, dev:inode must match the path, parent dir not group/world-writable); the target gets `/dev/fd/7`, never the path. Gates and prisma do not inherit this fd. |
-| `DEPLOY_DATABASE_URL_FILE`                  | required for a real target, same file rules, must hold a `postgres://` URL. Opened onto fd 8 only after gates and confirmation, read once, then closed immediately. Only `prisma migrate deploy` sees the URL, as `DATABASE_URL` (env, not argv). Gates, prisma, and the target do not inherit fd 8.                                                                                                       |
-| `DEPLOY_CREDENTIALS`                        | refused if set (secrets as files, not env values).                                                                                                                                                                                                                                                           |
+| `DEPLOY_DATABASE_URL_FILE`                  | required for a real target, same file rules, must hold a `postgres://` URL. Opened onto fd 8 only after gates and confirmation, read once, then closed immediately. Only `prisma migrate deploy` sees the URL, as `DATABASE_URL` (env, not argv). Gates, prisma, and the target do not inherit fd 8.                                                                                                 |
+| `DEPLOY_CREDENTIALS`                        | refused if set (secrets as files, not env values).                                                                                                                                                                                                                                                                                                                                                   |
 
 Order for a real target: gates → confirmation → open secret files → `prisma migrate deploy` (credential fd closed in the child) → `deploy_target_<name> <env> <sha>
 <credentials-file>` → (staging only) staging marker. A failed migration stops before rollout; a failed rollout
 writes no marker, so production can never be unlocked by a placeholder or failed run. Adding a real target is one
 reviewed PR that appends to `DEPLOY_KNOWN_TARGETS` and defines its function (needs-owner: hosting choice, ADR-016
 secret manager).
+
+## Deploy env: realtime `TRUST_PROXY` (after #455)
+
+Realtime and the API share `TRUST_PROXY` / `BEHIND_CLOUDFLARE` (`packages/config/src/client-ip.ts`).
+Before rolling a production image that includes #455:
+
+1. Set `TRUST_PROXY` to a comma list of proxy IPs/CIDRs that **includes the nginx address**
+   realtime sees (or its network CIDR). Unset becomes hop count `1` in compose for realtime,
+   which **fails startup when `NODE_ENV=production`**.
+2. Remove any `REALTIME_TRUST_PROXY_HOPS` from the deploy environment (non-zero values now fail
+   realtime startup; use `TRUST_PROXY` instead).
+3. Remember one compose/`TRUST_PROXY` value feeds **both** API and realtime: trusting a whole
+   docker network range makes the API honour X-Forwarded-For from that range too.
+
+Details: [environment-variables.md](../00-getting-started/environment-variables.md) (API + Realtime).
 
 ## Flow
 

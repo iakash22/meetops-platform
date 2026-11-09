@@ -1,4 +1,12 @@
-# Phase status — 9 Nov 2026 (~20:30 IST)
+# Phase status — 9 Nov 2026 (~20:45 IST)
+
+## Update — 9 Nov 2026 (~20:45 IST)
+
+Tree: `main` at `ca3c0e2b` (unchanged). `integration/phase-1` at `741ec449` (15 ahead / 0 behind `main`). Merged since the 20:30 snapshot: [#454](https://github.com/iakash22/meetops-platform/pull/454) status docs; [#455](https://github.com/iakash22/meetops-platform/pull/455) realtime client IP uses the shared API `TRUST_PROXY` allowlist (`REALTIME_TRUST_PROXY_HOPS` removed); [#456](https://github.com/iakash22/meetops-platform/pull/456) ADR-021 MFA test plan + pending security suite.
+
+**Deploy note (#455):** production realtime must set `TRUST_PROXY` to an IP/CIDR allowlist including nginx; hop counts fail startup. See `.env.example`, [environment-variables.md](00-getting-started/environment-variables.md), and [cicd.md](devops/cicd.md#deploy-env-realtime-trust_proxy-after-455).
+
+Google OIDC hardening on `feat/security/google-oidc-hardening` is still assigned (findings M-2, N-1…N-6, L-1…L-5; L-2/L-3 Info). MFA/SSO product work remains future (ADR-021); #456 is the test plan only.
 
 ## Update — 9 Nov 2026 (~20:30 IST)
 
