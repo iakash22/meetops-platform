@@ -66,12 +66,21 @@ export class NoActiveOrganizationError extends DomainError {
   }
 }
 
+export interface RevokeForUserOptions {
+  /**
+   * #459 follow-up: rethrow a store failure instead of swallowing it, so a caller that retries (the account-takeover
+   * follow-up) sees it. Default false: logout, reset and member removal never fail on this step.
+   */
+  propagate?: boolean;
+}
+
 export interface ExtensionRevoker {
-  /** ADR-005 A1.6: revoke a user's families (all, or in one org). Never throws. */
+  /** ADR-005 A1.6: revoke a user's families (all, or in one org). Never throws unless `opts.propagate`. */
   revokeForUser(
     userId: string,
     reason: 'logout' | 'logout_all' | 'password_changed' | 'member_removed' | 'org_switch',
     organizationId?: string,
+    opts?: RevokeForUserOptions,
   ): Promise<void>;
 }
 
@@ -413,6 +422,7 @@ export class ExtensionAuthService implements ExtensionRevoker {
     userId: string,
     reason: 'logout' | 'logout_all' | 'password_changed' | 'member_removed' | 'org_switch',
     organizationId?: string,
+    opts: RevokeForUserOptions = {},
   ): Promise<void> {
     try {
       for (const f of await this.d.extensionTokens.listFamilies(
@@ -421,8 +431,9 @@ export class ExtensionAuthService implements ExtensionRevoker {
         organizationId,
       ))
         await this.revokeFamily(f, reason);
-    } catch {
-      // The user-facing revocation (session, membership) already happened; never fail it here.
+    } catch (e) {
+      // The user-facing revocation (session, membership) already happened; never fail it here, unless asked.
+      if (opts.propagate) throw e;
     }
   }
 
