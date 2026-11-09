@@ -44,19 +44,38 @@ describe('config hardening', () => {
 
   it('parses the new limits with defaults', () => {
     expect(loadRealtimeConfig({ REALTIME_CORS_ORIGINS: ORIGIN })).toMatchObject({
-      trustProxyHops: 0,
+      behindCloudflare: false,
       maxSocketsPerUser: 20,
       maxSocketsPerIp: 50,
       joinLimitPerSocket: 30,
       maxRoomsPerSocket: 50,
     });
-    expect(
-      loadRealtimeConfig({ REALTIME_CORS_ORIGINS: ORIGIN, REALTIME_TRUST_PROXY_HOPS: '2' })
-        .trustProxyHops,
-    ).toBe(2);
+  });
+
+  it('reads TRUST_PROXY with the API rules and rejects the removed REALTIME_TRUST_PROXY_HOPS', () => {
+    const base = { REALTIME_CORS_ORIGINS: ORIGIN };
+    // Missing config: trust nothing (socket peer).
+    expect(loadRealtimeConfig(base).trustProxy('10.0.0.1', 0)).toBe(false);
+    const cfg = loadRealtimeConfig({ ...base, TRUST_PROXY: '10.0.0.0/8' });
+    expect(cfg.trustProxy('10.1.2.3', 0)).toBe(true);
+    expect(cfg.trustProxy('::ffff:10.1.2.3', 0)).toBe(true);
+    expect(cfg.trustProxy('192.168.1.1', 0)).toBe(false);
+    expect(() => loadRealtimeConfig({ ...base, TRUST_PROXY: 'true' })).toThrow(/not allowed/);
+    expect(() => loadRealtimeConfig({ ...base, TRUST_PROXY: '0.0.0.0/0' })).toThrow(/invalid/);
     expect(() =>
-      loadRealtimeConfig({ REALTIME_CORS_ORIGINS: ORIGIN, REALTIME_TRUST_PROXY_HOPS: '-1' }),
-    ).toThrow();
+      loadRealtimeConfig({
+        ...base,
+        TRUST_PROXY: '1',
+        NODE_ENV: 'production',
+        REDIS_URL: 'rediss://x',
+      }),
+    ).toThrow(/production/);
+    expect(loadRealtimeConfig({ ...base, TRUST_PROXY: '1' }).trustProxy('10.0.0.1', 0)).toBe(true);
+    expect(() => loadRealtimeConfig({ ...base, REALTIME_TRUST_PROXY_HOPS: '1' })).toThrow(
+      /TRUST_PROXY/,
+    );
+    expect(loadRealtimeConfig({ ...base, REALTIME_TRUST_PROXY_HOPS: '0' })).toBeTruthy();
+    expect(loadRealtimeConfig({ ...base, BEHIND_CLOUDFLARE: 'true' }).behindCloudflare).toBe(true);
   });
 
   it('caps Socket.IO message size at 16 KiB', async () => {
@@ -68,50 +87,135 @@ describe('config hardening', () => {
   });
 });
 
-describe('clientIp (trusted proxy hops)', () => {
-  const hs = (xff?: string) => ({
-    address: '10.0.0.9',
-    headers: xff === undefined ? {} : { 'x-forwarded-for': xff },
+describe('clientIp (TRUST_PROXY allowlist, same as the API)', () => {
+  const hs = (address: string, xff?: string, extra: Record<string, string> = {}) => ({
+    address,
+    headers: { ...(xff === undefined ? {} : { 'x-forwarded-for': xff }), ...extra },
   });
-  it('ignores X-Forwarded-For with 0 hops', () => {
-    expect(clientIp(hs('1.1.1.1'), 0)).toBe('10.0.0.9');
+  const cfg = (TRUST_PROXY?: string, more: Record<string, string> = {}) =>
+    loadRealtimeConfig({
+      REALTIME_CORS_ORIGINS: ORIGIN,
+      ...(TRUST_PROXY === undefined ? {} : { TRUST_PROXY }),
+      ...more,
+    });
+
+  it('missing config: ignores X-Forwarded-For and uses the socket peer', () => {
+    expect(clientIp(hs('10.0.0.9', '1.1.1.1'), cfg())).toBe('10.0.0.9');
+    expect(clientIp(hs('10.0.0.9', '1.1.1.1'), cfg(''))).toBe('10.0.0.9');
   });
-  it('takes the Nth entry from the right', () => {
-    expect(clientIp(hs('6.6.6.6, 1.1.1.1, 2.2.2.2'), 1)).toBe('2.2.2.2');
-    expect(clientIp(hs('6.6.6.6, 1.1.1.1, 2.2.2.2'), 2)).toBe('1.1.1.1');
+  it('trusted proxy: uses the forwarded client IP', () => {
+    expect(clientIp(hs('10.0.0.9', '203.0.113.7'), cfg('10.0.0.9'))).toBe('203.0.113.7');
   });
-  it('falls back to the socket address when the header is short or missing', () => {
-    expect(clientIp(hs('1.1.1.1'), 2)).toBe('10.0.0.9');
-    expect(clientIp(hs(), 1)).toBe('10.0.0.9');
-  });
-  it('ignores a spoofed leading X-Forwarded-For entry with hops=1 (uses the rightmost entry)', () => {
-    // The client sent "X-Forwarded-For: 9.9.9.9"; nginx appended the real peer 203.0.113.7.
-    expect(clientIp(hs('9.9.9.9, 203.0.113.7'), 1)).toBe('203.0.113.7');
-    expect(clientIp(hs('9.9.9.9, 8.8.8.8, 203.0.113.7'), 1)).toBe('203.0.113.7');
-  });
-  it('falls back to the socket address when the chosen entry is not a valid IP', () => {
-    expect(clientIp(hs('1.1.1.1, not-an-ip'), 1)).toBe('10.0.0.9');
-    expect(clientIp(hs('1.1.1.1, 999.1.1.1'), 1)).toBe('10.0.0.9');
-    expect(clientIp(hs('1.1.1.1, unknown'), 1)).toBe('10.0.0.9');
-    expect(clientIp(hs('1.1.1.1, 2001:db8::1'), 1)).toBe('2001:db8::1');
-  });
-  it('drives the per-IP connection limit', async () => {
-    const { url } = await start(
-      {},
-      { REALTIME_TRUST_PROXY_HOPS: '1', REALTIME_CONN_LIMIT_PER_IP: '1' },
+  it('untrusted peer: its X-Forwarded-For is ignored', () => {
+    expect(clientIp(hs('198.51.100.4', '203.0.113.7'), cfg('10.0.0.9'))).toBe('198.51.100.4');
+    // The old hop-count bug: one hop "trusted" a direct client's own header. Not any more.
+    expect(clientIp(hs('198.51.100.4', '6.6.6.6, 7.7.7.7'), cfg('10.0.0.0/8'))).toBe(
+      '198.51.100.4',
     );
+  });
+  it('multi-hop chain: skips trusted hops from the right and ignores a spoofed left-most entry', () => {
+    const c = cfg('10.0.0.1,10.0.0.2');
+    expect(clientIp(hs('10.0.0.1', '6.6.6.6, 203.0.113.7, 10.0.0.2'), c)).toBe('203.0.113.7');
+    expect(clientIp(hs('10.0.0.1', '10.0.0.2, 203.0.113.7'), c)).toBe('203.0.113.7');
+  });
+  it('IPv6 and IPv4-mapped IPv6', () => {
+    expect(clientIp(hs('2001:db8::1', '2a00:1450::5'), cfg('2001:db8::/32'))).toBe('2a00:1450::5');
+    expect(clientIp(hs('::ffff:10.0.0.9', '203.0.113.7'), cfg('10.0.0.9'))).toBe('203.0.113.7');
+    expect(clientIp(hs('::ffff:198.51.100.4', '203.0.113.7'), cfg('10.0.0.9'))).toBe(
+      '198.51.100.4',
+    );
+  });
+  it('a garbage entry from a trusted proxy falls back to the proxy address', () => {
+    expect(clientIp(hs('10.0.0.9', 'not-an-ip'), cfg('10.0.0.9'))).toBe('10.0.0.9');
+    expect(clientIp(hs('10.0.0.9', '1.1.1.1, 999.1.1.1'), cfg('10.0.0.9'))).toBe('10.0.0.9');
+  });
+  it('never reads the Forwarded header; CF-Connecting-IP only behind Cloudflare from a pinned edge', () => {
+    expect(clientIp(hs('10.0.0.9', undefined, { forwarded: 'for=1.1.1.1' }), cfg('10.0.0.9'))).toBe(
+      '10.0.0.9',
+    );
+    const cf = { 'cf-connecting-ip': '203.0.113.7' };
+    expect(
+      clientIp(hs('173.245.48.1', undefined, cf), cfg(undefined, { BEHIND_CLOUDFLARE: 'true' })),
+    ).toBe('203.0.113.7');
+    expect(
+      clientIp(hs('198.51.100.4', undefined, cf), cfg(undefined, { BEHIND_CLOUDFLARE: 'true' })),
+    ).toBe('198.51.100.4');
+    expect(clientIp(hs('173.245.48.1', undefined, cf), cfg())).toBe('173.245.48.1');
+  });
+  it('matches Fastify request.ip (the API) for the same TRUST_PROXY, peer and header', async () => {
+    const { default: Fastify } = await import('fastify');
+    const { parseTrustProxy } = await import('@meetops/config');
+    const cases: Array<[string, string, string | undefined]> = [
+      ['10.0.0.1,10.0.0.2', '10.0.0.1', '6.6.6.6, 203.0.113.7, 10.0.0.2'],
+      ['10.0.0.1,10.0.0.2', '10.0.0.1', '203.0.113.7, 10.0.0.2'],
+      ['10.0.0.0/8', '198.51.100.4', '203.0.113.7'],
+      ['10.0.0.0/8', '10.0.0.5', undefined],
+      ['2001:db8::/32', '2001:db8::1', '2001:db8::2, 2a00:1450::5'],
+      ['10.0.0.9', '::ffff:10.0.0.9', '203.0.113.7'],
+      ['1', '10.0.0.9', '6.6.6.6, 1.1.1.1, 2.2.2.2'],
+      ['', '10.0.0.9', '1.1.1.1'],
+    ];
+    for (const [tp, peer, xff] of cases) {
+      const app = Fastify({ trustProxy: parseTrustProxy(tp) });
+      app.get('/', (req) => ({ ip: req.ip }));
+      const res = await app.inject({
+        url: '/',
+        remoteAddress: peer,
+        headers: xff === undefined ? {} : { 'x-forwarded-for': xff },
+      });
+      const apiIp = res.json<{ ip: string }>().ip.replace(/^::ffff:(?=\d+\.)/i, '');
+      expect(clientIp(hs(peer, xff), cfg(tp)), `${tp} ${peer} ${xff}`).toBe(apiIp);
+      await app.close();
+    }
+  });
+
+  // Test clients connect from loopback; TRUST_PROXY lists it (both forms) to model nginx in front of realtime.
+  const LOOPBACK = '127.0.0.1,::1';
+  it('connection limit keys on the forwarded IP from a trusted proxy', async () => {
+    const { url } = await start({}, { TRUST_PROXY: LOOPBACK, REALTIME_CONN_LIMIT_PER_IP: '1' });
     const xff = (ip: string) => ({ 'x-forwarded-for': ip });
-    // A spoofed leading entry does not buy a fresh budget: only the rightmost (proxy-appended) entry counts.
+    // A spoofed leading entry does not buy a fresh budget: only the proxy-appended (right-most) entry counts.
     await connected(connect(url, { cookie: 'a1', headers: xff('3.3.3.3, 4.4.4.4') }));
     await expect(
       connected(connect(url, { cookie: 'a2', headers: xff('9.9.9.9, 4.4.4.4') })),
     ).rejects.toThrow();
     await connected(connect(url, { cookie: 'a1', headers: xff('5.5.5.5') }));
-    // Same proxy hop, different client IP: its own budget.
+    // Same proxy, different client IP: its own budget.
     await connected(connect(url, { cookie: 'a2', headers: xff('7.7.7.7') }));
     // Same client IP again: over the per-IP limit.
     await expect(
       connected(connect(url, { cookie: 'a2', headers: xff('5.5.5.5') })),
+    ).rejects.toThrow();
+  });
+  it('untrusted peer cannot reset its connection budget by spoofing X-Forwarded-For', async () => {
+    // Peer (loopback) is not in the allowlist, so every connection keys on the socket address.
+    const { url } = await start({}, { TRUST_PROXY: '10.0.0.1', REALTIME_CONN_LIMIT_PER_IP: '1' });
+    await connected(connect(url, { cookie: 'a1', headers: { 'x-forwarded-for': '1.1.1.1' } }));
+    await expect(
+      connected(connect(url, { cookie: 'a2', headers: { 'x-forwarded-for': '2.2.2.2' } })),
+    ).rejects.toThrow();
+    await expect(connected(connect(url, { cookie: 'a2' }))).rejects.toThrow();
+  });
+  it('missing TRUST_PROXY: spoofed X-Forwarded-For cannot evade the per-IP connection limit', async () => {
+    const { url } = await start({}, { REALTIME_CONN_LIMIT_PER_IP: '1' });
+    await connected(connect(url, { cookie: 'a1', headers: { 'x-forwarded-for': '1.1.1.1' } }));
+    await expect(
+      connected(connect(url, { cookie: 'a2', headers: { 'x-forwarded-for': '3.3.3.3' } })),
+    ).rejects.toThrow();
+  });
+  it('concurrent per-IP socket cap keys on the resolved IP (spoofing from an untrusted peer does not help)', async () => {
+    const { url } = await start({}, { TRUST_PROXY: '10.0.0.1', REALTIME_MAX_SOCKETS_PER_IP: '1' });
+    await connected(connect(url, { cookie: 'a1', headers: { 'x-forwarded-for': '1.1.1.1' } }));
+    await expect(
+      connected(connect(url, { cookie: 'a2', headers: { 'x-forwarded-for': '2.2.2.2' } })),
+    ).rejects.toThrow();
+  });
+  it('concurrent per-IP socket cap from a trusted proxy is per forwarded client', async () => {
+    const { url } = await start({}, { TRUST_PROXY: LOOPBACK, REALTIME_MAX_SOCKETS_PER_IP: '1' });
+    await connected(connect(url, { cookie: 'a1', headers: { 'x-forwarded-for': '1.1.1.1' } }));
+    await connected(connect(url, { cookie: 'a2', headers: { 'x-forwarded-for': '2.2.2.2' } }));
+    await expect(
+      connected(connect(url, { cookie: 'a2', headers: { 'x-forwarded-for': '6.6.6.6, 1.1.1.1' } })),
     ).rejects.toThrow();
   });
 });

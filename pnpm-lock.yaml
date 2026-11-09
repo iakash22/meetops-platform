@@ -376,6 +376,9 @@ importers:
 
   apps/realtime:
     dependencies:
+      '@meetops/config':
+        specifier: workspace:*
+        version: link:../../packages/config
       '@meetops/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
@@ -620,6 +623,9 @@ importers:
 
   packages/config:
     dependencies:
+      '@fastify/proxy-addr':
+        specifier: ^5.1.2
+        version: 5.1.2
       zod:
         specifier: ^4.6.6
         version: 4.6.7
