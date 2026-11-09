@@ -5,6 +5,8 @@ import {
   CsrfUnavailableError,
   createApiClient,
   readCsrfCookie,
+  VERIFY_OUTCOME_HEADER,
+  VERIFY_OUTCOMES,
 } from '@/lib/api/client';
 import { meetings, session, uploadResponse } from './fixtures/data';
 
@@ -633,13 +635,23 @@ describe('auth lifecycle endpoints', () => {
     expect(headersOf(calls[2]![1])[CSRF_HEADER]).toBe('pre-session');
   });
 
+  it('pins the verify outcome header and values (identical copy in apps/api auth.plugin.ts)', () => {
+    expect(VERIFY_OUTCOME_HEADER).toBe('x-meetops-verify-outcome');
+    expect(VERIFY_OUTCOMES).toEqual({
+      passwordReset: 'password_reset',
+      setPassword: 'set_password',
+      verified: 'verified',
+    });
+  });
+
   it.each([
-    [null, false],
-    ['verified', false],
-    ['password_reset', true],
+    [null, false, false],
+    ['verified', false, false],
+    ['password_reset', true, false],
+    ['set_password', false, true],
   ] as const)(
     'verifyEmail posts with CSRF and reads the outcome header (%s)',
-    async (outcome, passwordReset) => {
+    async (outcome, passwordReset, setPassword) => {
       const fetchMock = vi
         .fn()
         .mockResolvedValueOnce(jsonResponse({ csrfToken: 'tok' }))
@@ -652,6 +664,7 @@ describe('auth lifecycle endpoints', () => {
       const api = createApiClient({ baseUrl: 'http://api', fetch: fetchMock });
       await expect(api.auth.verifyEmail({ token: 't'.repeat(40) })).resolves.toEqual({
         passwordReset,
+        setPassword,
       });
       const calls = fetchMock.mock.calls as Call[];
       expect(calls[1]![0]).toBe('http://api/auth/verify-email');
