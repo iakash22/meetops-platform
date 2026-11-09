@@ -1,9 +1,9 @@
-import { isIP } from 'node:net';
 import Fastify, { type FastifyBaseLogger, type FastifyInstance } from 'fastify';
 import { Server, type Socket } from 'socket.io';
 import { createAdapter } from '@socket.io/redis-adapter';
 import { createClient } from 'redis';
 import { REDACT_KEYS } from '@meetops/contracts';
+import { resolveClientIp, resolveForwardedIp, type TrustProxyFn } from '@meetops/config';
 import { createLogger, type Logger } from '@meetops/logger';
 import type { RealtimeConfig } from './config.js';
 import { installSecurityHeaders } from './security-headers.js';
@@ -249,23 +249,24 @@ export function createRedisConcurrencyTracker(
 }
 
 /**
- * Client IP for the per-IP limits. With `trustProxyHops` = N > 0, take the Nth X-Forwarded-For entry from the right
- * (the address the outermost trusted proxy saw). Entries left of it are client-controlled and ignored. Falls back to
- * the socket address with 0 hops, when the header is short, or when the chosen entry is not a valid IP (net.isIP).
+ * Client IP for the per-IP limits, resolved exactly like the API's ADR-014 client IP (shared @meetops/config helper):
+ * X-Forwarded-For is honoured only when the socket peer is in the TRUST_PROXY allowlist, walked from the right while
+ * hops are trusted; CF-Connecting-IP only with BEHIND_CLOUDFLARE=true from a pinned Cloudflare edge. `Forwarded` is
+ * never read. IPv4-mapped IPv6 is normalised to IPv4. Falls back to the raw socket address if nothing valid resolves.
  */
 export function clientIp(
   handshake: { address: string; headers: Record<string, string | string[] | undefined> },
-  trustProxyHops: number,
+  trust: { trustProxy: TrustProxyFn; behindCloudflare?: boolean },
 ): string {
-  if (trustProxyHops <= 0) return handshake.address;
-  const raw = handshake.headers['x-forwarded-for'];
-  const list = (Array.isArray(raw) ? raw.join(',') : (raw ?? ''))
-    .split(',')
-    .map((s) => s.trim())
-    .filter(Boolean);
-  const candidate = list[list.length - trustProxyHops];
-  // Only a syntactically valid IP is used as a limit key; anything else falls back to the socket address.
-  return candidate !== undefined && isIP(candidate) !== 0 ? candidate : handshake.address;
+  const peer = resolveForwardedIp(
+    handshake.address,
+    handshake.headers['x-forwarded-for'],
+    trust.trustProxy,
+  );
+  const ip = resolveClientIp(peer, handshake.headers['cf-connecting-ip'], {
+    behindCloudflare: trust.behindCloudflare === true,
+  });
+  return ip ?? handshake.address;
 }
 
 /** Socket.IO message size cap (bytes); realtime only carries small control messages. */
@@ -382,7 +383,7 @@ export async function createRealtimeServer(
       },
       policy,
     );
-    const ip = clientIp(socket.handshake, opts.config.trustProxyHops);
+    const ip = clientIp(socket.handshake, opts.config);
     // Per-IP limit before any verifier work, so a flood cannot turn into database load.
     if (!limiter.take(`ip:${ip}`, opts.config.connLimitPerIp)) {
       log.warn('realtime connection rate limited (ip)');

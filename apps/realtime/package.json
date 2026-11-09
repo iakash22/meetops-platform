@@ -15,6 +15,7 @@
     "coverage": "vitest run --coverage"
   },
   "dependencies": {
+    "@meetops/config": "workspace:*",
     "@meetops/contracts": "workspace:*",
     "@meetops/database": "workspace:*",
     "@meetops/logger": "workspace:*",

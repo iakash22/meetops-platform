@@ -302,9 +302,12 @@ services:
       DB_ROLE: none
       REALTIME_HOST: 0.0.0.0
       REALTIME_PORT: 4001
-      # One trusted proxy hop: the web nginx /socket.io proxy overwrites X-Forwarded-For with the client IP.
-      # Realtime takes the client IP from X-Forwarded-For across this many hops (config default 0 = ignore XFF).
-      REALTIME_TRUST_PROXY_HOPS: 1
+      # Same TRUST_PROXY variable and rules as the API (@meetops/config): X-Forwarded-For is honoured only when the
+      # socket peer is allowlisted. The web nginx /socket.io proxy overwrites XFF with the client IP, so the list must
+      # include the nginx address realtime sees (its compose network CIDR). Unset falls back to the dev-only hop
+      # count 1, which fails startup when NODE_ENV=production: set an IP/CIDR allowlist there.
+      TRUST_PROXY: ${TRUST_PROXY:-1}
+      BEHIND_CLOUDFLARE: ${BEHIND_CLOUDFLARE:-}
       # Explicit allowlist, required; never '*'.
       REALTIME_CORS_ORIGINS: ${REALTIME_CORS_ORIGINS:?set REALTIME_CORS_ORIGINS in .env}
     secrets: [redis_password]
@@ -312,7 +315,7 @@ services:
     entrypoint: ['/bin/sh', '/opt/with-secrets.sh']
     command: ['node', 'dist/index.js']
     # LOCAL DEV ONLY. Production and self-host must not publish the realtime port: it must be reachable only
-    # through nginx (REALTIME_TRUST_PROXY_HOPS=1). See docs/00-getting-started/environment-variables.md.
+    # through nginx (TRUST_PROXY allowlists nginx). See docs/00-getting-started/environment-variables.md.
     ports:
       - '127.0.0.1:${REALTIME_PORT:-4001}:4001'
     healthcheck:
