@@ -1,4 +1,16 @@
-# Phase status — 9 Nov 2026 (~20:45 IST)
+# Phase status — 9 Nov 2026 (~22:35 IST)
+
+## Update — 9 Nov 2026 (~22:35 IST)
+
+Tree: `main` at `ca3c0e2b` (unchanged). `integration/phase-1` at `fd4ede49` (55 ahead / 0 behind `main`), merge of [#459](https://github.com/iakash22/meetops-platform/pull/459) Google OIDC hardening (Architecture + Tester PASS on `c41fc720`).
+
+Also merged 9 Nov into integration after the ~20:45 snapshot: [#457](https://github.com/iakash22/meetops-platform/pull/457) TRUST_PROXY env/docs share; [#458](https://github.com/iakash22/meetops-platform/pull/458) Dependabot `serde_with` 3.17→3.21 + glib RE-07 (Tester; remaining-work #2 **partial**); [#460](https://github.com/iakash22/meetops-platform/pull/460) `plist`/`quick-xml` clearing RUSTSEC-2026-0194/0195 (Tester).
+
+**Deploy note (#455, unchanged):** production realtime must set `TRUST_PROXY` to an IP/CIDR allowlist including nginx; hop counts fail startup. Compose passes `BEHIND_CLOUDFLARE` only to the realtime service (API still reads the env var in code — see [environment-variables.md](00-getting-started/environment-variables.md) and [cicd.md](devops/cicd.md#deploy-env-realtime-trust_proxy-after-455)).
+
+Google OIDC hardening findings M-2, N-1…N-6, L-1…L-5 are **closed in #459**. Small follow-ups remain (Tester X4-mem on the in-memory store, NB-R3 verify/post-commit UX, info copy). MFA/SSO product work remains future (ADR-021); #456 is the test plan only. Owner decision OD-1 (cross-device verify drops password) stays with Akash.
+
+P1 estimate ~98% (Google web sign-in + hardening in; MFA/SSO still open). P9 Dependabot row #2 partial.
 
 ## Update — 9 Nov 2026 (~20:45 IST)
 

@@ -2,6 +2,14 @@
 
 Written 31 Oct 2026 (IST). Read this first; it assumes no prior context. Owner: **Akash** (GitHub `iakash22`).
 
+## Update — 9 Nov 2026 (~22:35 IST)
+
+`main` is at `ca3c0e2b` (unchanged). `integration/phase-1` is at `fd4ede49` (55 ahead / 0 behind `main`), the merge of [#459](https://github.com/iakash22/meetops-platform/pull/459) Google OIDC hardening (Architecture + Tester PASS on `c41fc720`). Also merged 9 Nov into integration: [#457](https://github.com/iakash22/meetops-platform/pull/457) TRUST_PROXY docs; [#458](https://github.com/iakash22/meetops-platform/pull/458) Dependabot `serde_with` + glib RE-07 (Tester); [#460](https://github.com/iakash22/meetops-platform/pull/460) `plist`/`quick-xml` RUSTSEC clear (Tester). Current phase percentages are in [PHASE_STATUS.md](PHASE_STATUS.md). The percentages in §2 below are the 31 Oct snapshot.
+
+Google **login** code is in and hardened (#459). It stays hidden until `GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET`, and `GOOGLE_OAUTH_REDIRECT_URI` are set together. Google **Calendar** still needs its own client (`GOOGLE_CALENDAR_*`). MFA and enterprise SSO are not built (ADR-021 plan + pending suite in #456). Small #459 follow-ups remain (in-memory store race X4-mem, post-commit verify UX, log redaction nits). Owner decision OD-1: cross-device email verify still drops the password until Akash decides otherwise.
+
+Dependabot remaining-work #2 is **partial** (#458 + #460); glib/deepmerge stay accepted exceptions; Dependabot alerts read on the agent token is still needs-owner.
+
 ## Update — 9 Nov 2026 (~20:45 IST)
 
 `main` is at `ca3c0e2b` (unchanged). Google OIDC sign-in landed as `f6c77fd855` on `dev`, merged via `34c0d247`, with docs `ca3c0e2b`. `integration/phase-1` is at `741ec449` (merges of [#454](https://github.com/iakash22/meetops-platform/pull/454) status docs, [#455](https://github.com/iakash22/meetops-platform/pull/455) realtime TRUST_PROXY, [#456](https://github.com/iakash22/meetops-platform/pull/456) ADR-021 MFA test plan; 15 ahead / 0 behind `main`). Current phase percentages are in [PHASE_STATUS.md](PHASE_STATUS.md). The percentages in §2 below are the 31 Oct snapshot.
@@ -11,10 +19,10 @@ Google **login** code is in. It stays hidden until `GOOGLE_OAUTH_CLIENT_ID`, `GO
 ## 1. Repo and branches
 
 - Repo: `iakash22/meetops-platform` (pnpm + turbo monorepo: `apps/api`, `apps/web`, `apps/worker`, `apps/extension` (wxt), desktop (Tauri/Rust), mobile (Expo/React Native), `packages/*` incl. `contracts`, `integrations`, `notifications`, `storage`).
-- Work branch: **`integration/phase-1`** at `741ec449242e` (15 ahead / 0 behind `main`). All feature PRs target it.
+- Work branch: **`integration/phase-1`** at `fd4ede49` (55 ahead / 0 behind `main`). All feature PRs target it.
 - `main` at `ca3c0e2b2b74` (unchanged): only Akash merges into `main`. Recent merges (6 Nov IST): #437, #439, #443, #445, #447, #449, #450, #451, then #452 (`integration/phase-1` → `main`). After #452 Akash pushed Google OIDC sign-in (`f6c77fd855` on `dev`, merge `34c0d247`, docs `ca3c0e2b`).
-- Merged into `integration/phase-1` (9 Nov): [#453](https://github.com/iakash22/meetops-platform/pull/453) rate-limit coverage; [#454](https://github.com/iakash22/meetops-platform/pull/454) status docs; [#455](https://github.com/iakash22/meetops-platform/pull/455) realtime TRUST_PROXY (shared with API; `REALTIME_TRUST_PROXY_HOPS` removed); [#456](https://github.com/iakash22/meetops-platform/pull/456) ADR-021 MFA test plan + pending security suite (`docs/12-security/mfa-test-plan.md`). Tip `741ec449`.
-- Open into integration: Google OIDC hardening (`feat/security/google-oidc-hardening`; findings M-2, N-1…N-6, L-1…L-5, L-2/L-3 Info) and devops follow-ups (this PR).
+- Merged into `integration/phase-1` (9 Nov): [#453](https://github.com/iakash22/meetops-platform/pull/453) rate-limit coverage; [#454](https://github.com/iakash22/meetops-platform/pull/454) status docs; [#455](https://github.com/iakash22/meetops-platform/pull/455) realtime TRUST_PROXY; [#456](https://github.com/iakash22/meetops-platform/pull/456) ADR-021 MFA test plan; [#457](https://github.com/iakash22/meetops-platform/pull/457) TRUST_PROXY docs; [#458](https://github.com/iakash22/meetops-platform/pull/458) Dependabot `serde_with`; [#460](https://github.com/iakash22/meetops-platform/pull/460) `plist`/`quick-xml`; [#459](https://github.com/iakash22/meetops-platform/pull/459) Google OIDC hardening. Tip `fd4ede49`.
+- Open into integration: none at this snapshot (status/proxy docs follow-up in flight). Small #459 code follow-ups next.
 - Other docs: [PHASE_STATUS.md](PHASE_STATUS.md), [PROJECT_CONTEXT.md](PROJECT_CONTEXT.md), [AGENT_STATUS.md](AGENT_STATUS.md), [local-gates.md](local-gates.md), ADRs in [15-decisions/](15-decisions/).
 
 ## 2. Project state (estimates, see PHASE_STATUS.md)

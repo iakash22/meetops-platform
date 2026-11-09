@@ -53,6 +53,11 @@ When deploying a build that includes the realtime TRUST_PROXY change (#455):
 - **Delete `REALTIME_TRUST_PROXY_HOPS`** from staging/production env (removed; a non-zero value
   fails realtime startup). Replace it with `TRUST_PROXY`.
 - Compose caution: one `TRUST_PROXY` value is passed to both API and realtime containers.
+- **`BEHIND_CLOUDFLARE`:** both API and realtime honour it in code, but
+  `infra/compose/compose.app.yml` injects it into **realtime only**. Ensure the API process
+  also has it when Cloudflare sits in front of the API.
+- IPv4-mapped addresses (`::ffff:a.b.c.d`) are normalised to IPv4 for allowlist matching and
+  rate-limit keys; list nginx as IPv4/CIDR as usual.
 
 See [environment-variables.md](../00-getting-started/environment-variables.md) and
 [cicd.md](../devops/cicd.md#deploy-env-realtime-trust_proxy-after-455).
