@@ -56,17 +56,23 @@ Signup and reset passwords are 8–128 characters and must include a letter, a n
 
 Full-page navigations, not JSON. Sign-up and log-in share one flow. The web app shows "Continue with Google" only when `GET /auth/providers` returns `{ google: true }`.
 
-The start route seals the PKCE verifier, nonce, and state into `meetops_oauth` (`__Host-meetops_oauth` outside development). The callback clears that cookie, exchanges the code, and checks the ID token. The authorization code, ID token, verifier, and client secret never appear in the redirect back to the app. Failures use a fixed code (`google` or `google_unverified`) and may keep a same-origin `next` path. Google's own error text is not forwarded.
+The start route seals the PKCE verifier, nonce, and state into `meetops_oauth` (`__Host-meetops_oauth` outside development), MACed with a key derived from `CSRF_SECRET` by HKDF-SHA256 (info `oauth-state`). The callback clears that cookie, exchanges the code, and checks the ID token (RS256, issuer, audience, `azp` required when there are several audiences, nonce, `exp`/`iat` with 60 s skew, `iat` at most 10 minutes old). The authorization code, ID token, verifier, and client secret never appear in the redirect back to the app. Failures use a fixed code (`google`, `google_unverified`, or `google_link_password`) and may keep a same-origin `next` path. Google's own error text is not forwarded.
 
-Linking (`users.google_sub`, unique, nullable):
+"Proven" email: Google's `email_verified` is true **and** Google hosts the mailbox, i.e. the domain is `gmail.com` / `googlemail.com`, or the token's `hd` (Workspace) equals the email's domain. `email_verified` alone is not trusted for other domains.
 
-- Match the Google `sub` first. Email is not the identity.
-- If the email belongs to a verified MeetOps account with no Google subject, link it.
-- If that account's email is not verified, refuse. The browser lands on `/login?error=google_unverified`.
-- If nothing matches, create the account with the email already verified and no usable password. Password login cannot succeed until a password is set.
+Linking (`users.google_sub`, nullable, unique among live users):
+
+- Match the Google `sub` first. Email is not the identity. An account already bound to another subject is never relinked.
+- Proven email, verified account: link, sign out the account's other sessions, send an "account linked" email, audit `auth.google.linked`.
+- Proven email, unverified account (possible pre-registration by someone else): drop its password, revoke every session, extension token, push device and one-time link, then link, notify and audit as above.
+- Unproven email, verified account: no auto-link. The browser lands on `/login?error=google_link_password` with a 10-minute HttpOnly `meetops_oauth_link` cookie (HKDF info `oauth-link`); the next successful password login of that same account in that browser links Google (other sessions are signed out, notice + audit).
+- Unproven email, unverified account: refuse (`/login?error=google_unverified`).
+- Nothing matches: create the account with no usable password. Verified only for a proven email; otherwise unverified with a verification email, so org creation and invitation acceptance stay gated (D2).
 - A Google account whose email is not verified never creates or links a user.
 
-Rate limit: 20 requests per minute per IP, shared by start and callback. A limit failure redirects to `/login?error=google`.
+Google sessions are stored with `auth_level = google`. Verifying an email (`POST /auth/verify-email`) also signs out the account's other sessions.
+
+Rate limit: 20 flows per minute per IP, charged once by the start route. The callback refuses a missing, forged or expired state cookie before charging anything, and each state completes at most one callback. A request with no client IP is refused rather than sharing an `unknown` bucket. A limit failure redirects to `/login?error=google`.
 
 The extension pairing endpoints (`/auth/extension/pair`, `/auth/extension-token`, `/auth/extension/refresh`, `/auth/extension/revoke`) are defined in contracts (`EXTENSION_AUTH_PATHS`, ADR-005) but `apps/api` doesn't implement them yet.
 
