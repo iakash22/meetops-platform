@@ -6,6 +6,7 @@ import {
   hkdfSync,
   randomBytes,
   timingSafeEqual,
+  type JsonWebKey as NodeJsonWebKey,
 } from 'node:crypto';
 
 /** Authorization-code + PKCE. The browser never sees the client secret or the ID token. */
@@ -346,7 +347,7 @@ export function verifyGoogleIdToken(
 
   let signatureOk = false;
   try {
-    const key = createPublicKey({ key: jwk, format: 'jwk' });
+    const key = createPublicKey({ key: jwk as NodeJsonWebKey, format: 'jwk' });
     const verifier = createVerify('RSA-SHA256');
     verifier.update(`${parts[0]}.${parts[1]}`);
     signatureOk = verifier.verify(key, Buffer.from(parts[2], 'base64url'));

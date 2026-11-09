@@ -45,6 +45,7 @@ import { Argon2PasswordHasher } from './auth/infrastructure/argon2-password-hash
 import { CryptoTokenService, uuidGenerator } from './auth/infrastructure/crypto-token.service.js';
 import { InMemorySessionRepository } from './auth/infrastructure/in-memory-session.repository.js';
 import type { MediaRateLimits } from './media/http/rate-limit.js';
+import { routeLimiter, type RouteRateLimits } from '../shared/rate-limits.js';
 import { InMemoryOneTimeTokenRepository } from './auth/infrastructure/in-memory-one-time-token.repository.js';
 import {
   InMemoryLoginLockout,
@@ -158,6 +159,8 @@ export interface ModuleDeps {
   rateLimiter: RateLimiter;
   /** Overrides MEDIA_RATE_LIMITS (tests). */
   mediaRateLimits?: MediaRateLimits;
+  /** Overrides buckets of ROUTE_RATE_LIMITS (shared/rate-limits.ts; tests). */
+  routeRateLimits?: Partial<RouteRateLimits>;
   lockout: LoginLockout;
   /**
    * AUTH_MAIL_QUEUE=bullmq: BullMqAuthMailQueue on REDIS_URL (ADR-013, notifications #11), consumed by the
@@ -518,7 +521,7 @@ function googleOAuthDep(
   env: NodeJS.ProcessEnv,
   nodeEnv: string | undefined,
   allowedOrigins: string[],
-): { googleOAuth: { config: GoogleOAuthConfig } } | { googleOAuth?: undefined } {
+): { googleOAuth: { config: GoogleOAuthConfig } } | Record<never, never> {
   const config = readGoogleOAuthConfig(env, nodeEnv);
   if (!config) return {};
   assertGoogleWebOrigin(env.WEB_BASE_URL ?? 'http://localhost:5173', allowedOrigins);
@@ -845,7 +848,12 @@ export async function registerModules(app: FastifyInstance, deps: ModuleDeps) {
     webBaseUrl: deps.webBaseUrl,
     google: deps.googleOAuth ?? null,
   });
-  await app.register(organizationRoutes, { auth, organizations, security: deps.security });
+  await app.register(organizationRoutes, {
+    auth,
+    organizations,
+    security: deps.security,
+    routeLimits: routeLimiter(deps.rateLimiter, deps.routeRateLimits),
+  });
   await app.register(extensionAuthRoutes, { auth, extensionAuth, security: deps.security });
   if (desktopAuth)
     await app.register(desktopAuthRoutes, { auth, desktopAuth, security: deps.security });

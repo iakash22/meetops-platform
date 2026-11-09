@@ -26,6 +26,7 @@ import {
 import type { AuthService } from '../auth/application/auth.service.js';
 import { makeGuards, requestMeta } from '../auth/http/security.js';
 import { registerDomainErrorHandler } from '../../shared/http-errors.js';
+import { routeLimiter } from '../../shared/rate-limits.js';
 import type { OrganizationService } from '../organizations/application/organization.service.js';
 import { defineAbilityFor, orgSubject } from '../organizations/domain/abilities.js';
 import { ForbiddenError, OrganizationNotFoundError } from '../organizations/domain/errors.js';
@@ -107,6 +108,7 @@ export default async function notificationsModule(
   const repo = opts.repo ?? selectNotificationsRepository(deps);
   const g = makeGuards(auth, deps.security);
   const access = new DirectoryAccess(organizations, deps.audit);
+  const limits = routeLimiter(deps.rateLimiter, deps.routeRateLimits);
   const linkSecret =
     deps.emailLinkSecret ??
     process.env.EMAIL_LINK_SECRET ??
@@ -258,6 +260,7 @@ export default async function notificationsModule(
       },
       async (request, reply) => {
         const c = await meCaller(request, 'create');
+        await limits.charge('pushDeviceRegister', c.ctx);
         let token: string;
         try {
           token = pushTokenFromRegistration(request.body);
@@ -310,10 +313,11 @@ export default async function notificationsModule(
           tags: ['notifications'],
           summary: 'Unsubscribe confirm page (does not change anything)',
           querystring: UnsubscribeQuery,
-          response: { 400: ErrorBody, 503: ErrorBody },
+          response: { 400: ErrorBody, 429: ErrorBody, 503: ErrorBody },
         },
       },
       async (request, reply) => {
+        await limits.charge('unsubscribe', requestMeta(request));
         const ok = verify(request.query.token) !== null;
         return reply
           .status(ok ? 200 : 400)
@@ -340,10 +344,11 @@ export default async function notificationsModule(
           tags: ['notifications'],
           summary: 'Apply an unsubscribe link (email channel, link category)',
           querystring: UnsubscribeQuery,
-          response: { 200: UnsubscribeResponse, 400: ErrorBody, 503: ErrorBody },
+          response: { 200: UnsubscribeResponse, 400: ErrorBody, 429: ErrorBody, 503: ErrorBody },
         },
       },
       async (request) => {
+        await limits.charge('unsubscribe', requestMeta(request));
         const claims = verify(request.query.token);
         if (!claims) throw new UnsubscribeLinkInvalidError();
         await repo.setPreferences(claims.organizationId, claims.userId, [

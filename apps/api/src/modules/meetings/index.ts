@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import type { AuthService } from '../auth/application/auth.service.js';
 import { makeGuards, requestMeta } from '../auth/http/security.js';
 import { registerDomainErrorHandler } from '../../shared/http-errors.js';
+import { routeLimiter } from '../../shared/rate-limits.js';
 import type { OrganizationService } from '../organizations/application/organization.service.js';
 import { DirectoryAccess } from '../directory/access.js';
 import type { ResolveCaller } from '../directory/http/route-kit.js';
@@ -44,5 +45,6 @@ export default async function meetingsModule(app: FastifyInstance, opts: Meeting
     meetings: new MeetingService(deps.meetings, access, organizations, deps.rateLimiter),
     caller,
     resolveCaller: dualCaller(caller, opts.extensionBearer, organizations, 'meetings:resolve'),
+    routeLimits: routeLimiter(deps.rateLimiter, deps.routeRateLimits),
   });
 }
