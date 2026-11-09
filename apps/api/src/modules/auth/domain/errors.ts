@@ -10,11 +10,8 @@ export class UnauthenticatedError extends DomainError {
     super('UNAUTHENTICATED', 'Authentication required', 401);
   }
 }
-export class RateLimitedError extends DomainError {
-  constructor(public readonly retryAfterMs: number) {
-    super('RATE_LIMITED', 'Too many requests, try again later', 429);
-  }
-}
+/** Platform error (shared/rate-limit-core.ts), re-exported so `instanceof` stays one class everywhere. */
+export { RateLimitedError } from '../../../shared/rate-limit-core.js';
 /** Missing, mismatched, forged or stale CSRF token. */
 export class CsrfError extends DomainError {
   constructor(message = 'CSRF validation failed') {

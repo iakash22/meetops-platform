@@ -12,15 +12,8 @@ export interface TokenService {
   hash(token: string): string;
 }
 
-export interface RateLimitResult {
-  allowed: boolean;
-  retryAfterMs: number;
-}
-
-/** Fixed-window counter. Redis adapter in production, in-memory in tests. */
-export interface RateLimiter {
-  consume(key: string, limit: number, windowMs: number): Promise<RateLimitResult>;
-}
+/** The rate-limit port is platform code (shared/rate-limit-core.ts); re-exported for existing auth imports. */
+export type { RateLimiter, RateLimitResult } from '../../../shared/rate-limit-core.js';
 
 /** Account lockout after repeated failures. Never permanent. */
 export interface LoginLockout {
