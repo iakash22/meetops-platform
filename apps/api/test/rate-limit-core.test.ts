@@ -14,7 +14,13 @@ import { routeLimiter } from '../src/shared/rate-limits.js';
 describe('shared rate-limit core', () => {
   it('refuses a request without a client IP instead of pooling it', () => {
     expect(clientIpKey('203.0.113.7')).toBe('203.0.113.7');
-    for (const ip of [null, undefined, '']) expect(() => clientIpKey(ip)).toThrow(CoreUnavailable);
+    for (const ip of [null, undefined, '', 'unknown', 'garbage'])
+      expect(() => clientIpKey(ip)).toThrow(CoreUnavailable);
+  });
+
+  it('uses the shared @meetops/config normalisation (one bucket per address)', () => {
+    expect(clientIpKey('::ffff:198.51.100.9')).toBe('198.51.100.9');
+    expect(clientIpKey(' 2001:db8::1 ')).toBe('2001:db8::1');
   });
 
   it('public route buckets: no IP -> 503, and nothing is charged', async () => {

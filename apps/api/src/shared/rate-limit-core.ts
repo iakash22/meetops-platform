@@ -1,3 +1,4 @@
+import { normalizeIp } from '@meetops/config';
 import { DomainError } from './domain-error.js';
 
 /**
@@ -42,8 +43,12 @@ export const RATE_LIMITER_TIMEOUT_MS = 1_500;
  * client IP (requestMeta().ip null) cannot be metered per IP. Pooling all of them into one shared `unknown` bucket
  * would let a single such caller exhaust the budget of every other one, so the request is refused instead: fail
  * closed with 503 + Retry-After, like a limiter outage. Behind the TRUST_PROXY allowlist every real request has an IP.
+ * The IP itself is resolved once by the shared ADR-014 helper in @meetops/config (TRUST_PROXY / BEHIND_CLOUDFLARE,
+ * server.ts `request.clientIp`); this only canonicalises it with the same package's `normalizeIp`, so `::ffff:a.b.c.d`
+ * and `a.b.c.d` share one bucket and a value that is not an IP is refused rather than becoming its own key.
  */
 export function clientIpKey(ip: string | null | undefined): string {
-  if (!ip) throw new RateLimiterUnavailableError();
-  return ip;
+  const key = ip ? normalizeIp(ip) : null;
+  if (!key) throw new RateLimiterUnavailableError();
+  return key;
 }
