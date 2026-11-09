@@ -69,7 +69,7 @@ Where each variable is read:
 - `REALTIME_HOST` (default `0.0.0.0`), `REALTIME_PORT` (default 4001). The compose `127.0.0.1:4001` port mapping is for **local development only**.
 - `REALTIME_CORS_ORIGINS`: comma-separated allowed origins (dev: `http://localhost:5173`). Empty or `*` allows any, so set it explicitly.
 - `REALTIME_SOCKET_PATH` (default `/socket.io`).
-- `REALTIME_TRUST_PROXY_HOPS` (default 0): reverse proxies in front of realtime. With N > 0 the per-IP limits use the Nth `X-Forwarded-For` entry from the right; entries to its left are client-controlled and ignored. If that entry is not a valid IP address, the socket address is used instead. **Behind the single nginx proxy, set `REALTIME_TRUST_PROXY_HOPS=1`** (nginx must append the peer with `proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;`).
+- `TRUST_PROXY` / `BEHIND_CLOUDFLARE` (realtime): the **same variables and rules as the API** (shared parser in `packages/config/src/client-ip.ts`). The per-IP limits key on the socket peer unless that peer is in the `TRUST_PROXY` IP/CIDR allowlist; then `X-Forwarded-For` is walked from the right, skipping trusted hops, and the first untrusted address is the client. Unset means trust nothing (socket address). Hop counts are dev/test only and fail startup in production. `Forwarded` is never read. **Behind nginx, list the nginx address (or its network CIDR).** Compose defaults realtime to the dev-only hop count `1` when `TRUST_PROXY` is unset. The old `REALTIME_TRUST_PROXY_HOPS` was removed; a non-zero value now fails startup so a deploy cannot silently drop proxy trust.
 - `REALTIME_MAX_SOCKETS_PER_USER` (default 20) and `REALTIME_MAX_SOCKETS_PER_IP` (default 50): concurrent socket caps, shared through Redis when `REDIS_URL` is set.
 - `REALTIME_JOIN_LIMIT_PER_SOCKET` (default 30 per minute) and `REALTIME_MAX_ROOMS_PER_SOCKET` (default 50): `meeting:join` limits.
 - `REALTIME_CORS_ORIGINS` must be `https://` unless `NODE_ENV=development`. In production `REDIS_URL` is required and must be `rediss://`.
@@ -79,7 +79,7 @@ Where each variable is read:
 
 - Realtime must be reachable **only through nginx**. Production and self-host compose must **not** publish the realtime port (no `ports:` entry for the realtime service); nginx reaches it over the internal compose network.
 - The `127.0.0.1:4001` mapping in `infra/compose/compose.app.yml` exists for local development only. Remove it (or use an override without it) for any production or self-host deployment.
-- Why: with `REALTIME_TRUST_PROXY_HOPS=1` the gateway trusts the last `X-Forwarded-For` entry. A client that can reach realtime directly, bypassing nginx, can set that entry itself and evade the per-IP limits.
+- Why: defence in depth. Realtime honours `X-Forwarded-For` only from `TRUST_PROXY`-allowlisted peers, so a direct client's header is ignored, but a client inside an allowlisted CIDR (for example the compose network) could still set it. With the dev-only hop count, any direct client can.
 
 ### Media (worker)
 
