@@ -109,7 +109,7 @@ describe('routeLimiter (shared/rate-limits.ts)', () => {
   });
 
   it('every default bucket is a positive limit with a window', () => {
-    for (const [scope, l] of Object.entries(ROUTE_RATE_LIMITS)) {
+    for (const [scope, l] of Object.entries(ROUTE_RATE_LIMITS as RouteRateLimits)) {
       const windows = [l.perIp, l.perUser, l.perOrg].filter(Boolean);
       expect(windows.length, scope).toBeGreaterThan(0);
       for (const w of windows) {
