@@ -21,6 +21,7 @@ import {
 import type { AuthService } from '../auth/application/auth.service.js';
 import { makeGuards, requestMeta } from '../auth/http/security.js';
 import { registerDomainErrorHandler } from '../../shared/http-errors.js';
+import { routeLimiter } from '../../shared/rate-limits.js';
 import type { OrganizationService } from '../organizations/application/organization.service.js';
 import { isRelaxedEnv, MissingProductionDependencyError, type ModuleDeps } from '../index.js';
 import { DirectoryAccess } from '../directory/access.js';
@@ -114,6 +115,7 @@ export default async function tasksModule(
   // Origin allowlist + double-submit CSRF on every non-GET route (same as directory/index.ts).
   app.addHook('onRequest', g.mutationGuard);
   const access = new DirectoryAccess(organizations, deps.audit);
+  const limits = routeLimiter(deps.rateLimiter, deps.routeRateLimits);
   const caller = async (request: Parameters<typeof g.requireSession>[0], organizationId: string) =>
     access.caller(await g.requireSession(request), organizationId, requestMeta(request));
 
@@ -355,6 +357,7 @@ export default async function tasksModule(
       const c = await caller(request, request.params.organizationId);
       organizations.authorize(c.ctx, 'read', 'Task');
       const { from, to } = parseAnalyticsRange(request.query, MAX_ANALYTICS_RANGE_DAYS);
+      await limits.charge('analytics', c.ctx);
       const r = await call(() => repo.analytics(c.ctx.organizationId, { from, to }));
       void reply.header('cache-control', 'private, no-store');
       return {

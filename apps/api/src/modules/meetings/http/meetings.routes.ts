@@ -17,6 +17,7 @@ import {
 } from '@meetops/contracts';
 import { directoryErrors, iso, type ResolveCaller } from '../../directory/http/route-kit.js';
 import type { MeetingService } from '../application/meeting.service.js';
+import type { RouteLimiter } from '../../../shared/rate-limits.js';
 import type { MeetingRecord } from '../domain/meeting.js';
 
 /** Route paths. Not in @meetops/contracts yet (no MEETING_PATHS constant); mirrors the web client. */
@@ -78,9 +79,11 @@ export async function meetingRoutes(
     caller: ResolveCaller;
     /** Caller for `resolve` (cookie or ADR-005 extension bearer); defaults to `caller`. */
     resolveCaller?: ResolveCaller;
+    /** ROUTE_RATE_LIMITS.analytics (shared with task analytics). */
+    routeLimits?: RouteLimiter;
   },
 ) {
-  const { meetings, caller } = opts;
+  const { meetings, caller, routeLimits } = opts;
   const resolveCaller = opts.resolveCaller ?? caller;
 
   app.get<{ Params: MeetingsParams; Querystring: ListMeetingsQuery }>(
@@ -159,6 +162,7 @@ export async function meetingRoutes(
     },
     async (request, reply) => {
       const c = await caller(request, request.params.organizationId);
+      await routeLimits?.charge('analytics', c.ctx);
       const r = await meetings.analytics(c, request.query);
       void reply.header('cache-control', 'private, no-store');
       return {

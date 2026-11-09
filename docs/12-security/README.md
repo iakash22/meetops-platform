@@ -9,6 +9,7 @@ Security design docs for MeetOps AI. Status: Draft, Phase 0 (no features impleme
 | [threat-model.md](threat-model.md)                             | STRIDE threat model of the meeting-to-task pipeline     |
 | [multi-tenant-isolation.md](multi-tenant-isolation.md)         | org_id scoping, repository layer, Postgres RLS, tests   |
 | [auth-session-spec.md](auth-session-spec.md)                   | Passwords, sessions, cookies, CSRF, rate limits         |
+| [../p9/rate-limit-coverage.md](../p9/rate-limit-coverage.md)   | Rate-limit coverage of every non-auth route (P9 #9)     |
 | [secrets-policy.md](secrets-policy.md)                         | Secret storage, envelope encryption, rotation, scanning |
 | [ai-provider-registry.md](ai-provider-registry.md)             | Provider allowlist, SSRF controls, prompt injection     |
 | [upload-media-security.md](upload-media-security.md)           | Upload, media processing, recording consent             |

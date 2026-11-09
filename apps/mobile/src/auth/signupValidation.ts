@@ -1,10 +1,10 @@
+import type { SignupRequest } from '@meetops/contracts';
 import {
   PASSWORD_MAX_LENGTH,
   PASSWORD_MIN_LENGTH,
   PASSWORD_POLICY_MESSAGE,
   isAcceptablePassword,
-  type SignupRequest,
-} from '@meetops/contracts';
+} from '@meetops/contracts/types';
 
 import { EMAIL_MAX_LENGTH } from './validation';
 

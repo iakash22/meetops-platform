@@ -97,15 +97,15 @@ Status: Draft (Phase 0, design-time). Stack per repo: React/Vite web, Fastify AP
 
 ### 3.7 Web UI / API
 
-| STRIDE | Threat                                 | Mitigation                                                                 |
-| ------ | -------------------------------------- | -------------------------------------------------------------------------- |
-| S      | Credential stuffing, session theft     | argon2id, rate limits, `__Host-` HttpOnly cookies (`auth-session-spec.md`) |
-| T      | CSRF on state-changing calls           | Synchronizer token + Origin check                                          |
-| T/I    | XSS via transcript/AI content rendered | React escaping, no `dangerouslySetInnerHTML` without sanitizer, strict CSP |
-| I      | IDOR / cross-tenant reads              | Repository-layer org scoping + RLS + tests                                 |
-| D      | API abuse                              | `@fastify/rate-limit`, body limits, Zod validation                         |
-| E      | Role escalation                        | CASL abilities server-side; role changes owner/admin only, audited         |
-| R      | Missing audit                          | Append-only audit log for auth, role, provider, integration, export events |
+| STRIDE | Threat                                 | Mitigation                                                                                                                         |
+| ------ | -------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| S      | Credential stuffing, session theft     | argon2id, rate limits, `__Host-` HttpOnly cookies (`auth-session-spec.md`)                                                         |
+| T      | CSRF on state-changing calls           | Synchronizer token + Origin check                                                                                                  |
+| T/I    | XSS via transcript/AI content rendered | React escaping, no `dangerouslySetInnerHTML` without sanitizer, strict CSP                                                         |
+| I      | IDOR / cross-tenant reads              | Repository-layer org scoping + RLS + tests                                                                                         |
+| D      | API abuse                              | Redis `RateLimiter` via fail-closed `consumeGuarded` (coverage: `docs/p9/rate-limit-coverage.md`), body limits, TypeBox validation |
+| E      | Role escalation                        | CASL abilities server-side; role changes owner/admin only, audited                                                                 |
+| R      | Missing audit                          | Append-only audit log for auth, role, provider, integration, export events                                                         |
 
 ## 4. Residual risk
 

@@ -1,4 +1,8 @@
-import { PASSWORD_MAX_LENGTH, PASSWORD_PATTERN, PASSWORD_POLICY_MESSAGE } from '@meetops/contracts';
+import {
+  PASSWORD_MAX_LENGTH,
+  PASSWORD_PATTERN,
+  PASSWORD_POLICY_MESSAGE,
+} from '@meetops/contracts/types';
 import { z } from 'zod';
 
 // zod 4: top-level z.email() replaces the deprecated z.string().email(). Piping keeps the v3 UX

@@ -35,7 +35,9 @@ async function appFor(identity: GoogleIdentity, users = new InMemoryUserReposito
   return { app, users };
 }
 
-function oauthCookie(res: { cookies: { name: string; value: string }[] }) {
+function oauthCookie(res: {
+  cookies: { name: string; value: string; httpOnly?: boolean; sameSite?: string }[];
+}) {
   const cookie = res.cookies.find((c) => c.name.endsWith('meetops_oauth'));
   if (!cookie) throw new Error('missing oauth cookie');
   return cookie;

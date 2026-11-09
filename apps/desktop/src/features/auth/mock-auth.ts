@@ -1,4 +1,4 @@
-import { isAcceptablePassword } from '@meetops/contracts';
+import { isAcceptablePassword } from '@meetops/contracts/types';
 
 import { AuthError, MAX_NAME_LENGTH, type AuthClient, type DesktopSession } from './auth-client';
 

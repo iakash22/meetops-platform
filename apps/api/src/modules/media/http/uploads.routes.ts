@@ -18,6 +18,7 @@ import {
   UploadParams,
 } from './types.js';
 import type { MediaRateLimit } from './rate-limit.js';
+import type { RouteLimiter } from '../../../shared/rate-limits.js';
 
 const tags = ['uploads'];
 const errors = { ...directoryErrors, 409: ErrorBody, 422: ErrorBody, 503: ErrorBody } as const;
@@ -31,9 +32,11 @@ export async function uploadRoutes(
     writeCaller?: ResolveCaller;
     /** Per user + IP limits on init/complete (429 + Retry-After). */
     rateLimit?: MediaRateLimit;
+    /** ROUTE_RATE_LIMITS.downloadUrl (per org + user, per org) on presigned GET minting. */
+    routeLimits?: RouteLimiter;
   },
 ) {
-  const { uploads, caller, rateLimit } = opts;
+  const { uploads, caller, rateLimit, routeLimits } = opts;
   const writeCaller = opts.writeCaller ?? caller;
 
   app.post<{ Params: OrgParams; Body: InitUploadInput }>(
@@ -100,6 +103,7 @@ export async function uploadRoutes(
     },
     async (request, reply) => {
       const c = await caller(request, request.params.organizationId);
+      await routeLimits?.charge('downloadUrl', c.ctx);
       const d = await uploads.downloadUrl(c, request.params.fileObjectId);
       void reply.header('cache-control', 'no-store');
       return {

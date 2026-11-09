@@ -2,7 +2,7 @@ import { useState, type ReactNode } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { Link } from '@tanstack/react-router';
-import { PASSWORD_POLICY_MESSAGE } from '@meetops/contracts';
+import { PASSWORD_POLICY_MESSAGE } from '@meetops/contracts/types';
 import { ApiError } from '@/lib/api/client';
 import { cn } from '@/lib/utils';
 import { applyFieldErrors, toastError } from '@/lib/errors/notify';
@@ -74,7 +74,7 @@ export function LoginForm({
 }: {
   onSubmit: SubmitHandler<LoginValues>;
   /** Full navigation to GET /auth/google/start. Omitted when Google sign-in is off. */
-  googleHref?: string;
+  googleHref?: string | undefined;
   /** Post-login path. Kept on the sign-up link so switching forms does not drop it. */
   next?: string | undefined;
 }) {
@@ -172,7 +172,7 @@ export function SignupForm({
   onResend?: (email: string) => Promise<unknown>;
   next?: string | undefined;
   /** Same Google flow as login. The API creates the account when the Google email is new. */
-  googleHref?: string;
+  googleHref?: string | undefined;
 }) {
   const [sentTo, setSentTo] = useState<string | null>(null);
   const {

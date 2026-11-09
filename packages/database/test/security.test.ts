@@ -132,7 +132,9 @@ const MEETING_STATUS_DELAYED_MIGRATION = '20261103180000_meeting_status_transcri
 const OUTBOX_DEDUPE_KEY_MIGRATION = '20261103200000_outbox_dedupe_key';
 /** #423: unique (org_id, dedupe_key), built CONCURRENTLY in its own single-statement migration. */
 const OUTBOX_DEDUPE_KEY_INDEX_MIGRATION = '20261103200100_outbox_dedupe_key_index';
-const LATEST_MIGRATION = OUTBOX_DEDUPE_KEY_INDEX_MIGRATION;
+/** Google OIDC (main f6c77fd8): nullable users.google_sub + a global unique index. Global table, no RLS. */
+const USER_GOOGLE_SUB_MIGRATION = '20261106120000_user_google_sub';
+const LATEST_MIGRATION = USER_GOOGLE_SUB_MIGRATION;
 /**
  * Parallel PRs that sort between calendar_events and meeting_embeddings (#334 consent events, #341 calendar links).
  * The order checks below ignore them so they hold whichever merges first; when present they must sort before ours.
@@ -189,6 +191,9 @@ const orderedDirs = () => {
   expect(dirs.indexOf(OUTBOX_DEDUPE_KEY_INDEX_MIGRATION)).toBe(
     dirs.indexOf(OUTBOX_DEDUPE_KEY_MIGRATION) + 1,
   );
+  expect(dirs.indexOf(USER_GOOGLE_SUB_MIGRATION)).toBe(
+    dirs.indexOf(OUTBOX_DEDUPE_KEY_INDEX_MIGRATION) + 1,
+  );
   return dirs.filter(
     (d) =>
       d !== TASK_SYNC_MIGRATION &&
@@ -199,6 +204,7 @@ const orderedDirs = () => {
       d !== MEETING_STATUS_DELAYED_MIGRATION &&
       d !== OUTBOX_DEDUPE_KEY_MIGRATION &&
       d !== OUTBOX_DEDUPE_KEY_INDEX_MIGRATION &&
+      d !== USER_GOOGLE_SUB_MIGRATION &&
       !(PARALLEL_MIGRATIONS as readonly string[]).includes(d),
   );
 };
@@ -597,6 +603,9 @@ describe('per-org uniqueness (M2)', () => {
         'tokenHash',
         // auth_refresh_tokens.token_hash (ADR-005 A1.2.1): SHA-256 hashes are globally unique.
         'tokenHash',
+        // users.google_sub (Google OIDC): one Google subject maps to at most one user, like email. Soft-deleted
+        // users still hold their subject (OIDC review L-1, being addressed in the hardening PR).
+        'googleSub',
       ].sort(),
     );
   });
