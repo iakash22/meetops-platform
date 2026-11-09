@@ -93,6 +93,10 @@ export const DEFAULT_REDACT_KEYS: readonly string[] = [
   'clientDataJSON',
   'authenticatorData',
   'userHandle',
+  // PR #459 round 3: device/extension pairing challenge codes and bare PKCE-style verifiers.
+  'challengeCode',
+  'challenge_code',
+  'verifier',
 ];
 
 /**

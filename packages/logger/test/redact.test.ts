@@ -220,6 +220,10 @@ describe('#282 M-1 integration secrets and free-text scrub', () => {
       'clientDataJSON',
       'authenticatorData',
       'userHandle',
+      // Round 3.
+      'challengeCode',
+      'challenge_code',
+      'verifier',
     ];
     log.info({ a: { b: Object.fromEntries(keys.map((k) => [k, `MFASEKRET_${k}`])) } });
     // A WebAuthn ceremony body and an otpauth URI as they would be logged.
