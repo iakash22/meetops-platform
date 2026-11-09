@@ -326,7 +326,7 @@ describe('media upload / recording-chunk rate limits', () => {
         },
         `10.1.${i}.2`,
       );
-    for (let i = 0; i < 90; i++) expect((await init(i)).statusCode, `call #${i + 1}`).not.toBe(429);
+    for (let i = 0; i < 90; i++) expect((await init(i)).statusCode, `call #${i + 1}`).toBe(201);
     const r = await init(90);
     expect(r.statusCode).toBe(429);
     expect(Number(r.headers['retry-after'])).toBeGreaterThan(0);

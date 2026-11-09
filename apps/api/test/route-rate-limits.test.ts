@@ -208,10 +208,10 @@ describe('route rate limits over HTTP (P9 remaining-work #9)', () => {
       expect(first.headers['retry-after']).toBeUndefined();
       expect(s.keys.some((key) => key.startsWith(`rl:${k.scope}:org:${s.org}:user:`))).toBe(true);
       expect429(await k.call(s));
-      // Another user of the same org has their own bucket ...
-      if (!k.ownerOnly) expect((await k.call(s, s.owner)).statusCode).not.toBe(429);
+      // Another user of the same org has their own bucket and gets the route's normal answer ...
+      if (!k.ownerOnly) expect((await k.call(s, s.owner)).statusCode).toBe(first.statusCode);
       // ... and the owner of another org never shares a key with this one.
-      expect((await k.call(s, s.other, s.otherOrg)).statusCode).not.toBe(429);
+      expect((await k.call(s, s.other, s.otherOrg)).statusCode).toBe(first.statusCode);
     });
 
     it(`${k.name}: limiter store down -> 503 + Retry-After (fail closed)`, async () => {
@@ -293,7 +293,8 @@ describe('route rate limits over HTTP (P9 remaining-work #9)', () => {
       expect(first.statusCode).not.toBe(429);
       expect(s.keys).toContain(`rl:${p.scope}:ip:198.51.100.10`);
       expect429(await send(s, '198.51.100.10'));
-      expect((await send(s, '198.51.100.11')).statusCode).not.toBe(429);
+      // Another IP gets exactly the answer the first one got before its budget ran out.
+      expect((await send(s, '198.51.100.11')).statusCode).toBe(first.statusCode);
     });
     it(`${p.name}: limiter store down -> 503 + Retry-After`, async () => {
       const s = await setup({});

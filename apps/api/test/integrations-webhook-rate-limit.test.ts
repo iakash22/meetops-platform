@@ -258,11 +258,12 @@ describe('integration webhook rate limits (P9 coverage)', () => {
       perIp: { limit: 2, windowMs: 60_000 },
       perTarget: { limit: 100, windowMs: 60_000 },
     });
-    expect((await post(app, `/webhooks/jira/${randomUUID()}`)).statusCode).not.toBe(429);
-    expect((await post(app, '/webhooks/github')).statusCode).not.toBe(429);
+    // Unsigned deliveries: the route's own 401 until the shared per-IP budget is spent.
+    expect((await post(app, `/webhooks/jira/${randomUUID()}`)).statusCode).toBe(401);
+    expect((await post(app, '/webhooks/github')).statusCode).toBe(401);
     expect((await post(app, `/webhooks/github/${randomUUID()}`)).statusCode).toBe(429);
-    expect(
-      (await post(app, `/webhooks/github/${randomUUID()}`, '198.51.100.9')).statusCode,
-    ).not.toBe(429);
+    expect((await post(app, `/webhooks/github/${randomUUID()}`, '198.51.100.9')).statusCode).toBe(
+      401,
+    );
   });
 });
