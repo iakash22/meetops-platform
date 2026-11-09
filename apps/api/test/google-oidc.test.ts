@@ -89,7 +89,7 @@ describe('readGoogleOAuthConfig', () => {
 
 describe('verifyGoogleIdToken', () => {
   const { publicKey, privateKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
-  const jwk = publicKey.export({ format: 'jwk' }) as JsonWebKey & { kid: string };
+  const jwk = publicKey.export({ format: 'jwk' }) as unknown as JsonWebKey & { kid: string };
   jwk.kid = 'test-key';
   const audience = '1234567890-abc.apps.googleusercontent.com';
   const nonce = 'nonce-value-0123456789abcdef';

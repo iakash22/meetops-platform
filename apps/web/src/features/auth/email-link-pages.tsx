@@ -1,4 +1,4 @@
-import { PASSWORD_POLICY_MESSAGE } from '@meetops/contracts';
+import { PASSWORD_POLICY_MESSAGE } from '@meetops/contracts/types';
 import { useState, type ReactNode } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';

@@ -1,4 +1,8 @@
-import { PASSWORD_MAX_LENGTH, PASSWORD_MIN_LENGTH, isAcceptablePassword } from '@meetops/contracts';
+import {
+  PASSWORD_MAX_LENGTH,
+  PASSWORD_MIN_LENGTH,
+  isAcceptablePassword,
+} from '@meetops/contracts/types';
 import { forwardRef, useState, type ComponentProps } from 'react';
 import { Check, Eye, EyeOff } from 'lucide-react';
 import { cn } from '@/lib/utils';
