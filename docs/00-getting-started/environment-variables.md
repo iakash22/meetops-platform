@@ -108,7 +108,7 @@ Where each variable is read:
 - `SMTP_PASSWORD`
 - `EMAIL_FROM`: e.g. "MeetOps AI <noreply@example.com>"
 - `AUTH_MAIL_QUEUE`: `inline` (default) or `bullmq`. `bullmq` (production, ADR-013 / notifications #11) enqueues ids-only auth mail jobs on the BullMQ `auth-mail` queue on `REDIS_URL` (deterministic, PII-free job ids `authmail_<kind>_<sha256>`; 5 attempts, exponential backoff from 2 s) and the worker sends through the provider-independent `EmailService` that `EMAIL_PROVIDER` explicitly selects (`smtp`: Mailpit in dev, Gmail opt-in; `resend`: production). There is never an automatic fallback: a failing provider retries or fails on that same provider. Resend 429/5xx/network errors and SMTP 4xx/connection errors retry; Resend other 4xx and SMTP 5xx fail fast. In strict environments it satisfies the `mailQueue` production dependency.
-- `AUTH_MAIL_QUEUE_PREFIX`: optional BullMQ key prefix for that queue (default `bull`; the live test uses `qa:it:`).
+- `AUTH_MAIL_QUEUE_PREFIX`: optional BullMQ key prefix for that queue and the `auth-takeover-follow-up` queue and DLQ (default `bull`; the live test uses `qa:it:`). Set the same value on the worker, whose metrics exporter reads the takeover queue and DLQ depth under it, and for `pnpm --filter @meetops/api takeover:redrive`.
 - `AUTH_MAIL_WORKER_ENABLED`: `true` (default) runs the auth-mail consumer inside the API process when `AUTH_MAIL_QUEUE=bullmq`; set `false` on API replicas that should only enqueue.
 - `AUTH_MAIL_WORKER_CONCURRENCY`: consumer concurrency, 1-50 (default 5).
 
@@ -145,7 +145,7 @@ GitHub, Jira and other integrations are configured as per-organization integrati
 
 - `RLS_TEST_APP_URL` / `RLS_TEST_OWNER_URL`: enable the PR #25 live RLS tests (connect as `meetops_app` / the owner). Skipped when unset.
 - `AI_SMOKE_AUDIO_FILE`: optional audio file for the AI provider smoke test (PR #21).
-- CI audit gate: `scripts/audit-gate.mjs` (fail-closed, high/critical block). `AUDIT_GATE_NOW` overrides the date for local tests only (ignored in CI). Exceptions are defined in the script and documented in `docs/12-security/risk-exceptions.md`: RE-01 (braces@3.0.3, issue #54, expires 2026-11-20), RE-03 (node-forge@1.4.0, expires 2026-11-24) and RE-04 (image-size@1.2.1, two GHSAs, expires 2026-11-24).
+- CI audit gate: `scripts/audit-gate.mjs` (fail-closed, high/critical block). `AUDIT_GATE_NOW` overrides the date for local tests only (ignored in CI). Exceptions are defined in the script and documented in `docs/12-security/risk-exceptions.md`. The only active gate rows are RE-04 (image-size@1.2.1, two GHSAs, expires 2026-11-24). RE-01 (braces, issue #54) and RE-03 (node-forge) are closed; see "Closed entries" in the register.
 - `STORAGE_APP_ACCESS_KEY_ID` / `STORAGE_APP_SECRET_ACCESS_KEY`: scoped MinIO user that minio-init creates for api/worker in the compose stack (read/write on `STORAGE_BUCKET` only). The root `STORAGE_ACCESS_KEY_ID`/`STORAGE_SECRET_ACCESS_KEY` is used only by minio/minio-init.
 
 ## Compose secrets (local dev)

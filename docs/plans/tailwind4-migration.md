@@ -2,8 +2,8 @@
 
 Status: proposal. Owner: Web, with DevOps for the lockfile slot and the audit gate.
 Baseline: `integration/phase-1` @ `e4aceac` (merge of #342, 31 Oct 2026 20:49 IST).
-Risk exception: RE-01 (`braces@3.0.3`, GHSA-vfj7-8cjw-p6xm), which expires **20 Nov 2026 23:59 UTC**
-(`scripts/audit-gate.mjs`). Version and advisory facts below were checked against the npm registry, the GitHub
+Risk exception: RE-01 (`braces@3.0.3`, GHSA-vfj7-8cjw-p6xm) is **closed** (advisory withdrawn 2026-10-23; gate row
+removed, see `docs/12-security/risk-exceptions.md`). This plan no longer has a deadline. Version and advisory facts below were checked against the npm registry, the GitHub
 Advisory Database and the Tailwind v4 upgrade guide on 1 Nov 2026 (IST).
 
 ## 0. Summary

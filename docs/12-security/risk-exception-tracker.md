@@ -3,6 +3,12 @@
 Written 1 Nov 2026 (IST) from `integration/phase-1` @ `e4aceac4`. It adds to
 [risk-exceptions.md](risk-exceptions.md) and does not replace it. No secrets in this file.
 
+> **Update 11 Nov 2026 (IST): RE-04 is closed too**, so no gate exceptions remain. The `image-size@<2.0.3` override
+> and the metro 0.81.5 patch (#412) mean the lockfile at `integration/phase-1` @ `809557f2` resolves only
+> `image-size@2.0.4`, outside GHSA-5p2g-fcmc-qvqq and GHSA-w3rx-r6r6-pgpr (both `<=2.0.2`). Both gate rows are removed.
+> The gate passes without them, also with `AUDIT_GATE_NOW=2026-11-25T00:00:01Z`. The RE-04 rows below, and the
+> "An override is unsafe" note, are kept for history only.
+
 > **Update 1 Nov 2026 (IST): RE-01 and RE-03 are closed.**
 >
 > - RE-01: GHSA-vfj7-8cjw-p6xm was withdrawn on 2026-10-23.
@@ -10,6 +16,12 @@ Written 1 Nov 2026 (IST) from `integration/phase-1` @ `e4aceac4`. It adds to
 > - Both gate rows are removed. See "Closed entries" in [risk-exceptions.md](risk-exceptions.md).
 > - The RE-01 owner mismatch (register said Frontend, gate said DevOps Agent) is now moot. Keep owners aligned for future entries.
 > - **Only RE-04 remains**, and the rows below for RE-01 and RE-03 are kept for history only.
+>
+> **Re-check 11 Nov 2026 (IST), `integration/phase-1` @ `6feef782` (issue #54):** `scripts/audit-gate.mjs` has no RE-01
+> row, `pnpm audit` reports no `braces` advisory, and the gate passes with `AUDIT_GATE_NOW=2026-11-21T00:00:01Z`
+> (after the old RE-01 expiry). The lockfile resolves only `braces@3.0.3` (still the latest release). GitHub lists
+> GHSA-vfj7-8cjw-p6xm as withdrawn (2026-10-23T12:53:02Z); GHSA-grv7-fg5c-xmjg (`<3.0.3`) and GHSA-cwfw-4gq5-mrqx
+> (`>=2.2.0 <2.3.1`) don't match 3.0.3. No override or lockfile change is needed. Issue #54 can be closed.
 
 ## Dependency paths (from `pnpm-lock.yaml`; `node_modules` were not installed, so `pnpm why` was not run)
 
