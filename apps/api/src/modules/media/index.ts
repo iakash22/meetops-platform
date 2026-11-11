@@ -74,6 +74,7 @@ export default async function mediaModule(app: FastifyInstance, opts: MediaPlugi
       }),
       caller,
       writeCaller,
+      routeLimits: routeLimiter(deps.rateLimiter, deps.routeRateLimits),
     });
   }
   await app.register(uploadRoutes, {

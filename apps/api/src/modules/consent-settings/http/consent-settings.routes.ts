@@ -89,6 +89,7 @@ export async function consentSettingsRoutes(
         request.params.organizationId,
         requestMeta(request),
       );
+      await opts.routeLimits?.charge('consentSettingsWrite', c.ctx);
       return service.update(c, request.body);
     },
   );

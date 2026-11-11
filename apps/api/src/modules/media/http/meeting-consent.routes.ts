@@ -10,6 +10,7 @@ import {
 import { ErrorBody } from '../../auth/http/schemas.js';
 import { directoryErrors, type ResolveCaller } from '../../directory/http/route-kit.js';
 import { toWire, type MeetingConsentService } from '../application/meeting-consent.service.js';
+import type { RouteLimiter } from '../../../shared/rate-limits.js';
 
 const tags = ['consent'];
 const errors = { ...directoryErrors, 422: ErrorBody } as const;
@@ -27,9 +28,14 @@ type MeetingConsentParams = Static<typeof MeetingConsentParams>;
  */
 export async function meetingConsentRoutes(
   app: FastifyInstance,
-  opts: { consents: MeetingConsentService; caller: ResolveCaller; writeCaller: ResolveCaller },
+  opts: {
+    consents: MeetingConsentService;
+    caller: ResolveCaller;
+    writeCaller: ResolveCaller;
+    routeLimits?: RouteLimiter;
+  },
 ) {
-  const { consents, caller, writeCaller } = opts;
+  const { consents, caller, writeCaller, routeLimits } = opts;
 
   app.get<{ Params: MeetingConsentParams }>(
     MEETING_CONSENT_PATHS.consent,
@@ -62,6 +68,7 @@ export async function meetingConsentRoutes(
     },
     async (request, reply) => {
       const c = await writeCaller(request, request.params.organizationId);
+      await routeLimits?.charge('consentRecord', c.ctx);
       const e = await consents.record(c, request.params.meetingId, request.body);
       return reply.code(201).send(toWire(e));
     },
@@ -82,6 +89,7 @@ export async function meetingConsentRoutes(
     },
     async (request, reply) => {
       const c = await writeCaller(request, request.params.organizationId);
+      await routeLimits?.charge('consentRevoke', c.ctx);
       const e = await consents.revoke(c, request.params.meetingId, request.body ?? {});
       return reply.code(201).send(toWire(e));
     },
