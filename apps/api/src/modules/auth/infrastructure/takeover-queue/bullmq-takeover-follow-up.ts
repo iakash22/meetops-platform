@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { Queue, UnrecoverableError, Worker, type Job, type JobsOptions } from 'bullmq';
+import { AUTH_TAKEOVER_FOLLOW_UP_DLQ, AUTH_TAKEOVER_FOLLOW_UP_QUEUE } from '@meetops/contracts';
 import {
   isTakeoverFollowUpKind,
   type TakeoverFollowUpJob,
@@ -13,8 +14,8 @@ import {
  * (ADR-013): ids-only payloads, deterministic job ids without ':', bounded attempts with exponential backoff, and the
  * worker's `<queue>-dlq` dead-letter pattern (see apps/worker transcription-retry) once the attempts are used up.
  */
-export const TAKEOVER_FOLLOW_UP_QUEUE = 'auth-takeover-follow-up';
-export const TAKEOVER_FOLLOW_UP_DLQ = `${TAKEOVER_FOLLOW_UP_QUEUE}-dlq`;
+export const TAKEOVER_FOLLOW_UP_QUEUE = AUTH_TAKEOVER_FOLLOW_UP_QUEUE;
+export const TAKEOVER_FOLLOW_UP_DLQ = AUTH_TAKEOVER_FOLLOW_UP_DLQ;
 
 /**
  * First run 5 s after the request (like the old timer), then exponential backoff: 5, 10, 20, 40, 80 s (about 2.5 min
@@ -29,7 +30,8 @@ export const TAKEOVER_FOLLOW_UP_JOB_OPTIONS = {
   removeOnFail: { age: 7 * 24 * 3600, count: 5000 },
 } as const satisfies JobsOptions;
 
-const JOB_ID_RE = /^takeover_(realtime|extension_tokens|push_devices)_[0-9a-f]{40}$/;
+export const TAKEOVER_JOB_ID_RE =
+  /^takeover_(realtime|extension_tokens|push_devices)_[0-9a-f]{40}$/;
 const USER_ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
 
 /** Deterministic job id per user and follow-up kind: `takeover_<kind>_<sha256(kind, userId)[:40]>` (no ':'). */
@@ -39,7 +41,8 @@ export function takeoverFollowUpJobId(job: TakeoverFollowUpJob): string {
     .digest('hex')
     .slice(0, 40);
   const id = `takeover_${job.kind}_${h}`;
-  if (!JOB_ID_RE.test(id)) throw new Error('takeover follow-up job id has an unsafe shape');
+  if (!TAKEOVER_JOB_ID_RE.test(id))
+    throw new Error('takeover follow-up job id has an unsafe shape');
   return id;
 }
 
@@ -96,7 +99,8 @@ export interface TakeoverFollowUpConnection {
   prefix?: string | undefined;
 }
 
-const connectionOf = (conn: TakeoverFollowUpConnection) => ({
+/** BullMQ queue/worker options for a connection: the Redis URL plus the optional key prefix. */
+export const connectionOf = (conn: TakeoverFollowUpConnection) => ({
   connection: { url: conn.redisUrl, maxRetriesPerRequest: null },
   ...(conn.prefix ? { prefix: conn.prefix } : {}),
 });
@@ -129,7 +133,8 @@ export class InvalidTakeoverFollowUpJobError extends UnrecoverableError {
   }
 }
 
-function validJob(data: unknown): TakeoverFollowUpJob | null {
+/** The `{ userId, kind }` payload when valid, else null (extra fields are dropped). */
+export function validJob(data: unknown): TakeoverFollowUpJob | null {
   if (!data || typeof data !== 'object') return null;
   const { userId, kind } = data as Record<string, unknown>;
   if (typeof userId !== 'string' || !USER_ID_RE.test(userId) || !isTakeoverFollowUpKind(kind))

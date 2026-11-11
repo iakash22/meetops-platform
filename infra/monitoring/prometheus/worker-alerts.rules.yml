@@ -12,7 +12,7 @@ groups:
           summary: 'MeetOps worker exporter {{ $labels.instance }} is not being scraped'
           runbook: docs/14-observability/alerts.md#meetopsworkerdown
       - alert: MeetOpsQueueBacklog
-        expr: sum by (queue) (bullmq_queue_jobs{job="meetops-worker",state=~"waiting|prioritized",queue!="transcription-dlq"}) > 100
+        expr: sum by (queue) (bullmq_queue_jobs{job="meetops-worker",state=~"waiting|prioritized",queue!~".*-dlq"}) > 100
         for: 10m
         labels:
           severity: ticket
@@ -35,6 +35,14 @@ groups:
         annotations:
           summary: 'Transcription DLQ has entries for 30+ minutes; redrive or fail them'
           runbook: docs/14-observability/alerts.md#meetopstranscriptiondlqnotempty
+      - alert: MeetOpsTakeoverFollowUpDlqNotEmpty
+        expr: sum(bullmq_queue_jobs{job="meetops-worker",queue="auth-takeover-follow-up-dlq",state=~"waiting|delayed|failed"}) > 0
+        for: 15m
+        labels:
+          severity: ticket
+        annotations:
+          summary: 'Account-takeover follow-ups were dead-lettered; a revocation may still be outstanding'
+          runbook: docs/14-observability/alerts.md#meetopstakeoverfollowupdlqnotempty
       - alert: MeetOpsQueueScrapeError
         expr: max by (queue) (bullmq_queue_scrape_error{job="meetops-worker"}) == 1
         for: 5m

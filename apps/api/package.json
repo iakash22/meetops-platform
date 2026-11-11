@@ -13,7 +13,9 @@
     "lint": "eslint .",
     "test": "vitest run",
     "coverage": "vitest run --coverage",
-    "media:reconcile": "node dist/scripts/reconcile-media-jobs.js"
+    "media:reconcile": "node dist/scripts/reconcile-media-jobs.js",
+    "takeover:redrive": "node dist/scripts/takeover-dlq-redrive.js",
+    "takeover:redrive:dev": "tsx --import ../../scripts/load-env-if-exists.mjs src/scripts/takeover-dlq-redrive.ts"
   },
   "dependencies": {
     "@casl/ability": "^6.7.1",
