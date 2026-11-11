@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Change: `WXT_FEATURE_HTTP_UPLOAD` defaults **on** in development builds (`wxt` / `wxt build --mode development`) and stays **off** in production builds (`wxt build`) unless set to `true`/`1`. Unit tests always use `StubUploadClient` unless a test constructs the HTTP client or passes an explicit flag. Set `WXT_FEATURE_HTTP_UPLOAD=false` (or `0`) to force the stub in dev.
+- Fix: `POST /orgs/:org/meetings/resolve` honours `Retry-After` on retryable statuses, the same way the upload client does.
+- UI: when meeting resolve fails because the extension is not paired, the popup shows the same Start pairing-required copy.
+
 - Fix: Start fails closed. The pairing, browser-quota and pending-storage checks are required dependencies, and a missing, throwing or nonsensical answer refuses Start (the local-only stub answers pairing `true` explicitly).
 - Fix: Start counts every pending chunk, held or only queued. Pending chunks are never evicted, so Start is refused when the cap has less than one chunk of room left on top of them, instead of starting and then refusing the first chunk.
 - Fix: the local recording chunk size equals the server limit (`MAX_CHUNK_BYTES`, 64 MiB), imported from `@meetops/contracts/types` rather than mirrored. This removes the 8 MiB vs 64 MiB mismatch; the Start reserve is one chunk at that size.

@@ -97,7 +97,7 @@ Decisions:
   - **Never fall back automatically to a paid provider.** No arbitrary user-supplied endpoints (SSRF guard; remote endpoints must use port 443).
 - **Storage**: MinIO in dev, R2 or S3 in production. Postgres stores file metadata only.
 - **Email**: Gmail SMTP via Nodemailer (`smtp.gmail.com:465`), behind an EmailService adapter, with a BullMQ email queue. No paid email in dev.
-- **Frontend**: stay on Tailwind 3 under a `braces@3.0.3` risk exception, up for review 2026-11-20. Frontend owns the Tailwind 4 migration before then.
+- **Frontend**: Tailwind 3 for now. The `braces@3.0.3` risk exception (RE-01, issue #54) is closed: GHSA-vfj7-8cjw-p6xm was withdrawn on 2026-10-23 and the gate row is gone. The Tailwind 4 migration is dependency hygiene with no deadline (`docs/plans/tailwind4-migration.md`).
 - Dependabot and the dependency graph are on.
 - No covert recording, and no bypassing platform permissions.
 - **Storage keys (ADR-010, approved by Akash)**: object keys move from `org/` to `organizations/{organizationId}/`. Plan: dev wipe and reseed, a staging copy, and reads of old `org/` keys kept until the copy is verified. `organizationId` is the canonical tenant key.
