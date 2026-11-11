@@ -439,6 +439,9 @@ describe('RLS migration', () => {
   it('ADR-021 MFA migration: auth_level pinned, one active TOTP per user, MFA audit actions allowlisted', () => {
     expect(mfaSql).toContain(`CHECK ("auth_level" IN ('password', 'google', 'mfa'))`);
     expect(mfaSql).toContain(
+      `ALTER TABLE "organizations" ADD COLUMN "mfa_required" BOOLEAN NOT NULL DEFAULT false;`,
+    );
+    expect(mfaSql).toContain(
       `CREATE UNIQUE INDEX "mfa_factors_one_active_totp" ON "mfa_factors"("user_id") WHERE "status" = 'active' AND "type" = 'totp';`,
     );
     for (const a of [

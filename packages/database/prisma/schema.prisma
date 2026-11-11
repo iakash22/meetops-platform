@@ -227,6 +227,8 @@ model Organization {
   id          String    @id @default(uuid()) @db.Uuid
   name        String
   slug        String    @unique
+  /// ADR-021 OQ-13: org policy "require MFA for everyone" (owners/admins always need MFA).
+  mfaRequired Boolean   @default(false) @map("mfa_required")
   createdById String?   @map("created_by_id") @db.Uuid
   createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt   DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)

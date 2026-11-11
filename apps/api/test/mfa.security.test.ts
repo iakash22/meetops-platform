@@ -257,7 +257,7 @@ describe('ADR-021 baseline: session auth_level (active)', () => {
     // N-4 (OIDC hardening) made the level explicit; a session without one is never elevated.
     expect(writes[0]!.authLevel).toBe(PLANNED.levels.password);
     expect(writes[0]!.mfaAt).toBeNull();
-    // ADR-021: a step-up time without the mfa level is dropped (the DB CHECK sessions_mfa_at_requires_mfa agrees).
+    // ADR-021: a step-up time without the mfa level is dropped (the DB CHECK sessions_mfa_at_level_check agrees).
     const stray = await repo.create({
       ...base,
       id: '00000000-0000-4000-8000-000000000003',

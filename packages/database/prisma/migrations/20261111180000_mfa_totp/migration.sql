@@ -4,6 +4,11 @@
 --    factor is removed. Read with the user on every authenticated request (MFA-TOTP-01 gate), so no extra query.
 ALTER TABLE "users" ADD COLUMN "mfa_enabled_at" TIMESTAMPTZ(3);
 
+-- 1b. organizations.mfa_required: the org-wide "require MFA for everyone" policy (ADR-021 D2, OQ-13). Owners and admins
+--     always need MFA (OQ-5) whatever this says. organizations is a reviewed global table (no RLS); the column is only
+--     changed through the org-context, CASL-checked, step-up-guarded route.
+ALTER TABLE "organizations" ADD COLUMN "mfa_required" BOOLEAN NOT NULL DEFAULT false;
+
 -- 2. sessions: when this session last passed an MFA check (step-up freshness, MFA-SU-06), and the auth_level values
 --    are pinned (MFA-SU-09). Anything other than exactly 'mfa' is not elevated; the CHECK makes a typo impossible.
 ALTER TABLE "sessions" ADD COLUMN "mfa_at" TIMESTAMPTZ(3);
