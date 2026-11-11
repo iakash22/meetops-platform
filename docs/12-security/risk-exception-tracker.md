@@ -3,6 +3,12 @@
 Written 1 Nov 2026 (IST) from `integration/phase-1` @ `e4aceac4`. It adds to
 [risk-exceptions.md](risk-exceptions.md) and does not replace it. No secrets in this file.
 
+> **Update 11 Nov 2026 (IST): RE-04 is closed too**, so no gate exceptions remain. The `image-size@<2.0.3` override
+> and the metro 0.81.5 patch (#412) mean the lockfile at `integration/phase-1` @ `809557f2` resolves only
+> `image-size@2.0.4`, outside GHSA-5p2g-fcmc-qvqq and GHSA-w3rx-r6r6-pgpr (both `<=2.0.2`). Both gate rows are removed.
+> The gate passes without them, also with `AUDIT_GATE_NOW=2026-11-25T00:00:01Z`. The RE-04 rows below, and the
+> "An override is unsafe" note, are kept for history only.
+
 > **Update 1 Nov 2026 (IST): RE-01 and RE-03 are closed.**
 >
 > - RE-01: GHSA-vfj7-8cjw-p6xm was withdrawn on 2026-10-23.
