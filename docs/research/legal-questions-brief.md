@@ -179,19 +179,40 @@ stores an org country; `docs/research/competitive-landscape.md` §4 records this
 13. Sarvam's Terms allow training on inputs "(where required) subject to your consent", and its privacy policy names
     itself a Data Fiduciary. In a MeetOps → Sarvam API flow, who must give or collect that consent, and is Sarvam a
     processor for us?
-14. CERT-In direction (iv) of 28 Apr 2022 says logs are kept for 180 days "within the Indian jurisdiction", but CERT-In's
+14. DPDP roles (see [dpdp-role-and-dpa-outline.md](dpdp-role-and-dpa-outline.md) §3): is MeetOps a Data Processor for
+    customer meeting content, including speech by participants who never signed up, and a Data Fiduciary only for its
+    own account, billing, analytics and marketing data? What would make it a joint Fiduciary "in conjunction with" the
+    customer (s. 2(i)), for example letting an AI vendor train on content?
+15. For non-member participants, what ground under s. 4 does the customer have: consent (s. 6), or "voluntarily
+    provided" (s. 7(a)) by speaking after the recording notice? Does the ADR-020 notice-based default meet s. 5 and Rule 3?
+16. Commencement: G.S.R. 843(E) and the Rules (G.S.R. 846(E)) are in Gazette issue No. 760 dated 13 Nov 2025, but the
+    e-Gazette ID and signature read 14 Nov 2025. Is the 18-month date 13 May 2027 or 14 May 2027, and is the Consent
+    Manager date 13 or 14 Nov 2026?
+17. Breach: what processor-to-customer notice period should the India DPA set so customers can meet Rule 7(2)(b)'s 72
+    hours, and how should it sit with CERT-In's 6-hour reporting, which we read as applying to MeetOps directly?
+18. Children: when a customer's meeting includes under-18 participants, what must MeetOps provide as processor so the
+    customer can meet s. 9(1) and Rule 10? Is diarization or speaker analytics "tracking or behavioural monitoring" under
+    s. 9(3)?
+19. Does s. 17(1)(d) exempt MeetOps' processing in India of meeting content of people outside India for foreign customers,
+    and which duties (s. 8(1), 8(5)) remain?
+20. Are customer-directed integrations (GitHub, Jira, Outlook calendar) sub-processors, or recipients chosen by the
+    customer as Fiduciary? Is Razorpay our processor or its own Fiduciary for payment data?
+21. Rule 8(3) makes the Fiduciary keep processing logs, including its Processor's, for at least a year. How does that sit
+    with ADR-019's "AI provider copies deleted right after processing" and with customer retention settings as short as 7
+    days?
+22. CERT-In direction (iv) of 28 Apr 2022 says logs are kept for 180 days "within the Indian jurisdiction", but CERT-In's
     own FAQ Q35 says they "may be stored outside India" if they can be produced in reasonable time, and calls itself
     "not a legal document". Can MeetOps keep its logs, or its sub-processors' logs, outside India? (See
     [verification-round-3.md](verification-round-3.md) §3.)
-15. AssemblyAI, Google and Resend promise breach notice only "without undue delay", with no hour limit, and none of their
+23. AssemblyAI, Google and Resend promise breach notice only "without undue delay", with no hour limit, and none of their
     DPAs names the DPDP Act. CERT-In needs a report within 6 hours, and DPDP Rule 7(2)(b) gives the Data Fiduciary 72
     hours for details to the Board. Must our sub-processor terms set fixed hours, and when a breach happens at a foreign
     sub-processor, whose 6-hour CERT-In clock applies? (See [verification-round-3.md](verification-round-3.md) §4.)
-16. Razorpay publishes no DPA. Its terms make us "solely and absolutely responsible" for our customers' data, and its
+24. Razorpay publishes no DPA. Its terms make us "solely and absolutely responsible" for our customers' data, and its
     privacy policy gives DPDP rights directly. Is Razorpay an independent Data Fiduciary for payment data it must hold in
     India under RBI rules, and what should our privacy notice and sub-processor list say about it? (See
     [verification-round-3.md](verification-round-3.md) §4.)
-17. Razorpay's Terms Part A §12.3 require us to tell Razorpay within 24 hours of any actual or suspected breach of
+25. Razorpay's Terms Part A §12.3 require us to tell Razorpay within 24 hours of any actual or suspected breach of
     customer data in our systems. Does that apply to MeetOps as a SaaS merchant, and how should it sit in our incident
     runbook next to the CERT-In 6-hour and DPDP 72-hour duties?
 

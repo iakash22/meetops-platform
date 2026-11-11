@@ -9,7 +9,8 @@
 
 ## 1. The pipeline we actually run
 
-The matrix in §3 uses these stages, read from the repo at `integration/phase-1` (`70f2ffb0`):
+The matrix in §3 uses these stages, read from the repo at `integration/phase-1` base `8b881166` (the cited code and ADR files are unchanged from `70f2ffb0`,
+where they were first read):
 
 | #   | Stage                                 | What the code does                                                                                                                                                                                                                                                                                                                                                                                                                 | Files                                                                                                                                                                                               |
 | --- | ------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -34,9 +35,11 @@ What the repo shows that matters for this review:
   (§2.3). This is a code change, outside docs/research; listed in §7 for the coordinator.
 - **No content PII redaction exists before the LLM.** `redact()` in `packages/ai-core/src/audit.ts` L25 only masks
   secret keys in audit records. Transcripts go to the summary and action-item model as they are.
-- **Hosts.** The SSRF allowlist (`ssrf.ts` L89) and the Gemini adapter cover `generativelanguage.googleapis.com`,
-  `api.assemblyai.com` and `api.openai.com` only. Vertex AI, Azure OpenAI, Sarvam and AssemblyAI's EU host
-  (`api.eu.assemblyai.com`) would each need adapter and allowlist work.
+- **Hosts.** At base `8b881166`, `DEFAULT_ALLOWED_HOSTS` in `packages/ai-core/src/security/ssrf.ts` L89 lists four
+  hosts: `generativelanguage.googleapis.com`, `api.assemblyai.com`, `api.openai.com` and `api.deepgram.com`. The project
+  lead says the last entry is being removed from the code; it is not a provider assessed in this doc. The Gemini adapter
+  uses `generativelanguage.googleapis.com` only. None of the four is a Vertex AI, Azure OpenAI, Sarvam or AssemblyAI EU
+  (`api.eu.assemblyai.com`) host, so each of those would need adapter and allowlist work.
 
 ## 2. Findings per provider
 
@@ -127,14 +130,14 @@ What the repo shows that matters for this review:
 
 - **Training.** Prompts, completions, embeddings and training data "are NOT available to OpenAI", "are NOT used to train
   any generative AI foundation models without your permission or instruction", and are not used to improve Microsoft or
-  third-party products without permission [Z1, page dated 18 May 2026].
+  third-party products without permission [Z1, last updated 5 Jun 2026].
 - **Retention.** Abuse monitoring may route flagged content to human review by authorised Microsoft employees (in the
   EEA for EEA deployments). Customers who meet Limited Access criteria can apply for **modified abuse monitoring**, which
-  removes storage and human review [Z2, 13 May 2026]. The retention period for abuse data isn't stated on the pages we
+  removes storage and human review [Z2, last updated 19 May 2026]. The retention period for abuse data isn't stated on the pages we
   fetched (**not verified**).
 - **Regions.** Deployment type sets where inference runs: Global may use any Azure region; Data Zone stays in the US, EU
   or APAC zone; Standard (regional) keeps prompts and responses in the chosen Azure geography. Data at rest stays in the
-  resource's geography [Z3, 6 Aug 2026]. Which models are offered as Standard (regional) in Central India or South India
+  resource's geography [Z3, last updated 12 Aug 2026]. Which models are offered as Standard (regional) in Central India or South India
   is **not verified** (the model page only shows South India for fine-tuning) [Z4].
 - **DPA, sub-processors, certifications.** Governed by the Microsoft Products and Services DPA [Z1]. We didn't read the
   DPA text, the sub-processor list or the compliance offerings (**not verified**).
@@ -237,13 +240,12 @@ Formula: `LLM $/h = 30,000 × input_price/1M + 2,500 × output_price/1M`; `STT $
 | S2+S3    | Sarvam 105B                                | ₹15 / ₹60 [S1]                 | **₹0.60**                     |
 | S3 retry | Worst case, one extra S3 pass (Flash-Lite) | +15,000 in, +1,000 out         | **+$0.0019**                  |
 | S4       | Gemini API `gemini-embedding-001`          | 15,000 × $0.15/1M [G5]         | **$0.0023**                   |
-| S4       | OpenAI `text-embedding-3-small`            | 15,000 × $0.02/1M [O5]         | **$0.0003**                   |
-| S4       | Azure `text-embedding-3-small`             | 15,000 × $0.022/1M [Z5]        | **$0.0003**                   |
+| S4       | OpenAI `text-embedding-3-small`            | 15,000 × $0.02/1M [O5]         | **$0.000300**                 |
+| S4       | Azure `text-embedding-3-small`             | 15,000 × $0.022/1M [Z5]        | **$0.000330**                 |
 | S4       | Vertex Gemini Embedding                    | "per 1,000 count" unit unclear | **not estimated**             |
 
 Read-across (**ESTIMATE**): STT is more than 90% of AI cost per hour on every route in the table. With diarization, Universal-3.5 Pro is
-$0.23/h, so a 20 h/month user is ≈ **$4.60**, not the $4.20 in `pricing-packaging.md` §3 (which leaves out the
-diarization add-on). Moving S2+S3 from Gemini API Flash-Lite to Vertex in Mumbai adds about $0.011–0.013 per hour.
+$0.23/h, so a 20 h/month user is ≈ **$4.60** (`pricing-packaging.md` §3 now shows both figures, after `ab93ede`). Moving S2+S3 from Gemini API Flash-Lite to Vertex in Mumbai adds about $0.011–0.013 per hour.
 
 ## 5. Decisions for Akash (labelled OPTIONS, none decided)
 
@@ -272,7 +274,7 @@ diarization add-on). Moving S2+S3 from Gemini API Flash-Lite to Vertex in Mumbai
 - **OPTION A: keep embeddings off** until §5.1 is decided. No cost, no new sub-processor.
 - **OPTION B: `gemini-embedding-001` at 1,536 dims on Vertex Mumbai.** India region, same vendor as S2; caller must
   normalise vectors [G6, V3]; Vertex price unit unclear [V4].
-- **OPTION C: OpenAI or Azure `text-embedding-3-small`.** Native 1,536 dims, ≈ $0.0003/h; adds a vendor; Azure India
+- **OPTION C: OpenAI or Azure `text-embedding-3-small`.** Native 1,536 dims, ≈ $0.000300/h (OpenAI) or $0.000330/h (Azure); adds a vendor; Azure India
   regional availability NV; OpenAI India processing is limited to gpt-6-luna [O1].
 
 ### 5.4 AI budgets (`monthlyBudgetUsd`, ADR-009)
@@ -310,51 +312,54 @@ diarization add-on). Moving S2+S3 from Gemini API Flash-Lite to Vertex in Mumbai
 - `packages/ai-core/src/bootstrap.ts`: defaults labelled `tier: 'free'` for Gemini and AssemblyAI; OpenAI default price
   matches `gpt-4o-mini`, which OpenAI lists as Deprecated [O4].
 - Default model `gemini-2.5-flash-lite` is not offered in Vertex Mumbai [V3].
-- `docs/research/pricing-packaging.md` §3 leaves out the $0.02/h diarization add-on [A1] (a docs fix for a later PR).
+- `docs/research/pricing-packaging.md` §3 leaves out the $0.02/h diarization add-on [A1]. **Applied** in `ab93ede`
+  (§3 now has the add-on row and the $4.60 estimate).
 
 ## Sources
 
-All fetched 2026-11-12 (IST). Dates in brackets are the page's own date where shown.
+All fetched 2026-11-12 (IST). Dates in brackets are the page's own date where shown. For Microsoft Learn pages (Z1–Z4) the date is the
+visible "Last updated on" badge, which Microsoft stores as a UTC timestamp (re-checked 2026-11-12 IST); it differs from
+the `ms.date` metadata we first quoted.
 
-| ID  | Source                                                                                                                                                         |
-| --- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| G1  | Gemini API Additional Terms of Service [effective 23 Mar 2026]: https://ai.google.dev/gemini-api/terms (canonical aistudio.google.com/docs/terms)              |
-| G2  | Gemini API zero data retention: https://ai.google.dev/gemini-api/docs/zdr                                                                                      |
-| G3  | Gemini API logs policy: https://aistudio.google.com/docs/logs-policy                                                                                           |
-| G4  | Gemini API available regions: https://aistudio.google.com/docs/available-regions                                                                               |
-| G5  | Gemini API pricing: https://aistudio.google.com/docs/pricing                                                                                                   |
-| G6  | Gemini API embeddings: https://aistudio.google.com/docs/embeddings                                                                                             |
-| G7  | Google Cloud Data Processing Addendum [last modified 30 Oct 2026]: https://cloud.google.com/terms/data-processing-addendum                                     |
-| G8  | Google Cloud sub-processors [last modified 19 Oct 2026]: https://cloud.google.com/terms/subprocessors                                                          |
-| G9  | Google processor terms: https://business.safety.google/processorterms                                                                                          |
-| V1  | Zero data retention [updated 10 Nov 2026 UTC]: https://docs.cloud.google.com/gemini-enterprise-agent-platform/resources/zero-data-retention                    |
-| V2  | Abuse monitoring: https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/abuse-monitoring                                                       |
-| V3  | Locations [updated 11 Nov 2026 UTC]: https://docs.cloud.google.com/gemini-enterprise-agent-platform/resources/locations                                        |
-| V4  | Vertex AI / Model Garden pricing: https://cloud.google.com/model-garden/pricing                                                                                |
-| A1  | AssemblyAI pricing: https://www.assemblyai.com/pricing                                                                                                         |
-| A2  | AssemblyAI Terms of Service [effective 1 Jul 2026]: https://www.assemblyai.com/legal/terms-of-service                                                          |
-| A3  | AssemblyAI Biometric Data Addendum [effective 26 May 2026]: https://www.assemblyai.com/legal/biometric-data-addendum                                           |
-| A4  | AssemblyAI Biometric Notice & Consent FAQs: https://www.assemblyai.com/legal/biometric-notice-and-consent-faqs                                                 |
-| A5  | AssemblyAI Data Processing Addendum [effective 22 Jan 2026]: https://www.assemblyai.com/legal/data-processing-addendum                                         |
-| A6  | AssemblyAI Data Controls: https://www.assemblyai.com/docs/data-controls                                                                                        |
-| A7  | AssemblyAI Data retention and model training: https://www.assemblyai.com/docs/data-retention-and-model-training                                                |
-| A8  | AssemblyAI Cloud endpoints and data residency: https://www.assemblyai.com/docs/pre-recorded-audio/select-the-region                                            |
-| A9  | AssemblyAI Trust Center, sub-processors: https://www.assemblyai.com/legal/subprocessors (renders the Vanta trust center)                                       |
-| A10 | AssemblyAI Security: https://www.assemblyai.com/security                                                                                                       |
-| A11 | AssemblyAI Code switching: https://www.assemblyai.com/docs/pre-recorded-audio/code-switching                                                                   |
-| A12 | AssemblyAI Delete transcripts: https://www.assemblyai.com/docs/pre-recorded-audio/delete-transcripts                                                           |
-| Z1  | Azure: Data, privacy and security for Models sold by Azure [18 May 2026]: https://learn.microsoft.com/en-us/azure/foundry/responsible-ai/openai/data-privacy   |
-| Z2  | Azure: Abuse monitoring [13 May 2026]: https://learn.microsoft.com/en-us/azure/foundry/openai/concepts/abuse-monitoring                                        |
-| Z3  | Azure: Deployment types [6 Aug 2026]: https://learn.microsoft.com/en-us/azure/foundry/foundry-models/concepts/deployment-types                                 |
-| Z4  | Azure: Models [21 Sep 2026]: https://learn.microsoft.com/en-us/azure/ai-foundry/openai/concepts/models                                                         |
-| Z5  | Azure OpenAI pricing (page default region, USD): https://azure.microsoft.com/en-us/pricing/details/azure-openai/                                               |
-| O1  | OpenAI: Your data: https://developers.openai.com/api/docs/guides/your-data                                                                                     |
-| O2  | OpenAI: Enterprise privacy [updated 8 Jan 2026]: https://openai.com/enterprise-privacy/                                                                        |
-| O3  | OpenAI: Sub-processor list [updated 14 Oct 2026]: https://openai.com/policies/sub-processor-list/                                                              |
-| O4  | OpenAI model pages: https://developers.openai.com/api/docs/models/gpt-4o-transcribe-diarize , …/gpt-4o-mini , …/gpt-4o-mini-transcribe                         |
-| O5  | OpenAI pricing and model pages: https://platform.openai.com/docs/pricing , https://developers.openai.com/api/docs/models/gpt-6-luna , …/text-embedding-3-small |
-| S1  | Sarvam API pricing: https://www.sarvam.ai/api-pricing                                                                                                          |
-| S2  | Sarvam Terms of Service [v2.0, effective 29 Jul 2026]: https://www.sarvam.ai/terms-of-service                                                                  |
-| S3  | Sarvam Privacy Policy: https://www.sarvam.ai/privacy-policy                                                                                                    |
-| S4  | Sarvam Trust Center: https://www.sarvam.ai/trust-center                                                                                                        |
-| S5  | Sarvam Saaras docs: https://docs.sarvam.ai/api/api-guides-tutorials/models/saaras                                                                              |
+| ID  | Source                                                                                                                                                                   |
+| --- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| G1  | Gemini API Additional Terms of Service [effective 23 Mar 2026]: https://ai.google.dev/gemini-api/terms (canonical aistudio.google.com/docs/terms)                        |
+| G2  | Gemini API zero data retention: https://ai.google.dev/gemini-api/docs/zdr                                                                                                |
+| G3  | Gemini API logs policy: https://aistudio.google.com/docs/logs-policy                                                                                                     |
+| G4  | Gemini API available regions: https://aistudio.google.com/docs/available-regions                                                                                         |
+| G5  | Gemini API pricing: https://aistudio.google.com/docs/pricing                                                                                                             |
+| G6  | Gemini API embeddings: https://aistudio.google.com/docs/embeddings                                                                                                       |
+| G7  | Google Cloud Data Processing Addendum [last modified 30 Oct 2026]: https://cloud.google.com/terms/data-processing-addendum                                               |
+| G8  | Google Cloud sub-processors [last modified 19 Oct 2026]: https://cloud.google.com/terms/subprocessors                                                                    |
+| G9  | Google processor terms: https://business.safety.google/processorterms                                                                                                    |
+| V1  | Zero data retention [updated 10 Nov 2026 UTC]: https://docs.cloud.google.com/gemini-enterprise-agent-platform/resources/zero-data-retention                              |
+| V2  | Abuse monitoring: https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/abuse-monitoring                                                                 |
+| V3  | Locations [updated 11 Nov 2026 UTC]: https://docs.cloud.google.com/gemini-enterprise-agent-platform/resources/locations                                                  |
+| V4  | Vertex AI / Model Garden pricing: https://cloud.google.com/model-garden/pricing                                                                                          |
+| A1  | AssemblyAI pricing: https://www.assemblyai.com/pricing                                                                                                                   |
+| A2  | AssemblyAI Terms of Service [effective 1 Jul 2026]: https://www.assemblyai.com/legal/terms-of-service                                                                    |
+| A3  | AssemblyAI Biometric Data Addendum [effective 26 May 2026]: https://www.assemblyai.com/legal/biometric-data-addendum                                                     |
+| A4  | AssemblyAI Biometric Notice & Consent FAQs: https://www.assemblyai.com/legal/biometric-notice-and-consent-faqs                                                           |
+| A5  | AssemblyAI Data Processing Addendum [effective 22 Jan 2026]: https://www.assemblyai.com/legal/data-processing-addendum                                                   |
+| A6  | AssemblyAI Data Controls: https://www.assemblyai.com/docs/data-controls                                                                                                  |
+| A7  | AssemblyAI Data retention and model training: https://www.assemblyai.com/docs/data-retention-and-model-training                                                          |
+| A8  | AssemblyAI Cloud endpoints and data residency: https://www.assemblyai.com/docs/pre-recorded-audio/select-the-region                                                      |
+| A9  | AssemblyAI Trust Center, sub-processors: https://www.assemblyai.com/legal/subprocessors (renders the Vanta trust center)                                                 |
+| A10 | AssemblyAI Security: https://www.assemblyai.com/security                                                                                                                 |
+| A11 | AssemblyAI Code switching: https://www.assemblyai.com/docs/pre-recorded-audio/code-switching                                                                             |
+| A12 | AssemblyAI Delete transcripts: https://www.assemblyai.com/docs/pre-recorded-audio/delete-transcripts                                                                     |
+| Z1  | Azure: Data, privacy and security for Models sold by Azure [last updated 2026-06-05]: https://learn.microsoft.com/en-us/azure/foundry/responsible-ai/openai/data-privacy |
+| Z2  | Azure: Abuse monitoring [last updated 2026-05-19]: https://learn.microsoft.com/en-us/azure/foundry/openai/concepts/abuse-monitoring                                      |
+| Z3  | Azure: Deployment types [last updated 2026-08-12]: https://learn.microsoft.com/en-us/azure/foundry/foundry-models/concepts/deployment-types                              |
+| Z4  | Azure: Models [last updated 2026-10-29]: https://learn.microsoft.com/en-us/azure/ai-foundry/openai/concepts/models                                                       |
+| Z5  | Azure OpenAI pricing (page default region, USD): https://azure.microsoft.com/en-us/pricing/details/azure-openai/                                                         |
+| O1  | OpenAI: Your data: https://developers.openai.com/api/docs/guides/your-data                                                                                               |
+| O2  | OpenAI: Enterprise privacy [updated 8 Jan 2026]: https://openai.com/enterprise-privacy/                                                                                  |
+| O3  | OpenAI: Sub-processor list [updated 14 Oct 2026]: https://openai.com/policies/sub-processor-list/                                                                        |
+| O4  | OpenAI model pages: https://developers.openai.com/api/docs/models/gpt-4o-transcribe-diarize , …/gpt-4o-mini , …/gpt-4o-mini-transcribe                                   |
+| O5  | OpenAI pricing and model pages: https://platform.openai.com/docs/pricing , https://developers.openai.com/api/docs/models/gpt-6-luna , …/text-embedding-3-small           |
+| S1  | Sarvam API pricing: https://www.sarvam.ai/api-pricing                                                                                                                    |
+| S2  | Sarvam Terms of Service [v2.0, effective 29 Jul 2026]: https://www.sarvam.ai/terms-of-service                                                                            |
+| S3  | Sarvam Privacy Policy: https://www.sarvam.ai/privacy-policy                                                                                                              |
+| S4  | Sarvam Trust Center: https://www.sarvam.ai/trust-center                                                                                                                  |
+| S5  | Sarvam Saaras docs: https://docs.sarvam.ai/api/api-guides-tutorials/models/saaras                                                                                        |
