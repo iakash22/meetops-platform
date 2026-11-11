@@ -183,17 +183,20 @@ estimates.
 
 ## 7. Corrections to earlier docs
 
-#478 merged into `integration/phase-1` (merge `fe5d285c`, 2026-11-12 00:28 IST) while this PR was open, so
-`gtm-india-smb-midmarket.md` is now a merged doc. Line numbers below are for that merged file.
+#478 merged into `integration/phase-1` (merge `fe5d285c`, 2026-11-12 00:28 IST) while PR #480 was open, so
+`gtm-india-smb-midmarket.md` was already a merged doc when the corrections below were written. Line numbers in the
+tables are for that merged file.
 
-**One merged doc is edited in this PR**, because it is a clear factual fix with primary sources:
+**What was merged.** #480 edited `gtm-india-smb-midmarket.md` L75 (Forge revenue-share dates; E1–E2 below) and was
+merged at `70f2ffb0` (2026-11-12 00:43 IST). #488 then applied the remaining §7 corrections (table below) and was
+merged at `d92096c6` (2026-11-12 00:54 IST).
 
 | Edit | File and line                        | Was                                                     | Now                                                                                    | Basis                                                                                                                    |
 | ---- | ------------------------------------ | ------------------------------------------------------- | -------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
 | E1   | `gtm-india-smb-midmarket.md` L75     | "the standard Forge rate is 17% from 1 Jul 2026 [GT10]" | "the standard Forge rate is 16% from 1 Apr 2026 and 17% from 1 Oct 2026 [GT10, GT10b]" | Atlassian's 3 Nov 2025 post moved the dates [R2-A12]; the developer pricing page gives 84%, then 83% to partners [R2-A9] |
 | E2   | `gtm-india-smb-midmarket.md` sources | —                                                       | New row GT10b citing R2-A12 and R2-A9                                                  | Supports E1                                                                                                              |
 
-Applied in a follow-up PR (branch `docs/research-corrections-r2`, off `70f2ffb0`). Line numbers are for the file
+Applied in #488 (branch `docs/research-corrections-r2`, off `70f2ffb0`; merge `d92096c6`). Line numbers are for the file
 before that PR:
 
 | File and line                         | Was (short)                                                                         | Applied change                                                                                                                                                                         | Basis          | Status      |

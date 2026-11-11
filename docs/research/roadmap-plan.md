@@ -77,8 +77,8 @@ realtime auth).
 
 1. **Owner inputs (HANDOFF §5).** AI keys, Jira credentials, the GitHub App install and the Google Calendar client block
    #1, #5, #6, #2 and #13 from being tested with real providers. The Google Calendar client also needs Google's brand
-   verification (about 2–3 business days) and sensitive-scope verification (up to 10 business days) before the app can
-   pass 100 new users ([verification-round-2.md](verification-round-2.md) §1.3).
+   plus sensitive-scope verification, which take about 2–3 plus up to 10 business days, and unverified apps are capped
+   at 100 new users ([verification-round-2.md](verification-round-2.md) §1.3).
 2. **P8 native builds have never been compiled** (HANDOFF §6). Any native work in #3, #4 or #22 needs the device checklists
    first.
 3. **Contracts.** #1, #3, #5 and #7 change `@meetops/contracts` (ADR-003 owner: Architecture).
