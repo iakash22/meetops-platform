@@ -2,13 +2,15 @@
 
 Status: proposal. Needs Maddy's Expo/RN decision (AR-5). Owner: Mobile, with DevOps for the lockfile slot and the audit gate.
 Baseline: `integration/phase-1` @ `e4aceac` (merge of #342, 31 Oct 2026 20:49 IST).
-Risk exceptions: RE-03 (`node-forge`) and RE-04 (`image-size`). Both expire **24 Nov 2026 23:59 UTC** (`scripts/audit-gate.mjs`).
+Risk exceptions: RE-03 (`node-forge`) and RE-04 (`image-size`) are both **closed** (RE-04 on 11 Nov 2026 through the
+#412 override and metro patch; see `docs/12-security/risk-exceptions.md`). This upgrade no longer has a gate deadline.
 Version and advisory facts below were checked against the npm registry, the GitHub Advisory Database and the Expo
 release notes on 1 Nov 2026 (IST). Re-check them before the lockfile PR.
 
 ## 0. Summary
 
-- **RE-04 needs this upgrade.** `image-size@1.2.1` (GHSA-5p2g-fcmc-qvqq, GHSA-w3rx-r6r6-pgpr, both high, fixed in
+- **RE-04 no longer needs this upgrade** (update 11 Nov 2026: #412 overrides image-size to `^2.0.3` and patches
+  metro 0.81.5, so the lockfile resolves only 2.0.4 and the gate rows are removed). Original reasoning: `image-size@1.2.1` (GHSA-5p2g-fcmc-qvqq, GHSA-w3rx-r6r6-pgpr, both high, fixed in
   2.0.3) reaches us only through `react-native@0.76.9` → `@react-native/community-cli-plugin@0.76.9` → `metro@0.81.5`.
   Metro dropped `image-size` in **0.83.8** (2026-08-19). The oldest Expo SDK that pins a Metro without it is **SDK 55**.
 - **RE-03 does not need this upgrade.** Root `pnpm.overrides` already forces `node-forge@<1.4.2` to `1.4.2` (b9521567,
