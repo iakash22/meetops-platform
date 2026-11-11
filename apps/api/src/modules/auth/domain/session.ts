@@ -42,6 +42,9 @@ export const toSessionAuthLevel = (v: string | null | undefined): SessionAuthLev
     ? (v as SessionAuthLevel)
     : 'password';
 
+/** ADR-021: the elevated level. Only AuthService.elevate() issues sessions with it. */
+export const MFA_SESSION_LEVEL: SessionAuthLevel = 'mfa';
+
 /** ADR-021 OQ-1 default: a step-up stays fresh for 10 minutes. */
 export const STEP_UP_WINDOW_MS = 10 * 60_000;
 

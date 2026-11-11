@@ -13,6 +13,16 @@ export type AuditAction =
   | 'auth.email.verification_resend'
   /** OIDC review M-2 / N-4: a Google subject was linked to an existing account (distinct from a sign-in). */
   | 'auth.google.linked'
+  // ADR-021 MFA (pre-tenant; mapped to record_global_auth_event names in prisma-audit.log.ts)
+  | 'auth.mfa.enroll'
+  | 'auth.mfa.confirm'
+  | 'auth.mfa.disable'
+  | 'auth.mfa.challenge.success'
+  | 'auth.mfa.challenge.failure'
+  | 'auth.mfa.step_up'
+  | 'auth.mfa.recovery_code.used'
+  | 'auth.mfa.recovery_codes.regenerate'
+  | 'auth.mfa.lockout'
   | 'org.create'
   | 'org.switch'
   | 'invitation.create'
@@ -85,7 +95,8 @@ export interface AuditEvent {
     | 'extension_device'
     | 'desktop_device'
     | 'integration'
-    | 'calendar_connection';
+    | 'calendar_connection'
+    | 'mfa_factor';
   targetId: string | null;
   metadata: Record<string, string | number | boolean | null>;
   ip: string | null;
