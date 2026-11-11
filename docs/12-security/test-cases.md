@@ -245,6 +245,34 @@ Planned. MFA is not built yet. The full steps, expected results, sources and thr
 | MFA-ERR-02  | Generic MFA failure                         | Medium   | Pending (`it.todo`)    |
 | MFA-ERR-03  | Org admins see status, not detail           | Low      | Pending (`it.todo`)    |
 
-## 6. Counts
+## 6. AI prompt injection and PII (worker prompts)
 
-Cross-tenant: 42 · Auth abuse: 35 · SSRF: 32 · Recording-session and upload: 19 · MFA and step-up (planned): 84 (9 active, 75 pending) · Total: 212.
+Covers the production worker prompts `meeting-summary@1` and `action-items@1` (`apps/worker/src/ai/`). Executable suites: `apps/worker/test/ai-prompt-injection.test.ts` and `apps/worker/test/ai-pii-leak.test.ts` (fixtures in `apps/worker/test/fixtures/ai/`). They drive the real ai-core executor with a scripted provider; no network. "Gap" rows are `it.fails` (asserting the missing control) or `it.todo`.
+
+| ID        | Case                                                                    | Severity | Status              |
+| --------- | ----------------------------------------------------------------------- | -------- | ------------------- |
+| AI-INJ-01 | One real `TRANSCRIPT_<nonce>` fence; nothing after the closer           | High     | Active              |
+| AI-INJ-02 | Newlines in segment text cannot start a new `[n]` line                  | High     | Active              |
+| AI-INJ-03 | Forged fence tags (guessed nonce, bare, other nonce, case, spacing)     | High     | Active              |
+| AI-INJ-04 | Role spoofing via speaker labels (tags and punctuation stripped)        | Medium   | Active              |
+| AI-INJ-05 | Control and bidi characters stripped                                    | Medium   | Active              |
+| AI-INJ-06 | System prompt marks the fence as untrusted data                         | Medium   | Active              |
+| AI-INJ-07 | Summary JSON with smuggled keys or trailing text is rejected            | High     | Active              |
+| AI-INJ-08 | Action items with `status`/`assigneeId` rejected after bounded repair   | High     | Active              |
+| AI-INJ-09 | Evidence ids outside the transcript are dropped                         | Medium   | Active              |
+| AI-INJ-10 | Obeyed, schema-valid injected task stored as `pending_review` (today)   | High     | Active (current)    |
+| AI-INJ-11 | Injected tasks flagged or kept out of drafts                            | High     | Gap (`it.fails`)    |
+| AI-INJ-12 | Injected text in the stored report flagged                              | Medium   | Gap (`it.fails`)    |
+| AI-INJ-13 | Loose fence look-alikes (`< /TRANSCRIPT_x >`, full-width brackets)      | Low      | Pending (`it.todo`) |
+| AI-PII-01 | Logs and `summary:ready` events carry ids and counts only               | High     | Active              |
+| AI-PII-02 | Errors (provider, invalid output, validation) carry codes only          | High     | Active              |
+| AI-PII-03 | `toPublicError` exposes code, requestId and retryable only              | High     | Active              |
+| AI-PII-04 | Outbox payloads (`meeting.summary_ready`, `extracted_tasks.*`) ids only | High     | Active              |
+| AI-PII-08 | Emails and phones in segments reach the LLM prompt verbatim (today)     | Medium   | Active (current)    |
+| AI-PII-05 | PII redacted before the transcript goes to the LLM                      | Medium   | Pending (`it.todo`) |
+| AI-PII-06 | STT `redact_pii` enabled                                                | Medium   | Pending (`it.todo`) |
+| AI-PII-07 | Logger redaction covers transcript/summary text keys                    | Medium   | Pending (`it.todo`) |
+
+## 7. Counts
+
+Cross-tenant: 42 · Auth abuse: 35 · SSRF: 32 · Recording-session and upload: 19 · MFA and step-up (planned): 84 (9 active, 75 pending) · AI prompt injection and PII: 21 (15 active, 2 gaps as `it.fails`, 4 pending) · Total: 233.
