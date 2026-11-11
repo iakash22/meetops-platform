@@ -185,9 +185,9 @@ stores an org country; `docs/research/competitive-landscape.md` §4 records this
     customer (s. 2(i)), for example letting an AI vendor train on content?
 15. For non-member participants, what ground under s. 4 does the customer have: consent (s. 6), or "voluntarily
     provided" (s. 7(a)) by speaking after the recording notice? Does the ADR-020 notice-based default meet s. 5 and Rule 3?
-16. Commencement: G.S.R. 843(E) and the Rules (G.S.R. 846(E)) are in Gazette issue No. 760 dated 13 Nov 2025, but the
-    e-Gazette ID and signature read 14 Nov 2025. Is the 18-month date 13 May 2027 or 14 May 2027, and is the Consent
-    Manager date 13 or 14 Nov 2026?
+16. Commencement: G.S.R. 843(E) is in Gazette issue No. 757 dated 13 Nov 2025, and only the Rules (G.S.R. 846(E)) are in
+    Gazette issue No. 760 dated 13 Nov 2025; the e-Gazette IDs and signatures on both read 14 Nov 2025. Is the 18-month
+    date 13 May 2027 or 14 May 2027, and is the Consent Manager date 13 or 14 Nov 2026?
 17. Breach: what processor-to-customer notice period should the India DPA set so customers can meet Rule 7(2)(b)'s 72
     hours, and how should it sit with CERT-In's 6-hour reporting, which we read as applying to MeetOps directly?
 18. Children: when a customer's meeting includes under-18 participants, what must MeetOps provide as processor so the
