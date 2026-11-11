@@ -163,6 +163,22 @@ stores an org country; `docs/research/competitive-landscape.md` §4 records this
 6. Is diarization "biometric categorisation" under the AI Act?
 7. Can one notice satisfy ADR-020, GDPR Art. 13, DPDP and AI Act Art. 50?
 8. How should the customer contract allocate consent and BIPA duties?
+9. AssemblyAI's Biometric Data Addendum makes the customer give notice and get written consent "on behalf of" AssemblyAI
+   and indemnify it, and its FAQ says diarization is an opt-in feature whose speaker embeddings "may be deemed biometric
+   data" but are not kept after the transcript is returned. Our worker turns diarization on by default. Does that make
+   every diarized chunk a "Biometric Feature" use, and what notice and consent wording would cover it? (See
+   [ai-provider-due-diligence.md](ai-provider-due-diligence.md) §2.3.)
+10. AssemblyAI's Terms §4.3(b) license Customer Data for model training (opt-out on paid plans only) and §4.6 let it own
+    and use De-Identified Data for any purpose. Does this fit MeetOps' processor role under our customer DPA and DPDP,
+    and must it be disclosed to customers or switched off contractually?
+11. The paid Gemini API logs prompts and responses for abuse detection and may store or cache them "in any country". Is
+    that acceptable for Indian customers' meeting content under DPDP cross-border rules, or should customer data use a
+    regional processor (for example Vertex AI in Mumbai)?
+12. ADR-019 promises AI provider copies are deleted right after processing, but no provider delete call exists yet and
+    AssemblyAI keeps transcripts 30 days by default. What must the DPA and sub-processor list say until that is fixed?
+13. Sarvam's Terms allow training on inputs "(where required) subject to your consent", and its privacy policy names
+    itself a Data Fiduciary. In a MeetOps → Sarvam API flow, who must give or collect that consent, and is Sarvam a
+    processor for us?
 
 ## Sources (fetched 2026-11-11)
 
