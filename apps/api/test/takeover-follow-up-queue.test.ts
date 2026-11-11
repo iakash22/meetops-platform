@@ -253,9 +253,10 @@ describe('takeover follow-up retries and DLQ', () => {
       { error: vi.fn(), warn },
     );
     const err = await p(failed(5)).catch((e: Error) => e);
-    expect(err.name).toBe('TypeError');
+    expect(err).toBeInstanceOf(Error);
+    expect((err as Error).name).toBe('TypeError');
     expect(
-      await handleTakeoverFollowUpFailure(failed(6), err, {
+      await handleTakeoverFollowUpFailure(failed(6), err as Error, {
         dlq: q,
         log: { error: vi.fn() },
         now: () => new Date('2026-11-11T00:00:00Z'),
