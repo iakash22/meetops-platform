@@ -14,6 +14,17 @@ While the version is `0.x`, a minor bump may contain breaking changes (ADR-003).
 
 ### Added
 
+- ADR-021 MFA (TOTP): `API_ERROR_CODES` / `ApiErrorCode` gain `MFA_REQUIRED` (403), `STEP_UP_REQUIRED` (403) and
+  `INVALID_MFA_CODE` (400, generic). New `MFA_PATHS` (`/auth/mfa`, `/auth/mfa/totp/enroll`, `/auth/mfa/totp/confirm`,
+  `/auth/mfa/challenge`, `/auth/mfa/step-up`, `/auth/mfa/recovery-codes`, `/auth/mfa/factors/:factorId`),
+  `SESSION_AUTH_LEVELS`, `MFA_STEP_UP_WINDOW_SECONDS` (600), `MFA_TOTP_DIGITS`, `MFA_TOTP_PERIOD_SECONDS`,
+  `MFA_RECOVERY_CODE_COUNT`, and schemas `SessionAuthLevel`, `TotpCode`, `RecoveryCode`, `MfaCodeRequest`,
+  `MfaChallengeRequest`, `MfaStepUpRequest`, `MfaTotpConfirmRequest`, `MfaFactorParams`, `MfaFactor`,
+  `MfaStatusResponse`, `MfaTotpEnrollResponse`, `MfaTotpConfirmResponse`, `MfaRecoveryCodesResponse`,
+  `MfaElevationResponse`, `AuthSessionInfo`. `AuthSession` gains optional `mfaRequired` and
+  `session: { authLevel, mfaEnabled, stepUpExpiresAt? }`. Additive, but clients that switch exhaustively on
+  `ApiErrorCode` must handle the three new codes. `REDACT_KEYS` gains `totpCode`, `recoveryCode`, `recoveryCodes`,
+  `otpauthUri` and `secret`.
 - `CONSENT_ATTESTATION_MAX_BACKDATE_SECONDS` (86400): `attestedAt` more than 24 h before the server clock is now
   rejected with 422 `CONSENT_INVALID` (consent and upload/recording init), backed by a DB CHECK.
   **Release note:** in-flight uploads/recordings whose attestation is older than 24 h fail closed

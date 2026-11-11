@@ -13,6 +13,7 @@ import {
   runWithOrgContext,
   runWithOrganizationContext,
   type TransactionCapableClient,
+  USER_TABLES,
 } from '../src/tenant.js';
 
 const pkgDir = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -262,6 +263,11 @@ const adr010Sql =
 /** Phase 3 per-recording transcript revision migration. */
 const TRANSCRIPT_REVISION_MIGRATION_DIR = '20261026200000_transcript_recording_revision';
 const consentSql = readFileSync(resolve(migrationsDir, CONSENT_MIGRATION, 'migration.sql'), 'utf8');
+/** ADR-021 MFA tables (user-scoped RLS) and the MFA global-audit allowlist. */
+const mfaSql = readFileSync(
+  resolve(migrationsDir, '20261111180000_mfa_totp', 'migration.sql'),
+  'utf8',
+);
 const rlsSql =
   readFileSync(resolve(migrationsDir, '20261021110000_tenant_rls_roles/migration.sql'), 'utf8') +
   laterTenantSql +
@@ -313,6 +319,8 @@ const models = [...schema.matchAll(/model (\w+) \{([\s\S]*?)\n\}/g)].map((m) => 
   return { name: m[1] ?? '', table: /@@map\("(\w+)"\)/.exec(body)?.[1] ?? '', body };
 });
 const tenantModels = models.filter((m) => /^\s+organizationId\s/m.test(m.body));
+/** ADR-021: user-scoped tables (no org_id), forced RLS on app.current_user_id. */
+const USER_SCOPED_TABLES = [...USER_TABLES] as string[];
 const GLOBAL_TABLES = [
   'organizations',
   'users',
@@ -327,7 +335,9 @@ describe('tenant schema', () => {
   it('every table is either a tenant table or an explicitly reviewed global table', () => {
     const tenant = tenantModels.map((m) => m.table).sort();
     expect(tenant).toEqual([...TENANT_TABLES].sort());
-    const others = models.map((m) => m.table).filter((t) => !tenant.includes(t));
+    const others = models
+      .map((m) => m.table)
+      .filter((t) => !tenant.includes(t) && !USER_SCOPED_TABLES.includes(t));
     expect(others.sort()).toEqual([...GLOBAL_TABLES].sort());
   });
 
@@ -408,6 +418,40 @@ describe('RLS migration', () => {
     expect(policySql).toContain(
       `CREATE POLICY tenant_isolation ON "${t}"\n  USING (org_id = ${ORG_EXPR})\n  WITH CHECK (org_id = ${ORG_EXPR});`,
     );
+  });
+
+  it.each(USER_SCOPED_TABLES)(
+    'ADR-021 %s is user-scoped: no org_id, RLS enabled + forced, user_isolation on app.current_user_id',
+    (t) => {
+      const model = models.find((m) => m.table === t);
+      expect(model, t).toBeDefined();
+      expect(model!.body).not.toMatch(/^\s+organizationId\s/m);
+      expect(model!.body).toMatch(/^\s+userId\s+String\s+@map\("user_id"\) @db\.Uuid/m);
+      expect(mfaSql).toContain(`ALTER TABLE "${t}" ENABLE ROW LEVEL SECURITY;`);
+      expect(mfaSql).toContain(`ALTER TABLE "${t}" FORCE ROW LEVEL SECURITY;`);
+      const expr = "user_id = NULLIF(current_setting('app.current_user_id', true), '')::uuid";
+      expect(mfaSql).toContain(
+        `CREATE POLICY user_isolation ON "${t}"\n  USING (${expr})\n  WITH CHECK (${expr});`,
+      );
+    },
+  );
+
+  it('ADR-021 MFA migration: auth_level pinned, one active TOTP per user, MFA audit actions allowlisted', () => {
+    expect(mfaSql).toContain(`CHECK ("auth_level" IN ('password', 'google', 'mfa'))`);
+    expect(mfaSql).toContain(
+      `CREATE UNIQUE INDEX "mfa_factors_one_active_totp" ON "mfa_factors"("user_id") WHERE "status" = 'active' AND "type" = 'totp';`,
+    );
+    for (const a of [
+      'auth.mfa_confirmed',
+      'auth.mfa_challenge_failed',
+      'auth.mfa_recovery_code_used',
+    ])
+      expect(mfaSql).toContain(`'${a}'`);
+    expect(mfaSql).toContain(`NOT IN ('user', 'session', 'email', 'mfa_factor')`);
+    expect(mfaSql).toMatch(
+      /REVOKE ALL ON FUNCTION public\.record_global_auth_event\([^)]*\)\s+FROM PUBLIC;/,
+    );
+    expect(mfaSql).not.toMatch(/GRANT (ALL|TRUNCATE|CREATE)[^;]*TO meetops_app/);
   });
 
   it('does not enable RLS on global tables', () => {

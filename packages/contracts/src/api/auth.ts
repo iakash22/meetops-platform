@@ -1,6 +1,7 @@
 import { Type, type Static } from '@sinclair/typebox';
 import { Id, IsoDateTime } from '../common.js';
 import { Membership, Organization, Role, User } from '../domain/org.js';
+import { AuthSessionInfo } from './mfa.js';
 import { PASSWORD_MAX_LENGTH, PASSWORD_MIN_LENGTH, PASSWORD_PATTERN } from '../password-policy.js';
 
 const Email = Type.String({ format: 'email', maxLength: 320 });
@@ -41,7 +42,7 @@ export type ForgotPasswordRequest = Static<typeof ForgotPasswordRequest>;
  * There is no bearer token in the body. The session lives only in a
  * `__Host-` prefixed, HttpOnly, Secure, SameSite cookie set by the API.
  * Clients send `csrfToken` back in the `x-csrf-token` header on state-changing requests.
- * `activeOrganizationId` and `role` are set by the server from the membership, never by the client. Both are null when the user has no organization membership yet (both null or both set).
+ * `activeOrganizationId` and `role` are set by the server from the membership, never by the client. Both are null when the user has no organization membership yet (both null or both set), or while `mfaRequired`.
  */
 export const AuthSession = Type.Object({
   user: User,
@@ -51,6 +52,13 @@ export const AuthSession = Type.Object({
   expiresAt: Type.Optional(IsoDateTime),
   organizations: Type.Array(Organization),
   memberships: Type.Optional(Type.Array(Membership)),
+  /**
+   * Unreleased (ADR-021): true when the user has MFA on and this session has not passed POST /auth/mfa/challenge.
+   * Org data is then withheld (`organizations: []`, nulls) and org routes return 403 MFA_REQUIRED.
+   */
+  mfaRequired: Type.Optional(Type.Boolean()),
+  /** Unreleased (ADR-021): assurance level of the current session. */
+  session: Type.Optional(AuthSessionInfo),
 });
 export type AuthSession = Static<typeof AuthSession>;
 

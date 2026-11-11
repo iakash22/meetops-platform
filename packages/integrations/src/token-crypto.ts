@@ -91,6 +91,28 @@ export function tokenAad(ctx: TokenEncryptionContext): Buffer {
   );
 }
 
+/**
+ * ADR-021 / #456 finding P-3: per-user secrets (MFA TOTP) have no organization or integration. Their AAD is its own
+ * context, bound to the user and the factor row, so an envelope copied to another user or factor fails to decrypt and
+ * can never be confused with an integration token envelope (different label).
+ */
+export interface UserSecretContext {
+  purpose: 'mfa.totp';
+  userId: string;
+  factorId: string;
+}
+
+const USER_SECRET_LABELS: Record<UserSecretContext['purpose'], string> = {
+  'mfa.totp': 'meetops.mfa.totp.v1',
+};
+
+export function userSecretAad(ctx: UserSecretContext): Buffer {
+  const label = USER_SECRET_LABELS[ctx.purpose];
+  if (!label || !ctx.userId || !ctx.factorId)
+    throw new Error('purpose, userId and factorId are required');
+  return Buffer.from(JSON.stringify([label, ctx.userId, ctx.factorId]), 'utf8');
+}
+
 const b64u = (b: Uint8Array) => Buffer.from(b).toString('base64url');
 const unb64u = (s: string) => {
   if (!/^[A-Za-z0-9_-]*$/.test(s)) throw new TokenDecryptionError();
@@ -106,7 +128,23 @@ export class TokenCipher {
   constructor(private readonly kek: KeyEncryptionProvider) {}
 
   async encrypt(plaintext: string, ctx: TokenEncryptionContext): Promise<string> {
-    const aad = tokenAad(ctx);
+    return this.seal(plaintext, tokenAad(ctx));
+  }
+
+  async decrypt(envelope: string, ctx: TokenEncryptionContext): Promise<string> {
+    return this.open(envelope, tokenAad(ctx));
+  }
+
+  /** ADR-021: same envelope format, AAD = userSecretAad(ctx) (user + factor), never org/integration. */
+  async encryptUserSecret(plaintext: string, ctx: UserSecretContext): Promise<string> {
+    return this.seal(plaintext, userSecretAad(ctx));
+  }
+
+  async decryptUserSecret(envelope: string, ctx: UserSecretContext): Promise<string> {
+    return this.open(envelope, userSecretAad(ctx));
+  }
+
+  private async seal(plaintext: string, aad: Buffer): Promise<string> {
     const keyId = await this.kek.currentKeyId();
     if (!KEY_ID_RE.test(keyId)) throw new Error('Invalid key id');
     const dek = randomBytes(32);
@@ -119,8 +157,7 @@ export class TokenCipher {
     }
   }
 
-  async decrypt(envelope: string, ctx: TokenEncryptionContext): Promise<string> {
-    const aad = tokenAad(ctx);
+  private async open(envelope: string, aad: Buffer): Promise<string> {
     const parts = envelope.split('.');
     if (parts.length !== 4 || parts[0] !== 'v1' || !KEY_ID_RE.test(parts[1] ?? ''))
       throw new TokenDecryptionError('Malformed token envelope');

@@ -291,6 +291,8 @@ model User {
   /// neither express nor introspect a partial index, so there is deliberately no @unique here (it would make the CI
   /// drift check want a full index back). Lookups use findFirst with deletedAt null; the index still enforces it.
   googleSub     String?   @map("google_sub")
+  /// ADR-021: set when the user's first MFA factor is activated (same transaction), cleared with the last one.
+  mfaEnabledAt  DateTime? @map("mfa_enabled_at") @db.Timestamptz(3)
   createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt     DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
   deletedAt     DateTime? @map("deleted_at") @db.Timestamptz(3)
@@ -324,6 +326,9 @@ model User {
   calendarEventLinks      CalendarEventLink[]      @relation("CalendarEventLinkOwner")
 
   taskSyncRequests TaskSyncJob[] @relation("TaskSyncRequester")
+
+  mfaFactors       MfaFactor[]       @relation("MfaFactorOwner")
+  mfaRecoveryCodes MfaRecoveryCode[] @relation("MfaRecoveryCodeOwner")
 
   @@map("users")
 }
@@ -369,6 +374,8 @@ model Session {
   revokedAt         DateTime? @map("revoked_at") @db.Timestamptz(3)
   lastSeenAt        DateTime  @default(now()) @map("last_seen_at") @db.Timestamptz(3)
   authLevel         String    @default("password") @map("auth_level")
+  /// ADR-021: when this session last passed an MFA check (step-up freshness). Null unless auth_level = 'mfa' (CHECK).
+  mfaAt             DateTime? @map("mfa_at") @db.Timestamptz(3)
   createdAt         DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt         DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
 
@@ -1587,4 +1594,47 @@ model MeetingEmbedding {
   @@index([organizationId, model])
   @@index([organizationId, meetingId])
   @@map("meeting_embeddings")
+}
+
+/// ADR-021 MFA factor (TOTP today). User-scoped, no org: forced RLS on app.current_user_id (migration
+/// 20261111180000). The secret is only a TokenCipher envelope (AAD = user + factor id). "At most one active TOTP per
+/// user" is the partial unique index mfa_factors_one_active_totp, which Prisma cannot express (kept out of here on
+/// purpose so the drift check stays clean). type/status values are pinned by CHECK constraints.
+model MfaFactor {
+  id               String    @id @default(uuid()) @db.Uuid
+  userId           String    @map("user_id") @db.Uuid
+  type             String
+  status           String
+  secretEnc        String    @map("secret_enc")
+  secretKeyId      String    @map("secret_key_id")
+  /// RFC 6238 replay guard: highest time step accepted so far.
+  lastUsedStep     BigInt?   @map("last_used_step")
+  pendingExpiresAt DateTime? @map("pending_expires_at") @db.Timestamptz(3)
+  confirmedAt      DateTime? @map("confirmed_at") @db.Timestamptz(3)
+  lastUsedAt       DateTime? @map("last_used_at") @db.Timestamptz(3)
+  createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt        DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  user          User              @relation("MfaFactorOwner", fields: [userId], references: [id], onDelete: Cascade)
+  recoveryCodes MfaRecoveryCode[]
+
+  @@index([userId])
+  @@map("mfa_factors")
+}
+
+/// ADR-021 single-use recovery code, stored only as HMAC-SHA256(per-user key, code). User-scoped forced RLS.
+model MfaRecoveryCode {
+  id        String    @id @default(uuid()) @db.Uuid
+  userId    String    @map("user_id") @db.Uuid
+  factorId  String    @map("factor_id") @db.Uuid
+  codeHash  String    @map("code_hash")
+  usedAt    DateTime? @map("used_at") @db.Timestamptz(3)
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  user   User      @relation("MfaRecoveryCodeOwner", fields: [userId], references: [id], onDelete: Cascade)
+  factor MfaFactor @relation(fields: [factorId], references: [id], onDelete: Cascade)
+
+  @@unique([factorId, codeHash])
+  @@index([userId])
+  @@map("mfa_recovery_codes")
 }

@@ -19,18 +19,47 @@ export interface Session {
   geo?: GeoFields;
   /**
    * How the user proved who they are (`sessions.auth_level`). Absent means `password` (the column default) so older
-   * fakes keep working. ADR-021 adds `mfa` for step-up later.
+   * fakes keep working. ADR-021: `mfa` once this session passed a TOTP / recovery-code check (only
+   * AuthService.elevate writes it).
    */
   authLevel?: SessionAuthLevel;
+  /**
+   * ADR-021 D4: when this session last proved MFA (`sessions.mfa_at`), the step-up freshness clock. Null/absent: no
+   * fresh step-up. A DB CHECK allows it only with `auth_level = 'mfa'`. An org switch keeps the level but clears it.
+   */
+  mfaAt?: Date | null;
 }
 
-/** OIDC review N-4: Google sessions are `google`, not the `password` column default. */
-export const SESSION_AUTH_LEVELS = ['password', 'google'] as const;
+/**
+ * OIDC review N-4: Google sessions are `google`, not the `password` column default. ADR-021: `mfa` is the elevated
+ * level (DB CHECK `sessions_auth_level_check` pins the same three values).
+ */
+export const SESSION_AUTH_LEVELS = ['password', 'google', 'mfa'] as const;
 export type SessionAuthLevel = (typeof SESSION_AUTH_LEVELS)[number];
+/** Unknown stored values are never trusted: they read back as the lowest level, `password`. */
 export const toSessionAuthLevel = (v: string | null | undefined): SessionAuthLevel =>
   (SESSION_AUTH_LEVELS as readonly string[]).includes(v ?? '')
     ? (v as SessionAuthLevel)
     : 'password';
+
+/** ADR-021 OQ-1 default: a step-up stays fresh for 10 minutes. */
+export const STEP_UP_WINDOW_MS = 10 * 60_000;
+
+/** True when the session is MFA-elevated (any time). */
+export const isMfaSession = (s: Pick<Session, 'authLevel'>): boolean => s.authLevel === 'mfa';
+
+/** When the current step-up stops being fresh, or null when there is none. */
+export function stepUpExpiresAt(s: Pick<Session, 'authLevel' | 'mfaAt'>): Date | null {
+  if (!isMfaSession(s) || !s.mfaAt) return null;
+  return new Date(s.mfaAt.getTime() + STEP_UP_WINDOW_MS);
+}
+
+/** ADR-021 D4 step-up: an `mfa` session whose `mfaAt` is within STEP_UP_WINDOW_MS (and not in the future). */
+export function hasFreshStepUp(s: Pick<Session, 'authLevel' | 'mfaAt'>, now: Date): boolean {
+  const until = stepUpExpiresAt(s);
+  if (!until || !s.mfaAt) return false;
+  return s.mfaAt.getTime() <= now.getTime() + 5_000 && now.getTime() < until.getTime();
+}
 
 export interface SessionPolicy {
   idleTimeoutMs: number;
