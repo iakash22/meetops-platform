@@ -17,6 +17,7 @@ through an ADR (`docs/15-decisions/`) or a plan (`docs/plans/`).
 | [gtm-india-smb-midmarket.md](gtm-india-smb-midmarket.md)     | India SMB and mid-market GTM: ICP, market size, channels, INR pricing, DPDP messaging                                                      |
 | [verification-round-2.md](verification-round-2.md)           | Google scope classes, GitHub and Atlassian marketplace rules, Zoho INR prices, DPDP timeline, India size                                   |
 | [ai-provider-due-diligence.md](ai-provider-due-diligence.md) | Gemini, Vertex AI, AssemblyAI, Azure OpenAI, OpenAI API and Sarvam: training, retention, regions, DPAs, prices, cost estimates and options |
+| [dpdp-role-and-dpa-outline.md](dpdp-role-and-dpa-outline.md) | DPDP Fiduciary vs Processor per purpose, breach, transfer, children, SDF, sub-processor list, India DPA outline (not legal advice)         |
 
 Conventions:
 
