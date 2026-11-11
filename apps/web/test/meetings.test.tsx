@@ -108,7 +108,7 @@ describe('meetings', () => {
   async function pickAndConsent(file: File) {
     await userEvent.upload(screen.getByTestId('upload-input'), file);
     expect(await screen.findByTestId('consent-notice')).toHaveTextContent(
-      'This meeting is recorded.',
+      'This meeting is being recorded by MeetOps Recorder.',
     );
     const confirm = screen.getByRole('button', { name: 'Confirm and upload' });
     expect(confirm).toBeDisabled();

@@ -388,17 +388,40 @@ export const ORG_ACCESS_CHANGE_REASONS = ['member_removed', 'role_changed'] as c
 export const REAUTH_REASONS = ['org_switch', 'session_expired', 'revalidation_failed'] as const;
 
 /**
- * v0.5.0: consent / retention settings.
- * - `mode`: `all_party` (every participant must consent) or `one_party` (the recording user's attestation suffices).
+ * ADR-019 / ADR-020: consent / retention settings (v0.15.0).
+ * - `mode`: `all_parties_notified` (visible notice is enough) or `all_parties_consented` (everyone must
+ *   explicitly agree). There is no one-party mode. Default is `all_parties_consented` for every org
+ *   (orgs do not store a country; a per-jurisdiction default is a follow-up).
  */
-export const CONSENT_SETTINGS_MODES = ['all_party', 'one_party'] as const;
+export const CONSENT_SETTINGS_MODES = ['all_parties_notified', 'all_parties_consented'] as const;
+/** Default settings mode: require explicit consent (ADR-020 EU/UK default, applied to every org). */
+export const DEFAULT_CONSENT_SETTINGS_MODE = 'all_parties_consented' as const;
 /** v0.5.0: roles allowed to PATCH consent settings. Every role may GET them (rbac-matrix "Consent / retention settings"). */
 export const CONSENT_SETTINGS_WRITE_ROLES = ['owner', 'admin'] as const;
 /** v0.5.0: max length of the consent notice text shown to participants. */
 export const MAX_CONSENT_NOTICE_TEXT_LENGTH = 4000;
-/** v0.5.0: recording retention range in days (1 day .. 10 years). */
-export const MIN_RETENTION_DAYS = 1;
-export const MAX_RETENTION_DAYS = 3650;
+/** Default notice shown until an owner/admin sets one (ADR-020: visible MeetOps Recorder). */
+export const DEFAULT_CONSENT_NOTICE_TEXT = 'This meeting is being recorded by MeetOps Recorder.';
+/** ADR-019: recording retention range in days (7–365); default 90. */
+export const MIN_RETENTION_DAYS = 7;
+export const MAX_RETENTION_DAYS = 365;
+export const DEFAULT_RETENTION_DAYS = 90;
+
+/**
+ * Next `currentConsentVersion` after the notice text changes (ADR-020). Uses UTC `YYYY-MM-DD`, or
+ * `YYYY-MM-DD.N` when the version was already bumped that day. The API owns this field; clients cannot set it.
+ */
+export function nextConsentVersion(current: string, now: Date = new Date()): string {
+  const day = now.toISOString().slice(0, 10);
+  if (current === day) return `${day}.2`;
+  const prefix = `${day}.`;
+  if (current.startsWith(prefix)) {
+    const n = Number.parseInt(current.slice(prefix.length), 10);
+    const next = Number.isFinite(n) && n >= 1 ? n + 1 : 2;
+    return `${prefix}${next}`;
+  }
+  return day;
+}
 
 /**
  * v0.5.0: consent settings and upload lifecycle route templates. Org-scoped; the API MUST check

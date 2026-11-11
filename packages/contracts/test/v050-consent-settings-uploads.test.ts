@@ -7,9 +7,16 @@ import {
   PAYLOAD_TOO_LARGE_HTTP_STATUS,
   type PayloadTooLargeErrorEnvelope,
   CONSENT_ERROR_REASONS,
+  CONSENT_SETTINGS_MODES,
   CONSENT_SETTINGS_WRITE_ROLES,
   CONSENT_UPLOAD_PATHS,
   CURRENT_CONSENT_VERSION,
+  DEFAULT_CONSENT_NOTICE_TEXT,
+  DEFAULT_CONSENT_SETTINGS_MODE,
+  DEFAULT_RETENTION_DAYS,
+  MAX_RETENTION_DAYS,
+  MIN_RETENTION_DAYS,
+  nextConsentVersion,
   CompleteUploadRequest,
   CompleteUploadResponse,
   ConsentSettings,
@@ -23,10 +30,10 @@ import * as Light from '../src/types.js';
 const id = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
 const at = '2026-10-26T12:00:00.000Z';
 const settings = {
-  mode: 'all_party',
-  noticeText: 'This meeting is recorded.',
+  mode: DEFAULT_CONSENT_SETTINGS_MODE,
+  noticeText: DEFAULT_CONSENT_NOTICE_TEXT,
   skipExternalParticipants: false,
-  retentionDays: 90,
+  retentionDays: DEFAULT_RETENTION_DAYS,
   currentConsentVersion: CURRENT_CONSENT_VERSION,
   updatedAt: at,
 };
@@ -47,25 +54,41 @@ describe('consent settings', () => {
   });
   it('accepts a full settings object and rejects bad values / extra keys', () => {
     expect(Value.Check(ConsentSettings, settings)).toBe(true);
+    expect(CONSENT_SETTINGS_MODES).toEqual(['all_parties_notified', 'all_parties_consented']);
+    expect(DEFAULT_CONSENT_SETTINGS_MODE).toBe('all_parties_consented');
+    expect(Value.Check(ConsentSettings, { ...settings, mode: 'one_party' })).toBe(false);
+    expect(Value.Check(ConsentSettings, { ...settings, mode: 'all_party' })).toBe(false);
     expect(Value.Check(ConsentSettings, { ...settings, mode: 'none' })).toBe(false);
-    expect(Value.Check(ConsentSettings, { ...settings, retentionDays: 0 })).toBe(false);
-    expect(Value.Check(ConsentSettings, { ...settings, retentionDays: 3651 })).toBe(false);
+    expect(MIN_RETENTION_DAYS).toBe(7);
+    expect(MAX_RETENTION_DAYS).toBe(365);
+    expect(DEFAULT_RETENTION_DAYS).toBe(90);
+    expect(Value.Check(ConsentSettings, { ...settings, retentionDays: 6 })).toBe(false);
+    expect(Value.Check(ConsentSettings, { ...settings, retentionDays: 366 })).toBe(false);
     expect(Value.Check(ConsentSettings, { ...settings, noticeText: '' })).toBe(false);
     expect(Value.Check(ConsentSettings, { ...settings, organizationId: id(1) })).toBe(false);
   });
   it('PATCH is partial, non-empty, and cannot set server-owned fields', () => {
-    expect(Value.Check(UpdateConsentSettingsRequest, { mode: 'one_party' })).toBe(true);
+    expect(Value.Check(UpdateConsentSettingsRequest, { mode: 'all_parties_notified' })).toBe(true);
+    expect(Value.Check(UpdateConsentSettingsRequest, { mode: 'one_party' })).toBe(false);
     expect(
       Value.Check(UpdateConsentSettingsRequest, {
         retentionDays: 30,
         skipExternalParticipants: true,
       }),
     ).toBe(true);
+    expect(Value.Check(UpdateConsentSettingsRequest, { retentionDays: 6 })).toBe(false);
     expect(Value.Check(UpdateConsentSettingsRequest, {})).toBe(false);
     expect(Value.Check(UpdateConsentSettingsRequest, { currentConsentVersion: '2027-01' })).toBe(
       false,
     );
     expect(Value.Check(UpdateConsentSettingsRequest, { updatedAt: at })).toBe(false);
+  });
+  it('nextConsentVersion bumps to the UTC day, then .N on the same day', () => {
+    const day = new Date('2026-11-11T23:30:00.000Z');
+    expect(nextConsentVersion('2026-10', day)).toBe('2026-11-11');
+    expect(nextConsentVersion('2026-11-11', day)).toBe('2026-11-11.2');
+    expect(nextConsentVersion('2026-11-11.2', day)).toBe('2026-11-11.3');
+    expect(Light.nextConsentVersion('2026-10', day)).toBe('2026-11-11');
   });
 });
 

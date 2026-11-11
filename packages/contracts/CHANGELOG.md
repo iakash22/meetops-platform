@@ -12,6 +12,21 @@ While the version is `0.x`, a minor bump may contain breaking changes (ADR-003).
   and rotates the session and CSRF token. They previously said `POST /auth/switch-org` returning `AuthSession`. No schema
   change and no new route.
 
+## [0.15.0] - 2026-11-11
+
+Consent settings aligned with ADR-019 and ADR-020. Breaking while `0.x` (ADR-003 minor bump).
+
+### Changed
+
+- `CONSENT_SETTINGS_MODES` is now `all_parties_notified | all_parties_consented`. `one_party` and `all_party` are
+  removed: there is no one-party mode. The default is `all_parties_consented` (`DEFAULT_CONSENT_SETTINGS_MODE`) for
+  every organization (orgs do not store a country; a per-jurisdiction default is a follow-up).
+- Recording retention is **7–365 days** (`MIN_RETENTION_DAYS` / `MAX_RETENTION_DAYS`), default **90**
+  (`DEFAULT_RETENTION_DAYS`, ADR-019). Previously 1–3650.
+- Changing `noticeText` bumps server-owned `currentConsentVersion` via `nextConsentVersion()` (UTC `YYYY-MM-DD`, or
+  `YYYY-MM-DD.N` on the same day). Clients still cannot set `currentConsentVersion` or `updatedAt`.
+- Added `DEFAULT_CONSENT_NOTICE_TEXT` ("This meeting is being recorded by MeetOps Recorder.").
+
 ### Added
 
 - `CONSENT_ATTESTATION_MAX_BACKDATE_SECONDS` (86400): `attestedAt` more than 24 h before the server clock is now
