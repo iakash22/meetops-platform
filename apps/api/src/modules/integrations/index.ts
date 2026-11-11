@@ -489,7 +489,7 @@ export default async function integrationsModule(
         bodyLimit: INTEGRATION_WEBHOOK_MAX_BYTES,
         schema: {
           tags: ['integrations'],
-          summary: 'Provider webhook (HMAC-SHA256 signed, replay-protected)',
+          summary: 'Provider webhook (HMAC before org lookup, replay-protected)',
           params: WebhookParams,
           response: {
             202: WebhookAcceptedResponse,
