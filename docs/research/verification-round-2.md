@@ -7,6 +7,8 @@
 - **Labels.** **Recommendation** means our proposal, not a decision. **Estimate** means a third-party projection or our
   own arithmetic. Neither is a fact.
 - **Scope.** This is research only. No application code changed. Repo paths are at `integration/phase-1` `7568f206`.
+  The branch was later brought up to date with `integration/phase-1` (which now includes #478) to clear a README
+  conflict.
 
 ## Summary
 
@@ -159,7 +161,8 @@ charged in addition":
 
 - The only source for a 12-month proposal is secondary reporting of a January 2026 stakeholder proposal (#478 [GT16]).
   It is not an official instrument.
-- We couldn't search PIB, because the search tool failed. We found no Rajya Sabha answer that changes the timeline.
+- A web search for a PIB release or a Rajya Sabha answer that changes the timeline found none. We did not browse the
+  PIB site itself, so this is "none found", not "none exists".
 - **Dates (computed, not officially stated):**
   - Consent Manager rules start on 13 Nov 2026.
   - Data Fiduciary duties start on 13 May 2027.
@@ -180,20 +183,28 @@ estimates.
 
 ## 7. Corrections to earlier docs
 
-**No merged doc is edited in this PR.** None of the items below is a clear factual error in a merged doc. The two clear
-fixes are in #478, which is not merged and whose branch this PR must not touch.
+#478 merged into `integration/phase-1` (merge `fe5d285c`, 2026-11-12 00:28 IST) while this PR was open, so
+`gtm-india-smb-midmarket.md` is now a merged doc. Line numbers below are for that merged file.
 
-| File and line                                            | Current text (short)                                                                | Change                                                                                                                                                    | Basis          |
-| -------------------------------------------------------- | ----------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------- |
-| `gtm-india-smb-midmarket.md` L73 (#478, head `b95690ed`) | "the standard Forge rate is 17% from 1 Jul 2026 [GT10]"                             | **Factual fix.** 16% from 1 Apr 2026 and 17% from 1 Oct 2026 (partner gets 84%, then 83%). Atlassian moved the dates after the GT10 post                  | [R2-A9]        |
-| `gtm-india-smb-midmarket.md` L72 (#478)                  | Scope class "**not verified**"; GT8 is a search summary                             | `calendar.events.readonly` is sensitive and nothing we use is restricted, so no CASA. `calendarlist.readonly` not verified. Replace GT8 with R2-G1, R2-G2 | §1             |
-| `gtm-india-smb-midmarket.md` L76 (#478)                  | GitHub Marketplace "Not checked today"                                              | Add the §2 requirements: 100 installs, verified org publisher, USD, 5%                                                                                    | §2             |
-| `gtm-india-smb-midmarket.md` L73 (#478), fit column      | "A listing needs a Forge app"                                                       | 3LO apps can get an informational listing; a paid listing needs Forge. Connect support ends 31 Jan 2027                                                   | [R2-A1, R2-A3] |
-| `gtm-india-smb-midmarket.md` L107 (#478)                 | S.O. 5458(E) read from a third-party copy                                           | Read on egazette.gov.in; the text is the same                                                                                                             | [R2-D5]        |
-| `gtm-india-smb-midmarket.md` L145 (#478)                 | "Zoho Meeting's INR prices did not render"                                          | Add the §4 table (Standard from ₹50, Professional from ₹125, billed annually)                                                                             | [R2-Z1]        |
-| `market-gaps.md` L87–88 (merged)                         | DPDP dates "recorded in our ADR-019 … We did not fetch the government source again" | Optional: cite G.S.R. 843(E) and Rule 1. The dates are right; only the citation improves                                                                  | [R2-D1, R2-D2] |
-| `roadmap-plan.md` L78 (merged)                           | Owner input "the Google Calendar client block"                                      | Optional addition: brand and sensitive-scope verification (about 2–3 plus 10 business days) before passing 100 new users                                  | §1.3           |
-| `verification-notes.md` §3 (merged)                      | Still-unverified list                                                               | No change. None of its items are covered here                                                                                                             | —              |
+**One merged doc is edited in this PR**, because it is a clear factual fix with primary sources:
+
+| Edit | File and line                        | Was                                                     | Now                                                                                    | Basis                                                                                                                    |
+| ---- | ------------------------------------ | ------------------------------------------------------- | -------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| E1   | `gtm-india-smb-midmarket.md` L75     | "the standard Forge rate is 17% from 1 Jul 2026 [GT10]" | "the standard Forge rate is 16% from 1 Apr 2026 and 17% from 1 Oct 2026 [GT10, GT10b]" | Atlassian's 3 Nov 2025 post moved the dates [R2-A12]; the developer pricing page gives 84%, then 83% to partners [R2-A9] |
+| E2   | `gtm-india-smb-midmarket.md` sources | —                                                       | New row GT10b citing R2-A12 and R2-A9                                                  | Supports E1                                                                                                              |
+
+Not edited here. These are additions or better sources rather than errors, so they are left for the doc owner:
+
+| File and line                         | Current text (short)                                                                | Suggested change                                                                                                                                          | Basis          |
+| ------------------------------------- | ----------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------- |
+| `gtm-india-smb-midmarket.md` L74      | Scope class "**not verified**"; GT8 is a search summary                             | `calendar.events.readonly` is sensitive and nothing we use is restricted, so no CASA. `calendarlist.readonly` not verified. Replace GT8 with R2-G1, R2-G2 | §1             |
+| `gtm-india-smb-midmarket.md` L75, fit | "A listing needs a Forge app"                                                       | 3LO apps can get an informational listing; a paid listing needs Forge. Connect support ends 31 Jan 2027                                                   | [R2-A1, R2-A3] |
+| `gtm-india-smb-midmarket.md` L78      | GitHub Marketplace "Not checked today"                                              | Add the §2 requirements: 100 installs, verified org publisher, USD, 5%                                                                                    | §2             |
+| `gtm-india-smb-midmarket.md` L109     | S.O. 5458(E) read from a third-party copy                                           | Read on egazette.gov.in; the text is the same                                                                                                             | [R2-D5]        |
+| `gtm-india-smb-midmarket.md` L149     | "Zoho Meeting's INR prices did not render"                                          | Add the §4 table (Standard from ₹50, Professional from ₹125, billed annually)                                                                             | [R2-Z1]        |
+| `market-gaps.md` L87–88               | DPDP dates "recorded in our ADR-019 … We did not fetch the government source again" | Optional: cite G.S.R. 843(E) and Rule 1. The dates are right; only the citation improves                                                                  | [R2-D1, R2-D2] |
+| `roadmap-plan.md` L78                 | Owner input "the Google Calendar client block"                                      | Optional addition: brand and sensitive-scope verification (about 2–3 plus 10 business days) before passing 100 new users                                  | §1.3           |
+| `verification-notes.md` §3            | Still-unverified list                                                               | No change. None of its items are covered here                                                                                                             | —              |
 
 ## 8. Still unverified
 
@@ -207,7 +218,7 @@ fixes are in #478, which is not merged and whose branch this PR must not touch.
   whether a Forge Remote app can keep the "Runs on Atlassian" badge (the badge requires no egress).
 - **Zoho:** monthly INR prices beyond the 10-participant tier, and Webinar prices.
 - **DPDP:**
-  - The PIB search failed.
+  - PIB: found nothing by web search; the PIB site itself was not browsed.
   - The MeitY page refused a second fetch.
   - The 12-month proposal has no official source.
 - **India market size:** no primary source exists.
@@ -246,6 +257,7 @@ Fetched 2026-11-12 (IST). "Updated" dates are the page's own (UTC where Google s
 | R2-A9  | https://developer.atlassian.com/platform/marketplace/pricing-payment-and-billing/                                                        |
 | R2-A10 | https://www.atlassian.com/licensing/marketplace/publisheragreement (Marketplace Partner Agreement)                                       |
 | R2-A11 | https://developer.atlassian.com/platform/marketplace/listing-forge-apps/                                                                 |
+| R2-A12 | https://www.atlassian.com/blog/development/extended-timelines-for-marketplace-revenue-share-changes (3 Nov 2025)                         |
 | R2-Z1  | https://www.zoho.com/meeting/pricing.html (rendered in INR from India)                                                                   |
 | R2-Z2  | https://www.zoho.com/sites/zweb/json/pricing/meeting-pricing-val.json (Zoho's price file used by that page)                              |
 | R2-Z3  | https://help.zoho.com/portal/en/kb/meeting/user-guide/integrations/zia/articles/zia-ai                                                   |
