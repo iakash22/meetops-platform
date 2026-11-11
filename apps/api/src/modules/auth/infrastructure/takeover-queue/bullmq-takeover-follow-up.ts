@@ -22,7 +22,8 @@ export const TAKEOVER_FOLLOW_UP_DLQ = AUTH_TAKEOVER_FOLLOW_UP_DLQ;
 /**
  * First run 5 s after the request (like the old timer), then exponential backoff: 5, 10, 20, 40, 80 s (about 2.5 min
  * in total, the old 5 s / 30 s / 2 min chain). Completed jobs are removed at once, so the job id dedupes only while a
- * follow-up is pending; failed jobs stay 7 days for inspection, the DLQ entry is the durable record.
+ * follow-up is pending; failed jobs stay 7 days for inspection, the DLQ entry is the durable record. The job id includes
+ * a time bucket so a failed job does not block a later takeover of the same user and kind for those 7 days.
  */
 export const TAKEOVER_FOLLOW_UP_JOB_OPTIONS = {
   delay: 5_000,
@@ -33,19 +34,55 @@ export const TAKEOVER_FOLLOW_UP_JOB_OPTIONS = {
 } as const satisfies JobsOptions;
 
 const FOLLOW_UP_KIND_ALT = TAKEOVER_FOLLOW_UP_KINDS.join('|');
-export const TAKEOVER_JOB_ID_RE = new RegExp(`^takeover_(${FOLLOW_UP_KIND_ALT})_[0-9a-f]{40}$`);
+export const TAKEOVER_JOB_ID_RE = new RegExp(
+  `^takeover_(${FOLLOW_UP_KIND_ALT})_([0-9]{1,12})_([0-9a-f]{40})$`,
+);
 const USER_ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
+const SAFE_ERROR_NAME_RE = /^[\w.-]{1,64}$/;
 
-/** Deterministic job id per user and follow-up kind: `takeover_<kind>_<sha256(kind, userId)[:40]>` (no ':'). */
-export function takeoverFollowUpJobId(job: TakeoverFollowUpJob): string {
+/** 10 min: covers the ~2.5 min retry window, so one takeover still dedupes. */
+export const TAKEOVER_FOLLOW_UP_JOB_ID_BUCKET_MS = 10 * 60 * 1000;
+
+export function takeoverFollowUpJobIdBucket(nowMs: number): number {
+  return Math.floor(nowMs / TAKEOVER_FOLLOW_UP_JOB_ID_BUCKET_MS);
+}
+
+/** Deterministic id at an explicit bucket: `takeover_<kind>_<bucket>_<sha256(kind, userId, bucket)[:40]>`. */
+export function takeoverFollowUpJobIdAt(job: TakeoverFollowUpJob, bucket: number): string {
   const h = createHash('sha256')
-    .update(`${job.kind}\u0000${job.userId}`)
+    .update(`${job.kind}\u0000${job.userId}\u0000${bucket}`)
     .digest('hex')
     .slice(0, 40);
-  const id = `takeover_${job.kind}_${h}`;
+  const id = `takeover_${job.kind}_${bucket}_${h}`;
   if (!TAKEOVER_JOB_ID_RE.test(id))
     throw new Error('takeover follow-up job id has an unsafe shape');
   return id;
+}
+
+/** Deterministic job id per user, kind and time bucket (no ':'). */
+export function takeoverFollowUpJobId(job: TakeoverFollowUpJob, nowMs = Date.now()): string {
+  return takeoverFollowUpJobIdAt(job, takeoverFollowUpJobIdBucket(nowMs));
+}
+
+/**
+ * The stored id when it is a well-formed id for this payload (any bucket). Used by DLQ re-drive so an entry from an
+ * earlier bucket still validates after the clock has moved on.
+ */
+export function matchingTakeoverFollowUpJobId(
+  job: TakeoverFollowUpJob,
+  jobId: unknown,
+): string | undefined {
+  if (typeof jobId !== 'string') return undefined;
+  const m = TAKEOVER_JOB_ID_RE.exec(jobId);
+  if (!m || m[1] !== job.kind) return undefined;
+  const expected = takeoverFollowUpJobIdAt(job, Number(m[2]));
+  return expected === jobId ? jobId : undefined;
+}
+
+/** Safe error class/name (or typeof) for DLQ `errorType` and logs: never a message. */
+export function safeErrorType(err: unknown): string {
+  if (err instanceof Error && SAFE_ERROR_NAME_RE.test(err.name)) return err.name;
+  return err instanceof Error ? 'Error' : typeof err;
 }
 
 /** DLQ entry id for a dead-lettered follow-up (same `dlq_` convention as the transcription DLQ). */
@@ -168,7 +205,9 @@ export function createTakeoverFollowUpProcessor(runner: TakeoverFollowUpRunner, 
         },
         'account takeover follow-up attempt failed',
       );
-      throw new Error(`takeover follow-up failed (${err instanceof Error ? err.name : 'unknown'})`);
+      const wrapped = new Error(`takeover follow-up failed (${safeErrorType(err)})`);
+      wrapped.name = safeErrorType(err);
+      throw wrapped;
     }
   };
 }
@@ -215,7 +254,7 @@ export async function handleTakeoverFollowUpFailure(
     ...data,
     jobId: job.id,
     attemptsMade: job.attemptsMade,
-    errorType: err instanceof Error ? err.name : typeof err,
+    errorType: safeErrorType(err),
     failedAt: (deps.now ?? (() => new Date()))().toISOString(),
   };
   const log = { userId: data.userId, kind: data.kind, jobId: job.id };

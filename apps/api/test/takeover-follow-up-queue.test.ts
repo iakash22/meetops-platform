@@ -12,6 +12,7 @@ import {
   createTakeoverFollowUpProcessor,
   handleTakeoverFollowUpFailure,
   InvalidTakeoverFollowUpJobError,
+  TAKEOVER_FOLLOW_UP_JOB_ID_BUCKET_MS,
   TAKEOVER_FOLLOW_UP_JOB_OPTIONS,
   takeoverFollowUpJobId,
   type TakeoverDeadLetter,
@@ -37,14 +38,28 @@ class DedupingProducer implements TakeoverFollowUpProducer {
 }
 
 describe('takeover follow-up job id and producer', () => {
-  it('is deterministic per user and kind, BullMQ-safe, and carries no raw id', () => {
-    const a = takeoverFollowUpJobId({ userId: USER, kind: 'push_devices' });
-    expect(a).toBe(takeoverFollowUpJobId({ userId: USER, kind: 'push_devices' }));
-    expect(a).toMatch(/^takeover_push_devices_[0-9a-f]{40}$/);
+  it('is deterministic per user, kind and time bucket, BullMQ-safe, and carries no raw id', () => {
+    // Align to a bucket start so now + BUCKET_MS - 1 is still the same bucket.
+    const now = 2 * TAKEOVER_FOLLOW_UP_JOB_ID_BUCKET_MS;
+    const a = takeoverFollowUpJobId({ userId: USER, kind: 'push_devices' }, now);
+    expect(a).toBe(takeoverFollowUpJobId({ userId: USER, kind: 'push_devices' }, now));
+    expect(a).toBe(
+      takeoverFollowUpJobId(
+        { userId: USER, kind: 'push_devices' },
+        now + TAKEOVER_FOLLOW_UP_JOB_ID_BUCKET_MS - 1,
+      ),
+    );
+    expect(a).toMatch(/^takeover_push_devices_[0-9]{1,12}_[0-9a-f]{40}$/);
     expect(a).not.toContain(':');
     expect(a).not.toContain(USER);
-    expect(takeoverFollowUpJobId({ userId: USER, kind: 'realtime' })).not.toBe(a);
-    expect(takeoverFollowUpJobId({ userId: `${USER}x`, kind: 'push_devices' })).not.toBe(a);
+    expect(takeoverFollowUpJobId({ userId: USER, kind: 'realtime' }, now)).not.toBe(a);
+    expect(takeoverFollowUpJobId({ userId: `${USER}x`, kind: 'push_devices' }, now)).not.toBe(a);
+    expect(
+      takeoverFollowUpJobId(
+        { userId: USER, kind: 'push_devices' },
+        now + TAKEOVER_FOLLOW_UP_JOB_ID_BUCKET_MS,
+      ),
+    ).not.toBe(a);
   });
 
   it('enqueues ids only, with the deterministic job id and bounded attempts + backoff', async () => {
@@ -71,12 +86,34 @@ describe('takeover follow-up job id and producer', () => {
   });
 
   it('is idempotent: enqueueing the same user + kind twice keeps one job', async () => {
+    vi.useFakeTimers({ now: 0 });
     const producer = new DedupingProducer();
     const q = new BullMqTakeoverFollowUpQueue(producer);
     await q.enqueue({ userId: USER, kind: 'push_devices' });
     await q.enqueue({ userId: USER, kind: 'push_devices' });
     expect(producer.adds).toBe(2);
     expect(producer.jobs.size).toBe(1);
+    vi.useRealTimers();
+  });
+
+  it('a later time bucket gets a new job id, so a failed job does not block a new takeover', async () => {
+    vi.useFakeTimers({ now: 0 });
+    const producer = new DedupingProducer();
+    const q = new BullMqTakeoverFollowUpQueue(producer);
+    await q.enqueue({ userId: USER, kind: 'push_devices' });
+    const first = [...producer.jobs.keys()][0]!;
+    vi.setSystemTime(TAKEOVER_FOLLOW_UP_JOB_ID_BUCKET_MS);
+    await q.enqueue({ userId: USER, kind: 'push_devices' });
+    expect(producer.jobs.size).toBe(2);
+    expect([...producer.jobs.keys()]).toEqual([
+      first,
+      takeoverFollowUpJobId(
+        { userId: USER, kind: 'push_devices' },
+        TAKEOVER_FOLLOW_UP_JOB_ID_BUCKET_MS,
+      ),
+    ]);
+    expect(first).toBe(takeoverFollowUpJobId({ userId: USER, kind: 'push_devices' }, 0));
+    vi.useRealTimers();
   });
 
   it('rejects invalid jobs and surfaces producer failures (the caller falls back)', async () => {
@@ -132,6 +169,7 @@ describe('takeover follow-up processor', () => {
     expect(err).toBeInstanceOf(Error);
     expect(err).not.toBeInstanceOf(UnrecoverableError);
     expect((err as Error).message).toBe('takeover follow-up failed (TypeError)');
+    expect((err as Error).name).toBe('TypeError');
     expect(JSON.stringify(warn.mock.calls)).not.toContain('secret');
     expect(warn.mock.calls[0]![0]).toMatchObject({
       event: 'auth.takeover.follow_up_retry_failed',
@@ -201,6 +239,30 @@ describe('takeover follow-up retries and DLQ', () => {
       }),
       expect.any(String),
     );
+  });
+
+  it('records the original error class on the DLQ entry, not a generic Error wrapper', async () => {
+    const q = dlq();
+    const warn = vi.fn();
+    const p = createTakeoverFollowUpProcessor(
+      {
+        runTakeoverFollowUp: async () => {
+          throw new TypeError('postgres://user:secret@db/x refused');
+        },
+      },
+      { error: vi.fn(), warn },
+    );
+    const err = await p(failed(5)).catch((e: Error) => e);
+    expect(err.name).toBe('TypeError');
+    expect(
+      await handleTakeoverFollowUpFailure(failed(6), err, {
+        dlq: q,
+        log: { error: vi.fn() },
+        now: () => new Date('2026-11-11T00:00:00Z'),
+      }),
+    ).toBe(true);
+    expect(q.added[0]!.data.errorType).toBe('TypeError');
+    expect(JSON.stringify(q.added)).not.toContain('secret');
   });
 
   it('an unrecoverable failure is final at once; a failed DLQ write is logged, never thrown', async () => {

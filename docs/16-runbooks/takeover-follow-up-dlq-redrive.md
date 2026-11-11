@@ -13,7 +13,7 @@ failing dependency first (Redis for realtime, Postgres for token families or pus
 # 1. Dry run (the default). Prints ids, the follow-up kind and an error class only.
 pnpm --filter @meetops/api takeover:redrive -- --all
 # 2. Re-drive one entry, one user, one kind, or everything. Asks for "yes" before changing anything.
-pnpm --filter @meetops/api takeover:redrive -- --job <id> --apply   # takeover_<kind>_<hash> or dlq_takeover_…
+pnpm --filter @meetops/api takeover:redrive -- --job <id> --apply   # takeover_<kind>_<bucket>_<hash> or dlq_takeover_…
 pnpm --filter @meetops/api takeover:redrive -- --user <userId> --apply
 pnpm --filter @meetops/api takeover:redrive -- --kind extension_tokens --apply
 pnpm --filter @meetops/api takeover:redrive -- --all --apply
@@ -40,10 +40,11 @@ Safety:
 
 - Idempotent. Every follow-up kind is idempotent, the DLQ entry is removed only after the retry or enqueue, the state is
   re-read just before acting, a pending original is never retried again, and enqueues reuse the deterministic job id
-  (`takeover_<kind>_<sha256>`), so BullMQ dedupes a concurrent second run.
+  (`takeover_<kind>_<bucket>_<sha256>`), so BullMQ dedupes a concurrent second run in the same time bucket.
 - Payload validation. An entry is acted on only when its payload is `{ userId, kind }` with a valid user id and kind,
-  and both its job id and its `dlq_` id are the deterministic ones for that payload. Anything else is
+  and both its job id and its `dlq_` id are a deterministic id for that payload (any time bucket). Anything else is
   `invalid_payload`, so a tampered entry cannot retry or enqueue an arbitrary job.
 - `--yes` skips the prompt (for scripted use only, after a dry run). `--dry-run` always wins over `--apply`.
 
-DLQ job ids use the `dlq_` prefix with no `:` (BullMQ 5.81 rejects `:` in custom ids).
+DLQ job ids use the `dlq_` prefix with no `:` (BullMQ 5.81 rejects `:` in custom ids). The original job id includes a
+10-minute time bucket so a failed job kept for 7 days does not block a later takeover of the same user and kind.

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { TakeoverFollowUpJob } from '../src/modules/auth/domain/takeover-follow-up.js';
 import {
+  TAKEOVER_FOLLOW_UP_JOB_ID_BUCKET_MS,
   takeoverDeadLetterJobId,
   takeoverFollowUpJobId,
 } from '../src/modules/auth/infrastructure/takeover-queue/bullmq-takeover-follow-up.js';
@@ -223,10 +224,35 @@ describe('redriveTakeoverFollowUpDlq', () => {
     });
     const line = formatTakeoverRedriveItem(r.items[0]!);
     expect(line).toMatch(
-      /^would_enqueue\s+dlq=dlq_takeover_realtime_[0-9a-f]{40} kind=realtime user=u1/,
+      /^would_enqueue\s+dlq=dlq_takeover_realtime_[0-9]+_[0-9a-f]{40} kind=realtime user=u1/,
     );
     expect(line).toContain('error=unknown');
     expect(line).not.toContain('hunter2');
+  });
+
+  it('still redrives an entry whose job id uses an earlier time bucket', async () => {
+    const f = fakeQueues();
+    const j = job('u1', 'realtime');
+    const oldId = takeoverFollowUpJobId(j, 0);
+    const nowId = takeoverFollowUpJobId(j, TAKEOVER_FOLLOW_UP_JOB_ID_BUCKET_MS);
+    expect(oldId).not.toBe(nowId);
+    const dlqId = takeoverDeadLetterJobId(oldId);
+    f.dlq.set(dlqId, {
+      id: dlqId,
+      data: { ...j, jobId: oldId, attemptsMade: 6, errorType: 'TypeError', failedAt: 'x' },
+      remove: async () => {
+        f.calls.push(`remove ${dlqId}`);
+        f.dlq.delete(dlqId);
+      },
+    });
+    const r = await redriveTakeoverFollowUpDlq(f.queues, {
+      filter: { all: true },
+      dryRun: false,
+      confirm: yes,
+    });
+    expect(r.items.map((i) => i.action)).toEqual(['enqueued']);
+    expect(r.items[0]).toMatchObject({ jobId: oldId, errorType: 'TypeError' });
+    expect(f.calls).toEqual([`enqueue ${oldId}`, `remove ${dlqId}`]);
   });
 });
 
