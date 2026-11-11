@@ -31,6 +31,12 @@ import type {
   TokenService,
 } from '../domain/ports.js';
 import { sequentialAccountClaims } from './account-claims.js';
+import type {
+  TakeoverFollowUpJob,
+  TakeoverFollowUpKind,
+  TakeoverFollowUpQueue,
+  TakeoverFollowUpRunner,
+} from '../domain/takeover-follow-up.js';
 import {
   isSessionActive,
   type Session,
@@ -96,8 +102,13 @@ export interface AuthServiceDeps {
   /** Structured log for failures that must not fail the request (takeover follow-ups). Omitted: silent. */
   log?: { error(obj: Record<string, unknown>, msg: string): void };
   /**
-   * Runs a deferred retry (takeover follow-ups that still failed after the in-request attempts). Default: an unref'd
-   * timer in this process. Tests inject a synchronous queue.
+   * Durable queue for takeover follow-ups that still failed after the in-request attempts (#463 review: BullMQ when
+   * AUTH_MAIL_QUEUE=bullmq). Omitted (dev/test), or when an enqueue fails: the in-process `scheduleRetry` fallback.
+   */
+  takeoverFollowUps?: TakeoverFollowUpQueue;
+  /**
+   * Fallback deferred retry, used only without `takeoverFollowUps` or when enqueueing fails. Default: an unref'd timer
+   * in this process (lost on restart). Tests inject a synchronous queue.
    */
   scheduleRetry?: (run: () => Promise<void>, delayMs: number) => void;
 }
@@ -108,7 +119,7 @@ const ROTATION_RACE_WINDOW_MS = 30_000;
 const ROTATION_SUCCESSOR_POLLS = 5;
 const ROTATION_SUCCESSOR_POLL_MS = 100;
 
-/** #459 NB-R3-2: deferred retries of takeover follow-ups, after the in-request attempts. */
+/** #459 NB-R3-2: in-process fallback retries of takeover follow-ups (no durable queue, or enqueue failed). */
 export const TAKEOVER_FOLLOW_UP_RETRY_DELAYS_MS = [5_000, 30_000, 120_000] as const;
 
 const defaultScheduleRetry = (run: () => Promise<void>, delayMs: number) => {
@@ -211,7 +222,7 @@ export interface PushDeviceRevoker {
   revokeForUser(userId: string, organizationId?: string | null): Promise<void>;
 }
 
-export class AuthService {
+export class AuthService implements TakeoverFollowUpRunner {
   private dummyHash: Promise<string> | null = null;
   private readonly claims: AccountClaimStore;
   constructor(private readonly d: AuthServiceDeps) {
@@ -646,22 +657,13 @@ export class AuthService {
    *
    * Never throws (#459 NB-R3-2): the claim has committed, so the request reports its real outcome. Each step is retried
    * in place and every step runs; a step that still fails is logged (`auth.takeover.follow_up_failed`) and, for the
-   * revocations, retried later (TAKEOVER_FOLLOW_UP_RETRY_DELAYS_MS). One-time-link invalidation is not retried later:
-   * it would also void the set-password link sent after it. Returns the names of the steps that failed in-request.
+   * revocations, retried later: one durable job per user and kind (`takeoverFollowUps`, BullMQ), or the in-process
+   * fallback (TAKEOVER_FOLLOW_UP_RETRY_DELAYS_MS) without a queue or when enqueueing fails. One-time-link invalidation is
+   * not retried later: it would also void the set-password link sent after it. Returns the names of the steps that failed in-request.
    */
   private async afterCredentialTakeover(userId: string): Promise<string[]> {
     const now = this.d.clock.now();
-    const revocations: [string, () => Promise<unknown>][] = [
-      ['realtime', () => this.publish({ kind: 'user', userId, reason: 'password_changed' })],
-      [
-        'extension_tokens',
-        async () =>
-          this.d.extensionRevoker?.revokeForUser(userId, 'password_changed', undefined, {
-            propagate: true,
-          }),
-      ],
-      ['push_devices', async () => this.d.pushDeviceRevoker?.revokeForUser(userId)],
-    ];
+    const revocations: TakeoverFollowUpKind[] = ['realtime', 'extension_tokens', 'push_devices'];
     const links: [string, () => Promise<unknown>][] = [
       ['reset_links', () => this.d.oneTimeTokens.invalidateForUser(userId, 'password_reset', now)],
       [
@@ -670,20 +672,77 @@ export class AuthService {
       ],
     ];
     const failed: string[] = [];
-    const pending: [string, () => Promise<unknown>][] = [];
-    for (const step of [...revocations, ...links]) {
-      if (await retryIdempotent(step[1])) continue;
-      failed.push(step[0]);
-      if (revocations.includes(step)) pending.push(step);
+    const pending: TakeoverFollowUpKind[] = [];
+    for (const kind of revocations) {
+      if (await retryIdempotent(() => this.runTakeoverFollowUp({ userId, kind }))) continue;
+      failed.push(kind);
+      pending.push(kind);
     }
+    for (const [name, step] of links) if (!(await retryIdempotent(step))) failed.push(name);
     if (failed.length) {
       this.d.log?.error(
         { event: 'auth.takeover.follow_up_failed', userId, steps: failed },
         'account takeover follow-up failed after commit; revocations will be retried',
       );
-      this.retryLater(userId, pending, 0);
+      await this.deferFollowUps(userId, pending);
     }
     return failed;
+  }
+
+  /**
+   * One takeover follow-up (in-request, and the durable queue's worker). Every kind is idempotent: a second realtime
+   * kick, family revocation or push-device delete of the same user is a no-op. Errors propagate (retries).
+   */
+  async runTakeoverFollowUp(job: TakeoverFollowUpJob): Promise<void> {
+    const { userId } = job;
+    switch (job.kind) {
+      case 'realtime':
+        await this.publish({ kind: 'user', userId, reason: 'password_changed' });
+        return;
+      case 'extension_tokens':
+        await this.d.extensionRevoker?.revokeForUser(userId, 'password_changed', undefined, {
+          propagate: true,
+        });
+        return;
+      case 'push_devices':
+        await this.d.pushDeviceRevoker?.revokeForUser(userId);
+        return;
+    }
+  }
+
+  /**
+   * Hands still-failing revocations to the durable queue (one job per user and kind). Never throws: the claim has
+   * committed, so the request keeps its 204. Kinds that cannot be enqueued (or every kind, without a queue) fall back
+   * to the in-process retry chain.
+   */
+  private async deferFollowUps(userId: string, kinds: TakeoverFollowUpKind[]) {
+    if (!kinds.length) return;
+    const queue = this.d.takeoverFollowUps;
+    let local = kinds;
+    if (queue) {
+      local = [];
+      for (const kind of kinds) {
+        try {
+          await queue.enqueue({ userId, kind });
+        } catch (err) {
+          local.push(kind);
+          this.d.log?.error(
+            {
+              event: 'auth.takeover.follow_up_enqueue_failed',
+              userId,
+              steps: [kind],
+              err: err instanceof Error ? err.name : typeof err,
+            },
+            'could not enqueue account takeover follow-up; retrying in process',
+          );
+        }
+      }
+    }
+    this.retryLater(
+      userId,
+      local.map((kind) => [kind, () => this.runTakeoverFollowUp({ userId, kind })]),
+      0,
+    );
   }
 
   private retryLater(userId: string, steps: [string, () => Promise<unknown>][], attempt: number) {
