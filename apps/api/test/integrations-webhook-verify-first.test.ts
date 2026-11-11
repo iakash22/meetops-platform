@@ -303,4 +303,128 @@ describe('per-integration webhook: verify before org lookup (F3)', () => {
     expect(resolveWebhookSecret.mock.calls.length).toBe(secretCallsAfterFirst);
     expect(resolveOrganization.mock.calls.length).toBe(orgCallsAfterFirst);
   });
+
+  it('GitHub unknown-id and bad-signature 401 responses have identical bodies', async () => {
+    const repo = new InMemoryIntegrations();
+    app = await buildApp({
+      integrations: repo,
+      integrationsRuntime: runtime(),
+    } as Partial<ModuleDeps>);
+    const { id } = seedGitHub(repo);
+    const body = JSON.stringify({
+      action: 'opened',
+      issue: { number: 1 },
+      repository: { full_name: 'acme/app' },
+      installation: { id: 99 },
+    });
+    const badKnown = await app.inject({
+      method: 'POST',
+      url: `/webhooks/github/${id}`,
+      payload: body,
+      headers: {
+        'content-type': 'application/json',
+        'x-hub-signature-256': sign256('wrong', body),
+        'x-github-event': 'issues',
+        'x-github-delivery': randomUUID(),
+      },
+    });
+    const unknown = await app.inject({
+      method: 'POST',
+      url: `/webhooks/github/${randomUUID()}`,
+      payload: body,
+      headers: {
+        'content-type': 'application/json',
+        'x-hub-signature-256': sign256(GH_SECRET, body),
+        'x-github-event': 'issues',
+        'x-github-delivery': randomUUID(),
+      },
+    });
+    expect(badKnown.statusCode).toBe(401);
+    expect(unknown.statusCode).toBe(401);
+    expect(badKnown.headers['content-type']).toBe(unknown.headers['content-type']);
+    const strip = (b: { error: Record<string, unknown> }) => {
+      const rest = { ...b.error };
+      delete rest.requestId;
+      return rest;
+    };
+    expect(strip(badKnown.json())).toEqual(strip(unknown.json()));
+  });
+
+  it('a known integration with a missing signature header gets a 401 and no DB secret read', async () => {
+    const repo = new InMemoryIntegrations();
+    const { id } = seedJira(repo);
+    const resolveWebhookSecret = vi.spyOn(repo, 'resolveWebhookSecret');
+    const readSecrets = vi.spyOn(repo, 'readSecrets');
+    app = await buildApp({
+      integrations: repo,
+      integrationsRuntime: runtime(),
+    } as Partial<ModuleDeps>);
+    const body = JSON.stringify({
+      webhookEvent: 'jira:issue_updated',
+      issue: { key: 'OPS-7', fields: { status: { statusCategory: { key: 'new' } } } },
+    });
+    const r = await app.inject({
+      method: 'POST',
+      url: `/webhooks/jira/${id}`,
+      payload: body,
+      headers: {
+        'content-type': 'application/json',
+        'x-atlassian-webhook-identifier': 'abc-missing-sig',
+      },
+    });
+    expect(r.statusCode).toBe(401);
+    expect(resolveWebhookSecret).not.toHaveBeenCalled();
+    expect(readSecrets).not.toHaveBeenCalled();
+  });
+
+  it('Jira early HMAC accepts a mixed-case signature header on a plain header bag', async () => {
+    const repo = new InMemoryIntegrations();
+    const { id, org } = seedJira(repo);
+    const taskId = linkTask(repo, org, id, 'jira', 'OPS-7');
+    const service = new IntegrationsService(repo, runtime());
+    const body = Buffer.from(
+      JSON.stringify({
+        webhookEvent: 'jira:issue_updated',
+        issue: { key: 'OPS-7', fields: { status: { statusCategory: { key: 'indeterminate' } } } },
+      }),
+    );
+    await expect(
+      service.webhook({
+        provider: 'jira',
+        integrationId: id,
+        rawBody: body,
+        headers: {
+          'X-Hub-Signature': sign256(JIRA_SECRET, body.toString()),
+          'X-Atlassian-Webhook-Identifier': 'abc-case-bag',
+        },
+      }),
+    ).resolves.toBe(1);
+    expect(repo.tasks.get(taskId)!.status).toBe('in_progress');
+  });
+
+  it('a valid Jira signature still processes when the signature header is mixed-case', async () => {
+    const repo = new InMemoryIntegrations();
+    const { id, org } = seedJira(repo);
+    const taskId = linkTask(repo, org, id, 'jira', 'OPS-7');
+    app = await buildApp({
+      integrations: repo,
+      integrationsRuntime: runtime(),
+    } as Partial<ModuleDeps>);
+    const body = JSON.stringify({
+      webhookEvent: 'jira:issue_updated',
+      issue: { key: 'OPS-7', fields: { status: { statusCategory: { key: 'indeterminate' } } } },
+    });
+    const r = await app.inject({
+      method: 'POST',
+      url: `/webhooks/jira/${id}`,
+      payload: body,
+      headers: {
+        'content-type': 'application/json',
+        'X-Hub-Signature': sign256(JIRA_SECRET, body),
+        'x-atlassian-webhook-identifier': 'abc-case',
+      },
+    });
+    expect(r.statusCode).toBe(202);
+    expect(repo.tasks.get(taskId)!.status).toBe('in_progress');
+  });
 });

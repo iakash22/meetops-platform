@@ -89,6 +89,13 @@ import {
   type AuthMailProducer,
 } from './auth/infrastructure/mail-queue/bullmq-mail-queue.js';
 import { loadAuthMailQueueEnv } from './auth/infrastructure/mail-queue/env.js';
+import type { TakeoverFollowUpQueue } from './auth/domain/takeover-follow-up.js';
+import {
+  BullMqTakeoverFollowUpQueue,
+  createTakeoverFollowUpProducer,
+  startTakeoverFollowUpWorker,
+  type TakeoverFollowUpProducer,
+} from './auth/infrastructure/takeover-queue/bullmq-takeover-follow-up.js';
 import { SessionVerifier } from './auth/application/session-verifier.js';
 import {
   noopRevocationPublisher,
@@ -182,6 +189,16 @@ export interface ModuleDeps {
   authMailWorker?: { redisUrl: string; prefix?: string | undefined; concurrency: number };
   /** Set when defaultModuleDeps created the BullMQ mail queue itself (closed in onClose). */
   ownedMailQueue?: { close(): Promise<void> };
+  /**
+   * #463 review: durable queue for account-takeover follow-ups that still failed in-request. With AUTH_MAIL_QUEUE=bullmq
+   * defaultModuleDeps builds a BullMqTakeoverFollowUpQueue on the same Redis and prefix; otherwise (dev/test) AuthService
+   * uses its in-process fallback.
+   */
+  takeoverFollowUps?: TakeoverFollowUpQueue;
+  /** When set, registerModules starts the takeover follow-up BullMQ consumer in-process (with AUTH_MAIL_WORKER_ENABLED). */
+  takeoverFollowUpWorker?: { redisUrl: string; prefix?: string | undefined; concurrency: number };
+  /** Set when defaultModuleDeps created the takeover follow-up queue itself (closed in onClose). */
+  ownedTakeoverFollowUps?: { close(): Promise<void> };
   audit: AuditLog;
   webBaseUrl: string;
   /**
@@ -355,6 +372,8 @@ export interface ModuleEnv {
   mailQueueEnv?: Record<string, string | undefined> | undefined;
   /** Test seam: BullMQ producer used instead of one on REDIS_URL when AUTH_MAIL_QUEUE=bullmq. */
   mailQueueProducer?: AuthMailProducer | undefined;
+  /** Injected takeover follow-up producer (tests); default: BullMQ on REDIS_URL when AUTH_MAIL_QUEUE=bullmq. */
+  takeoverFollowUpProducer?: TakeoverFollowUpProducer | undefined;
   /** Test seam: fake SMTP transport factory / fetch for the selected EmailService (no network in tests). */
   emailServiceDeps?: EmailServiceDeps | undefined;
 }
@@ -649,18 +668,32 @@ export function defaultModuleDeps(
               createAuthMailProducer({ redisUrl: mailRedisUrl!, prefix: mailQueueCfg.prefix }),
             clock,
           );
+          // #463 review: takeover follow-ups share the auth-mail Redis, prefix and worker switch.
+          const followUps =
+            env.takeoverFollowUpProducer || mailRedisUrl
+              ? new BullMqTakeoverFollowUpQueue(
+                  env.takeoverFollowUpProducer ??
+                    createTakeoverFollowUpProducer({
+                      redisUrl: mailRedisUrl!,
+                      prefix: mailQueueCfg.prefix,
+                    }),
+                )
+              : undefined;
+          const worker =
+            mailQueueCfg.workerEnabled && mailRedisUrl
+              ? {
+                  redisUrl: mailRedisUrl,
+                  prefix: mailQueueCfg.prefix,
+                  concurrency: mailQueueCfg.concurrency,
+                }
+              : undefined;
           return {
             mailQueue: q,
             ownedMailQueue: q,
-            ...(mailQueueCfg.workerEnabled && mailRedisUrl
-              ? {
-                  authMailWorker: {
-                    redisUrl: mailRedisUrl,
-                    prefix: mailQueueCfg.prefix,
-                    concurrency: mailQueueCfg.concurrency,
-                  },
-                }
+            ...(followUps
+              ? { takeoverFollowUps: followUps, ownedTakeoverFollowUps: followUps }
               : {}),
+            ...(worker ? { authMailWorker: worker, takeoverFollowUpWorker: worker } : {}),
           };
         })()
       : {}),
@@ -795,11 +828,12 @@ export async function registerModules(app: FastifyInstance, deps: ModuleDeps) {
     extensionBearerCorsHook(deps.extensionIds.map((id) => `chrome-extension://${id}`)),
   );
   // Close only the clients defaultModuleDeps created; injected ones belong to the caller.
-  const { ownedRedis, ownedDb, ownedMedia, ownedMailQueue } = deps;
-  if (ownedRedis || ownedDb || ownedMedia || ownedMailQueue) {
+  const { ownedRedis, ownedDb, ownedMedia, ownedMailQueue, ownedTakeoverFollowUps } = deps;
+  if (ownedRedis || ownedDb || ownedMedia || ownedMailQueue || ownedTakeoverFollowUps) {
     app.addHook('onClose', async () => {
       await Promise.allSettled([
         ownedMailQueue ? ownedMailQueue.close() : undefined,
+        ownedTakeoverFollowUps ? ownedTakeoverFollowUps.close() : undefined,
         ownedMedia ? ownedMedia.close() : undefined,
         ownedRedis ? closeOwnedRedis(ownedRedis) : undefined,
         ownedDb ? ownedDb.$disconnect() : undefined,
@@ -839,6 +873,12 @@ export async function registerModules(app: FastifyInstance, deps: ModuleDeps) {
     pushDeviceRevoker,
     log: deps.authLog ?? app.log,
   });
+  if (deps.takeoverFollowUpWorker) {
+    const followUpWorker = startTakeoverFollowUpWorker(auth, deps.takeoverFollowUpWorker, app.log);
+    app.addHook('onClose', async () => {
+      await followUpWorker.close();
+    });
+  }
   const organizations = new OrganizationService({
     ...deps,
     extensionRevoker: revoker,

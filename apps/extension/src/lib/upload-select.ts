@@ -1,4 +1,4 @@
-/** Choosing and assembling the upload client for the WXT_FEATURE_HTTP_UPLOAD flag (stub by default). */
+/** Choosing and assembling the upload client for the WXT_FEATURE_HTTP_UPLOAD flag. */
 import { NotPairedError } from './auth/auth-service.js';
 import type { AuthStatus } from './auth/messages.js';
 import { storageWithRetry, verifyingStorage } from './upload-http.js';

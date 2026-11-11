@@ -1,7 +1,11 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { Prisma, type IntegrationConnectionStatus } from '@prisma/client';
 import { getPrismaClient } from './client.js';
-import { runWithOrganizationContext } from './tenant.js';
+import {
+  LEGACY_ORG_CONTEXT_SETTING,
+  ORGANIZATION_CONTEXT_SETTING,
+  runWithOrganizationContext,
+} from './tenant.js';
 import type { RepositoryOptions } from './transcript-repository.js';
 
 /**
@@ -11,7 +15,7 @@ import type { RepositoryOptions } from './transcript-repository.js';
  * Secrets are encrypted at rest through a cipher port that @meetops/integrations' TokenCipher satisfies
  * structurally (envelope `v1.<keyId>.<wrappedKey>.<iv|ct|tag>`, AAD = org + integration id). The id is minted
  * here before encrypting so the AAD binds the ciphertext to its row. Plaintext is only returned by the explicit
- * `readSecrets` call and never appears in records, errors or logs.
+ * `readSecrets` / `resolveWebhookSecret` calls and never appears in records, errors or logs.
  */
 export interface IntegrationSecretCipher {
   encrypt(
@@ -88,6 +92,44 @@ const ENVELOPE_RE = /^v1\.([A-Za-z0-9_-]+)\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 const fenceOf = (envelope: string) => createHash('sha256').update(envelope).digest('base64url');
+
+/**
+ * AAD context for the miss-path dummy decrypt. Not a real org or integration; used only so a miss still
+ * runs the cipher (same cost class as a hit) and the result is discarded.
+ */
+const DUMMY_WEBHOOK_DECRYPT_CTX = {
+  organizationId: '00000000-0000-4000-8000-000000000000',
+  integrationId: '00000000-0000-4000-8000-000000000000',
+};
+
+const dummyEnvelopeByCipher = new WeakMap<IntegrationSecretCipher, Promise<string | null>>();
+
+function dummyWebhookEnvelope(cipher: IntegrationSecretCipher): Promise<string | null> {
+  let pending = dummyEnvelopeByCipher.get(cipher);
+  if (!pending) {
+    pending = cipher
+      .encrypt('meetops-webhook-timing-dummy', DUMMY_WEBHOOK_DECRYPT_CTX)
+      .catch(() => null);
+    dummyEnvelopeByCipher.set(cipher, pending);
+  }
+  return pending;
+}
+
+/** Decrypt the webhook envelope, or run a dummy decrypt when there is no row so hits and misses take similar time. */
+async function decryptWebhookSecretOrDummy(
+  cipher: IntegrationSecretCipher,
+  envelope: string | null,
+  ctx: { organizationId: string; integrationId: string },
+): Promise<string | null> {
+  if (envelope) return cipher.decrypt(envelope, ctx);
+  const dummy = await dummyWebhookEnvelope(cipher);
+  try {
+    await cipher.decrypt(dummy ?? 'v1.dummy.timing.placeholder', DUMMY_WEBHOOK_DECRYPT_CTX);
+  } catch {
+    // Expected when the cipher cannot mint a matching dummy envelope (result is unused).
+  }
+  return null;
+}
 
 function keyIdOf(envelope: string): string {
   const m = ENVELOPE_RE.exec(envelope);
@@ -288,6 +330,44 @@ export function createIntegrationConnectionRepository(
           SELECT integration_connection_org(${id}::uuid, ${provider}) AS org_id`,
       );
       return rows[0]?.org_id ?? null;
+    },
+
+    /**
+     * Jira webhook auth: one transaction that resolves the org (SECURITY DEFINER) and reads only
+     * `webhookSecretEnc` under that org's RLS. Access and refresh envelopes are not selected or decrypted.
+     * A miss still runs a dummy decrypt so the timing is closer to a hit.
+     */
+    async resolveWebhookSecret(
+      provider: string,
+      id: string,
+    ): Promise<{ organizationId: string; webhookSecret: string } | null> {
+      if (!UUID_RE.test(id)) {
+        await decryptWebhookSecretOrDummy(cipher, null, DUMMY_WEBHOOK_DECRYPT_CTX);
+        return null;
+      }
+      const db = options.client ?? getPrismaClient();
+      const looked = await db.$transaction(async (tx) => {
+        const rows = await tx.$queryRaw<{ org_id: string | null }[]>`
+          SELECT integration_connection_org(${id}::uuid, ${provider}) AS org_id`;
+        const organizationId = rows[0]?.org_id ?? null;
+        if (!organizationId) return null;
+        await tx.$executeRaw`SELECT set_config(${ORGANIZATION_CONTEXT_SETTING}, ${organizationId}, true)`;
+        await tx.$executeRaw`SELECT set_config(${LEGACY_ORG_CONTEXT_SETTING}, ${organizationId}, true)`;
+        const row = await tx.integrationConnection.findFirst({
+          where: { id, organizationId },
+          select: { webhookSecretEnc: true },
+        });
+        return { organizationId, webhookSecretEnc: row?.webhookSecretEnc ?? null };
+      });
+      const webhookSecret = await decryptWebhookSecretOrDummy(
+        cipher,
+        looked?.webhookSecretEnc ?? null,
+        looked
+          ? { organizationId: looked.organizationId, integrationId: id }
+          : DUMMY_WEBHOOK_DECRYPT_CTX,
+      );
+      if (!looked || !webhookSecret) return null;
+      return { organizationId: looked.organizationId, webhookSecret };
     },
 
     /**

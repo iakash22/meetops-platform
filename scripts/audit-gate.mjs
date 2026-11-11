@@ -20,31 +20,17 @@
 //                                      (apps/mobile > query-string@7.1.3, required by expo-router 4). 0.5.x is
 //                                      ESM-only, so patches/query-string@7.1.3.patch unwraps its default export
 //                                      for query-string's require(). Remove both once expo-router drops query-string 7.
+//   "image-size@<2.0.3": "^2.0.3"     GHSA-5p2g-fcmc-qvqq and GHSA-w3rx-r6r6-pgpr (high; apps/mobile > metro 0.81.5
+//                                      pins image-size ^1). patches/metro@0.81.5.patch moves metro's Assets.js to the
+//                                      2.x named export with Buffer input (#412). Remove both once Expo SDK 55 / metro
+//                                      >=0.83.8 drops image-size.
 import { spawnSync } from 'node:child_process';
 
-const EXCEPTIONS = [
-  {
-    // image-size@1.2.1 via apps/mobile > react-native > metro 0.81.x (mobile
-    // dev/bundler tooling; metro pins image-size ^1). Owner-approved 2026-10-25.
-    // Exit plan: upgrade expo/metro. See docs/12-security/risk-exceptions.md.
-    id: 'RE-04',
-    owner: 'DevOps Agent',
-    issue: 'https://github.com/iakash22/meetops-platform/pull/7',
-    ghsa: 'GHSA-5p2g-fcmc-qvqq',
-    module: 'image-size',
-    versions: ['1.2.1'],
-    expires: '2026-11-24T23:59:59Z',
-  },
-  {
-    id: 'RE-04',
-    owner: 'DevOps Agent',
-    issue: 'https://github.com/iakash22/meetops-platform/pull/7',
-    ghsa: 'GHSA-w3rx-r6r6-pgpr',
-    module: 'image-size',
-    versions: ['1.2.1'],
-    expires: '2026-11-24T23:59:59Z',
-  },
-];
+// No active exceptions. RE-04 (image-size@1.2.1, GHSA-5p2g-fcmc-qvqq and GHSA-w3rx-r6r6-pgpr) closed 2026-11-11:
+// the root override "image-size@<2.0.3": "^2.0.3" plus patches/metro@0.81.5.patch (#412) mean the lockfile resolves
+// only image-size@2.0.4. See "Closed entries" in docs/12-security/risk-exceptions.md. Add a row here only together
+// with a register entry (same ID, GHSA, module, exact versions and expiry).
+const EXCEPTIONS = [];
 const BLOCKING = new Set(['high', 'critical']);
 
 function fail(msg) {
