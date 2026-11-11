@@ -1,8 +1,39 @@
-# Phase status — 12 Nov 2026 (~00:40 IST)
+# Phase status — 12 Nov 2026 (~01:55 IST)
+
+## Update — 12 Nov 2026 (~01:55 IST)
+
+Tree: `main` at `ca3c0e2b` (unchanged). `integration/phase-1` at `d50d0dc2` (142 ahead / 0 behind `main`), merge of [#495](https://github.com/iakash22/meetops-platform/pull/495) (research verification round 3). Ahead/behind and open PR states queried live from the GitHub API at ~01:55 IST.
+
+Merged into integration since the 12 Nov ~00:40 snapshot (`5b66cfe6`, #482):
+
+- [#480](https://github.com/iakash22/meetops-platform/pull/480) research verification round 2.
+- [#488](https://github.com/iakash22/meetops-platform/pull/488) research corrections from round 2.
+- [#475](https://github.com/iakash22/meetops-platform/pull/475) webhook HMAC timing follow-ups.
+- [#474](https://github.com/iakash22/meetops-platform/pull/474) pass `BEHIND_CLOUDFLARE` through to the API (D-5).
+- [#481](https://github.com/iakash22/meetops-platform/pull/481) PHASE_STATUS refresh (11 Nov / 00:40 snapshot).
+- [#489](https://github.com/iakash22/meetops-platform/pull/489) research AI provider due diligence.
+- [#492](https://github.com/iakash22/meetops-platform/pull/492) research DPDP role and DPA outline.
+- [#486](https://github.com/iakash22/meetops-platform/pull/486) AI worker eval harness.
+- [#495](https://github.com/iakash22/meetops-platform/pull/495) research verification round 3 (`d50d0dc2`).
+
+**Open PRs targeting `integration/phase-1`** (live at ~01:55 IST):
+
+- [#472](https://github.com/iakash22/meetops-platform/pull/472) OD-1 account-claim decision (ADR-022) and the ADR-020 amendment.
+- [#483](https://github.com/iakash22/meetops-platform/pull/483) consent-settings contracts.
+- [#484](https://github.com/iakash22/meetops-platform/pull/484) consent-settings API.
+- [#485](https://github.com/iakash22/meetops-platform/pull/485) consent write rate limits.
+- [#487](https://github.com/iakash22/meetops-platform/pull/487) extension postinstall builds contracts before `wxt prepare`.
+- [#490](https://github.com/iakash22/meetops-platform/pull/490)–[#491](https://github.com/iakash22/meetops-platform/pull/491)/[#493](https://github.com/iakash22/meetops-platform/pull/493) MFA enrolment, step-up and security suite (ADR-021).
+- [#494](https://github.com/iakash22/meetops-platform/pull/494) mobile Live Activity / recording start stable id.
+- [#496](https://github.com/iakash22/meetops-platform/pull/496) retry failed set-password mail through the follow-up queue.
+
+**Promote:** [#462](https://github.com/iakash22/meetops-platform/pull/462) (`integration/phase-1` → `main`, head `d50d0dc2`, 142 commits). Only Akash merges #462.
+
+P1 estimate stays ~98% (Google web sign-in + hardening and takeover follow-ups in; MFA/SSO still open, ADR-021). P2 still needs the consent-settings API (contracts vs routes; open as #483–#485, not landed on this tip). P9 Dependabot row #2 remains **partial** (glib / deepmerge exceptions; alerts API still unread). Other phase percentages unchanged from the 7 Nov / 9 Nov snapshots below.
 
 ## Update — 12 Nov 2026 (~00:40 IST)
 
-Tree: `main` at `ca3c0e2b` (unchanged). `integration/phase-1` at `5b66cfe6` (109 ahead / 0 behind `main`), merge of [#482](https://github.com/iakash22/meetops-platform/pull/482) (extension HTTP upload default in development). PR states queried live from the GitHub API at ~00:40 IST.
+Tree: `main` at `ca3c0e2b` (unchanged). `integration/phase-1` at `5b66cfe6` (109 ahead / 0 behind `main` at that snapshot), merge of [#482](https://github.com/iakash22/meetops-platform/pull/482) (extension HTTP upload default in development). PR states queried live from the GitHub API at ~00:40 IST.
 
 Merged into integration since the 9 Nov ~22:35 snapshot (`fd4ede49`, #459):
 
@@ -33,7 +64,7 @@ Merged into integration since the 9 Nov ~22:35 snapshot (`fd4ede49`, #459):
 - [#484](https://github.com/iakash22/meetops-platform/pull/484) consent-settings API.
 - [#485](https://github.com/iakash22/meetops-platform/pull/485) consent write rate limits.
 
-**Promote:** [#462](https://github.com/iakash22/meetops-platform/pull/462) (`integration/phase-1` → `main`, head `5b66cfe6`, 109 commits). Only Akash merges #462.
+**Promote (as of that 00:40 snapshot):** [#462](https://github.com/iakash22/meetops-platform/pull/462) (`integration/phase-1` → `main`, head `5b66cfe6`, 109 commits). Only Akash merges #462. Live count is in the 01:55 update above.
 
 **Deploy note:** production realtime must set `TRUST_PROXY` to an IP/CIDR allowlist including nginx; hop counts fail startup. On this tip, compose still passes `BEHIND_CLOUDFLARE` only to the realtime service; the API compose fix is [#474](https://github.com/iakash22/meetops-platform/pull/474). See [environment-variables.md](00-getting-started/environment-variables.md) and [cicd.md](devops/cicd.md#deploy-env-realtime-trust_proxy-after-455).
 
@@ -44,7 +75,6 @@ P1 estimate stays ~98% (Google web sign-in + hardening and takeover follow-ups i
 Tree: `main` at `ca3c0e2b` (unchanged). `integration/phase-1` at `de8a86e4` (includes the #463 merge `6feef782`, then #464, #465, #461, and Dependabot #466/#467).
 
 [#463](https://github.com/iakash22/meetops-platform/pull/463) closed the remaining #459 follow-ups: Tester X4-mem (in-memory store copies), NB-R3 post-commit verify UX (verify returns 204 with the real `x-meetops-verify-outcome` after a committed takeover), and the info copy (`password_reset` vs `set_password` on `/verify-email`).
-
 
 ## Update — 9 Nov 2026 (~22:35 IST)
 
