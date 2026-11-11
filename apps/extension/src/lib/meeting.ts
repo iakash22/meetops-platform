@@ -19,6 +19,7 @@ import { fillPath } from './api-paths.js';
 import {
   isNetworkError,
   isRetryableStatus,
+  parseRetryAfter,
   retryPolicy,
   withRetry,
   type RetryPolicy,
@@ -52,6 +53,7 @@ export class MeetingResolveError extends Error {
   constructor(
     readonly status: number,
     readonly code: string,
+    readonly retryAfterMs?: number,
   ) {
     super(`Meeting resolve failed: HTTP ${status} ${code}`);
     this.name = 'MeetingResolveError';
@@ -149,6 +151,7 @@ export function createMeetingResolver(d: MeetingResolverDeps) {
           throw new MeetingResolveError(
             r.status,
             d.validators.apiError(json) ? json.error.code : 'INVALID_RESPONSE',
+            parseRetryAfter(r.headers.get('retry-after'), policy.now()),
           );
         }
         const json: unknown = await r.json().catch(() => undefined);
@@ -160,6 +163,7 @@ export function createMeetingResolver(d: MeetingResolverDeps) {
         retry:
           (err instanceof MeetingResolveError && isRetryableStatus(err.status)) ||
           isNetworkError(err),
+        retryAfterMs: err instanceof MeetingResolveError ? err.retryAfterMs : undefined,
       }),
       policy,
     );
