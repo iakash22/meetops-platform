@@ -10,6 +10,12 @@ Written 1 Nov 2026 (IST) from `integration/phase-1` @ `e4aceac4`. It adds to
 > - Both gate rows are removed. See "Closed entries" in [risk-exceptions.md](risk-exceptions.md).
 > - The RE-01 owner mismatch (register said Frontend, gate said DevOps Agent) is now moot. Keep owners aligned for future entries.
 > - **Only RE-04 remains**, and the rows below for RE-01 and RE-03 are kept for history only.
+>
+> **Re-check 11 Nov 2026 (IST), `integration/phase-1` @ `6feef782` (issue #54):** `scripts/audit-gate.mjs` has no RE-01
+> row, `pnpm audit` reports no `braces` advisory, and the gate passes with `AUDIT_GATE_NOW=2026-11-21T00:00:01Z`
+> (after the old RE-01 expiry). The lockfile resolves only `braces@3.0.3` (still the latest release). GitHub lists
+> GHSA-vfj7-8cjw-p6xm as withdrawn (2026-10-23T12:53:02Z); GHSA-grv7-fg5c-xmjg (`<3.0.3`) and GHSA-cwfw-4gq5-mrqx
+> (`>=2.2.0 <2.3.1`) don't match 3.0.3. No override or lockfile change is needed. Issue #54 can be closed.
 
 ## Dependency paths (from `pnpm-lock.yaml`; `node_modules` were not installed, so `pnpm why` was not run)
 
