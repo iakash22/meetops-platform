@@ -54,18 +54,21 @@ Patterns (from the table, our reading):
 
 ## 3. Our cost inputs (estimates)
 
-| Input                        | Published price                                                              | Source  |
-| ---------------------------- | ---------------------------------------------------------------------------- | ------- |
-| AssemblyAI Universal-3.5 Pro | $0.21 per hour (18 languages, code switching)                                | [P17]   |
-| AssemblyAI Universal-2       | $0.15 per hour (99 languages)                                                | [P17]   |
-| Sarvam speech to text        | ₹0.49/min pay-as-you-go; ₹0.45 (Pro), ₹0.41 (Growth), ₹0.38 (Business) plans | [P18]   |
-| Razorpay Subscriptions       | Per ADR-017: domestic 2%, +0.9% on card subscriptions, 18% GST on fees       | ADR-017 |
+| Input                                 | Published price                                                              | Source  |
+| ------------------------------------- | ---------------------------------------------------------------------------- | ------- |
+| AssemblyAI Universal-3.5 Pro          | $0.21 per hour (18 languages, code switching)                                | [P17]   |
+| AssemblyAI Universal-2                | $0.15 per hour (99 languages)                                                | [P17]   |
+| AssemblyAI Speaker Diarization add-on | +$0.02 per hour on Universal-3.5 Pro and Universal-2                         | [P17]   |
+| Sarvam speech to text                 | ₹0.49/min pay-as-you-go; ₹0.45 (Pro), ₹0.41 (Growth), ₹0.38 (Business) plans | [P18]   |
+| Razorpay Subscriptions                | Per ADR-017: domestic 2%, +0.9% on card subscriptions, 18% GST on fees       | ADR-017 |
 
-**Estimate (ours):** a user with 20 meeting hours a month costs about **$4.20** in STT on Universal-3.5 Pro, or about
-**₹588** on Sarvam pay-as-you-go (20 h × 60 min × ₹0.49). LLM cost for summaries and extraction is not included; we don't
-have a measured per-meeting figure yet (`AiUsageCounter` in `packages/database/prisma/schema.prisma` can give one after
-pilots). Sarvam is far costlier per hour than AssemblyAI at list price, so it should be an opt-in route for Indic-heavy orgs
-with a minutes cap (see [specs/05](specs/05-mixed-language-indic-transcription.md)).
+**Estimate (ours):** a user with 20 meeting hours a month costs about **$4.20** in STT on Universal-3.5 Pro without the
+diarization add-on, or about **$4.60** with it ($0.21 + $0.02 = $0.23/h × 20 h) [P17]. Diarization is on by default in
+our worker, so the add-on changes the relevant per-user estimate from $4.20 to $4.60. Sarvam pay-as-you-go is about
+**₹588** (20 h × 60 min × ₹0.49). LLM cost for summaries and extraction is not included; we don't have a measured
+per-meeting figure yet (`AiUsageCounter` in `packages/database/prisma/schema.prisma` can give one after pilots). Sarvam
+is far costlier per hour than AssemblyAI at list price, so it should be an opt-in route for Indic-heavy orgs with a
+minutes cap (see [specs/05](specs/05-mixed-language-indic-transcription.md)).
 
 ## 4. Proposed packaging (**proposal**)
 

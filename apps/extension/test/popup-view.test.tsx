@@ -3,10 +3,12 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import { CONSENT_CONFIRMATION, CONSENT_NOTICE, setConfirmed } from '../src/lib/consent.js';
 import { MAX_DURATION_MS } from '../src/lib/contract-limits.js';
+import { PAIRING_REQUIRED_MESSAGE as START_PAIRING_REQUIRED_MESSAGE } from '../src/lib/background-handler.js';
 import {
   MEETING_RESOLVE_MESSAGE,
   OFFLINE_MESSAGE,
   OPEN_FROM_TOOLBAR,
+  PAIRING_REQUIRED_MESSAGE,
   UNSUPPORTED_PAGE_MESSAGE,
   RELOADED_MESSAGE,
   POPUP_ONLY_ERROR,
@@ -287,6 +289,15 @@ describe('popup UI pass: status, re-auth, a11y', () => {
     );
     expect(popupErrorMessage('Meeting resolve failed: HTTP 403 FORBIDDEN', true)).toBe(
       MEETING_RESOLVE_MESSAGE,
+    );
+  });
+
+  it('maps an unpaired meeting-resolve error to the same Start pairing copy', () => {
+    expect(PAIRING_REQUIRED_MESSAGE).toBe(START_PAIRING_REQUIRED_MESSAGE);
+    expect(popupErrorMessage('not_paired', true)).toBe(PAIRING_REQUIRED_MESSAGE);
+    expect(popupErrorMessage('Extension is not paired', true)).toBe(PAIRING_REQUIRED_MESSAGE);
+    expect(popupErrorMessage('Extension must be paired again (expired)', true)).toBe(
+      PAIRING_REQUIRED_MESSAGE,
     );
   });
 });

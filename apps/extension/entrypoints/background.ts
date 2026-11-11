@@ -91,9 +91,10 @@ async function handlePendingTasks(): Promise<PendingTasksResponse> {
   };
 }
 
-// Upload client. StubUploadClient (no backend calls) is the default. With WXT_FEATURE_HTTP_UPLOAD on, HttpUploadClient
-// calls the recording-session API through auth.apiFetch() (bearer, exact API origin only) and PUTs chunks through the
-// fetch transport (never a bearer). The offscreen recorder reaches it via UPLOAD_RPC messages (src/lib/upload-rpc.ts).
+// Upload client. httpUploadEnabled() (on in development builds, off in production and in tests). When on,
+// HttpUploadClient calls the recording-session API through auth.apiFetch() (bearer, exact API origin only) and
+// PUTs chunks through the fetch transport (never a bearer). The offscreen recorder reaches it via UPLOAD_RPC
+// messages (src/lib/upload-rpc.ts). When off, StubUploadClient makes no backend calls.
 const HTTP_UPLOAD = httpUploadEnabled();
 const client = selectUploadClient(
   HTTP_UPLOAD,

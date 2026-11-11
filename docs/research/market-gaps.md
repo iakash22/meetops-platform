@@ -85,7 +85,7 @@ Each gap lists the evidence, who partly covers it today, and why the gap is stil
   Enterprise customers choose a data centre [S12]. Granola stores notes in a US-hosted AWS VPC [S7b]. None of the fetched
   pages mention India hosting.
 - **Context.** India's DPDP Rules 2025 were notified on 13 Nov 2025. Erasure and notice duties apply from 13 May 2027
-  (recorded in our ADR-019 from the owner's research. We did not fetch the government source again for this doc).
+  (G.S.R. 843(E), the Act's commencement notification, and Rule 1 of the DPDP Rules 2025, G.S.R. 846(E), read on 2026-11-12; see [verification-round-2.md](verification-round-2.md) §5, R2-D1, R2-D2. The dates match ADR-019).
 - **Why it's open.** Not found for India. This matters to the owner's home market and to ADR-017's INR billing.
 
 ### G9. Meetings across organisations and platforms

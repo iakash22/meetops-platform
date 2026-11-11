@@ -76,7 +76,9 @@ realtime auth).
 ## Cross-cutting dependencies
 
 1. **Owner inputs (HANDOFF §5).** AI keys, Jira credentials, the GitHub App install and the Google Calendar client block
-   #1, #5, #6, #2 and #13 from being tested with real providers.
+   #1, #5, #6, #2 and #13 from being tested with real providers. The Google Calendar client also needs Google's brand
+   plus sensitive-scope verification, which take about 2–3 plus up to 10 business days, and unverified apps are capped
+   at 100 new users ([verification-round-2.md](verification-round-2.md) §1.3).
 2. **P8 native builds have never been compiled** (HANDOFF §6). Any native work in #3, #4 or #22 needs the device checklists
    first.
 3. **Contracts.** #1, #3, #5 and #7 change `@meetops/contracts` (ADR-003 owner: Architecture).

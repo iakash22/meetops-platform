@@ -163,6 +163,14 @@ describe('L1: same-origin /socket.io proxy', () => {
     expect(compose).not.toMatch(/^\s*REALTIME_TRUST_PROXY_HOPS:/m);
   });
 
+  it('compose passes BEHIND_CLOUDFLARE to both the API and realtime', () => {
+    const compose = readFileSync(resolve(root, 'infra', 'compose', 'compose.app.yml'), 'utf8');
+    const apiEnv = /x-api-env: &api-env\n([\s\S]*?)\nservices:/m.exec(compose)?.[1] ?? '';
+    expect(apiEnv).toMatch(/^ {2}TRUST_PROXY: \$\{TRUST_PROXY:-\}$/m);
+    expect(apiEnv).toMatch(/^ {2}BEHIND_CLOUDFLARE: \$\{BEHIND_CLOUDFLARE:-\}$/m);
+    expect(compose).toMatch(/^ {6}BEHIND_CLOUDFLARE: \$\{BEHIND_CLOUDFLARE:-\}$/m);
+  });
+
   it.each([
     ['http://realtime:4001', undefined],
     ['https://rt.internal', '10.0.0.10'],

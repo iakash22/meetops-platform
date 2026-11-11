@@ -1,5 +1,5 @@
 import type { PrismaClient } from '@prisma/client';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   createIntegrationConnectionRepository,
   type IntegrationSecretCipher,
@@ -286,5 +286,84 @@ describe('integration routing helpers', () => {
       { organizationId: 'o', id: 'i', provider: 'jira' },
     ]);
     expect(calls[1]!.values).toEqual([before, 5]);
+  });
+});
+
+describe('resolveWebhookSecret', () => {
+  const org = '00000000-0000-4000-8000-000000000001';
+  const id = '00000000-0000-4000-8000-0000000000aa';
+
+  const routingClient = (
+    orgId: string | null,
+    row: { webhookSecretEnc?: string | null; accessTokenEnc?: string | null } | null,
+    opts?: { onFindFirst?: (select: Record<string, boolean>) => void },
+  ) => {
+    const tx = {
+      $queryRaw: async () => [{ org_id: orgId }],
+      $executeRaw: async () => 1,
+      integrationConnection: {
+        findFirst: async ({ select }: { select: Record<string, boolean> }) => {
+          opts?.onFindFirst?.(select);
+          if (!row) return null;
+          return Object.fromEntries(
+            Object.keys(select).map((k) => [k, (row as Record<string, unknown>)[k] ?? null]),
+          );
+        },
+      },
+    };
+    return { $transaction: (fn: (t: typeof tx) => unknown) => fn(tx) } as unknown as PrismaClient;
+  };
+
+  it('hit and miss paths both call decrypt, and a hit reads only the webhook envelope', async () => {
+    const webhookSecretEnc = await cipher.encrypt('hook-only', {
+      organizationId: org,
+      integrationId: id,
+    });
+    const accessTokenEnc = await cipher.encrypt('access-must-not-be-read', {
+      organizationId: org,
+      integrationId: id,
+    });
+    const decrypt = vi.fn(
+      (envelope: string, ctx: { organizationId: string; integrationId: string }) =>
+        cipher.decrypt(envelope, ctx),
+    );
+    const tracked: IntegrationSecretCipher = {
+      encrypt: (plaintext, ctx) => cipher.encrypt(plaintext, ctx),
+      decrypt,
+    };
+    let selected: Record<string, boolean> | undefined;
+    const repo = createIntegrationConnectionRepository({
+      client: routingClient(
+        org,
+        { webhookSecretEnc, accessTokenEnc },
+        {
+          onFindFirst: (s) => {
+            selected = s;
+          },
+        },
+      ),
+      cipher: tracked,
+    });
+    expect(await repo.resolveWebhookSecret('jira', id)).toEqual({
+      organizationId: org,
+      webhookSecret: 'hook-only',
+    });
+    expect(selected).toEqual({ webhookSecretEnc: true });
+    expect(decrypt).toHaveBeenCalledTimes(1);
+    expect(decrypt).toHaveBeenCalledWith(webhookSecretEnc, {
+      organizationId: org,
+      integrationId: id,
+    });
+    expect(decrypt.mock.calls[0]![0]).not.toBe(accessTokenEnc);
+
+    decrypt.mockClear();
+    const missRepo = createIntegrationConnectionRepository({
+      client: routingClient(null, null),
+      cipher: tracked,
+    });
+    expect(await missRepo.resolveWebhookSecret('jira', id)).toBeNull();
+    expect(decrypt).toHaveBeenCalledTimes(1);
+    expect(await missRepo.resolveWebhookSecret('jira', 'not-a-uuid')).toBeNull();
+    expect(decrypt).toHaveBeenCalledTimes(2);
   });
 });

@@ -88,12 +88,12 @@ Before rolling a production image that includes #455:
    realtime startup; use `TRUST_PROXY` instead).
 3. Remember one compose/`TRUST_PROXY` value feeds **both** API and realtime: trusting a whole
    docker network range makes the API honour X-Forwarded-For from that range too.
-4. **`BEHIND_CLOUDFLARE` compose gap:** `infra/compose/compose.app.yml` passes
-   `BEHIND_CLOUDFLARE` only to the **realtime** service. The API reads the same env var in
-   process (`clientIpOptionsFromEnv`) but does not receive it from that compose file. For a
-   Cloudflare edge in front of both, set the variable on the API process too (compose override,
-   orchestrator, or D-5). Non-compose deploys that export it for both are fine. If the API is
-   behind Cloudflare without `BEHIND_CLOUDFLARE`, the resolved client IP is the Cloudflare edge
+4. **`BEHIND_CLOUDFLARE`:** `infra/compose/compose.app.yml` passes
+   `BEHIND_CLOUDFLARE` to both the API (`x-api-env`) and the realtime service.
+   Default empty/off. For a Cloudflare edge in front of the stack, set it to `true`
+   so both processes honour `CF-Connecting-IP`. Non-compose deploys must export it
+   for both processes too. If the API is behind Cloudflare without
+   `BEHIND_CLOUDFLARE`, the resolved client IP is the Cloudflare edge
    (peer after `TRUST_PROXY`), so per-IP rate limits share one bucket per edge and one busy edge
    (or attacker) can 429 / lock out many users. Setting the flag is still fail-closed for spoofed
    headers: `CF-Connecting-IP` is ignored unless that peer is in the pinned Cloudflare ranges.

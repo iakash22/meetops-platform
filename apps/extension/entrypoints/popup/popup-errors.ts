@@ -16,6 +16,9 @@ export const UNSUPPORTED_PAGE_MESSAGE =
   'Open the meeting in this tab (an https page), then press Record.';
 export const MEETING_RESOLVE_MESSAGE =
   "Couldn't set up this meeting in MeetOps. Try again in a moment.";
+// Keep identical to PAIRING_REQUIRED_MESSAGE in src/lib/background-handler.ts (popup must not import that module).
+export const PAIRING_REQUIRED_MESSAGE =
+  'This browser is not paired with MeetOps AI, so recording was not started. Pair the extension first.';
 const EXTENSION_RELOADED = /extension context invalidated|receiving end does not exist/i;
 
 export const isPopupOnlyError = (raw: string): boolean => raw.includes(POPUP_ONLY_ERROR);
@@ -27,6 +30,9 @@ export function popupErrorMessage(raw: string | undefined, inPopup: boolean): st
   if (NETWORK_ERROR.test(raw)) return OFFLINE_MESSAGE;
   if (EXTENSION_RELOADED.test(raw)) return RELOADED_MESSAGE;
   if (raw.includes('UNSUPPORTED_PAGE')) return UNSUPPORTED_PAGE_MESSAGE;
+  // Resolve runs before Start when HTTP upload is on; show the same copy Start uses when unpaired.
+  if (/(?:^|\b)not_paired\b|is not paired|must be paired again/i.test(raw))
+    return PAIRING_REQUIRED_MESSAGE;
   if (raw.startsWith('Meeting resolve failed')) return MEETING_RESOLVE_MESSAGE;
   return raw;
 }
