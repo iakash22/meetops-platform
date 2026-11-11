@@ -106,7 +106,7 @@ describe('ADR-021 MFA contracts', () => {
       user: {
         id,
         email: 'a@example.com',
-        name: null,
+        name: 'Ada',
         emailVerifiedAt: null,
         createdAt: at,
         updatedAt: at,

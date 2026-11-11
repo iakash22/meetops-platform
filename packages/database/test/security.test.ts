@@ -137,7 +137,9 @@ const OUTBOX_DEDUPE_KEY_INDEX_MIGRATION = '20261103200100_outbox_dedupe_key_inde
 const USER_GOOGLE_SUB_MIGRATION = '20261106120000_user_google_sub';
 /** OIDC hardening: users.google_sub unique only over live rows (L-1) + auth.google_linked in the global audit allowlist. */
 const GOOGLE_OIDC_HARDENING_MIGRATION = '20261109120000_google_oidc_hardening';
-const LATEST_MIGRATION = GOOGLE_OIDC_HARDENING_MIGRATION;
+/** ADR-021 MFA: user-global factor tables (forced user RLS), sessions.mfa_at, organizations.mfa_required. */
+const MFA_TOTP_MIGRATION = '20261111180000_mfa_totp';
+const LATEST_MIGRATION = MFA_TOTP_MIGRATION;
 /**
  * Parallel PRs that sort between calendar_events and meeting_embeddings (#334 consent events, #341 calendar links).
  * The order checks below ignore them so they hold whichever merges first; when present they must sort before ours.
@@ -200,6 +202,7 @@ const orderedDirs = () => {
   expect(dirs.indexOf(GOOGLE_OIDC_HARDENING_MIGRATION)).toBe(
     dirs.indexOf(USER_GOOGLE_SUB_MIGRATION) + 1,
   );
+  expect(dirs.indexOf(MFA_TOTP_MIGRATION)).toBe(dirs.indexOf(GOOGLE_OIDC_HARDENING_MIGRATION) + 1);
   return dirs.filter(
     (d) =>
       d !== TASK_SYNC_MIGRATION &&
@@ -212,6 +215,7 @@ const orderedDirs = () => {
       d !== OUTBOX_DEDUPE_KEY_INDEX_MIGRATION &&
       d !== USER_GOOGLE_SUB_MIGRATION &&
       d !== GOOGLE_OIDC_HARDENING_MIGRATION &&
+      d !== MFA_TOTP_MIGRATION &&
       !(PARALLEL_MIGRATIONS as readonly string[]).includes(d),
   );
 };
@@ -877,7 +881,7 @@ describe('schema conventions', () => {
   });
 
   it('every model uses a uuid primary key', () => {
-    expect(models).toHaveLength(46);
+    expect(models).toHaveLength(48);
     for (const m of models.filter((x) => !ORGANIZATION_KEYED.includes(x.table)))
       expect(m.body, m.name).toMatch(/^\s+id\s+String\s+@id @default\(uuid\(\)\) @db\.Uuid$/m);
   });
