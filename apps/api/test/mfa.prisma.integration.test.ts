@@ -8,6 +8,7 @@ import { randomUUID } from 'node:crypto';
 import { createPrismaClient, type DatabaseClient } from '@meetops/database';
 import { PrismaUserRepository } from '../src/modules/users/infrastructure/prisma/prisma-user.repository.js';
 import { PrismaMfaRepository } from '../src/modules/mfa/infrastructure/prisma-mfa.repository.js';
+import { PrismaAccountClaimStore } from '../src/modules/auth/infrastructure/prisma/prisma-account-claim.store.js';
 
 const url = process.env.TEST_DATABASE_URL;
 
@@ -28,7 +29,7 @@ describe.skipIf(!url)(
       await db?.$disconnect();
     });
 
-    async function user() {
+    async function user(verified = true) {
       const now = new Date();
       const id = randomUUID();
       await users.create({
@@ -36,7 +37,7 @@ describe.skipIf(!url)(
         email: `mfa-${id.slice(0, 8)}@example.com`,
         name: 'Ada',
         passwordHash: 'hash',
-        emailVerifiedAt: now,
+        emailVerifiedAt: verified ? now : null,
         createdAt: now,
         updatedAt: now,
         deletedAt: null,
@@ -181,6 +182,48 @@ describe.skipIf(!url)(
       expect(await mfa.deleteFactor(u, f)).toBe(true);
       expect((await users.findById(u))?.mfaEnabledAt ?? null).toBeNull();
       expect(await mfa.countUnusedRecoveryCodes(u, f)).toBe(0);
+    });
+
+    // ADR-021 OQ-15 (MFA-TO-01..03, copied from the unmerged plan update #470): the takeover claim deletes the
+    // squatter's factors, pending enrolment and recovery hashes in its own transaction (no follow-up step involved).
+    for (const kind of ['mailbox', 'google'] as const) {
+      it(`MFA-TO-0${kind === 'mailbox' ? 1 : 2}/03: the ${kind} claim clears every factor in the claim transaction`, async () => {
+        const u = await user(false);
+        const active = await pending(u);
+        await mfa.activate({
+          userId: u,
+          factorId: active,
+          step: 1,
+          at: new Date(),
+          recoveryHashes: hashes(10),
+        });
+        await pending(u);
+        expect(await mfa.listFactors(u)).toHaveLength(2);
+        const store = new PrismaAccountClaimStore(db);
+        const sub = `1${randomUUID().replaceAll('-', '').replace(/[a-f]/g, '7').slice(0, 20)}`;
+        const claimed =
+          kind === 'mailbox'
+            ? await store.claimForMailbox(u, new Date())
+            : await store.claimForGoogle(u, sub, new Date());
+        expect(claimed).toBe(true);
+        expect(await mfa.listFactors(u)).toEqual([]);
+        expect(await mfa.countUnusedRecoveryCodes(u, active)).toBe(0);
+        expect((await users.findById(u))?.mfaEnabledAt ?? null).toBeNull();
+      });
+    }
+
+    it('OQ-15: a claim that does not apply (already verified) leaves the factors alone', async () => {
+      const u = await user(true);
+      const f = await pending(u);
+      await mfa.activate({
+        userId: u,
+        factorId: f,
+        step: 1,
+        at: new Date(),
+        recoveryHashes: hashes(10),
+      });
+      expect(await new PrismaAccountClaimStore(db).claimForMailbox(u, new Date())).toBe(false);
+      expect(await mfa.listFactors(u)).toHaveLength(1);
     });
   },
 );

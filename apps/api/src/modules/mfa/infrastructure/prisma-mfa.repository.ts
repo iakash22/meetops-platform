@@ -182,6 +182,13 @@ export class PrismaMfaRepository implements MfaRepository {
       return true;
     });
   }
+  async deleteAllForUser(userId: string) {
+    await this.tx(userId, async (tx) => {
+      await tx.mfaRecoveryCode.deleteMany({ where: { userId } });
+      await tx.mfaFactor.deleteMany({ where: { userId } });
+      await tx.user.updateMany({ where: { id: userId }, data: { mfaEnabledAt: null } });
+    });
+  }
   async deleteFactor(userId: string, factorId: string) {
     return this.tx(userId, async (tx) => {
       const r = await tx.mfaFactor.deleteMany({ where: { id: factorId, userId } });

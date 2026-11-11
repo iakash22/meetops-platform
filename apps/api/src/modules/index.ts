@@ -792,7 +792,9 @@ export function defaultModuleDeps(
       ownedRedis?.disconnect();
       throw new MissingProductionDependencyError(['accountClaims']);
     }
-    deps.accountClaims = sequentialAccountClaims(deps.users, deps.sessions);
+    // ADR-021 OQ-15: the claim also wipes the account's MFA (the Prisma store does it in its transaction).
+    deps.mfa ??= selectMfaRepository(deps);
+    deps.accountClaims = sequentialAccountClaims(deps.users, deps.sessions, deps.mfa);
   }
   return deps;
 }

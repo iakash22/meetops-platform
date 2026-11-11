@@ -110,6 +110,12 @@ export class InMemoryMfaRepository implements MfaRepository {
     if (!(await this.findActiveTotp(userId))) await this.onMfaEnabledChange(userId, null);
     return true;
   }
+  async deleteAllForUser(userId: string) {
+    for (const f of [...this.factors.values()]) if (f.userId === userId) await this.drop(f.id);
+    for (let i = this.codes.length - 1; i >= 0; i--)
+      if (this.codes[i]!.userId === userId) this.codes.splice(i, 1);
+    await this.onMfaEnabledChange(userId, null);
+  }
   private dropCodes(factorId: string) {
     for (let i = this.codes.length - 1; i >= 0; i--)
       if (this.codes[i]!.factorId === factorId) this.codes.splice(i, 1);

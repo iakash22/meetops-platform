@@ -64,4 +64,6 @@ export interface MfaRepository {
    * when the factor does not exist for this user.
    */
   deleteFactor(userId: string, factorId: string): Promise<boolean>;
+  /** ADR-021 OQ-15 (takeover claim): every factor, pending enrolment and recovery code; clears users.mfa_enabled_at. */
+  deleteAllForUser(userId: string): Promise<void>;
 }

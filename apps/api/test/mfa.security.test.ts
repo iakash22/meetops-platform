@@ -34,6 +34,8 @@ import {
 } from '../src/modules/auth/domain/session.js';
 import { InMemoryAuditLog } from '../src/modules/auth/domain/audit.js';
 import { InMemoryUserRepository } from '../src/modules/users/infrastructure/in-memory-user.repository.js';
+import { InMemoryMfaRepository } from '../src/modules/mfa/infrastructure/in-memory-mfa.repository.js';
+import { sequentialAccountClaims } from '../src/modules/auth/application/account-claims.js';
 import {
   buildApp,
   Client,
@@ -905,6 +907,72 @@ describe('ADR-021 enrolment hardening (copied from #470)', () => {
   });
 });
 
+describe('ADR-021 OQ-15 takeover (copied from #470)', () => {
+  it('MFA-TO-01 (sequential claim, dev/test wiring): a mailbox claim wipes the squatter factors and the flag', async () => {
+    const users = new InMemoryUserRepository();
+    const sessions = new InMemorySessionRepository();
+    const mfa = new InMemoryMfaRepository((id, at) => users.setMfaEnabledAt(id, at));
+    const now = new Date();
+    const id = randomUUID();
+    await users.create({
+      id,
+      email: 'squat@example.com',
+      name: 'Mallory',
+      passwordHash: 'squatter-hash',
+      emailVerifiedAt: null,
+      createdAt: now,
+      updatedAt: now,
+      deletedAt: null,
+    });
+    const fid = randomUUID();
+    await mfa.createPending({
+      id: fid,
+      userId: id,
+      type: 'totp',
+      status: 'pending',
+      secretEnc: 'v1.test.x',
+      secretKeyId: 'test',
+      lastUsedStep: null,
+      pendingExpiresAt: new Date(now.getTime() + 60_000),
+      confirmedAt: null,
+      lastUsedAt: null,
+      createdAt: now,
+    });
+    await mfa.activate({
+      userId: id,
+      factorId: fid,
+      step: 1,
+      at: now,
+      recoveryHashes: ['h1', 'h2'],
+    });
+    expect((await users.findById(id))?.mfaEnabledAt).toBeTruthy();
+    const claims = sequentialAccountClaims(users, sessions, mfa);
+    expect(await claims.claimForMailbox(id, now)).toBe(true);
+    expect(await mfa.listFactors(id)).toEqual([]);
+    expect(mfa.codes.filter((c) => c.userId === id)).toEqual([]);
+    expect((await users.findById(id))?.mfaEnabledAt ?? null).toBeNull();
+  });
+
+  it('MFA-TO-04 / MFA-REC-02: a password reset of a verified account keeps MFA', async () => {
+    const app = await buildApp();
+    await enrolledThenLoggedOut(app, 'to4@example.com');
+    const anon = new Client(app);
+    await anon.post('/auth/forgot-password', { email: 'to4@example.com' });
+    const mail = app.mail.sent.filter((m) => m.template === 'password_reset');
+    const token = new URL(mail.at(-1)!.data.url!).searchParams.get('token')!;
+    const newPassword = 'a-brand-new-password-1';
+    expect(
+      (await anon.post('/auth/reset-password', { token, password: newPassword })).statusCode,
+    ).toBe(204);
+    const login = await new Client(app).post('/auth/login', {
+      email: 'to4@example.com',
+      password: newPassword,
+    });
+    expect(login.json<{ mfaRequired?: boolean }>().mfaRequired).toBe(true);
+    await app.close();
+  });
+});
+
 describe('ADR-021 recovery codes (MFA-RC)', () => {
   it('MFA-RC-01/02: a recovery code works once and is single-use', async () => {
     const app = await buildApp();
@@ -1250,9 +1318,7 @@ describe('TODO(ADR-021) cases not automatable yet (it.todo)', () => {
     'MFA-OIDC-03: an owner/admin who signs in with Google still has to pass the MFA challenge',
   );
   it.todo('MFA-OIDC-04: amr/acr from Google are not trusted to elevate to mfa (OQ-3)');
-  it.todo(
-    'MFA-OIDC-05 (N-1): a pre-hijacked account cannot keep an attacker-enrolled factor after Google proves the email',
-  );
+  // MFA-OIDC-05 (N-1) is covered by MFA-TO-02 (live Postgres, test/mfa.prisma.integration.test.ts).
   // Clients
   it.todo(
     'MFA-CLI-01: desktop authorize (ADR-012) of an MFA-required user only completes after the browser MFA step',
@@ -1277,7 +1343,6 @@ describe('TODO(ADR-021) cases not automatable yet (it.todo)', () => {
   it.todo(
     'MFA-REC-01: losing all factors goes through the documented recovery path only (OQ-12); no email-only reset of MFA',
   );
-  it.todo('MFA-REC-02: password reset does not disable MFA');
   it.todo(
     'MFA-REC-03: admin MFA reset of another member needs step-up, is audited and emails the member',
   );
