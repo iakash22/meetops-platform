@@ -83,7 +83,11 @@ claim it in marketing.
   was given (`all_parties_notified` or `all_parties_consented`). One click revokes: capture stops and a deletion request
   is logged.
 - **Fit.** ADR-020 already has the append-only `consent_attestations` and `meeting_consent_events` ledger,
-  `CURRENT_CONSENT_VERSION`, and "capture stops on `consent_revoked`". Code: `apps/api/src/modules/media/*meeting-consent*`,
+  `CURRENT_CONSENT_VERSION`, and "capture stops on `consent_revoked`". Code:
+  `apps/api/src/modules/media/application/meeting-consent.service.ts`,
+  `apps/api/src/modules/media/domain/meeting-consent.ts`,
+  `apps/api/src/modules/media/domain/consent.ts`,
+  `apps/api/src/modules/media/http/meeting-consent.routes.ts`,
   `packages/contracts/src/api/meeting-consent.ts`. Open item: the GDPR Art. 17 erasure plan for attesters (ADR-020 notes).
 - **Teams.** Backend, frontend, native (extension, desktop and mobile revoke handling), security (signed, rate-limited
   links), QA. Legal review of the notice text (ADR-020 item 7).

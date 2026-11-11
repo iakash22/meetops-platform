@@ -11,8 +11,8 @@ Each gap lists the evidence, who partly covers it today, and why the gap is stil
 
 ### G1. Consent for people who never signed up
 
-- **Evidence.** A consolidated class action says Otter's notetaker records "without obtaining consent from all meeting
-  participants". The court let wiretap (ECPA, CIPA), Illinois BIPA, unjust-enrichment and UCL claims go forward [S30, S31].
+- **Evidence.** A consolidated class action accuses Otter's notetaker of recording meetings without consent from all
+  participants. The court let wiretap (ECPA, CIPA), Illinois BIPA, unjust-enrichment and UCL claims go forward [S30, S31].
   The NPR report says Otter asks the host by default, "but it does not by default ask all the other participants" [S30].
 - **Partial cover.** MeetGeek has "recording consent notifications" with approval tracking [S13]. Sembly lists "notification
   and consent tracking" on higher tiers [S23]. Google lets admins require explicit consent from every participant, but that
