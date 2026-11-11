@@ -18,6 +18,7 @@ through an ADR (`docs/15-decisions/`) or a plan (`docs/plans/`).
 | [verification-round-2.md](verification-round-2.md)           | Google scope classes, GitHub and Atlassian marketplace rules, Zoho INR prices, DPDP timeline, India size                                   |
 | [ai-provider-due-diligence.md](ai-provider-due-diligence.md) | Gemini, Vertex AI, AssemblyAI, Azure OpenAI, OpenAI API and Sarvam: training, retention, regions, DPAs, prices, cost estimates and options |
 | [dpdp-role-and-dpa-outline.md](dpdp-role-and-dpa-outline.md) | DPDP Fiduciary vs Processor per purpose, breach, transfer, children, SDF, sub-processor list, India DPA outline (not legal advice)         |
+| [verification-round-3.md](verification-round-3.md)           | DPDP G.S.R. 843/846 fix, Rules corrigendum, CERT-In directions status, vendor breach-notice and DPDP role terms                            |
 
 Conventions:
 
