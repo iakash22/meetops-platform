@@ -1,10 +1,10 @@
 # GTM brief: India SMB and mid-market (November 2026)
 
-- Checked **2026-11-12 (IST)**. New sources are GT1–GT16 at the end; S…, M…, P… and V… IDs point to the #468 and #473 docs.
+- Checked **2026-11-12 (IST)**. New sources are GT1–GT16 at the end; S…, M…, P… and V… IDs point to the merged #468 and #473 docs ([competitive-landscape.md](competitive-landscape.md), [verification-notes.md](verification-notes.md), [pricing-packaging.md](pricing-packaging.md)).
 - **Labels.** Market figures from third parties and our own arithmetic are **estimates**. Prices, plans, targets and the
   launch plan are **proposals**, not decisions. Decisions marked "project-lead decision, 2026-11-12" are decisions.
-- Prices match [pricing-packaging.md](pricing-packaging.md) (pending #473). Legal context is in
-  [legal-questions-brief.md](legal-questions-brief.md) (pending #473). That brief and this one are not legal advice.
+- Prices match [pricing-packaging.md](pricing-packaging.md). Legal context is in
+  [legal-questions-brief.md](legal-questions-brief.md). That brief and this one are not legal advice.
 
 ## 1. Headline
 
@@ -25,13 +25,13 @@ that:
 - often meet in clients' tenants, where Copilot doesn't work (G9; [S17] in #468);
 - pay in INR with a GSTIN and prefer UPI AutoPay or invoices (ADR-017).
 
-| Persona                                  | Role in the deal     | What they need                                                        | What we show                                                  |
-| ---------------------------------------- | -------------------- | --------------------------------------------------------------------- | ------------------------------------------------------------- |
-| Engineering manager / tech lead          | Champion, daily user | Action items with the right owner, in Jira/GitHub, no retyping        | Evidence-linked drafts → approve → issue (#468 #1, #6, #7)    |
-| Delivery / project manager (agency)      | Champion             | Follow-through across a client's recurring meetings                   | "Since last meeting" (spec 02, pending #473); cross-org mode  |
-| Founder / CTO (SMB)                      | Economic buyer       | Low INR price, no lock-in, no surprises for clients                   | INR plans, UPI AutoPay, no-viral guarantee (spec 04)          |
-| IT admin / security or privacy lead (MM) | Gatekeeper           | Control over who records, no bot spreading, retention, DPDP readiness | Admin rollout, consent ledger, retention 7–365 days (ADR-019) |
-| Finance                                  | Approver             | GST invoice, predictable recurring charge                             | GST invoicing, ≤ ₹15,000 per mandate charge (ADR-017)         |
+| Persona                                  | Role in the deal     | What they need                                                        | What we show                                                                     |
+| ---------------------------------------- | -------------------- | --------------------------------------------------------------------- | -------------------------------------------------------------------------------- |
+| Engineering manager / tech lead          | Champion, daily user | Action items with the right owner, in Jira/GitHub, no retyping        | Evidence-linked drafts → approve → issue (#468 #1, #6, #7)                       |
+| Delivery / project manager (agency)      | Champion             | Follow-through across a client's recurring meetings                   | "Since last meeting" ([spec 02](specs/02-since-last-meeting.md)); cross-org mode |
+| Founder / CTO (SMB)                      | Economic buyer       | Low INR price, no lock-in, no surprises for clients                   | INR plans, UPI AutoPay, no-viral guarantee (spec 04)                             |
+| IT admin / security or privacy lead (MM) | Gatekeeper           | Control over who records, no bot spreading, retention, DPDP readiness | Admin rollout, consent ledger, retention 7–365 days (ADR-019)                    |
+| Finance                                  | Approver             | GST invoice, predictable recurring charge                             | GST invoicing, ≤ ₹15,000 per mandate charge (ADR-017)                            |
 
 ## 3. Market size
 
@@ -59,7 +59,7 @@ Caveats:
 ### 4.1 How these buyers pay (evidence)
 
 - Suites localise for India: Google Workspace shows INR, including an introductory ₹864 Standard price for the first 20
-  users; Microsoft and Zoom show INR excluding GST [P13, P15, P16 in #473].
+  users; Microsoft and Zoom show INR excluding GST [P13, P15, P16](pricing-packaging.md).
 - Zoho, the largest India-built suite, accepts "online banking transfers and checks for yearly subscriptions" besides
   cards and PayPal [GT6].
 - RBI e-mandates: recurring debits up to ₹15,000 need no extra authentication; larger plans go by invoice (ADR-017 item 3).
@@ -88,10 +88,10 @@ Caveats:
 - **Sarvam (project-lead decision, 2026-11-12):** opt-in, off by default, capped, and **no Sarvam spend until Akash sets a
   budget**. Until then the Business tier offers AssemblyAI code switching only; don't market "Sarvam" or extra Indic
   languages at launch.
-- Viewers and approvers are free; charge only people who record (pricing principle 2 in #473).
+- Viewers and approvers are free; charge only people who record (pricing principle 2 in [pricing-packaging.md](pricing-packaging.md) §4).
 - One monthly mandate charge covers up to 15 Team users or 8 Business users under ₹15,000; larger monthly orgs move to an
-  annual invoice (#473 §4).
-- Open: show prices with or without 18% GST (#473 §5 Q2). Competitors show them without GST.
+  annual invoice ([pricing-packaging.md](pricing-packaging.md) §4).
+- Open: show prices with or without 18% GST ([pricing-packaging.md](pricing-packaging.md) §5 Q2). Competitors show them without GST.
 
 ## 6. Compliance messaging (DPDP Act 2023 and Rules 2025)
 
@@ -111,7 +111,7 @@ Caveats:
 
 - **Notice (Rule 3):** an itemised description of the personal data, the specific purpose, and a way to "withdraw her
   consent, with the ease of doing so being comparable to that with which such consent was given" [GT12]. This lines up with
-  consent receipts and one-click revoke (spec 03, pending #473).
+  consent receipts and one-click revoke ([spec 03](specs/03-consent-receipts.md)).
 - **Security (Rule 6):** safeguards such as "encryption, obfuscation, masking or the use of virtual tokens", and keeping
   logs for one year to detect and investigate unauthorised access [GT12]. ADR-019 already keeps audit logs for at least a year.
 - **Breach (Rule 7):** tell the Board without delay and give detailed information within 72 hours; affected people must also be told without delay [GT12].
@@ -134,13 +134,13 @@ Caveats:
 
 ## 7. Competitor positioning in India
 
-| Competitor                                | What an India buyer sees                                                                                                                                             | Our angle                                                        | Source               |
-| ----------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------- | -------------------- |
-| Google Workspace (Gemini in Meet)         | INR pricing; Gemini in Meet from Standard (₹1,080 list, ₹864 intro); one language per meeting; listed note-taking languages don't include Hindi                      | Hindi-English in one transcript; Jira/GitHub with approval       | P13 (#473), V16, S16 |
-| Microsoft 365 Copilot                     | INR pricing (₹1,745 add-on); no Hindi for work/school accounts; doesn't work in meetings hosted outside the org                                                      | Works on any tab, including clients' meetings; Hindi-English     | P16 (#473), V8, S17  |
-| Zoom (AI Companion / ZoomMate)            | INR pricing (Pro ₹1,240 annual); meeting summary in 33 languages, including Hindi, Bengali, Tamil, Telugu                                                            | Not tied to one platform; evidence-linked tasks into Jira/GitHub | P15 (#473), V7       |
-| Zoho Meeting                              | Transcripts and "keynotes" in the tier above Standard; Zia keynotes need the customer's own OpenAI key; Zia transcription only in English and six European languages | No key to bring; Indian languages; tasks into Jira/GitHub        | [GT6], [GT17]        |
-| AI notetakers (Otter, Fireflies, Fathom…) | USD prices to Indian visitors; Otter has no Hindi; Fathom lists 38 transcript languages including Hindi                                                              | INR and UPI AutoPay; no bot; consent receipts                    | #473 §2, S1, V1      |
+| Competitor                                | What an India buyer sees                                                                                                                                             | Our angle                                                        | Source                                                         |
+| ----------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------- | -------------------------------------------------------------- |
+| Google Workspace (Gemini in Meet)         | INR pricing; Gemini in Meet from Standard (₹1,080 list, ₹864 intro); one language per meeting; listed note-taking languages don't include Hindi                      | Hindi-English in one transcript; Jira/GitHub with approval       | [P13](pricing-packaging.md), [V16](verification-notes.md), S16 |
+| Microsoft 365 Copilot                     | INR pricing (₹1,745 add-on); no Hindi for work/school accounts; doesn't work in meetings hosted outside the org                                                      | Works on any tab, including clients' meetings; Hindi-English     | [P16](pricing-packaging.md), [V8](verification-notes.md), S17  |
+| Zoom (AI Companion / ZoomMate)            | INR pricing (Pro ₹1,240 annual); meeting summary in 33 languages, including Hindi, Bengali, Tamil, Telugu                                                            | Not tied to one platform; evidence-linked tasks into Jira/GitHub | [P15](pricing-packaging.md), V7                                |
+| Zoho Meeting                              | Transcripts and "keynotes" in the tier above Standard; Zia keynotes need the customer's own OpenAI key; Zia transcription only in English and six European languages | No key to bring; Indian languages; tasks into Jira/GitHub        | [GT6], [GT17]                                                  |
+| AI notetakers (Otter, Fireflies, Fathom…) | USD prices to Indian visitors; Otter has no Hindi; Fathom lists 38 transcript languages including Hindi                                                              | INR and UPI AutoPay; no bot; consent receipts                    | [pricing-packaging.md](pricing-packaging.md) §2, S1, V1        |
 
 Zoho Meeting's INR prices did not render in our fetch, so we don't quote them.
 
@@ -159,28 +159,28 @@ credentials (AssemblyAI, Jira, GitHub App, Google Calendar OAuth client).
 
 ## 9. Metrics (targets are proposals; set them after design partners)
 
-| Stage      | Metric                                                                           | Why                                       |
-| ---------- | -------------------------------------------------------------------------------- | ----------------------------------------- |
-| Activation | Org's first approved, synced Jira/GitHub issue within 7 days of sign-up          | Core value moment (README core flow)      |
-| Value      | Share of AI drafts approved without edits; share edited for owner                | Trust in #1 and #7                        |
-| Habit      | Recurring meetings with "since last meeting" opened                              | #2 follow-through                         |
-| Revenue    | Free → paid conversion; ARPU in INR; net revenue retention                       | Pricing check (#473)                      |
-| Trust      | Revocations processed and capture stopped; external emails sent (must be 0)      | Specs 03 and 04 guarantees                |
-| Cost       | STT and LLM cost per meeting hour (`AiUsageCounter`); Sarvam spend vs cap        | Margin (#473 §3); lead decision on Sarvam |
-| Language   | Share of meetings with Indic languages; error rate on the Hindi-English eval set | Spec 05                                   |
+| Stage      | Metric                                                                           | Why                                                                               |
+| ---------- | -------------------------------------------------------------------------------- | --------------------------------------------------------------------------------- |
+| Activation | Org's first approved, synced Jira/GitHub issue within 7 days of sign-up          | Core value moment (README core flow)                                              |
+| Value      | Share of AI drafts approved without edits; share edited for owner                | Trust in #1 and #7                                                                |
+| Habit      | Recurring meetings with "since last meeting" opened                              | #2 follow-through                                                                 |
+| Revenue    | Free → paid conversion; ARPU in INR; net revenue retention                       | Pricing check ([pricing-packaging.md](pricing-packaging.md))                      |
+| Trust      | Revocations processed and capture stopped; external emails sent (must be 0)      | Specs 03 and 04 guarantees                                                        |
+| Cost       | STT and LLM cost per meeting hour (`AiUsageCounter`); Sarvam spend vs cap        | Margin ([pricing-packaging.md](pricing-packaging.md) §3); lead decision on Sarvam |
+| Language   | Share of meetings with Indic languages; error rate on the Hindi-English eval set | Spec 05                                                                           |
 
 ## 10. Risks
 
-| Risk                                                                               | Mitigation                                                                                       |
-| ---------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
-| Suites bundle AI notes into plans buyers already pay for (Google, Microsoft, Zoom) | Sell the job they don't do: approved Jira/GitHub work and Hindi-English; price below the bundles |
-| No-viral rule slows product-led growth                                             | Accept it; grow through admins, marketplaces and partners                                        |
-| Compliance claims run ahead of the product                                         | Messaging rules in §6.3; legal review before GA                                                  |
-| DPDP timeline changes (e.g. the reported 12-month proposal)                        | Re-check MeitY and the Gazette before launch; build to 13 May 2027 or earlier                    |
-| Indic quality or cost: Sarvam is far costlier per hour than AssemblyAI (#473 §3)   | Sarvam off by default and capped, no spend without a budget (lead decision)                      |
-| Free-tier LLM can't process customer data                                          | Gate paid launch on an approved provider                                                         |
-| Marketplace reviews and a Forge rebuild take longer than planned                   | Direct sales and self-serve first; marketplaces in phase 2–3                                     |
-| Indian agencies serve US clients, so US recording and BIPA law can apply           | Cross-org mode with stricter defaults; legal brief questions (pending #473)                      |
+| Risk                                                                                                                     | Mitigation                                                                                                          |
+| ------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------- |
+| Suites bundle AI notes into plans buyers already pay for (Google, Microsoft, Zoom)                                       | Sell the job they don't do: approved Jira/GitHub work and Hindi-English; price below the bundles                    |
+| No-viral rule slows product-led growth                                                                                   | Accept it; grow through admins, marketplaces and partners                                                           |
+| Compliance claims run ahead of the product                                                                               | Messaging rules in §6.3; legal review before GA                                                                     |
+| DPDP timeline changes (e.g. the reported 12-month proposal)                                                              | Re-check MeitY and the Gazette before launch; build to 13 May 2027 or earlier                                       |
+| Indic quality or cost: Sarvam is far costlier per hour than AssemblyAI ([pricing-packaging.md](pricing-packaging.md) §3) | Sarvam off by default and capped, no spend without a budget (lead decision)                                         |
+| Free-tier LLM can't process customer data                                                                                | Gate paid launch on an approved provider                                                                            |
+| Marketplace reviews and a Forge rebuild take longer than planned                                                         | Direct sales and self-serve first; marketplaces in phase 2–3                                                        |
+| Indian agencies serve US clients, so US recording and BIPA law can apply                                                 | Cross-org mode with stricter defaults; legal brief questions ([legal-questions-brief.md](legal-questions-brief.md)) |
 
 ## 11. Open questions for Akash
 
