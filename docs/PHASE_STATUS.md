@@ -1,4 +1,8 @@
-# Phase status — 9 Nov 2026 (~22:35 IST)
+# Phase status — 11 Nov 2026 (~23:25 IST)
+
+## Update — 11 Nov 2026 (~23:25 IST)
+
+OD-1 is **decided** ([ADR-022](15-decisions/ADR-022-account-claim-decision.md)): keep the current behaviour. A signed-out cross-device verify of an unverified account still clears the password, unlinks Google sign-in that was linked before the email was proven, revokes all sessions and tokens, and emails a set-password link. Verified accounts keep their password. The verify page does not prompt for the current password. No code change. This note records the decision only; it is not a full status refresh. `integration/phase-1` was at `de8a86e4` when this was written (merge of #467).
 
 ## Update — 9 Nov 2026 (~22:35 IST)
 
@@ -8,7 +12,7 @@ Also merged 9 Nov into integration after the ~20:45 snapshot: [#457](https://git
 
 **Deploy note (#455, unchanged):** production realtime must set `TRUST_PROXY` to an IP/CIDR allowlist including nginx; hop counts fail startup. Compose passes `BEHIND_CLOUDFLARE` only to the realtime service (API still reads the env var in code — see [environment-variables.md](00-getting-started/environment-variables.md) and [cicd.md](devops/cicd.md#deploy-env-realtime-trust_proxy-after-455)).
 
-Google OIDC hardening findings M-2, N-1…N-6, L-1…L-5 are **closed in #459**. Small follow-ups remain (Tester X4-mem on the in-memory store, NB-R3 verify/post-commit UX, info copy). MFA/SSO product work remains future (ADR-021); #456 is the test plan only. Owner decision OD-1 (cross-device verify drops password) stays with Akash.
+Google OIDC hardening findings M-2, N-1…N-6, L-1…L-5 are **closed in #459**. Small follow-ups remain (Tester X4-mem on the in-memory store, NB-R3 verify/post-commit UX, info copy). MFA/SSO product work remains future (ADR-021); #456 is the test plan only. Owner decision OD-1 (cross-device verify drops password) was still with Akash in this snapshot; it was decided on 11 Nov 2026 in ADR-022 (keep that behaviour).
 
 P1 estimate ~98% (Google web sign-in + hardening in; MFA/SSO still open). P9 Dependabot row #2 partial.
 
