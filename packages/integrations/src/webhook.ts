@@ -253,13 +253,18 @@ export class WebhookVerificationError extends Error {
 
 export type HeaderBag = Record<string, string | string[] | undefined> | Headers;
 
-function header(headers: HeaderBag, name: string): string | undefined {
+/** Case-insensitive header lookup for a HeaderBag (Headers or a plain record). */
+export function webhookHeader(headers: HeaderBag, name: string): string | undefined {
   if (typeof Headers !== 'undefined' && headers instanceof Headers)
     return headers.get(name) ?? undefined;
   const bag = headers as Record<string, string | string[] | undefined>;
   const key = Object.keys(bag).find((k) => k.toLowerCase() === name.toLowerCase());
   const v = key ? bag[key] : undefined;
   return Array.isArray(v) ? v[0] : v;
+}
+
+function header(headers: HeaderBag, name: string): string | undefined {
+  return webhookHeader(headers, name);
 }
 
 /** Constant-time check of `sha256=<hex>` against HMAC-SHA256(secret, rawBody). A missing secret fails closed (invalid). */
