@@ -1,4 +1,34 @@
-# Phase status — 9 Nov 2026 (~22:35 IST)
+# Phase status — 12 Nov 2026 (~00:15 IST)
+
+## Update — 12 Nov 2026 (~00:15 IST)
+
+Tree: `main` at `ca3c0e2b` (unchanged). `integration/phase-1` at `7568f206` (86 ahead / 0 behind `main`), merge of [#473](https://github.com/iakash22/meetops-platform/pull/473) (research verification notes, P0 specs, pricing and legal brief). PR states queried live from the GitHub API at ~00:15 IST.
+
+Merged into integration since the 9 Nov ~22:35 snapshot (`fd4ede49`, #459):
+
+- [#461](https://github.com/iakash22/meetops-platform/pull/461) status + proxy operator docs (`7de8a872`).
+- [#464](https://github.com/iakash22/meetops-platform/pull/464) media rate-limit IP keys use `clientIpKey` (no shared `unknown`) (`14d4b491`).
+- [#465](https://github.com/iakash22/meetops-platform/pull/465) webhook HMAC is verified before the org lookup (`d0f837b4`).
+- [#463](https://github.com/iakash22/meetops-platform/pull/463) auth takeover follow-ups from the #459 reviews (`6feef782`).
+- [#466](https://github.com/iakash22/meetops-platform/pull/466) and [#467](https://github.com/iakash22/meetops-platform/pull/467) Dependabot bumps (`pnpm/action-setup`, `@fastify/cors`).
+- [#468](https://github.com/iakash22/meetops-platform/pull/468) research competitive landscape, gaps, proposals and 30/60/90 roadmap (`809557f2`).
+- [#473](https://github.com/iakash22/meetops-platform/pull/473) research specs, pricing, legal brief (`7568f206`).
+
+**Open PRs targeting `integration/phase-1`** (live at ~00:15 IST):
+
+- [#469](https://github.com/iakash22/meetops-platform/pull/469) durable BullMQ retries for takeover follow-ups.
+- [#470](https://github.com/iakash22/meetops-platform/pull/470) MFA security/QA test plan refresh (ADR-021).
+- [#471](https://github.com/iakash22/meetops-platform/pull/471) remove braces audit exception.
+- [#472](https://github.com/iakash22/meetops-platform/pull/472) OD-1 account-claim decision (ADR-022) and the ADR-020 amendment (explicit consent on by default for every org until an org country is stored). Docs only; not yet on this tip. This refresh does not duplicate that amendment.
+- [#474](https://github.com/iakash22/meetops-platform/pull/474) pass `BEHIND_CLOUDFLARE` through to the API (D-5).
+- [#475](https://github.com/iakash22/meetops-platform/pull/475) webhook HMAC timing follow-ups.
+- [#476](https://github.com/iakash22/meetops-platform/pull/476) remove RE-04 image-size audit exception.
+
+**Promote:** [#462](https://github.com/iakash22/meetops-platform/pull/462) (`integration/phase-1` → `main`, head `7568f206`, 86 commits). Only Akash merges #462.
+
+**Deploy note:** production realtime must set `TRUST_PROXY` to an IP/CIDR allowlist including nginx; hop counts fail startup. On this tip, compose still passes `BEHIND_CLOUDFLARE` only to the realtime service; the API compose fix is [#474](https://github.com/iakash22/meetops-platform/pull/474). See [environment-variables.md](00-getting-started/environment-variables.md) and [cicd.md](devops/cicd.md#deploy-env-realtime-trust_proxy-after-455).
+
+P1 estimate stays ~98% (Google web sign-in + hardening and takeover follow-ups in; MFA/SSO still open, ADR-021). P2 still needs the consent-settings API (contracts vs routes; not landed on this tip). P9 Dependabot row #2 remains **partial** (glib / deepmerge exceptions; alerts API still unread). Other phase percentages unchanged from the 7 Nov / 9 Nov snapshots below.
 
 ## Update — 9 Nov 2026 (~22:35 IST)
 
