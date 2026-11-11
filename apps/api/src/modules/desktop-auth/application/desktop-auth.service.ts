@@ -544,7 +544,8 @@ export function combineBearerStores(...stores: ExtensionTokenStore[]): Extension
 export function combineRevokers(...rs: ExtensionRevoker[]): ExtensionRevoker {
   return {
     async revokeForUser(userId, reason, organizationId, opts) {
-      // Every revoker runs even when one fails; the first failure is rethrown (only with opts.propagate).
+      // Every revoker runs even when one fails, then the first failure is always rethrown. In practice only an
+      // `opts.propagate` call sees one: ExtensionAuthService and DesktopAuthService swallow store errors otherwise.
       let failure: { e: unknown } | null = null;
       for (const r of rs) {
         try {
