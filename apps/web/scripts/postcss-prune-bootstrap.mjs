@@ -5,8 +5,11 @@
 // Tailwind output pass through unchanged. A selector is kept when it has no class at all (reboot, :root and
 // [data-bs-theme] variables) or when every class in it is "used": it appears as a token anywhere in the app source
 // (src/** and index.html; permissive, so it over-keeps rather than under-keeps) or matches SAFELIST (classes
-// react-bootstrap builds at runtime, e.g. `btn-${variant}`). A rule with no selectors left is removed, and so is
-// an at-rule (e.g. @media) with no children left. @keyframes, @font-face and the like are always kept.
+// react-bootstrap builds at runtime from props, e.g. `btn-${variant}`). SAFELIST is limited to the Button
+// variants and sizes mapped in src/components/ui/button.tsx; unused families (every btn-* colour, Spinner,
+// Dropdown, Overlay) used to inflate the CSS budget. Extend the list when those components are wired up.
+// A rule with no selectors left is removed, and so is an at-rule (e.g. @media) with no children left.
+// @keyframes, @font-face and the like are always kept.
 import { readdirSync, readFileSync } from 'node:fs';
 import { dirname, join, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -14,15 +17,12 @@ import { fileURLToPath } from 'node:url';
 const here = dirname(fileURLToPath(import.meta.url));
 const appRoot = join(here, '..');
 
-/** Classes react-bootstrap (Button, Spinner, Dropdown, Overlay*) adds at runtime from props. */
+/** Runtime classes from react-bootstrap Button (see src/components/ui/button.tsx). */
 export const SAFELIST = [
-  /^btn(-|$)/,
-  /^spinner-/,
-  /^dropdown/,
-  /^tooltip/,
-  /^popover/,
-  /^bs-(tooltip|popover)/,
-  /^(fade|show|active|disabled|collapse|collapsing|visually-hidden(-focusable)?)$/,
+  // prefix + variant/size: primary, secondary, danger, outline-secondary, link, sm, lg.
+  // btn-highlight is a static className in source, so sourceTokens keeps it.
+  /^(btn|btn-(primary|secondary|danger|outline-secondary|link|sm|lg))$/,
+  /^(active|disabled)$/,
 ];
 
 const SOURCE_EXT = /\.(tsx?|jsx?|mjs|html)$/;
