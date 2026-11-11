@@ -150,7 +150,7 @@ describe('consent settings API', () => {
       },
     });
     expect(r.statusCode).toBe(403);
-    expect((r.json() as { error: { code: string } }).error.code).toBe('CSRF_INVALID');
+    expect(r.json().error.code).toBe('CSRF_INVALID');
   });
 });
 
