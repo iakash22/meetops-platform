@@ -179,6 +179,21 @@ stores an org country; `docs/research/competitive-landscape.md` §4 records this
 13. Sarvam's Terms allow training on inputs "(where required) subject to your consent", and its privacy policy names
     itself a Data Fiduciary. In a MeetOps → Sarvam API flow, who must give or collect that consent, and is Sarvam a
     processor for us?
+14. CERT-In direction (iv) of 28 Apr 2022 says logs are kept for 180 days "within the Indian jurisdiction", but CERT-In's
+    own FAQ Q35 says they "may be stored outside India" if they can be produced in reasonable time, and calls itself
+    "not a legal document". Can MeetOps keep its logs, or its sub-processors' logs, outside India? (See
+    [verification-round-3.md](verification-round-3.md) §3.)
+15. AssemblyAI, Google and Resend promise breach notice only "without undue delay", with no hour limit, and none of their
+    DPAs names the DPDP Act. CERT-In needs a report within 6 hours, and DPDP Rule 7(2)(b) gives the Data Fiduciary 72
+    hours for details to the Board. Must our sub-processor terms set fixed hours, and when a breach happens at a foreign
+    sub-processor, whose 6-hour CERT-In clock applies? (See [verification-round-3.md](verification-round-3.md) §4.)
+16. Razorpay publishes no DPA. Its terms make us "solely and absolutely responsible" for our customers' data, and its
+    privacy policy gives DPDP rights directly. Is Razorpay an independent Data Fiduciary for payment data it must hold in
+    India under RBI rules, and what should our privacy notice and sub-processor list say about it? (See
+    [verification-round-3.md](verification-round-3.md) §4.)
+17. Razorpay's Terms Part A §12.3 require us to tell Razorpay within 24 hours of any actual or suspected breach of
+    customer data in our systems. Does that apply to MeetOps as a SaaS merchant, and how should it sit in our incident
+    runbook next to the CERT-In 6-hour and DPDP 72-hour duties?
 
 ## Sources (fetched 2026-11-11)
 
