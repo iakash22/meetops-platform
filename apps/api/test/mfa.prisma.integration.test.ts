@@ -184,7 +184,7 @@ describe.skipIf(!url)(
       expect(await mfa.countUnusedRecoveryCodes(u, f)).toBe(0);
     });
 
-    // ADR-021 OQ-15 (MFA-TO-01..03, copied from the unmerged plan update #470): the takeover claim deletes the
+    // ADR-021 OQ-15 (MFA-TO-01..03, from the #470 plan update): the takeover claim deletes the
     // squatter's factors, pending enrolment and recovery hashes in its own transaction (no follow-up step involved).
     for (const kind of ['mailbox', 'google'] as const) {
       it(`MFA-TO-0${kind === 'mailbox' ? 1 : 2}/03: the ${kind} claim clears every factor in the claim transaction`, async () => {

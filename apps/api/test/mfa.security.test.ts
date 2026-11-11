@@ -28,6 +28,7 @@ import type { GoogleIdentity } from '../src/modules/auth/application/google-oidc
 import { InMemorySessionRepository } from '../src/modules/auth/infrastructure/in-memory-session.repository.js';
 import { PrismaSessionRepository } from '../src/modules/auth/infrastructure/prisma/prisma-session.repository.js';
 import {
+  hasFreshStepUp,
   SESSION_AUTH_LEVELS,
   toSessionAuthLevel,
   type Session,
@@ -667,8 +668,8 @@ describe('ADR-021 TOTP verification (MFA-TOTP)', () => {
 });
 
 /* ------------------------------------------------------------------------------------------------------------------
- * ADR-021 piece (b) cases. The behaviour follows the decided defaults of the plan's §14 (ADR-021 Amendment 1). PR #470
- * (the plan update that adds MFA-TO and the OQ-17 wording) is not merged yet, so the cases below are copied from it.
+ * ADR-021 piece (b) cases. The behaviour follows the decided defaults of the plan's §14 (ADR-021 Amendment 1). The
+ * cases below were copied from PR #470 (the plan update that adds MFA-TO and the OQ-17 wording) before it merged.
  * ---------------------------------------------------------------------------------------------------------------- */
 const MFA_COOKIE = SID.replace(/meetops_sid$/, 'meetops_mfa');
 
@@ -1293,12 +1294,85 @@ describe('ADR-021 session handling and disable (MFA-SES, MFA-DIS)', () => {
   );
 });
 
+describe('ADR-021 storage, Google and auth-level cases (piece d)', () => {
+  it('MFA-SEC-01/02, MFA-RC-03: the secret is stored only encrypted and recovery codes only as keyed hashes', async () => {
+    const users = new InMemoryUserRepository();
+    const mfa = new InMemoryMfaRepository((id, at) => users.setMfaEnabledAt(id, at));
+    const app = await buildApp({ users, mfa });
+    const c = await signupAndLogin(app, 'store@example.com');
+    const { factorId, secret, recoveryCodes } = await enrollTotp(c);
+    const [factor] = await mfa.listFactors((await users.findByEmail('store@example.com'))!.id);
+    expect(factor?.id).toBe(factorId);
+    expect(factor?.secretEnc).toBeTruthy();
+    expect(factor?.secretEnc).not.toContain(secret);
+    expect(factor?.secretEnc).not.toContain(base32Decode(secret).toString('base64'));
+    const stored = mfa.codes.filter((r) => r.factorId === factorId);
+    expect(stored).toHaveLength(recoveryCodes.length);
+    for (const row of stored) expect(row.codeHash).toMatch(/^[0-9a-f]{64}$/);
+    const dump = JSON.stringify({ factors: [...mfa.factors.values()], codes: mfa.codes });
+    for (const code of recoveryCodes) {
+      expect(dump).not.toContain(code);
+      expect(dump).not.toContain(code.replace(/[-\s]/g, '').toUpperCase());
+    }
+    await app.close();
+  });
+
+  it('MFA-OIDC-03/04: a Google sign-in of an MFA user is only a challenge; Google never elevates (OQ-3, OQ-17)', async () => {
+    const app = await buildApp({
+      users: new InMemoryUserRepository(),
+      googleOAuth: {
+        config: GOOGLE_CONFIG,
+        client: fakeGoogle({
+          sub: '100000000000000000077',
+          email: 'g-mfa@gmail.com',
+          emailVerified: true,
+          name: 'G Mfa',
+        }),
+      },
+    });
+    const first = await googleSignIn(app);
+    const { secret } = await enrollTotp(first);
+    expect((await first.post('/auth/logout')).statusCode).toBe(204);
+
+    const start = await app.inject({ method: 'GET', url: '/auth/google/start' });
+    const state = new URL(String(start.headers.location)).searchParams.get('state') ?? '';
+    const oauth = start.cookies.find((k) => k.name.endsWith('meetops_oauth'))!;
+    const q = new URLSearchParams({ code: 'good-code', state, scope: 'openid email profile' });
+    const c = new Client(app);
+    c.absorb(
+      await app.inject({
+        method: 'GET',
+        url: `/auth/google/callback?${q.toString()}`,
+        headers: { cookie: `${oauth.name}=${oauth.value}` },
+      }),
+    );
+    expect(sidOf(c)).toBeUndefined();
+    expect(c.jar.get(MFA_COOKIE)).toBeTruthy();
+    const pending = await c.get('/orgs');
+    expect(pending.statusCode).toBe(403);
+    expect(errCode(pending)).toBe('MFA_REQUIRED');
+    const ok = await c.post(PLANNED.paths.challenge, {
+      [PLANNED.totpField]: totp(secret, Date.now()),
+    });
+    expect(ok.statusCode).toBe(200);
+    expect(sidOf(c)).toBeTruthy();
+    expect(await sessionLevel(c)).toBe(PLANNED.levels.mfa);
+    await app.close();
+  });
+
+  it('MFA-SU-09: only exactly "mfa" counts as elevated; unknown stored levels read back as password', () => {
+    const now = new Date();
+    for (const raw of ['MFA', 'mfa ', 'totp', 'webauthn', 'aal2', '', null, undefined])
+      expect(toSessionAuthLevel(raw)).toBe('password');
+    expect(toSessionAuthLevel('mfa')).toBe('mfa');
+    for (const level of ['password', 'google'] as const)
+      expect(hasFreshStepUp({ authLevel: level, mfaAt: now }, now)).toBe(false);
+    expect(hasFreshStepUp({ authLevel: 'mfa', mfaAt: now }, now)).toBe(true);
+  });
+});
+
 describe('TODO(ADR-021) cases not automatable yet (it.todo)', () => {
-  // Enrollment / secret storage
-  it.todo(
-    'MFA-SEC-01: TOTP secret stored only as a TokenCipher envelope bound to user+factor (P-3: tokenAad needs a user context)',
-  );
-  it.todo('MFA-SEC-02: recovery codes stored only as slow/keyed hashes; DB dump has no plaintext');
+  // Enrollment / secret storage: MFA-SEC-01/02 and MFA-RC-03 are active (ADR-021 piece d block above).
   it.todo('MFA-TOTP-07: code compare is constant-time (timingSafeEqual over fixed-length buffers)');
   // WebAuthn (ADR-021 Decision 1: passkeys)
   it.todo(
@@ -1313,11 +1387,7 @@ describe('TODO(ADR-021) cases not automatable yet (it.todo)', () => {
     'MFA-WA-05: a credential id registered by user A cannot be used to authenticate as user B',
   );
   // OIDC
-  // MFA-OIDC-02 (N-4) is active now: see MFA-OIDC-01/02 in the baseline block.
-  it.todo(
-    'MFA-OIDC-03: an owner/admin who signs in with Google still has to pass the MFA challenge',
-  );
-  it.todo('MFA-OIDC-04: amr/acr from Google are not trusted to elevate to mfa (OQ-3)');
+  // MFA-OIDC-02 (N-4) is active now: see MFA-OIDC-01/02 in the baseline block. MFA-OIDC-03/04: piece d block above.
   // MFA-OIDC-05 (N-1) is covered by MFA-TO-02 (live Postgres, test/mfa.prisma.integration.test.ts).
   // Clients
   it.todo(
@@ -1348,11 +1418,12 @@ describe('TODO(ADR-021) cases not automatable yet (it.todo)', () => {
   );
   // Remaining plan cases (see mfa-test-plan.md for the expected behaviour)
   it.todo('MFA-ENR-09: an owner/admin without MFA can only reach the enrollment flow (OQ-5)');
-  it.todo('MFA-RC-03: recovery codes are stored hashed and compared in constant time (OQ-6)');
   it.todo('MFA-RC-06: using a recovery code is audited and emails the user');
+  it.todo(
+    'MFA-DIS-03: disabling MFA emails the user (needs a notifications mail kind; follow-up to piece c)',
+  );
   it.todo('MFA-WA-06: only allowed COSE algorithms; attestation per OQ-8; no private key stored');
   it.todo('MFA-WA-07: passkey as first factor or second factor only, per OQ-8');
-  it.todo('MFA-SU-09: any auth_level other than exactly "mfa" is treated as not elevated');
   it.todo('MFA-DIS-02: owners/admins (and enforcing-org members) cannot remove their last factor');
   it.todo('MFA-OIDC-06 (M-2): linking Google onto an account with MFA needs that account MFA');
   it.todo(
