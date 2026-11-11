@@ -53,9 +53,10 @@ When deploying a build that includes the realtime TRUST_PROXY change (#455):
 - **Delete `REALTIME_TRUST_PROXY_HOPS`** from staging/production env (removed; a non-zero value
   fails realtime startup). Replace it with `TRUST_PROXY`.
 - Compose caution: one `TRUST_PROXY` value is passed to both API and realtime containers.
-- **`BEHIND_CLOUDFLARE`:** both API and realtime honour it in code, but
-  `infra/compose/compose.app.yml` injects it into **realtime only**. Ensure the API process
-  also has it when Cloudflare sits in front of the API (override / orchestrator / D-5). If the
+- **`BEHIND_CLOUDFLARE`:** both API and realtime honour it in code, and
+  `infra/compose/compose.app.yml` injects it into both the API and realtime
+  containers. Set it to `true` when Cloudflare sits in front of the stack.
+  Non-compose deploys must set it on both processes. If the
   API is behind Cloudflare without `BEHIND_CLOUDFLARE`, the resolved client IP is the Cloudflare
   edge (peer after `TRUST_PROXY`), so per-IP rate limits share one bucket per edge and one busy
   edge (or attacker) can 429 / lock out many users. Setting the flag is still fail-closed for
