@@ -32,18 +32,24 @@ Checked against `integration/phase-1` at `de8a86e4` (including the #463 takeover
   push devices and outstanding one-time links, and enqueue a set-password mail through the regular
   reset flow. A failed transaction is 503 (nothing changed). After a successful commit, the
   response is 204 with `x-meetops-verify-outcome` (`password_reset`, `set_password`, or
-  `verified`).
+  `verified`). If that set-password mail enqueue fails after the commit, the failure is caught and
+  logged without PII (error class and a safe code only), the response is still 204, and a durable
+  retry is enqueued on the `auth-takeover-follow-up` queue. This ADR depends on #496 for that
+  post-commit mail path.
 - An already-verified account keeps its password; only other sessions are signed out.
 - A password reset of an unverified account marks it verified and removes a Google link made
   before the address was proven; the new password stays.
 - The `/verify-email` page asks only for confirmation. It does not prompt for the current
   password.
 
-No mismatch was found between this decision and that code.
+The post-commit set-password mail path above is as implemented in #496. This ADR depends on
+that PR; without it, a failed mail enqueue after commit was uncaught and the request could
+error with no log and no retry.
 
 ## Decision
 
-Keep the current behaviour. No code change.
+Keep the current claim behaviour. OD-1 itself needs no product-behaviour change. The
+post-commit mail failure handling this ADR records depends on #496.
 
 1. A signed-out, cross-device verify of an unverified account clears the password, unlinks Google
    sign-in that was linked before the email was proven, revokes all sessions and tokens, and emails
@@ -75,9 +81,11 @@ password, as already implemented.
 - Linking Google to an already-verified account signs out its other sessions but does not remove
   the password. A password reset does not remove a Google link made after the address was proven.
 - After the claim transaction commits, a follow-up that still fails (mail enqueue, token-family or
-  push-device revocation) is logged and retried in-process (`auth.takeover.follow_up_failed`, then
-  `auth.takeover.follow_up_abandoned`). In-process retries are lost on restart; that is unchanged
-  from #463 and is not part of OD-1.
+  push-device revocation) is logged and retried through the durable `auth-takeover-follow-up`
+  queue from #469. A failed set-password mail enqueue is caught without PII and re-enqueued as
+  `set_password_mail` on that queue (#496). If the durable enqueue itself is unavailable,
+  in-process fallback may still be attempted; abandonment is logged as
+  `auth.takeover.follow_up_abandoned`. That retry path is not part of OD-1.
 
 ## References
 
@@ -97,3 +105,5 @@ password, as already implemented.
   <https://cheatsheetseries.owasp.org/cheatsheets/Email_Validation_and_Verification_Cheat_Sheet.html>
 - OWASP Input Validation Cheat Sheet, Email Address Validation.
   <https://cheatsheetseries.owasp.org/cheatsheets/Input_Validation_Cheat_Sheet.html>
+- PR #469 (durable `auth-takeover-follow-up` queue) and PR #496 (catch, log without PII, and
+  durably retry a failed set-password mail enqueue). This ADR depends on #496.
