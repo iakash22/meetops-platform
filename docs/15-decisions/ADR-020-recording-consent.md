@@ -1,6 +1,6 @@
 # ADR-020: Recording consent by region
 
-- Status: **Accepted — approved by owner Maddy, 2026-11-01**
+- Status: **Accepted — approved by owner Maddy, 2026-11-01**; amended 2026-11-11 (Amendment (2026-11-11): explicit consent on by default for every org until an org country is stored)
 - Date: 2026-11-01
 - Owner: Architecture (All Rounder Techy); clients by the Coordinator; tests by Tester & Security
 - Related: `docs/12-security/upload-media-security.md` §7, `docs/12-security/threat-model.md` §4
@@ -51,3 +51,17 @@ multi-region calls fall back to the strictest rule anyway.
   pseudonymise the `users` row and keep the consent evidence (Art. 17(3)(e) legal-claims retention), or use a reviewed
   maintenance migration (`docs/16-runbooks/meeting-consent-maintenance.md`). Until then, user hard-delete is blocked
   for attesters by design.
+
+## Amendment (2026-11-11)
+
+- Status: **Accepted — decided by the Project Plan & Coordinator, 2026-11-11**
+
+The original Decision item 3 said explicit consent (`all_parties_consented`) is **on by default
+for orgs in the EU or UK**, and Consequences said orgs need a country to apply that default.
+
+Orgs do not yet store a country. Until they do, **explicit consent is on by default for every
+org**. That is the privacy-safe default under GDPR. Adding an org country field is a follow-up;
+after it exists, the EU/UK-only default can be revisited.
+
+Where this amendment conflicts with Decision item 3 and the matching consequence, the amendment
+wins. No other part of this ADR changes (all-party everywhere, no one-party mode).
