@@ -12,6 +12,13 @@ While the version is `0.x`, a minor bump may contain breaking changes (ADR-003).
   and rotates the session and CSRF token. They previously said `POST /auth/switch-org` returning `AuthSession`. No schema
   change and no new route.
 
+### Changed (breaking)
+
+- `ApiErrorCode` / `API_ERROR_CODES` gain `MFA_REQUIRED`, `STEP_UP_REQUIRED` and `INVALID_MFA_CODE` (ADR-021). Every
+  exhaustive `Record<ApiErrorCode, …>` map must add an entry (ADR-003 §5). Updated in the same change:
+  `apps/web/src/lib/api/error-messages.ts`, `apps/web/src/features/extension/pair-errors.ts`,
+  `apps/web/src/features/desktop/authorize-errors.ts`.
+
 ### Added
 
 - ADR-021 MFA (TOTP): `API_ERROR_CODES` / `ApiErrorCode` gain `MFA_REQUIRED` (403), `STEP_UP_REQUIRED` (403) and
