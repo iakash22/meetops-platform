@@ -128,6 +128,10 @@ import type {
 import type { MeetingRepository } from './meetings/domain/meeting.js';
 import { InMemoryMeetingRepository } from './meetings/infrastructure/in-memory.repository.js';
 import { PrismaMeetingRepository } from './meetings/infrastructure/prisma.repository.js';
+import type { ConsentSettingsRepository } from './consent-settings/domain/consent-settings.js';
+import { InMemoryConsentSettingsRepository } from './consent-settings/infrastructure/in-memory.repository.js';
+import { PrismaConsentSettingsRepository } from './consent-settings/infrastructure/prisma.repository.js';
+import { consentSettingsRoutes } from './consent-settings/http/consent-settings.routes.js';
 import type { ConsentRepository } from './media/domain/consent.js';
 import type { FileObjectRepository, MediaJobQueue, MediaSigner } from './media/domain/ports.js';
 import type { RecordingSessionRepository } from './media/domain/recording-session.js';
@@ -223,6 +227,11 @@ export interface ModuleDeps {
   geoIp?: GeoIpProvider;
   /** Meetings repository (Prisma when `db` is set; in-memory only in development/test). */
   meetings: MeetingRepository;
+  /**
+   * Org consent / retention settings (GET/PATCH /orgs/:org/settings/consent). Prisma when `db` is
+   * set; in-memory only in development/test.
+   */
+  consentSettings: ConsentSettingsRepository;
   /** ADR-005 extension pairing/token store (Redis when `redis` is set; in-memory only in development/test). */
   extensionTokens: ExtensionTokenRepository;
   /** ADR-005 allowlisted Chrome extension ids (EXTENSION_IDS; plus EXTENSION_DEV_IDS in development/test). */
@@ -621,6 +630,7 @@ export function defaultModuleDeps(
         organizations: new PrismaOrganizationRepository(db),
         invitations: new PrismaInvitationRepository(db),
         meetings: new PrismaMeetingRepository(db),
+        consentSettings: new PrismaConsentSettingsRepository(db),
         audit: new PrismaAuditLog(db),
       }
     : {
@@ -632,6 +642,7 @@ export function defaultModuleDeps(
           memberships instanceof InMemoryMembershipRepository ? memberships : undefined,
         ),
         meetings: new InMemoryMeetingRepository(() => clock.now()),
+        consentSettings: new InMemoryConsentSettingsRepository(),
         audit: new InMemoryAuditLog(),
       };
   const deps: ModuleDeps = {
@@ -887,6 +898,15 @@ export async function registerModules(app: FastifyInstance, deps: ModuleDeps) {
     auth,
     organizations,
     security: deps.security,
+    routeLimits: routeLimiter(deps.rateLimiter, deps.routeRateLimits),
+  });
+  await app.register(consentSettingsRoutes, {
+    auth,
+    organizations,
+    security: deps.security,
+    audit: deps.audit,
+    settings: deps.consentSettings,
+    now: () => deps.clock.now(),
     routeLimits: routeLimiter(deps.rateLimiter, deps.routeRateLimits),
   });
   await app.register(extensionAuthRoutes, { auth, extensionAuth, security: deps.security });

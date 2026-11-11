@@ -274,6 +274,7 @@ model Organization {
   notificationDeliveryAttempts NotificationDeliveryAttempt[]
   notificationPreferences      NotificationPreference[]
   pushDeviceTokens             PushDeviceToken[]
+  consentSettings              OrganizationConsentSettings?
 
   createdBy User? @relation("OrgCreator", fields: [createdById], references: [id], onDelete: SetNull)
 
@@ -312,6 +313,7 @@ model User {
   passwordResets          PasswordReset[]
   recordingSessions       RecordingSession[]       @relation("RecordingSessionCreator")
   aiConfigsUpdated        AiOrganizationConfig[]   @relation("AiOrganizationConfigUpdater")
+  consentSettingsUpdated  OrganizationConsentSettings[] @relation("ConsentSettingsUpdater")
   consentAttestations     ConsentAttestation[]     @relation("ConsentAttester")
   meetingConsentEvents    MeetingConsentEvent[]    @relation("MeetingConsentActor")
   authDevices             AuthDevice[]             @relation("AuthDeviceOwner")
@@ -678,6 +680,25 @@ model MeetingConsentEvent {
   @@index([organizationId, meetingId, recordedAt])
   @@index([organizationId, meetingId, seq])
   @@map("meeting_consent_events")
+}
+
+/// Org recording-consent and media-retention settings (ADR-019 / ADR-020). One row per org.
+model OrganizationConsentSettings {
+  organizationId           String         @id @map("org_id") @db.Uuid
+  /// all_parties_notified | all_parties_consented (ConsentMethod; no one-party mode).
+  mode                     ConsentMethod
+  noticeText               String         @map("notice_text")
+  skipExternalParticipants Boolean        @map("skip_external_participants")
+  retentionDays            Int            @map("retention_days")
+  currentConsentVersion    String         @map("current_consent_version")
+  updatedById              String?        @map("updated_by_id") @db.Uuid
+  updatedAt                DateTime       @map("updated_at") @db.Timestamptz(3)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  updatedBy    User?        @relation("ConsentSettingsUpdater", fields: [updatedById], references: [id], onDelete: SetNull)
+
+  @@index([updatedById])
+  @@map("organization_consent_settings")
 }
 
 model Recording {
