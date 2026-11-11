@@ -43,7 +43,7 @@ describe('consent settings API', () => {
     const otherOrg = (await other.post('/orgs', { name: 'Globex' })).json<{
       organization: { id: string };
     }>().organization.id;
-    return { audit, settings, owner, admin, member, viewer, other, org, otherOrg };
+    return { app, audit, settings, owner, admin, member, viewer, other, org, otherOrg };
   }
   const path = (org: string) => `/orgs/${org}/settings/consent`;
   const expectDto = (
