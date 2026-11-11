@@ -1,8 +1,8 @@
 # GTM brief: India SMB and mid-market (November 2026)
 
-- Checked **2026-11-12 (IST)**. New sources are GT1–GT16 at the end; S…, M…, P… and V… IDs point to the merged #468 and #473 docs ([competitive-landscape.md](competitive-landscape.md), [verification-notes.md](verification-notes.md), [pricing-packaging.md](pricing-packaging.md)).
+- Checked **2026-11-12 (IST)**. New sources are GT1–GT18 at the end; S…, M…, P… and V… IDs point to the merged #468 and #473 docs ([competitive-landscape.md](competitive-landscape.md), [verification-notes.md](verification-notes.md), [pricing-packaging.md](pricing-packaging.md)).
 - **Labels.** Market figures from third parties and our own arithmetic are **estimates**. Prices, plans, targets and the
-  launch plan are **proposals**, not decisions. Decisions marked "project-lead decision, 2026-11-12" are decisions.
+  launch plan are **proposals**, not decisions. Decisions marked "project-lead decision" with a date are decisions.
 - Prices match [pricing-packaging.md](pricing-packaging.md). Legal context is in
   [legal-questions-brief.md](legal-questions-brief.md). That brief and this one are not legal advice.
 
@@ -35,20 +35,22 @@ that:
 
 ## 3. Market size
 
-| Figure                                                                   | Value                                                                     | Source   |
-| ------------------------------------------------------------------------ | ------------------------------------------------------------------------- | -------- |
-| Udyam + Udyam Assist registrations (all MSMEs, including informal micro) | 10,09,96,603 total; Micro 10,03,62,255                                    | [GT1]    |
-| Of which **Small** (turnover ≤ ₹100 crore) and **Medium** (≤ ₹500 crore) | Small **5,46,035**; Medium **42,092** (5,88,127 together, our sum)        | [GT1]    |
-| MSME registrations by activity (dashboard, 12 Nov 2026)                  | Services 3,91,70,281; Trading 4,19,65,758; Mfg 1,98,14,263                | [GT2]    |
-| DPIIT-recognised startups                                                | "more than 2.62 lakh" (Nov 2026); 52% from non-metro cities               | [GT3]    |
-| Developers on GitHub from India                                          | +5.2 million in 2025; **GitHub projects** 57.5 million by 2030 (estimate) | [GT4]    |
-| Zoho Corporation, all regions                                            | >1 million paying customers, >150 million users (Feb 2026)                | [GT5]    |
-| Global AI meeting-assistant market                                       | **Estimates:** $3.91B (2026) → $9.33B (2030); or +$3.46B 2024–29          | [M6, M7] |
+| Figure                                                                                                                                   | Value                                                                              | Source      |
+| ---------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------- | ----------- |
+| Udyam + Udyam Assist registrations (all MSMEs, including informal micro)                                                                 | 10,09,96,603 total; Micro 10,03,62,255                                             | [GT1]       |
+| Of which **Small** (investment ≤ ₹25 crore and turnover ≤ ₹100 crore) and **Medium** (investment ≤ ₹125 crore and turnover ≤ ₹500 crore) | Small **5,46,035**; Medium **42,092** (5,88,127 together, our sum)                 | [GT1, GT18] |
+| MSME registrations by activity (dashboard, 12 Nov 2026)                                                                                  | Services 3,91,70,281; Trading 4,19,65,758; Mfg 1,98,14,263                         | [GT2]       |
+| DPIIT-recognised startups                                                                                                                | "more than 2.62 lakh" (Nov 2026); 52% from non-metro cities                        | [GT3]       |
+| Developers on GitHub from India                                                                                                          | +5.2 million in 2025; 57.5 million developers in India by 2030 (GitHub projection) | [GT4]       |
+| Zoho Corporation, all regions                                                                                                            | >1 million paying customers, >150 million users (Feb 2026)                         | [GT5]       |
+| Global AI meeting-assistant market                                                                                                       | **Estimates:** $3.91B (2026) → $9.33B (2030); or +$3.46B 2024–29                   | [M6, M7]    |
 
 Caveats:
 
-- Udyam classes firms by investment and turnover, not headcount or software use [GT1]. It is a ceiling on "registered
-  small and medium businesses", not a count of our buyers. Startups and MSMEs overlap.
+- Udyam's MSME size classes use investment caps as well as turnover, not only turnover, and not headcount or software
+  use [GT1, GT18]. Official criteria (S.O. 1364(E), 21 March 2025, in force from 1 April 2025): Small — investment ≤ ₹25
+  crore and turnover ≤ ₹100 crore; Medium — investment ≤ ₹125 crore and turnover ≤ ₹500 crore. The counts above are a
+  ceiling on "registered small and medium businesses", not a count of our buyers. Startups and MSMEs overlap.
 - We found **no published figure for India's AI meeting-assistant market**. We don't make one up.
 - **Our sizing formula (estimate):** SAM = ICP orgs × recording users per org × price × 12. _Illustration only, with
   assumed inputs:_ 10,000 orgs × 10 recording users × ₹799 × 12 ≈ **₹95.88 crore a year**. The 10,000 and 10 are
@@ -127,9 +129,11 @@ Caveats:
   item 7 requires a legal review of the notice and DPA before GA.
 - **Don't claim per-participant consent records yet.** The ledger records the signed-in host today. That is a tracked
   feature gap and the backbone of spec 03 (project-lead decision, 2026-11-12).
-- **Bot notice:** ADR-020's "MeetOps Recorder" notice assumes a bot we don't ship. That mismatch, and the consent default,
-  go into an **ADR-020 amendment owned by the All Rounder Techy agent** (project-lead decision, 2026-11-12). Marketing copy
-  waits for it.
+- **Bot notice and consent default:** ADR-020's "MeetOps Recorder" notice assumes a bot we don't ship. That mismatch goes
+  into an **ADR-020 amendment owned by the All Rounder Techy agent**. The consent default is: "explicit consent is on by
+  default for all orgs until an org country is stored" (project-lead decision, 2026-11-11, recorded in the ADR-020
+  amendment in [PR #472](https://github.com/iakash22/meetops-platform/pull/472)). Marketing copy waits for the bot-notice
+  wording.
 - Open question for counsel: are customers the Data Fiduciary and MeetOps their Data Processor for meeting data?
 
 ## 7. Competitor positioning in India
@@ -211,3 +215,4 @@ credentials (AssemblyAI, Jira, GitHub App, Google Calendar OAuth client).
 | GT15 | https://avantiscdnprodstorage.blob.core.windows.net/legalupdatedocs/60138/Digital-Personal-Data-Protection-Removal-of-Difficulties-Order-2026-oct072026.pdf (copy of Gazette CG-DL-E-07102026-276885) |
 | GT16 | https://chambers.com/articles/meity-plans-to-cut-short-dpdp-compliance-timeline-and-notify-cross-border-restrictions-for-sdfs (secondary; search summary)                                             |
 | GT17 | https://help.zoho.com/portal/en/kb/meeting/user-guide/integrations/zia/articles/zia-ai                                                                                                                |
+| GT18 | https://egazette.gov.in/writeReadData/2025/261838.pdf (Gazette of India, Extraordinary, S.O. 1364(E), 21 March 2025; MSME investment and turnover limits, in force 1 April 2025)                      |

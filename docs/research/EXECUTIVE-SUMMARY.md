@@ -52,10 +52,12 @@ Ranked by the #468 score (2V + D + F − E, an estimate) in [feature-proposals.m
    billing (P9, ADR-017) and the ADR-020 item 7 legal review. GTM detail is in
    [gtm-india-smb-midmarket.md](gtm-india-smb-midmarket.md).
 
-## Project-lead decisions (2026-11-12)
+## Project-lead decisions (2026-11-11 and 2026-11-12)
 
-- The ADR-020 bot-notice mismatch and the consent default go into an **ADR-020 amendment owned by the All Rounder Techy
-  agent** ([legal-questions-brief.md](legal-questions-brief.md) §4).
+- The consent default is: "explicit consent is on by default for all orgs until an org country is stored" (project-lead
+  decision, 2026-11-11, recorded in the ADR-020 amendment in [PR #472](https://github.com/iakash22/meetops-platform/pull/472)).
+- The ADR-020 bot-notice mismatch (the "MeetOps Recorder" notice assumes a bot we don't ship) goes into an **ADR-020
+  amendment owned by the All Rounder Techy agent** ([legal-questions-brief.md](legal-questions-brief.md) §4).
 - The **host-only consent ledger is a tracked feature gap** and the backbone of spec 03.
 - Spec 05's new meeting-languages route is **decided at implementation**.
 - **Sarvam is opt-in, off by default and capped, with no spend until Akash sets a budget.**
