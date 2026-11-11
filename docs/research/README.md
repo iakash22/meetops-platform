@@ -3,12 +3,16 @@
 Market and competitor research for MeetOps. These docs are not specs, and nothing here is a decision until it's taken
 through an ADR (`docs/15-decisions/`) or a plan (`docs/plans/`).
 
-| Doc                                                  | What it covers                                                                                      |
-| ---------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
-| [competitive-landscape.md](competitive-landscape.md) | 19 competitors: capture, platforms, languages, AI, integrations, privacy, pricing, segment; sources |
-| [market-gaps.md](market-gaps.md)                     | Unmet needs with evidence, market-size estimates, trends                                            |
-| [feature-proposals.md](feature-proposals.md)         | 24 ranked proposals with fit to repo modules and ADRs                                               |
-| [roadmap-plan.md](roadmap-plan.md)                   | 30/60/90-day plan mapped to phases and teams, with dependencies and risks                           |
+| Doc                                                  | What it covers                                                                                       |
+| ---------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| [competitive-landscape.md](competitive-landscape.md) | 19 competitors: capture, platforms, languages, AI, integrations, privacy, pricing, segment; sources  |
+| [market-gaps.md](market-gaps.md)                     | Unmet needs with evidence, market-size estimates, trends                                             |
+| [feature-proposals.md](feature-proposals.md)         | 24 ranked proposals with fit to repo modules and ADRs                                                |
+| [roadmap-plan.md](roadmap-plan.md)                   | 30/60/90-day plan mapped to phases and teams, with dependencies and risks                            |
+| [verification-notes.md](verification-notes.md)       | Resolves the "not verified" items in the docs above with primary sources, and what each one corrects |
+| [specs/](specs/README.md)                            | Deep-dive specs for the five P0 proposals, with per-team effort estimates                            |
+| [pricing-packaging.md](pricing-packaging.md)         | Competitor price benchmark (USD and INR) and **proposed** MeetOps tiers                              |
+| [legal-questions-brief.md](legal-questions-brief.md) | Questions for counsel on BIPA, EU AI Act Art. 50 and ADR-020 (not legal advice)                      |
 
 Conventions:
 
