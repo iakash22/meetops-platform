@@ -69,7 +69,7 @@ log lines before each restart; startup env validation (`loadConfig`) failures sh
 
 ## MeetOpsQueueBacklog
 
-More than 100 waiting jobs on one queue for 10m (DLQ excluded). Check the worker is consuming that queue (its feature
+More than 100 waiting jobs on one queue for 10m (every `*-dlq` queue excluded). Check the worker is consuming that queue (its feature
 flag is on, logs show `worker jobs registered`), then the provider rate limits for `transcription`/`ai`. Scale workers
 only after ruling out a stuck job.
 
@@ -81,6 +81,15 @@ has one provider per org and no fallback, so provider outages show here by desig
 ## MeetOpsTranscriptionDlqNotEmpty
 
 Transcription DLQ entries older than 30m. Follow `docs/16-runbooks/transcription-dlq-redrive.md`.
+
+## MeetOpsTakeoverFollowUpDlqNotEmpty
+
+An account-takeover follow-up (realtime kick, extension/desktop token revocation or push-device revocation) used up
+its 6 attempts and was dead-lettered to `auth-takeover-follow-up-dlq`. The takeover itself committed, but one
+revocation may still be outstanding for that user, so treat it as security-relevant. Fix the failing dependency (the
+API log `auth.takeover.follow_up_abandoned` names the kind), then follow
+`docs/16-runbooks/takeover-follow-up-dlq-redrive.md`. The worker reads this queue under `AUTH_MAIL_QUEUE_PREFIX`, so
+set it to the API's value or the gauge reads an empty queue.
 
 ## MeetOpsQueueScrapeError
 
