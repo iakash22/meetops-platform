@@ -1,9 +1,15 @@
 /**
  * Durable retries of account-takeover follow-ups (#459 NB-R3-2, #463 review). After a mailbox-owner takeover has
- * committed, the revocations that still failed in-request are handed to a queue so a restart or deploy cannot drop
- * them. Jobs carry the user id and the follow-up kind only: never emails, tokens or secrets.
+ * committed, the revocations (and the set-password mail, if enqueueing it failed) that still failed in-request are
+ * handed to a queue so a restart or deploy cannot drop them. Jobs carry the user id and the follow-up kind only:
+ * never emails, tokens or secrets.
  */
-export const TAKEOVER_FOLLOW_UP_KINDS = ['realtime', 'extension_tokens', 'push_devices'] as const;
+export const TAKEOVER_FOLLOW_UP_KINDS = [
+  'realtime',
+  'extension_tokens',
+  'push_devices',
+  'set_password_mail',
+] as const;
 
 export type TakeoverFollowUpKind = (typeof TAKEOVER_FOLLOW_UP_KINDS)[number];
 

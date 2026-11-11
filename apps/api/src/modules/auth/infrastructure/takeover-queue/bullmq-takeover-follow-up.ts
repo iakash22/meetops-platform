@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { Queue, UnrecoverableError, Worker, type Job, type JobsOptions } from 'bullmq';
 import { AUTH_TAKEOVER_FOLLOW_UP_DLQ, AUTH_TAKEOVER_FOLLOW_UP_QUEUE } from '@meetops/contracts';
 import {
+  TAKEOVER_FOLLOW_UP_KINDS,
   isTakeoverFollowUpKind,
   type TakeoverFollowUpJob,
   type TakeoverFollowUpQueue,
@@ -10,7 +11,8 @@ import {
 
 /**
  * #463 review: durable retries of account-takeover follow-ups (realtime kick, extension/desktop token families, push
- * devices). Replaces the in-process timers, which a restart or deploy dropped. Same conventions as the auth-mail queue
+ * devices, and the set-password mail if enqueueing it failed). Replaces the in-process timers, which a restart or
+ * deploy dropped. Same conventions as the auth-mail queue
  * (ADR-013): ids-only payloads, deterministic job ids without ':', bounded attempts with exponential backoff, and the
  * worker's `<queue>-dlq` dead-letter pattern (see apps/worker transcription-retry) once the attempts are used up.
  */
@@ -30,8 +32,8 @@ export const TAKEOVER_FOLLOW_UP_JOB_OPTIONS = {
   removeOnFail: { age: 7 * 24 * 3600, count: 5000 },
 } as const satisfies JobsOptions;
 
-export const TAKEOVER_JOB_ID_RE =
-  /^takeover_(realtime|extension_tokens|push_devices)_[0-9a-f]{40}$/;
+const FOLLOW_UP_KIND_ALT = TAKEOVER_FOLLOW_UP_KINDS.join('|');
+export const TAKEOVER_JOB_ID_RE = new RegExp(`^takeover_(${FOLLOW_UP_KIND_ALT})_[0-9a-f]{40}$`);
 const USER_ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
 
 /** Deterministic job id per user and follow-up kind: `takeover_<kind>_<sha256(kind, userId)[:40]>` (no ':'). */

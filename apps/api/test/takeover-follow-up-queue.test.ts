@@ -17,6 +17,8 @@ import {
   type TakeoverDeadLetter,
   type TakeoverFollowUpProducer,
 } from '../src/modules/auth/infrastructure/takeover-queue/bullmq-takeover-follow-up.js';
+import { InlineAuthMailQueue } from '../src/modules/auth/application/auth-mail.handler.js';
+import type { AuthMailJob } from '../src/modules/auth/domain/mail-jobs.js';
 import { InMemoryMembershipRepository } from '../src/modules/organizations/infrastructure/in-memory.repositories.js';
 import type { ModuleDeps } from '../src/modules/index.js';
 import { buildApp, Client, PASSWORD, type App } from './helpers.js';
@@ -264,6 +266,41 @@ describe('AuthService.runTakeoverFollowUp (the worker runner)', () => {
         await auth.runTakeoverFollowUp({ userId: USER, kind });
     expect(calls).toHaveLength(6);
   });
+
+  it('set_password_mail voids leftover reset tokens, mints a fresh one, and enqueues mail', async () => {
+    const invalidated: string[] = [];
+    const created: { purpose: string }[] = [];
+    const mailed: AuthMailJob[] = [];
+    const now = new Date('2026-11-12T00:00:00Z');
+    const auth = new AuthService({
+      clock: { now: () => now },
+      ids: { next: () => 'tok-1' },
+      tokens: { hash: (s: string) => `h:${s}`, generate: () => 'plain' },
+      passwordResetTtlMs: 3_600_000,
+      oneTimeTokens: {
+        invalidateForUser: async (userId: string, purpose: string) => {
+          invalidated.push(`${userId}:${purpose}`);
+        },
+        create: async (row: { purpose: string; id: string }) => {
+          created.push({ purpose: row.purpose });
+          return row;
+        },
+      },
+      mailQueue: {
+        enqueue: async (job: AuthMailJob) => {
+          mailed.push(job);
+        },
+      },
+    } as unknown as ConstructorParameters<typeof AuthService>[0]);
+    await auth.runTakeoverFollowUp({ userId: USER, kind: 'set_password_mail' });
+    await auth.runTakeoverFollowUp({ userId: USER, kind: 'set_password_mail' });
+    expect(invalidated).toEqual([`${USER}:password_reset`, `${USER}:password_reset`]);
+    expect(created).toEqual([{ purpose: 'password_reset' }, { purpose: 'password_reset' }]);
+    expect(mailed).toEqual([
+      { kind: 'password_reset', tokenId: 'tok-1' },
+      { kind: 'password_reset', tokenId: 'tok-1' },
+    ]);
+  });
 });
 
 describe('verify-email takeover hands failed revocations to the durable queue', () => {
@@ -332,6 +369,99 @@ describe('verify-email takeover hands failed revocations to the durable queue', 
     ]);
     expect(errors[1]).toMatchObject({ steps: ['push_devices'], err: 'Error' });
     expect(scheduled).toEqual([5_000]);
+    await app.close();
+  });
+
+  it('a failed set-password mail enqueue still returns 204, logs no PII, and enqueues a retry', async () => {
+    const email = 'mailfail1@example.com';
+    const poison = `smtp rejected ${email} token=super-secret-token user=Mallory`;
+    const mailQueue = new InlineAuthMailQueue();
+    const orig = mailQueue.enqueue.bind(mailQueue);
+    let failReset = false;
+    mailQueue.enqueue = async (job) => {
+      if (failReset && job.kind === 'password_reset') throw new TypeError(poison);
+      return orig(job);
+    };
+    const producer = new DedupingProducer();
+    const errors: { obj: Record<string, unknown>; msg: string }[] = [];
+    const app: App = await buildApp({
+      mailQueue,
+      takeoverFollowUps: new BullMqTakeoverFollowUpQueue(producer),
+      authLog: { error: (obj, msg) => errors.push({ obj, msg }) },
+      scheduleRetry: () => {
+        throw new Error('in-process fallback must not run when the durable enqueue succeeds');
+      },
+    });
+    const squatter = new Client(app);
+    expect(
+      (await squatter.post('/auth/signup', { name: 'Mallory', email, password: PASSWORD }))
+        .statusCode,
+    ).toBe(202);
+    failReset = true;
+    const v = await new Client(app).post('/auth/verify-email', {
+      token: app.token(email, 'email_verification')!,
+    });
+    expect(v.statusCode).toBe(204);
+    expect(v.headers['x-meetops-verify-outcome']).toBe('password_reset');
+    const jobs = [...producer.jobs.values()];
+    expect(jobs).toHaveLength(1);
+    expect(jobs[0]!.data).toEqual({ userId: expect.any(String), kind: 'set_password_mail' });
+    expect(Object.keys(jobs[0]!.data).sort()).toEqual(['kind', 'userId']);
+    expect(errors.map((e) => e.obj.event)).toEqual([
+      'auth.takeover.set_password_mail_enqueue_failed',
+    ]);
+    expect(errors[0]!.obj).toMatchObject({
+      userId: expect.any(String),
+      err: { type: 'TypeError' },
+    });
+    const dumped = JSON.stringify(errors);
+    expect(dumped).not.toContain(email);
+    expect(dumped).not.toContain('super-secret-token');
+    expect(dumped).not.toContain('Mallory');
+    expect(dumped).not.toContain(poison);
+    await app.close();
+  });
+
+  it('a failed durable retry enqueue is logged and verify still returns 204', async () => {
+    const email = 'mailfail2@example.com';
+    const poison = `smtp rejected ${email} token=another-secret-token user=Mallory`;
+    const mailQueue = new InlineAuthMailQueue();
+    const orig = mailQueue.enqueue.bind(mailQueue);
+    let failReset = false;
+    mailQueue.enqueue = async (job) => {
+      if (failReset && job.kind === 'password_reset') throw new TypeError(poison);
+      return orig(job);
+    };
+    const errors: Record<string, unknown>[] = [];
+    const scheduled: number[] = [];
+    const app: App = await buildApp({
+      mailQueue,
+      takeoverFollowUps: {
+        enqueue: () => Promise.reject(new Error('ECONNREFUSED')),
+      },
+      authLog: { error: (obj) => errors.push(obj) },
+      scheduleRetry: (_run, delayMs) => scheduled.push(delayMs),
+    });
+    const squatter = new Client(app);
+    expect(
+      (await squatter.post('/auth/signup', { name: 'Mallory', email, password: PASSWORD }))
+        .statusCode,
+    ).toBe(202);
+    failReset = true;
+    const v = await new Client(app).post('/auth/verify-email', {
+      token: app.token(email, 'email_verification')!,
+    });
+    expect(v.statusCode).toBe(204);
+    expect(errors.map((e) => e.event)).toEqual([
+      'auth.takeover.set_password_mail_enqueue_failed',
+      'auth.takeover.follow_up_enqueue_failed',
+    ]);
+    expect(errors[1]).toMatchObject({ steps: ['set_password_mail'], err: 'Error' });
+    expect(scheduled).toEqual([5_000]);
+    const dumped = JSON.stringify(errors);
+    expect(dumped).not.toContain(email);
+    expect(dumped).not.toContain('another-secret-token');
+    expect(dumped).not.toContain('Mallory');
     await app.close();
   });
 });

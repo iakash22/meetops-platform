@@ -1,7 +1,7 @@
 # Re-drive dead-lettered account-takeover follow-ups
 
 After a mailbox owner takes an account over, revocations that still fail in-request run as durable BullMQ jobs on
-`auth-takeover-follow-up` (realtime kick, extension/desktop token families, push devices; see
+`auth-takeover-follow-up` (realtime kick, extension/desktop token families, push devices, and a failed set-password mail enqueue; see
 `docs/04-api/auth-and-orgs.md`). A job that uses up its 6 attempts is copied to `auth-takeover-follow-up-dlq` as
 `dlq_<jobId>` and the API logs `auth.takeover.follow_up_abandoned`. The alert is
 `MeetOpsTakeoverFollowUpDlqNotEmpty` (`docs/14-observability/alerts.md`).

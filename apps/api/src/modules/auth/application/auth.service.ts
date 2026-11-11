@@ -122,6 +122,16 @@ const ROTATION_SUCCESSOR_POLL_MS = 100;
 /** #459 NB-R3-2: in-process fallback retries of takeover follow-ups (no durable queue, or enqueue failed). */
 export const TAKEOVER_FOLLOW_UP_RETRY_DELAYS_MS = [5_000, 30_000, 120_000] as const;
 
+/** Error class and a safe code only: never a message, email, token or user name. */
+function safeAuthError(err: unknown): { type: string; code?: string } {
+  if (!(err instanceof Error)) return { type: typeof err };
+  const code = (err as { code?: unknown }).code;
+  return {
+    type: err.name,
+    ...(typeof code === 'string' && /^[\w.-]{1,64}$/.test(code) ? { code } : {}),
+  };
+}
+
 const defaultScheduleRetry = (run: () => Promise<void>, delayMs: number) => {
   const t = setTimeout(() => void run(), delayMs);
   t.unref?.();
@@ -691,7 +701,8 @@ export class AuthService implements TakeoverFollowUpRunner {
 
   /**
    * One takeover follow-up (in-request, and the durable queue's worker). Every kind is idempotent: a second realtime
-   * kick, family revocation or push-device delete of the same user is a no-op. Errors propagate (retries).
+   * kick, family revocation, push-device delete, or set-password mail of the same user is safe. Errors propagate
+   * (retries).
    */
   async runTakeoverFollowUp(job: TakeoverFollowUpJob): Promise<void> {
     const { userId } = job;
@@ -707,6 +718,18 @@ export class AuthService implements TakeoverFollowUpRunner {
       case 'push_devices':
         await this.d.pushDeviceRevoker?.revokeForUser(userId);
         return;
+      case 'set_password_mail': {
+        // Ids only: mint a fresh reset token (voiding any leftover from the failed request) and enqueue mail.
+        const now = this.d.clock.now();
+        await this.d.oneTimeTokens.invalidateForUser(userId, 'password_reset', now);
+        const reset = await this.createOneTimeToken(
+          userId,
+          'password_reset',
+          this.d.passwordResetTtlMs,
+        );
+        await this.d.mailQueue.enqueue({ kind: 'password_reset', tokenId: reset.id });
+        return;
+      }
     }
   }
 
@@ -992,13 +1015,27 @@ export class AuthService implements TakeoverFollowUpRunner {
       const failedSteps = await this.afterCredentialTakeover(user.id);
       metadata = failedSteps.length ? { ...before, followUpFailed: failedSteps } : before;
       passwordRemoved = before.passwordRemoved;
-      // Set-password link: the regular reset flow (single-use token, reset mail).
-      const reset = await this.createOneTimeToken(
-        user.id,
-        'password_reset',
-        this.d.passwordResetTtlMs,
-      );
-      await this.d.mailQueue.enqueue({ kind: 'password_reset', tokenId: reset.id });
+      // Set-password link: the regular reset flow (single-use token, reset mail). The claim has committed, so a
+      // failure here must not fail the request: log a safe error (class/code only, no PII), still return 204, and
+      // retry through the durable follow-up queue (`set_password_mail`).
+      try {
+        const reset = await this.createOneTimeToken(
+          user.id,
+          'password_reset',
+          this.d.passwordResetTtlMs,
+        );
+        await this.d.mailQueue.enqueue({ kind: 'password_reset', tokenId: reset.id });
+      } catch (err) {
+        this.d.log?.error(
+          {
+            event: 'auth.takeover.set_password_mail_enqueue_failed',
+            userId: user.id,
+            err: safeAuthError(err),
+          },
+          'could not enqueue set-password mail after account takeover; retrying',
+        );
+        await this.deferFollowUps(user.id, ['set_password_mail']);
+      }
     }
     await this.audit(
       {

@@ -1,4 +1,5 @@
 import {
+  TAKEOVER_FOLLOW_UP_KINDS,
   isTakeoverFollowUpKind,
   type TakeoverFollowUpJob,
   type TakeoverFollowUpKind,
@@ -81,7 +82,7 @@ export type TakeoverRedriveOptions = {
 export type TakeoverRedriveReport = { aborted: boolean; items: TakeoverRedrivePlanItem[] };
 
 const USER_ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
-const DLQ_ID_RE = /^dlq_takeover_(realtime|extension_tokens|push_devices)_[0-9a-f]{40}$/;
+const DLQ_ID_RE = new RegExp(`^dlq_takeover_(${TAKEOVER_FOLLOW_UP_KINDS.join('|')})_[0-9a-f]{40}$`);
 const SAFE_CODE_RE = /^[\w.-]{1,64}$/;
 /** BullMQ states in which the original will still run (or is running): re-driving it again would double-run. */
 const PENDING_STATES = new Set([
@@ -128,7 +129,7 @@ export function parseTakeoverRedriveArgs(argv: string[]): {
     } else if (a === '--kind') {
       const v = argv[++i];
       if (!isTakeoverFollowUpKind(v))
-        throw new Error('--kind needs realtime, extension_tokens or push_devices');
+        throw new Error(`--kind needs ${TAKEOVER_FOLLOW_UP_KINDS.join(', ')}`);
       set({ kind: v });
     } else throw new Error(`unknown argument: ${a}`);
   }
