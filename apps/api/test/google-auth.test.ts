@@ -13,7 +13,15 @@ import {
 } from '../src/modules/auth/application/auth.service.js';
 import { RateLimiterUnavailableError } from '../src/shared/rate-limit-core.js';
 import type { ModuleDeps } from '../src/modules/index.js';
-import { buildApp, Client, PASSWORD, SID, signupAndLogin, type App } from './helpers.js';
+import {
+  buildApp,
+  Client,
+  fakeHasher,
+  PASSWORD,
+  SID,
+  signupAndLogin,
+  type App,
+} from './helpers.js';
 
 const CONFIG = {
   clientId: '1234567890-abc.apps.googleusercontent.com',
@@ -1058,7 +1066,7 @@ describe('round 3: a sign-in in flight during a takeover never keeps a session',
     await app.close();
   });
 
-  it('post-commit revocations are retried; a step that keeps failing gives 503 and the set-password mail still goes out', async () => {
+  it('NB-R3-2: after the commit, follow-up failures never fail verify; they are logged and retried later', async () => {
     // The push-device revoker lists the user's memberships; make that fail once (retried) or for good.
     class Flaky extends InMemoryMembershipRepository {
       failures = 0;
@@ -1073,14 +1081,22 @@ describe('round 3: a sign-in in flight during a takeover never keeps a session',
       }
     }
     const memberships = new Flaky();
-    const { app, users } = await appFor(gmail('6', 'follow6@gmail.com'), { memberships });
+    const errors: { obj: Record<string, unknown>; msg: string }[] = [];
+    const queued: { run: () => Promise<void>; delayMs: number }[] = [];
+    const { app, users } = await appFor(gmail('6', 'follow6@gmail.com'), {
+      memberships,
+      authLog: { error: (obj, msg) => errors.push({ obj, msg }) },
+      scheduleRetry: (run, delayMs) => queued.push({ run, delayMs }),
+    });
     const attacker = await squatter(app, 'follow6@gmail.com');
     memberships.failures = 1;
     const ok = await new Client(app).post('/auth/verify-email', {
       token: app.token('follow6@gmail.com', 'email_verification')!,
     });
-    expect(ok.statusCode).toBe(204); // one blip, retried
+    expect(ok.statusCode).toBe(204); // one blip, retried in place
     expect(memberships.calls).toBe(1);
+    expect(errors).toHaveLength(0);
+    expect(queued).toHaveLength(0);
 
     const other = await squatter(app, 'follow7@gmail.com');
     memberships.failures = 99;
@@ -1088,17 +1104,142 @@ describe('round 3: a sign-in in flight during a takeover never keeps a session',
     const v = await new Client(app).post('/auth/verify-email', {
       token: app.token('follow7@gmail.com', 'email_verification')!,
     });
-    expect(v.statusCode).toBe(503);
+    // Committed and the set-password mail queued: the real outcome, not 503 (Tester info (a)).
+    expect(v.statusCode).toBe(204);
+    expect(v.headers['x-meetops-verify-outcome']).toBe('password_reset');
     expect(memberships.calls).toBe(3);
-    memberships.failures = 0;
-    // The claim itself committed: verified, password gone, set-password link sent.
     const u = await users.findByEmail('follow7@gmail.com');
     expect(u?.emailVerifiedAt).toBeTruthy();
     expect(u?.passwordHash).toBe('');
     expect(app.token('follow7@gmail.com', 'password_reset')).toBeTruthy();
     expect(await sessionOk(attacker)).toBe(401);
     expect(await sessionOk(other)).toBe(401);
+    // Structured error log, and one deferred retry of the failed revocation.
+    expect(errors).toEqual([
+      expect.objectContaining({
+        obj: expect.objectContaining({
+          event: 'auth.takeover.follow_up_failed',
+          userId: u!.id,
+          steps: ['push_devices'],
+        }),
+      }),
+    ]);
+    expect(queued.map((q) => q.delayMs)).toEqual([5_000]);
+    // Still failing: re-queued with the next delay; then the store recovers and the chain stops.
+    await queued.shift()!.run();
+    expect(queued.map((q) => q.delayMs)).toEqual([30_000]);
+    memberships.failures = 0;
+    memberships.calls = 0;
+    await queued.shift()!.run();
+    expect(queued).toHaveLength(0);
+    expect(errors.some((e) => e.obj.event === 'auth.takeover.follow_up_abandoned')).toBe(false);
     await app.close();
+  });
+
+  it('NB-R3-2: a follow-up that never recovers is abandoned with an error log after the last retry', async () => {
+    class Broken extends InMemoryMembershipRepository {
+      broken = false;
+      override async listByUser(userId: string) {
+        if (this.broken) throw new Error('store down');
+        return super.listByUser(userId);
+      }
+    }
+    const memberships = new Broken();
+    const errors: Record<string, unknown>[] = [];
+    const queued: (() => Promise<void>)[] = [];
+    const { app } = await appFor(gmail('8', 'follow8@gmail.com'), {
+      memberships,
+      authLog: { error: (obj) => errors.push(obj) },
+      scheduleRetry: (run) => queued.push(run),
+    });
+    await squatter(app, 'follow8@gmail.com');
+    memberships.broken = true;
+    const v = await new Client(app).post('/auth/verify-email', {
+      token: app.token('follow8@gmail.com', 'email_verification')!,
+    });
+    expect(v.statusCode).toBe(204);
+    while (queued.length) await queued.shift()!();
+    expect(errors.map((e) => e.event)).toEqual([
+      'auth.takeover.follow_up_failed',
+      'auth.takeover.follow_up_abandoned',
+    ]);
+    await app.close();
+  });
+
+  it('Tester info (b): a takeover of an account that never had a password reports set_password', async () => {
+    const unproven: GoogleIdentity = {
+      sub: '666000000009',
+      email: 'nopw9@corp.example',
+      emailVerified: true,
+      name: 'Stale',
+      hd: null,
+    };
+    const { app, users } = await appFor(unproven);
+    await googleSignIn(app); // creates the unverified, password-less account
+    expect((await users.findByEmail('nopw9@corp.example'))?.passwordHash).toBe('');
+    const v = await new Client(app).post('/auth/verify-email', {
+      token: app.token('nopw9@corp.example', 'email_verification')!,
+    });
+    expect(v.statusCode).toBe(204);
+    expect(v.headers['x-meetops-verify-outcome']).toBe('set_password');
+    expect(app.token('nopw9@corp.example', 'password_reset')).toBeTruthy();
+    await app.close();
+  });
+
+  it('X4-mem: a login held INSIDE the password check during a takeover gets 401', async () => {
+    let entered!: () => void;
+    let release!: () => void;
+    const reached = new Promise<void>((r) => (entered = r));
+    const gate = new Promise<void>((r) => (release = r));
+    let armed = false;
+    const hasher = {
+      ...fakeHasher,
+      async verify(hash: string, plain: string) {
+        if (armed) {
+          armed = false;
+          entered();
+          await gate;
+        }
+        return fakeHasher.verify(hash, plain);
+      },
+    };
+    const { app, users, sessions } = await appFor(gmail('10', 'held10@gmail.com'), { hasher });
+    const attacker = await squatter(app, 'held10@gmail.com');
+    armed = true;
+    const login = attacker.post('/auth/login', { email: 'held10@gmail.com', password: PASSWORD });
+    await reached; // inside hasher.verify, with the squatter's hash
+    const v = await new Client(app).post('/auth/verify-email', {
+      token: app.token('held10@gmail.com', 'email_verification')!,
+    });
+    expect(v.statusCode).toBe(204);
+    release();
+    const res = await login;
+    expect(res.statusCode).toBe(401);
+    attacker.absorb(res);
+    expect(await sessionOk(attacker)).toBe(401);
+    expect(await live(sessions, users, 'held10@gmail.com')).toHaveLength(0);
+    await app.close();
+  });
+
+  it('in-memory stores hand out copies: a held user object never sees later writes', async () => {
+    const users = new InMemoryUserRepository();
+    const now = new Date();
+    await users.create({
+      id: 'u-copy',
+      email: 'copy@example.com',
+      name: 'C',
+      passwordHash: 'h1',
+      emailVerifiedAt: null,
+      createdAt: now,
+      updatedAt: now,
+      deletedAt: null,
+    });
+    const held = (await users.findByEmail('copy@example.com'))!;
+    await users.claimUnverifiedForMailbox('u-copy', now, { clearPassword: true });
+    expect(held.passwordHash).toBe('h1');
+    held.name = 'mutated';
+    expect((await users.findById('u-copy'))?.name).toBe('C');
+    expect((await users.findById('u-copy'))?.passwordHash).toBe('');
   });
 
   it('verify in the registering browser reports the plain outcome', async () => {

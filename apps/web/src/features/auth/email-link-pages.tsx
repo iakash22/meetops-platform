@@ -59,9 +59,11 @@ export function VerifyEmailPage({
   onVerify,
 }: {
   token: string | undefined;
-  onVerify: (token: string) => Promise<{ passwordReset?: boolean } | void>;
+  onVerify: (token: string) => Promise<{ passwordReset?: boolean; setPassword?: boolean } | void>;
 }) {
-  const [state, setState] = useState<'idle' | 'pending' | 'done' | 'password_reset'>('idle');
+  const [state, setState] = useState<
+    'idle' | 'pending' | 'done' | 'password_reset' | 'set_password'
+  >('idle');
   const [error, setError] = useState<unknown>(null);
 
   const verify = async (t: string) => {
@@ -69,7 +71,11 @@ export function VerifyEmailPage({
     setError(null);
     try {
       const r = await onVerify(t);
-      if (r?.passwordReset) {
+      if (r?.setPassword) {
+        // The mailbox owner took over an account that never had a password: nothing was removed.
+        setState('set_password');
+        notify.success('Email verified', 'Set a password with the link we just emailed you.');
+      } else if (r?.passwordReset) {
         // UX-1: the mailbox owner took the account over; the old password no longer works.
         setState('password_reset');
         notify.success('Email verified', 'Set a password with the link we just emailed you.');
@@ -96,6 +102,18 @@ export function VerifyEmailPage({
       <Problem title="This verification link is incomplete">
         Open the link from your email again, or request a new one.
       </Problem>
+    );
+  } else if (state === 'set_password') {
+    body = (
+      <div className="grid gap-4">
+        <Status>
+          Your email address is verified. To sign in with a password, set one with the link we just
+          emailed you.
+        </Status>
+        <Button asChild className={authButtonClass}>
+          <Link to="/forgot-password">Send a new set-password link</Link>
+        </Button>
+      </div>
     );
   } else if (state === 'password_reset') {
     body = (

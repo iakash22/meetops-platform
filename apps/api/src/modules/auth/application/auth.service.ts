@@ -93,7 +93,28 @@ export interface AuthServiceDeps {
    * active organization or, without one, in every organization the user belongs to.
    */
   pushDeviceRevoker?: PushDeviceRevoker;
+  /** Structured log for failures that must not fail the request (takeover follow-ups). Omitted: silent. */
+  log?: { error(obj: Record<string, unknown>, msg: string): void };
+  /**
+   * Runs a deferred retry (takeover follow-ups that still failed after the in-request attempts). Default: an unref'd
+   * timer in this process. Tests inject a synchronous queue.
+   */
+  scheduleRetry?: (run: () => Promise<void>, delayMs: number) => void;
 }
+
+/** NB-R3-3: how recent a same-client successor session must be to count as the winner of a concurrent rotation. */
+const ROTATION_RACE_WINDOW_MS = 30_000;
+/** NB-R3-3: re-checks for the winner's session (it is inserted just after the winner's revoke). */
+const ROTATION_SUCCESSOR_POLLS = 5;
+const ROTATION_SUCCESSOR_POLL_MS = 100;
+
+/** #459 NB-R3-2: deferred retries of takeover follow-ups, after the in-request attempts. */
+export const TAKEOVER_FOLLOW_UP_RETRY_DELAYS_MS = [5_000, 30_000, 120_000] as const;
+
+const defaultScheduleRetry = (run: () => Promise<void>, delayMs: number) => {
+  const t = setTimeout(() => void run(), delayMs);
+  t.unref?.();
+};
 
 const realSleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
@@ -318,10 +339,13 @@ export class AuthService {
     if (lock.locked) throw new RateLimitedError(lock.retryAfterMs);
 
     const user = await this.d.users.findByEmail(email);
+    // X4-mem: the hash this login checks, captured before the (slow) check. Everything after compares against this
+    // value, never a re-read field of `user`, so a store that hands out live objects cannot hide a concurrent change.
+    const checkedHash = user?.passwordHash ?? '';
     // Google-only accounts store no password. Verify a dummy hash so that case is not faster than
     // an unknown email.
-    const ok = user?.passwordHash
-      ? await this.d.hasher.verify(user.passwordHash, input.password)
+    const ok = checkedHash
+      ? await this.d.hasher.verify(checkedHash, input.password)
       : (await this.d.hasher.verify(await this.getDummyHash(), input.password), false);
     if (!user || !ok) {
       // Keyed by normalized email whether or not the account exists (enumeration-safe).
@@ -345,11 +369,11 @@ export class AuthService {
       throw new InvalidCredentialsError();
     }
     await this.d.lockout.reset(email);
-    let verifiedHash = user.passwordHash;
-    if (this.d.hasher.needsRehash(user.passwordHash)) {
+    let verifiedHash = checkedHash;
+    if (this.d.hasher.needsRehash(checkedHash)) {
       const rehashed = await this.d.hasher.hash(input.password);
       // Compare-and-set: never write a hash back over a password a takeover just removed (X4).
-      if (await this.d.users.replacePasswordHash(user.id, user.passwordHash, rehashed))
+      if (await this.d.users.replacePasswordHash(user.id, checkedHash, rehashed))
         verifiedHash = rehashed;
     }
     if (currentToken) {
@@ -619,24 +643,64 @@ export class AuthService {
    * one unit: tell realtime, revoke extension/desktop token families and push devices, and void outstanding reset and
    * verification links. (A never-verified account cannot have joined an organisation (D2), so it has no families or
    * push devices of its own; these calls are defence in depth and idempotent.)
+   *
+   * Never throws (#459 NB-R3-2): the claim has committed, so the request reports its real outcome. Each step is retried
+   * in place and every step runs; a step that still fails is logged (`auth.takeover.follow_up_failed`) and, for the
+   * revocations, retried later (TAKEOVER_FOLLOW_UP_RETRY_DELAYS_MS). One-time-link invalidation is not retried later:
+   * it would also void the set-password link sent after it. Returns the names of the steps that failed in-request.
    */
-  private async afterCredentialTakeover(userId: string) {
+  private async afterCredentialTakeover(userId: string): Promise<string[]> {
     const now = this.d.clock.now();
-    // Round 3: these run after the claim committed, and a retry of the request cannot redo them (the account is now
-    // verified), so each idempotent step is retried in place and every step runs even when an earlier one failed.
-    // Anything still failing surfaces as 503 to the caller.
-    const steps: (() => Promise<unknown>)[] = [
-      () => this.publish({ kind: 'user', userId, reason: 'password_changed' }),
-      async () => this.d.extensionRevoker?.revokeForUser(userId, 'password_changed'),
-      async () => this.d.pushDeviceRevoker?.revokeForUser(userId),
-      () => this.d.oneTimeTokens.invalidateForUser(userId, 'password_reset', now),
-      () => this.d.oneTimeTokens.invalidateForUser(userId, 'email_verification', now),
+    const revocations: [string, () => Promise<unknown>][] = [
+      ['realtime', () => this.publish({ kind: 'user', userId, reason: 'password_changed' })],
+      [
+        'extension_tokens',
+        async () =>
+          this.d.extensionRevoker?.revokeForUser(userId, 'password_changed', undefined, {
+            propagate: true,
+          }),
+      ],
+      ['push_devices', async () => this.d.pushDeviceRevoker?.revokeForUser(userId)],
     ];
-    let failed = false;
-    for (const step of steps) {
-      if (!(await retryIdempotent(step))) failed = true;
+    const links: [string, () => Promise<unknown>][] = [
+      ['reset_links', () => this.d.oneTimeTokens.invalidateForUser(userId, 'password_reset', now)],
+      [
+        'verification_links',
+        () => this.d.oneTimeTokens.invalidateForUser(userId, 'email_verification', now),
+      ],
+    ];
+    const failed: string[] = [];
+    const pending: [string, () => Promise<unknown>][] = [];
+    for (const step of [...revocations, ...links]) {
+      if (await retryIdempotent(step[1])) continue;
+      failed.push(step[0]);
+      if (revocations.includes(step)) pending.push(step);
     }
-    if (failed) throw new CredentialStoreUnavailableError();
+    if (failed.length) {
+      this.d.log?.error(
+        { event: 'auth.takeover.follow_up_failed', userId, steps: failed },
+        'account takeover follow-up failed after commit; revocations will be retried',
+      );
+      this.retryLater(userId, pending, 0);
+    }
+    return failed;
+  }
+
+  private retryLater(userId: string, steps: [string, () => Promise<unknown>][], attempt: number) {
+    const delay = TAKEOVER_FOLLOW_UP_RETRY_DELAYS_MS[attempt];
+    if (!steps.length) return;
+    if (delay === undefined) {
+      this.d.log?.error(
+        { event: 'auth.takeover.follow_up_abandoned', userId, steps: steps.map((s) => s[0]) },
+        'account takeover follow-up still failing after deferred retries',
+      );
+      return;
+    }
+    (this.d.scheduleRetry ?? defaultScheduleRetry)(async () => {
+      const still: [string, () => Promise<unknown>][] = [];
+      for (const step of steps) if (!(await retryIdempotent(step[1], 1))) still.push(step);
+      this.retryLater(userId, still, attempt + 1);
+    }, delay);
   }
 
   private async finishGoogleLogin(
@@ -802,7 +866,11 @@ export class AuthService {
       signupBinding?: string | null | undefined;
       googleVerifyLink?: PendingGoogleLink | null | undefined;
     } = {},
-  ): Promise<{ proof: 'session' | 'signup_browser' | 'mailbox' | 'already_verified' }> {
+  ): Promise<{
+    proof: 'session' | 'signup_browser' | 'mailbox' | 'already_verified';
+    /** True only when this verification removed a password the account actually had (mailbox takeover). */
+    passwordRemoved: boolean;
+  }> {
     await this.limit(`verify:ip:${clientIpKey(meta.ip)}`, AUTH_LIMITS.verifySubmitPerIp);
     const now = this.d.clock.now();
     const t = await this.d.oneTimeTokens.consume(
@@ -823,6 +891,7 @@ export class AuthService {
 
     let proof: 'session' | 'signup_browser' | 'mailbox' | 'already_verified';
     let metadata: Record<string, unknown> = {};
+    let passwordRemoved = false;
     if (user.emailVerifiedAt) {
       proof = 'already_verified';
       await this.d.oneTimeTokens.invalidateForUser(user.id, 'email_verification', now);
@@ -857,35 +926,20 @@ export class AuthService {
       if (!claimed) {
         // A concurrent verify or reset got there first; it did the takeover.
         if ((await this.d.users.findById(user.id))?.emailVerifiedAt)
-          return { proof: 'already_verified' };
+          return { proof: 'already_verified', passwordRemoved: false };
         throw invalidVerificationError();
       }
-      const followUpFailed = await this.afterCredentialTakeover(user.id).then(
-        () => false,
-        () => true,
-      );
-      metadata = before;
-      // Set-password link: the regular reset flow (single-use token, reset mail). Sent even when a follow-up step
-      // failed, since the password is already gone.
+      // Committed: from here on the request reports the takeover (NB-R3-2); follow-up failures are logged and retried.
+      const failedSteps = await this.afterCredentialTakeover(user.id);
+      metadata = failedSteps.length ? { ...before, followUpFailed: failedSteps } : before;
+      passwordRemoved = before.passwordRemoved;
+      // Set-password link: the regular reset flow (single-use token, reset mail).
       const reset = await this.createOneTimeToken(
         user.id,
         'password_reset',
         this.d.passwordResetTtlMs,
       );
       await this.d.mailQueue.enqueue({ kind: 'password_reset', tokenId: reset.id });
-      if (followUpFailed) {
-        await this.audit(
-          {
-            actorId: user.id,
-            action: 'auth.email.verify',
-            targetType: 'user',
-            targetId: user.id,
-            metadata: { proof, ...metadata, followUpFailed: true },
-          },
-          meta,
-        );
-        throw new CredentialStoreUnavailableError();
-      }
     }
     await this.audit(
       {
@@ -897,7 +951,7 @@ export class AuthService {
       },
       meta,
     );
-    return { proof };
+    return { proof, passwordRemoved };
   }
 
   /** Enumeration-safe: always resolves the same; only unverified accounts get a new link. */
@@ -1028,12 +1082,17 @@ export class AuthService {
     activeOrganizationId: string | null,
     meta: RequestMeta,
     reason: 'org_switch' | 'role_changed' | 'member_removed' = 'org_switch',
-  ) {
+  ): Promise<SessionResult | null> {
     // X4: snapshot the credentials first, and refuse when someone else (a takeover) already revoked the old session;
     // the new session is then re-checked against the snapshot like a fresh sign-in.
     const before = await this.d.users.readCredentials(session.userId);
-    if (!before || (await this.d.sessions.revoke(session.id, this.d.clock.now())) === false)
+    if (!before) throw new UnauthenticatedError();
+    if (!(await this.d.sessions.revoke(session.id, this.d.clock.now()))) {
+      // NB-R3-3: a concurrent rotation of this same session by the same client (a double-submitted POST /orgs) already
+      // won. Null tells the route to keep the cookie the winner set; no new session is minted for the loser.
+      if (await this.supersededByOwnRotation(session, meta)) return null;
       throw new UnauthenticatedError();
+    }
     await this.publishSessionRevoked(session, reason);
     const r = await this.issueSession(session.userId, user, activeOrganizationId, meta, {
       authLevel: session.authLevel ?? 'password',
@@ -1044,6 +1103,35 @@ export class AuthService {
       c.emailVerifiedAt?.getTime() === before.emailVerifiedAt?.getTime();
     if (!(await this.stillHolds(r.session, meta, same))) throw new UnauthenticatedError();
     return r;
+  }
+
+  /**
+   * NB-R3-3: true when a live session of the same user, client (IP + user agent) and auth level was created since
+   * `session` was last validated, within ROTATION_RACE_WINDOW_MS. The winner's active organization is kept (a double
+   * submit of POST /orgs creates two orgs; the browser stays in the winner's). Nothing is minted for the loser, and a
+   * takeover, logout or logout-all revokes the successor too, so this never hides a real revocation.
+   */
+  private async supersededByOwnRotation(session: Session, meta: RequestMeta): Promise<boolean> {
+    // The winner revokes first and inserts its session right after, so give it a moment (only on this rare path).
+    for (let attempt = 0; ; attempt++) {
+      if (await this.hasRotationSuccessor(session, meta)) return true;
+      if (attempt >= ROTATION_SUCCESSOR_POLLS) return false;
+      await (this.d.sleep ?? realSleep)(ROTATION_SUCCESSOR_POLL_MS);
+    }
+  }
+
+  private async hasRotationSuccessor(session: Session, meta: RequestMeta): Promise<boolean> {
+    const now = this.d.clock.now();
+    const live = await this.d.sessions.listActiveForUser(session.userId, now);
+    return live.some(
+      (s) =>
+        s.id !== session.id &&
+        s.ip === meta.ip &&
+        s.userAgent === meta.userAgent &&
+        (s.authLevel ?? 'password') === (session.authLevel ?? 'password') &&
+        s.createdAt.getTime() >= session.lastSeenAt.getTime() &&
+        now.getTime() - s.createdAt.getTime() <= ROTATION_RACE_WINDOW_MS,
+    );
   }
 
   private async revokeByToken(token: string) {

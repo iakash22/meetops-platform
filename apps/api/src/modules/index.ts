@@ -155,6 +155,10 @@ export interface ModuleDeps {
   sessions: SessionRepository;
   /** OIDC review X1: takeover claim + session revocation in one transaction (defaults below). */
   accountClaims?: AccountClaimStore;
+  /** AuthService structured error log (takeover follow-ups). Default: the Fastify logger. */
+  authLog?: { error(obj: Record<string, unknown>, msg: string): void };
+  /** AuthService deferred-retry scheduler (tests). Default: an unref'd timer. */
+  scheduleRetry?: (run: () => Promise<void>, delayMs: number) => void;
   oneTimeTokens: OneTimeTokenRepository;
   organizations: OrganizationRepository;
   memberships: MembershipRepository;
@@ -828,7 +832,13 @@ export async function registerModules(app: FastifyInstance, deps: ModuleDeps) {
     },
   };
   const geoIp = deps.geoIp ?? createGeoIpProvider(process.env, app.log);
-  const auth = new AuthService({ ...deps, geoIp, extensionRevoker: revoker, pushDeviceRevoker });
+  const auth = new AuthService({
+    ...deps,
+    geoIp,
+    extensionRevoker: revoker,
+    pushDeviceRevoker,
+    log: deps.authLog ?? app.log,
+  });
   const organizations = new OrganizationService({
     ...deps,
     extensionRevoker: revoker,

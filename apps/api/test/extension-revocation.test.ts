@@ -246,3 +246,43 @@ describe('extension allowlist is enforced after pairing', () => {
     await app.close();
   });
 });
+
+describe('#459 follow-up: revokeForUser can propagate store failures', () => {
+  const failingStore = () =>
+    ({
+      listFamilies: () => Promise.reject(new Error('token store down')),
+    }) as unknown as ExtensionTokenRepository;
+  const svc = () =>
+    new ExtensionAuthService({
+      extensionTokens: failingStore(),
+      extensionIds: [EXT],
+      clock: { now: () => new Date() },
+    } as unknown as ExtensionAuthDeps);
+
+  it('swallows by default (logout, reset, member removal never fail here)', async () => {
+    await expect(svc().revokeForUser('u1', 'logout')).resolves.toBeUndefined();
+  });
+
+  it('rethrows with { propagate: true } so the takeover retry/log path sees it', async () => {
+    await expect(
+      svc().revokeForUser('u1', 'password_changed', undefined, { propagate: true }),
+    ).rejects.toThrow('token store down');
+  });
+
+  it('combineRevokers runs every revoker, then rethrows the first failure', async () => {
+    const { combineRevokers } =
+      await import('../src/modules/desktop-auth/application/desktop-auth.service.js');
+    const calls: string[] = [];
+    const ok = {
+      revokeForUser: async () => {
+        calls.push('second');
+      },
+    };
+    const both = combineRevokers(svc(), ok);
+    await expect(
+      both.revokeForUser('u1', 'password_changed', undefined, { propagate: true }),
+    ).rejects.toThrow('token store down');
+    expect(calls).toEqual(['second']);
+    await expect(both.revokeForUser('u1', 'logout')).resolves.toBeUndefined();
+  });
+});

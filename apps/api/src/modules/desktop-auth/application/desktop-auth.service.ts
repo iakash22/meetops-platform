@@ -33,7 +33,10 @@ import type {
   ExtensionTokenRepository,
   TokenFamily,
 } from '../../extension-auth/domain/extension-token.js';
-import type { ExtensionRevoker } from '../../extension-auth/application/extension-auth.service.js';
+import type {
+  ExtensionRevoker,
+  RevokeForUserOptions,
+} from '../../extension-auth/application/extension-auth.service.js';
 import {
   MemoryRefreshGraceStore,
   type RefreshGraceStore,
@@ -434,6 +437,7 @@ export class DesktopAuthService implements ExtensionRevoker {
     userId: string,
     reason: 'logout' | 'logout_all' | 'password_changed' | 'member_removed' | 'org_switch',
     organizationId?: string,
+    opts: RevokeForUserOptions = {},
   ): Promise<void> {
     try {
       for (const f of await this.d.desktopTokens.listFamilies(
@@ -442,8 +446,9 @@ export class DesktopAuthService implements ExtensionRevoker {
         organizationId,
       ))
         if (f.extensionId === DESKTOP_CLIENT_ID) await this.revokeFamily(f, reason);
-    } catch {
-      // Never fail the user-facing revocation here.
+    } catch (e) {
+      // Never fail the user-facing revocation here, unless asked (opts.propagate).
+      if (opts.propagate) throw e;
     }
   }
 
@@ -538,8 +543,17 @@ export function combineBearerStores(...stores: ExtensionTokenStore[]): Extension
 /** Fans a user revocation out to every revoker (extension and desktop). */
 export function combineRevokers(...rs: ExtensionRevoker[]): ExtensionRevoker {
   return {
-    async revokeForUser(userId, reason, organizationId) {
-      for (const r of rs) await r.revokeForUser(userId, reason, organizationId);
+    async revokeForUser(userId, reason, organizationId, opts) {
+      // Every revoker runs even when one fails; the first failure is rethrown (only with opts.propagate).
+      let failure: { e: unknown } | null = null;
+      for (const r of rs) {
+        try {
+          await r.revokeForUser(userId, reason, organizationId, opts);
+        } catch (e) {
+          failure ??= { e };
+        }
+      }
+      if (failure) throw failure.e;
     },
   };
 }

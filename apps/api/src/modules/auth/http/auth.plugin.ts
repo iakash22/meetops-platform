@@ -61,8 +61,20 @@ function sessionGeo(g: GeoFields | undefined) {
   };
 }
 
-/** UX-1: response header on POST /auth/verify-email (`password_reset` | `verified`). Exposed to CORS callers. */
+/**
+ * UX-1: response header on POST /auth/verify-email, exposed to CORS callers. Values:
+ * - `password_reset`: mailbox-owner takeover that removed the account's password; a set-password link was emailed;
+ * - `set_password`: mailbox-owner takeover of an account that never had a password; a set-password link was emailed;
+ * - `verified`: anything else.
+ * TODO(contracts): move to @meetops/contracts with the next contracts minor bump (ADR-003: an additive export is a
+ * MINOR); until then apps/web/src/lib/api/client.ts keeps an identical copy, pinned by tests on both sides.
+ */
 export const VERIFY_OUTCOME_HEADER = 'x-meetops-verify-outcome';
+export const VERIFY_OUTCOMES = {
+  passwordReset: 'password_reset',
+  setPassword: 'set_password',
+  verified: 'verified',
+} as const;
 
 export interface AuthPluginOptions {
   auth: AuthService;
@@ -286,7 +298,7 @@ export async function authRoutes(app: FastifyInstance, opts: AuthPluginOptions) 
         tags,
         summary: 'Verify email address',
         description:
-          "Consumes a single-use verification token (24 h TTL). Response header `x-meetops-verify-outcome`: `password_reset` after a mailbox-owner takeover, else `verified`. From a live session of the account or the browser that signed up: marks the email verified and signs out the account's other sessions (in the account's own Google session, a pending Google sign-in is linked). From anywhere else, the mailbox owner takes the account over: the password and any Google link are removed, every session is revoked and a set-password (reset) link is emailed. Public; does not need a session.",
+          "Consumes a single-use verification token (24 h TTL). Response header `x-meetops-verify-outcome`: `password_reset` after a mailbox-owner takeover that removed a password, `set_password` after one on an account without a password, else `verified`. From a live session of the account or the browser that signed up: marks the email verified and signs out the account's other sessions (in the account's own Google session, a pending Google sign-in is linked). From anywhere else, the mailbox owner takes the account over: the password and any Google link are removed, every session is revoked and a set-password (reset) link is emailed. Public; does not need a session.",
         body: VerifyEmailBody,
         response: {
           204: Type.Null(),
@@ -311,18 +323,29 @@ export async function authRoutes(app: FastifyInstance, opts: AuthPluginOptions) 
         now,
         GOOGLE_VERIFY_LINK_TTL_MS,
       );
-      const { proof } = await auth.verifyEmail(request.body.token, requestMeta(request), {
-        currentToken: g.readToken(request),
-        signupBinding: bound?.userId ?? null,
-        googleVerifyLink: pendingGoogle,
-      });
+      const { proof, passwordRemoved } = await auth.verifyEmail(
+        request.body.token,
+        requestMeta(request),
+        {
+          currentToken: g.readToken(request),
+          signupBinding: bound?.userId ?? null,
+          googleVerifyLink: pendingGoogle,
+        },
+      );
       if (request.cookies[signupBinding.name] !== undefined)
         reply.clearCookie(signupBinding.name, signupBinding.attributes);
       if (request.cookies[verifyLink.name] !== undefined)
         reply.clearCookie(verifyLink.name, verifyLink.attributes);
       // UX-1: tell the token holder (only) whether the mailbox-owner takeover ran, so the page can say the password was
       // removed and a set-password link was emailed. Additive header; the status stays 204 in every case.
-      reply.header(VERIFY_OUTCOME_HEADER, proof === 'mailbox' ? 'password_reset' : 'verified');
+      reply.header(
+        VERIFY_OUTCOME_HEADER,
+        proof !== 'mailbox'
+          ? VERIFY_OUTCOMES.verified
+          : passwordRemoved
+            ? VERIFY_OUTCOMES.passwordReset
+            : VERIFY_OUTCOMES.setPassword,
+      );
       return reply.status(204).send();
     },
   );
