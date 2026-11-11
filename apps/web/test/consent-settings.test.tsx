@@ -32,7 +32,7 @@ describe('/settings?tab=consent', () => {
       expect(screen.getByRole('button', { name: 'Save changes' })).toBeDisabled();
       await user.clear(days);
       await user.type(days, '30');
-      await user.click(screen.getByRole('radio', { name: /One-party/ }));
+      await user.click(screen.getByRole('radio', { name: /Notice only/ }));
       await user.click(screen.getByRole('button', { name: 'Save changes' }));
       expect(await screen.findByText('Saved')).toBeInTheDocument();
       expect(api.consentSettings.update).toHaveBeenCalledWith(
