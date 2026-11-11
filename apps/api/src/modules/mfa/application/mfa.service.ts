@@ -281,6 +281,98 @@ export class MfaService {
   }
 
   /**
+   * ADR-021 Decision 4: prove the factor again on this session. Rotates the session id (new CSRF token), keeps its
+   * absolute expiry (OQ-7) and stamps the step-up (fresh for 10 minutes, OQ-1). A user without MFA cannot step up
+   * (MFA-SU-05: a Google sign-in is never a second factor, OQ-3).
+   */
+  async stepUp(caller: Caller, proof: SecondFactor, meta: RequestMeta) {
+    const { user, session } = caller;
+    const f = await this.d.mfa.findActiveTotp(user.id);
+    if (!f)
+      throw new DomainError('FORBIDDEN', 'Turn on MFA before confirming sensitive actions', 403);
+    const verified = await this.verifySecondFactor(user, proof, meta, 'step_up');
+    const elevated = await this.d.auth.elevate(session, user, meta, { stepUp: true });
+    await this.audit(
+      {
+        actorId: user.id,
+        action: 'auth.mfa.step_up',
+        targetType: 'mfa_factor',
+        targetId: verified.factorId,
+        metadata: { method: verified.method },
+      },
+      meta,
+    );
+    return {
+      session: elevated,
+      ...(verified.recoveryCodesRemaining !== undefined
+        ? { recoveryCodesRemaining: verified.recoveryCodesRemaining }
+        : {}),
+    };
+  }
+
+  /**
+   * OQ-10: new recovery codes (fresh step-up required). A new HMAC key is generated with them, so every old code dies
+   * with its key even before the rows are replaced (same unit). Shown once.
+   */
+  async regenerateRecoveryCodes(caller: Caller, meta: RequestMeta) {
+    const { user, session } = caller;
+    this.d.auth.requireStepUp({ session, mfaEnabled: true });
+    const f = await this.d.mfa.findActiveTotp(user.id);
+    if (!f) throw new DomainError('NOT_FOUND', 'MFA is not turned on', 404);
+    const payload = await this.openPayload(f);
+    const fresh = { s: payload.s, r: generateRecoveryKey() };
+    const secretEnc = await this.d.cipher.encrypt(encodeSecretPayload(fresh), {
+      userId: user.id,
+      factorId: f.id,
+    });
+    const { codes, hashes } = generateRecoveryCodes(fresh.r);
+    const ok = await this.d.mfa.replaceRecoveryCodes(
+      user.id,
+      f.id,
+      secretEnc,
+      this.d.cipher.keyIdOf(secretEnc),
+      hashes,
+    );
+    if (!ok) throw new DomainError('NOT_FOUND', 'MFA is not turned on', 404);
+    await this.audit(
+      {
+        actorId: user.id,
+        action: 'auth.mfa.recovery_codes.regenerate',
+        targetType: 'mfa_factor',
+        targetId: f.id,
+        metadata: { count: codes.length },
+      },
+      meta,
+    );
+    return { recoveryCodes: codes };
+  }
+
+  /**
+   * OQ-10: remove a factor (turning MFA off when it was the active one). Needs a fresh step-up; every other session,
+   * extension and desktop family is signed out (MFA-DIS-01, SES-05). Unknown or foreign ids are 404.
+   */
+  async disable(caller: Caller, factorId: string, meta: RequestMeta) {
+    const { user, session } = caller;
+    const active = await this.d.mfa.findActiveTotp(user.id);
+    if (active) this.d.auth.requireStepUp({ session, mfaEnabled: true });
+    const f = await this.d.mfa.findFactor(user.id, factorId);
+    if (!f || !(await this.d.mfa.deleteFactor(user.id, factorId)))
+      throw new DomainError('NOT_FOUND', 'Factor not found', 404);
+    if (f.status !== 'active') return;
+    await this.audit(
+      {
+        actorId: user.id,
+        action: 'auth.mfa.disable',
+        targetType: 'mfa_factor',
+        targetId: f.id,
+        metadata: { type: f.type },
+      },
+      meta,
+    );
+    await this.d.auth.afterMfaChange(user.id, session.id, 'disabled');
+  }
+
+  /**
    * Shared second-factor check (challenge, step-up). Rate limits, then the shared lockout, then TOTP (replay CAS) or a
    * single-use recovery code. Failures record a lockout failure, are audited, and answer the same generic error.
    */

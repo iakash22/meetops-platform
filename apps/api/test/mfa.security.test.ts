@@ -16,7 +16,7 @@
  *
  * No real secrets: the TOTP secret below is the RFC 6238 test vector key, and every token is generated at run time.
  */
-import { createHmac } from 'node:crypto';
+import { createHash, createHmac, randomUUID } from 'node:crypto';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -382,7 +382,7 @@ describe('ADR-021 baseline: step-up route inventory (active)', () => {
 });
 
 describe('ADR-021 build state (active pins: when one fails, un-skip the matching TODO(ADR-021) suite below)', () => {
-  it('piece (b): status, enrol, confirm and the login challenge are served; step-up and regenerate are not yet', async () => {
+  it('pieces (b) + (c): status, enrol, confirm, the login challenge, step-up, regenerate and factor removal are served', async () => {
     const app = await buildApp();
     expect(app.hasRoute({ method: 'GET', url: PLANNED.paths.status })).toBe(true);
     for (const p of [PLANNED.paths.totpEnroll, PLANNED.paths.totpConfirm, PLANNED.paths.challenge])
@@ -390,9 +390,9 @@ describe('ADR-021 build state (active pins: when one fails, un-skip the matching
     // MFA-CSRF-02: enrolment and the challenge are never a GET.
     for (const p of [PLANNED.paths.totpEnroll, PLANNED.paths.totpConfirm, PLANNED.paths.challenge])
       expect(app.hasRoute({ method: 'GET', url: p }), p).toBe(false);
-    // TODO(ADR-021 part c): step-up and recovery-code regeneration.
     for (const p of [PLANNED.paths.stepUp, PLANNED.paths.recoveryCodes])
-      expect(app.hasRoute({ method: 'POST', url: p }), p).toBe(false);
+      expect(app.hasRoute({ method: 'POST', url: p }), p).toBe(true);
+    expect(app.hasRoute({ method: 'DELETE', url: '/auth/mfa/factors/:factorId' })).toBe(true);
     await app.close();
   });
 
@@ -928,13 +928,16 @@ describe('ADR-021 recovery codes (MFA-RC)', () => {
     await app.close();
   });
 
-  // TODO(ADR-021 part c): needs POST /auth/mfa/step-up and /auth/mfa/recovery-codes.
-  it.skip('MFA-RC-04: regenerate needs step-up, returns a fresh set and invalidates every old code', async () => {
+  it('MFA-RC-04: regenerate needs step-up, returns a fresh set and invalidates every old code', async () => {
     const app = await buildApp();
     const c = await signupAndLogin(app, 'rc4@example.com');
     const { recoveryCodes: old, secret } = await enrollTotp(c);
+    const denied = await c.post(PLANNED.paths.recoveryCodes, {});
+    expect(denied.statusCode).toBe(403);
+    expect(errCode(denied)).toBe(PLANNED.errors.stepUpRequired);
     await c.post(PLANNED.paths.stepUp, { [PLANNED.totpField]: totp(secret, Date.now()) });
     const regen = await c.post(PLANNED.paths.recoveryCodes, {});
+    expect(regen.headers['cache-control']).toMatch(/no-store/);
     expect(regen.statusCode).toBe(200);
     const fresh = regen.json<{ recoveryCodes: string[] }>().recoveryCodes;
     expect(fresh.some((x) => old.includes(x))).toBe(false);
@@ -956,26 +959,29 @@ describe('ADR-021 recovery codes (MFA-RC)', () => {
   });
 });
 
-describe.skip('TODO(ADR-021) step-up (MFA-SU)', () => {
-  it('MFA-SU-03: each step-up route returns 403 STEP_UP_REQUIRED on a password-level session of an MFA user', async () => {
+describe('ADR-021 step-up (MFA-SU)', () => {
+  it('MFA-SU-03: each step-up route returns 403 STEP_UP_REQUIRED on a session of an MFA user without a fresh step-up', async () => {
+    // Adapted to OQ-17: a password login of an MFA user no longer yields a session at all (MFA_REQUIRED, covered by
+    // MFA-TOTP-01). The session that lacks a step-up is the one right after confirm (elevated, never stamped).
     const app = await buildApp();
     const c = await signupAndLogin(app, 'su3@example.com');
     const org = (await c.post('/orgs', { name: 'SU' })).json<{ organization: { id: string } }>()
       .organization.id;
     await enrollTotp(c);
-    await c.post('/auth/logout');
-    const pw = new Client(app);
-    await pw.post('/auth/login', { email: 'su3@example.com', password: PASSWORD });
+    const pw = c;
     for (const r of STEP_UP_ROUTES) {
       const url = r.url
         .replace(':organizationId', org)
         .replace(':userId', '00000000-0000-4000-8000-000000000009')
         .replace(':integrationId', '00000000-0000-4000-8000-000000000008');
-      const res = await pw.send(
-        r.method,
-        url,
-        r.method === 'DELETE' ? undefined : { role: 'admin', provider: 'jira' },
-      );
+      // Adapted: a body valid for each route (Fastify validates the body before the handler checks the step-up).
+      const body =
+        r.method === 'DELETE'
+          ? undefined
+          : r.method === 'PATCH'
+            ? { role: 'member' }
+            : { provider: 'jira' };
+      const res = await pw.send(r.method, url, body);
       expect(res.statusCode, `${r.method} ${r.url}`).toBe(403);
       expect(errCode(res)).toBe(PLANNED.errors.stepUpRequired);
     }
@@ -1011,25 +1017,137 @@ describe.skip('TODO(ADR-021) step-up (MFA-SU)', () => {
     });
     const c = await googleSignIn(app);
     expect(await sessionLevel(c)).not.toBe(PLANNED.levels.mfa);
+    // OQ-3: Google's amr is never a second factor; without a factor there is nothing to step up with.
+    const up = await c.post(PLANNED.paths.stepUp, { [PLANNED.totpField]: '123456' });
+    expect(up.statusCode).toBe(403);
+    expect(await sessionLevel(c)).not.toBe(PLANNED.levels.mfa);
     await app.close();
   });
 
-  it.todo(
-    'MFA-SU-06: step-up older than the freshness window (OPEN QUESTION OQ-1) is required again',
-  );
-  it.todo('MFA-SU-07: org switch, role change and password reset drop auth_level back to password');
+  it('MFA-SU-06 (OQ-1): a step-up is fresh for 10 minutes, then required again', async () => {
+    let offset = 0;
+    const app = await buildApp({ clock: { now: () => new Date(Date.now() + offset) } });
+    const c = await signupAndLogin(app, 'su6@example.com');
+    const org = (await c.post('/orgs', { name: 'SU6' })).json<{ organization: { id: string } }>()
+      .organization.id;
+    const { secret } = await enrollTotp(c);
+    const up = await c.post(PLANNED.paths.stepUp, {
+      [PLANNED.totpField]: totp(secret, Date.now()),
+    });
+    expect(up.statusCode).toBe(200);
+    const until = Date.parse(up.json<{ stepUpExpiresAt: string }>().stepUpExpiresAt);
+    expect(until - Date.now()).toBeGreaterThan(9 * 60_000);
+    expect(until - Date.now()).toBeLessThanOrEqual(10 * 60_000 + 1_000);
+    const target = `/orgs/${org}/members/00000000-0000-4000-8000-000000000009`;
+    expect(errCode(await c.patch(target, { role: 'member' }))).not.toBe(
+      PLANNED.errors.stepUpRequired,
+    );
+    offset = 10 * 60_000 + 1_000;
+    const late = await c.patch(target, { role: 'member' });
+    expect(late.statusCode).toBe(403);
+    expect(errCode(late)).toBe(PLANNED.errors.stepUpRequired);
+    await app.close();
+  });
+
+  it('MFA-SU-07 (interpretation): an org switch keeps level mfa but drops the step-up', async () => {
+    const app = await buildApp();
+    const c = await signupAndLogin(app, 'su7@example.com');
+    const { secret } = await enrollTotp(c);
+    await c.post(PLANNED.paths.stepUp, { [PLANNED.totpField]: totp(secret, Date.now()) });
+    // Creating an org rotates the session into it (org switch).
+    const org = (await c.post('/orgs', { name: 'SU7' })).json<{ organization: { id: string } }>()
+      .organization.id;
+    expect(await sessionLevel(c)).toBe(PLANNED.levels.mfa);
+    const r = await c.patch(`/orgs/${org}/members/00000000-0000-4000-8000-000000000009`, {
+      role: 'member',
+    });
+    expect(errCode(r)).toBe(PLANNED.errors.stepUpRequired);
+    await app.close();
+  });
+
+  it('OQ-9 / OQ-10: the extra sensitive routes also need a fresh step-up', async () => {
+    const EXT = 'abcdefghijklmnopabcdefghijklmnop';
+    const app = await buildApp({ extensionIds: [EXT], desktopAuthEnabled: true });
+    const c = await signupAndLogin(app, 'oq910@example.com');
+    const org = (await c.post('/orgs', { name: 'OQ910' })).json<{ organization: { id: string } }>()
+      .organization.id;
+    const other = new Client(app);
+    await other.post('/auth/login', { email: 'oq910@example.com', password: PASSWORD });
+    await enrollTotp(c);
+    // enrolment signed the other session out; any session id other than ours exercises the check.
+    const verifier = createHash('sha256').update(randomUUID()).digest('base64url');
+    const cases: [string, string, object | undefined][] = [
+      ['DELETE', `/orgs/${org}/members/00000000-0000-4000-8000-000000000009`, undefined],
+      ['POST', `/orgs/${org}/invitations`, { email: 'new-admin@example.com', role: 'admin' }],
+      ['POST', `/orgs/${org}/calendar/connect`, { provider: 'google', returnTo: '/calendar' }],
+      [
+        'DELETE',
+        `/orgs/${org}/calendar/connections/00000000-0000-4000-8000-000000000007`,
+        undefined,
+      ],
+      ['DELETE', '/auth/sessions/00000000-0000-4000-8000-000000000006', undefined],
+      [
+        'POST',
+        '/auth/extension/pair',
+        {
+          extensionId: EXT,
+          deviceId: randomUUID(),
+          nonce: createHash('sha256').update(randomUUID()).digest('base64url'),
+        },
+      ],
+      [
+        'POST',
+        '/auth/desktop/authorize',
+        {
+          codeChallenge: createHash('sha256').update(verifier).digest('base64url'),
+          codeChallengeMethod: 'S256',
+          redirectUri: 'http://127.0.0.1:53682/callback',
+          deviceId: randomUUID(),
+        },
+      ],
+      ['POST', PLANNED.paths.recoveryCodes, undefined],
+    ];
+    for (const [method, url, body] of cases) {
+      const r = await c.send(method as 'POST' | 'DELETE', url, body);
+      expect(r.statusCode, `${method} ${url}`).toBe(403);
+      expect(errCode(r), `${method} ${url}`).toBe(PLANNED.errors.stepUpRequired);
+    }
+    // Not gated: inviting a member, leaving an org yourself, logging out.
+    const member = await c.post(`/orgs/${org}/invitations`, {
+      email: 'new-member@example.com',
+      role: 'member',
+    });
+    expect(member.statusCode).toBe(201);
+    await app.close();
+  });
+
+  it('users without MFA are not asked for a step-up (no factor to prove)', async () => {
+    const app = await buildApp();
+    const c = await signupAndLogin(app, 'nomfa@example.com');
+    const org = (await c.post('/orgs', { name: 'NoMFA' })).json<{ organization: { id: string } }>()
+      .organization.id;
+    const r = await c.post(`/orgs/${org}/invitations`, { email: 'adm@example.com', role: 'admin' });
+    expect(r.statusCode).toBe(201);
+    await app.close();
+  });
   it.todo(
     'MFA-SU-08: bearer clients (extension/desktop/mobile) get STEP_UP_REQUIRED on step-up routes, not a bypass',
   );
 });
 
-describe.skip('TODO(ADR-021) session handling and disable/reset (MFA-SES, MFA-DIS)', () => {
-  it('MFA-DIS-01/03: disabling MFA needs step-up, revokes every other session and notifies by email', async () => {
+describe('ADR-021 session handling and disable (MFA-SES, MFA-DIS)', () => {
+  it('MFA-DIS-01: disabling MFA needs step-up and revokes every other session', async () => {
     const app = await buildApp();
     const c = await signupAndLogin(app, 'dis1@example.com');
-    const { factorId, secret } = await enrollTotp(c);
+    const { factorId, secret, recoveryCodes } = await enrollTotp(c);
     const other = new Client(app);
     await other.post('/auth/login', { email: 'dis1@example.com', password: PASSWORD });
+    // OQ-17: the second device needs the second factor too before it holds a session.
+    expect(
+      (await other.post(PLANNED.paths.challenge, { [PLANNED.recoveryField]: recoveryCodes[0] }))
+        .statusCode,
+    ).toBe(200);
+    expect((await other.get('/auth/session')).statusCode).toBe(200);
     const denied = await c.delete(PLANNED.paths.factor(factorId));
     expect(denied.statusCode).toBe(403);
     await c.post(PLANNED.paths.stepUp, { [PLANNED.totpField]: totp(secret, Date.now()) });
@@ -1037,6 +1155,24 @@ describe.skip('TODO(ADR-021) session handling and disable/reset (MFA-SES, MFA-DI
     expect(ok.statusCode).toBe(204);
     expect((await other.get('/auth/session')).statusCode).toBe(401);
     expect((await c.get('/auth/session')).statusCode).toBe(200);
+    expect((await c.get(PLANNED.paths.status)).json<{ enabled: boolean }>().enabled).toBe(false);
+    // MFA is off: the next login is single-factor again.
+    await c.post('/auth/logout');
+    const again = new Client(app);
+    const login = await again.post('/auth/login', {
+      email: 'dis1@example.com',
+      password: PASSWORD,
+    });
+    expect(login.json<{ mfaRequired?: boolean }>().mfaRequired).toBeUndefined();
+    await app.close();
+  });
+
+  it('MFA-DIS-01: a foreign or unknown factor id is 404', async () => {
+    const app = await buildApp();
+    const a = await signupAndLogin(app, 'dis1a@example.com');
+    const b = await signupAndLogin(app, 'dis1b@example.com');
+    const { factorId } = await enrollTotp(a);
+    expect((await b.delete(PLANNED.paths.factor(factorId))).statusCode).toBe(404);
     await app.close();
   });
 
@@ -1044,14 +1180,18 @@ describe.skip('TODO(ADR-021) session handling and disable/reset (MFA-SES, MFA-DI
     const audit = new InMemoryAuditLog();
     const app = await buildApp({ audit });
     const c = await signupAndLogin(app, 'aud1@example.com');
-    const { secret, recoveryCodes } = await enrollTotp(c);
+    const { secret, recoveryCodes, factorId } = await enrollTotp(c);
     await c.post(PLANNED.paths.stepUp, { [PLANNED.totpField]: totp(secret, Date.now()) });
+    await c.post(PLANNED.paths.recoveryCodes, {});
+    await c.delete(PLANNED.paths.factor(factorId));
     const actions = audit.events.map((e) => e.action as string);
     expect(actions).toEqual(
       expect.arrayContaining([
         PLANNED.audit.enrolled,
         PLANNED.audit.confirmed,
         PLANNED.audit.stepUp,
+        PLANNED.audit.recoveryRegenerated,
+        PLANNED.audit.disabled,
       ]),
     );
     const dump = JSON.stringify(audit.events);
@@ -1060,9 +1200,20 @@ describe.skip('TODO(ADR-021) session handling and disable/reset (MFA-SES, MFA-DI
     await app.close();
   });
 
-  it.todo(
-    'MFA-SES-04: elevation keeps the absolute expiry of the original sign-in (no lifetime extension)',
-  );
+  it('MFA-SES-04 (OQ-7): confirm and step-up keep the absolute expiry of the original sign-in', async () => {
+    const sessions = new InMemorySessionRepository();
+    const app = await buildApp({ sessions });
+    const c = await signupAndLogin(app, 'ses4@example.com');
+    const live = () => [...sessions.items.values()].filter((x) => !x.revokedAt);
+    const [first] = live();
+    const { secret } = await enrollTotp(c);
+    await c.post(PLANNED.paths.stepUp, { [PLANNED.totpField]: totp(secret, Date.now()) });
+    const now = live();
+    expect(now).toHaveLength(1);
+    expect(now[0]!.id).not.toBe(first!.id);
+    expect(now[0]!.expiresAt.getTime()).toBe(first!.expiresAt.getTime());
+    await app.close();
+  });
   it.todo(
     'MFA-SES-05: MFA reset by an admin/support revokes all sessions, extension and desktop token families, push devices',
   );

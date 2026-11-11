@@ -1,8 +1,11 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
+import { Type } from '@sinclair/typebox';
 import {
   MFA_PATHS,
   MfaCodeRequest,
   MfaElevationResponse,
+  MfaFactorParams,
+  MfaRecoveryCodesResponse,
   MfaStatusResponse,
   MfaTotpConfirmRequest,
   MfaTotpConfirmResponse,
@@ -12,7 +15,7 @@ import { registerDomainErrorHandler } from '../../../shared/http-errors.js';
 import { DomainError } from '../../../shared/domain-error.js';
 import type { AuthService } from '../../auth/application/auth.service.js';
 import { UnauthenticatedError } from '../../auth/domain/errors.js';
-import { stepUpExpiresAt } from '../../auth/domain/session.js';
+import { stepUpExpiresAt, type Session } from '../../auth/domain/session.js';
 import { ErrorBody } from '../../auth/http/schemas.js';
 import { makeGuards, requestMeta, type HttpSecurityConfig } from '../../auth/http/security.js';
 import type { MfaService } from '../application/mfa.service.js';
@@ -41,6 +44,10 @@ async function codesMustBeStrings(request: FastifyRequest) {
 }
 
 const noStore = (reply: FastifyReply) => void reply.header('cache-control', 'no-store');
+const stepUpUntil = (s: Session) => {
+  const until = stepUpExpiresAt(s);
+  return until ? until.toISOString() : null;
+};
 
 export async function mfaRoutes(app: FastifyInstance, opts: MfaRoutesOptions) {
   registerDomainErrorHandler(app);
@@ -141,15 +148,80 @@ export async function mfaRoutes(app: FastifyInstance, opts: MfaRoutesOptions) {
       g.clearMfaChallengeCookie(reply);
       g.setSessionCookie(reply, r.session);
       noStore(reply);
-      const until = stepUpExpiresAt(r.session.session);
       return {
         csrfToken: g.issueCsrfForSession(reply, r.session.session.id),
         authLevel: r.session.session.authLevel ?? 'password',
-        stepUpExpiresAt: until ? until.toISOString() : null,
+        stepUpExpiresAt: stepUpUntil(r.session.session),
         ...(r.recoveryCodesRemaining !== undefined
           ? { recoveryCodesRemaining: r.recoveryCodesRemaining }
           : {}),
       };
+    },
+  );
+  app.post<{ Body: MfaCodeRequest }>(
+    MFA_PATHS.stepUp,
+    {
+      preValidation: codesMustBeStrings,
+      schema: {
+        tags,
+        summary: 'Step up (confirm it is you)',
+        description:
+          'ADR-021 Decision 4: send a TOTP or recovery code. Rotates the session (new cookie and CSRF token, same absolute expiry) and makes sensitive actions available for 10 minutes. 403 FORBIDDEN without MFA, 400 INVALID_MFA_CODE (shares the login lockout), 429 when rate-limited or locked.',
+        body: MfaCodeRequest,
+        response: { 200: MfaElevationResponse, ...errors },
+      },
+    },
+    async (request, reply) => {
+      const caller = await g.requireSession(request);
+      const r = await mfa.stepUp(caller, request.body, requestMeta(request));
+      g.setSessionCookie(reply, r.session);
+      noStore(reply);
+      return {
+        csrfToken: g.issueCsrfForSession(reply, r.session.session.id),
+        authLevel: r.session.session.authLevel ?? 'password',
+        stepUpExpiresAt: stepUpUntil(r.session.session),
+        ...(r.recoveryCodesRemaining !== undefined
+          ? { recoveryCodesRemaining: r.recoveryCodesRemaining }
+          : {}),
+      };
+    },
+  );
+
+  app.post(
+    MFA_PATHS.recoveryCodes,
+    {
+      schema: {
+        tags,
+        summary: 'Regenerate recovery codes',
+        description:
+          'Needs a fresh step-up (403 STEP_UP_REQUIRED). Returns 10 new codes ONCE (no-store); every old code stops working.',
+        response: { 200: MfaRecoveryCodesResponse, 404: ErrorBody, ...errors },
+      },
+    },
+    async (request, reply) => {
+      const caller = await g.requireSession(request);
+      const r = await mfa.regenerateRecoveryCodes(caller, requestMeta(request));
+      noStore(reply);
+      return r;
+    },
+  );
+
+  app.delete<{ Params: MfaFactorParams }>(
+    MFA_PATHS.factor,
+    {
+      schema: {
+        tags,
+        summary: 'Remove an MFA factor',
+        description:
+          'Removing the active factor turns MFA off. Needs a fresh step-up while MFA is on (403 STEP_UP_REQUIRED); signs out every other session and device. 404 for unknown or foreign ids.',
+        params: MfaFactorParams,
+        response: { 204: Type.Null(), 404: ErrorBody, ...errors },
+      },
+    },
+    async (request, reply) => {
+      const caller = await g.requireSession(request);
+      await mfa.disable(caller, request.params.factorId, requestMeta(request));
+      return reply.status(204).send();
     },
   );
 }

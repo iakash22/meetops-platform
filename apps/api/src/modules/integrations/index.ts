@@ -287,6 +287,8 @@ export default async function integrationsModule(
       async (request) => {
         const c = await callerFor(request, request.params.organizationId);
         organizations.authorize(c.ctx, 'update', 'Organization');
+        // ADR-021 Decision 4: connecting an integration needs a fresh step-up.
+        auth.requireStepUp(request.auth);
         await routeLimits.charge('oauthConnect', c.ctx);
         return service.connect({
           organizationId: c.ctx.organizationId,
@@ -343,6 +345,8 @@ export default async function integrationsModule(
       async (request) => {
         const c = await callerFor(request, request.params.organizationId);
         organizations.authorize(c.ctx, 'update', 'Organization');
+        // ADR-021 Decision 4: disconnecting an integration needs a fresh step-up.
+        auth.requireStepUp(request.auth);
         const r = await repo.disconnect(c.ctx.organizationId, request.params.integrationId);
         if (!r) throw new IntegrationNotFoundError();
         await access.record(c, {

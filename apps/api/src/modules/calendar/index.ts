@@ -163,6 +163,8 @@ export default async function calendarModule(
     },
     async (request) => {
       const c = await callerFor(request, request.params.organizationId);
+      // ADR-021 OQ-9: connecting a calendar needs a fresh step-up.
+      auth.requireStepUp(request.auth);
       await limits.charge('oauthConnect', c.ctx);
       return service.connect({
         organizationId: c.ctx.organizationId,
@@ -240,6 +242,8 @@ export default async function calendarModule(
     },
     async (request, reply) => {
       const c = await callerFor(request, request.params.organizationId);
+      // ADR-021 OQ-9: disconnecting a calendar needs a fresh step-up.
+      auth.requireStepUp(request.auth);
       await service.disconnect(
         c.ctx.organizationId,
         c.ctx.userId,

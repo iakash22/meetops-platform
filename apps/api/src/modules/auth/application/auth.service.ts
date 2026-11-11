@@ -39,6 +39,7 @@ import type {
   TakeoverFollowUpRunner,
 } from '../domain/takeover-follow-up.js';
 import {
+  hasFreshStepUp,
   isSessionActive,
   MFA_SESSION_LEVEL,
   type Session,
@@ -49,6 +50,7 @@ import {
 import {
   InvalidCredentialsError,
   RateLimitedError,
+  StepUpRequiredError,
   UnauthenticatedError,
   CredentialStoreUnavailableError,
 } from '../domain/errors.js';
@@ -1277,6 +1279,18 @@ export class AuthService implements TakeoverFollowUpRunner {
    * ADR-021: MFA turned on or off for the user. Every other session is revoked (realtime told) and, when disabling,
    * extension/desktop token families too, so nothing minted under the old assurance survives.
    */
+  /**
+   * ADR-021 Decision 4 (+ OQ-9 / OQ-10): a sensitive action by a user with MFA needs a step-up in the last 10 minutes
+   * (OQ-1) on this session. Users without MFA are not asked (they have nothing to step up with; org policy and forced
+   * enrolment, OQ-5 / OQ-13, are enforced separately). Call it right after requireSession, before any lookup, so the
+   * answer does not depend on whether the target exists.
+   */
+  requireStepUp(ctx: { session: Session; mfaEnabled?: boolean } | null | undefined): void {
+    if (!ctx) throw new UnauthenticatedError();
+    if (ctx.mfaEnabled && !hasFreshStepUp(ctx.session, this.d.clock.now()))
+      throw new StepUpRequiredError();
+  }
+
   async afterMfaChange(userId: string, keepSessionId: string, change: 'enabled' | 'disabled') {
     await this.revokeOtherSessions(userId, keepSessionId);
     if (change === 'disabled')

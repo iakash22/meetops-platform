@@ -317,7 +317,10 @@ export async function authRoutes(app: FastifyInstance, opts: AuthPluginOptions) 
       },
     },
     async (request, reply) => {
-      const { user, session } = await g.requireSession(request);
+      const ctx = await g.requireSession(request);
+      const { user, session } = ctx;
+      // ADR-021 OQ-10: revoking another session needs a fresh step-up; ending your own does not (it is a logout).
+      if (request.params.sessionId !== session.id) auth.requireStepUp(ctx);
       await auth.revokeSession(user.id, request.params.sessionId, requestMeta(request));
       if (request.params.sessionId === session.id) g.clearSessionCookie(reply);
       return reply.status(204).send();
