@@ -185,9 +185,9 @@ stores an org country; `docs/research/competitive-landscape.md` §4 records this
     customer (s. 2(i)), for example letting an AI vendor train on content?
 15. For non-member participants, what ground under s. 4 does the customer have: consent (s. 6), or "voluntarily
     provided" (s. 7(a)) by speaking after the recording notice? Does the ADR-020 notice-based default meet s. 5 and Rule 3?
-16. Commencement: G.S.R. 843(E) and the Rules (G.S.R. 846(E)) are in Gazette issue No. 760 dated 13 Nov 2025, but the
-    e-Gazette ID and signature read 14 Nov 2025. Is the 18-month date 13 May 2027 or 14 May 2027, and is the Consent
-    Manager date 13 or 14 Nov 2026?
+16. Commencement: G.S.R. 843(E) is in Gazette issue No. 757 dated 13 Nov 2025, and only the Rules (G.S.R. 846(E)) are in
+    Gazette issue No. 760 dated 13 Nov 2025; the e-Gazette IDs and signatures on both read 14 Nov 2025. Is the 18-month
+    date 13 May 2027 or 14 May 2027, and is the Consent Manager date 13 or 14 Nov 2026?
 17. Breach: what processor-to-customer notice period should the India DPA set so customers can meet Rule 7(2)(b)'s 72
     hours, and how should it sit with CERT-In's 6-hour reporting, which we read as applying to MeetOps directly?
 18. Children: when a customer's meeting includes under-18 participants, what must MeetOps provide as processor so the
@@ -200,8 +200,43 @@ stores an org country; `docs/research/competitive-landscape.md` §4 records this
 21. Rule 8(3) makes the Fiduciary keep processing logs, including its Processor's, for at least a year. How does that sit
     with ADR-019's "AI provider copies deleted right after processing" and with customer retention settings as short as 7
     days?
+22. CERT-In direction (iv) of 28 Apr 2022 says logs are kept for 180 days "within the Indian jurisdiction", but CERT-In's
+    own FAQ Q35 says they "may be stored outside India" if they can be produced in reasonable time, and calls itself
+    "not a legal document". Can MeetOps keep its logs, or its sub-processors' logs, outside India? (See
+    [verification-round-3.md](verification-round-3.md) §3.)
+23. AssemblyAI, Google and Resend promise breach notice only "without undue delay", with no hour limit, and none of their
+    DPAs names the DPDP Act. CERT-In needs a report within 6 hours, and DPDP Rule 7(2)(b) gives the Data Fiduciary 72
+    hours for details to the Board. Must our sub-processor terms set fixed hours, and when a breach happens at a foreign
+    sub-processor, whose 6-hour CERT-In clock applies? (See [verification-round-3.md](verification-round-3.md) §4.)
+24. Razorpay publishes no DPA. Its terms make us "solely and absolutely responsible" for our customers' data, and its
+    privacy policy gives DPDP rights directly. Is Razorpay an independent Data Fiduciary for payment data it must hold in
+    India under RBI rules, and what should our privacy notice and sub-processor list say about it? (See
+    [verification-round-3.md](verification-round-3.md) §4.)
+25. Razorpay's Terms Part A §12.3 require us to tell Razorpay within 24 hours of any actual or suspected breach of
+    customer data in our systems. Does that apply to MeetOps as a SaaS merchant, and how should it sit in our incident
+    runbook next to the CERT-In 6-hour and DPDP 72-hour duties?
+26. Eval-data consent wording. Does the consent form in
+    [design-partner-kit/hinglish-eval-data-protocol.md](design-partner-kit/hinglish-eval-data-protocol.md) §3 (English
+    §3.1, Hindi §3.2) meet s. 5, s. 6(1)–(3) and Rule 3 of the DPDP Rules? Is our Hindi draft an adequate Eighth
+    Schedule version under s. 5(3) and s. 6(3), and should counsel or a certified translator sign it off? The Hindi text
+    is our own draft translation and is marked there as needing native-speaker review.
+27. Withdrawal and de-identified eval data. Under s. 6(4) a speaker may withdraw "at any time"; s. 6(5) says withdrawal
+    "shall not affect the legality of processing ... before its withdrawal"; s. 6(6) requires processing to cease
+    "within a reasonable time", and s. 8(7)(a) requires erasure "upon the Data Principal withdrawing her consent" unless
+    a law requires retention [L13]. The Act defines personal data as data about an individual "who is
+    identifiable by or in relation to such data" (s. 2(t)) [L13] and has no separate rule for anonymised or de-identified data.
+    May verified, de-identified reference transcripts (protocol §4.2) be kept after the speaker withdraws if they no
+    longer identify that speaker, or must they be deleted as the protocol now proposes (§5, "On withdrawal")? Does a
+    transcript of a real meeting stay "personal data" because colleagues could still recognise who spoke, and what
+    "reasonable time" for deletion would counsel accept (the protocol proposes 30 days)?
+28. Consent-record retention. Section 6(10) puts on the Data Fiduciary the burden to prove that notice was given and
+    consent obtained. How long should we keep signed eval consent forms, the consent register and withdrawal records
+    after the related data is deleted (protocol §5 leaves "[period for counsel]")? The Rules set no period for a
+    Fiduciary's own consent records. Rule 8(3) requires processing logs to be kept for at least one year, and Consent
+    Managers must keep consent records for at least seven years (First Schedule, Part B, item 4(c)) [L14]. Is either a sensible
+    benchmark, and how does a longer period sit with s. 8(7) erasure and data minimisation?
 
-## Sources (fetched 2026-11-11)
+## Sources (fetched 2026-11-11; L13–L14 read 2026-11-18)
 
 | ID  | Source                                                                                                                                                                                                                                |
 | --- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -217,3 +252,5 @@ stores an org country; `docs/research/competitive-landscape.md` §4 records this
 | L10 | European Commission, Guidelines on transparency obligations (Art. 50): https://digital-strategy.ec.europa.eu/en/policies/guidelines-ai-transparency-obligations                                                                       |
 | L11 | Houthoff, "AI Act: transparency obligations and the AI Omnibus Regulation" (1 Sep 2026); law-firm summary: https://www.houthoff.com/insights/news/ai-act-transparency-obligations-and-the-ai-omnibus-regulation/                      |
 | L12 | Taft, "AI-Powered Call Transcription Tools Present Class Action BIPA Risk" (8 Sep 2026); legal press on L1: https://www.privacyanddatasecurityinsight.com/2026/09/ai-powered-call-transcription-tools-present-class-action-bipa-risk/ |
+| L13 | Digital Personal Data Protection Act, 2023 (No. 22 of 2023), ss. 2(t), 6(4)–(6), 6(10), 8(7), Gazette text on MeitY: https://www.meity.gov.in/static/uploads/2024/06/2bf1f0e9f04e6fb4f8fef35e82c42aa5.pdf                             |
+| L14 | DPDP Rules, 2025 (G.S.R. 846(E), Gazette No. 760), Rule 8(3) and First Schedule Part B item 4(c), MeitY copy: https://www.meity.gov.in/static/uploads/2025/11/53450e6e5dc0bfa85ebd78686cadad39.pdf                                    |
