@@ -1,6 +1,6 @@
 # ADR-020: Recording consent by region
 
-- Status: **Accepted — approved by owner Maddy, 2026-11-01**
+- Status: **Accepted — approved by owner Maddy, 2026-11-01**; amended 2026-11-11 (explicit-consent default for every org until an org country is stored; notice for botless capture)
 - Date: 2026-11-01
 - Owner: Architecture (All Rounder Techy); clients by the Coordinator; tests by Tester & Security
 - Related: `docs/12-security/upload-media-security.md` §7, `docs/12-security/threat-model.md` §4
@@ -51,3 +51,41 @@ multi-region calls fall back to the strictest rule anyway.
   pseudonymise the `users` row and keep the consent evidence (Art. 17(3)(e) legal-claims retention), or use a reviewed
   maintenance migration (`docs/16-runbooks/meeting-consent-maintenance.md`). Until then, user hard-delete is blocked
   for attesters by design.
+
+## Amendment (2026-11-11)
+
+- Status: **Accepted — decided by the Project Plan & Coordinator, 2026-11-11**
+
+The original Decision item 3 said explicit consent (`all_parties_consented`) is **on by default
+for orgs in the EU or UK**, and Consequences said orgs need a country to apply that default.
+
+Orgs do not yet store a country. Until they do, **explicit consent is on by default for every
+org**. That is the privacy-safe default under GDPR. Adding an org country field is a follow-up;
+after it exists, the EU/UK-only default can be revisited.
+
+Where this amendment conflicts with Decision item 3 and the matching consequence, the amendment
+wins.
+
+### Notice for botless capture
+
+Product Research found in [#473](https://github.com/iakash22/meetops-platform/pull/473)
+([`docs/research/legal-questions-brief.md` §4.1 item 1](https://github.com/iakash22/meetops-platform/blob/edf34a1132f37593404ec38fdb58184810f19607/docs/research/legal-questions-brief.md#41-points-we-found-for-that-review))
+that Decision item 2's default notice assumes a recording bot MeetOps does not ship. Item 2
+required a visible recorder name ("MeetOps Recorder") and a chat notice on join; capture is
+botless (extension, desktop and mobile).
+
+This amendment **supersedes that part of Decision item 2** (the "MeetOps Recorder" name and a
+join-time chat notice from a recorder bot). The default method remains notice-based
+(`all_parties_notified`). The capturing user's client must show the notice and post it to
+participants, for example as a meeting-chat message or a pre-capture prompt the capturing user
+must confirm. An always-visible recording indicator on MeetOps clients remains required.
+
+### Known gap: the consent ledger is host-only
+
+The same brief ([§4.1 item 2](https://github.com/iakash22/meetops-platform/blob/edf34a1132f37593404ec38fdb58184810f19607/docs/research/legal-questions-brief.md#41-points-we-found-for-that-review))
+notes that the consent ledger currently records only the host's (signed-in user's) consent, not
+other participants'. Per-participant records are a separate feature (see also the consent-receipts
+proposal in #473, [`docs/research/specs/03-consent-receipts.md`](https://github.com/iakash22/meetops-platform/blob/edf34a1132f37593404ec38fdb58184810f19607/docs/research/specs/03-consent-receipts.md))
+and are not implemented in this PR.
+
+All-party consent everywhere and the ban on one-party mode are unchanged.

@@ -5,6 +5,10 @@
 - **#463 follow-ups closed.** Tester X4-mem, NB-R3 post-commit verify UX, and the info copy from the #459 reviews are done in [#463](https://github.com/iakash22/meetops-platform/pull/463) (merge `6feef782`). `integration/phase-1` is at `de8a86e4`.
 - **Roles / CI / open PRs** are otherwise as in the 9 Nov ~22:35 IST snapshot below.
 
+## Update — 11 Nov 2026 (~23:25 IST)
+
+OD-1 is **decided** ([ADR-022](15-decisions/ADR-022-account-claim-decision.md)): keep the current behaviour (signed-out cross-device verify of an unverified account still drops the password; verified accounts keep theirs; no current-password prompt on the verify page). No code change. This note records the decision only; it is not a full status refresh.
+
 ## Update — 9 Nov 2026 (~22:35 IST)
 
 - **Pause lifted** (unchanged). Akash's standing go-ahead via Coordinator: continue parallel work; password minimum stays 8 with composition rules.
@@ -12,7 +16,7 @@
   - **All Rounder Techy** — Architect / DevOps / AI / Docs / Backend. Architecture reviews; Google OIDC hardening **merged** as [#459](https://github.com/iakash22/meetops-platform/pull/459) (`fd4ede49`, head `c41fc720` at merge). The #459 follow-ups (Tester X4-mem, NB-R3 post-commit verify UX, info copy) are **closed in [#463](https://github.com/iakash22/meetops-platform/pull/463)**. Next: docs/ops notes, then D-3…D-6 / AI work.
   - **Tester & Security** — Security / QA. Reviews each PR on its exact head SHA. Authored and merged Dependabot/Rust lockfile work: [#458](https://github.com/iakash22/meetops-platform/pull/458) (`serde_with` + glib RE-07; remaining-work #2 **partial**) and [#460](https://github.com/iakash22/meetops-platform/pull/460) (`plist`/`quick-xml` RUSTSEC-2026-0194/0195). Also authored [#453](https://github.com/iakash22/meetops-platform/pull/453), [#455](https://github.com/iakash22/meetops-platform/pull/455), [#456](https://github.com/iakash22/meetops-platform/pull/456) (all merged earlier).
   - **Project Plan & Coordinator** — coordination and merges into `integration/phase-1` after Architecture + Tester PASS.
-  - **Akash** — only merges into `main` (latest: #452 on 6 Nov; then Google OIDC push). `main` still at `ca3c0e2b`. Owner decision OD-1 (cross-device email verify drops the password) remains open; behaviour unchanged.
+  - **Akash** — only merges into `main` (latest: #452 on 6 Nov; then Google OIDC push). `main` still at `ca3c0e2b`. Owner decision OD-1 (cross-device email verify drops the password) was still open in this snapshot; behaviour unchanged. It was decided on 11 Nov 2026 in ADR-022 (keep that behaviour).
 - **Trees:** `main` `ca3c0e2b` · `integration/phase-1` `fd4ede49` (55 ahead / 0 behind `main`). Tip is the merge of #459. Also merged today into integration: #457 (TRUST_PROXY docs), #458 (Dependabot serde_with), #460 (plist/quick-xml).
 - **Open PRs:** [#462](https://github.com/iakash22/meetops-platform/pull/462) (`integration/phase-1` → `main`, open; only Akash merges). Feature work continues into `integration/phase-1`.
 - **CI:** GitHub Actions minutes still exhausted; local gates remain the gate. Flow unchanged: feature branch → PR into `integration/phase-1` → Architecture + Tester PASS on exact head → Coordinator merges → Akash merges integration → `main`.
