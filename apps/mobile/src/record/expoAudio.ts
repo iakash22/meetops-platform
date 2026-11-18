@@ -2,6 +2,7 @@ import { Linking, PermissionsAndroid, Platform } from 'react-native';
 
 import type { MicPermission, MicPermissionStatus } from '../consent/micPermission';
 import type { AudioDriver, ForegroundIndicator, RecorderFileGuard } from './nativeCapture';
+import { bindRecordingServiceIndicator } from './recordingIndicator';
 import { createRecorderFileGuard } from './recorderFiles';
 import type { SegmentRecorder } from './segmentCapture';
 import type { ChunkCipher, FileSystemLike } from './fileChunkStore';
@@ -187,21 +188,7 @@ export function createAndroidForegroundIndicator(): ForegroundIndicator | null {
   const { RecordingServiceModule } =
     require('../../modules/recording-service') as typeof import('../../modules/recording-service');
   if (!RecordingServiceModule) return null;
-  const native = RecordingServiceModule;
-  return {
-    start: () => native.start('MeetOps is recording', 'Tap Stop to end the recording now.'),
-    stop: () => native.stop(),
-    isConfirmed: () => native.isConfirmed(),
-    onStopRequested(listener) {
-      // Notification Stop, and the service dying on its own: both end capture immediately.
-      // Native fires exactly one of these per capture (latched in the service).
-      const subs = [
-        native.addListener('onStopRequested', listener),
-        native.addListener('onServiceLost', listener),
-      ];
-      return () => subs.forEach((s) => s.remove());
-    },
-  };
+  return bindRecordingServiceIndicator(RecordingServiceModule);
 }
 
 /**

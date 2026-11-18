@@ -1,7 +1,12 @@
 import type { LocalChunk } from '../upload/types';
 import type { RecordingCapture, RecordingDraft } from './capture';
 import type { FileChunkStore } from './fileChunkStore';
-import type { RecordingLiveActivity } from './liveActivity';
+import { isLiveActivityId, type RecordingLiveActivity } from './liveActivity';
+import {
+  PAUSED_NOTIFICATION_TITLE,
+  RECORDING_NOTIFICATION_BODY,
+  RECORDING_NOTIFICATION_TITLE,
+} from './recordingIndicator';
 
 /**
  * Native recorder (M4) over expo-audio, behind the `RecordingCapture` port. The OS-facing calls sit behind
@@ -28,8 +33,12 @@ export interface AudioDriver {
 
 /** Visible OS recording indicator (Android microphone foreground service with Stop/Open). */
 export interface ForegroundIndicator {
-  start(): void;
-  stop(): void;
+  /** Starts the notification/service and returns a stable session id, or null if it cannot. */
+  start(): string | null;
+  /** Updates the ongoing notification for this id. No-op if the id does not match. */
+  update(id: string, title: string, body: string): void;
+  /** Stops the service/notification for this id. No-op if the id does not match. */
+  stop(id: string): void;
   /** The service is running and its notification is confirmed showing. */
   isConfirmed(): boolean;
   onStopRequested(listener: () => void): () => void;
@@ -81,11 +90,26 @@ export function createNativeCapture(
   let recovery: Promise<void> | null = null;
   const MAX_SEAL_ATTEMPTS = 3;
 
+  let indicatorId: string | null = null;
+
   const stopIndicator = () => {
+    const id = indicatorId;
+    indicatorId = null;
+    if (!isLiveActivityId(id)) return;
     try {
-      indicator?.stop();
+      indicator?.stop(id);
     } catch {
       // The service may already be gone (Stop from the notification, or it never started).
+    }
+  };
+
+  const updateIndicator = (title: string) => {
+    const id = indicatorId;
+    if (!isLiveActivityId(id)) return;
+    try {
+      indicator?.update(id, title, RECORDING_NOTIFICATION_BODY);
+    } catch {
+      // Best effort: a failed notification update must not affect capture.
     }
   };
 
@@ -129,7 +153,13 @@ export function createNativeCapture(
       // R5 fail closed: the encryption self-test runs before the service starts and before the mic opens.
       await store.ready();
       // The foreground service (and its notification) starts before the mic opens; if it can't, nothing records.
-      indicator?.start();
+      if (indicator) {
+        const id = indicator.start();
+        if (!isLiveActivityId(id)) {
+          throw new Error('The recording notification could not be started.');
+        }
+        indicatorId = id;
+      }
       try {
         await driver.setRecordingMode(true);
         await driver.prepare();
@@ -157,12 +187,14 @@ export function createNativeCapture(
       if (!active || paused) return;
       driver.pause();
       paused = true;
+      updateIndicator(PAUSED_NOTIFICATION_TITLE);
       live?.pause();
     },
     resume() {
       if (!active || !paused) return;
       driver.record();
       paused = false;
+      updateIndicator(RECORDING_NOTIFICATION_TITLE);
       live?.resume();
     },
     isLive() {

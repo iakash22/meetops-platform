@@ -32,7 +32,7 @@ const BUDGETS = {
   '*': 25, // any other JS chunk (lazy route chunks)
   // Bootstrap 5 CSS took this from 11 to 45 (measured 39.13). scripts/postcss-prune-bootstrap.mjs now drops
   // Bootstrap rules the app never uses: measured 18.13 kB gzip, so the budget is the measured size rounded up.
-  // The rest is Tailwind (~9.4) plus the Bootstrap reboot, variables and button/spinner/overlay rules still used.
+  // The rest is Tailwind (~9.4) plus the Bootstrap reboot, variables and Button-only prune-safelist rules still used.
   css: 19,
   initialJs: 185, // entry + modulepreloads in index.html
   totalJs: 290, // every JS chunk, lazy ones included
