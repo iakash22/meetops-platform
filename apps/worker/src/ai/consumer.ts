@@ -12,6 +12,7 @@ import {
   type AttemptError,
   type AudioResolver,
   type ChunkGeometry,
+  type OnProviderTranscriptStored,
 } from '@meetops/ai-core';
 import {
   TRANSCRIPTION_SYSTEM_ACTOR,
@@ -46,6 +47,8 @@ export type TranscriptionConsumerDeps = {
   geometry: ChunkGeometry;
   /** Enqueues the meeting summary once the merged transcript is complete (`ready`). Deduped by job id. */
   summaryTrigger?: SummaryTrigger | undefined;
+  /** After a chunk is durably stored, enqueue provider-side transcript delete (ADR-019). */
+  onProviderTranscriptStored?: OnProviderTranscriptStored | undefined;
   now?: () => Date;
 };
 
@@ -166,6 +169,7 @@ export async function processTranscriptionJob(
     resolveAudio: deps.resolveAudio,
     // System actor: no TenantContext/ability, so the payload's sttProviderId is not an override; org/env routing applies.
     resolveActor: async () => undefined,
+    onProviderTranscriptStored: deps.onProviderTranscriptStored,
     now,
   });
   const out = await handler.handle(chunkJob);

@@ -7,6 +7,7 @@ import { CURRENT_CONSENT_VERSION } from '@meetops/contracts';
 import { orgConsentVersion } from '../src/modules/consent-settings/domain/consent-settings.js';
 import { InMemoryConsentSettingsRepository } from '../src/modules/consent-settings/infrastructure/in-memory.repository.js';
 import { reconcileStaleMedia } from '../src/modules/media/application/reconcile.js';
+import type { InMemoryMeetingConsentRepository } from '../src/modules/media/infrastructure/in-memory.js';
 import { consent, errorOf, mediaWorld, SHA_B64 } from './media-helpers.js';
 import type { Client } from './helpers.js';
 
@@ -164,6 +165,54 @@ describe('org consent version (server-side, per org)', () => {
       expect.objectContaining({ subjectId: fileObjectId, consentAttestationId: receipt.id }),
     ]);
     expect(receipt.consentVersion).toBe(CURRENT_CONSENT_VERSION);
+  });
+
+  it('enforcement on: a meeting grant from before the edit still lets an in-flight upload complete', async () => {
+    const w = await setup(true);
+    expect((await w.grant(w.member, w.org, w.meetingId, CURRENT_CONSENT_VERSION)).statusCode).toBe(
+      201,
+    );
+    const init = await w.upload(w.member, w.org, CURRENT_CONSENT_VERSION, w.meetingId);
+    expect(init.statusCode, JSON.stringify(init.json())).toBe(201);
+    const { fileObjectId } = init.json<{ fileObjectId: string }>();
+    w.signer.put(`organizations/${w.org}/uploads/${fileObjectId}/source`, 1000);
+    const v2 = await w.editNotice('Edited between init and complete.');
+    // New capture needs a grant for v2 ...
+    unsupported(await w.upload(w.member, w.org, v2, w.meetingId));
+    // ... but the in-flight upload completes on its v1 grant and v1 attestation.
+    const done = await w.member.post(`/orgs/${w.org}/uploads/${fileObjectId}/complete`, {});
+    expect(done.statusCode, JSON.stringify(done.json())).toBe(200);
+    const ledger = await w.member.get(`/orgs/${w.org}/meetings/${w.meetingId}/consent`);
+    expect(ledger.json()).toMatchObject({ state: 'granted', valid: false });
+    const grants = (w.media.meetingConsents as InMemoryMeetingConsentRepository).rows;
+    expect(grants.map((g) => g.consentVersion)).toEqual([CURRENT_CONSENT_VERSION]);
+    const receipt = w.consents.rows.find((r) => r.subjectId === fileObjectId)!;
+    expect(receipt.consentVersion).toBe(CURRENT_CONSENT_VERSION);
+    expect(w.jobs.jobs).toEqual([
+      expect.objectContaining({ subjectId: fileObjectId, meetingId: w.meetingId }),
+    ]);
+  });
+
+  it('enforcement on: the reconciler requeues a meeting upload whose grant predates the edit', async () => {
+    const w = await setup(true);
+    await w.grant(w.member, w.org, w.meetingId, CURRENT_CONSENT_VERSION);
+    const init = await w.upload(w.member, w.org, CURRENT_CONSENT_VERSION, w.meetingId);
+    const { fileObjectId } = init.json<{ fileObjectId: string }>();
+    await w.editNotice('Edited while the upload was processing.');
+    const r = await reconcileStaleMedia({
+      store: {
+        organizationIds: async () => [w.org],
+        staleUploads: async () => [{ id: fileObjectId, meetingId: w.meetingId }],
+      },
+      consents: w.consents,
+      jobs: w.jobs,
+      now: () => new Date(),
+      olderThanMs: 0,
+    });
+    expect(r).toEqual({ organizations: 1, uploads: 1, sessions: 0, skipped: 0 });
+    expect(w.jobs.jobs).toEqual([
+      expect.objectContaining({ subjectId: fileObjectId, meetingId: w.meetingId }),
+    ]);
   });
 
   it('with enforcement on, a grant for a superseded version no longer allows capture', async () => {

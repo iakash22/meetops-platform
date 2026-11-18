@@ -15,3 +15,4 @@ export * from './action-items-repository.js';
 export * from './summary-worker.js';
 export * from './transcription-retry.js';
 export * from './transcription-delayed-alert.js';
+export * from './provider-transcript-delete.js';

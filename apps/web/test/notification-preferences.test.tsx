@@ -54,6 +54,34 @@ describe('/settings?tab=notifications', () => {
     expect(await screen.findByText('Saved')).toBeInTheDocument();
   });
 
+  it('reverts checkboxes to the last saved state and shows an alert when save fails', async () => {
+    let shouldFail = false;
+    const api = apiWith((m, p, body) => {
+      if (p !== PATH) return undefined;
+      if (m === 'PUT') {
+        if (shouldFail) throw new ApiError(500, 'INTERNAL', 'save failed', 'req-1');
+        return body;
+      }
+      return { items: [] };
+    });
+    renderApp('/settings?tab=notifications', api);
+    const box = await screen.findByRole('checkbox', { name: 'Task assigned via Email' });
+    expect(box).toBeChecked();
+
+    await userEvent.click(box);
+    await userEvent.click(screen.getByRole('button', { name: 'Save preferences' }));
+    expect(await screen.findByText('Saved')).toBeInTheDocument();
+    expect(box).not.toBeChecked();
+
+    shouldFail = true;
+    await userEvent.click(box);
+    expect(box).toBeChecked();
+    await userEvent.click(screen.getByRole('button', { name: 'Save preferences' }));
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent("Couldn't save preferences");
+    await waitFor(() => expect(box).not.toBeChecked());
+  });
+
   it('shows "not available" on 404', async () => {
     const api = apiWith((_m, p) => {
       if (p === PATH) throw new ApiError(404, 'NOT_FOUND', 'no', 'r');

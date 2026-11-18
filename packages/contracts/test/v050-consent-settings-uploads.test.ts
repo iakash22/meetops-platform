@@ -38,6 +38,33 @@ const settings = {
   updatedAt: at,
 };
 
+/** Notices made only of characters the contract and the DB CHECK both treat as blank. */
+const BLANK_NOTICES = [
+  ' ',
+  '   ',
+  '\t',
+  '\n\t ',
+  '\r\n',
+  '\f',
+  '\v',
+  '\u00a0',
+  '\u1680',
+  '\u2000',
+  '\u2003',
+  '\u200a',
+  '\u2028',
+  '\u2029',
+  '\u202f',
+  '\u205f',
+  '\u3000',
+  '\ufeff',
+  '\u200b',
+  '\u0085',
+  ' \u00a0\u3000\u200b\u0085\t',
+];
+/** Visible text, including the letter 'v' (once mis-stripped as a "\v" escape in SQL). */
+const ACCEPTED_NOTICES = ['v', 'Notice', 'A\u00a0B', 'x\u200by', 'Recorded with MeetOps.'];
+
 describe('consent settings', () => {
   it('paths follow org-scoped conventions and are in the light entry', () => {
     expect(CONSENT_UPLOAD_PATHS.consentSettings).toBe('/orgs/:organizationId/settings/consent');
@@ -70,6 +97,27 @@ describe('consent settings', () => {
     expect(Value.Check(ConsentSettings, { ...settings, noticeText: ' Notice' })).toBe(false);
     expect(Value.Check(ConsentSettings, { ...settings, noticeText: 'Notice ' })).toBe(false);
     expect(Value.Check(ConsentSettings, { ...settings, noticeText: 'Notice' })).toBe(true);
+    // Same blank set as the DB CHECK notice_text_not_blank_check (consent-settings.live.test.ts mirrors these).
+    for (const blank of BLANK_NOTICES) {
+      expect(
+        Value.Check(ConsentSettings, { ...settings, noticeText: blank }),
+        JSON.stringify(blank),
+      ).toBe(false);
+      expect(Value.Check(UpdateConsentSettingsRequest, { noticeText: blank })).toBe(false);
+      // Also rejected as leading or trailing padding around real text.
+      expect(Value.Check(UpdateConsentSettingsRequest, { noticeText: `${blank}Notice` })).toBe(
+        false,
+      );
+      expect(Value.Check(UpdateConsentSettingsRequest, { noticeText: `Notice${blank}` })).toBe(
+        false,
+      );
+    }
+    for (const ok of ACCEPTED_NOTICES) {
+      expect(
+        Value.Check(UpdateConsentSettingsRequest, { noticeText: ok }),
+        JSON.stringify(ok),
+      ).toBe(true);
+    }
     expect(DEFAULT_CONSENT_NOTICE_TEXT).toBe(
       'This meeting is being recorded and transcribed with MeetOps by a participant.',
     );

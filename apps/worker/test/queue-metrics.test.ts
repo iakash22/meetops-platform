@@ -38,7 +38,13 @@ describe('worker queue metrics', () => {
 
   it('covers the transcription DLQ and the main queues', () => {
     expect(METRICS_QUEUES).toEqual(
-      expect.arrayContaining(['transcription', 'transcription-dlq', 'media', 'ai']),
+      expect.arrayContaining([
+        'transcription',
+        'transcription-dlq',
+        'media',
+        'ai',
+        'ai-provider-transcript-delete',
+      ]),
     );
   });
 
