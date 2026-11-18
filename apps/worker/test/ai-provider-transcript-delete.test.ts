@@ -5,11 +5,13 @@ import {
   PROVIDER_TRANSCRIPT_DELETE_BACKOFF_MS,
   PROVIDER_TRANSCRIPT_DELETE_JOB_NAME,
   PROVIDER_TRANSCRIPT_DELETE_QUEUE,
+  createProviderTranscriptDeleteProcessor,
   createQueueProviderTranscriptDeleteTrigger,
   createRepositoryProviderJobIdLookup,
   enqueueProviderTranscriptDelete,
   isProviderTranscriptDeleteEnabled,
   processProviderTranscriptDelete,
+  registerProviderTranscriptDeleteWorker,
   providerTranscriptDeleteJobId,
   renderProviderTranscriptDeleteMetrics,
   resetProviderTranscriptDeleteFailureCounts,
@@ -201,6 +203,50 @@ describe('provider transcript delete enqueue', () => {
       providerTranscriptDeleteJobId('assemblyai', 'tr-chunk-0'),
       providerTranscriptDeleteJobId('assemblyai', 'tr-chunk-1'),
     ]);
+  });
+
+  it('enqueues every id from stored segments plus a first-write-loser payload id, without duplicates', async () => {
+    const adds: string[] = [];
+    const seen = new Set<string>();
+    const queue: ProviderTranscriptDeleteQueueLike = {
+      add: async (_name, data, opts) => {
+        if (seen.has(opts.jobId)) throw new Error('Job is already waiting');
+        seen.add(opts.jobId);
+        adds.push(data.providerTranscriptId);
+      },
+    };
+    const trigger = createQueueProviderTranscriptDeleteTrigger(queue, {
+      enabled: true,
+      listProviderJobIds: async () => ['tr-chunk-0', 'tr-chunk-1'],
+    });
+    await trigger({
+      organizationId: ORG,
+      meetingId: MEET,
+      recordingId: REC,
+      chunkIndex: 1,
+      provider: 'assemblyai',
+      providerJobId: 'tr-loser',
+    });
+    expect(adds).toEqual(['tr-loser', 'tr-chunk-0', 'tr-chunk-1']);
+  });
+
+  it('does not enqueue an invalid transcript id format', async () => {
+    const adds: unknown[] = [];
+    const queue: ProviderTranscriptDeleteQueueLike = {
+      add: async (_name, data, opts) => {
+        adds.push({ data, opts });
+      },
+    };
+    expect(
+      await enqueueProviderTranscriptDelete(queue, {
+        organizationId: ORG,
+        provider: 'assemblyai',
+        providerTranscriptId: 'not a valid id!!!',
+        meetingId: MEET,
+        recordingId: REC,
+      }),
+    ).toEqual({ enqueued: false, reason: 'invalid_id' });
+    expect(adds).toEqual([]);
   });
 });
 
@@ -415,6 +461,92 @@ describe('processProviderTranscriptDelete', () => {
     ).rejects.toBeInstanceOf(UnrecoverableError);
     expect(log.blob()).not.toContain(SECRET);
     expect(log.entries.some((e) => e.level === 'error')).toBe(true);
+  });
+
+  it('rejects an invalid transcript id format without calling the provider or logging content', async () => {
+    const log = logger();
+    let called = 0;
+    const deleter: ProviderTranscriptDeleter = {
+      async deleteTranscript() {
+        called += 1;
+        return { outcome: 'deleted', httpStatus: 200 };
+      },
+    };
+    await expect(
+      processProviderTranscriptDelete(
+        { ...job, providerTranscriptId: 'https://evil.example/tr' },
+        {
+          resolveDeleter: async () => deleter,
+          resolveProviderJobId: async () => undefined,
+          logger: log.logger,
+        },
+        { isFinalAttempt: false, jobId: 'j-bad' },
+      ),
+    ).rejects.toBeInstanceOf(UnrecoverableError);
+    expect(called).toBe(0);
+    expect(log.blob()).not.toContain(SECRET);
+    expect(log.entries.every((e) => e.obj.providerTranscriptId === undefined)).toBe(true);
+  });
+
+  it('retries transport errors that have no HTTP status without changing global mapping', async () => {
+    const log = logger();
+    const failures: Array<Record<string, unknown>> = [];
+    const err = Object.assign(new Error('read ECONNRESET'), { code: 'ECONNRESET' });
+    const deleter: ProviderTranscriptDeleter = {
+      async deleteTranscript() {
+        throw err;
+      },
+    };
+    await expect(
+      processProviderTranscriptDelete(
+        job,
+        {
+          resolveDeleter: async () => deleter,
+          resolveProviderJobId: fromDb(),
+          logger: log.logger,
+          onFinalFailure: (i) => failures.push(i),
+        },
+        { isFinalAttempt: false, jobId: 'j-reset' },
+      ),
+    ).rejects.toMatchObject({ code: 'UNKNOWN', retryable: true });
+    expect(failures).toEqual([]);
+    expect(log.blob()).not.toContain(SECRET);
+  });
+
+  it('passes the job abort signal through to the deleter', async () => {
+    const log = logger();
+    const ac = new AbortController();
+    const seen: Array<AbortSignal | undefined> = [];
+    const deleter: ProviderTranscriptDeleter = {
+      async deleteTranscript(_id, signal) {
+        seen.push(signal);
+        return { outcome: 'deleted', httpStatus: 200 };
+      },
+    };
+    const processor = createProviderTranscriptDeleteProcessor({
+      resolveDeleter: async () => deleter,
+      resolveProviderJobId: fromDb(),
+      logger: log.logger,
+    });
+    await processor({
+      data: job,
+      id: 'j-signal',
+      opts: { attempts: 5 },
+      attemptsMade: 0,
+      signal: ac.signal,
+    } as never);
+    expect(seen).toEqual([ac.signal]);
+  });
+});
+
+describe('registerProviderTranscriptDeleteWorker', () => {
+  it('returns missing_redis when no redis URL is configured', () => {
+    expect(
+      registerProviderTranscriptDeleteWorker({
+        redisUrl: '',
+        resolveProviderJobId: async () => undefined,
+      }),
+    ).toEqual({ registered: false, reason: 'missing_redis' });
   });
 });
 

@@ -16,9 +16,11 @@ import type {
  * Layout (migration 20261026200000_transcript_recording_revision):
  * - Revision 0 of `transcripts` is a per-recording anchor. It owns the raw per-chunk STT results in
  *   `transcript_chunks` (`segments` holds the ai-core `ChunkTranscript`; `status = done`).
- *   The AssemblyAI (or other STT) job id is written to the revision-0 anchor's
- *   `transcripts.provider_job_id` (column already exists; migration 20261021140000) when a
- *   chunk result is first stored. The provider-copy delete job reads that column.
+ *   Each chunk's AssemblyAI (or other STT) job id is already stored on the
+ *   `transcript_chunks.segments` JSON (`ChunkTranscript.providerJobId`). Deletes
+ *   read every id from there. The same id is still copied onto the revision-0
+ *   `transcripts.provider_job_id` so PR 513-era readers keep working; a later
+ *   chunk may overwrite the anchor, but that is no longer the delete source.
  * - Revisions >= 1 are merged transcripts: `full_text`, `merge_state` (ai-core merge state) and their
  *   `transcript_segments` rows (same `revision`).
  *
@@ -126,14 +128,14 @@ export function createOrgScopedTranscriptRepository(
       // First write wins: (transcript_id, chunk_index) is unique; ON CONFLICT DO NOTHING keeps the earlier result.
       const inserted = await tx.$executeRaw`
         INSERT INTO "transcript_chunks"
-          ("id", "org_id", "transcript_id", "chunk_index", "start_ms", "end_ms", "status", "provider", "text", "segments",
-           "provider_job_id", "attempt_count", "updated_at")
+          ("id", "org_id", "transcript_id", "chunk_index", "start_ms", "end_ms", "status", "provider", "text", "segments", "attempt_count", "updated_at")
         VALUES (gen_random_uuid(), ${organizationId}::uuid, ${transcriptId}::uuid, ${chunk.chunkIndex}, ${startMs}, ${endMs},
           'done'::"TranscriptChunkStatus", ${chunk.provider}, ${chunk.segments.map((s) => s.text).join(' ')},
-          ${JSON.stringify(chunk)}::jsonb, ${chunk.providerJobId ?? null}, 1, now())
+          ${JSON.stringify(chunk)}::jsonb, 1, now())
         ON CONFLICT ("transcript_id", "chunk_index") DO NOTHING`;
-      // Also copy the id onto the revision-0 anchor for #513 compatibility. Not written on merged
+      // Also copy the id onto the revision-0 anchor for PR 513 compatibility. Not written on merged
       // revisions (unique (org, provider, provider_job_id) would conflict with the anchor).
+      // Deletes do not rely on this overwriteable column; they read every id from segments JSON.
       if (inserted === 1 && chunk.providerJobId) {
         await tx.transcript.updateMany({
           where: { organizationId, id: transcriptId, revision: ANCHOR_REVISION },
@@ -155,7 +157,6 @@ export function createOrgScopedTranscriptRepository(
       return row?.providerJobId ?? undefined;
     },
     async listProviderJobIds(meetingId, recordingId) {
-      const anchor = await findAnchor(meetingId, recordingId);
       const ids: string[] = [];
       const seen = new Set<string>();
       const add = (id: string | null | undefined) => {
@@ -163,15 +164,10 @@ export function createOrgScopedTranscriptRepository(
         seen.add(id);
         ids.push(id);
       };
-      if (anchor) {
-        const rows = await tx.transcriptChunk.findMany({
-          where: { organizationId, transcriptId: anchor.id },
-          orderBy: { chunkIndex: 'asc' },
-          select: { providerJobId: true },
-        });
-        for (const r of rows) add(r.providerJobId);
-      }
-      // Legacy #513 rows: the only stored id may live on the anchor.
+      // Source of truth: providerJobId already stored on each chunk's segments JSON.
+      for (const chunk of toChunks(await chunkRows(meetingId, recordingId)))
+        add(chunk.providerJobId);
+      // Legacy rows whose segments predate providerJobId may only have the anchor column.
       const anchorRow = await tx.transcript.findFirst({
         where: { organizationId, meetingId, recordingId, revision: ANCHOR_REVISION },
         select: { providerJobId: true },

@@ -8,8 +8,10 @@
  */
 import { Queue, UnrecoverableError, Worker, type Job } from 'bullmq';
 import {
+  AIError,
   AssemblyAIProvider,
   endpointPolicyFromEnv,
+  isRelaxedNodeEnv,
   loadAIEnv,
   toAIError,
   type OnProviderTranscriptStored,
@@ -23,6 +25,12 @@ export const PROVIDER_TRANSCRIPT_DELETE_QUEUE = 'ai-provider-transcript-delete';
 export const PROVIDER_TRANSCRIPT_DELETE_JOB_NAME = 'delete_provider_transcript';
 export const PROVIDER_TRANSCRIPT_DELETE_ATTEMPTS = 5;
 export const PROVIDER_TRANSCRIPT_DELETE_BACKOFF_MS = 2_000;
+/** AssemblyAI transcript ids (and our deterministic jobId suffix). */
+export const PROVIDER_TRANSCRIPT_ID_PATTERN = /^[A-Za-z0-9_-]{1,128}$/;
+
+export function isValidProviderTranscriptId(id: string): boolean {
+  return PROVIDER_TRANSCRIPT_ID_PATTERN.test(id);
+}
 
 export type ProviderTranscriptDeleteJob = {
   organizationId: string;
@@ -119,6 +127,10 @@ function isDuplicateJobError(err: unknown): boolean {
   );
 }
 
+function abortSignalOf(job: object): AbortSignal | undefined {
+  return 'signal' in job && job.signal instanceof AbortSignal ? job.signal : undefined;
+}
+
 function httpStatusOf(err: unknown): number | undefined {
   if (typeof err === 'object' && err !== null && 'status' in err) {
     const status = err.status;
@@ -131,12 +143,15 @@ export async function enqueueProviderTranscriptDelete(
   queue: ProviderTranscriptDeleteQueueLike,
   payload: ProviderTranscriptDeleteJob,
   opts: { enabled?: boolean | undefined } = {},
-): Promise<{ enqueued: boolean; reason?: 'disabled' | 'duplicate' | 'missing_id' }> {
+): Promise<{ enqueued: boolean; reason?: 'disabled' | 'duplicate' | 'missing_id' | 'invalid_id' }> {
   if (!(opts.enabled ?? isProviderTranscriptDeleteEnabled())) {
     return { enqueued: false, reason: 'disabled' };
   }
   if (!payload.providerTranscriptId) {
     return { enqueued: false, reason: 'missing_id' };
+  }
+  if (!isValidProviderTranscriptId(payload.providerTranscriptId)) {
+    return { enqueued: false, reason: 'invalid_id' };
   }
   try {
     await queue.add(PROVIDER_TRANSCRIPT_DELETE_JOB_NAME, payload, {
@@ -158,12 +173,34 @@ export function createQueueProviderTranscriptDeleteTrigger(
   opts: {
     enabled?: boolean | undefined;
     logger?: TranscriptionLogger | undefined;
+    /** Read every stored chunk id (from segments JSON) so siblings are enqueued too. */
+    listProviderJobIds?:
+      | ((organizationId: string, meetingId: string, recordingId: string) => Promise<string[]>)
+      | undefined;
   } = {},
 ): OnProviderTranscriptStored {
   return async (info: StoredProviderTranscript) => {
     if (info.provider !== 'assemblyai') return;
-    if (!info.providerJobId) {
-      // Legacy rows stored before provider_job_id was persisted. Ids and codes only.
+    const ids: string[] = [];
+    const seen = new Set<string>();
+    const add = (id: string | undefined) => {
+      if (!id || seen.has(id)) return;
+      seen.add(id);
+      ids.push(id);
+    };
+    // Include the id on this hook (covers a first-write-loser's provider copy, which is not in the stored row).
+    add(info.providerJobId);
+    if (opts.listProviderJobIds && info.meetingId && info.recordingId) {
+      for (const id of await opts.listProviderJobIds(
+        info.organizationId,
+        info.meetingId,
+        info.recordingId,
+      )) {
+        add(id);
+      }
+    }
+    if (ids.length === 0) {
+      // Legacy rows stored before providerJobId was persisted. Ids and codes only.
       opts.logger?.info(
         {
           organizationId: info.organizationId,
@@ -176,17 +213,19 @@ export function createQueueProviderTranscriptDeleteTrigger(
       );
       return;
     }
-    await enqueueProviderTranscriptDelete(
-      queue,
-      {
-        organizationId: info.organizationId,
-        provider: 'assemblyai',
-        providerTranscriptId: info.providerJobId,
-        meetingId: info.meetingId,
-        recordingId: info.recordingId,
-      },
-      opts,
-    );
+    for (const providerTranscriptId of ids) {
+      await enqueueProviderTranscriptDelete(
+        queue,
+        {
+          organizationId: info.organizationId,
+          provider: 'assemblyai',
+          providerTranscriptId,
+          meetingId: info.meetingId,
+          recordingId: info.recordingId,
+        },
+        opts,
+      );
+    }
   };
 }
 
@@ -250,12 +289,16 @@ export async function processProviderTranscriptDelete(
     recordingId: data.recordingId,
     providerTranscriptId: given,
   });
-  // Prefer the id the job was given (one delete per chunk); otherwise the stored row.
-  // Skip when both are null (legacy rows). Never invent an id; never log content.
+  // Prefer the id the job was given (one delete per chunk, including first-write losers);
+  // otherwise the stored row (segments JSON, then the PR 513 anchor). Skip when both are null.
   const id = given ?? storedId;
   if (!id) {
     deps.logger.info(baseLog, 'provider transcript delete skipped: no provider job id');
     return { outcome: 'already_deleted', httpStatus: 0 };
+  }
+  if (!isValidProviderTranscriptId(id)) {
+    deps.logger.error(baseLog, 'provider transcript delete failed: invalid_id');
+    throw new UnrecoverableError('provider transcript delete failed: invalid_id');
   }
   const log = { ...baseLog, providerTranscriptId: id };
   try {
@@ -267,7 +310,16 @@ export async function processProviderTranscriptDelete(
     );
     return result;
   } catch (err) {
-    const e = toAIError(err, data.provider);
+    // Transport errors with no HTTP status map to UNKNOWN globally and are not retryable.
+    // Retry them inside this processor only; do not change toAIError.
+    let e = toAIError(err, data.provider);
+    if (!e.retryable && e.code === 'UNKNOWN' && httpStatusOf(err) === undefined) {
+      e = new AIError('UNKNOWN', e.message, {
+        provider: data.provider,
+        retryable: true,
+        cause: err,
+      });
+    }
     const failure: ProviderTranscriptDeleteFinalFailure = {
       organizationId: data.organizationId,
       provider: data.provider,
@@ -296,8 +348,9 @@ export function createAssemblyAIDeleter(
 ): ProviderTranscriptDeleter {
   const { env: ai } = loadAIEnv(env);
   const policy = endpointPolicyFromEnv(ai, {
-    production: opts.production ?? env.NODE_ENV === 'production',
+    production: opts.production ?? !isRelaxedNodeEnv(env.NODE_ENV),
   });
+  // TODO(ai): use the credential resolver once org-scoped AssemblyAI keys exist.
   const provider = new AssemblyAIProvider({ apiKey: env.ASSEMBLYAI_API_KEY, policy });
   return {
     deleteTranscript: (id, signal) => provider.deleteTranscript(id, signal),
@@ -321,6 +374,7 @@ export function createProviderTranscriptDeleteProcessor(deps: ProcessProviderTra
     return processProviderTranscriptDelete(job.data, deps, {
       jobId: job.id,
       isFinalAttempt: (job.attemptsMade ?? 0) + 1 >= attempts,
+      signal: abortSignalOf(job),
     });
   };
 }
@@ -362,7 +416,7 @@ export function registerProviderTranscriptDeleteWorker(
 ):
   | { registered: true; close: () => Promise<void> }
   | { registered: false; reason: 'missing_redis' } {
-  const redisUrl = opts.redisUrl ?? process.env.REDIS_URL ?? 'redis://localhost:6379';
+  const redisUrl = opts.redisUrl ?? process.env.REDIS_URL;
   if (!redisUrl) return { registered: false, reason: 'missing_redis' };
   const logger = opts.logger ?? baseLogger.child({ worker: PROVIDER_TRANSCRIPT_DELETE_QUEUE });
   if (!opts.resolveProviderJobId) {

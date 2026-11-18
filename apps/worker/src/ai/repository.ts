@@ -60,8 +60,9 @@ export interface OrgScopedTranscriptRepository {
    */
   getProviderJobId(meetingId: string, recordingId: string): Promise<string | undefined>;
   /**
-   * Distinct STT job ids for this recording: `transcript_chunks.provider_job_id` in chunk order,
-   * then the revision-0 anchor id if it is not already in that list (legacy #513 rows).
+   * Distinct STT job ids for this recording: `ChunkTranscript.providerJobId` from each
+   * `transcript_chunks.segments` JSON, then the revision-0 anchor id if it is not already
+   * in that list (legacy rows whose segments predate the field).
    */
   listProviderJobIds(meetingId: string, recordingId: string): Promise<string[]>;
   /**

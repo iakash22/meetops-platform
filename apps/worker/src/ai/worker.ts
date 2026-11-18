@@ -92,7 +92,13 @@ export function startTranscriptionWorker(
     : createProviderTranscriptDeleteQueue(cfg.redisUrl);
   const onProviderTranscriptStored =
     deps.onProviderTranscriptStored ??
-    createQueueProviderTranscriptDeleteTrigger(deleteQueue!, { logger });
+    createQueueProviderTranscriptDeleteTrigger(deleteQueue!, {
+      logger,
+      listProviderJobIds: (organizationId, meetingId, recordingId) =>
+        deps.repository.withOrgContext(organizationId, (r) =>
+          r.listProviderJobIds(meetingId, recordingId),
+        ),
+    });
   const worker = new Worker<TranscriptionJobPayload, TranscriptionJobResult>(
     QUEUE_NAMES.transcription,
     createTranscriptionProcessor({
