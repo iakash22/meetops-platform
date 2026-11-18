@@ -23,7 +23,7 @@ export const ApiErrorCode = Type.Union([
   Type.Literal('RATE_LIMITED'),
   Type.Literal('PROVIDER_UNAVAILABLE'),
   Type.Literal('INTERNAL'),
-  /** Unreleased (ADR-021): 403. The user has MFA on and this session has not passed the MFA challenge yet. */
+  /** Unreleased (ADR-021 OQ-17): 403. MFA is required and has not been completed. An MFA login does not create a session (it returns MfaLoginChallenge); this is not a half-session gate. */
   Type.Literal('MFA_REQUIRED'),
   /** Unreleased (ADR-021): 403. A sensitive action needs a fresh step-up (POST /auth/mfa/step-up). */
   Type.Literal('STEP_UP_REQUIRED'),

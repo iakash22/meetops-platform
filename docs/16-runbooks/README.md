@@ -5,3 +5,4 @@
 - [Re-drive dead-lettered account-takeover follow-ups](takeover-follow-up-dlq-redrive.md)
 - [Backup and restore (Postgres, object storage, Redis)](backup-restore.md)
 - [Outbox dedupe key index: recovery after a failed build](outbox-dedupe-key-index-recovery.md)
+- [MFA sessions CHECK validation](mfa-session-checks-validate.md)

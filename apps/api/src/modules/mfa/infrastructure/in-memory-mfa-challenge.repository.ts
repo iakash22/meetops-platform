@@ -16,16 +16,22 @@ export class InMemoryMfaChallengeRepository implements MfaChallengeRepository {
       if (c.tokenHash === tokenHash && this.live(c, now)) return { ...c };
     return null;
   }
+  async reserveAttempt(id: string, userId: string, maxAttempts: number, now: Date) {
+    const c = this.items.get(id);
+    if (!this.live(c, now) || c.userId !== userId || c.attempts >= maxAttempts) return null;
+    c.attempts += 1;
+    return { ...c };
+  }
   async consume(id: string, userId: string, now: Date) {
     const c = this.items.get(id);
-    if (!this.live(c, now) || c.userId !== userId) return null;
+    if (!this.live(c, now) || c.userId !== userId || c.attempts <= 0) return null;
     c.usedAt = now;
     return { ...c };
   }
   async recordFailure(id: string, now: Date, maxAttempts: number) {
     const c = this.items.get(id);
     if (!c) return maxAttempts;
-    c.attempts += 1;
+    if (c.usedAt || c.expiresAt <= now) return c.attempts >= maxAttempts ? c.attempts : maxAttempts;
     if (c.attempts >= maxAttempts && !c.usedAt) c.usedAt = now;
     return c.attempts;
   }

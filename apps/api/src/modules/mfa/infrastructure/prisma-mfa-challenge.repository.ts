@@ -26,8 +26,9 @@ const out = (r: Row): MfaChallenge => ({
 });
 
 /**
- * mfa_challenges (ADR-021 OQ-17; global table like password_resets, no RLS). Single use and the attempt cap are one
- * conditional UPDATE each, so concurrent requests and API instances cannot both win.
+ * mfa_challenges (ADR-021 OQ-17; global table like password_resets, no RLS). The attempt cap, single use and user
+ * binding are each one conditional UPDATE, so concurrent requests and API instances cannot both win. `reserveAttempt`
+ * uses the database clock (`now()`).
  */
 export class PrismaMfaChallengeRepository implements MfaChallengeRepository {
   constructor(private readonly db: DatabaseClient = getPrismaClient()) {}
@@ -56,21 +57,31 @@ export class PrismaMfaChallengeRepository implements MfaChallengeRepository {
     return rows[0] ? out(rows[0]) : null;
   }
 
+  async reserveAttempt(id: string, userId: string, maxAttempts: number, now: Date) {
+    void now; // expiry is compared to the database clock, not the app clock
+    const rows = await this.db.$queryRaw<Row[]>`
+      UPDATE mfa_challenges SET attempts = attempts + 1
+      WHERE id = ${id}::uuid AND user_id = ${userId}::uuid AND purpose = 'mfa_challenge'
+        AND used_at IS NULL AND expires_at > now() AND attempts < ${maxAttempts}
+      RETURNING id, user_id, purpose, first_factor, token_hash, attempts, expires_at, used_at, created_at`;
+    return rows[0] ? out(rows[0]) : null;
+  }
+
   async consume(id: string, userId: string, now: Date) {
     const rows = await this.db.$queryRaw<Row[]>`
       UPDATE mfa_challenges SET used_at = ${now}
       WHERE id = ${id}::uuid AND user_id = ${userId}::uuid AND purpose = 'mfa_challenge'
-        AND used_at IS NULL AND expires_at > ${now}
+        AND used_at IS NULL AND expires_at > now() AND attempts > 0
       RETURNING id, user_id, purpose, first_factor, token_hash, attempts, expires_at, used_at, created_at`;
     return rows[0] ? out(rows[0]) : null;
   }
 
   async recordFailure(id: string, now: Date, maxAttempts: number) {
+    // Increment already happened in reserveAttempt. Only burn at the cap, and only a still-live row.
     const rows = await this.db.$queryRaw<{ attempts: number }[]>`
       UPDATE mfa_challenges
-      SET attempts = attempts + 1,
-          used_at = CASE WHEN attempts + 1 >= ${maxAttempts} THEN coalesce(used_at, ${now}) ELSE used_at END
-      WHERE id = ${id}::uuid
+      SET used_at = CASE WHEN attempts >= ${maxAttempts} THEN coalesce(used_at, ${now}) ELSE used_at END
+      WHERE id = ${id}::uuid AND used_at IS NULL AND expires_at > now()
       RETURNING attempts`;
     return rows[0]?.attempts ?? maxAttempts;
   }

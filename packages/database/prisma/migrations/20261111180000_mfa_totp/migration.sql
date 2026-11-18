@@ -1,4 +1,6 @@
 -- ADR-021 MFA (TOTP + recovery codes). Plan: docs/12-security/mfa-test-plan.md.
+-- Fail fast rather than queue behind a long lock on sessions (review #497).
+SET lock_timeout = '5s';
 
 -- 1. users.mfa_enabled_at: set in the same transaction that activates a user's first factor, cleared when the last
 --    factor is removed. Read with the user on every authenticated request (MFA-TOTP-01 gate), so no extra query.

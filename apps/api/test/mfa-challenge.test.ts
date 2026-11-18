@@ -1,5 +1,5 @@
 /** ADR-021 OQ-17: the login MFA challenge is short-lived, single use, single purpose, bound to the user, hash-only. */
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { MFA_CHALLENGE_TTL_SECONDS } from '@meetops/contracts';
 import {
   MFA_CHALLENGE_MAX_ATTEMPTS,
@@ -43,11 +43,13 @@ describe('MfaChallengeService (OQ-17)', () => {
     expect(JSON.stringify(stored)).not.toContain(issued.challengeToken);
   });
 
-  it('resolves only before expiry, and is single use', async () => {
+  it('resolves only before expiry, and is single use after a reserved success', async () => {
     const { svc } = setup();
     const { challengeToken } = await svc.issue(USER, 'google', t0);
     const c = await svc.resolve(challengeToken, at(60_000));
     expect(c?.userId).toBe(USER);
+    expect(await svc.complete(c!, at(61_000))).toBeNull(); // no reservation yet
+    expect(await svc.reserve(c!, at(61_000))).not.toBeNull();
     expect(await svc.complete(c!, at(61_000))).not.toBeNull();
     // Used: neither resolvable nor completable again (a replayed token or a raced second request loses).
     expect(await svc.resolve(challengeToken, at(62_000))).toBeNull();
@@ -56,6 +58,7 @@ describe('MfaChallengeService (OQ-17)', () => {
     const late = await svc.issue(USER, 'password', t0);
     expect(await svc.resolve(late.challengeToken, at(MFA_CHALLENGE_TTL_MS))).toBeNull();
     const c2 = await svc.resolve(late.challengeToken, at(MFA_CHALLENGE_TTL_MS - 1));
+    expect(await svc.reserve(c2!, at(MFA_CHALLENGE_TTL_MS - 1))).not.toBeNull();
     expect(await svc.complete(c2!, at(MFA_CHALLENGE_TTL_MS + 1))).toBeNull();
   });
 
@@ -63,6 +66,7 @@ describe('MfaChallengeService (OQ-17)', () => {
     const { svc, challenges } = setup();
     const { challengeToken } = await svc.issue(USER, 'password', t0);
     const c = (await svc.resolve(challengeToken, t0))!;
+    expect(await svc.reserve(c, t0)).not.toBeNull();
     expect(await challenges.consume(c.id, OTHER, t0)).toBeNull();
     expect(await svc.complete(c, t0)).not.toBeNull();
   });
@@ -74,17 +78,28 @@ describe('MfaChallengeService (OQ-17)', () => {
       expect(await svc.resolve(bad, t0)).toBeNull();
   });
 
-  it(`burns the challenge after ${MFA_CHALLENGE_MAX_ATTEMPTS} wrong codes`, async () => {
+  it(`burns the challenge after ${MFA_CHALLENGE_MAX_ATTEMPTS} wrong codes and checks the code at most that many times`, async () => {
     const { svc } = setup();
     const { challengeToken } = await svc.issue(USER, 'password', t0);
-    for (let i = 1; i < MFA_CHALLENGE_MAX_ATTEMPTS; i++) {
-      const c = (await svc.resolve(challengeToken, t0))!;
-      expect(await svc.fail(c, t0)).toBe(false);
-    }
-    const c = (await svc.resolve(challengeToken, t0))!;
-    expect(await svc.fail(c, t0)).toBe(true);
+    const verify = vi.fn(() => false);
+    for (let i = 0; i < MFA_CHALLENGE_MAX_ATTEMPTS; i++)
+      expect(await svc.submit(challengeToken, t0, verify)).toBeNull();
+    expect(verify).toHaveBeenCalledTimes(MFA_CHALLENGE_MAX_ATTEMPTS);
     expect(await svc.resolve(challengeToken, t0)).toBeNull();
-    expect(await svc.complete(c, t0)).toBeNull();
+    expect(await svc.submit(challengeToken, t0, verify)).toBeNull();
+    expect(verify).toHaveBeenCalledTimes(MFA_CHALLENGE_MAX_ATTEMPTS);
+  });
+
+  it('does not check the code when reservation fails, and a further burst cannot exceed the cap', async () => {
+    const { svc } = setup();
+    const { challengeToken } = await svc.issue(USER, 'password', t0);
+    const verify = vi.fn(() => false);
+    const results = await Promise.all(
+      Array.from({ length: 20 }, () => svc.submit(challengeToken, t0, verify)),
+    );
+    expect(results.filter(Boolean)).toHaveLength(0);
+    expect(verify.mock.calls.length).toBeLessThanOrEqual(MFA_CHALLENGE_MAX_ATTEMPTS);
+    expect(await svc.resolve(challengeToken, t0)).toBeNull();
   });
 
   it('invalidateForUser burns every live challenge of that user only', async () => {

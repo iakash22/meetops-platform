@@ -1,11 +1,15 @@
 /**
- * ADR-021 OQ-17 against live Postgres as the app role: mfa_challenges single use under concurrency, the attempt cap,
- * user binding, and the DB CHECKs (purpose, 5-minute TTL, hash format). Skipped unless TEST_DATABASE_URL is set.
+ * ADR-021 OQ-17 against live Postgres as the app role: mfa_challenges single use under concurrency, the attempt cap
+ * (reserved before the code is checked), user binding, and the DB CHECKs (purpose, 5-minute TTL, hash format).
+ * Skipped unless TEST_DATABASE_URL is set.
  */
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { createPrismaClient, type DatabaseClient } from '@meetops/database';
-import { MfaChallengeService } from '../src/modules/mfa/domain/challenge.js';
+import {
+  MFA_CHALLENGE_MAX_ATTEMPTS,
+  MfaChallengeService,
+} from '../src/modules/mfa/domain/challenge.js';
 import { PrismaMfaChallengeRepository } from '../src/modules/mfa/infrastructure/prisma-mfa-challenge.repository.js';
 import {
   CryptoTokenService,
@@ -37,11 +41,12 @@ describe.skipIf(!url)('mfa_challenges (live Postgres)', { timeout: 60_000 }, () 
     await db?.$disconnect();
   });
 
-  it('two concurrent completions: exactly one wins', async () => {
+  it('two concurrent completions after one reservation: exactly one wins', async () => {
     const now = new Date();
     const { challengeToken } = await svc.issue(userId, 'password', now);
     const c = (await svc.resolve(challengeToken, now))!;
     expect(c.userId).toBe(userId);
+    expect(await svc.reserve(c, now)).not.toBeNull();
     const results = await Promise.all([svc.complete(c, new Date()), svc.complete(c, new Date())]);
     expect(results.filter(Boolean)).toHaveLength(1);
     expect(await svc.resolve(challengeToken, new Date())).toBeNull();
@@ -60,11 +65,43 @@ describe.skipIf(!url)('mfa_challenges (live Postgres)', { timeout: 60_000 }, () 
   it('wrong codes burn it at the cap', async () => {
     const now = new Date();
     const { challengeToken } = await svc.issue(userId, 'password', now);
-    let burned = false;
-    for (let i = 0; i < 5; i++)
-      burned = await svc.fail((await svc.resolve(challengeToken, now))!, now);
-    expect(burned).toBe(true);
+    const verify = vi.fn(() => false);
+    let last: Awaited<ReturnType<typeof svc.submit>> = null;
+    for (let i = 0; i < 5; i++) last = await svc.submit(challengeToken, now, verify);
+    expect(last).toBeNull();
+    expect(verify).toHaveBeenCalledTimes(5);
     expect(await svc.resolve(challengeToken, now)).toBeNull();
+  });
+
+  it(`N parallel wrong guesses check the code at most ${MFA_CHALLENGE_MAX_ATTEMPTS} times and burn the challenge`, async () => {
+    const now = new Date();
+    const { challengeToken, challenge } = await svc.issue(userId, 'password', now);
+    const verify = vi.fn(() => false);
+    const results = await Promise.all(
+      Array.from({ length: 20 }, () => svc.submit(challengeToken, now, verify)),
+    );
+    expect(results.filter(Boolean)).toHaveLength(0);
+    expect(verify.mock.calls.length).toBeLessThanOrEqual(MFA_CHALLENGE_MAX_ATTEMPTS);
+    expect(verify.mock.calls.length).toBeGreaterThan(0);
+    expect(await svc.resolve(challengeToken, new Date())).toBeNull();
+    const row = await db.mfaChallenge.findUniqueOrThrow({ where: { id: challenge.id } });
+    expect(row.usedAt).not.toBeNull();
+    expect(row.attempts).toBe(MFA_CHALLENGE_MAX_ATTEMPTS);
+  });
+
+  it('parallel correct codes give exactly one success', async () => {
+    const now = new Date();
+    const { challengeToken, challenge } = await svc.issue(userId, 'password', now);
+    const verify = vi.fn(() => true);
+    const results = await Promise.all(
+      Array.from({ length: 20 }, () => svc.submit(challengeToken, now, verify)),
+    );
+    expect(results.filter(Boolean)).toHaveLength(1);
+    expect(verify.mock.calls.length).toBeGreaterThanOrEqual(1);
+    expect(verify.mock.calls.length).toBeLessThanOrEqual(MFA_CHALLENGE_MAX_ATTEMPTS);
+    expect(await svc.resolve(challengeToken, new Date())).toBeNull();
+    const row = await db.mfaChallenge.findUniqueOrThrow({ where: { id: challenge.id } });
+    expect(row.usedAt).not.toBeNull();
   });
 
   it('DB CHECKs refuse another purpose, a TTL over 5 minutes and a raw (non-hash) token', async () => {

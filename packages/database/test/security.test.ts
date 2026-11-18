@@ -459,6 +459,7 @@ describe('RLS migration', () => {
   );
 
   it('ADR-021 MFA migration: auth_level pinned, one active TOTP per user, MFA audit actions allowlisted', () => {
+    expect(mfaSql).toContain(`SET lock_timeout = '5s';`);
     expect(mfaSql).toContain(`CHECK ("auth_level" IN ('password', 'google', 'mfa')) NOT VALID;`);
     expect(mfaSql).toContain(`CHECK ("mfa_at" IS NULL OR "auth_level" = 'mfa') NOT VALID;`);
     const validate = readFileSync(

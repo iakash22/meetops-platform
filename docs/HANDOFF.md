@@ -16,7 +16,6 @@ device steps: [docs/mobile/live-activity.md](mobile/live-activity.md).
 
 `integration/phase-1` is at `de8a86e4` (the #463 merge is `6feef782`). [#463](https://github.com/iakash22/meetops-platform/pull/463) closed Tester X4-mem, the post-commit verify UX, and the `password_reset` / `set_password` info copy from the #459 reviews. The percentages in §2 below are still the 31 Oct snapshot; see [PHASE_STATUS.md](PHASE_STATUS.md).
 
-
 ## Update — 9 Nov 2026 (~22:35 IST)
 
 `main` is at `ca3c0e2b` (unchanged). `integration/phase-1` is at `fd4ede49` (55 ahead / 0 behind `main`), the merge of [#459](https://github.com/iakash22/meetops-platform/pull/459) Google OIDC hardening (Architecture + Tester PASS on `c41fc720`). Also merged 9 Nov into integration: [#457](https://github.com/iakash22/meetops-platform/pull/457) TRUST_PROXY docs; [#458](https://github.com/iakash22/meetops-platform/pull/458) Dependabot `serde_with` + glib RE-07 (Tester); [#460](https://github.com/iakash22/meetops-platform/pull/460) `plist`/`quick-xml` RUSTSEC clear (Tester). Current phase percentages are in [PHASE_STATUS.md](PHASE_STATUS.md). The percentages in §2 below are the 31 Oct snapshot.
@@ -91,7 +90,7 @@ Merged 31 Oct (#305–#317): extension real meeting API + held recordings (#305,
 4. ~~**Extension Info items**~~: addressed by merged #411 (fail-closed Start, durable pending, separate limits) and merged #437 (required Start checks, Start counts unheld pending chunks, server ceiling is contracts `MAX_CHUNK_BYTES` 64 MiB, local chunk/reserve stays 8 MiB).
 5. ~~**Desktop**~~: done in 02561e2efdf4a202d702dc7a87f5eda320c28911 (`chunk_put` takes a raw IPC body with the slot in an `x-meetops-chunk` header, JSON refused; `chunk_get` returns raw bytes; legacy chunk folders migrated).
 6. ~~**Mobile Lows**~~: done in #322 (server meeting id via `meetings/resolve` with `source: 'upload'`; wipe retries and surfaces failed deletes). Follow-up for Arch: a `mobile` `MeetingSource`.
-7. **MFA follow-ups (ADR-021, later tickets)**: (a) a rotation helper that re-wraps MFA secret envelopes (`mfa_factors.secret_enc`, AAD `["meetops.mfa.totp.v1", userId, factorId]`) under a new `secret_key_id` without the plaintext leaving the API process; (b) forced RLS on `organizations` as its own PR, before `MFA_ORG_ENFORCEMENT_ENABLED` can be turned on (until then only the audited admin service path writes `organizations.mfa_required`); (c) a retention sweep for used/expired `mfa_challenges` rows.
+7. **MFA follow-ups (ADR-021, later tickets)**: (a) a rotation helper that re-wraps MFA secret envelopes (`mfa_factors.secret_enc`, AAD `["meetops.mfa.totp.v1", userId, factorId]`) under a new `secret_key_id` without the plaintext leaving the API process; (b) forced RLS on `organizations` as its own PR, before `MFA_ORG_ENFORCEMENT_ENABLED` can be turned on (until then only the audited admin service path writes `organizations.mfa_required`); (c) **Ticket: `mfa_challenges` retention sweep** — used and expired login-challenge rows stay in `mfa_challenges` after consume, burn, or the 5-minute TTL. A later job (or SQL sweep) should delete rows with `used_at IS NOT NULL OR expires_at < now()` so the table cannot grow without bound. Out of scope for #497.
 
 ## 7. How to resume (checklist)
 
