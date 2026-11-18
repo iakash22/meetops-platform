@@ -35,7 +35,10 @@ export const API_ERROR_CODES = [
  * - `status`: GET, the caller's factors (never secrets).
  * - `enroll`: POST, starts a pending TOTP factor and returns the otpauth URI **once** (`Cache-Control: no-store`).
  * - `confirm`: POST, activates the pending factor with a TOTP code and returns the recovery codes **once**.
- * - `challenge`: POST, completes login for an MFA user (session goes `password` to `mfa`).
+ * - `challenge`: POST, completes login for an MFA user. Login (password or Google) of an MFA user returns an
+ *   `MfaLoginChallenge` (`{ mfaRequired: true, challengeToken, expiresAt }`) and sets **no** session cookie; this route
+ *   exchanges that single-use token (MFA_CHALLENGE_TTL_SECONDS, purpose MFA_CHALLENGE_PURPOSE) plus a code for a NEW
+ *   session created at level `mfa` (ADR-021 OQ-17). There is no `password` session to upgrade.
  * - `stepUp`: POST, refreshes step-up freshness on an `mfa` session (MFA_STEP_UP_WINDOW_SECONDS).
  * - `recoveryCodes`: POST, regenerates recovery codes (needs step-up).
  * - `factor`: DELETE, disables a factor (needs step-up).
@@ -53,6 +56,10 @@ export const MFA_PATHS = {
 export const SESSION_AUTH_LEVELS = ['password', 'google', 'mfa'] as const;
 /** ADR-021 OQ-1 default: a step-up stays fresh for 10 minutes. */
 export const MFA_STEP_UP_WINDOW_SECONDS = 600;
+/** ADR-021 OQ-17: lifetime of the login MFA challenge token (single use, not a session). */
+export const MFA_CHALLENGE_TTL_SECONDS = 300;
+/** ADR-021 OQ-17: the only purpose a login MFA challenge token is valid for. */
+export const MFA_CHALLENGE_PURPOSE = 'mfa_challenge';
 /** TOTP (RFC 6238) parameters: SHA-1, 6 digits, 30 s period. */
 export const MFA_TOTP_DIGITS = 6;
 export const MFA_TOTP_PERIOD_SECONDS = 30;
@@ -301,12 +308,14 @@ export const REDACT_KEYS = [
   'GITHUB_APP_CLIENT_SECRET',
   'JIRA_CLIENT_SECRET',
   'GITHUB_APP_WEBHOOK_SECRET',
-  // Unreleased (ADR-021 MFA): request/response fields of MFA_PATHS (@meetops/logger already covers them).
+  // Unreleased (ADR-021 MFA): request/response fields of MFA_PATHS (merged with the @meetops/logger defaults).
   'totpCode',
   'recoveryCode',
   'recoveryCodes',
   'otpauthUri',
-  'secret',
+  // The enrolment field is `totpSecret` (not a bare `secret`, which would also redact unrelated payloads).
+  'totpSecret',
+  'challengeToken',
 ] as const;
 
 /**

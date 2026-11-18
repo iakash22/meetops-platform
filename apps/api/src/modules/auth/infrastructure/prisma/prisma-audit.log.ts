@@ -8,7 +8,9 @@ import { truncateIp } from '../../../../shared/geoip/ip.js';
 
 /**
  * API action -> the allowlist in public.record_global_auth_event (migration 20261022032000, geo args added in
- * 20261028010000, auth.google_linked added in 20261109120000). Lockout is recorded as a failed login with `metadata.lockout = true`.
+ * 20261028010000, auth.google_linked added in 20261109120000, the ADR-021 MFA actions in 20261111180000). A password
+ * lockout is recorded as a failed login with `metadata.lockout = true`; an MFA lockout (`mfa.lockout`) has its own
+ * allowlisted action, `auth.mfa_lockout`.
  */
 const GLOBAL_AUTH_ACTIONS: Partial<Record<AuditAction, string>> = {
   'auth.signup': 'auth.signup',
@@ -23,8 +25,18 @@ const GLOBAL_AUTH_ACTIONS: Partial<Record<AuditAction, string>> = {
   'auth.email.verify': 'auth.email_verified',
   'auth.email.verification_resend': 'auth.email_verification_sent',
   'auth.google.linked': 'auth.google_linked',
+  // ADR-021 Amendment 1 P-5 (pre-tenant MFA events)
+  'auth.mfa.enroll': 'auth.mfa_enrolled',
+  'auth.mfa.confirm': 'auth.mfa_confirmed',
+  'auth.mfa.disable': 'auth.mfa_disabled',
+  'auth.mfa.challenge.success': 'auth.mfa_challenge_succeeded',
+  'auth.mfa.challenge.failure': 'auth.mfa_challenge_failed',
+  'auth.mfa.step_up': 'auth.mfa_step_up',
+  'auth.mfa.recovery_code.used': 'auth.mfa_recovery_code_used',
+  'auth.mfa.recovery_codes.regenerate': 'auth.mfa_recovery_codes_regenerated',
+  'mfa.lockout': 'auth.mfa_lockout',
 };
-const GLOBAL_TARGET_TYPES = new Set(['user', 'session', 'email']);
+const GLOBAL_TARGET_TYPES = new Set(['user', 'session', 'email', 'mfa_factor']);
 
 export class UnmappedGlobalAuditError extends Error {
   constructor(readonly action: string) {

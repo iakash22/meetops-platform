@@ -77,7 +77,7 @@ const PLANNED = {
     stepUp: 'auth.mfa.step_up',
     recoveryUsed: 'auth.mfa.recovery_code.used',
     recoveryRegenerated: 'auth.mfa.recovery_codes.regenerate',
-    lockout: 'auth.mfa.lockout',
+    lockout: 'mfa.lockout',
   },
 } as const;
 
@@ -557,6 +557,11 @@ describe.skip('TODO(ADR-021) enrollment (MFA-ENR)', () => {
   });
 });
 
+/**
+ * ADR-021 OQ-17 (review #497): login of an MFA user returns `{ mfaRequired: true, challengeToken, expiresAt }` and NO
+ * session cookie; POST /auth/mfa/challenge exchanges `challengeToken` + a code for a new `mfa` session. The cases below
+ * MFA-TOTP-02 still post a bare code; the challenge PR (#490) adds `challengeToken` to them when it activates this block.
+ */
 describe.skip('TODO(ADR-021) TOTP verification (MFA-TOTP)', () => {
   async function mfaUser(app: App, email: string) {
     const c = await signupAndLogin(app, email);
@@ -564,36 +569,41 @@ describe.skip('TODO(ADR-021) TOTP verification (MFA-TOTP)', () => {
     await c.post('/auth/logout');
     const fresh = new Client(app);
     const login = await fresh.post('/auth/login', { email, password: PASSWORD });
-    return { c: fresh, login, ...f };
+    const challengeToken = login.json<{ challengeToken?: string }>().challengeToken ?? '';
+    return { c: fresh, login, challengeToken, ...f };
   }
 
-  it('MFA-TOTP-01: password login of an MFA user is not elevated and cannot reach org data until the challenge', async () => {
+  it('MFA-TOTP-01: password login of an MFA user returns a challenge, not a session: no cookie, no org data', async () => {
     const app = await buildApp();
     const { c, login } = await mfaUser(app, 'totp1@example.com');
     expect(login.statusCode).toBe(200);
-    expect(login.json<{ mfaRequired?: boolean }>().mfaRequired).toBe(true);
-    const orgs = await c.get('/orgs');
-    expect(orgs.statusCode).toBe(403);
-    expect(errCode(orgs)).toBe(PLANNED.errors.mfaRequired);
+    const body = login.json<Record<string, unknown>>();
+    expect(body.mfaRequired).toBe(true);
+    expect(typeof body.challengeToken).toBe('string');
+    expect(Object.keys(body).sort()).toEqual(['challengeToken', 'expiresAt', 'mfaRequired']);
+    expect(String(login.headers['set-cookie'] ?? '')).not.toContain(`${SID}=`);
+    expect((await c.get('/auth/session')).statusCode).toBe(401);
+    expect((await c.get('/orgs')).statusCode).toBe(401);
     await app.close();
   });
 
-  it('MFA-TOTP-02: a valid code elevates to auth_level=mfa and rotates the session id', async () => {
+  it('MFA-TOTP-02: challengeToken + a valid code creates the session at auth_level=mfa; the token is single use', async () => {
     const app = await buildApp();
-    const { c, secret } = await mfaUser(app, 'totp2@example.com');
-    const before = sidOf(c);
+    const { c, secret, challengeToken } = await mfaUser(app, 'totp2@example.com');
+    expect(sidOf(c)).toBeFalsy();
     const ok = await c.post(PLANNED.paths.challenge, {
+      challengeToken,
       [PLANNED.totpField]: totp(secret, Date.now()),
     });
     expect(ok.statusCode).toBe(200);
-    expect(sidOf(c)).not.toBe(before);
+    expect(sidOf(c)).toBeTruthy();
     expect(await sessionLevel(c)).toBe(PLANNED.levels.mfa);
-    const stale = await app.inject({
-      method: 'GET',
-      url: '/auth/session',
-      headers: { cookie: `${SID}=${before}` },
+    const again = await new Client(app).post(PLANNED.paths.challenge, {
+      challengeToken,
+      [PLANNED.totpField]: totp(secret, Date.now() + 30_000),
     });
-    expect(stale.statusCode).toBe(401);
+    expect(again.statusCode).toBe(400);
+    expect(errCode(again)).toBe(PLANNED.errors.invalidCode);
     await app.close();
   });
 

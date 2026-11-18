@@ -6,8 +6,14 @@ import {
   ApiErrorCode,
   AuthSession,
   GetAuthSessionResponse,
+  LoginResponse,
+  MFA_CHALLENGE_PURPOSE,
+  MFA_CHALLENGE_TTL_SECONDS,
   MFA_PATHS,
+  MfaChallengeRequest,
+  MfaChallengeResponse,
   MfaCodeRequest,
+  MfaLoginChallenge,
   MfaElevationResponse,
   MfaRecoveryCodesResponse,
   MfaStatusResponse,
@@ -72,7 +78,7 @@ describe('ADR-021 MFA contracts', () => {
     expect(
       Value.Check(MfaTotpEnrollResponse, {
         factorId: id,
-        secret: 'A'.repeat(32),
+        totpSecret: 'A'.repeat(32),
         otpauthUri: 'otpauth://totp/MeetOps:a?issuer=MeetOps',
         expiresAt: at,
       }),
@@ -101,7 +107,7 @@ describe('ADR-021 MFA contracts', () => {
     ).toBe(false);
   });
 
-  it('AuthSession gains optional mfaRequired and session info (older servers stay valid)', () => {
+  it('AuthSession gains optional session info and has no mfaRequired flag (OQ-17: never a half session)', () => {
     const base = {
       user: {
         id,
@@ -117,12 +123,9 @@ describe('ADR-021 MFA contracts', () => {
       organizations: [],
     };
     expect(Value.Check(AuthSession, base)).toBe(true);
+    expect(Object.keys(AuthSession.properties)).not.toContain('mfaRequired');
     expect(
-      Value.Check(AuthSession, {
-        ...base,
-        mfaRequired: true,
-        session: { authLevel: 'password', mfaEnabled: true },
-      }),
+      Value.Check(AuthSession, { ...base, session: { authLevel: 'password', mfaEnabled: false } }),
     ).toBe(true);
     expect(
       Value.Check(AuthSession, {
@@ -135,11 +138,78 @@ describe('ADR-021 MFA contracts', () => {
     ).toBe(false);
     const noCsrf: Partial<typeof base> = { ...base };
     delete noCsrf.csrfToken;
-    expect(Value.Check(GetAuthSessionResponse, { ...noCsrf, mfaRequired: false })).toBe(true);
+    expect(Value.Check(GetAuthSessionResponse, noCsrf)).toBe(true);
+    expect(Object.keys(GetAuthSessionResponse.properties)).not.toContain('mfaRequired');
+    // The challenge response is the session created by the challenge.
+    expect(MfaChallengeResponse).toBe(AuthSession);
+  });
+
+  describe('OQ-17 login MFA challenge (not a session)', () => {
+    const challengeToken = 'A'.repeat(43);
+    const challenge = { mfaRequired: true, challengeToken, expiresAt: at };
+
+    it('MfaLoginChallenge is exactly { mfaRequired: true, challengeToken, expiresAt }', () => {
+      expect(Value.Check(MfaLoginChallenge, challenge)).toBe(true);
+      expect(Object.keys(MfaLoginChallenge.properties).sort()).toEqual(
+        ['challengeToken', 'expiresAt', 'mfaRequired'].sort(),
+      );
+      expect(Value.Check(MfaLoginChallenge, { ...challenge, mfaRequired: false })).toBe(false);
+      // No session material can ride along: no CSRF token, no user, no org data.
+      for (const extra of [{ csrfToken: csrf }, { user: { id } }, { organizations: [] }])
+        expect(Value.Check(MfaLoginChallenge, { ...challenge, ...extra })).toBe(false);
+      expect(Value.Check(MfaLoginChallenge, { ...challenge, challengeToken: 'short' })).toBe(false);
+      expect(
+        Value.Check(MfaLoginChallenge, { ...challenge, challengeToken: 'a b'.repeat(20) }),
+      ).toBe(false);
+    });
+
+    it('LoginResponse is a session or a challenge, discriminated on mfaRequired', () => {
+      expect(Value.Check(LoginResponse, challenge)).toBe(true);
+      expect(
+        Value.Check(LoginResponse, {
+          user: {
+            id,
+            email: 'a@example.com',
+            name: 'Ada',
+            emailVerifiedAt: null,
+            createdAt: at,
+            updatedAt: at,
+          },
+          csrfToken: csrf,
+          activeOrganizationId: null,
+          role: null,
+          organizations: [],
+        }),
+      ).toBe(true);
+    });
+
+    it('MfaChallengeRequest needs the challenge token plus exactly one code', () => {
+      expect(Value.Check(MfaChallengeRequest, { challengeToken, totpCode: '123456' })).toBe(true);
+      expect(
+        Value.Check(MfaChallengeRequest, { challengeToken, recoveryCode: 'abcde-fghij' }),
+      ).toBe(true);
+      expect(Value.Check(MfaChallengeRequest, { totpCode: '123456' })).toBe(false);
+      expect(Value.Check(MfaChallengeRequest, { challengeToken })).toBe(false);
+      expect(
+        Value.Check(MfaChallengeRequest, {
+          challengeToken,
+          totpCode: '123456',
+          recoveryCode: 'abcde-fghij',
+        }),
+      ).toBe(false);
+    });
+
+    it('5-minute TTL, single purpose, and the token is a REDACT key', () => {
+      expect(MFA_CHALLENGE_TTL_SECONDS).toBe(300);
+      expect(MFA_CHALLENGE_PURPOSE).toBe('mfa_challenge');
+      expect(REDACT_KEYS as readonly string[]).toContain('challengeToken');
+    });
   });
 
   it('MFA body/response fields are REDACT_KEYS', () => {
-    for (const k of ['totpCode', 'recoveryCode', 'recoveryCodes', 'otpauthUri', 'secret'])
+    for (const k of ['totpCode', 'recoveryCode', 'recoveryCodes', 'otpauthUri', 'totpSecret'])
       expect(REDACT_KEYS as readonly string[]).toContain(k);
+    // Narrowed (review #497 g): no bare `secret` entry in the contracts list.
+    expect(REDACT_KEYS as readonly string[]).not.toContain('secret');
   });
 });

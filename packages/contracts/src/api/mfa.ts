@@ -6,6 +6,8 @@ export {
   MFA_PATHS,
   SESSION_AUTH_LEVELS,
   MFA_STEP_UP_WINDOW_SECONDS,
+  MFA_CHALLENGE_TTL_SECONDS,
+  MFA_CHALLENGE_PURPOSE,
   MFA_TOTP_DIGITS,
   MFA_TOTP_PERIOD_SECONDS,
   MFA_RECOVERY_CODE_COUNT,
@@ -33,10 +35,41 @@ export const MfaCodeRequest = Type.Union([
 ]);
 export type MfaCodeRequest = Static<typeof MfaCodeRequest>;
 
-/** POST /auth/mfa/challenge: finish login for an MFA user. */
-export const MfaChallengeRequest = MfaCodeRequest;
-export type MfaChallengeRequest = MfaCodeRequest;
-/** POST /auth/mfa/step-up: same body; refreshes step-up freshness. */
+/**
+ * Opaque login MFA challenge token (ADR-021 OQ-17): 256-bit, base64url. Never logged (`challengeToken` is a REDACT
+ * key); the server stores only its SHA-256.
+ */
+export const MfaChallengeToken = Type.String({
+  minLength: 32,
+  maxLength: 128,
+  pattern: '^[A-Za-z0-9_-]+$',
+});
+
+/**
+ * Login response for a user with MFA on, after a correct first factor (password or Google). It is NOT a session: no
+ * cookie is set, there is no CSRF token and no org data, and it cannot call any other route. The token is single use,
+ * bound to the user, valid for MFA_CHALLENGE_TTL_SECONDS and only for POST /auth/mfa/challenge.
+ */
+export const MfaLoginChallenge = Type.Object(
+  {
+    mfaRequired: Type.Literal(true),
+    challengeToken: MfaChallengeToken,
+    expiresAt: IsoDateTime,
+  },
+  strict,
+);
+export type MfaLoginChallenge = Static<typeof MfaLoginChallenge>;
+
+/**
+ * POST /auth/mfa/challenge: finish login for an MFA user. Body: the login `challengeToken` plus exactly one of
+ * `totpCode` / `recoveryCode`. Success creates the session (level `mfa`) and returns `AuthSession` (`MfaChallengeResponse`).
+ */
+export const MfaChallengeRequest = Type.Union([
+  Type.Object({ challengeToken: MfaChallengeToken, totpCode: TotpCode }, strict),
+  Type.Object({ challengeToken: MfaChallengeToken, recoveryCode: RecoveryCode }, strict),
+]);
+export type MfaChallengeRequest = Static<typeof MfaChallengeRequest>;
+/** POST /auth/mfa/step-up: one code (no challenge token: it runs on an existing `mfa` session). */
 export const MfaStepUpRequest = MfaCodeRequest;
 export type MfaStepUpRequest = MfaCodeRequest;
 /** POST /auth/mfa/recovery-codes and DELETE /auth/mfa/factors/:factorId: no body (step-up gates them). */
@@ -67,13 +100,13 @@ export const MfaStatusResponse = Type.Object({
 export type MfaStatusResponse = Static<typeof MfaStatusResponse>;
 
 /**
- * POST /auth/mfa/totp/enroll. Shown once; the response has `Cache-Control: no-store`. `secret` is the base32 secret for
+ * POST /auth/mfa/totp/enroll. Shown once; the response has `Cache-Control: no-store`. `totpSecret` is the base32 secret for
  * manual entry; `otpauthUri` is for the QR code. Both are REDACT keys. The factor stays `pending` until confirm and
  * expires after `expiresAt`.
  */
 export const MfaTotpEnrollResponse = Type.Object({
   factorId: Id,
-  secret: Type.String({ minLength: 16, maxLength: 64 }),
+  totpSecret: Type.String({ minLength: 16, maxLength: 64 }),
   otpauthUri: Type.String({ minLength: 1, maxLength: 1024 }),
   expiresAt: IsoDateTime,
 });
@@ -96,7 +129,7 @@ export const MfaTotpConfirmResponse = Type.Object({
 });
 export type MfaTotpConfirmResponse = Static<typeof MfaTotpConfirmResponse>;
 
-/** Challenge / step-up success: the session id rotated, so a new CSRF token comes back. */
+/** Step-up success: the session id rotated, so a new CSRF token comes back. (Challenge success is `AuthSession`.) */
 export const MfaElevationResponse = Type.Object({
   csrfToken: Type.String({ minLength: 16 }),
   authLevel: SessionAuthLevel,

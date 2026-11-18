@@ -1,3 +1,4 @@
+import { SESSION_AUTH_LEVELS } from '@meetops/contracts';
 import type { UserId } from '../../users/domain/user.js';
 import type { GeoFields } from '../../../shared/geoip/provider.js';
 import type { NewLocationOutboxEvent } from '../application/new-location.js';
@@ -32,9 +33,9 @@ export interface Session {
 
 /**
  * OIDC review N-4: Google sessions are `google`, not the `password` column default. ADR-021: `mfa` is the elevated
- * level (DB CHECK `sessions_auth_level_check` pins the same three values).
+ * level (DB CHECK `sessions_auth_level_check` pins the same three values). Defined once, in @meetops/contracts.
  */
-export const SESSION_AUTH_LEVELS = ['password', 'google', 'mfa'] as const;
+export { SESSION_AUTH_LEVELS };
 export type SessionAuthLevel = (typeof SESSION_AUTH_LEVELS)[number];
 /** Unknown stored values are never trusted: they read back as the lowest level, `password`. */
 export const toSessionAuthLevel = (v: string | null | undefined): SessionAuthLevel =>

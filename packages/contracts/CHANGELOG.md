@@ -28,10 +28,18 @@ While the version is `0.x`, a minor bump may contain breaking changes (ADR-003).
   `MFA_RECOVERY_CODE_COUNT`, and schemas `SessionAuthLevel`, `TotpCode`, `RecoveryCode`, `MfaCodeRequest`,
   `MfaChallengeRequest`, `MfaStepUpRequest`, `MfaTotpConfirmRequest`, `MfaFactorParams`, `MfaFactor`,
   `MfaStatusResponse`, `MfaTotpEnrollResponse`, `MfaTotpConfirmResponse`, `MfaRecoveryCodesResponse`,
-  `MfaElevationResponse`, `AuthSessionInfo`. `AuthSession` gains optional `mfaRequired` and
+  `MfaElevationResponse`, `AuthSessionInfo`. `AuthSession` gains optional
   `session: { authLevel, mfaEnabled, stepUpExpiresAt? }`. Additive, but clients that switch exhaustively on
   `ApiErrorCode` must handle the three new codes. `REDACT_KEYS` gains `totpCode`, `recoveryCode`, `recoveryCodes`,
-  `otpauthUri` and `secret`.
+  `otpauthUri`, `totpSecret` and `challengeToken` (the enrolment response field is `totpSecret`, so no bare
+  `secret` key is added).
+- ADR-021 OQ-17 (Amendment 1): login of a user with MFA on returns `MfaLoginChallenge`
+  (`{ mfaRequired: true, challengeToken, expiresAt }`), which is **not a session**: no cookie, no CSRF token, no org
+  data. `LoginResponse` = `AuthSession | MfaLoginChallenge` (discriminate on `mfaRequired === true`).
+  `MfaChallengeRequest` is now `{ challengeToken, totpCode } | { challengeToken, recoveryCode }`, and POST
+  `/auth/mfa/challenge` creates the session at level `mfa` and returns `MfaChallengeResponse` (= `AuthSession`). New
+  `MfaChallengeToken`, `MFA_CHALLENGE_TTL_SECONDS` (300) and `MFA_CHALLENGE_PURPOSE` (`mfa_challenge`). `AuthSession`
+  has no `mfaRequired` flag (an earlier draft had one; it never shipped).
 - `CONSENT_ATTESTATION_MAX_BACKDATE_SECONDS` (86400): `attestedAt` more than 24 h before the server clock is now
   rejected with 422 `CONSENT_INVALID` (consent and upload/recording init), backed by a DB CHECK.
   **Release note:** in-flight uploads/recordings whose attestation is older than 24 h fail closed

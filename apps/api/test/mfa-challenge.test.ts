@@ -1,0 +1,98 @@
+/** ADR-021 OQ-17: the login MFA challenge is short-lived, single use, single purpose, bound to the user, hash-only. */
+import { describe, expect, it } from 'vitest';
+import { MFA_CHALLENGE_TTL_SECONDS } from '@meetops/contracts';
+import {
+  MFA_CHALLENGE_MAX_ATTEMPTS,
+  MFA_CHALLENGE_TTL_MS,
+  MfaChallengeService,
+} from '../src/modules/mfa/domain/challenge.js';
+import { InMemoryMfaChallengeRepository } from '../src/modules/mfa/infrastructure/in-memory-mfa-challenge.repository.js';
+import {
+  CryptoTokenService,
+  uuidGenerator,
+} from '../src/modules/auth/infrastructure/crypto-token.service.js';
+
+const USER = '00000000-0000-4000-8000-0000000000a1';
+const OTHER = '00000000-0000-4000-8000-0000000000b2';
+const t0 = new Date('2026-11-18T06:00:00.000Z');
+const at = (ms: number) => new Date(t0.getTime() + ms);
+
+function setup() {
+  const challenges = new InMemoryMfaChallengeRepository();
+  const tokens = new CryptoTokenService();
+  const svc = new MfaChallengeService({ challenges, tokens, ids: uuidGenerator });
+  return { challenges, tokens, svc };
+}
+
+describe('MfaChallengeService (OQ-17)', () => {
+  it('issues a 5-minute, purpose-bound challenge and stores only the SHA-256 of the token', async () => {
+    const { challenges, tokens, svc } = setup();
+    const issued = await svc.issue(USER, 'password', t0);
+    expect(MFA_CHALLENGE_TTL_MS).toBe(MFA_CHALLENGE_TTL_SECONDS * 1000);
+    expect(MFA_CHALLENGE_TTL_SECONDS).toBe(300);
+    expect(issued.expiresAt.getTime() - t0.getTime()).toBe(5 * 60_000);
+    expect(issued.challengeToken).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    const stored = [...challenges.items.values()];
+    expect(stored).toHaveLength(1);
+    expect(stored[0]).toMatchObject({
+      userId: USER,
+      purpose: 'mfa_challenge',
+      firstFactor: 'password',
+    });
+    expect(stored[0]!.tokenHash).toBe(tokens.hash(issued.challengeToken));
+    expect(JSON.stringify(stored)).not.toContain(issued.challengeToken);
+  });
+
+  it('resolves only before expiry, and is single use', async () => {
+    const { svc } = setup();
+    const { challengeToken } = await svc.issue(USER, 'google', t0);
+    const c = await svc.resolve(challengeToken, at(60_000));
+    expect(c?.userId).toBe(USER);
+    expect(await svc.complete(c!, at(61_000))).not.toBeNull();
+    // Used: neither resolvable nor completable again (a replayed token or a raced second request loses).
+    expect(await svc.resolve(challengeToken, at(62_000))).toBeNull();
+    expect(await svc.complete(c!, at(62_000))).toBeNull();
+
+    const late = await svc.issue(USER, 'password', t0);
+    expect(await svc.resolve(late.challengeToken, at(MFA_CHALLENGE_TTL_MS))).toBeNull();
+    const c2 = await svc.resolve(late.challengeToken, at(MFA_CHALLENGE_TTL_MS - 1));
+    expect(await svc.complete(c2!, at(MFA_CHALLENGE_TTL_MS + 1))).toBeNull();
+  });
+
+  it('is bound to its user: completing it for another user fails', async () => {
+    const { svc, challenges } = setup();
+    const { challengeToken } = await svc.issue(USER, 'password', t0);
+    const c = (await svc.resolve(challengeToken, t0))!;
+    expect(await challenges.consume(c.id, OTHER, t0)).toBeNull();
+    expect(await svc.complete(c, t0)).not.toBeNull();
+  });
+
+  it('rejects malformed and unknown tokens without a lookup hit', async () => {
+    const { svc } = setup();
+    await svc.issue(USER, 'password', t0);
+    for (const bad of ['', 'short', 'x'.repeat(200), 'has space'.repeat(5), 'A'.repeat(43)])
+      expect(await svc.resolve(bad, t0)).toBeNull();
+  });
+
+  it(`burns the challenge after ${MFA_CHALLENGE_MAX_ATTEMPTS} wrong codes`, async () => {
+    const { svc } = setup();
+    const { challengeToken } = await svc.issue(USER, 'password', t0);
+    for (let i = 1; i < MFA_CHALLENGE_MAX_ATTEMPTS; i++) {
+      const c = (await svc.resolve(challengeToken, t0))!;
+      expect(await svc.fail(c, t0)).toBe(false);
+    }
+    const c = (await svc.resolve(challengeToken, t0))!;
+    expect(await svc.fail(c, t0)).toBe(true);
+    expect(await svc.resolve(challengeToken, t0)).toBeNull();
+    expect(await svc.complete(c, t0)).toBeNull();
+  });
+
+  it('invalidateForUser burns every live challenge of that user only', async () => {
+    const { svc } = setup();
+    const a = await svc.issue(USER, 'password', t0);
+    const b = await svc.issue(OTHER, 'password', t0);
+    await svc.invalidateForUser(USER, t0);
+    expect(await svc.resolve(a.challengeToken, t0)).toBeNull();
+    expect(await svc.resolve(b.challengeToken, t0)).not.toBeNull();
+  });
+});
