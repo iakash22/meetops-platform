@@ -1,0 +1,73 @@
+{
+  "name": "hinglish-devanagari",
+  "description": "Synthetic Devanagari-script meeting (made-up speakers, no real people or recordings).",
+  "transcript": {
+    "transcriptId": "0e0e0e0e-0006-4000-8000-1000000000ff",
+    "recordingId": "0e0e0e0e-0006-4000-8000-2000000000ff",
+    "revision": 1,
+    "language": "hi",
+    "segments": [
+      {
+        "id": "0e0e0e0e-0006-4000-8000-000000000000",
+        "sequence": 0,
+        "speakerLabel": "Kabir",
+        "startMs": 0,
+        "endMs": 5500,
+        "text": "आज की सिंक छोटी रखते हैं, कल का डेमो अभी pending है।"
+      },
+      {
+        "id": "0e0e0e0e-0006-4000-8000-000000000001",
+        "sequence": 1,
+        "speakerLabel": "Zoya",
+        "startMs": 6000,
+        "endMs": 11500,
+        "text": "Zoya will डेमो स्लाइड्स तैयार करो by Wednesday."
+      },
+      {
+        "id": "0e0e0e0e-0006-4000-8000-000000000002",
+        "sequence": 2,
+        "speakerLabel": "Kabir",
+        "startMs": 12000,
+        "endMs": 17500,
+        "text": "We decided to शुक्रवार सुबह क्लाइंट को दिखाना."
+      },
+      {
+        "id": "0e0e0e0e-0006-4000-8000-000000000003",
+        "sequence": 3,
+        "speakerLabel": "Neel",
+        "startMs": 18000,
+        "endMs": 23500,
+        "text": "Neel will क्लाइंट लिंक भेजो."
+      },
+      {
+        "id": "0e0e0e0e-0006-4000-8000-000000000004",
+        "sequence": 4,
+        "speakerLabel": "Zoya",
+        "startMs": 24000,
+        "endMs": 29500,
+        "text": "ठीक है, कल मिलते हैं।"
+      }
+    ]
+  },
+  "golden": {
+    "actionItems": [
+      {
+        "title": "डेमो स्लाइड्स तैयार करो",
+        "owner": "Zoya",
+        "due": "Wednesday"
+      },
+      {
+        "title": "क्लाइंट लिंक भेजो",
+        "owner": "Neel",
+        "due": null
+      }
+    ],
+    "decisions": ["शुक्रवार सुबह क्लाइंट को दिखाना"],
+    "thresholds": {
+      "precision": 1,
+      "recall": 1,
+      "decisionRecall": 1,
+      "decisionPrecision": 1
+    }
+  }
+}
