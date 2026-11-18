@@ -30,9 +30,15 @@ What the repo shows that matters for this review:
   routing labels in our code. The vendor's own plan is set on the vendor account, which we can't see. But both vendors'
   free plans have the weakest data terms (§2.1, §2.3), and phase-7 notes already say "the free Gemini tier must not
   process customer data".
+  _Correction 2026-11-18 (after #513, `1d7ba360`): the labels are now at L66 (Gemini) and L81 (AssemblyAI). Production now refuses free or undeclared
+  LLM/STT tiers unless `AI_PROVIDER_DATA_TIER_<NAME>` is `paid` or `no-training` (b8eb5ffb;
+  `packages/ai-core/src/provider-data-tier.ts` L108–125)._
 - **No provider deletion call exists.** There is no `DELETE /v2/transcript/:id` (or any delete) in `apps/worker` or
   `packages/ai-core`, so the ADR-019 promise above is not implemented. AssemblyAI keeps transcripts 30 days by default
   (§2.3). This is a code change, outside docs/research; listed in §7 for the coordinator.
+  _Correction 2026-11-18 (after #513, `1d7ba360`): 45e8664e added a DELETE after durable store (`packages/ai-core/src/adapters/assemblyai.ts` L191;
+  `apps/worker/src/ai/provider-transcript-delete.ts`). There is no sweep for final failures, no backfill, and no
+  Gemini delete._
 - **No content PII redaction exists before the LLM.** `redact()` in `packages/ai-core/src/audit.ts` L25 only masks
   secret keys in audit records. Transcripts go to the summary and action-item model as they are.
 - **Hosts.** At base `8b881166`, `DEFAULT_ALLOWED_HOSTS` in `packages/ai-core/src/security/ssrf.ts` L89 lists four
@@ -40,6 +46,7 @@ What the repo shows that matters for this review:
   lead says the last entry is being removed from the code; it is not a provider assessed in this doc. The Gemini adapter
   uses `generativelanguage.googleapis.com` only. None of the four is a Vertex AI, Azure OpenAI, Sarvam or AssemblyAI EU
   (`api.eu.assemblyai.com`) host, so each of those would need adapter and allowlist work.
+  _Correction 2026-11-18 (after #513, `1d7ba360`): 088dab3e removed `api.deepgram.com`. The list is now three hosts (`ssrf.ts` L122–125)._
 
 ## 2. Findings per provider
 
@@ -162,7 +169,7 @@ What the repo shows that matters for this review:
 - **Certifications.** API Platform SOC 2 Type 2; BAA available [O2].
 - **Stages offered.** S2, S3, S4 and S1 (`gpt-4o-transcribe-diarize`, listed as Deprecated) [O4].
 - **List prices** (per 1M tokens) [O4, O5]: `gpt-6-luna` $0.10 / $0.50 (batch $0.05 / $0.25); `gpt-4o-mini` $0.15 /
-  $0.60 (listed as Deprecated; this is the price in `bootstrap.ts` L72); `text-embedding-3-small` $0.02;
+  $0.60 (listed as Deprecated; this is the price in `bootstrap.ts` L72; _correction 2026-11-18: now L125_); `text-embedding-3-small` $0.02;
   `gpt-4o-transcribe-diarize` audio input $2.50; `gpt-4o-mini-transcribe` $1.25.
 
 ### 2.6 Sarvam
@@ -290,6 +297,7 @@ $0.23/h, so a 20 h/month user is ≈ **$4.60** (`pricing-packaging.md` §3 now s
 - **OPTION B:** use the EU endpoint for EU orgs (never used for training) [A7, A8].
 - **OPTION C:** negotiate custom terms (de-identified data clause §4.6, biometric indemnity) [A2, A3].
 - Any option: implementing provider `DELETE` after each chunk is needed to meet ADR-019 as written.
+  _Correction 2026-11-18 (after #513, `1d7ba360`): implemented in 45e8664e; a retry sweep is still open._
 
 ## 6. Open questions
 
@@ -309,8 +317,10 @@ $0.23/h, so a 20 h/month user is ≈ **$4.60** (`pricing-packaging.md` §3 now s
 
 - `apps/worker` / `packages/ai-core`: no provider delete call, so ADR-019's "deleted at the provider right after
   processing" isn't met. AssemblyAI supports `DELETE` on a transcript [A12].
+  _Correction 2026-11-18 (after #513, `1d7ba360`): done for AssemblyAI in 45e8664e; the sweep, backfill and Gemini remain._
 - `packages/ai-core/src/bootstrap.ts`: defaults labelled `tier: 'free'` for Gemini and AssemblyAI; OpenAI default price
   matches `gpt-4o-mini`, which OpenAI lists as Deprecated [O4].
+  _Correction 2026-11-18 (after #513, `1d7ba360`): now L66/L81 free and L125 OpenAI paid, with a production guard (b8eb5ffb)._
 - Default model `gemini-2.5-flash-lite` is not offered in Vertex Mumbai [V3].
 - `docs/research/pricing-packaging.md` §3 leaves out the $0.02/h diarization add-on [A1]. **Applied** in `ab93ede`
   (§3 now has the add-on row and the $4.60 estimate).
