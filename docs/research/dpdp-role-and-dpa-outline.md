@@ -236,8 +236,12 @@ Appended to [legal-questions-brief.md](legal-questions-brief.md) §5 as items 14
   §2).
 - No s. 16 notification, Rule 15 order, SDF notification or s. 17(3) start-up exemption: "none found" from secondary
   trackers only [D6, D7].
-- Breach-notice terms in the AI vendors' DPAs; Resend's and Razorpay's roles and locations.
-- Whether CERT-In has amended the 2022 Directions since; we read the original.
+- Vendor breach-notice terms, roles and locations (AssemblyAI, Google, Resend, Razorpay) are now covered in
+  [verification-round-3.md](verification-round-3.md) §4. Still not verified: any India-specific addendum or negotiated
+  notice period on enterprise contracts (only public terms were read), and Razorpay's contractual role (it publishes no
+  DPA).
+- CERT-In: no amendment to the 2022 Directions was found on cert-in.org.in (see
+  [verification-round-3.md](verification-round-3.md) §3). A full Gazette search was not run.
 
 ## Sources
 
