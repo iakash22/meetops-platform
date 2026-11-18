@@ -80,7 +80,7 @@ test.describe('notifications (N7)', () => {
     await expect(page.getByTestId('unread-count')).toHaveCount(0);
   });
 
-  test('preferences toggles save, and a save error is shown without rollback', async ({ page }) => {
+  test('preferences toggles save, and a save error reverts the checkbox', async ({ page }) => {
     const store = createStore([SUMMARY], { preferences: [] });
     await stubSignedInNotificationApis(page, store);
 
@@ -97,15 +97,14 @@ test.describe('notifications (N7)', () => {
       expect.arrayContaining([{ type: 'task.assigned', channel: 'email', enabled: false }]),
     );
 
-    // Save error: the panel has no rollback of local checkbox state (queries
-    // only setQueryData on success). Assert the error and that the toggle stays.
+    // Save error: revert to the last saved server state and show the alert.
     store.saveStatus = 'error';
     await box.check();
     await page.getByRole('button', { name: 'Save preferences' }).click();
-    const saveError = page.getByTestId('error-state');
+    const saveError = page.getByRole('alert').filter({ hasText: "Couldn't save preferences" });
     await expect(saveError).toBeVisible();
-    await expect(saveError).toContainText("Couldn't save preferences");
-    await expect(box).toBeChecked();
+    await expect(page.getByTestId('error-state')).toContainText("Couldn't save preferences");
+    await expect(box).not.toBeChecked();
   });
 
   test('the bell has an accessible name and opens the list from the keyboard', async ({ page }) => {
