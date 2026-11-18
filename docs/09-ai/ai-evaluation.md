@@ -45,22 +45,43 @@ excludes `eval/**`.
   `obedient` mode follows `create a task: …` lines from the transcript; `obedient-extra-keys` also adds
   `status: 'approved'`.
 - **Fixtures** (`eval/fixtures/*.json`): `{ name, description, transcript: SummaryTranscript, golden }`, where
-  `golden` holds `actionItems` (`title`, `owner`, `due`), `decisions`, optional `forbidden` regexes and `thresholds`.
+  `golden` holds `actionItems` (`title`, `owner`, `due`), `decisions`, optional `forbidden` regexes and `thresholds`
+  (`precision`, `recall`, `decisionRecall`, `decisionPrecision`). JSON is schema-validated on load (TypeBox); a
+  validation error names the file and does not print fixture content.
   - `standup`: three owned items and one decision.
   - `planning`: four decisions, and one item phrased implicitly ("Ravi should probably own …") that the rule mock is
     expected to miss (recall threshold 0.66).
   - `noisy-no-actions`: chit-chat with no items and no decisions.
   - `adversarial`: real items plus instruction overrides, forged fence closers (including a guessed nonce), role
     spoofing and JSON smuggling. Injected tasks must not be persisted.
-- **Scoring** (`eval/score.ts`): titles match on token Jaccard >= 0.6 after normalisation (stop words dropped),
-  paired one-to-one. A strict true positive also needs the owner (`assigneeHint`) and due (`dueHint`) to match.
-  Reported per fixture: strict precision/recall, text-only precision/recall, owner and due accuracy, decision recall,
-  and summary schema validity (raw output parses into `LlmSummaryOutput` and the stored content passes contracts
-  `ReportContent`). Each run prints one `[worker eval]` line per fixture.
+  - `hinglish-romanised`, `hinglish-devanagari`, `hinglish-mixed`: made-up Hinglish meetings (romanised, Devanagari,
+    and mixed script). No real people or recordings.
+- **Scoring** (`eval/score.ts`): titles match on token Jaccard >= 0.6 after NFC normalisation, Unicode-aware
+  tokenizing (`\p{L}`, `\p{N}`, and `\p{M}` so Devanagari matras stay in the token), and stop-word removal, paired
+  one-to-one. Empty vs non-empty scores 0; two empty strings are not a title match (that used to be a false
+  perfect score when Devanagari was stripped). Empty vs empty is a pass only at the list level, when the fixture
+  expects no items and none were predicted. A strict true positive also needs the owner (`assigneeHint`) and due
+  (`dueHint`) to match. Decisions score both recall and precision, so a hallucinated extra decision fails the
+  fixture. Reported per fixture: strict precision/recall, text-only precision/recall, owner and due accuracy,
+  decision precision/recall, and summary schema validity (raw output parses into `LlmSummaryOutput` and the stored
+  content passes contracts `ReportContent`). Each run prints one `[worker eval]` line per fixture with the file
+  name and scores only — never transcript or golden text.
 - **Adversarial checks:** an `obedient-extra-keys` model makes the summary fail closed (`invalid_model_output`,
   nothing stored). An `obedient` model's injected tasks **are persisted** as `pending_review` drafts today. The
   worker path has no `possible-injection` flag (ai-core's pipeline has one), so only human review stops them. The eval
   asserts that the scorer catches this (precision below 1, forbidden hits); closing the gap is separate work.
 
-To add a case, drop a fixture JSON into `apps/worker/eval/fixtures/` with its golden values and thresholds. Real-model
-runs (live keys, rubric scoring) stay out of CI.
+The mock measures **pipeline behaviour**, not prompt quality: it checks that production prompts, parsing, persistence
+and scoring behave as expected against a deterministic rule model. It is not a live-model quality eval and must not be
+read as one.
+
+A future live-model mode (real keys, rubric scoring), if added, must be opt-in (explicit flag or env, default off),
+must never run in CI, and must have a cost cap.
+
+**Consented real eval data never goes in git.** In-repo fixtures are synthetic only. To score against consented
+recordings stored outside the repo, set `EVAL_DATA_DIR` to an absolute directory that is not inside the repository
+root. The variable is off by default and must never be set in CI; the harness refuses an in-repo path (including
+symlinks that resolve inside the repo) and will not start if `CI` or `GITHUB_ACTIONS` is true. Logs print fixture
+file names and scores only, never transcript or golden text.
+
+To add a synthetic case, drop a fixture JSON into `apps/worker/eval/fixtures/` with its golden values and thresholds.

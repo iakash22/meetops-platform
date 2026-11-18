@@ -5,6 +5,7 @@ import { join } from 'path';
 import { createFileChunkStore } from '../src/record/fileChunkStore';
 import {
   createRecordingLiveActivity,
+  isLiveActivityId,
   isValidTimeMs,
   LIVE_ACTIVITY_CALL_TIMEOUT_MS,
   type LiveActivityPort,
@@ -17,9 +18,9 @@ function fakePort(over: Partial<LiveActivityPort> = {}) {
   const calls: unknown[][] = [];
   let stop: (() => void) | null = null;
   const port: LiveActivityPort = {
-    start: (t) => (calls.push(['start', t]), Promise.resolve(true)),
-    update: (p, t, e) => (calls.push(['update', p, t, e]), Promise.resolve()),
-    end: () => (calls.push(['end']), Promise.resolve()),
+    start: (t) => (calls.push(['start', t]), Promise.resolve('act-1')),
+    update: (id, p, t, e) => (calls.push(['update', id, p, t, e]), Promise.resolve()),
+    end: (id) => (calls.push(['end', id]), Promise.resolve()),
     endAll: () => (calls.push(['endAll']), Promise.resolve(1)),
     onStopRequested(l) {
       stop = l;
@@ -69,10 +70,10 @@ describe('recording Live Activity state (R2)', () => {
     await live.settled();
     expect(calls).toEqual([
       ['start', 1_000],
-      ['update', true, 1_000, 10_000],
+      ['update', 'act-1', true, 1_000, 10_000],
       // Paused 50 s: the effective start moves forward by 50 s, elapsed stays 10 s.
-      ['update', false, 51_000, 10_000],
-      ['end'],
+      ['update', 'act-1', false, 51_000, 10_000],
+      ['end', 'act-1'],
     ]);
   });
 
@@ -115,23 +116,23 @@ describe('recording Live Activity state (R2)', () => {
 describe('Live Activity call serialization (hardening)', () => {
   function deferredPort() {
     const log: string[] = [];
-    let releaseStart: (ok: boolean) => void = () => undefined;
+    let releaseStart: (id: string | null) => void = () => undefined;
     const port: LiveActivityPort = {
       start: () => {
         log.push('start:begin');
-        return new Promise<boolean>((r) => {
-          releaseStart = (ok) => {
+        return new Promise<string | null>((r) => {
+          releaseStart = (id) => {
             log.push('start:done');
-            r(ok);
+            r(id);
           };
         });
       },
-      update: async (p) => void log.push(`update:${p}`),
+      update: async (id, p) => void log.push(`update:${id}:${p}`),
       end: async () => void log.push('end'),
       endAll: async () => (log.push('endAll'), 0),
       onStopRequested: () => () => undefined,
     };
-    return { port, log, release: (ok = true) => releaseStart(ok) };
+    return { port, log, release: (id: string | null = 'act-1') => releaseStart(id) };
   }
 
   it('a fast Start then Stop ends only after the start request has finished (no orphan)', async () => {
@@ -156,7 +157,13 @@ describe('Live Activity call serialization (hardening)', () => {
     await Promise.resolve();
     d.release();
     await live.settled();
-    expect(d.log).toEqual(['start:begin', 'start:done', 'update:true', 'update:false', 'end']);
+    expect(d.log).toEqual([
+      'start:begin',
+      'start:done',
+      'update:act-1:true',
+      'update:act-1:false',
+      'end',
+    ]);
   });
 
   it('launch endAll waits for an in-flight start, and a failing call never blocks the queue', async () => {
@@ -167,7 +174,7 @@ describe('Live Activity call serialization (hardening)', () => {
     live.pause();
     const all = live.endAll();
     await Promise.resolve();
-    d.release(false);
+    d.release(null);
     await all;
     expect(d.log).toEqual(['start:begin', 'start:done', 'endAll']);
   });
@@ -380,10 +387,22 @@ describe('Live Activity native config', () => {
     expect(mod.match(/staleDate: Self\.staleDate\(\)/g)).toHaveLength(2);
     // Native time validation mirrors isValidTimeMs: finite and >= 0, for start and for both update values.
     expect(mod).toContain('v.isFinite && v >= 0');
-    expect(mod).toContain('guard Self.isValidTimeMs(startedAtMs) else { return false }');
+    expect(mod).toContain('guard Self.isValidTimeMs(startedAtMs) else { return nil }');
     expect(mod).toContain(
       'guard Self.isValidTimeMs(startedAtMs), Self.isValidTimeMs(elapsedMs) else { return }',
     );
+    // start returns Activity.id (or nil); update/end target that id only.
+    expect(mod).toContain('let activity = try Activity.request(');
+    expect(mod).toContain('let id = activity.id');
+    expect(mod).toContain('return id.isEmpty ? nil : id');
+    expect(mod).toContain(
+      'AsyncFunction("update") { (id: String, paused: Bool, startedAtMs: Double, elapsedMs: Double) async in',
+    );
+    expect(mod).toContain('AsyncFunction("end") { (id: String) async in');
+    expect(mod).toContain('activity.id == id');
+    expect(mod).toContain('guard Self.isActivityId(id) else { return }');
+    expect(mod).not.toContain('return true');
+    expect(mod).not.toContain('_ = try Activity.request');
     const podspec = readFileSync(
       join(root, 'modules/live-activity/ios/LiveActivity.podspec'),
       'utf8',
@@ -420,9 +439,10 @@ describe('Live Activity call timeout', () => {
 
   const never = <T>() => new Promise<T>(() => undefined);
 
-  it('a hung native start does not block end(): end runs after the per-call timeout', async () => {
+  it('a hung native start does not block end(): a late id is ended, not left orphaned', async () => {
+    let lateStart: (id: string | null) => void = () => undefined;
     const { port, calls } = fakePort({
-      start: (t) => (calls.push(['start', t]), never<boolean>()),
+      start: (t) => (calls.push(['start', t]), new Promise<string | null>((r) => (lateStart = r))),
     });
     const live = createRecordingLiveActivity(port, () => 1_000);
     live.start();
@@ -431,13 +451,21 @@ describe('Live Activity call timeout', () => {
     expect(calls).toEqual([['start', 1_000]]);
     await jest.advanceTimersByTimeAsync(1);
     await live.settled();
-    expect(calls).toEqual([['start', 1_000], ['end']]);
+    // end ran, but start had not returned an id yet, so nothing was ended.
+    expect(calls).toEqual([['start', 1_000]]);
+    lateStart('act-1');
+    await jest.advanceTimersByTimeAsync(0);
+    await live.settled();
+    expect(calls).toEqual([
+      ['start', 1_000],
+      ['end', 'act-1'],
+    ]);
   });
 
   it('a hung update does not block endAll(), which still resolves', async () => {
     let t = 1_000;
     const { port, calls } = fakePort({
-      update: (p, st, e) => (calls.push(['update', p, st, e]), never<void>()),
+      update: (id, p, st, e) => (calls.push(['update', id, p, st, e]), never<void>()),
     });
     const live = createRecordingLiveActivity(port, () => t);
     live.start();
@@ -450,20 +478,20 @@ describe('Live Activity call timeout', () => {
   });
 
   it('a hung end() itself times out, so later calls still run', async () => {
-    const { port, calls } = fakePort({ end: () => (calls.push(['end']), never<void>()) });
+    const { port, calls } = fakePort({ end: (id) => (calls.push(['end', id]), never<void>()) });
     const live = createRecordingLiveActivity(port, () => 1_000);
     live.start();
     live.end();
     const done = live.endAll();
     await jest.advanceTimersByTimeAsync(LIVE_ACTIVITY_CALL_TIMEOUT_MS);
     await done;
-    expect(calls).toEqual([['start', 1_000], ['end'], ['endAll']]);
+    expect(calls).toEqual([['start', 1_000], ['end', 'act-1'], ['endAll']]);
   });
 
-  it('a start that resolves after its timeout and after end() is ended by a queued endAll (no orphan)', async () => {
-    let lateStart: (ok: boolean) => void = () => undefined;
+  it('a start that resolves after its timeout and after end() is ended by that id (no orphan)', async () => {
+    let lateStart: (id: string | null) => void = () => undefined;
     const { port, calls } = fakePort({
-      start: (t) => (calls.push(['start', t]), new Promise<boolean>((r) => (lateStart = r))),
+      start: (t) => (calls.push(['start', t]), new Promise<string | null>((r) => (lateStart = r))),
     });
     const live = createRecordingLiveActivity(port, () => 1_000);
     live.start();
@@ -471,53 +499,61 @@ describe('Live Activity call timeout', () => {
     await jest.advanceTimersByTimeAsync(LIVE_ACTIVITY_CALL_TIMEOUT_MS);
     await live.settled();
     // end() ran while the start was still in flight, so it ended nothing.
-    expect(calls).toEqual([['start', 1_000], ['end']]);
-    lateStart(true);
+    expect(calls).toEqual([['start', 1_000]]);
+    lateStart('act-late');
     await jest.advanceTimersByTimeAsync(0);
     await live.settled();
-    expect(calls).toEqual([['start', 1_000], ['end'], ['endAll']]);
+    expect(calls).toEqual([
+      ['start', 1_000],
+      ['end', 'act-late'],
+    ]);
+    expect(calls.filter((c) => c[0] === 'endAll')).toEqual([]);
   });
 
-  it('a late start that reports no activity (false) queues nothing', async () => {
-    let lateStart: (ok: boolean) => void = () => undefined;
+  it('a late start that reports no activity (null) queues nothing', async () => {
+    let lateStart: (id: string | null) => void = () => undefined;
     const { port, calls } = fakePort({
-      start: (t) => (calls.push(['start', t]), new Promise<boolean>((r) => (lateStart = r))),
+      start: (t) => (calls.push(['start', t]), new Promise<string | null>((r) => (lateStart = r))),
     });
     const live = createRecordingLiveActivity(port, () => 1_000);
     live.start();
     live.end();
     await jest.advanceTimersByTimeAsync(LIVE_ACTIVITY_CALL_TIMEOUT_MS);
-    lateStart(false);
+    lateStart(null);
     await jest.advanceTimersByTimeAsync(0);
     await live.settled();
-    expect(calls).toEqual([['start', 1_000], ['end']]);
+    expect(calls).toEqual([['start', 1_000]]);
   });
 
   it('a late start while the same recording is still live is left alone; a later end() ends it', async () => {
-    let lateStart: (ok: boolean) => void = () => undefined;
+    let lateStart: (id: string | null) => void = () => undefined;
     const { port, calls } = fakePort({
-      start: (t) => (calls.push(['start', t]), new Promise<boolean>((r) => (lateStart = r))),
+      start: (t) => (calls.push(['start', t]), new Promise<string | null>((r) => (lateStart = r))),
     });
     const live = createRecordingLiveActivity(port, () => 1_000);
     live.start();
     await jest.advanceTimersByTimeAsync(LIVE_ACTIVITY_CALL_TIMEOUT_MS);
-    lateStart(true);
+    lateStart('act-1');
     await jest.advanceTimersByTimeAsync(0);
     live.end();
     await live.settled();
-    expect(calls).toEqual([['start', 1_000], ['end']]);
+    expect(calls).toEqual([
+      ['start', 1_000],
+      ['end', 'act-1'],
+    ]);
   });
 
   it('honours a custom timeout and does not wait when calls settle quickly', async () => {
     const { port, calls } = fakePort({
-      start: (t) => (calls.push(['start', t]), never<boolean>()),
+      start: (t) => (calls.push(['start', t]), never<string | null>()),
     });
     const live = createRecordingLiveActivity(port, () => 1_000, { callTimeoutMs: 100 });
     live.start();
     live.end();
     await jest.advanceTimersByTimeAsync(100);
     await live.settled();
-    expect(calls).toEqual([['start', 1_000], ['end']]);
+    // start never returned an id, so end is fail-closed (no port.end).
+    expect(calls).toEqual([['start', 1_000]]);
     expect(jest.getTimerCount()).toBe(0);
   });
 });
@@ -549,7 +585,10 @@ describe('Live Activity time validation', () => {
     live.pause(); // elapsed NaN - 1_000 = NaN: dropped
     live.end();
     await live.settled();
-    expect(calls).toEqual([['start', 1_000], ['end']]);
+    expect(calls).toEqual([
+      ['start', 1_000],
+      ['end', 'act-1'],
+    ]);
   });
 
   it('drops an update with a negative elapsed time (clock went backwards)', async () => {
@@ -560,6 +599,105 @@ describe('Live Activity time validation', () => {
     live.pause();
     live.end();
     await live.settled();
-    expect(calls).toEqual([['start', 5_000], ['end']]);
+    expect(calls).toEqual([
+      ['start', 5_000],
+      ['end', 'act-1'],
+    ]);
+  });
+});
+
+describe('Live Activity id contract', () => {
+  it('accepts only a non-empty string as an activity id', () => {
+    expect(isLiveActivityId('act-1')).toBe(true);
+    expect(isLiveActivityId('0')).toBe(true);
+    for (const bad of ['', true, false, 1, 0, null, undefined, {}, []]) {
+      expect(isLiveActivityId(bad)).toBe(false);
+    }
+  });
+
+  it('stores the id from start and passes it to update and end', async () => {
+    const { port, calls } = fakePort({
+      start: (t) => (calls.push(['start', t]), Promise.resolve('act-42')),
+    });
+    const live = createRecordingLiveActivity(port, () => 1_000);
+    live.start();
+    live.pause();
+    live.end();
+    await live.settled();
+    expect(calls).toEqual([
+      ['start', 1_000],
+      ['update', 'act-42', true, 1_000, 0],
+      ['end', 'act-42'],
+    ]);
+  });
+
+  it('fail-closes when start returns null: no update or end is sent', async () => {
+    const { port, calls } = fakePort({
+      start: (t) => (calls.push(['start', t]), Promise.resolve(null)),
+    });
+    const live = createRecordingLiveActivity(port, () => 1_000);
+    live.start();
+    live.pause();
+    live.resume();
+    live.end();
+    await live.settled();
+    expect(calls).toEqual([['start', 1_000]]);
+  });
+
+  it('fail-closes when start returns an empty string', async () => {
+    const { port, calls } = fakePort({
+      start: (t) => (calls.push(['start', t]), Promise.resolve('')),
+    });
+    const live = createRecordingLiveActivity(port, () => 1_000);
+    live.start();
+    live.pause();
+    live.end();
+    await live.settled();
+    expect(calls).toEqual([['start', 1_000]]);
+  });
+
+  it('a late start after a newer recording started ends only the late id, not the new one', async () => {
+    jest.useFakeTimers();
+    try {
+      const late: Array<(id: string | null) => void> = [];
+      let n = 0;
+      const { port, calls } = fakePort({
+        start: (t) => {
+          const i = n++;
+          calls.push(['start', t]);
+          return new Promise<string | null>((r) => {
+            late[i] = r;
+          });
+        },
+      });
+      let t = 1_000;
+      const live = createRecordingLiveActivity(port, () => t);
+      live.start(); // first start hangs
+      await jest.advanceTimersByTimeAsync(LIVE_ACTIVITY_CALL_TIMEOUT_MS);
+      t = 2_000;
+      live.start(); // newer recording; first start is superseded
+      await jest.advanceTimersByTimeAsync(0);
+      late[1]!('act-new'); // current recording gets its id
+      await jest.advanceTimersByTimeAsync(0);
+      late[0]!('act-old'); // late first start must end only act-old
+      await jest.advanceTimersByTimeAsync(0);
+      await live.settled();
+      expect(calls).toEqual([
+        ['start', 1_000],
+        ['start', 2_000],
+        ['end', 'act-old'],
+      ]);
+      live.end();
+      await live.settled();
+      expect(calls).toEqual([
+        ['start', 1_000],
+        ['start', 2_000],
+        ['end', 'act-old'],
+        ['end', 'act-new'],
+      ]);
+      expect(calls.filter((c) => c[0] === 'endAll')).toEqual([]);
+    } finally {
+      jest.useRealTimers();
+    }
   });
 });

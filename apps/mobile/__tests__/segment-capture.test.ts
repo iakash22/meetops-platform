@@ -95,7 +95,8 @@ describe('Android segment capture (ADR-015, R5)', () => {
     const store = createFileChunkStore(fs, testCipher);
     const native = fakeNative(fs);
     const indicator = {
-      start: jest.fn(),
+      start: jest.fn(() => 'svc-1'),
+      update: jest.fn(),
       stop: jest.fn(),
       isConfirmed: () => true,
       onStopRequested: () => () => undefined,
@@ -135,7 +136,7 @@ describe('Android segment capture (ADR-015, R5)', () => {
     native.closeSegment(frame(40, 1));
     native.closeSegment(frame(33, 2));
     const chunks = await cap.capture('rec-1', 1000, draft);
-    expect(indicator.stop).toHaveBeenCalled();
+    expect(indicator.stop).toHaveBeenCalledWith('svc-1');
     const whole = new Uint8Array(native.plain.reduce((n, b) => n + b.length, 0));
     let off = 0;
     for (const [i, c] of chunks.entries()) {
@@ -292,7 +293,7 @@ describe('Android segment capture (ADR-015, R5)', () => {
     const { native, cap, store, indicator } = setup();
     native.start = () => Promise.reject(new Error('mic busy'));
     await expect(cap.begin('rec-1')).rejects.toThrow('mic busy');
-    expect(indicator.stop).toHaveBeenCalled();
+    expect(indicator.stop).toHaveBeenCalledWith('svc-1');
     await expect(store.getMarker()).resolves.toBeNull();
   });
 
@@ -311,7 +312,7 @@ describe('Android segment capture (ADR-015, R5)', () => {
     native.closeSegment(frame(40, 1));
     native.stop = () => Promise.reject(new Error('Plaintext segment could not be removed'));
     await expect(cap.capture('rec-1', 1, draft)).rejects.toThrow(/Plaintext/);
-    expect(indicator.stop).toHaveBeenCalled();
+    expect(indicator.stop).toHaveBeenCalledWith('svc-1');
     await expect(store.getMarker()).resolves.toMatchObject({
       phase: 'sealing',
       recordingId: 'rec-1',

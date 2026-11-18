@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 import { CONSENT_CONFIRMATION, CONSENT_NOTICE, setConfirmed } from '../src/lib/consent.js';
 import { MAX_DURATION_MS } from '../src/lib/contract-limits.js';
 import { PAIRING_REQUIRED_MESSAGE as START_PAIRING_REQUIRED_MESSAGE } from '../src/lib/background-handler.js';
+import { UNPAIRED_PROMPT_MESSAGE } from '../src/lib/pairing-messages.js';
 import {
   MEETING_RESOLVE_MESSAGE,
   OFFLINE_MESSAGE,
@@ -243,11 +244,18 @@ describe('popup UI pass: status, re-auth, a11y', () => {
     );
   });
 
-  it('not paired: hint that recordings stay on the device; hidden when paired or unknown', () => {
-    const hint = 'recordings are kept on this device';
-    expect(render()).toContain(hint);
-    expect(render({ auth: { state: 'paired' } })).not.toContain(hint);
-    expect(render({ auth: undefined })).not.toContain(hint);
+  it('not paired: prompts pairing with status semantics; hidden when paired or unknown', () => {
+    expect(UNPAIRED_PROMPT_MESSAGE).toContain('This browser is not paired with MeetOps AI');
+    expect(UNPAIRED_PROMPT_MESSAGE).toContain('so recording cannot start');
+    expect(UNPAIRED_PROMPT_MESSAGE).toContain('Pair the extension first.');
+    const html = render();
+    expect(html).toContain(UNPAIRED_PROMPT_MESSAGE);
+    expect(html).toMatch(/class="mo-hint" role="status" aria-label="Pairing required"/);
+    expect(html).not.toContain('recordings are kept on this device');
+    expect(html).not.toContain('upload once you pair');
+    expect(buttonsOf(html, 'primary')).toEqual(['Pair with MeetOps']);
+    expect(render({ auth: { state: 'paired' } })).not.toContain(UNPAIRED_PROMPT_MESSAGE);
+    expect(render({ auth: undefined })).not.toContain(UNPAIRED_PROMPT_MESSAGE);
   });
 
   it('confirmed consent is announced as per-meeting', () => {

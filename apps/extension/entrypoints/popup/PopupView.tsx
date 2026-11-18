@@ -15,6 +15,7 @@ import {
 import { MAX_DURATION_MS } from '../../src/lib/contract-limits.js';
 import { formatElapsed } from '../../src/lib/format.js';
 import type { StatusPayload } from '../../src/lib/messages.js';
+import { UNPAIRED_PROMPT_MESSAGE } from '../../src/lib/pairing-messages.js';
 import { pendingLabel, type PendingTasks } from '../../src/lib/pending-tasks.js';
 import { OPEN_FROM_TOOLBAR } from './popup-errors.js';
 
@@ -336,8 +337,8 @@ export function RecorderView(p: RecorderViewProps) {
         />
       )}
       {p.paired === false && !active && status.status !== 'error' && (
-        <p className="mo-hint">
-          Not paired: recordings are kept on this device and upload once you pair.
+        <p className="mo-hint" role="status" aria-label="Pairing required">
+          {UNPAIRED_PROMPT_MESSAGE}
         </p>
       )}
     </section>
