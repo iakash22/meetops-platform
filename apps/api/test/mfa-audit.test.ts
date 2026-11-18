@@ -65,7 +65,9 @@ describe('ADR-021 P-5 MFA audit actions', () => {
   );
 
   it('every mapped action is in the record_global_auth_event allowlist of the MFA migration', () => {
-    const body = mfaSql.slice(mfaSql.indexOf('p_action NOT IN ('), mfaSql.indexOf(') THEN'));
+    const start = mfaSql.indexOf('p_action NOT IN (');
+    expect(start).toBeGreaterThan(-1);
+    const body = mfaSql.slice(start, mfaSql.indexOf(') THEN', start));
     for (const dbAction of Object.values(MFA_ACTIONS)) expect(body).toContain(`'${dbAction}'`);
     expect(mfaSql).toContain(`NOT IN ('user', 'session', 'email', 'mfa_factor')`);
   });
