@@ -492,3 +492,47 @@ a {
   outline: 2px solid var(--mo-link);
   outline-offset: 2px;
 }
+
+.mo-privacy-link {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  padding: 0 4px;
+  color: var(--mo-link);
+  font-weight: 600;
+  text-decoration: underline;
+}
+
+.mo-privacy-link:focus-visible {
+  outline: 2px solid var(--mo-link);
+  outline-offset: 2px;
+}
+
+.mo-privacy-footer {
+  padding: 8px 16px 16px;
+}
+
+.mo-options {
+  box-sizing: border-box;
+  max-width: 36rem;
+  padding: 24px 20px;
+  color: var(--mo-foreground);
+  background: var(--mo-background, #0a0a0a);
+}
+
+.mo-options h1 {
+  margin: 0 0 12px;
+  font-size: 1.25rem;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}

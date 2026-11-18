@@ -17,6 +17,7 @@ import { formatElapsed } from '../../src/lib/format.js';
 import type { StatusPayload } from '../../src/lib/messages.js';
 import { pendingLabel, type PendingTasks } from '../../src/lib/pending-tasks.js';
 import { OPEN_FROM_TOOLBAR } from './popup-errors.js';
+import { PrivacyPolicyLink } from '../../src/lib/privacy-link.js';
 
 const REASONS: Record<NonNullable<AuthStatus['reason']>, string> = {
   unauthorized: 'Your session was rejected.',
@@ -101,6 +102,9 @@ export function OpenFromToolbar() {
       <section className="mo-section" aria-label="Open from toolbar">
         <p className="mo-notice">{OPEN_FROM_TOOLBAR}</p>
       </section>
+      <footer className="mo-privacy-footer">
+        <PrivacyPolicyLink />
+      </footer>
     </PopupFrame>
   );
 }
@@ -501,6 +505,9 @@ export function PopupView({
         emphasis={auth?.state === 'paired' ? 'primary' : 'secondary'}
       />
       <ErrorToast message={error} />
+      <footer className="mo-privacy-footer">
+        <PrivacyPolicyLink />
+      </footer>
     </PopupFrame>
   );
 }
