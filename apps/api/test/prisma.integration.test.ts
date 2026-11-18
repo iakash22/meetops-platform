@@ -257,5 +257,33 @@ describe.skipIf(!url)(
       // the app role cannot SELECT null-org rows; the insert succeeding is the assertion
       expect(await db.auditEvent.count({ where: { organizationId: null } })).toBe(0);
     });
+
+    it('hasUnusedSince: only unused, unexpired reset tokens created at or after `since` (#496)', async () => {
+      const c = await signupAndLogin(app, email('since'));
+      const userId = (await c.get('/auth/session')).json().user.id as string;
+      const repo = new PrismaOneTimeTokenRepository(db);
+      const claim = new Date();
+      const now = new Date(claim.getTime() + 60_000);
+      const row = (id: string, createdAt: Date, over: { usedAt?: Date; expiresAt?: Date } = {}) =>
+        repo.create({
+          id,
+          userId,
+          purpose: 'password_reset',
+          tokenHash: createHash('sha256').update(id).digest('hex'),
+          expiresAt: over.expiresAt ?? new Date(claim.getTime() + 3_600_000),
+          usedAt: over.usedAt ?? null,
+          createdAt,
+        });
+      await repo.invalidateForUser(userId, 'password_reset', claim);
+      await row(randomUUID(), new Date(claim.getTime() - 1_000));
+      await row(randomUUID(), new Date(claim.getTime() + 1_000), { usedAt: claim });
+      await row(randomUUID(), new Date(claim.getTime() + 1_000), {
+        expiresAt: new Date(claim.getTime() + 30_000),
+      });
+      expect(await repo.hasUnusedSince(userId, 'password_reset', claim, now)).toBe(false);
+      await row(randomUUID(), claim);
+      expect(await repo.hasUnusedSince(userId, 'password_reset', claim, now)).toBe(true);
+      expect(await repo.hasUnusedSince(userId, 'email_verification', claim, now)).toBe(false);
+    });
   },
 );
