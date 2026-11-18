@@ -8,6 +8,7 @@ import { describe, expect, it } from 'vitest';
 import { PrismaClient } from '@prisma/client';
 import {
   TENANT_TABLES,
+  USER_TABLES,
   runWithOrgContext,
   runWithOrganizationContext,
   runWithUserContext,
@@ -770,7 +771,7 @@ describe.skipIf(!APP_URL)('DB-BUG-2: empty-string context fails closed (live)', 
     await app.$transaction(async (tx) => {
       await tx.$executeRaw`SELECT set_config('app.current_org_id', '', false)`;
       await tx.$executeRaw`SELECT set_config('app.current_user_id', '', false)`;
-      for (const t of TENANT_TABLES) {
+      for (const t of [...TENANT_TABLES, ...USER_TABLES]) {
         const rows = await tx.$queryRawUnsafe<{ n: bigint }[]>(`SELECT count(*) AS n FROM "${t}"`);
         expect(Number(rows[0]?.n), t).toBe(0);
       }
@@ -944,7 +945,10 @@ describe.skipIf(!OWNER_URL || !ADMIN_URL)(
       const enabled = await owner.$queryRaw<{ relname: string }[]>`
       SELECT c.relname FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
       WHERE n.nspname = 'public' AND c.relkind = 'r' AND c.relrowsecurity`;
-      expect(enabled.map((r) => r.relname).sort()).toEqual([...TENANT_TABLES].sort());
+      // ADR-021: the user-scoped MFA tables (USER_TABLES, forced RLS on app.current_user_id) carry RLS too.
+      expect(enabled.map((r) => r.relname).sort()).toEqual(
+        [...TENANT_TABLES, ...USER_TABLES].sort(),
+      );
       await owner.$disconnect();
     });
   },
