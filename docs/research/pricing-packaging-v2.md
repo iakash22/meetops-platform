@@ -26,7 +26,7 @@ brief's §5 gets a one-line pointer. Where v2 proposes a different number, §1 l
 | 1   | AI notetakers showing INR to India                    | "No AI-notetaker vendor in §1 showed INR"                                 | **tl;dv now shows INR**: Pro ₹1,715, Business ₹2,499 per seat/month billed annually [PV4]                                                     | Live page today                                            |
 | 2   | AssemblyAI top batch model                            | Universal-3.5 Pro, $0.21/h, 18 languages [P17]                            | **AssemblyAI-STT-3.7**, $0.21/h, 32 languages; Universal-3.5 Pro deprecated [PV12, PV13]                                                      | Price same, name and coverage changed                      |
 | 3   | AssemblyAI free tier                                  | Not stated                                                                | "Up to 185 hours of pre-recorded transcription" [PV12]                                                                                        | New FAQ text                                               |
-| 4   | Our cost per meeting-hour                             | STT only: $0.23/h with diarization; LLM "not included" (§3)               | **Full ESTIMATE $0.19–$0.47/h, base ≈ $0.30/h (≈ ₹27.7)**: STT + LLM + storage + egress + Postgres share (§3)                                 | Brief asked for full COGS                                  |
+| 4   | Our cost per meeting-hour                             | STT only: $0.23/h with diarization; LLM "not included" (§3)               | **Full ESTIMATE $0.19–$0.47/h, base ≈ $0.297/h (≈ ₹27.7)**: STT + LLM + storage + egress + Postgres share (§3)                                | Brief asked for full COGS                                  |
 | 5   | Team included hours (proposal)                        | 25 h per recording user                                                   | **15 h per recording user, pooled across the org** (proposal)                                                                                 | At 25 h fully used, Team INR annual margin ≈ 10% (§4.4)    |
 | 6   | Business included hours (proposal)                    | 50 h per recording user                                                   | **30 h per recording user, pooled** (proposal)                                                                                                | At 50 h fully used, Business INR annual margin ≈ 4% (§4.4) |
 | 7   | Extra capture pack (proposal)                         | ₹299 / $5 per 10 h                                                        | **₹499 / $8 per 10 h** (proposal)                                                                                                             | ₹299 is ≈ 4% margin at base COGS (₹277 per 10 h)           |
@@ -97,9 +97,9 @@ Patterns (our reading, from the two tables):
 | Stage                | Code                                                                                                                                                                                                                                                                                          | Cost driver                                                  |
 | -------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------ |
 | Capture              | Browser and desktop record `audio/webm;codecs=opus` first (`apps/web/src/features/recording/recording-panel.tsx` L16, `apps/desktop/src/features/recording/recorder.ts` L14); no `audioBitsPerSecond` is set, so the browser default applies (bitrate **UNVERIFIED**; we assume 32–128 kbps). | Raw recording object (`kind: 'recording'`)                   |
-| Normalise and chunk  | ffmpeg to 16 kHz mono `pcm_s16le` WAV (`packages/media-core/src/transcode.ts` L45–47); **both** `normalized.wav` and each 600 s chunk WAV are written to object storage (`apps/worker/src/media/processor.ts` L369–378 and L405–418).                                                         | 115.2 MB per hour per WAV copy, two copies                   |
+| Normalise and chunk  | ffmpeg to 16 kHz mono `pcm_s16le` WAV (`packages/media-core/src/transcode.ts` L45–47); **both** `normalized.wav` and each 600 s chunk WAV are written to object storage (`apps/worker/src/media/processor.ts` L375–378 for `normalized.wav`, L415–418 for the chunk WAVs).                    | 115.2 MB per hour per WAV copy, two copies                   |
 | STT                  | Worker reads chunk bytes (`apps/worker/src/ai/bootstrap.ts` L88) and uploads them to AssemblyAI `/v2/upload`; body sends `speaker_labels` and `speech_model: this.model`, default `'universal'` (`apps/worker/src/ai/providers/assemblyai.ts` L143, L185–190).                                | Per audio hour + diarization; upload egress from our compute |
-| Summary + actions    | Gemini `gemini-2.5-flash-lite` by default (`packages/config/src/index.ts` L75); two passes, one bounded repair retry (#489 §1).                                                                                                                                                               | Tokens                                                       |
+| Summary + actions    | Gemini `gemini-2.5-flash-lite` by default (`packages/ai-core/src/env.ts` L18; also `packages/config/src/index.ts` L75); two passes, one bounded repair retry (#489 §1).                                                                                                                       | Tokens                                                       |
 | Embeddings           | Off unless `SEMANTIC_EMBEDDINGS_ENABLED=true` (`apps/worker/src/embeddings/index.ts` L30–33).                                                                                                                                                                                                 | Tokens, if on                                                |
 | Storage and Postgres | `STORAGE_PROVIDER` enum `minio`/`neon`/`r2`/`s3`, default `minio` (`packages/config/src/index.ts` L36); prod is R2 or S3 (`infra/docs/object-storage-prod.md`); hosting "is not chosen yet" (`docs/13-ops/README.md` L3).                                                                     | GB-months, requests, egress; one Postgres instance           |
 
@@ -136,6 +136,8 @@ Two code facts change the estimate:
   schema → **15,000 input tokens per pass**; summary 1,500 output, actions 1,000 output → **30,000 in, 2,500 out**.
   Worst case adds one repair pass (+15,000 in, +1,000 out) and **×1.5 tokens for Hindi-heavy text** (assumption;
   Devanagari usually tokenises heavier).
+- **Embeddings** (only when on): ≈ 15,000 tokens per meeting-hour (transcript segments + summary, embedded once), the
+  same assumption as #489 §4 (S4); 15,000 × $0.15/1M = $0.00225 ≈ **$0.0023**.
 - **Storage**: 0.2304 GB WAV + 0.0144–0.0576 GB opus (32–128 kbps, assumption), kept for the org's retention period.
 - **Requests**: 10 s capture slices (`recorder.ts` L11) ≈ 360 session-chunk PUTs/h + ≈ 10 processed objects.
 - **Egress**: the worker uploads 0.1152 GB of WAV per hour to AssemblyAI from our compute; priced at the AWS Mumbai
@@ -159,9 +161,9 @@ Formula: `COGS/h = STT + LLM + embeddings + storage (GB × $/GB-month × retenti
 | Requests                       | $0.0017                                       | **$0.0018**                                                        | $0.0018                                                              |
 | Egress (STT upload + playback) | $0.0126                                       | **$0.0165**                                                        | $0.0189                                                              |
 | Postgres share                 | $0.0024                                       | **$0.0244**                                                        | $0.1219                                                              |
-| **Total per meeting-hour**     | **≈ $0.19 (₹17.9)**                           | **≈ $0.30 (₹27.7)**                                                | **≈ $0.47 (₹43.9)**                                                  |
+| **Total per meeting-hour**     | **≈ $0.19 (₹17.9)**                           | **≈ $0.297 (₹27.7)**                                               | **≈ $0.47 (₹43.9)**                                                  |
 
-**COGS range (ESTIMATE): $0.19–$0.47 per meeting-hour; base ≈ $0.30 (≈ ₹28).** STT is about 78% of the base case.
+**COGS range (ESTIMATE): $0.19–$0.47 per meeting-hour; base ≈ $0.297 (≈ ₹27.7).** INR uses US$1 = ₹93.48 [PV19] on the unrounded base of $0.2967 (₹27.74). STT is about 78% of the base case.
 
 ### 3.5 Sensitivity (change from the base $0.297/h)
 
@@ -169,7 +171,7 @@ Formula: `COGS/h = STT + LLM + embeddings + storage (GB × $/GB-month × retenti
 | -------------------------------------------------------- | ------------------------------------- | ----------------------------------------------------------------------------------- |
 | Free Gemini tier instead of paid                         | −$0.004 (−1.3%)                       | Not allowed for customer data (#489 §5.1; phase-7 notes). No cost reason to use it. |
 | Vertex in Mumbai (2.5 Flash or 3.5 Flash-Lite)           | +$0.011–0.013                         | From #489 §4                                                                        |
-| Embeddings on (`gemini-embedding-001`)                   | +$0.0023                              | Off by default                                                                      |
+| Embeddings on (`gemini-embedding-001`, 15,000 tokens/h)  | +$0.0023                              | Off by default                                                                      |
 | Universal-2 instead of STT-3.7                           | −$0.06                                | 99 languages but no native code switching claim [PV12]                              |
 | Retention 7 / 30 / 90 / 365 days (S3)                    | $0.0016 / $0.0067 / $0.0200 / $0.0799 | R2: $0.0009 / $0.0040 / $0.0120 / $0.0480                                           |
 | Delete both WAV copies after transcription (90 days, S3) | −$0.017                               | Storage falls to ≈ $0.0027 (opus only); engineering change                          |
@@ -283,7 +285,7 @@ use during the pilot and 3 months after, plus a first-year INR discount
 ([icp-and-recruitment.md](design-partner-kit/icp-and-recruitment.md) §7). Nothing may be linked to eval data (DPDP
 s. 6(1), outline §4 and §14).
 
-Our cost of a pilot (ESTIMATE): 10 recording users × 15 h × 2 months ≈ 300 h ≈ **₹8,300 at base COGS (₹13,200 high)**;
+Our cost of a pilot (ESTIMATE): 10 recording users × 15 h × 2 monthly pools = **300 h ≈ ₹8,300 at base COGS (₹13,200 high)**. That basis assumes an 8-week pilot spans two monthly pools and both are fully used; pro rata over 8 weeks (56 days ÷ 30.4 days × 15 h × 10) is about 280 h ≈ ₹7,700;
 at #473's 25 h, ≈ ₹13,900. Pilots also need the **paid** LLM tier before any customer data (outline §7; #489 §5.1).
 
 | OPTION                               | What it is                                                                                                 | Pros                                                                          | Cons                                                                                         | Fit with current docs                                        |
@@ -340,7 +342,7 @@ independent of eval data, and record M16 (cost per meeting-hour) to replace the 
   `speech_models` [PV13]. Owner: AI/worker.
 - `packages/config/src/index.ts` L36 allows `STORAGE_PROVIDER=neon`, which the storage docs don't list
   (`docs/07-storage/storage-and-media.md` L58). Owner: config.
-- `bootstrap.ts` L50 and L55 label both default providers `tier: 'free'` (#489 §1); the paid-tier gate (decision 4)
+- `packages/ai-core/src/bootstrap.ts` L50 (Gemini) and L55 (AssemblyAI) label both default providers `tier: 'free'` (#489 §1); the paid-tier gate (decision 4)
   needs that changed before pilots.
 
 ## Sources (fetched 2026-11-18 IST unless noted)
