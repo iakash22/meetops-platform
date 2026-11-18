@@ -1,4 +1,12 @@
-import { HELD_FULL_START_MESSAGE, heldStorageLevel, type HeldSummary } from './drain.js';
+import {
+  HELD_FULL_START_MESSAGE,
+  PENDING_CHECK_FAILED_MESSAGE,
+  PENDING_FULL_START_MESSAGE,
+  heldStorageLevel,
+  pendingStorageFull,
+  type HeldSummary,
+  type PendingStorage,
+} from './drain.js';
 import {
   addPendingDiscard,
   clearPendingDiscard,
@@ -6,6 +14,14 @@ import {
   listFailedDiscards,
   retryPendingDiscards,
 } from './pending-discard.js';
+import {
+  QUOTA_CHECK_FAILED_MESSAGE,
+  QUOTA_FULL_START_MESSAGE,
+  QUOTA_LOW_MESSAGE,
+  quotaLevel,
+  type QuotaEstimate,
+  type QuotaLevel,
+} from './storage-quota.js';
 import { consumeConsent, recordConsent, toAttestation } from './consent-registry.js';
 import {
   isBackgroundMessage,
@@ -45,12 +61,27 @@ export interface BackgroundDeps {
   discardLocal: (sessionId: string) => Promise<void>;
   /** Fallback after repeated discard failures: delete the session from IndexedDB only. */
   deleteLocal?: (sessionId: string) => Promise<void>;
-  /** Number of recordings held after a server refusal (409/413); surfaced in the popup. */
-  heldRecordings?: () => Promise<HeldSummary>;
+  /**
+   * Number of recordings held after a server refusal (409/413); surfaced in the popup. Required: Start fails closed
+   * on it, so a missing implementation must be a type error, not a silently skipped check.
+   */
+  heldRecordings: () => Promise<HeldSummary>;
   /** Retry the held recordings (popup Retry upload). */
   retryHeld?: () => Promise<void>;
   /** Delete the held recordings locally (popup Discard, after confirmation). */
   discardHeld?: () => Promise<void>;
+  /**
+   * Pairing check for Start (ADR-005). Resolves true only when the extension is paired. A false result or a
+   * throw blocks Start (fail closed).
+   */
+  checkPairing: () => Promise<boolean>;
+  /** Browser storage usage/quota (navigator.storage.estimate). A throw blocks Start (fail closed). */
+  storageQuota: () => Promise<QuotaEstimate>;
+  /**
+   * Bytes of ALL not-yet-uploaded chunks (held or merely queued) and the local cap. Pending chunks are never
+   * evicted, so Start needs one full chunk of room on top of them. A throw blocks Start (fail closed).
+   */
+  pendingStorage: () => Promise<PendingStorage>;
   /** Override OFFSCREEN_TIMEOUT_MS (tests). */
   offscreenTimeoutMs?: number;
 }
@@ -113,6 +144,13 @@ const status = (s: RecorderState): BackgroundResponse =>
       };
 
 const fail = (error: string): BackgroundResponse => ({ ok: false, error });
+
+export const PAIRING_REQUIRED_MESSAGE =
+  'This browser is not paired with MeetOps AI, so recording was not started. Pair the extension first.';
+export const PAIRING_CHECK_FAILED_MESSAGE =
+  'Could not verify that this browser is paired with MeetOps AI, so recording was not started. Try again.';
+export const CONSENT_CHECK_FAILED_MESSAGE =
+  'Could not verify recording consent, so recording was not started. Confirm consent and try again.';
 
 export const HELD_CHECK_FAILED_MESSAGE =
   'Could not check local storage for held recordings, so recording was not started. Try again.';
@@ -181,7 +219,7 @@ async function withHeld(
   r: BackgroundResponse,
   otherAlert: boolean,
 ): Promise<BackgroundResponse> {
-  if (!deps.heldRecordings || !r.ok) return r;
+  if (!r.ok) return r;
   const h = await deps.heldRecordings().catch(() => undefined);
   if (!h) return r;
   if (state.status === 'idle') {
@@ -259,19 +297,49 @@ export async function handleBackgroundMessage(
 
     case 'START_RECORDING': {
       if (state.status !== 'idle' && state.status !== 'error') return fail('Already recording');
-      // Fail closed: if the held-recordings check itself fails, we cannot know there is room, so do not start.
-      if (deps.heldRecordings) {
-        let held: HeldSummary;
-        try {
-          held = await deps.heldRecordings();
-        } catch {
-          return fail(HELD_CHECK_FAILED_MESSAGE);
-        }
-        if (heldStorageLevel(held) === 'full') return fail(HELD_FULL_START_MESSAGE);
+      // Fail closed: every check below is mandatory; a missing answer, a throw or a non-true value refuses Start.
+      let paired: boolean;
+      try {
+        paired = (await deps.checkPairing()) === true;
+      } catch {
+        return fail(PAIRING_CHECK_FAILED_MESSAGE);
       }
-      const used = (await kv.get<string[]>(USED_STREAMS_KEY)) ?? [];
-      if (used.includes(msg.streamId)) return fail('Stream id already used');
-      const consent = await consumeConsent(kv, msg.tabId, deps.now(), msg.meetingId);
+      if (!paired) return fail(PAIRING_REQUIRED_MESSAGE);
+      // Held recordings (server-refused) block Start with their own message so the popup can offer Retry/Discard.
+      let held: HeldSummary;
+      try {
+        held = await deps.heldRecordings();
+      } catch {
+        return fail(HELD_CHECK_FAILED_MESSAGE);
+      }
+      if (heldStorageLevel(held) === 'full') return fail(HELD_FULL_START_MESSAGE);
+      // Pending chunks (held or still queued) are never evicted: without room for one more chunk the very first
+      // chunk of the new recording would be refused, so do not start.
+      try {
+        if (pendingStorageFull(await deps.pendingStorage()))
+          return fail(PENDING_FULL_START_MESSAGE);
+      } catch {
+        return fail(PENDING_CHECK_FAILED_MESSAGE);
+      }
+      let quotaWarning: string | undefined;
+      let level: QuotaLevel;
+      try {
+        level = quotaLevel(await deps.storageQuota());
+      } catch {
+        return fail(QUOTA_CHECK_FAILED_MESSAGE);
+      }
+      if (level === 'full') return fail(QUOTA_FULL_START_MESSAGE);
+      if (level === 'low') quotaWarning = QUOTA_LOW_MESSAGE;
+      let used: string[];
+      let consent: Awaited<ReturnType<typeof consumeConsent>>;
+      try {
+        used = (await kv.get<string[]>(USED_STREAMS_KEY)) ?? [];
+        if (used.includes(msg.streamId)) return fail('Stream id already used');
+        consent = await consumeConsent(kv, msg.tabId, deps.now(), msg.meetingId);
+      } catch {
+        // Fail closed: an unreadable consent record is never treated as consent.
+        return fail(CONSENT_CHECK_FAILED_MESSAGE);
+      }
       if (!consent.ok) return fail(consent.reason);
       const startedAt = deps.now();
       const next: RecorderState = {
@@ -283,6 +351,7 @@ export async function handleBackgroundMessage(
         startedAt,
         chunks: 0,
         lastHeartbeatAt: startedAt,
+        ...(quotaWarning ? { storageWarning: quotaWarning } : {}),
       };
       let offscreenStarted = false;
       try {

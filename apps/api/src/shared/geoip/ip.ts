@@ -1,4 +1,8 @@
 import { BlockList, isIP } from 'node:net';
+import { normalizeIp } from '@meetops/config';
+
+// normalizeIp is shared with realtime (@meetops/config); re-exported for existing callers.
+export { normalizeIp };
 
 /** Non-public ranges (RFC 6890 special-purpose, documentation, CGNAT, multicast, ...): GeoIP returns null for these. */
 const NON_PUBLIC = new BlockList();
@@ -33,16 +37,6 @@ for (const [net, prefix] of [
   ['ff00::', 8],
 ] as const)
   NON_PUBLIC.addSubnet(net, prefix, 'ipv6');
-
-/** Strip an IPv4-mapped IPv6 prefix (::ffff:a.b.c.d) and an IPv6 zone id. */
-export function normalizeIp(ip: string): string | null {
-  let v = ip.trim();
-  const zone = v.indexOf('%');
-  if (zone !== -1) v = v.slice(0, zone);
-  const m = /^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/i.exec(v);
-  if (m) v = m[1]!;
-  return isIP(v) ? v : null;
-}
 
 export function isPublicIp(ip: string): boolean {
   const v = normalizeIp(ip);

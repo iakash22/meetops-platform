@@ -14,6 +14,13 @@ import { MeetingConsentPanel } from './consent-panel';
 import { filterMeetings, type MeetingFilters } from './manage-api';
 import { MeetingFormDialog } from './meeting-form';
 import { Input } from '@/components/ui/input';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { RecordingPanel } from '@/features/recording/recording-panel';
 
 const STATUS_LABEL: Record<Meeting['status'], string> = {
@@ -22,7 +29,13 @@ const STATUS_LABEL: Record<Meeting['status'], string> = {
   processing: 'Processing',
   completed: 'Completed',
   failed: 'Failed',
+  transcription_delayed: 'Transcription delayed',
 };
+
+/** Unknown statuses (a newer API than this client) render as a neutral "Unknown status". */
+const UNKNOWN_STATUS_LABEL = 'Unknown status';
+const statusLabel = (s: string) => STATUS_LABEL[s as Meeting['status']] ?? UNKNOWN_STATUS_LABEL;
+const statusVariant = (s: string) => STATUS_VARIANT[s as Meeting['status']] ?? 'outline';
 
 const STATUS_VARIANT: Record<Meeting['status'], NonNullable<BadgeProps['variant']>> = {
   scheduled: 'outline',
@@ -30,6 +43,7 @@ const STATUS_VARIANT: Record<Meeting['status'], NonNullable<BadgeProps['variant'
   processing: 'secondary',
   completed: 'default',
   failed: 'destructive',
+  transcription_delayed: 'secondary',
 };
 
 const SOURCE_LABEL: Record<Meeting['source'], string> = {
@@ -42,8 +56,8 @@ const SOURCE_LABEL: Record<Meeting['source'], string> = {
 
 export function MeetingStatusBadge({ status }: { status: Meeting['status'] }) {
   return (
-    <Badge variant={STATUS_VARIANT[status]} data-testid="meeting-status">
-      {STATUS_LABEL[status]}
+    <Badge variant={statusVariant(status)} data-testid="meeting-status">
+      {statusLabel(status)}
     </Badge>
   );
 }
@@ -145,21 +159,27 @@ export function MeetingsPage() {
           onChange={(e) => setFilters((f) => ({ ...f, q: e.target.value }))}
           className="h-11 max-w-xs"
         />
-        <select
-          aria-label="Filter by status"
-          value={filters.status}
-          onChange={(e) =>
-            setFilters((f) => ({ ...f, status: e.target.value as MeetingFilters['status'] }))
+        <Select
+          value={filters.status || '__all__'}
+          onValueChange={(v) =>
+            setFilters((f) => ({
+              ...f,
+              status: (v === '__all__' ? '' : v) as MeetingFilters['status'],
+            }))
           }
-          className="h-11 rounded-md border border-input bg-background px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         >
-          <option value="">All statuses</option>
-          {(Object.keys(STATUS_LABEL) as Meeting['status'][]).map((s) => (
-            <option key={s} value={s}>
-              {STATUS_LABEL[s]}
-            </option>
-          ))}
-        </select>
+          <SelectTrigger className="h-11 w-44" aria-label="Filter by status">
+            <SelectValue placeholder="All statuses" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="__all__">All statuses</SelectItem>
+            {(Object.keys(STATUS_LABEL) as Meeting['status'][]).map((s) => (
+              <SelectItem key={s} value={s}>
+                {STATUS_LABEL[s]}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
       </div>
       <div className="flex flex-col gap-4" aria-busy={query.isFetchingNextPage}>
         {body}

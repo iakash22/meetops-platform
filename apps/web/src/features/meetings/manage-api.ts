@@ -2,8 +2,8 @@ import type { Id, Meeting } from '@meetops/contracts';
 import type { ApiClient } from '@/lib/api/client';
 
 /**
- * Meeting create/edit. DEPENDENCY: contracts 0.4.1 has no CreateMeetingRequest / UpdateMeetingRequest and the API has
- * no POST or PATCH /orgs/:organizationId/meetings yet (All Rounder, backend stream). These local types mirror the
+ * Meeting create/edit. DEPENDENCY: contracts 0.4.1 has no CreateMeetingRequest / UpdateMeetingRequest. The API serves
+ * POST /orgs/:organizationId/meetings (#440: body `MeetingInput`, 201 `Meeting`); PATCH is not implemented yet. These local types mirror the
  * `Meeting` DTO's editable fields; swap them for the contract types when they land.
  */
 export type MeetingInput = {

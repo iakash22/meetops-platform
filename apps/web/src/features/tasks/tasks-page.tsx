@@ -2,7 +2,7 @@ import { Link } from '@tanstack/react-router';
 import { useMemo } from 'react';
 import { TASK_STATUSES, type TaskStatusValue } from '@meetops/contracts/types';
 import { Badge } from '@/components/ui/badge';
-import { Label } from '@/components/ui/label';
+import { SelectField } from '@/features/directory/directory-ui';
 import type { TaskListFilters } from '@/lib/api/client';
 import { useTasks } from '@/lib/api/queries';
 import { PageHeader, ResourceList } from '@/pages/resource-list';
@@ -81,21 +81,15 @@ function FilterSelect({
   onChange: (v: string | undefined) => void;
 }) {
   return (
-    <div className="grid gap-1">
-      <Label htmlFor={id}>{label}</Label>
-      <select
-        id={id}
-        className="min-h-11 h-9 rounded-md border border-input bg-background px-2 text-sm"
+    <div className="w-44">
+      <SelectField
+        label={label}
+        name={id}
         value={value ?? ''}
-        onChange={(e) => onChange(e.target.value || undefined)}
-      >
-        <option value="">All</option>
-        {options.map((o) => (
-          <option key={o.value} value={o.value}>
-            {o.label}
-          </option>
-        ))}
-      </select>
+        emptyLabel="All"
+        options={options}
+        onValueChange={(v) => onChange(v || undefined)}
+      />
     </div>
   );
 }

@@ -1,4 +1,181 @@
-# Phase status — 3 Nov 2026 (~02:45 IST)
+# Phase status — 12 Nov 2026 (~00:40 IST)
+
+## Update — 12 Nov 2026 (~00:40 IST)
+
+Tree: `main` at `ca3c0e2b` (unchanged). `integration/phase-1` at `5b66cfe6` (109 ahead / 0 behind `main`), merge of [#482](https://github.com/iakash22/meetops-platform/pull/482) (extension HTTP upload default in development). PR states queried live from the GitHub API at ~00:40 IST.
+
+Merged into integration since the 9 Nov ~22:35 snapshot (`fd4ede49`, #459):
+
+- [#461](https://github.com/iakash22/meetops-platform/pull/461) status + proxy operator docs (`7de8a872`).
+- [#464](https://github.com/iakash22/meetops-platform/pull/464) media rate-limit IP keys use `clientIpKey` (no shared `unknown`) (`14d4b491`).
+- [#465](https://github.com/iakash22/meetops-platform/pull/465) webhook HMAC is verified before the org lookup (`d0f837b4`).
+- [#463](https://github.com/iakash22/meetops-platform/pull/463) auth takeover follow-ups from the #459 reviews (`6feef782`).
+- [#466](https://github.com/iakash22/meetops-platform/pull/466) and [#467](https://github.com/iakash22/meetops-platform/pull/467) Dependabot bumps (`pnpm/action-setup`, `@fastify/cors`).
+- [#468](https://github.com/iakash22/meetops-platform/pull/468) research competitive landscape, gaps, proposals and 30/60/90 roadmap (`809557f2`).
+- [#473](https://github.com/iakash22/meetops-platform/pull/473) research specs, pricing, legal brief (`7568f206`).
+- [#469](https://github.com/iakash22/meetops-platform/pull/469) durable BullMQ retries for takeover follow-ups.
+- [#470](https://github.com/iakash22/meetops-platform/pull/470) MFA security/QA test plan refresh (ADR-021).
+- [#471](https://github.com/iakash22/meetops-platform/pull/471) remove braces audit exception.
+- [#476](https://github.com/iakash22/meetops-platform/pull/476) remove RE-04 image-size audit exception.
+- [#478](https://github.com/iakash22/meetops-platform/pull/478) research executive summary and GTM brief.
+- [#477](https://github.com/iakash22/meetops-platform/pull/477) tighten Bootstrap CSS prune safelist (Frontend CSS budget).
+- [#479](https://github.com/iakash22/meetops-platform/pull/479) e2e for verify-email outcomes; marks the #463 post-commit verify UX closed.
+- [#482](https://github.com/iakash22/meetops-platform/pull/482) extension HTTP upload default in development (`5b66cfe6`).
+
+**Open PRs targeting `integration/phase-1`** (live at ~00:40 IST):
+
+- [#472](https://github.com/iakash22/meetops-platform/pull/472) OD-1 account-claim decision (ADR-022) and the ADR-020 amendment (explicit consent on by default for every org until an org country is stored). Docs only; not yet on this tip. This refresh does not duplicate that amendment.
+- [#474](https://github.com/iakash22/meetops-platform/pull/474) pass `BEHIND_CLOUDFLARE` through to the API (D-5).
+- [#475](https://github.com/iakash22/meetops-platform/pull/475) webhook HMAC timing follow-ups.
+- [#480](https://github.com/iakash22/meetops-platform/pull/480) research verification round 2.
+- [#481](https://github.com/iakash22/meetops-platform/pull/481) this PHASE_STATUS refresh.
+- [#483](https://github.com/iakash22/meetops-platform/pull/483) consent-settings contracts.
+- [#484](https://github.com/iakash22/meetops-platform/pull/484) consent-settings API.
+- [#485](https://github.com/iakash22/meetops-platform/pull/485) consent write rate limits.
+
+**Promote:** [#462](https://github.com/iakash22/meetops-platform/pull/462) (`integration/phase-1` → `main`, head `5b66cfe6`, 109 commits). Only Akash merges #462.
+
+**Deploy note:** production realtime must set `TRUST_PROXY` to an IP/CIDR allowlist including nginx; hop counts fail startup. On this tip, compose still passes `BEHIND_CLOUDFLARE` only to the realtime service; the API compose fix is [#474](https://github.com/iakash22/meetops-platform/pull/474). See [environment-variables.md](00-getting-started/environment-variables.md) and [cicd.md](devops/cicd.md#deploy-env-realtime-trust_proxy-after-455).
+
+P1 estimate stays ~98% (Google web sign-in + hardening and takeover follow-ups in; MFA/SSO still open, ADR-021). P2 still needs the consent-settings API (contracts vs routes; open as #483–#485, not landed on this tip). P9 Dependabot row #2 remains **partial** (glib / deepmerge exceptions; alerts API still unread). Other phase percentages unchanged from the 7 Nov / 9 Nov snapshots below.
+
+## Update — 11 Nov 2026 (~23:30 IST)
+
+Tree: `main` at `ca3c0e2b` (unchanged). `integration/phase-1` at `de8a86e4` (includes the #463 merge `6feef782`, then #464, #465, #461, and Dependabot #466/#467).
+
+[#463](https://github.com/iakash22/meetops-platform/pull/463) closed the remaining #459 follow-ups: Tester X4-mem (in-memory store copies), NB-R3 post-commit verify UX (verify returns 204 with the real `x-meetops-verify-outcome` after a committed takeover), and the info copy (`password_reset` vs `set_password` on `/verify-email`).
+
+
+## Update — 9 Nov 2026 (~22:35 IST)
+
+Tree: `main` at `ca3c0e2b` (unchanged). `integration/phase-1` at `fd4ede49` (55 ahead / 0 behind `main`), merge of [#459](https://github.com/iakash22/meetops-platform/pull/459) Google OIDC hardening (Architecture + Tester PASS on `c41fc720`).
+
+Also merged 9 Nov into integration after the ~20:45 snapshot: [#457](https://github.com/iakash22/meetops-platform/pull/457) TRUST_PROXY env/docs share; [#458](https://github.com/iakash22/meetops-platform/pull/458) Dependabot `serde_with` 3.17→3.21 + glib RE-07 (Tester; remaining-work #2 **partial**); [#460](https://github.com/iakash22/meetops-platform/pull/460) `plist`/`quick-xml` clearing RUSTSEC-2026-0194/0195 (Tester).
+
+**Deploy note (#455, unchanged):** production realtime must set `TRUST_PROXY` to an IP/CIDR allowlist including nginx; hop counts fail startup. Compose passes `BEHIND_CLOUDFLARE` to both the API and the realtime service (see [environment-variables.md](00-getting-started/environment-variables.md) and [cicd.md](devops/cicd.md#deploy-env-realtime-trust_proxy-after-455)).
+
+Google OIDC hardening findings M-2, N-1…N-6, L-1…L-5 are **closed in #459**. The #459 follow-ups (Tester X4-mem on the in-memory store, NB-R3 verify/post-commit UX, info copy) are **closed in [#463](https://github.com/iakash22/meetops-platform/pull/463)**. MFA/SSO product work remains future (ADR-021); #456 is the test plan only. Owner decision OD-1 (cross-device verify drops password) stays with Akash.
+
+P1 estimate ~98% (Google web sign-in + hardening in; MFA/SSO still open). P9 Dependabot row #2 partial.
+
+## Update — 9 Nov 2026 (~20:45 IST)
+
+Tree: `main` at `ca3c0e2b` (unchanged). `integration/phase-1` at `741ec449` (15 ahead / 0 behind `main`). Merged since the 20:30 snapshot: [#454](https://github.com/iakash22/meetops-platform/pull/454) status docs; [#455](https://github.com/iakash22/meetops-platform/pull/455) realtime client IP uses the shared API `TRUST_PROXY` allowlist (`REALTIME_TRUST_PROXY_HOPS` removed); [#456](https://github.com/iakash22/meetops-platform/pull/456) ADR-021 MFA test plan + pending security suite.
+
+**Deploy note (#455):** production realtime must set `TRUST_PROXY` to an IP/CIDR allowlist including nginx; hop counts fail startup. See `.env.example`, [environment-variables.md](00-getting-started/environment-variables.md), and [cicd.md](devops/cicd.md#deploy-env-realtime-trust_proxy-after-455).
+
+Google OIDC hardening on `feat/security/google-oidc-hardening` is still assigned (findings M-2, N-1…N-6, L-1…L-5; L-2/L-3 Info). MFA/SSO product work remains future (ADR-021); #456 is the test plan only.
+
+## Update — 9 Nov 2026 (~20:30 IST)
+
+Tree: `main` at `ca3c0e2b` (unchanged). `integration/phase-1` at `20aef486` (merge of [#453](https://github.com/iakash22/meetops-platform/pull/453); 6 ahead / 0 behind `main`). #453 brought rate-limit coverage (P9 #9 done) plus the OIDC-era lint/build/DB-test fixes.
+
+**Google OIDC sign-in — shipped to `main`.** Feature commit `f6c77fd855` (via `dev` merge `34c0d247`, docs `ca3c0e2b`). Web-only authorization-code + PKCE; button stays hidden until `GOOGLE_OAUTH_*` are set together. Separate from `GOOGLE_CALENDAR_*`. Mobile and desktop do not offer Google sign-in. MFA and enterprise SSO remain future work (ADR-021).
+
+**Hardening follow-up in progress** on `feat/security/google-oidc-hardening` (assigned to All Rounder Techy; not an open PR yet). Finding IDs: **M-2**; **N-1**, **N-2**, **N-3**, **N-4**, **N-5**, **N-6**; **L-1**, **L-2**, **L-3**, **L-4**, **L-5** (L-2 and L-3 are Info). Scope includes pre-registration takeover (N-1), verified-email / `hd` / auto-link rules (N-2, M-2), Google rate-limit ordering (N-3), audit/`auth_level` (N-4), JWKS single-flight + refresh fallback (N-5), optional iat/state/body caps (N-6), soft-delete `google_sub` uniqueness (L-1), `azp` when `aud` is multi-valued (L-2 Info), JWKS refresh throttle (L-3 Info), separate HMAC key for the state cookie via HKDF (L-4), and the missing failure-path tests (L-5). Password policy values stay 8–128 with composition rules (Akash, 9 Nov).
+
+P1 estimate stays ~97% (Google web sign-in in; MFA/SSO and OIDC hardening still open). Other phase percentages unchanged from the 7 Nov snapshot below.
+
+## Update — 7 Nov 2026 (~00:45 IST)
+
+Tree: `main` at `34c0d247` (merge of `dev`, 00:43 IST, 7 Nov). This snapshot is the local `main` tip. Open pull requests were not re-queried.
+
+Landed in that merge (`f6c77fd8` on `dev`):
+
+- **Web Google sign-in** (ADR-021 item 3, web only). Authorization code + PKCE. The API exchanges the code and checks the ID token (audience, nonce, `email_verified`). No Google refresh token is stored. Routes: `GET /auth/providers`, `GET /auth/google/start`, `GET /auth/google/callback`. The button stays hidden until `GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET`, and `GOOGLE_OAUTH_REDIRECT_URI` are set together. That client is separate from `GOOGLE_CALENDAR_*`. Mobile and desktop do not offer Google sign-in.
+- **Linking.** Match `users.google_sub` first (`20261106120000_user_google_sub`). A verified local account with no Google subject is linked. An unverified local email is refused. A new Google user is created with the email already verified and no usable password.
+- **Password policy.** Signup and reset require 8–128 characters with a letter, a number, and a symbol. The rule lives in `@meetops/contracts` and is enforced by the API and by web, mobile, and desktop signup. Login still accepts any non-empty password up to 128 characters.
+
+| Phase                          | 4 Nov | 7 Nov | Remaining                                                                                                       |
+| ------------------------------ | ----- | ----- | --------------------------------------------------------------------------------------------------------------- |
+| P0 Foundation                  | 100%  | 100%  | —                                                                                                               |
+| P1 Auth, orgs, RBAC            | ~95%  | ~97%  | MFA (TOTP/WebAuthn) and enterprise SSO. Google web sign-in is in; turn it on with `GOOGLE_OAUTH_*`              |
+| P2 Capture, uploads, consent   | ~92%  | ~92%  | Extension Info items                                                                                            |
+| P3 Transcription, AI           | ~85%  | ~85%  | Gemini key (owner), real-provider E2E                                                                           |
+| P4 Tasks, approval             | ~87%  | ~87%  | —                                                                                                               |
+| P5 Integrations                | ~88%  | ~88%  | Jira creds, GitHub App install (owner)                                                                          |
+| P6 Notifications               | ~87%  | ~87%  | Production email domain (owner)                                                                                 |
+| P7 Calendar, search, analytics | ~85%  | ~85%  | Google Calendar OAuth client (`GOOGLE_CALENDAR_*`, owner). Login OAuth is a different client and is implemented |
+| P8 Native desktop/mobile       | ~85%  | ~85%  | Never compiled; device checklists; bundle ids (owner)                                                           |
+| P9 Hardening, release          | ~60%  | ~60%  | Alert routing (owner), SBOM, versioning, deploy target, backup drill, billing, KMS, store submission            |
+
+Percentages are coordinator-style estimates, not measured. P2–P9 did not move in this snapshot; only P1 changed, for Google web sign-in and the shared password policy.
+
+## Update — 4 Nov 2026 (~21:50 IST)
+
+Tree: `integration/phase-1` at `1d46e8c6` (merge of #441, 21:42 IST, 4 Nov). PR states queried live from the GitHub
+API at ~21:50 IST. Percentages below are re-estimated for this snapshot (coordinator-style estimates, not measured).
+
+**#384 (`integration/phase-1` → `main`)**: open, head `1d46e8c6`, 296 commits, 379 files, +29,107/−1,884.
+GitHub reports `mergeable_state: unstable` (no passing remote checks: Actions minutes are exhausted, so the local
+gate is the gate). `main` has 3 commits not on integration (SelectField / invite-form UI). Only Akash merges #384.
+
+Merged since the 04:20 snapshot (42 PRs):
+
+- P3/AI: transcription retry + DLQ (#414), DLQ redrive (#420), `transcription_delayed` alert (#423), DLQ follow-ups
+  (#433), STT no-fallback comment fix (#435), ADR-009 revision (#409).
+- P5/integrations: refresh grace window (#421, #426, #428), webhook delivery store (#432, #434), DB org config store
+  (#425, #429), extension fail-closed pending (#411), extension auth allowlist/revoke (#418).
+- P7: semantic embeddings pipeline (#350), calendar background sync (#394) and auto-link (#398).
+- P2/P4 media and consent: consent hardening (#387), upload chunk rate limits (#419), media rate-limit hardening
+  (#424), storage quota fail-closed (#430).
+- P8: iOS Live Activity hardening (#347, merged 21:24 IST).
+- Realtime/web: realtime hardening (#417), web realtime client (#415, #422), web CSS budget (#441).
+- P9: docs CSP in prod (#404), security checklist (#391), dependency overrides (#412), P9 hardening (#416), CD
+  pipeline scaffold (#408) and deploy sentinel (#427), turbo test outputs (#413), coverage tooling (#431), pnpm
+  overrides guard (#405), Tester Lows batch (#403).
+- Docs/tests: architecture overview (#407), README DB setup (#406), email verification concurrency (#410), auth-UI
+  test deflake (#438), web E2E smoke suite (#440).
+
+**Open PRs** (base `integration/phase-1` unless noted), live at ~21:50 IST:
+
+| PR   | What                                                                       |
+| ---- | -------------------------------------------------------------------------- |
+| #384 | `integration/phase-1` → `main` (base `main`; Akash merges)                 |
+| #402 | This status snapshot, ops/observability docs, P9 #13 alert rules           |
+| #436 | Worker: retry transcription delayed-status reads                           |
+| #437 | Extension: fail-closed Start, unheld pending chunks, server chunk size     |
+| #439 | API: audit extension delisting, keep families on an empty allowlist        |
+| #442 | Database: `ai_org_config.updated_by_id` must be an org member              |
+| #443 | Handoff docs: desktop `chunk_put` and extension Info items done            |
+| #444 | Integrations: delivery-store doc nits, `REDIS_IT_URL` passthrough          |
+| #445 | API: per-org search caps and a 503 timeout on search routes                |
+| #446 | API: `POST /orgs/:organizationId/meetings` (New meeting 404 found by #440) |
+| #447 | Mobile: Live Activity follow-ups                                           |
+| #448 | Release: CycloneDX SBOM script, versioning and changelog (P9 #11/#12)      |
+| #449 | Deploy: validated target-agnostic interface with `prisma migrate deploy`   |
+| #450 | Ops: Postgres backup and local restore drill (P9 #10)                      |
+
+#441 merged at 21:42 IST; #347 and #440 are merged and no longer open.
+
+| Phase                          | 3 Nov | 4 Nov | Remaining                                                                                            |
+| ------------------------------ | ----- | ----- | ---------------------------------------------------------------------------------------------------- |
+| P0 Foundation                  | 100%  | 100%  | —                                                                                                    |
+| P1 Auth, orgs, RBAC            | ~95%  | ~95%  | MFA/SSO policy (ADR-021)                                                                             |
+| P2 Capture, uploads, consent   | ~90%  | ~92%  | Extension Info items                                                                                 |
+| P3 Transcription, AI           | ~75%  | ~85%  | Gemini key (owner), real-provider E2E                                                                |
+| P4 Tasks, approval             | ~85%  | ~87%  | —                                                                                                    |
+| P5 Integrations                | ~85%  | ~88%  | Jira creds, GitHub App install (owner)                                                               |
+| P6 Notifications               | ~85%  | ~87%  | Production email domain (owner)                                                                      |
+| P7 Calendar, search, analytics | ~70%  | ~85%  | Google OAuth client (owner), follow-ups                                                              |
+| P8 Native desktop/mobile       | ~85%  | ~85%  | Never compiled; device checklists; bundle ids (owner)                                                |
+| P9 Hardening, release          | ~50%  | ~60%  | Alert routing (owner), SBOM, versioning, deploy target, backup drill, billing, KMS, store submission |
+
+## Update — 3 Nov 2026 (~04:20 IST)
+
+Tree: `integration/phase-1` at `190b9d5` (merge of #397, 03:47 IST). PR states read from the GitHub API at ~04:15 IST.
+
+Merged since the 02:45 snapshot:
+
+- #393 P9 security headers, CORP, CSP reporting, env validation; #399 its follow-ups (R4, R5, R7, R13, R14, R19, R20, R24).
+- #400 credential-free test coverage for the analytics SQL and semantic search.
+- #401 415 for non-JSON unsafe request bodies and CSRF token rotation (R16, R17).
+- #385 calendar links deleted inside the revoke transaction; #386 task sync gated on one approval read; #392 analytics counts; #395 ajv/esbuild overrides; #396 Outlook tenant validated at startup; #397 the previous status refresh.
+
+Still open: #387 (consent hardening), #394 (background sync) and #398 (auto-link, stacked on #394), all merged up to
+`190b9d5`; #350 (embeddings pipeline, based on `085078f4`, does not contain `190b9d5`); #347 (iOS Live Activity, draft);
+#391 (P9 docs); #384 (integration → `main`). Tester Lows are batched in #403 (#396, #398–#401) and #404 (production
+`/docs` CSP and admin gate); #394's own findings are fixed on #394.
 
 ## Update — 3 Nov 2026 (~02:45 IST)
 
@@ -72,7 +249,7 @@ Merged into `integration/phase-1` today (#305–#317): extension real meeting AP
 
 ## Update — 27 Oct 2026 (~23:20 IST)
 
-Checked against `gh pr list` / `gh pr view` and the tree at `integration/phase-1` `99a6f4f` and `main` `02646a1`. Phase percentages below are unchanged (coordinator estimates, not measured).
+Checked against `gh pr list` / `gh pr view` and the tree at `integration/phase-1` `99a6f4f` and `main` `02646a1`. Phase percentages are coordinator estimates, not measured.
 
 - Merged after the ~21:30 IST snapshot:
   - [#249](https://github.com/iakash22/meetops-platform/pull/249) (into `integration/phase-1`, 22:40 IST) and [#250](https://github.com/iakash22/meetops-platform/pull/250) (into `main`, 22:41 IST): notifications architecture plan and [ADR-013](15-decisions/ADR-013-notifications-architecture.md) (Proposed).
@@ -84,7 +261,7 @@ Checked against `gh pr list` / `gh pr view` and the tree at `integration/phase-1
 
 ## Status at ~21:30 IST
 
-> `integration/phase-1` (head `4f197bb`) was merged into `main` by Shubham via [#247](https://github.com/iakash22/meetops-platform/pull/247) (merge commit `47dbf97`, 21:19 IST). Everything below is **on `main`**. Percentages are coordinator estimates, not measured.
+> `integration/phase-1` (head `4f197bb`) was merged into `main` by Akash via [#247](https://github.com/iakash22/meetops-platform/pull/247) (merge commit `47dbf97`, 21:19 IST). Everything below is **on `main`**. Percentages are coordinator estimates, not measured.
 
 | Phase                           | 27 Oct AM | 27 Oct PM | Merged today (27 Oct)                                                                                                                                                                                                |
 | ------------------------------- | --------- | --------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

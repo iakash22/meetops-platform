@@ -1,3 +1,10 @@
+import {
+  clientIpOptionsFromEnv,
+  compileTrustProxy,
+  parseTrustProxy,
+  type TrustProxyFn,
+} from '@meetops/config';
+
 export type RealtimeConfig = {
   host: string;
   port: number;
@@ -23,6 +30,22 @@ export type RealtimeConfig = {
   connLimitPerUser: number;
   /** Rate-limit window (REALTIME_CONN_LIMIT_WINDOW_MS, default 60 s). */
   connLimitWindowMs: number;
+  /**
+   * Trusted reverse proxies (TRUST_PROXY, the same variable and rules as the API; parsed by @meetops/config). The
+   * per-IP limits key on the socket peer unless that peer is allowlisted; then X-Forwarded-For is walked from the
+   * right, skipping trusted hops. Unset/empty trusts nothing (socket address). Hop counts are dev/test only.
+   */
+  trustProxy: TrustProxyFn;
+  /** BEHIND_CLOUDFLARE=true: honour CF-Connecting-IP when the resolved peer is a pinned Cloudflare edge (as the API). */
+  behindCloudflare: boolean;
+  /** Concurrent sockets per user (REALTIME_MAX_SOCKETS_PER_USER, default 20). Redis-backed when REDIS_URL is set. */
+  maxSocketsPerUser: number;
+  /** Concurrent sockets per client IP (REALTIME_MAX_SOCKETS_PER_IP, default 50). */
+  maxSocketsPerIp: number;
+  /** meeting:join attempts per socket per window (REALTIME_JOIN_LIMIT_PER_SOCKET, default 30 per 60 s). */
+  joinLimitPerSocket: number;
+  /** Meeting rooms one socket may be in at once (REALTIME_MAX_ROOMS_PER_SOCKET, default 50). */
+  maxRoomsPerSocket: number;
 };
 
 function positiveInt(env: NodeJS.ProcessEnv, key: string, fallback: number, min = 1): number {
@@ -47,7 +70,10 @@ export function loadRealtimeConfig(env: NodeJS.ProcessEnv = process.env): Realti
     .filter(Boolean);
   if (origins.length === 0)
     throw new Error('REALTIME_CORS_ORIGINS is required (comma-separated origins)');
+  const dev = env.NODE_ENV === 'development';
   for (const o of origins) {
+    if (!dev && /^http:/i.test(o))
+      throw new Error('REALTIME_CORS_ORIGINS must use https:// unless NODE_ENV=development');
     if (o === '*' || o === 'null' || normalizeOrigin(o) !== o.replace(/\/$/, '').toLowerCase()) {
       throw new Error(
         'REALTIME_CORS_ORIGINS must list exact origins like https://app.example.com (no wildcard, path or query)',
@@ -62,6 +88,13 @@ export function loadRealtimeConfig(env: NodeJS.ProcessEnv = process.env): Realti
     if (!EXTENSION_ID.test(id))
       throw new Error('REALTIME_EXTENSION_IDS must list Chrome extension ids (32 characters a-p)');
   }
+  // REALTIME_TRUST_PROXY_HOPS was replaced by TRUST_PROXY (the API's allowlist). Fail loudly rather than silently
+  // ignoring it: behind nginx, dropping proxy trust would key every client on nginx's address (one shared budget).
+  const legacyHops = env.REALTIME_TRUST_PROXY_HOPS?.trim();
+  if (legacyHops && legacyHops !== '0')
+    throw new Error(
+      'REALTIME_TRUST_PROXY_HOPS is no longer supported; set TRUST_PROXY (proxy IPs/CIDRs, same as the API)',
+    );
   const cfg: RealtimeConfig = {
     host: env.REALTIME_HOST || '0.0.0.0',
     port,
@@ -74,7 +107,17 @@ export function loadRealtimeConfig(env: NodeJS.ProcessEnv = process.env): Realti
     connLimitPerIp: positiveInt(env, 'REALTIME_CONN_LIMIT_PER_IP', 30),
     connLimitPerUser: positiveInt(env, 'REALTIME_CONN_LIMIT_PER_USER', 20),
     connLimitWindowMs: positiveInt(env, 'REALTIME_CONN_LIMIT_WINDOW_MS', 60_000, 1_000),
+    trustProxy: compileTrustProxy(
+      parseTrustProxy(env.TRUST_PROXY, { production: env.NODE_ENV === 'production' }),
+    ),
+    behindCloudflare: clientIpOptionsFromEnv(env).behindCloudflare,
+    maxSocketsPerUser: positiveInt(env, 'REALTIME_MAX_SOCKETS_PER_USER', 20),
+    maxSocketsPerIp: positiveInt(env, 'REALTIME_MAX_SOCKETS_PER_IP', 50),
+    joinLimitPerSocket: positiveInt(env, 'REALTIME_JOIN_LIMIT_PER_SOCKET', 30),
+    maxRoomsPerSocket: positiveInt(env, 'REALTIME_MAX_ROOMS_PER_SOCKET', 50),
   };
+  if (env.NODE_ENV === 'production' && !/^rediss:\/\//i.test(env.REDIS_URL ?? ''))
+    throw new Error('REDIS_URL is required in production and must use rediss:// (TLS)');
   if (env.REDIS_URL) cfg.redisUrl = env.REDIS_URL;
   return cfg;
 }

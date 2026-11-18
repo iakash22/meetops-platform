@@ -10,15 +10,22 @@
  */
 const fs = require('fs');
 const path = require('path');
-const { withDangerousMod, withInfoPlist, withXcodeProject } = require('expo/config-plugins');
+const {
+  IOSConfig,
+  withDangerousMod,
+  withInfoPlist,
+  withXcodeProject,
+} = require('expo/config-plugins');
 
 const TARGET = 'RecordingLiveActivity';
 const DEPLOYMENT_TARGET = '16.2';
 const SOURCE_DIR = path.join(__dirname, '..', 'targets', TARGET);
+const INTENT_FILE = 'StopRecordingIntent.swift';
 const SWIFT_FILES = [
   'RecordingActivityAttributes.swift',
   'RecordingLiveActivityBundle.swift',
   'RecordingLiveActivityWidget.swift',
+  INTENT_FILE,
 ];
 
 function setInfoPlist(plist) {
@@ -45,6 +52,16 @@ function findWidgetTarget(project) {
     if (typeof t === 'object' && unquote(t.name) === TARGET) return t;
   }
   return null;
+}
+
+/** The xcode lib leaves `key = undefined` on file references it creates; Xcode would read them as strings. */
+function dropUndefined(project) {
+  const refs = project.pbxFileReferenceSection();
+  for (const key of Object.keys(refs)) {
+    const ref = refs[key];
+    if (typeof ref !== 'object') continue;
+    for (const k of Object.keys(ref)) if (ref[k] === undefined) delete ref[k];
+  }
 }
 
 /** Adds the widget extension target to an `xcode` pbxProject. Returns false when it already exists. */
@@ -93,15 +110,59 @@ function addWidgetTarget(project, appBundleId) {
       ),
     });
   }
-  // The xcode lib leaves `fileEncoding = undefined; lastKnownFileType = undefined` on new file references.
-  const refs = project.pbxFileReferenceSection();
-  for (const key of Object.keys(refs)) {
-    const ref = refs[key];
-    if (typeof ref !== 'object') continue;
-    for (const k of Object.keys(ref)) if (ref[k] === undefined) delete ref[k];
-  }
-
+  dropUndefined(project);
   return true;
+}
+
+/**
+ * The app's own PBXNativeTarget: product type application AND named like the Xcode project. Never "the first
+ * target", which can be a pod, a test bundle or the widget extension depending on the project's order. Throws when
+ * there is no such target, so prebuild fails loudly instead of compiling the intent into the wrong target.
+ */
+function findAppTarget(project, appName) {
+  const targets = project.pbxNativeTargetSection();
+  for (const [uuid, t] of Object.entries(targets)) {
+    if (typeof t !== 'object' || uuid.endsWith('_comment')) continue;
+    if (
+      unquote(t.productType) === 'com.apple.product-type.application' &&
+      unquote(t.name) === appName
+    ) {
+      return { uuid, target: t };
+    }
+  }
+  throw new Error(
+    `withLiveActivity: no application target named "${appName}" in the Xcode project`,
+  );
+}
+
+/**
+ * Adds StopRecordingIntent.swift to the app target too (copied into `<app>/`), so Xcode extracts its App Intents
+ * metadata from the app and the iOS 17 Stop button's `perform()` runs in the app process. Idempotent.
+ */
+function addIntentToAppTarget(project, appName) {
+  const target = findAppTarget(project, appName);
+  const filepath = `${appName}/${INTENT_FILE}`;
+  const refs = project.pbxFileReferenceSection();
+  const exists = Object.keys(refs).some(
+    (k) => typeof refs[k] === 'object' && unquote(refs[k].path) === filepath,
+  );
+  if (exists) return false;
+  // Same helper Expo uses for app sources: puts the file in the `<app>` group (created if missing) and the app
+  // target's Sources phase.
+  IOSConfig.XcodeUtils.addBuildSourceFileToGroup({
+    filepath,
+    groupName: appName,
+    project,
+    targetUuid: target.uuid,
+  });
+  dropUndefined(project);
+  return true;
+}
+
+function copyIntentToApp(iosRoot, appName) {
+  const dest = path.join(iosRoot, appName);
+  fs.mkdirSync(dest, { recursive: true });
+  fs.copyFileSync(path.join(SOURCE_DIR, INTENT_FILE), path.join(dest, INTENT_FILE));
 }
 
 function withLiveActivity(config) {
@@ -113,6 +174,7 @@ function withLiveActivity(config) {
     'ios',
     (c) => {
       copyTargetFiles(c.modRequest.platformProjectRoot);
+      copyIntentToApp(c.modRequest.platformProjectRoot, c.modRequest.projectName);
       return c;
     },
   ]);
@@ -120,6 +182,7 @@ function withLiveActivity(config) {
     const bundleId = c.ios && c.ios.bundleIdentifier;
     if (!bundleId) throw new Error('withLiveActivity: ios.bundleIdentifier is required.');
     addWidgetTarget(c.modResults, bundleId);
+    addIntentToAppTarget(c.modResults, c.modRequest.projectName);
     return c;
   });
   return config;
@@ -131,4 +194,7 @@ module.exports.SWIFT_FILES = SWIFT_FILES;
 module.exports.setInfoPlist = setInfoPlist;
 module.exports.addWidgetTarget = addWidgetTarget;
 module.exports.findWidgetTarget = findWidgetTarget;
+module.exports.addIntentToAppTarget = addIntentToAppTarget;
+module.exports.findAppTarget = findAppTarget;
+module.exports.INTENT_FILE = INTENT_FILE;
 module.exports.copyTargetFiles = copyTargetFiles;

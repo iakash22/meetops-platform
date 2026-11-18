@@ -26,13 +26,15 @@ Each call returns a `trace` of every layer for explainability.
 
 ## Candidate planning (`planCandidates`)
 
-Order: primary → explicit fallbacks → enabled **local** providers that have the capability (by `fallbackPriority`).
-A candidate is skipped (and the reason recorded) if:
+Order: primary → explicit fallbacks. **There is no implicit fallback** (ADR-009): enabled local providers (Ollama,
+faster-whisper) are never appended automatically; they run only when chosen as the primary or listed as an explicit
+LLM fallback. **Speech-to-text has one provider per organization and no fallback**: `setOrgConfig` rejects STT
+fallback lists, and STT fallbacks already on a stored row are ignored at resolve time with a warning. A candidate is skipped (and the reason recorded) if:
 
 - it is unknown, of the wrong kind, or missing the capability;
 - it is disabled or its credential is missing;
-- approval is required and it is not approved. The system or env primary and enabled local providers are implicitly
-  approved. Anything else must appear in `approvedProviders`;
+- approval is required and it is not approved. The system or env primary and enabled local providers (when chosen as
+  above, never added automatically) are implicitly approved. Anything else must appear in `approvedProviders`;
 - it is **paid while the primary is free**, unless `AI_ALLOW_PAID_FALLBACK=true` AND the org did not opt out AND it is an
   explicitly configured fallback. Paid providers are never added implicitly.
 

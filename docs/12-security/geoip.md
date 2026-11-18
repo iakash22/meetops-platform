@@ -26,7 +26,9 @@ client (sessions page, new-location alert) and keep it here. The API exports the
   reserved, documentation and unknown IPs give all-null fields, and `SessionSummary` then omits the geo fields.
 - **Client IP:** Fastify `request.ip` after the `TRUST_PROXY` CIDR allowlist; `CF-Connecting-IP` only with
   `BEHIND_CLOUDFLARE=true` and a peer inside the pinned Cloudflare ranges (refresh via PR from
-  `https://www.cloudflare.com/ips-v4` and `/ips-v6`). Raw `X-Forwarded-For` is never read.
+  `https://www.cloudflare.com/ips-v4` and `/ips-v6`). Raw `X-Forwarded-For` is never read. Parsing and resolution
+  live in `packages/config/src/client-ip.ts`, shared with realtime (its per-IP limits use the same client IP, from
+  the Socket.IO handshake), so the API and realtime cannot drift.
 - **Logs:** full IPs are never logged at info; the logger audit sink truncates to /24 (IPv4) or /48 (IPv6).
 - **Missing database:** lookups are disabled (null provider) and sign-in keeps working.
 

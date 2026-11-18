@@ -12,4 +12,10 @@ interface ImportMetaEnv {
   readonly VITE_INTEGRATION_MOCKS?: string;
   /** 'true' shows the GitHub/Jira Connect buttons (needs the #226 connect routes on the API). */
   readonly VITE_INTEGRATION_CONNECT?: string;
+  /** 'true' connects to apps/realtime for live task/meeting updates (polling stays as the fallback). */
+  readonly VITE_REALTIME_ENABLED?: string;
+  /** Realtime origin, e.g. https://rt.example.com (default: same origin). */
+  readonly VITE_REALTIME_URL?: string;
+  /** Socket.IO path (REALTIME_SOCKET_PATH), default /socket.io. */
+  readonly VITE_REALTIME_PATH?: string;
 }

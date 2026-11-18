@@ -13,6 +13,7 @@ import {
 import { meeting1 } from './fixtures/data';
 import { createMockApi, renderApp, resetStores } from './fixtures/render';
 import { waitForRouteData } from './fixtures/route-ready';
+import { chooseSelect } from './fixtures/select';
 
 const ORG = '00000000-0000-4000-8000-000000000001';
 const m2: Meeting = {
@@ -46,10 +47,7 @@ describe('meeting filters', () => {
     await screen.findByText('Design review');
     await userEvent.type(screen.getByRole('searchbox', { name: 'Search meetings' }), 'design');
     await waitFor(() => expect(screen.queryByText('Weekly sync')).not.toBeInTheDocument());
-    await userEvent.selectOptions(
-      screen.getByRole('combobox', { name: 'Filter by status' }),
-      'completed',
-    );
+    await chooseSelect('Filter by status', 'Completed');
     expect(await screen.findByText('No matching meetings')).toBeInTheDocument();
   });
 });

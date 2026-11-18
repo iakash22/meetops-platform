@@ -7,7 +7,15 @@ import {
 import { InMemoryRateLimiter } from '../src/modules/auth/infrastructure/rate-limit/in-memory.js';
 import { systemClock } from '../src/shared/ports.js';
 import { parseTrustProxy } from '../src/shared/trust-proxy.js';
-import { Client, fakeHasher, ORIGIN } from './helpers.js';
+import { Client, fakeHasher, ORIGIN, SID, signupAndLogin, type App } from './helpers.js';
+import { RecordingMailTransport } from '../src/modules/auth/domain/mail-jobs.js';
+import { docsAdminEmailsFromEnv } from '../src/shared/docs-access.js';
+import {
+  API_CSP,
+  DOCS_CSP,
+  HSTS_VALUE,
+  docsEnabledFromEnv,
+} from '../src/shared/security-headers.js';
 
 // '' disables the DATABASE_URL / REDIS_URL defaults, so these hold even where CI exports them.
 const NO_INFRA = { databaseUrl: '', redisUrl: '' };
@@ -239,6 +247,7 @@ describe('cookie policy', () => {
     const { defaultModuleDeps, PRODUCTION_REQUIRED_DEPS } = await import('../src/modules/index.js');
     const all: Record<string, object> = {};
     for (const k of PRODUCTION_REQUIRED_DEPS as readonly string[]) all[k] = {};
+    all.accountClaims = {};
     const saved = { o: process.env.WEB_ORIGINS, s: process.env.CSRF_SECRET };
     delete process.env.WEB_ORIGINS;
     delete process.env.CSRF_SECRET;
@@ -257,6 +266,55 @@ describe('cookie policy', () => {
     else process.env.WEB_ORIGINS = saved.o;
     if (saved.s === undefined) delete process.env.CSRF_SECRET;
     else process.env.CSRF_SECRET = saved.s;
+  });
+  it('NB-R2-2: production refuses to start without the transactional account-claim store', async () => {
+    const { defaultModuleDeps, PRODUCTION_REQUIRED_DEPS, MissingProductionDependencyError } =
+      await import('../src/modules/index.js');
+    const { PrismaAccountClaimStore } =
+      await import('../src/modules/auth/infrastructure/prisma/prisma-account-claim.store.js');
+    const all: Record<string, object> = {};
+    for (const k of PRODUCTION_REQUIRED_DEPS as readonly string[]) all[k] = {};
+    const saved = { o: process.env.WEB_ORIGINS, s: process.env.CSRF_SECRET };
+    process.env.WEB_ORIGINS = 'https://app.example';
+    process.env.CSRF_SECRET = 'x'.repeat(40);
+    try {
+      // Non-Prisma credential stores and no injected claim store: no silent sequential fallback.
+      let err: unknown;
+      try {
+        defaultModuleDeps(all, { nodeEnv: 'production' });
+      } catch (e) {
+        err = e;
+      }
+      expect(err).toBeInstanceOf(MissingProductionDependencyError);
+      expect((err as InstanceType<typeof MissingProductionDependencyError>).missing).toEqual([
+        'accountClaims',
+      ]);
+      // An injected store is accepted as is.
+      const claims = { claimForGoogle: async () => false, claimForMailbox: async () => false };
+      expect(
+        defaultModuleDeps({ ...all, accountClaims: claims }, { nodeEnv: 'production' })
+          .accountClaims,
+      ).toBe(claims);
+      // Prisma users + sessions (from a Prisma client) wire the transactional store.
+      const rest = { ...all };
+      delete rest.users;
+      delete rest.sessions;
+      const prismaDeps = defaultModuleDeps({ ...rest, db: {} as never }, { nodeEnv: 'production' });
+      expect(prismaDeps.accountClaims).toBeInstanceOf(PrismaAccountClaimStore);
+    } finally {
+      if (saved.o === undefined) delete process.env.WEB_ORIGINS;
+      else process.env.WEB_ORIGINS = saved.o;
+      if (saved.s === undefined) delete process.env.CSRF_SECRET;
+      else process.env.CSRF_SECRET = saved.s;
+    }
+  });
+  it('NB-R2-2: development/test name the sequential claim explicitly', async () => {
+    const { defaultModuleDeps } = await import('../src/modules/index.js');
+    const { PrismaAccountClaimStore } =
+      await import('../src/modules/auth/infrastructure/prisma/prisma-account-claim.store.js');
+    const deps = defaultModuleDeps({}, { nodeEnv: 'test' });
+    expect(deps.accountClaims).toBeDefined();
+    expect(deps.accountClaims).not.toBeInstanceOf(PrismaAccountClaimStore);
   });
   it('dev default origins include the Vite app', async () => {
     const { DEV_WEB_ORIGINS } = await import('../src/modules/auth/http/security.js');
@@ -370,14 +428,171 @@ describe('log redaction', () => {
 });
 
 describe('Swagger UI gate', () => {
-  const serverFor = async (nodeEnv: string) => {
+  it('docsEnabledFromEnv: dev/test on; elsewhere only an explicit API_DOCS_ENABLED=true', () => {
+    expect(docsEnabledFromEnv('development', undefined)).toBe(true);
+    expect(docsEnabledFromEnv('test', 'false')).toBe(true);
+    for (const env of ['production', 'staging', '', undefined]) {
+      expect(docsEnabledFromEnv(env, undefined)).toBe(false);
+      for (const v of ['', 'false', '0', '1', 'yes', 'on', 'enabled'])
+        expect(docsEnabledFromEnv(env, v)).toBe(false);
+      expect(docsEnabledFromEnv(env, 'true')).toBe(true);
+      expect(docsEnabledFromEnv(env, ' TRUE ')).toBe(true);
+    }
+  });
+  const serverFor = async (nodeEnv: string, docsEnabled = '') => {
     const { defaultModuleDeps } = await import('../src/modules/index.js');
     // Fully injected deps so strict envs can start; only the docs gate is under test.
     const deps = defaultModuleDeps({}, { nodeEnv: 'test' });
-    const app = createServer({ nodeEnv, deps });
+    const app = createServer({ nodeEnv, deps, docsEnabled });
     await app.ready();
     return app;
   };
+  it.each(['false', '1', 'yes', ''])(
+    'production keeps /docs off for API_DOCS_ENABLED=%j',
+    async (flag) => {
+      const app = await serverFor('production', flag);
+      for (const url of ['/docs', '/docs/json'])
+        expect((await app.inject({ method: 'GET', url })).statusCode, url).toBe(404);
+      await app.close();
+    },
+  );
+  /** #404 D2: a production app (docs on) sharing deps with a test app that mints real browser sessions. */
+  const prodDocs = async (docsAdminEmails: string) => {
+    const { defaultModuleDeps } = await import('../src/modules/index.js');
+    const mail = new RecordingMailTransport();
+    const deps = defaultModuleDeps(
+      { hasher: fakeHasher, mailTransport: mail },
+      { nodeEnv: 'test' },
+    );
+    const testApp = createServer({ nodeEnv: 'test', deps });
+    await testApp.ready();
+    const helper = Object.assign(testApp, {
+      mail,
+      token: (to: string, t: Parameters<RecordingMailTransport['lastToken']>[1]) =>
+        mail.lastToken(to, t),
+    }) as unknown as App;
+    const sid = async (email: string, withOrg = true) => {
+      const c = await signupAndLogin(helper, email);
+      if (withOrg) expect((await c.post('/orgs', { name: 'Acme' })).statusCode).toBe(201);
+      return `${SID}=${c.jar.get(SID) ?? ''}`;
+    };
+    const app = createServer({ nodeEnv: 'production', deps, docsEnabled: 'true', docsAdminEmails });
+    await app.ready();
+    const close = async () => {
+      await app.close();
+      await testApp.close();
+    };
+    return { app, sid, close };
+  };
+  it('docsAdminEmailsFromEnv: trimmed, lowercased, empty/unset is nobody', () => {
+    expect([...docsAdminEmailsFromEnv(' Ops@Example.com , ,x@y.io')]).toEqual([
+      'ops@example.com',
+      'x@y.io',
+    ]);
+    expect(docsAdminEmailsFromEnv(undefined).size).toBe(0);
+    expect(docsAdminEmailsFromEnv('').size).toBe(0);
+  });
+  it('production /docs needs a session (401) of an API_DOCS_ADMIN_EMAILS user (403)', async () => {
+    const { app, sid, close } = await prodDocs('ops@example.com');
+    const urls = ['/docs', '/docs/', '/docs/json', '/docs/static/swagger-initializer.js'];
+    for (const url of urls) {
+      const r = await app.inject({ method: 'GET', url });
+      expect(r.statusCode, url).toBe(401);
+      expect(r.json().error.code).toBe('UNAUTHENTICATED');
+      const bad = await app.inject({ method: 'GET', url, headers: { cookie: `${SID}=nope` } });
+      expect(bad.statusCode, url).toBe(401);
+    }
+    const member = await sid('member@example.com');
+    for (const url of urls) {
+      const r = await app.inject({ method: 'GET', url, headers: { cookie: member } });
+      expect(r.statusCode, url).toBe(403);
+      expect(r.json().error.code).toBe('FORBIDDEN');
+    }
+    const admin = await sid('Ops@Example.com');
+    const ok = await app.inject({ method: 'GET', url: '/docs/json', headers: { cookie: admin } });
+    expect(ok.statusCode).toBe(200);
+    // Bearer-style headers are not a docs credential; other routes are untouched.
+    expect(
+      (
+        await app.inject({
+          method: 'GET',
+          url: '/docs/json',
+          headers: { authorization: 'Bearer x' },
+        })
+      ).statusCode,
+    ).toBe(401);
+    expect((await app.inject({ method: 'GET', url: '/health' })).statusCode).toBe(200);
+    await close();
+  });
+  it('production /docs guard cannot be bypassed with encoded, case or slash variants (401)', async () => {
+    const { app, sid, close } = await prodDocs('ops@example.com');
+    const variants = [
+      '/%64ocs/json',
+      '/%64ocs',
+      '/%64ocs/',
+      '/%64%6f%63%73/json',
+      '/%64%6F%63%73/yaml',
+      '/d%6fcs/json',
+      '/docs%2Fjson',
+      '/%2564ocs/json',
+      '/docs/%6Ason',
+      '/docs/yaml',
+      '/%64ocs/static/swagger-initializer.js',
+      '/docs/static/%73wagger-initializer.js',
+      '/DOCS/json',
+      '/Docs/json',
+      '/dOcS',
+      '//docs/json',
+      '/docs/json?x=1',
+      '/%64ocs/json?format=json',
+    ];
+    for (const url of variants) {
+      const r = await app.inject({ method: 'GET', url });
+      expect(r.statusCode, url).toBe(401);
+    }
+    // Non-admin sessions are still 403 on the encoded route; admins still get the spec.
+    const member = await sid('member@example.com');
+    expect(
+      (await app.inject({ method: 'GET', url: '/%64ocs/json', headers: { cookie: member } }))
+        .statusCode,
+    ).toBe(403);
+    const admin = await sid('ops@example.com');
+    expect(
+      (await app.inject({ method: 'GET', url: '/%64ocs/json', headers: { cookie: admin } }))
+        .statusCode,
+    ).toBe(200);
+    expect((await app.inject({ method: 'GET', url: '/health' })).statusCode).toBe(200);
+    await close();
+  });
+  it('production /docs fails closed (403) when API_DOCS_ADMIN_EMAILS is empty', async () => {
+    const { app, sid, close } = await prodDocs('');
+    const cookie = await sid('ops@example.com');
+    expect(
+      (await app.inject({ method: 'GET', url: '/docs/json', headers: { cookie } })).statusCode,
+    ).toBe(403);
+    await close();
+  });
+  it('production serves /docs with the strict DOCS_CSP only when API_DOCS_ENABLED=true', async () => {
+    const { app, sid, close } = await prodDocs('ops@example.com');
+    const cookie = await sid('ops@example.com');
+    for (const url of ['/docs/json', '/docs/', '/docs/static/swagger-initializer.js']) {
+      const r = await app.inject({ method: 'GET', url, headers: { cookie } });
+      expect(r.statusCode, url).toBe(200);
+      const csp = r.headers['content-security-policy'];
+      expect(csp, url).toBe(DOCS_CSP);
+      expect(csp).not.toMatch(/unsafe-inline|unsafe-eval|https:|\*/);
+      expect(r.headers['x-frame-options']).toBe('DENY');
+      expect(r.headers['strict-transport-security']).toBe(HSTS_VALUE);
+    }
+    // The UI page loads only external same-origin scripts, so script-src 'self' (no inline) is enough.
+    const html = (await app.inject({ method: 'GET', url: '/docs/', headers: { cookie } })).body;
+    expect(html).not.toMatch(/<script(?![^>]*\ssrc=)[^>]*>/i);
+    // Non-docs routes keep the JSON API CSP.
+    expect(
+      (await app.inject({ method: 'GET', url: '/health' })).headers['content-security-policy'],
+    ).toBe(API_CSP);
+    await close();
+  });
   it.each(['production', 'staging', ''])(
     '/docs and /docs/json are 404 when NODE_ENV=%s',
     async (env) => {
@@ -393,7 +608,9 @@ describe('Swagger UI gate', () => {
   it.each(['development', 'test'])('/docs is served when NODE_ENV=%s', async (env) => {
     const app = await serverFor(env);
     expect((await app.inject({ method: 'GET', url: '/docs/json' })).statusCode).toBe(200);
-    expect([200, 302]).toContain((await app.inject({ method: 'GET', url: '/docs' })).statusCode);
+    const ui = await app.inject({ method: 'GET', url: '/docs' });
+    expect([200, 302]).toContain(ui.statusCode);
+    expect(ui.headers['content-security-policy']).toBe(DOCS_CSP);
     await app.close();
   });
 });

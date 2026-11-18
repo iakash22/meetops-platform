@@ -1,10 +1,16 @@
 import type { SignupRequest } from '@meetops/contracts';
+import {
+  PASSWORD_MAX_LENGTH,
+  PASSWORD_MIN_LENGTH,
+  PASSWORD_POLICY_MESSAGE,
+  isAcceptablePassword,
+} from '@meetops/contracts/types';
 
-import { EMAIL_MAX_LENGTH, PASSWORD_MAX_LENGTH } from './validation';
+import { EMAIL_MAX_LENGTH } from './validation';
 
-/** Limits mirror `SignupRequest` in `@meetops/contracts` (name 1..200, email max 320, password 12..128). */
+/** Limits mirror `SignupRequest` in `@meetops/contracts`. */
 export const NAME_MAX_LENGTH = 200;
-export const PASSWORD_MIN_LENGTH = 12;
+export { PASSWORD_MIN_LENGTH };
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -39,9 +45,8 @@ export function validateSignup(input: SignupInput): {
     errors.email = 'Enter a valid email address.';
 
   if (password.length === 0) errors.password = 'Create a password.';
-  else if (password.length < PASSWORD_MIN_LENGTH)
-    errors.password = `Use at least ${PASSWORD_MIN_LENGTH} characters.`;
   else if (password.length > PASSWORD_MAX_LENGTH) errors.password = 'Password is too long.';
+  else if (!isAcceptablePassword(password)) errors.password = PASSWORD_POLICY_MESSAGE;
 
   return {
     ok: Object.keys(errors).length === 0,
@@ -52,15 +57,10 @@ export function validateSignup(input: SignupInput): {
 
 export type PasswordStrength = 'too-short' | 'weak' | 'fair' | 'strong';
 
-/**
- * Advisory strength meter (docs/references.md section 5). Only length is enforced (12..128, contracts); variety and
- * length beyond the minimum raise the level.
- */
+/** Advisory meter. The enforced rule is {@link isAcceptablePassword}. */
 export function passwordStrength(password: string): PasswordStrength {
   if (password.length < PASSWORD_MIN_LENGTH) return 'too-short';
-  const classes = [/[a-z]/, /[A-Z]/, /\d/, /[^A-Za-z0-9]/].filter((r) => r.test(password)).length;
-  const score = classes + (password.length >= 16 ? 1 : 0) + (password.length >= 20 ? 1 : 0);
-  if (score >= 4) return 'strong';
-  if (score >= 2) return 'fair';
-  return 'weak';
+  if (!isAcceptablePassword(password)) return 'weak';
+  const mixedCase = /[a-z]/.test(password) && /[A-Z]/.test(password);
+  return mixedCase && password.length >= 12 ? 'strong' : 'fair';
 }

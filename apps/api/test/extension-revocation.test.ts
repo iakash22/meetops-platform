@@ -12,6 +12,7 @@ import type { ExtensionAuthDeps } from '../src/modules/extension-auth/applicatio
 import type { TokenFamily } from '../src/modules/extension-auth/domain/extension-token.js';
 import { buildApp, signupAndLogin, type App } from './helpers.js';
 import { fakeRedis } from './fake-redis.js';
+import { InMemoryAuditLog } from '../src/modules/auth/domain/audit.js';
 
 const EXT = 'abcdefghijklmnopabcdefghijklmnop';
 const EXT_ORIGIN = `chrome-extension://${EXT}`;
@@ -21,9 +22,14 @@ const ext = (app: App, url: string, payload: object) =>
   app.inject({ method: 'POST', url, payload, headers: { origin: EXT_ORIGIN } });
 
 /** The shared ADR-011 verifier over the service's store; membership is always live here. */
-function bearerVerifier(extensionTokens: ExtensionTokenRepository, now = () => new Date()) {
+function bearerVerifier(
+  extensionTokens: ExtensionTokenRepository,
+  now = () => new Date(),
+  extensionIds: readonly string[] = [EXT],
+) {
   const svc = new ExtensionAuthService({
     extensionTokens,
+    extensionIds,
     clock: { now },
   } as unknown as ExtensionAuthDeps);
   return createSessionVerifier({
@@ -127,5 +133,156 @@ describe('Redis revocation marker', () => {
     await repo.createFamily(f);
     expect((await repo.findFamily(f.id))?.revokedAt).toEqual(at);
     expect(await repo.listFamilies(f.userId, new Date())).toEqual([]);
+  });
+});
+
+describe('extension allowlist is enforced after pairing', () => {
+  it('rejects access tokens of an extension id removed from the allowlist', async () => {
+    const { extensionTokens, accessToken } = await pairedToken();
+    expect(
+      await bearerVerifier(extensionTokens).verifySession({ bearer: accessToken }),
+    ).not.toBeNull();
+    const delisted = bearerVerifier(extensionTokens, () => new Date(), ['p'.repeat(32)]);
+    expect(await delisted.verifySession({ bearer: accessToken })).toBeNull();
+  });
+
+  it('refuses refresh and revokes the family once the extension id is delisted', async () => {
+    const { extensionTokens, deviceId, accessToken, refreshToken } = await pairedToken();
+    const app = await buildApp({ extensionTokens, extensionIds: ['p'.repeat(32)] });
+    const r = await app.inject({
+      method: 'POST',
+      url: EXTENSION_AUTH_PATHS.refresh,
+      payload: { extensionId: EXT, deviceId, refreshToken },
+      headers: { origin: EXT_ORIGIN },
+    });
+    expect(r.statusCode).toBe(401);
+    // The family is revoked, so even with EXT allowlisted again the access token is dead.
+    expect(await bearerVerifier(extensionTokens).verifySession({ bearer: accessToken })).toBeNull();
+  });
+
+  it('writes an extension.token.delisted audit event when delisting revokes the family', async () => {
+    const { extensionTokens, deviceId, refreshToken } = await pairedToken();
+    const audit = new InMemoryAuditLog();
+    const app = await buildApp({ extensionTokens, extensionIds: ['p'.repeat(32)], audit });
+    const r = await app.inject({
+      method: 'POST',
+      url: EXTENSION_AUTH_PATHS.refresh,
+      payload: { extensionId: EXT, deviceId, refreshToken },
+      headers: { origin: EXT_ORIGIN },
+    });
+    expect(r.statusCode).toBe(401);
+    const ev = audit.events.filter((e) => e.action === 'extension.token.delisted');
+    expect(ev).toHaveLength(1);
+    expect(ev[0]).toMatchObject({ targetType: 'extension_device', targetId: deviceId });
+    expect(ev[0]!.metadata).toMatchObject({ extensionId: EXT });
+  });
+
+  it('an EMPTY allowlist (misconfigured deploy) refuses refresh but does not revoke the family', async () => {
+    const { extensionTokens, deviceId, accessToken, refreshToken } = await pairedToken();
+    const audit = new InMemoryAuditLog();
+    const misconfigured = await buildApp({ extensionTokens, extensionIds: [], audit });
+    const r = await misconfigured.inject({
+      method: 'POST',
+      url: EXTENSION_AUTH_PATHS.refresh,
+      payload: { extensionId: EXT, deviceId, refreshToken },
+      headers: { origin: EXT_ORIGIN },
+    });
+    expect(r.statusCode).toBe(401);
+    expect(audit.events.some((e) => e.action === 'extension.token.delisted')).toBe(false);
+    // Config fixed: the family was left intact, so the access token still verifies.
+    expect(
+      await bearerVerifier(extensionTokens).verifySession({ bearer: accessToken }),
+    ).not.toBeNull();
+  });
+  it('misconfigured refresh does not burn the token: after the config is fixed the SAME token rotates (no reuse, no revoke)', async () => {
+    // One app whose allowlist array is flipped in place: empty (misconfigured deploy), then restored.
+    const extensionTokens = new InMemoryExtensionTokenRepository();
+    const audit = new InMemoryAuditLog();
+    const extensionIds: string[] = [EXT];
+    const app = await buildApp({ extensionTokens, extensionIds, audit });
+    const c = await signupAndLogin(app, `mis-${randomUUID()}@example.com`);
+    expect((await c.post('/orgs', { name: 'Mis Org' })).statusCode).toBe(201);
+    const deviceId = randomUUID();
+    const n = nonce();
+    const { pairingCode } = (
+      await c.post(EXTENSION_AUTH_PATHS.pair, { extensionId: EXT, deviceId, nonce: n })
+    ).json<{ pairingCode: string }>();
+    const tok = await ext(app, EXTENSION_AUTH_PATHS.token, {
+      extensionId: EXT,
+      deviceId,
+      pairingCode,
+      nonce: n,
+    });
+    expect(tok.statusCode).toBe(200);
+    const { accessToken, refreshToken } = tok.json<{ accessToken: string; refreshToken: string }>();
+    const payload = { extensionId: EXT, deviceId, refreshToken };
+
+    extensionIds.length = 0;
+    const bad = await ext(app, EXTENSION_AUTH_PATHS.refresh, payload);
+    expect(bad.statusCode).toBe(401);
+    expect(
+      await bearerVerifier(extensionTokens).verifySession({ bearer: accessToken }),
+    ).not.toBeNull();
+
+    extensionIds.push(EXT);
+    const ok = await ext(app, EXTENSION_AUTH_PATHS.refresh, payload);
+    expect(ok.statusCode).toBe(200);
+    const pair = ok.json<{ accessToken: string; refreshToken: string }>();
+    expect(pair.refreshToken).not.toBe(refreshToken);
+    expect(
+      audit.events.filter((e) =>
+        [
+          'extension.token.reuse_detected',
+          'extension.token.delisted',
+          'extension.token.revoke',
+        ].includes(e.action),
+      ),
+    ).toEqual([]);
+    expect(audit.events.filter((e) => e.action === 'extension.token.refresh')).toHaveLength(1);
+    // Family intact: the rotated access token verifies.
+    expect(
+      await bearerVerifier(extensionTokens).verifySession({ bearer: pair.accessToken }),
+    ).not.toBeNull();
+    await app.close();
+  });
+});
+
+describe('#459 follow-up: revokeForUser can propagate store failures', () => {
+  const failingStore = () =>
+    ({
+      listFamilies: () => Promise.reject(new Error('token store down')),
+    }) as unknown as ExtensionTokenRepository;
+  const svc = () =>
+    new ExtensionAuthService({
+      extensionTokens: failingStore(),
+      extensionIds: [EXT],
+      clock: { now: () => new Date() },
+    } as unknown as ExtensionAuthDeps);
+
+  it('swallows by default (logout, reset, member removal never fail here)', async () => {
+    await expect(svc().revokeForUser('u1', 'logout')).resolves.toBeUndefined();
+  });
+
+  it('rethrows with { propagate: true } so the takeover retry/log path sees it', async () => {
+    await expect(
+      svc().revokeForUser('u1', 'password_changed', undefined, { propagate: true }),
+    ).rejects.toThrow('token store down');
+  });
+
+  it('combineRevokers runs every revoker, then rethrows the first failure', async () => {
+    const { combineRevokers } =
+      await import('../src/modules/desktop-auth/application/desktop-auth.service.js');
+    const calls: string[] = [];
+    const ok = {
+      revokeForUser: async () => {
+        calls.push('second');
+      },
+    };
+    const both = combineRevokers(svc(), ok);
+    await expect(
+      both.revokeForUser('u1', 'password_changed', undefined, { propagate: true }),
+    ).rejects.toThrow('token store down');
+    expect(calls).toEqual(['second']);
+    await expect(both.revokeForUser('u1', 'logout')).resolves.toBeUndefined();
   });
 });

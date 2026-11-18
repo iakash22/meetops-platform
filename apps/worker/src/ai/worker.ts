@@ -1,5 +1,5 @@
 import { Queue, UnrecoverableError, Worker, type Job } from 'bullmq';
-import { Redis } from 'ioredis';
+import { createAppRedis } from '../redis.js';
 import { QUEUE_NAMES, type TranscriptionJobPayload } from '@meetops/contracts';
 import { logger as baseLogger } from '../logger.js';
 import { createRealtimePublisher, createRedisEmitter } from '../media/realtime.js';
@@ -11,8 +11,38 @@ import {
 } from './consumer.js';
 import { createQueueSummaryTrigger, SUMMARY_QUEUE } from './summary-trigger.js';
 import { loadTranscriptionWorkerEnv, type TranscriptionWorkerEnv } from './env.js';
+import {
+  DEFAULT_TRANSCRIPTION_RETRY,
+  TRANSCRIPTION_DLQ,
+  handleTranscriptionFailure,
+  handleTranscriptionSuccess,
+  queueDeadLetterLister,
+  createRedisDeadLetterIndex,
+  type DeadLetterIndex,
+  type DeadLetterLister,
+  transcriptionBackoffStrategy,
+  type DeadLetterQueueLike,
+  type TranscriptionDelayedAlert,
+  type TranscriptionDelayedStatus,
+  type TranscriptionRetryPolicy,
+} from './transcription-retry.js';
 
-export type TranscriptionWorkerConfig = { redisUrl: string; concurrency: number };
+export type TranscriptionWorkerConfig = {
+  redisUrl: string;
+  concurrency: number;
+  retry?: TranscriptionRetryPolicy | undefined;
+};
+
+/** Optional retry-exhaustion wiring: meeting status writer, alert hook, and a DLQ override (tests). */
+export type TranscriptionDeadLetterDeps = {
+  delayedStatus?: TranscriptionDelayedStatus | undefined;
+  onTranscriptionDelayed?: TranscriptionDelayedAlert | undefined;
+  deadLetterQueue?: DeadLetterQueueLike | undefined;
+  /** DLQ lister for the success-path guard (tests). Defaults to the worker's own DLQ queue. */
+  deadLetterLister?: DeadLetterLister | undefined;
+  /** Per-meeting DLQ index (tests). Defaults to a Redis set index over the worker's own DLQ queue. */
+  deadLetterIndex?: DeadLetterIndex | undefined;
+};
 
 /** BullMQ processor: permanent errors become UnrecoverableError so BullMQ stops retrying. */
 export function createTranscriptionProcessor(deps: TranscriptionConsumerDeps) {
@@ -36,14 +66,15 @@ export type TranscriptionHostDeps = Omit<
   TranscriptionConsumerDeps,
   'realtime' | 'logger' | 'geometry'
 > &
-  Partial<Pick<TranscriptionConsumerDeps, 'realtime' | 'logger' | 'geometry'>>;
+  Partial<Pick<TranscriptionConsumerDeps, 'realtime' | 'logger' | 'geometry'>> &
+  TranscriptionDeadLetterDeps;
 
 export function startTranscriptionWorker(
   cfg: TranscriptionWorkerConfig,
   deps: TranscriptionHostDeps & { geometry: TranscriptionConsumerDeps['geometry'] },
 ) {
   const logger = deps.logger ?? baseLogger.child({ worker: QUEUE_NAMES.transcription });
-  const conn = () => new Redis(cfg.redisUrl, { maxRetriesPerRequest: null });
+  const conn = () => createAppRedis(cfg.redisUrl, { maxRetriesPerRequest: null });
   const emitterRedis = deps.realtime ? undefined : conn();
   const realtime = deps.realtime ?? createRealtimePublisher(createRedisEmitter(emitterRedis!));
   // Default trigger: enqueue the meeting summary on QUEUE_NAMES.ai when a transcript becomes ready.
@@ -55,16 +86,50 @@ export function startTranscriptionWorker(
   const worker = new Worker<TranscriptionJobPayload, TranscriptionJobResult>(
     QUEUE_NAMES.transcription,
     createTranscriptionProcessor({ ...deps, realtime, logger, summaryTrigger }),
-    { connection: conn(), concurrency: cfg.concurrency },
+    {
+      connection: conn(),
+      concurrency: cfg.concurrency,
+      settings: {
+        backoffStrategy: transcriptionBackoffStrategy(cfg.retry ?? DEFAULT_TRANSCRIPTION_RETRY),
+      },
+    },
   );
-  worker.on('failed', (job, err) =>
+  const ownDlq = deps.deadLetterQueue
+    ? undefined
+    : new Queue(TRANSCRIPTION_DLQ, { connection: conn() });
+  const dlq: DeadLetterQueueLike =
+    deps.deadLetterQueue ?? (ownDlq as unknown as DeadLetterQueueLike);
+  const deadLetterLister =
+    deps.deadLetterLister ?? (ownDlq ? queueDeadLetterLister(ownDlq) : undefined);
+  const indexRedis = deps.deadLetterIndex || !ownDlq ? undefined : conn();
+  const deadLetterIndex =
+    deps.deadLetterIndex ??
+    (ownDlq && indexRedis ? createRedisDeadLetterIndex(indexRedis, ownDlq) : undefined);
+  worker.on('failed', (job, err) => {
     logger.warn(
       { jobId: job?.id, errorCode: err instanceof TranscriptionJobError ? err.code : err?.name },
       'transcription job attempt failed',
-    ),
-  );
+    );
+    void handleTranscriptionFailure(job, err, {
+      dlq,
+      index: deadLetterIndex,
+      status: deps.delayedStatus,
+      alert: deps.onTranscriptionDelayed,
+      logger,
+    });
+  });
+  worker.on('completed', (job) => {
+    void handleTranscriptionSuccess(job, {
+      status: deps.delayedStatus,
+      index: deadLetterIndex,
+      deadLetters: deadLetterLister,
+      logger,
+    });
+  });
   const close = async () => {
     await worker.close();
+    await ownDlq?.close();
+    indexRedis?.disconnect();
     await summaryQueue?.close();
     emitterRedis?.disconnect();
   };
@@ -108,7 +173,7 @@ export function registerTranscriptionWorker(
     return { registered: false, reason: 'missing_dependencies' };
   }
   const { close } = (opts.start ?? startTranscriptionWorker)(
-    { redisUrl: env.redisUrl, concurrency: env.concurrency },
+    { redisUrl: env.redisUrl, concurrency: env.concurrency, retry: env.retry },
     { ...deps, geometry: deps.geometry ?? { segmentSeconds: env.segmentSeconds } },
   );
   return { registered: true, close };

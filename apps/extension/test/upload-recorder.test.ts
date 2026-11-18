@@ -51,7 +51,7 @@ const events = () => ({
   onError: vi.fn(),
 });
 
-const newStore = (maxBytes = 1000, policy: 'refuse' | 'evict-oldest' = 'refuse') =>
+const newStore = (maxBytes = 1000, policy: 'refuse' | 'evict-uploaded' = 'refuse') =>
   ChunkStore.open({ maxBytes, policy }, new IDBFactory());
 
 describe('startRecording', () => {
@@ -190,7 +190,7 @@ describe('startRecording', () => {
   });
 
   it('reports eviction and refusal through onStorage', async () => {
-    const store = await newStore(4, 'evict-oldest');
+    const store = await newStore(4, 'evict-uploaded');
     const client = new StubUploadClient();
     const rec = new FakeRecorder();
     const ev = events();

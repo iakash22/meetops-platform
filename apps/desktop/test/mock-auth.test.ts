@@ -43,7 +43,7 @@ describe('mock auth client', () => {
 });
 
 describe('mock auth client sign-up', () => {
-  const valid = { name: 'Alex', email: ' Alex@Example.com ', password: 'x'.repeat(12) };
+  const valid = { name: 'Alex', email: ' Alex@Example.com ', password: 'Correct-1!' };
 
   it('returns verification_sent (no session) for a valid request', async () => {
     await expect(client.signUp(valid)).resolves.toEqual({

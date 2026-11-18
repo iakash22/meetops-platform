@@ -1,3 +1,4 @@
+import { clientIpKey } from '../../../shared/rate-limit-core.js';
 import {
   EXTENSION_REFRESH_FAMILY_MAX_LIFETIME_SECONDS,
   EXTENSION_SCOPES,
@@ -19,6 +20,10 @@ import { safeAudit, type AuditAction, type AuditLog } from '../../auth/domain/au
 import { RateLimitedError, UnauthenticatedError } from '../../auth/domain/errors.js';
 import type { RateLimiter, TokenService } from '../../auth/domain/ports.js';
 import type { RequestMeta } from '../../auth/application/auth.service.js';
+import {
+  MemoryRefreshGraceStore,
+  type RefreshGraceStore,
+} from '../../auth/application/refresh-grace.js';
 import { publishRevocation, type RevocationPublisher } from '../../auth/application/revocations.js';
 import type {
   MembershipRepository,
@@ -61,12 +66,21 @@ export class NoActiveOrganizationError extends DomainError {
   }
 }
 
+export interface RevokeForUserOptions {
+  /**
+   * #459 follow-up: rethrow a store failure instead of swallowing it, so a caller that retries (the account-takeover
+   * follow-up) sees it. Default false: logout, reset and member removal never fail on this step.
+   */
+  propagate?: boolean;
+}
+
 export interface ExtensionRevoker {
-  /** ADR-005 A1.6: revoke a user's families (all, or in one org). Never throws. */
+  /** ADR-005 A1.6: revoke a user's families (all, or in one org). Never throws unless `opts.propagate`. */
   revokeForUser(
     userId: string,
     reason: 'logout' | 'logout_all' | 'password_changed' | 'member_removed' | 'org_switch',
     organizationId?: string,
+    opts?: RevokeForUserOptions,
   ): Promise<void>;
 }
 
@@ -84,6 +98,8 @@ export interface ExtensionAuthDeps {
   revocations?: RevocationPublisher;
   /** Security-signal logger (the API's redacting request logger in production). */
   log?: ExtensionAuthLog;
+  /** Refresh grace window store (Redis when configured, so retries on any instance match). */
+  refreshGrace?: RefreshGraceStore<ExtensionRefreshResponse>;
 }
 
 type Limit = { limit: number; windowMs: number };
@@ -94,7 +110,13 @@ type Limit = { limit: number; windowMs: number };
  * failure is the same 401 UNAUTHENTICATED so a caller cannot tell which check failed.
  */
 export class ExtensionAuthService implements ExtensionRevoker {
-  constructor(private readonly d: ExtensionAuthDeps) {}
+  /** ~10 s grace for re-presenting the immediately previous refresh token from the same device. */
+  private readonly grace: RefreshGraceStore<ExtensionRefreshResponse>;
+  constructor(private readonly d: ExtensionAuthDeps) {
+    this.grace =
+      d.refreshGrace ??
+      new MemoryRefreshGraceStore<ExtensionRefreshResponse>(() => d.clock.now().getTime());
+  }
 
   isAllowedExtension(extensionId: string): boolean {
     return this.d.extensionIds.includes(extensionId);
@@ -177,7 +199,7 @@ export class ExtensionAuthService implements ExtensionRevoker {
   ): Promise<ExtensionPairResponse> {
     await this.limit(`pair:user:${caller.userId}`, EXTENSION_LIMITS.pairPerUserMin);
     await this.limit(`pair:user:h:${caller.userId}`, EXTENSION_LIMITS.pairPerUserHour);
-    await this.limit(`pair:ip:${meta.ip ?? 'unknown'}`, EXTENSION_LIMITS.pairPerIp);
+    await this.limit(`pair:ip:${clientIpKey(meta.ip)}`, EXTENSION_LIMITS.pairPerIp);
     if (!this.isAllowedExtension(body.extensionId)) throw new ExtensionNotAllowedError();
     const organizationId = caller.activeOrganizationId;
     if (!organizationId) throw new NoActiveOrganizationError();
@@ -216,7 +238,7 @@ export class ExtensionAuthService implements ExtensionRevoker {
 
   /** POST /auth/extension-token: atomically consumes the pairing code and starts a refresh family. */
   async exchange(body: ExtensionTokenRequest, meta: RequestMeta): Promise<ExtensionTokenResponse> {
-    const ipKey = `token:ip:${meta.ip ?? 'unknown'}`;
+    const ipKey = `token:ip:${clientIpKey(meta.ip)}`;
     await this.limit(ipKey, EXTENSION_LIMITS.tokenPerIp);
     const now = this.d.clock.now();
     const p = await this.d.extensionTokens.consumePairing(this.d.tokens.hash(body.pairingCode));
@@ -265,11 +287,55 @@ export class ExtensionAuthService implements ExtensionRevoker {
     body: ExtensionRefreshRequest,
     meta: RequestMeta,
   ): Promise<ExtensionRefreshResponse> {
-    await this.limit(`refresh:ip:${meta.ip ?? 'unknown'}`, EXTENSION_LIMITS.refreshPerIp);
-    const r = await this.d.extensionTokens.consumeRefresh(this.d.tokens.hash(body.refreshToken));
+    await this.limit(`refresh:ip:${clientIpKey(meta.ip)}`, EXTENSION_LIMITS.refreshPerIp);
+    // An EMPTY allowlist is a misconfiguration (e.g. EXTENSION_IDS unset or typo'd in a deploy): refuse the refresh
+    // BEFORE consumeRefresh, so the token is not burned and the family is not touched. Fixing the config then lets
+    // the same refresh token rotate normally, with no false reuse_detected and no revoke.
+    if (this.d.extensionIds.length === 0) {
+      console.warn(
+        'extension refresh refused: extension allowlist is empty; token and families left intact',
+        {
+          event: 'extension_allowlist_empty',
+        },
+      );
+      throw new UnauthenticatedError();
+    }
+    const tokenHash = this.d.tokens.hash(body.refreshToken);
+    const r = await this.d.extensionTokens.consumeRefresh(tokenHash);
     if (r.status === 'unknown') throw new UnauthenticatedError();
     const f = await this.d.extensionTokens.findFamily(r.familyId);
     if (!f) throw new UnauthenticatedError();
+    // An extension id removed from the allowlist (EXTENSION_IDS) can no longer refresh: revoke its family.
+    // Checked BEFORE the grace-window replay so a revoked extension cannot replay a just-rotated pair.
+    // (The empty-allowlist misconfiguration is refused above, before the token is consumed.)
+    if (!this.isAllowedExtension(f.extensionId)) {
+      if (!f.revokedAt) {
+        await this.revokeFamily(f, 'extension_revoked');
+        await this.audit(
+          {
+            organizationId: f.organizationId,
+            actorId: f.userId,
+            action: 'extension.token.delisted',
+            deviceId: f.deviceId,
+            extensionId: f.extensionId,
+            familyId: f.id,
+          },
+          meta,
+        );
+      }
+      throw new UnauthenticatedError();
+    }
+    if (
+      r.status === 'reused' &&
+      !f.revokedAt &&
+      f.extensionId === body.extensionId &&
+      f.deviceId === body.deviceId
+    ) {
+      // Grace window: the same device re-sent the token it just rotated; hand back the same new pair.
+      const again = await this.grace.replay(f.id, tokenHash, body.deviceId, body.refreshToken);
+      if (again) return again;
+      if (again === null) throw new UnauthenticatedError();
+    }
     if (
       r.status === 'reused' ||
       f.extensionId !== body.extensionId ||
@@ -291,6 +357,18 @@ export class ExtensionAuthService implements ExtensionRevoker {
       }
       throw new UnauthenticatedError();
     }
+    const pending = await this.grace.begin(f.id, tokenHash, f.deviceId, body.refreshToken);
+    try {
+      const pair = await this.rotate(f, meta);
+      await pending.resolve(pair);
+      return pair;
+    } catch (err) {
+      await pending.reject();
+      throw err;
+    }
+  }
+
+  private async rotate(f: TokenFamily, meta: RequestMeta): Promise<ExtensionRefreshResponse> {
     await this.limit(`refresh:fam:${f.id}`, EXTENSION_LIMITS.refreshPerFamily);
     await this.noteFrequentRefresh(f, meta);
     const now = this.d.clock.now();
@@ -316,7 +394,7 @@ export class ExtensionAuthService implements ExtensionRevoker {
 
   /** POST /auth/extension/revoke: revokes the device's family. Idempotent for a known token of this device. */
   async revoke(body: ExtensionRevokeRequest, meta: RequestMeta): Promise<{ revoked: true }> {
-    await this.limit(`revoke:ip:${meta.ip ?? 'unknown'}`, EXTENSION_LIMITS.revokePerIp);
+    await this.limit(`revoke:ip:${clientIpKey(meta.ip)}`, EXTENSION_LIMITS.revokePerIp);
     const r = await this.d.extensionTokens.peekRefresh(this.d.tokens.hash(body.refreshToken));
     if (r.status === 'unknown') throw new UnauthenticatedError();
     const f = await this.d.extensionTokens.findFamily(r.familyId);
@@ -344,6 +422,7 @@ export class ExtensionAuthService implements ExtensionRevoker {
     userId: string,
     reason: 'logout' | 'logout_all' | 'password_changed' | 'member_removed' | 'org_switch',
     organizationId?: string,
+    opts: RevokeForUserOptions = {},
   ): Promise<void> {
     try {
       for (const f of await this.d.extensionTokens.listFamilies(
@@ -352,8 +431,9 @@ export class ExtensionAuthService implements ExtensionRevoker {
         organizationId,
       ))
         await this.revokeFamily(f, reason);
-    } catch {
-      // The user-facing revocation (session, membership) already happened; never fail it here.
+    } catch (e) {
+      // The user-facing revocation (session, membership) already happened; never fail it here, unless asked.
+      if (opts.propagate) throw e;
     }
   }
 
@@ -367,6 +447,7 @@ export class ExtensionAuthService implements ExtensionRevoker {
       | 'member_removed'
       | 'org_switch',
   ) {
+    await this.grace.forget(f.id);
     await this.d.extensionTokens.revokeFamily(f.id, this.d.clock.now());
     await publishRevocation(this.d.revocations, {
       kind: 'session',
@@ -415,7 +496,8 @@ export class ExtensionAuthService implements ExtensionRevoker {
    * @meetops/session-verifier ExtensionTokenStore, consulted on every bearer verify. The family's revocation
    * (Redis marker, then Postgres as the authority via DurableExtensionTokenRepository) applies to every access
    * token in it at once, so a revoked token stops working immediately rather than at its expiry. The family
-   * must also still belong to the token's user and org and be inside its absolute lifetime. Lookup errors
+   * must also still belong to the token's user and org, be for an allowlisted extension id, and be inside its
+   * absolute lifetime. Lookup errors
    * fail closed (null), never open.
    */
   verifierStore(): ExtensionTokenStore {
@@ -426,6 +508,8 @@ export class ExtensionAuthService implements ExtensionRevoker {
           if (!a) return null;
           const f = await this.d.extensionTokens.findFamily(a.familyId);
           if (!f || f.userId !== a.userId || f.organizationId !== a.organizationId) return null;
+          // Access tokens of an extension id no longer on the allowlist stop working immediately.
+          if (!this.isAllowedExtension(f.extensionId)) return null;
           const now = this.d.clock.now();
           return {
             familyId: a.familyId,

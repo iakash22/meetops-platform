@@ -1,0 +1,53 @@
+# MeetOps worker queue alert rules (P9 item #13). Metrics: apps/worker/src/metrics.ts (token-gated, job `meetops-worker`).
+# Keep every `expr` on ONE line: apps/worker/test/queue-metrics.test.ts parses this file without a YAML library.
+groups:
+  - name: meetops-worker
+    rules:
+      - alert: MeetOpsWorkerDown
+        expr: up{job="meetops-worker"} == 0
+        for: 2m
+        labels:
+          severity: page
+        annotations:
+          summary: 'MeetOps worker exporter {{ $labels.instance }} is not being scraped'
+          runbook: docs/14-observability/alerts.md#meetopsworkerdown
+      - alert: MeetOpsQueueBacklog
+        expr: sum by (queue) (bullmq_queue_jobs{job="meetops-worker",state=~"waiting|prioritized",queue!~".*-dlq"}) > 100
+        for: 10m
+        labels:
+          severity: ticket
+        annotations:
+          summary: 'Queue {{ $labels.queue }} has more than 100 waiting jobs for 10 minutes'
+          runbook: docs/14-observability/alerts.md#meetopsqueuebacklog
+      - alert: MeetOpsQueueFailedJobsRising
+        expr: sum by (queue) (delta(bullmq_queue_jobs{job="meetops-worker",state="failed"}[15m])) > 10
+        for: 5m
+        labels:
+          severity: ticket
+        annotations:
+          summary: 'Queue {{ $labels.queue }} gained more than 10 failed jobs in 15 minutes'
+          runbook: docs/14-observability/alerts.md#meetopsqueuefailedjobsrising
+      - alert: MeetOpsTranscriptionDlqNotEmpty
+        expr: sum(bullmq_queue_jobs{job="meetops-worker",queue="transcription-dlq",state=~"waiting|delayed|failed"}) > 0
+        for: 30m
+        labels:
+          severity: ticket
+        annotations:
+          summary: 'Transcription DLQ has entries for 30+ minutes; redrive or fail them'
+          runbook: docs/14-observability/alerts.md#meetopstranscriptiondlqnotempty
+      - alert: MeetOpsTakeoverFollowUpDlqNotEmpty
+        expr: sum(bullmq_queue_jobs{job="meetops-worker",queue="auth-takeover-follow-up-dlq",state=~"waiting|delayed|failed"}) > 0
+        for: 15m
+        labels:
+          severity: ticket
+        annotations:
+          summary: 'Account-takeover follow-ups were dead-lettered; a revocation may still be outstanding'
+          runbook: docs/14-observability/alerts.md#meetopstakeoverfollowupdlqnotempty
+      - alert: MeetOpsQueueScrapeError
+        expr: max by (queue) (bullmq_queue_scrape_error{job="meetops-worker"}) == 1
+        for: 5m
+        labels:
+          severity: page
+        annotations:
+          summary: 'Worker cannot read counts for queue {{ $labels.queue }} (Redis unreachable?)'
+          runbook: docs/14-observability/alerts.md#meetopsqueuescrapeerror

@@ -10,7 +10,7 @@ import type { PasswordHasher } from '../src/modules/auth/domain/ports.js';
 export const ORIGIN = 'http://localhost:5173';
 export const SID = '__Host-meetops_sid';
 export const CSRF = '__Host-meetops_csrf';
-export const PASSWORD = 'correct-horse-battery';
+export const PASSWORD = 'correct-horse-battery-1';
 
 /** Fast deterministic hasher for tests that are not about argon2. */
 export const fakeHasher: PasswordHasher = {

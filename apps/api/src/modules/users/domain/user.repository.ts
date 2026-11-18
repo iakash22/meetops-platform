@@ -5,6 +5,48 @@ export interface UserRepository {
   findById(id: UserId): Promise<User | null>;
   /** Email must already be normalized. */
   findByEmail(email: string): Promise<User | null>;
+  /** Google OIDC subject. Excludes soft-deleted rows. */
+  findByGoogleSub(sub: string): Promise<User | null>;
+  /**
+   * Sets googleSub only when it is still null. Returns false if the user is missing, already linked,
+   * or the subject belongs to someone else. Must not clear or replace an existing subject.
+   */
+  linkGoogleSub(id: UserId, sub: string): Promise<boolean>;
+  /**
+   * OIDC review N-1: Google proved the address of an account whose email was never verified, so whoever set its
+   * password may not own the mailbox. In ONE update, only while the row is live, unverified and unlinked: drop the
+   * password, mark the email verified at `at`, and set googleSub. Returns false when any condition no longer holds or
+   * the subject belongs to someone else.
+   */
+  claimUnverifiedForGoogle(id: UserId, sub: string, at: Date): Promise<boolean>;
+  /**
+   * OIDC review N-1 residual / N-7: the mailbox owner proved the address (verification or reset link) from outside the
+   * account. In ONE update, only while the row is live and still unverified: mark the email verified at `at`, drop any
+   * Google subject (it never proved this address) and, with `clearPassword`, the password whoever registered set.
+   * Returns false when the row is gone or already verified (nothing changed).
+   */
+  claimUnverifiedForMailbox(
+    id: UserId,
+    at: Date,
+    opts: { clearPassword: boolean },
+  ): Promise<boolean>;
+  /**
+   * OIDC review X4: the account's current credentials, read so that a concurrent credential change cannot be missed.
+   * Prisma: `SELECT … FOR SHARE`, which waits for an in-flight takeover transaction (it holds the row lock) and then
+   * returns the committed values. Null when the row is gone. `passwordHash` is '' when there is none.
+   */
+  readCredentials(
+    id: UserId,
+  ): Promise<{
+    passwordHash: string;
+    googleSub: string | null;
+    emailVerifiedAt: Date | null;
+  } | null>;
+  /**
+   * Compare-and-set for a rehash after login: replaces the hash only while it still equals `expected`, so a rehash can
+   * never resurrect a password that a takeover just removed. Returns false when it no longer matches.
+   */
+  replacePasswordHash(id: UserId, expected: string, passwordHash: string): Promise<boolean>;
   /** Must reject (DuplicateEmailError) when the email is taken. */
   create(user: User): Promise<User>;
   updatePasswordHash(id: UserId, passwordHash: string): Promise<void>;

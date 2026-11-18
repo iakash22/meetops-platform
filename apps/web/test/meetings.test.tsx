@@ -27,6 +27,18 @@ describe('meetings', () => {
     );
   });
 
+  it.each([
+    ['transcription_delayed', 'Transcription delayed'],
+    ['some_future_status', 'Unknown status'],
+  ])('renders status %s as "%s"', async (status, label) => {
+    const api = createMockApi({
+      meetings: { get: vi.fn().mockResolvedValue({ ...meeting1, status }) },
+    });
+    renderApp('/meetings/20000000-0000-4000-8000-000000000001', api);
+    await waitForRouteData(api.meetings.get);
+    expect(await screen.findByTestId('meeting-status')).toHaveTextContent(label);
+  });
+
   it('shows the detail page with status, summary and transcript placeholders', async () => {
     const { api } = renderApp('/meetings/20000000-0000-4000-8000-000000000001');
     await waitForRouteData(api.meetings.get);

@@ -89,8 +89,11 @@ export type OrgAIConfigInput = z.input<typeof orgAIConfigSchema>;
 /** Persistence for organization AI config. Backend/DB supplies a durable, organization-scoped implementation. */
 export interface OrgConfigStore {
   get(organizationId: string): Promise<OrgAIConfig | undefined>;
-  put(cfg: OrgAIConfig): Promise<void>;
+  put(cfg: OrgAIConfig, meta?: OrgConfigWriteMeta): Promise<void>;
 }
+
+/** Who wrote the config (the acting user id from the TenantContext); stores may persist it. */
+export type OrgConfigWriteMeta = { updatedById?: string | undefined };
 
 export class InMemoryOrgConfigStore implements OrgConfigStore {
   private readonly m = new Map<string, OrgAIConfig>();
@@ -138,6 +141,9 @@ export class ModelRouter {
     private readonly env: AIEnv,
     private readonly orgStore: OrgConfigStore,
     private readonly audit: AuditSink,
+    /** Operational warnings (never given secrets or credential refs). Defaults to console.warn. */
+    private readonly warn: (msg: string, meta: Record<string, unknown>) => void = (msg, meta) =>
+      console.warn(msg, meta),
   ) {
     if (!audit) throw new AIError('CONFIG_INVALID', 'AuditSink is required');
   }
@@ -170,6 +176,18 @@ export class ModelRouter {
       throw new AIError('FORBIDDEN', "cannot change another organization's AI config", {
         retryable: false,
       });
+    // ADR-009: one STT provider per organization, no STT fallbacks (implicit or explicit).
+    const sttFallbackAt: string[] = [];
+    if (cfg.defaults.stt?.fallbacks?.length) sttFallbackAt.push('defaults.stt');
+    for (const [f, sel] of Object.entries(cfg.features))
+      if (sel?.fallbacks?.length && featureKind(f as AIFeature) === 'stt')
+        sttFallbackAt.push(`features.${f}`);
+    if (sttFallbackAt.length)
+      throw new AIError(
+        'CONFIG_INVALID',
+        `speech-to-text fallbacks are not allowed (one STT provider per organization); remove fallbacks from ${sttFallbackAt.join(', ')}`,
+        { retryable: false },
+      );
     for (const ref of Object.values(cfg.credentialRefs))
       if (!parseOrgSecretRef(ref, cfg.organizationId))
         throw new AIError('FORBIDDEN', 'credential ref must belong to this organization', {
@@ -191,7 +209,7 @@ export class ModelRouter {
         cause: e,
       });
     }
-    await this.orgStore.put(cfg);
+    await this.orgStore.put(cfg, { updatedById: ctx.userId });
   }
 
   /**
@@ -243,12 +261,23 @@ export class ModelRouter {
         retryable: false,
       });
     const [source, sel] = chosen;
-    const fallbacks =
+    const configuredFallbacks =
       sel.fallbacks ??
       (source === 'request'
         ? (org?.features[feature]?.fallbacks ?? org?.defaults[kind]?.fallbacks)
         : undefined) ??
       [];
+    let fallbacks = configuredFallbacks;
+    if (kind === 'stt' && configuredFallbacks.length) {
+      // Legacy rows may predate the setOrgConfig check: ignore, never act on them (no migration).
+      this.warn('ignoring STT fallbacks: one STT provider per organization (ADR-009)', {
+        organizationId,
+        feature,
+        source,
+        ignoredFallbackCount: configuredFallbacks.length,
+      });
+      fallbacks = [];
+    }
     if (override && actor) {
       try {
         await this.audit.emit({

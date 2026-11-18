@@ -16,13 +16,19 @@ import {
 } from '../src/lib/meeting.js';
 import { routeAlarm, WATCHDOG_ALARM } from '../src/lib/alarms.js';
 import { ChunkStore } from '../src/lib/chunk-store.js';
+import { estimateQuota, requestPersistentStorage } from '../src/lib/storage-quota.js';
 import {
   fetchPendingTasks,
   isPendingTasksRequest,
   type PendingTasksResponse,
 } from '../src/lib/pending-tasks.js';
 import { safeErrorMessage } from '../src/lib/redact.js';
-import { discardHeldSessions, drainQueue, summarizeHeld } from '../src/lib/drain.js';
+import {
+  discardHeldSessions,
+  drainQueue,
+  pendingStorage,
+  summarizeHeld,
+} from '../src/lib/drain.js';
 import {
   isPendingDiscard,
   listFailedDiscards,
@@ -85,9 +91,10 @@ async function handlePendingTasks(): Promise<PendingTasksResponse> {
   };
 }
 
-// Upload client. StubUploadClient (no backend calls) is the default. With WXT_FEATURE_HTTP_UPLOAD on, HttpUploadClient
-// calls the recording-session API through auth.apiFetch() (bearer, exact API origin only) and PUTs chunks through the
-// fetch transport (never a bearer). The offscreen recorder reaches it via UPLOAD_RPC messages (src/lib/upload-rpc.ts).
+// Upload client. httpUploadEnabled() (on in development builds, off in production and in tests). When on,
+// HttpUploadClient calls the recording-session API through auth.apiFetch() (bearer, exact API origin only) and
+// PUTs chunks through the fetch transport (never a bearer). The offscreen recorder reaches it via UPLOAD_RPC
+// messages (src/lib/upload-rpc.ts). When off, StubUploadClient makes no backend calls.
 const HTTP_UPLOAD = httpUploadEnabled();
 const client = selectUploadClient(
   HTTP_UPLOAD,
@@ -125,6 +132,8 @@ async function handleResolveMeeting(tabId: number): Promise<ResolveMeetingResult
 }
 
 let storePromise: Promise<ChunkStore> | undefined;
+// Ask Chrome to keep the recording queue persistent (not evicted under storage pressure). Best effort.
+void requestPersistentStorage();
 const store = () => (storePromise ??= ChunkStore.open());
 
 async function hasOffscreen(): Promise<boolean> {
@@ -252,6 +261,17 @@ const deps: BackgroundDeps = {
   },
   durableKV,
   discardLocal,
+  // Fail closed (Start): any server-backed upload mode requires a verified pairing; errors refuse to record.
+  // The local-only stub (no upload mode) has nothing to pair with, so it answers true explicitly.
+  checkPairing:
+    HTTP_UPLOAD || DIRECT_UPLOAD
+      ? async () => {
+          const st = await auth.status();
+          return st.state === 'paired' && Boolean(st.organizationId);
+        }
+      : async () => true,
+  pendingStorage: async () => pendingStorage(await store()),
+  storageQuota: () => estimateQuota(),
   deleteLocal,
   async setBadge(text) {
     // An undeletable discarded session keeps the error badge until it is resolved.

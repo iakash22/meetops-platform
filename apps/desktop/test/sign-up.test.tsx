@@ -23,7 +23,7 @@ async function fill(
   {
     name = 'Alex Rivera',
     email = 'alex@example.com',
-    password = 'correct horse battery',
+    password = 'Correct-horse-1',
   }: { name?: string; email?: string; password?: string } = {},
 ) {
   if (name) await user.type(screen.getByLabelText('Name'), name);
@@ -64,7 +64,9 @@ describe('desktop sign-up', () => {
     await openSignUp(user);
     await fill(user, { password: 'short' });
     await submit(user);
-    expect(screen.getByText('Use at least 12 characters.')).toBeInTheDocument();
+    expect(
+      screen.getByText('Use 8 or more characters with a letter, a number, and a symbol.'),
+    ).toBeInTheDocument();
     expect(screen.getByLabelText('Password')).toHaveFocus();
   });
 
@@ -87,12 +89,12 @@ describe('desktop sign-up', () => {
     expect(screen.getByText('Enter your email.')).toBeInTheDocument();
   });
 
-  it('shows the 12+ character strength hint and toggles password visibility', async () => {
+  it('shows the password policy hint and toggles password visibility', async () => {
     const user = renderApp();
     await openSignUp(user);
-    const hint = screen.getByText(/12\+ characters/);
+    const hint = screen.getByText(/letter, number, and symbol/);
     expect(hint).toHaveTextContent('(not met yet)');
-    await user.type(screen.getByLabelText('Password'), 'twelve-chars');
+    await user.type(screen.getByLabelText('Password'), 'Abcdef1!');
     expect(hint).toHaveTextContent('(met)');
 
     const toggle = screen.getByRole('button', { name: 'Show password' });
@@ -142,7 +144,7 @@ describe('desktop sign-up', () => {
 });
 
 describe('validateSignUp', () => {
-  const ok = { name: 'A', email: 'a@b.co', password: 'x'.repeat(12) };
+  const ok = { name: 'A', email: 'a@b.co', password: 'Correct-1!' };
   it('accepts a valid request', () => {
     expect(validateSignUp(ok)).toEqual({});
   });

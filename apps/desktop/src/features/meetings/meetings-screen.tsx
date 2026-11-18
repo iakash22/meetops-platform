@@ -14,7 +14,13 @@ const STATUS_LABEL: Record<MeetingStatus, string> = {
   processing: 'Processing',
   completed: 'Completed',
   failed: 'Failed',
+  transcription_delayed: 'Transcription delayed',
 };
+
+/** Unknown statuses (a newer API than this client) render as a neutral "Unknown status". */
+const UNKNOWN_STATUS_LABEL = 'Unknown status';
+const statusLabel = (s: string) => STATUS_LABEL[s as Meeting['status']] ?? UNKNOWN_STATUS_LABEL;
+const statusVariant = (s: string) => STATUS_VARIANT[s as Meeting['status']] ?? 'outline';
 
 const STATUS_VARIANT: Record<MeetingStatus, NonNullable<BadgeProps['variant']>> = {
   scheduled: 'outline',
@@ -22,6 +28,7 @@ const STATUS_VARIANT: Record<MeetingStatus, NonNullable<BadgeProps['variant']>> 
   processing: 'default',
   completed: 'secondary',
   failed: 'destructive',
+  transcription_delayed: 'secondary',
 };
 
 function formatDate(iso: string | undefined): string {
@@ -78,7 +85,7 @@ export function MeetingsScreen({
                     </p>
                   </div>
                   <div className="flex shrink-0 items-center gap-3">
-                    <Badge variant={STATUS_VARIANT[m.status]}>{STATUS_LABEL[m.status]}</Badge>
+                    <Badge variant={statusVariant(m.status)}>{statusLabel(m.status)}</Badge>
                     {onOpen ? (
                       <Button variant="outline" size="sm" onClick={() => onOpen(m)}>
                         Transcript &amp; report

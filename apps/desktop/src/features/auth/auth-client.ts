@@ -5,6 +5,7 @@ import type {
   LoginRequest,
   SignupRequest,
 } from '@meetops/contracts';
+import { PASSWORD_MAX_LENGTH, PASSWORD_MIN_LENGTH } from '@meetops/contracts/types';
 
 /**
  * Desktop session as held in memory. Uses the contracts' token-free session shape: the webview never sees or
@@ -24,10 +25,10 @@ export class AuthError extends Error {
   }
 }
 
-/** Minimum password length for new accounts (contracts SignupRequest: minLength 12). */
-export const MIN_PASSWORD_LENGTH = 12;
+/** Minimum length for a new password (contracts SignupRequest). */
+export const MIN_PASSWORD_LENGTH = PASSWORD_MIN_LENGTH;
 /** Max password length (contracts SignupRequest / LoginRequest). */
-export const MAX_PASSWORD_LENGTH = 128;
+export const MAX_PASSWORD_LENGTH = PASSWORD_MAX_LENGTH;
 /** Max display name length (contracts SignupRequest.name). */
 export const MAX_NAME_LENGTH = 200;
 

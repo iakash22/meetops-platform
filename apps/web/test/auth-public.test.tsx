@@ -33,6 +33,44 @@ describe('/verify-email', () => {
     );
   });
 
+  it('UX-1: after a mailbox-owner takeover it says the password was removed, never "log in now"', async () => {
+    const api = createMockApi({
+      auth: { verifyEmail: vi.fn().mockResolvedValue({ passwordReset: true }) },
+    });
+    renderApp(`/verify-email?token=${TOKEN}`, api);
+    await userEvent.click(await screen.findByRole('button', { name: 'Verify email' }));
+    expect(await screen.findByText(/the password on this account was removed/)).toBeInTheDocument();
+    expect(screen.getByText(/Set a new one with the link we just emailed you/)).toBeInTheDocument();
+    expect(
+      screen.getByText('Set a password with the link we just emailed you.'),
+    ).toBeInTheDocument();
+    expect(screen.queryByText('You can log in now.')).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'Continue to log in' })).not.toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Send a new set-password link' })).toHaveAttribute(
+      'href',
+      '/forgot-password',
+    );
+  });
+
+  it('UX-1: an account that never had a password is told to set one, never that a password was removed', async () => {
+    const api = createMockApi({
+      auth: {
+        verifyEmail: vi.fn().mockResolvedValue({ passwordReset: false, setPassword: true }),
+      },
+    });
+    renderApp(`/verify-email?token=${TOKEN}`, api);
+    await userEvent.click(await screen.findByRole('button', { name: 'Verify email' }));
+    expect(
+      await screen.findByText(/set one with the link we just emailed you/),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/removed/)).not.toBeInTheDocument();
+    expect(screen.queryByText('You can log in now.')).not.toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Send a new set-password link' })).toHaveAttribute(
+      'href',
+      '/forgot-password',
+    );
+  });
+
   it('explains an invalid or expired link (400) and offers a new one', async () => {
     const api = createMockApi({ auth: { verifyEmail: vi.fn().mockRejectedValue(badToken()) } });
     const { history } = renderApp(`/verify-email?token=${TOKEN}`, api);
@@ -80,21 +118,23 @@ describe('/reset-password', () => {
     await userEvent.type(await screen.findByLabelText('New password'), 'short');
     await userEvent.type(screen.getByLabelText('Confirm new password'), 'other');
     await userEvent.click(screen.getByRole('button', { name: 'Set new password' }));
-    expect(await screen.findByText('Password must be at least 12 characters')).toBeInTheDocument();
+    expect(
+      await screen.findByText('Use 8 or more characters with a letter, a number, and a symbol.'),
+    ).toBeInTheDocument();
     expect(screen.getByText('Passwords do not match')).toBeInTheDocument();
     expect(api.auth.resetPassword).not.toHaveBeenCalled();
 
     await userEvent.clear(screen.getByLabelText('New password'));
-    await userEvent.type(screen.getByLabelText('New password'), 'long-enough-pass');
+    await userEvent.type(screen.getByLabelText('New password'), 'Long-enough-1');
     await userEvent.clear(screen.getByLabelText('Confirm new password'));
-    await userEvent.type(screen.getByLabelText('Confirm new password'), 'long-enough-pass');
+    await userEvent.type(screen.getByLabelText('Confirm new password'), 'Long-enough-1');
     await userEvent.click(screen.getByRole('button', { name: 'Set new password' }));
 
     expect(await screen.findByText(/signed out on every device/)).toBeInTheDocument();
     expect(screen.getByText('Password changed')).toBeInTheDocument();
     expect(api.auth.resetPassword).toHaveBeenCalledWith({
       token: TOKEN,
-      password: 'long-enough-pass',
+      password: 'Long-enough-1',
     });
     expect(queryClient.getQueryData(['session'])).toBeNull();
     expect(useOrgStore.getState().currentOrganizationId).toBeNull();
@@ -107,8 +147,8 @@ describe('/reset-password', () => {
   it('explains an invalid or expired link (400) and links to forgot-password', async () => {
     const api = createMockApi({ auth: { resetPassword: vi.fn().mockRejectedValue(badToken()) } });
     renderApp(`/reset-password?token=${TOKEN}`, api);
-    await userEvent.type(await screen.findByLabelText('New password'), 'long-enough-pass');
-    await userEvent.type(screen.getByLabelText('Confirm new password'), 'long-enough-pass');
+    await userEvent.type(await screen.findByLabelText('New password'), 'Long-enough-1');
+    await userEvent.type(screen.getByLabelText('Confirm new password'), 'Long-enough-1');
     await userEvent.click(screen.getByRole('button', { name: 'Set new password' }));
     expect(await screen.findByTestId('link-problem')).toHaveTextContent(/invalid or has expired/);
     expect(screen.getByRole('link', { name: 'Request a new reset link' })).toHaveAttribute(

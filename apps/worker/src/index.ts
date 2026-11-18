@@ -4,7 +4,7 @@ import { startMediaWorker } from './media/index.js';
 import { registerSummaryWorker, registerTranscriptionWorker } from './ai/index.js';
 import { createTranscriptionHostDeps } from './ai/bootstrap.js';
 import { loadTranscriptionWorkerEnv } from './ai/env.js';
-import { Redis } from 'ioredis';
+import { createAppRedis } from './redis.js';
 import { createPrismaClient } from '@meetops/database';
 import { createNotificationDeliveryProducer } from '@meetops/notifications';
 import { createRedisEmitter } from './media/realtime.js';
@@ -23,6 +23,7 @@ import { loadCalendarSyncEnv, registerCalendarSyncScheduler } from './calendar/i
 import { loadTokenRefreshEnv, registerTokenRefreshJob } from './integrations/bootstrap.js';
 import { loadTaskSyncEnv, registerTaskSyncWorker } from './integrations/task-sync-bootstrap.js';
 import { closeAll, runningJobs, type ClosableJob } from './shutdown.js';
+import { startWorkerMetricsServer } from './metrics.js';
 
 export * from './media/index.js';
 export * from './ai/index.js';
@@ -47,7 +48,9 @@ export async function main() {
   const notifEnv = loadNotificationsWorkerEnv();
   const relayUrl = process.env.DATABASE_RELAY_URL?.trim();
   const notifRedis = notifEnv.enabled
-    ? new Redis(process.env.REDIS_URL ?? 'redis://localhost:6379', { maxRetriesPerRequest: null })
+    ? createAppRedis(process.env.REDIS_URL ?? 'redis://localhost:6379', {
+        maxRetriesPerRequest: null,
+      })
     : undefined;
   const notifications = registerNotificationsWorker({
     env: notifEnv,
@@ -117,7 +120,10 @@ export async function main() {
   }
   // Async task -> GitHub/Jira sync. Off unless TASK_SYNC_ENABLED=true; then INTEGRATIONS_TOKEN_KEK is required.
   const taskSync = await registerTaskSyncWorker({ env: loadTaskSyncEnv(), log: logger });
+  // P9 #13: token-gated queue-depth exporter (off unless WORKER_METRICS_TOKEN is set).
+  const metrics = startWorkerMetricsServer();
   const jobs: ClosableJob[] = [
+    { name: 'metrics', close: metrics?.close },
     { name: 'media', close },
     { name: 'transcription', job: transcription },
     { name: 'notifications', job: notifications },

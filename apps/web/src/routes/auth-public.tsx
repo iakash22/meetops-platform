@@ -66,9 +66,10 @@ export function createAuthPublicRoutes(getRoot: () => typeof RootRoute) {
         <VerifyEmailPage
           token={token}
           onVerify={async (t) => {
-            await api.auth.verifyEmail({ token: t });
+            const r = await api.auth.verifyEmail({ token: t });
             // A signed-in session now has emailVerified = true.
             await queryClient.invalidateQueries({ queryKey: queryKeys.session });
+            return r;
           }}
         />
       );

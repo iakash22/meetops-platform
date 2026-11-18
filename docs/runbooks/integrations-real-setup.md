@@ -17,7 +17,7 @@ served by `apps/api/src/modules/integrations/index.ts`.
 | OAuth / App-install callback | `GET /integrations/:provider/callback`                                      | `provider` = `jira` or `github`; signed single-use state             |
 | Disconnect                   | `DELETE /orgs/:organizationId/integrations/:integrationId`                  | session + CSRF + Origin; wipes secrets                               |
 | Push task issue              | `POST /orgs/:organizationId/tasks/:taskId/integration-issues`               | session + CSRF + Origin                                              |
-| Webhook receiver             | `POST /webhooks/:provider/:integrationId`                                   | no session; HMAC-SHA256 over raw body, 1 MiB cap, replay-protected   |
+| Webhook receiver             | `POST /webhooks/:provider/:integrationId`                                   | no session; HMAC before org lookup; 1 MiB cap; replay-protected      |
 
 The callback is built as `${INTEGRATIONS_API_ORIGIN}/integrations/<provider>/callback`. The provider app must use
 exactly that URL; the server never accepts a user-supplied redirect host. The worker (token refresh, calendar

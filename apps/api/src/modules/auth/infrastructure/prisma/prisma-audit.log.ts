@@ -8,7 +8,7 @@ import { truncateIp } from '../../../../shared/geoip/ip.js';
 
 /**
  * API action -> the allowlist in public.record_global_auth_event (migration 20261022032000, geo args added in
- * 20261028010000). Lockout is recorded as a failed login with `metadata.lockout = true`.
+ * 20261028010000, auth.google_linked added in 20261109120000). Lockout is recorded as a failed login with `metadata.lockout = true`.
  */
 const GLOBAL_AUTH_ACTIONS: Partial<Record<AuditAction, string>> = {
   'auth.signup': 'auth.signup',
@@ -22,6 +22,7 @@ const GLOBAL_AUTH_ACTIONS: Partial<Record<AuditAction, string>> = {
   'auth.password_reset.complete': 'auth.password_reset_completed',
   'auth.email.verify': 'auth.email_verified',
   'auth.email.verification_resend': 'auth.email_verification_sent',
+  'auth.google.linked': 'auth.google_linked',
 };
 const GLOBAL_TARGET_TYPES = new Set(['user', 'session', 'email']);
 

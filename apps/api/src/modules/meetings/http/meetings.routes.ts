@@ -17,6 +17,7 @@ import {
 } from '@meetops/contracts';
 import { directoryErrors, iso, type ResolveCaller } from '../../directory/http/route-kit.js';
 import type { MeetingService } from '../application/meeting.service.js';
+import type { RouteLimiter } from '../../../shared/rate-limits.js';
 import type { MeetingRecord } from '../domain/meeting.js';
 
 /** Route paths. Not in @meetops/contracts yet (no MEETING_PATHS constant); mirrors the web client. */
@@ -41,6 +42,20 @@ export const ListMeetingsQuery = Type.Pick(
 );
 export type ListMeetingsQuery = Static<typeof ListMeetingsQuery>;
 
+/**
+ * POST body, mirroring the web client (apps/web/src/features/meetings/manage-api.ts `MeetingInput`). Not in
+ * @meetops/contracts yet. Strict: unknown fields (organizationId, source, status...) are 400 VALIDATION_FAILED.
+ */
+export const CreateMeetingBody = Type.Object(
+  {
+    title: Type.String({ minLength: 1, maxLength: 300, pattern: '\\S' }),
+    startedAt: Type.Optional(Type.String({ format: 'date-time' })),
+    projectId: Type.Optional(Id),
+  },
+  { additionalProperties: false },
+);
+export type CreateMeetingBody = Static<typeof CreateMeetingBody>;
+
 export const toMeetingDto = (m: MeetingRecord): Meeting => ({
   id: m.id,
   organizationId: m.organizationId,
@@ -64,9 +79,11 @@ export async function meetingRoutes(
     caller: ResolveCaller;
     /** Caller for `resolve` (cookie or ADR-005 extension bearer); defaults to `caller`. */
     resolveCaller?: ResolveCaller;
+    /** ROUTE_RATE_LIMITS.analytics (shared with task analytics). */
+    routeLimits?: RouteLimiter;
   },
 ) {
-  const { meetings, caller } = opts;
+  const { meetings, caller, routeLimits } = opts;
   const resolveCaller = opts.resolveCaller ?? caller;
 
   app.get<{ Params: MeetingsParams; Querystring: ListMeetingsQuery }>(
@@ -88,6 +105,26 @@ export async function meetingRoutes(
       // Always scoped to the caller's organization (service + repository); `source` only narrows within it.
       const page = await meetings.list(c, { cursor, limit: limit ?? DEFAULT_PAGE_LIMIT, source });
       return { items: page.items.map(toMeetingDto), nextCursor: page.nextCursor };
+    },
+  );
+
+  app.post<{ Params: MeetingsParams; Body: CreateMeetingBody }>(
+    MEETING_PATHS.meetings,
+    {
+      schema: {
+        tags,
+        summary: 'Create a meeting',
+        description:
+          'Manual meeting (web "New meeting"). source upload, status scheduled; projectId must be a live project of the organization (else 400). Owner/admin/member; viewer 403; other orgs 404. CSRF, rate limited per caller and per org (429), audit-logged (meeting.create).',
+        params: MeetingsParams,
+        body: CreateMeetingBody,
+        response: { 201: Meeting, ...directoryErrors },
+      },
+    },
+    async (request, reply) => {
+      const c = await caller(request, request.params.organizationId);
+      const m = await meetings.create(c, request.body);
+      return reply.code(201).send(toMeetingDto(m));
     },
   );
 
@@ -125,6 +162,7 @@ export async function meetingRoutes(
     },
     async (request, reply) => {
       const c = await caller(request, request.params.organizationId);
+      await routeLimits?.charge('analytics', c.ctx);
       const r = await meetings.analytics(c, request.query);
       void reply.header('cache-control', 'private, no-store');
       return {

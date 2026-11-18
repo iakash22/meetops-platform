@@ -9,7 +9,13 @@ import { toIsoTimestamp } from './upload.js';
  * Persistent IndexedDB queue of recorded chunks, shared by the offscreen document (writer)
  * and the background service worker (drain on restart). Chunks are stored as ArrayBuffers.
  */
-export type EvictionPolicy = 'evict-oldest' | 'refuse';
+/**
+ * 'evict-uploaded': when over the cap, delete chunks the server already confirmed (uploaded) to make room;
+ * pending (not yet uploaded) chunks are NEVER evicted, the new chunk is refused instead.
+ * 'refuse': never delete anything to make room.
+ * A pending chunk leaves the store only after the server confirms its upload, or when the user discards it.
+ */
+export type EvictionPolicy = 'evict-uploaded' | 'refuse';
 
 export interface ChunkStoreConfig {
   /** Max total bytes of stored chunk data. */
@@ -19,7 +25,7 @@ export interface ChunkStoreConfig {
 
 export const DEFAULT_STORE_CONFIG: ChunkStoreConfig = {
   maxBytes: 500 * 1024 * 1024,
-  policy: 'evict-oldest',
+  policy: 'evict-uploaded',
 };
 
 export interface StoredChunk {
@@ -32,6 +38,11 @@ export interface StoredChunk {
   uploaded: boolean;
   /** Lowercase hex SHA-256 of data (absent on pre-v0.2 records; computed at upload). */
   sha256?: string;
+  /**
+   * Equal to `size` while the chunk is not uploaded, absent once it is. Backs the sparse PENDING_SIZE index, so
+   * pending byte totals are summed from index keys without ever loading `data`.
+   */
+  pendingSize?: number;
 }
 
 export interface HeldInfo {
@@ -105,6 +116,9 @@ export function normalizeSession(raw: StoredSession): StoredSession {
 const DB_NAME = 'meetops-ai-recorder';
 const CHUNKS = 'chunks';
 const SESSIONS = 'sessions';
+/** Sparse index on StoredChunk.pendingSize: only not-yet-uploaded chunks are in it. Added in DB version 2. */
+const PENDING_SIZE = 'pendingSize';
+const DB_VERSION = 2;
 
 function req<T>(r: IDBRequest<T>): Promise<T> {
   return new Promise((resolve, reject) => {
@@ -131,11 +145,30 @@ export class ChunkStore {
     factory: IDBFactory = indexedDB,
     name: string = DB_NAME,
   ): Promise<ChunkStore> {
-    const open = factory.open(name, 1);
-    open.onupgradeneeded = () => {
+    const open = factory.open(name, DB_VERSION);
+    open.onupgradeneeded = (ev) => {
       const db = open.result;
-      db.createObjectStore(CHUNKS, { keyPath: ['sessionId', 'seq'] });
-      db.createObjectStore(SESSIONS, { keyPath: 'sessionId' });
+      const tx = open.transaction!;
+      if (ev.oldVersion < 1) {
+        db.createObjectStore(CHUNKS, { keyPath: ['sessionId', 'seq'] });
+        db.createObjectStore(SESSIONS, { keyPath: 'sessionId' });
+      }
+      if (ev.oldVersion < 2) {
+        // v1 -> v2: add the pending-size index and backfill pendingSize on chunks not uploaded yet. This one-time
+        // migration reads each existing record; afterwards byte totals never touch chunk data.
+        const chunks = tx.objectStore(CHUNKS);
+        chunks.createIndex(PENDING_SIZE, PENDING_SIZE, { unique: false });
+        if (ev.oldVersion >= 1) {
+          const cur = chunks.openCursor();
+          cur.onsuccess = () => {
+            const c = cur.result;
+            if (!c) return;
+            const v = c.value as StoredChunk;
+            if (!v.uploaded && v.pendingSize !== v.size) c.update({ ...v, pendingSize: v.size });
+            c.continue();
+          };
+        }
+      }
     };
     return new ChunkStore(await req(open), config);
   }
@@ -189,15 +222,42 @@ export class ChunkStore {
     return all.sort((a, b) => a.createdAt - b.createdAt || a.seq - b.seq);
   }
 
+  /**
+   * Sum the sizes of not-yet-uploaded chunks (optionally only those whose session is in `sessions`) from the
+   * PENDING_SIZE index with a key cursor: the key is the size and the primary key is [sessionId, seq], so the
+   * stored records (and their audio data) are never loaded.
+   */
+  private sumPendingBytes(sessions?: ReadonlySet<string>): Promise<number> {
+    const tx = this.db.transaction(CHUNKS, 'readonly');
+    const cursorReq = tx.objectStore(CHUNKS).index(PENDING_SIZE).openKeyCursor();
+    return new Promise((resolve, reject) => {
+      let total = 0;
+      cursorReq.onsuccess = () => {
+        const cursor = cursorReq.result;
+        if (!cursor) {
+          resolve(total);
+          return;
+        }
+        const [sessionId] = cursor.primaryKey as [string, number];
+        if (!sessions || sessions.has(sessionId)) total += cursor.key as number;
+        cursor.continue();
+      };
+      cursorReq.onerror = () => reject(cursorReq.error ?? new Error('IndexedDB cursor failed'));
+    });
+  }
+
   /** Bytes of not-yet-uploaded chunks belonging to held (server-refused, not completed) sessions. */
   async heldBytes(): Promise<number> {
     const held = new Set(
       (await this.listSessions()).filter((s) => s.held && !s.completed).map((s) => s.sessionId),
     );
     if (!held.size) return 0;
-    return (await this.listChunks())
-      .filter((c) => !c.uploaded && held.has(c.sessionId))
-      .reduce((n, c) => n + c.size, 0);
+    return this.sumPendingBytes(held);
+  }
+
+  /** Bytes of every not-yet-uploaded chunk (held or queued). These are never evicted to make room. */
+  async pendingBytes(): Promise<number> {
+    return this.sumPendingBytes();
   }
 
   async totalBytes(): Promise<number> {
@@ -205,8 +265,8 @@ export class ChunkStore {
   }
 
   /**
-   * Store a chunk, enforcing the size cap. With 'evict-oldest' the oldest chunks (across all
-   * sessions) are deleted until the new one fits; with 'refuse' the new chunk is rejected.
+   * Store a chunk, enforcing the size cap. With 'evict-uploaded' the oldest already-uploaded chunks are deleted
+   * until the new one fits (pending chunks never are); otherwise, or with 'refuse', the new chunk is rejected.
    * Single transaction, so concurrent writers cannot overshoot the cap.
    */
   async putChunk(
@@ -216,24 +276,16 @@ export class ChunkStore {
     if (size > this.config.maxBytes) return { stored: false, reason: 'over-cap' };
     const tx = this.db.transaction([CHUNKS, SESSIONS], 'readwrite');
     const store = tx.objectStore(CHUNKS);
-    // Evict already-uploaded chunks first (no data loss), then the oldest pending ones.
+    // Oldest already-uploaded chunks first; pending chunks are never evicted (see below).
     const existing = ((await req(store.getAll())) as StoredChunk[]).sort(
       (a, b) =>
         Number(b.uploaded) - Number(a.uploaded) || a.createdAt - b.createdAt || a.seq - b.seq,
     );
     let total = existing.reduce((n, x) => n + x.size, 0);
-    // Held recordings (server refused, waiting for the user's Retry or Discard) are never evicted: their pending
-    // chunks are the only copy. If the cap can't be met without them, the new chunk is refused instead.
-    const sessionStore = tx.objectStore(SESSIONS);
-    const heldIds = new Set(
-      ((await req(sessionStore.getAll())) as StoredSession[])
-        .filter((s) => s.held && !s.completed)
-        .map((s) => s.sessionId),
-    );
-    // A recording never evicts its own earlier pending chunks either: that would silently cut its own audio.
-    const evictable = existing.filter(
-      (x) => x.uploaded || (!heldIds.has(x.sessionId) && x.sessionId !== c.sessionId),
-    );
+    // Only chunks the server already confirmed may be deleted to make room: a pending chunk is the only copy of
+    // that audio (held or not, this recording or another), so it is never evicted. If confirmed chunks cannot
+    // free enough space the new chunk is refused and the recorder surfaces a storage warning.
+    const evictable = existing.filter((x) => x.uploaded);
     const evictableBytes = evictable.reduce((n, x) => n + x.size, 0);
     let evictedCount = 0;
     let evictedBytes = 0;
@@ -264,12 +316,6 @@ export class ChunkStore {
         if (total + size <= this.config.maxBytes) break;
         if (gone.has(`${old.sessionId}\u0000${old.seq}`)) continue;
         evict(old);
-        // An unheld recording that lost a pending chunk can never be completed (the server needs seq 0..n-1 with
-        // no gaps; the drain aborts it). Evict the whole recording at once so its remaining chunks do not keep
-        // using the cap until the next drain, and later chunks of the new recording are not refused for them.
-        if (!old.uploaded) {
-          for (const sib of evictable) if (sib.sessionId === old.sessionId) evict(sib);
-        }
       }
     }
     const sessions = tx.objectStore(SESSIONS);
@@ -279,7 +325,13 @@ export class ChunkStore {
         sessions.put({ ...s, incomplete: { lostChunks: (s.incomplete?.lostChunks ?? 0) + n } });
       }
     }
-    store.put({ ...c, size, uploaded: c.uploaded ?? false } satisfies StoredChunk);
+    const uploaded = c.uploaded ?? false;
+    store.put({
+      ...c,
+      size,
+      uploaded,
+      ...(uploaded ? {} : { pendingSize: size }),
+    } satisfies StoredChunk);
     await done(tx);
     const lostPending = [...lost.values()].reduce((a, b) => a + b, 0);
     return {
@@ -314,7 +366,12 @@ export class ChunkStore {
     const tx = this.db.transaction(CHUNKS, 'readwrite');
     const store = tx.objectStore(CHUNKS);
     const c = (await req(store.get([sessionId, seq]))) as StoredChunk | undefined;
-    if (c) store.put({ ...c, uploaded: true });
+    if (c) {
+      // Leaving the PENDING_SIZE index: drop pendingSize so the uploaded chunk no longer counts as pending.
+      const next: StoredChunk = { ...c, uploaded: true };
+      delete next.pendingSize;
+      store.put(next);
+    }
     await done(tx);
   }
 

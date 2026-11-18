@@ -10,6 +10,8 @@ import { UploadService } from './application/upload.service.js';
 import { uploadRoutes } from './http/uploads.routes.js';
 import { RecordingSessionService } from './application/recording-session.service.js';
 import { recordingSessionRoutes } from './http/recording-sessions.routes.js';
+import { mediaRateLimit } from './http/rate-limit.js';
+import { routeLimiter } from '../../shared/rate-limits.js';
 import { MeetingConsentService } from './application/meeting-consent.service.js';
 import { meetingConsentRoutes } from './http/meeting-consent.routes.js';
 import { RecordingSessionNotFoundError } from './domain/recording-session.js';
@@ -61,6 +63,7 @@ export default async function mediaModule(app: FastifyInstance, opts: MediaPlugi
       bearerEnabled: bearer !== undefined,
     }),
   );
+  const rateLimit = mediaRateLimit(deps.rateLimiter, deps.mediaRateLimits);
   const writeCaller = dualCaller(caller, bearer, organizations, 'recordings:write');
   if (media.meetingConsents) {
     await app.register(meetingConsentRoutes, {
@@ -73,7 +76,13 @@ export default async function mediaModule(app: FastifyInstance, opts: MediaPlugi
       writeCaller,
     });
   }
-  await app.register(uploadRoutes, { uploads: new UploadService(mediaDeps), caller, writeCaller });
+  await app.register(uploadRoutes, {
+    uploads: new UploadService(mediaDeps),
+    caller,
+    writeCaller,
+    rateLimit,
+    routeLimits: routeLimiter(deps.rateLimiter, deps.routeRateLimits),
+  });
   // Session routes have no org in the path: resolve it from the session's active organization.
   const activeCaller = async (request: FastifyRequest) => {
     const ctx = await g.requireSession(request);
@@ -92,5 +101,6 @@ export default async function mediaModule(app: FastifyInstance, opts: MediaPlugi
     sessions: new RecordingSessionService(mediaDeps),
     caller: writeCaller,
     activeCaller: dualActiveCaller(activeCaller, bearer, bearerOrg, writeCaller),
+    rateLimit,
   });
 }

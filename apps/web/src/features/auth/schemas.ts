@@ -1,3 +1,8 @@
+import {
+  PASSWORD_MAX_LENGTH,
+  PASSWORD_PATTERN,
+  PASSWORD_POLICY_MESSAGE,
+} from '@meetops/contracts/types';
 import { z } from 'zod';
 
 // zod 4: top-level z.email() replaces the deprecated z.string().email(). Piping keeps the v3 UX
@@ -9,11 +14,12 @@ export const loginSchema = z.object({
   password: z.string().min(1, 'Password is required'),
 });
 
-// Matches the API password policy (12-128 characters).
+/** Signup and reset. Login stays non-empty only, matching LoginPassword in contracts. */
 const newPassword = z
   .string()
-  .min(12, 'Password must be at least 12 characters')
-  .max(128, 'Password must be at most 128 characters');
+  .min(1, 'Password is required')
+  .max(PASSWORD_MAX_LENGTH, 'Use at most 128 characters.')
+  .regex(new RegExp(PASSWORD_PATTERN), PASSWORD_POLICY_MESSAGE);
 
 // No confirm field on sign-up (show/hide toggle instead; see docs/05-web/auth-pages.md).
 export const signupSchema = z.object({

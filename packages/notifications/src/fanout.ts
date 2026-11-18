@@ -78,6 +78,25 @@ const SummaryReadyPayload = Type.Object({
   tasksPendingReview: Type.Optional(Type.Integer({ minimum: 0, maximum: 1000 })),
 });
 
+/** Written by the transcription worker when retries are used up (PR #414). Ids and codes only. */
+export const TRANSCRIPTION_DELAYED_EVENT = 'meeting.transcription_delayed';
+/** Same alert addressed to the meeting creator (outbox aggregate 'user' = creator id). */
+export const TRANSCRIPTION_DELAYED_OWNER_EVENT = 'meeting.transcription_delayed.owner';
+const TranscriptionDelayedPayload = Type.Object({
+  meetingId: Id,
+  recordingId: Id,
+  errorCode: Type.String({ pattern: '^[a-z][a-z0-9_]{0,63}$' }),
+  /** ISO time of the dead-lettering; its UTC day scopes the dedupe key. */
+  failedAt: Type.String({ pattern: '^\\d{4}-\\d{2}-\\d{2}T' }),
+});
+type TranscriptionDelayed = Static<typeof TranscriptionDelayedPayload>;
+/**
+ * One notification per user, recording and UTC day, shared by both delayed rules: an admin who also created the
+ * meeting, a chunk that dead-letters twice, or a replayed event never produce a second row.
+ */
+const transcriptionDelayedDedupe = (_e: ClaimedOutboxEvent, p: TranscriptionDelayed) =>
+  `txdelay:${p.recordingId}:${p.failedAt.slice(0, 10)}`;
+
 type Rule<P> = {
   kind: string;
   roles: readonly MembershipRoleName[];
@@ -100,6 +119,19 @@ const parser =
   <S extends Parameters<typeof Value.Check>[0]>(schema: S) =>
   (p: unknown) =>
     Value.Check(schema, p) ? p : undefined;
+
+const transcriptionDelayedRule = {
+  kind: 'meeting.transcription_delayed',
+  channels: ['in_app', 'web_push', 'mobile_push'],
+  parse: parser(TranscriptionDelayedPayload),
+  dedupeKey: transcriptionDelayedDedupe,
+  subject: (p: TranscriptionDelayed) => ({ subjectType: 'meeting', subjectId: p.meetingId }),
+  data: (p: TranscriptionDelayed) => ({
+    meetingId: p.meetingId,
+    recordingId: p.recordingId,
+    errorCode: p.errorCode,
+  }),
+} as const;
 
 /**
  * Event type -> notification kind. Recipients are org members by role (server-derived, never from the payload).
@@ -165,6 +197,17 @@ export const OUTBOX_NOTIFICATION_RULES = {
       ...(p.country ? { geoCountry: p.country } : {}),
     }),
   } satisfies Rule<Static<typeof AuthNewLocationSigninEvent>>,
+  /** Transcription delayed (retries used up): org owners and admins. */
+  [TRANSCRIPTION_DELAYED_EVENT]: {
+    ...transcriptionDelayedRule,
+    roles: ['owner', 'admin'],
+  } satisfies Rule<TranscriptionDelayed>,
+  /** Transcription delayed: the meeting creator (any active role), from the server-written aggregate. */
+  [TRANSCRIPTION_DELAYED_OWNER_EVENT]: {
+    ...transcriptionDelayedRule,
+    roles: ['owner', 'admin', 'member', 'viewer'],
+    recipient: (e: ClaimedOutboxEvent) => (e.aggregateType === 'user' ? e.aggregateId : undefined),
+  } satisfies Rule<TranscriptionDelayed>,
 } as const;
 export type OutboxNotificationEventType = keyof typeof OUTBOX_NOTIFICATION_RULES;
 

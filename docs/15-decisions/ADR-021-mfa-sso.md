@@ -8,10 +8,10 @@
 
 ## Context
 
-Sign-in is email and password only. `auth-session-spec.md` §8 lists MFA (TOTP/WebAuthn) for owners and admins and SSO
+Sign-in was email and password only. `auth-session-spec.md` §9 lists MFA (TOTP/WebAuthn) for owners and admins and SSO
 (OIDC/SAML) per org as future work; sessions already rotate on "MFA step-up", and `sessions.auth_level` exists (default
 `password`). Desktop sign-in (ADR-012) goes through the system browser with PKCE and reuses web login. The Google OAuth
-client ("calendar + login") is waiting on the owner.
+client ("calendar + login") was waiting on the owner.
 
 Options considered (prices checked 2026-11-01): build in-house (no licence cost); WorkOS (AuthKit free to 1M MAU, SSO
 $125 per connection per month for 1–15 connections); a hybrid that buys WorkOS SSO only per enterprise deal. Ory Polis
@@ -33,5 +33,6 @@ $125 per connection per month for 1–15 connections); a hybrid that buys WorkOS
 ## Consequences
 
 - MFA depends on ADR-016 (KMS) for secret encryption.
-- Unblocks the P1 "MFA/SSO decision" blocker. Google sign-in still needs the owner's Google OAuth client.
+- Unblocks the P1 "MFA/SSO decision" blocker. MFA and enterprise SSO are still not built.
+- Web Google sign-in shipped 2026-11-07 (authorization code + PKCE, ID token verification, linking by `sub`). The button stays off until `GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET`, and `GOOGLE_OAUTH_REDIRECT_URI` are set together. Calendar OAuth remains a separate client. Mobile and desktop do not offer Google sign-in.
 - No licence cost now; SSO cost is added only alongside enterprise revenue.

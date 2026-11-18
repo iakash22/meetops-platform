@@ -118,8 +118,11 @@ export class RecordingSessionService {
     c: DirectoryCaller,
     id: string,
     body: ChunkUploadUrlRequest,
+    /** Runs only after the ownership check passed (e.g. the per-session rate-limit bucket). */
+    afterOwn?: () => Promise<void>,
   ): Promise<SignedRequest> {
     const s = await this.own(c, id);
+    await afterOwn?.();
     RecordingSessionService.assertUploading(s);
     // A revocation mid-recording stops new chunk URLs (fail closed) while enforcement is on.
     await enforceMeetingConsent(this.d, s.organizationId, s.meetingId);

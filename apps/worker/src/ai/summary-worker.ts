@@ -1,4 +1,4 @@
-import { Redis } from 'ioredis';
+import { createAppRedis } from '../redis.js';
 import { UnrecoverableError, Worker } from 'bullmq';
 import { logger as baseLogger } from '../logger.js';
 import { createRedisEmitter, meetingRoom, organizationRoom } from '../media/realtime.js';
@@ -90,7 +90,7 @@ export function startSummaryWorker(
   cfg: { redisUrl: string; concurrency: number },
   deps: MeetingSummaryDeps,
 ) {
-  const conn = () => new Redis(cfg.redisUrl, { maxRetriesPerRequest: null });
+  const conn = () => createAppRedis(cfg.redisUrl, { maxRetriesPerRequest: null });
   const emitterRedis = deps.onSummaryReady ? undefined : conn();
   const onSummaryReady =
     deps.onSummaryReady ?? createSummaryReadyPublisher(createRedisEmitter(emitterRedis!));

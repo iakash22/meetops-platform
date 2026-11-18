@@ -33,6 +33,7 @@ import {
   type TranscriptionAuditEntry,
   type TranscriptionConsumerDeps,
   type TranscriptionHostDeps,
+  DEFAULT_TRANSCRIPTION_RETRY,
 } from '../src/ai/index.js';
 import { createRealtimePublisher } from '../src/media/realtime.js';
 
@@ -394,6 +395,7 @@ describe('transcription worker env + registration', () => {
       concurrency: 1,
       segmentSeconds: 600,
       redisUrl: 'redis://localhost:6379',
+      retry: DEFAULT_TRANSCRIPTION_RETRY,
     });
     expect(loadTranscriptionWorkerEnv({ TRANSCRIPTION_WORKER_ENABLED: 'TRUE' }).enabled).toBe(true);
     expect(() => loadTranscriptionWorkerEnv({ TRANSCRIPTION_WORKER_ENABLED: 'maybe' })).toThrow(
@@ -447,7 +449,10 @@ describe('transcription worker env + registration', () => {
     });
     expect(r.registered).toBe(true);
     expect(calls).toEqual([
-      [{ redisUrl: 'redis://localhost:6379', concurrency: 3 }, { segmentSeconds: 300 }],
+      [
+        { redisUrl: 'redis://localhost:6379', concurrency: 3, retry: DEFAULT_TRANSCRIPTION_RETRY },
+        { segmentSeconds: 300 },
+      ],
     ]);
   });
   it('system actor identity', () => {

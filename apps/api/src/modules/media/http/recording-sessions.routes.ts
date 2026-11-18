@@ -20,9 +20,16 @@ import {
   RECORDING_SESSION_PATHS,
   SessionParams,
 } from './recording-session.types.js';
+import type { MediaRateLimit } from './rate-limit.js';
 
 const tags = ['recording-sessions'];
-const errors = { ...directoryErrors, 409: ErrorBody, 413: ErrorBody, 422: ErrorBody } as const;
+const errors = {
+  ...directoryErrors,
+  409: ErrorBody,
+  413: ErrorBody,
+  422: ErrorBody,
+  503: ErrorBody,
+} as const;
 
 export async function recordingSessionRoutes(
   app: FastifyInstance,
@@ -30,9 +37,11 @@ export async function recordingSessionRoutes(
     sessions: RecordingSessionService;
     caller: ResolveCaller;
     activeCaller: (request: FastifyRequest) => Promise<DirectoryCaller>;
+    /** Per user/session + IP limits (429 + Retry-After). */
+    rateLimit?: MediaRateLimit;
   },
 ) {
-  const { sessions, caller, activeCaller } = opts;
+  const { sessions, caller, activeCaller, rateLimit } = opts;
 
   app.post<{ Params: OrgParams; Body: InitRecordingSessionInput }>(
     RECORDING_SESSION_PATHS.init,
@@ -49,6 +58,7 @@ export async function recordingSessionRoutes(
     },
     async (request, reply) => {
       const c = await caller(request, request.params.organizationId);
+      await rateLimit?.control(c);
       const s = await sessions.init(c, request.body);
       return reply.code(201).send({ sessionId: s.id });
     },
@@ -69,7 +79,14 @@ export async function recordingSessionRoutes(
     },
     async (request, reply) => {
       const c = await activeCaller(request);
-      const u = await sessions.chunkUrl(c, request.params.sessionId, request.body);
+      await rateLimit?.chunkUser(c);
+      const id = request.params.sessionId;
+      const u = await sessions.chunkUrl(
+        c,
+        id,
+        request.body,
+        rateLimit ? () => rateLimit.chunkSession(c, id) : undefined,
+      );
       return reply.header('cache-control', 'no-store').send({
         seq: request.body.seq,
         upload: { url: u.url, method: 'PUT', headers: u.headers, expiresAt: iso(u.expiresAt) },
@@ -92,6 +109,7 @@ export async function recordingSessionRoutes(
     },
     async (request, reply) => {
       const c = await activeCaller(request);
+      await rateLimit?.control(c);
       await sessions.complete(c, request.params.sessionId, request.body);
       return reply.code(202).send({ status: 'processing' });
     },
@@ -110,6 +128,7 @@ export async function recordingSessionRoutes(
     },
     async (request, reply) => {
       const c = await activeCaller(request);
+      await rateLimit?.control(c);
       await sessions.abort(c, request.params.sessionId, request.body.reason);
       return reply.code(204).send();
     },

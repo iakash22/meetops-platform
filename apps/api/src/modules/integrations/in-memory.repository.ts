@@ -158,6 +158,13 @@ export class InMemoryIntegrations implements IntegrationsRepository {
     const r = this.rows.get(id);
     return r && r.provider === provider && r.status !== 'revoked' ? r.organizationId : null;
   }
+  async resolveWebhookSecret(provider: ConnectedProvider, id: string) {
+    const r = this.rows.get(id);
+    if (!r || r.provider !== provider || r.status === 'revoked') return null;
+    const secrets = this.secrets.get(id);
+    if (!secrets) return null;
+    return { organizationId: r.organizationId, webhookSecret: secrets.webhookSecret };
+  }
   async resolveByExternalAccount(provider: ConnectedProvider, externalAccountId: string) {
     return [...this.rows.values()]
       .filter(

@@ -1,0 +1,24 @@
+# Example Prometheus scrape config for the API (P9 item #13). Copy into your prometheus.yml.
+# The bearer token is METRICS_TOKEN (>= 32 chars); keep it in a file from the secret manager, never inline.
+rule_files:
+  - api-alerts.rules.yml
+  - worker-alerts.rules.yml
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: ['alertmanager:9093'] # routes to placeholders until Akash picks a destination
+scrape_configs:
+  - job_name: meetops-api
+    metrics_path: /metrics
+    authorization:
+      type: Bearer
+      credentials_file: /etc/prometheus/secrets/meetops_metrics_token
+    static_configs:
+      - targets: ['api:3000']
+  - job_name: meetops-worker
+    metrics_path: /metrics
+    authorization:
+      type: Bearer
+      credentials_file: /etc/prometheus/secrets/meetops_worker_metrics_token
+    static_configs:
+      - targets: ['worker:9464'] # set WORKER_METRICS_HOST=0.0.0.0 inside a private network only

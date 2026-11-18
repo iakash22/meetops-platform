@@ -5,6 +5,7 @@ import type { AuthService } from '../../auth/application/auth.service.js';
 import { ErrorBody } from '../../auth/http/schemas.js';
 import { makeGuards, requestMeta, type HttpSecurityConfig } from '../../auth/http/security.js';
 import { registerDomainErrorHandler } from '../../../shared/http-errors.js';
+import type { RouteLimiter } from '../../../shared/rate-limits.js';
 import { DomainError } from '../../../shared/domain-error.js';
 import type { OrganizationService } from '../application/organization.service.js';
 import { InvitationError } from '../domain/invitation.js';
@@ -44,6 +45,8 @@ export interface OrganizationsPluginOptions {
   auth: AuthService;
   organizations: OrganizationService;
   security: HttpSecurityConfig;
+  /** ROUTE_RATE_LIMITS.orgCreate (POST /orgs). Omitted: unmetered (tests that mount the plugin alone). */
+  routeLimits?: RouteLimiter;
 }
 
 export async function organizationRoutes(app: FastifyInstance, opts: OrganizationsPluginOptions) {
@@ -69,6 +72,8 @@ export async function organizationRoutes(app: FastifyInstance, opts: Organizatio
       requestMeta(request),
       reason,
     );
+    // Null: a concurrent rotation of the same session by this client won; its response carries the new cookie.
+    if (!r) return;
     g.setSessionCookie(reply, r);
     g.issueCsrfForSession(reply, r.session.id);
   };
@@ -87,6 +92,7 @@ export async function organizationRoutes(app: FastifyInstance, opts: Organizatio
     },
     async (request, reply) => {
       const { user } = await g.requireSession(request);
+      await opts.routeLimits?.charge('orgCreate', { userId: user.id });
       const r = await orgs.create({ name: request.body.name, userId: user.id });
       await rotateInto(request, reply, r.organization.id);
       return reply
@@ -219,7 +225,8 @@ export async function organizationRoutes(app: FastifyInstance, opts: Organizatio
           token: request.body.token,
           userId: user.id,
           email: user.email,
-          ip: request.ip ?? null,
+          // ADR-014 client IP (TRUST_PROXY allowlist / pinned Cloudflare edge), not the proxy's socket address.
+          ip: requestMeta(request).ip,
         });
         return { organization: orgDto(r.organization), role: r.membership.role };
       } catch (err) {

@@ -9,7 +9,11 @@ import type {
 } from '@meetops/contracts/types';
 import { CURRENT_CONSENT_VERSION } from '@meetops/contracts/types';
 import { POPUP_CONSENT_METHOD } from './consent.js';
-import { CHUNK_UPLOAD_URL_TTL_SECONDS, MAX_CHUNK_BYTES, MAX_CHUNKS } from './contract-limits.js';
+import {
+  CHUNK_UPLOAD_URL_TTL_SECONDS,
+  UPLOAD_CHUNK_MAX_BYTES,
+  MAX_CHUNKS,
+} from './contract-limits.js';
 
 /** Signed headers of a presigned PUT; required by the contract (ChunkUploadUrlResponse.upload). */
 export type SignedHeaders = ChunkUploadUrlResponse['upload']['headers'];
@@ -158,8 +162,11 @@ export function hexToBase64(hex: string): string {
   return btoa(String.fromCharCode(...bytes));
 }
 
-/** Split bytes into parts of at most MAX_CHUNK_BYTES (server concatenates parts in seq order). */
-export function splitForUpload(data: ArrayBuffer, max: number = MAX_CHUNK_BYTES): ArrayBuffer[] {
+/** Split bytes into parts of at most UPLOAD_CHUNK_MAX_BYTES (server concatenates parts in seq order). */
+export function splitForUpload(
+  data: ArrayBuffer,
+  max: number = UPLOAD_CHUNK_MAX_BYTES,
+): ArrayBuffer[] {
   if (data.byteLength <= max) return [data];
   const parts: ArrayBuffer[] = [];
   for (let off = 0; off < data.byteLength; off += max) parts.push(data.slice(off, off + max));
@@ -180,8 +187,8 @@ export async function uploadChunk(
   now: () => number = Date.now,
   knownSha256?: string,
 ): Promise<{ seq: number; sha256: string; sizeBytes: number }> {
-  if (data.size < 1 || data.size > MAX_CHUNK_BYTES) {
-    throw new Error(`Chunk ${seq} size ${data.size} outside 1..${MAX_CHUNK_BYTES} bytes`);
+  if (data.size < 1 || data.size > UPLOAD_CHUNK_MAX_BYTES) {
+    throw new Error(`Chunk ${seq} size ${data.size} outside 1..${UPLOAD_CHUNK_MAX_BYTES} bytes`);
   }
   if (!Number.isInteger(seq) || seq < 0 || seq >= MAX_CHUNKS) {
     throw new Error(`Chunk seq ${seq} out of range`);
@@ -264,7 +271,11 @@ export class StubUploadClient implements UploadClient {
     // The real server knows sessions created before an extension restart; so does the stub.
     const s = this.sessionFor(sessionId);
     if (s.completed || s.aborted) throw new Error('Session is closed');
-    if (!Number.isInteger(req.sizeBytes) || req.sizeBytes < 1 || req.sizeBytes > MAX_CHUNK_BYTES) {
+    if (
+      !Number.isInteger(req.sizeBytes) ||
+      req.sizeBytes < 1 ||
+      req.sizeBytes > UPLOAD_CHUNK_MAX_BYTES
+    ) {
       throw new Error('sizeBytes out of range');
     }
     if (req.sha256 !== undefined && !/^[0-9a-f]{64}$/.test(req.sha256)) {

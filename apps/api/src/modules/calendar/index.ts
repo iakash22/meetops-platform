@@ -18,6 +18,7 @@ import {
 import type { AuthService } from '../auth/application/auth.service.js';
 import { makeGuards, requestMeta } from '../auth/http/security.js';
 import { registerDomainErrorHandler } from '../../shared/http-errors.js';
+import { routeLimiter } from '../../shared/rate-limits.js';
 import type { OrganizationService } from '../organizations/application/organization.service.js';
 import { isRelaxedEnv, MissingProductionDependencyError } from '../index.js';
 import { DirectoryAccess, type DirectoryCaller } from '../directory/access.js';
@@ -106,9 +107,11 @@ export default async function calendarModule(
     selectCalendarSyncStore(deps),
     undefined,
     selectCalendarEventLinks(deps),
+    app.log,
   );
   const g = makeGuards(auth, deps.security);
   const access = new DirectoryAccess(organizations, deps.audit);
+  const limits = routeLimiter(deps.rateLimiter, deps.routeRateLimits);
   const auditFor =
     (c: DirectoryCaller): CalendarAuditFn =>
     (action, targetId, metadata) =>
@@ -160,6 +163,7 @@ export default async function calendarModule(
     },
     async (request) => {
       const c = await callerFor(request, request.params.organizationId);
+      await limits.charge('oauthConnect', c.ctx);
       return service.connect({
         organizationId: c.ctx.organizationId,
         userId: c.ctx.userId,
@@ -181,6 +185,7 @@ export default async function calendarModule(
       },
     },
     async (request, reply) => {
+      await limits.charge('oauthCallback', requestMeta(request));
       const inner = service.verifyState(request.query.state);
       const session = await g.requireSession(request);
       const orgId = session.session.activeOrganizationId;
@@ -211,6 +216,7 @@ export default async function calendarModule(
     },
     async (request, reply) => {
       const c = await callerFor(request, request.params.organizationId);
+      await limits.charge('calendarEvents', c.ctx);
       const { items } = await service.events({
         organizationId: c.ctx.organizationId,
         userId: c.ctx.userId,

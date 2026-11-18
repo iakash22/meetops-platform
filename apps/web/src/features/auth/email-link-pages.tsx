@@ -1,3 +1,4 @@
+import { PASSWORD_POLICY_MESSAGE } from '@meetops/contracts/types';
 import { useState, type ReactNode } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
@@ -58,18 +59,30 @@ export function VerifyEmailPage({
   onVerify,
 }: {
   token: string | undefined;
-  onVerify: (token: string) => Promise<void>;
+  onVerify: (token: string) => Promise<{ passwordReset?: boolean; setPassword?: boolean } | void>;
 }) {
-  const [state, setState] = useState<'idle' | 'pending' | 'done'>('idle');
+  const [state, setState] = useState<
+    'idle' | 'pending' | 'done' | 'password_reset' | 'set_password'
+  >('idle');
   const [error, setError] = useState<unknown>(null);
 
   const verify = async (t: string) => {
     setState('pending');
     setError(null);
     try {
-      await onVerify(t);
-      setState('done');
-      notify.success('Email verified', 'You can log in now.');
+      const r = await onVerify(t);
+      if (r?.setPassword) {
+        // The mailbox owner took over an account that never had a password: nothing was removed.
+        setState('set_password');
+        notify.success('Email verified', 'Set a password with the link we just emailed you.');
+      } else if (r?.passwordReset) {
+        // UX-1: the mailbox owner took the account over; the old password no longer works.
+        setState('password_reset');
+        notify.success('Email verified', 'Set a password with the link we just emailed you.');
+      } else {
+        setState('done');
+        notify.success('Email verified', 'You can log in now.');
+      }
     } catch (err) {
       setError(err);
       setState('idle');
@@ -89,6 +102,30 @@ export function VerifyEmailPage({
       <Problem title="This verification link is incomplete">
         Open the link from your email again, or request a new one.
       </Problem>
+    );
+  } else if (state === 'set_password') {
+    body = (
+      <div className="grid gap-4">
+        <Status>
+          Your email address is verified. To sign in with a password, set one with the link we just
+          emailed you.
+        </Status>
+        <Button asChild className={authButtonClass}>
+          <Link to="/forgot-password">Send a new set-password link</Link>
+        </Button>
+      </div>
+    );
+  } else if (state === 'password_reset') {
+    body = (
+      <div className="grid gap-4">
+        <Status>
+          Your email address is verified. For your security, the password on this account was
+          removed. Set a new one with the link we just emailed you.
+        </Status>
+        <Button asChild className={authButtonClass}>
+          <Link to="/forgot-password">Send a new set-password link</Link>
+        </Button>
+      </div>
     );
   } else if (state === 'done') {
     body = (
@@ -158,7 +195,7 @@ export function ResetPasswordForm({
     formState: { errors, isSubmitting },
   } = useForm<ResetPasswordValues>({
     resolver: zodResolver(resetPasswordSchema),
-    mode: 'onTouched',
+    mode: 'onSubmit',
     shouldFocusError: true,
     defaultValues: { password: '', confirmPassword: '' },
   });
@@ -207,7 +244,7 @@ export function ResetPasswordForm({
               notify.success('Password changed', 'Log in with your new password.');
             } catch (err) {
               // A 400 with field details is the password policy; a bare 400 is the token.
-              if (applyFieldErrors(setFieldError, err, { password: 'Use 12 to 128 characters.' }))
+              if (applyFieldErrors(setFieldError, err, { password: PASSWORD_POLICY_MESSAGE }))
                 return;
               setError(err);
               if (!isStatus(err, 400)) toastError(err);
@@ -270,7 +307,7 @@ export function ResendVerificationForm({
     formState: { errors, isSubmitting },
   } = useForm<ResendVerificationValues>({
     resolver: zodResolver(resendVerificationSchema),
-    mode: 'onTouched',
+    mode: 'onSubmit',
     shouldFocusError: true,
     defaultValues: { email: defaultEmail ?? '' },
   });

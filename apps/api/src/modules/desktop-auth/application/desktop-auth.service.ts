@@ -1,3 +1,4 @@
+import { clientIpKey } from '../../../shared/rate-limit-core.js';
 import { createHash, timingSafeEqual } from 'node:crypto';
 import {
   DESKTOP_AUTHORIZATION_CODE_TTL_SECONDS,
@@ -32,7 +33,14 @@ import type {
   ExtensionTokenRepository,
   TokenFamily,
 } from '../../extension-auth/domain/extension-token.js';
-import type { ExtensionRevoker } from '../../extension-auth/application/extension-auth.service.js';
+import type {
+  ExtensionRevoker,
+  RevokeForUserOptions,
+} from '../../extension-auth/application/extension-auth.service.js';
+import {
+  MemoryRefreshGraceStore,
+  type RefreshGraceStore,
+} from '../../auth/application/refresh-grace.js';
 
 /**
  * Client id stored in the shared token-family shape (`TokenFamily.extensionId`). Every desktop family carries it, and
@@ -73,6 +81,8 @@ export interface DesktopAuthDeps {
   organizations: OrganizationRepository;
   memberships: MembershipRepository;
   revocations?: RevocationPublisher;
+  /** Refresh grace window store (Redis when configured, so retries on any instance match). */
+  refreshGrace?: RefreshGraceStore<DesktopRefreshResponse>;
 }
 
 type Limit = { limit: number; windowMs: number };
@@ -99,7 +109,13 @@ export function pkceS256Matches(verifier: string, challenge: string): boolean {
  * consumed on every attempt, including a mismatch. Every credential failure is the same 401.
  */
 export class DesktopAuthService implements ExtensionRevoker {
-  constructor(private readonly d: DesktopAuthDeps) {}
+  /** ~10 s grace for re-presenting the immediately previous refresh token from the same device. */
+  private readonly grace: RefreshGraceStore<DesktopRefreshResponse>;
+  constructor(private readonly d: DesktopAuthDeps) {
+    this.grace =
+      d.refreshGrace ??
+      new MemoryRefreshGraceStore<DesktopRefreshResponse>(() => d.clock.now().getTime());
+  }
 
   private async limit(key: string, l: Limit, cost = 1) {
     for (let i = 0; i < cost; i++) {
@@ -143,7 +159,7 @@ export class DesktopAuthService implements ExtensionRevoker {
   ): Promise<DesktopAuthorizeResponse> {
     await this.limit(`auth:user:${caller.userId}`, DESKTOP_LIMITS.authorizePerUserMin);
     await this.limit(`auth:user:h:${caller.userId}`, DESKTOP_LIMITS.authorizePerUserHour);
-    await this.limit(`auth:ip:${meta.ip ?? 'unknown'}`, DESKTOP_LIMITS.authorizePerIp);
+    await this.limit(`auth:ip:${clientIpKey(meta.ip)}`, DESKTOP_LIMITS.authorizePerIp);
     const organizationId = caller.activeOrganizationId;
     if (!organizationId) throw new DesktopNoActiveOrganizationError();
     const org = await this.d.organizations.findById(organizationId);
@@ -182,7 +198,7 @@ export class DesktopAuthService implements ExtensionRevoker {
 
   /** POST /auth/desktop/token: consumes the code, checks PKCE, redirect URI and device, starts a family. */
   async exchange(body: DesktopTokenRequest, meta: RequestMeta): Promise<DesktopRefreshResponse> {
-    const ipKey = `token:ip:${meta.ip ?? 'unknown'}`;
+    const ipKey = `token:ip:${clientIpKey(meta.ip)}`;
     await this.limit(ipKey, DESKTOP_LIMITS.tokenPerIp);
     const now = this.d.clock.now();
     const p = await this.d.desktopTokens.consumePairing(this.d.tokens.hash(body.authorizationCode));
@@ -251,11 +267,30 @@ export class DesktopAuthService implements ExtensionRevoker {
     refreshToken: string,
     deviceId: string,
     meta: RequestMeta,
-  ): Promise<TokenFamily> {
-    const r = await this.d.desktopTokens.consumeRefresh(this.d.tokens.hash(refreshToken));
+  ): Promise<TokenFamily>;
+  private async consume(
+    refreshToken: string,
+    deviceId: string,
+    meta: RequestMeta,
+    allowGrace: true,
+  ): Promise<TokenFamily | { replay: DesktopRefreshResponse }>;
+  private async consume(
+    refreshToken: string,
+    deviceId: string,
+    meta: RequestMeta,
+    allowGrace = false,
+  ): Promise<TokenFamily | { replay: DesktopRefreshResponse }> {
+    const tokenHash = this.d.tokens.hash(refreshToken);
+    const r = await this.d.desktopTokens.consumeRefresh(tokenHash);
     if (r.status === 'unknown') throw new UnauthenticatedError();
     const f = await this.d.desktopTokens.findFamily(r.familyId);
     if (!f || f.extensionId !== DESKTOP_CLIENT_ID) throw new UnauthenticatedError();
+    if (allowGrace && r.status === 'reused' && !f.revokedAt && f.deviceId === deviceId) {
+      // Grace window: the same device re-sent the token it just rotated; hand back the same new pair.
+      const again = await this.grace.replay(f.id, tokenHash, deviceId, refreshToken);
+      if (again) return { replay: again };
+      if (again === null) throw new UnauthenticatedError();
+    }
     if (r.status === 'reused' || f.deviceId !== deviceId) {
       if (!f.revokedAt) {
         await this.revokeFamily(f, 'desktop_revoked');
@@ -278,8 +313,27 @@ export class DesktopAuthService implements ExtensionRevoker {
 
   /** POST /auth/desktop/refresh. */
   async refresh(body: DesktopRefreshRequest, meta: RequestMeta): Promise<DesktopRefreshResponse> {
-    await this.limit(`refresh:ip:${meta.ip ?? 'unknown'}`, DESKTOP_LIMITS.refreshPerIp);
-    const f = await this.consume(body.refreshToken, body.deviceId, meta);
+    await this.limit(`refresh:ip:${clientIpKey(meta.ip)}`, DESKTOP_LIMITS.refreshPerIp);
+    const consumed = await this.consume(body.refreshToken, body.deviceId, meta, true);
+    if ('replay' in consumed) return consumed.replay;
+    const f = consumed;
+    const pending = await this.grace.begin(
+      f.id,
+      this.d.tokens.hash(body.refreshToken),
+      f.deviceId,
+      body.refreshToken,
+    );
+    try {
+      const pair = await this.rotate(f, meta);
+      await pending.resolve(pair);
+      return pair;
+    } catch (err) {
+      await pending.reject();
+      throw err;
+    }
+  }
+
+  private async rotate(f: TokenFamily, meta: RequestMeta): Promise<DesktopRefreshResponse> {
     await this.limit(`refresh:fam:${f.id}`, DESKTOP_LIMITS.refreshPerFamily);
     if (!(await this.liveMember(f.organizationId, f.userId))) {
       await this.revokeFamily(f, 'member_removed');
@@ -301,7 +355,7 @@ export class DesktopAuthService implements ExtensionRevoker {
 
   /** POST /auth/desktop/revoke: idempotent for a known token of this device; works after access expiry. */
   async revoke(body: DesktopRevokeRequest, meta: RequestMeta): Promise<{ revoked: true }> {
-    await this.limit(`revoke:ip:${meta.ip ?? 'unknown'}`, DESKTOP_LIMITS.revokePerIp);
+    await this.limit(`revoke:ip:${clientIpKey(meta.ip)}`, DESKTOP_LIMITS.revokePerIp);
     const r = await this.d.desktopTokens.peekRefresh(this.d.tokens.hash(body.refreshToken));
     if (r.status === 'unknown') throw new UnauthenticatedError();
     const f = await this.d.desktopTokens.findFamily(r.familyId);
@@ -333,7 +387,7 @@ export class DesktopAuthService implements ExtensionRevoker {
     body: DesktopSwitchOrgRequest,
     meta: RequestMeta,
   ): Promise<DesktopRefreshResponse> {
-    await this.limit(`switch:ip:${meta.ip ?? 'unknown'}`, DESKTOP_LIMITS.switchPerIp);
+    await this.limit(`switch:ip:${clientIpKey(meta.ip)}`, DESKTOP_LIMITS.switchPerIp);
     // Check the target first without consuming, so a 404 leaves the caller's refresh token usable.
     const peek = await this.d.desktopTokens.peekRefresh(this.d.tokens.hash(body.refreshToken));
     if (peek.status === 'ok') {
@@ -383,6 +437,7 @@ export class DesktopAuthService implements ExtensionRevoker {
     userId: string,
     reason: 'logout' | 'logout_all' | 'password_changed' | 'member_removed' | 'org_switch',
     organizationId?: string,
+    opts: RevokeForUserOptions = {},
   ): Promise<void> {
     try {
       for (const f of await this.d.desktopTokens.listFamilies(
@@ -391,12 +446,14 @@ export class DesktopAuthService implements ExtensionRevoker {
         organizationId,
       ))
         if (f.extensionId === DESKTOP_CLIENT_ID) await this.revokeFamily(f, reason);
-    } catch {
-      // Never fail the user-facing revocation here.
+    } catch (e) {
+      // Never fail the user-facing revocation here, unless asked (opts.propagate).
+      if (opts.propagate) throw e;
     }
   }
 
   private async revokeFamily(f: TokenFamily, reason: RevokeReason) {
+    await this.grace.forget(f.id);
     await this.d.desktopTokens.revokeFamily(f.id, this.d.clock.now());
     await publishRevocation(this.d.revocations, {
       kind: 'session',
@@ -486,8 +543,18 @@ export function combineBearerStores(...stores: ExtensionTokenStore[]): Extension
 /** Fans a user revocation out to every revoker (extension and desktop). */
 export function combineRevokers(...rs: ExtensionRevoker[]): ExtensionRevoker {
   return {
-    async revokeForUser(userId, reason, organizationId) {
-      for (const r of rs) await r.revokeForUser(userId, reason, organizationId);
+    async revokeForUser(userId, reason, organizationId, opts) {
+      // Every revoker runs even when one fails, then the first failure is always rethrown. In practice only an
+      // `opts.propagate` call sees one: ExtensionAuthService and DesktopAuthService swallow store errors otherwise.
+      let failure: { e: unknown } | null = null;
+      for (const r of rs) {
+        try {
+          await r.revokeForUser(userId, reason, organizationId, opts);
+        } catch (e) {
+          failure ??= { e };
+        }
+      }
+      if (failure) throw failure.e;
     },
   };
 }

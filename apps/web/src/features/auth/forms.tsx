@@ -2,7 +2,9 @@ import { useState, type ReactNode } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { Link } from '@tanstack/react-router';
+import { PASSWORD_POLICY_MESSAGE } from '@meetops/contracts/types';
 import { ApiError } from '@/lib/api/client';
+import { cn } from '@/lib/utils';
 import { applyFieldErrors, toastError } from '@/lib/errors/notify';
 import { CheckEmail } from './check-email';
 import { Field } from './field';
@@ -15,6 +17,7 @@ import {
   type LoginValues,
   type SignupValues,
 } from './schemas';
+import { GoogleContinue } from './google';
 import { authLinkClass } from './styles';
 import { SubmitButton } from './submit-button';
 
@@ -61,10 +64,20 @@ export function AuthCard({
 const FIELD_COPY = {
   name: 'Enter your name.',
   email: 'Enter a valid email address.',
-  password: 'Use 12 to 128 characters.',
+  password: PASSWORD_POLICY_MESSAGE,
 } as const;
 
-export function LoginForm({ onSubmit }: { onSubmit: SubmitHandler<LoginValues> }) {
+export function LoginForm({
+  onSubmit,
+  googleHref,
+  next,
+}: {
+  onSubmit: SubmitHandler<LoginValues>;
+  /** Full navigation to GET /auth/google/start. Omitted when Google sign-in is off. */
+  googleHref?: string | undefined;
+  /** Post-login path. Kept on the sign-up link so switching forms does not drop it. */
+  next?: string | undefined;
+}) {
   const {
     register,
     handleSubmit,
@@ -73,7 +86,7 @@ export function LoginForm({ onSubmit }: { onSubmit: SubmitHandler<LoginValues> }
     formState: { errors, isSubmitting },
   } = useForm<LoginValues>({
     resolver: zodResolver(loginSchema),
-    mode: 'onTouched',
+    mode: 'onSubmit',
     shouldFocusError: true,
     defaultValues: { email: '', password: '' },
   });
@@ -85,7 +98,7 @@ export function LoginForm({ onSubmit }: { onSubmit: SubmitHandler<LoginValues> }
       footer={
         <span>
           New to MeetOps?{' '}
-          <Link to="/signup" className={authLinkClass}>
+          <Link to="/signup" search={next ? { next } : {}} className={authLinkClass}>
             Create an account
           </Link>
         </span>
@@ -95,7 +108,7 @@ export function LoginForm({ onSubmit }: { onSubmit: SubmitHandler<LoginValues> }
         method="post"
         noValidate
         aria-busy={isSubmitting || undefined}
-        className="grid gap-4"
+        className="grid gap-3"
         onSubmit={(e) =>
           void handleSubmit(async (v) => {
             try {
@@ -116,6 +129,7 @@ export function LoginForm({ onSubmit }: { onSubmit: SubmitHandler<LoginValues> }
           })(e)
         }
       >
+        {googleHref ? <GoogleContinue href={googleHref} /> : null}
         <Field
           label="Email"
           autoComplete="username"
@@ -128,7 +142,7 @@ export function LoginForm({ onSubmit }: { onSubmit: SubmitHandler<LoginValues> }
           label="Password"
           autoComplete="current-password"
           labelAside={
-            <Link to="/forgot-password" className={`${authLinkClass} text-sm`}>
+            <Link to="/forgot-password" className={cn(authLinkClass, 'min-h-0 py-0 text-sm')}>
               Forgot password?
             </Link>
           }
@@ -152,10 +166,13 @@ export function SignupForm({
   onSubmit,
   onResend,
   next,
+  googleHref,
 }: {
   onSubmit: SubmitHandler<SignupValues>;
   onResend?: (email: string) => Promise<unknown>;
   next?: string | undefined;
+  /** Same Google flow as login. The API creates the account when the Google email is new. */
+  googleHref?: string | undefined;
 }) {
   const [sentTo, setSentTo] = useState<string | null>(null);
   const {
@@ -166,7 +183,7 @@ export function SignupForm({
     formState: { errors, isSubmitting },
   } = useForm<SignupValues>({
     resolver: zodResolver(signupSchema),
-    mode: 'onTouched',
+    mode: 'onSubmit',
     shouldFocusError: true,
     defaultValues: { name: '', email: '', password: '' },
   });
@@ -208,7 +225,7 @@ export function SignupForm({
         method="post"
         noValidate
         aria-busy={isSubmitting || undefined}
-        className="grid gap-4"
+        className="grid gap-3"
         onSubmit={(e) =>
           void handleSubmit(async (v) => {
             try {
@@ -220,6 +237,7 @@ export function SignupForm({
           })(e)
         }
       >
+        {googleHref ? <GoogleContinue href={googleHref} /> : null}
         <Field
           label="Full name"
           autoComplete="name"
@@ -242,7 +260,6 @@ export function SignupForm({
           error={errors.password?.message}
           {...register('password')}
         />
-        {/* <SocialAuth /> — the API has no SSO yet; add Google/Microsoft here when it does. */}
         {/* The page's one shimmer CTA (docs/05-web/auth-pages.md). */}
         <SubmitButton variant="shimmer" busy={isSubmitting} busyLabel="Creating account…">
           Create account
@@ -265,7 +282,7 @@ export function ForgotPasswordForm({
     formState: { errors, isSubmitting },
   } = useForm<ForgotPasswordValues>({
     resolver: zodResolver(forgotPasswordSchema),
-    mode: 'onTouched',
+    mode: 'onSubmit',
     shouldFocusError: true,
     defaultValues: { email: '' },
   });

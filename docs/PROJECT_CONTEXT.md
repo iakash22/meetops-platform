@@ -16,7 +16,7 @@
 ## Update — 27 Oct 2026 (morning)
 
 - **Agents:** Coordinator (merge gate, PRs, frontend) + All Rounder (backend, DB, contracts, security; full local CI incl. live DB tests).
-- **Flow:** feature branch → PR into `integration/phase-1` → merge gate → later one integration → `main` PR merged by Shubham.
+- **Flow:** feature branch → PR into `integration/phase-1` → merge gate → later one integration → `main` PR merged by Akash.
 - **Merge gate:** PR rebased on current integration, full CI green (audit-gate must pass; known mobile/extension advisories excepted), review, then merge in dependency order.
 - **Lockfile rule:** only one branch at a time may change `pnpm-lock.yaml`; others wait for the slot.
 - Work paused overnight 27 Oct; see `PHASE_STATUS.md` for the resume list.
@@ -97,7 +97,7 @@ Decisions:
   - **Never fall back automatically to a paid provider.** No arbitrary user-supplied endpoints (SSRF guard; remote endpoints must use port 443).
 - **Storage**: MinIO in dev, R2 or S3 in production. Postgres stores file metadata only.
 - **Email**: Gmail SMTP via Nodemailer (`smtp.gmail.com:465`), behind an EmailService adapter, with a BullMQ email queue. No paid email in dev.
-- **Frontend**: stay on Tailwind 3 under a `braces@3.0.3` risk exception, up for review 2026-11-20. Frontend owns the Tailwind 4 migration before then.
+- **Frontend**: Tailwind 3 for now. The `braces@3.0.3` risk exception (RE-01, issue #54) is closed: GHSA-vfj7-8cjw-p6xm was withdrawn on 2026-10-23 and the gate row is gone. The Tailwind 4 migration is dependency hygiene with no deadline (`docs/plans/tailwind4-migration.md`).
 - Dependabot and the dependency graph are on.
 - No covert recording, and no bypassing platform permissions.
 - **Storage keys (ADR-010, approved by Akash)**: object keys move from `org/` to `organizations/{organizationId}/`. Plan: dev wipe and reseed, a staging copy, and reads of old `org/` keys kept until the copy is verified. `organizationId` is the canonical tenant key.
@@ -142,7 +142,7 @@ Decisions:
 
 ## 6. Phase status
 
-Current phase report: [`docs/PHASE_STATUS.md`](PHASE_STATUS.md) (overall ~60%, coordinator estimate, 27 Oct 2026).
+Current phase report: [`docs/PHASE_STATUS.md`](PHASE_STATUS.md) (7 Nov 2026 snapshot on `main`). The 27 Oct figures below are historical.
 
 Roadmap (`README.md`): 0 foundation · 1 auth/orgs/employees/teams/projects/RBAC · 2 meetings, uploads, recording, FFmpeg · 3 transcription, reports, task drafts · 4 task review/notifications · 5 GitHub/Jira two-way sync · 6 live transcription + extension · 7 calendar/imports/search/analytics · 8 desktop + mobile offline recording · 9 production hardening, billing, release.
 

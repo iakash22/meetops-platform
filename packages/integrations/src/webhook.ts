@@ -1,4 +1,4 @@
-import { createHmac, timingSafeEqual } from 'node:crypto';
+import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
 
 /**
  * Replay window. GitHub deliveries carry NO signed timestamp, so the delivery-id TTL is the only replay control:
@@ -37,11 +37,21 @@ export type FreshnessResult = 'fresh' | 'stale' | 'future' | 'invalid';
  * Freshness check for providers that send an event timestamp (epoch ms or s, or ISO-8601).
  * Only meaningful as a replay control when the timestamp is covered by the signature (e.g. inside a signed body).
  */
-export function checkTimestampFreshness(timestamp: unknown, opts: FreshnessOptions): FreshnessResult {
+export function checkTimestampFreshness(
+  timestamp: unknown,
+  opts: FreshnessOptions,
+): FreshnessResult {
   let ms: number;
-  if (typeof timestamp === 'number' && Number.isFinite(timestamp)) ms = timestamp < 1e12 ? timestamp * 1000 : timestamp;
-  else if (typeof timestamp === 'string' && /^\d{10,13}$/.test(timestamp)) ms = timestamp.length <= 10 ? Number(timestamp) * 1000 : Number(timestamp);
-  else if (typeof timestamp === 'string' && timestamp.length <= 40 && !Number.isNaN(Date.parse(timestamp))) ms = Date.parse(timestamp);
+  if (typeof timestamp === 'number' && Number.isFinite(timestamp))
+    ms = timestamp < 1e12 ? timestamp * 1000 : timestamp;
+  else if (typeof timestamp === 'string' && /^\d{10,13}$/.test(timestamp))
+    ms = timestamp.length <= 10 ? Number(timestamp) * 1000 : Number(timestamp);
+  else if (
+    typeof timestamp === 'string' &&
+    timestamp.length <= 40 &&
+    !Number.isNaN(Date.parse(timestamp))
+  )
+    ms = Date.parse(timestamp);
   else return 'invalid';
   if (!(opts.maxAgeSeconds > 0)) return 'invalid';
   const now = (opts.now ?? Date.now)();
@@ -54,7 +64,10 @@ export function checkTimestampFreshness(timestamp: unknown, opts: FreshnessOptio
  * Jira Cloud webhook bodies include `timestamp` (epoch ms). Use after verifying the request's authenticity
  * (shared secret / JWT). If the field is absent: `requireTimestamp` (default false) decides; absent -> 'invalid'.
  */
-export function checkJiraWebhookFreshness(payload: unknown, opts: FreshnessOptions & { requireTimestamp?: boolean }): FreshnessResult | 'absent' {
+export function checkJiraWebhookFreshness(
+  payload: unknown,
+  opts: FreshnessOptions & { requireTimestamp?: boolean },
+): FreshnessResult | 'absent' {
   const ts = (payload as { timestamp?: unknown } | null)?.timestamp;
   if (ts === undefined || ts === null) return opts.requireTimestamp ? 'invalid' : 'absent';
   return checkTimestampFreshness(ts, opts);
@@ -67,7 +80,35 @@ export interface DeliveryStore {
    * Entries should expire after ttlSeconds.
    */
   markIfNew(deliveryId: string, ttlSeconds: number): Promise<boolean>;
+  /**
+   * Read-only replay check (records nothing). Lets callers reject a known replay before doing work that must not
+   * be charged to it (e.g. rate limiting), and only then record atomically with markIfNew.
+   */
+  isRecorded?(deliveryId: string): Promise<boolean>;
+  /** Three-state read (records nothing): no mark, a pending claim, or a committed (recorded) delivery. */
+  state?(deliveryId: string): Promise<DeliveryState>;
+  /**
+   * Two-phase record (preferred when implemented): atomically claim the id with a short-lived pending marker
+   * (SET NX). Returns an owner token, or null when the id is already recorded or claimed (replay/concurrent dup).
+   */
+  claim?(deliveryId: string, pendingTtlSeconds: number): Promise<string | null>;
+  /** Turn the holder's pending marker into the full replay TTL. False if the claim was lost (e.g. expired). */
+  commit?(deliveryId: string, token: string, ttlSeconds: number): Promise<boolean>;
+  /** Delete the pending marker, only if `token` still holds it (e.g. after a 429). */
+  release?(deliveryId: string, token: string): Promise<void>;
+  /** True only for stores shared across replicas (RedisDeliveryStore). Production requires it. */
+  readonly shared?: boolean;
 }
+
+export type DeliveryState = 'absent' | 'pending' | 'recorded';
+
+/** Only development and test may use a per-process (non-shared) delivery store. */
+export function isRelaxedNodeEnv(nodeEnv: string | undefined): boolean {
+  return nodeEnv === 'development' || nodeEnv === 'test';
+}
+
+/** Pending-claim lifetime: long enough for the rate-limit charge, short enough that a crashed holder self-heals. */
+export const DELIVERY_PENDING_TTL_SECONDS = 30;
 
 /** In-memory TTL store. Single-process only; use a shared store (Redis) with multiple replicas. */
 export interface InMemoryDeliveryStoreOptions {
@@ -75,8 +116,6 @@ export interface InMemoryDeliveryStoreOptions {
   maxEntries?: number;
   /** Defaults to process.env.NODE_ENV. */
   nodeEnv?: string | undefined;
-  /** Explicit escape hatch for tests only; production must use a shared (Redis) store. */
-  unsafeAllowInProduction?: boolean;
 }
 
 export class InMemoryDeliveryStore implements DeliveryStore {
@@ -86,11 +125,50 @@ export class InMemoryDeliveryStore implements DeliveryStore {
 
   constructor(options: InMemoryDeliveryStoreOptions = {}) {
     const env = 'nodeEnv' in options ? options.nodeEnv : process.env.NODE_ENV;
-    if (env === 'production' && options.unsafeAllowInProduction !== true) {
-      throw new Error('InMemoryDeliveryStore is not allowed in production; use a Redis-backed DeliveryStore');
+    // Fail closed: anything but development/test (unset, 'Production', 'prod', 'staging', ...) is production-like.
+    if (!isRelaxedNodeEnv(env)) {
+      throw new Error(
+        'InMemoryDeliveryStore is not allowed outside development/test; use a Redis-backed DeliveryStore',
+      );
     }
     this.now = options.now ?? Date.now;
     this.maxEntries = options.maxEntries ?? 10_000;
+  }
+
+  private readonly pending = new Map<string, { token: string; exp: number }>();
+  readonly shared = false;
+
+  async isRecorded(deliveryId: string): Promise<boolean> {
+    const exp = this.seen.get(deliveryId);
+    return exp !== undefined && exp > this.now();
+  }
+
+  async state(deliveryId: string): Promise<DeliveryState> {
+    if (await this.isRecorded(deliveryId)) return 'recorded';
+    const p = this.pending.get(deliveryId);
+    return p && p.exp > this.now() ? 'pending' : 'absent';
+  }
+
+  async claim(deliveryId: string, pendingTtlSeconds: number): Promise<string | null> {
+    const t = this.now();
+    this.prune(t);
+    if (await this.isRecorded(deliveryId)) return null;
+    const p = this.pending.get(deliveryId);
+    if (p && p.exp > t) return null;
+    const token = randomUUID();
+    this.pending.set(deliveryId, { token, exp: t + Math.max(1, pendingTtlSeconds) * 1000 });
+    return token;
+  }
+
+  async commit(deliveryId: string, token: string, ttlSeconds: number): Promise<boolean> {
+    const p = this.pending.get(deliveryId);
+    if (!p || p.token !== token || p.exp <= this.now()) return false;
+    this.pending.delete(deliveryId);
+    return this.markIfNew(deliveryId, ttlSeconds);
+  }
+
+  async release(deliveryId: string, token: string): Promise<void> {
+    if (this.pending.get(deliveryId)?.token === token) this.pending.delete(deliveryId);
   }
 
   async markIfNew(deliveryId: string, ttlSeconds: number): Promise<boolean> {
@@ -113,6 +191,7 @@ export class InMemoryDeliveryStore implements DeliveryStore {
 
   private prune(t: number) {
     for (const [k, exp] of this.seen) if (exp <= t) this.seen.delete(k);
+    for (const [k, p] of this.pending) if (p.exp <= t) this.pending.delete(k);
   }
 }
 
@@ -124,6 +203,7 @@ export type WebhookFailureReason =
   | 'missing_delivery_id'
   | 'malformed_delivery_id'
   | 'replayed_delivery'
+  | 'delivery_in_progress'
   | 'invalid_payload'
   | 'payload_too_large';
 
@@ -151,13 +231,20 @@ export interface WebhookSecretResolver {
 }
 
 export type WebhookVerificationResult =
-  | { ok: true; deliveryId: string; event: string | undefined; payload: unknown; organizationId: string; integrationId: string }
+  | {
+      ok: true;
+      deliveryId: string;
+      event: string | undefined;
+      payload: unknown;
+      organizationId: string;
+      integrationId: string;
+    }
   | { ok: false; reason: WebhookFailureReason; status: 400 | 401 | 409 | 413 };
 
 export class WebhookVerificationError extends Error {
   constructor(
     readonly reason: WebhookFailureReason,
-    readonly status: number
+    readonly status: number,
   ) {
     super(`GitHub webhook verification failed: ${reason}`);
     this.name = 'WebhookVerificationError';
@@ -166,16 +253,26 @@ export class WebhookVerificationError extends Error {
 
 export type HeaderBag = Record<string, string | string[] | undefined> | Headers;
 
-function header(headers: HeaderBag, name: string): string | undefined {
-  if (typeof Headers !== 'undefined' && headers instanceof Headers) return headers.get(name) ?? undefined;
+/** Case-insensitive header lookup for a HeaderBag (Headers or a plain record). */
+export function webhookHeader(headers: HeaderBag, name: string): string | undefined {
+  if (typeof Headers !== 'undefined' && headers instanceof Headers)
+    return headers.get(name) ?? undefined;
   const bag = headers as Record<string, string | string[] | undefined>;
   const key = Object.keys(bag).find((k) => k.toLowerCase() === name.toLowerCase());
   const v = key ? bag[key] : undefined;
   return Array.isArray(v) ? v[0] : v;
 }
 
+function header(headers: HeaderBag, name: string): string | undefined {
+  return webhookHeader(headers, name);
+}
+
 /** Constant-time check of `sha256=<hex>` against HMAC-SHA256(secret, rawBody). A missing secret fails closed (invalid). */
-export function verifyGitHubSignature(secret: string, rawBody: string | Uint8Array, signatureHeader: string | undefined): WebhookFailureReason | null {
+export function verifyGitHubSignature(
+  secret: string,
+  rawBody: string | Uint8Array,
+  signatureHeader: string | undefined,
+): WebhookFailureReason | null {
   if (!signatureHeader) return 'missing_signature';
   const m = /^sha256=([0-9a-f]{64})$/i.exec(signatureHeader.trim());
   if (!m?.[1]) return 'malformed_signature';
@@ -196,6 +293,72 @@ export interface VerifyWebhookOptions {
   replayTtlSeconds?: number;
   /** Default 1 MiB (GitHub caps payloads at 25 MB; issues events are small). */
   maxBodyBytes?: number;
+  /**
+   * Runs after the signature and a read-only replay check pass, and before the delivery id is recorded.
+   * If it throws (e.g. 429 rate limited) nothing is recorded, so the provider's retry is not seen as a replay.
+   */
+  beforeRecord?: () => Promise<void>;
+}
+
+/**
+ * Replay-safe ordering shared by the GitHub and Jira verifiers: read-only check (409 if already recorded) ->
+ * beforeRecord (may throw, records nothing) -> atomic record (SET NX); a concurrent duplicate that loses is 409.
+ */
+export type RecordOutcome = 'recorded' | 'replayed' | 'in_progress';
+
+/** Seconds a provider should wait before retrying a delivery that is in progress elsewhere. */
+export const DELIVERY_IN_PROGRESS_RETRY_AFTER_SECONDS = DELIVERY_PENDING_TTL_SECONDS;
+
+/**
+ * Replay-safe ordering shared by the GitHub and Jira verifiers: claim (pending SET NX) -> beforeRecord (may throw,
+ * the claim is released) -> commit to the full TTL. 'replayed' = already recorded (409); 'in_progress' = another
+ * request holds the claim, or ours expired before commit (409 delivery_in_progress, retryable).
+ */
+export async function recordDeliveryOutcome(
+  store: DeliveryStore,
+  deliveryId: string,
+  ttlSeconds: number,
+  beforeRecord?: () => Promise<void>,
+): Promise<RecordOutcome> {
+  if (store.claim && store.commit && store.release) {
+    // Claim first so simultaneous duplicates cannot both pass the check and both charge the caller's bucket.
+    const token = await store.claim(deliveryId, DELIVERY_PENDING_TTL_SECONDS);
+    if (!token) {
+      // Only a committed mark is a replay. A pending claim (or one released/expired since) is retryable.
+      if (store.state)
+        return (await store.state(deliveryId)) === 'recorded' ? 'replayed' : 'in_progress';
+      return store.isRecorded && !(await store.isRecorded(deliveryId)) ? 'in_progress' : 'replayed';
+    }
+    try {
+      await beforeRecord?.();
+    } catch (err) {
+      // 429 etc.: nothing recorded, so the provider's retry is not a replay. A failed release must not mask err.
+      try {
+        await store.release(deliveryId, token);
+      } catch {
+        /* the pending marker expires on its own */
+      }
+      throw err;
+    }
+    if (await store.commit(deliveryId, token, ttlSeconds)) return 'recorded';
+    console.warn('webhook delivery claim expired before commit; asking the provider to retry', {
+      event: 'webhook_delivery_claim_lost',
+    });
+    return 'in_progress';
+  }
+  if (store.isRecorded && (await store.isRecorded(deliveryId))) return 'replayed';
+  await beforeRecord?.();
+  return (await store.markIfNew(deliveryId, ttlSeconds)) ? 'recorded' : 'replayed';
+}
+
+/** Boolean form of recordDeliveryOutcome: true only when this call recorded the delivery. */
+export async function recordDelivery(
+  store: DeliveryStore,
+  deliveryId: string,
+  ttlSeconds: number,
+  beforeRecord?: () => Promise<void>,
+): Promise<boolean> {
+  return (await recordDeliveryOutcome(store, deliveryId, ttlSeconds, beforeRecord)) === 'recorded';
 }
 
 const STATUS: Record<WebhookFailureReason, 400 | 401 | 409 | 413> = {
@@ -206,8 +369,9 @@ const STATUS: Record<WebhookFailureReason, 400 | 401 | 409 | 413> = {
   missing_delivery_id: 400,
   malformed_delivery_id: 400,
   replayed_delivery: 409,
+  delivery_in_progress: 409,
   invalid_payload: 400,
-  payload_too_large: 413
+  payload_too_large: 413,
 };
 
 function idString(v: unknown): string | undefined {
@@ -220,15 +384,23 @@ function idString(v: unknown): string | undefined {
  * 1) size cap, 2) parse JSON (routing only), 3) resolve per-integration secret, 4) verify signature,
  * 5) record delivery id (only after a valid signature), then return the trusted payload + tenant ids.
  */
-export async function verifyGitHubWebhook(opts: VerifyWebhookOptions): Promise<WebhookVerificationResult> {
-  const fail = (reason: WebhookFailureReason) => ({ ok: false as const, reason, status: STATUS[reason] });
-  const size = typeof opts.rawBody === 'string' ? Buffer.byteLength(opts.rawBody) : opts.rawBody.byteLength;
+export async function verifyGitHubWebhook(
+  opts: VerifyWebhookOptions,
+): Promise<WebhookVerificationResult> {
+  const fail = (reason: WebhookFailureReason) => ({
+    ok: false as const,
+    reason,
+    status: STATUS[reason],
+  });
+  const size =
+    typeof opts.rawBody === 'string' ? Buffer.byteLength(opts.rawBody) : opts.rawBody.byteLength;
   if (size > (opts.maxBodyBytes ?? 1024 * 1024)) return fail('payload_too_large');
   const signature = header(opts.headers, 'x-hub-signature-256');
   if (!signature) return fail('missing_signature');
   let payload: unknown;
   try {
-    const text = typeof opts.rawBody === 'string' ? opts.rawBody : Buffer.from(opts.rawBody).toString('utf8');
+    const text =
+      typeof opts.rawBody === 'string' ? opts.rawBody : Buffer.from(opts.rawBody).toString('utf8');
     payload = JSON.parse(text);
   } catch {
     return fail('invalid_payload');
@@ -237,7 +409,9 @@ export async function verifyGitHubWebhook(opts: VerifyWebhookOptions): Promise<W
   const hookId = idString(header(opts.headers, 'x-github-hook-id'));
   const targetId = idString(header(opts.headers, 'x-github-hook-installation-target-id'));
   const targetType = header(opts.headers, 'x-github-hook-installation-target-type');
-  const installationId = idString((payload as { installation?: { id?: unknown } } | null)?.installation?.id);
+  const installationId = idString(
+    (payload as { installation?: { id?: unknown } } | null)?.installation?.id,
+  );
   if (hookId) ref.hookId = hookId;
   if (targetId) ref.targetId = targetId;
   if (targetType && /^[a-z_]{1,32}$/.test(targetType)) ref.targetType = targetType;
@@ -251,15 +425,21 @@ export async function verifyGitHubWebhook(opts: VerifyWebhookOptions): Promise<W
   if (!rawDelivery) return fail('missing_delivery_id');
   const deliveryId = rawDelivery.trim().toLowerCase();
   if (!isValidGitHubDeliveryId(deliveryId)) return fail('malformed_delivery_id');
-  const fresh = await opts.deliveryStore.markIfNew(deliveryId, effectiveReplayTtlSeconds(opts.replayTtlSeconds));
-  if (!fresh) return fail('replayed_delivery');
+  const outcome = await recordDeliveryOutcome(
+    opts.deliveryStore,
+    deliveryId,
+    effectiveReplayTtlSeconds(opts.replayTtlSeconds),
+    opts.beforeRecord,
+  );
+  if (outcome === 'replayed') return fail('replayed_delivery');
+  if (outcome === 'in_progress') return fail('delivery_in_progress');
   return {
     ok: true,
     deliveryId,
     event: header(opts.headers, 'x-github-event'),
     payload,
     organizationId: resolved.organizationId,
-    integrationId: resolved.integrationId
+    integrationId: resolved.integrationId,
   };
 }
 

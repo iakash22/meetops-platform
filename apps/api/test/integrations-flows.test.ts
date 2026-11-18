@@ -15,6 +15,7 @@ import {
   refusingTokenRefreshLease,
 } from '../src/modules/integrations/runtime.js';
 import type { ModuleDeps } from '../src/modules/index.js';
+import { RedisDeliveryStore } from '@meetops/integrations';
 import { selectIntegrationsRuntime } from '../src/modules/integrations/index.js';
 import { IntegrationsService } from '../src/modules/integrations/service.js';
 import { buildApp, signupAndLogin, type App, type Client } from './helpers.js';
@@ -332,12 +333,23 @@ describe('Phase 5 integration flows', () => {
       expect(selectIntegrationsRuntime({} as ModuleDeps, 'production')).toBeUndefined();
       // The injected runtime is kept as is; with no Redis in production it gains the refusing token-refresh lease
       // (fail closed, #375 F1) and nothing else.
-      expect(selectIntegrationsRuntime({ integrationsRuntime: rt } as never, 'production')).toEqual(
-        {
-          ...rt,
-          tokenRefreshLease: refusingTokenRefreshLease,
-        },
-      );
+      // Production must wire a shared (Redis) delivery store; the in-memory one is refused at startup.
+      expect(() =>
+        selectIntegrationsRuntime({ integrationsRuntime: rt } as never, 'production'),
+      ).toThrow(/shared webhook delivery store/);
+      const prodRt = {
+        ...rt,
+        deliveryStore: new RedisDeliveryStore({
+          set: async () => 'OK',
+          eval: async () => null,
+        }),
+      };
+      expect(
+        selectIntegrationsRuntime({ integrationsRuntime: prodRt } as never, 'production'),
+      ).toEqual({
+        ...prodRt,
+        tokenRefreshLease: refusingTokenRefreshLease,
+      });
       await expect(
         new IntegrationsService(repo, undefined).connect({
           organizationId: randomUUID(),

@@ -1,6 +1,6 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { Queue, Worker, type Job } from 'bullmq';
-import { Redis } from 'ioredis';
+import { createAppRedis } from '../redis.js';
 import { chunkAudio, computeWaveform, normalizeToWav, probeMedia } from '@meetops/media-core';
 import { disconnectPrismaClient } from '@meetops/database';
 import {
@@ -14,6 +14,8 @@ import {
 } from '@meetops/storage';
 import { QUEUE_NAMES, type SttProviderId } from '@meetops/contracts';
 import { logger as baseLogger } from '../logger.js';
+import { loadTranscriptionWorkerEnv } from '../ai/env.js';
+import type { TranscriptionRetryPolicy } from '../ai/transcription-retry.js';
 import {
   DEFAULT_MEDIA_LIMITS,
   DEFAULT_WORK_TMP_BYTES,
@@ -70,6 +72,8 @@ export type MediaWorkerConfig = {
   sttProviderId: SttProviderId;
   maxSourceBytes: number;
   maxDurationSeconds: number;
+  /** Transcription job attempts/backoff (TRANSCRIPTION_MAX_ATTEMPTS, TRANSCRIPTION_BACKOFF_*). */
+  transcriptionRetry?: TranscriptionRetryPolicy | undefined;
 };
 
 /** Job scope for the storage authorize hook: the worker may only touch its current job's org+meeting. */
@@ -122,6 +126,7 @@ export function loadMediaWorkerConfig(env: NodeJS.ProcessEnv = process.env): Med
       1,
       24 * 60 * 60,
     ),
+    transcriptionRetry: loadTranscriptionWorkerEnv(env).retry,
   };
   if (env.MEDIA_TMP_DIR) cfg.tmpRoot = env.MEDIA_TMP_DIR;
   // Fail fast if one job (x concurrency) could overflow the scratch tmpfs.
@@ -171,6 +176,7 @@ export function buildMediaProcessorDeps(
     },
     limits: { maxSourceBytes: cfg.maxSourceBytes, maxDurationSeconds: cfg.maxDurationSeconds },
     transcriptionQueue: parts.transcriptionQueue,
+    transcriptionRetry: cfg.transcriptionRetry,
     realtime: parts.realtime,
     logger: parts.logger,
     recordingVerifier: parts.persistence.recordingAccess,
@@ -295,7 +301,7 @@ export function startMediaWorker(
 ) {
   assertMediaWorkerDatabaseEnv(env);
   const logger = baseLogger.child({ worker: MEDIA_QUEUE });
-  const conn = () => new Redis(cfg.redisUrl, { maxRetriesPerRequest: null });
+  const conn = () => createAppRedis(cfg.redisUrl, { maxRetriesPerRequest: null });
   const emitterRedis = conn();
   const emitter = createRedisEmitter(emitterRedis);
   const transcriptionQueue = new Queue<TranscriptionJobPayload>(QUEUE_NAMES.transcription, {

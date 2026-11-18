@@ -1,3 +1,4 @@
+import { clientIpKey } from '../../shared/rate-limit-core.js';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { Type } from '@sinclair/typebox';
 import {
@@ -21,19 +22,30 @@ import {
 import type { AuthService } from '../auth/application/auth.service.js';
 import { makeGuards, requestMeta } from '../auth/http/security.js';
 import { registerDomainErrorHandler } from '../../shared/http-errors.js';
+import { routeLimiter } from '../../shared/rate-limits.js';
+import { consumeGuarded } from '../../shared/guarded-limit.js';
 import type { OrganizationService } from '../organizations/application/organization.service.js';
 import { isRelaxedEnv, MissingProductionDependencyError, type ModuleDeps } from '../index.js';
 import { DirectoryAccess, type DirectoryCaller } from '../directory/access.js';
 import { directoryErrors, directoryWriteErrors } from '../directory/http/route-kit.js';
 import { ErrorBody } from '../auth/http/schemas.js';
-import { IntegrationNotFoundError, OAuthStateInvalidError } from './errors.js';
+import {
+  IntegrationNotFoundError,
+  OAuthStateInvalidError,
+  WebhookSignatureError,
+} from './errors.js';
 import { InMemoryIntegrations } from './in-memory.repository.js';
 import { PrismaIntegrations } from './prisma.repository.js';
 import type { ConnectedProvider, IntegrationsRepository } from './ports.js';
-import { createRedisConnectionLease, parseSharedKek } from '@meetops/integrations';
+import {
+  createRedisConnectionLease,
+  parseSharedKek,
+  RedisDeliveryStore,
+} from '@meetops/integrations';
 import {
   devIntegrationsRuntime,
   integrationsRuntimeFromEnv,
+  deliveryRedisFromEval,
   leaseRedisFromEval,
   refusingTokenRefreshLease,
   type IntegrationsRuntime,
@@ -71,6 +83,31 @@ export type IntegrationsModuleDeps = ModuleDeps & {
   taskSyncEnabled?: boolean;
   taskSyncStore?: TaskSyncStore;
   taskSyncQueue?: TaskSyncQueue;
+  /** Overrides WEBHOOK_RATE_LIMITS (tests). */
+  webhookRateLimits?: WebhookRateLimits;
+};
+
+export type WebhookRateLimits = {
+  /** Per client IP, across all webhook routes. */
+  perIp: { limit: number; windowMs: number };
+  /** Per webhook target (provider + integration, or the App-wide GitHub route). */
+  perTarget: { limit: number; windowMs: number };
+  /**
+   * Small per-IP bucket charged only by App-wide GitHub deliveries whose signature is missing or invalid, so
+   * unauthenticated junk can neither drain the shared 'github-app' target bucket nor be retried cheaply.
+   * Defaults to WEBHOOK_RATE_LIMITS.unsignedPerIp.
+   */
+  unsignedPerIp?: { limit: number; windowMs: number };
+};
+
+/**
+ * Unauthenticated webhook routes are checked before the HMAC is computed, so a flood is rejected cheaply (429 +
+ * Retry-After). Limits are generous: providers retry on 429, and GitHub/Jira deliver from shared egress IPs.
+ */
+export const WEBHOOK_RATE_LIMITS: WebhookRateLimits = {
+  perIp: { limit: 600, windowMs: 60_000 },
+  perTarget: { limit: 300, windowMs: 60_000 },
+  unsignedPerIp: { limit: 20, windowMs: 60_000 },
 };
 
 /** Store + queue for the async sync route, or undefined when TASK_SYNC_ENABLED is off. Never silently in-memory. */
@@ -102,7 +139,31 @@ export function selectIntegrationsRuntime(
   const rt =
     deps.integrationsRuntime ??
     (isRelaxedEnv(nodeEnv) ? devIntegrationsRuntime(integrationsRuntimeFromEnv()) : undefined);
-  return rt && withTokenRefreshLease(rt, deps, nodeEnv);
+  return rt && withTokenRefreshLease(withDeliveryStore(rt, deps, nodeEnv), deps, nodeEnv);
+}
+
+/**
+ * Webhook replay marks must be shared across replicas. Outside development/test the runtime's delivery store is
+ * replaced by RedisDeliveryStore on the API's shared Redis client (deps.redis, REDIS_CLIENT_OPTIONS with
+ * commandTimeout), unless it is already a shared store. Without Redis there it fails closed at startup. Only
+ * development/test (isRelaxedEnv; unset, 'Production', 'prod', 'staging' are not relaxed) may keep the in-memory store.
+ */
+export function withDeliveryStore(
+  rt: IntegrationsRuntime,
+  deps: Pick<ModuleDeps, 'redis'>,
+  nodeEnv: string | undefined,
+): IntegrationsRuntime {
+  // Positive marker AND the concrete class: a look-alike object claiming shared: true is not enough.
+  if (
+    isRelaxedEnv(nodeEnv) ||
+    (rt.deliveryStore instanceof RedisDeliveryStore && rt.deliveryStore.shared === true)
+  )
+    return rt;
+  if (deps.redis)
+    return { ...rt, deliveryStore: new RedisDeliveryStore(deliveryRedisFromEval(deps.redis)) };
+  throw new Error(
+    'Integrations runtime: a shared webhook delivery store (RedisDeliveryStore) is required outside development/test; set REDIS_URL',
+  );
 }
 
 /**
@@ -152,6 +213,7 @@ export default async function integrationsModule(
   if (taskSync?.owned) app.addHook('onClose', async () => taskSync.queue.close?.());
   const g = makeGuards(auth, deps.security);
   const access = new DirectoryAccess(organizations, deps.audit);
+  const routeLimits = routeLimiter(deps.rateLimiter, deps.routeRateLimits);
   const auditFor =
     (c: DirectoryCaller): AuditFn =>
     (action, targetId, metadata) =>
@@ -225,6 +287,7 @@ export default async function integrationsModule(
       async (request) => {
         const c = await callerFor(request, request.params.organizationId);
         organizations.authorize(c.ctx, 'update', 'Organization');
+        await routeLimits.charge('oauthConnect', c.ctx);
         return service.connect({
           organizationId: c.ctx.organizationId,
           userId: c.ctx.userId,
@@ -246,6 +309,7 @@ export default async function integrationsModule(
         },
       },
       async (request, reply) => {
+        await routeLimits.charge('oauthCallback', requestMeta(request));
         const inner = service.verifyState(request.query.state);
         const session = await g.requireSession(request);
         const orgId = session.session.activeOrganizationId;
@@ -305,6 +369,7 @@ export default async function integrationsModule(
       async (request, reply) => {
         const c = await callerFor(request, request.params.organizationId);
         organizations.authorize(c.ctx, 'update', 'Organization');
+        await routeLimits.charge('issuePush', c.ctx);
         const link = await service.pushIssue({
           organizationId: c.ctx.organizationId,
           taskId: request.params.taskId,
@@ -331,6 +396,7 @@ export default async function integrationsModule(
         async (request, reply) => {
           const c = await callerFor(request, request.params.organizationId);
           organizations.authorize(c.ctx, 'update', 'Organization');
+          await routeLimits.charge('issuePush', c.ctx);
           const job = await syncService.request({
             organizationId: c.ctx.organizationId,
             userId: c.ctx.userId,
@@ -350,6 +416,41 @@ export default async function integrationsModule(
 
   await app.register(async (s) => {
     registerDomainErrorHandler(s);
+    const limits = deps.webhookRateLimits ?? WEBHOOK_RATE_LIMITS;
+    // Fail closed: limiter error or timeout -> 503 + Retry-After (providers retry), over the limit -> 429.
+    const consumeOrThrow = (key: string, l: { limit: number; windowMs: number }) =>
+      consumeGuarded(deps.rateLimiter, key, l);
+    s.addHook('onRequest', async (request) => {
+      const ip = clientIpKey(requestMeta(request).ip);
+      await consumeOrThrow(`webhook:ip:${ip}`, limits.perIp);
+    });
+    /**
+     * Per-target buckets ('github-app' and provider:integration) are charged only once a delivery passed the
+     * signature AND replay checks, so unsigned floods or replays of one valid delivery cannot use them up.
+     * Missing/invalid signatures (and unknown integration ids, which look the same) go to a small per-IP bucket.
+     */
+    const chargeWebhook = async (
+      request: FastifyRequest,
+      target: string,
+      run: (onDeliveryAccepted: () => Promise<void>) => Promise<unknown>,
+    ) => {
+      let accepted = false;
+      try {
+        await run(async () => {
+          accepted = true;
+          await consumeOrThrow(`webhook:target:${target}`, limits.perTarget);
+        });
+      } catch (err) {
+        if (!accepted && err instanceof WebhookSignatureError) {
+          const ip = clientIpKey(requestMeta(request).ip);
+          await consumeOrThrow(
+            `webhook:unsigned:ip:${ip}`,
+            limits.unsignedPerIp ?? WEBHOOK_RATE_LIMITS.unsignedPerIp!,
+          );
+        }
+        throw err;
+      }
+    };
     s.removeContentTypeParser('application/json');
     s.addContentTypeParser(
       'application/json',
@@ -369,13 +470,16 @@ export default async function integrationsModule(
             401: ErrorBody,
             409: ErrorBody,
             413: ErrorBody,
+            429: ErrorBody,
             503: ErrorBody,
           },
         },
       },
       async (request, reply) => {
         const body = Buffer.isBuffer(request.body) ? request.body : Buffer.alloc(0);
-        await service.githubAppWebhook({ rawBody: body, headers: request.headers });
+        await chargeWebhook(request, 'github-app', (onDeliveryAccepted) =>
+          service.githubAppWebhook({ rawBody: body, headers: request.headers, onDeliveryAccepted }),
+        );
         return reply.status(202).send({ received: true });
       },
     );
@@ -385,7 +489,7 @@ export default async function integrationsModule(
         bodyLimit: INTEGRATION_WEBHOOK_MAX_BYTES,
         schema: {
           tags: ['integrations'],
-          summary: 'Provider webhook (HMAC-SHA256 signed, replay-protected)',
+          summary: 'Provider webhook (HMAC before org lookup, replay-protected)',
           params: WebhookParams,
           response: {
             202: WebhookAcceptedResponse,
@@ -393,18 +497,23 @@ export default async function integrationsModule(
             401: ErrorBody,
             409: ErrorBody,
             413: ErrorBody,
+            429: ErrorBody,
             503: ErrorBody,
           },
         },
       },
       async (request, reply) => {
         const body = Buffer.isBuffer(request.body) ? request.body : Buffer.alloc(0);
-        await service.webhook({
-          provider: request.params.provider,
-          integrationId: request.params.integrationId,
-          rawBody: body,
-          headers: request.headers,
-        });
+        const { provider, integrationId } = request.params;
+        await chargeWebhook(request, `${provider}:${integrationId}`, (onDeliveryAccepted) =>
+          service.webhook({
+            provider,
+            integrationId,
+            rawBody: body,
+            headers: request.headers,
+            onDeliveryAccepted,
+          }),
+        );
         return reply.status(202).send({ received: true });
       },
     );

@@ -212,11 +212,11 @@ describe.skipIf(!url)(
       const anon = (await import('./helpers.js')).Client;
       const x = new anon(app);
       expect(
-        (await x.post('/auth/reset-password', { token: t, password: 'another-long-password' }))
+        (await x.post('/auth/reset-password', { token: t, password: 'another-long-password-1' }))
           .statusCode,
       ).toBe(204);
       expect(
-        (await x.post('/auth/reset-password', { token: t, password: 'another-long-password' }))
+        (await x.post('/auth/reset-password', { token: t, password: 'another-long-password-1' }))
           .statusCode,
       ).toBe(400);
       expect((await c.get('/auth/session')).statusCode).toBe(401);
@@ -232,11 +232,24 @@ describe.skipIf(!url)(
         [1, 2, 3].map(() =>
           new Client(app).post('/auth/reset-password', {
             token: t,
-            password: 'race-password-long',
+            password: 'race-password-long-1',
           }),
         ),
       );
       expect(rs.map((r) => r.statusCode).sort()).toEqual([204, 400, 400]);
+    });
+
+    it('D4: concurrent consumption of one email-verification token → exactly one wins', async () => {
+      await signupAndLogin(app, email('vrace'), undefined, { verify: false });
+      const { Client } = await import('./helpers.js');
+      const t = app.token(email('vrace'), 'email_verification')!;
+      const n = 5;
+      const rs = await Promise.all(
+        Array.from({ length: n }, () => new Client(app).post('/auth/verify-email', { token: t })),
+      );
+      const codes = rs.map((r) => r.statusCode);
+      expect(codes.filter((c) => c === 204)).toHaveLength(1);
+      expect(codes.filter((c) => c === 400)).toHaveLength(n - 1);
     });
 
     it('pre-tenant audit events are written as global rows (createMany, not readable by the app)', async () => {

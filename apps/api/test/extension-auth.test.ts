@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { EXTENSION_AUTH_PATHS } from '@meetops/contracts';
 import { InMemoryExtensionTokenRepository } from '../src/modules/extension-auth/index.js';
 import { buildApp, signupAndLogin, SID, type App } from './helpers.js';
@@ -30,6 +30,10 @@ async function paired(app: App, c: Awaited<ReturnType<typeof setup>>['c']) {
   const { pairingCode } = pair.json<{ pairingCode: string }>();
   return { deviceId, n, pairingCode };
 }
+
+afterEach(() => {
+  vi.useRealTimers();
+});
 
 describe('extension auth (ADR-005 A1)', () => {
   it('pairs, exchanges, rotates, and revokes the family on refresh reuse', async () => {
@@ -67,6 +71,8 @@ describe('extension auth (ADR-005 A1)', () => {
     const t2 = r1.json<{ accessToken: string; refreshToken: string }>();
     expect(t2.refreshToken).not.toBe(t1.refreshToken);
 
+    // Past the ~10 s grace window, so re-presenting the old token is reuse.
+    vi.useFakeTimers({ toFake: ['Date'], now: Date.now() + 11_000 });
     const reuse = await ext(app, EXTENSION_AUTH_PATHS.refresh, {
       extensionId: EXT,
       deviceId,
@@ -177,5 +183,120 @@ describe('extension auth (ADR-005 A1)', () => {
         })
       ).statusCode,
     ).toBe(401);
+  });
+});
+
+describe('extension refresh grace window', () => {
+  async function rotated() {
+    const { app, c, extensionTokens } = await setup();
+    const { deviceId, n, pairingCode } = await paired(app, c);
+    const tok = await ext(app, EXTENSION_AUTH_PATHS.token, {
+      extensionId: EXT,
+      deviceId,
+      pairingCode,
+      nonce: n,
+    });
+    const t1 = tok.json<{ accessToken: string; refreshToken: string }>();
+    const r1 = await ext(app, EXTENSION_AUTH_PATHS.refresh, {
+      extensionId: EXT,
+      deviceId,
+      refreshToken: t1.refreshToken,
+    });
+    expect(r1.statusCode).toBe(200);
+    return {
+      app,
+      extensionTokens,
+      deviceId,
+      t1,
+      t2: r1.json<{ accessToken: string; refreshToken: string }>(),
+    };
+  }
+
+  it('returns the same new pair when the same device re-sends the previous token within ~10 s', async () => {
+    const { app, deviceId, t1, t2 } = await rotated();
+    const again = await ext(app, EXTENSION_AUTH_PATHS.refresh, {
+      extensionId: EXT,
+      deviceId,
+      refreshToken: t1.refreshToken,
+    });
+    expect(again.statusCode).toBe(200);
+    expect(again.json()).toMatchObject({
+      accessToken: t2.accessToken,
+      refreshToken: t2.refreshToken,
+    });
+    // The family is intact: the new refresh token still rotates.
+    const next = await ext(app, EXTENSION_AUTH_PATHS.refresh, {
+      extensionId: EXT,
+      deviceId,
+      refreshToken: t2.refreshToken,
+    });
+    expect(next.statusCode).toBe(200);
+  });
+
+  it('still revokes the family when another device re-sends the token within the window', async () => {
+    const { app, extensionTokens, t1, t2 } = await rotated();
+    const other = await ext(app, EXTENSION_AUTH_PATHS.refresh, {
+      extensionId: EXT,
+      deviceId: randomUUID(),
+      refreshToken: t1.refreshToken,
+    });
+    expect(other.statusCode).toBe(401);
+    const a2 = await extensionTokens.findAccess(sha(t2.accessToken));
+    expect(a2 && (await extensionTokens.findFamily(a2.familyId))?.revokedAt).toBeTruthy();
+  });
+
+  it('does not extend grace to a token older than the immediately previous one', async () => {
+    const { app, deviceId, t1, t2 } = await rotated();
+    const r2 = await ext(app, EXTENSION_AUTH_PATHS.refresh, {
+      extensionId: EXT,
+      deviceId,
+      refreshToken: t2.refreshToken,
+    });
+    expect(r2.statusCode).toBe(200);
+    const old = await ext(app, EXTENSION_AUTH_PATHS.refresh, {
+      extensionId: EXT,
+      deviceId,
+      refreshToken: t1.refreshToken,
+    });
+    expect(old.statusCode).toBe(401);
+  });
+});
+
+describe('extension refresh grace window vs allowlist revoke (#418)', () => {
+  it('rejects a delisted extension replaying its previous token within the grace window', async () => {
+    // Mutable allowlist shared with the running service, so it can be delisted mid-window.
+    const extensionIds: string[] = [EXT];
+    const extensionTokens = new InMemoryExtensionTokenRepository();
+    const app = await buildApp({ extensionTokens, extensionIds });
+    const c = await signupAndLogin(app, `ext-${randomUUID()}@example.com`);
+    expect((await c.post('/orgs', { name: 'Ext Org' })).statusCode).toBe(201);
+    const { deviceId, n, pairingCode } = await paired(app, c);
+    const tok = await ext(app, EXTENSION_AUTH_PATHS.token, {
+      extensionId: EXT,
+      deviceId,
+      pairingCode,
+      nonce: n,
+    });
+    const t1 = tok.json<{ accessToken: string; refreshToken: string }>();
+    const r1 = await ext(app, EXTENSION_AUTH_PATHS.refresh, {
+      extensionId: EXT,
+      deviceId,
+      refreshToken: t1.refreshToken,
+    });
+    expect(r1.statusCode).toBe(200);
+    const t2 = r1.json<{ accessToken: string; refreshToken: string }>();
+
+    // The extension id is removed from the allowlist (another id stays, so this is a real delisting, not the
+    // empty-allowlist misconfiguration); the same device replays t1 inside ~10 s.
+    extensionIds.splice(0, extensionIds.length, 'q'.repeat(32));
+    const replay = await ext(app, EXTENSION_AUTH_PATHS.refresh, {
+      extensionId: EXT,
+      deviceId,
+      refreshToken: t1.refreshToken,
+    });
+    expect(replay.statusCode).not.toBe(200);
+    expect(replay.body).not.toContain(t2.refreshToken);
+    const a2 = await extensionTokens.findAccess(sha(t2.accessToken));
+    expect(a2 && (await extensionTokens.findFamily(a2.familyId))?.revokedAt).toBeTruthy();
   });
 });

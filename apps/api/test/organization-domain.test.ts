@@ -36,6 +36,7 @@ import {
   InlineAuthMailQueue,
 } from '../src/modules/auth/application/auth-mail.handler.js';
 import { randomUUID } from 'node:crypto';
+import { RateLimiterUnavailableError } from '../src/shared/rate-limit-core.js';
 
 const A = 'org-a';
 const B = 'org-b';
@@ -191,11 +192,30 @@ describe('OrganizationService', () => {
     expect(token).toMatch(/^[A-Za-z0-9_-]{43}$/);
     expect(token).not.toContain(organization.id);
     expect(invitation).not.toHaveProperty('token');
-    const r = await svc.acceptInvitation({ token, userId: 'u2', email: 'a@example.com', ip: null });
+    const r = await svc.acceptInvitation({
+      token,
+      userId: 'u2',
+      email: 'a@example.com',
+      ip: '203.0.113.7',
+    });
     expect(r.membership.role).toBe('viewer');
     await expect(
-      svc.acceptInvitation({ token, userId: 'u2', email: 'a@example.com', ip: null }),
+      svc.acceptInvitation({ token, userId: 'u2', email: 'a@example.com', ip: '203.0.113.7' }),
     ).rejects.toThrow(/not found/);
+  });
+
+  it('N-3: accept without a client IP fails closed instead of sharing an "unknown" bucket', async () => {
+    const { ctx } = await setup();
+    await addUser('u2', 'a@example.com');
+    await svc.invite(ctx, { email: 'a@example.com', role: 'viewer' });
+    await expect(
+      svc.acceptInvitation({
+        token: tokenFor('a@example.com'),
+        userId: 'u2',
+        email: 'a@example.com',
+        ip: null,
+      }),
+    ).rejects.toBeInstanceOf(RateLimiterUnavailableError);
   });
 
   it('concurrent accepts: exactly one wins', async () => {
@@ -205,7 +225,7 @@ describe('OrganizationService', () => {
     const token = tokenFor('a@example.com');
     const rs = await Promise.allSettled(
       [1, 2, 3].map(() =>
-        svc.acceptInvitation({ token, userId: 'u2', email: 'a@example.com', ip: null }),
+        svc.acceptInvitation({ token, userId: 'u2', email: 'a@example.com', ip: '203.0.113.7' }),
       ),
     );
     expect(rs.filter((r) => r.status === 'fulfilled')).toHaveLength(1);
@@ -218,7 +238,12 @@ describe('OrganizationService', () => {
     const first = tokenFor('a@example.com');
     await svc.invite(ctx, { email: 'a@example.com', role: 'member' });
     await expect(
-      svc.acceptInvitation({ token: first, userId: 'u2', email: 'a@example.com', ip: null }),
+      svc.acceptInvitation({
+        token: first,
+        userId: 'u2',
+        email: 'a@example.com',
+        ip: '203.0.113.7',
+      }),
     ).rejects.toThrow(/not found/);
   });
 
@@ -229,14 +254,19 @@ describe('OrganizationService', () => {
     await svc.invite(ctx, { email: 'a@example.com', role: 'member' });
     const token = tokenFor('a@example.com');
     await expect(
-      svc.acceptInvitation({ token, userId: 'u3', email: 'b@example.com', ip: null }),
+      svc.acceptInvitation({ token, userId: 'u3', email: 'b@example.com', ip: '203.0.113.7' }),
     ).rejects.toThrow(/not found/);
     clockNow = new Date(now.getTime() + 60_001);
     await expect(
-      svc.acceptInvitation({ token, userId: 'u2', email: 'a@example.com', ip: null }),
+      svc.acceptInvitation({ token, userId: 'u2', email: 'a@example.com', ip: '203.0.113.7' }),
     ).rejects.toThrow(/not found/);
     await expect(
-      svc.acceptInvitation({ token: 'unknown', userId: 'u2', email: 'a@example.com', ip: null }),
+      svc.acceptInvitation({
+        token: 'unknown',
+        userId: 'u2',
+        email: 'a@example.com',
+        ip: '203.0.113.7',
+      }),
     ).rejects.toThrow(/not found/);
   });
 
@@ -250,7 +280,7 @@ describe('OrganizationService', () => {
         token: tokenFor('nv@example.com'),
         userId: 'nv',
         email: 'nv@example.com',
-        ip: null,
+        ip: '203.0.113.7',
       }),
     ).rejects.toThrow(/Verify your email/);
   });
@@ -260,7 +290,7 @@ describe('OrganizationService', () => {
     const join = async (email: string, role: 'member' | 'admin' | 'viewer', userId: string) => {
       await addUser(userId, email);
       await svc.invite(ctx, { email, role });
-      await svc.acceptInvitation({ token: tokenFor(email), userId, email, ip: null });
+      await svc.acceptInvitation({ token: tokenFor(email), userId, email, ip: '203.0.113.7' });
       return svc.resolveTenant(organization.id, userId);
     };
     return {

@@ -19,6 +19,9 @@ struct RecordingLiveActivityWidget: Widget {
         StopButton()
       }
       .padding()
+      // Deep-link fallback: tapping the activity (anywhere but Stop) opens the Record tab, where Stop always works,
+      // even if the Stop intent didn't register.
+      .widgetURL(recordURL)
       .activityBackgroundTint(Color.black)
       .activitySystemActionForegroundColor(Color.white)
     } dynamicIsland: { context in
@@ -39,6 +42,7 @@ struct RecordingLiveActivityWidget: Widget {
       } minimal: {
         StatusDot(paused: context.state.isPaused)
       }
+      .widgetURL(recordURL)
     }
   }
 }
@@ -54,6 +58,8 @@ private struct Elapsed: View {
     }
   }
 }
+
+private let recordURL = URL(string: "meetops://record")!
 
 private struct StatusDot: View {
   let paused: Bool
@@ -73,7 +79,7 @@ private struct StopButton: View {
       }
       .tint(Color(red: 0.94, green: 0.27, blue: 0.27))
     } else {
-      Link(destination: URL(string: "meetops://record")!) {
+      Link(destination: recordURL) {
         Label("Stop", systemImage: "stop.fill")
       }
     }

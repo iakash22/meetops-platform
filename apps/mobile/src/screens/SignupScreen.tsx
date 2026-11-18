@@ -1,3 +1,4 @@
+import { isAcceptablePassword } from '@meetops/contracts/types';
 import { useRouter } from 'expo-router';
 import { useRef, useState } from 'react';
 import {
@@ -109,7 +110,7 @@ export function SignupScreen() {
     );
   }
 
-  const longEnough = password.length >= PASSWORD_MIN_LENGTH;
+  const longEnough = isAcceptablePassword(password);
   const strength = passwordStrength(password);
 
   return (
@@ -181,11 +182,10 @@ export function SignupScreen() {
           <Text
             testID="signup-password-hint"
             style={[styles.hint, longEnough && styles.hintMet]}
-            accessibilityLabel={`At least ${PASSWORD_MIN_LENGTH} characters, ${longEnough ? 'met' : 'not met yet'}`}
+            accessibilityLabel={`8 or more characters with a letter, number, and symbol, ${longEnough ? 'met' : 'not met yet'}`}
           >
             {longEnough ? '✓ ' : ''}
-            {PASSWORD_MIN_LENGTH}+ characters ({Math.min(password.length, PASSWORD_MIN_LENGTH)}/
-            {PASSWORD_MIN_LENGTH})
+            {PASSWORD_MIN_LENGTH}+ with a letter, number, and symbol
           </Text>
           <Pressable
             testID="signup-toggle-password"

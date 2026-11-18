@@ -47,6 +47,10 @@ x-api-env: &api-env
   HOST: 0.0.0.0
   WEB_ORIGINS: ${WEB_ORIGINS:-http://localhost:5173,http://localhost:3000}
   TRUST_PROXY: ${TRUST_PROXY:-}
+  # Same flag as realtime: honour CF-Connecting-IP only when the peer is a pinned
+  # Cloudflare edge. Default empty/off. Set true when Cloudflare sits in front of
+  # the API, otherwise per-IP limits collapse onto the edge address.
+  BEHIND_CLOUDFLARE: ${BEHIND_CLOUDFLARE:-}
   # Empty EMAIL_PROVIDER/SMTP_HOST (and no resend_api_key secret) = console sender in development.
   # SMTP_PASSWORD and RESEND_API_KEY come from secrets via with-secrets.sh, never from env here.
   EMAIL_PROVIDER: ${EMAIL_PROVIDER:-}
@@ -302,12 +306,20 @@ services:
       DB_ROLE: none
       REALTIME_HOST: 0.0.0.0
       REALTIME_PORT: 4001
+      # Same TRUST_PROXY variable and rules as the API (@meetops/config): X-Forwarded-For is honoured only when the
+      # socket peer is allowlisted. The web nginx /socket.io proxy overwrites XFF with the client IP, so the list must
+      # include the nginx address realtime sees (its compose network CIDR). Unset falls back to the dev-only hop
+      # count 1, which fails startup when NODE_ENV=production: set an IP/CIDR allowlist there.
+      TRUST_PROXY: ${TRUST_PROXY:-1}
+      BEHIND_CLOUDFLARE: ${BEHIND_CLOUDFLARE:-}
       # Explicit allowlist, required; never '*'.
       REALTIME_CORS_ORIGINS: ${REALTIME_CORS_ORIGINS:?set REALTIME_CORS_ORIGINS in .env}
     secrets: [redis_password]
     volumes: [*secrets-shim]
     entrypoint: ['/bin/sh', '/opt/with-secrets.sh']
     command: ['node', 'dist/index.js']
+    # LOCAL DEV ONLY. Production and self-host must not publish the realtime port: it must be reachable only
+    # through nginx (TRUST_PROXY allowlists nginx). See docs/00-getting-started/environment-variables.md.
     ports:
       - '127.0.0.1:${REALTIME_PORT:-4001}:4001'
     healthcheck:
@@ -352,6 +364,8 @@ services:
       # Local stack is plain http on localhost: do not upgrade its subresource requests to https.
       CSP_UPGRADE_INSECURE: 'off'
       CSP_REPORT_URL: ${CSP_REPORT_URL:-}
+      # Same-origin /socket.io proxy target (apps/realtime service).
+      REALTIME_UPSTREAM: http://realtime:4001
     # WEB_APP_PORT is the containerised nginx; WEB_PORT (5173) stays for `vite dev`.
     ports:
       - '127.0.0.1:${WEB_APP_PORT:-8080}:8080'
