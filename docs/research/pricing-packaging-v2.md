@@ -94,14 +94,14 @@ Patterns (our reading, from the two tables):
 
 ### 3.1 What the code actually runs (integration/phase-1 at `17735409`; cited files unchanged since `d5ce7c97`)
 
-| Stage                | Code                                                                                                                                                                                                                                                                                          | Cost driver                                                  |
-| -------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------ |
-| Capture              | Browser and desktop record `audio/webm;codecs=opus` first (`apps/web/src/features/recording/recording-panel.tsx` L16, `apps/desktop/src/features/recording/recorder.ts` L14); no `audioBitsPerSecond` is set, so the browser default applies (bitrate **UNVERIFIED**; we assume 32–128 kbps). | Raw recording object (`kind: 'recording'`)                   |
-| Normalise and chunk  | ffmpeg to 16 kHz mono `pcm_s16le` WAV (`packages/media-core/src/transcode.ts` L45–47); **both** `normalized.wav` and each 600 s chunk WAV are written to object storage (`apps/worker/src/media/processor.ts` L375–378 for `normalized.wav`, L415–418 for the chunk WAVs).                    | 115.2 MB per hour per WAV copy, two copies                   |
-| STT                  | Worker reads chunk bytes (`apps/worker/src/ai/bootstrap.ts` L88) and uploads them to AssemblyAI `/v2/upload`; body sends `speaker_labels` and `speech_model: this.model`, default `'universal'` (`apps/worker/src/ai/providers/assemblyai.ts` L143, L185–190).                                | Per audio hour + diarization; upload egress from our compute |
-| Summary + actions    | Gemini `gemini-2.5-flash-lite` by default (`packages/ai-core/src/env.ts` L18; also `packages/config/src/index.ts` L75); two passes, one bounded repair retry (#489 §1).                                                                                                                       | Tokens                                                       |
-| Embeddings           | Off unless `SEMANTIC_EMBEDDINGS_ENABLED=true` (`apps/worker/src/embeddings/index.ts` L30–33).                                                                                                                                                                                                 | Tokens, if on                                                |
-| Storage and Postgres | `STORAGE_PROVIDER` enum `minio`/`neon`/`r2`/`s3`, default `minio` (`packages/config/src/index.ts` L36); prod is R2 or S3 (`infra/docs/object-storage-prod.md`); hosting "is not chosen yet" (`docs/13-ops/README.md` L3).                                                                     | GB-months, requests, egress; one Postgres instance           |
+| Stage                | Code                                                                                                                                                                                                                                                                                                    | Cost driver                                                  |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------ |
+| Capture              | Browser and desktop record `audio/webm;codecs=opus` first (`apps/web/src/features/recording/recording-panel.tsx` L16, `apps/desktop/src/features/recording/recorder.ts` L14); no `audioBitsPerSecond` is set, so the browser default applies (bitrate **UNVERIFIED**; we assume 32–128 kbps).           | Raw recording object (`kind: 'recording'`)                   |
+| Normalise and chunk  | ffmpeg to 16 kHz mono `pcm_s16le` WAV (`packages/media-core/src/transcode.ts` L45–47); **both** `normalized.wav` and each 600 s chunk WAV are written to object storage (`apps/worker/src/media/processor.ts` L375–378 for `normalized.wav`, L415–418 for the chunk WAVs).                              | 115.2 MB per hour per WAV copy, two copies                   |
+| STT                  | Worker reads chunk bytes (`apps/worker/src/ai/bootstrap.ts` L88; _correction 2026-11-18: L89 after #513_) and uploads them to AssemblyAI `/v2/upload`; body sends `speaker_labels` and `speech_model: this.model`, default `'universal'` (`apps/worker/src/ai/providers/assemblyai.ts` L143, L185–190). | Per audio hour + diarization; upload egress from our compute |
+| Summary + actions    | Gemini `gemini-2.5-flash-lite` by default (`packages/ai-core/src/env.ts` L18; also `packages/config/src/index.ts` L75); two passes, one bounded repair retry (#489 §1).                                                                                                                                 | Tokens                                                       |
+| Embeddings           | Off unless `SEMANTIC_EMBEDDINGS_ENABLED=true` (`apps/worker/src/embeddings/index.ts` L30–33).                                                                                                                                                                                                           | Tokens, if on                                                |
+| Storage and Postgres | `STORAGE_PROVIDER` enum `minio`/`neon`/`r2`/`s3`, default `minio` (`packages/config/src/index.ts` L36); prod is R2 or S3 (`infra/docs/object-storage-prod.md`); hosting "is not chosen yet" (`docs/13-ops/README.md` L3).                                                                               | GB-months, requests, egress; one Postgres instance           |
 
 Two code facts change the estimate:
 
@@ -344,6 +344,13 @@ independent of eval data, and record M16 (cost per meeting-hour) to replace the 
   (`docs/07-storage/storage-and-media.md` L58). Owner: config.
 - `packages/ai-core/src/bootstrap.ts` L50 (Gemini) and L55 (AssemblyAI) label both default providers `tier: 'free'` (#489 §1); the paid-tier gate (decision 4)
   needs that changed before pilots.
+  _Correction 2026-11-18 (after #513, `1d7ba360`):_
+  - The labels are now at L66 (gemini), L81 (assemblyai), L97 (ollama) and L111 (faster-whisper), all `tier: 'free'`.
+    L125 (openai) and L137 (deepgram) are `tier: 'paid'`.
+  - Production now refuses an enabled free or undeclared LLM/STT tier unless `AI_PROVIDER_DATA_TIER_<NAME>` is
+    `paid` or `no-training` (b8eb5ffb; `packages/ai-core/src/provider-data-tier.ts` L108–125).
+  - AssemblyAI deletes after store now exist (45e8664e).
+  - See [onboarding-activation-teardown.md](onboarding-activation-teardown.md) §8.
 
 ## Sources (fetched 2026-11-18 IST unless noted)
 
