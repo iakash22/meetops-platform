@@ -149,9 +149,13 @@ Use them on every screen, not only auth. Never put a raw `err.message` in the UI
 - **No testimonials, logos, ratings, security claims or "14-day trial".** None of these exist yet,
   so nothing is invented. The testimonial slot renders nothing (TODO). Google is the only external
   sign-in, and only when the server has a client configured.
-- **Terms/Privacy line is env-gated.** `LegalLine` in `auth-layout.tsx` renders "By continuing, you
-  agree to the Terms of Service and Privacy Policy" only when both `VITE_TERMS_URL` and
-  `VITE_PRIVACY_URL` are set (https or same-origin path). Until the legal pages exist nothing renders.
+- **Terms/Privacy line is env-gated per link.** `LegalLine` in `auth-layout.tsx` renders a Terms
+  of Service link when `VITE_TERMS_URL` is set, and a Privacy Policy link when `VITE_PRIVACY_URL`
+  is set (https or same-origin path). The two are independent: a privacy link still appears if
+  only `VITE_PRIVACY_URL` is configured. When both are set the line is "By continuing, you agree
+  to the Terms of Service and Privacy Policy". When neither is set, nothing renders. Production
+  web builds (`vite build`) warn, but do not fail, if `VITE_PRIVACY_URL` is missing. See the
+  root `.env.example`.
 - **Toasts run on Sonner.** `components/ui/toast.tsx` keeps the same `toast`/`Toaster` API and our
   own themed card (`sonner.custom`); motion is disabled under `prefers-reduced-motion: reduce`.
 - **429 countdown.** The API client reads `Retry-After` (seconds or HTTP date, capped at 1 h) into

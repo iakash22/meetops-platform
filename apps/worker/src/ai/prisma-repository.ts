@@ -16,6 +16,9 @@ import type {
  * Layout (migration 20261026200000_transcript_recording_revision):
  * - Revision 0 of `transcripts` is a per-recording anchor. It owns the raw per-chunk STT results in
  *   `transcript_chunks` (`segments` holds the ai-core `ChunkTranscript`; `status = done`).
+ *   The AssemblyAI (or other STT) job id is written to the revision-0 anchor's
+ *   `transcripts.provider_job_id` (column already exists; migration 20261021140000) when a
+ *   chunk result is first stored. The provider-copy delete job reads that column.
  * - Revisions >= 1 are merged transcripts: `full_text`, `merge_state` (ai-core merge state) and their
  *   `transcript_segments` rows (same `revision`).
  *
@@ -128,7 +131,27 @@ export function createOrgScopedTranscriptRepository(
           'done'::"TranscriptChunkStatus", ${chunk.provider}, ${chunk.segments.map((s) => s.text).join(' ')},
           ${JSON.stringify(chunk)}::jsonb, 1, now())
         ON CONFLICT ("transcript_id", "chunk_index") DO NOTHING`;
+      // Persist the STT job id on the existing transcripts.provider_job_id column (no new migration).
+      // Not written on merged revisions (unique (org, provider, provider_job_id) would conflict with the anchor).
+      if (inserted === 1 && chunk.providerJobId) {
+        await tx.transcript.updateMany({
+          where: { organizationId, id: transcriptId, revision: ANCHOR_REVISION },
+          data: { providerJobId: chunk.providerJobId },
+        });
+      }
       return inserted === 1;
+    },
+    async getProviderJobId(meetingId, recordingId) {
+      const row = await tx.transcript.findFirst({
+        where: {
+          organizationId,
+          meetingId,
+          recordingId,
+          revision: ANCHOR_REVISION,
+        },
+        select: { providerJobId: true },
+      });
+      return row?.providerJobId ?? undefined;
     },
     async getChunkResult(meetingId, recordingId, chunkIndex) {
       return toChunks(await chunkRows(meetingId, recordingId, chunkIndex))[0];

@@ -5,6 +5,7 @@ import { BrandBackground } from '@/components/brand/brand-background';
 import { SpotlightCard } from '@/components/ui/spotlight-card';
 import { MeetOpsLogo } from './logo';
 import { authLinkClass } from './styles';
+import { isSafeLegalUrl } from '@/lib/legal-url';
 
 /**
  * Shared shell for every signed-out page (login, signup, forgot/reset password, verify and
@@ -171,8 +172,8 @@ function MockSummary() {
 /**
  * Legal line pinned under the form (Supabase/Resend pattern, docs/references.md §5).
  * The Terms/Privacy pages are owned outside this repo, so their URLs come from build env
- * (VITE_TERMS_URL / VITE_PRIVACY_URL). Until both are set, nothing renders: we never link
- * to a page that doesn't exist.
+ * (VITE_TERMS_URL / VITE_PRIVACY_URL). Each link renders independently when its own URL
+ * is set (https or a same-origin path). Nothing renders when neither is set.
  */
 export function LegalLine({
   termsUrl = import.meta.env.VITE_TERMS_URL,
@@ -181,23 +182,29 @@ export function LegalLine({
   termsUrl?: string | undefined;
   privacyUrl?: string | undefined;
 }) {
-  const safe = (u: string | undefined) => (u && /^(https:\/\/|\/)/.test(u) ? u : undefined);
-  const terms = safe(termsUrl);
-  const privacy = safe(privacyUrl);
-  if (!terms || !privacy) return null;
+  const terms = isSafeLegalUrl(termsUrl) ? termsUrl : undefined;
+  const privacy = isSafeLegalUrl(privacyUrl) ? privacyUrl : undefined;
+  if (!terms && !privacy) return null;
+
+  const link = (href: string, label: string) => (
+    <a href={href} className={authLinkClass} target="_blank" rel="noopener noreferrer">
+      {label}
+      <span className="sr-only"> (opens in a new tab)</span>
+    </a>
+  );
+
   return (
     <p className="pb-2 text-caption text-muted-foreground">
-      By continuing, you agree to the{' '}
-      <a href={terms} className={authLinkClass} target="_blank" rel="noopener noreferrer">
-        Terms of Service
-        <span className="sr-only"> (opens in a new tab)</span>
-      </a>{' '}
-      and{' '}
-      <a href={privacy} className={authLinkClass} target="_blank" rel="noopener noreferrer">
-        Privacy Policy
-        <span className="sr-only"> (opens in a new tab)</span>
-      </a>
-      .
+      {terms && privacy ? (
+        <>
+          By continuing, you agree to the {link(terms, 'Terms of Service')} and{' '}
+          {link(privacy, 'Privacy Policy')}.
+        </>
+      ) : terms ? (
+        <>By continuing, you agree to the {link(terms, 'Terms of Service')}.</>
+      ) : privacy ? (
+        <>Read our {link(privacy, 'Privacy Policy')}.</>
+      ) : null}
     </p>
   );
 }

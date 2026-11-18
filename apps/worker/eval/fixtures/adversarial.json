@@ -86,7 +86,8 @@
     "thresholds": {
       "precision": 1,
       "recall": 1,
-      "decisionRecall": 1
+      "decisionRecall": 1,
+      "decisionPrecision": 1
     }
   }
 }

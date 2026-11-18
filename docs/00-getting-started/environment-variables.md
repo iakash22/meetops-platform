@@ -136,6 +136,17 @@ These keys are owned and parsed by `@meetops/ai-core` (`loadAIEnv` in `packages/
 - `AI_ALLOW_PAID_FALLBACK`: false
 - `AI_STORES` (worker): `durable` (default; Postgres `ai_usage_counters`, `ai_idempotency` and `ai_org_config`, forced RLS). `memory` is for unit tests only and is refused unless `NODE_ENV=test` (staging, production and an unset `NODE_ENV` all refuse it); store errors fail the job, never fall back to memory.
 - `AI_REQUIRE_PROVIDER_APPROVAL`: true
+- `AI_PROVIDER_DATA_TIER_<PROVIDER>`: unset. In production (`NODE_ENV=production`), every enabled
+  LLM or STT provider whose configured `cost.tier` is `free` or unknown must have an explicit
+  data-use declaration of `paid` or `no-training`. This does not change default billing tiers
+  (those stay an owner decision). Hyphens in the provider name become underscores. Examples:
+  `AI_PROVIDER_DATA_TIER_GEMINI=paid`, `AI_PROVIDER_DATA_TIER_ASSEMBLYAI=no-training`. See
+  `docs/research/ai-provider-due-diligence.md`. The worker fails closed at registry startup if a
+  required declaration is missing or invalid.
+- `AI_PROVIDER_TRANSCRIPT_DELETE_ENABLED`: true. After a transcript is durably stored, enqueue a
+  best-effort AssemblyAI `DELETE /v2/transcript/:id` job (ADR-019). 404 is treated as success.
+  Set to `false`/`0`/`no`/`off` to skip enqueueing. Logs and metrics use ids and status codes
+  only, never transcript content.
 
 ### Integrations
 
@@ -145,7 +156,7 @@ GitHub, Jira and other integrations are configured as per-organization integrati
 
 - `RLS_TEST_APP_URL` / `RLS_TEST_OWNER_URL`: enable the PR #25 live RLS tests (connect as `meetops_app` / the owner). Skipped when unset.
 - `AI_SMOKE_AUDIO_FILE`: optional audio file for the AI provider smoke test (PR #21).
-- CI audit gate: `scripts/audit-gate.mjs` (fail-closed, high/critical block). `AUDIT_GATE_NOW` overrides the date for local tests only (ignored in CI). Exceptions are defined in the script and documented in `docs/12-security/risk-exceptions.md`. The only active gate rows are RE-04 (image-size@1.2.1, two GHSAs, expires 2026-11-24). RE-01 (braces, issue #54) and RE-03 (node-forge) are closed; see "Closed entries" in the register.
+- CI audit gate: `scripts/audit-gate.mjs` (fail-closed, high/critical block). `AUDIT_GATE_NOW` overrides the date for local tests only (ignored in CI). **No audit-gate exceptions are active**: `EXCEPTIONS` in the script is empty, so every high or critical advisory blocks. A new exception needs a row in the script and a matching entry in `docs/12-security/risk-exceptions.md` (same ID, GHSA, module, exact versions and expiry). RE-01 (braces, issue #54), RE-03 (node-forge) and RE-04 (image-size, #476) are closed; see "Closed entries" in the register.
 - `STORAGE_APP_ACCESS_KEY_ID` / `STORAGE_APP_SECRET_ACCESS_KEY`: scoped MinIO user that minio-init creates for api/worker in the compose stack (read/write on `STORAGE_BUCKET` only). The root `STORAGE_ACCESS_KEY_ID`/`STORAGE_SECRET_ACCESS_KEY` is used only by minio/minio-init.
 
 ## Compose secrets (local dev)

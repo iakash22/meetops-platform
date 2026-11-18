@@ -1,7 +1,12 @@
 import { pathToFileURL } from 'node:url';
 import { logger } from './logger.js';
 import { startMediaWorker } from './media/index.js';
-import { registerSummaryWorker, registerTranscriptionWorker } from './ai/index.js';
+import {
+  createRepositoryProviderJobIdLookup,
+  registerProviderTranscriptDeleteWorker,
+  registerSummaryWorker,
+  registerTranscriptionWorker,
+} from './ai/index.js';
 import { createTranscriptionHostDeps } from './ai/bootstrap.js';
 import { loadTranscriptionWorkerEnv } from './ai/env.js';
 import { createAppRedis } from './redis.js';
@@ -43,6 +48,14 @@ export async function main() {
   const env = loadTranscriptionWorkerEnv();
   const hostDeps = env.enabled ? await createTranscriptionHostDeps() : undefined;
   const transcription = registerTranscriptionWorker({ env, resolveDeps: () => hostDeps });
+  // Same process as the transcription worker: enqueue after a durable store, then consume
+  // the delete queue. Off when transcription is disabled so leftover jobs wait for it.
+  const providerTranscriptDelete = env.enabled
+    ? registerProviderTranscriptDeleteWorker({
+        redisUrl: env.redisUrl,
+        resolveProviderJobId: createRepositoryProviderJobIdLookup(hostDeps!.repository),
+      })
+    : { registered: false as const, reason: 'disabled' as const };
   // ADR-013 outbox relay + delivery. Relay claims run as meetops_relay (definer functions only); no push token
   // cipher is wired yet, so push channels are skipped until one is injected.
   const notifEnv = loadNotificationsWorkerEnv();
@@ -126,6 +139,7 @@ export async function main() {
     { name: 'metrics', close: metrics?.close },
     { name: 'media', close },
     { name: 'transcription', job: transcription },
+    { name: 'provider-transcript-delete', job: providerTranscriptDelete },
     { name: 'notifications', job: notifications },
     { name: 'summary', job: summary },
     { name: 'ip-retention', close: retention?.close },

@@ -10,6 +10,10 @@ import {
   type TranscriptionJobResult,
 } from './consumer.js';
 import { createQueueSummaryTrigger, SUMMARY_QUEUE } from './summary-trigger.js';
+import {
+  createProviderTranscriptDeleteQueue,
+  createQueueProviderTranscriptDeleteTrigger,
+} from './provider-transcript-delete.js';
 import { loadTranscriptionWorkerEnv, type TranscriptionWorkerEnv } from './env.js';
 import {
   DEFAULT_TRANSCRIPTION_RETRY,
@@ -83,9 +87,21 @@ export function startTranscriptionWorker(
     ? undefined
     : new Queue(SUMMARY_QUEUE, { connection: conn() });
   const summaryTrigger = deps.summaryTrigger ?? createQueueSummaryTrigger(summaryQueue!);
+  const deleteQueue = deps.onProviderTranscriptStored
+    ? undefined
+    : createProviderTranscriptDeleteQueue(cfg.redisUrl);
+  const onProviderTranscriptStored =
+    deps.onProviderTranscriptStored ??
+    createQueueProviderTranscriptDeleteTrigger(deleteQueue!, { logger });
   const worker = new Worker<TranscriptionJobPayload, TranscriptionJobResult>(
     QUEUE_NAMES.transcription,
-    createTranscriptionProcessor({ ...deps, realtime, logger, summaryTrigger }),
+    createTranscriptionProcessor({
+      ...deps,
+      realtime,
+      logger,
+      summaryTrigger,
+      onProviderTranscriptStored,
+    }),
     {
       connection: conn(),
       concurrency: cfg.concurrency,
@@ -131,6 +147,7 @@ export function startTranscriptionWorker(
     await ownDlq?.close();
     indexRedis?.disconnect();
     await summaryQueue?.close();
+    await deleteQueue?.close();
     emitterRedis?.disconnect();
   };
   return { worker, close };

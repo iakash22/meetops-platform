@@ -1,25 +1,33 @@
-/** Scoring for the worker eval: action-item precision/recall (text + owner + due), decision recall. */
+/** Scoring for the worker eval: action-item precision/recall (text + owner + due), decision precision/recall. */
 
 export type GoldenItem = { title: string; owner: string | null; due: string | null };
 export type PredictedItem = { title: string; owner: string | null; due: string | null };
 
 const STOP = new Set(['the', 'a', 'an', 'to', 'of', 'for', 'and', 'on', 'by', 'with', 'our', 'up']);
 
+/**
+ * Unicode-aware word tokens after NFC + lowercase.
+ * `\\p{M}` is included so Devanagari matras stay attached to the letter (`[\\p{L}\\p{N}]+` alone would split
+ * मीटिंग into म, ट, ग).
+ */
 export function tokens(s: string): Set<string> {
-  return new Set(
+  const parts =
     s
+      .normalize('NFC')
       .toLowerCase()
-      .replace(/[^a-z0-9 ]+/g, ' ')
-      .split(/\s+/)
-      .filter((t) => t && !STOP.has(t)),
-  );
+      .match(/[\p{L}\p{M}\p{N}]+/gu) ?? [];
+  return new Set(parts.filter((t) => t && !STOP.has(t)));
 }
 
-/** Token Jaccard similarity of two strings after normalisation (stop words dropped). */
+/**
+ * Token Jaccard similarity after normalisation (stop words dropped).
+ * Empty vs non-empty is 0. Two empty token sets are also 0 — they are not a match.
+ * (A fixture that expects no items is scored at the list level, not here.)
+ */
 export function similarity(a: string, b: string): number {
   const x = tokens(a);
   const y = tokens(b);
-  if (x.size === 0 && y.size === 0) return 1;
+  if (x.size === 0 || y.size === 0) return 0;
   let inter = 0;
   for (const t of x) if (y.has(t)) inter++;
   return inter / (x.size + y.size - inter);
@@ -28,7 +36,7 @@ export function similarity(a: string, b: string): number {
 export const TEXT_MATCH_THRESHOLD = 0.6;
 
 const normField = (v: string | null | undefined) =>
-  (v ?? '').trim().toLowerCase().replace(/\s+/g, ' ');
+  (v ?? '').normalize('NFC').trim().toLowerCase().replace(/\s+/g, ' ');
 
 export type ItemScore = {
   predicted: number;
@@ -47,6 +55,7 @@ export type ItemScore = {
   missedGolden: string[];
 };
 
+/** 0/0 is 1 only for an empty-vs-empty list (fixture expects no items and none were predicted). */
 const ratio = (n: number, d: number) => (d === 0 ? 1 : n / d);
 
 export function scoreItems(pred: PredictedItem[], gold: GoldenItem[]): ItemScore {
@@ -90,11 +99,18 @@ export function scoreItems(pred: PredictedItem[], gold: GoldenItem[]): ItemScore
   };
 }
 
-/** Share of golden decisions with a matching predicted decision (one-to-one). */
-export function decisionRecall(
-  pred: string[],
-  gold: string[],
-): { recall: number; missed: string[] } {
+export type DecisionScore = {
+  predicted: number;
+  golden: number;
+  matched: number;
+  precision: number;
+  recall: number;
+  missed: string[];
+  extra: string[];
+};
+
+/** One-to-one decision matches. Precision drops when the model hallucinates extra decisions. */
+export function scoreDecisions(pred: string[], gold: string[]): DecisionScore {
   const used = new Set<number>();
   const missed: string[] = [];
   for (const g of gold) {
@@ -110,5 +126,23 @@ export function decisionRecall(
     if (best >= 0) used.add(best);
     else missed.push(g);
   }
-  return { recall: ratio(gold.length - missed.length, gold.length), missed };
+  const matched = used.size;
+  return {
+    predicted: pred.length,
+    golden: gold.length,
+    matched,
+    precision: ratio(matched, pred.length),
+    recall: ratio(matched, gold.length),
+    missed,
+    extra: pred.filter((_, i) => !used.has(i)),
+  };
+}
+
+/** @deprecated Use scoreDecisions (also reports precision). Kept for call-site clarity in older tests. */
+export function decisionRecall(
+  pred: string[],
+  gold: string[],
+): { recall: number; missed: string[] } {
+  const s = scoreDecisions(pred, gold);
+  return { recall: s.recall, missed: s.missed };
 }

@@ -12,10 +12,15 @@ See [`.env.example`](./.env.example).
 | `WXT_WEB_ORIGIN`          | `https://app.meetops.ai`                                        | Pairing page, and the only `externally_connectable` origin         |
 | `WXT_API_ORIGIN`          | `https://api.meetops.ai`                                        | The only origin the bearer token is sent to (never presigned PUTs) |
 | `WXT_FEATURE_HTTP_UPLOAD` | on in development builds; off in production builds and in tests | `true`/`1` force the HTTP client; `false`/`0` force the stub       |
+| `WXT_PRIVACY_URL`         | unset (link hidden)                                             | Privacy Policy link in the popup and the options page              |
 
-`wxt.config.ts` validates both values when the build starts and fails on anything invalid. A value must be a bare
+`wxt.config.ts` validates `WXT_WEB_ORIGIN` and `WXT_API_ORIGIN` when the build starts and fails on anything invalid. A value must be a bare
 `https://host[:port]` origin with no path, trailing slash, query or credentials. `localhost` and other loopback hosts,
 including over `http`, are accepted only in dev mode.
+
+`WXT_PRIVACY_URL` is an absolute `https://` URL, or a path that is resolved against `WXT_WEB_ORIGIN`. The popup and the
+options page show the link only when it is set; the link opens in a new tab and stays keyboard-accessible. Production
+builds (`wxt build`) warn, but do not fail, if it is missing.
 
 ```sh
 WXT_WEB_ORIGIN=https://app.staging.example WXT_API_ORIGIN=https://api.staging.example pnpm build

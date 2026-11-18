@@ -15,7 +15,7 @@ async function stubSignedOutApis(
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
-        body: JSON.stringify({ csrfToken: 'e2e-csrf-token' }),
+        body: JSON.stringify({ csrfToken: 'e2e-csrf-token-xx' }),
       });
       return;
     }
@@ -23,7 +23,13 @@ async function stubSignedOutApis(
       await route.fulfill({
         status: 401,
         contentType: 'application/json',
-        body: JSON.stringify({ error: { code: 'UNAUTHENTICATED', message: 'Signed out' } }),
+        body: JSON.stringify({
+          error: {
+            code: 'UNAUTHENTICATED',
+            message: 'Authentication required',
+            requestId: 'e2e-request-id',
+          },
+        }),
       });
       return;
     }
@@ -42,7 +48,9 @@ async function stubSignedOutApis(
     await route.fulfill({
       status: 404,
       contentType: 'application/json',
-      body: JSON.stringify({ error: { code: 'NOT_FOUND', message: 'not stubbed' } }),
+      body: JSON.stringify({
+        error: { code: 'NOT_FOUND', message: 'not stubbed', requestId: 'e2e-request-id' },
+      }),
     });
   });
 }
@@ -66,7 +74,7 @@ function fulfillProblem(
     status,
     contentType: 'application/json',
     headers: extraHeaders,
-    body: JSON.stringify({ error: { code, message } }),
+    body: JSON.stringify({ error: { code, message, requestId: 'e2e-request-id' } }),
   });
 }
 
@@ -161,7 +169,7 @@ test.describe('/verify-email', () => {
     page,
   }) => {
     await stubSignedOutApis(page, (route) =>
-      fulfillProblem(route, 400, 'BAD_REQUEST', 'Verification link is invalid'),
+      fulfillProblem(route, 400, 'BAD_REQUEST', 'Verification link is invalid or has expired'),
     );
 
     await page.goto(`/verify-email?token=${TOKEN}`);
@@ -182,7 +190,13 @@ test.describe('/verify-email', () => {
     page,
   }) => {
     await stubSignedOutApis(page, (route) =>
-      fulfillProblem(route, 503, 'PROVIDER_UNAVAILABLE', 'down', { 'Retry-After': '5' }),
+      fulfillProblem(
+        route,
+        503,
+        'PROVIDER_UNAVAILABLE',
+        'Service temporarily unavailable, try again later',
+        { 'Retry-After': '5' },
+      ),
     );
 
     await page.goto(`/verify-email?token=${TOKEN}`);

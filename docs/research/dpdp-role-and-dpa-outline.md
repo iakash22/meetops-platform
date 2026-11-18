@@ -9,13 +9,13 @@
 
 ## 1. Instruments and dates
 
-| Instrument                                                                 | What it does                                                                                                                                                                                                                                                                       | Source |
-| -------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------ |
-| DPDP Act, 2023 (No. 22 of 2023), assent 11 Aug 2023                        | The Act. Most operative sections wait for G.S.R. 843(E).                                                                                                                                                                                                                           | [D1]   |
-| **G.S.R. 843(E)**, MeitY notification dated 13 Nov 2025                    | **Commencement of the Act**, not the Rules: s. 1(2), s. 2, ss. 18–26, 35, 38–43, 44(1), (3) on publication; s. 6(9) and s. 27(1)(d) one year later; ss. 3–5, 6(1)–(8) and (10), 7–17, 27 (except 27(1)(d)), 28–34, 36, 37 and 44(2) "eighteen months from the date of publication" | [D2]   |
-| **G.S.R. 846(E)**, the DPDP Rules, 2025, dated 13 Nov 2025                 | The Rules. Rule 1: Rules 1, 2 and 17–21 on publication; Rule 4 one year after; Rules 3, 5–16, 22 and 23 eighteen months after. Gazette Extraordinary No. 760, "Thursday, November 13, 2025"; e-Gazette ID CG-DL-E-14112025-267650                                                  | [D3]   |
-| S.O. 5458(E), DPDP (Removal of Difficulties) Order, 2026, dated 5 Oct 2026 | Wording fixes only: in s. 9(1) "child or a person with disability" becomes "child or of a person with disability"; in s. 10(2)(c)(ii) "audit" becomes "data audit". No change to dates                                                                                             | [D4]   |
-| CERT-In Directions No. 20(3)/2022-CERT-In, 28 Apr 2022 (IT Act s. 70B(6))  | A separate law: cyber incidents reported to CERT-In within 6 hours; ICT logs kept 180 days in India                                                                                                                                                                                | [D5]   |
+| Instrument                                                                 | What it does                                                                                                                                                                                                                                                                                                                                            | Source |
+| -------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------ |
+| DPDP Act, 2023 (No. 22 of 2023), assent 11 Aug 2023                        | The Act. Most operative sections wait for G.S.R. 843(E).                                                                                                                                                                                                                                                                                                | [D1]   |
+| **G.S.R. 843(E)**, MeitY notification dated 13 Nov 2025                    | **Commencement of the Act**, not the Rules: s. 1(2), s. 2, ss. 18–26, 35, 38–43, 44(1), (3) on publication; s. 6(9) and s. 27(1)(d) one year later; ss. 3–5, 6(1)–(8) and (10), 7–17, 27 (except 27(1)(d)), 28–34, 36, 37 and 44(2) "eighteen months from the date of publication". Gazette Extraordinary No. 757; e-Gazette ID CG-DL-E-14112025-267647 | [D2]   |
+| **G.S.R. 846(E)**, the DPDP Rules, 2025, dated 13 Nov 2025                 | The Rules. Rule 1: Rules 1, 2 and 17–21 on publication; Rule 4 one year after; Rules 3, 5–16, 22 and 23 eighteen months after. Gazette Extraordinary No. 760, "Thursday, November 13, 2025"; e-Gazette ID CG-DL-E-14112025-267650                                                                                                                       | [D3]   |
+| S.O. 5458(E), DPDP (Removal of Difficulties) Order, 2026, dated 5 Oct 2026 | Wording fixes only: in s. 9(1) "child or a person with disability" becomes "child or of a person with disability"; in s. 10(2)(c)(ii) "audit" becomes "data audit". No change to dates                                                                                                                                                                  | [D4]   |
+| CERT-In Directions No. 20(3)/2022-CERT-In, 28 Apr 2022 (IT Act s. 70B(6))  | A separate law: cyber incidents reported to CERT-In within 6 hours; ICT logs kept 180 days in India                                                                                                                                                                                                                                                     | [D5]   |
 
 **Correction to the brief.** The task named the Rules "G.S.R. 843(E)". In the Gazette, **843(E) is the Act's
 commencement notification and the Rules are G.S.R. 846(E)** [D2, D3]. Both are dated 13 Nov 2025.
@@ -236,8 +236,12 @@ Appended to [legal-questions-brief.md](legal-questions-brief.md) §5 as items 14
   §2).
 - No s. 16 notification, Rule 15 order, SDF notification or s. 17(3) start-up exemption: "none found" from secondary
   trackers only [D6, D7].
-- Breach-notice terms in the AI vendors' DPAs; Resend's and Razorpay's roles and locations.
-- Whether CERT-In has amended the 2022 Directions since; we read the original.
+- Vendor breach-notice terms, roles and locations (AssemblyAI, Google, Resend, Razorpay) are now covered in
+  [verification-round-3.md](verification-round-3.md) §4. Still not verified: any India-specific addendum or negotiated
+  notice period on enterprise contracts (only public terms were read), and Razorpay's contractual role (it publishes no
+  DPA).
+- CERT-In: no amendment to the 2022 Directions was found on cert-in.org.in (see
+  [verification-round-3.md](verification-round-3.md) §3). A full Gazette search was not run.
 
 ## Sources
 

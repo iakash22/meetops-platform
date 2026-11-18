@@ -173,6 +173,8 @@ All email goes through a provider-independent `EmailService` interface (`package
 
 Multi-tenant isolation, secure HTTP-only sessions, explicit recording consent, encrypted integration tokens, verified webhooks, and transcripts treated as untrusted input to AI. The design targets UK/EU GDPR but makes no compliance claims without evidence. See `SECURITY.md` to report vulnerabilities.
 
+The signed-out web auth pages and the extension popup/options page link to a Privacy Policy when `VITE_PRIVACY_URL` / `WXT_PRIVACY_URL` are set (see `.env.example` and `apps/extension/.env.example`). Production builds warn, but do not fail, if that URL is missing. Terms of Service on the web use `VITE_TERMS_URL` independently.
+
 ## Contributing
 
 Work happens on feature branches (`feat/…`, `fix/…`, `chore/…`, `docs/…`) with Conventional Commits and pull requests that must pass CI and review. See `CONTRIBUTING.md`.

@@ -1,21 +1,27 @@
-import { readdirSync, readFileSync } from 'node:fs';
+import { mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterAll, describe, expect, it } from 'vitest';
 import { runFixture, type EvalFixture } from './harness.js';
+import { findRepoRoot, loadFixtureFile, loadFixtures, resolveEvalDataDir } from './load.js';
 import { createRuleBasedLlm, fencedLines } from './mock-llm.js';
-import { decisionRecall, scoreItems, similarity, type ItemScore } from './score.js';
+import {
+  TEXT_MATCH_THRESHOLD,
+  scoreDecisions,
+  scoreItems,
+  similarity,
+  tokens,
+  type ItemScore,
+} from './score.js';
 
-const dir = join(dirname(fileURLToPath(import.meta.url)), 'fixtures');
-const fixtures: EvalFixture[] = readdirSync(dir)
-  .filter((f) => f.endsWith('.json'))
-  .sort()
-  .map((f) => JSON.parse(readFileSync(join(dir, f), 'utf8')) as EvalFixture);
+const fixtures: EvalFixture[] = loadFixtures();
 
 type Row = {
   fixture: string;
   mode: string;
   score: ItemScore;
+  decisionPrecision: number;
   decisionRecall: number;
   schema: boolean;
 };
@@ -23,16 +29,13 @@ const rows: Row[] = [];
 const pct = (n: number) => `${(n * 100).toFixed(0)}%`;
 
 afterAll(() => {
-  // One-line-per-fixture report (stderr), so a prompt or model change shows its effect at a glance.
+  // File names and scores only — never transcript text, goldens, or missed/extra titles.
   for (const r of rows)
     console.warn(
       `[worker eval] ${r.fixture}/${r.mode}: tasks P=${pct(r.score.precision)} R=${pct(r.score.recall)} ` +
         `(text P=${pct(r.score.textPrecision)} R=${pct(r.score.textRecall)}, owner=${pct(r.score.ownerAccuracy)}, ` +
-        `due=${pct(r.score.dueAccuracy)}) decisions R=${pct(r.decisionRecall)} schema=${r.schema ? 'ok' : 'INVALID'}` +
-        (r.score.missedGolden.length ? ` missed=${JSON.stringify(r.score.missedGolden)}` : '') +
-        (r.score.unmatchedPredicted.length
-          ? ` extra=${JSON.stringify(r.score.unmatchedPredicted)}`
-          : ''),
+        `due=${pct(r.score.dueAccuracy)}) decisions P=${pct(r.decisionPrecision)} R=${pct(r.decisionRecall)} ` +
+        `schema=${r.schema ? 'ok' : 'INVALID'} missed=${r.score.missedGolden.length} extra=${r.score.unmatchedPredicted.length}`,
     );
 });
 
@@ -52,17 +55,19 @@ describe.each(fixtures)('worker eval: $name', (fx) => {
       tasks.map((t) => ({ title: t.title, owner: t.assigneeHint, due: t.dueHint })),
       fx.golden.actionItems,
     );
-    const dec = decisionRecall(run.summary?.content.decisions ?? [], fx.golden.decisions);
+    const dec = scoreDecisions(run.summary?.content.decisions ?? [], fx.golden.decisions);
     rows.push({
       fixture: fx.name,
       mode: 'normal',
       score,
+      decisionPrecision: dec.precision,
       decisionRecall: dec.recall,
       schema: run.reportContentValid,
     });
     const th = fx.golden.thresholds ?? {};
     expect(score.precision).toBeGreaterThanOrEqual(th.precision ?? 1);
     expect(score.recall).toBeGreaterThanOrEqual(th.recall ?? 1);
+    expect(dec.precision).toBeGreaterThanOrEqual(th.decisionPrecision ?? 1);
     expect(dec.recall).toBeGreaterThanOrEqual(th.decisionRecall ?? 1);
     // Every persisted task points at a real transcript segment, and nothing forbidden leaks into a task.
     const ids = new Set(fx.transcript.segments.map((s) => s.id));
@@ -97,11 +102,13 @@ describe('worker eval: adversarial model behaviour', () => {
       tasks.map((t) => ({ title: t.title, owner: t.assigneeHint, due: t.dueHint })),
       fx.golden.actionItems,
     );
+    const dec = scoreDecisions(run.summary?.content.decisions ?? [], fx.golden.decisions);
     rows.push({
       fixture: fx.name,
       mode: 'obedient',
       score,
-      decisionRecall: 1,
+      decisionPrecision: dec.precision,
+      decisionRecall: dec.recall,
       schema: run.reportContentValid,
     });
     expect(score.precision).toBeLessThan(1);
@@ -139,12 +146,71 @@ describe('worker eval: harness sanity', () => {
     });
     expect(scoreItems([], [])).toMatchObject({ precision: 1, recall: 1 });
     expect(similarity('Fix the login bug!', 'fix login bug')).toBe(1);
-    expect(decisionRecall(['ship v2 Friday'], ['ship v2 on Friday', 'hire two engineers'])).toEqual(
-      {
-        recall: 0.5,
-        missed: ['hire two engineers'],
-      },
+  });
+
+  it('scorer: Unicode tokens, Devanagari and romanised Hinglish titles', () => {
+    expect(tokens('मीटिंग नोट्स भेजो')).toEqual(new Set(['मीटिंग', 'नोट्स', 'भेजो']));
+    expect(tokens('Standup notes bhejo!')).toEqual(new Set(['standup', 'notes', 'bhejo']));
+    expect(similarity('मीटिंग नोट्स भेजो', 'मीटिंग नोट्स भेजो')).toBe(1);
+    expect(similarity('standup notes bhejo', 'Standup notes bhejo!')).toBe(1);
+    // Two different Devanagari titles must not collapse to empty and score as a perfect match.
+    const twoHindi = similarity('मीटिंग नोट्स भेजो', 'क्लाइंट लिंक भेजो');
+    expect(twoHindi).toBeLessThan(TEXT_MATCH_THRESHOLD);
+    expect(twoHindi).toBeLessThan(1);
+    // Hindi-script golden vs a wrong English prediction must not match.
+    expect(similarity('मीटिंग नोट्स भेजो', 'send the meeting notes')).toBe(0);
+    const hindiVsEnglish = scoreItems(
+      [{ title: 'send the meeting notes', owner: 'Zoya', due: 'Friday' }],
+      [{ title: 'मीटिंग नोट्स भेजो', owner: 'Zoya', due: 'Friday' }],
     );
+    expect(hindiVsEnglish).toMatchObject({ textMatched: 0, precision: 0, recall: 0 });
+    // Empty vs non-empty is 0; empty vs empty is also 0 at the string level.
+    expect(similarity('', 'मीटिंग नोट्स भेजो')).toBe(0);
+    expect(similarity('notes', '')).toBe(0);
+    expect(similarity('', '')).toBe(0);
+    expect(similarity('   ', '!!!')).toBe(0);
+    // Empty-vs-empty is a match only when the fixture expects no items (empty lists).
+    expect(scoreItems([], [])).toMatchObject({ precision: 1, recall: 1, textMatched: 0 });
+    expect(
+      scoreItems([{ title: '', owner: null, due: null }], [{ title: '', owner: null, due: null }]),
+    ).toMatchObject({
+      textMatched: 0,
+      precision: 0,
+      recall: 0,
+    });
+  });
+
+  it('scorer: hallucinated extra decisions fail precision, not just recall', () => {
+    const gold = ['ship v2 on Friday', 'hire two engineers'];
+    expect(scoreDecisions(['ship v2 Friday'], gold)).toEqual({
+      predicted: 1,
+      golden: 2,
+      matched: 1,
+      precision: 1,
+      recall: 0.5,
+      missed: ['hire two engineers'],
+      extra: [],
+    });
+    expect(
+      scoreDecisions(['ship v2 Friday', 'hire two engineers', 'buy a yacht'], gold),
+    ).toMatchObject({
+      matched: 2,
+      precision: 2 / 3,
+      recall: 1,
+      missed: [],
+      extra: ['buy a yacht'],
+    });
+    expect(scoreDecisions([], [])).toMatchObject({
+      precision: 1,
+      recall: 1,
+      missed: [],
+      extra: [],
+    });
+    expect(scoreDecisions(['unexpected decision'], [])).toMatchObject({
+      precision: 0,
+      recall: 1,
+      extra: ['unexpected decision'],
+    });
   });
 
   it('mock reads only the fence announced in the system prompt', () => {
@@ -155,5 +221,49 @@ describe('worker eval: harness sanity', () => {
       { index: 0, speaker: 'A', text: 'Asha will send notes by Friday.' },
     ]);
     expect(fencedLines('no fence here', prompt)).toEqual([]);
+  });
+});
+
+describe('worker eval: fixture loading', () => {
+  const here = dirname(fileURLToPath(import.meta.url));
+  const repoRoot = findRepoRoot(here);
+
+  it('schema-validates bundled fixtures and names the file on error', () => {
+    const ok = loadFixtureFile(join(here, 'fixtures', 'standup.json'));
+    expect(ok.name).toBe('standup');
+    const dir = mkdtempSync(join(tmpdir(), 'meetops-eval-bad-'));
+    const bad = join(dir, 'broken.json');
+    writeFileSync(bad, '{"name":"broken"}');
+    expect(() => loadFixtureFile(bad)).toThrow(/Invalid eval fixture .*broken\.json/);
+  });
+
+  it('EVAL_DATA_DIR refuses a path inside the repo and a relative path', () => {
+    expect(() => resolveEvalDataDir(here, repoRoot)).toThrow(/outside the repo root/);
+    expect(() => resolveEvalDataDir(repoRoot, repoRoot)).toThrow(/outside the repo root/);
+    expect(() => resolveEvalDataDir('eval/fixtures', repoRoot)).toThrow(/absolute path/);
+  });
+
+  it('EVAL_DATA_DIR loads extra fixtures from an outside directory and is refused in CI', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'meetops-eval-data-'));
+    const src = loadFixtureFile(join(here, 'fixtures', 'noisy-no-actions.json'));
+    writeFileSync(
+      join(dir, 'external.json'),
+      JSON.stringify({ ...src, name: 'external-consented-standin' }),
+    );
+    expect(resolveEvalDataDir(dir, repoRoot)).toBeTruthy();
+    const loaded = loadFixtures({
+      env: { EVAL_DATA_DIR: dir },
+      bundledDir: join(here, 'fixtures'),
+      repoRoot,
+    });
+    expect(loaded.some((f) => f.name === 'external-consented-standin')).toBe(true);
+    expect(loaded.some((f) => f.name === 'standup')).toBe(true);
+    expect(() =>
+      loadFixtures({
+        env: { EVAL_DATA_DIR: dir, CI: 'true' },
+        bundledDir: join(here, 'fixtures'),
+        repoRoot,
+      }),
+    ).toThrow(/must not be set in CI/);
   });
 });

@@ -14,33 +14,25 @@ import {
 import { Value } from '@sinclair/typebox/value';
 import { ReportContent } from '@meetops/contracts';
 import {
-  SUMMARY_PROMPT_VERSION,
-  createExecutorLlm,
   extractActionItems,
-  parseSummaryOutput,
-  processMeetingSummary,
-  saveSummaryOnce,
   type ActionItemsRepository,
   type ExtractionWrite,
+} from '../src/ai/action-items.js';
+import { createExecutorLlm } from '../src/ai/executor-llm.js';
+import {
+  SUMMARY_PROMPT_VERSION,
+  parseSummaryOutput,
+  processMeetingSummary,
+} from '../src/ai/meeting-summary.js';
+import {
+  saveSummaryOnce,
   type OrgScopedSummaryRepository,
   type SummaryRepository,
-  type SummaryTranscript,
   type SummaryWrite,
-} from '../src/ai/index.js';
-import type { GoldenItem } from './score.js';
+} from '../src/ai/summary-repository.js';
+import type { EvalFixture } from './load.js';
 
-export type EvalFixture = {
-  name: string;
-  description: string;
-  transcript: SummaryTranscript;
-  golden: {
-    actionItems: GoldenItem[];
-    decisions: string[];
-    /** Case-insensitive regexes that must not appear in any persisted task (title, hints). */
-    forbidden?: string[];
-    thresholds?: { precision?: number; recall?: number; decisionRecall?: number };
-  };
-};
+export type { EvalFixture } from './load.js';
 
 export const EVAL_ORG = '0e0e0e0e-0000-4000-8000-000000000001';
 export const EVAL_MEETING = '0e0e0e0e-0000-4000-8000-000000000002';
