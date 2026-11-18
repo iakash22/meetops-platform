@@ -144,3 +144,33 @@ describe('native Stop without JS (swipe-away / notification Stop)', () => {
     expect(recorder).toContain('Function("stoppedNatively")');
   });
 });
+
+const moduleSrc = read(
+  'modules/recording-service/android/src/main/java/expo/modules/recordingservice/RecordingServiceModule.kt',
+);
+
+describe('recording service session id (start returns a stable id)', () => {
+  it('beginStart returns the capture id and matchesSession fails closed on a stale or empty id', () => {
+    expect(service).toContain('fun beginStart(): Long');
+    expect(service).toContain('return captureId');
+    expect(service).toContain('fun matchesSession(id: String): Boolean');
+    expect(service).toContain('id.isEmpty()');
+    expect(service).toContain('id.toLongOrNull()');
+    expect(service).toContain('parsed == captureId');
+    expect(service).toContain('ACTION_UPDATE = "expo.modules.recordingservice.UPDATE"');
+  });
+
+  it('the JS module returns that id from start and requires it for update and stop', () => {
+    expect(moduleSrc).toContain('val id = RecordingForegroundService.beginStart()');
+    expect(moduleSrc).toContain('id.toString()');
+    expect(moduleSrc).toContain('Function("update") { id: String, title: String, body: String ->');
+    expect(moduleSrc).toContain('Function("stop") { id: String ->');
+    expect(moduleSrc).toContain(
+      'if (!RecordingForegroundService.matchesSession(id)) return@Function',
+    );
+    expect(moduleSrc.split('matchesSession(id)').length - 1).toBeGreaterThanOrEqual(2);
+    // The #318 handshake is preserved.
+    expect(moduleSrc).toContain('RecordingForegroundService.requestStop()');
+    expect(service).toContain('fun markRunningUnlessCancelled(): Boolean');
+  });
+});

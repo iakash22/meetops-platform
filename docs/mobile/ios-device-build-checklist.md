@@ -64,6 +64,9 @@ eas build -p ios --profile preview
       Development/Ad Hoc.
 - [ ] Fresh install (delete the app first), so the consent and permission prompts appear.
 - [ ] Settings > MeetOps > Live Activities is **on**, for the Live Activity tests.
+- [ ] Activity id: pause/resume must update the **same** Live Activity (not spawn a second one), and
+      Stop must dismiss that activity only. A fast Start then Stop must not leave an orphan. See
+      `docs/mobile/live-activity.md` (activity id contract and Xcode steps).
 
 ## 5. Manual test script
 

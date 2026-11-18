@@ -14,8 +14,8 @@ release notes on 1 Nov 2026 (IST). Re-check them before the lockfile PR.
   2.0.3) reaches us only through `react-native@0.76.9` → `@react-native/community-cli-plugin@0.76.9` → `metro@0.81.5`.
   Metro dropped `image-size` in **0.83.8** (2026-08-19). The oldest Expo SDK that pins a Metro without it is **SDK 55**.
 - **RE-03 does not need this upgrade.** Root `pnpm.overrides` already forces `node-forge@<1.4.2` to `1.4.2` (b9521567,
-  28 Oct). GitHub lists no advisory affecting 1.4.2. `pnpm audit` on the baseline reports no `node-forge` finding, so the
-  RE-03 row in the gate is dormant. Remove it in a docs + gate PR (no lockfile change). See §7.
+  28 Oct). GitHub lists no advisory affecting 1.4.2. `pnpm audit` on the baseline reports no `node-forge` finding.
+  RE-03 is closed (gate row removed; see "Closed entries" in `docs/12-security/risk-exceptions.md`). See §7.
 - **New blocker, not fixed by any SDK we can take on Node 20:** GHSA-qr28-fpjm-wq7f (CVE-2026-118664, **high**,
   published 29 Oct 2026), `decode-uri-component <=0.5.0`, fixed in 0.5.1. It comes in through `apps/mobile` →
   `query-string@7.1.3`. `scripts/audit-gate.mjs` **fails on the baseline today** because of it. See §3.4.
@@ -176,7 +176,7 @@ commits so a reviewer can follow them:
 6. Native: `npx expo prebuild --clean`, then local or EAS **development** builds for Android and iOS (Xcode 26).
 7. Device checklist (§5), and fix anything it finds.
 8. Gate PR, same branch (already done in #476, through the override): delete the RE-04 rows from `scripts/audit-gate.mjs` and mark RE-04 closed in
-   `docs/12-security/risk-exceptions.md`. Do the same for RE-03 if it has not already gone in its own PR.
+   `docs/12-security/risk-exceptions.md`. RE-03 is already closed (gate row removed; see "Closed entries").
 9. Update `apps/mobile/README.md` (version notes, overrides list) and `docs/mobile/plan.md`.
 
 ## 5. Test and verification
@@ -212,14 +212,14 @@ Proposed order: finish whichever lockfile PR currently holds the slot, then Expo
 priority (no gate deadline remains). If the decode-uri-component fix is option (b), it is a
 lockfile change too, so either fold it into the Expo PR or run it straight after.
 
-## 7. RE-03: close without a lockfile change
+## 7. RE-03: closed without a lockfile change
 
 - GHSA-86w9-cpqp-85rv affects `node-forge <= 1.4.0`. `node-forge` 1.4.1 and 1.4.2 were published on 27 Oct 2026.
 - The lockfile on `e4aceac` resolves every path (extension `@devicefarmer/adbkit`, mobile `@expo/cli`, RN
   `selfsigned@2.4.1`) to `node-forge@1.4.2`, and `pnpm audit` reports no `node-forge` finding.
-- Action: a docs + gate PR removes the RE-03 row (`versions: ['1.4.0']`) and marks RE-03 closed in
-  `docs/12-security/risk-exceptions.md`. Keep the `node-forge@<1.4.2` override until the extension (wxt 0.21) and
-  mobile (SDK 55) upgrades have each been checked with `pnpm why node-forge`.
+- Done: the RE-03 gate row (`versions: ['1.4.0']`) is removed and RE-03 is in "Closed entries" in
+  `docs/12-security/risk-exceptions.md` (closed 2026-11-01). Keep the `node-forge@<1.4.2` override until the
+  extension (wxt 0.21) and mobile (SDK 55) upgrades have each been checked with `pnpm why node-forge`.
 
 ## 8. Rollback
 
