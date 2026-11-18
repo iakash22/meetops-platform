@@ -23,6 +23,7 @@
 | [ADR-019](ADR-019-media-retention.md)                      | Recording and media retention                                         | Accepted — approved by owner Maddy, 2026-11-01                                                                                   | 2026-11-01 |
 | [ADR-020](ADR-020-recording-consent.md)                    | Recording consent by region                                           | Accepted — approved by owner Maddy, 2026-11-01                                                                                   | 2026-11-01 |
 | [ADR-021](ADR-021-mfa-sso.md)                              | MFA and SSO                                                           | Accepted — approved by owner Maddy, 2026-11-01                                                                                   | 2026-11-01 |
+| [ADR-023](ADR-023-account-deletion-erasure.md)             | Account deletion and erasure                                          | Proposed — for Project Plan & Coordinator review                                                                                 | 2026-11-18 |
 
 New ADRs use the next number, `ADR-NNN-short-title.md`, with Date, Status, Context, Decision and Consequences sections. Add a row here. ADR-003 makes ARCH the owner of this folder. Status notes name a PR only while it is still open (checked with `gh pr list --state open` on 2026-10-27).
 
