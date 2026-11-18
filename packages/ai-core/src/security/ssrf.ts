@@ -14,15 +14,30 @@ export type EndpointPolicy = {
 
 const blocked = new BlockList();
 for (const [net, bits] of [
-  ['0.0.0.0', 8], ['10.0.0.0', 8], ['100.64.0.0', 10], ['127.0.0.0', 8], ['169.254.0.0', 16], ['172.16.0.0', 12],
-  ['192.0.0.0', 24], ['192.168.0.0', 16], ['198.18.0.0', 15], ['224.0.0.0', 4], ['240.0.0.0', 4],
-  ['192.0.2.0', 24], ['198.51.100.0', 24], ['203.0.113.0', 24], // TEST-NET-1/2/3 (documentation)
+  ['0.0.0.0', 8],
+  ['10.0.0.0', 8],
+  ['100.64.0.0', 10],
+  ['127.0.0.0', 8],
+  ['169.254.0.0', 16],
+  ['172.16.0.0', 12],
+  ['192.0.0.0', 24],
+  ['192.168.0.0', 16],
+  ['198.18.0.0', 15],
+  ['224.0.0.0', 4],
+  ['240.0.0.0', 4],
+  ['192.0.2.0', 24],
+  ['198.51.100.0', 24],
+  ['203.0.113.0', 24], // TEST-NET-1/2/3 (documentation)
   ['192.88.99.0', 24], // 6to4 relay anycast (deprecated)
-] as const) blocked.addSubnet(net, bits, 'ipv4');
+] as const)
+  blocked.addSubnet(net, bits, 'ipv4');
 for (const [net, bits] of [
-  ['::1', 128], ['::', 128],
+  ['::1', 128],
+  ['::', 128],
   ['::', 96], // IPv4-compatible IPv6 (deprecated; embeds IPv4, e.g. ::7f00:1); covers :: and ::1 too
-  ['fc00::', 7], ['fe80::', 10], ['ff00::', 8],
+  ['fc00::', 7],
+  ['fe80::', 10],
+  ['ff00::', 8],
   ['64:ff9b::', 96], // NAT64
   ['64:ff9b:1::', 48], // local-use NAT64
   ['2002::', 16], // 6to4 (embeds arbitrary IPv4)
@@ -30,7 +45,8 @@ for (const [net, bits] of [
   ['2001:db8::', 32], // documentation
   ['100::', 64], // discard-only
   ['fd00:ec2::254', 128], // AWS IMDS IPv6 (also inside fc00::/7)
-] as const) blocked.addSubnet(net, bits, 'ipv6');
+] as const)
+  blocked.addSubnet(net, bits, 'ipv6');
 
 const mapped = new BlockList();
 mapped.addSubnet('::ffff:0:0', 96, 'ipv6');
@@ -60,7 +76,11 @@ export type SafeEndpoint = {
  * Rejects if ANY resolved address is private/reserved. Returns the IP to pin (DNS-rebinding defence).
  * Exception: exact origins in `allowedLocalOrigins` (enabled self-hosted providers) may use http + private IPs.
  */
-export async function assertSafeEndpoint(rawUrl: string, policy: EndpointPolicy, lookup: DnsLookup = defaultLookup): Promise<SafeEndpoint> {
+export async function assertSafeEndpoint(
+  rawUrl: string,
+  policy: EndpointPolicy,
+  lookup: DnsLookup = defaultLookup,
+): Promise<SafeEndpoint> {
   let url: URL;
   try {
     url = new URL(rawUrl);
@@ -70,7 +90,8 @@ export async function assertSafeEndpoint(rawUrl: string, policy: EndpointPolicy,
   const block = (m: string) => new AIError('SSRF_BLOCKED', m, { retryable: false });
   if (url.username || url.password) throw block('Credentials in URL are not allowed');
   if (policy.allowedLocalOrigins.includes(url.origin)) {
-    if (url.protocol !== 'http:' && url.protocol !== 'https:') throw block(`Scheme ${url.protocol} not allowed`);
+    if (url.protocol !== 'http:' && url.protocol !== 'https:')
+      throw block(`Scheme ${url.protocol} not allowed`);
     return { url, local: true };
   }
   if (url.protocol !== 'https:') throw block(`Scheme ${url.protocol} not allowed (HTTPS only)`);
@@ -81,9 +102,25 @@ export async function assertSafeEndpoint(rawUrl: string, policy: EndpointPolicy,
   const fam = isIP(host);
   const addrs = fam ? [{ address: host, family: fam }] : await lookup(host);
   if (addrs.length === 0) throw block(`Host ${host} did not resolve`);
-  for (const a of addrs) if (isPrivateAddress(a.address)) throw block(`Host ${host} resolves to a private/reserved address`);
+  for (const a of addrs)
+    if (isPrivateAddress(a.address))
+      throw block(`Host ${host} resolves to a private/reserved address`);
   const first = addrs[0]!;
-  return { url, local: false, pinned: { address: first.address, family: first.family === 6 ? 6 : 4 } };
+  return {
+    url,
+    local: false,
+    pinned: { address: first.address, family: first.family === 6 ? 6 : 4 },
+  };
 }
 
-export const DEFAULT_ALLOWED_HOSTS = ['generativelanguage.googleapis.com', 'api.assemblyai.com', 'api.openai.com', 'api.deepgram.com'];
+/**
+ * Default outbound provider hosts. Deepgram is disabled and is not allowlisted
+ * (docs/research/ai-provider-due-diligence.md). `api.openai.com` stays because
+ * `OPENAI_ENABLED` can use the official API; `endpointPolicyFromEnv` also appends
+ * a custom `OPENAI_BASE_URL` host when OpenAI is enabled.
+ */
+export const DEFAULT_ALLOWED_HOSTS = [
+  'generativelanguage.googleapis.com',
+  'api.assemblyai.com',
+  'api.openai.com',
+];
