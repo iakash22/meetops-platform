@@ -92,6 +92,20 @@ describe('email delivery wiring', () => {
     );
   });
 
+  it('InlineAuthMailQueue.enqueueOrThrow logs and rethrows handler errors (#496)', async () => {
+    const q = new InlineAuthMailQueue();
+    const error = vi.fn();
+    q.log = { warn: vi.fn(), error };
+    q.handler = { handle: async () => Promise.reject(new Error('boom')) } as never;
+    await expect(
+      q.enqueueOrThrow({ kind: 'password_reset', tokenId: 't' } as never),
+    ).rejects.toThrow('boom');
+    expect(error).toHaveBeenCalledWith(
+      { kind: 'password_reset', err: { type: 'Error' } },
+      'auth mail delivery failed',
+    );
+  });
+
   it('development without email env falls back to the console sender (no network)', () => {
     const deps = defaultModuleDeps({}, { nodeEnv: 'development' });
     expect(typeof deps.mailTransport.send).toBe('function');

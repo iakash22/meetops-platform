@@ -677,6 +677,7 @@ export function defaultModuleDeps(
                       redisUrl: mailRedisUrl!,
                       prefix: mailQueueCfg.prefix,
                     }),
+                  clock,
                 )
               : undefined;
           const worker =

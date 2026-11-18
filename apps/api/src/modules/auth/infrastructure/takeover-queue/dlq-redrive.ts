@@ -1,12 +1,14 @@
 import {
+  TAKEOVER_FOLLOW_UP_KINDS,
   isTakeoverFollowUpKind,
   type TakeoverFollowUpJob,
   type TakeoverFollowUpKind,
 } from '../../domain/takeover-follow-up.js';
 import {
   TAKEOVER_JOB_ID_RE,
+  TAKEOVER_LEGACY_JOB_ID_RE,
+  matchingTakeoverFollowUpJobId,
   takeoverDeadLetterJobId,
-  takeoverFollowUpJobId,
   validJob,
 } from './bullmq-takeover-follow-up.js';
 
@@ -15,8 +17,9 @@ import {
  * Mirrors the worker's transcription DLQ re-drive (apps/worker/src/ai/dlq-redrive.ts), with two differences:
  * - the original job may be gone (completed jobs are removed at once, failed ones after 7 days). Every follow-up
  *   kind is idempotent, so a fresh job is enqueued under the same deterministic job id instead;
- * - an entry whose payload does not validate, or whose ids do not match `takeover_<kind>_<sha256>` for that
- *   payload, is reported and kept: it is never used to retry or enqueue anything.
+ * - an entry whose payload does not validate, or whose ids do not match `takeover_<kind>_<bucket>_<sha256>` for
+ *   that payload (any time bucket; or the #469 pre-bucket `takeover_<kind>_<sha256>` for the three original kinds),
+ *   is reported and kept: it is never used to retry or enqueue anything.
  * See docs/16-runbooks/takeover-follow-up-dlq-redrive.md.
  */
 
@@ -81,7 +84,13 @@ export type TakeoverRedriveOptions = {
 export type TakeoverRedriveReport = { aborted: boolean; items: TakeoverRedrivePlanItem[] };
 
 const USER_ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
-const DLQ_ID_RE = /^dlq_takeover_(realtime|extension_tokens|push_devices)_[0-9a-f]{40}$/;
+const DLQ_ID_RE = new RegExp(
+  `^dlq_takeover_(${TAKEOVER_FOLLOW_UP_KINDS.join('|')})_([0-9]{1,12})_([0-9a-f]{40})$`,
+);
+/** #469-format DLQ ids (no time bucket), still accepted for entries dead-lettered before the bucket change. */
+const LEGACY_DLQ_ID_RE = /^dlq_takeover_(realtime|extension_tokens|push_devices)_([0-9a-f]{40})$/;
+const isDlqId = (v: string) => DLQ_ID_RE.test(v) || LEGACY_DLQ_ID_RE.test(v);
+const isJobId = (v: string) => TAKEOVER_JOB_ID_RE.test(v) || TAKEOVER_LEGACY_JOB_ID_RE.test(v);
 const SAFE_CODE_RE = /^[\w.-]{1,64}$/;
 /** BullMQ states in which the original will still run (or is running): re-driving it again would double-run. */
 const PENDING_STATES = new Set([
@@ -118,8 +127,10 @@ export function parseTakeoverRedriveArgs(argv: string[]): {
     else if (a === '--all') set({ all: true });
     else if (a === '--job') {
       const v = argv[++i];
-      if (!v || !(TAKEOVER_JOB_ID_RE.test(v) || DLQ_ID_RE.test(v)))
-        throw new Error('--job needs a takeover_<kind>_<hash> or dlq_takeover_… id');
+      if (!v || !(isJobId(v) || isDlqId(v)))
+        throw new Error(
+          '--job needs a takeover_<kind>_<bucket>_<hash> (or #469 takeover_<kind>_<hash>) or dlq_takeover_… id',
+        );
       set({ jobId: v });
     } else if (a === '--user') {
       const v = argv[++i];
@@ -128,7 +139,7 @@ export function parseTakeoverRedriveArgs(argv: string[]): {
     } else if (a === '--kind') {
       const v = argv[++i];
       if (!isTakeoverFollowUpKind(v))
-        throw new Error('--kind needs realtime, extension_tokens or push_devices');
+        throw new Error(`--kind needs ${TAKEOVER_FOLLOW_UP_KINDS.join(', ')}`);
       set({ kind: v });
     } else throw new Error(`unknown argument: ${a}`);
   }
@@ -143,18 +154,18 @@ type Checked = {
   item: Omit<TakeoverRedrivePlanItem, 'action'>;
 };
 
-/** Validates one DLQ entry: payload shape, and that both ids are the deterministic ones for that payload. */
+/** Validates one DLQ entry: payload shape, and that both ids are a deterministic id for that payload (any bucket). */
 function check(entry: TakeoverDlqEntryLike): Checked {
   const raw = (entry.data && typeof entry.data === 'object' ? entry.data : {}) as Record<
     string,
     unknown
   >;
   const job = validJob(raw) ?? undefined;
-  const expectedId = job ? takeoverFollowUpJobId(job) : undefined;
+  const expectedId = job ? matchingTakeoverFollowUpJobId(job, raw.jobId) : undefined;
   const ok =
     !!job &&
-    raw.jobId === expectedId &&
-    entry.id === takeoverDeadLetterJobId(expectedId!) &&
+    !!expectedId &&
+    entry.id === takeoverDeadLetterJobId(expectedId) &&
     (raw.attemptsMade === undefined || Number.isInteger(raw.attemptsMade));
   const errorType =
     typeof raw.errorType === 'string' && SAFE_CODE_RE.test(raw.errorType)
@@ -165,7 +176,7 @@ function check(entry: TakeoverDlqEntryLike): Checked {
     job: ok ? job : undefined,
     jobId: ok ? expectedId : undefined,
     item: {
-      dlqJobId: entry.id && DLQ_ID_RE.test(entry.id) ? entry.id : undefined,
+      dlqJobId: entry.id && isDlqId(entry.id) ? entry.id : undefined,
       jobId: ok ? expectedId : undefined,
       userId: ok ? job.userId : undefined,
       kind: ok ? job.kind : undefined,

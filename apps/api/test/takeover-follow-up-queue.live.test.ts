@@ -6,6 +6,7 @@ import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { Queue } from 'bullmq';
 import { Redis } from 'ioredis';
+import { systemClock } from '../src/shared/ports.js';
 import type { TakeoverFollowUpJob } from '../src/modules/auth/domain/takeover-follow-up.js';
 import {
   BullMqTakeoverFollowUpQueue,
@@ -68,7 +69,7 @@ describe.skipIf(!live)('takeover follow-up queue (live Redis)', () => {
   it('a job enqueued while no worker runs survives a worker restart and runs once (deduped by job id)', async () => {
     const userId = randomUUID();
     const producer = createTakeoverFollowUpProducer({ redisUrl: redisUrl!, prefix: PREFIX });
-    const q = new BullMqTakeoverFollowUpQueue(producer);
+    const q = new BullMqTakeoverFollowUpQueue(producer, systemClock);
     await q.enqueue({ userId, kind: 'push_devices' });
     await q.enqueue({ userId, kind: 'push_devices' }); // duplicate: same deterministic id
     await producer.close!();

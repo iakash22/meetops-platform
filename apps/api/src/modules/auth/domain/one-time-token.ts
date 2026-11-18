@@ -23,4 +23,11 @@ export interface OneTimeTokenRepository {
   consume(purpose: OneTimeTokenPurpose, tokenHash: string, now: Date): Promise<OneTimeToken | null>;
   /** Marks every outstanding token of this purpose for the user as used. */
   invalidateForUser(userId: string, purpose: OneTimeTokenPurpose, now: Date): Promise<void>;
+  /** True when the user has a token of this purpose created at or after `since` that is still unused and unexpired. */
+  hasUnusedSince(
+    userId: string,
+    purpose: OneTimeTokenPurpose,
+    since: Date,
+    now: Date,
+  ): Promise<boolean>;
 }

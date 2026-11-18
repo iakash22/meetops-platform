@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import type { TakeoverFollowUpJob } from '../src/modules/auth/domain/takeover-follow-up.js';
 import {
+  TAKEOVER_FOLLOW_UP_JOB_ID_BUCKET_MS,
+  legacyTakeoverFollowUpJobId,
   takeoverDeadLetterJobId,
   takeoverFollowUpJobId,
 } from '../src/modules/auth/infrastructure/takeover-queue/bullmq-takeover-follow-up.js';
@@ -223,10 +225,85 @@ describe('redriveTakeoverFollowUpDlq', () => {
     });
     const line = formatTakeoverRedriveItem(r.items[0]!);
     expect(line).toMatch(
-      /^would_enqueue\s+dlq=dlq_takeover_realtime_[0-9a-f]{40} kind=realtime user=u1/,
+      /^would_enqueue\s+dlq=dlq_takeover_realtime_[0-9]+_[0-9a-f]{40} kind=realtime user=u1/,
     );
     expect(line).toContain('error=unknown');
     expect(line).not.toContain('hunter2');
+  });
+
+  it('still redrives an entry whose job id uses an earlier time bucket', async () => {
+    const f = fakeQueues();
+    const j = job('u1', 'realtime');
+    const oldId = takeoverFollowUpJobId(j, 0);
+    const nowId = takeoverFollowUpJobId(j, TAKEOVER_FOLLOW_UP_JOB_ID_BUCKET_MS);
+    expect(oldId).not.toBe(nowId);
+    const dlqId = takeoverDeadLetterJobId(oldId);
+    f.dlq.set(dlqId, {
+      id: dlqId,
+      data: { ...j, jobId: oldId, attemptsMade: 6, errorType: 'TypeError', failedAt: 'x' },
+      remove: async () => {
+        f.calls.push(`remove ${dlqId}`);
+        f.dlq.delete(dlqId);
+      },
+    });
+    const r = await redriveTakeoverFollowUpDlq(f.queues, {
+      filter: { all: true },
+      dryRun: false,
+      confirm: yes,
+    });
+    expect(r.items.map((i) => i.action)).toEqual(['enqueued']);
+    expect(r.items[0]).toMatchObject({ jobId: oldId, errorType: 'TypeError' });
+    expect(f.calls).toEqual([`enqueue ${oldId}`, `remove ${dlqId}`]);
+  });
+
+  it('accepts #469-format job ids without the time bucket (T&S low on #496)', async () => {
+    const f = fakeQueues();
+    const j = job('u1', 'push_devices');
+    const legacyId = legacyTakeoverFollowUpJobId(j)!;
+    expect(legacyId).toMatch(/^takeover_push_devices_[0-9a-f]{40}$/);
+    const dlqId = takeoverDeadLetterJobId(legacyId);
+    f.dlq.set(dlqId, {
+      id: dlqId,
+      data: { ...j, jobId: legacyId, attemptsMade: 6, errorType: 'TypeError', failedAt: 'x' },
+      remove: async () => {
+        f.calls.push(`remove ${dlqId}`);
+        f.dlq.delete(dlqId);
+      },
+    });
+    expect(parseTakeoverRedriveArgs(['--job', legacyId]).filter).toEqual({ jobId: legacyId });
+    expect(parseTakeoverRedriveArgs(['--job', dlqId]).filter).toEqual({ jobId: dlqId });
+    const r = await redriveTakeoverFollowUpDlq(f.queues, {
+      filter: { jobId: legacyId },
+      dryRun: false,
+      confirm: yes,
+    });
+    expect(r.items.map((i) => i.action)).toEqual(['enqueued']);
+    expect(r.items[0]).toMatchObject({ jobId: legacyId, dlqJobId: dlqId, kind: 'push_devices' });
+    expect(f.calls).toEqual([`enqueue ${legacyId}`, `remove ${dlqId}`]);
+  });
+
+  it('rejects a #469-format id that does not match its payload, and a legacy id for a newer kind', async () => {
+    const f = fakeQueues();
+    const other = legacyTakeoverFollowUpJobId(job('u2', 'realtime'))!;
+    const dlqId = takeoverDeadLetterJobId(other);
+    f.dlq.set(dlqId, {
+      id: dlqId,
+      data: { ...job('u1', 'realtime'), jobId: other, attemptsMade: 6 },
+      remove: async () => {
+        f.calls.push(`remove ${dlqId}`);
+      },
+    });
+    const r = await redriveTakeoverFollowUpDlq(f.queues, {
+      filter: { all: true },
+      dryRun: false,
+      confirm: yes,
+    });
+    expect(r.items.map((i) => i.action)).toEqual(['invalid_payload']);
+    expect(f.calls).toEqual([]);
+    expect(legacyTakeoverFollowUpJobId(job('u1', 'set_password_mail'))).toBeUndefined();
+    expect(() =>
+      parseTakeoverRedriveArgs(['--job', `takeover_set_password_mail_${'a'.repeat(40)}`]),
+    ).toThrow('--job needs');
   });
 });
 

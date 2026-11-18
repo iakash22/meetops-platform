@@ -108,4 +108,12 @@ export class PrismaOneTimeTokenRepository implements OneTimeTokenRepository {
       await this.db.passwordReset.updateMany({ where, data: { usedAt: now } });
     else await this.db.emailVerification.updateMany({ where, data: { usedAt: now } });
   }
+  async hasUnusedSince(userId: string, purpose: OneTimeTokenPurpose, since: Date, now: Date) {
+    const where = { userId, usedAt: null, expiresAt: { gt: now }, createdAt: { gte: since } };
+    const n =
+      purpose === 'password_reset'
+        ? await this.db.passwordReset.count({ where, take: 1 })
+        : await this.db.emailVerification.count({ where, take: 1 });
+    return n > 0;
+  }
 }

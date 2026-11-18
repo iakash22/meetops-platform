@@ -1,8 +1,12 @@
 import { createHash } from 'node:crypto';
 import { Queue, UnrecoverableError, Worker, type Job, type JobsOptions } from 'bullmq';
 import { AUTH_TAKEOVER_FOLLOW_UP_DLQ, AUTH_TAKEOVER_FOLLOW_UP_QUEUE } from '@meetops/contracts';
+import type { Clock } from '../../../../shared/ports.js';
 import {
+  TAKEOVER_FOLLOW_UP_KINDS,
   isTakeoverFollowUpKind,
+  safeErrorSummary,
+  safeErrorType,
   type TakeoverFollowUpJob,
   type TakeoverFollowUpQueue,
   type TakeoverFollowUpRunner,
@@ -10,7 +14,8 @@ import {
 
 /**
  * #463 review: durable retries of account-takeover follow-ups (realtime kick, extension/desktop token families, push
- * devices). Replaces the in-process timers, which a restart or deploy dropped. Same conventions as the auth-mail queue
+ * devices, and the set-password mail if enqueueing it failed). Replaces the in-process timers, which a restart or
+ * deploy dropped. Same conventions as the auth-mail queue
  * (ADR-013): ids-only payloads, deterministic job ids without ':', bounded attempts with exponential backoff, and the
  * worker's `<queue>-dlq` dead-letter pattern (see apps/worker transcription-retry) once the attempts are used up.
  */
@@ -20,7 +25,8 @@ export const TAKEOVER_FOLLOW_UP_DLQ = AUTH_TAKEOVER_FOLLOW_UP_DLQ;
 /**
  * First run 5 s after the request (like the old timer), then exponential backoff: 5, 10, 20, 40, 80 s (about 2.5 min
  * in total, the old 5 s / 30 s / 2 min chain). Completed jobs are removed at once, so the job id dedupes only while a
- * follow-up is pending; failed jobs stay 7 days for inspection, the DLQ entry is the durable record.
+ * follow-up is pending; failed jobs stay 7 days for inspection, the DLQ entry is the durable record. The job id includes
+ * a time bucket so a failed job does not block a later takeover of the same user and kind for those 7 days.
  */
 export const TAKEOVER_FOLLOW_UP_JOB_OPTIONS = {
   delay: 5_000,
@@ -30,20 +36,88 @@ export const TAKEOVER_FOLLOW_UP_JOB_OPTIONS = {
   removeOnFail: { age: 7 * 24 * 3600, count: 5000 },
 } as const satisfies JobsOptions;
 
-export const TAKEOVER_JOB_ID_RE =
-  /^takeover_(realtime|extension_tokens|push_devices)_[0-9a-f]{40}$/;
+const FOLLOW_UP_KIND_ALT = TAKEOVER_FOLLOW_UP_KINDS.join('|');
+export const TAKEOVER_JOB_ID_RE = new RegExp(
+  `^takeover_(${FOLLOW_UP_KIND_ALT})_([0-9]{1,12})_([0-9a-f]{40})$`,
+);
+/**
+ * #469-format ids (before the time bucket): `takeover_<kind>_<sha256(kind, userId)[:40]>`. Only the three original
+ * kinds existed then. Still accepted by DLQ re-drive so entries dead-lettered before the bucket change can be re-driven.
+ */
+export const TAKEOVER_LEGACY_JOB_ID_RE =
+  /^takeover_(realtime|extension_tokens|push_devices)_([0-9a-f]{40})$/;
 const USER_ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
 
-/** Deterministic job id per user and follow-up kind: `takeover_<kind>_<sha256(kind, userId)[:40]>` (no ':'). */
-export function takeoverFollowUpJobId(job: TakeoverFollowUpJob): string {
+/** 10 min: covers the ~2.5 min retry window, so one takeover still dedupes. */
+export const TAKEOVER_FOLLOW_UP_JOB_ID_BUCKET_MS = 10 * 60 * 1000;
+
+export function takeoverFollowUpJobIdBucket(nowMs: number): number {
+  return Math.floor(nowMs / TAKEOVER_FOLLOW_UP_JOB_ID_BUCKET_MS);
+}
+
+/** Deterministic id at an explicit bucket: `takeover_<kind>_<bucket>_<sha256(kind, userId, bucket)[:40]>`. */
+export function takeoverFollowUpJobIdAt(job: TakeoverFollowUpJob, bucket: number): string {
+  const h = createHash('sha256')
+    .update(`${job.kind}\u0000${job.userId}\u0000${bucket}`)
+    .digest('hex')
+    .slice(0, 40);
+  const id = `takeover_${job.kind}_${bucket}_${h}`;
+  if (!TAKEOVER_JOB_ID_RE.test(id))
+    throw new Error('takeover follow-up job id has an unsafe shape');
+  return id;
+}
+
+/** Deterministic job id per user, kind and time bucket (no ':'). */
+export function takeoverFollowUpJobId(job: TakeoverFollowUpJob, nowMs = Date.now()): string {
+  return takeoverFollowUpJobIdAt(job, takeoverFollowUpJobIdBucket(nowMs));
+}
+
+/** #469-format (pre-bucket) id for a payload, or undefined for kinds that did not exist then. */
+export function legacyTakeoverFollowUpJobId(job: TakeoverFollowUpJob): string | undefined {
   const h = createHash('sha256')
     .update(`${job.kind}\u0000${job.userId}`)
     .digest('hex')
     .slice(0, 40);
   const id = `takeover_${job.kind}_${h}`;
-  if (!TAKEOVER_JOB_ID_RE.test(id))
-    throw new Error('takeover follow-up job id has an unsafe shape');
-  return id;
+  return TAKEOVER_LEGACY_JOB_ID_RE.test(id) ? id : undefined;
+}
+
+/**
+ * The stored id when it is a well-formed id for this payload (any bucket, or the #469 pre-bucket format). Used by DLQ re-drive so an entry from an
+ * earlier bucket still validates after the clock has moved on.
+ */
+export function matchingTakeoverFollowUpJobId(
+  job: TakeoverFollowUpJob,
+  jobId: unknown,
+): string | undefined {
+  if (typeof jobId !== 'string') return undefined;
+  if (TAKEOVER_LEGACY_JOB_ID_RE.test(jobId))
+    return legacyTakeoverFollowUpJobId(job) === jobId ? jobId : undefined;
+  const m = TAKEOVER_JOB_ID_RE.exec(jobId);
+  if (!m || m[1] !== job.kind) return undefined;
+  const expected = takeoverFollowUpJobIdAt(job, Number(m[2]));
+  return expected === jobId ? jobId : undefined;
+}
+
+export { safeErrorType };
+
+/**
+ * BullMQ treats errors with these names specially (no retry, delay, rate-limit, wait). A sanitized rethrow must never
+ * carry one of them, or a follow-up failure could skip its retries or be parked: it gets a fixed safe name instead.
+ */
+const BULLMQ_CONTROL_ERROR_NAMES = new Set([
+  'UnrecoverableError',
+  'DelayedError',
+  'WaitingChildrenError',
+  'WaitingError',
+  'RateLimitError',
+]);
+export const TAKEOVER_FOLLOW_UP_RETHROW_NAME = 'TakeoverFollowUpError';
+
+/** Name for the sanitized rethrow: the original safe class name, unless BullMQ would act on it. */
+export function rethrowErrorName(err: unknown): string {
+  const name = safeErrorType(err);
+  return BULLMQ_CONTROL_ERROR_NAMES.has(name) ? TAKEOVER_FOLLOW_UP_RETHROW_NAME : name;
 }
 
 /** DLQ entry id for a dead-lettered follow-up (same `dlq_` convention as the transcription DLQ). */
@@ -56,12 +130,7 @@ export function minimalTakeoverFollowUpPayload(job: TakeoverFollowUpJob): Takeov
 
 /** Error class and a safe code only: BullMQ stores failure reasons in Redis and logs ship elsewhere. */
 export function safeFollowUpError(err: unknown): Record<string, unknown> {
-  if (!(err instanceof Error)) return { type: typeof err };
-  const code = (err as { code?: unknown }).code;
-  return {
-    type: err.name,
-    ...(typeof code === 'string' && /^[\w.-]{1,64}$/.test(code) ? { code } : {}),
-  };
+  return safeErrorSummary(err);
 }
 
 export interface FollowUpLog {
@@ -77,14 +146,18 @@ export interface TakeoverFollowUpProducer {
 
 /** Durable TakeoverFollowUpQueue. `enqueue` rejects on a Redis failure so AuthService can log and fall back. */
 export class BullMqTakeoverFollowUpQueue implements TakeoverFollowUpQueue {
-  constructor(private readonly producer: TakeoverFollowUpProducer) {}
+  constructor(
+    private readonly producer: TakeoverFollowUpProducer,
+    /** Picks the job id's time bucket (injected, so tests and the API share one clock). */
+    private readonly clock: Clock,
+  ) {}
 
   async enqueue(job: TakeoverFollowUpJob): Promise<void> {
     if (!isTakeoverFollowUpKind(job.kind) || !USER_ID_RE.test(job.userId))
       throw new Error('invalid takeover follow-up job');
     await this.producer.add(job.kind, minimalTakeoverFollowUpPayload(job), {
       ...TAKEOVER_FOLLOW_UP_JOB_OPTIONS,
-      jobId: takeoverFollowUpJobId(job),
+      jobId: takeoverFollowUpJobId(job, this.clock.now().getTime()),
     });
   }
 
@@ -166,7 +239,9 @@ export function createTakeoverFollowUpProcessor(runner: TakeoverFollowUpRunner, 
         },
         'account takeover follow-up attempt failed',
       );
-      throw new Error(`takeover follow-up failed (${err instanceof Error ? err.name : 'unknown'})`);
+      const wrapped = new Error(`takeover follow-up failed (${safeErrorType(err)})`);
+      wrapped.name = rethrowErrorName(err);
+      throw wrapped;
     }
   };
 }
@@ -209,17 +284,18 @@ export async function handleTakeoverFollowUpFailure(
     deps.log?.error({ jobId: job.id }, 'invalid takeover follow-up job dropped');
     return false;
   }
+  const now = deps.now ?? (() => new Date());
   const entry: TakeoverDeadLetter = {
     ...data,
     jobId: job.id,
     attemptsMade: job.attemptsMade,
-    errorType: err instanceof Error ? err.name : typeof err,
-    failedAt: (deps.now ?? (() => new Date()))().toISOString(),
+    errorType: safeErrorType(err),
+    failedAt: now().toISOString(),
   };
   const log = { userId: data.userId, kind: data.kind, jobId: job.id };
   try {
     await deps.dlq.add('takeover_follow_up_dead_letter', entry, {
-      jobId: takeoverDeadLetterJobId(job.id ?? takeoverFollowUpJobId(data)),
+      jobId: takeoverDeadLetterJobId(job.id ?? takeoverFollowUpJobId(data, now().getTime())),
       removeOnComplete: false,
       removeOnFail: false,
     });

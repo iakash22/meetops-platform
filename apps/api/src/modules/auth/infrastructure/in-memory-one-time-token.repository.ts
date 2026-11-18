@@ -32,4 +32,16 @@ export class InMemoryOneTimeTokenRepository implements OneTimeTokenRepository {
     for (const t of this.items.values())
       if (t.userId === userId && t.purpose === purpose && !t.usedAt) t.usedAt = now;
   }
+  async hasUnusedSince(userId: string, purpose: OneTimeTokenPurpose, since: Date, now: Date) {
+    for (const t of this.items.values())
+      if (
+        t.userId === userId &&
+        t.purpose === purpose &&
+        !t.usedAt &&
+        t.expiresAt > now &&
+        t.createdAt >= since
+      )
+        return true;
+    return false;
+  }
 }
