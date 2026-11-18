@@ -12,8 +12,11 @@ import {
 const ORG = '7c1d2e3f-4a5b-4c6d-8e7f-9a0b1c2d3e4f';
 const MID = '6f1c2b8e-3d4a-4e5f-9a6b-7c8d9e0f1a2b';
 const fast = { sleep: async () => undefined, random: () => 0.5, now: () => 0 };
-const json = (status: number, body: unknown) =>
-  new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
+const json = (status: number, body: unknown, headers: Record<string, string> = {}) =>
+  new Response(JSON.stringify(body), {
+    status,
+    headers: { 'content-type': 'application/json', ...headers },
+  });
 
 function setup(...replies: (Response | Error)[]) {
   const calls: { path: string; init: RequestInit }[] = [];
@@ -166,6 +169,28 @@ describe('createMeetingResolver (POST /orgs/:org/meetings/resolve)', () => {
     const { resolve, api } = setup(json(503, {}), new TypeError('Failed to fetch'));
     expect(await resolve('https://meet.google.com/a')).toBe(MID);
     expect(api).toHaveBeenCalledTimes(3);
+  });
+
+  it('honours Retry-After on a retryable status', async () => {
+    const sleeps: number[] = [];
+    const replies: (Response | Error)[] = [
+      json(503, {}, { 'retry-after': '2' }),
+      json(200, { meetingId: MID, created: false }),
+    ];
+    const api = vi.fn(async () => {
+      const r = replies.shift()!;
+      if (r instanceof Error) throw r;
+      return r;
+    });
+    const resolve = createMeetingResolver({
+      api,
+      organizationId: async () => ORG,
+      validators: meetingValidators,
+      retry: { sleep: async (ms) => void sleeps.push(ms), random: () => 0.5, now: () => 0 },
+    });
+    expect(await resolve('https://meet.google.com/a')).toBe(MID);
+    expect(api).toHaveBeenCalledTimes(2);
+    expect(sleeps).toEqual([2000]);
   });
 
   it('does not retry 4xx and reports only status + API code', async () => {

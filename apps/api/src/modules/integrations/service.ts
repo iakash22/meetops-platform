@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto';
 import {
   ApprovalRequiredError,
   GitHubAppClient,
@@ -20,6 +21,7 @@ import {
   randomUrlToken,
   tokenRefreshLeaseKey,
   verifyGitHubSignature,
+  webhookHeader,
   verifyGitHubWebhook,
   verifyJiraWebhook,
   type AuditEvent as IntegrationAuditEvent,
@@ -310,16 +312,8 @@ export class IntegrationsService {
     const gh = rt.github;
     if (!gh) throw new WebhookSignatureError();
     const secret = await gh.webhookSecret();
-    const h = input.headers;
-    const sig =
-      typeof Headers !== 'undefined' && h instanceof Headers
-        ? (h.get('x-hub-signature-256') ?? undefined)
-        : (h as Record<string, string | string[] | undefined>)['x-hub-signature-256'];
-    const pre = verifyGitHubSignature(
-      secret,
-      input.rawBody,
-      typeof sig === 'string' ? sig : undefined,
-    );
+    const sig = webhookHeader(input.headers, 'x-hub-signature-256');
+    const pre = verifyGitHubSignature(secret, input.rawBody, sig);
     // missing/malformed/invalid signature are all 401, and the check runs before any database lookup.
     if (pre) throw webhookFailure(401);
     let targets: { organizationId: string; id: string }[] = [];
@@ -364,7 +358,7 @@ export class IntegrationsService {
    * Order (F3): per-IP rate limit and body cap run in the route layer first; here the HMAC is checked before any
    * org resolution or heavy get/status work. Unknown ids and bad signatures both return 401 with the same body.
    * GitHub uses the App-wide secret (no DB before HMAC). Jira does one minimal secret lookup, then a constant-time
-   * compare against the real secret or a fixed dummy key when the id is unknown.
+   * compare against the real secret or a process-random dummy key when the id is unknown.
    */
   async webhook(input: {
     provider: ConnectedProvider;
@@ -380,17 +374,9 @@ export class IntegrationsService {
       const gh = rt.github;
       if (!gh) throw new WebhookSignatureError();
       const secret = await gh.webhookSecret();
-      const h = input.headers;
-      const sig =
-        typeof Headers !== 'undefined' && h instanceof Headers
-          ? (h.get('x-hub-signature-256') ?? undefined)
-          : (h as Record<string, string | string[] | undefined>)['x-hub-signature-256'];
+      const sig = webhookHeader(input.headers, 'x-hub-signature-256');
       // HMAC before any database lookup (same as githubAppWebhook).
-      const pre = verifyGitHubSignature(
-        secret,
-        input.rawBody,
-        typeof sig === 'string' ? sig : undefined,
-      );
+      const pre = verifyGitHubSignature(secret, input.rawBody, sig);
       if (pre) throw webhookFailure(401);
       const organizationId = await this.repo.resolveOrganization(provider, integrationId);
       // Unknown / revoked / missing connection look like a bad signature (no existence oracle).
@@ -420,19 +406,17 @@ export class IntegrationsService {
       });
     }
 
-    // Jira: one minimal secret lookup, then always HMAC (dummy key when unknown) before any heavier work.
+    // Jira: case-insensitive signature header first. A missing header fails closed with a dummy
+    // HMAC and no DB secret read. Otherwise one minimal secret lookup, then HMAC (process-random
+    // dummy key when unknown) before any heavier work.
+    const sig = webhookHeader(input.headers, 'x-hub-signature');
+    if (!sig) {
+      verifyGitHubSignature(DUMMY_WEBHOOK_HMAC_SECRET, input.rawBody, undefined);
+      throw new WebhookSignatureError();
+    }
     const material = await this.repo.resolveWebhookSecret(provider, integrationId);
     const compareSecret = material?.webhookSecret ?? DUMMY_WEBHOOK_HMAC_SECRET;
-    const h = input.headers;
-    const sig =
-      typeof Headers !== 'undefined' && h instanceof Headers
-        ? (h.get('x-hub-signature') ?? undefined)
-        : (h as Record<string, string | string[] | undefined>)['x-hub-signature'];
-    const pre = verifyGitHubSignature(
-      compareSecret,
-      input.rawBody,
-      typeof sig === 'string' ? sig : undefined,
-    );
+    const pre = verifyGitHubSignature(compareSecret, input.rawBody, sig);
     // Fail closed identically for unknown id and bad signature (dummy compare already ran).
     if (pre || !material) throw new WebhookSignatureError();
     const ctx = { organizationId: material.organizationId, integrationId };
@@ -708,10 +692,11 @@ export class IntegrationsService {
 const defaultSleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
 /**
- * Fixed HMAC key used only when the integration id is unknown, so the compare path matches a bad signature
- * (constant-time). Never used as a real webhook secret.
+ * Process-lifetime random HMAC key used only when the integration id is unknown or the signature
+ * header is missing, so the compare path matches a bad signature (constant-time). Never used as a
+ * real webhook secret and not a fixed, guessable value.
  */
-const DUMMY_WEBHOOK_HMAC_SECRET = 'meetops-webhook-dummy-hmac-key-not-a-real-secret-v1';
+const DUMMY_WEBHOOK_HMAC_SECRET = randomBytes(32).toString('base64url');
 
 function webhookFailure(status: number, reason?: string) {
   if (reason === 'delivery_in_progress') return new DeliveryInProgressError();

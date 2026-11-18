@@ -65,6 +65,14 @@ describe('consent settings', () => {
     expect(Value.Check(ConsentSettings, { ...settings, retentionDays: 6 })).toBe(false);
     expect(Value.Check(ConsentSettings, { ...settings, retentionDays: 366 })).toBe(false);
     expect(Value.Check(ConsentSettings, { ...settings, noticeText: '' })).toBe(false);
+    expect(Value.Check(ConsentSettings, { ...settings, noticeText: '  ' })).toBe(false);
+    expect(Value.Check(ConsentSettings, { ...settings, noticeText: '\n' })).toBe(false);
+    expect(Value.Check(ConsentSettings, { ...settings, noticeText: ' Notice' })).toBe(false);
+    expect(Value.Check(ConsentSettings, { ...settings, noticeText: 'Notice ' })).toBe(false);
+    expect(Value.Check(ConsentSettings, { ...settings, noticeText: 'Notice' })).toBe(true);
+    expect(DEFAULT_CONSENT_NOTICE_TEXT).toBe(
+      'This meeting is being recorded and transcribed with MeetOps by a participant.',
+    );
     expect(Value.Check(ConsentSettings, { ...settings, organizationId: id(1) })).toBe(false);
   });
   it('PATCH is partial, non-empty, and cannot set server-owned fields', () => {
@@ -77,6 +85,9 @@ describe('consent settings', () => {
       }),
     ).toBe(true);
     expect(Value.Check(UpdateConsentSettingsRequest, { retentionDays: 6 })).toBe(false);
+    expect(Value.Check(UpdateConsentSettingsRequest, { noticeText: '  ' })).toBe(false);
+    expect(Value.Check(UpdateConsentSettingsRequest, { noticeText: ' Notice' })).toBe(false);
+    expect(Value.Check(UpdateConsentSettingsRequest, { noticeText: 'Notice' })).toBe(true);
     expect(Value.Check(UpdateConsentSettingsRequest, {})).toBe(false);
     expect(Value.Check(UpdateConsentSettingsRequest, { currentConsentVersion: '2027-01' })).toBe(
       false,
