@@ -85,6 +85,9 @@ export const DEFAULT_REDACT_KEYS: readonly string[] = [
   'backup_codes',
   'otpauthUri',
   'otpauth_uri',
+  // ADR-021 OQ-17: the login MFA challenge token (contracts REDACT_KEYS `challengeToken`).
+  'challengeToken',
+  'challenge_token',
   'otpauthUrl',
   'credential',
   'assertion',
