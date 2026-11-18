@@ -1,6 +1,6 @@
 # Account deletion and erasure: design brief (inputs for ADR-023)
 
-- Checked: **2026-11-18 (IST)**. Repo facts are from `integration/phase-1` at `fed52cb1`; none of the cited files changed by `84c1fc5e`. Each source row gives the
+- Checked: **2026-11-18 (IST)**. Repo facts are from `integration/phase-1` at `fed52cb1`; none of the cited files changed by `b493dfdc` (re-checked 2026-11-18). Each source row gives the
   date we fetched it and the page's own "last updated" date where it shows one.
 - **Decision already taken (not re-opened here).** Per the coordinator's note of 2026-11-18, MeetOps will build
   **self-serve account deletion with a 30-day soft-delete grace period**, and a teammate is drafting ADR-023 from that
@@ -75,7 +75,7 @@
 ADR-020's alternative (a maintenance migration to remove consent rows) stays available for a counsel-directed
 erasure, but it shouldn't be the default path.
 
-## 3. Repo map (at `fed52cb1`, unchanged at `84c1fc5e`)
+## 3. Repo map (checked at `fed52cb1`, re-checked unchanged at `b493dfdc`)
 
 | Thing                     | Where                                                                                                                                                                                    | Notes                                                                                                                                                                                                                                                             |
 | ------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
