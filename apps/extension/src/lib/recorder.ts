@@ -84,6 +84,9 @@ export async function startRecording(opts: {
   const meta = {
     mimeType: MIME_TYPE,
     startedAt: toIsoTimestamp(opts.startedAt),
+    // Stay on the contracts RecordingSource literal `tab`. A new `tab+mic`
+    // member would need a contracts PR and a DB enum migration; the capture
+    // surface is still the tab, with the mic mixed in when permission allows.
     source: 'tab' as const,
     meetingId: opts.meetingId,
     consent: opts.consent,

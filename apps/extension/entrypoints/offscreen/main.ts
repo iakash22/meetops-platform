@@ -13,6 +13,7 @@ import { extensionUrls, isTrustedOffscreenSender } from '../../src/lib/senders.j
 import { httpUploadEnabled } from '../../src/lib/features.js';
 import { RpcUploadClient, type UploadRpcResponse } from '../../src/lib/upload-rpc.js';
 import { httpStorageTransport, selectUploadClient } from '../../src/lib/upload-select.js';
+import { acquireMicStream, connectCaptureGraph, type CaptureGraph } from '../../src/lib/mic-mix.js';
 
 // httpUploadEnabled() (on in development builds, off in production and in tests). When on, API calls are proxied
 // to the background worker (which holds the ADR-005 tokens) and chunk PUTs go straight to the presigned URL
@@ -30,6 +31,7 @@ const client = selectUploadClient(
 );
 let handle: RecordingHandle | undefined;
 let audioCtx: AudioContext | undefined;
+let graph: CaptureGraph | undefined;
 let heartbeat: ReturnType<typeof setInterval> | undefined;
 let storePromise: Promise<ChunkStore> | undefined;
 
@@ -42,35 +44,51 @@ async function start(
   startedAt: number,
   meetingId: string,
   consent: ConsentAttestationInput,
-) {
+  includeMic: boolean,
+): Promise<{ micCaptured: boolean }> {
   if (handle) throw new Error('Already recording');
   const store = await (storePromise ??= ChunkStore.open());
   const constraints = {
     audio: { mandatory: { chromeMediaSource: 'tab', chromeMediaSourceId: streamId } },
     video: false,
   } as unknown as MediaStreamConstraints;
-  const stream = await navigator.mediaDevices.getUserMedia(constraints);
+  const tabStream = await navigator.mediaDevices.getUserMedia(constraints);
+  // Never prompt for the microphone here. `includeMic` means the popup already
+  // requested permission during the Record click (user gesture). If that grant
+  // did not stick, acquireMicStream returns null and we record tab audio only.
+  let micStream: MediaStream | null = null;
+  if (includeMic) {
+    micStream = await acquireMicStream((c) => navigator.mediaDevices.getUserMedia(c));
+  }
   try {
-    await beginRecording(stream, store, startedAt, meetingId, consent);
+    await beginRecording(tabStream, micStream, store, startedAt, meetingId, consent);
   } catch (err) {
-    // Fail closed: never leave the tab captured when the recorder could not start.
-    stopStreamTracks(stream);
+    // Fail closed: never leave the tab (or mic) captured when the recorder could not start.
+    graph?.stopInputTracks();
+    graph = undefined;
+    stopStreamTracks(tabStream);
+    if (micStream) stopStreamTracks(micStream);
+    void audioCtx?.close();
+    audioCtx = undefined;
     throw err;
   }
+  return { micCaptured: graph?.micMixed === true };
 }
 
 async function beginRecording(
-  stream: MediaStream,
+  tabStream: MediaStream,
+  micStream: MediaStream | null,
   store: ChunkStore,
   startedAt: number,
   meetingId: string,
   consent: ConsentAttestationInput,
 ) {
-  // Tab capture mutes the tab by default; route audio back so the user still hears the meeting.
+  // Tab capture mutes the tab by default; loop tab audio only back to the
+  // speakers so the user still hears the meeting and does not hear themselves.
   audioCtx = new AudioContext();
-  audioCtx.createMediaStreamSource(stream).connect(audioCtx.destination);
+  graph = connectCaptureGraph(audioCtx, tabStream, micStream);
   handle = await startRecording({
-    stream,
+    stream: graph.recorded,
     client,
     store,
     startedAt,
@@ -102,6 +120,8 @@ function cleanup() {
   handle = undefined;
   if (heartbeat) clearInterval(heartbeat);
   heartbeat = undefined;
+  graph?.stopInputTracks();
+  graph = undefined;
   void audioCtx?.close();
   audioCtx = undefined;
 }
@@ -135,9 +155,16 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     sendResponse({ ok: true });
     return false;
   }
-  starting = start(msg.streamId, msg.startedAt, msg.meetingId, msg.consent);
-  starting.then(
-    () => sendResponse({ ok: true }),
+  starting = start(
+    msg.streamId,
+    msg.startedAt,
+    msg.meetingId,
+    msg.consent,
+    msg.includeMic === true,
+  ).then(
+    (result) => {
+      sendResponse({ ok: true, micCaptured: result.micCaptured });
+    },
     (err: unknown) => {
       const error = err instanceof Error ? err.message : String(err);
       cleanup();

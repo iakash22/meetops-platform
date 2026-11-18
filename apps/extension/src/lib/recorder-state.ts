@@ -4,6 +4,8 @@ interface Common {
   lastError?: string;
   storageWarning?: string;
   incomplete?: boolean;
+  /** Whether the recorded mix includes the microphone. */
+  micCaptured?: boolean;
 }
 
 export type RecorderState =

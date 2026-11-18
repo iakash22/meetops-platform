@@ -27,6 +27,12 @@ export type PopupToBackground =
        * Comes from resolveMeetingId() (src/lib/meeting.ts): the API's meetings/resolve when HTTP uploads are on.
        */
       meetingId: string;
+      /**
+       * True when the popup already requested microphone permission during the
+       * Record click. The offscreen document may then open a mic stream without
+       * prompting. False or omitted: tab-only, no mic getUserMedia.
+       */
+      includeMic?: boolean;
     }
   /** Stops an active recording, or dismisses an 'error' state. */
   | { target: 'background'; type: 'STOP_RECORDING' }
@@ -46,6 +52,8 @@ export type BackgroundToOffscreen =
       meetingId: string;
       /** Contracts v0.4.1: the user's attestation for this meeting, sent on recording-session init. */
       consent: ConsentAttestationInput;
+      /** Popup already requested mic permission; offscreen must not prompt. */
+      includeMic?: boolean;
     }
   | { target: 'offscreen'; type: 'OFFSCREEN_STOP' }
   /** Stop and throw the recording away (local chunks deleted, upload session aborted). */
@@ -91,6 +99,11 @@ export interface StatusPayload {
   heldNearFull?: boolean;
   /** Held data alone fills the cap: Start is blocked until retry or discard. */
   heldBlocksStart?: boolean;
+  /**
+   * Whether this session's recorded mix includes the microphone.
+   * False: tab-only (mic denied, failed, or unused). Undefined when idle/unknown.
+   */
+  micCaptured?: boolean;
 }
 
 export type BackgroundResponse = ({ ok: true } & StatusPayload) | { ok: false; error: string };
@@ -126,6 +139,8 @@ function isStorageEvent(v: unknown): v is StorageEvent {
   return false;
 }
 
+const isOptionalBool = (v: unknown): boolean => v === undefined || typeof v === 'boolean';
+
 export function isBackgroundMessage(msg: unknown): msg is BackgroundMessage {
   if (typeof msg !== 'object' || msg === null) return false;
   const m = msg as Record<string, unknown>;
@@ -141,7 +156,9 @@ export function isBackgroundMessage(msg: unknown): msg is BackgroundMessage {
     case 'ACK_CONSENT':
       return isNum(m.tabId) && isUuid(m.meetingId) && isConsentMethod(m.method);
     case 'START_RECORDING':
-      return isNum(m.tabId) && isStr(m.streamId) && isUuid(m.meetingId);
+      return (
+        isNum(m.tabId) && isStr(m.streamId) && isUuid(m.meetingId) && isOptionalBool(m.includeMic)
+      );
     case 'REC_STARTED':
     case 'REC_HEARTBEAT':
       return isStr(m.sessionId);
@@ -168,6 +185,7 @@ export function isOffscreenMessage(msg: unknown): msg is BackgroundToOffscreen {
     isStr(m.streamId) &&
     isNum(m.startedAt) &&
     isUuid(m.meetingId) &&
-    isConsentAttestation(m.consent)
+    isConsentAttestation(m.consent) &&
+    isOptionalBool(m.includeMic)
   );
 }

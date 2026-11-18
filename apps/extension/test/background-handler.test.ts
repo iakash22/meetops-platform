@@ -26,7 +26,9 @@ export function makeDeps(kv = memoryKV()) {
     now: () => t,
     ensureOffscreen: vi.fn(async () => undefined),
     closeOffscreen: vi.fn(async () => undefined),
-    sendToOffscreen: vi.fn<(m: { type: string }) => Promise<{ ok: boolean }>>(async () => ({
+    sendToOffscreen: vi.fn<
+      (m: { type: string }) => Promise<{ ok: boolean; micCaptured?: boolean }>
+    >(async () => ({
       ok: true,
     })),
     hasOffscreen: vi.fn(async () => true),
@@ -172,6 +174,7 @@ describe('background handler', () => {
         attestedAt: new Date(1000).toISOString(),
         method: 'all_parties_consented',
       },
+      includeMic: false,
     });
 
     await handleBackgroundMessage(
@@ -377,6 +380,47 @@ describe('meetingId (contracts v0.2 @ a9d9d89)', () => {
       expect.objectContaining({ type: 'OFFSCREEN_START', meetingId: MID, streamId: 'y' }),
     );
     expect(await loadState(deps.kv)).toMatchObject({ meetingId: MID });
+  });
+
+  it('forwards includeMic and records micCaptured from the offscreen reply', async () => {
+    const { deps } = makeDeps();
+    deps.sendToOffscreen.mockResolvedValueOnce({ ok: true, micCaptured: true });
+    await handleBackgroundMessage(deps, bg({ type: 'ACK_CONSENT', tabId: 1, ...GRANT }), popup);
+    const ok = await handleBackgroundMessage(
+      deps,
+      bg({
+        type: 'START_RECORDING',
+        meetingId: MID,
+        tabId: 1,
+        streamId: 'mic-on',
+        includeMic: true,
+      }),
+      popup,
+    );
+    expect(ok).toMatchObject({ ok: true, micCaptured: true });
+    expect(deps.sendToOffscreen).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'OFFSCREEN_START', includeMic: true, streamId: 'mic-on' }),
+    );
+    expect(await loadState(deps.kv)).toMatchObject({ micCaptured: true });
+  });
+
+  it('falls back to micCaptured false when includeMic is set but offscreen has no mic', async () => {
+    const { deps } = makeDeps();
+    deps.sendToOffscreen.mockResolvedValueOnce({ ok: true, micCaptured: false });
+    await handleBackgroundMessage(deps, bg({ type: 'ACK_CONSENT', tabId: 1, ...GRANT }), popup);
+    const ok = await handleBackgroundMessage(
+      deps,
+      bg({
+        type: 'START_RECORDING',
+        meetingId: MID,
+        tabId: 1,
+        streamId: 'mic-off',
+        includeMic: true,
+      }),
+      popup,
+    );
+    expect(ok).toMatchObject({ ok: true, micCaptured: false });
+    expect(await loadState(deps.kv)).toMatchObject({ micCaptured: false });
   });
 });
 

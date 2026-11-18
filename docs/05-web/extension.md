@@ -34,7 +34,7 @@ There are no `host_permissions` and no content scripts. `commands._execute_actio
 
 ## Consent flow
 
-1. The popup shows the consent notice (`CONSENT_NOTICE` in `src/lib/consent.ts`). Acknowledgement isn't persisted, so every recording needs a fresh one.
+1. The popup shows the consent notice (`CONSENT_NOTICE` in `src/lib/consent.ts`), which states that recording captures this tab's audio and the user's microphone. Acknowledgement isn't persisted, so every recording needs a fresh one. The Record click requests microphone permission in the popup (never from the offscreen document). If the mic is denied or unavailable, capture falls back to tab audio only and the popup shows "Your microphone isn't being recorded". Session meta `source` stays `tab` (a new literal would need a contracts and DB enum change).
 2. When the user acknowledges, the popup sends `ACK_CONSENT { tabId }`. The service worker records consent bound to that tab, valid for **2 minutes** (`CONSENT_TTL_MS`).
 3. **Start** gets a stream ID for that tab and sends `START_RECORDING { tabId, streamId, meetingId }`. The service worker **consumes** the consent atomically (one-shot, serialized per store); a missing, expired or wrong-tab record is refused.
 4. The stream ID is single-use and bound to the consented tab, and it's verified against `chrome.tabCapture.getCapturedTabs()`. On a mismatch the session is discarded: IndexedDB chunks are deleted and the upload session is aborted. A durable pending-discard marker (#55, `src/lib/pending-discard.ts`) makes the discard survive a service-worker restart, and it runs before any queue drain.

@@ -7,13 +7,13 @@ import type { ConsentMethod } from '@meetops/contracts/types';
  * binds it to the tab and meeting (consent-registry.ts) and sends it to the API as the session's attestation.
  */
 export const CONSENT_NOTICE =
-  "Recording captures this tab's audio. Only record meetings where " +
+  "Recording captures this tab's audio and your microphone. Only record meetings where " +
   'you have the right to do so and all participants have been informed and agree. ' +
   "Recording is visible in Chrome's tab indicator and can be stopped at any time.";
 
 /** The statement the user ticks. It asserts what POPUP_CONSENT_METHOD records. */
 export const CONSENT_CONFIRMATION =
-  'Everyone in this meeting has been told it will be recorded and agrees to it.';
+  'Everyone in this meeting has been told it will be recorded, including my microphone, and agrees to it.';
 
 /**
  * The contracts consent method the popup's confirmation attests: participants were informed AND agreed. A

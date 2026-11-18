@@ -5,6 +5,9 @@ import { CONSENT_CONFIRMATION, CONSENT_NOTICE, setConfirmed } from '../src/lib/c
 import { MAX_DURATION_MS } from '../src/lib/contract-limits.js';
 import { PAIRING_REQUIRED_MESSAGE as START_PAIRING_REQUIRED_MESSAGE } from '../src/lib/background-handler.js';
 import { UNPAIRED_PROMPT_MESSAGE } from '../src/lib/pairing-messages.js';
+import { MIC_UNAVAILABLE_MESSAGE } from '../src/lib/mic-mix.js';
+
+const MIC_UNAVAILABLE_HTML = MIC_UNAVAILABLE_MESSAGE.replaceAll("'", '&#x27;');
 import {
   MEETING_RESOLVE_MESSAGE,
   OFFLINE_MESSAGE,
@@ -384,5 +387,41 @@ describe('popup stylesheet', () => {
     const errorRules = css.match(/\.mo-(toast|callout--error)[^{]*\{[^}]*\}/g) ?? [];
     expect(errorRules.length).toBeGreaterThan(0);
     for (const rule of errorRules) expect(rule).not.toMatch(/highlight|ff2d95/i);
+  });
+});
+
+describe('microphone fallback note', () => {
+  it('is hidden while idle', () => {
+    expect(render()).not.toContain(MIC_UNAVAILABLE_HTML);
+  });
+
+  it('shows when a recording is tab-only because the mic was denied', () => {
+    const html = render({
+      auth: { state: 'paired' },
+      status: { status: 'recording', startedAt: 1, chunks: 1, tabId: 1, micCaptured: false },
+      consent: setConfirmed(true, 1),
+    });
+    expect(html).toContain(MIC_UNAVAILABLE_HTML);
+    expect(html).toMatch(/aria-label="Microphone not recorded"/);
+  });
+
+  it('shows during a start attempt when the popup already saw a denial', () => {
+    const html = render({
+      auth: { state: 'paired' },
+      status: { status: 'idle' },
+      starting: true,
+      micUnavailable: true,
+      consent: setConfirmed(true, 1),
+    });
+    expect(html).toContain(MIC_UNAVAILABLE_HTML);
+  });
+
+  it('is hidden when the mic is in the mix', () => {
+    const html = render({
+      auth: { state: 'paired' },
+      status: { status: 'recording', startedAt: 1, chunks: 1, tabId: 1, micCaptured: true },
+      consent: setConfirmed(true, 1),
+    });
+    expect(html).not.toContain(MIC_UNAVAILABLE_HTML);
   });
 });
