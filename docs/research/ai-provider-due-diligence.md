@@ -26,8 +26,9 @@ where they were first read):
 What the repo shows that matters for this review:
 
 - **Both defaults are labelled free tier.** `bootstrap.ts` L50 gives Gemini `cost: { tier: 'free' }` with
-  `dailyRequestLimit: 1000`; L55 gives AssemblyAI `tier: 'free'` with `monthlyAudioSecondsLimit: 5 * 3600`. These are
-  routing labels in our code. The vendor's own plan is set on the vendor account, which we can't see. But both vendors'
+  `dailyRequestLimit: 1000`; L55 gives AssemblyAI `tier: 'free'` with `monthlyAudioSecondsLimit: 5 * 3600`
+  (_updated 2026-11-18 at `2127fb46`: now L66/L68 for Gemini and L81/L83 for AssemblyAI_). These are routing labels
+  in our code. The vendor's own plan is set on the vendor account, which we can't see. But both vendors'
   free plans have the weakest data terms (§2.1, §2.3), and phase-7 notes already say "the free Gemini tier must not
   process customer data".
   _Correction 2026-11-18 (after #513, `1d7ba360`): the labels are now at L66 (Gemini) and L81 (AssemblyAI). Production now refuses free or undeclared

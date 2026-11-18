@@ -14,7 +14,8 @@
   is kept and marked.
   - 45e8664e added AssemblyAI deletes:
     - After each chunk is durably stored, the worker enqueues `DELETE v2/transcript/{id}`
-      (`apps/worker/src/ai/provider-transcript-delete.ts` L22–25: 5 attempts, exponential backoff from 2 s, 404 = done;
+      (`apps/worker/src/ai/provider-transcript-delete.ts` L22–25, _updated 2026-11-18: L24–27 at `2127fb46`_:
+      5 attempts, exponential backoff from 2 s, 404 = done;
       `packages/ai-core/src/adapters/assemblyai.ts` L35, L191).
     - The job id is now written to the anchor `transcripts.provider_job_id`.
   - Still open:

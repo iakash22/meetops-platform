@@ -385,7 +385,8 @@ place. The original text is kept.
 
 1. **AssemblyAI deletes now exist** (45e8664e, 2026-11-18 13:46 IST).
    - After a chunk is durably stored, the worker enqueues `ai-provider-transcript-delete`: 5 attempts, exponential
-     backoff from 2 s, 404 counts as success (`apps/worker/src/ai/provider-transcript-delete.ts` L22–25).
+     backoff from 2 s, 404 counts as success (`apps/worker/src/ai/provider-transcript-delete.ts` L22–25;
+     _updated 2026-11-18: L24–27 at `2127fb46`_).
    - The job calls `DELETE v2/transcript/{id}` (`packages/ai-core/src/adapters/assemblyai.ts` L35, L191).
    - The job id is now written to the anchor `transcripts.provider_job_id` (`apps/worker/src/ai/prisma-repository.ts`
      diff in 45e8664e).
@@ -403,7 +404,7 @@ place. The original text is kept.
      L81, L97 and L111. openai and deepgram are `tier: 'paid'` at L125 and L137.
    - In production, `assertProductionProviderDataTiers` refuses a free or undeclared tier for an enabled provider
      unless `AI_PROVIDER_DATA_TIER_<NAME>` is set to `paid` or `no-training` (`packages/ai-core/src/provider-data-tier.ts`
-     L22–34, L52–95, L108–125; called at `bootstrap.ts` L179).
+     L22–34, L52–95, L108–125; called at `bootstrap.ts` L179; _updated 2026-11-18: L181 at `2127fb46`_).
    - INFERRED: the env value is an operator declaration. The code can't check the real billing tier.
    - Corrected: `pricing-packaging-v2.md` §8 (was L50/L55) and `ai-provider-due-diligence.md` §1 and §7 (was L50/L55).
      The OpenAI price cite in `ai-provider-due-diligence.md` §2.5 is now L125 (was L72).
@@ -416,7 +417,8 @@ place. The original text is kept.
    - L79–85 is now the summary worker.
    - Corrected in `account-deletion-erasure-brief.md` §3.
 5. **`pricing-packaging-v2.md` §3.1.**
-   - `apps/worker/src/ai/bootstrap.ts` `resolveAudio` moved from L88 to L89.
+   - `apps/worker/src/ai/bootstrap.ts` `resolveAudio` moved from L88 to L89
+     (_updated 2026-11-18: L90 at `2127fb46`, after #514_).
    - The `apps/worker/src/ai/providers/assemblyai.ts` cites (L143, L185–190, L188) are unchanged.
 
 ## 9. Not verified
