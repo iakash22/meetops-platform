@@ -226,7 +226,7 @@ export const consentSettings: ConsentSettings = {
   noticeText: 'This meeting is being recorded and transcribed with MeetOps by a participant.',
   skipExternalParticipants: false,
   retentionDays: 90,
-  currentConsentVersion: '2026-10',
+  currentConsentVersion: '2026-11',
   updatedAt: '2026-10-20T10:00:00.000Z',
 };
 
@@ -234,7 +234,7 @@ export const consentGranted: MeetingConsentEvent = {
   id: '30000000-0000-4000-8000-000000000001',
   meetingId: '20000000-0000-4000-8000-000000000001',
   eventType: 'granted',
-  consentVersion: '2026-10',
+  consentVersion: '2026-11',
   method: 'all_parties_consented',
   reason: null,
   actorUserId: '10000000-0000-4000-8000-000000000001',

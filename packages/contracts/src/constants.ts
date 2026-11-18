@@ -319,7 +319,7 @@ export const MAX_PRESIGNED_GET_TTL_SECONDS = 300;
  */
 export const CONSENT_METHODS = ['all_parties_notified', 'all_parties_consented'] as const;
 /** v0.4.1: the consent notice version clients attest to today. The API rejects other versions (CONSENT_VERSION_UNSUPPORTED). */
-export const CURRENT_CONSENT_VERSION = '2026-10';
+export const CURRENT_CONSENT_VERSION = '2026-11';
 /** v0.4.1: `consentVersion` format: 1-32 chars, a letter or digit, then letters, digits, `.`, `_` or `-`. */
 export const CONSENT_VERSION_PATTERN = '^[A-Za-z0-9][A-Za-z0-9._-]{0,31}$';
 /**

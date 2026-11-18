@@ -118,7 +118,7 @@ function setup(failFirstChunk = false) {
       durationMs: 1000,
       chunks: [{ seq: 0, sizeBytes: 3, sha256: 'a'.repeat(64) }],
       consent: {
-        consentVersion: '2026-10',
+        consentVersion: '2026-11',
         attestedAt: '2026-10-31T10:00:00.000Z',
         method: 'all_parties_notified',
       },

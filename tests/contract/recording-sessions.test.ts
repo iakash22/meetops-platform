@@ -30,7 +30,7 @@ describe.skipIf(!has)('contracts: recording-session request schemas (UP pre-chec
     // G11 (contracts v0.4.1): init requires a consent attestation.
     consent: {
       method: 'all_parties_notified',
-      consentVersion: '2026-10',
+      consentVersion: '2026-11',
       attestedAt: '2026-10-22T09:59:30.000Z',
     },
   };
