@@ -194,28 +194,38 @@ export type ResolveProviderJobId = (q: {
   organizationId: string;
   meetingId?: string | undefined;
   recordingId?: string | undefined;
+  providerTranscriptId?: string | undefined;
 }) => Promise<string | undefined>;
 
-/** Looks up `transcripts.provider_job_id` on the revision-0 anchor (existing column). */
+/** Looks up stored STT job ids (per-chunk first, then the #513 revision-0 anchor). */
 export function createRepositoryProviderJobIdLookup(repo: {
   withOrgContext: <T>(
     organizationId: string,
     fn: (r: {
       getProviderJobId: (meetingId: string, recordingId: string) => Promise<string | undefined>;
+      listProviderJobIds?: (meetingId: string, recordingId: string) => Promise<string[]>;
     }) => Promise<T>,
   ) => Promise<T>;
 }): ResolveProviderJobId {
   return async (q) => {
     if (!q.meetingId || !q.recordingId) return undefined;
-    return repo.withOrgContext(q.organizationId, (r) =>
-      r.getProviderJobId(q.meetingId!, q.recordingId!),
-    );
+    return repo.withOrgContext(q.organizationId, async (r) => {
+      const ids = r.listProviderJobIds
+        ? await r.listProviderJobIds(q.meetingId!, q.recordingId!)
+        : [];
+      const anchor = await r.getProviderJobId(q.meetingId!, q.recordingId!);
+      const stored = ids.length > 0 ? ids : anchor ? [anchor] : [];
+      if (q.providerTranscriptId) {
+        return stored.includes(q.providerTranscriptId) ? q.providerTranscriptId : undefined;
+      }
+      return stored[0];
+    });
   };
 }
 
 export type ProcessProviderTranscriptDeleteDeps = {
   resolveDeleter: (provider: string) => Promise<ProviderTranscriptDeleter>;
-  /** Source of truth: the stored `transcripts.provider_job_id`. Null/missing => skip. */
+  /** Stored ids (chunk rows, or the #513 anchor). Used when the job did not carry an id. */
   resolveProviderJobId: ResolveProviderJobId;
   logger: TranscriptionLogger;
   onFinalFailure?: ((info: ProviderTranscriptDeleteFinalFailure) => void) | undefined;
@@ -233,20 +243,24 @@ export async function processProviderTranscriptDelete(
     recordingId: data.recordingId,
     jobId: ctx.jobId,
   };
+  const given = data.providerTranscriptId || undefined;
   const storedId = await deps.resolveProviderJobId({
     organizationId: data.organizationId,
     meetingId: data.meetingId,
     recordingId: data.recordingId,
+    providerTranscriptId: given,
   });
-  if (!storedId) {
-    // Legacy rows, or the anchor was never written: skip cleanly, no transcript content, no invented id.
+  // Prefer the id the job was given (one delete per chunk); otherwise the stored row.
+  // Skip when both are null (legacy rows). Never invent an id; never log content.
+  const id = given ?? storedId;
+  if (!id) {
     deps.logger.info(baseLog, 'provider transcript delete skipped: no provider job id');
     return { outcome: 'already_deleted', httpStatus: 0 };
   }
-  const log = { ...baseLog, providerTranscriptId: storedId };
+  const log = { ...baseLog, providerTranscriptId: id };
   try {
     const deleter = await deps.resolveDeleter(data.provider);
-    const result = await deleter.deleteTranscript(storedId, ctx.signal);
+    const result = await deleter.deleteTranscript(id, ctx.signal);
     deps.logger.info(
       { ...log, httpStatus: result.httpStatus, outcome: result.outcome },
       'provider transcript deleted',
@@ -257,7 +271,7 @@ export async function processProviderTranscriptDelete(
     const failure: ProviderTranscriptDeleteFinalFailure = {
       organizationId: data.organizationId,
       provider: data.provider,
-      providerTranscriptId: storedId,
+      providerTranscriptId: id,
       httpStatus: httpStatusOf(err),
       errorCode: e.code,
     };

@@ -14,6 +14,7 @@ function fakeTx(
     executeResult?: number;
     mergeState?: unknown;
     providerJobId?: string | null;
+    chunkJobIds?: Array<string | null>;
   } = {},
 ) {
   const calls: Array<{ op: string; args: unknown; values?: unknown[] }> = [];
@@ -45,10 +46,16 @@ function fakeTx(
       ),
     },
     transcriptChunk: {
-      findMany: async () => [
-        { segments: { chunkIndex: 0, segments: [], provider: 'assemblyai' } },
-        { segments: { bogus: true } },
-      ],
+      findMany: async (args?: { select?: Record<string, boolean> }) => {
+        calls.push({ op: 'transcriptChunk.findMany', args });
+        if (args?.select?.providerJobId) {
+          return (o.chunkJobIds ?? []).map((providerJobId) => ({ providerJobId }));
+        }
+        return [
+          { segments: { chunkIndex: 0, segments: [], provider: 'assemblyai' } },
+          { segments: { bogus: true } },
+        ];
+      },
     },
     transcriptSegment: {
       createMany: async (args: unknown) => (
@@ -136,7 +143,8 @@ describe('Prisma transcript repository', () => {
     const insert = tx.calls.find(
       (c) => c.op === 'executeRaw' && String(c.args).includes('"transcript_chunks"'),
     );
-    expect(String(insert?.args)).not.toContain('"provider_job_id"');
+    expect(String(insert?.args)).toContain('"provider_job_id"');
+    expect(insert?.values).toContain('tr-persist-1');
     expect(tx.calls.find((c) => c.op === 'transcript.updateMany')?.args).toMatchObject({
       where: { organizationId: ORG, id: 'anchor', revision: 0 },
       data: { providerJobId: 'tr-persist-1' },
@@ -175,6 +183,27 @@ describe('Prisma transcript repository', () => {
         ORG,
       ).getProviderJobId(MEET, REC),
     ).toBeUndefined();
+  });
+
+  it('lists per-chunk job ids and appends the anchor id only if it is not already present', async () => {
+    expect(
+      await createOrgScopedTranscriptRepository(
+        fakeTx({ chunkJobIds: ['tr-a', 'tr-b'], providerJobId: 'tr-b' }),
+        ORG,
+      ).listProviderJobIds(MEET, REC),
+    ).toEqual(['tr-a', 'tr-b']);
+    expect(
+      await createOrgScopedTranscriptRepository(
+        fakeTx({ chunkJobIds: [null, null], providerJobId: 'tr-legacy' }),
+        ORG,
+      ).listProviderJobIds(MEET, REC),
+    ).toEqual(['tr-legacy']);
+    expect(
+      await createOrgScopedTranscriptRepository(
+        fakeTx({ chunkJobIds: [], providerJobId: null }),
+        ORG,
+      ).listProviderJobIds(MEET, REC),
+    ).toEqual([]);
   });
 
   it('drops malformed chunk JSON when listing', async () => {

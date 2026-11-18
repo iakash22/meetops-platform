@@ -6,6 +6,7 @@ import {
   PROVIDER_TRANSCRIPT_DELETE_JOB_NAME,
   PROVIDER_TRANSCRIPT_DELETE_QUEUE,
   createQueueProviderTranscriptDeleteTrigger,
+  createRepositoryProviderJobIdLookup,
   enqueueProviderTranscriptDelete,
   isProviderTranscriptDeleteEnabled,
   processProviderTranscriptDelete,
@@ -158,6 +159,49 @@ describe('provider transcript delete enqueue', () => {
     });
     expect(adds).toEqual([{ data: expect.objectContaining({ providerTranscriptId: 'tr-hook' }) }]);
   });
+
+  it('enqueues one deterministic job per chunk id and treats a retry of the same id as a duplicate', async () => {
+    const adds: Array<{ data: { providerTranscriptId: string }; opts: { jobId: string } }> = [];
+    const ids = new Set<string>();
+    const queue: ProviderTranscriptDeleteQueueLike = {
+      add: async (_name, data, opts) => {
+        if (ids.has(opts.jobId)) throw new Error('Job is already waiting');
+        ids.add(opts.jobId);
+        adds.push({ data, opts });
+      },
+    };
+    const trigger = createQueueProviderTranscriptDeleteTrigger(queue, { enabled: true });
+    await trigger({
+      organizationId: ORG,
+      meetingId: MEET,
+      recordingId: REC,
+      chunkIndex: 0,
+      provider: 'assemblyai',
+      providerJobId: 'tr-chunk-0',
+    });
+    await trigger({
+      organizationId: ORG,
+      meetingId: MEET,
+      recordingId: REC,
+      chunkIndex: 1,
+      provider: 'assemblyai',
+      providerJobId: 'tr-chunk-1',
+    });
+    // Same id again (retry / anchor also holding chunk 1) must not enqueue a second job.
+    await trigger({
+      organizationId: ORG,
+      meetingId: MEET,
+      recordingId: REC,
+      chunkIndex: 1,
+      provider: 'assemblyai',
+      providerJobId: 'tr-chunk-1',
+    });
+    expect(adds.map((a) => a.data.providerTranscriptId)).toEqual(['tr-chunk-0', 'tr-chunk-1']);
+    expect(adds.map((a) => a.opts.jobId)).toEqual([
+      providerTranscriptDeleteJobId('assemblyai', 'tr-chunk-0'),
+      providerTranscriptDeleteJobId('assemblyai', 'tr-chunk-1'),
+    ]);
+  });
 });
 
 describe('processProviderTranscriptDelete', () => {
@@ -212,7 +256,7 @@ describe('processProviderTranscriptDelete', () => {
     expect(log.entries.some((e) => JSON.stringify(e).includes('text'))).toBe(false);
   });
 
-  it('skips cleanly when transcripts.provider_job_id is null (legacy rows), without calling delete', async () => {
+  it('skips cleanly when the job and the stored row have no provider job id (legacy), without calling delete', async () => {
     const log = logger();
     let called = 0;
     const deleter: ProviderTranscriptDeleter = {
@@ -223,7 +267,7 @@ describe('processProviderTranscriptDelete', () => {
     };
     await expect(
       processProviderTranscriptDelete(
-        job,
+        { ...job, providerTranscriptId: '' },
         {
           resolveDeleter: async () => deleter,
           resolveProviderJobId: async () => undefined,
@@ -236,6 +280,72 @@ describe('processProviderTranscriptDelete', () => {
     expect(log.entries.some((e) => e.msg.includes('no provider job id'))).toBe(true);
     expect(log.blob()).not.toContain(SECRET);
     expect(log.entries.every((e) => e.obj.providerTranscriptId === undefined)).toBe(true);
+  });
+
+  it('deletes every given chunk id, not a later anchor overwrite, and 404 retries stay idempotent', async () => {
+    const log = logger();
+    const deleted: string[] = [];
+    const deleter: ProviderTranscriptDeleter = {
+      async deleteTranscript(id) {
+        deleted.push(id);
+        return deleted.filter((x) => x === id).length === 1
+          ? { outcome: 'deleted', httpStatus: 200 }
+          : { outcome: 'already_deleted', httpStatus: 404 };
+      },
+    };
+    const deps = {
+      resolveDeleter: async () => deleter,
+      // Simulate #513's anchor holding only the last chunk id.
+      resolveProviderJobId: fromDb('tr-chunk-1'),
+      logger: log.logger,
+    };
+    await expect(
+      processProviderTranscriptDelete({ ...job, providerTranscriptId: 'tr-chunk-0' }, deps, {
+        isFinalAttempt: false,
+        jobId: 'j-c0',
+      }),
+    ).resolves.toEqual({ outcome: 'deleted', httpStatus: 200 });
+    await expect(
+      processProviderTranscriptDelete({ ...job, providerTranscriptId: 'tr-chunk-1' }, deps, {
+        isFinalAttempt: false,
+        jobId: 'j-c1',
+      }),
+    ).resolves.toEqual({ outcome: 'deleted', httpStatus: 200 });
+    await expect(
+      processProviderTranscriptDelete({ ...job, providerTranscriptId: 'tr-chunk-0' }, deps, {
+        isFinalAttempt: false,
+        jobId: 'j-c0-retry',
+      }),
+    ).resolves.toEqual({ outcome: 'already_deleted', httpStatus: 404 });
+    expect(deleted).toEqual(['tr-chunk-0', 'tr-chunk-1', 'tr-chunk-0']);
+    expect(log.blob()).not.toContain(SECRET);
+  });
+
+  it('createRepositoryProviderJobIdLookup prefers a given id when it is stored, else the first stored id', async () => {
+    const lookup = createRepositoryProviderJobIdLookup({
+      withOrgContext: async (_org, fn) =>
+        fn({
+          getProviderJobId: async () => 'tr-anchor',
+          listProviderJobIds: async () => ['tr-a', 'tr-b'],
+        }),
+    });
+    expect(
+      await lookup({
+        organizationId: ORG,
+        meetingId: MEET,
+        recordingId: REC,
+        providerTranscriptId: 'tr-b',
+      }),
+    ).toBe('tr-b');
+    expect(
+      await lookup({
+        organizationId: ORG,
+        meetingId: MEET,
+        recordingId: REC,
+        providerTranscriptId: 'tr-unknown',
+      }),
+    ).toBeUndefined();
+    expect(await lookup({ organizationId: ORG, meetingId: MEET, recordingId: REC })).toBe('tr-a');
   });
 
   it('retries on 5xx and emits a metric hook on final failure without content', async () => {

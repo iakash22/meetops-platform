@@ -56,9 +56,14 @@ export interface OrgScopedTranscriptRepository {
   latestTranscript(meetingId: string, recordingId: string): Promise<TranscriptRevision | undefined>;
   /**
    * AssemblyAI (or other STT) job id stored on the revision-0 anchor (`transcripts.provider_job_id`).
-   * Undefined on legacy rows where the column was never written.
+   * Undefined on legacy rows where the column was never written. Kept for #513 compatibility.
    */
   getProviderJobId(meetingId: string, recordingId: string): Promise<string | undefined>;
+  /**
+   * Distinct STT job ids for this recording: `transcript_chunks.provider_job_id` in chunk order,
+   * then the revision-0 anchor id if it is not already in that list (legacy #513 rows).
+   */
+  listProviderJobIds(meetingId: string, recordingId: string): Promise<string[]>;
   /**
    * Insert a `Transcript` row with `revision` and its `TranscriptSegment` rows, only if the latest revision equals
    * `expectedPrev` (compare-and-set; `@@unique([recordingId, revision])`). Returns false on conflict.

@@ -126,13 +126,14 @@ export function createOrgScopedTranscriptRepository(
       // First write wins: (transcript_id, chunk_index) is unique; ON CONFLICT DO NOTHING keeps the earlier result.
       const inserted = await tx.$executeRaw`
         INSERT INTO "transcript_chunks"
-          ("id", "org_id", "transcript_id", "chunk_index", "start_ms", "end_ms", "status", "provider", "text", "segments", "attempt_count", "updated_at")
+          ("id", "org_id", "transcript_id", "chunk_index", "start_ms", "end_ms", "status", "provider", "text", "segments",
+           "provider_job_id", "attempt_count", "updated_at")
         VALUES (gen_random_uuid(), ${organizationId}::uuid, ${transcriptId}::uuid, ${chunk.chunkIndex}, ${startMs}, ${endMs},
           'done'::"TranscriptChunkStatus", ${chunk.provider}, ${chunk.segments.map((s) => s.text).join(' ')},
-          ${JSON.stringify(chunk)}::jsonb, 1, now())
+          ${JSON.stringify(chunk)}::jsonb, ${chunk.providerJobId ?? null}, 1, now())
         ON CONFLICT ("transcript_id", "chunk_index") DO NOTHING`;
-      // Persist the STT job id on the existing transcripts.provider_job_id column (no new migration).
-      // Not written on merged revisions (unique (org, provider, provider_job_id) would conflict with the anchor).
+      // Also copy the id onto the revision-0 anchor for #513 compatibility. Not written on merged
+      // revisions (unique (org, provider, provider_job_id) would conflict with the anchor).
       if (inserted === 1 && chunk.providerJobId) {
         await tx.transcript.updateMany({
           where: { organizationId, id: transcriptId, revision: ANCHOR_REVISION },
@@ -152,6 +153,31 @@ export function createOrgScopedTranscriptRepository(
         select: { providerJobId: true },
       });
       return row?.providerJobId ?? undefined;
+    },
+    async listProviderJobIds(meetingId, recordingId) {
+      const anchor = await findAnchor(meetingId, recordingId);
+      const ids: string[] = [];
+      const seen = new Set<string>();
+      const add = (id: string | null | undefined) => {
+        if (!id || seen.has(id)) return;
+        seen.add(id);
+        ids.push(id);
+      };
+      if (anchor) {
+        const rows = await tx.transcriptChunk.findMany({
+          where: { organizationId, transcriptId: anchor.id },
+          orderBy: { chunkIndex: 'asc' },
+          select: { providerJobId: true },
+        });
+        for (const r of rows) add(r.providerJobId);
+      }
+      // Legacy #513 rows: the only stored id may live on the anchor.
+      const anchorRow = await tx.transcript.findFirst({
+        where: { organizationId, meetingId, recordingId, revision: ANCHOR_REVISION },
+        select: { providerJobId: true },
+      });
+      add(anchorRow?.providerJobId);
+      return ids;
     },
     async getChunkResult(meetingId, recordingId, chunkIndex) {
       return toChunks(await chunkRows(meetingId, recordingId, chunkIndex))[0];
