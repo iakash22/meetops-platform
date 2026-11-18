@@ -59,6 +59,21 @@ const BY_CODE: Record<ApiErrorCode, Omit<PairFailure, 'requestId'>> = {
     message: `This pairing link was already used or has expired. ${RESTART}`,
     retryable: false,
   },
+  MFA_REQUIRED: {
+    title: 'Finish signing in',
+    message: 'Enter the code from your authenticator app to finish signing in, then retry.',
+    retryable: false,
+  },
+  STEP_UP_REQUIRED: {
+    title: 'Confirm it is you',
+    message: 'For pairing, confirm with your authenticator app, then retry.',
+    retryable: true,
+  },
+  INVALID_MFA_CODE: {
+    title: 'Code not accepted',
+    message: "That authenticator code didn't work. Try again with a new code.",
+    retryable: true,
+  },
   PAYLOAD_TOO_LARGE: {
     title: 'Request too large',
     message: `This request was too large to process. ${RESTART}`,
