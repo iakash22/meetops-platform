@@ -5,6 +5,7 @@ import {
   hashSegments,
   mergeChunkTranscripts,
   type ChunkTranscript,
+  type OnProviderTranscriptStored,
   type TranscriptRevision,
 } from '@meetops/ai-core';
 import { ProviderError, type ProviderErrorCode } from './providers/errors.js';
@@ -47,6 +48,8 @@ export type RecordingTranscriptionDeps = {
   speakerLabels?: boolean | undefined;
   /** Enqueues the meeting summary once the transcript is `ready` (deduped by meeting + revision + prompt version). */
   summaryTrigger?: SummaryTrigger | undefined;
+  /** After the chunk is durably stored, enqueue provider-side transcript delete (ADR-019). */
+  onProviderTranscriptStored?: OnProviderTranscriptStored | undefined;
   now?: () => Date;
 };
 
@@ -58,6 +61,7 @@ export type RecordingTranscriptionErrorCode =
   | 'audio_unavailable'
   | 'revision_conflict'
   | 'summary_enqueue_failed'
+  | 'provider_delete_enqueue_failed'
   | `provider_${ProviderErrorCode}`;
 
 export class RecordingTranscriptionError extends Error {
@@ -90,6 +94,7 @@ export function toWholeRecordingChunk(r: TranscribeResult, receivedAt: string): 
     model: r.model,
     language: r.language ?? undefined,
     receivedAt,
+    ...(r.providerJobId ? { providerJobId: r.providerJobId } : {}),
     segments: r.segments.map((s) => ({
       startSec: s.startMs / 1000,
       endSec: s.endMs / 1000,
@@ -180,6 +185,21 @@ export async function processRecordingTranscription(
         ? fresh
         : ((await r.getChunkResult(meetingId, recordingId, 0)) ?? fresh),
     );
+  }
+
+  if (deps.onProviderTranscriptStored) {
+    try {
+      await deps.onProviderTranscriptStored({
+        organizationId,
+        meetingId,
+        recordingId,
+        chunkIndex: chunk.chunkIndex,
+        provider: chunk.provider,
+        ...(chunk.providerJobId ? { providerJobId: chunk.providerJobId } : {}),
+      });
+    } catch {
+      return fail('provider_delete_enqueue_failed', true);
+    }
   }
 
   const merged = mergeChunkTranscripts([chunk], 1);
