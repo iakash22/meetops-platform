@@ -136,6 +136,17 @@ These keys are owned and parsed by `@meetops/ai-core` (`loadAIEnv` in `packages/
 - `AI_ALLOW_PAID_FALLBACK`: false
 - `AI_STORES` (worker): `durable` (default; Postgres `ai_usage_counters`, `ai_idempotency` and `ai_org_config`, forced RLS). `memory` is for unit tests only and is refused unless `NODE_ENV=test` (staging, production and an unset `NODE_ENV` all refuse it); store errors fail the job, never fall back to memory.
 - `AI_REQUIRE_PROVIDER_APPROVAL`: true
+- `AI_PROVIDER_DATA_TIER_<PROVIDER>`: unset. In production (`NODE_ENV=production`), every enabled
+  LLM or STT provider whose configured `cost.tier` is `free` or unknown must have an explicit
+  data-use declaration of `paid` or `no-training`. This does not change default billing tiers
+  (those stay an owner decision). Hyphens in the provider name become underscores. Examples:
+  `AI_PROVIDER_DATA_TIER_GEMINI=paid`, `AI_PROVIDER_DATA_TIER_ASSEMBLYAI=no-training`. See
+  `docs/research/ai-provider-due-diligence.md`. The worker fails closed at registry startup if a
+  required declaration is missing or invalid.
+- `AI_PROVIDER_TRANSCRIPT_DELETE_ENABLED`: true. After a transcript is durably stored, enqueue a
+  best-effort AssemblyAI `DELETE /v2/transcript/:id` job (ADR-019). 404 is treated as success.
+  Set to `false`/`0`/`no`/`off` to skip enqueueing. Logs and metrics use ids and status codes
+  only, never transcript content.
 
 ### Integrations
 

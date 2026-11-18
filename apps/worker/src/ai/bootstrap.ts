@@ -56,6 +56,7 @@ export async function createTranscriptionHostDeps(
     resolveCredential,
     system: { system: true, userId: 'system:transcription-worker' },
     production: source.NODE_ENV === 'production',
+    processEnv: source,
   });
   const stores = createAiStores(source);
   if (stores.mode === 'memory')
