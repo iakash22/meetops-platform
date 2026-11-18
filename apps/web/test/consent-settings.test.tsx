@@ -32,13 +32,13 @@ describe('/settings?tab=consent', () => {
       expect(screen.getByRole('button', { name: 'Save changes' })).toBeDisabled();
       await user.clear(days);
       await user.type(days, '30');
-      await user.click(screen.getByRole('radio', { name: /One-party/ }));
+      await user.click(screen.getByRole('radio', { name: /Notice only/ }));
       await user.click(screen.getByRole('button', { name: 'Save changes' }));
       expect(await screen.findByText('Saved')).toBeInTheDocument();
       expect(api.consentSettings.update).toHaveBeenCalledWith(
         '00000000-0000-4000-8000-000000000001',
         {
-          mode: 'one_party',
+          mode: 'all_parties_notified',
           retentionDays: 30,
         },
       );
@@ -59,7 +59,7 @@ describe('/settings?tab=consent', () => {
     await user.clear(days);
     await user.type(days, '4000');
     await user.click(screen.getByRole('button', { name: 'Save changes' }));
-    expect(screen.getByText(/from 1 to 3650/)).toBeInTheDocument();
+    expect(screen.getByText(/from 7 to 365/)).toBeInTheDocument();
     expect(days).toHaveAttribute('aria-invalid', 'true');
     expect(api.consentSettings.update).not.toHaveBeenCalled();
   });
@@ -78,7 +78,7 @@ describe('/settings?tab=consent', () => {
 });
 
 describe('consent helpers', () => {
-  const draft = { ...consentSettings, retentionDays: '365' };
+  const draft = { ...consentSettings, retentionDays: '90' };
   it('diff sends only changed fields', () => {
     expect(diffConsentSettings(consentSettings, draft)).toEqual({});
     expect(diffConsentSettings(consentSettings, { ...draft, noticeText: ' New ' })).toEqual({
