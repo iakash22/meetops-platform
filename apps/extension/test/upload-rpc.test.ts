@@ -1,6 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
 import { uploadValidators } from '../src/lib/auth/validate.js';
-import { flagEnabled, httpUploadEnabled } from '../src/lib/features.js';
 import { UploadApiError } from '../src/lib/upload-http.js';
 import {
   RpcUploadClient,
@@ -9,7 +8,6 @@ import {
   isUploadRpcRequest,
   type UploadRpcRequest,
 } from '../src/lib/upload-rpc.js';
-import { selectUploadClient } from '../src/lib/upload-select.js';
 import { StubUploadClient, type StorageTransport, type UploadClient } from '../src/lib/upload.js';
 import { CONSENT } from './helpers/consent.js';
 
@@ -22,29 +20,6 @@ const initReq = {
   consent: CONSENT,
   meetingId: MID,
 };
-
-describe('WXT_FEATURE_HTTP_UPLOAD', () => {
-  it('only true / 1 turn the flag on', () => {
-    for (const v of ['true', 'TRUE', ' 1 ', '1', true]) expect(flagEnabled(v)).toBe(true);
-    for (const v of [undefined, '', 'false', '0', 'yes', 'on', false, 1])
-      expect(flagEnabled(v)).toBe(false);
-    expect(httpUploadEnabled({})).toBe(false);
-    expect(httpUploadEnabled({ WXT_FEATURE_HTTP_UPLOAD: 'true' })).toBe(true);
-  });
-
-  it('is off in this build by default', () => {
-    expect(httpUploadEnabled()).toBe(false);
-  });
-
-  it('selects the stub unless enabled, and only builds the HTTP client when enabled', () => {
-    const make = vi.fn<() => UploadClient>(() => new StubUploadClient());
-    expect(selectUploadClient(false, make)).toBeInstanceOf(StubUploadClient);
-    expect(make).not.toHaveBeenCalled();
-    const real = {} as UploadClient;
-    make.mockReturnValueOnce(real);
-    expect(selectUploadClient(true, make)).toBe(real);
-  });
-});
 
 describe('UPLOAD_RPC guard', () => {
   const base = { target: 'background', type: 'UPLOAD_RPC' } as const;

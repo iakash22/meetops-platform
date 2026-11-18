@@ -400,8 +400,9 @@ export const DEFAULT_CONSENT_SETTINGS_MODE = 'all_parties_consented' as const;
 export const CONSENT_SETTINGS_WRITE_ROLES = ['owner', 'admin'] as const;
 /** v0.5.0: max length of the consent notice text shown to participants. */
 export const MAX_CONSENT_NOTICE_TEXT_LENGTH = 4000;
-/** Default notice shown until an owner/admin sets one (ADR-020: visible MeetOps Recorder). */
-export const DEFAULT_CONSENT_NOTICE_TEXT = 'This meeting is being recorded by MeetOps Recorder.';
+/** Default notice shown until an owner/admin sets one (ADR-020 amendment: botless capture by a participant). */
+export const DEFAULT_CONSENT_NOTICE_TEXT =
+  'This meeting is being recorded and transcribed with MeetOps by a participant.';
 /** ADR-019: recording retention range in days (7–365); default 90. */
 export const MIN_RETENTION_DAYS = 7;
 export const MAX_RETENTION_DAYS = 365;

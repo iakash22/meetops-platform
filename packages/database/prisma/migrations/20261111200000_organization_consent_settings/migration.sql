@@ -3,10 +3,10 @@
 
 CREATE TABLE "organization_consent_settings" (
     "org_id" UUID NOT NULL,
-    "mode" "ConsentMethod" NOT NULL,
+    "mode" "ConsentMethod" NOT NULL DEFAULT 'all_parties_consented',
     "notice_text" TEXT NOT NULL,
     "skip_external_participants" BOOLEAN NOT NULL,
-    "retention_days" INTEGER NOT NULL,
+    "retention_days" INTEGER NOT NULL DEFAULT 90,
     "current_consent_version" TEXT NOT NULL,
     "updated_by_id" UUID,
     "updated_at" TIMESTAMPTZ(3) NOT NULL,
@@ -28,6 +28,9 @@ ALTER TABLE "organization_consent_settings"
 ALTER TABLE "organization_consent_settings"
   ADD CONSTRAINT "organization_consent_settings_notice_text_check"
     CHECK (char_length("notice_text") BETWEEN 1 AND 4000),
+  -- Whitespace-only notices are rejected here as well as in the contract (trimmed, non-empty).
+  ADD CONSTRAINT "organization_consent_settings_notice_text_not_blank_check"
+    CHECK (char_length(btrim("notice_text")) >= 1),
   ADD CONSTRAINT "organization_consent_settings_retention_days_check"
     CHECK ("retention_days" BETWEEN 7 AND 365),
   ADD CONSTRAINT "organization_consent_settings_consent_version_check"

@@ -78,7 +78,7 @@ describe('/settings?tab=consent', () => {
 });
 
 describe('consent helpers', () => {
-  const draft = { ...consentSettings, retentionDays: '365' };
+  const draft = { ...consentSettings, retentionDays: '90' };
   it('diff sends only changed fields', () => {
     expect(diffConsentSettings(consentSettings, draft)).toEqual({});
     expect(diffConsentSettings(consentSettings, { ...draft, noticeText: ' New ' })).toEqual({

@@ -42,12 +42,13 @@ type Col = { table_name: string; column_name: string; udt_name: string; data_typ
 
 type RowKey = { column: string; cast: 'uuid' | 'text' };
 /**
- * Row key per table. Most tenant tables use `id`; a few have a natural key instead: `ai_org_config` is 1:1
- * with the organization (key `org_id`) and `ai_idempotency` is keyed by (`org_id`, `key`).
+ * Row key per table. Most tenant tables use `id`; a few have a natural key instead: `ai_org_config` and
+ * `organization_consent_settings` are 1:1 with the organization (key `org_id`) and `ai_idempotency` is keyed by (`org_id`, `key`).
  */
 const ROW_KEY: Partial<Record<TenantTable, RowKey>> = {
   ai_org_config: { column: 'org_id', cast: 'uuid' },
   ai_idempotency: { column: 'key', cast: 'text' },
+  organization_consent_settings: { column: 'org_id', cast: 'uuid' },
 };
 const keyOf = (t: TenantTable): RowKey => ROW_KEY[t] ?? { column: 'id', cast: 'uuid' };
 const whereKey = (t: TenantTable) => `"${keyOf(t).column}" = $1::${keyOf(t).cast}`;
@@ -93,6 +94,9 @@ function override(table: string, column: string, organizationId: string): string
   if (table === 'file_objects' && column === 'storage_key')
     return `'organizations/${organizationId}/isolation-test-${randomUUID()}'`;
   if (table === 'consent_attestations' && column === 'consent_version') return `'2026-10'`;
+  // organization_consent_settings_consent_version_check: at most 32 chars, so the dummy text is too long.
+  if (table === 'organization_consent_settings' && column === 'current_consent_version')
+    return `'2026-10'`;
   if (table === 'meeting_consent_events' && column === 'event_type') return `'revoked'`;
   // CHECK constraints require v1 cipher envelopes (no real secrets in tests).
   if (table === 'integration_connections' && column.endsWith('_enc'))

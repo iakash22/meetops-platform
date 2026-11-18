@@ -25,7 +25,9 @@ Consent settings aligned with ADR-019 and ADR-020. Breaking while `0.x` (ADR-003
   (`DEFAULT_RETENTION_DAYS`, ADR-019). Previously 1–3650.
 - Changing `noticeText` bumps server-owned `currentConsentVersion` via `nextConsentVersion()` (UTC `YYYY-MM-DD`, or
   `YYYY-MM-DD.N` on the same day). Clients still cannot set `currentConsentVersion` or `updatedAt`.
-- Added `DEFAULT_CONSENT_NOTICE_TEXT` ("This meeting is being recorded by MeetOps Recorder.").
+- Added `DEFAULT_CONSENT_NOTICE_TEXT` ("This meeting is being recorded and transcribed with MeetOps by a participant."),
+  matching the ADR-020 amendment for botless capture. `noticeText` must be trimmed and non-empty after trim
+  (clients MUST trim before sending; whitespace-only and leading or trailing whitespace are rejected).
 
 ### Added
 

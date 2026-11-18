@@ -9,7 +9,8 @@
  *
  * API routes go through `ApiFetch`, which in production is `AuthService.apiFetch` (ADR-005: bearer with aud=extension,
  * exact API origin only, one refresh on 401). Presigned PUTs go through a StorageTransport, which never carries a
- * bearer. Gated behind WXT_FEATURE_HTTP_UPLOAD; StubUploadClient stays the default.
+ * bearer. Gated behind WXT_FEATURE_HTTP_UPLOAD (on in development builds, off in production
+ * builds and in tests; see httpUploadEnabled).
  *
  * This module never logs, and error messages carry only the operation, HTTP status and API error code (never
  * headers, bodies or server messages), so no token can leak through them.

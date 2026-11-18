@@ -33,7 +33,12 @@ export {
 export const ConsentSettingsMode = Type.Union(CONSENT_SETTINGS_MODES.map((m) => Type.Literal(m)));
 export type ConsentSettingsMode = (typeof CONSENT_SETTINGS_MODES)[number];
 
-const noticeText = Type.String({ minLength: 1, maxLength: MAX_CONSENT_NOTICE_TEXT_LENGTH });
+/** Notice body. Clients MUST trim before sending; whitespace-only or untrimmed values are invalid. */
+const noticeText = Type.String({
+  minLength: 1,
+  maxLength: MAX_CONSENT_NOTICE_TEXT_LENGTH,
+  pattern: '^\\S(?:[\\s\\S]*\\S)?$',
+});
 const retentionDays = Type.Integer({ minimum: MIN_RETENTION_DAYS, maximum: MAX_RETENTION_DAYS });
 
 /** Response of GET and PATCH. `currentConsentVersion` and `updatedAt` are server-owned (read-only). */

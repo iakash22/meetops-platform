@@ -18,8 +18,9 @@ Advisory Database and the Tailwind v4 upgrade guide on 1 Nov 2026 (IST).
   - it removes `tailwindcss@3.4.19` → `chokidar@3` / `postcss-selector-parser@6`;
   - it matches `apps/desktop`, which already uses `tailwindcss ^4.3.3` and `@tailwindcss/vite`;
   - it shrinks the PostCSS toolchain.
-    It is D4 in the lockfile queue, with **no deadline**. Expo SDK 55 (RE-04, 24 Nov) should take the slot first; see
-    `docs/plans/expo-rn-upgrade.md`.
+    It is D4 in the lockfile queue, with **no deadline**. RE-04 is closed too (#476; see
+    `docs/12-security/risk-exceptions.md`), so the Expo SDK 55 upgrade (`docs/plans/expo-rn-upgrade.md`) has no gate
+    deadline either; order the two by coordinator priority.
 - Target: `tailwindcss ^4.3.3` and `@tailwindcss/vite ^4.3.3`, with `tw-animate-css ^1.4.0` replacing
   `tailwindcss-animate`. Remove `postcss`, `autoprefixer`, `postcss.config.js` and `tailwind.config.ts` from
   `apps/web`. Estimate about 2–3 engineer-days.
@@ -237,11 +238,10 @@ spotlight-card, tabs, textarea, toast, typography.
   `tailwindcss`; drop `postcss`, `autoprefixer`, `tailwindcss-animate`) plus `pnpm-lock.yaml`, all in one PR with the
   CSS and class changes. Running `pnpm install` from the root should touch only the `apps/web` importer and the
   removed v3 subtree. **Do not regenerate the lockfile wholesale.**
-- Proposed slot: **after** the Expo SDK 55 PR (RE-04 has the hard date). Before Expo is fine only if the coordinator
-  confirms the Expo PR cannot start before about 8 Nov anyway.
-- Separate, not a lockfile change, can go now: a docs + gate PR that deletes the RE-01 row from
-  `scripts/audit-gate.mjs` and marks RE-01 "closed: advisory withdrawn 2026-10-23" in
-  `docs/12-security/risk-exceptions.md`. It needs a Security owner sign-off.
+- Proposed slot: any free lockfile slot. RE-04 is closed (#476), so the Expo SDK 55 PR no longer has a hard date and
+  need not go first.
+- Done: the RE-01 gate row is removed and RE-01 is in "Closed entries" in `docs/12-security/risk-exceptions.md`
+  (advisory withdrawn 2026-10-23; issue #54 closed).
 - Optional, later: root `lint-staged` `^15.2.10` → `^16.4.0` (Node >= 20.17; 17.x needs Node 22.22.1) drops one
   `micromatch` → `braces` path. That is a root lockfile change, so it gets its own slot.
 

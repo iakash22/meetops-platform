@@ -223,9 +223,9 @@ export const downloadUrlResponse: DownloadUrlResponse = {
 
 export const consentSettings: ConsentSettings = {
   mode: 'all_parties_consented',
-  noticeText: 'This meeting is being recorded by MeetOps Recorder.',
+  noticeText: 'This meeting is being recorded and transcribed with MeetOps by a participant.',
   skipExternalParticipants: false,
-  retentionDays: 365,
+  retentionDays: 90,
   currentConsentVersion: '2026-10',
   updatedAt: '2026-10-20T10:00:00.000Z',
 };

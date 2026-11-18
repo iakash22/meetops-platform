@@ -47,24 +47,30 @@ export class ConsentSettingsService {
       throw new ForbiddenError();
     }
     const now = this.d.now();
-    const current =
-      (await this.d.settings.get(c.ctx.organizationId)) ??
-      defaultConsentSettingsRecord(c.ctx.organizationId, now);
-    const noticeText = patch.noticeText !== undefined ? patch.noticeText : current.noticeText;
-    const noticeChanged = noticeText !== current.noticeText;
-    const next: ConsentSettingsRecord = {
-      organizationId: c.ctx.organizationId,
-      mode: patch.mode ?? current.mode,
-      noticeText,
-      skipExternalParticipants: patch.skipExternalParticipants ?? current.skipExternalParticipants,
-      retentionDays: patch.retentionDays ?? current.retentionDays,
-      currentConsentVersion: noticeChanged
-        ? nextConsentVersion(current.currentConsentVersion, now)
-        : current.currentConsentVersion,
-      updatedAt: now,
-      updatedById: c.ctx.userId,
-    };
-    const saved = await this.d.settings.upsert(next);
+    const org = c.ctx.organizationId;
+    let noticeChanged = false;
+    // Read and write in one transaction under a row lock: concurrent PATCHes apply one after the other.
+    const saved = await this.d.settings.update(
+      org,
+      defaultConsentSettingsRecord(org, now),
+      (current): ConsentSettingsRecord => {
+        const noticeText = patch.noticeText !== undefined ? patch.noticeText : current.noticeText;
+        noticeChanged = noticeText !== current.noticeText;
+        return {
+          organizationId: org,
+          mode: patch.mode ?? current.mode,
+          noticeText,
+          skipExternalParticipants:
+            patch.skipExternalParticipants ?? current.skipExternalParticipants,
+          retentionDays: patch.retentionDays ?? current.retentionDays,
+          currentConsentVersion: noticeChanged
+            ? nextConsentVersion(current.currentConsentVersion, now)
+            : current.currentConsentVersion,
+          updatedAt: now,
+          updatedById: c.ctx.userId,
+        };
+      },
+    );
     await safeAudit(this.d.audit, {
       organizationId: c.ctx.organizationId,
       actorId: c.ctx.userId,

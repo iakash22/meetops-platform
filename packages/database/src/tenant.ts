@@ -56,6 +56,7 @@ export const TENANT_TABLES = [
   'meeting_consent_events',
   'calendar_event_links',
   'task_sync_jobs',
+  'organization_consent_settings',
 ] as const;
 export type TenantTable = (typeof TENANT_TABLES)[number];
 

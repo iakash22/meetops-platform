@@ -61,8 +61,8 @@ export class RecordingSessionService {
   async init(c: DirectoryCaller, body: InitRecordingSessionInput): Promise<RecordingSessionRecord> {
     authorizeMedia(c, 'create', 'RecordingSession');
     const now = this.d.now();
-    const consent = checkConsentInput(body.consent, now);
     const org = c.ctx.organizationId;
+    const consent = checkConsentInput(body.consent, now, await this.d.consentVersion(org));
     const m = isUuid(body.meetingId) ? await this.d.meetings.findById(org, body.meetingId) : null;
     if (!m) throw new MeetingNotFoundError();
     // CONSENT_ENFORCEMENT_ENABLED: the meeting needs a current consent grant before any session exists.
@@ -162,6 +162,7 @@ export class RecordingSessionService {
       if (!s.sourcePending) return s;
       const consent = checkStoredConsent(
         await this.d.consents.findLatest(s.organizationId, 'recording_session', s.id),
+        await this.d.consentVersion(s.organizationId),
       );
       await enforceMeetingConsent(this.d, s.organizationId, s.meetingId);
       await this.enqueue(s, consent.id, true);
@@ -170,6 +171,7 @@ export class RecordingSessionService {
     RecordingSessionService.assertUploading(s);
     const consent = checkStoredConsent(
       await this.d.consents.findLatest(s.organizationId, 'recording_session', s.id),
+      await this.d.consentVersion(s.organizationId),
     );
     await enforceMeetingConsent(this.d, s.organizationId, s.meetingId);
     if (s.chunks.size !== body.chunkCount) {

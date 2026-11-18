@@ -68,4 +68,32 @@ describe.skipIf(!url)('consent settings Prisma repository (live)', { timeout: 60
     const again = await owner.get(`/orgs/${org}/settings/consent`);
     expect(again.json()).toMatchObject({ retentionDays: 45, mode: 'all_parties_notified' });
   });
+
+  it('concurrent notice PATCHes serialise on the row lock (first write too): no lost bump', async () => {
+    const owner = await signupAndLogin(app, email('race'));
+    const org = (await owner.post('/orgs', { name: `Consent race ${sfx}` })).json().organization
+      .id as string;
+    // No settings row yet: the first writers race on the insert of the default row, then on its lock.
+    const notices = Array.from({ length: 5 }, (_, i) => `Race notice ${i + 1}.`);
+    const res = await Promise.all(
+      notices.map((noticeText) => owner.patch(`/orgs/${org}/settings/consent`, { noticeText })),
+    );
+    const bodies = res.map((r) => {
+      expect(r.statusCode, JSON.stringify(r.json())).toBe(200);
+      return r.json<{ noticeText: string; currentConsentVersion: string }>();
+    });
+    const versions = bodies.map((b) => b.currentConsentVersion);
+    // Five distinct versions: every writer read the previous writer's committed row.
+    expect(new Set(versions).size).toBe(5);
+    const rank = (v: string) => Number(v.split('.')[1] ?? '1');
+    const last = bodies.reduce((a, b) =>
+      rank(b.currentConsentVersion) > rank(a.currentConsentVersion) ? b : a,
+    );
+    expect(versions.map(rank).sort()).toEqual([1, 2, 3, 4, 5]);
+    const stored = await owner.get(`/orgs/${org}/settings/consent`);
+    expect(stored.json()).toMatchObject({
+      noticeText: last.noticeText,
+      currentConsentVersion: last.currentConsentVersion,
+    });
+  });
 });

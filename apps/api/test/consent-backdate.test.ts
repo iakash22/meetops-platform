@@ -29,12 +29,20 @@ describe('consent attestedAt back-dating bound (24 h)', () => {
   it('is 24 hours', () => expect(CONSENT_ATTESTATION_MAX_BACKDATE_SECONDS).toBe(86_400));
 
   it('accepts up to 24 h old, rejects older with CONSENT_INVALID', () => {
-    expect(reason(() => checkConsentInput(input(ago(23 * 3600)), now))).toBeNull();
-    expect(reason(() => checkConsentInput(input(ago(86_400)), now))).toBeNull();
-    expect(reason(() => checkConsentInput(input(ago(86_401)), now))).toBe('CONSENT_INVALID');
-    expect(reason(() => checkConsentInput(input('2001-01-01T00:00:00.000Z'), now))).toBe(
+    expect(
+      reason(() => checkConsentInput(input(ago(23 * 3600)), now, CURRENT_CONSENT_VERSION)),
+    ).toBeNull();
+    expect(
+      reason(() => checkConsentInput(input(ago(86_400)), now, CURRENT_CONSENT_VERSION)),
+    ).toBeNull();
+    expect(reason(() => checkConsentInput(input(ago(86_401)), now, CURRENT_CONSENT_VERSION))).toBe(
       'CONSENT_INVALID',
     );
+    expect(
+      reason(() =>
+        checkConsentInput(input('2001-01-01T00:00:00.000Z'), now, CURRENT_CONSENT_VERSION),
+      ),
+    ).toBe('CONSENT_INVALID');
   });
 
   it('re-checks a stored attestation against its recordedAt', () => {
@@ -49,7 +57,9 @@ describe('consent attestedAt back-dating bound (24 h)', () => {
       attestedAt: new Date(attestedAt),
       recordedAt: now,
     });
-    expect(reason(() => checkStoredConsent(rec(ago(3600))))).toBeNull();
-    expect(reason(() => checkStoredConsent(rec(ago(2 * 86_400))))).toBe('CONSENT_INVALID');
+    expect(reason(() => checkStoredConsent(rec(ago(3600)), CURRENT_CONSENT_VERSION))).toBeNull();
+    expect(reason(() => checkStoredConsent(rec(ago(2 * 86_400)), CURRENT_CONSENT_VERSION))).toBe(
+      'CONSENT_INVALID',
+    );
   });
 });
