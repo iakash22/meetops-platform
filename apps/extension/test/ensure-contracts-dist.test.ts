@@ -27,6 +27,9 @@ async function loadScript() {
   return mod as {
     findRepoRoot: (startDir: string) => string;
     resolveTscBin: (root: string, contractsDir: string) => string;
+    isContractsDistReady: (contractsDir: string) => boolean;
+    isUsableDistFile: (file: string) => boolean;
+    DIST_SENTINELS: Record<string, string>;
     main: () => number;
   };
 }
@@ -63,8 +66,10 @@ import path from 'node:path';
 const stamp = process.env.TSC_STAMP;
 if (stamp) appendFileSync(stamp, 'ran\\n');
 mkdirSync(path.join(process.cwd(), 'dist'), { recursive: true });
-writeFileSync(path.join(process.cwd(), 'dist', 'index.js'), 'export {}\\n');
-writeFileSync(path.join(process.cwd(), 'dist', 'types.js'), 'export {}\\n');
+writeFileSync(path.join(process.cwd(), 'dist', 'index.js'), "export * from './formats.js'\\n");
+writeFileSync(path.join(process.cwd(), 'dist', 'types.js'), "export * from './constants.js'\\n");
+writeFileSync(path.join(process.cwd(), 'dist', 'index.d.ts'), 'export {}\\n');
+writeFileSync(path.join(process.cwd(), 'dist', 'types.d.ts'), 'export {}\\n');
 `;
 
 function layoutScript(root: string) {
@@ -109,7 +114,9 @@ describe('ensure-contracts-dist', () => {
     // The only remaining pnpm --filter mention is the stale-dist rebuild hint.
     const filterMentions = scriptSource.match(/pnpm --filter/g) ?? [];
     expect(filterMentions).toHaveLength(1);
-    expect(scriptSource).toMatch(/stale dist[\s\S]*pnpm --filter @meetops\/contracts build/);
+    expect(scriptSource).toMatch(
+      /stale-but-valid dist[\s\S]*pnpm --filter @meetops\/contracts build/,
+    );
   });
 
   it('builds contracts with node on the tsc bin when dist is missing', () => {
@@ -145,5 +152,59 @@ describe('ensure-contracts-dist', () => {
     writeFakeTsc(root, FAKE_TSC);
     const resolved = resolveTscBin(root, contractsDir);
     expect(resolved).toBe(path.join(root, 'node_modules', 'typescript', 'bin', 'tsc'));
+  });
+
+  it('treats empty or truncated dist files as missing', async () => {
+    const { isContractsDistReady, isUsableDistFile } = await loadScript();
+    const root = makeFixture();
+    const contractsDir = writeContractsPackage(root);
+    const distDir = path.join(contractsDir, 'dist');
+    mkdirSync(distDir, { recursive: true });
+
+    writeFileSync(path.join(distDir, 'index.js'), '');
+    writeFileSync(path.join(distDir, 'types.js'), '');
+    writeFileSync(path.join(distDir, 'index.d.ts'), '');
+    writeFileSync(path.join(distDir, 'types.d.ts'), '');
+    expect(isUsableDistFile(path.join(distDir, 'index.js'))).toBe(false);
+    expect(isContractsDistReady(contractsDir)).toBe(false);
+
+    writeFileSync(path.join(distDir, 'index.js'), 'export {}\n');
+    writeFileSync(path.join(distDir, 'types.js'), 'export {}\n');
+    writeFileSync(path.join(distDir, 'index.d.ts'), 'export {}\n');
+    writeFileSync(path.join(distDir, 'types.d.ts'), 'export {}\n');
+    expect(isUsableDistFile(path.join(distDir, 'index.js'))).toBe(true);
+    expect(isContractsDistReady(contractsDir)).toBe(false);
+
+    writeFileSync(path.join(distDir, 'index.js'), "export * from './formats.js'\n");
+    writeFileSync(path.join(distDir, 'types.js'), "export * from './constants.js'\n");
+    expect(isContractsDistReady(contractsDir)).toBe(true);
+  });
+
+  it('rebuilds when dist/index.js exists but is empty', () => {
+    const root = makeFixture();
+    const contractsDir = writeContractsPackage(root);
+    const stamp = path.join(root, 'tsc-stamp');
+    writeFakeTsc(root, FAKE_TSC);
+    const script = layoutScript(root);
+    const distDir = path.join(contractsDir, 'dist');
+    mkdirSync(distDir, { recursive: true });
+    writeFileSync(path.join(distDir, 'index.js'), '');
+    writeFileSync(path.join(distDir, 'types.js'), '');
+    writeFileSync(path.join(distDir, 'index.d.ts'), '');
+    writeFileSync(path.join(distDir, 'types.d.ts'), '');
+
+    const result = spawnSync(process.execPath, [script], {
+      cwd: root,
+      encoding: 'utf8',
+      env: { ...process.env, TSC_STAMP: stamp },
+    });
+    expect(result.status, result.stderr).toBe(0);
+    expect(readFileSync(stamp, 'utf8').trim().split('\n')).toEqual(['ran']);
+    expect(readFileSync(path.join(distDir, 'index.js'), 'utf8')).toContain(
+      "export * from './formats.js'",
+    );
+    expect(readFileSync(path.join(distDir, 'types.js'), 'utf8')).toContain(
+      "export * from './constants.js'",
+    );
   });
 });
