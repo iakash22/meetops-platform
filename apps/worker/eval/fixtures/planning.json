@@ -1,0 +1,122 @@
+{
+  "name": "planning",
+  "description": "Quarterly planning: decision-heavy, one action item phrased implicitly (expected miss for the rule mock).",
+  "transcript": {
+    "transcriptId": "0e0e0e0e-0002-4000-8000-1000000000ff",
+    "recordingId": "0e0e0e0e-0002-4000-8000-2000000000ff",
+    "revision": 1,
+    "language": "en",
+    "segments": [
+      {
+        "id": "0e0e0e0e-0002-4000-8000-000000000000",
+        "sequence": 0,
+        "speakerLabel": "Kavya",
+        "startMs": 0,
+        "endMs": 5500,
+        "text": "Let's start Q1 planning. Three decisions on the agenda."
+      },
+      {
+        "id": "0e0e0e0e-0002-4000-8000-000000000001",
+        "sequence": 1,
+        "speakerLabel": "Kavya",
+        "startMs": 6000,
+        "endMs": 11500,
+        "text": "Decision: move the billing service to Postgres 16."
+      },
+      {
+        "id": "0e0e0e0e-0002-4000-8000-000000000002",
+        "sequence": 2,
+        "speakerLabel": "Dev",
+        "startMs": 12000,
+        "endMs": 17500,
+        "text": "Agreed. We decided to drop support for Internet Explorer."
+      },
+      {
+        "id": "0e0e0e0e-0002-4000-8000-000000000003",
+        "sequence": 3,
+        "speakerLabel": "Kavya",
+        "startMs": 18000,
+        "endMs": 23500,
+        "text": "Also we decided to hire two backend engineers in January."
+      },
+      {
+        "id": "0e0e0e0e-0002-4000-8000-000000000004",
+        "sequence": 4,
+        "speakerLabel": "Dev",
+        "startMs": 24000,
+        "endMs": 29500,
+        "text": "On pricing, we decided to keep the free tier at five seats."
+      },
+      {
+        "id": "0e0e0e0e-0002-4000-8000-000000000005",
+        "sequence": 5,
+        "speakerLabel": "Kavya",
+        "startMs": 30000,
+        "endMs": 35500,
+        "text": "Action: Dev to draft the migration plan by January 10."
+      },
+      {
+        "id": "0e0e0e0e-0002-4000-8000-000000000006",
+        "sequence": 6,
+        "speakerLabel": "Dev",
+        "startMs": 36000,
+        "endMs": 41500,
+        "text": "Sana will prepare the hiring brief by next Monday."
+      },
+      {
+        "id": "0e0e0e0e-0002-4000-8000-000000000007",
+        "sequence": 7,
+        "speakerLabel": "Kavya",
+        "startMs": 42000,
+        "endMs": 47500,
+        "text": "Ravi should probably own the budget review, can you take that Ravi?"
+      },
+      {
+        "id": "0e0e0e0e-0002-4000-8000-000000000008",
+        "sequence": 8,
+        "speakerLabel": "Ravi",
+        "startMs": 48000,
+        "endMs": 53500,
+        "text": "Sure, I will look into it."
+      },
+      {
+        "id": "0e0e0e0e-0002-4000-8000-000000000009",
+        "sequence": 9,
+        "speakerLabel": "Kavya",
+        "startMs": 54000,
+        "endMs": 59500,
+        "text": "Great, see you next week."
+      }
+    ]
+  },
+  "golden": {
+    "actionItems": [
+      {
+        "title": "draft the migration plan",
+        "owner": "Dev",
+        "due": "January 10"
+      },
+      {
+        "title": "prepare the hiring brief",
+        "owner": "Sana",
+        "due": "next Monday"
+      },
+      {
+        "title": "own the budget review",
+        "owner": "Ravi",
+        "due": null
+      }
+    ],
+    "decisions": [
+      "move the billing service to Postgres 16",
+      "drop support for Internet Explorer",
+      "hire two backend engineers in January",
+      "keep the free tier at five seats"
+    ],
+    "thresholds": {
+      "precision": 1,
+      "recall": 0.66,
+      "decisionRecall": 1
+    }
+  }
+}
