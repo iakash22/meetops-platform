@@ -158,7 +158,7 @@ export const PairingView = memo(function PairingView({ auth, onPair, onUnpair }:
       ) : (
         <>
           <p className="mo-muted">
-            Pair this browser with your MeetOps workspace to upload recordings.
+            Pair this browser with your MeetOps workspace to record and sync.
           </p>
           <button type="button" className="mo-btn mo-btn--primary" onClick={onPair}>
             Pair with MeetOps
@@ -202,7 +202,7 @@ export interface RecorderViewProps {
   now: number;
   /** Primary when paired (the main action), secondary while pairing is still the next step. */
   emphasis: 'primary' | 'secondary';
-  /** Pairing state, for the upload hint. Undefined while still asking the background. */
+  /** Pairing state, used for the unpaired start-blocked hint. Undefined while still asking the background. */
   paired?: boolean | undefined;
   /** A start attempt is in flight: Record stays disabled. */
   starting?: boolean;
