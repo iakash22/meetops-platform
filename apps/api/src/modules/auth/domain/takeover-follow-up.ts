@@ -30,3 +30,22 @@ export interface TakeoverFollowUpQueue {
 export interface TakeoverFollowUpRunner {
   runTakeoverFollowUp(job: TakeoverFollowUpJob): Promise<void>;
 }
+
+const SAFE_ERROR_NAME_RE = /^[\w.-]{1,64}$/;
+
+/**
+ * Safe error class/name (or typeof) for DLQ `errorType` and logs: never a message. Shared by the takeover queue and
+ * AuthService so both log the same shape.
+ */
+export function safeErrorType(err: unknown): string {
+  if (err instanceof Error && SAFE_ERROR_NAME_RE.test(err.name)) return err.name;
+  return err instanceof Error ? 'Error' : typeof err;
+}
+
+/** Error class and a safe code only: never a message, email, token or user name. */
+export function safeErrorSummary(err: unknown): { type: string; code?: string } {
+  const type = safeErrorType(err);
+  if (!(err instanceof Error)) return { type };
+  const code = (err as { code?: unknown }).code;
+  return { type, ...(typeof code === 'string' && SAFE_ERROR_NAME_RE.test(code) ? { code } : {}) };
+}

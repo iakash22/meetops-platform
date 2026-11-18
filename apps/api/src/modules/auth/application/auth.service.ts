@@ -31,11 +31,12 @@ import type {
   TokenService,
 } from '../domain/ports.js';
 import { sequentialAccountClaims } from './account-claims.js';
-import type {
-  TakeoverFollowUpJob,
-  TakeoverFollowUpKind,
-  TakeoverFollowUpQueue,
-  TakeoverFollowUpRunner,
+import {
+  safeErrorSummary,
+  type TakeoverFollowUpJob,
+  type TakeoverFollowUpKind,
+  type TakeoverFollowUpQueue,
+  type TakeoverFollowUpRunner,
 } from '../domain/takeover-follow-up.js';
 import {
   isSessionActive,
@@ -122,15 +123,8 @@ const ROTATION_SUCCESSOR_POLL_MS = 100;
 /** #459 NB-R3-2: in-process fallback retries of takeover follow-ups (no durable queue, or enqueue failed). */
 export const TAKEOVER_FOLLOW_UP_RETRY_DELAYS_MS = [5_000, 30_000, 120_000] as const;
 
-/** Error class and a safe code only: never a message, email, token or user name. */
-function safeAuthError(err: unknown): { type: string; code?: string } {
-  if (!(err instanceof Error)) return { type: typeof err };
-  const code = (err as { code?: unknown }).code;
-  return {
-    type: err.name,
-    ...(typeof code === 'string' && /^[\w.-]{1,64}$/.test(code) ? { code } : {}),
-  };
-}
+/** Error class (safeErrorType) and a safe code only: never a message, email, token or user name. */
+const safeAuthError = safeErrorSummary;
 
 const defaultScheduleRetry = (run: () => Promise<void>, delayMs: number) => {
   const t = setTimeout(() => void run(), delayMs);
@@ -718,18 +712,60 @@ export class AuthService implements TakeoverFollowUpRunner {
       case 'push_devices':
         await this.d.pushDeviceRevoker?.revokeForUser(userId);
         return;
-      case 'set_password_mail': {
-        // Ids only: mint a fresh reset token (voiding any leftover from the failed request) and enqueue mail.
-        const now = this.d.clock.now();
-        await this.d.oneTimeTokens.invalidateForUser(userId, 'password_reset', now);
-        const reset = await this.createOneTimeToken(
-          userId,
-          'password_reset',
-          this.d.passwordResetTtlMs,
-        );
-        await this.d.mailQueue.enqueue({ kind: 'password_reset', tokenId: reset.id });
+      case 'set_password_mail':
+        await this.retrySetPasswordMail(userId);
         return;
+    }
+  }
+
+  /**
+   * Durable retry of the set-password mail after a mailbox takeover (ids only). Idempotent (coordinator decision on
+   * #496): a no-op when the claim is gone (no such live, verified user), when the user has set a password since the
+   * claim, or when an unused, unexpired reset token issued after the claim already exists (its mail went out, or the
+   * user requested a reset themselves; voiding it would break the link they hold). Otherwise it voids leftover reset
+   * tokens, mints one and enqueues the mail. The claim time is `emailVerifiedAt`: claimForMailbox sets it and drops
+   * the password in one transaction, so a non-empty password hash means one was set after the claim.
+   */
+  private async retrySetPasswordMail(userId: string): Promise<void> {
+    const user = await this.d.users.findById(userId);
+    if (!user || user.deletedAt || !user.emailVerifiedAt) return;
+    if (user.passwordHash) return;
+    const now = this.d.clock.now();
+    if (
+      await this.d.oneTimeTokens.hasUnusedSince(userId, 'password_reset', user.emailVerifiedAt, now)
+    )
+      return;
+    await this.d.oneTimeTokens.invalidateForUser(userId, 'password_reset', now);
+    await this.sendSetPasswordMail(userId);
+  }
+
+  /**
+   * Mints a set-password (reset) token and enqueues its mail, rejecting when either fails. If the mail could not be
+   * enqueued, the fresh token is voided first (best effort, logged), so the durable retry's idempotency check does not
+   * mistake a token whose mail never went out for a delivered one.
+   */
+  private async sendSetPasswordMail(userId: string): Promise<void> {
+    const reset = await this.createOneTimeToken(
+      userId,
+      'password_reset',
+      this.d.passwordResetTtlMs,
+    );
+    try {
+      await this.d.mailQueue.enqueueOrThrow({ kind: 'password_reset', tokenId: reset.id });
+    } catch (err) {
+      try {
+        await this.d.oneTimeTokens.invalidateForUser(userId, 'password_reset', this.d.clock.now());
+      } catch (voidErr) {
+        this.d.log?.error(
+          {
+            event: 'auth.takeover.set_password_token_void_failed',
+            userId,
+            err: safeAuthError(voidErr),
+          },
+          'could not void the set-password token after a failed mail enqueue',
+        );
       }
+      throw err;
     }
   }
 
@@ -1013,19 +1049,15 @@ export class AuthService implements TakeoverFollowUpRunner {
       }
       // Committed: from here on the request reports the takeover (NB-R3-2); follow-up failures are logged and retried.
       const failedSteps = await this.afterCredentialTakeover(user.id);
-      metadata = failedSteps.length ? { ...before, followUpFailed: failedSteps } : before;
       passwordRemoved = before.passwordRemoved;
       // Set-password link: the regular reset flow (single-use token, reset mail). The claim has committed, so a
-      // failure here must not fail the request: log a safe error (class/code only, no PII), still return 204, and
-      // retry through the durable follow-up queue (`set_password_mail`).
+      // failure here (token write, or the mail queue: enqueueOrThrow) must not fail the request: log a safe error
+      // (class/code only, no PII), still return 204, and retry through the durable follow-up queue
+      // (`set_password_mail`).
       try {
-        const reset = await this.createOneTimeToken(
-          user.id,
-          'password_reset',
-          this.d.passwordResetTtlMs,
-        );
-        await this.d.mailQueue.enqueue({ kind: 'password_reset', tokenId: reset.id });
+        await this.sendSetPasswordMail(user.id);
       } catch (err) {
+        failedSteps.push('set_password_mail');
         this.d.log?.error(
           {
             event: 'auth.takeover.set_password_mail_enqueue_failed',
@@ -1036,6 +1068,7 @@ export class AuthService implements TakeoverFollowUpRunner {
         );
         await this.deferFollowUps(user.id, ['set_password_mail']);
       }
+      metadata = failedSteps.length ? { ...before, followUpFailed: failedSteps } : before;
     }
     await this.audit(
       {

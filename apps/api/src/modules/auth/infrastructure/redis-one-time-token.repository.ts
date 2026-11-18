@@ -86,4 +86,12 @@ export class RedisOneTimeTokenRepository implements OneTimeTokenRepository {
       await this.save(t);
     }
   }
+  async hasUnusedSince(userId: string, purpose: OneTimeTokenPurpose, since: Date, now: Date) {
+    for (const id of await this.redis.smembers(this.userKey(purpose, userId))) {
+      const t = await this.load(id);
+      if (t && t.usedAt === null && t.expiresAt > now.getTime() && t.createdAt >= since.getTime())
+        return true;
+    }
+    return false;
+  }
 }

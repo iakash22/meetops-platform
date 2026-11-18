@@ -113,6 +113,23 @@ describe('BullMqAuthMailQueue', () => {
     expect(l.error).toHaveBeenCalledOnce();
     expect(JSON.stringify(l.error.mock.calls)).not.toContain(EMAIL);
   });
+
+  it('enqueueOrThrow logs the same way and rejects when Redis is down (#496)', async () => {
+    const p = new FakeProducer();
+    p.fail = new Error(`ECONNREFUSED for ${EMAIL}`);
+    const l = log();
+    const q = new BullMqAuthMailQueue(p, at('2026-10-29T00:00:00Z'), l);
+    await expect(q.enqueueOrThrow({ kind: 'password_reset', tokenId: 't1' })).rejects.toThrow(
+      'ECONNREFUSED',
+    );
+    expect(l.error).toHaveBeenCalledOnce();
+    expect(JSON.stringify(l.error.mock.calls)).not.toContain(EMAIL);
+    p.fail = null;
+    await expect(
+      q.enqueueOrThrow({ kind: 'password_reset', tokenId: 't1' }),
+    ).resolves.toBeUndefined();
+    expect(p.jobs.size).toBe(1);
+  });
 });
 
 describe('auth mail worker processor', () => {

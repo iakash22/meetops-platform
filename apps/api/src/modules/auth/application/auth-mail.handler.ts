@@ -205,11 +205,21 @@ export class InlineAuthMailQueue implements AuthMailQueue {
    * by class/code/status only (no message, which can echo addresses, links or provider bodies).
    */
   async enqueue(job: AuthMailJob) {
+    try {
+      await this.enqueueOrThrow(job);
+    } catch {
+      // Logged in enqueueOrThrow; enqueue never throws.
+    }
+  }
+
+  /** Same, but rejects after logging when delivery failed, so a caller with its own durable retry sees it. */
+  async enqueueOrThrow(job: AuthMailJob) {
     this.jobs.push(job);
     try {
       await this.handler?.handle(job);
     } catch (err) {
       this.log?.error({ kind: job.kind, err: safeMailError(err) }, 'auth mail delivery failed');
+      throw err;
     }
   }
 }

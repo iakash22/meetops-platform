@@ -104,7 +104,7 @@ export function minimalAuthMailPayload(job: AuthMailJob): AuthMailJob {
 
 /**
  * Durable AuthMailQueue. Like the inline queue, enqueue never throws: a Redis outage must not turn signup or invites
- * into a 500. The error is logged by class/code only.
+ * into a 500. The error is logged by class/code only. enqueueOrThrow logs the same way and then rejects.
  */
 export class BullMqAuthMailQueue implements AuthMailQueue {
   constructor(
@@ -114,6 +114,15 @@ export class BullMqAuthMailQueue implements AuthMailQueue {
   ) {}
 
   async enqueue(job: AuthMailJob): Promise<void> {
+    try {
+      await this.enqueueOrThrow(job);
+    } catch {
+      // Logged in enqueueOrThrow; enqueue never throws.
+    }
+  }
+
+  /** Rejects when Redis did not store the job (logged by class/code first), so the caller can retry durably. */
+  async enqueueOrThrow(job: AuthMailJob): Promise<void> {
     const jobId = authMailJobId(job, this.clock.now());
     if (!jobId) return;
     try {
@@ -126,6 +135,7 @@ export class BullMqAuthMailQueue implements AuthMailQueue {
         { kind: job.kind, jobId, err: safeMailError(err) },
         'auth mail enqueue failed',
       );
+      throw err;
     }
   }
 

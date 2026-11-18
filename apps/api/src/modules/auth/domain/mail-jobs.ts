@@ -23,7 +23,13 @@ export type AuthMailJob =
     };
 
 export interface AuthMailQueue {
+  /** Never throws: a queue or delivery failure is logged (class/code only) so signup or invites never 500. */
   enqueue(job: AuthMailJob): Promise<void>;
+  /**
+   * Same as `enqueue`, but rejects when the job could not be stored (BullMQ) or delivered (inline), after logging it
+   * the same way. For callers with their own durable retry (the takeover set-password mail), which must see failures.
+   */
+  enqueueOrThrow(job: AuthMailJob): Promise<void>;
 }
 
 export type AuthMailTemplate =
