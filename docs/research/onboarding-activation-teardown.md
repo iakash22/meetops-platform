@@ -158,7 +158,9 @@ and reviewers mention it. It is not drop-off rates.
 - Google requests `calendar.events.readonly` and `calendar.calendarlist.readonly`
   (`packages/integrations/src/calendar.ts` L99–102).
 - Outlook requests `Calendars.Read` and `User.Read`, plus `openid`, `profile`, `email` and `offline_access`
-  (`packages/integrations/src/calendar-outlook.ts` L33–42).
+  (`packages/integrations/src/calendar-outlook.ts` L33–42). _Correction 2026-11-18: Outlook requests only
+  `Calendars.Read`, `User.Read` and `offline_access` (`packages/integrations/src/calendar-outlook.ts` L248);
+  `openid`, `profile` and `email` are only tolerated in the grant check, not requested._
 - The connection is separate from sign-in and lives on `/calendar` (`router.tsx` L307). No capture path requires it.
 
 ### 4.3 First recording and upload (web)
@@ -178,8 +180,9 @@ and reviewers mention it. It is not drop-off rates.
     L66–76).
   - With `CONSENT_ENFORCEMENT_ENABLED` on, "an upload with no meeting… fails closed" (L70–71;
     `apps/api/src/modules/index.ts` L294–303, default off).
-- **Summary display.** Report and transcript panels show when `status === 'completed'` (`meetings-pages.tsx`
-  L241–242). The page polls every 5 s while recording or processing, or every 30 s with realtime connected
+- **Summary display.** Report and transcript panels show when `status === 'completed'`
+  (`apps/web/src/features/meetings/meetings-pages.tsx` L241–242). The page polls every 5 s while recording or
+  processing, or every 30 s with realtime connected
   (`apps/web/src/lib/api/queries.ts` L37–41).
 
 ### 4.4 Extension
@@ -368,7 +371,7 @@ for alerts.
 | F1  | The docs say "Pairing endpoints aren't in the API yet", but pair, extension-token and refresh are implemented                                                                                | `docs/05-web/extension.md` L81 vs `apps/api/src/modules/extension-auth/application/extension-auth.service.ts` L194, L239, L285 | Native/extension (docs) |
 | F2  | `WXT_FEATURE_HTTP_UPLOAD` is off in production builds, so production uses the stub upload client and extension recordings may never upload                                                   | `apps/extension/README.md` L14; `docs/05-web/extension.md` L79                                                                 | Native/extension        |
 | F3  | `TRANSCRIPTION_WORKER_ENABLED` and `AI_SUMMARY_WORKER_ENABLED` default false. With them off, no summary ever appears. No deploy config in the repo sets them (searched `infra/`, `.github/`) | `.env.example` L160, L163; `apps/worker/src/index.ts` L79–85                                                                   | DevOps / AI             |
-| F4  | The Meetings-list Upload has no `meetingId`. It fails closed when consent enforcement is on. Whether a meeting-less upload is ever transcribed is unverified                                 | `meetings-pages.tsx` L149; `upload.service.ts` L66–76                                                                          | Backend / Frontend      |
+| F4  | The Meetings-list Upload has no `meetingId`. It fails closed when consent enforcement is on. Whether a meeting-less upload is ever transcribed is unverified                                 | `apps/web/src/features/meetings/meetings-pages.tsx` L149; `apps/api/src/modules/media/application/upload.service.ts` L66–76    | Backend / Frontend      |
 | F5  | The desktop README still says "M1 scaffold… mocked sign-in… No recording yet". The code has recording, native upload and browser auth                                                        | `apps/desktop/README.md` L7 vs `apps/desktop/src/features/recording/`, `app.tsx` L151–158                                      | Native (docs)           |
 | F6  | Desktop production sign-in works only with `VITE_DESKTOP_BROWSER_AUTH=true`. Otherwise it fails closed                                                                                       | `apps/desktop/src/app.tsx` L151–158                                                                                            | Native                  |
 | F7  | Mobile has no org creation, so a new user is told to ask an admin                                                                                                                            | `apps/mobile/src/screens/LoginScreen.tsx` L34                                                                                  | Native / Backend        |
@@ -382,13 +385,16 @@ place. The original text is kept.
 
 1. **AssemblyAI deletes now exist** (45e8664e, 2026-11-18 13:46 IST).
    - After a chunk is durably stored, the worker enqueues `ai-provider-transcript-delete`: 5 attempts, exponential
-     backoff from 2 s, 404 counts as success (`apps/worker/src/ai/provider-transcript-delete.ts` L22–25).
+     backoff from 2 s, 404 counts as success (`apps/worker/src/ai/provider-transcript-delete.ts` L22–25;
+     _updated 2026-11-18: L24–27 at `2127fb46`_).
    - The job calls `DELETE v2/transcript/{id}` (`packages/ai-core/src/adapters/assemblyai.ts` L35, L191).
    - The job id is now written to the anchor `transcripts.provider_job_id` (`apps/worker/src/ai/prisma-repository.ts`
      diff in 45e8664e).
    - The delete worker runs only when transcription is enabled (`apps/worker/src/index.ts` L50–58).
    - **Still open:**
-     - no periodic sweep for final failures, which only fire a hook and metric (L100, L221);
+     - no periodic sweep for final failures, which only fire a hook and metric
+       (`apps/worker/src/ai/provider-transcript-delete.ts` L100, L221 at `e5075890`;
+       _updated 2026-11-18: L106–107 for the metric and L270, L334 for the hook at `2127fb46`, after #514_);
      - no backfill for transcripts made before 45e8664e;
      - Gemini has no delete call (unchanged).
    - Corrected: `account-deletion-erasure-brief.md` S5, §3 rows, §5 recommendation and C3; `pricing-packaging-v2.md`
@@ -398,7 +404,7 @@ place. The original text is kept.
      L81, L97 and L111. openai and deepgram are `tier: 'paid'` at L125 and L137.
    - In production, `assertProductionProviderDataTiers` refuses a free or undeclared tier for an enabled provider
      unless `AI_PROVIDER_DATA_TIER_<NAME>` is set to `paid` or `no-training` (`packages/ai-core/src/provider-data-tier.ts`
-     L22–34, L52–95, L108–125; called at `bootstrap.ts` L179).
+     L22–34, L52–95, L108–125; called at `bootstrap.ts` L179; _updated 2026-11-18: L181 at `2127fb46`_).
    - INFERRED: the env value is an operator declaration. The code can't check the real billing tier.
    - Corrected: `pricing-packaging-v2.md` §8 (was L50/L55) and `ai-provider-due-diligence.md` §1 and §7 (was L50/L55).
      The OpenAI price cite in `ai-provider-due-diligence.md` §2.5 is now L125 (was L72).
@@ -411,7 +417,8 @@ place. The original text is kept.
    - L79–85 is now the summary worker.
    - Corrected in `account-deletion-erasure-brief.md` §3.
 5. **`pricing-packaging-v2.md` §3.1.**
-   - `apps/worker/src/ai/bootstrap.ts` `resolveAudio` moved from L88 to L89.
+   - `apps/worker/src/ai/bootstrap.ts` `resolveAudio` moved from L88 to L89
+     (_updated 2026-11-18: L90 at `2127fb46`, after #514_).
    - The `apps/worker/src/ai/providers/assemblyai.ts` cites (L143, L185–190, L188) are unchanged.
 
 ## 9. Not verified
