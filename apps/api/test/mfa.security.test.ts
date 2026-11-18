@@ -90,11 +90,12 @@ const STEP_UP_ROUTES = [
     method: 'DELETE',
     url: '/orgs/:organizationId/integrations/:integrationId',
   },
-] as const;
-/** Contracted (CONSENT_UPLOAD_PATHS.consentSettings) but not served by the API yet; billing (ADR-017) has no route. */
-const STEP_UP_NOT_BUILT = [
+  // Retention (ADR-019) is written through the consent-settings PATCH (#484), so it joins the inventory.
   { category: 'retention', method: 'PATCH', url: '/orgs/:organizationId/settings/consent' },
 ] as const;
+/** Step-up categories with no API route yet. Billing (ADR-017) has none; the pin below also checks no billing route. */
+const STEP_UP_NOT_BUILT: readonly { category: string; method: 'PATCH' | 'POST'; url: string }[] =
+  [];
 
 /* ---------------------------------------------- RFC 6238 helpers ---------------------------------------------- */
 const B32 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
@@ -303,7 +304,7 @@ describe('ADR-021 baseline: step-up route inventory (active)', () => {
     await app.close();
   });
 
-  it('MFA-SU-02 (pin): retention and billing writes are not served yet; when one lands it must join STEP_UP_ROUTES', async () => {
+  it('MFA-SU-02 (pin): billing writes are not served yet; when one lands it must join STEP_UP_ROUTES', async () => {
     const app = await buildApp();
     for (const r of STEP_UP_NOT_BUILT) {
       expect(
