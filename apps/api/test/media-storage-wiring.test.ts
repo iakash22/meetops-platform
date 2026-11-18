@@ -13,7 +13,6 @@ import {
   InMemoryFileObjectRepository,
   InMemoryMediaJobQueue,
 } from '../src/modules/media/infrastructure/in-memory.js';
-import { globalConsentVersion } from '../src/modules/media/domain/consent.js';
 import { reconcileStaleMedia } from '../src/modules/media/application/reconcile.js';
 import { CURRENT_CONSENT_VERSION } from '@meetops/contracts';
 import {
@@ -211,7 +210,6 @@ describe('#302 M-1 requeue + reconciler', () => {
     };
     const now = new Date('2026-10-28T12:00:00Z');
     const r = await reconcileStaleMedia({
-      consentVersion: globalConsentVersion,
       store,
       consents,
       jobs,
@@ -234,7 +232,6 @@ describe('#302 M-1 requeue + reconciler', () => {
       await reconcileStaleMedia({
         store,
         consents,
-        consentVersion: globalConsentVersion,
         jobs,
         now: () => now,
         olderThanMs: 60_000,
@@ -248,7 +245,6 @@ describe('#302 M-1 requeue + reconciler', () => {
         await reconcileStaleMedia({
           store,
           consents,
-          consentVersion: globalConsentVersion,
           jobs,
           now: () => now,
           olderThanMs: 60_000,
@@ -300,7 +296,6 @@ describe('#302 M-1 requeue + reconciler', () => {
       reconcileStaleMedia({
         store,
         consents,
-        consentVersion: globalConsentVersion,
         jobs,
         now: () => new Date(),
         olderThanMs: 0,

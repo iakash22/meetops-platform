@@ -57,9 +57,7 @@ describe('consent attestedAt back-dating bound (24 h)', () => {
       attestedAt: new Date(attestedAt),
       recordedAt: now,
     });
-    expect(reason(() => checkStoredConsent(rec(ago(3600)), CURRENT_CONSENT_VERSION))).toBeNull();
-    expect(reason(() => checkStoredConsent(rec(ago(2 * 86_400)), CURRENT_CONSENT_VERSION))).toBe(
-      'CONSENT_INVALID',
-    );
+    expect(reason(() => checkStoredConsent(rec(ago(3600))))).toBeNull();
+    expect(reason(() => checkStoredConsent(rec(ago(2 * 86_400))))).toBe('CONSENT_INVALID');
   });
 });

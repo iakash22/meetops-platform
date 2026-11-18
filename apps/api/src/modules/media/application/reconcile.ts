@@ -1,4 +1,4 @@
-import type { ConsentRepository, ConsentVersionResolver } from '../domain/consent.js';
+import type { ConsentRepository } from '../domain/consent.js';
 import { checkStoredConsent } from '../domain/consent.js';
 import type { MediaJobQueue } from '../domain/ports.js';
 
@@ -39,9 +39,8 @@ export interface ReconcileResult {
  */
 export async function reconcileStaleMedia(d: {
   store: StaleMediaStore;
+  /** Stored attestations are grandfathered (checkStoredConsent): a later notice edit never skips a subject. */
   consents: ConsentRepository;
-  /** The org's current consent version; attestations for any other version are skipped. */
-  consentVersion: ConsentVersionResolver;
   jobs: MediaJobQueue;
   now: () => Date;
   olderThanMs: number;
@@ -52,14 +51,11 @@ export async function reconcileStaleMedia(d: {
   const out: ReconcileResult = { organizations: 0, uploads: 0, sessions: 0, skipped: 0 };
   for (const org of await d.store.organizationIds()) {
     out.organizations++;
-    const accepted = await d.consentVersion(org);
+
     for (const u of await d.store.staleUploads(org, before, limit)) {
       let consentId: string;
       try {
-        consentId = checkStoredConsent(
-          await d.consents.findLatest(org, 'upload', u.id),
-          accepted,
-        ).id;
+        consentId = checkStoredConsent(await d.consents.findLatest(org, 'upload', u.id)).id;
       } catch {
         out.skipped++;
         continue;
@@ -79,7 +75,6 @@ export async function reconcileStaleMedia(d: {
       try {
         consentId = checkStoredConsent(
           await d.consents.findLatest(org, 'recording_session', s.id),
-          accepted,
         ).id;
       } catch {
         out.skipped++;

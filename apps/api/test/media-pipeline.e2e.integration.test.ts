@@ -17,7 +17,6 @@ import {
   withOrganizationContext,
   type DatabaseClient,
 } from '@meetops/database';
-import { globalConsentVersion } from '../src/modules/media/domain/consent.js';
 import { reconcileStaleMedia } from '../src/modules/media/application/reconcile.js';
 import { PrismaStaleMediaStore } from '../src/modules/media/infrastructure/prisma.js';
 import { storageMediaAdapters, type MediaAdapters } from '../src/modules/index.js';
@@ -355,7 +354,6 @@ describe.skipIf(!url || !redisUrl)('media pipeline e2e (Prisma + BullMQ + worker
     expect((await store.unassembledSessions(w.org, later, 100)).map((r) => r.id)).toContain(sid);
 
     const r = await reconcileStaleMedia({
-      consentVersion: globalConsentVersion,
       store,
       consents: media.consents,
       jobs: media.jobs,
