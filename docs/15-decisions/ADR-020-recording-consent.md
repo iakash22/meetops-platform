@@ -51,3 +51,14 @@ multi-region calls fall back to the strictest rule anyway.
   pseudonymise the `users` row and keep the consent evidence (Art. 17(3)(e) legal-claims retention), or use a reviewed
   maintenance migration (`docs/16-runbooks/meeting-consent-maintenance.md`). Until then, user hard-delete is blocked
   for attesters by design.
+
+## Amendment (2026-11-18): extension notice includes the microphone
+
+The Chrome extension records the meeting tab and, when the user grants it from the
+popup, their microphone (mixed in the offscreen document; tab loopback stays tab-only).
+`CONSENT_NOTICE` / `CONSENT_CONFIRMATION` in `apps/extension/src/lib/consent.ts` now
+say that the microphone is recorded. Per item 6, `CURRENT_CONSENT_VERSION` is
+`2026-11`. If the microphone is denied or unavailable, recording continues with tab
+audio only and the popup shows "Your microphone isn't being recorded". The Chrome
+tab-capturing indicator is unchanged. A real Google Meet check of the mix is still
+**UNVERIFIED**.

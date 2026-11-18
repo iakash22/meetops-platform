@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
+  CONSENT_CONFIRMATION,
+  CONSENT_NOTICE,
   POPUP_CONSENT_METHOD,
   canStartRecording,
   consentGrant,
@@ -29,5 +31,11 @@ describe('consent', () => {
       method: 'all_parties_consented',
     });
     expect(POPUP_CONSENT_METHOD).toBe('all_parties_consented');
+  });
+
+  it('tells participants the microphone is recorded', () => {
+    expect(CONSENT_NOTICE).toContain("this tab's audio and your microphone");
+    expect(CONSENT_NOTICE).toContain("Chrome's tab indicator");
+    expect(CONSENT_CONFIRMATION).toContain('including my microphone');
   });
 });

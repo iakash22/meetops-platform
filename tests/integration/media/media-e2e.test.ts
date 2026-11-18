@@ -77,7 +77,7 @@ const skipReason = missing.length
 if (skipReason) console.warn(`[media-e2e] skipped: ${skipReason}`);
 
 const consent = () => ({
-  consentVersion: '2026-10',
+  consentVersion: '2026-11',
   attestedAt: new Date(Date.now() - 1000).toISOString(),
   method: 'all_parties_consented',
 });

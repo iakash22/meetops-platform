@@ -130,7 +130,7 @@ describe('meetings', () => {
       checksumSha256: 'ungWv48Bz+pBQUDeXa4iI7ADYaOWF3qctBD/YfIAFa0=', // sha256('abc')
       meetingId: meeting1.id,
       consent: {
-        consentVersion: '2026-10',
+        consentVersion: '2026-11',
         attestedAt: expect.any(String),
         method: 'all_parties_consented',
       },

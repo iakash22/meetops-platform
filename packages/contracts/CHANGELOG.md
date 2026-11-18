@@ -6,6 +6,13 @@ While the version is `0.x`, a minor bump may contain breaking changes (ADR-003).
 
 ## [Unreleased]
 
+### Changed
+
+- `CURRENT_CONSENT_VERSION` is now `2026-11`. The extension consent notice now states that
+  recording captures the tab's audio and the user's microphone (ADR-020 item 6: bump the
+  version when the notice text changes). The API accepts only this current version, same as
+  before. Clients must send the new value after deploy.
+
 ### Documentation
 
 - `SwitchOrganizationRequest` docs now name the real route, `POST /orgs/switch`, which returns `{ organization, role }`

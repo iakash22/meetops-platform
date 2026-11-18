@@ -9,7 +9,7 @@ import {
 } from '../src/upload/uploadQueueEngine';
 
 const consent = {
-  consentVersion: '2026-10',
+  consentVersion: '2026-11',
   attestedAt: '2026-10-26T10:00:00.000Z',
   method: 'all_parties_notified',
 } as const;

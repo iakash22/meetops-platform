@@ -116,7 +116,16 @@ const extras = (s: RecorderState) => ({
   ...(s.lastError ? { lastError: s.lastError } : {}),
   ...(s.storageWarning ? { storageWarning: s.storageWarning } : {}),
   ...(s.incomplete ? { incomplete: true } : {}),
+  ...(s.micCaptured !== undefined ? { micCaptured: s.micCaptured } : {}),
 });
+
+function offscreenStartedWithMic(res: unknown): boolean {
+  return (
+    typeof res === 'object' &&
+    res !== null &&
+    (res as { micCaptured?: unknown }).micCaptured === true
+  );
+}
 
 /**
  * Serialise all message handling so read-modify-write of session state (and consent
@@ -361,14 +370,21 @@ export async function handleBackgroundMessage(
         await deps.ensureOffscreen();
         await deps.startWatchdog();
         offscreenStarted = true;
-        await sendOffscreen(deps, {
+        const started = await sendOffscreen(deps, {
           target: 'offscreen',
           type: 'OFFSCREEN_START',
           streamId: msg.streamId,
           startedAt,
           meetingId: msg.meetingId,
           consent: toAttestation(consent.record),
+          includeMic: msg.includeMic === true,
         });
+        const withMic = {
+          ...next,
+          micCaptured: msg.includeMic === true && offscreenStartedWithMic(started),
+        };
+        await saveState(kv, withMic);
+        return status(withMic);
       } catch (err) {
         const e = err instanceof Error ? err.message : String(err);
         // The offscreen doc may have created a session (e.g. it answered after our timeout): discard it so no
@@ -384,7 +400,6 @@ export async function handleBackgroundMessage(
         });
         return fail(e);
       }
-      return status(next);
     }
 
     case 'STOP_RECORDING': {

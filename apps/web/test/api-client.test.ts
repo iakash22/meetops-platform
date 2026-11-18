@@ -295,7 +295,7 @@ describe('uploads (PresignedUrlDto)', () => {
       sizeBytes: 1024,
       checksumSha256: 'ungWv48Bz+pBQUDeXa4iI7ADYaOWF3qctBD/YfIAFa0=',
       consent: {
-        consentVersion: '2026-10',
+        consentVersion: '2026-11',
         attestedAt: '2026-10-26T00:00:00.000Z',
         method: 'all_parties_notified' as const,
       },

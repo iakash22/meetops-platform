@@ -10,7 +10,13 @@ import { DEFAULT_WEB_ORIGIN, originMatch } from './lib/auth/origins.js';
  * - `tabCapture`: obtain a tab stream ID, only from the popup's user click
  *   after the consent notice is acknowledged.
  * - `offscreen`: MV3 service workers have no DOM/MediaRecorder; an offscreen
- *   document (reason USER_MEDIA) consumes the stream and records it.
+ *   document (reason USER_MEDIA) consumes the tab stream and, when the popup
+ *   has already been granted microphone permission, mixes in the mic.
+ * - Microphone access is a browser permission on the extension origin, requested
+ *   with getUserMedia from the popup during the Record click. It is not declared
+ *   here: Chrome's MV3 extension permission list has no `audioCapture` (that
+ *   name is a Chrome App permission; `"audio"` is the chrome.audio API). The
+ *   offscreen USER_MEDIA reason is what Chrome requires for getUserMedia there.
  * - `storage`: required for chrome.storage.session, used to persist recorder
  *   and consent state across service-worker suspension. Session storage is
  *   in-memory, cleared on browser restart, and not exposed to content scripts.

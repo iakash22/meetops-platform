@@ -18,6 +18,7 @@ import type {
   StatusPayload,
 } from '../../src/lib/messages.js';
 import { getTabStreamId } from '../../src/lib/tab-capture.js';
+import { requestMicPermission } from '../../src/lib/mic-mix.js';
 import { detectPopupContext, popupErrorMessage, type PopupContext } from './popup-errors.js';
 import { OpenFromToolbar, PopupFrame, BrandHeader, PopupView } from './PopupView.js';
 import { usePairing } from './usePairing.js';
@@ -61,6 +62,7 @@ function PopupApp() {
   const [rawError, setRawError] = useState('');
   const [now, setNow] = useState(Date.now());
   const [starting, setStarting] = useState(false);
+  const [micUnavailable, setMicUnavailable] = useState(false);
   const { error: pairingError, ...pairing } = usePairing();
   const pendingTasks = usePendingTasks(pairing.auth);
 
@@ -93,7 +95,12 @@ function PopupApp() {
     setStarting(true);
     try {
       const tabId = await activeTabId();
+      // tabCapture must stay inside the click gesture; request it before the
+      // mic prompt, which can take long enough to drop the gesture.
       const streamId = await getTabStreamId(tabId);
+      const includeMic =
+        (await requestMicPermission((c) => navigator.mediaDevices.getUserMedia(c))) === 'granted';
+      setMicUnavailable(!includeMic);
       const meetingId = await resolveMeetingId(tabId, (m: ResolveMeetingMessage) =>
         chrome.runtime.sendMessage<ResolveMeetingMessage, ResolveMeetingResult>(m),
       );
@@ -108,7 +115,14 @@ function PopupApp() {
         return;
       }
       apply(
-        await send({ target: 'background', type: 'START_RECORDING', tabId, streamId, meetingId }),
+        await send({
+          target: 'background',
+          type: 'START_RECORDING',
+          tabId,
+          streamId,
+          meetingId,
+          includeMic,
+        }),
       );
     } catch (e) {
       setRawError(errText(e));
@@ -160,6 +174,7 @@ function PopupApp() {
       now={now}
       error={popupErrorMessage(rawError, true) || popupErrorMessage(pairingError, true)}
       starting={starting}
+      micUnavailable={micUnavailable}
       onConsentChange={onConsentChange}
       onRecord={() => void onRecord()}
       onStop={onStop}

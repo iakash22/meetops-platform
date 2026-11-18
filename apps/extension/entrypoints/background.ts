@@ -236,7 +236,8 @@ const deps: BackgroundDeps = {
     await chrome.offscreen.createDocument({
       url: OFFSCREEN_PATH,
       reasons: [chrome.offscreen.Reason.USER_MEDIA],
-      justification: 'Record the tab audio the user explicitly chose to record, after consent.',
+      justification:
+        'Record the tab audio, and the microphone when the user has already granted it in the popup, after consent.',
     });
   },
   async closeOffscreen() {

@@ -16,6 +16,7 @@ import { MAX_DURATION_MS } from '../../src/lib/contract-limits.js';
 import { formatElapsed } from '../../src/lib/format.js';
 import type { StatusPayload } from '../../src/lib/messages.js';
 import { UNPAIRED_PROMPT_MESSAGE } from '../../src/lib/pairing-messages.js';
+import { MIC_UNAVAILABLE_MESSAGE } from '../../src/lib/mic-mix.js';
 import { pendingLabel, type PendingTasks } from '../../src/lib/pending-tasks.js';
 import { OPEN_FROM_TOOLBAR } from './popup-errors.js';
 import { PrivacyPolicyLink } from '../../src/lib/privacy-link.js';
@@ -206,6 +207,8 @@ export interface RecorderViewProps {
   paired?: boolean | undefined;
   /** A start attempt is in flight: Record stays disabled. */
   starting?: boolean;
+  /** Popup already learned the mic was denied or unavailable. */
+  micUnavailable?: boolean;
   onConsentChange: (checked: boolean) => void;
   onRecord: () => void;
   onStop: () => void;
@@ -343,6 +346,11 @@ export function RecorderView(p: RecorderViewProps) {
       {p.paired === false && !active && status.status !== 'error' && (
         <p className="mo-hint" role="status" aria-label="Pairing required">
           {UNPAIRED_PROMPT_MESSAGE}
+        </p>
+      )}
+      {(status.micCaptured === false || p.micUnavailable) && (active || p.starting === true) && (
+        <p className="mo-hint" role="status" aria-label="Microphone not recorded">
+          {MIC_UNAVAILABLE_MESSAGE}
         </p>
       )}
     </section>

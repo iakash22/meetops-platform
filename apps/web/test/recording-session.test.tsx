@@ -64,7 +64,7 @@ describe('RecordingSessionUploader', () => {
         meetingId: meeting1.id,
         mimeType: 'audio/webm',
         consent: expect.objectContaining({
-          consentVersion: '2026-10',
+          consentVersion: '2026-11',
           method: 'all_parties_consented',
         }) as unknown,
       }),

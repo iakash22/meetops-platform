@@ -26,6 +26,37 @@ describe('message guards', () => {
       }),
     ).toBe(true);
     expect(isBackgroundMessage({ target: 'background', type: 'REC_CHUNK', seq: 0 })).toBe(true);
+    expect(
+      isBackgroundMessage({
+        target: 'background',
+        type: 'START_RECORDING',
+        meetingId: MID,
+        tabId: 1,
+        streamId: 'x',
+        includeMic: true,
+      }),
+    ).toBe(true);
+    expect(
+      isBackgroundMessage({
+        target: 'background',
+        type: 'START_RECORDING',
+        meetingId: MID,
+        tabId: 1,
+        streamId: 'x',
+        includeMic: 'yes',
+      }),
+    ).toBe(false);
+    expect(
+      isOffscreenMessage({
+        target: 'offscreen',
+        type: 'OFFSCREEN_START',
+        meetingId: MID,
+        streamId: 's',
+        startedAt: 1,
+        consent: CONSENT,
+        includeMic: false,
+      }),
+    ).toBe(true);
   });
 
   it('rejects malformed or mis-targeted messages', () => {
