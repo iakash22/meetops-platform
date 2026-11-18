@@ -145,7 +145,7 @@ export function defaultProviderConfigs(env: AIEnv): ProviderConfigInput[] {
 /** Factories build a fresh adapter per call with the per-org credential. */
 export function defaultAdapterFactories(
   policy: EndpointPolicy,
-  opts?: { assemblyAiSpeechModels?: readonly string[] | undefined } | undefined,
+  opts?: { assemblyAiSpeechModels?: readonly string[] },
 ): Record<string, AdapterFactory> {
   return {
     gemini: (c, key, o) =>
