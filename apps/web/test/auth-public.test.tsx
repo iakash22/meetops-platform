@@ -75,7 +75,10 @@ describe('/verify-email', () => {
     const api = createMockApi({ auth: { verifyEmail: vi.fn().mockRejectedValue(badToken()) } });
     const { history } = renderApp(`/verify-email?token=${TOKEN}`, api);
     await userEvent.click(await screen.findByRole('button', { name: 'Verify email' }));
-    expect(await screen.findByTestId('link-problem')).toHaveTextContent(/invalid or has expired/);
+    const expired = await screen.findByTestId('link-problem');
+    expect(expired).toHaveTextContent(/invalid or has expired/);
+    expect(expired).toHaveFocus();
+    expect(expired).toHaveAttribute('tabindex', '-1');
     expect(screen.getByRole('link', { name: 'Send a new verification link' })).toHaveAttribute(
       'href',
       '/resend-verification',
@@ -86,7 +89,10 @@ describe('/verify-email', () => {
   it('handles a link without a token', async () => {
     const api = signedOut();
     renderApp('/verify-email', api);
-    expect(await screen.findByTestId('link-problem')).toHaveTextContent(/incomplete/);
+    const missing = await screen.findByTestId('link-problem');
+    expect(missing).toHaveTextContent(/incomplete/);
+    expect(missing).toHaveFocus();
+    expect(missing).toHaveAttribute('tabindex', '-1');
     expect(screen.queryByRole('button', { name: 'Verify email' })).not.toBeInTheDocument();
   });
 

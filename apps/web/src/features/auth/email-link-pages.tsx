@@ -1,5 +1,5 @@
 import { PASSWORD_POLICY_MESSAGE } from '@meetops/contracts/types';
-import { useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { Link } from '@tanstack/react-router';
@@ -34,10 +34,17 @@ function Status({ children }: { children: ReactNode }) {
 
 /** A problem with the link itself (page-level, inline): not a toast. */
 function Problem({ title, children }: { title: string; children: ReactNode }) {
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    ref.current?.focus();
+  }, []);
+
   return (
     <div
+      ref={ref}
       role="alert"
-      className="grid gap-1 rounded-md border border-destructive/40 bg-destructive/10 p-4"
+      tabIndex={-1}
+      className="grid gap-1 rounded-md border border-destructive/40 bg-destructive/10 p-4 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 focus:ring-offset-background"
       data-testid="link-problem"
     >
       <p className={`font-medium ${authErrorTextClass}`}>{title}</p>
