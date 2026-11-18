@@ -232,8 +232,11 @@ stores an org country; `docs/research/competitive-landscape.md` §4 records this
 28. Consent-record retention. Section 6(10) puts on the Data Fiduciary the burden to prove that notice was given and
     consent obtained. How long should we keep signed eval consent forms, the consent register and withdrawal records
     after the related data is deleted (protocol §5 leaves "[period for counsel]")? The Rules set no period for a
-    Fiduciary's own consent records. Rule 8(3) requires processing logs to be kept for at least one year, and Consent
-    Managers must keep consent records for at least seven years (First Schedule, Part B, item 4(c)) [L14]. Is either a sensible
+    Fiduciary's own consent records. Rule 8(3) is narrower than a general log rule: it requires a Data Fiduciary to retain
+    "such personal data, associated traffic data and other logs of the processing" for at least one year "for the
+    purposes as specified in the Seventh Schedule" (State uses and requests for information under Rule 23), and then to
+    erase them unless another law requires longer [L14]. It is not a consent-record rule. Consent Managers must keep
+    consent records for at least seven years (First Schedule, Part B, item 4(c)) [L14]. Is either a sensible
     benchmark, and how does a longer period sit with s. 8(7) erasure and data minimisation?
 
 ## Sources (fetched 2026-11-11; L13–L14 read 2026-11-18)
@@ -252,5 +255,5 @@ stores an org country; `docs/research/competitive-landscape.md` §4 records this
 | L10 | European Commission, Guidelines on transparency obligations (Art. 50): https://digital-strategy.ec.europa.eu/en/policies/guidelines-ai-transparency-obligations                                                                       |
 | L11 | Houthoff, "AI Act: transparency obligations and the AI Omnibus Regulation" (1 Sep 2026); law-firm summary: https://www.houthoff.com/insights/news/ai-act-transparency-obligations-and-the-ai-omnibus-regulation/                      |
 | L12 | Taft, "AI-Powered Call Transcription Tools Present Class Action BIPA Risk" (8 Sep 2026); legal press on L1: https://www.privacyanddatasecurityinsight.com/2026/09/ai-powered-call-transcription-tools-present-class-action-bipa-risk/ |
-| L13 | Digital Personal Data Protection Act, 2023 (No. 22 of 2023), ss. 2(t), 6(4)–(6), 6(10), 8(7), Gazette text on MeitY: https://www.meity.gov.in/static/uploads/2024/06/2bf1f0e9f04e6fb4f8fef35e82c42aa5.pdf                             |
-| L14 | DPDP Rules, 2025 (G.S.R. 846(E), Gazette No. 760), Rule 8(3) and First Schedule Part B item 4(c), MeitY copy: https://www.meity.gov.in/static/uploads/2025/11/53450e6e5dc0bfa85ebd78686cadad39.pdf                                    |
+| L13 | Digital Personal Data Protection Act, 2023 (No. 22 of 2023), ss. 2(t), 5, 6(1)–(6), 6(10), 8(7), Gazette text on MeitY: https://www.meity.gov.in/static/uploads/2024/06/2bf1f0e9f04e6fb4f8fef35e82c42aa5.pdf                          |
+| L14 | DPDP Rules, 2025 (G.S.R. 846(E), Gazette No. 760), Rule 3, Rule 8(3) with the Seventh Schedule, and First Schedule Part B item 4(c), MeitY copy: https://www.meity.gov.in/static/uploads/2025/11/53450e6e5dc0bfa85ebd78686cadad39.pdf |
