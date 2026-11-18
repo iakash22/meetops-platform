@@ -33,11 +33,17 @@ export {
 export const ConsentSettingsMode = Type.Union(CONSENT_SETTINGS_MODES.map((m) => Type.Literal(m)));
 export type ConsentSettingsMode = (typeof CONSENT_SETTINGS_MODES)[number];
 
-/** Notice body. Clients MUST trim before sending; whitespace-only or untrimmed values are invalid. */
+/**
+ * Characters a notice may not start or end with, and may not consist of only: ECMAScript `\s` (whitespace incl. VT,
+ * NBSP, U+1680, U+2000-U+200A, U+2028/2029, U+202F, U+205F, U+3000, U+FEFF) plus ZWSP U+200B and NEL U+0085. The DB
+ * CHECK organization_consent_settings_notice_text_not_blank_check rejects a notice made only of the same set.
+ */
+const CONSENT_NOTICE_BLANK_CHARS = '\\s\\u200b\\u0085';
+/** Notice body. Clients MUST trim before sending; blank (only CONSENT_NOTICE_BLANK_CHARS) or untrimmed is invalid. */
 const noticeText = Type.String({
   minLength: 1,
   maxLength: MAX_CONSENT_NOTICE_TEXT_LENGTH,
-  pattern: '^\\S(?:[\\s\\S]*\\S)?$',
+  pattern: `^[^${CONSENT_NOTICE_BLANK_CHARS}](?:[\\s\\S]*[^${CONSENT_NOTICE_BLANK_CHARS}])?$`,
 });
 const retentionDays = Type.Integer({ minimum: MIN_RETENTION_DAYS, maximum: MAX_RETENTION_DAYS });
 

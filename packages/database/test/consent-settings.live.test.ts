@@ -97,8 +97,22 @@ describe.skipIf(!APP_URL || !OWNER_URL)('organization_consent_settings (live)', 
         }),
       ),
     ).rejects.toThrow();
-    // notice_text_not_blank_check: whitespace-only notices (spaces, tabs, newlines) are rejected by the DB too.
-    for (const blank of [' ', '   ', '\n\t ', '\r\n', '\t']) {
+    // notice_text_not_blank_check: the same blank set as the contract (v050-consent-settings-uploads.test.ts).
+    for (const blank of [
+      ' ',
+      '   ',
+      '\n\t ',
+      '\r\n',
+      '\t',
+      '\v',
+      '\u00a0',
+      '\u2003',
+      '\u3000',
+      '\ufeff',
+      '\u200b',
+      '\u0085',
+      ' \u00a0\u3000\u200b\u0085\t',
+    ]) {
       await expect(
         runWithOrganizationContext(app, orgA, (tx) =>
           tx.organizationConsentSettings.update({
@@ -107,6 +121,16 @@ describe.skipIf(!APP_URL || !OWNER_URL)('organization_consent_settings (live)', 
           }),
         ),
       ).rejects.toThrow(/notice_text_not_blank_check/);
+    }
+    // Visible text passes, including the letter 'v' (a bad "\v" escape once stripped it).
+    for (const ok of ['v', 'A\u00a0B', 'x\u200by']) {
+      const saved = await runWithOrganizationContext(app, orgA, (tx) =>
+        tx.organizationConsentSettings.update({
+          where: { organizationId: orgA },
+          data: { noticeText: ok, updatedAt: now },
+        }),
+      );
+      expect(saved.noticeText).toBe(ok);
     }
   });
 

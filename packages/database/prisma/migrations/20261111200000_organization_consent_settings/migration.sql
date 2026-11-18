@@ -28,10 +28,11 @@ ALTER TABLE "organization_consent_settings"
 ALTER TABLE "organization_consent_settings"
   ADD CONSTRAINT "organization_consent_settings_notice_text_check"
     CHECK (char_length("notice_text") BETWEEN 1 AND 4000),
-  -- Whitespace-only notices are rejected here as well as in the contract (trimmed, non-empty). btrim's default
-  -- strips only spaces, so tabs, newlines and other ASCII whitespace are listed explicitly.
+    -- Blank notices are rejected here exactly as in the contract (UpdateConsentSettingsRequest.noticeText): a notice
+  -- made only of whitespace (\s), NBSP, U+1680, U+2000-U+200A, U+2028/2029, U+202F, U+205F, U+3000, U+FEFF, ZWSP
+  -- U+200B or NEL U+0085 fails. (PostgreSQL E'' strings have no \v escape, so btrim() was not a safe way to do this.)
   ADD CONSTRAINT "organization_consent_settings_notice_text_not_blank_check"
-    CHECK (char_length(btrim("notice_text", E' \t\n\r\f\v')) >= 1),
+    CHECK ("notice_text" !~ '^[\s\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff\u200b\u0085]*$'),
   ADD CONSTRAINT "organization_consent_settings_retention_days_check"
     CHECK ("retention_days" BETWEEN 7 AND 365),
   ADD CONSTRAINT "organization_consent_settings_consent_version_check"
