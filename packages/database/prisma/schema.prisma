@@ -1171,6 +1171,9 @@ model TranscriptChunk {
   endMs          Int                   @map("end_ms")
   status         TranscriptChunkStatus @default(pending)
   provider       String
+  /// AssemblyAI (or other STT) job id for this chunk, so every provider copy can be deleted (ADR-019).
+  /// Nullable for legacy rows written before this column existed.
+  providerJobId  String?               @map("provider_job_id")
   text           String?
   segments       Json?
   attemptCount   Int                   @default(0) @map("attempt_count")
@@ -1183,7 +1186,9 @@ model TranscriptChunk {
 
   @@unique([transcriptId, chunkIndex])
   @@unique([organizationId, id])
+  @@unique([organizationId, provider, providerJobId])
   @@index([organizationId, transcriptId])
+  @@index([organizationId, providerJobId])
   @@map("transcript_chunks")
 }
 

@@ -20,6 +20,7 @@ export interface TranscriptChunkRecord {
   segments: unknown;
   attemptCount: number;
   error: string | null;
+  providerJobId: string | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -33,6 +34,7 @@ export interface UpsertChunkInput {
   status?: TranscriptChunkStatus;
   text?: string | null;
   segments?: unknown;
+  providerJobId?: string | null;
 }
 
 export interface MarkChunkInput {
@@ -70,6 +72,7 @@ type Row = {
   segments: unknown;
   attempt_count: number;
   error: string | null;
+  provider_job_id: string | null;
   created_at: Date;
   updated_at: Date;
 };
@@ -87,6 +90,7 @@ const toRecord = (r: Row): TranscriptChunkRecord => ({
   segments: r.segments,
   attemptCount: r.attempt_count,
   error: r.error,
+  providerJobId: r.provider_job_id ?? null,
   createdAt: r.created_at,
   updatedAt: r.updated_at,
 });
@@ -129,10 +133,10 @@ export function createTranscriptRepository(options: RepositoryOptions = {}) {
         const rows = await tx.$queryRaw<Row[]>`
           INSERT INTO "transcript_chunks"
             ("id", "org_id", "transcript_id", "chunk_index", "start_ms", "end_ms", "status", "provider",
-             "text", "segments", "updated_at")
+             "text", "segments", "provider_job_id", "updated_at")
           VALUES (gen_random_uuid(), ${organizationId}::uuid, ${input.transcriptId}::uuid, ${input.chunkIndex},
                   ${input.startMs}, ${input.endMs}, ${status}::"TranscriptChunkStatus", ${input.provider},
-                  ${input.text ?? null}, ${json(input.segments)}::jsonb, now())
+                  ${input.text ?? null}, ${json(input.segments)}::jsonb, ${input.providerJobId ?? null}, now())
           ON CONFLICT ("transcript_id", "chunk_index") DO UPDATE SET
             "start_ms" = EXCLUDED."start_ms",
             "end_ms" = EXCLUDED."end_ms",
@@ -140,6 +144,7 @@ export function createTranscriptRepository(options: RepositoryOptions = {}) {
             "provider" = EXCLUDED."provider",
             "text" = COALESCE(EXCLUDED."text", "transcript_chunks"."text"),
             "segments" = COALESCE(EXCLUDED."segments", "transcript_chunks"."segments"),
+            "provider_job_id" = COALESCE(EXCLUDED."provider_job_id", "transcript_chunks"."provider_job_id"),
             "updated_at" = now()
           WHERE "transcript_chunks"."status" <> 'done'
           RETURNING *`;
