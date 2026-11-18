@@ -687,7 +687,7 @@ model OrganizationConsentSettings {
   organizationId           String        @id @map("org_id") @db.Uuid
   /// all_parties_notified | all_parties_consented (ConsentMethod; no one-party mode).
   mode                     ConsentMethod @default(all_parties_consented)
-  /// CHECK char_length 1..4000 and char_length(btrim(notice_text)) >= 1 (migration only).
+  /// CHECK char_length 1..4000 and non-blank after trimming ASCII whitespace (migration only).
   noticeText               String        @map("notice_text")
   skipExternalParticipants Boolean       @map("skip_external_participants")
   retentionDays            Int           @default(90) @map("retention_days")

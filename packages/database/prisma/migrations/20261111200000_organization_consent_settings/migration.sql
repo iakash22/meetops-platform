@@ -28,9 +28,10 @@ ALTER TABLE "organization_consent_settings"
 ALTER TABLE "organization_consent_settings"
   ADD CONSTRAINT "organization_consent_settings_notice_text_check"
     CHECK (char_length("notice_text") BETWEEN 1 AND 4000),
-  -- Whitespace-only notices are rejected here as well as in the contract (trimmed, non-empty).
+  -- Whitespace-only notices are rejected here as well as in the contract (trimmed, non-empty). btrim's default
+  -- strips only spaces, so tabs, newlines and other ASCII whitespace are listed explicitly.
   ADD CONSTRAINT "organization_consent_settings_notice_text_not_blank_check"
-    CHECK (char_length(btrim("notice_text")) >= 1),
+    CHECK (char_length(btrim("notice_text", E' \t\n\r\f\v')) >= 1),
   ADD CONSTRAINT "organization_consent_settings_retention_days_check"
     CHECK ("retention_days" BETWEEN 7 AND 365),
   ADD CONSTRAINT "organization_consent_settings_consent_version_check"
