@@ -569,7 +569,7 @@ describe('verify-email takeover hands failed revocations to the durable queue', 
         return v;
       },
       hash: (v: string) => real.hash(v),
-    } as unknown as ModuleDeps['tokens'];
+    };
     const verifyTokens: string[] = [];
     let failReset = false;
     const producer: AuthMailProducer = {
@@ -583,7 +583,7 @@ describe('verify-email takeover hands failed revocations to the durable queue', 
     const mailQueue = new BullMqAuthMailQueue(producer, systemClock, {
       error: (obj) => mailLog.push(obj),
       warn: (obj) => mailLog.push(obj),
-    } as ConstructorParameters<typeof BullMqAuthMailQueue>[2]);
+    });
     return {
       mailQueue,
       tokens,
