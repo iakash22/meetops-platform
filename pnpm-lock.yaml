@@ -92,7 +92,7 @@ importers:
         version: 11.1.3
       '@fastify/cors':
         specifier: ^11
-        version: 11.4.1
+        version: 11.4.3
       '@fastify/swagger':
         specifier: ^9.9.2
         version: 9.9.2
@@ -1035,8 +1035,8 @@ packages:
     resolution: {integrity: sha512-RgHBCvtjbOK2gXSNBNIkNoEc9qoVEtau3hj8gEqKQuL3HZAibKarWFEI3Lfm6EYKkLalOh8eSrj9b+ch9H/VBA==}
     engines: {node: '>=6.9.0'}
 
-  '@babel/generator@7.29.13':
-    resolution: {integrity: sha512-T5FRo+RzVHvGjWOuF1Ljc44b+NXAOazodHkGUHp4I3zCkQ4/sNVJm56h1S278LMR0bY5xBhztGziSbli8zObIw==}
+  '@babel/generator@7.29.14':
+    resolution: {integrity: sha512-qSY56jgW5JnSXzuekLVil6zaOQxOCtOHidr65KkaMBw772IuAY28Qx4ZykAcDn8+FRF15qk80XzKwgSc/RYW6g==}
     engines: {node: '>=6.9.0'}
 
   '@babel/generator@7.29.8':
@@ -1110,8 +1110,8 @@ packages:
     resolution: {integrity: sha512-brcMGQaVzIeUb+6/bs1Av0f8YuNNjKY2JyvfRCsFuFsdKccEQ5Ges2y74D74NZ1Rz8lKJ9ksJkfqwQFJ/iNEyQ==}
     engines: {node: '>=6.9.0'}
 
-  '@babel/helper-string-parser@7.29.13':
-    resolution: {integrity: sha512-fWegr+WsEsiMVW4KUNdIIzzMTZSzNiqhy0//6+2MRi2d5NFNsL/AYwBQW8eBnRbTBVRnDVzjaJEUqKaCWjMMdQ==}
+  '@babel/helper-string-parser@7.29.14':
+    resolution: {integrity: sha512-CXvKMFvM80ihI7Vox9jb+kQjnyjESQNPM+vB7U0Zz6TWuZA+Z/FL0QPMH300h33qJtIx+REeBhXqWOPW48TcAQ==}
     engines: {node: '>=6.9.0'}
 
   '@babel/helper-string-parser@7.29.7':
@@ -1138,8 +1138,8 @@ packages:
     resolution: {integrity: sha512-llL88JShoCsth8fF8R4SJnIn+WLvR6ccFxu1H3FlMhDontdcmZWf2HgIZ7AIqV3Xcck1idlohrN4EUBQz6klbw==}
     engines: {node: '>=6.9.0'}
 
-  '@babel/parser@7.29.13':
-    resolution: {integrity: sha512-fJM50YYjlTiBhgdkGmC1tBpv+FMAyo4annf2X6Aks+0yRlaiVkYW/3f07xAfVVkYIoZ9fFZp+mEThUFnuybhkQ==}
+  '@babel/parser@7.29.14':
+    resolution: {integrity: sha512-VL220vXuyO2z3rNIQwY7ftj9UwpqOt+33sH+sBWkOekbsSR2g7EEMnOx24ZlCH0xOA3DM/33SifVFGbnJD8r/w==}
     engines: {node: '>=6.0.0'}
     hasBin: true
 
@@ -1760,12 +1760,12 @@ packages:
     resolution: {integrity: sha512-B3lYAs2nkKskbgQ1nfy8Ma9ao9Q1rntTAQHrzzyDuj+TSO+X3le6PfWwqDvodsb+OumE10eMFfuMCTQSQ5iuIQ==}
     engines: {node: '>=6.9.0'}
 
-  '@babel/traverse@7.29.13':
-    resolution: {integrity: sha512-0ve0xMlFA73dgY1oyJRY6RoW+/bncdcOQqg6jjYcVfXBK90OdLXjm9R6lmRetdZVrPjXkKIoMVBqYFPjcAlZ4Q==}
+  '@babel/traverse@7.29.14':
+    resolution: {integrity: sha512-RAdQJrBgmIH1FWvN0X+1hoDxzMzlP4cv/1Zi4dn4tG1H0cTb+rw7CzUxQJhp1f4ANd8j5vH3fy8BAWFGkBDEsA==}
     engines: {node: '>=6.9.0'}
 
-  '@babel/types@7.29.11':
-    resolution: {integrity: sha512-WCsemW40Cpc6gouC1SrY6PBaZ+oLRlEVY9XBvZBI7il/HyUrb2nJ505wE1MHEFyDZNnrWDEuy4jL50WVHfTTSQ==}
+  '@babel/types@7.29.14':
+    resolution: {integrity: sha512-UjI/dKmwJwT9pOszJitq2G6EObZPnsZUfdCr92z2TlF3EZK9J3EdfOKUrCzHl6wFthbzwhzl1Soc/UIwxRiq6w==}
     engines: {node: '>=6.9.0'}
 
   '@babel/types@7.29.8':
@@ -2191,8 +2191,8 @@ packages:
   '@fastify/cookie@11.1.3':
     resolution: {integrity: sha512-RBhlMNsmSG6C5KGiTkhSXBF75xIrUMSytDDBcpnVewhJ8XVYnJTu+SV6FYKXClIRsBuRjOfKbBSULvnPD3X/mg==}
 
-  '@fastify/cors@11.4.1':
-    resolution: {integrity: sha512-WuPATGGyc3YzpOfumovBJ4xC2RPBBFyDFElwldFRBCgM2G27xH9DnXTho9+nc2Ho6gLD1hKTetdOntR+G38+7A==}
+  '@fastify/cors@11.4.3':
+    resolution: {integrity: sha512-6NNFNR1i9t1oG1WlQftwc2ugElFm4cG75ylYyGNiKKiyxlVGueneup9MQ9Nd3eI4lT6kVOJaxV1Jqa727/E4jg==}
 
   '@fastify/deepmerge@3.2.2':
     resolution: {integrity: sha512-155eqA/WMQdN6gUD4RrhS2K0Pcz2Ou9pQ86L0sipOpP9ONbTA6oYw/hW4VdBjR4egcDHqmWUK9x80oUX7S1mDQ==}
@@ -10052,10 +10052,10 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  '@babel/generator@7.29.13':
+  '@babel/generator@7.29.14':
     dependencies:
-      '@babel/parser': 7.29.13
-      '@babel/types': 7.29.11
+      '@babel/parser': 7.29.14
+      '@babel/types': 7.29.14
       '@jridgewell/gen-mapping': 0.3.13
       '@jridgewell/trace-mapping': 0.3.31
       jsesc: 3.1.0
@@ -10167,7 +10167,7 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  '@babel/helper-string-parser@7.29.13': {}
+  '@babel/helper-string-parser@7.29.14': {}
 
   '@babel/helper-string-parser@7.29.7': {}
 
@@ -10195,9 +10195,9 @@ snapshots:
       js-tokens: 4.0.0
       picocolors: 1.1.1
 
-  '@babel/parser@7.29.13':
+  '@babel/parser@7.29.14':
     dependencies:
-      '@babel/types': 7.29.11
+      '@babel/types': 7.29.14
 
   '@babel/parser@7.29.9':
     dependencies:
@@ -10949,21 +10949,21 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  '@babel/traverse@7.29.13':
+  '@babel/traverse@7.29.14':
     dependencies:
       '@babel/code-frame': 7.29.7
-      '@babel/generator': 7.29.13
+      '@babel/generator': 7.29.14
       '@babel/helper-globals': 7.29.7
-      '@babel/parser': 7.29.13
+      '@babel/parser': 7.29.14
       '@babel/template': 7.29.7
-      '@babel/types': 7.29.11
+      '@babel/types': 7.29.14
       debug: 4.4.3
     transitivePeerDependencies:
       - supports-color
 
-  '@babel/types@7.29.11':
+  '@babel/types@7.29.14':
     dependencies:
-      '@babel/helper-string-parser': 7.29.13
+      '@babel/helper-string-parser': 7.29.14
       '@babel/helper-validator-identifier': 7.29.7
 
   '@babel/types@7.29.8':
@@ -11561,7 +11561,7 @@ snapshots:
       cookie: 2.0.1
       fastify-plugin: 6.0.1
 
-  '@fastify/cors@11.4.1':
+  '@fastify/cors@11.4.3':
     dependencies:
       fastify-plugin: 6.0.1
       toad-cache: 3.7.4
@@ -16988,7 +16988,7 @@ snapshots:
   metro-source-map@0.81.5:
     dependencies:
       '@babel/traverse': 7.29.10
-      '@babel/traverse--for-generate-function-map': '@babel/traverse@7.29.13'
+      '@babel/traverse--for-generate-function-map': '@babel/traverse@7.29.14'
       '@babel/types': 7.29.8
       flow-enums-runtime: 0.0.6
       invariant: 2.2.4
