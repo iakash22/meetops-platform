@@ -40,6 +40,8 @@ class RecordingForegroundService : Service() {
 
     const val ACTION_START = "expo.modules.recordingservice.START"
     const val ACTION_STOP = "expo.modules.recordingservice.STOP"
+    /** Update the ongoing notification title/body for the session id passed by JS. */
+    const val ACTION_UPDATE = "expo.modules.recordingservice.UPDATE"
     /**
      * Package-local broadcast to the native recorder (chunk-crypto SegmentRecorderModule) on a native Stop: it closes
      * the mic and seals the open segment itself, so ending capture never waits on JS. Same string on both sides
@@ -185,12 +187,24 @@ class RecordingForegroundService : Service() {
      * exactly one side wins: either stop() sees running and stops the service, or the start sees the cancel.
      */
 
-    /** Module start(): a fresh start clears any earlier cancel. */
-    @Synchronized fun beginStart() {
+    /** Module start(): a fresh start clears any earlier cancel and returns the stable capture id. */
+    @Synchronized fun beginStart(): Long {
       cancelRequested = false
       captureId = ++nextCaptureId
       stopCaptureId = -1L
       sealing = false
+      return captureId
+    }
+
+    /**
+     * True when `id` is the decimal string of the capture assigned by the current beginStart().
+     * Empty, unparseable, or stale ids fail closed (do not match). Pending starts already have a
+     * captureId, so JS can stop a start that has not reached onStartCommand yet.
+     */
+    @Synchronized fun matchesSession(id: String): Boolean {
+      if (id.isEmpty()) return false
+      val parsed = id.toLongOrNull() ?: return false
+      return parsed >= 0L && parsed == captureId
     }
 
     /** Module stop(): records the cancel and returns whether the service was already up (caller then stops it). */
@@ -213,6 +227,16 @@ class RecordingForegroundService : Service() {
   override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
     if (intent?.action == ACTION_STOP) {
       nativeStop()
+      return START_NOT_STICKY
+    }
+    if (intent?.action == ACTION_UPDATE) {
+      val id = intent.getStringExtra("id") ?: ""
+      if (matchesSession(id) && running) {
+        val title = intent.getStringExtra("title") ?: "Recording"
+        val body = intent.getStringExtra("body") ?: ""
+        getSystemService(NotificationManager::class.java)?.notify(
+          NOTIFICATION_ID, buildNotification(title, body))
+      }
       return START_NOT_STICKY
     }
     val title = intent?.getStringExtra("title") ?: "Recording"

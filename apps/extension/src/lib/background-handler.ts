@@ -31,6 +31,8 @@ import {
 } from './messages.js';
 import { loadState, saveState, type RecorderState } from './recorder-state.js';
 import type { KV } from './storage.js';
+import { PAIRING_REQUIRED_MESSAGE } from './pairing-messages.js';
+export { PAIRING_REQUIRED_MESSAGE };
 
 /** No heartbeat for this long while active => the offscreen recorder is considered dead. */
 export const HEARTBEAT_TIMEOUT_MS = 20_000;
@@ -145,8 +147,6 @@ const status = (s: RecorderState): BackgroundResponse =>
 
 const fail = (error: string): BackgroundResponse => ({ ok: false, error });
 
-export const PAIRING_REQUIRED_MESSAGE =
-  'This browser is not paired with MeetOps AI, so recording was not started. Pair the extension first.';
 export const PAIRING_CHECK_FAILED_MESSAGE =
   'Could not verify that this browser is paired with MeetOps AI, so recording was not started. Try again.';
 export const CONSENT_CHECK_FAILED_MESSAGE =

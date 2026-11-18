@@ -1,0 +1,73 @@
+{
+  "name": "hinglish-mixed",
+  "description": "Synthetic mixed-script Hinglish billing catch-up (romanised and Devanagari; made-up speakers, no real data).",
+  "transcript": {
+    "transcriptId": "0e0e0e0e-0007-4000-8000-1000000000ff",
+    "recordingId": "0e0e0e0e-0007-4000-8000-2000000000ff",
+    "revision": 1,
+    "language": "hi",
+    "segments": [
+      {
+        "id": "0e0e0e0e-0007-4000-8000-000000000000",
+        "sequence": 0,
+        "speakerLabel": "Tara",
+        "startMs": 0,
+        "endMs": 5500,
+        "text": "Chalo, billing wala catch-up start karte hain."
+      },
+      {
+        "id": "0e0e0e0e-0007-4000-8000-000000000001",
+        "sequence": 1,
+        "speakerLabel": "Isha",
+        "startMs": 6000,
+        "endMs": 11500,
+        "text": "Isha will invoice template update karna by Monday."
+      },
+      {
+        "id": "0e0e0e0e-0007-4000-8000-000000000002",
+        "sequence": 2,
+        "speakerLabel": "Tara",
+        "startMs": 12000,
+        "endMs": 17500,
+        "text": "आज ही rate card freeze कर देते हैं। We decided to freeze the rate card today."
+      },
+      {
+        "id": "0e0e0e0e-0007-4000-8000-000000000003",
+        "sequence": 3,
+        "speakerLabel": "Rehan",
+        "startMs": 18000,
+        "endMs": 23500,
+        "text": "Rehan will दर सूची PDF भेजो by Tuesday."
+      },
+      {
+        "id": "0e0e0e0e-0007-4000-8000-000000000004",
+        "sequence": 4,
+        "speakerLabel": "Isha",
+        "startMs": 24000,
+        "endMs": 29500,
+        "text": "Done, thanks sab."
+      }
+    ]
+  },
+  "golden": {
+    "actionItems": [
+      {
+        "title": "invoice template update karna",
+        "owner": "Isha",
+        "due": "Monday"
+      },
+      {
+        "title": "दर सूची PDF भेजो",
+        "owner": "Rehan",
+        "due": "Tuesday"
+      }
+    ],
+    "decisions": ["freeze the rate card today"],
+    "thresholds": {
+      "precision": 1,
+      "recall": 1,
+      "decisionRecall": 1,
+      "decisionPrecision": 1
+    }
+  }
+}

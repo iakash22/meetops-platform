@@ -2,9 +2,20 @@
 
 Written 31 Oct 2026 (IST). Read this first; it assumes no prior context. Owner: **Akash** (GitHub `iakash22`).
 
+## Update — 11 Nov 2026 (~23:45 IST, Asia/Calcutta)
+
+Native Apps reviewed merged [#447](https://github.com/iakash22/meetops-platform/pull/447) and implemented
+the missing activity-id contract on `feat/mobile-live-activity-id` (local work based on
+`origin/integration/phase-1` `de8a86e4`). JS stores the id returned by native `start` and passes it to
+`update`/`end`. A refused or empty start is fail-closed. Swift `Activity.request` now resolves with
+`activity.id` (not compiled: no Xcode on the box). Android `RecordingServiceModule.start` returns the
+existing `#318` `captureId` for `update`/`stop`; the start/stop handshake is unchanged. Xcode and
+device steps: [docs/mobile/live-activity.md](mobile/live-activity.md).
+
 ## Update — 11 Nov 2026 (~23:30 IST)
 
 `integration/phase-1` is at `de8a86e4` (the #463 merge is `6feef782`). [#463](https://github.com/iakash22/meetops-platform/pull/463) closed Tester X4-mem, the post-commit verify UX, and the `password_reset` / `set_password` info copy from the #459 reviews. The percentages in §2 below are still the 31 Oct snapshot; see [PHASE_STATUS.md](PHASE_STATUS.md).
+
 
 ## Update — 9 Nov 2026 (~22:35 IST)
 

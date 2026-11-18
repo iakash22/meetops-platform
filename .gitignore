@@ -38,3 +38,7 @@ packages/**/node_modules/
 .secrets/
 /backups/
 /sbom/
+
+# Local consented eval recordings for EVAL_DATA_DIR. Never commit real meeting data;
+# the env var must point outside the repo (this path is only a safety net).
+/eval-data/

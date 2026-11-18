@@ -1,0 +1,73 @@
+{
+  "name": "hinglish-romanised",
+  "description": "Synthetic romanised-Hinglish standup (made-up speakers, no real people or recordings).",
+  "transcript": {
+    "transcriptId": "0e0e0e0e-0005-4000-8000-1000000000ff",
+    "recordingId": "0e0e0e0e-0005-4000-8000-2000000000ff",
+    "revision": 1,
+    "language": "hi",
+    "segments": [
+      {
+        "id": "0e0e0e0e-0005-4000-8000-000000000000",
+        "sequence": 0,
+        "speakerLabel": "Nikhil",
+        "startMs": 0,
+        "endMs": 5500,
+        "text": "Yaar aaj ka standup short rakhte hain, kal ke notes late ho gaye."
+      },
+      {
+        "id": "0e0e0e0e-0005-4000-8000-000000000001",
+        "sequence": 1,
+        "speakerLabel": "Pia",
+        "startMs": 6000,
+        "endMs": 11500,
+        "text": "Theek hai. Pia will share the sprint board update by tomorrow."
+      },
+      {
+        "id": "0e0e0e0e-0005-4000-8000-000000000002",
+        "sequence": 2,
+        "speakerLabel": "Nikhil",
+        "startMs": 12000,
+        "endMs": 17500,
+        "text": "We decided to move the retro to Thursday."
+      },
+      {
+        "id": "0e0e0e0e-0005-4000-8000-000000000003",
+        "sequence": 3,
+        "speakerLabel": "Sahil",
+        "startMs": 18000,
+        "endMs": 23500,
+        "text": "Sahil will ping the design team about the empty states."
+      },
+      {
+        "id": "0e0e0e0e-0005-4000-8000-000000000004",
+        "sequence": 4,
+        "speakerLabel": "Pia",
+        "startMs": 24000,
+        "endMs": 29500,
+        "text": "Perfect, bas itna hi aaj."
+      }
+    ]
+  },
+  "golden": {
+    "actionItems": [
+      {
+        "title": "share the sprint board update",
+        "owner": "Pia",
+        "due": "tomorrow"
+      },
+      {
+        "title": "ping the design team about the empty states",
+        "owner": "Sahil",
+        "due": null
+      }
+    ],
+    "decisions": ["move the retro to Thursday"],
+    "thresholds": {
+      "precision": 1,
+      "recall": 1,
+      "decisionRecall": 1,
+      "decisionPrecision": 1
+    }
+  }
+}
