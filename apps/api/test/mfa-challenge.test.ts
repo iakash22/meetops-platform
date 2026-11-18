@@ -90,6 +90,37 @@ describe('MfaChallengeService (OQ-17)', () => {
     expect(verify).toHaveBeenCalledTimes(MFA_CHALLENGE_MAX_ATTEMPTS);
   });
 
+  it('rejects a correct code after 5 reserved failures without checking it', async () => {
+    const { svc } = setup();
+    const { challengeToken } = await svc.issue(USER, 'password', t0);
+    for (let i = 0; i < MFA_CHALLENGE_MAX_ATTEMPTS; i++)
+      expect(await svc.submit(challengeToken, t0, () => false)).toBeNull();
+    const verify = vi.fn(() => true);
+    expect(await svc.submit(challengeToken, t0, verify)).toBeNull();
+    expect(verify).not.toHaveBeenCalled();
+  });
+
+  it('recordFailure does not keep counting after a burn, and consume refuses attempts past the cap', async () => {
+    const { svc, challenges } = setup();
+    const { challengeToken, challenge } = await svc.issue(USER, 'password', t0);
+    for (let i = 0; i < MFA_CHALLENGE_MAX_ATTEMPTS; i++)
+      expect(await svc.submit(challengeToken, t0, () => false)).toBeNull();
+    const stored = challenges.items.get(challenge.id)!;
+    expect(stored.attempts).toBe(MFA_CHALLENGE_MAX_ATTEMPTS);
+    expect(stored.usedAt).not.toBeNull();
+    for (let i = 0; i < 4; i++)
+      expect(await challenges.recordFailure(challenge.id, t0, MFA_CHALLENGE_MAX_ATTEMPTS)).toBe(
+        MFA_CHALLENGE_MAX_ATTEMPTS,
+      );
+    expect(challenges.items.get(challenge.id)!.attempts).toBe(MFA_CHALLENGE_MAX_ATTEMPTS);
+
+    const second = await svc.issue(USER, 'password', t0);
+    const c = (await svc.resolve(second.challengeToken, t0))!;
+    expect(await svc.reserve(c, t0)).not.toBeNull();
+    challenges.items.get(c.id)!.attempts = MFA_CHALLENGE_MAX_ATTEMPTS + 1;
+    expect(await svc.complete(c, t0)).toBeNull();
+  });
+
   it('does not check the code when reservation fails, and a further burst cannot exceed the cap', async () => {
     const { svc } = setup();
     const { challengeToken } = await svc.issue(USER, 'password', t0);

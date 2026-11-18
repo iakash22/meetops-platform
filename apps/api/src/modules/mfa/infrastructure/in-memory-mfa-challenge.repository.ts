@@ -1,3 +1,4 @@
+import { MFA_CHALLENGE_MAX_ATTEMPTS } from '../domain/challenge.js';
 import type { MfaChallenge, MfaChallengeRepository } from '../domain/challenge.js';
 
 /** Test/dev only. Every method is a synchronous check-and-set, so it is atomic in-process. */
@@ -9,30 +10,39 @@ export class InMemoryMfaChallengeRepository implements MfaChallengeRepository {
   async create(c: MfaChallenge) {
     for (const x of this.items.values())
       if (x.tokenHash === c.tokenHash) throw new Error('mfa_challenges_token_hash_key');
-    this.items.set(c.id, { ...c });
+    const stored = { ...c };
+    this.items.set(c.id, stored);
+    return { ...stored };
   }
   async findLive(tokenHash: string, now: Date) {
     for (const c of this.items.values())
       if (c.tokenHash === tokenHash && this.live(c, now)) return { ...c };
     return null;
   }
-  async reserveAttempt(id: string, userId: string, maxAttempts: number, now: Date) {
-    const c = this.items.get(id);
+  async reserveAttempt(tokenHash: string, userId: string, maxAttempts: number, now: Date) {
+    let c: MfaChallenge | undefined;
+    for (const row of this.items.values()) if (row.tokenHash === tokenHash) c = row;
     if (!this.live(c, now) || c.userId !== userId || c.attempts >= maxAttempts) return null;
     c.attempts += 1;
     return { ...c };
   }
   async consume(id: string, userId: string, now: Date) {
     const c = this.items.get(id);
-    if (!this.live(c, now) || c.userId !== userId || c.attempts <= 0) return null;
+    if (
+      !this.live(c, now) ||
+      c.userId !== userId ||
+      c.attempts <= 0 ||
+      c.attempts > MFA_CHALLENGE_MAX_ATTEMPTS
+    )
+      return null;
     c.usedAt = now;
     return { ...c };
   }
   async recordFailure(id: string, now: Date, maxAttempts: number) {
     const c = this.items.get(id);
     if (!c) return maxAttempts;
-    if (c.usedAt || c.expiresAt <= now) return c.attempts >= maxAttempts ? c.attempts : maxAttempts;
-    if (c.attempts >= maxAttempts && !c.usedAt) c.usedAt = now;
+    if (c.usedAt || c.expiresAt <= now) return c.attempts;
+    if (c.attempts >= maxAttempts) c.usedAt = now;
     return c.attempts;
   }
   async invalidateForUser(userId: string, now: Date) {
