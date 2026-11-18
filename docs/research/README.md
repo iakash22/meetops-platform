@@ -27,6 +27,7 @@ through an ADR (`docs/15-decisions/`) or a plan (`docs/plans/`).
 | [onboarding-activation-teardown.md](onboarding-activation-teardown.md)               | Onboarding and activation teardown (2026-11-18): signup-to-first-summary for 9 competitors, friction evidence, our flow and step counts, proposals, activation events, post-#513 corrections |
 | [oauth-verification-readiness.md](oauth-verification-readiness.md)                   | Google OAuth verification (scope classes, brand/sensitive review, 100-user cap, Testing 7-day expiry, pilot options); Microsoft publisher verification, admin consent; checklist             |
 | [phase-2-roadmap.md](phase-2-roadmap.md)                                             | Phase-2 roadmap synthesis: Now/Next/Later from all briefs, critical paths to pilot and store, consolidated decisions for Akash                                                               |
+| [expo-android-target-api.md](expo-android-target-api.md)                             | Expo SDK 54–56 Android target API (all target 36), overrides, Google Play API 36 rule (since 31 Aug 2026) and store-safety of SDK 54 on the Legacy Architecture                              |
 
 Conventions:
 

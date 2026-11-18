@@ -2,6 +2,49 @@
 
 Written 31 Oct 2026 (IST). Read this first; it assumes no prior context. Owner: **Akash** (GitHub `iakash22`).
 
+## Update — 18 Nov 2026 (~15:20 IST, Asia/Calcutta)
+
+_Dated note; the text below is kept as written._ `integration/phase-1` is at `14361406` (merge of #521). `main` is at
+`ca3c0e2b` (unchanged; 238 behind). The merged and open PR lists for today are in [PHASE_STATUS.md](PHASE_STATUS.md)
+"Update — 18 Nov 2026". Open: #462 (promote), #472, #484, #485, #490, #491, #493, #496, #497, #516 and #517.
+
+**§2 percentages: stale as of 2026-11-18; not re-estimated.** Why we chose this:
+
+- §2 is the 31 Oct snapshot. Nobody has re-estimated phases since 12 Nov. Inventing new numbers from merge counts
+  would not be defensible.
+- The newest percentages the repo already states are in PHASE_STATUS:
+  - **P1 ~98%**: "Update — 12 Nov 2026 (~01:55 IST)", also 9 Nov.
+  - **P0 to P9 except P1**, from the "Update — 7 Nov 2026 (~00:45 IST)" table: P0 100%, P2 ~92%, P3 ~85%, P4 ~87%,
+    P5 ~88%, P6 ~87%, P7 ~85%, P8 ~85%, P9 ~60%. The 12 Nov note says these were unchanged.
+  - The last stated **overall** figure is ~79% (3 Nov table). No later overall number exists.
+  - All of these are coordinator-style estimates, not measured. They predate everything merged since 12 Nov.
+- **Caution:** phase labels changed between PHASE_STATUS tables.
+  - The 3 Nov table has P2 "Meetings, uploads, recording" and P6 "Extension".
+  - The 4 Nov and 7 Nov tables have P2 "Capture, uploads, consent" and P6 "Notifications".
+  - §2 below has no labels. So §2's P6 ~85% and the 7 Nov P6 ~87% may not be the same phase. This needs an owner
+    check.
+
+**Evidence: what merged into `integration/phase-1` after the 31 Oct snapshot** (after #317, up to `14361406`).
+
+- There are 189 first-parent merges (`git log --first-parent --merges`), grouped by branch name.
+- This grouping is approximate: a PR can touch several areas, and a branch name isn't proof of scope.
+- No percentage is derived from these counts.
+
+| Area                                    | Merges | PRs                                                                                                                                                                                                              |
+| --------------------------------------- | ------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Hardening, security, deps, release (P9) | 35     | #337, #351, #352, #359, #360, #364, #367, #391, #395, #399, #401, #404, #405, #408, #412, #413, #416, #425, #427, #429, #431, #442, #449, #450, #453, #455, #458, #460, #466, #467, #471, #474, #476, #499, #509 |
+| Mobile and desktop (P8)                 | 21     | #318, #320, #321, #322, #327, #328, #329, #331, #332, #338, #340, #342, #347, #355, #365, #371, #380, #381, #443, #447, #494                                                                                     |
+| Calendar, search, analytics (P7)        | 18     | #324, #341, #344, #346, #348, #350, #353, #356, #376, #385, #390, #392, #394, #396, #398, #400, #445, #500                                                                                                       |
+| Research docs (`docs/research`)         | 17     | #468, #473, #478, #480, #488, #489, #492, #495, #498, #501, #506, #508, #511, #512, #515, #518, #521                                                                                                             |
+| Transcription and AI (P3)               | 15     | #333, #335, #357, #414, #420, #423, #433, #435, #436, #486, #502, #507, #513, #514, #520                                                                                                                         |
+| Integrations, tasks, webhooks (P4/P5)   | 15     | #323, #325, #349, #354, #375, #378, #382, #386, #389, #432, #434, #444, #448, #465, #475                                                                                                                         |
+| Capture, uploads, consent (P2)          | 15     | #334, #336, #345, #377, #379, #387, #388, #419, #424, #430, #446, #451, #464, #483, #510                                                                                                                         |
+| Web app                                 | 15     | #339, #343, #361, #362, #366, #370, #372, #383, #415, #417, #422, #440, #441, #477, #505                                                                                                                         |
+| Auth (P1)                               | 13     | #369, #410, #421, #426, #428, #438, #456, #459, #463, #469, #470, #479, #519                                                                                                                                     |
+| Status and other docs                   | 12     | #319, #326, #363, #397, #402, #406, #407, #409, #454, #457, #461, #481                                                                                                                                           |
+| Extension                               | 8      | #411, #418, #437, #439, #482, #487, #503, #504                                                                                                                                                                   |
+| Other (tests, `main` syncs)             | 5      | #330, #374, #403, plus the `main` merges of 6 Nov and 9 Nov                                                                                                                                                      |
+
 ## Update — 11 Nov 2026 (~23:45 IST, Asia/Calcutta)
 
 Native Apps reviewed merged [#447](https://github.com/iakash22/meetops-platform/pull/447) and implemented
@@ -15,7 +58,6 @@ device steps: [docs/mobile/live-activity.md](mobile/live-activity.md).
 ## Update — 11 Nov 2026 (~23:30 IST)
 
 `integration/phase-1` is at `de8a86e4` (the #463 merge is `6feef782`). [#463](https://github.com/iakash22/meetops-platform/pull/463) closed Tester X4-mem, the post-commit verify UX, and the `password_reset` / `set_password` info copy from the #459 reviews. The percentages in §2 below are still the 31 Oct snapshot; see [PHASE_STATUS.md](PHASE_STATUS.md).
-
 
 ## Update — 9 Nov 2026 (~22:35 IST)
 
@@ -41,6 +83,9 @@ Google **login** code is in. It stays hidden until `GOOGLE_OAUTH_CLIENT_ID`, `GO
 - Other docs: [PHASE_STATUS.md](PHASE_STATUS.md), [PROJECT_CONTEXT.md](PROJECT_CONTEXT.md), [AGENT_STATUS.md](AGENT_STATUS.md), [local-gates.md](local-gates.md), ADRs in [15-decisions/](15-decisions/).
 
 ## 2. Project state (estimates, see PHASE_STATUS.md)
+
+_Note 2026-11-18: the line below is the 31 Oct snapshot, **stale as of 2026-11-18; not re-estimated**. See the
+18 Nov update at the top for the newer stated figures and what merged since._
 
 P0 100% · P1 ~95% · P2 ~85% · P3 ~70% · P4 ~75% · P5 ~80% · P6 ~85% · P7 ~45% · P8 ~75% · P9 ~35% · **overall ~72%**.
 

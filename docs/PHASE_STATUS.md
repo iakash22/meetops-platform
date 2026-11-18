@@ -1,5 +1,73 @@
 # Phase status — 12 Nov 2026 (~01:55 IST)
 
+## Update — 18 Nov 2026 (~15:20 IST, Asia/Calcutta)
+
+_Dated status note; the sections below are kept as written._ Tree: `main` at `ca3c0e2b` (unchanged).
+`integration/phase-1` at `14361406` (merge of #521; 238 ahead / 0 behind `main`, `git rev-list` on the fetched refs at
+~15:15 IST).
+
+**Merged on 18 Nov 2026 (25 PRs).** Verified with GitHub's search API (`is:merged merged:2026-11-18`, total 24 at
+~14:55 IST plus #521 at ~15:15 IST). Each `merged_at` was read from the API and converted to IST. The SHA is that PR's
+merge commit on `integration/phase-1` (`git log --first-parent`); it matches `merged_at` to the second. GitHub's
+`merge_commit_sha` field itself was not visible through our API tool (output truncated), so the SHA column is from git.
+
+| PR                                                            | Merged (IST) | Merge commit | Title                                                                                      |
+| ------------------------------------------------------------- | ------------ | ------------ | ------------------------------------------------------------------------------------------ |
+| [#483](https://github.com/iakash22/meetops-platform/pull/483) | 14:22        | `e5075890`   | feat(contracts): align consent settings with ADR-019 and ADR-020                           |
+| [#487](https://github.com/iakash22/meetops-platform/pull/487) | 12:38        | `73286ef4`   | fix(extension): build contracts before wxt prepare on install                              |
+| [#494](https://github.com/iakash22/meetops-platform/pull/494) | 12:38        | `94d40e68`   | feat(mobile): return a stable id from Live Activity and recording start                    |
+| [#498](https://github.com/iakash22/meetops-platform/pull/498) | 12:05        | `d56f8819`   | docs(research): design-partner kit and VR3 review nits                                     |
+| [#499](https://github.com/iakash22/meetops-platform/pull/499) | 12:05        | `78a9d204`   | docs(security): state that no audit-gate exceptions are active                             |
+| [#500](https://github.com/iakash22/meetops-platform/pull/500) | 13:21        | `17735409`   | feat(web): semantic search toggle with keyword fallback                                    |
+| [#501](https://github.com/iakash22/meetops-platform/pull/501) | 12:16        | `fed52cb1`   | docs(research): capture platform-policy study, counsel Q26–28 and DPDP cite audit          |
+| [#502](https://github.com/iakash22/meetops-platform/pull/502) | 12:38        | `6178dafa`   | test(worker): add prompt-injection and PII-leak tests for AI prompts                       |
+| [#503](https://github.com/iakash22/meetops-platform/pull/503) | 13:57        | `c9ed61b3`   | fix(extension): call contracts tsc directly in postinstall                                 |
+| [#504](https://github.com/iakash22/meetops-platform/pull/504) | 12:45        | `84c1fc5e`   | fix(extension): prompt pairing when unpaired                                               |
+| [#505](https://github.com/iakash22/meetops-platform/pull/505) | 13:21        | `db24acbe`   | fix(web): revert notification prefs on save error, plus N7 e2e                             |
+| [#506](https://github.com/iakash22/meetops-platform/pull/506) | 12:40        | `a64229b0`   | docs(research): capture-policy follow-ups and legal brief Rule 8(3) nits                   |
+| [#507](https://github.com/iakash22/meetops-platform/pull/507) | 12:51        | `c10566c9`   | fix(worker): unicode-aware eval scoring and fixture validation                             |
+| [#508](https://github.com/iakash22/meetops-platform/pull/508) | 12:53        | `d093b2b9`   | docs(research): add account deletion and erasure design brief                              |
+| [#509](https://github.com/iakash22/meetops-platform/pull/509) | 12:54        | `d5ce7c97`   | docs(security): mark RE-03 closed in the Expo SDK 55 plan                                  |
+| [#510](https://github.com/iakash22/meetops-platform/pull/510) | 13:57        | `323fdc71`   | feat(web,extension): show a privacy policy link from its own env URL                       |
+| [#511](https://github.com/iakash22/meetops-platform/pull/511) | 14:16        | `359433e1`   | docs(research): add Jira/GitHub two-way sync and since-last-meeting brief                  |
+| [#512](https://github.com/iakash22/meetops-platform/pull/512) | 14:05        | `b493dfdc`   | docs(research): pricing and packaging v2 brief                                             |
+| [#513](https://github.com/iakash22/meetops-platform/pull/513) | 14:06        | `1d7ba360`   | feat(ai): AssemblyAI transcript delete, production data-tier guard, and SSRF Deepgram clea |
+| [#514](https://github.com/iakash22/meetops-platform/pull/514) | 14:34        | `ed62b726`   | feat(worker): delete every AssemblyAI chunk transcript from segments JSON                  |
+| [#515](https://github.com/iakash22/meetops-platform/pull/515) | 14:35        | `2127fb46`   | docs(research): onboarding and activation teardown; correct briefs after #513              |
+| [#518](https://github.com/iakash22/meetops-platform/pull/518) | 14:53        | `a83b82ce`   | docs(research): add OAuth verification readiness brief (Google, Microsoft)                 |
+| [#519](https://github.com/iakash22/meetops-platform/pull/519) | 15:03        | `8a538e89`   | fix(web): focus the verify-email alert and apply #500/#510/#503 nits                       |
+| [#520](https://github.com/iakash22/meetops-platform/pull/520) | 15:04        | `f6573d4f`   | fix(ai): AssemblyAI speech_models default and audio storage measurements                   |
+| [#521](https://github.com/iakash22/meetops-platform/pull/521) | 15:10        | `14361406`   | docs(research): add phase-2 roadmap synthesis; refresh provider-data-tier cites            |
+
+- **The coordinator's list** (#483, #499–#515 and #518) is confirmed: all 19 are merged.
+  - No number in #499–#515 is closed-unmerged or missing.
+  - Also merged today, but not on that list: #487, #494, #498, #519, #520 and #521.
+- **Open PRs** (12 at ~14:55 IST; 11 after #521 merged; all target `integration/phase-1` except #462):
+  - [#517](https://github.com/iakash22/meetops-platform/pull/517) docs(adr): ADR-023 account deletion and erasure.
+  - [#516](https://github.com/iakash22/meetops-platform/pull/516) feat(extension): mix the user's microphone with tab audio.
+  - [#497](https://github.com/iakash22/meetops-platform/pull/497) feat(auth): MFA schema, RLS, TOTP core and the ADR-021
+    amendment (ADR-021 part a).
+  - [#496](https://github.com/iakash22/meetops-platform/pull/496) fix(auth): retry failed set-password mail through the
+    follow-up queue.
+  - [#493](https://github.com/iakash22/meetops-platform/pull/493) feat(auth): wipe MFA factors in the takeover claim and
+    finish the ADR-021 suite (part d).
+  - [#491](https://github.com/iakash22/meetops-platform/pull/491) feat(auth): require an MFA step-up for sensitive
+    actions (ADR-021 part c).
+  - [#490](https://github.com/iakash22/meetops-platform/pull/490) feat(auth): TOTP enrolment, confirm and the MFA login
+    challenge (ADR-021 part b).
+  - [#485](https://github.com/iakash22/meetops-platform/pull/485) fix(api): rate-limit meeting consent writes and settings
+    PATCH.
+  - [#484](https://github.com/iakash22/meetops-platform/pull/484) feat(api): add org consent-settings GET and PATCH.
+  - [#472](https://github.com/iakash22/meetops-platform/pull/472) docs(auth): record OD-1 account-claim decision.
+  - [#462](https://github.com/iakash22/meetops-platform/pull/462) Promote integration/phase-1 → main (#453–#460, #459).
+    Only Akash merges it.
+- **Changes against the 12 Nov list:** #483, #487 and #494 have merged. #490, #491, #493, #496, #484, #485 and #472
+  are still open. #497, #516 and #517 are new.
+- **Percentages:** not re-estimated in this note. The 12 Nov line below (P1 ~98%; others from the 7 Nov / 9 Nov
+  snapshots) is the latest stated figure. HANDOFF §2 has a matching dated note.
+- **Open question:** owner names (Maddy, Akash and Shubham) still differ across ADRs, this file and HANDOFF. Nothing
+  was renamed. See `docs/research/phase-2-roadmap.md` §7 C3.
+
 ## Update — 12 Nov 2026 (~01:55 IST)
 
 Tree: `main` at `ca3c0e2b` (unchanged). `integration/phase-1` at `d5ce7c97` (172 ahead / 0 behind `main`, GitHub compare queried live on 18 Nov 2026 at ~13:22 IST), merge of [#509](https://github.com/iakash22/meetops-platform/pull/509) (RE-03 closed, Expo plan). This branch's snapshot below was taken at `d50d0dc2`; open PR states were queried at ~01:55 IST on 12 Nov.

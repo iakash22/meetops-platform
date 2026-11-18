@@ -70,7 +70,7 @@ named in the source outline.
 | N1  | Paid LLM and STT accounts for customer data; set `AI_PROVIDER_DATA_TIER_*`; AssemblyAI opt-out and TTL    | [AI DD §5.1](ai-provider-due-diligence.md#51-gemini-tier-for-customer-data), [§5.5](ai-provider-due-diligence.md#55-assemblyai-training-and-retention-input-for-51-style-decision); [pricing §6](pricing-packaging-v2.md#6-decision-points-for-akash-labelled-options) item 4 | Akash + AI                           | D1, D2; Gemini key (HANDOFF §5 item 3)                               | S (option A keeps the adapter and host, AI DD §5.1)             | Guard done (#513)                                                     |
 | N2  | Hosted pilot environment with both AI workers on, KMS, backups and a domain                               | [teardown F3](onboarding-activation-teardown.md#7-code-findings-to-route-no-code-changed); `docs/p9/remaining-work.md` rows 3, 10, 17                                                                                                                                         | Akash + Backend                      | D20, N1                                                              | M (three needs-owner P9 rows plus a deploy; no source estimate) | Deploy interface merged (#449); target not chosen (PHASE_STATUS L130) |
 | N3  | Privacy policy, terms and home page live; set `VITE_PRIVACY_URL`, `VITE_TERMS_URL` and `WXT_PRIVACY_URL`  | [capture F2](capture-platform-policy.md#1-summary); [OAuth brief](oauth-verification-readiness.md) §3.2–3.3                                                                                                                                                                   | Akash + counsel; Frontend for config | Counsel (§6)                                                         | S for config once the text exists                               | Link code done (#510)                                                 |
-| N4  | Pilot agreement and eval consent form drafted by counsel                                                  | [pilot-agreement-outline.md](design-partner-kit/pilot-agreement-outline.md#decisions-needed); [eval protocol §10](design-partner-kit/hinglish-eval-data-protocol.md#10-decisions-needed)                                                                                      | Akash + counsel                      | D3, D4, D8                                                           | Counsel time (UNVERIFIED)                                       | Outlines exist                                                        |
+| N4  | Pilot agreement and eval consent form drafted by counsel                                                  | [pilot-agreement-outline.md](design-partner-kit/pilot-agreement-outline.md#decisions-needed); [eval protocol §10](design-partner-kit/hinglish-eval-data-protocol.md#10-decisions-needed)                                                                                      | Akash + counsel                      | D3, D4, D8, N3 (N3 added 2026-11-18)                                 | Counsel time (UNVERIFIED)                                       | Outlines exist                                                        |
 | N5  | Recruit the cohort and run discovery interviews                                                           | [icp §6–§9](design-partner-kit/icp-and-recruitment.md#6-cohort-size-and-mix-proposal); [interview script](design-partner-kit/interview-script.md)                                                                                                                             | Akash                                | D5, D6, N4                                                           | 2-week baseline + 6 weeks of use per team (icp §6)              | Not started                                                           |
 | N6  | Two-way sync correctness: monotonic, echo-safe status apply (C1); Jira OAuth webhook JWT and refresh (C2) | [two-way §11](two-way-sync-since-last-meeting-brief.md#11-code-findings-to-route-no-code-changed) C1, C2; K2, K3                                                                                                                                                              | Integrations + Backend               | Jira credentials (HANDOFF §5 item 9); GitHub App install (§5 item 2) | M (two worker jobs plus a route change from two-way §9)         | Not started                                                           |
 | N7  | Server-side activation events, no PII, so pilot metrics have a baseline                                   | [teardown §6](onboarding-activation-teardown.md#6-activation-metrics-to-instrument-proposal-no-pii); [pilot metrics §2](design-partner-kit/pilot-success-metrics.md#2-baseline-capture-proposal)                                                                              | Backend                              | D7                                                                   | M (about 14 events on the existing outbox, teardown §6)         | Not started (teardown F9)                                             |
@@ -78,6 +78,27 @@ named in the source outline.
 | N9  | Land consent-settings API and rate limits                                                                 | #484, #485                                                                                                                                                                                                                                                                    | Backend + Security                   | Review                                                               | — (in review)                                                   | In review                                                             |
 | N10 | Extension usable in the pilot: production HTTP upload (F2) and microphone mix (#516)                      | [teardown F2](onboarding-activation-teardown.md#7-code-findings-to-route-no-code-changed); [capture §6.3](capture-platform-policy.md#63-f8-does-the-extension-miss-the-users-own-microphone)                                                                                  | Extension                            | A real-meeting test of #516 (UNVERIFIED, capture §5)                 | S for F2 (build flag)                                           | #516 in review                                                        |
 | N11 | AssemblyAI delete sweep for final failures, plus a backfill                                               | [teardown §8](onboarding-activation-teardown.md#8-corrections-to-merged-briefs-after-513-dated-2026-11-18-subject-to-the-coordinators-no-objection) item 1; ADR-023 (#517)                                                                                                    | AI                                   | —                                                                    | S–M (one repeatable job)                                        | Deletes done; sweep open                                              |
+
+_Dated notes 2026-11-18 (after the #521 review; the table text above is kept):_
+
+- **N4** now depends on N3 as well (the cell above), matching the §4 diagram's N3 → N4 edge.
+- **N7:** teardown §6 lists **15 events** in 11 rows, not "about 14": `signup_started`, `signup_completed`,
+  `email_verified`, `org_created`, `first_meeting_created`, `capture_started`, `capture_completed`, `transcript_ready`,
+  `summary_ready`, `processing_failed`, `summary_viewed`, `calendar_connected`, `extension_paired`,
+  `extension_repair_required`, `sample_opened`. Effort stays M.
+- **N9–N11 and pilot start** (see the §4 update):
+  - **N9 blocks pilot start** (INFERRED). The pilot agreement's partner duties include ADR-020's "explicit consent
+    option" (pilot-agreement-outline row 6). The org setting for it is the consent-settings API (#484, rate limits in
+    #485). #483's contracts merged on 18 Nov; #484 and #485 are still open.
+  - **N10 blocks pilot start for live-meeting capture** (decision, evidence INFERRED). Without the extension, in-product
+    meeting capture is the web recording panel. It calls only `getDisplayMedia({ audio: true, video: true })`
+    (`apps/web/src/features/recording/recording-panel.tsx` L110) and never `getUserMedia`. By the same reasoning as
+    capture F8, it may miss the local speaker. The extension today uploads through a stub in production (teardown F2)
+    and records the tab only (F8, fix in #516).
+    - File upload works without N10 (teardown §1 item 1), so a pilot could start upload-only as a stated fallback.
+  - **N11 does not block pilot start** (INFERRED). AssemblyAI deletes after store are already in (45e8664e; per-chunk
+    in #514). The sweep is a backstop for final failures. It should land before pilot data volume grows, and before
+    GA.
 
 ### 3.2 Next (about weeks 3–8): store submission, verification, first-run
 
@@ -94,6 +115,24 @@ named in the source outline.
 | X9  | MFA (ADR-021)                                                                                                                                                                                               | #490, #491, #493, #497                                                                                                    | Security + Backend                        | Review                                | — (in review)                                                                               | In review                                                                                                   |
 | X10 | Spec 04 no-viral guarantee, spec 05 language settings, trust flags shown (roadmap-plan #4, #5, #8)                                                                                                          | [roadmap-plan days 0–30](roadmap-plan.md#days-030-trust-and-finishing-p3p4p5-all-p0); [specs](specs/README.md)            | Backend, Frontend, AI                     | D8 for Hindi eval                     | Spec 04 about 5–7 ew, spec 05 about 6–8 ew (specs README)                                   | Flags exist in the pipeline (`packages/ai-core/src/extraction/schemas.ts`); no web display found (INFERRED) |
 | X11 | Billing and entitlements (ADR-017), pricing page                                                                                                                                                            | `docs/p9/remaining-work.md` rows 5–8; [pricing §4](pricing-packaging-v2.md#4-plan-proposals-proposal)                     | Backend, Frontend                         | D11, D12; Razorpay account            | L (four P9 rows)                                                                            | Not started                                                                                                 |
+
+_Dated notes 2026-11-18 (after the #521 review; the table text above is kept):_
+
+- **X2 sizing is tied to the C1 outcome** (§7, updated).
+  - If SDK 55 suffices: 4.5–7 engineer-days, M (`expo-rn-upgrade.md` L22).
+  - If SDK 54 on the Legacy Architecture is taken first, it's a smaller step now, but the New-Architecture migration
+    (SDK 55+) is still owed later. The plan has no estimate for an SDK 54-only step (UNVERIFIED).
+  - Per [expo-android-target-api.md](expo-android-target-api.md), SDK 54, 55 and 56 all target API 36 and meet
+    Play's rule. Xcode 26 is EAS's default for SDK 54 and Expo's minimum for SDK 55. Builds are UNVERIFIED.
+- **X3's dependency wording is corrected:** "X1 (F9 says deletion exists)" should read "X1: F9 says the drafted Data
+  safety text claims the 'user can request deletion' (`docs/mobile/store-review.md` L28), and F1 says deletion isn't
+  built". So X3 waits on X1.
+- **X8:** the `speech_models` part is **done in #520** (merged 2026-11-18 15:04 IST, `f6573d4f`).
+  - The default is `assemblyai-stt-3-7` (`packages/ai-core/src/assemblyai-speech-models.ts` L11–13;
+    `apps/worker/src/ai/providers/assemblyai.ts` L199 sends `speech_models`), pending Akash's cost okay
+    (`docs/09-ai/transcription.md` L15).
+  - WAV deletion (`apps/worker/src/media/processor.ts` L362 still writes `normalized.wav`) and the ADR-019 storage
+    estimate still wait on D10.
 
 ### 3.3 Later (after the pilot or before GA)
 
@@ -124,6 +163,8 @@ flowchart LR
     N2 --> START((Pilot start))
     N5 --> START
     N7[N7 activation events] --> START
+    N9[N9 consent-settings API] --> START
+    N10[N10 extension upload + mic] --> START
     N6 --> EXIT((Phase-0 exit: approved issues synced))
     START --> EXIT
   end
@@ -135,7 +176,7 @@ flowchart LR
     D19[D19 accounts + bundle ids] --> X3
     N3 --> X3
     X3 --> SUB((Mobile store submission))
-    N10[N10 extension upload + mic] --> CWS((Chrome Web Store))
+    N10 --> CWS((Chrome Web Store))
     N3 --> CWS
   end
 ```
@@ -146,6 +187,9 @@ flowchart LR
 - **Store critical path:** D18 → X1 and D17 → X2, both into X3 → submission.
   - X1 is the longest item (L). D17 is the earliest decision.
   - The Chrome Web Store needs N3 and N10, plus a publisher account (`docs/p9/remaining-work.md` row 16).
+- _Update 2026-11-18 (after the #521 review): N9 and N10 are now in the diagram as pilot-start blockers. N11 is not a
+  pilot-start blocker (see the notes under §3.1). INFERRED: D1/D20 → N1 → N2 is still the longest chain; N9 (review
+  and merge of #484/#485) and N10 (#516 plus the F2 build flag and a real-meeting test) run in parallel with it._
 - **Google verification (X5)** is about 3–5 weeks elapsed (OAuth brief §6). It isn't on the pilot path if the pilot
   uses Testing mode (D9 option B).
 
@@ -208,6 +252,12 @@ approval lines are not touched.
   - [capture §6.1](capture-platform-policy.md#61-expo-sdk-52-android-target-and-xcode-f3-f4) says Play needs API 36 and
     "Expo SDK 56 and later target 36".
   - UNVERIFIED: whether SDK 55 targets API 36. If it doesn't, the plan won't clear F3.
+  - _Resolved 2026-11-18 ([expo-android-target-api.md](expo-android-target-api.md)):_ SDK 54, 55 and 56 all default to
+    `targetSdkVersion` 36 (Expo versions tables; RN 0.81.5/0.83.10/0.85.3 catalogs), so capture §6.1's "56 and later"
+    was incomplete (dated note added there). Either the plan's SDK 55 or a reported "SDK 54 next, on the Legacy
+    Architecture" clears F3. SDK 54 is the last SDK with the Legacy Architecture, so a later move is also the
+    New-Architecture migration. D17's option text "56+ per capture §6.1" is superseded by this. §6's UNVERIFIED row
+    for SDK 52 matters only if the app stays on SDK 52.
 - **C2. Who decides Expo.** The plan says "Needs Maddy's Expo/RN decision (AR-5)" (L3). HANDOFF §5 item 5 lists it as
   blocked on Akash.
 - **C3. Owner names.** ADR-017, ADR-018 and ADR-020 say "approved by owner Maddy". PHASE_STATUS has "Owner decisions
@@ -221,6 +271,8 @@ approval lines are not touched.
   - HANDOFF §2 percentages are from 31 Oct.
   - `docs/p9/remaining-work.md` row 4 calls malware scanning a needs-owner decision, but ADR-018 is Accepted.
   - The roadmap-plan phase table uses these older numbers.
+  - _Update 2026-11-18:_ PHASE_STATUS, HANDOFF and `docs/p9/remaining-work.md` row 4 got dated notes in the same PR as
+    [expo-android-target-api.md](expo-android-target-api.md).
 - **C6. Two-way sync GA.** Roadmap-plan days 0–30 treat #6 as flag-on GA. The two-way brief K3 says Jira inbound
   can't work with the OAuth app as built.
 - **C7. The Outlook scope wording** in the teardown §4.2 was corrected by #518 (a dated note in §4.2).
