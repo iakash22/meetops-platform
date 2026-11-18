@@ -3,6 +3,9 @@
  * (e.g. popup.html opened as a normal tab). That guard is a security check, not something a user can act
  * on, so its raw text is never shown: in the real popup it is dropped, elsewhere it becomes a friendly hint.
  */
+import { PAIRING_REQUIRED_MESSAGE } from '../../src/lib/pairing-messages.js';
+export { PAIRING_REQUIRED_MESSAGE };
+
 export const POPUP_ONLY_ERROR = 'Commands must come from the popup';
 
 export const OPEN_FROM_TOOLBAR =
@@ -16,9 +19,6 @@ export const UNSUPPORTED_PAGE_MESSAGE =
   'Open the meeting in this tab (an https page), then press Record.';
 export const MEETING_RESOLVE_MESSAGE =
   "Couldn't set up this meeting in MeetOps. Try again in a moment.";
-// Keep identical to PAIRING_REQUIRED_MESSAGE in src/lib/background-handler.ts (popup must not import that module).
-export const PAIRING_REQUIRED_MESSAGE =
-  'This browser is not paired with MeetOps AI, so recording was not started. Pair the extension first.';
 const EXTENSION_RELOADED = /extension context invalidated|receiving end does not exist/i;
 
 export const isPopupOnlyError = (raw: string): boolean => raw.includes(POPUP_ONLY_ERROR);

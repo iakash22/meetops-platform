@@ -8,7 +8,7 @@
     "dev": "wxt",
     "build": "wxt build",
     "zip": "wxt zip",
-    "postinstall": "wxt prepare",
+    "postinstall": "node ./scripts/ensure-contracts-dist.mjs && wxt prepare",
     "typecheck": "wxt prepare && tsc -p tsconfig.json --noEmit",
     "lint": "wxt prepare && eslint .",
     "test": "vitest run",

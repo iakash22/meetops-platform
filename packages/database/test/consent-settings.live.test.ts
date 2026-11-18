@@ -97,8 +97,8 @@ describe.skipIf(!APP_URL || !OWNER_URL)('organization_consent_settings (live)', 
         }),
       ),
     ).rejects.toThrow();
-    // CHECK char_length(btrim(notice_text)) >= 1: whitespace-only notices are rejected by the DB too.
-    for (const blank of [' ', '   ', '\n\t ']) {
+    // notice_text_not_blank_check: whitespace-only notices (spaces, tabs, newlines) are rejected by the DB too.
+    for (const blank of [' ', '   ', '\n\t ', '\r\n', '\t']) {
       await expect(
         runWithOrganizationContext(app, orgA, (tx) =>
           tx.organizationConsentSettings.update({
