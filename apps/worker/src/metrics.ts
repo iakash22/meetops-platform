@@ -11,6 +11,10 @@ import {
 import { createQueue } from '@meetops/queue';
 import { TRANSCRIPTION_DLQ } from './ai/transcription-retry.js';
 import { EMBEDDINGS_QUEUE } from './embeddings/pipeline.js';
+import {
+  PROVIDER_TRANSCRIPT_DELETE_QUEUE,
+  renderProviderTranscriptDeleteMetrics,
+} from './ai/provider-transcript-delete.js';
 import { logger } from './logger.js';
 
 export type MetricsLog = { warn(obj: object, msg: string): void };
@@ -51,6 +55,7 @@ export const METRICS_QUEUES = [
   NOTIFICATION_DELIVERY_QUEUE,
   TASK_SYNC_QUEUE,
   EMBEDDINGS_QUEUE,
+  PROVIDER_TRANSCRIPT_DELETE_QUEUE,
 ] as const;
 /** Queues owned by apps/api and read under the auth-mail key prefix (AUTH_MAIL_QUEUE_PREFIX). */
 export const AUTH_PREFIXED_METRICS_QUEUES = [
@@ -142,7 +147,8 @@ export async function handleMetricsRequest(
   return {
     status: 200,
     type: 'text/plain; version=0.0.4; charset=utf-8',
-    body: await renderQueueMetrics(opts.queues, opts.read),
+    body:
+      (await renderQueueMetrics(opts.queues, opts.read)) + renderProviderTranscriptDeleteMetrics(),
   };
 }
 

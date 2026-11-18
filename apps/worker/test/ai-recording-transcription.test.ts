@@ -50,6 +50,7 @@ class FakeRepo implements RecordingTranscriptRepository {
       getChunkResult: async (_m, _r, i) => this.chunks.find((c) => c.chunkIndex === i),
       listChunkResults: async () => this.chunks,
       latestTranscript: latest,
+      getProviderJobId: async () => this.chunks.find((c) => c.providerJobId)?.providerJobId,
       writeTranscriptRevision: async (w, prev) => {
         if (this.failWritesOnce) {
           this.failWritesOnce = false;
@@ -293,5 +294,46 @@ describe('recording transcription -> summary trigger', () => {
     await processRecordingTranscription(input, deps);
     expect(events).toHaveLength(2);
     expect(events[1]).toEqual(events[0]);
+  });
+});
+
+describe('recording transcription -> provider transcript delete', () => {
+  it('notifies after a durable store and not when the store write fails', async () => {
+    const { deps, repo } = setup();
+    const stored: Array<{ providerJobId: string }> = [];
+    deps.onProviderTranscriptStored = async (info) => {
+      stored.push({ providerJobId: info.providerJobId });
+    };
+    await processRecordingTranscription(input, deps);
+    expect(stored).toEqual([{ providerJobId: 'tr_1' }]);
+    expect(repo.chunks[0]?.providerJobId).toBe('tr_1');
+
+    const fail = setup();
+    const missed: string[] = [];
+    fail.deps.onProviderTranscriptStored = async (info) => {
+      missed.push(info.providerJobId);
+    };
+    // Override the in-context put by making withOrgContext throw on the first write after transcribe.
+    fail.repo.withOrgContext = async (o, fn) => {
+      fail.repo.contexts.push(o);
+      return fn({
+        findMeeting: async (id) => (id === MEET ? { id, organizationId: o } : undefined),
+        findRecording: async (id) =>
+          id === REC ? { id, organizationId: o, meetingId: MEET, chunkCount: 1 } : undefined,
+        putChunkResult: async () => {
+          throw new Error('db write failed');
+        },
+        getChunkResult: async () => undefined,
+        listChunkResults: async () => [],
+        latestTranscript: async () => undefined,
+        getProviderJobId: async () => undefined,
+        writeTranscriptRevision: async () => false,
+        markTranscriptFailed: async () => undefined,
+      });
+    };
+    await expect(processRecordingTranscription(input, fail.deps)).rejects.toThrow(
+      /db write failed/,
+    );
+    expect(missed).toEqual([]);
   });
 });
