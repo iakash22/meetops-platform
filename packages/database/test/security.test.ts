@@ -136,9 +136,7 @@ const OUTBOX_DEDUPE_KEY_INDEX_MIGRATION = '20261103200100_outbox_dedupe_key_inde
 const USER_GOOGLE_SUB_MIGRATION = '20261106120000_user_google_sub';
 /** OIDC hardening: users.google_sub unique only over live rows (L-1) + auth.google_linked in the global audit allowlist. */
 const GOOGLE_OIDC_HARDENING_MIGRATION = '20261109120000_google_oidc_hardening';
-/** Per-chunk STT job id on transcript_chunks (follow-up to #513 anchor-only provider_job_id). */
-const CHUNK_PROVIDER_JOB_MIGRATION = '20261118140000_transcript_chunk_provider_job_id';
-const LATEST_MIGRATION = CHUNK_PROVIDER_JOB_MIGRATION;
+const LATEST_MIGRATION = GOOGLE_OIDC_HARDENING_MIGRATION;
 /**
  * Parallel PRs that sort between calendar_events and meeting_embeddings (#334 consent events, #341 calendar links).
  * The order checks below ignore them so they hold whichever merges first; when present they must sort before ours.
@@ -201,9 +199,6 @@ const orderedDirs = () => {
   expect(dirs.indexOf(GOOGLE_OIDC_HARDENING_MIGRATION)).toBe(
     dirs.indexOf(USER_GOOGLE_SUB_MIGRATION) + 1,
   );
-  expect(dirs.indexOf(CHUNK_PROVIDER_JOB_MIGRATION)).toBe(
-    dirs.indexOf(GOOGLE_OIDC_HARDENING_MIGRATION) + 1,
-  );
   return dirs.filter(
     (d) =>
       d !== TASK_SYNC_MIGRATION &&
@@ -216,7 +211,6 @@ const orderedDirs = () => {
       d !== OUTBOX_DEDUPE_KEY_INDEX_MIGRATION &&
       d !== USER_GOOGLE_SUB_MIGRATION &&
       d !== GOOGLE_OIDC_HARDENING_MIGRATION &&
-      d !== CHUNK_PROVIDER_JOB_MIGRATION &&
       !(PARALLEL_MIGRATIONS as readonly string[]).includes(d),
   );
 };
@@ -851,26 +845,6 @@ describe('contracts v0.2 (PR #38) alignment', () => {
     resolve(migrationsDir, '20261021150000_contracts_v02_alignment/migration.sql'),
     'utf8',
   );
-  it('transcript_chunks.provider_job_id is unique per org+provider and keeps forced RLS', () => {
-    const sql = readFileSync(
-      resolve(migrationsDir, CHUNK_PROVIDER_JOB_MIGRATION, 'migration.sql'),
-      'utf8',
-    );
-    expect(sql).toContain('ALTER TABLE "transcript_chunks" ADD COLUMN "provider_job_id" TEXT');
-    expect(sql).toContain(
-      'CREATE UNIQUE INDEX "transcript_chunks_org_id_provider_provider_job_id_key"',
-    );
-    expect(sql).toContain('"transcript_chunks"("org_id", "provider", "provider_job_id")');
-    expect(sql).toContain('CREATE INDEX "transcript_chunks_org_id_provider_job_id_idx"');
-    expect(sql).toContain('ALTER TABLE "transcript_chunks" ENABLE ROW LEVEL SECURITY');
-    expect(sql).toContain('ALTER TABLE "transcript_chunks" FORCE ROW LEVEL SECURITY');
-    expect(sql).not.toMatch(
-      /DROP TABLE|DROP COLUMN|NO FORCE ROW LEVEL SECURITY|DISABLE ROW LEVEL SECURITY/i,
-    );
-    expect(allSql).toContain('"transcript_chunks"("org_id", "provider", "provider_job_id")');
-    expect(schema).toMatch(/providerJobId\s+String\?\s+@map\("provider_job_id"\)/);
-  });
-
   it('MeetingParticipantRole is exactly host|participant, mapped without data loss', () => {
     expect(/enum MeetingParticipantRole \{\s*host\s+participant\s*\}/.test(schema)).toBe(true);
     expect(v02).toContain(`WHEN 'host' THEN 'host' ELSE 'participant'`);
