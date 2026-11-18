@@ -123,11 +123,14 @@ describe('AssemblyAI REST adapter (mocked fetch)', () => {
     expect(calls[0]?.[0]).toBe('https://api.assemblyai.com/v2/upload');
     expect(calls[0]?.[1].headers.authorization).toBe('aai');
     expect(calls[0]?.[1].headers['content-type']).toBe('application/octet-stream');
-    expect(JSON.parse(calls[1]?.[1].body)).toMatchObject({
+    const submitted = JSON.parse(calls[1]?.[1].body);
+    expect(submitted).toEqual({
       audio_url: 'https://cdn.assemblyai.com/upload/abc',
       speaker_labels: true,
+      speech_models: ['assemblyai-stt-3-7'],
       language_code: 'en',
     });
+    expect(submitted).not.toHaveProperty('speech_model');
     expect(calls[2]?.[0]).toBe('https://api.assemblyai.com/v2/transcript/tr1');
     expect(r).toMatchObject({
       text: 'hello',
@@ -135,6 +138,46 @@ describe('AssemblyAI REST adapter (mocked fetch)', () => {
       providerJobId: 'tr1',
       segments: [{ startSec: 0, endSec: 1.5, speaker: 'A' }],
     });
+  });
+
+  it('always sends speech_models and never the legacy speech_model field', async () => {
+    const calls: Array<[string, any]> = [];
+    const fetch = async (u: string, i: any) => {
+      calls.push([u, i]);
+      if (u.endsWith('/v2/upload'))
+        return Response.json({ upload_url: 'https://cdn.assemblyai.com/upload/abc' });
+      if (u.endsWith('/v2/transcript')) return Response.json({ id: 'tr1', status: 'queued' });
+      return Response.json({ id: 'tr1', status: 'completed', text: 'ok' });
+    };
+    await new AssemblyAIProvider({
+      apiKey: 'aai',
+      policy: remote,
+      fetch,
+      lookup: pubLookup,
+      sleep: async () => {},
+    }).transcribe({ bytes: new Uint8Array([1]) });
+    const body = JSON.parse(calls[1]?.[1].body);
+    expect(body.speech_models).toEqual(['assemblyai-stt-3-7']);
+    expect(body).not.toHaveProperty('speech_model');
+
+    const overrideCalls: Array<[string, any]> = [];
+    const overrideFetch = async (u: string, i: any) => {
+      overrideCalls.push([u, i]);
+      if (u.endsWith('/v2/upload'))
+        return Response.json({ upload_url: 'https://cdn.assemblyai.com/upload/abc' });
+      if (u.endsWith('/v2/transcript')) return Response.json({ id: 'tr2', status: 'queued' });
+      return Response.json({ id: 'tr2', status: 'completed', text: 'ok' });
+    };
+    await new AssemblyAIProvider({
+      apiKey: 'aai',
+      policy: remote,
+      fetch: overrideFetch,
+      lookup: pubLookup,
+      sleep: async () => {},
+      speechModels: ['universal-2'],
+    }).transcribe({ bytes: new Uint8Array([1]) });
+    expect(JSON.parse(overrideCalls[1]?.[1].body).speech_models).toEqual(['universal-2']);
+    expect(JSON.parse(overrideCalls[1]?.[1].body)).not.toHaveProperty('speech_model');
   });
   it('polling is bounded and error status -> MODEL_ERROR', async () => {
     const pending = async (u: string) =>

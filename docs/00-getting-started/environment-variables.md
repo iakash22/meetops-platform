@@ -121,6 +121,17 @@ These keys are owned and parsed by `@meetops/ai-core` (`loadAIEnv` in `packages/
 - `GEMINI_API_KEY`
 - `AI_STT_PROVIDER`: assemblyai
 - `ASSEMBLYAI_API_KEY`
+- `ASSEMBLYAI_SPEECH_MODELS`: `assemblyai-stt-3-7` (proposed default; **Akash should confirm**, because it
+  sets STT cost). Comma-separated official pre-recorded models sent as `speech_models` on
+  `POST /v2/transcript`. Allowed values: `assemblyai-stt-3-7` ($0.21/h list, flagship, 32 languages
+  with native code-switching including English↔Hindi) and `universal-2` ($0.15/h, 99 languages,
+  no native mid-sentence code-switching). Example fallback: `assemblyai-stt-3-7,universal-2`.
+  The legacy singular `ASSEMBLYAI_SPEECH_MODEL` is still accepted as a single-value alias. The
+  old default `universal` is rejected. Sources: AssemblyAI model selection
+  (https://www.assemblyai.com/docs/pre-recorded-audio/select-the-speech-model), pricing
+  (https://www.assemblyai.com/pricing/), code switching
+  (https://www.assemblyai.com/docs/pre-recorded-audio/code-switching). See
+  `docs/09-ai/transcription.md`.
 - `OLLAMA_ENABLED`: false
 - `OLLAMA_BASE_URL`: http://localhost:11434
 - `OLLAMA_MODEL`: llama3.2

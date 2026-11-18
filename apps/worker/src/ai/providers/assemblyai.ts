@@ -1,4 +1,10 @@
 import { timingSafeEqual } from 'node:crypto';
+import {
+  DEFAULT_ASSEMBLYAI_SPEECH_MODELS,
+  parseAssemblyAiSpeechModels,
+  assemblyAiSpeechModelsFromEnv,
+  InvalidAssemblyAiSpeechModelsError,
+} from '@meetops/ai-core';
 import { ProviderError, providerFetch, readJson, type FetchLike } from './errors.js';
 import type {
   TranscribeRequest,
@@ -15,6 +21,9 @@ export type AssemblyAiConfig = {
   /** Overall budget for submit + polling. */
   totalTimeoutMs?: number | undefined;
   pollIntervalMs?: number | undefined;
+  /** Pre-recorded `speech_models` list. Defaults to the proposed `assemblyai-stt-3-7`. */
+  speechModels?: readonly string[] | undefined;
+  /** @deprecated Use `speechModels`. Treated as a single-value list when `speechModels` is omitted. */
   speechModel?: string | undefined;
   /** If set, AssemblyAI calls this URL on completion with `webhookAuthHeader` (webhook mode). */
   webhookUrl?: string | undefined;
@@ -43,6 +52,7 @@ type AaiTranscript = {
   language_code?: unknown;
   audio_duration?: unknown;
   speech_model?: unknown;
+  speech_model_used?: unknown;
   utterances?: unknown;
   words?: unknown;
   confidence?: unknown;
@@ -91,7 +101,7 @@ export function mapAssemblyAiTranscript(
   const dur = num(body.audio_duration);
   return {
     provider: ID,
-    model: str(body.speech_model) ?? fallbackModel,
+    model: str(body.speech_model_used) ?? str(body.speech_model) ?? fallbackModel,
     providerJobId: id,
     language: str(body.language_code),
     durationMs: dur === null ? null : Math.round(dur * 1000),
@@ -129,7 +139,7 @@ export class AssemblyAiTranscriptionProvider implements TranscriptionProvider {
   private readonly reqTimeout: number;
   private readonly totalTimeout: number;
   private readonly pollMs: number;
-  private readonly model: string;
+  private readonly models: readonly string[];
   private readonly sleep: (ms: number) => Promise<void>;
   private readonly now: () => number;
 
@@ -140,7 +150,7 @@ export class AssemblyAiTranscriptionProvider implements TranscriptionProvider {
     this.reqTimeout = cfg.requestTimeoutMs ?? 30_000;
     this.totalTimeout = cfg.totalTimeoutMs ?? 30 * 60_000;
     this.pollMs = cfg.pollIntervalMs ?? 5_000;
-    this.model = cfg.speechModel ?? 'universal';
+    this.models = resolveSpeechModels(cfg);
     this.sleep = cfg.sleep ?? ((ms) => new Promise((r) => setTimeout(r, ms)));
     this.now = cfg.now ?? Date.now;
   }
@@ -185,7 +195,7 @@ export class AssemblyAiTranscriptionProvider implements TranscriptionProvider {
     const body: Record<string, unknown> = {
       audio_url: audioUrl,
       speaker_labels: req.speakerLabels,
-      speech_model: this.model,
+      speech_models: [...this.models],
       ...(req.language ? { language_code: req.language } : { language_detection: true }),
     };
     if (this.cfg.webhookUrl && this.cfg.webhookSecret) {
@@ -215,7 +225,7 @@ export class AssemblyAiTranscriptionProvider implements TranscriptionProvider {
       throw new ProviderError(ID, 'invalid_request');
     const res = await this.call(`/v2/transcript/${providerJobId}`, { method: 'GET' }, signal);
     const body = (await readJson(ID, res)) as AaiTranscript;
-    if (body?.status === 'completed') return mapAssemblyAiTranscript(body, this.model);
+    if (body?.status === 'completed') return mapAssemblyAiTranscript(body, this.models[0]!);
     if (body?.status === 'error') throw new ProviderError(ID, 'provider_failed');
     if (body?.status === 'queued' || body?.status === 'processing') return { status: 'pending' };
     throw new ProviderError(ID, 'bad_response');
@@ -231,6 +241,32 @@ export class AssemblyAiTranscriptionProvider implements TranscriptionProvider {
       if (req.signal?.aborted) throw new ProviderError(ID, 'timeout');
       await this.sleep(this.pollMs);
     }
+  }
+}
+
+function resolveSpeechModels(cfg: AssemblyAiConfig): readonly string[] {
+  try {
+    if (cfg.speechModels && cfg.speechModels.length > 0) {
+      return parseAssemblyAiSpeechModels(cfg.speechModels.join(','));
+    }
+    if (cfg.speechModel?.trim()) return parseAssemblyAiSpeechModels(cfg.speechModel);
+    return [...DEFAULT_ASSEMBLYAI_SPEECH_MODELS];
+  } catch (e) {
+    if (e instanceof InvalidAssemblyAiSpeechModelsError)
+      throw new ProviderError(ID, 'invalid_request');
+    throw e;
+  }
+}
+
+function loadSpeechModels(
+  env: NodeJS.ProcessEnv,
+): ReturnType<typeof assemblyAiSpeechModelsFromEnv> {
+  try {
+    return assemblyAiSpeechModelsFromEnv(env);
+  } catch (e) {
+    if (e instanceof InvalidAssemblyAiSpeechModelsError)
+      throw new ProviderError(ID, 'invalid_request');
+    throw e;
   }
 }
 
@@ -250,7 +286,7 @@ export function loadAssemblyAiConfig(
   return {
     apiKey,
     baseUrl: base || undefined,
-    speechModel: env.ASSEMBLYAI_SPEECH_MODEL?.trim() || undefined,
+    speechModels: loadSpeechModels(env),
     requestTimeoutMs: intEnv(env.AI_TRANSCRIPTION_REQUEST_TIMEOUT_MS, 30_000, 1_000, 300_000),
     totalTimeoutMs: intEnv(env.AI_TRANSCRIPTION_TIMEOUT_MS, 30 * 60_000, 10_000, 4 * 3_600_000),
     pollIntervalMs: intEnv(env.AI_TRANSCRIPTION_POLL_INTERVAL_MS, 5_000, 500, 60_000),

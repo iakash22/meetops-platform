@@ -18,6 +18,7 @@ describe('env validation', () => {
     expect(env.AI_LLM_PROVIDER).toBe('gemini');
     expect(env.GEMINI_MODEL).toBe('gemini-2.5-flash-lite');
     expect(env.AI_STT_PROVIDER).toBe('assemblyai');
+    expect(env.ASSEMBLYAI_SPEECH_MODELS).toEqual(['assemblyai-stt-3-7']);
     expect(env.AI_ALLOW_PAID_FALLBACK).toBe(false);
     expect(env.AI_REQUIRE_PROVIDER_APPROVAL).toBe(true);
     expect(env.OLLAMA_ENABLED).toBe(false);
@@ -60,6 +61,21 @@ describe('env validation', () => {
       /OLLAMA_BASE_URL/,
     );
     expect(() => loadAIEnv({ GEMINI_MODEL: '' }, { production: true })).toThrow();
+    expect(() =>
+      loadAIEnv({ ASSEMBLYAI_SPEECH_MODELS: 'universal' }, { production: true }),
+    ).toThrow(/ASSEMBLYAI_SPEECH_MODELS/);
+  });
+  it('parses ASSEMBLYAI_SPEECH_MODELS and the legacy singular alias', () => {
+    expect(
+      loadAIEnv({ ASSEMBLYAI_SPEECH_MODELS: 'assemblyai-stt-3-7, universal-2' }).env
+        .ASSEMBLYAI_SPEECH_MODELS,
+    ).toEqual(['assemblyai-stt-3-7', 'universal-2']);
+    expect(
+      loadAIEnv({ ASSEMBLYAI_SPEECH_MODEL: 'universal-2' }).env.ASSEMBLYAI_SPEECH_MODELS,
+    ).toEqual(['universal-2']);
+    const bad = loadAIEnv({ ASSEMBLYAI_SPEECH_MODELS: 'universal' });
+    expect(bad.errors).toContain('ASSEMBLYAI_SPEECH_MODELS: invalid');
+    expect(bad.env.ASSEMBLYAI_SPEECH_MODELS).toEqual(['assemblyai-stt-3-7']);
   });
   it('blocks local origins in production at startup', () => {
     expect(() =>

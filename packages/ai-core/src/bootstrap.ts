@@ -12,6 +12,7 @@ import { OpenAICompatibleProvider } from './adapters/openai-compatible.js';
 import { FasterWhisperProvider } from './adapters/faster-whisper.js';
 import { DeepgramProvider } from './adapters/deepgram.js';
 import { assertProductionProviderDataTiers } from './provider-data-tier.js';
+import { DEFAULT_ASSEMBLYAI_SPEECH_MODELS } from './assemblyai-speech-models.js';
 
 /**
  * Backend-controlled endpoint policy derived from env. Local origins only when that provider is enabled, and
@@ -72,7 +73,7 @@ export function defaultProviderConfigs(env: AIEnv): ProviderConfigInput[] {
       name: 'assemblyai',
       type: 'stt',
       adapter: 'assemblyai',
-      model: 'universal',
+      model: env.ASSEMBLYAI_SPEECH_MODELS[0] ?? DEFAULT_ASSEMBLYAI_SPEECH_MODELS[0],
       enabled: true,
       credentialRef: 'env:ASSEMBLYAI_API_KEY',
       capabilities: ['batch-transcription', 'diarization'],
@@ -142,11 +143,22 @@ export function defaultProviderConfigs(env: AIEnv): ProviderConfigInput[] {
 }
 
 /** Factories build a fresh adapter per call with the per-org credential. */
-export function defaultAdapterFactories(policy: EndpointPolicy): Record<string, AdapterFactory> {
+export function defaultAdapterFactories(
+  policy: EndpointPolicy,
+  opts?: { assemblyAiSpeechModels?: readonly string[] | undefined } | undefined,
+): Record<string, AdapterFactory> {
   return {
     gemini: (c, key, o) =>
       new GeminiProvider({ apiKey: key, policy, outputLimits: o?.outputLimits }, c.name),
-    assemblyai: (c, key) => new AssemblyAIProvider({ apiKey: key, policy }, c.name),
+    assemblyai: (c, key) =>
+      new AssemblyAIProvider(
+        {
+          apiKey: key,
+          policy,
+          speechModels: [...(opts?.assemblyAiSpeechModels ?? DEFAULT_ASSEMBLYAI_SPEECH_MODELS)],
+        },
+        c.name,
+      ),
     ollama: (c, _key, o) =>
       new OllamaProvider(
         { baseUrl: c.baseUrl ?? '', policy, outputLimits: o?.outputLimits },
@@ -180,7 +192,7 @@ export async function createRegistryFromEnv(
     production: deps.production,
   });
   const reg = new ProviderRegistry(
-    defaultAdapterFactories(policy),
+    defaultAdapterFactories(policy, { assemblyAiSpeechModels: env.ASSEMBLYAI_SPEECH_MODELS }),
     deps.resolveCredential,
     deps.audit,
   );
