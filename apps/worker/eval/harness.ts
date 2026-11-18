@@ -7,7 +7,7 @@ import {
   ModelRouter,
   ProviderRegistry,
   UsageQuotaManager,
-  aiEnvSchema,
+  loadAIEnv,
   createCredentialResolver,
   type LLMProvider,
 } from '@meetops/ai-core';
@@ -67,7 +67,11 @@ export async function evalExecutor(llm: LLMProvider): Promise<AIExecutor> {
   const usage = new InMemoryUsageTracker();
   return new AIExecutor({
     registry,
-    router: new ModelRouter(aiEnvSchema.parse({}), new InMemoryOrgConfigStore(), audit),
+    router: new ModelRouter(
+      loadAIEnv({ NODE_ENV: 'test' }).env,
+      new InMemoryOrgConfigStore(),
+      audit,
+    ),
     usage,
     quota: new UsageQuotaManager(usage),
     idempotency: new InMemoryIdempotencyStore(),

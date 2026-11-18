@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { aiEnvSchema } from '../src/env.js';
+import { loadAIEnv } from '../src/env.js';
 import { InMemoryOrgConfigStore, ModelRouter, orgAIConfigSchema } from '../src/router.js';
 import { AIError } from '../src/errors.js';
 import { admin } from './helpers.js';
@@ -11,7 +11,7 @@ const audit = { emit: async () => {} };
 const make = () => {
   const store = new InMemoryOrgConfigStore();
   const warnings: Array<{ msg: string; meta: Record<string, unknown> }> = [];
-  const router = new ModelRouter(aiEnvSchema.parse({}), store, audit, (msg, meta) =>
+  const router = new ModelRouter(loadAIEnv({ NODE_ENV: 'test' }).env, store, audit, (msg, meta) =>
     warnings.push({ msg, meta }),
   );
   return { store, router, warnings };

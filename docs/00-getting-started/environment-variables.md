@@ -121,6 +121,17 @@ These keys are owned and parsed by `@meetops/ai-core` (`loadAIEnv` in `packages/
 - `GEMINI_API_KEY`
 - `AI_STT_PROVIDER`: assemblyai
 - `ASSEMBLYAI_API_KEY`
+- `ASSEMBLYAI_SPEECH_MODELS`: `assemblyai-stt-3-7` (proposed default; **Akash should confirm**, because it
+  sets STT cost). Comma-separated official pre-recorded models sent as `speech_models` on
+  `POST /v2/transcript`. Allowed values: `assemblyai-stt-3-7` ($0.21/h list, flagship, 32 languages
+  with native code-switching including English↔Hindi) and `universal-2` ($0.15/h, 99 languages,
+  no native mid-sentence code-switching). Example fallback: `assemblyai-stt-3-7,universal-2`.
+  The legacy singular `ASSEMBLYAI_SPEECH_MODEL` is still accepted as a single-value alias. The
+  old default `universal` is rejected. Sources: AssemblyAI model selection
+  (https://www.assemblyai.com/docs/pre-recorded-audio/select-the-speech-model), pricing
+  (https://www.assemblyai.com/pricing/), code switching
+  (https://www.assemblyai.com/docs/pre-recorded-audio/code-switching). See
+  `docs/09-ai/transcription.md`.
 - `OLLAMA_ENABLED`: false
 - `OLLAMA_BASE_URL`: http://localhost:11434
 - `OLLAMA_MODEL`: llama3.2
@@ -136,13 +147,16 @@ These keys are owned and parsed by `@meetops/ai-core` (`loadAIEnv` in `packages/
 - `AI_ALLOW_PAID_FALLBACK`: false
 - `AI_STORES` (worker): `durable` (default; Postgres `ai_usage_counters`, `ai_idempotency` and `ai_org_config`, forced RLS). `memory` is for unit tests only and is refused unless `NODE_ENV=test` (staging, production and an unset `NODE_ENV` all refuse it); store errors fail the job, never fall back to memory.
 - `AI_REQUIRE_PROVIDER_APPROVAL`: true
-- `AI_PROVIDER_DATA_TIER_<PROVIDER>`: unset. In production (`NODE_ENV=production`), every enabled
-  LLM or STT provider whose configured `cost.tier` is `free` or unknown must have an explicit
-  data-use declaration of `paid` or `no-training`. This does not change default billing tiers
+- `AI_PROVIDER_DATA_TIER_<PROVIDER>`: unset. The guard is fail-closed: it applies unless
+  `NODE_ENV` is `development` or `test` (the same allow-list as #375). A typo, `staging`,
+  production, or an unset `NODE_ENV` all run the guard. Every enabled LLM or STT provider
+  whose configured `cost.tier` is `free` or unknown must have an explicit data-use
+  declaration of `paid` or `no-training`. This does not change default billing tiers
   (those stay an owner decision). Hyphens in the provider name become underscores. Examples:
   `AI_PROVIDER_DATA_TIER_GEMINI=paid`, `AI_PROVIDER_DATA_TIER_ASSEMBLYAI=no-training`. See
   `docs/research/ai-provider-due-diligence.md`. The worker fails closed at registry startup if a
-  required declaration is missing or invalid.
+  required declaration is missing or invalid. `loadAIEnv` uses the same allow-list when
+  deciding whether invalid AI env shapes fail startup or fall back to defaults.
 - `AI_PROVIDER_TRANSCRIPT_DELETE_ENABLED`: true. After a transcript is durably stored, enqueue a
   best-effort AssemblyAI `DELETE /v2/transcript/:id` job (ADR-019). 404 is treated as success.
   Set to `false`/`0`/`no`/`off` to skip enqueueing. Logs and metrics use ids and status codes

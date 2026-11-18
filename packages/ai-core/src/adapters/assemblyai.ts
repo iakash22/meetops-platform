@@ -7,6 +7,8 @@ import type {
 } from '../types.js';
 import { AIError, toAIError } from '../errors.js';
 import { guardedFetch, type HttpOpts } from './http.js';
+import { DEFAULT_ASSEMBLYAI_SPEECH_MODELS } from '../assemblyai-speech-models.js';
+import { isValidProviderTranscriptId } from '../assemblyai-ids.js';
 import { realSleep, type Sleeper } from '../retry.js';
 
 export const ASSEMBLYAI_BASE_URL = 'https://api.assemblyai.com';
@@ -30,7 +32,7 @@ type Transcript = {
 /**
  * AssemblyAI pre-recorded STT over REST (no SDK), via guardedFetch. Header `authorization: <key>`.
  *   POST /v2/upload       (application/octet-stream, raw bytes) -> { upload_url }
- *   POST /v2/transcript   { audio_url, speaker_labels, language_code | language_detection } -> { id, status }
+ *   POST /v2/transcript   { audio_url, speech_models, speaker_labels, language_code | language_detection } -> { id, status }
  *   GET  /v2/transcript/{id}  polled with bounded attempts until completed | error (honours AbortSignal)
  *   DELETE /v2/transcript/{id}  after our copy is durably stored (ADR-019; 404 is success)
  * Audio is always sent as BYTES (uploaded) so AssemblyAI never fetches our internal/presigned URLs.
@@ -98,13 +100,13 @@ export class AssemblyAIProvider implements TranscriptionProvider {
           body: JSON.stringify({
             audio_url: up.upload_url,
             speaker_labels: input.diarize ?? true,
+            speech_models: this.http.speechModels ?? [...DEFAULT_ASSEMBLYAI_SPEECH_MODELS],
             ...(input.language ? { language_code: input.language } : { language_detection: true }),
-            ...(this.http.speechModels ? { speech_models: this.http.speechModels } : {}),
           }),
           ...sig,
         })
       ).json<Transcript>();
-      if (!/^[A-Za-z0-9-]+$/.test(created.id ?? ''))
+      if (!isValidProviderTranscriptId(created.id ?? ''))
         throw new AIError('INVALID_OUTPUT', 'unexpected transcript id', {
           provider: this.providerId,
           retryable: false,
@@ -180,7 +182,7 @@ export class AssemblyAIProvider implements TranscriptionProvider {
     id: string,
     signal?: AbortSignal,
   ): Promise<{ outcome: 'deleted' | 'already_deleted'; httpStatus: number }> {
-    if (!/^[A-Za-z0-9-]+$/.test(id)) {
+    if (!isValidProviderTranscriptId(id)) {
       throw new AIError('INVALID_OUTPUT', 'unexpected transcript id', {
         provider: this.providerId,
         retryable: false,

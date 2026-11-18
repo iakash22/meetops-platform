@@ -2,6 +2,8 @@ export * from './types.js';
 export * from './errors.js';
 export * from './config.js';
 export * from './env.js';
+export * from './assemblyai-speech-models.js';
+export * from './assemblyai-ids.js';
 export * from './retry.js';
 export * from './usage.js';
 export * from './audit.js';

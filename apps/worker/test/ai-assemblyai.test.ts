@@ -35,7 +35,7 @@ const done = {
   text: 'Hi there. Ok.',
   language_code: 'en',
   audio_duration: 12.5,
-  speech_model: 'universal',
+  speech_model_used: 'assemblyai-stt-3-7',
   utterances: [
     { speaker: 'A', start: 0, end: 1200, text: 'Hi there.', confidence: 0.9 },
     { speaker: 'B', start: 1300, end: 2000, text: 'Ok.', confidence: 0.8 },
@@ -73,7 +73,7 @@ describe('AssemblyAI adapter (mocked fetch)', () => {
       providerJobId: 'tr_1',
       language: 'en',
       durationMs: 12_500,
-      model: 'universal',
+      model: 'assemblyai-stt-3-7',
     });
     expect(out.segments).toEqual([
       { speaker: 'A', startMs: 0, endMs: 1200, text: 'Hi there.', confidence: 0.9 },
@@ -210,7 +210,7 @@ describe('AssemblyAI adapter (mocked fetch)', () => {
   it('mapping falls back to one segment without utterances', () => {
     const r = mapAssemblyAiTranscript(
       { id: 'x', text: 'solo', words: [{ start: 100, end: 900 }], confidence: 0.7 },
-      'universal',
+      'assemblyai-stt-3-7',
     );
     expect(r.segments).toEqual([
       { speaker: null, startMs: 100, endMs: 900, text: 'solo', confidence: 0.7 },
@@ -235,6 +235,39 @@ describe('AssemblyAI adapter (mocked fetch)', () => {
   });
 });
 
+it('submit body uses speech_models and omits the legacy speech_model field', async () => {
+  const f = fakeFetch([json(200, { id: 'tr_1' })]);
+  await make(f).submit({ audio: { kind: 'url', url: 'https://x.example/a' }, speakerLabels: true });
+  const body = f.calls[0]!.body as Record<string, unknown>;
+  expect(body).toEqual({
+    audio_url: 'https://x.example/a',
+    speaker_labels: true,
+    speech_models: ['assemblyai-stt-3-7'],
+    language_detection: true,
+  });
+  expect(body).not.toHaveProperty('speech_model');
+});
+
+it('honours an explicit speechModels override in the request body', async () => {
+  const f = fakeFetch([json(200, { id: 'tr_1' })]);
+  await make(f, { speechModels: ['universal-2'] }).submit({
+    audio: { kind: 'url', url: 'https://x.example/a' },
+    speakerLabels: false,
+  });
+  expect(f.calls[0]!.body).toEqual({
+    audio_url: 'https://x.example/a',
+    speaker_labels: false,
+    speech_models: ['universal-2'],
+    language_detection: true,
+  });
+});
+
+it('rejects an unknown speech model without calling the provider', async () => {
+  const f = fakeFetch([]);
+  expect(() => make(f, { speechModel: 'universal' })).toThrow(ProviderError);
+  expect(f.calls).toHaveLength(0);
+});
+
 describe('loadAssemblyAiConfig', () => {
   it('is undefined without a key, clamps numbers, requires https base', async () => {
     const { loadAssemblyAiConfig } = await import('../src/ai/index.js');
@@ -253,6 +286,24 @@ describe('loadAssemblyAiConfig', () => {
     });
     expect(() =>
       loadAssemblyAiConfig({ ASSEMBLYAI_API_KEY: 'k', ASSEMBLYAI_BASE_URL: 'http://evil' }),
+    ).toThrow(ProviderError);
+    expect(loadAssemblyAiConfig({ ASSEMBLYAI_API_KEY: 'k' })?.speechModels).toEqual([
+      'assemblyai-stt-3-7',
+    ]);
+    expect(
+      loadAssemblyAiConfig({
+        ASSEMBLYAI_API_KEY: 'k',
+        ASSEMBLYAI_SPEECH_MODELS: 'assemblyai-stt-3-7,universal-2',
+      })?.speechModels,
+    ).toEqual(['assemblyai-stt-3-7', 'universal-2']);
+    expect(
+      loadAssemblyAiConfig({
+        ASSEMBLYAI_API_KEY: 'k',
+        ASSEMBLYAI_SPEECH_MODEL: 'universal-2',
+      })?.speechModels,
+    ).toEqual(['universal-2']);
+    expect(() =>
+      loadAssemblyAiConfig({ ASSEMBLYAI_API_KEY: 'k', ASSEMBLYAI_SPEECH_MODEL: 'universal' }),
     ).toThrow(ProviderError);
   });
 });

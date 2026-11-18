@@ -33,11 +33,14 @@ const ANCHOR_REVISION = 0;
 const KNOWN_PROVIDERS = new Set(['assemblyai', 'faster-whisper', 'deepgram', 'unknown']);
 const providerOf = (p: string) => (KNOWN_PROVIDERS.has(p) ? p : 'unknown');
 
-const isChunkTranscript = (v: unknown): v is ChunkTranscript =>
-  typeof v === 'object' &&
-  v !== null &&
-  typeof (v as ChunkTranscript).chunkIndex === 'number' &&
-  Array.isArray((v as ChunkTranscript).segments);
+const isChunkTranscript = (v: unknown): v is ChunkTranscript => {
+  if (typeof v !== 'object' || v === null) return false;
+  const row = v as ChunkTranscript;
+  if (typeof row.chunkIndex !== 'number' || !Array.isArray(row.segments)) return false;
+  // When present, providerJobId must be a string so deletes never read a coerced value.
+  if (row.providerJobId !== undefined && typeof row.providerJobId !== 'string') return false;
+  return true;
+};
 const isRevision = (v: unknown): v is TranscriptRevision =>
   typeof v === 'object' &&
   v !== null &&

@@ -30,6 +30,7 @@ class FakeRepo implements RecordingTranscriptRepository {
   contexts: string[] = [];
   failWritesOnce = false;
   conflictAlways = false;
+  loseFirstWrite?: ChunkTranscript;
   async withOrgContext<T>(
     o: string,
     fn: (r: OrgScopedRecordingTranscriptRepository) => Promise<T>,
@@ -43,6 +44,10 @@ class FakeRepo implements RecordingTranscriptRepository {
       findRecording: async (id) =>
         id === REC ? { id, organizationId: o, meetingId: MEET, chunkCount: 1 } : undefined,
       putChunkResult: async (_m, _r, c) => {
+        if (this.loseFirstWrite && !this.chunks.some((x) => x.chunkIndex === c.chunkIndex)) {
+          this.chunks.push(structuredClone(this.loseFirstWrite));
+          return false;
+        }
         if (this.chunks.some((x) => x.chunkIndex === c.chunkIndex)) return false;
         this.chunks.push(structuredClone(c));
         return true;
@@ -340,5 +345,40 @@ describe('recording transcription -> provider transcript delete', () => {
       /db write failed/,
     );
     expect(missed).toEqual([]);
+  });
+
+  it('enqueues the first-write loser id and the winner id, without duplicates', async () => {
+    const { deps, repo } = setup([{ ...RESULT, providerJobId: 'tr_loser' }]);
+    repo.loseFirstWrite = {
+      chunkIndex: 0,
+      startSec: 0,
+      durationSec: 5,
+      overlapSec: 0,
+      provider: 'assemblyai',
+      model: 'universal',
+      receivedAt: '2026-01-01T00:00:00.000Z',
+      providerJobId: 'tr_winner',
+      segments: [],
+    };
+    const stored: string[] = [];
+    deps.onProviderTranscriptStored = async (info) => {
+      if (info.providerJobId) stored.push(info.providerJobId);
+    };
+    await processRecordingTranscription(input, deps);
+    expect(stored.sort()).toEqual(['tr_loser', 'tr_winner']);
+    expect(repo.chunks).toHaveLength(1);
+    expect(repo.chunks[0]?.providerJobId).toBe('tr_winner');
+
+    const same = setup([{ ...RESULT, providerJobId: 'tr_same' }]);
+    same.repo.loseFirstWrite = {
+      ...repo.loseFirstWrite,
+      providerJobId: 'tr_same',
+    };
+    const once: string[] = [];
+    same.deps.onProviderTranscriptStored = async (info) => {
+      if (info.providerJobId) once.push(info.providerJobId);
+    };
+    await processRecordingTranscription(input, same.deps);
+    expect(once).toEqual(['tr_same']);
   });
 });

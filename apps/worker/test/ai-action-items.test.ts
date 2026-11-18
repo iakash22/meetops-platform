@@ -10,7 +10,7 @@ import {
   ModelRouter,
   ProviderRegistry,
   UsageQuotaManager,
-  aiEnvSchema,
+  loadAIEnv,
   createCredentialResolver,
   type LLMGenerateStructuredParams,
   type LLMProvider,
@@ -178,7 +178,10 @@ async function realExecutor(
   return new AIExecutor({
     registry,
     router: new ModelRouter(
-      aiEnvSchema.parse(extra?.allowPaid ? { AI_ALLOW_PAID_FALLBACK: 'true' } : {}),
+      loadAIEnv({
+        NODE_ENV: 'test',
+        ...(extra?.allowPaid ? { AI_ALLOW_PAID_FALLBACK: 'true' } : {}),
+      }).env,
       orgs,
       audit,
     ),
