@@ -91,6 +91,13 @@ export type TaskSyncJobPayload = Static<typeof TaskSyncJobPayload>;
 
 /** Media processing queue (normalize, chunk, then fan out transcription jobs). */
 export const MEDIA_QUEUE = 'media' as const;
+
+/**
+ * Account-takeover follow-up queue (#463 review) and its dead-letter queue. Produced and consumed by apps/api under
+ * the auth-mail key prefix (AUTH_MAIL_QUEUE_PREFIX); named here so the worker metrics exporter can read their depth.
+ */
+export const AUTH_TAKEOVER_FOLLOW_UP_QUEUE = 'auth-takeover-follow-up' as const;
+export const AUTH_TAKEOVER_FOLLOW_UP_DLQ = `${AUTH_TAKEOVER_FOLLOW_UP_QUEUE}-dlq` as const;
 export const MEDIA_JOB_NAME = 'process_recording' as const;
 
 export const MEDIA_SOURCE_EXTS = ['webm', 'ogg', 'mp3', 'm4a', 'aac', 'mp4', 'wav'] as const;

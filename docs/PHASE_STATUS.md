@@ -1,4 +1,50 @@
-# Phase status — 9 Nov 2026 (~22:35 IST)
+# Phase status — 12 Nov 2026 (~00:40 IST)
+
+## Update — 12 Nov 2026 (~00:40 IST)
+
+Tree: `main` at `ca3c0e2b` (unchanged). `integration/phase-1` at `5b66cfe6` (109 ahead / 0 behind `main`), merge of [#482](https://github.com/iakash22/meetops-platform/pull/482) (extension HTTP upload default in development). PR states queried live from the GitHub API at ~00:40 IST.
+
+Merged into integration since the 9 Nov ~22:35 snapshot (`fd4ede49`, #459):
+
+- [#461](https://github.com/iakash22/meetops-platform/pull/461) status + proxy operator docs (`7de8a872`).
+- [#464](https://github.com/iakash22/meetops-platform/pull/464) media rate-limit IP keys use `clientIpKey` (no shared `unknown`) (`14d4b491`).
+- [#465](https://github.com/iakash22/meetops-platform/pull/465) webhook HMAC is verified before the org lookup (`d0f837b4`).
+- [#463](https://github.com/iakash22/meetops-platform/pull/463) auth takeover follow-ups from the #459 reviews (`6feef782`).
+- [#466](https://github.com/iakash22/meetops-platform/pull/466) and [#467](https://github.com/iakash22/meetops-platform/pull/467) Dependabot bumps (`pnpm/action-setup`, `@fastify/cors`).
+- [#468](https://github.com/iakash22/meetops-platform/pull/468) research competitive landscape, gaps, proposals and 30/60/90 roadmap (`809557f2`).
+- [#473](https://github.com/iakash22/meetops-platform/pull/473) research specs, pricing, legal brief (`7568f206`).
+- [#469](https://github.com/iakash22/meetops-platform/pull/469) durable BullMQ retries for takeover follow-ups.
+- [#470](https://github.com/iakash22/meetops-platform/pull/470) MFA security/QA test plan refresh (ADR-021).
+- [#471](https://github.com/iakash22/meetops-platform/pull/471) remove braces audit exception.
+- [#476](https://github.com/iakash22/meetops-platform/pull/476) remove RE-04 image-size audit exception.
+- [#478](https://github.com/iakash22/meetops-platform/pull/478) research executive summary and GTM brief.
+- [#477](https://github.com/iakash22/meetops-platform/pull/477) tighten Bootstrap CSS prune safelist (Frontend CSS budget).
+- [#479](https://github.com/iakash22/meetops-platform/pull/479) e2e for verify-email outcomes; marks the #463 post-commit verify UX closed.
+- [#482](https://github.com/iakash22/meetops-platform/pull/482) extension HTTP upload default in development (`5b66cfe6`).
+
+**Open PRs targeting `integration/phase-1`** (live at ~00:40 IST):
+
+- [#472](https://github.com/iakash22/meetops-platform/pull/472) OD-1 account-claim decision (ADR-022) and the ADR-020 amendment (explicit consent on by default for every org until an org country is stored). Docs only; not yet on this tip. This refresh does not duplicate that amendment.
+- [#474](https://github.com/iakash22/meetops-platform/pull/474) pass `BEHIND_CLOUDFLARE` through to the API (D-5).
+- [#475](https://github.com/iakash22/meetops-platform/pull/475) webhook HMAC timing follow-ups.
+- [#480](https://github.com/iakash22/meetops-platform/pull/480) research verification round 2.
+- [#481](https://github.com/iakash22/meetops-platform/pull/481) this PHASE_STATUS refresh.
+- [#483](https://github.com/iakash22/meetops-platform/pull/483) consent-settings contracts.
+- [#484](https://github.com/iakash22/meetops-platform/pull/484) consent-settings API.
+- [#485](https://github.com/iakash22/meetops-platform/pull/485) consent write rate limits.
+
+**Promote:** [#462](https://github.com/iakash22/meetops-platform/pull/462) (`integration/phase-1` → `main`, head `5b66cfe6`, 109 commits). Only Akash merges #462.
+
+**Deploy note:** production realtime must set `TRUST_PROXY` to an IP/CIDR allowlist including nginx; hop counts fail startup. On this tip, compose still passes `BEHIND_CLOUDFLARE` only to the realtime service; the API compose fix is [#474](https://github.com/iakash22/meetops-platform/pull/474). See [environment-variables.md](00-getting-started/environment-variables.md) and [cicd.md](devops/cicd.md#deploy-env-realtime-trust_proxy-after-455).
+
+P1 estimate stays ~98% (Google web sign-in + hardening and takeover follow-ups in; MFA/SSO still open, ADR-021). P2 still needs the consent-settings API (contracts vs routes; open as #483–#485, not landed on this tip). P9 Dependabot row #2 remains **partial** (glib / deepmerge exceptions; alerts API still unread). Other phase percentages unchanged from the 7 Nov / 9 Nov snapshots below.
+
+## Update — 11 Nov 2026 (~23:30 IST)
+
+Tree: `main` at `ca3c0e2b` (unchanged). `integration/phase-1` at `de8a86e4` (includes the #463 merge `6feef782`, then #464, #465, #461, and Dependabot #466/#467).
+
+[#463](https://github.com/iakash22/meetops-platform/pull/463) closed the remaining #459 follow-ups: Tester X4-mem (in-memory store copies), NB-R3 post-commit verify UX (verify returns 204 with the real `x-meetops-verify-outcome` after a committed takeover), and the info copy (`password_reset` vs `set_password` on `/verify-email`).
+
 
 ## Update — 9 Nov 2026 (~22:35 IST)
 
@@ -6,9 +52,9 @@ Tree: `main` at `ca3c0e2b` (unchanged). `integration/phase-1` at `fd4ede49` (55 
 
 Also merged 9 Nov into integration after the ~20:45 snapshot: [#457](https://github.com/iakash22/meetops-platform/pull/457) TRUST_PROXY env/docs share; [#458](https://github.com/iakash22/meetops-platform/pull/458) Dependabot `serde_with` 3.17→3.21 + glib RE-07 (Tester; remaining-work #2 **partial**); [#460](https://github.com/iakash22/meetops-platform/pull/460) `plist`/`quick-xml` clearing RUSTSEC-2026-0194/0195 (Tester).
 
-**Deploy note (#455, unchanged):** production realtime must set `TRUST_PROXY` to an IP/CIDR allowlist including nginx; hop counts fail startup. Compose passes `BEHIND_CLOUDFLARE` only to the realtime service (API still reads the env var in code — see [environment-variables.md](00-getting-started/environment-variables.md) and [cicd.md](devops/cicd.md#deploy-env-realtime-trust_proxy-after-455)).
+**Deploy note (#455, unchanged):** production realtime must set `TRUST_PROXY` to an IP/CIDR allowlist including nginx; hop counts fail startup. Compose passes `BEHIND_CLOUDFLARE` to both the API and the realtime service (see [environment-variables.md](00-getting-started/environment-variables.md) and [cicd.md](devops/cicd.md#deploy-env-realtime-trust_proxy-after-455)).
 
-Google OIDC hardening findings M-2, N-1…N-6, L-1…L-5 are **closed in #459**. Small follow-ups remain (Tester X4-mem on the in-memory store, NB-R3 verify/post-commit UX, info copy). MFA/SSO product work remains future (ADR-021); #456 is the test plan only. Owner decision OD-1 (cross-device verify drops password) stays with Akash.
+Google OIDC hardening findings M-2, N-1…N-6, L-1…L-5 are **closed in #459**. The #459 follow-ups (Tester X4-mem on the in-memory store, NB-R3 verify/post-commit UX, info copy) are **closed in [#463](https://github.com/iakash22/meetops-platform/pull/463)**. MFA/SSO product work remains future (ADR-021); #456 is the test plan only. Owner decision OD-1 (cross-device verify drops password) stays with Akash.
 
 P1 estimate ~98% (Google web sign-in + hardening in; MFA/SSO still open). P9 Dependabot row #2 partial.
 

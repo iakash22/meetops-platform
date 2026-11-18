@@ -43,19 +43,15 @@ describe('postcss-prune-bootstrap', () => {
     expect(out).toContain('body');
   });
 
-  it('keeps runtime react-bootstrap classes via the safelist', async () => {
+  it('keeps runtime react-bootstrap Button classes via the safelist', async () => {
     const out = await run(
-      '.btn{a:1}.btn-outline-secondary{a:1}.spinner-border{a:1}.tooltip.show{a:1}.btn-check:checked+.btn{a:1}',
+      '.btn{a:1}.btn-outline-secondary{a:1}.btn-lg{a:1}.btn-success{a:1}.spinner-border{a:1}.tooltip.show{a:1}.btn-check:checked+.btn{a:1}',
       [],
     );
-    for (const s of [
-      '.btn{',
-      '.btn-outline-secondary',
-      '.spinner-border',
-      '.tooltip.show',
-      '.btn-check',
-    ])
-      expect(out).toContain(s);
+    for (const s of ['.btn{', '.btn-outline-secondary', '.btn-lg']) expect(out).toContain(s);
+    for (const s of ['.btn-success', '.spinner-border', '.tooltip', '.btn-check']) {
+      expect(out).not.toContain(s);
+    }
   });
 
   it('trims a selector list to the used selectors and removes emptied @media blocks', async () => {
@@ -76,6 +72,8 @@ describe('postcss-prune-bootstrap', () => {
     expect(selectorClasses('.a.b:not(.c) [class*=".d"]')).toEqual(['a', 'b', 'c']);
     expect(selectorClasses('.sm\\:p-3')).toEqual(['sm:p-3']);
     expect(isUsed('btn-lg', new Set())).toBe(true);
+    expect(isUsed('btn-success', new Set())).toBe(false);
+    expect(isUsed('spinner-border', new Set())).toBe(false);
     expect(isUsed('modal', new Set())).toBe(false);
   });
 
