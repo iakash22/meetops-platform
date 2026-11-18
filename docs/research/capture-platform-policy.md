@@ -2,8 +2,11 @@
 
 - Checked: **2026-11-18 (IST)**. Each source row gives the page's own "last updated" date where the page shows one.
 - Scope: what Chrome Web Store, Apple (App Store and macOS) and Google Play require of an app that records meeting
-  audio, compared with what the repo does today on `integration/phase-1` at `d56f8819`. Desk research only: no store
-  accounts, no submissions, no device builds.
+  audio, compared with what the repo does today on `integration/phase-1`. First checked at `d56f8819`; re-checked at
+  `84c1fc5e` (2026-11-18): none of the files cited here changed. Changes in between touched the extension's unpaired
+  copy (`apps/extension/src/lib/pairing-messages.ts`) and the Android recording service's session-id handling
+  (`apps/mobile/modules/recording-service/`), which don't affect any finding. Desk research only: no store accounts,
+  no submissions, no device builds.
 - Labels: **gap** = something a store or OS rule requires that the repo doesn't have yet; **proposal** = our suggested
   fix, not decided; **interpretation** = our reading of a policy, not the store's. Store reviewers decide case by case,
   so passing this list doesn't guarantee approval.
