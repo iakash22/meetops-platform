@@ -112,6 +112,34 @@ describe('consent settings API', () => {
     expect((await w.member.get(path(w.org))).json()).toMatchObject({ retentionDays: 30 });
   });
 
+  it('serialises concurrent PATCHes: every notice edit bumps the version, none is lost', async () => {
+    const w = await world();
+    const notices = ['Notice one.', 'Notice two.', 'Notice three.'];
+    const res = await Promise.all(
+      notices.map((noticeText, i) =>
+        (i % 2 ? w.admin : w.owner).patch(path(w.org), { noticeText }),
+      ),
+    );
+    const bodies = res.map((r) => {
+      expect(r.statusCode, JSON.stringify(r.json())).toBe(200);
+      return r.json<ConsentSettings>();
+    });
+    // Each writer saw the previous one's committed row: three distinct, consecutive versions.
+    expect(bodies.map((b) => b.currentConsentVersion).sort()).toEqual([
+      '2026-11-11',
+      '2026-11-11.2',
+      '2026-11-11.3',
+    ]);
+    const last = bodies.find((b) => b.currentConsentVersion === '2026-11-11.3')!;
+    const stored = await w.settings.get(w.org);
+    expect(stored).toMatchObject({
+      currentConsentVersion: '2026-11-11.3',
+      noticeText: last.noticeText,
+    });
+    const audits = w.audit.events.filter((e) => e.action === 'consent.settings.update');
+    expect(audits.map((e) => e.metadata?.noticeChanged)).toEqual([true, true, true]);
+  });
+
   it('rejects other-org ids with 404 and does not leak a row', async () => {
     const w = await world();
     expect((await w.other.get(path(w.org))).statusCode).toBe(404);
@@ -158,16 +186,17 @@ describe('InMemoryConsentSettingsRepository', () => {
   it('returns copies so a caller cannot mutate the store', async () => {
     const repo = new InMemoryConsentSettingsRepository();
     const now = new Date('2026-11-11T00:00:00.000Z');
-    const saved = await repo.upsert({
+    const row = {
       organizationId: 'o1',
-      mode: 'all_parties_consented',
+      mode: 'all_parties_consented' as const,
       noticeText: 'N',
       skipExternalParticipants: false,
       retentionDays: 90,
       currentConsentVersion: '2026-10',
       updatedAt: now,
       updatedById: 'u1',
-    });
+    };
+    const saved = await repo.update('o1', row, (current) => ({ ...current, updatedById: 'u1' }));
     saved.noticeText = 'mutated';
     saved.retentionDays = 7;
     const got = await repo.get('o1');

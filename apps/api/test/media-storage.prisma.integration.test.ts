@@ -14,6 +14,7 @@ import {
   FakeMediaSigner,
   InMemoryMediaJobQueue,
 } from '../src/modules/media/infrastructure/in-memory.js';
+import { globalConsentVersion } from '../src/modules/media/domain/consent.js';
 import { reconcileStaleMedia } from '../src/modules/media/application/reconcile.js';
 import { PrismaStaleMediaStore } from '../src/modules/media/infrastructure/prisma.js';
 import { consent, mediaWorld, SHA_B64, type MediaWorld } from './media-helpers.js';
@@ -153,6 +154,7 @@ describe.skipIf(!url)('media storage wiring (Prisma, live)', () => {
     const before = jobs.jobs.length;
     const run = () =>
       reconcileStaleMedia({
+        consentVersion: globalConsentVersion,
         store: new PrismaStaleMediaStore(db),
         consents: media.consents,
         jobs,

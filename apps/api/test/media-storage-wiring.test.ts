@@ -13,6 +13,7 @@ import {
   InMemoryFileObjectRepository,
   InMemoryMediaJobQueue,
 } from '../src/modules/media/infrastructure/in-memory.js';
+import { globalConsentVersion } from '../src/modules/media/domain/consent.js';
 import { reconcileStaleMedia } from '../src/modules/media/application/reconcile.js';
 import { CURRENT_CONSENT_VERSION } from '@meetops/contracts';
 import {
@@ -210,6 +211,7 @@ describe('#302 M-1 requeue + reconciler', () => {
     };
     const now = new Date('2026-10-28T12:00:00Z');
     const r = await reconcileStaleMedia({
+      consentVersion: globalConsentVersion,
       store,
       consents,
       jobs,
@@ -229,14 +231,29 @@ describe('#302 M-1 requeue + reconciler', () => {
     ]);
     // #302 L-3: a rerun while the job is live adds nothing and counts nothing.
     expect(
-      await reconcileStaleMedia({ store, consents, jobs, now: () => now, olderThanMs: 60_000 }),
+      await reconcileStaleMedia({
+        store,
+        consents,
+        consentVersion: globalConsentVersion,
+        jobs,
+        now: () => now,
+        olderThanMs: 60_000,
+      }),
     ).toEqual({ organizations: 1, uploads: 0, sessions: 0, skipped: 1 });
     expect(jobs.jobs).toHaveLength(1);
     // A FAILED/COMPLETED job held under the id is replaced and counted.
     jobs.finished.add(`process_upload_${ORG}_${SUB}`);
     expect(
-      (await reconcileStaleMedia({ store, consents, jobs, now: () => now, olderThanMs: 60_000 }))
-        .uploads,
+      (
+        await reconcileStaleMedia({
+          store,
+          consents,
+          consentVersion: globalConsentVersion,
+          jobs,
+          now: () => now,
+          olderThanMs: 60_000,
+        })
+      ).uploads,
     ).toBe(1);
     expect(jobs.finished.size).toBe(0);
     expect(jobs.jobs).toHaveLength(1);
@@ -280,7 +297,14 @@ describe('#302 M-1 requeue + reconciler', () => {
     };
     const requeue = vi.spyOn(jobs, 'requeue');
     const run = () =>
-      reconcileStaleMedia({ store, consents, jobs, now: () => new Date(), olderThanMs: 0 });
+      reconcileStaleMedia({
+        store,
+        consents,
+        consentVersion: globalConsentVersion,
+        jobs,
+        now: () => new Date(),
+        olderThanMs: 0,
+      });
     expect(await run()).toEqual({ organizations: 1, uploads: 0, sessions: 1, skipped: 1 });
     expect(requeue).toHaveBeenCalledWith(legacy);
     expect(jobs.finished.size).toBe(0);
