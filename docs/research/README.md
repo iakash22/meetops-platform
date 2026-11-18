@@ -22,6 +22,7 @@ through an ADR (`docs/15-decisions/`) or a plan (`docs/plans/`).
 | [design-partner-kit/](design-partner-kit/README.md)                    | India design-partner kit: ICP and recruitment, interview scripts, pilot metrics, pilot agreement outline, Hindi-English eval-data protocol                       |
 | [capture-platform-policy.md](capture-platform-policy.md)               | Chrome Web Store, App Store, macOS and Play rules for recording apps vs the repo: account deletion, privacy links, target SDKs, FGS, consent UX                  |
 | [account-deletion-erasure-brief.md](account-deletion-erasure-brief.md) | Account deletion with a 30-day grace: keeping consent and audit evidence, last-owner orgs, AssemblyAI and Gemini deletes, store deletion page (not legal advice) |
+| [pricing-packaging-v2.md](pricing-packaging-v2.md)                     | Pricing v2 (2026-11-18): competitor re-check incl. INR, cost per meeting-hour estimate, proposed plans and margins, pilot pricing, decisions                     |
 
 Conventions:
 
