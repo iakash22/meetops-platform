@@ -348,7 +348,9 @@ independent of eval data, and record M16 (cost per meeting-hour) to replace the 
   - The labels are now at L66 (gemini), L81 (assemblyai), L97 (ollama) and L111 (faster-whisper), all `tier: 'free'`.
     L125 (openai) and L137 (deepgram) are `tier: 'paid'`.
   - Production now refuses an enabled free or undeclared LLM/STT tier unless `AI_PROVIDER_DATA_TIER_<NAME>` is
-    `paid` or `no-training` (b8eb5ffb; `packages/ai-core/src/provider-data-tier.ts` L108–125).
+    `paid` or `no-training` (b8eb5ffb; `packages/ai-core/src/provider-data-tier.ts` L108–125;
+    _updated 2026-11-18 at `2127fb46`, after #514: `assertProductionProviderDataTiers` is L120–135, doc comment from
+    L115_).
   - AssemblyAI deletes after store now exist (45e8664e).
   - See [onboarding-activation-teardown.md](onboarding-activation-teardown.md) §8.
 

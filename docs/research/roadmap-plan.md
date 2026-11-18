@@ -1,5 +1,9 @@
 # 30/60/90-day roadmap for the research proposals (from 2026-11-11)
 
+> **Update 2026-11-18:** the phase table and the day-0–90 windows are superseded by
+> [phase-2-roadmap.md](phase-2-roadmap.md) (§2 says what changed). The feature rows (#1–#24) below remain the content
+> source; the original text is kept.
+
 - Inputs: [feature-proposals.md](feature-proposals.md) (# numbers below), `docs/PHASE_STATUS.md` (9 Nov 2026 update;
   per-phase table from 7 Nov), `docs/HANDOFF.md` (§5 owner blockers, §6 next tasks), `docs/p9/remaining-work.md` and the
   ADRs in `docs/15-decisions/`.
