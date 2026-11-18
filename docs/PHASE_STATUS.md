@@ -2,7 +2,7 @@
 
 ## Update — 12 Nov 2026 (~01:55 IST)
 
-Tree: `main` at `ca3c0e2b` (unchanged). `integration/phase-1` at `d50d0dc2` (142 ahead / 0 behind `main`), merge of [#495](https://github.com/iakash22/meetops-platform/pull/495) (research verification round 3). Ahead/behind and open PR states queried live from the GitHub API at ~01:55 IST.
+Tree: `main` at `ca3c0e2b` (unchanged). `integration/phase-1` at `fed52cb1` (149 ahead / 0 behind `main`, GitHub compare queried live on 18 Nov 2026 at ~12:40 IST), merge of [#501](https://github.com/iakash22/meetops-platform/pull/501) (research capture policy). This branch's snapshot below was taken at `d50d0dc2`; open PR states were queried at ~01:55 IST on 12 Nov.
 
 Merged into integration since the 12 Nov ~00:40 snapshot (`5b66cfe6`, #482):
 
