@@ -4,20 +4,24 @@
 --    factor is removed. Read with the user on every authenticated request (MFA-TOTP-01 gate), so no extra query.
 ALTER TABLE "users" ADD COLUMN "mfa_enabled_at" TIMESTAMPTZ(3);
 
--- 1b. organizations.mfa_required: the org-wide "require MFA for everyone" policy (ADR-021 D2, OQ-13). Owners and admins
---     always need MFA (OQ-5) whatever this says. organizations is a reviewed global table (no RLS); the column is only
---     changed through the org-context, CASL-checked, step-up-guarded route.
+-- 1b. organizations.mfa_required: the org-wide "require MFA for everyone" policy (ADR-021 D2, OQ-13). Off by default;
+--     enforcement (grace window, MFA_ORG_ENFORCEMENT_ENABLED kill switch) is OQ-5 and ships later. organizations is a
+--     reviewed global table (no RLS yet: forced RLS on it is deferred to its own PR, A1.3); until then only the
+--     audited admin service path writes this column.
 ALTER TABLE "organizations" ADD COLUMN "mfa_required" BOOLEAN NOT NULL DEFAULT false;
 
 -- 2. sessions: when this session last passed an MFA check (step-up freshness, MFA-SU-06), and the auth_level values
 --    are pinned (MFA-SU-09). Anything other than exactly 'mfa' is not elevated; the CHECK makes a typo impossible.
+--    Both CHECKs are added NOT VALID (new and updated rows are checked at once, no full-table scan under the ACCESS
+--    EXCLUSIVE lock); 20261111180100_mfa_validate_session_checks validates them in its own migration (SHARE UPDATE
+--    EXCLUSIVE only), so a busy sessions table is not blocked.
 ALTER TABLE "sessions" ADD COLUMN "mfa_at" TIMESTAMPTZ(3);
 ALTER TABLE "sessions" ADD CONSTRAINT "sessions_auth_level_check"
-  CHECK ("auth_level" IN ('password', 'google', 'mfa'));
+  CHECK ("auth_level" IN ('password', 'google', 'mfa')) NOT VALID;
 ALTER TABLE "sessions" ADD CONSTRAINT "sessions_mfa_at_level_check"
-  CHECK ("mfa_at" IS NULL OR "auth_level" = 'mfa');
+  CHECK ("mfa_at" IS NULL OR "auth_level" = 'mfa') NOT VALID;
 
--- 3. mfa_factors: one row per enrolled factor. The TOTP secret (and the user's recovery-code HMAC key) live only in a
+-- 3. mfa_factors: one row per enrolled factor. The TOTP secret (and that factor's recovery-code HMAC key) live only in a
 --    TokenCipher envelope whose AAD is ['meetops.mfa.totp.v1', user_id, id] (MFA-SEC-01, finding P-3).
 --    last_used_step is the RFC 6238 replay guard: a code is accepted only for a step greater than it, set by a
 --    conditional UPDATE (atomic across sessions and API instances, MFA-TOTP-04).
@@ -48,12 +52,16 @@ CREATE INDEX "mfa_factors_user_id_idx" ON "mfa_factors"("user_id");
 -- At most one active TOTP factor per user (replacement retires the old one in the same transaction). Prisma cannot
 -- express a partial unique index, so it lives here only (same approach as users_google_sub_key).
 CREATE UNIQUE INDEX "mfa_factors_one_active_totp" ON "mfa_factors"("user_id") WHERE "status" = 'active' AND "type" = 'totp';
+-- (id, user_id) is unique (id alone already is) so recovery codes can reference the pair: a code row can only point
+-- at a factor of the SAME user (review #497 L-3), whatever the app or RLS context does.
+CREATE UNIQUE INDEX "mfa_factors_id_user_id_key" ON "mfa_factors"("id", "user_id");
 ALTER TABLE "mfa_factors" ADD CONSTRAINT "mfa_factors_user_id_fkey"
   FOREIGN KEY ("user_id") REFERENCES "users"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
--- 4. mfa_recovery_codes: single-use codes, stored only as HMAC-SHA256(per-user key, code) (MFA-RC-03). The key is in
---    the factor's encrypted envelope, so a database dump alone cannot be brute-forced. used_at is set by a
---    conditional UPDATE (... WHERE used_at IS NULL): a code works once even under concurrency (MFA-RC-02).
+-- 4. mfa_recovery_codes: single-use codes, stored only as HMAC-SHA256(per-factor key, code) (MFA-RC-03). The key is
+--    generated per factor and kept in that factor's encrypted envelope, so a database dump alone cannot be
+--    brute-forced. used_at is set by a conditional UPDATE (... WHERE used_at IS NULL): a code works once even under
+--    concurrency (MFA-RC-02).
 CREATE TABLE "mfa_recovery_codes" (
     "id" UUID NOT NULL,
     "user_id" UUID NOT NULL,
@@ -68,8 +76,42 @@ CREATE UNIQUE INDEX "mfa_recovery_codes_factor_id_code_hash_key" ON "mfa_recover
 CREATE INDEX "mfa_recovery_codes_user_id_idx" ON "mfa_recovery_codes"("user_id");
 ALTER TABLE "mfa_recovery_codes" ADD CONSTRAINT "mfa_recovery_codes_user_id_fkey"
   FOREIGN KEY ("user_id") REFERENCES "users"("id") ON DELETE CASCADE ON UPDATE CASCADE;
-ALTER TABLE "mfa_recovery_codes" ADD CONSTRAINT "mfa_recovery_codes_factor_id_fkey"
-  FOREIGN KEY ("factor_id") REFERENCES "mfa_factors"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+-- Composite FK (factor_id, user_id) -> mfa_factors(id, user_id): user A cannot attach a code to user B's factor.
+ALTER TABLE "mfa_recovery_codes" ADD CONSTRAINT "mfa_recovery_codes_factor_id_user_id_fkey"
+  FOREIGN KEY ("factor_id", "user_id") REFERENCES "mfa_factors"("id", "user_id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- 4b. mfa_challenges (ADR-021 OQ-17): the short-lived, single-purpose login challenge a user with MFA on gets after a
+--     correct first factor (password or Google). It is NOT a session: no session row and no cookie exist until the
+--     challenge succeeds, and the session is then created at level 'mfa'. Only SHA-256(token) is stored. Single use is
+--     a conditional UPDATE (... WHERE used_at IS NULL AND expires_at > now RETURNING); wrong codes count in attempts
+--     and burn the challenge at the cap. Like password_resets it is a reviewed global table (looked up by token hash
+--     before any user context exists), so it has no RLS; the app role gets DML only.
+CREATE TABLE "mfa_challenges" (
+    "id" UUID NOT NULL,
+    "user_id" UUID NOT NULL,
+    "purpose" TEXT NOT NULL DEFAULT 'mfa_challenge',
+    "first_factor" TEXT NOT NULL,
+    "token_hash" TEXT NOT NULL,
+    "attempts" INTEGER NOT NULL DEFAULT 0,
+    "expires_at" TIMESTAMPTZ(3) NOT NULL,
+    "used_at" TIMESTAMPTZ(3),
+    "created_at" TIMESTAMPTZ(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "mfa_challenges_pkey" PRIMARY KEY ("id"),
+    CONSTRAINT "mfa_challenges_purpose_check" CHECK ("purpose" = 'mfa_challenge'),
+    CONSTRAINT "mfa_challenges_first_factor_check" CHECK ("first_factor" IN ('password', 'google')),
+    CONSTRAINT "mfa_challenges_token_hash_check" CHECK ("token_hash" ~ '^[0-9a-f]{64}$'),
+    CONSTRAINT "mfa_challenges_attempts_check" CHECK ("attempts" >= 0),
+    -- 5 minutes at most (MFA_CHALLENGE_TTL_SECONDS): a longer-lived challenge cannot be written by mistake.
+    CONSTRAINT "mfa_challenges_ttl_check" CHECK (
+      "expires_at" > "created_at" AND "expires_at" <= "created_at" + interval '5 minutes'
+    )
+);
+CREATE UNIQUE INDEX "mfa_challenges_token_hash_key" ON "mfa_challenges"("token_hash");
+CREATE INDEX "mfa_challenges_user_id_idx" ON "mfa_challenges"("user_id");
+CREATE INDEX "mfa_challenges_expires_at_idx" ON "mfa_challenges"("expires_at");
+ALTER TABLE "mfa_challenges" ADD CONSTRAINT "mfa_challenges_user_id_fkey"
+  FOREIGN KEY ("user_id") REFERENCES "users"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- 5. Forced RLS keyed on the user (these tables have no org_id: MFA is per user, MFA-AUD-03 / OQ-13). The app sets
 --    app.current_user_id LOCAL in a transaction (runWithUserContext); unset or '' => NULL => no rows (fail closed).
@@ -93,6 +135,7 @@ BEGIN
   IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'meetops_app') THEN
     GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "mfa_factors" TO meetops_app;
     GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "mfa_recovery_codes" TO meetops_app;
+    GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "mfa_challenges" TO meetops_app;
   END IF;
 END
 $$;
@@ -128,7 +171,7 @@ BEGIN
     'auth.google_linked',
     'auth.mfa_enrolled', 'auth.mfa_confirmed', 'auth.mfa_disabled', 'auth.mfa_challenge_succeeded',
     'auth.mfa_challenge_failed', 'auth.mfa_step_up', 'auth.mfa_recovery_code_used',
-    'auth.mfa_recovery_codes_regenerated'
+    'auth.mfa_recovery_codes_regenerated', 'auth.mfa_lockout'
   ) THEN
     RAISE EXCEPTION 'audit_action_not_allowed' USING ERRCODE = '22023';
   END IF;

@@ -1157,3 +1157,63 @@ describe.skipIf(!APP_URL || !OWNER_URL)('DB-1 teams and team_members RLS (live)'
     await owner.$disconnect();
   });
 });
+
+describe.skipIf(!APP_URL || !OWNER_URL)('ADR-021 MFA user tables (live)', () => {
+  const app = new PrismaClient({ datasources: { db: { url: APP_URL ?? '' } } });
+  const owner = new PrismaClient({ datasources: { db: { url: OWNER_URL ?? '' } } });
+  const userA = randomUUID();
+  const userB = randomUUID();
+  const factorB = randomUUID();
+  // A syntactically valid envelope prefix (CHECK secret_enc LIKE 'v1.%'); never a real secret.
+  const envelope = ['v1', 'test-key', 'x', 'y'].join('.');
+
+  it('setup: user B has an active TOTP factor', async () => {
+    for (const id of [userA, userB])
+      await owner.user.create({ data: { id, email: `mfa-${id}@example.test` } });
+    await runWithUserContext(app, userB, (tx) =>
+      tx.mfaFactor.create({
+        data: {
+          id: factorB,
+          userId: userB,
+          type: 'totp',
+          status: 'active',
+          secretEnc: envelope,
+          secretKeyId: 'test-key',
+          confirmedAt: new Date(),
+        },
+      }),
+    );
+  });
+
+  it("review #497 L-3: user A cannot attach a recovery code to user B's factor (composite FK)", async () => {
+    // RLS WITH CHECK passes (user_id = A is A's own context); the (factor_id, user_id) FK must refuse it.
+    await expect(
+      runWithUserContext(
+        app,
+        userA,
+        (tx) =>
+          tx.$executeRaw`INSERT INTO mfa_recovery_codes (id, user_id, factor_id, code_hash)
+          VALUES (${randomUUID()}::uuid, ${userA}::uuid, ${factorB}::uuid, 'h-a')`,
+      ),
+    ).rejects.toThrow(/mfa_recovery_codes_factor_id_user_id_fkey|23503|foreign key/i);
+    // The owner of the factor can.
+    const n = await runWithUserContext(
+      app,
+      userB,
+      (tx) => tx.$executeRaw`INSERT INTO mfa_recovery_codes (id, user_id, factor_id, code_hash)
+        VALUES (${randomUUID()}::uuid, ${userB}::uuid, ${factorB}::uuid, 'h-b')`,
+    );
+    expect(n).toBe(1);
+  });
+
+  it("user A's context sees none of user B's MFA rows", async () => {
+    const seen = await runWithUserContext(app, userA, async (tx) => ({
+      factors: await tx.mfaFactor.count(),
+      codes: await tx.mfaRecoveryCode.count(),
+    }));
+    expect(seen).toEqual({ factors: 0, codes: 0 });
+    await owner.user.deleteMany({ where: { id: { in: [userA, userB] } } });
+    await app.$disconnect();
+    await owner.$disconnect();
+  });
+});

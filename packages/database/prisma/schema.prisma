@@ -331,6 +331,7 @@ model User {
 
   mfaFactors       MfaFactor[]       @relation("MfaFactorOwner")
   mfaRecoveryCodes MfaRecoveryCode[] @relation("MfaRecoveryCodeOwner")
+  mfaChallenges    MfaChallenge[]    @relation("MfaChallengeOwner")
 
   @@map("users")
 }
@@ -1620,11 +1621,14 @@ model MfaFactor {
   user          User              @relation("MfaFactorOwner", fields: [userId], references: [id], onDelete: Cascade)
   recoveryCodes MfaRecoveryCode[]
 
+  /// Target of the composite FK from mfa_recovery_codes (a code can only reference a factor of the same user).
+  @@unique([id, userId])
   @@index([userId])
   @@map("mfa_factors")
 }
 
-/// ADR-021 single-use recovery code, stored only as HMAC-SHA256(per-user key, code). User-scoped forced RLS.
+/// ADR-021 single-use recovery code, stored only as HMAC-SHA256(per-factor key, code); the key lives in the factor's
+/// encrypted envelope. User-scoped forced RLS.
 model MfaRecoveryCode {
   id        String    @id @default(uuid()) @db.Uuid
   userId    String    @map("user_id") @db.Uuid
@@ -1634,9 +1638,33 @@ model MfaRecoveryCode {
   createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
 
   user   User      @relation("MfaRecoveryCodeOwner", fields: [userId], references: [id], onDelete: Cascade)
-  factor MfaFactor @relation(fields: [factorId], references: [id], onDelete: Cascade)
+  /// Composite FK (factor_id, user_id) -> mfa_factors(id, user_id): never another user's factor.
+  factor MfaFactor @relation(fields: [factorId, userId], references: [id, userId], onDelete: Cascade)
 
   @@unique([factorId, codeHash])
   @@index([userId])
   @@map("mfa_recovery_codes")
+}
+
+/// ADR-021 OQ-17 login MFA challenge: short-lived (5 min, CHECK), single use, purpose 'mfa_challenge' (CHECK), bound to
+/// the user. Not a session: the session is created only when the challenge succeeds. Only SHA-256(token) is stored.
+/// Global like PasswordReset (looked up by token hash before any user context), so no RLS.
+model MfaChallenge {
+  id          String    @id @default(uuid()) @db.Uuid
+  userId      String    @map("user_id") @db.Uuid
+  purpose     String    @default("mfa_challenge")
+  /// How the first factor was proved: 'password' | 'google' (CHECK).
+  firstFactor String    @map("first_factor")
+  tokenHash   String    @unique @map("token_hash")
+  /// Wrong codes against this challenge; it is burned at the cap.
+  attempts    Int       @default(0)
+  expiresAt   DateTime  @map("expires_at") @db.Timestamptz(3)
+  usedAt      DateTime? @map("used_at") @db.Timestamptz(3)
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  user User @relation("MfaChallengeOwner", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@map("mfa_challenges")
 }
