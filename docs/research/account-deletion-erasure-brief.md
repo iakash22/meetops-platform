@@ -1,0 +1,287 @@
+# Account deletion and erasure: design brief (inputs for ADR-023)
+
+- Checked: **2026-11-18 (IST)**. Repo facts are from `integration/phase-1` at `fed52cb1`; none of the cited files changed by `84c1fc5e`. Each source row gives the
+  date we fetched it and the page's own "last updated" date where it shows one.
+- **Decision already taken (not re-opened here).** Per the coordinator's note of 2026-11-18, MeetOps will build
+  **self-serve account deletion with a 30-day soft-delete grace period**, and a teammate is drafting ADR-023 from that
+  decision. This brief can't cite ADR-023 yet, so it attributes the decision to that note. Everything below is an
+  option or a proposal _inside_ that decision.
+- Labels: **interpretation** = our reading of a law or policy; **proposal** = a suggested design, not decided;
+  **estimate** = our own number; **gap** = something a rule needs that the repo doesn't have yet.
+- **Not legal advice.** Which retention periods apply to MeetOps, and whether the proposals below meet them, are for
+  counsel. Store policies are contract terms, not law. The open questions are in §8.
+- Builds on `docs/15-decisions/ADR-019-media-retention.md`, `docs/15-decisions/ADR-020-recording-consent.md`
+  (the open GDPR erasure item), [capture-platform-policy.md](capture-platform-policy.md) F1 (no account deletion
+  anywhere) and [legal-questions-brief.md](legal-questions-brief.md) Q28 (Rule 8(3)).
+
+## 1. Summary
+
+| #   | Finding                                                                                                                                                                                                                                                                                                                                                      | Area |
+| --- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---- |
+| S1  | Nothing in the repo deletes an account today: no self-delete route in `apps/api/src/modules/auth/http/auth.plugin.ts` or `apps/api/src/modules/users`, and no screen on web or mobile. The ADR-019 purge job (item 1, "daily worker purge job") isn't implemented either; the worker only redacts IPs (ADR-014) and purges sessions and AI idempotency rows. | all  |
+| S2  | A plain hard delete of a `users` row fails by design: `consent_attestations.attested_by_user_id` and `meeting_consent_events.actor_user_id` are `ON DELETE RESTRICT`, and both tables are append-only for every role. Pseudonymising the `users` row works without touching those tables or the audit log.                                                   | §2   |
+| S3  | DPDP Rule 8(3) says to keep "personal data, associated traffic data and other logs of the processing" for at least a year from processing, and its own illustration says "even if X deletes her account". How much of a meeting that covers is the biggest counsel question here (Q29).                                                                      | §2   |
+| S4  | The same RESTRICT FKs block hard-deleting a **meeting** that has consent events, and an **organization** that has consent rows or audit events. The ADR-019 purge of soft-deleted meetings and any org deletion therefore need a "tombstone" (scrubbed row kept) design, not `DELETE`.                                                                       | §3   |
+| S5  | **Gap:** the AssemblyAI adapter never calls `DELETE /v2/transcript/{id}`, and the worker doesn't persist the provider job id (`transcripts.provider_job_id` exists, but nothing writes it). AssemblyAI keeps the final transcript for 30 days by default, so ADR-019's "deleted at the provider right after processing" isn't true today.                    | §5   |
+| S6  | Gemini is called inline (`:generateContent`, no Files API), so there's nothing to delete by API. What remains is Google's abuse-monitoring and optional logging retention, which we must disclose, not purge.                                                                                                                                                | §5   |
+| S7  | Apple accepts a delayed deletion if we say how long it takes and confirm when it's done; deactivation alone fails. Play wants an in-app path and a web page that works without the app. A 30-day grace that ends in automatic deletion fits both (**interpretation**).                                                                                       | §6   |
+| S8  | The API already refuses to remove or demote the last owner (409 `LAST_OWNER`). There is no organization delete route. Account deletion for a last owner needs a rule; we recommend "block until transferred or the org is scheduled for deletion".                                                                                                           | §4   |
+
+## 2. Keeping consent evidence and audit records after deletion
+
+### 2.1 What the sources say
+
+| Source                                          | What it says (quoted or closely paraphrased)                                                                                                                                                                                                                                                                                                                                                                                                                                          | Bearing on deletion (**interpretation**)                                                                                                     |
+| ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| DPDP Act s. 12(3) [E1]                          | On an erasure request the Fiduciary "shall erase her personal data unless retention of the same is necessary for the specified purpose or for compliance with any law for the time being in force".                                                                                                                                                                                                                                                                                   | Deletion is the default; anything we keep needs a named law or purpose.                                                                      |
+| DPDP Act s. 8(7) [E1]                           | Erase on withdrawal of consent or once the specified purpose is no longer served, "unless retention is necessary for compliance with any law", and cause the Data Processor to erase too.                                                                                                                                                                                                                                                                                             | Provider copies (AssemblyAI, Google) are in scope (§5).                                                                                      |
+| DPDP Act s. 6(10) [E1]                          | Where consent is in dispute, the Fiduciary must prove that notice was given and consent obtained.                                                                                                                                                                                                                                                                                                                                                                                     | Supports keeping consent evidence. Note: it speaks of the Data Principal's own consent, not a host's attestation about other participants.   |
+| DPDP Rules, Rule 6(1)(c) and (e) [E2]           | Security safeguards include "visibility on the accessing of such personal data, through appropriate logs, monitoring and review" and, to detect and investigate unauthorised access, "retain such logs and personal data for a period of one year, unless compliance with any law ... requires otherwise".                                                                                                                                                                            | Audit and access logs: at least a year.                                                                                                      |
+| DPDP Rules, Rule 8(3) and Seventh Schedule [E2] | Retain "such personal data, associated traffic data and other logs of the processing for a minimum period of one year from the date of such processing, for the purposes as specified in the Seventh Schedule", then erase. Illustration, Case 1: the platform "must retain the order details, personal data, and logs of the processing ... even if X deletes her account". The Seventh Schedule purposes are State uses (sovereignty and security, functions under law, and so on). | Account deletion doesn't end the one-year hold. Whether "personal data" here means meeting content or only processing records is open (Q29). |
+| DPDP Rules, Rule 8(1)–(2), Third Schedule [E2]  | Inactivity-based erasure for large e-commerce, online gaming and social media classes, with a 48-hour warning before erasure.                                                                                                                                                                                                                                                                                                                                                         | Probably not MeetOps' class, and it's about inactivity, not a user request. A reminder before the purge is still cheap (proposal, §4.3).     |
+| DPDP Rules, Rule 1(4) [E2]                      | Rules 3, 5 to 16, 22 and 23 come into force 18 months after publication (computed as 13 May 2027 in [verification-round-3.md](verification-round-3.md)).                                                                                                                                                                                                                                                                                                                              | Rules 6 and 8 aren't in force yet, but ADR-019 already designs for Rule 8. Build to them now.                                                |
+| CERT-In Directions, 28 Apr 2022, para (iv) [E3] | Keep logs of ICT systems for a rolling 180 days, within India. Verified in [verification-round-3.md](verification-round-3.md) §3; not re-fetched today.                                                                                                                                                                                                                                                                                                                               | Shorter than Rule 6/8's one year, so the one year governs logs.                                                                              |
+| GDPR Art. 17(3)(b) and (e) [E4]                 | Erasure doesn't apply where processing is necessary "for compliance with a legal obligation which requires processing by Union or Member State law" or "for the establishment, exercise or defence of legal claims".                                                                                                                                                                                                                                                                  | (e) is ADR-020's basis for keeping consent evidence. (b) needs an EU or member-state law; Indian Rule 8(3) doesn't count for GDPR.           |
+| GDPR Recital 26 [E5]                            | Pseudonymised data "which could be attributed to a natural person by the use of additional information should be considered to be information on an identifiable natural person".                                                                                                                                                                                                                                                                                                     | A pseudonymised `users` row is still personal data under GDPR; it needs its own retention limit and basis.                                   |
+| GDPR Art. 12(3) [E6]                            | Act on a request "without undue delay and in any event within one month", extendable by two months for complex or numerous requests.                                                                                                                                                                                                                                                                                                                                                  | 30-day grace + a daily purge can slip past one month. See §4.3 and Q31.                                                                      |
+| Apple [E7], Play [E8]                           | Apple: if you're legally required to keep some data, "let people know what information will and won't be retained". Play: you may keep data "for legitimate reasons such as security, fraud prevention or regulatory compliance" if you "clearly inform users".                                                                                                                                                                                                                       | Whatever we keep has to be listed on the deletion page (§6.3).                                                                               |
+
+### 2.2 Options for each kind of record
+
+"Grace end" means day 30 after the request, when the purge job runs.
+
+| Record                                                                                                                         | A. Delete at grace end                                                                                                              | B. Pseudonymise at grace end                                                                                                                                                          | C. Keep unchanged for a set period                                                                         |
+| ------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| `users` row                                                                                                                    | Blocked by the consent FKs (RESTRICT) unless consent rows are removed first.                                                        | Keep `id`, set `deleted_at`, scrub `email` (tombstone), `name`, `password_hash`, `google_sub`. Works with the FKs as they are.                                                        | Not allowed: Apple and Play both say deactivation isn't deletion.                                          |
+| `consent_attestations`, `meeting_consent_events` (only the user id, method, version, times and an optional `reason`)           | Needs the migrator-only maintenance path (`docs/16-runbooks/meeting-consent-maintenance.md`), and loses the evidence ADR-020 keeps. | Already pseudonymous once the `users` row is scrubbed: rows hold a user uuid, no name or email. Free-text `reason` could hold names; option to null it via the same maintenance path. | Keep for a counsel-set period (Q30), then delete via a reviewed maintenance migration.                     |
+| `audit_events` (`actor_id`, `ip_address`, `user_agent`, geo, `metadata`)                                                       | Blocked: append-only trigger; the app role has no UPDATE/DELETE.                                                                    | The trigger already allows an UPDATE that only nulls `actor_id`. IPs are already nulled at 30 days (ADR-014).                                                                         | Keep `actor_id` for a year (Rule 6(1)(e), 8(3)), then null it. `metadata` may hold emails; needs a review. |
+| Sessions, auth devices, token families, email-verification and password-reset rows, push tokens, notifications and preferences | Cascade on `users`, but the row isn't deleted under B, so delete explicitly. Sessions should go on day 0.                           | n/a                                                                                                                                                                                   | n/a                                                                                                        |
+| `calendar_connections`, `calendar_events`, `calendar_event_links`                                                              | Revoke at Google then delete. `CalendarService.disconnect` already revokes and wipes.                                               | n/a                                                                                                                                                                                   | n/a                                                                                                        |
+| Org content the user created (meetings, files, tasks: `created_by_id` etc. are `SetNull`)                                      | Not the user's to delete: it belongs to the org (see Q32).                                                                          | Null the creator links (what `SetNull` would do on a hard delete).                                                                                                                    | Keep in the org.                                                                                           |
+| `meeting_participants.user_id`, `employees.user_id` (`SetNull`)                                                                | n/a                                                                                                                                 | Null the link; the participant's display name in the org stays org data (Q32).                                                                                                        | n/a                                                                                                        |
+
+**Recommendation (proposal):**
+
+1. At grace end, **pseudonymise the `users` row (B)**. Keep the uuid, replace `email` with a unique tombstone such as
+   `deleted+<uuid>@invalid` (the column is a full `@unique`), and null `name`, `password_hash`, `google_sub` and
+   `email_verified_at`. Hard-delete every user-owned row in the table above and revoke calendar grants.
+2. **Keep consent evidence (C)** in place. It's pseudonymous after step 1. Counsel sets the end date (Q30); until then
+   it's "the life of the org's meetings, plus any limitation period".
+3. **Audit log:** keep `actor_id` for a year after each event (Rules 6 and 8), then null it with the existing hatch.
+   Before that, review `audit_events.metadata` for emails or names and stop writing them there.
+4. Write one audit event per step ("deletion requested", "cancelled", "purged") with no email in it. That is our
+   evidence that we honoured the request.
+
+ADR-020's alternative (a maintenance migration to remove consent rows) stays available for a counsel-directed
+erasure, but it shouldn't be the default path.
+
+## 3. Repo map (at `fed52cb1`, unchanged at `84c1fc5e`)
+
+| Thing                     | Where                                                                                                                                                                                               | Notes                                                                                                                                                             |
+| ------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `User`                    | `packages/database/prisma/schema.prisma` L283–                                                                                                                                                      | `email @unique` (full, not partial); `google_sub` unique over live rows only (migration `20261109120000`); `deleted_at`.                                          |
+| Deleted users locked out  | `apps/api/src/modules/auth/application/session-verifier.ts` L50; `auth.service.ts` L315, L508                                                                                                       | A set `deleted_at` already blocks sessions and login, so a user in grace can't sign in to cancel unless the design changes (§4.3).                                |
+| Consent tables            | `schema.prisma` L629–682; append-only trigger in `migrations/20261025120000_consent_scan_keycheck/migration.sql` (~L129)                                                                            | `attested_by_user_id`, `actor_user_id`, org and meeting FKs all `Restrict`. Migrator opt-in: `SET LOCAL meetops.consent_maintenance='on'`.                        |
+| Audit log                 | `schema.prisma` L986–1015; `migrations/20261022041000_audit_hatch_session_user/migration.sql`; grants in `20261021110000_tenant_rls_roles`, `20261021170000_integration_provider_grants`            | `actor_id` `SetNull`; org FK `Restrict`. Trigger allows an UPDATE that only nulls `actor_id`; maintenance GUC `meetops.audit_maintenance` for `meetops_migrator`. |
+| User-owned tables         | `schema.prisma` relations with `onDelete: Cascade` to `User`                                                                                                                                        | Membership, Session, EmailVerification, PasswordReset, AuthDevice, AuthTokenFamily, Notification, NotificationPreference, PushDeviceToken, Calendar\*.            |
+| `SetNull` links to `User` | Organization, Invitation, Employee, Meeting, MeetingParticipant, FileObject, TaskApproval, Task, RecordingSession, AiOrganizationConfig, TaskSyncJob, AuditEvent                                    | These are org records that outlive the user.                                                                                                                      |
+| Integration connections   | `schema.prisma` L1200–                                                                                                                                                                              | Org-scoped; `connected_by_id` is a plain uuid column with **no FK**, so it isn't nulled by any cascade.                                                           |
+| Meetings, transcripts     | `schema.prisma` L504–, L709–744                                                                                                                                                                     | Meeting children cascade, except `meeting_consent_events` (`Restrict`). `transcripts.provider_job_id` exists; `transcript_chunks` has no job id column.           |
+| Retention jobs that exist | `apps/worker/src/index.ts` L73–89, `apps/worker/src/privacy/ip-retention.ts`, `packages/database/src/ip-retention.ts`, `packages/database/src/session-purge.ts`, `packages/database/src/ai.ts` L239 | IP redaction, session purge (90 days), AI idempotency purge. **No ADR-019 media or soft-delete purge.**                                                           |
+| Last-owner guard          | `apps/api/src/modules/organizations/infrastructure/prisma/prisma.repositories.ts` L162; `http/organizations.plugin.ts` L272, L295                                                                   | Demoting or removing the last owner returns 409 `LAST_OWNER`. No org delete route.                                                                                |
+| Provider adapters         | `apps/worker/src/ai/providers/assemblyai.ts` (L167, L197, L216), `packages/ai-core/src/adapters/assemblyai.ts`, `apps/worker/src/ai/providers/gemini.ts` (L58, L61)                                 | No DELETE call anywhere. Gemini inline only.                                                                                                                      |
+| Surfaces                  | Web `apps/web/src/routes/account.tsx` (`/account`); mobile `apps/mobile/app/(app)/(tabs)/account.tsx`; signup `apps/mobile/app/(auth)/signup.tsx`                                                   | Natural homes for "Delete account". No Sign in with Apple in the repo, so Apple's token-revocation step doesn't apply.                                            |
+
+## 4. Last-owner organizations and what the grace period does
+
+### 4.1 Options when the requester is the last owner of an org
+
+| Option                                | How it works                                                                                                                                 | For                                                                   | Against                                                                                                    |
+| ------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| 1. Block until resolved               | Request returns 409 `LAST_OWNER` per org, with two ways out in the UI: transfer ownership, or schedule the org for deletion.                 | Reuses today's rule and error. No org is orphaned. Simple to explain. | One more step for a solo user. Apple says don't make it "unnecessarily difficult" (keep it to one screen). |
+| 2. Auto-transfer                      | Promote the longest-standing admin (or member) to owner.                                                                                     | No extra step.                                                        | Hands someone data control without asking them. Fails when the user is alone.                              |
+| 3. Delete the org with the account    | Scheduling account deletion also schedules every sole-owned org.                                                                             | One step for solo users.                                              | Deletes other members' meetings as a side effect. Risky for teams.                                         |
+| 4. Hybrid (**recommended**, proposal) | Solo org (the user is the only live member): offer to schedule it with the account in one confirm. Org with other members: block (option 1). | Easy path for the common solo case; no surprise for teams.            | Two flows to build and test.                                                                               |
+
+### 4.2 What the 30-day grace does to an org that's scheduled for deletion (proposal)
+
+| Thing                            | During grace                                                                                   | At grace end                                                                                                                                         |
+| -------------------------------- | ---------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Org (`organizations.deleted_at`) | Set on request. Read-only banner for owners with "Cancel deletion".                            | Tombstone: keep the row (consent and audit FKs are `Restrict`), scrub `name` and `slug`.                                                             |
+| Meetings and media               | No new recordings, uploads or bot joins. Existing data stays readable so people can export it. | Delete recordings, files, transcripts, reports, tasks and embeddings (and storage objects). Keep a scrubbed meeting stub where consent events exist. |
+| Members                          | Notified on day 0 and before purge. Can't be invited. Keep read access.                        | Memberships removed. Their accounts are untouched.                                                                                                   |
+| Integrations (Slack, Jira etc.)  | Pause outbound sync and webhooks.                                                              | Revoke tokens at the provider where an API exists, then delete `integration_connections`.                                                            |
+| Calendar links                   | Stop auto-join from this org.                                                                  | Delete this org's `calendar_event_links`.                                                                                                            |
+| Provider copies                  | n/a                                                                                            | AssemblyAI DELETE per transcript (§5).                                                                                                               |
+| Billing (none yet)               | n/a today; when it ships, stop renewal on day 0.                                               | n/a                                                                                                                                                  |
+
+### 4.3 Grace period for the user account (proposal)
+
+- **Day 0:** revoke all sessions and push tokens, so devices sign out. Send an email with the purge date and a signed
+  "cancel deletion" link. Show the date in the app before confirming.
+- **Locking vs cancelling.** Setting `users.deleted_at` on day 0 locks the user out (session verifier and login
+  already check it), so cancelling needs either (a) the emailed link, or (b) a separate `deletion_requested_at` column
+  that lets login through to a single "Cancel deletion?" screen. (b) is friendlier; (a) changes less. Both need a
+  contract change.
+- **Reminder:** an email about 48 hours before purge (Rule 8(2) style; not required by it, as far as we read).
+- **Purge:** the daily job picks up users whose grace ended, runs §2.2 and §5, and emails a confirmation that
+  deletion is complete (Apple wants that confirmation, §6).
+- **Timing:** grace (30 days) + daily run can pass GDPR's one month (Art. 12(3)), and backups keep data another 35
+  days (ADR-019). Options: tell EU users the timetable up front and treat the grace as their choice (Q31), or shorten the
+  grace for EU users. Backups should be described on the deletion page.
+
+### 4.4 Notes per surface
+
+- **Backend (contracts):** `POST /me/deletion` (confirm with recent re-auth: password, Google, or step-up per ADR-021),
+  `DELETE /me/deletion` (cancel), `GET /me/deletion` (status and purge date). Errors: 409 `LAST_OWNER` listing the orgs.
+  `POST /orgs/:id/deletion` and `DELETE /orgs/:id/deletion` for owners. Names are proposals.
+- **Frontend (web):** "Delete account" under `/account`, a last-owner resolver (transfer or schedule org), a confirm
+  screen that lists what's kept (§6.3), and a public deletion page that works without signing in.
+- **Native (mobile, desktop, extension):** Mobile needs the in-app path for Apple and Play, in the account tab. It can
+  link straight to the web flow (Apple and Play both allow that). Desktop and extension can link to the web page.
+  Handle the 401 after sessions are revoked by showing a "deletion scheduled" screen, not a generic error.
+
+## 5. Provider copies
+
+| Provider and mode                     | What's kept, per the provider                                                                                                                                                                                                                                                                                                                                                                                                                                                                           | Delete API                                                                                                                                                                                       | Repo today                                                                                                                                            |
+| ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| AssemblyAI (pre-recorded) [E9, E10]   | Uploaded audio: deletion begins at 24 h and finishes within 48 h by default (sooner with a TTL; 72 h default with a BAA). Final transcript: deletion begins at **30 days** by default. Intermediate artifacts: 48–72 h. A TTL can be as low as 1 hour, with a lag of hours to days. "Certain metadata about the transcript is stored and maintained for logging and billing purposes."                                                                                                                  | `DELETE /v2/transcript/{transcript_id}`: "Remove the data from the transcript and mark it as deleted. Files uploaded via the /upload endpoint are immediately deleted alongside the transcript". | **Gap:** upload, submit and poll only. The returned `providerJobId` isn't saved (no writer for `transcripts.provider_job_id`; chunks have no column). |
+| Gemini API, AI Studio paid [E11, E12] | Paid services: Google "logs prompts and responses for a limited period of time, solely for detecting and preventing violations of the Prohibited Use Policy" and for required legal or regulatory disclosures; may be stored transiently or cached in any country. Optional AI Studio logging: "default maximum period of 55 days" (7, 14, 28 or 55), and only on billing-enabled projects. Unpaid services: Google "uses the content you submit ... to provide, improve, and develop Google products". | None for inline calls; nothing is stored by us at Google. Logs and datasets, if turned on, are managed in AI Studio.                                                                             | Inline `:generateContent` with `x-goog-api-key`; no Files API. Nothing to delete. Keep logging off.                                                   |
+| Gemini on Vertex AI [E13, E14]        | Abuse monitoring: prompts logged during an investigation are "stored securely for up to 90 days in the same region". For Google frontier models, logs are "stored securely inside the customer's environment for up to 30 days". Zero-data-retention notes: in-memory cache "deleted no later than 24 hours"; grounding with Google Search keeps data 3 days, Maps 30 days.                                                                                                                             | None for inline calls.                                                                                                                                                                           | Not used today.                                                                                                                                       |
+
+**Recommendation (proposal):**
+
+1. **AssemblyAI:** persist the job id (on `transcripts.provider_job_id` and a new chunk column, or a small
+   `provider_artifacts` table), then call DELETE right after the transcript is stored. That makes ADR-019's "deleted at
+   the provider right after processing" true. Add a sweep in the purge job that retries any undeleted job ids, and
+   treat 404 as done. Optionally set a short TTL as a backstop if the account supports it (not verified).
+2. **Gemini:** no call. Use only paid, billing-enabled projects (unpaid terms allow product use), keep AI Studio logging
+   off, avoid grounding tools, and list the abuse-monitoring periods on the deletion page and in the sub-processor
+   list.
+3. **Where the purge job calls them:** after the DB rows for a transcript are deleted (or tombstoned), the job deletes the
+   AssemblyAI job ids it had recorded, logs success or failure as an audit event without content, and retries
+   failures the next day.
+
+## 6. Store requirements and the deletion page
+
+### 6.1 Apple [E7, E15]
+
+- App Review Guideline 5.1.1(v): "If your app supports account creation, you must also offer account deletion within
+  the app".
+- Delete the whole account record and its data; "only offering to temporarily deactivate or disable an account is
+  insufficient".
+- A direct link to the web page where people finish deletion is fine.
+- "If the deletion request will take additional time to complete, let them know." FAQ: a process that "takes a reasonable
+  amount of time" is acceptable; "Inform the person how long it will take to delete the account and provide a
+  confirmation when the deletion is complete."
+- No call or email required for apps outside highly regulated industries.
+- Apps that link out to a browser for signup still need in-app deletion.
+
+### 6.2 Google Play [E8, E16]
+
+- If the app lets users create an account, it needs "an in-app path to delete their app accounts and associated data"
+  and "a web link resource where users can request app account deletion".
+- A link from the app to the web resource is an accepted alternative to deleting fully in the app.
+- The web resource must work without the app ("without sending the user back to the app"), load without errors, make
+  the deletion path "prominently featured", and name the app or developer as on the store listing.
+- The Data deletion questions in the Data safety form are required, and the URL goes there.
+- Data may be kept "for legitimate reasons such as security, fraud prevention or regulatory compliance" if users are
+  told. Complete requests "within a reasonably quick period of time".
+- "Account freezing is not a valid substitute" (User Data policy).
+- The FAQ "Am I required to delete account data that was previously shared with a third party?" didn't render in our
+  fetch, so its answer is **not verified**. §5 assumes yes.
+
+### 6.3 Checklist for the web deletion page (proposal)
+
+- [ ] Names "MeetOps" and the developer exactly as on both store listings.
+- [ ] The first thing on the page is how to delete: sign in and press "Delete account", or a signed-out request form
+      that verifies by email link.
+- [ ] Steps for each surface (web, iOS, Android) and what to resolve first (last owner of an org; billing once it
+      exists).
+- [ ] Grace wording, for example: "We'll delete your account 30 days after you ask. Until then you're signed out
+      everywhere, and you can cancel from the link in our email. After 30 days we can't undo it, and we'll email you when
+      it's done."
+- [ ] What's deleted: profile, sign-in details, devices and notifications, calendar connections, and (for orgs you
+      delete) meetings, recordings, transcripts, summaries and tasks.
+- [ ] What's kept and why, with periods: consent records and audit logs (with your name and email removed) for the
+      periods counsel confirms (§8); meetings in organizations you don't own stay with that organization; encrypted
+      backups roll off within 35 days.
+- [ ] Processors: AssemblyAI deletes our copies when we ask; Google may keep prompts for abuse monitoring for a limited
+      time (§5).
+- [ ] A contact for privacy questions (DPDP Rule 9 asks for published contact details) and how to complain.
+- [ ] Same URL in Play Console's Data safety form, the App Store privacy details, the privacy policy and the app.
+
+## 7. Task outline per team (proposal)
+
+| Team                          | Tasks                                                                                                                                                                                                                                                                                                 |
+| ----------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Architecture (ADR-023 inputs) | Pick §2.2 B as the default and record the maintenance path as the exception. Pick the last-owner rule (§4.1). Pick lock-vs-cancel (§4.3). Define tombstones for users, meetings and orgs. Close ADR-020's erasure item. Update ADR-019's provider-copy line until §5 ships. Decide EU timing (Q31).   |
+| Backend                       | Deletion endpoints and contracts (§4.4). The ADR-019 purge job, including user and org tombstones and storage deletes. Explicit deletes for user-owned rows. Calendar revoke via `CalendarService.disconnect`. Integration token revoke. Audit events without emails. Review `audit_events.metadata`. |
+| Frontend (web)                | Delete-account flow under `/account`, last-owner resolver, org deletion settings, a public deletion page that works signed out (§6.3), cancel-deletion landing page.                                                                                                                                  |
+| Native                        | Mobile account-tab entry (in-app or a direct link to the web flow), "deletion scheduled" handling after sign-out. Desktop and extension link to the web page. Play Data safety and App Store answers.                                                                                                 |
+| AI                            | Persist AssemblyAI job ids for whole and chunked transcripts, DELETE after storage, sweep and retry. Keep Gemini on paid projects with logging off. Document provider retention for the sub-processor list.                                                                                           |
+
+## 8. Questions for counsel (not legal advice)
+
+These are also listed as Q29–Q33 in [legal-questions-brief.md](legal-questions-brief.md), after Q28.
+
+- **Q29.** Rule 8(3) asks us to keep "personal data, associated traffic data and other logs of the processing" for a
+  year, "even if X deletes her account". For a meeting app, does that cover meeting content (recordings, transcripts),
+  or only records of the processing (who uploaded what, when, which provider)? ADR-019 assumes the latter.
+- **Q30.** How long can we keep pseudonymised consent attestations and consent events after the user, or the whole
+  org, is deleted? Is s. 6(10) (proof of consent) a basis when the attestation is the host's statement about other
+  participants? What limitation period should set the end date, in India and for GDPR Art. 17(3)(e)?
+- **Q31.** For EU users, is a 30-day grace the user chose, followed by deletion and 35-day backup roll-off,
+  compatible with Art. 12(3)'s one month? Or must the grace be shorter, or optional?
+- **Q32.** When a member deletes their account, are meetings they recorded in someone else's org the org's data (we
+  keep them) or theirs (we must delete or anonymise their voice and name in transcripts)? Does this change if MeetOps is
+  a Processor for that org (see [dpdp-role-and-dpa-outline.md](dpdp-role-and-dpa-outline.md))?
+- **Q33.** Is a pseudonymised `users` row (uuid only) enough to count as "erased" under s. 12(3), given we can still
+  link it to consent and audit rows?
+
+## 9. Not verified
+
+- CERT-In para (iv) wording wasn't re-fetched today (the PDF download timed out); it relies on
+  [verification-round-3.md](verification-round-3.md) §3.
+- GDPR text came from gdpr-info.eu, a **secondary** mirror, because EUR-Lex timed out. Check against EUR-Lex [E4]
+  before quoting.
+- Play's FAQ on data shared with third parties didn't render.
+- Whether AssemblyAI TTL can be set per request on our plan, and whether DELETE also removes the "metadata ... for
+  logging and billing".
+- Whether Slack, Jira and the other integrations each have a revoke API (not checked per provider).
+- Whether `audit_events.metadata` holds emails today (not audited row by row).
+- Our reading that Rule 8(1)–(2) and the Third Schedule don't apply to MeetOps.
+
+## 10. Code findings to route (no code changed)
+
+| #   | Finding                                                                                            | Where                                                                                                              | Route to                  |
+| --- | -------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ | ------------------------- |
+| C1  | No account deletion route or screen                                                                | `apps/api/src/modules/auth`, `apps/api/src/modules/users`, web `/account`, mobile account tab                      | Backend, Frontend, Native |
+| C2  | ADR-019 purge job not implemented                                                                  | `apps/worker/src/index.ts`                                                                                         | Backend                   |
+| C3  | AssemblyAI DELETE never called; provider job id never persisted                                    | `apps/worker/src/ai/providers/assemblyai.ts`, `apps/worker/src/ai/recording-transcription.ts`, `transcript_chunks` | AI                        |
+| C4  | Consent and audit `Restrict` FKs block hard delete of meetings and orgs, not only users            | `schema.prisma` L629–682, L986–1015                                                                                | Architecture              |
+| C5  | `integration_connections.connected_by_id` has no FK, so it won't be nulled on user purge           | `schema.prisma` L1207                                                                                              | Backend                   |
+| C6  | `Transcript.provider` comment still says "deepgram"; SSRF allowlist still lists `api.deepgram.com` | `schema.prisma` (Transcript), `packages/ai-core/src/security/ssrf.ts` L89                                          | AI                        |
+
+## Sources
+
+All fetched 2026-11-18 (IST) unless noted.
+
+| ID  | Source                                                                                                                                                                                                        |
+| --- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| E1  | Digital Personal Data Protection Act, 2023, ss. 6(10), 8(7), 12(3), MeitY copy: https://www.meity.gov.in/static/uploads/2024/06/2bf1f0e9f04e6fb4f8fef35e82c42aa5.pdf                                          |
+| E2  | DPDP Rules, 2025 (G.S.R. 846(E)), Rules 1(4), 6, 8, 9, Third and Seventh Schedules, MeitY copy: https://www.meity.gov.in/static/uploads/2025/11/53450e6e5dc0bfa85ebd78686cadad39.pdf                          |
+| E3  | CERT-In Directions No. 20(3)/2022-CERT-In, 28 Apr 2022: https://www.cert-in.org.in/PDF/CERT-In_Directions_70B_28.04.2022.pdf (checked for [verification-round-3.md](verification-round-3.md); not re-fetched) |
+| E4  | Regulation (EU) 2016/679 (GDPR), EUR-Lex: https://eur-lex.europa.eu/eli/reg/2016/679/oj (timed out today); text read at https://gdpr-info.eu/art-17-gdpr/ (**secondary**)                                     |
+| E5  | GDPR Recital 26, **secondary** mirror: https://gdpr-info.eu/recitals/no-26/                                                                                                                                   |
+| E6  | GDPR Art. 12, **secondary** mirror: https://gdpr-info.eu/art-12-gdpr/                                                                                                                                         |
+| E7  | Apple, Offering account deletion in your app: https://developer.apple.com/support/offering-account-deletion-in-your-app/                                                                                      |
+| E8  | Play Console Help, Understanding Google Play's app account deletion requirements: https://support.google.com/googleplay/android-developer/answer/13327111                                                     |
+| E9  | AssemblyAI, Delete transcript (API reference): https://www.assemblyai.com/docs/api-reference/transcripts/delete and how-to https://www.assemblyai.com/docs/pre-recorded-audio/delete-transcripts              |
+| E10 | AssemblyAI, Data retention and model training: https://www.assemblyai.com/docs/data-retention-and-model-training                                                                                              |
+| E11 | Gemini API Additional Terms of Service (effective 23 Mar 2026): https://ai.google.dev/gemini-api/terms                                                                                                        |
+| E12 | Gemini API, Logs policy: https://ai.google.dev/gemini-api/docs/logs-policy                                                                                                                                    |
+| E13 | Google Cloud, Abuse monitoring (page updated 2026-11-17 UTC): https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/abuse-monitoring                                                          |
+| E14 | Google Cloud, Zero data retention (page updated 2026-11-17 UTC): https://docs.cloud.google.com/gemini-enterprise-agent-platform/resources/zero-data-retention                                                 |
+| E15 | Apple, App Review Guidelines 5.1.1(v) (page "Last Updated: October 16, 2026"): https://developer.apple.com/app-store/review/guidelines/                                                                       |
+| E16 | Play Console Help, User Data policy: https://support.google.com/googleplay/android-developer/answer/10144311                                                                                                  |

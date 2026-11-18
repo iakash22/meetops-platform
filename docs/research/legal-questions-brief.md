@@ -238,6 +238,24 @@ stores an org country; `docs/research/competitive-landscape.md` §4 records this
     erase them unless another law requires longer [L14]. It is not a consent-record rule. Consent Managers must keep
     consent records for at least seven years (First Schedule, Part B, item 4(c)) [L14]. Is either a sensible
     benchmark, and how does a longer period sit with s. 8(7) erasure and data minimisation?
+29. Rule 8(3) and account deletion. Rule 8(3) requires keeping "such personal data, associated traffic data and other
+    logs of the processing" for at least a year, and its illustration says the platform keeps them "even if X deletes
+    her account". For a meeting app, does that cover meeting content (recordings, transcripts) or only records of the
+    processing? ADR-019 assumes the latter. Details and sources:
+    [account-deletion-erasure-brief.md](account-deletion-erasure-brief.md) §2 (E2).
+30. Consent evidence after account or org deletion. How long may we keep pseudonymised consent attestations and
+    meeting consent events after the attesting user, or the whole org, is deleted? Is s. 6(10) a basis when the
+    attestation is the host's statement about other participants, and what limitation period should set the end date,
+    in India and for GDPR Art. 17(3)(e)? See [account-deletion-erasure-brief.md](account-deletion-erasure-brief.md) §2.2.
+31. Grace period and GDPR timing. For EU users, is a 30-day grace the user chose, followed by deletion and 35-day backup
+    roll-off, compatible with Art. 12(3)'s "within one month"? Or must the grace be shorter or optional? See
+    [account-deletion-erasure-brief.md](account-deletion-erasure-brief.md) §4.3.
+32. Whose meetings are they? When a member deletes their account, are meetings they recorded in someone else's org the
+    org's data (kept) or theirs (deleted, or their voice and name removed from transcripts)? Does it change if MeetOps
+    is a Processor for that org ([dpdp-role-and-dpa-outline.md](dpdp-role-and-dpa-outline.md))?
+33. Is pseudonymisation erasure? Is a `users` row scrubbed down to its uuid "erased" under s. 12(3), given it still
+    links consent and audit rows? GDPR Recital 26 treats pseudonymised data as personal data. See
+    [account-deletion-erasure-brief.md](account-deletion-erasure-brief.md) §2.2.
 
 ## Sources (fetched 2026-11-11; L13–L14 read 2026-11-18)
 
