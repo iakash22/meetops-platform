@@ -27,17 +27,41 @@ export type TranscriptionChunkJobPayload = TranscriptionJobPayload & {
  * Reads a chunk's audio server-side (tenant-checked) and returns BYTES. Owned by Media/Storage.
  * Bytes, not URLs: the AssemblyAI adapter uploads bytes so providers never fetch our storage URLs.
  */
-export type AudioResolver = (q: { organizationId: string; fileObjectId: string }) => Promise<Pick<TranscriptionInput, 'bytes' | 'mimeType'>>;
+export type AudioResolver = (q: {
+  organizationId: string;
+  fileObjectId: string;
+}) => Promise<Pick<TranscriptionInput, 'bytes' | 'mimeType'>>;
 
 /**
  * Server-derived actor for a job (e.g. the worker's service identity scoped to the org, or the enqueuing user's context
  * re-validated by Backend). Its ability decides whether the payload's provider choice may override routing.
  * Never derived from the payload itself.
  */
-export type JobActorResolver = (q: { organizationId: string; requestId?: string | undefined }) => Promise<TenantContext | undefined>;
+export type JobActorResolver = (q: {
+  organizationId: string;
+  requestId?: string | undefined;
+}) => Promise<TenantContext | undefined>;
+
+/** Fired after a chunk is durably stored (new or duplicate) when a provider transcript id is known. */
+export type StoredProviderTranscript = {
+  organizationId: string;
+  meetingId: string;
+  recordingId: string;
+  chunkIndex: number;
+  provider: string;
+  /** Absent on legacy rows that were stored before provider_job_id was persisted. */
+  providerJobId?: string | undefined;
+};
+
+export type OnProviderTranscriptStored = (info: StoredProviderTranscript) => Promise<void>;
 
 export type ChunkJobResult =
-  | { status: 'succeeded'; duplicate: boolean; revision: TranscriptRevision | undefined; revisionChanged: boolean }
+  | {
+      status: 'succeeded';
+      duplicate: boolean;
+      revision: TranscriptRevision | undefined;
+      revisionChanged: boolean;
+    }
   | { status: Exclude<JobStatus, 'succeeded'>; errors: AttemptError[] };
 
 export const STT_PROMPT_VERSION = 'stt@1';
@@ -45,15 +69,33 @@ export const STT_PROMPT_VERSION = 'stt@1';
 export const chunkIdempotencyKey = (p: TranscriptionChunkJobPayload) =>
   `stt:${p.organizationId}:${p.meetingId}:${p.recordingId}:chunk:${p.chunk.index}`;
 
-export function hashSegments(segs: Array<{ id: string; startSec: number; endSec: number; text: string; speaker?: string | undefined }>) {
+export function hashSegments(
+  segs: Array<{
+    id: string;
+    startSec: number;
+    endSec: number;
+    text: string;
+    speaker?: string | undefined;
+  }>,
+) {
   const h = createHash('sha256');
-  for (const s of segs) h.update(`${s.id}|${s.startSec}|${s.endSec}|${s.speaker ?? ''}|${s.text}\n`);
+  for (const s of segs)
+    h.update(`${s.id}|${s.startSec}|${s.endSec}|${s.speaker ?? ''}|${s.text}\n`);
   return h.digest('hex');
 }
 
 export class TranscriptionChunkHandler {
   constructor(
-    private readonly deps: { executor: AIExecutor; store: TranscriptStore; resolveAudio: AudioResolver; resolveActor: JobActorResolver; now?: () => Date; maxCasRetries?: number },
+    private readonly deps: {
+      executor: AIExecutor;
+      store: TranscriptStore;
+      resolveAudio: AudioResolver;
+      resolveActor: JobActorResolver;
+      now?: () => Date;
+      maxCasRetries?: number;
+      /** Best-effort hook: enqueue provider-side delete (ADR-019) after the chunk is stored. */
+      onProviderTranscriptStored?: OnProviderTranscriptStored | undefined;
+    },
   ) {}
 
   async handle(p: TranscriptionChunkJobPayload): Promise<ChunkJobResult> {
@@ -64,7 +106,10 @@ export class TranscriptionChunkHandler {
     if (!existing) {
       const base = transcriptionJobToRequest(p);
       const actor = await this.deps.resolveActor({ organizationId: t, requestId: p.requestId });
-      const audio = await this.deps.resolveAudio({ organizationId: t, fileObjectId: p.chunk.fileObjectId });
+      const audio = await this.deps.resolveAudio({
+        organizationId: t,
+        fileObjectId: p.chunk.fileObjectId,
+      });
       const out = await this.deps.executor.run(
         // Without an authorized actor the payload's provider is ignored and normal routing applies (no override).
         {
@@ -101,14 +146,21 @@ export class TranscriptionChunkHandler {
         model: out.meta.model,
         language: out.value.language,
         receivedAt: (this.deps.now?.() ?? new Date()).toISOString(),
+        ...(out.value.providerJobId ? { providerJobId: out.value.providerJobId } : {}),
       };
       duplicate = !(await this.deps.store.putChunk(t, m, r, chunk));
+      await this.notifyProviderTranscriptStored(p, chunk);
+    } else {
+      await this.notifyProviderTranscriptStored(p, existing);
     }
 
     // (Re)merge and write a new revision only if content changed. CAS loop guards concurrent chunk completions.
     for (let i = 0; i < (this.deps.maxCasRetries ?? 5); i++) {
       const prev = await this.deps.store.latestRevision(t, m, r);
-      const merged = mergeChunkTranscripts(await this.deps.store.listChunks(t, m, r), p.chunk.count);
+      const merged = mergeChunkTranscripts(
+        await this.deps.store.listChunks(t, m, r),
+        p.chunk.count,
+      );
       const contentHash = hashSegments(merged.segments);
       if (prev && prev.contentHash === contentHash && prev.complete === merged.complete)
         return { status: 'succeeded', duplicate, revision: prev, revisionChanged: false };
@@ -121,8 +173,25 @@ export class TranscriptionChunkHandler {
         contentHash,
         createdAt: (this.deps.now?.() ?? new Date()).toISOString(),
       };
-      if (await this.deps.store.putRevision(rev, prev?.revision ?? 0)) return { status: 'succeeded', duplicate, revision: rev, revisionChanged: true };
+      if (await this.deps.store.putRevision(rev, prev?.revision ?? 0))
+        return { status: 'succeeded', duplicate, revision: rev, revisionChanged: true };
     }
     return { status: 'retryable', errors: [{ provider: '-', code: 'UNKNOWN' }] };
+  }
+
+  private async notifyProviderTranscriptStored(
+    p: TranscriptionChunkJobPayload,
+    chunk: ChunkTranscript,
+  ): Promise<void> {
+    const hook = this.deps.onProviderTranscriptStored;
+    if (!hook) return;
+    await hook({
+      organizationId: p.organizationId,
+      meetingId: p.meetingId,
+      recordingId: p.recordingId,
+      chunkIndex: p.chunk.index,
+      provider: chunk.provider,
+      ...(chunk.providerJobId ? { providerJobId: chunk.providerJobId } : {}),
+    });
   }
 }

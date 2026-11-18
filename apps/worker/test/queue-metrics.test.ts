@@ -1,6 +1,9 @@
 import { readFileSync } from 'node:fs';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
+  ALL_METRICS_QUEUES,
+  AUTH_PREFIXED_METRICS_QUEUES,
+  authQueuePrefixFromEnv,
   handleMetricsRequest,
   METRICS_QUEUES,
   MIN_WORKER_METRICS_TOKEN_LENGTH,
@@ -35,8 +38,50 @@ describe('worker queue metrics', () => {
 
   it('covers the transcription DLQ and the main queues', () => {
     expect(METRICS_QUEUES).toEqual(
-      expect.arrayContaining(['transcription', 'transcription-dlq', 'media', 'ai']),
+      expect.arrayContaining([
+        'transcription',
+        'transcription-dlq',
+        'media',
+        'ai',
+        'ai-provider-transcript-delete',
+      ]),
     );
+  });
+
+  it('covers the API-owned takeover follow-up queue and DLQ, read under AUTH_MAIL_QUEUE_PREFIX', async () => {
+    expect(AUTH_PREFIXED_METRICS_QUEUES).toEqual([
+      'auth-takeover-follow-up',
+      'auth-takeover-follow-up-dlq',
+    ]);
+    expect(ALL_METRICS_QUEUES).toEqual(
+      expect.arrayContaining([...METRICS_QUEUES, ...AUTH_PREFIXED_METRICS_QUEUES]),
+    );
+    expect(authQueuePrefixFromEnv(undefined)).toBeUndefined();
+    expect(authQueuePrefixFromEnv('  ')).toBeUndefined();
+    expect(authQueuePrefixFromEnv('qa:it:x')).toBe('qa:it:x');
+    expect(() => authQueuePrefixFromEnv('bad prefix')).toThrow(/AUTH_MAIL_QUEUE_PREFIX/);
+    expect(() =>
+      startWorkerMetricsServer(
+        { WORKER_METRICS_TOKEN: TOKEN, AUTH_MAIL_QUEUE_PREFIX: '{x}' },
+        read,
+      ),
+    ).toThrow(/AUTH_MAIL_QUEUE_PREFIX/);
+    const s = startWorkerMetricsServer(
+      { WORKER_METRICS_TOKEN: TOKEN, WORKER_METRICS_PORT: '0' },
+      read,
+    );
+    closers.push(s!.close);
+    await new Promise((r) => s!.server.once('listening', r));
+    const { port } = s!.server.address() as { port: number };
+    const body = await (
+      await fetch(`http://127.0.0.1:${port}/metrics`, {
+        headers: { authorization: `Bearer ${TOKEN}` },
+      })
+    ).text();
+    expect(body).toContain(
+      'bullmq_queue_jobs{queue="auth-takeover-follow-up-dlq",state="failed"} 2',
+    );
+    expect(body).toContain('bullmq_queue_scrape_error{queue="auth-takeover-follow-up"} 0');
   });
 
   it('is off without a >= 32 char token', () => {
@@ -103,6 +148,7 @@ describe('worker Prometheus alert rules', () => {
         'MeetOpsQueueBacklog',
         'MeetOpsQueueFailedJobsRising',
         'MeetOpsTranscriptionDlqNotEmpty',
+        'MeetOpsTakeoverFollowUpDlqNotEmpty',
         'MeetOpsQueueScrapeError',
       ]),
     );

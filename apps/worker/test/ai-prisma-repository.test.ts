@@ -13,9 +13,11 @@ function fakeTx(
     insertRows?: Array<{ id: string }>;
     executeResult?: number;
     mergeState?: unknown;
+    providerJobId?: string | null;
+    chunkSegments?: unknown[];
   } = {},
 ) {
-  const calls: Array<{ op: string; args: unknown }> = [];
+  const calls: Array<{ op: string; args: unknown; values?: unknown[] }> = [];
   const sql = (strings: TemplateStringsArray) => strings.join('?');
   const tx = {
     calls,
@@ -32,17 +34,26 @@ function fakeTx(
         select: Record<string, boolean>;
       }) => {
         calls.push({ op: 'transcript.findFirst', args });
+        if (args.select.providerJobId) return { providerJobId: o.providerJobId ?? null };
         if (args.where.revision === 0) return { id: 'anchor' };
         if (args.select.mergeState)
           return o.mergeState === undefined ? null : { mergeState: o.mergeState };
         return o.latestRevision === undefined ? null : { revision: o.latestRevision };
       },
+      updateMany: async (args: unknown) => (
+        calls.push({ op: 'transcript.updateMany', args }),
+        { count: 1 }
+      ),
     },
     transcriptChunk: {
-      findMany: async () => [
-        { segments: { chunkIndex: 0, segments: [], provider: 'assemblyai' } },
-        { segments: { bogus: true } },
-      ],
+      findMany: async (args?: { select?: Record<string, boolean> }) => {
+        calls.push({ op: 'transcriptChunk.findMany', args });
+        if (o.chunkSegments) return o.chunkSegments.map((segments) => ({ segments }));
+        return [
+          { segments: { chunkIndex: 0, segments: [], provider: 'assemblyai' } },
+          { segments: { bogus: true } },
+        ];
+      },
     },
     transcriptSegment: {
       createMany: async (args: unknown) => (
@@ -50,8 +61,8 @@ function fakeTx(
         { count: 1 }
       ),
     },
-    $executeRaw: async (s: TemplateStringsArray) => (
-      calls.push({ op: 'executeRaw', args: sql(s) }),
+    $executeRaw: async (s: TemplateStringsArray, ...values: unknown[]) => (
+      calls.push({ op: 'executeRaw', args: sql(s), values }),
       o.executeResult ?? 1
     ),
     $queryRaw: async (s: TemplateStringsArray) => (
@@ -109,6 +120,109 @@ describe('Prisma transcript repository', () => {
     expect(String(tx.calls.find((c) => c.op === 'executeRaw')?.args)).toContain(
       'ON CONFLICT ("transcript_id", "chunk_index") DO NOTHING',
     );
+  });
+
+  it('writes transcripts.provider_job_id on the revision-0 anchor when the STT job returns one', async () => {
+    const chunk = {
+      chunkIndex: 0,
+      startSec: 0,
+      durationSec: 600,
+      overlapSec: 0,
+      provider: 'assemblyai',
+      model: 'universal',
+      receivedAt: '2026-11-18T07:00:00.000Z',
+      providerJobId: 'tr-persist-1',
+      segments: [{ startSec: 0, endSec: 1, text: 'hi' }],
+    };
+    const tx = fakeTx({ executeResult: 1 });
+    expect(
+      await createOrgScopedTranscriptRepository(tx, ORG).putChunkResult(MEET, REC, chunk),
+    ).toBe(true);
+    const insert = tx.calls.find(
+      (c) => c.op === 'executeRaw' && String(c.args).includes('"transcript_chunks"'),
+    );
+    expect(String(insert?.args)).not.toContain('"provider_job_id"');
+    expect(JSON.stringify(insert?.values)).toContain('tr-persist-1');
+    expect(tx.calls.find((c) => c.op === 'transcript.updateMany')?.args).toMatchObject({
+      where: { organizationId: ORG, id: 'anchor', revision: 0 },
+      data: { providerJobId: 'tr-persist-1' },
+    });
+  });
+
+  it('does not write provider_job_id when the chunk insert loses the first-write-wins race', async () => {
+    const chunk = {
+      chunkIndex: 0,
+      startSec: 0,
+      durationSec: 600,
+      overlapSec: 0,
+      provider: 'assemblyai',
+      model: 'universal',
+      receivedAt: '2026-11-18T07:00:00.000Z',
+      providerJobId: 'tr-late',
+      segments: [],
+    };
+    const tx = fakeTx({ executeResult: 0 });
+    expect(
+      await createOrgScopedTranscriptRepository(tx, ORG).putChunkResult(MEET, REC, chunk),
+    ).toBe(false);
+    expect(tx.calls.some((c) => c.op === 'transcript.updateMany')).toBe(false);
+  });
+
+  it('reads transcripts.provider_job_id from the anchor (undefined when unset)', async () => {
+    expect(
+      await createOrgScopedTranscriptRepository(
+        fakeTx({ providerJobId: 'tr-stored' }),
+        ORG,
+      ).getProviderJobId(MEET, REC),
+    ).toBe('tr-stored');
+    expect(
+      await createOrgScopedTranscriptRepository(
+        fakeTx({ providerJobId: null }),
+        ORG,
+      ).getProviderJobId(MEET, REC),
+    ).toBeUndefined();
+  });
+
+  it('lists per-chunk job ids from segments JSON and appends the anchor id only if new', async () => {
+    expect(
+      await createOrgScopedTranscriptRepository(
+        fakeTx({
+          chunkSegments: [
+            { chunkIndex: 0, segments: [], providerJobId: 'tr-a' },
+            { chunkIndex: 1, segments: [], providerJobId: 'tr-b' },
+          ],
+          providerJobId: 'tr-b',
+        }),
+        ORG,
+      ).listProviderJobIds(MEET, REC),
+    ).toEqual(['tr-a', 'tr-b']);
+    expect(
+      await createOrgScopedTranscriptRepository(
+        fakeTx({
+          chunkSegments: [{ chunkIndex: 0, segments: [], provider: 'assemblyai' }],
+          providerJobId: 'tr-legacy',
+        }),
+        ORG,
+      ).listProviderJobIds(MEET, REC),
+    ).toEqual(['tr-legacy']);
+    expect(
+      await createOrgScopedTranscriptRepository(
+        fakeTx({ chunkSegments: [], providerJobId: null }),
+        ORG,
+      ).listProviderJobIds(MEET, REC),
+    ).toEqual([]);
+    expect(
+      await createOrgScopedTranscriptRepository(
+        fakeTx({
+          chunkSegments: [
+            { chunkIndex: 0, segments: [], providerJobId: 12345 },
+            { chunkIndex: 1, segments: [], providerJobId: 'tr-ok' },
+          ],
+          providerJobId: 'tr-legacy',
+        }),
+        ORG,
+      ).listProviderJobIds(MEET, REC),
+    ).toEqual(['tr-ok', 'tr-legacy']);
   });
 
   it('drops malformed chunk JSON when listing', async () => {

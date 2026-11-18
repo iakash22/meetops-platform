@@ -10,7 +10,7 @@ import {
   ModelRouter,
   ProviderRegistry,
   UsageQuotaManager,
-  aiEnvSchema,
+  loadAIEnv,
   createCredentialResolver,
   type ChunkTranscript,
   type TranscriptionProvider,
@@ -101,6 +101,12 @@ class FakeRepo implements TranscriptRepository {
       getChunkResult: async (m, r, i) => list(m, r).find((c) => c.chunk.chunkIndex === i)?.chunk,
       listChunkResults: async (m, r) => list(m, r).map((c) => c.chunk),
       latestTranscript: latest,
+      getProviderJobId: async (m, r) =>
+        list(m, r).find((c) => c.chunk.providerJobId)?.chunk.providerJobId,
+      listProviderJobIds: async (m, r) =>
+        list(m, r)
+          .map((c) => c.chunk.providerJobId)
+          .filter((id): id is string => typeof id === 'string' && id.length > 0),
       writeTranscriptRevision: async (w, prev) => {
         if (w.organizationId !== o) throw new Error('cross-org write');
         if (((await latest(w.meetingId, w.recordingId))?.revision ?? 0) !== prev) return false;
@@ -162,7 +168,11 @@ async function makeDeps(opts: { fail?: AIError; chunkCount?: number; meetingOrg?
   const usage = new InMemoryUsageTracker();
   const executor = new AIExecutor({
     registry,
-    router: new ModelRouter(aiEnvSchema.parse({}), new InMemoryOrgConfigStore(), audit),
+    router: new ModelRouter(
+      loadAIEnv({ NODE_ENV: 'test' }).env,
+      new InMemoryOrgConfigStore(),
+      audit,
+    ),
     usage,
     quota: new UsageQuotaManager(usage),
     idempotency: new InMemoryIdempotencyStore(),

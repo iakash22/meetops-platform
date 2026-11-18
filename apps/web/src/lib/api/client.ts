@@ -58,6 +58,18 @@ import {
 } from '@/features/uploads/types';
 
 /** Contracts ApiErrorEnvelope codes plus 'UNKNOWN' when the body is unparseable. */
+/**
+ * Response header of POST /auth/verify-email and its values.
+ * TODO(contracts): identical copy of VERIFY_OUTCOME_HEADER / VERIFY_OUTCOMES in apps/api/src/modules/auth/http/auth.plugin.ts;
+ * move both to @meetops/contracts with its next minor bump (ADR-003). Pinned by tests on both sides.
+ */
+export const VERIFY_OUTCOME_HEADER = 'x-meetops-verify-outcome';
+export const VERIFY_OUTCOMES = {
+  passwordReset: 'password_reset',
+  setPassword: 'set_password',
+  verified: 'verified',
+} as const;
+
 export type ApiErrorCode = ContractApiErrorCode | 'UNKNOWN';
 
 const KNOWN_CODES = new Set<string>(API_ERROR_CODES);
@@ -236,7 +248,13 @@ export type ApiClient = {
     /** POST /auth/reset-password (204). The API revokes every session of the user. */
     resetPassword: (body: ResetPasswordRequest) => Promise<void>;
     /** POST /auth/verify-email (204). Public; 400 BAD_REQUEST for an invalid/expired token. */
-    verifyEmail: (body: VerifyEmailRequest) => Promise<void>;
+    /**
+     * UX-1: `passwordReset`: the account's password was removed and a set-password link was emailed. `setPassword`: the
+     * account had no password; a set-password link was emailed.
+     */
+    verifyEmail: (
+      body: VerifyEmailRequest,
+    ) => Promise<{ passwordReset: boolean; setPassword: boolean }>;
     /** POST /auth/resend-verification: always 202 (enumeration-safe). */
     resendVerification: (body: ForgotPasswordRequest) => Promise<void>;
     /** GET /auth/providers. `{ google: true }` only when the API has Google sign-in configured. */
@@ -454,6 +472,14 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
   }
 
   async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
+    return (await requestWithHeaders<T>(method, path, body)).data;
+  }
+
+  async function requestWithHeaders<T>(
+    method: string,
+    path: string,
+    body?: unknown,
+  ): Promise<{ data: T; header: (name: string) => string | null }> {
     let res = await send(method, path, body, false);
     let data = safeJson(await res.text());
     // Retry once, with a fresh token, only for CSRF-specific rejections.
@@ -480,7 +506,7 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
         error.retryAfterSeconds = parseRetryAfter(res.headers?.get?.('retry-after') ?? null);
       throw error;
     }
-    return data as T;
+    return { data: data as T, header: (name) => res.headers?.get?.(name) ?? null };
   }
 
   async function authRequest(path: string, body: unknown): Promise<AuthSession> {
@@ -534,7 +560,13 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
         cachedCsrf = null;
       },
       verifyEmail: async (body) => {
-        await request('POST', '/auth/verify-email', body);
+        const r = await requestWithHeaders('POST', '/auth/verify-email', body);
+        // UX-1: the API reports a mailbox-owner takeover (set-password link emailed) in a header.
+        const outcome = r.header(VERIFY_OUTCOME_HEADER);
+        return {
+          passwordReset: outcome === VERIFY_OUTCOMES.passwordReset,
+          setPassword: outcome === VERIFY_OUTCOMES.setPassword,
+        };
       },
       resendVerification: async (body) => {
         await request('POST', '/auth/resend-verification', body);

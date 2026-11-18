@@ -45,6 +45,7 @@ import { Argon2PasswordHasher } from './auth/infrastructure/argon2-password-hash
 import { CryptoTokenService, uuidGenerator } from './auth/infrastructure/crypto-token.service.js';
 import { InMemorySessionRepository } from './auth/infrastructure/in-memory-session.repository.js';
 import type { MediaRateLimits } from './media/http/rate-limit.js';
+import { routeLimiter, type RouteRateLimits } from '../shared/rate-limits.js';
 import { InMemoryOneTimeTokenRepository } from './auth/infrastructure/in-memory-one-time-token.repository.js';
 import {
   InMemoryLoginLockout,
@@ -57,6 +58,9 @@ import {
 } from './auth/infrastructure/rate-limit/redis.js';
 import { PrismaAuditLog } from './auth/infrastructure/prisma/prisma-audit.log.js';
 import { PrismaOneTimeTokenRepository } from './auth/infrastructure/prisma/prisma-one-time-token.repository.js';
+import { sequentialAccountClaims } from './auth/application/account-claims.js';
+import { PrismaAccountClaimStore } from './auth/infrastructure/prisma/prisma-account-claim.store.js';
+import type { AccountClaimStore } from './auth/domain/ports.js';
 import { PrismaSessionRepository } from './auth/infrastructure/prisma/prisma-session.repository.js';
 import { PrismaUserRepository } from './users/infrastructure/prisma/prisma-user.repository.js';
 import {
@@ -85,6 +89,13 @@ import {
   type AuthMailProducer,
 } from './auth/infrastructure/mail-queue/bullmq-mail-queue.js';
 import { loadAuthMailQueueEnv } from './auth/infrastructure/mail-queue/env.js';
+import type { TakeoverFollowUpQueue } from './auth/domain/takeover-follow-up.js';
+import {
+  BullMqTakeoverFollowUpQueue,
+  createTakeoverFollowUpProducer,
+  startTakeoverFollowUpWorker,
+  type TakeoverFollowUpProducer,
+} from './auth/infrastructure/takeover-queue/bullmq-takeover-follow-up.js';
 import { SessionVerifier } from './auth/application/session-verifier.js';
 import {
   noopRevocationPublisher,
@@ -149,6 +160,12 @@ import { systemClock, type Clock, type IdGenerator } from '../shared/ports.js';
 export interface ModuleDeps {
   users: UserRepository;
   sessions: SessionRepository;
+  /** OIDC review X1: takeover claim + session revocation in one transaction (defaults below). */
+  accountClaims?: AccountClaimStore;
+  /** AuthService structured error log (takeover follow-ups). Default: the Fastify logger. */
+  authLog?: { error(obj: Record<string, unknown>, msg: string): void };
+  /** AuthService deferred-retry scheduler (tests). Default: an unref'd timer. */
+  scheduleRetry?: (run: () => Promise<void>, delayMs: number) => void;
   oneTimeTokens: OneTimeTokenRepository;
   organizations: OrganizationRepository;
   memberships: MembershipRepository;
@@ -158,6 +175,8 @@ export interface ModuleDeps {
   rateLimiter: RateLimiter;
   /** Overrides MEDIA_RATE_LIMITS (tests). */
   mediaRateLimits?: MediaRateLimits;
+  /** Overrides buckets of ROUTE_RATE_LIMITS (shared/rate-limits.ts; tests). */
+  routeRateLimits?: Partial<RouteRateLimits>;
   lockout: LoginLockout;
   /**
    * AUTH_MAIL_QUEUE=bullmq: BullMqAuthMailQueue on REDIS_URL (ADR-013, notifications #11), consumed by the
@@ -170,6 +189,16 @@ export interface ModuleDeps {
   authMailWorker?: { redisUrl: string; prefix?: string | undefined; concurrency: number };
   /** Set when defaultModuleDeps created the BullMQ mail queue itself (closed in onClose). */
   ownedMailQueue?: { close(): Promise<void> };
+  /**
+   * #463 review: durable queue for account-takeover follow-ups that still failed in-request. With AUTH_MAIL_QUEUE=bullmq
+   * defaultModuleDeps builds a BullMqTakeoverFollowUpQueue on the same Redis and prefix; otherwise (dev/test) AuthService
+   * uses its in-process fallback.
+   */
+  takeoverFollowUps?: TakeoverFollowUpQueue;
+  /** When set, registerModules starts the takeover follow-up BullMQ consumer in-process (with AUTH_MAIL_WORKER_ENABLED). */
+  takeoverFollowUpWorker?: { redisUrl: string; prefix?: string | undefined; concurrency: number };
+  /** Set when defaultModuleDeps created the takeover follow-up queue itself (closed in onClose). */
+  ownedTakeoverFollowUps?: { close(): Promise<void> };
   audit: AuditLog;
   webBaseUrl: string;
   /**
@@ -343,6 +372,8 @@ export interface ModuleEnv {
   mailQueueEnv?: Record<string, string | undefined> | undefined;
   /** Test seam: BullMQ producer used instead of one on REDIS_URL when AUTH_MAIL_QUEUE=bullmq. */
   mailQueueProducer?: AuthMailProducer | undefined;
+  /** Injected takeover follow-up producer (tests); default: BullMQ on REDIS_URL when AUTH_MAIL_QUEUE=bullmq. */
+  takeoverFollowUpProducer?: TakeoverFollowUpProducer | undefined;
   /** Test seam: fake SMTP transport factory / fetch for the selected EmailService (no network in tests). */
   emailServiceDeps?: EmailServiceDeps | undefined;
 }
@@ -513,23 +544,24 @@ export class MissingProductionDependencyError extends Error {
   }
 }
 
-/**
- * Default deps. With a Prisma client (injected `db`, or DATABASE_URL outside NODE_ENV=test) the
- * repositories and audit log are the Prisma ones; with Redis (injected `redis`, or REDIS_URL outside
- * NODE_ENV=test) the rate limiter and lockout are Redis-backed. Anything else falls back to
- * in-memory, which only development/test accept. Injected overrides always win.
- */
+/** GOOGLE_OAUTH_* (all three or none) and WEB_BASE_URL must be an allowed origin when Google sign-in is on. */
 function googleOAuthDep(
   env: NodeJS.ProcessEnv,
   nodeEnv: string | undefined,
   allowedOrigins: string[],
-): { googleOAuth: { config: GoogleOAuthConfig } } | { googleOAuth?: undefined } {
+): { googleOAuth: { config: GoogleOAuthConfig } } | Record<never, never> {
   const config = readGoogleOAuthConfig(env, nodeEnv);
   if (!config) return {};
   assertGoogleWebOrigin(env.WEB_BASE_URL ?? 'http://localhost:5173', allowedOrigins);
   return { googleOAuth: { config } };
 }
 
+/**
+ * Default deps. With a Prisma client (injected `db`, or DATABASE_URL outside NODE_ENV=test) the
+ * repositories and audit log are the Prisma ones; with Redis (injected `redis`, or REDIS_URL outside
+ * NODE_ENV=test) the rate limiter and lockout are Redis-backed. Anything else falls back to
+ * in-memory, which only development/test accept. Injected overrides always win.
+ */
 export function defaultModuleDeps(
   overrides: Partial<ModuleDeps> = {},
   env: ModuleEnv = moduleEnvFromProcess(),
@@ -636,18 +668,32 @@ export function defaultModuleDeps(
               createAuthMailProducer({ redisUrl: mailRedisUrl!, prefix: mailQueueCfg.prefix }),
             clock,
           );
+          // #463 review: takeover follow-ups share the auth-mail Redis, prefix and worker switch.
+          const followUps =
+            env.takeoverFollowUpProducer || mailRedisUrl
+              ? new BullMqTakeoverFollowUpQueue(
+                  env.takeoverFollowUpProducer ??
+                    createTakeoverFollowUpProducer({
+                      redisUrl: mailRedisUrl!,
+                      prefix: mailQueueCfg.prefix,
+                    }),
+                )
+              : undefined;
+          const worker =
+            mailQueueCfg.workerEnabled && mailRedisUrl
+              ? {
+                  redisUrl: mailRedisUrl,
+                  prefix: mailQueueCfg.prefix,
+                  concurrency: mailQueueCfg.concurrency,
+                }
+              : undefined;
           return {
             mailQueue: q,
             ownedMailQueue: q,
-            ...(mailQueueCfg.workerEnabled && mailRedisUrl
-              ? {
-                  authMailWorker: {
-                    redisUrl: mailRedisUrl,
-                    prefix: mailQueueCfg.prefix,
-                    concurrency: mailQueueCfg.concurrency,
-                  },
-                }
+            ...(followUps
+              ? { takeoverFollowUps: followUps, ownedTakeoverFollowUps: followUps }
               : {}),
+            ...(worker ? { authMailWorker: worker, takeoverFollowUpWorker: worker } : {}),
           };
         })()
       : {}),
@@ -712,6 +758,26 @@ export function defaultModuleDeps(
       passwordResetExpiresInMinutes: Math.max(1, Math.round(deps.passwordResetTtlMs / MIN)),
     });
   }
+  // X1: one Postgres transaction when both credential tables are the Prisma ones; otherwise AuthService falls back to
+  // the port-based sequential claim (in-memory dev/test).
+  if (
+    !deps.accountClaims &&
+    db &&
+    deps.users instanceof PrismaUserRepository &&
+    deps.sessions instanceof PrismaSessionRepository
+  )
+    deps.accountClaims = new PrismaAccountClaimStore(db);
+  // Architecture NB-R2-2: outside development/test the takeover claim must be the transactional one; never a silent
+  // fallback to the sequential (non-atomic) claim. Inject `accountClaims` when wiring non-Prisma credential stores.
+  // Development/test name the sequential claim explicitly, so it is visible in the deps rather than an implicit default.
+  if (!deps.accountClaims) {
+    if (strict) {
+      void ownedDb?.$disconnect().catch(() => undefined);
+      ownedRedis?.disconnect();
+      throw new MissingProductionDependencyError(['accountClaims']);
+    }
+    deps.accountClaims = sequentialAccountClaims(deps.users, deps.sessions);
+  }
   return deps;
 }
 
@@ -750,7 +816,7 @@ export async function registerModules(app: FastifyInstance, deps: ModuleDeps) {
         methods: ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE'],
         allowedHeaders: ['content-type', 'x-csrf-token'],
         // R11: let the web app read rate-limit backoff and the request id for support.
-        exposedHeaders: ['retry-after', 'x-request-id'],
+        exposedHeaders: ['retry-after', 'x-request-id', 'x-meetops-verify-outcome'],
         maxAge: 600,
         strictPreflight: true,
       });
@@ -762,11 +828,12 @@ export async function registerModules(app: FastifyInstance, deps: ModuleDeps) {
     extensionBearerCorsHook(deps.extensionIds.map((id) => `chrome-extension://${id}`)),
   );
   // Close only the clients defaultModuleDeps created; injected ones belong to the caller.
-  const { ownedRedis, ownedDb, ownedMedia, ownedMailQueue } = deps;
-  if (ownedRedis || ownedDb || ownedMedia || ownedMailQueue) {
+  const { ownedRedis, ownedDb, ownedMedia, ownedMailQueue, ownedTakeoverFollowUps } = deps;
+  if (ownedRedis || ownedDb || ownedMedia || ownedMailQueue || ownedTakeoverFollowUps) {
     app.addHook('onClose', async () => {
       await Promise.allSettled([
         ownedMailQueue ? ownedMailQueue.close() : undefined,
+        ownedTakeoverFollowUps ? ownedTakeoverFollowUps.close() : undefined,
         ownedMedia ? ownedMedia.close() : undefined,
         ownedRedis ? closeOwnedRedis(ownedRedis) : undefined,
         ownedDb ? ownedDb.$disconnect() : undefined,
@@ -799,7 +866,19 @@ export async function registerModules(app: FastifyInstance, deps: ModuleDeps) {
     },
   };
   const geoIp = deps.geoIp ?? createGeoIpProvider(process.env, app.log);
-  const auth = new AuthService({ ...deps, geoIp, extensionRevoker: revoker, pushDeviceRevoker });
+  const auth = new AuthService({
+    ...deps,
+    geoIp,
+    extensionRevoker: revoker,
+    pushDeviceRevoker,
+    log: deps.authLog ?? app.log,
+  });
+  if (deps.takeoverFollowUpWorker) {
+    const followUpWorker = startTakeoverFollowUpWorker(auth, deps.takeoverFollowUpWorker, app.log);
+    app.addHook('onClose', async () => {
+      await followUpWorker.close();
+    });
+  }
   const organizations = new OrganizationService({
     ...deps,
     extensionRevoker: revoker,
@@ -844,7 +923,12 @@ export async function registerModules(app: FastifyInstance, deps: ModuleDeps) {
     webBaseUrl: deps.webBaseUrl,
     google: deps.googleOAuth ?? null,
   });
-  await app.register(organizationRoutes, { auth, organizations, security: deps.security });
+  await app.register(organizationRoutes, {
+    auth,
+    organizations,
+    security: deps.security,
+    routeLimits: routeLimiter(deps.rateLimiter, deps.routeRateLimits),
+  });
   await app.register(extensionAuthRoutes, { auth, extensionAuth, security: deps.security });
   if (desktopAuth)
     await app.register(desktopAuthRoutes, { auth, desktopAuth, security: deps.security });

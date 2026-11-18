@@ -13,6 +13,8 @@ export type ChunkTranscript = {
   model: string;
   language?: string | undefined;
   receivedAt: string;
+  /** Provider-side transcript id, persisted so a later delete job can run idempotently. */
+  providerJobId?: string | undefined;
 };
 
 export type MergedSegment = {
@@ -49,7 +51,8 @@ export function dedupeChunks(chunks: ChunkTranscript[]): ChunkTranscript[] {
   return [...m.values()].sort((a, b) => a.chunkIndex - b.chunkIndex);
 }
 
-const overlapLen = (a0: number, a1: number, b0: number, b1: number) => Math.max(0, Math.min(a1, b1) - Math.max(a0, b0));
+const overlapLen = (a0: number, a1: number, b0: number, b1: number) =>
+  Math.max(0, Math.min(a1, b1) - Math.max(a0, b0));
 
 /**
  * Merge chunk transcripts into one recording-level transcript.
@@ -60,11 +63,19 @@ const overlapLen = (a0: number, a1: number, b0: number, b1: number) => Math.max(
  * - Speakers: a chunk's provider labels are mapped to previous labels by time-overlap of their speech inside the overlap
  *   region with the previous chunk; unmatched labels get a new recording-wide label.
  */
-export function mergeChunkTranscripts(input: ChunkTranscript[], expectedChunkCount?: number): MergedTranscript {
+export function mergeChunkTranscripts(
+  input: ChunkTranscript[],
+  expectedChunkCount?: number,
+): MergedTranscript {
   const chunks = dedupeChunks(input);
   const abs = chunks.map((c) => ({
     c,
-    segs: c.segments.map((s, n) => ({ ...s, n, a0: c.startSec + s.startSec, a1: c.startSec + s.endSec })),
+    segs: c.segments.map((s, n) => ({
+      ...s,
+      n,
+      a0: c.startSec + s.startSec,
+      a1: c.startSec + s.endSec,
+    })),
   }));
   const speakerMap: Record<number, Record<string, string>> = {};
   let nextSpeaker = 1;
@@ -86,12 +97,15 @@ export function mergeChunkTranscripts(input: ChunkTranscript[], expectedChunkCou
         for (const s of segs.filter((x) => x.speaker === label)) {
           for (const p of prev.segs) {
             if (!p.speaker) continue;
-            const t = overlapLen(s.a0, s.a1, p.a0, p.a1) * (overlapLen(s.a0, s.a1, ov0, ov1) > 0 ? 1 : 0);
+            const t =
+              overlapLen(s.a0, s.a1, p.a0, p.a1) * (overlapLen(s.a0, s.a1, ov0, ov1) > 0 ? 1 : 0);
             const g = prevMap[p.speaker];
             if (t > 0 && g) score.set(g, (score.get(g) ?? 0) + t);
           }
         }
-        const best = [...score.entries()].filter(([g]) => !used.has(g)).sort((a, b) => b[1] - a[1])[0];
+        const best = [...score.entries()]
+          .filter(([g]) => !used.has(g))
+          .sort((a, b) => b[1] - a[1])[0];
         if (best) {
           map[label] = best[0];
           used.add(best[0]);
@@ -103,7 +117,10 @@ export function mergeChunkTranscripts(input: ChunkTranscript[], expectedChunkCou
 
     const next = abs[i + 1];
     const lo = contiguous ? c.startSec + c.overlapSec / 2 : -Infinity;
-    const hi = next && next.c.chunkIndex === c.chunkIndex + 1 ? next.c.startSec + next.c.overlapSec / 2 : Infinity;
+    const hi =
+      next && next.c.chunkIndex === c.chunkIndex + 1
+        ? next.c.startSec + next.c.overlapSec / 2
+        : Infinity;
     for (const s of segs) {
       const mid = (s.a0 + s.a1) / 2;
       if (mid < lo || mid >= hi) continue;
@@ -132,7 +149,9 @@ export function mergeChunkTranscripts(input: ChunkTranscript[], expectedChunkCou
     text: out.map((s) => (s.speaker ? `${s.speaker}: ${s.text}` : s.text)).join('\n'),
     chunkIndexes: idx,
     missingChunks,
-    complete: missingChunks.length === 0 && (expectedChunkCount === undefined || idx.length === expectedChunkCount),
+    complete:
+      missingChunks.length === 0 &&
+      (expectedChunkCount === undefined || idx.length === expectedChunkCount),
     durationSec: last ? round(last.startSec + last.durationSec) : 0,
     speakerMap,
   };

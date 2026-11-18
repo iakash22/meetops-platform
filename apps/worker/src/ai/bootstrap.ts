@@ -4,6 +4,7 @@ import {
   UsageQuotaManager,
   createCredentialResolver,
   createRegistryFromEnv,
+  isRelaxedNodeEnv,
   loadAIEnv,
   type AuditSink,
 } from '@meetops/ai-core';
@@ -55,7 +56,8 @@ export async function createTranscriptionHostDeps(
     audit: auditSink,
     resolveCredential,
     system: { system: true, userId: 'system:transcription-worker' },
-    production: source.NODE_ENV === 'production',
+    production: !isRelaxedNodeEnv(source.NODE_ENV),
+    processEnv: source,
   });
   const stores = createAiStores(source);
   if (stores.mode === 'memory')

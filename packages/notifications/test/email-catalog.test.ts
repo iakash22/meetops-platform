@@ -21,6 +21,7 @@ describe('email catalog', () => {
     expect([...emailNames].sort()).toEqual(
       [
         'account-exists',
+        'account-linked',
         'integration-error',
         'invitation',
         'login-lockout',

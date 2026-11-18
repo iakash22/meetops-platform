@@ -27,6 +27,7 @@ concurrency, timeoutMs, retryPolicy, cost, usage, health, fallbackPriority`.
 | GEMINI_API_KEY                                                   | –                                                            |
 | AI_STT_PROVIDER                                                  | assemblyai                                                   |
 | ASSEMBLYAI_API_KEY                                               | –                                                            |
+| ASSEMBLYAI_SPEECH_MODELS                                         | assemblyai-stt-3-7 (proposed default; confirm with Akash)    |
 | OLLAMA_ENABLED / OLLAMA_BASE_URL / OLLAMA_MODEL                  | false / http://localhost:11434 / llama3.2                    |
 | LOCAL_STT_ENABLED / LOCAL_STT_URL / LOCAL_STT_MODEL              | false / http://localhost:8000 / Systran/faster-whisper-small |
 | OPENAI_ENABLED / OPENAI_API_KEY / OPENAI_BASE_URL / OPENAI_MODEL | false / – / https://api.openai.com/v1 / gpt-4o-mini          |
@@ -42,7 +43,7 @@ reported in `errors` and replaced by defaults.
 | Adapter           | Transport                                                                                                                                 | Default            |
 | ----------------- | ----------------------------------------------------------------------------------------------------------------------------------------- | ------------------ |
 | Gemini            | official `@google/genai` (`models.generateContent`, `responseMimeType: application/json` + `responseJsonSchema = z.toJSONSchema(schema)`) | enabled, needs key |
-| AssemblyAI        | official `assemblyai` SDK (`transcripts.transcribe`, polls until done, `speaker_labels`)                                                  | enabled, needs key |
+| AssemblyAI        | REST `POST /v2/upload` then `POST /v2/transcript` (`speech_models`, `speaker_labels`), bounded poll                                       | enabled, needs key |
 | Ollama            | REST `POST /api/chat` (`stream:false`, `format: <JSON schema>`), `GET /api/tags`                                                          | disabled           |
 | OpenAI-compatible | REST `POST /chat/completions` (`response_format: json_schema`), `GET /models`                                                             | disabled           |
 | faster-whisper    | OpenAI-compatible REST, see transcription.md                                                                                              | disabled           |

@@ -1,4 +1,20 @@
 import { z } from 'zod';
+import { isRelaxedNodeEnv } from './provider-data-tier.js';
+import {
+  assemblyAiSpeechModelsFromEnv,
+  DEFAULT_ASSEMBLYAI_SPEECH_MODELS,
+  InvalidAssemblyAiSpeechModelsError,
+  type AssemblyAiSpeechModel,
+} from './assemblyai-speech-models.js';
+
+export {
+  ASSEMBLYAI_PRE_RECORDED_SPEECH_MODELS,
+  DEFAULT_ASSEMBLYAI_SPEECH_MODELS,
+  InvalidAssemblyAiSpeechModelsError,
+  assemblyAiSpeechModelsFromEnv,
+  parseAssemblyAiSpeechModels,
+  type AssemblyAiSpeechModel,
+} from './assemblyai-speech-models.js';
 
 const bool = (def: boolean) =>
   z
@@ -36,7 +52,10 @@ export const aiEnvSchema = z.object({
   AI_ALLOW_PAID_FALLBACK: bool(false),
   AI_REQUIRE_PROVIDER_APPROVAL: bool(true),
 });
-export type AIEnv = z.infer<typeof aiEnvSchema>;
+export type AIEnv = z.infer<typeof aiEnvSchema> & {
+  /** Proposed default `assemblyai-stt-3-7`; Akash should confirm (sets STT cost). */
+  ASSEMBLYAI_SPEECH_MODELS: AssemblyAiSpeechModel[];
+};
 
 export type ProviderAvailability = {
   provider: string;
@@ -54,11 +73,11 @@ export function loadAIEnv(
   source: Record<string, string | undefined> = process.env,
   opts: { production?: boolean | undefined } = {},
 ): LoadedAIEnv {
-  const production = opts.production ?? source.NODE_ENV === 'production';
+  const production = opts.production ?? !isRelaxedNodeEnv(source.NODE_ENV);
   const errors: string[] = [];
   const parsed = aiEnvSchema.safeParse(source);
   let env: AIEnv;
-  if (parsed.success) env = parsed.data;
+  if (parsed.success) env = parsed.data as AIEnv;
   else if (production) {
     // Fail fast in production: never boot with silently-defaulted AI config. Messages name vars, never values.
     throw new Error(
@@ -68,7 +87,15 @@ export function loadAIEnv(
     for (const issue of parsed.error.issues) errors.push(`${issue.path.join('.')}: invalid`);
     const bad = new Set(parsed.error.issues.map((i) => String(i.path[0])));
     const cleaned = Object.fromEntries(Object.entries(source).filter(([k]) => !bad.has(k)));
-    env = aiEnvSchema.parse(cleaned);
+    env = aiEnvSchema.parse(cleaned) as AIEnv;
+  }
+  try {
+    env.ASSEMBLYAI_SPEECH_MODELS = assemblyAiSpeechModelsFromEnv(source);
+  } catch (e) {
+    if (!(e instanceof InvalidAssemblyAiSpeechModelsError)) throw e;
+    if (production) throw new Error('Invalid AI env: ASSEMBLYAI_SPEECH_MODELS');
+    errors.push('ASSEMBLYAI_SPEECH_MODELS: invalid');
+    env.ASSEMBLYAI_SPEECH_MODELS = [...DEFAULT_ASSEMBLYAI_SPEECH_MODELS];
   }
   const a = (provider: string, available: boolean, reason: string): ProviderAvailability =>
     available ? { provider, available } : { provider, available, reason };

@@ -58,6 +58,51 @@ export class PrismaUserRepository implements UserRepository {
       throw e;
     }
   }
+  async claimUnverifiedForGoogle(id: UserId, sub: string, at: Date) {
+    try {
+      const r = await this.db.user.updateMany({
+        where: { id, deletedAt: null, googleSub: null, emailVerified: null },
+        data: { googleSub: sub, emailVerified: at, passwordHash: null },
+      });
+      return r.count === 1;
+    } catch (e) {
+      if (isUniqueViolation(e)) return false;
+      throw e;
+    }
+  }
+  async claimUnverifiedForMailbox(id: UserId, at: Date, opts: { clearPassword: boolean }) {
+    const r = await this.db.user.updateMany({
+      where: { id, deletedAt: null, emailVerified: null },
+      data: {
+        emailVerified: at,
+        googleSub: null,
+        ...(opts.clearPassword ? { passwordHash: null } : {}),
+      },
+    });
+    return r.count === 1;
+  }
+  async readCredentials(id: UserId) {
+    // FOR SHARE (X4): blocks while a takeover transaction holds the row, then sees its committed result.
+    const rows = await this.db.$queryRaw<
+      { password_hash: string | null; google_sub: string | null; email_verified_at: Date | null }[]
+    >`SELECT password_hash, google_sub, email_verified_at FROM users
+      WHERE id = ${id}::uuid AND deleted_at IS NULL FOR SHARE`;
+    const r = rows[0];
+    return r
+      ? {
+          passwordHash: r.password_hash ?? '',
+          googleSub: r.google_sub,
+          emailVerifiedAt: r.email_verified_at,
+        }
+      : null;
+  }
+  async replacePasswordHash(id: UserId, expected: string, passwordHash: string) {
+    const r = await this.db.user.updateMany({
+      where: { id, deletedAt: null, passwordHash: expected },
+      data: { passwordHash },
+    });
+    return r.count === 1;
+  }
   async create(u: User) {
     try {
       const r = await this.db.user.create({

@@ -13,6 +13,7 @@ const KIND: Record<AuthMailTemplate, string> = {
   invitation: 'invite',
   login_lockout: 'lockout',
   password_changed: 'password-changed',
+  account_linked: 'account-linked',
 };
 
 export class RecordingAuthMailer implements MailTransport {

@@ -33,11 +33,52 @@ describe('/verify-email', () => {
     );
   });
 
+  it('UX-1: after a mailbox-owner takeover it says the password was removed, never "log in now"', async () => {
+    const api = createMockApi({
+      auth: { verifyEmail: vi.fn().mockResolvedValue({ passwordReset: true }) },
+    });
+    renderApp(`/verify-email?token=${TOKEN}`, api);
+    await userEvent.click(await screen.findByRole('button', { name: 'Verify email' }));
+    expect(await screen.findByText(/the password on this account was removed/)).toBeInTheDocument();
+    expect(screen.getByText(/Set a new one with the link we just emailed you/)).toBeInTheDocument();
+    expect(
+      screen.getByText('Set a password with the link we just emailed you.'),
+    ).toBeInTheDocument();
+    expect(screen.queryByText('You can log in now.')).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'Continue to log in' })).not.toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Send a new set-password link' })).toHaveAttribute(
+      'href',
+      '/forgot-password',
+    );
+  });
+
+  it('UX-1: an account that never had a password is told to set one, never that a password was removed', async () => {
+    const api = createMockApi({
+      auth: {
+        verifyEmail: vi.fn().mockResolvedValue({ passwordReset: false, setPassword: true }),
+      },
+    });
+    renderApp(`/verify-email?token=${TOKEN}`, api);
+    await userEvent.click(await screen.findByRole('button', { name: 'Verify email' }));
+    expect(
+      await screen.findByText(/set one with the link we just emailed you/),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/removed/)).not.toBeInTheDocument();
+    expect(screen.queryByText('You can log in now.')).not.toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Send a new set-password link' })).toHaveAttribute(
+      'href',
+      '/forgot-password',
+    );
+  });
+
   it('explains an invalid or expired link (400) and offers a new one', async () => {
     const api = createMockApi({ auth: { verifyEmail: vi.fn().mockRejectedValue(badToken()) } });
     const { history } = renderApp(`/verify-email?token=${TOKEN}`, api);
     await userEvent.click(await screen.findByRole('button', { name: 'Verify email' }));
-    expect(await screen.findByTestId('link-problem')).toHaveTextContent(/invalid or has expired/);
+    const expired = await screen.findByTestId('link-problem');
+    expect(expired).toHaveTextContent(/invalid or has expired/);
+    expect(expired).toHaveFocus();
+    expect(expired).toHaveAttribute('tabindex', '-1');
     expect(screen.getByRole('link', { name: 'Send a new verification link' })).toHaveAttribute(
       'href',
       '/resend-verification',
@@ -48,7 +89,10 @@ describe('/verify-email', () => {
   it('handles a link without a token', async () => {
     const api = signedOut();
     renderApp('/verify-email', api);
-    expect(await screen.findByTestId('link-problem')).toHaveTextContent(/incomplete/);
+    const missing = await screen.findByTestId('link-problem');
+    expect(missing).toHaveTextContent(/incomplete/);
+    expect(missing).toHaveFocus();
+    expect(missing).toHaveAttribute('tabindex', '-1');
     expect(screen.queryByRole('button', { name: 'Verify email' })).not.toBeInTheDocument();
   });
 

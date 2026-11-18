@@ -13,20 +13,32 @@ import { ConsentVersion } from './consent.js';
  *   GET   /orgs/:organizationId/settings/consent                          -> ConsentSettings (all roles)
  *   PATCH /orgs/:organizationId/settings/consent  UpdateConsentSettingsRequest -> ConsentSettings (owner/admin only; 403 otherwise)
  * See CONSENT_UPLOAD_PATHS.consentSettings and CONSENT_SETTINGS_WRITE_ROLES.
+ * ADR-019/020: modes are all_parties_notified | all_parties_consented (no one_party); retention 7–365
+ * (default 90); default mode is all_parties_consented for every org. Changing noticeText bumps
+ * currentConsentVersion via nextConsentVersion (server-owned).
  */
 export {
   CONSENT_SETTINGS_MODES,
   CONSENT_SETTINGS_WRITE_ROLES,
   CONSENT_UPLOAD_PATHS,
+  DEFAULT_CONSENT_NOTICE_TEXT,
+  DEFAULT_CONSENT_SETTINGS_MODE,
+  DEFAULT_RETENTION_DAYS,
   MAX_CONSENT_NOTICE_TEXT_LENGTH,
   MAX_RETENTION_DAYS,
   MIN_RETENTION_DAYS,
+  nextConsentVersion,
 } from '../constants.js';
 
 export const ConsentSettingsMode = Type.Union(CONSENT_SETTINGS_MODES.map((m) => Type.Literal(m)));
 export type ConsentSettingsMode = (typeof CONSENT_SETTINGS_MODES)[number];
 
-const noticeText = Type.String({ minLength: 1, maxLength: MAX_CONSENT_NOTICE_TEXT_LENGTH });
+/** Notice body. Clients MUST trim before sending; whitespace-only or untrimmed values are invalid. */
+const noticeText = Type.String({
+  minLength: 1,
+  maxLength: MAX_CONSENT_NOTICE_TEXT_LENGTH,
+  pattern: '^\\S(?:[\\s\\S]*\\S)?$',
+});
 const retentionDays = Type.Integer({ minimum: MIN_RETENTION_DAYS, maximum: MAX_RETENTION_DAYS });
 
 /** Response of GET and PATCH. `currentConsentVersion` and `updatedAt` are server-owned (read-only). */

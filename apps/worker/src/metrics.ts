@@ -1,6 +1,8 @@
 import { createHash, timingSafeEqual } from 'node:crypto';
 import { createServer, type Server } from 'node:http';
 import {
+  AUTH_TAKEOVER_FOLLOW_UP_DLQ,
+  AUTH_TAKEOVER_FOLLOW_UP_QUEUE,
   MEDIA_QUEUE,
   NOTIFICATION_DELIVERY_QUEUE,
   QUEUE_NAMES,
@@ -9,6 +11,10 @@ import {
 import { createQueue } from '@meetops/queue';
 import { TRANSCRIPTION_DLQ } from './ai/transcription-retry.js';
 import { EMBEDDINGS_QUEUE } from './embeddings/pipeline.js';
+import {
+  PROVIDER_TRANSCRIPT_DELETE_QUEUE,
+  renderProviderTranscriptDeleteMetrics,
+} from './ai/provider-transcript-delete.js';
 import { logger } from './logger.js';
 
 export type MetricsLog = { warn(obj: object, msg: string): void };
@@ -25,6 +31,9 @@ export const isLoopbackHost = (h: string) => LOOPBACK.has(h) || /^127\.\d+\.\d+\
  * OFF unless WORKER_METRICS_TOKEN (>= 32 chars) is set; then GET /metrics needs `Authorization: Bearer <token>`
  * (constant-time compare). Anything else is 404. Binds WORKER_METRICS_HOST (default 127.0.0.1) :WORKER_METRICS_PORT
  * (default 9464).
+ *
+ * The account-takeover follow-up queue and its DLQ (#463 review) are produced and consumed by apps/api under the
+ * auth-mail key prefix, so they are read with AUTH_MAIL_QUEUE_PREFIX (same value as the API; default `bull`).
  */
 export const MIN_WORKER_METRICS_TOKEN_LENGTH = 32;
 export const JOB_STATES = [
@@ -46,7 +55,25 @@ export const METRICS_QUEUES = [
   NOTIFICATION_DELIVERY_QUEUE,
   TASK_SYNC_QUEUE,
   EMBEDDINGS_QUEUE,
+  PROVIDER_TRANSCRIPT_DELETE_QUEUE,
 ] as const;
+/** Queues owned by apps/api and read under the auth-mail key prefix (AUTH_MAIL_QUEUE_PREFIX). */
+export const AUTH_PREFIXED_METRICS_QUEUES = [
+  AUTH_TAKEOVER_FOLLOW_UP_QUEUE,
+  AUTH_TAKEOVER_FOLLOW_UP_DLQ,
+] as const;
+export const ALL_METRICS_QUEUES: readonly string[] = [
+  ...METRICS_QUEUES,
+  ...AUTH_PREFIXED_METRICS_QUEUES,
+];
+
+/** AUTH_MAIL_QUEUE_PREFIX as the API validates it; undefined = BullMQ default. Invalid values throw (name only). */
+export function authQueuePrefixFromEnv(v: string | undefined): string | undefined {
+  const p = (v ?? '').trim() || undefined;
+  if (p !== undefined && !/^[A-Za-z0-9:_-]{1,64}$/.test(p))
+    throw new Error('AUTH_MAIL_QUEUE_PREFIX has invalid characters');
+  return p;
+}
 
 export type CountsReader = (queue: string) => Promise<Partial<Record<string, number>>>;
 
@@ -120,7 +147,8 @@ export async function handleMetricsRequest(
   return {
     status: 200,
     type: 'text/plain; version=0.0.4; charset=utf-8',
-    body: await renderQueueMetrics(opts.queues, opts.read),
+    body:
+      (await renderQueueMetrics(opts.queues, opts.read)) + renderProviderTranscriptDeleteMetrics(),
   };
 }
 
@@ -136,6 +164,8 @@ export function startWorkerMetricsServer(
   if (!Number.isInteger(port) || port < 0 || port > 65535)
     throw new Error('WORKER_METRICS_PORT is invalid');
   const host = env.WORKER_METRICS_HOST?.trim() || '127.0.0.1';
+  const authPrefix = authQueuePrefixFromEnv(env.AUTH_MAIL_QUEUE_PREFIX);
+  const authQueues = new Set<string>(AUTH_PREFIXED_METRICS_QUEUES);
   if (!isLoopbackHost(host))
     log.warn(
       { host },
@@ -146,13 +176,17 @@ export function startWorkerMetricsServer(
     read ??
     ((q) => {
       let queue = owned.get(q);
-      if (!queue) owned.set(q, (queue = createQueue(q)));
+      if (!queue)
+        owned.set(
+          q,
+          (queue = createQueue(q, authQueues.has(q) && authPrefix ? { prefix: authPrefix } : {})),
+        );
       return queue.getJobCounts(...JOB_STATES);
     });
   const server = createServer((req, res) => {
     void handleMetricsRequest(
       { method: req.method, url: req.url, authorization: req.headers.authorization },
-      { token, queues: METRICS_QUEUES, read: reader },
+      { token, queues: ALL_METRICS_QUEUES, read: reader },
     ).then(
       (r) =>
         res

@@ -2,9 +2,38 @@
 
 ## Providers
 
-- **AssemblyAI** (default, `AI_STT_PROVIDER=assemblyai`): official SDK, `client.transcripts.transcribe({ audio, speaker_labels, language_code | language_detection })`.
-  The SDK uploads bytes or uses a URL, then polls. Utterances map to `segments` (ms → s, speaker, confidence).
+- **AssemblyAI** (default, `AI_STT_PROVIDER=assemblyai`): REST via `guardedFetch` (`POST /v2/upload`,
+  `POST /v2/transcript`, bounded `GET /v2/transcript/{id}` poll). The request sends `speech_models`
+  (never the deprecated singular `speech_model`), `speaker_labels`, and `language_code` or
+  `language_detection`. Utterances map to `segments` (ms → s, speaker, confidence).
   `audio_duration` gives `usage.audioSeconds`. Diarization: yes. Streaming: not wired yet (capability reports false).
+
+## AssemblyAI speech model (proposed default — confirm with Akash)
+
+This default **sets STT cost**. It is a proposed default for Akash to confirm, not a final owner decision.
+
+- **Proposed default:** `speech_models: ["assemblyai-stt-3-7"]` (`ASSEMBLYAI_SPEECH_MODELS`, default
+  `assemblyai-stt-3-7`). List price **$0.21/h** of submitted audio
+  ([AssemblyAI pricing](https://www.assemblyai.com/pricing/), read 2026-11-18).
+- **Cheaper alternative that does not meet the accuracy bar:** `universal-2` at **$0.15/h**. Official
+  docs position it as the cost-effective fallback for languages outside AssemblyAI-STT-3.7's 32, not
+  as the meeting-notetaker model
+  ([model selection](https://www.assemblyai.com/docs/pre-recorded-audio/select-the-speech-model)).
+- **Why not the cheaper model:** MeetOps needs Hinglish / Indian-English accuracy and mid-sentence
+  English↔Hindi code-switching (`docs/research/ai-provider-due-diligence.md`,
+  `docs/research/specs/05-mixed-language-indic-transcription.md`, the #512 pricing brief
+  `docs/research/pricing-packaging-v2.md`). AssemblyAI-STT-3.7 natively code-switches across 32
+  languages, including an English↔Hindi example
+  ([code switching](https://www.assemblyai.com/docs/pre-recorded-audio/code-switching);
+  Hindi, Marathi and Urdu are in the 32-language set). Universal-2's code-switching path is a
+  legacy two-language router, and its published Hindi WER is only in the "good" (>10% to ≤25%) band
+  ([supported languages](https://www.assemblyai.com/docs/pre-recorded-audio/supported-languages)).
+- **Optional fallback:** set `ASSEMBLYAI_SPEECH_MODELS=assemblyai-stt-3-7,universal-2` if language
+  detection must fall back for languages outside the 32 (for example Tamil or Bengali). The
+  flagship model still transcribes every language it supports; Universal-2 is used only for the
+  rest. Accuracy on many Indic languages on Universal-2 is published as fair/moderate.
+- The legacy singular `ASSEMBLYAI_SPEECH_MODEL` remains a single-value alias. The previous default
+  `universal` is rejected so we never silently rely on an undocumented alias.
 - **faster-whisper (local)**, enabled with `LOCAL_STT_ENABLED=true` and `LOCAL_STT_URL`. It expects an
   **OpenAI-compatible** server, for example [speaches](https://github.com/speaches-ai/speaches) (formerly faster-whisper-server):
   - `POST {LOCAL_STT_URL}/v1/audio/transcriptions`, multipart: `file` (audio bytes), `model` (e.g. `Systran/faster-whisper-small`),

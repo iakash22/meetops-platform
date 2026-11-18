@@ -1,7 +1,7 @@
 import type { FastifyError, FastifyInstance } from 'fastify';
 import type { ApiErrorCode, ApiErrorEnvelope, ApiErrorReason } from './api-error.js';
 import { DomainError } from './domain-error.js';
-import { RateLimitedError } from '../modules/auth/domain/errors.js';
+import { RateLimitedError } from './rate-limit-core.js';
 
 const GENERIC: Record<number, [ApiErrorCode, string]> = {
   400: ['BAD_REQUEST', 'Bad request'],

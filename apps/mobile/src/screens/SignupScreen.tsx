@@ -1,4 +1,4 @@
-import { isAcceptablePassword } from '@meetops/contracts';
+import { isAcceptablePassword } from '@meetops/contracts/types';
 import { useRouter } from 'expo-router';
 import { useRef, useState } from 'react';
 import {

@@ -142,6 +142,27 @@ export class AuthMailJobHandler {
         });
         return;
       }
+      case 'account_linked': {
+        if (job.provider !== 'google') return;
+        const user = await this.d.users.findById(job.userId);
+        if (!user) return;
+        await this.d.transport.send({
+          to: user.email,
+          template: 'account_linked',
+          data: withName(
+            {
+              // Not "reset your password": a reset does not remove a linked Google sign-in (OIDC review N-7).
+              url: new URL('/login', this.d.webBaseUrl).toString(),
+              provider: 'Google',
+              linkedAt: job.linkedAt,
+              ...(job.passwordRemoved ? { passwordRemoved: 'true' } : {}),
+              timeZone: this.d.defaultTimeZone ?? 'UTC',
+            },
+            user.name,
+          ),
+        });
+        return;
+      }
       case 'invitation': {
         const inv = await this.d.invitations.findById(job.organizationId, job.invitationId);
         if (!inv || inv.status !== 'pending' || inv.expiresAt <= now) return;

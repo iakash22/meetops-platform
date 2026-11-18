@@ -16,6 +16,11 @@ import type {
  * Layout (migration 20261026200000_transcript_recording_revision):
  * - Revision 0 of `transcripts` is a per-recording anchor. It owns the raw per-chunk STT results in
  *   `transcript_chunks` (`segments` holds the ai-core `ChunkTranscript`; `status = done`).
+ *   Each chunk's AssemblyAI (or other STT) job id is already stored on the
+ *   `transcript_chunks.segments` JSON (`ChunkTranscript.providerJobId`). Deletes
+ *   read every id from there. The same id is still copied onto the revision-0
+ *   `transcripts.provider_job_id` so PR 513-era readers keep working; a later
+ *   chunk may overwrite the anchor, but that is no longer the delete source.
  * - Revisions >= 1 are merged transcripts: `full_text`, `merge_state` (ai-core merge state) and their
  *   `transcript_segments` rows (same `revision`).
  *
@@ -28,11 +33,14 @@ const ANCHOR_REVISION = 0;
 const KNOWN_PROVIDERS = new Set(['assemblyai', 'faster-whisper', 'deepgram', 'unknown']);
 const providerOf = (p: string) => (KNOWN_PROVIDERS.has(p) ? p : 'unknown');
 
-const isChunkTranscript = (v: unknown): v is ChunkTranscript =>
-  typeof v === 'object' &&
-  v !== null &&
-  typeof (v as ChunkTranscript).chunkIndex === 'number' &&
-  Array.isArray((v as ChunkTranscript).segments);
+const isChunkTranscript = (v: unknown): v is ChunkTranscript => {
+  if (typeof v !== 'object' || v === null) return false;
+  const row = v as ChunkTranscript;
+  if (typeof row.chunkIndex !== 'number' || !Array.isArray(row.segments)) return false;
+  // When present, providerJobId must be a string so deletes never read a coerced value.
+  if (row.providerJobId !== undefined && typeof row.providerJobId !== 'string') return false;
+  return true;
+};
 const isRevision = (v: unknown): v is TranscriptRevision =>
   typeof v === 'object' &&
   v !== null &&
@@ -128,7 +136,47 @@ export function createOrgScopedTranscriptRepository(
           'done'::"TranscriptChunkStatus", ${chunk.provider}, ${chunk.segments.map((s) => s.text).join(' ')},
           ${JSON.stringify(chunk)}::jsonb, 1, now())
         ON CONFLICT ("transcript_id", "chunk_index") DO NOTHING`;
+      // Also copy the id onto the revision-0 anchor for PR 513 compatibility. Not written on merged
+      // revisions (unique (org, provider, provider_job_id) would conflict with the anchor).
+      // Deletes do not rely on this overwriteable column; they read every id from segments JSON.
+      if (inserted === 1 && chunk.providerJobId) {
+        await tx.transcript.updateMany({
+          where: { organizationId, id: transcriptId, revision: ANCHOR_REVISION },
+          data: { providerJobId: chunk.providerJobId },
+        });
+      }
       return inserted === 1;
+    },
+    async getProviderJobId(meetingId, recordingId) {
+      const row = await tx.transcript.findFirst({
+        where: {
+          organizationId,
+          meetingId,
+          recordingId,
+          revision: ANCHOR_REVISION,
+        },
+        select: { providerJobId: true },
+      });
+      return row?.providerJobId ?? undefined;
+    },
+    async listProviderJobIds(meetingId, recordingId) {
+      const ids: string[] = [];
+      const seen = new Set<string>();
+      const add = (id: string | null | undefined) => {
+        if (!id || seen.has(id)) return;
+        seen.add(id);
+        ids.push(id);
+      };
+      // Source of truth: providerJobId already stored on each chunk's segments JSON.
+      for (const chunk of toChunks(await chunkRows(meetingId, recordingId)))
+        add(chunk.providerJobId);
+      // Legacy rows whose segments predate providerJobId may only have the anchor column.
+      const anchorRow = await tx.transcript.findFirst({
+        where: { organizationId, meetingId, recordingId, revision: ANCHOR_REVISION },
+        select: { providerJobId: true },
+      });
+      add(anchorRow?.providerJobId);
+      return ids;
     },
     async getChunkResult(meetingId, recordingId, chunkIndex) {
       return toChunks(await chunkRows(meetingId, recordingId, chunkIndex))[0];

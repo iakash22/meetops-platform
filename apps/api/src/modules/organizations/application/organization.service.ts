@@ -1,3 +1,4 @@
+import { clientIpKey } from '../../../shared/rate-limit-core.js';
 import type { Clock, IdGenerator } from '../../../shared/ports.js';
 import type { TenantContext } from '../../../shared/tenant.js';
 import type { RateLimiter, TokenService } from '../../auth/domain/ports.js';
@@ -6,7 +7,7 @@ import { safeAudit, type AuditEvent, type AuditLog } from '../../auth/domain/aud
 import type { SessionRepository } from '../../auth/domain/session.js';
 import { publishRevocation, type RevocationPublisher } from '../../auth/application/revocations.js';
 import type { UserRepository } from '../../users/domain/user.repository.js';
-import { RateLimitedError } from '../../auth/domain/errors.js';
+import { consumeGuarded } from '../../../shared/guarded-limit.js';
 import { normalizeEmail } from '../../users/domain/user.js';
 import { slugify, type Organization } from '../domain/organization.js';
 import {
@@ -71,14 +72,16 @@ export const INVITE_LIMITS = {
   sendPerOrg: { limit: 50, windowMs: DAY },
   sendPerAddress: { limit: 5, windowMs: DAY },
   acceptPerIp: { limit: 10, windowMs: 60 * 60 * 1000 },
+  /** Per signed-in user, so one account cannot spread token guessing over many IPs. */
+  acceptPerUser: { limit: 10, windowMs: 60 * 60 * 1000 },
 } as const;
 
 export class OrganizationService {
   constructor(private readonly d: OrganizationServiceDeps) {}
 
+  /** Fail closed: limiter error or timeout -> 503 + Retry-After; over the limit -> 429 + Retry-After. */
   private async limit(key: string, l: { limit: number; windowMs: number }) {
-    const r = await this.d.rateLimiter.consume(key, l.limit, l.windowMs);
-    if (!r.allowed) throw new RateLimitedError(r.retryAfterMs);
+    await consumeGuarded(this.d.rateLimiter, key, l);
   }
 
   private audit(
@@ -253,7 +256,8 @@ export class OrganizationService {
     email: string;
     ip: string | null;
   }) {
-    await this.limit(`invite:accept:ip:${input.ip ?? 'unknown'}`, INVITE_LIMITS.acceptPerIp);
+    await this.limit(`invite:accept:ip:${clientIpKey(input.ip)}`, INVITE_LIMITS.acceptPerIp);
+    await this.limit(`invite:accept:user:${input.userId}`, INVITE_LIMITS.acceptPerUser);
     await this.requireVerifiedEmail(input.userId);
     const r = await this.d.invitations.accept(
       this.d.tokens.hash(input.token),

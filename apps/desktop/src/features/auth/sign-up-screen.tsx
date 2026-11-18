@@ -2,7 +2,7 @@ import {
   isAcceptablePassword,
   PASSWORD_MIN_LENGTH,
   PASSWORD_POLICY_MESSAGE,
-} from '@meetops/contracts';
+} from '@meetops/contracts/types';
 import { useState, type FormEvent } from 'react';
 
 export type PasswordStrength = 'too-short' | 'weak' | 'fair' | 'strong';

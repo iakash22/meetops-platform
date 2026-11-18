@@ -18,6 +18,8 @@ pnpm --filter @meetops/extension test:e2e   # build + real Alt+Shift+M gesture i
 
 `test:e2e` needs Playwright Chromium, `xvfb` and `xdotool`, and `@meetops/contracts` built first. It isn't in CI yet: `.github` is DevOps' area, and #52 lists what's needed.
 
+Build-time origins and flags are documented in `apps/extension/.env.example` and `apps/extension/README.md`. `WXT_PRIVACY_URL` (an absolute https URL, or a path resolved against `WXT_WEB_ORIGIN`) drives a Privacy Policy link in the popup and on the options page. The link opens in a new tab and is omitted when the env var is unset. Production builds (`wxt build`) warn, but do not fail, if it is missing.
+
 ## Permissions
 
 | Permission   | Why                                                                                                                                                  |
@@ -74,9 +76,9 @@ Replies are `{ ok: true, status, tabId?, startedAt?, chunks?, lastError?, storag
 
 ## Known gaps (on `integration/phase-1`)
 
-- **Uploader is a stub:** `StubUploadClient`; there's no real API client yet. When one lands, it must use `auth.apiFetch()` for API routes and the fetch transport (no bearer) for presigned PUTs.
+- **HTTP upload client:** `HttpUploadClient` (recording-session API via `auth.apiFetch()`, bearer-free presigned PUTs) is selected by `WXT_FEATURE_HTTP_UPLOAD`. It defaults **on** in development builds and **off** in production builds; unit tests always use `StubUploadClient`. Set `true`/`1` to force it on in a production build, or `false`/`0` to force the stub in dev.
+- **Meeting resolve:** with the HTTP client on, the popup's `RESOLVE_MEETING` call finds or creates the meeting with `POST /orgs/:organizationId/meetings/resolve` (tab URL reduced to origin + path). With the stub, a random UUID is used.
 - **Pairing endpoints aren't in the API yet:** contracts define `EXTENSION_AUTH_PATHS` (`/auth/extension/pair`, `/auth/extension-token`, `/auth/extension/refresh`, `/auth/extension/revoke`), but `apps/api` doesn't implement them.
-- **`meetingId` is interim:** `resolveMeetingId()` returns a fresh UUID until a Backend endpoint creates the meeting (TODO(meeting-api)).
 - **e2e:** the extension's `test:e2e` isn't wired into CI. The QA workflow's e2e job covers the web app only.
 
 ## Earlier gaps (from #5)

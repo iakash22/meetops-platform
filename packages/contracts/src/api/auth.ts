@@ -1,26 +1,18 @@
 import { Type, type Static } from '@sinclair/typebox';
 import { Id, IsoDateTime } from '../common.js';
 import { Membership, Organization, Role, User } from '../domain/org.js';
+import { PASSWORD_MAX_LENGTH, PASSWORD_MIN_LENGTH, PASSWORD_PATTERN } from '../password-policy.js';
 
 const Email = Type.String({ format: 'email', maxLength: 320 });
 
-/** New passwords (signup and reset). Login stays looser so an existing password still signs in. */
-export const PASSWORD_MIN_LENGTH = 8;
-export const PASSWORD_MAX_LENGTH = 128;
-export const PASSWORD_POLICY_MESSAGE =
-  'Use 8 or more characters with a letter, a number, and a symbol.';
-/**
- * 8–128 characters, no newlines, with at least one letter, one digit, and one symbol
- * (anything that is not a letter, digit, or space).
- */
-export const PASSWORD_PATTERN = '^(?=.*[A-Za-z])(?=.*\\d)(?=.*[^A-Za-z0-9\\s]).{8,128}$';
-
-const passwordPattern = new RegExp(PASSWORD_PATTERN);
-
-/** True when a new password meets {@link PASSWORD_PATTERN}. */
-export function isAcceptablePassword(password: string): boolean {
-  return passwordPattern.test(password);
-}
+// Password policy lives in a TypeBox-free module so UI bundles can import it from `@meetops/contracts/types`.
+export {
+  PASSWORD_MAX_LENGTH,
+  PASSWORD_MIN_LENGTH,
+  PASSWORD_PATTERN,
+  PASSWORD_POLICY_MESSAGE,
+  isAcceptablePassword,
+} from '../password-policy.js';
 
 const Password = Type.String({
   minLength: PASSWORD_MIN_LENGTH,

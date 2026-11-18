@@ -49,14 +49,14 @@ export function validateDraft(d: Draft): Partial<Record<'noticeText' | 'retentio
 
 const MODES: Array<{ value: ConsentSettingsMode; label: string; hint: string }> = [
   {
-    value: 'all_party',
-    label: 'All-party consent',
-    hint: 'Every participant must agree to be recorded.',
+    value: 'all_parties_consented',
+    label: 'Require explicit consent',
+    hint: 'Every participant must explicitly agree to be recorded.',
   },
   {
-    value: 'one_party',
-    label: 'One-party consent',
-    hint: "The recording user's attestation is enough.",
+    value: 'all_parties_notified',
+    label: 'Notice only',
+    hint: 'A visible recording notice is enough; participants are not asked to opt in.',
   },
 ];
 

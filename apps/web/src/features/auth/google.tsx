@@ -8,9 +8,16 @@ export const GOOGLE_LOGIN_ERRORS = {
     title: "Google sign-in didn't complete",
     description: 'Try again, or use your password.',
   },
+  // Architecture B-1: send the mailbox owner to a password reset. A reset proves the address, replaces any password
+  // someone else set and signs everyone else out; "verify your email" alone used to leave a squatter's password usable.
   google_unverified: {
-    title: 'This email already has an account',
-    description: 'Sign in with your password and verify your email, then try Google again.',
+    title: 'This email already has an unverified account',
+    description: "Reset its password from 'Forgot password', then try Google again.",
+  },
+  google_link_password: {
+    title: 'Confirm it is your account',
+    description:
+      'This email already has a MeetOps account. Sign in with your password once to link Google.',
   },
 } as const;
 

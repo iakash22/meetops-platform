@@ -3,10 +3,13 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import { CONSENT_CONFIRMATION, CONSENT_NOTICE, setConfirmed } from '../src/lib/consent.js';
 import { MAX_DURATION_MS } from '../src/lib/contract-limits.js';
+import { PAIRING_REQUIRED_MESSAGE as START_PAIRING_REQUIRED_MESSAGE } from '../src/lib/background-handler.js';
+import { UNPAIRED_PROMPT_MESSAGE } from '../src/lib/pairing-messages.js';
 import {
   MEETING_RESOLVE_MESSAGE,
   OFFLINE_MESSAGE,
   OPEN_FROM_TOOLBAR,
+  PAIRING_REQUIRED_MESSAGE,
   UNSUPPORTED_PAGE_MESSAGE,
   RELOADED_MESSAGE,
   POPUP_ONLY_ERROR,
@@ -69,6 +72,8 @@ describe('popup header', () => {
 describe('popup render states', () => {
   it('not paired: primary Pair with MeetOps, secondary Record this meeting', () => {
     const html = render();
+    expect(html).toContain('Pair this browser with your MeetOps workspace to record and sync.');
+    expect(html).not.toContain('to upload recordings');
     expect(buttonsOf(html, 'primary')).toEqual(['Pair with MeetOps']);
     expect(buttonsOf(html, 'secondary')).toEqual(['Record this meeting']);
   });
@@ -231,7 +236,9 @@ describe('popup UI pass: status, re-auth, a11y', () => {
       /class="mo-callout mo-callout--warning" role="alert" aria-label="Sign-in required"/,
     );
     expect(html).toContain('Your sign-in was revoked. Pair again to continue.');
+    expect(html).toContain('Sign in again to keep recording');
     expect(html).toContain('stay queued and upload after you pair again');
+    expect(html).not.toContain('uploading');
     expect(html).not.toContain('mo-callout--error');
   });
 
@@ -241,11 +248,18 @@ describe('popup UI pass: status, re-auth, a11y', () => {
     );
   });
 
-  it('not paired: hint that recordings stay on the device; hidden when paired or unknown', () => {
-    const hint = 'recordings are kept on this device';
-    expect(render()).toContain(hint);
-    expect(render({ auth: { state: 'paired' } })).not.toContain(hint);
-    expect(render({ auth: undefined })).not.toContain(hint);
+  it('not paired: prompts pairing with status semantics; hidden when paired or unknown', () => {
+    expect(UNPAIRED_PROMPT_MESSAGE).toContain('This browser is not paired with MeetOps AI');
+    expect(UNPAIRED_PROMPT_MESSAGE).toContain('so recording cannot start');
+    expect(UNPAIRED_PROMPT_MESSAGE).toContain('Pair the extension first.');
+    const html = render();
+    expect(html).toContain(UNPAIRED_PROMPT_MESSAGE);
+    expect(html).toMatch(/class="mo-hint" role="status" aria-label="Pairing required"/);
+    expect(html).not.toContain('recordings are kept on this device');
+    expect(html).not.toContain('upload once you pair');
+    expect(buttonsOf(html, 'primary')).toEqual(['Pair with MeetOps']);
+    expect(render({ auth: { state: 'paired' } })).not.toContain(UNPAIRED_PROMPT_MESSAGE);
+    expect(render({ auth: undefined })).not.toContain(UNPAIRED_PROMPT_MESSAGE);
   });
 
   it('confirmed consent is announced as per-meeting', () => {
@@ -287,6 +301,15 @@ describe('popup UI pass: status, re-auth, a11y', () => {
     );
     expect(popupErrorMessage('Meeting resolve failed: HTTP 403 FORBIDDEN', true)).toBe(
       MEETING_RESOLVE_MESSAGE,
+    );
+  });
+
+  it('maps an unpaired meeting-resolve error to the same Start pairing copy', () => {
+    expect(PAIRING_REQUIRED_MESSAGE).toBe(START_PAIRING_REQUIRED_MESSAGE);
+    expect(popupErrorMessage('not_paired', true)).toBe(PAIRING_REQUIRED_MESSAGE);
+    expect(popupErrorMessage('Extension is not paired', true)).toBe(PAIRING_REQUIRED_MESSAGE);
+    expect(popupErrorMessage('Extension must be paired again (expired)', true)).toBe(
+      PAIRING_REQUIRED_MESSAGE,
     );
   });
 });

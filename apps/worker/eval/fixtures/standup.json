@@ -1,0 +1,102 @@
+{
+  "name": "standup",
+  "description": "Daily standup: three owned action items, one decision.",
+  "transcript": {
+    "transcriptId": "0e0e0e0e-0001-4000-8000-1000000000ff",
+    "recordingId": "0e0e0e0e-0001-4000-8000-2000000000ff",
+    "revision": 1,
+    "language": "en",
+    "segments": [
+      {
+        "id": "0e0e0e0e-0001-4000-8000-000000000000",
+        "sequence": 0,
+        "speakerLabel": "Priya",
+        "startMs": 0,
+        "endMs": 5500,
+        "text": "Morning all. Quick round today."
+      },
+      {
+        "id": "0e0e0e0e-0001-4000-8000-000000000001",
+        "sequence": 1,
+        "speakerLabel": "Priya",
+        "startMs": 6000,
+        "endMs": 11500,
+        "text": "Yesterday I finished the release notes draft."
+      },
+      {
+        "id": "0e0e0e0e-0001-4000-8000-000000000002",
+        "sequence": 2,
+        "speakerLabel": "Arjun",
+        "startMs": 12000,
+        "endMs": 17500,
+        "text": "I am still on the login bug, it only happens on Safari."
+      },
+      {
+        "id": "0e0e0e0e-0001-4000-8000-000000000003",
+        "sequence": 3,
+        "speakerLabel": "Priya",
+        "startMs": 18000,
+        "endMs": 23500,
+        "text": "Okay. Arjun will fix the Safari login bug by Thursday."
+      },
+      {
+        "id": "0e0e0e0e-0001-4000-8000-000000000004",
+        "sequence": 4,
+        "speakerLabel": "Meera",
+        "startMs": 24000,
+        "endMs": 29500,
+        "text": "I can take the changelog. Meera will update the changelog by Friday."
+      },
+      {
+        "id": "0e0e0e0e-0001-4000-8000-000000000005",
+        "sequence": 5,
+        "speakerLabel": "Priya",
+        "startMs": 30000,
+        "endMs": 35500,
+        "text": "We decided to ship version 2 on Friday."
+      },
+      {
+        "id": "0e0e0e0e-0001-4000-8000-000000000006",
+        "sequence": 6,
+        "speakerLabel": "Arjun",
+        "startMs": 36000,
+        "endMs": 41500,
+        "text": "Rahul will review the payment PR."
+      },
+      {
+        "id": "0e0e0e0e-0001-4000-8000-000000000007",
+        "sequence": 7,
+        "speakerLabel": "Priya",
+        "startMs": 42000,
+        "endMs": 47500,
+        "text": "Thanks everyone."
+      }
+    ]
+  },
+  "golden": {
+    "actionItems": [
+      {
+        "title": "fix the Safari login bug",
+        "owner": "Arjun",
+        "due": "Thursday"
+      },
+      {
+        "title": "update the changelog",
+        "owner": "Meera",
+        "due": "Friday"
+      },
+      {
+        "title": "review the payment PR",
+        "owner": "Rahul",
+        "due": null
+      }
+    ],
+    "decisions": ["ship version 2 on Friday"],
+    "thresholds": {
+      "precision": 1,
+      "recall": 1,
+      "decisionRecall": 1,
+      "decisionPrecision": 1
+    }
+  }
+}

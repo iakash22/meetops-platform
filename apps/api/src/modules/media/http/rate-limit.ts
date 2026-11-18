@@ -1,7 +1,19 @@
-import type { RateLimiter } from '../../auth/domain/ports.js';
-import { RateLimitedError } from '../../auth/domain/errors.js';
 import type { DirectoryCaller } from '../../directory/access.js';
-import { DomainError } from '../../../shared/domain-error.js';
+import {
+  RATE_LIMITER_TIMEOUT_MS,
+  RATE_LIMITER_UNAVAILABLE_RETRY_AFTER_MS,
+  RateLimitedError,
+  RateLimiterUnavailableError,
+  clientIpKey,
+  type RateLimiter,
+} from '../../../shared/rate-limit-core.js';
+
+// Platform names (shared/rate-limit-core.ts), re-exported for existing media imports.
+export {
+  RATE_LIMITER_TIMEOUT_MS,
+  RATE_LIMITER_UNAVAILABLE_RETRY_AFTER_MS,
+  RateLimiterUnavailableError,
+};
 
 export type MediaLimit = { limit: number; windowMs: number };
 
@@ -41,22 +53,6 @@ export const MEDIA_RATE_LIMITS: MediaRateLimits = {
   controlPerUser: { limit: 90, windowMs: 30_000 },
 };
 
-/** Retry-After sent when the limiter backend (Redis) is unreachable. */
-export const RATE_LIMITER_UNAVAILABLE_RETRY_AFTER_MS = 5_000;
-
-/** The limiter could not be consulted: fail closed (503 + Retry-After), never let the request through unmetered. */
-export class RateLimiterUnavailableError extends DomainError {
-  constructor(public readonly retryAfterMs: number = RATE_LIMITER_UNAVAILABLE_RETRY_AFTER_MS) {
-    super('PROVIDER_UNAVAILABLE', 'Service temporarily unavailable, try again later', 503);
-  }
-}
-
-/**
- * Backstop for a limiter call that never settles (e.g. a Redis that accepts the connection but never answers).
- * Slightly above the ioredis commandTimeout (REDIS_COMMAND_TIMEOUT_MS) so the client's own timeout normally fires first.
- */
-export const RATE_LIMITER_TIMEOUT_MS = 1_500;
-
 function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   const t = new Promise<never>((_, reject) => {
@@ -90,7 +86,8 @@ export function mediaRateLimit(
       if (!r.allowed) throw new RateLimitedError(r.retryAfterMs);
     }
   };
-  const ip = (c: DirectoryCaller) => c.meta.ip ?? 'unknown';
+  /** Per-IP key part: same clientIpKey rule as the rest of the platform (null/invalid -> 503, never `unknown`). */
+  const ip = (c: DirectoryCaller) => clientIpKey(c.meta.ip);
   const user = (c: DirectoryCaller) => `org:${c.ctx.organizationId}:user:${c.ctx.userId}`;
   return {
     chunkUser: (c) =>

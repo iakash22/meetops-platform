@@ -80,8 +80,10 @@ export function UploadButton({ meetingId }: { meetingId?: Id }) {
     retry: false,
     staleTime: 60_000,
   });
-  const allParty = settings.data?.mode !== 'one_party';
-  const methods: readonly ConsentMethod[] = allParty ? ['all_parties_consented'] : CONSENT_METHODS;
+  const requireExplicit = settings.data?.mode !== 'all_parties_notified';
+  const methods: readonly ConsentMethod[] = requireExplicit
+    ? ['all_parties_consented']
+    : CONSENT_METHODS;
   const [method, setMethod] = useState<ConsentMethod>('all_parties_consented');
   const [confirmed, setConfirmed] = useState(false);
 

@@ -3,6 +3,9 @@
  * (e.g. popup.html opened as a normal tab). That guard is a security check, not something a user can act
  * on, so its raw text is never shown: in the real popup it is dropped, elsewhere it becomes a friendly hint.
  */
+import { PAIRING_REQUIRED_MESSAGE } from '../../src/lib/pairing-messages.js';
+export { PAIRING_REQUIRED_MESSAGE };
+
 export const POPUP_ONLY_ERROR = 'Commands must come from the popup';
 
 export const OPEN_FROM_TOOLBAR =
@@ -27,6 +30,9 @@ export function popupErrorMessage(raw: string | undefined, inPopup: boolean): st
   if (NETWORK_ERROR.test(raw)) return OFFLINE_MESSAGE;
   if (EXTENSION_RELOADED.test(raw)) return RELOADED_MESSAGE;
   if (raw.includes('UNSUPPORTED_PAGE')) return UNSUPPORTED_PAGE_MESSAGE;
+  // Resolve runs before Start when HTTP upload is on; show the same copy Start uses when unpaired.
+  if (/(?:^|\b)not_paired\b|is not paired|must be paired again/i.test(raw))
+    return PAIRING_REQUIRED_MESSAGE;
   if (raw.startsWith('Meeting resolve failed')) return MEETING_RESOLVE_MESSAGE;
   return raw;
 }

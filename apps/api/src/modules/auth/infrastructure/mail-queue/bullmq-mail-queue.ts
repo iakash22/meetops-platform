@@ -52,6 +52,9 @@ export function authMailJobId(job: AuthMailJob, now: Date): string | null {
     case 'password_changed':
       parts = [job.userId, job.changedAt];
       break;
+    case 'account_linked':
+      parts = [job.userId, job.provider, job.linkedAt];
+      break;
     default:
       parts = null;
   }
@@ -88,6 +91,14 @@ export function minimalAuthMailPayload(job: AuthMailJob): AuthMailJob {
       return { kind: job.kind, organizationId: job.organizationId, invitationId: job.invitationId };
     case 'password_changed':
       return { kind: job.kind, userId: job.userId, changedAt: job.changedAt };
+    case 'account_linked':
+      return {
+        kind: job.kind,
+        userId: job.userId,
+        provider: job.provider,
+        linkedAt: job.linkedAt,
+        ...(job.passwordRemoved ? { passwordRemoved: true } : {}),
+      };
   }
 }
 
@@ -188,6 +199,7 @@ const KINDS = new Set<AuthMailJob['kind']>([
   'login_lockout',
   'invitation',
   'password_changed',
+  'account_linked',
 ]);
 
 export interface AuthMailJobRunner {

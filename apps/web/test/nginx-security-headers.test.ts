@@ -157,9 +157,18 @@ describe('L1: same-origin /socket.io proxy', () => {
     );
   });
 
-  it('compose trusts exactly one proxy hop in realtime (#417)', () => {
+  it('compose gives realtime the API TRUST_PROXY allowlist (dev-only hop 1 default), not the removed hop var', () => {
     const compose = readFileSync(resolve(root, 'infra', 'compose', 'compose.app.yml'), 'utf8');
-    expect(compose).toMatch(/^ {6}REALTIME_TRUST_PROXY_HOPS: 1$/m);
+    expect(compose).toMatch(/^ {6}TRUST_PROXY: \$\{TRUST_PROXY:-1\}$/m);
+    expect(compose).not.toMatch(/^\s*REALTIME_TRUST_PROXY_HOPS:/m);
+  });
+
+  it('compose passes BEHIND_CLOUDFLARE to both the API and realtime', () => {
+    const compose = readFileSync(resolve(root, 'infra', 'compose', 'compose.app.yml'), 'utf8');
+    const apiEnv = /x-api-env: &api-env\n([\s\S]*?)\nservices:/m.exec(compose)?.[1] ?? '';
+    expect(apiEnv).toMatch(/^ {2}TRUST_PROXY: \$\{TRUST_PROXY:-\}$/m);
+    expect(apiEnv).toMatch(/^ {2}BEHIND_CLOUDFLARE: \$\{BEHIND_CLOUDFLARE:-\}$/m);
+    expect(compose).toMatch(/^ {6}BEHIND_CLOUDFLARE: \$\{BEHIND_CLOUDFLARE:-\}$/m);
   });
 
   it.each([
