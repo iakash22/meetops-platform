@@ -158,7 +158,9 @@ and reviewers mention it. It is not drop-off rates.
 - Google requests `calendar.events.readonly` and `calendar.calendarlist.readonly`
   (`packages/integrations/src/calendar.ts` L99–102).
 - Outlook requests `Calendars.Read` and `User.Read`, plus `openid`, `profile`, `email` and `offline_access`
-  (`packages/integrations/src/calendar-outlook.ts` L33–42).
+  (`packages/integrations/src/calendar-outlook.ts` L33–42). _Correction 2026-11-18: Outlook requests only
+  `Calendars.Read`, `User.Read` and `offline_access` (`packages/integrations/src/calendar-outlook.ts` L248);
+  `openid`, `profile` and `email` are only tolerated in the grant check, not requested._
 - The connection is separate from sign-in and lives on `/calendar` (`router.tsx` L307). No capture path requires it.
 
 ### 4.3 First recording and upload (web)
@@ -178,8 +180,9 @@ and reviewers mention it. It is not drop-off rates.
     L66–76).
   - With `CONSENT_ENFORCEMENT_ENABLED` on, "an upload with no meeting… fails closed" (L70–71;
     `apps/api/src/modules/index.ts` L294–303, default off).
-- **Summary display.** Report and transcript panels show when `status === 'completed'` (`meetings-pages.tsx`
-  L241–242). The page polls every 5 s while recording or processing, or every 30 s with realtime connected
+- **Summary display.** Report and transcript panels show when `status === 'completed'`
+  (`apps/web/src/features/meetings/meetings-pages.tsx` L241–242). The page polls every 5 s while recording or
+  processing, or every 30 s with realtime connected
   (`apps/web/src/lib/api/queries.ts` L37–41).
 
 ### 4.4 Extension
@@ -368,7 +371,7 @@ for alerts.
 | F1  | The docs say "Pairing endpoints aren't in the API yet", but pair, extension-token and refresh are implemented                                                                                | `docs/05-web/extension.md` L81 vs `apps/api/src/modules/extension-auth/application/extension-auth.service.ts` L194, L239, L285 | Native/extension (docs) |
 | F2  | `WXT_FEATURE_HTTP_UPLOAD` is off in production builds, so production uses the stub upload client and extension recordings may never upload                                                   | `apps/extension/README.md` L14; `docs/05-web/extension.md` L79                                                                 | Native/extension        |
 | F3  | `TRANSCRIPTION_WORKER_ENABLED` and `AI_SUMMARY_WORKER_ENABLED` default false. With them off, no summary ever appears. No deploy config in the repo sets them (searched `infra/`, `.github/`) | `.env.example` L160, L163; `apps/worker/src/index.ts` L79–85                                                                   | DevOps / AI             |
-| F4  | The Meetings-list Upload has no `meetingId`. It fails closed when consent enforcement is on. Whether a meeting-less upload is ever transcribed is unverified                                 | `meetings-pages.tsx` L149; `upload.service.ts` L66–76                                                                          | Backend / Frontend      |
+| F4  | The Meetings-list Upload has no `meetingId`. It fails closed when consent enforcement is on. Whether a meeting-less upload is ever transcribed is unverified                                 | `apps/web/src/features/meetings/meetings-pages.tsx` L149; `apps/api/src/modules/media/application/upload.service.ts` L66–76    | Backend / Frontend      |
 | F5  | The desktop README still says "M1 scaffold… mocked sign-in… No recording yet". The code has recording, native upload and browser auth                                                        | `apps/desktop/README.md` L7 vs `apps/desktop/src/features/recording/`, `app.tsx` L151–158                                      | Native (docs)           |
 | F6  | Desktop production sign-in works only with `VITE_DESKTOP_BROWSER_AUTH=true`. Otherwise it fails closed                                                                                       | `apps/desktop/src/app.tsx` L151–158                                                                                            | Native                  |
 | F7  | Mobile has no org creation, so a new user is told to ask an admin                                                                                                                            | `apps/mobile/src/screens/LoginScreen.tsx` L34                                                                                  | Native / Backend        |
@@ -388,7 +391,9 @@ place. The original text is kept.
      diff in 45e8664e).
    - The delete worker runs only when transcription is enabled (`apps/worker/src/index.ts` L50–58).
    - **Still open:**
-     - no periodic sweep for final failures, which only fire a hook and metric (L100, L221);
+     - no periodic sweep for final failures, which only fire a hook and metric
+       (`apps/worker/src/ai/provider-transcript-delete.ts` L100, L221 at `e5075890`;
+       _updated 2026-11-18: L106–107 for the metric and L270, L334 for the hook at `2127fb46`, after #514_);
      - no backfill for transcripts made before 45e8664e;
      - Gemini has no delete call (unchanged).
    - Corrected: `account-deletion-erasure-brief.md` S5, §3 rows, §5 recommendation and C3; `pricing-packaging-v2.md`
