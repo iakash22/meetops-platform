@@ -34,6 +34,8 @@ What the repo shows that matters for this review:
   _Correction 2026-11-18 (after #513, `1d7ba360`): the labels are now at L66 (Gemini) and L81 (AssemblyAI). Production now refuses free or undeclared
   LLM/STT tiers unless `AI_PROVIDER_DATA_TIER_<NAME>` is `paid` or `no-training` (b8eb5ffb;
   `packages/ai-core/src/provider-data-tier.ts` L108–125)._
+  _Updated 2026-11-18 at `2127fb46`, after #514: `assertProductionProviderDataTiers` is L120–135, doc comment from
+  L115._
 - **No provider deletion call exists.** There is no `DELETE /v2/transcript/:id` (or any delete) in `apps/worker` or
   `packages/ai-core`, so the ADR-019 promise above is not implemented. AssemblyAI keeps transcripts 30 days by default
   (§2.3). This is a code change, outside docs/research; listed in §7 for the coordinator.

@@ -1,5 +1,8 @@
 # Executive summary: product research (November 2026)
 
+> **Update 2026-11-18:** "What to build first" is superseded by [phase-2-roadmap.md](phase-2-roadmap.md) §3; the
+> consolidated owner decisions are in its §5. The rest of this page stands; the original text is kept.
+
 - For Akash and the project lead. One page, drawn from the merged research docs (#468) and the follow-up docs from #473
   (now merged; linked below).
 - Everything here is a **proposal** unless it is marked as a project-lead decision. Scores, efforts and prices are

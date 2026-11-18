@@ -408,6 +408,9 @@ place. The original text is kept.
    - INFERRED: the env value is an operator declaration. The code can't check the real billing tier.
    - Corrected: `pricing-packaging-v2.md` §8 (was L50/L55) and `ai-provider-due-diligence.md` §1 and §7 (was L50/L55).
      The OpenAI price cite in `ai-provider-due-diligence.md` §2.5 is now L125 (was L72).
+   - _Updated 2026-11-18 at `2127fb46`, after #514: the `provider-data-tier.ts` cites above (L22–34, L52–95,
+     L108–125) are now `dataTierEnvName` L30–32 and `parseProductionDataTier` L34–42, `assessEnabledProviderDataTiers`
+     L60–104, and `assertProductionProviderDataTiers` L120–135 with its doc comment from L115._
 3. **Deepgram dropped from the SSRF default allowlist** (088dab3e).
    - `DEFAULT_ALLOWED_HOSTS` (`packages/ai-core/src/security/ssrf.ts` L122–125) now lists Gemini, AssemblyAI and
      OpenAI.
