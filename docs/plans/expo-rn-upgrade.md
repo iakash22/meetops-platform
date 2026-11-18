@@ -7,6 +7,16 @@ Risk exceptions: RE-03 (`node-forge`) and RE-04 (`image-size`) are both **closed
 Version and advisory facts below were checked against the npm registry, the GitHub Advisory Database and the Expo
 release notes on 1 Nov 2026 (IST). Re-check them before the lockfile PR.
 
+_Note 2026-11-18 (keeps the text above and below; see `docs/research/expo-android-target-api.md`):_
+
+- Android target: SDK 54, 55 and 56 all default to `compileSdkVersion` 36 and `targetSdkVersion` 36 (Expo versions
+  table; React Native catalogs for 0.81.5, 0.83.10 and 0.85.3). Each meets Google Play's API 36 rule for new apps and
+  updates (since 31 Aug 2026; the extension to 1 Nov 2026 has expired) with no `expo-build-properties` override.
+- SDK 54 is the last SDK with the Legacy Architecture. SDK 55 removes it (§3.1 item 1). The SDK 54 row's "does not
+  clear RE-04" (§1 table) no longer blocks it, because RE-04 is closed.
+- A coordinator message reports a decision of "SDK 54 next, on the Legacy Architecture". This plan still recommends
+  SDK 55, and the decision isn't recorded here. The owner question (AR-5, Maddy vs Akash) stays open.
+
 ## 0. Summary
 
 - **RE-04 no longer needs this upgrade** (update 11 Nov 2026: #412 overrides image-size to `^2.0.3` and patches

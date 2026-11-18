@@ -151,6 +151,11 @@ contract:
 - **Result:** F3 is a **confirmed gap**. Play needs 36 [P12]. Expo SDK 56 and later target 36 [P7]. For F4, Apple needs
   Xcode 26 [P5], and Expo's own minimum for SDK 52 is Xcode 16. Whether SDK 52 builds on Xcode 26 stays
   **UNVERIFIED**. **Interpretation:** both point to the SDK upgrade in HANDOFF §5.5 rather than a pin-and-override.
+- _Correction 2026-11-18 (later the same day; keeps the text above):_ "Expo SDK 56 and later target 36" is incomplete.
+  P7 lists only SDK 56–58. Expo's SDK 55 and 56 versions pages show `targetSdkVersion` **36** for SDK 54, 55 and 56,
+  and the SDK 54 release notes say "React Native for Android now targets Android 16 / API 36". So SDK 54 or 55 also
+  clears F3 without an override. SDK 54 is the last SDK with the Legacy Architecture. Details, sources and the
+  store-safety conclusion are in [expo-android-target-api.md](expo-android-target-api.md).
 
 ### 6.2 Chrome tab-capture indicator (§2.1)
 
