@@ -81,14 +81,21 @@ export function snippetParts(snippet: string): { text: string; match: boolean }[
   return out;
 }
 
-export type SearchPageSearch = { q?: string | undefined; kind?: SearchResultKind | undefined };
+export type SearchPageSearch = {
+  q?: string | undefined;
+  kind?: SearchResultKind | undefined;
+  /** When true, /search uses semantic search. Omitted from the URL when off. */
+  semantic?: true | undefined;
+};
 export function parseSearchPageSearch(s: Record<string, unknown>): SearchPageSearch {
   const q = typeof s.q === 'string' ? s.q.slice(0, 200) : undefined;
   const kind =
     typeof s.kind === 'string' && (SEARCH_RESULT_KINDS as readonly string[]).includes(s.kind)
       ? (s.kind as SearchResultKind)
       : undefined;
-  return { q: q || undefined, kind };
+  const semanticOn =
+    s.semantic === true || s.semantic === 'true' || s.semantic === '1' || s.semantic === 1;
+  return { q: q || undefined, kind, ...(semanticOn ? { semantic: true as const } : {}) };
 }
 
 let override: SearchApi | null = null;

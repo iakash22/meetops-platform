@@ -101,7 +101,7 @@ export function SearchPage({
   const searchApi = getSearchApi(api.request);
   const [draft, setDraft] = useState(search.q ?? '');
   useEffect(() => setDraft(search.q ?? ''), [search.q]);
-  const [semanticOn, setSemanticOn] = useState(false);
+  const semanticOn = search.semantic === true;
   const q = (search.q ?? '').trim();
   const semKind = semanticKindFor(search.kind);
   const semanticActive = semanticOn && semKind !== null;
@@ -152,34 +152,36 @@ export function SearchPage({
           Search
         </Button>
       </form>
-      <div className="flex flex-wrap gap-2" role="group" aria-label="Filter by type">
-        <Button
-          type="button"
-          size="sm"
-          variant={search.kind ? 'outline' : 'default'}
-          aria-pressed={!search.kind}
-          onClick={() => onSearchChange({ ...search, kind: undefined })}
-        >
-          All
-        </Button>
-        {SEARCH_RESULT_KINDS.map((k) => (
+      <div className="flex flex-wrap items-center gap-2">
+        <div className="flex flex-wrap gap-2" role="group" aria-label="Filter by type">
           <Button
-            key={k}
             type="button"
             size="sm"
-            variant={search.kind === k ? 'default' : 'outline'}
-            aria-pressed={search.kind === k}
-            onClick={() => onSearchChange({ ...search, kind: k })}
+            variant={search.kind ? 'outline' : 'default'}
+            aria-pressed={!search.kind}
+            onClick={() => onSearchChange({ ...search, kind: undefined })}
           >
-            {KIND_LABEL[k]}
+            All
           </Button>
-        ))}
+          {SEARCH_RESULT_KINDS.map((k) => (
+            <Button
+              key={k}
+              type="button"
+              size="sm"
+              variant={search.kind === k ? 'default' : 'outline'}
+              aria-pressed={search.kind === k}
+              onClick={() => onSearchChange({ ...search, kind: k })}
+            >
+              {KIND_LABEL[k]}
+            </Button>
+          ))}
+        </div>
         <Button
           type="button"
           size="sm"
           variant={semanticOn ? 'default' : 'outline'}
           aria-pressed={semanticOn}
-          onClick={() => setSemanticOn((v) => !v)}
+          onClick={() => onSearchChange({ ...search, semantic: semanticOn ? undefined : true })}
         >
           <Sparkles aria-hidden />
           Semantic
