@@ -84,9 +84,11 @@ A team qualifies if all of these are true:
 - **Size spread:** at least 2 SMB (20–200 staff) and at least 2 mid-market (200–1,000).
 - **Length:** 8 weeks per team. 2 weeks of baseline (§ baseline in [pilot-success-metrics.md](pilot-success-metrics.md)),
   then 6 weeks of use.
-- **Gates first:** customer data must not go to a free-tier LLM ([gtm-india-smb-midmarket.md](../gtm-india-smb-midmarket.md)
-  §8 gates). Design partners are customers for this rule, so the paid-tier decision
-  ([ai-provider-due-diligence.md](../ai-provider-due-diligence.md) §5.1) must come before any partner meeting is processed.
+- **Gates first (recommendation, pending Akash's decision in §9):** the GTM gates say customer data must not go to a
+  free-tier LLM ([gtm-india-smb-midmarket.md](../gtm-india-smb-midmarket.md) §8 gates). We recommend treating design
+  partners as customers for this rule, so that the paid-tier decision
+  ([ai-provider-due-diligence.md](../ai-provider-due-diligence.md) §5.1) comes before any partner meeting is processed.
+  Whether partners may start before that gate is cleared is an open decision for Akash (§9).
 
 ## 7. Incentives (all proposals, none decided)
 
