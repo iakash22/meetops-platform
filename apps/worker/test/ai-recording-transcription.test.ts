@@ -51,6 +51,10 @@ class FakeRepo implements RecordingTranscriptRepository {
       listChunkResults: async () => this.chunks,
       latestTranscript: latest,
       getProviderJobId: async () => this.chunks.find((c) => c.providerJobId)?.providerJobId,
+      listProviderJobIds: async () =>
+        this.chunks
+          .map((c) => c.providerJobId)
+          .filter((id): id is string => typeof id === 'string' && id.length > 0),
       writeTranscriptRevision: async (w, prev) => {
         if (this.failWritesOnce) {
           this.failWritesOnce = false;
@@ -327,6 +331,7 @@ describe('recording transcription -> provider transcript delete', () => {
         listChunkResults: async () => [],
         latestTranscript: async () => undefined,
         getProviderJobId: async () => undefined,
+        listProviderJobIds: async () => [],
         writeTranscriptRevision: async () => false,
         markTranscriptFailed: async () => undefined,
       });
