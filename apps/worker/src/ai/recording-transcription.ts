@@ -180,11 +180,12 @@ export async function processRecordingTranscription(
       }
       throw e;
     }
-    fresh = toWholeRecordingChunk(result, now().toISOString());
+    const created = toWholeRecordingChunk(result, now().toISOString());
+    fresh = created;
     chunk = await repo.withOrgContext(organizationId, async (r) =>
-      (await r.putChunkResult(meetingId, recordingId, fresh))
-        ? fresh
-        : ((await r.getChunkResult(meetingId, recordingId, 0)) ?? fresh),
+      (await r.putChunkResult(meetingId, recordingId, created))
+        ? created
+        : ((await r.getChunkResult(meetingId, recordingId, 0)) ?? created),
     );
   }
 

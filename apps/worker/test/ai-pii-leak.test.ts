@@ -11,7 +11,7 @@ import {
   ModelRouter,
   ProviderRegistry,
   UsageQuotaManager,
-  aiEnvSchema,
+  loadAIEnv,
   createCredentialResolver,
   toPublicError,
   type LLMGenerateStructuredParams,
@@ -155,7 +155,11 @@ async function executorFor(llm: LLMProvider, onInternal?: (e: unknown) => void) 
   const usage = new InMemoryUsageTracker();
   return new AIExecutor({
     registry,
-    router: new ModelRouter(aiEnvSchema.parse({}), new InMemoryOrgConfigStore(), audit),
+    router: new ModelRouter(
+      loadAIEnv({ NODE_ENV: 'test' }).env,
+      new InMemoryOrgConfigStore(),
+      audit,
+    ),
     usage,
     quota: new UsageQuotaManager(usage),
     idempotency: new InMemoryIdempotencyStore(),

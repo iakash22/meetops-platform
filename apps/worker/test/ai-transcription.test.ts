@@ -10,7 +10,7 @@ import {
   ModelRouter,
   ProviderRegistry,
   UsageQuotaManager,
-  aiEnvSchema,
+  loadAIEnv,
   createCredentialResolver,
   type ChunkTranscript,
   type TranscriptionProvider,
@@ -168,7 +168,11 @@ async function makeDeps(opts: { fail?: AIError; chunkCount?: number; meetingOrg?
   const usage = new InMemoryUsageTracker();
   const executor = new AIExecutor({
     registry,
-    router: new ModelRouter(aiEnvSchema.parse({}), new InMemoryOrgConfigStore(), audit),
+    router: new ModelRouter(
+      loadAIEnv({ NODE_ENV: 'test' }).env,
+      new InMemoryOrgConfigStore(),
+      audit,
+    ),
     usage,
     quota: new UsageQuotaManager(usage),
     idempotency: new InMemoryIdempotencyStore(),
