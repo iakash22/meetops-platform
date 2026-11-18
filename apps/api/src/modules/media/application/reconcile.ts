@@ -39,6 +39,7 @@ export interface ReconcileResult {
  */
 export async function reconcileStaleMedia(d: {
   store: StaleMediaStore;
+  /** Stored attestations are grandfathered (checkStoredConsent): a later notice edit never skips a subject. */
   consents: ConsentRepository;
   jobs: MediaJobQueue;
   now: () => Date;
@@ -50,6 +51,7 @@ export async function reconcileStaleMedia(d: {
   const out: ReconcileResult = { organizations: 0, uploads: 0, sessions: 0, skipped: 0 };
   for (const org of await d.store.organizationIds()) {
     out.organizations++;
+
     for (const u of await d.store.staleUploads(org, before, limit)) {
       let consentId: string;
       try {

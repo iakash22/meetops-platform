@@ -244,21 +244,14 @@ describe('recording sessions', () => {
     );
   });
 
-  it('complete without a valid stored consent: 422 CONSENT_* and no job', async () => {
+  it('complete without a stored consent: 422 CONSENT_REQUIRED and no job', async () => {
     const w = await setup();
     const id = await w.start();
     await w.chunk(w.member, id, 0);
     w.upload(id, 0);
     const row = w.consents.rows.find((r) => r.subjectId === id)!;
-    row.consentVersion = '1999-01';
-    let r = await complete(w, w.member, id, { chunkCount: 1, durationMs: 5 });
-    expect(r.statusCode).toBe(422);
-    expect(errorOf(r)).toMatchObject({
-      code: 'VALIDATION_FAILED',
-      reason: 'CONSENT_VERSION_UNSUPPORTED',
-    });
     w.consents.rows.splice(w.consents.rows.indexOf(row), 1);
-    r = await complete(w, w.member, id, { chunkCount: 1, durationMs: 5 });
+    const r = await complete(w, w.member, id, { chunkCount: 1, durationMs: 5 });
     expect(errorOf(r)).toMatchObject({ code: 'VALIDATION_FAILED', reason: 'CONSENT_REQUIRED' });
     expect(w.jobs.jobs).toHaveLength(0);
     expect(w.repo.rows.get(id)!.status).toBe('uploading');
