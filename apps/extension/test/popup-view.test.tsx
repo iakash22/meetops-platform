@@ -72,6 +72,8 @@ describe('popup header', () => {
 describe('popup render states', () => {
   it('not paired: primary Pair with MeetOps, secondary Record this meeting', () => {
     const html = render();
+    expect(html).toContain('Pair this browser with your MeetOps workspace to record and sync.');
+    expect(html).not.toContain('to upload recordings');
     expect(buttonsOf(html, 'primary')).toEqual(['Pair with MeetOps']);
     expect(buttonsOf(html, 'secondary')).toEqual(['Record this meeting']);
   });

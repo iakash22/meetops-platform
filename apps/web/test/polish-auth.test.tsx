@@ -56,19 +56,35 @@ describe('Retry-After countdown toast', () => {
 });
 
 describe('LegalLine', () => {
-  it('renders nothing until both URLs are configured', () => {
-    const { container } = render(
-      <LegalLine termsUrl="https://x.test/terms" privacyUrl={undefined} />,
-    );
+  it('renders nothing when neither URL is configured', () => {
+    const { container } = render(<LegalLine termsUrl={undefined} privacyUrl={undefined} />);
     expect(container).toBeEmptyDOMElement();
   });
-  it('rejects non-https URLs', () => {
-    const { container } = render(
-      <LegalLine termsUrl="javascript:alert(1)" privacyUrl="/privacy" />,
+  it('renders the privacy link even when the terms URL is missing', () => {
+    render(<LegalLine termsUrl={undefined} privacyUrl="https://x.test/privacy" />);
+    expect(screen.queryByRole('link', { name: /Terms of Service/ })).not.toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /Privacy Policy/ })).toHaveAttribute(
+      'href',
+      'https://x.test/privacy',
     );
-    expect(container).toBeEmptyDOMElement();
   });
-  it('links Terms and Privacy when configured', () => {
+  it('renders the terms link even when the privacy URL is missing', () => {
+    render(<LegalLine termsUrl="https://x.test/terms" privacyUrl={undefined} />);
+    expect(screen.getByRole('link', { name: /Terms of Service/ })).toHaveAttribute(
+      'href',
+      'https://x.test/terms',
+    );
+    expect(screen.queryByRole('link', { name: /Privacy Policy/ })).not.toBeInTheDocument();
+  });
+  it('rejects an unsafe terms URL but still shows a safe privacy link', () => {
+    render(<LegalLine termsUrl="javascript:alert(1)" privacyUrl="/privacy" />);
+    expect(screen.queryByRole('link', { name: /Terms of Service/ })).not.toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /Privacy Policy/ })).toHaveAttribute(
+      'href',
+      '/privacy',
+    );
+  });
+  it('links Terms and Privacy when both are configured', () => {
     render(<LegalLine termsUrl="/legal/terms" privacyUrl="https://x.test/privacy" />);
     expect(screen.getByRole('link', { name: /Terms of Service/ })).toHaveAttribute(
       'href',

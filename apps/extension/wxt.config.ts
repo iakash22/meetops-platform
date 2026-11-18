@@ -1,6 +1,7 @@
 import { defineConfig } from 'wxt';
 import { resolveOrigins } from './src/lib/auth/origins.js';
 import { buildManifest } from './src/manifest.js';
+import { missingPrivacyUrlWarning } from './src/lib/privacy-url.js';
 
 /**
  * WXT loads .env files into process.env before evaluating these functions. Origins are validated here, so a bad
@@ -15,6 +16,13 @@ export default defineConfig({
   manifest: ({ mode }) => buildManifest(origins(mode).webOrigin),
   vite: ({ mode, command }) => {
     const { webOrigin, apiOrigin } = origins(mode);
+    // `wxt prepare` (postinstall / lint / typecheck) also uses command "build" and
+    // production mode. Only warn on a real `wxt build` production compile.
+    const isWxtPrepare = process.argv.some((arg) => /(^|\/)prepare$/.test(arg));
+    if (command === 'build' && mode === 'production' && !isWxtPrepare) {
+      const warning = missingPrivacyUrlWarning(process.env.WXT_PRIVACY_URL);
+      if (warning) console.warn(warning);
+    }
     return {
       // WXT hard-codes server.watch on the internal vite server it uses to import entrypoints, so `wxt prepare`
       // (run by lint/typecheck/postinstall) opens a chokidar watcher and fails with ENOSPC when inotify watches
@@ -42,6 +50,7 @@ export default defineConfig({
         'import.meta.env.WXT_FEATURE_DIRECT_UPLOAD': JSON.stringify(
           process.env.WXT_FEATURE_DIRECT_UPLOAD ?? '',
         ),
+        'import.meta.env.WXT_PRIVACY_URL': JSON.stringify(process.env.WXT_PRIVACY_URL ?? ''),
       },
     };
   },
