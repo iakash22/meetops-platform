@@ -80,7 +80,15 @@ export function NotificationPreferencesPanel() {
       aria-label="Notification preferences"
       onSubmit={(e) => {
         e.preventDefault();
-        save.mutate({ items: fromMatrix(matrix) });
+        const lastSaved = q.data;
+        save.mutate(
+          { items: fromMatrix(matrix) },
+          {
+            onError: () => {
+              if (lastSaved) setMatrix(toMatrix(lastSaved.items));
+            },
+          },
+        );
       }}
       className="space-y-4"
     >
