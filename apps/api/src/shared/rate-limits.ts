@@ -52,6 +52,18 @@ export const ROUTE_RATE_LIMITS = {
   /** POST /orgs, per user (no org yet, so the key is `rl:orgCreate:user:<id>`): bounds scripted tenant creation. */
   orgCreate: { perUser: { limit: 10, windowMs: HOUR } },
   /**
+   * POST /orgs/:org/meetings/:id/consent (record a grant). A participant attests once per meeting; 30/min per user
+   * is well above that and bounds ledger writes.
+   */
+  consentRecord: { perUser: { limit: 30, windowMs: MIN }, perOrg: { limit: 300, windowMs: MIN } },
+  /** POST /orgs/:org/meetings/:id/consent/revoke. Revokes are rarer than grants. */
+  consentRevoke: { perUser: { limit: 30, windowMs: MIN }, perOrg: { limit: 300, windowMs: MIN } },
+  /** PATCH /orgs/:org/settings/consent (owner/admin). A settings form is saved a handful of times. */
+  consentSettingsWrite: {
+    perUser: { limit: 20, windowMs: MIN },
+    perOrg: { limit: 60, windowMs: MIN },
+  },
+  /**
    * GET/POST /notifications/unsubscribe (public, signed link). RFC 8058 one-click POSTs come from mail-provider
    * egress IPs shared by many recipients, so the per-IP cap is generous; it still bounds DB writes per source.
    */

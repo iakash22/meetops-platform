@@ -12,7 +12,7 @@ import { RateLimitedError } from '../src/modules/auth/domain/errors.js';
 import { RateLimiterUnavailableError } from '../src/shared/guarded-limit.js';
 import { INVITE_LIMITS } from '../src/modules/organizations/application/organization.service.js';
 import { createServer } from '../src/server.js';
-import { mediaWorld, type MediaWorld } from './media-helpers.js';
+import { consent, mediaWorld, type MediaWorld } from './media-helpers.js';
 import { fakeHasher, type Client } from './helpers.js';
 
 /** Records every key consumed; can be switched to throw (limiter store down) or to never settle. */
@@ -196,6 +196,25 @@ describe('route rate limits over HTTP (P9 remaining-work #9)', () => {
           token: `ExponentPushToken[${randomUUID().replace(/-/g, '')}]`,
           platform: 'ios',
         }),
+    },
+    {
+      scope: 'consentRecord',
+      name: 'POST /orgs/:org/meetings/:id/consent',
+      call: (s, c = s.member, org = s.org) =>
+        c.post(`/orgs/${org}/meetings/${randomUUID()}/consent`, consent()),
+    },
+    {
+      scope: 'consentRevoke',
+      name: 'POST /orgs/:org/meetings/:id/consent/revoke',
+      call: (s, c = s.member, org = s.org) =>
+        c.post(`/orgs/${org}/meetings/${randomUUID()}/consent/revoke`, {}),
+    },
+    {
+      scope: 'consentSettingsWrite',
+      name: 'PATCH /orgs/:org/settings/consent',
+      ownerOnly: true,
+      call: (s, c = s.owner, org = s.org) =>
+        c.patch(`/orgs/${org}/settings/consent`, { retentionDays: 90 }),
     },
   ];
 

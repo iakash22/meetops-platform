@@ -61,8 +61,8 @@ export class UploadService {
     if (!isSafeUploadFilename(body.filename))
       throw new DomainError('VALIDATION_FAILED', 'Invalid filename', 400);
     const now = this.d.now();
-    const consent = checkConsentInput(body.consent, now);
     const org = c.ctx.organizationId;
+    const consent = checkConsentInput(body.consent, now, await this.d.consentVersion(org));
     if (body.meetingId) {
       const m = isUuid(body.meetingId) ? await this.d.meetings.findById(org, body.meetingId) : null;
       if (!m) throw new MeetingNotFoundError();
@@ -128,7 +128,7 @@ export class UploadService {
       const consent = checkStoredConsent(
         await this.d.consents.findLatest(f.organizationId, 'upload', f.id),
       );
-      await enforceMeetingConsent(this.d, f.organizationId, f.meetingId);
+      await enforceMeetingConsent(this.d, f.organizationId, f.meetingId, 'in_flight');
       await this.enqueue(f, consent.id, true);
       return { ...f };
     }
@@ -148,7 +148,7 @@ export class UploadService {
     const consent = checkStoredConsent(
       await this.d.consents.findLatest(f.organizationId, 'upload', f.id),
     );
-    await enforceMeetingConsent(this.d, f.organizationId, f.meetingId);
+    await enforceMeetingConsent(this.d, f.organizationId, f.meetingId, 'in_flight');
     await this.d.files.setStatus(f.organizationId, f.id, 'processing', 'pending');
     await this.enqueue(f, consent.id);
     return { ...f, status: 'processing', scanStatus: 'pending' };

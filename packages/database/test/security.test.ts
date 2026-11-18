@@ -136,7 +136,9 @@ const OUTBOX_DEDUPE_KEY_INDEX_MIGRATION = '20261103200100_outbox_dedupe_key_inde
 const USER_GOOGLE_SUB_MIGRATION = '20261106120000_user_google_sub';
 /** OIDC hardening: users.google_sub unique only over live rows (L-1) + auth.google_linked in the global audit allowlist. */
 const GOOGLE_OIDC_HARDENING_MIGRATION = '20261109120000_google_oidc_hardening';
-const LATEST_MIGRATION = GOOGLE_OIDC_HARDENING_MIGRATION;
+/** ADR-019/020 org consent settings: one row per org (PK org_id), forced RLS on the ADR-010 setting only. */
+const CONSENT_SETTINGS_MIGRATION = '20261111200000_organization_consent_settings';
+const LATEST_MIGRATION = CONSENT_SETTINGS_MIGRATION;
 /**
  * Parallel PRs that sort between calendar_events and meeting_embeddings (#334 consent events, #341 calendar links).
  * The order checks below ignore them so they hold whichever merges first; when present they must sort before ours.
@@ -196,6 +198,9 @@ const orderedDirs = () => {
   expect(dirs.indexOf(USER_GOOGLE_SUB_MIGRATION)).toBe(
     dirs.indexOf(OUTBOX_DEDUPE_KEY_INDEX_MIGRATION) + 1,
   );
+  expect(dirs.indexOf(CONSENT_SETTINGS_MIGRATION)).toBe(
+    dirs.indexOf(GOOGLE_OIDC_HARDENING_MIGRATION) + 1,
+  );
   expect(dirs.indexOf(GOOGLE_OIDC_HARDENING_MIGRATION)).toBe(
     dirs.indexOf(USER_GOOGLE_SUB_MIGRATION) + 1,
   );
@@ -211,6 +216,7 @@ const orderedDirs = () => {
       d !== OUTBOX_DEDUPE_KEY_INDEX_MIGRATION &&
       d !== USER_GOOGLE_SUB_MIGRATION &&
       d !== GOOGLE_OIDC_HARDENING_MIGRATION &&
+      d !== CONSENT_SETTINGS_MIGRATION &&
       !(PARALLEL_MIGRATIONS as readonly string[]).includes(d),
   );
 };
@@ -248,6 +254,10 @@ const taskSyncSql = readFileSync(
   resolve(migrationsDir, TASK_SYNC_MIGRATION, 'migration.sql'),
   'utf8',
 );
+const consentSettingsSql = readFileSync(
+  resolve(migrationsDir, CONSENT_SETTINGS_MIGRATION, 'migration.sql'),
+  'utf8',
+);
 const adr010Sql =
   teamsSql +
   authTokensSql +
@@ -258,7 +268,8 @@ const adr010Sql =
   calendarEventLinksSql +
   meetingEmbeddingsSql +
   meetingConsentSql +
-  taskSyncSql;
+  taskSyncSql +
+  consentSettingsSql;
 /** Phase 3 per-recording transcript revision migration. */
 const TRANSCRIPT_REVISION_MIGRATION_DIR = '20261026200000_transcript_recording_revision';
 const consentSql = readFileSync(resolve(migrationsDir, CONSENT_MIGRATION, 'migration.sql'), 'utf8');
@@ -268,10 +279,10 @@ const rlsSql =
   aiTenantSql +
   adr010Sql;
 /**
- * Tenant tables keyed by the organization itself rather than a uuid id: ai_org_config (PK org_id) and
- * ai_idempotency (PK (org_id, key)). Their primary key already leads with org_id.
+ * Tenant tables keyed by the organization itself rather than a uuid id: ai_org_config and
+ * organization_consent_settings (PK org_id) and ai_idempotency (PK (org_id, key)). Their primary key already leads with org_id.
  */
-const ORGANIZATION_KEYED = ['ai_org_config', 'ai_idempotency'];
+const ORGANIZATION_KEYED = ['ai_org_config', 'ai_idempotency', 'organization_consent_settings'];
 /** Pre-ADR-010 tenant policy definitions (still the source of membership_self_read). */
 const legacyPolicySql =
   readFileSync(
@@ -303,6 +314,7 @@ const ADR010_ONLY_TABLES: readonly string[] = [
   'meeting_consent_events',
   'calendar_event_links',
   'task_sync_jobs',
+  'organization_consent_settings',
 ];
 /** DB-3: append-only tenant tables with their own SELECT/INSERT policies (ADR-010 setting) in consentSql. */
 const CONSENT_TABLES: readonly string[] = ['consent_attestations'];
@@ -830,7 +842,7 @@ describe('schema conventions', () => {
   });
 
   it('every model uses a uuid primary key', () => {
-    expect(models).toHaveLength(46);
+    expect(models).toHaveLength(47);
     for (const m of models.filter((x) => !ORGANIZATION_KEYED.includes(x.table)))
       expect(m.body, m.name).toMatch(/^\s+id\s+String\s+@id @default\(uuid\(\)\) @db\.Uuid$/m);
   });

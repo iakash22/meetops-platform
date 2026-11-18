@@ -76,6 +76,10 @@ Tree: `main` at `ca3c0e2b` (unchanged). `integration/phase-1` at `de8a86e4` (inc
 
 [#463](https://github.com/iakash22/meetops-platform/pull/463) closed the remaining #459 follow-ups: Tester X4-mem (in-memory store copies), NB-R3 post-commit verify UX (verify returns 204 with the real `x-meetops-verify-outcome` after a committed takeover), and the info copy (`password_reset` vs `set_password` on `/verify-email`).
 
+## Update — 11 Nov 2026 (consent-settings API)
+
+`GET`/`PATCH /orgs/:organizationId/settings/consent` is implemented (contracts ADR-019/020 in the stacked contracts PR; this change adds the org settings table with forced RLS, Prisma and in-memory repositories, TypeBox routes, CSRF and an audit entry on PATCH). Explicit consent defaults to on for every org (no country field yet). Rate limits for record/revoke/PATCH follow in a stacked PR.
+
 ## Update — 9 Nov 2026 (~22:35 IST)
 
 Tree: `main` at `ca3c0e2b` (unchanged). `integration/phase-1` at `fd4ede49` (55 ahead / 0 behind `main`), merge of [#459](https://github.com/iakash22/meetops-platform/pull/459) Google OIDC hardening (Architecture + Tester PASS on `c41fc720`).

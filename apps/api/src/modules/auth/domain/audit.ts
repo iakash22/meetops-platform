@@ -61,7 +61,8 @@ export type AuditAction =
   | 'calendar.connect'
   | 'calendar.disconnect'
   | 'calendar.link'
-  | 'calendar.unlink';
+  | 'calendar.unlink'
+  | 'consent.settings.update';
 
 /** Never put passwords, tokens, cookies or hashes in metadata. */
 export interface AuditEvent {
@@ -85,7 +86,8 @@ export interface AuditEvent {
     | 'extension_device'
     | 'desktop_device'
     | 'integration'
-    | 'calendar_connection';
+    | 'calendar_connection'
+    | 'consent_settings';
   targetId: string | null;
   metadata: Record<string, string | number | boolean | null>;
   ip: string | null;
